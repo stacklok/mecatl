@@ -2,9 +2,9 @@
 id: 24-learning-driver-ownership
 title: Enforce workload-authenticated ownership in learning drivers
 blocked_by: [23-attempt-control-api, 16-learning-driver-composition]
-status: in-progress
-branch: ""
-worktree: ""
+status: done
+branch: "plan-cloud-native-learning/24-learning-driver-ownership-repair"
+worktree: ".scratch/worktrees/24-learning-driver-ownership-repair"
 issue: ""
 retries: 0
 last_error: ""
