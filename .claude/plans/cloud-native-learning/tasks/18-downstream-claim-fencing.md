@@ -2,7 +2,7 @@
 id: 18-downstream-claim-fencing
 title: Fence attempt-owned lifecycle transitions by claim
 blocked_by: [17-distributed-repository-conformance]
-status: pending
+status: in-progress
 branch: ""
 worktree: ""
 issue: ""
