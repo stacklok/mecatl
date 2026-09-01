@@ -138,7 +138,9 @@ Credentials belong in `headers`, and nowhere else. A URL carrying userinfo
 `Basic` header that would bypass every protection `headers` gets. Header values
 are secret-shaped: never logged, never carried in an event, never included in an
 error. A URL is redacted to `scheme://host/path` wherever it is logged or echoed
-in a message, so a token in the query string does not reach the operator's log.
+in a message — in the message text, in the attributes beside it, and inside the
+underlying transport error, which embeds the full request URL of its own accord —
+so a token in the query string does not reach the operator's log.
 
 A client endpoint may not redirect: a URL that passes validation is not permitted
 to send the daemon onward to a host that never did. Operator-configured servers

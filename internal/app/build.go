@@ -2686,8 +2686,14 @@ func sessionEngineFactory(
 			// redacted at the log site instead of trusted to be clean. mcp.RedactURL is
 			// the SAME policy the validator's own messages use — one redactor, so the
 			// log and the error cannot drift.
+			// BOTH the url AND the err must be redacted, and the err is the one that
+			// was missed: net/http embeds the complete request URL in a connection
+			// error, and the MCP SDK formats it into its own message text, so a
+			// query-string token reached the operator log through `err` even though
+			// `url` beside it was clean. Redacting one of two channels is not
+			// redacting.
 			cfg.diag().Log(ctx, port.LevelWarn, "client MCP server unreachable; skipping for this session",
-				"server", sc.Name, "url", mcp.RedactURL(sc.URL), "err", err)
+				"server", sc.Name, "url", mcp.RedactURL(sc.URL), "err", mcp.RedactError(err))
 		}
 		var mgr *mcp.Manager
 		if len(specs) > 0 {
@@ -2703,7 +2709,11 @@ func sessionEngineFactory(
 				// using MountedClientMCP below. Reporting which servers connected is
 				// this factory's job; deciding whether a partial mount is acceptable
 				// belongs to the caller, and the two callers disagree.
-				cfg.diag().Log(ctx, port.LevelWarn, "client MCP: no servers connected for this session; mounting core tools only", "err", err)
+				// Same redaction as onError above: this error is NewManager's lastErr,
+				// so it is one of the per-server transport errors and carries that
+				// server's full URL.
+				cfg.diag().Log(ctx, port.LevelWarn, "client MCP: no servers connected for this session; mounting core tools only",
+					"err", mcp.RedactError(err))
 			}
 			mgr = m
 		}

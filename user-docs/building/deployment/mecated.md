@@ -838,7 +838,9 @@ namespace and a duplicate would collide in the tool catalog. **Credentials go in
 `headers`**, never in the URL: `https://user:pass@host/mcp` is rejected, because
 the standard library turns userinfo into a `Basic` header that would bypass the
 protections `headers` values get. Anything logged or echoed shows the URL as
-`scheme://host/path`, so a token in a query string stays out of your operator log.
+`scheme://host/path` — including the connection error itself, which otherwise
+carries the full request URL — so a token in a query string stays out of your
+operator log.
 
 Client endpoints also may not redirect, so a vetted URL cannot bounce the daemon on
 to a host that was never vetted. Servers you configure yourself are unaffected.

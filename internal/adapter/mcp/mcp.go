@@ -33,6 +33,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -188,6 +189,107 @@ func RedactURL(raw string) string {
 	}
 	safe := url.URL{Scheme: u.Scheme, Host: u.Host, Path: u.Path}
 	return safe.String()
+}
+
+// urlInText matches a scheme-bearing URL embedded in free text. The terminator set
+// is deliberately small — whitespace, quotes, angle brackets, backslash, backtick —
+// because transport errors render URLs inside quotes (`Post "https://..."`) and
+// over-capturing a trailing comma or paren is harmless: RedactURL drops the query
+// regardless, so any junk lands in the discarded tail rather than in the output.
+var urlInText = regexp.MustCompile(`(?i)\bhttps?://[^\s"'` + "`" + `<>\\]+`)
+
+// RedactText scrubs every URL embedded in free text, replacing each with its
+// RedactURL form (scheme://host/path — no userinfo, no query, no fragment).
+//
+// It exists because redacting a ServerConfig.URL at a log site is NOT sufficient:
+// the ERROR logged beside it embeds the full request URL independently.
+// net/http's *url.Error carries it, and the MCP SDK formats it into its own
+// message text (`rejected by transport: Post "http://host/mcp?access_token=..."`),
+// so the URL arrives as a STRING inside a wrapped message rather than as an
+// unwrappable field — innerURLError cannot reach it and neither can any
+// error-chain approach. A text scrub is the only thing that does.
+//
+// This is why the redaction is a TEXT operation rather than a URL one: the
+// sensitive value can appear anywhere in a message composed by a layer we do not
+// control, including a future SDK version that words it differently.
+func RedactText(s string) string {
+	if s == "" {
+		return s
+	}
+	return urlInText.ReplaceAllStringFunc(s, RedactURL)
+}
+
+// RedactError renders err for a log with every URL it embeds redacted. A nil error
+// renders as the empty string.
+//
+// Prefer this over logging err directly ANYWHERE an MCP server's URL could reach
+// the error — which in practice means every MCP transport error, since the URL is
+// what the transport was asked to reach.
+func RedactError(err error) string {
+	if err == nil {
+		return ""
+	}
+	return RedactText(err.Error())
+}
+
+// redactingDiagnostics wraps a port.Diagnostics so every message and every
+// string/error attribute logged THROUGH IT has its embedded URLs scrubbed.
+//
+// It is applied once, at this package's diagnostics ENTRY POINTS (Connect and
+// NewManager), rather than at each of the package's log sites. That is the point:
+// there were four in-package sites logging a transport error (resource listing,
+// prompt listing, list refresh, reconnect), every one of them able to carry a
+// credential-bearing URL, and dressing each call individually leaves the next one
+// added to leak by default. Wrapping the sink makes the safe behaviour the
+// automatic one.
+//
+// Attribute KEYS are scrubbed too. They are harness-authored constants that never
+// contain a URL, so this is a no-op on them — but treating every string uniformly
+// removes the need for the wrapper to reason about slog's key/value positions,
+// which is exactly the kind of assumption that breaks quietly.
+type redactingDiagnostics struct{ inner port.Diagnostics }
+
+// redactDiagnostics wraps diag unless it is already wrapped, so the
+// NewManager -> Connect path does not double-decorate. Double scrubbing would be
+// harmless (RedactText is idempotent — a redacted URL has no query left to drop)
+// but the guard keeps the log path cheap.
+func redactDiagnostics(diag port.Diagnostics) port.Diagnostics {
+	if diag == nil {
+		return port.NopDiagnostics{}
+	}
+	if _, already := diag.(redactingDiagnostics); already {
+		return diag
+	}
+	return redactingDiagnostics{inner: diag}
+}
+
+func (d redactingDiagnostics) Log(ctx context.Context, level port.Level, msg string, attrs ...any) {
+	d.inner.Log(ctx, level, RedactText(msg), redactAttrs(attrs)...)
+}
+
+func (d redactingDiagnostics) With(attrs ...any) port.Diagnostics {
+	return redactingDiagnostics{inner: d.inner.With(redactAttrs(attrs)...)}
+}
+
+// redactAttrs scrubs the string and error values in a slog-style attribute list,
+// leaving every other type untouched. It copies rather than mutating in place: the
+// caller may reuse the slice, and a logger must never edit its caller's data.
+func redactAttrs(attrs []any) []any {
+	if len(attrs) == 0 {
+		return attrs
+	}
+	out := make([]any, len(attrs))
+	for i, a := range attrs {
+		switch v := a.(type) {
+		case string:
+			out[i] = RedactText(v)
+		case error:
+			out[i] = RedactError(v)
+		default:
+			out[i] = a
+		}
+	}
+	return out
 }
 
 // innerURLError unwraps a *url.Error to its underlying reason, which — unlike the
@@ -408,9 +510,11 @@ func newMCPHTTPClient(cfg ServerConfig, oauth *OAuthController) *http.Client {
 // unavailable; callers (the composition root) are expected to log-and-skip such
 // a server rather than aborting the whole harness.
 func Connect(ctx context.Context, cfg ServerConfig, diag port.Diagnostics) (*Server, error) {
-	if diag == nil {
-		diag = port.NopDiagnostics{}
-	}
+	// Wrap the sink so no log line from this package — nor from the *Server it
+	// builds, which inherits this diag — can carry a credential-bearing URL. See
+	// redactingDiagnostics for why this is a sink decoration rather than a fix at
+	// each call site.
+	diag = redactDiagnostics(diag)
 	if cfg.Name == "" {
 		return nil, errors.New("mcp: server config requires a Name")
 	}
@@ -875,9 +979,12 @@ type Manager struct {
 // least one was configured, so the caller can distinguish "nothing usable" from
 // "all good".
 func NewManager(ctx context.Context, configs []ServerConfig, onError func(cfg ServerConfig, err error), diag port.Diagnostics) (*Manager, error) {
-	if diag == nil {
-		diag = port.NopDiagnostics{}
-	}
+	// Same sink decoration as Connect. NOTE this does NOT sanitize what onError
+	// does with the error it is handed, nor the error this function RETURNS: both
+	// cross out of this package as values, and their consumer owns its own log
+	// site. Callers must use RedactError there — see internal/app's client-MCP
+	// factory, which is the consumer that leaked.
+	diag = redactDiagnostics(diag)
 	m := &Manager{}
 	if len(configs) == 0 {
 		return m, nil

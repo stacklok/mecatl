@@ -219,7 +219,12 @@ func clampErr(err error) string {
 		return ""
 	}
 	const maxLen = 200
-	s := err.Error()
+	// REDACT BEFORE CLAMPING. Order is load-bearing: clamping first can cut the
+	// middle of a query string and leave a partial credential in the retained
+	// prefix, which the diagnostics sink wrapper then cannot recognise as a URL to
+	// scrub. Redacting first removes the query outright, so the clamp only ever
+	// shortens already-safe text.
+	s := RedactError(err)
 	if len(s) <= maxLen {
 		return s
 	}
