@@ -111,6 +111,10 @@ when the code that satisfies the plan has landed.
   debugger evidence/incarnation handles retain their exact existing identity contracts. Status:
   landed.
 
+- [Server-owned session placement](server-owned-session-placement.md) — removes public
+  client filesystem paths without compatibility: composition binds local, no-FS, or
+  remote environments; clients omit placement, attenuate to no-FS, or use a freshly
+  reauthorized opaque server-advertised placement ID. Status: draft.
 - [Listener-scoped workspace authority](listener-scoped-workspace-authority.md) — network listeners assign one operator-configured filesystem root while embedded and loopback deployments retain client-selected workspaces; mecak8s is no-FS by default. Status: draft.
 - [SDK server enablers](sdk-server-enablers.md) — the Go-side contracts the TypeScript
   SDK is built on: `GetServerInfo` + an open-string feature vocabulary, RFC 9457 typed
