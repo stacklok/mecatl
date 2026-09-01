@@ -38,17 +38,6 @@ message AutomaticLedgerErrorDetail {
   AutomaticLedgerErrorCode code = 1;
 }
 
-message AutomaticAdmissionPolicy {
-  google.protobuf.Duration window = 1;
-  google.protobuf.Duration cooldown = 2;
-  google.protobuf.Duration dedupe_window = 3;
-  uint64 max_count = 4;
-  uint64 max_tokens = 5;
-  uint64 max_count_per_principal = 6;
-  uint64 max_tokens_per_principal = 7;
-  google.protobuf.Duration reservation_claim_duration = 8;
-}
-
 message AutomaticReservationFence {
   uint64 generation = 1;
   google.protobuf.Timestamp expires_at = 2;
@@ -61,8 +50,8 @@ message AutomaticReservationRequest {
   string digest = 4 [(buf.validate.field).string.max_len = 128];
   string admission_class = 5 [(buf.validate.field).string.max_len = 32];
   uint64 tokens = 6;
-  google.protobuf.Timestamp now = 7 [(buf.validate.field).required = true];
-  AutomaticAdmissionPolicy policy = 8 [(buf.validate.field).required = true];
+  reserved 7, 8;
+  string expected_policy_revision = 9 [(buf.validate.field).string.max_len = 128];
 }
 
 message AutomaticReservation {
@@ -80,6 +69,7 @@ message AutomaticReservation {
   google.protobuf.Timestamp dedupe_expires_at = 12 [(buf.validate.field).required = true];
   google.protobuf.Duration claim_duration = 13 [(buf.validate.field).required = true];
   AutomaticReservationFence fence = 14;
+  string policy_revision = 15 [(buf.validate.field).string.max_len = 128];
 }
 
 message AutomaticReservationResponse {
@@ -98,13 +88,12 @@ message GetAutomaticReservationResponse {
 message ReassignAutomaticReservationRequest {
   string id = 1 [(buf.validate.field).string.max_len = 96];
   string expected_version = 2 [(buf.validate.field).string.max_len = 128];
-  google.protobuf.Timestamp now = 3 [(buf.validate.field).required = true];
-  google.protobuf.Timestamp expires_at = 4 [(buf.validate.field).required = true];
+  reserved 3, 4;
 }
 
 message ResolveAutomaticReservationRequest {
   string id = 1 [(buf.validate.field).string.max_len = 96];
   string expected_version = 2 [(buf.validate.field).string.max_len = 128];
   AutomaticReservationFence fence = 3 [(buf.validate.field).required = true];
-  google.protobuf.Timestamp now = 4 [(buf.validate.field).required = true];
+  reserved 4;
 }

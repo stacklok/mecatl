@@ -19,7 +19,6 @@ import (
 	"github.com/stacklok/mecatl/engine/prompt"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/internal/adapter/attemptstore"
-	"github.com/stacklok/mecatl/internal/adapter/automaticstore"
 	"github.com/stacklok/mecatl/internal/adapter/hookexec"
 	"github.com/stacklok/mecatl/internal/adapter/reflectionstore"
 	"github.com/stacklok/mecatl/internal/adapter/server"
@@ -76,10 +75,7 @@ func TestCloudNativeLearning_Scenario6_WeightedAdmissionUsesAttemptLifecycle(t *
 	if err != nil {
 		t.Fatal(err)
 	}
-	ledger, err := automaticstore.New(filepath.Join(t.TempDir(), "automatic"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	ledger := automaticStoreForTest(t, filepath.Join(t.TempDir(), "automatic"), defaultLearningAutomaticConfig())
 	orderedAttempts := &reservationOrderAttemptRepository{AttemptRepository: attempts, ledger: ledger}
 	proposals, err := reflectionstore.New(filepath.Join(t.TempDir(), "proposals"))
 	if err != nil {
@@ -192,10 +188,7 @@ func TestCloudNativeLearning_Scenario6_NoPrematureGlobalBoundClaim(t *testing.T)
 		t.Fatalf("unwired StablePrefix claims global automatic bounds: %q", unwired.StablePrefix)
 	}
 
-	ledger, err := automaticstore.New(filepath.Join(t.TempDir(), "automatic"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	ledger := automaticStoreForTest(t, filepath.Join(t.TempDir(), "automatic"), defaultLearningAutomaticConfig())
 	durable := capture(t, ledger)
 	if !strings.Contains(durable.StablePrefix, learningAutomaticGlobalPostureNote) {
 		t.Fatalf("durable-ledger StablePrefix = %q, want global automatic bounds", durable.StablePrefix)

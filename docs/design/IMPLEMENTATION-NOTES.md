@@ -4286,8 +4286,12 @@ explicit Off runs synchronously against lazy proposal persistence and creates no
 The storage-neutral accounting contract lives in `engine/learning/automatic_ledger.go`
 (`AutomaticAdmissionLedger`), with shared adapter coverage in
 `engine/adapter/automaticconformance/automaticconformance.go` (`Run`). Its reservation ID is derived
-only from the deterministic attempt ID. One atomic admission applies global and opaque-principal
-count/token windows, global digest deduplication, and weighted cooldown; hard admission bypasses only
+only from the deterministic attempt ID. Policy and time are backend authority: construction binds one
+immutable policy to its derived revision and an injected clock; requests carry only identity/charge
+demand plus the expected revision, and every timestamp/expiry decision is minted by that clock. The
+durable local document persists the policy revision and refuses a differently configured replica,
+while the driver protocol exposes neither client policy nor client time. One atomic admission applies
+global and opaque-principal count/token windows, global digest deduplication, and weighted cooldown; hard admission bypasses only
 cooldown and explicit host-requested reflection does not enter this automatic seam. Expired ownership
 is reassigned with a newer opaque fence without adding a charge. `internal/app/automatic_reservation_reconciliation.go`
 (`automaticReservationReconciler`) closes the non-transactional boundary: it reserves before durable

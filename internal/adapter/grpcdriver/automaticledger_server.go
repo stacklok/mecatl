@@ -21,20 +21,13 @@ func NewAutomaticAdmissionLedgerServer(ledger learning.AutomaticAdmissionLedger)
 }
 
 func (s *automaticAdmissionLedgerServer) ReserveAutomaticAdmission(ctx context.Context, wire *driverv1.AutomaticReservationRequest) (*driverv1.AutomaticReservationResponse, error) {
-	policy, err := automaticPolicyFromProto(wire.GetPolicy())
-	if err != nil {
-		return nil, automaticRepositoryStatus(err)
-	}
-	now, err := automaticTime(wire.GetNow())
-	if err != nil {
-		return nil, automaticRepositoryStatus(err)
-	}
 	req := learning.AutomaticReservationRequest{
 		ID: learning.AutomaticReservationID(wire.GetId()), AttemptID: learning.AttemptID(wire.GetAttemptId()),
 		Principal: learning.AttemptPartition(wire.GetPrincipal()), Digest: learning.CanonicalDigest(wire.GetDigest()),
-		Class: learning.AdmissionClass(wire.GetAdmissionClass()), Tokens: wire.GetTokens(), Now: now, Policy: policy,
+		Class: learning.AdmissionClass(wire.GetAdmissionClass()), Tokens: wire.GetTokens(),
+		ExpectedPolicyRevision: learning.AutomaticAdmissionPolicyRevision(wire.GetExpectedPolicyRevision()),
 	}
-	if err = req.Validate(); err != nil {
+	if err := req.Validate(); err != nil {
 		return nil, automaticRepositoryStatus(err)
 	}
 	reservation, err := s.ledger.Reserve(ctx, req)
@@ -59,15 +52,10 @@ func (s *automaticAdmissionLedgerServer) GetAutomaticReservation(ctx context.Con
 }
 
 func (s *automaticAdmissionLedgerServer) ReassignAutomaticReservation(ctx context.Context, req *driverv1.ReassignAutomaticReservationRequest) (*driverv1.AutomaticReservationResponse, error) {
-	now, err := automaticTime(req.GetNow())
-	if err != nil {
-		return nil, automaticRepositoryStatus(err)
-	}
-	expires, err := automaticTime(req.GetExpiresAt())
-	if err != nil || req.GetId() == "" || req.GetExpectedVersion() == "" {
+	if req.GetId() == "" || req.GetExpectedVersion() == "" {
 		return nil, automaticRepositoryStatus(learning.ErrInvalidAutomaticReservation)
 	}
-	reservation, err := s.ledger.Reassign(ctx, learning.AutomaticReservationID(req.GetId()), learning.AutomaticReservationVersion(req.GetExpectedVersion()), now, expires)
+	reservation, err := s.ledger.Reassign(ctx, learning.AutomaticReservationID(req.GetId()), learning.AutomaticReservationVersion(req.GetExpectedVersion()))
 	return serverAutomaticResponse(reservation, err)
 }
 
@@ -80,19 +68,15 @@ func (s *automaticAdmissionLedgerServer) ReclaimAutomaticReservation(ctx context
 }
 
 func (s *automaticAdmissionLedgerServer) resolve(ctx context.Context, req *driverv1.ResolveAutomaticReservationRequest, retain bool) (*driverv1.AutomaticReservationResponse, error) {
-	now, err := automaticTime(req.GetNow())
-	if err != nil {
-		return nil, automaticRepositoryStatus(err)
-	}
 	fence, err := automaticFenceFromProto(req.GetFence(), true)
 	if err != nil || req.GetId() == "" || req.GetExpectedVersion() == "" {
 		return nil, automaticRepositoryStatus(learning.ErrInvalidAutomaticReservation)
 	}
 	var reservation learning.AutomaticReservation
 	if retain {
-		reservation, err = s.ledger.Retain(ctx, learning.AutomaticReservationID(req.GetId()), learning.AutomaticReservationVersion(req.GetExpectedVersion()), fence, now)
+		reservation, err = s.ledger.Retain(ctx, learning.AutomaticReservationID(req.GetId()), learning.AutomaticReservationVersion(req.GetExpectedVersion()), fence)
 	} else {
-		reservation, err = s.ledger.Reclaim(ctx, learning.AutomaticReservationID(req.GetId()), learning.AutomaticReservationVersion(req.GetExpectedVersion()), fence, now)
+		reservation, err = s.ledger.Reclaim(ctx, learning.AutomaticReservationID(req.GetId()), learning.AutomaticReservationVersion(req.GetExpectedVersion()), fence)
 	}
 	return serverAutomaticResponse(reservation, err)
 }

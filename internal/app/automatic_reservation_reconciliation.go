@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"time"
 
 	"github.com/stacklok/mecatl/engine/learning"
 )
@@ -28,7 +27,7 @@ func (r automaticReservationReconciler) reserveAndCreate(ctx context.Context, re
 	if err != nil {
 		return learning.AttemptRecord{}, err
 	}
-	if _, err = r.reconcileReservation(ctx, reservation, req.Now, &create); err != nil {
+	if _, err = r.reconcileReservation(ctx, reservation, &create); err != nil {
 		return learning.AttemptRecord{}, err
 	}
 	record, found, err := r.attempts.Get(ctx, req.Principal, create.ID)
@@ -45,8 +44,8 @@ func (r automaticReservationReconciler) reserveAndCreate(ctx context.Context, re
 // replacement. A nil create means the caller has abandoned work before attempt
 // creation: an existing attempt still retains the charge; an absent attempt
 // reclaims it.
-func (r automaticReservationReconciler) reconcile(ctx context.Context, id learning.AutomaticReservationID, now time.Time, create *learning.AttemptCreate) (learning.AutomaticReservation, error) {
-	if r.ledger == nil || r.attempts == nil || id == "" || now.IsZero() {
+func (r automaticReservationReconciler) reconcile(ctx context.Context, id learning.AutomaticReservationID, create *learning.AttemptCreate) (learning.AutomaticReservation, error) {
+	if r.ledger == nil || r.attempts == nil || id == "" {
 		return learning.AutomaticReservation{}, learning.ErrInvalidAutomaticReservation
 	}
 	reservation, found, err := r.ledger.Get(ctx, id)
@@ -56,12 +55,12 @@ func (r automaticReservationReconciler) reconcile(ctx context.Context, id learni
 	if !found {
 		return learning.AutomaticReservation{}, learning.ErrAutomaticReservationNotFound
 	}
-	return r.reconcileReservation(ctx, reservation, now, create)
+	return r.reconcileReservation(ctx, reservation, create)
 }
 
 //nolint:gocyclo // reservation and attempt states stay visibly ordered for crash reconciliation
-func (r automaticReservationReconciler) reconcileReservation(ctx context.Context, reservation learning.AutomaticReservation, now time.Time, create *learning.AttemptCreate) (learning.AutomaticReservation, error) {
-	if err := reservation.Validate(); err != nil || now.IsZero() || create != nil && (create.ID != reservation.AttemptID || create.Validate() != nil) {
+func (r automaticReservationReconciler) reconcileReservation(ctx context.Context, reservation learning.AutomaticReservation, create *learning.AttemptCreate) (learning.AutomaticReservation, error) {
+	if err := reservation.Validate(); err != nil || create != nil && (create.ID != reservation.AttemptID || create.Validate() != nil) {
 		return learning.AutomaticReservation{}, learning.ErrInvalidAutomaticReservation
 	}
 	for range maxAutomaticReconcileAttempts {
@@ -82,26 +81,11 @@ func (r automaticReservationReconciler) reconcileReservation(ctx context.Context
 			return learning.AutomaticReservation{}, learning.ErrInvalidAutomaticReservation
 		}
 
-		if !reservation.Fence.ValidAt(now) {
-			updated, reassignErr := r.ledger.Reassign(ctx, reservation.ID, reservation.Version, now, now.Add(reservation.ClaimDuration))
-			if reassignErr != nil {
-				if !errors.Is(reassignErr, learning.ErrAutomaticReservationVersion) && !errors.Is(reassignErr, learning.ErrAutomaticReservationFence) {
-					return learning.AutomaticReservation{}, reassignErr
-				}
-				reservation, err = r.reload(ctx, reservation.ID)
-				if err != nil {
-					return learning.AutomaticReservation{}, err
-				}
-				continue
-			}
-			reservation = updated
-		}
-
 		var updated learning.AutomaticReservation
 		if found {
-			updated, err = r.ledger.Retain(ctx, reservation.ID, reservation.Version, reservation.Fence, now)
+			updated, err = r.ledger.Retain(ctx, reservation.ID, reservation.Version, reservation.Fence)
 		} else if create == nil {
-			updated, err = r.ledger.Reclaim(ctx, reservation.ID, reservation.Version, reservation.Fence, now)
+			updated, err = r.ledger.Reclaim(ctx, reservation.ID, reservation.Version, reservation.Fence)
 		} else {
 			_, err = r.attempts.Create(ctx, reservation.Principal, *create)
 			if err == nil {
@@ -110,6 +94,13 @@ func (r automaticReservationReconciler) reconcileReservation(ctx context.Context
 		}
 		if err == nil {
 			return updated, nil
+		}
+		if errors.Is(err, learning.ErrAutomaticReservationFence) {
+			updated, err = r.ledger.Reassign(ctx, reservation.ID, reservation.Version)
+			if err == nil {
+				reservation = updated
+				continue
+			}
 		}
 		if !errors.Is(err, learning.ErrAutomaticReservationVersion) && !errors.Is(err, learning.ErrAutomaticReservationFence) {
 			return learning.AutomaticReservation{}, err

@@ -15,32 +15,63 @@ import (
 	"github.com/stacklok/mecatl/engine/learning"
 )
 
-// Factory returns a fresh, isolated ledger for each subtest.
-type Factory func(*testing.T) learning.AutomaticAdmissionLedger
+// Clock is a deterministic backend clock shared by a conformance fixture.
+type Clock struct {
+	mu  sync.RWMutex
+	now time.Time
+}
+
+// NewClock returns a deterministic clock at now.
+func NewClock(now time.Time) *Clock { return &Clock{now: now} }
+
+// Now returns the fixture's current backend time.
+func (c *Clock) Now() time.Time {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.now
+}
+
+// Set advances or rewinds the fixture's backend time.
+func (c *Clock) Set(now time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.now = now
+}
+
+// Factory returns a fresh, isolated ledger configured with authoritative policy
+// and clock for each subtest.
+type Factory func(*testing.T, learning.AutomaticAdmissionPolicy, *Clock) learning.AutomaticAdmissionLedger
 
 // Run executes the complete automatic-admission ledger contract.
 //
 //nolint:gocyclo // one visible suite keeps adapter coverage auditable
 func Run(t *testing.T, factory Factory) {
 	t.Helper()
+	newLedger := func(t *testing.T, cfg learning.AutomaticAdmissionPolicy) (learning.AutomaticAdmissionLedger, *Clock) {
+		t.Helper()
+		clock := NewClock(baseTime())
+		return factory(t, cfg, clock), clock
+	}
 
 	t.Run("deterministic attempt linkage idempotency and global dedupe", func(t *testing.T) {
-		ledger := factory(t)
-		now := baseTime()
-		first := request(t, "same-attempt", "a", "1", learning.AdmissionWeighted, 10, now, policy())
+		cfg := policy()
+		ledger, clock := newLedger(t, cfg)
+		first := request(t, "same-attempt", "a", "1", learning.AdmissionWeighted, 10, cfg)
 		created := mustReserve(t, ledger, first)
-		retry := first
-		retry.Now = now.Add(time.Second)
-		again := mustReserve(t, ledger, retry)
+		if created.ReservedAt != baseTime() || created.PolicyRevision != first.ExpectedPolicyRevision {
+			t.Fatalf("backend authority was not persisted: reservation=%+v", created)
+		}
+		clock.Set(baseTime().Add(time.Second))
+		again := mustReserve(t, ledger, first)
 		if created != again {
 			t.Fatalf("idempotent Reserve changed record: first=%+v again=%+v", created, again)
 		}
-		changed := retry
+		changed := first
 		changed.Tokens++
 		if _, err := ledger.Reserve(context.Background(), changed); !errors.Is(err, learning.ErrAutomaticReservationConflict) {
 			t.Fatalf("same-id immutable conflict error = %v, want ErrAutomaticReservationConflict", err)
 		}
-		duplicate := request(t, "other-attempt", "b", "1", learning.AdmissionWeighted, 10, now, policy())
+		duplicate := request(t, "other-attempt", "b", "1", learning.AdmissionWeighted, 10, cfg)
 		duplicate.Digest = first.Digest
 		if _, err := ledger.Reserve(context.Background(), duplicate); !errors.Is(err, learning.ErrAutomaticAdmissionDuplicate) {
 			t.Fatalf("duplicate digest error = %v, want ErrAutomaticAdmissionDuplicate", err)
@@ -67,10 +98,9 @@ func Run(t *testing.T, factory Factory) {
 		}
 		for _, test := range tests {
 			t.Run(test.name, func(t *testing.T) {
-				ledger := factory(t)
-				now := baseTime()
-				mustReserve(t, ledger, request(t, test.name+"-1", test.first.principal, test.first.digest, learning.AdmissionWeighted, test.first.tokens, now, test.policy))
-				_, err := ledger.Reserve(context.Background(), request(t, test.name+"-2", test.second.principal, test.second.digest, learning.AdmissionWeighted, test.second.tokens, now, test.policy))
+				ledger, _ := newLedger(t, test.policy)
+				mustReserve(t, ledger, request(t, test.name+"-1", test.first.principal, test.first.digest, learning.AdmissionWeighted, test.first.tokens, test.policy))
+				_, err := ledger.Reserve(context.Background(), request(t, test.name+"-2", test.second.principal, test.second.digest, learning.AdmissionWeighted, test.second.tokens, test.policy))
 				if !errors.Is(err, learning.ErrAutomaticAdmissionLimit) {
 					t.Fatalf("second Reserve error = %v, want ErrAutomaticAdmissionLimit", err)
 				}
@@ -79,82 +109,85 @@ func Run(t *testing.T, factory Factory) {
 	})
 
 	t.Run("weighted cooldown does not collapse hard admission", func(t *testing.T) {
-		ledger := factory(t)
-		now := baseTime()
 		cfg := policy()
-		mustReserve(t, ledger, request(t, "weighted", "a", "1", learning.AdmissionWeighted, 10, now, cfg))
-		if _, err := ledger.Reserve(context.Background(), request(t, "cooled", "a", "2", learning.AdmissionWeighted, 10, now.Add(time.Second), cfg)); !errors.Is(err, learning.ErrAutomaticAdmissionCooldown) {
+		ledger, clock := newLedger(t, cfg)
+		mustReserve(t, ledger, request(t, "weighted", "a", "1", learning.AdmissionWeighted, 10, cfg))
+		clock.Set(baseTime().Add(time.Second))
+		if _, err := ledger.Reserve(context.Background(), request(t, "cooled", "a", "2", learning.AdmissionWeighted, 10, cfg)); !errors.Is(err, learning.ErrAutomaticAdmissionCooldown) {
 			t.Fatalf("weighted cooldown error = %v, want ErrAutomaticAdmissionCooldown", err)
 		}
-		hard := mustReserve(t, ledger, request(t, "hard", "a", "3", learning.AdmissionHard, 10, now.Add(time.Second), cfg))
+		hard := mustReserve(t, ledger, request(t, "hard", "a", "3", learning.AdmissionHard, 10, cfg))
 		if hard.Class != learning.AdmissionHard {
 			t.Fatalf("hard reservation class = %q", hard.Class)
 		}
 	})
 
 	t.Run("reassignment fences expired owners without adding a charge", func(t *testing.T) {
-		ledger := factory(t)
-		now := baseTime()
 		cfg := withLimits(1, 100, 1, 100)
-		first := mustReserve(t, ledger, request(t, "reassign", "a", "1", learning.AdmissionWeighted, 10, now, cfg))
-		if _, err := ledger.Reassign(context.Background(), first.ID, first.Version, now, now.Add(time.Minute)); !errors.Is(err, learning.ErrAutomaticReservationFence) {
+		ledger, clock := newLedger(t, cfg)
+		first := mustReserve(t, ledger, request(t, "reassign", "a", "1", learning.AdmissionWeighted, 10, cfg))
+		if _, err := ledger.Reassign(context.Background(), first.ID, first.Version); !errors.Is(err, learning.ErrAutomaticReservationFence) {
 			t.Fatalf("live Reassign error = %v, want ErrAutomaticReservationFence", err)
 		}
-		successor, err := ledger.Reassign(context.Background(), first.ID, first.Version, first.Fence.ExpiresAt, first.Fence.ExpiresAt.Add(cfg.ReservationClaimDuration))
+		clock.Set(first.Fence.ExpiresAt)
+		successor, err := ledger.Reassign(context.Background(), first.ID, first.Version)
 		if err != nil {
 			t.Fatal(err)
 		}
 		if successor.Fence.Generation <= first.Fence.Generation || successor.ReservedAt != first.ReservedAt || successor.ChargeExpiresAt != first.ChargeExpiresAt {
 			t.Fatalf("reassignment changed charge or failed to advance fence: first=%+v successor=%+v", first, successor)
 		}
-		if _, err = ledger.Retain(context.Background(), successor.ID, successor.Version, first.Fence, successor.Fence.ExpiresAt.Add(-time.Second)); !errors.Is(err, learning.ErrAutomaticReservationFence) {
+		clock.Set(successor.Fence.ExpiresAt.Add(-time.Second))
+		if _, err = ledger.Retain(context.Background(), successor.ID, successor.Version, first.Fence); !errors.Is(err, learning.ErrAutomaticReservationFence) {
 			t.Fatalf("stale fence Retain error = %v, want ErrAutomaticReservationFence", err)
 		}
-		retained, err := ledger.Retain(context.Background(), successor.ID, successor.Version, successor.Fence, successor.Fence.ExpiresAt.Add(-time.Second))
+		retained, err := ledger.Retain(context.Background(), successor.ID, successor.Version, successor.Fence)
 		if err != nil || retained.Charge != learning.AutomaticChargeRetained || !retained.AttemptCreated {
 			t.Fatalf("Retain = %+v, err=%v", retained, err)
 		}
-		if _, err = ledger.Reserve(context.Background(), request(t, "replacement", "b", "2", learning.AdmissionHard, 10, now.Add(2*time.Minute), cfg)); !errors.Is(err, learning.ErrAutomaticAdmissionLimit) {
+		clock.Set(baseTime().Add(2 * time.Minute))
+		if _, err = ledger.Reserve(context.Background(), request(t, "replacement", "b", "2", learning.AdmissionHard, 10, cfg)); !errors.Is(err, learning.ErrAutomaticAdmissionLimit) {
 			t.Fatalf("reassigned reservation admitted a replacement: %v", err)
 		}
 	})
 
 	t.Run("reclaimed charge releases effects while retained charge ages out", func(t *testing.T) {
-		ledger := factory(t)
-		now := baseTime()
 		cfg := withLimits(1, 100, 1, 100)
 		cfg.Cooldown = 10 * time.Minute
-		firstReq := request(t, "reclaim", "a", "1", learning.AdmissionWeighted, 10, now, cfg)
+		ledger, clock := newLedger(t, cfg)
+		firstReq := request(t, "reclaim", "a", "1", learning.AdmissionWeighted, 10, cfg)
 		first := mustReserve(t, ledger, firstReq)
-		reclaimed, err := ledger.Reclaim(context.Background(), first.ID, first.Version, first.Fence, now.Add(time.Second))
+		clock.Set(baseTime().Add(time.Second))
+		reclaimed, err := ledger.Reclaim(context.Background(), first.ID, first.Version, first.Fence)
 		if err != nil || reclaimed.Charge != learning.AutomaticChargeReclaimed || reclaimed.AttemptCreated {
 			t.Fatalf("Reclaim = %+v, err=%v", reclaimed, err)
 		}
-		replacement := request(t, "replacement", "a", "1", learning.AdmissionWeighted, 10, now.Add(2*time.Second), cfg)
-		replacement.Digest = firstReq.Digest
-		second := mustReserve(t, ledger, replacement)
-		retained, err := ledger.Retain(context.Background(), second.ID, second.Version, second.Fence, now.Add(3*time.Second))
+		secondReq := request(t, "replacement", "a", "1", learning.AdmissionWeighted, 10, cfg)
+		secondReq.Digest = firstReq.Digest
+		second := mustReserve(t, ledger, secondReq)
+		clock.Set(baseTime().Add(3 * time.Second))
+		retained, err := ledger.Retain(context.Background(), second.ID, second.Version, second.Fence)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err = ledger.Reclaim(context.Background(), retained.ID, retained.Version, retained.Fence, now.Add(4*time.Second)); !errors.Is(err, learning.ErrAutomaticReservationState) {
+		if _, err = ledger.Reclaim(context.Background(), retained.ID, retained.Version, retained.Fence); !errors.Is(err, learning.ErrAutomaticReservationState) {
 			t.Fatalf("retained Reclaim error = %v, want ErrAutomaticReservationState", err)
 		}
-		beforeDedupeExpiry := request(t, "duplicate", "b", "1", learning.AdmissionHard, 10, retained.ChargeExpiresAt, cfg)
-		beforeDedupeExpiry.Digest = retained.Digest
-		if _, err = ledger.Reserve(context.Background(), beforeDedupeExpiry); !errors.Is(err, learning.ErrAutomaticAdmissionDuplicate) {
+		clock.Set(retained.ChargeExpiresAt)
+		before := request(t, "duplicate", "b", "1", learning.AdmissionHard, 10, cfg)
+		before.Digest = retained.Digest
+		if _, err = ledger.Reserve(context.Background(), before); !errors.Is(err, learning.ErrAutomaticAdmissionDuplicate) {
 			t.Fatalf("retained digest before expiry error = %v, want ErrAutomaticAdmissionDuplicate", err)
 		}
-		after := request(t, "after-dedupe", "b", "2", learning.AdmissionHard, 10, retained.DedupeExpiresAt, cfg)
-		mustReserve(t, ledger, after)
+		clock.Set(retained.DedupeExpiresAt)
+		mustReserve(t, ledger, request(t, "after-dedupe", "b", "2", learning.AdmissionHard, 10, cfg))
 	})
 
 	t.Run("opaque CAS and concurrent global fencing permit one winner", func(t *testing.T) {
-		ledger := factory(t)
-		now := baseTime()
 		cfg := withLimits(1, 100, 10, 100)
-		created := mustReserve(t, ledger, request(t, "cas", "a", "1", learning.AdmissionHard, 10, now, cfg))
-		if _, err := ledger.Retain(context.Background(), created.ID, learning.AutomaticReservationVersion("stale"), created.Fence, now.Add(time.Second)); !errors.Is(err, learning.ErrAutomaticReservationVersion) {
+		ledger, _ := newLedger(t, cfg)
+		created := mustReserve(t, ledger, request(t, "cas", "a", "1", learning.AdmissionHard, 10, cfg))
+		if _, err := ledger.Retain(context.Background(), created.ID, learning.AutomaticReservationVersion("stale"), created.Fence); !errors.Is(err, learning.ErrAutomaticReservationVersion) {
 			t.Fatalf("stale Retain error = %v, want ErrAutomaticReservationVersion", err)
 		}
 		stored, found, err := ledger.Get(context.Background(), created.ID)
@@ -162,11 +195,11 @@ func Run(t *testing.T, factory Factory) {
 			t.Fatalf("stale CAS changed record: found=%v got=%+v err=%v", found, stored, err)
 		}
 
-		ledger = factory(t)
+		ledger, _ = newLedger(t, cfg)
 		const contenders = 16
 		requests := make([]learning.AutomaticReservationRequest, contenders)
 		for i := range contenders {
-			requests[i] = request(t, fmt.Sprintf("race-%d", i), fmt.Sprintf("p-%d", i), fmt.Sprintf("%x", i+1), learning.AdmissionHard, 10, now, cfg)
+			requests[i] = request(t, fmt.Sprintf("race-%d", i), fmt.Sprintf("p-%d", i), fmt.Sprintf("%x", i+1), learning.AdmissionHard, 10, cfg)
 		}
 		start := make(chan struct{})
 		results := make(chan error, contenders)
@@ -201,11 +234,7 @@ func Run(t *testing.T, factory Factory) {
 }
 
 func policy() learning.AutomaticAdmissionPolicy {
-	return learning.AutomaticAdmissionPolicy{
-		Window: time.Hour, Cooldown: time.Minute, DedupeWindow: 24 * time.Hour,
-		MaxCount: 10, MaxTokens: 1000, MaxCountPerPrincipal: 10, MaxTokensPerPrincipal: 1000,
-		ReservationClaimDuration: 5 * time.Minute,
-	}
+	return learning.AutomaticAdmissionPolicy{Window: time.Hour, Cooldown: time.Minute, DedupeWindow: 24 * time.Hour, MaxCount: 10, MaxTokens: 1000, MaxCountPerPrincipal: 10, MaxTokensPerPrincipal: 1000, ReservationClaimDuration: 5 * time.Minute}
 }
 
 func withLimits(globalCount, globalTokens, principalCount, principalTokens uint64) learning.AutomaticAdmissionPolicy {
@@ -226,18 +255,19 @@ func entry(principal, digest string, tokens uint64) struct {
 	}{principal, digest, tokens}
 }
 
-func request(t *testing.T, suffix, principal, digest string, class learning.AdmissionClass, tokens uint64, now time.Time, cfg learning.AutomaticAdmissionPolicy) learning.AutomaticReservationRequest {
+func request(t *testing.T, suffix, principal, digest string, class learning.AdmissionClass, tokens uint64, cfg learning.AutomaticAdmissionPolicy) learning.AutomaticReservationRequest {
 	t.Helper()
 	attempt := learning.AttemptID("attempt-" + suffix)
 	id, err := learning.AutomaticReservationIDForAttempt(attempt)
 	if err != nil {
 		t.Fatal(err)
 	}
-	digestSum := sha256.Sum256([]byte(digest))
-	return learning.AutomaticReservationRequest{
-		ID: id, AttemptID: attempt, Principal: learning.AttemptPartition("partition-" + principal),
-		Digest: learning.CanonicalDigest(fmt.Sprintf("%x", digestSum)), Class: class, Tokens: tokens, Now: now, Policy: cfg,
+	revision, err := learning.AutomaticAdmissionPolicyRevisionFor(cfg)
+	if err != nil {
+		t.Fatal(err)
 	}
+	digestSum := sha256.Sum256([]byte(digest))
+	return learning.AutomaticReservationRequest{ID: id, AttemptID: attempt, Principal: learning.AttemptPartition("partition-" + principal), Digest: learning.CanonicalDigest(fmt.Sprintf("%x", digestSum)), Class: class, Tokens: tokens, ExpectedPolicyRevision: revision}
 }
 
 func mustReserve(t *testing.T, ledger learning.AutomaticAdmissionLedger, req learning.AutomaticReservationRequest) learning.AutomaticReservation {

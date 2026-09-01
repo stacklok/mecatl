@@ -22,6 +22,7 @@ import (
 	"github.com/gofrs/flock"
 
 	"github.com/stacklok/mecatl/engine/learning"
+	"github.com/stacklok/mecatl/engine/port"
 )
 
 const (
@@ -34,31 +35,40 @@ const (
 )
 
 type entry struct {
-	Reservation learning.AutomaticReservation     `json:"reservation"`
-	Policy      learning.AutomaticAdmissionPolicy `json:"policy"`
+	Reservation learning.AutomaticReservation `json:"reservation"`
 }
 
 type document struct {
-	Format  string                                    `json:"format"`
-	Records map[learning.AutomaticReservationID]entry `json:"records"`
+	Format         string                                    `json:"format"`
+	Policy         learning.AutomaticAdmissionPolicy         `json:"policy"`
+	PolicyRevision learning.AutomaticAdmissionPolicyRevision `json:"policy_revision"`
+	Records        map[learning.AutomaticReservationID]entry `json:"records"`
 }
 
 // Store is a durable learning.AutomaticAdmissionLedger for cooperating
 // processes on one host filesystem. Each operation reloads under flock; no
 // process-local cache participates in admission decisions.
 type Store struct {
-	mu   sync.Mutex
-	dir  string
-	path string
-	lock *flock.Flock
+	mu             sync.Mutex
+	dir            string
+	path           string
+	lock           *flock.Flock
+	policy         learning.AutomaticAdmissionPolicy
+	policyRevision learning.AutomaticAdmissionPolicyRevision
+	clock          port.Clock
 }
 
 var _ learning.AutomaticAdmissionLedger = (*Store)(nil)
 
-// New prepares a ledger rooted at dir.
-func New(dir string) (*Store, error) {
-	if strings.TrimSpace(dir) == "" {
-		return nil, errors.New("automaticstore: directory required")
+// New prepares a ledger rooted at dir with backend-owned immutable policy and
+// time authority.
+func New(dir string, policy learning.AutomaticAdmissionPolicy, clock port.Clock) (*Store, error) {
+	if strings.TrimSpace(dir) == "" || clock == nil {
+		return nil, errors.New("automaticstore: directory, policy, and clock required")
+	}
+	revision, err := learning.AutomaticAdmissionPolicyRevisionFor(policy)
+	if err != nil {
+		return nil, err
 	}
 	abs, err := filepath.Abs(dir)
 	if err != nil {
@@ -69,11 +79,14 @@ func New(dir string) (*Store, error) {
 	} else if statErr != nil && !os.IsNotExist(statErr) {
 		return nil, statErr
 	}
-	return &Store{dir: abs, path: filepath.Join(abs, documentName), lock: flock.New(filepath.Join(abs, lockName))}, nil
+	return &Store{
+		dir: abs, path: filepath.Join(abs, documentName), lock: flock.New(filepath.Join(abs, lockName)),
+		policy: policy, policyRevision: revision, clock: clock,
+	}, nil
 }
 
-func emptyDocument() document {
-	return document{Format: documentType, Records: make(map[learning.AutomaticReservationID]entry)}
+func (s *Store) emptyDocument() document {
+	return document{Format: documentType, Policy: s.policy, PolicyRevision: s.policyRevision, Records: make(map[learning.AutomaticReservationID]entry)}
 }
 
 func (s *Store) transaction(ctx context.Context, write bool, fn func(*document) error) error {
@@ -138,7 +151,7 @@ func rejectSymlinks(paths ...string) error {
 func (s *Store) load() (document, error) {
 	file, err := os.OpenFile(s.path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
 	if os.IsNotExist(err) {
-		return emptyDocument(), nil
+		return s.emptyDocument(), nil
 	}
 	if err != nil {
 		return document{}, err
@@ -162,15 +175,19 @@ func (s *Store) load() (document, error) {
 	if err = validateDocument(doc); err != nil {
 		return document{}, err
 	}
+	if doc.Policy != s.policy || doc.PolicyRevision != s.policyRevision {
+		return document{}, errors.New("automaticstore: configured policy revision does not match durable ledger")
+	}
 	return doc, nil
 }
 
 func validateDocument(doc document) error {
-	if doc.Format != documentType || doc.Records == nil {
+	revision, err := learning.AutomaticAdmissionPolicyRevisionFor(doc.Policy)
+	if doc.Format != documentType || doc.Records == nil || err != nil || revision != doc.PolicyRevision {
 		return errors.New("automaticstore: invalid ledger document")
 	}
 	for id, stored := range doc.Records {
-		if id != stored.Reservation.ID || stored.Reservation.Validate() != nil || stored.Policy.Validate() != nil {
+		if id != stored.Reservation.ID || stored.Reservation.Validate() != nil || stored.Reservation.PolicyRevision != doc.PolicyRevision {
 			return errors.New("automaticstore: invalid ledger record")
 		}
 	}
@@ -228,12 +245,17 @@ func newVersion() (learning.AutomaticReservationVersion, error) {
 
 // Reserve atomically applies all configured accounting controls.
 func (s *Store) Reserve(ctx context.Context, req learning.AutomaticReservationRequest) (learning.AutomaticReservation, error) {
-	if err := req.Validate(); err != nil || len(req.Principal) > 128 {
+	if err := req.Validate(); err != nil || len(req.Principal) > 128 || req.ExpectedPolicyRevision != s.policyRevision ||
+		req.Tokens > s.policy.MaxTokens || req.Tokens > s.policy.MaxTokensPerPrincipal {
+		return learning.AutomaticReservation{}, learning.ErrInvalidAutomaticReservation
+	}
+	now := s.clock.Now().UTC()
+	if now.IsZero() {
 		return learning.AutomaticReservation{}, learning.ErrInvalidAutomaticReservation
 	}
 	var result learning.AutomaticReservation
 	err := s.transaction(ctx, true, func(doc *document) error {
-		pruneResolved(doc, req.Now)
+		pruneResolved(doc, now)
 		if stored, ok := doc.Records[req.ID]; ok {
 			if sameImmutable(stored, req) {
 				result = stored.Reservation
@@ -241,7 +263,7 @@ func (s *Store) Reserve(ctx context.Context, req learning.AutomaticReservationRe
 			}
 			return learning.ErrAutomaticReservationConflict
 		}
-		if err := admissionError(*doc, req); err != nil {
+		if err := s.admissionError(*doc, req, now); err != nil {
 			return err
 		}
 		version, err := newVersion()
@@ -250,12 +272,12 @@ func (s *Store) Reserve(ctx context.Context, req learning.AutomaticReservationRe
 		}
 		result = learning.AutomaticReservation{
 			ID: req.ID, AttemptID: req.AttemptID, Version: version, Principal: req.Principal,
-			Digest: req.Digest, Class: req.Class, Tokens: req.Tokens, Charge: learning.AutomaticChargeHeld,
-			ReservedAt: req.Now, ChargeExpiresAt: req.Now.Add(req.Policy.Window), DedupeExpiresAt: req.Now.Add(req.Policy.DedupeWindow),
-			ClaimDuration: req.Policy.ReservationClaimDuration,
-			Fence:         learning.AutomaticReservationFence{Generation: 1, ExpiresAt: req.Now.Add(req.Policy.ReservationClaimDuration)},
+			Digest: req.Digest, Class: req.Class, PolicyRevision: s.policyRevision, Tokens: req.Tokens, Charge: learning.AutomaticChargeHeld,
+			ReservedAt: now, ChargeExpiresAt: now.Add(s.policy.Window), DedupeExpiresAt: now.Add(s.policy.DedupeWindow),
+			ClaimDuration: s.policy.ReservationClaimDuration,
+			Fence:         learning.AutomaticReservationFence{Generation: 1, ExpiresAt: now.Add(s.policy.ReservationClaimDuration)},
 		}
-		doc.Records[req.ID] = entry{Reservation: result, Policy: req.Policy}
+		doc.Records[req.ID] = entry{Reservation: result}
 		return nil
 	})
 	return result, err
@@ -272,23 +294,23 @@ func pruneResolved(doc *document, now time.Time) {
 func sameImmutable(stored entry, req learning.AutomaticReservationRequest) bool {
 	r := stored.Reservation
 	return r.ID == req.ID && r.AttemptID == req.AttemptID && r.Principal == req.Principal && r.Digest == req.Digest &&
-		r.Class == req.Class && r.Tokens == req.Tokens && stored.Policy == req.Policy
+		r.Class == req.Class && r.Tokens == req.Tokens && r.PolicyRevision == req.ExpectedPolicyRevision
 }
 
-func admissionError(doc document, req learning.AutomaticReservationRequest) error {
+func (s *Store) admissionError(doc document, req learning.AutomaticReservationRequest, now time.Time) error {
 	var globalCount, globalTokens, principalCount, principalTokens uint64
 	for _, stored := range doc.Records {
 		r := stored.Reservation
 		if r.Charge == learning.AutomaticChargeReclaimed {
 			continue
 		}
-		if req.Now.Before(r.DedupeExpiresAt) && r.Digest == req.Digest {
+		if now.Before(r.DedupeExpiresAt) && r.Digest == req.Digest {
 			return learning.ErrAutomaticAdmissionDuplicate
 		}
-		if req.Class == learning.AdmissionWeighted && r.Principal == req.Principal && req.Now.Before(r.ReservedAt.Add(stored.Policy.Cooldown)) {
+		if req.Class == learning.AdmissionWeighted && r.Principal == req.Principal && now.Before(r.ReservedAt.Add(s.policy.Cooldown)) {
 			return learning.ErrAutomaticAdmissionCooldown
 		}
-		if !req.Now.Before(r.ChargeExpiresAt) {
+		if !now.Before(r.ChargeExpiresAt) {
 			continue
 		}
 		globalCount++
@@ -304,8 +326,8 @@ func admissionError(doc document, req learning.AutomaticReservationRequest) erro
 			principalTokens += r.Tokens
 		}
 	}
-	if globalCount >= req.Policy.MaxCount || globalTokens >= req.Policy.MaxTokens || req.Tokens > req.Policy.MaxTokens-globalTokens ||
-		principalCount >= req.Policy.MaxCountPerPrincipal || principalTokens >= req.Policy.MaxTokensPerPrincipal || req.Tokens > req.Policy.MaxTokensPerPrincipal-principalTokens {
+	if globalCount >= s.policy.MaxCount || globalTokens >= s.policy.MaxTokens || req.Tokens > s.policy.MaxTokens-globalTokens ||
+		principalCount >= s.policy.MaxCountPerPrincipal || principalTokens >= s.policy.MaxTokensPerPrincipal || req.Tokens > s.policy.MaxTokensPerPrincipal-principalTokens {
 		return learning.ErrAutomaticAdmissionLimit
 	}
 	return nil
@@ -322,13 +344,14 @@ func (s *Store) Get(ctx context.Context, id learning.AutomaticReservationID) (le
 	return result, found, err
 }
 
-func (s *Store) Reassign(ctx context.Context, id learning.AutomaticReservationID, expected learning.AutomaticReservationVersion, now, expiresAt time.Time) (learning.AutomaticReservation, error) {
+func (s *Store) Reassign(ctx context.Context, id learning.AutomaticReservationID, expected learning.AutomaticReservationVersion) (learning.AutomaticReservation, error) {
+	now := s.clock.Now().UTC()
 	return s.mutate(ctx, id, expected, func(stored entry) (entry, error) {
 		r := stored.Reservation
 		if r.Charge != learning.AutomaticChargeHeld {
 			return entry{}, learning.ErrAutomaticReservationState
 		}
-		if now.Before(r.Fence.ExpiresAt) || expiresAt != now.Add(r.ClaimDuration) {
+		if now.IsZero() || now.Before(r.Fence.ExpiresAt) {
 			return entry{}, learning.ErrAutomaticReservationFence
 		}
 		version, err := newVersion()
@@ -336,21 +359,22 @@ func (s *Store) Reassign(ctx context.Context, id learning.AutomaticReservationID
 			return entry{}, err
 		}
 		r.Version = version
-		r.Fence = learning.AutomaticReservationFence{Generation: r.Fence.Generation + 1, ExpiresAt: expiresAt}
+		r.Fence = learning.AutomaticReservationFence{Generation: r.Fence.Generation + 1, ExpiresAt: now.Add(r.ClaimDuration)}
 		stored.Reservation = r
 		return stored, nil
 	})
 }
 
-func (s *Store) Retain(ctx context.Context, id learning.AutomaticReservationID, expected learning.AutomaticReservationVersion, fence learning.AutomaticReservationFence, now time.Time) (learning.AutomaticReservation, error) {
-	return s.resolve(ctx, id, expected, fence, now, learning.AutomaticChargeRetained)
+func (s *Store) Retain(ctx context.Context, id learning.AutomaticReservationID, expected learning.AutomaticReservationVersion, fence learning.AutomaticReservationFence) (learning.AutomaticReservation, error) {
+	return s.resolve(ctx, id, expected, fence, learning.AutomaticChargeRetained)
 }
 
-func (s *Store) Reclaim(ctx context.Context, id learning.AutomaticReservationID, expected learning.AutomaticReservationVersion, fence learning.AutomaticReservationFence, now time.Time) (learning.AutomaticReservation, error) {
-	return s.resolve(ctx, id, expected, fence, now, learning.AutomaticChargeReclaimed)
+func (s *Store) Reclaim(ctx context.Context, id learning.AutomaticReservationID, expected learning.AutomaticReservationVersion, fence learning.AutomaticReservationFence) (learning.AutomaticReservation, error) {
+	return s.resolve(ctx, id, expected, fence, learning.AutomaticChargeReclaimed)
 }
 
-func (s *Store) resolve(ctx context.Context, id learning.AutomaticReservationID, expected learning.AutomaticReservationVersion, fence learning.AutomaticReservationFence, now time.Time, disposition learning.AutomaticChargeDisposition) (learning.AutomaticReservation, error) {
+func (s *Store) resolve(ctx context.Context, id learning.AutomaticReservationID, expected learning.AutomaticReservationVersion, fence learning.AutomaticReservationFence, disposition learning.AutomaticChargeDisposition) (learning.AutomaticReservation, error) {
+	now := s.clock.Now().UTC()
 	return s.mutate(ctx, id, expected, func(stored entry) (entry, error) {
 		r := stored.Reservation
 		if r.Charge != learning.AutomaticChargeHeld {

@@ -232,6 +232,30 @@ func positiveAutomaticValue(value int) (uint64, error) {
 	return uint64(value), nil //nolint:gosec // positivity excludes signed wraparound
 }
 
+func automaticAdmissionPolicy(cfg LearningAutomaticConfig) (learning.AutomaticAdmissionPolicy, error) {
+	maxCount, err := positiveAutomaticValue(cfg.MaxReflections)
+	if err != nil {
+		return learning.AutomaticAdmissionPolicy{}, err
+	}
+	maxTokens, err := positiveAutomaticValue(cfg.MaxTokens)
+	if err != nil {
+		return learning.AutomaticAdmissionPolicy{}, err
+	}
+	maxPrincipalCount, err := positiveAutomaticValue(cfg.MaxReflectionsPerPrincipal)
+	if err != nil {
+		return learning.AutomaticAdmissionPolicy{}, err
+	}
+	maxPrincipalTokens, err := positiveAutomaticValue(cfg.MaxTokensPerPrincipal)
+	if err != nil {
+		return learning.AutomaticAdmissionPolicy{}, err
+	}
+	return learning.AutomaticAdmissionPolicy{
+		Window: cfg.Window, Cooldown: cfg.Cooldown, DedupeWindow: learningDedupeTTL,
+		MaxCount: maxCount, MaxTokens: maxTokens, MaxCountPerPrincipal: maxPrincipalCount, MaxTokensPerPrincipal: maxPrincipalTokens,
+		ReservationClaimDuration: time.Minute,
+	}, nil
+}
+
 func (o *reflectionObserver) createOrReserveAttempt(ctx context.Context, partition learning.AttemptPartition, create learning.AttemptCreate, tokens int) (learning.AttemptRecord, bool, error) {
 	if o.ledger == nil {
 		return learning.AttemptRecord{}, false, errors.New("durable automatic admission ledger is not configured")
@@ -244,19 +268,7 @@ func (o *reflectionObserver) createOrReserveAttempt(ctx context.Context, partiti
 	if err != nil {
 		return learning.AttemptRecord{}, false, err
 	}
-	maxCount, err := positiveAutomaticValue(o.automatic.MaxReflections)
-	if err != nil {
-		return learning.AttemptRecord{}, false, err
-	}
-	maxTokens, err := positiveAutomaticValue(o.automatic.MaxTokens)
-	if err != nil {
-		return learning.AttemptRecord{}, false, err
-	}
-	maxPrincipalCount, err := positiveAutomaticValue(o.automatic.MaxReflectionsPerPrincipal)
-	if err != nil {
-		return learning.AttemptRecord{}, false, err
-	}
-	maxPrincipalTokens, err := positiveAutomaticValue(o.automatic.MaxTokensPerPrincipal)
+	policy, err := automaticAdmissionPolicy(o.automatic)
 	if err != nil {
 		return learning.AttemptRecord{}, false, err
 	}
@@ -264,16 +276,14 @@ func (o *reflectionObserver) createOrReserveAttempt(ctx context.Context, partiti
 	if err != nil {
 		return learning.AttemptRecord{}, false, err
 	}
-	now := time.Now()
-	policy := learning.AutomaticAdmissionPolicy{
-		Window: o.automatic.Window, Cooldown: o.automatic.Cooldown, DedupeWindow: learningDedupeTTL,
-		MaxCount: maxCount, MaxTokens: maxTokens, MaxCountPerPrincipal: maxPrincipalCount, MaxTokensPerPrincipal: maxPrincipalTokens,
-		ReservationClaimDuration: time.Minute,
+	revision, err := learning.AutomaticAdmissionPolicyRevisionFor(policy)
+	if err != nil {
+		return learning.AttemptRecord{}, false, err
 	}
 	req := learning.AutomaticReservationRequest{
 		ID: reservationID, AttemptID: create.ID, Principal: partition,
 		Digest: create.Provenance.Source.CanonicalDigest, Class: create.Provenance.Class,
-		Tokens: reservedTokens, Now: now, Policy: policy,
+		Tokens: reservedTokens, ExpectedPolicyRevision: revision,
 	}
 	record, err := (automaticReservationReconciler{ledger: o.ledger, attempts: o.attempts}).reserveAndCreate(ctx, req, create)
 	if err != nil {

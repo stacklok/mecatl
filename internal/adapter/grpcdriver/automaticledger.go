@@ -51,63 +51,38 @@ func (l *AutomaticAdmissionLedger) Get(ctx context.Context, id learning.Automati
 	return record, err == nil, err
 }
 
-func (l *AutomaticAdmissionLedger) Reassign(ctx context.Context, id learning.AutomaticReservationID, expected learning.AutomaticReservationVersion, now, expiresAt time.Time) (learning.AutomaticReservation, error) {
+func (l *AutomaticAdmissionLedger) Reassign(ctx context.Context, id learning.AutomaticReservationID, expected learning.AutomaticReservationVersion) (learning.AutomaticReservation, error) {
 	resp, err := l.client.ReassignAutomaticReservation(ctx, &driverv1.ReassignAutomaticReservationRequest{
-		Id: string(id), ExpectedVersion: string(expected), Now: timestamppb.New(now), ExpiresAt: timestamppb.New(expiresAt),
+		Id: string(id), ExpectedVersion: string(expected),
 	})
 	return automaticResponse(ctx, resp, err)
 }
 
-func (l *AutomaticAdmissionLedger) Retain(ctx context.Context, id learning.AutomaticReservationID, expected learning.AutomaticReservationVersion, fence learning.AutomaticReservationFence, now time.Time) (learning.AutomaticReservation, error) {
-	resp, err := l.client.RetainAutomaticReservation(ctx, automaticResolveToProto(id, expected, fence, now))
+func (l *AutomaticAdmissionLedger) Retain(ctx context.Context, id learning.AutomaticReservationID, expected learning.AutomaticReservationVersion, fence learning.AutomaticReservationFence) (learning.AutomaticReservation, error) {
+	resp, err := l.client.RetainAutomaticReservation(ctx, automaticResolveToProto(id, expected, fence))
 	return automaticResponse(ctx, resp, err)
 }
 
-func (l *AutomaticAdmissionLedger) Reclaim(ctx context.Context, id learning.AutomaticReservationID, expected learning.AutomaticReservationVersion, fence learning.AutomaticReservationFence, now time.Time) (learning.AutomaticReservation, error) {
-	resp, err := l.client.ReclaimAutomaticReservation(ctx, automaticResolveToProto(id, expected, fence, now))
+func (l *AutomaticAdmissionLedger) Reclaim(ctx context.Context, id learning.AutomaticReservationID, expected learning.AutomaticReservationVersion, fence learning.AutomaticReservationFence) (learning.AutomaticReservation, error) {
+	resp, err := l.client.ReclaimAutomaticReservation(ctx, automaticResolveToProto(id, expected, fence))
 	return automaticResponse(ctx, resp, err)
 }
 
 func automaticRequestToProto(req learning.AutomaticReservationRequest) *driverv1.AutomaticReservationRequest {
 	return &driverv1.AutomaticReservationRequest{
 		Id: string(req.ID), AttemptId: string(req.AttemptID), Principal: string(req.Principal), Digest: string(req.Digest),
-		AdmissionClass: string(req.Class), Tokens: req.Tokens, Now: timestamppb.New(req.Now), Policy: automaticPolicyToProto(req.Policy),
+		AdmissionClass: string(req.Class), Tokens: req.Tokens, ExpectedPolicyRevision: string(req.ExpectedPolicyRevision),
 	}
 }
 
-func automaticResolveToProto(id learning.AutomaticReservationID, expected learning.AutomaticReservationVersion, fence learning.AutomaticReservationFence, now time.Time) *driverv1.ResolveAutomaticReservationRequest {
+func automaticResolveToProto(id learning.AutomaticReservationID, expected learning.AutomaticReservationVersion, fence learning.AutomaticReservationFence) *driverv1.ResolveAutomaticReservationRequest {
 	wireFence := automaticFenceToProto(fence)
 	if wireFence == nil {
 		wireFence = &driverv1.AutomaticReservationFence{}
 	}
 	return &driverv1.ResolveAutomaticReservationRequest{
-		Id: string(id), ExpectedVersion: string(expected), Fence: wireFence, Now: timestamppb.New(now),
+		Id: string(id), ExpectedVersion: string(expected), Fence: wireFence,
 	}
-}
-
-func automaticPolicyToProto(policy learning.AutomaticAdmissionPolicy) *driverv1.AutomaticAdmissionPolicy {
-	return &driverv1.AutomaticAdmissionPolicy{
-		Window: durationpb.New(policy.Window), Cooldown: durationpb.New(policy.Cooldown), DedupeWindow: durationpb.New(policy.DedupeWindow),
-		MaxCount: policy.MaxCount, MaxTokens: policy.MaxTokens, MaxCountPerPrincipal: policy.MaxCountPerPrincipal,
-		MaxTokensPerPrincipal: policy.MaxTokensPerPrincipal, ReservationClaimDuration: durationpb.New(policy.ReservationClaimDuration),
-	}
-}
-
-func automaticPolicyFromProto(wire *driverv1.AutomaticAdmissionPolicy) (learning.AutomaticAdmissionPolicy, error) {
-	if wire == nil || wire.GetWindow() == nil || wire.GetCooldown() == nil || wire.GetDedupeWindow() == nil || wire.GetReservationClaimDuration() == nil {
-		return learning.AutomaticAdmissionPolicy{}, learning.ErrInvalidAutomaticReservation
-	}
-	for _, value := range []*durationpb.Duration{wire.GetWindow(), wire.GetCooldown(), wire.GetDedupeWindow(), wire.GetReservationClaimDuration()} {
-		if err := value.CheckValid(); err != nil {
-			return learning.AutomaticAdmissionPolicy{}, learning.ErrInvalidAutomaticReservation
-		}
-	}
-	policy := learning.AutomaticAdmissionPolicy{
-		Window: wire.GetWindow().AsDuration(), Cooldown: wire.GetCooldown().AsDuration(), DedupeWindow: wire.GetDedupeWindow().AsDuration(),
-		MaxCount: wire.GetMaxCount(), MaxTokens: wire.GetMaxTokens(), MaxCountPerPrincipal: wire.GetMaxCountPerPrincipal(),
-		MaxTokensPerPrincipal: wire.GetMaxTokensPerPrincipal(), ReservationClaimDuration: wire.GetReservationClaimDuration().AsDuration(),
-	}
-	return policy, policy.Validate()
 }
 
 func automaticFenceToProto(fence learning.AutomaticReservationFence) *driverv1.AutomaticReservationFence {
@@ -141,7 +116,7 @@ func automaticFenceFromProto(wire *driverv1.AutomaticReservationFence, required 
 func automaticReservationToProto(r learning.AutomaticReservation) *driverv1.AutomaticReservation {
 	return &driverv1.AutomaticReservation{
 		Id: string(r.ID), AttemptId: string(r.AttemptID), Version: string(r.Version), Principal: string(r.Principal), Digest: string(r.Digest),
-		AdmissionClass: string(r.Class), Tokens: r.Tokens, Charge: string(r.Charge), AttemptCreated: r.AttemptCreated,
+		AdmissionClass: string(r.Class), PolicyRevision: string(r.PolicyRevision), Tokens: r.Tokens, Charge: string(r.Charge), AttemptCreated: r.AttemptCreated,
 		ReservedAt: timestamppb.New(r.ReservedAt), ChargeExpiresAt: timestamppb.New(r.ChargeExpiresAt), DedupeExpiresAt: timestamppb.New(r.DedupeExpiresAt),
 		ClaimDuration: durationpb.New(r.ClaimDuration), Fence: automaticFenceToProto(r.Fence),
 	}
@@ -170,7 +145,7 @@ func automaticReservationFromProto(wire *driverv1.AutomaticReservation) (learnin
 	r := learning.AutomaticReservation{
 		ID: learning.AutomaticReservationID(wire.GetId()), AttemptID: learning.AttemptID(wire.GetAttemptId()), Version: learning.AutomaticReservationVersion(wire.GetVersion()),
 		Principal: learning.AttemptPartition(wire.GetPrincipal()), Digest: learning.CanonicalDigest(wire.GetDigest()), Class: learning.AdmissionClass(wire.GetAdmissionClass()),
-		Tokens: wire.GetTokens(), Charge: learning.AutomaticChargeDisposition(wire.GetCharge()), AttemptCreated: wire.GetAttemptCreated(), ReservedAt: reserved,
+		PolicyRevision: learning.AutomaticAdmissionPolicyRevision(wire.GetPolicyRevision()), Tokens: wire.GetTokens(), Charge: learning.AutomaticChargeDisposition(wire.GetCharge()), AttemptCreated: wire.GetAttemptCreated(), ReservedAt: reserved,
 		ChargeExpiresAt: chargeExpires, DedupeExpiresAt: dedupeExpires, ClaimDuration: wire.GetClaimDuration().AsDuration(), Fence: fence,
 	}
 	if err = r.Validate(); err != nil {

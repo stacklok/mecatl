@@ -29,6 +29,7 @@ var (
 type AutomaticReservationID string
 type AutomaticReservationVersion string
 type AutomaticReservationGeneration uint64
+type AutomaticAdmissionPolicyRevision string
 
 // AutomaticReservationIDForAttempt derives the sole reservation identity from
 // the durable attempt identity. Retries and replicas therefore converge before
@@ -41,9 +42,8 @@ func AutomaticReservationIDForAttempt(attemptID AttemptID) (AutomaticReservation
 	return AutomaticReservationID("reservation-" + hex.EncodeToString(sum[:16])), nil
 }
 
-// AutomaticAdmissionPolicy is supplied to the atomic Reserve operation. All
-// replicas sharing a ledger must use the same policy. Zero limits are closed,
-// not unlimited.
+// AutomaticAdmissionPolicy is immutable backend-owned admission policy. Zero
+// limits are closed, not unlimited. Clients carry only its derived revision.
 type AutomaticAdmissionPolicy struct {
 	Window                   time.Duration
 	Cooldown                 time.Duration
@@ -64,26 +64,36 @@ func (p AutomaticAdmissionPolicy) Validate() error {
 	return nil
 }
 
+// AutomaticAdmissionPolicyRevisionFor derives the immutable configuration
+// revision that clients may use to fail closed against a differently configured
+// backend.
+func AutomaticAdmissionPolicyRevisionFor(p AutomaticAdmissionPolicy) (AutomaticAdmissionPolicyRevision, error) {
+	if err := p.Validate(); err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256([]byte(fmt.Sprintf("%d:%d:%d:%d:%d:%d:%d:%d", p.Window, p.Cooldown, p.DedupeWindow, p.MaxCount, p.MaxTokens, p.MaxCountPerPrincipal, p.MaxTokensPerPrincipal, p.ReservationClaimDuration)))
+	return AutomaticAdmissionPolicyRevision(hex.EncodeToString(sum[:16])), nil
+}
+
 // AutomaticReservationRequest is bounded, content-free admission material.
 // Principal is an opaque one-way partition and Digest is the canonical input
 // digest. Only weighted and genuine-current-user hard decisions are automatic;
 // host-requested reflection remains an explicit path outside this ledger.
 type AutomaticReservationRequest struct {
-	ID        AutomaticReservationID
-	AttemptID AttemptID
-	Principal AttemptPartition
-	Digest    CanonicalDigest
-	Class     AdmissionClass
-	Tokens    uint64
-	Now       time.Time
-	Policy    AutomaticAdmissionPolicy
+	ID                     AutomaticReservationID
+	AttemptID              AttemptID
+	Principal              AttemptPartition
+	Digest                 CanonicalDigest
+	Class                  AdmissionClass
+	Tokens                 uint64
+	ExpectedPolicyRevision AutomaticAdmissionPolicyRevision
 }
 
 func (r AutomaticReservationRequest) Validate() error {
 	expected, err := AutomaticReservationIDForAttempt(r.AttemptID)
 	if err != nil || r.ID != expected || r.Principal == "" || !validDigest(r.Digest) ||
-		(r.Class != AdmissionWeighted && r.Class != AdmissionHard) || r.Tokens == 0 || r.Now.IsZero() ||
-		r.Policy.Validate() != nil || r.Tokens > r.Policy.MaxTokens || r.Tokens > r.Policy.MaxTokensPerPrincipal {
+		(r.Class != AdmissionWeighted && r.Class != AdmissionHard) || r.Tokens == 0 ||
+		!validOpaque(string(r.ExpectedPolicyRevision), MaxAttemptVersionBytes) {
 		return fmt.Errorf("%w: request", ErrInvalidAutomaticReservation)
 	}
 	return nil
@@ -126,6 +136,7 @@ type AutomaticReservation struct {
 	Principal       AttemptPartition
 	Digest          CanonicalDigest
 	Class           AdmissionClass
+	PolicyRevision  AutomaticAdmissionPolicyRevision
 	Tokens          uint64
 	Charge          AutomaticChargeDisposition
 	AttemptCreated  bool
@@ -149,7 +160,7 @@ func (r AutomaticReservation) Validate() error {
 
 func (r AutomaticReservation) validIdentity(expected AutomaticReservationID) bool {
 	return r.ID == expected && validOpaque(string(r.Version), MaxAttemptVersionBytes) &&
-		r.Principal != "" && validDigest(r.Digest) &&
+		r.Principal != "" && validDigest(r.Digest) && validOpaque(string(r.PolicyRevision), MaxAttemptVersionBytes) &&
 		(r.Class == AdmissionWeighted || r.Class == AdmissionHard)
 }
 
@@ -189,20 +200,20 @@ func (r AutomaticReservation) validChargeState() bool {
 // Every mutation atomically matches expected and the current fence. Stale CAS
 // returns ErrAutomaticReservationVersion; expired or superseded ownership
 // returns ErrAutomaticReservationFence, both without a write. Reassign accepts
-// only a held reservation at or after fence expiry, requires expiresAt to equal
-// now plus the original ClaimDuration, mints a strictly newer generation, and
-// never adds a second count/token charge. Retain records that
+// only a held reservation at or after backend-clock fence expiry, mints its new
+// expiry from the original ClaimDuration, advances generation, and never adds a
+// second count/token charge. Retain records that
 // the linked attempt was created and makes its charge non-reclaimable; later
 // attempt failure, timeout, or abandonment does not refund it. Reclaim is valid
 // only before attempt creation and releases count, token, cooldown, and dedupe
 // effects atomically. Thus a successor first reassigns an expired uncertain
 // reservation, checks AttemptRepository, then retains or reclaims exactly once.
-// Natural charge and dedupe expiry are evaluated against caller-supplied now by
-// Reserve, so implementations need no process-local sweeper.
+// Natural charge, dedupe, and ownership expiry are evaluated against the
+// backend-owned clock; callers cannot accelerate any transition with skew.
 type AutomaticAdmissionLedger interface {
 	Reserve(context.Context, AutomaticReservationRequest) (AutomaticReservation, error)
 	Get(context.Context, AutomaticReservationID) (AutomaticReservation, bool, error)
-	Reassign(context.Context, AutomaticReservationID, AutomaticReservationVersion, time.Time, time.Time) (AutomaticReservation, error)
-	Retain(context.Context, AutomaticReservationID, AutomaticReservationVersion, AutomaticReservationFence, time.Time) (AutomaticReservation, error)
-	Reclaim(context.Context, AutomaticReservationID, AutomaticReservationVersion, AutomaticReservationFence, time.Time) (AutomaticReservation, error)
+	Reassign(context.Context, AutomaticReservationID, AutomaticReservationVersion) (AutomaticReservation, error)
+	Retain(context.Context, AutomaticReservationID, AutomaticReservationVersion, AutomaticReservationFence) (AutomaticReservation, error)
+	Reclaim(context.Context, AutomaticReservationID, AutomaticReservationVersion, AutomaticReservationFence) (AutomaticReservation, error)
 }

@@ -5038,12 +5038,20 @@ func buildCatalog(ctx context.Context, cfg Config, reg *providerRegistry, provid
 					return nil, catalogAssets{}, nil, nil, nil, fmt.Errorf("build learning attempt store: %w", attemptErr)
 				}
 				attemptRepository = attempts
-				ledger, ledgerErr := automaticstore.New(filepath.Join(base, "automatic-admission"))
-				if ledgerErr != nil {
-					mcpClose()
-					return nil, catalogAssets{}, nil, nil, nil, fmt.Errorf("build automatic learning admission store: %w", ledgerErr)
+				if cfg.LearningAutomatic.MaxReflections > 0 && cfg.LearningAutomatic.MaxTokens > 0 &&
+					cfg.LearningAutomatic.MaxReflectionsPerPrincipal > 0 && cfg.LearningAutomatic.MaxTokensPerPrincipal > 0 {
+					policy, policyErr := automaticAdmissionPolicy(cfg.LearningAutomatic)
+					if policyErr != nil {
+						mcpClose()
+						return nil, catalogAssets{}, nil, nil, nil, fmt.Errorf("build automatic learning admission policy: %w", policyErr)
+					}
+					ledger, ledgerErr := automaticstore.New(filepath.Join(base, "automatic-admission"), policy, wallclock.Clock{})
+					if ledgerErr != nil {
+						mcpClose()
+						return nil, catalogAssets{}, nil, nil, nil, fmt.Errorf("build automatic learning admission store: %w", ledgerErr)
+					}
+					automaticAdmissionLedger = ledger
 				}
-				automaticAdmissionLedger = ledger
 				reflectionCoordinator = newReflectionCoordinator(ctx, reflectionCoordinatorConfig{Diagnostics: cfg.diag()})
 				previousClose := mcpClose
 				mcpClose = func() { reflectionCoordinator.Close(); previousClose() }

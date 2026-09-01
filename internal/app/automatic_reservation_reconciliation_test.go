@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stacklok/mecatl/engine/adapter/wallclock"
 	"github.com/stacklok/mecatl/engine/learning"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/internal/adapter/attemptstore"
@@ -17,7 +18,6 @@ import (
 
 func TestADR_0254_AutomaticReservationsReconcileWithoutExceedingGlobalMaximum(t *testing.T) {
 	ctx := context.Background()
-	now := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
 	policy := learning.AutomaticAdmissionPolicy{
 		Window: time.Hour, Cooldown: 0, DedupeWindow: 24 * time.Hour,
 		MaxCount: 1, MaxTokens: 100, MaxCountPerPrincipal: 1, MaxTokensPerPrincipal: 100,
@@ -26,19 +26,19 @@ func TestADR_0254_AutomaticReservationsReconcileWithoutExceedingGlobalMaximum(t 
 	partition, create := automaticAttemptFixture(t, "primary")
 
 	t.Run("crash before reservation spends nothing", func(t *testing.T) {
-		ledger, attempts := automaticRepositories(t)
+		ledger, attempts := automaticRepositories(t, policy)
 		reconciler := automaticReservationReconciler{ledger: ledger, attempts: attempts}
-		record, err := reconciler.reserveAndCreate(ctx, automaticRequestForAttempt(t, create.ID, partition, "digest-primary", now, policy), create)
+		record, err := reconciler.reserveAndCreate(ctx, automaticRequestForAttempt(t, create.ID, partition, "digest-primary", policy), create)
 		if err != nil || record.ID != create.ID {
 			t.Fatalf("retry after pre-reservation crash = %+v, err=%v", record, err)
 		}
 	})
 
 	t.Run("lost reserve response retries one identity and one charge", func(t *testing.T) {
-		ledger, attempts := automaticRepositories(t)
+		ledger, attempts := automaticRepositories(t, policy)
 		lossy := &reserveResponseLossLedger{AutomaticAdmissionLedger: ledger}
 		reconciler := automaticReservationReconciler{ledger: lossy, attempts: attempts}
-		req := automaticRequestForAttempt(t, create.ID, partition, "digest-primary", now, policy)
+		req := automaticRequestForAttempt(t, create.ID, partition, "digest-primary", policy)
 		if _, err := reconciler.reserveAndCreate(ctx, req, create); !errors.Is(err, context.DeadlineExceeded) {
 			t.Fatalf("lost reserve response error = %v", err)
 		}
@@ -46,20 +46,19 @@ func TestADR_0254_AutomaticReservationsReconcileWithoutExceedingGlobalMaximum(t 
 		if _, err := reconciler.reserveAndCreate(ctx, req, create); err != nil {
 			t.Fatalf("reserve retry: %v", err)
 		}
-		assertOneAttemptAndNoReplacement(ctx, t, attempts, ledger, partition, create.ID, now, policy)
+		assertOneAttemptAndNoReplacement(ctx, t, attempts, ledger, partition, create.ID, policy)
 	})
 
 	t.Run("lost create response reconciles after expiry and reassignment", func(t *testing.T) {
-		ledger, attempts := automaticRepositories(t)
+		ledger, attempts := automaticRepositories(t, policy)
 		lossy := &createResponseLossRepository{AttemptRepository: attempts}
 		reconciler := automaticReservationReconciler{ledger: ledger, attempts: lossy}
-		req := automaticRequestForAttempt(t, create.ID, partition, "digest-primary", now, policy)
+		req := automaticRequestForAttempt(t, create.ID, partition, "digest-primary", policy)
 		if _, err := reconciler.reserveAndCreate(ctx, req, create); !errors.Is(err, context.DeadlineExceeded) {
 			t.Fatalf("lost create response error = %v", err)
 		}
 		reconciler.attempts = attempts
 		retry := req
-		retry.Now = now.Add(2 * time.Minute)
 		if _, err := reconciler.reserveAndCreate(ctx, retry, create); err != nil {
 			t.Fatalf("post-expiry retry: %v", err)
 		}
@@ -67,13 +66,13 @@ func TestADR_0254_AutomaticReservationsReconcileWithoutExceedingGlobalMaximum(t 
 		if err != nil || !found || reservation.Fence.Generation != 0 || reservation.Charge != learning.AutomaticChargeRetained {
 			t.Fatalf("reconciled reservation = %+v, found=%v err=%v", reservation, found, err)
 		}
-		assertOneAttemptAndNoReplacement(ctx, t, attempts, ledger, partition, create.ID, now.Add(2*time.Minute), policy)
+		assertOneAttemptAndNoReplacement(ctx, t, attempts, ledger, partition, create.ID, policy)
 	})
 
 	t.Run("concurrent retries converge without duplicate attempts", func(t *testing.T) {
-		ledger, attempts := automaticRepositories(t)
+		ledger, attempts := automaticRepositories(t, policy)
 		reconciler := automaticReservationReconciler{ledger: ledger, attempts: attempts}
-		req := automaticRequestForAttempt(t, create.ID, partition, "digest-primary", now, policy)
+		req := automaticRequestForAttempt(t, create.ID, partition, "digest-primary", policy)
 		const retries = 16
 		start := make(chan struct{})
 		results := make(chan error, retries)
@@ -95,32 +94,32 @@ func TestADR_0254_AutomaticReservationsReconcileWithoutExceedingGlobalMaximum(t 
 				t.Fatalf("concurrent retry: %v", err)
 			}
 		}
-		assertOneAttemptAndNoReplacement(ctx, t, attempts, ledger, partition, create.ID, now, policy)
+		assertOneAttemptAndNoReplacement(ctx, t, attempts, ledger, partition, create.ID, policy)
 	})
 
 	t.Run("expired pre-create reservation is reclaimed", func(t *testing.T) {
-		ledger, attempts := automaticRepositories(t)
-		req := automaticRequestForAttempt(t, create.ID, partition, "digest-primary", now, policy)
+		ledger, attempts := automaticRepositories(t, policy)
+		req := automaticRequestForAttempt(t, create.ID, partition, "digest-primary", policy)
 		reservation, err := ledger.Reserve(ctx, req)
 		if err != nil {
 			t.Fatal(err)
 		}
 		reconciler := automaticReservationReconciler{ledger: ledger, attempts: attempts}
-		resolved, err := reconciler.reconcile(ctx, reservation.ID, now.Add(2*time.Minute), nil)
+		resolved, err := reconciler.reconcile(ctx, reservation.ID, nil)
 		if err != nil || resolved.Charge != learning.AutomaticChargeReclaimed {
 			t.Fatalf("reclaim = %+v, err=%v", resolved, err)
 		}
 		replacementPartition, replacement := automaticAttemptFixture(t, "replacement")
-		replacementReq := automaticRequestForAttempt(t, replacement.ID, replacementPartition, "digest-replacement", now.Add(2*time.Minute), policy)
+		replacementReq := automaticRequestForAttempt(t, replacement.ID, replacementPartition, "digest-replacement", policy)
 		if _, err := ledger.Reserve(ctx, replacementReq); err != nil {
 			t.Fatalf("replacement after reclaim: %v", err)
 		}
 	})
 
 	t.Run("abandoned created attempt retains charge", func(t *testing.T) {
-		ledger, attempts := automaticRepositories(t)
+		ledger, attempts := automaticRepositories(t, policy)
 		reconciler := automaticReservationReconciler{ledger: ledger, attempts: attempts}
-		req := automaticRequestForAttempt(t, create.ID, partition, "digest-primary", now, policy)
+		req := automaticRequestForAttempt(t, create.ID, partition, "digest-primary", policy)
 		record, err := reconciler.reserveAndCreate(ctx, req, create)
 		if err != nil {
 			t.Fatal(err)
@@ -128,11 +127,11 @@ func TestADR_0254_AutomaticReservationsReconcileWithoutExceedingGlobalMaximum(t 
 		if _, err = attempts.Abandon(ctx, partition, record.ID, record.Version, record.CreatedAt.Add(time.Second)); err != nil {
 			t.Fatal(err)
 		}
-		resolved, err := reconciler.reconcile(ctx, req.ID, now.Add(2*time.Minute), &create)
+		resolved, err := reconciler.reconcile(ctx, req.ID, &create)
 		if err != nil || resolved.Charge != learning.AutomaticChargeRetained {
 			t.Fatalf("abandoned reconciliation = %+v, err=%v", resolved, err)
 		}
-		assertOneAttemptAndNoReplacement(ctx, t, attempts, ledger, partition, create.ID, now.Add(2*time.Minute), policy)
+		assertOneAttemptAndNoReplacement(ctx, t, attempts, ledger, partition, create.ID, policy)
 	})
 }
 
@@ -164,10 +163,10 @@ func (r *createResponseLossRepository) Create(ctx context.Context, partition lea
 	return record, err
 }
 
-func automaticRepositories(t *testing.T) (learning.AutomaticAdmissionLedger, learning.AttemptRepository) {
+func automaticRepositories(t *testing.T, policy learning.AutomaticAdmissionPolicy) (learning.AutomaticAdmissionLedger, learning.AttemptRepository) {
 	t.Helper()
 	root := t.TempDir()
-	ledger, err := automaticstore.New(root + "/ledger")
+	ledger, err := automaticstore.New(root+"/ledger", policy, wallclock.Clock{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -197,26 +196,43 @@ func automaticAttemptFixture(t *testing.T, key string) (learning.AttemptPartitio
 	return partition, learning.AttemptCreate{ID: id, Provenance: provenance}
 }
 
-func automaticRequestForAttempt(t *testing.T, id learning.AttemptID, partition learning.AttemptPartition, digest string, now time.Time, policy learning.AutomaticAdmissionPolicy) learning.AutomaticReservationRequest {
+func automaticRequestForAttempt(t *testing.T, id learning.AttemptID, partition learning.AttemptPartition, digest string, policy learning.AutomaticAdmissionPolicy) learning.AutomaticReservationRequest {
 	t.Helper()
 	reservationID, err := learning.AutomaticReservationIDForAttempt(id)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return learning.AutomaticReservationRequest{ID: reservationID, AttemptID: id, Principal: partition, Digest: learning.CanonicalDigest(testDigest(digest)), Class: learning.AdmissionWeighted, Tokens: 10, Now: now, Policy: policy}
+	revision, err := learning.AutomaticAdmissionPolicyRevisionFor(policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return learning.AutomaticReservationRequest{ID: reservationID, AttemptID: id, Principal: partition, Digest: learning.CanonicalDigest(testDigest(digest)), Class: learning.AdmissionWeighted, Tokens: 10, ExpectedPolicyRevision: revision}
 }
 
-func assertOneAttemptAndNoReplacement(ctx context.Context, t *testing.T, attempts learning.AttemptRepository, ledger learning.AutomaticAdmissionLedger, partition learning.AttemptPartition, id learning.AttemptID, now time.Time, policy learning.AutomaticAdmissionPolicy) {
+func assertOneAttemptAndNoReplacement(ctx context.Context, t *testing.T, attempts learning.AttemptRepository, ledger learning.AutomaticAdmissionLedger, partition learning.AttemptPartition, id learning.AttemptID, policy learning.AutomaticAdmissionPolicy) {
 	t.Helper()
 	page, err := attempts.List(ctx, partition, learning.AttemptList{})
 	if err != nil || len(page.Records) != 1 || page.Records[0].ID != id {
 		t.Fatalf("attempts = %+v, err=%v; want one %q", page.Records, err, id)
 	}
 	replacementPartition, replacement := automaticAttemptFixture(t, "replacement")
-	_, err = ledger.Reserve(ctx, automaticRequestForAttempt(t, replacement.ID, replacementPartition, "digest-replacement", now, policy))
+	_, err = ledger.Reserve(ctx, automaticRequestForAttempt(t, replacement.ID, replacementPartition, "digest-replacement", policy))
 	if !errors.Is(err, learning.ErrAutomaticAdmissionLimit) {
 		t.Fatalf("replacement reserve error = %v, want global limit", err)
 	}
+}
+
+func automaticStoreForTest(t *testing.T, dir string, cfg LearningAutomaticConfig) learning.AutomaticAdmissionLedger {
+	t.Helper()
+	policy, err := automaticAdmissionPolicy(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ledger, err := automaticstore.New(dir, policy, wallclock.Clock{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ledger
 }
 
 func testDigest(value string) string {

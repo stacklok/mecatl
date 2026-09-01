@@ -15,7 +15,6 @@ import (
 	"github.com/stacklok/mecatl/engine/adapter/memskill"
 	"github.com/stacklok/mecatl/engine/adapter/wallclock"
 	"github.com/stacklok/mecatl/engine/learning"
-	"github.com/stacklok/mecatl/internal/adapter/automaticstore"
 	"github.com/stacklok/mecatl/internal/adapter/grpcdriver"
 )
 
@@ -137,10 +136,7 @@ func TestLearningDriverCompositionSmoke(t *testing.T) {
 	attempts := memattempt.New(wallclock.Clock{})
 	proposals := &captureProposalPartitions{ProposalRepository: memproposal.New()}
 	skills := &captureSkillPartitions{SkillRepository: memskill.New()}
-	ledger, err := automaticstore.New(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	ledger := automaticStoreForTest(t, t.TempDir(), defaultLearningAutomaticConfig())
 	addr := startSourceDriver(t, func(server *grpc.Server) {
 		driverv1.RegisterLearningRepositoryCapabilitiesServiceServer(server, grpcdriver.NewLearningRepositoryCapabilitiesServer(grpcdriver.LearningRepositoryCapabilities{
 			AttemptRepository: true, ProposalRepository: true, SkillRepository: true, ValidatedSkillActivation: true,

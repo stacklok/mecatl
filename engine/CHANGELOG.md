@@ -11,6 +11,10 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 ## [Unreleased]
 
+### Changed
+
+- **`learning.AutomaticAdmissionLedger` policy/time authority** ([ADR 0259](../docs/adr/0259-cloud-native-learning.md)) — breaking (pre-v1 minor): reservation requests now carry only identity, charge demand, and an expected derived policy revision; reservations persist that revision; and `Reassign`, `Retain`, and `Reclaim` no longer accept caller timestamps. Ledger backends own immutable configured policy and clock authority, preventing clients or skewed replicas from enlarging limits or prematurely expiring charges and fences.
+
 ### Added
 
 - **Session placement authority repair** — removes the orphan exported `session.PlacementSelector` protocol, adds persisted display-only `session.PlacementMetadata`, requires a valid `EnvironmentRef` at aggregate construction, and rejects direct engine runs whose live environment does not match the session identity. Changed (breaking, pre-v1 minor).

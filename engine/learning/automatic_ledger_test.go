@@ -44,23 +44,26 @@ func TestADR_0254_AutomaticAdmissionReservationContract(t *testing.T) {
 		t.Fatalf("short dedupe window error = %v, want ErrInvalidAutomaticReservation", err)
 	}
 
+	revision, err := AutomaticAdmissionPolicyRevisionFor(policy)
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, class := range []AdmissionClass{AdmissionWeighted, AdmissionHard} {
 		req := AutomaticReservationRequest{
-			ID:        first,
-			AttemptID: attempt,
-			Principal: AttemptPartition("principal-partition"),
-			Digest:    CanonicalDigest("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"),
-			Class:     class,
-			Tokens:    100,
-			Now:       time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC),
-			Policy:    policy,
+			ID:                     first,
+			AttemptID:              attempt,
+			Principal:              AttemptPartition("principal-partition"),
+			Digest:                 CanonicalDigest("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"),
+			Class:                  class,
+			Tokens:                 100,
+			ExpectedPolicyRevision: revision,
 		}
 		if err = req.Validate(); err != nil {
 			t.Fatalf("%s request: %v", class, err)
 		}
 	}
 
-	host := AutomaticReservationRequest{ID: first, AttemptID: attempt, Principal: "principal-partition", Digest: "0123456789abcdef", Class: AdmissionHostRequested, Tokens: 100, Now: time.Now(), Policy: policy}
+	host := AutomaticReservationRequest{ID: first, AttemptID: attempt, Principal: "principal-partition", Digest: "0123456789abcdef", Class: AdmissionHostRequested, Tokens: 100, ExpectedPolicyRevision: revision}
 	if err = host.Validate(); !errors.Is(err, ErrInvalidAutomaticReservation) {
 		t.Fatalf("host-requested automatic reservation error = %v, want ErrInvalidAutomaticReservation", err)
 	}

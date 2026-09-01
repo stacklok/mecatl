@@ -1252,7 +1252,11 @@ host-requested reflection remains a separate explicit operation outside automati
 
 A durable automatic-admission ledger applies the ten-minute weighted per-principal cooldown,
 one-hour global/principal count and reserved-token windows, trajectory-digest deduplication, and a
-24-hour dedupe window atomically across cooperating processes. Reservation uses the selected
+24-hour dedupe window atomically across cooperating processes. The ledger backend owns an immutable
+policy and its derived revision plus the clock used for every reservation, expiry, reassignment,
+retain, and reclaim decision. Clients carry only identity, charge demand, and the expected policy
+revision; they cannot enlarge limits or age out a charge/fence by submitting policy or wall time.
+Reservation uses the selected
 provider/model token counter for bounded canonical input plus a 4096-token output cap. The
 coordinator checks local queue and in-flight capacity before invoking the ledger, and the ledger
 reserves by deterministic attempt identity before `AttemptRepository.Create`; failed creation is
