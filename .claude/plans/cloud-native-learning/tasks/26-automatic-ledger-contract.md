@@ -2,7 +2,7 @@
 id: 26-automatic-ledger-contract
 title: Define distributed automatic admission reservation semantics
 blocked_by: [25-attempt-watch-deferred]
-status: pending
+status: in-progress
 branch: ""
 worktree: ""
 issue: ""
