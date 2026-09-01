@@ -2,7 +2,7 @@
 id: 27-durable-automatic-ledger
 title: Implement globally bounded automatic admission accounting
 blocked_by: [26-automatic-ledger-contract]
-status: pending
+status: in-progress
 branch: ""
 worktree: ""
 issue: ""
