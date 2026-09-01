@@ -2,7 +2,7 @@
 id: 20-replica-catalog-hydration
 title: Hydrate and invalidate learned skills across replicas
 blocked_by: [19-catalog-convergence-protocol]
-status: pending
+status: in-progress
 branch: ""
 worktree: ""
 issue: ""
