@@ -172,6 +172,12 @@ jobs:
         run: task sdk:api:check
 
       - name: Verify generated contracts are fresh
+        env:
+          GOPRIVATE: github.com/stacklok/*
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GIT_CONFIG_COUNT: 1
+          GIT_CONFIG_KEY_0: url.https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/.insteadOf
+          GIT_CONFIG_VALUE_0: https://github.com/
         run: |
           task generate
           git diff --exit-code -- contracts/gen sdk/typescript/src/gen
