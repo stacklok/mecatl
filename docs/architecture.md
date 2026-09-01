@@ -1221,23 +1221,23 @@ or learn-procedure intent is hard admission on the bounded clean-limit stops too
 failed/cancelled/awaiting, plan, no-progress, timeout, structured-output, and unverifiable compacted
 spans fail closed before a provider call.
 
-A process-owned controller adds a ten-minute weighted per-principal cooldown, one-hour sliding
-process/principal count and reserved-token windows, trajectory-digest in-flight joins, and a
-24-hour/1024-entry completed-digest LRU. Reservation uses the selected provider/model token counter
-for bounded canonical input plus a 4096-token output cap. It happens after queue capacity succeeds
-and before provider work; failure, timeout, and abstention still consume it. Queue-full does not.
-The controller and weighted-admission caches reset on restart, while admitted work is authoritative in the durable attempt repository. Review/auto composition starts one bounded Build-owned recovery worker when nonterminal attempts exist; it reloads the exact source session and RunID-bound event evidence, rebuilds only the canonical projection, and invokes the reflector across the shared untrusted fence. Proposal/skill publication and terminal attempt finalization remain claim-fenced and idempotent. `Built.Close` cancels and joins this worker. Durable proposals and attempts remain
-idempotent. Budgets are process-local, so multiple replicas multiply aggregate capacity.
+A durable automatic-admission ledger applies the ten-minute weighted per-principal cooldown,
+one-hour global/principal count and reserved-token windows, trajectory-digest deduplication, and a
+24-hour dedupe window atomically across cooperating processes. Reservation uses the selected
+provider/model token counter for bounded canonical input plus a 4096-token output cap. The
+coordinator checks local queue and in-flight capacity before invoking the ledger, and the ledger
+reserves by deterministic attempt identity before `AttemptRepository.Create`; failed creation is
+reconciled to one retained or reclaimed charge. Failures, timeouts, and abstentions after create
+retain the charge. Hard current-principal intent bypasses cooldown only; authenticated explicit
+reflection remains outside automatic accounting.
 
-The durable replacement authority is implemented separately from that still-wired controller.
-`internal/adapter/automaticstore` serializes every reservation and fence transition across cooperating
-processes through one bounded atomic file under flock; count/token windows, opaque-principal limits,
-cooldown, and digest deduplication are evaluated in that transaction. The
-`internal/adapter/grpcdriver` automatic-ledger service lets independent clients share that authority
-without transporting prompt, transcript, tool, path, credential, or backend-error content. Backend and
-driver both pass the shared automatic-ledger conformance suite, including a concurrent independent-client
-global-maximum proof. Standard composition does not claim global automatic bounds until it migrates from
-the process-owned controller to this authority.
+Weighted work then enters the same durable attempt worker as explicit work: claim fencing,
+source evidence validation/reconstruction, reflection, proposal/skill convergence, terminal state,
+and restart recovery all remain repository-authoritative. The coordinator queue and receipt map
+are disposable scheduling aids, never a second workflow authority. Local composition uses the
+flock-backed automatic ledger beside the attempt store; a configured learning driver must
+positively advertise and serve the automatic ledger whenever automatic learning is enabled, with
+no local fallback.
 
 The current raw Attempt/Proposal/Skill driver RPCs are trusted-infrastructure-only: callers select
 repository partitions, and no ADR-0213 workload-authentication middleware, private durable owner

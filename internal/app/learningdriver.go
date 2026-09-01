@@ -10,31 +10,35 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/grpcdriver"
 )
 
-func resolveLearningRepositories(ctx context.Context, cfg Config) (learning.AttemptRepository, learning.ProposalRepository, learning.SkillRepository, func(), error) {
+func resolveLearningRepositories(ctx context.Context, cfg Config) (learning.AttemptRepository, learning.ProposalRepository, learning.SkillRepository, learning.AutomaticAdmissionLedger, func(), error) {
 	if cfg.LearningStoreURL == "" {
-		return nil, nil, nil, func() {}, nil
+		return nil, nil, nil, nil, func() {}, nil
 	}
 	// The current raw repository RPCs have no workload-authenticated ownership
 	// middleware. A driver's self-description cannot establish that trust boundary.
 	if cfg.OwnershipEnforced {
-		return nil, nil, nil, nil, fmt.Errorf("learning-store driver %q is unavailable with ownership enforcement until ADR-0213 learning-driver middleware and private ownership registry are implemented", cfg.LearningStoreURL)
+		return nil, nil, nil, nil, nil, fmt.Errorf("learning-store driver %q is unavailable with ownership enforcement until ADR-0213 learning-driver middleware and private ownership registry are implemented", cfg.LearningStoreURL)
 	}
 	conn, closeConn, err := cfg.drivers().dial(cfg, cfg.LearningStoreURL)
 	if err != nil {
-		return nil, nil, nil, nil, fmt.Errorf("dial learning-store driver %q: %w", cfg.LearningStoreURL, err)
+		return nil, nil, nil, nil, nil, fmt.Errorf("dial learning-store driver %q: %w", cfg.LearningStoreURL, err)
 	}
 	caps, err := grpcdriver.ProbeLearningRepositoryCapabilities(ctx, conn)
 	if err != nil {
 		closeConn()
-		return nil, nil, nil, nil, fmt.Errorf("probe learning-store driver capabilities %q: %w", cfg.LearningStoreURL, err)
+		return nil, nil, nil, nil, nil, fmt.Errorf("probe learning-store driver capabilities %q: %w", cfg.LearningStoreURL, err)
 	}
 	if !caps.AttemptRepository || !caps.ProposalRepository || !caps.SkillRepository {
 		closeConn()
-		return nil, nil, nil, nil, fmt.Errorf("learning-store driver %q does not advertise the complete attempt/proposal/skill repository set", cfg.LearningStoreURL)
+		return nil, nil, nil, nil, nil, fmt.Errorf("learning-store driver %q does not advertise the complete attempt/proposal/skill repository set", cfg.LearningStoreURL)
+	}
+	if (cfg.operatorLearningMode != learning.Off || cfg.LearningMode != learning.Off) && !caps.AutomaticAdmissionLedger {
+		closeConn()
+		return nil, nil, nil, nil, nil, fmt.Errorf("learning-store driver %q does not advertise the automatic admission ledger required by automatic learning", cfg.LearningStoreURL)
 	}
 	if caps.OwnershipMode != grpcdriver.LearningRepositoryOwnershipTrusted && caps.OwnershipMode != grpcdriver.LearningRepositoryOwnershipEnforced {
 		closeConn()
-		return nil, nil, nil, nil, fmt.Errorf("learning-store driver %q does not advertise an explicit trusted ownership posture", cfg.LearningStoreURL)
+		return nil, nil, nil, nil, nil, fmt.Errorf("learning-store driver %q does not advertise an explicit trusted ownership posture", cfg.LearningStoreURL)
 	}
 
 	attempts := grpcdriver.NewAttemptRepository(conn)
@@ -45,7 +49,11 @@ func resolveLearningRepositories(ctx context.Context, cfg Config) (learning.Atte
 	} else {
 		skills = &opaqueSkillRepository{inner: grpcdriver.NewSkillRepository(conn)}
 	}
-	return attempts, proposals, skills, closeConn, nil
+	var ledger learning.AutomaticAdmissionLedger
+	if caps.AutomaticAdmissionLedger {
+		ledger = grpcdriver.NewAutomaticAdmissionLedger(conn)
+	}
+	return attempts, proposals, skills, ledger, closeConn, nil
 }
 
 func opaqueLearningPartition(value string) string {

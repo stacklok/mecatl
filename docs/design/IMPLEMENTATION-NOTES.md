@@ -4273,37 +4273,38 @@ session kind, stop, verified current `MessageSpan`, standard weighted signals, c
 usage. `engine/agent/loop.go` (`observeCompletion`) snapshots Kind/Counters and locates the accepted
 genuine prompt in final history; compaction that makes the span unverifiable therefore fails closed.
 Hard explicit intent is genuine-current-user-only and bypasses score/cooldown/legacy interval, never
-budgets or coordinator capacity. `internal/app/learning_controller.go`
-(`automaticAdmissionController`) owns the process-local sliding reservations, per-principal weighted
-cooldown, completed-digest LRU, and canonical digest excluding `ExistingFact`; coordinator admission
-runs its reservation callback after duplicate/capacity checks and before provider work, so queue-full
-cannot spend a reservation. Terminal failures still call completion and retain the reservation.
-Authenticated explicit reflection carries `SignalHostRequested`, bypasses this controller, and joins
-an identical in-flight digest. Off constructs no attempt repository, automatic controller, coordinator worker, or recovery worker; explicit Off
-runs synchronously against lazy proposal persistence and creates no durable attempt. `Built.Close` cancels and joins both coordinator and recovery workers. Automatic budget/cooldown state still has no startup/shutdown
-sweep; admitted nonterminal attempts are the distinct durable workflow and are recovered at Build startup. Every process gets an independent budget and restart resets all controller state.
+budgets or coordinator capacity. `internal/app/reflection_observer.go` derives the deterministic
+attempt/provenance before scheduling; the coordinator performs duplicate/capacity checks, then invokes
+one admission callback that reserves through `AutomaticAdmissionLedger` before the reconciler creates
+the attempt. Weighted and hard automatic work use this path; authenticated explicit reflection remains
+outside automatic accounting. The attempt then runs through the existing claim-fenced evidence,
+reflection, proposal/skill convergence, and terminal lifecycle. The coordinator queue/singleflight and
+receipts remain reset-by-design scheduling state, never a second workflow authority.
 
-The storage-neutral replacement contract now lives in `engine/learning/automatic_ledger.go`
+Off constructs no attempt repository, automatic ledger, coordinator worker, or recovery worker;
+explicit Off runs synchronously against lazy proposal persistence and creates no durable attempt.
+`Built.Close` cancels and joins coordinator and recovery workers.
+
+The storage-neutral accounting contract lives in `engine/learning/automatic_ledger.go`
 (`AutomaticAdmissionLedger`), with shared adapter coverage in
 `engine/adapter/automaticconformance/automaticconformance.go` (`Run`). Its reservation ID is derived
 only from the deterministic attempt ID. One atomic admission applies global and opaque-principal
 count/token windows, global digest deduplication, and weighted cooldown; hard admission bypasses only
 cooldown and explicit host-requested reflection does not enter this automatic seam. Expired ownership
-is reassigned with a newer opaque fence without adding a charge. A successor reconciles the linked
-attempt and then retains the charge after creation or reclaims it before creation; retained charges are
-not refunded by later failure, timeout, or abandonment. This interface is accounting rather than a
-queue: wired automatic work must continue to enter the existing `AttemptRepository` lifecycle.
-`internal/adapter/automaticstore/store.go` is the selected cooperating-process durable backend: every
-operation reloads one bounded, content-free document under a stable flock and crash-safe atomic replace,
-so separate backend instances share one count/token window, opaque-principal limit, cooldown, and digest
+is reassigned with a newer opaque fence without adding a charge. `internal/app/automatic_reservation_reconciliation.go`
+(`automaticReservationReconciler`) closes the non-transactional boundary: it reserves before durable
+attempt create, retains after the attempt is observable, and reclaims only when no attempt was created.
+Retained charges are not refunded by later failure, timeout, or abandonment.
+
+`internal/adapter/automaticstore/store.go` is the local cooperating-process backend: every operation
+reloads one bounded, content-free document under a stable flock and crash-safe atomic replace, so
+separate backend instances share one count/token window, opaque-principal limit, cooldown, and digest
 dedupe authority. `internal/adapter/grpcdriver/automaticledger.go` and
 `internal/adapter/grpcdriver/automaticledger_server.go` expose the same contract to independent driver
-clients with only bounded opaque metadata and closed safe error details. Both the backend and transport
-run `engine/adapter/automaticconformance/automaticconformance.go` (`Run`); the ADR pin races independent
-clients through separate servers and backend handles rather than treating an in-memory singleton as
-distributed proof. Standard composition still uses the process-local controller until the lifecycle
-migration lands, so the presence of these adapters alone does not advertise globally bounded automatic
-mode.
+clients with only bounded opaque metadata and closed safe error details. Both run the shared conformance
+suite. `internal/app/learningdriver.go` requires positive automatic-ledger capability whenever automatic
+learning is enabled and never falls back to local accounting; local composition places the ledger beside
+the durable attempt store.
 
 **Evaluated and validated agent-owned skills (#510; ADR 0111, superseded in part by ADR 0224):**
 `engine/adapter/skilllifecycle.Pipeline` is a state-aware, idempotent resume over

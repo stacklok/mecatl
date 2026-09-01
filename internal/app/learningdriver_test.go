@@ -15,6 +15,7 @@ import (
 	"github.com/stacklok/mecatl/engine/adapter/memskill"
 	"github.com/stacklok/mecatl/engine/adapter/wallclock"
 	"github.com/stacklok/mecatl/engine/learning"
+	"github.com/stacklok/mecatl/internal/adapter/automaticstore"
 	"github.com/stacklok/mecatl/internal/adapter/grpcdriver"
 )
 
@@ -26,7 +27,7 @@ func TestADR_0254_LearningDriversEnforceOwnershipOrFailClosed(t *testing.T) {
 			CallerInfrastructureRPCsSeparated: true,
 		}))
 	})
-	_, _, _, closeEnforced, err := resolveLearningRepositories(context.Background(), Config{
+	_, _, _, _, closeEnforced, err := resolveLearningRepositories(context.Background(), Config{
 		LearningStoreURL:  enforcedAddr,
 		OwnershipEnforced: true,
 		driverConns:       driverConnsForTest(t),
@@ -44,7 +45,7 @@ func TestADR_0254_LearningDriversEnforceOwnershipOrFailClosed(t *testing.T) {
 			OwnershipMode: grpcdriver.LearningRepositoryOwnershipTrusted,
 		}))
 	})
-	_, _, _, closeTrusted, err := resolveLearningRepositories(context.Background(), Config{
+	_, _, _, _, closeTrusted, err := resolveLearningRepositories(context.Background(), Config{
 		LearningStoreURL: trustedAddr,
 		driverConns:      driverConnsForTest(t),
 	})
@@ -53,6 +54,15 @@ func TestADR_0254_LearningDriversEnforceOwnershipOrFailClosed(t *testing.T) {
 	}
 	if err != nil {
 		t.Fatalf("trusted single-tenant driver negotiation: %v", err)
+	}
+	_, _, _, _, closeAutomatic, err := resolveLearningRepositories(context.Background(), Config{
+		LearningStoreURL: trustedAddr, LearningMode: learning.Review, driverConns: driverConnsForTest(t),
+	})
+	if closeAutomatic != nil {
+		closeAutomatic()
+	}
+	if err == nil || !strings.Contains(err.Error(), "automatic admission ledger") {
+		t.Fatalf("automatic learning accepted driver without automatic ledger: %v", err)
 	}
 
 	partialAddr := startSourceDriver(t, func(server *grpc.Server) {
@@ -65,7 +75,7 @@ func TestADR_0254_LearningDriversEnforceOwnershipOrFailClosed(t *testing.T) {
 		"missing capabilities": startSourceDriver(t, func(*grpc.Server) {}),
 		"partial capabilities": partialAddr,
 	} {
-		_, _, _, closeDriver, resolveErr := resolveLearningRepositories(context.Background(), Config{
+		_, _, _, _, closeDriver, resolveErr := resolveLearningRepositories(context.Background(), Config{
 			LearningStoreURL: addr,
 			driverConns:      driverConnsForTest(t),
 		})
@@ -91,7 +101,7 @@ func TestLearningDriverCompositionRequiresExplicitCapabilities(t *testing.T) {
 		driverv1.RegisterSkillRepositoryServiceServer(server, grpcdriver.NewSkillRepositoryServer(memskill.New()))
 	})
 
-	_, _, _, closeDriver, err := resolveLearningRepositories(context.Background(), Config{
+	_, _, _, _, closeDriver, err := resolveLearningRepositories(context.Background(), Config{
 		LearningStoreURL: addr,
 		driverConns:      driverConnsForTest(t),
 	})
@@ -127,26 +137,32 @@ func TestLearningDriverCompositionSmoke(t *testing.T) {
 	attempts := memattempt.New(wallclock.Clock{})
 	proposals := &captureProposalPartitions{ProposalRepository: memproposal.New()}
 	skills := &captureSkillPartitions{SkillRepository: memskill.New()}
+	ledger, err := automaticstore.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	addr := startSourceDriver(t, func(server *grpc.Server) {
 		driverv1.RegisterLearningRepositoryCapabilitiesServiceServer(server, grpcdriver.NewLearningRepositoryCapabilitiesServer(grpcdriver.LearningRepositoryCapabilities{
 			AttemptRepository: true, ProposalRepository: true, SkillRepository: true, ValidatedSkillActivation: true,
-			OwnershipMode: grpcdriver.LearningRepositoryOwnershipTrusted,
+			AutomaticAdmissionLedger: true,
+			OwnershipMode:            grpcdriver.LearningRepositoryOwnershipTrusted,
 		}))
 		driverv1.RegisterAttemptRepositoryServiceServer(server, grpcdriver.NewAttemptRepositoryServer(attempts))
 		driverv1.RegisterProposalRepositoryServiceServer(server, grpcdriver.NewProposalRepositoryServer(proposals))
 		driverv1.RegisterSkillRepositoryServiceServer(server, grpcdriver.NewSkillRepositoryServer(skills))
+		driverv1.RegisterAutomaticAdmissionLedgerServiceServer(server, grpcdriver.NewAutomaticAdmissionLedgerServer(ledger))
 	})
 	connections := driverConnsForTest(t)
 
-	attemptRepo, proposalRepo, skillRepo, closeDriver, err := resolveLearningRepositories(context.Background(), Config{
+	attemptRepo, proposalRepo, skillRepo, automaticRepo, closeDriver, err := resolveLearningRepositories(context.Background(), Config{
 		LearningStoreURL: addr,
 		driverConns:      connections,
 	})
 	if err != nil {
 		t.Fatalf("resolveLearningRepositories() error = %v", err)
 	}
-	if attemptRepo == nil || proposalRepo == nil || skillRepo == nil {
-		t.Fatal("complete learning driver did not compose all repositories")
+	if attemptRepo == nil || proposalRepo == nil || skillRepo == nil || automaticRepo == nil {
+		t.Fatal("complete learning driver did not compose all repositories and automatic ledger")
 	}
 	if _, ok := skillRepo.(learning.ValidatedSkillActivator); !ok {
 		t.Fatal("advertised validated activation capability was not composed")

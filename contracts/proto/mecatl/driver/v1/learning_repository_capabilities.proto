@@ -29,6 +29,9 @@ message LearningRepositoryCapabilitiesResponse {
   // caller and maintenance surfaces. Current composition does not trust this
   // self-advertisement as evidence that those surfaces exist.
   bool caller_infrastructure_rpcs_separated = 6;
+  // Automatic mode requires this ledger beside the complete repository set;
+  // explicit-only deployments may omit it.
+  bool automatic_admission_ledger = 7;
 }
 
 enum LearningRepositoryOwnershipMode {

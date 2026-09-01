@@ -19,6 +19,7 @@ import (
 	"github.com/stacklok/mecatl/engine/learning"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
+	"github.com/stacklok/mecatl/internal/adapter/automaticstore"
 	memoryadapter "github.com/stacklok/mecatl/internal/adapter/memory"
 )
 
@@ -80,13 +81,16 @@ func TestAutomaticReflectionEmitsCorrelatedClosedMetrics(t *testing.T) {
 	automatic.Cooldown = 0
 	automatic.MaxReflections = 1
 	sourceStore := memstore.New()
+	ledger, err := automaticstore.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	cfg := Config{
 		Model: "test-model", LearningMode: learning.Auto, LearningSensitivity: learning.Balanced,
 		LearningAutomatic: automatic, LearningMetricsEmitter: emitter,
-		attemptRepository: memattempt.New(wallclock.Clock{}), learningSourceStore: sourceStore,
+		attemptRepository: memattempt.New(wallclock.Clock{}), automaticAdmissionLedger: ledger, learningSourceStore: sourceStore,
 	}
 	admission := newLearningAdmission(1)
-	admission.controller = newAutomaticAdmissionController(cfg.LearningAutomatic, cfg.LearningMetricsEmitter)
 	coordinator := newReflectionCoordinator(context.Background(), reflectionCoordinatorConfig{Workers: 1, Capacity: 2, Timeout: time.Second})
 	t.Cleanup(coordinator.Close)
 	provider := mockllm.New(mockllm.TextTurn(`{"kind":"abstained","candidates":[]}`))

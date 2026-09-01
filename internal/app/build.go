@@ -55,6 +55,7 @@ import (
 	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/agents"
 	"github.com/stacklok/mecatl/internal/adapter/attemptstore"
+	"github.com/stacklok/mecatl/internal/adapter/automaticstore"
 	"github.com/stacklok/mecatl/internal/adapter/dream"
 	"github.com/stacklok/mecatl/internal/adapter/envscrub"
 	"github.com/stacklok/mecatl/internal/adapter/flocklease"
@@ -590,11 +591,12 @@ type Config struct {
 	// SkillEvaluator is trusted host admission control. Nil deliberately ABSTAINS;
 	// evaluator errors persist as a non-activatable marker, and only generic error
 	// categories reach diagnostics.
-	SkillEvaluator      learning.SkillEvaluator
-	attemptRepository   learning.AttemptRepository
-	proposalRepository  learning.ProposalRepository
-	skillRepository     learning.SkillRepository
-	learningSourceStore port.SessionStore
+	SkillEvaluator           learning.SkillEvaluator
+	attemptRepository        learning.AttemptRepository
+	automaticAdmissionLedger learning.AutomaticAdmissionLedger
+	proposalRepository       learning.ProposalRepository
+	skillRepository          learning.SkillRepository
+	learningSourceStore      port.SessionStore
 	// operatorLearningMode retains the pre-project ceiling so per-session engines
 	// can apply their own workspace's tighten-only project setting.
 	operatorLearningMode          learning.Mode
@@ -1725,15 +1727,17 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	}
 
 	// Distributed learning is one explicitly negotiated backend. A configured
-	// target must provide all three repositories; partial capability never
-	// falls through to the local filesystem stores.
-	attemptRepo, proposalRepo, skillRepo, learningClose, learningErr := resolveLearningRepositories(ctx, cfg)
+	// target must provide all three repositories and, when automatic learning is
+	// enabled, the durable admission ledger; partial capability never falls
+	// through to the local filesystem stores.
+	attemptRepo, proposalRepo, skillRepo, automaticLedger, learningClose, learningErr := resolveLearningRepositories(ctx, cfg)
 	if learningErr != nil {
 		commandConnClose()
 		return nil, learningErr
 	}
 	if cfg.LearningStoreURL != "" {
 		cfg.attemptRepository = attemptRepo
+		cfg.automaticAdmissionLedger = automaticLedger
 		cfg.proposalRepository = proposalRepo
 		cfg.skillRepository = skillRepo
 		previousClose := commandConnClose
@@ -2084,6 +2088,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 			reflectionCfg.LearningMode, reflectionCfg.LearningSensitivity, reflectionCfg.SkillActivationPolicy = learningPolicyForWorkspace(cfg, workspace)
 			reflectionCfg.Model = sess.ModelID
 			reflectionCfg.attemptRepository = assets.attemptRepository
+			reflectionCfg.automaticAdmissionLedger = assets.automaticAdmissionLedger
 			reflectionCfg.learningSourceStore = store
 			if sess.ProviderID != "" {
 				entry, ok := reg.Lookup(sess.ProviderID)
@@ -2811,6 +2816,7 @@ func sessionEngineFactory(
 		learningCfg.LearningMode, learningCfg.LearningSensitivity, learningCfg.SkillActivationPolicy = learningPolicyForWorkspace(cfg, workspace)
 		learningCfg.Model = resolvedModel
 		learningCfg.attemptRepository = assets.attemptRepository
+		learningCfg.automaticAdmissionLedger = assets.automaticAdmissionLedger
 		learningCfg.learningSourceStore = store
 		deps := engineDepsForProvider(cfg, resolvedProvider, resolvedModel, windowFn, store, policy, hooks, mcpProvider, instructions)
 		attachOperatorProfile(&deps, assets.userModelStore)
@@ -3696,10 +3702,10 @@ func buildEngine(ctx context.Context, cfg Config, reg *providerRegistry, provide
 	var learningAdmission *learningAdmission
 	if cfg.operatorLearningMode != learning.Off {
 		learningAdmission = newLearningAdmission(cfg.UserModelReviewInterval)
-		learningAdmission.controller = newAutomaticAdmissionController(cfg.LearningAutomatic, cfg.LearningMetricsEmitter)
 	}
 	assets.learningAdmission = learningAdmission
 	cfg.attemptRepository = assets.attemptRepository
+	cfg.automaticAdmissionLedger = assets.automaticAdmissionLedger
 	cfg.learningSourceStore = store
 	deps := baseEngineDeps(cfg, reg, provider, engineStore, sharedPolicy, mainHooks, mcpProvider, instructions)
 	attachOperatorProfile(&deps, userModelStore)
@@ -5019,9 +5025,11 @@ func buildCatalog(ctx context.Context, cfg Config, reg *providerRegistry, provid
 
 	var reflectionRepository learning.ProposalRepository
 	var attemptRepository learning.AttemptRepository
+	var automaticAdmissionLedger learning.AutomaticAdmissionLedger
 	var reflectionCoordinator *reflectionCoordinator
 	if cfg.LearningStoreURL != "" {
 		attemptRepository = cfg.attemptRepository
+		automaticAdmissionLedger = cfg.automaticAdmissionLedger
 		reflectionRepository = cfg.proposalRepository
 		if userModelStore != nil && provider != nil && (cfg.LearningMode != learning.Off || cfg.operatorLearningMode != learning.Off) {
 			reflectionCoordinator = newReflectionCoordinator(ctx, reflectionCoordinatorConfig{Diagnostics: cfg.diag()})
@@ -5037,6 +5045,12 @@ func buildCatalog(ctx context.Context, cfg Config, reg *providerRegistry, provid
 					return nil, catalogAssets{}, nil, nil, nil, fmt.Errorf("build learning attempt store: %w", attemptErr)
 				}
 				attemptRepository = attempts
+				ledger, ledgerErr := automaticstore.New(filepath.Join(base, "automatic-admission"))
+				if ledgerErr != nil {
+					mcpClose()
+					return nil, catalogAssets{}, nil, nil, nil, fmt.Errorf("build automatic learning admission store: %w", ledgerErr)
+				}
+				automaticAdmissionLedger = ledger
 				reflectionCoordinator = newReflectionCoordinator(ctx, reflectionCoordinatorConfig{Diagnostics: cfg.diag()})
 				previousClose := mcpClose
 				mcpClose = func() { reflectionCoordinator.Close(); previousClose() }
@@ -5158,10 +5172,11 @@ func buildCatalog(ctx context.Context, cfg Config, reg *providerRegistry, provid
 		// (kill switch > --websearch-url > SEARXNG_URL > BRAVE_API_KEY > Exa default)
 		// and threaded onto the assets so every per-session catalog reuses the SAME
 		// provider.
-		searchProvider:        buildSearchProvider(ctx, cfg),
-		reflectionCoordinator: reflectionCoordinator,
-		reflectionRepository:  reflectionRepository,
-		attemptRepository:     attemptRepository,
+		searchProvider:           buildSearchProvider(ctx, cfg),
+		reflectionCoordinator:    reflectionCoordinator,
+		reflectionRepository:     reflectionRepository,
+		attemptRepository:        attemptRepository,
+		automaticAdmissionLedger: automaticAdmissionLedger,
 		// Fire-result delivery queue (ADR 0075): the DURABLE per-session
 		// pending-delivery queue. Built ONCE here so the main engine's Step 2a
 		// drain, the per-session engine factory's drain, and the scheduler's

@@ -11,10 +11,9 @@ import (
 // provider-specific reviewer shares one instance, so per-session engine creation
 // cannot reset throttling.
 type learningAdmission struct {
-	interval   int
-	mu         sync.Mutex
-	count      int
-	controller *automaticAdmissionController
+	interval int
+	mu       sync.Mutex
+	count    int
 }
 
 func newLearningAdmission(interval int) *learningAdmission {

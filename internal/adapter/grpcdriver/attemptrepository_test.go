@@ -100,7 +100,7 @@ func TestAttemptWatchIsDeferred(t *testing.T) {
 	}
 
 	capabilityType := reflect.TypeOf(LearningRepositoryCapabilities{})
-	wantCapabilities := []string{"AttemptRepository", "ProposalRepository", "SkillRepository", "ValidatedSkillActivation", "OwnershipMode", "CallerInfrastructureRPCsSeparated"}
+	wantCapabilities := []string{"AttemptRepository", "ProposalRepository", "SkillRepository", "ValidatedSkillActivation", "AutomaticAdmissionLedger", "OwnershipMode", "CallerInfrastructureRPCsSeparated"}
 	if capabilityType.NumField() != len(wantCapabilities) {
 		t.Fatalf("learning repository capabilities have %d fields, want %d", capabilityType.NumField(), len(wantCapabilities))
 	}
@@ -109,7 +109,7 @@ func TestAttemptWatchIsDeferred(t *testing.T) {
 			t.Errorf("learning repository capability field[%d] = %q, want %q", i, got, want)
 		}
 	}
-	wantWireCapabilities := []string{"attempt_repository", "proposal_repository", "skill_repository", "validated_skill_activation", "ownership_mode", "caller_infrastructure_rpcs_separated"}
+	wantWireCapabilities := []string{"attempt_repository", "proposal_repository", "skill_repository", "validated_skill_activation", "ownership_mode", "caller_infrastructure_rpcs_separated", "automatic_admission_ledger"}
 	wireFields := (&driverv1.LearningRepositoryCapabilitiesResponse{}).ProtoReflect().Descriptor().Fields()
 	if wireFields.Len() != len(wantWireCapabilities) {
 		t.Fatalf("learning repository wire capabilities have %d fields, want %d", wireFields.Len(), len(wantWireCapabilities))

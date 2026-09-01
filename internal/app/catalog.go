@@ -131,11 +131,12 @@ type catalogAssets struct {
 	deliveryQueue port.DeliveryQueue
 	// learningAdmission is the ONE process-wide completion counter shared by the
 	// default and every per-session/provider reviewer.
-	learningAdmission     *learningAdmission
-	reflectionCoordinator *reflectionCoordinator
-	reflectionRepository  learning.ProposalRepository
-	attemptRepository     learning.AttemptRepository
-	rootCatalog           *tool.Catalog
+	learningAdmission        *learningAdmission
+	reflectionCoordinator    *reflectionCoordinator
+	reflectionRepository     learning.ProposalRepository
+	attemptRepository        learning.AttemptRepository
+	automaticAdmissionLedger learning.AutomaticAdmissionLedger
+	rootCatalog              *tool.Catalog
 }
 
 // catalogSession is the PER-CATALOG variation: the resolved provider/model the

@@ -33,6 +33,7 @@ type LearningRepositoryCapabilities struct {
 	ProposalRepository                bool
 	SkillRepository                   bool
 	ValidatedSkillActivation          bool
+	AutomaticAdmissionLedger          bool
 	OwnershipMode                     LearningRepositoryOwnershipMode
 	CallerInfrastructureRPCsSeparated bool
 }
@@ -56,6 +57,7 @@ func ProbeLearningRepositoryCapabilities(ctx context.Context, conn grpc.ClientCo
 		ProposalRepository:                resp.GetProposalRepository(),
 		SkillRepository:                   resp.GetSkillRepository(),
 		ValidatedSkillActivation:          resp.GetValidatedSkillActivation(),
+		AutomaticAdmissionLedger:          resp.GetAutomaticAdmissionLedger(),
 		OwnershipMode:                     ownershipModeFromProto(resp.GetOwnershipMode()),
 		CallerInfrastructureRPCsSeparated: resp.GetCallerInfrastructureRpcsSeparated(),
 	}, nil
@@ -78,6 +80,7 @@ func (s *learningRepositoryCapabilitiesServer) Capabilities(context.Context, *dr
 		ProposalRepository:                s.capabilities.ProposalRepository,
 		SkillRepository:                   s.capabilities.SkillRepository,
 		ValidatedSkillActivation:          s.capabilities.ValidatedSkillActivation,
+		AutomaticAdmissionLedger:          s.capabilities.AutomaticAdmissionLedger,
 		OwnershipMode:                     ownershipModeToProto(s.capabilities.OwnershipMode),
 		CallerInfrastructureRpcsSeparated: s.capabilities.CallerInfrastructureRPCsSeparated,
 	}, nil
