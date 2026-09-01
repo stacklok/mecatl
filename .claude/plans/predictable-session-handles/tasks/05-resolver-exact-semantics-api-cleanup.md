@@ -2,8 +2,8 @@
 id: 05-resolver-exact-semantics-api-cleanup
 title: Resolver ambiguity, exact-ID CLI escape hatch, and handle API repair
 blocked_by: [01-handle-projection-presentation, 02-debug-handle-resolution, 03-command-help-and-docs, 04-ac-trace-compatibility]
-status: in-progress
-branch: ""
+status: done
+branch: "plan-predictable-session-handles/05-resolver-exact-semantics-api-cleanup"
 worktree: ".scratch/worktrees/issue-922-task05"
 issue: "922"
 retries: 0
