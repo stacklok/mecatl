@@ -1231,7 +1231,11 @@ attempt. One Build-owned, cancellation-aware worker continuously performs bounde
 running attempts whose claims expired. It acquires through CAS, renews the fenced claim throughout
 evidence, model, and publication work, cancels that work if renewal is lost, and is cancelled and
 joined before borrowed Build resources close. The same contract is available through the remote
-AttemptRepository driver. Process-local coordinator admission and receipts are scheduling hints only:
+AttemptRepository driver. Every repository partition retains at most 256 records; creation at
+that boundary evicts the oldest terminal record only, and returns a content-free quota error when
+queued/running work fills the partition. Capacity checks and terminal cleanup happen inside the same
+partition-authoritative lock/CAS boundary, so one caller cannot consume another caller's quota or
+force deletion of its claimed work. Process-local coordinator admission and receipts are scheduling hints only:
 a capacity rejection cannot strand a durably queued attempt. Skipped or non-admitted completions
 remain immediate content-free activity and create no attempt history.
 

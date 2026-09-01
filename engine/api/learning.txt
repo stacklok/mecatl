@@ -158,6 +158,7 @@ const MaxAttemptLinkIDBytes untyped int = 128
 const MaxAttemptPageSize untyped int = 200
 const MaxAttemptVersionBytes untyped int = 128
 const MaxAttemptWorkBatch untyped int = 200
+const MaxAttemptsPerPartition untyped int = 256
 const MaxAutomaticReservationIDBytes untyped int = 96
 const MaxCandidateBodyBytes untyped int = 8192
 const MaxCandidateDescriptionBytes untyped int = 2048
@@ -411,6 +412,7 @@ var ErrAttemptClaimConflict error
 var ErrAttemptClaimLost error
 var ErrAttemptCreateConflict error
 var ErrAttemptNotFound error
+var ErrAttemptQuotaExceeded error
 var ErrAttemptTransition error
 var ErrAttemptVersionConflict error
 var ErrAutomaticAdmissionCooldown error

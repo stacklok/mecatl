@@ -344,6 +344,28 @@ func bucket(doc *document, key string) partitionDocument {
 	return partition
 }
 
+func makeRoom(part *partitionDocument) error {
+	if len(part.Records) < learning.MaxAttemptsPerPartition {
+		return nil
+	}
+	var oldest learning.AttemptRecord
+	found := false
+	for _, record := range part.Records {
+		if record.State.Terminal() && (!found || record.UpdatedAt.Before(oldest.UpdatedAt) || (record.UpdatedAt.Equal(oldest.UpdatedAt) && record.ID < oldest.ID)) {
+			oldest, found = record, true
+		}
+	}
+	if !found {
+		return learning.ErrAttemptQuotaExceeded
+	}
+	delete(part.Records, oldest.ID)
+	delete(part.ClaimGenerations, oldest.ID)
+	if len(part.Records) >= learning.MaxAttemptsPerPartition {
+		return learning.ErrAttemptQuotaExceeded
+	}
+	return nil
+}
+
 func (s *Store) Create(ctx context.Context, partition learning.AttemptPartition, create learning.AttemptCreate) (out learning.AttemptRecord, err error) {
 	key, err := partitionKey(partition)
 	if err != nil || create.Validate() != nil {
@@ -361,6 +383,9 @@ func (s *Store) Create(ctx context.Context, partition learning.AttemptPartition,
 			}
 			out = existing
 			return nil
+		}
+		if roomErr := makeRoom(&part); roomErr != nil {
+			return roomErr
 		}
 		v, versionErr := version()
 		if versionErr != nil {

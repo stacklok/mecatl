@@ -18,6 +18,10 @@ const (
 	MaxAttemptPageSize     = 200
 	MaxAttemptDeleteBatch  = 200
 	MaxAttemptWorkBatch    = 200
+	// MaxAttemptsPerPartition bounds one caller's durable attempt records. Create
+	// evicts the oldest terminal record at this boundary, but never queued or
+	// running work; a partition containing only nonterminal records is saturated.
+	MaxAttemptsPerPartition = 256
 )
 
 var (
@@ -27,6 +31,7 @@ var (
 	ErrAttemptTransition      = errors.New("learning: invalid attempt transition")
 	ErrAttemptClaimConflict   = errors.New("learning: attempt has a live claim")
 	ErrAttemptClaimLost       = errors.New("learning: attempt claim expired or superseded")
+	ErrAttemptQuotaExceeded   = errors.New("learning: attempt partition quota exceeded")
 )
 
 // AttemptPartition is an opaque, one-way owner partition. Repositories must not
@@ -222,7 +227,11 @@ func ValidAttemptTransition(from, to AttemptState) bool {
 // returned record; stale values return ErrAttemptVersionConflict without a
 // write. Create is idempotent for the same partition, ID, and immutable
 // provenance and returns the existing record; an identity collision with
-// different immutable material returns ErrAttemptCreateConflict.
+// different immutable material returns ErrAttemptCreateConflict. Each partition
+// retains at most MaxAttemptsPerPartition records. Create at that boundary
+// evicts only the oldest terminal record (UpdatedAt, then ID); if none exists it
+// returns ErrAttemptQuotaExceeded without changing queued or running work. The
+// limit and cleanup are partition-local, so saturation cannot block a peer.
 //
 // AcquireClaim accepts queued attempts or running attempts whose claim is
 // expired at now. It allocates a strictly newer ClaimGeneration and returns the

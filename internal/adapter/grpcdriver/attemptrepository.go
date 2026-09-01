@@ -326,6 +326,8 @@ func attemptErrorSentinel(code driverv1.AttemptErrorCode) error {
 		return learning.ErrAttemptClaimConflict
 	case driverv1.AttemptErrorCode_ATTEMPT_ERROR_CODE_CLAIM_LOST:
 		return learning.ErrAttemptClaimLost
+	case driverv1.AttemptErrorCode_ATTEMPT_ERROR_CODE_QUOTA_EXCEEDED:
+		return learning.ErrAttemptQuotaExceeded
 	default:
 		return nil
 	}
@@ -347,6 +349,8 @@ func attemptErrorCode(err error) (driverv1.AttemptErrorCode, codes.Code) {
 		return driverv1.AttemptErrorCode_ATTEMPT_ERROR_CODE_CLAIM_CONFLICT, codes.ResourceExhausted
 	case errors.Is(err, learning.ErrAttemptClaimLost):
 		return driverv1.AttemptErrorCode_ATTEMPT_ERROR_CODE_CLAIM_LOST, codes.OutOfRange
+	case errors.Is(err, learning.ErrAttemptQuotaExceeded):
+		return driverv1.AttemptErrorCode_ATTEMPT_ERROR_CODE_QUOTA_EXCEEDED, codes.ResourceExhausted
 	default:
 		return driverv1.AttemptErrorCode_ATTEMPT_ERROR_CODE_UNSPECIFIED, codes.Internal
 	}

@@ -388,6 +388,57 @@ func RunRetentionAndDeletion(t *testing.T, factory Factory) {
 			t.Fatalf("zero retention limit error = %v, want ErrInvalidAttempt", err)
 		}
 	})
+
+	t.Run("partition quota retains nonterminal work and does not block peers", func(t *testing.T) {
+		runPartitionQuota(t, factory)
+	})
+}
+
+func runPartitionQuota(t *testing.T, factory Factory) {
+	t.Helper()
+	h := newHarness(t, factory)
+	ctx := context.Background()
+	now := baseTime()
+	alice := partition(t, "quota-alice")
+	bob := partition(t, "quota-bob")
+
+	claimed := mustCreate(t, h.Repository, alice, fixture(t, "quota-claimed"))
+	claimed, _, err := h.Repository.AcquireClaim(ctx, alice, claimed.ID, claimed.Version, now, now.Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	terminal := createTerminal(t, h.Repository, alice, fixture(t, "quota-terminal"), now)
+	queued := make([]learning.AttemptRecord, 0, learning.MaxAttemptsPerPartition-2)
+	for i := 0; i < learning.MaxAttemptsPerPartition-2; i++ {
+		queued = append(queued, mustCreate(t, h.Repository, alice, fixture(t, fmt.Sprintf("quota-queued-%d", i))))
+	}
+
+	replacement := mustCreate(t, h.Repository, alice, fixture(t, "quota-replacement"))
+	assertMissing(t, h.Repository, alice, terminal.ID)
+	if got := mustGet(t, h.Repository, alice, claimed.ID); got != claimed {
+		t.Fatalf("claimed attempt changed during terminal retention: got=%+v want=%+v", got, claimed)
+	}
+	for _, record := range queued {
+		if got := mustGet(t, h.Repository, alice, record.ID); got != record {
+			t.Fatalf("queued attempt %q changed during terminal retention: got=%+v want=%+v", record.ID, got, record)
+		}
+	}
+	mustGet(t, h.Repository, alice, replacement.ID)
+
+	if _, err = h.Repository.Create(ctx, alice, fixture(t, "quota-saturated")); !errors.Is(err, learning.ErrAttemptQuotaExceeded) {
+		t.Fatalf("saturated Alice Create error = %v, want ErrAttemptQuotaExceeded", err)
+	}
+	bobCreated := mustCreate(t, h.Repository, bob, fixture(t, "quota-bob"))
+	bobRunning, bobClaim, err := h.Repository.AcquireClaim(ctx, bob, bobCreated.ID, bobCreated.Version, now, now.Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	bobDone, err := h.Repository.Finalize(ctx, bob, bobRunning.ID, bobRunning.Version, bobClaim, now, learning.AttemptFinalization{
+		State: learning.AttemptCompleted, Outcome: learning.AttemptOutcomeSucceeded,
+	})
+	if err != nil || bobDone.State != learning.AttemptCompleted {
+		t.Fatalf("Bob finalize = %+v, err=%v", bobDone, err)
+	}
 }
 
 func newHarness(t *testing.T, factory Factory) Harness {

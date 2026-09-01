@@ -49,6 +49,19 @@ func (r *retentionRepository) Create(_ context.Context, partition learning.Attem
 	if r.records[partition] == nil {
 		r.records[partition] = make(map[learning.AttemptID]learning.AttemptRecord)
 	}
+	if len(r.records[partition]) >= learning.MaxAttemptsPerPartition {
+		var oldest learning.AttemptRecord
+		found := false
+		for _, candidate := range r.records[partition] {
+			if candidate.State.Terminal() && (!found || candidate.UpdatedAt.Before(oldest.UpdatedAt) || (candidate.UpdatedAt.Equal(oldest.UpdatedAt) && candidate.ID < oldest.ID)) {
+				oldest, found = candidate, true
+			}
+		}
+		if !found {
+			return learning.AttemptRecord{}, learning.ErrAttemptQuotaExceeded
+		}
+		delete(r.records[partition], oldest.ID)
+	}
 	record := learning.AttemptRecord{ID: create.ID, Version: r.version(), State: learning.AttemptQueued, Provenance: create.Provenance, AttemptGeneration: 1, CreatedAt: r.now, UpdatedAt: r.now}
 	r.records[partition][create.ID] = record
 	return record, nil

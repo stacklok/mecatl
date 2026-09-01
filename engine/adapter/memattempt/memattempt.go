@@ -60,6 +60,10 @@ func (s *Store) Create(ctx context.Context, partition learning.AttemptPartition,
 		}
 		return learning.AttemptRecord{}, learning.ErrAttemptCreateConflict
 	}
+	if err := s.makeRoomLocked(partition); err != nil {
+		return learning.AttemptRecord{}, err
+	}
+	bucket = s.records[partition]
 	if bucket == nil {
 		bucket = make(map[learning.AttemptID]learning.AttemptRecord)
 		s.records[partition] = bucket
@@ -395,6 +399,26 @@ func (s *Store) DeleteTerminalBefore(ctx context.Context, partition learning.Att
 		delete(s.claimGeneration[partition], candidate.id)
 	}
 	return len(candidates), nil
+}
+
+func (s *Store) makeRoomLocked(partition learning.AttemptPartition) error {
+	records := s.records[partition]
+	if len(records) < learning.MaxAttemptsPerPartition {
+		return nil
+	}
+	var oldest learning.AttemptRecord
+	found := false
+	for _, record := range records {
+		if record.State.Terminal() && (!found || record.UpdatedAt.Before(oldest.UpdatedAt) || (record.UpdatedAt.Equal(oldest.UpdatedAt) && record.ID < oldest.ID)) {
+			oldest, found = record, true
+		}
+	}
+	if !found {
+		return learning.ErrAttemptQuotaExceeded
+	}
+	delete(records, oldest.ID)
+	delete(s.claimGeneration[partition], oldest.ID)
+	return nil
 }
 
 func (s *Store) currentLocked(partition learning.AttemptPartition, id learning.AttemptID, expected learning.AttemptVersion) (learning.AttemptRecord, error) {
