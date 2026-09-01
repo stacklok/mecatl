@@ -132,6 +132,14 @@ type Config struct {
 	// Empty safely reports as "unknown" for generic embeddings.
 	ServerImplementation string
 	Workspace            string
+	// PlacementProvider optionally replaces the trusted local default with one
+	// deployment-owned provider implementing ADR 0280's atomic Bind protocol.
+	// The provider owns any worktree/remote inventory and stable opaque IDs; Build
+	// creates no registry, signer, cache, or path-derived public identifier.
+	PlacementProvider server.PlacementProvider
+	// PlacementScope is the trusted authorization scope passed to the provider.
+	// Empty defaults to the process deployment scope.
+	PlacementScope server.PlacementScope
 	// WorkspaceAuthority is the deployment's workspace-selection policy (ADR 0237).
 	// The zero value is client-selectable, preserving embedded and loopback use.
 	// The cmd/ main owns this decision: listener topology never reaches the server
@@ -1781,6 +1789,24 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	commandLister := buildCommandLister(cfg, mcpProvider)
 	cfg.storageMaintenance = &storageMaintenanceState{}
 	dreamReviewer, dreamCapabilities := buildDreamReview(cfg, assets, provider != nil)
+	workspaceFactory := osfsWorkspaceFactory(cfg.diag())
+	placementScope := cfg.PlacementScope
+	if placementScope == "" {
+		placementScope = defaultPlacementScope
+	}
+	placementProvider := cfg.PlacementProvider
+	if placementProvider == nil {
+		placementRoot := cfg.Workspace
+		if cfg.AuthoritativeWorkspace != "" {
+			placementRoot = cfg.AuthoritativeWorkspace
+		}
+		placementProvider = &localPlacementProvider{
+			scope: placementScope, root: placementRoot, workspace: workspaceFactory,
+			runnerForRoot: func(root string) tool.CommandRunner {
+				return buildCommandRunnerForRoot(cfg, root)
+			},
+		}
+	}
 	svcCfg := server.Config{
 		BuildID:              buildinfo.BuildID,
 		ServerImplementation: cfg.ServerImplementation,
@@ -1809,7 +1835,9 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		},
 		StorageMaintenanceStatus: cfg.storageMaintenance.snapshot,
 		StorageMaintenanceUpdate: cfg.storageMaintenance.update,
-		Workspaces:               osfsWorkspaceFactory(cfg.diag()),
+		Workspaces:               workspaceFactory,
+		PlacementProvider:        placementProvider,
+		PlacementScope:           placementScope,
 		RootAuthority: func(kind session.SessionKind) session.Authority {
 			return mintRootAuthority(assets.rootCatalog, mcpResourceCapabilities(assets.globalMgr), kind)
 		},
@@ -2217,7 +2245,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	}
 	applyTeamConfig(&svcCfg, cfg, reg, provider, mainMgr, agentReg, assets.skillIndex, assets)
 
-	svc, err := server.NewService(svcCfg)
+	svc, err := server.NewServiceContext(ctx, svcCfg)
 	if err != nil {
 		mcpClose()
 		agentClose()

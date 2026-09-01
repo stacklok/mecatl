@@ -365,6 +365,16 @@ type Config struct {
 	// persisted environment ref. The two are independent (a session may need
 	// either, both, or neither).
 	EnvironmentResolver func(context.Context, session.EnvironmentRef) (tool.Environment, error)
+	// PlacementProvider is the deployment-owned atomic placement seam (ADR 0280).
+	// Bind is its only operation: possession of an opaque ID never bypasses the
+	// provider's caller, operation, scope, inventory, and revision checks. app.Build
+	// always supplies the trusted local default; alternative composition may supply
+	// one provider that owns worktree or remote placements. nil preserves legacy
+	// hand-built Service configurations until their creation consumers migrate.
+	PlacementProvider PlacementProvider
+	// PlacementScope is the trusted deployment scope supplied to every provider
+	// Bind. It must be non-empty when PlacementProvider is configured.
+	PlacementScope PlacementScope
 	// RootAuthority mints a complete authority set for a newly composed root.
 	// A nil callback preserves host-managed legacy sessions; app.Build always wires
 	// this callback with its assembled catalog. Carryover forks copy their source
@@ -871,6 +881,10 @@ var engineCloseTimeout = 10 * time.Second
 type Service struct {
 	cfg Config
 
+	// placementBinder is the sole creation/successor placement binding seam.
+	// It is nil only for legacy hand-built configurations that have not migrated.
+	placementBinder *PlacementBinder
+
 	// models is the selectable-model inventory, SEEDED from cfg.Models at
 	// construction and atomically SWAPPED by SetModels when the composition layer's
 	// background live-catalog refresh completes (multi-provider live listing). It is
@@ -1275,9 +1289,16 @@ func normalizeServerImplementation(value string) string {
 	return value
 }
 
-// NewService validates cfg and constructs a Service. It returns ErrConfig if
-// Engine, Store or Workspaces is nil.
+// NewService validates cfg and constructs a Service using a background startup
+// context. Composition roots with a lifecycle context should call
+// NewServiceContext.
 func NewService(cfg Config) (*Service, error) {
+	return NewServiceContext(context.Background(), cfg)
+}
+
+// NewServiceContext validates cfg and constructs a Service. ctx bounds and
+// propagates trusted startup context to configured placement providers.
+func NewServiceContext(ctx context.Context, cfg Config) (*Service, error) {
 	if cfg.Engine == nil {
 		return nil, fmt.Errorf("%w: Engine is required", ErrConfig)
 	}
@@ -1287,7 +1308,8 @@ func NewService(cfg Config) (*Service, error) {
 	if cfg.Workspaces == nil {
 		return nil, fmt.Errorf("%w: Workspaces is required", ErrConfig)
 	}
-	if err := validateWorkspaceAuthorityConfig(cfg); err != nil {
+	placementBinder, err := configuredPlacementBinder(ctx, cfg)
+	if err != nil {
 		return nil, err
 	}
 	cfg.ServerImplementation = normalizeServerImplementation(cfg.ServerImplementation)
@@ -1327,6 +1349,7 @@ func NewService(cfg Config) (*Service, error) {
 	_, shutdownCancel := context.WithCancel(context.Background())
 	svc := &Service{
 		cfg:                 cfg,
+		placementBinder:     placementBinder,
 		shutdownCancel:      shutdownCancel,
 		runs:                make(map[session.SessionID]*runState),
 		teams:               make(map[string]*teamState),
@@ -1391,6 +1414,22 @@ func NewService(cfg Config) (*Service, error) {
 	}
 	svc.wireScheduleManager(cfg)
 	return svc, nil
+}
+
+// BindPlacement atomically authorizes and resolves a placement through the
+// deployment provider. The caller principal comes only from the authenticated
+// context and the scope only from trusted composition; neither is supplied by
+// the selector or inferred from possession of its opaque ID.
+func (s *Service) BindPlacement(ctx context.Context, selector session.PlacementSelector, operation PlacementOperation) (PlacementBinding, error) {
+	if s == nil || s.placementBinder == nil {
+		return PlacementBinding{}, fmt.Errorf("%w: no PlacementProvider is configured", ErrConfig)
+	}
+	return s.placementBinder.Bind(ctx, PlacementBindRequest{
+		Selector:  selector,
+		Principal: session.PrincipalFromContext(ctx),
+		Scope:     s.cfg.PlacementScope,
+		Operation: operation,
+	})
 }
 
 // wireScheduleManager attaches the post-construction seams the schedule manager

@@ -254,6 +254,7 @@ var serviceAccessTable = map[string]ClassificationEntry{
 	"CreateSessionWithProvider": {KindCallerOwned, "delegates to CreateSessionWithProfile's atomic owner bind"},
 	"CreateSessionWithProfile":  {KindCallerOwned, "atomic owner bind at creation (reserveSessionID); ForkSession/carryover sources are authorized via authorizeSession before copying history"},
 	"CreateSessionWithMCP":      {KindCallerOwned, "delegates to CreateSessionWithProfile's atomic owner bind"},
+	"BindPlacement":             {KindCallerOwned, "passes the verified context principal and trusted composition scope to the provider's single atomic authorization-and-resolution operation"},
 	"GetSession":                {KindCallerOwned, "authorizeSession: owner mismatch or absence both return ErrNotFound"},
 	"WithAuthorizedSession":     {KindCallerOwned, "ownership preflight excludes foreign lock contention; authoritative reload under runEntryMu precedes the caller-owned effect"},
 	"GetTranscript":             {KindCallerOwned, "one SessionStore.Load followed by authorizeSession; no run-entry side effects"},
