@@ -2,9 +2,9 @@
 id: 15-distributed-skill-repository
 title: Add distributed SkillRepository client and server adapters
 blocked_by: [13-explicit-worker-vertical-slice]
-status: in-progress
-branch: ""
-worktree: ""
+status: done
+branch: "plan-cloud-native-learning/15-distributed-skill-repository"
+worktree: ".scratch/worktrees/15-distributed-skill-repository"
 issue: ""
 retries: 0
 last_error: ""

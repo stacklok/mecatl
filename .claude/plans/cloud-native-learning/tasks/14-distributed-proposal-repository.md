@@ -2,9 +2,9 @@
 id: 14-distributed-proposal-repository
 title: Add distributed ProposalRepository client and server adapters
 blocked_by: [13-explicit-worker-vertical-slice]
-status: in-progress
-branch: ""
-worktree: ""
+status: done
+branch: "plan-cloud-native-learning/14-distributed-proposal-repository"
+worktree: ".scratch/worktrees/14-distributed-proposal-repository"
 issue: ""
 retries: 0
 last_error: ""
