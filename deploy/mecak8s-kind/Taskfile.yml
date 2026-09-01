@@ -45,6 +45,14 @@ tasks:
     cmds:
       - task: cluster-ready
       - cmd: |
+          # Delegated to a real bash subprocess, not run inline under Task's
+          # embedded shell interpreter (mvdan.cc/sh): that interpreter's `$!`
+          # is a synthetic job id, not a real OS PID, so `kill -0 "$pid"` /
+          # `wait "$pid"` against a backgrounded kubectl port-forward always
+          # falsely reports it dead on the first check -- and separately, its
+          # `trap` builtin rejects any signal name but EXIT outright. A real
+          # bash gets both right.
+          bash <<'BASHEOF'
           set -eu
           state={{.STATE}}
           ca="$state/fixture-ca.crt"
@@ -98,9 +106,12 @@ tasks:
           wait_port mecak8s-gRPC 18080 "$mecak8s_pid" "$mecak8s_log"
           wait_port mecak8s-HTTPS 18081 "$mecak8s_pid" "$mecak8s_log"
           kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} --namespace={{.NAMESPACE}} get secret fixture-ca -o jsonpath='{.data.tls\.crt}' >"$encoded"
-          if base64 -d "$encoded" >"$decoded" 2>/dev/null; then
+          # A positional filename argument is GNU-only; BSD/macOS base64
+          # rejects it ("invalid argument") unless given via -i or stdin.
+          # Piping through stdin is accepted by both implementations.
+          if base64 -d <"$encoded" >"$decoded" 2>/dev/null; then
             :
-          elif base64 -D "$encoded" >"$decoded" 2>/dev/null; then
+          elif base64 -D <"$encoded" >"$decoded" 2>/dev/null; then
             :
           else
             echo "failed to decode fixture CA" >&2
@@ -125,6 +136,7 @@ tasks:
           done
           echo "a fixture port-forward exited; stopping the remaining forward" >&2
           exit 1
+          BASHEOF
 
   kind-status:
     desc: Show the local mecak8s Kind baseline
