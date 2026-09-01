@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
@@ -708,70 +707,32 @@ func validateCwd(cwd, method string) error {
 	return nil
 }
 
-// maxClientMCPServers caps how many MCP servers one client may declare on
-// session/new. The factory connects them SERIALLY, each bounded by
-// clientMCPConnectTimeout, so an uncapped count would let a client stall a single
-// session/new for count × timeout (CWE-400, resource exhaustion). 8 is generous for
-// a real editor while bounding the worst-case connect wall-clock.
-const maxClientMCPServers = 8
-
-// clientMCPConnectTimeout bounds the connect handshake + tool listing for ONE
-// client-provided MCP server, deliberately shorter than the operator-path
-// defaultConnectTimeout (30s): a slow client server must not hold session/new open
-// for the full operator budget. It rides on each spec's ServerConfig.Timeout seam.
-const clientMCPConnectTimeout = 10 * time.Second
-
-// partitionClientMCP classifies client-provided MCP server entries and returns
-// the streaming-HTTP ones as mcp.ServerConfig specs to mount per-session. It is
-// FAIL-LOUD: the first bad entry rejects the whole request, so a session never
-// silently drops a server the client asked for.
+// partitionClientMCP maps the ACP session/new / session/load mcpServers list
+// into the SHARED client-MCP classifier (mcp.PartitionClientServers) and wraps
+// its rejection as an ACP invalid-params error prefixed with method.
 //
-// Classification per entry:
+// The classification itself — stdio/sse hard-reject, the SSRF URL allowlist, the
+// server cap, the bounded per-server connect timeout — lives in the mcp adapter
+// so the ACP surface and the gRPC/HTTP CreateSession surface share ONE
+// validator. A second copy here is exactly the divergence that would let one
+// surface accept what the other rejects.
 //
-//   - STDIO — type=="stdio", or type=="" with a non-empty Command: hard-rejected
-//     with a "stdio MCP" message (mecatl never spawns an MCP server process).
-//   - SSE — type=="sse": rejected ("sse transport not supported").
-//   - HTTP — type=="http", or type=="" with a non-empty URL: validated via
-//     mcp.ValidateClientURL (SSRF scheme allowlist) and, on success, appended as a
-//     mcp.ServerConfig carrying the entry's Name, URL, mapped Headers, and a
-//     bounded per-server connect Timeout (clientMCPConnectTimeout).
-//
-// It rejects a request declaring more than maxClientMCPServers (CWE-400: the
-// servers connect serially, so an unbounded count could stall session/new). It
-// returns nil specs (no error) for an empty server list, so a session/new with no
+// It returns nil specs (no error) for an empty list, so a session/new with no
 // mcpServers takes the shared-engine path. Header VALUES are never logged.
 func partitionClientMCP(servers []mcpServer, method string) ([]mcp.ServerConfig, error) {
-	if len(servers) == 0 {
-		return nil, nil
-	}
-	if len(servers) > maxClientMCPServers {
-		return nil, newMethodErr(codeInvalidParams,
-			fmt.Sprintf("acp: %s: too many MCP servers (%d > %d max)", method, len(servers), maxClientMCPServers))
-	}
-	specs := make([]mcp.ServerConfig, 0, len(servers))
+	in := make([]mcp.ClientServer, 0, len(servers))
 	for _, m := range servers {
-		switch {
-		case m.Type == "stdio" || (m.Type == "" && m.Command != ""):
-			return nil, newMethodErr(codeInvalidParams,
-				fmt.Sprintf("acp: %s: stdio MCP server %q rejected (mecatl is streaming-HTTP MCP only)", method, m.Name))
-		case m.Type == "sse":
-			return nil, newMethodErr(codeInvalidParams,
-				fmt.Sprintf("acp: %s: sse transport not supported for MCP server %q (streaming-HTTP only)", method, m.Name))
-		case m.Type == "http" || (m.Type == "" && m.URL != ""):
-			if verr := mcp.ValidateClientURL(m.URL); verr != nil {
-				return nil, newMethodErr(codeInvalidParams,
-					fmt.Sprintf("acp: %s: MCP server %q rejected: %v", method, m.Name, verr))
-			}
-			specs = append(specs, mcp.ServerConfig{
-				Name:    m.Name,
-				URL:     m.URL,
-				Headers: headerMap(m.Headers),
-				Timeout: clientMCPConnectTimeout,
-			})
-		default:
-			return nil, newMethodErr(codeInvalidParams,
-				fmt.Sprintf("acp: %s: MCP server %q has no recognized transport (need http url)", method, m.Name))
-		}
+		in = append(in, mcp.ClientServer{
+			Name:    m.Name,
+			Command: m.Command,
+			URL:     m.URL,
+			Type:    m.Type,
+			Headers: headerMap(m.Headers),
+		})
+	}
+	specs, err := mcp.PartitionClientServers(in)
+	if err != nil {
+		return nil, newMethodErr(codeInvalidParams, fmt.Sprintf("acp: %s: %v", method, err))
 	}
 	return specs, nil
 }

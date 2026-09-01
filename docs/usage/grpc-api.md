@@ -84,6 +84,34 @@ allow-always executes only the current call: it is not learned and the next call
 The target is never entered, leased, or
 mutated by evidence reads. See [ADR 0256](../adr/0256-session-debugger-evidence-and-reporting.md).
 
+**Client-provided MCP servers.** `CreateSessionRequest.mcp_servers` mounts
+streaming-HTTP MCP servers for the lifetime of the created session, via a
+per-session engine, so their tools and their auth headers never leak into another
+session. Each entry carries `name`, `url`, `type` (`"http"`, or empty with a
+`url`), and optional `headers`.
+
+The field is **listener-scoped**, and the scope is a DEPLOYMENT property decided
+once at startup, not a per-connection one ([ADR 0237](../adr/0237-listener-scoped-workspace-authority.md)):
+one `Service` backs both API listeners, so a daemon whose listeners are all local
+— a `--grpc-unix-socket` with `--http-addr ""`, the SDK-spawned shape — accepts
+the field, and a daemon with ANY network-facing API listener refuses every
+non-empty value with `UNIMPLEMENTED` / code `client_mcp_unsupported` on ALL of its
+listeners. That refusal is the server's, so it holds against a client that never
+checked. Accepting an arbitrary endpoint plus its credentials from an API caller
+lends the daemon its outbound network authority, which is the same class of
+delegation the workspace rule refuses.
+
+Check `mcp_servers_on_create` in `GetCompatibilityInfo.features` before sending
+the field; the advertisement and the enforcement read the same value, so an
+advertised deployment will accept it and an unadvertised one will not. An empty
+list is not a use of the feature and is accepted everywhere.
+
+Transport is streaming-HTTP only on EVERY deployment, regardless of that policy: a
+`stdio` entry (or an untyped entry carrying a `command`) and an `sse` entry are
+`INVALID_ARGUMENT` — mecatl never spawns an MCP server process. Header values are
+secret-shaped: they are never logged, never carried in an event, and never
+included in an error.
+
 **Manual compaction.** Check
 `CreateSessionResponse.capabilities.manual_compaction` before offering this action.
 Call `CompactSession` with the owned session ID. The server runs the configured

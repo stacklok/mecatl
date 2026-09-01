@@ -336,6 +336,7 @@ var serviceAccessTable = map[string]ClassificationEntry{
 
 	// --- shared infrastructure: process-wide catalog/config, same for every caller by design ---
 	"CompatibilityInfo":       {KindSharedInfrastructure, "the deployment's capability/feature descriptor, identical for every caller; it touches no session, schedule, or memory record"},
+	"ClientMCPFromWire":       {KindSharedInfrastructure, "classifies a request's MCP entries and applies the deployment-wide client-MCP policy, which is identical for every caller; it reads and writes no session, schedule, or memory record and reaches no network"},
 	"ListMcpResources":        {KindSharedInfrastructure, "MCP servers are process-wide composition config, not a caller-owned record; every caller may list a wired server's resources"},
 	"ReadMcpResource":         {KindSharedInfrastructure, "reads a resource off a process-wide MCP server registration, not a caller-owned record"},
 	"ListMcpPrompts":          {KindSharedInfrastructure, "reads prompt snapshots off a process-wide MCP server registration"},

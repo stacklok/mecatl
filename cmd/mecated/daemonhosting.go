@@ -349,8 +349,12 @@ type readyDoc struct {
 	// APIMajor is the wire-contract major from the compatibility projection, so
 	// a parent can refuse an incompatible daemon before its first RPC.
 	APIMajor int32 `json:"api_major"`
-	// Features are the build's feature identifiers, verbatim from the same
-	// registry GetCompatibilityInfo serves.
+	// Features are the feature identifiers, verbatim from the same projection
+	// GetCompatibilityInfo serves — so they are "what this build implements AND
+	// this deployment permits", not build facts alone (issue #821: the
+	// listener-scoped mcp_servers_on_create is the first identifier for which the
+	// two differ). Reading them from the one projection is what keeps the ready
+	// file from becoming a second, drifting answer to the same question.
 	Features []string `json:"features,omitempty"`
 	// Deployment is the operator-set --deployment-id label, empty by default and
 	// never derived from the host.

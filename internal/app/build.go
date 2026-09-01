@@ -141,9 +141,15 @@ type Config struct {
 	// WorkspaceAuthorityServerAssigned, which requires it. A file-less deployment
 	// selects WorkspaceAuthorityFileless and leaves this empty.
 	AuthoritativeWorkspace string
-	Model                  string
-	UseOpenAI              bool
-	OpenAIKey              string
+	// ClientMCPOnCreate permits client-provided MCP servers on a session-creating
+	// API request (issue #821, ADR 0237 applied to outbound MCP). Like
+	// WorkspaceAuthority it is a deployment policy the cmd/ main decides from its
+	// listener topology and Build passes through verbatim; the zero value fails
+	// closed, so a composition root that never sets it refuses the field.
+	ClientMCPOnCreate bool
+	Model             string
+	UseOpenAI         bool
+	OpenAIKey         string
 	// OpenAICodexCredential is the validated, immutable manual ChatGPT token
 	// snapshot consumed only by the distinct openai-codex registry entry.
 	OpenAICodexCredential openaicodex.Credential
@@ -1811,6 +1817,10 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		// main from its listener topology and passed through verbatim.
 		WorkspaceAuthority:     cfg.WorkspaceAuthority,
 		AuthoritativeWorkspace: cfg.AuthoritativeWorkspace,
+		// ADR 0237 applied to outbound MCP: the same deployment-policy discipline —
+		// decided by the cmd/ main from its listener topology, passed through here,
+		// never inferred from the server package's socket state.
+		ClientMCPOnCreate: cfg.ClientMCPOnCreate,
 		// CommandRunner (issue #462): the MAIN session's bound runner — the
 		// Environment seam hands it to Tool.Execute so Bash observes the session
 		// namespace. nil when Bash is disabled (the catalog omits Bash and the

@@ -284,6 +284,27 @@ type Config struct {
 	// It must be EMPTY under WorkspaceAuthorityFileless and is ignored under
 	// WorkspaceAuthorityClientSelected.
 	AuthoritativeWorkspace string
+	// ClientMCPOnCreate permits CLIENT-PROVIDED MCP servers on a session-creating
+	// API request (CreateSessionRequest.mcp_servers and its HTTP peer). It is a
+	// deployment/composition policy in the shape ADR 0237 requires, NOT an
+	// inference the server package makes from its own socket state.
+	//
+	// The zero value FAILS CLOSED: a Service built without an explicit grant
+	// refuses the field. That direction is deliberate — accepting an arbitrary
+	// outbound endpoint plus its auth headers from an API caller lends the server's
+	// ambient network authority to a remote principal, so a composition root that
+	// has not thought about it must not accidentally grant it. mecated derives it
+	// from listener topology (clientMCPOnCreateForListeners): permitted only when
+	// NO API listener is a network boundary.
+	//
+	// It gates the WIRE surface only. The in-process CreateSessionWithMCP /
+	// LoadSessionWithMCP entries are unaffected: their caller is the ACP adapter,
+	// which is a stdio peer of the operator's own editor and has no listener at
+	// all, so listener-derived policy is meaningless there.
+	//
+	// The SAME value drives the mcp_servers_on_create advertisement (FeatureScope),
+	// so a deployment cannot advertise what it will refuse.
+	ClientMCPOnCreate bool
 	// CommandRunner is the MAIN session's bound command runner (issue #462). It is
 	// the runner the main session's Environment binds when the session runs on the
 	// DEFAULT workspace; a session whose workspace DIFFERS (a worktree binding, an
@@ -1472,6 +1493,10 @@ type createSessionOpts struct {
 	debugTargetID          session.SessionID
 	debugTargetIncarnation session.IncarnationID
 	debugMCPServers        []string
+	// clientMCP are the client-provided MCP servers to mount for this session,
+	// already classified AND policy-checked by Service.ClientMCPFromWire. Empty is
+	// the byte-identical shared-engine path.
+	clientMCP []mcp.ServerConfig
 }
 
 // WithSessionID overrides the session id a CreateSession* call mints. When set,
@@ -1511,6 +1536,19 @@ func WithDebugTarget(id session.SessionID) CreateSessionOption {
 // cross this seam.
 func WithDebugMCP(names []string) CreateSessionOption {
 	return func(o *createSessionOpts) { o.debugMCPServers = append([]string(nil), names...) }
+}
+
+// WithClientMCP mounts client-provided streaming-HTTP MCP servers for the new
+// session's lifetime, via a per-session engine (which requires
+// Config.SessionEngine, else ErrInvalidArgument).
+//
+// specs MUST already have passed Service.ClientMCPFromWire: this option carries
+// a decided result, it does not validate. Keeping validation at the wire seam
+// rather than here is what keeps ONE classifier and ONE policy check on the
+// path, instead of a second one that a future caller could bypass by
+// constructing the option directly.
+func WithClientMCP(specs []mcp.ServerConfig) CreateSessionOption {
+	return func(o *createSessionOpts) { o.clientMCP = append([]mcp.ServerConfig(nil), specs...) }
 }
 
 func debugMCPNameRune(r rune) bool {
@@ -1638,7 +1676,7 @@ func (s *Service) createSessionWithOptions(ctx context.Context, workspace string
 	if err := validateDebugMCPNames(opts.debugTargetID, opts.debugMCPServers); err != nil {
 		return nil, err
 	}
-	return s.createSession(ctx, workspace, mode, limits, sel, nil, profile, opts)
+	return s.createSession(ctx, workspace, mode, limits, sel, opts.clientMCP, profile, opts)
 }
 
 // createSession is the single create path generalizing the shared-engine fast
@@ -2285,9 +2323,53 @@ func (s *Service) CompatibilityInfo(context.Context) *mecatlv1.GetCompatibilityI
 	return &mecatlv1.GetCompatibilityInfoResponse{
 		ApiMajor:     APIMajor,
 		Capabilities: s.capabilities(),
-		Features:     serverFeatures(),
+		Features:     serverFeatures(s.featureScope()),
 		Deployment:   s.cfg.DeploymentID,
 	}
+}
+
+// featureScope projects the deployment policy the feature registry filters on.
+// It reads the SAME Config value the enforcement seam reads, which is what keeps
+// the advertisement and the refusal from disagreeing.
+func (s *Service) featureScope() FeatureScope {
+	return FeatureScope{ClientMCPOnCreate: s.cfg.ClientMCPOnCreate}
+}
+
+// ClientMCPFromWire is the SINGLE enforcement seam for client-provided MCP
+// servers arriving on a session-creating API request. Both wire transports call
+// it; neither classifies an entry itself.
+//
+// Order is load-bearing, and it is the ordinary "400 before 501" shape:
+//
+//  1. CLASSIFY, unconditionally, through the shared mcp.PartitionClientServers —
+//     the same validator the ACP surface uses. A stdio or sse entry is rejected
+//     AS SUCH on every deployment, so "No stdio MCP, ever" (AGENTS.md) stays an
+//     invariant of the request shape rather than a downstream consequence of a
+//     policy flag that some future composition root might flip. Classification is
+//     pure string work: it opens no connection and has no side effect, so running
+//     it on a deployment that will refuse anyway costs nothing.
+//  2. GATE on the deployment policy. A well-formed request that this deployment
+//     does not accept is refused with the typed ErrClientMCPUnsupported
+//     (UNIMPLEMENTED / 501), never silently dropped — a client whose servers were
+//     quietly ignored would run a session it believes has tools it does not have.
+//
+// An empty list returns nil specs and no error on EVERY deployment: sending no
+// MCP servers is not a use of the feature, so a TCP deployment must not fail an
+// ordinary create that merely carries an empty repeated field.
+//
+// Header values never appear in the returned error (they are secret-shaped).
+func (s *Service) ClientMCPFromWire(servers []mcp.ClientServer) ([]mcp.ServerConfig, error) {
+	if len(servers) == 0 {
+		return nil, nil
+	}
+	specs, err := mcp.PartitionClientServers(servers)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrInvalidArgument, err)
+	}
+	if !s.cfg.ClientMCPOnCreate {
+		return nil, fmt.Errorf("%w: this deployment has a network-facing API listener", ErrClientMCPUnsupported)
+	}
+	return specs, nil
 }
 
 // CreateSessionWithMCP creates a session that mounts the client-provided

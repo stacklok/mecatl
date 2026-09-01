@@ -573,6 +573,48 @@ message CreateSessionRequest {
   // target; names are bounded and unique. No URL, header, or inline MCP config is
   // accepted, and selection never implies publication authority.
   repeated string debug_mcp_servers = 10;
+
+  // mcp_servers are CLIENT-PROVIDED streaming-HTTP MCP servers to mount for the
+  // lifetime of this session, via a per-session engine. Empty (the default) is
+  // byte-identical to today: the session takes the shared-engine path.
+  //
+  // LISTENER-SCOPED (ADR 0237 / ADR 0248): accepting an MCP endpoint plus its
+  // auth headers from an API caller combines a remote principal with the
+  // server's ambient outbound network authority, so it is a DEPLOYMENT policy,
+  // not an inference from the request. A deployment whose API listeners are all
+  // local (a UNIX socket, a disabled HTTP listener) permits this field; a
+  // deployment with any network-facing API listener refuses every non-empty
+  // value with the typed `client_mcp_unsupported` error (UNIMPLEMENTED / 501)
+  // rather than mounting it. The refusal is the SERVER's, so it holds against a
+  // client that never checked. A client discovers whether the field is usable
+  // from `mcp_servers_on_create` in GetCompatibilityInfo.features.
+  //
+  // Transport is streaming-HTTP ONLY, on EVERY listener and regardless of that
+  // policy: a stdio entry and an sse entry are hard-rejected as such (AGENTS.md:
+  // "No stdio MCP, ever" — mecatl never spawns an MCP server process).
+  repeated McpServerSpec mcp_servers = 11;
+}
+
+// McpServerSpec is one client-provided MCP server on CreateSessionRequest. It
+// mirrors the ACP session/new mcpServers entry shape so both surfaces classify
+// through the same validator.
+message McpServerSpec {
+  // name is the short, stable identifier that becomes the <server> segment of
+  // every wrapped tool's namespaced name.
+  string name = 1;
+  // url is the server's streaming-HTTP endpoint. It must be absolute with a
+  // host, and https — or http only to an explicit loopback host.
+  string url = 2;
+  // type is the transport discriminant: "http" (or empty with a url) is the only
+  // accepted value. "stdio" and "sse" are hard-rejected on every listener.
+  string type = 3;
+  // command is carried ONLY so a command-shaped entry is classified as stdio and
+  // rejected AS stdio. It is never executed — mecatl spawns no MCP process.
+  string command = 4;
+  // headers are extra HTTP headers sent to this server, typically an
+  // Authorization bearer. Values are SECRET-SHAPED: the server never logs them,
+  // never projects them into an event, and never includes them in an error.
+  map<string, string> headers = 5;
 }
 
 // GetServerInfoRequest asks for the sanitized diagnostic display endpoint of the

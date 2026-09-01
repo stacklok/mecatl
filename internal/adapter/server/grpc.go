@@ -19,6 +19,7 @@ import (
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
+	"github.com/stacklok/mecatl/internal/adapter/mcp"
 )
 
 // HarnessServer implements the generated mecatlv1.HarnessServiceServer over the
@@ -63,6 +64,18 @@ func (h *HarnessServer) CreateSession(ctx context.Context, req *mecatlv1.CreateS
 	if names := req.GetDebugMcpServers(); len(names) > 0 {
 		opts = append(opts, WithDebugMCP(names))
 	}
+	// Client-provided MCP servers (issue #821, ADR 0237). Both wire transports go
+	// through the ONE Service seam, which classifies through the same validator the
+	// ACP surface uses and then applies the deployment policy — so this handler
+	// neither classifies an entry nor decides whether the field is accepted here.
+	// An empty repeated field is not a use of the feature and stays byte-identical.
+	specs, err := h.svc.ClientMCPFromWire(clientMCPFromProto(req.GetMcpServers()))
+	if err != nil {
+		return nil, toStatus(err)
+	}
+	if len(specs) > 0 {
+		opts = append(opts, WithClientMCP(specs))
+	}
 	sess, err := h.svc.CreateSessionWithProfile(ctx, req.GetWorkspace(), modeFromProto(req.GetMode()), limitsFromProto(req.GetLimits()), sel, profile, opts...)
 	if err != nil {
 		return nil, toStatus(err)
@@ -85,6 +98,31 @@ func (h *HarnessServer) CreateSession(ctx context.Context, req *mecatlv1.CreateS
 		},
 		ResolvedModel: resolvedModelToProto(h.svc.ResolvedModel(sess.ID)),
 	}, nil
+}
+
+// clientMCPFromProto maps the wire McpServerSpec list onto the transport-neutral
+// mcp.ClientServer shape the shared classifier consumes. It is a pure field
+// mapping and makes NO decisions: no defaulting, no normalisation, no
+// classification — those all belong to mcp.PartitionClientServers, which the ACP
+// surface reaches through its own equivalent mapping.
+//
+// GetHeaders() is passed through as-is; header VALUES are secret-shaped and are
+// never logged, echoed, or included in an error from here on.
+func clientMCPFromProto(in []*mecatlv1.McpServerSpec) []mcp.ClientServer {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]mcp.ClientServer, 0, len(in))
+	for _, m := range in {
+		out = append(out, mcp.ClientServer{
+			Name:    m.GetName(),
+			Command: m.GetCommand(),
+			URL:     m.GetUrl(),
+			Type:    m.GetType(),
+			Headers: m.GetHeaders(),
+		})
+	}
+	return out
 }
 
 // GetServerInfo returns safe build, composition, and the caller-selected provider endpoint projection.

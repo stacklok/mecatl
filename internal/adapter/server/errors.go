@@ -146,6 +146,14 @@ var (
 	// than pretending an unknown id. ListSessions does NOT use it (it degrades to
 	// an empty list via PrunableStore instead).
 	ErrNoEventLog = errors.New("server: no durable event log configured")
+	// ErrClientMCPUnsupported means this DEPLOYMENT does not accept
+	// client-provided MCP servers on session creation (ADR 0237's listener-scoped
+	// authority, applied to outbound MCP). It is the deployment's refusal, not the
+	// build's: the RPC and the field exist, this deployment just does not offer
+	// them, exactly as ErrNoEventLog reports a wired-storage fact one level up.
+	// Both map to UNIMPLEMENTED / 501 for that reason, and a client that wants to
+	// know BEFORE it asks reads mcp_servers_on_create from GetCompatibilityInfo.
+	ErrClientMCPUnsupported = errors.New("server: client-provided MCP servers are not accepted on this deployment")
 	// ErrSessionDeleteUnsupported means the configured store cannot physically
 	// remove snapshots and their sidecars.
 	ErrSessionDeleteUnsupported = errors.New("server: session deletion is not supported by the configured store")

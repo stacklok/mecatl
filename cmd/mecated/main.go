@@ -1051,6 +1051,7 @@ func appConfig(cfg config, sink port.EventSink, recorder port.ToolCallRecorder, 
 		Workspace:                     cfg.workspace,
 		WorkspaceAuthority:            mustWorkspaceAuthority(cfg),
 		AuthoritativeWorkspace:        cfg.workspace,
+		ClientMCPOnCreate:             clientMCPOnCreateForListeners(cfg),
 		Model:                         cfg.model,
 		DefaultProvider:               cfg.defaultProvider,
 		DefaultModel:                  cfg.defaultModel,
@@ -1400,6 +1401,40 @@ func workspaceAuthorityForListeners(cfg config) (server.WorkspaceAuthority, erro
 	default:
 		return 0, fmt.Errorf("--workspace-authority %q: want client-selected or server-assigned", cfg.workspaceAuthority)
 	}
+}
+
+// clientMCPOnCreateForListeners derives whether this deployment accepts
+// CLIENT-PROVIDED MCP servers on a session-creating API request (issue #821).
+//
+// It is the sibling of workspaceAuthorityForListeners and reuses its exact
+// predicate — permitted only when NEITHER API listener is a network boundary —
+// because it answers the same question about a different ambient authority. A
+// workspace path lends the server's filesystem authority to the caller; an MCP
+// endpoint plus its auth headers lends the server's OUTBOUND NETWORK authority,
+// letting a remote principal aim the daemon at a host of its choosing and have it
+// carry supplied credentials there. Both are "an authenticated caller is not
+// thereby authorized to direct the server's ambient authority".
+//
+// DEPLOYMENT-SCOPED, not per-connection, per ADR 0237's Decision: authority is "a
+// deployment/composition policy, not an inference made from a request or from the
+// server package's socket state". One *Service backs both listeners, so a daemon
+// with ANY network-facing API listener refuses the field on ALL of them,
+// including a UNIX socket it also happens to serve. That is the fail-closed
+// direction: the alternative would have the same Service answer differently per
+// connection, which contradicts 0237 as written and would need its own ADR.
+//
+// The mixed case is therefore deliberately conservative rather than clever. A
+// daemon spawned by an SDK is the target shape (--grpc-unix-socket with
+// --http-addr "" — S8), and it has no network listener at all, so it keeps the
+// feature; an operator who adds a TCP listener to that daemon has widened its
+// reachability and gives it up.
+//
+// The SAME value feeds the mcp_servers_on_create advertisement, so the daemon
+// cannot advertise a field it will refuse.
+func clientMCPOnCreateForListeners(cfg config) bool {
+	grpcNetwork := listenerIsNetworkBoundary(cfg.grpcAddr, cfg.grpcUnixSocket != "")
+	httpNetwork := cfg.httpAddr != "" && listenerIsNetworkBoundary(cfg.httpAddr, false)
+	return !grpcNetwork && !httpNetwork
 }
 
 // mustWorkspaceAuthority is used only after validateEffectiveConfig has accepted

@@ -262,9 +262,9 @@ The server-side half of callback tools. The boundary is enforced by the listener
 - AC9.1: A session created over a **UDS** listener with `mcp_servers` mounts them and reaches their tools.
   - verify: `TestSDKServerEnablers_Scenario9_UDSSessionMountsMCPServers`
 - AC9.2: The same request over a **TCP** listener is refused with a typed unsupported-feature error — the boundary holds against a client that does not implement the SDK's check.
-  - verify: `TestADR_0244_McpServersRejectedOnTCPListener`
+  - verify: `TestSDKServerEnablers_Scenario9_McpServersRejectedOnTCPListener`
 - AC9.3: `mcp_servers_on_create` appears in `GetCompatibilityInfo.features` only on a listener that permits it.
-  - verify: `TestADR_0244_ListenerScopedFeatureAdvertisement`
+  - verify: `TestSDKServerEnablers_Scenario9_ListenerScopedFeatureAdvertisement`
 - AC9.4: A stdio entry and an sse entry are hard-rejected on every listener — the no-stdio invariant is unchanged.
   - verify: `TestInvariant_no_stdio_mcp_ever`
 - AC9.5: Header values on a mounted MCP server are never logged, never projected into an event, and never appear in an error.

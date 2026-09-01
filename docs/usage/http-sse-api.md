@@ -44,7 +44,7 @@ compatibility. `build_id` is not a semantic-version API.
 
 | Method & path | Body | Response |
 | --- | --- | --- |
-| `POST /v1/sessions` | `{workspace, mode?, limits?, provider_id?, model_id?, profile?}` | `201` `{session_id}` |
+| `POST /v1/sessions` | `{workspace, mode?, limits?, provider_id?, model_id?, profile?, mcp_servers?}` | `201` `{session_id}`; `501` code `client_mcp_unsupported` when `mcp_servers` is non-empty on a deployment that does not accept it (see below) |
 | `GET /v1/sessions` | — | `200` `{sessions: [...]}` — the stored-session inventory (picker rows: id, timestamps, state, turns, model id; no conversation content), most-recently-active first |
 | `GET /v1/sessions/{id}` | — | `200` session snapshot |
 | `GET /v1/sessions/{id}/events` | — | `200` `text/event-stream` — replay a session's durable event log (full timeline incl. the log-only `approval`/`compaction_archive`/`user_prompt` a live prompt stream skips); empty for an unknown id, `501` when no durable `EventLog` is wired |
@@ -62,6 +62,19 @@ compatibility. `build_id` is not a semantic-version API.
 | `POST /v1/sessions/{id}/fork` | `{"title": "...", "reasoning_effort": "..."}` (both optional; empty/absent inherits the source's) | `201` `{session_id}` — create a peer session from `{id}`'s conversation history snapshot (ADR 0065); same provider/model only, with the ONE optional selector delta a reasoning-effort override (ADR 0068); `412` if `{id}` is not an idle/terminal main chat or is live in this process, `409` when another replica holds its lease |
 | `POST /v1/sessions/{id}/adoption:preflight` | `{workspace, environment_kind, environment_id, provider_id, model_id, profile?}` | `200` `{eligible, reason_code, bindings}`. Requires authenticated caller ownership; absent and foreign IDs are both `404`. Every binding is explicit and unresolved bindings return `binding_unresolved` rather than selecting a default |
 | `POST /v1/sessions/{id}/adopt` | the same explicit bindings plus `idempotency_key` | `201` `{session_id, source_session_id, capabilities, resolved_model}`. Revalidates under the source mutation lease; a retry returns the same complete target. The legacy source is unchanged |
+
+`mcp_servers` mounts client-provided streaming-HTTP MCP servers for the created
+session's lifetime, via a per-session engine. Each entry is
+`{name, url, type?, headers?}` — the HTTP mirror of the gRPC
+`CreateSessionRequest.mcp_servers` field, documented in full in
+[the gRPC API guide](./grpc-api.md). The short version: it is **listener-scoped**
+per [ADR 0237](../adr/0237-listener-scoped-workspace-authority.md) and the scope is
+a deployment property, so a daemon with any network-facing API listener refuses
+every non-empty value on all of its listeners with `501` /
+`client_mcp_unsupported`; check `mcp_servers_on_create` in `GET /v1/compatibility`
+`features` first. A `stdio` or `sse` entry is `400` on every deployment (mecatl
+never spawns an MCP server process), and header values are never logged, evented,
+or echoed in an error.
 
 Adoption is available only when authenticated caller ownership and a per-session engine
 factory are wired (`ServerCapabilities.legacy_adoption`). It accepts no message array or
