@@ -44,15 +44,19 @@ func TestADR_0254_LearningDriversEnforceOwnershipOrFailClosed(t *testing.T) {
 			OwnershipMode: grpcdriver.LearningRepositoryOwnershipTrusted,
 		}))
 	})
-	_, _, _, _, closeTrusted, err := resolveLearningRepositories(context.Background(), Config{
-		LearningStoreURL: trustedAddr,
-		driverConns:      driverConnsForTest(t),
+	attempts, proposals, skills, _, closeTrusted, err := resolveLearningRepositories(context.Background(), Config{
+		LearningStoreURL:  trustedAddr,
+		OwnershipEnforced: false,
+		driverConns:       driverConnsForTest(t),
 	})
 	if closeTrusted != nil {
 		closeTrusted()
 	}
 	if err != nil {
 		t.Fatalf("trusted single-tenant driver negotiation: %v", err)
+	}
+	if attempts == nil || proposals == nil || skills == nil {
+		t.Fatalf("trusted single-tenant driver repositories = (%T, %T, %T), want complete composed set", attempts, proposals, skills)
 	}
 	_, _, _, _, closeAutomatic, err := resolveLearningRepositories(context.Background(), Config{
 		LearningStoreURL: trustedAddr, LearningMode: learning.Review, driverConns: driverConnsForTest(t),

@@ -69,7 +69,7 @@ An explicit accepted request drives a durable attempt through claim, evidence re
   - verify: `TestADR_0294_AbstentionIsASeparateTerminalOutcome`
 - AC3.5: Crash after claim or after a downstream durable boundary is reconciled idempotently; a retry neither duplicates a proposal/skill nor reports an invented success.
   - verify: `TestADR_0294_AttemptReconciliationIsIdempotent`
-- AC3.6: With learning unwired or off, engine composition and ordinary runs remain byte-identical and allocate no attempt repository, worker, or durable attempt.
+- AC3.6: With learning unwired (including the default/off configuration without `--learning-store-url`), engine composition and ordinary runs remain byte-identical and allocate no attempt repository, worker, or durable attempt. Off mode with an explicitly configured remote learning store still dials, probes, and composes that repository set for explicit reflection, learned-skill inspection, and recovery of already-admitted work; an ordinary off-mode run does not itself admit a new automatic attempt, and explicit `/reflect` semantics remain unchanged.
   - verify: `TestCloudNativeLearning_Scenario3_UnwiredLearningIsByteIdentical`
 
 ---
@@ -92,7 +92,7 @@ The distributed contract reaches beyond the queue: `ProposalRepository` and `Ski
 
 ### Scenario 5 — Authorized attempt inspection and control
 
-The service exposes caller-authorized attempt get/list state and defined manual retry/abandon controls with bounded pages and opaque cursors, safe closed failure codes, and authorized proposal/skill links. Ownership/non-disclosure applies before locks, signals, diagnostics, and pagination/count/cursor construction: foreign and missing attempts are indistinguishable with no testable timing or existence oracle. The private owner binding created with the attempt is the only authority input; callers cannot supply a principal or system-principal bypass. Driver-backed learning requires workload-authenticated claims, separated caller and infrastructure RPCs, opaque project namespaces (never raw workspace paths), and fail-closed startup if ownership cannot be enforced. Attempt watch is deferred: ADR-0250's session `EventLog` watch is not an attempt watch feed. A later ADR must specify a durable attempt-change feed whose notifications are advisory and whose clients re-read `AttemptRepository` under authority.
+The service exposes caller-authorized attempt get/list state and defined manual retry/abandon controls with bounded pages and opaque cursors, safe closed failure codes, and authorized proposal/skill links. Ownership/non-disclosure applies before locks, signals, diagnostics, and pagination/count/cursor construction: foreign and missing attempts are indistinguishable with no testable timing or existence oracle. The private owner binding created with the attempt is the only authority input; callers cannot supply a principal or system-principal bypass. The shipped raw learning repository driver is not a multi-tenant authority boundary: when application ownership enforcement is enabled, any configured remote learning store fails closed until ADR-0213 workload-authenticated middleware, a private owner registry, and separated maintenance RPCs land. A capability-complete driver is permitted only as explicitly trusted single-tenant infrastructure with `OwnershipEnforced=false`; project namespaces are opaque rather than raw workspace paths. Attempt watch is deferred: ADR-0250's session `EventLog` watch is not an attempt watch feed. A later ADR must specify a durable attempt-change feed whose notifications are advisory and whose clients re-read `AttemptRepository` under authority.
 
 **Acceptance:**
 - AC5.1: The owner can get and page through attempt projections, while another caller cannot infer existence, metadata, proposal IDs, skill IDs, counts, cursors, timing, or diagnostics. This non-disclosure holds before locks/signals/diagnostics and pagination/count/cursor construction; foreign and missing requests have the same absence-style result.
@@ -101,7 +101,7 @@ The service exposes caller-authorized attempt get/list state and defined manual 
   - verify: `TestADR_0294_AttemptAPIIsContentFree`
 - AC5.3: Manual retry and abandon perform only defined attempt CAS transitions; abandon is non-compensating and does not promise downstream rollback. Stale versions, terminal conflicts, and a live fenced claim return closed typed errors without changing the attempt. Private owner binding and exact-source delegation are enforced without caller-supplied principal or system-principal bypass.
   - verify: `TestADR_0294_AttemptControlsRequirePrivateOwnerBinding`
-- AC5.4: Driver-backed learning enforces workload-authenticated claims; caller and infrastructure RPCs are separated; project namespaces are opaque rather than raw workspace paths; and startup fails closed when the driver cannot enforce ownership.
+- AC5.4: The shipped raw learning repository RPCs do not claim workload-authenticated ownership enforcement. With `OwnershipEnforced=true`, configuring `--learning-store-url` fails closed until ADR-0213 middleware, a private owner registry, and separated maintenance RPCs exist, regardless of a driver's self-advertised `enforced` value. Only a capability-complete driver explicitly trusted as single-tenant infrastructure may compose when `OwnershipEnforced=false`; proposal and skill project namespaces are opaque rather than raw workspace paths.
   - verify: `TestADR_0294_LearningDriversEnforceOwnershipOrFailClosed`
 - AC5.5: Attempt watch is deferred. ADR-0250 session `EventLog` watch is explicitly not an attempt-watch feed; no endpoint, cursor, process-local substitute, or watch envelope is introduced in this plan.
   - verify: none — deferred to a separately specified durable attempt-change feed
@@ -136,16 +136,16 @@ Weighted automatic work joins the same durable attempt queue only after explicit
 
 ## Sequencing recommendation
 
-Land Scenario 1 alone first. Scenarios 2 and 3 form the first durable vertical slice and must update both ADR 0027 inventories before code lands. Scenario 4 follows before any distributed claim is made for learned skills, but is the remaining oversized scenario: `/plan-orchestrate` must split it into dependency-ordered small waves for driver conformance and attempt-lifecycle fencing first, then per-partition generation and replica hydration/invalidation convergence. Scenario 5 may land its get/list/control half after Scenario 3; attempt watch is deferred to a separately specified durable attempt-change-feed follow-up, not ADR-0250 session watch. Scenario 6 is last; prior waves must describe automatic controls as process-local.
+Land Scenario 1 alone first. Scenarios 2 and 3 form the first durable vertical slice and must update ADR 0027's durable learning-attempt repository, learning-attempt discovery/recovery worker, and durable learning-attempt lifecycle/admission-provenance entries before code lands. Scenario 4 follows before any distributed claim is made for learned skills, but is the remaining oversized scenario: `/plan-orchestrate` must split it into dependency-ordered small waves for driver conformance and attempt-lifecycle fencing first, then per-partition generation and replica hydration/invalidation convergence. Scenario 5 may land its get/list/control half after Scenario 3; attempt watch is deferred to a separately specified durable attempt-change-feed follow-up, not ADR-0250 session watch. Scenario 6 is last; prior waves must describe automatic controls as process-local.
 
 ## Definition of done
 
 1. All six scenarios' acceptance criteria and named tests are green, including cross-Build/cross-replica offline proofs.
 2. `task lint`, `task test`, `task api:check`, and `go run ./cmd/mecademo` pass; if an engine export changes, `task api:update` and the classified `engine/CHANGELOG.md` entry are committed.
-3. `task docs` and `task site:build` pass; `docs/architecture.md`, `docs/design/IMPLEMENTATION-NOTES.md`, the ADR 0027 List 1/2 inventories, `docs/usage.md`, and relevant `user-docs/` material describe landed behavior.
+3. `task docs` and `task site:build` pass; `docs/architecture.md`, `docs/design/IMPLEMENTATION-NOTES.md`, the ADR 0027 durable automatic-admission ledger, durable learning-attempt repository, learning-attempt discovery/recovery worker, and corresponding restart-fidelity entries, `docs/usage.md`, and relevant `user-docs/` material describe landed behavior.
 4. `task ac-trace-strict` passes when this plan becomes `landed`.
-5. Every new outlives-call resource and restart-lost state has an explicit ADR 0027 inventory/rehydration decision, and every attempt record/API projection passes the content-free structural guards.
-6. The unwired/off configuration is demonstrated byte-identical, and no stage claims distributed automatic bounds before Scenario 6.
+5. Every new outlives-call resource and restart-lost state has an explicit ADR 0027 resource-inventory and rehydrate-fidelity decision, named by the resource rather than a positional table row, and every attempt record/API projection passes the content-free structural guards.
+6. The unwired default/off configuration is demonstrated byte-identical; explicitly configuring a remote repository is documented as a connection/inspection/recovery opt-in rather than automatic admission, and no stage claims distributed automatic bounds before Scenario 6.
 
 ## Deferred decisions and known risks
 

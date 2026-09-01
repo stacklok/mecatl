@@ -253,7 +253,7 @@ secrets or raw file content. See [ADR 0088](https://github.com/stacklok/mecatl/b
 | `--scheduler-min-interval` | `1m` | Frequency floor enforced at schedule-create time (fail-closed, by both the in-chat `Schedule` tool and the REST/gRPC create). Defaults to `1m`; `0` disables the floor |
 | `--scheduler-max-concurrent-fires` | `4` | Max schedules fired in parallel per tick |
 | `--schedule-store-url` | `""` | gRPC driver endpoint (`ScheduleStoreService` + `ScheduleOneShotReArmerService`) for the durable schedule registry, **independent of the session store** — when set, replaces the `ScheduleStore()` discovery from the configured store. Empty keeps the default (the configured store's own `ScheduleStore()`, or no scheduling). The driver runs atomic fire advancement server-side, but current remote drivers do not expose atomic create-only publication; this option is therefore rejected when OIDC caller ownership is enabled |
-| `--learning-store-url` | `""` | One distributed-learning driver endpoint. Startup requires explicit capability advertisement of the complete Attempt/Proposal/Skill repository set and, when automatic learning is non-off, the automatic admission ledger; partial drivers fail instead of mixing remote and local persistence or accounting. Repository partitions are opaque on the wire. Current raw RPCs are trusted single-tenant infrastructure only; ownership-enforced/multi-tenant startup fails closed pending ADR-0213 workload-authenticated ownership |
+| `--learning-store-url` | `""` | One distributed-learning driver endpoint. Startup requires explicit capability advertisement of the complete Attempt/Proposal/Skill repository set and, when automatic learning is non-off, the automatic admission ledger; partial drivers fail instead of mixing remote and local persistence or accounting. The explicit flag still dials/probes/composes repositories in off mode for explicit reflection, learned-skill inspection, and recovery of already-admitted work; it does not enable automatic admission. Repository partitions are opaque on the wire. Current raw RPCs are permitted only as trusted single-tenant infrastructure with `OwnershipEnforced=false`; ownership-enforced/multi-tenant startup fails closed pending ADR-0213 workload-authenticated ownership |
 
 See [Scheduled tasks](/building/what-you-get/scheduled-tasks.md) for the in-chat `Schedule` tool and the gRPC/REST management surface.
 
@@ -561,10 +561,14 @@ startup rejects an old or partial driver rather than silently keeping any local
 repository or accounting authority. Equal driver targets reuse one Build-owned connection and shutdown
 path. Proposal and skill partition keys are opaque hashes on this wire, not raw
 workspace paths or identity claims. The current raw repository RPCs are trusted,
-single-tenant infrastructure only. An ownership-enforced or multi-tenant deployment
+single-tenant infrastructure only, and may be composed only with `OwnershipEnforced=false`.
+An ownership-enforced or multi-tenant deployment
 fails startup even if the driver self-advertises `enforced`; ADR-0213 workload-authenticated
 claims, a private durable owner registry, and separately authenticated maintenance RPCs
-must land before that posture is available.
+must land before that posture is available. Selecting the flag remains an explicit
+repository opt-in in off mode: startup still dials, probes, composes, and inspects the
+remote set for explicit reflection, learned-skill publication, and recovery of work
+admitted by another process, but ordinary off-mode runs do not automatically admit attempts.
 
 ### Import from Codex or Claude Code
 

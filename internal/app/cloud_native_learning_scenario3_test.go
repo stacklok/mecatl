@@ -10,11 +10,15 @@ import (
 	"testing"
 	"time"
 
+	"google.golang.org/grpc"
+
+	driverv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/driver/v1"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/learning"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/internal/adapter/attemptstore"
+	"github.com/stacklok/mecatl/internal/adapter/grpcdriver"
 	"github.com/stacklok/mecatl/internal/adapter/store/jsonlstore"
 )
 
@@ -163,6 +167,30 @@ func TestCloudNativeLearning_Scenario3_UnwiredLearningIsByteIdentical(t *testing
 	}
 	if _, statErr := os.Stat(filepath.Join(userModelDir, "learning-attempts")); !errors.Is(statErr, os.ErrNotExist) {
 		t.Fatalf("off learning allocated durable attempt repository: %v", statErr)
+	}
+
+	// Off suppresses automatic admission, not an explicitly configured repository
+	// connection. The latter remains available for explicit reflection, learned-skill
+	// inspection, and recovery of attempts admitted by another process.
+	remoteAddr := startSourceDriver(t, func(server *grpc.Server) {
+		driverv1.RegisterLearningRepositoryCapabilitiesServiceServer(server, grpcdriver.NewLearningRepositoryCapabilitiesServer(grpcdriver.LearningRepositoryCapabilities{
+			AttemptRepository: true, ProposalRepository: true, SkillRepository: true,
+			OwnershipMode: grpcdriver.LearningRepositoryOwnershipTrusted,
+		}))
+	})
+	attempts, proposals, skills, ledger, closeRemote, err := resolveLearningRepositories(ctx, Config{
+		LearningStoreURL: remoteAddr,
+		LearningMode:     learning.Off,
+		driverConns:      driverConnsForTest(t),
+	})
+	if closeRemote != nil {
+		defer closeRemote()
+	}
+	if err != nil {
+		t.Fatalf("off configured learning repository: %v", err)
+	}
+	if attempts == nil || proposals == nil || skills == nil || ledger != nil {
+		t.Fatalf("off configured repositories = (%T, %T, %T), ledger=%T; want inspected repository set without automatic ledger", attempts, proposals, skills, ledger)
 	}
 }
 

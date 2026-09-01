@@ -49,9 +49,13 @@ learning:
 
 The modes are deliberately different:
 
-- **`off`** disables the automatic observer, coordinator, proposal repository,
-  and reflection provider call. Explicit memory and reflection operations remain
-  available.
+- **`off`** disables automatic observation, admission, and coordinator work. With no
+  `--learning-store-url`, it allocates no attempt repository or recovery worker and
+  keeps explicit reflection on the lazy local path. An explicitly configured remote
+  store is still dialed, capability-probed, and composed so explicit reflection,
+  learned-skill inspection, and recovery of already-admitted attempts remain available;
+  ordinary off-mode runs do not admit new automatic attempts. Explicit memory and
+  reflection operations remain available.
 - **`review`** admits eligible evidence and stages bounded proposals, but does
   not change active memory automatically.
 - **`auto`** stages first and can promote only the narrow set of candidates that

@@ -23,11 +23,11 @@ off/unwired composition and do not claim enforcement that the driver cannot prov
 
 Repair proof only; AC ownership remains with the existing composition and driver-ownership tasks.
 
-> AC3.6: With learning unwired or off, engine composition and ordinary runs remain byte-identical and allocate no attempt repository, worker, or durable attempt.
+> AC3.6: With learning unwired (including the default/off configuration without `--learning-store-url`), engine composition and ordinary runs remain byte-identical and allocate no attempt repository, worker, or durable attempt. Off mode with an explicitly configured remote learning store still dials, probes, and composes that repository set for explicit reflection, learned-skill inspection, and recovery of already-admitted work; an ordinary off-mode run does not itself admit a new automatic attempt, and explicit `/reflect` semantics remain unchanged.
 >
 > - verify: `TestCloudNativeLearning_Scenario3_UnwiredLearningIsByteIdentical`
 
-> AC5.4: Driver-backed learning enforces workload-authenticated claims; caller and infrastructure RPCs are separated; project namespaces are opaque rather than raw workspace paths; and startup fails closed when the driver cannot enforce ownership.
+> AC5.4: The shipped raw learning repository RPCs do not claim workload-authenticated ownership enforcement. With `OwnershipEnforced=true`, configuring `--learning-store-url` fails closed until ADR-0213 middleware, a private owner registry, and separated maintenance RPCs exist, regardless of a driver's self-advertised `enforced` value. Only a capability-complete driver explicitly trusted as single-tenant infrastructure may compose when `OwnershipEnforced=false`; proposal and skill project namespaces are opaque rather than raw workspace paths.
 >
 > - verify: `TestADR_0259_LearningDriversEnforceOwnershipOrFailClosed`
 

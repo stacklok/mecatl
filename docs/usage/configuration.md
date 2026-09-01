@@ -349,7 +349,12 @@ Build-owned connection cache and shutdown path used by the other driver seams ow
 this connection. Principal and project repository partitions cross this transport
 only as opaque SHA-256 values, never as authenticated identity claims or raw
 workspace paths. This negotiation does not by itself make the raw driver a tenant
-boundary; workload-authenticated ownership enforcement is a later deployment gate.
+boundary. The shipped RPCs are permitted only as explicitly trusted single-tenant
+infrastructure when `OwnershipEnforced=false`; ownership-enforced startup fails closed
+until ADR-0213 workload-authenticated middleware, a private owner registry, and separated
+maintenance RPCs land. The explicit flag is still dialed, probed, and composed in Off mode
+for explicit reflection, learned-skill inspection, and recovery of already-admitted work;
+it does not enable automatic observation or admission.
 
 Transport posture: **only LOCAL targets may ride plaintext** — loopback hosts
 and unix sockets (the single-user default). Any other driver target
