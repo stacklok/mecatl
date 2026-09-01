@@ -497,6 +497,11 @@ type Config struct {
 	// same Driver* auth/TLS posture and per-target connection cache as the
 	// store/event-log drivers (equal URLs share one connection).
 	ScheduleStoreURL string
+	// LearningStoreURL selects one remote distributed-learning backend. The
+	// driver must explicitly advertise the complete AttemptRepository,
+	// ProposalRepository, and SkillRepository set; partial/legacy drivers fail
+	// startup rather than falling back to local repositories.
+	LearningStoreURL string
 	DriverAuthToken  string
 	DriverTLS        bool
 	DriverTLSCA      string
@@ -586,6 +591,8 @@ type Config struct {
 	// categories reach diagnostics.
 	SkillEvaluator      learning.SkillEvaluator
 	attemptRepository   learning.AttemptRepository
+	proposalRepository  learning.ProposalRepository
+	skillRepository     learning.SkillRepository
 	learningSourceStore port.SessionStore
 	// operatorLearningMode retains the pre-project ceiling so per-session engines
 	// can apply their own workspace's tighten-only project setting.
@@ -1714,6 +1721,22 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		}
 		cfg.commandSource = cmdSrc
 		commandConnClose = connClose
+	}
+
+	// Distributed learning is one explicitly negotiated backend. A configured
+	// target must provide all three repositories; partial capability never
+	// falls through to the local filesystem stores.
+	attemptRepo, proposalRepo, skillRepo, learningClose, learningErr := resolveLearningRepositories(ctx, cfg)
+	if learningErr != nil {
+		commandConnClose()
+		return nil, learningErr
+	}
+	if cfg.LearningStoreURL != "" {
+		cfg.attemptRepository = attemptRepo
+		cfg.proposalRepository = proposalRepo
+		cfg.skillRepository = skillRepo
+		previousClose := commandConnClose
+		commandConnClose = func() { learningClose(); previousClose() }
 	}
 
 	// buildStore + the OPTIONAL session lease (cloud-native Phase 4) are built
@@ -5004,7 +5027,15 @@ func buildCatalog(ctx context.Context, cfg Config, reg *providerRegistry, provid
 	var reflectionRepository learning.ProposalRepository
 	var attemptRepository learning.AttemptRepository
 	var reflectionCoordinator *reflectionCoordinator
-	if userModelStore != nil && provider != nil {
+	if cfg.LearningStoreURL != "" {
+		attemptRepository = cfg.attemptRepository
+		reflectionRepository = cfg.proposalRepository
+		if userModelStore != nil && provider != nil && (cfg.LearningMode != learning.Off || cfg.operatorLearningMode != learning.Off) {
+			reflectionCoordinator = newReflectionCoordinator(ctx, reflectionCoordinatorConfig{Diagnostics: cfg.diag()})
+			previousClose := mcpClose
+			mcpClose = func() { reflectionCoordinator.Close(); previousClose() }
+		}
+	} else if userModelStore != nil && provider != nil {
 		if base := resolveUserModelDir(cfg.UserModelDir); base != "" {
 			if cfg.LearningMode != learning.Off || cfg.operatorLearningMode != learning.Off {
 				attempts, attemptErr := attemptstore.New(filepath.Join(base, "learning-attempts"))
@@ -5068,16 +5099,20 @@ func buildCatalog(ctx context.Context, cfg Config, reg *providerRegistry, provid
 	var liveSkills *coreskillfs.AtomicCatalog
 	skillPartition := learning.SkillPartition{Principal: reflectionPrincipal(nil)}
 	const skillOwner = "reflection"
-	if base := resolveUserModelDir(cfg.UserModelDir); base != "" {
+	if cfg.LearningStoreURL != "" {
+		learnedSkills = cfg.skillRepository
+	} else if base := resolveUserModelDir(cfg.UserModelDir); base != "" {
 		learned, openErr := skillstore.New(filepath.Join(base, "learned-skills"))
 		if openErr != nil {
 			mcpClose()
 			return nil, catalogAssets{}, nil, nil, nil, fmt.Errorf("build learned-skill store: %w", openErr)
 		}
 		learnedSkills = learned
-		active, listErr := listActiveLearnedSkills(ctx, learned, skillPartition, "")
+	}
+	if learnedSkills != nil {
+		active, listErr := listActiveLearnedSkills(ctx, learnedSkills, skillPartition, "")
 		if listErr == nil && cfg.Workspace != "" && projectIngestionAdmitted(cfg) {
-			projectActive, projectErr := listActiveLearnedSkills(ctx, learned, learning.SkillPartition{Principal: skillPartition.Principal, Project: cfg.Workspace}, "")
+			projectActive, projectErr := listActiveLearnedSkills(ctx, learnedSkills, learning.SkillPartition{Principal: skillPartition.Principal, Project: cfg.Workspace}, "")
 			if projectErr != nil {
 				listErr = projectErr
 			} else {

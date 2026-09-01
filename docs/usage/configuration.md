@@ -326,6 +326,17 @@ conforming driver must accept snapshot payloads up to **64 MiB** (mount the
 gRPC server with a matching receive limit; the harness client is already
 configured for it).
 
+`--learning-store-url` selects one driver target for the distributed learning
+repository set. The target must implement the capability-negotiation service and
+positively advertise `AttemptRepositoryService`, `ProposalRepositoryService`, and
+`SkillRepositoryService` together. Startup fails if any member is absent; mecatl
+never combines a partial remote set with local fallback repositories. The same
+Build-owned connection cache and shutdown path used by the other driver seams owns
+this connection. Principal and project repository partitions cross this transport
+only as opaque SHA-256 values, never as authenticated identity claims or raw
+workspace paths. This negotiation does not by itself make the raw driver a tenant
+boundary; workload-authenticated ownership enforcement is a later deployment gate.
+
 Transport posture: **only LOCAL targets may ride plaintext** — loopback hosts
 and unix sockets (the single-user default). Any other driver target
 **requires `--driver-tls`, token or not**: the client refuses cleartext

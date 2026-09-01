@@ -1,0 +1,24 @@
+// SPDX-FileCopyrightText: Copyright 2026 Stacklok, Inc.
+// SPDX-License-Identifier: LicenseRef-Stacklok-Proprietary
+
+// mecatl driver API: explicit distributed-learning repository negotiation.
+//
+// A harness selects this endpoint only as one complete backend for attempts,
+// proposals, and learned skills. A positive response never conveys caller
+// identity, workspace paths, credentials, or repository content.
+syntax = "proto3";
+
+package mecatl.driver.v1;
+
+service LearningRepositoryCapabilitiesService {
+  rpc Capabilities(LearningRepositoryCapabilitiesRequest) returns (LearningRepositoryCapabilitiesResponse);
+}
+
+message LearningRepositoryCapabilitiesRequest {}
+
+message LearningRepositoryCapabilitiesResponse {
+  bool attempt_repository = 1;
+  bool proposal_repository = 2;
+  bool skill_repository = 3;
+  bool validated_skill_activation = 4;
+}

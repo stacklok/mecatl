@@ -4235,6 +4235,17 @@ after the observer has copied the verified session principal and bounded traject
 stops local scheduling, publishes closed receipts for queued waiters, clears pending state, cancels active work, and joins workers. Queue-full, duplicate, completion, and failure diagnostics carry only bounded
 attempt IDs and counts. Queue/singleflight/receipt state remains reset-by-design scheduling state; `internal/adapter/attemptstore` persists authoritative queued/running/terminal workflow state and immutable content-free provenance across processes. Skipped/non-admitted decisions emit their immediate content-free activity and never touch the attempt repository.
 
+**Distributed learning repository composition:** `internal/app/learningdriver.go`
+(`resolveLearningRepositories`) selects one `--learning-store-url` target only after
+`internal/adapter/grpcdriver/learningrepositories.go`
+(`ProbeLearningRepositoryCapabilities`) positively negotiates the complete Attempt/Proposal/Skill
+repository set. Missing or partial capability is fatal; no member falls back to local persistence.
+All three clients borrow the existing Build-scoped `driverConns` entry and once-guarded close.
+Composition hashes both components of Proposal/Skill partitions before transport and restores only
+the in-process view, so raw workspace paths and identity strings never cross these repository RPCs.
+Validated skill activation is exposed only when separately advertised. This is transport
+minimization; enforced workload ownership remains outside this slice.
+
 The observer performs the structural signal gate before the process-wide legacy interval admission, so
 trivial completions spend no provider call and do not consume the debounce cadence. Standard composition
 constructs `agent.EvidenceReflector` on the selected session provider/model (or the same-provider

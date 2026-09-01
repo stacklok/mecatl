@@ -115,6 +115,7 @@ var flagMetaByFlag = map[string]flagMeta{
 	"memory-store-url":             {group: groupDriver, common: false, acp: acpExclude},
 	"event-log-url":                {group: groupDriver, common: false, acp: acpExclude},
 	"schedule-store-url":           {group: groupDriver, common: false, acp: acpExclude},
+	"learning-store-url":           {group: groupDriver, common: false, acp: acpExclude},
 	"skill-source-url":             {group: groupDriver, common: false, acp: acpExclude},
 	"soul-source-url":              {group: groupDriver, common: false, acp: acpExclude},
 	"agent-source-url":             {group: groupDriver, common: false, acp: acpExclude},

@@ -1228,6 +1228,15 @@ and before provider work; failure, timeout, and abstention still consume it. Que
 The controller and weighted-admission caches reset on restart, while admitted work is authoritative in the durable attempt repository. Review/auto composition starts one bounded Build-owned recovery worker when nonterminal attempts exist; it reloads the exact source session and RunID-bound event evidence, rebuilds only the canonical projection, and invokes the reflector across the shared untrusted fence. Proposal/skill publication and terminal attempt finalization remain claim-fenced and idempotent. `Built.Close` cancels and joins this worker. Durable proposals and attempts remain
 idempotent. Budgets are process-local, so multiple replicas multiply aggregate capacity.
 
+A configured `--learning-store-url` selects one explicitly negotiated distributed backend for
+all three learning repositories. The driver must advertise Attempt, Proposal, and Skill repository
+support together through `LearningRepositoryCapabilitiesService`; missing negotiation or any false
+member is a startup error, never a local fallback. The clients share the Build-owned driver
+connection cache and its once-guarded close. Composition hashes principal and project partition
+components before Proposal/Skill RPCs and restores only the caller's in-process partition view, so
+raw workspace paths and identity strings do not cross this repository transport. This is transport
+minimization, not workload-authenticated ownership enforcement.
+
 Review and auto share admission; only downstream staging/promotion differs. Auto promotes operator
 facts only from explicit principal-authored current-prompt evidence and project facts only at the
 exact trusted configured root. Tool/assistant/repository/history-only evidence stages for review.

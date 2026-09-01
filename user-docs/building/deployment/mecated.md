@@ -253,6 +253,7 @@ secrets or raw file content. See [ADR 0088](https://github.com/stacklok/mecatl/b
 | `--scheduler-min-interval` | `1m` | Frequency floor enforced at schedule-create time (fail-closed, by both the in-chat `Schedule` tool and the REST/gRPC create). Defaults to `1m`; `0` disables the floor |
 | `--scheduler-max-concurrent-fires` | `4` | Max schedules fired in parallel per tick |
 | `--schedule-store-url` | `""` | gRPC driver endpoint (`ScheduleStoreService` + `ScheduleOneShotReArmerService`) for the durable schedule registry, **independent of the session store** — when set, replaces the `ScheduleStore()` discovery from the configured store. Empty keeps the default (the configured store's own `ScheduleStore()`, or no scheduling). The driver runs atomic fire advancement server-side, but current remote drivers do not expose atomic create-only publication; this option is therefore rejected when OIDC caller ownership is enabled |
+| `--learning-store-url` | `""` | One distributed-learning driver endpoint. Startup requires explicit capability advertisement of the complete Attempt/Proposal/Skill repository set; partial drivers fail instead of mixing remote and local persistence. Repository partitions are opaque on the wire; workload-authenticated driver ownership remains a separate deployment requirement |
 
 See [Scheduled tasks](/building/what-you-get/scheduled-tasks.md) for the in-chat `Schedule` tool and the gRPC/REST management surface.
 
@@ -551,6 +552,15 @@ or a custom store behind the driver protocol, and is mutually exclusive with
 an OIDC/ownership-enforced server rejects `--session-store-url`; use the local JSONL
 backend (or mecak8s's directly wired Redis store) for multi-user deployments until
 the driver adds `port.SessionCreator` parity.
+
+For distributed learning persistence, `--learning-store-url` selects one driver
+for attempts, staged proposals, and learned skills. The target must implement
+`LearningRepositoryCapabilitiesService` and advertise all three repositories;
+startup rejects an old or partial driver rather than silently keeping any local
+repository. Equal driver targets reuse one Build-owned connection and shutdown
+path. Proposal and skill partition keys are opaque hashes on this wire, not raw
+workspace paths or identity claims. Treat the raw driver as trusted infrastructure
+until workload-authenticated ownership enforcement is enabled by a later release.
 
 ### Import from Codex or Claude Code
 
