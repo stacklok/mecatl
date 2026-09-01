@@ -4,12 +4,14 @@
     method func (*Principal).IdentityWellFramed() bool
     method func (*Principal).SameIdentity(other *Principal) bool
     method func (*Session).Abandon() error
+    method func (*Session).AbortAuthorization(reason string) ([]ToolResult, error)
     method func (*Session).ApplyTitleGeneration(generation TitleGenerationState, attempts []TitleAttempt)
     method func (*Session).BeginRun(runID string)
     method func (*Session).BeginTurn() error
     method func (*Session).BindAuthority(authority Authority) error
     method func (*Session).BoundAuthority() (Authority, bool)
     method func (*Session).Cancel() error
+    method func (*Session).ClaimAuthorization() (PendingAuthorization, error)
     method func (*Session).Complete() error
     method func (*Session).Fail() error
     method func (*Session).FailedStepRetryPending() (RetryDisposition, StreamProgress, bool)
@@ -17,10 +19,13 @@
     method func (*Session).FailurePermanence() bool
     method func (*Session).Incarnation() IncarnationID
     method func (*Session).Interrupt() error
+    method func (*Session).InterruptAuthorization() ([]ToolResult, error)
     method func (*Session).LastError() string
     method func (*Session).LimitTripped() (StopReason, bool)
     method func (*Session).PauseForApproval(ask PendingAsk) error
+    method func (*Session).PauseForAuthorization(pending PendingAuthorization) error
     method func (*Session).PendingAsk() (PendingAsk, bool)
+    method func (*Session).PendingAuthorization() (PendingAuthorization, bool)
     method func (*Session).PrepareFailedStepRetry() error
     method func (*Session).RecordAssistant(m Message) error
     method func (*Session).RecordFailureMetadata(disposition RetryDisposition, progress StreamProgress) error
@@ -59,6 +64,7 @@
     method func (*Session).TitleAttempts() []TitleAttempt
     method func (*Session).TitleSourcePrompts() []string
     method func (*Session).TokenUsageSnapshot() map[UsageKind]TokenUsage
+    method func (*Session).ValidateAuthorizationState() error
     method func (Authority).Clone() Authority
     method func (Authority).Valid() bool
     method func (EnvironmentRef).Valid() bool
@@ -66,6 +72,7 @@
     method func (IncarnationID).Valid() bool
     method func (Limits).WithDefaults(d Limits) Limits
     method func (PendingAsk).Origin() AskOrigin
+    method func (PendingAuthorization).Clone() PendingAuthorization
     method func (RetryDisposition).Valid() bool
     method func (State).IsTerminal() bool
     method func (StreamProgress).Valid() bool
@@ -185,6 +192,7 @@ const SessionKindScheduled SessionKind = "scheduled"
 const SessionKindSubagent SessionKind = "subagent"
 const SessionKindTeamMember SessionKind = "team_member"
 const SessionKindUnknown SessionKind = "unknown"
+const StateAuthorizing State = "authorizing"
 const StateAwaiting State = "awaiting"
 const StateCancelled State = "cancelled"
 const StateCompleted State = "completed"
@@ -274,6 +282,7 @@ func RepairToolResult(r ToolResult) ToolResult
 func StripProviderState(messages []Message) []Message
 func ToValidUTF8(s string) string
 func ToolBlockText(b Content) string
+func ValidAuthorizationID(value string) bool
 func ValidateJSON(schema json.RawMessage, payload json.RawMessage) error
 func ValidateMediaParts(parts []Content) error
 func ValidateMediaURL(raw string) error
@@ -287,6 +296,7 @@ type ApprovalPayload struct{AskID string; Verdict string; Tool string; Call Tool
 type ApprovalVerdict int
 type AskOrigin int
 type Authority struct{CapabilitySet governance.CapabilitySet "json:\"capability_set\""; Provenance string "json:\"provenance\""; DefinitionIdentity string "json:\"definition_identity,omitempty\""}
+type AuthorizationBinding string
 type BlockKind string
 type CompactionArchivePayload struct{Replaced []Message}
 type Content struct{BlockKind BlockKind "json:\"block_kind,omitempty\""; Kind MediaKind; MIMEType string; Data []byte; URL string; Text string "json:\"Text,omitempty\""; Name string "json:\"Name,omitempty\""; Title string "json:\"Title,omitempty\""; Description string "json:\"Description,omitempty\""; Size int64 "json:\"Size,omitempty\""; Audience []string "json:\"Audience,omitempty\""; Priority float64 "json:\"Priority,omitempty\""; LastModified string "json:\"LastModified,omitempty\""}
@@ -296,6 +306,7 @@ type EnvironmentKind string
 type EnvironmentRef struct{Kind EnvironmentKind; ID string; Revision string}
 type Event struct{Type EventType; Seq int64; Turn int; Text string; Title *TitlePayload; ToolCall *ToolCall; ToolResult *ToolResult; Ask *PendingAsk; ModelRetry *ModelRetryPayload; RequestManifest *RequestManifestPayload; NetworkAttempt *NetworkAttemptPayload; Result *ResultPayload; TurnEnd *TurnEndPayload; Hook *HookPayload; Approval *ApprovalPayload; CompactionArchive *CompactionArchivePayload; UserPrompt *UserPromptPayload; Usage *Usage; Subagent *SubagentPayload; Team *TeamPayload; Parallel *ParallelPayload; RunID string; Actor *Principal; Schedule *SchedulePayload; Steer *SteerPayload}
 type EventType string
+type ExternalAuthorization struct{ID string; DisplayName string; Binding AuthorizationBinding; ExpiresAt time.Time}
 type GrantType string
 type HookDecision string
 type HookPayload struct{Phase string; Tool string; Decision HookDecision; CallID ToolCallID}
@@ -308,6 +319,7 @@ type NetworkAttemptPayload struct{SessionID SessionID "json:\"session_id\""; Run
 type ParallelEventKind string
 type ParallelPayload struct{ParentCallID string; Kind ParallelEventKind; Join string; BranchCount int; BranchIndex int; ChildID string; ChildIncarnation IncarnationID; BranchLabel string; Goal string; RoutedCategory string; RoutedModel string; RoutingReason string; Model string; ToolName string; IsError bool; ToolCount int; Text string; Detail string; InnerKind EventType; Failed bool; Stop StopReason; Usage Usage; DurationMs int64; Winner int}
 type PendingAsk struct{AskID string; Tool string; Args json.RawMessage; Reason string; Call ToolCallID "json:\"call,omitempty\""; ConfiguredAsk bool; FlooredConfiguredAllow bool; HookOriginated bool "json:\"hook_originated,omitempty\""; PlanOriginated bool "json:\"plan_originated,omitempty\""}
+type PendingAuthorization struct{Authorization ExternalAuthorization; Call ToolCall; Deferred []ToolCall}
 type PermissionMode string
 type PlacementMetadata struct{Kind string "json:\"kind,omitempty\""; Label string "json:\"label,omitempty\""; Branch string "json:\"branch,omitempty\""; Revision string "json:\"revision,omitempty\""}
 type Principal struct{Issuer string; Subject string; GrantType GrantType; Name string}
@@ -351,4 +363,5 @@ var ErrInvalidContent error
 var ErrInvalidMediaURL error
 var ErrInvalidSessionMetadata error
 var ErrNoPendingAsk error
+var ErrNoPendingAuthorization error
 var ErrOwnerAlreadySet error

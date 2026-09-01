@@ -3,12 +3,16 @@
 //
 // The Session aggregate exposes its lifecycle data through exported fields
 // (ID, State, Mode, Conversation, Limits, Counters, EnvironmentRef, CreatedAt) and
-// through the PendingAsk accessor. Two pieces of its state are unexported and
-// not directly addressable from outside the session package:
+// through the PendingAsk and PendingAuthorization accessors. Three pieces of its
+// state are unexported and not directly addressable from outside the session
+// package:
 //
 //   - pending *PendingAsk — readable via Session.PendingAsk() (only while
 //     StateAwaiting) and restorable via Session.PauseForApproval() (only from
 //     StateRunning). The snapshot round-trips it for the awaiting case.
+//   - pendingAuthorization *PendingAuthorization — readable through a deep-copy
+//     accessor while StateAuthorizing and restored through PauseForAuthorization.
+//     Its private DTO preserves effective tool-argument bytes exactly.
 //   - stop StopReason — the recorded terminal stop reason. It is captured
 //     faithfully via Session.RecordedStopReason() (which performs no limit
 //     derivation) and restored via the matching terminal transition
@@ -40,7 +44,10 @@ type Snapshot struct {
 	Incarnation session.IncarnationID  `json:"incarnation,omitempty"`
 	Messages    []messageDTO           `json:"messages"`
 	Pending     *session.PendingAsk    `json:"pending,omitempty"`
-	StopReason  session.StopReason     `json:"stop_reason,omitempty"`
+	// PendingAuthorization is present exactly while StateAuthorizing. Its private
+	// DTO base64-encodes tool arguments so JSON normalization cannot change bytes.
+	PendingAuthorization *pendingAuthorizationDTO `json:"pending_authorization,omitempty"`
+	StopReason           session.StopReason       `json:"stop_reason,omitempty"`
 	// Kind and Relationship are the validated producer taxonomy from ADR 0217.
 	// A missing kind is legacy data and restores as unknown (fail-closed).
 	Kind         session.SessionKind         `json:"kind,omitempty"`
@@ -181,6 +188,85 @@ type contentDTO struct {
 	URL      string            `json:"url,omitempty"`
 }
 
+// pendingAuthorizationDTO keeps the private continuation's effective argument
+// bytes out of json.RawMessage encoding, which may normalize JSON whitespace.
+// []byte uses encoding/json's base64 representation and therefore round-trips
+// the exact bytes.
+type pendingAuthorizationDTO struct {
+	Authorization externalAuthorizationDTO `json:"authorization"`
+	Call          authorizationCallDTO     `json:"call"`
+	Deferred      []authorizationCallDTO   `json:"deferred,omitempty"`
+}
+
+type externalAuthorizationDTO struct {
+	ID          string                       `json:"id"`
+	DisplayName string                       `json:"display_name,omitempty"`
+	Binding     session.AuthorizationBinding `json:"binding"`
+	ExpiresAt   time.Time                    `json:"expires_at"`
+}
+
+type authorizationCallDTO struct {
+	ID     session.ToolCallID `json:"id"`
+	Name   string             `json:"name"`
+	Args   []byte             `json:"args,omitempty"`
+	ItemID string             `json:"item_id,omitempty"`
+}
+
+func toPendingAuthorizationDTO(p session.PendingAuthorization) *pendingAuthorizationDTO {
+	dto := &pendingAuthorizationDTO{
+		Authorization: externalAuthorizationDTO{
+			ID:          p.Authorization.ID,
+			DisplayName: p.Authorization.DisplayName,
+			Binding:     p.Authorization.Binding,
+			ExpiresAt:   p.Authorization.ExpiresAt,
+		},
+		Call: toAuthorizationCallDTO(p.Call),
+	}
+	dto.Deferred = make([]authorizationCallDTO, len(p.Deferred))
+	for i, call := range p.Deferred {
+		dto.Deferred[i] = toAuthorizationCallDTO(call)
+	}
+	return dto
+}
+
+func toAuthorizationCallDTO(call session.ToolCall) authorizationCallDTO {
+	return authorizationCallDTO{
+		ID:     call.ID,
+		Name:   call.Name,
+		Args:   append([]byte(nil), call.Args...),
+		ItemID: call.ItemID,
+	}
+}
+
+func fromPendingAuthorizationDTO(dto *pendingAuthorizationDTO) *session.PendingAuthorization {
+	if dto == nil {
+		return nil
+	}
+	pending := &session.PendingAuthorization{
+		Authorization: session.ExternalAuthorization{
+			ID:          dto.Authorization.ID,
+			DisplayName: dto.Authorization.DisplayName,
+			Binding:     dto.Authorization.Binding,
+			ExpiresAt:   dto.Authorization.ExpiresAt,
+		},
+		Call: fromAuthorizationCallDTO(dto.Call),
+	}
+	pending.Deferred = make([]session.ToolCall, len(dto.Deferred))
+	for i, call := range dto.Deferred {
+		pending.Deferred[i] = fromAuthorizationCallDTO(call)
+	}
+	return pending
+}
+
+func fromAuthorizationCallDTO(dto authorizationCallDTO) session.ToolCall {
+	return session.ToolCall{
+		ID:     dto.ID,
+		Name:   dto.Name,
+		Args:   append([]byte(nil), dto.Args...),
+		ItemID: dto.ItemID,
+	}
+}
+
 // ErrNilSession is returned by Of when given a nil session.
 var ErrNilSession = errors.New("sessnap: nil session")
 
@@ -189,6 +275,9 @@ var ErrNilSession = errors.New("sessnap: nil session")
 func Of(s *session.Session) (Snapshot, error) {
 	if s == nil {
 		return Snapshot{}, ErrNilSession
+	}
+	if err := s.ValidateAuthorizationState(); err != nil {
+		return Snapshot{}, fmt.Errorf("sessnap: validate authorization state: %w", err)
 	}
 	relationship := s.Relationship
 	if relationship.BranchIndex != nil {
@@ -243,6 +332,9 @@ func Of(s *session.Session) (Snapshot, error) {
 	if ask, ok := s.PendingAsk(); ok {
 		a := ask
 		snap.Pending = &a
+	}
+	if pending, ok := s.PendingAuthorization(); ok {
+		snap.PendingAuthorization = toPendingAuthorizationDTO(pending)
 	}
 	// Capture the recorded terminal reason faithfully (no limit derivation) so a
 	// terminal session round-trips through the matching transition on restore.
@@ -313,7 +405,8 @@ func (snap Snapshot) Restore() (*session.Session, error) {
 
 	// Drive the state machine to the recorded lifecycle state, seed the running
 	// totals + cumulative usage. New() lands in StateIdle; RestoreState advances.
-	if err := RestoreState(s, snap.State, snap.StopReason, snap.Pending, snap.Counters, usage, snap.Permanent, snap.LastError); err != nil {
+	pendingAuthorization := fromPendingAuthorizationDTO(snap.PendingAuthorization)
+	if err := restoreState(s, snap.State, snap.StopReason, snap.Pending, pendingAuthorization, snap.Counters, usage, snap.Permanent, snap.LastError); err != nil {
 		return nil, err
 	}
 	// Canonical token usage wins whenever it is present; legacy snapshots derive the
@@ -400,6 +493,28 @@ func RestoreState(
 	permanent bool,
 	lastError string,
 ) error {
+	return restoreState(s, state, stop, pending, nil, counters, usage, permanent, lastError)
+}
+
+// restoreState is the snapshot-only extension of RestoreState for additive
+// external-authorization continuation state. Keeping it private preserves the
+// existing public restore API.
+//
+//nolint:gocyclo // The switch mirrors the complete session lifecycle state machine.
+func restoreState(
+	s *session.Session,
+	state session.State,
+	stop session.StopReason,
+	pending *session.PendingAsk,
+	pendingAuthorization *session.PendingAuthorization,
+	counters session.Counters,
+	usage session.Usage,
+	permanent bool,
+	lastError string,
+) error {
+	if err := validateRestorePendingState(s, state, pending, pendingAuthorization); err != nil {
+		return err
+	}
 	// Restore running totals directly; these are exported and authoritative.
 	s.Counters = counters
 	// Usage seeds the budget so it survives restart.
@@ -416,12 +531,15 @@ func RestoreState(
 		if err := beginTurnPreservingCounters(s, counters); err != nil {
 			return err
 		}
-		ask := session.PendingAsk{}
-		if pending != nil {
-			ask = *pending
-		}
-		if err := s.PauseForApproval(ask); err != nil {
+		if err := s.PauseForApproval(*pending); err != nil {
 			return fmt.Errorf("sessnap: restore awaiting: %w", err)
+		}
+	case session.StateAuthorizing:
+		if err := beginTurnPreservingCounters(s, counters); err != nil {
+			return err
+		}
+		if err := s.PauseForAuthorization(*pendingAuthorization); err != nil {
+			return fmt.Errorf("sessnap: restore authorizing: %w", err)
 		}
 	case session.StateCompleted:
 		// Stop(reason) records the exact captured reason; Complete is the special
@@ -448,6 +566,33 @@ func RestoreState(
 		}
 	default:
 		return fmt.Errorf("sessnap: unknown state %q", state)
+	}
+	return nil
+}
+
+func validateRestorePendingState(s *session.Session, state session.State, pending *session.PendingAsk, pendingAuthorization *session.PendingAuthorization) error {
+	switch state {
+	case session.StateAwaiting:
+		if pending == nil || pendingAuthorization != nil {
+			return fmt.Errorf("sessnap: awaiting state/pending mismatch")
+		}
+	case session.StateAuthorizing:
+		if pending != nil || pendingAuthorization == nil {
+			return fmt.Errorf("sessnap: authorizing state/pending mismatch")
+		}
+		// Validate against the exact restored history without mutating s.
+		probe := session.New(s.ID, s.Mode, s.EnvironmentRef, s.Limits, s.CreatedAt)
+		probe.Conversation = s.Conversation
+		if err := probe.BeginTurn(); err != nil {
+			return fmt.Errorf("sessnap: validate authorizing: %w", err)
+		}
+		if err := probe.PauseForAuthorization(*pendingAuthorization); err != nil {
+			return fmt.Errorf("sessnap: authorizing state/pending mismatch: %w", err)
+		}
+	default:
+		if pending != nil || pendingAuthorization != nil {
+			return fmt.Errorf("sessnap: pending value outside matching state")
+		}
 	}
 	return nil
 }

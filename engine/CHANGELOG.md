@@ -54,6 +54,17 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   result usage, and conversation. Snapshot and event-source metadata round-trip
   the title-specific state. Added (minor).
 
+- **Generic external authorization continuation** — `session.ExternalAuthorization`,
+  `session.PendingAuthorization`, and `session.StateAuthorizing` add a durable,
+  provider-neutral aggregate park/claim/abort lifecycle with exact tool-pairing
+  validation, effective-call ownership, and deep-copy isolation.
+  `tool.AuthorizationRequester` receives that effective call explicitly and aborts
+  with the complete private `ExternalAuthorization` correlation; aggregate abort
+  reasons are closed harness tokens rendered as fixed messages. The private
+  `sessnap.Snapshot.PendingAuthorization` DTO base64-encodes private continuation
+  argument bytes for exact round-trip fidelity without changing the existing
+  `sessnap.RestoreState` signature. Added (minor).
+
 - **`tool.DispatchSerial`** — optional static marker for read-only tools whose
   sibling call must form a run-local dispatch barrier. It preserves
   `Tool.ReadOnly` semantics and tool advertisement while making the dispatcher

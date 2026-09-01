@@ -147,6 +147,19 @@ func Run(t *testing.T, newStore func(t *testing.T) port.SessionStore) {
 				t.Errorf("PendingAsk = %+v want %+v", gotAsk, ask)
 			}
 		})
+		t.Run("authorizing with pending authorization", func(t *testing.T) {
+			st := newStore(t)
+			s := authorizingSession(t, "conf-authorizing")
+			got := roundTrip(t, st, s)
+			pending, ok := got.PendingAuthorization()
+			if got.State != session.StateAuthorizing || !ok {
+				t.Fatalf("round trip = state %q pending %+v, %v", got.State, pending, ok)
+			}
+			wantExpiry := time.Unix(1_800_000_000, 0)
+			if pending.Authorization.ID != "authorization-1" || pending.Authorization.Binding != "opaque binding/value\nline" || !pending.Authorization.ExpiresAt.Equal(wantExpiry) || pending.Call.ID != "parked" || string(pending.Call.Args) != "{ \"effective\" : true }" || len(pending.Deferred) != 1 || pending.Deferred[0].ID != "later" {
+				t.Fatalf("PendingAuthorization = %+v", pending)
+			}
+		})
 		t.Run("cancelled", func(t *testing.T) {
 			st := newStore(t)
 			s := newSession("conf-cancelled")
@@ -671,7 +684,32 @@ func RunConditionalPrunable(t *testing.T, newStore func(t *testing.T) port.Sessi
 	}
 }
 
+func authorizingSession(t *testing.T, id session.SessionID) *session.Session {
+	t.Helper()
+	s := newSession(id)
+	mustOK(t, "BeginTurn", s.BeginTurn())
+	calls := []session.ToolCall{
+		session.NewToolCall("done", "Read", json.RawMessage(`{"path":"done"}`)),
+		session.NewToolCall("parked", "external_create", json.RawMessage(`{"title":"review"}`)),
+		session.NewToolCall("later", "external_list", json.RawMessage(`{"after":"today"}`)),
+	}
+	mustOK(t, "RecordAssistant", s.RecordAssistant(session.NewAssistantMessage("", "", calls)))
+	mustOK(t, "RecordToolResults", s.RecordToolResults([]session.ToolResult{session.NewToolResult("done", "ok")}))
+	effectiveCall := calls[1]
+	effectiveCall.Args = json.RawMessage(`{ "effective" : true }`)
+	mustOK(t, "PauseForAuthorization", s.PauseForAuthorization(session.PendingAuthorization{
+		Authorization: session.ExternalAuthorization{
+			ID:        "authorization-1",
+			Binding:   "opaque binding/value\nline",
+			ExpiresAt: time.Unix(1_800_000_000, 0),
+		},
+		Call: effectiveCall, Deferred: []session.ToolCall{calls[2]},
+	}))
+	return s
+}
+
 // newSession constructs an idle session with non-default limits, exact placement,
+// mode and a fixed (whole-nanosecond, UTC) creation time so timestamp
 // mode and a fixed (whole-nanosecond, UTC) creation time so timestamp
 // round-trip equality is well-defined.
 func newSession(id session.SessionID) *session.Session {

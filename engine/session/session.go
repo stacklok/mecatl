@@ -14,10 +14,15 @@ type SessionID string
 
 // State is the session lifecycle state. The state machine is:
 //
-//	idle → running → awaiting → running → completed
+//	idle → running → completed
+//	          ↕ awaiting
+//	          ↕ authorizing
 //
-// with Cancel permitted from any non-terminal state and Fail from any
-// non-terminal state. completed, failed, and cancelled are terminal. Each terminal
+// Awaiting is resumed only through ResumeWith. Authorizing can leave only
+// through ClaimAuthorization, AbortAuthorization, or InterruptAuthorization;
+// generic terminal transitions reject it.
+//
+// Cancel and Fail are otherwise permitted from any non-terminal state. completed, failed, and cancelled are terminal. Each terminal
 // state has its own recovery seam back to idle: Reopen (from completed), Interrupt
 // (from cancelled, also repairing the interrupted turn's history), Recover
 // (from failed, same history repair — issue #51), and Abandon (from running,
@@ -32,6 +37,8 @@ const (
 	StateRunning State = "running"
 	// StateAwaiting means the loop is paused on a permission "ask".
 	StateAwaiting State = "awaiting"
+	// StateAuthorizing means the loop is paused on an external authorization.
+	StateAuthorizing State = "authorizing"
 	// StateCompleted is a terminal success state.
 	StateCompleted State = "completed"
 	// StateFailed is a terminal failure state.
@@ -323,6 +330,9 @@ var (
 	// ErrNoPendingAsk is returned by ResumeWith when the session is not awaiting
 	// approval.
 	ErrNoPendingAsk = errors.New("session: no pending ask to resume")
+	// ErrNoPendingAuthorization is returned when authorization resolution is
+	// requested outside StateAuthorizing.
+	ErrNoPendingAuthorization = errors.New("session: no pending external authorization")
 )
 
 // Session is the aggregate root of the Agent Session context. All mutation of
@@ -351,8 +361,9 @@ type Session struct {
 	// yet lazily derived it from its durable labels.
 	usageAttribution string
 	// Usage is the deprecated lifetime main-token compatibility projection. It always
-	// mirrors TokenUsage[UsageKindMain].Total and is never reset. Unlike Counters,
-	// it is deliberately NOT cleared by resetToIdle.
+	// mirrors TokenUsage[UsageKindMain].Total. Unlike Counters, it is deliberately
+	// NOT cleared by resetToIdle; the sole exception is the explicit ResetUsage
+	// seam, which clears both this mirror and its underlying ledger bucket together.
 	Usage Usage
 	// EnvironmentRef is the sole durable identity of the execution environment.
 	// It is minted by the placement provider and must be valid before persistence
@@ -453,6 +464,8 @@ type Session struct {
 	authorityBound bool
 	// pending is set iff State == StateAwaiting.
 	pending *PendingAsk
+	// pendingAuthorization is set iff State == StateAuthorizing.
+	pendingAuthorization *PendingAuthorization
 	// stop holds the terminal stop reason once the session has stopped.
 	stop StopReason
 	// permanent is the compatibility projection of failureDisposition==Permanent.
@@ -612,6 +625,35 @@ func (s *Session) RecordUsage(u Usage) error {
 	return nil
 }
 
+// ResetUsage zeroes the aggregate's cumulative Usage (and its underlying
+// UsageKindMain ledger bucket — RecordUsage re-derives Usage from that bucket,
+// so clearing only the mirror would be silently undone by the next call),
+// granting a fresh MaxRunTokens allowance for the next run. It is the EXPLICIT
+// counterpart to the deliberate non-reset in resetToIdle: because Usage
+// survives Reopen/Interrupt/Recover (so the budget brake bounds the whole
+// logical run across restart), a caller that genuinely wants a fresh budget
+// for a NEW phase of work must say so through this intention-revealing seam
+// rather than poking the public Usage field (the aggregate-mutation
+// discipline RecordUsage established). The UsageKindSessionTitle bucket is
+// untouched — this seam bounds only the main-run budget.
+//
+// It is legal from any NON-running state (idle, completed, or the other terminals)
+// — NOT while running, where it would discard an in-flight turn's spend mid-budget
+// and race the loop's own RecordUsage. The SOLE caller today is the team
+// supervisor's synthesise step (engine/agent/teamsupervisor.go): a lead whose
+// working run was stopped by its MaxRunTokens must still produce the team's
+// synthesis deliverable, so the supervisor resets the lead's accumulator between
+// the working drive and the synthesis drive (the synthesis spend is then folded
+// into the team outcome separately). Returns ErrIllegalTransition from running.
+func (s *Session) ResetUsage() error {
+	if s.State == StateRunning || s.State == StateAuthorizing {
+		return fmt.Errorf("%w: ResetUsage from %q", ErrIllegalTransition, s.State)
+	}
+	delete(s.tokenUsage, UsageKindMain)
+	s.Usage = Usage{}
+	return nil
+}
+
 // RecordUserPrompt appends a user prompt to the conversation through the
 // aggregate root, optionally preceded by discovered project-instruction messages
 // (AGENTS.md / CLAUDE.md). It is the intention-revealing seam the loop uses
@@ -630,7 +672,7 @@ func (s *Session) RecordUserPrompt(text string, instructions []Message) error {
 // difference is the recorded user message carries Parts. It is legal from any
 // non-terminal state.
 func (s *Session) RecordUserPromptWithParts(text string, parts []Content, instructions []Message) error {
-	if s.State.IsTerminal() || (s.retryPending && s.State == StateIdle) {
+	if s.State.IsTerminal() || (s.retryPending && s.State == StateIdle) || s.State == StateAuthorizing {
 		return fmt.Errorf("%w: RecordUserPrompt from %q", ErrIllegalTransition, s.State)
 	}
 	for _, m := range instructions {
@@ -672,7 +714,7 @@ func (s *Session) ReplaceHistory(messages []Message) error {
 // The replacement must satisfy ValidateToolPairing so the resulting history is
 // provider-replayable in both directions.
 func (s *Session) ReplaceHistoryAtBoundary(messages []Message) error {
-	if s.State == StateRunning || s.State == StateAwaiting {
+	if s.State == StateRunning || s.State == StateAwaiting || s.State == StateAuthorizing {
 		return fmt.Errorf("%w: ReplaceHistoryAtBoundary from %q", ErrIllegalTransition, s.State)
 	}
 	if err := ValidateToolPairing(messages); err != nil {
@@ -747,9 +789,10 @@ func (s *Session) ResumeWith() (PendingAsk, error) {
 }
 
 // Complete marks a successful terminal end of the run. It is legal from any
-// non-terminal state and records StopEndTurn unless a stop reason is already set.
+// non-terminal state except StateAuthorizing and records StopEndTurn unless a
+// stop reason is already set.
 func (s *Session) Complete() error {
-	if s.State.IsTerminal() {
+	if s.State.IsTerminal() || s.State == StateAuthorizing {
 		return fmt.Errorf("%w: Complete from %q", ErrIllegalTransition, s.State)
 	}
 	if s.stop == StopNone {
@@ -762,9 +805,10 @@ func (s *Session) Complete() error {
 }
 
 // Stop marks a successful terminal end carrying an explicit stop reason (e.g. a
-// limit was reached). It is legal from any non-terminal state.
+// limit was reached). It is legal from any non-terminal state except
+// StateAuthorizing.
 func (s *Session) Stop(reason StopReason) error {
-	if s.State.IsTerminal() {
+	if s.State.IsTerminal() || s.State == StateAuthorizing {
 		return fmt.Errorf("%w: Stop from %q", ErrIllegalTransition, s.State)
 	}
 	s.stop = reason
@@ -775,9 +819,9 @@ func (s *Session) Stop(reason StopReason) error {
 }
 
 // Cancel transitions the session to StateCancelled. It is legal from any
-// non-terminal state.
+// non-terminal state except StateAuthorizing.
 func (s *Session) Cancel() error {
-	if s.State.IsTerminal() {
+	if s.State.IsTerminal() || s.State == StateAuthorizing {
 		return fmt.Errorf("%w: Cancel from %q", ErrIllegalTransition, s.State)
 	}
 	s.stop = StopCancelled
@@ -938,7 +982,7 @@ func (s *Session) RunID() string {
 }
 
 // Fail transitions the session to StateFailed with StopError. It is legal from
-// any non-terminal state.
+// any non-terminal state except StateAuthorizing.
 //
 // A failed session recovers through Recover (failed→idle, history-repaired —
 // issue #51), so a transient provider failure no longer bricks the session
@@ -948,7 +992,7 @@ func (s *Session) RunID() string {
 // snapping the kept-tail boundary past leading tool results and self-validating
 // via ValidateToolPairing.
 func (s *Session) Fail() error {
-	if s.State.IsTerminal() {
+	if s.State.IsTerminal() || s.State == StateAuthorizing {
 		return fmt.Errorf("%w: Fail from %q", ErrIllegalTransition, s.State)
 	}
 	s.stop = StopError
@@ -1188,7 +1232,7 @@ func (s *Session) Rehome(ref EnvironmentRef) error {
 // set_mode while running must defer it (apply on the next prompt). Setting the
 // mode it already has is a no-op success.
 func (s *Session) SetMode(mode PermissionMode) error {
-	if s.State == StateRunning || s.State == StateAwaiting {
+	if s.State == StateRunning || s.State == StateAwaiting || s.State == StateAuthorizing {
 		return fmt.Errorf("%w: SetMode from %q", ErrIllegalTransition, s.State)
 	}
 	s.Mode = mode
