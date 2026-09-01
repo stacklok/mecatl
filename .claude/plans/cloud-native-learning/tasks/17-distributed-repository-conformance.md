@@ -2,7 +2,7 @@
 id: 17-distributed-repository-conformance
 title: Prove distributed proposal and skill repository conformance
 blocked_by: [16-learning-driver-composition]
-status: pending
+status: in-progress
 branch: ""
 worktree: ""
 issue: ""
