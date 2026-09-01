@@ -2,7 +2,7 @@
 id: 04-rotation-and-leakage
 title: Rotation-safe remint and credential-leak proofs
 blocked_by: [03-typed-verifier]
-status: pending
+status: in-progress
 branch: ""
 worktree: ""
 issue: "375"
