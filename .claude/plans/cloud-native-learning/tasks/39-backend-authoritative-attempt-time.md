@@ -2,7 +2,7 @@
 id: 39-backend-authoritative-attempt-time
 title: Make attempt repository time backend-authoritative
 blocked_by: [37-partitioned-attempt-quota-retention]
-status: pending
+status: in-progress
 branch: plan-cloud-native-learning/39-backend-authoritative-attempt-time
 worktree: .scratch/worktrees/39-backend-authoritative-attempt-time
 issue: ""
