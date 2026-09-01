@@ -2,7 +2,7 @@
 id: 24-learning-driver-ownership
 title: Enforce workload-authenticated ownership in learning drivers
 blocked_by: [23-attempt-control-api, 16-learning-driver-composition]
-status: pending
+status: in-progress
 branch: ""
 worktree: ""
 issue: ""
