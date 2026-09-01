@@ -2,7 +2,7 @@
 
 Accumulator: `acc/cloud-native-learning`
 
-This graph delivers the six acceptance scenarios in dependency order. It fixes verified explicit intent first, establishes the authoritative attempt domain and durable repositories, reconstructs bounded evidence, lands the explicit worker slice, extends distributed proposal/skill authority with attempt-lifecycle claim fencing, converges replica catalogs, adds authorized controls, and only then replaces process-local automatic accounting with a distributed ledger. Documentation and generated surfaces are reconciled by the final single-writer task.
+This graph delivers the six acceptance scenarios in dependency order. It fixes verified explicit intent first, establishes the authoritative attempt domain and durable repositories, reconstructs bounded evidence, lands the explicit worker slice, extends distributed proposal/skill authority with attempt-lifecycle claim fencing, converges replica catalogs, adds authorized controls, and only then replaces process-local automatic accounting with a distributed ledger. Documentation and generated surfaces are reconciled by the final single-writer task. A subsequent repair-proof wave is gated by that integration task; it closes the final-panel findings without taking ownership from the original acceptance-criterion tasks.
 
 ## DAG waves
 
@@ -15,5 +15,6 @@ This graph delivers the six acceptance scenarios in dependency order. It fixes v
 7. Authorized state/control: API projection `22`; controls `23`; driver ownership `24`; no-watch guard `25`.
 8. Distributed automatic controls: ledger domain `26`; durable global accounting `27`; crash reconciliation `28`; weighted lifecycle wiring `29`; capability claims `30`.
 9. Documentation/generated integration: `31`.
+10. Final-panel repair proofs (each gated by `31`; execute in this dependency-aware order): durable work discovery and retry `32`; canonical artifact identity `33`; evidence sequence continuity `35`; partitioned quota and retention `37`; authoritative ledger policy/time `34`; contract and documentation honesty `36`.
 
 No task maps a GitHub issue. Every task starts pending and is merged only through the accumulator.
