@@ -28,6 +28,34 @@ type DistributedFixture func(*testing.T) DistributedFactory
 //nolint:gocyclo // the shared suite keeps the complete lifecycle contract together
 func Run(t *testing.T, factory Factory) {
 	t.Helper()
+	t.Run("authoritative-partition-generation", func(t *testing.T) {
+		repo := factory(t)
+		ctx := context.Background()
+		p := partition()
+		other := learning.SkillPartition{Principal: "other-principal", Project: "other-project"}
+		initial, err := repo.Generation(ctx, p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if initial != 0 {
+			t.Fatalf("initial generation=%d, want 0", initial)
+		}
+		if _, err = repo.CreateDraft(ctx, p, "agent-a", skill("generated", "Generated workflow."), provenance("generation")); err != nil {
+			t.Fatal(err)
+		}
+		next, err := repo.Generation(ctx, p)
+		if err != nil || next <= initial {
+			t.Fatalf("generation after mutation=%d err=%v", next, err)
+		}
+		page, err := repo.List(ctx, p, learning.SkillList{})
+		if err != nil || page.Generation != next {
+			t.Fatalf("list generation=%d authoritative=%d err=%v", page.Generation, next, err)
+		}
+		unchanged, err := repo.Generation(ctx, other)
+		if err != nil || unchanged != 0 {
+			t.Fatalf("unrelated partition generation=%d err=%v", unchanged, err)
+		}
+	})
 	t.Run("lifecycle-cas-clone-partition-owner", func(t *testing.T) {
 		repo := factory(t)
 		ctx := context.Background()
@@ -256,10 +284,18 @@ func RunDistributed(t *testing.T, newFixture DistributedFixture) {
 		open := newFixture(t)
 		ctx := context.Background()
 		p := partition()
+		initialGeneration, err := open(t).Generation(ctx, p)
+		if err != nil {
+			t.Fatal(err)
+		}
 		bundle := skill("distributed-review", "Review distributed changes.")
 		draft, err := open(t).CreateDraft(ctx, p, "agent-a", bundle, provenance("distributed-a"))
 		if err != nil || draft.Revision == "" {
 			t.Fatalf("draft=%#v err=%v", draft, err)
+		}
+		durableGeneration, err := open(t).Generation(ctx, p)
+		if err != nil || durableGeneration <= initialGeneration {
+			t.Fatalf("cross-client generation=%d initial=%d err=%v", durableGeneration, initialGeneration, err)
 		}
 		reopened, err := open(t).CreateDraft(ctx, p, "agent-a", bundle, provenance("distributed-b"))
 		if err != nil || reopened.ID != draft.ID || reopened.Version != draft.Version || reopened.Revision == "" || len(reopened.Provenance.ProposalIDs) != 2 {

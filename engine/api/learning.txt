@@ -25,6 +25,7 @@
     ifacemethod func (SkillRepository).Activate(context.Context, SkillPartition, string, SkillID, VersionID, Revision) (SkillVersion, error)
     ifacemethod func (SkillRepository).Archive(context.Context, SkillPartition, string, SkillID, VersionID, Revision) (SkillVersion, error)
     ifacemethod func (SkillRepository).CreateDraft(context.Context, SkillPartition, string, SkillBundle, SkillProvenance) (SkillVersion, error)
+    ifacemethod func (SkillRepository).Generation(context.Context, SkillPartition) (SkillGeneration, error)
     ifacemethod func (SkillRepository).Get(context.Context, SkillPartition, string, SkillID, VersionID) (SkillVersion, bool, error)
     ifacemethod func (SkillRepository).List(context.Context, SkillPartition, SkillList) (SkillPage, error)
     ifacemethod func (SkillRepository).RecordEvaluation(context.Context, SkillPartition, string, SkillID, VersionID, Revision, SkillEvaluation) (SkillVersion, error)
@@ -347,10 +348,11 @@ type SkillDraftInput struct{Partition SkillPartition; OwnerAgent string; Bundle 
 type SkillEvaluation struct{Verdict EvaluationVerdict "json:\"verdict\""; FixtureIDs []string "json:\"fixture_ids,omitempty\""; Baseline string "json:\"baseline,omitempty\""; Treatment string "json:\"treatment,omitempty\""; Reason string "json:\"reason,omitempty\""; At time.Time "json:\"at\""}
 type SkillEvaluationRequest struct{Partition SkillPartition; OwnerAgent string; Version SkillVersion}
 type SkillEvaluator interface{Evaluate(context.Context, SkillEvaluationRequest) (SkillEvaluation, error)}
+type SkillGeneration uint64
 type SkillID string
 type SkillInventoryItem struct{Name string; OwnerAgent string; AgentOwned bool; Bundle SkillBundle; SkillID SkillID; Version VersionID}
 type SkillList struct{After SkillID; Limit int; Name string; State SkillState; OwnerAgent string}
-type SkillPage struct{Versions []SkillVersion; Next SkillID}
+type SkillPage struct{Versions []SkillVersion; Next SkillID; Generation SkillGeneration}
 type SkillPartition struct{Principal string "json:\"principal\""; Project string "json:\"project,omitempty\""}
 type SkillProvenance struct{Origin SkillProvenanceOrigin "json:\"origin,omitempty\""; ValidationDisposition ValidationDisposition "json:\"validation_disposition,omitempty\""; ProposalIDs []ProposalID "json:\"proposal_ids,omitempty\""; EvidenceRefs []EvidenceRef "json:\"evidence_refs,omitempty\""; Signals []Signal "json:\"signals,omitempty\""}
 type SkillProvenanceOrigin string
@@ -359,7 +361,7 @@ type SkillReceiptList struct{After string; Limit int}
 type SkillReceiptPage struct{Records []SkillReceiptRecord; Next string}
 type SkillReceiptRecord struct{ID string; SkillID SkillID; Name string; OwnerAgent string; Version VersionID; Receipt SkillReceipt}
 type SkillReceiptRepository interface{ListSkillReceipts(context.Context, SkillPartition, SkillReceiptList) (SkillReceiptPage, error)}
-type SkillRepository interface{Activate(context.Context, SkillPartition, string, SkillID, VersionID, Revision) (SkillVersion, error); Archive(context.Context, SkillPartition, string, SkillID, VersionID, Revision) (SkillVersion, error); CreateDraft(context.Context, SkillPartition, string, SkillBundle, SkillProvenance) (SkillVersion, error); Get(context.Context, SkillPartition, string, SkillID, VersionID) (SkillVersion, bool, error); List(context.Context, SkillPartition, SkillList) (SkillPage, error); RecordEvaluation(context.Context, SkillPartition, string, SkillID, VersionID, Revision, SkillEvaluation) (SkillVersion, error); Reject(context.Context, SkillPartition, string, SkillID, VersionID, Revision) (SkillVersion, error); Rollback(context.Context, SkillPartition, string, SkillID, Revision, VersionID) (SkillVersion, error); Stage(context.Context, SkillPartition, string, SkillID, VersionID, Revision) (SkillVersion, error)}
+type SkillRepository interface{Activate(context.Context, SkillPartition, string, SkillID, VersionID, Revision) (SkillVersion, error); Archive(context.Context, SkillPartition, string, SkillID, VersionID, Revision) (SkillVersion, error); CreateDraft(context.Context, SkillPartition, string, SkillBundle, SkillProvenance) (SkillVersion, error); Generation(context.Context, SkillPartition) (SkillGeneration, error); Get(context.Context, SkillPartition, string, SkillID, VersionID) (SkillVersion, bool, error); List(context.Context, SkillPartition, SkillList) (SkillPage, error); RecordEvaluation(context.Context, SkillPartition, string, SkillID, VersionID, Revision, SkillEvaluation) (SkillVersion, error); Reject(context.Context, SkillPartition, string, SkillID, VersionID, Revision) (SkillVersion, error); Rollback(context.Context, SkillPartition, string, SkillID, Revision, VersionID) (SkillVersion, error); Stage(context.Context, SkillPartition, string, SkillID, VersionID, Revision) (SkillVersion, error)}
 type SkillState string
 type SkillValidation struct{Disposition ValidationDisposition; Duplicate *SkillInventoryItem; Similar []SkillInventoryItem}
 type SkillValidationRequest struct{Partition SkillPartition; OwnerAgent string; Bundle SkillBundle; Provenance SkillProvenance; Assets []string; Inventory []SkillInventoryItem}

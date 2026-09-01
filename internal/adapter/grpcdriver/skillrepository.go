@@ -38,6 +38,14 @@ func NewValidatedSkillRepository(conn grpc.ClientConnInterface) *ValidatedSkillR
 	return &ValidatedSkillRepository{SkillRepository: NewSkillRepository(conn)}
 }
 
+func (r *SkillRepository) Generation(ctx context.Context, partition learning.SkillPartition) (learning.SkillGeneration, error) {
+	resp, err := r.client.ListSkillVersions(ctx, &driverv1.ListSkillVersionsRequest{Partition: skillPartitionToProto(partition), Limit: 1})
+	if err != nil {
+		return 0, skillStatusToErr(ctx, err)
+	}
+	return learning.SkillGeneration(resp.GetGeneration()), nil
+}
+
 func (r *SkillRepository) CreateDraft(ctx context.Context, partition learning.SkillPartition, owner string, bundle learning.SkillBundle, provenance learning.SkillProvenance) (learning.SkillVersion, error) {
 	resp, err := r.client.CreateSkillDraft(ctx, &driverv1.CreateSkillDraftRequest{Partition: skillPartitionToProto(partition), OwnerAgent: owner, Bundle: skillBundleToProto(bundle), Provenance: skillProvenanceToProto(provenance)})
 	return skillResponse(ctx, resp, err)
@@ -63,7 +71,7 @@ func (r *SkillRepository) List(ctx context.Context, partition learning.SkillPart
 	if err != nil {
 		return learning.SkillPage{}, skillStatusToErr(ctx, err)
 	}
-	page := learning.SkillPage{Versions: make([]learning.SkillVersion, 0, len(resp.GetVersions())), Next: learning.SkillID(resp.GetNext())}
+	page := learning.SkillPage{Versions: make([]learning.SkillVersion, 0, len(resp.GetVersions())), Next: learning.SkillID(resp.GetNext()), Generation: learning.SkillGeneration(resp.GetGeneration())}
 	for _, wire := range resp.GetVersions() {
 		value, decodeErr := skillVersionFromProto(wire)
 		if decodeErr != nil {

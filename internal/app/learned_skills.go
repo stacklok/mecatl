@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"time"
 
@@ -36,17 +37,33 @@ func hydrateLearnedSkillPartitions(ctx context.Context, cfg Config, assets catal
 	return partitions
 }
 
-func listActiveLearnedSkills(ctx context.Context, repository learning.SkillRepository, partition learning.SkillPartition, owner string) ([]learning.SkillVersion, error) {
+var errLearnedSkillGenerationChanged = errors.New("learned skill partition generation changed during hydration")
+
+func listActiveLearnedSkillsAtGeneration(ctx context.Context, repository learning.SkillRepository, partition learning.SkillPartition, owner string) ([]learning.SkillVersion, learning.SkillGeneration, error) {
 	var out []learning.SkillVersion
 	var after learning.SkillID
+	var generation learning.SkillGeneration
+	first := true
 	for {
 		page, err := repository.List(ctx, partition, learning.SkillList{After: after, Limit: learning.MaxSkillPageSize, State: learning.SkillActive, OwnerAgent: owner})
 		if err != nil {
-			return nil, err
+			return nil, 0, err
+		}
+		if first {
+			generation, first = page.Generation, false
+		} else if page.Generation != generation {
+			return nil, page.Generation, errLearnedSkillGenerationChanged
 		}
 		out = append(out, page.Versions...)
 		if page.Next == "" {
-			return out, nil
+			current, generationErr := repository.Generation(ctx, partition)
+			if generationErr != nil {
+				return nil, generation, generationErr
+			}
+			if current != generation {
+				return nil, current, errLearnedSkillGenerationChanged
+			}
+			return out, generation, nil
 		}
 		after = page.Next
 	}
@@ -62,10 +79,10 @@ type learnedSkillPublisher struct {
 	serial     *learnedSkillPublication
 }
 
-func (p learnedSkillPublisher) Quarantine(name string) {
-	if p.catalog != nil && len(p.partitions) > 0 {
-		p.catalog.RevokePartition(p.partitions[len(p.partitions)-1], name)
-	}
+func (learnedSkillPublisher) Quarantine(string) {
+	// Publish invalidates the exact uncertain partition at its observed durable
+	// generation before returning an error. A second name-based revocation here
+	// could race and revoke a newer replacement.
 }
 
 func (p learnedSkillPublisher) Publish(ctx context.Context) error {
@@ -73,16 +90,24 @@ func (p learnedSkillPublisher) Publish(ctx context.Context) error {
 		p.serial.mu.Lock()
 		defer p.serial.mu.Unlock()
 	}
-	var active []learning.SkillVersion
+	active := make([]learning.SkillVersion, 0)
+	generations := make(map[learning.SkillPartition]learning.SkillGeneration, len(p.partitions))
 	for _, partition := range p.partitions {
-		versions, err := listActiveLearnedSkills(ctx, p.repository, partition, p.owner)
+		generation, err := p.repository.Generation(ctx, partition)
 		if err != nil {
-			p.catalog.ClearPartitions(p.partitions...)
+			generation = learning.SkillGeneration(p.catalog.View(partition).Generation)
+			p.catalog.ClearPartitionsAtGeneration(map[learning.SkillPartition]learning.SkillGeneration{partition: generation})
 			return err
 		}
+		versions, observed, err := listActiveLearnedSkillsAtGeneration(ctx, p.repository, partition, p.owner)
+		if err != nil {
+			p.catalog.ClearPartitionsAtGeneration(map[learning.SkillPartition]learning.SkillGeneration{partition: generation})
+			return err
+		}
+		generations[partition] = observed
 		active = append(active, versions...)
 	}
-	p.catalog.RefreshPartitions(p.partitions, active)
+	p.catalog.RefreshPartitionsAtGeneration(generations, active)
 	return nil
 }
 

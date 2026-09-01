@@ -136,6 +136,7 @@ message ListSkillVersionsRequest {
 message ListSkillVersionsResponse {
   repeated LearnedSkillVersion versions = 1;
   string next = 2 [(buf.validate.field).string.max_len = 128];
+  uint64 generation = 3;
 }
 
 message SkillMutationRequest {

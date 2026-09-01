@@ -3,7 +3,6 @@ package app
 import (
 	"context"
 	"errors"
-	"runtime"
 	"sync"
 	"testing"
 
@@ -46,9 +45,7 @@ func (r *barrierSkillRepository) List(ctx context.Context, partition learning.Sk
 	return page, err
 }
 
-func TestLearnedSkillPublisherSerializesStaleSnapshots(t *testing.T) {
-	previous := runtime.GOMAXPROCS(1)
-	t.Cleanup(func() { runtime.GOMAXPROCS(previous) })
+func TestADR_0254_DelayedPublicationCannotRevokeNewerGeneration(t *testing.T) {
 	ctx := context.Background()
 	partition := learning.SkillPartition{Principal: "alice"}
 	repository := memskill.New()
@@ -59,42 +56,27 @@ func TestLearnedSkillPublisherSerializesStaleSnapshots(t *testing.T) {
 		entered:         [2]chan struct{}{make(chan struct{}), make(chan struct{})},
 		releases:        [2]chan struct{}{make(chan struct{}), make(chan struct{})},
 	}
-	serial := &learnedSkillPublication{}
-	publisher := learnedSkillPublisher{repository: barrier, partitions: []learning.SkillPartition{partition}, catalog: catalog, serial: serial}
-	firstDone := make(chan error, 1)
-	go func() { firstDone <- publisher.Publish(ctx) }()
+	publisher := learnedSkillPublisher{repository: barrier, partitions: []learning.SkillPartition{partition}, catalog: catalog}
+	oldDone := make(chan error, 1)
+	go func() { oldDone <- publisher.Publish(ctx) }()
 	<-barrier.entered[0]
 
 	second := activateCompositionSkill(t, repository, partition, "serialized", "Second publication.")
-	secondStarted := make(chan struct{})
-	secondGo := make(chan struct{})
-	secondDone := make(chan error, 1)
-	go func() {
-		close(secondStarted)
-		<-secondGo
-		secondDone <- publisher.Publish(ctx)
-	}()
-	<-secondStarted
-	close(secondGo)
-	runtime.Gosched() // with one P, the second publisher runs until it blocks on serial.mu
-	select {
-	case <-barrier.entered[1]:
-		t.Fatal("new publisher read the repository while the stale publisher still owned publication serialization")
-	default:
+	newDone := make(chan error, 1)
+	go func() { newDone <- publisher.Publish(ctx) }()
+	<-barrier.entered[1]
+	close(barrier.releases[1])
+	if err := <-newDone; err != nil {
+		t.Fatal(err)
 	}
 
 	close(barrier.releases[0])
-	if err := <-firstDone; err != nil {
-		t.Fatal(err)
-	}
-	<-barrier.entered[1]
-	close(barrier.releases[1])
-	if err := <-secondDone; err != nil {
-		t.Fatal(err)
+	if err := <-oldDone; !errors.Is(err, errLearnedSkillGenerationChanged) {
+		t.Fatalf("stale publisher error=%v", err)
 	}
 	view := catalog.View(partition)
 	if len(view.Metas) != 1 || view.Metas[0].Metadata["mecatl.active_version"] != string(second.Version) || second.Version == first.Version {
-		t.Fatalf("stale publication won: first=%s second=%s metas=%+v", first.Version, second.Version, view.Metas)
+		t.Fatalf("stale publication or invalidation won: first=%s second=%s generation=%d metas=%+v", first.Version, second.Version, view.Generation, view.Metas)
 	}
 }
 
@@ -116,8 +98,8 @@ func TestLearnedSkillPublicationFailureQuarantinesOnlyOwnedPartitionsAndReconcil
 	if err := publisher.Publish(ctx); !errors.Is(err, wrapped.err) {
 		t.Fatalf("publish error=%v", err)
 	}
-	if got := catalog.View(alice, aliceProject).Metas; len(got) != 0 {
-		t.Fatalf("failed caller partitions were not quarantined: %+v", got)
+	if got := catalog.View(alice, aliceProject).Metas; len(got) != 1 || got[0].Name != "alice-global" {
+		t.Fatalf("publication uncertainty changed a healthy caller partition: %+v", got)
 	}
 	if got := catalog.View(bob).Metas; len(got) != 1 || got[0].Name != "bob-global" {
 		t.Fatalf("unrelated caller partition changed during quarantine: %+v", got)

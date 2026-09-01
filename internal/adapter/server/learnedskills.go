@@ -31,7 +31,7 @@ func (s *Service) liveSkillGeneration(ctx context.Context, project string) uint6
 	return s.cfg.LiveSkillGeneration(partition)
 }
 
-func (s *Service) publishLearnedSkills(ctx context.Context, partition learning.SkillPartition, name string) (string, string) {
+func (s *Service) publishLearnedSkills(ctx context.Context, partition learning.SkillPartition) (string, string) {
 	if s.cfg.PublishLearnedSkills == nil {
 		return "unavailable", "no publication target"
 	}
@@ -39,9 +39,6 @@ func (s *Service) publishLearnedSkills(ctx context.Context, partition learning.S
 	err := s.cfg.PublishLearnedSkills(publishCtx, partition)
 	cancel()
 	if err != nil {
-		if s.cfg.RevokeLearnedSkill != nil {
-			s.cfg.RevokeLearnedSkill(partition, name)
-		}
 		return "pending_reconciliation", safeSkillText(err.Error(), 1024)
 	}
 	return "published", ""
@@ -175,7 +172,7 @@ func (s *Service) mutateLearnedSkill(ctx context.Context, request *mecatlv1.Muta
 	if err != nil {
 		return nil, skillServiceError(err)
 	}
-	status, publishErr := s.publishLearnedSkills(ctx, partition, value.Bundle.Name)
+	status, publishErr := s.publishLearnedSkills(ctx, partition)
 	return &mecatlv1.MutateLearnedSkillResponse{Skill: toProtoLearnedSkill(value), Generation: s.liveSkillGeneration(ctx, request.GetProject()), Project: validLearningText(request.GetProject()), PublicationStatus: status, PublicationError: publishErr}, nil
 }
 
@@ -235,7 +232,7 @@ func (s *Service) RollbackLearnedSkill(ctx context.Context, r *mecatlv1.Rollback
 	if err != nil {
 		return nil, skillServiceError(err)
 	}
-	status, publishErr := s.publishLearnedSkills(ctx, partition, value.Bundle.Name)
+	status, publishErr := s.publishLearnedSkills(ctx, partition)
 	return &mecatlv1.MutateLearnedSkillResponse{Skill: toProtoLearnedSkill(value), Generation: s.liveSkillGeneration(ctx, r.GetProject()), Project: validLearningText(r.GetProject()), PublicationStatus: status, PublicationError: publishErr}, nil
 }
 

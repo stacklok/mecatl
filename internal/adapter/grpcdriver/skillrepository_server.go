@@ -57,7 +57,7 @@ func (s *skillRepositoryServer) ListSkillVersions(ctx context.Context, req *driv
 	if err != nil {
 		return nil, skillRepositoryStatus(err)
 	}
-	response := &driverv1.ListSkillVersionsResponse{Versions: make([]*driverv1.LearnedSkillVersion, 0, len(page.Versions)), Next: string(page.Next)}
+	response := &driverv1.ListSkillVersionsResponse{Versions: make([]*driverv1.LearnedSkillVersion, 0, len(page.Versions)), Next: string(page.Next), Generation: uint64(page.Generation)}
 	for _, value := range page.Versions {
 		if err := validateWireSkillVersion(value); err != nil {
 			return nil, status.Error(codes.Internal, "skill repository returned an invalid version")

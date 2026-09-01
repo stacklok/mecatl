@@ -2012,11 +2012,6 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 			assets.skillPublication.mu.Lock()
 			return assets.skillPublication.mu.Unlock
 		},
-		RevokeLearnedSkill: func(partition learning.SkillPartition, name string) {
-			if assets.liveSkills != nil {
-				assets.liveSkills.RevokePartition(partition, name)
-			}
-		},
 		LiveSkillGeneration: func(partition learning.SkillPartition) uint64 {
 			if assets.liveSkills == nil {
 				return 0
@@ -5110,20 +5105,15 @@ func buildCatalog(ctx context.Context, cfg Config, reg *providerRegistry, provid
 		learnedSkills = learned
 	}
 	if learnedSkills != nil {
-		active, listErr := listActiveLearnedSkills(ctx, learnedSkills, skillPartition, "")
-		if listErr == nil && cfg.Workspace != "" && projectIngestionAdmitted(cfg) {
-			projectActive, projectErr := listActiveLearnedSkills(ctx, learnedSkills, learning.SkillPartition{Principal: skillPartition.Principal, Project: cfg.Workspace}, "")
-			if projectErr != nil {
-				listErr = projectErr
-			} else {
-				active = append(active, projectActive...)
-			}
+		partitions := []learning.SkillPartition{skillPartition}
+		if cfg.Workspace != "" && projectIngestionAdmitted(cfg) {
+			partitions = append(partitions, learning.SkillPartition{Principal: skillPartition.Principal, Project: cfg.Workspace})
 		}
-		if listErr != nil {
+		liveSkills = coreskillfs.NewAtomicCatalog(seam.metas, seam.source, nil)
+		if publishErr := (learnedSkillPublisher{repository: learnedSkills, partitions: partitions, catalog: liveSkills}).Publish(ctx); publishErr != nil {
 			mcpClose()
-			return nil, catalogAssets{}, nil, nil, nil, fmt.Errorf("load active learned skills: %w", listErr)
+			return nil, catalogAssets{}, nil, nil, nil, fmt.Errorf("load active learned skills: %w", publishErr)
 		}
-		liveSkills = coreskillfs.NewAtomicCatalog(seam.metas, seam.source, active)
 	}
 	var skillPublication *learnedSkillPublication
 	if liveSkills != nil {

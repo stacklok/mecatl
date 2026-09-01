@@ -108,6 +108,10 @@ func restoreSkillVersion(value learning.SkillVersion, partition learning.SkillPa
 
 type opaqueSkillRepository struct{ inner learning.SkillRepository }
 
+func (r *opaqueSkillRepository) Generation(ctx context.Context, p learning.SkillPartition) (learning.SkillGeneration, error) {
+	return r.inner.Generation(ctx, opaqueSkillPartition(p))
+}
+
 func (r *opaqueSkillRepository) CreateDraft(ctx context.Context, p learning.SkillPartition, owner string, bundle learning.SkillBundle, provenance learning.SkillProvenance) (learning.SkillVersion, error) {
 	value, err := r.inner.CreateDraft(ctx, opaqueSkillPartition(p), owner, bundle, provenance)
 	return restoreSkillVersion(value, p), err

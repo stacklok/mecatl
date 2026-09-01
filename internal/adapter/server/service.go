@@ -469,7 +469,6 @@ type Config struct {
 	LearnedSkills             learning.SkillRepository
 	PublishLearnedSkills      func(context.Context, learning.SkillPartition) error
 	BeginSkillPublication     func() func()
-	RevokeLearnedSkill        func(learning.SkillPartition, string)
 	LiveSkillGeneration       func(learning.SkillPartition) uint64
 	SkillActionAvailable      func(learning.SkillPartition, string) (bool, string)
 	LearnedSkillNameAvailable func(string) bool

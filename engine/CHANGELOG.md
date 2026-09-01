@@ -69,6 +69,8 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   without widening the minimal `SessionStore` or loading transcript content.
   Added (minor).
 
+- **Authoritative learned-skill catalog generations** ([ADR 0254](../docs/adr/0254-cloud-native-learning.md)) — `learning.SkillGeneration` and generation-aware `skillfs.AtomicCatalog` publication/invalidation methods let derived per-partition caches reject delayed older updates while retaining external-skill precedence and path-free bundles. Added (minor).
+
 - **Restart-safe canonical evidence reflection** ([ADR 0254](../docs/adr/0254-cloud-native-learning.md)) — `agent.EvidenceReflector.ReflectProjection` accepts only a bounded canonical `learning.Projection`, revalidates its content-addressed evidence metadata, and applies the canonical governance untrusted fence before the provider boundary. Added (minor).
 
 - **Storage-neutral durable learning attempt repository contract** ([ADR 0254](../docs/adr/0254-cloud-native-learning.md)) — `learning.AttemptRepository` defines idempotent create, opaque-version CAS, a closed lifecycle transition table, expiring generation-fenced claim acquire/renew/release, monotonic reconciliation checkpoints, terminal finalization, retry/abandon, bounded partitioned listing, retention, deletion, and typed conflicts. Added (minor).
@@ -98,6 +100,8 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   default loop; composition enables it only alongside durable EventLog retention. Adding a field
   to an exported struct breaks external unkeyed literals, so this is Changed/breaking (pre-v1 a
   minor bump).
+
+- **`learning.SkillRepository.Generation` and `learning.SkillPage.Generation`** ([ADR 0254](../docs/adr/0254-cloud-native-learning.md)) — repositories now expose the durable per-caller/project-partition monotonic generation used to publish, hydrate, and invalidate derived catalogs. Extending the interface and exported page struct is Changed/breaking (pre-v1 a minor bump).
 
 - **`learning.Trajectory.RunID`** ([ADR 0254](../docs/adr/0254-cloud-native-learning.md)) — binds a completed trajectory to the persisted ADR-0249 run identity that durable learning admission verifies before creating an attempt. Adding a field to an exported struct breaks external unkeyed literals, so this is Changed/breaking (pre-v1 a minor bump).
 

@@ -72,6 +72,62 @@ func uniquePartitions(values []learning.SkillVersion) []learning.SkillPartition 
 	return out
 }
 
+// RefreshPartitionsAtGeneration publishes authoritative repository snapshots for
+// the named partitions. Each partition is compared independently; an older
+// delayed operation cannot replace a newer cache generation. Equal generations
+// are accepted so hydration can repair an uncertain cache without a mutation.
+func (c *AtomicCatalog) RefreshPartitionsAtGeneration(generations map[learning.SkillPartition]learning.SkillGeneration, learned []learning.SkillVersion) bool {
+	grouped := make(map[learning.SkillPartition]map[string]catalogEntry, len(generations))
+	for partition := range generations {
+		grouped[partition] = map[string]catalogEntry{}
+	}
+	for _, version := range learned {
+		entries, selected := grouped[version.Partition]
+		if !selected || version.State != learning.SkillActive {
+			continue
+		}
+		if _, exists := c.external[version.Bundle.Name]; exists {
+			continue
+		}
+		meta := tool.SkillMeta{Name: version.Bundle.Name, Description: version.Bundle.Description, Metadata: map[string]string{
+			"mecatl.agent_owned": "true", "mecatl.owner_agent": version.OwnerAgent, "mecatl.active_version": string(version.Version),
+		}}
+		entries[meta.Name] = catalogEntry{meta: meta, body: version.Bundle.Body, learned: true, partition: version.Partition}
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	accepted := true
+	for partition, generation := range generations {
+		current := c.partitions[partition]
+		if learning.SkillGeneration(current.generation) > generation {
+			accepted = false
+			continue
+		}
+		c.partitions[partition] = partitionSnapshot{generation: uint64(generation), entries: grouped[partition]}
+		c.generation = max(c.generation, uint64(generation))
+	}
+	return accepted
+}
+
+// ClearPartitionsAtGeneration fail-closes only cache partitions that have not
+// already advanced beyond the authoritative generation associated with the
+// uncertain operation.
+func (c *AtomicCatalog) ClearPartitionsAtGeneration(generations map[learning.SkillPartition]learning.SkillGeneration) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	accepted := true
+	for partition, generation := range generations {
+		current := c.partitions[partition]
+		if learning.SkillGeneration(current.generation) > generation {
+			accepted = false
+			continue
+		}
+		c.partitions[partition] = partitionSnapshot{generation: uint64(generation), entries: map[string]catalogEntry{}}
+		c.generation = max(c.generation, uint64(generation))
+	}
+	return accepted
+}
+
 // Refresh replaces only the partitions represented by learned. Call
 // RefreshPartitions when an empty authoritative generation must be published.
 func (c *AtomicCatalog) Refresh(_ []tool.SkillMeta, _ tool.SkillSource, learned []learning.SkillVersion) []learning.SkillVersion {

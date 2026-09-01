@@ -4289,17 +4289,21 @@ and explicit limits; mecatl ships no production judge. Candidate inventory drain
 metadata plus every learned version in the exact partition.
 
 `skillfs.AtomicCatalog` composes the existing path-free `tool.SkillSource` with body-only learned versions behind
-one immutable generation pointer. External filesystem/driver assets retain the ordinary `{name, asset}` schema,
-validation, and bounds; learned asset requests fail explicitly, and no path/read-root/materialization seam exists.
-External names win. Shared, selector, and no-fs catalogs register `LiveTool` over the same pointer. A
-verified caller's global partition and exact trusted launch-root project can bind publication; the
-caller-bound LiveTool selects only that principal/project generation, while Service mutation authorization is skill-specific and independent
-of memory convergence.
+independent immutable caller/project partition snapshots. `learning.SkillRepository.Generation` is the durable
+monotonic authority for each partition; every successful repository mutation advances only that partition, and
+paginated hydration verifies one unchanged generation before atomically publishing it. Generation-aware publish and
+invalidation reject delayed older operations, while uncertainty clears only the affected partition. This is lazy
+list/run hydration and convergence, not an instant invalidation or attempt-claim fence. External filesystem/driver
+assets retain the ordinary `{name, asset}` schema, validation, and bounds; learned asset requests fail explicitly,
+and no path/read-root/materialization seam exists. External names win. Shared, selector, and no-fs catalogs register
+`LiveTool` over the same catalog. A verified caller's global partition and exact trusted launch-root project can bind
+publication; the caller-bound LiveTool selects only that principal/project snapshot, while Service mutation
+authorization is skill-specific and independent of memory convergence.
 
 Archive accepts only Active. Rollback additionally requires durable proof that the target was previously
 active through `activate`, `activate_validated`, or `rollback_to`; arbitrary ABSTAIN and draft versions remain
 ineligible. Post-commit publication uses a bounded cancel-detached context and reports `published` versus
-`pending_reconciliation` alongside committed state; failure revokes the learned entry fail-safe, while startup and
+`pending_reconciliation` alongside committed state; failure generation-invalidates the uncertain partition, while startup and
 live-list refresh reconstruct from durable active state. Lifecycle `SkillDraft` derives verified caller identity,
 exact live workspace root, and main-agent ownership at execution, refusing identity-free calls. API/TUI requests
 preserve project and correlate generation plus skill/version; list and receipt consumers drain every page, with

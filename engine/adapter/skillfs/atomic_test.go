@@ -52,6 +52,27 @@ func activeVersion(name, body string) learning.SkillVersion {
 	return learning.SkillVersion{State: learning.SkillActive, Partition: learning.SkillPartition{Principal: hex.EncodeToString(sum[:])}, Bundle: learning.SkillBundle{Name: name, Description: name + " description", Body: body}}
 }
 
+func TestADR_0254_CatalogGenerationRejectsStaleUpdates(t *testing.T) {
+	partition := activeVersion("new", "").Partition
+	catalog := skillfs.NewAtomicCatalog(nil, nil, nil)
+	newer := activeVersion("new", "new body")
+	older := activeVersion("old", "old body")
+
+	if !catalog.RefreshPartitionsAtGeneration(map[learning.SkillPartition]learning.SkillGeneration{partition: 2}, []learning.SkillVersion{newer}) {
+		t.Fatal("new authoritative generation was not published")
+	}
+	if catalog.RefreshPartitionsAtGeneration(map[learning.SkillPartition]learning.SkillGeneration{partition: 1}, []learning.SkillVersion{older}) {
+		t.Fatal("stale publication was accepted")
+	}
+	if catalog.ClearPartitionsAtGeneration(map[learning.SkillPartition]learning.SkillGeneration{partition: 1}) {
+		t.Fatal("stale invalidation was accepted")
+	}
+	view := catalog.View(partition)
+	if view.Generation != 2 || len(view.Metas) != 1 || view.Metas[0].Name != "new" {
+		t.Fatalf("stale operation replaced newer snapshot: generation=%d metas=%+v", view.Generation, view.Metas)
+	}
+}
+
 func TestAtomicCatalogExternalPrecedenceAssetParityAndRefresh(t *testing.T) {
 	external := []tool.SkillMeta{{Name: "same", Description: "operator", HasAssets: true}}
 	source := atomicSource{

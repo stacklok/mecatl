@@ -41,9 +41,10 @@ type skillRecord struct {
 }
 
 type manifest struct {
-	Format     string                                      `json:"format"`
-	Partitions map[string]map[learning.SkillID]skillRecord `json:"partitions"`
-	Receipts   map[string][]learning.SkillReceiptRecord    `json:"receipts,omitempty"`
+	Format      string                                      `json:"format"`
+	Partitions  map[string]map[learning.SkillID]skillRecord `json:"partitions"`
+	Receipts    map[string][]learning.SkillReceiptRecord    `json:"receipts,omitempty"`
+	Generations map[string]learning.SkillGeneration         `json:"generations,omitempty"`
 }
 
 // Store is a durable learning.SkillRepository. New is lazy: an empty repository
@@ -139,7 +140,7 @@ func rejectPathSymlinks(path string) error {
 }
 
 func emptyManifest() manifest {
-	return manifest{Format: "mecatl-skillstore/1", Partitions: map[string]map[learning.SkillID]skillRecord{}, Receipts: map[string][]learning.SkillReceiptRecord{}}
+	return manifest{Format: "mecatl-skillstore/1", Partitions: map[string]map[learning.SkillID]skillRecord{}, Receipts: map[string][]learning.SkillReceiptRecord{}, Generations: map[string]learning.SkillGeneration{}}
 }
 
 func partitionKey(p learning.SkillPartition) string {
@@ -290,6 +291,9 @@ func (s *Store) load() (manifest, error) {
 	}
 	if doc.Receipts == nil {
 		doc.Receipts = rebuildReceiptIndex(doc.Partitions)
+	}
+	if doc.Generations == nil {
+		doc.Generations = map[string]learning.SkillGeneration{}
 	}
 	if err = s.validateManifest(doc); err != nil {
 		return manifest{}, err
@@ -609,6 +613,22 @@ func locate(bucket map[learning.SkillID]skillRecord, owner string, id learning.S
 	return skillRecord{}, 0, learning.ErrSkillNotFound
 }
 
+func advanceGeneration(doc *manifest, key string) {
+	doc.Generations[key]++
+}
+
+// Generation returns the durable monotonic generation for one partition.
+func (s *Store) Generation(ctx context.Context, p learning.SkillPartition) (generation learning.SkillGeneration, err error) {
+	if err = learning.ValidateSkillPartition(p, "generation"); err != nil {
+		return 0, err
+	}
+	err = s.locked(ctx, false, func(doc *manifest) error {
+		generation = doc.Generations[partitionKey(p)]
+		return nil
+	})
+	return generation, err
+}
+
 // CreateDraft creates an immutable body version or merges provenance into its exact duplicate.
 func (s *Store) CreateDraft(ctx context.Context, p learning.SkillPartition, owner string, bundle learning.SkillBundle, provenance learning.SkillProvenance) (out learning.SkillVersion, err error) {
 	if err = learning.ValidateSkillPartition(p, owner); err != nil {
@@ -655,6 +675,7 @@ func (s *Store) CreateDraft(ctx context.Context, p learning.SkillPartition, owne
 					record.Versions[i].Revision = rev
 					record.Versions[i].UpdatedAt = s.now().UTC()
 					bucket[id] = record
+					advanceGeneration(doc, key)
 				}
 				out = clone(record.Versions[i])
 				return nil
@@ -674,6 +695,7 @@ func (s *Store) CreateDraft(ctx context.Context, p learning.SkillPartition, owne
 			record.Versions = append(record.Versions, clone(value))
 			bucket[id] = record
 			doc.Partitions[key] = bucket
+			advanceGeneration(doc, key)
 			out = clone(value)
 			return nil
 		}
@@ -691,6 +713,7 @@ func (s *Store) CreateDraft(ctx context.Context, p learning.SkillPartition, owne
 		value := learning.SkillVersion{ID: id, Version: version, Revision: rev, State: learning.SkillDraft, OwnerAgent: owner, Partition: p, Bundle: bundle, Provenance: provenance, Disposition: provenance.ValidationDisposition, CreatedAt: now, UpdatedAt: now}
 		bucket[id] = skillRecord{Owner: owner, Name: bundle.Name, Versions: []learning.SkillVersion{clone(value)}}
 		doc.Partitions[key] = bucket
+		advanceGeneration(doc, key)
 		out = clone(value)
 		return nil
 	})
@@ -728,7 +751,9 @@ func (s *Store) List(ctx context.Context, p learning.SkillPartition, options lea
 		return page, learning.ErrInvalidSkill
 	}
 	err = s.locked(ctx, false, func(doc *manifest) error {
-		bucket := doc.Partitions[partitionKey(p)]
+		key := partitionKey(p)
+		page.Generation = doc.Generations[key]
+		bucket := doc.Partitions[key]
 		ids := make([]learning.SkillID, 0, len(bucket))
 		selected := make(map[learning.SkillID]learning.SkillVersion, len(bucket))
 		for id, record := range bucket {
@@ -897,6 +922,7 @@ func (s *Store) update(ctx context.Context, p learning.SkillPartition, owner str
 		appendReceiptHistory(doc, key, id, record, receiptBefore, receiptHad)
 		bucket[id] = record
 		doc.Partitions[key] = bucket
+		advanceGeneration(doc, key)
 		out = clone(record.Versions[index])
 		return nil
 	})
@@ -1074,6 +1100,7 @@ func (s *Store) Rollback(ctx context.Context, p learning.SkillPartition, owner s
 		appendReceiptHistory(doc, key, id, record, receiptBefore, receiptHad)
 		bucket[id] = record
 		doc.Partitions[key] = bucket
+		advanceGeneration(doc, key)
 		out = clone(record.Versions[targetIndex])
 		return nil
 	})
