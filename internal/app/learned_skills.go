@@ -27,14 +27,46 @@ func learnedSkillPartitions(ctx context.Context, workspace string, cfg Config) [
 
 func hydrateLearnedSkillPartitions(ctx context.Context, cfg Config, assets catalogAssets, workspace string) []learning.SkillPartition {
 	partitions := learnedSkillPartitions(ctx, workspace, cfg)
+	hydrateLearnedSkills(ctx, cfg, assets, partitions)
+	return partitions
+}
+
+func hydrateLearnedSkills(ctx context.Context, cfg Config, assets catalogAssets, partitions []learning.SkillPartition) {
 	if assets.liveSkills == nil || assets.learnedSkills == nil || len(partitions) == 0 {
-		return partitions
+		return
 	}
 	publisher := learnedSkillPublisher{repository: assets.learnedSkills, partitions: partitions, catalog: assets.liveSkills, serial: assets.skillPublication}
 	if err := publisher.Publish(ctx); err != nil {
 		cfg.diag().Log(ctx, port.LevelWarn, "learned-skill hydration failed; caller partition quarantined", "err", err)
 	}
-	return partitions
+}
+
+type hydratingSkillTool struct {
+	live        skillfs.LiveTool
+	hydrate     func(context.Context)
+	specContext context.Context
+}
+
+func newHydratingSkillTool(ctx context.Context, cfg Config, assets catalogAssets, live skillfs.LiveTool, partitions []learning.SkillPartition) tool.Tool {
+	return hydratingSkillTool{
+		live: live,
+		hydrate: func(callCtx context.Context) {
+			hydrateLearnedSkills(callCtx, cfg, assets, partitions)
+		},
+		specContext: session.WithPrincipal(context.Background(), session.PrincipalFromContext(ctx)),
+	}
+}
+
+func (t hydratingSkillTool) Spec() tool.ToolSpec {
+	t.hydrate(t.specContext)
+	return t.live.Spec()
+}
+
+func (hydratingSkillTool) ReadOnly() bool { return true }
+
+func (t hydratingSkillTool) Execute(ctx context.Context, call session.ToolCall, env tool.Environment) (session.ToolResult, error) {
+	t.hydrate(ctx)
+	return t.live.Execute(ctx, call, env)
 }
 
 var errLearnedSkillGenerationChanged = errors.New("learned skill partition generation changed during hydration")
