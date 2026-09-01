@@ -7,173 +7,184 @@
 
 This clean break removes client filesystem-path authority from every session lifecycle.
 The server binds every environment; no compatibility field, legacy-path adoption, or
-listener-topology exception remains.
+listener-topology exception remains. Trusted private runtime and durable storage may keep
+physical roots as implementation data required for exact reattachment.
 
 ## Placement protocol and scope
 
-The public placement selector is a tagged value with exactly three variants:
+Default `CreateSession` accepts only omitted deployment default or explicit no-FS
+attenuation. It accepts no general placement ID. Alternate worktree selection starts from
+an owned source session: `ListWorktrees(session_id)` returns safe display metadata and an
+opaque short-lived selector usable only by `ClearSession` or `ForkSession` for that source.
 
-1. **omitted** — use the trusted composition-configured deployment default;
-2. **no-FS** — explicit attenuation of the applicable default or inherited placement;
-3. **ID** — an opaque server-advertised placement ID.
+`session.EnvironmentRef{Kind, ID, Revision}` is the sole durable runtime identity.
+`Session.Workspace` is removed, but a local ref's private ID may identify the configured
+root. Snapshots and trusted driver storage may carry that exact private ref. Public
+Harness/HTTP/client mappers never expose it or any filesystem path; public kind, label,
+branch, and revision metadata is display-only and grants nothing.
 
-It is neither a path nor a bearer capability. Possession authorizes nothing. The server
-reauthorizes every ID for the durable owner principal, operation, placement scope, and
-current provider inventory. It atomically binds authorization and resolution to one
-immutable provider record/version, returning a complete `tool.Environment`, persisted
-`PlacementRef{Kind, ID, Revision}`, and bounded safe metadata. `Reattach` accepts only
-that exact ref/revision and never follows a current default.
+Local worktree selectors are HMAC-SHA256 digests over provider-private current choice
+identity plus caller/source scope, made with a random per-process key. The server never
+decodes them: it re-enumerates current eligible choices and constant-time matches in one
+provider snapshot. There is no selector registry, encoded path, or persistence. After a
+restart the client relists. Remote providers may provide equivalent scoped ephemeral
+selectors.
 
-V1 uses stable opaque IDs and revisions owned by the placement provider: a local default
-is configured by trusted composition, a git-worktree provider supplies a stable non-path
-identity plus current inventory/fingerprint, and remote providers supply their IDs. V1
-adds no placement registry, signer, token, path hash, encoded/encrypted path, or
-process-local map. IDs need not be secret because possession is never authority.
-
-Physical workspace is removed from the session aggregate, snapshot, public/session
-inventory, driver records, and event sources. Runtime adapter roots and operator
-composition paths remain private. ACP's standard local boundary may require a cwd only
-as a consistency assertion against the composition-configured placement; it never
-constructs or selects authority.
+`Bind` atomically resolves the deployment default/no-FS choice or matches a current
+selector choice and returns a complete `tool.Environment` plus exact private ref.
+`Reattach` accepts only that exact persisted ref/revision and never follows a current
+default. ACP cwd remains solely a local assertion against trusted configuration.
 
 ## Scenarios and acceptance criteria
 
-### Scenario 1 — Create binds one server-owned placement
+### Scenario 1 — Create binds the server-owned default or no-FS
 
 This scenario enforces [ADR 0280](../adr/0280-server-owned-session-placement.md) at the public creation boundary.
 
-- AC1.1: `CreateSession` accepts only the three tagged selector variants. Omission binds
-the deployment default; no-FS attenuates it; an ID is reauthorized. Its response exposes
-only `PlacementRef` and safe metadata.
-  - verify: `TestADR_0280_CreateSessionPlacementProtocol`
-- AC1.2: `Bind` atomically authorizes and resolves one immutable provider record/version;
-a rebind or inventory revision between authorization and resolution fails closed before
-filesystem access or persistence, never binding a mixed generation.
+- AC1.1: `CreateSession` accepts only omitted deployment default or explicit no-FS
+attenuation; it accepts no general placement ID or selector. Its response exposes only a
+session ID and bounded display metadata, never the exact private `EnvironmentRef`.
+  - verify: `TestADR_0280_CreateSessionAcceptsOnlyDefaultOrNoFS`
+- AC1.2: `Bind` constructs the complete environment and exact private ref from one
+immutable provider snapshot; an authorization/resolution or inventory revision race fails
+closed before persistence or filesystem access, never binding a mixed generation.
   - verify: `TestADR_0280_BindRejectsRebindBetweenAuthorizationAndResolution`
-- AC1.3: Unknown, stale, wrong-scope, unauthorized, or unavailable IDs fail before
-environment construction, trust evaluation, or persistence; hidden and absent IDs are
-indistinguishable and never default.
-  - verify: `TestInvariant_server_owned_placement_ids_fail_closed`
-- AC1.4: Harness protobuf/HTTP requests and responses, generated clients, and public
-session inventory contain no filesystem path, cwd, workspace root, mount, or
-path-shaped environment selector. Old path-bearing requests are unsupported.
+- AC1.3: Unknown, stale, wrong-owner, wrong-source, unauthorized, or unavailable selectors
+fail before environment construction, trust evaluation, or persistence; hidden and absent
+choices are indistinguishable and never fall back to a default.
+  - verify: `TestADR_0280_ScopedWorktreeSelectorsFailClosed`
+- AC1.4: Harness protobuf/HTTP requests and responses, generated clients, and public session
+inventory contain no filesystem path, cwd, workspace root, mount, exact private
+`EnvironmentRef`, or path-shaped selector. Old path-bearing requests are unsupported.
   - verify: `TestADR_0280_PublicHarnessContractContainsNoFilesystemPaths`
 
 ### Scenario 2 — Durable sessions reattach exactly
 
-This scenario preserves the exact-reattachment invariant from [ADR 0214](../adr/0214-environment-persistence.md) while removing path-derived identity.
+This scenario preserves the exact-reattachment invariant from [ADR 0214](../adr/0214-environment-persistence.md) while removing duplicate workspace identity.
 
-- AC2.1: `Session` and its snapshot persist only `PlacementRef{Kind, ID, Revision}`;
-they contain no `Workspace`, workspace path, live runner, credential, transport, or
-process handle.
-  - verify: `TestADR_0280_SessionAndSnapshotPersistOnlyPlacementRef`
-- AC2.2: On load and at run entry, `Reattach` requires the exact persisted ref/revision
-and returns a complete environment whose identity and bound runner share its namespace.
+- AC2.1: `Session` and its snapshot persist only
+`EnvironmentRef{Kind, ID, Revision}` as runtime identity and contain no duplicate
+`Workspace`, live runner, credential, transport, or process handle. A local private ID may
+identify its configured physical root.
+  - verify: `TestADR_0280_SessionAndSnapshotPersistOnlyEnvironmentRef`
+- AC2.2: On load and at run entry, `Reattach` requires the exact persisted ref/revision and
+returns a complete environment whose identity and bound runner share its namespace.
 Missing resolver/provider, authorization drift, revision mismatch, nil workspace, or
 identity mismatch is a failed precondition with no fallback.
   - verify: `TestInvariant_persisted_placement_reattaches_exactly`
-- AC2.3: Legacy zero, path-bearing, or otherwise invalid placement snapshots are
-rejected; there is no lazy stamping, migration sweep, inference, or alternate authority
-path.
-  - verify: `TestADR_0280_LegacyPlacementStateIsStructurallyUnsupported`
-- AC2.4: Public projections, events, diagnostics, logs, and errors carry only the opaque
-ref or safe metadata and never a physical path or secret backend locator.
+- AC2.3: Zero refs, duplicate legacy `Workspace` state, and otherwise invalid snapshots are
+rejected; there is no lazy stamping, migration sweep, workspace inference, adoption, or
+alternate authority path.
+  - verify: `TestADR_0280_LegacyDuplicatePlacementStateIsUnsupported`
+- AC2.4: Public projections, events, client-visible logs, and errors expose only bounded
+display metadata and never an exact private ref, physical path, or secret backend locator.
+Trusted operator diagnostics may retain physical roots.
   - verify: `TestInvariant_physical_placement_paths_never_cross_public_api`
 
-### Scenario 3 — Discovery is owned-session scoped
+### Scenario 3 — Discovery issues source-scoped ephemeral selectors
 
-This scenario retains the worktree workflow from [ADR 0032](../adr/0032-worktree-binding.md) without its path-bearing authority.
+This scenario retains the worktree workflow from [ADR 0032](../adr/0032-worktree-binding.md) without public path authority or stable public placement IDs.
 
-- AC3.1: `ListCommands(session_id)` and `ListWorktrees(session_id)` authorize and
-reattach the owned session before discovery; neither accepts a root or selector.
+- AC3.1: `ListCommands(session_id)` and `ListWorktrees(session_id)` authorize and reattach
+the owned session before discovery; neither accepts a root or client-provided selector.
+Worktree entries contain an opaque selector plus bounded display-only kind/label/branch/
+revision metadata.
   - verify: `TestADR_0280_DiscoveryIsSessionScopedAndOwnerAuthorized`
-- AC3.2: For a no-FS session, both discovery calls return the documented empty/
-unsupported result without invoking a filesystem/default resolver, command source, or
-worktree lister.
+- AC3.2: For a no-FS session, both discovery calls return the documented empty/unsupported
+result without invoking a filesystem/default resolver, command source, or worktree lister.
   - verify: `TestADR_0280_NoFSDiscoveryDoesNotInvokeFilesystemProviders`
-- AC3.3: Worktree entries advertise only provider-owned opaque IDs and bounded safe
-metadata. Creating or forking from one reauthorizes and atomically binds it; listing is
-not a grant.
-  - verify: `TestADR_0280_WorktreePlacementIsReauthorizedOnUse`
-- AC3.4: A hidden or unknown session cannot probe another owner's placement or server
-layout; mecatui switches by opaque ID and retains its selected session on failure.
-  - verify: `TestServerOwnedSessionPlacement_Scenario3_OwnershipAndMecatuiSwitch`
+- AC3.3: A local selector is an HMAC-SHA256 digest scoped to caller and source session. On
+use, the server re-enumerates currently eligible source-placement worktrees and
+constant-time matches in one provider snapshot; it never decodes the token or consults a
+registry/map.
+  - verify: `TestADR_0280_WorktreeSelectorIsScopedAndMatchedAgainstCurrentInventory`
+- AC3.4: A hidden/unknown session cannot probe another owner's placement or server layout.
+Selectors expire on process restart, so mecatui relists and retains its selected session
+on relist or switch failure.
+  - verify: `TestServerOwnedSessionPlacement_Scenario3_OwnershipRelistAndSafeSwitch`
 
 ### Scenario 4 — Clear and fork create non-destructive successors
 
 This scenario extends the history-carrying successor semantics of [ADR 0065](../adr/0065-conversation-fork.md) with a separate empty-history operation.
 
-- AC4.1: `ClearSession` is a new breaking RPC: request contains only `source_session_id`;
-response returns the distinct successor ID and safe session metadata. It creates an
-empty-history successor with the source's exact `PlacementRef`, owner, applicable mode,
-provider/model/effort, limits, and permission posture.
-  - verify: `TestADR_0280_ClearSessionRPCCreatesEmptyInheritedSuccessor`
-- AC4.2: Clear authorizes the source, observes source-state/run-entry serialization and
-lease rules, reattaches/reauthorizes the inherited exact placement, and is
-non-destructive: failure persists no successor and changes neither source nor client
-binding.
+- AC4.1: `ClearSession(source_session_id, optional selector)` creates a distinct
+empty-history successor. Ordinary `/clear` omits the selector and inherits the exact
+source placement, owner, applicable mode, provider/model/effort, limits, and permission
+posture; the response exposes no exact private ref or path.
+  - verify: `TestADR_0280_ClearSessionCreatesEmptyInheritedSuccessor`
+- AC4.2: Clear reauthorizes the source, observes source-state/run-entry serialization and
+lease rules, and exactly reattaches inherited placement or atomically resolves a current
+source-scoped selector. Failure persists no successor and changes neither source nor
+client binding.
   - verify: `TestADR_0280_ClearSessionIsLeaseSafeAndNonDestructive`
-- AC4.3: `ForkSession` copies valid history and either inherits the exact source ref or
-uses one of the three selector variants. A changed placement/provider/model/effort is
-fully authorized and atomically bound; failure leaves no partial successor.
+- AC4.3: `ForkSession(source_session_id, optional selector, model overrides)` copies valid
+history and inherits the exact source ref when selector is omitted. A selector and model/
+provider/effort overrides are fully authorized and atomically resolved; failure leaves no
+partial successor.
   - verify: `TestInvariant_fork_placement_is_atomic_and_server_authorized`
 
 ### Scenario 5 — Delegation and artifact handles do not become selectors
 
 This scenario preserves complete parent/child environment affinity from [ADR 0211](../adr/0211-execution-environment-runtime-seam.md).
 
-- AC5.1: Teams derive placement from their owning session (or a direct API's authorized
-selector); subagents and Parallel derive or fork the parent environment. No model-facing
-or delegation call accepts an unrelated placement ID or path, and no-FS cannot upgrade.
+- AC5.1: Teams derive placement from their owning session; subagents and Parallel derive or
+fork the parent environment. No model-facing or delegation call accepts a worktree
+selector, placement ID, or path; models cannot choose selectors and no-FS cannot upgrade.
   - verify: `TestInvariant_delegation_cannot_escalate_placement`
-- AC5.2: Preserved-fork, delegation, and artifact handles are distinct typed handles,
-never accepted as placement selectors. Every inspection consumer reauthorizes the owner
+- AC5.2: Preserved-fork, delegation, and artifact handles are distinct typed handles and
+are never accepted as worktree selectors. Every inspection consumer reauthorizes the owner
 and original placement scope before access.
   - verify: `TestADR_0280_ArtifactHandlesCannotReplayAsPlacementSelectors`
-- AC5.3: Delegation results, inspection surfaces, and model-visible summaries expose no
-fork root or placement path.
+- AC5.3: Delegation results, inspection surfaces, events, and model-visible summaries expose
+no fork root, placement path, exact private ref, or reusable selector.
   - verify: `TestADR_0280_DelegationObservabilityContainsNoPlacementPath`
 
-### Scenario 6 — Deferred creation preserves owner and exact placement
+### Scenario 6 — Deferred creation persists resolved owner and placement
 
 This scenario applies the deferred-session contract from [ADR 0059](../adr/0059-scheduled-tasks.md) without granting the scheduler ambient placement authority.
 
-- AC6.1: A schedule persists its durable owner principal, original placement scope, and
-exact `PlacementRef` revision (or explicit no-FS attenuation), never “follow current
-default” intent or a path.
-  - verify: `TestADR_0280_SchedulePersistsOwnerScopeAndExactPlacementRef`
-- AC6.2: Each fire reauthorizes and reattaches with that owner and scope, not daemon
+- AC6.1: Schedule creation inherits the source placement or immediately resolves a current
+source-scoped selector, then persists the durable owner principal, original scope, and
+exact private `EnvironmentRef`. It never persists a selector or “follow current default”
+intent; models cannot choose schedule selectors.
+  - verify: `TestADR_0280_ScheduleResolvesSelectorBeforePersistingExactEnvironmentRef`
+- AC6.2: Each fire reauthorizes and exactly reattaches with that owner and scope, not daemon
 identity. Drift, unavailability, or mismatch records an operator-visible failure without
 creating a session or accessing a filesystem.
   - verify: `TestInvariant_scheduled_placement_is_reauthorized_at_fire`
 
-### Scenario 7 — Driver and ACP preserve the binding boundary
+### Scenario 7 — Driver storage and ACP preserve the binding boundary
 
 This scenario keeps remote environment reattachment aligned with [ADR 0214](../adr/0214-environment-persistence.md) and the composition boundary in [`architecture.md`](../architecture.md).
 
-- AC7.1: Driver session/environment messages carry only exact opaque placement refs and
-capabilities, not paths. Driver results are accepted only through exact `Reattach`.
-  - verify: `TestADR_0280_DriverProtocolCarriesExactOpaquePlacementRef`
+- AC7.1: Trusted driver storage messages carry the exact private `EnvironmentRef`, which
+may include a local physical root, and driver results enter runtime only through exact
+`Reattach`. No public Harness/HTTP/client mapper projects that ref.
+  - verify: `TestADR_0280_DriverStorageCarriesExactPrivateEnvironmentRef`
 - AC7.2: ACP `session/new` and `session/load` bind or reattach from server state before
-access. A required ACP cwd is checked only for consistency with the configured placement;
-a mismatch is rejected and ACP cannot select or construct placement authority.
+access. A required ACP cwd is checked only for consistency with trusted configured
+placement; mismatch is rejected and cwd cannot select or construct authority.
   - verify: `TestADR_0280_ACPBindAndLoadAssertConfiguredPlacement`
-- AC7.3: ACP-visible sessions, discovery, errors, and events obey the same no-path
-projection rule.
+- AC7.3: Apart from the local cwd assertion, ACP-visible sessions, discovery, errors, and
+events obey the same public no-path and no-exact-ref projection rule.
   - verify: `TestServerOwnedSessionPlacement_Scenario7_ACPProjectsNoPhysicalPaths`
 
-### Scenario 8 — Composition owns allowed paths without new hidden state
+### Scenario 8 — Composition owns private paths and selector lifecycle
 
-- AC8.1: The complete path-surface inventory classifies public Harness/HTTP fields,
-durable aggregate/snapshot/driver fields, runtime adapter/operator-composition paths,
-and ACP cwd assertions. The first two are removed; only the last two are allowed.
-  - verify: `TestADR_0280_PathSurfaceInventoryHasNoPublicOrDurableWorkspacePath`
-- AC8.2: Trusted composition configures the local default; worktree and remote providers
-provide stable opaque IDs/revisions. Startup rejects invalid configuration before serving.
+- AC8.1: The path-surface inventory distinguishes public Harness/HTTP/client fields and
+public projections from private session/snapshot/driver storage, runtime adapters,
+operator diagnostics, composition, and ACP cwd. Public surfaces are path-free; private
+storage may retain the exact ref, `Session.Workspace` is removed, and ACP cwd is assertion
+only.
+  - verify: `TestADR_0280_PathSurfaceInventoryEnforcesPublicBoundary`
+- AC8.2: Trusted composition configures and validates the local deployment default and
+placement providers before serving; no stable public placement-ID registry is required.
   - verify: `TestADR_0280_CompositionConfiguresProviderOwnedPlacements`
-- AC8.3: The ADR 0027 List 1/List 2 re-audit records any actual added resource or durable
-state. V1 introduces none of a registry, signer, cache, or process-local placement map.
-  - verify: `TestADR_0280_PlacementReauditFindsNoV1RegistryOrState`
+- AC8.3: ADR 0027 List 1 inventories the random HMAC key as a Build-owned,
+process-lifetime resource, and List 2 records its reset-by-design restart semantics.
+Selectors are not persisted, restart requires relisting, and no selector registry/map is
+introduced.
+  - verify: `TestADR_0280_PlacementReauditInventoriesEphemeralSelectorKey`
 
 ## Out of scope
 
@@ -182,33 +193,32 @@ state. V1 introduces none of a registry, signer, cache, or process-local placeme
 | Compatibility aliases, legacy path migration, or adoption | Deleted, not redesigned; no compatibility users are supported. |
 | Client-selected host paths, including embedded/loopback | Permanently excluded by [ADR 0280](../adr/0280-server-owned-session-placement.md). |
 | Filesystem CAS, read ledger, runner affinity, or fork/merge mechanics | Preserved by [ADR 0208](../adr/0208-execution-environment.md) and [ADR 0211](../adr/0211-execution-environment-runtime-seam.md). |
-| Placement IDs as bearer grants, encoded paths, or portable deployment aliases | Permanently excluded. |
+| Stable public placement IDs, selectors as bearer grants, encoded paths, or portable deployment aliases | Permanently excluded. |
 
 ## Cross-cutting deliverables
 
-- Remove physical `Workspace` from aggregate, snapshot, public/session inventory, driver,
-and event-source types; keep runtime adapter roots private.
-- Update public contracts, generated SDKs, API compatibility records, architecture,
-usage, implementation notes, `AGENTS.md`, and `user-docs/` for the breaking change.
-- Add structural path-surface guards and the named scenario tests above. Every AC has one
-observable verify line; `task ac-trace-strict` must resolve all 26 ACs.
-- Re-audit ADR 0027 List 1/List 2 after implementation. Add rows only for an actual
-outlives-a-call resource or restart-relevant state; V1's provider-owned protocol adds
-neither by design.
+- Remove `Session.Workspace` and public path/ref projections while retaining exact private
+  `EnvironmentRef` in snapshot and trusted driver storage.
+- Update public contracts, generated SDKs, API compatibility records, architecture, usage,
+  implementation notes, `AGENTS.md`, and `user-docs/` for the breaking change.
+- Add structural public-path guards and the named scenario tests above. Every AC has one
+  observable verify line; `task ac-trace-strict` must resolve all 26 ACs.
+- Re-audit ADR 0027 List 1/List 2 and inventory the Build-owned random HMAC key, including
+  its reset-by-design/relist-after-restart decision.
 
 ## Definition of done
 
 1. `task lint`, `task test`, `task docs`, `task generate`, `task api:check`, and
    `task site:build` pass.
-2. `task ac-trace-strict` resolves all 26 AC proofs and every named scenario test is
-   green.
+2. `task ac-trace-strict` resolves all 26 AC proofs and every named scenario test is green.
 3. gRPC, HTTP/SSE, generated SDK, mecatui, mecak8s, driver, ACP, schedule, clear, fork,
    delegation, and no-FS tests demonstrate the corresponding scenarios above.
-4. ADR 0027 contains the implementation re-audit before the accumulator is complete.
+4. ADR 0027 inventories the selector HMAC key and its reset-by-design restart semantics
+   before the accumulator is complete.
 
 ## Unresolved decisions
 
-- Safe display metadata may be refined by provider, but must remain bounded, non-secret,
-  non-path, and non-reversible.
-- The final Go names for the tagged selector and `PlacementRef` fields may follow local
-  conventions; their three-variant/exact-revision protocol is fixed.
+- Safe display labels may be refined by provider but must remain bounded, non-secret,
+  non-path, and unusable as authority.
+- Final Go names for internal binding requests and public selector fields may follow local
+  conventions; the source-scoped ephemeral-token and exact-private-ref protocol is fixed.

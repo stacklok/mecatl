@@ -13,12 +13,21 @@ accumulator: acc/server-owned-session-placement
 
 # Task brief
 
-Perform the documentation-only final audit after the atomic cutover. Update the living architecture and usage documentation, implementation notes, ADR 0027 List 1/List 2, and user documentation; regenerate `llms.txt` and validate the site. Do not change implementation; report any implementation discrepancy for follow-up rather than repairing it in this task.
+Perform the documentation-only final audit after the atomic cutover. Update the living
+architecture and usage documentation, implementation notes, ADR 0027 List 1/List 2, and
+user documentation; regenerate `llms.txt` and validate the site. Inventory the random
+selector HMAC key as Build-owned process-lifetime state and record that restart resets it
+by design, invalidating selectors until clients relist. Do not change implementation;
+report any implementation discrepancy for follow-up rather than repairing it in this task.
 
-Expected focus: `docs/architecture.md`, `docs/usage.md`, `docs/design/IMPLEMENTATION-NOTES.md`, `docs/adr/0027-cloud-native.md`, `AGENTS.md`, `user-docs/`, generated `llms.txt`, and `task site:build`.
+Expected focus: `docs/architecture.md`, `docs/usage.md`,
+`docs/design/IMPLEMENTATION-NOTES.md`, `docs/adr/0027-cloud-native.md`, `AGENTS.md`,
+`user-docs/`, generated `llms.txt`, and `task site:build`.
 
 ## Acceptance criteria
 
-- AC8.3: The ADR 0027 List 1/List 2 re-audit records any actual added resource or durable
-state. V1 introduces none of a registry, signer, cache, or process-local placement map.
-  - verify: `TestADR_0280_PlacementReauditFindsNoV1RegistryOrState`
+- AC8.3: ADR 0027 List 1 inventories the random HMAC key as a Build-owned,
+process-lifetime resource, and List 2 records its reset-by-design restart semantics.
+Selectors are not persisted, restart requires relisting, and no selector registry/map is
+introduced.
+  - verify: `TestADR_0280_PlacementReauditInventoriesEphemeralSelectorKey`
