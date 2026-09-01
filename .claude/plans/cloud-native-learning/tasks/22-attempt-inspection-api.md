@@ -2,9 +2,9 @@
 id: 22-attempt-inspection-api
 title: Expose authorized bounded attempt get and list APIs
 blocked_by: [21-partition-publication-isolation]
-status: in-progress
-branch: ""
-worktree: ""
+status: done
+branch: "plan-cloud-native-learning/22-attempt-inspection-api"
+worktree: ".scratch/worktrees/22-attempt-inspection-api"
 issue: ""
 retries: 0
 last_error: ""
