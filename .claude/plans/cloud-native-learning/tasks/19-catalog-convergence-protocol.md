@@ -2,7 +2,7 @@
 id: 19-catalog-convergence-protocol
 title: Define durable learned-skill catalog generation convergence
 blocked_by: [18-downstream-claim-fencing]
-status: pending
+status: in-progress
 branch: ""
 worktree: ""
 issue: ""
