@@ -2,12 +2,12 @@
 id: 18-downstream-claim-fencing
 title: Fence attempt-owned lifecycle transitions by claim
 blocked_by: [17-distributed-repository-conformance]
-status: in-progress
-branch: ""
-worktree: ""
+status: done
+branch: "plan-cloud-native-learning/18-downstream-claim-fencing"
+worktree: ".scratch/worktrees/18-downstream-claim-fencing"
 issue: ""
 retries: 0
-last_error: "Corrected mis-decomposition: downstream repositories converge independently of attempt claims."
+last_error: ""
 accumulator: acc/cloud-native-learning
 ---
 
