@@ -3,7 +3,7 @@
 - Status: Accepted
 - Date: 2026-09-01
 - Scope: mecatui client-side session-handle presentation and debug-target resolution
-- Supersedes: ADR 0217 decision 8 (display handles only)
+- Supersedes: ADR 0217 decision 8 (display handles) and ADR 0254 decision paragraph 3's `DEBUG target #<digest>` presentation clause only
 - Superseded by: —
 
 ## Context
@@ -51,8 +51,9 @@ the status-line documentation must describe v2.
 A positional debug operand is a handle candidate only when it is a non-empty ASCII token of at
 most twelve columns whose first atom is `[A-Za-z0-9._]` or a complete uppercase
 `%[0-9A-F]{2}` escape and whose later atoms may additionally be literal `-`. Lowercase,
-malformed, or truncated escape candidates are not handles; longer and all other operands remain
-exact-ID inputs and bypass inventory automatically. For a syntactically valid short candidate,
+malformed, or truncated escape candidates are not handles; longer and other operands accepted
+positionally remain exact-ID inputs and bypass inventory automatically. A leading-hyphen exact ID
+uses the explicit `--exact` form below so the command parser cannot mistake it for a flag. For a syntactically valid short candidate,
 `mecatui debug` uses the existing all-pages `ListSessions` helper to obtain the complete
 caller-visible inventory. It deduplicates repeated rows by exact ID, gathers every distinct ID
 whose fixed projection equals the token, and requires exactly one projected match. Exact string

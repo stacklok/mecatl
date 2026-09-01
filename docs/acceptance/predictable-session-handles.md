@@ -1,7 +1,7 @@
 # Predictable mecatui session handles — acceptance plan
 
 **Phase:** capability — mecatui session discovery and debugger UX
-**Status:** landed, 2026-09-01.
+**Status:** in-progress. Final panel repair wave 2026-09-01.
 **Issue:** [stacklok/mecatl#922](https://github.com/stacklok/mecatl/issues/922).
 **ADR:** [ADR-0280](../adr/0280-predictable-mecatui-session-handles.md) — one fixed client-side actionable short-handle contract, superseding ADR-0217's display-only digest decision.
 **Related debugger boundaries:** [ADR-0254](../adr/0254-session-debugger-admin-transport.md), [ADR-0256](../adr/0256-session-debugger-evidence-and-reporting.md), and [ADR-0258](../adr/0258-cryptographic-session-incarnations.md).
@@ -122,9 +122,10 @@ cryptographic binding in [ADR-0258](../adr/0258-cryptographic-session-incarnatio
 - AC2.1: Only a syntactically valid positional short token invokes local resolution: it is
   non-empty ASCII, at most twelve columns, begins with `[A-Za-z0-9._]` or a complete uppercase
   `%[0-9A-F]{2}` atom, and thereafter consists of `[A-Za-z0-9._-]` literals or complete uppercase
-  escapes. Lowercase, malformed, truncated, leading-hyphen, longer, and other operands remain exact
-  IDs and are sent unchanged without inventory lookup. `--exact SESSION_ID` also bypasses inventory;
-  it is mutually exclusive with the positional operand in embedded and connected forms.
+  escapes. Lowercase, malformed, or truncated escapes, plus longer and other operands accepted
+  positionally, remain exact IDs and bypass inventory. A leading-hyphen exact ID uses
+  `--exact SESSION_ID` so it cannot be mistaken for a flag; the exact form also bypasses inventory
+  and is mutually exclusive with the positional operand in embedded and connected forms.
   - verify: `TestPredictableSessionHandles_Scenario2_HandleGrammarAndExactEscapeHatch`
 - AC2.2: For a syntactically valid short token, the complete caller-visible inventory is consulted
   before creation. Repeated rows for one exact ID count once; all distinct projected matches are
@@ -164,7 +165,8 @@ in [`AGENTS.md`](../../AGENTS.md) requires both living docs and `user-docs/` cov
 - AC3.1: `mecatui debug` and `mecatui connect ADDRESS debug` help accurately distinguish a
   positional exact ID or displayed short handle from the explicit `--exact SESSION_ID` bypass,
   state their mutual exclusivity, direct ambiguous or inventory-failed input to `/session` plus
-  `--exact`, and show no leading `#` marker.
+  `--exact`, explain that a leading-hyphen exact ID requires `--exact`, and show no leading `#`
+  marker.
   - verify: `TestPredictableSessionHandles_Scenario3_CommandHelpAndExactBypass`
 - AC3.2: `docs/tui.md`, `docs/usage.md`, the relevant `user-docs/` session/debug guides, and the
   status-line input reference use the handle term, explain leading-hyphen encoding and the fixed
@@ -184,6 +186,10 @@ in [`AGENTS.md`](../../AGENTS.md) requires both living docs and `user-docs/` cov
   and pre-ADR-0280 session-handle test names are absent; ordinary presentation is never described as a
   debugger evidence digest.
   - verify: `TestADR_0280_OrdinaryHandleDoesNotAlterDebuggerEvidenceHandles`
+- AC3.5: ADR-0280 explicitly supersedes only ADR-0217's ordinary display-handle decision and
+  ADR-0254's `DEBUG target #<digest>` presentation clause; both older ADRs carry scoped backlinks,
+  while every debugger authority, evidence, and incarnation decision remains in force.
+  - verify: inspection — `task docs` validates ADR metadata and links
 
 **Cross-boundary oracle and boundary table**
 

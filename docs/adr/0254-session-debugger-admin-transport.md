@@ -4,7 +4,7 @@
 - Date: 2026-08-30
 - Scope: stored-session diagnosis and the embedded mecatui performance-admin listener
 - Supersedes: ADR 0018 decision 7's fixed `127.0.0.1:9099` default only
-- Superseded by: —
+- Superseded by: ADR 0280 (decision paragraph 3's `DEBUG target #<digest>` presentation clause only)
 
 ## Context
 

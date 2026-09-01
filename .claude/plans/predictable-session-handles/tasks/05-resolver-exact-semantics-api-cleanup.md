@@ -58,13 +58,6 @@ update broad docs here; task 06 owns those dependent standards changes.
   `SessionIDDisplayWidth` compatibility alias is absent, with no change to debugger evidence or
   incarnation digest APIs.
   - verify: `TestPredictableSessionHandles_Scenario1_OnlyHandleWidthAPI`
-- AC2.1: Only a syntactically valid positional short token invokes local resolution: it is
-  non-empty ASCII, at most twelve columns, begins with `[A-Za-z0-9._]` or a complete uppercase
-  `%[0-9A-F]{2}` atom, and thereafter consists of `[A-Za-z0-9._-]` literals or complete uppercase
-  escapes. Lowercase, malformed, truncated, leading-hyphen, longer, and other operands remain exact
-  IDs and are sent unchanged without inventory lookup. `--exact SESSION_ID` also bypasses inventory;
-  it is mutually exclusive with the positional operand in embedded and connected forms.
-  - verify: `TestPredictableSessionHandles_Scenario2_HandleGrammarAndExactEscapeHatch`
 - AC2.2: For a syntactically valid short token, the complete caller-visible inventory is consulted
   before creation. Repeated rows for one exact ID count once; all distinct projected matches are
   gathered before selection, and multiple matches fail ambiguous even when one full ID exactly

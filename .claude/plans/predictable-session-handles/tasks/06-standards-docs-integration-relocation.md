@@ -38,11 +38,6 @@ unchanged. Regenerate docs as required and run the acceptance trace checks.
   `cmd/mecatui`, drives public UI update/View paths, and keeps `cmd/mecatui/ui` tests proto/gRPC-free
   without widening production APIs for test access.
   - verify: `TestPredictableSessionHandles_Scenario2_RenderedHeaderCreatesBoundDebugger`
-- AC3.1: `mecatui debug` and `mecatui connect ADDRESS debug` help accurately distinguish a
-  positional exact ID or displayed short handle from the explicit `--exact SESSION_ID` bypass,
-  state their mutual exclusivity, direct ambiguous or inventory-failed input to `/session` plus
-  `--exact`, and show no leading `#` marker.
-  - verify: `TestPredictableSessionHandles_Scenario3_CommandHelpAndExactBypass`
 - AC3.2: `docs/tui.md`, `docs/usage.md`, the relevant `user-docs/` session/debug guides, and the
   status-line input reference use the handle term, explain leading-hyphen encoding and the fixed
   escaped-prefix projection, preserve `/session` exact-copy guidance, and document both embedded
