@@ -5,5 +5,7 @@
  */
 
 export * from "./index.js";
+export type { NodeConnectOptions } from "./node-client.js";
+export { connect } from "./node-client.js";
 export type { NodeTransportCommonOptions, NodeTransportOptions } from "./node-transport.js";
 export { createNodeTransport } from "./node-transport.js";

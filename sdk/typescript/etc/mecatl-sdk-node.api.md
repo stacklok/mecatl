@@ -20,6 +20,38 @@ export class AuthenticationError extends MecatlError {
 }
 
 // @public
+export interface Client {
+    // (undocumented)
+    [Symbol.asyncDispose](): Promise<void>;
+    // (undocumented)
+    close(): Promise<void>;
+    // (undocumented)
+    readonly sessions: Sessions;
+    // (undocumented)
+    readonly status: ConnectionStatusStore;
+}
+
+// @public
+export function connect(options: NodeConnectOptions): Client;
+
+// @public
+export type ConnectionStatus = "connecting" | "online" | "reconnecting" | "offline" | "unauthorized" | "incompatible";
+
+// @public
+export type ConnectionStatusListener = (status: ConnectionStatus) => void;
+
+// @public
+export interface ConnectionStatusStore {
+    // (undocumented)
+    getSnapshot(): ConnectionStatus;
+    // (undocumented)
+    subscribe(listener: ConnectionStatusListener): () => void;
+}
+
+// @public
+export type ConnectOptions = HttpTransportOptions | InjectedTransportOptions;
+
+// @public
 export function createHttpTransport(options: HttpTransportOptions): Transport;
 
 // @public
@@ -27,6 +59,31 @@ export function createNodeTransport(options: NodeTransportOptions): Transport;
 
 // @public
 export function createRawClient(options: RawClientOptions): RawClient;
+
+// @public
+export interface CreateSessionOptions {
+    // (undocumented)
+    debugMcpServers?: string[];
+    // (undocumented)
+    debugTargetSessionId?: string;
+    // (undocumented)
+    limits?: SessionLimits;
+    // (undocumented)
+    mcpServers?: SessionMcpServer[];
+    mode?: 0 | 1 | 2 | 3;
+    // (undocumented)
+    modelId?: string;
+    // (undocumented)
+    profile?: string;
+    // (undocumented)
+    providerId?: string;
+    // (undocumented)
+    reasoningEffort?: string;
+    // (undocumented)
+    sourceSessionId?: string;
+    // (undocumented)
+    workspace?: string;
+}
 
 // @public (undocumented)
 export interface CredentialOptions {
@@ -36,6 +93,14 @@ export interface CredentialOptions {
 
 // @public (undocumented)
 export type CredentialProvider = () => HeadersInit | Promise<HeadersInit>;
+
+// @public
+export interface ForkSessionOptions {
+    // (undocumented)
+    reasoningEffort?: string;
+    // (undocumented)
+    title?: string;
+}
 
 // @public
 export function getRawJson(message: object): JsonValue | undefined;
@@ -51,6 +116,12 @@ export interface HttpTransportOptions extends CredentialOptions {
 // @public (undocumented)
 export class IncompatibleServerError extends MecatlError {
     constructor(message: string, options: Omit<MecatlErrorOptions, "code">);
+}
+
+// @public
+export interface InjectedTransportOptions {
+    transport: Transport;
+    transportKind?: TransportKind;
 }
 
 // @public (undocumented)
@@ -92,6 +163,9 @@ export interface MecatlErrorOptions {
     // (undocumented)
     transport: TransportKind;
 }
+
+// @public
+export type NodeConnectOptions = NodeTransportOptions | InjectedTransportOptions;
 
 // @public (undocumented)
 export interface NodeTransportCommonOptions extends CredentialOptions {
@@ -140,6 +214,48 @@ export class ServerError extends MecatlError {
 
 // @public (undocumented)
 export type ServerErrorCode = (typeof MECATL_ERROR_CODES)[number] | "unknown";
+
+// @public
+export interface Session {
+    close(): Promise<void>;
+    delete(): Promise<void>;
+    // (undocumented)
+    readonly id: string;
+}
+
+// @public
+export interface SessionLimits {
+    // (undocumented)
+    maxConsecutiveFailures?: number;
+    // (undocumented)
+    maxToolCalls?: number;
+    // (undocumented)
+    maxTurns?: number;
+}
+
+// @public
+export interface SessionMcpServer {
+    // (undocumented)
+    command?: string;
+    // (undocumented)
+    headers?: Record<string, string>;
+    // (undocumented)
+    name?: string;
+    // (undocumented)
+    type?: string;
+    // (undocumented)
+    url?: string;
+}
+
+// @public
+export interface Sessions {
+    // (undocumented)
+    create(options: CreateSessionOptions): Promise<Session>;
+    // (undocumented)
+    fork(sourceSessionId: string, options?: ForkSessionOptions): Promise<Session>;
+    // (undocumented)
+    get(sessionId: string): Promise<Session>;
+}
 
 // @public (undocumented)
 export const SUPPORTED_API_MAJOR = 1;

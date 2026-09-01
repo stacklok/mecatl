@@ -102,6 +102,9 @@ export function createRawClient(options: RawClientOptions): RawClient {
         return { header: response.header, message: info, trailer: response.trailer };
       })
       .catch((cause: unknown) => {
+        // A transient floor failure must not poison this client permanently.
+        // Connection monitoring and a later ordinary operation may retry it.
+        compatibility = undefined;
         if (cause instanceof IncompatibleServerError) throw cause;
         const normalized = normalizeError(cause, transportKind);
         if (

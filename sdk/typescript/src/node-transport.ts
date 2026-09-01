@@ -2,7 +2,7 @@ import type { ClientSessionOptions } from "node:http2";
 import { connect as connectSocket } from "node:net";
 import type { Transport } from "@connectrpc/connect";
 import type { GrpcTransportOptions } from "@connectrpc/connect-node";
-import { createGrpcTransport } from "@connectrpc/connect-node";
+import { createGrpcTransport, Http2SessionManager } from "@connectrpc/connect-node";
 import type { CredentialOptions } from "./credentials.js";
 import { credentialInterceptor } from "./credentials.js";
 import { registerTransport } from "./raw.js";
@@ -37,19 +37,19 @@ export function createNodeTransport(options: NodeTransportOptions): Transport {
       ? {}
       : { credentialProvider: options.credentialProvider }),
   };
-  const grpcOptions: GrpcTransportOptions = {
-    baseUrl: options.baseUrl ?? "http://localhost",
-    interceptors: [credentialInterceptor(credentials)],
-    ...(options.nodeOptions === undefined && options.socketPath === undefined
+  const baseUrl = options.baseUrl ?? "http://localhost";
+  const sessionManager = new Http2SessionManager(baseUrl, undefined, {
+    ...options.nodeOptions,
+    ...(options.socketPath === undefined
       ? {}
-      : {
-          nodeOptions: {
-            ...options.nodeOptions,
-            ...(options.socketPath === undefined
-              ? {}
-              : { createConnection: () => connectSocket(options.socketPath) }),
-          },
-        }),
+      : { createConnection: () => connectSocket(options.socketPath) }),
+  });
+  const grpcOptions: GrpcTransportOptions = {
+    baseUrl,
+    interceptors: [credentialInterceptor(credentials)],
+    sessionManager,
   };
-  return registerTransport(createGrpcTransport(grpcOptions), "grpc");
+  const transport = createGrpcTransport(grpcOptions) as Transport & AsyncDisposable;
+  transport[Symbol.asyncDispose] = async () => sessionManager.abort();
+  return registerTransport(transport, "grpc");
 }

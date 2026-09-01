@@ -5,6 +5,21 @@
  */
 
 export type { Transport } from "@connectrpc/connect";
+export type {
+  Client,
+  ConnectionStatus,
+  ConnectionStatusListener,
+  ConnectionStatusStore,
+  ConnectOptions,
+  CreateSessionOptions,
+  ForkSessionOptions,
+  InjectedTransportOptions,
+  Session,
+  SessionLimits,
+  SessionMcpServer,
+  Sessions,
+} from "./client.js";
+export { connect } from "./client.js";
 export type { CredentialOptions, CredentialProvider } from "./credentials.js";
 export type {
   MecatlErrorCode,
