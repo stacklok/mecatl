@@ -1,7 +1,7 @@
 # Logical-agent identity projection — acceptance plan
 
 **Phase:** I2 logical-agent identity
-**Status:** draft, 2026-08-31. Synthesized from the approved and adversarially reviewed I2 design session.
+**Status:** in-progress, 2026-08-31. Synthesized from the approved and adversarially reviewed I2 design session.
 **Issues:** [stacklok/mecatl#367](https://github.com/stacklok/mecatl/issues/367), [#371](https://github.com/stacklok/mecatl/issues/371), [#375](https://github.com/stacklok/mecatl/issues/375), [#377](https://github.com/stacklok/mecatl/issues/377).
 **ADR:** [ADR-0252](../adr/0252-logical-agent-identity-projection.md) — pins the logical subject, closed typed claim, one containment proof, and issue/verify boundary.
 **Accumulator branch:** `acc/logical-agent-identity-projection` (off `acc/identity-issuer-substrate`).

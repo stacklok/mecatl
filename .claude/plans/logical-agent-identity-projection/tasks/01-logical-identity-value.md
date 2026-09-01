@@ -2,7 +2,7 @@
 id: 01-logical-identity-value
 title: Canonical logical-definition identity and closed claim value
 blocked_by: []
-status: pending
+status: in-progress
 branch: ""
 worktree: ""
 issue: "377"
