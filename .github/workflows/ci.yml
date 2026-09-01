@@ -171,13 +171,29 @@ jobs:
       - name: Verify SDK API reports
         run: task sdk:api:check
 
+      # The repository token cannot clone the private matlatl module directly.
+      # The organization-approved action builds it from its own checkout and
+      # exposes the binary for task generate's llms.txt regeneration.
+      - name: Acquire matlatl generator
+        id: sdk-matlatl
+        uses: stacklok/matlatl@de0d613703c3414aea70e13981f9b1b5c067dcb0 # v0.0.8
+        with:
+          annotate: "false"
+          job-summary: "false"
+
+      # The action uses its own go.mod toolchain; restore this checkout's Go
+      # version before generation and the same-checkout mecated build.
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: |
+            go.sum
+            engine/go.sum
+
       - name: Verify generated contracts are fresh
         env:
-          GOPRIVATE: github.com/stacklok/*
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GIT_CONFIG_COUNT: 1
-          GIT_CONFIG_KEY_0: url.https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/.insteadOf
-          GIT_CONFIG_VALUE_0: https://github.com/
+          MATLATL_BIN: ${{ steps.sdk-matlatl.outputs.binary-path }}
         run: |
           task generate
           git diff --exit-code -- contracts/gen sdk/typescript/src/gen

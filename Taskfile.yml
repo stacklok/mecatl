@@ -799,8 +799,15 @@ tasks:
       # matlatl renders an importance-ordered llms.txt from the doc link graph.
       # Pinned to a matlatl release; --title MUST match the README H1 ("mecatl")
       # and the freshness gate in .github/workflows/ci.yml. Never hand-edit
-      # llms.txt — regenerate. (A private-module fetch needs GOPRIVATE set.)
-      - go run github.com/stacklok/matlatl/cmd/matlatl@v0.0.8 index . --llms --title "mecatl" > llms.txt
+      # llms.txt — regenerate. MATLATL_BIN lets CI reuse the binary built by
+      # the private, organization-approved action without persisting git auth;
+      # the local fallback needs GOPRIVATE set.
+      - |
+        if [ -n "${MATLATL_BIN:-}" ]; then
+          "$MATLATL_BIN" index . --llms --title "mecatl" > llms.txt
+        else
+          go run github.com/stacklok/matlatl/cmd/matlatl@v0.0.8 index . --llms --title "mecatl" > llms.txt
+        fi
 
   docs:configref:
     desc: Regenerate the committed config-init skeleton + configuration-reference.md from the permconfig schema
