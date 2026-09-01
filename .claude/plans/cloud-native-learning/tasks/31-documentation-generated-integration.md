@@ -2,9 +2,9 @@
 id: 31-documentation-generated-integration
 title: Reconcile cloud-native learning documentation and generated surfaces
 blocked_by: [30-automatic-capability-claims]
-status: in-progress
-branch: ""
-worktree: ""
+status: done
+branch: "plan-cloud-native-learning/31-documentation-generated-integration"
+worktree: ".scratch/worktrees/31-documentation-generated-integration"
 issue: ""
 retries: 0
 last_error: ""
