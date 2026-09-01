@@ -2,9 +2,9 @@
 id: 27-durable-automatic-ledger
 title: Implement globally bounded automatic admission accounting
 blocked_by: [26-automatic-ledger-contract]
-status: in-progress
-branch: ""
-worktree: ""
+status: done
+branch: "plan-cloud-native-learning/27-durable-automatic-ledger"
+worktree: ".scratch/worktrees/27-durable-automatic-ledger"
 issue: ""
 retries: 0
 last_error: ""
