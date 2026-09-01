@@ -59,3 +59,8 @@ user-docs/
 
 # website/CLAUDE.md is agent guidance for the Docusaurus site, not product docs.
 website/CLAUDE.md
+
+# API Extractor reports are review artifacts, not navigational documentation.
+# Exclude both the committed reports and their ignored comparison copies.
+sdk/typescript/etc/*.api.md
+sdk/typescript/.api-extractor-temp/

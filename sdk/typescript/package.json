@@ -1,0 +1,48 @@
+{
+  "name": "@stacklok/mecatl-sdk",
+  "version": "0.0.0",
+  "description": "TypeScript SDK for the mecatl agentic coding harness",
+  "license": "Apache-2.0",
+  "type": "module",
+  "sideEffects": false,
+  "engines": {
+    "node": ">=22"
+  },
+  "packageManager": "pnpm@11.25.0",
+  "files": [
+    "dist",
+    "LICENSE"
+  ],
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./node": {
+      "types": "./dist/node.d.ts",
+      "import": "./dist/node.js"
+    },
+    "./gen": {
+      "types": "./dist/gen/index.d.ts",
+      "import": "./dist/gen/index.js"
+    }
+  },
+  "scripts": {
+    "lint": "biome check .",
+    "format": "biome check --write .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "build": "node --input-type=module --eval \"import { rmSync } from 'node:fs'; rmSync('dist', { recursive: true, force: true });\" && tsc -p tsconfig.build.json",
+    "api:check": "api-extractor run --config api-extractor.json && api-extractor run --config api-extractor.node.json",
+    "api:update": "api-extractor run --local --config api-extractor.json && api-extractor run --local --config api-extractor.node.json",
+    "prepack": "pnpm run build"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.11",
+    "@microsoft/api-extractor": "7.59.0",
+    "@types/node": "22.20.1",
+    "typescript": "6.0.3",
+    "vitest": "4.1.11"
+  }
+}

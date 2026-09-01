@@ -190,6 +190,18 @@ translation, resilience, tools, and the provider-neutral engine port remain
 single-sourced. See [the provider chapter](architecture/providers.md#experimental-openai-codex-subscription-provider)
 and [ADR 0215](adr/0215-openai-subscription-manual-token.md).
 
+### TypeScript SDK
+
+The ESM-only `@stacklok/mecatl-sdk` package lives in `sdk/typescript/`, with its
+own pnpm lockfile and Node-focused build/test gates kept separate from the Go
+modules and the npm-based `website/` tree. Its public surface is split by
+transport: `.` is the transport-neutral core plus the browser HTTP/SSE client,
+`./node` contains the Node/Bun gRPC and local-process features, and
+`./gen` is reserved for protobuf-es types and service descriptors generated under
+`sdk/typescript/src/gen/` from `contracts/proto/mecatl/v1/`. The scaffold fixes
+these package boundaries; later SDK slices fill in codegen, transports, and run
+choreography. See [ADR 0279](adr/0279-typescript-sdk-architecture.md).
+
 Around that core, every capability beyond the minimal loop is a **seam with a
 default and a swap-in adapter**, so the production build stays static and
 network-free unless you wire something in. The current adapters cover, grouped:

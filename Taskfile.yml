@@ -19,6 +19,9 @@ includes:
   site:
     taskfile: website/Taskfile.yml
     dir: website
+  sdk:
+    taskfile: sdk/typescript/Taskfile.yml
+    dir: sdk/typescript
   mecak8s:
     taskfile: deploy/mecak8s-kind/Taskfile.yml
     dir: .

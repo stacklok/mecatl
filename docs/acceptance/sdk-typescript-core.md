@@ -127,12 +127,12 @@ npm untouched) and into `ci.yml` as one job.
 - AC1.2: The built package is ESM-only with declarations and source maps,
   and its exports map exposes exactly `.`, `./node`, and `./gen` — a CJS
   `require()` of the package fails, and no other subpath resolves.
-  - verify: `sdk/typescript/test/package.test.ts :: "exports map exposes exactly ., ./node, ./gen"`
+  - verify: vitest:sdk/typescript/test/package.test.ts#ZXhwb3J0cyBtYXAgZXhwb3NlcyBleGFjdGx5IC4sIC4vbm9kZSwgLi9nZW4 — `sdk/typescript/test/package.test.ts :: "exports map exposes exactly ., ./node, ./gen"`
 - AC1.3: `pnpm pack` produces a tarball containing the built output, license,
   and package metadata — and no test files, config, or generated-source
   duplicates outside the intended layout; the license field and file are
   Apache-2.0.
-  - verify: `sdk/typescript/test/package.test.ts :: "packed tarball carries dist and license only"`
+  - verify: vitest:sdk/typescript/test/package.test.ts#cGFja2VkIHRhcmJhbGwgY2FycmllcyBkaXN0IGFuZCBsaWNlbnNlIG9ubHk — `sdk/typescript/test/package.test.ts :: "packed tarball carries dist and license only"`
 - AC1.4: The committed API Extractor reports — one for `.`, one for `./node`
   (API Extractor is single-entry-point, so one report per subpath; `./gen`
   is deliberately not report-governed, its surface being machine-generated
@@ -572,9 +572,11 @@ proofs are vitest suites under `sdk/typescript/`, cited per AC.
 
 ## Deferred decisions and known risks
 
-- **The `.actrace.yml` vitest resolver may not be expressible** — the
-  resolver mechanism is an internal tool; AC1.5 degrades to a recorded
-  limitation, not a silent vacuous pass. Resolved during Scenario 1.
+- **The `.actrace.yml` Vitest resolver is expressible in ac-trace v0.0.3.**
+  Scenario 1 wires a `vitest:` custom resolver whose token carries the test
+  file plus the exact title encoded as base64url. The repository-owned resolver
+  parses the TypeScript AST and requires exactly one matching Vitest case, so a
+  deleted or renamed title fails instead of degrading to a file-level proof.
 - **HTTP steer lands out from under AC3.7** — if
   [#873](https://github.com/stacklok/mecatl/issues/873) merges mid-plan, the
   worker may wire HTTP steer behind the same `http_steer` feature gate and

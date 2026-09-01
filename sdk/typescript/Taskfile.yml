@@ -1,0 +1,60 @@
+version: '3'
+
+tasks:
+  install:
+    desc: Install the TypeScript SDK dependencies from the frozen pnpm lockfile
+    sources:
+      - package.json
+      - pnpm-lock.yaml
+    generates:
+      - node_modules/.modules.yaml
+    cmds:
+      - pnpm install --frozen-lockfile
+
+  lint:
+    desc: Lint and format-check the TypeScript SDK with Biome
+    deps: [install]
+    cmds:
+      - pnpm run lint
+
+  format:
+    desc: Format and apply safe import organization to the TypeScript SDK
+    deps: [install]
+    cmds:
+      - pnpm run format
+
+  typecheck:
+    desc: Type-check the TypeScript SDK without emitting files
+    deps: [install]
+    cmds:
+      - pnpm run typecheck
+
+  test:
+    desc: Run the TypeScript SDK Vitest suite
+    deps: [install]
+    cmds:
+      - pnpm run test
+
+  build:
+    desc: Build ESM modules, declarations, and source maps with tsc
+    deps: [install]
+    cmds:
+      - pnpm run build
+
+  api:check:
+    desc: Verify the public API reports for the root and node entry points
+    deps: [build]
+    cmds:
+      - pnpm run api:check
+
+  api:update:
+    desc: Refresh the committed public API reports after an intentional change
+    deps: [build]
+    cmds:
+      - pnpm run api:update
+
+  pack:
+    desc: Build and pack the TypeScript SDK into the ignored temporary directory
+    deps: [install]
+    cmds:
+      - pnpm pack --pack-destination .api-extractor-temp
