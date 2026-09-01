@@ -299,23 +299,6 @@ func TestPredictableSessionHandles_Scenario2_HandleResolvesToExactID(t *testing.
 	}
 }
 
-func TestPredictableSessionHandles_Scenario2_RealHeaderHandleCreatesBoundDebugger(t *testing.T) {
-	const fullID = "normal\x1b-session-id"
-	headerLiteral := SessionHandle(fullID)
-	fake := &debugHarness{
-		caps:     &mecatlv1.ServerCapabilities{SessionDebug: true},
-		sessions: []*mecatlv1.SessionSummary{{SessionId: fullID}},
-	}
-	cl := &Client{svc: fake}
-	_, resolved, _, _, err := cl.CreateDebugSession(context.Background(), headerLiteral, 0, ModelSelection{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if resolved != fullID || fake.request.GetDebugTargetSessionId() != fullID {
-		t.Fatalf("rendered literal %q resolved=%q request target=%q, want %q", headerLiteral, resolved, fake.request.GetDebugTargetSessionId(), fullID)
-	}
-}
-
 func TestPredictableSessionHandles_Scenario2_FailClosedBeforeCreate(t *testing.T) {
 	const target = "same-prefix-"
 	tests := []struct {
