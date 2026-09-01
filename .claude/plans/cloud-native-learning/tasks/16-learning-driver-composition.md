@@ -2,9 +2,9 @@
 id: 16-learning-driver-composition
 title: Negotiate and compose distributed learning repositories
 blocked_by: [08-attempt-driver-repository, 14-distributed-proposal-repository, 15-distributed-skill-repository]
-status: in-progress
-branch: ""
-worktree: ""
+status: done
+branch: "plan-cloud-native-learning/16-learning-driver-composition"
+worktree: ".scratch/worktrees/16-learning-driver-composition"
 issue: ""
 retries: 0
 last_error: ""
