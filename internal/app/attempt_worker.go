@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"sync"
 	"time"
 
 	"github.com/stacklok/mecatl/engine/learning"
@@ -20,11 +21,12 @@ type durableAttemptWork struct {
 // expensive or downstream work, but only repository checkpoints authorize the
 // worker to skip that work after a crash.
 type attemptWorker struct {
-	repository learning.AttemptRepository
-	partition  learning.AttemptPartition
-	id         learning.AttemptID
-	now        func() time.Time
-	claimTTL   time.Duration
+	repository         learning.AttemptRepository
+	partition          learning.AttemptPartition
+	id                 learning.AttemptID
+	now                func() time.Time
+	claimTTL           time.Duration
+	claimRenewInterval time.Duration
 
 	evidence func(context.Context, learning.AttemptRecord) (learning.AttemptFailureCode, error)
 	reflect  func(context.Context) (learning.Outcome, error)
@@ -33,6 +35,95 @@ type attemptWorker struct {
 	// Crash seams pin reconciliation at both sides of durable work.
 	afterClaim      func() error
 	afterCheckpoint func(learning.AttemptCheckpointStage) error
+}
+
+type attemptClaimLease struct {
+	mu         sync.Mutex
+	repository learning.AttemptRepository
+	partition  learning.AttemptPartition
+	id         learning.AttemptID
+	record     learning.AttemptRecord
+	claim      learning.AttemptClaim
+}
+
+func (l *attemptClaimLease) snapshot() learning.AttemptRecord {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.record
+}
+
+func (l *attemptClaimLease) renew(ctx context.Context, now time.Time, ttl time.Duration) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	record, claim, err := l.repository.RenewClaim(ctx, l.partition, l.id, l.record.Version, l.claim, now, now.Add(ttl))
+	if err == nil {
+		l.record, l.claim = record, claim
+	}
+	return err
+}
+
+func (l *attemptClaimLease) checkpoint(ctx context.Context, now time.Time, value learning.AttemptCheckpoint) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	record, err := l.repository.Checkpoint(ctx, l.partition, l.id, l.record.Version, l.claim, now, value)
+	if err == nil {
+		l.record = record
+	}
+	return err
+}
+
+func (l *attemptClaimLease) finalize(ctx context.Context, now time.Time, value learning.AttemptFinalization) (learning.AttemptRecord, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	record, err := l.repository.Finalize(ctx, l.partition, l.id, l.record.Version, l.claim, now, value)
+	if err == nil {
+		l.record = record
+	}
+	return record, err
+}
+
+type attemptClaimRenewer struct {
+	cancel context.CancelFunc
+	done   chan struct{}
+	mu     sync.Mutex
+	err    error
+}
+
+func startAttemptClaimRenewer(parent context.Context, cancelWork context.CancelFunc, lease *attemptClaimLease, now func() time.Time, ttl, interval time.Duration) *attemptClaimRenewer {
+	ctx, cancel := context.WithCancel(parent)
+	r := &attemptClaimRenewer{cancel: cancel, done: make(chan struct{})}
+	go func() {
+		defer close(r.done)
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if err := lease.renew(ctx, now().UTC(), ttl); err != nil {
+					r.mu.Lock()
+					r.err = err
+					r.mu.Unlock()
+					cancelWork()
+					return
+				}
+			}
+		}
+	}()
+	return r
+}
+
+func (r *attemptClaimRenewer) failure() error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.err
+}
+
+func (r *attemptClaimRenewer) stop() error {
+	r.cancel()
+	<-r.done
+	return r.failure()
 }
 
 // Run advances one claimed attempt through the closed checkpoint/finalization
@@ -65,9 +156,44 @@ func (w *attemptWorker) Run(ctx context.Context) (learning.AttemptRecord, error)
 			return learning.AttemptRecord{}, err
 		}
 	}
+	lease := &attemptClaimLease{repository: w.repository, partition: w.partition, id: w.id, record: record, claim: claim}
+
+	// A linked downstream artifact is proof that publication committed. Never
+	// repeat the write merely because terminal finalization was interrupted.
+	if record.CheckpointStage == learning.AttemptCheckpointProposalLinked || record.CheckpointStage == learning.AttemptCheckpointSkillLinked {
+		return lease.finalize(ctx, w.now().UTC(), learning.AttemptFinalization{State: learning.AttemptCompleted, Outcome: learning.AttemptOutcomeSucceeded})
+	}
+
+	workCtx, cancelWork := context.WithCancel(ctx)
+	defer cancelWork()
+	interval := w.claimRenewInterval
+	if interval <= 0 {
+		interval = ttl / 3
+	}
+	if interval <= 0 {
+		interval = time.Millisecond
+	}
+	renewer := startAttemptClaimRenewer(workCtx, cancelWork, lease, w.now, ttl, interval)
+	stopped := false
+	stopRenewal := func() error {
+		if stopped {
+			return renewer.failure()
+		}
+		stopped = true
+		return renewer.stop()
+	}
+	defer func() { _ = stopRenewal() }()
+	claimFailure := func() error {
+		if err := renewer.failure(); err != nil {
+			return err
+		}
+		return workCtx.Err()
+	}
 	checkpoint := func(value learning.AttemptCheckpoint) error {
-		record, err = w.repository.Checkpoint(ctx, w.partition, w.id, record.Version, claim, w.now().UTC(), value)
-		if err != nil {
+		if err := claimFailure(); err != nil {
+			return err
+		}
+		if err := lease.checkpoint(workCtx, w.now().UTC(), value); err != nil {
 			return err
 		}
 		if w.afterCheckpoint != nil {
@@ -75,28 +201,30 @@ func (w *attemptWorker) Run(ctx context.Context) (learning.AttemptRecord, error)
 		}
 		return nil
 	}
+	finalize := func(value learning.AttemptFinalization) (learning.AttemptRecord, error) {
+		if err := stopRenewal(); err != nil {
+			return learning.AttemptRecord{}, err
+		}
+		if err := ctx.Err(); err != nil {
+			return learning.AttemptRecord{}, err
+		}
+		return lease.finalize(ctx, w.now().UTC(), value)
+	}
 	finalizeFailure := func(code learning.AttemptFailureCode) (learning.AttemptRecord, error) {
 		if code == learning.FailureNone {
 			code = learning.FailureInternal
 		}
-		return w.repository.Finalize(ctx, w.partition, w.id, record.Version, claim, w.now().UTC(), learning.AttemptFinalization{
-			State: learning.AttemptFailed, Outcome: learning.AttemptOutcomeFailed, FailureCode: code,
-		})
-	}
-
-	// A linked downstream artifact is proof that publication committed. Never
-	// repeat the write merely because terminal finalization was interrupted.
-	if record.CheckpointStage == learning.AttemptCheckpointProposalLinked || record.CheckpointStage == learning.AttemptCheckpointSkillLinked {
-		return w.repository.Finalize(ctx, w.partition, w.id, record.Version, claim, w.now().UTC(), learning.AttemptFinalization{
-			State: learning.AttemptCompleted, Outcome: learning.AttemptOutcomeSucceeded,
-		})
+		return finalize(learning.AttemptFinalization{State: learning.AttemptFailed, Outcome: learning.AttemptOutcomeFailed, FailureCode: code})
 	}
 
 	if record.CheckpointStage == learning.AttemptCheckpointNone {
 		if w.evidence == nil {
 			return finalizeFailure(learning.FailureEvidenceUnavailable)
 		}
-		failure, evidenceErr := w.evidence(ctx, record)
+		failure, evidenceErr := w.evidence(workCtx, lease.snapshot())
+		if claimErr := claimFailure(); claimErr != nil {
+			return learning.AttemptRecord{}, errors.Join(evidenceErr, claimErr)
+		}
 		if evidenceErr != nil {
 			terminal, finalErr := finalizeFailure(learning.FailureEvidenceUnavailable)
 			return terminal, errors.Join(evidenceErr, finalErr)
@@ -112,26 +240,30 @@ func (w *attemptWorker) Run(ctx context.Context) (learning.AttemptRecord, error)
 	if w.reflect == nil {
 		return finalizeFailure(learning.FailureUnavailable)
 	}
-	outcome, reflectErr := w.reflect(ctx)
+	outcome, reflectErr := w.reflect(workCtx)
+	if claimErr := claimFailure(); claimErr != nil {
+		return learning.AttemptRecord{}, errors.Join(reflectErr, claimErr)
+	}
 	if reflectErr != nil {
 		terminal, finalErr := finalizeFailure(learning.FailureUnavailable)
 		return terminal, errors.Join(reflectErr, finalErr)
 	}
-	if record.CheckpointStage != learning.AttemptCheckpointReflectionComplete {
+	if lease.snapshot().CheckpointStage != learning.AttemptCheckpointReflectionComplete {
 		if err := checkpoint(learning.AttemptCheckpoint{Stage: learning.AttemptCheckpointReflectionComplete}); err != nil {
 			return learning.AttemptRecord{}, err
 		}
 	}
 	if outcome.Kind == learning.OutcomeAbstained {
-		return w.repository.Finalize(ctx, w.partition, w.id, record.Version, claim, w.now().UTC(), learning.AttemptFinalization{
-			State: learning.AttemptCompleted, Outcome: learning.AttemptOutcomeAbstained,
-		})
+		return finalize(learning.AttemptFinalization{State: learning.AttemptCompleted, Outcome: learning.AttemptOutcomeAbstained})
 	}
 	if outcome.Kind != learning.OutcomeProposed || w.publish == nil {
 		return finalizeFailure(learning.FailureEvaluationRejected)
 	}
 
-	downstream, failure, publishErr := w.publish(ctx, outcome)
+	downstream, failure, publishErr := w.publish(workCtx, outcome)
+	if claimErr := claimFailure(); claimErr != nil {
+		return learning.AttemptRecord{}, errors.Join(publishErr, claimErr)
+	}
 	if publishErr != nil {
 		if failure == learning.FailureNone {
 			failure = learning.FailurePublicationFailed
@@ -148,7 +280,5 @@ func (w *attemptWorker) Run(ctx context.Context) (learning.AttemptRecord, error)
 	if err := checkpoint(downstream); err != nil {
 		return learning.AttemptRecord{}, err
 	}
-	return w.repository.Finalize(ctx, w.partition, w.id, record.Version, claim, w.now().UTC(), learning.AttemptFinalization{
-		State: learning.AttemptCompleted, Outcome: learning.AttemptOutcomeSucceeded,
-	})
+	return finalize(learning.AttemptFinalization{State: learning.AttemptCompleted, Outcome: learning.AttemptOutcomeSucceeded})
 }

@@ -415,30 +415,34 @@ func (s *Store) List(ctx context.Context, partition learning.AttemptPartition, q
 	return page, err
 }
 
-type PendingAttempt struct {
-	Partition learning.AttemptPartition
-	Record    learning.AttemptRecord
-}
-
-// Pending returns every nonterminal attempt for Build-time process recovery.
-func (s *Store) Pending(ctx context.Context) (pending []PendingAttempt, err error) {
+// DiscoverWork returns bounded repository-authoritative work across partitions.
+func (s *Store) DiscoverWork(ctx context.Context, query learning.AttemptWorkList) (page learning.AttemptWorkPage, err error) {
+	if query.Validate() != nil {
+		return page, learning.ErrInvalidAttempt
+	}
 	err = s.locked(ctx, false, func(doc *document) error {
 		for partition, values := range doc.Partitions {
 			for _, record := range values.Records {
-				if !record.State.Terminal() {
-					pending = append(pending, PendingAttempt{Partition: learning.AttemptPartition(partition), Record: record})
+				after := learning.AttemptPartition(partition) > query.After.Partition || (learning.AttemptPartition(partition) == query.After.Partition && record.ID > query.After.ID)
+				if after && (record.State == learning.AttemptQueued || (record.State == learning.AttemptRunning && !record.ClaimExpiresAt.After(query.Now))) {
+					page.Work = append(page.Work, learning.AttemptWork{Partition: learning.AttemptPartition(partition), Record: record})
 				}
 			}
 		}
-		sort.Slice(pending, func(i, j int) bool {
-			if pending[i].Partition == pending[j].Partition {
-				return pending[i].Record.ID < pending[j].Record.ID
+		sort.Slice(page.Work, func(i, j int) bool {
+			if page.Work[i].Partition == page.Work[j].Partition {
+				return page.Work[i].Record.ID < page.Work[j].Record.ID
 			}
-			return pending[i].Partition < pending[j].Partition
+			return page.Work[i].Partition < page.Work[j].Partition
 		})
+		if len(page.Work) > query.Limit {
+			last := page.Work[query.Limit-1]
+			page.Next = learning.AttemptWorkCursor{Partition: last.Partition, ID: last.Record.ID}
+			page.Work = page.Work[:query.Limit]
+		}
 		return nil
 	})
-	return pending, err
+	return page, err
 }
 
 func current(part partitionDocument, id learning.AttemptID, expected learning.AttemptVersion) (learning.AttemptRecord, error) {

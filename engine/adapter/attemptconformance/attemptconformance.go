@@ -258,7 +258,50 @@ func Run(t *testing.T, factory Factory) {
 		}
 	})
 
+	RunDiscovery(t, factory)
 	RunRetentionAndDeletion(t, factory)
+}
+
+// RunDiscovery pins storage-neutral worker discovery across owner partitions.
+func RunDiscovery(t *testing.T, factory Factory) {
+	t.Helper()
+	t.Run("discovery returns queued and expired claims only", func(t *testing.T) {
+		h := newHarness(t, factory)
+		ctx := context.Background()
+		now := baseTime()
+		queuedPartition := partition(t, "discover-queued")
+		expiredPartition := partition(t, "discover-expired")
+		livePartition := partition(t, "discover-live")
+		queued := mustCreate(t, h.Repository, queuedPartition, fixture(t, "discover-queued"))
+		expired := mustCreate(t, h.Repository, expiredPartition, fixture(t, "discover-expired"))
+		expired, _, err := h.Repository.AcquireClaim(ctx, expiredPartition, expired.ID, expired.Version, now, now.Add(time.Minute))
+		if err != nil {
+			t.Fatal(err)
+		}
+		live := mustCreate(t, h.Repository, livePartition, fixture(t, "discover-live"))
+		if _, _, err = h.Repository.AcquireClaim(ctx, livePartition, live.ID, live.Version, now, now.Add(time.Hour)); err != nil {
+			t.Fatal(err)
+		}
+
+		first, err := h.Repository.DiscoverWork(ctx, learning.AttemptWorkList{Now: now.Add(2 * time.Minute), Limit: 1})
+		if err != nil || len(first.Work) != 1 || first.Next == (learning.AttemptWorkCursor{}) {
+			t.Fatalf("first DiscoverWork = %+v, err=%v", first, err)
+		}
+		second, err := h.Repository.DiscoverWork(ctx, learning.AttemptWorkList{Now: now.Add(2 * time.Minute), Limit: learning.MaxAttemptWorkBatch, After: first.Next})
+		if err != nil || len(second.Work) != 1 || second.Work[0] == first.Work[0] {
+			t.Fatalf("second DiscoverWork = %+v, err=%v", second, err)
+		}
+		seen := map[learning.AttemptID]learning.AttemptPartition{}
+		for _, item := range append(first.Work, second.Work...) {
+			seen[item.Record.ID] = item.Partition
+		}
+		if seen[queued.ID] != queuedPartition || seen[expired.ID] != expiredPartition || seen[live.ID] != "" {
+			t.Fatalf("discoverable work = %+v, want queued and expired only", seen)
+		}
+		if _, err = h.Repository.DiscoverWork(ctx, learning.AttemptWorkList{Now: now}); !errors.Is(err, learning.ErrInvalidAttempt) {
+			t.Fatalf("zero discovery limit error = %v, want ErrInvalidAttempt", err)
+		}
+	})
 }
 
 // RunRetentionAndDeletion pins the caller-partitioned cleanup and claimed-work

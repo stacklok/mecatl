@@ -38,6 +38,7 @@ const (
 	AttemptRepositoryService_CreateAttempt_FullMethodName                = "/mecatl.driver.v1.AttemptRepositoryService/CreateAttempt"
 	AttemptRepositoryService_GetAttempt_FullMethodName                   = "/mecatl.driver.v1.AttemptRepositoryService/GetAttempt"
 	AttemptRepositoryService_ListAttempts_FullMethodName                 = "/mecatl.driver.v1.AttemptRepositoryService/ListAttempts"
+	AttemptRepositoryService_DiscoverAttemptWork_FullMethodName          = "/mecatl.driver.v1.AttemptRepositoryService/DiscoverAttemptWork"
 	AttemptRepositoryService_AcquireAttemptClaim_FullMethodName          = "/mecatl.driver.v1.AttemptRepositoryService/AcquireAttemptClaim"
 	AttemptRepositoryService_RenewAttemptClaim_FullMethodName            = "/mecatl.driver.v1.AttemptRepositoryService/RenewAttemptClaim"
 	AttemptRepositoryService_CheckpointAttempt_FullMethodName            = "/mecatl.driver.v1.AttemptRepositoryService/CheckpointAttempt"
@@ -56,6 +57,7 @@ type AttemptRepositoryServiceClient interface {
 	CreateAttempt(ctx context.Context, in *CreateAttemptRequest, opts ...grpc.CallOption) (*AttemptRecordResponse, error)
 	GetAttempt(ctx context.Context, in *GetAttemptRequest, opts ...grpc.CallOption) (*GetAttemptResponse, error)
 	ListAttempts(ctx context.Context, in *ListAttemptsRequest, opts ...grpc.CallOption) (*ListAttemptsResponse, error)
+	DiscoverAttemptWork(ctx context.Context, in *DiscoverAttemptWorkRequest, opts ...grpc.CallOption) (*DiscoverAttemptWorkResponse, error)
 	AcquireAttemptClaim(ctx context.Context, in *AttemptClaimMutationRequest, opts ...grpc.CallOption) (*AttemptClaimResponse, error)
 	RenewAttemptClaim(ctx context.Context, in *AttemptClaimMutationRequest, opts ...grpc.CallOption) (*AttemptClaimResponse, error)
 	CheckpointAttempt(ctx context.Context, in *CheckpointAttemptRequest, opts ...grpc.CallOption) (*AttemptRecordResponse, error)
@@ -99,6 +101,16 @@ func (c *attemptRepositoryServiceClient) ListAttempts(ctx context.Context, in *L
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ListAttemptsResponse)
 	err := c.cc.Invoke(ctx, AttemptRepositoryService_ListAttempts_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *attemptRepositoryServiceClient) DiscoverAttemptWork(ctx context.Context, in *DiscoverAttemptWorkRequest, opts ...grpc.CallOption) (*DiscoverAttemptWorkResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DiscoverAttemptWorkResponse)
+	err := c.cc.Invoke(ctx, AttemptRepositoryService_DiscoverAttemptWork_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -202,6 +214,7 @@ type AttemptRepositoryServiceServer interface {
 	CreateAttempt(context.Context, *CreateAttemptRequest) (*AttemptRecordResponse, error)
 	GetAttempt(context.Context, *GetAttemptRequest) (*GetAttemptResponse, error)
 	ListAttempts(context.Context, *ListAttemptsRequest) (*ListAttemptsResponse, error)
+	DiscoverAttemptWork(context.Context, *DiscoverAttemptWorkRequest) (*DiscoverAttemptWorkResponse, error)
 	AcquireAttemptClaim(context.Context, *AttemptClaimMutationRequest) (*AttemptClaimResponse, error)
 	RenewAttemptClaim(context.Context, *AttemptClaimMutationRequest) (*AttemptClaimResponse, error)
 	CheckpointAttempt(context.Context, *CheckpointAttemptRequest) (*AttemptRecordResponse, error)
@@ -229,6 +242,9 @@ func (UnimplementedAttemptRepositoryServiceServer) GetAttempt(context.Context, *
 }
 func (UnimplementedAttemptRepositoryServiceServer) ListAttempts(context.Context, *ListAttemptsRequest) (*ListAttemptsResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ListAttempts not implemented")
+}
+func (UnimplementedAttemptRepositoryServiceServer) DiscoverAttemptWork(context.Context, *DiscoverAttemptWorkRequest) (*DiscoverAttemptWorkResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method DiscoverAttemptWork not implemented")
 }
 func (UnimplementedAttemptRepositoryServiceServer) AcquireAttemptClaim(context.Context, *AttemptClaimMutationRequest) (*AttemptClaimResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method AcquireAttemptClaim not implemented")
@@ -329,6 +345,24 @@ func _AttemptRepositoryService_ListAttempts_Handler(srv interface{}, ctx context
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(AttemptRepositoryServiceServer).ListAttempts(ctx, req.(*ListAttemptsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _AttemptRepositoryService_DiscoverAttemptWork_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DiscoverAttemptWorkRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AttemptRepositoryServiceServer).DiscoverAttemptWork(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AttemptRepositoryService_DiscoverAttemptWork_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AttemptRepositoryServiceServer).DiscoverAttemptWork(ctx, req.(*DiscoverAttemptWorkRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -513,6 +547,10 @@ var AttemptRepositoryService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ListAttempts",
 			Handler:    _AttemptRepositoryService_ListAttempts_Handler,
+		},
+		{
+			MethodName: "DiscoverAttemptWork",
+			Handler:    _AttemptRepositoryService_DiscoverAttemptWork_Handler,
 		},
 		{
 			MethodName: "AcquireAttemptClaim",

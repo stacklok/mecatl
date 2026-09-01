@@ -97,6 +97,8 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 ### Changed
 
+- **`learning.AttemptRepository.DiscoverWork`, `learning.AttemptWork{List,Page,Cursor}`, and `learning.MaxAttemptWorkBatch`** ([ADR 0254](../docs/adr/0254-cloud-native-learning.md)) — adds bounded, cursor-paged, storage-neutral discovery of queued attempts and running attempts with expired claims across opaque owner partitions. The cursor is only a disposable scan position and grants no workflow authority. This makes the repository, including a remote driver, the sole worker authority for work admitted after startup and claim-expiry reassignment. Extending the interface is Changed/breaking (pre-v1 a minor bump).
+
 - **`agent.Deps.EnableDurableEvidence`** — adds the explicit opt-in gate for
   debugger-only request-manifest construction/emission and sanitized network-attempt capture. The zero value preserves the allocation-sensitive
   default loop; composition enables it only alongside durable EventLog retention. Adding a field

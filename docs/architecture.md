@@ -1226,9 +1226,14 @@ coordinator queue, its receipt cache, or `EventLog` ([ADR 0254](adr/0254-cloud-n
 Before reporting `queued`, composition reloads the source session, requires its exact non-empty
 ADR-0249 `RunID`, binds the verified current principal prompt and canonical digest into
 content-free immutable provenance, and idempotently creates the deterministic caller/session/run
-attempt. Replacement processes enumerate nonterminal attempts and resume only legal claim-fenced
-checkpoints. Skipped or non-admitted completions remain immediate content-free activity and create
-no attempt history.
+attempt. One Build-owned, cancellation-aware worker continuously performs bounded repository
+`DiscoverWork` reads across opaque partitions, so it sees attempts admitted after startup as well as
+running attempts whose claims expired. It acquires through CAS, renews the fenced claim throughout
+evidence, model, and publication work, cancels that work if renewal is lost, and is cancelled and
+joined before borrowed Build resources close. The same contract is available through the remote
+AttemptRepository driver. Process-local coordinator admission and receipts are scheduling hints only:
+a capacity rejection cannot strand a durably queued attempt. Skipped or non-admitted completions
+remain immediate content-free activity and create no attempt history.
 
 The attempt references source evidence; it never copies a transcript. A worker rechecks owner,
 `RunID`, event ordering, and canonical digest, reconstructs only the existing bounded secret-safe

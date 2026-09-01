@@ -118,6 +118,38 @@ func (s *Store) List(ctx context.Context, partition learning.AttemptPartition, q
 	return page, nil
 }
 
+func (s *Store) DiscoverWork(ctx context.Context, query learning.AttemptWorkList) (learning.AttemptWorkPage, error) {
+	if err := ctx.Err(); err != nil {
+		return learning.AttemptWorkPage{}, err
+	}
+	if query.Validate() != nil {
+		return learning.AttemptWorkPage{}, learning.ErrInvalidAttempt
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	work := make([]learning.AttemptWork, 0, query.Limit+1)
+	for partition, records := range s.records {
+		for _, record := range records {
+			after := partition > query.After.Partition || (partition == query.After.Partition && record.ID > query.After.ID)
+			if after && (record.State == learning.AttemptQueued || (record.State == learning.AttemptRunning && !record.ClaimExpiresAt.After(query.Now))) {
+				work = append(work, learning.AttemptWork{Partition: partition, Record: record})
+			}
+		}
+	}
+	sort.Slice(work, func(i, j int) bool {
+		if work[i].Partition == work[j].Partition {
+			return work[i].Record.ID < work[j].Record.ID
+		}
+		return work[i].Partition < work[j].Partition
+	})
+	page := learning.AttemptWorkPage{Work: work[:min(query.Limit, len(work))]}
+	if len(work) > query.Limit {
+		last := page.Work[len(page.Work)-1]
+		page.Next = learning.AttemptWorkCursor{Partition: last.Partition, ID: last.Record.ID}
+	}
+	return page, nil
+}
+
 func (s *Store) AcquireClaim(ctx context.Context, partition learning.AttemptPartition, id learning.AttemptID, expected learning.AttemptVersion, now, expiresAt time.Time) (learning.AttemptRecord, learning.AttemptClaim, error) {
 	if err := ctx.Err(); err != nil {
 		return learning.AttemptRecord{}, learning.AttemptClaim{}, err

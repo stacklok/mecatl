@@ -72,6 +72,37 @@ func (s *attemptRepositoryServer) ListAttempts(ctx context.Context, req *driverv
 	return response, nil
 }
 
+func (s *attemptRepositoryServer) DiscoverAttemptWork(ctx context.Context, req *driverv1.DiscoverAttemptWorkRequest) (*driverv1.DiscoverAttemptWorkResponse, error) {
+	now, err := serverAttemptTime(req.GetNow(), true)
+	query := learning.AttemptWorkList{
+		Now: now, Limit: int(req.GetLimit()),
+		After: learning.AttemptWorkCursor{Partition: learning.AttemptPartition(req.GetAfterPartition()), ID: learning.AttemptID(req.GetAfterId())},
+	}
+	if err != nil || query.Validate() != nil {
+		return nil, attemptRepositoryStatus(learning.ErrInvalidAttempt)
+	}
+	page, err := s.repository.DiscoverWork(ctx, query)
+	if err != nil {
+		return nil, attemptRepositoryStatus(err)
+	}
+	if len(page.Work) > query.Limit {
+		return nil, status.Error(codes.Internal, "attempt repository returned too much work")
+	}
+	response := &driverv1.DiscoverAttemptWorkResponse{
+		Work: make([]*driverv1.AttemptWork, 0, len(page.Work)), NextPartition: string(page.Next.Partition), NextId: string(page.Next.ID),
+	}
+	if (page.Next.Partition == "") != (page.Next.ID == "") {
+		return nil, status.Error(codes.Internal, "attempt repository returned an invalid work cursor")
+	}
+	for _, item := range page.Work {
+		if item.Partition == "" || learning.ValidateAttemptRecord(item.Record) != nil {
+			return nil, status.Error(codes.Internal, "attempt repository returned invalid work")
+		}
+		response.Work = append(response.Work, &driverv1.AttemptWork{Partition: string(item.Partition), Record: attemptRecordToProto(item.Record)})
+	}
+	return response, nil
+}
+
 func (s *attemptRepositoryServer) AcquireAttemptClaim(ctx context.Context, req *driverv1.AttemptClaimMutationRequest) (*driverv1.AttemptClaimResponse, error) {
 	mutation, err := claimMutationFromProto(req, false, true)
 	if err != nil {

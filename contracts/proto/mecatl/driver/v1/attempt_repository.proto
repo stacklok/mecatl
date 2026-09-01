@@ -24,6 +24,7 @@ service AttemptRepositoryService {
   rpc CreateAttempt(CreateAttemptRequest) returns (AttemptRecordResponse);
   rpc GetAttempt(GetAttemptRequest) returns (GetAttemptResponse);
   rpc ListAttempts(ListAttemptsRequest) returns (ListAttemptsResponse);
+  rpc DiscoverAttemptWork(DiscoverAttemptWorkRequest) returns (DiscoverAttemptWorkResponse);
   rpc AcquireAttemptClaim(AttemptClaimMutationRequest) returns (AttemptClaimResponse);
   rpc RenewAttemptClaim(AttemptClaimMutationRequest) returns (AttemptClaimResponse);
   rpc CheckpointAttempt(CheckpointAttemptRequest) returns (AttemptRecordResponse);
@@ -109,6 +110,24 @@ message ListAttemptsRequest {
 message ListAttemptsResponse {
   repeated AttemptRecord records = 1;
   string next = 2 [(buf.validate.field).string.max_len = 96];
+}
+
+message AttemptWork {
+  string partition = 1 [(buf.validate.field).string.max_len = 128];
+  AttemptRecord record = 2 [(buf.validate.field).required = true];
+}
+
+message DiscoverAttemptWorkRequest {
+  google.protobuf.Timestamp now = 1 [(buf.validate.field).required = true];
+  int32 limit = 2;
+  string after_partition = 3 [(buf.validate.field).string.max_len = 128];
+  string after_id = 4 [(buf.validate.field).string.max_len = 96];
+}
+
+message DiscoverAttemptWorkResponse {
+  repeated AttemptWork work = 1;
+  string next_partition = 2 [(buf.validate.field).string.max_len = 128];
+  string next_id = 3 [(buf.validate.field).string.max_len = 96];
 }
 
 message AttemptMutationRequest {

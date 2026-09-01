@@ -1799,14 +1799,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		return nil, err
 	}
 	logMCPInventory(ctx, cfg.diag(), mcpInventory)
-	attempts, attemptErr := startAttemptRecovery(ctx, cfg, reg, store, eventLog, assets.attemptRepository, assets.reflectionRepository, assets)
-	if attemptErr != nil {
-		mcpClose()
-		agentClose()
-		storeClose()
-		commandConnClose()
-		return nil, fmt.Errorf("start durable learning attempt recovery: %w", attemptErr)
-	}
+	attempts := startAttemptRecovery(ctx, cfg, reg, store, eventLog, assets.attemptRepository, assets.reflectionRepository, assets)
 	if attempts != nil {
 		previousClose := mcpClose
 		mcpClose = func() { attempts.Close(); previousClose() }

@@ -71,6 +71,31 @@ func (r *AttemptRepository) List(ctx context.Context, partition learning.Attempt
 	return page, nil
 }
 
+func (r *AttemptRepository) DiscoverWork(ctx context.Context, query learning.AttemptWorkList) (learning.AttemptWorkPage, error) {
+	resp, err := r.client.DiscoverAttemptWork(ctx, &driverv1.DiscoverAttemptWorkRequest{
+		Now: attemptTimeToProto(query.Now), Limit: int32(query.Limit), AfterPartition: string(query.After.Partition), AfterId: string(query.After.ID), // #nosec G115 -- domain limit is <= 200
+	})
+	if err != nil {
+		return learning.AttemptWorkPage{}, attemptStatusToErr(ctx, err)
+	}
+	page := learning.AttemptWorkPage{Work: make([]learning.AttemptWork, 0, len(resp.GetWork()))}
+	for _, wire := range resp.GetWork() {
+		if wire.GetPartition() == "" {
+			return learning.AttemptWorkPage{}, errors.New("grpcdriver: attempt work omitted partition")
+		}
+		record, decodeErr := attemptRecordFromProto(wire.GetRecord())
+		if decodeErr != nil {
+			return learning.AttemptWorkPage{}, decodeErr
+		}
+		page.Work = append(page.Work, learning.AttemptWork{Partition: learning.AttemptPartition(wire.GetPartition()), Record: record})
+	}
+	page.Next = learning.AttemptWorkCursor{Partition: learning.AttemptPartition(resp.GetNextPartition()), ID: learning.AttemptID(resp.GetNextId())}
+	if (page.Next.Partition == "") != (page.Next.ID == "") {
+		return learning.AttemptWorkPage{}, errors.New("grpcdriver: attempt work returned an incomplete cursor")
+	}
+	return page, nil
+}
+
 func (r *AttemptRepository) AcquireClaim(ctx context.Context, partition learning.AttemptPartition, id learning.AttemptID, expected learning.AttemptVersion, now, expires time.Time) (learning.AttemptRecord, learning.AttemptClaim, error) {
 	resp, err := r.client.AcquireAttemptClaim(ctx, claimMutationToProto(partition, id, expected, learning.AttemptClaim{}, now, expires))
 	return claimResponse(ctx, resp, err)

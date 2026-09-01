@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -41,6 +42,99 @@ func newAttemptWorkerRecord(t *testing.T, clock *attemptWorkerClock) (*memattemp
 		t.Fatal(err)
 	}
 	return repo, partition, record
+}
+
+type renewalRepository struct {
+	learning.AttemptRepository
+	renewed chan int
+	mu      sync.Mutex
+	count   int
+	fail    bool
+}
+
+func (r *renewalRepository) RenewClaim(ctx context.Context, partition learning.AttemptPartition, id learning.AttemptID, version learning.AttemptVersion, claim learning.AttemptClaim, now, expires time.Time) (learning.AttemptRecord, learning.AttemptClaim, error) {
+	if r.fail {
+		return learning.AttemptRecord{}, learning.AttemptClaim{}, learning.ErrAttemptClaimLost
+	}
+	record, renewed, err := r.AttemptRepository.RenewClaim(ctx, partition, id, version, claim, now, expires)
+	if err == nil {
+		r.mu.Lock()
+		r.count++
+		count := r.count
+		r.mu.Unlock()
+		select {
+		case r.renewed <- count:
+		default:
+		}
+	}
+	return record, renewed, err
+}
+
+func waitRenewal(t *testing.T, renewed <-chan int, minimum int) {
+	t.Helper()
+	deadline := time.NewTimer(time.Second)
+	defer deadline.Stop()
+	for {
+		select {
+		case count := <-renewed:
+			if count >= minimum {
+				return
+			}
+		case <-deadline.C:
+			t.Fatalf("claim was not renewed %d times", minimum)
+		}
+	}
+}
+
+func TestAttemptWorkerRenewsClaimDuringLongWork(t *testing.T) {
+	clock := &attemptWorkerClock{now: time.Unix(60, 0)}
+	base, partition, record := newAttemptWorkerRecord(t, clock)
+	repository := &renewalRepository{AttemptRepository: base, renewed: make(chan int, 8)}
+	worker := attemptWorker{
+		repository: repository, partition: partition, id: record.ID, now: clock.Now,
+		claimTTL: time.Minute, claimRenewInterval: 5 * time.Millisecond,
+		evidence: func(context.Context, learning.AttemptRecord) (learning.AttemptFailureCode, error) {
+			waitRenewal(t, repository.renewed, 1)
+			return learning.FailureNone, nil
+		},
+		reflect: func(context.Context) (learning.Outcome, error) {
+			waitRenewal(t, repository.renewed, 2)
+			return learning.Outcome{Kind: learning.OutcomeProposed}, nil
+		},
+		publish: func(context.Context, learning.Outcome) (learning.AttemptCheckpoint, learning.AttemptFailureCode, error) {
+			waitRenewal(t, repository.renewed, 3)
+			return learning.AttemptCheckpoint{Stage: learning.AttemptCheckpointProposalLinked, ProposalID: "proposal-renewed"}, learning.FailureNone, nil
+		},
+	}
+	got, err := worker.Run(context.Background())
+	if err != nil || got.State != learning.AttemptCompleted {
+		t.Fatalf("Run = %+v, err=%v", got, err)
+	}
+}
+
+func TestAttemptWorkerCancelsWorkWhenRenewalIsLost(t *testing.T) {
+	clock := &attemptWorkerClock{now: time.Unix(70, 0)}
+	base, partition, record := newAttemptWorkerRecord(t, clock)
+	repository := &renewalRepository{AttemptRepository: base, renewed: make(chan int), fail: true}
+	cancelled := make(chan struct{})
+	worker := attemptWorker{
+		repository: repository, partition: partition, id: record.ID, now: clock.Now,
+		claimTTL: time.Minute, claimRenewInterval: 5 * time.Millisecond,
+		evidence: func(ctx context.Context, _ learning.AttemptRecord) (learning.AttemptFailureCode, error) {
+			<-ctx.Done()
+			close(cancelled)
+			return learning.FailureNone, ctx.Err()
+		},
+	}
+	_, err := worker.Run(context.Background())
+	if !errors.Is(err, learning.ErrAttemptClaimLost) {
+		t.Fatalf("Run error = %v, want ErrAttemptClaimLost", err)
+	}
+	select {
+	case <-cancelled:
+	default:
+		t.Fatal("renewal loss did not cancel active work")
+	}
 }
 
 func TestADR_0254_AbstentionIsASeparateTerminalOutcome(t *testing.T) {

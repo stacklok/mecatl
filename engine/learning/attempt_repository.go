@@ -17,6 +17,7 @@ const (
 	DefaultAttemptPageSize = 50
 	MaxAttemptPageSize     = 200
 	MaxAttemptDeleteBatch  = 200
+	MaxAttemptWorkBatch    = 200
 )
 
 var (
@@ -166,6 +167,39 @@ type AttemptPage struct {
 	Next    AttemptID
 }
 
+// AttemptWork identifies one repository-authoritative queued attempt or running
+// attempt whose claim has expired. Partition is opaque infrastructure routing
+// metadata and must never be projected to callers.
+type AttemptWork struct {
+	Partition AttemptPartition
+	Record    AttemptRecord
+}
+
+type AttemptWorkCursor struct {
+	Partition AttemptPartition
+	ID        AttemptID
+}
+
+type AttemptWorkList struct {
+	After AttemptWorkCursor
+	Now   time.Time
+	Limit int
+}
+
+func (q AttemptWorkList) Validate() error {
+	cursorEmpty := q.After == (AttemptWorkCursor{})
+	cursorValid := q.After.Partition != "" && validOpaque(string(q.After.Partition), 128) && validOpaque(string(q.After.ID), MaxAttemptIDBytes)
+	if q.Now.IsZero() || q.Limit < 1 || q.Limit > MaxAttemptWorkBatch || (!cursorEmpty && !cursorValid) {
+		return fmt.Errorf("%w: work list", ErrInvalidAttempt)
+	}
+	return nil
+}
+
+type AttemptWorkPage struct {
+	Work []AttemptWork
+	Next AttemptWorkCursor
+}
+
 // ValidAttemptTransition is the closed lifecycle table. Same-state running is
 // reserved for claim renewal, successor acquisition, and checkpoints. Failed
 // attempts may be retried; completed and abandoned attempts are immutable.
@@ -210,10 +244,16 @@ func ValidAttemptTransition(from, to AttemptState) bool {
 // a successor acquisition/release/abandon transition resolves it.
 // DeleteTerminalBefore removes at most limit terminal records older than before
 // from exactly one partition; limit must be in [1, MaxAttemptDeleteBatch].
+// DiscoverWork returns one bounded page of queued attempts and running attempts
+// whose claim expires at or before query.Now, ordered by opaque partition then ID.
+// Its cursor is an exclusive, disposable scan position; it grants no authority.
+// This is the infrastructure worker's durable discovery seam, not a caller list
+// or watch API.
 type AttemptRepository interface {
 	Create(context.Context, AttemptPartition, AttemptCreate) (AttemptRecord, error)
 	Get(context.Context, AttemptPartition, AttemptID) (AttemptRecord, bool, error)
 	List(context.Context, AttemptPartition, AttemptList) (AttemptPage, error)
+	DiscoverWork(context.Context, AttemptWorkList) (AttemptWorkPage, error)
 	AcquireClaim(context.Context, AttemptPartition, AttemptID, AttemptVersion, time.Time, time.Time) (AttemptRecord, AttemptClaim, error)
 	RenewClaim(context.Context, AttemptPartition, AttemptID, AttemptVersion, AttemptClaim, time.Time, time.Time) (AttemptRecord, AttemptClaim, error)
 	Checkpoint(context.Context, AttemptPartition, AttemptID, AttemptVersion, AttemptClaim, time.Time, AttemptCheckpoint) (AttemptRecord, error)

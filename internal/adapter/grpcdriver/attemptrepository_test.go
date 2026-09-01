@@ -16,17 +16,79 @@ import (
 	"google.golang.org/grpc/status"
 
 	driverv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/driver/v1"
+	"github.com/stacklok/mecatl/engine/adapter/attemptconformance"
+	"github.com/stacklok/mecatl/engine/adapter/memattempt"
 	"github.com/stacklok/mecatl/engine/learning"
 	"github.com/stacklok/mecatl/engine/session"
 )
 
 type attemptRepositoryStub struct {
 	learning.AttemptRepository
-	create func(context.Context, learning.AttemptPartition, learning.AttemptCreate) (learning.AttemptRecord, error)
+	create   func(context.Context, learning.AttemptPartition, learning.AttemptCreate) (learning.AttemptRecord, error)
+	discover func(context.Context, learning.AttemptWorkList) (learning.AttemptWorkPage, error)
 }
 
 func (s attemptRepositoryStub) Create(ctx context.Context, partition learning.AttemptPartition, create learning.AttemptCreate) (learning.AttemptRecord, error) {
 	return s.create(ctx, partition, create)
+}
+
+func (s attemptRepositoryStub) DiscoverWork(ctx context.Context, query learning.AttemptWorkList) (learning.AttemptWorkPage, error) {
+	return s.discover(ctx, query)
+}
+
+func TestAttemptRepositoryDriverDiscoversWorkAfterStartup(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
+	partition, err := learning.DeriveAttemptPartition("remote-worker")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := learning.AttemptWorkPage{Work: []learning.AttemptWork{{Partition: partition, Record: validAttemptRecordFixture(t, now)}}, Next: learning.AttemptWorkCursor{Partition: partition, ID: "attempt-next"}}
+	backend := attemptRepositoryStub{discover: func(_ context.Context, query learning.AttemptWorkList) (learning.AttemptWorkPage, error) {
+		if !query.Now.Equal(now) || query.Limit != 7 {
+			t.Fatalf("DiscoverWork query = %+v, want now=%v limit=7", query, now)
+		}
+		return want, nil
+	}}
+	conn := dialBufconn(t, func(gs *grpc.Server) {
+		driverv1.RegisterAttemptRepositoryServiceServer(gs, NewAttemptRepositoryServer(backend))
+	})
+	got, err := NewAttemptRepository(conn).DiscoverWork(context.Background(), learning.AttemptWorkList{Now: now, Limit: 7})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("DiscoverWork over wire = %+v, want %+v", got, want)
+	}
+}
+
+func validAttemptRecordFixture(t *testing.T, now time.Time) learning.AttemptRecord {
+	t.Helper()
+	digest := learning.CanonicalDigest(strings.Repeat("d", 64))
+	source := learning.AttemptSource{SessionID: "session-discovery", RunID: "run-discovery", CanonicalDigest: digest}
+	provenance, err := learning.NewAdmissionProvenance(learning.AdmissionHard, source, learning.CurrentPromptBinding{Ordinal: 1, Digest: digest, Origin: learning.PromptOriginCurrentPrincipal})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return learning.AttemptRecord{ID: "attempt-discovery", Version: "opaque-v1", State: learning.AttemptQueued, Provenance: provenance, AttemptGeneration: 1, CreatedAt: now, UpdatedAt: now}
+}
+
+func TestAttemptRepositoryDriverConformance(t *testing.T) {
+	attemptconformance.Run(t, func(t *testing.T) attemptconformance.Harness {
+		clock := &leaseFakeClock{}
+		backend := memattempt.New(clock)
+		conn := dialBufconn(t, func(gs *grpc.Server) {
+			driverv1.RegisterAttemptRepositoryServiceServer(gs, NewAttemptRepositoryServer(backend))
+		})
+		return attemptconformance.Harness{
+			Repository: NewAttemptRepository(conn),
+			SetNow: func(now time.Time) {
+				clock.mu.Lock()
+				clock.t = now
+				clock.mu.Unlock()
+			},
+		}
+	})
 }
 
 func TestAttemptRepositoryDriverSmoke(t *testing.T) {
@@ -85,7 +147,7 @@ func TestAttemptWatchIsDeferred(t *testing.T) {
 	}
 
 	wantRPCs := []string{
-		"CreateAttempt", "GetAttempt", "ListAttempts", "AcquireAttemptClaim", "RenewAttemptClaim", "CheckpointAttempt",
+		"CreateAttempt", "GetAttempt", "ListAttempts", "DiscoverAttemptWork", "AcquireAttemptClaim", "RenewAttemptClaim", "CheckpointAttempt",
 		"ReleaseAttemptClaim", "FinalizeAttempt", "RetryAttempt", "AbandonAttempt", "DeleteAttempt", "DeleteTerminalAttemptsBefore",
 	}
 	var gotRPCs []string

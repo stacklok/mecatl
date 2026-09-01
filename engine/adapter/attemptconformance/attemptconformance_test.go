@@ -70,6 +70,10 @@ func (r *retentionRepository) List(_ context.Context, partition learning.Attempt
 	return learning.AttemptPage{Records: records}, nil
 }
 
+func (*retentionRepository) DiscoverWork(context.Context, learning.AttemptWorkList) (learning.AttemptWorkPage, error) {
+	panic("not used by retention conformance")
+}
+
 func (r *retentionRepository) AcquireClaim(_ context.Context, partition learning.AttemptPartition, id learning.AttemptID, expected learning.AttemptVersion, now, expires time.Time) (learning.AttemptRecord, learning.AttemptClaim, error) {
 	record, ok := r.records[partition][id]
 	if !ok {

@@ -22,6 +22,9 @@ func (repositoryContract) Get(context.Context, learning.AttemptPartition, learni
 func (repositoryContract) List(context.Context, learning.AttemptPartition, learning.AttemptList) (learning.AttemptPage, error) {
 	return learning.AttemptPage{}, nil
 }
+func (repositoryContract) DiscoverWork(context.Context, learning.AttemptWorkList) (learning.AttemptWorkPage, error) {
+	return learning.AttemptWorkPage{}, nil
+}
 func (repositoryContract) AcquireClaim(context.Context, learning.AttemptPartition, learning.AttemptID, learning.AttemptVersion, time.Time, time.Time) (learning.AttemptRecord, learning.AttemptClaim, error) {
 	return learning.AttemptRecord{}, learning.AttemptClaim{}, nil
 }

@@ -9,45 +9,78 @@ import (
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/learning"
 	"github.com/stacklok/mecatl/engine/port"
-	"github.com/stacklok/mecatl/internal/adapter/attemptstore"
 	memoryadapter "github.com/stacklok/mecatl/internal/adapter/memory"
 )
+
+const defaultAttemptDiscoveryInterval = time.Second
 
 type attemptRecovery struct {
 	cancel context.CancelFunc
 	done   sync.WaitGroup
 }
 
-func startAttemptRecovery(parent context.Context, cfg Config, reg *providerRegistry, sessions port.SessionStore, events port.EventLog, repository learning.AttemptRepository, proposals learning.ProposalRepository, assets catalogAssets) (*attemptRecovery, error) {
-	source, ok := repository.(interface {
-		Pending(context.Context) ([]attemptstore.PendingAttempt, error)
-	})
-	if !ok || events == nil || proposals == nil {
-		return nil, nil
-	}
-	pending, err := source.Pending(parent)
-	if err != nil {
-		return nil, err
-	}
-	if len(pending) == 0 {
-		return nil, nil
+func newAttemptRecoveryLoop(parent context.Context, repository learning.AttemptRepository, interval time.Duration, now func() time.Time, process func(context.Context, learning.AttemptWork) error, reportDiscoveryError func(error)) *attemptRecovery {
+	if interval <= 0 {
+		interval = defaultAttemptDiscoveryInterval
 	}
 	ctx, cancel := context.WithCancel(parent)
 	recovery := &attemptRecovery{cancel: cancel}
 	recovery.done.Add(1)
 	go func() {
 		defer recovery.done.Done()
-		for _, item := range pending {
-			if ctx.Err() != nil {
+		timer := time.NewTimer(0)
+		defer timer.Stop()
+		failedDiscovery := false
+		var cursor learning.AttemptWorkCursor
+		for {
+			select {
+			case <-ctx.Done():
 				return
+			case <-timer.C:
 			}
-			if err := recoverAttempt(ctx, cfg, reg, sessions, events, repository, proposals, assets, item); err != nil &&
-				!errors.Is(err, context.Canceled) && !errors.Is(err, learning.ErrAttemptClaimConflict) && !errors.Is(err, learning.ErrAttemptVersionConflict) {
-				cfg.diag().Log(ctx, port.LevelWarn, "durable learning attempt recovery failed", "attempt_id", item.Record.ID)
+			page, err := repository.DiscoverWork(ctx, learning.AttemptWorkList{After: cursor, Now: now().UTC(), Limit: learning.MaxAttemptWorkBatch})
+			if err != nil {
+				if !failedDiscovery && reportDiscoveryError != nil && !errors.Is(err, context.Canceled) {
+					reportDiscoveryError(err)
+				}
+				failedDiscovery = true
+			} else {
+				failedDiscovery = false
+				for _, item := range page.Work {
+					if ctx.Err() != nil {
+						return
+					}
+					_ = process(ctx, item)
+				}
+			}
+			if err == nil && page.Next != (learning.AttemptWorkCursor{}) {
+				cursor = page.Next
+				timer.Reset(0)
+			} else {
+				if err == nil {
+					cursor = learning.AttemptWorkCursor{}
+				}
+				timer.Reset(interval)
 			}
 		}
 	}()
-	return recovery, nil
+	return recovery
+}
+
+func startAttemptRecovery(parent context.Context, cfg Config, reg *providerRegistry, sessions port.SessionStore, events port.EventLog, repository learning.AttemptRepository, proposals learning.ProposalRepository, assets catalogAssets) *attemptRecovery {
+	if repository == nil || events == nil || proposals == nil {
+		return nil
+	}
+	recovery := newAttemptRecoveryLoop(parent, repository, defaultAttemptDiscoveryInterval, time.Now, func(ctx context.Context, item learning.AttemptWork) error {
+		err := recoverAttempt(ctx, cfg, reg, sessions, events, repository, proposals, assets, item)
+		if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, learning.ErrAttemptClaimConflict) && !errors.Is(err, learning.ErrAttemptVersionConflict) {
+			cfg.diag().Log(ctx, port.LevelWarn, "durable learning attempt recovery failed", "attempt_id", item.Record.ID)
+		}
+		return err
+	}, func(error) {
+		cfg.diag().Log(parent, port.LevelWarn, "durable learning attempt discovery unavailable")
+	})
+	return recovery
 }
 
 func (r *attemptRecovery) Close() {
@@ -59,7 +92,7 @@ func (r *attemptRecovery) Close() {
 }
 
 //nolint:gocyclo // exact-source reconstruction and claim-fenced publication stay visibly ordered
-func recoverAttempt(ctx context.Context, cfg Config, reg *providerRegistry, sessions port.SessionStore, events port.EventLog, repository learning.AttemptRepository, proposals learning.ProposalRepository, assets catalogAssets, item attemptstore.PendingAttempt) error {
+func recoverAttempt(ctx context.Context, cfg Config, reg *providerRegistry, sessions port.SessionStore, events port.EventLog, repository learning.AttemptRepository, proposals learning.ProposalRepository, assets catalogAssets, item learning.AttemptWork) error {
 	source, err := sessions.Load(ctx, item.Record.Provenance.Source.SessionID)
 	if err != nil {
 		return err

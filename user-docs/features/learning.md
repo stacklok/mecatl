@@ -174,7 +174,12 @@ permissions or tools.
   cooldown, and deduplication only after its durable ledger is selected. An unwired
   embedding retains the process-local ADR-0114 limitation and must report it honestly.
 - `--learning-store-url` is currently for explicitly trusted single-tenant
-  infrastructure only. Ownership-enforced or multi-tenant startup fails closed until
+  infrastructure only. Its attempt repository must implement bounded worker discovery:
+  each replica continuously finds queued attempts (including those admitted after startup)
+  and running attempts whose claims expired. Claims renew during evidence, model, and
+  publication work; renewal loss cancels that worker, and shutdown joins it. A local
+  coordinator capacity rejection therefore does not discard an already durable attempt.
+  Ownership-enforced or multi-tenant startup fails closed until
   ADR-0213 workload-authenticated claims, a private owner registry, and separated
   maintenance RPCs are implemented; a driver's self-advertised `enforced` value does
   not satisfy that boundary.
