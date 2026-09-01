@@ -202,6 +202,8 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0202 — Diagnostic-only posture reporting](./0202-diagnostic-only-posture-reporting.md) *(orthogonal reporting surface; relates to 0095)*
 - [0204 — Caller identity: accept a principal, thread it everywhere, record the owner](./0204-caller-identity-threading.md) *(agent-identity Track A; audit-trail phase)*
 - [0234 — Derived delegation authority behind an evaluator port](./0234-authority-evaluator-port.md)
+- [0251 — Identity issuer substrate for the combined broker](./0251-identity-issuer-substrate.md)
+- [0252 — Logical-agent JWT-SVID identity projection](./0252-logical-agent-identity-projection.md)
 - [0205 — Bound cached JWKS staleness](./0205-bounded-jwks-staleness.md)
 - [0206 — Ship reusable OIDC caller identity as an opt-in module](./0206-oidc-authn-module.md)
 - [0212 — Enforce caller ownership at every application access path](./0212-caller-ownership-enforcement.md) *(agent-identity Track A; application isolation)*

@@ -62,6 +62,7 @@ when the code that satisfies the plan has landed.
 - [Session-load observability](session-load-observability.md) — target-free operator
   classification and metrics for snapshot load failures while preserving ownership
   concealment. Status: landed.
+- [Logical-agent identity projection](logical-agent-identity-projection.md) — typed tier-qualified logical-definition JWT-SVID claims, exact no-wider tool projection through the existing authority predicate, independent verification, and rotation-safe ephemeral reminting. Status: draft.
 - [Identity issuer substrate](identity-issuer-substrate.md) — Secret-backed ES256 JWT-SVID issuance, canonical SPIFFE bundle and retained verifier, immutable-key rotation, and shell-isolated combined-broker-host compatibility. Status: draft.
 - [Local mecak8s Kind fixture](mecak8s-kind-fixture.md) — cleanly separates an
   operator-run mock/real-provider mecak8s fixture, optional Keycloak caller
