@@ -133,11 +133,11 @@ Optional completed-trajectory observation policy. Off means no automatic complet
 | `learning.sensitivity` | `string` | `balanced` | Sensitivity controls weighted automatic admission. Empty means balanced. |
 | `learning.skills` | `learningskillssection` | `(absent)` | Skills controls learned-skill lifecycle policy. |
 | `learning.skills.activation` | `string` | `validated when mode is explicitly auto; evaluated otherwise` | Activation is validated (default for Auto) or evaluated. Project settings may only tighten validated to evaluated. |
-| `learning.automatic` | `learningautomaticsection` | `(absent)` | Automatic is operator-only process-local rate policy. |
+| `learning.automatic` | `learningautomaticsection` | `(absent)` | Automatic is operator-only admission policy. Standard non-off composition applies it through a durable ledger, making count/token windows, cooldown, and deduplication deployment-wide across cooperating processes. |
 | `learning.automatic.cooldown` | `duration` | `10m` | Cooldown is the per-principal weighted-admission cooldown; zero disables it. |
 | `learning.automatic.window` | `duration` | `1h` | Window is the sliding count/token window, strictly 1m..24h. |
-| `learning.automatic.max_reflections` | `int` | `8` | MaxReflections is the process-wide count cap; zero disables automatic reflection. |
-| `learning.automatic.max_tokens` | `int` | `100000` | MaxTokens is the process-wide reserved-token cap; zero disables automatic reflection. |
+| `learning.automatic.max_reflections` | `int` | `8` | MaxReflections is the global count cap; zero disables automatic reflection. |
+| `learning.automatic.max_tokens` | `int` | `100000` | MaxTokens is the global reserved-token cap; zero disables automatic reflection. |
 | `learning.automatic.max_reflections_per_principal` | `int` | `4` | MaxReflectionsPerPrincipal is the per-principal count cap; zero disables automatic reflection. |
 | `learning.automatic.max_tokens_per_principal` | `int` | `50000` | MaxTokensPerPrincipal is the per-principal reserved-token cap; zero disables automatic reflection. |
 

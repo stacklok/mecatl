@@ -175,13 +175,16 @@ learning:
 
 After an eligible main-session completion, mecatl scores only evidence in the verified current
 run. Balanced requires 4 points (conservative 6, eager 3); modifiers cannot admit by
-themselves. A genuine current prompt that explicitly asks to remember or learn is a hard
-trigger, but tool/WebFetch/WebSearch/MCP, repository, historical, event-only, and
+themselves. A genuine current principal-authored prompt that affirmatively asks to remember or
+learn/create a procedure is a hard trigger on the exact clean terminal set, but negation,
+capability questions, tool/WebFetch/WebSearch/MCP, repository, historical, event-only, and
 assistant-only text cannot manufacture one. Hard triggers bypass score and weighted cooldown,
-not count/token budgets or coordinator capacity. The sliding budgets and duplicate cache are
-process-local and reset on restart; multiple replicas multiply aggregate capacity. Failed,
-timed-out, and abstaining reflections consume their reservation, while queue-full does not.
-There is no startup or shutdown catch-up.
+not count/token budgets or coordinator capacity. Standard non-off composition reserves through
+the durable automatic ledger, so cooperating processes share global/principal count and token
+windows, cooldown, and digest deduplication. Reservation is tied to deterministic attempt create;
+failed create is reconciled to one retained or reclaimed charge, while failed, timed-out,
+and abstaining attempts retain theirs. Queue-full does not consume a reservation. An unwired
+embedding retains ADR-0114's process-local limitation and must not advertise global bounds.
 
 `review` durably stages valid evidence-backed proposals without changing memory. `auto` stages
 first, then promotes operator facts only when the candidate cites the genuine user message carrying an explicit remember request. Tool/WebFetch/WebSearch/MCP, repository, event-only, and assistant-only evidence stays staged. Project facts use a separate narrow rule: candidates from any non-empty session workspace remain staged and inspectable in that project's partition, but auto-promotion, approval, and undo require the exact trusted configured workspace and an available convergence-capable project memory store. Operator facts continue to follow operator policy. Proposal detail re-checks source ownership and evidence digests and shows a bounded, redacted canonical preview before approval; unavailable, changed, or cross-owner evidence has no preview and cannot be promoted. Ambiguous, conflicting, sensitive, and unsupported

@@ -1221,6 +1221,30 @@ or learn-procedure intent is hard admission on the bounded clean-limit stops too
 failed/cancelled/awaiting, plan, no-progress, timeout, structured-output, and unverifiable compacted
 spans fail closed before a provider call.
 
+A durable admitted attempt is the workflow authority for admitted learning, not the
+coordinator queue, its receipt cache, or `EventLog` ([ADR 0254](adr/0254-cloud-native-learning.md)).
+Before reporting `queued`, composition reloads the source session, requires its exact non-empty
+ADR-0249 `RunID`, binds the verified current principal prompt and canonical digest into
+content-free immutable provenance, and idempotently creates the deterministic caller/session/run
+attempt. Replacement processes enumerate nonterminal attempts and resume only legal claim-fenced
+checkpoints. Skipped or non-admitted completions remain immediate content-free activity and create
+no attempt history.
+
+The attempt references source evidence; it never copies a transcript. A worker rechecks owner,
+`RunID`, event ordering, and canonical digest, reconstructs only the existing bounded secret-safe
+projection, and applies the governance untrusted fence at every restarted or remote model boundary.
+Raw prompt, transcript, archive, tool, event, provider-error, path, identity, credential,
+diagnostic, and metric content is absent from attempt storage and APIs. Missing, gapped,
+unauthorized, compacted-without-archive, or mismatched evidence fails with a closed
+`evidence_unavailable`-class outcome before proposal or skill mutation. Abstention is a distinct
+successful terminal outcome.
+
+Explicit authority lands first: only a verified current principal-authored main-session imperative
+on the exact clean hard-stop set can hard-admit procedure learning; negation, capability questions,
+history, and model/tool/repository text fail closed. This hard admission uses the same durable
+attempt lifecycle as weighted work and does not activate a direct `SkillDraft`. Authenticated
+host-requested reflection remains a separate explicit operation outside automatic accounting.
+
 A durable automatic-admission ledger applies the ten-minute weighted per-principal cooldown,
 one-hour global/principal count and reserved-token windows, trajectory-digest deduplication, and a
 24-hour dedupe window atomically across cooperating processes. Reservation uses the selected
@@ -1258,7 +1282,7 @@ exact trusted configured root. Tool/assistant/repository/history-only evidence s
 Authenticated explicit reflection carries host-requested provenance and bypasses automatic policy,
 cooldown, budgets, and completed cache while retaining provider, queue, timeout, ownership, and
 stage/promotion controls. In off mode there is no automatic observer, attempt repository, coordinator worker,
-or recovery worker; explicit reflection uses the pre-existing synchronous lazy proposal path and creates no durable attempt. When the durable repository is wired, authenticated gRPC `GetLearningAttempt` / `ListLearningAttempts` / `RetryLearningAttempt` / `AbandonLearningAttempt` and HTTP `GET /v1/learning/attempts[/{id}]` plus `POST /v1/learning/attempts/{id}/{retry,abandon}` expose bounded, caller-partitioned attempt state and opaque-version controls. The Service derives the private one-way owner partition before repository access; foreign and missing IDs return the same absence response, and system principals cannot bypass the owner binding. Retry and non-compensating abandon mutate only the AttemptRepository under CAS; abandon does not promise downstream rollback. Projections contain only closed lifecycle metadata, timestamps, opaque versions/cursors, and proposal/skill IDs already linked inside that partition—never source evidence, transcript/tool/provider text, principal values, paths, diagnostics, metrics, or EventLog/watch data. The gRPC and HTTP surfaces also expose explicit completed-session
+or recovery worker; explicit reflection uses the pre-existing synchronous lazy proposal path and creates no durable attempt. When the durable repository is wired, authenticated gRPC `GetLearningAttempt` / `ListLearningAttempts` / `RetryLearningAttempt` / `AbandonLearningAttempt` and HTTP `GET /v1/learning/attempts[/{id}]` plus `POST /v1/learning/attempts/{id}/{retry,abandon}` expose bounded, caller-partitioned attempt state and opaque-version controls. The Service derives the private one-way owner partition before repository access; foreign and missing IDs return the same absence response, and system principals cannot bypass the owner binding. Retry and non-compensating abandon mutate only the AttemptRepository under CAS; abandon does not promise downstream rollback. Projections contain only closed lifecycle metadata, timestamps, opaque versions/cursors, and proposal/skill IDs already linked inside that partition—never source evidence, transcript/tool/provider text, principal values, paths, diagnostics, metrics, or EventLog/watch data. There is deliberately no attempt-watch endpoint, cursor, envelope, or process-local substitute: ADR-0250 session `EventLog` watch is not an attempt feed. A future attempt-change feed requires a separate decision, and its notifications can only advise clients to re-read `AttemptRepository` under caller authority. The gRPC and HTTP surfaces also expose explicit completed-session
 reflection, bounded caller-partitioned list/detail, CAS approve/reject, and compensating undo;
 capability bits keep older/unconfigured servers honest. Source-session ownership and proposal
 principal are verified, project partitions remain reviewable but project promotion is root/trust-gated, and evidence detail reports only

@@ -975,7 +975,18 @@ plans and idempotent terminal receipts are restart-losable coordination state re
 36. Loss is explicit: regenerate and spend again; no snapshot/event-log reconstruction or
 cross-replica handoff is claimed.
 
-**Configurable-learning-trigger re-audit (List 1 / List 2 — ADR 0114).** The controller is List 1 row 55 and its restart-reset policy is List 2 row 32. It adds no goroutine and no shutdown catch-up. The existing coordinator remains row 47 and is no longer constructed in Off.
+**Cloud-native learning re-audit (List 1 / List 2 — ADR 0254).** The durable automatic
+ledger is List 1 row 55 and its restart reconciliation is List 2 row 32. The authoritative
+attempt store and the startup recovery worker are List 1 rows 67–68; List 2 row 40 holds the
+queued/running/terminal lifecycle, immutable content-free source binding, claims, checkpoints,
+and safe downstream links that survive replacement. The existing coordinator remains row 47
+and its queue/singleflight/receipts remain disposable scheduling state in List 2 row 30—not a
+second workflow authority. Proposal/skill durability and derived generation publication remain
+rows 46, 48–49 and List 2 rows 29/31. Remote clients borrow the already-inventoried driver
+connection cache in row 19. Exact evidence loading is bounded per attempt and retains no new
+outlives-call resource. Attempt watch is absent, so there is no feed, cursor, envelope, cache, or
+rehydration row. Off/unwired constructs no attempt store, automatic ledger, coordinator worker,
+or recovery worker; authenticated explicit reflection keeps the synchronous lazy proposal path.
 
 **Evidence-reflection re-audit (List 1 / List 2 — issue #509, ADR 0109).** Standard
 wires the durable proposal artifact and its per-operation flock (List 1 row 46), plus the bounded Build-owned coordinator (row 47). Proposal lifecycle state survives a crash (List 2 row 29); transient queue, singleflight, and receipt state deliberately resets without a retrospective session sweep (List 2 row 30).

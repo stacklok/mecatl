@@ -113,14 +113,28 @@ reserved-token budgets and coordinator capacity. Historical, tool, web, MCP, ass
 and repository text cannot hard-trigger. An unverifiable post-compaction current span
 fails closed.
 
-The automatic limits are sliding, process-local reservations. Zero for any maximum
+The automatic limits are sliding durable reservations once a non-off standard
+application has successfully selected its `AutomaticAdmissionLedger`. Zero for any maximum
 disables automatic reflection under that bound; cooldown zero disables only cooldown.
 The window must be 1m–24h. A reservation estimates the selected reflection model's
 bounded canonical input plus a 4096-token output cap and remains consumed after failure,
-timeout, or abstention. Queue-full does not consume it. Restart resets windows,
-cooldowns, and the 24-hour/1024-entry duplicate cache by design. There is no startup or
-shutdown catch-up. In a multi-replica deployment each replica owns a separate budget,
-so aggregate spend may be the configured limit multiplied by replica count.
+timeout, or abstention. Queue-full does not consume it. The deterministic attempt ID binds
+reservation to durable attempt create; a crash before create is reconciled to a reclaimed
+charge, while an observable attempt retains its charge. Local composition stores the ledger
+beside the attempt store, so cooperating processes share global/principal count and token
+windows, cooldown, and 24-hour digest deduplication. A configured learning driver must
+advertise and serve the ledger whenever automatic learning is enabled; startup fails rather
+than falling back to per-process accounting. An embedding that does not wire the durable
+ledger retains ADR-0114's process-local limitation and must not advertise global bounds.
+
+Automatic admission reports `queued` only after an exact non-empty persisted `RunID` and
+idempotent durable `AttemptRepository.Create`. That caller/session/run/digest record—not the
+coordinator, receipt cache, or EventLog—is workflow authority across restart. It stores bounded
+content-free provenance and source references, never transcript/tool/provider content. Recovery
+reconstructs only the bounded canonical projection, verifies owner/run/order/digest, fences it at
+every model boundary, and fails closed when exact evidence is unavailable. The attempt APIs expose
+get/list and opaque-version retry/abandon only; no attempt-watch feed exists, and ADR-0250 session
+EventLog watch is not a substitute.
 
 `review` signal-gates eligible clean completions into the process-wide reflection
 coordinator and durably stages valid proposals without changing memory. `auto` uses the same

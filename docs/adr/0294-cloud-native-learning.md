@@ -148,9 +148,14 @@ non-disclosure check before locks, signals, diagnostics, and pagination/count/cu
 so the two cases have no testable timing or existence oracle. Responses use closed safe failure codes
 and only link proposal/skill IDs a caller may read.
 
-Driver-backed learning requires workload-authenticated claims, separate caller and infrastructure
+Driver-backed learning ultimately requires workload-authenticated claims, separate caller and infrastructure
 RPC surfaces, opaque workload-asserted project namespaces rather than raw workspace paths, and
-fail-closed startup when configured learning drivers cannot enforce ownership.
+fail-closed startup when configured learning drivers cannot enforce ownership. In the current
+implementation stage, the raw repository RPCs have none of ADR-0213's authentication middleware,
+private durable owner registry, or separately authenticated maintenance surface. They are therefore
+available only as explicitly trusted single-tenant infrastructure; application ownership enforcement
+always rejects `--learning-store-url`, even when a driver self-advertises `enforced`. That advertised
+value is not proof until the cryptographic boundary lands.
 
 Attempt watch is deferred to a separately specified follow-up. ADR-0250's session `EventLog` watch
 is not an attempt watch feed. That follow-up must define a durable attempt-change feed with cursors
@@ -164,13 +169,16 @@ under authority rather than treating a feed as workflow state.
 reconcile without losing the fact that learning was admitted. Exact source evidence remains under
 existing session/log ownership and compaction rules instead of becoming a second transcript store.
 Replica-safe downstream repositories and hydration make a committed Active skill usable outside the
-worker's process. The explicit vertical slice delivers value before the global automatic-ledger
-work is ready.
+worker's process. The explicit vertical slice delivered first; the as-built final wave now also
+selects a durable automatic ledger before advertising global automatic controls.
 
 **Costs and limits.** This adds an exported engine port, domain values, adapters/drivers,
 conformance suites, API surface, repository migrations, attempt claim fencing, durable retention
-policy, and ADR 0027 resource/fidelity inventory rows. Driver-backed learning requires ADR-0213
-ownership enforcement rather than a trusted raw-driver exception. It requires `task api:update` and
+policy, and ADR 0027 resource/fidelity inventory rows. The as-built raw learning driver is restricted
+to explicitly trusted single-tenant infrastructure and fails closed whenever application ownership
+enforcement is active. Multi-tenant driver-backed learning remains blocked on ADR-0213 workload
+authentication, its private owner registry, and separated maintenance surface; a driver's
+self-advertised `enforced` value cannot waive that boundary. It requires `task api:update` and
 a compatibility changelog entry when the port lands. It also introduces operational work: claim
 expiry, abandoned-attempt reconciliation, evidence retention limits, and replica-safe generation
 convergence must be observable through safe metadata without leaking model content.
@@ -184,9 +192,10 @@ per-partition monotonic generation; delayed old publication or invalidation cann
 revoke a newer generation, but instant claim-driven invalidation is not promised. Strict universal
 prevention of late downstream writes is a deferred design requiring a separate unified
 linearizable learning authority. Unavailable evidence fails honestly. EventLog's documented gap
-behavior remains a reason to fail evidence verification, never a reason to infer completion. Before
-the final automatic-controls wave, multi-replica automatic learning is still process-multiplied and
-must be documented that way.
+behavior remains a reason to fail evidence verification, never a reason to infer completion. The
+as-built final automatic-controls wave uses the durable ledger for process-independent accounting;
+an embedding that does not wire it retains ADR-0114's process-local limitation and must not claim
+global bounds.
 
 This ADR supersedes only the identified reset-by-design coordinator/receipt authority in ADR 0109
 and process-local automatic admission accounting in ADR 0114 when v2 is wired. Their durable

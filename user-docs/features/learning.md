@@ -7,7 +7,9 @@ description: Configure evidence-backed learning, reflection, and learned-skill a
 # Learning
 
 Mecatl's learning feature turns eligible completed runs into bounded, reviewable
-reflection proposals. It is not a general conversation recorder and it does not
+reflection proposals. A durable admitted attempt—not a process-local queue, receipt, or
+session EventLog—is the workflow authority once non-off standard learning is enabled.
+It is not a general conversation recorder and it does not
 let the model rewrite policy, safety rules, tools, or the soul. Explicit memory
 tools remain separate and available even when automatic learning is off.
 
@@ -63,8 +65,12 @@ learning, raise autonomy, or weaken assurance. The legacy
 ## What can be learned
 
 After an eligible main-session completion, mecatl evaluates evidence from the
-verified current run. A genuine user prompt that explicitly asks to remember a
-fact or learn a procedure is a hard admission signal. Otherwise, the weighted
+verified current run. Explicit procedure authority was the first durable slice: only a
+genuine current principal-authored imperative to create, make, build, learn, save, or turn
+a workflow into a skill is a hard admission signal, and only on the documented clean
+terminal set. Negation and questions about learning capability fail closed. The admitted
+work is durably created before `queued` and then follows the same attempt lifecycle that
+weighted automatic work uses; it does not activate a direct `SkillDraft`. Otherwise, the weighted
 signals must reach the configured sensitivity threshold:
 
 - `conservative`: 6 points;
@@ -97,6 +103,13 @@ process-local reservations: windows reset on restart and multiple replicas can e
 spend their own budget. A reflection that fails, times out, or abstains consumes its
 reservation; a queue-full admission does not. The time window must be between one
 minute and 24 hours.
+
+The attempt stores bounded, content-free provenance and references its exact source
+session, durable run ID, and canonical digest; it does not copy the transcript. A worker
+reconstructs only the bounded, secret-safe canonical evidence projection, verifies owner,
+run, ordering, and digest, and fences that projection as untrusted at every restarted or
+remote model boundary. Missing, gapped, unauthorized, mismatched, or unrecoverably
+compacted evidence fails closed before proposal or skill mutation.
 
 The reflection request is bounded and uses the selected reflection model. Raw
 provider errors are not persisted or logged. Candidates retain enough provenance
@@ -137,7 +150,9 @@ timestamps, safe failure/checkpoint codes, opaque versions, and authorized
 proposal/skill links only. They never include prompts, transcripts, tool/provider
 output, filesystem paths, identity values, credentials, diagnostics, metrics, or
 event/watch payloads. Another caller sees the same not-found response as a missing
-attempt. Attempt watch is not available. A failed attempt can be retried with
+attempt. There is no attempt-watch endpoint, cursor, envelope, or process-local substitute;
+ADR-0250 session EventLog watch is a different feed. Any future attempt notification is
+advisory and clients must re-read the attempt repository under caller authority. A failed attempt can be retried with
 `RetryLearningAttempt`, and an unclaimed nonterminal attempt can be abandoned with
 `AbandonLearningAttempt`; HTTP uses `POST /v1/learning/attempts/{id}/retry` and
 `POST /v1/learning/attempts/{id}/abandon`. Both controls require the attempt's
@@ -155,9 +170,14 @@ permissions or tools.
 
 - Automatic learning is off unless an operator explicitly enables `review` or
   `auto`; configuring dream/consolidation intervals does not enable it.
-- Admission budgets and duplicate detection are process-local and reset on
-  restart. In a multi-replica deployment, aggregate capacity can be the per-
-  replica limit multiplied by the replica count.
+- Standard non-off composition claims global automatic count/token budgets,
+  cooldown, and deduplication only after its durable ledger is selected. An unwired
+  embedding retains the process-local ADR-0114 limitation and must report it honestly.
+- `--learning-store-url` is currently for explicitly trusted single-tenant
+  infrastructure only. Ownership-enforced or multi-tenant startup fails closed until
+  ADR-0213 workload-authenticated claims, a private owner registry, and separated
+  maintenance RPCs are implemented; a driver's self-advertised `enforced` value does
+  not satisfy that boundary.
 - Project promotion requires the exact trusted configured workspace and a
   lifecycle-capable project memory store. Candidates from other roots can remain
   staged but cannot approve, undo, or write launch-root project memory.
