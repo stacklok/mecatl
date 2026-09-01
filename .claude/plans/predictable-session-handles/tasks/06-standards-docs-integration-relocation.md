@@ -3,8 +3,8 @@ id: 06-standards-docs-integration-relocation
 title: ADR-0280 standards repair, documentation, and integration-test relocation
 blocked_by: [05-resolver-exact-semantics-api-cleanup]
 status: pending
-branch: "plan-predictable-session-handles/06-standards-docs-integration-relocation"
-worktree: ".scratch/worktrees/issue-922-task06"
+branch: ""
+worktree: ""
 issue: "922"
 retries: 0
 last_error: ""
