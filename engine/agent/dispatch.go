@@ -36,11 +36,16 @@ type parentMutatingCaller interface {
 }
 
 // readBatchable reports whether a call may join the concurrent read batch: it must
-// be a known ReadOnly tool whose this-call posture is NOT parent-mutating. A
-// parent-mutating call (parentMutatingCaller.MutatesParent true) is excluded so it
-// flushes alone via runOne, exactly like a mutating tool — see parentMutatingCaller.
+// be a known ReadOnly tool that does not request serial dispatch and whose this-call
+// posture is NOT parent-mutating. A DispatchSerial tool or parent-mutating call
+// (parentMutatingCaller.MutatesParent true) is excluded so it flushes alone via
+// runOne, exactly like a mutating tool — see DispatchSerial and
+// parentMutatingCaller.
 func readBatchable(t tool.Tool, known bool, c session.ToolCall) bool {
 	if !known || !t.ReadOnly() {
+		return false
+	}
+	if _, serial := t.(tool.DispatchSerial); serial {
 		return false
 	}
 	if pm, ok := t.(parentMutatingCaller); ok && pm.MutatesParent(c) {
@@ -54,12 +59,15 @@ func readBatchable(t tool.Tool, known bool, c session.ToolCall) bool {
 // permission-await or mid-execution) so the loop can terminate as cancelled.
 //
 // Ordering contract (gauntlet #4, read-parallel / mutate-serial):
+//   - This ordering is run-local: it applies among sibling calls in this dispatch;
+//     shared state reached by concurrent runs still requires its own synchronization.
 //   - Calls are processed in their original order, batched into maximal runs of
 //     consecutive read-batchable tools (readBatchable: known ReadOnly, not
-//     parent-mutating-this-call).
+//     DispatchSerial, not parent-mutating-this-call).
 //   - A read-only batch runs CONCURRENTLY (one goroutine per call).
-//   - A mutating tool — or a read-only tool whose THIS call mutates the parent
-//     (parentMutatingCaller) — runs ALONE, strictly serially, never overlapping.
+//   - A mutating tool, a serial-dispatch read-only tool, or a read-only tool
+//     whose THIS call mutates the parent (parentMutatingCaller) runs ALONE,
+//     strictly serially, never overlapping.
 //   - Permission "asks" are sequenced one at a time (we never ask for two at
 //     once): a batch that contains an Ask is resolved call-by-call before the
 //     read-only calls that follow it execute.
@@ -84,7 +92,8 @@ func (e *Engine) dispatch(ctx context.Context, r *Run, sess *session.Session, en
 		c := calls[i]
 		t, known := e.lookupTool(r, c.Name)
 
-		// Mutating (or unknown) tools flush alone, serially — AND a read-only tool
+		// Mutating (or unknown) tools flush alone, serially. The same run-local
+		// barrier applies to a read-only DispatchSerial tool and to a read-only tool
 		// whose THIS call will mutate the parent workspace (parentMutatingCaller, FIX
 		// C): a writable Subagent or single-branch auto-merging Parallel call merges
 		// its fork diff into the parent at run end, so it must NOT overlap a sibling

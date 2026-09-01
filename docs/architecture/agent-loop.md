@@ -130,15 +130,25 @@ sequenceDiagram
 
 ### Read-parallel / mutate-serial dispatch (`dispatch.go`)
 
-Enforced in `Engine.dispatch`, keyed off `Tool.ReadOnly()`:
-- Calls are processed **in original order**, batched into maximal runs of
-  consecutive read-only tools.
+Enforced in `Engine.dispatch`:
+- Calls are processed **in original order**. Ordinary `Tool.ReadOnly()==true`
+  sibling calls form maximal concurrent batches.
+- A read-only tool implementing the static `tool.DispatchSerial` marker forms a
+  **run-local barrier**: the dispatcher flushes the preceding read batch, runs
+  the marked call alone, then starts the following batch. The marker changes
+  neither `ReadOnly` semantics nor tool advertisement.
 - A read-only batch (`runReadBatch`) authorizes + runs PreToolUse hooks for
   every call first (permission **asks are sequenced one at a time**, never two
   at once), then executes the cleared calls **concurrently**, one goroutine per
   call, results merged under a mutex.
 - A mutating or **unknown** tool (`runOne`) runs **alone, serially**, never
-  overlapping anything.
+  overlapping a sibling call in that dispatch.
+- A read-only tool whose specific call implements the unexported
+  `parentMutatingCaller` predicate and returns true gets the same run-local
+  barrier, preserving writable Subagent and auto-merging Parallel behavior.
+- These barriers apply only among sibling calls within one run/dispatch.
+  Shared adapter state reached by concurrent runs still requires its own
+  synchronization.
 - Results are keyed by `CallID` and re-assembled in input order.
 
 A `cancelled` flag propagates from `dispatch` so the loop terminates as
