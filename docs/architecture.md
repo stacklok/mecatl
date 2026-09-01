@@ -1229,6 +1229,16 @@ and before provider work; failure, timeout, and abstention still consume it. Que
 The controller and weighted-admission caches reset on restart, while admitted work is authoritative in the durable attempt repository. Review/auto composition starts one bounded Build-owned recovery worker when nonterminal attempts exist; it reloads the exact source session and RunID-bound event evidence, rebuilds only the canonical projection, and invokes the reflector across the shared untrusted fence. Proposal/skill publication and terminal attempt finalization remain claim-fenced and idempotent. `Built.Close` cancels and joins this worker. Durable proposals and attempts remain
 idempotent. Budgets are process-local, so multiple replicas multiply aggregate capacity.
 
+The durable replacement authority is implemented separately from that still-wired controller.
+`internal/adapter/automaticstore` serializes every reservation and fence transition across cooperating
+processes through one bounded atomic file under flock; count/token windows, opaque-principal limits,
+cooldown, and digest deduplication are evaluated in that transaction. The
+`internal/adapter/grpcdriver` automatic-ledger service lets independent clients share that authority
+without transporting prompt, transcript, tool, path, credential, or backend-error content. Backend and
+driver both pass the shared automatic-ledger conformance suite, including a concurrent independent-client
+global-maximum proof. Standard composition does not claim global automatic bounds until it migrates from
+the process-owned controller to this authority.
+
 The current raw Attempt/Proposal/Skill driver RPCs are trusted-infrastructure-only: callers select
 repository partitions, and no ADR-0213 workload-authentication middleware, private durable owner
 registry, or separately authenticated maintenance surface exists yet. Consequently,

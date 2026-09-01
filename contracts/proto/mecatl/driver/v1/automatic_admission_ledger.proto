@@ -1,0 +1,110 @@
+// SPDX-FileCopyrightText: Copyright 2026 Stacklok, Inc.
+// SPDX-License-Identifier: LicenseRef-Stacklok-Proprietary
+
+// Infrastructure driver seam for the bounded, content-free automatic learning
+// admission ledger. The service carries opaque IDs, digests and principal
+// partitions plus closed accounting values; it never carries prompts,
+// transcript/tool content, paths, credentials, headers, or backend error text.
+syntax = "proto3";
+
+package mecatl.driver.v1;
+
+import "buf/validate/validate.proto";
+import "google/protobuf/duration.proto";
+import "google/protobuf/timestamp.proto";
+
+service AutomaticAdmissionLedgerService {
+  rpc ReserveAutomaticAdmission(AutomaticReservationRequest) returns (AutomaticReservationResponse);
+  rpc GetAutomaticReservation(GetAutomaticReservationRequest) returns (GetAutomaticReservationResponse);
+  rpc ReassignAutomaticReservation(ReassignAutomaticReservationRequest) returns (AutomaticReservationResponse);
+  rpc RetainAutomaticReservation(ResolveAutomaticReservationRequest) returns (AutomaticReservationResponse);
+  rpc ReclaimAutomaticReservation(ResolveAutomaticReservationRequest) returns (AutomaticReservationResponse);
+}
+
+enum AutomaticLedgerErrorCode {
+  AUTOMATIC_LEDGER_ERROR_CODE_UNSPECIFIED = 0;
+  AUTOMATIC_LEDGER_ERROR_CODE_INVALID = 1;
+  AUTOMATIC_LEDGER_ERROR_CODE_DUPLICATE = 2;
+  AUTOMATIC_LEDGER_ERROR_CODE_COOLDOWN = 3;
+  AUTOMATIC_LEDGER_ERROR_CODE_LIMIT = 4;
+  AUTOMATIC_LEDGER_ERROR_CODE_IDENTITY_CONFLICT = 5;
+  AUTOMATIC_LEDGER_ERROR_CODE_NOT_FOUND = 6;
+  AUTOMATIC_LEDGER_ERROR_CODE_VERSION_CONFLICT = 7;
+  AUTOMATIC_LEDGER_ERROR_CODE_FENCE_LOST = 8;
+  AUTOMATIC_LEDGER_ERROR_CODE_STATE = 9;
+}
+
+message AutomaticLedgerErrorDetail {
+  AutomaticLedgerErrorCode code = 1;
+}
+
+message AutomaticAdmissionPolicy {
+  google.protobuf.Duration window = 1;
+  google.protobuf.Duration cooldown = 2;
+  google.protobuf.Duration dedupe_window = 3;
+  uint64 max_count = 4;
+  uint64 max_tokens = 5;
+  uint64 max_count_per_principal = 6;
+  uint64 max_tokens_per_principal = 7;
+  google.protobuf.Duration reservation_claim_duration = 8;
+}
+
+message AutomaticReservationFence {
+  uint64 generation = 1;
+  google.protobuf.Timestamp expires_at = 2;
+}
+
+message AutomaticReservationRequest {
+  string id = 1 [(buf.validate.field).string.max_len = 96];
+  string attempt_id = 2 [(buf.validate.field).string.max_len = 96];
+  string principal = 3 [(buf.validate.field).string.max_len = 128];
+  string digest = 4 [(buf.validate.field).string.max_len = 128];
+  string admission_class = 5 [(buf.validate.field).string.max_len = 32];
+  uint64 tokens = 6;
+  google.protobuf.Timestamp now = 7 [(buf.validate.field).required = true];
+  AutomaticAdmissionPolicy policy = 8 [(buf.validate.field).required = true];
+}
+
+message AutomaticReservation {
+  string id = 1 [(buf.validate.field).string.max_len = 96];
+  string attempt_id = 2 [(buf.validate.field).string.max_len = 96];
+  string version = 3 [(buf.validate.field).string.max_len = 128];
+  string principal = 4 [(buf.validate.field).string.max_len = 128];
+  string digest = 5 [(buf.validate.field).string.max_len = 128];
+  string admission_class = 6 [(buf.validate.field).string.max_len = 32];
+  uint64 tokens = 7;
+  string charge = 8 [(buf.validate.field).string.max_len = 32];
+  bool attempt_created = 9;
+  google.protobuf.Timestamp reserved_at = 10 [(buf.validate.field).required = true];
+  google.protobuf.Timestamp charge_expires_at = 11 [(buf.validate.field).required = true];
+  google.protobuf.Timestamp dedupe_expires_at = 12 [(buf.validate.field).required = true];
+  google.protobuf.Duration claim_duration = 13 [(buf.validate.field).required = true];
+  AutomaticReservationFence fence = 14;
+}
+
+message AutomaticReservationResponse {
+  AutomaticReservation reservation = 1 [(buf.validate.field).required = true];
+}
+
+message GetAutomaticReservationRequest {
+  string id = 1 [(buf.validate.field).string.max_len = 96];
+}
+
+message GetAutomaticReservationResponse {
+  bool found = 1;
+  AutomaticReservation reservation = 2;
+}
+
+message ReassignAutomaticReservationRequest {
+  string id = 1 [(buf.validate.field).string.max_len = 96];
+  string expected_version = 2 [(buf.validate.field).string.max_len = 128];
+  google.protobuf.Timestamp now = 3 [(buf.validate.field).required = true];
+  google.protobuf.Timestamp expires_at = 4 [(buf.validate.field).required = true];
+}
+
+message ResolveAutomaticReservationRequest {
+  string id = 1 [(buf.validate.field).string.max_len = 96];
+  string expected_version = 2 [(buf.validate.field).string.max_len = 128];
+  AutomaticReservationFence fence = 3 [(buf.validate.field).required = true];
+  google.protobuf.Timestamp now = 4 [(buf.validate.field).required = true];
+}

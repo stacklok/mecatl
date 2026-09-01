@@ -4292,9 +4292,18 @@ cooldown and explicit host-requested reflection does not enter this automatic se
 is reassigned with a newer opaque fence without adding a charge. A successor reconciles the linked
 attempt and then retains the charge after creation or reclaims it before creation; retained charges are
 not refunded by later failure, timeout, or abandonment. This interface is accounting rather than a
-queue: wired automatic work must continue to enter the existing `AttemptRepository` lifecycle. The
-current process-local controller remains wired until the durable adapters and composition migration
-land, so this contract alone does not claim distributed enforcement.
+queue: wired automatic work must continue to enter the existing `AttemptRepository` lifecycle.
+`internal/adapter/automaticstore/store.go` is the selected cooperating-process durable backend: every
+operation reloads one bounded, content-free document under a stable flock and crash-safe atomic replace,
+so separate backend instances share one count/token window, opaque-principal limit, cooldown, and digest
+dedupe authority. `internal/adapter/grpcdriver/automaticledger.go` and
+`internal/adapter/grpcdriver/automaticledger_server.go` expose the same contract to independent driver
+clients with only bounded opaque metadata and closed safe error details. Both the backend and transport
+run `engine/adapter/automaticconformance/automaticconformance.go` (`Run`); the ADR pin races independent
+clients through separate servers and backend handles rather than treating an in-memory singleton as
+distributed proof. Standard composition still uses the process-local controller until the lifecycle
+migration lands, so the presence of these adapters alone does not advertise globally bounded automatic
+mode.
 
 **Evaluated and validated agent-owned skills (#510; ADR 0111, superseded in part by ADR 0224):**
 `engine/adapter/skilllifecycle.Pipeline` is a state-aware, idempotent resume over
