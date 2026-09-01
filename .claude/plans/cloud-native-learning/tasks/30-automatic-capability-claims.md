@@ -2,7 +2,7 @@
 id: 30-automatic-capability-claims
 title: Gate global automatic-learning capability claims on ledger wiring
 blocked_by: [29-weighted-attempt-lifecycle]
-status: pending
+status: in-progress
 branch: ""
 worktree: ""
 issue: ""
