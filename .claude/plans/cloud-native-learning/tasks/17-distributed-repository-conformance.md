@@ -2,9 +2,9 @@
 id: 17-distributed-repository-conformance
 title: Prove distributed proposal and skill repository conformance
 blocked_by: [16-learning-driver-composition]
-status: in-progress
-branch: ""
-worktree: ""
+status: done
+branch: "plan-cloud-native-learning/17-distributed-repository-conformance"
+worktree: ".scratch/worktrees/17-distributed-repository-conformance"
 issue: ""
 retries: 0
 last_error: ""
