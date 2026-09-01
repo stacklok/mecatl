@@ -49,8 +49,10 @@ mecatui debug 01JOPAQUESESSIONID \
 
 1. Use the full target ID from `/session`, `/sessions`, or the
    `mecatui: final-session-id=...` line printed when its TUI exits. You can instead
-   type the exact 12-byte ID displayed in the TUI header. If multiple visible
-   sessions share that prefix, mecatui creates nothing and asks for the full ID.
+   type the displayed 12-column short handle unchanged: safe `[A-Za-z0-9._-]` bytes
+   are literal and other UTF-8 bytes are uppercase `%HH` atoms. It has no leading
+   `#`. If the handle is ambiguous or has no visible match, mecatui creates nothing;
+   open `/session` and copy the exact full ID.
 2. Run `mecatui debug` against the same embedded store, or use
    `mecatui connect ADDRESS debug` against the server that owns the target.
 3. mecatui prints a privacy disclosure before entering the alternate screen.
@@ -59,8 +61,8 @@ mecatui debug 01JOPAQUESESSIONID \
    the selected model.
 4. The server authorizes the target and creates a **different**, durable,
    no-filesystem analysis session. The normal padded header shows amber/bold
-   `DEBUG target #<digest>` after `mecatui`, and the terminal title carries the digest.
-   `/session` shows the safely quoted exact target ID and copies it with `t`.
+   `DEBUG target <handle>` after `mecatui`, and the terminal title carries the same
+   handle. `/session` shows the safely quoted exact target ID and copies it with `t`.
 5. The debugger submits one first user turn ordered as your diagnosis objective, the required
    status/transcript/pagination workflow, the expected report sections, and finally a delimited
    sanitized current-debugger client/server runtime block. `--prompt` replaces only the

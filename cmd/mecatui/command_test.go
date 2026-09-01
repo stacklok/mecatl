@@ -1005,7 +1005,7 @@ func TestCommandSummaryUsesIndentedWrappedDescriptions(t *testing.T) {
 
 	for _, want := range []string{
 		"  sessions\n    browse stored sessions before creating or continuing a chat\n",
-		"  debug SESSION_ID [flags]\n    diagnose a stored session by full ID or its 12-character header ID in a\n    separate no-filesystem analysis session; ambiguous header IDs require the\n    full ID\n",
+		"  debug SESSION_ID [flags]\n    diagnose a stored session by exact full ID or its displayed 12-column short\n    handle (literal [A-Za-z0-9._-] or uppercase %HH atoms, no leading #); for\n    ambiguous or unmatched handles, use /session to copy the exact ID\n",
 		"  connect ADDRESS [sessions | debug SESSION_ID] [flags]\n    dial a running mecated at ADDRESS (host:port), optionally browsing or\n    debugging a stored session\n",
 		"  login ADDRESS\n    log in to a remote mecated at ADDRESS using OIDC\n",
 		"  llm login [--skip-browser]\n    run the ToolHive LLM gateway OIDC browser flow (no session)\n",

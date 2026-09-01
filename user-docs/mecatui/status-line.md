@@ -79,11 +79,11 @@ are zero, and `Clock.Now` is the zero time until the source refreshes it.
 
 | JSON path | Type | Meaning |
 | --- | --- | --- |
-| `Version` | integer | Status input protocol version (currently `1`). |
+| `Version` | integer | Status input protocol version (currently `2`). |
 | `Server.DisplayTarget` | string | Credential-free target shown by the client. |
 | `Server.ConnectionMode` | string | `embedded`, `connect`, or empty while unknown. |
 | `Session.Title` | string | Optional display title. |
-| `Session.Digest` | string | Stable shortened session identifier used by the shipped header. |
+| `Session.Handle` | string | Fixed 12-column ordinary session handle used by shipped headers: safe `[A-Za-z0-9._-]` bytes are literal, other UTF-8 bytes are uppercase `%HH`, and only complete atoms that fit are included. It has no leading `#` and replaces the v1 `Session.Digest` field; no digest alias is emitted. |
 | `Session.Mode` | string | Active or pending permission mode used by the shipped header. |
 | `Session.ReasoningEffort` | string | `low`, `medium`, `high`, `xhigh`, `max`, or empty. |
 | `Model.ProviderID`, `Model.ID`, `Model.DisplayName`, `Model.Route` | strings | Provider/model routing identifiers, display label, and observed downstream route. |
@@ -186,12 +186,12 @@ status_customization:
   templates:
     header:
       full: |-
-        <header><primary>mecatui · session #{{.Session.Digest}} · {{if .Model.ProviderID}}{{.Model.ProviderID}}/{{end}}{{.Model.DisplayName}}{{if .Model.Route}}/{{.Model.Route}}{{end}}</primary>{{- if .Session.Mode -}}
+        <header><primary>mecatui · session {{.Session.Handle}} · {{if .Model.ProviderID}}{{.Model.ProviderID}}/{{end}}{{.Model.DisplayName}}{{if .Model.Route}}/{{.Model.Route}}{{end}}</primary>{{- if .Session.Mode -}}
         <warning> · mode {{.Session.Mode}}</warning>{{- end -}}
         {{- if .Server.DisplayTarget -}}
         <text> · {{.Server.DisplayTarget}}</text>{{- end -}}</header>
       compact: |-
-        <header><primary>mecatui · #{{.Session.Digest}} · {{.Model.DisplayName}}</primary>{{- if .Session.Mode -}}
+        <header><primary>mecatui · {{.Session.Handle}} · {{.Model.DisplayName}}</primary>{{- if .Session.Mode -}}
         <warning> · {{.Session.Mode}}</warning>{{- end -}}</header>
       minimal: |-
         <header><primary>mecatui</primary></header>

@@ -388,11 +388,13 @@ inventory without first creating a session, then continue/inspect through the ex
 authoritative transcript path or create only when the operator requests a new chat.
 The sibling `mecatui debug SESSION_ID` and `mecatui connect ADDRESS debug SESSION_ID`
 forms create a separate durable `debug` session whose trusted relationship metadata binds
-one authorized target. The proto-free client uses the same 12-byte helper as the
-header: only an exact header-width reference is resolved against the caller-filtered
-inventory, exact full-ID matches win, and ambiguity fails before creation. Longer IDs
-bypass inventory lookup; an unmatched short reference is still sent unchanged so the
-server preserves its absence-shaped authorization response and remains the final authority.
+one authorized target. The proto-free client uses the same fixed 12-column,
+terminal-safe handle as the header: safe `[A-Za-z0-9._-]` bytes are literal and all
+other UTF-8 bytes are uppercase `%HH`, with only complete atoms that fit. The displayed
+literal has no leading `#`; exact full-ID matches win, otherwise it is resolved against
+the caller-filtered inventory. Ambiguous or zero-match handles fail before creation with
+`/session` exact-copy guidance. Longer or malformed operands remain exact-ID inputs;
+the server remains the final authority.
 That engine has no filesystem, carries a stable-prefix debugging
 contract, and always exposes the target-bound `InspectSession` tool; the model cannot
 choose another target or submit a raw session ID. A create request may additionally name
@@ -471,9 +473,9 @@ first user turn ordered as objective, required InspectSession workflow, expected
 structure, then a delimited sanitized debugger-runtime context. The runtime block is
 compatibility/transport context, never target evidence; a custom `--prompt` changes only the
 objective. Durable safety, authority, and source hierarchy stay in the stable system Role.
-Its normal padded header keeps amber/bold `DEBUG target #<digest>`
+Its normal padded header keeps amber/bold `DEBUG target <handle>`
 ahead of lower-priority details, `/session` exposes and copies the safely quoted exact target,
-and the target-derived terminal title remains while binding-breaking controls are hidden. See [ADR 0254](adr/0254-session-debugger-admin-transport.md), [ADR 0255](adr/0255-sanitized-network-attempt-evidence.md), [ADR 0256](adr/0256-session-debugger-evidence-and-reporting.md), and [ADR 0257](adr/0257-session-debugger-hardening.md). Each
+and the target-derived terminal title uses the same handle. See [ADR 0254](adr/0254-session-debugger-admin-transport.md), [ADR 0255](adr/0255-sanitized-network-attempt-evidence.md), [ADR 0256](adr/0256-session-debugger-evidence-and-reporting.md), and [ADR 0257](adr/0257-session-debugger-hardening.md). Each
 inventory row also carries server-authored action capabilities. The TUI uses those bits—not
 ID spelling—to expose exact-ID copy, detached transcript view, peer fork, operator-title
 rename, and confirmed physical deletion. The server also exposes authenticated legacy-adoption

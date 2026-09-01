@@ -55,17 +55,17 @@ func TestSessionContinuityUX_Scenario4_FamilyTabs(t *testing.T) {
 	}
 }
 
-func TestSessionContinuityUX_Scenario4_CurrentAndDigest(t *testing.T) {
+func TestSessionContinuityUX_Scenario4_CurrentAndHandle(t *testing.T) {
 	row := client.SessionListItem{ID: "opaque-current-id", Title: "Current work", Kind: client.SessionKindMain}
 	st := sessionsState{view: sessionsPanel, tab: tabChats, sessions: []client.SessionListItem{row}, filtered: []client.SessionListItem{row}}
 	st.handles = sessionDisplayHandles(st.filtered)
 	got := stripANSIstr(renderSessionsPanel(testTheme(), st, client.Capabilities{}, helpKeys{}, 100, 30, row.ID))
 	if !strings.Contains(got, "Current work") || !strings.Contains(got, st.handles[row.ID]) || !strings.Contains(got, "current") {
-		t.Fatalf("current titled row must retain title, digest, and marker:\n%s", got)
+		t.Fatalf("current titled row must retain title, handle, and marker:\n%s", got)
 	}
 }
 
-func TestADR_0108_DisplayDigestIsNotAnID(t *testing.T) {
+func TestADR_0278_OrdinaryHandleDoesNotChangeAuthoritativeSessionID(t *testing.T) {
 	loader := &fakeSessionTranscriptLoader{transcript: client.SessionTranscript{SessionID: "opaque-real-id", Complete: true}}
 	m := newScenario4Model(t, loader)
 	row := client.SessionListItem{ID: "opaque-real-id", Kind: client.SessionKindMain, Capabilities: client.SessionInventoryCapabilities{PublicChat: true, Inspect: true}}

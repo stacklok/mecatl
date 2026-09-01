@@ -43,15 +43,16 @@ func TestResolveDebugRejectsMissingFlagFirstAndExtraOperands(t *testing.T) {
 	}
 }
 
-func TestDebugHelpDocumentsBothCanonicalForms(t *testing.T) {
+func TestPredictableSessionHandles_Scenario3_CommandHelp(t *testing.T) {
 	var out bytes.Buffer
 	writeTopLevelHelp(&out)
 	text := out.String()
 	for _, want := range []string{
 		"mecatui debug SESSION_ID [flags]",
 		"mecatui connect ADDRESS debug SESSION_ID [flags]",
-		"full ID or its 12-character header ID",
-		"ambiguous header IDs require the",
+		"exact full ID or its displayed 12-column short\n    handle",
+		"[A-Za-z0-9._-] or uppercase %HH atoms, no leading #",
+		"ambiguous or unmatched handles, use /session to copy the exact ID",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("help missing %q:\n%s", want, text)

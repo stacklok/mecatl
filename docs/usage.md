@@ -80,9 +80,13 @@ eligible failure exists. Historical transcript replay never triggers automatic r
 
 ## mecatui session identity
 
-The TUI header shows a compact `#<digest>` for the active session rather than a long
-opaque ID. Type `/session` to inspect the safely quoted full ID, title, state, workspace,
-known timestamps, provider, and model; press `c` in that overlay to copy the exact ID.
+The TUI header shows a compact short handle for the active session rather than a long
+opaque ID. For a non-empty valid-UTF-8 ID, it renders safe `[A-Za-z0-9._-]` bytes
+literally and every other UTF-8 byte as uppercase `%HH`, taking the longest prefix of
+complete literal or `%HH` atoms that fits 12 ASCII columns. The displayed literal has
+no leading `#` and can be passed unchanged to `mecatui debug`; type `/session` to
+inspect the safely quoted full ID, title, state, workspace, known timestamps, provider,
+and model, then press `c` in that overlay to copy the exact ID.
 Use `/sessions` separately to Continue a stored chat or Inspect scheduled, child, and
 unknown/other runs without changing the active chat. Its selected-row hints come from
 server capabilities: `y` copies the exact ID, `v` views without attaching, `f` forks an
@@ -116,9 +120,11 @@ exists, the TUI fails, or a signal interrupts/forces exit; stdout is unchanged. 
 
 Use `mecatui debug SESSION_ID` against the embedded store, or
 `mecatui connect ADDRESS debug SESSION_ID` against a running server. `SESSION_ID`
-may be the full opaque ID or the exact 12-byte ID displayed in the TUI header.
-The short form must identify one caller-visible inventory row; an ambiguous prefix
-creates nothing and requires the full ID. The command creates a **separate durable
+may be an exact full opaque ID or the displayed 12-column short handle: safe
+`[A-Za-z0-9._-]` bytes are literal and other bytes are uppercase `%HH` atoms. The
+handle has no leading `#`; pass that displayed literal unchanged. A short handle must
+resolve to one caller-visible inventory row. An ambiguous or zero-match handle creates
+nothing; open `/session` and copy its exact full ID instead. The command creates a **separate durable
 debug session** and submits one first user turn containing the sanitized current debugger
 client/server diagnostics baseline plus a request to inspect the bound target's status and
 authoritative transcript. A custom `--prompt` replaces that diagnosis request, not the
@@ -165,9 +171,9 @@ timing are unavailable.
 Evidence is bounded and fenced as hostile data. The target ID is fixed by the server,
 not supplied by the model, and the debug run never resumes, mutates, approves, cancels,
 steers, or leases the target. The normal padded header places amber/bold
-`DEBUG target #<digest>` immediately after `mecatui` and keeps that complete identity when
+`DEBUG target <handle>` immediately after `mecatui` and keeps that complete identity when
 less important model/mode/server details are shed. `/session` shows the safely quoted exact
-target ID and copies it with `t`; the target-derived terminal title is unchanged.
+target ID and copies it with `t`; the target-derived terminal title uses the same handle.
 Model/mode/session-changing affordances are disabled. See
 [ADR 0254](adr/0254-session-debugger-admin-transport.md).
 

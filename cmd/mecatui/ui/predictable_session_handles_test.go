@@ -197,7 +197,7 @@ func TestPredictableSessionHandles_Scenario1_EscapedUTF8AndControls(t *testing.T
 	}
 }
 
-func TestPredictableSessionHandles_Scenario3_PresentationParityAndSafety(t *testing.T) {
+func TestADR_0278_OrdinaryHandleDoesNotAlterDebuggerEvidenceHandles(t *testing.T) {
 	const id = "legacy\x1b/$雪-session"
 	want := client.SessionHandle(id)
 	m := newTestModelFromDeps(Deps{Theme: testTheme(), Ctx: context.Background(), DebugTarget: id})

@@ -53,9 +53,11 @@ mecatui debug SESSION_ID
 mecatui connect ADDRESS debug SESSION_ID
 ```
 
-Debug invocation accepts the full opaque session ID or the exact 12-byte ID shown
-in the TUI header; an ambiguous short ID creates nothing and requires the full ID. It
-creates a separate no-filesystem analysis session and is explicit consent
+Debug invocation accepts an exact full opaque session ID or the displayed 12-column
+short handle. Safe `[A-Za-z0-9._-]` bytes are literal and other UTF-8 bytes are
+uppercase `%HH` atoms; the literal has no leading `#`. If it is ambiguous or has no
+visible match, mecatui creates nothing: open `/session` and copy the exact full ID.
+It creates a separate no-filesystem analysis session and is explicit consent
 to send bounded stored-session evidence—which may include secrets—to the selected model.
 It never resumes or mutates the target. Its bounded network view can correlate persisted,
 sanitized retry/transport evidence to that target without exposing raw errors or request data.

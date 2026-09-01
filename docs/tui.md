@@ -133,11 +133,12 @@ or fallback:
   quit without a session. Inspection `esc` returns to the startup inventory.
 
 - **`mecatui debug SESSION_ID [flags]`** — create a separate durable no-filesystem
-  analysis session permanently bound to that stored target. `SESSION_ID` may be the
-  full opaque ID or the exact 12-byte ID shown in the TUI header. A unique
-  header ID resolves through the caller-visible inventory; if it is ambiguous,
-  mecatui creates nothing and asks for the full ID. The invocation is the consent
-  gesture: before entering the TUI, mecatui warns that the target transcript
+  analysis session permanently bound to that stored target. `SESSION_ID` may be an exact
+  full opaque ID or the displayed 12-column short handle: safe `[A-Za-z0-9._-]` bytes
+  are literal and every other UTF-8 byte is uppercase `%HH`; the handle has no leading
+  `#` marker. The displayed literal resolves through the caller-visible inventory. If it
+  is ambiguous or has no match, mecatui creates nothing; use `/session` to copy the
+  exact full ID. The invocation is the consent gesture: before entering the TUI, mecatui warns that the target transcript
   and diagnostic evidence may contain prompts, outputs, tool arguments/results, file
   paths, and secrets and will be sent to the selected model. It then submits a default
   diagnostic prompt automatically. The target is never resumed, leased, mutated, or
@@ -292,10 +293,13 @@ server. After reviewing it, send a new current prompt such as `Publish this issu
 each mutating call opens an approval card even under yolo/configured allow. Allow once sends
 one request. A later mutation asks again; Allow always is deliberately not learned.
 
-These commands accept either the full opaque session ID or the exact 12-byte ID
-shown in the TUI header. The short form is resolved from the caller-visible session
-inventory. If more than one visible session shares it, no debug session is created and
-mecatui asks for the full ID. These commands do not attach to or continue the target.
+These commands accept either an exact full opaque session ID or the displayed 12-column
+short handle. It renders safe `[A-Za-z0-9._-]` bytes literally and every other UTF-8 byte
+as an uppercase `%HH` atom, stopping before an atom that would exceed 12 ASCII columns.
+The displayed literal has no leading `#` and is itself the debug argument. It resolves
+from the caller-visible session inventory. If it is ambiguous or has no match, no debug
+session is created: open `/session` and copy the exact full ID. These commands do not
+attach to or continue the target.
 They authorize it, create a separate durable no-filesystem debug session, print a privacy
 disclosure, and submit one first genuine user turn. That turn is ordered as the diagnosis
 objective, the required status/transcript/pagination workflow, the expected report sections,
@@ -327,10 +331,10 @@ the debugger.
 The debug conversation persists independently and can rehydrate after server restart with
 the same exact lineage and narrow catalog. Invalid lineage/no-fs metadata, a missing debug
 factory, or an unavailable target fails closed. The ordinary padded header places amber/bold
-`DEBUG target #<digest>` immediately after `mecatui` in every phase. At narrow widths it
+`DEBUG target <handle>` immediately after `mecatui` in every phase. At narrow widths it
 sheds model/mode/server detail before that complete target identity rather than clipping it;
 `/session` displays the safely quoted exact target ID and copies it with `t`. The
-`DEBUG <target-digest>` terminal title remains unchanged. The TUI hides `/clear`, `/sessions`, `/models`,
+`DEBUG <handle>` terminal title uses the same handle. The TUI hides `/clear`, `/sessions`, `/models`,
 `/effort`, and `/worktrees`, and blocks the mode/effort shortcuts because those controls
 can replace the launch binding. Schedule and learning controls remain available because
 changing those independent settings does not rebind the debug target; harmless inspection
@@ -549,8 +553,8 @@ The title leads because tab bars **truncate from the right**; the status is a
 attention heuristics — the dock bounces / the taskbar flashes on every change).
 The title self-heals across a session switch / fork / carryover (a refetch adopts
 the server's stored title when this client never saw the first prompt). A dedicated
-debugger instead always starts with `DEBUG <target-digest>`, followed by its static
-phase label; the persistent amber/bold `DEBUG target #<digest>` segment in the ordinary
+debugger instead always starts with `DEBUG <handle>`, followed by its static
+phase label; the persistent amber/bold `DEBUG target <handle>` segment in the ordinary
 padded header carries the same identity through every lifecycle and fatal state.
 
 The title is terminal-escape-sanitized (C0/ESC/DEL stripped — a malicious prompt
@@ -1414,11 +1418,12 @@ conversation history. The editor preserves a three-row minimum, grows and shrink
 with explicit newlines and soft wraps to eight rows, then scrolls internally to keep
 the caret visible.
 
-**Header bar.** `mecatui · session #<digest> · <model> · mode <mode> · <server>`.
-The session segment uses the same terminal-safe eight-character SHA-256 digest as the
-`/sessions` inventory; it never prints the full opaque ID. Type **`/session`** for the
-safe quoted full ID and active-session metadata, or press **`c`** there to copy the exact
-ID through the clipboard.
+**Header bar.** `mecatui · session <handle> · <model> · mode <mode> · <server>`.
+The session segment uses a fixed terminal-safe 12-column handle: safe `[A-Za-z0-9._-]`
+bytes are literal, other UTF-8 bytes are uppercase `%HH`, and only complete atoms that
+fit are shown. It has no leading `#` and is the literal accepted by `mecatui debug`.
+Type **`/session`** for the safe quoted full ID and active-session metadata, or press
+**`c`** there to copy the exact ID through the clipboard.
 The **mode segment** shows the server-confirmed permission posture for the current session;
 when a mid-turn switch has been deferred it shows `mode <target> pending` until the retry
 succeeds at the next prompt boundary. The **model segment** shows the EFFECTIVE model the server resolved THIS session to —
@@ -1494,7 +1499,7 @@ id" and stays in inspect.
 **`/session` (active session details).** This read-only overlay shows the current
 chat's safely quoted full opaque ID, title, lifecycle state, workspace, known creation
 and modification timestamps, provider, and model. The header intentionally shows only
-the compact digest. Press **`c`** to copy the exact full ID byte-for-byte; mecatui reports
+the compact short handle. Press **`c`** to copy the exact full ID byte-for-byte; mecatui reports
 clipboard failure or a session change instead of claiming a stale copy. `esc` closes it.
 
 **`/sessions` (session continuity).** The session inventory has four session tabs:
@@ -1532,7 +1537,7 @@ stay unresolved until the operator explicitly selects them—there is no server-
 fallback.
 `tab` switches tabs; the
 search box filters the current tab. Search matches the title, full session ID,
-its terminal-safe digest handle, model, workspace, and the available
+its terminal-safe short handle, model, workspace, and the available
 relationship metadata (parent/call, schedule/origin, team/member). This keeps
 scheduled fires and delegation children discoverable without making their IDs
 part of the UI contract.
@@ -1549,11 +1554,12 @@ the new first page arrives. Closing the panel or quitting the startup browser
 cancels the outstanding request and never creates or rebinds a session.
 
 Each row shows a state badge, relative modification time, turn count, title,
-digest handle, and model. The active chat is explicitly marked **`[current]`**;
-a team member row also identifies its member. The digest is a lowercase SHA-256
-prefix (`#…`): it starts at eight hex characters and expands only if another
-visible row collides, while the full opaque ID remains what the client sends
-back to the server.
+short handle, and model. The active chat is explicitly marked **`[current]`**;
+a team member row also identifies its member. The handle is the same fixed
+12-column escaped-prefix literal as the header (no `#`): safe `[A-Za-z0-9._-]`
+bytes are literal, other UTF-8 bytes are uppercase `%HH`, and only complete atoms
+that fit are retained. The full opaque ID remains what the client sends back to the
+server.
 
 Pressing `enter` follows server-authored capabilities. A public Chat is
 **Continue**: mecatui first loads the authoritative snapshot-derived
