@@ -2,7 +2,7 @@
 id: 21-partition-publication-isolation
 title: Quarantine uncertain learned-skill partitions by generation
 blocked_by: [20-replica-catalog-hydration]
-status: pending
+status: in-progress
 branch: ""
 worktree: ""
 issue: ""
