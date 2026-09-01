@@ -2,9 +2,9 @@
 id: 19-catalog-convergence-protocol
 title: Define durable learned-skill catalog generation convergence
 blocked_by: [18-downstream-claim-fencing]
-status: in-progress
-branch: ""
-worktree: ""
+status: done
+branch: "plan-cloud-native-learning/19-catalog-convergence-protocol"
+worktree: ".scratch/worktrees/19-catalog-convergence-protocol"
 issue: ""
 retries: 0
 last_error: ""
