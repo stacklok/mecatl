@@ -2,8 +2,8 @@
 id: 04-rotation-and-leakage
 title: Rotation-safe remint and credential-leak proofs
 blocked_by: [03-typed-verifier]
-status: in-progress
-branch: ""
+status: done
+branch: "plan-logical-agent-identity-projection/04-rotation-and-leakage"
 worktree: ""
 issue: "375"
 retries: 0
