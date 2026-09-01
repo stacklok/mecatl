@@ -22,6 +22,11 @@ func TestVersionInvocationIsExact(t *testing.T) {
 	if !buildinfo.IsVersion([]string{"mecatui", "--version"}) {
 		t.Fatal("exact --version was not recognized")
 	}
+	var buf bytes.Buffer
+	buildinfo.PrintVersion(&buf, "mecatui")
+	if got := buf.String(); got != "mecatui "+buildinfo.BuildID+"\n" {
+		t.Errorf("PrintVersion output = %q, want %q", got, "mecatui "+buildinfo.BuildID+"\n")
+	}
 	for _, args := range [][]string{{"--version", "--mock"}, {"-version"}} {
 		if _, _, err := parseTransportFlags(modeLocal, io.Discard, args); err == nil {
 			t.Errorf("parseTransportFlags(%v) accepted a non-exact version invocation", args)

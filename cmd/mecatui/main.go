@@ -61,6 +61,10 @@ func (e *usageErrorTrailer) Error() string { return e.err.Error() }
 func (e *usageErrorTrailer) Unwrap() error { return e.err }
 
 func main() {
+	if buildinfo.IsVersion(os.Args) {
+		buildinfo.PrintVersion(os.Stdout, "mecatui")
+		return
+	}
 	if err := run(os.Args); err != nil {
 		// --help / --help-all is a successful action: the Usage hook (or the
 		// --help-all renderer) already printed help; mirror mecated's
