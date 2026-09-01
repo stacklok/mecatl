@@ -7290,7 +7290,9 @@ engine-port or proto widening): `client.ReconnectLiveCmd`/`reconnectLiveLoop`
 in `cmd/mecatui/client/backoff.go`) that, per attempt, (a) drains the durable
 catch-up via the EXISTING `StreamSessionEvents` full replay (recovering any
 fire-result delivery note emitted during the gap — NO `from_seq`/`log_seq` cursor)
-and (b) re-opens `StreamSessionLive`. Exactly-once is a CLIENT-side FireID dedup,
+and (b) re-opens `StreamSessionLive` with a fresh, bounded 10-second context per
+attempt, so a wedged gRPC transport fails into the existing retry path rather than
+pinning the reconnect loop forever. Exactly-once is a CLIENT-side FireID dedup,
 not a server ordinal: the ui's `seenFireIDs` set (keyed on `DeliveryNoteMsg.FireID`,
 stable across replay + live) suppresses a note that arrives via BOTH the catch-up
 and the re-opened live feed — the single dedup site is `applyDeliveryNote`

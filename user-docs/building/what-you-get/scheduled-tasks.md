@@ -171,7 +171,9 @@ When a fire's result reports back into the conversation that created it, `mecatu
 receives it over a live session feed. If that feed drops (a server restart, a network
 blip, a proxy idle timeout), the TUI now **reconnects automatically** with bounded
 backoff and catches up on any delivery note emitted during the gap — rendering it
-exactly once — instead of silently going quiet (issue #387). A brief "live feed
+exactly once — instead of silently going quiet (issue #387). Each live-feed reopen
+attempt is bounded, so a wedged transport returns to the same retry path rather
+than leaving the reconnect loop stuck forever. A brief "live feed
 reconnecting…" cue shows in the footer while it recovers; no reload or re-prompt is
 needed.
 

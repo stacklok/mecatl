@@ -185,6 +185,11 @@ func (s *EventStream) bearerBackedStream() bool {
 
 func (c *Client) bearerBackedStream() bool { return c != nil && c.bearerBacked }
 
+// liveReconnectAttemptTimeout bounds one StreamSessionLive reopening attempt. It
+// prevents a wedged gRPC transport from holding the reconnect loop forever. Tests
+// temporarily shrink it to exercise the timeout path.
+var liveReconnectAttemptTimeout = 10 * time.Second
+
 // reconnectLiveLoop is the body of ReconnectLiveCmd: the bounded-backoff
 // reconnect+catch-up loop. It emits LiveReconnectingMsg at the top of each
 // attempt, drains the durable catch-up (forwarding its event msgs onto out), then
@@ -225,12 +230,12 @@ func reconnectLiveLoop(ctx context.Context, live LiveStreamer, replayer SessionR
 		if replayer != nil {
 			_ = catchUpReplay(ctx, replayer, id, out)
 		}
-		// (b) re-open the live feed (connectivity probe; the ui re-arms a fresh
-		// channel on LiveReconnectedMsg).
-		es, err := live.StreamSessionLive(ctx, id)
+		// (b) Re-open the live feed as a bounded connectivity probe. The stream is
+		// discarded because the UI re-arms a fresh live channel on success.
+		attemptCtx, cancel := context.WithTimeout(ctx, liveReconnectAttemptTimeout)
+		es, err := live.StreamSessionLive(attemptCtx, id)
+		cancel()
 		if err == nil {
-			// Success. The probe stream (bound to ctx) is cleaned up when the ui
-			// cancels this loop's ctx on LiveReconnectedMsg. Emit + return.
 			_ = es
 			emit(ctx, out, LiveReconnectedMsg{})
 			return

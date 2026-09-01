@@ -48,6 +48,33 @@ type fakeLiveStreamerReconnect struct {
 	succeed *FakeEventStream // stream handed back on a successful open (nil ⇒ empty)
 }
 
+type wedgedLiveStreamerReconnect struct {
+	mu       sync.Mutex
+	opens    int
+	firstErr error
+}
+
+func (f *wedgedLiveStreamerReconnect) StreamSessionLive(ctx context.Context, _ string) (*EventStream, error) {
+	f.mu.Lock()
+	f.opens++
+	first := f.opens == 1
+	f.mu.Unlock()
+	if first {
+		<-ctx.Done()
+		f.mu.Lock()
+		f.firstErr = ctx.Err()
+		f.mu.Unlock()
+		return nil, ctx.Err()
+	}
+	return NewEventStream(NewFakeEventStream()), nil
+}
+
+func (f *wedgedLiveStreamerReconnect) result() (int, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.opens, f.firstErr
+}
+
 func (f *fakeLiveStreamerReconnect) StreamSessionLive(_ context.Context, id string) (*EventStream, error) {
 	f.mu.Lock()
 	f.opens++
@@ -194,6 +221,45 @@ func TestReconnectLiveCmd_RetriesUntilSuccess(t *testing.T) {
 	}
 	if live.opens != 4 {
 		t.Errorf("live opens = %d, want 4", live.opens)
+	}
+}
+
+// TestReconnectLiveCmd_RetriesWedgedOpen verifies a StreamSessionLive call that
+// never reaches the transport is bounded by its attempt context, then retried.
+func TestReconnectLiveCmd_RetriesWedgedOpen(t *testing.T) {
+	defer restoreBackoff(t)()
+	previousTimeout := liveReconnectAttemptTimeout
+	liveReconnectAttemptTimeout = 10 * time.Millisecond
+	defer func() { liveReconnectAttemptTimeout = previousTimeout }()
+	liveReconnectBaseBackoff = time.Millisecond
+	liveReconnectJitterFrac = 0
+
+	live := &wedgedLiveStreamerReconnect{}
+	ch, stop := ReconnectLiveCmd(context.Background(), live, nil, "sess-wedged")
+	defer stop()
+	msgs := drainRecon(t, ch)
+
+	var reconnecting []LiveReconnectingMsg
+	var reconnected bool
+	for _, m := range msgs {
+		switch v := m.(type) {
+		case LiveReconnectingMsg:
+			reconnecting = append(reconnecting, v)
+		case LiveReconnectedMsg:
+			reconnected = true
+		}
+	}
+	if !reconnected {
+		t.Fatalf("expected LiveReconnectedMsg, got: %#v", msgs)
+	}
+	if len(reconnecting) != 2 || reconnecting[0].Attempt != 1 || reconnecting[1].Attempt != 2 {
+		t.Fatalf("reconnecting attempts = %+v, want attempts 1 and 2", reconnecting)
+	}
+	if !errors.Is(reconnecting[1].Err, context.DeadlineExceeded) {
+		t.Errorf("second attempt error = %v, want context deadline exceeded", reconnecting[1].Err)
+	}
+	if opens, firstErr := live.result(); opens != 2 || !errors.Is(firstErr, context.DeadlineExceeded) {
+		t.Errorf("live opens/first error = %d/%v, want 2/context deadline exceeded", opens, firstErr)
 	}
 }
 
