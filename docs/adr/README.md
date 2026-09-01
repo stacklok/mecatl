@@ -30,6 +30,7 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0027 — Cloud-native arc](./0027-cloud-native.md)
 - [0104 — Session families get a bounded, injective, non-reversible physical name](./0104-session-family-physical-naming.md)
 - [0217 — Session discovery uses durable kind metadata and an authoritative transcript](./0217-session-discovery-continuation.md)
+- [0278 — Predictable actionable mecatui session handles](./0278-predictable-mecatui-session-handles.md) *(ordinary fixed escaped raw-ID-prefix handles; supersedes ADR 0217's display-only digest-handle decision without changing debugger evidence/incarnation handles or their digests)*
 - [0226 — Session storage separates current state, indexed metadata, and maintenance](./0226-session-storage-maintenance.md)
 - [0239 — Semantic stream retry and failed-step retry transport](./0239-semantic-stream-retry.md)
 - [0243 — Local JSONL durability boundaries](./0243-jsonl-durability.md)
