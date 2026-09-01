@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"crypto/sha256"
 	"strings"
 	"testing"
 
@@ -16,6 +17,59 @@ import (
 	"github.com/stacklok/mecatl/engine/learning"
 	"github.com/stacklok/mecatl/internal/adapter/grpcdriver"
 )
+
+func TestADR_0254_LearningDriversEnforceOwnershipOrFailClosed(t *testing.T) {
+	rejected := []grpcdriver.LearningRepositoryCapabilities{
+		{
+			AttemptRepository: true, ProposalRepository: true, SkillRepository: true,
+			OwnershipMode:                     grpcdriver.LearningRepositoryOwnershipTrusted,
+			CallerInfrastructureRPCsSeparated: true,
+		},
+		{
+			AttemptRepository: true, ProposalRepository: true, SkillRepository: true,
+			OwnershipMode: grpcdriver.LearningRepositoryOwnershipEnforced,
+		},
+	}
+	for i, capabilities := range rejected {
+		addr := startSourceDriver(t, func(server *grpc.Server) {
+			driverv1.RegisterLearningRepositoryCapabilitiesServiceServer(server, grpcdriver.NewLearningRepositoryCapabilitiesServer(capabilities))
+		})
+		_, _, _, closeDriver, err := resolveLearningRepositories(context.Background(), Config{
+			LearningStoreURL: addr,
+			driverConns:      driverConnsForTest(t),
+		})
+		if closeDriver != nil {
+			closeDriver()
+		}
+		if err == nil || !strings.Contains(err.Error(), "enforced ownership") {
+			t.Fatalf("rejected posture %d error = %v, want fail-closed enforced-ownership error", i, err)
+		}
+	}
+
+	enforcedAddr := startSourceDriver(t, func(server *grpc.Server) {
+		driverv1.RegisterLearningRepositoryCapabilitiesServiceServer(server, grpcdriver.NewLearningRepositoryCapabilitiesServer(grpcdriver.LearningRepositoryCapabilities{
+			AttemptRepository: true, ProposalRepository: true, SkillRepository: true,
+			OwnershipMode:                     grpcdriver.LearningRepositoryOwnershipEnforced,
+			CallerInfrastructureRPCsSeparated: true,
+		}))
+	})
+	_, _, _, closeEnforced, err := resolveLearningRepositories(context.Background(), Config{
+		LearningStoreURL: enforcedAddr,
+		driverConns:      driverConnsForTest(t),
+	})
+	if closeEnforced != nil {
+		closeEnforced()
+	}
+	if err != nil {
+		t.Fatalf("enforced driver negotiation: %v", err)
+	}
+
+	rawPath := "/srv/workspaces/private-project"
+	digest := opaqueLearningPartition(rawPath)
+	if digest == rawPath || len(digest) != sha256.Size*2 {
+		t.Fatalf("project namespace = %q, want opaque SHA-256 digest", digest)
+	}
+}
 
 func TestLearningDriverCompositionRequiresExplicitCapabilities(t *testing.T) {
 	addr := startSourceDriver(t, func(server *grpc.Server) {
@@ -63,6 +117,7 @@ func TestLearningDriverCompositionSmoke(t *testing.T) {
 	addr := startSourceDriver(t, func(server *grpc.Server) {
 		driverv1.RegisterLearningRepositoryCapabilitiesServiceServer(server, grpcdriver.NewLearningRepositoryCapabilitiesServer(grpcdriver.LearningRepositoryCapabilities{
 			AttemptRepository: true, ProposalRepository: true, SkillRepository: true, ValidatedSkillActivation: true,
+			OwnershipMode: grpcdriver.LearningRepositoryOwnershipEnforced, CallerInfrastructureRPCsSeparated: true,
 		}))
 		driverv1.RegisterAttemptRepositoryServiceServer(server, grpcdriver.NewAttemptRepositoryServer(attempts))
 		driverv1.RegisterProposalRepositoryServiceServer(server, grpcdriver.NewProposalRepositoryServer(proposals))

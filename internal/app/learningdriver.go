@@ -27,6 +27,10 @@ func resolveLearningRepositories(ctx context.Context, cfg Config) (learning.Atte
 		closeConn()
 		return nil, nil, nil, nil, fmt.Errorf("learning-store driver %q does not advertise the complete attempt/proposal/skill repository set", cfg.LearningStoreURL)
 	}
+	if caps.OwnershipMode != grpcdriver.LearningRepositoryOwnershipEnforced || !caps.CallerInfrastructureRPCsSeparated {
+		closeConn()
+		return nil, nil, nil, nil, fmt.Errorf("learning-store driver %q does not advertise enforced ownership with separated caller and infrastructure RPCs", cfg.LearningStoreURL)
+	}
 
 	attempts := grpcdriver.NewAttemptRepository(conn)
 	proposals := &opaqueProposalRepository{inner: grpcdriver.NewProposalRepository(conn)}

@@ -4245,8 +4245,12 @@ repository set. Missing or partial capability is fatal; no member falls back to 
 All three clients borrow the existing Build-scoped `driverConns` entry and once-guarded close.
 Composition hashes both components of Proposal/Skill partitions before transport and restores only
 the in-process view, so raw workspace paths and identity strings never cross these repository RPCs.
-Validated skill activation is exposed only when separately advertised. This is transport
-minimization; enforced workload ownership remains outside this slice.
+Validated skill activation is exposed only when separately advertised. The capability probe also
+requires the explicit ADR-0213 `enforced` ownership mode and separated caller/infrastructure RPC
+surfaces. Unspecified or trusted mode, or a mixed RPC surface, is fatal before any repository is
+composed. In enforced mode the driver contract accepts caller claims only from an authenticated
+mecatl workload peer and stores immutable owner bindings in a private durable registry; request
+partitions are opaque routing values, never client-asserted identity authority.
 
 The observer performs the structural signal gate before the process-wide legacy interval admission, so
 trivial completions spend no provider call and do not consume the debounce cadence. Standard composition

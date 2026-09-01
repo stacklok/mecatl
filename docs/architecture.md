@@ -1231,11 +1231,14 @@ idempotent. Budgets are process-local, so multiple replicas multiply aggregate c
 A configured `--learning-store-url` selects one explicitly negotiated distributed backend for
 all three learning repositories. The driver must advertise Attempt, Proposal, and Skill repository
 support together through `LearningRepositoryCapabilitiesService`; missing negotiation or any false
-member is a startup error, never a local fallback. The clients share the Build-owned driver
+member is a startup error, never a local fallback. The same probe must explicitly advertise
+ADR-0213 `enforced` ownership and separated caller versus infrastructure RPC surfaces; trusted,
+unspecified, or mixed-surface drivers fail startup. In enforced mode the driver accepts its caller
+claim only from its authenticated mecatl workload peer and binds records through its private durable
+owner registry; caller payload fields are never identity authority. The clients share the Build-owned driver
 connection cache and its once-guarded close. Composition hashes principal and project partition
 components before Proposal/Skill RPCs and restores only the caller's in-process partition view, so
-raw workspace paths and identity strings do not cross this repository transport. This is transport
-minimization, not workload-authenticated ownership enforcement.
+raw workspace paths and identity strings do not cross this repository transport.
 
 Review and auto share admission; only downstream staging/promotion differs. Auto promotes operator
 facts only from explicit principal-authored current-prompt evidence and project facts only at the

@@ -21,4 +21,23 @@ message LearningRepositoryCapabilitiesResponse {
   bool proposal_repository = 2;
   bool skill_repository = 3;
   bool validated_skill_activation = 4;
+
+  // Ownership mode is explicit: metadata presence never upgrades a trusted
+  // infrastructure-only driver to caller-enforcing mode.
+  LearningRepositoryOwnershipMode ownership_mode = 5;
+  // True only when caller-owned operations and worker/retention operations are
+  // exposed on separately authenticated RPC surfaces.
+  bool caller_infrastructure_rpcs_separated = 6;
+}
+
+enum LearningRepositoryOwnershipMode {
+  LEARNING_REPOSITORY_OWNERSHIP_MODE_UNSPECIFIED = 0;
+  LEARNING_REPOSITORY_OWNERSHIP_MODE_TRUSTED = 1;
+  // ENFORCED certifies ADR-0213: caller claims are accepted only from an
+  // authenticated mecatl workload peer, caller-owned and infrastructure RPCs
+  // use separate authenticated surfaces, immutable owner bindings are kept in
+  // a private durable registry, and project namespaces are opaque SHA-256
+  // digests rather than paths. Request partition fields are never identity
+  // authority. A driver must not advertise this value for trusted-only mode.
+  LEARNING_REPOSITORY_OWNERSHIP_MODE_ENFORCED = 2;
 }
