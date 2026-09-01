@@ -2,9 +2,9 @@
 id: 34-authoritative-ledger-policy-time
 title: Make automatic ledger policy and time backend-authoritative
 blocked_by: [31-documentation-generated-integration]
-status: in-progress
-branch: ""
-worktree: ""
+status: done
+branch: "plan-cloud-native-learning/34-authoritative-ledger-policy-time"
+worktree: ".scratch/worktrees/34-authoritative-ledger-policy-time"
 issue: ""
 retries: 0
 last_error: ""
