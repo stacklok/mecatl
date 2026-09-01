@@ -7,14 +7,16 @@ import (
 
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/learning"
-	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 )
 
-type gapMarkedLearningEventLog struct{ port.EventLog }
+type countingCanonicalEvidenceReflector struct {
+	calls int
+}
 
-func (gapMarkedLearningEventLog) LearningEvidenceGap(context.Context, session.SessionID, learning.DurableRunID) (bool, error) {
-	return true, nil
+func (r *countingCanonicalEvidenceReflector) ReflectProjection(context.Context, learning.Projection) (learning.Outcome, error) {
+	r.calls++
+	return learning.Outcome{Kind: learning.OutcomeProposed}, nil
 }
 
 func TestADR_0254_WorkerSourceAuthorityFailsClosedWithoutIdentityOracle(t *testing.T) {
@@ -56,6 +58,15 @@ func TestADR_0254_WorkerSourceAuthorityFailsClosedWithoutIdentityOracle(t *testi
 	}
 
 	events := memstore.NewEventLog()
+	// CursorEventLog positions are session-global while Event.Seq restarts for each
+	// run. A gap before the target's complete seq=1 start belongs outside the
+	// target evidence and must not poison it.
+	if err := events.Append(ctx, source.ID, session.Event{Type: session.EvResult, Seq: 1, RunID: "run_prior", Result: &session.ResultPayload{Stop: session.StopEndTurn}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := events.AppendGap(ctx, source.ID, "prior run append failed"); err != nil {
+		t.Fatal(err)
+	}
 	for _, event := range []session.Event{
 		{Type: session.EvUserPrompt, Seq: 1, RunID: runID, UserPrompt: &session.UserPromptPayload{Text: "Create a skill from this workflow"}},
 		{Type: session.EvTurnStart, Seq: 2, RunID: runID},
@@ -115,6 +126,11 @@ func TestADR_0254_WorkerSourceAuthorityFailsClosedWithoutIdentityOracle(t *testi
 			if len(got.Messages) != 0 || len(got.Events) != 0 {
 				t.Fatalf("unavailable source returned evidence: %+v", got)
 			}
+			reflector := &countingCanonicalEvidenceReflector{}
+			outcome, reflectedFailure, err := reflectAttemptEvidence(ctx, loader, reflector, p, attempt)
+			if err != nil || reflectedFailure != learning.FailureEvidenceUnavailable || outcome.Kind != "" || reflector.calls != 0 {
+				t.Fatalf("failed evidence reached downstream reflection: outcome=%+v failure=%q calls=%d err=%v", outcome, reflectedFailure, reflector.calls, err)
+			}
 		})
 	}
 
@@ -134,7 +150,40 @@ func TestADR_0254_WorkerSourceAuthorityFailsClosedWithoutIdentityOracle(t *testi
 	digestMismatch.Provenance.Source.CanonicalDigest = learning.CanonicalDigest("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
 	assertUnavailable("digest mismatch", newLearningEvidenceLoader(store, events), partition, digestMismatch)
 
-	assertUnavailable("gap marked", newLearningEvidenceLoader(store, gapMarkedLearningEventLog{EventLog: events}), partition, record)
+	gapMarked := memstore.NewEventLog()
+	for _, event := range []session.Event{
+		{Type: session.EvUserPrompt, Seq: 1, RunID: runID, UserPrompt: &session.UserPromptPayload{Text: "Create a skill from this workflow"}},
+		{Type: session.EvTurnStart, Seq: 2, RunID: runID},
+	} {
+		if err := gapMarked.Append(ctx, source.ID, event); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := gapMarked.AppendGap(ctx, source.ID, "missing durable event"); err != nil {
+		t.Fatal(err)
+	}
+	for _, event := range []session.Event{
+		{Type: session.EvMessageDelta, Seq: 3, RunID: runID, Text: "done"},
+		{Type: session.EvResult, Seq: 4, RunID: runID, Result: &session.ResultPayload{Stop: session.StopEndTurn, Usage: usage}},
+	} {
+		if err := gapMarked.Append(ctx, source.ID, event); err != nil {
+			t.Fatal(err)
+		}
+	}
+	assertUnavailable("durable gap record", newLearningEvidenceLoader(store, gapMarked), partition, record)
+
+	missingSequence := memstore.NewEventLog()
+	for _, event := range []session.Event{
+		{Type: session.EvUserPrompt, Seq: 1, RunID: runID, UserPrompt: &session.UserPromptPayload{Text: "Create a skill from this workflow"}},
+		{Type: session.EvTurnStart, Seq: 2, RunID: runID},
+		{Type: session.EvMessageDelta, Seq: 4, RunID: runID, Text: "done"},
+		{Type: session.EvResult, Seq: 5, RunID: runID, Result: &session.ResultPayload{Stop: session.StopEndTurn, Usage: usage}},
+	} {
+		if err := missingSequence.Append(ctx, source.ID, event); err != nil {
+			t.Fatal(err)
+		}
+	}
+	assertUnavailable("missing sequence record 1,2,4", newLearningEvidenceLoader(store, missingSequence), partition, record)
 
 	outOfOrder := memstore.NewEventLog()
 	for _, event := range []session.Event{

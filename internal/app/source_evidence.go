@@ -15,11 +15,6 @@ import (
 type learningEvidenceLoader struct {
 	sessions port.SessionStore
 	events   port.EventLog
-	gaps     learningEvidenceGapOracle
-}
-
-type learningEvidenceGapOracle interface {
-	LearningEvidenceGap(context.Context, session.SessionID, learning.DurableRunID) (bool, error)
 }
 
 type canonicalEvidenceReflector interface {
@@ -39,9 +34,7 @@ func reflectAttemptEvidence(ctx context.Context, loader *learningEvidenceLoader,
 }
 
 func newLearningEvidenceLoader(sessions port.SessionStore, events port.EventLog) *learningEvidenceLoader {
-	loader := &learningEvidenceLoader{sessions: sessions, events: events}
-	loader.gaps, _ = events.(learningEvidenceGapOracle)
-	return loader
+	return &learningEvidenceLoader{sessions: sessions, events: events}
 }
 
 // Load reconstructs evidence using the attempt's repository partition as the
@@ -69,12 +62,6 @@ func (l *learningEvidenceLoader) loadInput(ctx context.Context, partition learni
 	if err != nil || sess == nil || sess.ID != provenance.Source.SessionID || sess.Owner == nil ||
 		!sess.Owner.IdentityWellFramed() {
 		return unavailable()
-	}
-	if l.gaps != nil {
-		gapped, gapErr := l.gaps.LearningEvidenceGap(ctx, provenance.Source.SessionID, provenance.Source.RunID)
-		if gapErr != nil || gapped {
-			return unavailable()
-		}
 	}
 	ownerPartition, err := learning.DeriveAttemptPartition(reflectionPrincipal(sess.Owner))
 	if err != nil || ownerPartition != partition {
@@ -161,47 +148,82 @@ func (l *learningEvidenceLoader) readExactRun(ctx context.Context, source learni
 	seenRun, leftRun, seenTerminal := false, false, false
 	compactionPending, archiveOK := false, false
 	read := 0
-	for event, err := range l.events.Read(ctx, source.SessionID) {
-		if err != nil {
-			return nil, session.ResultPayload{}, false, false
-		}
+
+	consume := func(event session.Event) (done, valid bool) {
 		if event.RunID != string(source.RunID) {
 			if seenRun && event.RunID != "" {
 				leftRun = true
 			}
-			continue
+			return false, true
 		}
 		read++
 		if read > learning.MaxInputEvents {
-			return nil, session.ResultPayload{}, false, false
+			return false, false
 		}
-		if leftRun || event.Seq <= 0 || seenRun && event.Seq <= previous || seenTerminal {
-			return nil, session.ResultPayload{}, false, false
+		if leftRun || event.Seq <= 0 || !seenRun && event.Seq != 1 || seenRun && event.Seq != previous+1 || seenTerminal {
+			return false, false
 		}
 		seenRun = true
 		previous = event.Seq
 		switch event.Type {
 		case session.EvCompaction:
 			if compactionPending {
-				return nil, session.ResultPayload{}, false, false
+				return false, false
 			}
 			compactionPending = true
 		case session.EvCompactionArchive:
 			if !compactionPending || event.CompactionArchive == nil || len(event.CompactionArchive.Replaced) == 0 ||
 				len(event.CompactionArchive.Replaced) > learning.MaxInputMessages || session.ValidateToolPairing(event.CompactionArchive.Replaced) != nil {
-				return nil, session.ResultPayload{}, false, false
+				return false, false
 			}
 			compactionPending = false
 			archiveOK = true
 		case session.EvResult:
 			if compactionPending || event.Result == nil || event.Result.Stop == session.StopNone {
-				return nil, session.ResultPayload{}, false, false
+				return false, false
 			}
 			terminal = *event.Result
 			seenTerminal = true
 		}
 		events = append(events, event)
-		if seenTerminal {
+		return seenTerminal, true
+	}
+
+	if cursorLog, ok := l.events.(port.CursorEventLog); ok {
+		for record, err := range cursorLog.ReadAfter(ctx, source.SessionID, "", port.ReadOptions{}) {
+			if err != nil {
+				return nil, session.ResultPayload{}, false, false
+			}
+			switch record.Kind {
+			case port.LogRecordGap:
+				if seenRun {
+					return nil, session.ResultPayload{}, false, false
+				}
+				continue
+			case port.LogRecordEvent:
+			default:
+				return nil, session.ResultPayload{}, false, false
+			}
+			done, valid := consume(record.Event)
+			if !valid {
+				return nil, session.ResultPayload{}, false, false
+			}
+			if done {
+				return events, terminal, archiveOK, true
+			}
+		}
+		return nil, session.ResultPayload{}, false, false
+	}
+
+	for event, err := range l.events.Read(ctx, source.SessionID) {
+		if err != nil {
+			return nil, session.ResultPayload{}, false, false
+		}
+		done, valid := consume(event)
+		if !valid {
+			return nil, session.ResultPayload{}, false, false
+		}
+		if done {
 			return events, terminal, archiveOK, true
 		}
 	}
