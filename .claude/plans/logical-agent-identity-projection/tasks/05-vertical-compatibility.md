@@ -2,8 +2,8 @@
 id: 05-vertical-compatibility
 title: Verified-tool vertical proof and no-lifecycle compatibility
 blocked_by: [03-typed-verifier]
-status: in-progress
-branch: ""
+status: done
+branch: "plan-logical-agent-identity-projection/05-vertical-compatibility"
 worktree: ""
 issue: "367"
 retries: 0
