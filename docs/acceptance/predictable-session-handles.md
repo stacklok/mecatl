@@ -1,7 +1,7 @@
 # Predictable mecatui session handles — acceptance plan
 
 **Phase:** capability — mecatui session discovery and debugger UX
-**Status:** in-progress. Final panel repair wave 2026-09-01.
+**Status:** landed, 2026-09-01.
 **Issue:** [stacklok/mecatl#922](https://github.com/stacklok/mecatl/issues/922).
 **ADR:** [ADR-0280](../adr/0280-predictable-mecatui-session-handles.md) — one fixed client-side actionable short-handle contract, superseding ADR-0217's display-only digest decision.
 **Related debugger boundaries:** [ADR-0254](../adr/0254-session-debugger-admin-transport.md), [ADR-0256](../adr/0256-session-debugger-evidence-and-reporting.md), and [ADR-0258](../adr/0258-cryptographic-session-incarnations.md).

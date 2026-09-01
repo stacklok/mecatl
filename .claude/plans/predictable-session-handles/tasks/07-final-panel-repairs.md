@@ -2,8 +2,8 @@
 id: 07-final-panel-repairs
 title: Final debugger grammar and ADR supersession repairs
 blocked_by: [05-resolver-exact-semantics-api-cleanup, 06-standards-docs-integration-relocation]
-status: in-progress
-branch: ""
+status: done
+branch: "plan-predictable-session-handles/07-final-panel-repairs"
 worktree: ".scratch/worktrees/issue-922-task07"
 issue: "922"
 retries: 0
