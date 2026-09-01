@@ -14,6 +14,7 @@ import (
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/prompt"
 	"github.com/stacklok/mecatl/engine/session"
+	"github.com/stacklok/mecatl/internal/adapter/agents"
 	"github.com/stacklok/mecatl/internal/adapter/hookexec"
 	"github.com/stacklok/mecatl/internal/adapter/mcp"
 	"github.com/stacklok/mecatl/internal/adapter/server"
@@ -150,4 +151,70 @@ func TestClientMCPUnreachableWARNRedactsQueryCredentials(t *testing.T) {
 			t.Fatalf("a query-string credential reached the operator diagnostics on the partial path:\n%s", got)
 		}
 	})
+}
+
+// TestInlineAgentMCPUnreachableWARNRedactsCredentials is the third leak site from
+// the review, reproduced the way the reviewer reproduced it: the REAL manager and a
+// closed listener.
+//
+// The inline agent-MCP callback logged `sc.URL` and `err` raw, so an unreachable
+// inline server at ...?access_token=... leaked through BOTH the per-server WARN and
+// the all-failed WARN. It was missed by the audit that fixed the client-MCP path
+// because that audit was a grep — and the grep keyed on lines containing "mcp",
+// which this call site's `err` line does not.
+//
+// The fix is structural rather than another call-site patch: Connect redacts at the
+// source and NewManager hands the callback a safe config view, so all three
+// in-tree callbacks — and any future one — are safe without remembering. This test
+// pins the reported site end to end regardless of which layer does the work.
+func TestInlineAgentMCPUnreachableWARNRedactsCredentials(t *testing.T) {
+	const secret = "review-query-secret"
+	const headerSecret = "Bearer zzz-inline-header-secret"
+
+	srv := httptest.NewServer(nil)
+	dead := srv.URL
+	srv.Close()
+
+	diag := &attrCapturingDiag{}
+	def := agents.AgentDef{
+		Name:        "inline-agent",
+		Description: "uses an unreachable inline server",
+		MCPServers: []agents.AgentMCPServer{{
+			Name:    "inline",
+			URL:     dead + "/mcp?access_token=" + secret,
+			Headers: map[string]string{"Authorization": headerSecret},
+		}},
+	}
+
+	_, _, _, closeFn := defMCPTools(context.Background(), diag, def, nil)
+	if closeFn != nil {
+		defer func() { _ = closeFn() }()
+	}
+
+	got := diag.dump()
+
+	// Positive control: the WARN must actually have fired, or the leak assertions
+	// below pass vacuously.
+	if !strings.Contains(got, "inline MCP server unreachable") {
+		t.Fatalf("the per-server WARN never fired, so this test proves nothing:\n%s", got)
+	}
+
+	if strings.Contains(got, secret) {
+		t.Fatalf("the inline agent MCP WARN leaked a query credential:\n%s", got)
+	}
+	if strings.Contains(got, headerSecret) {
+		t.Fatalf("the inline agent MCP WARN leaked a header credential:\n%s", got)
+	}
+	// No usable prefix either.
+	for n := 6; n < len(secret); n++ {
+		if strings.Contains(got, secret[:n]) {
+			t.Fatalf("a %d-character prefix of the credential survived:\n%s", n, got)
+		}
+	}
+	// Still diagnostic: the agent, the server name, and the host survive.
+	for _, want := range []string{"inline-agent", "inline", "127.0.0.1"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("diagnostics lost %q, leaving less to debug with:\n%s", want, got)
+		}
+	}
 }

@@ -232,6 +232,38 @@ func RedactError(err error) string {
 	return RedactText(err.Error())
 }
 
+// redactedError renders a redacted message while preserving the ORIGINAL error
+// chain, so errors.Is / errors.As still see through it. That combination is the
+// point: callers legitimately branch on sentinels (ErrOAuthLoginRequired,
+// ErrOAuthUnavailable) and must keep doing so, while anything that PRINTS the
+// error gets the scrubbed text.
+//
+// Unwrap does expose the unredacted original, so a caller can still leak by
+// unwrapping and printing deliberately. That is an explicit act rather than the
+// default, which is the distinction this type exists to create.
+type redactedError struct {
+	inner error
+	msg   string
+}
+
+func (e *redactedError) Error() string { return e.msg }
+func (e *redactedError) Unwrap() error { return e.inner }
+
+// RedactErrorValue wraps err so that printing it cannot leak an embedded URL.
+// An error with nothing to redact is returned AS-IS, so the common case adds no
+// wrapper and no allocation.
+func RedactErrorValue(err error) error {
+	if err == nil {
+		return nil
+	}
+	raw := err.Error()
+	msg := RedactText(raw)
+	if msg == raw {
+		return err
+	}
+	return &redactedError{inner: err, msg: msg}
+}
+
 // redactingDiagnostics wraps a port.Diagnostics so every message and every
 // string/error attribute logged THROUGH IT has its embedded URLs scrubbed.
 //
@@ -510,6 +542,22 @@ func newMCPHTTPClient(cfg ServerConfig, oauth *OAuthController) *http.Client {
 // unavailable; callers (the composition root) are expected to log-and-skip such
 // a server rather than aborting the whole harness.
 func Connect(ctx context.Context, cfg ServerConfig, diag port.Diagnostics) (*Server, error) {
+	// REDACT AT THE SOURCE. Every error this package hands out is produced here or
+	// below, and net/http embeds the full request URL — query string included — in
+	// any connection error. Redacting at the one exit rather than at each consumer
+	// is what makes every downstream safe by default: NewManager's onError
+	// callback, NewManager's returned error, and the direct callers that return
+	// this error onward (internal/app's MCP login flow) all inherit it without
+	// needing to remember.
+	//
+	// The alternative — asking each consumer to call RedactError — was tried and
+	// demonstrably does not hold: of three NewManager callers, one logged the raw
+	// error and the raw URL, and the audit that was supposed to find it missed it.
+	srv, err := connect(ctx, cfg, diag)
+	return srv, RedactErrorValue(err)
+}
+
+func connect(ctx context.Context, cfg ServerConfig, diag port.Diagnostics) (*Server, error) {
 	// Wrap the sink so no log line from this package — nor from the *Server it
 	// builds, which inherits this diag — can carry a credential-bearing URL. See
 	// redactingDiagnostics for why this is a sink decoration rather than a fix at
@@ -979,11 +1027,15 @@ type Manager struct {
 // least one was configured, so the caller can distinguish "nothing usable" from
 // "all good".
 func NewManager(ctx context.Context, configs []ServerConfig, onError func(cfg ServerConfig, err error), diag port.Diagnostics) (*Manager, error) {
-	// Same sink decoration as Connect. NOTE this does NOT sanitize what onError
-	// does with the error it is handed, nor the error this function RETURNS: both
-	// cross out of this package as values, and their consumer owns its own log
-	// site. Callers must use RedactError there — see internal/app's client-MCP
-	// factory, which is the consumer that leaked.
+	// Same sink decoration as Connect.
+	//
+	// Unlike an earlier version of this comment, callers do NOT have to redact what
+	// they are handed: the error reaches onError already redacted (Connect redacts
+	// at the source) and the ServerConfig is replaced with a safe view
+	// (safeCallbackConfig). The returned error is redacted too. That inversion is
+	// deliberate — "the consumer owns its own log site" was the documented contract,
+	// and one of three consumers still leaked, which is evidence the contract was
+	// the wrong shape rather than that the consumer was careless.
 	diag = redactDiagnostics(diag)
 	m := &Manager{}
 	if len(configs) == 0 {
@@ -1022,16 +1074,40 @@ func NewManager(ctx context.Context, configs []ServerConfig, onError func(cfg Se
 		if r.err != nil {
 			lastErr = r.err
 			if onError != nil {
-				onError(r.cfg, r.err)
+				// The CONFIG is a second credential channel, independent of the error:
+				// a callback that logs sc.URL leaks a query token even when the error
+				// beside it is clean, and one that logs sc.Headers leaks a bearer
+				// outright. Connect's redaction cannot reach either, because the config
+				// is the caller's own value travelling back to it. So the callback gets
+				// a SAFE VIEW: URL redacted to scheme://host/path, Headers dropped.
+				//
+				// Names and everything else are preserved, which is what a callback
+				// actually needs — the three in-tree callbacks log Name, and one logs
+				// the URL for context. A future callback that genuinely needs the raw
+				// URL or the headers has to reach for the original config it passed in,
+				// which makes that a visible decision instead of an accident.
+				onError(safeCallbackConfig(r.cfg), r.err)
 			}
 			continue
 		}
 		m.servers = append(m.servers, r.srv)
 	}
 	if len(results) > 0 && len(m.servers) == 0 {
-		return m, fmt.Errorf("mcp: no servers could be connected: %w", lastErr)
+		// lastErr already arrives redacted from Connect; RedactErrorValue here is the
+		// belt on the braces, so a future change to this message cannot reintroduce a
+		// URL without the wrapper catching it.
+		return m, RedactErrorValue(fmt.Errorf("mcp: no servers could be connected: %w", lastErr))
 	}
 	return m, nil
+}
+
+// safeCallbackConfig returns cfg with its two credential-bearing fields made safe
+// for an error callback to log: the URL redacted, the headers dropped. Every other
+// field is preserved verbatim.
+func safeCallbackConfig(cfg ServerConfig) ServerConfig {
+	cfg.URL = RedactURL(cfg.URL)
+	cfg.Headers = nil
+	return cfg
 }
 
 // maxConnectConcurrency caps the number of MCP servers connecting in parallel.

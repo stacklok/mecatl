@@ -97,9 +97,13 @@ func TestRedactErrorStripsEmbeddedURLs(t *testing.T) {
 // loopback listener, so the dial is a real ECONNREFUSED and no external network is
 // touched).
 //
-// It asserts the two things that matter separately: the raw error DOES carry the
-// token (so the test is not vacuously passing against a shape that never leaked),
-// and RedactError removes it.
+// Connect redacts at the SOURCE, so the error it returns is already safe — which is
+// what makes every downstream consumer safe by default: NewManager's callback, its
+// returned error, and the direct callers that pass this error onward. The test
+// proves three things together, because the value of the wrapper is all three at
+// once: the returned error is clean, the ORIGINAL is still reachable through
+// Unwrap (so the leak shape genuinely existed and this is not a vacuous assertion),
+// and errors.Is still sees through the wrapper.
 func TestConnectErrorIsRedactedThroughTheRealClient(t *testing.T) {
 	srv := httptest.NewServer(nil)
 	base := srv.URL
@@ -115,13 +119,112 @@ func TestConnectErrorIsRedactedThroughTheRealClient(t *testing.T) {
 		t.Fatal("expected a connect failure against a closed listener")
 	}
 
-	// The positive control. If this stops holding, the leak shape changed and the
-	// assertion below has become vacuous.
-	if !strings.Contains(err.Error(), queryTokenSecret) {
-		t.Fatalf("the raw connect error no longer carries the query token, so this test proves nothing; error was:\n%v", err)
+	if strings.Contains(err.Error(), queryTokenSecret) {
+		t.Fatalf("Connect returned an error carrying the query token:\n%v", err)
 	}
-	if got := RedactError(err); strings.Contains(got, queryTokenSecret) {
-		t.Fatalf("RedactError left the token in a real connect error:\n%s", got)
+
+	// The positive control, one layer down: the wrapped original must still carry
+	// the token. If it does not, the transport stopped embedding the URL and the
+	// assertion above has become vacuous — a change worth knowing about.
+	inner := errors.Unwrap(err)
+	if inner == nil {
+		t.Fatalf("Connect's error has no wrapped original, so this test cannot tell redaction from a transport that never leaked:\n%v", err)
+	}
+	if !strings.Contains(inner.Error(), queryTokenSecret) {
+		t.Fatalf("the unwrapped original no longer carries the token; the leak shape changed and this test proves nothing:\n%v", inner)
+	}
+
+	// Still diagnostic.
+	if !strings.Contains(err.Error(), "127.0.0.1") {
+		t.Fatalf("the redacted error dropped the host, leaving nothing to debug:\n%v", err)
+	}
+}
+
+// TestRedactErrorValuePreservesSentinels pins the property that makes source-level
+// redaction safe to adopt: callers branch on sentinels, and wrapping must not break
+// that. internal/app's MCP login flow and the operator MCP callback both do
+// errors.Is against ErrOAuthLoginRequired / ErrOAuthUnavailable.
+func TestRedactErrorValuePreservesSentinels(t *testing.T) {
+	leaky := fmt.Errorf(`connect https://mcp.example/mcp?access_token=%s: %w`, queryTokenSecret, ErrOAuthLoginRequired)
+	wrapped := RedactErrorValue(leaky)
+
+	if strings.Contains(wrapped.Error(), queryTokenSecret) {
+		t.Fatalf("RedactErrorValue left the token in:\n%v", wrapped)
+	}
+	if !errors.Is(wrapped, ErrOAuthLoginRequired) {
+		t.Fatal("RedactErrorValue broke errors.Is: callers that branch on OAuth sentinels would silently take the wrong path")
+	}
+
+	// An error with nothing to redact is returned AS-IS, so the common path adds no
+	// wrapper at all.
+	plain := errors.New("mcp: server \"notes\" requires a URL")
+	if got := RedactErrorValue(plain); got != plain {
+		t.Fatalf("RedactErrorValue wrapped an error with no URL in it: %T", got)
+	}
+	if RedactErrorValue(nil) != nil {
+		t.Fatal("RedactErrorValue(nil) must be nil")
+	}
+}
+
+// TestNewManagerCallbackReceivesSafeValues pins the SECOND credential channel: the
+// ServerConfig handed back to onError.
+//
+// Connect's error redaction cannot reach it, because the config is the caller's own
+// value travelling back. A callback logging sc.URL leaks a query token even when
+// the error beside it is clean, and one logging sc.Headers leaks a bearer outright —
+// which is exactly what the inline agent-MCP callback did. So NewManager replaces it
+// with a safe view.
+func TestNewManagerCallbackReceivesSafeValues(t *testing.T) {
+	srv := httptest.NewServer(nil)
+	base := srv.URL
+	srv.Close()
+
+	const headerSecret = "Bearer zzz-callback-header-secret"
+	var gotCfg ServerConfig
+	var gotErr error
+	var called int
+
+	_, err := NewManager(context.Background(), []ServerConfig{{
+		Name:        "notes",
+		URL:         base + "/mcp?access_token=" + queryTokenSecret,
+		Headers:     map[string]string{"Authorization": headerSecret},
+		Timeout:     ClientConnectTimeout,
+		NoRedirects: true,
+	}}, func(cfg ServerConfig, cerr error) {
+		called++
+		gotCfg, gotErr = cfg, cerr
+	}, port.NopDiagnostics{})
+	if err == nil {
+		t.Fatal("expected NewManager to report that every server failed")
+	}
+	if called != 1 {
+		t.Fatalf("onError called %d times, want 1", called)
+	}
+
+	if strings.Contains(gotCfg.URL, queryTokenSecret) {
+		t.Fatalf("the callback config carries the query token: %q", gotCfg.URL)
+	}
+	if gotCfg.Headers != nil {
+		t.Fatalf("the callback config carries headers, which are secret-shaped: %v", gotCfg.Headers)
+	}
+	if gotErr != nil && strings.Contains(gotErr.Error(), queryTokenSecret) {
+		t.Fatalf("the callback error carries the query token:\n%v", gotErr)
+	}
+	// The name survives — it is what a callback actually needs.
+	if gotCfg.Name != "notes" {
+		t.Fatalf("callback config lost the server name: %+v", gotCfg)
+	}
+	// ...and so does enough of the URL to diagnose with.
+	if !strings.Contains(gotCfg.URL, "127.0.0.1") {
+		t.Fatalf("callback config dropped the host: %q", gotCfg.URL)
+	}
+
+	// The RETURNED error is clean too (that is the second reported log line).
+	if strings.Contains(err.Error(), queryTokenSecret) {
+		t.Fatalf("NewManager's returned error carries the query token:\n%v", err)
+	}
+	if strings.Contains(err.Error(), headerSecret) {
+		t.Fatalf("NewManager's returned error carries the header secret:\n%v", err)
 	}
 }
 

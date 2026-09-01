@@ -646,13 +646,19 @@ func defMCPTools(ctx context.Context, d port.Diagnostics, def agents.AgentDef, m
 
 	if len(inlineConfigs) > 0 {
 		onError := func(sc mcp.ServerConfig, err error) {
+			// Both values already arrive safe — NewManager hands the callback a
+			// redacted config view and Connect redacts the error at its source — so the
+			// explicit calls here are a deliberate SECOND layer, not the defence. Kept
+			// for the same reason AGENTS.md keeps both the semantic repair and the
+			// mechanical backstop on the UTF-8 path: a credential leak is worth two
+			// independent guards, and this site is the one that shipped the bug.
 			d.Log(ctx, port.LevelWarn, "agent def inline MCP server unreachable; skipping",
-				"agent", def.Name, "server", sc.Name, "url", sc.URL, "err", err)
+				"agent", def.Name, "server", sc.Name, "url", mcp.RedactURL(sc.URL), "err", mcp.RedactError(err))
 		}
 		mgr, err := mcp.NewManager(ctx, inlineConfigs, onError, d)
 		if err != nil {
 			d.Log(ctx, port.LevelWarn, "agent def inline MCP managers all failed; none scoped",
-				"agent", def.Name, "err", err)
+				"agent", def.Name, "err", mcp.RedactError(err))
 		}
 		if mgr != nil {
 			inlineTools := mgr.Tools()

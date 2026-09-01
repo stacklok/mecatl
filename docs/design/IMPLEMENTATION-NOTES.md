@@ -8239,7 +8239,33 @@ a wrapped message — `innerURLError` cannot reach it and no error-chain approac
 sensitive value can appear anywhere in a message composed by a layer we do not control, including a
 future SDK version that words it differently.
 
-The fix is applied THREE ways, because the two originally-reported log sites were not the only ones:
+**The redaction moved to the SOURCE after a second review pass, because per-caller redaction did not
+hold.** The first version of this fix asked each consumer to call `RedactError` and documented that
+contract on `NewManager` ("the consumer owns its own log site"). Of the three in-tree `NewManager`
+callers, one — the inline agent-MCP callback in `agentdefs.go` — logged the raw URL *and* the raw
+error, and the grep-based audit that was supposed to find it missed it (the grep keyed on lines
+containing "mcp", which that call site's `err` line does not). One of three consumers leaking is
+evidence the CONTRACT was the wrong shape, not that the consumer was careless. So:
+
+- `Connect` redacts at its single exit (`RedactErrorValue`), making every downstream safe by
+  default — `NewManager`'s callback, `NewManager`'s returned error, and the direct callers that pass
+  the error onward (`internal/app/mcplogin.go` returns it to the CLI).
+- `RedactErrorValue` renders redacted while PRESERVING the chain via `Unwrap`, because callers
+  legitimately branch on `ErrOAuthLoginRequired`/`ErrOAuthUnavailable` and must keep doing so. An
+  error with nothing to redact is returned as-is, so the common path adds no wrapper.
+- `NewManager` replaces the `ServerConfig` handed to `onError` with `safeCallbackConfig` — URL
+  redacted, Headers dropped. That is a SECOND credential channel `Connect`'s error redaction cannot
+  reach, because the config is the caller's own value travelling back to it; a callback logging
+  `sc.Headers` leaks a bearer outright. Names survive, which is what a callback actually needs.
+- The app-side log sites keep their explicit `RedactError`/`RedactURL` calls as a deliberate SECOND
+  layer, mirroring the "keep BOTH" discipline AGENTS.md records for the UTF-8 semantic repair plus
+  mechanical backstop. A credential leak is worth two independent guards.
+
+The layers are separately tested, so a mutation removing any ONE of them fails a test naming that
+layer rather than passing on the strength of another.
+
+The fix is ALSO applied three ways at the logging layer, because the two originally-reported log
+sites were not the only ones:
 
 - The two `internal/app` client-MCP WARN sites (`onError`, and the every-server-failed aggregate)
   call `mcp.RedactError(err)` explicitly. They log an error that crosses OUT of the mcp package as
