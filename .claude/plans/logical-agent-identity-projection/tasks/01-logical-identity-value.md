@@ -2,8 +2,8 @@
 id: 01-logical-identity-value
 title: Canonical logical-definition identity and closed claim value
 blocked_by: []
-status: in-progress
-branch: ""
+status: done
+branch: "plan-logical-agent-identity-projection/01-logical-identity-value"
 worktree: ""
 issue: "377"
 retries: 0
