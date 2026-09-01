@@ -20,7 +20,7 @@ func debugUIModel(target string, width int) Model {
 
 func TestDebugIdentityUsesNormalHeaderAcrossPhases(t *testing.T) {
 	m := debugUIModel("target\x1b[31m\nopaque", 80)
-	want := "DEBUG target #" + sessionDigest(m.deps.DebugTarget)[:8]
+	want := "DEBUG target " + client.SessionHandle(m.deps.DebugTarget)
 	for _, p := range []phase{phaseConnecting, phaseIdle, phaseRunning, phaseAwaitingApproval, phaseFatal} {
 		m.phase = p
 		rendered := m.renderHeader()
@@ -44,13 +44,13 @@ func TestDebugHeaderKeepsWholeIdentityAndShedsOptionalSegments(t *testing.T) {
 	m.activeMode = "accept-edits"
 	m.deps.Server = "remote-server"
 	plain := stripANSIstr(m.renderHeader())
-	want := "DEBUG target #" + sessionDigest("target-session")[:8]
+	want := "DEBUG target " + client.SessionHandle("target-session")
 	if !strings.Contains(plain, want) || strings.Contains(plain, "large-model") || strings.Contains(plain, "accept-edits") || strings.Contains(plain, "remote-server") {
 		t.Fatalf("narrow debug header did not preserve target before optional segments: %q", plain)
 	}
 	m.width = 7
 	plain = strings.Join(strings.Fields(stripANSIstr(m.renderHeader())), "")
-	if !strings.Contains(plain, "DEBUGtarget#"+sessionDigest("target-session")[:8]) || strings.Contains(plain, "…") {
+	if !strings.Contains(plain, "DEBUGtarget"+client.SessionHandle("target-session")) || strings.Contains(plain, "…") {
 		t.Fatalf("very narrow header clipped debug identity: %q", plain)
 	}
 }
@@ -104,9 +104,9 @@ func TestDebugSessionDetailsShowAndCopyExactTargetID(t *testing.T) {
 	}
 }
 
-func TestDebugWindowTitleStartsWithStableDigestAcrossPhases(t *testing.T) {
+func TestDebugWindowTitleStartsWithStableHandleAcrossPhases(t *testing.T) {
 	m := debugUIModel("target-session", 80)
-	prefix := "DEBUG " + sessionDigest("target-session")[:8]
+	prefix := "DEBUG " + client.SessionHandle("target-session")
 	for _, p := range []phase{phaseConnecting, phaseIdle, phaseRunning, phaseAwaitingApproval, phaseFatal} {
 		m.phase = p
 		if got := m.windowTitle(); !strings.HasPrefix(got, prefix) {

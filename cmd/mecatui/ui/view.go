@@ -128,7 +128,7 @@ func (m Model) renderHeader() string {
 	if sid == "" {
 		sid = "connecting…"
 	} else {
-		sid = "#" + sessionDigest(sid)[:8]
+		sid = client.SessionHandle(sid)
 	}
 	// next: badge — the pendingNext (apply-on-next-create) selection, shown ONLY when
 	// it is set AND differs from the effective model this session runs on (same model
@@ -186,11 +186,11 @@ func (m Model) renderHeader() string {
 }
 
 func (m Model) debugHeaderTarget() string {
-	return m.deps.Theme.Style("warning").Bold(true).Render("DEBUG target #" + sessionDigest(m.deps.DebugTarget)[:8])
+	return m.deps.Theme.Style("warning").Bold(true).Render("DEBUG target " + client.SessionHandle(m.deps.DebugTarget))
 }
 
 func (m Model) debugEssentialHeaderParts(sid string) []string {
-	return []string{"mecatui", m.debugHeaderTarget(), "session " + client.DisplaySessionID(sid)}
+	return []string{"mecatui", m.debugHeaderTarget(), "session " + sid}
 }
 
 // Operator-posture tier names (the m.caps.Posture vocabulary, server-wide). Named
@@ -302,13 +302,13 @@ const headerIdentityPad = 4
 // headerIdentityParts builds the header identity segments. withNext is the next:
 // badge ("" to omit it). Order: mecatui · [DEBUG target] · session · model ·
 // [next: …] · mode · ws: <worktree> · socket. The debug target is immutable,
-// always uses its complete digest, and precedes the debugger session identity.
+// always uses its complete fixed handle, and precedes the debugger session identity.
 func (m Model) headerIdentityParts(sid, withNext string) []string {
 	parts := []string{"mecatui"}
 	if m.deps.DebugTarget != "" {
 		parts = append(parts, m.debugHeaderTarget())
 	}
-	parts = append(parts, "session "+client.DisplaySessionID(sid))
+	parts = append(parts, "session "+sid)
 	// Model segment: the EFFECTIVE model the server resolved THIS session to (set once
 	// on SessionReadyMsg). The header only CHOOSES which known string to display; it
 	// never resolves a default itself. While connecting there is NO model segment.

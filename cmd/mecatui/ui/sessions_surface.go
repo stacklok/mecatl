@@ -3,7 +3,6 @@ package ui
 import (
 	"context"
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -1286,45 +1285,12 @@ func filterSessions(sessions []client.SessionListItem, handles map[string]string
 	return out
 }
 
-func sessionDigest(id string) string {
-	sum := sha256.Sum256([]byte(id))
-	return hex.EncodeToString(sum[:])
-}
-
-// sessionDisplayHandles derives terminal-safe lowercase-hex handles and expands
-// only colliding prefixes. The map is display-only; callers retain the full ID.
+// sessionDisplayHandles projects every row independently. Collisions deliberately
+// remain identical: inventory contents, ordering, and pagination never alter a handle.
 func sessionDisplayHandles(rows []client.SessionListItem) map[string]string {
-	const minimum = 8
-	digests := make(map[string]string, len(rows))
-	lengths := make(map[string]int, len(rows))
-	for _, row := range rows {
-		digests[row.ID] = sessionDigest(row.ID)
-		lengths[row.ID] = minimum
-	}
-	for {
-		groups := make(map[string][]string, len(rows))
-		for id, digest := range digests {
-			groups[digest[:lengths[id]]] = append(groups[digest[:lengths[id]]], id)
-		}
-		changed := false
-		for _, ids := range groups {
-			if len(ids) < 2 {
-				continue
-			}
-			for _, id := range ids {
-				if lengths[id] < len(digests[id]) {
-					lengths[id]++
-					changed = true
-				}
-			}
-		}
-		if !changed {
-			break
-		}
-	}
 	out := make(map[string]string, len(rows))
 	for _, row := range rows {
-		out[row.ID] = digests[row.ID][:lengths[row.ID]]
+		out[row.ID] = client.SessionHandle(row.ID)
 	}
 	return out
 }
@@ -1751,7 +1717,7 @@ func renderSessionRows(b *strings.Builder, th theme.Theme, st sessionsState, cur
 		}
 		line := marker + stateBadge(s.State) + " " + relativeTime(s.ModifiedAt) + " " + strconv.Itoa(int(s.Turns)) + "t " + sanitizeTerminal(label)
 		if handle := st.handles[s.ID]; handle != "" {
-			line += "  #" + handle
+			line += "  " + handle
 		}
 		if s.ModelID != "" {
 			line += "  (" + sanitizeTerminal(s.ModelID) + ")"

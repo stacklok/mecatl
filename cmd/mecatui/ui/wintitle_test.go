@@ -334,7 +334,7 @@ func TestWindowTitleHealRefetchRoundTrip(t *testing.T) {
 	if m.sessionTitle != "forked carryover task" {
 		t.Fatalf("after heal round-trip sessionTitle = %q, want the server's stored title", m.sessionTitle)
 	}
-	if got := m.windowTitle(); got != "forked carryover task — mecatui" {
+	if got := m.windowTitle(); got != "forked carryover task sess-fork-00 — mecatui" {
 		t.Errorf("windowTitle() = %q, want the healed title at idle", got)
 	}
 
@@ -372,18 +372,18 @@ func TestWindowTitleView(t *testing.T) {
 		tea.WindowSizeMsg{Width: 120, Height: 30},
 		client.SessionReadyMsg{SessionID: "sess-view-0001"},
 	)
-	// Before any prompt: bare app name.
-	if got := m.View().WindowTitle; got != "mecatui" {
-		t.Fatalf("View().WindowTitle = %q, want bare 'mecatui' with no title yet", got)
+	// Before any prompt: the fixed session handle identifies the tab.
+	if got := m.View().WindowTitle; got != "sess-view-00 — mecatui" {
+		t.Fatalf("View().WindowTitle = %q, want the fixed session handle", got)
 	}
 	// Submit a prompt: the phase flips to running and the title leads.
 	m = sendText(t, m, "investigate the flaky test")
-	if got, want := m.View().WindowTitle, "investigate the flaky test — Working mecatui"; got != want {
+	if got, want := m.View().WindowTitle, "investigate the flaky test sess-view-00 — Working mecatui"; got != want {
 		t.Errorf("View().WindowTitle = %q, want %q after first prompt (running)", got, want)
 	}
-	// Back at idle the status word drops but the title stays.
+	// Back at idle the status word drops but the title and handle stay.
 	m.phase = phaseIdle
-	if got, want := m.View().WindowTitle, "investigate the flaky test — mecatui"; got != want {
+	if got, want := m.View().WindowTitle, "investigate the flaky test sess-view-00 — mecatui"; got != want {
 		t.Errorf("View().WindowTitle = %q, want %q at idle", got, want)
 	}
 	// The opt-out pins the bare app name regardless.

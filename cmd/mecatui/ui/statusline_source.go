@@ -7,6 +7,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
+	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	statusline "github.com/stacklok/mecatl/cmd/mecatui/statusline"
 )
 
@@ -151,10 +152,7 @@ func (m Model) statusLineInput(now time.Time) statusline.Input {
 	if m.pendingMode != "" {
 		mode = m.pendingMode + " pending"
 	}
-	digest := ""
-	if m.sessionID != "" {
-		digest = sessionDigest(m.sessionID)[:8]
-	}
+	handle := client.SessionHandle(m.sessionID)
 	switch m.phase {
 	case phaseConnecting:
 		state = "connecting"
@@ -174,7 +172,7 @@ func (m Model) statusLineInput(now time.Time) statusline.Input {
 	return statusline.Input{
 		Version: statusline.ProtocolVersion,
 		Server:  statusline.ServerTarget{DisplayTarget: m.deps.Server, ConnectionMode: m.deps.ConnectionMode},
-		Session: statusline.Session{Title: m.sessionTitle, Digest: digest, Mode: mode, ReasoningEffort: m.resolvedSessionModel.ReasoningEffort},
+		Session: statusline.Session{Title: m.sessionTitle, Handle: handle, Mode: mode, ReasoningEffort: m.resolvedSessionModel.ReasoningEffort},
 		Model:   statusline.Model{ProviderID: m.resolvedSessionModel.ProviderID, ID: m.resolvedSessionModel.ModelID, DisplayName: m.headerModelLabel(), Route: m.providerRoute, ContextWindow: contextAtom(window)},
 		Usage:   statusline.Usage{Input: usageAtom(m.usage.InputTokens), Output: usageAtom(m.usage.OutputTokens), CacheRead: usageAtom(m.usage.CacheReadTokens), CacheWrite: usageAtom(m.usage.CacheWriteTokens), CacheReadPercent: cachePercent},
 		Context: statusline.Context{Used: contextAtom(m.contextTokens), Window: contextAtom(window), Percent: contextPercent}, Workspace: workspace,

@@ -157,9 +157,9 @@ func TestSessionContinuityUX_Scenario5_HeaderAndHelp(t *testing.T) {
 	m.sessionID = strings.Repeat("very-long-opaque-id", 20)
 	m.width = 44
 	header := stripANSIstr(m.renderHeader())
-	wantHandle := sessionDigest(m.sessionID)[:8]
+	wantHandle := client.SessionHandle(m.sessionID)
 	if !strings.Contains(header, wantHandle) || strings.Contains(header, m.sessionID) {
-		t.Fatalf("header must use the shared display digest, not the full id: %q", header)
+		t.Fatalf("header must use the shared fixed handle, not the full id: %q", header)
 	}
 	for _, line := range strings.Split(header, "\n") {
 		if len([]rune(line)) > m.width {

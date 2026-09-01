@@ -120,8 +120,8 @@ func statusSurfaceText(surface Surface) string {
 }
 func defaultHeaderTemplates() SurfaceTemplates {
 	return SurfaceTemplates{
-		Full:    `<header><primary>mecatui · session #{{.Session.Digest}} · {{if .Model.ProviderID}}{{.Model.ProviderID}}/{{end}}{{.Model.DisplayName}}{{if .Model.Route}}/{{.Model.Route}}{{end}}</primary>{{if .Session.Mode}}<warning> · mode {{.Session.Mode}}</warning>{{end}}{{if .Server.DisplayTarget}}<text> · {{.Server.DisplayTarget}}</text>{{end}}</header>`,
-		Compact: `<header><primary>mecatui · #{{.Session.Digest}} · {{.Model.DisplayName}}</primary>{{if .Session.Mode}}<warning> · {{.Session.Mode}}</warning>{{end}}</header>`,
+		Full:    `<header><primary>mecatui · session {{.Session.Handle}} · {{if .Model.ProviderID}}{{.Model.ProviderID}}/{{end}}{{.Model.DisplayName}}{{if .Model.Route}}/{{.Model.Route}}{{end}}</primary>{{if .Session.Mode}}<warning> · mode {{.Session.Mode}}</warning>{{end}}{{if .Server.DisplayTarget}}<text> · {{.Server.DisplayTarget}}</text>{{end}}</header>`,
+		Compact: `<header><primary>mecatui · {{.Session.Handle}} · {{.Model.DisplayName}}</primary>{{if .Session.Mode}}<warning> · {{.Session.Mode}}</warning>{{end}}</header>`,
 		Minimal: `<header><primary>mecatui</primary></header>`,
 	}
 }
@@ -158,7 +158,7 @@ type templateLiveTeam struct {
 	Working, Total int
 }
 type templateServer struct{ DisplayTarget, ConnectionMode templateText }
-type templateSession struct{ Title, Digest, Mode, ReasoningEffort templateText }
+type templateSession struct{ Title, Handle, Mode, ReasoningEffort templateText }
 type templateModel struct {
 	ProviderID, ID, DisplayName, Route templateText
 	ContextWindow                      templateContextAtom
@@ -277,7 +277,7 @@ func newTemplateInput(input Input) templateInput {
 	return templateInput{
 		Version:    input.Version,
 		Server:     templateServer{escapeTemplateText(input.Server.DisplayTarget), escapeTemplateText(input.Server.ConnectionMode)},
-		Session:    templateSession{escapeTemplateText(input.Session.Title), escapeTemplateText(input.Session.Digest), escapeTemplateText(input.Session.Mode), escapeTemplateText(input.Session.ReasoningEffort)},
+		Session:    templateSession{escapeTemplateText(input.Session.Title), escapeTemplateText(input.Session.Handle), escapeTemplateText(input.Session.Mode), escapeTemplateText(input.Session.ReasoningEffort)},
 		Model:      templateModel{escapeTemplateText(input.Model.ProviderID), escapeTemplateText(input.Model.ID), escapeTemplateText(input.Model.DisplayName), escapeTemplateText(input.Model.Route), templateContextAtom{input.Model.ContextWindow.Raw, escapeTemplateText(input.Model.ContextWindow.Human)}},
 		Usage:      templateUsage{templateUsageAtom{input.Usage.Input.Raw, escapeTemplateText(input.Usage.Input.Human)}, templateUsageAtom{input.Usage.Output.Raw, escapeTemplateText(input.Usage.Output.Human)}, templateUsageAtom{input.Usage.CacheRead.Raw, escapeTemplateText(input.Usage.CacheRead.Human)}, templateUsageAtom{input.Usage.CacheWrite.Raw, escapeTemplateText(input.Usage.CacheWrite.Human)}, input.Usage.CacheReadPercent},
 		Context:    templateContext{templateContextAtom{input.Context.Used.Raw, escapeTemplateText(input.Context.Used.Human)}, templateContextAtom{input.Context.Window.Raw, escapeTemplateText(input.Context.Window.Human)}, input.Context.Percent},

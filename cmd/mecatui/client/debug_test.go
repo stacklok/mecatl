@@ -77,12 +77,12 @@ func TestCreateDebugSessionFailsClosedAndCleansUpUnsupportedCreate(t *testing.T)
 	}
 }
 
-func TestDisplaySessionIDUsesSharedWidth(t *testing.T) {
-	if got := DisplaySessionID("123456789012-rest"); got != "123456789012" {
-		t.Fatalf("DisplaySessionID = %q", got)
+func TestSessionHandleUsesSharedWidth(t *testing.T) {
+	if got := SessionHandle("123456789012-rest"); got != "123456789012" {
+		t.Fatalf("SessionHandle = %q", got)
 	}
-	if got := DisplaySessionID("short"); got != "short" {
-		t.Fatalf("DisplaySessionID short = %q", got)
+	if got := SessionHandle("short"); got != "short" {
+		t.Fatalf("SessionHandle short = %q", got)
 	}
 }
 

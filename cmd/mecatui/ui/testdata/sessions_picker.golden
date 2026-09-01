@@ -1,8 +1,8 @@
- mecatui  ·  session #b9ba2286  ·  mock-model  ·  mode default
+ mecatui  ·  session sess-test-00  ·  mock-model  ·  mode default
 ────────────────────────────────────────────────────────────────────────────────────────────────────
 ▸ Chats    Scheduled runs    Child runs    Other
 
-▶ ✓ 5m ago 12t Fix the flaky CI  #60d09667  (gpt-5)
+▶ ✓ 5m ago 12t Fix the flaky CI  sess-aaa  (gpt-5)
 
 enter: continue  y: copy ID  v: view  f: fork  r: rename  d: delete  tab: switch  esc: close
 

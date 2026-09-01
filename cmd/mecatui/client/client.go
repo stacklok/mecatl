@@ -257,16 +257,44 @@ func (c *Client) CreateSession(ctx context.Context, workspace string, mode mecat
 	})
 }
 
-// SessionIDDisplayWidth is the one session-ID width used by the TUI header and
-// by debug-target prefix resolution.
-const SessionIDDisplayWidth = 12
+// SessionHandleWidth is the fixed maximum ASCII-column width of every ordinary
+// session handle shown by mecatui.
+const SessionHandleWidth = 12
 
-// DisplaySessionID returns the session ID exactly as shown in the TUI header.
-func DisplaySessionID(id string) string {
-	if len(id) <= SessionIDDisplayWidth {
-		return id
+// SessionIDDisplayWidth remains the width accepted by the legacy exact-prefix
+// debug-target resolver. It does not define an alternate server-side ID.
+const SessionIDDisplayWidth = SessionHandleWidth
+
+// SessionHandle returns the fixed, terminal-safe escaped prefix used by every
+// ordinary mecatui session presentation. Unreserved ASCII is copied verbatim;
+// every other UTF-8 byte is one uppercase %HH atom. The longest complete-atom
+// prefix fitting SessionHandleWidth is returned. Empty or invalid UTF-8 IDs have
+// no handle.
+func SessionHandle(id string) string {
+	if id == "" || !utf8.ValidString(id) {
+		return ""
 	}
-	return id[:SessionIDDisplayWidth]
+	const hex = "0123456789ABCDEF"
+	var out strings.Builder
+	out.Grow(SessionHandleWidth)
+	for _, b := range []byte(id) {
+		safe := b >= 'A' && b <= 'Z' || b >= 'a' && b <= 'z' || b >= '0' && b <= '9' || b == '.' || b == '_' || b == '-'
+		atomLen := 3
+		if safe {
+			atomLen = 1
+		}
+		if out.Len()+atomLen > SessionHandleWidth {
+			break
+		}
+		if safe {
+			out.WriteByte(b)
+		} else {
+			out.WriteByte('%')
+			out.WriteByte(hex[b>>4])
+			out.WriteByte(hex[b&0x0f])
+		}
+	}
+	return out.String()
 }
 
 // CreateDebugSession creates a separate no-filesystem analysis session bound to

@@ -2,6 +2,8 @@ package ui
 
 import (
 	"strings"
+
+	"github.com/stacklok/mecatl/cmd/mecatui/client"
 )
 
 // windowTitleRunes caps the title SEGMENT of the terminal window/tab title (the
@@ -17,12 +19,13 @@ const windowTitleRunes = 40
 // the RIGHT, so the title (the most identifying thing) leads and the status
 // word + "mecatui" trail:
 //
-//	<title> — Working mecatui      (phaseRunning)
-//	<title> — ⚠ mecatui            (phaseAwaitingApproval)
-//	<title> — Connecting mecatui   (phaseConnecting)
-//	<title> — ✗ mecatui            (phaseFatal)
-//	<title> — mecatui              (phaseIdle / phaseReplay, title known)
-//	mecatui                        (no title yet, or opt-out)
+//	<title> <handle> — Working mecatui      (phaseRunning)
+//	<title> <handle> — ⚠ mecatui            (phaseAwaitingApproval)
+//	<title> <handle> — Connecting mecatui   (phaseConnecting)
+//	<title> <handle> — ✗ mecatui            (phaseFatal)
+//	<title> <handle> — mecatui              (phaseIdle / phaseReplay)
+//	<handle> — mecatui                      (no title yet)
+//	mecatui                                  (no session yet, or opt-out)
 //
 // The status is a STATIC WORD, never an animated spinner: per-frame title churn
 // trips OS attention heuristics (the dock bounces / the taskbar flashes on every
@@ -37,9 +40,17 @@ func (m Model) windowTitle() string {
 		return "mecatui"
 	}
 	if m.deps.DebugTarget != "" {
-		return "DEBUG " + sessionDigest(m.deps.DebugTarget)[:8] + " — " + debugPhaseTitle(m.phase) + " mecatui"
+		return "DEBUG " + client.SessionHandle(m.deps.DebugTarget) + " — " + debugPhaseTitle(m.phase) + " mecatui"
 	}
 	title := clampWindowTitle(m.sessionTitle)
+	handle := client.SessionHandle(m.sessionID)
+	switch {
+	case title != "" && handle != "":
+		suffix := " " + handle
+		title = truncate(title, windowTitleRunes-len([]rune(suffix))) + suffix
+	case handle != "":
+		title = handle
+	}
 	status := phaseStatusWord(m.phase)
 	switch {
 	case title == "" && status == "":

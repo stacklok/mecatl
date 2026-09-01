@@ -11,7 +11,7 @@ import (
 
 const (
 	// ProtocolVersion is the current Input wire-independent contract version.
-	ProtocolVersion uint8 = 1
+	ProtocolVersion uint8 = 2
 
 	maxMarkupBytes = 16 << 10
 	maxSpanRunes   = 4 << 10

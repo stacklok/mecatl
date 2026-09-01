@@ -111,7 +111,7 @@ func TestStatusCustomization_Scenario1_StatusInputProjectsLiveUIState(t *testing
 	if input.Version != statusline.ProtocolVersion || input.Server != (statusline.ServerTarget{DisplayTarget: "server.example", ConnectionMode: "embedded"}) {
 		t.Fatalf("server/version projection = %#v", input)
 	}
-	if input.Session.Title != "Status work" || input.Session.ReasoningEffort != "high" || input.Session.Mode != "default" || input.Session.Digest != "" {
+	if input.Session.Title != "Status work" || input.Session.ReasoningEffort != "high" || input.Session.Mode != "default" || input.Session.Handle != "" {
 		t.Fatalf("session projection = %#v", input.Session)
 	}
 	if input.Model.ProviderID != "openai" || input.Model.ID != "gpt-5" || input.Model.DisplayName != "gpt-5" || input.Model.ContextWindow != (statusline.ContextAtom{Raw: 200_000, Human: "200K"}) {
