@@ -2,9 +2,9 @@
 id: 37-partitioned-attempt-quota-retention
 title: Bound durable attempt quota and retention per partition
 blocked_by: [31-documentation-generated-integration]
-status: in-progress
-branch: ""
-worktree: ""
+status: done
+branch: plan-cloud-native-learning/37-partitioned-attempt-quota-retention
+worktree: .scratch/worktrees/37-partitioned-attempt-quota-retention
 issue: ""
 retries: 0
 last_error: ""
