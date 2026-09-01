@@ -24,8 +24,10 @@ socket path). Browsers do **not** use Connect-ES (mecated does not speak
 Connect); the `.` export's browser transport is hand-written fetch + SSE
 against mecated's existing HTTP API, behind the same raw-operation seam.
 
-**Mocking:** clients accept an injected Transport. `createRouterTransport` is
-the downstream unit-test story. Do **not** vendor ADR 0253's unary automocker.
+**Mocking (M1 cut only):** clients accept an injected Transport. The SDK's
+own tests may use `createRouterTransport` (and a fetch-level HTTP fake)
+routed at handler functions or fixture files. Do **not** ship a
+downstream-app mocker or a transport-agnostic e2e testkit — that is #872.
 
 **Steer over HTTP:** gate on the `http_steer` **feature** string from
 `GetCompatibilityInfo` (ADR 0252). When absent, typed unsupported-feature
@@ -53,7 +55,7 @@ Branch `sdk/13-transports` off the stack tip. Do not push.
   - verify: `sdk/typescript/test/transport-parity.test.ts :: "raw operations agree across gRPC and HTTP"`
 - AC3.2: A client constructed over an injected `createRouterTransport`
   exercises unary and server-streaming operations with no network and no
-  daemon — the ADR-0278 mocking seam works as documented.
+  daemon — the ADR-0278 M1 test seam works as documented.
   - verify: `sdk/typescript/test/router-transport.test.ts :: "router transport drives unary and streaming operations offline"`
 - AC3.3: A server whose `GetCompatibilityInfo` is absent or reports an
   unsupported API major yields `IncompatibleServerError`; no probe session

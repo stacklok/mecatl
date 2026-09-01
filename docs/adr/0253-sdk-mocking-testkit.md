@@ -4,7 +4,7 @@
 - Date: 2026-08-31
 - Scope: `sdk/typescript/` testing tooling for `@stacklok/mecatl` (issue #872).
 - Supersedes: none.
-- Superseded by: [ADR 0278](./0278-typescript-sdk-architecture.md), in part — Decisions 1–2 (the vendored unary automocker and its SPDX-relicense surface) are replaced by Connect-ES's `createRouterTransport` over an injected-Transport seam; Decisions 3–4 stand.
+- Superseded by: [ADR 0278](./0278-typescript-sdk-architecture.md), in part — Decisions 1–2 (the vendored unary automocker and its SPDX-relicense surface) are dropped, not replaced by a published mocker; M1 keeps only an injected-Transport seam plus a minimal in-process fake for the SDK's own tests. The npm name `@stacklok/mecatl` is also superseded (`@stacklok/mecatl-sdk`). Decisions 3–4 stand.
 
 ## Context
 

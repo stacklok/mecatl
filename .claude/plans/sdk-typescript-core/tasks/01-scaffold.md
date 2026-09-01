@@ -4,7 +4,7 @@ title: TypeScript SDK scaffold, toolchain, and CI
 blocked_by: []
 status: in-progress
 branch: ""
-worktree: ""
+worktree: ".scratch/plan-sdk-11-scaffold"
 issue: "909"
 retries: 0
 last_error: ""
@@ -13,7 +13,7 @@ accumulator: sdk/10-architecture-adr
 
 # Task brief
 
-Create the in-repo `@stacklok/mecatl` package at `sdk/typescript/` and wire it
+Create the in-repo `@stacklok/mecatl-sdk` package at `sdk/typescript/` and wire it
 into the root Taskfile + CI. This is M1 Scenario 1. Do **not** generate proto,
 do **not** implement Client/Session/Run, do **not** touch
 `contracts/proto/mecatl/v1/harness.proto` or `internal/adapter/server/`.
@@ -30,7 +30,8 @@ deliberately not report-governed. Apache-2.0 license field + LICENSE file.
 Subpath exports exactly `.` / `./node` / `./gen`. Node 22+.
 
 **Work:**
-- `sdk/typescript/`: package.json (exports map, `packageManager`, Apache-2.0),
+- `sdk/typescript/`: package.json (`name` is `@stacklok/mecatl-sdk` per
+  ADR 0278 Decision 6; exports map, `packageManager`, Apache-2.0),
   tsconfig, biome config (exclude generated `src/gen/` from formatting),
   vitest config, API Extractor configs + committed reports for `.` and
   `./node`, local `.gitignore` (node_modules, dist, API Extractor temp),

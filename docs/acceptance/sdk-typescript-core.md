@@ -1,12 +1,12 @@
 # TypeScript SDK core (M1) — acceptance plan
 
-**Phase:** capability — `@stacklok/mecatl` M1: foundation, codegen, and core runs
+**Phase:** capability — `@stacklok/mecatl-sdk` M1: foundation, codegen, and core runs
 **Status:** in-progress, 2026-09-01. Synthesised from the settled #821 design contract plus the transport decision recorded in ADR 0278.
 **Issue:** [stacklok/mecatl#821](https://github.com/stacklok/mecatl/issues/821) (parent: [#761](https://github.com/stacklok/mecatl/issues/761)).
 **ADR:** [ADR-0278](../adr/0278-typescript-sdk-architecture.md) — Connect-ES v2 + protobuf-es v2, the injected-Transport seam, the in-repo pnpm/biome/vitest toolchain, and the in-part supersession of [ADR-0253](../adr/0253-sdk-mocking-testkit.md).
 **Accumulator / stack:** `sdk/10-architecture-adr` is the stack trunk (PR #908). Subsequent layers are `sdk/11`…`sdk/19` via `gh stack` (linear, one PR per scenario — the plan's 4–8 parallelism is serialised because a stack cannot fork).
 
-The smallest set of work that makes `@stacklok/mecatl` real: a scaffolded,
+The smallest set of work that makes `@stacklok/mecatl-sdk` real: a scaffolded,
 CI-gated `sdk/typescript/` tree; committed protobuf-es generation for
 `mecatl.v1`; both raw transports (Node/Bun gRPC via Connect-ES, browser
 HTTP/SSE) behind one transport-neutral seam; typed errors and the
@@ -31,10 +31,11 @@ not which packages exist on disk.
   so that branch merges independently.
 - **Connect-ES v2, decided — not re-litigated per task.**
   [ADR-0278](../adr/0278-typescript-sdk-architecture.md) settles the
-  transport library, the codegen stack, and the mocking consequence (the
-  vendored automocker of [ADR-0253](../adr/0253-sdk-mocking-testkit.md) is
-  superseded in part by `createRouterTransport` over the injected-Transport
-  seam). Workers implement against it.
+  transport library, the codegen stack, the npm name
+  (`@stacklok/mecatl-sdk`), and the mocking cut: no published mocker in M1;
+  an injected-Transport seam plus a minimal in-process fake for the SDK's
+  own tests. The vendored automocker of
+  [ADR-0253](../adr/0253-sdk-mocking-testkit.md) is not shipped.
 - **The browser transport is exercised from Node in M1.** The HTTP/SSE
   client is isomorphic code; M1 proves wire correctness against a real
   `mecated` HTTP listener from vitest in Node, and browser-only behaviours
@@ -74,7 +75,7 @@ not which packages exist on disk.
 | npm publish workflow, trusted publishing, `sdk/typescript/vX.Y.Z` tags | M4 plan | #821 M4 item 4; tag discipline per [ADR-0093](../adr/0093-provider-modules.md) |
 | `user-docs/` pages for the SDK | M4 plan | nothing is published before `v0.1.0`; M1 updates `docs/architecture.md` + IMPLEMENTATION-NOTES only |
 | Steer over the HTTP transport | when [#873](https://github.com/stacklok/mecatl/issues/873) lands | [ADR-0252](../adr/0252-http-steer-endpoint.md) |
-| Downstream-app mocking fixtures beyond the Transport seam | #872 as re-scoped | [ADR-0278](../adr/0278-typescript-sdk-architecture.md) supersedes [ADR-0253](../adr/0253-sdk-mocking-testkit.md) in part |
+| Downstream-app / transport-agnostic e2e mocker (Next.js and similar) | #872 | [ADR-0278](../adr/0278-typescript-sdk-architecture.md) Decision 3: M1 is the injection seam only |
 
 ## In scope — 9 scenarios, in implementation order
 
@@ -206,9 +207,9 @@ generated-never-hand-edited, per the standing rule in
 One transport-neutral raw-operation seam with two implementations: the
 Connect-ES gRPC transport (Node/Bun, TCP and UDS) and the hand-written
 fetch + SSE transport over mecated's existing HTTP API. Clients accept an
-injected Transport — the seam that makes `createRouterTransport` the
-downstream mocking story ([ADR-0278](../adr/0278-typescript-sdk-architecture.md)
-Decision 3). Errors normalize to one typed hierarchy carrying the stable
+injected Transport — the M1 test seam ([ADR-0278](../adr/0278-typescript-sdk-architecture.md)
+Decision 3): a minimal in-process fake (handlers or fixture files), not a
+shipped downstream mocker. Errors normalize to one typed hierarchy carrying the stable
 mecatl code from RFC 9457 problem bodies and gRPC status details alike, and
 the first call enforces the compatibility floor — both per
 [ADR-0248](../adr/0248-sdk-compatibility-and-error-contract.md).
@@ -231,7 +232,7 @@ the first call enforces the compatibility floor — both per
   - verify: `sdk/typescript/test/transport-parity.test.ts :: "raw operations agree across gRPC and HTTP"`
 - AC3.2: A client constructed over an injected `createRouterTransport`
   exercises unary and server-streaming operations with no network and no
-  daemon — the ADR-0278 mocking seam works as documented.
+  daemon — the ADR-0278 M1 test seam works as documented.
   - verify: `sdk/typescript/test/router-transport.test.ts :: "router transport drives unary and streaming operations offline"`
 - AC3.3: A server whose `GetCompatibilityInfo` is absent or reports an
   unsupported API major yields `IncompatibleServerError`; no probe session

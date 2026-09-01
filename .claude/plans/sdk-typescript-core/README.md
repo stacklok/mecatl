@@ -1,6 +1,6 @@
 # sdk-typescript-core — plan index
 
-M1 of `@stacklok/mecatl`: scaffold, codegen, transports, Client/Session/Run,
+M1 of `@stacklok/mecatl-sdk`: scaffold, codegen, transports, Client/Session/Run,
 events, permissions, multimodal helpers, offline e2e.
 
 Delivery is a **linear `gh stack`** rooted at `sdk/10-architecture-adr`

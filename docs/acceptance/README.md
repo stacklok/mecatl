@@ -111,7 +111,7 @@ when the code that satisfies the plan has landed.
   errors, exact-origin CORS, a durable host-minted `run_id` with stale-control guards,
   `port.CursorEventLog` + the Redis LIST→Stream migration, `WatchSessionEvents`, the
   spawned-daemon UDS/ready-file surface, and listener-scoped `mcp_servers`. Status: draft.
-- [TypeScript SDK core (M1)](sdk-typescript-core.md) — `@stacklok/mecatl` M1: the
+- [TypeScript SDK core (M1)](sdk-typescript-core.md) — `@stacklok/mecatl-sdk` M1: the
   `sdk/typescript/` scaffold (pnpm 11, TS 6, biome, vitest, API Extractor), pinned
   protobuf-es generation for `mecatl.v1` with a freshness gate, Connect-ES + HTTP/SSE
   raw transports behind an injected-Transport seam, typed errors and the compatibility

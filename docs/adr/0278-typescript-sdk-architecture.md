@@ -2,23 +2,26 @@
 
 - Status: Proposed
 - Date: 2026-09-01
-- Scope: `sdk/typescript/` (the `@stacklok/mecatl` package), `buf.gen.yaml`, the root Taskfile/CI wiring for the SDK tree.
-- Supersedes: [ADR 0253](./0253-sdk-mocking-testkit.md) Decisions 1–2, in part — the vendored unary automocker and the SPDX-relicense surface it carried (see "The mocking consequence" below). ADR 0253's Decisions 3–4 and its scoping of Studio's separate needs stand.
+- Scope: `sdk/typescript/` (the `@stacklok/mecatl-sdk` package), `buf.gen.yaml`, the root Taskfile/CI wiring for the SDK tree.
+- Supersedes: [ADR 0253](./0253-sdk-mocking-testkit.md) Decisions 1–2, in part — the vendored unary automocker and the SPDX-relicense surface it carried (see Decision 3). Also supersedes the npm package name `@stacklok/mecatl` as used in [#821](https://github.com/stacklok/mecatl/issues/821) and ADRs [0248](./0248-sdk-compatibility-and-error-contract.md)/[0252](./0252-http-steer-endpoint.md)/[0253](./0253-sdk-mocking-testkit.md). ADR 0253's Decisions 3–4 (name the residual; no premature shared package) stand.
 
 ## Context
 
 [#761](https://github.com/stacklok/mecatl/issues/761) and
 [#821](https://github.com/stacklok/mecatl/issues/821) settled almost the whole
-SDK design contract before any code: one Apache-2.0 package
-`@stacklok/mecatl`, in-repo at `sdk/typescript/` with an exactly-pinned
+SDK design contract before any code: one Apache-2.0 in-repo package at
+`sdk/typescript/` with an exactly-pinned
 pnpm 11 and its own lockfile (the existing `website/` tree stays on npm);
+the issues named it `@stacklok/mecatl` — this ADR renames it (Decision 6)
+so the bare `mecatl` npm name stays free;
 ESM-only unbundled transpiled modules with declarations and source maps;
 subpath exports `.` (isomorphic core + the HTTP/SSE transport), `./node`
 (gRPC transport, `spawn()`, `tool()`), `./gen` (generated protobuf types and
 service descriptors); Node 22+, Bun 1.4+, the latest two stable
 Chrome/Firefox/Safari; Windows is remote `connect()` only in v0.1; develop on
 TypeScript 6 while emitting declarations compatible with TypeScript 5.7+.
-This ADR records that contract rather than re-deciding it.
+This ADR records that contract rather than re-deciding it, except the npm
+name (Decision 6) and the mocking cut (Decision 3).
 
 The one load-bearing item the issues point at but never settle is the
 **transport client library** for the Node/Bun gRPC path. It is on the
@@ -37,8 +40,9 @@ critical path for two reasons:
   explicitly unary-only, with streaming named as an unsolved residual, and
   with an SPDX relicensing decision attached to the vendor drop. That ADR
   never evaluated `createRouterTransport`, Connect-ES's in-memory fake
-  Transport. Whether the mocker still earns its place is a direct consequence
-  of the transport choice, so it must be resolved here, on the record.
+  Transport. A later review constraint: downstream apps (Next.js and similar)
+  need **transport-agnostic** end-to-end mocks, and a published mocker does
+  not belong in the first prototype — only a minimal in-process cut, if any.
 
 The realistic candidates were **Connect-ES v2**
 (`@connectrpc/connect` + `@connectrpc/connect-node`, over protobuf-es) and
@@ -90,25 +94,23 @@ freshness gate (regenerate, then fail on diff) keeps proto and generated TS
 from drifting, the same generate→commit→diff discipline the repo already
 applies to committed generated artifacts.
 
-**3. The Transport is an injection seam, and `createRouterTransport` is the
-mocking story.** SDK clients accept an injected Transport at construction.
-That seam — not a byte-level wire fake — is how downstream apps unit-test
-against `@stacklok/mecatl`: `createRouterTransport` runs their fixtures
-through real protobuf (de)serialization for unary and streaming RPCs alike.
+**3. M1 ships an injected-Transport seam, not a mocker product.** SDK
+clients accept an injected Transport at construction. That is the only
+mocking surface in this milestone: the SDK's own tests may route the
+in-memory Connect fake (`createRouterTransport`) — and a sibling
+fetch-level HTTP fake — at handler functions or fixture files. It is a
+minimal cut so Scenario 3 can prove the raw seam offline. It is **not**
+the downstream-app testkit (#872), and it is **not** transport-agnostic
+end-to-end mocking (a Next.js app talking HTTP/SSE still cannot use a
+gRPC router transport as its e2e double).
 
-**The mocking consequence.** This supersedes ADR 0253's Decision 1 (vendor
-the private prototype's unary automocker) and with it the Decision 2
-SPDX-relicense surface, which existed only to carry that vendor drop: the
-primitive Connect-ES ships in the dependency tree covers strictly more than
-the vendored mocker would have (streaming included — 0253's own stated
-residual), with zero vendored code to relicense or drift. 0253's honesty
-about residuals survives, inverted: **streaming mocking is now covered; the
-un-mocked residual is the browser HTTP/SSE path**, which is a different wire
-shape (hand-written JSON + SSE, not Connect-RPC) and remains, per 0253's own
-framing, a separately-buildable REST-shaped concern (MSW-style) for whoever
-needs it — most plausibly Studio, whose client architecture is still
-undecided. ADR 0253's Decision 3 (name the residual) and Decision 4 (no
-premature shared package) carry over unchanged in spirit.
+This still supersedes ADR 0253's Decision 1 (vendor the unary automocker)
+and Decision 2 (its SPDX relicense): we do not vendor that prototype.
+0253's Decision 3 (name the residual) and Decision 4 (no premature shared
+package) stand. The residual is now stated honestly: **a published,
+transport-agnostic mocker is deferred**; the HTTP/SSE path is un-mocked
+as a product, and Connect's in-memory fake covers only the gRPC half of
+the SDK's own unit tests. Issue #872 tracks the later product.
 
 **4. Project tooling.** Exactly-pinned pnpm 11 via the `packageManager`
 field (CI installs pnpm explicitly at the pinned version rather than
@@ -138,6 +140,11 @@ heartbeat, reconnect loops, the M3 tool host) live in the client process,
 outside ADR 0027's scope; the milestone that lands each one owns its
 client-side lifecycle contract (M2 attachment, M3 spawn/tools).
 
+**6. The published npm name is `@stacklok/mecatl-sdk`.** [#821](https://github.com/stacklok/mecatl/issues/821)
+used `@stacklok/mecatl`. The bare name stays available for other npm
+artifacts (for example a future `mecatui` package). The in-repo path
+remains `sdk/typescript/`.
+
 ## Consequences
 
 - **One type system end to end.** protobuf-es types are what Connect-ES
@@ -147,11 +154,12 @@ client-side lifecycle contract (M2 attachment, M3 spawn/tools).
 - **Streaming is first-class from day one** — `Converse`,
   `WatchSessionEvents`, and `RunTeam` map onto async iteration, which is the
   shape the SDK's `Run`/attachment contracts already promise.
-- **The testkit shrinks.** No vendor drop, no SPDX relicense, no drift
-  against the private prototype. The cost: byte-level wire-framing fidelity
-  is not exercised by router-transport tests — accepted, because the framing
-  layer is Connect-ES's own tested code, and the SDK's e2e suite runs
-  against a real `mecated --mock` daemon over real wire anyway.
+- **No mocker product in M1.** No vendor drop, no SPDX relicense. Downstream
+  apps do not get a documented e2e testkit yet; they inject a Transport or
+  hit a real daemon. The cost: Next.js-style transport-agnostic e2e doubles
+  wait on #872. Router-transport tests also do not prove byte-level framing
+  — accepted, because that layer is Connect-ES's, and Scenario 9 hits a real
+  `mecated --mock` over real wire.
 - **A major-version commitment.** The SDK couples to Connect-ES v2 and
   protobuf-es v2 majors; their upgrade cadence becomes SDK maintenance load.
   Pinned plugin + runtime versions and the freshness gate keep the generated
@@ -184,5 +192,6 @@ client-side lifecycle contract (M2 attachment, M3 spawn/tools).
 - `docs/acceptance/sdk-typescript-core.md` — the acceptance plan this ADR
   anchors (M1).
 - [Issue #821](https://github.com/stacklok/mecatl/issues/821) — the settled
-  design contract this ADR records; [#872](https://github.com/stacklok/mecatl/issues/872)
-  — the testkit issue whose scope Decision 3 narrows.
+  design contract this ADR records (npm name excepted; Decision 6);
+  [#872](https://github.com/stacklok/mecatl/issues/872) — the deferred
+  transport-agnostic mocker.
