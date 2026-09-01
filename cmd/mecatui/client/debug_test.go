@@ -83,6 +83,9 @@ func TestPredictableSessionHandles_Scenario1_InvalidUTF8HasNoHandleOrDebugCreate
 	if _, _, _, _, err := cl.CreateDebugSession(context.Background(), target, 0, ModelSelection{}); err == nil {
 		t.Fatal("CreateDebugSession accepted invalid UTF-8 target")
 	}
+	if _, _, _, _, err := cl.CreateDebugSessionExact(context.Background(), target, 0, ModelSelection{}); err == nil {
+		t.Fatal("CreateDebugSessionExact accepted invalid UTF-8 target")
+	}
 	if service.createCalls != 0 {
 		t.Fatalf("server CreateSession calls = %d, want 0", service.createCalls)
 	}
@@ -154,21 +157,23 @@ func TestCreateDebugSessionResolvesUniqueHeaderID(t *testing.T) {
 	}
 }
 
-func TestCreateDebugSessionExactHeaderWidthIDPrecedesPrefix(t *testing.T) {
-	const target = "123456789012"
-	fake := &debugHarness{
-		caps: &mecatlv1.ServerCapabilities{SessionDebug: true},
-		sessions: []*mecatlv1.SessionSummary{
-			{SessionId: target + "-longer"},
-			{SessionId: target},
-		},
-	}
-	cl := &Client{svc: fake}
-	if _, _, _, _, err := cl.CreateDebugSession(context.Background(), target, 0, ModelSelection{}); err != nil {
-		t.Fatal(err)
-	}
-	if got := fake.request.GetDebugTargetSessionId(); got != target {
-		t.Fatalf("debug target = %q", got)
+func TestCreateDebugSessionExactBypassesProjection(t *testing.T) {
+	for _, target := range []string{"123456789012", "short", "-leading", "legacy\x1b-id"} {
+		t.Run(target, func(t *testing.T) {
+			fake := &debugHarness{
+				caps:    &mecatlv1.ServerCapabilities{SessionDebug: true},
+				listErr: errors.New("exact path must not list inventory"),
+			}
+			cl := &Client{svc: fake}
+			if _, resolved, _, _, err := cl.CreateDebugSessionExact(context.Background(), target, 0, ModelSelection{}); err != nil {
+				t.Fatal(err)
+			} else if resolved != target {
+				t.Fatalf("resolved target = %q, want %q", resolved, target)
+			}
+			if got := fake.request.GetDebugTargetSessionId(); got != target || fake.listCalls != 0 {
+				t.Fatalf("debug target = %q, list calls = %d", got, fake.listCalls)
+			}
+		})
 	}
 }
 
@@ -201,48 +206,69 @@ func TestCreateDebugSessionMissingHandleFailsBeforeCreate(t *testing.T) {
 	}
 }
 
-func TestPredictableSessionHandles_Scenario1_InventoryFailureKeepsExactCopyFallback(t *testing.T) {
-	fake := &debugHarness{listErr: errors.New("inventory unavailable")}
+func TestPredictableSessionHandles_Scenario1_InventoryFailureKeepsExplicitExactFallback(t *testing.T) {
+	fake := &debugHarness{listErr: errors.New("inventory unavailable"), caps: &mecatlv1.ServerCapabilities{SessionDebug: true}}
 	cl := &Client{svc: fake}
 	_, _, _, _, err := cl.CreateDebugSession(context.Background(), "123456789012", 0, ModelSelection{})
-	if err == nil || !strings.Contains(err.Error(), "list sessions") || !strings.Contains(err.Error(), "inventory unavailable") || !strings.Contains(err.Error(), "/session") || !strings.Contains(err.Error(), "exact") || !strings.Contains(err.Error(), "copy") {
+	if err == nil || !strings.Contains(err.Error(), "list sessions") || !strings.Contains(err.Error(), "inventory unavailable") || !strings.Contains(err.Error(), "/session") || !strings.Contains(err.Error(), "--exact") {
 		t.Fatalf("error = %v", err)
 	}
 	if fake.createCalls != 0 {
 		t.Fatalf("CreateSession calls = %d", fake.createCalls)
 	}
+	if _, target, _, _, exactErr := cl.CreateDebugSessionExact(context.Background(), "123456789012", 0, ModelSelection{}); exactErr != nil || target != "123456789012" {
+		t.Fatalf("CreateDebugSessionExact target=%q err=%v", target, exactErr)
+	}
+	if fake.listCalls != 1 || fake.request.GetDebugTargetSessionId() != "123456789012" {
+		t.Fatalf("exact fallback listed %d times and sent target %q", fake.listCalls, fake.request.GetDebugTargetSessionId())
+	}
 }
 
-func TestPredictableSessionHandles_Scenario2_HandleGrammar(t *testing.T) {
+func TestPredictableSessionHandles_Scenario1_OnlyHandleWidthAPI(t *testing.T) {
+	if SessionHandleWidth != 12 {
+		t.Fatalf("SessionHandleWidth = %d, want 12", SessionHandleWidth)
+	}
+}
+
+func TestPredictableSessionHandles_Scenario2_HandleGrammarAndExactEscapeHatch(t *testing.T) {
 	tests := []struct {
 		name      string
 		target    string
+		fullID    string
 		candidate bool
+		reject    bool
 	}{
-		{name: "empty", target: "", candidate: false},
-		{name: "one safe atom", target: "a", candidate: true},
-		{name: "exactly twelve safe", target: "abcdefghijkl", candidate: true},
-		{name: "uppercase escape exactly fits", target: "123456789%2F", candidate: true},
-		{name: "uppercase escapes", target: "%C3%A9", candidate: true},
-		{name: "escape cannot fit", target: "1234567890%2F", candidate: false},
-		{name: "too long", target: "abcdefghijklm", candidate: false},
-		{name: "lowercase escape", target: "%2f", candidate: false},
-		{name: "truncated escape", target: "%2", candidate: false},
-		{name: "malformed escape", target: "%GG", candidate: false},
-		{name: "literal percent", target: "abc%def", candidate: false},
-		{name: "other ascii", target: "abc/def", candidate: false},
-		{name: "multibyte", target: "é", candidate: false},
-		{name: "invalid utf8", target: string([]byte{0xff}), candidate: false},
+		{name: "empty", target: "", reject: true},
+		{name: "one safe atom", target: "a", fullID: "a", candidate: true},
+		{name: "exactly twelve safe", target: "abcdefghijkl", fullID: "abcdefghijkl", candidate: true},
+		{name: "uppercase escape exactly fits", target: "123456789%2F", fullID: "123456789/", candidate: true},
+		{name: "uppercase escapes", target: "%C3%A9", fullID: "é", candidate: true},
+		{name: "escape cannot fit", target: "1234567890%2F"},
+		{name: "too long", target: "abcdefghijklm"},
+		{name: "lowercase escape", target: "%2f"},
+		{name: "truncated escape", target: "%2"},
+		{name: "malformed escape", target: "%GG"},
+		{name: "leading hyphen", target: "-legacy"},
+		{name: "literal percent", target: "abc%def"},
+		{name: "other ascii", target: "abc/def"},
+		{name: "multibyte", target: "é"},
+		{name: "invalid utf8", target: string([]byte{0xff}), reject: true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			fake := &debugHarness{caps: &mecatlv1.ServerCapabilities{SessionDebug: true}, listErr: errors.New("inventory must be bypassed")}
 			if tc.candidate {
 				fake.listErr = nil
-				fake.sessions = []*mecatlv1.SessionSummary{{SessionId: tc.target}}
+				fake.sessions = []*mecatlv1.SessionSummary{{SessionId: tc.fullID}}
 			}
 			cl := &Client{svc: fake}
 			_, _, _, _, err := cl.CreateDebugSession(context.Background(), tc.target, 0, ModelSelection{})
+			if tc.reject {
+				if err == nil || fake.createCalls != 0 || fake.listCalls != 0 {
+					t.Fatalf("rejected target error=%v create calls=%d list calls=%d", err, fake.createCalls, fake.listCalls)
+				}
+				return
+			}
 			if err != nil {
 				t.Fatalf("CreateDebugSession: %v", err)
 			}
@@ -253,14 +279,27 @@ func TestPredictableSessionHandles_Scenario2_HandleGrammar(t *testing.T) {
 			if fake.listCalls != wantLists {
 				t.Fatalf("ListSessions calls = %d, want %d", fake.listCalls, wantLists)
 			}
-			if got := fake.request.GetDebugTargetSessionId(); got != tc.target {
-				t.Fatalf("request target = %q, want opaque input %q", got, tc.target)
+			wantTarget := tc.target
+			if tc.candidate {
+				wantTarget = tc.fullID
+			}
+			if got := fake.request.GetDebugTargetSessionId(); got != wantTarget {
+				t.Fatalf("request target = %q, want %q", got, wantTarget)
 			}
 		})
 	}
+
+	fake := &debugHarness{caps: &mecatlv1.ServerCapabilities{SessionDebug: true}, listErr: errors.New("exact must bypass inventory")}
+	cl := &Client{svc: fake}
+	if _, target, _, _, err := cl.CreateDebugSessionExact(context.Background(), "short", 0, ModelSelection{}); err != nil || target != "short" {
+		t.Fatalf("CreateDebugSessionExact target=%q err=%v", target, err)
+	}
+	if fake.listCalls != 0 || fake.request.GetDebugTargetSessionId() != "short" {
+		t.Fatalf("exact path listed %d times and sent %q", fake.listCalls, fake.request.GetDebugTargetSessionId())
+	}
 }
 
-func TestPredictableSessionHandles_Scenario2_ExactIDPrecedesDistinctProjectionMatches(t *testing.T) {
+func TestPredictableSessionHandles_Scenario2_AllProjectedMatchesPrecedeSelection(t *testing.T) {
 	const target = "same-prefix-"
 	fake := &debugHarness{
 		caps: &mecatlv1.ServerCapabilities{SessionDebug: true},
@@ -271,15 +310,16 @@ func TestPredictableSessionHandles_Scenario2_ExactIDPrecedesDistinctProjectionMa
 		},
 	}
 	cl := &Client{svc: fake}
-	if _, _, _, _, err := cl.CreateDebugSession(context.Background(), target, 0, ModelSelection{}); err != nil {
-		t.Fatal(err)
+	_, _, _, _, err := cl.CreateDebugSession(context.Background(), target, 0, ModelSelection{})
+	if err == nil || !strings.Contains(err.Error(), "ambiguous") || !strings.Contains(err.Error(), "--exact") {
+		t.Fatalf("error = %v, want projected-match ambiguity with exact fallback", err)
 	}
-	if got := fake.request.GetDebugTargetSessionId(); got != target {
-		t.Fatalf("request target = %q, want exact ID %q", got, target)
+	if fake.createCalls != 0 {
+		t.Fatalf("CreateSession calls = %d, want 0", fake.createCalls)
 	}
 }
 
-func TestPredictableSessionHandles_Scenario2_HandleResolvesToExactID(t *testing.T) {
+func TestPredictableSessionHandles_Scenario2_HandleAndExplicitExactPaths(t *testing.T) {
 	const fullID = "legacy\x1b-session"
 	handle := SessionHandle(fullID)
 	fake := &debugHarness{
@@ -297,9 +337,17 @@ func TestPredictableSessionHandles_Scenario2_HandleResolvesToExactID(t *testing.
 	if resolved != fullID || fake.request.GetDebugTargetSessionId() != fullID {
 		t.Fatalf("resolved=%q request target=%q, want %q", resolved, fake.request.GetDebugTargetSessionId(), fullID)
 	}
+
+	const shortExact = "short"
+	if _, resolved, _, _, err = cl.CreateDebugSessionExact(context.Background(), shortExact, 0, ModelSelection{}); err != nil {
+		t.Fatal(err)
+	}
+	if resolved != shortExact || fake.request.GetDebugTargetSessionId() != shortExact || fake.listCalls != 1 {
+		t.Fatalf("exact resolved=%q request target=%q list calls=%d", resolved, fake.request.GetDebugTargetSessionId(), fake.listCalls)
+	}
 }
 
-func TestPredictableSessionHandles_Scenario2_FailClosedBeforeCreate(t *testing.T) {
+func TestPredictableSessionHandles_Scenario2_FailClosedWithExactGuidance(t *testing.T) {
 	const target = "same-prefix-"
 	tests := []struct {
 		name     string
@@ -315,7 +363,7 @@ func TestPredictableSessionHandles_Scenario2_FailClosedBeforeCreate(t *testing.T
 			fake := &debugHarness{sessions: tc.sessions, listErr: tc.listErr}
 			cl := &Client{svc: fake}
 			_, _, _, _, err := cl.CreateDebugSession(context.Background(), target, 0, ModelSelection{})
-			if err == nil || !strings.Contains(err.Error(), "/session") || !strings.Contains(err.Error(), "exact") || !strings.Contains(err.Error(), "copy") {
+			if err == nil || !strings.Contains(err.Error(), "/session") || !strings.Contains(err.Error(), "--exact") {
 				t.Fatalf("error = %v, want concrete /session exact-copy guidance", err)
 			}
 			if fake.createCalls != 0 {

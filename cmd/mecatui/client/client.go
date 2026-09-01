@@ -261,12 +261,10 @@ func (c *Client) CreateSession(ctx context.Context, workspace string, mode mecat
 // session handle shown by mecatui.
 const SessionHandleWidth = 12
 
-// SessionIDDisplayWidth remains a compatibility alias for the shared handle width.
-const SessionIDDisplayWidth = SessionHandleWidth
-
 // SessionHandle returns the fixed, terminal-safe escaped prefix used by every
-// ordinary mecatui session presentation. Unreserved ASCII is copied verbatim;
-// every other UTF-8 byte is one uppercase %HH atom. The longest complete-atom
+// ordinary mecatui session presentation. Unreserved ASCII is copied verbatim,
+// except that a leading hyphen is escaped; every other UTF-8 byte is one
+// uppercase %HH atom. The longest complete-atom
 // prefix fitting SessionHandleWidth is returned. Empty or invalid UTF-8 IDs have
 // no handle.
 func SessionHandle(id string) string {
@@ -276,8 +274,8 @@ func SessionHandle(id string) string {
 	const hex = "0123456789ABCDEF"
 	var out strings.Builder
 	out.Grow(SessionHandleWidth)
-	for _, b := range []byte(id) {
-		safe := b >= 'A' && b <= 'Z' || b >= 'a' && b <= 'z' || b >= '0' && b <= '9' || b == '.' || b == '_' || b == '-'
+	for i, b := range []byte(id) {
+		safe := b >= 'A' && b <= 'Z' || b >= 'a' && b <= 'z' || b >= '0' && b <= '9' || b == '.' || b == '_' || b == '-' && i > 0
 		atomLen := 3
 		if safe {
 			atomLen = 1
@@ -308,6 +306,19 @@ func (c *Client) CreateDebugSession(ctx context.Context, targetID string, mode m
 	if err != nil {
 		return "", "", Capabilities{}, ResolvedModel{}, err
 	}
+	return c.createDebugSession(ctx, resolvedTarget, mode, sel, debugMCP...)
+}
+
+// CreateDebugSessionExact creates a debug session for an explicit full ID
+// without consulting the caller-visible session inventory.
+func (c *Client) CreateDebugSessionExact(ctx context.Context, targetID string, mode mecatlv1.PermissionMode, sel ModelSelection, debugMCP ...string) (string, string, Capabilities, ResolvedModel, error) {
+	if err := validateDebugTarget(targetID); err != nil {
+		return "", "", Capabilities{}, ResolvedModel{}, err
+	}
+	return c.createDebugSession(ctx, targetID, mode, sel, debugMCP...)
+}
+
+func (c *Client) createDebugSession(ctx context.Context, resolvedTarget string, mode mecatlv1.PermissionMode, sel ModelSelection, debugMCP ...string) (string, string, Capabilities, ResolvedModel, error) {
 	id, caps, resolved, err := c.createSession(ctx, &mecatlv1.CreateSessionRequest{
 		Profile:              "no-fs",
 		Mode:                 mode,
@@ -332,9 +343,22 @@ func (c *Client) CreateDebugSession(ctx context.Context, targetID string, mode m
 	return id, resolvedTarget, caps, resolved, nil
 }
 
-const debugTargetExactCopyGuidance = "open /session and copy the exact full session ID"
+const debugTargetExactCopyGuidance = "open /session to copy the exact full session ID, then retry with debug --exact SESSION_ID"
+
+func validateDebugTarget(targetID string) error {
+	if targetID == "" {
+		return errors.New("debug target session ID must not be empty")
+	}
+	if !utf8.ValidString(targetID) {
+		return errors.New("debug target session ID must be valid UTF-8")
+	}
+	return nil
+}
 
 func (c *Client) resolveDebugTarget(ctx context.Context, targetID string) (string, error) {
+	if err := validateDebugTarget(targetID); err != nil {
+		return "", err
+	}
 	if !isSessionHandleCandidate(targetID) {
 		return targetID, nil
 	}
@@ -347,24 +371,19 @@ func (c *Client) resolveDebugTarget(ctx context.Context, targetID string) (strin
 	for _, item := range sessions {
 		ids[item.ID] = struct{}{}
 	}
-	if _, ok := ids[targetID]; ok {
-		return targetID, nil
-	}
-
-	match := ""
+	matches := make([]string, 0, 1)
 	for id := range ids {
-		if SessionHandle(id) != targetID {
-			continue
+		if SessionHandle(id) == targetID {
+			matches = append(matches, id)
 		}
-		if match != "" {
-			return "", fmt.Errorf("session handle %q is ambiguous; %s", targetID, debugTargetExactCopyGuidance)
-		}
-		match = id
 	}
-	if match == "" {
+	if len(matches) > 1 {
+		return "", fmt.Errorf("session handle %q is ambiguous; %s", targetID, debugTargetExactCopyGuidance)
+	}
+	if len(matches) == 0 {
 		return "", fmt.Errorf("session handle %q did not match a session; %s", targetID, debugTargetExactCopyGuidance)
 	}
-	return match, nil
+	return matches[0], nil
 }
 
 func isSessionHandleCandidate(value string) bool {
@@ -373,7 +392,8 @@ func isSessionHandleCandidate(value string) bool {
 	}
 	for i := 0; i < len(value); i++ {
 		b := value[i]
-		if b >= 'A' && b <= 'Z' || b >= 'a' && b <= 'z' || b >= '0' && b <= '9' || b == '.' || b == '_' || b == '-' {
+		literal := b >= 'A' && b <= 'Z' || b >= 'a' && b <= 'z' || b >= '0' && b <= '9' || b == '.' || b == '_' || b == '-' && i > 0
+		if literal {
 			continue
 		}
 		if b != '%' || i+2 >= len(value) || !isUpperHex(value[i+1]) || !isUpperHex(value[i+2]) {

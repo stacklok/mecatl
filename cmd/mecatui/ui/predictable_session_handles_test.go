@@ -167,13 +167,15 @@ func TestPredictableSessionHandles_Scenario1_FixedCollisionBehavior(t *testing.T
 	}
 }
 
-func TestPredictableSessionHandles_Scenario1_EscapedUTF8AndControls(t *testing.T) {
+func TestPredictableSessionHandles_Scenario1_EscapedUTF8ControlsAndLeadingHyphen(t *testing.T) {
 	tests := []struct {
 		name, id, want string
 	}{
 		{"empty", "", ""},
 		{"exactly twelve safe", "abcdefghijkl", "abcdefghijkl"},
 		{"normal cap", "abcdefghijklmnop", "abcdefghijkl"},
+		{"leading hyphen", "-legacy-id", "%2Dlegacy-id"},
+		{"non-leading hyphens", "a-b-c", "a-b-c"},
 		{"escaped byte exactly fits", "123456789$tail", "123456789%24"},
 		{"escaped byte cannot fit", "1234567890$tail", "1234567890"},
 		{"shell significant", "abc$def;ghi", "abc%24def%3B"},
@@ -190,7 +192,7 @@ func TestPredictableSessionHandles_Scenario1_EscapedUTF8AndControls(t *testing.T
 			if got != tc.want {
 				t.Fatalf("SessionHandle(%q) = %q, want %q", tc.id, got, tc.want)
 			}
-			if len(got) > client.SessionHandleWidth || !allowed.MatchString(got) {
+			if len(got) > client.SessionHandleWidth || !allowed.MatchString(got) || strings.HasPrefix(got, "-") {
 				t.Fatalf("handle %q violates fixed ASCII grammar", got)
 			}
 		})

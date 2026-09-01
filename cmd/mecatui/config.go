@@ -33,6 +33,8 @@ type config struct {
 	// debugTarget binds a dedicated no-filesystem analysis session to one stored
 	// target. It comes only from the command grammar, never from a flag.
 	debugTarget string
+	// debugExact bypasses positional short-handle inventory resolution.
+	debugExact bool
 	// debugMCP selects configured server-global MCP servers by name for a debug session.
 	debugMCP []string
 	// helpAll is true when --help-all was passed; it requests the exhaustive

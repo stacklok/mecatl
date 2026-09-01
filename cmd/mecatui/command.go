@@ -64,15 +64,15 @@ var topLevelCommands = []topLevelCommand{
 	},
 	{
 		name:     "debug",
-		synopsis: "debug SESSION_ID [flags]",
-		purpose:  "diagnose a stored session by exact full ID or its displayed 12-column short handle (literal [A-Za-z0-9._-] or uppercase %HH atoms, no leading #); for ambiguous or unmatched handles, use /session to copy the exact ID",
+		synopsis: "debug (SESSION_ID | --exact SESSION_ID) [flags]",
+		purpose:  "diagnose a stored session by its displayed 12-column short handle, or bypass inventory with --exact and a full ID; for ambiguous or unmatched handles, use /session and --exact",
 		resolve: func(args []string) invocationResolution {
 			return resolveDebugCommand(modeLocal, "", args)
 		},
 	},
 	{
 		name:     "connect",
-		synopsis: "connect ADDRESS [sessions | debug SESSION_ID] [flags]",
+		synopsis: "connect ADDRESS [sessions | debug (SESSION_ID | --exact SESSION_ID)] [flags]",
 		purpose:  "dial a running mecated at ADDRESS (host:port), optionally browsing or debugging a stored session",
 		resolve:  resolveConnectCommand,
 	},
@@ -106,6 +106,7 @@ type invocationResolution struct {
 	address        string // connect or remote-login target; empty for local/login help
 	browseSessions bool   // launch directly into the shared stored-session inventory
 	debugTarget    string // immutable target for a dedicated no-filesystem debug session
+	debugExact     bool   // bypass local short-handle inventory resolution
 	helpIndex      bool   // render the top-level command index
 	remaining      []string
 	err            error
@@ -278,8 +279,22 @@ func resolveDebugCommand(mode transportMode, address string, args []string) invo
 	if len(args) == 1 && isHelpMetaFlag(args[0]) {
 		return invocationResolution{mode: mode, address: address, remaining: args}
 	}
-	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
-		return invocationResolution{err: helpUsageError("debug requires SESSION_ID before flags")}
+	if len(args) == 0 {
+		return invocationResolution{err: helpUsageError("debug requires SESSION_ID or --exact SESSION_ID")}
+	}
+	if args[0] == "--exact" {
+		if len(args) < 2 || args[1] == "" {
+			return invocationResolution{err: helpUsageError("debug --exact requires a non-empty SESSION_ID")}
+		}
+		return invocationResolution{mode: mode, address: address, debugTarget: args[1], debugExact: true, remaining: args[2:]}
+	}
+	if args[0] == "" || strings.HasPrefix(args[0], "-") {
+		return invocationResolution{err: helpUsageError("debug requires SESSION_ID or --exact SESSION_ID")}
+	}
+	for _, arg := range args[1:] {
+		if arg == "--exact" {
+			return invocationResolution{err: helpUsageError("debug positional SESSION_ID and --exact are mutually exclusive")}
+		}
 	}
 	return invocationResolution{mode: mode, address: address, debugTarget: args[0], remaining: args[1:]}
 }
@@ -333,8 +348,8 @@ func writeSoftWrapped(out io.Writer, indent, text string, width int) {
 // spellings and after a leading-word usage error.
 func writeTopLevelHelp(out io.Writer) {
 	_, _ = fmt.Fprintln(out, "Usage: mecatui [flags]")
-	_, _ = fmt.Fprintln(out, "       mecatui debug SESSION_ID [flags]")
-	_, _ = fmt.Fprintln(out, "       mecatui connect ADDRESS debug SESSION_ID [flags]")
+	_, _ = fmt.Fprintln(out, "       mecatui debug (SESSION_ID | --exact SESSION_ID) [flags]")
+	_, _ = fmt.Fprintln(out, "       mecatui connect ADDRESS debug (SESSION_ID | --exact SESSION_ID) [flags]")
 	_, _ = fmt.Fprintln(out, "       mecatui <command> [flags]")
 	_, _ = fmt.Fprintln(out)
 	_, _ = fmt.Fprintln(out, "Bare 'mecatui [flags]' hosts an embedded mecated server in-process (no loopback probe).")
