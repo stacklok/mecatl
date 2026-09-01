@@ -2,9 +2,9 @@
 id: 25-attempt-watch-deferred
 title: Guard the explicit deferral of attempt watch
 blocked_by: [24-learning-driver-ownership]
-status: in-progress
-branch: ""
-worktree: ""
+status: done
+branch: "plan-cloud-native-learning/25-attempt-watch-deferred"
+worktree: ".scratch/worktrees/25-attempt-watch-deferred"
 issue: ""
 retries: 0
 last_error: ""
