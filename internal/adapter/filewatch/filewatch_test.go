@@ -14,11 +14,12 @@ func TestWatcherCoalescesBurst(t *testing.T) {
 	mustWrite(t, path, "initial")
 
 	changes := make(chan struct{}, 4)
-	w := newTestWatcher(t, []string{path}, 50*time.Millisecond, 200*time.Millisecond, func() { changes <- struct{}{} })
+	w, armed := newTestWatcher(t, []string{path}, 50*time.Millisecond, 200*time.Millisecond, func() { changes <- struct{}{} })
 	defer w.Close()
 
 	for i := 0; i < 8; i++ {
 		mustWrite(t, path, "changed")
+		awaitChange(t, armed)
 	}
 	awaitChange(t, changes)
 	select {
@@ -34,7 +35,7 @@ func TestWatcherBoundsRepeatedEvents(t *testing.T) {
 	mustWrite(t, path, "initial")
 
 	changes := make(chan struct{}, 8)
-	w := newTestWatcher(t, []string{path, path}, 60*time.Millisecond, 150*time.Millisecond, func() { changes <- struct{}{} })
+	w, _ := newTestWatcher(t, []string{path, path}, 60*time.Millisecond, 150*time.Millisecond, func() { changes <- struct{}{} })
 	defer w.Close()
 
 	started := time.Now()
@@ -70,7 +71,7 @@ func TestWatcherSeesProjectedSymlinkSwap(t *testing.T) {
 
 	got := make(chan string, 2)
 	path := filepath.Join(dir, "value")
-	w := newTestWatcher(t, []string{path}, 30*time.Millisecond, 120*time.Millisecond, func() {
+	w, _ := newTestWatcher(t, []string{path}, 30*time.Millisecond, 120*time.Millisecond, func() {
 		body, err := os.ReadFile(path)
 		if err == nil {
 			got <- string(body)
@@ -125,11 +126,12 @@ func TestWatcherCloseJoinsInFlightCallback(t *testing.T) {
 	mustWrite(t, path, "initial")
 	started := make(chan struct{})
 	release := make(chan struct{})
-	w := newTestWatcher(t, []string{path}, 10*time.Millisecond, 20*time.Millisecond, func() {
+	w, armed := newTestWatcher(t, []string{path}, 10*time.Millisecond, 20*time.Millisecond, func() {
 		close(started)
 		<-release
 	})
 	mustWrite(t, path, "changed")
+	awaitChange(t, armed)
 	awaitChange(t, started)
 	closed := make(chan struct{})
 	go func() {
@@ -145,13 +147,18 @@ func TestWatcherCloseJoinsInFlightCallback(t *testing.T) {
 	awaitChange(t, closed)
 }
 
-func newTestWatcher(t *testing.T, paths []string, debounce, maxDebounce time.Duration, onChange func()) *Watcher {
+// newTestWatcher constructs a watcher through the unexported newWatcher entry
+// point so tests can synchronise on the armed channel (the same per-arm signal
+// TestWatcherCloseCancelsArmedCallback uses) instead of racing real wall-clock
+// timing against the watcher goroutine's startup.
+func newTestWatcher(t *testing.T, paths []string, debounce, maxDebounce time.Duration, onChange func()) (*Watcher, <-chan struct{}) {
 	t.Helper()
-	w, err := New(paths, debounce, maxDebounce, onChange, func(err error) { t.Errorf("watch error: %v", err) })
+	armed := make(chan struct{}, 1)
+	w, err := newWatcher(paths, debounce, maxDebounce, onChange, func(err error) { t.Errorf("watch error: %v", err) }, armed)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return w
+	return w, armed
 }
 
 func awaitChange(t *testing.T, changes <-chan struct{}) {
