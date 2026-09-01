@@ -4,4 +4,161 @@
 
 ```ts
 
+import type { CallOptions } from '@connectrpc/connect';
+import type { ClientSessionOptions } from 'node:http2';
+import type { DescMessage } from '@bufbuild/protobuf';
+import type { DescMethodStreaming } from '@bufbuild/protobuf';
+import type { DescMethodUnary } from '@bufbuild/protobuf';
+import type { JsonValue } from '@bufbuild/protobuf';
+import type { MessageInitShape } from '@bufbuild/protobuf';
+import type { MessageShape } from '@bufbuild/protobuf';
+import { Transport } from '@connectrpc/connect';
+
+// @public (undocumented)
+export class AuthenticationError extends MecatlError {
+    constructor(message: string, options: Omit<MecatlErrorOptions, "code">);
+}
+
+// @public
+export function createHttpTransport(options: HttpTransportOptions): Transport;
+
+// @public
+export function createNodeTransport(options: NodeTransportOptions): Transport;
+
+// @public
+export function createRawClient(options: RawClientOptions): RawClient;
+
+// @public (undocumented)
+export interface CredentialOptions {
+    credentialProvider?: CredentialProvider;
+    headers?: HeadersInit;
+}
+
+// @public (undocumented)
+export type CredentialProvider = () => HeadersInit | Promise<HeadersInit>;
+
+// @public
+export function getRawJson(message: object): JsonValue | undefined;
+
+// @public (undocumented)
+export interface HttpTransportOptions extends CredentialOptions {
+    // (undocumented)
+    baseUrl: string;
+    credentials?: RequestCredentials;
+    fetch?: typeof globalThis.fetch;
+}
+
+// @public (undocumented)
+export class IncompatibleServerError extends MecatlError {
+    constructor(message: string, options: Omit<MecatlErrorOptions, "code">);
+}
+
+// @public (undocumented)
+export class InvalidStateError extends MecatlError {
+    constructor(message: string, options: Omit<MecatlErrorOptions, "code">);
+}
+
+// @public
+export const MECATL_ERROR_CODES: readonly ["activity_gap", "child_not_found", "cleanup_backend", "cleanup_plan_stale", "cleanup_unsupported", "client_mcp_unreachable", "client_mcp_unsupported", "conflict", "cursor_expired", "cursor_malformed", "draining", "dream_apply_failed", "dream_capacity", "dream_conflict", "dream_deadline", "dream_generate_failed", "dream_in_progress", "dream_not_found", "dream_request_failed", "dream_terminal_conflict", "dream_unavailable", "failed_precondition", "failed_step_retry_ineligible", "fire_now_overlap", "internal", "invalid_argument", "learning_unavailable", "management_unauthorized", "migration_backend", "migration_conflict", "migration_unsupported", "no_active_run", "no_event_log", "no_mcp_provider", "no_schedule_store", "not_awaiting_plan", "not_found", "proposal_conflict", "request_too_large", "resource_exhausted", "schedule_disabled", "schedule_exhausted", "schedule_not_found", "schedule_not_leader", "schedule_unsupported", "scheduler_not_running", "session_delete_unsupported", "session_leased_elsewhere", "session_metadata_cursor_restart", "session_metadata_paging_unsupported", "session_not_found", "stale_run_control", "storage_health_backend", "team_not_found", "team_not_running", "team_running", "teams_disabled", "too_many_session_engines", "too_many_teams", "unimplemented", "watch_lagging", "watch_unsupported"];
+
+// @public
+export class MecatlError extends Error {
+    constructor(message: string, options: MecatlErrorOptions);
+    // (undocumented)
+    readonly code: MecatlErrorCode;
+    // (undocumented)
+    readonly requestId: string | undefined;
+    // (undocumented)
+    readonly status: number | undefined;
+    // (undocumented)
+    toJSON(): Record<string, unknown>;
+    // (undocumented)
+    readonly transport: TransportKind;
+}
+
+// @public (undocumented)
+export type MecatlErrorCode = ServerErrorCode | SDKErrorCode;
+
+// @public (undocumented)
+export interface MecatlErrorOptions {
+    // (undocumented)
+    cause?: unknown;
+    // (undocumented)
+    code: MecatlErrorCode;
+    // (undocumented)
+    requestId?: string | undefined;
+    // (undocumented)
+    status?: number | undefined;
+    // (undocumented)
+    transport: TransportKind;
+}
+
+// @public (undocumented)
+export interface NodeTransportCommonOptions extends CredentialOptions {
+    nodeOptions?: Omit<ClientSessionOptions, "createConnection">;
+}
+
+// @public (undocumented)
+export type NodeTransportOptions = NodeTransportCommonOptions & ({
+    baseUrl: string;
+    socketPath?: never;
+} | {
+    baseUrl?: string;
+    socketPath: string;
+});
+
+// @public (undocumented)
+export class ProtocolError extends MecatlError {
+    constructor(message: string, options: Omit<MecatlErrorOptions, "code">);
+}
+
+// @public
+export interface RawClient {
+    // (undocumented)
+    stream<I extends DescMessage, O extends DescMessage>(method: DescMethodStreaming<I, O>, input: AsyncIterable<MessageInitShape<I>>, options?: CallOptions): AsyncIterable<MessageShape<O>>;
+    // (undocumented)
+    unary<I extends DescMessage, O extends DescMessage>(method: DescMethodUnary<I, O>, input: MessageInitShape<I>, options?: CallOptions): Promise<MessageShape<O>>;
+}
+
+// @public (undocumented)
+export interface RawClientOptions {
+    transport: Transport;
+    transportKind?: TransportKind;
+}
+
+// @public (undocumented)
+export type SDKErrorCode = "authentication" | "incompatible_server" | "invalid_state" | "protocol" | "transport" | "unsupported_feature";
+
+// @public (undocumented)
+export class ServerError extends MecatlError {
+    constructor(message: string, options: Omit<MecatlErrorOptions, "code"> & {
+        code: ServerErrorCode;
+    });
+    // (undocumented)
+    readonly code: ServerErrorCode;
+}
+
+// @public (undocumented)
+export type ServerErrorCode = (typeof MECATL_ERROR_CODES)[number] | "unknown";
+
+// @public (undocumented)
+export const SUPPORTED_API_MAJOR = 1;
+
+export { Transport }
+
+// @public (undocumented)
+export class TransportError extends MecatlError {
+    constructor(message: string, options: Omit<MecatlErrorOptions, "code">);
+}
+
+// @public (undocumented)
+export type TransportKind = "grpc" | "http";
+
+// @public (undocumented)
+export class UnsupportedFeatureError extends MecatlError {
+    constructor(feature: string, options: Omit<MecatlErrorOptions, "code">);
+    // (undocumented)
+    readonly feature: string;
+}
+
 ```

@@ -3,4 +3,7 @@
  *
  * @packageDocumentation
  */
-export {};
+
+export * from "./index.js";
+export type { NodeTransportCommonOptions, NodeTransportOptions } from "./node-transport.js";
+export { createNodeTransport } from "./node-transport.js";

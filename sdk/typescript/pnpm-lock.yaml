@@ -14,6 +14,9 @@ importers:
       '@connectrpc/connect':
         specifier: 2.1.2
         version: 2.1.2(@bufbuild/protobuf@2.14.0)
+      '@connectrpc/connect-node':
+        specifier: 2.1.2
+        version: 2.1.2(@bufbuild/protobuf@2.14.0)(@connectrpc/connect@2.1.2(@bufbuild/protobuf@2.14.0))
     devDependencies:
       '@biomejs/biome':
         specifier: 2.5.11
@@ -92,6 +95,13 @@ packages:
 
   '@bufbuild/protobuf@2.14.0':
     resolution: {integrity: sha512-C3UGsiCwSprE2NKIIFA3hCDlpXTMCAXRZuEVp88L1GY36Y41+rYL5fryE+nOFhp4p4JPQvdV8PQ4DWgHgeTE+w==}
+
+  '@connectrpc/connect-node@2.1.2':
+    resolution: {integrity: sha512-+i/aAOpsI8sIx1mbYp6d99zvxaUSF6t/jP9Ux9maAmjsZPgmIQ3JuIeYi0zJIP9zlCnBlJjkpPosshCgdRuThQ==}
+    engines: {node: '>=20'}
+    peerDependencies:
+      '@bufbuild/protobuf': ^2.7.0
+      '@connectrpc/connect': 2.1.2
 
   '@connectrpc/connect@2.1.2':
     resolution: {integrity: sha512-MXkBijtcX09R10Eb6sFeIetc6w6746eio6xtfuyVOH7oQAacT1X0GzMIQFux6Qy8cq3W/T5qX5Bei8YbFtmRGA==}
@@ -736,6 +746,11 @@ snapshots:
     optional: true
 
   '@bufbuild/protobuf@2.14.0': {}
+
+  '@connectrpc/connect-node@2.1.2(@bufbuild/protobuf@2.14.0)(@connectrpc/connect@2.1.2(@bufbuild/protobuf@2.14.0))':
+    dependencies:
+      '@bufbuild/protobuf': 2.14.0
+      '@connectrpc/connect': 2.1.2(@bufbuild/protobuf@2.14.0)
 
   '@connectrpc/connect@2.1.2(@bufbuild/protobuf@2.14.0)':
     dependencies:
