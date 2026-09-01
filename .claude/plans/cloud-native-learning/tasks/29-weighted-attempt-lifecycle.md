@@ -2,9 +2,9 @@
 id: 29-weighted-attempt-lifecycle
 title: Route weighted admission through the durable attempt worker
 blocked_by: [28-automatic-reservation-reconciliation]
-status: in-progress
-branch: ""
-worktree: ""
+status: done
+branch: "plan-cloud-native-learning/29-weighted-attempt-lifecycle"
+worktree: ".scratch/worktrees/29-weighted-attempt-lifecycle"
 issue: ""
 retries: 0
 last_error: ""
