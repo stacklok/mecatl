@@ -2,7 +2,7 @@
 id: 16-learning-driver-composition
 title: Negotiate and compose distributed learning repositories
 blocked_by: [08-attempt-driver-repository, 14-distributed-proposal-repository, 15-distributed-skill-repository]
-status: pending
+status: in-progress
 branch: ""
 worktree: ""
 issue: ""
