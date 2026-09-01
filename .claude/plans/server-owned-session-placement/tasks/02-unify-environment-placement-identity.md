@@ -2,7 +2,7 @@
 id: 02-unify-environment-placement-identity
 title: Unify environment and placement identity
 blocked_by: [01-placement-foundation]
-status: pending
+status: in-progress
 branch: ""
 worktree: ""
 issue: ""
