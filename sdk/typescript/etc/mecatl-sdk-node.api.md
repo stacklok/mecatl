@@ -472,6 +472,13 @@ export interface ParallelEventPayload {
 }
 
 // @public
+export class PermissionAskAlreadyResolvedError extends InvalidStateError {
+    constructor(askId: string, options: Omit<MecatlErrorOptions, "code">);
+    // (undocumented)
+    readonly askId: string;
+}
+
+// @public
 export interface PermissionAskEventPayload {
     // (undocumented)
     readonly args: string;
@@ -482,6 +489,12 @@ export interface PermissionAskEventPayload {
     // (undocumented)
     readonly tool: string;
 }
+
+// @public
+export type PermissionAskResponder = (ask: PermissionAskEventPayload, signal: AbortSignal) => PermissionVerdict | undefined | Promise<PermissionVerdict | undefined>;
+
+// @public
+export type PermissionVerdict = "allow_once" | "allow_always" | "deny";
 
 // @public (undocumented)
 export class ProtocolError extends MecatlError {
@@ -529,10 +542,17 @@ export interface Run extends AsyncIterable<Event_2> {
     cancel(): Promise<void>;
     // (undocumented)
     readonly id: string;
+    resolveAsk(askId: string, verdict: PermissionVerdict): Promise<void>;
     result(): Promise<RunResult>;
     // (undocumented)
     readonly sessionId: string;
     steer(text: string): Promise<void>;
+}
+
+// @public
+export interface RunOptions {
+    // (undocumented)
+    onPermissionAsk?: PermissionAskResponder;
 }
 
 // @public
@@ -588,7 +608,7 @@ export interface Session {
     delete(): Promise<void>;
     // (undocumented)
     readonly id: string;
-    run(prompt: string): Promise<Run>;
+    run(prompt: string, options?: RunOptions): Promise<Run>;
 }
 
 // @public

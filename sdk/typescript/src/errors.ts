@@ -164,6 +164,16 @@ export class InvalidStateError extends MecatlError {
 /** A local run is already active on this Session handle. @public */
 export class SessionBusyError extends InvalidStateError {}
 
+/** A permission ask is no longer pending on its originating run. @public */
+export class PermissionAskAlreadyResolvedError extends InvalidStateError {
+  readonly askId: string;
+
+  constructor(askId: string, options: Omit<MecatlErrorOptions, "code">) {
+    super(`Permission ask ${askId} is already resolved`, options);
+    this.askId = askId;
+  }
+}
+
 /** @public */
 export class IncompatibleServerError extends MecatlError {
   constructor(message: string, options: Omit<MecatlErrorOptions, "code">) {

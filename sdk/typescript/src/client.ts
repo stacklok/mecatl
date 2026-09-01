@@ -20,7 +20,7 @@ import {
 import { type ConverseResponse, type Event, HarnessService } from "./gen/mecatl/v1/harness_pb.js";
 import { createHttpTransport, type HttpTransportOptions } from "./http.js";
 import { createRawClient, type RawClient } from "./raw.js";
-import { type ConverseFrame, type Run, RunImpl } from "./run.js";
+import { type ConverseFrame, type Run, RunImpl, type RunOptions } from "./run.js";
 
 /** The complete connection-state vocabulary exposed by the SDK. @public */
 export type ConnectionStatus =
@@ -93,7 +93,7 @@ export interface ForkSessionOptions {
 export interface Session {
   readonly id: string;
   /** Starts a run and resolves once its first run-ID-bearing event arrives. */
-  run(prompt: string): Promise<Run>;
+  run(prompt: string, options?: RunOptions): Promise<Run>;
   /** Releases runtime resources without removing the durable session. */
   close(): Promise<void>;
   /** Permanently removes the durable session and its sidecars. */
@@ -153,7 +153,7 @@ class SessionImpl implements Session {
     this.#operations = operations;
   }
 
-  async run(prompt: string): Promise<Run> {
+  async run(prompt: string, options: RunOptions = {}): Promise<Run> {
     this.#operations.assertOpen();
     if (this.#busy) {
       throw new SessionBusyError("A run is already active on this Session", {
@@ -195,10 +195,17 @@ class SessionImpl implements Session {
         this.#busy = false;
         input.close();
       }
-      return new RunImpl(this.id, first.runId, first, events, {
-        send: (frame) => input.send(frame),
-        transportKind: this.#operations.transportKind,
-      });
+      return new RunImpl(
+        this.id,
+        first.runId,
+        first,
+        events,
+        {
+          send: (frame) => input.send(frame),
+          transportKind: this.#operations.transportKind,
+        },
+        options,
+      );
     } catch (error) {
       this.#busy = false;
       input.close();

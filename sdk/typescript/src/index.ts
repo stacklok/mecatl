@@ -34,6 +34,7 @@ export {
   InvalidStateError,
   MECATL_ERROR_CODES,
   MecatlError,
+  PermissionAskAlreadyResolvedError,
   ProtocolError,
   ServerError,
   SessionBusyError,
@@ -84,4 +85,10 @@ export type { HttpTransportOptions } from "./http.js";
 export { createHttpTransport } from "./http.js";
 export type { RawClient, RawClientOptions } from "./raw.js";
 export { createRawClient, getRawJson, SUPPORTED_API_MAJOR } from "./raw.js";
-export type { Run, RunResult } from "./run.js";
+export type {
+  PermissionAskResponder,
+  PermissionVerdict,
+  Run,
+  RunOptions,
+  RunResult,
+} from "./run.js";
