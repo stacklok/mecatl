@@ -22,8 +22,10 @@ export type {
 export { connect } from "./client.js";
 export type { CredentialOptions, CredentialProvider } from "./credentials.js";
 export type {
+  ErrorOrigin,
   MecatlErrorCode,
   MecatlErrorOptions,
+  PromptValidationReason,
   SDKErrorCode,
   ServerErrorCode,
   TransportKind,
@@ -35,6 +37,7 @@ export {
   MECATL_ERROR_CODES,
   MecatlError,
   PermissionAskAlreadyResolvedError,
+  PromptValidationError,
   ProtocolError,
   ServerError,
   SessionBusyError,
@@ -83,6 +86,25 @@ export type {
 export { MECATL_EVENT_KINDS } from "./events.js";
 export type { HttpTransportOptions } from "./http.js";
 export { createHttpTransport } from "./http.js";
+export type {
+  AudioPromptPart,
+  ImagePromptPart,
+  MediaPartOptions,
+  MediaPartSource,
+  PromptInput,
+  PromptPart,
+  TextPromptPart,
+} from "./media.js";
+export {
+  audioPart,
+  audioPartFromBlob,
+  imagePart,
+  imagePartFromBlob,
+  MAX_MEDIA_PART_BYTES,
+  MAX_PROMPT_MEDIA_BYTES,
+  MAX_PROMPT_MEDIA_PARTS,
+  textPart,
+} from "./media.js";
 export type { RawClient, RawClientOptions } from "./raw.js";
 export { createRawClient, getRawJson, SUPPORTED_API_MAJOR } from "./raw.js";
 export type {

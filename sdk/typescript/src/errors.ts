@@ -74,6 +74,7 @@ export type ServerErrorCode = (typeof MECATL_ERROR_CODES)[number] | "unknown";
 export type SDKErrorCode =
   | "authentication"
   | "incompatible_server"
+  | "invalid_prompt"
   | "invalid_state"
   | "protocol"
   | "transport"
@@ -82,6 +83,17 @@ export type SDKErrorCode =
 export type MecatlErrorCode = ServerErrorCode | SDKErrorCode;
 /** @public */
 export type TransportKind = "grpc" | "http";
+/** The request transport, or `local` when validation failed before transport selection. @public */
+export type ErrorOrigin = TransportKind | "local";
+
+/** Stable reasons reported by PromptValidationError. @public */
+export type PromptValidationReason =
+  | "capability"
+  | "mime_type"
+  | "prompt"
+  | "size"
+  | "source_xor"
+  | "url";
 
 /** @public */
 export interface MecatlErrorOptions {
@@ -89,7 +101,7 @@ export interface MecatlErrorOptions {
   code: MecatlErrorCode;
   requestId?: string | undefined;
   status?: number | undefined;
-  transport: TransportKind;
+  transport: ErrorOrigin;
 }
 
 /** Base class for every error authored by the SDK. @public */
@@ -97,7 +109,7 @@ export class MecatlError extends Error {
   readonly code: MecatlErrorCode;
   readonly requestId: string | undefined;
   readonly status: number | undefined;
-  readonly transport: TransportKind;
+  readonly transport: ErrorOrigin;
 
   constructor(message: string, options: MecatlErrorOptions) {
     super(message, options.cause === undefined ? undefined : { cause: options.cause });
@@ -158,6 +170,16 @@ export class UnsupportedFeatureError extends MecatlError {
 export class InvalidStateError extends MecatlError {
   constructor(message: string, options: Omit<MecatlErrorOptions, "code">) {
     super(message, { ...options, code: "invalid_state" });
+  }
+}
+
+/** A structured prompt failed local validation before any request was sent. @public */
+export class PromptValidationError extends MecatlError {
+  readonly reason: PromptValidationReason;
+
+  constructor(reason: PromptValidationReason, message: string) {
+    super(message, { code: "invalid_prompt", transport: "local" });
+    this.reason = reason;
   }
 }
 

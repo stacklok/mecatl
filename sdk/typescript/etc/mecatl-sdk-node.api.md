@@ -53,6 +53,27 @@ export interface ArchivedConversationMessage {
     readonly toolResult?: ToolResultEventPayload | undefined;
 }
 
+// @public
+export function audioPart(options: MediaPartOptions): AudioPromptPart;
+
+// @public
+export function audioPartFromBlob(blob: Blob, mimeType?: string): Promise<AudioPromptPart>;
+
+// @public
+export function audioPartFromPath(path: string | URL, mimeType: string): Promise<AudioPromptPart>;
+
+// @public
+export interface AudioPromptPart {
+    // (undocumented)
+    readonly bytes?: Uint8Array;
+    // (undocumented)
+    readonly kind: "audio";
+    // (undocumented)
+    readonly mimeType: string;
+    // (undocumented)
+    readonly url?: string;
+}
+
 // @public (undocumented)
 export class AuthenticationError extends MecatlError {
     constructor(message: string, options: Omit<MecatlErrorOptions, "code">);
@@ -138,6 +159,9 @@ export interface CredentialOptions {
 
 // @public (undocumented)
 export type CredentialProvider = () => HeadersInit | Promise<HeadersInit>;
+
+// @public
+export type ErrorOrigin = TransportKind | "local";
 
 // @public
 type Event_2 = KnownEvent | UnknownEvent;
@@ -327,6 +351,27 @@ export interface HttpTransportOptions extends CredentialOptions {
     fetch?: typeof globalThis.fetch;
 }
 
+// @public
+export function imagePart(options: MediaPartOptions): ImagePromptPart;
+
+// @public
+export function imagePartFromBlob(blob: Blob, mimeType?: string): Promise<ImagePromptPart>;
+
+// @public
+export function imagePartFromPath(path: string | URL, mimeType: string): Promise<ImagePromptPart>;
+
+// @public
+export interface ImagePromptPart {
+    // (undocumented)
+    readonly bytes?: Uint8Array;
+    // (undocumented)
+    readonly kind: "image";
+    // (undocumented)
+    readonly mimeType: string;
+    // (undocumented)
+    readonly url?: string;
+}
+
 // @public (undocumented)
 export class IncompatibleServerError extends MecatlError {
     constructor(message: string, options: Omit<MecatlErrorOptions, "code">);
@@ -355,6 +400,15 @@ export type KnownEvent = {
 export type KnownEventKind = (typeof MECATL_EVENT_KINDS)[number];
 
 // @public
+export const MAX_MEDIA_PART_BYTES: number;
+
+// @public
+export const MAX_PROMPT_MEDIA_BYTES: number;
+
+// @public
+export const MAX_PROMPT_MEDIA_PARTS = 16;
+
+// @public
 export const MECATL_ERROR_CODES: readonly ["activity_gap", "child_not_found", "cleanup_backend", "cleanup_plan_stale", "cleanup_unsupported", "client_mcp_unreachable", "client_mcp_unsupported", "conflict", "cursor_expired", "cursor_malformed", "draining", "dream_apply_failed", "dream_capacity", "dream_conflict", "dream_deadline", "dream_generate_failed", "dream_in_progress", "dream_not_found", "dream_request_failed", "dream_terminal_conflict", "dream_unavailable", "failed_precondition", "failed_step_retry_ineligible", "fire_now_overlap", "internal", "invalid_argument", "learning_unavailable", "management_unauthorized", "migration_backend", "migration_conflict", "migration_unsupported", "no_active_run", "no_event_log", "no_mcp_provider", "no_schedule_store", "not_awaiting_plan", "not_found", "proposal_conflict", "request_too_large", "resource_exhausted", "schedule_disabled", "schedule_exhausted", "schedule_not_found", "schedule_not_leader", "schedule_unsupported", "scheduler_not_running", "session_delete_unsupported", "session_leased_elsewhere", "session_metadata_cursor_restart", "session_metadata_paging_unsupported", "session_not_found", "stale_run_control", "storage_health_backend", "team_not_found", "team_not_running", "team_running", "teams_disabled", "too_many_session_engines", "too_many_teams", "unimplemented", "watch_lagging", "watch_unsupported"];
 
 // @public
@@ -372,7 +426,7 @@ export class MecatlError extends Error {
     // (undocumented)
     toJSON(): Record<string, unknown>;
     // (undocumented)
-    readonly transport: TransportKind;
+    readonly transport: ErrorOrigin;
 }
 
 // @public (undocumented)
@@ -389,7 +443,21 @@ export interface MecatlErrorOptions {
     // (undocumented)
     status?: number | undefined;
     // (undocumented)
-    transport: TransportKind;
+    transport: ErrorOrigin;
+}
+
+// @public
+export interface MediaPartOptions extends MediaPartSource {
+    // (undocumented)
+    mimeType: string;
+}
+
+// @public
+export interface MediaPartSource {
+    // (undocumented)
+    bytes?: Uint8Array;
+    // (undocumented)
+    url?: string;
 }
 
 // @public
@@ -496,6 +564,22 @@ export type PermissionAskResponder = (ask: PermissionAskEventPayload, signal: Ab
 // @public
 export type PermissionVerdict = "allow_once" | "allow_always" | "deny";
 
+// @public
+export type PromptInput = string | readonly PromptPart[];
+
+// @public
+export type PromptPart = TextPromptPart | ImagePromptPart | AudioPromptPart;
+
+// @public
+export class PromptValidationError extends MecatlError {
+    constructor(reason: PromptValidationReason, message: string);
+    // (undocumented)
+    readonly reason: PromptValidationReason;
+}
+
+// @public
+export type PromptValidationReason = "capability" | "mime_type" | "prompt" | "size" | "source_xor" | "url";
+
 // @public (undocumented)
 export class ProtocolError extends MecatlError {
     constructor(message: string, options: Omit<MecatlErrorOptions, "code">);
@@ -588,7 +672,7 @@ export interface ScheduleEventPayload {
 }
 
 // @public (undocumented)
-export type SDKErrorCode = "authentication" | "incompatible_server" | "invalid_state" | "protocol" | "transport" | "unsupported_feature";
+export type SDKErrorCode = "authentication" | "incompatible_server" | "invalid_prompt" | "invalid_state" | "protocol" | "transport" | "unsupported_feature";
 
 // @public (undocumented)
 export class ServerError extends MecatlError {
@@ -608,7 +692,7 @@ export interface Session {
     delete(): Promise<void>;
     // (undocumented)
     readonly id: string;
-    run(prompt: string, options?: RunOptions): Promise<Run>;
+    run(prompt: PromptInput, options?: RunOptions): Promise<Run>;
 }
 
 // @public
@@ -816,6 +900,17 @@ export interface TeamTaskEventPayload {
     readonly id: string;
     // (undocumented)
     readonly state: string;
+}
+
+// @public
+export function textPart(text: string): TextPromptPart;
+
+// @public
+export interface TextPromptPart {
+    // (undocumented)
+    readonly kind: "text";
+    // (undocumented)
+    readonly text: string;
 }
 
 // @public

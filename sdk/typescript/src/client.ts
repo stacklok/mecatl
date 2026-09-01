@@ -5,6 +5,7 @@ import type {
   MessageInitShape,
   MessageShape,
 } from "@bufbuild/protobuf";
+import { create } from "@bufbuild/protobuf";
 import type { Transport } from "@connectrpc/connect";
 
 import {
@@ -17,8 +18,14 @@ import {
   TransportError,
   type TransportKind,
 } from "./errors.js";
-import { type ConverseResponse, type Event, HarnessService } from "./gen/mecatl/v1/harness_pb.js";
+import {
+  ContentSchema,
+  type ConverseResponse,
+  type Event,
+  HarnessService,
+} from "./gen/mecatl/v1/harness_pb.js";
 import { createHttpTransport, type HttpTransportOptions } from "./http.js";
+import { encodePrompt, type PromptCapabilities, type PromptInput } from "./media.js";
 import { createRawClient, type RawClient } from "./raw.js";
 import { type ConverseFrame, type Run, RunImpl, type RunOptions } from "./run.js";
 
@@ -93,7 +100,7 @@ export interface ForkSessionOptions {
 export interface Session {
   readonly id: string;
   /** Starts a run and resolves once its first run-ID-bearing event arrives. */
-  run(prompt: string, options?: RunOptions): Promise<Run>;
+  run(prompt: PromptInput, options?: RunOptions): Promise<Run>;
   /** Releases runtime resources without removing the durable session. */
   close(): Promise<void>;
   /** Permanently removes the durable session and its sidecars. */
@@ -146,23 +153,46 @@ const HEARTBEAT_INTERVAL_MS = 30_000;
 class SessionImpl implements Session {
   readonly id: string;
   readonly #operations: SessionOperations;
+  readonly #promptCapabilities: PromptCapabilities | undefined;
   #busy = false;
 
-  constructor(id: string, operations: SessionOperations) {
+  constructor(
+    id: string,
+    operations: SessionOperations,
+    promptCapabilities: PromptCapabilities | undefined,
+  ) {
     this.id = id;
     this.#operations = operations;
+    this.#promptCapabilities = promptCapabilities;
   }
 
-  async run(prompt: string, options: RunOptions = {}): Promise<Run> {
+  async run(prompt: PromptInput, options: RunOptions = {}): Promise<Run> {
     this.#operations.assertOpen();
     if (this.#busy) {
       throw new SessionBusyError("A run is already active on this Session", {
         transport: this.#operations.transportKind,
       });
     }
+    const encoded = encodePrompt(prompt, this.#promptCapabilities);
     this.#busy = true;
     const input = new ConverseInput(
-      { kind: { case: "prompt", value: { sessionId: this.id, text: prompt } } },
+      {
+        kind: {
+          case: "prompt",
+          value: {
+            parts: encoded.media.map((part) =>
+              create(ContentSchema, {
+                ...(part.bytes === undefined ? {} : { data: part.bytes }),
+                kind: part.kind === "image" ? 1 : 2,
+                mimeType: part.mimeType,
+                ...(part.url === undefined ? {} : { url: part.url }),
+              }),
+            ),
+            sessionId: this.id,
+            text: encoded.text,
+          },
+        },
+      },
       this.#operations.transportKind,
     );
     const responses = this.#operations
@@ -261,14 +291,14 @@ class ClientImpl implements Client {
     this.sessions = {
       create: async (input) => {
         const response = await this.#unary(HarnessService.method.createSession, input);
-        return this.#session(response.sessionId, "CreateSession");
+        return this.#session(response.sessionId, "CreateSession", response.sessionCapabilities);
       },
       fork: async (sourceSessionId, input = {}) => {
         const response = await this.#unary(HarnessService.method.forkSession, {
           ...input,
           sourceSessionId,
         });
-        return this.#session(response.sessionId, "ForkSession");
+        return this.#session(response.sessionId, "ForkSession", undefined);
       },
       get: async (sessionId) => {
         const response = await this.#unary(HarnessService.method.getSession, { sessionId });
@@ -277,7 +307,7 @@ class ClientImpl implements Client {
             transport: this.#transportKind,
           });
         }
-        return new SessionImpl(response.session.sessionId, this.#operations);
+        return new SessionImpl(response.session.sessionId, this.#operations, undefined);
       },
     };
     this.status = {
@@ -328,13 +358,17 @@ class ClientImpl implements Client {
     }
   }
 
-  #session(sessionId: string, operation: string): Session {
+  #session(
+    sessionId: string,
+    operation: string,
+    promptCapabilities: PromptCapabilities | undefined,
+  ): Session {
     if (sessionId === "") {
       throw new ProtocolError(`${operation} returned no session id`, {
         transport: this.#transportKind,
       });
     }
-    return new SessionImpl(sessionId, this.#operations);
+    return new SessionImpl(sessionId, this.#operations, promptCapabilities);
   }
 
   async #unary<I extends DescMessage, O extends DescMessage>(
