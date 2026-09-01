@@ -14,7 +14,7 @@ accumulator: sdk/10-architecture-adr
 # Task brief
 
 `task generate` must emit committed TypeScript for `mecatl.v1` alongside the
-existing Go, per ADR 0278 Decision 2. Scenario 2.
+existing Go, per ADR 0279 Decision 2. Scenario 2.
 
 **Hard constraints:**
 - Second buf template (e.g. `buf.gen.ts.yaml`), NOT a plugin added to the

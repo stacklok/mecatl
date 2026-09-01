@@ -4,7 +4,7 @@ M1 of `@stacklok/mecatl-sdk`: scaffold, codegen, transports, Client/Session/Run,
 events, permissions, multimodal helpers, offline e2e.
 
 Delivery is a **linear `gh stack`** rooted at `sdk/10-architecture-adr`
-(PR #908 / ADR 0278). Parallelism in scenarios 4–8 is serialised so each
+(PR #908 / ADR 0279). Parallelism in scenarios 4–8 is serialised so each
 layer is one stacked PR.
 
 Plan: `docs/acceptance/sdk-typescript-core.md`. Parent issue: #821.

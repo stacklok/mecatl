@@ -1,4 +1,4 @@
-# ADR 0278 — TypeScript SDK architecture: Connect-ES transport, protobuf-es codegen, in-repo pnpm project
+# ADR 0279 — TypeScript SDK architecture: Connect-ES transport, protobuf-es codegen, in-repo pnpm project
 
 - Status: Proposed
 - Date: 2026-09-01

@@ -19,7 +19,7 @@ do **not** implement Client/Session/Run, do **not** touch
 `contracts/proto/mecatl/v1/harness.proto` or `internal/adapter/server/`.
 Do **not** change `website/` (it stays on npm). No root-level `package.json`.
 
-Read ADR 0278 (`docs/adr/0278-typescript-sdk-architecture.md`) Decision 4
+Read ADR 0279 (`docs/adr/0279-typescript-sdk-architecture.md`) Decision 4
 before choosing tools. The settled toolchain: exactly-pinned **pnpm 11** via
 `packageManager` (CI installs pnpm explicitly at that version — never assume
 corepack); **TypeScript 6** for development, declarations compatible with TS
@@ -31,7 +31,7 @@ Subpath exports exactly `.` / `./node` / `./gen`. Node 22+.
 
 **Work:**
 - `sdk/typescript/`: package.json (`name` is `@stacklok/mecatl-sdk` per
-  ADR 0278 Decision 6; exports map, `packageManager`, Apache-2.0),
+  ADR 0279 Decision 6; exports map, `packageManager`, Apache-2.0),
   tsconfig, biome config (exclude generated `src/gen/` from formatting),
   vitest config, API Extractor configs + committed reports for `.` and
   `./node`, local `.gitignore` (node_modules, dist, API Extractor temp),

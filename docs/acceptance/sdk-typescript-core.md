@@ -1,9 +1,9 @@
 # TypeScript SDK core (M1) — acceptance plan
 
 **Phase:** capability — `@stacklok/mecatl-sdk` M1: foundation, codegen, and core runs
-**Status:** in-progress, 2026-09-01. Synthesised from the settled #821 design contract plus the transport decision recorded in ADR 0278.
+**Status:** in-progress, 2026-09-01. Synthesised from the settled #821 design contract plus the transport decision recorded in ADR 0279.
 **Issue:** [stacklok/mecatl#821](https://github.com/stacklok/mecatl/issues/821) (parent: [#761](https://github.com/stacklok/mecatl/issues/761)).
-**ADR:** [ADR-0278](../adr/0278-typescript-sdk-architecture.md) — Connect-ES v2 + protobuf-es v2, the injected-Transport seam, the in-repo pnpm/biome/vitest toolchain, and the in-part supersession of [ADR-0253](../adr/0253-sdk-mocking-testkit.md).
+**ADR:** [ADR-0279](../adr/0279-typescript-sdk-architecture.md) — Connect-ES v2 + protobuf-es v2, the injected-Transport seam, the in-repo pnpm/biome/vitest toolchain, and the in-part supersession of [ADR-0253](../adr/0253-sdk-mocking-testkit.md).
 **Accumulator / stack:** `sdk/10-architecture-adr` is the stack trunk (PR #908). Subsequent layers are `sdk/11`…`sdk/19` via `gh stack` (linear, one PR per scenario — the plan's 4–8 parallelism is serialised because a stack cannot fork).
 
 The smallest set of work that makes `@stacklok/mecatl-sdk` real: a scaffolded,
@@ -30,7 +30,7 @@ not which packages exist on disk.
   `contracts/proto/mecatl/v1/harness.proto` or `internal/adapter/server/`,
   so that branch merges independently.
 - **Connect-ES v2, decided — not re-litigated per task.**
-  [ADR-0278](../adr/0278-typescript-sdk-architecture.md) settles the
+  [ADR-0279](../adr/0279-typescript-sdk-architecture.md) settles the
   transport library, the codegen stack, the npm name
   (`@stacklok/mecatl-sdk`), and the mocking cut: no published mocker in M1;
   an injected-Transport seam plus a minimal in-process fake for the SDK's
@@ -75,7 +75,7 @@ not which packages exist on disk.
 | npm publish workflow, trusted publishing, `sdk/typescript/vX.Y.Z` tags | M4 plan | #821 M4 item 4; tag discipline per [ADR-0093](../adr/0093-provider-modules.md) |
 | `user-docs/` pages for the SDK | M4 plan | nothing is published before `v0.1.0`; M1 updates `docs/architecture.md` + IMPLEMENTATION-NOTES only |
 | Steer over the HTTP transport | when [#873](https://github.com/stacklok/mecatl/issues/873) lands | [ADR-0252](../adr/0252-http-steer-endpoint.md) |
-| Downstream-app / transport-agnostic e2e mocker (Next.js and similar) | #872 | [ADR-0278](../adr/0278-typescript-sdk-architecture.md) Decision 3: M1 is the injection seam only |
+| Downstream-app / transport-agnostic e2e mocker (Next.js and similar) | #872 | [ADR-0279](../adr/0279-typescript-sdk-architecture.md) Decision 3: M1 is the injection seam only |
 
 ## In scope — 9 scenarios, in implementation order
 
@@ -94,7 +94,7 @@ The project exists and is gated. Exactly-pinned pnpm 11 (the `packageManager`
 field), TypeScript 6, biome (lint + format), vitest, plain `tsc` ESM build
 with declarations and source maps, API Extractor, Apache-2.0 metadata, and
 subpath exports `.` / `./node` / `./gen` — per
-[ADR-0278](../adr/0278-typescript-sdk-architecture.md) Decision 4. The tree
+[ADR-0279](../adr/0279-typescript-sdk-architecture.md) Decision 4. The tree
 wires into the root Taskfile via the existing `includes:` pattern (the
 `site:` include for `website/` is the precedent; `website/` itself stays on
 npm untouched) and into `ci.yml` as one job.
@@ -106,7 +106,7 @@ npm untouched) and into `ci.yml` as one job.
   freshness gate and the format gate never fight), vitest config, API
   Extractor configs + committed reports — one per entry point, for `.` and
   `./node`; `./gen` deliberately excluded per
-  [ADR-0278](../adr/0278-typescript-sdk-architecture.md) Decision 4 — a
+  [ADR-0279](../adr/0279-typescript-sdk-architecture.md) Decision 4 — a
   local `.gitignore` (node_modules, dist, API Extractor temp), LICENSE,
   README.
 - Root: the `sdk:` Taskfile include (lint / typecheck / test / build / pack);
@@ -159,7 +159,7 @@ npm untouched) and into `ci.yml` as one job.
 
 `task generate` emits committed TypeScript alongside the existing Go, from
 the same proto source of truth, per
-[ADR-0278](../adr/0278-typescript-sdk-architecture.md) Decision 2. The
+[ADR-0279](../adr/0279-typescript-sdk-architecture.md) Decision 2. The
 generated tree is the `./gen` export. `contracts/gen/` stays
 generated-never-hand-edited, per the standing rule in
 [`AGENTS.md`](../../AGENTS.md); the same discipline extends to the TS output.
@@ -170,7 +170,7 @@ generated-never-hand-edited, per the standing rule in
   its own `inputs`/`paths` scoped to `mecatl/v1`, writing under
   `sdk/typescript/src/gen/` — buf's v2 config has no per-plugin path
   scoping, and the Go template must keep generating `mecatl/driver/v1`, so
-  one shared template cannot serve both ([ADR-0278](../adr/0278-typescript-sdk-architecture.md)
+  one shared template cannot serve both ([ADR-0279](../adr/0279-typescript-sdk-architecture.md)
   Decision 2). The TS template carries its own deliberate managed-mode
   block (managed-mode rewrites are stamped into the serialized descriptors
   embedded in generated output, so only this template may ever produce the
@@ -207,7 +207,7 @@ generated-never-hand-edited, per the standing rule in
 One transport-neutral raw-operation seam with two implementations: the
 Connect-ES gRPC transport (Node/Bun, TCP and UDS) and the hand-written
 fetch + SSE transport over mecated's existing HTTP API. Clients accept an
-injected Transport — the M1 test seam ([ADR-0278](../adr/0278-typescript-sdk-architecture.md)
+injected Transport — the M1 test seam ([ADR-0279](../adr/0279-typescript-sdk-architecture.md)
 Decision 3): a minimal in-process fake (handlers or fixture files), not a
 shipped downstream mocker. Errors normalize to one typed hierarchy carrying the stable
 mecatl code from RFC 9457 problem bodies and gRPC status details alike, and
@@ -232,7 +232,7 @@ the first call enforces the compatibility floor — both per
   - verify: `sdk/typescript/test/transport-parity.test.ts :: "raw operations agree across gRPC and HTTP"`
 - AC3.2: A client constructed over an injected `createRouterTransport`
   exercises unary and server-streaming operations with no network and no
-  daemon — the ADR-0278 M1 test seam works as documented.
+  daemon — the ADR-0279 M1 test seam works as documented.
   - verify: `sdk/typescript/test/router-transport.test.ts :: "router transport drives unary and streaming operations offline"`
 - AC3.3: A server whose `GetCompatibilityInfo` is absent or reports an
   unsupported API major yields `IncompatibleServerError`; no probe session
@@ -281,7 +281,7 @@ the first call enforces the compatibility floor — both per
 `connect()` returns a `Client`; `client.sessions.create/get/fork` return
 `Session`s; `session.close()` releases runtime resources while
 `session.delete()` removes durable state — the #821 contract recorded in
-[ADR-0278](../adr/0278-typescript-sdk-architecture.md). Connection status is
+[ADR-0279](../adr/0279-typescript-sdk-architecture.md). Connection status is
 a multicast with `getSnapshot()`/`subscribe()` over the closed vocabulary
 (connecting, online, reconnecting, offline, unauthorized, incompatible),
 heartbeating `GetCompatibilityInfo` only while subscribed, per
@@ -496,7 +496,7 @@ live model). One CI job runs the unit suites and this e2e for every PR.
   — the no-touch constraint holds.
 - `sdk/typescript/e2e/`: the suites below. Expect the UDS leg of AC9.1 to
   need deliberate connect-node plumbing (socket path via node options, not
-  a `baseUrl` scheme), per [ADR-0278](../adr/0278-typescript-sdk-architecture.md)
+  a `baseUrl` scheme), per [ADR-0279](../adr/0279-typescript-sdk-architecture.md)
   Decision 1.
 
 **Acceptance:**
@@ -525,7 +525,7 @@ live model). One CI job runs the unit suites and this e2e for every PR.
 
 ## Cross-cutting deliverables
 
-- [ADR-0278](../adr/0278-typescript-sdk-architecture.md) and the in-part
+- [ADR-0279](../adr/0279-typescript-sdk-architecture.md) and the in-part
   supersession pointer on [ADR-0253](../adr/0253-sdk-mocking-testkit.md) —
   authored with this plan (already on the accumulator, not a worker task).
 - `docs/architecture.md`: a short SDK section (what the SDK is, the

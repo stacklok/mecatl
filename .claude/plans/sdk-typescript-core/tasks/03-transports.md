@@ -15,7 +15,7 @@ accumulator: sdk/10-architecture-adr
 
 One transport-neutral raw-operation seam with two implementations, plus the
 typed error hierarchy and the `GetCompatibilityInfo` floor. Scenario 3.
-ADR 0278 Decisions 1 and 3; ADR 0248.
+ADR 0279 Decisions 1 and 3; ADR 0248.
 
 **Stack:** Connect-ES v2 (`@connectrpc/connect` + `@connectrpc/connect-node`)
 for Node/Bun **real gRPC over HTTP/2** (TCP and UDS). UDS is not a first-class
@@ -55,7 +55,7 @@ Branch `sdk/13-transports` off the stack tip. Do not push.
   - verify: `sdk/typescript/test/transport-parity.test.ts :: "raw operations agree across gRPC and HTTP"`
 - AC3.2: A client constructed over an injected `createRouterTransport`
   exercises unary and server-streaming operations with no network and no
-  daemon — the ADR-0278 M1 test seam works as documented.
+  daemon — the ADR-0279 M1 test seam works as documented.
   - verify: `sdk/typescript/test/router-transport.test.ts :: "router transport drives unary and streaming operations offline"`
 - AC3.3: A server whose `GetCompatibilityInfo` is absent or reports an
   unsupported API major yields `IncompatibleServerError`; no probe session
