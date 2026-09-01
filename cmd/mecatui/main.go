@@ -204,8 +204,9 @@ func runWithOptions(argv []string, options runOptions) error {
 	if !ok {
 		fmt.Fprintf(os.Stderr, "mecatui: unknown theme %q, using %q\n", cfg.theme, th.Name)
 	}
+	themeAutoDetect := resolveThemeAutoDetect(cfg, term.IsTerminal(int(os.Stdout.Fd())))
 	if options.recoveryOnly {
-		return runDisconnectedRecovery(context.Background(), argv, th, options)
+		return runDisconnectedRecovery(context.Background(), argv, th, themeAutoDetect, options)
 	}
 
 	// Manual two-signal handler: first signal = graceful shutdown (cancels ctx →
@@ -315,6 +316,7 @@ func runWithOptions(argv []string, options runOptions) error {
 		GlobalDefault:          globalDefault,
 		Clipboard:              client.NewClipboard(),
 		Theme:                  th,
+		ThemeAutoDetect:        themeAutoDetect,
 		StatusSource:           statusSource,
 		Server:                 target,
 		ConnectionMode:         connectionMode,
@@ -457,8 +459,20 @@ func connectRestartIntent(final tea.Model) (ui.ConnectRestartIntent, bool) {
 	return reporter.ConnectRestartIntent()
 }
 
-func runDisconnectedRecovery(ctx context.Context, argv []string, th theme.Theme, options runOptions) error {
-	deps := ui.Deps{Ctx: ctx, Theme: th, Connect: savedConnectController{}, ConnectOpen: true, ConnectError: options.connectError, ConnectReason: options.connectReason, ConnectTarget: options.connectTarget, ConnectResumeSessionID: options.connectResumeSessionID}
+// resolveThemeAutoDetect decides whether the light/dark terminal-background
+// auto-detect (ADR 0280) should be armed for this launch: only when no
+// explicit --theme/MECATUI_THEME was given (finalizeParsedConfig resolves both
+// into cfg.theme, so an empty value means neither was given) AND stdout is a
+// real terminal — never on redirected/piped output, which must never see the
+// OSC background-colour query escape. Extracted as a pure function (stdout's
+// TTY-ness passed in, not read here) so the gate's logic is unit-testable
+// without a real terminal.
+func resolveThemeAutoDetect(cfg config, stdoutIsTTY bool) bool {
+	return cfg.theme == "" && stdoutIsTTY
+}
+
+func runDisconnectedRecovery(ctx context.Context, argv []string, th theme.Theme, themeAutoDetect bool, options runOptions) error {
+	deps := ui.Deps{Ctx: ctx, Theme: th, ThemeAutoDetect: themeAutoDetect, Connect: savedConnectController{}, ConnectOpen: true, ConnectError: options.connectError, ConnectReason: options.connectReason, ConnectTarget: options.connectTarget, ConnectResumeSessionID: options.connectResumeSessionID}
 	prog := tea.NewProgram(ui.New(deps), tea.WithContext(ctx))
 	finalModel, runErr := prog.Run()
 	if intent, ok := connectRestartIntent(finalModel); ok {

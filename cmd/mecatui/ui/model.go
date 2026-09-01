@@ -211,6 +211,15 @@ type Deps struct {
 	// main.go populates it with client.NewClipboard().
 	Clipboard client.Clipboard
 	Theme     theme.Theme
+	// ThemeAutoDetect enables the terminal-background light/dark auto-detect
+	// (ADR 0280): composition sets it true only when no explicit --theme/
+	// MECATUI_THEME was supplied AND stdout is a real TTY (never on redirected
+	// output, which must never see the OSC background-colour query). When true,
+	// Init requests the terminal's background color (tea.RequestBackgroundColor)
+	// and a light response switches the active theme to the built-in "solar"
+	// theme; a dark or absent response keeps Theme as given. Explicit theme
+	// selection always wins — this field is simply never set true then.
+	ThemeAutoDetect bool
 	// StatusSource is composed outside ui. The UI only submits display facts and
 	// consumes semantic snapshots through one Bubble Tea listener.
 	StatusSource statusline.Source
@@ -685,6 +694,14 @@ type Model struct {
 	// until the first ColorProfileMsg.
 	fullColor bool
 
+	// themeAutoDetectArmed is true while a tea.BackgroundColorMsg response is
+	// still awaited for the auto-detect (ADR 0280): Init sets it when
+	// Deps.ThemeAutoDetect is true, and onBackgroundColor clears it on the FIRST
+	// response, before acting on it — so a duplicate or late response (a
+	// misbehaving terminal, or a race with a fast quit) is a structural no-op,
+	// never a second theme switch.
+	themeAutoDetectArmed bool
+
 	// emojiOK is the PROCESS-STABLE emoji-presentation capability, seeded ONCE at New
 	// from emojiCapable() (conservative, env-based — see emoji.go). It is read on the
 	// header hot path by postureBadge to pick the yolo badge's glyph variant (emoji
@@ -956,6 +973,10 @@ func New(deps Deps) Model {
 		sp:      sp,
 		vp:      vp,
 		stuck:   true,
+		// Armed exactly when Init will actually request the background colour
+		// (see ThemeAutoDetect); onBackgroundColor disarms it on the first
+		// response so a late/duplicate one is a no-op.
+		themeAutoDetectArmed: deps.ThemeAutoDetect,
 		// Seed the active selection from the persisted last-used (composition loads it
 		// from the state file). The connect-time ListModels reconcile clears it to the
 		// server default if its PROVIDER is no longer available, BEFORE the create that
@@ -1139,6 +1160,21 @@ type startupResumeReadyMsg struct{}
 // fallback leg. With no lister wired (old server / persistence off) it fires
 // CreateSession directly (the historical path, with an empty selection).
 func (m Model) Init() tea.Cmd {
+	startup := m.startupCmd()
+	// The light/dark auto-detect (ADR 0280) wraps structurally around whatever
+	// startup fires, so every branch gets it without threading a themeDetectCmd
+	// through each one. Deps.ThemeAutoDetect is false unless composition armed it
+	// (no explicit --theme/MECATUI_THEME AND stdout is a real TTY).
+	if !m.deps.ThemeAutoDetect {
+		return startup
+	}
+	return tea.Batch(tea.RequestBackgroundColor, startup)
+}
+
+// startupCmd is Init's original per-branch startup logic (ConnectOpen /
+// BrowseSessions / Resume / Models / the no-lister fallback), factored out so
+// Init can wrap it once rather than threading a shared cmd through every arm.
+func (m Model) startupCmd() tea.Cmd {
 	if m.deps.ConnectOpen && m.deps.Session == nil {
 		if m.deps.Connect == nil {
 			return nil

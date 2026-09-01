@@ -331,6 +331,39 @@ func TestParseFlagsNoMouse(t *testing.T) {
 	}
 }
 
+// TestParseFlagsThemeResolution asserts cfg.theme (the light-theme
+// auto-detect gate's input, ADR 0280 — resolveThemeAutoDetect treats an empty
+// cfg.theme as "no explicit theme") stays empty with none given, and picks up
+// a theme name from either --theme or the MECATUI_THEME fallback.
+func TestParseFlagsThemeResolution(t *testing.T) {
+	t.Setenv("MECATUI_THEME", "") // isolate from the ambient environment
+
+	cfg, err := parseFlags(nil)
+	if err != nil {
+		t.Fatalf("parseFlags: %v", err)
+	}
+	if cfg.theme != "" {
+		t.Errorf("cfg.theme = %q with no theme given, want empty", cfg.theme)
+	}
+
+	cfg, err = parseFlags([]string{"-theme", "solar"})
+	if err != nil {
+		t.Fatalf("parseFlags(-theme solar): %v", err)
+	}
+	if cfg.theme != "solar" {
+		t.Errorf("cfg.theme = %q, want %q", cfg.theme, "solar")
+	}
+
+	t.Setenv("MECATUI_THEME", "mono")
+	cfg, err = parseFlags(nil)
+	if err != nil {
+		t.Fatalf("parseFlags (MECATUI_THEME=mono): %v", err)
+	}
+	if cfg.theme != "mono" {
+		t.Errorf("cfg.theme = %q, want %q", cfg.theme, "mono")
+	}
+}
+
 // TestParseFlagsTerminalTitle asserts the dynamic terminal title is ON by
 // default, turned off by --terminal-title=off/false/0, left on by
 // on/true/1/"" (explicitly or defaulted), turned off by

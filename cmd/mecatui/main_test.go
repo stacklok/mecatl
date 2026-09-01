@@ -33,6 +33,34 @@ func TestMain(m *testing.M) {
 	}))
 }
 
+// TestResolveThemeAutoDetect pins the light/dark auto-detect gate (ADR 0280):
+// armed only when no explicit theme was given AND stdout is a real terminal —
+// every other combination (explicit theme, redirected stdout, or both) must
+// leave it disarmed, since an explicit --theme/MECATUI_THEME always wins and a
+// non-TTY stdout must never see the OSC background-colour query escape.
+func TestResolveThemeAutoDetect(t *testing.T) {
+	cases := []struct {
+		name        string
+		theme       string
+		stdoutIsTTY bool
+		want        bool
+	}{
+		{name: "no explicit theme, real TTY", theme: "", stdoutIsTTY: true, want: true},
+		{name: "no explicit theme, redirected stdout", theme: "", stdoutIsTTY: false, want: false},
+		{name: "explicit theme, real TTY", theme: "solar", stdoutIsTTY: true, want: false},
+		{name: "explicit theme, redirected stdout", theme: "solar", stdoutIsTTY: false, want: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := config{theme: tc.theme}
+			if got := resolveThemeAutoDetect(cfg, tc.stdoutIsTTY); got != tc.want {
+				t.Errorf("resolveThemeAutoDetect(theme=%q, stdoutIsTTY=%v) = %v, want %v",
+					tc.theme, tc.stdoutIsTTY, got, tc.want)
+			}
+		})
+	}
+}
+
 // TestEmbeddedConfigWiresMCPProfileLoader pins the fix for the silent-ignore of
 // operator-tier mcp.servers by mecatui's embedded server: embeddedConfig MUST set
 // a non-nil MCPProfileLoader so app.Build loads the operator profiles instead of

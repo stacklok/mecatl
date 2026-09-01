@@ -211,6 +211,7 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0088 — Explicit daemon.yaml (listener topology config)](./0088-daemon-config-file.md)
 - [0222 — mecatui: ctrl+t routes by ask type; full-screen ask-args view](./0222-mecatui-ask-args-view.md)
 - [0247 — mecatui generated status lines](./0247-mecatui-status-line.md)
+- [0280 — Automatic light theme selection in mecatui](./0280-mecatui-light-theme-autodetect.md)
 
 ### Retired
 - [0029 — Repo-map tree-sitter](./0029-repomap-tree-sitter.md) *(retired)*

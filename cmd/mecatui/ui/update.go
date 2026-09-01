@@ -14,6 +14,7 @@ import (
 	"github.com/charmbracelet/colorprofile"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
+	"github.com/stacklok/mecatl/cmd/mecatui/theme"
 	"github.com/stacklok/mecatl/cmd/mecatui/ui/welcome"
 )
 
@@ -252,6 +253,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.ColorProfileMsg:
 		return m.onColorProfile(msg), nil
+
+	case tea.BackgroundColorMsg:
+		return m.onBackgroundColor(msg), nil
 
 	case tea.MouseWheelMsg, tea.MouseClickMsg, tea.MouseMotionMsg, tea.MouseReleaseMsg:
 		return m.onMouseMsg(msg)
@@ -1477,6 +1481,40 @@ func (m Model) onResize(msg tea.WindowSizeMsg) (tea.Model, tea.Cmd) {
 // welcome package only ever sees the derived bool.
 func (m Model) onColorProfile(msg tea.ColorProfileMsg) Model {
 	m.fullColor = msg.Profile == colorprofile.TrueColor
+	return m
+}
+
+// onBackgroundColor is the light/dark auto-detect reducer (ADR 0280): it
+// consumes the tea.BackgroundColorMsg Init requested via
+// tea.RequestBackgroundColor when Deps.ThemeAutoDetect was set. It disarms
+// themeAutoDetectArmed FIRST, so a duplicate or late response — a misbehaving
+// terminal, or a race with a fast quit — is a structural no-op rather than a
+// second switch. A light response (msg.IsDark() == false) switches to the
+// built-in "solar" theme; a dark response leaves the given theme untouched.
+// Only fires once: a caller with the detect disabled (or already consumed)
+// sees themeAutoDetectArmed false and returns m unchanged.
+func (m Model) onBackgroundColor(msg tea.BackgroundColorMsg) Model {
+	if !m.themeAutoDetectArmed {
+		return m
+	}
+	m.themeAutoDetectArmed = false
+	if !msg.IsDark() {
+		m = m.switchTheme(theme.Solar())
+	}
+	return m
+}
+
+// switchTheme installs th as the active theme and resets every baked-in
+// consumer so nothing keeps rendering the old palette (ADR 0280): the input
+// textarea and every overlay read m.deps.Theme fresh on each render, but the
+// renderer's glamour/block/join caches and the spinner's style are captured at
+// construction time and must be rebuilt explicitly.
+func (m Model) switchTheme(th theme.Theme) Model {
+	m.deps.Theme = th
+	m.rend = newRenderer(th, m.rend.marks)
+	m.rend.setWidth(m.width)
+	m.sp.Style = th.Style("spinner")
+	m.refreshView()
 	return m
 }
 

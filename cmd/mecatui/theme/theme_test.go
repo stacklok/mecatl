@@ -221,6 +221,29 @@ func TestRegistryCaseInsensitive(t *testing.T) {
 	}
 }
 
+// TestSolarReturnsBuiltinLightTheme asserts theme.Solar() (the light-theme
+// auto-detect fallback, ADR 0280) always returns the built-in "solar" theme —
+// byte-identical to resolving "solar" through a fresh registry — regardless of
+// any user override loaded under the same name.
+func TestSolarReturnsBuiltinLightTheme(t *testing.T) {
+	got := Solar()
+	if got.Name != "solar" {
+		t.Fatalf("Solar().Name = %q, want %q", got.Name, "solar")
+	}
+	if got.Palette != solarPalette {
+		t.Errorf("Solar().Palette diverged from the built-in solarPalette")
+	}
+
+	// A registered override under the same name must not change Solar()'s
+	// result: it always returns the compiled built-in, not whatever a registry
+	// currently holds.
+	r := NewRegistry()
+	r.Register(New("solar", aztecPalette))
+	if again := Solar(); again.Palette != solarPalette {
+		t.Error("Solar() returned an overridden theme after Register(\"solar\", ...)")
+	}
+}
+
 // TestGlamourStyleColoured asserts the glamour config is driven by the palette:
 // heading colour matches mdHeading and a code chroma colour matches a syntax
 // slot. This locks the "markdown obeys the theme" contract.

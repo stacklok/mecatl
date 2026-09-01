@@ -407,7 +407,7 @@ a short directive with a longer brief. The seed fires ONCE: a `/models` restart 
 | `--resume-latest` | off | continue the newest eligible owned main chat with an available authoritative transcript; excludes active, awaiting, scheduled, child, and unknown sessions; when none is eligible, start a new chat; mutually exclusive with `--resume` |
 | `-p` / `--prompt` | – | seed prompt auto-submitted once the first session is ready (the CLI task to launch with). The TUI stays interactive for follow-ups; this is NOT a one-shot. Both `--prompt` and `--prompt-file` may be given (literal first, joined by a blank line). Fires ONCE — a `/models` restart or `/clear` never re-submits it |
 | `--prompt-file` | – | path to a file whose contents are the seed prompt body. Read at startup (fail-fast on unreadable). Joined after `--prompt` when both are given. Same once-only semantics as `--prompt` |
-| `--theme` | `aztec` | theme name (also `MECATUI_THEME`) |
+| `--theme` | `aztec` | theme name (also `MECATUI_THEME`); giving either pins the theme and disables the light/dark auto-detect below |
 | `--theme-dir` | – | extra directory of `*.json` themes to load |
 | `--auth-token` | – | bearer token for an **external** server (or `MECATL_AUTH_TOKEN`) |
 | `--tls` | off | use TLS transport for an **external** server |
@@ -1996,6 +1996,25 @@ to change:
 ```
 
 Select it with `--theme midnight` (or set `theme` / `MECATUI_THEME`).
+
+### Light/dark auto-detect (ADR 0280)
+
+Out of the box, mecatui detects a light terminal background and switches to the
+built-in **solar** theme automatically — no flag, no config. On startup, when
+no explicit `--theme`/`MECATUI_THEME` was given AND stdout is a real terminal,
+`Init` sends Bubble Tea v2's `tea.RequestBackgroundColor()` (an OSC 11 query);
+the terminal's asynchronous reply arrives as a `tea.BackgroundColorMsg`, and a
+light response (`msg.IsDark() == false`) switches every baked theme consumer —
+`Deps.Theme`, the renderer's glamour/block/join caches, and the spinner style —
+to `solar`. A dark response, no response at all (many terminals or
+multiplexers don't answer OSC 11), or redirected/piped stdout all leave the
+default **aztec** theme untouched. Only the FIRST response acts; a duplicate or
+late one (a misbehaving terminal) is a no-op.
+
+An explicit `--theme`/`MECATUI_THEME` always wins and skips the detect
+entirely — including `--theme aztec`, which pins the default rather than
+leaving it to auto-detection. There is no separate opt-out flag; pinning the
+theme IS the opt-out.
 
 ## Architecture & testing
 

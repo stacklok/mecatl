@@ -40,6 +40,13 @@ func (r *Registry) Register(t Theme) {
 	r.themes[t.Name] = t
 }
 
+// Solar returns the built-in "solar" theme — the light-leaning variant used as
+// the automatic fallback when the terminal reports a light background (ADR
+// 0280) and no explicit theme was requested. It always returns the built-in,
+// never a user override registered under the same name, so the auto-detect
+// outcome is predictable regardless of --theme-dir contents.
+func Solar() Theme { return builtins["solar"] }
+
 // Get returns the theme for name and whether it was found. Lookup is
 // case-insensitive (keys are stored lowercase), so "--theme Aztec" resolves.
 func (r *Registry) Get(name string) (Theme, bool) {

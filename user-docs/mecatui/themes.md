@@ -19,6 +19,19 @@ bin/mecatui --theme mono
 
 You can also set `MECATUI_THEME=mono`. Use `--list-themes` to print the themes available to this launch.
 
+## Light terminals get a light theme automatically
+
+If you don't pass `--theme`/`MECATUI_THEME` and you're running in a real
+terminal, mecatui asks your terminal for its background color at startup. If
+the terminal reports a light background, mecatui switches to **solar**
+automatically — no flag needed. A dark background, no answer (some terminals
+and multiplexers don't respond), or piped/redirected output all keep the
+default **aztec** theme.
+
+Passing `--theme`/`MECATUI_THEME` — including `--theme aztec` — always wins
+and skips this detection. There's no separate opt-out flag; pinning a theme is
+the opt-out.
+
 ## Add a partial palette
 
 Theme files are JSON. A palette extends the Aztec base, so it only needs the slots it changes:
