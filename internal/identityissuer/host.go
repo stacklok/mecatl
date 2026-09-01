@@ -81,6 +81,15 @@ func (h *Host) Bundle() ([]byte, error) {
 	return h.issuer.Bundle(h.refreshHint)
 }
 
+// IssueLogicalAgent mints the one constrained logical-agent JWT-SVID profile.
+// It exposes neither an arbitrary signing operation nor signer material.
+func (h *Host) IssueLogicalAgent(request LogicalAgentIssueRequest) (string, error) {
+	if h == nil || h.issuer == nil || !h.verified {
+		return "", errHostUnavailable
+	}
+	return h.issuer.IssueLogicalAgent(request)
+}
+
 func (h *Host) verifyStartupCanary() error {
 	verifier, err := NewVerifier(VerifierConfig{
 		TrustDomain:       h.issuer.trustDomain,

@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"crypto/ecdsa"
 	"crypto/elliptic"
+	"crypto/rand"
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
@@ -102,6 +103,9 @@ type Issuer struct {
 	phase          RotationPhase
 	bundleSequence uint64
 	rotating       bool
+	random         io.Reader
+	now            func() time.Time
+	maxTokenBytes  int
 	bundleMu       sync.Mutex
 }
 
@@ -165,6 +169,9 @@ func loadAt(cfg Config, manifestBytes []byte, loader KeyLoader, now time.Time) (
 		phase:          parsed.Phase,
 		bundleSequence: parsed.Sequence,
 		rotating:       parsed.Version == 2,
+		random:         rand.Reader,
+		now:            time.Now,
+		maxTokenBytes:  maxLogicalAgentCompactTokenBytes,
 	}, nil
 }
 
