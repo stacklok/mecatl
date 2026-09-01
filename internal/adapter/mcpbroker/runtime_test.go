@@ -140,6 +140,9 @@ func TestWrappersBindCanonicalSessionAndPrivateRoute(t *testing.T) {
 
 	firstTool := toolByName(t, first, "mcp__calendar__create")
 	secondTool := toolByName(t, second, "mcp__search__query")
+	if _, ok := firstTool.(tool.AuthorizationRequester); ok {
+		t.Fatal("anonymous wrapper unexpectedly advertises authorization")
+	}
 	if firstTool.ReadOnly() || !secondTool.ReadOnly() {
 		t.Fatalf("read-only projection = %v, %v", firstTool.ReadOnly(), secondTool.ReadOnly())
 	}

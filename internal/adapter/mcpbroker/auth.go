@@ -1,0 +1,713 @@
+package mcpbroker
+
+import (
+	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"crypto/x509"
+	"encoding/base64"
+	"errors"
+	"fmt"
+	"net/http"
+	"net/url"
+	"os"
+	"strings"
+	"time"
+
+	"golang.org/x/oauth2"
+
+	"github.com/stacklok/mecatl/engine/session"
+	"github.com/stacklok/mecatl/internal/adapter/permconfig"
+	contract "github.com/stacklok/mecatl/internal/mcpbroker"
+)
+
+const (
+	defaultAuthorizationTTL = 10 * time.Minute
+	defaultExchangeTimeout  = 30 * time.Second
+	maxCallbackQueryBytes   = 8 << 10
+	maxCallbackValueBytes   = 2048
+)
+
+type oauthRoute struct {
+	authorizationEndpoint string
+	tokenEndpoint         string
+	callbackURL           string
+	clientID              string
+	secretEnv             string
+	scopes                []string
+	requestRefresh        bool
+}
+
+func compileOAuthRoute(callbackURL string, declaration permconfig.MCPServerProfile) (*oauthRoute, error) {
+	profile := declaration.Auth.OAuth
+	if profile == nil || profile.Upstream == nil || profile.Upstream.Mode != "oauth2" || profile.Upstream.OAuth2 == nil {
+		return nil, fmt.Errorf("%w: route %q requires trusted explicit OAuth2 endpoints", ErrProtectedRouteUnsupported, declaration.Name)
+	}
+	if profile.Client.Mode != "preregistered" || profile.Client.Preregistered == nil {
+		return nil, fmt.Errorf("%w: route %q requires a preregistered OAuth client", ErrProtectedRouteUnsupported, declaration.Name)
+	}
+	for label, raw := range map[string]string{
+		"authorization endpoint": profile.Upstream.OAuth2.AuthorizationEndpoint,
+		"token endpoint":         profile.Upstream.OAuth2.TokenEndpoint,
+		"callback URL":           callbackURL,
+	} {
+		parsed, err := url.Parse(raw)
+		if err != nil || parsed.Scheme == "" || parsed.Host == "" || parsed.User != nil || parsed.Fragment != "" {
+			return nil, fmt.Errorf("%w: route %q has invalid %s", ErrInvalidCatalogue, declaration.Name, label)
+		}
+		if parsed.Scheme != "https" {
+			return nil, fmt.Errorf("%w: route %q requires HTTPS for %s", ErrInvalidCatalogue, declaration.Name, label)
+		}
+	}
+	if profile.Client.Preregistered.ID == "" || profile.Client.Preregistered.SecretEnv == "" || len(profile.Scopes) == 0 {
+		return nil, fmt.Errorf("%w: route %q has incomplete OAuth client metadata", ErrInvalidCatalogue, declaration.Name)
+	}
+	return &oauthRoute{
+		authorizationEndpoint: profile.Upstream.OAuth2.AuthorizationEndpoint,
+		tokenEndpoint:         profile.Upstream.OAuth2.TokenEndpoint,
+		callbackURL:           callbackURL,
+		clientID:              profile.Client.Preregistered.ID,
+		secretEnv:             profile.Client.Preregistered.SecretEnv,
+		scopes:                append([]string(nil), profile.Scopes...),
+		requestRefresh:        profile.RequestRefreshToken,
+	}, nil
+}
+
+func (c *Catalogue) protected() bool {
+	for _, route := range c.routes {
+		if route.oauth != nil {
+			return true
+		}
+	}
+	return false
+}
+
+type oauthRuntimeOptions struct {
+	httpClient    *http.Client
+	resolveSecret func(context.Context, string) (string, error)
+	now           func() time.Time
+	random        func([]byte) (int, error)
+	ttl           time.Duration
+	timeout       time.Duration
+	allowLoopback bool
+	testRootCAs   *x509.CertPool
+	testHelper    interface{ Helper() }
+}
+
+func defaultOAuthRuntimeOptions() oauthRuntimeOptions {
+	return oauthRuntimeOptions{
+		resolveSecret: func(_ context.Context, name string) (string, error) {
+			value, ok := os.LookupEnv(name)
+			if !ok || value == "" {
+				return "", errors.New("OAuth client secret is unavailable")
+			}
+			return value, nil
+		},
+		now: time.Now, random: rand.Read, ttl: defaultAuthorizationTTL, timeout: defaultExchangeTimeout,
+	}
+}
+
+// Option configures process-owned OAuth custody without widening the broker contract.
+type Option func(*Runtime)
+
+// WithAuthorizedCaller installs the protected-route transport seam.
+func WithAuthorizedCaller(caller AuthorizedCaller) Option {
+	return func(runtime *Runtime) { runtime.authorizedCaller = caller }
+}
+
+// WithOAuthLoopbackForTest enables only an in-process TLS test token endpoint.
+// No production configuration surface can relax the hardened client's IP policy.
+func WithOAuthLoopbackForTest(t interface{ Helper() }, roots *x509.CertPool) Option {
+	t.Helper()
+	return func(runtime *Runtime) {
+		runtime.oauth.allowLoopback = true
+		runtime.oauth.testRootCAs = roots
+		runtime.oauth.testHelper = t
+	}
+}
+
+// WithOAuthSecretResolver resolves trusted secret references from P07 declarations.
+func WithOAuthSecretResolver(resolver func(context.Context, string) (string, error)) Option {
+	return func(runtime *Runtime) {
+		if resolver != nil {
+			runtime.oauth.resolveSecret = resolver
+		}
+	}
+}
+
+// WithOAuthLimits overrides transaction and network bounds. Non-positive values retain defaults.
+func WithOAuthLimits(transactionTTL, exchangeTimeout time.Duration) Option {
+	return func(runtime *Runtime) {
+		if transactionTTL > 0 {
+			runtime.oauth.ttl = transactionTTL
+		}
+		if exchangeTimeout > 0 {
+			runtime.oauth.timeout = exchangeTimeout
+		}
+	}
+}
+
+const (
+	// Resolved authorization records are retained for idempotent status/cancel.
+	// At the cap, new authorizations fail closed rather than evicting replay state.
+	maxAuthorizationRecords = 1024
+	// Executed protected calls are never evicted: losing a claim could replay an
+	// ambiguously completed mutation. At the cap, further calls fail closed.
+	maxExecutedCallsPerGrant = 4096
+)
+
+type callbackState struct {
+	logical     *logicalSession
+	transaction *authorizationTransaction
+}
+
+type authorizationIdentity struct {
+	id      string
+	binding session.AuthorizationBinding
+}
+
+type authorizationTransaction struct {
+	identity     authorizationIdentity
+	route        *oauthRoute
+	backend      string
+	callHash     [32]byte
+	callID       session.ToolCallID
+	state        string
+	verifier     string
+	clientSecret string
+	expiresAt    time.Time
+	status       session.AuthorizationStatus
+	claimed      bool
+	cancel       context.CancelFunc
+}
+
+type oauthGrant struct {
+	config       *oauth2.Config
+	token        *oauth2.Token
+	firstCall    [32]byte
+	firstPending bool
+	executed     map[session.ToolCallID][32]byte
+}
+
+func (r *Runtime) registerCallbackState(state string, logical *logicalSession, transaction *authorizationTransaction) bool {
+	r.stateMu.Lock()
+	defer r.stateMu.Unlock()
+	if _, exists := r.states[state]; exists {
+		return false
+	}
+	r.states[state] = callbackState{logical: logical, transaction: transaction}
+	return true
+}
+
+func (r *Runtime) claimCallbackState(state string) (callbackState, bool) {
+	r.stateMu.Lock()
+	defer r.stateMu.Unlock()
+	indexed, ok := r.states[state]
+	if ok {
+		delete(r.states, state)
+	}
+	return indexed, ok
+}
+
+func (r *Runtime) removeCallbackState(state string, transaction *authorizationTransaction) {
+	if state == "" {
+		return
+	}
+	r.stateMu.Lock()
+	if indexed, ok := r.states[state]; ok && indexed.transaction == transaction {
+		delete(r.states, state)
+	}
+	r.stateMu.Unlock()
+}
+
+func opaque(random func([]byte) (int, error)) (string, error) {
+	bytes := make([]byte, 32)
+	if _, err := random(bytes); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(bytes), nil
+}
+
+func callHash(call session.ToolCall) [32]byte {
+	h := sha256.New()
+	_, _ = h.Write([]byte(call.ID))
+	_, _ = h.Write([]byte{0})
+	_, _ = h.Write([]byte(call.Name))
+	_, _ = h.Write([]byte{0})
+	_, _ = h.Write(call.Args)
+	var out [32]byte
+	copy(out[:], h.Sum(nil))
+	return out
+}
+
+type protectedSessionTool struct {
+	*sessionTool
+}
+
+func (t *protectedSessionTool) RequestAuthorization(ctx context.Context, call session.ToolCall) (session.ExternalAuthorization, bool, error) {
+	if err := t.attachment.stateError(); err != nil {
+		return session.ExternalAuthorization{}, false, err
+	}
+	if call.Name != t.route.spec.Name {
+		return session.ExternalAuthorization{}, false, errors.New("broker authorization call does not match wrapper")
+	}
+	logical := t.attachment.logical
+	hash := callHash(call)
+	logical.mu.Lock()
+	defer logical.mu.Unlock()
+	if logical.deleted {
+		return session.ExternalAuthorization{}, false, contract.ErrStateUnavailable
+	}
+	if grant := logical.grants[t.route.backend]; grant != nil {
+		if grant.firstPending && grant.firstCall != hash {
+			return session.ExternalAuthorization{}, false, errors.New("broker authorization is bound to another effective tool call")
+		}
+		return session.ExternalAuthorization{}, false, nil
+	}
+	for _, transaction := range logical.authorizations {
+		if transaction.backend == t.route.backend && transaction.status == session.AuthorizationPending {
+			if transaction.callHash != hash {
+				return session.ExternalAuthorization{}, false, errors.New("broker route already has a different pending authorization")
+			}
+			return transaction.external(), true, nil
+		}
+	}
+	if len(logical.authorizations) >= maxAuthorizationRecords {
+		return session.ExternalAuthorization{}, false, errors.New("broker authorization record capacity reached")
+	}
+	secret, err := t.attachment.runtime.oauth.resolveSecret(ctx, t.route.oauth.secretEnv)
+	if err != nil {
+		return session.ExternalAuthorization{}, false, err
+	}
+	id, err := opaque(t.attachment.runtime.oauth.random)
+	if err != nil {
+		return session.ExternalAuthorization{}, false, fmt.Errorf("create authorization identity: %w", err)
+	}
+	binding, err := opaque(t.attachment.runtime.oauth.random)
+	if err != nil {
+		return session.ExternalAuthorization{}, false, fmt.Errorf("create authorization binding: %w", err)
+	}
+	state, err := opaque(t.attachment.runtime.oauth.random)
+	if err != nil {
+		return session.ExternalAuthorization{}, false, fmt.Errorf("create callback state: %w", err)
+	}
+	verifier, err := opaque(t.attachment.runtime.oauth.random)
+	if err != nil {
+		return session.ExternalAuthorization{}, false, fmt.Errorf("create PKCE verifier: %w", err)
+	}
+	copyRoute := *t.route.oauth
+	transaction := &authorizationTransaction{
+		identity: authorizationIdentity{id: id, binding: session.AuthorizationBinding(binding)}, route: &copyRoute,
+		backend: t.route.backend, callHash: hash, callID: call.ID, state: state, verifier: verifier, clientSecret: secret,
+		expiresAt: t.attachment.runtime.oauth.now().Add(t.attachment.runtime.oauth.ttl), status: session.AuthorizationPending,
+	}
+	logical.authorizations[transaction.identity] = transaction
+	if !t.attachment.runtime.registerCallbackState(state, logical, transaction) {
+		delete(logical.authorizations, transaction.identity)
+		transaction.clientSecret = ""
+		transaction.verifier = ""
+		transaction.state = ""
+		return session.ExternalAuthorization{}, false, errors.New("create unique callback state")
+	}
+	return transaction.external(), true, nil
+}
+
+func (t *authorizationTransaction) external() session.ExternalAuthorization {
+	return session.ExternalAuthorization{ID: t.identity.id, DisplayName: t.backend, Binding: t.identity.binding, ExpiresAt: t.expiresAt}
+}
+
+func (t *authorizationTransaction) oauthConfig(secret string) *oauth2.Config {
+	return &oauth2.Config{ClientID: t.route.clientID, ClientSecret: secret, RedirectURL: t.route.callbackURL,
+		Scopes: append([]string(nil), t.route.scopes...), Endpoint: oauth2.Endpoint{
+			AuthURL: t.route.authorizationEndpoint, TokenURL: t.route.tokenEndpoint, AuthStyle: oauth2.AuthStyleInHeader,
+		}}
+}
+
+func lookupAuthorization(logical *logicalSession, authorization session.ExternalAuthorization) (*authorizationTransaction, error) {
+	transaction := logical.authorizations[authorizationIdentity{id: authorization.ID, binding: authorization.Binding}]
+	if transaction == nil {
+		return nil, contract.ErrAuthorizationNotFound
+	}
+	return transaction, nil
+}
+
+func (a *Attachment) lookupAuthorizationLocked(authorization session.ExternalAuthorization) (*authorizationTransaction, error) {
+	transaction, err := lookupAuthorization(a.logical, authorization)
+	if errors.Is(err, contract.ErrAuthorizationNotFound) && a.runtime.catalogue.protected() && len(a.logical.authorizations) == 0 {
+		// A protected authorization reference with no process-local transaction is
+		// the explicit in-process restart posture: never mint replacement state.
+		return nil, contract.ErrStateUnavailable
+	}
+	return transaction, err
+}
+
+// PresentAuthorization returns a live URL for the exact process-local transaction.
+func (a *Attachment) PresentAuthorization(ctx context.Context, authorization session.ExternalAuthorization) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	if err := a.stateError(); err != nil {
+		return "", err
+	}
+	a.logical.mu.Lock()
+	defer a.logical.mu.Unlock()
+	transaction, err := a.lookupAuthorizationLocked(authorization)
+	if err != nil {
+		return "", err
+	}
+	a.expireLocked(transaction)
+	if transaction.status != session.AuthorizationPending || transaction.claimed {
+		return "", contract.ErrAuthorizationNotFound
+	}
+	cfg := transaction.oauthConfig(transaction.clientSecret)
+	challenge := sha256.Sum256([]byte(transaction.verifier))
+	options := []oauth2.AuthCodeOption{
+		oauth2.SetAuthURLParam("code_challenge", base64.RawURLEncoding.EncodeToString(challenge[:])),
+		oauth2.SetAuthURLParam("code_challenge_method", "S256"),
+	}
+	if transaction.route.requestRefresh {
+		options = append(options, oauth2.AccessTypeOffline)
+	}
+	return cfg.AuthCodeURL(transaction.state, options...), nil
+}
+
+// AuthorizationStatus reports the exact transaction's current lifecycle status.
+func (a *Attachment) AuthorizationStatus(ctx context.Context, authorization session.ExternalAuthorization) (session.AuthorizationStatus, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	if err := a.stateError(); err != nil {
+		return "", err
+	}
+	a.logical.mu.Lock()
+	defer a.logical.mu.Unlock()
+	transaction, err := a.lookupAuthorizationLocked(authorization)
+	if err != nil {
+		return "", err
+	}
+	a.expireLocked(transaction)
+	return transaction.status, nil
+}
+
+func (a *Attachment) expireLocked(transaction *authorizationTransaction) {
+	if transaction.status == session.AuthorizationPending && !a.runtime.oauth.now().Before(transaction.expiresAt) {
+		transaction.status = session.AuthorizationExpired
+		a.runtime.removeCallbackState(transaction.state, transaction)
+		if transaction.cancel != nil {
+			transaction.cancel()
+		}
+		transaction.clientSecret = ""
+		transaction.verifier = ""
+		transaction.state = ""
+	}
+}
+
+// CancelAuthorization idempotently settles only the exact pending transaction.
+func (a *Attachment) CancelAuthorization(ctx context.Context, authorization session.ExternalAuthorization) (contract.CancelOutcome, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	if err := a.stateError(); err != nil {
+		return "", err
+	}
+	a.logical.mu.Lock()
+	defer a.logical.mu.Unlock()
+	transaction, err := a.lookupAuthorizationLocked(authorization)
+	if err != nil {
+		return "", err
+	}
+	a.expireLocked(transaction)
+	switch transaction.status {
+	case session.AuthorizationPending:
+		transaction.status = session.AuthorizationCancelled
+		a.runtime.removeCallbackState(transaction.state, transaction)
+		if transaction.cancel != nil {
+			transaction.cancel()
+		}
+		transaction.clientSecret = ""
+		transaction.verifier = ""
+		transaction.state = ""
+		return contract.CancelCancelled, nil
+	case session.AuthorizationCancelled:
+		return contract.CancelAlreadyCancelled, nil
+	default:
+		return contract.CancelAlreadyResolved, nil
+	}
+}
+
+func (t *protectedSessionTool) AbortAuthorization(ctx context.Context, authorization session.ExternalAuthorization) error {
+	_, err := t.attachment.CancelAuthorization(ctx, authorization)
+	return err
+}
+
+// CallbackHandler returns the process-owned, bounded one-time OAuth callback handler.
+func (r *Runtime) CallbackHandler() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodGet || request.Body != nil && request.ContentLength > 0 || len(request.URL.RawQuery) > maxCallbackQueryBytes {
+			http.Error(w, "invalid OAuth callback", http.StatusBadRequest)
+			return
+		}
+		values, err := url.ParseQuery(request.URL.RawQuery)
+		if err != nil || !exactCallbackValues(values) {
+			http.Error(w, "invalid OAuth callback", http.StatusBadRequest)
+			return
+		}
+		if callbackErr := values.Get("error"); callbackErr != "" {
+			if err := r.handleCallbackError(values.Get("state")); err != nil {
+				http.Error(w, "invalid OAuth callback", http.StatusBadRequest)
+				return
+			}
+			http.Error(w, "OAuth authorization was not granted", http.StatusBadRequest)
+			return
+		}
+		if err := r.handleCallback(request.Context(), values.Get("code"), values.Get("state")); err != nil {
+			http.Error(w, "invalid OAuth callback", http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+}
+
+func exactCallbackValues(values url.Values) bool {
+	if len(values) < 2 || len(values) > 3 || len(values["state"]) != 1 {
+		return false
+	}
+	hasCode := len(values["code"]) == 1
+	hasError := len(values["error"]) == 1
+	if hasCode == hasError {
+		return false
+	}
+	for key, list := range values {
+		allowed := key == "state" || hasCode && (key == "code" || key == "scope") || hasError && (key == "error" || key == "error_description")
+		if !allowed || len(list) != 1 || list[0] == "" || len(list[0]) > maxCallbackValueBytes {
+			return false
+		}
+	}
+	return true
+}
+
+func (r *Runtime) handleCallbackError(state string) error {
+	indexed, ok := r.claimCallbackState(state)
+	if !ok {
+		return contract.ErrAuthorizationNotFound
+	}
+	logical, transaction := indexed.logical, indexed.transaction
+	logical.mu.Lock()
+	defer logical.mu.Unlock()
+	if logical.deleted || transaction.status != session.AuthorizationPending || transaction.claimed {
+		return contract.ErrAuthorizationNotFound
+	}
+	if !r.oauth.now().Before(transaction.expiresAt) {
+		transaction.status = session.AuthorizationExpired
+	} else {
+		transaction.claimed = true
+		transaction.status = session.AuthorizationFailed
+	}
+	if transaction.cancel != nil {
+		transaction.cancel()
+		transaction.cancel = nil
+	}
+	transaction.clientSecret = ""
+	transaction.verifier = ""
+	transaction.state = ""
+	return nil
+}
+
+func (r *Runtime) handleCallback(ctx context.Context, code, state string) error {
+	r.mu.RLock()
+	closed := r.closed
+	r.mu.RUnlock()
+	if closed {
+		return contract.ErrStateUnavailable
+	}
+	indexed, ok := r.claimCallbackState(state)
+	if !ok {
+		return contract.ErrAuthorizationNotFound
+	}
+	logical, transaction := indexed.logical, indexed.transaction
+	logical.mu.Lock()
+	if logical.deleted || transaction.status != session.AuthorizationPending || transaction.claimed {
+		logical.mu.Unlock()
+		return contract.ErrAuthorizationNotFound
+	}
+	if !r.oauth.now().Before(transaction.expiresAt) {
+		transaction.status = session.AuthorizationExpired
+		transaction.clientSecret = ""
+		transaction.verifier = ""
+		transaction.state = ""
+		logical.mu.Unlock()
+		return contract.ErrAuthorizationNotFound
+	}
+	transaction.claimed = true
+	exchangeCtx, exchangeCancel := context.WithTimeout(context.WithoutCancel(ctx), r.oauth.timeout)
+	transaction.cancel = exchangeCancel
+	cfg := transaction.oauthConfig(transaction.clientSecret)
+	verifier := transaction.verifier
+	transaction.clientSecret = ""
+	transaction.verifier = ""
+	transaction.state = ""
+	logical.mu.Unlock()
+
+	exchangeCtx = context.WithValue(exchangeCtx, oauth2.HTTPClient, r.oauth.httpClient)
+	token, err := cfg.Exchange(exchangeCtx, code, oauth2.VerifierOption(verifier))
+	exchangeCancel()
+	logical.mu.Lock()
+	defer logical.mu.Unlock()
+	transaction.cancel = nil
+	if logical.deleted || transaction.status != session.AuthorizationPending {
+		return contract.ErrStateUnavailable
+	}
+	if err != nil || !validBearerToken(token) {
+		transaction.status = session.AuthorizationFailed
+		return errors.New("OAuth token exchange failed")
+	}
+	logical.grants[transaction.backend] = &oauthGrant{config: cfg, token: token, firstCall: transaction.callHash, firstPending: true, executed: make(map[session.ToolCallID][32]byte)}
+	transaction.status = session.AuthorizationGranted
+	return nil
+}
+
+func validBearerToken(token *oauth2.Token) bool {
+	return token != nil && token.AccessToken != "" && strings.EqualFold(token.TokenType, "bearer")
+}
+
+type scopedTokenSource struct {
+	runtime *Runtime
+	logical *logicalSession
+	backend string
+}
+
+func (s *scopedTokenSource) Token() (*oauth2.Token, error) {
+	s.logical.mu.Lock()
+	defer s.logical.mu.Unlock()
+	if s.logical.deleted {
+		return nil, contract.ErrStateUnavailable
+	}
+	grant := s.logical.grants[s.backend]
+	if grant == nil {
+		return nil, contract.ErrAuthorizationNotFound
+	}
+	if grant.token.Valid() {
+		return cloneToken(grant.token), nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), s.runtime.oauth.timeout)
+	defer cancel()
+	ctx = context.WithValue(ctx, oauth2.HTTPClient, s.runtime.oauth.httpClient)
+	fresh, err := grant.config.TokenSource(ctx, grant.token).Token()
+	if err != nil {
+		var retrieveErr *oauth2.RetrieveError
+		if errors.As(err, &retrieveErr) && retrieveErr.ErrorCode == "invalid_grant" {
+			s.logical.revokeGrantLocked(s.backend, grant)
+		}
+		return nil, errors.New("OAuth token refresh failed")
+	}
+	if !validBearerToken(fresh) {
+		s.logical.revokeGrantLocked(s.backend, grant)
+		return nil, errors.New("OAuth token refresh failed")
+	}
+	if fresh.RefreshToken == "" {
+		fresh.RefreshToken = grant.token.RefreshToken
+	}
+	grant.token = fresh
+	return cloneToken(fresh), nil
+}
+
+func (l *logicalSession) revokeGrantLocked(backend string, expected *oauthGrant) {
+	if l.grants[backend] != expected {
+		return
+	}
+	if expected.token != nil {
+		expected.token.AccessToken = ""
+		expected.token.RefreshToken = ""
+	}
+	delete(l.grants, backend)
+}
+
+func cloneToken(token *oauth2.Token) *oauth2.Token {
+	if token == nil {
+		return nil
+	}
+	clone := *token
+	return &clone
+}
+
+func (t *sessionTool) executeProtected(ctx context.Context, call session.ToolCall) (session.ToolResult, error) {
+	logical := t.attachment.logical
+	hash := callHash(call)
+	logical.mu.Lock()
+	grant := logical.grants[t.route.backend]
+	if grant == nil {
+		logical.mu.Unlock()
+		return session.ToolResult{}, contract.ErrAuthorizationNotFound
+	}
+	if grant.firstPending {
+		if grant.firstCall != hash {
+			logical.mu.Unlock()
+			return session.ToolResult{}, errors.New("protected call does not match authorized effective call")
+		}
+		grant.firstPending = false
+	}
+	if prior, exists := grant.executed[call.ID]; exists {
+		logical.mu.Unlock()
+		if prior == hash {
+			return session.ToolResult{}, errors.New("protected call outcome is ambiguous; automatic replay refused")
+		}
+		return session.ToolResult{}, errors.New("protected call ID was reused with different arguments")
+	}
+	grant.executed[call.ID] = hash // claim before transport: an unknown outcome is never replayed.
+	logical.mu.Unlock()
+	result, err := t.attachment.runtime.authorizedCaller(ctx, logical.ref, t.route.backend, call, &scopedTokenSource{runtime: t.attachment.runtime, logical: logical, backend: t.route.backend})
+	result.CallID = call.ID
+	return result, err
+}
+
+func (l *logicalSession) clearSecretsLocked(runtime *Runtime, status session.AuthorizationStatus) {
+	for _, transaction := range l.authorizations {
+		runtime.removeCallbackState(transaction.state, transaction)
+		if transaction.status == session.AuthorizationPending {
+			transaction.status = status
+		}
+		if transaction.cancel != nil {
+			transaction.cancel()
+		}
+		transaction.clientSecret = ""
+		transaction.verifier = ""
+		transaction.state = ""
+	}
+	for _, grant := range l.grants {
+		if grant.token != nil {
+			grant.token.AccessToken = ""
+			grant.token.RefreshToken = ""
+		}
+	}
+	clear(l.authorizations)
+	clear(l.grants)
+}
+
+// Close releases all process-owned callbacks, transactions, grants and logical sessions.
+func (r *Runtime) Close() error {
+	r.mu.Lock()
+	if r.closed {
+		r.mu.Unlock()
+		return nil
+	}
+	r.closed = true
+	sessions := r.sessions
+	r.sessions = make(map[session.SessionID]*logicalSession)
+	r.mu.Unlock()
+	for _, logical := range sessions {
+		logical.mu.Lock()
+		logical.deleted = true
+		logical.cancelOps()
+		logical.mu.Unlock()
+	}
+	for _, logical := range sessions {
+		logical.waitOperations()
+		logical.mu.Lock()
+		logical.clearSecretsLocked(r, session.AuthorizationClosed)
+		logical.mu.Unlock()
+	}
+	if r.oauth.httpClient != nil {
+		r.oauth.httpClient.CloseIdleConnections()
+	}
+	return nil
+}

@@ -12,9 +12,13 @@ import (
 	"strings"
 	"sync"
 
+	"golang.org/x/oauth2"
+
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
+	mcpadapter "github.com/stacklok/mecatl/internal/adapter/mcp"
 	"github.com/stacklok/mecatl/internal/adapter/mcpauthority"
+	"github.com/stacklok/mecatl/internal/adapter/permconfig"
 	contract "github.com/stacklok/mecatl/internal/mcpbroker"
 )
 
@@ -42,6 +46,7 @@ type route struct {
 	backend  string
 	spec     tool.ToolSpec
 	readOnly bool
+	oauth    *oauthRoute
 }
 
 // Catalogue is an immutable compiled broker catalogue. Specs deliberately
@@ -54,7 +59,8 @@ type Catalogue struct {
 // occupied contains names already visible to the model; collisions are rejected
 // before any session attachment is created.
 func Compile(config mcpauthority.BrokerConfig, discovered []ToolDefinition, occupied []string) (*Catalogue, error) {
-	backends := make(map[string]string, len(config.Routes))
+	backends := make(map[string]permconfig.MCPServerProfile, len(config.Routes))
+	protectedRoutes := 0
 	for _, declaration := range config.Routes {
 		key := strings.ToLower(declaration.Name)
 		if key == "" {
@@ -63,10 +69,22 @@ func Compile(config mcpauthority.BrokerConfig, discovered []ToolDefinition, occu
 		if _, exists := backends[key]; exists {
 			return nil, fmt.Errorf("%w: duplicate route %q", ErrInvalidCatalogue, declaration.Name)
 		}
-		if declaration.Auth.Mode != "none" {
+		if declaration.Auth.Mode != "none" && declaration.Auth.Mode != "oauth" {
 			return nil, fmt.Errorf("%w: route %q uses auth mode %q", ErrProtectedRouteUnsupported, declaration.Name, declaration.Auth.Mode)
 		}
-		backends[key] = declaration.Name
+		if declaration.Auth.Mode == "oauth" {
+			protectedRoutes++
+			if protectedRoutes > 1 {
+				return nil, fmt.Errorf("%w: at most one OAuth route is supported by the shared callback", ErrProtectedRouteUnsupported)
+			}
+			if declaration.Auth.OAuth == nil {
+				return nil, fmt.Errorf("%w: route %q has no OAuth declaration", ErrProtectedRouteUnsupported, declaration.Name)
+			}
+			if config.CallbackURL == "" {
+				return nil, fmt.Errorf("%w: OAuth routes require a callback URL", ErrInvalidCatalogue)
+			}
+		}
+		backends[key] = declaration
 	}
 
 	seen := make(map[string]struct{}, len(occupied)+len(discovered))
@@ -79,10 +97,11 @@ func Compile(config mcpauthority.BrokerConfig, discovered []ToolDefinition, occu
 
 	routes := make([]route, 0, len(discovered))
 	for _, definition := range discovered {
-		backend, configured := backends[strings.ToLower(definition.Backend)]
+		declaration, configured := backends[strings.ToLower(definition.Backend)]
 		if !configured {
 			return nil, fmt.Errorf("%w: discovery references unconfigured route %q", ErrInvalidCatalogue, definition.Backend)
 		}
+		backend := declaration.Name
 		if definition.Name == "" {
 			return nil, fmt.Errorf("%w: discovered tool name is required", ErrInvalidCatalogue)
 		}
@@ -93,7 +112,7 @@ func Compile(config mcpauthority.BrokerConfig, discovered []ToolDefinition, occu
 			return nil, fmt.Errorf("%w: tool %q has invalid JSON schema", ErrInvalidCatalogue, definition.Name)
 		}
 		seen[definition.Name] = struct{}{}
-		routes = append(routes, route{
+		compiledRoute := route{
 			backend: backend,
 			spec: tool.ToolSpec{
 				Name:        definition.Name,
@@ -101,7 +120,15 @@ func Compile(config mcpauthority.BrokerConfig, discovered []ToolDefinition, occu
 				Schema:      append(json.RawMessage(nil), definition.Schema...),
 			},
 			readOnly: definition.ReadOnly,
-		})
+		}
+		if declaration.Auth.Mode == "oauth" {
+			oauthRoute, err := compileOAuthRoute(config.CallbackURL, declaration)
+			if err != nil {
+				return nil, err
+			}
+			compiledRoute.oauth = oauthRoute
+		}
+		routes = append(routes, compiledRoute)
 	}
 	sort.Slice(routes, func(i, j int) bool { return routes[i].spec.Name < routes[j].spec.Name })
 	return &Catalogue{routes: routes}, nil
@@ -126,12 +153,19 @@ type SessionRef struct {
 	generation uint64
 }
 
+// SessionID returns the canonical mecatl session identity without exposing its incarnation.
 func (r SessionRef) SessionID() session.SessionID { return r.id }
 
 type logicalSession struct {
-	mu      sync.RWMutex
-	ref     SessionRef
-	deleted bool
+	mu             sync.RWMutex
+	ref            SessionRef
+	deleted        bool
+	operationCtx   context.Context
+	cancelOps      context.CancelFunc
+	activeOps      int
+	operationsDone chan struct{}
+	authorizations map[authorizationIdentity]*authorizationTransaction
+	grants         map[string]*oauthGrant
 }
 
 // Caller is the private execution seam used by the in-process transport. The
@@ -139,26 +173,70 @@ type logicalSession struct {
 // model-controlled arguments.
 type Caller func(context.Context, SessionRef, string, session.ToolCall) (session.ToolResult, error)
 
+// AuthorizedCaller is the protected-route execution seam. The token source is
+// scoped to the exact logical session and route and retains refresh custody.
+type AuthorizedCaller func(context.Context, SessionRef, string, session.ToolCall, oauth2.TokenSource) (session.ToolResult, error)
+
 // Runtime owns logical broker sessions and creates process-local attachments.
 type Runtime struct {
-	mu             sync.RWMutex
-	catalogue      *Catalogue
-	caller         Caller
-	sessions       map[session.SessionID]*logicalSession
-	nextGeneration uint64
+	mu               sync.RWMutex
+	stateMu          sync.Mutex
+	catalogue        *Catalogue
+	caller           Caller
+	authorizedCaller AuthorizedCaller
+	oauth            oauthRuntimeOptions
+	sessions         map[session.SessionID]*logicalSession
+	states           map[string]callbackState
+	nextGeneration   uint64
+	closed           bool
 }
 
 var _ contract.Service = (*Runtime)(nil)
 
-// New constructs an in-process anonymous-route broker.
-func New(catalogue *Catalogue, caller Caller) (*Runtime, error) {
+// New constructs an in-process broker. OAuth options are required only when the
+// catalogue contains protected routes.
+func New(catalogue *Catalogue, caller Caller, options ...Option) (*Runtime, error) {
 	if catalogue == nil {
 		return nil, fmt.Errorf("%w: catalogue is required", ErrInvalidCatalogue)
 	}
 	if caller == nil {
 		return nil, fmt.Errorf("%w: caller is required", ErrInvalidCatalogue)
 	}
-	return &Runtime{catalogue: catalogue, caller: caller, sessions: make(map[session.SessionID]*logicalSession)}, nil
+	runtime := &Runtime{
+		catalogue: catalogue,
+		caller:    caller,
+		oauth:     defaultOAuthRuntimeOptions(),
+		sessions:  make(map[session.SessionID]*logicalSession),
+		states:    make(map[string]callbackState),
+	}
+	for _, option := range options {
+		if option == nil {
+			return nil, fmt.Errorf("%w: nil runtime option", ErrInvalidCatalogue)
+		}
+		option(runtime)
+	}
+	if catalogue.protected() && runtime.authorizedCaller == nil {
+		return nil, fmt.Errorf("%w: protected routes require an authorized caller", ErrInvalidCatalogue)
+	}
+	if catalogue.protected() {
+		var tokenEndpoint string
+		for _, route := range catalogue.routes {
+			if route.oauth != nil {
+				tokenEndpoint = route.oauth.tokenEndpoint
+				break
+			}
+		}
+		clientOptions := mcpadapter.HardenedOAuthTokenClientOptions{TokenEndpoint: tokenEndpoint, Timeout: runtime.oauth.timeout}
+		if runtime.oauth.allowLoopback {
+			mcpadapter.AllowHardenedOAuthTokenLoopbackForTest(runtime.oauth.testHelper, &clientOptions, runtime.oauth.testRootCAs)
+		}
+		client, err := mcpadapter.NewHardenedOAuthTokenClient(clientOptions)
+		if err != nil {
+			return nil, fmt.Errorf("%w: hardened OAuth token client: %v", ErrInvalidCatalogue, err)
+		}
+		runtime.oauth.httpClient = client
+	}
+	return runtime, nil
 }
 
 // AttachSession creates or reattaches to logical state keyed by the canonical
@@ -171,11 +249,22 @@ func (r *Runtime) AttachSession(ctx context.Context, id session.SessionID) (cont
 		return nil, "", fmt.Errorf("%w: session ID is required", ErrInvalidCatalogue)
 	}
 	r.mu.Lock()
+	if r.closed {
+		r.mu.Unlock()
+		return nil, "", contract.ErrStateUnavailable
+	}
 	logical, exists := r.sessions[id]
 	outcome := contract.AttachReattached
 	if !exists {
 		r.nextGeneration++
-		logical = &logicalSession{ref: SessionRef{id: id, generation: r.nextGeneration}}
+		operationCtx, cancelOps := context.WithCancel(context.Background())
+		logical = &logicalSession{
+			ref:            SessionRef{id: id, generation: r.nextGeneration},
+			operationCtx:   operationCtx,
+			cancelOps:      cancelOps,
+			authorizations: make(map[authorizationIdentity]*authorizationTransaction),
+			grants:         make(map[string]*oauthGrant),
+		}
 		r.sessions[id] = logical
 		outcome = contract.AttachCreated
 	}
@@ -184,7 +273,12 @@ func (r *Runtime) AttachSession(ctx context.Context, id session.SessionID) (cont
 	attachment := &Attachment{runtime: r, logical: logical}
 	attachment.tools = make([]tool.Tool, len(r.catalogue.routes))
 	for i, route := range r.catalogue.routes {
-		attachment.tools[i] = &sessionTool{attachment: attachment, route: route}
+		base := &sessionTool{attachment: attachment, route: route}
+		if route.oauth != nil {
+			attachment.tools[i] = &protectedSessionTool{sessionTool: base}
+		} else {
+			attachment.tools[i] = base
+		}
 	}
 	return attachment, outcome, nil
 }
@@ -196,16 +290,25 @@ func (r *Runtime) DeleteSession(ctx context.Context, id session.SessionID) (cont
 		return "", err
 	}
 	r.mu.Lock()
+	if r.closed {
+		r.mu.Unlock()
+		return "", contract.ErrStateUnavailable
+	}
 	logical, exists := r.sessions[id]
 	if !exists {
 		r.mu.Unlock()
 		return contract.DeleteNotFound, nil
 	}
-	delete(r.sessions, id)
-	r.mu.Unlock()
-
 	logical.mu.Lock()
 	logical.deleted = true
+	logical.cancelOps()
+	delete(r.sessions, id)
+	logical.mu.Unlock()
+	r.mu.Unlock()
+
+	logical.waitOperations()
+	logical.mu.Lock()
+	logical.clearSecretsLocked(r, session.AuthorizationClosed)
 	logical.mu.Unlock()
 	return contract.DeleteDeleted, nil
 }
@@ -214,11 +317,13 @@ func (r *Runtime) DeleteSession(ctx context.Context, id session.SessionID) (cont
 // adapter-specific projection used by composition; the P06 lifecycle methods
 // satisfy the neutral contract.
 type Attachment struct {
-	mu      sync.RWMutex
-	runtime *Runtime
-	logical *logicalSession
-	closed  bool
-	tools   []tool.Tool
+	mu             sync.RWMutex
+	runtime        *Runtime
+	logical        *logicalSession
+	closed         bool
+	activeOps      int
+	operationsDone chan struct{}
+	tools          []tool.Tool
 }
 
 var _ contract.Attachment = (*Attachment)(nil)
@@ -246,51 +351,88 @@ func (a *Attachment) stateError() error {
 	return nil
 }
 
-// PresentAuthorization has no authorization state for anonymous routes.
-func (a *Attachment) PresentAuthorization(ctx context.Context, _ session.ExternalAuthorization) (string, error) {
-	if err := ctx.Err(); err != nil {
-		return "", err
-	}
-	if err := a.stateError(); err != nil {
-		return "", err
-	}
-	return "", contract.ErrAuthorizationNotFound
-}
-
-// AuthorizationStatus has no authorization state for anonymous routes.
-func (a *Attachment) AuthorizationStatus(ctx context.Context, _ session.ExternalAuthorization) (session.AuthorizationStatus, error) {
-	if err := ctx.Err(); err != nil {
-		return "", err
-	}
-	if err := a.stateError(); err != nil {
-		return "", err
-	}
-	return "", contract.ErrAuthorizationNotFound
-}
-
-// CancelAuthorization has no authorization state for anonymous routes.
-func (a *Attachment) CancelAuthorization(ctx context.Context, _ session.ExternalAuthorization) (contract.CancelOutcome, error) {
-	if err := ctx.Err(); err != nil {
-		return "", err
-	}
-	if err := a.stateError(); err != nil {
-		return "", err
-	}
-	return "", contract.ErrAuthorizationNotFound
-}
-
-// Close releases only this process-local attachment.
+// Close rejects new work through this attachment and joins work that was already
+// registered through it. It does not cancel sibling attachments or logical state.
 func (a *Attachment) Close(ctx context.Context) (contract.CloseOutcome, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
 	a.mu.Lock()
-	defer a.mu.Unlock()
 	if a.closed {
+		a.mu.Unlock()
 		return contract.CloseAlreadyClosed, nil
 	}
 	a.closed = true
+	done := a.operationsDone
+	a.mu.Unlock()
+	if done != nil {
+		<-done
+	}
 	return contract.CloseClosed, nil
+}
+
+func (a *Attachment) beginOperation(parent context.Context) (context.Context, func(), error) {
+	a.mu.Lock()
+	if a.closed {
+		a.mu.Unlock()
+		return nil, nil, contract.ErrAttachmentClosed
+	}
+	if a.activeOps == 0 {
+		a.operationsDone = make(chan struct{})
+	}
+	a.activeOps++
+
+	logical := a.logical
+	logical.mu.Lock()
+	if logical.deleted {
+		logical.mu.Unlock()
+		a.finishAttachmentOperation()
+		a.mu.Unlock()
+		return nil, nil, contract.ErrStateUnavailable
+	}
+	if logical.activeOps == 0 {
+		logical.operationsDone = make(chan struct{})
+	}
+	logical.activeOps++
+	operationCtx, cancel := context.WithCancel(logical.operationCtx)
+	stop := context.AfterFunc(parent, cancel)
+	logical.mu.Unlock()
+	a.mu.Unlock()
+
+	var once sync.Once
+	return operationCtx, func() {
+		once.Do(func() {
+			stop()
+			cancel()
+			logical.mu.Lock()
+			logical.activeOps--
+			if logical.activeOps == 0 {
+				close(logical.operationsDone)
+				logical.operationsDone = nil
+			}
+			logical.mu.Unlock()
+			a.mu.Lock()
+			a.finishAttachmentOperation()
+			a.mu.Unlock()
+		})
+	}, nil
+}
+
+func (a *Attachment) finishAttachmentOperation() {
+	a.activeOps--
+	if a.activeOps == 0 {
+		close(a.operationsDone)
+		a.operationsDone = nil
+	}
+}
+
+func (l *logicalSession) waitOperations() {
+	l.mu.RLock()
+	done := l.operationsDone
+	l.mu.RUnlock()
+	if done != nil {
+		<-done
+	}
 }
 
 type sessionTool struct {
@@ -302,24 +444,22 @@ func (t *sessionTool) Spec() tool.ToolSpec { return copySpec(t.route.spec) }
 func (t *sessionTool) ReadOnly() bool      { return t.route.readOnly }
 
 func (t *sessionTool) Execute(ctx context.Context, call session.ToolCall, _ tool.Environment) (session.ToolResult, error) {
-	t.attachment.mu.RLock()
-	defer t.attachment.mu.RUnlock()
-	if t.attachment.closed {
-		return session.ToolResult{}, contract.ErrAttachmentClosed
+	opCtx, done, err := t.attachment.beginOperation(ctx)
+	if err != nil {
+		return session.ToolResult{}, err
 	}
-	t.attachment.logical.mu.RLock()
-	defer t.attachment.logical.mu.RUnlock()
-	if t.attachment.logical.deleted {
-		return session.ToolResult{}, contract.ErrStateUnavailable
-	}
+	defer done()
 	if call.Name != t.route.spec.Name {
 		return session.NewToolError(call.ID, "broker tool call does not match wrapper"), nil
 	}
-	if err := ctx.Err(); err != nil {
+	if err := opCtx.Err(); err != nil {
 		return session.ToolResult{}, err
 	}
 	call.Args = append(json.RawMessage(nil), call.Args...)
-	result, err := t.attachment.runtime.caller(ctx, t.attachment.logical.ref, t.route.backend, call)
+	if t.route.oauth != nil {
+		return t.executeProtected(opCtx, call)
+	}
+	result, err := t.attachment.runtime.caller(opCtx, t.attachment.logical.ref, t.route.backend, call)
 	result.CallID = call.ID
 	return result, err
 }

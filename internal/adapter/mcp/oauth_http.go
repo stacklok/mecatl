@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"io"
 	"mime"
@@ -25,6 +26,71 @@ const (
 
 type oauthLookupFunc func(context.Context, string, string) ([]netip.Addr, error)
 type oauthDialFunc func(context.Context, string, string) (net.Conn, error)
+
+// HardenedOAuthTokenClientOptions configures an exact-origin OAuth token client.
+// The resulting client refuses redirects and proxies, validates every resolved IP,
+// pins dialing to the validated addresses, requires TLS 1.2+, and applies bounded
+// dial, handshake, response-header, and whole-request timeouts.
+type HardenedOAuthTokenClientOptions struct {
+	TokenEndpoint string
+	Timeout       time.Duration
+	allowLoopback bool
+	rootCAs       *x509.CertPool
+}
+
+// AllowHardenedOAuthTokenLoopbackForTest enables a loopback TLS endpoint and its
+// test CA. The relaxation is deliberately unavailable as production data/config.
+func AllowHardenedOAuthTokenLoopbackForTest(t interface{ Helper() }, opts *HardenedOAuthTokenClientOptions, roots *x509.CertPool) {
+	t.Helper()
+	if opts != nil {
+		opts.allowLoopback = true
+		opts.rootCAs = roots
+	}
+}
+
+// NewHardenedOAuthTokenClient constructs a client restricted to the trusted token
+// endpoint's exact origin. Request path/query remain controlled by oauth2.Config.
+func NewHardenedOAuthTokenClient(opts HardenedOAuthTokenClientOptions) (*http.Client, error) {
+	endpoint, err := validateHTTPURL("OAuth token endpoint", opts.TokenEndpoint, false)
+	if err != nil || endpoint.RawQuery != "" || endpoint.Fragment != "" {
+		return nil, errors.New("OAuth token endpoint must be a canonical HTTPS URL")
+	}
+	origin := urlOrigin(endpoint)
+	resolver := &net.Resolver{}
+	dialer := &net.Dialer{Timeout: 5 * time.Second}
+	transport := &oauthHTTPTransport{
+		origins:            map[string]struct{}{origin: {}},
+		private:            make(map[string]struct{}),
+		issuerOrigin:       origin,
+		resourceOrigin:     origin,
+		requireClientBasic: true,
+		lookup:             resolver.LookupNetIP,
+		dial:               dialer.DialContext,
+		allowLoopback:      opts.allowLoopback,
+	}
+	transport.base = &http.Transport{
+		Proxy:                  nil,
+		TLSClientConfig:        &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: opts.rootCAs},
+		TLSHandshakeTimeout:    5 * time.Second,
+		ResponseHeaderTimeout:  10 * time.Second,
+		MaxResponseHeaderBytes: 64 << 10,
+		MaxIdleConns:           2,
+		MaxIdleConnsPerHost:    2,
+		IdleConnTimeout:        30 * time.Second,
+		DialContext:            transport.dialContext,
+	}
+	timeout := opts.Timeout
+	if timeout <= 0 {
+		timeout = defaultOAuthTimeout
+	}
+	return &http.Client{
+		Transport: transport,
+		Timeout:   timeout,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return projectOAuthError(ErrOAuthUnavailable)
+		},
+	}, nil
+}
 
 type oauthHTTPTransport struct {
 	origins            map[string]struct{}
