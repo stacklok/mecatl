@@ -113,10 +113,6 @@ func (s *Service) controlLearningAttempt(ctx context.Context, id, expectedVersio
 	if s.cfg.Attempts == nil {
 		return nil, ErrLearningUnavailable
 	}
-	principal := session.PrincipalFromContext(ctx)
-	if principal == nil || principal.Issuer == "" || principal.Subject == "" || principal.GrantType == session.GrantTypeSystem {
-		return nil, fmt.Errorf("%w: verified private attempt principal unavailable", ErrFailedPrecondition)
-	}
 	partition, err := s.attemptPartition(ctx)
 	if err != nil {
 		return nil, err

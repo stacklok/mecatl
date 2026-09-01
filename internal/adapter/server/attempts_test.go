@@ -32,7 +32,11 @@ func attemptTestContext(subject string) context.Context {
 
 func createAttemptFixture(t *testing.T, repository learning.AttemptRepository, subject, sourceSuffix string) learning.AttemptRecord {
 	t.Helper()
-	principal := &session.Principal{Issuer: "https://issuer.example", Subject: subject}
+	return createAttemptFixtureForPrincipal(t, repository, &session.Principal{Issuer: "https://issuer.example", Subject: subject}, sourceSuffix)
+}
+
+func createAttemptFixtureForPrincipal(t *testing.T, repository learning.AttemptRepository, principal *session.Principal, sourceSuffix string) learning.AttemptRecord {
+	t.Helper()
 	caller := reflectionPrincipal(principal)
 	partition, err := learning.DeriveAttemptPartition(caller)
 	if err != nil {
@@ -164,6 +168,12 @@ func TestADR_0254_AttemptControlsRequirePrivateOwnerBinding(t *testing.T) {
 	if _, err = svc.RetryLearningAttempt(system, string(failed.ID), string(failed.Version)); !errors.Is(err, ErrFailedPrecondition) {
 		t.Fatalf("system retry error = %v, want failed precondition", err)
 	}
+	if _, err = svc.AbandonLearningAttempt(system, string(failed.ID), string(failed.Version)); !errors.Is(err, ErrFailedPrecondition) {
+		t.Fatalf("system abandon error = %v, want failed precondition", err)
+	}
+	if _, err = svc.RetryLearningAttempt(context.Background(), string(failed.ID), string(failed.Version)); !errors.Is(err, ErrFailedPrecondition) {
+		t.Fatalf("identity-free retry error = %v, want failed precondition", err)
+	}
 	if _, err = svc.AbandonLearningAttempt(context.Background(), string(failed.ID), string(failed.Version)); !errors.Is(err, ErrFailedPrecondition) {
 		t.Fatalf("identity-free abandon error = %v, want failed precondition", err)
 	}
@@ -209,6 +219,34 @@ func TestADR_0254_AttemptControlsRequirePrivateOwnerBinding(t *testing.T) {
 	claimedAfter, _, _ := repository.Get(context.Background(), alicePartition, claimed.ID)
 	if claimedAfter != claimed {
 		t.Fatalf("live-claim conflict changed attempt: before=%#v after=%#v", claimed, claimedAfter)
+	}
+
+	ownerlessPartition, err := learning.DeriveAttemptPartition(reflectionPrincipal(nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ownerlessFailed := createAttemptFixtureForPrincipal(t, repository, nil, "ownerless-failed")
+	ownerlessRunning, ownerlessClaim, err := repository.AcquireClaim(context.Background(), ownerlessPartition, ownerlessFailed.ID, ownerlessFailed.Version, now, now.Add(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ownerlessFailed, err = repository.Finalize(context.Background(), ownerlessPartition, ownerlessFailed.ID, ownerlessRunning.Version, ownerlessClaim, now, learning.AttemptFinalization{
+		State: learning.AttemptFailed, Outcome: learning.AttemptOutcomeFailed, FailureCode: learning.FailureUnavailable,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ownerlessControls := &Service{cfg: Config{Attempts: repository, Now: func() time.Time { return now }}}
+	ownerlessRetried, err := ownerlessControls.RetryLearningAttempt(context.Background(), string(ownerlessFailed.ID), string(ownerlessFailed.Version))
+	if err != nil || ownerlessRetried.GetState() != string(learning.AttemptQueued) {
+		t.Fatalf("ownerless retry = %#v, %v", ownerlessRetried, err)
+	}
+	if _, err = ownerlessControls.RetryLearningAttempt(system, string(ownerlessFailed.ID), ownerlessRetried.GetVersion()); !errors.Is(err, ErrFailedPrecondition) {
+		t.Fatalf("ownerless system retry error = %v, want failed precondition", err)
+	}
+	ownerlessAbandoned, err := ownerlessControls.AbandonLearningAttempt(context.Background(), string(ownerlessFailed.ID), ownerlessRetried.GetVersion())
+	if err != nil || ownerlessAbandoned.GetState() != string(learning.AttemptAbandoned) {
+		t.Fatalf("ownerless abandon = %#v, %v", ownerlessAbandoned, err)
 	}
 
 	grpcFailed := createFailedAttemptFixture(t, repository, "alice", "grpc", now)
