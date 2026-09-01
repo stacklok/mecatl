@@ -54,12 +54,15 @@ model: ""
 maxRunTokens: null
 maxTeamTokens: null
 
-# A real provider (mockProvider: false) is accepted only with both encrypted
-# server transport and OIDC caller authentication. This conspicuous bypass is
-# for local development or a trusted mesh that supplies both controls outside
-# the pod; selecting it is annotated on the rendered pod.
+# A real provider (mockProvider: false) requires OIDC and either pod TLS or an
+# explicitly asserted gateway TLS boundary. The unsafe bypass remains for local
+# development or a trusted mesh that supplies both controls outside the pod.
 security:
   allowUnsafeRealProvider: false
+  # For the real-provider secure profile, permits TLS upstream only with OIDC;
+  # operator owns gateway TLS, forwarding the original Authorization bearer, and
+  # gateway/mesh-only plaintext backend reachability.
+  tlsTerminatedUpstream: false
 
 # Optional Kubernetes scheduling controls. Empty values render no pod fields.
 topologySpreadConstraints: []

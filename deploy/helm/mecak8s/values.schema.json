@@ -58,7 +58,10 @@
       "type": "object",
       "additionalProperties": false,
       "required": ["allowUnsafeRealProvider"],
-      "properties": {"allowUnsafeRealProvider": {"type": "boolean"}}
+      "properties": {
+        "allowUnsafeRealProvider": {"type": "boolean"},
+        "tlsTerminatedUpstream": {"type": "boolean"}
+      }
     },
     "replicaCount": {"type": "integer", "minimum": 2},
     "mockProvider": {"type": "boolean"},
@@ -168,16 +171,68 @@
   "allOf": [
     {
       "if": {
+        "required": ["mockProvider", "security"],
         "properties": {
           "mockProvider": {"const": false},
-          "security": {"properties": {"allowUnsafeRealProvider": {"const": false}}}
-        },
-        "required": ["mockProvider", "security"]
+          "security": {
+            "required": ["allowUnsafeRealProvider"],
+            "properties": {"allowUnsafeRealProvider": {"const": false}}
+          }
+        }
       },
       "then": {
+        "required": ["oidc", "tls", "security"],
         "properties": {
-          "tls": {"properties": {"enabled": {"const": true}}},
-          "oidc": {"properties": {"enabled": {"const": true}}}
+          "oidc": {
+            "required": ["enabled"],
+            "properties": {"enabled": {"const": true}}
+          }
+        },
+        "anyOf": [
+          {
+            "properties": {
+              "tls": {
+                "required": ["enabled"],
+                "properties": {"enabled": {"const": true}}
+              }
+            }
+          },
+          {
+            "properties": {
+              "security": {
+                "required": ["tlsTerminatedUpstream"],
+                "properties": {"tlsTerminatedUpstream": {"const": true}}
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "if": {
+        "required": ["mockProvider", "security", "tls"],
+        "properties": {
+          "mockProvider": {"const": false},
+          "security": {
+            "required": ["allowUnsafeRealProvider", "tlsTerminatedUpstream"],
+            "properties": {
+              "allowUnsafeRealProvider": {"const": false},
+              "tlsTerminatedUpstream": {"const": true}
+            }
+          },
+          "tls": {
+            "required": ["enabled"],
+            "properties": {"enabled": {"const": false}}
+          }
+        }
+      },
+      "then": {
+        "required": ["service"],
+        "properties": {
+          "service": {
+            "required": ["type"],
+            "properties": {"type": {"const": "ClusterIP"}}
+          }
         }
       }
     }

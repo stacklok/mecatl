@@ -18,13 +18,21 @@ spec:
   template:
     metadata:
       labels: {{- include "mecak8s.selectorLabels" . | nindent 8 }}
-      {{- if or .Values.podAnnotations (and (not .Values.mockProvider) .Values.security.allowUnsafeRealProvider) }}
+      {{- $chartAnnotations := dict }}
+      {{- if and (not .Values.mockProvider) .Values.security.allowUnsafeRealProvider }}
+      {{- $_ := set $chartAnnotations "mecatl.stacklok.com/unsafe-real-provider" "true" }}
+      {{- end }}
+      {{- if and (not .Values.mockProvider) (not .Values.security.allowUnsafeRealProvider) .Values.security.tlsTerminatedUpstream }}
+      {{- $_ := set $chartAnnotations "mecatl.stacklok.com/tls-terminated-upstream" "true" }}
+      {{- end }}
+      {{- $userAnnotations := omit (deepCopy .Values.podAnnotations) "mecatl.stacklok.com/unsafe-real-provider" "mecatl.stacklok.com/tls-terminated-upstream" }}
+      {{- if or $userAnnotations $chartAnnotations }}
       annotations:
-        {{- with .Values.podAnnotations }}
+        {{- with $userAnnotations }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
-        {{- if and (not .Values.mockProvider) .Values.security.allowUnsafeRealProvider }}
-        mecatl.stacklok.com/unsafe-real-provider: "true"
+        {{- with $chartAnnotations }}
+        {{- toYaml . | nindent 8 }}
         {{- end }}
       {{- else }}
       annotations: {}

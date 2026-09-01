@@ -8,6 +8,9 @@ spec:
   selector: {{- include "mecak8s.selectorLabels" . | nindent 4 }}
   ports:
     - name: grpc
+      {{- if not .Values.tls.enabled }}
+      appProtocol: kubernetes.io/h2c
+      {{- end }}
       port: {{ .Values.service.grpcPort }}
       targetPort: grpc
       {{- with .Values.service.nodePorts.grpc }}

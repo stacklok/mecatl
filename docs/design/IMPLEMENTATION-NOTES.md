@@ -126,13 +126,20 @@ rotations retain the previous generation. The
 server client-CA pool remains static and requires restart; CA rotation should overlap old
 and new roots before removing the old root.
 
-Helm chart 0.2.0 treats `mockProvider: false` as real-provider intent and requires both
-`tls.enabled` and `oidc.enabled`, unless the visibly unsafe local/trusted-mesh bypass is
-explicit. Empty provider/model and null token ceilings emit no flags; explicit ceilings are
-positive. Scheduling controls are empty by default and map directly to pod-spec topology
-spread, affinity, node selector, and toleration fields. The comprehensive production
-fixture pins external verified Redis, TLS/OIDC, provider/model, finite run/team ceilings,
-and hostname spreading; Kind remains mock and secret-free.
+Helm chart 0.3.0 has three explicit real-provider postures: in-pod TLS + OIDC;
+edge-terminated TLS + OIDC (`security.tlsTerminatedUpstream`, pod TLS off for a
+ClusterIP h2c backend); and the visibly unsafe local/trusted-mesh bypass. The edge
+setting is an operator attestation, not chart enforcement: gateway TLS must preserve
+the original Authorization bearer, never use forwarded identity authentication, limit
+plaintext access to the gateway/mesh, and publish a `GRPCRoute` only (not drain or
+health endpoints). The chart intentionally creates no Gateway, Route, Certificate, or
+general NetworkPolicy; `BackendTLSPolicy` or in-pod TLS supplies re-encryption.
+Changing pod TLS to h2c requires blue-green or maintenance cutover. Empty provider/model
+and null token ceilings emit no flags; explicit ceilings are positive. Scheduling controls
+are empty by default and map directly to pod-spec topology spread, affinity, node selector,
+and toleration fields. The comprehensive production fixtures pin external verified Redis,
+both secure transport options, provider/model, finite run/team ceilings, and hostname
+spreading; Kind remains mock and secret-free.
 
 ---
 

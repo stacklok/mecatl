@@ -239,11 +239,19 @@ Set a credentials Secret reference when a configured key needs reading.
 The image defaults to `v<chart-version>`.
 This default keeps ranged Helm upgrades aligned with released images.
 Set a signed release tag or digest only to override the default.
-A real-provider deployment (`mockProvider: false`) requires server TLS and OIDC caller authentication.
-TLS does not authenticate callers.
-OIDC does not encrypt transport.
-Use `security.allowUnsafeRealProvider: true` only for local deployments or trusted meshes that provide both controls externally.
-This bypass annotates the pod as unsafe.
+A real-provider deployment (`mockProvider: false`) has three explicit postures:
+in-pod TLS with OIDC; edge-terminated TLS with `security.tlsTerminatedUpstream=true`,
+OIDC, and `tls.enabled=false` for a `ClusterIP` plaintext h2c backend; or the explicit
+unsafe bypass. The upstream value is an attestation, not chart enforcement. The edge
+gateway must restrict backend access to the gateway or mesh, forward the original
+`Authorization: Bearer` token rather than use forwarded-identity authentication, and
+publish a `GRPCRoute` only—never public-route `/drain`, `/healthz`, or `/readyz`.
+The chart creates no Gateway, Route, Certificate, or general NetworkPolicy; use an
+operator-owned `BackendTLSPolicy` or in-pod TLS for gateway-to-pod re-encryption.
+Setting both in-pod TLS and the upstream attestation is valid. Change an existing
+pod-TLS release to h2c through a blue-green or maintenance cutover, not an
+assumed-safe rolling update. The bypass annotates the pod as unsafe; a secure upstream
+attestation is annotated as TLS-terminated-upstream.
 The chart retains two replicas, a PDB, rolling updates, restricted pod security, bounded resources, dynamic probes, and namespaced Lease RBAC.
 The chart creates no agent PVC and ships no general NetworkPolicy.
 The cluster must provide network isolation because agent egress depends on operator-selected endpoints.
@@ -398,7 +406,10 @@ helm upgrade --install mecak8s deploy/helm/mecak8s --namespace mecatl \
   --set redis.endpoint=redis.example.internal:6379 \
   --set redis.credentialsSecret=mecak8s-redis \
   --set tls.enabled=true \
-  --set tls.secretName=mecak8s-tls
+  --set tls.secretName=mecak8s-tls \
+  --set oidc.enabled=true \
+  --set oidc.issuer=https://idp.example.com \
+  --set oidc.audience=mecatl
 ```
 
 The chart creates no Secret. With `tls.enabled=true`, it projects only
@@ -408,8 +419,14 @@ when your Secret uses different PEM key names. The container receives the
 fixed mounted paths `/var/run/secrets/tls/<certKey>` and
 `/var/run/secrets/tls/<keyKey>` as `--tls-cert` and `--tls-key`, enabling TLS
 for both gRPC and HTTP/SSE. The chart also changes health, readiness, and drain
-requests to HTTPS. Rotated certificate/key pairs are loaded transactionally for new
-handshakes without a rollout; invalid candidates retain the last valid generation.
+requests to HTTPS. This is the in-pod TLS + OIDC secure real-provider posture;
+include the OIDC values shown above for a real provider. For an operator-owned edge
+TLS boundary instead, set `security.tlsTerminatedUpstream=true` with OIDC. Keeping
+`tls.enabled=true` is valid re-encryption and preserves that upstream attestation;
+setting it false selects the ClusterIP-only plaintext h2c backend, which must be
+reachable only from the gateway or mesh. Rotated certificate/key pairs are loaded
+transactionally for new handshakes without a rollout; invalid candidates retain the
+last valid generation.
 
 ---
 

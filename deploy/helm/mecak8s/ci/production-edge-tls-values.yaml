@@ -1,0 +1,28 @@
+# task deploy:check valid chart-input fixture: secure real-provider service whose
+# TLS gateway is operator-owned. It attests the required bearer forwarding and
+# gateway/mesh-only access; it does not prove a complete Gateway deployment.
+# The gateway forwards the original Authorization bearer; only the gateway or mesh
+# may reach this plaintext h2c backend.
+image:
+  tag: v0.0.0
+defaultProvider: openrouter
+model: anthropic/claude-sonnet-4-6
+extraEnv:
+  - name: OPENROUTER_API_KEY
+    valueFrom:
+      secretKeyRef:
+        name: provider-credentials
+        key: openrouter-api-key
+redis:
+  endpoint: redis.example.internal:6379
+  credentialsSecret: redis-credentials
+oidc:
+  enabled: true
+  issuer: https://idp.example.com
+  audience: mecatl
+security:
+  tlsTerminatedUpstream: true
+service:
+  type: ClusterIP
+tls:
+  enabled: false

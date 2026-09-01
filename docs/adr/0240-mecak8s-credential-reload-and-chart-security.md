@@ -3,6 +3,7 @@
 - Status: Accepted
 - Date: 2026-08-27
 - Scope: mecak8s projected credentials, live TLS and Redis reload, and Helm security defaults
+- Superseded by: [ADR 0278](./0278-mecak8s-edge-terminated-tls.md) (provider-security gate scope only)
 
 ## Context
 

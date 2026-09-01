@@ -88,16 +88,23 @@ all identical to `mecated`'s (see §3).
 
 #### Production Helm chart (`deploy/helm/mecak8s/`)
 
-The Helm chart defines the production contract.
-It never installs Redis.
-Set an externally managed Redis endpoint.
-Set a Secret reference when any configured key needs reading.
-A real-provider install (`mockProvider: false`) requires server TLS and OIDC caller authentication.
-TLS does not authenticate callers.
-OIDC does not encrypt transport.
-Chart 0.2.0 enforces this requirement.
-Use `security.allowUnsafeRealProvider: true` only for local deployments or trusted meshes.
-This bypass stamps the pod template with `mecatl.stacklok.com/unsafe-real-provider: "true"`.
+The chart has three explicit postures: **in-pod TLS** (`tls.enabled=true` plus
+OIDC); **edge-terminated TLS** (`security.tlsTerminatedUpstream=true` plus OIDC,
+with `tls.enabled=false` selecting a ClusterIP-only plaintext h2c backend); and the
+explicit **unsafe bypass** (`security.allowUnsafeRealProvider=true`) for local or
+trusted-mesh deployments. `tlsTerminatedUpstream` is an operator attestation, not
+chart enforcement: the chart cannot verify gateway TLS, gateway-only reachability,
+or token forwarding. The edge gateway must forward the original `Authorization:
+Bearer` token—never authenticate with a forwarded identity header—and expose a
+`GRPCRoute` only; do not public-route the HTTP drain or health endpoints. The chart
+creates no Gateway, Route, Certificate, or general NetworkPolicy. A
+`BackendTLSPolicy` or in-pod TLS provides gateway-to-pod re-encryption; setting both
+in-pod TLS and `tlsTerminatedUpstream=true` is valid and retains the upstream
+attestation. Changing an existing pod-TLS release to h2c needs blue-green or a
+maintenance cutover, not an assumed-safe rolling update. The unsafe bypass stamps
+`mecatl.stacklok.com/unsafe-real-provider: "true"`; a secure upstream attestation
+stamps `mecatl.stacklok.com/tls-terminated-upstream: "true"`.
+
 Leave `redis.caKey` empty to select system-trust TLS.
 This option mounts no Secret unless an ACL key is set.
 ACL password and username Secret keys are optional.

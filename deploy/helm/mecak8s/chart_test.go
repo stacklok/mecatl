@@ -2,6 +2,7 @@ package mecak8s_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -31,6 +32,25 @@ func helm(t *testing.T, args ...string) (string, error) {
 	cmd.Dir = chartDir(t)
 	out, err := cmd.CombinedOutput()
 	return string(out), err
+}
+
+func serviceFromRender(t *testing.T, rendered string) *corev1.Service {
+	t.Helper()
+	for _, document := range strings.Split(rendered, "\n---") {
+		var meta struct {
+			Kind string `yaml:"kind"`
+		}
+		if err := yaml.Unmarshal([]byte(document), &meta); err != nil || meta.Kind != "Service" {
+			continue
+		}
+		var service corev1.Service
+		if err := yaml.Unmarshal([]byte(document), &service); err != nil {
+			t.Fatal(err)
+		}
+		return &service
+	}
+	t.Fatal("rendered chart has no Service")
+	return nil
 }
 
 func deploymentFromRender(t *testing.T, rendered string) *appsv1.Deployment {
@@ -121,6 +141,110 @@ func TestMecak8sHelmChart_KindProfileAloneHasNoSecretDependency(t *testing.T) {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("bare Kind render missing %q", want)
 		}
+	}
+}
+
+func TestMecak8sHelmChart_EdgeTerminatedTLS(t *testing.T) {
+	rendered, err := helm(t, "template", "production", ".", "-f", "ci/production-edge-tls-values.yaml")
+	if err != nil {
+		t.Fatalf("render edge TLS fixture: %v", err)
+	}
+	deployment := deploymentFromRender(t, rendered)
+	container := deployment.Spec.Template.Spec.Containers[0]
+	for _, want := range []string{"--oidc-issuer=https://idp.example.com", "--oidc-audience=mecatl", "--oidc-max-jwks-staleness=1h"} {
+		if !slices.Contains(container.Args, want) {
+			t.Fatalf("edge TLS args missing %q: %q", want, container.Args)
+		}
+	}
+	for _, absent := range []string{"--tls-cert=", "--tls-key="} {
+		if slices.ContainsFunc(container.Args, func(arg string) bool { return strings.HasPrefix(arg, absent) }) {
+			t.Fatalf("edge TLS args unexpectedly contain %q: %q", absent, container.Args)
+		}
+	}
+	if deployment.Spec.Template.Annotations["mecatl.stacklok.com/tls-terminated-upstream"] != "true" || len(deployment.Spec.Template.Annotations) != 1 {
+		t.Fatalf("edge TLS annotations = %#v", deployment.Spec.Template.Annotations)
+	}
+	if _, ok := deployment.Spec.Template.Annotations["mecatl.stacklok.com/unsafe-real-provider"]; ok {
+		t.Fatal("edge TLS render carries unsafe annotation")
+	}
+	if slices.ContainsFunc(deployment.Spec.Template.Spec.Volumes, func(volume corev1.Volume) bool { return volume.Name == "tls" }) {
+		t.Fatal("edge TLS render includes a pod TLS Secret volume")
+	}
+	if slices.ContainsFunc(container.VolumeMounts, func(mount corev1.VolumeMount) bool { return mount.Name == "tls" }) {
+		t.Fatal("edge TLS render includes a pod TLS Secret volume mount")
+	}
+	for _, probe := range []*corev1.Probe{container.StartupProbe, container.ReadinessProbe, container.LivenessProbe} {
+		if probe == nil || probe.HTTPGet == nil || probe.HTTPGet.Scheme != corev1.URISchemeHTTP {
+			t.Fatalf("edge TLS probe = %#v, want HTTP", probe)
+		}
+	}
+	if container.Lifecycle == nil || container.Lifecycle.PreStop == nil || container.Lifecycle.PreStop.HTTPGet == nil || container.Lifecycle.PreStop.HTTPGet.Scheme != corev1.URISchemeHTTP {
+		t.Fatalf("edge TLS preStop = %#v, want HTTP", container.Lifecycle)
+	}
+	service := serviceFromRender(t, rendered)
+	if service.Spec.Type != corev1.ServiceTypeClusterIP {
+		t.Fatalf("edge TLS Service type = %q, want ClusterIP", service.Spec.Type)
+	}
+	for _, port := range service.Spec.Ports {
+		if port.Name == "grpc" {
+			if port.AppProtocol == nil || *port.AppProtocol != "kubernetes.io/h2c" {
+				t.Fatalf("edge TLS gRPC Service port = %#v, want kubernetes.io/h2c", port)
+			}
+			continue
+		}
+		if port.AppProtocol != nil {
+			t.Fatalf("edge TLS non-gRPC Service port %q has appProtocol %q", port.Name, *port.AppProtocol)
+		}
+	}
+}
+
+func TestMecak8sHelmChart_EdgeFixtureRendersNoExternalBoundaryResources(t *testing.T) {
+	rendered, err := helm(t, "template", "production", ".", "-f", "ci/production-edge-tls-values.yaml")
+	if err != nil {
+		t.Fatalf("render edge TLS fixture: %v", err)
+	}
+	for _, document := range strings.Split(rendered, "\n---") {
+		var meta struct {
+			Kind     string `yaml:"kind"`
+			Metadata struct {
+				Name string `yaml:"name"`
+			} `yaml:"metadata"`
+		}
+		if err := yaml.Unmarshal([]byte(document), &meta); err != nil {
+			t.Fatal(err)
+		}
+		switch meta.Kind {
+		case "Gateway", "HTTPRoute", "GRPCRoute", "TLSRoute", "Route", "Certificate":
+			t.Fatalf("edge fixture unexpectedly renders platform-owned %s", meta.Kind)
+		case "NetworkPolicy":
+			if !strings.HasSuffix(meta.Metadata.Name, "-raw-driver") {
+				t.Fatalf("edge fixture unexpectedly renders general NetworkPolicy %q", meta.Metadata.Name)
+			}
+		}
+	}
+}
+
+func TestMecak8sHelmChart_ChartOwnedAnnotationsCannotBeOverridden(t *testing.T) {
+	base := []string{"template", "production", ".", "--set", "image.tag=v0.0.0", "--set", "redis.endpoint=redis.example.internal:6380", "--set", "redis.credentialsSecret=redis-credentials"}
+	for _, tc := range []struct {
+		name string
+		set  string
+		want string
+	}{
+		{"edge", "security.tlsTerminatedUpstream=true,oidc.enabled=true,oidc.issuer=https://idp.example.com,oidc.audience=mecatl,podAnnotations.example\\.com/kept=value,podAnnotations.mecatl\\.stacklok\\.com/tls-terminated-upstream=false,podAnnotations.mecatl\\.stacklok\\.com/unsafe-real-provider=false", "mecatl.stacklok.com/tls-terminated-upstream"},
+		{"edge re-encryption", "security.tlsTerminatedUpstream=true,tls.enabled=true,tls.secretName=mecak8s-tls,oidc.enabled=true,oidc.issuer=https://idp.example.com,oidc.audience=mecatl,podAnnotations.example\\.com/kept=value,podAnnotations.mecatl\\.stacklok\\.com/tls-terminated-upstream=false", "mecatl.stacklok.com/tls-terminated-upstream"},
+		{"unsafe", "security.allowUnsafeRealProvider=true,podAnnotations.example\\.com/kept=value,podAnnotations.mecatl\\.stacklok\\.com/tls-terminated-upstream=true,podAnnotations.mecatl\\.stacklok\\.com/unsafe-real-provider=false", "mecatl.stacklok.com/unsafe-real-provider"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rendered, err := helm(t, append(base, "--set", tc.set)...)
+			if err != nil {
+				t.Fatal(err)
+			}
+			annotations := deploymentFromRender(t, rendered).Spec.Template.Annotations
+			if annotations[tc.want] != "true" || annotations["example.com/kept"] != "value" || len(annotations) != 2 {
+				t.Fatalf("chart-owned annotations = %#v", annotations)
+			}
+		})
 	}
 }
 
@@ -231,7 +355,7 @@ func TestMecak8sHelmChart_DeployCheckProductionFixtureRuntimeAndSpread(t *testin
 }
 
 func TestMecak8sHelmChart_ProductionFixturesReferenceProviderCredential(t *testing.T) {
-	for _, fixture := range []string{"ci/production-values.yaml", "ci/production-oidc-values.yaml"} {
+	for _, fixture := range []string{"ci/production-values.yaml", "ci/production-oidc-values.yaml", "ci/production-edge-tls-values.yaml"} {
 		t.Run(fixture, func(t *testing.T) {
 			rendered, err := helm(t, "template", ".", "-f", fixture)
 			if err != nil {
@@ -273,16 +397,84 @@ func TestMecak8sValuesSchemaIndependentlyEnforcesProviderSecurity(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	var values map[string]any
-	if err := json.Unmarshal(valuesJSON, &values); err != nil {
+
+	for _, serviceType := range []string{"ClusterIP", "NodePort", "LoadBalancer"} {
+		for _, mock := range []bool{false, true} {
+			for _, unsafe := range []bool{false, true} {
+				for _, tls := range []bool{false, true} {
+					for _, edge := range []bool{false, true} {
+						for _, oidc := range []bool{false, true} {
+							name := fmt.Sprintf("service=%s/mock=%t/unsafe=%t/tls=%t/edge=%t/oidc=%t", serviceType, mock, unsafe, tls, edge, oidc)
+							t.Run(name, func(t *testing.T) {
+								var values map[string]any
+								if err := json.Unmarshal(valuesJSON, &values); err != nil {
+									t.Fatal(err)
+								}
+								values["mockProvider"] = mock
+								values["security"].(map[string]any)["allowUnsafeRealProvider"] = unsafe
+								values["security"].(map[string]any)["tlsTerminatedUpstream"] = edge
+								values["tls"].(map[string]any)["enabled"] = tls
+								values["oidc"].(map[string]any)["enabled"] = oidc
+								values["service"].(map[string]any)["type"] = serviceType
+								wantOK := mock || unsafe || (oidc && (tls || (edge && serviceType == "ClusterIP")))
+								if err := resolved.Validate(values); (err == nil) != wantOK {
+									t.Fatalf("schema acceptance = %t, want %t: %v", err == nil, wantOK, err)
+								}
+							})
+						}
+					}
+				}
+			}
+		}
+	}
+
+	var legacyPodTLS map[string]any
+	if err := json.Unmarshal(valuesJSON, &legacyPodTLS); err != nil {
 		t.Fatal(err)
 	}
-	values["mockProvider"] = false
-	values["security"].(map[string]any)["allowUnsafeRealProvider"] = false
-	values["tls"].(map[string]any)["enabled"] = false
-	values["oidc"].(map[string]any)["enabled"] = false
-	if err := resolved.Validate(values); err == nil {
-		t.Fatal("values.schema.json accepted a real provider without TLS and OIDC")
+	legacyPodTLS["mockProvider"] = false
+	delete(legacyPodTLS["security"].(map[string]any), "tlsTerminatedUpstream")
+	legacyPodTLS["tls"].(map[string]any)["enabled"] = true
+	legacyPodTLS["tls"].(map[string]any)["secretName"] = "mecak8s-tls"
+	legacyPodTLS["oidc"].(map[string]any)["enabled"] = true
+	if err := resolved.Validate(legacyPodTLS); err != nil {
+		t.Fatalf("schema rejected chart-0.2-shaped pod TLS + OIDC values: %v", err)
+	}
+}
+
+func TestMecak8sHelmHelperMatchesProviderSecuritySchema(t *testing.T) {
+	help, err := helm(t, "template", "--help")
+	if err != nil || !strings.Contains(help, "--skip-schema-validation") {
+		t.Fatalf("Helm must support --skip-schema-validation for helper-independence coverage: %v", err)
+	}
+	base := []string{"template", "production", ".", "--skip-schema-validation", "--set", "image.tag=v0.0.0", "--set", "redis.endpoint=redis.example.internal:6380", "--set", "redis.credentialsSecret=redis-credentials"}
+	for _, serviceType := range []string{"ClusterIP", "NodePort", "LoadBalancer"} {
+		for _, mock := range []bool{false, true} {
+			for _, unsafe := range []bool{false, true} {
+				for _, tls := range []bool{false, true} {
+					for _, edge := range []bool{false, true} {
+						for _, oidc := range []bool{false, true} {
+							name := fmt.Sprintf("service=%s/mock=%t/unsafe=%t/tls=%t/edge=%t/oidc=%t", serviceType, mock, unsafe, tls, edge, oidc)
+							t.Run(name, func(t *testing.T) {
+								args := append([]string{}, base...)
+								args = append(args, "--set", fmt.Sprintf("mockProvider=%t,security.allowUnsafeRealProvider=%t,security.tlsTerminatedUpstream=%t,tls.enabled=%t,oidc.enabled=%t,service.type=%s", mock, unsafe, edge, tls, oidc, serviceType))
+								if tls {
+									args = append(args, "--set", "tls.secretName=mecak8s-tls")
+								}
+								if oidc {
+									args = append(args, "--set", "oidc.issuer=https://idp.example.com,oidc.audience=mecatl")
+								}
+								_, err := helm(t, args...)
+								wantOK := mock || unsafe || (oidc && (tls || (edge && serviceType == "ClusterIP")))
+								if (err == nil) != wantOK {
+									t.Fatalf("helper acceptance = %t, want %t: %v", err == nil, wantOK, err)
+								}
+							})
+						}
+					}
+				}
+			}
+		}
 	}
 }
 
@@ -439,7 +631,7 @@ func TestMecak8sHelmChart_Scenario1_ProductionValuesRequireExternalRedis(t *test
 	if err != nil {
 		t.Fatalf("render chart-version image: %v", err)
 	}
-	if !strings.Contains(rendered, "ghcr.io/stacklok/mecatl/mecak8s:v0.2.0") {
+	if !strings.Contains(rendered, "ghcr.io/stacklok/mecatl/mecak8s:v0.3.0") {
 		t.Fatal("production render did not default the image tag from the chart version")
 	}
 	args = append(productionArgs(), "--set", "image.digest=sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
@@ -840,6 +1032,13 @@ func TestMecak8sHelmChart_ServerTLS(t *testing.T) {
 	} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("TLS production fixture missing %q", want)
+		}
+	}
+
+	service := serviceFromRender(t, rendered)
+	for _, port := range service.Spec.Ports {
+		if port.AppProtocol != nil && *port.AppProtocol == "kubernetes.io/h2c" {
+			t.Fatalf("pod TLS Service port %q has h2c appProtocol", port.Name)
 		}
 	}
 
