@@ -2,7 +2,7 @@
 id: 31-documentation-generated-integration
 title: Reconcile cloud-native learning documentation and generated surfaces
 blocked_by: [30-automatic-capability-claims]
-status: pending
+status: in-progress
 branch: ""
 worktree: ""
 issue: ""
