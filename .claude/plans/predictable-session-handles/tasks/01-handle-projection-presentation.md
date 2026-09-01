@@ -2,7 +2,7 @@
 id: 01-handle-projection-presentation
 title: Shared terminal-safe session handle projection and presentation protocol
 blocked_by: []
-status: pending
+status: in-progress
 branch: ""
 worktree: ""
 issue: "922"
