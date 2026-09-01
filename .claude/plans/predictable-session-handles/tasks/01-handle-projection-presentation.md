@@ -2,9 +2,9 @@
 id: 01-handle-projection-presentation
 title: Shared terminal-safe session handle projection and presentation protocol
 blocked_by: []
-status: in-progress
-branch: ""
-worktree: ""
+status: done
+branch: "plan-predictable-session-handles/01-handle-projection-presentation"
+worktree: ".scratch/worktrees/issue-922-task01"
 issue: "922"
 retries: 0
 last_error: ""
