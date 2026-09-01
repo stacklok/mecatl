@@ -27,7 +27,7 @@ corepack); **TypeScript 6** for development, declarations compatible with TS
 **tsc** ESM-only unbundled build with declarations + source maps; **API
 Extractor** — one report per entry point for `.` and `./node`; `./gen` is
 deliberately not report-governed. Apache-2.0 license field + LICENSE file.
-Subpath exports exactly `.` / `./node` / `./gen`. Node 22+.
+Subpath exports exactly `.` / `./node` / `./gen`. Node 24+.
 
 **Work:**
 - `sdk/typescript/`: package.json (`name` is `@stacklok/mecatl-sdk` per
@@ -60,7 +60,7 @@ Branch off `sdk/10-architecture-adr` as `sdk/11-scaffold` (not
 
 ## Acceptance criteria
 
-- AC1.1: A clean checkout with only pnpm 11 and Node 22 runs install
+- AC1.1: A clean checkout with only pnpm 11 and Node 24 runs install
   (frozen lockfile), lint, typecheck, test, build, and pack through the root
   `task sdk:*` targets; no root-level package.json appears and `website/`
   is untouched.

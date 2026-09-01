@@ -118,7 +118,7 @@ npm untouched) and into `ci.yml` as one job.
   lines.
 
 **Acceptance:**
-- AC1.1: A clean checkout with only pnpm 11 and Node 22 runs install
+- AC1.1: A clean checkout with only pnpm 11 and Node 24 runs install
   (frozen lockfile), lint, typecheck, test, build, and pack through the root
   `task sdk:*` targets; no root-level package.json appears and `website/`
   is untouched.

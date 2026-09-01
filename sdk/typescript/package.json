@@ -6,7 +6,7 @@
   "type": "module",
   "sideEffects": false,
   "engines": {
-    "node": ">=22"
+    "node": ">=24"
   },
   "packageManager": "pnpm@11.25.0",
   "files": [
@@ -41,7 +41,7 @@
   "devDependencies": {
     "@biomejs/biome": "2.5.11",
     "@microsoft/api-extractor": "7.59.0",
-    "@types/node": "22.20.1",
+    "@types/node": "24.13.3",
     "typescript": "6.0.3",
     "vitest": "4.1.11"
   }
