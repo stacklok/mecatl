@@ -2,9 +2,9 @@
 id: 33-canonical-artifact-identity
 title: Persist canonical artifact identity across worker restarts
 blocked_by: [31-documentation-generated-integration]
-status: in-progress
-branch: ""
-worktree: ""
+status: done
+branch: "plan-cloud-native-learning/33-canonical-artifact-identity"
+worktree: ".scratch/worktrees/33-canonical-artifact-identity"
 issue: ""
 retries: 0
 last_error: ""
