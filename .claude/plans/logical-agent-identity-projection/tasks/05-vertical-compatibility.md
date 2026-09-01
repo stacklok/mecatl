@@ -2,7 +2,7 @@
 id: 05-vertical-compatibility
 title: Verified-tool vertical proof and no-lifecycle compatibility
 blocked_by: [03-typed-verifier]
-status: pending
+status: in-progress
 branch: ""
 worktree: ""
 issue: "367"
