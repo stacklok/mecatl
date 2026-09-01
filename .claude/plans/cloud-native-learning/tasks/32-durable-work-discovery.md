@@ -2,9 +2,9 @@
 id: 32-durable-work-discovery
 title: Storage-neutral durable work discovery and retry loop
 blocked_by: [31-documentation-generated-integration]
-status: in-progress
-branch: ""
-worktree: ""
+status: done
+branch: "plan-cloud-native-learning/32-durable-work-discovery"
+worktree: ".scratch/worktrees/32-durable-work-discovery"
 issue: ""
 retries: 0
 last_error: ""
