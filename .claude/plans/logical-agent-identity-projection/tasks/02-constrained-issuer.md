@@ -2,8 +2,8 @@
 id: 02-constrained-issuer
 title: Constrained typed issuer and governance containment
 blocked_by: [01-logical-identity-value]
-status: in-progress
-branch: ""
+status: done
+branch: "plan-logical-agent-identity-projection/02-constrained-issuer"
 worktree: ""
 issue: "371"
 retries: 0

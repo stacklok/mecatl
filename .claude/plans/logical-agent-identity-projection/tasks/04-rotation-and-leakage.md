@@ -13,6 +13,8 @@ accumulator: acc/logical-agent-identity-projection
 
 # Task brief
 
+**Worker gate scope:** run only focused tests for packages/files you change and any directly dependent focused tests. Do **not** run `task lint`, `task test`, `task docs`, or other repository-wide gates; the orchestrator runs those once after all tasks merge.
+
 Extend I2 tests over the existing I1 rotation substrate. Prove remint derives fresh ephemeral credentials from the same typed logical identity and same-or-narrower tool authority, without persisting or exposing a compact token. Keep this pure I2 issue/verify work: do not add B4 spawn, resume, session, event-log, or broker wiring. Exercise a real minted token and deliberately malicious claim/error inputs so absence checks are not vacuous.
 
 ## Acceptance criteria

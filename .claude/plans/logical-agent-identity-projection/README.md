@@ -6,3 +6,5 @@
 **Base:** `acc/identity-issuer-substrate`
 
 Tasks are ordered by the typed-value → issuance → verification dependency chain. Rotation/leak evidence and the vertical authorization proof may proceed after typed verification lands.
+
+**Gate policy:** workers run only focused package tests. Repository-wide `task lint`, `task test`, `task docs`, and aggregate checks run once on the assembled accumulator after every task is merged.

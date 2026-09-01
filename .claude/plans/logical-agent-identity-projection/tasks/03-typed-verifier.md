@@ -13,6 +13,8 @@ accumulator: acc/logical-agent-identity-projection
 
 # Task brief
 
+**Worker gate scope:** run only focused tests for packages/files you change and any directly dependent focused tests. Do **not** run `task lint`, `task test`, `task docs`, or other repository-wide gates; the orchestrator runs those once after all tasks merge.
+
 Implement the I2-specific independent verifier as a mutually exclusive profile beside, not a weakening of, I1's registered-claims-only canary verifier. It must validate header, envelope, signature, bundle/key selection, and typed profile through one security representation, rejecting duplicate JSON names at every security-relevant level. Return only the approved typed verified identity with defensive copies; never raw compact JWT, generic claims, partial result, or authorization decision. Retain I1's fixed ES256, local trust-domain, singleton-audience, time/bundle freshness semantics and validate I2 `jti`, canonical subject, closed fields, and canonical tools.
 
 ## Acceptance criteria

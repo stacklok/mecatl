@@ -13,6 +13,8 @@ accumulator: acc/logical-agent-identity-projection
 
 # Task brief
 
+**Worker gate scope:** run only focused tests for packages/files you change and any directly dependent focused tests. Do **not** run `task lint`, `task test`, `task docs`, or other repository-wide gates; the orchestrator runs those once after all tasks merge.
+
 Add the focused vertical proof that independently verified I2 tools—not a hand-built substitute, subject string, or unrelated policy floor—are what reach the existing authority evaluator. Keep the proof root-internal/test-only and do not introduce B4 lifecycle integration. Add a structural/regression test proving I2 does not add app/server/agent invocation or new persisted token fields, while existing snapshot/event bytes remain unchanged.
 
 ## Acceptance criteria
