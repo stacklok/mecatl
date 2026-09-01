@@ -17,6 +17,14 @@ import (
 
 type Factory func(*testing.T) learning.SkillRepository
 
+// DistributedFactory opens an independent client/server-instance view over one
+// shared repository backend. Revisions remain opaque across every view.
+type DistributedFactory func(*testing.T) learning.SkillRepository
+
+// DistributedFixture creates one shared backend and returns a factory for
+// independent views over it.
+type DistributedFixture func(*testing.T) DistributedFactory
+
 //nolint:gocyclo // the shared suite keeps the complete lifecycle contract together
 func Run(t *testing.T, factory Factory) {
 	t.Helper()
@@ -229,6 +237,100 @@ func Run(t *testing.T, factory Factory) {
 		}
 		if _, err = repo.Stage(ctx, p, "agent-a", rejected.ID, rejected.Version, rejected.Revision); !errors.Is(err, learning.ErrSkillTransition) {
 			t.Fatalf("stage rejected=%v", err)
+		}
+	})
+}
+
+// RunDistributed adds cross-client and cross-server-instance checks to the
+// complete SkillRepository contract.
+//
+//nolint:gocyclo // the distributed suite keeps lifecycle and partition checks together
+func RunDistributed(t *testing.T, newFixture DistributedFixture) {
+	t.Helper()
+	Run(t, func(t *testing.T) learning.SkillRepository {
+		t.Helper()
+		return newFixture(t)(t)
+	})
+
+	t.Run("cross-client-recovery-provenance-evaluation-activation", func(t *testing.T) {
+		open := newFixture(t)
+		ctx := context.Background()
+		p := partition()
+		bundle := skill("distributed-review", "Review distributed changes.")
+		draft, err := open(t).CreateDraft(ctx, p, "agent-a", bundle, provenance("distributed-a"))
+		if err != nil || draft.Revision == "" {
+			t.Fatalf("draft=%#v err=%v", draft, err)
+		}
+		reopened, err := open(t).CreateDraft(ctx, p, "agent-a", bundle, provenance("distributed-b"))
+		if err != nil || reopened.ID != draft.ID || reopened.Version != draft.Version || reopened.Revision == "" || len(reopened.Provenance.ProposalIDs) != 2 {
+			t.Fatalf("idempotent reopen=%#v err=%v", reopened, err)
+		}
+		if _, err = open(t).RecordEvaluation(ctx, p, "agent-a", reopened.ID, reopened.Version, learning.Revision("stale-opaque-token"), evaluation(learning.EvaluationPass)); !errors.Is(err, learning.ErrSkillConflict) {
+			t.Fatalf("opaque stale CAS=%v", err)
+		}
+		evaluated, err := open(t).RecordEvaluation(ctx, p, "agent-a", reopened.ID, reopened.Version, reopened.Revision, evaluation(learning.EvaluationPass))
+		if err != nil || evaluated.State != learning.SkillEvaluated {
+			t.Fatalf("evaluation=%#v err=%v", evaluated, err)
+		}
+		recovered, found, err := open(t).Get(ctx, p, "agent-a", evaluated.ID, evaluated.Version)
+		if err != nil || !found || recovered.Revision != evaluated.Revision || len(recovered.Evaluations) != 1 || recovered.Evaluations[0].Verdict != learning.EvaluationPass || len(recovered.Provenance.EvidenceRefs) == 0 {
+			t.Fatalf("recovered evaluation=%#v found=%v err=%v", recovered, found, err)
+		}
+		staged, err := open(t).Stage(ctx, p, "agent-a", recovered.ID, recovered.Version, recovered.Revision)
+		if err != nil {
+			t.Fatal(err)
+		}
+		clients := []learning.SkillRepository{open(t), open(t)}
+		start := make(chan struct{})
+		results := make(chan error, len(clients))
+		for _, repo := range clients {
+			go func(repo learning.SkillRepository) {
+				<-start
+				_, activateErr := repo.Activate(ctx, p, "agent-a", staged.ID, staged.Version, staged.Revision)
+				results <- activateErr
+			}(repo)
+		}
+		close(start)
+		wins := 0
+		for range clients {
+			activateErr := <-results
+			if activateErr == nil {
+				wins++
+			} else if !errors.Is(activateErr, learning.ErrSkillConflict) {
+				t.Fatal(activateErr)
+			}
+		}
+		active, found, err := open(t).Get(ctx, p, "agent-a", staged.ID, staged.Version)
+		if wins != 1 || err != nil || !found || active.State != learning.SkillActive {
+			t.Fatalf("activation wins=%d active=%#v found=%v err=%v", wins, active, found, err)
+		}
+	})
+
+	t.Run("concurrent-partition-isolation", func(t *testing.T) {
+		open := newFixture(t)
+		ctx := context.Background()
+		partitions := []learning.SkillPartition{partition(), {Principal: "other-principal", Project: "other-project"}}
+		results := make(chan error, len(partitions))
+		start := make(chan struct{})
+		for i, p := range partitions {
+			repo := open(t)
+			go func(repo learning.SkillRepository, i int, p learning.SkillPartition) {
+				<-start
+				_, createErr := repo.CreateDraft(ctx, p, "agent-a", skill(fmt.Sprintf("partition-%d", i), "Partition-local workflow."), provenance(fmt.Sprintf("partition-%d", i)))
+				results <- createErr
+			}(repo, i, p)
+		}
+		close(start)
+		for range partitions {
+			if err := <-results; err != nil {
+				t.Fatal(err)
+			}
+		}
+		for _, p := range partitions {
+			page, err := open(t).List(ctx, p, learning.SkillList{})
+			if err != nil || len(page.Versions) != 1 || page.Versions[0].Partition != p {
+				t.Fatalf("partition=%#v page=%#v err=%v", p, page, err)
+			}
 		}
 	})
 }

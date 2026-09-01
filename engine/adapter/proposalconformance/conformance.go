@@ -16,6 +16,14 @@ import (
 
 type Factory func(*testing.T) learning.ProposalRepository
 
+// DistributedFactory opens an independent client/server-instance view over one
+// shared repository backend. Versions must remain opaque across every view.
+type DistributedFactory func(*testing.T) learning.ProposalRepository
+
+// DistributedFixture creates one shared backend and returns a factory for
+// independent views over it.
+type DistributedFixture func(*testing.T) DistributedFactory
+
 //nolint:gocyclo // the shared suite keeps repository lifecycle cases together for every adapter
 func Run(t *testing.T, f Factory) {
 	t.Helper()
@@ -176,6 +184,109 @@ func Run(t *testing.T, f Factory) {
 		}
 	})
 }
+
+// RunDistributed adds cross-client and cross-server-instance checks to the
+// complete ProposalRepository contract.
+//
+//nolint:gocyclo // the distributed suite keeps recovery, CAS, and partition checks together
+func RunDistributed(t *testing.T, newFixture DistributedFixture) {
+	t.Helper()
+	Run(t, func(t *testing.T) learning.ProposalRepository {
+		t.Helper()
+		return newFixture(t)(t)
+	})
+
+	t.Run("cross-client-recovery-and-opaque-cas", func(t *testing.T) {
+		open := newFixture(t)
+		ctx := context.Background()
+		partition, candidate := fixture("distributed")
+		signal := learning.Signal{Kind: learning.SignalContradiction, Evidence: candidate.Evidence}
+		first, err := open(t).StageBatch(ctx, partition, strings.Repeat("7", 64), []learning.Candidate{candidate}, []learning.Signal{signal})
+		if err != nil || len(first) != 1 || first[0].Version == "" {
+			t.Fatalf("stage=%#v err=%v", first, err)
+		}
+		reopened, found, err := open(t).Get(ctx, partition, first[0].ID)
+		if err != nil || !found || reopened.Version != first[0].Version || reopened.Candidate.Evidence[0].Digest != candidate.Evidence[0].Digest || len(reopened.Signals) != 1 {
+			t.Fatalf("reopened=%#v found=%v err=%v", reopened, found, err)
+		}
+		if _, err = open(t).ClaimPromotion(ctx, partition, reopened.ID, learning.ProposalVersion("stale-opaque-token")); !errors.Is(err, learning.ErrProposalVersionConflict) {
+			t.Fatalf("opaque stale CAS=%v", err)
+		}
+		claimed, err := open(t).ClaimPromotion(ctx, partition, reopened.ID, reopened.Version)
+		if err != nil {
+			t.Fatal(err)
+		}
+		decision := learning.Decision{Kind: learning.DecisionDefer, Actor: "distributed-reviewer", Reason: "recover terminal write"}
+		finalized, err := open(t).Finalize(ctx, partition, claimed.ID, claimed.Version, learning.ProposalConflicted, nil, decision)
+		if err != nil {
+			t.Fatal(err)
+		}
+		retried, err := open(t).Finalize(ctx, partition, claimed.ID, claimed.Version, learning.ProposalConflicted, nil, decision)
+		if err != nil || retried.Version != finalized.Version || retried.Status != learning.ProposalConflicted {
+			t.Fatalf("idempotent recovery=%#v err=%v", retried, err)
+		}
+	})
+
+	t.Run("cross-client-concurrency-and-partition-isolation", func(t *testing.T) {
+		open := newFixture(t)
+		ctx := context.Background()
+		partition, candidate := fixture("race-distributed")
+		records, err := open(t).StageBatch(ctx, partition, strings.Repeat("8", 64), []learning.Candidate{candidate}, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		clients := []learning.ProposalRepository{open(t), open(t)}
+		start := make(chan struct{})
+		results := make(chan error, len(clients))
+		for _, repo := range clients {
+			go func(repo learning.ProposalRepository) {
+				<-start
+				_, claimErr := repo.ClaimPromotion(ctx, partition, records[0].ID, records[0].Version)
+				results <- claimErr
+			}(repo)
+		}
+		close(start)
+		wins := 0
+		for range clients {
+			claimErr := <-results
+			if claimErr == nil {
+				wins++
+			} else if !errors.Is(claimErr, learning.ErrProposalVersionConflict) {
+				t.Fatal(claimErr)
+			}
+		}
+		if wins != 1 {
+			t.Fatalf("cross-client CAS wins=%d", wins)
+		}
+		partitions := []learning.ProposalPartition{
+			{Principal: partition.Principal, Project: "other-distributed-project-a"},
+			{Principal: "other-distributed-principal", Project: "other-distributed-project-b"},
+		}
+		repos := []learning.ProposalRepository{open(t), open(t)}
+		stageResults := make(chan error, len(partitions))
+		stageStart := make(chan struct{})
+		for i, other := range partitions {
+			go func(repo learning.ProposalRepository, other learning.ProposalPartition) {
+				<-stageStart
+				_, stageErr := repo.StageBatch(ctx, other, strings.Repeat("8", 64), []learning.Candidate{candidate}, nil)
+				stageResults <- stageErr
+			}(repos[i], other)
+		}
+		close(stageStart)
+		for range partitions {
+			if stageErr := <-stageResults; stageErr != nil {
+				t.Fatal(stageErr)
+			}
+		}
+		for _, other := range partitions {
+			page, listErr := open(t).List(ctx, other, learning.ProposalList{})
+			if listErr != nil || len(page.Records) != 1 || page.Records[0].Partition != other {
+				t.Fatalf("isolated partition=%#v page=%#v err=%v", other, page, listErr)
+			}
+		}
+	})
+}
+
 func fixture(x string) (learning.ProposalPartition, learning.Candidate) {
 	return learning.ProposalPartition{Principal: "issuer\x00subject", Project: "project"}, learning.Candidate{Kind: learning.CandidateProjectFact, Key: "project/" + x, Value: "Use task test.", Description: "Test command", Evidence: []learning.EvidenceRef{{SessionID: session.SessionID("s-" + x), Locator: learning.EvidenceMessage, Ordinal: 0, Digest: strings.Repeat("d", 64)}}}
 }

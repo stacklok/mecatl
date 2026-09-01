@@ -12,17 +12,38 @@ import (
 
 	driverv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/driver/v1"
 	"github.com/stacklok/mecatl/engine/adapter/memproposal"
+	"github.com/stacklok/mecatl/engine/adapter/memskill"
 	"github.com/stacklok/mecatl/engine/adapter/proposalconformance"
+	"github.com/stacklok/mecatl/engine/adapter/skillconformance"
 	"github.com/stacklok/mecatl/engine/learning"
 )
 
 func TestCloudNativeLearning_Scenario4_DistributedRepositoriesConform(t *testing.T) {
-	proposalconformance.Run(t, func(t *testing.T) learning.ProposalRepository {
-		backend := memproposal.New()
-		conn := dialBufconn(t, func(server *grpc.Server) {
-			driverv1.RegisterProposalRepositoryServiceServer(server, NewProposalRepositoryServer(backend))
+	t.Run("proposal", func(t *testing.T) {
+		proposalconformance.RunDistributed(t, func(t *testing.T) proposalconformance.DistributedFactory {
+			t.Helper()
+			backend := memproposal.New()
+			return func(t *testing.T) learning.ProposalRepository {
+				t.Helper()
+				conn := dialBufconn(t, func(server *grpc.Server) {
+					driverv1.RegisterProposalRepositoryServiceServer(server, NewProposalRepositoryServer(backend))
+				})
+				return NewProposalRepository(conn)
+			}
 		})
-		return NewProposalRepository(conn)
+	})
+	t.Run("skill", func(t *testing.T) {
+		skillconformance.RunDistributed(t, func(t *testing.T) skillconformance.DistributedFactory {
+			t.Helper()
+			backend := memskill.New()
+			return func(t *testing.T) learning.SkillRepository {
+				t.Helper()
+				conn := dialBufconn(t, func(server *grpc.Server) {
+					driverv1.RegisterSkillRepositoryServiceServer(server, NewSkillRepositoryServer(backend))
+				})
+				return NewValidatedSkillRepository(conn)
+			}
+		})
 	})
 }
 

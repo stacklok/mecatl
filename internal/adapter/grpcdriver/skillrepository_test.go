@@ -11,7 +11,7 @@ import (
 	"github.com/stacklok/mecatl/engine/learning"
 )
 
-func TestCloudNativeLearning_Scenario4_DistributedSkillRepositoryConforms(t *testing.T) {
+func TestValidatedSkillRepositoryDriverConforms(t *testing.T) {
 	factory := func(t *testing.T) learning.SkillRepository {
 		t.Helper()
 		conn := dialBufconn(t, func(server *grpc.Server) {
@@ -20,6 +20,5 @@ func TestCloudNativeLearning_Scenario4_DistributedSkillRepositoryConforms(t *tes
 		return NewValidatedSkillRepository(conn)
 	}
 
-	skillconformance.Run(t, factory)
 	skillconformance.RunValidatedActivation(t, factory)
 }
