@@ -2,9 +2,9 @@
 id: 26-automatic-ledger-contract
 title: Define distributed automatic admission reservation semantics
 blocked_by: [25-attempt-watch-deferred]
-status: in-progress
-branch: ""
-worktree: ""
+status: done
+branch: "plan-cloud-native-learning/26-automatic-ledger-contract"
+worktree: ".scratch/worktrees/26-automatic-ledger-contract"
 issue: ""
 retries: 0
 last_error: ""
