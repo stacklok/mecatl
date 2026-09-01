@@ -73,7 +73,7 @@ func TestADR_0254_WorkerSourceAuthorityFailsClosedWithoutIdentityOracle(t *testi
 	trajectory.Counters = source.Counters
 	trajectory.Current = learning.MessageSpan{Start: 2, End: len(trajectory.Messages)}
 	input := learning.NewInput(trajectory, nil, []learning.Signal{{Kind: learning.SignalHostRequested}}, nil)
-	digest, err := automaticTrajectoryDigest("", input)
+	digest, err := automaticTrajectoryDigest(input)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -179,7 +179,7 @@ func TestADR_0254_WorkerSourceAuthorityFailsClosedWithoutIdentityOracle(t *testi
 	compactedTrajectory.Counters = compacted.Counters
 	compactedTrajectory.Current = learning.MessageSpan{Start: 1, End: 3}
 	compactedInput := learning.NewInput(compactedTrajectory, nil, []learning.Signal{{Kind: learning.SignalHostRequested}}, nil)
-	compactedDigest, err := automaticTrajectoryDigest("", compactedInput)
+	compactedDigest, err := automaticTrajectoryDigest(compactedInput)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -281,7 +281,7 @@ func TestLearningEvidenceLoader_LoadsSourceRunAfterSnapshotAdvances(t *testing.T
 	trajectory.Counters = source.Counters
 	trajectory.Current = learning.MessageSpan{Start: 0, End: len(trajectory.Messages)}
 	input := learning.NewInput(trajectory, nil, []learning.Signal{{Kind: learning.SignalHostRequested}}, nil)
-	digest, err := automaticTrajectoryDigest("", input)
+	digest, err := automaticTrajectoryDigest(input)
 	if err != nil {
 		t.Fatal(err)
 	}

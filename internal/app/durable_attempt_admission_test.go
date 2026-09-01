@@ -88,7 +88,7 @@ func TestADR_0254_QueuedAttemptRequiresDurableRunIDAndIsIdempotent(t *testing.T)
 		t.Fatalf("source binding = %+v, want session=%q run=%q", record.Provenance.Source, trajectory.SessionID, trajectory.RunID)
 	}
 	expectedInput := learning.NewInput(trajectory, nil, []learning.Signal{{Kind: learning.SignalHostRequested}}, nil)
-	expectedDigest, err := automaticTrajectoryDigest("", expectedInput)
+	expectedDigest, err := automaticTrajectoryDigest(expectedInput)
 	if err != nil {
 		t.Fatal(err)
 	}

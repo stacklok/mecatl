@@ -182,7 +182,7 @@ func (o *reflectionObserver) durableAttemptMaterial(ctx context.Context, input l
 	if err != nil || persisted.RunID() != input.Trajectory.RunID {
 		return "", learning.AttemptCreate{}, errors.New("durable learning admission requires an exact persisted ADR-0249 run ID")
 	}
-	digest, err := automaticTrajectoryDigest("", input)
+	digest, err := automaticTrajectoryDigest(input)
 	if err != nil {
 		return "", learning.AttemptCreate{}, err
 	}
@@ -317,10 +317,6 @@ func (o *reflectionObserver) submit(ctx context.Context, trajectory learning.Tra
 		}
 		signals = decision.Signals
 	}
-	automaticDigest, digestErr := automaticTrajectoryDigest(reflectionPrincipal(owner), input)
-	if digestErr != nil {
-		return reflectionReceipt{}, digestErr
-	}
 	reservationTokens := 0
 	if automatic {
 		estimator, ok := o.reflector.(interface {
@@ -329,10 +325,11 @@ func (o *reflectionObserver) submit(ctx context.Context, trajectory learning.Tra
 		if !ok {
 			return reflectionReceipt{}, errors.New("automatic reflection requires an exact request token estimator")
 		}
-		reservationTokens, digestErr = estimator.RequestTokenEstimate(input)
-		if digestErr != nil {
-			return reflectionReceipt{}, digestErr
+		estimated, estimateErr := estimator.RequestTokenEstimate(input)
+		if estimateErr != nil {
+			return reflectionReceipt{}, estimateErr
 		}
+		reservationTokens = estimated
 	}
 	if o.coordinator == nil {
 		jobCtx, cancel := context.WithTimeout(ctx, defaultReflectionJobTimeout)
@@ -388,7 +385,7 @@ func (o *reflectionObserver) submit(ctx context.Context, trajectory learning.Tra
 			o.emitReflection(receipt)
 		}
 	}
-	job := o.job(input, signals, owner, automaticDigest, reserve, complete, string(create.ID))
+	job := o.job(input, signals, owner, string(create.Provenance.Source.CanonicalDigest), reserve, complete, string(create.ID))
 	job.attempt = &durableAttemptWork{repository: o.attempts, partition: partition, id: create.ID}
 	receipt, err := o.coordinator.Enqueue(job)
 	if reserved && !existingAttempt && o.metrics != nil {
@@ -548,9 +545,23 @@ func (o *reflectionObserver) job(input learning.Input, signals []learning.Signal
 }
 
 type stagedGroup struct {
-	partition learning.ProposalPartition
-	store     tool.MemoryStore
-	items     []learning.Candidate
+	partition    learning.ProposalPartition
+	store        tool.MemoryStore
+	items        []learning.Candidate
+	primary      bool
+	primaryIndex int
+}
+
+func checkpointFromReflectionReceipt(receipt reflectionReceipt) (learning.AttemptCheckpoint, learning.AttemptFailureCode, error) {
+	if receipt.ProposalID == "" {
+		return learning.AttemptCheckpoint{}, learning.FailureEvaluationRejected, learning.ErrInvalidProposal
+	}
+	checkpoint := learning.AttemptCheckpoint{Stage: learning.AttemptCheckpointProposalLinked, ProposalID: receipt.ProposalID}
+	if receipt.SkillID != "" {
+		checkpoint.Stage = learning.AttemptCheckpointSkillLinked
+		checkpoint.SkillID = receipt.SkillID
+	}
+	return checkpoint, learning.FailureNone, nil
 }
 
 func evidenceRefEqual(a, b learning.EvidenceRef) bool {
@@ -624,7 +635,7 @@ func processReflectionOutcome(
 	workspace := input.Trajectory.Workspace
 	operator := stagedGroup{partition: learning.ProposalPartition{Principal: principal}, store: operatorMemory}
 	project := stagedGroup{partition: learning.ProposalPartition{Principal: principal, Project: workspace}, store: projectMemory}
-	for _, candidate := range outcome.Candidates {
+	for candidateIndex, candidate := range outcome.Candidates {
 		group := &operator
 		if candidate.Kind == learning.CandidateProjectFact || candidate.Kind == learning.CandidateProcedure {
 			// Project candidates remain reviewable in their source partition. The
@@ -636,6 +647,10 @@ func processReflectionOutcome(
 		}
 		if err := learning.ValidateProposalMaterial(group.partition, digest, candidate, signals); err != nil {
 			return receipt, err
+		}
+		if candidateIndex == 0 {
+			group.primary = true
+			group.primaryIndex = len(group.items)
 		}
 		group.items = append(group.items, candidate)
 	}
@@ -649,7 +664,12 @@ func processReflectionOutcome(
 			return receipt, err
 		}
 		receipt.Staged += len(records)
-		for _, record := range records {
+		for recordIndex, record := range records {
+			isPrimary := group.primary && recordIndex == group.primaryIndex
+			if isPrimary {
+				receipt.ProposalID = record.ID
+				receipt.SkillID = record.SkillID
+			}
 			switch record.Status {
 			case learning.ProposalPromoted:
 				receipt.Promoted++
@@ -683,6 +703,17 @@ func processReflectionOutcome(
 				if procedure != nil && mode != learning.Off {
 					if err := procedure(ctx, claimed, mode); err != nil {
 						return receipt, err
+					}
+					if isPrimary {
+						authoritative, found, err := repository.Get(ctx, group.partition, record.ID)
+						if err != nil {
+							return receipt, err
+						}
+						if !found || authoritative.ID != record.ID {
+							return receipt, learning.ErrProposalNotFound
+						}
+						receipt.ProposalID = authoritative.ID
+						receipt.SkillID = authoritative.SkillID
 					}
 				}
 				continue

@@ -50,6 +50,8 @@ type reflectionReceipt struct {
 	Promoted    int
 	Conflicted  int
 	Abstained   bool
+	ProposalID  learning.ProposalID
+	SkillID     learning.SkillID
 	Err         string
 }
 
@@ -569,16 +571,7 @@ func (c *reflectionCoordinator) runDurable(item queuedReflection) {
 				return learning.AttemptCheckpoint{}, code, err
 			}
 			receipt = processed
-			candidate := outcome.Candidates[0]
-			partition := learning.ProposalPartition{Principal: item.job.principal}
-			if candidate.Kind == learning.CandidateProjectFact || candidate.Kind == learning.CandidateProcedure {
-				partition.Project = item.job.input.Trajectory.Workspace
-			}
-			proposalID, err := learning.DeterministicProposalID(partition, item.digest, candidate)
-			if err != nil {
-				return learning.AttemptCheckpoint{}, learning.FailureEvaluationRejected, err
-			}
-			return learning.AttemptCheckpoint{Stage: learning.AttemptCheckpointProposalLinked, ProposalID: proposalID}, learning.FailureNone, nil
+			return checkpointFromReflectionReceipt(processed)
 		},
 	}
 	record, err := worker.Run(ctx)

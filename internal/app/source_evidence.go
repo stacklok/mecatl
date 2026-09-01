@@ -137,7 +137,7 @@ func (l *learningEvidenceLoader) loadInput(ctx context.Context, partition learni
 	}
 	trajectory.Current = learning.MessageSpan{Start: promptOrdinal, End: len(trajectory.Messages)}
 	input = learning.NewInput(trajectory, runEvents, nil, nil)
-	digest, err := automaticTrajectoryDigest("", input)
+	digest, err := automaticTrajectoryDigest(input)
 	if err != nil || learning.CanonicalDigest(digest) != provenance.Source.CanonicalDigest {
 		return unavailable()
 	}

@@ -153,10 +153,7 @@ func recoverAttempt(ctx context.Context, cfg Config, reg *providerRegistry, sess
 			if len(outcome.Candidates) == 0 {
 				return learning.AttemptCheckpoint{}, learning.FailureEvaluationRejected, nil
 			}
-			digest, digestErr := reflectionInputDigest(input)
-			if digestErr != nil {
-				return learning.AttemptCheckpoint{}, learning.FailureEvaluationRejected, digestErr
-			}
+			digest := string(item.Record.Provenance.Source.CanonicalDigest)
 			principal := reflectionPrincipal(source.Owner)
 			processed, processErr := processReflectionOutcome(memoryadapter.WithWorkspace(publishCtx, source.Workspace), proposals,
 				assets.userModelStore, assets.memStore, principal, input, digest, outcome, input.Signals,
@@ -168,17 +165,7 @@ func recoverAttempt(ctx context.Context, cfg Config, reg *providerRegistry, sess
 				}
 				return learning.AttemptCheckpoint{}, failure, processErr
 			}
-			_ = processed
-			candidate := outcome.Candidates[0]
-			partition := learning.ProposalPartition{Principal: principal}
-			if candidate.Kind == learning.CandidateProjectFact || candidate.Kind == learning.CandidateProcedure {
-				partition.Project = source.Workspace
-			}
-			proposalID, idErr := learning.DeterministicProposalID(partition, digest, candidate)
-			if idErr != nil {
-				return learning.AttemptCheckpoint{}, learning.FailureEvaluationRejected, idErr
-			}
-			return learning.AttemptCheckpoint{Stage: learning.AttemptCheckpointProposalLinked, ProposalID: proposalID}, learning.FailureNone, nil
+			return checkpointFromReflectionReceipt(processed)
 		},
 	}
 	_, err = worker.Run(ctx)

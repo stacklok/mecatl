@@ -11,7 +11,7 @@ import (
 
 const learningDedupeTTL = 24 * time.Hour
 
-func automaticTrajectoryDigest(principal string, in learning.Input) (string, error) {
+func automaticTrajectoryDigest(in learning.Input) (string, error) {
 	tr := in.Trajectory
 	messages := tr.Messages
 	if tr.Current.Valid(len(messages)) {
@@ -30,7 +30,7 @@ func automaticTrajectoryDigest(principal string, in learning.Input) (string, err
 		Counters  any    `json:"counters"`
 		Usage     any    `json:"usage"`
 		Evidence  any    `json:"evidence"`
-	}{principal, string(tr.Kind), tr.Counters, tr.Usage, projected})
+	}{"", string(tr.Kind), tr.Counters, tr.Usage, projected})
 	if err != nil {
 		return "", err
 	}

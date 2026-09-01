@@ -10,6 +10,8 @@ import (
 
 	"github.com/stacklok/mecatl/engine/adapter/memattempt"
 	"github.com/stacklok/mecatl/engine/adapter/memproposal"
+	"github.com/stacklok/mecatl/engine/adapter/memskill"
+	"github.com/stacklok/mecatl/engine/adapter/skillmaterialize"
 	"github.com/stacklok/mecatl/engine/learning"
 	"github.com/stacklok/mecatl/engine/session"
 )
@@ -239,6 +241,94 @@ func TestADR_0254_AttemptReconciliationIsIdempotent(t *testing.T) {
 	}
 	if publicationCalls != 1 || again.Version != got.Version {
 		t.Fatalf("terminal replay duplicated work or changed CAS version: calls=%d first=%q replay=%q", publicationCalls, got.Version, again.Version)
+	}
+}
+
+func TestADR_0254_CanonicalArtifactIdentitySurvivesRestart(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	clock := &attemptWorkerClock{now: time.Unix(50, 0)}
+	attempts, attemptPartition, created := newAttemptWorkerRecord(t, clock)
+	remoteProposals := memproposal.New()
+	remoteSkills := memskill.New()
+	proposals := &opaqueProposalRepository{inner: remoteProposals}
+	skills := &opaqueSkillRepository{inner: remoteSkills}
+	input, outcome, recomputedDigest := reflectionOutcomeFixture(t, learning.CandidateProcedure)
+	canonicalDigest := string(created.Provenance.Source.CanonicalDigest)
+	if recomputedDigest == canonicalDigest {
+		t.Fatal("fixture must expose the admission/recovery digest mismatch")
+	}
+	partition := learning.ProposalPartition{Principal: "restart-principal", Project: input.Trajectory.Workspace}
+	owner := "reflection"
+
+	publish := func(publishCtx context.Context, record learning.AttemptRecord, reflected learning.Outcome) (learning.AttemptCheckpoint, learning.AttemptFailureCode, error) {
+		procedure := func(ctx context.Context, proposal learning.ProposalRecord, _ learning.Mode) error {
+			_, err := skillmaterialize.Materialize(ctx, proposals, skills, learning.SkillPartition(proposal.Partition), owner, proposal, nil, learning.Decision{Kind: learning.DecisionApprove, Actor: "test"})
+			return err
+		}
+		processed, err := processReflectionOutcome(publishCtx, proposals, nil, nil, partition.Principal, input,
+			string(record.Provenance.Source.CanonicalDigest), reflected, nil, learning.Review, false, "", procedure)
+		if err != nil {
+			return learning.AttemptCheckpoint{}, learning.FailurePublicationFailed, err
+		}
+		return checkpointFromReflectionReceipt(processed)
+	}
+	newWorker := func(expireAfterPublish bool) *attemptWorker {
+		claimed := created
+		return &attemptWorker{
+			repository: attempts, partition: attemptPartition, id: created.ID, now: clock.Now, claimTTL: time.Second,
+			evidence: func(_ context.Context, record learning.AttemptRecord) (learning.AttemptFailureCode, error) {
+				claimed = record
+				return learning.FailureNone, nil
+			},
+			reflect: func(context.Context) (learning.Outcome, error) { return outcome, nil },
+			publish: func(publishCtx context.Context, reflected learning.Outcome) (learning.AttemptCheckpoint, learning.AttemptFailureCode, error) {
+				checkpoint, failure, err := publish(publishCtx, claimed, reflected)
+				if expireAfterPublish {
+					clock.now = clock.now.Add(2 * time.Second)
+				}
+				return checkpoint, failure, err
+			},
+		}
+	}
+
+	if _, err := newWorker(true).Run(ctx); !errors.Is(err, learning.ErrAttemptClaimLost) {
+		t.Fatalf("initial worker error = %v, want ErrAttemptClaimLost", err)
+	}
+	reconciled, err := newWorker(false).Run(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reconciled.State != learning.AttemptCompleted || reconciled.Outcome != learning.AttemptOutcomeSucceeded || reconciled.ProposalID == "" || reconciled.SkillID == "" {
+		t.Fatalf("restarted worker did not adopt authoritative artifacts: %+v", reconciled)
+	}
+
+	proposalPage, err := proposals.List(ctx, partition, learning.ProposalList{})
+	if err != nil || len(proposalPage.Records) != 1 {
+		t.Fatalf("logical proposal partition records = %d, err=%v", len(proposalPage.Records), err)
+	}
+	if proposalPage.Records[0].ID != reconciled.ProposalID || proposalPage.Records[0].SkillID != reconciled.SkillID || proposalPage.Records[0].InputDigest != canonicalDigest {
+		t.Fatalf("attempt links do not match authoritative proposal: attempt=%+v proposal=%+v", reconciled, proposalPage.Records[0])
+	}
+	skillPage, err := skills.List(ctx, learning.SkillPartition(partition), learning.SkillList{OwnerAgent: owner})
+	if err != nil || len(skillPage.Versions) != 1 || skillPage.Versions[0].ID != reconciled.SkillID {
+		t.Fatalf("logical skill partition = %+v, err=%v", skillPage.Versions, err)
+	}
+	foreignProposals, err := proposals.List(ctx, learning.ProposalPartition{Principal: partition.Principal, Project: "/other"}, learning.ProposalList{})
+	if err != nil || len(foreignProposals.Records) != 0 {
+		t.Fatalf("proposal crossed partition: %+v, err=%v", foreignProposals.Records, err)
+	}
+	foreignSkills, err := skills.List(ctx, learning.SkillPartition{Principal: partition.Principal, Project: "/other"}, learning.SkillList{})
+	if err != nil || len(foreignSkills.Versions) != 0 {
+		t.Fatalf("skill crossed partition: %+v, err=%v", foreignSkills.Versions, err)
+	}
+	localProposalPage, err := remoteProposals.List(ctx, partition, learning.ProposalList{})
+	if err != nil || len(localProposalPage.Records) != 0 {
+		t.Fatalf("remote wrapper leaked untransformed proposal partition: %+v, err=%v", localProposalPage.Records, err)
+	}
+	localSkillPage, err := remoteSkills.List(ctx, learning.SkillPartition(partition), learning.SkillList{})
+	if err != nil || len(localSkillPage.Versions) != 0 {
+		t.Fatalf("remote wrapper leaked untransformed skill partition: %+v, err=%v", localSkillPage.Versions, err)
 	}
 }
 

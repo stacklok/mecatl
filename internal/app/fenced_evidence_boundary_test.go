@@ -83,7 +83,7 @@ func TestADR_0254_EvidenceProjectionIsBoundedFencedAndInjectionSafe(t *testing.T
 	trajectory.Counters = source.Counters
 	trajectory.Current = learning.MessageSpan{Start: 0, End: len(trajectory.Messages)}
 	input := learning.NewInput(trajectory, runEvents, []learning.Signal{{Kind: learning.SignalHostRequested}}, nil)
-	digest, err := automaticTrajectoryDigest("", input)
+	digest, err := automaticTrajectoryDigest(input)
 	if err != nil {
 		t.Fatal(err)
 	}
