@@ -2,9 +2,9 @@
 id: 35-evidence-run-sequence-continuity
 title: Reject gaps in durable RunID evidence sequences
 blocked_by: [31-documentation-generated-integration]
-status: in-progress
-branch: ""
-worktree: ""
+status: done
+branch: "plan-cloud-native-learning/35-evidence-run-sequence-continuity"
+worktree: ".scratch/worktrees/35-evidence-run-sequence-continuity"
 issue: ""
 retries: 0
 last_error: ""
