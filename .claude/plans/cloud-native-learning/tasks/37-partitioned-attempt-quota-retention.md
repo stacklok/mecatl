@@ -2,7 +2,7 @@
 id: 37-partitioned-attempt-quota-retention
 title: Bound durable attempt quota and retention per partition
 blocked_by: [31-documentation-generated-integration]
-status: pending
+status: in-progress
 branch: ""
 worktree: ""
 issue: ""

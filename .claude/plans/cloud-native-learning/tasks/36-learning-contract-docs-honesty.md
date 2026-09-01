@@ -2,7 +2,7 @@
 id: 36-learning-contract-docs-honesty
 title: Reconcile learning contract and documentation honesty
 blocked_by: [31-documentation-generated-integration]
-status: pending
+status: in-progress
 branch: ""
 worktree: ""
 issue: ""

@@ -2,7 +2,7 @@
 id: 35-evidence-run-sequence-continuity
 title: Reject gaps in durable RunID evidence sequences
 blocked_by: [31-documentation-generated-integration]
-status: pending
+status: in-progress
 branch: ""
 worktree: ""
 issue: ""

@@ -2,7 +2,7 @@
 id: 33-canonical-artifact-identity
 title: Persist canonical artifact identity across worker restarts
 blocked_by: [31-documentation-generated-integration]
-status: pending
+status: in-progress
 branch: ""
 worktree: ""
 issue: ""

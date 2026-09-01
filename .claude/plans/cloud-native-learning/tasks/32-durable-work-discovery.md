@@ -2,7 +2,7 @@
 id: 32-durable-work-discovery
 title: Storage-neutral durable work discovery and retry loop
 blocked_by: [31-documentation-generated-integration]
-status: pending
+status: in-progress
 branch: ""
 worktree: ""
 issue: ""

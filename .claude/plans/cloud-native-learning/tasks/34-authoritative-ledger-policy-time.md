@@ -2,7 +2,7 @@
 id: 34-authoritative-ledger-policy-time
 title: Make automatic ledger policy and time backend-authoritative
 blocked_by: [31-documentation-generated-integration]
-status: pending
+status: in-progress
 branch: ""
 worktree: ""
 issue: ""
