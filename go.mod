@@ -32,7 +32,7 @@ require (
 	github.com/prometheus/procfs v0.21.1
 	github.com/redis/go-redis/v9 v9.22.0
 	github.com/stacklok/mecatl/authn/oidc v0.0.0-00010101000000-000000000000
-	github.com/stacklok/mecatl/engine v0.11.0
+	github.com/stacklok/mecatl/engine v0.12.0
 	github.com/stacklok/mecatl/provider/anthropic v0.0.0-00010101000000-000000000000
 	github.com/stacklok/mecatl/provider/openai v0.0.0-00010101000000-000000000000
 	github.com/stacklok/mecatl/provider/openaichat v0.0.0-00010101000000-000000000000
@@ -231,7 +231,7 @@ require (
 	github.com/spf13/cobra v1.10.2 // indirect
 	github.com/spf13/pflag v1.0.10 // indirect
 	github.com/spf13/viper v1.21.0 // indirect
-	github.com/stacklok/mecatl/provider/ssefilter v0.0.0 // indirect
+	github.com/stacklok/mecatl/provider/ssefilter v0.1.0 // indirect
 	github.com/standard-webhooks/standard-webhooks/libraries v0.0.1 // indirect
 	github.com/stretchr/testify v1.11.1 // indirect
 	github.com/subosito/gotenv v1.6.0 // indirect
