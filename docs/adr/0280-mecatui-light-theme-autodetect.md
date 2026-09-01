@@ -50,7 +50,6 @@ Future components that cache theme-derived styles must also be refreshed by
 
 ## See also
 
-- `docs/tui.md`
-- `user-docs/mecatui/themes.md`
-- `cmd/mecatui/theme/registry.go` (`Solar`)
-- `cmd/mecatui/ui/update.go` (`onBackgroundColor`, `switchTheme`)
+- [TUI guide](../tui.md)
+- [`Solar` in the theme registry](../../cmd/mecatui/theme/registry.go)
+- [`onBackgroundColor` and `switchTheme` in the UI reducer](../../cmd/mecatui/ui/update.go)

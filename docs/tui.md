@@ -2002,9 +2002,9 @@ Select it with `--theme midnight` (or set `theme` / `MECATUI_THEME`).
 Out of the box, mecatui detects a light terminal background and switches to the
 built-in **solar** theme automatically — no flag, no config. On startup, when
 no explicit `--theme`/`MECATUI_THEME` was given AND stdout is a real terminal,
-`Init` sends Bubble Tea v2's `tea.RequestBackgroundColor()` (an OSC 11 query);
-the terminal's asynchronous reply arrives as a `tea.BackgroundColorMsg`, and a
-light response (`msg.IsDark() == false`) switches every baked theme consumer —
+`Init` batches Bubble Tea v2's `tea.RequestBackgroundColor` command (an OSC 11
+query); the terminal's asynchronous reply arrives as a
+`tea.BackgroundColorMsg`, and a light response (`!msg.IsDark()`) switches every baked theme consumer —
 `Deps.Theme`, the renderer's glamour/block/join caches, and the spinner style —
 to `solar`. A dark response, no response at all (many terminals or
 multiplexers don't answer OSC 11), or redirected/piped stdout all leave the

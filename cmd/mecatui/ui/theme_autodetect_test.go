@@ -2,8 +2,8 @@ package ui
 
 import (
 	"context"
-	"fmt"
 	"image/color"
+	"reflect"
 	"testing"
 	"time"
 
@@ -29,8 +29,8 @@ func TestInitRequestsBackgroundColorOnlyWhenAutoDetectArmed(t *testing.T) {
 	if !ok || len(batch) == 0 {
 		t.Fatalf("Init() = %#v, want a non-empty batch", batch)
 	}
-	if got := fmt.Sprintf("%T", batch[0]()); got != "tea.backgroundColorMsg" {
-		t.Fatalf("first Init command produced %s, want tea.backgroundColorMsg", got)
+	if reflect.ValueOf(batch[0]).Pointer() != reflect.ValueOf(tea.RequestBackgroundColor).Pointer() {
+		t.Fatal("first Init command is not tea.RequestBackgroundColor")
 	}
 
 	unarmed := newTestModelFromDeps(Deps{Theme: aztec(), Ctx: t.Context()})
