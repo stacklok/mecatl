@@ -2,9 +2,9 @@
 id: 36-learning-contract-docs-honesty
 title: Reconcile learning contract and documentation honesty
 blocked_by: [31-documentation-generated-integration]
-status: in-progress
-branch: ""
-worktree: ""
+status: done
+branch: plan-cloud-native-learning/36-learning-contract-docs-honesty
+worktree: .scratch/worktrees/36-learning-contract-docs-honesty
 issue: ""
 retries: 0
 last_error: ""
