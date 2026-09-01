@@ -2,9 +2,9 @@
 id: 23-attempt-control-api
 title: Add authorized manual retry and abandon controls
 blocked_by: [22-attempt-inspection-api]
-status: in-progress
-branch: ""
-worktree: ""
+status: done
+branch: "plan-cloud-native-learning/23-attempt-control-api-repair"
+worktree: ".scratch/worktrees/23-attempt-control-api-repair"
 issue: ""
 retries: 0
 last_error: ""
