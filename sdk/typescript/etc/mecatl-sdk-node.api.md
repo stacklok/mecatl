@@ -200,6 +200,49 @@ export interface RawClientOptions {
     transportKind?: TransportKind;
 }
 
+// @public
+export interface Run extends AsyncIterable<{
+    readonly kind: string;
+    readonly payload: {
+        readonly runId: string;
+        readonly type: string;
+    };
+}> {
+    approve(askId: string, allow: boolean): Promise<void>;
+    cancel(): Promise<void>;
+    // (undocumented)
+    readonly id: string;
+    result(): Promise<RunResult>;
+    // (undocumented)
+    readonly sessionId: string;
+    steer(text: string): Promise<void>;
+}
+
+// @public
+export interface RunResult {
+    // (undocumented)
+    readonly content: string;
+    readonly rawEvent: {
+        readonly runId: string;
+        readonly type: string;
+    };
+    // (undocumented)
+    readonly runId: string;
+    // (undocumented)
+    readonly sessionId: string;
+    // (undocumented)
+    readonly stopReason: string;
+    readonly text: string;
+    // (undocumented)
+    readonly usage: {
+        readonly cacheReadTokens: bigint;
+        readonly cacheWriteTokens: bigint;
+        readonly inputTokens: bigint;
+        readonly outputTokens: bigint;
+        readonly reasoningTokens: bigint;
+    } | undefined;
+}
+
 // @public (undocumented)
 export type SDKErrorCode = "authentication" | "incompatible_server" | "invalid_state" | "protocol" | "transport" | "unsupported_feature";
 
@@ -221,6 +264,11 @@ export interface Session {
     delete(): Promise<void>;
     // (undocumented)
     readonly id: string;
+    run(prompt: string): Promise<Run>;
+}
+
+// @public
+export class SessionBusyError extends InvalidStateError {
 }
 
 // @public

@@ -36,6 +36,7 @@ export {
   MecatlError,
   ProtocolError,
   ServerError,
+  SessionBusyError,
   TransportError,
   UnsupportedFeatureError,
 } from "./errors.js";
@@ -43,3 +44,4 @@ export type { HttpTransportOptions } from "./http.js";
 export { createHttpTransport } from "./http.js";
 export type { RawClient, RawClientOptions } from "./raw.js";
 export { createRawClient, getRawJson, SUPPORTED_API_MAJOR } from "./raw.js";
+export type { Run, RunResult } from "./run.js";

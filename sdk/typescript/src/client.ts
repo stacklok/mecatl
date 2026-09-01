@@ -1,5 +1,6 @@
 import type {
   DescMessage,
+  DescMethodStreaming,
   DescMethodUnary,
   MessageInitShape,
   MessageShape,
@@ -12,12 +13,14 @@ import {
   InvalidStateError,
   ProtocolError,
   ServerError,
+  SessionBusyError,
   TransportError,
   type TransportKind,
 } from "./errors.js";
-import { HarnessService } from "./gen/mecatl/v1/harness_pb.js";
+import { type ConverseResponse, type Event, HarnessService } from "./gen/mecatl/v1/harness_pb.js";
 import { createHttpTransport, type HttpTransportOptions } from "./http.js";
 import { createRawClient, type RawClient } from "./raw.js";
+import { type ConverseFrame, type Run, RunImpl } from "./run.js";
 
 /** The complete connection-state vocabulary exposed by the SDK. @public */
 export type ConnectionStatus =
@@ -86,9 +89,11 @@ export interface ForkSessionOptions {
   title?: string;
 }
 
-/** A durable mecatl session handle. Run support is added by the next SDK layer. @public */
+/** A durable mecatl session handle. @public */
 export interface Session {
   readonly id: string;
+  /** Starts a run and resolves once its first run-ID-bearing event arrives. */
+  run(prompt: string): Promise<Run>;
   /** Releases runtime resources without removing the durable session. */
   close(): Promise<void>;
   /** Permanently removes the durable session and its sidecars. */
@@ -119,6 +124,11 @@ interface ClientCoreOptions {
 
 interface SessionOperations {
   assertOpen(): void;
+  readonly transportKind: TransportKind;
+  stream<I extends DescMessage, O extends DescMessage>(
+    method: DescMethodStreaming<I, O>,
+    input: AsyncIterable<MessageInitShape<I>>,
+  ): AsyncIterable<MessageShape<O>>;
   unary<I extends DescMessage, O extends DescMessage>(
     method: DescMethodUnary<I, O>,
     input: MessageInitShape<I>,
@@ -136,10 +146,64 @@ const HEARTBEAT_INTERVAL_MS = 30_000;
 class SessionImpl implements Session {
   readonly id: string;
   readonly #operations: SessionOperations;
+  #busy = false;
 
   constructor(id: string, operations: SessionOperations) {
     this.id = id;
     this.#operations = operations;
+  }
+
+  async run(prompt: string): Promise<Run> {
+    this.#operations.assertOpen();
+    if (this.#busy) {
+      throw new SessionBusyError("A run is already active on this Session", {
+        transport: this.#operations.transportKind,
+      });
+    }
+    this.#busy = true;
+    const input = new ConverseInput(
+      { kind: { case: "prompt", value: { sessionId: this.id, text: prompt } } },
+      this.#operations.transportKind,
+    );
+    const responses = this.#operations
+      .stream(HarnessService.method.converse, input)
+      [Symbol.asyncIterator]();
+    try {
+      let first: Event;
+      for (;;) {
+        const next = await responses.next();
+        if (next.done) {
+          throw new ProtocolError("The Converse stream ended before reporting a run id", {
+            transport: this.#operations.transportKind,
+          });
+        }
+        if (next.value.event === undefined) {
+          throw new ProtocolError("The Converse stream returned a frame without an event", {
+            transport: this.#operations.transportKind,
+          });
+        }
+        if (next.value.event.runId !== "") {
+          first = next.value.event;
+          break;
+        }
+      }
+      const events = unwrapEvents(responses, first.runId, this.#operations.transportKind, () => {
+        this.#busy = false;
+        input.close();
+      });
+      if (first.type === "result") {
+        this.#busy = false;
+        input.close();
+      }
+      return new RunImpl(this.id, first.runId, first, events, {
+        send: (frame) => input.send(frame),
+        transportKind: this.#operations.transportKind,
+      });
+    } catch (error) {
+      this.#busy = false;
+      input.close();
+      throw error;
+    }
   }
 
   async close(): Promise<void> {
@@ -183,6 +247,8 @@ class ClientImpl implements Client {
     });
     this.#operations = {
       assertOpen: () => this.#assertOpen(),
+      stream: (method, input) => this.#stream(method, input),
+      transportKind: this.#transportKind,
       unary: (method, input) => this.#unary(method, input),
     };
     this.sessions = {
@@ -278,6 +344,27 @@ class ClientImpl implements Client {
       this.#observeError(error);
       throw error;
     }
+  }
+
+  #stream<I extends DescMessage, O extends DescMessage>(
+    method: DescMethodStreaming<I, O>,
+    input: AsyncIterable<MessageInitShape<I>>,
+  ): AsyncIterable<MessageShape<O>> {
+    this.#assertOpen();
+    const raw = this.#raw.stream(method, input, { signal: this.#abort.signal });
+    const observeError = (error: unknown) => this.#observeError(error);
+    const publishOnline = () => this.#publish("online");
+    return (async function* () {
+      try {
+        for await (const message of raw) {
+          publishOnline();
+          yield message;
+        }
+      } catch (error) {
+        observeError(error);
+        throw error;
+      }
+    })();
   }
 
   async #probe(raw: RawClient, signal: AbortSignal = this.#abort.signal): Promise<void> {
@@ -413,6 +500,93 @@ class ClientImpl implements Client {
     this.#visibilityTarget?.removeEventListener("visibilitychange", this.#visibilityChanged);
     this.#visibilityTarget = undefined;
   }
+}
+
+class ConverseInput implements AsyncIterable<ConverseFrame> {
+  readonly #values: ConverseFrame[];
+  readonly #transport: TransportKind;
+  #closed = false;
+  #waiting: ((value: IteratorResult<ConverseFrame>) => void) | undefined;
+
+  constructor(first: ConverseFrame, transport: TransportKind) {
+    this.#values = [first];
+    this.#transport = transport;
+  }
+
+  send(frame: ConverseFrame): void {
+    if (this.#closed) {
+      throw new InvalidStateError("The run control stream is closed", {
+        transport: this.#transport,
+      });
+    }
+    const waiting = this.#waiting;
+    if (waiting === undefined) this.#values.push(frame);
+    else {
+      this.#waiting = undefined;
+      waiting({ done: false, value: frame });
+    }
+  }
+
+  close(): void {
+    if (this.#closed) return;
+    this.#closed = true;
+    this.#waiting?.({ done: true, value: undefined });
+    this.#waiting = undefined;
+  }
+
+  [Symbol.asyncIterator](): AsyncIterator<ConverseFrame> {
+    return {
+      next: async () => {
+        const value = this.#values.shift();
+        if (value !== undefined) return { done: false, value };
+        if (this.#closed) return { done: true, value: undefined };
+        return new Promise<IteratorResult<ConverseFrame>>((resolve) => {
+          this.#waiting = resolve;
+        });
+      },
+      return: async () => {
+        this.close();
+        return { done: true, value: undefined };
+      },
+      throw: async (error?: unknown) => {
+        this.close();
+        throw error;
+      },
+    };
+  }
+}
+
+function unwrapEvents(
+  responses: AsyncIterator<ConverseResponse>,
+  runId: string,
+  transport: TransportKind,
+  release: () => void,
+): AsyncIterator<Event> {
+  return {
+    next: async () => {
+      try {
+        const next = await responses.next();
+        if (next.done) {
+          release();
+          return { done: true, value: undefined };
+        }
+        const event = next.value.event;
+        if (event === undefined) {
+          throw new ProtocolError("The Converse stream returned a frame without an event", {
+            transport,
+          });
+        }
+        if (event.runId !== runId) {
+          throw new ProtocolError("The Converse stream changed run id", { transport });
+        }
+        if (event.type === "result") release();
+        return { done: false, value: event };
+      } catch (error) {
+        release();
+        throw error;
+      }
+    },
+  };
 }
 
 /** Internal construction seam shared with the Node entry point. */

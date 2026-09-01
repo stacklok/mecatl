@@ -197,6 +197,10 @@ test("packed tarball carries dist and license only", () => {
     "package/dist/raw.d.ts.map",
     "package/dist/raw.js",
     "package/dist/raw.js.map",
+    "package/dist/run.d.ts",
+    "package/dist/run.d.ts.map",
+    "package/dist/run.js",
+    "package/dist/run.js.map",
     "package/package.json",
   ];
   expect([...packedFiles.keys()].sort()).toEqual(expectedFiles);

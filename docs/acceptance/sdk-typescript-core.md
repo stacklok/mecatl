@@ -261,7 +261,7 @@ the first call enforces the compatibility floor — both per
   error when the feature is absent; steer over gRPC succeeds. Because the
   gate reads the feature set, the error clears without SDK changes once
   [#873](https://github.com/stacklok/mecatl/issues/873) lands server-side.
-  - verify: `sdk/typescript/test/steer.test.ts :: "HTTP steer is a typed unsupported-feature error"`
+  - verify: vitest:sdk/typescript/test/steer.test.ts#SFRUUCBzdGVlciBpcyBhIHR5cGVkIHVuc3VwcG9ydGVkLWZlYXR1cmUgZXJyb3I — `sdk/typescript/test/steer.test.ts :: "HTTP steer is a typed unsupported-feature error"`
 - AC3.8: Unknown fields and unknown enum-like string values arriving from a
   newer server pass through the raw seam undamaged — the SDK never strips
   what it does not understand.
@@ -334,20 +334,20 @@ for the HTTP route to come).
 - AC5.1: `session.run(prompt)` resolves only after the server accepted the
   run and the first run-ID-bearing event arrived; the returned `Run` exposes
   that non-empty run ID.
-  - verify: `sdk/typescript/test/run.test.ts :: "run resolves on acceptance with the first run ID"`
+  - verify: vitest:sdk/typescript/test/run.test.ts#cnVuIHJlc29sdmVzIG9uIGFjY2VwdGFuY2Ugd2l0aCB0aGUgZmlyc3QgcnVuIElE — `sdk/typescript/test/run.test.ts :: "run resolves on acceptance with the first run ID"`
 - AC5.2: A `Run` is consumed exactly once: iterating it yields the event
   stream; `run.result()` drains and returns `RunResult`; doing both, or
   either twice, fails with a typed invalid-state error.
-  - verify: `sdk/typescript/test/run.test.ts :: "a run has exactly one consumption mode"`
+  - verify: vitest:sdk/typescript/test/run.test.ts#YSBydW4gaGFzIGV4YWN0bHkgb25lIGNvbnN1bXB0aW9uIG1vZGU — `sdk/typescript/test/run.test.ts :: "a run has exactly one consumption mode"`
 - AC5.3: `RunResult` carries stop reason, final text/content, usage, session
   ID, run ID, and the raw terminal event; server terminals — `StopError`,
   cancellation, limits, budget — resolve normally with the typed outcome,
   while a transport/protocol failure rejects.
-  - verify: `sdk/typescript/test/run.test.ts :: "server terminals resolve typed, transport failures throw"`
+  - verify: vitest:sdk/typescript/test/run.test.ts#c2VydmVyIHRlcm1pbmFscyByZXNvbHZlIHR5cGVkLCB0cmFuc3BvcnQgZmFpbHVyZXMgdGhyb3c — `sdk/typescript/test/run.test.ts :: "server terminals resolve typed, transport failures throw"`
 - AC5.4: A second local `run()` on a busy `Session` rejects with
   `SessionBusyError` without sending a prompt; the daemon stays
   authoritative for cross-client contention.
-  - verify: `sdk/typescript/test/run.test.ts :: "a second local run is SessionBusyError"`
+  - verify: vitest:sdk/typescript/test/run.test.ts#YSBzZWNvbmQgbG9jYWwgcnVuIGlzIFNlc3Npb25CdXN5RXJyb3I — `sdk/typescript/test/run.test.ts :: "a second local run is SessionBusyError"`
 - AC5.5: Every approve/cancel/steer sent through the ergonomic
   `Run`/`Session` surface carries the active run's `expected_run_id`; a
   control racing a terminal (the run it named is gone) surfaces the
@@ -355,16 +355,16 @@ for the HTTP route to come).
   untouched. The raw operation seam leaves `expected_run_id`
   caller-controlled — omitting it is how a raw caller opts into the
   server's legacy behaviour, including steer promotion.
-  - verify: `sdk/typescript/test/controls.test.ts :: "ergonomic controls always carry expected_run_id and stale controls fail typed"`
+  - verify: vitest:sdk/typescript/test/controls.test.ts#ZXJnb25vbWljIGNvbnRyb2xzIGFsd2F5cyBjYXJyeSBleHBlY3RlZF9ydW5faWQgYW5kIHN0YWxlIGNvbnRyb2xzIGZhaWwgdHlwZWQ — `sdk/typescript/test/controls.test.ts :: "ergonomic controls always carry expected_run_id and stale controls fail typed"`
 - AC5.6: `run.steer()` is strict — because it always names its run
   (AC5.5), a steer that loses the terminal race is refused, never promoted
   into a new run; the raw seam retains the documented promotion behaviour
   for callers that deliberately omit `expected_run_id`.
-  - verify: `sdk/typescript/test/steer.test.ts :: "run.steer never promotes; the raw seam may"`
+  - verify: vitest:sdk/typescript/test/steer.test.ts#cnVuLnN0ZWVyIG5ldmVyIHByb21vdGVzOyB0aGUgcmF3IHNlYW0gbWF5 — `sdk/typescript/test/steer.test.ts :: "run.steer never promotes; the raw seam may"`
 - AC5.7: `run.cancel()` resolves the run with the cancelled terminal outcome
   through the normal consumption path — cancellation is an outcome, not an
   exception.
-  - verify: `sdk/typescript/test/run.test.ts :: "cancel is a typed outcome"`
+  - verify: vitest:sdk/typescript/test/run.test.ts#Y2FuY2VsIGlzIGEgdHlwZWQgb3V0Y29tZQ — `sdk/typescript/test/run.test.ts :: "cancel is a typed outcome"`
 
 ---
 

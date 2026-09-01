@@ -161,6 +161,9 @@ export class InvalidStateError extends MecatlError {
   }
 }
 
+/** A local run is already active on this Session handle. @public */
+export class SessionBusyError extends InvalidStateError {}
+
 /** @public */
 export class IncompatibleServerError extends MecatlError {
   constructor(message: string, options: Omit<MecatlErrorOptions, "code">) {
