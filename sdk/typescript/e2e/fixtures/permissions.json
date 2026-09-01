@@ -1,0 +1,24 @@
+{
+  "turns": [
+    {
+      "tool_calls": [
+        {
+          "id": "approve-write",
+          "name": "Write",
+          "args": { "path": "approved.txt", "content": "approved\n" }
+        }
+      ]
+    },
+    { "text": "approved write completed" },
+    {
+      "tool_calls": [
+        {
+          "id": "deny-write",
+          "name": "Write",
+          "args": { "path": "denied.txt", "content": "must not be written\n" }
+        }
+      ]
+    },
+    { "text": "continued after denial" }
+  ]
+}

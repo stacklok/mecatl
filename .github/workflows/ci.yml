@@ -159,7 +159,7 @@ jobs:
       - name: Type-check SDK
         run: task sdk:typecheck
 
-      - name: Test SDK
+      - name: Test SDK unit suite
         run: task sdk:test
 
       - name: Build SDK
@@ -173,9 +173,11 @@ jobs:
 
       - name: Verify generated contracts are fresh
         run: |
-          buf generate
-          buf generate --template buf.gen.ts.yaml
+          task generate
           git diff --exit-code -- contracts/gen sdk/typescript/src/gen
+
+      - name: Run offline SDK e2e against same-checkout mecated
+        run: task sdk:e2e
 
   build:
     name: Build

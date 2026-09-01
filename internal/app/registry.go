@@ -495,7 +495,7 @@ func buildProviderRegistryContext(ctx context.Context, cfg Config, detect envDet
 
 	// UseMock short-circuit: a single synthetic entry, offline, regardless of env.
 	if cfg.UseMock || cfg.MockProvider != nil {
-		cfg.diag().Log(ctx, port.LevelWarn, "LLM provider: mock (canned, offline) — for smoke tests only")
+		logMockProvider(ctx, cfg)
 		mock := port.LLMProvider(mockllm.New(
 			mockllm.TextTurn("Mock provider: no real model is configured. Set OPENAI_API_KEY for live use."),
 		))
@@ -673,6 +673,14 @@ func buildProviderRegistryContext(ctx context.Context, cfg Config, detect envDet
 		return nil, err
 	}
 	return reg, nil
+}
+
+func logMockProvider(ctx context.Context, cfg Config) {
+	if cfg.MockProvider == nil {
+		cfg.diag().Log(ctx, port.LevelWarn, "LLM provider: mock (canned, offline) — for smoke tests only")
+		return
+	}
+	cfg.diag().Log(ctx, port.LevelWarn, "LLM provider: mock (scripted, offline) — for testing only")
 }
 
 func providerRegistryContext(ctx context.Context) context.Context {

@@ -504,18 +504,18 @@ live model). One CI job runs the unit suites and this e2e for every PR.
   and UDS), passes the compatibility floor, creates a session, runs a
   prompt, iterates events to the typed terminal result, and deletes the
   session — no network beyond loopback.
-  - verify: `sdk/typescript/e2e/grpc.e2e.test.ts :: "full run lifecycle over gRPC"`
+  - verify: vitest:sdk/typescript/e2e/grpc.e2e.test.ts#ZnVsbCBydW4gbGlmZWN5Y2xlIG92ZXIgZ1JQQw — `sdk/typescript/e2e/grpc.e2e.test.ts :: "full run lifecycle over gRPC"`
 - AC9.2: The same flow over the HTTP/SSE transport (steer excepted per
   AC3.7) yields the same normalized events and terminal outcome.
-  - verify: `sdk/typescript/e2e/http.e2e.test.ts :: "full run lifecycle over HTTP/SSE"`
+  - verify: vitest:sdk/typescript/e2e/http.e2e.test.ts#ZnVsbCBydW4gbGlmZWN5Y2xlIG92ZXIgSFRUUC9TU0U — `sdk/typescript/e2e/http.e2e.test.ts :: "full run lifecycle over HTTP/SSE"`
 - AC9.3: A permission ask surfaces end to end: the mock run hits an
   ask-worthy tool, `onPermissionAsk` approves, and the run completes; a
   second e2e denies and the run observably continues past the denial.
-  - verify: `sdk/typescript/e2e/permissions.e2e.test.ts :: "asks resolve through the responder end to end"`
+  - verify: vitest:sdk/typescript/e2e/permissions.e2e.test.ts#YXNrcyByZXNvbHZlIHRocm91Z2ggdGhlIHJlc3BvbmRlciBlbmQgdG8gZW5k — `sdk/typescript/e2e/permissions.e2e.test.ts :: "asks resolve through the responder end to end"`
 - AC9.4: Cancellation and stale controls hold on the real wire: cancelling
   an in-flight run resolves the cancelled outcome, and a control carrying a
   finished run's ID fails typed while the session's next run is untouched.
-  - verify: `sdk/typescript/e2e/controls.e2e.test.ts :: "cancel and stale controls on the real wire"`
+  - verify: vitest:sdk/typescript/e2e/controls.e2e.test.ts#Y2FuY2VsIGFuZCBzdGFsZSBjb250cm9scyBvbiB0aGUgcmVhbCB3aXJl — `sdk/typescript/e2e/controls.e2e.test.ts :: "cancel and stale controls on the real wire"`
 - AC9.5: The CI job runs biome, typecheck, the vitest unit suites, the
   build + API report + pack, the codegen freshness step, and this e2e on
   every PR — a failure in any of them fails the PR.

@@ -33,6 +33,7 @@
     "format": "biome check --write .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "test:e2e": "vitest run --config vitest.e2e.config.ts",
     "build": "node --input-type=module --eval \"import { rmSync } from 'node:fs'; rmSync('dist', { recursive: true, force: true });\" && tsc -p tsconfig.build.json",
     "api:check": "api-extractor run --config api-extractor.json && api-extractor run --config api-extractor.node.json",
     "api:update": "api-extractor run --local --config api-extractor.json && api-extractor run --local --config api-extractor.node.json",

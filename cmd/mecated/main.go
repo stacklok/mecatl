@@ -122,6 +122,8 @@ type config struct {
 	// app.Config in appConfig alongside providerFlags.
 	toolhiveLLMFlags     *cliconfig.ToolhiveLLMFlags
 	useMock              bool
+	mockScript           string
+	mockProvider         port.LLMProvider
 	storeDir             string
 	shell                string
 	noBash               bool
@@ -838,6 +840,12 @@ func run(mode commandMode, remaining []string) error {
 	if err := validateEffectiveConfig(cfg); err != nil {
 		return err
 	}
+	if cfg.mockScript != "" {
+		cfg.mockProvider, err = loadMockScript(cfg.mockScript)
+		if err != nil {
+			return err
+		}
+	}
 
 	logger := cliconfig.NewTextLogger(os.Stderr, cfg.logLevel, cfg.logLevelWarning)
 	// slog.SetDefault stays for the daemon: this is the DELIBERATE, PERMANENT
@@ -1062,6 +1070,7 @@ func appConfig(cfg config, sink port.EventSink, recorder port.ToolCallRecorder, 
 		DefaultProviderFlagSet:        cfg.defaultProviderFlagSet,
 		UseOpenAI:                     cfg.useOpenAI,
 		UseMock:                       cfg.useMock,
+		MockProvider:                  cfg.mockProvider,
 		StoreDir:                      cfg.storeDir,
 		Shell:                         cfg.shell,
 		NoBash:                        cfg.noBash,
@@ -1623,6 +1632,7 @@ func parseFlagsModeOut(mode commandMode, argv []string, out io.Writer) (*flag.Fl
 	// both, so mecated's help text disambiguates it from --toolhive explicitly.
 	cfg.toolhiveLLMFlags = cliconfig.RegisterToolhiveLLMFlags(fs, cliconfig.DefaultToolhiveLLMFlagHelp)
 	fs.BoolVar(&cfg.useMock, "mock", false, "use a canned offline mock provider (no network; for smoke tests only)")
+	fs.StringVar(&cfg.mockScript, "mock-script", "", "path to a JSON mockllm script (offline; implies --mock and supports text, tool-call, and delayed turns)")
 	fs.StringVar(&cfg.storeDir, "store-dir", "", "directory for the JSONL session store (empty -> in-memory store)")
 	fs.StringVar(&cfg.sessionStoreURL, "session-store-url", "", "host:port of a remote session-store gRPC driver (mecatl.driver.v1.SessionStoreService); replaces the local store, so it is mutually exclusive with --store-dir. Loopback may ride plaintext; pair a non-loopback target with --driver-tls (and --driver-auth-token as needed)")
 	fs.StringVar(&cfg.shell, "shell", "/bin/sh", "shell used to execute Bash-tool commands; empty disables Bash (shell-less mode)")
@@ -1812,6 +1822,11 @@ func parseFlagsModeOut(mode commandMode, argv []string, out io.Writer) (*flag.Fl
 			writeServeHelpAll(out, fs)
 		}
 		return nil, config{}, flag.ErrHelp
+	}
+	if cfg.mockScript != "" {
+		// Match every existing UseMock short-circuit as well as replacing the
+		// canned provider itself. A script is an additive way to select mock mode.
+		cfg.useMock = true
 	}
 
 	// Post-parse MCP finalize (issue #358): resolve the --mcp-server-insecure-http

@@ -158,7 +158,8 @@ type Config struct {
 	// scripted provider — the test-only seam for driving a full Build offline
 	// with scripted tool calls (UseMock scripts a single fixed text turn, which
 	// can never emit a tool call). It implies the mock registry entry (same
-	// short-circuit as UseMock); production cmd/ mains never set it.
+	// short-circuit as UseMock). mecated uses this seam only when an operator
+	// explicitly supplies --mock-script; the other production roots leave it nil.
 	MockProvider port.LLMProvider
 	StoreDir     string
 	// RedisURL (ADR 0048, mecak8s) points the session store + durable event log

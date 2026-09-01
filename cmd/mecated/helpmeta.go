@@ -149,6 +149,7 @@ var flagMetaByFlag = map[string]flagMeta{
 	"opencode-base-url":     {group: groupProvider, common: false, acp: acpInclude},
 	"auth-file":             {group: groupProvider, common: false, acp: acpInclude},
 	"mock":                  {group: groupProvider, common: false, acp: acpInclude},
+	"mock-script":           {group: groupProvider, common: false, acp: acpInclude},
 	"toolhive-llm":          {group: groupProvider, common: false, acp: acpInclude},
 	"toolhive-llm-base-url": {group: groupProvider, common: false, acp: acpInclude},
 	"toolhive-llm-mode":     {group: groupProvider, common: false, acp: acpInclude},

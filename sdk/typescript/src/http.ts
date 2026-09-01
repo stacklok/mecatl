@@ -520,7 +520,9 @@ async function* parseSSE(
   let buffer = "";
   let event = "message";
   let data: string[] = [];
-  const abort = () => void reader.cancel(signal?.reason);
+  const abort = () => {
+    void reader.cancel(signal?.reason).catch(() => undefined);
+  };
   signal?.addEventListener("abort", abort, { once: true });
   try {
     for (;;) {

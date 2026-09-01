@@ -8014,6 +8014,52 @@ failures name only the class, never the value. The elapsed-time expiry leg is bo
 the only clock-dependent part because the official `oauth2.Token.Valid` has no injected
 clock.
 
+## TypeScript SDK — `sdk/typescript/` (M1 core, ADR 0279)
+
+The ESM-only `@stacklok/mecatl-sdk` has three exports. `.` owns the transport-neutral
+`Client`/`Session`/`Run` API, typed events/errors, prompt-media helpers, and the hand-written
+HTTP/JSON/SSE transport. `./node` re-exports that surface and adds connect-node real gRPC over
+HTTP/2: TCP uses an ordinary base URL; UDS keeps an ordinary HTTP authority and supplies a
+socket-opening `createConnection` through the HTTP/2 node options (`sdk/typescript/src/node-transport.ts`),
+never a `unix://` URL. `./gen` is the committed protobuf-es output generated only for
+`contracts/proto/mecatl/v1/`; it has a codegen freshness gate rather than an API Extractor
+report. The package requires Node 24 in M1, builds unbundled ESM plus declarations/source maps,
+and owns its pinned pnpm lock independently of the npm-based website.
+
+`sdk/typescript/src/raw.ts` enforces API-major compatibility before all non-compatibility RPCs;
+the ergonomic client also probes status and maps transport/auth/incompatibility states without
+making the probe a second protocol contract. `Session` handles are lightweight views over one
+client. A handle admits one live run at a time, while separately fetched handles let callers
+model real server-side races. `Run` is single-consumption: callers choose async event iteration
+or `result()`, never both. Server terminal stops — including `cancelled` — resolve as typed
+values; transport/protocol/server failures reject. Every approval, cancel, and steer frame
+carries `expected_run_id`, so a stale HTTP control becomes typed `stale_run_control` and cannot
+affect the session's next run. HTTP steer remains deliberately unsupported until the server
+advertises `http_steer`.
+
+`sdk/typescript/src/events.ts` normalizes gRPC protobuf events and HTTP JSON/SSE records into
+one discriminated union, retaining an explicit unknown-event member for forward compatibility.
+The Go↔TypeScript kind-parity gate prevents the known vocabulary from drifting. Permission
+asks remain ordinary raw `permission.ask` events even when `onPermissionAsk` automatically
+returns `allow_once`, `allow_always`, or `deny`; responder lifetime is tied to the ask and late
+answers cannot resolve a retracted ask. A denial is a tool error, not a terminal run failure,
+so the provider receives that result and may continue on a later turn.
+
+Prompt media in `sdk/typescript/src/media.ts` accepts text plus image/audio parts and validates
+source XOR, MIME allowlists, per-part/count/aggregate bounds, and server capabilities before
+opening a run. The Node export adds path loaders; neither transport changes the normalized
+prompt model or event model.
+
+The offline real-wire lane is `sdk/typescript/e2e/`, separate from injected-transport unit
+tests and from the paid Go live suite below. `task sdk:e2e` first runs the repository Taskfile
+build, then Vitest spawns `bin/mecated` only on `127.0.0.1` or an owner-local UDS, with live
+provider credentials removed. Bare `--mock` remains its original single canned text turn.
+`cmd/mecated/mockscript.go` exposes `--mock-script`: strict bounded JSON is compiled into the
+existing `engine/adapter/mockllm` provider via `app.Config.MockProvider`, including ask-worthy
+tool-call turns and a bounded per-turn delay for deterministic mid-flight cancellation. The
+SDK CI job runs frozen install, Biome, typecheck, unit Vitest, build, pack, API reports, Go+TS
+codegen freshness, and this e2e; each command remains a hard failure.
+
 ## Live e2e — `e2e/` (see `e2e/README.md`)
 
 A LIVE, ginkgo-driven BDD suite proving the harness's features against a REAL model: it

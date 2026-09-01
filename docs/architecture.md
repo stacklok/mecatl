@@ -196,11 +196,18 @@ The ESM-only `@stacklok/mecatl-sdk` package lives in `sdk/typescript/`, with its
 own pnpm lockfile and Node-focused build/test gates kept separate from the Go
 modules and the npm-based `website/` tree. Its public surface is split by
 transport: `.` is the transport-neutral core plus the browser HTTP/SSE client,
-`./node` contains the Node/Bun gRPC and local-process features, and
+while `./node` contains the Node/Bun real-gRPC transport (TCP and UDS), and
 `./gen` is reserved for protobuf-es types and service descriptors generated under
-`sdk/typescript/src/gen/` from `contracts/proto/mecatl/v1/`. The scaffold fixes
-these package boundaries; later SDK slices fill in codegen, transports, and run
-choreography. See [ADR 0279](adr/0279-typescript-sdk-architecture.md).
+`sdk/typescript/src/gen/` from `contracts/proto/mecatl/v1/`. Both transports feed
+the same `Client`/`Session`/single-consumption `Run` layer: compatibility is checked
+before ordinary calls; events and server errors are normalized into closed typed
+families; controls carry the current run id; permission responders do not hide raw
+ask events; and prompt media is validated before transport selection. UDS dials by
+supplying connect-node's HTTP/2 node connection option for the socket path, never a
+`unix://` base URL. Unit tests inject transports; `sdk/typescript/e2e/` separately
+builds and spawns the same checkout's `mecated` with the offline mock provider to
+prove TCP, UDS, HTTP/SSE, asks, cancellation, and stale controls on real wire. See
+[ADR 0279](adr/0279-typescript-sdk-architecture.md).
 
 Around that core, every capability beyond the minimal loop is a **seam with a
 default and a swap-in adapter**, so the production build stays static and

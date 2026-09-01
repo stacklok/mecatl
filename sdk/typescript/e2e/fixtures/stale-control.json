@@ -1,0 +1,6 @@
+{
+  "turns": [
+    { "text": "old run finished" },
+    { "delay_ms": 2000, "text": "next run remained untouched" }
+  ]
+}

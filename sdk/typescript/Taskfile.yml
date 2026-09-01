@@ -30,10 +30,17 @@ tasks:
       - pnpm run typecheck
 
   test:
-    desc: Run the TypeScript SDK Vitest suite
+    desc: Run the TypeScript SDK Vitest unit suite (excludes e2e/)
     deps: [install]
     cmds:
       - pnpm run test
+
+  e2e:
+    desc: Build same-checkout mecated and run the offline TypeScript SDK wire suite
+    deps: [install]
+    cmds:
+      - task --dir ../.. build
+      - pnpm run test:e2e
 
   build:
     desc: Build ESM modules, declarations, and source maps with tsc

@@ -121,6 +121,7 @@ root, or wait for a future opaque scoped-grant design. See [ADR
 | `--anthropic-base-url` | `""` | override the native Anthropic API base URL (compatible/proxy endpoints; key from `ANTHROPIC_API_KEY`) |
 | `--auth-file` | `""` | path to a YAML credentials file (`providers.<name>.api_key` for `anthropic`/`openai`/`openrouter`/`opencode`, or file-only `providers.openai-codex.oauth`); overrides the conventional default `$XDG_CONFIG_HOME/mecatl/auth.yaml` (usually `~/.config/mecatl/auth.yaml`, a `settings.yaml` sibling). See [Credentials file](#credentials-file-authyaml) below — an environment variable wins over the file only for the API-key providers; `openai-codex` has no environment alias. |
 | `--mock` | `false` | use a canned offline mock provider (no network; smoke tests only) |
+| `--mock-script` | `""` | path to a strict JSON mock script; implies the offline mock provider and replaces its canned turn with ordered text/tool-call turns. Optional `delay_ms` (0–30000) keeps a turn in flight for control testing. |
 | `--shell` | `/bin/sh` | shell used to execute `Bash`-tool commands; empty disables Bash (shell-less mode). |
 | `--no-bash` | `false` | disable the `Bash` tool entirely (shell-less mode); overrides `--shell`. |
 | `--compaction` | `heuristic` | compaction strategy: `heuristic` (single-summary) or `cascade` (tiered snip→strip→collapse→summarize). |
@@ -948,6 +949,8 @@ builds an N-provider registry and AUTO-DETECTS availability from the environment
   matching API-key environment variable is empty. `openai-codex` instead uses
   only its distinct `providers.openai-codex.oauth` file entry.
 - `--mock` → canned offline provider (single text turn; smoke tests only).
+- `--mock-script PATH` → scripted offline provider backed by the same `mockllm`
+  adapter; it implies the mock provider without changing bare `--mock`.
 - none of the above → startup error (the daemon refuses to start; mecatui fails the
   same check client-side before hosting an embedded server). The error names all
   four API-key environment routes (Anthropic, OpenAI, OpenRouter, and OpenCode),
@@ -966,6 +969,35 @@ even if an intent-only gateway such as ToolHive is also available. A zero-select
 session continues to float with the deployment default after restart, while an
 explicit Codex selector is persisted and must rehydrate through Codex rather than
 `openai`.
+
+#### Scripted offline mock
+
+`--mock-script` reads one JSON document at startup and fails before listener binding
+if the file is missing or malformed. Each turn sets exactly one of `text` or
+`tool_calls`; tool-call `args` is ordinary JSON. Turns are consumed in order across
+model calls, so a tool-call turn followed by a text turn models the loop continuing
+after the tool result:
+
+```json
+{
+  "turns": [
+    {
+      "tool_calls": [
+        {
+          "id": "write-1",
+          "name": "Write",
+          "args": { "path": "proof.txt", "content": "ok\n" }
+        }
+      ]
+    },
+    { "text": "continued after the tool" },
+    { "delay_ms": 2000, "text": "a cancellable turn" }
+  ]
+}
+```
+
+The flag is an offline operator/testing surface, not a network mock service. A bare
+`--mock` remains the original single canned text turn byte-for-byte.
 
 #### Per-session provider/model selection (wire)
 
