@@ -329,6 +329,11 @@ service HarnessService {
   // remains available when automatic learning is off if reflection is configured.
   rpc ReflectSession(ReflectSessionRequest) returns (ReflectSessionResponse);
 
+  // Learning attempts expose content-free lifecycle metadata from only the
+  // verified caller's private partition. Pagination cursors are opaque IDs.
+  rpc GetLearningAttempt(GetLearningAttemptRequest) returns (GetLearningAttemptResponse);
+  rpc ListLearningAttempts(ListLearningAttemptsRequest) returns (ListLearningAttemptsResponse);
+
   // GenerateDreamPlan creates a bounded-lifetime manual consolidation review for
   // one closed, deployment-owned target. The request carries no mutation material.
   // Unavailable deployments return Unimplemented (HTTP parity: 501).
@@ -2905,6 +2910,40 @@ message ReflectionReceipt {
 }
 
 message ReflectSessionResponse { ReflectionReceipt receipt = 1; }
+
+// LearningAttempt is deliberately content-free. It contains only the closed
+// lifecycle vocabulary, opaque versions/identifiers, bounded generations, and
+// authorized proposal/skill links from the caller's private attempt partition.
+message LearningAttempt {
+  string id = 1;
+  string version = 2;
+  string state = 3;
+  string outcome = 4;
+  string failure_code = 5;
+  uint64 attempt_generation = 6;
+  uint64 claim_generation = 7;
+  google.protobuf.Timestamp claim_expires_at = 8;
+  string checkpoint_stage = 9;
+  string proposal_id = 10;
+  string skill_id = 11;
+  google.protobuf.Timestamp created_at = 12;
+  google.protobuf.Timestamp updated_at = 13;
+}
+
+message GetLearningAttemptRequest {
+  string id = 1 [(buf.validate.field).string.min_len = 1];
+}
+message GetLearningAttemptResponse { LearningAttempt attempt = 1; }
+
+message ListLearningAttemptsRequest {
+  string state = 1;
+  string cursor = 2;
+  int32 limit = 3;
+}
+message ListLearningAttemptsResponse {
+  repeated LearningAttempt attempts = 1;
+  string next_cursor = 2;
+}
 
 message ListLearningProposalsRequest {
   string status = 1;

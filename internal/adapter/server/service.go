@@ -447,9 +447,13 @@ type Config struct {
 	UserModel UserModelLister
 
 	// ReflectSession enables explicit completed-session reflection independently of
-	// automatic learning mode. Proposals and the mutation callbacks expose the
-	// bounded, caller-partitioned staged-learning review surface.
+	// automatic learning mode. Attempts expose only content-free lifecycle
+	// projections from the verified caller's private partition. Proposals and the
+	// mutation callbacks expose the bounded, caller-partitioned staged-learning
+	// review surface.
 	ReflectSession          ExplicitReflector
+	Attempts                learning.AttemptRepository
+	AttemptPrincipal        func(*session.Principal) string
 	Proposals               learning.ProposalRepository
 	ProposalPrincipal       func(*session.Principal) string
 	PromoteProposal         ProposalPromoter

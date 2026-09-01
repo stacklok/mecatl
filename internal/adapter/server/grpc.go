@@ -1193,6 +1193,24 @@ func (h *HarnessServer) ReflectSession(ctx context.Context, req *mecatlv1.Reflec
 	return &mecatlv1.ReflectSessionResponse{Receipt: receipt}, nil
 }
 
+// GetLearningAttempt returns one content-free attempt projection from the caller partition.
+func (h *HarnessServer) GetLearningAttempt(ctx context.Context, req *mecatlv1.GetLearningAttemptRequest) (*mecatlv1.GetLearningAttemptResponse, error) {
+	attempt, err := h.svc.GetLearningAttempt(ctx, req.GetId())
+	if err != nil {
+		return nil, toStatus(err)
+	}
+	return &mecatlv1.GetLearningAttemptResponse{Attempt: attempt}, nil
+}
+
+// ListLearningAttempts returns one bounded attempt page from the caller partition.
+func (h *HarnessServer) ListLearningAttempts(ctx context.Context, req *mecatlv1.ListLearningAttemptsRequest) (*mecatlv1.ListLearningAttemptsResponse, error) {
+	response, err := h.svc.ListLearningAttempts(ctx, req.GetState(), req.GetCursor(), int(req.GetLimit()))
+	if err != nil {
+		return nil, toStatus(err)
+	}
+	return response, nil
+}
+
 // GenerateDreamPlan creates a retained manual consolidation review.
 func (h *HarnessServer) GenerateDreamPlan(ctx context.Context, req *mecatlv1.GenerateDreamPlanRequest) (*mecatlv1.GenerateDreamPlanResponse, error) {
 	review, err := h.svc.GenerateDream(ctx, DreamTarget(req.GetTarget()))

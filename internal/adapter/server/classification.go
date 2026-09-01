@@ -362,6 +362,8 @@ var serviceAccessTable = map[string]ClassificationEntry{
 	"GetUserModel":             {KindDerived, "delegates to cfg.UserModel.List, the caller-partitioned memory.CallerStore already classified caller-owned"},
 	"GetUserModelDetail":       {KindDerived, "delegates to cfg.UserModel's optional lifecycle Inspect, preserving the same caller-partitioned memory.CallerStore boundary for current value and history"},
 	"ReflectSession":           {KindCallerOwned, "loads and authorizes the source session before submitting its bounded completed trajectory"},
+	"GetLearningAttempt":       {KindCallerOwned, "derives the private immutable attempt partition from the verified caller before repository access"},
+	"ListLearningAttempts":     {KindCallerOwned, "pages only the private immutable attempt partition derived from the verified caller"},
 	"ListLearningProposals":    {KindCallerOwned, "derives the proposal partition from the verified caller; optional project scope is trust-gated"},
 	"GetLearningProposal":      {KindCallerOwned, "reads only the verified caller's proposal partition"},
 	"DecideLearningProposal":   {KindCallerOwned, "mutates only the verified caller's proposal partition with version CAS"},

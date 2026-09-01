@@ -123,6 +123,16 @@ persisted provider/model, and bypasses automatic cooldown and admission budgets.
 Without genuine current-prompt promotion provenance, its output remains staged
 rather than changing active memory.
 
+When durable learning is enabled, authenticated clients can inspect attempts over
+`GetLearningAttempt` / `ListLearningAttempts` or HTTP
+`GET /v1/learning/attempts[/{id}]`. Lists use an optional closed state filter, an
+opaque cursor, and a page limit of at most 200. Responses contain lifecycle state,
+timestamps, safe failure/checkpoint codes, opaque versions, and authorized
+proposal/skill links only. They never include prompts, transcripts, tool/provider
+output, filesystem paths, identity values, credentials, diagnostics, metrics, or
+event/watch payloads. Another caller sees the same not-found response as a missing
+attempt. Attempt watch is not available.
+
 Use the memory tools to inspect and manage the resulting facts. Values remain
 bounded and secret-shaped credentials or role/directive overrides are rejected.
 The live operator profile is injected as data into model requests; it does not

@@ -80,6 +80,8 @@ func NewHTTPHandler(svc *Service) *HTTPHandler {
 	}
 	h.mux.HandleFunc("POST /v1/dream/plans", h.generateDreamPlan)
 	h.mux.HandleFunc("POST /v1/dream/plans/{plan_id}/decision", h.decideDreamPlan)
+	h.mux.HandleFunc("GET /v1/learning/attempts", h.listLearningAttempts)
+	h.mux.HandleFunc("GET /v1/learning/attempts/{id}", h.getLearningAttempt)
 	h.mux.HandleFunc("GET /v1/learning/proposals", h.listLearningProposals)
 	h.mux.HandleFunc("GET /v1/learning/proposals/{id}", h.getLearningProposal)
 	h.mux.HandleFunc("POST /v1/learning/proposals/{id}/decision", h.decideLearningProposal)
@@ -1956,6 +1958,29 @@ func (h *HTTPHandler) decideDreamPlan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, &mecatlv1.DecideDreamPlanResponse{Receipt: toProtoDreamReceipt(receipt)})
+}
+
+func (h *HTTPHandler) listLearningAttempts(w http.ResponseWriter, r *http.Request) {
+	limit, err := strconv.Atoi(r.URL.Query().Get("limit"))
+	if err != nil && r.URL.Query().Get("limit") != "" {
+		writeError(w, http.StatusBadRequest, "invalid attempt limit")
+		return
+	}
+	response, err := h.svc.ListLearningAttempts(r.Context(), r.URL.Query().Get("state"), r.URL.Query().Get("cursor"), limit)
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, response)
+}
+
+func (h *HTTPHandler) getLearningAttempt(w http.ResponseWriter, r *http.Request) {
+	attempt, err := h.svc.GetLearningAttempt(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, &mecatlv1.GetLearningAttemptResponse{Attempt: attempt})
 }
 
 func (h *HTTPHandler) listLearningProposals(w http.ResponseWriter, r *http.Request) {

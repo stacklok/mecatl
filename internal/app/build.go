@@ -2054,6 +2054,8 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		DreamCapabilities: dreamCapabilities,
 		Proposals:         assets.reflectionRepository,
 		ProposalPrincipal: reflectionPrincipal,
+		Attempts:          assets.attemptRepository,
+		AttemptPrincipal:  reflectionPrincipal,
 		ProjectPromotionAllowed: func(project string) bool {
 			return projectIngestionAdmittedForRoot(cfg, project)
 		},

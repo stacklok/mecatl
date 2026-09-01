@@ -4235,6 +4235,8 @@ after the observer has copied the verified session principal and bounded traject
 stops local scheduling, publishes closed receipts for queued waiters, clears pending state, cancels active work, and joins workers. Queue-full, duplicate, completion, and failure diagnostics carry only bounded
 attempt IDs and counts. Queue/singleflight/receipt state remains reset-by-design scheduling state; `internal/adapter/attemptstore` persists authoritative queued/running/terminal workflow state and immutable content-free provenance across processes. Skipped/non-admitted decisions emit their immediate content-free activity and never touch the attempt repository.
 
+`internal/adapter/server/attempts.go` derives the verified caller's private one-way attempt partition before every repository read. `GetLearningAttempt` maps foreign and missing IDs to the same content-free absence and `ListLearningAttempts` uses the repository's bounded state filter/page limit and opaque next-ID cursor. `toProtoLearningAttempt` is the sole gRPC/HTTP projection: closed state/outcome/failure/checkpoint tokens, generations, timestamps, opaque ID/version, and same-partition proposal/skill links only. Source session/run/digests, immutable prompt provenance, principal values, content, errors, diagnostics, metrics, EventLog records, and watch envelopes never enter the public message. `internal/adapter/server/grpc.go` and `internal/adapter/server/http.go` are thin projections over those Service methods; attempt watch remains absent.
+
 **Distributed learning repository composition:** `internal/app/learningdriver.go`
 (`resolveLearningRepositories`) selects one `--learning-store-url` target only after
 `internal/adapter/grpcdriver/learningrepositories.go`

@@ -1243,7 +1243,7 @@ exact trusted configured root. Tool/assistant/repository/history-only evidence s
 Authenticated explicit reflection carries host-requested provenance and bypasses automatic policy,
 cooldown, budgets, and completed cache while retaining provider, queue, timeout, ownership, and
 stage/promotion controls. In off mode there is no automatic observer, attempt repository, coordinator worker,
-or recovery worker; explicit reflection uses the pre-existing synchronous lazy proposal path and creates no durable attempt. The gRPC and HTTP surfaces expose explicit completed-session
+or recovery worker; explicit reflection uses the pre-existing synchronous lazy proposal path and creates no durable attempt. When the durable repository is wired, authenticated gRPC `GetLearningAttempt` / `ListLearningAttempts` and HTTP `GET /v1/learning/attempts[/{id}]` expose bounded, caller-partitioned attempt state. The Service derives the private one-way owner partition before repository access; foreign and missing IDs return the same absence response. Projections contain only closed lifecycle metadata, timestamps, opaque versions/cursors, and proposal/skill IDs already linked inside that partition—never source evidence, transcript/tool/provider text, principal values, paths, diagnostics, metrics, or EventLog/watch data. The gRPC and HTTP surfaces also expose explicit completed-session
 reflection, bounded caller-partitioned list/detail, CAS approve/reject, and compensating undo;
 capability bits keep older/unconfigured servers honest. Source-session ownership and proposal
 principal are verified, project partitions remain reviewable but project promotion is root/trust-gated, and evidence detail reports only

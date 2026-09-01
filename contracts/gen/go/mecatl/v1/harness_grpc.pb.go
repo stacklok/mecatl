@@ -82,6 +82,8 @@ const (
 	HarnessService_GetSoul_FullMethodName                  = "/mecatl.v1.HarnessService/GetSoul"
 	HarnessService_GetUserModel_FullMethodName             = "/mecatl.v1.HarnessService/GetUserModel"
 	HarnessService_ReflectSession_FullMethodName           = "/mecatl.v1.HarnessService/ReflectSession"
+	HarnessService_GetLearningAttempt_FullMethodName       = "/mecatl.v1.HarnessService/GetLearningAttempt"
+	HarnessService_ListLearningAttempts_FullMethodName     = "/mecatl.v1.HarnessService/ListLearningAttempts"
 	HarnessService_GenerateDreamPlan_FullMethodName        = "/mecatl.v1.HarnessService/GenerateDreamPlan"
 	HarnessService_DecideDreamPlan_FullMethodName          = "/mecatl.v1.HarnessService/DecideDreamPlan"
 	HarnessService_ListLearningProposals_FullMethodName    = "/mecatl.v1.HarnessService/ListLearningProposals"
@@ -379,6 +381,10 @@ type HarnessServiceClient interface {
 	// ReflectSession explicitly reflects one completed, caller-owned session. It
 	// remains available when automatic learning is off if reflection is configured.
 	ReflectSession(ctx context.Context, in *ReflectSessionRequest, opts ...grpc.CallOption) (*ReflectSessionResponse, error)
+	// Learning attempts expose content-free lifecycle metadata from only the
+	// verified caller's private partition. Pagination cursors are opaque IDs.
+	GetLearningAttempt(ctx context.Context, in *GetLearningAttemptRequest, opts ...grpc.CallOption) (*GetLearningAttemptResponse, error)
+	ListLearningAttempts(ctx context.Context, in *ListLearningAttemptsRequest, opts ...grpc.CallOption) (*ListLearningAttemptsResponse, error)
 	// GenerateDreamPlan creates a bounded-lifetime manual consolidation review for
 	// one closed, deployment-owned target. The request carries no mutation material.
 	// Unavailable deployments return Unimplemented (HTTP parity: 501).
@@ -910,6 +916,26 @@ func (c *harnessServiceClient) ReflectSession(ctx context.Context, in *ReflectSe
 	return out, nil
 }
 
+func (c *harnessServiceClient) GetLearningAttempt(ctx context.Context, in *GetLearningAttemptRequest, opts ...grpc.CallOption) (*GetLearningAttemptResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetLearningAttemptResponse)
+	err := c.cc.Invoke(ctx, HarnessService_GetLearningAttempt_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *harnessServiceClient) ListLearningAttempts(ctx context.Context, in *ListLearningAttemptsRequest, opts ...grpc.CallOption) (*ListLearningAttemptsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListLearningAttemptsResponse)
+	err := c.cc.Invoke(ctx, HarnessService_ListLearningAttempts_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *harnessServiceClient) GenerateDreamPlan(ctx context.Context, in *GenerateDreamPlanRequest, opts ...grpc.CallOption) (*GenerateDreamPlanResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(GenerateDreamPlanResponse)
@@ -1430,6 +1456,10 @@ type HarnessServiceServer interface {
 	// ReflectSession explicitly reflects one completed, caller-owned session. It
 	// remains available when automatic learning is off if reflection is configured.
 	ReflectSession(context.Context, *ReflectSessionRequest) (*ReflectSessionResponse, error)
+	// Learning attempts expose content-free lifecycle metadata from only the
+	// verified caller's private partition. Pagination cursors are opaque IDs.
+	GetLearningAttempt(context.Context, *GetLearningAttemptRequest) (*GetLearningAttemptResponse, error)
+	ListLearningAttempts(context.Context, *ListLearningAttemptsRequest) (*ListLearningAttemptsResponse, error)
 	// GenerateDreamPlan creates a bounded-lifetime manual consolidation review for
 	// one closed, deployment-owned target. The request carries no mutation material.
 	// Unavailable deployments return Unimplemented (HTTP parity: 501).
@@ -1650,6 +1680,12 @@ func (UnimplementedHarnessServiceServer) GetUserModel(context.Context, *GetUserM
 }
 func (UnimplementedHarnessServiceServer) ReflectSession(context.Context, *ReflectSessionRequest) (*ReflectSessionResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ReflectSession not implemented")
+}
+func (UnimplementedHarnessServiceServer) GetLearningAttempt(context.Context, *GetLearningAttemptRequest) (*GetLearningAttemptResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetLearningAttempt not implemented")
+}
+func (UnimplementedHarnessServiceServer) ListLearningAttempts(context.Context, *ListLearningAttemptsRequest) (*ListLearningAttemptsResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ListLearningAttempts not implemented")
 }
 func (UnimplementedHarnessServiceServer) GenerateDreamPlan(context.Context, *GenerateDreamPlanRequest) (*GenerateDreamPlanResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GenerateDreamPlan not implemented")
@@ -2429,6 +2465,42 @@ func _HarnessService_ReflectSession_Handler(srv interface{}, ctx context.Context
 	return interceptor(ctx, in, info, handler)
 }
 
+func _HarnessService_GetLearningAttempt_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetLearningAttemptRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HarnessServiceServer).GetLearningAttempt(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: HarnessService_GetLearningAttempt_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HarnessServiceServer).GetLearningAttempt(ctx, req.(*GetLearningAttemptRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _HarnessService_ListLearningAttempts_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListLearningAttemptsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HarnessServiceServer).ListLearningAttempts(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: HarnessService_ListLearningAttempts_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HarnessServiceServer).ListLearningAttempts(ctx, req.(*ListLearningAttemptsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _HarnessService_GenerateDreamPlan_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(GenerateDreamPlanRequest)
 	if err := dec(in); err != nil {
@@ -2979,6 +3051,14 @@ var HarnessService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ReflectSession",
 			Handler:    _HarnessService_ReflectSession_Handler,
+		},
+		{
+			MethodName: "GetLearningAttempt",
+			Handler:    _HarnessService_GetLearningAttempt_Handler,
+		},
+		{
+			MethodName: "ListLearningAttempts",
+			Handler:    _HarnessService_ListLearningAttempts_Handler,
 		},
 		{
 			MethodName: "GenerateDreamPlan",
