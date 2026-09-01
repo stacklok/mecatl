@@ -9,11 +9,6 @@ oidc:
   caSecret: fixture-ca
   caKey: tls.crt
 
-service:
-  type: ClusterIP
-  grpcPort: 8080
-  httpPort: 8081
-
 tls:
   enabled: true
   secretName: mecak8s-tls

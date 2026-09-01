@@ -47,10 +47,31 @@ func serviceFromRender(t *testing.T, rendered string) *corev1.Service {
 		if err := yaml.Unmarshal([]byte(document), &service); err != nil {
 			t.Fatal(err)
 		}
+		// The Keycloak fixture renders a Redis Service too; select the
+		// chart's own Service by name rather than document order.
+		if !strings.HasSuffix(service.Name, "-mecak8s") {
+			continue
+		}
 		return &service
 	}
-	t.Fatal("rendered chart has no Service")
+	t.Fatal("rendered chart has no mecak8s Service")
 	return nil
+}
+
+func assertFixtureServiceNodePorts(t *testing.T, rendered string) {
+	t.Helper()
+	service := serviceFromRender(t, rendered)
+	if service.Spec.Type != corev1.ServiceTypeNodePort {
+		t.Fatalf("Service type = %q, want NodePort", service.Spec.Type)
+	}
+	got := map[string]int32{}
+	for _, port := range service.Spec.Ports {
+		got[port.Name] = port.NodePort
+	}
+	want := map[string]int32{"grpc": 30080, "http": 30081}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("Service NodePorts = %#v, want %#v", got, want)
+	}
 }
 
 func deploymentFromRender(t *testing.T, rendered string) *appsv1.Deployment {
@@ -88,6 +109,14 @@ func secureProductionArgs() []string {
 // mecak8s-tls) — see values-kind.yaml's own comment.
 func kindVMCPArgs() []string {
 	return []string{"template", "kind", ".", "-f", "values-kind.yaml", "-f", "values-kind-vmcp.yaml"}
+}
+
+func kindFixtureArgs() []string {
+	return []string{"template", "kind", ".", "-f", "values-kind.yaml", "-f", "../../mecak8s-kind/kind-nodeports.yaml"}
+}
+
+func kindKeycloakFixtureArgs() []string {
+	return append(kindFixtureArgs(), "-f", "values-kind-keycloak.yaml")
 }
 
 // TestMecak8sHelmChart_KindProfileAloneHasNoSecretDependency pins the exact
@@ -496,6 +525,26 @@ func TestMecak8sHelmHelperMatchesProviderSecuritySchema(t *testing.T) {
 				t.Fatalf("helper acceptance = %t, want %t: %v", err == nil, tc.wantAccepted(), err)
 			}
 		})
+	}
+}
+
+func TestMecak8sHelmChart_KindFixtureNodePortsAndProductionClusterIP(t *testing.T) {
+	fixture, err := helm(t, kindFixtureArgs()...)
+	if err != nil {
+		t.Fatalf("render Kind fixture overlay: %v", err)
+	}
+	assertFixtureServiceNodePorts(t, fixture)
+	keycloakFixture, err := helm(t, kindKeycloakFixtureArgs()...)
+	if err != nil {
+		t.Fatalf("render Kind Keycloak fixture overlays in Taskfile order: %v", err)
+	}
+	assertFixtureServiceNodePorts(t, keycloakFixture)
+	bare, err := helm(t, "template", "kind", ".", "-f", "values-kind.yaml")
+	if err != nil {
+		t.Fatalf("render bare Kind profile: %v", err)
+	}
+	if !strings.Contains(bare, "type: ClusterIP") || strings.Contains(bare, "nodePort:") {
+		t.Fatal("shared Kind values must remain ClusterIP without NodePorts")
 	}
 }
 

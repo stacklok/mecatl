@@ -580,10 +580,11 @@ metadata:
     app.kubernetes.io/name: keycloak
     app.kubernetes.io/part-of: mecak8s
 spec:
-  type: ClusterIP
+  type: NodePort
   selector:
     app.kubernetes.io/name: keycloak
   ports:
     - name: https
       port: 8443
       targetPort: https
+      nodePort: 30443

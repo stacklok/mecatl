@@ -8,6 +8,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"sigs.k8s.io/yaml"
 )
 
 const fixtureTask = "Taskfile.yml"
@@ -19,7 +21,7 @@ func TestMecak8sKindFixture_Scenario1_ToolHiveFreeSetup(t *testing.T) {
 	text := fixtureTaskClosure(t, "kind-setup")
 	for _, want := range []string{
 		"reset-state:", "cluster-create:", "namespace-apply:", "image-build-load:", "chart-apply:",
-		"--values=deploy/helm/mecak8s/values-kind.yaml", "statefulset/redis",
+		"--values=deploy/helm/mecak8s/values-kind.yaml", "--values=deploy/mecak8s-kind/kind-nodeports.yaml", "statefulset/redis",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("Kind base setup missing %q", want)
@@ -42,11 +44,10 @@ func TestMecak8sKindFixture_Scenario1_DedicatedKubeconfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	text := string(body) + "\n" + fixtureTaskClosure(t, "kind-setup", "kind-status", "kind-port-forward", "kind-destroy")
+	text := string(body) + "\n" + fixtureTaskClosure(t, "kind-setup", "kind-status", "kind-keycloak-demo", "kind-destroy")
 	for _, want := range []string{
 		"KUBECONFIG: deploy/mecak8s-kind/kconfig.yaml", "CONTEXT: kind-mecatl-dev",
 		"--kubeconfig={{.KUBECONFIG}}", "--context={{.CONTEXT}}", "--kube-context={{.CONTEXT}}",
-		"--address=127.0.0.1", "svc/{{.RELEASE}}-mecak8s", "18080:8080", "18081:8081",
 		"kind delete cluster --name={{.CLUSTER}}", "rm -rf {{.STATE}}", "rm -f {{.KUBECONFIG}} {{.SETUP_LOCK}}",
 	} {
 		if !strings.Contains(text, want) {
@@ -67,13 +68,13 @@ func TestMecak8sKindFixture_Scenario1_DocumentationBoundaries(t *testing.T) {
 	baseDocs, _, _ := strings.Cut(text, "\n## Optional Keycloak login journey")
 	for _, want := range []string{
 		"operator-run", "deploy/helm/mecak8s/", "e2e/k8s/", "no general NetworkPolicy",
-		"127.0.0.1", "port-forward",
+		"127.0.0.1", "NodePort", "extraPortMappings",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("fixture documentation missing boundary %q", want)
 		}
 	}
-	for _, forbidden := range []string{"production network isolation", "ToolHive", "Keycloak", "vMCP"} {
+	for _, forbidden := range []string{"production network isolation", "ToolHive", "vMCP"} {
 		if strings.Contains(baseDocs, forbidden) {
 			t.Fatalf("ToolHive-free fixture documentation contains %q", forbidden)
 		}
@@ -244,66 +245,127 @@ func fixtureTaskClosure(t *testing.T, roots ...string) string {
 }
 
 func TestMecak8sKindFixture_Scenario3_LoopbackReachability(t *testing.T) {
-	task := fixtureTaskClosure(t, "kind-port-forward")
-	for _, want := range []string{
-		"--address=127.0.0.1", "svc/{{.RELEASE}}-mecak8s", "18080:8080", "18081:8081",
-	} {
+	task := fixtureTaskClosure(t, "kind-keycloak-demo")
+	for _, want := range []string{"nc -z 127.0.0.1", "wait_port Keycloak 8443", "wait_port mecak8s-gRPC 18080", "wait_port mecak8s-HTTPS 18081"} {
 		if !strings.Contains(task, want) {
-			t.Fatalf("loopback access path missing %q", want)
+			t.Fatalf("direct loopback readiness missing %q", want)
 		}
 	}
-
-	keycloakTask := fixtureTaskClosure(t, "kind-keycloak-port-forward")
-	for _, want := range []string{"--address=127.0.0.1", "svc/keycloak", "8443:8443"} {
-		if !strings.Contains(keycloakTask, want) {
-			t.Fatalf("Keycloak loopback access path missing %q", want)
+	for _, forbidden := range []string{"port-forward", "kill ", "kind-port-forward", "kind-keycloak-port-forward"} {
+		if strings.Contains(task, forbidden) {
+			t.Fatalf("direct mapping task retains forwarding lifecycle %q", forbidden)
 		}
 	}
-
-	hostsTasks := fixtureTaskClosure(t, "kind-hosts-show", "kind-hosts-add", "kind-hosts-remove")
-	for _, want := range []string{
-		"127.0.0.1 keycloak.mecatl.svc.cluster.local",
-		"grep -Fqx", "sudo sh -c", "sudo sed -i.bak",
-		"^127\\.0\\.0\\.1 keycloak\\.mecatl\\.svc\\.cluster\\.local$",
-	} {
-		if !strings.Contains(hostsTasks, want) {
-			t.Fatalf("Keycloak hosts lifecycle missing %q", want)
+	taskfile, err := os.ReadFile(fixtureTask)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, forbidden := range []string{"kind-port-forward:", "kind-keycloak-port-forward:"} {
+		if strings.Contains(string(taskfile), forbidden) {
+			t.Fatalf("Taskfile retains obsolete task %q", forbidden)
 		}
+	}
+	if regexp.MustCompile(`kubectl[^\n]*port-forward`).Match(taskfile) {
+		t.Fatal("Taskfile retains a kubectl port-forward command")
+	}
+
+	config, err := os.ReadFile("kind-config.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var kindConfig struct {
+		Nodes []struct {
+			Role              string `yaml:"role"`
+			ExtraPortMappings []struct {
+				ContainerPort int    `yaml:"containerPort"`
+				HostPort      int    `yaml:"hostPort"`
+				ListenAddress string `yaml:"listenAddress"`
+				Protocol      string `yaml:"protocol"`
+			} `yaml:"extraPortMappings"`
+		} `yaml:"nodes"`
+	}
+	if err := yaml.Unmarshal(config, &kindConfig); err != nil {
+		t.Fatalf("parse Kind config: %v", err)
+	}
+	var mappings []struct {
+		ContainerPort int    `yaml:"containerPort"`
+		HostPort      int    `yaml:"hostPort"`
+		ListenAddress string `yaml:"listenAddress"`
+		Protocol      string `yaml:"protocol"`
+	}
+	for _, node := range kindConfig.Nodes {
+		if node.Role == "control-plane" {
+			mappings = append(mappings, node.ExtraPortMappings...)
+		}
+	}
+	wantMappings := map[int]int{30080: 18080, 30081: 18081, 30443: 8443}
+	if len(mappings) != len(wantMappings) {
+		t.Fatalf("control-plane extraPortMappings = %#v, want exactly %#v", mappings, wantMappings)
+	}
+	for _, mapping := range mappings {
+		if wantHostPort, ok := wantMappings[mapping.ContainerPort]; !ok || mapping.HostPort != wantHostPort || mapping.Protocol != "TCP" || mapping.ListenAddress != "127.0.0.1" {
+			t.Fatalf("unexpected control-plane extraPortMapping: %#v", mapping)
+		}
+		delete(wantMappings, mapping.ContainerPort)
+	}
+	if len(wantMappings) != 0 {
+		t.Fatalf("missing control-plane extraPortMappings: %#v", wantMappings)
 	}
 	keycloak, err := os.ReadFile("keycloak.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, forbidden := range []string{"NodePort", "nodePort", "LoadBalancer", "Ingress", "0.0.0.0", "*"} {
+	for _, want := range []string{"type: NodePort", "port: 8443", "targetPort: https", "nodePort: 30443"} {
+		if !strings.Contains(string(keycloak), want) {
+			t.Fatalf("Keycloak Service missing %q", want)
+		}
+	}
+	// The fixture's only host path is the loopback-bound Kind mapping in
+	// front of that NodePort; nothing here may reach further.
+	for _, forbidden := range []string{"LoadBalancer", "Ingress", "0.0.0.0", "*"} {
 		if strings.Contains(string(keycloak), forbidden) {
 			t.Fatalf("Keycloak Service exposes the fixture externally with %q", forbidden)
 		}
 	}
-	if !strings.Contains(string(keycloak), "type: ClusterIP") {
-		t.Fatal("Keycloak Service must be ClusterIP")
-	}
-
-	base, err := os.ReadFile("../helm/mecak8s/values.yaml")
+	overlay, err := os.ReadFile("kind-nodeports.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(base), "type: ClusterIP") {
-		t.Fatal("chart default Service must be ClusterIP")
+	for _, want := range []string{"type: NodePort", "grpc: 30080", "http: 30081"} {
+		if !strings.Contains(string(overlay), want) {
+			t.Fatalf("NodePort overlay missing %q", want)
+		}
 	}
-
-	overlay, err := os.ReadFile("../helm/mecak8s/values-kind-keycloak.yaml")
+	for _, forbidden := range []string{"LoadBalancer", "Ingress", "0.0.0.0", "*"} {
+		if strings.Contains(string(overlay), forbidden) {
+			t.Fatalf("NodePort overlay exposes the fixture externally with %q", forbidden)
+		}
+	}
+	// NodePort plumbing lives in kind-nodeports.yaml alone: the Keycloak
+	// overlay stays a pure OIDC/TLS layer with no Service exposure of its own.
+	keycloakOverlay, err := os.ReadFile("../helm/mecak8s/values-kind-keycloak.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, forbidden := range []string{"NodePort", "nodePort", "LoadBalancer", "Ingress", "0.0.0.0", "*"} {
-		if strings.Contains(string(overlay), forbidden) {
+		if strings.Contains(string(keycloakOverlay), forbidden) {
 			t.Fatalf("Keycloak overlay exposes mecak8s externally with %q", forbidden)
 		}
 	}
-	if !strings.Contains(string(overlay), "type: ClusterIP") {
-		t.Fatal("Keycloak overlay must retain the ClusterIP Service")
+	base, err := os.ReadFile("../helm/mecak8s/values-kind.yaml")
+	if err != nil {
+		t.Fatal(err)
 	}
-
+	if !strings.Contains(string(base), "endpoint: redis:6379") || strings.Contains(string(base), "NodePort") {
+		t.Fatal("shared Kind values must remain bare ClusterIP profile")
+	}
+	chartDefaults, err := os.ReadFile("../helm/mecak8s/values.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(chartDefaults), "type: ClusterIP") {
+		t.Fatal("chart default Service must be ClusterIP")
+	}
 	certs, err := os.ReadFile("fixture-tls.yaml")
 	if err != nil {
 		t.Fatal(err)
@@ -311,6 +373,12 @@ func TestMecak8sKindFixture_Scenario3_LoopbackReachability(t *testing.T) {
 	for _, want := range []string{"- localhost", "- 127.0.0.1"} {
 		if !strings.Contains(string(certs), want) {
 			t.Fatalf("fixture certificate misses loopback client identity %q", want)
+		}
+	}
+	hostsTasks := fixtureTaskClosure(t, "kind-hosts-show", "kind-hosts-add", "kind-hosts-remove")
+	for _, want := range []string{"127.0.0.1 keycloak.mecatl.svc.cluster.local", "grep -Fqx", "sudo sh -c", "sudo sed -i.bak"} {
+		if !strings.Contains(hostsTasks, want) {
+			t.Fatalf("Keycloak hosts lifecycle missing %q", want)
 		}
 	}
 }
@@ -371,13 +439,9 @@ func TestMecak8sKindFixture_Scenario3_KeycloakIsOptIn(t *testing.T) {
 func TestMecak8sKindFixture_Scenario3_KeycloakDemoQuickstart(t *testing.T) {
 	text := fixtureTaskClosure(t, "kind-keycloak-demo")
 	for _, want := range []string{
-		"kind-keycloak-demo:", "task: cluster-ready", "nc -z 127.0.0.1", "trap cleanup EXIT INT TERM",
-		"svc/keycloak 8443:8443", "svc/{{.RELEASE}}-mecak8s 18080:8080 18081:8081",
-		"--address=127.0.0.1", "get secret fixture-ca", "fixture-ca.crt",
+		"kind-keycloak-demo:", "task: cluster-ready", "nc -z 127.0.0.1", "trap 'rm -f",
+		"get secret fixture-ca", "fixture-ca.crt", "base64 -D <",
 		"wait_port Keycloak 8443", "wait_port mecak8s-gRPC 18080", "wait_port mecak8s-HTTPS 18081",
-		// NOT localhost:18080/18081: mecatui's client treats a "localhost"-named
-		// target as co-located and defaults its workspace field to the caller's
-		// own cwd, which this --workspace-assigning deployment rejects.
 		"mecatui login mecak8s-mecak8s.mecatl.svc.cluster.local:18080", "--client-id mecatui-kind", "--audience mecak8s",
 		"--scopes openid,profile,mecak8s:access,offline_access", "mecatui connect mecak8s-mecak8s.mecatl.svc.cluster.local:18080 --tls",
 	} {
@@ -385,7 +449,7 @@ func TestMecak8sKindFixture_Scenario3_KeycloakDemoQuickstart(t *testing.T) {
 			t.Fatalf("Keycloak demo quickstart missing %q", want)
 		}
 	}
-	for _, forbidden := range []string{"task: kind-keycloak-setup", "task: kind-hosts-add", "sudo", "extraPortMappings", "NodePort", "--address=0.0.0.0"} {
+	for _, forbidden := range []string{"task: kind-keycloak-setup", "task: kind-hosts-add", "sudo", "port-forward", "--address=0.0.0.0"} {
 		if strings.Contains(text, forbidden) {
 			t.Fatalf("Keycloak demo quickstart violates fixture boundary with %q", forbidden)
 		}
@@ -411,7 +475,7 @@ func TestMecak8sKindFixture_Scenario3_KeycloakOIDCOverlay(t *testing.T) {
 	}
 
 	task := fixtureTaskClosure(t, "kind-keycloak-apply")
-	for _, want := range []string{"--values=deploy/helm/mecak8s/values-kind.yaml", "--values=deploy/helm/mecak8s/values-kind-keycloak.yaml"} {
+	for _, want := range []string{"--values=deploy/helm/mecak8s/values-kind.yaml", "deploy/mecak8s-kind/kind-nodeports.yaml", "--values=deploy/helm/mecak8s/values-kind-keycloak.yaml"} {
 		if !strings.Contains(task, want) {
 			t.Fatalf("Keycloak chart apply missing %q", want)
 		}
@@ -419,13 +483,14 @@ func TestMecak8sKindFixture_Scenario3_KeycloakOIDCOverlay(t *testing.T) {
 	if _, err := exec.LookPath("helm"); err != nil {
 		t.Skip("helm is required to render the Keycloak overlay")
 	}
-	cmd := exec.Command("helm", "template", "kind", ".", "-f", "values-kind.yaml", "-f", "values-kind-keycloak.yaml")
+	cmd := exec.Command("helm", "template", "kind", ".", "-f", "values-kind.yaml", "-f", "../../mecak8s-kind/kind-nodeports.yaml", "-f", "values-kind-keycloak.yaml")
 	cmd.Dir = "../helm/mecak8s"
 	rendered, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("render Keycloak OIDC overlay: %v\n%s", err, rendered)
 	}
 	for _, want := range []string{
+		"type: NodePort", "name: grpc", "nodePort: 30080", "name: http", "nodePort: 30081",
 		"--oidc-issuer=https://keycloak.mecatl.svc.cluster.local:8443/realms/mecatl",
 		"--oidc-audience=mecak8s", "--oidc-ca-cert-file=/var/run/secrets/oidc-ca/tls.crt",
 		"--oidc-allow-private-https-issuer", "secretName: fixture-ca",

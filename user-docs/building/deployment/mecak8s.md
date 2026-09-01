@@ -51,20 +51,17 @@ task mecak8s:kind-status
 ```
 
 Setup creates the `mecatl-dev` Kind cluster, builds and loads `mecak8s`, installs the
-local chart and Redis, and selects the mock provider. Forward the API in a separate
-terminal:
-
-```sh
-task mecak8s:kind-port-forward
-```
-
-The forward binds to loopback only: gRPC is at `127.0.0.1:18080` and HTTPS is at
-`https://127.0.0.1:18081`. The chart Service remains `ClusterIP`; no ingress,
-NodePort, or wildcard host binding is created. Use the normal gRPC/HTTP clients
-described in [Drive via gRPC / HTTP](grpc-http.md) to send a request, or point a
-local client at these forwarded ports. The mock provider is useful for exploring the
-wire protocol, session lifecycle, and Kubernetes-backed deployment shape without
-spending provider tokens.
+local chart and Redis, and selects the mock provider. Kind's static
+`extraPortMappings` expose fixture NodePorts directly on loopback: gRPC is at
+`127.0.0.1:18080` and HTTP is at `http://127.0.0.1:18081`. Keycloak, when enabled,
+is at `127.0.0.1:8443`. These host mappings are installed only at cluster creation;
+the shared `values-kind.yaml` and bare chart defaults remain `ClusterIP`, while
+`kind-nodeports.yaml` supplies the fixture-only NodePort values. Only the host
+binding is loopback-only: the NodePorts are also open on the Kind node itself,
+reachable from the Docker network. That is fine for a disposable local cluster
+and is not a production isolation claim. Use the normal
+gRPC/HTTP clients described in [Drive via gRPC / HTTP](grpc-http.md) to send a
+request.
 
 When finished, remove the cluster and fixture-owned local state:
 
@@ -95,23 +92,13 @@ task mecak8s:kind-keycloak-setup
 task mecak8s:kind-hosts-add
 ```
 
-For the recommended quickstart, run this in one terminal and leave it running while
-using the client in another:
+For the recommended quickstart, run the readiness and CA-export helper:
 
 ```sh
 task mecak8s:kind-keycloak-demo
 ```
 
-It keeps both loopback-only forwards supervised, writes the fixture CA under
-`.scratch/`, and prints ready-to-copy `mecatui login` and `mecatui connect` commands.
-It deliberately does not rerun setup or invoke `sudo`; `Ctrl-C` stops both forwards.
-
-To manage the forwards independently instead:
-
-```sh
-task mecak8s:kind-keycloak-port-forward
-task mecak8s:kind-port-forward
-```
+It waits for the direct loopback mappings (8443, 18080, and 18081), writes the fixture CA under `.scratch/`, and prints ready-to-copy `mecatui login` and `mecatui connect` commands. It deliberately does not rerun setup or invoke `sudo`; it exits after readiness checks.
 
 The Keycloak issuer is available at `https://keycloak.mecatl.svc.cluster.local:8443`;
 the mecak8s API remains at `https://localhost:18081` (gRPC at `localhost:18080`).
@@ -133,15 +120,15 @@ task mecak8s:kind-destroy
 
 ## Local ToolHive-free Kind profile
 
-For a disposable Kind-only mecak8s baseline, use `task mecak8s:kind-setup`. It installs the local Helm chart with the explicit `values-kind.yaml` profile, which is the sole profile permitted to use the locally loaded `ko.local` image and plaintext fixture Redis. It does **not** install ToolHive, create integration resources, resolve releases, or contact GitHub. Setup recreates the named `mecatl-dev` cluster and its `.scratch/kind/mecatl-dev` state. Status uses only the dedicated kubeconfig/context, never the ambient kubeconfig. Host access is through `task mecak8s:kind-port-forward`, which binds gRPC and HTTP to `127.0.0.1` only. The local workflow above is the recommended user path; it makes no production network-isolation claim and has no general NetworkPolicy.
+For a disposable Kind-only mecak8s baseline, use `task mecak8s:kind-setup`. It installs the local Helm chart with the explicit `values-kind.yaml` profile, which is the sole profile permitted to use the locally loaded `ko.local` image and plaintext fixture Redis. It does **not** install ToolHive, create integration resources, resolve releases, or contact GitHub. Setup recreates the named `mecatl-dev` cluster and its `.scratch/kind/mecatl-dev` state. Status uses only the dedicated kubeconfig/context, never the ambient kubeconfig. Host access is through Kind `extraPortMappings`, which bind the fixture NodePorts to `127.0.0.1` only (18080/18081; Keycloak 8443). The local workflow above is the recommended user path; it makes no production network-isolation claim and has no general NetworkPolicy.
 
 ### Optional local Keycloak validation
 
 `task mecak8s:kind-keycloak-setup` adds the fixture's private Keycloak and TLS
-layer to that base. It does not expose mecak8s: the Service remains `ClusterIP`,
-and the explicit loopback port-forward is the only host path. The authenticated
-workflow above covers the issuer forwarding, hostname mapping, PKCE client, and
-TLS requirements.
+layer to that base. The fixture-only NodePort overlay is mapped by Kind to loopback;
+the shared `values-kind.yaml` profile and bare chart defaults remain `ClusterIP`.
+The authenticated workflow above covers the issuer mapping, hostname mapping, PKCE
+client, and TLS requirements.
 
 For an interactive remote client after setup, add the fixture host aliases, run
 `mecatui login ADDRESS … --tls-ca ISSUER_CA --scopes openid,profile,mecak8s:access,offline_access`,

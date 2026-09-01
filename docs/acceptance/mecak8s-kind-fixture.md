@@ -43,21 +43,21 @@ without introducing ToolHive as a dependency ([ADR-0048](../adr/0048-mecak8s.md)
   Kind fixture with mecak8s and local Redis, but does not invoke or transitively
   depend on cert-manager, Keycloak, ToolHive, Yardstick, or any vMCP resource.
   - verify: `TestMecak8sKindFixture_Scenario1_ToolHiveFreeSetup`
-- AC1.2: Setup, status, explicit loopback-only port forwarding, and destroy use
+- AC1.2: Setup, status, direct static loopback mappings, and destroy use
   the fixture's dedicated kubeconfig/context; destroy removes the named cluster,
   generated fixture kubeconfig, and local state without relying on the ambient
   kubeconfig.
   - verify: `TestMecak8sKindFixture_Scenario1_DedicatedKubeconfig`
 - AC1.3: `values-kind.yaml` remains the exact e2e-safe profile: two replicas,
   `mockProvider: true`, local plaintext Redis at `redis:6379`, workspace `/tmp`,
-  a ClusterIP Service, and no OIDC/TLS flags or Secret references. The
+  a ClusterIP Service, and no NodePort overlay or OIDC/TLS flags or Secret references. The
   `e2e/k8s/` suite continues to install that profile directly rather than any
   operator-fixture overlay.
   - verify: `TestMecak8sHelmChart_KindProfileAloneHasNoSecretDependency`
 - AC1.4: The local fixture documentation distinguishes the operator-run Kind
   fixture from the production Helm chart and the `e2e/k8s/` suite, and does not
   claim production network isolation: it has no general NetworkPolicy and uses
-  explicit loopback-only forwarding for host access.
+  static Kind `extraPortMappings` for host access, all bound to loopback.
   - verify: `TestMecak8sKindFixture_Scenario1_DocumentationBoundaries`
 
 ---
@@ -133,10 +133,10 @@ and the bounded signing-key availability policy
   token's audience, never to an ID token or an access token that omits the
   scope.
   - verify: `TestMecak8sKindFixture_Scenario3_ResourceAudience`
-- AC3.4: A local client reaches the authenticated mecak8s service only through
-  an explicit loopback-only port-forward and certificate-covered hostname; the
-  base fixture remains ClusterIP with no externally reachable Service,
-  LoadBalancer, Ingress, or wildcard host binding.
+- AC3.4: A local client reaches the authenticated mecak8s service through the static
+  loopback-only Kind mappings and certificate-covered hostname; the fixture
+  NodePort overlay is separate from the shared ClusterIP values and there is no
+  externally reachable LoadBalancer, Ingress, or wildcard host binding.
   - verify: `TestMecak8sKindFixture_Scenario3_LoopbackReachability`
 - AC3.5: mecak8s rejects an absent, forged, wrong-issuer, wrong-audience,
   wrong-hostname, or untrusted-CA bearer request before authenticated API

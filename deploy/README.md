@@ -207,11 +207,12 @@ start.
 
 `deploy/mecak8s-kind/` layers a private Keycloak issuer over its otherwise
 unauthenticated Kind baseline for local validation only. Run
-`task mecak8s:kind-keycloak-setup`, then use its explicit loopback-only
-port-forward; mecak8s stays a `ClusterIP` Service with no Ingress, NodePort,
-LoadBalancer, or wildcard host binding. Its fixture certificate covers
-`localhost` and `127.0.0.1`, and clients must verify both the hostname and the
-fixture CA.
+`task mecak8s:kind-keycloak-setup`, then use its static Kind
+`extraPortMappings`, whose host bindings are loopback-only; the fixture overlay
+selects NodePorts 30080/30081 (and Keycloak 30443), while shared/bare chart
+values remain `ClusterIP` with no Ingress, LoadBalancer, or wildcard host
+binding. Its fixture certificate covers `localhost` and `127.0.0.1`, and clients
+must verify both the hostname and the fixture CA.
 
 The normal client login is Authorization Code + PKCE using Keycloak's public
 client and an access token with the `mecak8s` audience. A password grant is a

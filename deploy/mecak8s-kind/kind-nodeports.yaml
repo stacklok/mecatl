@@ -1,0 +1,7 @@
+# NodePort plumbing for the disposable Kind fixture only. Keep
+# values-kind.yaml ClusterIP so e2e/k8s can install it without host mappings.
+service:
+  type: NodePort
+  nodePorts:
+    grpc: 30080
+    http: 30081

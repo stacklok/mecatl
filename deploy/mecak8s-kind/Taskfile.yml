@@ -38,73 +38,43 @@ tasks:
       - task: kind-keycloak-apply
 
   kind-keycloak-demo:
-    desc: Supervise loopback forwards and print the remote OIDC quickstart (requires kind-keycloak-setup and kind-hosts-add)
+    desc: Wait for direct loopback mappings and print the remote OIDC quickstart (requires kind-keycloak-setup and kind-hosts-add)
     preconditions:
       - sh: command -v nc >/dev/null 2>&1
-        msg: nc is required to wait for the loopback forwards
+        msg: nc is required to wait for the loopback mappings
     cmds:
       - task: cluster-ready
       - cmd: |
           # Delegated to a real bash subprocess, not run inline under Task's
-          # embedded shell interpreter (mvdan.cc/sh): that interpreter's `$!`
-          # is a synthetic job id, not a real OS PID, so `kill -0 "$pid"` /
-          # `wait "$pid"` against a backgrounded kubectl port-forward always
-          # falsely reports it dead on the first check -- and separately, its
-          # `trap` builtin rejects any signal name but EXIT outright. A real
-          # bash gets both right.
+          # embedded shell interpreter (mvdan.cc/sh), whose `trap` builtin
+          # rejects any signal name but EXIT outright.
           bash <<'BASHEOF'
           set -eu
           state={{.STATE}}
           ca="$state/fixture-ca.crt"
-          keycloak_log="$state/keycloak-port-forward.log"
-          mecak8s_log="$state/mecak8s-port-forward.log"
           encoded="$state/fixture-ca.b64.$$"
           decoded="$ca.tmp.$$"
           mkdir -p "$state"
-
-          cleanup() {
-            status=$?
-            trap - EXIT INT TERM
-            [ -z "${keycloak_pid:-}" ] || kill "$keycloak_pid" 2>/dev/null || true
-            [ -z "${mecak8s_pid:-}" ] || kill "$mecak8s_pid" 2>/dev/null || true
-            [ -z "${keycloak_pid:-}" ] || wait "$keycloak_pid" 2>/dev/null || true
-            [ -z "${mecak8s_pid:-}" ] || wait "$mecak8s_pid" 2>/dev/null || true
-            rm -f "$encoded" "$decoded"
-            exit "$status"
-          }
-          trap cleanup EXIT INT TERM
-
-          kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} --namespace={{.NAMESPACE}} port-forward --address=127.0.0.1 svc/keycloak 8443:8443 >"$keycloak_log" 2>&1 &
-          keycloak_pid=$!
-          kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} --namespace={{.NAMESPACE}} port-forward --address=127.0.0.1 svc/{{.RELEASE}}-mecak8s 18080:8080 18081:8081 >"$mecak8s_log" 2>&1 &
-          mecak8s_pid=$!
+          trap 'rm -f "$encoded" "$decoded"' EXIT
 
           wait_port() {
             name=$1
             port=$2
-            pid=$3
-            log=$4
             attempt=0
             while [ "$attempt" -lt 30 ]; do
               if nc -z 127.0.0.1 "$port"; then
                 return 0
               fi
-              if ! kill -0 "$pid" 2>/dev/null; then
-                echo "$name port-forward exited before accepting connections; log: $log" >&2
-                cat "$log" >&2 || true
-                return 1
-              fi
               attempt=$((attempt + 1))
               sleep 1
             done
-            echo "$name port-forward did not accept loopback connections; log: $log" >&2
-            cat "$log" >&2 || true
+            echo "$name direct loopback mapping did not accept connections" >&2
             return 1
           }
 
-          wait_port Keycloak 8443 "$keycloak_pid" "$keycloak_log"
-          wait_port mecak8s-gRPC 18080 "$mecak8s_pid" "$mecak8s_log"
-          wait_port mecak8s-HTTPS 18081 "$mecak8s_pid" "$mecak8s_log"
+          wait_port Keycloak 8443
+          wait_port mecak8s-gRPC 18080
+          wait_port mecak8s-HTTPS 18081
           kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} --namespace={{.NAMESPACE}} get secret fixture-ca -o jsonpath='{.data.tls\.crt}' >"$encoded"
           # A positional filename argument is GNU-only; BSD/macOS base64
           # rejects it ("invalid argument") unless given via -i or stdin.
@@ -117,11 +87,10 @@ tasks:
             echo "failed to decode fixture CA" >&2
             exit 1
           fi
-          rm -f "$encoded"
           chmod 0600 "$decoded"
           mv "$decoded" "$ca"
 
-          printf '\nFixture forwards are ready. In another terminal, run:\n\n'
+          printf '\nFixture direct mappings are ready. In another terminal, run:\n\n'
           # NOT localhost:18080 -- mecatui's client treats a "localhost"-named
           # target as co-located and defaults its workspace field to the
           # CALLER's own cwd; this deployment sets --workspace and rejects
@@ -129,13 +98,7 @@ tasks:
           # codes.InvalidArgument. The DNS alias below is not cosmetic.
           printf '%s\n' "mecatui login mecak8s-mecak8s.mecatl.svc.cluster.local:18080 --issuer https://keycloak.mecatl.svc.cluster.local:8443/realms/mecatl --client-id mecatui-kind --audience mecak8s --tls-ca $ca --scopes openid,profile,mecak8s:access,offline_access"
           printf '%s\n' "mecatui connect mecak8s-mecak8s.mecatl.svc.cluster.local:18080 --tls --tls-ca $ca"
-          printf '\nThe CA is at %s. This task keeps both loopback forwards alive; press Ctrl-C here to stop them.\n' "$ca"
-
-          while kill -0 "$keycloak_pid" 2>/dev/null && kill -0 "$mecak8s_pid" 2>/dev/null; do
-            sleep 1
-          done
-          echo "a fixture port-forward exited; stopping the remaining forward" >&2
-          exit 1
+          printf '\nThe CA is at %s. Kind maps container NodePorts directly to loopback host ports; this task exits after readiness checks.\n' "$ca"
           BASHEOF
 
   kind-status:
@@ -144,18 +107,6 @@ tasks:
       - task: cluster-ready
       - kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} get pods,services,statefulsets -n {{.NAMESPACE}}
       - helm status {{.RELEASE}} --namespace={{.NAMESPACE}} --kubeconfig={{.KUBECONFIG}} --kube-context={{.CONTEXT}}
-
-  kind-port-forward:
-    desc: Forward mecak8s gRPC and HTTP to loopback only (Ctrl-C to stop)
-    cmds:
-      - task: cluster-ready
-      - kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} --namespace={{.NAMESPACE}} port-forward --address=127.0.0.1 svc/{{.RELEASE}}-mecak8s 18080:8080 18081:8081
-
-  kind-keycloak-port-forward:
-    desc: Forward Keycloak HTTPS to loopback only (Ctrl-C to stop)
-    cmds:
-      - task: cluster-ready
-      - kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} --namespace={{.NAMESPACE}} port-forward --address=127.0.0.1 svc/keycloak 8443:8443
 
   kind-hosts-show:
     desc: Show the temporary loopback aliases required for the issuer and mecak8s target
@@ -176,7 +127,7 @@ tasks:
           # login/connect run against plain `localhost` fails with
           # codes.InvalidArgument. A DNS name is never treated as loopback by
           # that check, so the mecak8s alias below -- resolving to the SAME
-          # 127.0.0.1 the port-forward already binds -- is the fix, not a
+          # 127.0.0.1 the Kind mapping already exposes -- is the fix, not a
           # cosmetic alternative to `localhost`.
           for entry in \
             '127.0.0.1 keycloak.mecatl.svc.cluster.local' \
@@ -312,7 +263,7 @@ tasks:
         msg: helm is required
     cmds:
       - task: cluster-ready
-      - helm upgrade --install {{.RELEASE}} deploy/helm/mecak8s --namespace={{.NAMESPACE}} --kubeconfig={{.KUBECONFIG}} --kube-context={{.CONTEXT}} --values=deploy/helm/mecak8s/values-kind.yaml --values=deploy/helm/mecak8s/values-kind-keycloak.yaml --wait --timeout=4m
+      - helm upgrade --install {{.RELEASE}} deploy/helm/mecak8s --namespace={{.NAMESPACE}} --kubeconfig={{.KUBECONFIG}} --kube-context={{.CONTEXT}} --values=deploy/helm/mecak8s/values-kind.yaml --values=deploy/mecak8s-kind/kind-nodeports.yaml --values=deploy/helm/mecak8s/values-kind-keycloak.yaml --wait --timeout=4m
       - kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} rollout status deployment/{{.RELEASE}}-mecak8s -n {{.NAMESPACE}} --timeout=240s
 
   chart-apply:
@@ -332,6 +283,6 @@ tasks:
             kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} delete secret {{.PROVIDER_SECRET}} --namespace={{.NAMESPACE}} --ignore-not-found
             provider_values=deploy/mecak8s-kind/kind-provider-mock.yaml
           fi
-          helm upgrade --install {{.RELEASE}} deploy/helm/mecak8s --namespace={{.NAMESPACE}} --kubeconfig={{.KUBECONFIG}} --kube-context={{.CONTEXT}} --values=deploy/helm/mecak8s/values-kind.yaml --values="$provider_values" --wait --timeout=4m
+          helm upgrade --install {{.RELEASE}} deploy/helm/mecak8s --namespace={{.NAMESPACE}} --kubeconfig={{.KUBECONFIG}} --kube-context={{.CONTEXT}} --values=deploy/helm/mecak8s/values-kind.yaml --values=deploy/mecak8s-kind/kind-nodeports.yaml --values="$provider_values" --wait --timeout=4m
           kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} rollout status statefulset/redis -n {{.NAMESPACE}} --timeout=240s
           kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} rollout status deployment/{{.RELEASE}}-mecak8s -n {{.NAMESPACE}} --timeout=240s
