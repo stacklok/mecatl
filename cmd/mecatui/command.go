@@ -65,7 +65,7 @@ var topLevelCommands = []topLevelCommand{
 	{
 		name:     "debug",
 		synopsis: "debug (SESSION_ID | --exact SESSION_ID) [flags]",
-		purpose:  "diagnose a stored session by its displayed 12-column short handle, or bypass inventory with --exact and a full ID; for ambiguous or unmatched handles, use /session and --exact",
+		purpose:  "diagnose by a positional exact ID or displayed 12-column short handle; resolution gathers every projected match; bypass inventory with --exact SESSION_ID (mutually exclusive); on ambiguity or inventory failure, use /session then --exact",
 		resolve: func(args []string) invocationResolution {
 			return resolveDebugCommand(modeLocal, "", args)
 		},

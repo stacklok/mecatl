@@ -83,7 +83,7 @@ are zero, and `Clock.Now` is the zero time until the source refreshes it.
 | `Server.DisplayTarget` | string | Credential-free target shown by the client. |
 | `Server.ConnectionMode` | string | `embedded`, `connect`, or empty while unknown. |
 | `Session.Title` | string | Optional display title. |
-| `Session.Handle` | string | Fixed 12-column ordinary session handle used by shipped headers: safe `[A-Za-z0-9._-]` bytes are literal, other UTF-8 bytes are uppercase `%HH`, and only complete atoms that fit are included. It has no leading `#` and replaces the v1 `Session.Digest` field; no digest alias is emitted. |
+| `Session.Handle` | string | Fixed 12-column ordinary session handle used by shipped headers: safe `[A-Za-z0-9._-]` bytes are literal except that a leading `-` is encoded as `%2D`; other UTF-8 bytes are uppercase `%HH`, and only complete atoms that fit are included. It has no leading `#` and replaces the v1 `Session.Digest` field in protocol v2; no digest alias is emitted. |
 | `Session.Mode` | string | Active or pending permission mode used by the shipped header. |
 | `Session.ReasoningEffort` | string | `low`, `medium`, `high`, `xhigh`, `max`, or empty. |
 | `Model.ProviderID`, `Model.ID`, `Model.DisplayName`, `Model.Route` | strings | Provider/model routing identifiers, display label, and observed downstream route. |

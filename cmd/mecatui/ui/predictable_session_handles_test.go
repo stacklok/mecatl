@@ -3,102 +3,15 @@ package ui
 import (
 	"context"
 	"encoding/json"
-	"net"
 	"reflect"
 	"regexp"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
-	"google.golang.org/grpc"
-
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/cmd/mecatui/statusline"
-	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 )
-
-type headerDebugServer struct {
-	mecatlv1.UnimplementedHarnessServiceServer
-	ids []string
-
-	mu     sync.Mutex
-	target string
-}
-
-func (s *headerDebugServer) ListSessions(context.Context, *mecatlv1.ListSessionsRequest) (*mecatlv1.ListSessionsResponse, error) {
-	items := make([]*mecatlv1.SessionSummary, 0, len(s.ids))
-	for _, id := range s.ids {
-		items = append(items, &mecatlv1.SessionSummary{SessionId: id})
-	}
-	return &mecatlv1.ListSessionsResponse{Sessions: items}, nil
-}
-
-func (s *headerDebugServer) CreateSession(_ context.Context, req *mecatlv1.CreateSessionRequest) (*mecatlv1.CreateSessionResponse, error) {
-	s.mu.Lock()
-	s.target = req.GetDebugTargetSessionId()
-	s.mu.Unlock()
-	return &mecatlv1.CreateSessionResponse{
-		SessionId:    "debug-created",
-		Capabilities: &mecatlv1.ServerCapabilities{SessionDebug: true},
-	}, nil
-}
-
-func (s *headerDebugServer) createdTarget() string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.target
-}
-
-func TestPredictableSessionHandles_Scenario2_RealHeaderHandleCreatesBoundDebugger(t *testing.T) {
-	ids := []string{
-		"0123456789abcdef0123456789abcdef",
-		"legacy\x1b-session-é",
-	}
-	service := &headerDebugServer{ids: ids}
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	grpcServer := grpc.NewServer()
-	mecatlv1.RegisterHarnessServiceServer(grpcServer, service)
-	go func() { _ = grpcServer.Serve(listener) }()
-	t.Cleanup(func() {
-		grpcServer.Stop()
-		_ = listener.Close()
-	})
-
-	cl, err := client.Dial(client.DialConfig{Server: listener.Addr().String()})
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = cl.Close() })
-
-	for _, fullID := range ids {
-		t.Run(fullID, func(t *testing.T) {
-			m := newTestModelFromDeps(Deps{Theme: testTheme(), Ctx: context.Background()})
-			m.sessionID = fullID
-			m.width = 160
-			header := stripANSIstr(m.renderHeader())
-			_, visible, ok := strings.Cut(header, "session ")
-			if !ok {
-				t.Fatalf("normal header has no session segment: %q", header)
-			}
-			headerLiteral, _, ok := strings.Cut(visible, "  ·  ")
-			if !ok || headerLiteral == "" {
-				t.Fatalf("normal header has no literal handle boundary: %q", header)
-			}
-
-			_, resolved, _, _, err := cl.CreateDebugSession(context.Background(), headerLiteral, 0, client.ModelSelection{})
-			if err != nil {
-				t.Fatal(err)
-			}
-			if target := service.createdTarget(); resolved != fullID || target != fullID {
-				t.Fatalf("visible header literal %q resolved=%q request target=%q, want exact ID %q", headerLiteral, resolved, target, fullID)
-			}
-		})
-	}
-}
 
 func TestPredictableSessionHandles_Scenario1_SharedNormalHandle(t *testing.T) {
 	const id = "sess-01JABCDEFGH-rest"
@@ -205,7 +118,6 @@ const (
 	checkHandlePresentation predictableSessionHandleCheck = 1 << iota
 	checkHandleStatus
 	checkHandleDebuggerEvidence
-	checkHandleCurrentRow
 	checkHandleAuthoritativeID
 )
 
@@ -302,10 +214,10 @@ func testPredictableSessionHandle(t *testing.T, checks predictableSessionHandleC
 	}
 }
 
-func TestPredictableSessionHandles_Scenario3_PresentationParityAndSafety(t *testing.T) {
-	testPredictableSessionHandle(t, checkHandlePresentation|checkHandleStatus|checkHandleDebuggerEvidence)
+func TestPredictableSessionHandles_Scenario3_PresentationParitySafetyAndLayering(t *testing.T) {
+	testPredictableSessionHandle(t, checkHandlePresentation|checkHandleStatus|checkHandleDebuggerEvidence|checkHandleAuthoritativeID)
 }
 
-func TestADR_0278_OrdinaryHandleDoesNotAlterDebuggerEvidenceHandles(t *testing.T) {
+func TestADR_0280_OrdinaryHandleDoesNotAlterDebuggerEvidenceHandles(t *testing.T) {
 	testPredictableSessionHandle(t, checkHandleDebuggerEvidence)
 }

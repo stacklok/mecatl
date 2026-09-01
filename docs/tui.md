@@ -27,7 +27,9 @@ mandatory safety/navigation and activity lanes, then clips and aligns the result
 A configuration selects exactly one source: responsive `templates` or a
 `command` with an absolute `executable` and literal `args`. Templates receive an
 automatically StatusML-escaped projection; a command receives the same raw input
-as JSON on stdin. It is run directly (there is no shell or source configuration
+as JSON on stdin. Input protocol v2 exposes the ordinary fixed handle as `Session.Handle`;
+it replaces v1's `Session.Digest`, and no digest compatibility alias is emitted. It is run
+directly (there is no shell or source configuration
 form); `/bin/sh` is available only when explicitly selected as the executable with
 literal arguments. It uses a constrained environment, local-only CWD selection, a
 one-second deadline, and a combined 4 KiB stdout/stderr limit. StatusML accepts semantic theme tokens and validated
@@ -132,13 +134,15 @@ or fallback:
   create a new chat with the launch workspace/mode/model defaults, or `esc` to
   quit without a session. Inspection `esc` returns to the startup inventory.
 
-- **`mecatui debug SESSION_ID [flags]`** — create a separate durable no-filesystem
-  analysis session permanently bound to that stored target. `SESSION_ID` may be an exact
-  full opaque ID or the displayed 12-column short handle: safe `[A-Za-z0-9._-]` bytes
-  are literal and every other UTF-8 byte is uppercase `%HH`; the handle has no leading
-  `#` marker. The displayed literal resolves through the caller-visible inventory. If it
-  is ambiguous or has no match, mecatui creates nothing; use `/session` to copy the
-  exact full ID. The invocation is the consent gesture: before entering the TUI, mecatui warns that the target transcript
+- **`mecatui debug (SESSION_ID | --exact SESSION_ID) [flags]`** — create a separate durable no-filesystem
+  analysis session permanently bound to that stored target. A positional `SESSION_ID` may be an
+  exact full opaque ID or the displayed 12-column short handle: safe `[A-Za-z0-9._-]` bytes are
+  literal except that a leading `-` becomes `%2D`; every other UTF-8 byte is uppercase `%HH`, and
+  only complete atoms that fit are shown. The handle has no leading `#` marker. A syntactically
+  valid positional handle gathers every distinct projected match from the complete caller-visible
+  inventory; exact equality does not beat a collision. Ambiguity, no match, or inventory failure
+  creates nothing. Use `/session` to copy the exact full ID, then use the mutually exclusive
+  inventory-free form `mecatui debug --exact SESSION_ID`. The invocation is the consent gesture:
   and diagnostic evidence may contain prompts, outputs, tool arguments/results, file
   paths, and secrets and will be sent to the selected model. It then submits a default
   diagnostic prompt automatically. The target is never resumed, leased, mutated, or
@@ -282,9 +286,11 @@ a usage error; choose one startup intent explicitly.
 ### Debug a stored session
 
 ```sh
-mecatui debug 01JOPAQUETARGET
-mecatui connect 127.0.0.1:8080 debug 01JOPAQUETARGET
-mecatui connect 127.0.0.1:8080 debug 01JOPAQUETARGET --debug-mcp github
+mecatui debug 01JOPAQUETARG
+mecatui connect 127.0.0.1:8080 debug 01JOPAQUETARG
+mecatui debug --exact 01JOPAQUETARGET
+mecatui connect 127.0.0.1:8080 debug --exact 01JOPAQUETARGET
+mecatui connect 127.0.0.1:8080 debug 01JOPAQUETARG --debug-mcp github
 ```
 
 `--debug-mcp NAME` is repeatable and selects only already-configured server-global
@@ -294,11 +300,15 @@ each mutating call opens an approval card even under yolo/configured allow. Allo
 one request. A later mutation asks again; Allow always is deliberately not learned.
 
 These commands accept either an exact full opaque session ID or the displayed 12-column
-short handle. It renders safe `[A-Za-z0-9._-]` bytes literally and every other UTF-8 byte
-as an uppercase `%HH` atom, stopping before an atom that would exceed 12 ASCII columns.
-The displayed literal has no leading `#` and is itself the debug argument. It resolves
-from the caller-visible session inventory. If it is ambiguous or has no match, no debug
-session is created: open `/session` and copy the exact full ID. These commands do not
+short handle as a positional operand. The handle renders safe `[A-Za-z0-9._-]` bytes literally
+except that a leading `-` becomes `%2D`; every other UTF-8 byte is an uppercase `%HH` atom, and
+rendering stops before an atom that would exceed 12 ASCII columns. The displayed literal has no
+leading `#` and is itself the debug argument. A syntactically valid positional handle gathers all
+distinct projected matches from the complete caller-visible session inventory before selection;
+an exact-ID row cannot hide a collision. Ambiguity, no match, or inventory failure creates no
+debug session: open `/session`, copy the exact full ID, and use `mecatui debug --exact SESSION_ID`
+or `mecatui connect ADDRESS debug --exact SESSION_ID`. The explicit form is mutually exclusive
+with a positional operand and bypasses inventory. These commands do not
 attach to or continue the target.
 They authorize it, create a separate durable no-filesystem debug session, print a privacy
 disclosure, and submit one first genuine user turn. That turn is ordered as the diagnosis
@@ -1420,8 +1430,9 @@ the caret visible.
 
 **Header bar.** `mecatui · session <handle> · <model> · mode <mode> · <server>`.
 The session segment uses a fixed terminal-safe 12-column handle: safe `[A-Za-z0-9._-]`
-bytes are literal, other UTF-8 bytes are uppercase `%HH`, and only complete atoms that
-fit are shown. It has no leading `#` and is the literal accepted by `mecatui debug`.
+bytes are literal except that a leading `-` is encoded as `%2D`; other UTF-8 bytes are
+uppercase `%HH`, and only complete atoms that fit are shown. It has no leading `#` and
+is the literal accepted by positional `mecatui debug` when it resolves uniquely.
 Type **`/session`** for the safe quoted full ID and active-session metadata, or press
 **`c`** there to copy the exact ID through the clipboard.
 The **mode segment** shows the server-confirmed permission posture for the current session;
@@ -1557,8 +1568,9 @@ Each row shows a state badge, relative modification time, turn count, title,
 short handle, and model. The active chat is explicitly marked **`[current]`**;
 a team member row also identifies its member. The handle is the same fixed
 12-column escaped-prefix literal as the header (no `#`): safe `[A-Za-z0-9._-]`
-bytes are literal, other UTF-8 bytes are uppercase `%HH`, and only complete atoms
-that fit are retained. The full opaque ID remains what the client sends back to the
+bytes are literal except that a leading `-` is encoded as `%2D`; other UTF-8 bytes are
+uppercase `%HH`, and only complete atoms that fit are retained. The full opaque ID remains
+what the client sends back to the
 server.
 
 Pressing `enter` follows server-authored capabilities. A public Chat is

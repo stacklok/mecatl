@@ -69,20 +69,27 @@ func TestResolveDebugRejectsMissingFlagFirstAndExtraOperands(t *testing.T) {
 	}
 }
 
-func TestPredictableSessionHandles_Scenario3_CommandHelp(t *testing.T) {
+func TestPredictableSessionHandles_Scenario3_CommandHelpAndExactBypass(t *testing.T) {
 	var out bytes.Buffer
 	writeTopLevelHelp(&out)
 	text := out.String()
+	words := strings.Join(strings.Fields(text), " ")
 	for _, want := range []string{
 		"mecatui debug (SESSION_ID | --exact SESSION_ID) [flags]",
 		"mecatui connect ADDRESS debug (SESSION_ID | --exact SESSION_ID) [flags]",
-		"displayed 12-column short handle",
-		"bypass\n    inventory with --exact and a full ID",
-		"ambiguous or unmatched handles,\n    use /session and --exact",
+		"positional exact ID or displayed 12-column short handle",
+		"gathers every projected match",
+		"bypass inventory with --exact SESSION_ID",
+		"mutually exclusive",
+		"inventory failure",
+		"use /session",
 	} {
-		if !strings.Contains(text, want) {
+		if !strings.Contains(words, want) {
 			t.Fatalf("help missing %q:\n%s", want, text)
 		}
+	}
+	if strings.Contains(text, "#<handle>") || strings.Contains(text, "#HANDLE") {
+		t.Fatalf("help retains a leading handle marker:\n%s", text)
 	}
 }
 

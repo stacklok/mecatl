@@ -42,7 +42,11 @@ Use `/sessions` or `mecatui sessions` to inspect what the server has stored. An 
 ## A debug command cannot open its target
 
 `mecatui debug SESSION_ID` and `mecatui connect ADDRESS debug SESSION_ID` require the
-same store and caller authorization as the target. Missing and unauthorized targets are
+same store and caller authorization as the target. A syntactically valid displayed handle gathers
+all projected matches; ambiguity, no match, or inventory failure stops before creation. Open
+`/session`, copy the exact full ID, and retry with `mecatui debug --exact SESSION_ID` or
+`mecatui connect ADDRESS debug --exact SESSION_ID`; these forms bypass inventory. Missing and
+unauthorized targets are
 both reported as not found so ownership is not disclosed. Confirm the exact server,
 identity, and session ID. A persisted debugger also fails closed after restart if its
 bound target or dedicated debug-engine support is unavailable; it never falls back to an

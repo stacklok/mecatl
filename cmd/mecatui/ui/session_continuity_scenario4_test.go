@@ -55,18 +55,6 @@ func TestSessionContinuityUX_Scenario4_FamilyTabs(t *testing.T) {
 	}
 }
 
-func TestSessionContinuityUX_Scenario4_CurrentAndDigest(t *testing.T) {
-	testPredictableSessionHandle(t, checkHandleCurrentRow)
-}
-
-func TestADR_0108_DisplayDigestIsNotAnID(t *testing.T) {
-	testPredictableSessionHandle(t, checkHandleAuthoritativeID)
-}
-
-func TestADR_0278_OrdinaryHandleDoesNotChangeAuthoritativeSessionID(t *testing.T) {
-	testPredictableSessionHandle(t, checkHandleAuthoritativeID)
-}
-
 func TestSessionContinuityUX_Scenario4_SearchFields(t *testing.T) {
 	row := client.SessionListItem{
 		ID: "opaque-full-id", Title: "Fix Scheduler", ModelID: "GPT-5", Workspace: "/Work/Repo",

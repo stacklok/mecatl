@@ -33,15 +33,20 @@ Save that value and use it with `--resume`.
 A debugger is intentionally different from continuing a chat:
 
 ```sh
-mecatui debug 01JOPAQUESESSIONID
-mecatui connect 127.0.0.1:8080 debug 01JOPAQUESESSIONID
+# Positional exact ID or displayed short handle.
+mecatui debug 01JOPAQUESES
+mecatui connect 127.0.0.1:8080 debug 01JOPAQUESES
+
+# Inventory-free exact-ID bypass (mutually exclusive with the positional form).
+mecatui debug --exact 01JOPAQUESESSIONID
+mecatui connect 127.0.0.1:8080 debug --exact 01JOPAQUESESSIONID
 
 # Add one or more already-configured global reporting servers by name.
-mecatui debug 01JOPAQUESESSIONID --debug-mcp github
-mecatui connect 127.0.0.1:8080 debug 01JOPAQUESESSIONID --debug-mcp github
+mecatui debug 01JOPAQUESES --debug-mcp github
+mecatui connect 127.0.0.1:8080 debug 01JOPAQUESES --debug-mcp github
 
 # Replace the automatic diagnosis question with a focused one.
-mecatui debug 01JOPAQUESESSIONID \
+mecatui debug --exact 01JOPAQUESESSIONID \
   --prompt "Why did the final tool call fail?"
 ```
 
@@ -50,9 +55,13 @@ mecatui debug 01JOPAQUESESSIONID \
 1. Use the full target ID from `/session`, `/sessions`, or the
    `mecatui: final-session-id=...` line printed when its TUI exits. You can instead
    type the displayed 12-column short handle unchanged: safe `[A-Za-z0-9._-]` bytes
-   are literal and other UTF-8 bytes are uppercase `%HH` atoms. It has no leading
-   `#`. If the handle is ambiguous or has no visible match, mecatui creates nothing;
-   open `/session` and copy the exact full ID.
+   are literal except that a leading `-` is encoded as `%2D`; other UTF-8 bytes are
+   uppercase `%HH` atoms, and only complete atoms that fit are shown. It has no leading
+   `#`. A syntactically valid positional handle gathers every distinct projected match
+   from the complete visible inventory; exact equality cannot hide a collision. If the
+   handle is ambiguous, absent, or inventory cannot be loaded, mecatui creates nothing.
+   Open `/session`, copy the exact full ID, and use `debug --exact SESSION_ID`; that form
+   bypasses inventory and is mutually exclusive with a positional operand.
 2. Run `mecatui debug` against the same embedded store, or use
    `mecatui connect ADDRESS debug` against the server that owns the target.
 3. mecatui prints a privacy disclosure before entering the alternate screen.

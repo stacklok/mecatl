@@ -307,9 +307,15 @@ evidence. A safely classified lookup failure leaves unavailable fields but does 
 that turn or expose the raw error. Durable authority, safety, and source hierarchy remain in
 `applyDebugSessionPosture`'s stable Role rather than dynamic runtime text. The ordinary padded
 header carries amber/bold `DEBUG target <handle>` immediately after `mecatui`; its fixed
-12-column handle renders safe `[A-Za-z0-9._-]` bytes literally and every other UTF-8 byte as
-uppercase `%HH`, keeping only complete atoms that fit. It has no leading `#`; ambiguity or a
-zero match is recovered by copying the exact ID from `/session`. Width pressure removes
+12-column handle renders safe `[A-Za-z0-9._-]` bytes literally except that a leading `-` is
+encoded as `%2D`, and renders every other UTF-8 byte as uppercase `%HH`, keeping only complete
+atoms that fit. It has no leading `#`. A syntactically valid positional handle gathers every
+distinct projected match from the complete caller-visible inventory before selection, so exact
+string equality cannot hide ambiguity. Ambiguity, a zero match, or inventory failure stops before
+create and directs the operator to copy the exact ID from `/session` and use `--exact`; both
+`mecatui debug --exact SESSION_ID` and
+`mecatui connect ADDRESS debug --exact SESSION_ID` bypass inventory and send that ID unchanged.
+Width pressure removes
 model/mode/server detail before that complete identity, `/session` shows and copies the
 safely quoted exact target ID, and the target-derived title uses the same handle. Binding-breaking
 controls stay disabled. Live target following, raw audit/tool-record inspection, packet capture,

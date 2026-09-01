@@ -82,9 +82,10 @@ eligible failure exists. Historical transcript replay never triggers automatic r
 
 The TUI header shows a compact short handle for the active session rather than a long
 opaque ID. For a non-empty valid-UTF-8 ID, it renders safe `[A-Za-z0-9._-]` bytes
-literally and every other UTF-8 byte as uppercase `%HH`, taking the longest prefix of
-complete literal or `%HH` atoms that fits 12 ASCII columns. The displayed literal has
-no leading `#` and can be passed unchanged to `mecatui debug`; type `/session` to
+literally except that a leading `-` is encoded as `%2D`; every other UTF-8 byte is
+uppercase `%HH`. It takes the longest prefix of complete literal or `%HH` atoms that fits
+12 ASCII columns. The displayed literal has no leading `#` and can be passed unchanged to
+`mecatui debug`; type `/session` to
 inspect the safely quoted full ID, title, state, workspace, known timestamps, provider,
 and model, then press `c` in that overlay to copy the exact ID.
 Use `/sessions` separately to Continue a stored chat or Inspect scheduled, child, and
@@ -119,12 +120,21 @@ exists, the TUI fails, or a signal interrupts/forces exit; stdout is unchanged. 
 ## Debug a stored session
 
 Use `mecatui debug SESSION_ID` against the embedded store, or
-`mecatui connect ADDRESS debug SESSION_ID` against a running server. `SESSION_ID`
+`mecatui connect ADDRESS debug SESSION_ID` against a running server. A positional `SESSION_ID`
 may be an exact full opaque ID or the displayed 12-column short handle: safe
-`[A-Za-z0-9._-]` bytes are literal and other bytes are uppercase `%HH` atoms. The
-handle has no leading `#`; pass that displayed literal unchanged. A short handle must
-resolve to one caller-visible inventory row. An ambiguous or zero-match handle creates
-nothing; open `/session` and copy its exact full ID instead. The command creates a **separate durable
+`[A-Za-z0-9._-]` bytes are literal except that a leading `-` is encoded as `%2D`; other bytes
+are uppercase `%HH` atoms. The handle has no leading `#`; pass that displayed literal
+unchanged. A syntactically valid positional handle gathers every distinct projected match from
+the complete caller-visible inventory before selection, so exact equality does not hide a
+collision. Ambiguity, no match, or inventory failure creates nothing. Open `/session`, copy its
+exact full ID, and use the mutually exclusive inventory-free form:
+
+```sh
+mecatui debug --exact SESSION_ID
+mecatui connect ADDRESS debug --exact SESSION_ID
+```
+
+The command creates a **separate durable
 debug session** and submits one first user turn containing the sanitized current debugger
 client/server diagnostics baseline plus a request to inspect the bound target's status and
 authoritative transcript. A custom `--prompt` replaces that diagnosis request, not the
