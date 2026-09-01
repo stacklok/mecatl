@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/stacklok/mecatl/engine/adapter/memattempt"
+	"github.com/stacklok/mecatl/engine/adapter/memproposal"
 	"github.com/stacklok/mecatl/engine/learning"
 	"github.com/stacklok/mecatl/engine/session"
 )
@@ -144,5 +145,69 @@ func TestADR_0254_AttemptReconciliationIsIdempotent(t *testing.T) {
 	}
 	if publicationCalls != 1 || again.Version != got.Version {
 		t.Fatalf("terminal replay duplicated work or changed CAS version: calls=%d first=%q replay=%q", publicationCalls, got.Version, again.Version)
+	}
+}
+
+func TestADR_0254_IndependentDownstreamCommitReconcilesAfterClaimLoss(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	clock := &attemptWorkerClock{now: time.Unix(40, 0)}
+	attempts, attemptPartition, created := newAttemptWorkerRecord(t, clock)
+	proposals := memproposal.New()
+	input, outcome, digest := reflectionOutcomeFixture(t, learning.CandidateOperatorFact)
+	proposalPartition := learning.ProposalPartition{Principal: "claim-loss-principal"}
+	proposalID, err := learning.DeterministicProposalID(proposalPartition, digest, outcome.Candidates[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	publish := func(publishCtx context.Context, reflected learning.Outcome) (learning.AttemptCheckpoint, learning.AttemptFailureCode, error) {
+		if _, processErr := processReflectionOutcome(publishCtx, proposals, nil, nil, proposalPartition.Principal, input, digest, reflected, nil, learning.Review, false, ""); processErr != nil {
+			return learning.AttemptCheckpoint{}, learning.FailurePublicationFailed, processErr
+		}
+		return learning.AttemptCheckpoint{Stage: learning.AttemptCheckpointProposalLinked, ProposalID: proposalID}, learning.FailureNone, nil
+	}
+	worker := attemptWorker{
+		repository: attempts, partition: attemptPartition, id: created.ID, now: clock.Now, claimTTL: time.Second,
+		evidence: func(context.Context, learning.AttemptRecord) (learning.AttemptFailureCode, error) {
+			return learning.FailureNone, nil
+		},
+		reflect: func(context.Context) (learning.Outcome, error) { return outcome, nil },
+		publish: func(publishCtx context.Context, reflected learning.Outcome) (learning.AttemptCheckpoint, learning.AttemptFailureCode, error) {
+			checkpoint, failure, publishErr := publish(publishCtx, reflected)
+			clock.now = clock.now.Add(2 * time.Second) // the independent commit wins after this worker's claim expires
+			return checkpoint, failure, publishErr
+		},
+	}
+
+	if _, err = worker.Run(ctx); !errors.Is(err, learning.ErrAttemptClaimLost) {
+		t.Fatalf("late worker error = %v, want ErrAttemptClaimLost", err)
+	}
+	staleAttempt, found, err := attempts.Get(ctx, attemptPartition, created.ID)
+	if err != nil || !found {
+		t.Fatalf("attempt after claim loss found=%v err=%v", found, err)
+	}
+	if staleAttempt.State == learning.AttemptCompleted || staleAttempt.Outcome == learning.AttemptOutcomeSucceeded || staleAttempt.ProposalID != "" {
+		t.Fatalf("independent downstream commit invented attempt success: %+v", staleAttempt)
+	}
+	committed, found, err := proposals.Get(ctx, proposalPartition, proposalID)
+	if err != nil || !found || committed.Status != learning.ProposalStaged {
+		t.Fatalf("independent proposal commit = %+v found=%v err=%v", committed, found, err)
+	}
+
+	worker.publish = publish
+	reconciled, err := worker.Run(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reconciled.State != learning.AttemptCompleted || reconciled.Outcome != learning.AttemptOutcomeSucceeded || reconciled.ProposalID != proposalID {
+		t.Fatalf("compatible deterministic proposal was not adopted: %+v", reconciled)
+	}
+	page, err := proposals.List(ctx, proposalPartition, learning.ProposalList{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Records) != 1 || page.Records[0].ID != committed.ID || page.Records[0].Version != committed.Version || page.Records[0].Status != committed.Status {
+		t.Fatalf("reconciliation duplicated or rewrote downstream commit: before=%+v after=%+v", committed, page.Records)
 	}
 }

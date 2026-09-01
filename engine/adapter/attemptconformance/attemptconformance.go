@@ -151,6 +151,7 @@ func Run(t *testing.T, factory Factory) {
 			t.Fatalf("renewed claim = %+v, want same generation and later expiry than %+v", renewedClaim, firstClaim)
 		}
 		successorNow := renewedClaim.ExpiresAt
+		assertClaimFenced(t, h.Repository, p, renewed, renewedClaim, successorNow, "expired")
 		successor, successorClaim, err := h.Repository.AcquireClaim(ctx, p, renewed.ID, renewed.Version, successorNow, successorNow.Add(time.Minute))
 		if err != nil {
 			t.Fatal(err)
@@ -158,17 +159,12 @@ func Run(t *testing.T, factory Factory) {
 		if successorClaim.Generation <= renewedClaim.Generation {
 			t.Fatalf("successor generation = %d, want > %d", successorClaim.Generation, renewedClaim.Generation)
 		}
-		if _, err = h.Repository.Checkpoint(ctx, p, successor.ID, successor.Version, renewedClaim, successorNow, learning.AttemptCheckpoint{Stage: learning.AttemptCheckpointEvidenceVerified}); !errors.Is(err, learning.ErrAttemptClaimLost) {
-			t.Fatalf("superseded worker checkpoint error = %v, want ErrAttemptClaimLost", err)
-		}
-		stored := mustGet(t, h.Repository, p, successor.ID)
-		if stored != successor {
-			t.Fatalf("superseded worker changed stored record: got=%+v want=%+v", stored, successor)
-		}
+		assertClaimFenced(t, h.Repository, p, successor, renewedClaim, successorNow, "superseded")
 		queued, err := h.Repository.ReleaseClaim(ctx, p, successor.ID, successor.Version, successorClaim, successorNow)
 		if err != nil || queued.State != learning.AttemptQueued || queued.ClaimGeneration != 0 || !queued.ClaimExpiresAt.IsZero() {
 			t.Fatalf("ReleaseClaim = %+v, err=%v", queued, err)
 		}
+		assertClaimFenced(t, h.Repository, p, queued, successorClaim, successorNow, "released")
 	})
 
 	t.Run("checkpoints are monotonic and replay-safe", func(t *testing.T) {
@@ -228,10 +224,12 @@ func Run(t *testing.T, factory Factory) {
 		if err != nil || retried.State != learning.AttemptQueued || retried.AttemptGeneration != failed.AttemptGeneration+1 {
 			t.Fatalf("Retry = %+v, err=%v", retried, err)
 		}
+		assertClaimFenced(t, h.Repository, p, retried, claim, now, "retried")
 		abandoned, err := h.Repository.Abandon(ctx, p, retried.ID, retried.Version, now)
 		if err != nil || abandoned.State != learning.AttemptAbandoned || abandoned.Outcome != learning.AttemptOutcomeAbandoned {
 			t.Fatalf("Abandon = %+v, err=%v", abandoned, err)
 		}
+		assertClaimFenced(t, h.Repository, p, abandoned, claim, now, "abandoned")
 		if _, err = h.Repository.Retry(ctx, p, abandoned.ID, abandoned.Version, now); !errors.Is(err, learning.ErrAttemptTransition) {
 			t.Fatalf("terminal Retry error = %v, want ErrAttemptTransition", err)
 		}
@@ -418,6 +416,39 @@ func mustGet(t *testing.T, repository learning.AttemptRepository, p learning.Att
 		t.Fatalf("Get(%q) found=%v err=%v", id, found, err)
 	}
 	return record
+}
+
+func assertClaimFenced(t *testing.T, repository learning.AttemptRepository, partition learning.AttemptPartition, current learning.AttemptRecord, stale learning.AttemptClaim, now time.Time, state string) {
+	t.Helper()
+	operations := []struct {
+		name string
+		run  func() error
+	}{
+		{name: "renew", run: func() error {
+			_, _, err := repository.RenewClaim(context.Background(), partition, current.ID, current.Version, stale, now, now.Add(time.Minute))
+			return err
+		}},
+		{name: "checkpoint", run: func() error {
+			_, err := repository.Checkpoint(context.Background(), partition, current.ID, current.Version, stale, now, learning.AttemptCheckpoint{Stage: learning.AttemptCheckpointEvidenceVerified})
+			return err
+		}},
+		{name: "release", run: func() error {
+			_, err := repository.ReleaseClaim(context.Background(), partition, current.ID, current.Version, stale, now)
+			return err
+		}},
+		{name: "finalize", run: func() error {
+			_, err := repository.Finalize(context.Background(), partition, current.ID, current.Version, stale, now, learning.AttemptFinalization{State: learning.AttemptCompleted, Outcome: learning.AttemptOutcomeSucceeded})
+			return err
+		}},
+	}
+	for _, operation := range operations {
+		if err := operation.run(); !errors.Is(err, learning.ErrAttemptClaimLost) {
+			t.Fatalf("%s claim %s error = %v, want ErrAttemptClaimLost", state, operation.name, err)
+		}
+		if stored := mustGet(t, repository, partition, current.ID); stored != current {
+			t.Fatalf("%s claim %s changed attempt: got=%+v want=%+v", state, operation.name, stored, current)
+		}
+	}
 }
 
 func assertMissing(t *testing.T, repository learning.AttemptRepository, p learning.AttemptPartition, id learning.AttemptID) {
