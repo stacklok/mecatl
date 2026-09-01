@@ -144,6 +144,11 @@ jobs:
             go.sum
             engine/go.sum
 
+      - name: Remember checkout Go path
+        id: sdk-go-path
+        shell: bash
+        run: echo "bin=$(go env GOROOT)/bin" >> "$GITHUB_OUTPUT"
+
       - uses: bufbuild/buf-setup-action@a47c93e0b1648d5651a065437926377d060baa99 # v1.50.0
         with:
           version: '1.72.0'
@@ -181,15 +186,12 @@ jobs:
           annotate: "false"
           job-summary: "false"
 
-      # The action uses its own go.mod toolchain; restore this checkout's Go
-      # version before generation and the same-checkout mecated build.
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version-file: go.mod
-          cache: true
-          cache-dependency-path: |
-            go.sum
-            engine/go.sum
+      # The action prepends its own go.mod toolchain. Put the already-installed
+      # checkout toolchain back first without restoring the module cache twice.
+      - name: Restore checkout Go path
+        env:
+          MECATL_GO_BIN: ${{ steps.sdk-go-path.outputs.bin }}
+        run: echo "$MECATL_GO_BIN" >> "$GITHUB_PATH"
 
       - name: Verify generated contracts are fresh
         env:
