@@ -261,8 +261,7 @@ func (c *Client) CreateSession(ctx context.Context, workspace string, mode mecat
 // session handle shown by mecatui.
 const SessionHandleWidth = 12
 
-// SessionIDDisplayWidth remains the width accepted by the legacy exact-prefix
-// debug-target resolver. It does not define an alternate server-side ID.
+// SessionIDDisplayWidth remains a compatibility alias for the shared handle width.
 const SessionIDDisplayWidth = SessionHandleWidth
 
 // SessionHandle returns the fixed, terminal-safe escaped prefix used by every
@@ -298,12 +297,12 @@ func SessionHandle(id string) string {
 }
 
 // CreateDebugSession creates a separate no-filesystem analysis session bound to
-// targetID. A target written exactly as the TUI's 12-character header ID is
-// resolved against the caller-visible session inventory; the server still receives
-// and authorizes only an exact ID. Capability absence is detected from the create
-// response (the first common response carrying ServerCapabilities); an older server
-// may ignore the new target field, so that accidentally-created ordinary session is
-// closed before this method fails closed.
+// targetID. A target with the canonical short-handle grammar is resolved against
+// the caller-visible session inventory; the server still receives and authorizes
+// only an exact ID. Capability absence is detected from the create response (the
+// first common response carrying ServerCapabilities); an older server may ignore
+// the new target field, so that accidentally-created ordinary session is closed
+// before this method fails closed.
 func (c *Client) CreateDebugSession(ctx context.Context, targetID string, mode mecatlv1.PermissionMode, sel ModelSelection, debugMCP ...string) (string, string, Capabilities, ResolvedModel, error) {
 	resolvedTarget, err := c.resolveDebugTarget(ctx, targetID)
 	if err != nil {
@@ -333,35 +332,60 @@ func (c *Client) CreateDebugSession(ctx context.Context, targetID string, mode m
 	return id, resolvedTarget, caps, resolved, nil
 }
 
+const debugTargetExactCopyGuidance = "open /session and copy the exact full session ID"
+
 func (c *Client) resolveDebugTarget(ctx context.Context, targetID string) (string, error) {
-	if len(targetID) != SessionIDDisplayWidth {
+	if !isSessionHandleCandidate(targetID) {
 		return targetID, nil
 	}
 	sessions, err := c.ListSessions(ctx)
 	if err != nil {
-		return "", fmt.Errorf("resolve debug target: list sessions: %w", err)
+		return "", fmt.Errorf("resolve debug target: list sessions: %w; %s", err, debugTargetExactCopyGuidance)
 	}
+
+	ids := make(map[string]struct{}, len(sessions))
 	for _, item := range sessions {
-		if item.ID == targetID {
-			return targetID, nil
-		}
+		ids[item.ID] = struct{}{}
 	}
+	if _, ok := ids[targetID]; ok {
+		return targetID, nil
+	}
+
 	match := ""
-	for _, item := range sessions {
-		if !strings.HasPrefix(item.ID, targetID) {
+	for id := range ids {
+		if SessionHandle(id) != targetID {
 			continue
 		}
 		if match != "" {
-			return "", fmt.Errorf("session ID prefix %q is ambiguous; use the full session ID", targetID)
+			return "", fmt.Errorf("session handle %q is ambiguous; %s", targetID, debugTargetExactCopyGuidance)
 		}
-		match = item.ID
+		match = id
 	}
-	if match != "" {
-		return match, nil
+	if match == "" {
+		return "", fmt.Errorf("session handle %q did not match a session; %s", targetID, debugTargetExactCopyGuidance)
 	}
-	// Preserve the server's ordinary not-found posture. The caller-filtered
-	// inventory is only a convenience resolver; the server remains authoritative.
-	return targetID, nil
+	return match, nil
+}
+
+func isSessionHandleCandidate(value string) bool {
+	if value == "" || len(value) > SessionHandleWidth {
+		return false
+	}
+	for i := 0; i < len(value); i++ {
+		b := value[i]
+		if b >= 'A' && b <= 'Z' || b >= 'a' && b <= 'z' || b >= '0' && b <= '9' || b == '.' || b == '_' || b == '-' {
+			continue
+		}
+		if b != '%' || i+2 >= len(value) || !isUpperHex(value[i+1]) || !isUpperHex(value[i+2]) {
+			return false
+		}
+		i += 2
+	}
+	return true
+}
+
+func isUpperHex(b byte) bool {
+	return b >= '0' && b <= '9' || b >= 'A' && b <= 'F'
 }
 
 // CreateSessionWithCarryover is CreateSession seeded with the source session's
