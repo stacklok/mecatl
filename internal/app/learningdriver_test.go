@@ -19,33 +19,6 @@ import (
 )
 
 func TestADR_0254_LearningDriversEnforceOwnershipOrFailClosed(t *testing.T) {
-	rejected := []grpcdriver.LearningRepositoryCapabilities{
-		{
-			AttemptRepository: true, ProposalRepository: true, SkillRepository: true,
-			OwnershipMode:                     grpcdriver.LearningRepositoryOwnershipTrusted,
-			CallerInfrastructureRPCsSeparated: true,
-		},
-		{
-			AttemptRepository: true, ProposalRepository: true, SkillRepository: true,
-			OwnershipMode: grpcdriver.LearningRepositoryOwnershipEnforced,
-		},
-	}
-	for i, capabilities := range rejected {
-		addr := startSourceDriver(t, func(server *grpc.Server) {
-			driverv1.RegisterLearningRepositoryCapabilitiesServiceServer(server, grpcdriver.NewLearningRepositoryCapabilitiesServer(capabilities))
-		})
-		_, _, _, closeDriver, err := resolveLearningRepositories(context.Background(), Config{
-			LearningStoreURL: addr,
-			driverConns:      driverConnsForTest(t),
-		})
-		if closeDriver != nil {
-			closeDriver()
-		}
-		if err == nil || !strings.Contains(err.Error(), "enforced ownership") {
-			t.Fatalf("rejected posture %d error = %v, want fail-closed enforced-ownership error", i, err)
-		}
-	}
-
 	enforcedAddr := startSourceDriver(t, func(server *grpc.Server) {
 		driverv1.RegisterLearningRepositoryCapabilitiesServiceServer(server, grpcdriver.NewLearningRepositoryCapabilitiesServer(grpcdriver.LearningRepositoryCapabilities{
 			AttemptRepository: true, ProposalRepository: true, SkillRepository: true,
@@ -54,14 +27,54 @@ func TestADR_0254_LearningDriversEnforceOwnershipOrFailClosed(t *testing.T) {
 		}))
 	})
 	_, _, _, closeEnforced, err := resolveLearningRepositories(context.Background(), Config{
-		LearningStoreURL: enforcedAddr,
-		driverConns:      driverConnsForTest(t),
+		LearningStoreURL:  enforcedAddr,
+		OwnershipEnforced: true,
+		driverConns:       driverConnsForTest(t),
 	})
 	if closeEnforced != nil {
 		closeEnforced()
 	}
+	if err == nil || !strings.Contains(err.Error(), "ADR-0213") {
+		t.Fatalf("unauthenticated self-advertised enforced driver error = %v, want ADR-0213 fail-closed error", err)
+	}
+
+	trustedAddr := startSourceDriver(t, func(server *grpc.Server) {
+		driverv1.RegisterLearningRepositoryCapabilitiesServiceServer(server, grpcdriver.NewLearningRepositoryCapabilitiesServer(grpcdriver.LearningRepositoryCapabilities{
+			AttemptRepository: true, ProposalRepository: true, SkillRepository: true,
+			OwnershipMode: grpcdriver.LearningRepositoryOwnershipTrusted,
+		}))
+	})
+	_, _, _, closeTrusted, err := resolveLearningRepositories(context.Background(), Config{
+		LearningStoreURL: trustedAddr,
+		driverConns:      driverConnsForTest(t),
+	})
+	if closeTrusted != nil {
+		closeTrusted()
+	}
 	if err != nil {
-		t.Fatalf("enforced driver negotiation: %v", err)
+		t.Fatalf("trusted single-tenant driver negotiation: %v", err)
+	}
+
+	partialAddr := startSourceDriver(t, func(server *grpc.Server) {
+		driverv1.RegisterLearningRepositoryCapabilitiesServiceServer(server, grpcdriver.NewLearningRepositoryCapabilitiesServer(grpcdriver.LearningRepositoryCapabilities{
+			AttemptRepository: true, ProposalRepository: true,
+			OwnershipMode: grpcdriver.LearningRepositoryOwnershipTrusted,
+		}))
+	})
+	for name, addr := range map[string]string{
+		"missing capabilities": startSourceDriver(t, func(*grpc.Server) {}),
+		"partial capabilities": partialAddr,
+	} {
+		_, _, _, closeDriver, resolveErr := resolveLearningRepositories(context.Background(), Config{
+			LearningStoreURL: addr,
+			driverConns:      driverConnsForTest(t),
+		})
+		if closeDriver != nil {
+			closeDriver()
+		}
+		if resolveErr == nil {
+			t.Errorf("%s: resolveLearningRepositories() succeeded, want fail-closed error", name)
+		}
 	}
 
 	rawPath := "/srv/workspaces/private-project"
@@ -117,7 +130,7 @@ func TestLearningDriverCompositionSmoke(t *testing.T) {
 	addr := startSourceDriver(t, func(server *grpc.Server) {
 		driverv1.RegisterLearningRepositoryCapabilitiesServiceServer(server, grpcdriver.NewLearningRepositoryCapabilitiesServer(grpcdriver.LearningRepositoryCapabilities{
 			AttemptRepository: true, ProposalRepository: true, SkillRepository: true, ValidatedSkillActivation: true,
-			OwnershipMode: grpcdriver.LearningRepositoryOwnershipEnforced, CallerInfrastructureRPCsSeparated: true,
+			OwnershipMode: grpcdriver.LearningRepositoryOwnershipTrusted,
 		}))
 		driverv1.RegisterAttemptRepositoryServiceServer(server, grpcdriver.NewAttemptRepositoryServer(attempts))
 		driverv1.RegisterProposalRepositoryServiceServer(server, grpcdriver.NewProposalRepositoryServer(proposals))

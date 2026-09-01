@@ -500,7 +500,8 @@ type Config struct {
 	// LearningStoreURL selects one remote distributed-learning backend. The
 	// driver must explicitly advertise the complete AttemptRepository,
 	// ProposalRepository, and SkillRepository set; partial/legacy drivers fail
-	// startup rather than falling back to local repositories.
+	// startup rather than falling back to local repositories. Remote learning
+	// is trusted-infrastructure-only and fails closed when OwnershipEnforced is set.
 	LearningStoreURL string
 	DriverAuthToken  string
 	DriverTLS        bool

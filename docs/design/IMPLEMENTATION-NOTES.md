@@ -4245,12 +4245,16 @@ repository set. Missing or partial capability is fatal; no member falls back to 
 All three clients borrow the existing Build-scoped `driverConns` entry and once-guarded close.
 Composition hashes both components of Proposal/Skill partitions before transport and restores only
 the in-process view, so raw workspace paths and identity strings never cross these repository RPCs.
-Validated skill activation is exposed only when separately advertised. The capability probe also
-requires the explicit ADR-0213 `enforced` ownership mode and separated caller/infrastructure RPC
-surfaces. Unspecified or trusted mode, or a mixed RPC surface, is fatal before any repository is
-composed. In enforced mode the driver contract accepts caller claims only from an authenticated
-mecatl workload peer and stores immutable owner bindings in a private durable registry; request
-partitions are opaque routing values, never client-asserted identity authority.
+Validated skill activation is exposed only when separately advertised. The current raw repository
+RPC servers remain trusted infrastructure: they accept caller-selected partitions and do not yet
+have ADR-0213 workload-authentication middleware, a private durable owner registry, or a separately
+authenticated maintenance surface. Therefore a configured remote learning store fails closed whenever
+application `OwnershipEnforced` is true, even if the driver self-advertises `enforced` ownership and
+RPC separation. With ownership enforcement disabled, an explicitly `trusted` driver may be composed;
+the reserved `enforced` value is treated no stronger than trusted until cryptographically bound
+ADR-0213 enforcement exists. Unspecified ownership and missing or partial repository capabilities
+remain fatal before any repository client is composed. Local in-process repositories retain their
+existing application ownership enforcement.
 
 The observer performs the structural signal gate before the process-wide legacy interval admission, so
 trivial completions spend no provider call and do not consume the debounce cadence. Standard composition

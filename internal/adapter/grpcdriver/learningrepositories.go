@@ -18,8 +18,9 @@ const (
 	// LearningRepositoryOwnershipTrusted marks a driver as deployment-trusted
 	// infrastructure without caller ownership enforcement.
 	LearningRepositoryOwnershipTrusted LearningRepositoryOwnershipMode = iota + 1
-	// LearningRepositoryOwnershipEnforced certifies the complete ADR-0213
-	// authenticated-workload and private-owner-binding contract.
+	// LearningRepositoryOwnershipEnforced is reserved for future negotiation.
+	// Current composition treats it only as deployment-trusted because the raw
+	// repository RPCs do not yet implement ADR-0213 authenticated ownership.
 	LearningRepositoryOwnershipEnforced
 )
 

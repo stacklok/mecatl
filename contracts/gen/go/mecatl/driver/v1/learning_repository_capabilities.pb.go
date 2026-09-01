@@ -35,12 +35,10 @@ type LearningRepositoryOwnershipMode int32
 const (
 	LearningRepositoryOwnershipMode_LEARNING_REPOSITORY_OWNERSHIP_MODE_UNSPECIFIED LearningRepositoryOwnershipMode = 0
 	LearningRepositoryOwnershipMode_LEARNING_REPOSITORY_OWNERSHIP_MODE_TRUSTED     LearningRepositoryOwnershipMode = 1
-	// ENFORCED certifies ADR-0213: caller claims are accepted only from an
-	// authenticated mecatl workload peer, caller-owned and infrastructure RPCs
-	// use separate authenticated surfaces, immutable owner bindings are kept in
-	// a private durable registry, and project namespaces are opaque SHA-256
-	// digests rather than paths. Request partition fields are never identity
-	// authority. A driver must not advertise this value for trusted-only mode.
+	// ENFORCED is reserved for future ADR-0213 negotiation. The current raw
+	// Attempt/Proposal/Skill RPCs do not authenticate workload claims or maintain
+	// private owner bindings, so advertising this value is not proof of enforcement
+	// and current composition treats it no stronger than TRUSTED.
 	LearningRepositoryOwnershipMode_LEARNING_REPOSITORY_OWNERSHIP_MODE_ENFORCED LearningRepositoryOwnershipMode = 2
 )
 
@@ -130,8 +128,9 @@ type LearningRepositoryCapabilitiesResponse struct {
 	// Ownership mode is explicit: metadata presence never upgrades a trusted
 	// infrastructure-only driver to caller-enforcing mode.
 	OwnershipMode LearningRepositoryOwnershipMode `protobuf:"varint,5,opt,name=ownership_mode,json=ownershipMode,proto3,enum=mecatl.driver.v1.LearningRepositoryOwnershipMode" json:"ownership_mode,omitempty"`
-	// True only when caller-owned operations and worker/retention operations are
-	// exposed on separately authenticated RPC surfaces.
+	// Reserved declaration for future negotiation of separately authenticated
+	// caller and maintenance surfaces. Current composition does not trust this
+	// self-advertisement as evidence that those surfaces exist.
 	CallerInfrastructureRpcsSeparated bool `protobuf:"varint,6,opt,name=caller_infrastructure_rpcs_separated,json=callerInfrastructureRpcsSeparated,proto3" json:"caller_infrastructure_rpcs_separated,omitempty"`
 	unknownFields                     protoimpl.UnknownFields
 	sizeCache                         protoimpl.SizeCache
