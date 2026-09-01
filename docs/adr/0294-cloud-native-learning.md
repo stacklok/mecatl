@@ -97,22 +97,31 @@ replaced by best-effort current history or a copied raw transcript. Reconciliati
 must converge through deterministic IDs and opaque CAS rather than report an unobserved result as
 success.
 
-### 4. Extend distributed authority through proposals, skills, and catalogs
+### 4. Keep attempt authority separate from downstream convergence
 
 Provide distributed implementations/drivers for `ProposalRepository`, `SkillRepository`, and the
-new `AttemptRepository`. Each preserves the current conformance contracts: opaque CAS,
-provenance/evaluation/activation guards, caller/project partitioning, and idempotent crash
-reconciliation. Claim generation fencing applies to every downstream proposal and skill mutation,
-and to catalog publish and invalidate boundaries: a stale worker cannot mutate after a successor
-owns, retries, or abandons an attempt. No cross-store transaction is claimed; independently
-committed boundaries reconcile from durable identifiers as they do today.
+new `AttemptRepository`. Each preserves its current conformance contracts: opaque CAS,
+provenance/evaluation/activation guards, caller/project partitioning, deterministic identifiers,
+and idempotent crash reconciliation. `AttemptRepository` alone fences the attempt-owned
+`Renew`, `Checkpoint`, `Release`, and `Finalize` transitions. An expired, released, superseded,
+retried, or abandoned claim cannot revive, checkpoint, release, or finalize that attempt, cannot
+finalize a successor, and cannot rewrite an abandoned attempt to success.
 
-A replica-safe catalog protocol must hydrate and invalidate the caller's admitted partitions from
-authoritative durable Active, archive, rollback, and replacement transitions before serving the Skill tool. It preserves path-free bundles,
-external-skill precedence, and partition isolation. Already-hydrated replicas converge on archive,
-rollback, or replacement too: no stale body or metadata remains served. A stale or uncertain
-partition fails closed without clearing or exposing another partition; an older failure cannot revoke
-a newer activation.
+Proposal and skill commits remain independent deterministic, CAS-protected durable boundaries;
+there is no cross-store transaction and no claim-generation guard on them. A stale worker can win
+an independently valid downstream commit race after losing its claim, but that effect never proves
+attempt success and cannot overwrite the attempt. A fresh claimant re-reads the authoritative
+repositories and may adopt only a compatible deterministic artifact; otherwise it leaves
+inactive/unlinked residue or reaches a safe non-success outcome. Manual abandon is
+non-compensating: it changes only the attempt and promises no downstream rollback.
+
+Catalogs are derived per-partition monotonic-generation caches. Publish, hydrate, and invalidate
+compare authoritative partition generations: a delayed old publish or invalidate cannot replace or
+revoke a newer generation. This guarantees convergence rather than instant claim-driven
+invalidation. A stale or uncertain partition fails closed without clearing or exposing another
+partition, while external-skill precedence and path-free bundles remain intact. Strict universal
+prevention of late downstream writes would require a future unified linearizable learning authority
+and is deliberately out of scope.
 
 ### 5. Stage delivery: explicit first, automatic distributed controls last
 
@@ -159,18 +168,25 @@ worker's process. The explicit vertical slice delivers value before the global a
 work is ready.
 
 **Costs and limits.** This adds an exported engine port, domain values, adapters/drivers,
-conformance suites, API surface, repository migrations, claim fencing, durable retention policy,
-and ADR 0027 resource/fidelity inventory rows. Driver-backed learning requires ADR-0213 ownership
-enforcement rather than a trusted raw-driver exception. It requires `task api:update` and a compatibility
-changelog entry when the port lands. It also introduces operational work: claim expiry, abandoned
-attempt reconciliation, evidence retention limits, and replica-safe invalidation must be observable
-through safe metadata without leaking model content.
+conformance suites, API surface, repository migrations, attempt claim fencing, durable retention
+policy, and ADR 0027 resource/fidelity inventory rows. Driver-backed learning requires ADR-0213
+ownership enforcement rather than a trusted raw-driver exception. It requires `task api:update` and
+a compatibility changelog entry when the port lands. It also introduces operational work: claim
+expiry, abandoned-attempt reconciliation, evidence retention limits, and replica-safe generation
+convergence must be observable through safe metadata without leaking model content.
 
 There is deliberately no distributed transaction across attempt, proposal, skill, session, and
-event stores. Every boundary must be idempotent and reconcilable; unavailable evidence fails
-honestly. EventLog's documented gap behavior remains a reason to fail evidence verification, never
-a reason to infer completion. Before the final automatic-controls wave, multi-replica automatic
-learning is still process-multiplied and must be documented that way.
+event stores. A downstream effect never proves attempt success. Every boundary must be
+idempotent and reconcilable: a fresh claimant may adopt only a compatible deterministic artifact,
+otherwise it leaves inactive/unlinked residue or records safe non-success. Manual abandon is
+non-compensating and does not roll back downstream state. Catalogs converge by authoritative
+per-partition monotonic generation; delayed old publication or invalidation cannot replace or
+revoke a newer generation, but instant claim-driven invalidation is not promised. Strict universal
+prevention of late downstream writes is a deferred design requiring a separate unified
+linearizable learning authority. Unavailable evidence fails honestly. EventLog's documented gap
+behavior remains a reason to fail evidence verification, never a reason to infer completion. Before
+the final automatic-controls wave, multi-replica automatic learning is still process-multiplied and
+must be documented that way.
 
 This ADR supersedes only the identified reset-by-design coordinator/receipt authority in ADR 0109
 and process-local automatic admission accounting in ADR 0114 when v2 is wired. Their durable

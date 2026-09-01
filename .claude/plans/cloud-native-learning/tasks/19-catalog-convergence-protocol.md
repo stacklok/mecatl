@@ -13,7 +13,12 @@ accumulator: acc/cloud-native-learning
 
 # Task brief
 
-Add the smallest durable generation/change protocol needed for replica-safe Active, archive, rollback, and replacement convergence. Bind generations to caller/project partitions and authoritative repository state, preserve external-skill precedence and path-free bundles, and ensure catalog updates remain guarded by the current attempt claim. Do not introduce attempt watch or reuse ADR-0250 session watch as workflow state.
+Define the authoritative per-caller/project-partition monotonic generation read from durable
+repository state. Catalogs are derived caches: publish, hydrate, and invalidate compare that
+generation so a delayed old operation cannot replace or revoke a newer generation. Preserve
+external-skill precedence and path-free bundles, and fail closed only the uncertain partition. Do
+not claim instant invalidation or guard catalog updates with an attempt claim; do not introduce
+attempt watch or reuse ADR-0250 session watch as workflow state.
 
 ## Acceptance criteria
 

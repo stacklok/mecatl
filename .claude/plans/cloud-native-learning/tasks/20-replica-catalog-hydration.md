@@ -17,5 +17,5 @@ Wire caller-bound Skill-tool selection to reconcile the affected learned-skill p
 
 ## Acceptance criteria
 
-- AC4.3: After a durable Active, archive, rollback, or replacement transition on replica A, an authorized session on replica B hydrates or invalidates the affected partition before serving the Skill tool. Already-hydrated replicas converge and serve neither stale body nor stale metadata; an unauthorized or non-admitted partition sees nothing.
+- AC4.3: Catalog publication, hydration, and invalidation converge by authoritative per-partition monotonic generation after Active, archive, rollback, or replacement transitions. An authorized session on replica B serves a wholly old or wholly new partition snapshot; delayed old publish/invalidate cannot replace or revoke a newer generation. Instant claim-driven invalidation is not promised, and an unauthorized or non-admitted partition sees nothing.
   - verify: `TestADR_0254_ReplicaHydrationConvergesAcrossReplacementAndRollback`

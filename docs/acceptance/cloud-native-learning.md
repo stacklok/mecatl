@@ -43,8 +43,8 @@ After explicit or weighted admission succeeds, and only after landed ADR-0249 su
   - verify: `TestADR_0294_QueuedAttemptRequiresDurableRunIDAndIsIdempotent`
 - AC2.2: The immutable, content-free provenance records admission class plus the exact current-prompt/RunID/canonical-digest binding. Workers never re-derive explicit authority from replayed user-role text; forged provenance fields and synthetic continuations fail closed.
   - verify: `TestADR_0294_AdmissionProvenanceBindsCurrentPromptAndRejectsForgery`
-- AC2.3: Attempts permit only legal CAS transitions, and an expired or superseded worker claim cannot checkpoint, propose, mutate a skill, publish/invalidate a catalog, or finalize a successor.
-  - verify: `TestADR_0294_AttemptFencedClaimGuardsEveryDownstreamBoundary`
+- AC2.3: Attempts permit only legal CAS transitions. An expired, released, superseded, retried, or abandoned claim cannot renew, checkpoint, release, or finalize its attempt; cannot finalize a successor; and cannot rewrite an abandoned attempt to success.
+  - verify: `TestADR_0294_StaleClaimCannotTransitionAttempt`
 - AC2.4: Attempt projections and stored records contain only bounded safe metadata and closed failure codes; structural tests reject raw content, paths, principal values, credentials, tokens, headers, secret-shaped values, driver-error text, diagnostics, metrics, watch envelopes, and optional EventLog projections.
   - verify: `TestADR_0294_AttemptSurfacesContainNoContentOrSecrets`
 - AC2.5: A skipped or non-admitted completion produces immediate status plus content-free metrics but creates no attempt record.
@@ -74,16 +74,16 @@ An explicit accepted request drives a durable attempt through claim, evidence re
 
 ---
 
-### Scenario 4 — Distributed downstream authority and replica-safe skill visibility
+### Scenario 4 — Independent downstream convergence and replica-safe skill visibility
 
-The distributed contract reaches beyond the queue: `ProposalRepository` and `SkillRepository` need durable/driver implementations preserving current CAS, provenance, evaluation, activation, and caller/project partition invariants. A committed Active skill is hydrated or invalidated replica-safely, so it does not mean “active only on the pod that processed it.” Caller-bound catalog selection remains path-free and partition-isolated as [ADR-0111](../adr/0111-hardened-agent-owned-skill-publication.md) requires.
+The distributed contract reaches beyond the queue: `ProposalRepository` and `SkillRepository` need durable/driver implementations preserving current CAS, provenance, evaluation, activation, and caller/project partition invariants. Their deterministic, CAS-protected commits are independent of attempt claim ownership: a late independently valid commit never proves attempt success, and reconciliation may adopt only a compatible deterministic artifact or leave inactive/unlinked residue or safe non-success. Catalogs are derived per-partition monotonic-generation caches, not claim-fenced attempt state. A committed Active skill is hydrated or invalidated replica-safely, so it does not mean “active only on the pod that processed it.” Caller-bound catalog selection remains path-free and partition-isolated as [ADR-0111](../adr/0111-hardened-agent-owned-skill-publication.md) requires.
 
 **Acceptance:**
 - AC4.1: Distributed ProposalRepository and SkillRepository implementations satisfy their existing shared conformance suites, including opaque CAS, provenance, evaluation, activation, recovery, and partition isolation.
   - verify: `TestCloudNativeLearning_Scenario4_DistributedRepositoriesConform`
-- AC4.2: Concurrent replicas converge one proposal/skill lifecycle without lost transitions, duplicate activation, or cross-partition visibility. Failure injection proves that stale worker A cannot propose, mutate a skill, publish/invalidate a catalog, or finalize after worker B owns, retries, or abandons the attempt.
-  - verify: `TestADR_0294_StaleClaimCannotMutateAnyDownstreamBoundary`
-- AC4.3: After a durable Active, archive, rollback, or replacement transition on replica A, an authorized session on replica B hydrates or invalidates the affected partition before serving the Skill tool. Already-hydrated replicas converge and serve neither stale body nor stale metadata; an unauthorized or non-admitted partition sees nothing.
+- AC4.2: Crash and claim-loss races converge through deterministic IDs and CAS: no duplicate artifact, overwrite of a newer target revision, two active versions, invented attempt success, or partition crossing. An independently valid late downstream commit is allowed; authoritative reread adopts only a compatible deterministic artifact, otherwise leaves inactive/unlinked residue or reaches safe non-success.
+  - verify: `TestADR_0294_IndependentDownstreamCommitReconcilesAfterClaimLoss`
+- AC4.3: Catalog publication, hydration, and invalidation converge by authoritative per-partition monotonic generation after Active, archive, rollback, or replacement transitions. An authorized session on replica B serves a wholly old or wholly new partition snapshot; delayed old publish/invalidate cannot replace or revoke a newer generation. Instant claim-driven invalidation is not promised, and an unauthorized or non-admitted partition sees nothing.
   - verify: `TestADR_0294_ReplicaHydrationConvergesAcrossReplacementAndRollback`
 - AC4.4: Publication/hydration uncertainty fail-closes only the affected partition and cannot revoke a newer durable active generation.
   - verify: `TestADR_0294_LearnedSkillPartitionPublicationIsolation`
@@ -99,7 +99,7 @@ The service exposes caller-authorized attempt get/list state and defined manual 
   - verify: `TestADR_0294_AttemptControlsAreNonDisclosingBeforeSideEffects`
 - AC5.2: Attempt API projections expose only bounded state, timestamps, safe codes, and authorized identifiers; they never expose transcript, tool output, provider text, paths, principal values, credentials, tokens, headers, secret-shaped values, driver errors, diagnostics, metrics, watch envelopes, or optional EventLog projections.
   - verify: `TestADR_0294_AttemptAPIIsContentFree`
-- AC5.3: Manual retry and abandon perform only defined CAS transitions; stale versions, terminal conflicts, and a live fenced claim return closed typed errors without changing the attempt. Private owner binding and exact-source delegation are enforced without caller-supplied principal or system-principal bypass.
+- AC5.3: Manual retry and abandon perform only defined attempt CAS transitions; abandon is non-compensating and does not promise downstream rollback. Stale versions, terminal conflicts, and a live fenced claim return closed typed errors without changing the attempt. Private owner binding and exact-source delegation are enforced without caller-supplied principal or system-principal bypass.
   - verify: `TestADR_0294_AttemptControlsRequirePrivateOwnerBinding`
 - AC5.4: Driver-backed learning enforces workload-authenticated claims; caller and infrastructure RPCs are separated; project namespaces are opaque rather than raw workspace paths; and startup fails closed when the driver cannot enforce ownership.
   - verify: `TestADR_0294_LearningDriversEnforceOwnershipOrFailClosed`
@@ -132,10 +132,11 @@ Weighted automatic work joins the same durable attempt queue only after explicit
 | Attempt watch, including cursor binding to caller/query-or-attempt scope/generation and indistinguishable rejection of tampered, expired, or foreign cursors | Separately specified follow-up after this plan | Must use a durable attempt-change feed; ADR-0250 session EventLog watch is not that feed |
 | A process-local or session-EventLog-derived substitute for attempt watch | Never | Attempt notifications are advisory only; clients must re-read AttemptRepository under authority |
 | A new direct-SkillDraft activation path | Not part of learning admission | [ADR-0111](../adr/0111-hardened-agent-owned-skill-publication.md) |
+| Strict universal prevention of late downstream writes | Separate future decision | Requires a unified linearizable learning authority; independent repositories intentionally permit an independently valid late commit after claim loss |
 
 ## Sequencing recommendation
 
-Land Scenario 1 alone first. Scenarios 2 and 3 form the first durable vertical slice and must update both ADR 0027 inventories before code lands. Scenario 4 follows before any distributed claim is made for learned skills, but is the remaining oversized scenario: `/plan-orchestrate` must split it into dependency-ordered small waves for driver conformance/ownership fencing first, then replica hydration/invalidation convergence. Scenario 5 may land its get/list/control half after Scenario 3; attempt watch is deferred to a separately specified durable attempt-change-feed follow-up, not ADR-0250 session watch. Scenario 6 is last; prior waves must describe automatic controls as process-local.
+Land Scenario 1 alone first. Scenarios 2 and 3 form the first durable vertical slice and must update both ADR 0027 inventories before code lands. Scenario 4 follows before any distributed claim is made for learned skills, but is the remaining oversized scenario: `/plan-orchestrate` must split it into dependency-ordered small waves for driver conformance and attempt-lifecycle fencing first, then per-partition generation and replica hydration/invalidation convergence. Scenario 5 may land its get/list/control half after Scenario 3; attempt watch is deferred to a separately specified durable attempt-change-feed follow-up, not ADR-0250 session watch. Scenario 6 is last; prior waves must describe automatic controls as process-local.
 
 ## Definition of done
 
@@ -152,6 +153,7 @@ Land Scenario 1 alone first. Scenarios 2 and 3 form the first durable vertical s
 - **Evidence retention versus attempt retention.** An attempt may outlive its reconstructable session/log evidence; terminal `evidence_unavailable` is the intentional honest result. Retention durations and operator policy remain a bounded configuration design for the implementation slice.
 - **Attempt notifications.** Attempt watch is deferred to a separate ADR. It must define durable attempt-change records and cursors bound to caller, query/attempt scope, and generation; notifications are advisory and clients re-read `AttemptRepository` under authority. ADR-0250's session `EventLog` watch is not this feed.
 - **Global automatic ledger mechanics.** Scenario 6 requires atomic distributed reservation semantics, including deterministic reserve/create linkage, crash-boundary charge reconciliation, expiry/reassignment, and a global-maximum proof, but intentionally does not pre-select Redis, a driver, or another backend before its conformance and deployment constraints are specified.
+- **Unified late-write prevention.** This plan's independent durable boundaries deliberately allow an independently valid late downstream commit after claim loss; it must never prove attempt success. The kill criterion for claiming strict no-late-downstream-write semantics is a separately designed unified linearizable learning authority.
 
 ## Exit criteria
 
