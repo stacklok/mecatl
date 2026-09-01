@@ -83,6 +83,9 @@ mounted
 {{- end -}}
 {{- end -}}
 {{- define "mecak8s.validateProviderSecurity" -}}
+{{- if and .Values.mockProvider .Values.security.tlsTerminatedUpstream -}}
+{{- fail "security.tlsTerminatedUpstream applies only to a real provider; it is ignored when mockProvider=true, so setting both is a mistake" -}}
+{{- end -}}
 {{- if and (not .Values.mockProvider) (not .Values.security.allowUnsafeRealProvider) -}}
 {{- if not .Values.oidc.enabled -}}
 {{- fail "mockProvider=false requires oidc.enabled=true (OIDC authenticates callers); set security.allowUnsafeRealProvider=true only for local or trusted-mesh deployments" -}}

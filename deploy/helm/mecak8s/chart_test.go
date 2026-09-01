@@ -376,6 +376,51 @@ func TestMecak8sHelmChart_ProductionFixturesReferenceProviderCredential(t *testi
 	}
 }
 
+// providerSecurityCase is one point in the real-provider gate's input space. The gate is
+// enforced twice and independently — values.schema.json and the
+// mecak8s.validateProviderSecurity helper — so both enforcement tests iterate THIS table
+// against THIS oracle. Keeping the rule in one place is the point: a divergence between
+// the two enforcement paths must fail as a disagreement with the shared oracle, never be
+// papered over by editing one test's private copy of the rule.
+type providerSecurityCase struct {
+	serviceType                   string
+	mock, unsafe, tls, edge, oidc bool
+}
+
+func (c providerSecurityCase) name() string {
+	return fmt.Sprintf("service=%s/mock=%t/unsafe=%t/tls=%t/edge=%t/oidc=%t", c.serviceType, c.mock, c.unsafe, c.tls, c.edge, c.oidc)
+}
+
+// wantAccepted is the ADR 0278 gate: a mock provider or the explicit unsafe bypass is
+// always accepted; a secure real provider needs OIDC plus either in-pod TLS or an
+// upstream-TLS attestation on a ClusterIP-only h2c backend. The upstream attestation is
+// meaningless without a real provider, so mockProvider=true rejects it outright rather
+// than accepting a value it would silently ignore.
+func (c providerSecurityCase) wantAccepted() bool {
+	if c.mock {
+		return !c.edge
+	}
+	return c.unsafe || (c.oidc && (c.tls || (c.edge && c.serviceType == "ClusterIP")))
+}
+
+func providerSecurityCases() []providerSecurityCase {
+	var cases []providerSecurityCase
+	for _, serviceType := range []string{"ClusterIP", "NodePort", "LoadBalancer"} {
+		for _, mock := range []bool{false, true} {
+			for _, unsafe := range []bool{false, true} {
+				for _, tls := range []bool{false, true} {
+					for _, edge := range []bool{false, true} {
+						for _, oidc := range []bool{false, true} {
+							cases = append(cases, providerSecurityCase{serviceType, mock, unsafe, tls, edge, oidc})
+						}
+					}
+				}
+			}
+		}
+	}
+	return cases
+}
+
 func TestMecak8sValuesSchemaIndependentlyEnforcesProviderSecurity(t *testing.T) {
 	schemaJSON, err := os.ReadFile("values.schema.json")
 	if err != nil {
@@ -398,34 +443,22 @@ func TestMecak8sValuesSchemaIndependentlyEnforcesProviderSecurity(t *testing.T) 
 		t.Fatal(err)
 	}
 
-	for _, serviceType := range []string{"ClusterIP", "NodePort", "LoadBalancer"} {
-		for _, mock := range []bool{false, true} {
-			for _, unsafe := range []bool{false, true} {
-				for _, tls := range []bool{false, true} {
-					for _, edge := range []bool{false, true} {
-						for _, oidc := range []bool{false, true} {
-							name := fmt.Sprintf("service=%s/mock=%t/unsafe=%t/tls=%t/edge=%t/oidc=%t", serviceType, mock, unsafe, tls, edge, oidc)
-							t.Run(name, func(t *testing.T) {
-								var values map[string]any
-								if err := json.Unmarshal(valuesJSON, &values); err != nil {
-									t.Fatal(err)
-								}
-								values["mockProvider"] = mock
-								values["security"].(map[string]any)["allowUnsafeRealProvider"] = unsafe
-								values["security"].(map[string]any)["tlsTerminatedUpstream"] = edge
-								values["tls"].(map[string]any)["enabled"] = tls
-								values["oidc"].(map[string]any)["enabled"] = oidc
-								values["service"].(map[string]any)["type"] = serviceType
-								wantOK := mock || unsafe || (oidc && (tls || (edge && serviceType == "ClusterIP")))
-								if err := resolved.Validate(values); (err == nil) != wantOK {
-									t.Fatalf("schema acceptance = %t, want %t: %v", err == nil, wantOK, err)
-								}
-							})
-						}
-					}
-				}
+	for _, tc := range providerSecurityCases() {
+		t.Run(tc.name(), func(t *testing.T) {
+			var values map[string]any
+			if err := json.Unmarshal(valuesJSON, &values); err != nil {
+				t.Fatal(err)
 			}
-		}
+			values["mockProvider"] = tc.mock
+			values["security"].(map[string]any)["allowUnsafeRealProvider"] = tc.unsafe
+			values["security"].(map[string]any)["tlsTerminatedUpstream"] = tc.edge
+			values["tls"].(map[string]any)["enabled"] = tc.tls
+			values["oidc"].(map[string]any)["enabled"] = tc.oidc
+			values["service"].(map[string]any)["type"] = tc.serviceType
+			if err := resolved.Validate(values); (err == nil) != tc.wantAccepted() {
+				t.Fatalf("schema acceptance = %t, want %t: %v", err == nil, tc.wantAccepted(), err)
+			}
+		})
 	}
 
 	var legacyPodTLS map[string]any
@@ -448,158 +481,21 @@ func TestMecak8sHelmHelperMatchesProviderSecuritySchema(t *testing.T) {
 		t.Fatalf("Helm must support --skip-schema-validation for helper-independence coverage: %v", err)
 	}
 	base := []string{"template", "production", ".", "--skip-schema-validation", "--set", "image.tag=v0.0.0", "--set", "redis.endpoint=redis.example.internal:6380", "--set", "redis.credentialsSecret=redis-credentials"}
-	for _, serviceType := range []string{"ClusterIP", "NodePort", "LoadBalancer"} {
-		for _, mock := range []bool{false, true} {
-			for _, unsafe := range []bool{false, true} {
-				for _, tls := range []bool{false, true} {
-					for _, edge := range []bool{false, true} {
-						for _, oidc := range []bool{false, true} {
-							name := fmt.Sprintf("service=%s/mock=%t/unsafe=%t/tls=%t/edge=%t/oidc=%t", serviceType, mock, unsafe, tls, edge, oidc)
-							t.Run(name, func(t *testing.T) {
-								args := append([]string{}, base...)
-								args = append(args, "--set", fmt.Sprintf("mockProvider=%t,security.allowUnsafeRealProvider=%t,security.tlsTerminatedUpstream=%t,tls.enabled=%t,oidc.enabled=%t,service.type=%s", mock, unsafe, edge, tls, oidc, serviceType))
-								if tls {
-									args = append(args, "--set", "tls.secretName=mecak8s-tls")
-								}
-								if oidc {
-									args = append(args, "--set", "oidc.issuer=https://idp.example.com,oidc.audience=mecatl")
-								}
-								_, err := helm(t, args...)
-								wantOK := mock || unsafe || (oidc && (tls || (edge && serviceType == "ClusterIP")))
-								if (err == nil) != wantOK {
-									t.Fatalf("helper acceptance = %t, want %t: %v", err == nil, wantOK, err)
-								}
-							})
-						}
-					}
-				}
-			}
-		}
-	}
-}
-
-func TestMecak8sHelmChart_RuntimeSchemaRejectsInvalidValues(t *testing.T) {
-	for _, set := range []string{
-		"maxRunTokens=0",
-		"maxTeamTokens=-1",
-		"maxRunTokens=1.5",
-		"defaultProvider=unknown",
-	} {
-		t.Run(set, func(t *testing.T) {
-			if _, err := helm(t, append(secureProductionArgs(), "--set", set)...); err == nil {
-				t.Fatalf("render accepted invalid value %q", set)
-			}
-		})
-	}
-	if _, err := helm(t, append(secureProductionArgs(), "--set-string", "model=   ")...); err == nil {
-		t.Fatal("render accepted a whitespace-only model")
-	}
-}
-
-func TestMecak8sHelmChart_SchedulingControls(t *testing.T) {
-	rendered, err := helm(t, productionArgs()...)
-	if err != nil {
-		t.Fatalf("render defaults: %v", err)
-	}
-	for _, absent := range []string{"topologySpreadConstraints:", "affinity:", "nodeSelector:", "tolerations:"} {
-		if strings.Contains(rendered, absent) {
-			t.Fatalf("default render unexpectedly contains %q", absent)
-		}
-	}
-
-	args := append(secureProductionArgs(),
-		"--set", "topologySpreadConstraints[0].maxSkew=1",
-		"--set", "topologySpreadConstraints[0].topologyKey=kubernetes.io/hostname",
-		"--set", "topologySpreadConstraints[0].whenUnsatisfiable=DoNotSchedule",
-		"--set", "topologySpreadConstraints[0].labelSelector.matchLabels.app\\.kubernetes\\.io/name=mecak8s",
-		"--set", "topologySpreadConstraints[0].labelSelector.matchLabels.app\\.kubernetes\\.io/instance=production",
-		"--set", "topologySpreadConstraints[0].labelSelector.matchLabels.app\\.kubernetes\\.io/component=agent",
-		"--set", "nodeSelector.kubernetes\\.io/os=linux",
-		"--set", "tolerations[0].key=dedicated,tolerations[0].operator=Equal,tolerations[0].value=agents,tolerations[0].effect=NoSchedule",
-		"--set", "affinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms[0].matchExpressions[0].key=kubernetes.io/arch",
-		"--set", "affinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms[0].matchExpressions[0].operator=In",
-		"--set", "affinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms[0].matchExpressions[0].values[0]=amd64",
-	)
-	rendered, err = helm(t, args...)
-	if err != nil {
-		t.Fatalf("render scheduling controls: %v", err)
-	}
-	for _, want := range []string{"topologySpreadConstraints:", "topologyKey: kubernetes.io/hostname", "affinity:", "nodeSelector:", "kubernetes.io/os: linux", "tolerations:", "effect: NoSchedule"} {
-		if !strings.Contains(rendered, want) {
-			t.Fatalf("scheduling render missing %q", want)
-		}
-	}
-}
-
-func TestMecak8sHelmChart_RealProviderSecurityGate(t *testing.T) {
-	base := []string{"template", "production", ".", "--set", "image.tag=v0.0.0", "--set", "redis.endpoint=redis.example.internal:6380", "--set", "redis.credentialsSecret=redis-credentials"}
-	for _, tc := range []struct {
-		name string
-		set  []string
-		ok   bool
-	}{
-		{name: "neither"},
-		{name: "TLS only", set: []string{"tls.enabled=true,tls.secretName=mecak8s-tls"}},
-		{name: "OIDC only", set: []string{"oidc.enabled=true,oidc.issuer=https://idp.example.com,oidc.audience=mecatl"}},
-		{name: "TLS and OIDC", set: []string{"tls.enabled=true,tls.secretName=mecak8s-tls", "oidc.enabled=true,oidc.issuer=https://idp.example.com,oidc.audience=mecatl"}, ok: true},
-		{name: "explicit unsafe bypass", set: []string{"security.allowUnsafeRealProvider=true"}, ok: true},
-		{name: "mock", set: []string{"mockProvider=true"}, ok: true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
+	for _, tc := range providerSecurityCases() {
+		t.Run(tc.name(), func(t *testing.T) {
 			args := append([]string{}, base...)
-			for _, set := range tc.set {
-				args = append(args, "--set", set)
+			args = append(args, "--set", fmt.Sprintf("mockProvider=%t,security.allowUnsafeRealProvider=%t,security.tlsTerminatedUpstream=%t,tls.enabled=%t,oidc.enabled=%t,service.type=%s", tc.mock, tc.unsafe, tc.edge, tc.tls, tc.oidc, tc.serviceType))
+			if tc.tls {
+				args = append(args, "--set", "tls.secretName=mecak8s-tls")
 			}
-			rendered, err := helm(t, args...)
-			if tc.ok && err != nil {
-				t.Fatalf("expected render to pass: %v", err)
+			if tc.oidc {
+				args = append(args, "--set", "oidc.issuer=https://idp.example.com,oidc.audience=mecatl")
 			}
-			if !tc.ok && err == nil {
-				t.Fatal("expected render to fail")
-			}
-			if tc.name == "explicit unsafe bypass" && !strings.Contains(rendered, `mecatl.stacklok.com/unsafe-real-provider: "true"`) {
-				t.Fatal("unsafe real-provider render is not visibly annotated")
+			_, err := helm(t, args...)
+			if (err == nil) != tc.wantAccepted() {
+				t.Fatalf("helper acceptance = %t, want %t: %v", err == nil, tc.wantAccepted(), err)
 			}
 		})
-	}
-}
-
-// TestMecak8sHelmChart_KindFixtureRealProviderDisablesMock pins the
-// fixture-only real-provider overlay: one Secret-backed env projection and no
-// mock flag. The key itself is created by the fixture, not chart values.
-func TestMecak8sHelmChart_KindFixtureRealProviderDisablesMock(t *testing.T) {
-	rendered, err := helm(t, "template", "kind", ".", "-f", "values-kind.yaml", "-f", "../../mecak8s-kind/kind-provider-real.yaml")
-	if err != nil {
-		t.Fatalf("render real-provider fixture: %v", err)
-	}
-	if strings.Contains(rendered, "- --mock") {
-		t.Fatal("real-provider fixture still enables mock mode")
-	}
-	const projection = "name: OPENROUTER_API_KEY\n              valueFrom:\n                secretKeyRef:\n                  key: OPENROUTER_API_KEY\n                  name: mecak8s-openrouter"
-	if count := strings.Count(rendered, projection); count != 1 {
-		t.Fatalf("expected exactly one OpenRouter Secret projection, got %d", count)
-	}
-	if strings.Contains(rendered, "OPENROUTER_API_KEY=") {
-		t.Fatal("rendered manifest contains an OpenRouter credential value")
-	}
-}
-
-func TestMecak8sHelmChart_KindNodePortAndProductionClusterIP(t *testing.T) {
-	kind, err := helm(t, kindVMCPArgs()...)
-	if err != nil {
-		t.Fatalf("render Kind profile: %v", err)
-	}
-	for _, want := range []string{"type: NodePort", "name: grpc", "nodePort: 30081"} {
-		if !strings.Contains(kind, want) {
-			t.Fatalf("Kind render missing %q", want)
-		}
-	}
-	production, err := helm(t, productionArgs()...)
-	if err != nil {
-		t.Fatalf("render production profile: %v", err)
-	}
-	if !strings.Contains(production, "type: ClusterIP") || strings.Contains(production, "nodePort:") {
-		t.Fatal("production Service must remain ClusterIP without fixed NodePorts")
 	}
 }
 

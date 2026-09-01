@@ -128,13 +128,14 @@ and new roots before removing the old root.
 
 Helm chart 0.3.0 has three explicit real-provider postures: in-pod TLS + OIDC;
 edge-terminated TLS + OIDC (`security.tlsTerminatedUpstream`, pod TLS off for a
-ClusterIP h2c backend); and the visibly unsafe local/trusted-mesh bypass. The edge
-setting is an operator attestation, not chart enforcement: gateway TLS must preserve
-the original Authorization bearer, never use forwarded identity authentication, limit
-plaintext access to the gateway/mesh, and publish a `GRPCRoute` only (not drain or
-health endpoints). The chart intentionally creates no Gateway, Route, Certificate, or
-general NetworkPolicy; `BackendTLSPolicy` or in-pod TLS supplies re-encryption.
-Changing pod TLS to h2c requires blue-green or maintenance cutover. Empty provider/model
+ClusterIP h2c backend); and the visibly unsafe local/trusted-mesh bypass. The gate is
+enforced twice and independently — `values.schema.json` and the
+`mecak8s.validateProviderSecurity` helper — so a `--skip-schema-validation` install
+still fails closed. The edge value is an operator attestation the chart cannot verify;
+the operator contract and its cleartext-bearer-token exposure are ADR 0278's.
+Chart-owned annotations (`mecatl.stacklok.com/unsafe-real-provider`,
+`.../tls-terminated-upstream`) are `omit`-ed from `podAnnotations` before merge, so a
+release cannot forge or clear its own posture stamp. Empty provider/model
 and null token ceilings emit no flags; explicit ceilings are positive. Scheduling controls
 are empty by default and map directly to pod-spec topology spread, affinity, node selector,
 and toleration fields. The comprehensive production fixtures pin external verified Redis,

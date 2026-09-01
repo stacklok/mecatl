@@ -186,15 +186,9 @@ mecak8s --redis-url redis.example:6379 --redis-tls          # multi-replica, tic
 mecated serve --store-dir ./state --no-scheduler                  # opt out (manual management still works)
 ```
 
-For the mecak8s Helm chart, real-provider deployments have three postures: in-pod TLS
-plus OIDC; edge-terminated TLS plus OIDC (`security.tlsTerminatedUpstream=true`, pod
-TLS off for a ClusterIP-only h2c backend); or the explicit unsafe local/trusted-mesh
-bypass. Edge termination is an operator-owned attestation, not chart enforcement:
-preserve the original Authorization bearer, never authenticate with forwarded identity
-headers, restrict the backend to the gateway/mesh, and expose a `GRPCRoute` only (never
-the drain or health endpoints). Use `BackendTLSPolicy` or in-pod TLS for re-encryption;
-changing pod TLS to h2c requires blue-green or maintenance cutover. See
-[ADR 0278](adr/0278-mecak8s-edge-terminated-tls.md).
+The mecak8s Helm chart offers three secure real-provider transport postures — in-pod
+TLS, operator-attested edge-terminated TLS, and the explicit unsafe bypass. Picking one
+is [the mecak8s guide's](usage/mecak8s.md) job, not this page's.
 
 Flags:
 

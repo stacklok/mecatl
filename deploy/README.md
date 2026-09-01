@@ -100,18 +100,16 @@ static base), `allowPrivilegeEscalation: false`, `readOnlyRootFilesystem: true`,
 
 ## Caller identity (OIDC) — the opt-in chart values
 
-`deploy/helm/mecak8s/` has three explicit real-provider postures: in-pod TLS plus
+`deploy/helm/mecak8s/` treats `mockProvider: false` as a real-provider deployment and
+fails closed unless the release picks one of three explicit postures: in-pod TLS plus
 OIDC; edge-terminated TLS (`security.tlsTerminatedUpstream=true`, `tls.enabled=false`,
-OIDC, and a `ClusterIP` Service); and the conspicuous unsafe bypass. The upstream value
-is an attestation, not chart enforcement. Edge mode exposes an h2c backend only; the
-operator must own gateway TLS, preserve the original `Authorization: Bearer` token (not
-substitute forwarded-identity authentication), restrict plaintext backend access to the
-gateway or mesh, and expose a `GRPCRoute` only—not `/drain`, `/healthz`, or `/readyz`.
-The chart intentionally creates no Gateway, Route, Certificate, or general
-NetworkPolicy; use an operator-owned `BackendTLSPolicy` or in-pod TLS when gateway-to-pod
-re-encryption is required. Setting both in-pod TLS and the upstream attestation is valid.
-Move an existing pod-TLS release to h2c with a blue-green or maintenance cutover, not an
-assumed-safe rolling update. See [ADR 0278](../docs/adr/0278-mecak8s-edge-terminated-tls.md).
+OIDC, and a `ClusterIP` Service); or the conspicuous unsafe bypass
+(`security.allowUnsafeRealProvider=true`). TLS encrypts the server transport; OIDC
+authenticates callers, and neither substitutes for the other. Edge mode leaves an h2c
+backend whose caller bearer tokens cross the pod network in cleartext — restricting
+reachability to the gateway or mesh is the control that matters, and the chart ships no
+NetworkPolicy to do it. The full operator contract, and what the chart deliberately does
+not create, is [ADR 0278](../docs/adr/0278-mecak8s-edge-terminated-tls.md).
 
 The `oidc.*` values turn on **caller identity and
 ownership isolation** for the mecak8s agent: a real IdP authenticates each

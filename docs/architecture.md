@@ -621,15 +621,7 @@ never force-closes a generation still held by an iterator or migration lock, and
 `Close` cannot stall a swap. Credential targets must resolve to regular files. The reload-worker
 join is separately bounded after watcher close and cancellation; any candidate completing after a
 timeout is rejected and closed by the shut generation manager. Credential retries use capped
-jitter and restart at attempt one on a newer projection event. For Helm secure
-real-provider deployments, the three postures are in-pod TLS + OIDC, an asserted
-operator-owned edge TLS + OIDC, or the explicit unsafe bypass. Edge h2c is
-ClusterIP-only; the operator must preserve the original Authorization bearer, reject
-forwarded identity headers, limit backend access to the gateway/mesh, and publish a
-`GRPCRoute` only (never the drain or health endpoints). The upstream setting is an
-attestation, not chart enforcement. The chart ships neither Gateway/Route/Certificate
-nor a general NetworkPolicy; `BackendTLSPolicy` or in-pod TLS provides re-encryption,
-and changing pod TLS to h2c needs blue-green or maintenance cutover.
+jitter and restart at attempt one on a newer projection event.
 Redis
 metadata paging and retention are zero-load and work-bounded after index publication; the
 retention worker is owned by `app.Build`, whose idempotent close cancels and joins any
@@ -664,6 +656,9 @@ or the `preStop` `httpGet /drain` fires; **in-flight runs are cancelled, not dra
 multi-minute LLM turn cannot survive a rolling update within
 `terminationGracePeriodSeconds: 60`); the pod is disposable, the session is not — it is
 `Recover`-able on the successor (issue #51) from the Redis snapshot + durable event log.
+Its Helm chart offers three secure real-provider transport postures — in-pod TLS, an
+operator-attested edge-terminated TLS boundary, and the explicit unsafe bypass —
+detailed in [deployment and hardening](architecture/deployment-and-hardening.md).
 See `docs/adr/0048-mecak8s.md`.
 
 Two deliberate cycle-breaks worth noting, documented in code:

@@ -88,22 +88,23 @@ all identical to `mecated`'s (see §3).
 
 #### Production Helm chart (`deploy/helm/mecak8s/`)
 
-The chart has three explicit postures: **in-pod TLS** (`tls.enabled=true` plus
-OIDC); **edge-terminated TLS** (`security.tlsTerminatedUpstream=true` plus OIDC,
-with `tls.enabled=false` selecting a ClusterIP-only plaintext h2c backend); and the
-explicit **unsafe bypass** (`security.allowUnsafeRealProvider=true`) for local or
-trusted-mesh deployments. `tlsTerminatedUpstream` is an operator attestation, not
-chart enforcement: the chart cannot verify gateway TLS, gateway-only reachability,
-or token forwarding. The edge gateway must forward the original `Authorization:
-Bearer` token—never authenticate with a forwarded identity header—and expose a
-`GRPCRoute` only; do not public-route the HTTP drain or health endpoints. The chart
-creates no Gateway, Route, Certificate, or general NetworkPolicy. A
-`BackendTLSPolicy` or in-pod TLS provides gateway-to-pod re-encryption; setting both
-in-pod TLS and `tlsTerminatedUpstream=true` is valid and retains the upstream
-attestation. Changing an existing pod-TLS release to h2c needs blue-green or a
-maintenance cutover, not an assumed-safe rolling update. The unsafe bypass stamps
-`mecatl.stacklok.com/unsafe-real-provider: "true"`; a secure upstream attestation
-stamps `mecatl.stacklok.com/tls-terminated-upstream: "true"`.
+A real-provider install (`mockProvider: false`) has three explicit postures.
+**In-pod TLS** is `tls.enabled=true` plus OIDC.
+**Edge-terminated TLS** is `security.tlsTerminatedUpstream=true` plus OIDC, with `tls.enabled=false` selecting a ClusterIP-only plaintext h2c backend.
+The **unsafe bypass** is `security.allowUnsafeRealProvider=true`, for local or trusted-mesh deployments.
+Setting both in-pod TLS and `tlsTerminatedUpstream=true` is valid and keeps the upstream attestation.
+The unsafe bypass stamps the pod `mecatl.stacklok.com/unsafe-real-provider: "true"`; a secure upstream attestation stamps `mecatl.stacklok.com/tls-terminated-upstream: "true"`.
+Neither stamp can be forged or cleared through `podAnnotations`.
+
+Edge mode's cost is concrete: on an h2c backend the caller's `Authorization: Bearer` token crosses the pod network in cleartext.
+Any workload that can reach the Service ClusterIP can read that token and replay it as the caller, and the chart ships no NetworkPolicy, so by default every pod in the cluster can reach it.
+Admitting only the gateway's pods — by NetworkPolicy or an mTLS mesh — is therefore the load-bearing control in this posture, not optional hardening.
+`tlsTerminatedUpstream` is an attestation the chart cannot verify: it checks neither gateway TLS, nor gateway-only reachability, nor token forwarding.
+The gateway must forward the original bearer token rather than authenticate with a forwarded-identity header, and must expose a `GRPCRoute` only — never public-route the HTTP drain or health endpoints.
+The chart deliberately creates no Gateway, Route, Certificate, or general NetworkPolicy.
+Use an operator-owned `BackendTLSPolicy` or in-pod TLS where gateway-to-pod re-encryption is required.
+Move an existing pod-TLS release to h2c with a blue-green or maintenance cutover, not an assumed-safe rolling update.
+See [ADR 0278](../adr/0278-mecak8s-edge-terminated-tls.md).
 
 Leave `redis.caKey` empty to select system-trust TLS.
 This option mounts no Secret unless an ACL key is set.

@@ -36,15 +36,13 @@ and `cmd/mecated` wires the knobs:
   the unchanged post-validation `(issuer, subject)` limiter.
 - **Health** — HTTP `/healthz` (liveness) + `/readyz` (readiness) mounted outside
   auth/rate-limit, plus standard `grpc_health_v1` `SERVING` (`internal/adapter/server/health.go`).
-- **mecak8s edge TLS termination** — its Helm chart accepts secure real-provider
-  in-pod TLS + OIDC, an asserted gateway TLS + OIDC boundary, or the explicit unsafe
-  bypass. Edge h2c is ClusterIP-only; the operator must restrict it to the gateway/mesh,
-  forward the original Authorization bearer instead of a forwarded identity, and expose
-  a `GRPCRoute` only (not `/drain`, `/healthz`, or `/readyz`). The upstream setting is
-  an attestation, not chart enforcement. The chart intentionally creates no Gateway,
-  Route, Certificate, or general NetworkPolicy. Use a `BackendTLSPolicy` or in-pod TLS
-  for re-encryption, and use blue-green or maintenance cutover when changing pod TLS to
-  h2c ([ADR 0278](../adr/0278-mecak8s-edge-terminated-tls.md)).
+- **mecak8s secure real-provider transport** — three postures: in-pod TLS + OIDC,
+  edge-terminated TLS + OIDC (`security.tlsTerminatedUpstream=true`, ClusterIP-only h2c),
+  and the explicit unsafe bypass. The upstream value is an operator attestation the chart
+  cannot verify, and edge mode puts caller bearer tokens on the pod network in cleartext:
+  restricting backend reachability to the gateway or mesh is the load-bearing control,
+  and the chart ships no NetworkPolicy to do it. Full operator contract in
+  [ADR 0278](../adr/0278-mecak8s-edge-terminated-tls.md).
 - **Graceful shutdown** — gRPC `GracefulStop` + HTTP `Shutdown`.
 - **Daemon config file (`daemon.yaml`, ADR 0088)** — the serve-time topology
   slice (gRPC/HTTP/metrics listen addresses, TLS cert/key/CA paths,

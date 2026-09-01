@@ -51,6 +51,15 @@ clear, auditable TLS termination boundary. The chart cannot verify bearer forwar
 gateway-only reachability, or gateway configuration, so those remain operator
 responsibilities.
 
+Edge mode is genuinely weaker than in-pod TLS, and the specific loss is worth naming:
+on an h2c backend the caller's `Authorization: Bearer` token crosses the pod network in
+cleartext. Any workload that can reach the Service ClusterIP can read it and then replay
+it as that caller. The chart ships no NetworkPolicy, so by default every pod in the
+cluster can reach it. Restricting that reachability — a NetworkPolicy admitting only the
+gateway's pods, or an mTLS mesh — is therefore the load-bearing control in this posture,
+not an optional hardening step. Where the pod network is not trusted for bearer tokens,
+use in-pod TLS or a `BackendTLSPolicy`.
+
 ## See also
 
 - [ADR 0240](./0240-mecak8s-credential-reload-and-chart-security.md)

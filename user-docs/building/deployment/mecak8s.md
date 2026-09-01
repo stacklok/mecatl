@@ -239,19 +239,22 @@ Set a credentials Secret reference when a configured key needs reading.
 The image defaults to `v<chart-version>`.
 This default keeps ranged Helm upgrades aligned with released images.
 Set a signed release tag or digest only to override the default.
-A real-provider deployment (`mockProvider: false`) has three explicit postures:
-in-pod TLS with OIDC; edge-terminated TLS with `security.tlsTerminatedUpstream=true`,
-OIDC, and `tls.enabled=false` for a `ClusterIP` plaintext h2c backend; or the explicit
-unsafe bypass. The upstream value is an attestation, not chart enforcement. The edge
-gateway must restrict backend access to the gateway or mesh, forward the original
-`Authorization: Bearer` token rather than use forwarded-identity authentication, and
-publish a `GRPCRoute` only—never public-route `/drain`, `/healthz`, or `/readyz`.
-The chart creates no Gateway, Route, Certificate, or general NetworkPolicy; use an
-operator-owned `BackendTLSPolicy` or in-pod TLS for gateway-to-pod re-encryption.
-Setting both in-pod TLS and the upstream attestation is valid. Change an existing
-pod-TLS release to h2c through a blue-green or maintenance cutover, not an
-assumed-safe rolling update. The bypass annotates the pod as unsafe; a secure upstream
-attestation is annotated as TLS-terminated-upstream.
+A real-provider deployment (`mockProvider: false`) has three explicit postures.
+In-pod TLS with OIDC.
+Edge-terminated TLS with `security.tlsTerminatedUpstream=true`, OIDC, and `tls.enabled=false` for a `ClusterIP` plaintext h2c backend.
+Or the explicit unsafe bypass.
+Setting both in-pod TLS and the upstream attestation is valid.
+The bypass annotates the pod as unsafe; a secure upstream attestation is annotated as TLS-terminated-upstream, and neither annotation can be set through `podAnnotations`.
+
+Understand what edge mode costs before choosing it.
+On an h2c backend the caller's `Authorization: Bearer` token crosses the pod network in cleartext.
+Any workload that can reach the Service ClusterIP can read that token and replay it as the caller.
+The chart ships no NetworkPolicy, so by default every pod in the cluster can reach it.
+Admitting only the gateway's pods — by NetworkPolicy or an mTLS mesh — is the load-bearing control here, not optional hardening.
+The upstream value is an attestation, not chart enforcement: nothing in the chart verifies gateway TLS, reachability, or token forwarding.
+The gateway must forward the original bearer token rather than use forwarded-identity authentication, and publish a `GRPCRoute` only—never public-route `/drain`, `/healthz`, or `/readyz`.
+The chart creates no Gateway, Route, or Certificate either; use an operator-owned `BackendTLSPolicy` or in-pod TLS for gateway-to-pod re-encryption.
+Change an existing pod-TLS release to h2c through a blue-green or maintenance cutover, not an assumed-safe rolling update.
 The chart retains two replicas, a PDB, rolling updates, restricted pod security, bounded resources, dynamic probes, and namespaced Lease RBAC.
 The chart creates no agent PVC and ships no general NetworkPolicy.
 The cluster must provide network isolation because agent egress depends on operator-selected endpoints.

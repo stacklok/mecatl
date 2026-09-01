@@ -171,6 +171,19 @@
   "allOf": [
     {
       "if": {
+        "required": ["mockProvider"],
+        "properties": {"mockProvider": {"const": true}}
+      },
+      "then": {
+        "properties": {
+          "security": {
+            "properties": {"tlsTerminatedUpstream": {"const": false}}
+          }
+        }
+      }
+    },
+    {
+      "if": {
         "required": ["mockProvider", "security"],
         "properties": {
           "mockProvider": {"const": false},
