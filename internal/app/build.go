@@ -2844,7 +2844,7 @@ func sessionEngineFactory(
 		// tool it cannot call).
 		deps.PromptConfig = applySchedulePosture(deps.PromptConfig, scheduleManagerPresent(assets))
 		deps.PromptConfig = applyDiagnosticsPosture(deps.PromptConfig)
-		deps.PromptConfig = applyLearningPosture(deps.PromptConfig, learningCfg.LearningMode, learningCfg.SkillActivationPolicy)
+		deps.PromptConfig = applyLearningPosture(deps.PromptConfig, learningCfg.LearningMode, learningCfg.SkillActivationPolicy, learningCfg.automaticAdmissionLedger)
 		// MODEL-VISIBLE no-FS posture (ADR 0070, the #40 pattern): tell the model up
 		// front there is no filesystem — and stop the prompt <env> claiming the
 		// SERVER's cwd/shell/git state, none of which this session can touch. The
@@ -3723,7 +3723,7 @@ func buildEngine(ctx context.Context, cfg Config, reg *providerRegistry, provide
 	// note (the model is never told about a tool it cannot call).
 	deps.PromptConfig = applySchedulePosture(deps.PromptConfig, scheduleManagerPresent(assets))
 	deps.PromptConfig = applyDiagnosticsPosture(deps.PromptConfig)
-	deps.PromptConfig = applyLearningPosture(deps.PromptConfig, cfg.LearningMode, cfg.SkillActivationPolicy)
+	deps.PromptConfig = applyLearningPosture(deps.PromptConfig, cfg.LearningMode, cfg.SkillActivationPolicy, assets.automaticAdmissionLedger)
 	// The shell-less default-FS posture is NOT baked into the shared engine's
 	// prompt here: it is truthed per-request against the LIVE tool.Environment in
 	// engine/agent.buildRequest (issue #462 review). The shared engine's
@@ -7779,9 +7779,17 @@ func applyDiagnosticsPosture(pc prompt.Config) prompt.Config {
 	return pc
 }
 
-const learningAutoPostureNote = "AUTOMATIC LEARNED-SKILL POLICY: When the user explicitly asks you to learn a reusable procedure, perform and verify the requested workflow normally; completed-trajectory learning materializes the evidence-backed skill afterward. Do not call SkillDraft as an activation shortcut: direct SkillDraft output remains inactive. Automatic activation never grants new tools or capabilities; it only publishes a validated body into the existing Skill catalog."
+const (
+	learningAutoPostureNote = "AUTOMATIC LEARNED-SKILL POLICY: When the user explicitly asks you to learn a reusable procedure, perform and verify the requested workflow normally; completed-trajectory learning materializes the evidence-backed skill afterward. Do not call SkillDraft as an activation shortcut: direct SkillDraft output remains inactive. Automatic activation never grants new tools or capabilities; it only publishes a validated body into the existing Skill catalog."
+	// learningAutomaticProcessLocalPostureNote retains ADR-0114's limitation whenever
+	// composition did not select a healthy durable admission ledger.
+	learningAutomaticProcessLocalPostureNote = " Automatic admission remains limited to this process under ADR-0114; do not claim global count, token, cooldown, or deduplication bounds."
+	// learningAutomaticGlobalPostureNote is emitted only after composition has selected
+	// a durable ledger, which is the authority for these automatic controls.
+	learningAutomaticGlobalPostureNote = " Automatic admission has durable global count, token, cooldown, and deduplication bounds."
+)
 
-func applyLearningPosture(pc prompt.Config, mode learning.Mode, activation learning.SkillActivationPolicy) prompt.Config {
+func applyLearningPosture(pc prompt.Config, mode learning.Mode, activation learning.SkillActivationPolicy, ledger learning.AutomaticAdmissionLedger) prompt.Config {
 	if mode != learning.Auto {
 		return pc
 	}
@@ -7792,7 +7800,11 @@ func applyLearningPosture(pc prompt.Config, mode learning.Mode, activation learn
 	if activation.Effective() == learning.SkillActivationEvaluated {
 		assurance = " Under activation=evaluated, publication requires a trusted evaluator PASS; ABSTAIN remains staged and FAIL is rejected."
 	}
-	pc.Role += "\n\n" + learningAutoPostureNote + assurance
+	capability := learningAutomaticProcessLocalPostureNote
+	if ledger != nil {
+		capability = learningAutomaticGlobalPostureNote
+	}
+	pc.Role += "\n\n" + learningAutoPostureNote + capability + assurance
 	return pc
 }
 

@@ -99,8 +99,11 @@ Forget is floor-Ask. All are config-overridable. Completed-trajectory reflection
 controlled by `learning.mode` (`off` by default): Off attaches no automatic observer,
 Review stages bounded evidence-backed proposals without a memory write, and Auto stages
 through the same repository before conservatively promoting eligible non-conflicting
-facts with source-session attribution. Explicit reflection remains available in Off via
-a lazy path. Project candidates are staged only for the exact admitted configured root.
+facts with source-session attribution. Standard non-off composition selects a durable
+automatic-admission ledger, so global count/token bounds, cooldown, and deduplication
+are advertised only after that ledger is successfully selected. An unwired or
+unhealthy ledger retains ADR-0114's process-local limitation and is never presented
+as globally bounded. Explicit reflection remains available in Off via a lazy path. Project candidates are staged only for the exact admitted configured root.
 Proposal detail re-checks source ownership and evidence digests and exposes only a bounded,
 redacted canonical preview before approval. Consolidation is independently maintained: automatic schedules remain off by default and
 retire only byte-identical duplicates through the local atomic operation. Manual `/dream`

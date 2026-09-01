@@ -18,9 +18,13 @@ reflection provider and proposal persistence can be built. It is **off by
 default**. The engine can also be embedded with the learning pipeline configured
 by the host.
 
-The feature is process-local for admission budgets and coordination. It can use
-project memory and the cross-project user model, but those stores and their
-lifecycle capabilities must be configured separately.
+The selected admission ledger determines the scope of automatic bounds. Standard
+non-off application configuration selects a durable ledger, so its count and token
+budgets, cooldown, and deduplication are global across cooperating processes. An
+unwired embedding or unhealthy/absent durable ledger retains [ADR-0114's](https://github.com/stacklok/mecatl/blob/main/docs/adr/0114-configurable-learning-trigger-policy.md)
+process-local limitation and must not claim global automatic bounds. Project memory
+and the cross-project user model, and their lifecycle capabilities, must still be
+configured separately.
 
 ## Learning modes
 
@@ -85,12 +89,14 @@ startup sweep.
 
 ## Budgets and safety
 
-Automatic reflection uses sliding, process-local reservations. The limits under
-`learning.automatic` bound reflection count and tokens globally and per
-principal. The time window must be between one minute and 24 hours. A reflection
-that fails, times out, or abstains consumes its reservation; a queue-full
-admission does not. The duplicate cache, cooldowns, and reservations reset when
-the process restarts, and multiple replicas have separate budgets.
+Automatic reflection reserves count and tokens through the selected admission
+ledger. In the standard non-off application configuration, the durable ledger makes
+those limits, cooldown, and deduplication global across cooperating processes. If a
+durable ledger is absent or unhealthy, the capability is limited to ADR-0114's
+process-local reservations: windows reset on restart and multiple replicas can each
+spend their own budget. A reflection that fails, times out, or abstains consumes its
+reservation; a queue-full admission does not. The time window must be between one
+minute and 24 hours.
 
 The reflection request is bounded and uses the selected reflection model. Raw
 provider errors are not persisted or logged. Candidates retain enough provenance

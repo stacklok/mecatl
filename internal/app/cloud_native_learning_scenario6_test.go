@@ -4,6 +4,7 @@ import (
 	"context"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -11,11 +12,17 @@ import (
 	"github.com/stacklok/mecatl/engine/adapter/memmemory"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
+	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
+	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/learning"
+	"github.com/stacklok/mecatl/engine/port"
+	"github.com/stacklok/mecatl/engine/prompt"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/internal/adapter/attemptstore"
 	"github.com/stacklok/mecatl/internal/adapter/automaticstore"
+	"github.com/stacklok/mecatl/internal/adapter/hookexec"
 	"github.com/stacklok/mecatl/internal/adapter/reflectionstore"
+	"github.com/stacklok/mecatl/internal/adapter/server"
 )
 
 type reservationOrderAttemptRepository struct {
@@ -150,5 +157,50 @@ func TestCloudNativeLearning_Scenario6_WeightedAdmissionUsesAttemptLifecycle(t *
 	close(release)
 	if enqueueErr != nil || full.Disposition != reflectionQueueFull || reserveCalled {
 		t.Fatalf("capacity result=%+v err=%v reserve_called=%v; want queue_full before reservation/create", full, enqueueErr, reserveCalled)
+	}
+}
+
+func TestCloudNativeLearning_Scenario6_NoPrematureGlobalBoundClaim(t *testing.T) {
+	capture := func(t *testing.T, ledger learning.AutomaticAdmissionLedger) prompt.Layered {
+		t.Helper()
+		var captured prompt.Layered
+		provider := mockllm.NewWith([]mockllm.Option{
+			mockllm.WithRequestObserver(func(req port.LLMRequest) { captured = req.System }),
+		}, mockllm.TextTurn("ok"))
+		cfg := Config{Model: "gpt-5", LearningMode: learning.Auto,
+			operatorLearningMode: learning.Auto, operatorLearningSensitivity: learning.Balanced,
+			operatorSkillActivationPolicy: learning.SkillActivationValidated}
+		factory := sessionEngineFactory(cfg, regForTest(provider, providerOpenAI, cfg.Model), provider,
+			memstore.New(), permpolicy.NewPolicy(defaultRules(), nil), hookexec.New(nil), nil,
+			prompt.RootAssembler{}, catalogAssets{automaticAdmissionLedger: ledger}, nil)
+		result, err := factory(context.Background(), server.ProviderSelector{}, nil, server.ProfileDefault, "", session.ModeDefault)
+		if err != nil {
+			t.Fatalf("factory: %v", err)
+		}
+		defer func() { _ = result.Close() }()
+		run := result.Engine.Run(context.Background(), session.New("s", session.ModeDefault, "/ws", session.Limits{MaxTurns: 1}, time.Unix(1, 0)), memEnvironment("/ws"), agent.RunRequest{Text: "hi"})
+		for range run.Events() {
+		}
+		return captured
+	}
+
+	unwired := capture(t, nil)
+	if !strings.Contains(unwired.StablePrefix, learningAutomaticProcessLocalPostureNote) {
+		t.Fatalf("unwired StablePrefix = %q, want ADR-0114 process-local limitation", unwired.StablePrefix)
+	}
+	if strings.Contains(unwired.StablePrefix, learningAutomaticGlobalPostureNote) {
+		t.Fatalf("unwired StablePrefix claims global automatic bounds: %q", unwired.StablePrefix)
+	}
+
+	ledger, err := automaticstore.New(filepath.Join(t.TempDir(), "automatic"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	durable := capture(t, ledger)
+	if !strings.Contains(durable.StablePrefix, learningAutomaticGlobalPostureNote) {
+		t.Fatalf("durable-ledger StablePrefix = %q, want global automatic bounds", durable.StablePrefix)
+	}
+	if strings.Contains(durable.StablePrefix, learningAutomaticProcessLocalPostureNote) {
+		t.Fatalf("durable-ledger StablePrefix retains ADR-0114 process-local limitation: %q", durable.StablePrefix)
 	}
 }

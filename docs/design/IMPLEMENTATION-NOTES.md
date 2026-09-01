@@ -4304,7 +4304,10 @@ dedupe authority. `internal/adapter/grpcdriver/automaticledger.go` and
 clients with only bounded opaque metadata and closed safe error details. Both run the shared conformance
 suite. `internal/app/learningdriver.go` requires positive automatic-ledger capability whenever automatic
 learning is enabled and never falls back to local accounting; local composition places the ledger beside
-the durable attempt store.
+the durable attempt store. Capability/posture reporting distinguishes the durable explicit-attempt
+lifecycle from automatic bounds: it advertises global count/token/cooldown/deduplication only after a
+durable ledger is successfully selected. An unwired or unhealthy ledger retains ADR-0114's
+process-local limitation and is never presented as globally bounded.
 
 **Evaluated and validated agent-owned skills (#510; ADR 0111, superseded in part by ADR 0224):**
 `engine/adapter/skilllifecycle.Pipeline` is a state-aware, idempotent resume over
