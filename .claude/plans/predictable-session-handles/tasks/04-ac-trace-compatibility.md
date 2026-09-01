@@ -2,8 +2,8 @@
 id: 04-ac-trace-compatibility
 title: Restore session handle traceability aliases
 blocked_by: [01-handle-projection-presentation, 02-debug-handle-resolution, 03-command-help-and-docs]
-status: in-progress
-branch: ""
+status: done
+branch: "plan-predictable-session-handles/04-ac-trace-compatibility"
 worktree: ".scratch/worktrees/issue-922-task04"
 issue: "922"
 retries: 0
