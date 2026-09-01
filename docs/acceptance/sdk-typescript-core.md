@@ -1,10 +1,10 @@
 # TypeScript SDK core (M1) — acceptance plan
 
 **Phase:** capability — `@stacklok/mecatl` M1: foundation, codegen, and core runs
-**Status:** draft, 2026-09-01. Synthesised from the settled #821 design contract plus the transport decision recorded in ADR 0278.
+**Status:** in-progress, 2026-09-01. Synthesised from the settled #821 design contract plus the transport decision recorded in ADR 0278.
 **Issue:** [stacklok/mecatl#821](https://github.com/stacklok/mecatl/issues/821) (parent: [#761](https://github.com/stacklok/mecatl/issues/761)).
 **ADR:** [ADR-0278](../adr/0278-typescript-sdk-architecture.md) — Connect-ES v2 + protobuf-es v2, the injected-Transport seam, the in-repo pnpm/biome/vitest toolchain, and the in-part supersession of [ADR-0253](../adr/0253-sdk-mocking-testkit.md).
-**Accumulator branch:** `acc/sdk-typescript-core` (off `main`).
+**Accumulator / stack:** `sdk/10-architecture-adr` is the stack trunk (PR #908). Subsequent layers are `sdk/11`…`sdk/19` via `gh stack` (linear, one PR per scenario — the plan's 4–8 parallelism is serialised because a stack cannot fork).
 
 The smallest set of work that makes `@stacklok/mecatl` real: a scaffolded,
 CI-gated `sdk/typescript/` tree; committed protobuf-es generation for
