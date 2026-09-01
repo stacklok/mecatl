@@ -2,7 +2,7 @@
 id: 01-placement-foundation
 title: Provider-owned placement protocol and atomic binding
 blocked_by: []
-status: pending
+status: in-progress
 branch: ""
 worktree: ""
 issue: ""

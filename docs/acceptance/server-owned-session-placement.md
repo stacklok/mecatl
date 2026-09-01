@@ -1,7 +1,7 @@
 # Server-owned session placement — acceptance plan
 
 **Phase:** public placement capability redesign  
-**Status:** draft, 2026-09-01  
+**Status:** in-progress, 2026-09-01  
 **ADR:** [ADR 0280](../adr/0280-server-owned-session-placement.md)  
 **Accumulator branch:** `acc/server-owned-session-placement` (off `main`)
 
