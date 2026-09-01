@@ -2,7 +2,7 @@
 id: 02-durable-placement-state
 title: Placement-only session aggregate and snapshot persistence
 blocked_by: [01-placement-foundation]
-status: pending
+status: in-progress
 branch: ""
 worktree: ""
 issue: ""

@@ -2,9 +2,9 @@
 id: 01-placement-foundation
 title: Provider-owned placement protocol and atomic binding
 blocked_by: []
-status: in-progress
-branch: ""
-worktree: ""
+status: done
+branch: "plan-server-owned-session-placement/01-placement-foundation"
+worktree: ".scratch/worktrees/01-placement-foundation"
 issue: ""
 retries: 0
 last_error: ""
