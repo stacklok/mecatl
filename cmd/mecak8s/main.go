@@ -12,6 +12,7 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/slogdiag"
 	"github.com/stacklok/mecatl/internal/app"
 	"github.com/stacklok/mecatl/internal/buildinfo"
+	"github.com/stacklok/mecatl/internal/cliconfig"
 )
 
 func main() {
@@ -36,7 +37,7 @@ func run() error {
 		return err
 	}
 
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	logger := cliconfig.NewTextLogger(os.Stderr, cfg.logLevel, cfg.logLevelWarning)
 	// slog.SetDefault stays for the daemon: this is the DELIBERATE, PERMANENT
 	// third-party-slog bridge — a server's operational output belongs on
 	// stderr/journald. cmd/ mains are the only layer allowed to call

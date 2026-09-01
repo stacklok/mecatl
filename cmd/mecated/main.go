@@ -82,8 +82,10 @@ const defaultMetricsAddr = "127.0.0.1:9090"
 // addresses, TLS, auth, rate limiting, metrics, tracing) is serve-time state
 // owned by this binary.
 type config struct {
-	grpcAddr string
-	httpAddr string
+	logLevel        slog.Level
+	logLevelWarning string
+	grpcAddr        string
+	httpAddr        string
 	// grpcUnixSocket serves gRPC on a UNIX-domain socket INSTEAD of a TCP port
 	// (issue #821 Scenario 8) — what a locally spawned daemon wants: no port, and
 	// reachability governed by filesystem permission rather than by "any local
@@ -837,7 +839,7 @@ func run(mode commandMode, remaining []string) error {
 		return err
 	}
 
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	logger := cliconfig.NewTextLogger(os.Stderr, cfg.logLevel, cfg.logLevelWarning)
 	// slog.SetDefault stays for the daemon: this is the DELIBERATE, PERMANENT
 	// third-party-slog bridge — a server's operational output belongs on
 	// stderr/journald, so any ambient slog.Default() use (a transitive dependency, the
@@ -846,6 +848,8 @@ func run(mode commandMode, remaining []string) error {
 	// injected port.Diagnostics (ban-guarded). The TUI, by contrast, redirects the
 	// default to a FILE because it owns the alt-screen. See docs/adr/0020-diagnostics.md.
 	slog.SetDefault(logger)
+	// Diagnostics and ambient slog share this configured logger.
+	// The warning, if any, was emitted by the logger factory above.
 	// Diagnostics sink for the composition's build-once facts and the relocated
 	// operational logging. It wraps the SAME stderr/text/Info logger installed above,
 	// so the facts print identically — but flow through the injected port.Diagnostics
@@ -1587,6 +1591,8 @@ func parseFlagsModeOut(mode commandMode, argv []string, out io.Writer) (*flag.Fl
 
 	cwd, _ := os.Getwd()
 
+	logLevelFlags := cliconfig.RegisterLogLevelFlag(fs)
+
 	fs.StringVar(&cfg.grpcAddr, "grpc-addr", defaultGRPCAddr,
 		"gRPC listen address (defaults to loopback; set --auth-token and/or --tls-cert before binding non-loopback)")
 	fs.StringVar(&cfg.httpAddr, "http-addr", defaultHTTPAddr,
@@ -1792,6 +1798,10 @@ func parseFlagsModeOut(mode commandMode, argv []string, out io.Writer) (*flag.Fl
 		// the full real registration path via the --help-triggered ErrHelp path.
 		return fs, config{}, err
 	}
+
+	// Resolve the shared level after parsing so invalid values remain a
+	// non-fatal startup condition and can be warned about by the root logger.
+	cfg.logLevel, cfg.logLevelWarning = logLevelFlags.Resolve()
 
 	// --help-all was parsed as a normal flag; render and return ErrHelp (exit 0).
 	if cfg.helpAll {

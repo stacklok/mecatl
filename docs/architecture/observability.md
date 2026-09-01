@@ -28,7 +28,13 @@
   the audit (`ToolCallRecorder`) and the event stream (`EventSink`). `engine/` + `internal/`
   take this port and NEVER touch global slog; the `slogdiag` adapter is the only
   slog bridge and composition picks the sink per binary. The ban is `forbidigo`-
-  guarded. See `docs/adr/0020-diagnostics.md`.
+  guarded. See `docs/adr/0020-diagnostics.md`. The `mecated` and `mecak8s`
+  command roots share an exact `--log-level` flag (`debug`, `info`, `warn`, or
+  `error`; default `info`). Each root installs its configured stderr logger as
+  the global `slog` default and wraps that same logger with `slogdiag`, so
+  ambient library records and injected diagnostics obey one threshold. Invalid
+  values, including an explicitly empty value, fail soft to `info` and produce
+  one warning after logger installation.
 - **Telemetry** (`internal/adapter/telemetry`) — one adapter that implements
   **both** `port.EventSink` (deriving counters/gauges from the event stream) and
   `port.ToolCallRecorder` (per-tool counters + a latency histogram). It is built on the

@@ -94,7 +94,8 @@ var flagMetaByFlag = map[string]flagMeta{
 	"oidc-allow-private-https-issuer":    {group: groupSecurity, common: false, acp: acpExclude},
 	"oidc-ca-cert-file":                  {group: groupSecurity, common: false, acp: acpExclude},
 
-	// ── Observability (serve-only) ────────────────────────────────────────
+	// ── Observability (both) ────────────────────────────────────────────────
+	"log-level":                {group: groupObservability, common: true, acp: acpInclude},
 	"otlp-endpoint":            {group: groupObservability, common: false, acp: acpExclude},
 	"otlp-protocol":            {group: groupObservability, common: false, acp: acpExclude},
 	"otlp-insecure":            {group: groupObservability, common: false, acp: acpExclude},
@@ -270,6 +271,7 @@ var groupOrder = []string{
 	groupAgentTeams,
 	groupMCP,
 	groupServer,
+	groupObservability,
 }
 
 // commonFlagNames returns the set of flag names marked common and appropriate

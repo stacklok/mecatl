@@ -71,6 +71,8 @@ const gracefulStopTimeout = 30 * time.Second
 // knobs (listeners, TLS, auth, drain). It deliberately drops mecated's
 // telemetry/metrics/admin surface and its subcommands.
 type config struct {
+	logLevel        slog.Level
+	logLevelWarning string
 	// diagnostics is installed by run after the command root builds its operator
 	// sink; tests and alternate callers may leave it nil for a silent edge.
 	diagnostics            port.Diagnostics
@@ -265,6 +267,8 @@ func parseFlags(argv []string) (config, error) {
 	fs := flag.NewFlagSet("mecak8s", flag.ContinueOnError)
 	var cfg config
 
+	logLevelFlags := cliconfig.RegisterLogLevelFlag(fs)
+
 	fs.StringVar(&cfg.grpcAddr, "grpc-addr", defaultGRPCAddr,
 		"gRPC listen address (a pod binds 0.0.0.0; set --auth-token and/or --tls-cert for a non-mesh deployment)")
 	fs.StringVar(&cfg.httpAddr, "http-addr", defaultHTTPAddr,
@@ -407,6 +411,10 @@ func parseFlags(argv []string) (config, error) {
 	if err := fs.Parse(argv); err != nil {
 		return config{}, err
 	}
+
+	// Invalid log levels are fail-soft: retain Info and let the root logger
+	// report the single warning after it is installed.
+	cfg.logLevel, cfg.logLevelWarning = logLevelFlags.Resolve()
 
 	// Post-parse MCP finalize (issue #358): resolve the --mcp-server-insecure-http
 	// relaxations against the collected --mcp-server entries and run the deferred

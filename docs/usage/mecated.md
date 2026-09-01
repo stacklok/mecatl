@@ -13,6 +13,11 @@ $ export OPENAI_API_KEY=sk-...
 $ go run ./cmd/mecated serve --openai --workspace "$PWD"
 ```
 
+`--log-level` accepts the exact values `debug`, `info`, `warn`, and `error`
+(default `info`). The command root applies the same threshold to ambient `slog`
+records and injected diagnostics. An invalid value, including
+`--log-level=`, falls back to `info` and emits one warning.
+
 ### Getting help
 
 `mecated` provides progressive, mode-specific help:

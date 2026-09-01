@@ -290,8 +290,17 @@ The Redis Secret is mounted read-only with `defaultMode: 0440` and projects exac
 ### Mount trusted skills, agents, and rules
 
 The chart's `extraEnv`, `extraArgs`, `extraVolumes`, and `extraVolumeMounts`
-values can project an immutable ConfigMap as XDG configuration. Set
-`XDG_CONFIG_HOME` to the mount root, put files below
+values can project an immutable ConfigMap as XDG configuration. For example,
+set the shared logging threshold without changing the container image:
+
+```yaml
+extraArgs:
+  - --log-level=debug
+```
+
+`extraArgs` is appended to the `mecak8s` command line, so the same exact values
+(`debug`, `info`, `warn`, `error`) and fail-soft invalid-value behavior apply.
+Set `XDG_CONFIG_HOME` to the mount root, put files below
 `<root>/mecatl/{skills,agents,rules}`, and set `skills.autoDiscover: true`
 (default `false`) to discover skills from the standard XDG locations
 (`$XDG_CONFIG_HOME/mecatl/skills` or `~/.config/mecatl/skills`, plus

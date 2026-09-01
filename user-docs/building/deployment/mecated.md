@@ -60,6 +60,11 @@ mecated serve \
   --posture auto
 ```
 
+Set `--log-level` to one of the exact values `debug`, `info`, `warn`, or `error`
+(default `info`). The same threshold is used for ambient `slog` output and
+injected diagnostics. Invalid values, including `--log-level=`, fall back to
+`info` and emit one warning.
+
 `--store-dir` enables local JSONL persistence with an authoritative v2 current
 snapshot plus readable v1 history. The configured path and every ancestor must be
 physical non-symlink directories; on macOS, use the physical `/private/...` spelling
