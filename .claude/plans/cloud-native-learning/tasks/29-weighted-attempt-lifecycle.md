@@ -2,7 +2,7 @@
 id: 29-weighted-attempt-lifecycle
 title: Route weighted admission through the durable attempt worker
 blocked_by: [28-automatic-reservation-reconciliation]
-status: pending
+status: in-progress
 branch: ""
 worktree: ""
 issue: ""
