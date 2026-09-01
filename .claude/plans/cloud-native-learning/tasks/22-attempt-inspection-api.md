@@ -2,7 +2,7 @@
 id: 22-attempt-inspection-api
 title: Expose authorized bounded attempt get and list APIs
 blocked_by: [21-partition-publication-isolation]
-status: pending
+status: in-progress
 branch: ""
 worktree: ""
 issue: ""
