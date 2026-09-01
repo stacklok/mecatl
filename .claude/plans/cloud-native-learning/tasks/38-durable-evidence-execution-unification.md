@@ -2,7 +2,7 @@
 id: 38-durable-evidence-execution-unification
 title: Unify durable attempt execution on authoritative evidence
 blocked_by: [37-partitioned-attempt-quota-retention]
-status: in-progress
+status: done
 branch: plan-cloud-native-learning/38-durable-evidence-execution-unification
 worktree: .scratch/worktrees/38-durable-evidence-execution-unification
 issue: ""

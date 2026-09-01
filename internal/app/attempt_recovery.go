@@ -96,7 +96,6 @@ func finalizeUnavailableAttemptEvidence(ctx context.Context, repository learning
 		repository: repository,
 		partition:  item.Partition,
 		id:         item.Record.ID,
-		now:        time.Now,
 		evidence: func(context.Context, learning.AttemptRecord) (learning.AttemptFailureCode, error) {
 			return learning.FailureEvidenceUnavailable, nil
 		},

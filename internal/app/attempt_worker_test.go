@@ -336,7 +336,7 @@ func TestADR_0254_IncompleteTerminalEvidenceRemainsRetryable(t *testing.T) {
 	clock := &attemptWorkerClock{now: time.Unix(45, 0)}
 	repository, partition, created := newAttemptWorkerRecord(t, clock)
 	worker := attemptWorker{
-		repository: repository, partition: partition, id: created.ID, now: clock.Now,
+		repository: repository, partition: partition, id: created.ID,
 		evidence: func(context.Context, learning.AttemptRecord) (learning.AttemptFailureCode, error) {
 			return learning.FailureNone, errLearningEvidenceNotReady
 		},

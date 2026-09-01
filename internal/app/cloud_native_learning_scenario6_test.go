@@ -125,7 +125,7 @@ func TestCloudNativeLearning_Scenario6_WeightedAdmissionUsesAttemptLifecycle(t *
 		t.Fatal("weighted reflection observer was not built")
 	}
 	registry := regForTest(provider, providerOpenAI, cfg.Model)
-	recovery := newAttemptRecoveryLoop(ctx, orderedAttempts, 5*time.Millisecond, time.Now, func(recoveryCtx context.Context, item learning.AttemptWork) error {
+	recovery := newAttemptRecoveryLoop(ctx, orderedAttempts, 5*time.Millisecond, func(recoveryCtx context.Context, item learning.AttemptWork) error {
 		return recoverAttempt(recoveryCtx, cfg, registry, sources, events, orderedAttempts, proposals, catalogAssets{
 			userModelStore:       userMemory,
 			reflectionRepository: proposals,
