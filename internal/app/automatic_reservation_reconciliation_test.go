@@ -124,7 +124,7 @@ func TestADR_0254_AutomaticReservationsReconcileWithoutExceedingGlobalMaximum(t 
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err = attempts.Abandon(ctx, partition, record.ID, record.Version, record.CreatedAt.Add(time.Second)); err != nil {
+		if _, err = attempts.Abandon(ctx, partition, record.ID, record.Version); err != nil {
 			t.Fatal(err)
 		}
 		resolved, err := reconciler.reconcile(ctx, req.ID, &create)

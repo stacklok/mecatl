@@ -45,15 +45,15 @@ func TestAttemptRepositoryDriverDiscoversWorkAfterStartup(t *testing.T) {
 	}
 	want := learning.AttemptWorkPage{Work: []learning.AttemptWork{{Partition: partition, Record: validAttemptRecordFixture(t, now)}}, Next: learning.AttemptWorkCursor{Partition: partition, ID: "attempt-next"}}
 	backend := attemptRepositoryStub{discover: func(_ context.Context, query learning.AttemptWorkList) (learning.AttemptWorkPage, error) {
-		if !query.Now.Equal(now) || query.Limit != 7 {
-			t.Fatalf("DiscoverWork query = %+v, want now=%v limit=7", query, now)
+		if query.Limit != 7 {
+			t.Fatalf("DiscoverWork query = %+v, want limit=7", query)
 		}
 		return want, nil
 	}}
 	conn := dialBufconn(t, func(gs *grpc.Server) {
 		driverv1.RegisterAttemptRepositoryServiceServer(gs, NewAttemptRepositoryServer(backend))
 	})
-	got, err := NewAttemptRepository(conn).DiscoverWork(context.Background(), learning.AttemptWorkList{Now: now, Limit: 7})
+	got, err := NewAttemptRepository(conn).DiscoverWork(context.Background(), learning.AttemptWorkList{Limit: 7})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,6 +71,55 @@ func validAttemptRecordFixture(t *testing.T, now time.Time) learning.AttemptReco
 		t.Fatal(err)
 	}
 	return learning.AttemptRecord{ID: "attempt-discovery", Version: "opaque-v1", State: learning.AttemptQueued, Provenance: provenance, AttemptGeneration: 1, CreatedAt: now, UpdatedAt: now}
+}
+
+func TestADR_0259_RemoteClockSkewCannotTakeOverOrMutateExpiredClaim(t *testing.T) {
+	t.Parallel()
+	clock := &leaseFakeClock{t: time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)}
+	backend := memattempt.New(clock)
+	conn := dialBufconn(t, func(gs *grpc.Server) {
+		driverv1.RegisterAttemptRepositoryServiceServer(gs, NewAttemptRepositoryServer(backend))
+	})
+	repository := NewAttemptRepository(conn)
+	partition, err := learning.DeriveAttemptPartition("remote-skew")
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := repository.Create(context.Background(), partition, learning.AttemptCreate{
+		ID:         "attempt-remote-skew",
+		Provenance: validAttemptRecordFixture(t, clock.Now()).Provenance,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	running, staleClaim, err := repository.AcquireClaim(context.Background(), partition, created.ID, created.Version, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// A remote caller has no authority-time input with which to manufacture an
+	// early expiry. The backend clock still sees this claim as live.
+	if _, _, err = repository.AcquireClaim(context.Background(), partition, running.ID, running.Version, time.Minute); !errors.Is(err, learning.ErrAttemptClaimConflict) {
+		t.Fatalf("early takeover error = %v, want ErrAttemptClaimConflict", err)
+	}
+
+	clock.mu.Lock()
+	clock.t = staleClaim.ExpiresAt
+	clock.mu.Unlock()
+	if _, err = repository.Finalize(context.Background(), partition, running.ID, running.Version, staleClaim, learning.AttemptFinalization{
+		State: learning.AttemptCompleted, Outcome: learning.AttemptOutcomeSucceeded,
+	}); !errors.Is(err, learning.ErrAttemptClaimLost) {
+		t.Fatalf("post-expiry finalize error = %v, want ErrAttemptClaimLost", err)
+	}
+	successor, _, err := repository.AcquireClaim(context.Background(), partition, running.ID, running.Version, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = repository.Finalize(context.Background(), partition, successor.ID, successor.Version, staleClaim, learning.AttemptFinalization{
+		State: learning.AttemptCompleted, Outcome: learning.AttemptOutcomeSucceeded,
+	}); !errors.Is(err, learning.ErrAttemptClaimLost) {
+		t.Fatalf("stale claim against successor error = %v, want ErrAttemptClaimLost", err)
+	}
 }
 
 func TestAttemptRepositoryDriverConformance(t *testing.T) {
@@ -148,7 +197,7 @@ func TestAttemptWatchIsDeferred(t *testing.T) {
 
 	wantRPCs := []string{
 		"CreateAttempt", "GetAttempt", "ListAttempts", "DiscoverAttemptWork", "AcquireAttemptClaim", "RenewAttemptClaim", "CheckpointAttempt",
-		"ReleaseAttemptClaim", "FinalizeAttempt", "RetryAttempt", "AbandonAttempt", "DeleteAttempt", "DeleteTerminalAttemptsBefore",
+		"ReleaseAttemptClaim", "FinalizeAttempt", "RetryAttempt", "AbandonAttempt", "DeleteAttempt", "DeleteTerminalAttemptsOlderThan",
 	}
 	var gotRPCs []string
 	for _, line := range strings.Split(string(protocol), "\n") {

@@ -19,7 +19,7 @@ type attemptRecovery struct {
 	done   sync.WaitGroup
 }
 
-func newAttemptRecoveryLoop(parent context.Context, repository learning.AttemptRepository, interval time.Duration, now func() time.Time, process func(context.Context, learning.AttemptWork) error, reportDiscoveryError func(error)) *attemptRecovery {
+func newAttemptRecoveryLoop(parent context.Context, repository learning.AttemptRepository, interval time.Duration, process func(context.Context, learning.AttemptWork) error, reportDiscoveryError func(error)) *attemptRecovery {
 	if interval <= 0 {
 		interval = defaultAttemptDiscoveryInterval
 	}
@@ -38,7 +38,7 @@ func newAttemptRecoveryLoop(parent context.Context, repository learning.AttemptR
 				return
 			case <-timer.C:
 			}
-			page, err := repository.DiscoverWork(ctx, learning.AttemptWorkList{After: cursor, Now: now().UTC(), Limit: learning.MaxAttemptWorkBatch})
+			page, err := repository.DiscoverWork(ctx, learning.AttemptWorkList{After: cursor, Limit: learning.MaxAttemptWorkBatch})
 			if err != nil {
 				if !failedDiscovery && reportDiscoveryError != nil && !errors.Is(err, context.Canceled) {
 					reportDiscoveryError(err)
@@ -71,7 +71,7 @@ func startAttemptRecovery(parent context.Context, cfg Config, reg *providerRegis
 	if repository == nil || events == nil || proposals == nil {
 		return nil
 	}
-	recovery := newAttemptRecoveryLoop(parent, repository, defaultAttemptDiscoveryInterval, time.Now, func(ctx context.Context, item learning.AttemptWork) error {
+	recovery := newAttemptRecoveryLoop(parent, repository, defaultAttemptDiscoveryInterval, func(ctx context.Context, item learning.AttemptWork) error {
 		err := recoverAttempt(ctx, cfg, reg, sessions, events, repository, proposals, assets, item)
 		if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, errLearningEvidenceNotReady) && !errors.Is(err, learning.ErrAttemptClaimConflict) && !errors.Is(err, learning.ErrAttemptVersionConflict) {
 			cfg.diag().Log(ctx, port.LevelWarn, "durable learning attempt recovery failed", "attempt_id", item.Record.ID)
@@ -148,7 +148,6 @@ func recoverAttempt(ctx context.Context, cfg Config, reg *providerRegistry, sess
 		repository: repository,
 		partition:  item.Partition,
 		id:         item.Record.ID,
-		now:        time.Now,
 		evidence: func(_ context.Context, record learning.AttemptRecord) (learning.AttemptFailureCode, error) {
 			failure := load(record)
 			return failure, loadErr

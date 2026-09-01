@@ -132,11 +132,11 @@ func TestADR_0254_AttemptControlsRequirePrivateOwnerBinding(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	running, claim, err := repository.AcquireClaim(context.Background(), alicePartition, failed.ID, failed.Version, now, now.Add(time.Minute))
+	running, claim, err := repository.AcquireClaim(context.Background(), alicePartition, failed.ID, failed.Version, time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
-	failed, err = repository.Finalize(context.Background(), alicePartition, failed.ID, running.Version, claim, now, learning.AttemptFinalization{
+	failed, err = repository.Finalize(context.Background(), alicePartition, failed.ID, running.Version, claim, learning.AttemptFinalization{
 		State: learning.AttemptFailed, Outcome: learning.AttemptOutcomeFailed, FailureCode: learning.FailureUnavailable,
 	})
 	if err != nil {
@@ -209,7 +209,7 @@ func TestADR_0254_AttemptControlsRequirePrivateOwnerBinding(t *testing.T) {
 	}
 
 	claimed := createAttemptFixture(t, repository, "alice", "claimed")
-	claimed, _, err = repository.AcquireClaim(context.Background(), alicePartition, claimed.ID, claimed.Version, now, now.Add(time.Minute))
+	claimed, _, err = repository.AcquireClaim(context.Background(), alicePartition, claimed.ID, claimed.Version, time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -226,11 +226,11 @@ func TestADR_0254_AttemptControlsRequirePrivateOwnerBinding(t *testing.T) {
 		t.Fatal(err)
 	}
 	ownerlessFailed := createAttemptFixtureForPrincipal(t, repository, nil, "ownerless-failed")
-	ownerlessRunning, ownerlessClaim, err := repository.AcquireClaim(context.Background(), ownerlessPartition, ownerlessFailed.ID, ownerlessFailed.Version, now, now.Add(time.Minute))
+	ownerlessRunning, ownerlessClaim, err := repository.AcquireClaim(context.Background(), ownerlessPartition, ownerlessFailed.ID, ownerlessFailed.Version, time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
-	ownerlessFailed, err = repository.Finalize(context.Background(), ownerlessPartition, ownerlessFailed.ID, ownerlessRunning.Version, ownerlessClaim, now, learning.AttemptFinalization{
+	ownerlessFailed, err = repository.Finalize(context.Background(), ownerlessPartition, ownerlessFailed.ID, ownerlessRunning.Version, ownerlessClaim, learning.AttemptFinalization{
 		State: learning.AttemptFailed, Outcome: learning.AttemptOutcomeFailed, FailureCode: learning.FailureUnavailable,
 	})
 	if err != nil {
@@ -249,7 +249,7 @@ func TestADR_0254_AttemptControlsRequirePrivateOwnerBinding(t *testing.T) {
 		t.Fatalf("ownerless abandon = %#v, %v", ownerlessAbandoned, err)
 	}
 
-	grpcFailed := createFailedAttemptFixture(t, repository, "alice", "grpc", now)
+	grpcFailed := createFailedAttemptFixture(t, repository, "alice", "grpc")
 	grpcResponse, err := (&HarnessServer{svc: svc}).RetryLearningAttempt(alice, &mecatlv1.MutateLearningAttemptRequest{
 		Id: string(grpcFailed.ID), ExpectedVersion: string(grpcFailed.Version),
 	})
@@ -270,18 +270,18 @@ func TestADR_0254_AttemptControlsRequirePrivateOwnerBinding(t *testing.T) {
 	}
 }
 
-func createFailedAttemptFixture(t *testing.T, repository learning.AttemptRepository, subject, suffix string, now time.Time) learning.AttemptRecord {
+func createFailedAttemptFixture(t *testing.T, repository learning.AttemptRepository, subject, suffix string) learning.AttemptRecord {
 	t.Helper()
 	record := createAttemptFixture(t, repository, subject, suffix)
 	partition, err := learning.DeriveAttemptPartition(reflectionPrincipal(&session.Principal{Issuer: "https://issuer.example", Subject: subject}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	running, claim, err := repository.AcquireClaim(context.Background(), partition, record.ID, record.Version, now, now.Add(time.Minute))
+	running, claim, err := repository.AcquireClaim(context.Background(), partition, record.ID, record.Version, time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
-	record, err = repository.Finalize(context.Background(), partition, record.ID, running.Version, claim, now, learning.AttemptFinalization{
+	record, err = repository.Finalize(context.Background(), partition, record.ID, running.Version, claim, learning.AttemptFinalization{
 		State: learning.AttemptFailed, Outcome: learning.AttemptOutcomeFailed, FailureCode: learning.FailureUnavailable,
 	})
 	if err != nil {
@@ -298,16 +298,15 @@ func TestADR_0254_AttemptAPIIsContentFree(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	now := time.Now().UTC()
-	running, claim, err := repository.AcquireClaim(context.Background(), partition, record.ID, record.Version, now, now.Add(time.Minute))
+	running, claim, err := repository.AcquireClaim(context.Background(), partition, record.ID, record.Version, time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
-	running, err = repository.Checkpoint(context.Background(), partition, record.ID, running.Version, claim, now, learning.AttemptCheckpoint{Stage: learning.AttemptCheckpointProposalLinked, ProposalID: "proposal-safe-link"})
+	running, err = repository.Checkpoint(context.Background(), partition, record.ID, running.Version, claim, learning.AttemptCheckpoint{Stage: learning.AttemptCheckpointProposalLinked, ProposalID: "proposal-safe-link"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = repository.Checkpoint(context.Background(), partition, record.ID, running.Version, claim, now, learning.AttemptCheckpoint{Stage: learning.AttemptCheckpointSkillLinked, ProposalID: "proposal-safe-link", SkillID: "skill-safe-link"})
+	_, err = repository.Checkpoint(context.Background(), partition, record.ID, running.Version, claim, learning.AttemptCheckpoint{Stage: learning.AttemptCheckpointSkillLinked, ProposalID: "proposal-safe-link", SkillID: "skill-safe-link"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -423,18 +422,18 @@ func (r *ownerFirstAttemptRepository) List(ctx context.Context, partition learni
 	return r.AttemptRepository.List(ctx, partition, query)
 }
 
-func (r *ownerFirstAttemptRepository) Retry(ctx context.Context, partition learning.AttemptPartition, id learning.AttemptID, expected learning.AttemptVersion, now time.Time) (learning.AttemptRecord, error) {
+func (r *ownerFirstAttemptRepository) Retry(ctx context.Context, partition learning.AttemptPartition, id learning.AttemptID, expected learning.AttemptVersion) (learning.AttemptRecord, error) {
 	if !r.ownerResolved.Swap(false) {
 		return learning.AttemptRecord{}, errors.New("attempt repository reached before private owner binding")
 	}
-	return r.AttemptRepository.Retry(ctx, partition, id, expected, now)
+	return r.AttemptRepository.Retry(ctx, partition, id, expected)
 }
 
-func (r *ownerFirstAttemptRepository) Abandon(ctx context.Context, partition learning.AttemptPartition, id learning.AttemptID, expected learning.AttemptVersion, now time.Time) (learning.AttemptRecord, error) {
+func (r *ownerFirstAttemptRepository) Abandon(ctx context.Context, partition learning.AttemptPartition, id learning.AttemptID, expected learning.AttemptVersion) (learning.AttemptRecord, error) {
 	if !r.ownerResolved.Swap(false) {
 		return learning.AttemptRecord{}, errors.New("attempt repository reached before private owner binding")
 	}
-	return r.AttemptRepository.Abandon(ctx, partition, id, expected, now)
+	return r.AttemptRepository.Abandon(ctx, partition, id, expected)
 }
 
 type attemptRecordingDiagnostics struct{ entries []string }

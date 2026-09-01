@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"time"
 
 	"google.golang.org/protobuf/types/known/timestamppb"
 
@@ -117,15 +116,11 @@ func (s *Service) controlLearningAttempt(ctx context.Context, id, expectedVersio
 	if err != nil {
 		return nil, err
 	}
-	now := time.Now().UTC()
-	if s.cfg.Now != nil {
-		now = s.cfg.Now()
-	}
 	var record learning.AttemptRecord
 	if abandon {
-		record, err = s.cfg.Attempts.Abandon(ctx, partition, learning.AttemptID(id), learning.AttemptVersion(expectedVersion), now)
+		record, err = s.cfg.Attempts.Abandon(ctx, partition, learning.AttemptID(id), learning.AttemptVersion(expectedVersion))
 	} else {
-		record, err = s.cfg.Attempts.Retry(ctx, partition, learning.AttemptID(id), learning.AttemptVersion(expectedVersion), now)
+		record, err = s.cfg.Attempts.Retry(ctx, partition, learning.AttemptID(id), learning.AttemptVersion(expectedVersion))
 	}
 	if err != nil {
 		return nil, attemptServiceError(err)

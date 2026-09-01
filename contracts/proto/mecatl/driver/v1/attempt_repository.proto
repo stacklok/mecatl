@@ -33,7 +33,7 @@ service AttemptRepositoryService {
   rpc RetryAttempt(AttemptMutationRequest) returns (AttemptRecordResponse);
   rpc AbandonAttempt(AttemptMutationRequest) returns (AttemptRecordResponse);
   rpc DeleteAttempt(AttemptMutationRequest) returns (DeleteAttemptResponse);
-  rpc DeleteTerminalAttemptsBefore(DeleteTerminalAttemptsBeforeRequest) returns (DeleteTerminalAttemptsBeforeResponse);
+  rpc DeleteTerminalAttemptsOlderThan(DeleteTerminalAttemptsOlderThanRequest) returns (DeleteTerminalAttemptsOlderThanResponse);
 }
 
 enum AttemptErrorCode {
@@ -119,7 +119,7 @@ message AttemptWork {
 }
 
 message DiscoverAttemptWorkRequest {
-  google.protobuf.Timestamp now = 1 [(buf.validate.field).required = true];
+  reserved 1; // authority time is owned by the repository backend
   int32 limit = 2;
   string after_partition = 3 [(buf.validate.field).string.max_len = 128];
   string after_id = 4 [(buf.validate.field).string.max_len = 96];
@@ -135,7 +135,7 @@ message AttemptMutationRequest {
   string partition = 1 [(buf.validate.field).string.max_len = 128];
   string id = 2 [(buf.validate.field).string.max_len = 96];
   string expected_version = 3 [(buf.validate.field).string.max_len = 128];
-  google.protobuf.Timestamp now = 4 [(buf.validate.field).required = true];
+  reserved 4; // authority time is owned by the repository backend
 }
 
 message AttemptClaimMutationRequest {
@@ -143,8 +143,8 @@ message AttemptClaimMutationRequest {
   string id = 2 [(buf.validate.field).string.max_len = 96];
   string expected_version = 3 [(buf.validate.field).string.max_len = 128];
   AttemptClaim claim = 4;
-  google.protobuf.Timestamp now = 5 [(buf.validate.field).required = true];
-  google.protobuf.Timestamp expires_at = 6;
+  reserved 5, 6; // caller time and absolute expiry are never authoritative
+  int64 duration_millis = 7 [(buf.validate.field).int64 = {gt: 0, lte: 86400000}];
 }
 
 message CheckpointAttemptRequest {
@@ -161,10 +161,11 @@ message FinalizeAttemptRequest {
   string failure_code = 4 [(buf.validate.field).string.max_len = 32];
 }
 
-message DeleteTerminalAttemptsBeforeRequest {
+message DeleteTerminalAttemptsOlderThanRequest {
   string partition = 1 [(buf.validate.field).string.max_len = 128];
-  google.protobuf.Timestamp before = 2 [(buf.validate.field).required = true];
+  reserved 2; // absolute cutoff is derived from backend time
   int32 limit = 3;
+  int64 older_than_millis = 4 [(buf.validate.field).int64 = {gt: 0, lte: 315360000000}];
 }
 
 message AttemptRecordResponse {
@@ -178,6 +179,6 @@ message AttemptClaimResponse {
 
 message DeleteAttemptResponse {}
 
-message DeleteTerminalAttemptsBeforeResponse {
+message DeleteTerminalAttemptsOlderThanResponse {
   int32 deleted = 1;
 }

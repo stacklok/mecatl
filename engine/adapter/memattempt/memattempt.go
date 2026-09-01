@@ -131,11 +131,15 @@ func (s *Store) DiscoverWork(ctx context.Context, query learning.AttemptWorkList
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	now := s.clock.Now().UTC()
+	if now.IsZero() {
+		return learning.AttemptWorkPage{}, learning.ErrInvalidAttempt
+	}
 	work := make([]learning.AttemptWork, 0, query.Limit+1)
 	for partition, records := range s.records {
 		for _, record := range records {
 			after := partition > query.After.Partition || (partition == query.After.Partition && record.ID > query.After.ID)
-			if after && (record.State == learning.AttemptQueued || (record.State == learning.AttemptRunning && !record.ClaimExpiresAt.After(query.Now))) {
+			if after && (record.State == learning.AttemptQueued || (record.State == learning.AttemptRunning && !record.ClaimExpiresAt.After(now))) {
 				work = append(work, learning.AttemptWork{Partition: partition, Record: record})
 			}
 		}
@@ -154,13 +158,18 @@ func (s *Store) DiscoverWork(ctx context.Context, query learning.AttemptWorkList
 	return page, nil
 }
 
-func (s *Store) AcquireClaim(ctx context.Context, partition learning.AttemptPartition, id learning.AttemptID, expected learning.AttemptVersion, now, expiresAt time.Time) (learning.AttemptRecord, learning.AttemptClaim, error) {
+func (s *Store) AcquireClaim(ctx context.Context, partition learning.AttemptPartition, id learning.AttemptID, expected learning.AttemptVersion, duration time.Duration) (learning.AttemptRecord, learning.AttemptClaim, error) {
 	if err := ctx.Err(); err != nil {
 		return learning.AttemptRecord{}, learning.AttemptClaim{}, err
 	}
-	if !validClaimWindow(now, expiresAt) {
+	if !validClaimDuration(duration) {
 		return learning.AttemptRecord{}, learning.AttemptClaim{}, learning.ErrInvalidAttempt
 	}
+	now := s.clock.Now().UTC()
+	if now.IsZero() {
+		return learning.AttemptRecord{}, learning.AttemptClaim{}, learning.ErrInvalidAttempt
+	}
+	expiresAt := now.Add(duration)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	record, err := s.currentLocked(partition, id, expected)
@@ -185,13 +194,18 @@ func (s *Store) AcquireClaim(ctx context.Context, partition learning.AttemptPart
 	return record, claim, nil
 }
 
-func (s *Store) RenewClaim(ctx context.Context, partition learning.AttemptPartition, id learning.AttemptID, expected learning.AttemptVersion, claim learning.AttemptClaim, now, expiresAt time.Time) (learning.AttemptRecord, learning.AttemptClaim, error) {
+func (s *Store) RenewClaim(ctx context.Context, partition learning.AttemptPartition, id learning.AttemptID, expected learning.AttemptVersion, claim learning.AttemptClaim, duration time.Duration) (learning.AttemptRecord, learning.AttemptClaim, error) {
 	if err := ctx.Err(); err != nil {
 		return learning.AttemptRecord{}, learning.AttemptClaim{}, err
 	}
-	if !validClaimWindow(now, expiresAt) {
+	if !validClaimDuration(duration) {
 		return learning.AttemptRecord{}, learning.AttemptClaim{}, learning.ErrInvalidAttempt
 	}
+	now := s.clock.Now().UTC()
+	if now.IsZero() {
+		return learning.AttemptRecord{}, learning.AttemptClaim{}, learning.ErrInvalidAttempt
+	}
+	expiresAt := now.Add(duration)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	record, err := s.currentLocked(partition, id, expected)
@@ -206,10 +220,11 @@ func (s *Store) RenewClaim(ctx context.Context, partition learning.AttemptPartit
 	return record, learning.AttemptClaim{Generation: claim.Generation, ExpiresAt: record.ClaimExpiresAt}, nil
 }
 
-func (s *Store) Checkpoint(ctx context.Context, partition learning.AttemptPartition, id learning.AttemptID, expected learning.AttemptVersion, claim learning.AttemptClaim, now time.Time, checkpoint learning.AttemptCheckpoint) (learning.AttemptRecord, error) {
+func (s *Store) Checkpoint(ctx context.Context, partition learning.AttemptPartition, id learning.AttemptID, expected learning.AttemptVersion, claim learning.AttemptClaim, checkpoint learning.AttemptCheckpoint) (learning.AttemptRecord, error) {
 	if err := ctx.Err(); err != nil {
 		return learning.AttemptRecord{}, err
 	}
+	now := s.clock.Now().UTC()
 	if now.IsZero() || checkpoint.Validate() != nil {
 		return learning.AttemptRecord{}, learning.ErrInvalidAttempt
 	}
@@ -238,10 +253,11 @@ func (s *Store) Checkpoint(ctx context.Context, partition learning.AttemptPartit
 	return record, nil
 }
 
-func (s *Store) ReleaseClaim(ctx context.Context, partition learning.AttemptPartition, id learning.AttemptID, expected learning.AttemptVersion, claim learning.AttemptClaim, now time.Time) (learning.AttemptRecord, error) {
+func (s *Store) ReleaseClaim(ctx context.Context, partition learning.AttemptPartition, id learning.AttemptID, expected learning.AttemptVersion, claim learning.AttemptClaim) (learning.AttemptRecord, error) {
 	if err := ctx.Err(); err != nil {
 		return learning.AttemptRecord{}, err
 	}
+	now := s.clock.Now().UTC()
 	if now.IsZero() {
 		return learning.AttemptRecord{}, learning.ErrInvalidAttempt
 	}
@@ -260,10 +276,11 @@ func (s *Store) ReleaseClaim(ctx context.Context, partition learning.AttemptPart
 	return record, nil
 }
 
-func (s *Store) Finalize(ctx context.Context, partition learning.AttemptPartition, id learning.AttemptID, expected learning.AttemptVersion, claim learning.AttemptClaim, now time.Time, final learning.AttemptFinalization) (learning.AttemptRecord, error) {
+func (s *Store) Finalize(ctx context.Context, partition learning.AttemptPartition, id learning.AttemptID, expected learning.AttemptVersion, claim learning.AttemptClaim, final learning.AttemptFinalization) (learning.AttemptRecord, error) {
 	if err := ctx.Err(); err != nil {
 		return learning.AttemptRecord{}, err
 	}
+	now := s.clock.Now().UTC()
 	if now.IsZero() {
 		return learning.AttemptRecord{}, learning.ErrInvalidAttempt
 	}
@@ -290,10 +307,11 @@ func (s *Store) Finalize(ctx context.Context, partition learning.AttemptPartitio
 	return record, nil
 }
 
-func (s *Store) Retry(ctx context.Context, partition learning.AttemptPartition, id learning.AttemptID, expected learning.AttemptVersion, now time.Time) (learning.AttemptRecord, error) {
+func (s *Store) Retry(ctx context.Context, partition learning.AttemptPartition, id learning.AttemptID, expected learning.AttemptVersion) (learning.AttemptRecord, error) {
 	if err := ctx.Err(); err != nil {
 		return learning.AttemptRecord{}, err
 	}
+	now := s.clock.Now().UTC()
 	if now.IsZero() {
 		return learning.AttemptRecord{}, learning.ErrInvalidAttempt
 	}
@@ -315,10 +333,11 @@ func (s *Store) Retry(ctx context.Context, partition learning.AttemptPartition, 
 	return record, nil
 }
 
-func (s *Store) Abandon(ctx context.Context, partition learning.AttemptPartition, id learning.AttemptID, expected learning.AttemptVersion, now time.Time) (learning.AttemptRecord, error) {
+func (s *Store) Abandon(ctx context.Context, partition learning.AttemptPartition, id learning.AttemptID, expected learning.AttemptVersion) (learning.AttemptRecord, error) {
 	if err := ctx.Err(); err != nil {
 		return learning.AttemptRecord{}, err
 	}
+	now := s.clock.Now().UTC()
 	if now.IsZero() {
 		return learning.AttemptRecord{}, learning.ErrInvalidAttempt
 	}
@@ -342,12 +361,9 @@ func (s *Store) Abandon(ctx context.Context, partition learning.AttemptPartition
 	return record, nil
 }
 
-func (s *Store) Delete(ctx context.Context, partition learning.AttemptPartition, id learning.AttemptID, expected learning.AttemptVersion, now time.Time) error {
+func (s *Store) Delete(ctx context.Context, partition learning.AttemptPartition, id learning.AttemptID, expected learning.AttemptVersion) error {
 	if err := ctx.Err(); err != nil {
 		return err
-	}
-	if now.IsZero() {
-		return learning.ErrInvalidAttempt
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -366,13 +382,18 @@ func (s *Store) Delete(ctx context.Context, partition learning.AttemptPartition,
 	return nil
 }
 
-func (s *Store) DeleteTerminalBefore(ctx context.Context, partition learning.AttemptPartition, before time.Time, limit int) (int, error) {
+func (s *Store) DeleteTerminalOlderThan(ctx context.Context, partition learning.AttemptPartition, olderThan time.Duration, limit int) (int, error) {
 	if err := ctx.Err(); err != nil {
 		return 0, err
 	}
-	if partition == "" || before.IsZero() || limit < 1 || limit > learning.MaxAttemptDeleteBatch {
+	if partition == "" || olderThan <= 0 || olderThan > learning.MaxAttemptRetentionAge || limit < 1 || limit > learning.MaxAttemptDeleteBatch {
 		return 0, learning.ErrInvalidAttempt
 	}
+	now := s.clock.Now().UTC()
+	if now.IsZero() {
+		return 0, learning.ErrInvalidAttempt
+	}
+	cutoff := now.Add(-olderThan)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	type candidate struct {
@@ -381,7 +402,7 @@ func (s *Store) DeleteTerminalBefore(ctx context.Context, partition learning.Att
 	}
 	candidates := make([]candidate, 0)
 	for id, record := range s.records[partition] {
-		if record.State.Terminal() && record.UpdatedAt.Before(before) {
+		if record.State.Terminal() && record.UpdatedAt.Before(cutoff) {
 			candidates = append(candidates, candidate{id: id, at: record.UpdatedAt})
 		}
 	}
@@ -453,8 +474,8 @@ func (s *Store) nextClaimGenerationLocked(partition learning.AttemptPartition, i
 	return generations[id]
 }
 
-func validClaimWindow(now, expiresAt time.Time) bool {
-	return !now.IsZero() && expiresAt.After(now)
+func validClaimDuration(duration time.Duration) bool {
+	return duration > 0 && duration <= learning.MaxAttemptClaimDuration
 }
 
 func matchesClaim(record learning.AttemptRecord, claim learning.AttemptClaim, now time.Time) bool {

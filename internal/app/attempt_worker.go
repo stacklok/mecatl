@@ -18,7 +18,6 @@ type attemptWorker struct {
 	repository         learning.AttemptRepository
 	partition          learning.AttemptPartition
 	id                 learning.AttemptID
-	now                func() time.Time
 	claimTTL           time.Duration
 	claimRenewInterval time.Duration
 
@@ -46,40 +45,40 @@ func (l *attemptClaimLease) snapshot() learning.AttemptRecord {
 	return l.record
 }
 
-func (l *attemptClaimLease) renew(ctx context.Context, now time.Time, ttl time.Duration) error {
+func (l *attemptClaimLease) renew(ctx context.Context, ttl time.Duration) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	record, claim, err := l.repository.RenewClaim(ctx, l.partition, l.id, l.record.Version, l.claim, now, now.Add(ttl))
+	record, claim, err := l.repository.RenewClaim(ctx, l.partition, l.id, l.record.Version, l.claim, ttl)
 	if err == nil {
 		l.record, l.claim = record, claim
 	}
 	return err
 }
 
-func (l *attemptClaimLease) checkpoint(ctx context.Context, now time.Time, value learning.AttemptCheckpoint) error {
+func (l *attemptClaimLease) checkpoint(ctx context.Context, value learning.AttemptCheckpoint) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	record, err := l.repository.Checkpoint(ctx, l.partition, l.id, l.record.Version, l.claim, now, value)
+	record, err := l.repository.Checkpoint(ctx, l.partition, l.id, l.record.Version, l.claim, value)
 	if err == nil {
 		l.record = record
 	}
 	return err
 }
 
-func (l *attemptClaimLease) release(ctx context.Context, now time.Time) (learning.AttemptRecord, error) {
+func (l *attemptClaimLease) release(ctx context.Context) (learning.AttemptRecord, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	record, err := l.repository.ReleaseClaim(ctx, l.partition, l.id, l.record.Version, l.claim, now)
+	record, err := l.repository.ReleaseClaim(ctx, l.partition, l.id, l.record.Version, l.claim)
 	if err == nil {
 		l.record = record
 	}
 	return record, err
 }
 
-func (l *attemptClaimLease) finalize(ctx context.Context, now time.Time, value learning.AttemptFinalization) (learning.AttemptRecord, error) {
+func (l *attemptClaimLease) finalize(ctx context.Context, value learning.AttemptFinalization) (learning.AttemptRecord, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	record, err := l.repository.Finalize(ctx, l.partition, l.id, l.record.Version, l.claim, now, value)
+	record, err := l.repository.Finalize(ctx, l.partition, l.id, l.record.Version, l.claim, value)
 	if err == nil {
 		l.record = record
 	}
@@ -93,7 +92,7 @@ type attemptClaimRenewer struct {
 	err    error
 }
 
-func startAttemptClaimRenewer(parent context.Context, cancelWork context.CancelFunc, lease *attemptClaimLease, now func() time.Time, ttl, interval time.Duration) *attemptClaimRenewer {
+func startAttemptClaimRenewer(parent context.Context, cancelWork context.CancelFunc, lease *attemptClaimLease, ttl, interval time.Duration) *attemptClaimRenewer {
 	ctx, cancel := context.WithCancel(parent)
 	r := &attemptClaimRenewer{cancel: cancel, done: make(chan struct{})}
 	go func() {
@@ -105,7 +104,7 @@ func startAttemptClaimRenewer(parent context.Context, cancelWork context.CancelF
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				if err := lease.renew(ctx, now().UTC(), ttl); err != nil {
+				if err := lease.renew(ctx, ttl); err != nil {
 					r.mu.Lock()
 					r.err = err
 					r.mu.Unlock()
@@ -146,12 +145,11 @@ func (w *attemptWorker) Run(ctx context.Context) (learning.AttemptRecord, error)
 		return record, nil
 	}
 
-	now := w.now().UTC()
 	ttl := w.claimTTL
 	if ttl <= 0 {
 		ttl = defaultAttemptClaimTTL
 	}
-	record, claim, err := w.repository.AcquireClaim(ctx, w.partition, w.id, record.Version, now, now.Add(ttl))
+	record, claim, err := w.repository.AcquireClaim(ctx, w.partition, w.id, record.Version, ttl)
 	if err != nil {
 		return learning.AttemptRecord{}, err
 	}
@@ -165,7 +163,7 @@ func (w *attemptWorker) Run(ctx context.Context) (learning.AttemptRecord, error)
 	// A linked downstream artifact is proof that publication committed. Never
 	// repeat the write merely because terminal finalization was interrupted.
 	if record.CheckpointStage == learning.AttemptCheckpointProposalLinked || record.CheckpointStage == learning.AttemptCheckpointSkillLinked {
-		return lease.finalize(ctx, w.now().UTC(), learning.AttemptFinalization{State: learning.AttemptCompleted, Outcome: learning.AttemptOutcomeSucceeded})
+		return lease.finalize(ctx, learning.AttemptFinalization{State: learning.AttemptCompleted, Outcome: learning.AttemptOutcomeSucceeded})
 	}
 
 	workCtx, cancelWork := context.WithCancel(ctx)
@@ -177,7 +175,7 @@ func (w *attemptWorker) Run(ctx context.Context) (learning.AttemptRecord, error)
 	if interval <= 0 {
 		interval = time.Millisecond
 	}
-	renewer := startAttemptClaimRenewer(workCtx, cancelWork, lease, w.now, ttl, interval)
+	renewer := startAttemptClaimRenewer(workCtx, cancelWork, lease, ttl, interval)
 	stopped := false
 	stopRenewal := func() error {
 		if stopped {
@@ -197,7 +195,7 @@ func (w *attemptWorker) Run(ctx context.Context) (learning.AttemptRecord, error)
 		if err := claimFailure(); err != nil {
 			return err
 		}
-		if err := lease.checkpoint(workCtx, w.now().UTC(), value); err != nil {
+		if err := lease.checkpoint(workCtx, value); err != nil {
 			return err
 		}
 		if w.afterCheckpoint != nil {
@@ -212,7 +210,7 @@ func (w *attemptWorker) Run(ctx context.Context) (learning.AttemptRecord, error)
 		if err := ctx.Err(); err != nil {
 			return learning.AttemptRecord{}, err
 		}
-		return lease.finalize(ctx, w.now().UTC(), value)
+		return lease.finalize(ctx, value)
 	}
 	finalizeFailure := func(code learning.AttemptFailureCode) (learning.AttemptRecord, error) {
 		if code == learning.FailureNone {
@@ -234,7 +232,7 @@ func (w *attemptWorker) Run(ctx context.Context) (learning.AttemptRecord, error)
 				if stopErr := stopRenewal(); stopErr != nil {
 					return learning.AttemptRecord{}, errors.Join(evidenceErr, stopErr)
 				}
-				released, releaseErr := lease.release(ctx, w.now().UTC())
+				released, releaseErr := lease.release(ctx)
 				return released, errors.Join(evidenceErr, releaseErr)
 			}
 			terminal, finalErr := finalizeFailure(learning.FailureEvidenceUnavailable)

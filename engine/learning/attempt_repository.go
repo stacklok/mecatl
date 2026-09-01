@@ -22,6 +22,11 @@ const (
 	// evicts the oldest terminal record at this boundary, but never queued or
 	// running work; a partition containing only nonterminal records is saturated.
 	MaxAttemptsPerPartition = 256
+	// MaxAttemptClaimDuration bounds a client-requested claim lease. Repository
+	// backends derive every absolute expiry from their own authoritative clock.
+	MaxAttemptClaimDuration = 24 * time.Hour
+	// MaxAttemptRetentionAge bounds a client-requested terminal retention age.
+	MaxAttemptRetentionAge = 10 * 365 * 24 * time.Hour
 )
 
 var (
@@ -187,14 +192,13 @@ type AttemptWorkCursor struct {
 
 type AttemptWorkList struct {
 	After AttemptWorkCursor
-	Now   time.Time
 	Limit int
 }
 
 func (q AttemptWorkList) Validate() error {
 	cursorEmpty := q.After == (AttemptWorkCursor{})
 	cursorValid := q.After.Partition != "" && validOpaque(string(q.After.Partition), 128) && validOpaque(string(q.After.ID), MaxAttemptIDBytes)
-	if q.Now.IsZero() || q.Limit < 1 || q.Limit > MaxAttemptWorkBatch || (!cursorEmpty && !cursorValid) {
+	if q.Limit < 1 || q.Limit > MaxAttemptWorkBatch || (!cursorEmpty && !cursorValid) {
 		return fmt.Errorf("%w: work list", ErrInvalidAttempt)
 	}
 	return nil
@@ -234,14 +238,17 @@ func ValidAttemptTransition(from, to AttemptState) bool {
 // limit and cleanup are partition-local, so saturation cannot block a peer.
 //
 // AcquireClaim accepts queued attempts or running attempts whose claim is
-// expired at now. It allocates a strictly newer ClaimGeneration and returns the
-// exact claim required by RenewClaim, Checkpoint, ReleaseClaim, and Finalize.
-// Those operations must atomically match expected, claim generation, and an
-// expiry strictly after now; otherwise they return ErrAttemptClaimLost without
-// a write. AcquireClaim on a live claim returns ErrAttemptClaimConflict.
-// ReleaseClaim returns running work to queued and clears the lease. Retry is
-// failed-to-queued only, increments AttemptGeneration, and clears the claim.
-// Abandon follows ValidAttemptTransition and must reject a live claim.
+// expired according to the repository backend's authoritative clock. Clients
+// request a bounded duration; they never supply authority time or an absolute
+// expiry. It allocates a strictly newer ClaimGeneration and returns the exact
+// claim required by RenewClaim, Checkpoint, ReleaseClaim, and Finalize. Those
+// operations atomically match expected and claim generation and require an
+// expiry strictly after the backend's current time; otherwise they return
+// ErrAttemptClaimLost without a write. AcquireClaim on a live claim returns
+// ErrAttemptClaimConflict. ReleaseClaim returns running work to queued and
+// clears the lease. Retry is failed-to-queued only, increments
+// AttemptGeneration, and clears the claim. Abandon follows
+// ValidAttemptTransition and must reject a live claim.
 //
 // Checkpoint is monotonic by AttemptCheckpointStage. Replaying the same stage
 // and links is permitted with the current version; rollback or changing links
@@ -251,10 +258,11 @@ func ValidAttemptTransition(from, to AttemptState) bool {
 // Delete requires a terminal attempt or an unclaimed queued attempt. It must
 // reject every claimed nonterminal attempt, including an expired claim, until
 // a successor acquisition/release/abandon transition resolves it.
-// DeleteTerminalBefore removes at most limit terminal records older than before
-// from exactly one partition; limit must be in [1, MaxAttemptDeleteBatch].
-// DiscoverWork returns one bounded page of queued attempts and running attempts
-// whose claim expires at or before query.Now, ordered by opaque partition then ID.
+// DeleteTerminalOlderThan removes at most limit terminal records whose age,
+// measured by the repository backend's authoritative clock, exceeds olderThan.
+// The duration must be in (0, MaxAttemptRetentionAge]. DiscoverWork returns one
+// bounded page of queued attempts and running attempts whose claim has expired
+// according to that same clock, ordered by opaque partition then ID.
 // Its cursor is an exclusive, disposable scan position; it grants no authority.
 // This is the infrastructure worker's durable discovery seam, not a caller list
 // or watch API.
@@ -263,13 +271,13 @@ type AttemptRepository interface {
 	Get(context.Context, AttemptPartition, AttemptID) (AttemptRecord, bool, error)
 	List(context.Context, AttemptPartition, AttemptList) (AttemptPage, error)
 	DiscoverWork(context.Context, AttemptWorkList) (AttemptWorkPage, error)
-	AcquireClaim(context.Context, AttemptPartition, AttemptID, AttemptVersion, time.Time, time.Time) (AttemptRecord, AttemptClaim, error)
-	RenewClaim(context.Context, AttemptPartition, AttemptID, AttemptVersion, AttemptClaim, time.Time, time.Time) (AttemptRecord, AttemptClaim, error)
-	Checkpoint(context.Context, AttemptPartition, AttemptID, AttemptVersion, AttemptClaim, time.Time, AttemptCheckpoint) (AttemptRecord, error)
-	ReleaseClaim(context.Context, AttemptPartition, AttemptID, AttemptVersion, AttemptClaim, time.Time) (AttemptRecord, error)
-	Finalize(context.Context, AttemptPartition, AttemptID, AttemptVersion, AttemptClaim, time.Time, AttemptFinalization) (AttemptRecord, error)
-	Retry(context.Context, AttemptPartition, AttemptID, AttemptVersion, time.Time) (AttemptRecord, error)
-	Abandon(context.Context, AttemptPartition, AttemptID, AttemptVersion, time.Time) (AttemptRecord, error)
-	Delete(context.Context, AttemptPartition, AttemptID, AttemptVersion, time.Time) error
-	DeleteTerminalBefore(context.Context, AttemptPartition, time.Time, int) (int, error)
+	AcquireClaim(context.Context, AttemptPartition, AttemptID, AttemptVersion, time.Duration) (AttemptRecord, AttemptClaim, error)
+	RenewClaim(context.Context, AttemptPartition, AttemptID, AttemptVersion, AttemptClaim, time.Duration) (AttemptRecord, AttemptClaim, error)
+	Checkpoint(context.Context, AttemptPartition, AttemptID, AttemptVersion, AttemptClaim, AttemptCheckpoint) (AttemptRecord, error)
+	ReleaseClaim(context.Context, AttemptPartition, AttemptID, AttemptVersion, AttemptClaim) (AttemptRecord, error)
+	Finalize(context.Context, AttemptPartition, AttemptID, AttemptVersion, AttemptClaim, AttemptFinalization) (AttemptRecord, error)
+	Retry(context.Context, AttemptPartition, AttemptID, AttemptVersion) (AttemptRecord, error)
+	Abandon(context.Context, AttemptPartition, AttemptID, AttemptVersion) (AttemptRecord, error)
+	Delete(context.Context, AttemptPartition, AttemptID, AttemptVersion) error
+	DeleteTerminalOlderThan(context.Context, AttemptPartition, time.Duration, int) (int, error)
 }

@@ -87,7 +87,8 @@ func (*retentionRepository) DiscoverWork(context.Context, learning.AttemptWorkLi
 	panic("not used by retention conformance")
 }
 
-func (r *retentionRepository) AcquireClaim(_ context.Context, partition learning.AttemptPartition, id learning.AttemptID, expected learning.AttemptVersion, now, expires time.Time) (learning.AttemptRecord, learning.AttemptClaim, error) {
+func (r *retentionRepository) AcquireClaim(_ context.Context, partition learning.AttemptPartition, id learning.AttemptID, expected learning.AttemptVersion, duration time.Duration) (learning.AttemptRecord, learning.AttemptClaim, error) {
+	now, expires := r.now, r.now.Add(duration)
 	record, ok := r.records[partition][id]
 	if !ok {
 		return learning.AttemptRecord{}, learning.AttemptClaim{}, learning.ErrAttemptNotFound
@@ -107,19 +108,20 @@ func (r *retentionRepository) AcquireClaim(_ context.Context, partition learning
 	return record, learning.AttemptClaim{Generation: record.ClaimGeneration, ExpiresAt: expires}, nil
 }
 
-func (*retentionRepository) RenewClaim(context.Context, learning.AttemptPartition, learning.AttemptID, learning.AttemptVersion, learning.AttemptClaim, time.Time, time.Time) (learning.AttemptRecord, learning.AttemptClaim, error) {
+func (*retentionRepository) RenewClaim(context.Context, learning.AttemptPartition, learning.AttemptID, learning.AttemptVersion, learning.AttemptClaim, time.Duration) (learning.AttemptRecord, learning.AttemptClaim, error) {
 	panic("not used by retention conformance")
 }
 
-func (*retentionRepository) Checkpoint(context.Context, learning.AttemptPartition, learning.AttemptID, learning.AttemptVersion, learning.AttemptClaim, time.Time, learning.AttemptCheckpoint) (learning.AttemptRecord, error) {
+func (*retentionRepository) Checkpoint(context.Context, learning.AttemptPartition, learning.AttemptID, learning.AttemptVersion, learning.AttemptClaim, learning.AttemptCheckpoint) (learning.AttemptRecord, error) {
 	panic("not used by retention conformance")
 }
 
-func (*retentionRepository) ReleaseClaim(context.Context, learning.AttemptPartition, learning.AttemptID, learning.AttemptVersion, learning.AttemptClaim, time.Time) (learning.AttemptRecord, error) {
+func (*retentionRepository) ReleaseClaim(context.Context, learning.AttemptPartition, learning.AttemptID, learning.AttemptVersion, learning.AttemptClaim) (learning.AttemptRecord, error) {
 	panic("not used by retention conformance")
 }
 
-func (r *retentionRepository) Finalize(_ context.Context, partition learning.AttemptPartition, id learning.AttemptID, expected learning.AttemptVersion, claim learning.AttemptClaim, now time.Time, final learning.AttemptFinalization) (learning.AttemptRecord, error) {
+func (r *retentionRepository) Finalize(_ context.Context, partition learning.AttemptPartition, id learning.AttemptID, expected learning.AttemptVersion, claim learning.AttemptClaim, final learning.AttemptFinalization) (learning.AttemptRecord, error) {
+	now := r.now
 	record, ok := r.records[partition][id]
 	if !ok {
 		return learning.AttemptRecord{}, learning.ErrAttemptNotFound
@@ -137,15 +139,15 @@ func (r *retentionRepository) Finalize(_ context.Context, partition learning.Att
 	return record, nil
 }
 
-func (*retentionRepository) Retry(context.Context, learning.AttemptPartition, learning.AttemptID, learning.AttemptVersion, time.Time) (learning.AttemptRecord, error) {
+func (*retentionRepository) Retry(context.Context, learning.AttemptPartition, learning.AttemptID, learning.AttemptVersion) (learning.AttemptRecord, error) {
 	panic("not used by retention conformance")
 }
 
-func (*retentionRepository) Abandon(context.Context, learning.AttemptPartition, learning.AttemptID, learning.AttemptVersion, time.Time) (learning.AttemptRecord, error) {
+func (*retentionRepository) Abandon(context.Context, learning.AttemptPartition, learning.AttemptID, learning.AttemptVersion) (learning.AttemptRecord, error) {
 	panic("not used by retention conformance")
 }
 
-func (r *retentionRepository) Delete(_ context.Context, partition learning.AttemptPartition, id learning.AttemptID, expected learning.AttemptVersion, _ time.Time) error {
+func (r *retentionRepository) Delete(_ context.Context, partition learning.AttemptPartition, id learning.AttemptID, expected learning.AttemptVersion) error {
 	record, ok := r.records[partition][id]
 	if !ok {
 		return learning.ErrAttemptNotFound
@@ -163,7 +165,8 @@ func (r *retentionRepository) Delete(_ context.Context, partition learning.Attem
 	return nil
 }
 
-func (r *retentionRepository) DeleteTerminalBefore(_ context.Context, partition learning.AttemptPartition, before time.Time, limit int) (int, error) {
+func (r *retentionRepository) DeleteTerminalOlderThan(_ context.Context, partition learning.AttemptPartition, olderThan time.Duration, limit int) (int, error) {
+	before := r.now.Add(-olderThan)
 	if limit < 1 || limit > learning.MaxAttemptDeleteBatch {
 		return 0, learning.ErrInvalidAttempt
 	}

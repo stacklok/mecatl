@@ -72,24 +72,25 @@ func TestADR_0254_StaleClaimCannotTransitionAttempt(t *testing.T) {
 	}
 	assertFenced := func(name string, current learning.AttemptRecord, stale learning.AttemptClaim, at time.Time) {
 		t.Helper()
+		clock.set(at)
 		operations := []struct {
 			name string
 			run  func() error
 		}{
 			{name: "renew", run: func() error {
-				_, _, mutateErr := repository.RenewClaim(ctx, partition, current.ID, current.Version, stale, at, at.Add(time.Minute))
+				_, _, mutateErr := repository.RenewClaim(ctx, partition, current.ID, current.Version, stale, time.Minute)
 				return mutateErr
 			}},
 			{name: "checkpoint", run: func() error {
-				_, mutateErr := repository.Checkpoint(ctx, partition, current.ID, current.Version, stale, at, learning.AttemptCheckpoint{Stage: learning.AttemptCheckpointEvidenceVerified})
+				_, mutateErr := repository.Checkpoint(ctx, partition, current.ID, current.Version, stale, learning.AttemptCheckpoint{Stage: learning.AttemptCheckpointEvidenceVerified})
 				return mutateErr
 			}},
 			{name: "release", run: func() error {
-				_, mutateErr := repository.ReleaseClaim(ctx, partition, current.ID, current.Version, stale, at)
+				_, mutateErr := repository.ReleaseClaim(ctx, partition, current.ID, current.Version, stale)
 				return mutateErr
 			}},
 			{name: "finalize", run: func() error {
-				_, mutateErr := repository.Finalize(ctx, partition, current.ID, current.Version, stale, at, learning.AttemptFinalization{State: learning.AttemptCompleted, Outcome: learning.AttemptOutcomeSucceeded})
+				_, mutateErr := repository.Finalize(ctx, partition, current.ID, current.Version, stale, learning.AttemptFinalization{State: learning.AttemptCompleted, Outcome: learning.AttemptOutcomeSucceeded})
 				return mutateErr
 			}},
 		}
@@ -105,45 +106,46 @@ func TestADR_0254_StaleClaimCannotTransitionAttempt(t *testing.T) {
 	}
 
 	expiring := create("a")
-	running, expiredClaim, err := repository.AcquireClaim(ctx, partition, expiring.ID, expiring.Version, now, now.Add(time.Minute))
+	running, expiredClaim, err := repository.AcquireClaim(ctx, partition, expiring.ID, expiring.Version, time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
 	expiry := expiredClaim.ExpiresAt
 	assertFenced("expired", running, expiredClaim, expiry)
-	successor, successorClaim, err := repository.AcquireClaim(ctx, partition, running.ID, running.Version, expiry, expiry.Add(time.Minute))
+	successor, successorClaim, err := repository.AcquireClaim(ctx, partition, running.ID, running.Version, time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
 	assertFenced("superseded cannot finalize successor", successor, expiredClaim, expiry)
-	released, err := repository.ReleaseClaim(ctx, partition, successor.ID, successor.Version, successorClaim, expiry)
+	released, err := repository.ReleaseClaim(ctx, partition, successor.ID, successor.Version, successorClaim)
 	if err != nil {
 		t.Fatal(err)
 	}
 	assertFenced("released", released, successorClaim, expiry)
 
 	retrying := create("b")
-	retryRunning, retryClaim, err := repository.AcquireClaim(ctx, partition, retrying.ID, retrying.Version, now, now.Add(time.Hour))
+	retryRunning, retryClaim, err := repository.AcquireClaim(ctx, partition, retrying.ID, retrying.Version, time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
-	failed, err := repository.Finalize(ctx, partition, retryRunning.ID, retryRunning.Version, retryClaim, now, learning.AttemptFinalization{State: learning.AttemptFailed, Outcome: learning.AttemptOutcomeFailed, FailureCode: learning.FailureUnavailable})
+	failed, err := repository.Finalize(ctx, partition, retryRunning.ID, retryRunning.Version, retryClaim, learning.AttemptFinalization{State: learning.AttemptFailed, Outcome: learning.AttemptOutcomeFailed, FailureCode: learning.FailureUnavailable})
 	if err != nil {
 		t.Fatal(err)
 	}
-	retried, err := repository.Retry(ctx, partition, failed.ID, failed.Version, now)
+	retried, err := repository.Retry(ctx, partition, failed.ID, failed.Version)
 	if err != nil {
 		t.Fatal(err)
 	}
 	assertFenced("retried", retried, retryClaim, now)
 
 	abandoning := create("c")
-	abandonRunning, abandonClaim, err := repository.AcquireClaim(ctx, partition, abandoning.ID, abandoning.Version, now, now.Add(time.Minute))
+	abandonRunning, abandonClaim, err := repository.AcquireClaim(ctx, partition, abandoning.ID, abandoning.Version, time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
 	abandonedAt := abandonClaim.ExpiresAt
-	abandoned, err := repository.Abandon(ctx, partition, abandonRunning.ID, abandonRunning.Version, abandonedAt)
+	clock.set(abandonedAt)
+	abandoned, err := repository.Abandon(ctx, partition, abandonRunning.ID, abandonRunning.Version)
 	if err != nil {
 		t.Fatal(err)
 	}

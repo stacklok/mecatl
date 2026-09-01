@@ -7,7 +7,6 @@ import (
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
-	"google.golang.org/protobuf/types/known/timestamppb"
 
 	driverv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/driver/v1"
 	"github.com/stacklok/mecatl/engine/learning"
@@ -73,12 +72,11 @@ func (s *attemptRepositoryServer) ListAttempts(ctx context.Context, req *driverv
 }
 
 func (s *attemptRepositoryServer) DiscoverAttemptWork(ctx context.Context, req *driverv1.DiscoverAttemptWorkRequest) (*driverv1.DiscoverAttemptWorkResponse, error) {
-	now, err := serverAttemptTime(req.GetNow(), true)
 	query := learning.AttemptWorkList{
-		Now: now, Limit: int(req.GetLimit()),
+		Limit: int(req.GetLimit()),
 		After: learning.AttemptWorkCursor{Partition: learning.AttemptPartition(req.GetAfterPartition()), ID: learning.AttemptID(req.GetAfterId())},
 	}
-	if err != nil || query.Validate() != nil {
+	if query.Validate() != nil {
 		return nil, attemptRepositoryStatus(learning.ErrInvalidAttempt)
 	}
 	page, err := s.repository.DiscoverWork(ctx, query)
@@ -108,7 +106,7 @@ func (s *attemptRepositoryServer) AcquireAttemptClaim(ctx context.Context, req *
 	if err != nil {
 		return nil, attemptRepositoryStatus(err)
 	}
-	record, claim, err := s.repository.AcquireClaim(ctx, mutation.partition, mutation.id, mutation.expected, mutation.now, mutation.expires)
+	record, claim, err := s.repository.AcquireClaim(ctx, mutation.partition, mutation.id, mutation.expected, mutation.duration)
 	return serverClaimResponse(record, claim, err)
 }
 
@@ -117,7 +115,7 @@ func (s *attemptRepositoryServer) RenewAttemptClaim(ctx context.Context, req *dr
 	if err != nil {
 		return nil, attemptRepositoryStatus(err)
 	}
-	record, claim, err := s.repository.RenewClaim(ctx, mutation.partition, mutation.id, mutation.expected, mutation.claim, mutation.now, mutation.expires)
+	record, claim, err := s.repository.RenewClaim(ctx, mutation.partition, mutation.id, mutation.expected, mutation.claim, mutation.duration)
 	return serverClaimResponse(record, claim, err)
 }
 
@@ -130,7 +128,7 @@ func (s *attemptRepositoryServer) CheckpointAttempt(ctx context.Context, req *dr
 	if checkpoint.Validate() != nil {
 		return nil, attemptRepositoryStatus(learning.ErrInvalidAttempt)
 	}
-	record, err := s.repository.Checkpoint(ctx, mutation.partition, mutation.id, mutation.expected, mutation.claim, mutation.now, checkpoint)
+	record, err := s.repository.Checkpoint(ctx, mutation.partition, mutation.id, mutation.expected, mutation.claim, checkpoint)
 	return serverRecordResponse(record, err)
 }
 
@@ -139,7 +137,7 @@ func (s *attemptRepositoryServer) ReleaseAttemptClaim(ctx context.Context, req *
 	if err != nil {
 		return nil, attemptRepositoryStatus(err)
 	}
-	record, err := s.repository.ReleaseClaim(ctx, mutation.partition, mutation.id, mutation.expected, mutation.claim, mutation.now)
+	record, err := s.repository.ReleaseClaim(ctx, mutation.partition, mutation.id, mutation.expected, mutation.claim)
 	return serverRecordResponse(record, err)
 }
 
@@ -152,7 +150,7 @@ func (s *attemptRepositoryServer) FinalizeAttempt(ctx context.Context, req *driv
 	if err := final.Validate(); err != nil {
 		return nil, attemptRepositoryStatus(err)
 	}
-	record, err := s.repository.Finalize(ctx, mutation.partition, mutation.id, mutation.expected, mutation.claim, mutation.now, final)
+	record, err := s.repository.Finalize(ctx, mutation.partition, mutation.id, mutation.expected, mutation.claim, final)
 	return serverRecordResponse(record, err)
 }
 
@@ -161,7 +159,7 @@ func (s *attemptRepositoryServer) RetryAttempt(ctx context.Context, req *driverv
 	if err != nil {
 		return nil, attemptRepositoryStatus(err)
 	}
-	record, err := s.repository.Retry(ctx, mutation.partition, mutation.id, mutation.expected, mutation.now)
+	record, err := s.repository.Retry(ctx, mutation.partition, mutation.id, mutation.expected)
 	return serverRecordResponse(record, err)
 }
 
@@ -170,7 +168,7 @@ func (s *attemptRepositoryServer) AbandonAttempt(ctx context.Context, req *drive
 	if err != nil {
 		return nil, attemptRepositoryStatus(err)
 	}
-	record, err := s.repository.Abandon(ctx, mutation.partition, mutation.id, mutation.expected, mutation.now)
+	record, err := s.repository.Abandon(ctx, mutation.partition, mutation.id, mutation.expected)
 	return serverRecordResponse(record, err)
 }
 
@@ -179,26 +177,26 @@ func (s *attemptRepositoryServer) DeleteAttempt(ctx context.Context, req *driver
 	if err != nil {
 		return nil, attemptRepositoryStatus(err)
 	}
-	if err := s.repository.Delete(ctx, mutation.partition, mutation.id, mutation.expected, mutation.now); err != nil {
+	if err := s.repository.Delete(ctx, mutation.partition, mutation.id, mutation.expected); err != nil {
 		return nil, attemptRepositoryStatus(err)
 	}
 	return &driverv1.DeleteAttemptResponse{}, nil
 }
 
-func (s *attemptRepositoryServer) DeleteTerminalAttemptsBefore(ctx context.Context, req *driverv1.DeleteTerminalAttemptsBeforeRequest) (*driverv1.DeleteTerminalAttemptsBeforeResponse, error) {
-	before, err := serverAttemptTime(req.GetBefore(), true)
+func (s *attemptRepositoryServer) DeleteTerminalAttemptsOlderThan(ctx context.Context, req *driverv1.DeleteTerminalAttemptsOlderThanRequest) (*driverv1.DeleteTerminalAttemptsOlderThanResponse, error) {
+	olderThanMillis := req.GetOlderThanMillis()
 	limit := int(req.GetLimit())
-	if err != nil || req.GetPartition() == "" || limit < 1 || limit > learning.MaxAttemptDeleteBatch {
+	if req.GetPartition() == "" || olderThanMillis < 1 || olderThanMillis > learning.MaxAttemptRetentionAge.Milliseconds() || limit < 1 || limit > learning.MaxAttemptDeleteBatch {
 		return nil, attemptRepositoryStatus(learning.ErrInvalidAttempt)
 	}
-	deleted, err := s.repository.DeleteTerminalBefore(ctx, learning.AttemptPartition(req.GetPartition()), before, limit)
+	deleted, err := s.repository.DeleteTerminalOlderThan(ctx, learning.AttemptPartition(req.GetPartition()), time.Duration(olderThanMillis)*time.Millisecond, limit)
 	if err != nil {
 		return nil, attemptRepositoryStatus(err)
 	}
 	if deleted < 0 || deleted > math.MaxInt32 {
 		return nil, status.Error(codes.Internal, "attempt repository returned an invalid delete count")
 	}
-	return &driverv1.DeleteTerminalAttemptsBeforeResponse{Deleted: int32(deleted)}, nil // #nosec G115 -- checked above
+	return &driverv1.DeleteTerminalAttemptsOlderThanResponse{Deleted: int32(deleted)}, nil // #nosec G115 -- checked above
 }
 
 type attemptMutation struct {
@@ -206,34 +204,28 @@ type attemptMutation struct {
 	id        learning.AttemptID
 	expected  learning.AttemptVersion
 	claim     learning.AttemptClaim
-	now       time.Time
-	expires   time.Time
+	duration  time.Duration
 }
 
 func mutationFromProto(req *driverv1.AttemptMutationRequest) (attemptMutation, error) {
 	if req == nil || req.GetPartition() == "" || req.GetId() == "" || req.GetExpectedVersion() == "" {
 		return attemptMutation{}, learning.ErrInvalidAttempt
 	}
-	now, err := serverAttemptTime(req.GetNow(), true)
-	if err != nil {
-		return attemptMutation{}, learning.ErrInvalidAttempt
-	}
-	return attemptMutation{partition: learning.AttemptPartition(req.GetPartition()), id: learning.AttemptID(req.GetId()), expected: learning.AttemptVersion(req.GetExpectedVersion()), now: now}, nil
+	return attemptMutation{partition: learning.AttemptPartition(req.GetPartition()), id: learning.AttemptID(req.GetId()), expected: learning.AttemptVersion(req.GetExpectedVersion())}, nil
 }
 
-func claimMutationFromProto(req *driverv1.AttemptClaimMutationRequest, requireClaim, requireExpiry bool) (attemptMutation, error) {
+func claimMutationFromProto(req *driverv1.AttemptClaimMutationRequest, requireClaim, requireDuration bool) (attemptMutation, error) {
 	if req == nil || req.GetPartition() == "" || req.GetId() == "" || req.GetExpectedVersion() == "" {
 		return attemptMutation{}, learning.ErrInvalidAttempt
 	}
-	now, err := serverAttemptTime(req.GetNow(), true)
-	if err != nil {
+	durationMillis := req.GetDurationMillis()
+	if (requireDuration && (durationMillis < 1 || durationMillis > learning.MaxAttemptClaimDuration.Milliseconds())) || (!requireDuration && durationMillis != 0) {
 		return attemptMutation{}, learning.ErrInvalidAttempt
 	}
-	expires, err := serverAttemptTime(req.GetExpiresAt(), requireExpiry)
-	if err != nil {
-		return attemptMutation{}, learning.ErrInvalidAttempt
+	mutation := attemptMutation{
+		partition: learning.AttemptPartition(req.GetPartition()), id: learning.AttemptID(req.GetId()), expected: learning.AttemptVersion(req.GetExpectedVersion()),
+		duration: time.Duration(durationMillis) * time.Millisecond,
 	}
-	mutation := attemptMutation{partition: learning.AttemptPartition(req.GetPartition()), id: learning.AttemptID(req.GetId()), expected: learning.AttemptVersion(req.GetExpectedVersion()), now: now, expires: expires}
 	if requireClaim {
 		claim, claimErr := attemptClaimFromProto(req.GetClaim())
 		if claimErr != nil {
@@ -244,23 +236,6 @@ func claimMutationFromProto(req *driverv1.AttemptClaimMutationRequest, requireCl
 		return attemptMutation{}, learning.ErrInvalidAttempt
 	}
 	return mutation, nil
-}
-
-func serverAttemptTime(value *timestamppb.Timestamp, required bool) (time.Time, error) {
-	if value == nil {
-		if required {
-			return time.Time{}, learning.ErrInvalidAttempt
-		}
-		return time.Time{}, nil
-	}
-	if err := value.CheckValid(); err != nil {
-		return time.Time{}, learning.ErrInvalidAttempt
-	}
-	result := value.AsTime()
-	if required && result.IsZero() {
-		return time.Time{}, learning.ErrInvalidAttempt
-	}
-	return result, nil
 }
 
 func serverRecordResponse(record learning.AttemptRecord, err error) (*driverv1.AttemptRecordResponse, error) {

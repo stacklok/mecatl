@@ -24,12 +24,12 @@ func createRecoveryAttempt(t *testing.T, repository learning.AttemptRepository, 
 	return partition, created
 }
 
-func completeDiscoveredAttempt(ctx context.Context, repository learning.AttemptRepository, now func() time.Time, item learning.AttemptWork) error {
-	record, claim, err := repository.AcquireClaim(ctx, item.Partition, item.Record.ID, item.Record.Version, now(), now().Add(time.Minute))
+func completeDiscoveredAttempt(ctx context.Context, repository learning.AttemptRepository, item learning.AttemptWork) error {
+	record, claim, err := repository.AcquireClaim(ctx, item.Partition, item.Record.ID, item.Record.Version, time.Minute)
 	if err != nil {
 		return err
 	}
-	_, err = repository.Finalize(ctx, item.Partition, record.ID, record.Version, claim, now(), learning.AttemptFinalization{State: learning.AttemptCompleted, Outcome: learning.AttemptOutcomeSucceeded})
+	_, err = repository.Finalize(ctx, item.Partition, record.ID, record.Version, claim, learning.AttemptFinalization{State: learning.AttemptCompleted, Outcome: learning.AttemptOutcomeSucceeded})
 	return err
 }
 
@@ -57,8 +57,8 @@ func TestAttemptRecoveryRetriesAfterDiscoveryFailure(t *testing.T) {
 	repository := &failOnceDiscoveryRepository{AttemptRepository: base}
 	reported := make(chan struct{}, 1)
 	completed := make(chan struct{}, 1)
-	recovery := newAttemptRecoveryLoop(context.Background(), repository, 5*time.Millisecond, clock.Now, func(ctx context.Context, item learning.AttemptWork) error {
-		err := completeDiscoveredAttempt(ctx, repository, clock.Now, item)
+	recovery := newAttemptRecoveryLoop(context.Background(), repository, 5*time.Millisecond, func(ctx context.Context, item learning.AttemptWork) error {
+		err := completeDiscoveredAttempt(ctx, repository, item)
 		if err == nil {
 			completed <- struct{}{}
 		}
@@ -81,8 +81,8 @@ func TestAttemptRecoveryDiscoversWorkAdmittedAfterStartup(t *testing.T) {
 	clock := &attemptWorkerClock{now: time.Unix(100, 0)}
 	repository := memattempt.New(clock)
 	completed := make(chan struct{}, 1)
-	recovery := newAttemptRecoveryLoop(context.Background(), repository, 5*time.Millisecond, clock.Now, func(ctx context.Context, item learning.AttemptWork) error {
-		err := completeDiscoveredAttempt(ctx, repository, clock.Now, item)
+	recovery := newAttemptRecoveryLoop(context.Background(), repository, 5*time.Millisecond, func(ctx context.Context, item learning.AttemptWork) error {
+		err := completeDiscoveredAttempt(ctx, repository, item)
 		if err == nil {
 			completed <- struct{}{}
 		}
@@ -96,7 +96,7 @@ func TestAttemptRecoveryDiscoversWorkAdmittedAfterStartup(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("work admitted after startup was not discovered")
 	}
-	work, err := repository.DiscoverWork(context.Background(), learning.AttemptWorkList{Now: clock.Now(), Limit: learning.MaxAttemptWorkBatch})
+	work, err := repository.DiscoverWork(context.Background(), learning.AttemptWorkList{Limit: learning.MaxAttemptWorkBatch})
 	if err != nil || len(work.Work) != 0 {
 		t.Fatalf("completed attempt remained discoverable: %+v err=%v record=%s", work, err, record.ID)
 	}
@@ -106,14 +106,14 @@ func TestAttemptRecoveryDiscoversExpiredClaimReplacement(t *testing.T) {
 	clock := &attemptWorkerClock{now: time.Unix(105, 0)}
 	repository := memattempt.New(clock)
 	partition, record := createRecoveryAttempt(t, repository, clock)
-	running, _, err := repository.AcquireClaim(context.Background(), partition, record.ID, record.Version, clock.Now(), clock.Now().Add(time.Second))
+	running, _, err := repository.AcquireClaim(context.Background(), partition, record.ID, record.Version, time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
 	clock.now = clock.now.Add(2 * time.Second)
 	completed := make(chan struct{}, 1)
-	recovery := newAttemptRecoveryLoop(context.Background(), repository, 5*time.Millisecond, clock.Now, func(ctx context.Context, item learning.AttemptWork) error {
-		err := completeDiscoveredAttempt(ctx, repository, clock.Now, item)
+	recovery := newAttemptRecoveryLoop(context.Background(), repository, 5*time.Millisecond, func(ctx context.Context, item learning.AttemptWork) error {
+		err := completeDiscoveredAttempt(ctx, repository, item)
 		if err == nil {
 			completed <- struct{}{}
 		}
@@ -135,8 +135,8 @@ func TestAttemptRecoveryIgnoresLegacyCoordinatorCapacity(t *testing.T) {
 	clock := &attemptWorkerClock{now: time.Unix(110, 0)}
 	repository := memattempt.New(clock)
 	completed := make(chan struct{}, 1)
-	recovery := newAttemptRecoveryLoop(context.Background(), repository, 5*time.Millisecond, clock.Now, func(ctx context.Context, item learning.AttemptWork) error {
-		err := completeDiscoveredAttempt(ctx, repository, clock.Now, item)
+	recovery := newAttemptRecoveryLoop(context.Background(), repository, 5*time.Millisecond, func(ctx context.Context, item learning.AttemptWork) error {
+		err := completeDiscoveredAttempt(ctx, repository, item)
 		if err == nil {
 			completed <- struct{}{}
 		}
@@ -174,7 +174,7 @@ func TestAttemptRecoveryCloseCancelsAndJoinsWorker(t *testing.T) {
 	_, _ = createRecoveryAttempt(t, repository, clock)
 	started := make(chan struct{})
 	exited := make(chan struct{})
-	recovery := newAttemptRecoveryLoop(context.Background(), repository, time.Hour, clock.Now, func(ctx context.Context, _ learning.AttemptWork) error {
+	recovery := newAttemptRecoveryLoop(context.Background(), repository, time.Hour, func(ctx context.Context, _ learning.AttemptWork) error {
 		close(started)
 		<-ctx.Done()
 		close(exited)

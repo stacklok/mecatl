@@ -24,6 +24,7 @@ package driverv1
 
 import (
 	context "context"
+
 	grpc "google.golang.org/grpc"
 	codes "google.golang.org/grpc/codes"
 	status "google.golang.org/grpc/status"
@@ -35,19 +36,19 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	AttemptRepositoryService_CreateAttempt_FullMethodName                = "/mecatl.driver.v1.AttemptRepositoryService/CreateAttempt"
-	AttemptRepositoryService_GetAttempt_FullMethodName                   = "/mecatl.driver.v1.AttemptRepositoryService/GetAttempt"
-	AttemptRepositoryService_ListAttempts_FullMethodName                 = "/mecatl.driver.v1.AttemptRepositoryService/ListAttempts"
-	AttemptRepositoryService_DiscoverAttemptWork_FullMethodName          = "/mecatl.driver.v1.AttemptRepositoryService/DiscoverAttemptWork"
-	AttemptRepositoryService_AcquireAttemptClaim_FullMethodName          = "/mecatl.driver.v1.AttemptRepositoryService/AcquireAttemptClaim"
-	AttemptRepositoryService_RenewAttemptClaim_FullMethodName            = "/mecatl.driver.v1.AttemptRepositoryService/RenewAttemptClaim"
-	AttemptRepositoryService_CheckpointAttempt_FullMethodName            = "/mecatl.driver.v1.AttemptRepositoryService/CheckpointAttempt"
-	AttemptRepositoryService_ReleaseAttemptClaim_FullMethodName          = "/mecatl.driver.v1.AttemptRepositoryService/ReleaseAttemptClaim"
-	AttemptRepositoryService_FinalizeAttempt_FullMethodName              = "/mecatl.driver.v1.AttemptRepositoryService/FinalizeAttempt"
-	AttemptRepositoryService_RetryAttempt_FullMethodName                 = "/mecatl.driver.v1.AttemptRepositoryService/RetryAttempt"
-	AttemptRepositoryService_AbandonAttempt_FullMethodName               = "/mecatl.driver.v1.AttemptRepositoryService/AbandonAttempt"
-	AttemptRepositoryService_DeleteAttempt_FullMethodName                = "/mecatl.driver.v1.AttemptRepositoryService/DeleteAttempt"
-	AttemptRepositoryService_DeleteTerminalAttemptsBefore_FullMethodName = "/mecatl.driver.v1.AttemptRepositoryService/DeleteTerminalAttemptsBefore"
+	AttemptRepositoryService_CreateAttempt_FullMethodName                   = "/mecatl.driver.v1.AttemptRepositoryService/CreateAttempt"
+	AttemptRepositoryService_GetAttempt_FullMethodName                      = "/mecatl.driver.v1.AttemptRepositoryService/GetAttempt"
+	AttemptRepositoryService_ListAttempts_FullMethodName                    = "/mecatl.driver.v1.AttemptRepositoryService/ListAttempts"
+	AttemptRepositoryService_DiscoverAttemptWork_FullMethodName             = "/mecatl.driver.v1.AttemptRepositoryService/DiscoverAttemptWork"
+	AttemptRepositoryService_AcquireAttemptClaim_FullMethodName             = "/mecatl.driver.v1.AttemptRepositoryService/AcquireAttemptClaim"
+	AttemptRepositoryService_RenewAttemptClaim_FullMethodName               = "/mecatl.driver.v1.AttemptRepositoryService/RenewAttemptClaim"
+	AttemptRepositoryService_CheckpointAttempt_FullMethodName               = "/mecatl.driver.v1.AttemptRepositoryService/CheckpointAttempt"
+	AttemptRepositoryService_ReleaseAttemptClaim_FullMethodName             = "/mecatl.driver.v1.AttemptRepositoryService/ReleaseAttemptClaim"
+	AttemptRepositoryService_FinalizeAttempt_FullMethodName                 = "/mecatl.driver.v1.AttemptRepositoryService/FinalizeAttempt"
+	AttemptRepositoryService_RetryAttempt_FullMethodName                    = "/mecatl.driver.v1.AttemptRepositoryService/RetryAttempt"
+	AttemptRepositoryService_AbandonAttempt_FullMethodName                  = "/mecatl.driver.v1.AttemptRepositoryService/AbandonAttempt"
+	AttemptRepositoryService_DeleteAttempt_FullMethodName                   = "/mecatl.driver.v1.AttemptRepositoryService/DeleteAttempt"
+	AttemptRepositoryService_DeleteTerminalAttemptsOlderThan_FullMethodName = "/mecatl.driver.v1.AttemptRepositoryService/DeleteTerminalAttemptsOlderThan"
 )
 
 // AttemptRepositoryServiceClient is the client API for AttemptRepositoryService service.
@@ -66,7 +67,7 @@ type AttemptRepositoryServiceClient interface {
 	RetryAttempt(ctx context.Context, in *AttemptMutationRequest, opts ...grpc.CallOption) (*AttemptRecordResponse, error)
 	AbandonAttempt(ctx context.Context, in *AttemptMutationRequest, opts ...grpc.CallOption) (*AttemptRecordResponse, error)
 	DeleteAttempt(ctx context.Context, in *AttemptMutationRequest, opts ...grpc.CallOption) (*DeleteAttemptResponse, error)
-	DeleteTerminalAttemptsBefore(ctx context.Context, in *DeleteTerminalAttemptsBeforeRequest, opts ...grpc.CallOption) (*DeleteTerminalAttemptsBeforeResponse, error)
+	DeleteTerminalAttemptsOlderThan(ctx context.Context, in *DeleteTerminalAttemptsOlderThanRequest, opts ...grpc.CallOption) (*DeleteTerminalAttemptsOlderThanResponse, error)
 }
 
 type attemptRepositoryServiceClient struct {
@@ -197,10 +198,10 @@ func (c *attemptRepositoryServiceClient) DeleteAttempt(ctx context.Context, in *
 	return out, nil
 }
 
-func (c *attemptRepositoryServiceClient) DeleteTerminalAttemptsBefore(ctx context.Context, in *DeleteTerminalAttemptsBeforeRequest, opts ...grpc.CallOption) (*DeleteTerminalAttemptsBeforeResponse, error) {
+func (c *attemptRepositoryServiceClient) DeleteTerminalAttemptsOlderThan(ctx context.Context, in *DeleteTerminalAttemptsOlderThanRequest, opts ...grpc.CallOption) (*DeleteTerminalAttemptsOlderThanResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(DeleteTerminalAttemptsBeforeResponse)
-	err := c.cc.Invoke(ctx, AttemptRepositoryService_DeleteTerminalAttemptsBefore_FullMethodName, in, out, cOpts...)
+	out := new(DeleteTerminalAttemptsOlderThanResponse)
+	err := c.cc.Invoke(ctx, AttemptRepositoryService_DeleteTerminalAttemptsOlderThan_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -223,7 +224,7 @@ type AttemptRepositoryServiceServer interface {
 	RetryAttempt(context.Context, *AttemptMutationRequest) (*AttemptRecordResponse, error)
 	AbandonAttempt(context.Context, *AttemptMutationRequest) (*AttemptRecordResponse, error)
 	DeleteAttempt(context.Context, *AttemptMutationRequest) (*DeleteAttemptResponse, error)
-	DeleteTerminalAttemptsBefore(context.Context, *DeleteTerminalAttemptsBeforeRequest) (*DeleteTerminalAttemptsBeforeResponse, error)
+	DeleteTerminalAttemptsOlderThan(context.Context, *DeleteTerminalAttemptsOlderThanRequest) (*DeleteTerminalAttemptsOlderThanResponse, error)
 	mustEmbedUnimplementedAttemptRepositoryServiceServer()
 }
 
@@ -270,8 +271,8 @@ func (UnimplementedAttemptRepositoryServiceServer) AbandonAttempt(context.Contex
 func (UnimplementedAttemptRepositoryServiceServer) DeleteAttempt(context.Context, *AttemptMutationRequest) (*DeleteAttemptResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method DeleteAttempt not implemented")
 }
-func (UnimplementedAttemptRepositoryServiceServer) DeleteTerminalAttemptsBefore(context.Context, *DeleteTerminalAttemptsBeforeRequest) (*DeleteTerminalAttemptsBeforeResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method DeleteTerminalAttemptsBefore not implemented")
+func (UnimplementedAttemptRepositoryServiceServer) DeleteTerminalAttemptsOlderThan(context.Context, *DeleteTerminalAttemptsOlderThanRequest) (*DeleteTerminalAttemptsOlderThanResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method DeleteTerminalAttemptsOlderThan not implemented")
 }
 func (UnimplementedAttemptRepositoryServiceServer) mustEmbedUnimplementedAttemptRepositoryServiceServer() {
 }
@@ -511,20 +512,20 @@ func _AttemptRepositoryService_DeleteAttempt_Handler(srv interface{}, ctx contex
 	return interceptor(ctx, in, info, handler)
 }
 
-func _AttemptRepositoryService_DeleteTerminalAttemptsBefore_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(DeleteTerminalAttemptsBeforeRequest)
+func _AttemptRepositoryService_DeleteTerminalAttemptsOlderThan_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DeleteTerminalAttemptsOlderThanRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(AttemptRepositoryServiceServer).DeleteTerminalAttemptsBefore(ctx, in)
+		return srv.(AttemptRepositoryServiceServer).DeleteTerminalAttemptsOlderThan(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: AttemptRepositoryService_DeleteTerminalAttemptsBefore_FullMethodName,
+		FullMethod: AttemptRepositoryService_DeleteTerminalAttemptsOlderThan_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(AttemptRepositoryServiceServer).DeleteTerminalAttemptsBefore(ctx, req.(*DeleteTerminalAttemptsBeforeRequest))
+		return srv.(AttemptRepositoryServiceServer).DeleteTerminalAttemptsOlderThan(ctx, req.(*DeleteTerminalAttemptsOlderThanRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -585,8 +586,8 @@ var AttemptRepositoryService_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _AttemptRepositoryService_DeleteAttempt_Handler,
 		},
 		{
-			MethodName: "DeleteTerminalAttemptsBefore",
-			Handler:    _AttemptRepositoryService_DeleteTerminalAttemptsBefore_Handler,
+			MethodName: "DeleteTerminalAttemptsOlderThan",
+			Handler:    _AttemptRepositoryService_DeleteTerminalAttemptsOlderThan_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

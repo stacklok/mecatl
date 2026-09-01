@@ -25,31 +25,31 @@ func (repositoryContract) List(context.Context, learning.AttemptPartition, learn
 func (repositoryContract) DiscoverWork(context.Context, learning.AttemptWorkList) (learning.AttemptWorkPage, error) {
 	return learning.AttemptWorkPage{}, nil
 }
-func (repositoryContract) AcquireClaim(context.Context, learning.AttemptPartition, learning.AttemptID, learning.AttemptVersion, time.Time, time.Time) (learning.AttemptRecord, learning.AttemptClaim, error) {
+func (repositoryContract) AcquireClaim(context.Context, learning.AttemptPartition, learning.AttemptID, learning.AttemptVersion, time.Duration) (learning.AttemptRecord, learning.AttemptClaim, error) {
 	return learning.AttemptRecord{}, learning.AttemptClaim{}, nil
 }
-func (repositoryContract) RenewClaim(context.Context, learning.AttemptPartition, learning.AttemptID, learning.AttemptVersion, learning.AttemptClaim, time.Time, time.Time) (learning.AttemptRecord, learning.AttemptClaim, error) {
+func (repositoryContract) RenewClaim(context.Context, learning.AttemptPartition, learning.AttemptID, learning.AttemptVersion, learning.AttemptClaim, time.Duration) (learning.AttemptRecord, learning.AttemptClaim, error) {
 	return learning.AttemptRecord{}, learning.AttemptClaim{}, nil
 }
-func (repositoryContract) Checkpoint(context.Context, learning.AttemptPartition, learning.AttemptID, learning.AttemptVersion, learning.AttemptClaim, time.Time, learning.AttemptCheckpoint) (learning.AttemptRecord, error) {
+func (repositoryContract) Checkpoint(context.Context, learning.AttemptPartition, learning.AttemptID, learning.AttemptVersion, learning.AttemptClaim, learning.AttemptCheckpoint) (learning.AttemptRecord, error) {
 	return learning.AttemptRecord{}, nil
 }
-func (repositoryContract) ReleaseClaim(context.Context, learning.AttemptPartition, learning.AttemptID, learning.AttemptVersion, learning.AttemptClaim, time.Time) (learning.AttemptRecord, error) {
+func (repositoryContract) ReleaseClaim(context.Context, learning.AttemptPartition, learning.AttemptID, learning.AttemptVersion, learning.AttemptClaim) (learning.AttemptRecord, error) {
 	return learning.AttemptRecord{}, nil
 }
-func (repositoryContract) Finalize(context.Context, learning.AttemptPartition, learning.AttemptID, learning.AttemptVersion, learning.AttemptClaim, time.Time, learning.AttemptFinalization) (learning.AttemptRecord, error) {
+func (repositoryContract) Finalize(context.Context, learning.AttemptPartition, learning.AttemptID, learning.AttemptVersion, learning.AttemptClaim, learning.AttemptFinalization) (learning.AttemptRecord, error) {
 	return learning.AttemptRecord{}, nil
 }
-func (repositoryContract) Retry(context.Context, learning.AttemptPartition, learning.AttemptID, learning.AttemptVersion, time.Time) (learning.AttemptRecord, error) {
+func (repositoryContract) Retry(context.Context, learning.AttemptPartition, learning.AttemptID, learning.AttemptVersion) (learning.AttemptRecord, error) {
 	return learning.AttemptRecord{}, nil
 }
-func (repositoryContract) Abandon(context.Context, learning.AttemptPartition, learning.AttemptID, learning.AttemptVersion, time.Time) (learning.AttemptRecord, error) {
+func (repositoryContract) Abandon(context.Context, learning.AttemptPartition, learning.AttemptID, learning.AttemptVersion) (learning.AttemptRecord, error) {
 	return learning.AttemptRecord{}, nil
 }
-func (repositoryContract) Delete(context.Context, learning.AttemptPartition, learning.AttemptID, learning.AttemptVersion, time.Time) error {
+func (repositoryContract) Delete(context.Context, learning.AttemptPartition, learning.AttemptID, learning.AttemptVersion) error {
 	return nil
 }
-func (repositoryContract) DeleteTerminalBefore(context.Context, learning.AttemptPartition, time.Time, int) (int, error) {
+func (repositoryContract) DeleteTerminalOlderThan(context.Context, learning.AttemptPartition, time.Duration, int) (int, error) {
 	return 0, nil
 }
 

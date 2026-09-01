@@ -17,8 +17,7 @@ import (
 )
 
 // Harness supplies a fresh repository and a deterministic clock control. SetNow
-// changes the time observed by Create; lifecycle methods receive their effective
-// time explicitly through the AttemptRepository contract.
+// changes the time observed by every repository lifecycle operation.
 type Harness struct {
 	Repository learning.AttemptRepository
 	SetNow     func(time.Time)
@@ -67,16 +66,15 @@ func Run(t *testing.T, factory Factory) {
 		h := newHarness(t, factory)
 		ctx := context.Background()
 		p := partition(t, "cas")
-		now := baseTime()
 		created := mustCreate(t, h.Repository, p, fixture(t, "cas"))
-		running, claim, err := h.Repository.AcquireClaim(ctx, p, created.ID, created.Version, now, now.Add(time.Minute))
+		running, claim, err := h.Repository.AcquireClaim(ctx, p, created.ID, created.Version, time.Minute)
 		if err != nil {
 			t.Fatal(err)
 		}
 		if running.Version == created.Version {
 			t.Fatal("successful mutation did not replace the opaque version")
 		}
-		if _, err := h.Repository.ReleaseClaim(ctx, p, running.ID, created.Version, claim, now); !errors.Is(err, learning.ErrAttemptVersionConflict) {
+		if _, err := h.Repository.ReleaseClaim(ctx, p, running.ID, created.Version, claim); !errors.Is(err, learning.ErrAttemptVersionConflict) {
 			t.Fatalf("stale ReleaseClaim error = %v, want ErrAttemptVersionConflict", err)
 		}
 		stored := mustGet(t, h.Repository, p, running.ID)
@@ -89,7 +87,6 @@ func Run(t *testing.T, factory Factory) {
 		h := newHarness(t, factory)
 		ctx := context.Background()
 		p := partition(t, "concurrent-cas")
-		now := baseTime()
 		created := mustCreate(t, h.Repository, p, fixture(t, "concurrent-cas"))
 
 		const contenders = 16
@@ -101,7 +98,7 @@ func Run(t *testing.T, factory Factory) {
 			go func() {
 				defer wg.Done()
 				<-start
-				_, _, err := h.Repository.AcquireClaim(ctx, p, created.ID, created.Version, now, now.Add(time.Minute))
+				_, _, err := h.Repository.AcquireClaim(ctx, p, created.ID, created.Version, time.Minute)
 				results <- err
 			}()
 		}
@@ -136,14 +133,15 @@ func Run(t *testing.T, factory Factory) {
 		p := partition(t, "claims")
 		now := baseTime()
 		created := mustCreate(t, h.Repository, p, fixture(t, "claims"))
-		running, firstClaim, err := h.Repository.AcquireClaim(ctx, p, created.ID, created.Version, now, now.Add(time.Minute))
+		running, firstClaim, err := h.Repository.AcquireClaim(ctx, p, created.ID, created.Version, time.Minute)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, _, err = h.Repository.AcquireClaim(ctx, p, running.ID, running.Version, now.Add(time.Second), now.Add(2*time.Minute)); !errors.Is(err, learning.ErrAttemptClaimConflict) {
+		if _, _, err = h.Repository.AcquireClaim(ctx, p, running.ID, running.Version, 2*time.Minute); !errors.Is(err, learning.ErrAttemptClaimConflict) {
 			t.Fatalf("live successor acquisition error = %v, want ErrAttemptClaimConflict", err)
 		}
-		renewed, renewedClaim, err := h.Repository.RenewClaim(ctx, p, running.ID, running.Version, firstClaim, now.Add(10*time.Second), now.Add(2*time.Minute))
+		h.SetNow(now.Add(10 * time.Second))
+		renewed, renewedClaim, err := h.Repository.RenewClaim(ctx, p, running.ID, running.Version, firstClaim, 110*time.Second)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -151,29 +149,29 @@ func Run(t *testing.T, factory Factory) {
 			t.Fatalf("renewed claim = %+v, want same generation and later expiry than %+v", renewedClaim, firstClaim)
 		}
 		successorNow := renewedClaim.ExpiresAt
-		assertClaimFenced(t, h.Repository, p, renewed, renewedClaim, successorNow, "expired")
-		successor, successorClaim, err := h.Repository.AcquireClaim(ctx, p, renewed.ID, renewed.Version, successorNow, successorNow.Add(time.Minute))
+		h.SetNow(successorNow)
+		assertClaimFenced(t, h, p, renewed, renewedClaim, successorNow, "expired")
+		successor, successorClaim, err := h.Repository.AcquireClaim(ctx, p, renewed.ID, renewed.Version, time.Minute)
 		if err != nil {
 			t.Fatal(err)
 		}
 		if successorClaim.Generation <= renewedClaim.Generation {
 			t.Fatalf("successor generation = %d, want > %d", successorClaim.Generation, renewedClaim.Generation)
 		}
-		assertClaimFenced(t, h.Repository, p, successor, renewedClaim, successorNow, "superseded")
-		queued, err := h.Repository.ReleaseClaim(ctx, p, successor.ID, successor.Version, successorClaim, successorNow)
+		assertClaimFenced(t, h, p, successor, renewedClaim, successorNow, "superseded")
+		queued, err := h.Repository.ReleaseClaim(ctx, p, successor.ID, successor.Version, successorClaim)
 		if err != nil || queued.State != learning.AttemptQueued || queued.ClaimGeneration != 0 || !queued.ClaimExpiresAt.IsZero() {
 			t.Fatalf("ReleaseClaim = %+v, err=%v", queued, err)
 		}
-		assertClaimFenced(t, h.Repository, p, queued, successorClaim, successorNow, "released")
+		assertClaimFenced(t, h, p, queued, successorClaim, successorNow, "released")
 	})
 
 	t.Run("checkpoints are monotonic and replay-safe", func(t *testing.T) {
 		h := newHarness(t, factory)
 		ctx := context.Background()
 		p := partition(t, "checkpoints")
-		now := baseTime()
 		created := mustCreate(t, h.Repository, p, fixture(t, "checkpoints"))
-		current, claim, err := h.Repository.AcquireClaim(ctx, p, created.ID, created.Version, now, now.Add(time.Hour))
+		current, claim, err := h.Repository.AcquireClaim(ctx, p, created.ID, created.Version, time.Hour)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -184,21 +182,21 @@ func Run(t *testing.T, factory Factory) {
 			{Stage: learning.AttemptCheckpointSkillLinked, ProposalID: "proposal-one", SkillID: "skill-one"},
 		}
 		for _, step := range steps {
-			current, err = h.Repository.Checkpoint(ctx, p, current.ID, current.Version, claim, now, step)
+			current, err = h.Repository.Checkpoint(ctx, p, current.ID, current.Version, claim, step)
 			if err != nil {
 				t.Fatalf("Checkpoint(%q): %v", step.Stage, err)
 			}
 		}
-		replayed, err := h.Repository.Checkpoint(ctx, p, current.ID, current.Version, claim, now, steps[len(steps)-1])
+		replayed, err := h.Repository.Checkpoint(ctx, p, current.ID, current.Version, claim, steps[len(steps)-1])
 		if err != nil || replayed.CheckpointStage != learning.AttemptCheckpointSkillLinked {
 			t.Fatalf("idempotent checkpoint replay = %+v, err=%v", replayed, err)
 		}
 		rollback := learning.AttemptCheckpoint{Stage: learning.AttemptCheckpointProposalLinked, ProposalID: "proposal-one"}
-		if _, err = h.Repository.Checkpoint(ctx, p, replayed.ID, replayed.Version, claim, now, rollback); !errors.Is(err, learning.ErrAttemptTransition) {
+		if _, err = h.Repository.Checkpoint(ctx, p, replayed.ID, replayed.Version, claim, rollback); !errors.Is(err, learning.ErrAttemptTransition) {
 			t.Fatalf("checkpoint rollback error = %v, want ErrAttemptTransition", err)
 		}
 		changed := learning.AttemptCheckpoint{Stage: learning.AttemptCheckpointSkillLinked, ProposalID: "proposal-other", SkillID: "skill-other"}
-		if _, err = h.Repository.Checkpoint(ctx, p, replayed.ID, replayed.Version, claim, now, changed); !errors.Is(err, learning.ErrAttemptTransition) {
+		if _, err = h.Repository.Checkpoint(ctx, p, replayed.ID, replayed.Version, claim, changed); !errors.Is(err, learning.ErrAttemptTransition) {
 			t.Fatalf("same-stage checkpoint rewrite error = %v, want ErrAttemptTransition", err)
 		}
 	})
@@ -209,28 +207,28 @@ func Run(t *testing.T, factory Factory) {
 		p := partition(t, "states")
 		now := baseTime()
 		created := mustCreate(t, h.Repository, p, fixture(t, "states"))
-		if _, err := h.Repository.Retry(ctx, p, created.ID, created.Version, now); !errors.Is(err, learning.ErrAttemptTransition) {
+		if _, err := h.Repository.Retry(ctx, p, created.ID, created.Version); !errors.Is(err, learning.ErrAttemptTransition) {
 			t.Fatalf("queued Retry error = %v, want ErrAttemptTransition", err)
 		}
-		running, claim, err := h.Repository.AcquireClaim(ctx, p, created.ID, created.Version, now, now.Add(time.Hour))
+		running, claim, err := h.Repository.AcquireClaim(ctx, p, created.ID, created.Version, time.Hour)
 		if err != nil {
 			t.Fatal(err)
 		}
-		failed, err := h.Repository.Finalize(ctx, p, running.ID, running.Version, claim, now, learning.AttemptFinalization{State: learning.AttemptFailed, Outcome: learning.AttemptOutcomeFailed, FailureCode: learning.FailureUnavailable})
+		failed, err := h.Repository.Finalize(ctx, p, running.ID, running.Version, claim, learning.AttemptFinalization{State: learning.AttemptFailed, Outcome: learning.AttemptOutcomeFailed, FailureCode: learning.FailureUnavailable})
 		if err != nil {
 			t.Fatal(err)
 		}
-		retried, err := h.Repository.Retry(ctx, p, failed.ID, failed.Version, now)
+		retried, err := h.Repository.Retry(ctx, p, failed.ID, failed.Version)
 		if err != nil || retried.State != learning.AttemptQueued || retried.AttemptGeneration != failed.AttemptGeneration+1 {
 			t.Fatalf("Retry = %+v, err=%v", retried, err)
 		}
-		assertClaimFenced(t, h.Repository, p, retried, claim, now, "retried")
-		abandoned, err := h.Repository.Abandon(ctx, p, retried.ID, retried.Version, now)
+		assertClaimFenced(t, h, p, retried, claim, now, "retried")
+		abandoned, err := h.Repository.Abandon(ctx, p, retried.ID, retried.Version)
 		if err != nil || abandoned.State != learning.AttemptAbandoned || abandoned.Outcome != learning.AttemptOutcomeAbandoned {
 			t.Fatalf("Abandon = %+v, err=%v", abandoned, err)
 		}
-		assertClaimFenced(t, h.Repository, p, abandoned, claim, now, "abandoned")
-		if _, err = h.Repository.Retry(ctx, p, abandoned.ID, abandoned.Version, now); !errors.Is(err, learning.ErrAttemptTransition) {
+		assertClaimFenced(t, h, p, abandoned, claim, now, "abandoned")
+		if _, err = h.Repository.Retry(ctx, p, abandoned.ID, abandoned.Version); !errors.Is(err, learning.ErrAttemptTransition) {
 			t.Fatalf("terminal Retry error = %v, want ErrAttemptTransition", err)
 		}
 	})
@@ -274,20 +272,21 @@ func RunDiscovery(t *testing.T, factory Factory) {
 		livePartition := partition(t, "discover-live")
 		queued := mustCreate(t, h.Repository, queuedPartition, fixture(t, "discover-queued"))
 		expired := mustCreate(t, h.Repository, expiredPartition, fixture(t, "discover-expired"))
-		expired, _, err := h.Repository.AcquireClaim(ctx, expiredPartition, expired.ID, expired.Version, now, now.Add(time.Minute))
+		expired, _, err := h.Repository.AcquireClaim(ctx, expiredPartition, expired.ID, expired.Version, time.Minute)
 		if err != nil {
 			t.Fatal(err)
 		}
 		live := mustCreate(t, h.Repository, livePartition, fixture(t, "discover-live"))
-		if _, _, err = h.Repository.AcquireClaim(ctx, livePartition, live.ID, live.Version, now, now.Add(time.Hour)); err != nil {
+		if _, _, err = h.Repository.AcquireClaim(ctx, livePartition, live.ID, live.Version, time.Hour); err != nil {
 			t.Fatal(err)
 		}
 
-		first, err := h.Repository.DiscoverWork(ctx, learning.AttemptWorkList{Now: now.Add(2 * time.Minute), Limit: 1})
+		h.SetNow(now.Add(2 * time.Minute))
+		first, err := h.Repository.DiscoverWork(ctx, learning.AttemptWorkList{Limit: 1})
 		if err != nil || len(first.Work) != 1 || first.Next == (learning.AttemptWorkCursor{}) {
 			t.Fatalf("first DiscoverWork = %+v, err=%v", first, err)
 		}
-		second, err := h.Repository.DiscoverWork(ctx, learning.AttemptWorkList{Now: now.Add(2 * time.Minute), Limit: learning.MaxAttemptWorkBatch, After: first.Next})
+		second, err := h.Repository.DiscoverWork(ctx, learning.AttemptWorkList{Limit: learning.MaxAttemptWorkBatch, After: first.Next})
 		if err != nil || len(second.Work) != 1 || second.Work[0] == first.Work[0] {
 			t.Fatalf("second DiscoverWork = %+v, err=%v", second, err)
 		}
@@ -298,7 +297,7 @@ func RunDiscovery(t *testing.T, factory Factory) {
 		if seen[queued.ID] != queuedPartition || seen[expired.ID] != expiredPartition || seen[live.ID] != "" {
 			t.Fatalf("discoverable work = %+v, want queued and expired only", seen)
 		}
-		if _, err = h.Repository.DiscoverWork(ctx, learning.AttemptWorkList{Now: now}); !errors.Is(err, learning.ErrInvalidAttempt) {
+		if _, err = h.Repository.DiscoverWork(ctx, learning.AttemptWorkList{}); !errors.Is(err, learning.ErrInvalidAttempt) {
 			t.Fatalf("zero discovery limit error = %v, want ErrInvalidAttempt", err)
 		}
 	})
@@ -317,11 +316,11 @@ func RunRetentionAndDeletion(t *testing.T, factory Factory) {
 		cutoff := old.Add(24 * time.Hour)
 
 		h.SetNow(old)
-		oldTerminalA := createTerminal(t, h.Repository, p, fixture(t, "old-terminal-a"), old)
-		oldTerminalB := createTerminal(t, h.Repository, p, fixture(t, "old-terminal-b"), old)
-		foreignTerminal := createTerminal(t, h.Repository, foreign, fixture(t, "foreign-terminal"), old)
+		oldTerminalA := createTerminal(t, h.Repository, p, fixture(t, "old-terminal-a"))
+		oldTerminalB := createTerminal(t, h.Repository, p, fixture(t, "old-terminal-b"))
+		foreignTerminal := createTerminal(t, h.Repository, foreign, fixture(t, "foreign-terminal"))
 		claimed := mustCreate(t, h.Repository, p, fixture(t, "claimed"))
-		claimed, _, err := h.Repository.AcquireClaim(ctx, p, claimed.ID, claimed.Version, old, old.Add(time.Minute))
+		claimed, _, err := h.Repository.AcquireClaim(ctx, p, claimed.ID, claimed.Version, time.Minute)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -329,27 +328,28 @@ func RunRetentionAndDeletion(t *testing.T, factory Factory) {
 
 		h.SetNow(cutoff)
 		atCutoffCreated := mustCreate(t, h.Repository, p, fixture(t, "at-cutoff"))
-		atCutoffRunning, atCutoffClaim, err := h.Repository.AcquireClaim(ctx, p, atCutoffCreated.ID, atCutoffCreated.Version, cutoff, cutoff.Add(time.Hour))
+		atCutoffRunning, atCutoffClaim, err := h.Repository.AcquireClaim(ctx, p, atCutoffCreated.ID, atCutoffCreated.Version, time.Hour)
 		if err != nil {
 			t.Fatal(err)
 		}
-		atCutoff, err := h.Repository.Finalize(ctx, p, atCutoffRunning.ID, atCutoffRunning.Version, atCutoffClaim, cutoff, learning.AttemptFinalization{State: learning.AttemptCompleted, Outcome: learning.AttemptOutcomeSucceeded})
+		atCutoff, err := h.Repository.Finalize(ctx, p, atCutoffRunning.ID, atCutoffRunning.Version, atCutoffClaim, learning.AttemptFinalization{State: learning.AttemptCompleted, Outcome: learning.AttemptOutcomeSucceeded})
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err = h.Repository.Delete(ctx, p, claimed.ID, claimed.Version, cutoff); !errors.Is(err, learning.ErrAttemptClaimConflict) {
+		if err = h.Repository.Delete(ctx, p, claimed.ID, claimed.Version); !errors.Is(err, learning.ErrAttemptClaimConflict) {
 			t.Fatalf("Delete expired claimed nonterminal error = %v, want ErrAttemptClaimConflict", err)
 		}
 		if got := mustGet(t, h.Repository, p, claimed.ID); got != claimed {
 			t.Fatalf("claimed attempt changed after refused delete: got=%+v want=%+v", got, claimed)
 		}
-		if err = h.Repository.Delete(ctx, p, atCutoff.ID, atCutoffRunning.Version, cutoff); !errors.Is(err, learning.ErrAttemptVersionConflict) {
+		if err = h.Repository.Delete(ctx, p, atCutoff.ID, atCutoffRunning.Version); !errors.Is(err, learning.ErrAttemptVersionConflict) {
 			t.Fatalf("Delete with stale opaque version error = %v, want ErrAttemptVersionConflict", err)
 		}
 
-		deleted, err := h.Repository.DeleteTerminalBefore(ctx, p, cutoff, 1)
+		retentionAge := 24*time.Hour - time.Nanosecond
+		deleted, err := h.Repository.DeleteTerminalOlderThan(ctx, p, retentionAge, 1)
 		if err != nil || deleted != 1 {
-			t.Fatalf("DeleteTerminalBefore = %d, err=%v; want one", deleted, err)
+			t.Fatalf("DeleteTerminalOlderThan = %d, err=%v; want one", deleted, err)
 		}
 		remainingOld := 0
 		for _, id := range []learning.AttemptID{oldTerminalA.ID, oldTerminalB.ID} {
@@ -362,9 +362,9 @@ func RunRetentionAndDeletion(t *testing.T, factory Factory) {
 		if remainingOld != 1 {
 			t.Fatalf("retention batch left %d old terminal attempts, want 1", remainingOld)
 		}
-		deleted, err = h.Repository.DeleteTerminalBefore(ctx, p, cutoff, 1)
+		deleted, err = h.Repository.DeleteTerminalOlderThan(ctx, p, retentionAge, 1)
 		if err != nil || deleted != 1 {
-			t.Fatalf("second DeleteTerminalBefore = %d, err=%v; want one", deleted, err)
+			t.Fatalf("second DeleteTerminalOlderThan = %d, err=%v; want one", deleted, err)
 		}
 		assertMissing(t, h.Repository, p, oldTerminalA.ID)
 		assertMissing(t, h.Repository, p, oldTerminalB.ID)
@@ -373,18 +373,18 @@ func RunRetentionAndDeletion(t *testing.T, factory Factory) {
 		mustGet(t, h.Repository, p, queued.ID)
 		mustGet(t, h.Repository, p, atCutoff.ID)
 
-		if err = h.Repository.Delete(ctx, foreign, atCutoff.ID, atCutoff.Version, cutoff); !errors.Is(err, learning.ErrAttemptNotFound) {
+		if err = h.Repository.Delete(ctx, foreign, atCutoff.ID, atCutoff.Version); !errors.Is(err, learning.ErrAttemptNotFound) {
 			t.Fatalf("foreign-partition Delete error = %v, want ErrAttemptNotFound", err)
 		}
-		if err = h.Repository.Delete(ctx, p, queued.ID, queued.Version, cutoff); err != nil {
+		if err = h.Repository.Delete(ctx, p, queued.ID, queued.Version); err != nil {
 			t.Fatalf("Delete unclaimed queued: %v", err)
 		}
-		if err = h.Repository.Delete(ctx, p, atCutoff.ID, atCutoff.Version, cutoff); err != nil {
+		if err = h.Repository.Delete(ctx, p, atCutoff.ID, atCutoff.Version); err != nil {
 			t.Fatalf("Delete terminal: %v", err)
 		}
 		assertMissing(t, h.Repository, p, queued.ID)
 		assertMissing(t, h.Repository, p, atCutoff.ID)
-		if _, err = h.Repository.DeleteTerminalBefore(ctx, p, cutoff, 0); !errors.Is(err, learning.ErrInvalidAttempt) {
+		if _, err = h.Repository.DeleteTerminalOlderThan(ctx, p, retentionAge, 0); !errors.Is(err, learning.ErrInvalidAttempt) {
 			t.Fatalf("zero retention limit error = %v, want ErrInvalidAttempt", err)
 		}
 	})
@@ -398,16 +398,15 @@ func runPartitionQuota(t *testing.T, factory Factory) {
 	t.Helper()
 	h := newHarness(t, factory)
 	ctx := context.Background()
-	now := baseTime()
 	alice := partition(t, "quota-alice")
 	bob := partition(t, "quota-bob")
 
 	claimed := mustCreate(t, h.Repository, alice, fixture(t, "quota-claimed"))
-	claimed, _, err := h.Repository.AcquireClaim(ctx, alice, claimed.ID, claimed.Version, now, now.Add(time.Hour))
+	claimed, _, err := h.Repository.AcquireClaim(ctx, alice, claimed.ID, claimed.Version, time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
-	terminal := createTerminal(t, h.Repository, alice, fixture(t, "quota-terminal"), now)
+	terminal := createTerminal(t, h.Repository, alice, fixture(t, "quota-terminal"))
 	queued := make([]learning.AttemptRecord, 0, learning.MaxAttemptsPerPartition-2)
 	for i := 0; i < learning.MaxAttemptsPerPartition-2; i++ {
 		queued = append(queued, mustCreate(t, h.Repository, alice, fixture(t, fmt.Sprintf("quota-queued-%d", i))))
@@ -429,11 +428,11 @@ func runPartitionQuota(t *testing.T, factory Factory) {
 		t.Fatalf("saturated Alice Create error = %v, want ErrAttemptQuotaExceeded", err)
 	}
 	bobCreated := mustCreate(t, h.Repository, bob, fixture(t, "quota-bob"))
-	bobRunning, bobClaim, err := h.Repository.AcquireClaim(ctx, bob, bobCreated.ID, bobCreated.Version, now, now.Add(time.Hour))
+	bobRunning, bobClaim, err := h.Repository.AcquireClaim(ctx, bob, bobCreated.ID, bobCreated.Version, time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
-	bobDone, err := h.Repository.Finalize(ctx, bob, bobRunning.ID, bobRunning.Version, bobClaim, now, learning.AttemptFinalization{
+	bobDone, err := h.Repository.Finalize(ctx, bob, bobRunning.ID, bobRunning.Version, bobClaim, learning.AttemptFinalization{
 		State: learning.AttemptCompleted, Outcome: learning.AttemptOutcomeSucceeded,
 	})
 	if err != nil || bobDone.State != learning.AttemptCompleted {
@@ -488,14 +487,14 @@ func mustCreate(t *testing.T, repository learning.AttemptRepository, p learning.
 	return record
 }
 
-func createTerminal(t *testing.T, repository learning.AttemptRepository, p learning.AttemptPartition, create learning.AttemptCreate, now time.Time) learning.AttemptRecord {
+func createTerminal(t *testing.T, repository learning.AttemptRepository, p learning.AttemptPartition, create learning.AttemptCreate) learning.AttemptRecord {
 	t.Helper()
 	created := mustCreate(t, repository, p, create)
-	running, claim, err := repository.AcquireClaim(context.Background(), p, created.ID, created.Version, now, now.Add(time.Hour))
+	running, claim, err := repository.AcquireClaim(context.Background(), p, created.ID, created.Version, time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
-	terminal, err := repository.Finalize(context.Background(), p, running.ID, running.Version, claim, now, learning.AttemptFinalization{State: learning.AttemptCompleted, Outcome: learning.AttemptOutcomeSucceeded})
+	terminal, err := repository.Finalize(context.Background(), p, running.ID, running.Version, claim, learning.AttemptFinalization{State: learning.AttemptCompleted, Outcome: learning.AttemptOutcomeSucceeded})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -512,26 +511,28 @@ func mustGet(t *testing.T, repository learning.AttemptRepository, p learning.Att
 	return record
 }
 
-func assertClaimFenced(t *testing.T, repository learning.AttemptRepository, partition learning.AttemptPartition, current learning.AttemptRecord, stale learning.AttemptClaim, now time.Time, state string) {
+func assertClaimFenced(t *testing.T, h Harness, partition learning.AttemptPartition, current learning.AttemptRecord, stale learning.AttemptClaim, now time.Time, state string) {
 	t.Helper()
+	h.SetNow(now)
+	repository := h.Repository
 	operations := []struct {
 		name string
 		run  func() error
 	}{
 		{name: "renew", run: func() error {
-			_, _, err := repository.RenewClaim(context.Background(), partition, current.ID, current.Version, stale, now, now.Add(time.Minute))
+			_, _, err := repository.RenewClaim(context.Background(), partition, current.ID, current.Version, stale, time.Minute)
 			return err
 		}},
 		{name: "checkpoint", run: func() error {
-			_, err := repository.Checkpoint(context.Background(), partition, current.ID, current.Version, stale, now, learning.AttemptCheckpoint{Stage: learning.AttemptCheckpointEvidenceVerified})
+			_, err := repository.Checkpoint(context.Background(), partition, current.ID, current.Version, stale, learning.AttemptCheckpoint{Stage: learning.AttemptCheckpointEvidenceVerified})
 			return err
 		}},
 		{name: "release", run: func() error {
-			_, err := repository.ReleaseClaim(context.Background(), partition, current.ID, current.Version, stale, now)
+			_, err := repository.ReleaseClaim(context.Background(), partition, current.ID, current.Version, stale)
 			return err
 		}},
 		{name: "finalize", run: func() error {
-			_, err := repository.Finalize(context.Background(), partition, current.ID, current.Version, stale, now, learning.AttemptFinalization{State: learning.AttemptCompleted, Outcome: learning.AttemptOutcomeSucceeded})
+			_, err := repository.Finalize(context.Background(), partition, current.ID, current.Version, stale, learning.AttemptFinalization{State: learning.AttemptCompleted, Outcome: learning.AttemptOutcomeSucceeded})
 			return err
 		}},
 	}

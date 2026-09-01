@@ -75,7 +75,7 @@ func TestConcurrentStoreInstancesPreserveCAS(t *testing.T) {
 		wg.Add(1)
 		go func(store *Store) {
 			defer wg.Done()
-			_, _, claimErr := store.AcquireClaim(context.Background(), partition, created.ID, created.Version, now, now.Add(time.Minute))
+			_, _, claimErr := store.AcquireClaim(context.Background(), partition, created.ID, created.Version, time.Minute)
 			errs <- claimErr
 		}(store)
 	}

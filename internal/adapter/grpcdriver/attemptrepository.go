@@ -73,7 +73,7 @@ func (r *AttemptRepository) List(ctx context.Context, partition learning.Attempt
 
 func (r *AttemptRepository) DiscoverWork(ctx context.Context, query learning.AttemptWorkList) (learning.AttemptWorkPage, error) {
 	resp, err := r.client.DiscoverAttemptWork(ctx, &driverv1.DiscoverAttemptWorkRequest{
-		Now: attemptTimeToProto(query.Now), Limit: int32(query.Limit), AfterPartition: string(query.After.Partition), AfterId: string(query.After.ID), // #nosec G115 -- domain limit is <= 200
+		Limit: int32(query.Limit), AfterPartition: string(query.After.Partition), AfterId: string(query.After.ID), // #nosec G115 -- domain limit is <= 200
 	})
 	if err != nil {
 		return learning.AttemptWorkPage{}, attemptStatusToErr(ctx, err)
@@ -96,55 +96,55 @@ func (r *AttemptRepository) DiscoverWork(ctx context.Context, query learning.Att
 	return page, nil
 }
 
-func (r *AttemptRepository) AcquireClaim(ctx context.Context, partition learning.AttemptPartition, id learning.AttemptID, expected learning.AttemptVersion, now, expires time.Time) (learning.AttemptRecord, learning.AttemptClaim, error) {
-	resp, err := r.client.AcquireAttemptClaim(ctx, claimMutationToProto(partition, id, expected, learning.AttemptClaim{}, now, expires))
+func (r *AttemptRepository) AcquireClaim(ctx context.Context, partition learning.AttemptPartition, id learning.AttemptID, expected learning.AttemptVersion, duration time.Duration) (learning.AttemptRecord, learning.AttemptClaim, error) {
+	resp, err := r.client.AcquireAttemptClaim(ctx, claimMutationToProto(partition, id, expected, learning.AttemptClaim{}, duration))
 	return claimResponse(ctx, resp, err)
 }
 
-func (r *AttemptRepository) RenewClaim(ctx context.Context, partition learning.AttemptPartition, id learning.AttemptID, expected learning.AttemptVersion, claim learning.AttemptClaim, now, expires time.Time) (learning.AttemptRecord, learning.AttemptClaim, error) {
-	resp, err := r.client.RenewAttemptClaim(ctx, claimMutationToProto(partition, id, expected, claim, now, expires))
+func (r *AttemptRepository) RenewClaim(ctx context.Context, partition learning.AttemptPartition, id learning.AttemptID, expected learning.AttemptVersion, claim learning.AttemptClaim, duration time.Duration) (learning.AttemptRecord, learning.AttemptClaim, error) {
+	resp, err := r.client.RenewAttemptClaim(ctx, claimMutationToProto(partition, id, expected, claim, duration))
 	return claimResponse(ctx, resp, err)
 }
 
-func (r *AttemptRepository) Checkpoint(ctx context.Context, partition learning.AttemptPartition, id learning.AttemptID, expected learning.AttemptVersion, claim learning.AttemptClaim, now time.Time, checkpoint learning.AttemptCheckpoint) (learning.AttemptRecord, error) {
+func (r *AttemptRepository) Checkpoint(ctx context.Context, partition learning.AttemptPartition, id learning.AttemptID, expected learning.AttemptVersion, claim learning.AttemptClaim, checkpoint learning.AttemptCheckpoint) (learning.AttemptRecord, error) {
 	resp, err := r.client.CheckpointAttempt(ctx, &driverv1.CheckpointAttemptRequest{
-		Mutation: claimMutationToProto(partition, id, expected, claim, now, time.Time{}), Stage: string(checkpoint.Stage),
+		Mutation: claimMutationToProto(partition, id, expected, claim, 0), Stage: string(checkpoint.Stage),
 		ProposalId: string(checkpoint.ProposalID), SkillId: string(checkpoint.SkillID),
 	})
 	return recordResponse(ctx, resp, err)
 }
 
-func (r *AttemptRepository) ReleaseClaim(ctx context.Context, partition learning.AttemptPartition, id learning.AttemptID, expected learning.AttemptVersion, claim learning.AttemptClaim, now time.Time) (learning.AttemptRecord, error) {
-	resp, err := r.client.ReleaseAttemptClaim(ctx, claimMutationToProto(partition, id, expected, claim, now, time.Time{}))
+func (r *AttemptRepository) ReleaseClaim(ctx context.Context, partition learning.AttemptPartition, id learning.AttemptID, expected learning.AttemptVersion, claim learning.AttemptClaim) (learning.AttemptRecord, error) {
+	resp, err := r.client.ReleaseAttemptClaim(ctx, claimMutationToProto(partition, id, expected, claim, 0))
 	return recordResponse(ctx, resp, err)
 }
 
-func (r *AttemptRepository) Finalize(ctx context.Context, partition learning.AttemptPartition, id learning.AttemptID, expected learning.AttemptVersion, claim learning.AttemptClaim, now time.Time, final learning.AttemptFinalization) (learning.AttemptRecord, error) {
+func (r *AttemptRepository) Finalize(ctx context.Context, partition learning.AttemptPartition, id learning.AttemptID, expected learning.AttemptVersion, claim learning.AttemptClaim, final learning.AttemptFinalization) (learning.AttemptRecord, error) {
 	resp, err := r.client.FinalizeAttempt(ctx, &driverv1.FinalizeAttemptRequest{
-		Mutation: claimMutationToProto(partition, id, expected, claim, now, time.Time{}), State: string(final.State),
+		Mutation: claimMutationToProto(partition, id, expected, claim, 0), State: string(final.State),
 		Outcome: string(final.Outcome), FailureCode: string(final.FailureCode),
 	})
 	return recordResponse(ctx, resp, err)
 }
 
-func (r *AttemptRepository) Retry(ctx context.Context, partition learning.AttemptPartition, id learning.AttemptID, expected learning.AttemptVersion, now time.Time) (learning.AttemptRecord, error) {
-	resp, err := r.client.RetryAttempt(ctx, mutationToProto(partition, id, expected, now))
+func (r *AttemptRepository) Retry(ctx context.Context, partition learning.AttemptPartition, id learning.AttemptID, expected learning.AttemptVersion) (learning.AttemptRecord, error) {
+	resp, err := r.client.RetryAttempt(ctx, mutationToProto(partition, id, expected))
 	return recordResponse(ctx, resp, err)
 }
 
-func (r *AttemptRepository) Abandon(ctx context.Context, partition learning.AttemptPartition, id learning.AttemptID, expected learning.AttemptVersion, now time.Time) (learning.AttemptRecord, error) {
-	resp, err := r.client.AbandonAttempt(ctx, mutationToProto(partition, id, expected, now))
+func (r *AttemptRepository) Abandon(ctx context.Context, partition learning.AttemptPartition, id learning.AttemptID, expected learning.AttemptVersion) (learning.AttemptRecord, error) {
+	resp, err := r.client.AbandonAttempt(ctx, mutationToProto(partition, id, expected))
 	return recordResponse(ctx, resp, err)
 }
 
-func (r *AttemptRepository) Delete(ctx context.Context, partition learning.AttemptPartition, id learning.AttemptID, expected learning.AttemptVersion, now time.Time) error {
-	_, err := r.client.DeleteAttempt(ctx, mutationToProto(partition, id, expected, now))
+func (r *AttemptRepository) Delete(ctx context.Context, partition learning.AttemptPartition, id learning.AttemptID, expected learning.AttemptVersion) error {
+	_, err := r.client.DeleteAttempt(ctx, mutationToProto(partition, id, expected))
 	return attemptStatusToErr(ctx, err)
 }
 
-func (r *AttemptRepository) DeleteTerminalBefore(ctx context.Context, partition learning.AttemptPartition, before time.Time, limit int) (int, error) {
-	resp, err := r.client.DeleteTerminalAttemptsBefore(ctx, &driverv1.DeleteTerminalAttemptsBeforeRequest{
-		Partition: string(partition), Before: attemptTimeToProto(before), Limit: int32(limit), // #nosec G115 -- domain limit is <= 200
+func (r *AttemptRepository) DeleteTerminalOlderThan(ctx context.Context, partition learning.AttemptPartition, olderThan time.Duration, limit int) (int, error) {
+	resp, err := r.client.DeleteTerminalAttemptsOlderThan(ctx, &driverv1.DeleteTerminalAttemptsOlderThanRequest{
+		Partition: string(partition), OlderThanMillis: olderThan.Milliseconds(), Limit: int32(limit), // #nosec G115 -- domain limit is <= 200
 	})
 	if err != nil {
 		return 0, attemptStatusToErr(ctx, err)
@@ -152,13 +152,13 @@ func (r *AttemptRepository) DeleteTerminalBefore(ctx context.Context, partition 
 	return int(resp.GetDeleted()), nil
 }
 
-func mutationToProto(partition learning.AttemptPartition, id learning.AttemptID, expected learning.AttemptVersion, now time.Time) *driverv1.AttemptMutationRequest {
-	return &driverv1.AttemptMutationRequest{Partition: string(partition), Id: string(id), ExpectedVersion: string(expected), Now: attemptTimeToProto(now)}
+func mutationToProto(partition learning.AttemptPartition, id learning.AttemptID, expected learning.AttemptVersion) *driverv1.AttemptMutationRequest {
+	return &driverv1.AttemptMutationRequest{Partition: string(partition), Id: string(id), ExpectedVersion: string(expected)}
 }
 
-func claimMutationToProto(partition learning.AttemptPartition, id learning.AttemptID, expected learning.AttemptVersion, claim learning.AttemptClaim, now, expires time.Time) *driverv1.AttemptClaimMutationRequest {
+func claimMutationToProto(partition learning.AttemptPartition, id learning.AttemptID, expected learning.AttemptVersion, claim learning.AttemptClaim, duration time.Duration) *driverv1.AttemptClaimMutationRequest {
 	request := &driverv1.AttemptClaimMutationRequest{
-		Partition: string(partition), Id: string(id), ExpectedVersion: string(expected), Now: attemptTimeToProto(now), ExpiresAt: attemptTimeToProto(expires),
+		Partition: string(partition), Id: string(id), ExpectedVersion: string(expected), DurationMillis: duration.Milliseconds(),
 	}
 	if claim.Valid() {
 		request.Claim = &driverv1.AttemptClaim{Generation: uint64(claim.Generation), ExpiresAt: attemptTimeToProto(claim.ExpiresAt)}

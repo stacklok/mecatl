@@ -54,11 +54,11 @@ type renewalRepository struct {
 	fail    bool
 }
 
-func (r *renewalRepository) RenewClaim(ctx context.Context, partition learning.AttemptPartition, id learning.AttemptID, version learning.AttemptVersion, claim learning.AttemptClaim, now, expires time.Time) (learning.AttemptRecord, learning.AttemptClaim, error) {
+func (r *renewalRepository) RenewClaim(ctx context.Context, partition learning.AttemptPartition, id learning.AttemptID, version learning.AttemptVersion, claim learning.AttemptClaim, duration time.Duration) (learning.AttemptRecord, learning.AttemptClaim, error) {
 	if r.fail {
 		return learning.AttemptRecord{}, learning.AttemptClaim{}, learning.ErrAttemptClaimLost
 	}
-	record, renewed, err := r.AttemptRepository.RenewClaim(ctx, partition, id, version, claim, now, expires)
+	record, renewed, err := r.AttemptRepository.RenewClaim(ctx, partition, id, version, claim, duration)
 	if err == nil {
 		r.mu.Lock()
 		r.count++
@@ -93,7 +93,7 @@ func TestAttemptWorkerRenewsClaimDuringLongWork(t *testing.T) {
 	base, partition, record := newAttemptWorkerRecord(t, clock)
 	repository := &renewalRepository{AttemptRepository: base, renewed: make(chan int, 8)}
 	worker := attemptWorker{
-		repository: repository, partition: partition, id: record.ID, now: clock.Now,
+		repository: repository, partition: partition, id: record.ID,
 		claimTTL: time.Minute, claimRenewInterval: 5 * time.Millisecond,
 		evidence: func(context.Context, learning.AttemptRecord) (learning.AttemptFailureCode, error) {
 			waitRenewal(t, repository.renewed, 1)
@@ -120,7 +120,7 @@ func TestAttemptWorkerCancelsWorkWhenRenewalIsLost(t *testing.T) {
 	repository := &renewalRepository{AttemptRepository: base, renewed: make(chan int), fail: true}
 	cancelled := make(chan struct{})
 	worker := attemptWorker{
-		repository: repository, partition: partition, id: record.ID, now: clock.Now,
+		repository: repository, partition: partition, id: record.ID,
 		claimTTL: time.Minute, claimRenewInterval: 5 * time.Millisecond,
 		evidence: func(ctx context.Context, _ learning.AttemptRecord) (learning.AttemptFailureCode, error) {
 			<-ctx.Done()
@@ -168,7 +168,7 @@ func TestADR_0254_AbstentionIsASeparateTerminalOutcome(t *testing.T) {
 			clock := &attemptWorkerClock{now: time.Unix(10, 0)}
 			repo, partition, record := newAttemptWorkerRecord(t, clock)
 			worker := attemptWorker{
-				repository: repo, partition: partition, id: record.ID, now: clock.Now,
+				repository: repo, partition: partition, id: record.ID,
 				evidence: func(context.Context, learning.AttemptRecord) (learning.AttemptFailureCode, error) {
 					if tc.name == "evidence_failure" {
 						return learning.FailureEvidenceUnavailable, nil
@@ -196,7 +196,7 @@ func TestADR_0254_AttemptReconciliationIsIdempotent(t *testing.T) {
 	claimCrash := errors.New("simulated crash after claim")
 	checkpointCrash := errors.New("simulated crash after durable publication checkpoint")
 	worker := attemptWorker{
-		repository: repo, partition: partition, id: record.ID, now: clock.Now, claimTTL: time.Second,
+		repository: repo, partition: partition, id: record.ID, claimTTL: time.Second,
 		evidence: func(context.Context, learning.AttemptRecord) (learning.AttemptFailureCode, error) {
 			return learning.FailureNone, nil
 		},
@@ -276,7 +276,7 @@ func TestADR_0254_CanonicalArtifactIdentitySurvivesRestart(t *testing.T) {
 	newWorker := func(expireAfterPublish bool) *attemptWorker {
 		claimed := created
 		return &attemptWorker{
-			repository: attempts, partition: attemptPartition, id: created.ID, now: clock.Now, claimTTL: time.Second,
+			repository: attempts, partition: attemptPartition, id: created.ID, claimTTL: time.Second,
 			evidence: func(_ context.Context, record learning.AttemptRecord) (learning.AttemptFailureCode, error) {
 				claimed = record
 				return learning.FailureNone, nil
@@ -371,7 +371,7 @@ func TestADR_0254_IndependentDownstreamCommitReconcilesAfterClaimLoss(t *testing
 		return learning.AttemptCheckpoint{Stage: learning.AttemptCheckpointProposalLinked, ProposalID: proposalID}, learning.FailureNone, nil
 	}
 	worker := attemptWorker{
-		repository: attempts, partition: attemptPartition, id: created.ID, now: clock.Now, claimTTL: time.Second,
+		repository: attempts, partition: attemptPartition, id: created.ID, claimTTL: time.Second,
 		evidence: func(context.Context, learning.AttemptRecord) (learning.AttemptFailureCode, error) {
 			return learning.FailureNone, nil
 		},

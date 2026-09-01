@@ -13,6 +13,7 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 ### Changed
 
+- **`learning.AttemptRepository` backend-authoritative time** ([ADR 0294](../docs/adr/0294-cloud-native-learning.md)) — breaking (pre-v1 minor): discovery, lifecycle mutations, claim expiry, and retention now use each repository backend's clock. Clients request bounded claim and retention durations and provide opaque versions/fences, but cannot supply `now` or absolute authoritative expiry.
 - **`learning.AutomaticAdmissionLedger` policy/time authority** ([ADR 0294](../docs/adr/0294-cloud-native-learning.md)) — breaking (pre-v1 minor): reservation requests now carry only identity, charge demand, and an expected derived policy revision; reservations persist that revision; and `Reassign`, `Retain`, and `Reclaim` no longer accept caller timestamps. Ledger backends own immutable configured policy and clock authority, preventing clients or skewed replicas from enlarging limits or prematurely expiring charges and fences.
 
 ### Added
