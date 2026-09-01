@@ -1,7 +1,7 @@
 # Cloud-native learning v2 — acceptance plan
 
 **Phase:** capability — durable, distributed procedure learning
-**Status:** in-progress, 2026-08-31. Settled design synthesis.
+**Status:** landed, 2026-08-31. Settled design synthesis.
 **ADR:** [ADR-0294](../adr/0294-cloud-native-learning.md) — authoritative learning attempts and distributed downstream authority.
 **Accumulator branch:** `acc/cloud-native-learning` (off `main`).
 

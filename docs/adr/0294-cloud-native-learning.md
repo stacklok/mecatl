@@ -1,6 +1,6 @@
 # ADR 0294 — Cloud-native learning uses durable, authoritative attempts
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-08-31
 - Scope: learning admission, durable attempt orchestration, source evidence, distributed proposal/skill authority, and attempt APIs
 - Supersedes: ADR 0109's reset-by-design reflection coordinator/receipt authority decision; ADR 0114's process-local automatic admission accounting decision, where cloud-native learning v2 is wired
