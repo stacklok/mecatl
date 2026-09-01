@@ -1211,6 +1211,24 @@ func (h *HarnessServer) ListLearningAttempts(ctx context.Context, req *mecatlv1.
 	return response, nil
 }
 
+// RetryLearningAttempt retries one failed attempt under opaque-version CAS.
+func (h *HarnessServer) RetryLearningAttempt(ctx context.Context, req *mecatlv1.MutateLearningAttemptRequest) (*mecatlv1.MutateLearningAttemptResponse, error) {
+	attempt, err := h.svc.RetryLearningAttempt(ctx, req.GetId(), req.GetExpectedVersion())
+	if err != nil {
+		return nil, toStatus(err)
+	}
+	return &mecatlv1.MutateLearningAttemptResponse{Attempt: attempt}, nil
+}
+
+// AbandonLearningAttempt abandons only the attempt; it performs no compensation.
+func (h *HarnessServer) AbandonLearningAttempt(ctx context.Context, req *mecatlv1.MutateLearningAttemptRequest) (*mecatlv1.MutateLearningAttemptResponse, error) {
+	attempt, err := h.svc.AbandonLearningAttempt(ctx, req.GetId(), req.GetExpectedVersion())
+	if err != nil {
+		return nil, toStatus(err)
+	}
+	return &mecatlv1.MutateLearningAttemptResponse{Attempt: attempt}, nil
+}
+
 // GenerateDreamPlan creates a retained manual consolidation review.
 func (h *HarnessServer) GenerateDreamPlan(ctx context.Context, req *mecatlv1.GenerateDreamPlanRequest) (*mecatlv1.GenerateDreamPlanResponse, error) {
 	review, err := h.svc.GenerateDream(ctx, DreamTarget(req.GetTarget()))

@@ -82,6 +82,8 @@ func NewHTTPHandler(svc *Service) *HTTPHandler {
 	h.mux.HandleFunc("POST /v1/dream/plans/{plan_id}/decision", h.decideDreamPlan)
 	h.mux.HandleFunc("GET /v1/learning/attempts", h.listLearningAttempts)
 	h.mux.HandleFunc("GET /v1/learning/attempts/{id}", h.getLearningAttempt)
+	h.mux.HandleFunc("POST /v1/learning/attempts/{id}/retry", h.retryLearningAttempt)
+	h.mux.HandleFunc("POST /v1/learning/attempts/{id}/abandon", h.abandonLearningAttempt)
 	h.mux.HandleFunc("GET /v1/learning/proposals", h.listLearningProposals)
 	h.mux.HandleFunc("GET /v1/learning/proposals/{id}", h.getLearningProposal)
 	h.mux.HandleFunc("POST /v1/learning/proposals/{id}/decision", h.decideLearningProposal)
@@ -1981,6 +1983,30 @@ func (h *HTTPHandler) getLearningAttempt(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	writeJSON(w, http.StatusOK, &mecatlv1.GetLearningAttemptResponse{Attempt: attempt})
+}
+
+func (h *HTTPHandler) retryLearningAttempt(w http.ResponseWriter, r *http.Request) {
+	mutateLearningAttempt(w, r, h.svc.RetryLearningAttempt)
+}
+
+func (h *HTTPHandler) abandonLearningAttempt(w http.ResponseWriter, r *http.Request) {
+	mutateLearningAttempt(w, r, h.svc.AbandonLearningAttempt)
+}
+
+func mutateLearningAttempt(w http.ResponseWriter, r *http.Request, mutate func(context.Context, string, string) (*mecatlv1.LearningAttempt, error)) {
+	var body struct {
+		ExpectedVersion string `json:"expected_version"`
+	}
+	if err := decodeLearningJSON(r, 2<<10, &body, false); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid attempt control")
+		return
+	}
+	attempt, err := mutate(r.Context(), r.PathValue("id"), body.ExpectedVersion)
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, &mecatlv1.MutateLearningAttemptResponse{Attempt: attempt})
 }
 
 func (h *HTTPHandler) listLearningProposals(w http.ResponseWriter, r *http.Request) {

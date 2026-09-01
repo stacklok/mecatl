@@ -81,6 +81,12 @@ var (
 	ErrFailedPrecondition = errors.New("server: failed precondition")
 	// ErrLearningUnavailable means reflection/proposal persistence is not wired.
 	ErrLearningUnavailable = errors.New("server: learning proposals are not configured")
+	// ErrAttemptVersionConflict reports an opaque expected-version CAS mismatch.
+	ErrAttemptVersionConflict = errors.New("server: learning attempt version conflict")
+	// ErrAttemptTerminalConflict reports a lifecycle state that cannot perform the requested control.
+	ErrAttemptTerminalConflict = errors.New("server: learning attempt terminal conflict")
+	// ErrAttemptLiveClaimConflict reports an attempt currently fenced by a live worker claim.
+	ErrAttemptLiveClaimConflict = errors.New("server: learning attempt has a live claim")
 	// ErrProposalConflict reports a stale proposal version or invalid lifecycle transition.
 	ErrProposalConflict = errors.New("server: proposal conflict")
 	// ErrInternal signals a server-side fault that is NOT the client's fault — a

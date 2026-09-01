@@ -333,6 +333,10 @@ service HarnessService {
   // verified caller's private partition. Pagination cursors are opaque IDs.
   rpc GetLearningAttempt(GetLearningAttemptRequest) returns (GetLearningAttemptResponse);
   rpc ListLearningAttempts(ListLearningAttemptsRequest) returns (ListLearningAttemptsResponse);
+  // Retry and abandon are opaque-version CAS controls over only the attempt.
+  // Abandon is non-compensating and does not promise downstream rollback.
+  rpc RetryLearningAttempt(MutateLearningAttemptRequest) returns (MutateLearningAttemptResponse);
+  rpc AbandonLearningAttempt(MutateLearningAttemptRequest) returns (MutateLearningAttemptResponse);
 
   // GenerateDreamPlan creates a bounded-lifetime manual consolidation review for
   // one closed, deployment-owned target. The request carries no mutation material.
@@ -2944,6 +2948,12 @@ message ListLearningAttemptsResponse {
   repeated LearningAttempt attempts = 1;
   string next_cursor = 2;
 }
+
+message MutateLearningAttemptRequest {
+  string id = 1 [(buf.validate.field).string.min_len = 1];
+  string expected_version = 2 [(buf.validate.field).string.min_len = 1];
+}
+message MutateLearningAttemptResponse { LearningAttempt attempt = 1; }
 
 message ListLearningProposalsRequest {
   string status = 1;

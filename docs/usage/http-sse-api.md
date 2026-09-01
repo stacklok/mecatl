@@ -109,6 +109,8 @@ exact private `EnvironmentRef{kind,id,revision}`; HTTP projections never do.
 | `POST /v1/sessions/{id}/reflect` | synchronously reflect a caller-owned completed session on its persisted provider (optional empty/`{}` body); returns bounded abstained/staged/promoted/conflicted counts |
 | `GET /v1/learning/attempts` | content-free caller-partitioned attempt page; accepts closed `state`, opaque `cursor`, and bounded `limit` (default 50, maximum 200) |
 | `GET /v1/learning/attempts/{id}` | content-free attempt lifecycle detail; foreign and missing IDs both return `404` |
+| `POST /v1/learning/attempts/{id}/retry` | body `{"expected_version":"<opaque>"}`; failed-to-queued attempt CAS only |
+| `POST /v1/learning/attempts/{id}/abandon` | body `{"expected_version":"<opaque>"}`; non-compensating attempt CAS only, with no downstream rollback promise |
 | `POST /v1/dream/plans` | body `{"target":"project_memory"}` or `{"target":"user_model"}`; spends one planner call and returns the bounded-lifetime exact/synthesized review plan plus opaque process-local id |
 | `POST /v1/dream/plans/{plan_id}/decision` | body `{"decision":"apply"}` or `{"decision":"dismiss"}`; decides the authoritative retained whole plan and returns planned/applied/conflicted/skipped/failed source counts |
 | `GET /v1/learning/proposals` | bounded caller-partitioned proposal page (`status`, `cursor`, `limit`, optional reviewable `project`; promotion remains launch-root/trust-gated) |

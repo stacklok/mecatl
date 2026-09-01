@@ -131,7 +131,13 @@ timestamps, safe failure/checkpoint codes, opaque versions, and authorized
 proposal/skill links only. They never include prompts, transcripts, tool/provider
 output, filesystem paths, identity values, credentials, diagnostics, metrics, or
 event/watch payloads. Another caller sees the same not-found response as a missing
-attempt. Attempt watch is not available.
+attempt. Attempt watch is not available. A failed attempt can be retried with
+`RetryLearningAttempt`, and an unclaimed nonterminal attempt can be abandoned with
+`AbandonLearningAttempt`; HTTP uses `POST /v1/learning/attempts/{id}/retry` and
+`POST /v1/learning/attempts/{id}/abandon`. Both controls require the attempt's
+opaque `expected_version`, mutate only the caller's attempt record, and leave state
+unchanged on stale versions, terminal conflicts, or live worker claims. Abandon is
+non-compensating and does not roll back linked proposals, skills, or other downstream effects.
 
 Use the memory tools to inspect and manage the resulting facts. Values remain
 bounded and secret-shaped credentials or role/directive overrides are rejected.

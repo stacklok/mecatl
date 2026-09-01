@@ -364,6 +364,8 @@ var serviceAccessTable = map[string]ClassificationEntry{
 	"ReflectSession":           {KindCallerOwned, "loads and authorizes the source session before submitting its bounded completed trajectory"},
 	"GetLearningAttempt":       {KindCallerOwned, "derives the private immutable attempt partition from the verified caller before repository access"},
 	"ListLearningAttempts":     {KindCallerOwned, "pages only the private immutable attempt partition derived from the verified caller"},
+	"RetryLearningAttempt":     {KindCallerOwned, "retries only the verified caller's attempt under opaque-version CAS"},
+	"AbandonLearningAttempt":   {KindCallerOwned, "non-compensating abandon mutates only the verified caller's attempt under opaque-version CAS"},
 	"ListLearningProposals":    {KindCallerOwned, "derives the proposal partition from the verified caller; optional project scope is trust-gated"},
 	"GetLearningProposal":      {KindCallerOwned, "reads only the verified caller's proposal partition"},
 	"DecideLearningProposal":   {KindCallerOwned, "mutates only the verified caller's proposal partition with version CAS"},

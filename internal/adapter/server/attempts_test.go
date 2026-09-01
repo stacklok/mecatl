@@ -120,6 +120,138 @@ func TestADR_0254_AttemptControlsAreNonDisclosingBeforeSideEffects(t *testing.T)
 	}
 }
 
+func TestADR_0254_AttemptControlsRequirePrivateOwnerBinding(t *testing.T) {
+	now := time.Date(2026, time.September, 1, 12, 0, 0, 0, time.UTC)
+	repository := memattempt.New(wallclock.Clock{})
+	failed := createAttemptFixture(t, repository, "alice", "failed")
+	alicePartition, err := learning.DeriveAttemptPartition(reflectionPrincipal(&session.Principal{Issuer: "https://issuer.example", Subject: "alice"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	running, claim, err := repository.AcquireClaim(context.Background(), alicePartition, failed.ID, failed.Version, now, now.Add(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	failed, err = repository.Finalize(context.Background(), alicePartition, failed.ID, running.Version, claim, now, learning.AttemptFinalization{
+		State: learning.AttemptFailed, Outcome: learning.AttemptOutcomeFailed, FailureCode: learning.FailureUnavailable,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var ownerResolved atomic.Bool
+	ordered := &ownerFirstAttemptRepository{AttemptRepository: repository, ownerResolved: &ownerResolved}
+	svc := &Service{cfg: Config{
+		Attempts: ordered, OwnershipEnforced: true, Now: func() time.Time { return now },
+		AttemptPrincipal: func(principal *session.Principal) string {
+			ownerResolved.Store(true)
+			return reflectionPrincipal(principal)
+		},
+	}}
+
+	before, found, err := repository.Get(context.Background(), alicePartition, failed.ID)
+	if err != nil || !found {
+		t.Fatalf("Get failed attempt = %#v, %v", before, err)
+	}
+	bob := attemptTestContext("bob")
+	if _, err = svc.RetryLearningAttempt(bob, string(failed.ID), string(failed.Version)); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("foreign retry error = %v, want absence", err)
+	}
+	if _, err = svc.AbandonLearningAttempt(bob, string(failed.ID), string(failed.Version)); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("foreign abandon error = %v, want absence", err)
+	}
+	system := session.WithPrincipal(context.Background(), &session.Principal{Issuer: "mecatl:internal", Subject: "scheduler", GrantType: session.GrantTypeSystem})
+	if _, err = svc.RetryLearningAttempt(system, string(failed.ID), string(failed.Version)); !errors.Is(err, ErrFailedPrecondition) {
+		t.Fatalf("system retry error = %v, want failed precondition", err)
+	}
+	if _, err = svc.AbandonLearningAttempt(context.Background(), string(failed.ID), string(failed.Version)); !errors.Is(err, ErrFailedPrecondition) {
+		t.Fatalf("identity-free abandon error = %v, want failed precondition", err)
+	}
+	afterRejected, _, err := repository.Get(context.Background(), alicePartition, failed.ID)
+	if err != nil || afterRejected != before {
+		t.Fatalf("rejected controls changed attempt: before=%#v after=%#v err=%v", before, afterRejected, err)
+	}
+
+	alice := attemptTestContext("alice")
+	if _, err = svc.RetryLearningAttempt(alice, string(failed.ID), "stale-version"); !errors.Is(err, ErrAttemptVersionConflict) {
+		t.Fatalf("stale retry error = %v, want version conflict", err)
+	}
+	afterStale, _, _ := repository.Get(context.Background(), alicePartition, failed.ID)
+	if afterStale != before {
+		t.Fatalf("stale retry changed attempt: before=%#v after=%#v", before, afterStale)
+	}
+	retried, err := svc.RetryLearningAttempt(alice, string(failed.ID), string(failed.Version))
+	if err != nil || retried.GetState() != string(learning.AttemptQueued) || retried.GetAttemptGeneration() != uint64(failed.AttemptGeneration+1) {
+		t.Fatalf("retry result = %#v, %v", retried, err)
+	}
+
+	terminal := createAttemptFixture(t, repository, "alice", "terminal")
+	abandoned, err := svc.AbandonLearningAttempt(alice, string(terminal.ID), string(terminal.Version))
+	if err != nil || abandoned.GetState() != string(learning.AttemptAbandoned) {
+		t.Fatalf("abandon result = %#v, %v", abandoned, err)
+	}
+	if _, err = svc.RetryLearningAttempt(alice, string(terminal.ID), abandoned.GetVersion()); !errors.Is(err, ErrAttemptTerminalConflict) {
+		t.Fatalf("terminal retry error = %v, want terminal conflict", err)
+	}
+	terminalAfter, _, _ := repository.Get(context.Background(), alicePartition, terminal.ID)
+	if terminalAfter.Version != learning.AttemptVersion(abandoned.GetVersion()) || terminalAfter.State != learning.AttemptAbandoned {
+		t.Fatalf("terminal conflict changed attempt: %#v", terminalAfter)
+	}
+
+	claimed := createAttemptFixture(t, repository, "alice", "claimed")
+	claimed, _, err = repository.AcquireClaim(context.Background(), alicePartition, claimed.ID, claimed.Version, now, now.Add(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = svc.AbandonLearningAttempt(alice, string(claimed.ID), string(claimed.Version)); !errors.Is(err, ErrAttemptLiveClaimConflict) {
+		t.Fatalf("live-claim abandon error = %v, want live claim conflict", err)
+	}
+	claimedAfter, _, _ := repository.Get(context.Background(), alicePartition, claimed.ID)
+	if claimedAfter != claimed {
+		t.Fatalf("live-claim conflict changed attempt: before=%#v after=%#v", claimed, claimedAfter)
+	}
+
+	grpcFailed := createFailedAttemptFixture(t, repository, "alice", "grpc", now)
+	grpcResponse, err := (&HarnessServer{svc: svc}).RetryLearningAttempt(alice, &mecatlv1.MutateLearningAttemptRequest{
+		Id: string(grpcFailed.ID), ExpectedVersion: string(grpcFailed.Version),
+	})
+	if err != nil || grpcResponse.GetAttempt().GetState() != string(learning.AttemptQueued) {
+		t.Fatalf("gRPC retry = %#v, %v", grpcResponse, err)
+	}
+
+	httpQueued := createAttemptFixture(t, repository, "alice", "http")
+	httpResponse := httptest.NewRecorder()
+	httpRequest := httptest.NewRequest(http.MethodPost, "/v1/learning/attempts/"+string(httpQueued.ID)+"/abandon", strings.NewReader(`{"expected_version":"`+string(httpQueued.Version)+`"}`)).WithContext(alice)
+	NewHTTPHandler(svc).ServeHTTP(httpResponse, httpRequest)
+	if httpResponse.Code != http.StatusOK {
+		t.Fatalf("HTTP abandon status = %d, body=%s", httpResponse.Code, httpResponse.Body.String())
+	}
+	var abandonedResponse mecatlv1.MutateLearningAttemptResponse
+	if err = json.Unmarshal(httpResponse.Body.Bytes(), &abandonedResponse); err != nil || abandonedResponse.GetAttempt().GetState() != string(learning.AttemptAbandoned) {
+		t.Fatalf("HTTP abandon = %#v, %v", abandonedResponse.GetAttempt(), err)
+	}
+}
+
+func createFailedAttemptFixture(t *testing.T, repository learning.AttemptRepository, subject, suffix string, now time.Time) learning.AttemptRecord {
+	t.Helper()
+	record := createAttemptFixture(t, repository, subject, suffix)
+	partition, err := learning.DeriveAttemptPartition(reflectionPrincipal(&session.Principal{Issuer: "https://issuer.example", Subject: subject}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	running, claim, err := repository.AcquireClaim(context.Background(), partition, record.ID, record.Version, now, now.Add(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err = repository.Finalize(context.Background(), partition, record.ID, running.Version, claim, now, learning.AttemptFinalization{
+		State: learning.AttemptFailed, Outcome: learning.AttemptOutcomeFailed, FailureCode: learning.FailureUnavailable,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return record
+}
+
 func TestADR_0254_AttemptAPIIsContentFree(t *testing.T) {
 	repository := memattempt.New(wallclock.Clock{})
 	record := createAttemptFixture(t, repository, "alice", "secret-path-token")
@@ -251,6 +383,20 @@ func (r *ownerFirstAttemptRepository) List(ctx context.Context, partition learni
 		return learning.AttemptPage{}, errors.New("attempt repository reached before private owner binding")
 	}
 	return r.AttemptRepository.List(ctx, partition, query)
+}
+
+func (r *ownerFirstAttemptRepository) Retry(ctx context.Context, partition learning.AttemptPartition, id learning.AttemptID, expected learning.AttemptVersion, now time.Time) (learning.AttemptRecord, error) {
+	if !r.ownerResolved.Swap(false) {
+		return learning.AttemptRecord{}, errors.New("attempt repository reached before private owner binding")
+	}
+	return r.AttemptRepository.Retry(ctx, partition, id, expected, now)
+}
+
+func (r *ownerFirstAttemptRepository) Abandon(ctx context.Context, partition learning.AttemptPartition, id learning.AttemptID, expected learning.AttemptVersion, now time.Time) (learning.AttemptRecord, error) {
+	if !r.ownerResolved.Swap(false) {
+		return learning.AttemptRecord{}, errors.New("attempt repository reached before private owner binding")
+	}
+	return r.AttemptRepository.Abandon(ctx, partition, id, expected, now)
 }
 
 type attemptRecordingDiagnostics struct{ entries []string }
