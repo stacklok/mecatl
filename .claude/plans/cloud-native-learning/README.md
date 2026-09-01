@@ -16,5 +16,6 @@ This graph delivers the six acceptance scenarios in dependency order. It fixes v
 8. Distributed automatic controls: ledger domain `26`; durable global accounting `27`; crash reconciliation `28`; weighted lifecycle wiring `29`; capability claims `30`.
 9. Documentation/generated integration: `31`.
 10. Final-panel repair proofs (each gated by `31`; execute in this dependency-aware order): durable work discovery and retry `32`; canonical artifact identity `33`; evidence sequence continuity `35`; partitioned quota and retention `37`; authoritative ledger policy/time `34`; contract and documentation honesty `36`.
+11. Final cloud-learning repair wave (each gated by `37`): durable evidence execution unification `38` and backend-authoritative attempt time `39` may proceed in parallel; reservation reconciliation `40` follows `39`; undeliverable-attempt recovery `41` follows `38`; documentation/status reconciliation `42` follows `38`–`41`.
 
 No task maps a GitHub issue. Every task starts pending and is merged only through the accumulator.
