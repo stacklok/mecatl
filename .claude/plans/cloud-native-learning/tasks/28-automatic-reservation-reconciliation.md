@@ -2,7 +2,7 @@
 id: 28-automatic-reservation-reconciliation
 title: Reconcile reservation and attempt creation crash boundaries
 blocked_by: [27-durable-automatic-ledger]
-status: pending
+status: in-progress
 branch: ""
 worktree: ""
 issue: ""
