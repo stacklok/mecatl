@@ -2,7 +2,7 @@
 id: 23-attempt-control-api
 title: Add authorized manual retry and abandon controls
 blocked_by: [22-attempt-inspection-api]
-status: pending
+status: in-progress
 branch: ""
 worktree: ""
 issue: ""
