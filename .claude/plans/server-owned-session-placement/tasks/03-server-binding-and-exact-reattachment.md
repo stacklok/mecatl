@@ -2,7 +2,7 @@
 id: 03-server-binding-and-exact-reattachment
 title: Server binding and exact reattachment
 blocked_by: [02-unify-environment-placement-identity]
-status: pending
+status: in-progress
 branch: ""
 worktree: ""
 issue: ""

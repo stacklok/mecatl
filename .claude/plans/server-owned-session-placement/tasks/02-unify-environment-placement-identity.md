@@ -2,9 +2,9 @@
 id: 02-unify-environment-placement-identity
 title: Unify environment and placement identity
 blocked_by: [01-placement-foundation]
-status: in-progress
-branch: ""
-worktree: ""
+status: done
+branch: "plan-server-owned-session-placement/02-unify-environment-placement-identity"
+worktree: ".scratch/worktrees/02-unify-environment-placement-identity"
 issue: ""
 retries: 0
 last_error: ""
