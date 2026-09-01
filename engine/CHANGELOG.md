@@ -137,6 +137,9 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   binds trusted run correlation, omits provider codes, and retains correlation values
   only as fixed domain-separated SHA-256 digests. Added (minor).
 
+- **`agent.LRUForkReaper.Close`** — releases all retained Parallel winner-fork
+  workspaces during graceful composition shutdown. Added (minor).
+
 - **Manual session compaction core** — `session.ReplaceHistoryAtBoundary` provides
   the pairing-validated, non-active aggregate rewrite seam; `agent.Engine.CompactSession`
   and `agent.ManualCompactionResult` run the configured compactor once and expose the

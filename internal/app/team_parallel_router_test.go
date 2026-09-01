@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"iter"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -446,6 +447,59 @@ func TestParallelRoutesBranchesToCategoryModelsE2E(t *testing.T) {
 	}
 	if !sawSmall {
 		t.Fatalf("no branch ran on the small-category model %q; models=%v", routerSmall, models)
+	}
+}
+
+// TestBuiltCloseReapsPreservedParallelWinner proves the composition-owned reaper
+// follows Built's graceful lifecycle, rather than the tool's per-call lifecycle.
+func TestBuiltCloseReapsPreservedParallelWinner(t *testing.T) {
+	ctx := context.Background()
+	workspace := t.TempDir()
+	parallelCall := session.NewToolCall("c1", "Parallel", []byte(`{"tasks":["one","two"],"join":"first"}`))
+	prov := &routingProvider{parentTool: "Parallel", parentCall: parallelCall}
+	built, err := Build(ctx, routerE2ECfg(workspace, func() port.LLMProvider { return prov },
+		func(c *Config) { c.EnableParallel = true }))
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	t.Cleanup(built.Close)
+
+	sess, err := built.Service.CreateSession(ctx, workspace, session.ModeDefault, defaultLimits())
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	run, err := built.Service.StartRun(ctx, sess.ID, "go")
+	if err != nil {
+		t.Fatalf("StartRun: %v", err)
+	}
+	drainRun(run)
+
+	stored, err := built.Service.GetSession(ctx, sess.ID)
+	if err != nil {
+		t.Fatalf("GetSession: %v", err)
+	}
+	var root string
+	for _, message := range stored.Conversation.Messages {
+		if message.Role != session.RoleTool || message.ToolResult == nil || message.ToolResult.CallID != "c1" {
+			continue
+		}
+		for _, line := range strings.Split(message.ToolResult.Content, "\n") {
+			if _, after, ok := strings.Cut(line, "): "); ok && strings.Contains(line, "winner workspace (ephemeral") {
+				root = after
+				break
+			}
+		}
+	}
+	if root == "" {
+		t.Fatal("Parallel result did not report a winner workspace path")
+	}
+	if _, err := os.Stat(root); err != nil {
+		t.Fatalf("winner workspace %q before shutdown: %v", root, err)
+	}
+
+	built.Close()
+	if _, err := os.Stat(root); !os.IsNotExist(err) {
+		t.Fatalf("preserved winner workspace %q remains after Built.Close: %v", root, err)
 	}
 }
 

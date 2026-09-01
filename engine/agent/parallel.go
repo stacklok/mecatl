@@ -262,14 +262,14 @@ func WithWinnerReaper(s PreservedForkStore) ParallelOption {
 // The merger fires ONLY for a single-branch run (len(tasks)==1) with a
 // successful winner under join=first/judge. Multi-branch runs and join=all
 // NEVER auto-merge (the no-auto-merge boundary stays for fan-out). The merge is
-// a POST-RUN step (after preserveWinner, before Execute returns), so ReadOnly()
-// stays true for read-only fan-out; a merge-completing CALL is excluded from the
-// concurrent read batch via MutatesParent (dispatch-serial — see
-// parentMutatingCaller), so it never overlaps a sibling parent read, and
-// cross-run merge-vs-merge is serialized by the shared SerializingMerger. On a conflict Execute returns a
-// tool error naming the conflict and the preserved fork path; the fork is left
-// intact for manual resolution. See tool.EnvironmentMerger and the forker.Merger
-// adapter.
+// a POST-RUN step before the winner cleanup is handed to the reaper and before
+// Execute returns, so ReadOnly() stays true for read-only fan-out; a
+// merge-completing CALL is excluded from the concurrent read batch via
+// MutatesParent (dispatch-serial — see parentMutatingCaller), so it never
+// overlaps a sibling parent read, and cross-run merge-vs-merge is serialized by
+// the shared SerializingMerger. On a conflict Execute returns a tool error with
+// the ephemeral fork path, which may already be gone if graceful shutdown began.
+// See tool.EnvironmentMerger and the forker.Merger adapter.
 func WithAutoMerge(m tool.EnvironmentMerger) ParallelOption {
 	return func(t *ParallelTool) { t.autoMerger = m }
 }
@@ -458,10 +458,10 @@ type branchResult struct {
 
 	// cleanup tears down this branch's fork. Ownership is LIFTED out of runBranch's
 	// old defer (see runBranch) so Execute decides, per strategy, which forks to
-	// tear down and which to PRESERVE: for "all" every fork is cleaned (today's
-	// behaviour); for "first"/"judge" every LOSER is cleaned but the WINNER's
-	// cleanup is dropped (never called) so its tree survives. nil when the fork
-	// failed before producing a tree. Not serialized — orchestration state only.
+	// tear down and which to hand to the reaper: for "all" every fork is cleaned
+	// (today's behaviour); for "first"/"judge" every LOSER is cleaned and the
+	// WINNER cleanup is retained by the reaper when wired (or dropped otherwise).
+	// A reaper already closing may invoke it immediately. nil when the fork failed before producing a tree. Not serialized — orchestration state only.
 	cleanup func() error
 }
 
@@ -473,12 +473,11 @@ func (r branchResult) runCleanup() {
 	}
 }
 
-// preserveWinner hands a winning branch's PRESERVED fork to the bounded reaper (if
-// one is wired) so the oldest preserved fork can be LRU-reaped once the cap is
-// exceeded. With no reaper the winner's cleanup is simply not called (the original
-// behaviour: the fork survives for the operator and is never auto-deleted). The
-// winner's fork is the deliverable either way; the reaper only bounds how many
-// survive at once.
+// preserveWinner hands a winning branch's cleanup to the bounded reaper (if one is
+// wired) so the oldest retained fork can be LRU-reaped once the cap is exceeded. With
+// no reaper the cleanup is simply not called (the original behavior: the fork survives
+// until process exit). A reaper that has begun graceful shutdown invokes the cleanup
+// immediately, so callers must treat the reported workspace path as ephemeral.
 func (t *ParallelTool) preserveWinner(w branchResult) {
 	if t.winnerReaper != nil {
 		t.winnerReaper.Preserve(w.childRoot, w.cleanup)
@@ -717,22 +716,17 @@ func (t *ParallelTool) executeFirst(ctx context.Context, callID session.ToolCall
 		be.end(joinFirst, len(results), -1, "", sumBranchUsage(results), session.StopReason(""))
 		return session.NewToolResult(callID, joinBranches(results))
 	}
-	// Preserve the winner's fork; clean every loser.
+	// Clean every loser before auto-merging the winner. The winner is not handed
+	// to the reaper until merge finishes, so graceful shutdown cannot remove its
+	// workspace while Merge uses it.
 	for i := range results {
 		if i == winner {
 			continue
 		}
 		results[i].runCleanup()
 	}
-	t.preserveWinner(results[winner])
-	// AUTO-MERGE (default-on, no flag — see docs/adr/0039-parallel-auto-merge.md):
-	// for a SINGLE-BRANCH winner, merge the winner's diff back into the parent
-	// workspace so a delegated implementer's edits actually land. Multi-branch runs
-	// NEVER auto-merge (the no-auto-merge boundary stays for fan-out). The merge is
-	// a POST-RUN step (after preserveWinner, before be.end/return), so ReadOnly()
-	// stays true. On a conflict, surface a tool error naming the conflict + the
-	// preserved fork path; the fork is left intact for manual resolution.
 	autoMerged, errResult := t.autoMergeWinner(ctx, env, results, winner, joinFirst, be, callID)
+	t.preserveWinner(results[winner])
 	if errResult != nil {
 		return *errResult
 	}
@@ -757,7 +751,7 @@ func (t *ParallelTool) autoMergeWinner(ctx context.Context, env tool.Environment
 		be.end(join, len(results), winner, results[winner].childRoot, sumBranchUsage(results), session.StopError)
 		errRes := session.NewToolError(callID, fmt.Sprintf(
 			"Parallel: auto-merge of the winning branch into this workspace FAILED: %v "+
-				"(the winner's fork is PRESERVED at %q for manual resolution)",
+				"(winner workspace path: %q; it is ephemeral and may already be removed if graceful shutdown began)",
 			merr, results[winner].childRoot))
 		return false, &errRes
 	}
@@ -767,9 +761,10 @@ func (t *ParallelTool) autoMergeWinner(ctx context.Context, env tool.Environment
 // executeJudge runs every branch, then (when ≥2 succeeded) asks the injected
 // BranchJudge to pick a winner from the branch SUMMARIES only (never transcripts).
 // Degradations: 0 successes → all-failed report (all forks cleaned); exactly 1
-// success → that branch wins with no judge call. The winner's fork is PRESERVED;
-// every loser's fork is cleaned. A misbehaving judge falls back to the first
-// successful branch — Parallel never hard-fails because the judge erred.
+// success → that branch wins with no judge call. The winner cleanup is handed to the
+// reaper after any single-branch auto-merge; every loser's fork is cleaned. A
+// misbehaving judge falls back to the first successful branch — Parallel never hard-fails
+// because the judge erred.
 func (t *ParallelTool) executeJudge(ctx context.Context, callID session.ToolCallID, tasks []string, shared, criteria string, env tool.Environment, be branchEmitter, caps parentCaps) session.ToolResult {
 	results := t.runBranches(ctx, callID, tasks, shared, env, be, caps)
 
@@ -809,17 +804,17 @@ func (t *ParallelTool) executeJudge(ctx context.Context, callID session.ToolCall
 	// two constant rationales above pass through untouched — neither matches a marker.
 	rationale = clampRunes(neutraliseChildText(rationale), maxTeamPreview)
 
+	// Clean every loser before auto-merging the winner. The winner is not handed
+	// to the reaper until merge finishes, so graceful shutdown cannot remove its
+	// workspace while Merge uses it.
 	for i := range results {
 		if i == winner {
 			continue
 		}
 		results[i].runCleanup()
 	}
-	t.preserveWinner(results[winner])
-	// AUTO-MERGE (default-on): a SINGLE-BRANCH join=judge winner's diff is merged
-	// back into the parent workspace, same as join=first. Multi-branch judge runs
-	// never auto-merge (the no-auto-merge boundary stays for fan-out).
 	autoMerged, errResult := t.autoMergeWinner(ctx, env, results, winner, joinJudge, be, callID)
+	t.preserveWinner(results[winner])
 	if errResult != nil {
 		return *errResult
 	}
@@ -1277,7 +1272,7 @@ func branchLabel(i int) string {
 // line stays: it keys InspectSubagent, which reads the persisted session-store
 // transcript, NOT the filesystem, so a torn-down fork does not invalidate it.
 // To keep a winning branch's filesystem changes, use join=first or join=judge
-// (the winner's fork is PRESERVED) or --parallel-auto-merge (a single-branch
+// (the reported workspace path is ephemeral) or --parallel-auto-merge (a single-branch
 // join=first auto-merges the winner's diff back into this workspace).
 func joinBranches(results []branchResult) string {
 	sorted := sortedByIndex(results)
@@ -1446,16 +1441,14 @@ func joinJudgeResult(results []branchResult, winner int, rationale string, autoM
 	return b.String()
 }
 
-// writeWinnerWorkspace renders the preserved-workspace note for a selected winner.
-// LIFETIME / OWNERSHIP: the winner's fork is intentionally NOT auto-deleted — its
-// contents (a branch that may have IMPLEMENTED changes in its isolated fork) are
-// the deliverable. The harness does not reap it; the CALLER/OPERATOR owns it and
-// must clean it up when done. There is no auto-merge to the base (that would mutate
-// the parent and break ParallelTool.ReadOnly()==true); merge is a manual follow-up
-// against this path.
+// writeWinnerWorkspace renders the selected winner's ephemeral workspace path.
+// If the reaper is still open it retains the cleanup until LRU eviction or graceful
+// app shutdown; if shutdown has begun, Preserve immediately cleans it. A crash can
+// still leave the workspace behind. A single-branch winner may already be auto-merged
+// into the parent, which its caller reports separately.
 func writeWinnerWorkspace(b *strings.Builder, w branchResult) {
 	if w.childRoot != "" {
-		fmt.Fprintf(b, "winner workspace (PRESERVED — not auto-deleted; yours to inspect/merge/clean): %s\n", w.childRoot)
+		fmt.Fprintf(b, "winner workspace (ephemeral — inspect or merge before LRU eviction or graceful app shutdown; it may already be removed if shutdown began, while a crash may leave it behind): %s\n", w.childRoot)
 	}
 }
 

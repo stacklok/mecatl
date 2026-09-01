@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stacklok/mecatl/engine/adapter/memfs"
@@ -29,6 +30,7 @@ func TestLRUForkReaperUnit(t *testing.T) {
 	}
 
 	r := agent.NewLRUForkReaper(2)
+	t.Cleanup(r.Close)
 	r.Preserve("/a", cleanup("/a"))
 	r.Preserve("/b", cleanup("/b"))
 	if r.Len() != 2 {
@@ -58,6 +60,7 @@ func TestLRUForkReaperRefreshesRecency(t *testing.T) {
 		return func() error { mu.Lock(); reaped[root] = true; mu.Unlock(); return nil }
 	}
 	r := agent.NewLRUForkReaper(2)
+	t.Cleanup(r.Close)
 	r.Preserve("/a", cl("/a"))
 	r.Preserve("/b", cl("/b"))
 	r.Preserve("/a", cl("/a")) // refresh /a => now /b is oldest
@@ -82,6 +85,85 @@ func TestLRUForkReaperNilCleanupIgnored(t *testing.T) {
 	r.Preserve("/x", nil)
 	if r.Len() != 0 {
 		t.Fatalf("nil cleanup tracked: len = %d, want 0", r.Len())
+	}
+}
+
+func TestLRUForkReaperCloseReapsRetainedForksOnce(t *testing.T) {
+	var cleaned [2]atomic.Int32
+	r := agent.NewLRUForkReaper(2)
+	for i := range cleaned {
+		i := i
+		r.Preserve(fmt.Sprintf("/fork/%d", i), func() error {
+			cleaned[i].Add(1)
+			return nil
+		})
+	}
+
+	r.Close()
+	r.Close()
+
+	if r.Len() != 0 {
+		t.Fatalf("len after close = %d, want 0", r.Len())
+	}
+	for i := range cleaned {
+		if got := cleaned[i].Load(); got != 1 {
+			t.Errorf("cleanup %d called %d times, want 1", i, got)
+		}
+	}
+}
+
+func TestLRUForkReaperPreserveAfterCloseCleansImmediately(t *testing.T) {
+	var cleaned atomic.Int32
+	r := agent.NewLRUForkReaper(1)
+	r.Close()
+	r.Preserve("/fork", func() error {
+		cleaned.Add(1)
+		return nil
+	})
+
+	if got := cleaned.Load(); got != 1 {
+		t.Fatalf("post-close cleanup called %d times, want 1", got)
+	}
+	if r.Len() != 0 {
+		t.Fatalf("post-close preserve retained a fork: len = %d", r.Len())
+	}
+}
+
+func TestLRUForkReaperConcurrentPreserveAndCloseCleansEveryFork(t *testing.T) {
+	const forks = 100
+
+	r := agent.NewLRUForkReaper(forks)
+	var cleaned [forks]atomic.Int32
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for i := range cleaned {
+		i := i
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			r.Preserve(fmt.Sprintf("/fork/%d", i), func() error {
+				cleaned[i].Add(1)
+				return nil
+			})
+		}()
+	}
+	for range 3 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			r.Close()
+		}()
+	}
+	close(start)
+	wg.Wait()
+	r.Close()
+
+	for i := range cleaned {
+		if got := cleaned[i].Load(); got != 1 {
+			t.Errorf("cleanup %d called %d times, want 1", i, got)
+		}
 	}
 }
 
@@ -133,6 +215,7 @@ func TestForkWinnerReaperBoundsPreservedForks(t *testing.T) {
 	uf := newUniqueForker()
 	judge := &fakeJudge{pick: "WIN", rationale: "beta wins"}
 	reaper := agent.NewLRUForkReaper(capN)
+	t.Cleanup(reaper.Close)
 	fork := agent.NewParallelTool(childEngine, uf,
 		agent.WithParallelConcurrency(1),
 		agent.WithParallelJudge(judge),
@@ -170,12 +253,12 @@ func TestForkWinnerReaperBoundsPreservedForks(t *testing.T) {
 }
 
 // extractWinnerRoot pulls the preserved winner workspace path out of a join=judge
-// result body ("winner workspace (PRESERVED ...): <root>").
+// result body ("winner workspace (ephemeral ...): <root>").
 func extractWinnerRoot(t *testing.T, content string) string {
 	t.Helper()
 	const marker = "): "
 	for _, line := range strings.Split(content, "\n") {
-		if strings.Contains(line, "winner workspace (PRESERVED") {
+		if strings.Contains(line, "winner workspace (ephemeral") {
 			if j := strings.Index(line, marker); j >= 0 {
 				return line[j+len(marker):]
 			}

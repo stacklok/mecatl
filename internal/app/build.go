@@ -2296,6 +2296,9 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		schedClose()
 		refreshClose()
 		svc.Close()
+		if assets.forkReaper != nil {
+			assets.forkReaper.Close()
+		}
 		childLiveness.Close()
 		mcpClose()
 		closeProfiles()

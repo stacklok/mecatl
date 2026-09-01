@@ -495,8 +495,8 @@ func TestParallelAutoMergeSingleBranchSuccess(t *testing.T) {
 }
 
 // TestParallelAutoMergeConflictSurfacesToolError asserts that a merge conflict
-// returns a tool ERROR naming the conflict + the preserved fork path (the fork
-// is left intact for manual resolution), and the merger WAS called.
+// returns a tool ERROR naming the conflict and the ephemeral fork path (which may
+// already be gone if graceful shutdown began), and the merger WAS called.
 func TestParallelAutoMergeConflictSurfacesToolError(t *testing.T) {
 	childRead := &fakeTool{name: "Read", readOnly: true,
 		exec: func(_ context.Context, in session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
@@ -516,8 +516,8 @@ func TestParallelAutoMergeConflictSurfacesToolError(t *testing.T) {
 	if !strings.Contains(res.Content, "auto-merge") || !strings.Contains(res.Content, "FAILED") {
 		t.Fatalf("error must name the auto-merge failure, got:\n%s", res.Content)
 	}
-	if !strings.Contains(res.Content, "PRESERVED") {
-		t.Fatalf("error must say the fork is PRESERVED for manual resolution, got:\n%s", res.Content)
+	if !strings.Contains(res.Content, "winner workspace path") || !strings.Contains(res.Content, "ephemeral") {
+		t.Fatalf("error must accurately describe the ephemeral winner workspace path, got:\n%s", res.Content)
 	}
 }
 
@@ -623,7 +623,7 @@ func TestParallelAutoMergeNilMergerIsNoOp(t *testing.T) {
 	if strings.Contains(res.Content, "auto-merged") {
 		t.Fatalf("nil-merger result must not claim an auto-merge, got:\n%s", res.Content)
 	}
-	if !strings.Contains(res.Content, "PRESERVED — not auto-deleted") {
+	if !strings.Contains(res.Content, "inspect or merge before LRU eviction") {
 		t.Fatalf("nil-merger result must still carry the preserved-workspace guidance, got:\n%s", res.Content)
 	}
 }

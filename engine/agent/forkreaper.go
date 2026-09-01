@@ -41,9 +41,12 @@ type PreservedForkStore interface {
 type LRUForkReaper struct {
 	cap int
 
-	mu    sync.Mutex
-	order *list.List               // front = oldest, back = newest
-	elems map[string]*list.Element // root -> element (dedupes re-preserved roots)
+	mu        sync.Mutex
+	closed    bool
+	evictions sync.WaitGroup
+	closeDone chan struct{}
+	order     *list.List               // front = oldest, back = newest
+	elems     map[string]*list.Element // root -> element (dedupes re-preserved roots)
 }
 
 // preservedFork is one retained winner fork: its root and the cleanup that reaps
@@ -66,16 +69,18 @@ func NewLRUForkReaper(capacity int) *LRUForkReaper {
 		capacity = DefaultPreservedForkCap
 	}
 	return &LRUForkReaper{
-		cap:   capacity,
-		order: list.New(),
-		elems: make(map[string]*list.Element),
+		cap:       capacity,
+		closeDone: make(chan struct{}),
+		order:     list.New(),
+		elems:     make(map[string]*list.Element),
 	}
 }
 
 // Preserve records a winner fork and reaps the oldest beyond the cap. Re-preserving
 // the same root refreshes its recency (and adopts the new cleanup) rather than
-// double-counting. A nil cleanup is ignored. Eviction cleanup runs OUTSIDE the lock
-// so a slow filesystem teardown does not serialize concurrent Parallel calls.
+// double-counting. A nil cleanup is ignored. After Close, cleanup runs immediately.
+// Cleanup runs OUTSIDE the lock so a slow filesystem teardown does not serialize
+// concurrent Parallel calls.
 func (r *LRUForkReaper) Preserve(root string, cleanup func() error) {
 	if cleanup == nil {
 		return
@@ -83,6 +88,11 @@ func (r *LRUForkReaper) Preserve(root string, cleanup func() error) {
 
 	var evicted []func() error
 	r.mu.Lock()
+	if r.closed {
+		r.mu.Unlock()
+		_ = cleanup()
+		return
+	}
 	if el, ok := r.elems[root]; ok && root != "" {
 		// Already tracked: refresh recency and adopt the latest cleanup.
 		el.Value = preservedFork{root: root, cleanup: cleanup}
@@ -102,13 +112,48 @@ func (r *LRUForkReaper) Preserve(root string, cleanup func() error) {
 		}
 		evicted = append(evicted, pf.cleanup)
 	}
+	if len(evicted) != 0 {
+		r.evictions.Add(len(evicted))
+	}
 	r.mu.Unlock()
 
 	for _, c := range evicted {
 		if c != nil {
 			_ = c()
 		}
+		r.evictions.Done()
 	}
+}
+
+// Close reaps every retained fork and waits for eviction cleanups detached before
+// closure. It is safe to call concurrently with Preserve and is idempotent. Once
+// closed, a reaper never retains another fork: Preserve instead invokes its supplied
+// cleanup immediately, and Close does not wait for that later work. Cleanup runs
+// outside the mutex.
+func (r *LRUForkReaper) Close() {
+	var cleanups []func() error
+	r.mu.Lock()
+	if r.closed {
+		done := r.closeDone
+		r.mu.Unlock()
+		<-done
+		return
+	}
+	r.closed = true
+	for el := r.order.Front(); el != nil; el = el.Next() {
+		cleanups = append(cleanups, el.Value.(preservedFork).cleanup)
+	}
+	r.order.Init()
+	clear(r.elems)
+	r.mu.Unlock()
+
+	r.evictions.Wait()
+	for _, cleanup := range cleanups {
+		if cleanup != nil {
+			_ = cleanup()
+		}
+	}
+	close(r.closeDone)
 }
 
 // Len reports how many preserved forks the reaper currently retains. Test/diagnostic

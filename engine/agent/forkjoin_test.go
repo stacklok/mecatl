@@ -268,8 +268,8 @@ func TestParallelJoinJudgeSelectsWinnerPreservesFork(t *testing.T) {
 	if !strings.Contains(res.Content, rf.root("branch-2")) {
 		t.Fatalf("winner workspace path not reported:\n%s", res.Content)
 	}
-	if !strings.Contains(res.Content, "PRESERVED") {
-		t.Fatalf("preservation note missing:\n%s", res.Content)
+	if !strings.Contains(res.Content, "winner workspace (ephemeral") {
+		t.Fatalf("ephemeral workspace note missing:\n%s", res.Content)
 	}
 	// Winner preserved; losers cleaned.
 	if rf.wasCleaned("branch-2") {

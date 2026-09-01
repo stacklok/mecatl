@@ -29,8 +29,12 @@ the Subagent `agentId:` trailer (issue #30; `InspectSubagent`'s gate admits both
 **Merging a winner back.** Parallel does NOT auto-merge fan-out: for `join=all`
 every fork is torn down after the join (the result reports branch ids for
 transcript pulls, NOT workspace paths — the forks are gone); for `join=first` /
-`join=judge` the WINNER's fork is PRESERVED (its cleanup is dropped) and its path
-is reported. A SINGLE-BRANCH `join=first`/`join=judge` winner is auto-merged back
+`join=judge` the winner workspace path is reported. The shared process LRU normally
+retains winners until eviction or graceful app shutdown, but a path may already be gone
+if shutdown began concurrently. Shutdown drains
+both currently retained winners and eviction cleanups detached before closure, without
+holding the reaper lock during filesystem work; it does not wait for a later `Preserve`.
+A crash remains a residual and does not sweep them at startup. A SINGLE-BRANCH `join=first`/`join=judge` winner is auto-merged back
 into the parent workspace BY DEFAULT (no flag; see
 [ADR 0039](../adr/0039-parallel-auto-merge.md)): the winner's diff is applied via
 `tool.EnvironmentMerger` (the `forker.Merger` adapter — `git diff --no-textconv HEAD`
@@ -38,8 +42,9 @@ from the fork piped to `git apply` in the parent, plus untracked-file copy; the
 merge refuses `.gitattributes`-touching patches and runs `--no-textconv` to close
 attacker-named `diff.*.textconv`/`filter.*.smudge` RCE from an untrusted fork
 `.git`). Multi-branch runs and `join=all` NEVER auto-merge (the no-auto-merge
-boundary stays for fan-out). On a conflict the merge surfaces a tool error and
-PRESERVES the fork for manual resolution; it never forces. `Parallel.ReadOnly()`
+boundary stays for fan-out). On a conflict the merge surfaces a tool error with the
+winner workspace path, which is ephemeral and may already be gone if graceful shutdown
+began; it never forces. `Parallel.ReadOnly()`
 stays `true` — the merge is a POST-RUN step, not a dispatch-time mutation, so
 read-parallel / mutate-serial is unaffected.
 

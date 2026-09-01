@@ -1640,12 +1640,17 @@ does not apply). The shared `autoMergeWinner` helper fires for a SINGLE-BRANCH
 (`len(results) == 1`) winner of `join=first` OR `join=judge` — both one-branch
 winners land (the paths collapse: a one-branch judge run and a one-branch first
 run are the same "delegate and land" case). The winner's diff is auto-merged back
-into the parent workspace AFTER `preserveWinner` and BEFORE `Execute` returns;
-the result notes the auto-merge (and drops the "inspect/merge/clean" guidance —
-the changes already landed). Multi-branch runs and `join=all` NEVER auto-merge
-(the no-auto-merge boundary stays for fan-out). On a conflict `Execute` returns a
-tool error naming the conflict + the preserved fork path (the fork is left intact
-for manual resolution); it NEVER forces. `ParallelTool.ReadOnly()` stays `true` —
+into the parent workspace BEFORE `preserveWinner` and before `Execute` returns, so
+shutdown cannot reap its fork while the merge reads it; the result notes the auto-merge
+(and drops the "inspect/merge/clean" guidance — the changes already landed).
+Multi-branch runs and `join=all` NEVER auto-merge
+(the no-auto-merge boundary stays for fan-out). The process-scoped
+`agent.LRUForkReaper` retains preserved winners only until LRU eviction or graceful
+app shutdown. `Close` drains retained cleanups and eviction cleanups detached before
+closure outside its mutex, but does not wait for a `Preserve` that begins after closure;
+a crash remains a residual (there is deliberately no startup deletion sweep). On a conflict `Execute` returns a
+tool error naming the conflict + the ephemeral workspace path, which may already be gone
+if graceful shutdown began; it NEVER forces. `ParallelTool.ReadOnly()` stays `true` —
 the merge is a POST-RUN step, not a dispatch-time mutation, so read-parallel /
 mutate-serial is unaffected. The merge runs in the PARENT workspace under the
 parent's trust posture. SECURITY: the merge's `git diff` runs `--no-textconv`

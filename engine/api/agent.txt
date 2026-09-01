@@ -25,6 +25,7 @@
     method func (*InspectSubagentTool).Execute(ctx context.Context, call session.ToolCall, _ tool.Environment) (session.ToolResult, error)
     method func (*InspectSubagentTool).ReadOnly() bool
     method func (*InspectSubagentTool).Spec() tool.ToolSpec
+    method func (*LRUForkReaper).Close()
     method func (*LRUForkReaper).Len() int
     method func (*LRUForkReaper).Preserve(root string, cleanup func() error)
     method func (*ParallelTool).Execute(ctx context.Context, call session.ToolCall, env tool.Environment) (session.ToolResult, error)
