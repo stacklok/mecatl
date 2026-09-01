@@ -1999,18 +1999,13 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 			if assets.liveSkills == nil || assets.learnedSkills == nil {
 				return nil
 			}
-			partitions := []learning.SkillPartition{{Principal: partition.Principal}}
-			if partition.Project != "" {
-				partitions = append(partitions, partition)
-			}
-			return (learnedSkillPublisher{repository: assets.learnedSkills, partitions: partitions, owner: "", catalog: assets.liveSkills}).Publish(ctx)
+			return (learnedSkillPublisher{repository: assets.learnedSkills, partitions: []learning.SkillPartition{partition}, owner: "", catalog: assets.liveSkills}).Publish(ctx)
 		},
-		BeginSkillPublication: func() func() {
+		BeginSkillPublication: func(partition learning.SkillPartition) func() {
 			if assets.skillPublication == nil {
 				return func() {}
 			}
-			assets.skillPublication.mu.Lock()
-			return assets.skillPublication.mu.Unlock
+			return assets.skillPublication.lock(partition)
 		},
 		LiveSkillGeneration: func(partition learning.SkillPartition) uint64 {
 			if assets.liveSkills == nil {

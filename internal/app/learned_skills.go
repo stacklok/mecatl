@@ -101,7 +101,32 @@ func listActiveLearnedSkillsAtGeneration(ctx context.Context, repository learnin
 	}
 }
 
-type learnedSkillPublication struct{ mu sync.Mutex }
+type learnedSkillPublication struct {
+	mu     sync.Mutex
+	active map[learning.SkillPartition]chan struct{}
+}
+
+func (p *learnedSkillPublication) lock(partition learning.SkillPartition) func() {
+	p.mu.Lock()
+	if p.active == nil {
+		p.active = make(map[learning.SkillPartition]chan struct{})
+	}
+	wait, busy := p.active[partition]
+	if !busy {
+		wait = make(chan struct{})
+		p.active[partition] = wait
+		p.mu.Unlock()
+		return func() {
+			p.mu.Lock()
+			delete(p.active, partition)
+			close(wait)
+			p.mu.Unlock()
+		}
+	}
+	p.mu.Unlock()
+	<-wait
+	return p.lock(partition)
+}
 
 type learnedSkillPublisher struct {
 	repository learning.SkillRepository
@@ -118,28 +143,35 @@ func (learnedSkillPublisher) Quarantine(string) {
 }
 
 func (p learnedSkillPublisher) Publish(ctx context.Context) error {
-	if p.serial != nil {
-		p.serial.mu.Lock()
-		defer p.serial.mu.Unlock()
-	}
-	active := make([]learning.SkillVersion, 0)
-	generations := make(map[learning.SkillPartition]learning.SkillGeneration, len(p.partitions))
+	var firstErr error
 	for _, partition := range p.partitions {
-		generation, err := p.repository.Generation(ctx, partition)
-		if err != nil {
-			generation = learning.SkillGeneration(p.catalog.View(partition).Generation)
-			p.catalog.ClearPartitionsAtGeneration(map[learning.SkillPartition]learning.SkillGeneration{partition: generation})
-			return err
+		if err := p.publishPartition(ctx, partition); err != nil && firstErr == nil {
+			firstErr = err
 		}
-		versions, observed, err := listActiveLearnedSkillsAtGeneration(ctx, p.repository, partition, p.owner)
-		if err != nil {
-			p.catalog.ClearPartitionsAtGeneration(map[learning.SkillPartition]learning.SkillGeneration{partition: generation})
-			return err
-		}
-		generations[partition] = observed
-		active = append(active, versions...)
 	}
-	p.catalog.RefreshPartitionsAtGeneration(generations, active)
+	return firstErr
+}
+
+func (p learnedSkillPublisher) publishPartition(ctx context.Context, partition learning.SkillPartition) error {
+	if p.serial != nil {
+		unlock := p.serial.lock(partition)
+		defer unlock()
+	}
+	generation, err := p.repository.Generation(ctx, partition)
+	if err != nil {
+		generation = learning.SkillGeneration(p.catalog.View(partition).Generation)
+		p.catalog.ClearPartitionsAtGeneration(map[learning.SkillPartition]learning.SkillGeneration{partition: generation})
+		return err
+	}
+	versions, observed, err := listActiveLearnedSkillsAtGeneration(ctx, p.repository, partition, p.owner)
+	if err != nil {
+		current, generationErr := p.repository.Generation(ctx, partition)
+		if generationErr != nil || current == generation {
+			p.catalog.ClearPartitionsAtGeneration(map[learning.SkillPartition]learning.SkillGeneration{partition: generation})
+		}
+		return err
+	}
+	p.catalog.RefreshPartitionsAtGeneration(map[learning.SkillPartition]learning.SkillGeneration{partition: observed}, versions)
 	return nil
 }
 
@@ -183,15 +215,10 @@ func buildProcedureProcessor(cfg Config, assets catalogAssets) func(context.Cont
 		var publisher skilllifecycle.Publisher
 		publishable := partition.Project == "" || (partition.Project == cfg.Workspace && projectIngestionAdmitted(cfg))
 		if publishable && assets.liveSkills != nil {
-			global := learning.SkillPartition{Principal: partition.Principal}
-			partitions := []learning.SkillPartition{global}
-			if partition != global {
-				partitions = append(partitions, partition)
-			}
-			publisher = learnedSkillPublisher{repository: assets.learnedSkills, partitions: partitions, owner: assets.skillOwner, catalog: assets.liveSkills}
+			publisher = learnedSkillPublisher{repository: assets.learnedSkills, partitions: []learning.SkillPartition{partition}, owner: assets.skillOwner, catalog: assets.liveSkills}
 			if assets.skillPublication != nil {
-				assets.skillPublication.mu.Lock()
-				defer assets.skillPublication.mu.Unlock()
+				unlock := assets.skillPublication.lock(partition)
+				defer unlock()
 			}
 		} else if mode == learning.Auto {
 			// A shared process catalog cannot safely expose another caller/project

@@ -468,7 +468,7 @@ type Config struct {
 	// publisher atomically refreshes the shared live Skill catalog after mutations.
 	LearnedSkills             learning.SkillRepository
 	PublishLearnedSkills      func(context.Context, learning.SkillPartition) error
-	BeginSkillPublication     func() func()
+	BeginSkillPublication     func(learning.SkillPartition) func()
 	LiveSkillGeneration       func(learning.SkillPartition) uint64
 	SkillActionAvailable      func(learning.SkillPartition, string) (bool, string)
 	LearnedSkillNameAvailable func(string) bool
@@ -6692,16 +6692,15 @@ func (s *Service) ListAgents(_ context.Context) []*mecatlv1.AgentInfo {
 
 // ListSkills returns the current skills inventory (possibly empty).
 func (s *Service) ListSkills(ctx context.Context) []*mecatlv1.SkillInfo {
-	if s.cfg.BeginSkillPublication != nil {
-		unlock := s.cfg.BeginSkillPublication()
+	partition, partitionErr := s.skillPartition(ctx, "")
+	if s.cfg.BeginSkillPublication != nil && partitionErr == nil {
+		unlock := s.cfg.BeginSkillPublication(partition)
 		defer unlock()
 	}
-	if s.cfg.PublishLearnedSkills != nil {
-		if partition, err := s.skillPartition(ctx, ""); err == nil {
-			publishCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), skillPublicationTimeout)
-			_ = s.cfg.PublishLearnedSkills(publishCtx, partition)
-			cancel()
-		}
+	if s.cfg.PublishLearnedSkills != nil && partitionErr == nil {
+		publishCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), skillPublicationTimeout)
+		_ = s.cfg.PublishLearnedSkills(publishCtx, partition)
+		cancel()
 	}
 	if s.cfg.LiveSkills != nil {
 		return s.cfg.LiveSkills(ctx)

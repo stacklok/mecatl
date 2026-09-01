@@ -68,7 +68,7 @@ func (s *Service) ListLearnedSkills(ctx context.Context, request *mecatlv1.ListL
 		return nil, err
 	}
 	if s.cfg.BeginSkillPublication != nil {
-		unlock := s.cfg.BeginSkillPublication()
+		unlock := s.cfg.BeginSkillPublication(partition)
 		defer unlock()
 	}
 	if s.cfg.PublishLearnedSkills != nil {
@@ -150,7 +150,7 @@ func (s *Service) mutateLearnedSkill(ctx context.Context, request *mecatlv1.Muta
 		return nil, err
 	}
 	if s.cfg.BeginSkillPublication != nil {
-		unlock := s.cfg.BeginSkillPublication()
+		unlock := s.cfg.BeginSkillPublication(partition)
 		defer unlock()
 	}
 	if s.cfg.SkillActionAvailable == nil {
@@ -207,7 +207,7 @@ func (s *Service) RollbackLearnedSkill(ctx context.Context, r *mecatlv1.Rollback
 		return nil, err
 	}
 	if s.cfg.BeginSkillPublication != nil {
-		unlock := s.cfg.BeginSkillPublication()
+		unlock := s.cfg.BeginSkillPublication(partition)
 		defer unlock()
 	}
 	if s.cfg.SkillActionAvailable == nil {
