@@ -17,23 +17,8 @@ Replace the ordinary SHA-256 display digest with one client-owned fixed escaped-
 
 Expected seam: the current header helper in `cmd/mecatui/client/client.go`, digest-based ordinary projections in `cmd/mecatui/ui/{view.go,sessions_surface.go,statusline_source.go,wintitle.go}`, and the status-line schema/templates in `cmd/mecatui/statusline/`. Extend or replace the existing digest-focused UI/status-line tests with the named scenario proofs, including terminal-safe valid UTF-8, control-bearing input, invalid UTF-8, empty IDs, collision stability, and inventory independence.
 
-## Acceptance criteria
+## Acceptance ownership
 
-- AC1.1: A normal generated session ID has a handle containing its first twelve characters;
-  header, `/sessions`, debugger target chrome, terminal title, and status input use that same
-  literal rather than an ordinary display digest.
-  - verify: `TestPredictableSessionHandles_Scenario1_SharedNormalHandle`
-- AC1.2: Two IDs with the same fixed handle retain that same twelve-column projection; rendering
-  neither expands either token nor loads the complete inventory, and pagination or ordering
-  cannot change the displayed literal.
-  - verify: `TestPredictableSessionHandles_Scenario1_FixedCollisionBehavior`
-- AC1.3: An arbitrary non-empty valid-UTF-8 ID, including a long, shell-significant, or
-  control-bearing legacy/custom value, produces the documented complete-atom, at-most-twelve
-  ASCII-column literal. The literal contains only `[A-Za-z0-9._%-]`; empty IDs remain
-  corrupt/invalid for actionable handling and receive no fabricated handle.
-  - verify: `TestPredictableSessionHandles_Scenario1_EscapedUTF8AndControls`
-- AC3.3: Header, `/sessions`, debugger-target presentation, terminal title, status input, and
-  shipped StatusML templates use the same handle grammar. The cross-boundary table below proves
-  its edge cases and that only ordinary presentation changes; `InspectSession` scope/history
-  handles, evidence digests, and target+incarnation cryptographic handles remain unchanged.
-  - verify: `TestPredictableSessionHandles_Scenario3_PresentationParityAndSafety`
+Historical task completed before panel review. Its former AC1.1–AC1.3 and AC3.3 text is
+superseded by the revised plan; task 05 owns revised AC1.1–AC1.6 where implementation repair is
+required, and task 06 owns revised AC3.3. This done task owns no current numbered AC.

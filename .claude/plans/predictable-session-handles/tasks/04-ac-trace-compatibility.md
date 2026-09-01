@@ -13,16 +13,10 @@ accumulator: acc/predictable-session-handles
 
 # Task brief
 
-Repair the aggregate ac-trace regression introduced when task 03 renamed tests consumed by the already-landed session-continuity plan and reused the AC3.3 proof body for AC3.4. Preserve the old verification names as thin compatibility proofs, restore the new AC3.3 named proof, and keep the ADR-0278 evidence-boundary proof without duplicating the test logic. Do not revert the new handle behavior or modify unrelated ac-trace baseline failures.
+Historical traceability repair for the first implementation. Panel review replaces its thin
+compatibility-alias strategy: the older landed plan now points directly to ADR-0280 scenario tests,
+and task 06 removes stale ADR-0108/digest aliases. This done task owns no current numbered AC.
 
-## Acceptance criteria
+## Acceptance ownership
 
-- AC3.3: Header, `/sessions`, debugger-target presentation, terminal title, status input, and
-  shipped StatusML templates use the same handle grammar. The cross-boundary table below proves
-  its edge cases and that only ordinary presentation changes; `InspectSession` scope/history
-  handles, evidence digests, and target+incarnation cryptographic handles remain unchanged.
-  - verify: `TestPredictableSessionHandles_Scenario3_PresentationParityAndSafety`
-- AC3.4: Preserve the verification names consumed by already-landed acceptance plans as thin
-  compatibility proofs while README summaries and new tests use ADR-0217/0278 handle terminology;
-  no ordinary projection is described as a debugger evidence digest.
-  - verify: `TestADR_0278_OrdinaryHandleDoesNotAlterDebuggerEvidenceHandles`
+None. Revised AC3.3 and AC3.4 are owned by task 06.

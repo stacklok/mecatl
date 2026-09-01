@@ -100,11 +100,11 @@ authoritative snapshot transcript, not EventLog. The TUI remains a proto-free cl
 **Acceptance:**
 - AC4.1: `/sessions` groups rows by server-authored kind into Chats, Scheduled runs, and Child runs; team-member rows are not presented as resumable teams.
   - verify: `TestSessionContinuityUX_Scenario4_FamilyTabs`
-- AC4.2: Each titled row also shows a display-only digest handle; the current chat stays visible with a `current` marker and cannot be redundantly opened.
-  - verify: `TestSessionContinuityUX_Scenario4_CurrentAndDigest`
-- AC4.3: Digest handles are terminal-safe, expand on collision within the visible page, and are never sent to server APIs as session IDs.
-  - verify: `TestADR_0108_DisplayDigestIsNotAnID`
-- AC4.4: Filtering matches title, full ID, visible digest, model, workspace, and child relationship names case-insensitively across fetched pages.
+- AC4.2: Each titled row shows ADR-0280's fixed ordinary session handle; the current chat stays visible with a `current` marker and cannot be redundantly opened.
+  - verify: `TestPredictableSessionHandles_Scenario1_SharedNormalHandle`
+- AC4.3: Ordinary handles are terminal-safe fixed projections and are never sent to server APIs as session IDs; ambiguous debug selection requires the explicit exact-ID path.
+  - verify: `TestPredictableSessionHandles_Scenario3_PresentationParitySafetyAndLayering`
+- AC4.4: Filtering matches title, full ID, visible handle, model, workspace, and child relationship names case-insensitively across fetched pages.
   - verify: `TestSessionContinuityUX_Scenario4_SearchFields`
 - AC4.5: Inspecting a scheduled or child run leaves the active prompt target, live subscription, capabilities, title, model, and conversation unchanged; Escape restores the prior view.
   - verify: `TestSessionContinuityUX_Scenario4_InspectionPreservesActiveChat`
@@ -131,7 +131,7 @@ affordance is discoverable under existing TUI help conventions.
   - verify: `TestSessionContinuityUX_Scenario5_CopyExactID`
 - AC5.3: Stored-session continuation, model carryover, effort fork, and worktree switch each update the details/copy target to the final adopted ID.
   - verify: `TestSessionContinuityUX_Scenario5_RebindMatrix`
-- AC5.4: The compact header uses the display digest, remains width-safe, and `/session` is discoverable from slash completion and `?` help.
+- AC5.4: The compact header uses ADR-0280's fixed ordinary handle, remains width-safe, and `/session` is discoverable from slash completion and `?` help.
   - verify: `TestSessionContinuityUX_Scenario5_HeaderAndHelp`
 - AC5.5: Newline/control-bearing, empty, and very long valid-UTF-8 IDs render safely while clipboard copy remains exact; a persisted invalid-UTF-8 ID is rejected as corrupt before protobuf mapping rather than repaired into a different handle.
   - verify: `TestInvariant_session_details_render_safe_copy_exact`

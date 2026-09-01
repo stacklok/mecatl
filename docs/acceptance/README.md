@@ -106,9 +106,10 @@ when the code that satisfies the plan has landed.
   Status: draft.
 - [Predictable mecatui session handles](predictable-session-handles.md) — one fixed,
   terminal-safe, client-resolved escaped raw-ID-prefix handle for ordinary chrome, `/sessions`,
-  status-line v2, and `mecatui debug`; debug alone resolves it against caller-visible exact IDs,
-  while server APIs and debugger evidence/incarnation handles retain their exact existing identity
-  contracts. Status: draft.
+  status-line v2, and `mecatui debug`; debug resolves positional handles against all caller-visible
+  projected matches and offers an explicit inventory-free exact-ID path, while server APIs and
+  debugger evidence/incarnation handles retain their exact existing identity contracts. Status:
+  in-progress.
 
 - [Listener-scoped workspace authority](listener-scoped-workspace-authority.md) — network listeners assign one operator-configured filesystem root while embedded and loopback deployments retain client-selected workspaces; mecak8s is no-FS by default. Status: draft.
 - [SDK server enablers](sdk-server-enablers.md) — the Go-side contracts the TypeScript
