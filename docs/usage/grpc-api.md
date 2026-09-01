@@ -91,20 +91,34 @@ session. Each entry carries `name`, `url`, `type` (`"http"`, or empty with a
 `url`), and optional `headers`.
 
 The field is **listener-scoped**, and the scope is a DEPLOYMENT property decided
-once at startup, not a per-connection one ([ADR 0237](../adr/0237-listener-scoped-workspace-authority.md)):
-one `Service` backs both API listeners, so a daemon whose listeners are all local
-— a `--grpc-unix-socket` with `--http-addr ""`, the SDK-spawned shape — accepts
-the field, and a daemon with ANY network-facing API listener refuses every
-non-empty value with `UNIMPLEMENTED` / code `client_mcp_unsupported` on ALL of its
-listeners. That refusal is the server's, so it holds against a client that never
-checked. Accepting an arbitrary endpoint plus its credentials from an API caller
-lends the daemon its outbound network authority, which is the same class of
-delegation the workspace rule refuses.
+once at startup, not a per-connection one ([ADR 0237](../adr/0237-listener-scoped-workspace-authority.md)).
+Exactly one topology accepts it: a **`--grpc-unix-socket` listener with
+`--http-addr ""`** — the SDK-spawned daemon shape. Every other deployment,
+**loopback TCP included**, refuses every non-empty value with `UNIMPLEMENTED` /
+code `client_mcp_unsupported`. One `Service` backs both API listeners, so adding
+any TCP listener gives the field up on all of them, the UNIX socket included.
+
+That threshold is stricter than the one `--workspace-authority` derives, which
+does accept loopback. The asymmetry is deliberate: a workspace path selects among
+roots the operator already owns, while an MCP endpoint plus its headers points the
+daemon at a host of the caller's choosing and has it carry supplied credentials
+there. Loopback TCP is reachable by every local process and local user on the
+host; a UNIX socket is guarded by filesystem permissions on an owner-only
+directory. The refusal is the server's, so it holds against a client that never
+checked.
 
 Check `mcp_servers_on_create` in `GetCompatibilityInfo.features` before sending
 the field; the advertisement and the enforcement read the same value, so an
 advertised deployment will accept it and an unadvertised one will not. An empty
 list is not a use of the feature and is accepted everywhere.
+
+Mounting is **all-or-nothing**. Every requested server must connect or the create
+fails with `UNAVAILABLE` / code `client_mcp_unreachable`, naming the servers that
+did not answer; no session is created. The two codes are distinct on purpose:
+`client_mcp_unsupported` is permanent and a client should stop asking, while
+`client_mcp_unreachable` is transient and the client's own endpoint to fix. A
+partial mount is never reported as success — a session silently missing some of
+its tools is indistinguishable from a working one at the API.
 
 Transport is streaming-HTTP only on EVERY deployment, regardless of that policy: a
 `stdio` entry (or an untyped entry carrying a `command`) and an `sse` entry are

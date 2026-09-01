@@ -45,6 +45,22 @@ import (
 type mcpSpecRecorder struct {
 	mu    sync.Mutex
 	calls [][]mcp.ServerConfig
+	// closes counts SessionEngineResult.Close calls, so a test can prove a REFUSED
+	// create tore the freshly-built engine down instead of leaking its MCP
+	// connections for the process lifetime (ADR 0027 List 1 discipline).
+	closes int
+}
+
+func (r *mcpSpecRecorder) noteClose() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.closes++
+}
+
+func (r *mcpSpecRecorder) closeCount() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.closes
 }
 
 func (r *mcpSpecRecorder) record(specs []mcp.ServerConfig) {
@@ -103,6 +119,19 @@ func (d *capturingDiag) String() string {
 // factory argument alone.
 func clientMCPService(t *testing.T, permit bool, rec *mcpSpecRecorder, diag port.Diagnostics, llm port.LLMProvider) *server.Service {
 	t.Helper()
+	return clientMCPServiceUnreachable(t, permit, rec, diag, llm, nil)
+}
+
+// clientMCPServiceUnreachable is clientMCPService with a set of server names the
+// factory pretends it could not connect to, mirroring composition's best-effort
+// mount: mcp.NewManager keeps the servers that answered, drops the rest, and
+// reports only the survivors on SessionEngineResult.MountedClientMCP.
+//
+// It exists to test the all-or-nothing WIRE contract without a network call —
+// which is the only way to test it offline, since a real unreachable server is a
+// real dial.
+func clientMCPServiceUnreachable(t *testing.T, permit bool, rec *mcpSpecRecorder, diag port.Diagnostics, llm port.LLMProvider, unreachable []string) *server.Service {
+	t.Helper()
 	shared := agent.NewEngine(agent.Deps{
 		LLM:     mockllm.New(mockllm.TextTurn("shared")),
 		Catalog: tool.NewCatalog(),
@@ -125,12 +154,19 @@ func clientMCPService(t *testing.T, permit bool, rec *mcpSpecRecorder, diag port
 				rec.record(specs)
 			}
 			cat := tool.NewCatalog()
+			var mounted []string
 			for _, s := range specs {
+				// An unreachable server contributes neither a tool nor a name, exactly
+				// as a failed mcp.Connect does in composition.
+				if slices.Contains(unreachable, s.Name) {
+					continue
+				}
 				cat.MustRegister(&scriptTool{
 					name:     "mcp__" + s.Name + "__ping",
 					readOnly: true,
 					content:  "pong from " + s.Name,
 				})
+				mounted = append(mounted, s.Name)
 			}
 			return server.SessionEngineResult{
 				Engine: agent.NewEngine(agent.Deps{
@@ -139,7 +175,15 @@ func clientMCPService(t *testing.T, permit bool, rec *mcpSpecRecorder, diag port
 					Policy:  permpolicy.NewPolicy(allowRules(), permstore.New()),
 					Model:   "test-model",
 				}),
-				Close: func() error { return nil },
+				// The honest mounted set. The Service compares it against the request
+				// and fails the create on any shortfall (verifyClientMCPMounted).
+				MountedClientMCP: mounted,
+				Close: func() error {
+					if rec != nil {
+						rec.noteClose()
+					}
+					return nil
+				},
 			}, nil
 		},
 	}
@@ -740,6 +784,37 @@ func TestSDKServerEnablers_Scenario9_McpHeadersNeverLogged(t *testing.T) {
 			})
 		}
 	})
+
+	// The unreachable-server refusal is a SEPARATE error-composing site from the
+	// four arms above: it is the only one that runs AFTER the specs (headers and
+	// all) have crossed into the factory, and it is the only one that reports
+	// per-server detail back to the caller. So it is the likeliest place for a
+	// header to be appended "helpfully" while diagnosing a connection failure —
+	// a mutation that leaked spec.Headers into the missing-server list passed
+	// every other arm of this test.
+	t.Run("unreachable server: not in the error", func(t *testing.T) {
+		diag := &capturingDiag{}
+		svc := clientMCPServiceUnreachable(t, true, nil, diag, mockllm.New(mockllm.TextTurn("ok")), []string{"notes"})
+
+		client, cleanup := dialGRPC(t, svc)
+		_, err := client.CreateSession(context.Background(), &mecatlv1.CreateSessionRequest{
+			Workspace:  "/ws",
+			McpServers: []*mecatlv1.McpServerSpec{protoMCPEntry()},
+		})
+		cleanup()
+		if err == nil {
+			t.Fatal("expected the unreachable-server refusal")
+		}
+		assertClean(t, "grpc error", err.Error())
+
+		srv := httpFor(t, svc)
+		_, body := postCreate(t, srv, map[string]any{
+			"workspace":   "/ws",
+			"mcp_servers": []any{httpMCPEntry()},
+		})
+		assertClean(t, "http problem body", string(body))
+		assertClean(t, "diagnostics", diag.String())
+	})
 }
 
 // --- AC9.6 -------------------------------------------------------------------
@@ -882,4 +957,241 @@ func parseGo(t *testing.T, file string) *ast.File {
 		t.Fatalf("parse %s: %v", file, err)
 	}
 	return src
+}
+
+// TestSDKServerEnablers_Scenario9_PartialMountFailsTheWireCreate closes the
+// silent-degradation hole raised in review on PR #903.
+//
+// Connecting client MCP is BEST-EFFORT in composition: mcp.NewManager connects
+// every server concurrently, keeps the ones that answered, drops the rest with an
+// operator WARN, and returns an error only when EVERY server failed. So before
+// this check, a wire client could ask for three servers, have two connect, and
+// receive a perfectly ordinary 201/OK with a session id — running a session that
+// silently lacks a third of the tools it asked for, with nothing in the response
+// to distinguish that from success. The all-failed case was worse: a session with
+// NO client tools at all, still reported as created.
+//
+// The contract is therefore ALL-OR-NOTHING on the wire, and the failure is a
+// DISTINCT code from the deployment refusal: client_mcp_unreachable is transient
+// and the client's own to fix, client_mcp_unsupported is permanent.
+func TestSDKServerEnablers_Scenario9_PartialMountFailsTheWireCreate(t *testing.T) {
+	twoServers := []*mecatlv1.McpServerSpec{
+		{Name: "notes", Url: "https://notes.example/mcp", Type: "http"},
+		{Name: "calendar", Url: "https://cal.example/mcp", Type: "http"},
+	}
+
+	t.Run("grpc: one of two unreachable", func(t *testing.T) {
+		rec := &mcpSpecRecorder{}
+		svc := clientMCPServiceUnreachable(t, true, rec, nil, mockllm.New(mockllm.TextTurn("ok")), []string{"calendar"})
+		client, cleanup := dialGRPC(t, svc)
+		defer cleanup()
+
+		_, err := client.CreateSession(context.Background(), &mecatlv1.CreateSessionRequest{
+			Workspace:  "/ws",
+			McpServers: twoServers,
+		})
+		if err == nil {
+			t.Fatal("a create whose MCP servers only PARTIALLY mounted succeeded: the client cannot detect the missing tools")
+		}
+		st, _ := status.FromError(err)
+		if st.Code() != codes.Unavailable {
+			t.Fatalf("code = %v, want Unavailable (transient, the client's endpoint to fix)", st.Code())
+		}
+		if code := errorCodeOf(t, st); code != "client_mcp_unreachable" {
+			t.Fatalf("typed code = %q, want client_mcp_unreachable", code)
+		}
+		// The message must name WHICH server, or the client cannot act on it.
+		if !strings.Contains(st.Message(), "calendar") {
+			t.Fatalf("error does not name the unreachable server: %q", st.Message())
+		}
+		// ...and must NOT indict the one that worked.
+		if strings.Contains(st.Message(), "notes") {
+			t.Fatalf("error names a server that DID mount: %q", st.Message())
+		}
+		// The engine was built (the factory ran) and must have been torn down
+		// rather than left registered against a session that does not exist.
+		if rec.count() != 1 {
+			t.Fatalf("factory calls = %d, want 1", rec.count())
+		}
+		if rec.closeCount() != 1 {
+			t.Fatalf("Close calls = %d, want 1: a refused create must tear the built engine down, not leak its MCP connections", rec.closeCount())
+		}
+		assertNoLiveSessions(t, svc)
+	})
+
+	t.Run("grpc: every server unreachable", func(t *testing.T) {
+		svc := clientMCPServiceUnreachable(t, true, nil, nil, mockllm.New(mockllm.TextTurn("ok")), []string{"notes", "calendar"})
+		client, cleanup := dialGRPC(t, svc)
+		defer cleanup()
+
+		_, err := client.CreateSession(context.Background(), &mecatlv1.CreateSessionRequest{
+			Workspace:  "/ws",
+			McpServers: twoServers,
+		})
+		if err == nil {
+			t.Fatal("a create whose MCP servers ALL failed to mount succeeded with a core-only engine")
+		}
+		st, _ := status.FromError(err)
+		if code := errorCodeOf(t, st); code != "client_mcp_unreachable" {
+			t.Fatalf("typed code = %q, want client_mcp_unreachable", code)
+		}
+		assertNoLiveSessions(t, svc)
+	})
+
+	t.Run("http: partial mount is 503, not 201", func(t *testing.T) {
+		svc := clientMCPServiceUnreachable(t, true, nil, nil, mockllm.New(mockllm.TextTurn("ok")), []string{"calendar"})
+		srv := httpFor(t, svc)
+
+		code, body := postCreate(t, srv, map[string]any{
+			"workspace": "/ws",
+			"mcp_servers": []map[string]any{
+				{"name": "notes", "url": "https://notes.example/mcp", "type": "http"},
+				{"name": "calendar", "url": "https://cal.example/mcp", "type": "http"},
+			},
+		})
+		if code != http.StatusServiceUnavailable {
+			t.Fatalf("POST /v1/sessions = %d, want 503; body=%s", code, body)
+		}
+		var problem struct {
+			Code   string `json:"code"`
+			Detail string `json:"detail"`
+		}
+		if err := json.Unmarshal(body, &problem); err != nil {
+			t.Fatalf("decode problem: %v; body=%s", err, body)
+		}
+		if problem.Code != "client_mcp_unreachable" {
+			t.Fatalf("problem code = %q, want client_mcp_unreachable", problem.Code)
+		}
+		if !strings.Contains(problem.Detail, "calendar") {
+			t.Fatalf("detail does not name the unreachable server: %q", problem.Detail)
+		}
+		assertNoLiveSessions(t, svc)
+	})
+
+	t.Run("full mount still succeeds", func(t *testing.T) {
+		// The guard must not be a blanket refusal: the happy path is unchanged.
+		svc := clientMCPServiceUnreachable(t, true, nil, nil, mockllm.New(mockllm.TextTurn("ok")), nil)
+		client, cleanup := dialGRPC(t, svc)
+		defer cleanup()
+
+		cs, err := client.CreateSession(context.Background(), &mecatlv1.CreateSessionRequest{
+			Workspace:  "/ws",
+			McpServers: twoServers,
+		})
+		if err != nil {
+			t.Fatalf("a create whose servers ALL mounted was refused: %v", err)
+		}
+		if cs.GetSessionId() == "" {
+			t.Fatal("no session id on a fully-mounted create")
+		}
+	})
+}
+
+// TestSDKServerEnablers_Scenario9_PartialMountToleratedOnACPPath pins the OTHER
+// half of the all-or-nothing decision: it is the WIRE contract, not a global one.
+//
+// The ACP peer is the operator's own editor. A flaky editor-side MCP server should
+// cost the user some tools, not their whole session, and ACP has its own channel
+// to report it — which is why composition's mount stays best-effort and only
+// WithClientMCP (the wire's sole entry) arms the strict check. Without this test,
+// "fix the silent partial mount" would plausibly be implemented one layer down in
+// composition and break editor sessions on every deployment.
+func TestSDKServerEnablers_Scenario9_PartialMountToleratedOnACPPath(t *testing.T) {
+	rec := &mcpSpecRecorder{}
+	svc := clientMCPServiceUnreachable(t, true, rec, nil, mockllm.New(mockllm.TextTurn("ok")), []string{"calendar"})
+
+	sess, err := svc.CreateSessionWithMCP(context.Background(), "/ws", session.ModeDefault, session.Limits{}, []mcp.ServerConfig{
+		{Name: "notes", URL: "https://notes.example/mcp", Timeout: mcp.ClientConnectTimeout},
+		{Name: "calendar", URL: "https://cal.example/mcp", Timeout: mcp.ClientConnectTimeout},
+	})
+	if err != nil {
+		t.Fatalf("the ACP entry must tolerate a partial mount, but it failed: %v", err)
+	}
+	if sess == nil || sess.ID == "" {
+		t.Fatal("ACP create returned no session")
+	}
+	if rec.count() != 1 {
+		t.Fatalf("factory calls = %d, want 1", rec.count())
+	}
+}
+
+// TestSDKServerEnablers_Scenario9_UnreportedMountFailsClosed pins the direction of
+// the ambiguous case: a factory reached through the WIRE that reports NO mounted
+// servers while servers were requested fails the create.
+//
+// The alternative — treat an empty MountedClientMCP as "made no claim" and pass —
+// would make the guarantee opt-out by omission: any future factory that forgot the
+// field would silently restore the exact silent-partial-mount bug this check
+// exists to prevent, and it would pass its tests while doing so.
+func TestSDKServerEnablers_Scenario9_UnreportedMountFailsClosed(t *testing.T) {
+	svc := mustService(t, server.Config{
+		Engine:            sharedTestEngine(),
+		Store:             memstore.New(),
+		Workspaces:        func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+		DefaultWorkspace:  "/ws",
+		Now:               func() time.Time { return time.Unix(0, 0) },
+		ClientMCPOnCreate: true,
+		// A factory that mounts specs but never populates MountedClientMCP.
+		SessionEngine: func(_ context.Context, _ server.ProviderSelector, _ []mcp.ServerConfig, _ server.SessionProfile, _ string, _ session.PermissionMode) (server.SessionEngineResult, error) {
+			return server.SessionEngineResult{
+				Engine: sharedTestEngine(),
+				Close:  func() error { return nil },
+			}, nil
+		},
+	})
+	client, cleanup := dialGRPC(t, svc)
+	defer cleanup()
+
+	_, err := client.CreateSession(context.Background(), &mecatlv1.CreateSessionRequest{
+		Workspace:  "/ws",
+		McpServers: []*mecatlv1.McpServerSpec{protoMCPEntry()},
+	})
+	if err == nil {
+		t.Fatal("a factory that reported no mounted servers produced a successful create: the check is opt-out by omission")
+	}
+	st, _ := status.FromError(err)
+	if code := errorCodeOf(t, st); code != "client_mcp_unreachable" {
+		t.Fatalf("typed code = %q, want client_mcp_unreachable", code)
+	}
+
+	// An ordinary create with NO mcp_servers must be entirely unaffected: the
+	// check keys on a REQUEST for servers, never on the field being unpopulated.
+	if _, err := client.CreateSession(context.Background(), &mecatlv1.CreateSessionRequest{Workspace: "/ws"}); err != nil {
+		t.Fatalf("ordinary create broke: %v", err)
+	}
+}
+
+// --- shared helpers for the mount-enforcement tests --------------------------
+
+func sharedTestEngine() *agent.Engine {
+	return agent.NewEngine(agent.Deps{
+		LLM:     mockllm.New(mockllm.TextTurn("shared")),
+		Catalog: tool.NewCatalog(),
+		Policy:  permpolicy.NewPolicy(nil, permstore.New()),
+		Model:   "test-model",
+	})
+}
+
+func mustService(t *testing.T, cfg server.Config) *server.Service {
+	t.Helper()
+	svc, err := server.NewService(cfg)
+	if err != nil {
+		t.Fatalf("new service: %v", err)
+	}
+	return svc
+}
+
+// assertNoLiveSessions proves a REFUSED create left nothing behind — no session in
+// the store and no per-session engine holding an MCP connection. A guard that
+// returns an error but keeps the half-built session would trade a detectable
+// failure for a leak.
+func assertNoLiveSessions(t *testing.T, svc *server.Service) {
+	t.Helper()
+	sessions, err := svc.ListSessions(context.Background())
+	if err != nil {
+		t.Fatalf("list sessions: %v", err)
+	}
+	if len(sessions) != 0 {
+		t.Fatalf("a refused create left %d session(s) behind", len(sessions))
+	}
 }

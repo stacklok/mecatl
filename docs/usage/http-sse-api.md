@@ -69,12 +69,15 @@ session's lifetime, via a per-session engine. Each entry is
 `CreateSessionRequest.mcp_servers` field, documented in full in
 [the gRPC API guide](./grpc-api.md). The short version: it is **listener-scoped**
 per [ADR 0237](../adr/0237-listener-scoped-workspace-authority.md) and the scope is
-a deployment property, so a daemon with any network-facing API listener refuses
-every non-empty value on all of its listeners with `501` /
-`client_mcp_unsupported`; check `mcp_servers_on_create` in `GET /v1/compatibility`
-`features` first. A `stdio` or `sse` entry is `400` on every deployment (mecatl
-never spawns an MCP server process), and header values are never logged, evented,
-or echoed in an error.
+a deployment property. Only a `--grpc-unix-socket` daemon with `--http-addr ""`
+accepts it — which means the HTTP surface never does, since serving HTTP at all is
+a TCP listener; every other deployment, loopback included, returns `501` /
+`client_mcp_unsupported`. Check `mcp_servers_on_create` in `GET /v1/compatibility`
+`features` first. Mounting is all-or-nothing: a server that does not connect fails
+the create with `503` / `client_mcp_unreachable` rather than returning a session
+quietly missing its tools. A `stdio` or `sse` entry is `400` on every deployment
+(mecatl never spawns an MCP server process), and header values are never logged,
+evented, or echoed in an error.
 
 Adoption is available only when authenticated caller ownership and a per-session engine
 factory are wired (`ServerCapabilities.legacy_adoption`). It accepts no message array or

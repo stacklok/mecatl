@@ -152,6 +152,26 @@ type SessionEngineResult struct {
 	// DebugMCPTools is the exact direct-tool ceiling resolved by a debug factory.
 	// It contains model-facing tool names only and is persisted on the session.
 	DebugMCPTools []string
+	// MountedClientMCP names the client-provided MCP servers that ACTUALLY
+	// CONNECTED for this session — never an echo of what was requested. It is nil
+	// when no specs were passed, and SHORTER than the request when some server was
+	// unreachable (mcp.NewManager keeps only successful connections).
+	//
+	// It exists because connecting is best-effort in composition and that is the
+	// right default for ONE of the two callers, not both. The ACP adapter wants a
+	// usable session even when an editor's MCP server is down; a gRPC/HTTP
+	// CreateSession caller cannot see composition's WARN and would otherwise be
+	// handed a session ID for a session missing tools it asked for, with no way to
+	// detect it. So the factory reports the mounted set and the Service enforces
+	// all-or-nothing on the wire path only (see verifyClientMCPMounted).
+	//
+	// A factory reached through the WIRE path MUST populate it. Leaving it empty
+	// while servers were requested is treated as "nothing mounted" and fails the
+	// create, rather than as "no claim made" — a guarantee a factory can silently
+	// opt out of by forgetting a field is not a guarantee. Only WithClientMCP
+	// (the wire-only option) turns the check on, so the ACP path and every
+	// selector-only factory are unaffected.
+	MountedClientMCP []string
 	// Close tears down the session's MCP manager. Never nil (a no-op when no specs).
 	Close func() error
 }
@@ -294,8 +314,12 @@ type Config struct {
 	// outbound endpoint plus its auth headers from an API caller lends the server's
 	// ambient network authority to a remote principal, so a composition root that
 	// has not thought about it must not accidentally grant it. mecated derives it
-	// from listener topology (clientMCPOnCreateForListeners): permitted only when
-	// NO API listener is a network boundary.
+	// from listener topology (clientMCPOnCreateForListeners): permitted only on a
+	// UNIX-socket gRPC listener with HTTP disabled. That is STRICTER than the
+	// loopback-tolerant WorkspaceAuthority derivation above, because an
+	// attacker-named endpoint carrying caller-supplied credentials is a larger
+	// grant than a root the operator chose, and loopback TCP is reachable by every
+	// local process on the host.
 	//
 	// It gates the WIRE surface only. The in-process CreateSessionWithMCP /
 	// LoadSessionWithMCP entries are unaffected: their caller is the ACP adapter,
@@ -1497,6 +1521,11 @@ type createSessionOpts struct {
 	// already classified AND policy-checked by Service.ClientMCPFromWire. Empty is
 	// the byte-identical shared-engine path.
 	clientMCP []mcp.ServerConfig
+	// clientMCPStrict requires every server in clientMCP to actually connect, or
+	// the create fails with ErrClientMCPUnreachable. Set only by WithClientMCP,
+	// which is the wire path's only entry — the ACP path keeps composition's
+	// best-effort mount. See verifyClientMCPMounted.
+	clientMCPStrict bool
 }
 
 // WithSessionID overrides the session id a CreateSession* call mints. When set,
@@ -1547,8 +1576,18 @@ func WithDebugMCP(names []string) CreateSessionOption {
 // rather than here is what keeps ONE classifier and ONE policy check on the
 // path, instead of a second one that a future caller could bypass by
 // constructing the option directly.
+//
+// It also arms the ALL-OR-NOTHING mount requirement (clientMCPStrict): every
+// requested server must actually connect or the create fails. That is the wire
+// contract, and this option is the wire's only entry, so the two travel
+// together rather than as a separate flag a handler could forget. The ACP path
+// (CreateSessionWithMCP) deliberately does not come through here and keeps
+// composition's best-effort behaviour.
 func WithClientMCP(specs []mcp.ServerConfig) CreateSessionOption {
-	return func(o *createSessionOpts) { o.clientMCP = append([]mcp.ServerConfig(nil), specs...) }
+	return func(o *createSessionOpts) {
+		o.clientMCP = append([]mcp.ServerConfig(nil), specs...)
+		o.clientMCPStrict = true
+	}
 }
 
 func debugMCPNameRune(r rune) bool {
@@ -2149,6 +2188,17 @@ func (s *Service) createPerSessionEngine(ctx context.Context, mintID func() sess
 		return nil, err
 	}
 	eng, closeFn := res.Engine, res.Close
+	// All-or-nothing client MCP on the WIRE path, BEFORE an id is minted or
+	// anything is persisted: a caller that asked for tools must not be handed a
+	// session quietly missing them. Teardown uses the same closeFn idiom as every
+	// other rejection below, so a refused create leaks neither a connection nor a
+	// registry slot.
+	if err := verifyClientMCPMounted(specs, res.MountedClientMCP, opts.clientMCPStrict); err != nil {
+		if closeFn != nil {
+			_ = closeFn()
+		}
+		return nil, err
+	}
 	sess, err := newCreatedSession(mintID(), mode, workspace, limits, s.cfg.Now(), opts)
 	if err != nil {
 		if closeFn != nil {
@@ -2335,6 +2385,47 @@ func (s *Service) featureScope() FeatureScope {
 	return FeatureScope{ClientMCPOnCreate: s.cfg.ClientMCPOnCreate}
 }
 
+// verifyClientMCPMounted enforces the wire path's ALL-OR-NOTHING client-MCP
+// contract: every requested server must appear in the factory's mounted set.
+//
+// The problem it closes: connecting client MCP is best-effort in composition
+// (mcp.NewManager keeps the servers that answered and drops the rest, and returns
+// an error only when EVERY one fails). That is right for the ACP adapter, whose
+// peer is the operator's own editor and for whom a degraded session beats no
+// session. It is wrong for a wire caller, which sees none of composition's WARNs
+// and would receive an ordinary session id for a session missing some or all of
+// the tools it asked for — with nothing in the response to tell it apart from
+// success. Silent partial success is the failure mode worth engineering against.
+//
+// strict is set only by WithClientMCP, so the ACP path is untouched. When strict
+// and servers were requested, an EMPTY mounted set fails: a factory that reports
+// nothing has mounted nothing as far as this check can tell, and a guarantee that
+// a factory can opt out of by omitting a field is not a guarantee.
+//
+// The error names the SERVER NAMES that did not mount — client-supplied
+// identifiers, which the caller already knows. It carries no URL and, per AC9.5,
+// no header value: those are secret-shaped and never appear in an error.
+func verifyClientMCPMounted(requested []mcp.ServerConfig, mounted []string, strict bool) error {
+	if !strict || len(requested) == 0 {
+		return nil
+	}
+	mountedSet := make(map[string]struct{}, len(mounted))
+	for _, name := range mounted {
+		mountedSet[name] = struct{}{}
+	}
+	var missing []string
+	for _, spec := range requested {
+		if _, ok := mountedSet[spec.Name]; !ok {
+			missing = append(missing, spec.Name)
+		}
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	return fmt.Errorf("%w: %d of %d requested server(s) did not connect: %s",
+		ErrClientMCPUnreachable, len(missing), len(requested), strings.Join(missing, ", "))
+}
+
 // ClientMCPFromWire is the SINGLE enforcement seam for client-provided MCP
 // servers arriving on a session-creating API request. Both wire transports call
 // it; neither classifies an entry itself.
@@ -2367,7 +2458,7 @@ func (s *Service) ClientMCPFromWire(servers []mcp.ClientServer) ([]mcp.ServerCon
 		return nil, fmt.Errorf("%w: %w", ErrInvalidArgument, err)
 	}
 	if !s.cfg.ClientMCPOnCreate {
-		return nil, fmt.Errorf("%w: this deployment has a network-facing API listener", ErrClientMCPUnsupported)
+		return nil, fmt.Errorf("%w: this API surface is reachable over TCP; client-provided MCP servers require a UNIX-socket listener with HTTP disabled", ErrClientMCPUnsupported)
 	}
 	return specs, nil
 }

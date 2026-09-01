@@ -2518,6 +2518,28 @@ func debugSessionEngineFactory(cfg Config, reg *providerRegistry, fallback port.
 	}
 }
 
+// mountedClientMCPNames reports the client MCP servers that actually CONNECTED,
+// for the Service's all-or-nothing check on the wire path. mcp.NewManager keeps
+// only successful connections in Servers(), so this is the honest mounted set —
+// never an echo of what was requested.
+//
+// Scoped to CONNECTION deliberately. A connected server whose tool name is
+// shadowed by a server-global tool of the same name still counts as mounted: that
+// is an operator-side name collision with its own WARN in mountClientMCP, not a
+// failure to reach the client's server, and conflating the two would make an
+// operator's global MCP config able to fail an unrelated client's create.
+func mountedClientMCPNames(mgr *mcp.Manager) []string {
+	if mgr == nil {
+		return nil
+	}
+	servers := mgr.Servers()
+	names := make([]string, 0, len(servers))
+	for _, srv := range servers {
+		names = append(names, srv.Name())
+	}
+	return names
+}
+
 func sessionEngineFactory(
 	cfg Config,
 	reg *providerRegistry,
@@ -2663,12 +2685,21 @@ func sessionEngineFactory(
 		if len(specs) > 0 {
 			m, err := mcp.NewManager(ctx, specs, onError, cfg.diag())
 			if err != nil {
-				// Best-effort: every server failed. The session still gets a usable engine
-				// (core tools only) rather than failing session creation outright.
+				// Best-effort HERE, by design: every server failed and the session still
+				// gets a usable engine (core tools only) rather than failing outright.
+				// This is the ACP contract — an editor's flaky MCP server should not cost
+				// the user their session, and ACP has its own channel to say so.
+				//
+				// It is NOT the wire contract. A gRPC/HTTP CreateSession caller cannot
+				// see this WARN, so the Service enforces all-or-nothing on that path
+				// using MountedClientMCP below. Reporting which servers connected is
+				// this factory's job; deciding whether a partial mount is acceptable
+				// belongs to the caller, and the two callers disagree.
 				cfg.diag().Log(ctx, port.LevelWarn, "client MCP: no servers connected for this session; mounting core tools only", "err", err)
 			}
 			mgr = m
 		}
+		mountedClientMCP := mountedClientMCPNames(mgr)
 
 		// Assemble the per-session catalog through the SAME assembleCatalog the
 		// build-time shared catalog uses (issue #42 — the anti-drift seam): core +
@@ -2785,7 +2816,12 @@ func sessionEngineFactory(
 			// Service stamps sessionEngine.builtForMode from this one source and detects a
 			// later mode→model staleness — the SAME single-source discipline as the ids.
 			BuiltForMode: mode,
-			Close:        closeFn,
+			// The client MCP servers that actually connected (nil when none were
+			// requested). The factory REPORTS; the Service decides whether a partial
+			// mount is acceptable, because its two callers disagree — see the
+			// best-effort comment on the NewManager error above.
+			MountedClientMCP: mountedClientMCP,
+			Close:            closeFn,
 		}, nil
 	}
 }

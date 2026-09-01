@@ -1,20 +1,34 @@
 package main
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/stacklok/mecatl/internal/adapter/server"
+)
 
 // TestSDKServerEnablers_Scenario9_ClientMCPPolicyFollowsListenerTopology pins the
-// DEPLOYMENT-SCOPED reading of AC9.2/AC9.3 (issue #821, ADR 0237).
+// DEPLOYMENT-SCOPED reading of AC9.2/AC9.3 (issue #821, ADR 0237) and the
+// UDS-ONLY threshold within it.
 //
-// Accepting an MCP endpoint plus its auth headers from an API caller lends the
-// daemon's outbound network authority to a remote principal, so the decision is
-// made ONCE from listener topology — exactly like workspaceAuthorityForListeners,
-// and for the same reason 0237 gives: authority is a deployment policy, "not an
-// inference made from a request or from the server package's socket state".
+// Two independent decisions are under test here, and both have a failure mode:
 //
-// The mixed case is the load-bearing row. One *Service backs BOTH listeners, so a
-// daemon that serves a UNIX socket AND a TCP port refuses the field on both. That
-// is deliberately conservative: a per-connection answer would contradict 0237 as
-// written and would need its own ADR.
+//  1. WHERE the decision is made. Accepting an MCP endpoint plus its auth headers
+//     from an API caller lends the daemon's outbound network authority to that
+//     caller, so it is decided ONCE from listener topology, per 0237: authority is
+//     a deployment policy, "not an inference made from a request or from the server
+//     package's socket state".
+//  2. WHAT counts as local enough. UNIX socket with HTTP disabled, and nothing
+//     else. Loopback TCP does NOT qualify, which is where this derivation parts
+//     company with workspaceAuthorityForListeners — the loopback rows below are the
+//     ones that pin the difference. Loopback is reachable by every local process
+//     and every local user on the host; a UNIX socket is guarded by filesystem
+//     permissions on an owner-only directory. AC9.2 says "over a TCP listener is
+//     refused" and ADR 0248 already publishes "only reachable on a UDS listener";
+//     a loopback TCP daemon is a TCP daemon.
+//
+// The mixed rows are the load-bearing ones for (1): one *Service backs BOTH
+// listeners, so a daemon serving a UNIX socket AND a TCP port refuses the field on
+// both. A per-connection answer would contradict 0237 as written.
 func TestSDKServerEnablers_Scenario9_ClientMCPPolicyFollowsListenerTopology(t *testing.T) {
 	cases := []struct {
 		name       string
@@ -23,15 +37,21 @@ func TestSDKServerEnablers_Scenario9_ClientMCPPolicyFollowsListenerTopology(t *t
 		httpAddr   string
 		want       bool
 	}{
-		// The SDK-spawned daemon shape from Scenario 8: a UNIX socket with HTTP
-		// disabled. No network surface at all, so it keeps the feature.
+		// The ONE topology that qualifies: the SDK-spawned daemon shape from
+		// Scenario 8. A UNIX socket, HTTP disabled, no network surface at all.
 		{name: "uds with http disabled", grpcSocket: "/run/mecatl.sock", want: true},
-		// A UNIX socket beside a loopback HTTP listener is still no wider than the
-		// loopback bind that already grants client-selected workspace authority.
-		{name: "uds with loopback http", grpcSocket: "/run/mecatl.sock", httpAddr: "127.0.0.1:8081", want: true},
-		{name: "loopback tcp both", grpcAddr: "127.0.0.1:8080", httpAddr: "localhost:8081", want: true},
-		{name: "ipv6 loopback", grpcAddr: "[::1]:8080", httpAddr: "[::1]:8081", want: true},
-		{name: "http disabled, loopback grpc", grpcAddr: "127.0.0.1:8080", want: true},
+		// A UNIX socket beside HTTP on an explicit loopback address still exposes a
+		// TCP port that any local process — including a browser page — can reach.
+		// It gives the feature up. (Contrast workspaceAuthorityForListeners, which
+		// accepts this shape: see the type-level comment for why they differ.)
+		{name: "uds with loopback http", grpcSocket: "/run/mecatl.sock", httpAddr: "127.0.0.1:8081", want: false},
+		// Default mecated. Loopback gRPC + loopback HTTP is the shape the review
+		// caught advertising and accepting mcp_servers; it must not.
+		{name: "loopback tcp both", grpcAddr: "127.0.0.1:8080", httpAddr: "localhost:8081", want: false},
+		{name: "ipv6 loopback", grpcAddr: "[::1]:8080", httpAddr: "[::1]:8081", want: false},
+		// HTTP disabled is necessary but not sufficient: gRPC is still on TCP here,
+		// because only --grpc-unix-socket suppresses that bind.
+		{name: "http disabled, loopback grpc", grpcAddr: "127.0.0.1:8080", want: false},
 
 		{name: "wildcard grpc", grpcAddr: "0.0.0.0:8080", httpAddr: "127.0.0.1:8081", want: false},
 		{name: "public grpc", grpcAddr: "192.0.2.10:8080", httpAddr: "127.0.0.1:8081", want: false},
@@ -40,9 +60,13 @@ func TestSDKServerEnablers_Scenario9_ClientMCPPolicyFollowsListenerTopology(t *t
 		// one Service answers for both, so the wider listener decides.
 		{name: "uds plus wildcard http", grpcSocket: "/run/mecatl.sock", httpAddr: "0.0.0.0:8081", want: false},
 		// An empty --grpc-addr is a WILDCARD bind, not a disabled listener (gRPC has
-		// no disable path). Reading it as "no listener" would grant the feature on a
+		// no disable path). The positive grpcUnixSocket test is what makes this row
+		// safe: an absence check on grpcAddr would have granted the feature on a
 		// listener reachable from every interface.
 		{name: "empty grpc addr is a wildcard", grpcAddr: "", httpAddr: "127.0.0.1:8081", want: false},
+		// ...and an empty grpcAddr with HTTP also disabled is STILL a wildcard gRPC
+		// bind, so it must not be mistaken for the no-listener daemon.
+		{name: "empty grpc addr with http disabled", grpcAddr: "", want: false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -58,6 +82,45 @@ func TestSDKServerEnablers_Scenario9_ClientMCPPolicyFollowsListenerTopology(t *t
 	}
 }
 
+// TestSDKServerEnablers_Scenario9_ClientMCPIsStricterThanWorkspaceAuthority pins
+// the DIVERGENCE between the two listener-derived policies as a deliberate
+// property rather than an accident of two similar-looking functions.
+//
+// Both answer "may an API caller direct the daemon's ambient authority?", and
+// they answer differently on purpose: a workspace path selects among roots the
+// operator already owns (loopback accepted, ADR 0237's shipped precedent), while
+// an MCP endpoint plus caller-supplied credentials points the daemon at a host of
+// the caller's choosing. If someone later "unifies" these two derivations for
+// tidiness, this test fails and says which direction is safe to unify in.
+func TestSDKServerEnablers_Scenario9_ClientMCPIsStricterThanWorkspaceAuthority(t *testing.T) {
+	// Loopback TCP: workspace authority is client-selected, client MCP is refused.
+	loopback := config{grpcAddr: "127.0.0.1:8080", httpAddr: "127.0.0.1:8081"}
+	authority, err := workspaceAuthorityForListeners(loopback)
+	if err != nil {
+		t.Fatalf("workspaceAuthorityForListeners: %v", err)
+	}
+	if authority != server.WorkspaceAuthorityClientSelected {
+		t.Fatalf("loopback workspace authority = %v, want client-selected (the 0237 precedent this test contrasts with)", authority)
+	}
+	if clientMCPOnCreateForListeners(loopback) {
+		t.Fatal("loopback TCP must NOT permit client MCP: it is strictly the larger grant, and AC9.2 refuses any TCP listener")
+	}
+
+	// The UDS daemon: both are granted, so the difference is a threshold on the
+	// same axis, not one policy being off.
+	uds := config{grpcUnixSocket: "/run/mecatl.sock"}
+	if !clientMCPOnCreateForListeners(uds) {
+		t.Fatal("uds daemon with http disabled must permit client MCP")
+	}
+	udsAuthority, err := workspaceAuthorityForListeners(uds)
+	if err != nil {
+		t.Fatalf("workspaceAuthorityForListeners(uds): %v", err)
+	}
+	if udsAuthority != server.WorkspaceAuthorityClientSelected {
+		t.Fatalf("uds workspace authority = %v, want client-selected", udsAuthority)
+	}
+}
+
 // TestSDKServerEnablers_Scenario9_ClientMCPPolicyReachesTheService proves the
 // derived policy is actually WIRED, not merely computed: appConfig must carry it
 // into the composition Config the Service reads. Without this the derivation
@@ -69,6 +132,7 @@ func TestSDKServerEnablers_Scenario9_ClientMCPPolicyReachesTheService(t *testing
 		want bool
 	}{
 		{"local socket daemon", config{grpcUnixSocket: "/run/mecatl.sock"}, true},
+		{"default loopback daemon", config{grpcAddr: "127.0.0.1:8080", httpAddr: "127.0.0.1:8081"}, false},
 		{"network daemon", config{grpcAddr: "0.0.0.0:8080", httpAddr: "127.0.0.1:8081"}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

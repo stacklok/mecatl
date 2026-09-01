@@ -154,6 +154,20 @@ var (
 	// Both map to UNIMPLEMENTED / 501 for that reason, and a client that wants to
 	// know BEFORE it asks reads mcp_servers_on_create from GetCompatibilityInfo.
 	ErrClientMCPUnsupported = errors.New("server: client-provided MCP servers are not accepted on this deployment")
+	// ErrClientMCPUnreachable means the deployment DID accept the request but at
+	// least one requested MCP server could not be connected, so the session was
+	// not created. It is the counterpart of ErrClientMCPUnsupported and a
+	// deliberately DIFFERENT code: "this deployment refuses the field" is
+	// permanent and a client should stop asking, while "your server did not
+	// answer" is transient and retryable once the client's own endpoint is up.
+	// Collapsing them into one code would make an SDK unable to tell a
+	// misconfigured deployment from a sleeping sidecar.
+	//
+	// Creation is ALL-OR-NOTHING on the wire for the reason this sentinel exists:
+	// a partially-mounted session is one the client cannot detect, since the
+	// unreachable-server WARN goes to the operator's log and the create otherwise
+	// returns a perfectly ordinary session id.
+	ErrClientMCPUnreachable = errors.New("server: a requested client-provided MCP server could not be connected")
 	// ErrSessionDeleteUnsupported means the configured store cannot physically
 	// remove snapshots and their sidecars.
 	ErrSessionDeleteUnsupported = errors.New("server: session deletion is not supported by the configured store")

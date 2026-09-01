@@ -8125,6 +8125,86 @@ the single correlation source — no separate burn maps; the watermark derives
 from the tail send.
 
 
+## Client-provided MCP on session creation (issue #821 Scenario 9, ADR 0237 / ADR 0248)
+
+`CreateSessionRequest.mcp_servers` (+ the HTTP `mcp_servers` body field) mounts a
+caller's streaming-HTTP MCP servers for one session's lifetime. Two properties are
+load-bearing and both were tightened after review on PR #903.
+
+**One validator, two callers.** `mcp.PartitionClientServers` (`internal/adapter/mcp/clientmcp.go`)
+is the single classifier: the ACP `partitionClientMCP` is now a thin field mapping onto it, and
+`Service.ClientMCPFromWire` is the wire's only entry. AC9.6 exists because a second validator on
+the wire path would be the obvious way to implement this and would drift from ACP's within a
+release. `command` is carried on the wire ONLY so a command-shaped entry classifies as stdio and
+is rejected AS stdio; nothing ever executes it.
+
+**Order inside `ClientMCPFromWire` is classify-then-gate** (the ordinary 400-before-501 shape).
+Classification runs unconditionally, so a `stdio`/`sse` entry is `InvalidArgument` naming the
+transport on EVERY deployment. Reversed, "No stdio MCP, ever" would only be *observable* where
+client MCP happens to be permitted — an invariant contingent on a config flag is not an
+invariant. `TestInvariant_no_stdio_mcp_ever` asserts both postures for exactly this reason.
+
+**The listener threshold is UDS-with-HTTP-disabled, and it is deliberately STRICTER than
+`workspaceAuthorityForListeners`.** Both are deployment-scoped per ADR 0237's Decision (one
+`*Service` backs both listeners, so no per-connection answer), but they draw the line in
+different places: workspace authority accepts loopback TCP as 0237's shipped precedent, while
+`clientMCPOnCreateForListeners` requires `grpcUnixSocket != "" && httpAddr == ""`. A workspace
+path selects among roots the operator already owns; an MCP endpoint plus its headers points the
+daemon's OUTBOUND NETWORK authority at a host the caller names and has it carry the caller's
+credentials there. Loopback TCP is reachable by every local process and local user account
+(browser pages included, for HTTP); a UNIX socket is guarded by filesystem permissions on the
+owner-only directory `listenUnixSocket` creates. AC9.2 says "over a TCP listener is refused" and
+ADR 0248 already publishes "only reachable on a UDS listener" — the first implementation reused
+the loopback-tolerant predicate and therefore accepted the field on default `mecated`.
+The two tests are asymmetric because the listeners are: HTTP is always TCP (`net.Listen("tcp",
+...)`) so an empty `--http-addr` is its only disable path, while gRPC has NO disable path, so its
+test is the POSITIVE `grpcUnixSocket != ""` — an empty `--grpc-addr` is a WILDCARD bind.
+`TestSDKServerEnablers_Scenario9_ClientMCPIsStricterThanWorkspaceAuthority` pins the divergence
+so a later "unification" of the two derivations fails loudly.
+A CONSEQUENCE worth stating: the HTTP surface can never accept the field on `mecated`, because
+serving HTTP at all is a TCP listener. The HTTP adapter still implements it — the policy is
+composition-injected, so another root may permit it — but no `mecated` topology reaches that path.
+
+**Mounting is ALL-OR-NOTHING on the wire, and the split is by CALLER, not by layer.**
+`mcp.NewManager` connects concurrently, keeps the servers that answered, drops the rest with an
+operator WARN, and errors only when EVERY one fails — so before this, a wire client could receive
+an ordinary session id for a session missing some or all of its requested tools, with nothing in
+the response distinguishing that from success (the WARN goes to the operator's log, which the
+client cannot read). That best-effort behaviour is RIGHT for ACP, whose peer is the operator's own
+editor and for whom a degraded session beats none, so it stays. The fix is a report-and-decide
+seam instead of a behaviour change one layer down: the factory populates
+`SessionEngineResult.MountedClientMCP` with the names that actually CONNECTED, and
+`verifyClientMCPMounted` fails the create when the wire asked for more. `clientMCPStrict` is set
+by `WithClientMCP` — the wire's sole entry — so the two travel together rather than as a flag a
+handler could forget. An EMPTY report with servers requested FAILS: a guarantee a factory can opt
+out of by omitting a field is not a guarantee. The check runs before any id is minted and calls
+the same `closeFn` every other rejection in `createPerSessionEngine` does, so a refusal leaks
+neither a connection nor a registry slot.
+`ErrClientMCPUnreachable` (`client_mcp_unreachable`, `Unavailable` / 503) is deliberately a
+DIFFERENT code from `ErrClientMCPUnsupported` (`client_mcp_unsupported`, `Unimplemented` / 501):
+the first is transient and the client's own endpoint to fix, the second is permanent and means
+stop asking. Collapsing them would leave an SDK unable to tell a misconfigured deployment from a
+sleeping sidecar. The report is scoped to CONNECTION only — a connected server whose tool name is
+shadowed by a server-global tool keeps counting as mounted, since that is an operator-side
+collision with its own WARN, and conflating the two would let an operator's global MCP config fail
+an unrelated client's create.
+
+**Headers are secret-shaped** (AC9.5): never logged, never projected into an event, never in an
+error. The proto `McpServerInfo` carries no headers field at all, so `ListMcpSources` is
+structurally incapable of leaking them. The unreachable-server error is the one site that reports
+per-server detail AFTER the specs crossed into the factory, which makes it the likeliest place for
+a header to be appended while "helpfully" diagnosing a failure — it names server names only, and
+`TestSDKServerEnablers_Scenario9_McpHeadersNeverLogged` has a dedicated arm for that path (a
+mutation leaking `spec.Headers` there passed every other arm).
+
+**Offline test shape.** The server-side tests use a stand-in factory, so composition's honesty is
+pinned separately by `internal/app/client_mcp_mounted_report_test.go` against the REAL
+`sessionEngineFactory`: a reachable in-process `mcpsdk` server over `httptest`, and an
+"unreachable" one that is a *started-then-closed* loopback listener — a genuine ECONNREFUSED dial
+that touches no external network and returns immediately instead of waiting out
+`mcp.ClientConnectTimeout`.
+
+
 ---
 
 *Part of the [design docs](./README.md). Related: [mecatl — Architecture](../adr/0004-v1-architecture.md), [Driver seams — ports, the gRPC driver protocol, and conformance](../adr/0005-driver-seams.md), [mecatl — Implementation Step-Chain (v1)](../adr/0006-v1-step-chain.md).*

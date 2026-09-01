@@ -798,22 +798,38 @@ field depends on where it listens:
 
 | Listener topology | `mcp_servers` |
 |---|---|
-| UNIX socket, or loopback TCP only | accepted |
-| Any wildcard or non-loopback API listener | refused on **every** listener, with `UNIMPLEMENTED` / `501` and the code `client_mcp_unsupported` |
+| `--grpc-unix-socket` **and** `--http-addr ""` | accepted |
+| Anything else — including plain loopback TCP | refused on **every** listener, with `UNIMPLEMENTED` / `501` and the code `client_mcp_unsupported` |
 
-The reason is the same one behind server-assigned workspaces: an endpoint plus a
-credential, accepted from an API caller, points the daemon's **outbound network
-authority** wherever that caller chooses. That is fine when reaching the API already
-means being a local process the operator trusts, and not fine when it means holding
-a bearer token. The decision is made once at startup from your listener topology, so
-a daemon that serves both a socket and a public port refuses the field on both — the
-same `Service` answers for each, and the wider listener decides.
+Only the fully socket-bound daemon qualifies. A loopback TCP port does **not**, and
+neither does a socket-plus-HTTP daemon: serving HTTP at all means serving TCP.
+
+That bar is higher than the one for workspaces, which does accept loopback, and the
+difference is deliberate. A workspace path picks among roots you already own. An MCP
+endpoint plus a credential points the daemon's **outbound network authority**
+wherever the caller chooses and has it carry the caller's token there — a larger
+grant, and one worth a narrower door. A loopback port is reachable by every process
+and every user account on the machine, browser pages included; a UNIX socket is
+guarded by filesystem permissions on a directory created for you alone.
+
+The decision is made once at startup from your listener topology, so a daemon that
+serves both a socket and a port refuses the field on both — the same `Service`
+answers for each, and the wider listener decides.
 
 The refusal is the **server's**, not a convention clients are asked to honour: a
 client that never checks still gets a clean, typed error rather than a mounted
 server. Clients that do check read `mcp_servers_on_create` from
 `GetCompatibilityInfo` (`GET /v1/compatibility`) — a deployment advertises it
 exactly when it will accept it.
+
+**Either all of them mount, or none does.** If a server you asked for cannot be
+reached, the create fails with `UNAVAILABLE` / `503` and the code
+`client_mcp_unreachable`, naming the ones that did not answer — no session is
+created. That code is distinct from `client_mcp_unsupported` because the fix is
+different: the unsupported one means this daemon will never accept the field, while
+the unreachable one means your own endpoint was down and a retry may work. A
+half-mounted session is never reported as success, since from the API it would look
+exactly like a working one while quietly missing tools.
 
 One rule holds regardless of topology: transport is streaming-HTTP only. A `stdio`
 entry — or an untyped one carrying a `command` — and an `sse` entry are rejected as
