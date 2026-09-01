@@ -562,15 +562,35 @@ func (e *Engine) catalogTools() []catalogToolInfo {
 	return out
 }
 
+// RunOutcome records why a Run's event stream closed. Its zero value means the
+// run is still active.
+type RunOutcome int32
+
+const (
+	// RunOutcomeUnknown means the run is still active.
+	RunOutcomeUnknown RunOutcome = iota
+	// RunOutcomeCompleted means the run emitted a terminal EvResult.
+	RunOutcomeCompleted
+	// RunOutcomeAuthorizationPending means the run durably parked without an
+	// EvResult or terminal session stop.
+	RunOutcomeAuthorizationPending
+)
+
 // Run is the handle to one in-flight prompt. It exposes the Event stream plus the
 // out-of-band controls the bidi API needs (Approve resolves a permission.ask;
 // Cancel aborts the run). The Events channel is closed exactly once, when the run
 // terminates.
 type Run struct {
-	events chan session.Event
-	asks   *askRegistry
-	cancel context.CancelFunc
-	seq    atomic.Int64
+	events  chan session.Event
+	asks    *askRegistry
+	cancel  context.CancelFunc
+	seq     atomic.Int64
+	outcome atomic.Int32
+
+	// closureMu linearizes the final authorization.required publication against
+	// Cancel. That publication is the one nonterminal way an event stream closes.
+	closureMu       sync.Mutex
+	cancelRequested bool
 	// hardAbort is closed a short grace AFTER Cancel (hardAbortOnce arms the
 	// hardAbortGrace timer BEFORE the ctx cancel) — the explicit "stop blocking
 	// anywhere" unwedge signal every guarded send on this run selects on (emit,
@@ -774,6 +794,9 @@ type RunRequest struct {
 	// Parts carries non-text media (image/audio) alongside Text. nil for a text-only
 	// prompt. The media passes through to the engine untouched.
 	Parts []session.Content
+	// CanPresentAuthorization permits this main run to present a required external
+	// authorization. The zero value fails closed.
+	CanPresentAuthorization bool
 	// MaxRunTokensOverride, when > 0, is a per-run TIGHTEN-ONLY override of the engine's
 	// Deps.MaxRunTokens budget: the effective ceiling for THIS run is the lower of the
 	// two non-zero values (a per-call ceiling may make the run stricter than the operator
@@ -850,9 +873,14 @@ type RunRequest struct {
 // be the one the caller is holding).
 func (r *Run) RunID() string { return r.runID }
 
-// Events returns the channel of domain Events for this run. It is closed when the
-// run ends (after the terminal result Event has been delivered).
+// Events returns the channel of domain Events for this run. It closes after a
+// terminal result or a durable external-authorization park.
 func (r *Run) Events() <-chan session.Event { return r.events }
+
+// Outcome reports why this Run's event stream closed.
+func (r *Run) Outcome() RunOutcome { return RunOutcome(r.outcome.Load()) }
+
+func (r *Run) setOutcome(outcome RunOutcome) { r.outcome.Store(int32(outcome)) }
 
 // Approve resolves the permission.ask identified by askID with the client's
 // verdict: VerdictDeny refuses the call, VerdictAllowOnce permits this call only,
@@ -930,6 +958,14 @@ var hardAbortGrace = time.Second
 // or while awaiting an approval) and terminates with a result carrying
 // StopCancelled.
 func (r *Run) Cancel() {
+	r.closureMu.Lock()
+	if r.Outcome() == RunOutcomeAuthorizationPending {
+		r.closureMu.Unlock()
+		return
+	}
+	r.cancelRequested = true
+	r.closureMu.Unlock()
+
 	r.hardAbortOnce.Do(func() {
 		if r.hardAbort != nil {
 			time.AfterFunc(hardAbortGrace, func() { close(r.hardAbort) })
@@ -1089,7 +1125,19 @@ func (e *Engine) RetryFailedStep(ctx context.Context, sess *session.Session, env
 // terminal EvResult (Stop == StopError, the Error field), exactly like any other
 // terminal — it never silently completes. The pending tool executes EXACTLY ONCE on
 // the allow path and NOT AT ALL on a precondition failure or a deny.
+type ResumeApprovalOptions struct {
+	// CanPresentAuthorization permits this resumed main run to present a newly
+	// required external authorization. The zero value fails closed.
+	CanPresentAuthorization bool
+}
+
 func (e *Engine) ResumeApproval(ctx context.Context, sess *session.Session, env tool.Environment, askID string, verdict session.ApprovalVerdict) *Run {
+	return e.ResumeApprovalWith(ctx, sess, env, askID, verdict, ResumeApprovalOptions{})
+}
+
+// ResumeApprovalWith resumes an awaiting permission decision with explicit host
+// capabilities that may be needed by the continued tool call.
+func (e *Engine) ResumeApprovalWith(ctx context.Context, sess *session.Session, env tool.Environment, askID string, verdict session.ApprovalVerdict, opts ResumeApprovalOptions) *Run {
 	// The resumed run CONTINUES the run that parked awaiting this ask — it is not
 	// a new one — so it carries that run's identity forward, read from the session
 	// the host restored it onto (ADR 0249). This is what makes a cross-process
@@ -1099,7 +1147,7 @@ func (e *Engine) ResumeApproval(ctx context.Context, sess *session.Session, env 
 	// never read the id off the session: a reused session still carries the id of
 	// the run that just ended, and inheriting it would silently attribute a brand
 	// new run's events to the previous one.
-	return e.startRun(ctx, sess, RunRequest{RunID: sess.RunID()}, session.Usage{}, func(ctx context.Context, r *Run) {
+	return e.startRun(ctx, sess, RunRequest{RunID: sess.RunID(), CanPresentAuthorization: opts.CanPresentAuthorization}, session.Usage{}, func(ctx context.Context, r *Run) {
 		if !e.prepareRunEnvironment(ctx, r, sess, env) {
 			return
 		}
@@ -1315,6 +1363,8 @@ func (e *Engine) drive(ctx context.Context, r *Run, sess *session.Session, env t
 // (the durable compatibility mirror), measured from r.budgetBaseline and independent
 // of total. skipFirstBoundaryInjections is used only by failed-step retry reuses conversation state; live instruction sources are re-resolved.
 // while every later iteration resumes the ordinary boundary drains.
+//
+//nolint:unparam // total is a seed seam shared by prompt and resumed-entry callers.
 func (e *Engine) runLoop(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, total session.Usage, lastText string, skipFirstBoundaryInjections bool) {
 	// no-progress nudge accounting (Workstream A). noProgressNudges counts the
 	// continuation messages injected this run; nudgeCap is the budget (defaulted in
@@ -1467,28 +1517,170 @@ func (e *Engine) runLoop(ctx context.Context, r *Run, sess *session.Session, env
 		}
 
 		// Step 6: dispatch the tool calls, then loop back to step 2.
-		results, cancelled := e.dispatch(ctx, r, sess, env, turnIdx, asst.ToolCalls)
-		if cancelled {
-			e.terminate(ctx, r, sess, session.StopCancelled, lastText, total, nil, false)
-			return
-		}
-		if err := sess.RecordToolResults(results); err != nil {
-			e.terminate(ctx, r, sess, session.StopError, lastText, total, err, false)
-			return
-		}
-		e.save(ctx, r, sess)
-
-		// Plan-approval gate (issue #206): if a plan verdict (approved OR iterate)
-		// is pending this turn, terminate instead of looping back to the model. On
-		// Allow the run ends with StopPlanApproved (terminateComplete flips the mode
-		// at the boundary); on Deny (iterate) the run ends with StopPlanIterate so
-		// the operator's next typed prompt drives the revision (the session stays
-		// ModePlan — no mode flip). CLEAN terminals (completed path,
-		// Reopen-recoverable), parallel to StopBudget/StopNoProgress.
-		if e.planApprovalTerminal(ctx, r, sess, lastText, total) {
+		if e.dispatchTurn(ctx, r, sess, env, turnIdx, asst.ToolCalls, lastText, total) {
 			return
 		}
 	}
+}
+
+// dispatchTurn owns the dispatch-to-record tail and reports whether the run ended.
+func (e *Engine) dispatchTurn(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, turnIdx int, calls []session.ToolCall, lastText string, total session.Usage) bool {
+	results, park, cancelled := e.dispatch(ctx, r, sess, env, turnIdx, calls)
+	if cancelled {
+		e.terminate(ctx, r, sess, session.StopCancelled, lastText, total, nil, false)
+		return true
+	}
+	if park != nil {
+		outcome := e.parkAuthorization(ctx, r, sess, turnIdx, park, results)
+		switch {
+		case outcome.cancelled:
+			e.terminate(ctx, r, sess, session.StopCancelled, lastText, total, nil, false)
+			return true
+		case outcome.fatal != nil:
+			e.terminate(ctx, r, sess, session.StopError, lastText, total, outcome.fatal, false)
+			return true
+		case outcome.parked:
+			return true
+		default:
+			results = outcome.results
+		}
+	}
+	if err := sess.RecordToolResults(results); err != nil {
+		e.terminate(ctx, r, sess, session.StopError, lastText, total, err, false)
+		return true
+	}
+	e.save(ctx, r, sess)
+	return e.planApprovalTerminal(ctx, r, sess, lastText, total)
+}
+
+type authorizationParkResult struct {
+	results   []session.ToolResult
+	parked    bool
+	cancelled bool
+	fatal     error
+}
+
+func (e *Engine) authorizationParkFailures(r *Run, turnIdx int, park *dispatchPark, message string) []session.ToolResult {
+	results := make([]session.ToolResult, 0, len(park.deferred)+1)
+	pending := session.NewToolError(park.call.ID, message)
+	e.emit(r, session.Event{Type: session.EvToolResult, Turn: turnIdx, ToolResult: ptr(pending)})
+	results = append(results, pending)
+	for _, call := range park.deferred {
+		e.openCard(r, turnIdx, call)
+		result := session.NewToolError(call.ID, "external authorization deferred sibling was not executed")
+		e.emit(r, session.Event{Type: session.EvToolResult, Turn: turnIdx, ToolResult: ptr(result)})
+		results = append(results, result)
+	}
+	return results
+}
+
+const authorizationAbortTimeout = 5 * time.Second
+
+func abortAuthorization(ctx context.Context, park *dispatchPark) error {
+	if park.requester == nil {
+		return nil
+	}
+	abortCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), authorizationAbortTimeout)
+	defer cancel()
+	return park.requester.AbortAuthorization(abortCtx, park.authorization)
+}
+
+func (e *Engine) rollbackAuthorization(ctx context.Context, sess *session.Session, park *dispatchPark, reason string) error {
+	if _, err := sess.AbortAuthorization(reason); err != nil {
+		return errors.Join(err, abortAuthorization(ctx, park))
+	}
+	rollbackCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), authorizationAbortTimeout)
+	saveErr := e.saveRequired(rollbackCtx, sess)
+	cancel()
+	abortErr := abortAuthorization(ctx, park)
+	if saveErr != nil {
+		saveErr = fmt.Errorf("persist authorization rollback: %w", saveErr)
+	}
+	return errors.Join(saveErr, abortErr)
+}
+
+// parkAuthorization is the single ownership tail after a requester allocated an
+// external authorization. The aggregate transition is persisted before its event
+// is delivered; every failure aborts the requester and restores running state.
+func (e *Engine) parkAuthorization(ctx context.Context, r *Run, sess *session.Session, turnIdx int, park *dispatchPark, completed []session.ToolResult) authorizationParkResult {
+	if len(completed) > 0 {
+		if err := sess.RecordToolResults(completed); err != nil {
+			return authorizationParkResult{fatal: errors.Join(
+				fmt.Errorf("record results before external authorization: %w", err),
+				abortAuthorization(ctx, park),
+			)}
+		}
+	}
+	if park.fatal != nil {
+		return authorizationParkResult{fatal: park.fatal}
+	}
+	if !r.req.CanPresentAuthorization || e.deps.Role != "" {
+		if err := abortAuthorization(ctx, park); err != nil {
+			return authorizationParkResult{fatal: fmt.Errorf("abort ineligible external authorization: %w", err)}
+		}
+		return authorizationParkResult{results: e.authorizationParkFailures(r, turnIdx, park, "external authorization cannot be presented by this run")}
+	}
+	if ctx.Err() != nil {
+		if err := abortAuthorization(ctx, park); err != nil {
+			return authorizationParkResult{fatal: fmt.Errorf("abort cancelled external authorization: %w", err)}
+		}
+		return authorizationParkResult{cancelled: true}
+	}
+	if err := sess.PauseForAuthorization(session.PendingAuthorization{
+		Authorization: park.authorization,
+		Call:          park.call,
+		Deferred:      park.deferred,
+	}); err != nil {
+		return authorizationParkResult{fatal: errors.Join(
+			fmt.Errorf("park external authorization: %w", err),
+			abortAuthorization(ctx, park),
+		)}
+	}
+	if ctx.Err() != nil {
+		if err := e.rollbackAuthorization(ctx, sess, park, "cancelled"); err != nil {
+			return authorizationParkResult{fatal: err}
+		}
+		return authorizationParkResult{cancelled: true}
+	}
+	if err := e.saveRequired(ctx, sess); err != nil {
+		rollbackErr := e.rollbackAuthorization(ctx, sess, park, "failed")
+		return authorizationParkResult{fatal: errors.Join(fmt.Errorf("persist external authorization: %w", err), rollbackErr)}
+	}
+
+	e.drainChildren(ctx, r)
+	if ctx.Err() != nil {
+		if err := e.rollbackAuthorization(ctx, sess, park, "cancelled"); err != nil {
+			return authorizationParkResult{fatal: err}
+		}
+		return authorizationParkResult{cancelled: true}
+	}
+	payload := session.AuthorizationPayload{
+		AuthorizationID: park.authorization.ID,
+		Call:            park.call.ID,
+		ExpiresAt:       park.authorization.ExpiresAt,
+		Status:          session.AuthorizationPending,
+	}
+	sequenced, emitted, cancelled := r.emitAuthorizationRequired(session.Event{Type: session.EvAuthorizationRequired, Turn: turnIdx, Authorization: &payload})
+	if !emitted {
+		if err := e.rollbackAuthorization(ctx, sess, park, "cancelled"); err != nil {
+			return authorizationParkResult{fatal: err}
+		}
+		if cancelled {
+			return authorizationParkResult{cancelled: true}
+		}
+		return authorizationParkResult{fatal: errors.New("deliver external authorization event: event buffer unavailable")}
+	}
+	if e.deps.Sink != nil {
+		e.deps.Sink.Emit(r.ctx, sequenced)
+	}
+	return authorizationParkResult{parked: true}
+}
+
+func (e *Engine) saveRequired(ctx context.Context, sess *session.Session) error {
+	if e.deps.Store == nil {
+		return errors.New("agent: external authorization requires a durable session store")
+	}
+	return e.deps.Store.Save(ctx, sess)
 }
 
 func shouldRunBoundaryInjections(firstIteration, skipFirst bool) bool {
@@ -2456,6 +2648,28 @@ func (e *Engine) bindRunDiag(id session.SessionID) port.Diagnostics {
 // consumes its Seq — monotonic-with-gaps, exactly emitOrAbort's documented
 // contract — and is still returned for sink mirroring.
 func (r *Run) emit(ev session.Event) session.Event {
+	sequenced, _ := r.emitChecked(ev)
+	return sequenced
+}
+
+func (r *Run) emitAuthorizationRequired(ev session.Event) (session.Event, bool, bool) {
+	r.closureMu.Lock()
+	defer r.closureMu.Unlock()
+	if r.cancelRequested {
+		return ev, false, true
+	}
+	ev.Seq = r.seq.Add(1)
+	ev.RunID = r.runID
+	select {
+	case r.events <- ev:
+		r.setOutcome(RunOutcomeAuthorizationPending)
+		return ev, true, false
+	default:
+		return ev, false, false
+	}
+}
+
+func (r *Run) emitChecked(ev session.Event) (session.Event, bool) {
 	ev.Seq = r.seq.Add(1)
 	// The run labels its own events with run-scoped identity. Seq answers "where
 	// in this run", RunID answers "which run" — Seq restarts every run, so it
@@ -2466,14 +2680,15 @@ func (r *Run) emit(ev session.Event) session.Event {
 	ev.RunID = r.runID
 	select {
 	case r.events <- ev:
-		return ev
+		return ev, true
 	default:
 	}
 	select {
 	case r.events <- ev:
+		return ev, true
 	case <-r.hardAbort:
+		return ev, false
 	}
-	return ev
 }
 
 // emitOrAbort is emit's give-up-at-seal sibling for the OUT-OF-BAND child
@@ -2632,6 +2847,7 @@ func (e *Engine) deferFailedStepRetry(ctx context.Context, r *Run, sess *session
 	e.closeSteerDrained(ctx, r, sess)
 	e.drainChildren(ctx, r)
 	e.fireStop(ctx, r, sess, reason)
+	r.setOutcome(RunOutcomeCompleted)
 	e.emitResult(r, sess, reason, text, usage, "", session.RetryDispositionUnknown, session.StreamProgressUnknown)
 	e.save(ctx, r, sess)
 }
@@ -2663,6 +2879,7 @@ func (e *Engine) terminate(ctx context.Context, r *Run, sess *session.Session, r
 		errMsg = cause.Error()
 	}
 	e.fireStop(ctx, r, sess, reason)
+	r.setOutcome(RunOutcomeCompleted)
 	e.emitResult(r, sess, reason, text, usage, errMsg, disposition, progress)
 	e.save(ctx, r, sess)
 }
@@ -2721,6 +2938,7 @@ func (e *Engine) terminateComplete(ctx context.Context, r *Run, sess *session.Se
 	e.save(ctx, r, sess)
 	e.observeCompletion(ctx, r, sess, reason, usage)
 	e.fireStop(ctx, r, sess, reason)
+	r.setOutcome(RunOutcomeCompleted)
 	// terminateComplete has no Go error to classify (the provider relays a stop
 	// CHUNK, not an error), so the permanence bit is always false here — honest
 	// fail-open. Only the error terminate() path carries a real classified cause.

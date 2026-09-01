@@ -14,6 +14,7 @@
     method func (*Engine).HasTool(name string) bool
     method func (*Engine).Model() string
     method func (*Engine).ResumeApproval(ctx context.Context, sess *session.Session, env tool.Environment, askID string, verdict session.ApprovalVerdict) *Run
+    method func (*Engine).ResumeApprovalWith(ctx context.Context, sess *session.Session, env tool.Environment, askID string, verdict session.ApprovalVerdict, opts ResumeApprovalOptions) *Run
     method func (*Engine).RetryFailedStep(ctx context.Context, sess *session.Session, env tool.Environment) *Run
     method func (*Engine).Run(ctx context.Context, sess *session.Session, env tool.Environment, req RunRequest) *Run
     method func (*Engine).SteerEnabled() bool
@@ -40,6 +41,7 @@
     method func (*Run).CancelSteer() (SteerOutcome, error)
     method func (*Run).EnqueueSteer(text string, parts []session.Content) (SteerOutcome, error)
     method func (*Run).Events() <-chan session.Event
+    method func (*Run).Outcome() RunOutcome
     method func (*Run).RetractPermissionAsk(askID string) bool
     method func (*Run).RunID() string
     method func (*ScheduleQueryTool).Execute(ctx context.Context, call session.ToolCall, _ tool.Environment) (session.ToolResult, error)
@@ -91,6 +93,9 @@ const RouterMissCancelled untyped string = "cancelled"
 const RouterMissClassifierError untyped string = "classifier-error"
 const RouterMissDegenerateInput untyped string = "degenerate-input"
 const RouterMissUnknownCategory untyped string = "unknown-category"
+const RunOutcomeAuthorizationPending RunOutcome = 2
+const RunOutcomeCompleted RunOutcome = 1
+const RunOutcomeUnknown RunOutcome = 0
 const ScheduleQueryToolName untyped string = "ScheduleQuery"
 const ScheduleToolName untyped string = "Schedule"
 const SteerAccepted SteerOutcome = "accepted"
@@ -231,8 +236,10 @@ type ParallelOption func(*ParallelTool)
 type ParallelTool struct{}
 type PreservedForkStore interface{Preserve(handle ArtifactHandle, cleanup func() error)}
 type ReflectionLimits struct{InputBytes int; Events int; Existing int; Candidates int; EvidencePerCandidate int; OutputBytes int; Tokens int; Timeout time.Duration}
+type ResumeApprovalOptions struct{CanPresentAuthorization bool}
 type Run struct{}
-type RunRequest struct{Text string; Parts []session.Content; MaxRunTokensOverride int; ExtraTools []tool.Tool; RunID string; AskIDDiscriminator string}
+type RunOutcome int32
+type RunRequest struct{Text string; Parts []session.Content; CanPresentAuthorization bool; MaxRunTokensOverride int; ExtraTools []tool.Tool; RunID string; AskIDDiscriminator string}
 type ScheduleQueryTool struct{}
 type ScheduleTool struct{}
 type SteerOutcome string

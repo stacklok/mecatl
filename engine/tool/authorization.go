@@ -15,6 +15,7 @@ type AuthorizationRequester interface {
 	// AbortAuthorization settles the exact pending transaction identified by its
 	// ID and private binding. If settlement cannot be confirmed, it must make the
 	// requester unusable before returning an error, so cleanup failure cannot leave
-	// the transaction executable.
+	// the transaction executable. Implementations must honor context cancellation;
+	// the dispatcher supplies a bounded cleanup deadline.
 	AbortAuthorization(context.Context, session.ExternalAuthorization) error
 }
