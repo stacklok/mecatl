@@ -131,7 +131,7 @@ func TestAttemptRecoveryDiscoversExpiredClaimReplacement(t *testing.T) {
 	}
 }
 
-func TestAttemptRecoveryCoordinatorRejectionDoesNotStrandQueuedWork(t *testing.T) {
+func TestAttemptRecoveryIgnoresLegacyCoordinatorCapacity(t *testing.T) {
 	clock := &attemptWorkerClock{now: time.Unix(110, 0)}
 	repository := memattempt.New(clock)
 	completed := make(chan struct{}, 1)
@@ -160,17 +160,11 @@ func TestAttemptRecoveryCoordinatorRejectionDoesNotStrandQueuedWork(t *testing.T
 		t.Fatal("occupying coordinator job did not start")
 	}
 
-	_, record := createRecoveryAttempt(t, repository, clock)
-	rejected := testJob("same-principal", "rejected", &testReflector{})
-	rejected.durableID = string(record.ID)
-	receipt, err := coordinator.Enqueue(rejected)
-	if err != nil || receipt.Disposition != reflectionQueueFull {
-		t.Fatalf("durable enqueue = %+v, err=%v; want queue_full", receipt, err)
-	}
+	_, _ = createRecoveryAttempt(t, repository, clock)
 	select {
 	case <-completed:
 	case <-time.After(time.Second):
-		t.Fatal("coordinator rejection stranded repository-authoritative queued work")
+		t.Fatal("legacy coordinator capacity delayed repository-authoritative queued work")
 	}
 }
 

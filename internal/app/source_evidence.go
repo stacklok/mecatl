@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 
 	"github.com/stacklok/mecatl/engine/adapter/eventsource"
 	"github.com/stacklok/mecatl/engine/learning"
@@ -20,6 +21,16 @@ type learningEvidenceLoader struct {
 type canonicalEvidenceReflector interface {
 	ReflectProjection(context.Context, learning.Projection) (learning.Outcome, error)
 }
+
+var errLearningEvidenceNotReady = errors.New("durable learning evidence is not ready")
+
+type evidenceReadState uint8
+
+const (
+	evidenceReadInvalid evidenceReadState = iota
+	evidenceReadIncomplete
+	evidenceReadComplete
+)
 
 func reflectAttemptEvidence(ctx context.Context, loader *learningEvidenceLoader, reflector canonicalEvidenceReflector, partition learning.AttemptPartition, attempt learning.AttemptRecord) (learning.Outcome, learning.AttemptFailureCode, error) {
 	if reflector == nil {
@@ -41,14 +52,17 @@ func newLearningEvidenceLoader(sessions port.SessionStore, events port.EventLog)
 // private owner authority. Caller identity in ctx is deliberately irrelevant:
 // a worker cannot substitute either a user or system principal for that binding.
 func (l *learningEvidenceLoader) Load(ctx context.Context, partition learning.AttemptPartition, attempt learning.AttemptRecord) (learning.Projection, learning.AttemptFailureCode) {
-	_, projection, failure := l.loadInput(ctx, partition, attempt)
+	_, projection, failure, err := l.loadForExecution(ctx, partition, attempt)
+	if err != nil {
+		return learning.Projection{}, learning.FailureEvidenceUnavailable
+	}
 	return projection, failure
 }
 
 //nolint:gocyclo // the fail-closed source, owner, run, archive, and digest checks form one boundary
-func (l *learningEvidenceLoader) loadInput(ctx context.Context, partition learning.AttemptPartition, attempt learning.AttemptRecord) (learning.Input, learning.Projection, learning.AttemptFailureCode) {
-	unavailable := func() (learning.Input, learning.Projection, learning.AttemptFailureCode) {
-		return learning.Input{}, learning.Projection{}, learning.FailureEvidenceUnavailable
+func (l *learningEvidenceLoader) loadForExecution(ctx context.Context, partition learning.AttemptPartition, attempt learning.AttemptRecord) (learning.Input, learning.Projection, learning.AttemptFailureCode, error) {
+	unavailable := func() (learning.Input, learning.Projection, learning.AttemptFailureCode, error) {
+		return learning.Input{}, learning.Projection{}, learning.FailureEvidenceUnavailable, nil
 	}
 	if l == nil || l.sessions == nil || l.events == nil || partition == "" {
 		return unavailable()
@@ -59,8 +73,8 @@ func (l *learningEvidenceLoader) loadInput(ctx context.Context, partition learni
 	}
 
 	sess, err := l.sessions.Load(ctx, provenance.Source.SessionID)
-	if err != nil || sess == nil || sess.ID != provenance.Source.SessionID || sess.Owner == nil ||
-		!sess.Owner.IdentityWellFramed() {
+	if err != nil || sess == nil || sess.ID != provenance.Source.SessionID ||
+		sess.Owner != nil && !sess.Owner.IdentityWellFramed() {
 		return unavailable()
 	}
 	ownerPartition, err := learning.DeriveAttemptPartition(reflectionPrincipal(sess.Owner))
@@ -68,8 +82,11 @@ func (l *learningEvidenceLoader) loadInput(ctx context.Context, partition learni
 		return unavailable()
 	}
 
-	runEvents, terminal, _, ok := l.readExactRun(ctx, provenance.Source)
-	if !ok {
+	runEvents, terminal, _, readState := l.readExactRun(ctx, provenance.Source)
+	if readState == evidenceReadIncomplete {
+		return learning.Input{}, learning.Projection{}, learning.FailureNone, errLearningEvidenceNotReady
+	}
+	if readState != evidenceReadComplete {
 		return unavailable()
 	}
 	reconstructed, err := eventsource.Fold(eventsource.SessionMeta{
@@ -137,11 +154,11 @@ func (l *learningEvidenceLoader) loadInput(ctx context.Context, partition learni
 	if err != nil {
 		return unavailable()
 	}
-	return input, projection, learning.FailureNone
+	return input, projection, learning.FailureNone, nil
 }
 
 //nolint:gocyclo // exact-run ordering and compaction form a deliberately closed event state machine
-func (l *learningEvidenceLoader) readExactRun(ctx context.Context, source learning.AttemptSource) ([]session.Event, session.ResultPayload, bool, bool) {
+func (l *learningEvidenceLoader) readExactRun(ctx context.Context, source learning.AttemptSource) ([]session.Event, session.ResultPayload, bool, evidenceReadState) {
 	events := make([]session.Event, 0, 16)
 	var terminal session.ResultPayload
 	var previous int64
@@ -192,40 +209,46 @@ func (l *learningEvidenceLoader) readExactRun(ctx context.Context, source learni
 	if cursorLog, ok := l.events.(port.CursorEventLog); ok {
 		for record, err := range cursorLog.ReadAfter(ctx, source.SessionID, "", port.ReadOptions{}) {
 			if err != nil {
-				return nil, session.ResultPayload{}, false, false
+				return nil, session.ResultPayload{}, false, evidenceReadInvalid
 			}
 			switch record.Kind {
 			case port.LogRecordGap:
 				if seenRun {
-					return nil, session.ResultPayload{}, false, false
+					return nil, session.ResultPayload{}, false, evidenceReadInvalid
 				}
 				continue
 			case port.LogRecordEvent:
 			default:
-				return nil, session.ResultPayload{}, false, false
+				return nil, session.ResultPayload{}, false, evidenceReadInvalid
 			}
 			done, valid := consume(record.Event)
 			if !valid {
-				return nil, session.ResultPayload{}, false, false
+				return nil, session.ResultPayload{}, false, evidenceReadInvalid
 			}
 			if done {
-				return events, terminal, archiveOK, true
+				return events, terminal, archiveOK, evidenceReadComplete
 			}
 		}
-		return nil, session.ResultPayload{}, false, false
+		if leftRun {
+			return nil, session.ResultPayload{}, false, evidenceReadInvalid
+		}
+		return nil, session.ResultPayload{}, false, evidenceReadIncomplete
 	}
 
 	for event, err := range l.events.Read(ctx, source.SessionID) {
 		if err != nil {
-			return nil, session.ResultPayload{}, false, false
+			return nil, session.ResultPayload{}, false, evidenceReadInvalid
 		}
 		done, valid := consume(event)
 		if !valid {
-			return nil, session.ResultPayload{}, false, false
+			return nil, session.ResultPayload{}, false, evidenceReadInvalid
 		}
 		if done {
-			return events, terminal, archiveOK, true
+			return events, terminal, archiveOK, evidenceReadComplete
 		}
 	}
-	return nil, session.ResultPayload{}, false, false
+	if leftRun {
+		return nil, session.ResultPayload{}, false, evidenceReadInvalid
+	}
+	return nil, session.ResultPayload{}, false, evidenceReadIncomplete
 }

@@ -51,25 +51,55 @@ func (r *reservationOrderAttemptRepository) sawHeldReservation() bool {
 func TestCloudNativeLearning_Scenario6_WeightedAdmissionUsesAttemptLifecycle(t *testing.T) {
 	ctx := context.Background()
 	owner := &session.Principal{Issuer: "test", Subject: "weighted-owner", GrantType: session.GrantTypeUser}
+	calls := []session.ToolCall{
+		{ID: "a", Name: "Read"}, {ID: "b", Name: "Grep"},
+		{ID: "c", Name: "Read"}, {ID: "d", Name: "Grep"},
+	}
 	messages := []session.Message{
 		session.NewUserMessage("Run the established workflow"),
-		{Role: session.RoleAssistant, ToolCalls: []session.ToolCall{{ID: "a", Name: "Read"}, {ID: "b", Name: "Grep"}}},
-		{Role: session.RoleAssistant, ToolCalls: []session.ToolCall{{ID: "c", Name: "Read"}, {ID: "d", Name: "Grep"}}},
-		{Role: session.RoleAssistant, Text: "done"},
+		session.NewAssistantMessage("", "", calls[:2]),
+		session.NewToolMessage(session.NewToolResult("a", "first read")),
+		session.NewToolMessage(session.NewToolResult("b", "first grep")),
+		session.NewAssistantMessage("", "", calls[2:]),
+		session.NewToolMessage(session.NewToolResult("c", "second read")),
+		session.NewToolMessage(session.NewToolResult("d", "second grep")),
+		session.NewAssistantMessage("done", "", nil),
 	}
 	trajectory := learning.NewTrajectory("weighted-source", "/workspace", session.StopEndTurn, session.Usage{}, messages)
 	trajectory.Principal = owner
 	trajectory.RunID = "run_aaaaaaaaaaaaaaaaaaaaaaaaaa"
 	trajectory.Kind = session.SessionKindMain
-	trajectory.Counters = session.Counters{Turns: 4, ToolCalls: 4}
+	trajectory.Counters = session.Counters{Turns: 3, ToolCalls: 4}
 	trajectory.Current = learning.MessageSpan{Start: 0, End: len(messages)}
 
 	sources := memstore.New()
+	events := memstore.NewEventLog()
 	source := session.New(trajectory.SessionID, session.ModeDefault, trajectory.Workspace, session.Limits{}, time.Unix(1, 0))
 	source.Owner = owner.Clone()
 	source.BeginRun(trajectory.RunID)
 	if err := sources.Save(ctx, source); err != nil {
 		t.Fatal(err)
+	}
+	sequence := []session.Event{
+		{Type: session.EvUserPrompt, Seq: 1, RunID: trajectory.RunID, UserPrompt: &session.UserPromptPayload{Text: messages[0].Text}},
+		{Type: session.EvTurnStart, Seq: 2, RunID: trajectory.RunID, Turn: 0},
+		{Type: session.EvToolCall, Seq: 3, RunID: trajectory.RunID, Turn: 0, ToolCall: &calls[0]},
+		{Type: session.EvToolCall, Seq: 4, RunID: trajectory.RunID, Turn: 0, ToolCall: &calls[1]},
+		{Type: session.EvToolResult, Seq: 5, RunID: trajectory.RunID, Turn: 0, ToolResult: messages[2].ToolResult},
+		{Type: session.EvToolResult, Seq: 6, RunID: trajectory.RunID, Turn: 0, ToolResult: messages[3].ToolResult},
+		{Type: session.EvTurnStart, Seq: 7, RunID: trajectory.RunID, Turn: 1},
+		{Type: session.EvToolCall, Seq: 8, RunID: trajectory.RunID, Turn: 1, ToolCall: &calls[2]},
+		{Type: session.EvToolCall, Seq: 9, RunID: trajectory.RunID, Turn: 1, ToolCall: &calls[3]},
+		{Type: session.EvToolResult, Seq: 10, RunID: trajectory.RunID, Turn: 1, ToolResult: messages[5].ToolResult},
+		{Type: session.EvToolResult, Seq: 11, RunID: trajectory.RunID, Turn: 1, ToolResult: messages[6].ToolResult},
+		{Type: session.EvTurnStart, Seq: 12, RunID: trajectory.RunID, Turn: 2},
+		{Type: session.EvMessageDelta, Seq: 13, RunID: trajectory.RunID, Turn: 2, Text: "done"},
+		{Type: session.EvResult, Seq: 14, RunID: trajectory.RunID, Turn: 2, Result: &session.ResultPayload{Stop: session.StopEndTurn}},
+	}
+	for _, event := range sequence {
+		if err := events.Append(ctx, source.ID, event); err != nil {
+			t.Fatal(err)
+		}
 	}
 	attempts, err := attemptstore.New(filepath.Join(t.TempDir(), "attempts"))
 	if err != nil {
@@ -89,10 +119,19 @@ func TestCloudNativeLearning_Scenario6_WeightedAdmissionUsesAttemptLifecycle(t *
 		LearningAutomatic: defaultLearningAutomaticConfig(), attemptRepository: orderedAttempts,
 		automaticAdmissionLedger: ledger, learningSourceStore: sources,
 	}
-	observer, ok := buildReflectionObserver(cfg, provider, cfg.Model, memmemory.New(), nil, proposals, coordinator, nil).(*reflectionObserver)
+	userMemory := memmemory.New()
+	observer, ok := buildReflectionObserver(cfg, provider, cfg.Model, userMemory, nil, proposals, coordinator, nil).(*reflectionObserver)
 	if !ok {
 		t.Fatal("weighted reflection observer was not built")
 	}
+	registry := regForTest(provider, providerOpenAI, cfg.Model)
+	recovery := newAttemptRecoveryLoop(ctx, orderedAttempts, 5*time.Millisecond, time.Now, func(recoveryCtx context.Context, item learning.AttemptWork) error {
+		return recoverAttempt(recoveryCtx, cfg, registry, sources, events, orderedAttempts, proposals, catalogAssets{
+			userModelStore:       userMemory,
+			reflectionRepository: proposals,
+		}, item)
+	}, nil)
+	t.Cleanup(recovery.Close)
 	if err := observer.Observe(ctx, trajectory); err != nil {
 		t.Fatal(err)
 	}
@@ -136,23 +175,11 @@ func TestCloudNativeLearning_Scenario6_WeightedAdmissionUsesAttemptLifecycle(t *
 	if reservation.Charge != learning.AutomaticChargeRetained || !reservation.AttemptCreated || reservation.AttemptID != record.ID {
 		t.Fatalf("automatic reservation = %+v, want retained charge linked to the durable attempt", reservation)
 	}
-
-	release := make(chan struct{})
-	started := make(chan session.SessionID, 1)
-	blocked := &testReflector{start: started, release: release}
-	capacityGate := newReflectionCoordinator(ctx, reflectionCoordinatorConfig{Workers: 1, Capacity: 1, PrincipalCapacity: 1, Timeout: time.Second})
-	defer capacityGate.Close()
-	if first, enqueueErr := capacityGate.Enqueue(testJob("weighted-owner", "running", blocked)); enqueueErr != nil || first.Disposition != reflectionQueued {
-		t.Fatalf("seed capacity gate = %+v, err=%v", first, enqueueErr)
-	}
-	<-started
-	reserveCalled := false
-	overflow := testJob("weighted-owner", "overflow", blocked)
-	overflow.reserve = func() bool { reserveCalled = true; return true }
-	full, enqueueErr := capacityGate.Enqueue(overflow)
-	close(release)
-	if enqueueErr != nil || full.Disposition != reflectionQueueFull || reserveCalled {
-		t.Fatalf("capacity result=%+v err=%v reserve_called=%v; want queue_full before reservation/create", full, enqueueErr, reserveCalled)
+	coordinator.mu.Lock()
+	coordinatorStarted := coordinator.started
+	coordinator.mu.Unlock()
+	if coordinatorStarted {
+		t.Fatal("weighted durable attempt entered the legacy process-local coordinator")
 	}
 }
 

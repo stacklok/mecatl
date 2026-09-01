@@ -121,7 +121,6 @@ func TestAutomaticReflectionEmitsCorrelatedClosedMetrics(t *testing.T) {
 	if err := observer.Observe(context.Background(), first); err != nil {
 		t.Fatal(err)
 	}
-	waitForLearningActivity(t, emitted, learning.ActivityAbstained)
 
 	second := trajectory("second-private-session", "Please remember another private preference")
 	if err := observer.Observe(context.Background(), second); err != nil {
@@ -135,7 +134,6 @@ func TestAutomaticReflectionEmitsCorrelatedClosedMetrics(t *testing.T) {
 	want := []learning.Activity{
 		{Kind: learning.ActivityAdmitted, Reason: learning.ReasonHardTrigger, Sensitivity: learning.Balanced, Count: 1},
 		{Kind: learning.ActivityReservedTokens, Reason: learning.ReasonHardTrigger, Sensitivity: learning.Balanced, Count: int64(reserved)},
-		{Kind: learning.ActivityAbstained, Reason: learning.ReasonAbstained, Sensitivity: learning.Balanced, Count: 1},
 		{Kind: learning.ActivityAdmitted, Reason: learning.ReasonHardTrigger, Sensitivity: learning.Balanced, Count: 1},
 		{Kind: learning.ActivityRateLimited, Reason: learning.ReasonRateLimit, Sensitivity: learning.Balanced, Count: 1},
 	}
@@ -201,13 +199,11 @@ func TestNonLaunchReflectionDoesNotReadLaunchProjectMemory(t *testing.T) {
 	inputs := make(chan learning.Input, 1)
 	observer := &reflectionObserver{
 		coordinator: coordinator, reflector: captureReflectionInput{input: inputs}, repository: memproposal.New(),
-		attempts:       memattempt.New(wallclock.Clock{}),
 		operatorMemory: memmemory.New(), projectMemory: project, mode: learning.Review,
 		trusted: true, projectWorkspace: "/launch",
 	}
 	trajectory := learning.NewTrajectory("alternate", "/alternate", session.StopEndTurn, session.Usage{}, []session.Message{session.NewUserMessage("Remember concise output")})
 	trajectory.RunID = "run_aaaaaaaaaaaaaaaaaaaaaaaaaa"
-	observer.sourceStore = persistedAdmissionSource(t, trajectory)
 	if _, err := observer.Reflect(context.Background(), trajectory, false); err != nil {
 		t.Fatal(err)
 	}

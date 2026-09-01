@@ -27,6 +27,26 @@ import (
 
 type countObserver struct{ calls atomic.Int64 }
 
+func drainRunToLearningLog(ctx context.Context, t *testing.T, svc *server.Service, id session.SessionID, run interface {
+	Events() <-chan session.Event
+	Approve(string, session.ApprovalVerdict)
+}) string {
+	t.Helper()
+	recorder := server.NewRunEventRecorder(ctx, svc, id)
+	defer recorder.Close()
+	var final string
+	for event := range run.Events() {
+		recorder.Observe(event)
+		if event.Type == session.EvPermissionAsk && event.Ask != nil {
+			run.Approve(event.Ask.AskID, session.VerdictAllowOnce)
+		}
+		if event.Type == session.EvResult && event.Result != nil {
+			final = event.Result.Text
+		}
+	}
+	return final
+}
+
 func (o *countObserver) Observe(context.Context, learning.Trajectory) error {
 	o.calls.Add(1)
 	return nil
@@ -226,10 +246,10 @@ func TestBuildSharesLearningAdmissionAcrossSharedAndSelectedProviderEngines(t *t
 	if err != nil {
 		t.Fatalf("StartRun(default): %v", err)
 	}
-	_ = drainRun(defaultRun)
+	_ = drainRunToLearningLog(ctx, t, built.Service, defaultSession.ID, defaultRun)
 	waitCalls := func(provider *mockllm.Provider, want int) int {
 		t.Helper()
-		deadline := time.Now().Add(time.Second)
+		deadline := time.Now().Add(2 * time.Second)
 		for provider.Calls() < want && time.Now().Before(deadline) {
 			time.Sleep(time.Millisecond)
 		}
@@ -249,7 +269,7 @@ func TestBuildSharesLearningAdmissionAcrossSharedAndSelectedProviderEngines(t *t
 		if runErr != nil {
 			t.Fatalf("StartRun(selected): %v", runErr)
 		}
-		_ = drainRun(run)
+		_ = drainRunToLearningLog(ctx, t, built.Service, sess.ID, run)
 	}
 
 	runSelected("Remember that I prefer short examples")
@@ -269,6 +289,7 @@ func TestStartupProjectOffKeepsAlternateRootAutomaticAssets(t *testing.T) {
 		want int
 	}{{"finite", 2, 2}, {"zero disables", 0, 1}} {
 		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
 			startupRoot, alternateRoot := t.TempDir(), t.TempDir()
 			if err := os.MkdirAll(filepath.Join(startupRoot, ".mecatl"), 0o700); err != nil {
 				t.Fatal(err)
@@ -297,17 +318,17 @@ func TestStartupProjectOffKeepsAlternateRootAutomaticAssets(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer built.Close()
-			sess, err := built.Service.CreateSession(context.Background(), session.ModeDefault, defaultLimits())
+			sess, err := built.Service.CreateSession(ctx, session.ModeDefault, defaultLimits())
 			if err != nil {
 				t.Fatal(err)
 			}
-			run, err := built.Service.StartRun(context.Background(), sess.ID, "Remember that I prefer concise answers")
+			run, err := built.Service.StartRun(ctx, sess.ID, "Remember that I prefer concise answers")
 			if err != nil {
 				t.Fatal(err)
 			}
-			_ = drainRun(run)
+			_ = drainRunToLearningLog(ctx, t, built.Service, sess.ID, run)
 			if tc.want == 2 {
-				deadline := time.Now().Add(time.Second)
+				deadline := time.Now().Add(2 * time.Second)
 				for provider.Calls() < 2 && time.Now().Before(deadline) {
 					time.Sleep(time.Millisecond)
 				}
@@ -503,6 +524,7 @@ func TestServiceExplicitReflectionReceiptsMatchReviewAndAutoPolicy(t *testing.T)
 		{learning.Auto, 1, learning.ProposalPromoted},
 	} {
 		t.Run(tc.mode.String(), func(t *testing.T) {
+			ctx := context.Background()
 			workspace := t.TempDir()
 			provider := mockllm.New(
 				mockllm.TextTurn("completed"),
@@ -523,21 +545,34 @@ func TestServiceExplicitReflectionReceiptsMatchReviewAndAutoPolicy(t *testing.T)
 			if tc.mode == learning.Off && buildReflectionObserver(cfg, provider, cfg.Model, memmemory.New(), nil, memproposal.New(), nil, nil) != nil {
 				t.Fatal("off mode wired an automatic reflection observer")
 			}
-			built, err := Build(context.Background(), cfg)
+			built, err := Build(ctx, cfg)
 			if err != nil {
 				t.Fatal(err)
 			}
 			defer built.Close()
-			sess, err := built.Service.CreateSession(context.Background(), session.ModeDefault, defaultLimits())
+			sess, err := built.Service.CreateSession(ctx, session.ModeDefault, defaultLimits())
 			if err != nil {
 				t.Fatal(err)
 			}
-			run, err := built.Service.StartRun(context.Background(), sess.ID, "Remember that I prefer concise output")
+			run, err := built.Service.StartRun(ctx, sess.ID, "Remember that I prefer concise output")
 			if err != nil {
 				t.Fatal(err)
 			}
-			_ = drainRun(run)
-			receipt, err := built.Service.ReflectSession(context.Background(), sess.ID)
+			_ = drainRunToLearningLog(ctx, t, built.Service, sess.ID, run)
+			if tc.mode != learning.Off {
+				deadline := time.Now().Add(2 * time.Second)
+				for provider.Calls() < 2 && time.Now().Before(deadline) {
+					time.Sleep(time.Millisecond)
+				}
+			}
+			receipt, err := built.Service.ReflectSession(ctx, sess.ID)
+			if tc.mode != learning.Off {
+				deadline := time.Now().Add(2 * time.Second)
+				for err == nil && receipt.GetStaged() == 0 && time.Now().Before(deadline) {
+					time.Sleep(time.Millisecond)
+					receipt, err = built.Service.ReflectSession(ctx, sess.ID)
+				}
+			}
 			if err != nil || receipt.GetStaged() != 1 || receipt.GetPromoted() != tc.wantPromoted {
 				t.Fatalf("receipt=%+v err=%v", receipt, err)
 			}

@@ -60,11 +60,9 @@ type reflectionJob struct {
 	input     learning.Input
 	reflector learning.Reflector
 	process   func(context.Context, string, learning.Outcome) (reflectionReceipt, error)
-	attempt   *durableAttemptWork
 	// dedupeKey is the canonical trajectory digest shared by automatic and explicit
 	// submissions. reserve runs under coordinator admission after capacity checks.
 	dedupeKey string
-	durableID string
 	reserve   func() bool
 	complete  func(reflectionReceipt)
 }
@@ -262,20 +260,6 @@ func (c *reflectionCoordinator) nextAttemptIDLocked(key string) string {
 	return fmt.Sprintf("%s-%016x", reflectionJobID(key), c.attempt)
 }
 
-func reflectionReceiptID(job reflectionJob, key string) string {
-	if job.durableID != "" {
-		return job.durableID
-	}
-	return reflectionJobID(key)
-}
-
-func (c *reflectionCoordinator) queueIDLocked(job reflectionJob, key string) string {
-	if job.durableID != "" {
-		return job.durableID
-	}
-	return c.nextAttemptIDLocked(key)
-}
-
 // Enqueue admits a job without waiting for model or storage work. An in-flight
 // duplicate joins the original attempt; a rerun after completion gets a fresh id.
 // Capacity rejection records the same content-free id/count receipt that
@@ -300,7 +284,7 @@ func (c *reflectionCoordinator) Enqueue(job reflectionJob) (reflectionReceipt, e
 		digest = job.dedupeKey
 	}
 	key := job.principal + "\x00" + digest
-	baseID := reflectionReceiptID(job, key)
+	baseID := reflectionJobID(key)
 
 	c.mu.Lock()
 	if c.closed {
@@ -321,7 +305,7 @@ func (c *reflectionCoordinator) Enqueue(job reflectionJob) (reflectionReceipt, e
 		c.cfg.Diagnostics.Log(c.ctx, port.LevelInfo, "reflection queue full", "job_id", baseID, "queued", queued, "principal_queued", principalQueued)
 		return receipt, nil
 	}
-	id := c.queueIDLocked(job, key)
+	id := c.nextAttemptIDLocked(key)
 	if !c.reserveReceiptLocked(id) {
 		queued := c.queued
 		receipt := reflectionReceipt{ID: id, Disposition: reflectionQueueFull, Queued: queued, Err: errReflectionQueueFull.Error()}
@@ -498,10 +482,6 @@ func (c *reflectionCoordinator) worker() {
 }
 
 func (c *reflectionCoordinator) run(item queuedReflection) {
-	if item.job.attempt != nil {
-		c.runDurable(item)
-		return
-	}
 	receipt := reflectionReceipt{ID: item.id, Disposition: reflectionCompleted}
 	ctx, cancel := context.WithTimeout(c.ctx, c.cfg.Timeout)
 	outcome, err := item.job.reflector.Reflect(ctx, item.job.input)
@@ -533,64 +513,6 @@ func (c *reflectionCoordinator) run(item queuedReflection) {
 			c.cfg.Diagnostics.Log(c.ctx, port.LevelWarn, "reflection job failed", "job_id", item.id, "failure", failure)
 		}
 	} else {
-		c.cfg.Diagnostics.Log(c.ctx, port.LevelInfo, "reflection job completed", "job_id", item.id,
-			"staged", receipt.Staged, "promoted", receipt.Promoted, "conflicted", receipt.Conflicted, "abstained", receipt.Abstained)
-	}
-	c.finish(item, receipt)
-}
-
-func (c *reflectionCoordinator) runDurable(item queuedReflection) {
-	receipt := reflectionReceipt{ID: item.id, Disposition: reflectionCompleted}
-	ctx, cancel := context.WithTimeout(c.ctx, c.cfg.Timeout)
-	defer cancel()
-	work := item.job.attempt
-	worker := attemptWorker{
-		repository: work.repository,
-		partition:  work.partition,
-		id:         work.id,
-		now:        time.Now,
-		evidence: func(context.Context, learning.AttemptRecord) (learning.AttemptFailureCode, error) {
-			if _, err := learning.ProjectInput(item.job.input); err != nil {
-				return learning.FailureEvidenceUnavailable, nil
-			}
-			return learning.FailureNone, nil
-		},
-		reflect: func(ctx context.Context) (learning.Outcome, error) {
-			return item.job.reflector.Reflect(ctx, item.job.input)
-		},
-		publish: func(ctx context.Context, outcome learning.Outcome) (learning.AttemptCheckpoint, learning.AttemptFailureCode, error) {
-			if item.job.process == nil || len(outcome.Candidates) == 0 {
-				return learning.AttemptCheckpoint{}, learning.FailureEvaluationRejected, nil
-			}
-			processed, err := item.job.process(ctx, item.digest, outcome)
-			if err != nil {
-				code := learning.FailurePublicationFailed
-				if errors.Is(err, learning.ErrInvalidOutcome) || errors.Is(err, learning.ErrInvalidProposal) {
-					code = learning.FailureEvaluationRejected
-				}
-				return learning.AttemptCheckpoint{}, code, err
-			}
-			receipt = processed
-			return checkpointFromReflectionReceipt(processed)
-		},
-	}
-	record, err := worker.Run(ctx)
-	receipt.ID = item.id
-	if err != nil {
-		receipt.Disposition = reflectionFailed
-		receipt.Err = "reflection failed"
-		if errors.Is(err, context.DeadlineExceeded) {
-			receipt.Disposition = reflectionTimedOut
-			receipt.Err = "reflection timed out"
-		}
-		c.cfg.Diagnostics.Log(c.ctx, port.LevelWarn, "reflection job failed", "job_id", item.id, "failure", receipt.Err)
-	} else if record.Outcome == learning.AttemptOutcomeAbstained {
-		receipt.Abstained = true
-	} else if record.Outcome == learning.AttemptOutcomeFailed {
-		receipt.Disposition = reflectionFailed
-		receipt.Err = string(record.FailureCode)
-	}
-	if err == nil && record.Outcome != learning.AttemptOutcomeFailed {
 		c.cfg.Diagnostics.Log(c.ctx, port.LevelInfo, "reflection job completed", "job_id", item.id,
 			"staged", receipt.Staged, "promoted", receipt.Promoted, "conflicted", receipt.Conflicted, "abstained", receipt.Abstained)
 	}

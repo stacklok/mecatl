@@ -1211,8 +1211,8 @@ memory-promotion policy rejects unsafe/transient facts, never overwrites conflic
 revisions, routes procedure candidates into the evaluated learned-skill pipeline, and uses per-candidate presence-and-version CAS. Memory revisions carry
 an optional proposal id, allowing a crashed promoting claim to reconcile without a duplicate write.
 Batches may partially promote by design because each candidate is its own atomic convergence unit.
-Standard composition applies `learning.ThresholdPolicy` before one bounded Build-owned
-coordinator ([ADR 0114](adr/0114-configurable-learning-trigger-policy.md)). Standard weights are
+Standard composition applies `learning.ThresholdPolicy` before durable admission
+([ADR 0114](adr/0114-configurable-learning-trigger-policy.md)). Standard weights are
 5/5/4/3/2 for repeated correction, trusted host contradiction, failure recovery, repeated stable
 tool sequence, and substantial success; modifiers never admit alone. Conservative/balanced/eager
 thresholds are 6/4/3. Detection is scoped to a verified current-run message span. Weighted work is
@@ -1235,8 +1235,9 @@ AttemptRepository driver. Every repository partition retains at most 256 records
 that boundary evicts the oldest terminal record only, and returns a content-free quota error when
 queued/running work fills the partition. Capacity checks and terminal cleanup happen inside the same
 partition-authoritative lock/CAS boundary, so one caller cannot consume another caller's quota or
-force deletion of its claimed work. Process-local coordinator admission and receipts are scheduling hints only:
-a capacity rejection cannot strand a durably queued attempt. Skipped or non-admitted completions
+force deletion of its claimed work. The legacy process-local coordinator is not used for admitted
+durable attempts: both hard and weighted admission create or converge the repository record directly,
+and `DiscoverWork` is their only execution queue. Skipped or non-admitted completions
 remain immediate content-free activity and create no attempt history.
 
 The attempt references source evidence; it never copies a transcript. A worker rechecks owner,
@@ -1261,8 +1262,7 @@ policy and its derived revision plus the clock used for every reservation, expir
 retain, and reclaim decision. Clients carry only identity, charge demand, and the expected policy
 revision; they cannot enlarge limits or age out a charge/fence by submitting policy or wall time.
 Reservation uses the selected
-provider/model token counter for bounded canonical input plus a 4096-token output cap. The
-coordinator checks local queue and in-flight capacity before invoking the ledger, and the ledger
+provider/model token counter for bounded canonical input plus a 4096-token output cap. The ledger
 reserves by deterministic attempt identity before `AttemptRepository.Create`; failed creation is
 reconciled to one retained or reclaimed charge. Failures, timeouts, and abstentions after create
 retain the charge. Hard current-principal intent bypasses cooldown only; authenticated explicit
@@ -1270,8 +1270,10 @@ reflection remains outside automatic accounting.
 
 Weighted work then enters the same durable attempt worker as explicit work: claim fencing,
 source evidence validation/reconstruction, reflection, proposal/skill convergence, terminal state,
-and restart recovery all remain repository-authoritative. The coordinator queue and receipt map
-are disposable scheduling aids, never a second workflow authority. Local composition uses the
+and restart recovery all remain repository-authoritative. No process-local queue or receipt controls
+admitted work. Because attempt admission precedes relay persistence of the terminal `EvResult`, an
+otherwise valid source run with no terminal event yet releases its claim and remains queued for a
+later retry policy to bound; malformed, gapped, unauthorized, or mismatched evidence still fails closed. Local composition uses the
 flock-backed automatic ledger beside the attempt store; a configured learning driver must
 positively advertise and serve the automatic ledger whenever automatic learning is enabled, with
 no local fallback.

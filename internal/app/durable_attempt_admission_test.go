@@ -123,7 +123,7 @@ func TestADR_0254_QueuedAttemptRequiresDurableRunIDAndIsIdempotent(t *testing.T)
 			repo := memattempt.New(wallclock.Clock{})
 			candidate := *observer
 			candidate.attempts = repo
-			receipt, err := candidate.submit(ctx, durableAdmissionTrajectory(runID), nil, true, false)
+			receipt, err := candidate.submit(ctx, durableAdmissionTrajectory(runID), nil, true, true)
 			if err == nil {
 				t.Fatalf("run ID %q admitted with receipt %+v", runID, receipt)
 			}

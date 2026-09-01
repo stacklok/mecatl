@@ -73,7 +73,7 @@ func startAttemptRecovery(parent context.Context, cfg Config, reg *providerRegis
 	}
 	recovery := newAttemptRecoveryLoop(parent, repository, defaultAttemptDiscoveryInterval, time.Now, func(ctx context.Context, item learning.AttemptWork) error {
 		err := recoverAttempt(ctx, cfg, reg, sessions, events, repository, proposals, assets, item)
-		if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, learning.ErrAttemptClaimConflict) && !errors.Is(err, learning.ErrAttemptVersionConflict) {
+		if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, errLearningEvidenceNotReady) && !errors.Is(err, learning.ErrAttemptClaimConflict) && !errors.Is(err, learning.ErrAttemptVersionConflict) {
 			cfg.diag().Log(ctx, port.LevelWarn, "durable learning attempt recovery failed", "attempt_id", item.Record.ID)
 		}
 		return err
@@ -91,11 +91,25 @@ func (r *attemptRecovery) Close() {
 	r.done.Wait()
 }
 
+func finalizeUnavailableAttemptEvidence(ctx context.Context, repository learning.AttemptRepository, item learning.AttemptWork) error {
+	worker := attemptWorker{
+		repository: repository,
+		partition:  item.Partition,
+		id:         item.Record.ID,
+		now:        time.Now,
+		evidence: func(context.Context, learning.AttemptRecord) (learning.AttemptFailureCode, error) {
+			return learning.FailureEvidenceUnavailable, nil
+		},
+	}
+	_, err := worker.Run(ctx)
+	return err
+}
+
 //nolint:gocyclo // exact-source reconstruction and claim-fenced publication stay visibly ordered
 func recoverAttempt(ctx context.Context, cfg Config, reg *providerRegistry, sessions port.SessionStore, events port.EventLog, repository learning.AttemptRepository, proposals learning.ProposalRepository, assets catalogAssets, item learning.AttemptWork) error {
 	source, err := sessions.Load(ctx, item.Record.Provenance.Source.SessionID)
-	if err != nil {
-		return err
+	if err != nil || source == nil {
+		return finalizeUnavailableAttemptEvidence(ctx, repository, item)
 	}
 	providerID := source.ProviderID
 	if providerID == "" {
@@ -123,9 +137,10 @@ func recoverAttempt(ctx context.Context, cfg Config, reg *providerRegistry, sess
 	loader := newLearningEvidenceLoader(sessions, events)
 	var input learning.Input
 	var projection learning.Projection
+	var loadErr error
 	load := func(record learning.AttemptRecord) learning.AttemptFailureCode {
 		var failure learning.AttemptFailureCode
-		input, projection, failure = loader.loadInput(ctx, item.Partition, record)
+		input, projection, failure, loadErr = loader.loadForExecution(ctx, item.Partition, record)
 		return failure
 	}
 	procedure := buildProcedureProcessor(workerCfg, assets)
@@ -135,7 +150,8 @@ func recoverAttempt(ctx context.Context, cfg Config, reg *providerRegistry, sess
 		id:         item.Record.ID,
 		now:        time.Now,
 		evidence: func(_ context.Context, record learning.AttemptRecord) (learning.AttemptFailureCode, error) {
-			return load(record), nil
+			failure := load(record)
+			return failure, loadErr
 		},
 		reflect: func(reflectCtx context.Context) (learning.Outcome, error) {
 			if len(projection.Messages) == 0 {

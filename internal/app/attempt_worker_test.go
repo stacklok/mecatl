@@ -332,6 +332,25 @@ func TestADR_0254_CanonicalArtifactIdentitySurvivesRestart(t *testing.T) {
 	}
 }
 
+func TestADR_0254_IncompleteTerminalEvidenceRemainsRetryable(t *testing.T) {
+	clock := &attemptWorkerClock{now: time.Unix(45, 0)}
+	repository, partition, created := newAttemptWorkerRecord(t, clock)
+	worker := attemptWorker{
+		repository: repository, partition: partition, id: created.ID, now: clock.Now,
+		evidence: func(context.Context, learning.AttemptRecord) (learning.AttemptFailureCode, error) {
+			return learning.FailureNone, errLearningEvidenceNotReady
+		},
+	}
+
+	got, err := worker.Run(context.Background())
+	if !errors.Is(err, errLearningEvidenceNotReady) {
+		t.Fatalf("Run error = %v, want retryable evidence-not-ready", err)
+	}
+	if got.State != learning.AttemptQueued || got.State.Terminal() || got.FailureCode != learning.FailureNone {
+		t.Fatalf("incomplete event sequence became terminal: %+v", got)
+	}
+}
+
 func TestADR_0254_IndependentDownstreamCommitReconcilesAfterClaimLoss(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

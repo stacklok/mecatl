@@ -12,10 +12,12 @@ import (
 	"github.com/stacklok/mecatl/engine/learning"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
+	"github.com/stacklok/mecatl/internal/adapter/store/jsonlstore"
 )
 
 func TestUsableAutoSkillsStockBuildPublishesReflectedProcedure(t *testing.T) {
 	workspace := t.TempDir()
+	storeDir := t.TempDir()
 	var requestMu sync.Mutex
 	var requests []port.LLMRequest
 	provider := mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(func(request port.LLMRequest) {
@@ -30,7 +32,7 @@ func TestUsableAutoSkillsStockBuildPublishesReflectedProcedure(t *testing.T) {
 	)
 	built, err := Build(context.Background(), Config{
 		Model: "test-model", Workspace: workspace, TrustProject: true,
-		LearningMode: learning.Auto, UserModelDir: t.TempDir(), MemoryDir: t.TempDir(),
+		LearningMode: learning.Auto, UserModelDir: t.TempDir(), MemoryDir: t.TempDir(), StoreDir: storeDir,
 		envDetector:         fakeEnv(map[string]string{"OPENAI_API_KEY": "test-key"}),
 		liveModelHTTPClient: offlineHTTPClient(),
 		providerConstructor: func(Config, string, string, string) port.LLMProvider { return provider },
@@ -49,8 +51,15 @@ func TestUsableAutoSkillsStockBuildPublishesReflectedProcedure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	log, err := jsonlstore.New(storeDir)
+	if err != nil {
+		t.Fatal(err)
+	}
 	var firstRunErr string
 	for event := range run.Events() {
+		if err := log.Append(ctx, sess.ID, event); err != nil {
+			t.Fatal(err)
+		}
 		if event.Type == session.EvPermissionAsk && event.Ask != nil {
 			run.Approve(event.Ask.AskID, session.VerdictAllowOnce)
 		}

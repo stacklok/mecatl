@@ -11,12 +11,6 @@ import (
 
 const defaultAttemptClaimTTL = 2 * time.Minute
 
-type durableAttemptWork struct {
-	repository learning.AttemptRepository
-	partition  learning.AttemptPartition
-	id         learning.AttemptID
-}
-
 // attemptWorker owns the durable attempt state machine. Callbacks may perform
 // expensive or downstream work, but only repository checkpoints authorize the
 // worker to skip that work after a crash.
@@ -70,6 +64,16 @@ func (l *attemptClaimLease) checkpoint(ctx context.Context, now time.Time, value
 		l.record = record
 	}
 	return err
+}
+
+func (l *attemptClaimLease) release(ctx context.Context, now time.Time) (learning.AttemptRecord, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	record, err := l.repository.ReleaseClaim(ctx, l.partition, l.id, l.record.Version, l.claim, now)
+	if err == nil {
+		l.record = record
+	}
+	return record, err
 }
 
 func (l *attemptClaimLease) finalize(ctx context.Context, now time.Time, value learning.AttemptFinalization) (learning.AttemptRecord, error) {
@@ -226,6 +230,13 @@ func (w *attemptWorker) Run(ctx context.Context) (learning.AttemptRecord, error)
 			return learning.AttemptRecord{}, errors.Join(evidenceErr, claimErr)
 		}
 		if evidenceErr != nil {
+			if errors.Is(evidenceErr, errLearningEvidenceNotReady) {
+				if stopErr := stopRenewal(); stopErr != nil {
+					return learning.AttemptRecord{}, errors.Join(evidenceErr, stopErr)
+				}
+				released, releaseErr := lease.release(ctx, w.now().UTC())
+				return released, errors.Join(evidenceErr, releaseErr)
+			}
 			terminal, finalErr := finalizeFailure(learning.FailureEvidenceUnavailable)
 			return terminal, errors.Join(evidenceErr, finalErr)
 		}
