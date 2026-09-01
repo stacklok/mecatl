@@ -2,9 +2,9 @@
 id: 21-partition-publication-isolation
 title: Quarantine uncertain learned-skill partitions by generation
 blocked_by: [20-replica-catalog-hydration]
-status: in-progress
-branch: ""
-worktree: ""
+status: done
+branch: "plan-cloud-native-learning/21-partition-publication-isolation"
+worktree: ".scratch/worktrees/21-partition-publication-isolation"
 issue: ""
 retries: 0
 last_error: ""
