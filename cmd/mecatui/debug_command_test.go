@@ -50,6 +50,28 @@ func TestPredictableSessionHandles_Scenario2_HandleGrammarAndExactEscapeHatch(t 
 	}
 }
 
+func TestResolveDebugRejectsLeadingHyphenExactIDWithExactGuidance(t *testing.T) {
+	tests := []struct {
+		argv []string
+		want string
+	}{
+		{
+			argv: []string{"mecatui", "debug", "-legacy"},
+			want: "use 'mecatui debug --exact SESSION_ID'",
+		},
+		{
+			argv: []string{"mecatui", "connect", "host:9443", "debug", "-legacy"},
+			want: "use 'mecatui connect ADDRESS debug --exact SESSION_ID'",
+		},
+	}
+	for _, tc := range tests {
+		res := resolveInvocation(tc.argv)
+		if res.err == nil || !strings.Contains(res.err.Error(), tc.want) {
+			t.Fatalf("resolve(%v) error = %v, want %q", tc.argv, res.err, tc.want)
+		}
+	}
+}
+
 func TestResolveDebugRejectsMissingFlagFirstAndExtraOperands(t *testing.T) {
 	for _, argv := range [][]string{
 		{"mecatui", "debug"},
@@ -83,6 +105,7 @@ func TestPredictableSessionHandles_Scenario3_CommandHelpAndExactBypass(t *testin
 		"mutually exclusive",
 		"inventory failure",
 		"use /session",
+		"leading-hyphen exact IDs require --exact",
 	} {
 		if !strings.Contains(words, want) {
 			t.Fatalf("help missing %q:\n%s", want, text)

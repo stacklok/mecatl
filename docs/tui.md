@@ -138,7 +138,8 @@ or fallback:
   analysis session permanently bound to that stored target. A positional `SESSION_ID` may be an
   exact full opaque ID or the displayed 12-column short handle: safe `[A-Za-z0-9._-]` bytes are
   literal except that a leading `-` becomes `%2D`; every other UTF-8 byte is uppercase `%HH`, and
-  only complete atoms that fit are shown. The handle has no leading `#` marker. A syntactically
+  only complete atoms that fit are shown. The handle has no leading `#` marker. A leading-hyphen
+  exact ID is flag-like positionally, so use `mecatui debug --exact SESSION_ID`. A syntactically
   valid positional handle gathers every distinct projected match from the complete caller-visible
   inventory; exact equality does not beat a collision. Ambiguity, no match, or inventory failure
   creates nothing. Use `/session` to copy the exact full ID, then use the mutually exclusive
@@ -148,7 +149,7 @@ or fallback:
   diagnostic prompt automatically. The target is never resumed, leased, mutated, or
   used as the debugger's conversation.
 
-- **`mecatui connect ADDRESS [flags]`** — always dial a running `mecated` at
+- **`mecatui connect ADDRESS [sessions | debug (SESSION_ID | --exact SESSION_ID)] [flags]`** — always dial a running `mecated` at
   `ADDRESS` (host:port); **never probe** loopback and **never embed** — the
   target must already be serving. Embedded-server flags (`--mock`,
   `--trust-project`, provider keys, …) are **rejected** here — only shared
@@ -158,6 +159,7 @@ or fallback:
   bin/mecated serve &                                 # listens on 127.0.0.1:8080
   bin/mecatui connect 127.0.0.1:8080 --workspace "$PWD"
   bin/mecatui connect 127.0.0.1:8080 sessions --workspace "$PWD"
+  bin/mecatui connect 127.0.0.1:8080 debug --exact SESSION_ID
   bin/mecatui connect mecated.internal:443 --tls --auth-token "$MECATL_AUTH_TOKEN"
   ```
 

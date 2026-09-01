@@ -65,7 +65,7 @@ var topLevelCommands = []topLevelCommand{
 	{
 		name:     "debug",
 		synopsis: "debug (SESSION_ID | --exact SESSION_ID) [flags]",
-		purpose:  "diagnose by a positional exact ID or displayed 12-column short handle; resolution gathers every projected match; bypass inventory with --exact SESSION_ID (mutually exclusive); on ambiguity or inventory failure, use /session then --exact",
+		purpose:  "diagnose by a positional exact ID or displayed 12-column short handle; resolution gathers every projected match; bypass inventory with --exact SESSION_ID (mutually exclusive); leading-hyphen exact IDs require --exact; on ambiguity or inventory failure, use /session then --exact",
 		resolve: func(args []string) invocationResolution {
 			return resolveDebugCommand(modeLocal, "", args)
 		},
@@ -288,8 +288,15 @@ func resolveDebugCommand(mode transportMode, address string, args []string) invo
 		}
 		return invocationResolution{mode: mode, address: address, debugTarget: args[1], debugExact: true, remaining: args[2:]}
 	}
-	if args[0] == "" || strings.HasPrefix(args[0], "-") {
+	if args[0] == "" {
 		return invocationResolution{err: helpUsageError("debug requires SESSION_ID or --exact SESSION_ID")}
+	}
+	if strings.HasPrefix(args[0], "-") {
+		usage := "mecatui debug --exact SESSION_ID"
+		if mode == modeConnect {
+			usage = "mecatui connect ADDRESS debug --exact SESSION_ID"
+		}
+		return invocationResolution{err: helpUsageError(fmt.Sprintf("debug positional SESSION_ID %q is flag-like; use '%s'", args[0], usage))}
 	}
 	for _, arg := range args[1:] {
 		if arg == "--exact" {
