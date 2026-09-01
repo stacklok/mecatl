@@ -2,9 +2,9 @@
 id: 28-automatic-reservation-reconciliation
 title: Reconcile reservation and attempt creation crash boundaries
 blocked_by: [27-durable-automatic-ledger]
-status: in-progress
-branch: ""
-worktree: ""
+status: done
+branch: "plan-cloud-native-learning/28-automatic-reservation-reconciliation"
+worktree: ".scratch/worktrees/28-automatic-reservation-reconciliation"
 issue: ""
 retries: 0
 last_error: ""
