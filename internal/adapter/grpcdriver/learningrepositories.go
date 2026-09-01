@@ -25,7 +25,9 @@ const (
 )
 
 // LearningRepositoryCapabilities is the closed set required to select one
-// remote distributed-learning backend.
+// remote distributed-learning backend. It deliberately excludes attempt watch:
+// ADR-0250 watches session events only; advisory notifications need a separate
+// durable attempt-change-feed ADR.
 type LearningRepositoryCapabilities struct {
 	AttemptRepository                 bool
 	ProposalRepository                bool

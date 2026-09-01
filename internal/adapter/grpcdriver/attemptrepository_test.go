@@ -3,6 +3,11 @@ package grpcdriver
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
+	"reflect"
+	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -60,6 +65,59 @@ func TestAttemptRepositoryDriverSmoke(t *testing.T) {
 	}
 	if got != want {
 		t.Fatalf("Create over wire = %+v, want %+v", got, want)
+	}
+}
+
+func TestAttemptWatchIsDeferred(t *testing.T) {
+	t.Parallel()
+
+	_, file, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("locating attempt repository protocol")
+	}
+	protocolPath := filepath.Join(filepath.Dir(file), "..", "..", "..", "contracts", "proto", "mecatl", "driver", "v1", "attempt_repository.proto")
+	protocol, err := os.ReadFile(protocolPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(protocol), "ADR-0250 watches session events only") {
+		t.Fatal("attempt repository protocol does not document that ADR-0250 watches session events only")
+	}
+
+	wantRPCs := []string{
+		"CreateAttempt", "GetAttempt", "ListAttempts", "AcquireAttemptClaim", "RenewAttemptClaim", "CheckpointAttempt",
+		"ReleaseAttemptClaim", "FinalizeAttempt", "RetryAttempt", "AbandonAttempt", "DeleteAttempt", "DeleteTerminalAttemptsBefore",
+	}
+	var gotRPCs []string
+	for _, line := range strings.Split(string(protocol), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "rpc ") {
+			gotRPCs = append(gotRPCs, strings.Fields(line)[1][:strings.IndexByte(strings.Fields(line)[1], '(')])
+		}
+	}
+	if !reflect.DeepEqual(gotRPCs, wantRPCs) {
+		t.Fatalf("attempt repository RPCs = %v, want lifecycle operations only %v", gotRPCs, wantRPCs)
+	}
+
+	capabilityType := reflect.TypeOf(LearningRepositoryCapabilities{})
+	wantCapabilities := []string{"AttemptRepository", "ProposalRepository", "SkillRepository", "ValidatedSkillActivation", "OwnershipMode", "CallerInfrastructureRPCsSeparated"}
+	if capabilityType.NumField() != len(wantCapabilities) {
+		t.Fatalf("learning repository capabilities have %d fields, want %d", capabilityType.NumField(), len(wantCapabilities))
+	}
+	for i, want := range wantCapabilities {
+		if got := capabilityType.Field(i).Name; got != want {
+			t.Errorf("learning repository capability field[%d] = %q, want %q", i, got, want)
+		}
+	}
+	wantWireCapabilities := []string{"attempt_repository", "proposal_repository", "skill_repository", "validated_skill_activation", "ownership_mode", "caller_infrastructure_rpcs_separated"}
+	wireFields := (&driverv1.LearningRepositoryCapabilitiesResponse{}).ProtoReflect().Descriptor().Fields()
+	if wireFields.Len() != len(wantWireCapabilities) {
+		t.Fatalf("learning repository wire capabilities have %d fields, want %d", wireFields.Len(), len(wantWireCapabilities))
+	}
+	for i, want := range wantWireCapabilities {
+		if got := string(wireFields.Get(i).Name()); got != want {
+			t.Errorf("learning repository wire capability field[%d] = %q, want %q", i, got, want)
+		}
 	}
 }
 
