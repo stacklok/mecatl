@@ -2,7 +2,7 @@
 id: 25-attempt-watch-deferred
 title: Guard the explicit deferral of attempt watch
 blocked_by: [24-learning-driver-ownership]
-status: pending
+status: in-progress
 branch: ""
 worktree: ""
 issue: ""
