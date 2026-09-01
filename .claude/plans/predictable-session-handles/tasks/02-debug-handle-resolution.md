@@ -2,8 +2,8 @@
 id: 02-debug-handle-resolution
 title: Debug short-handle resolver and exact-ID boundary proof
 blocked_by: [01-handle-projection-presentation]
-status: in-progress
-branch: ""
+status: done
+branch: "plan-predictable-session-handles/02-debug-handle-resolution"
 worktree: ".scratch/worktrees/issue-922-task02"
 issue: "922"
 retries: 0
