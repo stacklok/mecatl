@@ -2,7 +2,7 @@
 id: 02-constrained-issuer
 title: Constrained typed issuer and governance containment
 blocked_by: [01-logical-identity-value]
-status: pending
+status: in-progress
 branch: ""
 worktree: ""
 issue: "371"
