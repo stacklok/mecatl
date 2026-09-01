@@ -4283,6 +4283,19 @@ an identical in-flight digest. Off constructs no attempt repository, automatic c
 runs synchronously against lazy proposal persistence and creates no durable attempt. `Built.Close` cancels and joins both coordinator and recovery workers. Automatic budget/cooldown state still has no startup/shutdown
 sweep; admitted nonterminal attempts are the distinct durable workflow and are recovered at Build startup. Every process gets an independent budget and restart resets all controller state.
 
+The storage-neutral replacement contract now lives in `engine/learning/automatic_ledger.go`
+(`AutomaticAdmissionLedger`), with shared adapter coverage in
+`engine/adapter/automaticconformance/automaticconformance.go` (`Run`). Its reservation ID is derived
+only from the deterministic attempt ID. One atomic admission applies global and opaque-principal
+count/token windows, global digest deduplication, and weighted cooldown; hard admission bypasses only
+cooldown and explicit host-requested reflection does not enter this automatic seam. Expired ownership
+is reassigned with a newer opaque fence without adding a charge. A successor reconciles the linked
+attempt and then retains the charge after creation or reclaims it before creation; retained charges are
+not refunded by later failure, timeout, or abandonment. This interface is accounting rather than a
+queue: wired automatic work must continue to enter the existing `AttemptRepository` lifecycle. The
+current process-local controller remains wired until the durable adapters and composition migration
+land, so this contract alone does not claim distributed enforcement.
+
 **Evaluated and validated agent-owned skills (#510; ADR 0111, superseded in part by ADR 0224):**
 `engine/adapter/skilllifecycle.Pipeline` is a state-aware, idempotent resume over
 content-addressed versions: it skips already-committed evaluation/stage/activation boundaries and

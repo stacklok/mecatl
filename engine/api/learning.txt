@@ -11,6 +11,11 @@
     ifacemethod func (AttemptRepository).ReleaseClaim(context.Context, AttemptPartition, AttemptID, AttemptVersion, AttemptClaim, time.Time) (AttemptRecord, error)
     ifacemethod func (AttemptRepository).RenewClaim(context.Context, AttemptPartition, AttemptID, AttemptVersion, AttemptClaim, time.Time, time.Time) (AttemptRecord, AttemptClaim, error)
     ifacemethod func (AttemptRepository).Retry(context.Context, AttemptPartition, AttemptID, AttemptVersion, time.Time) (AttemptRecord, error)
+    ifacemethod func (AutomaticAdmissionLedger).Get(context.Context, AutomaticReservationID) (AutomaticReservation, bool, error)
+    ifacemethod func (AutomaticAdmissionLedger).Reassign(context.Context, AutomaticReservationID, AutomaticReservationVersion, time.Time, time.Time) (AutomaticReservation, error)
+    ifacemethod func (AutomaticAdmissionLedger).Reclaim(context.Context, AutomaticReservationID, AutomaticReservationVersion, AutomaticReservationFence, time.Time) (AutomaticReservation, error)
+    ifacemethod func (AutomaticAdmissionLedger).Reserve(context.Context, AutomaticReservationRequest) (AutomaticReservation, error)
+    ifacemethod func (AutomaticAdmissionLedger).Retain(context.Context, AutomaticReservationID, AutomaticReservationVersion, AutomaticReservationFence, time.Time) (AutomaticReservation, error)
     ifacemethod func (Observer).Observe(context.Context, Trajectory) error
     ifacemethod func (ProposalRepository).ClaimDecision(context.Context, ProposalPartition, ProposalID, ProposalVersion, Decision) (ProposalRecord, error)
     ifacemethod func (ProposalRepository).ClaimPromotion(context.Context, ProposalPartition, ProposalID, ProposalVersion) (ProposalRecord, error)
@@ -52,6 +57,12 @@
     method func (AttemptSource).Valid() bool
     method func (AttemptState).Terminal() bool
     method func (AttemptState).Valid() bool
+    method func (AutomaticAdmissionPolicy).Validate() error
+    method func (AutomaticChargeDisposition).Valid() bool
+    method func (AutomaticReservation).Validate() error
+    method func (AutomaticReservationFence).Valid() bool
+    method func (AutomaticReservationFence).ValidAt(now time.Time) bool
+    method func (AutomaticReservationRequest).Validate() error
     method func (CandidateKind).Valid() bool
     method func (EvaluationVerdict).Valid() bool
     method func (MessageSpan).Contains(ordinal int) bool
@@ -109,6 +120,9 @@ const AttemptOutcomeSucceeded AttemptOutcome = "succeeded"
 const AttemptQueued AttemptState = "queued"
 const AttemptRunning AttemptState = "running"
 const Auto Mode = 2
+const AutomaticChargeHeld AutomaticChargeDisposition = "held"
+const AutomaticChargeReclaimed AutomaticChargeDisposition = "reclaimed"
+const AutomaticChargeRetained AutomaticChargeDisposition = "retained"
 const Balanced Sensitivity = 2
 const CandidateOperatorFact CandidateKind = "operator_fact"
 const CandidateProcedure CandidateKind = "procedure"
@@ -141,6 +155,7 @@ const MaxAttemptIDBytes untyped int = 96
 const MaxAttemptLinkIDBytes untyped int = 128
 const MaxAttemptPageSize untyped int = 200
 const MaxAttemptVersionBytes untyped int = 128
+const MaxAutomaticReservationIDBytes untyped int = 96
 const MaxCandidateBodyBytes untyped int = 8192
 const MaxCandidateDescriptionBytes untyped int = 2048
 const MaxCandidateEvidence untyped int = 16
@@ -237,6 +252,7 @@ const SkillStaged SkillState = "staged"
 const ValidationAccept ValidationDisposition = "accept"
 const ValidationExactDuplicate ValidationDisposition = "exact_duplicate"
 const ValidationSimilarStageHint ValidationDisposition = "similar_stage_hint"
+func AutomaticReservationIDForAttempt(attemptID AttemptID) (AutomaticReservationID, error)
 func DeriveAttemptPartition(identity string) (AttemptPartition, error)
 func DetectSignals(in Input) []Signal
 func DetectSignalsScoped(in Input, scope DetectionScope) []Signal
@@ -298,6 +314,15 @@ type AttemptRepository interface{Abandon(context.Context, AttemptPartition, Atte
 type AttemptSource struct{SessionID session.SessionID "json:\"session_id\""; RunID DurableRunID "json:\"run_id\""; CanonicalDigest CanonicalDigest "json:\"canonical_digest\""}
 type AttemptState string
 type AttemptVersion string
+type AutomaticAdmissionLedger interface{Get(context.Context, AutomaticReservationID) (AutomaticReservation, bool, error); Reassign(context.Context, AutomaticReservationID, AutomaticReservationVersion, time.Time, time.Time) (AutomaticReservation, error); Reclaim(context.Context, AutomaticReservationID, AutomaticReservationVersion, AutomaticReservationFence, time.Time) (AutomaticReservation, error); Reserve(context.Context, AutomaticReservationRequest) (AutomaticReservation, error); Retain(context.Context, AutomaticReservationID, AutomaticReservationVersion, AutomaticReservationFence, time.Time) (AutomaticReservation, error)}
+type AutomaticAdmissionPolicy struct{Window time.Duration; Cooldown time.Duration; DedupeWindow time.Duration; MaxCount uint64; MaxTokens uint64; MaxCountPerPrincipal uint64; MaxTokensPerPrincipal uint64; ReservationClaimDuration time.Duration}
+type AutomaticChargeDisposition string
+type AutomaticReservation struct{ID AutomaticReservationID; AttemptID AttemptID; Version AutomaticReservationVersion; Principal AttemptPartition; Digest CanonicalDigest; Class AdmissionClass; Tokens uint64; Charge AutomaticChargeDisposition; AttemptCreated bool; ReservedAt time.Time; ChargeExpiresAt time.Time; DedupeExpiresAt time.Time; ClaimDuration time.Duration; Fence AutomaticReservationFence}
+type AutomaticReservationFence struct{Generation AutomaticReservationGeneration; ExpiresAt time.Time}
+type AutomaticReservationGeneration uint64
+type AutomaticReservationID string
+type AutomaticReservationRequest struct{ID AutomaticReservationID; AttemptID AttemptID; Principal AttemptPartition; Digest CanonicalDigest; Class AdmissionClass; Tokens uint64; Now time.Time; Policy AutomaticAdmissionPolicy}
+type AutomaticReservationVersion string
 type Candidate struct{Kind CandidateKind "json:\"kind\""; Key string "json:\"key,omitempty\""; Value string "json:\"value,omitempty\""; Description string "json:\"description,omitempty\""; Name string "json:\"name,omitempty\""; Title string "json:\"title,omitempty\""; Body string "json:\"body,omitempty\""; Evidence []EvidenceRef "json:\"evidence\""}
 type CandidateKind string
 type CanonicalDigest string
@@ -379,7 +404,16 @@ var ErrAttemptCreateConflict error
 var ErrAttemptNotFound error
 var ErrAttemptTransition error
 var ErrAttemptVersionConflict error
+var ErrAutomaticAdmissionCooldown error
+var ErrAutomaticAdmissionDuplicate error
+var ErrAutomaticAdmissionLimit error
+var ErrAutomaticReservationConflict error
+var ErrAutomaticReservationFence error
+var ErrAutomaticReservationNotFound error
+var ErrAutomaticReservationState error
+var ErrAutomaticReservationVersion error
 var ErrInvalidAttempt error
+var ErrInvalidAutomaticReservation error
 var ErrInvalidCandidate error
 var ErrInvalidEvidence error
 var ErrInvalidInput error

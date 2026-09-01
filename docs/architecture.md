@@ -145,7 +145,8 @@ adapters (`engine/adapter/*`: `mockllm`, `memfs`, `nofs`, `memstore`, `sessnap`,
 `webfetch` (bounded public HTTP(S) text retrieval with DNS-pinned dialing and `x/net/html` extraction),
 `fstools` (the FS tool bodies), `agentfs` (the filesystem agent-def discovery adapter), `skillfs` (the read-only skills discovery core + Skill tool body), `rulesfs` (the `.claude/rules` discovery adapter, issue #329 — the pattern-2 turn-0 context instance), plus
 the conformance-as-contract suites `fsconformance`, `memconformance`,
-`storeconformance`, `sourceconformance`, `eventlogconformance`) live
+`storeconformance`, `sourceconformance`, `eventlogconformance`,
+`attemptconformance`, and `automaticconformance`) live
 under `engine/` — the
 importable core, fully self-contained (tests included: nothing under `engine/`
 imports `internal/...`) and intended to be importable as a library by external

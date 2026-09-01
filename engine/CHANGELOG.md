@@ -69,6 +69,8 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   without widening the minimal `SessionStore` or loading transcript content.
   Added (minor).
 
+- **Storage-neutral automatic admission ledger contract** ([ADR 0254](../docs/adr/0254-cloud-native-learning.md)) — `learning.AutomaticAdmissionLedger` defines deterministic attempt-linked reservations, opaque CAS/fencing, global and per-principal count/token windows, weighted cooldown and deduplication, and retained/reclaimed charge reconciliation without introducing a second work queue. Added (minor).
+
 - **Authoritative learned-skill catalog generations** ([ADR 0254](../docs/adr/0254-cloud-native-learning.md)) — `learning.SkillGeneration` and generation-aware `skillfs.AtomicCatalog` publication/invalidation methods let derived per-partition caches reject delayed older updates while retaining external-skill precedence and path-free bundles. Added (minor).
 
 - **Restart-safe canonical evidence reflection** ([ADR 0254](../docs/adr/0254-cloud-native-learning.md)) — `agent.EvidenceReflector.ReflectProjection` accepts only a bounded canonical `learning.Projection`, revalidates its content-addressed evidence metadata, and applies the canonical governance untrusted fence before the provider boundary. Added (minor).
