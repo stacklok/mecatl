@@ -439,8 +439,26 @@ type approveBody struct {
 // createSession handles POST /v1/sessions.
 func (h *HTTPHandler) createSession(w http.ResponseWriter, r *http.Request) {
 	var body createSessionBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid JSON body")
+	// STRICT decode. An unknown field is a 400, not a silent drop.
+	//
+	// This body is where leniency stopped being harmless: a client coming from the
+	// gRPC surface (or using a generated client) naturally writes the protojson
+	// spelling {"mcpServers": [...]}, which a lenient decoder discards — returning
+	// 201 with a session that has none of the MCP servers the caller asked for, and
+	// no signal anywhere that it dropped them. That is the same silent-degradation
+	// class as a partial mount, on the transport where it is easiest to hit.
+	//
+	// The error detail is surfaced because encoding/json names the offending field
+	// ("unknown field \"mcpServers\""), which turns an otherwise baffling 400 into a
+	// self-diagnosing one. It describes the caller's own input, so it leaks nothing.
+	//
+	// It is a deliberate behaviour CHANGE: a request carrying a stray field used to
+	// succeed. The strictness matches decodeLearningJSON's existing posture on this
+	// same handler set.
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body: "+err.Error())
 		return
 	}
 	// Session profile (issue #55): the workspace requirement is PROFILE-AWARE and
@@ -473,13 +491,13 @@ func (h *HTTPHandler) createSession(w http.ResponseWriter, r *http.Request) {
 	// Client-provided MCP servers (issue #821, ADR 0237): the SAME Service seam the
 	// gRPC handler calls, so both transports classify through one validator and
 	// read one deployment policy. No filtering or classification happens here.
-	specs, err := h.svc.ClientMCPFromWire(clientMCPFromJSON(body.MCPServers))
+	grant, err := h.svc.ClientMCPFromWire(clientMCPFromJSON(body.MCPServers))
 	if err != nil {
 		writeServiceError(w, err)
 		return
 	}
-	if len(specs) > 0 {
-		opts = append(opts, WithClientMCP(specs))
+	if !grant.IsEmpty() {
+		opts = append(opts, WithClientMCP(grant))
 	}
 	sess, err := h.svc.CreateSessionWithProfile(r.Context(), body.Workspace, modeFromString(body.Mode), limits, sel, profile, opts...)
 	if err != nil {

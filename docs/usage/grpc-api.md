@@ -122,9 +122,27 @@ its tools is indistinguishable from a working one at the API.
 
 Transport is streaming-HTTP only on EVERY deployment, regardless of that policy: a
 `stdio` entry (or an untyped entry carrying a `command`) and an `sse` entry are
-`INVALID_ARGUMENT` — mecatl never spawns an MCP server process. Header values are
-secret-shaped: they are never logged, never carried in an event, and never
-included in an error.
+`INVALID_ARGUMENT` — mecatl never spawns an MCP server process.
+
+Each `name` must be 1–64 characters of `[A-Za-z0-9._-]`, must not contain `__`,
+and must be unique within the request; a violation is `INVALID_ARGUMENT`. The
+rules are the tool namespace's, not cosmetic: names become
+`mcp__<name>__<tool>`, so `__` inside one would forge another server's namespace,
+and duplicates would collide in the catalog with one set silently dropped. Note
+the namespace is FLAT and shared with operator-configured servers, so a client
+naming its server `github` can inherit an operator permission rule written for
+the real one — one more reason the field is gated to a local-only daemon.
+
+Credentials belong in `headers`, and nowhere else. A URL carrying userinfo
+(`https://user:pass@host/mcp`) is `INVALID_ARGUMENT`, because Go promotes it to a
+`Basic` header that would bypass every protection `headers` gets. Header values
+are secret-shaped: never logged, never carried in an event, never included in an
+error. A URL is redacted to `scheme://host/path` wherever it is logged or echoed
+in a message, so a token in the query string does not reach the operator's log.
+
+A client endpoint may not redirect: a URL that passes validation is not permitted
+to send the daemon onward to a host that never did. Operator-configured servers
+are unaffected.
 
 **Manual compaction.** Check
 `CreateSessionResponse.capabilities.manual_compaction` before offering this action.

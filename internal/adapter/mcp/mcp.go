@@ -80,6 +80,11 @@ type ServerConfig struct {
 	// defaultConnectTimeout is used. It does not bound later tool calls, which
 	// are governed by the per-call context.
 	Timeout time.Duration
+	// NoRedirects refuses HTTP redirects on this server's client. It is set for
+	// CLIENT-SUPPLIED specs (PartitionClientServers) and left false for
+	// operator-configured servers, so the operator path keeps Go's default
+	// behaviour byte-for-byte. See newMCPHTTPClient for why the two differ.
+	NoRedirects bool
 }
 
 // ValidateClientURL validates a CLIENT-PROVIDED Streamable HTTP MCP endpoint
@@ -89,13 +94,33 @@ type ServerConfig struct {
 // gated this way, since an operator may legitimately point a server at an
 // internal host.
 //
-// The contract: the URL must be absolute and carry a host, and the scheme must be
-// "https" — OR "http" only when the host is an explicit loopback address
-// ("127.0.0.1", "::1", "localhost"). Everything else (file/ftp/gopher/etc., a
-// relative URL, a hostless URL, or plaintext http to a non-loopback host) is
-// rejected. Note this is a SCHEME/host-shape allowlist, not metadata-IP
-// filtering: the editor is a local-trusted process, so we filter the obviously
-// dangerous shapes rather than resolving and blocking link-local/metadata IPs.
+// The contract: the URL must be absolute, carry a host, carry NO userinfo, and
+// use scheme "https" — OR "http" only when the host is an explicit loopback
+// address ("127.0.0.1", "::1", "localhost"). Everything else (file/ftp/gopher/
+// etc., a relative URL, a hostless URL, credentials in userinfo, or plaintext
+// http to a non-loopback host) is rejected.
+//
+// KNOW WHAT THIS IS NOT. It is a scheme/host-SHAPE allowlist, and it is the
+// weaker of this repo's two outbound-URL standards. It does NOT screen IP ranges,
+// so it permits https:// to 169.254.169.254, metadata.google.internal, 10.0.0.1,
+// or the inet_aton form 2130706433; and it validates by NAME while the dial
+// resolves by name again, so it does not close DNS rebinding. The stronger
+// standard is session.ValidateMediaURL + session.ValidateResolvedIP (used by
+// FetchMcpResource and webfetch), which screens ranges, normalises numeric and
+// trailing-dot hosts, and re-validates every redirect hop against a pinned
+// dialer.
+//
+// Two things bound the residual here. Every spec this validator accepts is
+// mounted with ServerConfig.NoRedirects, so newMCPHTTPClient refuses redirects and
+// a vetted URL cannot 302 the daemon onward to an address this check would have
+// refused — which was the sharper half of the gap.
+// And headerRoundTripper is origin-scoped, so credentials never travel to a host
+// other than the one they were configured for. What remains is blind SSRF from
+// the daemon's own network position (and loopback port probing) by a caller that
+// already reaches a UNIX-socket-only API — a local process the operator trusts.
+// Adopting the pinned-dialer standard here is the right fix and is deliberately
+// NOT bundled into the client-MCP wire feature; it changes the operator MCP path
+// too.
 func ValidateClientURL(raw string) error {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -103,14 +128,28 @@ func ValidateClientURL(raw string) error {
 	}
 	u, err := url.Parse(raw)
 	if err != nil {
-		return fmt.Errorf("mcp: invalid client MCP URL %q: %w", raw, err)
+		// Neither the raw string nor the *url.Error is echoed: url.Error embeds the
+		// URL it failed on, so %w would reintroduce exactly what RedactURL exists to
+		// strip. The inner reason is unwrapped and carries no URL.
+		return fmt.Errorf("mcp: client MCP URL is not parseable: %v", innerURLError(err))
 	}
 	if !u.IsAbs() {
-		return fmt.Errorf("mcp: client MCP URL %q must be absolute", raw)
+		return fmt.Errorf("mcp: client MCP URL %q must be absolute", RedactURL(raw))
 	}
 	host := u.Hostname()
 	if host == "" {
-		return fmt.Errorf("mcp: client MCP URL %q has no host", raw)
+		return fmt.Errorf("mcp: client MCP URL %q has no host", RedactURL(raw))
+	}
+	// USERINFO is an unguarded credential channel and must not be a back door
+	// around the Headers discipline. net/http promotes URL.User to a Basic
+	// Authorization header automatically, so "https://user:pass@host/mcp" is a
+	// fully functional credential path that never passes through ServerConfig.
+	// Headers and inherits none of its secret-shaped protections — not the
+	// no-logging rule, not the no-event rule, not the no-error rule. Reject it and
+	// say where credentials belong. (Errors here use RedactURL for the same reason:
+	// a rejection message must not be the thing that leaks the secret.)
+	if u.User != nil {
+		return errors.New("mcp: client MCP URL must not carry userinfo credentials; use headers")
 	}
 	switch strings.ToLower(u.Scheme) {
 	case "https":
@@ -119,10 +158,46 @@ func ValidateClientURL(raw string) error {
 		if isLoopbackHost(host) {
 			return nil
 		}
-		return fmt.Errorf("mcp: client MCP URL %q uses plaintext http to a non-loopback host; use https", raw)
+		return fmt.Errorf("mcp: client MCP URL %q uses plaintext http to a non-loopback host; use https", RedactURL(raw))
 	default:
-		return fmt.Errorf("mcp: client MCP URL %q scheme %q not allowed (https, or http to loopback only)", raw, u.Scheme)
+		return fmt.Errorf("mcp: client MCP URL %q scheme %q not allowed (https, or http to loopback only)", RedactURL(raw), u.Scheme)
 	}
+}
+
+// RedactURL renders a client-supplied URL for a MESSAGE OR AN OPERATOR LOG with
+// any embedded credential removed: scheme://host/path only, dropping userinfo, the
+// whole query string, and the fragment.
+//
+// The query goes as a UNIT rather than being filtered key-by-key. A credential in
+// the query ("?access_token=...", "?key=...", "?sig=...") is syntactically
+// indistinguishable from a benign parameter, so a denylist of parameter names
+// would miss the next spelling; dropping the query costs a little diagnostic
+// detail and closes the class. userinfo is separately REJECTED outright by
+// ValidateClientURL — this is the backstop for the channel that cannot be.
+//
+// It is exported because composition logs these URLs too (the
+// client-MCP-unreachable WARN in internal/app), and one redaction policy shared is
+// the point: a second local copy is how the two drift.
+//
+// An unparseable or hostless input degrades to a placeholder rather than the raw
+// string, since that is precisely the case where echoing the input is the leak.
+func RedactURL(raw string) string {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || u.Host == "" {
+		return "(redacted url)"
+	}
+	safe := url.URL{Scheme: u.Scheme, Host: u.Host, Path: u.Path}
+	return safe.String()
+}
+
+// innerURLError unwraps a *url.Error to its underlying reason, which — unlike the
+// wrapper — does not embed the offending URL.
+func innerURLError(err error) error {
+	var uerr *url.Error
+	if errors.As(err, &uerr) && uerr.Err != nil {
+		return uerr.Err
+	}
+	return err
 }
 
 // isLoopbackHost reports whether host is an explicit loopback address that
@@ -284,6 +359,26 @@ func newMCPHTTPClient(cfg ServerConfig, oauth *OAuthController) *http.Client {
 		// Resource requests carrying restored or refreshed bearer tokens must use
 		// the same no-proxy, DNS-pinned destination policy as OAuth endpoints.
 		client.Transport = oauthResourceRoundTripper{base: oauth.transport}
+	} else if cfg.NoRedirects {
+		// NO REDIRECTS for a CLIENT-SUPPLIED endpoint. Go's default follows up to 10
+		// hops to ANY host, so a URL that passed ValidateClientURL's scheme/host
+		// shape check could 302 the daemon onward to an address that never would
+		// have — a cloud metadata endpoint, a private range, a loopback port.
+		// ValidateClientURL vets the URL the caller GAVE us; only this closes the one
+		// it can be sent to next. A Streamable-HTTP MCP endpoint has no legitimate
+		// need to redirect, so refusing costs nothing functional.
+		//
+		// Scoped to the client path ON PURPOSE. The OPERATOR path keeps Go's default
+		// (this branch is not taken) because an operator's endpoint is a URL they
+		// chose themselves and may legitimately redirect to a canonical path, and
+		// their credentials are already protected cross-origin by the origin-scoped
+		// headerRoundTripper. Disabling it there would be an unrequested behaviour
+		// change to a shipped path; here it closes an SSRF amplifier on a surface
+		// this feature is the first to expose to a wire caller.
+		//
+		// The OAuth branch above has its own stricter origin-pinned policy
+		// (mcpOAuthRedirectPolicy) and keeps it; this is the branch that had none.
+		client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	}
 	if len(cfg.Headers) == 0 {
 		return client

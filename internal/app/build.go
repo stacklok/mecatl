@@ -2678,8 +2678,16 @@ func sessionEngineFactory(
 		windowFn := reg.windowResolver(cfg, resolvedProviderID, resolvedModel)
 
 		onError := func(sc mcp.ServerConfig, err error) {
+			// REDACTED url (CWE-532). The header map is secret-shaped and never logged,
+			// but a credential can also ride the URL itself — "?access_token=..." — and
+			// logging sc.URL verbatim put it in the operator's diagnostics. userinfo is
+			// now rejected outright by ValidateClientURL; a query-string token cannot be
+			// (it is indistinguishable from an ordinary parameter), so the URL is
+			// redacted at the log site instead of trusted to be clean. mcp.RedactURL is
+			// the SAME policy the validator's own messages use — one redactor, so the
+			// log and the error cannot drift.
 			cfg.diag().Log(ctx, port.LevelWarn, "client MCP server unreachable; skipping for this session",
-				"server", sc.Name, "url", sc.URL, "err", err)
+				"server", sc.Name, "url", mcp.RedactURL(sc.URL), "err", err)
 		}
 		var mgr *mcp.Manager
 		if len(specs) > 0 {

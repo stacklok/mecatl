@@ -747,8 +747,10 @@ func TestSessionNewRejectsBadScheme(t *testing.T) {
 }
 
 // TestSessionNewRejectsTooManyMCP asserts a client declaring more than the cap of
-// MCP servers is rejected (CWE-400: the servers connect serially, so an unbounded
-// count could stall session/new). It is rejected BEFORE the factory is consulted.
+// MCP servers is rejected (CWE-400: the servers connect CONCURRENTLY under a
+// bounded fan-out, so the cap bounds the goroutine and connection blast of one
+// session/new rather than its wall-clock). It is rejected BEFORE the factory is
+// consulted.
 func TestSessionNewRejectsTooManyMCP(t *testing.T) {
 	fake := &fakeSessionEngine{engine: stubEngine(t)}
 	svc := newServiceCfg(t, mockllm.New(), nil, func(c *server.Config) { c.SessionEngine = fake.factory })

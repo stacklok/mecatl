@@ -69,12 +69,12 @@ func (h *HarnessServer) CreateSession(ctx context.Context, req *mecatlv1.CreateS
 	// ACP surface uses and then applies the deployment policy — so this handler
 	// neither classifies an entry nor decides whether the field is accepted here.
 	// An empty repeated field is not a use of the feature and stays byte-identical.
-	specs, err := h.svc.ClientMCPFromWire(clientMCPFromProto(req.GetMcpServers()))
+	grant, err := h.svc.ClientMCPFromWire(clientMCPFromProto(req.GetMcpServers()))
 	if err != nil {
 		return nil, toStatus(err)
 	}
-	if len(specs) > 0 {
-		opts = append(opts, WithClientMCP(specs))
+	if !grant.IsEmpty() {
+		opts = append(opts, WithClientMCP(grant))
 	}
 	sess, err := h.svc.CreateSessionWithProfile(ctx, req.GetWorkspace(), modeFromProto(req.GetMode()), limitsFromProto(req.GetLimits()), sel, profile, opts...)
 	if err != nil {

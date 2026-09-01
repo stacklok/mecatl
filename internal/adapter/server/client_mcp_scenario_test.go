@@ -858,8 +858,15 @@ func TestSDKServerEnablers_Scenario9_SingleMCPValidationPath(t *testing.T) {
 	})
 
 	t.Run("no consuming adapter re-implements the transport classification", func(t *testing.T) {
-		// The transport discriminants are string literals. Only the one classifier
-		// may compare against them; a copy elsewhere is the divergence this AC bans.
+		// A WEAK BACKSTOP, and worth naming as such so nobody mistakes it for the
+		// enforcement. The transport discriminants are string literals, and this
+		// catches the most likely copy-paste — but it is a byte scan: a reformat, or
+		// a `switch m.Type { case "stdio": }` re-implementation, walks straight past
+		// it. The load-bearing guards are the AST subtest above (a second
+		// ValidateClientURL call site anywhere in these packages) and, for the option
+		// seam, the unforgeable ClientMCPGrant type — see
+		// TestSDKServerEnablers_Scenario9_ClientMCPGrantIsUnforgeable. Kept because
+		// it costs nothing and does occasionally fire, not because it proves the AC.
 		for _, pkg := range []string{"internal/adapter/acp", "internal/adapter/server"} {
 			for _, file := range goFilesIn(t, pkg) {
 				body, err := os.ReadFile(file)
@@ -909,7 +916,7 @@ func TestSDKServerEnablers_Scenario9_SingleMCPValidationPath(t *testing.T) {
 			many = append(many, &mecatlv1.McpServerSpec{Name: fmt.Sprintf("s%d", i), Type: "http", Url: "https://mcp.example/mcp"})
 		}
 		if _, err := client.CreateSession(context.Background(), &mecatlv1.CreateSessionRequest{Workspace: "/ws", McpServers: many}); err == nil {
-			t.Fatalf("accepted %d servers; the shared cap is %d (a create connects them serially)", len(many), mcp.MaxClientServers)
+			t.Fatalf("accepted %d servers; the shared cap is %d (a create connects them concurrently under a bounded fan-out, so the cap bounds connection blast, not wall-clock)", len(many), mcp.MaxClientServers)
 		}
 	})
 }
@@ -1193,5 +1200,265 @@ func assertNoLiveSessions(t *testing.T, svc *server.Service) {
 	}
 	if len(sessions) != 0 {
 		t.Fatalf("a refused create left %d session(s) behind", len(sessions))
+	}
+}
+
+// TestSDKServerEnablers_Scenario9_ServerNameIsValidated closes the review finding
+// that `Name` reached the mount unvalidated.
+//
+// mcp.Connect does reject "" and "__" — but at CONNECT time, inside the
+// best-effort manager, so a malformed name surfaced as an unreachable-server
+// failure (before the all-or-nothing check landed, as a 200 with the server
+// silently missing). Diagnosing a malformed name as a connection failure is
+// wrong, and three problems were not covered at all: duplicates, the tool-schema
+// bytes, and namespace forgery via "__".
+//
+// The bar is the one this repo already applies to the sibling debug_mcp_servers
+// field (validateDebugMCPNames): non-empty, <= 64, [A-Za-z0-9._-], no "__",
+// unique. Same tool namespace, so the same rules.
+func TestSDKServerEnablers_Scenario9_ServerNameIsValidated(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		servers []*mecatlv1.McpServerSpec
+		wantIn  string
+	}{
+		{
+			name:    "empty name",
+			servers: []*mecatlv1.McpServerSpec{{Name: "", Url: "https://a.example/mcp", Type: "http"}},
+			wantIn:  "name is required",
+		},
+		{
+			name:    "namespace separator forges another server",
+			servers: []*mecatlv1.McpServerSpec{{Name: "a__b", Url: "https://a.example/mcp", Type: "http"}},
+			wantIn:  "must not contain",
+		},
+		{
+			name:    "space is not in the charset",
+			servers: []*mecatlv1.McpServerSpec{{Name: "a b", Url: "https://a.example/mcp", Type: "http"}},
+			wantIn:  "[A-Za-z0-9._-]",
+		},
+		{
+			name:    "over the length bound",
+			servers: []*mecatlv1.McpServerSpec{{Name: strings.Repeat("n", 65), Url: "https://a.example/mcp", Type: "http"}},
+			wantIn:  "longer than 64",
+		},
+		{
+			name: "duplicate names would collide in the catalog",
+			servers: []*mecatlv1.McpServerSpec{
+				{Name: "notes", Url: "https://a.example/mcp", Type: "http"},
+				{Name: "notes", Url: "https://b.example/mcp", Type: "http"},
+			},
+			wantIn: "duplicate MCP server name",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := &mcpSpecRecorder{}
+			svc := clientMCPService(t, true, rec, nil, mockllm.New(mockllm.TextTurn("ok")))
+			client, cleanup := dialGRPC(t, svc)
+			defer cleanup()
+
+			_, err := client.CreateSession(context.Background(), &mecatlv1.CreateSessionRequest{
+				Workspace:  "/ws",
+				McpServers: tc.servers,
+			})
+			if err == nil {
+				t.Fatal("a malformed server name was accepted")
+			}
+			st, _ := status.FromError(err)
+			// InvalidArgument, NOT the unreachable code: a malformed name is a bad
+			// request, and reporting it as a failed connection sends the client
+			// looking at the wrong thing.
+			if st.Code() != codes.InvalidArgument {
+				t.Fatalf("code = %v, want InvalidArgument (a bad name is not a connection failure)", st.Code())
+			}
+			if !strings.Contains(st.Message(), tc.wantIn) {
+				t.Fatalf("message %q does not explain the problem (want it to contain %q)", st.Message(), tc.wantIn)
+			}
+			// Rejected before anything was built.
+			if rec.count() != 0 {
+				t.Fatalf("factory ran %d time(s) for a malformed name: rejection must precede the mount", rec.count())
+			}
+		})
+	}
+
+	t.Run("a legal name still works", func(t *testing.T) {
+		svc := clientMCPService(t, true, nil, nil, mockllm.New(mockllm.TextTurn("ok")))
+		client, cleanup := dialGRPC(t, svc)
+		defer cleanup()
+		if _, err := client.CreateSession(context.Background(), &mecatlv1.CreateSessionRequest{
+			Workspace:  "/ws",
+			McpServers: []*mecatlv1.McpServerSpec{{Name: "notes-v2.1_x", Url: "https://a.example/mcp", Type: "http"}},
+		}); err != nil {
+			t.Fatalf("a legal name was rejected: %v", err)
+		}
+	})
+}
+
+// TestSDKServerEnablers_Scenario9_URLCredentialsRejected closes the review finding
+// that URL userinfo was an unguarded credential channel.
+//
+// This PR is careful that header VALUES are secret-shaped, and that holds. But
+// net/http promotes URL.User to a Basic Authorization header automatically, so
+// "https://user:pass@host/mcp" was a fully functional credential path that never
+// passed through Headers and inherited none of its protections — not the
+// no-logging rule, not the no-event rule, not the no-error rule. The claim
+// "credentials are never logged" was therefore true of the map and false of the
+// feature.
+func TestSDKServerEnablers_Scenario9_URLCredentialsRejected(t *testing.T) {
+	const urlSecret = "zzz-userinfo-secret-zzz"
+
+	t.Run("userinfo is refused outright", func(t *testing.T) {
+		diag := &capturingDiag{}
+		svc := clientMCPService(t, true, nil, diag, mockllm.New(mockllm.TextTurn("ok")))
+		client, cleanup := dialGRPC(t, svc)
+		defer cleanup()
+
+		_, err := client.CreateSession(context.Background(), &mecatlv1.CreateSessionRequest{
+			Workspace: "/ws",
+			McpServers: []*mecatlv1.McpServerSpec{{
+				Name: "notes",
+				Url:  "https://user:" + urlSecret + "@mcp.example/mcp",
+				Type: "http",
+			}},
+		})
+		if err == nil {
+			t.Fatal("a URL carrying userinfo credentials was accepted")
+		}
+		st, _ := status.FromError(err)
+		if st.Code() != codes.InvalidArgument {
+			t.Fatalf("code = %v, want InvalidArgument", st.Code())
+		}
+		// The rejection must point at the supported channel...
+		if !strings.Contains(st.Message(), "headers") {
+			t.Fatalf("message %q should say where credentials belong", st.Message())
+		}
+		// ...and must not itself be the leak.
+		if strings.Contains(st.Message(), urlSecret) {
+			t.Fatalf("the rejection message leaked the userinfo credential: %q", st.Message())
+		}
+		if strings.Contains(diag.String(), urlSecret) {
+			t.Fatalf("diagnostics leaked the userinfo credential:\n%s", diag.String())
+		}
+	})
+
+	t.Run("a query-string token is not echoed in a rejection", func(t *testing.T) {
+		// A token in the query is indistinguishable from a benign parameter, so it
+		// cannot be rejected — which is exactly why no error message may render the
+		// raw URL. Here the scheme is bad, so the URL reaches a rejection path.
+		diag := &capturingDiag{}
+		svc := clientMCPService(t, true, nil, diag, mockllm.New(mockllm.TextTurn("ok")))
+		client, cleanup := dialGRPC(t, svc)
+		defer cleanup()
+
+		_, err := client.CreateSession(context.Background(), &mecatlv1.CreateSessionRequest{
+			Workspace: "/ws",
+			McpServers: []*mecatlv1.McpServerSpec{{
+				Name: "notes",
+				Url:  "ftp://mcp.example/mcp?access_token=" + urlSecret,
+				Type: "http",
+			}},
+		})
+		if err == nil {
+			t.Fatal("an ftp URL was accepted")
+		}
+		st, _ := status.FromError(err)
+		if strings.Contains(st.Message(), urlSecret) {
+			t.Fatalf("the scheme-rejection message leaked a query-string credential: %q", st.Message())
+		}
+		if strings.Contains(diag.String(), urlSecret) {
+			t.Fatalf("diagnostics leaked a query-string credential:\n%s", diag.String())
+		}
+	})
+}
+
+// TestSDKServerEnablers_Scenario9_UnknownCreateFieldIsRejected closes the review
+// finding that the HTTP create body decoded leniently.
+//
+// A client coming from the gRPC surface — or using a generated client — naturally
+// writes the protojson spelling {"mcpServers": [...]}. A lenient decoder dropped
+// it and returned 201 with a session that had none of the servers requested: the
+// same silent-degradation class as a partial mount, on the transport where it is
+// easiest to hit, with no signal anywhere.
+//
+// This is a deliberate behaviour change — a stray field used to be accepted.
+func TestSDKServerEnablers_Scenario9_UnknownCreateFieldIsRejected(t *testing.T) {
+	svc := clientMCPService(t, true, nil, nil, mockllm.New(mockllm.TextTurn("ok")))
+	srv := httpFor(t, svc)
+
+	t.Run("protojson spelling is a 400, not a silent drop", func(t *testing.T) {
+		code, body := postCreate(t, srv, map[string]any{
+			"workspace":  "/ws",
+			"mcpServers": []any{httpMCPEntry()},
+		})
+		if code != http.StatusBadRequest {
+			t.Fatalf("POST /v1/sessions = %d, want 400; a dropped mcpServers is a session missing its tools; body=%s", code, body)
+		}
+		// The error must name the offending field, or the 400 is baffling.
+		if !strings.Contains(string(body), "mcpServers") {
+			t.Fatalf("the 400 does not name the unknown field: %s", body)
+		}
+	})
+
+	t.Run("the snake_case spelling still works", func(t *testing.T) {
+		code, body := postCreate(t, srv, map[string]any{
+			"workspace":   "/ws",
+			"mcp_servers": []any{httpMCPEntry()},
+		})
+		if code != http.StatusCreated {
+			t.Fatalf("POST /v1/sessions = %d, want 201; body=%s", code, body)
+		}
+	})
+
+	t.Run("an ordinary create is unaffected", func(t *testing.T) {
+		code, body := postCreate(t, srv, map[string]any{"workspace": "/ws"})
+		if code != http.StatusCreated {
+			t.Fatalf("POST /v1/sessions = %d, want 201; body=%s", code, body)
+		}
+	})
+}
+
+// TestSDKServerEnablers_Scenario9_ClientMCPGrantIsUnforgeable pins the type-level
+// half of AC9.6.
+//
+// WithClientMCP and the CreateSession* entries are all exported, so before the
+// grant type any in-process caller could mint the option from raw specs and
+// bypass both the classifier and the deployment gate. ClientMCPGrant's field is
+// unexported, so a zero value built outside this package is EMPTY — and an empty
+// grant is inert, arming neither a mount nor strict mode. The invariant is now
+// carried by the compiler rather than by a doc comment.
+func TestSDKServerEnablers_Scenario9_ClientMCPGrantIsUnforgeable(t *testing.T) {
+	// A forged grant from outside the package is empty by construction.
+	var forged server.ClientMCPGrant
+	if !forged.IsEmpty() {
+		t.Fatal("a zero ClientMCPGrant is not empty: the bypass this type exists to close is open")
+	}
+
+	// Passing it produces an ORDINARY create, not a strict-mode session with
+	// nothing mounted (which would fail every create).
+	rec := &mcpSpecRecorder{}
+	svc := clientMCPService(t, false, rec, nil, mockllm.New(mockllm.TextTurn("ok")))
+	sess, err := svc.CreateSessionWithProfile(context.Background(), "/ws", session.ModeDefault,
+		session.Limits{}, server.ProviderSelector{}, server.ProfileDefault, server.WithClientMCP(forged))
+	if err != nil {
+		t.Fatalf("an empty grant must be a no-op, but the create failed: %v", err)
+	}
+	if sess == nil || sess.ID == "" {
+		t.Fatal("no session returned")
+	}
+	if rec.count() != 0 {
+		t.Fatalf("factory ran %d time(s): an empty grant must not force the per-session path", rec.count())
+	}
+
+	// And a REAL grant still carries its specs through (the type is not inert for
+	// the legitimate caller).
+	permitting := clientMCPService(t, true, nil, nil, mockllm.New(mockllm.TextTurn("ok")))
+	grant, err := permitting.ClientMCPFromWire([]mcp.ClientServer{{
+		Name: "notes", URL: "https://mcp.example/mcp", Type: "http",
+	}})
+	if err != nil {
+		t.Fatalf("ClientMCPFromWire: %v", err)
+	}
+	if grant.IsEmpty() {
+		t.Fatal("a minted grant is empty: ClientMCPFromWire is the one mint and it produced nothing")
 	}
 }

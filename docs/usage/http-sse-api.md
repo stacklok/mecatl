@@ -76,8 +76,16 @@ a TCP listener; every other deployment, loopback included, returns `501` /
 `features` first. Mounting is all-or-nothing: a server that does not connect fails
 the create with `503` / `client_mcp_unreachable` rather than returning a session
 quietly missing its tools. A `stdio` or `sse` entry is `400` on every deployment
-(mecatl never spawns an MCP server process), and header values are never logged,
+(mecatl never spawns an MCP server process); each `name` must be 1-64 chars of
+`[A-Za-z0-9._-]`, contain no `__`, and be unique in the request; a URL carrying
+userinfo credentials is `400` (use `headers`); and header values are never logged,
 evented, or echoed in an error.
+
+**The create body is decoded strictly.** An unrecognized field is `400` naming the
+field, rather than being silently ignored. This matters most for `mcp_servers`: the
+protojson spelling `mcpServers` used to be dropped, returning `201` for a session
+with none of the requested servers. It applies to every field on the body, so a
+client sending stray keys that previously succeeded now gets a `400`.
 
 Adoption is available only when authenticated caller ownership and a per-session engine
 factory are wired (`ServerCapabilities.legacy_adoption`). It accepts no message array or

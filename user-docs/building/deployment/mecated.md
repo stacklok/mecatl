@@ -831,6 +831,18 @@ the unreachable one means your own endpoint was down and a retry may work. A
 half-mounted session is never reported as success, since from the API it would look
 exactly like a working one while quietly missing tools.
 
+Two client-side rules are worth knowing before you wire an SDK. **Server names**
+must be 1-64 characters of `[A-Za-z0-9._-]` with no `__` and no duplicates in one
+request — they become `mcp__<name>__<tool>`, so `__` would forge another server's
+namespace and a duplicate would collide in the tool catalog. **Credentials go in
+`headers`**, never in the URL: `https://user:pass@host/mcp` is rejected, because
+the standard library turns userinfo into a `Basic` header that would bypass the
+protections `headers` values get. Anything logged or echoed shows the URL as
+`scheme://host/path`, so a token in a query string stays out of your operator log.
+
+Client endpoints also may not redirect, so a vetted URL cannot bounce the daemon on
+to a host that was never vetted. Servers you configure yourself are unaffected.
+
 One rule holds regardless of topology: transport is streaming-HTTP only. A `stdio`
 entry — or an untyped one carrying a `command` — and an `sse` entry are rejected as
 malformed requests everywhere, because mecatl never spawns an MCP server process.

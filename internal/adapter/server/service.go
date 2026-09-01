@@ -1567,15 +1567,34 @@ func WithDebugMCP(names []string) CreateSessionOption {
 	return func(o *createSessionOpts) { o.debugMCPServers = append([]string(nil), names...) }
 }
 
+// ClientMCPGrant is a DECIDED client-MCP result: specs that have passed the shared
+// classifier AND this deployment's policy gate. Only Service.ClientMCPFromWire
+// mints a non-empty one, because specs is unexported — so the invariant is carried
+// by the TYPE rather than by a doc comment asking callers to behave.
+//
+// That matters because WithClientMCP and the CreateSession* entries are all
+// exported: before this, any in-process caller (the scheduler, a future
+// composition root, a later refactor of the ACP adapter) could construct the
+// option from raw specs and bypass both the classifier and the gate. A
+// ClientMCPGrant{} built outside this package is EMPTY, which is inert — the
+// worst a bypass attempt achieves is a session with no client MCP, never an
+// unvalidated mount.
+type ClientMCPGrant struct {
+	specs []mcp.ServerConfig
+}
+
+// IsEmpty reports whether the grant carries no servers — either because the
+// request declared none, or because it is a zero value built outside this package.
+func (g ClientMCPGrant) IsEmpty() bool { return len(g.specs) == 0 }
+
 // WithClientMCP mounts client-provided streaming-HTTP MCP servers for the new
 // session's lifetime, via a per-session engine (which requires
 // Config.SessionEngine, else ErrInvalidArgument).
 //
-// specs MUST already have passed Service.ClientMCPFromWire: this option carries
-// a decided result, it does not validate. Keeping validation at the wire seam
-// rather than here is what keeps ONE classifier and ONE policy check on the
-// path, instead of a second one that a future caller could bypass by
-// constructing the option directly.
+// It takes a ClientMCPGrant, not raw specs: the grant is unforgeable outside this
+// package, so "validated and policy-checked" is a type-level fact rather than a
+// convention. This option does not validate and must not — one classifier, one
+// gate, at the wire seam.
 //
 // It also arms the ALL-OR-NOTHING mount requirement (clientMCPStrict): every
 // requested server must actually connect or the create fails. That is the wire
@@ -1583,9 +1602,16 @@ func WithDebugMCP(names []string) CreateSessionOption {
 // together rather than as a separate flag a handler could forget. The ACP path
 // (CreateSessionWithMCP) deliberately does not come through here and keeps
 // composition's best-effort behaviour.
-func WithClientMCP(specs []mcp.ServerConfig) CreateSessionOption {
+//
+// An EMPTY grant is a no-op: it arms nothing, so a caller that passes a zero
+// value gets the ordinary shared-engine create rather than a strict-mode session
+// with nothing to mount.
+func WithClientMCP(grant ClientMCPGrant) CreateSessionOption {
 	return func(o *createSessionOpts) {
-		o.clientMCP = append([]mcp.ServerConfig(nil), specs...)
+		if grant.IsEmpty() {
+			return
+		}
+		o.clientMCP = append([]mcp.ServerConfig(nil), grant.specs...)
 		o.clientMCPStrict = true
 	}
 }
@@ -2444,23 +2470,28 @@ func verifyClientMCPMounted(requested []mcp.ServerConfig, mounted []string, stri
 //     (UNIMPLEMENTED / 501), never silently dropped — a client whose servers were
 //     quietly ignored would run a session it believes has tools it does not have.
 //
-// An empty list returns nil specs and no error on EVERY deployment: sending no
-// MCP servers is not a use of the feature, so a TCP deployment must not fail an
+// An empty list returns an EMPTY grant and no error on EVERY deployment: sending
+// no MCP servers is not a use of the feature, so a TCP deployment must not fail an
 // ordinary create that merely carries an empty repeated field.
 //
+// It returns a ClientMCPGrant rather than raw specs so that "these specs were
+// classified and permitted" is enforced by the type system: WithClientMCP accepts
+// nothing else, and the grant's field is unexported, so this function is the only
+// place a non-empty one comes from.
+//
 // Header values never appear in the returned error (they are secret-shaped).
-func (s *Service) ClientMCPFromWire(servers []mcp.ClientServer) ([]mcp.ServerConfig, error) {
+func (s *Service) ClientMCPFromWire(servers []mcp.ClientServer) (ClientMCPGrant, error) {
 	if len(servers) == 0 {
-		return nil, nil
+		return ClientMCPGrant{}, nil
 	}
 	specs, err := mcp.PartitionClientServers(servers)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrInvalidArgument, err)
+		return ClientMCPGrant{}, fmt.Errorf("%w: %w", ErrInvalidArgument, err)
 	}
 	if !s.cfg.ClientMCPOnCreate {
-		return nil, fmt.Errorf("%w: this API surface is reachable over TCP; client-provided MCP servers require a UNIX-socket listener with HTTP disabled", ErrClientMCPUnsupported)
+		return ClientMCPGrant{}, fmt.Errorf("%w: this API surface is reachable over TCP; client-provided MCP servers require a UNIX-socket listener with HTTP disabled", ErrClientMCPUnsupported)
 	}
-	return specs, nil
+	return ClientMCPGrant{specs: specs}, nil
 }
 
 // CreateSessionWithMCP creates a session that mounts the client-provided
