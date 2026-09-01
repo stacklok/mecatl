@@ -2,8 +2,8 @@
 id: 03-command-help-and-docs
 title: Handle command help and living/public documentation
 blocked_by: [01-handle-projection-presentation, 02-debug-handle-resolution]
-status: in-progress
-branch: ""
+status: done
+branch: "plan-predictable-session-handles/03-command-help-and-docs"
 worktree: ".scratch/worktrees/issue-922-task03"
 issue: "922"
 retries: 0
