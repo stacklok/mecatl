@@ -1,0 +1,141 @@
+package cliconfig
+
+import (
+	"fmt"
+	"net/url"
+	"strings"
+
+	"github.com/stacklok/mecatl/internal/adapter/mcpauthority"
+	"github.com/stacklok/mecatl/internal/adapter/permconfig"
+)
+
+// MCPAuthorityOptions supplies the already-parsed operator block and command-root policy.
+type MCPAuthorityOptions struct {
+	Operator        *permconfig.MCPSection
+	Legacy          *MCPServerList
+	LookupEnv       func(string) (string, bool)
+	DefaultMode     mcpauthority.Mode
+	BrokerSupported bool
+}
+
+// ResolveMCPAuthority applies exactly one mode-specific validation and loading
+// path. Broker mode retains neutral declarations and opens no global resources.
+func ResolveMCPAuthority(opts MCPAuthorityOptions) (*mcpauthority.Result, error) {
+	mode := opts.DefaultMode
+	if mode != mcpauthority.Global && mode != mcpauthority.Broker {
+		return nil, fmt.Errorf("%w: MCP root default must be global or broker", ErrMCPProfileInvalid)
+	}
+	if opts.Operator != nil && opts.Operator.Mode != "" {
+		mode = mcpauthority.Mode(opts.Operator.Mode)
+	}
+	if mode != mcpauthority.Global && mode != mcpauthority.Broker {
+		return nil, fmt.Errorf("%w: mcp.mode must be global or broker", ErrMCPProfileInvalid)
+	}
+	if mode == mcpauthority.Broker {
+		if !opts.BrokerSupported {
+			return nil, fmt.Errorf("%w: broker MCP mode is unsupported by this command root", ErrMCPProfileInvalid)
+		}
+		if opts.Legacy != nil && len(opts.Legacy.entries) != 0 {
+			return nil, fmt.Errorf("%w: --mcp-server is global-only and conflicts with mcp.mode: broker", ErrMCPProfileInvalid)
+		}
+		return resolveBrokerAuthority(opts.Operator)
+	}
+	return resolveGlobalAuthority(opts)
+}
+
+func resolveGlobalAuthority(opts MCPAuthorityOptions) (*mcpauthority.Result, error) {
+	if opts.Operator != nil && opts.Operator.Broker.CallbackURL != "" {
+		return nil, fmt.Errorf("%w: mcp.broker.callback_url is inert in global mode", ErrMCPProfileInvalid)
+	}
+	if opts.Operator != nil {
+		for _, route := range opts.Operator.Servers {
+			if route.Auth.OAuth == nil {
+				continue
+			}
+			if route.Auth.OAuth.Upstream != nil {
+				return nil, fmt.Errorf("%w: MCP server %q: oauth upstream selection is broker-only", ErrMCPProfileInvalid, route.Name)
+			}
+			if err := validateGlobalOAuth(route); err != nil {
+				return nil, err
+			}
+		}
+	}
+	profiles, err := LoadMCPProfiles(MCPProfileLoadOptions{Operator: opts.Operator, Legacy: opts.Legacy, LookupEnv: opts.LookupEnv})
+	if err != nil {
+		return nil, err
+	}
+	return mcpauthority.NewGlobal(profiles.Servers, profiles), nil
+}
+
+func validateGlobalOAuth(route permconfig.MCPServerProfile) error {
+	oauth := route.Auth.OAuth
+	if oauth.Profile == "" || oauth.Principal == "" || oauth.Issuer == "" || len(oauth.Scopes) == 0 || oauth.Network == nil || oauth.Credentials.Mode == "" {
+		return fmt.Errorf("%w: MCP server %q: global OAuth requires profile, principal, issuer, scopes, credentials, and network", ErrMCPProfileInvalid, route.Name)
+	}
+	return nil
+}
+
+func resolveBrokerAuthority(section *permconfig.MCPSection) (*mcpauthority.Result, error) {
+	if section == nil {
+		return mcpauthority.NewBroker(mcpauthority.BrokerConfig{}), nil
+	}
+	oauthCount := 0
+	for _, route := range section.Servers {
+		switch route.Auth.Mode {
+		case "none":
+		case "static_bearer":
+			return nil, fmt.Errorf("%w: MCP server %q: static_bearer is unsupported in broker mode", ErrMCPProfileInvalid, route.Name)
+		case "oauth":
+			oauthCount++
+			if oauthCount > 1 {
+				return nil, fmt.Errorf("%w: broker mode supports at most one OAuth MCP server", ErrMCPProfileInvalid)
+			}
+			if err := validateBrokerOAuth(route); err != nil {
+				return nil, err
+			}
+		default:
+			return nil, fmt.Errorf("%w: MCP server %q: invalid auth mode", ErrMCPProfileInvalid, route.Name)
+		}
+	}
+	callback := section.Broker.CallbackURL
+	if oauthCount == 1 {
+		if err := validateBrokerCallbackURL(callback); err != nil {
+			return nil, err
+		}
+	} else if callback != "" {
+		return nil, fmt.Errorf("%w: mcp.broker.callback_url requires a broker OAuth server", ErrMCPProfileInvalid)
+	}
+	return mcpauthority.NewBroker(mcpauthority.BrokerConfig{Routes: section.Servers, CallbackURL: callback}), nil
+}
+
+func validateBrokerOAuth(route permconfig.MCPServerProfile) error {
+	oauth := route.Auth.OAuth
+	if oauth == nil || len(oauth.Scopes) == 0 || oauth.Network == nil || oauth.Client.Mode == "" {
+		return fmt.Errorf("%w: MCP server %q: broker OAuth requires client, scopes, and network", ErrMCPProfileInvalid, route.Name)
+	}
+	if oauth.Upstream == nil || oauth.Upstream.Mode == "oidc" {
+		if oauth.Issuer == "" {
+			return fmt.Errorf("%w: MCP server %q: broker OIDC requires issuer", ErrMCPProfileInvalid, route.Name)
+		}
+	} else if oauth.Upstream.Mode != "oauth2" || oauth.Upstream.OAuth2 == nil || oauth.Upstream.OAuth2.AuthorizationEndpoint == "" || oauth.Upstream.OAuth2.TokenEndpoint == "" || oauth.Issuer != "" {
+		return fmt.Errorf("%w: MCP server %q: broker OAuth2 requires explicit endpoints and forbids issuer", ErrMCPProfileInvalid, route.Name)
+	}
+	if oauth.Upstream != nil && oauth.Upstream.Mode == "oauth2" && (len(oauth.Network.AdditionalOrigins) != 0 || len(oauth.Network.PrivateOrigins) != 0 || oauth.Network.MaxRedirects != 0) {
+		return fmt.Errorf("%w: MCP server %q: broker OAuth2 network controls are unsupported", ErrMCPProfileInvalid, route.Name)
+	}
+	if oauth.Profile != "" || oauth.Principal != "" || oauth.Credentials.Mode != "" || oauth.Credentials.Local != nil || oauth.Credentials.Environment != nil {
+		return fmt.Errorf("%w: MCP server %q: broker OAuth forbids profile, principal, and credentials", ErrMCPProfileInvalid, route.Name)
+	}
+	return nil
+}
+
+func validateBrokerCallbackURL(raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil || !u.IsAbs() || u.Scheme != "https" || u.Host == "" || u.Path == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+		return fmt.Errorf("%w: mcp.broker.callback_url must be an absolute HTTPS URL with a path and without userinfo, query, or fragment", ErrMCPProfileInvalid)
+	}
+	if strings.TrimSpace(raw) != raw {
+		return fmt.Errorf("%w: mcp.broker.callback_url must not contain surrounding whitespace", ErrMCPProfileInvalid)
+	}
+	return nil
+}

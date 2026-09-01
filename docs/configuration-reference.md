@@ -244,11 +244,14 @@ OPERATOR-TIER OpenRouter downstream-provider routing (issue #480): a per-model p
 
 Tier: **operator**
 
-Strict OPERATOR-TIER named global Streamable HTTP MCP servers. Authentication is a closed none/static_bearer/oauth union; OAuth supports preregistered or CIMD clients and local or environment credentials. All secret-shaped values are MECATL_* environment references, never values in YAML. Project mcp blocks are ignored with a value-free warning.
+Strict OPERATOR-TIER Streamable HTTP MCP authority configuration. Mode selects one mutually exclusive global or session-broker authority; broker mode carries its callback configuration and neutral route declarations. Authentication is a closed none/static_bearer/oauth union. Broker OAuth may use trusted explicit OAuth2 endpoints; all secret-shaped values are MECATL_* environment references, never values in YAML. Project mcp blocks are ignored with a value-free warning.
 
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
-| `mcp.servers` | `[]mcpserverprofile` | `(absent)` | Servers is the ordered list of named global Streamable HTTP servers. |
+| `mcp.mode` | `string` | `(empty)` | Mode selects global or broker authority. Empty uses the command-root default. |
+| `mcp.broker` | `mcpbrokerprofile` | `(absent)` | Broker contains options meaningful only in broker mode. |
+| `mcp.broker.callback_url` | `string` | `(empty)` | CallbackURL is required exactly when broker mode contains an OAuth route. |
+| `mcp.servers` | `[]mcpserverprofile` | `(absent)` | Servers is the ordered list of neutral Streamable HTTP route declarations. |
 | `mcp.servers[].name` | `string` | `(empty)` | Name is an ASCII [A-Za-z0-9_]+ identifier, unique case-insensitively. |
 | `mcp.servers[].url` | `string` | `(empty)` | URL is an absolute HTTP(S) endpoint without userinfo or a fragment. |
 | `mcp.servers[].auth` | `mcpauthprofile` | `(absent)` | Auth selects exactly one of none, static_bearer, or oauth. |
@@ -256,9 +259,14 @@ Strict OPERATOR-TIER named global Streamable HTTP MCP servers. Authentication is
 | `mcp.servers[].auth.static_bearer` | `mcpstaticbearerprofile` | `(absent)` | StaticBearer names the bearer-token environment reference. |
 | `mcp.servers[].auth.static_bearer.token_env` | `string` | `(empty)` | TokenEnv is a MECATL_* environment variable name containing the opaque token. |
 | `mcp.servers[].auth.oauth` | `mcpoauthprofile` | `(absent)` | OAuth declares the OAuth identity, client, credentials, scopes, and network policy. |
-| `mcp.servers[].auth.oauth.profile` | `string` | `(empty)` | Profile is the required operator-defined credential identity profile. |
-| `mcp.servers[].auth.oauth.principal` | `string` | `(empty)` | Principal is the required operator-defined credential identity principal. |
-| `mcp.servers[].auth.oauth.issuer` | `string` | `(empty)` | Issuer is the required canonical exact HTTP(S) origin of the authorization server. |
+| `mcp.servers[].auth.oauth.profile` | `string` | `(empty)` | Profile is the required global-mode credential identity profile and is forbidden in broker mode. |
+| `mcp.servers[].auth.oauth.principal` | `string` | `(empty)` | Principal is the required global-mode credential identity principal and is forbidden in broker mode. |
+| `mcp.servers[].auth.oauth.issuer` | `string` | `(empty)` | Issuer is the canonical exact origin used by OIDC discovery. It is forbidden when Upstream explicitly selects generic OAuth2. |
+| `mcp.servers[].auth.oauth.upstream` | `mcpoauthupstreamprofile` | `(absent)` | Upstream optionally selects OIDC discovery or explicit generic OAuth2. Omitted defaults to OIDC. |
+| `mcp.servers[].auth.oauth.upstream.mode` | `string` | `(empty)` |  |
+| `mcp.servers[].auth.oauth.upstream.oauth2` | `mcpoauth2upstreamprofile` | `(absent)` |  |
+| `mcp.servers[].auth.oauth.upstream.oauth2.authorization_endpoint` | `string` | `(empty)` |  |
+| `mcp.servers[].auth.oauth.upstream.oauth2.token_endpoint` | `string` | `(empty)` |  |
 | `mcp.servers[].auth.oauth.client` | `mcpoauthclientprofile` | `(absent)` | Client selects exactly one preregistered or CIMD client declaration. |
 | `mcp.servers[].auth.oauth.client.mode` | `string` | `(empty)` | Mode is exactly preregistered or cimd. |
 | `mcp.servers[].auth.oauth.client.preregistered` | `mcppreregisteredclientprofile` | `(absent)` | Preregistered declares a confidential client registered with the issuer. |
@@ -268,7 +276,7 @@ Strict OPERATOR-TIER named global Streamable HTTP MCP servers. Authentication is
 | `mcp.servers[].auth.oauth.client.cimd.document_url` | `string` | `(empty)` | DocumentURL is the required HTTPS metadata-document URL. |
 | `mcp.servers[].auth.oauth.scopes` | `[]string` | `(absent)` | Scopes is the non-empty allowlist of OAuth scopes the client may request. |
 | `mcp.servers[].auth.oauth.request_refresh_token` | `bool` | `false` | RequestRefreshToken asks the authorization server for refresh capability. |
-| `mcp.servers[].auth.oauth.credentials` | `mcpoauthcredentialprofile` | `(absent)` | Credentials selects exactly one local or environment credential source. |
+| `mcp.servers[].auth.oauth.credentials` | `mcpoauthcredentialprofile` | `(absent)` | Credentials selects one global-mode local or environment credential source and is forbidden in broker mode. |
 | `mcp.servers[].auth.oauth.credentials.mode` | `string` | `(empty)` | Mode is exactly local or environment. |
 | `mcp.servers[].auth.oauth.credentials.local` | `mcplocalcredentialprofile` | `(absent)` | Local declares encrypted mutable credentials rooted at an absolute path. |
 | `mcp.servers[].auth.oauth.credentials.local.root` | `string` | `(empty)` | Root is the required absolute credential-store root. |

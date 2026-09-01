@@ -359,72 +359,68 @@
 #|         allow_fallbacks: false
 
 #| === mcp === (tier: operator)
-#| Strict OPERATOR-TIER named global Streamable HTTP MCP servers. Authentication is a
-#| closed none/static_bearer/oauth union; OAuth supports preregistered or CIMD clients
-#| and local or environment credentials. All secret-shaped values are MECATL_*
-#| environment references, never values in YAML. Project mcp blocks are ignored with a
-#| value-free warning.
+#| Strict OPERATOR-TIER Streamable HTTP MCP authority configuration. Mode selects one
+#| mutually exclusive global or session-broker authority; broker mode carries its
+#| callback configuration and neutral route declarations. Authentication is a closed
+#| none/static_bearer/oauth union. Broker OAuth may use trusted explicit OAuth2
+#| endpoints; all secret-shaped values are MECATL_* environment references, never values
+#| in YAML. Project mcp blocks are ignored with a value-free warning.
 # mcp:
-#   # Servers is the ordered list of named global Streamable HTTP servers.
+#   # Mode selects global or broker authority. Empty uses the command-root default.
+#   mode: ""
+#   # Broker contains options meaningful only in broker mode.
+#   broker:
+#     # CallbackURL is required exactly when broker mode contains an OAuth route.
+#     callback_url: ""
+#   # Servers is the ordered list of neutral Streamable HTTP route declarations.
 #   servers: []
 #|
 #| Example:
 #|   mcp:
+#|     mode: broker
+#|     broker:
+#|       callback_url: https://agent.example/v1/mcp/authorization/callback
 #|     servers:
-#|       - name: public
-#|         url: https://mcp.example.com/public
+#|       - name: docs
+#|         url: https://modelcontextprotocol.io/mcp
 #|         auth:
 #|           mode: none
-#|       - name: static_api
-#|         url: https://mcp.example.com/static
-#|         auth:
-#|           mode: static_bearer
-#|           static_bearer:
-#|             token_env: MECATL_MCP_STATIC_TOKEN
 #|       - name: github
-#|         url: https://mcp.example.com/mcp
+#|         url: https://api.githubcopilot.com/mcp/
 #|         auth:
 #|           mode: oauth
 #|           oauth:
-#|             profile: work
-#|             principal: alice@example.com
-#|             issuer: https://id.example.com
+#|             upstream:
+#|               mode: oauth2
+#|               oauth2:
+#|                 authorization_endpoint: https://github.com/login/oauth/authorize
+#|                 token_endpoint: https://github.com/login/oauth/access_token
 #|             client:
 #|               mode: preregistered
 #|               preregistered:
-#|                 id: mecatl-local
-#|                 secret_env: MECATL_MCP_GITHUB_CLIENT_SECRET
-#|             scopes: [mcp.read, mcp.write]
+#|                 id: mecatl-github-mcp
+#|                 secret_env: MECATL_GITHUB_MCP_CLIENT_SECRET
+#|             scopes: [repo]
 #|             request_refresh_token: true
-#|             credentials:
-#|               mode: local
-#|               local:
-#|                 root: /home/alice/.local/state/mecatl/credentials
-#|                 key_env: MECATL_MCP_CREDENTIAL_KEY
-#|             network:
-#|               additional_origins: []
-#|               private_origins: []
-#|               max_redirects: 0
-#|       - name: cluster_tools
-#|         url: https://tools.example.com/mcp
-#|         auth:
-#|           mode: oauth
-#|           oauth:
-#|             profile: cluster
-#|             principal: service-account:mecatl
-#|             issuer: https://issuer.example.com
-#|             client:
-#|               mode: cimd
-#|               cimd:
-#|                 document_url: https://client.example.com/mecatl.json
-#|             scopes: [mcp.read]
-#|             request_refresh_token: false
-#|             credentials:
-#|               mode: environment
-#|               environment:
-#|                 credential_env: MECATL_MCP_CLUSTER_CREDENTIAL
-#|                 allow_process_local_refresh: false
-#|             network:
-#|               additional_origins: [https://client.example.com]
-#|               private_origins: []
-#|               max_redirects: 0
+#|             network: {}
+#|     # Global mode additionally supports static_bearer and OIDC identity profiles:
+#|     # static_bearer:
+#|     #   token_env: MECATL_MCP_STATIC_TOKEN
+#|     # profile: work
+#|     # principal: alice@example.com
+#|     # issuer: https://id.example.com
+#|     # client:
+#|     #   cimd:
+#|     #     document_url: https://client.example.com/mecatl.json
+#|     # credentials:
+#|     #   mode: local
+#|     #   local:
+#|     #     root: /home/operator/.local/state/mecatl/credentials
+#|     #     key_env: MECATL_MCP_CREDENTIAL_KEY
+#|     #   environment:
+#|     #     credential_env: MECATL_MCP_CREDENTIAL_RECORD
+#|     #     allow_process_local_refresh: false
+#|     # network:
+#|     #   additional_origins: []
+#|     #   private_origins: []
+#|     #   max_redirects: 0

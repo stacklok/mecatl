@@ -52,10 +52,13 @@ func authoritativeKeys() []string {
 	collect("openrouter", permconfig.OpenRouterSection{})
 	collect("openrouter.models", permconfig.OpenRouterModelRoute{})
 	collect("mcp", permconfig.MCPSection{})
+	collect("mcp.broker", permconfig.MCPBrokerProfile{})
 	collect("mcp.servers", permconfig.MCPServerProfile{})
 	collect("mcp.servers.auth", permconfig.MCPAuthProfile{})
 	collect("mcp.servers.auth.static_bearer", permconfig.MCPStaticBearerProfile{})
 	collect("mcp.servers.auth.oauth", permconfig.MCPOAuthProfile{})
+	collect("mcp.servers.auth.oauth.upstream", permconfig.MCPOAuthUpstreamProfile{})
+	collect("mcp.servers.auth.oauth.upstream.oauth2", permconfig.MCPOAuth2UpstreamProfile{})
 	collect("mcp.servers.auth.oauth.client", permconfig.MCPOAuthClientProfile{})
 	collect("mcp.servers.auth.oauth.client.preregistered", permconfig.MCPPreregisteredClientProfile{})
 	collect("mcp.servers.auth.oauth.client.cimd", permconfig.MCPCIMDClientProfile{})
@@ -159,8 +162,10 @@ func TestMCPArtifactsShowStrictUnionWithoutSecretValues(t *testing.T) {
 	skeleton := configgen.RenderSkeleton(model)
 	reference := configgen.RenderReference(model)
 	for _, want := range []string{
-		"mode: none", "mode: static_bearer", "mode: oauth",
-		"token_env: MECATL_MCP_STATIC_TOKEN", "secret_env: MECATL_MCP_GITHUB_CLIENT_SECRET",
+		"mode: broker", "mode: none", "mode: oauth", "mode: oauth2",
+		"authorization_endpoint: https://github.com/login/oauth/authorize",
+		"token_endpoint: https://github.com/login/oauth/access_token",
+		"secret_env: MECATL_GITHUB_MCP_CLIENT_SECRET", "token_env: MECATL_MCP_STATIC_TOKEN",
 		"key_env: MECATL_MCP_CREDENTIAL_KEY",
 	} {
 		if !strings.Contains(skeleton, want) {
@@ -168,7 +173,12 @@ func TestMCPArtifactsShowStrictUnionWithoutSecretValues(t *testing.T) {
 		}
 	}
 	for _, want := range []string{
+		"`mcp.mode`",
+		"`mcp.broker.callback_url`",
 		"`mcp.servers[].auth.mode`",
+		"`mcp.servers[].auth.oauth.upstream.mode`",
+		"`mcp.servers[].auth.oauth.upstream.oauth2.authorization_endpoint`",
+		"`mcp.servers[].auth.oauth.upstream.oauth2.token_endpoint`",
 		"`mcp.servers[].auth.oauth.client.preregistered.secret_env`",
 		"`mcp.servers[].auth.oauth.client.cimd.document_url`",
 		"`mcp.servers[].auth.oauth.credentials.environment.credential_env`",
