@@ -768,7 +768,7 @@ tasks:
       - cd provider/openaichat && GOWORK=off go mod tidy
 
   generate:
-    desc: Regenerate contracts/gen from contracts/proto via buf
+    desc: Regenerate Go and TypeScript contracts from contracts/proto via buf
     cmds:
       # Regenerates the gRPC contracts — the harness API (contracts/proto/
       # mecatl/v1) AND the store-driver protocol (contracts/proto/mecatl/
@@ -780,6 +780,7 @@ tasks:
           if [ -f buf.gen.yaml ] && [ -d contracts/proto ]; then
             command -v buf >/dev/null 2>&1 || { echo "buf not found; install: https://buf.build/docs/installation"; exit 1; }
             buf generate
+            buf generate --template buf.gen.ts.yaml
           else
             echo "skip generate: buf.gen.yaml and/or contracts/proto not present"
           fi

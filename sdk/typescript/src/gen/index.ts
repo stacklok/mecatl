@@ -1,8 +1,2 @@
-/**
- * Generated mecatl protobuf types and service descriptors.
- *
- * Scenario 2 replaces this placeholder with protobuf-es output.
- *
- * @packageDocumentation
- */
-export {};
+export * from "./mecatl/v1/harness_pb.js";
+export * from "./mecatl/v1/schedule_pb.js";

@@ -1,5 +1,13 @@
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -7,6 +15,7 @@ import { gunzipSync } from "node:zlib";
 import { afterAll, beforeAll, expect, test } from "vitest";
 
 type PackageJson = {
+  dependencies: Record<string, string>;
   exports: Record<"." | "./gen" | "./node", { import: string; types: string }>;
   license: string;
   name: string;
@@ -83,6 +92,12 @@ beforeAll(() => {
     mkdirSync(dirname(destination), { recursive: true });
     writeFileSync(destination, content);
   }
+  for (const dependency of Object.keys(packageJson.dependencies)) {
+    const dependencyPath = dependency.split("/");
+    const destination = join(consumerRoot, "node_modules", ...dependencyPath);
+    mkdirSync(dirname(destination), { recursive: true });
+    symlinkSync(join(packageRoot, "node_modules", ...dependencyPath), destination, "junction");
+  }
 }, 60_000);
 
 afterAll(() => {
@@ -130,10 +145,22 @@ test("packed tarball carries dist and license only", () => {
   const expectedFiles = [
     "package/LICENSE",
     "package/README.md",
+    "package/dist/gen/buf/validate/validate_pb.d.ts",
+    "package/dist/gen/buf/validate/validate_pb.d.ts.map",
+    "package/dist/gen/buf/validate/validate_pb.js",
+    "package/dist/gen/buf/validate/validate_pb.js.map",
     "package/dist/gen/index.d.ts",
     "package/dist/gen/index.d.ts.map",
     "package/dist/gen/index.js",
     "package/dist/gen/index.js.map",
+    "package/dist/gen/mecatl/v1/harness_pb.d.ts",
+    "package/dist/gen/mecatl/v1/harness_pb.d.ts.map",
+    "package/dist/gen/mecatl/v1/harness_pb.js",
+    "package/dist/gen/mecatl/v1/harness_pb.js.map",
+    "package/dist/gen/mecatl/v1/schedule_pb.d.ts",
+    "package/dist/gen/mecatl/v1/schedule_pb.d.ts.map",
+    "package/dist/gen/mecatl/v1/schedule_pb.js",
+    "package/dist/gen/mecatl/v1/schedule_pb.js.map",
     "package/dist/index.d.ts",
     "package/dist/index.d.ts.map",
     "package/dist/index.js",
@@ -151,6 +178,10 @@ test("packed tarball carries dist and license only", () => {
   ) as PackageJson;
   expect(packedPackageJson.name).toBe("@stacklok/mecatl-sdk");
   expect(packedPackageJson.license).toBe("Apache-2.0");
+  expect(packedPackageJson.dependencies).toEqual({
+    "@bufbuild/protobuf": "2.14.0",
+    "@connectrpc/connect": "2.1.2",
+  });
   expect(packedFiles.get("package/LICENSE")?.toString("utf8")).toContain(
     "Apache License\n                           Version 2.0",
   );

@@ -171,6 +171,12 @@ jobs:
       - name: Verify SDK API reports
         run: task sdk:api:check
 
+      - name: Verify generated contracts are fresh
+        run: |
+          buf generate
+          buf generate --template buf.gen.ts.yaml
+          git diff --exit-code -- contracts/gen sdk/typescript/src/gen
+
   build:
     name: Build
     needs: changes

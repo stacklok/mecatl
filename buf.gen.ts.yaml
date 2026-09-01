@@ -1,0 +1,24 @@
+version: v2
+managed:
+  enabled: true
+  override:
+    - file_option: go_package_prefix
+      value: github.com/stacklok/mecatl/contracts/gen/go
+  # Keep this template's serialized descriptors consistent with the Go
+  # template without rewriting protovalidate's canonical Go module path.
+  disable:
+    - module: buf.build/bufbuild/protovalidate
+      file_option: go_package_prefix
+plugins:
+  - remote: buf.build/bufbuild/es:v2.14.0
+    out: sdk/typescript/src/gen
+    # harness.proto and schedule.proto embed buf.validate annotations in their
+    # descriptors, so the generated validation descriptor is a runtime import.
+    include_imports: true
+    opt:
+      - target=ts
+      - import_extension=js
+inputs:
+  - directory: contracts/proto
+    paths:
+      - contracts/proto/mecatl/v1

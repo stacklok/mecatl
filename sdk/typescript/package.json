@@ -44,5 +44,9 @@
     "@types/node": "24.13.3",
     "typescript": "6.0.3",
     "vitest": "4.1.11"
+  },
+  "dependencies": {
+    "@bufbuild/protobuf": "2.14.0",
+    "@connectrpc/connect": "2.1.2"
   }
 }
