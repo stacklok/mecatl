@@ -125,9 +125,9 @@ func TestADR_0254_AttemptControlsAreNonDisclosingBeforeSideEffects(t *testing.T)
 }
 
 func TestADR_0254_AttemptControlsRequirePrivateOwnerBinding(t *testing.T) {
-	now := time.Date(2026, time.September, 1, 12, 0, 0, 0, time.UTC)
 	repository := memattempt.New(wallclock.Clock{})
 	failed := createAttemptFixture(t, repository, "alice", "failed")
+	now := failed.CreatedAt.Add(time.Second)
 	alicePartition, err := learning.DeriveAttemptPartition(reflectionPrincipal(&session.Principal{Issuer: "https://issuer.example", Subject: "alice"}))
 	if err != nil {
 		t.Fatal(err)
