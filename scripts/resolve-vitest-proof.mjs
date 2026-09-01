@@ -32,12 +32,11 @@ if (
   reject("test path must stay under sdk/typescript/");
 }
 
-let expectedTitle;
-try {
-  expectedTitle = Buffer.from(proof.slice(separator + 1), "base64url").toString("utf8");
-} catch (error) {
-  reject(`invalid base64url title: ${error instanceof Error ? error.message : String(error)}`);
+const encodedTitle = proof.slice(separator + 1);
+if (!/^[A-Za-z0-9_-]+$/.test(encodedTitle)) {
+  reject("title must use unpadded base64url encoding");
 }
+const expectedTitle = Buffer.from(encodedTitle, "base64url").toString("utf8");
 if (expectedTitle.length === 0) {
   reject("test title must not be empty");
 }

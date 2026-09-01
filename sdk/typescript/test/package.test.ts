@@ -63,9 +63,15 @@ beforeAll(() => {
     stdio: "pipe",
   });
 
-  const archives = readdirSync(fixtureRoot).filter((name) => name.endsWith(".tgz"));
-  expect(archives).toHaveLength(1);
-  packedFiles = readPackedFiles(join(fixtureRoot, archives[0] as string));
+  const [archive, ...extraArchives] = readdirSync(fixtureRoot).filter((name) =>
+    name.endsWith(".tgz"),
+  );
+  expect(archive).toBeDefined();
+  expect(extraArchives).toHaveLength(0);
+  if (archive === undefined) {
+    throw new Error("pnpm pack did not create an archive");
+  }
+  packedFiles = readPackedFiles(join(fixtureRoot, archive));
 
   consumerRoot = join(fixtureRoot, "consumer");
   const installedRoot = join(consumerRoot, "node_modules", "@stacklok", "mecatl-sdk");

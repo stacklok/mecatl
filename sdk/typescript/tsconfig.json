@@ -16,7 +16,7 @@
     "forceConsistentCasingInFileNames": true,
     "skipLibCheck": false,
     "noEmit": true,
-    "types": ["node", "vitest/globals"]
+    "types": ["node"]
   },
   "include": ["src/**/*.ts", "test/**/*.ts", "vitest.config.ts"]
 }
