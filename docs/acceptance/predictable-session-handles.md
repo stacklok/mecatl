@@ -175,8 +175,9 @@ in [`AGENTS.md`](../../AGENTS.md) requires both living docs and `user-docs/` cov
 - AC3.3: Header, `/sessions`, debugger-target presentation, terminal title, status input, and
   shipped StatusML templates use the same handle grammar. The cross-boundary table proves its edge
   cases and that only ordinary presentation changes; `InspectSession` scope/history handles,
-  evidence digests, and target+incarnation cryptographic handles remain unchanged. UI tests import
-  neither proto nor gRPC; the transport-spanning rendered-header proof is composition-level.
+  evidence digests, and target+incarnation cryptographic handles remain unchanged. The relocated
+  transport-spanning proof is composition-level and introduces no new proto/gRPC dependency into
+  `cmd/mecatui/ui`.
   - verify: `TestPredictableSessionHandles_Scenario3_PresentationParitySafetyAndLayering`
 - AC3.4: The landed session-continuity plan's AC4.2 and AC4.3 point directly to current ADR-0280
   scenario tests. Stale `TestADR_0108_DisplayDigestIsNotAnID`, digest-named compatibility aliases,
@@ -197,7 +198,7 @@ in [`AGENTS.md`](../../AGENTS.md) requires both living docs and `user-docs/` cov
 | unique, multiple, or zero projected-ID matches | unique sends the exact ID; multiple/zero stop before create with `/session` and `--exact` guidance | resolver table tests |
 | explicit `--exact SESSION_ID` | bypass inventory and send the supplied valid ID unchanged; mutually exclusive with positional operand | embedded + connected CLI tests |
 | normal header, `/sessions` row, debugger chrome, terminal title, status input/templates | same ordinary handle literal; no rendering inventory dependency | presentation parity + composition integration tests |
-| `cmd/mecatui/ui` package and tests | no protobuf or gRPC imports; transport-spanning proof lives in `cmd/mecatui` | layering + integration tests |
+| relocated header-to-debug proof | introduces no proto or gRPC dependency into `cmd/mecatui/ui`; transport-spanning proof lives in `cmd/mecatui` | layering + integration tests |
 | `InspectSession` related/history, evidence/manifest digest, target+incarnation handles | unchanged debugger-specific contracts | ADR-0254/0256/0258 regression test |
 
 ## Out of scope

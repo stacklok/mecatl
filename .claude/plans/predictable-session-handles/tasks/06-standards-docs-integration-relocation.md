@@ -2,8 +2,8 @@
 id: 06-standards-docs-integration-relocation
 title: ADR-0280 standards repair, documentation, and integration-test relocation
 blocked_by: [05-resolver-exact-semantics-api-cleanup]
-status: in-progress
-branch: ""
+status: done
+branch: "plan-predictable-session-handles/06-standards-docs-integration-relocation"
 worktree: ".scratch/worktrees/issue-922-task06"
 issue: "922"
 retries: 0
@@ -52,8 +52,9 @@ unchanged. Regenerate docs as required and run the acceptance trace checks.
 - AC3.3: Header, `/sessions`, debugger-target presentation, terminal title, status input, and
   shipped StatusML templates use the same handle grammar. The cross-boundary table proves its edge
   cases and that only ordinary presentation changes; `InspectSession` scope/history handles,
-  evidence digests, and target+incarnation cryptographic handles remain unchanged. UI tests import
-  neither proto nor gRPC; the transport-spanning rendered-header proof is composition-level.
+  evidence digests, and target+incarnation cryptographic handles remain unchanged. The relocated
+  transport-spanning proof is composition-level and introduces no new proto/gRPC dependency into
+  `cmd/mecatui/ui`.
   - verify: `TestPredictableSessionHandles_Scenario3_PresentationParitySafetyAndLayering`
 - AC3.4: The landed session-continuity plan's AC4.2 and AC4.3 point directly to current ADR-0280
   scenario tests. Stale `TestADR_0108_DisplayDigestIsNotAnID`, digest-named compatibility aliases,
