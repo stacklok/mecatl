@@ -45,29 +45,39 @@ const (
 )
 
 // EnvironmentRef is the cycle-safe identity value an Environment carries. It
-// names the backend family (Kind) and an opaque backend identity (ID) the
-// adapter that minted the Environment owns. The session package owns it (not
-// the tool package) so it CAN ride the session snapshot and event log without
-// pulling tool types in — it is the identity half of the Environment seam,
-// kept separate from the capability half (tool.Environment).
+// names the backend family (Kind), an opaque backend identity (ID), and the
+// exact provider inventory generation (Revision) the adapter that minted the
+// Environment owns. The session package owns it (not the tool package) so it
+// CAN ride the session snapshot and event log without pulling tool types in —
+// it is the identity half of the Environment seam, kept separate from the
+// capability half (tool.Environment).
 //
 // PHASE 3 (ADR 0214): this is a DURABLE identity. It persists on the snapshot
 // (sessnap.Snapshot.EnvironmentRef) so a restarted process can reattach a live
-// Environment to the SAME backend. The session package interprets NEITHER
-// field — it only stores and carries them. A zero ref restored from a legacy
+// Environment to the SAME backend. The session package interprets none of the
+// components — it only stores and carries them. A zero ref restored from a legacy
 // snapshot is stamped from the first successfully resolved live Environment so
 // the next ordinary save persists it (no migration sweep).
 //
 // Kind is a backend FAMILY label (see EnvironmentKind); ID is opaque backend
-// identity (a workspace root, a remote container id, …). Both are compared by
-// plain equality; the session package interprets NEITHER — it only stores and
-// carries them. The zero value {Kind:"", ID:""} is the "unspecified" ref and
-// never names a real backend; it is what an Environment built without a ref
-// (legacy/test paths) carries.
+// identity (a workspace root, a remote container id, …); Revision pins the
+// exact provider inventory generation. All three are compared by plain
+// equality; the session package interprets none of them — it only stores and
+// carries them. The zero value is the "unspecified" ref and never names a real
+// backend; it is what an Environment built without a ref (legacy/test paths)
+// carries.
 type EnvironmentRef struct {
 	// Kind names the backend family (local / mem / nofs / …).
 	Kind EnvironmentKind
 	// ID is the opaque backend identity the adapter that minted the
 	// Environment owns. It is never parsed by the session package.
 	ID string
+	// Revision pins the exact provider inventory generation.
+	Revision string
+}
+
+// Valid reports whether every component required for exact reattachment is
+// present. The session domain deliberately does not interpret any component.
+func (r EnvironmentRef) Valid() bool {
+	return r.Kind != "" && r.ID != "" && r.Revision != ""
 }

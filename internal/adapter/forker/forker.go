@@ -350,7 +350,7 @@ func (f *Forker) childEnv(base tool.Environment, ws tool.Workspace) (tool.Enviro
 	if f.newRunner != nil {
 		runner = f.newRunner(root)
 	}
-	ref := session.EnvironmentRef{Kind: base.Ref().Kind, ID: root}
+	ref := session.EnvironmentRef{Kind: base.Ref().Kind, ID: root, Revision: base.Ref().Revision}
 	return tool.NewEnvironment(ref, ws, runner)
 }
 

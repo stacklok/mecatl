@@ -64,14 +64,11 @@ func (p *localPlacementProvider) bindLocal() (server.PlacementBinding, error) {
 	if ws == nil {
 		return server.PlacementBinding{}, server.ErrPlacementUnavailable
 	}
-	ref := session.PlacementRef{
-		Kind: session.PlacementKind(session.EnvKindLocal), ID: localDefaultPlacementID,
+	ref := session.EnvironmentRef{
+		Kind: session.EnvKindLocal, ID: localDefaultPlacementID,
 		Revision: localDefaultPlacementRevision,
 	}
-	env, err := tool.NewEnvironment(
-		session.EnvironmentRef{Kind: session.EnvKindLocal, ID: ref.ID},
-		ws, p.runnerForRoot(p.root),
-	)
+	env, err := tool.NewEnvironment(ref, ws, p.runnerForRoot(p.root))
 	if err != nil {
 		return server.PlacementBinding{}, server.ErrPlacementUnavailable
 	}
@@ -83,14 +80,11 @@ func (p *localPlacementProvider) bindLocal() (server.PlacementBinding, error) {
 }
 
 func (*localPlacementProvider) bindNoFS() (server.PlacementBinding, error) {
-	ref := session.PlacementRef{
-		Kind: session.PlacementKind(session.EnvKindNoFS), ID: noFSPlacementID,
+	ref := session.EnvironmentRef{
+		Kind: session.EnvKindNoFS, ID: noFSPlacementID,
 		Revision: noFSPlacementRevision,
 	}
-	env, err := tool.NewEnvironment(
-		session.EnvironmentRef{Kind: session.EnvKindNoFS, ID: ref.ID},
-		nofs.New(), nil,
-	)
+	env, err := tool.NewEnvironment(ref, nofs.New(), nil)
 	if err != nil {
 		return server.PlacementBinding{}, server.ErrPlacementUnavailable
 	}

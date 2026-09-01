@@ -11,9 +11,9 @@ import (
 	"github.com/stacklok/mecatl/engine/tool"
 )
 
-func placementTestEnvironment(ref session.PlacementRef) tool.Environment {
+func placementTestEnvironment(ref session.EnvironmentRef) tool.Environment {
 	return tool.MustEnvironment(
-		session.EnvironmentRef{Kind: session.EnvironmentKind(ref.Kind), ID: ref.ID},
+		ref,
 		memfs.NewWorkspace("/placement"),
 		nil,
 	)
@@ -47,7 +47,7 @@ func TestADR_0280_BindRejectsRebindBetweenAuthorizationAndResolution(t *testing.
 			return PlacementBinding{}, ErrPlacementChanged
 		}
 		environmentConstructions++
-		ref := session.PlacementRef{Kind: "worktree", ID: "wt-opaque-7", Revision: revision}
+		ref := session.EnvironmentRef{Kind: "worktree", ID: "wt-opaque-7", Revision: revision}
 		return PlacementBinding{Environment: placementTestEnvironment(ref), Ref: ref}, nil
 	})
 	binder, err := NewPlacementBinder(provider)
@@ -151,10 +151,11 @@ func TestPlacementBinderRejectsMismatchedOrUnsafeProviderOutput(t *testing.T) {
 		name    string
 		binding PlacementBinding
 	}{
-		{name: "nil workspace", binding: PlacementBinding{Ref: session.PlacementRef{Kind: "remote", ID: "r1", Revision: "v1"}}},
-		{name: "missing revision", binding: PlacementBinding{Ref: session.PlacementRef{Kind: "remote", ID: "r1"}, Environment: placementTestEnvironment(session.PlacementRef{Kind: "remote", ID: "r1"})}},
-		{name: "mismatched identity", binding: PlacementBinding{Ref: session.PlacementRef{Kind: "remote", ID: "r1", Revision: "v1"}, Environment: placementTestEnvironment(session.PlacementRef{Kind: "remote", ID: "r2"})}},
-		{name: "unsafe metadata", binding: PlacementBinding{Ref: session.PlacementRef{Kind: "remote", ID: "r1", Revision: "v1"}, Environment: placementTestEnvironment(session.PlacementRef{Kind: "remote", ID: "r1"}), Metadata: PlacementMetadata{Name: "bad\nname"}}},
+		{name: "nil workspace", binding: PlacementBinding{Ref: session.EnvironmentRef{Kind: "remote", ID: "r1", Revision: "v1"}}},
+		{name: "missing revision", binding: PlacementBinding{Ref: session.EnvironmentRef{Kind: "remote", ID: "r1"}, Environment: placementTestEnvironment(session.EnvironmentRef{Kind: "remote", ID: "r1"})}},
+		{name: "mismatched identity", binding: PlacementBinding{Ref: session.EnvironmentRef{Kind: "remote", ID: "r1", Revision: "v1"}, Environment: placementTestEnvironment(session.EnvironmentRef{Kind: "remote", ID: "r2", Revision: "v1"})}},
+		{name: "mismatched revision", binding: PlacementBinding{Ref: session.EnvironmentRef{Kind: "remote", ID: "r1", Revision: "v1"}, Environment: placementTestEnvironment(session.EnvironmentRef{Kind: "remote", ID: "r1", Revision: "v2"})}},
+		{name: "unsafe metadata", binding: PlacementBinding{Ref: session.EnvironmentRef{Kind: "remote", ID: "r1", Revision: "v1"}, Environment: placementTestEnvironment(session.EnvironmentRef{Kind: "remote", ID: "r1"}), Metadata: PlacementMetadata{Name: "bad\nname"}}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

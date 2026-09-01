@@ -13,7 +13,7 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 ### Added
 
-- **Provider-owned placement values** — adds `session.PlacementRef{Kind, ID, Revision}` and the closed default/no-FS/opaque-ID `session.PlacementSelector` vocabulary for exact, non-path session placement. Added (minor).
+- **Unified environment and placement identity** — adds `Revision` and `Valid` to `session.EnvironmentRef`, makes that exact `{Kind, ID, Revision}` value the runtime and durable placement identity, and removes the short-lived duplicate `session.PlacementRef`/`PlacementKind` types. Engine-created Subagent, Parallel, and Team child sessions now persist the identity carried by their `tool.Environment`. Changed (breaking, pre-v1 minor).
 
 - **`port.CursorEventLog`, `port.Cursor`, `port.EncodeCursor`/`DecodeCursor`, `port.LogRecord`/`LogRecordKind`, `port.ReadOptions`, `port.ErrCursorMalformed`/`ErrCursorExpired`** (issue #821, [ADR 0250](../docs/adr/0250-durable-cursors-and-watch.md)) — durable positions over the event log: an append reports WHERE the record landed, and a read resumes from a position rather than always from the start.
 

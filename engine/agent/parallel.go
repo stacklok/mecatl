@@ -1063,13 +1063,13 @@ func (t *ParallelTool) runBranch(ctx context.Context, callID session.ToolCallID,
 	if caps.parentSessionID == "" {
 		// Direct Tool.Execute has no parent aggregate identity. Classify that
 		// custom-host path unknown rather than fabricating lineage or granting main.
-		childSess = session.New(t.childSessionID("", callID, i), t.childMode,
-			childEnv.Workspace().Root(), t.limits, branchEngine.now())
+		childSess = newChildSessionInEnvironment(t.childSessionID("", callID, i), t.childMode,
+			childEnv, t.limits, branchEngine.now())
 		err = childSess.RestoreSessionMetadata(session.SessionKindUnknown, session.SessionRelationship{})
 	} else {
-		childSess, err = session.NewParallelBranch(
+		childSess, err = newParallelBranchSessionInEnvironment(
 			t.childSessionID(caps.parentSessionID, callID, i), t.childMode,
-			childEnv.Workspace().Root(), t.limits, branchEngine.now(),
+			childEnv, t.limits, branchEngine.now(),
 			caps.parentSessionID, caps.parentIncarnation, callID, i)
 	}
 	if err != nil {

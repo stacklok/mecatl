@@ -51,11 +51,11 @@
     method func (*Session).StopReason() (StopReason, bool)
     method func (Authority).Clone() Authority
     method func (Authority).Valid() bool
+    method func (EnvironmentRef).Valid() bool
     method func (GrantType).Valid() bool
     method func (IncarnationID).Valid() bool
     method func (Limits).WithDefaults(d Limits) Limits
     method func (PendingAsk).Origin() AskOrigin
-    method func (PlacementRef).Valid() bool
     method func (PlacementSelector).Valid() bool
     method func (RetryDisposition).Valid() bool
     method func (State).IsTerminal() bool
@@ -279,7 +279,7 @@ type Content struct{BlockKind BlockKind "json:\"block_kind,omitempty\""; Kind Me
 type Conversation struct{Messages []Message}
 type Counters struct{Turns int; ToolCalls int; ConsecutiveFailures int}
 type EnvironmentKind string
-type EnvironmentRef struct{Kind EnvironmentKind; ID string}
+type EnvironmentRef struct{Kind EnvironmentKind; ID string; Revision string}
 type Event struct{Type EventType; Seq int64; Turn int; Text string; ToolCall *ToolCall; ToolResult *ToolResult; Ask *PendingAsk; ModelRetry *ModelRetryPayload; RequestManifest *RequestManifestPayload; NetworkAttempt *NetworkAttemptPayload; Result *ResultPayload; TurnEnd *TurnEndPayload; Hook *HookPayload; Approval *ApprovalPayload; CompactionArchive *CompactionArchivePayload; UserPrompt *UserPromptPayload; Usage *Usage; Subagent *SubagentPayload; Team *TeamPayload; Parallel *ParallelPayload; RunID string; Actor *Principal; Schedule *SchedulePayload; Steer *SteerPayload}
 type EventType string
 type GrantType string
@@ -295,8 +295,6 @@ type ParallelEventKind string
 type ParallelPayload struct{ParentCallID string; Kind ParallelEventKind; Join string; BranchCount int; BranchIndex int; ChildID string; ChildIncarnation IncarnationID; BranchLabel string; Goal string; RoutedCategory string; RoutedModel string; RoutingReason string; Model string; ToolName string; IsError bool; ToolCount int; Text string; Detail string; InnerKind EventType; Failed bool; Workspace string; Stop StopReason; Usage Usage; DurationMs int64; Winner int; WinnerWorkspace string}
 type PendingAsk struct{AskID string; Tool string; Args json.RawMessage; Reason string; Call ToolCallID "json:\"call,omitempty\""; ConfiguredAsk bool; FlooredConfiguredAllow bool; HookOriginated bool "json:\"hook_originated,omitempty\""; PlanOriginated bool "json:\"plan_originated,omitempty\""}
 type PermissionMode string
-type PlacementKind string
-type PlacementRef struct{Kind PlacementKind; ID string; Revision string}
 type PlacementSelector struct{Kind PlacementSelectorKind; ID string}
 type PlacementSelectorKind string
 type Principal struct{Issuer string; Subject string; GrantType GrantType; Name string}

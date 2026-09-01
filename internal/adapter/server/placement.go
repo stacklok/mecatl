@@ -58,7 +58,7 @@ type PlacementMetadata struct {
 // PlacementBinding is the indivisible successful result of Bind.
 type PlacementBinding struct {
 	Environment tool.Environment
-	Ref         session.PlacementRef
+	Ref         session.EnvironmentRef
 	Metadata    PlacementMetadata
 }
 
@@ -157,8 +157,7 @@ func validatePlacementBinding(binding PlacementBinding) error {
 	if binding.Environment.Workspace() == nil {
 		return ErrInvalidPlacementBinding
 	}
-	envRef := binding.Environment.Ref()
-	if string(envRef.Kind) != string(binding.Ref.Kind) || envRef.ID != binding.Ref.ID {
+	if binding.Environment.Ref() != binding.Ref {
 		return ErrInvalidPlacementBinding
 	}
 	if !safeOptionalPlacementText(binding.Metadata.Name, maxPlacementNameRunes) ||

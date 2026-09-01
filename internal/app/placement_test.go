@@ -47,11 +47,11 @@ func TestADR_0280_CompositionConfiguresProviderOwnedPlacements(t *testing.T) {
 	})
 
 	t.Run("startup validation uses the build context", func(t *testing.T) {
-		ref := session.PlacementRef{Kind: "remote", ID: "opaque-context-id", Revision: "r1"}
+		ref := session.EnvironmentRef{Kind: "remote", ID: "opaque-context-id", Revision: "r1"}
 		provider := &compositionPlacementProvider{binding: server.PlacementBinding{
 			Ref: ref,
 			Environment: tool.MustEnvironment(
-				session.EnvironmentRef{Kind: "remote", ID: ref.ID},
+				ref,
 				memfs.NewWorkspace("/private-context-root"), nil,
 			),
 		}}
@@ -92,14 +92,14 @@ func TestADR_0280_CompositionConfiguresProviderOwnedPlacements(t *testing.T) {
 		}
 	})
 
-	for _, kind := range []session.PlacementKind{"worktree", "remote"} {
+	for _, kind := range []session.EnvironmentKind{"worktree", "remote"} {
 		kind := kind
 		t.Run(string(kind)+" provider extension", func(t *testing.T) {
-			ref := session.PlacementRef{Kind: kind, ID: "opaque-provider-id", Revision: "inventory-r7"}
+			ref := session.EnvironmentRef{Kind: kind, ID: "opaque-provider-id", Revision: "inventory-r7"}
 			provider := &compositionPlacementProvider{binding: server.PlacementBinding{
 				Ref: ref,
 				Environment: tool.MustEnvironment(
-					session.EnvironmentRef{Kind: session.EnvironmentKind(kind), ID: ref.ID},
+					ref,
 					memfs.NewWorkspace("/private-provider-root"), nil,
 				),
 				Metadata: server.PlacementMetadata{Name: "Provider placement"},

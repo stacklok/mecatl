@@ -776,7 +776,7 @@ func TestLoadV1SnapshotMissingLastErrorKeyLoadsEmpty(t *testing.T) {
 // Marshal→Unmarshal (ADR 0214, issue #462 phase 3).
 func TestSnapshotEnvironmentRefRoundTrip(t *testing.T) {
 	s := session.New("s1", session.ModeDefault, "/ws", session.Limits{MaxTurns: 1}, time.Unix(1700000000, 0).UTC())
-	s.EnvironmentRef = session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws"}
+	s.EnvironmentRef = session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "inventory-v3"}
 	got, err := sessnap.Unmarshal(mustMarshal(t, s))
 	if err != nil {
 		t.Fatalf("Unmarshal: %v", err)
