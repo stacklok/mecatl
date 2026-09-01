@@ -55,35 +55,16 @@ func TestSessionContinuityUX_Scenario4_FamilyTabs(t *testing.T) {
 	}
 }
 
-func TestSessionContinuityUX_Scenario4_CurrentAndHandle(t *testing.T) {
-	row := client.SessionListItem{ID: "opaque-current-id", Title: "Current work", Kind: client.SessionKindMain}
-	st := sessionsState{view: sessionsPanel, tab: tabChats, sessions: []client.SessionListItem{row}, filtered: []client.SessionListItem{row}}
-	st.handles = sessionDisplayHandles(st.filtered)
-	got := stripANSIstr(renderSessionsPanel(testTheme(), st, client.Capabilities{}, helpKeys{}, 100, 30, row.ID))
-	if !strings.Contains(got, "Current work") || !strings.Contains(got, st.handles[row.ID]) || !strings.Contains(got, "current") {
-		t.Fatalf("current titled row must retain title, handle, and marker:\n%s", got)
-	}
+func TestSessionContinuityUX_Scenario4_CurrentAndDigest(t *testing.T) {
+	testPredictableSessionHandle(t, checkHandleCurrentRow)
+}
+
+func TestADR_0108_DisplayDigestIsNotAnID(t *testing.T) {
+	testPredictableSessionHandle(t, checkHandleAuthoritativeID)
 }
 
 func TestADR_0278_OrdinaryHandleDoesNotChangeAuthoritativeSessionID(t *testing.T) {
-	loader := &fakeSessionTranscriptLoader{transcript: client.SessionTranscript{SessionID: "opaque-real-id", Complete: true}}
-	m := newScenario4Model(t, loader)
-	row := client.SessionListItem{ID: "opaque-real-id", Kind: client.SessionKindMain, Capabilities: client.SessionInventoryCapabilities{PublicChat: true, Inspect: true}}
-	ensureActiveSessions(&m).sessions = []client.SessionListItem{row}
-	ensureActiveSessions(&m).filtered = []client.SessionListItem{row}
-	ensureActiveSessions(&m).handles = sessionDisplayHandles(ensureActiveSessions(&m).filtered)
-	if strings.Contains(ensureActiveSessions(&m).handles[row.ID], row.ID) {
-		t.Fatalf("display handle %q unexpectedly embeds full id", ensureActiveSessions(&m).handles[row.ID])
-	}
-	mm, cmd, handled := m.chooseSession()
-	if !handled || cmd == nil {
-		t.Fatal("continuable row should start an authoritative transcript load")
-	}
-	m = mm.(Model)
-	m = applyAll(m, cmd())
-	if len(loader.calls) != 1 || loader.calls[0] != row.ID {
-		t.Fatalf("transcript API ids = %q, want exact opaque id %q", loader.calls, row.ID)
-	}
+	testPredictableSessionHandle(t, checkHandleAuthoritativeID)
 }
 
 func TestSessionContinuityUX_Scenario4_SearchFields(t *testing.T) {

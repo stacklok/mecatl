@@ -197,67 +197,113 @@ func TestPredictableSessionHandles_Scenario1_EscapedUTF8AndControls(t *testing.T
 	}
 }
 
-func TestADR_0278_OrdinaryHandleDoesNotAlterDebuggerEvidenceHandles(t *testing.T) {
+type predictableSessionHandleCheck uint8
+
+const (
+	checkHandlePresentation predictableSessionHandleCheck = 1 << iota
+	checkHandleStatus
+	checkHandleDebuggerEvidence
+	checkHandleCurrentRow
+	checkHandleAuthoritativeID
+)
+
+func testPredictableSessionHandle(t *testing.T, checks predictableSessionHandleCheck) {
+	t.Helper()
 	const id = "legacy\x1b/$雪-session"
 	want := client.SessionHandle(id)
-	m := newTestModelFromDeps(Deps{Theme: testTheme(), Ctx: context.Background(), DebugTarget: id})
-	m.sessionID = id
-	m.sessionTitle = "debug"
 
-	presentations := map[string]string{
-		"header":         stripANSIstr(m.renderHeader()),
-		"debugger title": m.windowTitle(),
-	}
-	st := newSessionsPanelState()
-	st.loading, st.loadState = false, sessionsComplete
-	st.sessions = []client.SessionListItem{{ID: id, Title: "legacy", Kind: client.SessionKindMain}}
-	st.syncFilter()
-	presentations["sessions"] = stripANSIstr(renderSessionsPanel(testTheme(), st, client.Capabilities{}, helpKeys{}, 100, 30, ""))
-	for name, rendered := range presentations {
-		if !strings.Contains(rendered, want) || strings.Contains(rendered, "#"+want) || strings.Contains(rendered, "\x1b") {
-			t.Fatalf("%s does not use terminal-safe shared handle %q: %q", name, want, rendered)
+	if checks&checkHandlePresentation != 0 {
+		m := newTestModelFromDeps(Deps{Theme: testTheme(), Ctx: context.Background(), DebugTarget: id})
+		m.sessionID = id
+		m.sessionTitle = "debug"
+		presentations := map[string]string{
+			"header":         stripANSIstr(m.renderHeader()),
+			"debugger title": m.windowTitle(),
+		}
+		st := newSessionsPanelState()
+		st.loading, st.loadState = false, sessionsComplete
+		st.sessions = []client.SessionListItem{{ID: id, Title: "legacy", Kind: client.SessionKindMain}}
+		st.syncFilter()
+		presentations["sessions"] = stripANSIstr(renderSessionsPanel(testTheme(), st, client.Capabilities{}, helpKeys{}, 100, 30, ""))
+		for name, rendered := range presentations {
+			if !strings.Contains(rendered, want) || strings.Contains(rendered, "#"+want) || strings.Contains(rendered, "\x1b") {
+				t.Fatalf("%s does not use terminal-safe shared handle %q: %q", name, want, rendered)
+			}
 		}
 	}
 
-	m.deps.DebugTarget = ""
-	input := m.statusLineInput(time.Unix(1, 0))
-	if input.Version != 2 || input.Session.Handle != want {
-		t.Fatalf("status protocol = v%d handle %q, want v2 %q", input.Version, input.Session.Handle, want)
-	}
-	if _, exists := reflect.TypeFor[statusline.Session]().FieldByName("Digest"); exists {
-		t.Fatal("status protocol retains removed Session.Digest alias")
-	}
-	wire, err := json.Marshal(input)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(wire), `"Handle":"`+want+`"`) || strings.Contains(string(wire), `"Digest"`) {
-		t.Fatalf("status command JSON does not expose only Session.Handle: %s", wire)
-	}
-	source := statusline.NewDefaultSource(0)
-	t.Cleanup(func() { _ = source.Close(context.Background()) })
-	input.Terminal.HeaderAvailCols = 100
-	source.Submit(input)
-	select {
-	case <-source.Changed():
-	case <-time.After(time.Second):
-		t.Fatal("shipped StatusML template did not publish")
-	}
-	var shipped strings.Builder
-	for _, span := range source.Latest().Header.Spans {
-		shipped.WriteString(span.Text)
-	}
-	if got := shipped.String(); !strings.Contains(got, "session "+want) || strings.Contains(got, "#"+want) {
-		t.Fatalf("shipped template does not use bare handle %q: %q", want, got)
+	if checks&checkHandleStatus != 0 {
+		m := newTestModelFromDeps(Deps{Theme: testTheme(), Ctx: context.Background()})
+		m.sessionID = id
+		input := m.statusLineInput(time.Unix(1, 0))
+		if input.Version != 2 || input.Session.Handle != want {
+			t.Fatalf("status protocol = v%d handle %q, want v2 %q", input.Version, input.Session.Handle, want)
+		}
+		if _, exists := reflect.TypeFor[statusline.Session]().FieldByName("Digest"); exists {
+			t.Fatal("status protocol retains removed Session.Digest alias")
+		}
+		wire, err := json.Marshal(input)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(wire), `"Handle":"`+want+`"`) || strings.Contains(string(wire), `"Digest"`) {
+			t.Fatalf("status command JSON does not expose only Session.Handle: %s", wire)
+		}
+		source := statusline.NewDefaultSource(0)
+		t.Cleanup(func() { _ = source.Close(context.Background()) })
+		input.Terminal.HeaderAvailCols = 100
+		source.Submit(input)
+		select {
+		case <-source.Changed():
+		case <-time.After(time.Second):
+			t.Fatal("shipped StatusML template did not publish")
+		}
+		var shipped strings.Builder
+		for _, span := range source.Latest().Header.Spans {
+			shipped.WriteString(span.Text)
+		}
+		if got := shipped.String(); !strings.Contains(got, "session "+want) || strings.Contains(got, "#"+want) {
+			t.Fatalf("shipped template does not use bare handle %q: %q", want, got)
+		}
 	}
 
-	// Ordinary presentation changes must not rewrite exact IDs or evidence digests.
-	m.deps.DebugTarget = id
-	if got := m.sessionDetails().DebugTargetID; got != id {
-		t.Fatalf("debug target exact ID changed from %q to %q", id, got)
+	if checks&checkHandleDebuggerEvidence != 0 {
+		m := newTestModelFromDeps(Deps{Theme: testTheme(), Ctx: context.Background(), DebugTarget: id})
+		if got := m.sessionDetails().DebugTargetID; got != id {
+			t.Fatalf("debug target exact ID changed from %q to %q", id, got)
+		}
+		evidence := client.LearningEvidence{SessionID: id, Digest: strings.Repeat("d", 64)}
+		if evidence.SessionID != id || evidence.Digest != strings.Repeat("d", 64) {
+			t.Fatalf("debugger evidence identity/digest was projected as ordinary handle: %#v", evidence)
+		}
 	}
-	evidence := client.LearningEvidence{SessionID: id, Digest: strings.Repeat("d", 64)}
-	if evidence.SessionID != id || evidence.Digest != strings.Repeat("d", 64) {
-		t.Fatalf("debugger evidence identity/digest was projected as ordinary handle: %#v", evidence)
+
+	if checks&checkHandleAuthoritativeID != 0 {
+		loader := &fakeSessionTranscriptLoader{transcript: client.SessionTranscript{SessionID: "opaque-real-id", Complete: true}}
+		m := newScenario4Model(t, loader)
+		row := client.SessionListItem{ID: "opaque-real-id", Kind: client.SessionKindMain, Capabilities: client.SessionInventoryCapabilities{PublicChat: true, Inspect: true}}
+		ensureActiveSessions(&m).sessions = []client.SessionListItem{row}
+		ensureActiveSessions(&m).filtered = []client.SessionListItem{row}
+		ensureActiveSessions(&m).handles = sessionDisplayHandles(ensureActiveSessions(&m).filtered)
+		if strings.Contains(ensureActiveSessions(&m).handles[row.ID], row.ID) {
+			t.Fatalf("display handle %q unexpectedly embeds full id", ensureActiveSessions(&m).handles[row.ID])
+		}
+		mm, cmd, handled := m.chooseSession()
+		if !handled || cmd == nil {
+			t.Fatal("continuable row should start an authoritative transcript load")
+		}
+		m = mm.(Model)
+		m = applyAll(m, cmd())
+		if len(loader.calls) != 1 || loader.calls[0] != row.ID {
+			t.Fatalf("transcript API ids = %q, want exact opaque id %q", loader.calls, row.ID)
+		}
 	}
+}
+
+func TestPredictableSessionHandles_Scenario3_PresentationParityAndSafety(t *testing.T) {
+	testPredictableSessionHandle(t, checkHandlePresentation|checkHandleStatus|checkHandleDebuggerEvidence)
+}
+
+func TestADR_0278_OrdinaryHandleDoesNotAlterDebuggerEvidenceHandles(t *testing.T) {
+	testPredictableSessionHandle(t, checkHandleDebuggerEvidence)
 }
