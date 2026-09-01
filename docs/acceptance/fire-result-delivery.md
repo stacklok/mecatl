@@ -285,10 +285,11 @@ result stays pull-able.
   backlog cap drops the oldest with a WARN rather than growing unboundedly on an
   overloaded origin.
   - verify: `TestFireDelivery_Scenario4_MultiplePendingAllDrained`
-- AC4.4: A fire whose origin session was deleted, OR whose origin is a collected
-  child/`sched--` session, drops the delivery with a WARN and never fails the
-  fire nor delivers into another fire's chat; the result remains pull-able via
-  `ListFires`.
+- AC4.4: A missing or deleted origin remains ownership-safe and preserves
+  no-verifier compatibility. A child/`sched--`-family non-deliverable origin drops
+  the delivery with a WARN and never fails the fire nor delivers into another
+  fire's chat; the result remains pull-able via `ListFires`.
+  - verify: `TestScheduleDeliveryMissingOriginPreservesNoVerifierCompatibility`
   - verify: `TestFireDelivery_Scenario4_NonDeliverableChildOriginDropsWithWarn`
 - AC4.5: The pending-delivery queue is durable: a process restart with notes
   still pending drains them on the origin's next run-entry (the
