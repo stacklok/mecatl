@@ -2,7 +2,7 @@
 id: 03-typed-verifier
 title: Single-pass typed logical-agent verifier
 blocked_by: [02-constrained-issuer]
-status: pending
+status: in-progress
 branch: ""
 worktree: ""
 issue: "478"
