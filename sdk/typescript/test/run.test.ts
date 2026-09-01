@@ -131,7 +131,7 @@ describe("run choreography", () => {
         text: `${stop} text`,
       });
       expect(outcome.usage).toMatchObject({ inputTokens: 7n, outputTokens: 3n });
-      expect(outcome.rawEvent.type).toBe("result");
+      expect(outcome.rawEvent.kind).toBe("result");
     }
     await client.close();
 

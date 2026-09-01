@@ -481,6 +481,10 @@ class HttpTransport implements Transport {
           });
         }
         registerRawJson(message, raw);
+        if (wrapEvent) {
+          const event = (message as { readonly event?: object | undefined }).event;
+          if (event !== undefined) registerRawJson(event, raw);
+        }
         yield message;
       }
     })();

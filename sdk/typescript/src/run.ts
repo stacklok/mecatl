@@ -1,7 +1,8 @@
 import type { MessageInitShape } from "@bufbuild/protobuf";
 
 import { InvalidStateError, ProtocolError, type TransportKind } from "./errors.js";
-import type { ConverseRequestSchema, Event } from "./gen/mecatl/v1/harness_pb.js";
+import { decodeEvent, type Event, type EventOf, type EventUsage } from "./events.js";
+import type { ConverseRequestSchema, Event as ProtoEvent } from "./gen/mecatl/v1/harness_pb.js";
 
 /** The terminal outcome of a consumed run. Server-declared stops are values, not errors. @public */
 export interface RunResult {
@@ -9,29 +10,15 @@ export interface RunResult {
   readonly text: string;
   readonly content: string;
   readonly stopReason: string;
-  readonly usage:
-    | {
-        readonly cacheReadTokens: bigint;
-        readonly cacheWriteTokens: bigint;
-        readonly inputTokens: bigint;
-        readonly outputTokens: bigint;
-        readonly reasoningTokens: bigint;
-      }
-    | undefined;
+  readonly usage: EventUsage | undefined;
   readonly sessionId: string;
   readonly runId: string;
-  /** The generated terminal event without ergonomic remapping. */
-  readonly rawEvent: { readonly runId: string; readonly type: string };
+  /** The terminal event from the same discriminated union exposed by iteration. */
+  readonly rawEvent: EventOf<"result">;
 }
 
 /** One accepted server run and its single-consumption event stream. @public */
-export interface Run
-  extends AsyncIterable<{
-    /** Temporary event discriminant; Scenario 6 replaces this wrapper with the event union. */
-    readonly kind: string;
-    /** The generated proto event for this frame. */
-    readonly payload: { readonly runId: string; readonly type: string };
-  }> {
+export interface Run extends AsyncIterable<Event> {
   readonly id: string;
   readonly sessionId: string;
   /** Sends a permission verdict for a raw permission.ask event. Scenario 7 adds responders. */
@@ -50,36 +37,31 @@ export interface RunOperations {
 }
 
 type ConsumptionMode = "events" | "result";
-type RunEvent = {
-  readonly kind: string;
-  readonly payload: Event;
-};
-
 export class RunImpl implements Run {
   readonly id: string;
   readonly sessionId: string;
 
-  readonly #events: AsyncIterator<Event>;
+  readonly #events: AsyncIterator<ProtoEvent>;
   readonly #first: Event;
   readonly #operations: RunOperations;
   #consumption: ConsumptionMode | undefined;
   #firstPending = true;
-  #terminal: Event | undefined;
+  #terminal: EventOf<"result"> | undefined;
   #steerSequence = 0;
 
   constructor(
     sessionId: string,
     runId: string,
-    first: Event,
-    events: AsyncIterator<Event>,
+    first: ProtoEvent,
+    events: AsyncIterator<ProtoEvent>,
     operations: RunOperations,
   ) {
     this.id = runId;
     this.sessionId = sessionId;
-    this.#first = first;
+    this.#first = decodeEvent(first, operations.transportKind);
     this.#events = events;
     this.#operations = operations;
-    if (terminal(first)) this.#terminal = first;
+    if (terminal(this.#first)) this.#terminal = this.#first;
   }
 
   async approve(askId: string, allow: boolean): Promise<void> {
@@ -111,7 +93,7 @@ export class RunImpl implements Run {
     });
   }
 
-  [Symbol.asyncIterator](): AsyncIterator<RunEvent> {
+  [Symbol.asyncIterator](): AsyncIterator<Event> {
     this.#claim("events");
     return this.#consumer();
   }
@@ -123,19 +105,19 @@ export class RunImpl implements Run {
       if (next.done) break;
     }
     const event = this.#terminal;
-    if (event?.result === undefined) {
+    if (event === undefined) {
       throw new ProtocolError("The Converse stream ended without a terminal result", {
         transport: this.#operations.transportKind,
       });
     }
     return {
-      content: event.result.text,
+      content: event.payload.text,
       rawEvent: event,
       runId: this.id,
       sessionId: this.sessionId,
-      stopReason: event.result.stop,
-      text: event.result.text,
-      usage: event.result.usage ?? event.usage,
+      stopReason: event.payload.stop,
+      text: event.payload.text,
+      usage: event.payload.usage ?? event.usage,
     };
   }
 
@@ -149,17 +131,17 @@ export class RunImpl implements Run {
     this.#consumption = mode;
   }
 
-  #consumer(): AsyncIterator<RunEvent> {
+  #consumer(): AsyncIterator<Event> {
     return {
       next: () => this.#next(),
       return: async () => ({ done: true, value: undefined }),
     };
   }
 
-  async #next(): Promise<IteratorResult<RunEvent>> {
+  async #next(): Promise<IteratorResult<Event>> {
     if (this.#firstPending) {
       this.#firstPending = false;
-      return { done: false, value: wrap(this.#first) };
+      return { done: false, value: this.#first };
     }
     if (this.#terminal !== undefined) return { done: true, value: undefined };
     const next = await this.#events.next();
@@ -173,8 +155,9 @@ export class RunImpl implements Run {
         transport: this.#operations.transportKind,
       });
     }
-    if (terminal(next.value)) this.#terminal = next.value;
-    return { done: false, value: wrap(next.value) };
+    const event = decodeEvent(next.value, this.#operations.transportKind);
+    if (terminal(event)) this.#terminal = event;
+    return { done: false, value: event };
   }
 
   #send(frame: MessageInitShape<typeof ConverseRequestSchema>): void {
@@ -182,12 +165,8 @@ export class RunImpl implements Run {
   }
 }
 
-function terminal(event: Event): boolean {
-  return event.type === "result" && event.result !== undefined;
-}
-
-function wrap(event: Event): RunEvent {
-  return { kind: event.type, payload: event };
+function terminal(event: Event): event is EventOf<"result"> {
+  return event.kind === "result";
 }
 
 export type ConverseFrame = MessageInitShape<typeof ConverseRequestSchema>;

@@ -13,6 +13,45 @@ import type { MessageInitShape } from '@bufbuild/protobuf';
 import type { MessageShape } from '@bufbuild/protobuf';
 import { Transport } from '@connectrpc/connect';
 
+// @public
+export type AgentEvent = Exclude<KnownEvent, {
+    readonly kind: `team.${string}`;
+}>;
+
+// @public
+export interface ApprovalEventPayload {
+    // (undocumented)
+    readonly allowAlways: boolean;
+    // (undocumented)
+    readonly askId: string;
+    // (undocumented)
+    readonly callId: string;
+    // (undocumented)
+    readonly tool: string;
+    // (undocumented)
+    readonly verdict: string;
+}
+
+// @public
+export interface ArchivedConversationMessage {
+    // (undocumented)
+    readonly parts: readonly EventContent[];
+    // (undocumented)
+    readonly providerPhase: string;
+    // (undocumented)
+    readonly reasoning: string;
+    // (undocumented)
+    readonly reasoningItemId: string;
+    // (undocumented)
+    readonly role: string;
+    // (undocumented)
+    readonly text: string;
+    // (undocumented)
+    readonly toolCalls: readonly ToolCallEventPayload[];
+    // (undocumented)
+    readonly toolResult?: ToolResultEventPayload | undefined;
+}
+
 // @public (undocumented)
 export class AuthenticationError extends MecatlError {
     constructor(message: string, options: Omit<MecatlErrorOptions, "code">);
@@ -28,6 +67,12 @@ export interface Client {
     readonly sessions: Sessions;
     // (undocumented)
     readonly status: ConnectionStatusStore;
+}
+
+// @public
+export interface CompactionArchiveEventPayload {
+    // (undocumented)
+    readonly replaced: readonly ArchivedConversationMessage[];
 }
 
 // @public
@@ -91,6 +136,163 @@ export interface CredentialOptions {
 export type CredentialProvider = () => HeadersInit | Promise<HeadersInit>;
 
 // @public
+type Event_2 = KnownEvent | UnknownEvent;
+export { Event_2 as Event }
+
+// @public
+export interface EventCommon {
+    // (undocumented)
+    readonly runId: string;
+    // (undocumented)
+    readonly seq: bigint;
+    // (undocumented)
+    readonly text: string;
+    // (undocumented)
+    readonly turn: number;
+    // (undocumented)
+    readonly usage: EventUsage | undefined;
+}
+
+// @public
+export interface EventContent {
+    // (undocumented)
+    readonly data: Uint8Array;
+    // (undocumented)
+    readonly kind: 0 | 1 | 2;
+    // (undocumented)
+    readonly mimeType: string;
+    // (undocumented)
+    readonly url: string;
+}
+
+// @public
+export interface EventContentBlock {
+    // (undocumented)
+    readonly audience: readonly string[];
+    // (undocumented)
+    readonly data: Uint8Array;
+    // (undocumented)
+    readonly description: string;
+    // (undocumented)
+    readonly kind: 0 | 1 | 2 | 3 | 4 | 5 | 6;
+    // (undocumented)
+    readonly lastModified: string;
+    // (undocumented)
+    readonly mimeType: string;
+    // (undocumented)
+    readonly name: string;
+    // (undocumented)
+    readonly priority: number;
+    // (undocumented)
+    readonly size: bigint;
+    // (undocumented)
+    readonly text: string;
+    // (undocumented)
+    readonly title: string;
+    // (undocumented)
+    readonly url: string;
+}
+
+// @public
+export type EventOf<Kind extends KnownEventKind> = Extract<KnownEvent, {
+    readonly kind: Kind;
+}>;
+
+// @public
+export interface EventPayloads {
+    // (undocumented)
+    readonly "compaction.archive": CompactionArchiveEventPayload;
+    // (undocumented)
+    readonly "message.delta": undefined;
+    // (undocumented)
+    readonly "model.retry": ModelRetryEventPayload;
+    // (undocumented)
+    readonly "network.attempt": undefined;
+    // (undocumented)
+    readonly "parallel.branch": ParallelEventPayload;
+    // (undocumented)
+    readonly "parallel.end": ParallelEventPayload;
+    // (undocumented)
+    readonly "parallel.start": ParallelEventPayload;
+    // (undocumented)
+    readonly "permission.ask": PermissionAskEventPayload;
+    // (undocumented)
+    readonly "permission.retract": PermissionAskEventPayload;
+    // (undocumented)
+    readonly "provider.route": undefined;
+    // (undocumented)
+    readonly "reasoning.delta": undefined;
+    // (undocumented)
+    readonly "request.manifest": undefined;
+    // (undocumented)
+    readonly "schedule.failed": ScheduleEventPayload;
+    // (undocumented)
+    readonly "schedule.fired": ScheduleEventPayload;
+    // (undocumented)
+    readonly "schedule.skipped": ScheduleEventPayload;
+    // (undocumented)
+    readonly "session.init": undefined;
+    // (undocumented)
+    readonly "steer.outcome": SteerOutcomeEventPayload;
+    // (undocumented)
+    readonly "subagent.end": SubagentEventPayload;
+    // (undocumented)
+    readonly "subagent.start": SubagentEventPayload;
+    // (undocumented)
+    readonly "subagent.tool": SubagentEventPayload;
+    // (undocumented)
+    readonly "team.end": TeamEventPayload;
+    // (undocumented)
+    readonly "team.findings": TeamEventPayload;
+    // (undocumented)
+    readonly "team.member": TeamEventPayload;
+    // (undocumented)
+    readonly "team.start": TeamEventPayload;
+    // (undocumented)
+    readonly "team.tasks": TeamEventPayload;
+    // (undocumented)
+    readonly "tool.call": ToolCallEventPayload;
+    // (undocumented)
+    readonly "tool.progress": undefined;
+    // (undocumented)
+    readonly "tool.result": ToolResultEventPayload;
+    // (undocumented)
+    readonly "turn.end": TurnEndEventPayload;
+    // (undocumented)
+    readonly "turn.start": undefined;
+    // (undocumented)
+    readonly approval: ApprovalEventPayload;
+    // (undocumented)
+    readonly compaction: undefined;
+    // (undocumented)
+    readonly hook: HookEventPayload;
+    // (undocumented)
+    readonly no_progress: undefined;
+    // (undocumented)
+    readonly recover_notice: undefined;
+    // (undocumented)
+    readonly result: ResultEventPayload;
+    // (undocumented)
+    readonly steer: SteerEventPayload;
+    // (undocumented)
+    readonly user_prompt: UserPromptEventPayload;
+}
+
+// @public
+export interface EventUsage {
+    // (undocumented)
+    readonly cacheReadTokens: bigint;
+    // (undocumented)
+    readonly cacheWriteTokens: bigint;
+    // (undocumented)
+    readonly inputTokens: bigint;
+    // (undocumented)
+    readonly outputTokens: bigint;
+    // (undocumented)
+    readonly reasoningTokens: bigint;
+}
+
+// @public
 export interface ForkSessionOptions {
     // (undocumented)
     reasoningEffort?: string;
@@ -100,6 +302,18 @@ export interface ForkSessionOptions {
 
 // @public
 export function getRawJson(message: object): JsonValue | undefined;
+
+// @public
+export interface HookEventPayload {
+    // (undocumented)
+    readonly callId: string;
+    // (undocumented)
+    readonly decision: 0 | 1 | 2 | 3 | 4;
+    // (undocumented)
+    readonly phase: string;
+    // (undocumented)
+    readonly tool: string;
+}
 
 // @public (undocumented)
 export interface HttpTransportOptions extends CredentialOptions {
@@ -126,7 +340,21 @@ export class InvalidStateError extends MecatlError {
 }
 
 // @public
+export type KnownEvent = {
+    [Kind in KnownEventKind]: EventCommon & {
+        readonly kind: Kind;
+        readonly payload: EventPayloads[Kind];
+    };
+}[KnownEventKind];
+
+// @public
+export type KnownEventKind = (typeof MECATL_EVENT_KINDS)[number];
+
+// @public
 export const MECATL_ERROR_CODES: readonly ["activity_gap", "child_not_found", "cleanup_backend", "cleanup_plan_stale", "cleanup_unsupported", "client_mcp_unreachable", "client_mcp_unsupported", "conflict", "cursor_expired", "cursor_malformed", "draining", "dream_apply_failed", "dream_capacity", "dream_conflict", "dream_deadline", "dream_generate_failed", "dream_in_progress", "dream_not_found", "dream_request_failed", "dream_terminal_conflict", "dream_unavailable", "failed_precondition", "failed_step_retry_ineligible", "fire_now_overlap", "internal", "invalid_argument", "learning_unavailable", "management_unauthorized", "migration_backend", "migration_conflict", "migration_unsupported", "no_active_run", "no_event_log", "no_mcp_provider", "no_schedule_store", "not_awaiting_plan", "not_found", "proposal_conflict", "request_too_large", "resource_exhausted", "schedule_disabled", "schedule_exhausted", "schedule_not_found", "schedule_not_leader", "schedule_unsupported", "scheduler_not_running", "session_delete_unsupported", "session_leased_elsewhere", "session_metadata_cursor_restart", "session_metadata_paging_unsupported", "session_not_found", "stale_run_control", "storage_health_backend", "team_not_found", "team_not_running", "team_running", "teams_disabled", "too_many_session_engines", "too_many_teams", "unimplemented", "watch_lagging", "watch_unsupported"];
+
+// @public
+export const MECATL_EVENT_KINDS: readonly ["approval", "compaction", "compaction.archive", "hook", "message.delta", "model.retry", "network.attempt", "no_progress", "parallel.branch", "parallel.end", "parallel.start", "permission.ask", "permission.retract", "provider.route", "reasoning.delta", "recover_notice", "request.manifest", "result", "schedule.failed", "schedule.fired", "schedule.skipped", "session.init", "steer", "steer.outcome", "subagent.end", "subagent.start", "subagent.tool", "team.end", "team.findings", "team.member", "team.start", "team.tasks", "tool.call", "tool.progress", "tool.result", "turn.end", "turn.start", "user_prompt"];
 
 // @public
 export class MecatlError extends Error {
@@ -160,6 +388,80 @@ export interface MecatlErrorOptions {
     transport: TransportKind;
 }
 
+// @public
+export interface ModelRetryEventPayload {
+    // (undocumented)
+    readonly retryDisposition: RetryDisposition;
+    // (undocumented)
+    readonly streamProgress: StreamProgress;
+}
+
+// @public
+export interface ParallelEventPayload {
+    // (undocumented)
+    readonly branchCount: number;
+    // (undocumented)
+    readonly branchIndex: number;
+    // (undocumented)
+    readonly branchLabel: string;
+    // (undocumented)
+    readonly childId: string;
+    // (undocumented)
+    readonly detail: string;
+    // (undocumented)
+    readonly durationMs: bigint;
+    // (undocumented)
+    readonly failed: boolean;
+    // (undocumented)
+    readonly goal: string;
+    // (undocumented)
+    readonly innerKind: string;
+    // (undocumented)
+    readonly isError: boolean;
+    // (undocumented)
+    readonly join: string;
+    // (undocumented)
+    readonly kind: string;
+    // (undocumented)
+    readonly model: string;
+    // (undocumented)
+    readonly parentCallId: string;
+    // (undocumented)
+    readonly routedCategory: string;
+    // (undocumented)
+    readonly routedModel: string;
+    // (undocumented)
+    readonly routingReason: string;
+    // (undocumented)
+    readonly stop: string;
+    // (undocumented)
+    readonly text: string;
+    // (undocumented)
+    readonly toolCount: number;
+    // (undocumented)
+    readonly toolName: string;
+    // (undocumented)
+    readonly usage?: EventUsage | undefined;
+    // (undocumented)
+    readonly winner: number;
+    // (undocumented)
+    readonly winnerWorkspace: string;
+    // (undocumented)
+    readonly workspace: string;
+}
+
+// @public
+export interface PermissionAskEventPayload {
+    // (undocumented)
+    readonly args: string;
+    // (undocumented)
+    readonly askId: string;
+    // (undocumented)
+    readonly reason: string;
+    // (undocumented)
+    readonly tool: string;
+}
+
 // @public (undocumented)
 export class ProtocolError extends MecatlError {
     constructor(message: string, options: Omit<MecatlErrorOptions, "code">);
@@ -180,13 +482,28 @@ export interface RawClientOptions {
 }
 
 // @public
-export interface Run extends AsyncIterable<{
-    readonly kind: string;
-    readonly payload: {
-        readonly runId: string;
-        readonly type: string;
-    };
-}> {
+export interface ResultEventPayload {
+    // (undocumented)
+    readonly error: string;
+    // (undocumented)
+    readonly permanent: boolean;
+    // (undocumented)
+    readonly retryDisposition?: RetryDisposition | undefined;
+    // (undocumented)
+    readonly stop: string;
+    // (undocumented)
+    readonly streamProgress?: StreamProgress | undefined;
+    // (undocumented)
+    readonly text: string;
+    // (undocumented)
+    readonly usage?: EventUsage | undefined;
+}
+
+// @public
+export type RetryDisposition = 0 | 1 | 2 | 3;
+
+// @public
+export interface Run extends AsyncIterable<Event_2> {
     approve(askId: string, allow: boolean): Promise<void>;
     cancel(): Promise<void>;
     // (undocumented)
@@ -201,10 +518,7 @@ export interface Run extends AsyncIterable<{
 export interface RunResult {
     // (undocumented)
     readonly content: string;
-    readonly rawEvent: {
-        readonly runId: string;
-        readonly type: string;
-    };
+    readonly rawEvent: EventOf<"result">;
     // (undocumented)
     readonly runId: string;
     // (undocumented)
@@ -213,13 +527,23 @@ export interface RunResult {
     readonly stopReason: string;
     readonly text: string;
     // (undocumented)
-    readonly usage: {
-        readonly cacheReadTokens: bigint;
-        readonly cacheWriteTokens: bigint;
-        readonly inputTokens: bigint;
-        readonly outputTokens: bigint;
-        readonly reasoningTokens: bigint;
-    } | undefined;
+    readonly usage: EventUsage | undefined;
+}
+
+// @public
+export interface ScheduleEventPayload {
+    // (undocumented)
+    readonly err: string;
+    // (undocumented)
+    readonly fireId: string;
+    // (undocumented)
+    readonly kind: string;
+    // (undocumented)
+    readonly scheduleName: string;
+    // (undocumented)
+    readonly sessionId: string;
+    // (undocumented)
+    readonly stop: string;
 }
 
 // @public (undocumented)
@@ -284,8 +608,198 @@ export interface Sessions {
     get(sessionId: string): Promise<Session>;
 }
 
+// @public
+export interface SteerEventPayload {
+    // (undocumented)
+    readonly messageId: string;
+    // (undocumented)
+    readonly parts: readonly EventContent[];
+    // (undocumented)
+    readonly text: string;
+}
+
+// @public
+export interface SteerOutcomeEventPayload {
+    // (undocumented)
+    readonly messageId: string;
+    // (undocumented)
+    readonly outcome: 0 | 1 | 2 | 3 | 4 | 5;
+    // (undocumented)
+    readonly promoted: boolean;
+    // (undocumented)
+    readonly text: string;
+}
+
+// @public
+export type StreamProgress = 0 | 1 | 2 | 3 | 4;
+
+// @public
+export interface SubagentEventPayload {
+    // (undocumented)
+    readonly background: boolean;
+    // (undocumented)
+    readonly cause: string;
+    // (undocumented)
+    readonly childId: string;
+    // (undocumented)
+    readonly detail: string;
+    // (undocumented)
+    readonly durationMs: bigint;
+    // (undocumented)
+    readonly goal: string;
+    // (undocumented)
+    readonly innerKind: string;
+    // (undocumented)
+    readonly isError: boolean;
+    // (undocumented)
+    readonly model: string;
+    // (undocumented)
+    readonly parentCallId: string;
+    // (undocumented)
+    readonly routedCategory: string;
+    // (undocumented)
+    readonly routedModel: string;
+    // (undocumented)
+    readonly routingReason: string;
+    // (undocumented)
+    readonly stop: string;
+    // (undocumented)
+    readonly text: string;
+    // (undocumented)
+    readonly toolCount: number;
+    // (undocumented)
+    readonly toolName: string;
+    // (undocumented)
+    readonly usage?: EventUsage | undefined;
+}
+
 // @public (undocumented)
 export const SUPPORTED_API_MAJOR = 1;
+
+// @public
+export type TeamEvent = Extract<KnownEvent, {
+    readonly kind: `team.${string}`;
+}>;
+
+// @public
+export interface TeamEventPayload {
+    // (undocumented)
+    readonly cause: string;
+    // (undocumented)
+    readonly contextUsed: bigint;
+    // (undocumented)
+    readonly contextWindow: bigint;
+    // (undocumented)
+    readonly detail: string;
+    // (undocumented)
+    readonly dispositions: readonly TeamMemberDispositionEventPayload[];
+    // (undocumented)
+    readonly findings: readonly TeamFindingEventPayload[];
+    // (undocumented)
+    readonly innerKind: string;
+    // (undocumented)
+    readonly isError: boolean;
+    // (undocumented)
+    readonly member: string;
+    // (undocumented)
+    readonly memberSessionId: string;
+    // (undocumented)
+    readonly parentCallId: string;
+    // (undocumented)
+    readonly roster: readonly TeamMemberSpecEventPayload[];
+    // (undocumented)
+    readonly rounds: number;
+    // (undocumented)
+    readonly stop: string;
+    // (undocumented)
+    readonly tasks: readonly TeamTaskEventPayload[];
+    // (undocumented)
+    readonly teamId: string;
+    // (undocumented)
+    readonly text: string;
+    // (undocumented)
+    readonly toolName: string;
+    // (undocumented)
+    readonly usage?: EventUsage | undefined;
+}
+
+// @public
+export interface TeamFindingEventPayload {
+    // (undocumented)
+    readonly body: string;
+    // (undocumented)
+    readonly member: string;
+}
+
+// @public
+export interface TeamMemberDispositionEventPayload {
+    // (undocumented)
+    readonly errorRounds: number;
+    // (undocumented)
+    readonly name: string;
+    // (undocumented)
+    readonly reason: 0 | 1 | 2 | 3;
+    // (undocumented)
+    readonly stopped: boolean;
+}
+
+// @public
+export interface TeamMemberSpecEventPayload {
+    // (undocumented)
+    readonly lead: boolean;
+    // (undocumented)
+    readonly model: string;
+    // (undocumented)
+    readonly mutating: boolean;
+    // (undocumented)
+    readonly name: string;
+    // (undocumented)
+    readonly role: string;
+    // (undocumented)
+    readonly routedCategory: string;
+    // (undocumented)
+    readonly routedModel: string;
+    // (undocumented)
+    readonly routingReason: string;
+}
+
+// @public
+export interface TeamTaskEventPayload {
+    // (undocumented)
+    readonly assignee: string;
+    // (undocumented)
+    readonly deps: readonly string[];
+    // (undocumented)
+    readonly description: string;
+    // (undocumented)
+    readonly id: string;
+    // (undocumented)
+    readonly state: string;
+}
+
+// @public
+export interface ToolCallEventPayload {
+    // (undocumented)
+    readonly args: string;
+    // (undocumented)
+    readonly id: string;
+    // (undocumented)
+    readonly name: string;
+}
+
+// @public
+export interface ToolResultEventPayload {
+    // (undocumented)
+    readonly blocks: readonly EventContentBlock[];
+    // (undocumented)
+    readonly callId: string;
+    // (undocumented)
+    readonly content: string;
+    // (undocumented)
+    readonly isError: boolean;
+    // (undocumented)
+    readonly structuredContent: string;
+}
 
 export { Transport }
 
@@ -297,11 +811,52 @@ export class TransportError extends MecatlError {
 // @public (undocumented)
 export type TransportKind = "grpc" | "http";
 
+// @public
+export interface TurnEndEventPayload {
+    // (undocumented)
+    readonly durationMs: bigint;
+    // (undocumented)
+    readonly usage?: EventUsage | undefined;
+}
+
+// @public
+export type UnknownEvent = UnknownHttpEvent | UnknownGrpcEvent;
+
+// @public
+export interface UnknownGrpcEvent extends EventCommon {
+    // (undocumented)
+    readonly kind: "unknown";
+    readonly rawData: Uint8Array;
+    // (undocumented)
+    readonly transport: "grpc";
+    // (undocumented)
+    readonly wireKind: string;
+}
+
+// @public
+export interface UnknownHttpEvent extends EventCommon {
+    // (undocumented)
+    readonly kind: "unknown";
+    readonly rawData: JsonValue;
+    // (undocumented)
+    readonly transport: "http";
+    // (undocumented)
+    readonly wireKind: string;
+}
+
 // @public (undocumented)
 export class UnsupportedFeatureError extends MecatlError {
     constructor(feature: string, options: Omit<MecatlErrorOptions, "code">);
     // (undocumented)
     readonly feature: string;
+}
+
+// @public
+export interface UserPromptEventPayload {
+    // (undocumented)
+    readonly parts: readonly EventContent[];
+    // (undocumented)
+    readonly text: string;
 }
 
 ```

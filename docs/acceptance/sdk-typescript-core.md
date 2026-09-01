@@ -393,12 +393,12 @@ fine — the no-touch constraint is about edits, not reads.
 **Acceptance:**
 - AC6.1: Every known agent and team event kind narrows by literal `kind` to
   a payload type whose fields match the proto payload for that kind.
-  - verify: `sdk/typescript/test/events.test.ts :: "known kinds narrow by literal kind"`
+  - verify: vitest:sdk/typescript/test/events.test.ts#a25vd24ga2luZHMgbmFycm93IGJ5IGxpdGVyYWwga2luZA — `sdk/typescript/test/events.test.ts :: "known kinds narrow by literal kind"`
 - AC6.2: An event of an unknown kind decodes to
   `{ kind: "unknown", wireKind, ... }` carrying the decoded common fields
   plus the transport-native raw data — raw JSON over HTTP, unknown protobuf
   bytes over gRPC — and iteration continues.
-  - verify: `sdk/typescript/test/events.test.ts :: "unknown kinds preserve transport-native raw data"`
+  - verify: vitest:sdk/typescript/test/events.test.ts#dW5rbm93biBraW5kcyBwcmVzZXJ2ZSB0cmFuc3BvcnQtbmF0aXZlIHJhdyBkYXRh — `sdk/typescript/test/events.test.ts :: "unknown kinds preserve transport-native raw data"`
 - AC6.3: A Go-side parity guard enumerates the wire event kinds the server
   can emit and fails when the TS union misses one or types one the server
   no longer emits — a new `session.Event` kind fails CI until it is typed.
