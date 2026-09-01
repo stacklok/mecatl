@@ -2,8 +2,8 @@
 id: 03-typed-verifier
 title: Single-pass typed logical-agent verifier
 blocked_by: [02-constrained-issuer]
-status: in-progress
-branch: ""
+status: done
+branch: "plan-logical-agent-identity-projection/03-typed-verifier"
 worktree: ""
 issue: "478"
 retries: 0
