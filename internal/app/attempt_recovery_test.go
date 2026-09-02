@@ -9,6 +9,7 @@ import (
 
 	"github.com/stacklok/mecatl/engine/adapter/memattempt"
 	"github.com/stacklok/mecatl/engine/learning"
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 )
 
@@ -168,6 +169,57 @@ func TestAttemptRecoveryIgnoresLegacyCoordinatorCapacity(t *testing.T) {
 	}
 }
 
+type blockingRecoverySessionStore struct {
+	started  chan struct{}
+	returned chan struct{}
+}
+
+func (*blockingRecoverySessionStore) Save(context.Context, *session.Session) error { return nil }
+
+func (s *blockingRecoverySessionStore) Load(ctx context.Context, _ session.SessionID) (*session.Session, error) {
+	close(s.started)
+	<-ctx.Done()
+	close(s.returned)
+	return nil, ctx.Err()
+}
+
+func TestAttemptRecoveryConfiguredTimeoutBoundsBlockingStoreAndPersistsRetry(t *testing.T) {
+	t.Parallel()
+	clock := &attemptWorkerClock{now: time.Unix(125, 0)}
+	repository := memattempt.New(clock)
+	partition, record := createRecoveryAttempt(t, repository, clock)
+	store := &blockingRecoverySessionStore{started: make(chan struct{}), returned: make(chan struct{})}
+	item := learning.AttemptWork{Partition: partition, Record: record}
+
+	startedAt := time.Now()
+	err := recoverAttempt(context.Background(), Config{LearningAttemptTimeout: 20 * time.Millisecond}, nil, store, nil, repository, nil, catalogAssets{}, item)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("recoverAttempt error = %v, want deadline", err)
+	}
+	if elapsed := time.Since(startedAt); elapsed > time.Second {
+		t.Fatalf("blocking store exceeded configured attempt bound: %v", elapsed)
+	}
+	select {
+	case <-store.started:
+	default:
+		t.Fatal("blocking store was not exercised")
+	}
+	select {
+	case <-store.returned:
+	default:
+		t.Fatal("recoverAttempt returned before blocking store cooperatively stopped")
+	}
+	persisted, found, getErr := repository.Get(context.Background(), partition, record.ID)
+	if getErr != nil || !found {
+		t.Fatalf("persisted retry found=%v err=%v", found, getErr)
+	}
+	if persisted.State != learning.AttemptRunning || persisted.State.Terminal() || persisted.FailureCode != learning.FailureNone || persisted.ClaimExpiresAt.IsZero() {
+		t.Fatalf("deadline did not persist transient retry/backoff: %+v", persisted)
+	}
+}
+
+var _ port.SessionStore = (*blockingRecoverySessionStore)(nil)
+
 func TestAttemptRecoveryCloseCancelsAndJoinsWorker(t *testing.T) {
 	clock := &attemptWorkerClock{now: time.Unix(120, 0)}
 	repository := memattempt.New(clock)
@@ -185,7 +237,11 @@ func TestAttemptRecoveryCloseCancelsAndJoinsWorker(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("recovery worker did not start")
 	}
+	closedAt := time.Now()
 	recovery.Close()
+	if elapsed := time.Since(closedAt); elapsed > time.Second {
+		t.Fatalf("Close exceeded the cooperative shutdown bound: %v", elapsed)
+	}
 	select {
 	case <-exited:
 	default:

@@ -134,9 +134,10 @@ func recoverAttempt(ctx context.Context, cfg Config, reg *providerRegistry, sess
 		return nil
 	}
 	worker := attemptWorker{
-		repository: repository,
-		partition:  item.Partition,
-		id:         item.Record.ID,
+		repository:      repository,
+		partition:       item.Partition,
+		id:              item.Record.ID,
+		callbackTimeout: cfg.LearningAttemptTimeout,
 		prepare: func(prepareCtx context.Context, record learning.AttemptRecord) (learning.AttemptFailureCode, error) {
 			loaded, err := sessions.Load(prepareCtx, record.Provenance.Source.SessionID)
 			if err != nil || loaded == nil {

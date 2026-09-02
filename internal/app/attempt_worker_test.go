@@ -88,6 +88,75 @@ func waitRenewal(t *testing.T, renewed <-chan int, minimum int) {
 	}
 }
 
+func TestAttemptWorkerCallbackDeadlinePersistsBackoffThenRetryExhausted(t *testing.T) {
+	t.Parallel()
+	for _, stage := range []string{"prepare", "evidence", "reflection", "publish"} {
+		t.Run(stage, func(t *testing.T) {
+			t.Parallel()
+			clock := &attemptWorkerClock{now: time.Unix(80, 0)}
+			repository, partition, created := newAttemptWorkerRecord(t, clock)
+			callbackReturned := make(chan struct{}, defaultAttemptSetupMaxAttempts)
+			block := func(ctx context.Context) error {
+				<-ctx.Done()
+				callbackReturned <- struct{}{}
+				return ctx.Err()
+			}
+			worker := attemptWorker{
+				repository: repository, partition: partition, id: created.ID,
+				claimTTL: time.Second, claimRenewInterval: time.Millisecond,
+				callbackTimeout: 20 * time.Millisecond,
+				setupRetryBase:  time.Second, setupMaxAttempts: 2,
+				prepare: func(ctx context.Context, _ learning.AttemptRecord) (learning.AttemptFailureCode, error) {
+					if stage == "prepare" {
+						return learning.FailureNone, block(ctx)
+					}
+					return learning.FailureNone, nil
+				},
+				evidence: func(ctx context.Context, _ learning.AttemptRecord) (learning.AttemptFailureCode, error) {
+					if stage == "evidence" {
+						return learning.FailureNone, block(ctx)
+					}
+					return learning.FailureNone, nil
+				},
+				reflect: func(ctx context.Context) (learning.Outcome, error) {
+					if stage == "reflection" {
+						return learning.Outcome{}, block(ctx)
+					}
+					return learning.Outcome{Kind: learning.OutcomeProposed}, nil
+				},
+				publish: func(ctx context.Context, _ learning.Outcome) (learning.AttemptCheckpoint, learning.AttemptFailureCode, error) {
+					if stage == "publish" {
+						return learning.AttemptCheckpoint{}, learning.FailureNone, block(ctx)
+					}
+					return learning.AttemptCheckpoint{Stage: learning.AttemptCheckpointProposalLinked, ProposalID: "proposal"}, learning.FailureNone, nil
+				},
+			}
+
+			for attempt := 1; attempt <= 2; attempt++ {
+				got, err := worker.Run(context.Background())
+				if !errors.Is(err, context.DeadlineExceeded) {
+					t.Fatalf("attempt %d error = %v, want deadline", attempt, err)
+				}
+				select {
+				case <-callbackReturned:
+				default:
+					t.Fatalf("attempt %d returned before %s callback cooperatively stopped", attempt, stage)
+				}
+				if attempt == 1 {
+					if got.State != learning.AttemptRunning || got.State.Terminal() || got.FailureCode != learning.FailureNone {
+						t.Fatalf("deadline did not persist transient retry: %+v", got)
+					}
+					clock.now = got.ClaimExpiresAt
+					continue
+				}
+				if got.State != learning.AttemptFailed || got.FailureCode != learning.FailureRetryExhausted {
+					t.Fatalf("deadline retry cap = %+v, want failed/retry_exhausted", got)
+				}
+			}
+		})
+	}
+}
+
 func TestAttemptWorkerRenewsClaimDuringLongWork(t *testing.T) {
 	clock := &attemptWorkerClock{now: time.Unix(60, 0)}
 	base, partition, record := newAttemptWorkerRecord(t, clock)
@@ -136,6 +205,58 @@ func TestAttemptWorkerCancelsWorkWhenRenewalIsLost(t *testing.T) {
 	case <-cancelled:
 	default:
 		t.Fatal("renewal loss did not cancel active work")
+	}
+}
+
+type blockingRenewalRepository struct {
+	learning.AttemptRepository
+	started  chan struct{}
+	returned chan struct{}
+	mu       sync.Mutex
+	blocked  bool
+}
+
+func (r *blockingRenewalRepository) RenewClaim(ctx context.Context, partition learning.AttemptPartition, id learning.AttemptID, version learning.AttemptVersion, claim learning.AttemptClaim, duration time.Duration) (learning.AttemptRecord, learning.AttemptClaim, error) {
+	r.mu.Lock()
+	if r.blocked {
+		r.mu.Unlock()
+		return r.AttemptRepository.RenewClaim(ctx, partition, id, version, claim, duration)
+	}
+	r.blocked = true
+	r.mu.Unlock()
+	close(r.started)
+	<-ctx.Done()
+	close(r.returned)
+	return learning.AttemptRecord{}, learning.AttemptClaim{}, ctx.Err()
+}
+
+func TestAttemptWorkerDeadlineStopsAndJoinsClaimRenewal(t *testing.T) {
+	t.Parallel()
+	clock := &attemptWorkerClock{now: time.Unix(75, 0)}
+	base, partition, record := newAttemptWorkerRecord(t, clock)
+	repository := &blockingRenewalRepository{AttemptRepository: base, started: make(chan struct{}), returned: make(chan struct{})}
+	worker := attemptWorker{
+		repository: repository, partition: partition, id: record.ID,
+		claimTTL: time.Second, claimRenewInterval: time.Millisecond, callbackTimeout: 20 * time.Millisecond,
+		evidence: func(ctx context.Context, _ learning.AttemptRecord) (learning.AttemptFailureCode, error) {
+			<-repository.started
+			<-ctx.Done()
+			return learning.FailureNone, ctx.Err()
+		},
+	}
+
+	got, err := worker.Run(context.Background())
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Run error = %v, want deadline", err)
+	}
+	select {
+	case <-repository.returned:
+	default:
+		t.Fatal("Run returned before the blocked renewal stopped and joined")
+	}
+	wantBackoffExpiry := clock.now.Add(defaultAttemptSetupRetryBase)
+	if got.State != learning.AttemptRunning || got.State.Terminal() || !got.ClaimExpiresAt.Equal(wantBackoffExpiry) {
+		t.Fatalf("deadline did not retain persisted retry/backoff through renewal join: got %+v, want expiry %v", got, wantBackoffExpiry)
 	}
 }
 

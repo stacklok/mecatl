@@ -310,6 +310,10 @@ type Config struct {
 	LLMStreamIdleTimeout time.Duration
 	LLMBreakerThreshold  int
 	LLMBreakerCooldown   time.Duration
+	// LearningAttemptTimeout bounds one Build-owned recovered attempt across
+	// preparation, evidence reconstruction, reflection, and publication. Zero uses
+	// the bounded reflection-job default.
+	LearningAttemptTimeout time.Duration
 
 	// Provider-side prompt caching (ADR 0100). PromptCacheDisabled (wired from
 	// --no-prompt-cache) forces every adapter's cache dialect to None,

@@ -11,6 +11,7 @@ import (
 
 const (
 	defaultAttemptClaimTTL         = 2 * time.Minute
+	defaultAttemptCallbackTimeout  = 2 * time.Minute
 	defaultAttemptSetupMaxAttempts = 3
 	defaultAttemptSetupRetryBase   = 5 * time.Second
 	maxAttemptSetupRetryBackoff    = time.Minute
@@ -27,6 +28,7 @@ type attemptWorker struct {
 	id                 learning.AttemptID
 	claimTTL           time.Duration
 	claimRenewInterval time.Duration
+	callbackTimeout    time.Duration
 	setupRetryBase     time.Duration
 	setupMaxAttempts   int
 
@@ -105,6 +107,9 @@ func startAttemptClaimRenewer(parent context.Context, cancelWork context.CancelF
 				return
 			case <-ticker.C:
 				if err := lease.renew(ctx, ttl); err != nil {
+					if ctx.Err() != nil {
+						return
+					}
 					r.mu.Lock()
 					r.err = err
 					r.mu.Unlock()
@@ -180,7 +185,11 @@ func (w *attemptWorker) Run(ctx context.Context) (learning.AttemptRecord, error)
 		return lease.finalize(ctx, learning.AttemptFinalization{State: learning.AttemptCompleted, Outcome: learning.AttemptOutcomeSucceeded})
 	}
 
-	workCtx, cancelWork := context.WithCancel(ctx)
+	callbackTimeout := w.callbackTimeout
+	if callbackTimeout <= 0 {
+		callbackTimeout = defaultAttemptCallbackTimeout
+	}
+	workCtx, cancelWork := context.WithTimeout(ctx, callbackTimeout)
 	defer cancelWork()
 	interval := w.claimRenewInterval
 	if interval <= 0 {
@@ -204,6 +213,18 @@ func (w *attemptWorker) Run(ctx context.Context) (learning.AttemptRecord, error)
 			return err
 		}
 		return workCtx.Err()
+	}
+	boundaryError := func(callbackErr error) error {
+		if renewErr := renewer.failure(); renewErr != nil {
+			return errors.Join(callbackErr, renewErr)
+		}
+		if workErr := workCtx.Err(); workErr != nil {
+			if errors.Is(workErr, context.DeadlineExceeded) {
+				return errors.Join(callbackErr, errAttemptSetupTransient, workErr)
+			}
+			return errors.Join(callbackErr, workErr)
+		}
+		return callbackErr
 	}
 	checkpoint := func(value learning.AttemptCheckpoint) error {
 		if err := claimFailure(); err != nil {
@@ -233,6 +254,12 @@ func (w *attemptWorker) Run(ctx context.Context) (learning.AttemptRecord, error)
 		return finalize(learning.AttemptFinalization{State: learning.AttemptFailed, Outcome: learning.AttemptOutcomeFailed, FailureCode: code})
 	}
 	handleBoundaryFailure := func(failure learning.AttemptFailureCode, boundaryErr error) (learning.AttemptRecord, bool, error) {
+		if renewErr := renewer.failure(); renewErr != nil {
+			return lease.snapshot(), true, errors.Join(boundaryErr, renewErr)
+		}
+		if ctx.Err() != nil {
+			return lease.snapshot(), true, errors.Join(boundaryErr, ctx.Err())
+		}
 		if errors.Is(boundaryErr, errAttemptSetupTransient) || errors.Is(boundaryErr, errLearningEvidenceNotReady) {
 			maxAttempts := w.setupMaxAttempts
 			if maxAttempts <= 0 {
@@ -267,6 +294,7 @@ func (w *attemptWorker) Run(ctx context.Context) (learning.AttemptRecord, error)
 
 	if w.prepare != nil {
 		failure, prepareErr := w.prepare(workCtx, lease.snapshot())
+		prepareErr = boundaryError(prepareErr)
 		if prepared, handled, prepareResultErr := handleBoundaryFailure(failure, prepareErr); handled {
 			return prepared, prepareResultErr
 		}
@@ -277,9 +305,7 @@ func (w *attemptWorker) Run(ctx context.Context) (learning.AttemptRecord, error)
 			return finalizeFailure(learning.FailureEvidenceUnavailable)
 		}
 		failure, evidenceErr := w.evidence(workCtx, lease.snapshot())
-		if claimErr := claimFailure(); claimErr != nil {
-			return learning.AttemptRecord{}, errors.Join(evidenceErr, claimErr)
-		}
+		evidenceErr = boundaryError(evidenceErr)
 		if resolved, handled, resolveErr := handleBoundaryFailure(failure, evidenceErr); handled {
 			return resolved, resolveErr
 		}
@@ -292,12 +318,10 @@ func (w *attemptWorker) Run(ctx context.Context) (learning.AttemptRecord, error)
 		return finalizeFailure(learning.FailureUnavailable)
 	}
 	outcome, reflectErr := w.reflect(workCtx)
-	if claimErr := claimFailure(); claimErr != nil {
-		return learning.AttemptRecord{}, errors.Join(reflectErr, claimErr)
-	}
+	reflectErr = boundaryError(reflectErr)
 	if reflectErr != nil {
-		terminal, finalErr := finalizeFailure(learning.FailureUnavailable)
-		return terminal, errors.Join(reflectErr, finalErr)
+		terminal, _, handleErr := handleBoundaryFailure(learning.FailureUnavailable, reflectErr)
+		return terminal, handleErr
 	}
 	if lease.snapshot().CheckpointStage != learning.AttemptCheckpointReflectionComplete {
 		if err := checkpoint(learning.AttemptCheckpoint{Stage: learning.AttemptCheckpointReflectionComplete}); err != nil {
@@ -312,18 +336,12 @@ func (w *attemptWorker) Run(ctx context.Context) (learning.AttemptRecord, error)
 	}
 
 	downstream, failure, publishErr := w.publish(workCtx, outcome)
-	if claimErr := claimFailure(); claimErr != nil {
-		return learning.AttemptRecord{}, errors.Join(publishErr, claimErr)
+	publishErr = boundaryError(publishErr)
+	if publishErr != nil && failure == learning.FailureNone {
+		failure = learning.FailurePublicationFailed
 	}
-	if publishErr != nil {
-		if failure == learning.FailureNone {
-			failure = learning.FailurePublicationFailed
-		}
-		terminal, finalErr := finalizeFailure(failure)
-		return terminal, errors.Join(publishErr, finalErr)
-	}
-	if failure != learning.FailureNone {
-		return finalizeFailure(failure)
+	if terminal, handled, handleErr := handleBoundaryFailure(failure, publishErr); handled {
+		return terminal, handleErr
 	}
 	if downstream.Stage != learning.AttemptCheckpointProposalLinked && downstream.Stage != learning.AttemptCheckpointSkillLinked {
 		return finalizeFailure(learning.FailurePublicationFailed)
