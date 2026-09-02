@@ -1356,8 +1356,7 @@ export type SessionSummary = Message<"mecatl.v1.SessionSummary"> & {
   titleMetadata?: SessionTitle | undefined;
 
   /**
-   * token_usage is canonical durable accounting keyed only by "main" and
-   * "session_title". Every bucket total equals the sum of its models entries.
+   * token_usage is canonical durable accounting.
    *
    * @generated from field: map<string, mecatl.v1.TokenUsage> token_usage = 17;
    */
@@ -2751,8 +2750,7 @@ export type Session = Message<"mecatl.v1.Session"> & {
   titleMetadata?: SessionTitle | undefined;
 
   /**
-   * token_usage is canonical durable accounting keyed only by "main" and
-   * "session_title". Every bucket total equals the sum of its models entries.
+   * token_usage is canonical durable accounting.
    *
    * @generated from field: map<string, mecatl.v1.TokenUsage> token_usage = 20;
    */

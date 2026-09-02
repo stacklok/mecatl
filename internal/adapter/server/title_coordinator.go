@@ -117,7 +117,7 @@ func (c *titleCoordinator) claim(id session.SessionID) ([]string, string, Provid
 	attempts := sess.TitleAttempts()
 	if len(attempts) > 0 && attempts[len(attempts)-1].Outcome == "" {
 		attempts[len(attempts)-1].Outcome = session.TitleAttemptInterrupted
-		sess.RestoreTitleMetadata(session.TitleGenerationExhausted, sess.TitleSourcePrompts(), attempts, sess.AuxiliaryUsage())
+		sess.RestoreTitleMetadata(session.TitleGenerationExhausted, sess.TitleSourcePrompts(), attempts)
 		c.persistTitle(c.ctx, sess)
 		return nil, "", ProviderSelector{}, false
 	}
@@ -150,8 +150,8 @@ func (c *titleCoordinator) commit(id session.SessionID, attemptID string, result
 		return
 	}
 	attempts[len(attempts)-1].Outcome = result.Outcome
-	sess.RestoreTitleMetadata(sess.TitleGeneration, sess.TitleSourcePrompts(), attempts, sess.AuxiliaryUsage())
-	sess.RecordAuxiliaryUsage(session.AuxiliaryUsage{Operation: session.AuxiliaryOperationSessionTitle, ProviderID: result.ProviderID, ModelID: result.ModelID, Usage: result.Usage, RecordedAt: c.svc.cfg.Now(), Outcome: result.Outcome})
+	sess.RestoreTitleMetadata(sess.TitleGeneration, sess.TitleSourcePrompts(), attempts)
+	sess.RecordTokenUsage(session.UsageKindSessionTitle, result.ProviderID, result.ModelID, result.Usage)
 
 	switch result.Outcome {
 	case session.TitleAttemptSucceeded:

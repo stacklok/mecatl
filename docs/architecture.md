@@ -849,7 +849,10 @@ the client-tier surface over the same `port.EventLog.Read` the operator-tier 3c
 has **no position and no follow**, so "catch up, then watch" was two calls with a window
 between them in which an append was silently lost; the live alternative
 (`StreamSessionLive`, over the in-memory `Service.Subscribe` registry) is process-local and
-drops for a slow subscriber. `WatchSessionEvents` (and `GET /v1/sessions/{id}/watch`) is
+drops for a slow subscriber. It is the best-effort live path for out-of-band session metadata
+updates such as `session.title`; the per-run HTTP SSE relay does not receive those updates, so
+HTTP clients discover them by reloading the authoritative session snapshot or reading the durable
+event stream. `WatchSessionEvents` (and `GET /v1/sessions/{id}/watch`) is
 the **one operation** that closes both gaps, over the additive `port.CursorEventLog` seam
 ([ADR 0250](adr/0250-durable-cursors-and-watch.md)): it replays from an opaque cursor,
 emits one phase-only frame at the replay→live boundary, then follows the tail, delivering

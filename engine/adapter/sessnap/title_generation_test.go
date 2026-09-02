@@ -12,13 +12,7 @@ func TestSessionTitleGeneration_Scenario2_TitleMetadataRoundTrip(t *testing.T) {
 	s.SetTitleGeneration(session.TitleGenerationPending)
 	s.RecordTitleSourcePrompt("first principal prompt")
 	s.RecordTitleAttempt(session.TitleAttempt{ID: "attempt-1", Outcome: session.TitleAttemptDeferred})
-	s.RecordAuxiliaryUsage(session.AuxiliaryUsage{
-		Operation:  session.AuxiliaryOperationSessionTitle,
-		ProviderID: "provider",
-		ModelID:    "model",
-		Usage:      session.Usage{InputTokens: 3, OutputTokens: 5},
-		Outcome:    session.TitleAttemptDeferred,
-	})
+	s.RecordTokenUsage(session.UsageKindSessionTitle, "provider", "model", session.Usage{InputTokens: 3, OutputTokens: 5})
 
 	snap, err := Of(s)
 	if err != nil {
@@ -38,32 +32,29 @@ func TestSessionTitleGeneration_Scenario2_TitleMetadataRoundTrip(t *testing.T) {
 	if len(attempts) != 1 || attempts[0].ID != "attempt-1" || attempts[0].Outcome != session.TitleAttemptDeferred {
 		t.Errorf("TitleAttempts = %#v, want deferred attempt", attempts)
 	}
-	usage := restored.AuxiliaryUsage()
-	if len(usage) != 1 || usage[0].Usage != (session.Usage{InputTokens: 3, OutputTokens: 5}) {
-		t.Errorf("AuxiliaryUsage = %#v, want title usage", usage)
+	usage := restored.TokenUsage[session.UsageKindSessionTitle]
+	if usage.Total != (session.Usage{InputTokens: 3, OutputTokens: 5}) || usage.Models["provider/model"] != usage.Total {
+		t.Errorf("TokenUsage = %#v, want title usage", usage)
 	}
 }
 
-func TestSessionTitleGeneration_Scenario5_AuxiliaryUsageRoundTripAndProjection(t *testing.T) {
+func TestSessionTitleGeneration_Scenario5_TokenUsageRoundTripAndProjection(t *testing.T) {
 	s := session.New("title-usage", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/workspace", Revision: "in-tree-v1"}, session.Limits{}, time.Time{})
-	s.RecordAuxiliaryUsage(session.AuxiliaryUsage{
-		Operation: session.AuxiliaryOperationSessionTitle,
-		Usage:     session.Usage{InputTokens: 13, OutputTokens: 8},
-	})
+	s.RecordTokenUsage(session.UsageKindSessionTitle, "provider", "model", session.Usage{InputTokens: 13, OutputTokens: 8})
 
 	snap, err := Of(s)
 	if err != nil {
 		t.Fatalf("Of: %v", err)
 	}
-	if len(snap.AuxiliaryUsage) != 1 || snap.AuxiliaryUsage[0].Usage.OutputTokens != 8 {
-		t.Fatalf("snapshot auxiliary usage = %#v, want projected entry", snap.AuxiliaryUsage)
+	if usage := snap.TokenUsage[session.UsageKindSessionTitle]; usage.Total.OutputTokens != 8 || usage.Models["provider/model"].InputTokens != 13 {
+		t.Fatalf("snapshot token usage = %#v, want projected title usage", usage)
 	}
 	restored, err := snap.Restore()
 	if err != nil {
 		t.Fatalf("Restore: %v", err)
 	}
-	if got := restored.AuxiliaryUsage(); len(got) != 1 || got[0].Usage.InputTokens != 13 {
-		t.Errorf("round-trip auxiliary usage = %#v, want input=13", got)
+	if usage := restored.TokenUsage[session.UsageKindSessionTitle]; usage.Total.InputTokens != 13 || usage.Models["provider/model"].OutputTokens != 8 {
+		t.Errorf("round-trip token usage = %#v, want title usage", usage)
 	}
 	if restored.Usage != (session.Usage{}) {
 		t.Errorf("main Usage = %#v, want zero", restored.Usage)

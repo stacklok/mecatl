@@ -4,7 +4,6 @@
     method func (*Principal).IdentityWellFramed() bool
     method func (*Principal).SameIdentity(other *Principal) bool
     method func (*Session).Abandon() error
-    method func (*Session).AuxiliaryUsage() []AuxiliaryUsage
     method func (*Session).BeginRun(runID string)
     method func (*Session).BeginTurn() error
     method func (*Session).BindAuthority(authority Authority) error
@@ -23,12 +22,12 @@
     method func (*Session).PendingAsk() (PendingAsk, bool)
     method func (*Session).PrepareFailedStepRetry() error
     method func (*Session).RecordAssistant(m Message) error
-    method func (*Session).RecordAuxiliaryUsage(entry AuxiliaryUsage)
     method func (*Session).RecordFailureMetadata(disposition RetryDisposition, progress StreamProgress) error
     method func (*Session).RecordFailurePermanence(permanent bool) error
     method func (*Session).RecordLastError(cause string) error
     method func (*Session).RecordTitleAttempt(attempt TitleAttempt)
     method func (*Session).RecordTitleSourcePrompt(text string)
+    method func (*Session).RecordTokenUsage(kind UsageKind, providerID string, modelID string, usage Usage)
     method func (*Session).RecordToolResults(results []ToolResult) error
     method func (*Session).RecordUsage(u Usage) error
     method func (*Session).RecordUserPrompt(text string, instructions []Message) error
@@ -45,7 +44,7 @@
     method func (*Session).RestoreIncarnation(inc IncarnationID) error
     method func (*Session).RestoreLabels(owner *Principal, authority Authority) error
     method func (*Session).RestoreSessionMetadata(kind SessionKind, rel SessionRelationship) error
-    method func (*Session).RestoreTitleMetadata(generation TitleGenerationState, sources []string, attempts []TitleAttempt, usage []AuxiliaryUsage)
+    method func (*Session).RestoreTitleMetadata(generation TitleGenerationState, sources []string, attempts []TitleAttempt)
     method func (*Session).RestoreTokenUsage(usage map[UsageKind]TokenUsage)
     method func (*Session).ResumeWith() (PendingAsk, error)
     method func (*Session).RunID() string
@@ -74,7 +73,6 @@
 const AskOriginHook AskOrigin = 1
 const AskOriginNone AskOrigin = 0
 const AskOriginPlan AskOrigin = 2
-const AuxiliaryOperationSessionTitle AuxiliaryOperation = "session_title"
 const BlockAudio BlockKind = "audio"
 const BlockEmbeddedResource BlockKind = "embedded_resource"
 const BlockImage BlockKind = "image"
@@ -287,8 +285,6 @@ type ApprovalPayload struct{AskID string; Verdict string; Tool string; Call Tool
 type ApprovalVerdict int
 type AskOrigin int
 type Authority struct{CapabilitySet governance.CapabilitySet "json:\"capability_set\""; Provenance string "json:\"provenance\""; DefinitionIdentity string "json:\"definition_identity,omitempty\""}
-type AuxiliaryOperation string
-type AuxiliaryUsage struct{Operation AuxiliaryOperation; ProviderID string; ModelID string; Usage Usage; RecordedAt time.Time; Outcome TitleAttemptOutcome}
 type BlockKind string
 type CompactionArchivePayload struct{Replaced []Message}
 type Content struct{BlockKind BlockKind "json:\"block_kind,omitempty\""; Kind MediaKind; MIMEType string; Data []byte; URL string; Text string "json:\"Text,omitempty\""; Name string "json:\"Name,omitempty\""; Title string "json:\"Title,omitempty\""; Description string "json:\"Description,omitempty\""; Size int64 "json:\"Size,omitempty\""; Audience []string "json:\"Audience,omitempty\""; Priority float64 "json:\"Priority,omitempty\""; LastModified string "json:\"LastModified,omitempty\""}

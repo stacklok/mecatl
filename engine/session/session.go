@@ -343,9 +343,8 @@ type Session struct {
 	Limits Limits
 	// Counters are the running totals for stop-condition evaluation.
 	Counters Counters
-	// TokenUsage is the canonical durable accounting ledger. Each bucket total is
-	// the element-wise sum of its opaque server-produced model attributions.
-	// Session.Usage remains the deprecated compatibility projection of "main".
+	// TokenUsage is the canonical durable accounting ledger. Session.Usage remains
+	// the deprecated compatibility projection of "main".
 	TokenUsage map[UsageKind]TokenUsage
 	// Usage is the deprecated cumulative main-token compatibility projection. It is
 	// the MaxRunTokens budget brake (StopBudget) is evaluated against, so it is
@@ -421,8 +420,6 @@ type Session struct {
 	titleSourcePrompts []string
 	// titleAttempts records durable title-generation lifecycle attempts.
 	titleAttempts []TitleAttempt
-	// auxiliaryUsage is a bounded ledger distinct from the main run Usage.
-	auxiliaryUsage []AuxiliaryUsage
 	// Owner is the verified caller this session is attributed to, or nil when the
 	// session is ownerless (a pre-ship snapshot, or a deployment with no identity
 	// verifier wired). It is a WRITE-ONCE label stamped through RestoreLabels —
@@ -599,7 +596,7 @@ func (s *Session) RecordUsage(u Usage) error {
 		return fmt.Errorf("%w: RecordUsage from %q", ErrIllegalTransition, s.State)
 	}
 	s.Usage = s.Usage.Add(u)
-	s.recordTokenUsage(UsageKindMain, modelAttribution(s.ProviderID, s.ModelID), u)
+	s.RecordTokenUsage(UsageKindMain, s.ProviderID, s.ModelID, u)
 	return nil
 }
 

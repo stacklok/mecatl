@@ -33,6 +33,15 @@ func modelAttribution(providerID, modelID string) string {
 	return providerID + "/" + modelID
 }
 
+// RecordTokenUsage adds usage to a canonical bucket under the opaque provider/model
+// attribution. It does not affect the main-run budget projection in Session.Usage.
+func (s *Session) RecordTokenUsage(kind UsageKind, providerID, modelID string, usage Usage) {
+	if kind != UsageKindMain && kind != UsageKindSessionTitle {
+		return
+	}
+	s.recordTokenUsage(kind, modelAttribution(providerID, modelID), usage)
+}
+
 func (s *Session) recordTokenUsage(kind UsageKind, attribution string, usage Usage) {
 	if s.TokenUsage == nil {
 		s.TokenUsage = make(map[UsageKind]TokenUsage)

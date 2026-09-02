@@ -11,6 +11,15 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 ## [Unreleased]
 
+### Changed
+
+- **Simplified title-model token accounting** — removes the title-specific
+  `session.AuxiliaryUsage`/`AuxiliaryOperation` API and its per-attempt ledger.
+  `Session.RecordTokenUsage` records canonical usage by kind and opaque selected-model
+  attribution, and `RestoreTitleMetadata` now restores title lifecycle metadata only.
+  Removed APIs and the changed restore signature are breaking; pre-v1 this is a minor
+  compatibility classification.
+
 ### Added
 
 - **Session-load failure classification** — adds `port.SessionLoadFailureClass`,
@@ -30,10 +39,10 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 - **`agent.Run.RetractPermissionAsk`** ([ADR 0294](../docs/adr/0294-session-correlation-and-affinity.md)) — lets a lease-owning host atomically withdraw one still-pending local permission ask without resolving it, emitting the matching retraction before cancellation while leaving an already-durable awaiting snapshot untouched for successor handoff. Added (minor).
 - **Canonical token-usage buckets and title lifecycle projection** — adds
-  `session.UsageKind`/`TokenUsage` and `Session.TokenUsage`, the canonical
-  `main` and `session_title` totals plus opaque model attribution maps. Each
-  total is normalized to the sum of its model entries; legacy snapshots map
-  unattributed usage to `unknown`. `Session.Usage` and its snapshot projection
+  `session.UsageKind`/`TokenUsage` and `Session.TokenUsage`, canonical token
+  usage kinds with opaque model attribution maps. Each total is normalized to
+  the sum of its model entries; legacy snapshots map unattributed usage to
+  `unknown`. `Session.Usage` and its snapshot projection
   remain dual-written compatibility data. `SessionTitle` is the source-free
   canonical title lifecycle projection; its nested usage is removed. Added
   (minor); the retained wire title/provenance fields are deprecated (pre-v1
@@ -44,12 +53,12 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 - **`tool.CommandEnvironmentOverlay`, `tool.CommandEnvironmentRunner`, and `tool.CommandEnvironmentStreamer`** ([ADR 0281](../docs/adr/0281-managed-temporary-command-leases.md)) — an optional, per-invocation command-environment overlay for host-owned runtime values such as managed temporary storage. The optional capability preserves the existing bound-runner API and namespace affinity: callers that require an overlay must decline honestly when a runner does not implement it, never interpolate environment values into shell text or fall back to an unoverlayed call. Added (minor).
 
 - **Session title-generation domain metadata and lifecycle event** — adds generated title provenance,
-  durable title-generation lifecycle/source/attempt records, a bounded
-  `session_title` auxiliary-usage ledger, and the source-free `EvSessionTitle` /
-  `TitlePayload` event projection. The ledger is intentionally separate
-  from `Session.Usage`, normal run budgets, result usage, and conversation.
-  Snapshot and event-source metadata round-trip the title-specific state. Added
-  (minor).
+  durable title-generation lifecycle/source/attempt records, canonical title-model
+  token usage, and the source-free `EvSessionTitle` / `TitlePayload` event
+  projection. Title lifecycle attempts retain only identity, outcome, and time;
+  title usage is intentionally separate from `Session.Usage`, normal run budgets,
+  result usage, and conversation. Snapshot and event-source metadata round-trip
+  the title-specific state. Added (minor).
 
 - **`port.CursorEventLog`, `port.Cursor`, `port.EncodeCursor`/`DecodeCursor`, `port.LogRecord`/`LogRecordKind`, `port.ReadOptions`, `port.ErrCursorMalformed`/`ErrCursorExpired`** (issue #821, [ADR 0250](../docs/adr/0250-durable-cursors-and-watch.md)) — durable positions over the event log: an append reports WHERE the record landed, and a read resumes from a position rather than always from the start.
 

@@ -1043,8 +1043,7 @@ message SessionSummary {
   PlacementMetadata placement = 15;
   // title_metadata is the canonical bounded, source-free title lifecycle projection.
   SessionTitle title_metadata = 16;
-  // token_usage is canonical durable accounting keyed only by "main" and
-  // "session_title". Every bucket total equals the sum of its models entries.
+  // token_usage is canonical durable accounting.
   map<string, TokenUsage> token_usage = 17;
 }
 
@@ -1366,8 +1365,7 @@ message Session {
   PlacementMetadata placement = 18;
   // title_metadata is the canonical bounded, source-free title lifecycle projection.
   SessionTitle title_metadata = 19;
-  // token_usage is canonical durable accounting keyed only by "main" and
-  // "session_title". Every bucket total equals the sum of its models entries.
+  // token_usage is canonical durable accounting.
   map<string, TokenUsage> token_usage = 20;
 }
 

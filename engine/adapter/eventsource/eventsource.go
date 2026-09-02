@@ -113,7 +113,6 @@ type SessionMeta struct {
 	TitleGeneration    session.TitleGenerationState
 	TitleSourcePrompts []string
 	TitleAttempts      []session.TitleAttempt
-	AuxiliaryUsage     []session.AuxiliaryUsage
 	// TokenUsage is the canonical durable accounting ledger supplied by snapshot metadata.
 	TokenUsage map[session.UsageKind]session.TokenUsage
 	// Kind and Relationship are the trusted producer taxonomy supplied alongside
@@ -193,7 +192,7 @@ func Fold(meta SessionMeta, events iter.Seq2[session.Event, error]) (*session.Se
 	s.DebugTargetFingerprint = meta.DebugTargetFingerprint
 	s.Title = meta.Title
 	s.TitleProvenance = meta.TitleProvenance
-	s.RestoreTitleMetadata(meta.TitleGeneration, meta.TitleSourcePrompts, meta.TitleAttempts, meta.AuxiliaryUsage)
+	s.RestoreTitleMetadata(meta.TitleGeneration, meta.TitleSourcePrompts, meta.TitleAttempts)
 	if meta.TokenUsage != nil {
 		s.RestoreTokenUsage(meta.TokenUsage)
 	}
@@ -220,8 +219,7 @@ func Fold(meta SessionMeta, events iter.Seq2[session.Event, error]) (*session.Se
 	}
 	if meta.TokenUsage == nil && f.usage != (session.Usage{}) {
 		s.RestoreTokenUsage(map[session.UsageKind]session.TokenUsage{
-			session.UsageKindMain:         {Total: f.usage, Models: map[string]session.Usage{"unknown": f.usage}},
-			session.UsageKindSessionTitle: s.TokenUsage[session.UsageKindSessionTitle],
+			session.UsageKindMain: {Total: f.usage, Models: map[string]session.Usage{"unknown": f.usage}},
 		})
 	}
 	if s.State == session.StateFailed {

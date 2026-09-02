@@ -89,22 +89,6 @@ type TitleAttempt struct {
 	CreatedAt time.Time
 }
 
-// AuxiliaryOperation identifies a bounded, non-run model-usage ledger entry.
-type AuxiliaryOperation string
-
-// AuxiliaryOperationSessionTitle identifies the title-generator ledger entry.
-const AuxiliaryOperationSessionTitle AuxiliaryOperation = "session_title"
-
-// AuxiliaryUsage accounts for one auxiliary operation without affecting Session.Usage.
-type AuxiliaryUsage struct {
-	Operation  AuxiliaryOperation
-	ProviderID string
-	ModelID    string
-	Usage      Usage
-	RecordedAt time.Time
-	Outcome    TitleAttemptOutcome
-}
-
 // TitlePayload is the bounded source-free projection emitted after a durable
 // title lifecycle change. It intentionally contains neither title-source prompts
 // nor provider error text.
@@ -164,7 +148,6 @@ func ClampTitle(s string) string {
 const (
 	maxTitleSourcePrompts  = 3
 	maxTitleSourceRunes    = 2_000
-	maxAuxiliaryUsage      = 16
 	maxGeneratedTitleRunes = 80
 )
 
@@ -224,29 +207,9 @@ func clampGeneratedTitle(text string) string {
 	return string(runes[:maxGeneratedTitleRunes-1]) + "…"
 }
 
-// RecordAuxiliaryUsage appends bounded session-title accounting without adding
-// it to Session.Usage, conversation, or the run budget.
-func (s *Session) RecordAuxiliaryUsage(entry AuxiliaryUsage) {
-	if entry.Operation != AuxiliaryOperationSessionTitle {
-		return
-	}
-	entry.ProviderID = strings.Join(strings.Fields(entry.ProviderID), " ")
-	entry.ModelID = strings.Join(strings.Fields(entry.ModelID), " ")
-	s.recordTokenUsage(UsageKindSessionTitle, modelAttribution(entry.ProviderID, entry.ModelID), entry.Usage)
-	if len(s.auxiliaryUsage) == maxAuxiliaryUsage {
-		s.auxiliaryUsage = append([]AuxiliaryUsage(nil), s.auxiliaryUsage[1:]...)
-	}
-	s.auxiliaryUsage = append(s.auxiliaryUsage, entry)
-}
-
-// AuxiliaryUsage returns an owned copy of the auxiliary accounting ledger.
-func (s *Session) AuxiliaryUsage() []AuxiliaryUsage {
-	return append([]AuxiliaryUsage(nil), s.auxiliaryUsage...)
-}
-
 // RestoreTitleMetadata restores durable title-specific metadata from a trusted
 // snapshot or event-source metadata projection.
-func (s *Session) RestoreTitleMetadata(generation TitleGenerationState, sources []string, attempts []TitleAttempt, usage []AuxiliaryUsage) {
+func (s *Session) RestoreTitleMetadata(generation TitleGenerationState, sources []string, attempts []TitleAttempt) {
 	if generation == "" {
 		generation = TitleGenerationDisabled
 	}
@@ -256,8 +219,4 @@ func (s *Session) RestoreTitleMetadata(generation TitleGenerationState, sources 
 		s.RecordTitleSourcePrompt(source)
 	}
 	s.titleAttempts = append([]TitleAttempt(nil), attempts...)
-	s.auxiliaryUsage = nil
-	for _, entry := range usage {
-		s.RecordAuxiliaryUsage(entry)
-	}
 }

@@ -2629,8 +2629,7 @@ type SessionSummary struct {
 	Placement       *PlacementMetadata `protobuf:"bytes,15,opt,name=placement,proto3" json:"placement,omitempty"`
 	// title_metadata is the canonical bounded, source-free title lifecycle projection.
 	TitleMetadata *SessionTitle `protobuf:"bytes,16,opt,name=title_metadata,json=titleMetadata,proto3" json:"title_metadata,omitempty"`
-	// token_usage is canonical durable accounting keyed only by "main" and
-	// "session_title". Every bucket total equals the sum of its models entries.
+	// token_usage is canonical durable accounting.
 	TokenUsage    map[string]*TokenUsage `protobuf:"bytes,17,rep,name=token_usage,json=tokenUsage,proto3" json:"token_usage,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -5380,8 +5379,7 @@ type Session struct {
 	Placement       *PlacementMetadata `protobuf:"bytes,18,opt,name=placement,proto3" json:"placement,omitempty"`
 	// title_metadata is the canonical bounded, source-free title lifecycle projection.
 	TitleMetadata *SessionTitle `protobuf:"bytes,19,opt,name=title_metadata,json=titleMetadata,proto3" json:"title_metadata,omitempty"`
-	// token_usage is canonical durable accounting keyed only by "main" and
-	// "session_title". Every bucket total equals the sum of its models entries.
+	// token_usage is canonical durable accounting.
 	TokenUsage    map[string]*TokenUsage `protobuf:"bytes,20,rep,name=token_usage,json=tokenUsage,proto3" json:"token_usage,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
