@@ -186,7 +186,7 @@ func (st *Store) PageSessionMetadata(_ context.Context, request port.SessionMeta
 		rows = append(rows, port.SessionDiscoveryMeta{
 			ID: id, ModifiedAt: st.savedAt[id], State: snap.State,
 			Turns: snap.Counters.Turns, ModelID: snap.ModelID, CreatedAt: snap.CreatedAt,
-			Title: snap.Title, TitleProvenance: snap.TitleProvenance, Workspace: snap.Workspace,
+			Title: snap.Title, TitleProvenance: snap.TitleProvenance, EnvironmentRef: snap.EnvironmentRef,
 			Kind: kind, Relationship: snap.Relationship, Owner: snap.Owner,
 			EstimatedBytes: st.estimatedBytes[id],
 		})
@@ -204,7 +204,7 @@ func estimateSnapshotBytes(snap sessnap.Snapshot) int64 {
 	size := int64(256 + len(snap.ID) + len(snap.State) + len(snap.Mode) + len(snap.Workspace) +
 		len(snap.StopReason) + len(snap.Kind) + len(snap.Profile) + len(snap.ProviderID) +
 		len(snap.ModelID) + len(snap.ReasoningEffort) + len(snap.Title) + len(snap.TitleProvenance) +
-		len(snap.LastError) + len(snap.Incarnation) + len(snap.EnvironmentRef.Kind) + len(snap.EnvironmentRef.ID))
+		len(snap.LastError) + len(snap.Incarnation) + len(snap.EnvironmentRef.Kind) + len(snap.EnvironmentRef.ID) + len(snap.EnvironmentRef.Revision))
 
 	if authority := snap.Authority; authority != nil {
 		size += int64(96 + len(authority.Provenance) + len(authority.DefinitionIdentity))

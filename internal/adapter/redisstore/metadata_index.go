@@ -181,7 +181,7 @@ func sessionMetadata(s *session.Session, modifiedAt time.Time, size int64) port.
 	return port.SessionDiscoveryMeta{
 		ID: s.ID, ModifiedAt: modifiedAt, State: s.State, Turns: s.Counters.Turns,
 		ModelID: s.ModelID, CreatedAt: s.CreatedAt, Title: s.Title,
-		TitleProvenance: s.TitleProvenance, Owner: s.Owner.Clone(), Workspace: s.Workspace,
+		TitleProvenance: s.TitleProvenance, Owner: s.Owner.Clone(), EnvironmentRef: s.EnvironmentRef,
 		Kind: s.Kind, Relationship: s.Relationship, EstimatedBytes: size,
 	}
 }

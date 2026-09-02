@@ -56,11 +56,12 @@ func TestScheduleSharedCatalog_Scenario1_ManagerIsStoreShaped(t *testing.T) {
 	// The manager works standalone: a valid cron create saves ENABLED with the
 	// cronparse-computed first fire, with no Service in sight.
 	spec := port.ScheduleSpec{
-		Name:      "standalone",
-		Prompt:    "rotate keys",
-		Trigger:   port.TriggerSpec{Cron: "@every 1h"},
-		Workspace: "/ws",
-		Mode:      session.ModePlan,
+		Name:           "standalone",
+		Prompt:         "rotate keys",
+		Trigger:        port.TriggerSpec{Cron: "@every 1h"},
+		EnvironmentRef: session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"},
+		PlacementScope: "legacy-local",
+		Mode:           session.ModePlan,
 	}
 	sched, err := pm.CreateSchedule(ctx, spec)
 	if err != nil {
@@ -129,11 +130,10 @@ func TestScheduleSharedCatalog_Scenario1_ServiceDelegates(t *testing.T) {
 	// The delegation is byte-identical: drive every verb through the Service
 	// wrapper and observe it on the manager (the SAME seam) over the same store.
 	spec := port.ScheduleSpec{
-		Name:      "delegate",
-		Prompt:    "p",
-		Trigger:   port.TriggerSpec{Cron: "@every 1h"},
-		Workspace: "/ws",
-		Mode:      session.ModePlan,
+		Name:    "delegate",
+		Prompt:  "p",
+		Trigger: port.TriggerSpec{Cron: "@every 1h"},
+		Mode:    session.ModePlan,
 	}
 	if _, err := svc.CreateSchedule(ctx, spec); err != nil {
 		t.Fatalf("svc.CreateSchedule: %v", err)
@@ -289,11 +289,10 @@ func TestScheduleSharedCatalog_Scenario1_FireNowStatesPreserved(t *testing.T) {
 		t.Errorf("svc.FireNow on an unknown schedule: err=%v, want ErrScheduleNotFound", err)
 	}
 	if _, err := mgr.CreateSchedule(ctx, port.ScheduleSpec{
-		Name:      "paused",
-		Prompt:    "p",
-		Trigger:   port.TriggerSpec{Cron: "@every 1h"},
-		Workspace: "/ws",
-		Mode:      session.ModePlan,
+		Name:    "paused",
+		Prompt:  "p",
+		Trigger: port.TriggerSpec{Cron: "@every 1h"},
+		Mode:    session.ModePlan,
 	}); err != nil {
 		t.Fatalf("mgr.CreateSchedule: %v", err)
 	}
@@ -324,6 +323,7 @@ func newDelegatingScheduleService(t *testing.T, store port.SessionStore, now tim
 	cfg := server.Config{
 		Engine:              engine,
 		Store:               store,
+		DefaultWorkspace:    "/ws",
 		Workspaces:          func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
 		Now:                 func() time.Time { return now },
 		DefaultCapabilities: llm.Capabilities(),

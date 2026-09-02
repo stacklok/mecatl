@@ -219,8 +219,12 @@ const (
 //     deployment default (the same opaque-string discipline as
 //     port.LLMRequest.Model).
 //   - Profile is the session tool-surface profile ("" default, "no-fs" file-less).
-//     The store stores it inertly; composition interprets it at fire time.
-//   - Workspace is the session cwd. "" means the deployment default.
+//     It is public attenuation only; placement is otherwise server-owned.
+//   - EnvironmentRef is the exact private placement resolved at creation. It is
+//     durable trusted storage state and must never be projected on public/model
+//     schedule surfaces.
+//   - PlacementScope is the trusted deployment scope in which EnvironmentRef was
+//     authorized. Fire must require the same scope before exact reattachment.
 //   - Mode is the session permission posture (the same session.PermissionMode a
 //     created session carries).
 //   - Limits are the bounded budgets for each fire — subagent-grade caps
@@ -291,19 +295,20 @@ const (
 //     The store stores it inertly (the store never interprets it); composition
 //     reads it at fire-start.
 type ScheduleSpec struct {
-	Name      string
-	Prompt    string
-	Parts     []session.Content
-	Trigger   TriggerSpec
-	Selector  ScheduleProviderSelector
-	Profile   string
-	Workspace string
-	Mode      session.PermissionMode
-	Limits    session.Limits
-	Mutating  bool
-	MaxFires  int
-	Misfire   MisfirePolicy
-	Singleton bool
+	Name           string
+	Prompt         string
+	Parts          []session.Content
+	Trigger        TriggerSpec
+	Selector       ScheduleProviderSelector
+	Profile        string
+	EnvironmentRef session.EnvironmentRef
+	PlacementScope string
+	Mode           session.PermissionMode
+	Limits         session.Limits
+	Mutating       bool
+	MaxFires       int
+	Misfire        MisfirePolicy
+	Singleton      bool
 	// Timezone is the IANA timezone name (e.g. "America/New_York") the cron
 	// expression fires in. Empty means UTC (the recommended default for infra
 	// schedules — avoids the 1–3am DST danger zone). The store stores it

@@ -43,7 +43,7 @@
     method func (*ScheduleQueryTool).Execute(ctx context.Context, call session.ToolCall, _ tool.Environment) (session.ToolResult, error)
     method func (*ScheduleQueryTool).ReadOnly() bool
     method func (*ScheduleQueryTool).Spec() tool.ToolSpec
-    method func (*ScheduleTool).Execute(ctx context.Context, call session.ToolCall, _ tool.Environment) (session.ToolResult, error)
+    method func (*ScheduleTool).Execute(ctx context.Context, call session.ToolCall, env tool.Environment) (session.ToolResult, error)
     method func (*ScheduleTool).ReadOnly() bool
     method func (*ScheduleTool).Spec() tool.ToolSpec
     method func (*SubagentStatusTool).Execute(_ context.Context, call session.ToolCall, _ tool.Environment) (session.ToolResult, error)

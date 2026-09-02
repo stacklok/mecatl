@@ -164,7 +164,8 @@ func TestCallerSeparation_Scenario4_OwnerlessCutoverIsObservableAndSafe(t *testi
 	ownedSchedule := legacySchedule
 	ownedSchedule.Spec.Name = "alice-schedule"
 	ownedSchedule.Spec.Owner = alice.Clone()
-	ownedSchedule.Spec.Workspace = workspace
+	ownedSchedule.Spec.EnvironmentRef = session.EnvironmentRef{Kind: session.EnvKindLocal, ID: localDefaultPlacementID, Revision: localDefaultPlacementRevision}
+	ownedSchedule.Spec.PlacementScope = string(defaultPlacementScope)
 	for _, schedule := range []port.Schedule{legacySchedule, ownedSchedule} {
 		if err := scheduleStore.Save(ctx, schedule); err != nil {
 			t.Fatal(err)

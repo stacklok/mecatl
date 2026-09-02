@@ -82,15 +82,22 @@ func makeFireFunc(svc *server.Service, store port.ScheduleStore, defaultTimeout 
 			limits.MaxConsecutiveFailures = subagentDefaultMaxConsecFails
 		}
 
+		ownerCtx := schedulerOwnerContext(ctx, sched.Spec.Owner)
+		placement, err := svc.ReattachPlacementInScope(ownerCtx, sched.Spec.EnvironmentRef, sched.Spec.PlacementScope)
+		if err != nil {
+			return fireFailed(sched, now, "", err), err
+		}
+
 		// Pre-mint the fire id (ADR 0059 decision #7 Phase-2): a "sched--"-prefixed
 		// id that serves as BOTH the fire id AND the session id. Minting it here
 		// (before CreateSessionWithProfile) and passing it as the WithSessionID
 		// override means the fire's persisted session carries the sched-- family
 		// prefix the GC retention sweep (ScheduleFireRetention) partitions on.
 		fireID := newFireID(literalName, now)
-		sess, err := svc.CreateSessionWithProfile(ctx, sched.Spec.Workspace, mode, limits, sel, profile,
+		sess, err := svc.CreateSessionWithProfile(ownerCtx, "", mode, limits, sel, profile,
 			server.WithSessionID(session.SessionID(fireID)),
 			server.WithOwner(fireSessionOwner(sched.Spec.Owner)),
+			server.WithPlacementBinding(placement),
 			server.WithScheduledRelationship(literalName, sched.Spec.OriginSessionID))
 		if err != nil {
 			return fireFailed(sched, now, "", err), err
@@ -121,7 +128,6 @@ func makeFireFunc(svc *server.Service, store port.ScheduleStore, defaultTimeout 
 		// in the scheduler ignores CarryContext (the crashed fire's context is
 		// untrusted AND incomplete); this gate is on CarryContext + a real prior
 		// session id (not the pending sentinel, not empty).
-		ownerCtx := schedulerOwnerContext(ctx, sess.Owner)
 		prompt := carriedContextPrompt(ownerCtx, svc, sched)
 
 		// Issue #386 — the in-flight scheduled-fire state: RecordFireStart flips

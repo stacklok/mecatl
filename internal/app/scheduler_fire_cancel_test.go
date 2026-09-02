@@ -107,10 +107,11 @@ func runFireCancelTest(t *testing.T, shareStore bool) {
 	const schedName = "cancel-on-shutdown"
 	if err := schedStore.Save(ctx, port.Schedule{
 		Spec: port.ScheduleSpec{
-			Name:      schedName,
-			Prompt:    "run until cancelled",
-			Workspace: workspace,
-			Trigger:   port.TriggerSpec{OneShot: time.Now().Add(-1 * time.Second)}, // already due
+			Name:           schedName,
+			Prompt:         "run until cancelled",
+			EnvironmentRef: session.EnvironmentRef{Kind: session.EnvKindLocal, ID: workspace, Revision: "in-tree-v1"},
+			PlacementScope: "legacy-local",
+			Trigger:        port.TriggerSpec{OneShot: time.Now().Add(-1 * time.Second)}, // already due
 		},
 		State: port.ScheduleState{
 			NextFireAt: time.Now().Add(-1 * time.Second), // due now (Claim's due-check needs NextFireAt <= now)

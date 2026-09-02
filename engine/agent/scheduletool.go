@@ -59,9 +59,6 @@ type scheduleArgs struct {
 	OneShot string `json:"one_shot,omitempty"`
 	// Timezone is the IANA timezone the cron fires in (create; empty = UTC).
 	Timezone string `json:"timezone,omitempty"`
-	// Workspace is the session cwd the fire runs in (create; required on a
-	// default-profile schedule).
-	Workspace string `json:"workspace,omitempty"`
 	// Profile is the session tool-surface profile (create; "" default, "no-fs").
 	Profile string `json:"profile,omitempty"`
 	// Mutating is the explicit write opt-in (create; default false = read-leaning,
@@ -96,7 +93,6 @@ var scheduleSchema = json.RawMessage(`{
     "cron": {"type": "string", "description": "create only: a cron expression or @-macro (e.g. '0 9 * * *', '@every 1h'). Mutually exclusive with one_shot."},
     "one_shot": {"type": "string", "description": "create only: a single future fire instant, RFC 3339. Mutually exclusive with cron."},
     "timezone": {"type": "string", "description": "create only: the IANA timezone the cron fires in (e.g. 'America/New_York'). Empty = UTC."},
-    "workspace": {"type": "string", "description": "create only: the session cwd the fire runs in. Required on a default-profile schedule; must be empty on a no-fs schedule."},
     "profile": {"type": "string", "description": "create only: the session tool-surface profile ('' default, 'no-fs' file-less)."},
     "mutating": {"type": "boolean", "description": "create only: the explicit write opt-in. Default false (read-leaning — the fire runs in plan mode)."},
     "max_fires": {"type": "integer", "description": "create only: bound a cron's total fires (0 = forever). Ignored on a one-shot."},
@@ -159,7 +155,7 @@ func (*ScheduleTool) Spec() tool.ToolSpec {
 	return tool.ToolSpec{
 		Name: ScheduleToolName,
 		Description: "Manage scheduled tasks (recurring or one-shot prompts that run unattended) — the MUTATING half. " +
-			"Verbs: create registers a schedule (name + prompt + cron or one_shot + workspace); " +
+			"Verbs: create registers a schedule (name + prompt + cron or one_shot) in this session's exact placement; " +
 			"pause/resume disable/enable without deleting; delete removes it; " +
 			"fire triggers an immediate run and returns the fire id + session id. " +
 			"A schedule created here reports its fire's result back into THIS conversation when it fires — " +
@@ -336,14 +332,14 @@ var _ tool.Tool = (*planAwareScheduleTool)(nil)
 // verb-level error (an unknown schedule, a rejected create, a fire overlap) is
 // a MODEL-ADDRESSABLE ToolResult (IsError), not a harness-level error — the
 // loop records it and lets the model react.
-func (t *ScheduleTool) Execute(ctx context.Context, call session.ToolCall, _ tool.Environment) (session.ToolResult, error) {
+func (t *ScheduleTool) Execute(ctx context.Context, call session.ToolCall, env tool.Environment) (session.ToolResult, error) {
 	var args scheduleArgs
 	if msg, ok := session.ParseArgs(call, &args); !ok {
 		return session.NewToolError(call.ID, "Schedule: "+msg), nil
 	}
 	switch strings.ToLower(strings.TrimSpace(args.Verb)) {
 	case "create":
-		return t.create(ctx, call, args), nil
+		return t.create(ctx, call, args, env.Ref()), nil
 	case "pause":
 		return t.setEnabled(ctx, call, args, false), nil
 	case "resume":
@@ -363,7 +359,7 @@ func (t *ScheduleTool) Execute(ctx context.Context, call session.ToolCall, _ too
 // the RFC 3339 one-shot parse); ALL validation (cron grammar, the Mutating/Mode
 // invariant, the profile-aware workspace check, the cadence floor) lives in the
 // create-seam — the tool never re-implements it (the one-path discipline).
-func (t *ScheduleTool) create(ctx context.Context, call session.ToolCall, args scheduleArgs) session.ToolResult {
+func (t *ScheduleTool) create(ctx context.Context, call session.ToolCall, args scheduleArgs, environmentRef session.EnvironmentRef) session.ToolResult {
 	if strings.TrimSpace(args.Name) == "" {
 		return session.NewToolError(call.ID, "Schedule create: 'name' is required")
 	}
@@ -379,15 +375,15 @@ func (t *ScheduleTool) create(ctx context.Context, call session.ToolCall, args s
 		mode = session.ModePlan
 	}
 	spec := port.ScheduleSpec{
-		Name:      strings.TrimSpace(args.Name),
-		Prompt:    args.Prompt,
-		Trigger:   trigger,
-		Profile:   args.Profile,
-		Workspace: args.Workspace,
-		Mode:      mode,
-		Mutating:  args.Mutating,
-		MaxFires:  args.MaxFires,
-		Timezone:  args.Timezone,
+		Name:           strings.TrimSpace(args.Name),
+		Prompt:         args.Prompt,
+		Trigger:        trigger,
+		Profile:        args.Profile,
+		EnvironmentRef: environmentRef,
+		Mode:           mode,
+		Mutating:       args.Mutating,
+		MaxFires:       args.MaxFires,
+		Timezone:       args.Timezone,
 		// The origin comes from the RUN CONTEXT and from nowhere else, and this
 		// literal is the only place it is ever set (ADR 0209). scheduleArgs has
 		// no origin field, so a model-supplied one cannot reach it — do NOT add

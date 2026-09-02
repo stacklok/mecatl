@@ -614,8 +614,8 @@ func RunMetadataPager(t *testing.T, newStore func(t *testing.T) port.SessionStor
 			if row.EstimatedBytes <= 0 {
 				t.Fatalf("discovery metadata for %q omitted a positive byte estimate", row.ID)
 			}
-			if row.Workspace != "/work/space" || row.Kind != session.SessionKindMain {
-				t.Fatalf("discovery metadata for %q = workspace %q kind %q", row.ID, row.Workspace, row.Kind)
+			if row.EnvironmentRef != (session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/work/space", Revision: "rev-1"}) || row.Kind != session.SessionKindMain {
+				t.Fatalf("discovery metadata for %q = environment_ref %+v kind %q", row.ID, row.EnvironmentRef, row.Kind)
 			}
 		}
 	}
@@ -675,13 +675,15 @@ func RunConditionalPrunable(t *testing.T, newStore func(t *testing.T) port.Sessi
 // mode and a fixed (whole-nanosecond, UTC) creation time so timestamp
 // round-trip equality is well-defined.
 func newSession(id session.SessionID) *session.Session {
-	return session.New(
+	s := session.New(
 		id,
 		session.ModeAccept,
 		"/work/space",
 		session.Limits{MaxTurns: 7, MaxToolCalls: 21, MaxConsecutiveFailures: 3},
 		time.Date(2026, 6, 1, 12, 30, 45, 123456789, time.UTC),
 	)
+	s.EnvironmentRef = session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/work/space", Revision: "rev-1"}
+	return s
 }
 
 // representativeSession builds a session exercising every history shape

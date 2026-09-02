@@ -47,20 +47,21 @@ func TestScheduleSaveLoadOverWire(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 	in := port.Schedule{
 		Spec: port.ScheduleSpec{
-			Name:        "cron-sched",
-			Prompt:      "rotate the keys",
-			Trigger:     port.TriggerSpec{Cron: sampleScheduleCron},
-			Profile:     "no-fs",
-			Workspace:   "/srv",
-			Mode:        session.ModeDefault,
-			Limits:      session.Limits{MaxTurns: 5, MaxToolCalls: 20},
-			Mutating:    true,
-			MaxFires:    3,
-			Misfire:     port.MisfireFireOnceNow,
-			Singleton:   true,
-			Timezone:    "UTC",
-			CreatedAt:   now,
-			FireTimeout: 5 * time.Minute,
+			Name:           "cron-sched",
+			Prompt:         "rotate the keys",
+			Trigger:        port.TriggerSpec{Cron: sampleScheduleCron},
+			Profile:        "no-fs",
+			EnvironmentRef: session.EnvironmentRef{Kind: "remote", ID: "opaque-placement", Revision: "r7"},
+			PlacementScope: "deployment-a",
+			Mode:           session.ModeDefault,
+			Limits:         session.Limits{MaxTurns: 5, MaxToolCalls: 20},
+			Mutating:       true,
+			MaxFires:       3,
+			Misfire:        port.MisfireFireOnceNow,
+			Singleton:      true,
+			Timezone:       "UTC",
+			CreatedAt:      now,
+			FireTimeout:    5 * time.Minute,
 		},
 		State: port.ScheduleState{
 			NextFireAt: now.Add(time.Minute),
@@ -77,7 +78,7 @@ func TestScheduleSaveLoadOverWire(t *testing.T) {
 	if got.Spec.Name != in.Spec.Name || got.Spec.Prompt != in.Spec.Prompt || got.Spec.Trigger.Cron != in.Spec.Trigger.Cron {
 		t.Errorf("Load round trip Spec = %+v, want %+v", got.Spec, in.Spec)
 	}
-	if got.Spec.Profile != in.Spec.Profile || got.Spec.Workspace != in.Spec.Workspace || got.Spec.Mode != in.Spec.Mode {
+	if got.Spec.Profile != in.Spec.Profile || got.Spec.EnvironmentRef != in.Spec.EnvironmentRef || got.Spec.PlacementScope != in.Spec.PlacementScope || got.Spec.Mode != in.Spec.Mode {
 		t.Errorf("Load round trip Spec detail = %+v, want %+v", got.Spec, in.Spec)
 	}
 	if got.Spec.MaxFires != in.Spec.MaxFires || got.Spec.Mutating != in.Spec.Mutating || got.Spec.Singleton != in.Spec.Singleton {

@@ -312,10 +312,10 @@ func TestScheduleTool_MutatingCreateGatedByPlanMode(t *testing.T) {
 	},
 		// Turn 1: the model attempts a mutating create — plan mode must deny it.
 		mockllm.ToolCallTurn(session.NewToolCall("c1", agent.ScheduleToolName,
-			[]byte(`{"verb":"create","name":"mut","prompt":"p","cron":"@every 1h","workspace":"`+workspace+`","mutating":true}`))),
+			[]byte(`{"verb":"create","name":"mut","prompt":"p","cron":"@every 1h","mutating":true}`))),
 		// Turn 2: the model falls back to a read-leaning create — plan mode allows it.
 		mockllm.ToolCallTurn(session.NewToolCall("c2", agent.ScheduleToolName,
-			[]byte(`{"verb":"create","name":"ro","prompt":"p","cron":"@every 1h","workspace":"`+workspace+`"}`))),
+			[]byte(`{"verb":"create","name":"ro","prompt":"p","cron":"@every 1h"}`))),
 		// Turn 3: done.
 		mockllm.TextTurn("created the read-leaning schedule"),
 	)
@@ -412,7 +412,7 @@ func TestScheduleTool_Scenario4_FullInChatFlow(t *testing.T) {
 	provider := mockllm.New(
 		// Turn 1: create the schedule.
 		mockllm.ToolCallTurn(session.NewToolCall("c1", agent.ScheduleToolName,
-			[]byte(`{"verb":"create","name":"nightly","prompt":"check ci","cron":"@every 1m","workspace":"`+workspace+`"}`))),
+			[]byte(`{"verb":"create","name":"nightly","prompt":"check ci","cron":"@every 1m"}`))),
 		// Turn 2: list it (a READ-ONLY verb — on the ScheduleQuery tool after the
 		// AC1.4 split).
 		mockllm.ToolCallTurn(session.NewToolCall("c2", agent.ScheduleQueryToolName, []byte(`{"verb":"list"}`))),

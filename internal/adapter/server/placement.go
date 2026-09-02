@@ -7,6 +7,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/stacklok/mecatl/engine/adapter/nofs"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 )
@@ -137,8 +138,7 @@ func configuredWorktreeSelectors(cfg Config) (*WorktreeSelectorIssuer, error) {
 }
 
 func (s *Service) bindPlacementForCreate(ctx context.Context, workspace string, profile SessionProfile, owner *session.Principal) (string, *PlacementBinding, error) {
-	useBinder := s.placementBinder != nil && (profile == ProfileNoFS ||
-		!s.cfg.WorkspaceAuthority.clientSelectsRoot() || workspace == s.cfg.DefaultWorkspace)
+	useBinder := s.placementBinder != nil
 	if !useBinder {
 		return workspace, nil, nil
 	}
@@ -173,6 +173,67 @@ func (s *Service) persistPlacedCreatedSession(ctx context.Context, sess *session
 		s.mu.Unlock()
 	}
 	return persisted, err
+}
+
+func (s *Service) resolveSchedulePlacement(ctx context.Context, ref session.EnvironmentRef, profile SessionProfile) (session.EnvironmentRef, string, SessionProfile, error) {
+	if s.placementBinder == nil {
+		if profile == ProfileNoFS {
+			return session.EnvironmentRef{Kind: session.EnvKindNoFS, ID: "none", Revision: "in-tree-v1"}, "legacy-local", profile, nil
+		}
+		if !ref.Valid() && s.cfg.DefaultWorkspace != "" {
+			ref = session.EnvironmentRef{Kind: session.EnvKindLocal, ID: s.cfg.DefaultWorkspace, Revision: "in-tree-v1"}
+		}
+		if !ref.Valid() {
+			return session.EnvironmentRef{}, "", profile, fmt.Errorf("%w: exact schedule placement is required", ErrFailedPrecondition)
+		}
+		return ref, "legacy-local", profile, nil
+	}
+	if profile == ProfileNoFS {
+		binding, err := s.BindPlacement(ctx, session.NoFSPlacement(), PlacementOperationCreate)
+		if err != nil {
+			return session.EnvironmentRef{}, "", profile, err
+		}
+		return binding.Ref, string(s.cfg.PlacementScope), ProfileNoFS, nil
+	}
+	if profile != ProfileDefault {
+		return session.EnvironmentRef{}, "", profile, fmt.Errorf("%w: unknown schedule profile %q", ErrInvalidArgument, profile)
+	}
+	var binding PlacementBinding
+	var err error
+	if ref.Valid() {
+		binding, err = s.ReattachPlacement(ctx, ref)
+	} else {
+		binding, err = s.BindPlacement(ctx, session.DefaultPlacement(), PlacementOperationCreate)
+	}
+	if err != nil {
+		return session.EnvironmentRef{}, "", profile, err
+	}
+	return binding.Ref, string(s.cfg.PlacementScope), ProfileDefault, nil
+}
+
+func (s *Service) reattachLegacySchedulePlacement(ref session.EnvironmentRef) (PlacementBinding, error) {
+	if !ref.Valid() {
+		return PlacementBinding{}, ErrInvalidPlacementSelection
+	}
+	if ref.Kind == session.EnvKindNoFS {
+		env := tool.MustEnvironment(ref, nofs.New(), nil)
+		return PlacementBinding{Environment: env, Ref: ref}, nil
+	}
+	if ref.Kind != session.EnvKindLocal || s.cfg.Workspaces == nil {
+		return PlacementBinding{}, ErrPlacementUnavailable
+	}
+	ws := s.cfg.Workspaces(ref.ID)
+	var runner tool.CommandRunner
+	if ref.ID == s.cfg.DefaultWorkspace {
+		runner = s.cfg.CommandRunner
+	} else if s.cfg.CommandRunnerFactory != nil {
+		runner = s.cfg.CommandRunnerFactory(ref.ID)
+	}
+	env, err := tool.NewEnvironment(ref, ws, runner)
+	if err != nil {
+		return PlacementBinding{}, err
+	}
+	return PlacementBinding{Environment: env, Ref: ref}, nil
 }
 
 // Bind validates the request, delegates exactly one atomic operation to the

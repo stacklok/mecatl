@@ -156,7 +156,7 @@ type SessionDiscoveryMeta struct {
 	Title           string
 	TitleProvenance session.TitleProvenance
 	Owner           *session.Principal
-	Workspace       string
+	EnvironmentRef  session.EnvironmentRef
 	Kind            session.SessionKind
 	Relationship    session.SessionRelationship
 	// EstimatedBytes is a content-free backend estimate of bytes reclaimed by

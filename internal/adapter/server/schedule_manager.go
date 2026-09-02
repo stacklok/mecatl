@@ -138,12 +138,10 @@ type scheduleManager struct {
 	// ownershipEnforced mirrors ScheduleManagerConfig.OwnershipEnforced — see
 	// its doc. Gates physicalScheduleName's owner-prefixing.
 	ownershipEnforced bool
-	// workspaceForCreate applies the owning Service's workspace authority to
-	// schedule create/update requests, returning the effective root AND profile so
-	// a file-less deployment persists the profile it actually applied (a stored
-	// empty profile would later fail the fire-time authority check).
-	// Nil preserves standalone manager behavior.
-	workspaceForCreate func(string, SessionProfile) (string, SessionProfile, error)
+	// placementForCreate atomically resolves or exactly reauthorizes durable
+	// schedule placement through the owning Service. The returned ref and scope
+	// are private store state; neither is accepted from public schedule mappings.
+	placementForCreate func(context.Context, session.EnvironmentRef, SessionProfile) (session.EnvironmentRef, string, SessionProfile, error)
 }
 
 // scheduleStoreProvider is the accessor the jsonlstore + redisstore expose:
@@ -254,11 +252,10 @@ func (m *scheduleManager) setModelsPointer(p *atomic.Pointer[[]*mecatlv1.ModelIn
 	m.models = p
 }
 
-// setWorkspaceForCreate attaches the Service-owned workspace authority to the
-// manager after Service construction. A standalone manager remains
-// client-selectable by leaving this nil.
-func (m *scheduleManager) setWorkspaceForCreate(fn func(string, SessionProfile) (string, SessionProfile, error)) {
-	m.workspaceForCreate = fn
+// setPlacementForCreate attaches the Service-owned placement authority to the
+// manager after Service construction.
+func (m *scheduleManager) setPlacementForCreate(fn func(context.Context, session.EnvironmentRef, SessionProfile) (session.EnvironmentRef, string, SessionProfile, error)) {
+	m.placementForCreate = fn
 }
 
 // scheduleStore returns the manager's ScheduleStore (the explicit override
@@ -384,27 +381,34 @@ func fireNotFoundErr(fireID string) error {
 // read-leaning schedule — Mutating=false — must run in plan mode, never a
 // write-capable posture), and Saves the schedule. It returns the saved
 // schedule.
+//
+//nolint:gocyclo // Creation intentionally keeps validation, placement resolution, ownership, and atomic publication in one transaction.
 func (m *scheduleManager) CreateSchedule(ctx context.Context, spec port.ScheduleSpec) (port.Schedule, error) {
 	if !m.requireCaller(ctx) {
 		return port.Schedule{}, fmt.Errorf("%w: unable to create schedule", ErrInvalidArgument)
 	}
-	if m.workspaceForCreate != nil {
-		// Validate the request and resolve the effective profile, but do NOT persist
-		// a resolved root. A server-assigned schedule stores the empty WIRE
-		// workspace; the fire assigns the deployment root when it mints its session
-		// (ADR 0237), exactly as a live create does. Persisting the resolved root
-		// would store a value the create gate rejects at fire time (a non-empty
-		// filesystem request), so the schedule could never fire.
-		_, profile, err := m.workspaceForCreate(spec.Workspace, SessionProfile(spec.Profile))
-		if err != nil {
-			return port.Schedule{}, err
-		}
-		spec.Profile = string(profile)
-	}
 	now := m.now()
-	cronNextFire, originOwner, err := m.validateScheduleSpec(ctx, spec, now)
+	cronNextFire, originOwner, originRef, err := m.validateScheduleSpec(ctx, spec, now)
 	if err != nil {
 		return port.Schedule{}, err
+	}
+	if spec.OriginSessionID != "" && SessionProfile(spec.Profile) != ProfileNoFS {
+		if spec.EnvironmentRef.Valid() && spec.EnvironmentRef != originRef {
+			return port.Schedule{}, fmt.Errorf("%w: schedule placement does not match its origin session", ErrInvalidArgument)
+		}
+		spec.EnvironmentRef = originRef
+	} else if spec.OriginSessionID == "" && spec.EnvironmentRef.Valid() && m.placementForCreate != nil {
+		return port.Schedule{}, fmt.Errorf("%w: public schedule creation cannot supply an exact placement", ErrInvalidArgument)
+	}
+	if m.placementForCreate != nil {
+		ref, scope, profile, rerr := m.placementForCreate(ctx, spec.EnvironmentRef, SessionProfile(spec.Profile))
+		if rerr != nil {
+			return port.Schedule{}, rerr
+		}
+		spec.EnvironmentRef, spec.PlacementScope, spec.Profile = ref, scope, string(profile)
+	}
+	if !spec.EnvironmentRef.Valid() || spec.PlacementScope == "" {
+		return port.Schedule{}, fmt.Errorf("%w: schedule placement was not resolved", ErrFailedPrecondition)
 	}
 	// Collision guard: a Create whose name already exists must never SILENTLY
 	// CLOBBER the existing schedule's spec (the edit path is UpdateSchedule, a
@@ -548,104 +552,63 @@ func scheduleSingletonExplicit(_ port.ScheduleSpec) bool { return false }
 // ListModels advertises) and the cadence floor against the composition-
 // injected scheduler MinInterval — two deployment-level inputs the spec alone
 // cannot carry.
-// validateScheduleWorkspaceProfile enforces the profile-aware workspace rule,
-// mirroring the session create-seam (service.go createSession): a default-profile
-// schedule REQUIRES a workspace (a fire mints a filesystem session), a no-fs
-// schedule must NOT carry one. Enforcing it at create is fail-closed — otherwise
-// an empty-workspace default schedule is accepted at create but fails at FIRE time
-// ("workspace is required"), i.e. a schedule that can never fire.
-//
-// EXCEPTION under server-assigned authority (ADR 0237): the authority hook
-// (m.workspaceForCreate, installed only for a server-assigned deployment) already
-// rejected a non-empty client workspace, and the deployment assigns the root at
-// fire time. There an empty default-profile workspace is the correct WIRE value,
-// not a can-never-fire mistake, so the required-workspace rule is
-// client-selected-only.
-func (m *scheduleManager) validateScheduleWorkspaceProfile(spec port.ScheduleSpec) error {
+// validateScheduleProfile accepts the two public attenuation profiles. Exact
+// placement is resolved separately and is never accepted from the public wire.
+func (*scheduleManager) validateScheduleProfile(spec port.ScheduleSpec) error {
 	switch SessionProfile(spec.Profile) {
-	case ProfileDefault:
-		if spec.Workspace == "" && m.workspaceForCreate == nil {
-			return fmt.Errorf("%w: a default-profile schedule requires a workspace (the fire mints a filesystem session)", ErrInvalidArgument)
-		}
-	case ProfileNoFS:
-		if spec.Workspace != "" {
-			return fmt.Errorf("%w: a %q schedule must not carry a workspace (a no-FS fire has no filesystem to root); got %q", ErrInvalidArgument, ProfileNoFS, spec.Workspace)
-		}
+	case ProfileDefault, ProfileNoFS:
+		return nil
 	default:
 		return fmt.Errorf("%w: unknown schedule profile %q (supported: \"\" (default) and %q)", ErrInvalidArgument, spec.Profile, ProfileNoFS)
 	}
-	return nil
 }
 
-func (m *scheduleManager) validateScheduleSpec(ctx context.Context, spec port.ScheduleSpec, now time.Time) (time.Time, *session.Principal, error) {
+func (m *scheduleManager) validateScheduleSpec(ctx context.Context, spec port.ScheduleSpec, now time.Time) (time.Time, *session.Principal, session.EnvironmentRef, error) {
+	fail := func(err error) (time.Time, *session.Principal, session.EnvironmentRef, error) {
+		return time.Time{}, nil, session.EnvironmentRef{}, err
+	}
 	if spec.Name == "" {
-		return time.Time{}, nil, fmt.Errorf("%w: schedule name is required", ErrInvalidArgument)
+		return fail(fmt.Errorf("%w: schedule name is required", ErrInvalidArgument))
 	}
 	if spec.Prompt == "" && len(spec.Parts) == 0 {
-		return time.Time{}, nil, fmt.Errorf("%w: prompt or parts is required", ErrInvalidArgument)
+		return fail(fmt.Errorf("%w: prompt or parts is required", ErrInvalidArgument))
 	}
 	if err := spec.Trigger.Validate(); err != nil {
-		return time.Time{}, nil, fmt.Errorf("%w: %v", ErrInvalidArgument, err)
+		return fail(fmt.Errorf("%w: %v", ErrInvalidArgument, err))
 	}
-	// OriginSessionID validation: a non-empty OriginSessionID must name an
-	// existing session in the store (the session the fire's terminal result
-	// will be delivered to). A non-existent session is rejected fail-closed
-	// so a delivery pointer that can never resolve is caught at create time
-	// rather than surfacing hours later as a fire-time failure. An empty
-	// OriginSessionID is always valid (delivery is OFF — the v1 pre-delivery
-	// posture).
-	originOwner, err := m.validateScheduleOrigin(ctx, spec)
+	originOwner, originRef, err := m.validateScheduleOrigin(ctx, spec)
 	if err != nil {
-		return time.Time{}, nil, err
+		return fail(err)
 	}
-	// OneShotRetry is one-shot-ONLY: a cron self-heals via misfire already
-	// (decision #1), so a retry budget on a cron is a misconfiguration the
-	// create-seam rejects fail-closed. CarryContext is allowed on either trigger
-	// (a cron carrying its prior fire's context is a valid use case).
 	if spec.OneShotRetry && spec.Trigger.Kind() != port.TriggerOneShot {
-		return time.Time{}, nil, fmt.Errorf("%w: one_shot_retry is one-shot-only (a cron self-heals via misfire — no retry budget)", ErrInvalidArgument)
+		return fail(fmt.Errorf("%w: one_shot_retry is one-shot-only (a cron self-heals via misfire — no retry budget)", ErrInvalidArgument))
 	}
 	if spec.OneShotMaxRetries < 0 {
-		return time.Time{}, nil, fmt.Errorf("%w: one_shot_max_retries must be >= 0 (got %d)", ErrInvalidArgument, spec.OneShotMaxRetries)
+		return fail(fmt.Errorf("%w: one_shot_max_retries must be >= 0 (got %d)", ErrInvalidArgument, spec.OneShotMaxRetries))
 	}
-	// Reject a read-leaning schedule (Mutating=false) with a write-capable Mode
-	// (the scheduler_fire.go:54-55 TODO — a read-leaning schedule must not carry
-	// a write-capable posture). ModePlan is read-only; ModeDefault/ModeAccept are
-	// write-capable. An empty Mode defaults to ModeDefault at fire time, so an
-	// empty Mode under Mutating=false is ALSO rejected (the caller must set
-	// Mode=plan for a read-leaning schedule, or leave both empty and accept the
-	// fire-time plan enforcement — but the create-seam demands an explicit plan
-	// mode to avoid the ambiguity).
 	mode := spec.Mode
 	if mode == "" {
 		mode = session.ModeDefault
 	}
 	if !spec.Mutating && mode != session.ModePlan {
-		return time.Time{}, nil, fmt.Errorf("%w: a non-mutating schedule must use plan mode (got %q)", ErrInvalidArgument, mode)
+		return fail(fmt.Errorf("%w: a non-mutating schedule must use plan mode (got %q)", ErrInvalidArgument, mode))
 	}
-	if err := m.validateScheduleWorkspaceProfile(spec); err != nil {
-		return time.Time{}, nil, err
+	if err := m.validateScheduleProfile(spec); err != nil {
+		return fail(err)
 	}
-	// Selector validation (ADR 0073, AC1.2c): a non-empty selector must name a
-	// provider+model pair the deployment actually serves — resolved against the
-	// SAME projected selectable-model inventory ListModels advertises (the
-	// composition-computed snapshot, live-swapped by SetModels). Fail-closed,
-	// like an invalid cron: a schedule fire must not silently target a provider
-	// the deployment never configured, surfacing hours later as a fire-time
-	// failure. An empty selector (the deployment default) is ALWAYS valid.
 	if err := m.validateScheduleSelector(spec.Selector); err != nil {
-		return time.Time{}, nil, err
+		return fail(err)
 	}
 	switch spec.Trigger.Kind() {
 	case port.TriggerOneShot:
 		if !spec.Trigger.OneShot.After(now) {
-			return time.Time{}, nil, fmt.Errorf("%w: one-shot trigger time must be in the future", ErrInvalidArgument)
+			return fail(fmt.Errorf("%w: one-shot trigger time must be in the future", ErrInvalidArgument))
 		}
 	case port.TriggerCron:
-		next, cerr := m.validateCronTrigger(spec, now)
-		return next, originOwner, cerr
+		next, cronErr := m.validateCronTrigger(spec, now)
+		return next, originOwner, originRef, cronErr
 	}
-	return time.Time{}, originOwner, nil
+	return time.Time{}, originOwner, originRef, nil
 }
 
 // validateCronTrigger validates the cron arm of the trigger switch: the
@@ -715,16 +678,16 @@ func captureScheduleOwner(ctx context.Context, spec port.ScheduleSpec, originOwn
 // It also RETURNS the validated session's owner (nil when there is no origin, or
 // the origin is ownerless), so the create-seam captures the owner from THIS load
 // instead of re-reading a session a concurrent sweep may already have deleted.
-func (m *scheduleManager) validateScheduleOrigin(ctx context.Context, spec port.ScheduleSpec) (*session.Principal, error) {
+func (m *scheduleManager) validateScheduleOrigin(ctx context.Context, spec port.ScheduleSpec) (*session.Principal, session.EnvironmentRef, error) {
 	if spec.OriginSessionID == "" {
-		return nil, nil
+		return nil, session.EnvironmentRef{}, nil
 	}
 	origin, lerr := m.store.Load(ctx, spec.OriginSessionID)
 	if lerr != nil {
-		return nil, errOriginSessionMustExist(spec.OriginSessionID)
+		return nil, session.EnvironmentRef{}, errOriginSessionMustExist(spec.OriginSessionID)
 	}
 	if origin == nil {
-		return nil, nil
+		return nil, session.EnvironmentRef{}, errOriginSessionMustExist(spec.OriginSessionID)
 	}
 	// Under ownership enforcement, the origin's owner must match the verified
 	// caller (review finding 1, issue #368): a schedule's delivery path
@@ -747,10 +710,10 @@ func (m *scheduleManager) validateScheduleOrigin(ctx context.Context, spec port.
 	if m.ownershipEnforced {
 		caller := session.PrincipalFromContext(ctx)
 		if origin.Owner == nil || !origin.Owner.SameIdentity(caller) {
-			return nil, errOriginSessionMustExist(spec.OriginSessionID)
+			return nil, session.EnvironmentRef{}, errOriginSessionMustExist(spec.OriginSessionID)
 		}
 	}
-	return origin.Owner.Clone(), nil
+	return origin.Owner.Clone(), origin.EnvironmentRef, nil
 }
 
 // errOriginSessionMustExist is the ONE error constructor for a rejected
@@ -853,24 +816,11 @@ func (m *scheduleManager) UpdateSchedule(ctx context.Context, spec port.Schedule
 	if !m.requireCaller(ctx) {
 		return port.Schedule{}, scheduleNotFoundErr(port.ErrScheduleNotFound, spec.Name)
 	}
-	if m.workspaceForCreate != nil {
-		// Validate the request and resolve the effective profile, but do NOT persist
-		// a resolved root. A server-assigned schedule stores the empty WIRE
-		// workspace; the fire assigns the deployment root when it mints its session
-		// (ADR 0237), exactly as a live create does. Persisting the resolved root
-		// would store a value the create gate rejects at fire time (a non-empty
-		// filesystem request), so the schedule could never fire.
-		_, profile, err := m.workspaceForCreate(spec.Workspace, SessionProfile(spec.Profile))
-		if err != nil {
-			return port.Schedule{}, err
-		}
-		spec.Profile = string(profile)
-	}
 	now := m.now()
 	// The computed cron next-fire is not needed here (Update preserves the
 	// existing State, including NextFireAt); the call is still made for its
 	// validation side effect (the shared create-seam checks).
-	if _, _, err := m.validateScheduleSpec(ctx, spec, now); err != nil {
+	if _, _, _, err := m.validateScheduleSpec(ctx, spec, now); err != nil {
 		return port.Schedule{}, err
 	}
 	applyScheduleDefaults(&spec)
@@ -890,6 +840,8 @@ func (m *scheduleManager) UpdateSchedule(ctx context.Context, spec port.Schedule
 	// captured owner forward verbatim, so editing a schedule can never re-own it
 	// to the updating caller.
 	spec.Owner = existing.Spec.Owner
+	spec.EnvironmentRef = existing.Spec.EnvironmentRef
+	spec.PlacementScope = existing.Spec.PlacementScope
 	// See CreateSchedule: Spec.Name carries the physical key only across the
 	// Save call (the store keys strictly by Spec.Name); it is restored to the
 	// literal name on the returned value below.

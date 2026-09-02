@@ -15,15 +15,21 @@ import (
 type placementContextKey struct{}
 
 type compositionPlacementProvider struct {
-	binding     server.PlacementBinding
-	err         error
-	calls       []server.PlacementBindRequest
-	contextSeen any
+	binding       server.PlacementBinding
+	err           error
+	calls         []server.PlacementBindRequest
+	reattachCalls []server.PlacementReattachRequest
+	contextSeen   any
 }
 
 func (p *compositionPlacementProvider) Bind(ctx context.Context, req server.PlacementBindRequest) (server.PlacementBinding, error) {
 	p.calls = append(p.calls, req)
 	p.contextSeen = ctx.Value(placementContextKey{})
+	return p.binding, p.err
+}
+
+func (p *compositionPlacementProvider) Reattach(_ context.Context, req server.PlacementReattachRequest) (server.PlacementBinding, error) {
+	p.reattachCalls = append(p.reattachCalls, req)
 	return p.binding, p.err
 }
 

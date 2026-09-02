@@ -91,9 +91,10 @@ func callerSeparationFixture(t *testing.T) (*server.Service, *memstore.Store, *m
 	svc, err := server.NewService(server.Config{
 		Engine: agent.NewEngine(agent.Deps{LLM: mockllm.New(), Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil), Model: "test-model"}),
 		Store:  sessions, EventLog: memstore.NewEventLog(),
-		ScheduleManager: server.NewScheduleManager(server.ScheduleManagerConfig{Store: sessions, ScheduleStore: schedules, OwnershipEnforced: true}),
-		Workspaces:      func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
-		Now:             func() time.Time { return time.Unix(0, 0) }, OwnershipEnforced: true,
+		ScheduleManager:  server.NewScheduleManager(server.ScheduleManagerConfig{Store: sessions, ScheduleStore: schedules, OwnershipEnforced: true}),
+		DefaultWorkspace: "/ws",
+		Workspaces:       func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+		Now:              func() time.Time { return time.Unix(0, 0) }, OwnershipEnforced: true,
 	})
 	if err != nil {
 		t.Fatalf("NewService: %v", err)
@@ -104,7 +105,7 @@ func callerSeparationFixture(t *testing.T) (*server.Service, *memstore.Store, *m
 }
 
 func callerSchedule(name string) port.ScheduleSpec {
-	return port.ScheduleSpec{Name: name, Prompt: "do work", Workspace: "/ws", Mode: session.ModePlan, Trigger: port.TriggerSpec{OneShot: time.Now().Add(time.Hour)}}
+	return port.ScheduleSpec{Name: name, Prompt: "do work", Mode: session.ModePlan, Trigger: port.TriggerSpec{OneShot: time.Now().Add(time.Hour)}}
 }
 
 func TestCallerSeparation_Scenario1_OwnerCanAccessOwnedResources(t *testing.T) {
@@ -252,6 +253,7 @@ func TestCallerSeparation_Scenario2_ScheduleNotFoundDoesNotLeakPhysicalKey(t *te
 		Engine:            agent.NewEngine(agent.Deps{LLM: mockllm.New(), Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil), Model: "test-model"}),
 		Store:             sessions,
 		ScheduleManager:   server.NewScheduleManager(server.ScheduleManagerConfig{Store: sessions, ScheduleStore: rst.ScheduleStore(), OwnershipEnforced: true}),
+		DefaultWorkspace:  "/ws",
 		Workspaces:        func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
 		OwnershipEnforced: true,
 	})
@@ -387,9 +389,10 @@ func TestCallerSeparation_Scenario6_OwnerlessNamespaceUnchanged(t *testing.T) {
 	svc, err := server.NewService(server.Config{
 		Engine: agent.NewEngine(agent.Deps{LLM: mockllm.New(), Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil), Model: "test-model"}),
 		Store:  sessions, EventLog: memstore.NewEventLog(),
-		ScheduleManager: server.NewScheduleManager(server.ScheduleManagerConfig{Store: sessions, ScheduleStore: schedules}),
-		Workspaces:      func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
-		Now:             func() time.Time { return time.Unix(0, 0) },
+		ScheduleManager:  server.NewScheduleManager(server.ScheduleManagerConfig{Store: sessions, ScheduleStore: schedules}),
+		DefaultWorkspace: "/ws",
+		Workspaces:       func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+		Now:              func() time.Time { return time.Unix(0, 0) },
 		// OwnershipEnforced left false: the byte-identical no-verifier posture.
 	})
 	if err != nil {
@@ -433,6 +436,7 @@ func redisCallerScheduleFixture(t *testing.T) (*server.Service, port.ScheduleSto
 		Engine:            agent.NewEngine(agent.Deps{LLM: mockllm.New(), Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil), Model: "test-model"}),
 		Store:             sessions,
 		ScheduleManager:   server.NewScheduleManager(server.ScheduleManagerConfig{Store: sessions, ScheduleStore: schedules, OwnershipEnforced: true}),
+		DefaultWorkspace:  "/ws",
 		Workspaces:        func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
 		OwnershipEnforced: true,
 	})
@@ -521,10 +525,11 @@ func TestCallerSeparation_Scenario2_OwnerlessGetFireKeepsOrphanCompatibility(t *
 	sessions := memstore.New()
 	schedules := memschedulestore.New()
 	svc, err := server.NewService(server.Config{
-		Engine:          agent.NewEngine(agent.Deps{LLM: mockllm.New(), Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil), Model: "test-model"}),
-		Store:           sessions,
-		ScheduleManager: server.NewScheduleManager(server.ScheduleManagerConfig{Store: sessions, ScheduleStore: schedules}),
-		Workspaces:      func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+		Engine:           agent.NewEngine(agent.Deps{LLM: mockllm.New(), Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil), Model: "test-model"}),
+		Store:            sessions,
+		ScheduleManager:  server.NewScheduleManager(server.ScheduleManagerConfig{Store: sessions, ScheduleStore: schedules}),
+		DefaultWorkspace: "/ws",
+		Workspaces:       func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
 	})
 	if err != nil {
 		t.Fatalf("NewService: %v", err)

@@ -256,6 +256,7 @@ var serviceAccessTable = map[string]ClassificationEntry{
 	"CreateSessionWithMCP":      {KindCallerOwned, "delegates to CreateSessionWithProfile's atomic owner bind"},
 	"BindPlacement":             {KindCallerOwned, "passes the verified context principal and trusted composition scope to the provider's single atomic authorization-and-resolution operation"},
 	"ReattachPlacement":         {KindCallerOwned, "passes the exact persisted ref, verified context principal, and trusted scope to the provider without falling back to Bind"},
+	"ReattachPlacementInScope":  {KindCallerOwned, "requires the durable schedule scope to equal trusted composition scope, then reauthorizes the exact persisted ref as the verified owner without default fallback"},
 	"ListCommandsForSession":    {KindCallerOwned, "loads and owner-authorizes the source session before exact placement reattachment and command discovery"},
 	"ListWorktreesForSession":   {KindCallerOwned, "loads and owner-authorizes the source session before exact placement reattachment and scoped selector issuance"},
 	"ClearSessionSuccessor":     {KindCallerOwned, "serializes and leases an owner-authorized source before atomically publishing an empty-history placed successor"},

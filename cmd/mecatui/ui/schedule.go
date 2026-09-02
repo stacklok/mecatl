@@ -65,19 +65,18 @@ type scheduleState struct {
 // scheduleForm is the in-overlay Create form (Phase 3b, issue #236): a small,
 // common-path authoring surface mirroring the per-row action keys. The CLI
 // (mecated schedule create) covers the full flag surface; the form keeps it
-// SIMPLE — name, prompt, trigger (cron OR NL), workspace, mutating. The trigger
+// SIMPLE — name, prompt, trigger (cron OR NL), mutating. The trigger
 // field accepts EITHER a raw cron expression OR a natural-language phrase; on
 // submit, schedparse.Compile is tried first (compile to cron or one-shot), and
 // only on no-match is the value treated verbatim as raw cron. Mode defaults to
 // plan for non-mutating (the server enforces the mode↔mutating invariant);
 // singleton defaults true. focusIdx is the cursor over the fields.
 type scheduleForm struct {
-	name      textinput.Model
-	prompt    textinput.Model
-	trigger   textinput.Model
-	workspace textinput.Model
-	mutating  bool
-	focusIdx  int
+	name     textinput.Model
+	prompt   textinput.Model
+	trigger  textinput.Model
+	mutating bool
+	focusIdx int
 }
 
 // openSchedule opens the picker and fires the ListSchedules RPC. Only callable
@@ -238,12 +237,11 @@ func (m Model) openScheduleCreate() (tea.Model, tea.Cmd, bool) {
 		return ti
 	}
 	f := scheduleForm{
-		name:      newInput("schedule name"),
-		prompt:    newInput("prompt to run on each fire"),
-		trigger:   newInput("cron (e.g. 0 9 * * *) or NL (e.g. every 30 minutes)"),
-		workspace: newInput("workspace path (empty = default)"),
-		mutating:  false,
-		focusIdx:  0,
+		name:     newInput("schedule name"),
+		prompt:   newInput("prompt to run on each fire"),
+		trigger:  newInput("cron (e.g. 0 9 * * *) or NL (e.g. every 30 minutes)"),
+		mutating: false,
+		focusIdx: 0,
 	}
 	f.name.Focus()
 	m.schedule.form = f
@@ -254,7 +252,7 @@ func (m Model) openScheduleCreate() (tea.Model, tea.Cmd, bool) {
 
 // scheduleFormFields is the ordered list of editable text fields for focus
 // cycling. The mutating toggle is cycled separately (a bool, not a textinput).
-const scheduleFormFieldCount = 4 // name, prompt, trigger, workspace
+const scheduleFormFieldCount = 3 // name, prompt, trigger
 
 // focusScheduleField moves the focus to the field at form.focusIdx, blurring all
 // others. Tab/↑↓ call this after incrementing/decrementing focusIdx.
@@ -263,7 +261,6 @@ func (m Model) focusScheduleField() Model {
 		&m.schedule.form.name,
 		&m.schedule.form.prompt,
 		&m.schedule.form.trigger,
-		&m.schedule.form.workspace,
 	}
 	for i, f := range fields {
 		if i == m.schedule.form.focusIdx {
@@ -337,7 +334,6 @@ func (m Model) onScheduleCreateKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, boo
 		&m.schedule.form.name,
 		&m.schedule.form.prompt,
 		&m.schedule.form.trigger,
-		&m.schedule.form.workspace,
 	}
 	idx := m.schedule.form.focusIdx
 	if idx >= 0 && idx < len(fields) {
@@ -384,7 +380,6 @@ func (m Model) submitScheduleCreate() (tea.Model, tea.Cmd, bool) {
 		Name:      f.name.Value(),
 		Prompt:    f.prompt.Value(),
 		Trigger:   trigger,
-		Workspace: f.workspace.Value(),
 		Mutating:  f.mutating,
 		Singleton: true,
 		Timezone:  "UTC",
@@ -741,7 +736,7 @@ func renderScheduleInspect(th theme.Theme, st scheduleState, replayerWired bool,
 }
 
 // renderScheduleSpecBlock renders the spec-card fields (trigger/prompt/selector/
-// profile/workspace/mode/mutating row/timezone/fire_timeout) for the inspect
+// profile/mode/mutating row/timezone/fire_timeout) for the inspect
 // view. Extracted from renderScheduleInspect to keep its cyclomatic complexity
 // in check (#386 added the fire_timeout branch).
 func renderScheduleSpecBlock(b *strings.Builder, muted lipgloss.Style, spec client.ScheduleSpec) {
@@ -754,9 +749,6 @@ func renderScheduleSpecBlock(b *strings.Builder, muted lipgloss.Style, spec clie
 	}
 	if spec.Profile != "" {
 		b.WriteString(muted.Render("profile: ") + sanitizeTerminal(spec.Profile) + "\n")
-	}
-	if spec.Workspace != "" {
-		b.WriteString(muted.Render("workspace: ") + sanitizeTerminal(spec.Workspace) + "\n")
 	}
 	if spec.Mode != "" {
 		b.WriteString(muted.Render("mode: ") + sanitizeTerminal(spec.Mode) + "\n")
@@ -814,7 +806,6 @@ func renderScheduleCreate(th theme.Theme, st scheduleState, hk helpKeys, _, _ in
 		{"name", f.name.View()},
 		{"prompt", f.prompt.View()},
 		{"trigger", f.trigger.View()},
-		{"workspace", f.workspace.View()},
 	}
 	for i, fld := range fields {
 		marker := "  "

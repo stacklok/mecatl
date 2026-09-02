@@ -37,7 +37,6 @@ func TestScheduleInFlightWire_GrpcGetScheduleProjectsInFlightFields(t *testing.T
 	if _, err := gsrv.CreateSchedule(ctx, &mecatlv1.CreateScheduleRequest{Spec: &mecatlv1.ScheduleSpec{
 		Name:        "inflight",
 		Prompt:      "run",
-		Workspace:   "/repo",
 		Mutating:    true,
 		Trigger:     &mecatlv1.TriggerSpec{Cron: "0 9 * * *"},
 		FireTimeout: durationpb.New(timeout),
@@ -110,7 +109,7 @@ func TestScheduleInFlightWire_GrpcListFiresProjectsInFlightFire(t *testing.T) {
 	gsrv := server.NewScheduleServer(svc)
 
 	if _, err := gsrv.CreateSchedule(ctx, &mecatlv1.CreateScheduleRequest{Spec: &mecatlv1.ScheduleSpec{
-		Name: "inflight", Prompt: "run", Workspace: "/repo", Mutating: true,
+		Name: "inflight", Prompt: "run", Mutating: true,
 		Trigger: &mecatlv1.TriggerSpec{Cron: "0 9 * * *"},
 	}}); err != nil {
 		t.Fatalf("CreateSchedule: %v", err)
@@ -203,7 +202,7 @@ func TestScheduleInFlightWire_ClaimedPendingProjects(t *testing.T) {
 	gsrv := server.NewScheduleServer(svc)
 
 	if _, err := gsrv.CreateSchedule(ctx, &mecatlv1.CreateScheduleRequest{Spec: &mecatlv1.ScheduleSpec{
-		Name: "claimed", Prompt: "run", Workspace: "/repo", Mutating: true,
+		Name: "claimed", Prompt: "run", Mutating: true,
 		Trigger: &mecatlv1.TriggerSpec{Cron: "0 9 * * *"},
 	}}); err != nil {
 		t.Fatalf("CreateSchedule: %v", err)

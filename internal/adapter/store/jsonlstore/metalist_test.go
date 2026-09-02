@@ -30,6 +30,7 @@ func TestMetaListProjectsSnapshotFields(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("RestoreSessionMetadata: %v", err)
 	}
+	s.EnvironmentRef = session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "inventory-r3"}
 	s.ModelID = "model-x"
 	s.SetTitle("the real title")
 	for i := 0; i < 3; i++ {
@@ -81,7 +82,8 @@ func TestMetaListProjectsSnapshotFields(t *testing.T) {
 	}
 
 	// MetaList is the legacy compatibility seam and intentionally keeps its old
-	// projection. The discovery pager carries the additive taxonomy and workspace.
+	// projection. The discovery pager carries the additive taxonomy and exact
+	// private environment identity.
 	pager := ss.(port.SessionMetadataPager)
 	page, err := pager.PageSessionMetadata(ctx, port.SessionMetadataPageRequest{Limit: 10})
 	if err != nil {
@@ -91,8 +93,9 @@ func TestMetaListProjectsSnapshotFields(t *testing.T) {
 		t.Fatalf("PageSessionMetadata returned %d rows, want 1: %+v", len(page.Sessions), page.Sessions)
 	}
 	discovery := page.Sessions[0]
-	if discovery.Workspace != "/ws" || discovery.Kind != session.SessionKindSubagent {
-		t.Errorf("discovery metadata = workspace %q kind %q", discovery.Workspace, discovery.Kind)
+	wantRef := session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "inventory-r3"}
+	if discovery.EnvironmentRef != wantRef || discovery.Kind != session.SessionKindSubagent {
+		t.Errorf("discovery metadata = environment ref %+v kind %q", discovery.EnvironmentRef, discovery.Kind)
 	}
 	if discovery.Relationship.ParentSessionID != "parent-1" || discovery.Relationship.CallID != "call-1" {
 		t.Errorf("discovery relationship = %+v", discovery.Relationship)

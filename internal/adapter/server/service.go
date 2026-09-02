@@ -1457,6 +1457,25 @@ func (s *Service) ReattachPlacement(ctx context.Context, ref session.Environment
 	return binding, nil
 }
 
+func (s *Service) schedulePlacementScope() PlacementScope {
+	if s.cfg.PlacementScope == "" && s.placementBinder == nil {
+		return "legacy-local"
+	}
+	return s.cfg.PlacementScope
+}
+
+// ReattachPlacementInScope requires the durable schedule scope to match this
+// deployment before reauthorizing and resolving the exact persisted ref.
+func (s *Service) ReattachPlacementInScope(ctx context.Context, ref session.EnvironmentRef, scope string) (PlacementBinding, error) {
+	if s == nil || scope == "" || PlacementScope(scope) != s.schedulePlacementScope() {
+		return PlacementBinding{}, fmt.Errorf("%w: scheduled placement scope changed", ErrFailedPrecondition)
+	}
+	if s.placementBinder == nil {
+		return s.reattachLegacySchedulePlacement(ref)
+	}
+	return s.ReattachPlacement(ctx, ref)
+}
+
 // wireScheduleManager attaches the post-construction seams the schedule manager
 // can only receive once the Service exists. Both are no-ops without a manager.
 func (s *Service) wireScheduleManager(cfg Config) {
@@ -1466,14 +1485,10 @@ func (s *Service) wireScheduleManager(cfg Config) {
 	if cfg.Scheduler != nil {
 		s.schedMgr.SetScheduler(cfg.Scheduler)
 	}
-	// Install the authority hook ONLY where it changes the outcome. Under
-	// client-selected authority its sole effect on a default-profile schedule
-	// would be to reject an empty workspace — which validateScheduleSpec already
-	// does, with a message that explains WHY a schedule needs one. Leaving the
-	// hook nil there keeps client-selected schedule validation byte-identical.
-	if !cfg.WorkspaceAuthority.clientSelectsRoot() {
-		s.schedMgr.setWorkspaceForCreate(s.workspaceForCreate)
-	}
+	// Exact placement is private durable state. Install the resolver on every
+	// schedule-capable Service; it binds the deployment default for out-of-band
+	// creates and reauthorizes an invoking session's exact ref.
+	s.schedMgr.setPlacementForCreate(s.resolveSchedulePlacement)
 }
 
 // SetModels atomically swaps the selectable-model inventory. It is the composition
@@ -1590,6 +1605,9 @@ type createSessionOpts struct {
 	// which is the wire path's only entry — the ACP path keeps composition's
 	// best-effort mount. See verifyClientMCPMounted.
 	clientMCPStrict bool
+	// placement is a trusted, already-reauthorized exact binding supplied only by
+	// server composition (scheduled fire). It bypasses default placement binding.
+	placement *PlacementBinding
 }
 
 // WithSessionID overrides the session id a CreateSession* call mints. When set,
@@ -1600,6 +1618,13 @@ type createSessionOpts struct {
 // uses to mint "sched--"-prefixed fire-session ids.
 func WithSessionID(id session.SessionID) CreateSessionOption {
 	return func(o *createSessionOpts) { o.id, o.idSet = id, true }
+}
+
+// WithPlacementBinding supplies a trusted exact binding already reauthorized by
+// composition. It is intended for scheduled fire only; public transports cannot
+// construct or select it.
+func WithPlacementBinding(binding PlacementBinding) CreateSessionOption {
+	return func(o *createSessionOpts) { o.placement = &binding }
 }
 
 // WithSourceSession seeds a NEW session's conversation history from the named
@@ -2123,18 +2148,28 @@ func (s *Service) bindRelatedIncarnations(ctx context.Context, opts *createSessi
 	return nil
 }
 
+//nolint:gocyclo // Creation intentionally keeps placement, ownership, limits, engine selection, and persistence in one transaction.
 func (s *Service) createSession(ctx context.Context, workspace string, mode session.PermissionMode, limits session.Limits, sel ProviderSelector, specs []mcp.ServerConfig, profile SessionProfile, opts createSessionOpts) (*session.Session, error) {
 	if err := s.validateDebugCreate(ctx, workspace, profile, specs, opts); err != nil {
 		return nil, err
 	}
 	var err error
-	if s.placementBinder == nil {
-		workspace, profile, err = s.workspaceForCreate(workspace, profile)
-		if err != nil {
-			return nil, err
+	if opts.placement == nil {
+		if s.placementBinder == nil {
+			workspace, profile, err = s.workspaceForCreate(workspace, profile)
+			if err != nil {
+				return nil, err
+			}
+		} else if workspace != "" {
+			// The public wire no longer carries a workspace. Keep the in-process
+			// Service API source-compatible only for the composition default: it is
+			// not a selector and still binds through the provider's atomic default.
+			if workspace != s.cfg.DefaultWorkspace {
+				return nil, fmt.Errorf("%w: public placement is server-owned", ErrInvalidArgument)
+			}
 		}
 	} else if workspace != "" {
-		return nil, fmt.Errorf("%w: public placement is server-owned", ErrInvalidArgument)
+		return nil, fmt.Errorf("%w: trusted exact placement must not also carry a workspace", ErrInvalidArgument)
 	}
 	if mode == "" {
 		mode = s.cfg.DefaultMode
@@ -2149,9 +2184,21 @@ func (s *Service) createSession(ctx context.Context, workspace string, mode sess
 	// The owner stamped on the new session: the explicit WithOwner injection, else
 	// the verified principal on the context, else nil (the ownerless no-auth path).
 	owner := resolveOwner(ctx, opts)
-	workspace, placement, err := s.bindPlacementForCreate(ctx, workspace, profile, owner)
-	if err != nil {
-		return nil, err
+	var placement *PlacementBinding
+	if opts.placement != nil {
+		if err := validatePlacementBinding(*opts.placement); err != nil {
+			return nil, err
+		}
+		placement = opts.placement
+		workspace = placement.Environment.Workspace().Root()
+		if profile == ProfileNoFS && workspace != "" || profile != ProfileNoFS && workspace == "" {
+			return nil, ErrInvalidPlacementBinding
+		}
+	} else {
+		workspace, placement, err = s.bindPlacementForCreate(ctx, workspace, profile, owner)
+		if err != nil {
+			return nil, err
+		}
 	}
 	if err := s.bindRelatedIncarnations(ctx, &opts); err != nil {
 		return nil, err
@@ -3672,28 +3719,23 @@ func (s *Service) isAuthoritativeWorkspace(root string) bool {
 	return root == s.cfg.AuthoritativeWorkspace && isCleanAbs(root)
 }
 
-// validatePersistedScheduleWorkspace prevents durable schedule specs from
-// becoming a filesystem-authority bypass at fire time.
-func (s *Service) validatePersistedScheduleWorkspace(spec port.ScheduleSpec) error {
-	if s.cfg.WorkspaceAuthority.clientSelectsRoot() {
-		return nil
+// validatePersistedSchedulePlacement rejects legacy or cross-scope schedule
+// records before claim. Exact reauthorization still happens for every fire.
+func (s *Service) validatePersistedSchedulePlacement(spec port.ScheduleSpec) error {
+	if !spec.EnvironmentRef.Valid() || spec.PlacementScope == "" {
+		return fmt.Errorf("%w: persisted schedule %q has no exact placement", ErrFailedPrecondition, spec.Name)
 	}
-	// A server-assigned schedule persists the empty WIRE workspace for BOTH
-	// profiles (ADR 0237): a no-FS fire has no root, and a default-profile fire is
-	// assigned the deployment root when it mints its session. A non-empty persisted
-	// workspace is therefore stale off-root state — a schedule written under an
-	// earlier client-selected configuration, or via a shared client-selected store.
-	if spec.Workspace == "" {
-		return nil
+	if PlacementScope(spec.PlacementScope) != s.schedulePlacementScope() {
+		return fmt.Errorf("%w: persisted schedule %q placement scope changed", ErrFailedPrecondition, spec.Name)
 	}
-	return fmt.Errorf("%w: persisted schedule %q workspace does not match the deployment-assigned workspace", ErrFailedPrecondition, spec.Name)
+	return nil
 }
 
 // CanProcessSchedule reports whether a durable schedule is eligible to be
 // claimed by this deployment's scheduler. Rejected legacy state is logged before
 // the scheduler's claim fence so it cannot revive an off-root filesystem path.
 func (s *Service) CanProcessSchedule(sched port.Schedule) bool {
-	if err := s.validatePersistedScheduleWorkspace(sched.Spec); err != nil {
+	if err := s.validatePersistedSchedulePlacement(sched.Spec); err != nil {
 		s.cfg.Diagnostics.Log(context.Background(), port.LevelWarn, "scheduler: refusing schedule outside deployment workspace authority", "schedule", sched.Spec.Name, "err", err.Error())
 		return false
 	}
@@ -4687,9 +4729,9 @@ func (s *Service) buildSessionEnvironment(sess *session.Session, ws tool.Workspa
 // for a non-in-tree Kind goes through resolveEnvironmentRef at run entry.
 func defaultEnvironmentRef(sess *session.Session) session.EnvironmentRef {
 	if sess.Workspace == "" {
-		return session.EnvironmentRef{Kind: session.EnvKindNoFS, ID: ""}
+		return session.EnvironmentRef{Kind: session.EnvKindNoFS, ID: "none", Revision: "in-tree-v1"}
 	}
-	return session.EnvironmentRef{Kind: session.EnvKindLocal, ID: sess.Workspace}
+	return session.EnvironmentRef{Kind: session.EnvKindLocal, ID: sess.Workspace, Revision: "in-tree-v1"}
 }
 
 // stampDefaultEnvironmentRef stamps the resolved default EnvironmentRef onto a

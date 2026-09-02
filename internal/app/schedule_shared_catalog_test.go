@@ -43,8 +43,9 @@ func TestScheduleSharedCatalog_Scenario2_SharedCatalogHasScheduleTools(t *testin
 		mockllm.ToolCallTurn(session.NewToolCall("c2", agent.ScheduleQueryToolName, []byte(`{"verb":"list"}`))),
 		mockllm.TextTurn("done"),
 	)
+	workspace := t.TempDir()
 	built, err := Build(context.Background(), Config{
-		Workspace:    t.TempDir(),
+		Workspace:    workspace,
 		Model:        "mock",
 		StoreDir:     t.TempDir(), // jsonlstore — backs a ScheduleStore
 		MockProvider: llm,
@@ -55,7 +56,7 @@ func TestScheduleSharedCatalog_Scenario2_SharedCatalogHasScheduleTools(t *testin
 	defer built.Close()
 
 	ctx := context.Background()
-	sess, err := built.Service.CreateSession(ctx, t.TempDir(), session.ModeDefault, session.Limits{})
+	sess, err := built.Service.CreateSession(ctx, "", session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}

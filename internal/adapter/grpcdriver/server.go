@@ -301,7 +301,7 @@ func metadataToProto(meta port.SessionDiscoveryMeta) (*driverv1.SessionMetadataE
 	entry := &driverv1.SessionMetadataEntry{
 		SessionId: string(meta.ID), State: string(meta.State), Turns: int32(meta.Turns),
 		ModelId: meta.ModelID, Title: meta.Title, TitleProvenance: string(meta.TitleProvenance),
-		Workspace: meta.Workspace, Kind: string(meta.Kind), EstimatedBytes: meta.EstimatedBytes,
+		EnvironmentRef: &driverv1.StoredEnvironmentRef{Kind: string(meta.EnvironmentRef.Kind), Id: meta.EnvironmentRef.ID, Revision: meta.EnvironmentRef.Revision}, Kind: string(meta.Kind), EstimatedBytes: meta.EstimatedBytes,
 		ParentSessionId: string(meta.Relationship.ParentSessionID), ParentIncarnation: string(meta.Relationship.ParentIncarnation), CallId: string(meta.Relationship.CallID),
 		ScheduleName: meta.Relationship.ScheduleName, OriginSessionId: string(meta.Relationship.OriginSessionID), OriginIncarnation: string(meta.Relationship.OriginIncarnation),
 		TeamId: meta.Relationship.TeamID, MemberName: meta.Relationship.MemberName,

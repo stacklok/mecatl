@@ -9,6 +9,7 @@ import (
 	"github.com/stacklok/mecatl/engine/adapter/memschedulestore"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/port"
+	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/internal/adapter/server"
 	"github.com/stacklok/mecatl/internal/adapter/store/jsonlstore"
 )
@@ -96,7 +97,7 @@ func TestScheduleManagerConfig_ScheduleStoreOverridePreventsSplitBrain(t *testin
 	} else if err := as.Save(ctx, port.Schedule{
 		Spec: port.ScheduleSpec{
 			Name: "accessor-only", Prompt: "x", Trigger: port.TriggerSpec{Cron: "@every 1h"},
-			Workspace: "/ws", Mode: "plan",
+			EnvironmentRef: session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, PlacementScope: "legacy-local", Mode: "plan",
 		},
 	}); err != nil {
 		t.Fatalf("seed accessor store: %v", err)
@@ -108,7 +109,7 @@ func TestScheduleManagerConfig_ScheduleStoreOverridePreventsSplitBrain(t *testin
 	if err := override.Save(ctx, port.Schedule{
 		Spec: port.ScheduleSpec{
 			Name: "override-only", Prompt: "x", Trigger: port.TriggerSpec{Cron: "@every 1h"},
-			Workspace: "/ws", Mode: "plan",
+			EnvironmentRef: session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, PlacementScope: "legacy-local", Mode: "plan",
 		},
 	}); err != nil {
 		t.Fatalf("seed override store: %v", err)

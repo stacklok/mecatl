@@ -298,6 +298,21 @@ func TestSaveLoadOverWire(t *testing.T) {
 	}
 }
 
+func TestADR_0280_DriverStorageCarriesExactPrivateEnvironmentRef(t *testing.T) {
+	want := session.EnvironmentRef{Kind: "remote", ID: "opaque-private-id", Revision: "inventory-r17"}
+	entry, err := metadataToProto(port.SessionDiscoveryMeta{ID: "s1", EnvironmentRef: want})
+	if err != nil {
+		t.Fatalf("metadataToProto: %v", err)
+	}
+	if entry.GetEnvironmentRef() == nil || entry.GetEnvironmentRef().GetRevision() != want.Revision {
+		t.Fatalf("driver environment ref = %+v, want exact private ref %+v", entry.GetEnvironmentRef(), want)
+	}
+	got := metadataFromProto(entry)
+	if got.EnvironmentRef != want {
+		t.Fatalf("round-tripped environment ref = %+v, want %+v", got.EnvironmentRef, want)
+	}
+}
+
 // TestServerWrapperSaveRejectsBadEnvelope pins the server wrapper's Save
 // pre-validation: every malformed envelope shape — blank session_id, missing
 // snapshot, unknown format, empty payload, undecodable payload, and a

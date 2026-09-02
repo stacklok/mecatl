@@ -863,12 +863,11 @@ func TestFireDelivery_EmbeddedEndToEnd(t *testing.T) {
 	// picks up exercises the REAL tick→fire→deliver chain (stronger than FireNow:
 	// it proves the tick loop, the Claim-before-fire, and the deliverFireResult
 	// callback all wire together). The schedule is read-leaning (mutating:false)
-	// in plan mode, rooted at the workspace.
+	// in plan mode and inherits the origin session's exact private placement.
 	schedName := "embedded-delivery-e2e"
 	spec := port.ScheduleSpec{
 		Name:            schedName,
 		Prompt:          "monitor the build",
-		Workspace:       workspace,
 		Mode:            session.ModePlan,
 		Mutating:        false,
 		OriginSessionID: originID, // <- the metadata-only routing key the wire cannot carry

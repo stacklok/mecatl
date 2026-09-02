@@ -152,7 +152,7 @@ func TestScheduleTool_VerbDispatch(t *testing.T) {
 
 	// create with a cron trigger maps the args onto the spec (read-leaning →
 	// plan mode; the create-seam's own validation is not the tool's concern).
-	res := run(`{"verb":"create","name":"nightly","prompt":"check ci","cron":"0 3 * * *","workspace":"/repo"}`)
+	res := run(`{"verb":"create","name":"nightly","prompt":"check ci","cron":"0 3 * * *"}`)
 	if res.IsError {
 		t.Fatalf("create = error %q", res.Content)
 	}
@@ -160,8 +160,11 @@ func TestScheduleTool_VerbDispatch(t *testing.T) {
 		t.Fatalf("created %d specs, want 1", len(mgr.created))
 	}
 	spec := mgr.created[0]
-	if spec.Name != "nightly" || spec.Prompt != "check ci" || spec.Trigger.Cron != "0 3 * * *" || spec.Workspace != "/repo" {
+	if spec.Name != "nightly" || spec.Prompt != "check ci" || spec.Trigger.Cron != "0 3 * * *" {
 		t.Fatalf("spec = %+v", spec)
+	}
+	if want := (session.EnvironmentRef{Kind: session.EnvKindMem, ID: "test"}); spec.EnvironmentRef != want {
+		t.Fatalf("spec EnvironmentRef = %+v, want invoking environment %+v", spec.EnvironmentRef, want)
 	}
 	if spec.Mode != session.ModePlan {
 		t.Fatalf("read-leaning create Mode = %q, want plan (the tool pins read-leaning to plan)", spec.Mode)
@@ -177,7 +180,7 @@ func TestScheduleTool_VerbDispatch(t *testing.T) {
 	}
 
 	// a mutating create pins the default mode (not plan).
-	res = run(`{"verb":"create","name":"writer","prompt":"w","cron":"0 3 * * *","workspace":"/r","mutating":true}`)
+	res = run(`{"verb":"create","name":"writer","prompt":"w","cron":"0 3 * * *","mutating":true}`)
 	if res.IsError {
 		t.Fatalf("mutating create = error %q", res.Content)
 	}
@@ -187,7 +190,7 @@ func TestScheduleTool_VerbDispatch(t *testing.T) {
 
 	// the Phase-2 one-shot retry fields map through VERBATIM (their rule
 	// enforcement lives in the create-seam — the tool must never drop them).
-	res = run(`{"verb":"create","name":"retryme","prompt":"w","one_shot":"2026-07-25T09:00:00Z","workspace":"/r","one_shot_retry":true,"one_shot_max_retries":7}`)
+	res = run(`{"verb":"create","name":"retryme","prompt":"w","one_shot":"2026-07-25T09:00:00Z","one_shot_retry":true,"one_shot_max_retries":7}`)
 	if res.IsError {
 		t.Fatalf("one-shot retry create = error %q", res.Content)
 	}
@@ -351,8 +354,8 @@ func TestScheduleTool_MutatingCreateGatedByPlanMode(t *testing.T) {
 	t.Parallel()
 	mgr := newStubScheduleManager()
 	ws := memfs.NewWorkspace("/ws")
-	mutCreate := `{"verb":"create","name":"mut","prompt":"p","cron":"@every 1h","workspace":"/r","mutating":true}`
-	roCreate := `{"verb":"create","name":"ro","prompt":"p","cron":"@every 1h","workspace":"/r"}`
+	mutCreate := `{"verb":"create","name":"mut","prompt":"p","cron":"@every 1h","mutating":true}`
+	roCreate := `{"verb":"create","name":"ro","prompt":"p","cron":"@every 1h"}`
 
 	// The PLAN-MODE variant: a mutating create is hard-denied BEFORE the base
 	// tool runs (the manager never sees it — the deny reason mirrors the

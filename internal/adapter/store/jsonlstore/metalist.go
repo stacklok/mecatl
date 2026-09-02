@@ -35,7 +35,7 @@ type metaSnapshot struct {
 	TitleProvenance session.TitleProvenance     `json:"title_provenance,omitempty"`
 	Kind            session.SessionKind         `json:"kind,omitempty"`
 	Relationship    session.SessionRelationship `json:"relationship,omitzero"`
-	Workspace       string                      `json:"workspace"`
+	EnvironmentRef  session.EnvironmentRef      `json:"environment_ref,omitzero"`
 	CreatedAt       time.Time                   `json:"created_at"`
 	// Owner is the session's verified owner (ADR 0204). Decoding it here is
 	// what keeps the cheap fast path's row IDENTICAL to the Load-per-row
@@ -122,7 +122,7 @@ func metaSnapshotFromSession(s *session.Session) metaSnapshot {
 	return metaSnapshot{
 		ID: s.ID, State: s.State, Counters: s.Counters, ModelID: s.ModelID,
 		Title: s.Title, TitleProvenance: s.TitleProvenance, Kind: s.Kind,
-		Relationship: s.Relationship, Workspace: s.Workspace, CreatedAt: s.CreatedAt,
+		Relationship: s.Relationship, EnvironmentRef: s.EnvironmentRef, CreatedAt: s.CreatedAt,
 		Owner: s.Owner,
 	}
 }
@@ -214,7 +214,7 @@ func (st *Store) rebuildInventoryRows() ([]port.SessionDiscoveryMeta, error) {
 				meta.ModelID = m.ModelID
 				meta.Title = m.Title
 				meta.TitleProvenance = m.TitleProvenance
-				meta.Workspace = m.Workspace
+				meta.EnvironmentRef = m.EnvironmentRef
 				meta.Kind = kind
 				meta.Relationship = m.Relationship
 				meta.Owner = m.Owner

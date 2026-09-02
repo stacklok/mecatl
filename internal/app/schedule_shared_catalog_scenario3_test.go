@@ -61,7 +61,7 @@ func TestScheduleSharedCatalog_Scenario3_DefaultSessionHasTool(t *testing.T) {
 	llm2 := mockllm.New(
 		mockllm.ToolCallTurn(session.NewToolCall("q1", agent.ScheduleQueryToolName, []byte(`{"verb":"list"}`))),
 		mockllm.ToolCallTurn(session.NewToolCall("q2", agent.ScheduleToolName,
-			[]byte(`{"verb":"create","name":"ac31","prompt":"p","cron":"@every 1h","workspace":"`+t.TempDir()+`"}`))),
+			[]byte(`{"verb":"create","name":"ac31","prompt":"p","cron":"@every 1h"}`))),
 		mockllm.TextTurn("done"),
 	)
 	built2, ws := scheduleScenario3Build(t, llm2)
@@ -202,7 +202,7 @@ func TestScheduleSharedCatalog_Scenario3_OriginAndDeliveryWired(t *testing.T) {
 	// own sched-- run consumes turn 3.
 	llm := mockllm.New(
 		mockllm.ToolCallTurn(session.NewToolCall("c1", agent.ScheduleToolName,
-			[]byte(`{"verb":"create","name":"nightly","prompt":"check ci","cron":"@every 1h","workspace":"`+workspace+`"}`))),
+			[]byte(`{"verb":"create","name":"nightly","prompt":"check ci","cron":"@every 1h"}`))),
 		mockllm.TextTurn("scheduled"),
 		mockllm.TextTurn("fire output"),
 	)
@@ -220,9 +220,13 @@ func TestScheduleSharedCatalog_Scenario3_OriginAndDeliveryWired(t *testing.T) {
 	}
 	defer built.Close()
 
-	sess, err := built.Service.CreateSession(ctx, workspace, session.ModeDefault, session.Limits{})
+	sess, err := built.Service.CreateSession(ctx, "", session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
+	}
+
+	if _, err := built.Service.ReattachPlacement(ctx, sess.EnvironmentRef); err != nil {
+		t.Fatalf("created session exact placement cannot reattach before schedule creation: ref=%+v err=%v", sess.EnvironmentRef, err)
 	}
 
 	// The origin run creates the schedule. startRun places THIS session id on

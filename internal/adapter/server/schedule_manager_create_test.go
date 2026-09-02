@@ -86,11 +86,12 @@ func newManagerBackedBy(t *testing.T, store port.ScheduleStore, now time.Time) *
 	})
 	sessions := memstore.New()
 	svc, err := server.NewService(server.Config{
-		Engine:          engine,
-		Store:           sessions,
-		ScheduleManager: server.NewScheduleManager(server.ScheduleManagerConfig{Store: sessions, ScheduleStore: store, Now: func() time.Time { return now }}),
-		Workspaces:      func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
-		Now:             func() time.Time { return now },
+		Engine:           engine,
+		Store:            sessions,
+		ScheduleManager:  server.NewScheduleManager(server.ScheduleManagerConfig{Store: sessions, ScheduleStore: store, Now: func() time.Time { return now }}),
+		DefaultWorkspace: "/tmp",
+		Workspaces:       func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+		Now:              func() time.Time { return now },
 	})
 	if err != nil {
 		t.Fatalf("new service: %v", err)
@@ -100,11 +101,10 @@ func newManagerBackedBy(t *testing.T, store port.ScheduleStore, now time.Time) *
 
 func testSchedule(name string) port.ScheduleSpec {
 	return port.ScheduleSpec{
-		Name:      name,
-		Prompt:    "do work",
-		Trigger:   port.TriggerSpec{Cron: "* * * * *"},
-		Mutating:  true,
-		Workspace: "/tmp",
+		Name:     name,
+		Prompt:   "do work",
+		Trigger:  port.TriggerSpec{Cron: "* * * * *"},
+		Mutating: true,
 	}
 }
 

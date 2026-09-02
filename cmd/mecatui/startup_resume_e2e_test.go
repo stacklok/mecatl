@@ -113,7 +113,7 @@ func TestSessionsCommand_EmbeddedAndConnectE2E(t *testing.T) {
 			chatID := seedStartupResumeSession(ctx, t, target, workspace)
 			if _, err := cl.CreateSchedule(ctx, client.ScheduleSpec{
 				Name: "sessions-command-inspect", Prompt: "scheduled inspection transcript",
-				Trigger: client.ScheduleTrigger{OneShot: time.Now().Add(time.Hour)}, Workspace: workspace, Mode: "plan",
+				Trigger: client.ScheduleTrigger{OneShot: time.Now().Add(time.Hour)}, Mode: "plan",
 			}); err != nil {
 				t.Fatalf("create schedule: %v", err)
 			}

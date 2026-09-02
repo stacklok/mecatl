@@ -48,7 +48,6 @@ type ScheduleSpec struct {
 	Trigger   ScheduleTrigger
 	Selector  ScheduleSelector
 	Profile   string
-	Workspace string
 	Mode      string
 	Mutating  bool
 	MaxFires  int32
@@ -343,7 +342,6 @@ func mapScheduleSpec(in *mecatlv1.ScheduleSpec) ScheduleSpec {
 		Name:      in.GetName(),
 		Prompt:    in.GetPrompt(),
 		Profile:   in.GetProfile(),
-		Workspace: in.GetWorkspace(),
 		Mode:      modeStringFromProto(in.GetMode()),
 		Mutating:  in.GetMutating(),
 		MaxFires:  in.GetMaxFires(),
@@ -443,7 +441,6 @@ func scheduleSpecToProto(in ScheduleSpec) *mecatlv1.ScheduleSpec {
 		Name:      in.Name,
 		Prompt:    in.Prompt,
 		Profile:   in.Profile,
-		Workspace: in.Workspace,
 		Mode:      modeToProtoFromString(in.Mode),
 		Mutating:  in.Mutating,
 		MaxFires:  in.MaxFires,

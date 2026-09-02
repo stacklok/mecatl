@@ -46,11 +46,12 @@ func newValidatedScheduleService(t *testing.T, now time.Time, minInterval time.D
 		Store:   store,
 	})
 	svc, err := server.NewService(server.Config{
-		Engine:     engine,
-		Store:      store,
-		Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
-		Now:        func() time.Time { return now },
-		Models:     models,
+		Engine:           engine,
+		Store:            store,
+		DefaultWorkspace: "/ws",
+		Workspaces:       func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+		Now:              func() time.Time { return now },
+		Models:           models,
 	})
 	if err != nil {
 		t.Fatalf("new service: %v", err)
@@ -71,7 +72,6 @@ func newValidatedScheduleService(t *testing.T, now time.Time, minInterval time.D
 func TestCreateScheduleEnforcesMinIntervalSeam(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 	ctx := context.Background()
-	workspace := t.TempDir()
 
 	svc := newValidatedScheduleService(t, now, 5*time.Minute, nil)
 
@@ -85,7 +85,7 @@ func TestCreateScheduleEnforcesMinIntervalSeam(t *testing.T) {
 	} {
 		spec := port.ScheduleSpec{
 			Name: "tight-" + strings.ReplaceAll(tc.name, " ", "-"), Prompt: "p",
-			Trigger: port.TriggerSpec{Cron: tc.cron}, Workspace: workspace, Mode: session.ModePlan,
+			Trigger: port.TriggerSpec{Cron: tc.cron}, Mode: session.ModePlan,
 		}
 		if _, err := svc.CreateSchedule(ctx, spec); !errors.Is(err, server.ErrInvalidArgument) {
 			t.Fatalf("%s: CreateSchedule = %v, want ErrInvalidArgument (a cadence tighter than the 5m floor is rejected fail-closed)", tc.name, err)
@@ -99,7 +99,7 @@ func TestCreateScheduleEnforcesMinIntervalSeam(t *testing.T) {
 	for _, cron := range []string{"*/5 * * * *", "@every 5m", "@hourly", "0 9 * * *"} {
 		if _, err := svc.CreateSchedule(ctx, port.ScheduleSpec{
 			Name: "ok-" + strings.NewReplacer("*", "s", "/", "-", " ", "-", "@", "a").Replace(cron), Prompt: "p",
-			Trigger: port.TriggerSpec{Cron: cron}, Workspace: workspace, Mode: session.ModePlan,
+			Trigger: port.TriggerSpec{Cron: cron}, Mode: session.ModePlan,
 		}); err != nil {
 			t.Fatalf("cron %q at/above the 5m floor = %v, want accepted", cron, err)
 		}
@@ -108,7 +108,7 @@ func TestCreateScheduleEnforcesMinIntervalSeam(t *testing.T) {
 	// A one-shot is a single fire, not a cadence: unaffected by the floor.
 	if _, err := svc.CreateSchedule(ctx, port.ScheduleSpec{
 		Name: "oneshot", Prompt: "p", Trigger: port.TriggerSpec{OneShot: now.Add(time.Minute)},
-		Workspace: workspace, Mode: session.ModePlan,
+		Mode: session.ModePlan,
 	}); err != nil {
 		t.Fatalf("one-shot create with a floor configured = %v, want accepted (a one-shot has no cadence)", err)
 	}
@@ -117,7 +117,7 @@ func TestCreateScheduleEnforcesMinIntervalSeam(t *testing.T) {
 	// existing schedule below the floor is rejected too.
 	if _, err := svc.UpdateSchedule(ctx, port.ScheduleSpec{
 		Name: "oneshot", Prompt: "p", Trigger: port.TriggerSpec{Cron: "* * * * *"},
-		Workspace: workspace, Mode: session.ModePlan,
+		Mode: session.ModePlan,
 	}); !errors.Is(err, server.ErrInvalidArgument) {
 		t.Fatalf("UpdateSchedule to a below-floor cadence = %v, want ErrInvalidArgument (the seam is shared)", err)
 	}
@@ -127,7 +127,7 @@ func TestCreateScheduleEnforcesMinIntervalSeam(t *testing.T) {
 	noFloor := newValidatedScheduleService(t, now, 0, nil)
 	if _, err := noFloor.CreateSchedule(ctx, port.ScheduleSpec{
 		Name: "tight-ok", Prompt: "p", Trigger: port.TriggerSpec{Cron: "* * * * *"},
-		Workspace: workspace, Mode: session.ModePlan,
+		Mode: session.ModePlan,
 	}); err != nil {
 		t.Fatalf("create with NO floor configured = %v, want accepted (0 = no floor, byte-identical pre-feature posture)", err)
 	}
@@ -143,7 +143,6 @@ func TestCreateScheduleEnforcesMinIntervalSeam(t *testing.T) {
 func TestCreateScheduleRejectsUnknownSelectorSeam(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 	ctx := context.Background()
-	workspace := t.TempDir()
 
 	models := []*mecatlv1.ModelInfo{
 		{Id: "gpt-5", ProviderId: "openai"},
@@ -153,7 +152,7 @@ func TestCreateScheduleRejectsUnknownSelectorSeam(t *testing.T) {
 
 	base := port.ScheduleSpec{
 		Prompt: "p", Trigger: port.TriggerSpec{Cron: "0 9 * * *"},
-		Workspace: workspace, Mode: session.ModePlan,
+		Mode: session.ModePlan,
 	}
 
 	// Unknown provider: rejected, never saved.

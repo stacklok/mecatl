@@ -439,7 +439,7 @@ func metadataFromProto(entry *driverv1.SessionMetadataEntry) port.SessionDiscove
 		ModelID:         entry.GetModelId(),
 		Title:           entry.GetTitle(),
 		TitleProvenance: session.TitleProvenance(entry.GetTitleProvenance()),
-		Workspace:       entry.GetWorkspace(),
+		EnvironmentRef:  environmentRefFromProto(entry.GetEnvironmentRef()),
 		Kind:            session.SessionKind(entry.GetKind()),
 		EstimatedBytes:  entry.GetEstimatedBytes(),
 		Relationship: session.SessionRelationship{
@@ -472,6 +472,13 @@ func metadataFromProto(entry *driverv1.SessionMetadataEntry) port.SessionDiscove
 		}
 	}
 	return meta
+}
+
+func environmentRefFromProto(ref *driverv1.StoredEnvironmentRef) session.EnvironmentRef {
+	if ref == nil {
+		return session.EnvironmentRef{}
+	}
+	return session.EnvironmentRef{Kind: session.EnvironmentKind(ref.GetKind()), ID: ref.GetId(), Revision: ref.GetRevision()}
 }
 
 // Delete removes the snapshot stored under id on the driver. It is idempotent
