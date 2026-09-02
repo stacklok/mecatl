@@ -123,10 +123,6 @@ func newTranscriptService(t *testing.T, store port.SessionStore, eventLog port.E
 			effects.Add(1)
 			return memfs.NewWorkspace(root)
 		},
-		EnvironmentResolver: func(context.Context, session.EnvironmentRef) (tool.Environment, error) {
-			effects.Add(1)
-			return tool.Environment{}, errors.New("must not resolve")
-		},
 		SessionEngine: func(context.Context, server.ProviderSelector, []mcp.ServerConfig, server.SessionProfile, string, session.PermissionMode) (server.SessionEngineResult, error) {
 			effects.Add(1)
 			return server.SessionEngineResult{}, errors.New("must not rebuild")

@@ -223,6 +223,24 @@ func TestExitCodeCleanIsZero(t *testing.T) {
 	}
 }
 
+type scriptedPlacementProvider struct{ workspaces func(string) tool.Workspace }
+
+func (scriptedPlacementProvider) AcceptsPrivatePlacementHints() {}
+
+func (p scriptedPlacementProvider) Bind(_ context.Context, req server.PlacementBindRequest) (server.PlacementBinding, error) {
+	root := "/ws"
+	workspace := tool.Workspace(memfs.NewWorkspace(root))
+	if req.Selector.IsID() {
+		root = req.Selector.ID
+		workspace = p.workspaces(root)
+	}
+	ref := session.EnvironmentRef{Kind: session.EnvKindLocal, ID: root, Revision: "test-v1"}
+	return server.PlacementBinding{Ref: ref, Environment: tool.MustEnvironment(ref, workspace, nil)}, nil
+}
+func (p scriptedPlacementProvider) Reattach(_ context.Context, req server.PlacementReattachRequest) (server.PlacementBinding, error) {
+	return server.PlacementBinding{Ref: req.Ref, Environment: tool.MustEnvironment(req.Ref, p.workspaces(req.Ref.ID), nil)}, nil
+}
+
 // scriptedService builds a real server.Service over a SCRIPTED mockllm provider — the
 // adversarial-test seam (app.Build's canned mock cannot be scripted). It mirrors the
 // construction in internal/adapter/server/budget_test.go. extraTools are registered
@@ -248,6 +266,8 @@ func scriptedService(t *testing.T, extraTools []tool.Tool, workspaces func(strin
 		Engine:              engine,
 		Store:               memstore.New(),
 		Workspaces:          workspaces,
+		PlacementProvider:   scriptedPlacementProvider{workspaces: workspaces},
+		PlacementScope:      "test",
 		Now:                 func() time.Time { return time.Unix(0, 0) },
 		DefaultCapabilities: llm.Capabilities(),
 	})
@@ -402,10 +422,13 @@ func TestRunCancelOnMainAskBoundsAndExits(t *testing.T) {
 		Policy:  permpolicy.NewPolicy(nil, nil),
 		Model:   "test-model",
 	})
+	ws := func(root string) tool.Workspace { return memfs.NewWorkspace(root) }
 	svc, err := server.NewService(server.Config{
 		Engine:              engine,
 		Store:               memstore.New(),
-		Workspaces:          func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+		Workspaces:          ws,
+		PlacementProvider:   scriptedPlacementProvider{workspaces: ws},
+		PlacementScope:      "test",
 		Now:                 func() time.Time { return time.Unix(0, 0) },
 		DefaultCapabilities: llm.Capabilities(),
 	})

@@ -5,13 +5,13 @@ import (
 	"fmt"
 
 	"github.com/stacklok/mecatl/engine/session"
-	"github.com/stacklok/mecatl/engine/tool"
 )
 
 // SuccessorPlacement selects exact inheritance when empty or one freshly
 // matched source-scoped worktree when Selector is present.
 type SuccessorPlacement struct {
-	Selector string
+	Selector        string
+	SelectorPresent bool
 }
 
 // ForkSuccessorRequest is the additive internal successor shape used before
@@ -40,6 +40,9 @@ func (s *Service) ForkSessionSuccessor(ctx context.Context, req ForkSuccessorReq
 
 //nolint:gocyclo // Successor creation keeps validation, exact placement, engine setup, and publication atomic.
 func (s *Service) createPlacedSuccessor(ctx context.Context, req ForkSuccessorRequest, copyHistory bool) (session.SessionID, error) {
+	if req.Placement.SelectorPresent && req.Placement.Selector == "" {
+		return "", fmt.Errorf("%w: worktree_selector must not be empty when present", ErrInvalidArgument)
+	}
 	absent, err := s.managementOwnershipPreflight(ctx, req.Source, false)
 	if err != nil {
 		return "", err
@@ -57,7 +60,9 @@ func (s *Service) createPlacedSuccessor(ctx context.Context, req ForkSuccessorRe
 		return "", err
 	}
 	defer release()
-	source, absent, err := s.managementTarget(ctx, req.Source, false)
+	mutationCtx, stopMutation, stillHeld := s.mutationLeaseContext(ctx, req.Source)
+	defer stopMutation()
+	source, absent, err := s.managementTarget(mutationCtx, req.Source, false)
 	if err != nil || absent {
 		return "", err
 	}
@@ -65,12 +70,16 @@ func (s *Service) createPlacedSuccessor(ctx context.Context, req ForkSuccessorRe
 	if err != nil {
 		return "", err
 	}
-	binding, err := s.successorPlacement(ctx, source, req.Placement)
+	binding, err := s.successorPlacement(mutationCtx, source, req.Placement)
 	if err != nil {
 		return "", err
 	}
+	if binding.Close != nil {
+		defer func() { _ = binding.Close() }()
+	}
 
 	created := session.New(s.cfg.NewID(), source.Mode, binding.Ref, source.Limits, s.cfg.Now())
+	created.Placement = canonicalPlacementMetadata(binding)
 	authority, bound := source.BoundAuthority()
 	if !bound {
 		authority = session.Authority{}
@@ -98,27 +107,32 @@ func (s *Service) createPlacedSuccessor(ctx context.Context, req ForkSuccessorRe
 		if s.cfg.SessionEngine == nil {
 			return "", fmt.Errorf("%w: per-session engine not supported (no session-engine factory configured)", ErrInvalidArgument)
 		}
-		builtEngine, err = s.buildAndRegisterSessionEngine(ctx, created, selector, profile, created.Mode, false)
+		builtEngine, err = s.buildAndRegisterSessionEngine(mutationCtx, created, selector, profile, created.Mode, false)
 		if err != nil {
 			return "", err
 		}
 	}
-	// Publish only after every source, placement, history, label, and engine
-	// validation has succeeded. Source state and binding are never modified.
-	if err := s.persistNewSession(ctx, created); err != nil {
-		if builtEngine != nil {
-			s.mu.Lock()
-			delete(s.sessionEngines, created.ID)
-			s.mu.Unlock()
-			if builtEngine.close != nil {
-				_ = builtEngine.close()
-			}
+	cleanupEngine := func() {
+		if builtEngine == nil {
+			return
 		}
+		s.mu.Lock()
+		delete(s.sessionEngines, created.ID)
+		s.mu.Unlock()
+		if builtEngine.close != nil {
+			_ = builtEngine.close()
+		}
+	}
+	// The lease context covers provider binding and engine construction. Recheck
+	// ownership immediately before the only publication point.
+	if !stillHeld() {
+		cleanupEngine()
+		return "", ErrSessionLeasedElsewhere
+	}
+	if err := s.persistNewSession(mutationCtx, created); err != nil {
+		cleanupEngine()
 		return "", fmt.Errorf("server: persist successor: %w", err)
 	}
-	s.mu.Lock()
-	s.sessionEnvironments[created.ID] = binding.Environment
-	s.mu.Unlock()
 	return created.ID, nil
 }
 
@@ -140,39 +154,11 @@ func successorProviderSelector(source *session.Session, req ForkSuccessorRequest
 }
 
 func (s *Service) successorPlacement(ctx context.Context, source *session.Session, requested SuccessorPlacement) (PlacementBinding, error) {
-	binding, err := s.ReattachPlacement(ctx, source.EnvironmentRef)
-	if err != nil {
-		return PlacementBinding{}, err
-	}
 	if requested.Selector == "" {
-		return binding, nil
+		return s.ReattachPlacement(ctx, source.EnvironmentRef)
 	}
 	if source.EnvironmentRef.Kind == session.EnvKindNoFS {
 		return PlacementBinding{}, ErrPlacementNotFound
 	}
-	choice, err := s.matchCurrentWorktree(ctx, source.ID, requested.Selector, binding.Environment)
-	if err != nil {
-		return PlacementBinding{}, err
-	}
-	if choice.Path == "" || choice.Head == "" {
-		return PlacementBinding{}, ErrPlacementNotFound
-	}
-	ws := s.cfg.Workspaces(choice.Path)
-	if ws == nil {
-		return PlacementBinding{}, ErrPlacementUnavailable
-	}
-	var runner tool.CommandRunner
-	if s.cfg.CommandRunnerFactory != nil {
-		runner = s.cfg.CommandRunnerFactory(ws.Root())
-	}
-	ref := session.EnvironmentRef{Kind: session.EnvKindLocal, ID: choice.Path, Revision: choice.Head}
-	env, err := tool.NewEnvironment(ref, ws, runner)
-	if err != nil {
-		return PlacementBinding{}, ErrPlacementUnavailable
-	}
-	selected := PlacementBinding{Environment: env, Ref: ref}
-	if err := validatePlacementBinding(selected); err != nil {
-		return PlacementBinding{}, err
-	}
-	return selected, nil
+	return s.BindPlacement(ctx, SelectWorktree(source.ID, source.EnvironmentRef, requested.Selector), PlacementOperationSuccessor)
 }

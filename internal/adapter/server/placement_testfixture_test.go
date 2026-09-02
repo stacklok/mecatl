@@ -46,7 +46,7 @@ func (p testPlacementProvider) workspace(root string) tool.Workspace {
 }
 
 func (p testPlacementProvider) Bind(_ context.Context, req server.PlacementBindRequest) (server.PlacementBinding, error) {
-	if req.Selector.Kind == session.PlacementSelectorNoFS {
+	if req.Selector.Kind == server.PlacementSelectorNoFS {
 		ref := session.EnvironmentRef{Kind: session.EnvKindNoFS, ID: "none", Revision: "in-tree-v1"}
 		return server.PlacementBinding{Ref: ref, Environment: tool.MustEnvironment(ref, nofs.New(), nil)}, nil
 	}

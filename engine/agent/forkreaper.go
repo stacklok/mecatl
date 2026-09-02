@@ -6,8 +6,8 @@ import (
 )
 
 // ArtifactHandle is an opaque handle for a preserved delegation artifact. It is
-// deliberately a distinct type from session.PlacementSelector: artifact discovery
-// never grants placement authority, and no placement API accepts this value.
+// deliberately distinct from the server's placement-selector protocol: artifact
+// discovery never grants placement authority, and no placement API accepts this value.
 type ArtifactHandle string
 
 // PreservedForkStore is the seam the Parallel tool uses to retain a winning branch's

@@ -252,7 +252,7 @@ func TestPathEscapePosture_Scenario5_IsolatedMembersUnchanged(t *testing.T) {
 // consult the re-view.
 func runTeamWithForkers(t *testing.T, base tool.Workspace, factory server.MemberEngineFactory, roFk, mutatingFk tool.EnvironmentForker, spec agent.MemberSpec, sink func(agent.TeamEvent)) {
 	t.Helper()
-	svc, err := server.NewService(server.Config{
+	svc, err := newTestServerService(server.Config{
 		Engine:         noopEngine(),
 		Store:          memstore.New(),
 		Workspaces:     func(string) tool.Workspace { return base },

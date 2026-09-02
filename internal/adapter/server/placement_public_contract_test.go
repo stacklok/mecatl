@@ -26,12 +26,21 @@ import (
 
 const adrPrivateRoot = "/srv/private/repository"
 
-type adrPlacementProvider struct{}
+type adrPlacementProvider struct{ selectors *WorktreeSelectorIssuer }
 
-func (adrPlacementProvider) Bind(_ context.Context, req PlacementBindRequest) (PlacementBinding, error) {
-	if req.Selector.Kind == session.PlacementSelectorNoFS {
+func (p adrPlacementProvider) Bind(_ context.Context, req PlacementBindRequest) (PlacementBinding, error) {
+	if req.Selector.Kind == PlacementSelectorNoFS {
 		ref := session.EnvironmentRef{Kind: session.EnvKindNoFS, ID: "none", Revision: "v1"}
 		return PlacementBinding{Ref: ref, Environment: tool.MustEnvironment(ref, nofs.New(), nil), Metadata: PlacementMetadata{Name: "No filesystem"}}, nil
+	}
+	if req.Selector.IsWorktree() {
+		current, _ := (adrWorktrees{}).List(context.Background(), req.Selector.SourceRef.ID)
+		choice, err := p.selectors.Match(req.Selector.ID, req.Principal, req.Selector.Source, current)
+		if err != nil {
+			return PlacementBinding{}, err
+		}
+		ref := session.EnvironmentRef{Kind: session.EnvKindLocal, ID: choice.Path, Revision: choice.Head}
+		return PlacementBinding{Ref: ref, Environment: tool.MustEnvironment(ref, memfs.NewWorkspace(choice.Path), nil), Metadata: PlacementMetadata{Label: choice.Branch, Branch: choice.Branch, Revision: choice.Head}}, nil
 	}
 	return adrPlacementBinding(), nil
 }
@@ -39,7 +48,7 @@ func (adrPlacementProvider) Bind(_ context.Context, req PlacementBindRequest) (P
 func (adrPlacementProvider) Reattach(_ context.Context, req PlacementReattachRequest) (PlacementBinding, error) {
 	binding := adrPlacementBinding()
 	if req.Ref.Kind == session.EnvKindNoFS {
-		return adrPlacementProvider{}.Bind(context.Background(), PlacementBindRequest{Selector: session.NoFSPlacement()})
+		return adrPlacementProvider{}.Bind(context.Background(), PlacementBindRequest{Selector: NoFSPlacement()})
 	}
 	binding.Ref = req.Ref
 	binding.Environment = tool.MustEnvironment(req.Ref, memfs.NewWorkspace(adrPrivateRoot), nil)
@@ -50,7 +59,7 @@ func adrPlacementBinding() PlacementBinding {
 	ref := session.EnvironmentRef{Kind: session.EnvKindLocal, ID: adrPrivateRoot, Revision: "rev-private"}
 	return PlacementBinding{
 		Ref: ref, Environment: tool.MustEnvironment(ref, memfs.NewWorkspace(adrPrivateRoot), nil),
-		Metadata: PlacementMetadata{Name: "Primary repository"},
+		Metadata: PlacementMetadata{Label: "Primary repository", Branch: "main", Revision: "display-rev"},
 	}
 }
 
@@ -60,6 +69,15 @@ func (adrWorktrees) List(context.Context, string) ([]Worktree, error) {
 	return []Worktree{{Path: adrPrivateRoot, Branch: "main", Head: "abc123"}, {Path: "/srv/private/feature", Branch: "feature", Head: "def456"}}, nil
 }
 
+func (p adrPlacementProvider) ListWorktrees(_ context.Context, req PlacementDiscoveryRequest) ([]ScopedWorktree, error) {
+	current, _ := (adrWorktrees{}).List(context.Background(), req.SourceRef.ID)
+	out := make([]ScopedWorktree, 0, len(current))
+	for _, choice := range current {
+		out = append(out, ScopedWorktree{Selector: p.selectors.Issue(req.Principal, req.Source, choice), Label: choice.Branch, Branch: choice.Branch, Revision: choice.Head})
+	}
+	return out, nil
+}
+
 func newADR0280Service(t *testing.T) *Service {
 	t.Helper()
 	eng := agent.NewEngine(agent.Deps{LLM: mockllm.New(), Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil), Model: "test"})
@@ -67,10 +85,15 @@ func newADR0280Service(t *testing.T) *Service {
 	for i := range key {
 		key[i] = byte(i + 1)
 	}
+	issuer, err := NewWorktreeSelectorIssuer(key[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider := adrPlacementProvider{selectors: issuer}
 	svc, err := NewService(Config{
 		Engine: eng, Store: memstore.New(), Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
-		Now: func() time.Time { return time.Unix(1, 0) }, PlacementProvider: adrPlacementProvider{}, PlacementScope: "test",
-		PlacementSelectorKey: key, Worktrees: adrWorktrees{},
+		Now: func() time.Time { return time.Unix(1, 0) }, PlacementProvider: provider, PlacementScope: "test",
+		Worktrees: adrWorktrees{},
 		SessionEngine: func(context.Context, ProviderSelector, []mcp.ServerConfig, SessionProfile, string, session.PermissionMode) (SessionEngineResult, error) {
 			return SessionEngineResult{Engine: eng, Close: func() error { return nil }}, nil
 		},
@@ -90,6 +113,9 @@ func TestADR_0280_CreateSessionAcceptsOnlyDefaultOrNoFS(t *testing.T) {
 		}
 		if resp.GetSessionId() == "" || resp.GetPlacement() == nil {
 			t.Fatalf("response = %+v", resp)
+		}
+		if got := resp.GetPlacement(); req.GetProfile() == "" && (got.GetLabel() != "Primary repository" || got.GetBranch() != "main" || got.GetRevision() != "display-rev") {
+			t.Fatalf("create placement metadata = %+v", got)
 		}
 		if strings.Contains(resp.String(), adrPrivateRoot) || strings.Contains(resp.String(), "rev-private") {
 			t.Fatalf("private placement escaped in response: %v", resp)
@@ -181,6 +207,9 @@ func TestADR_0280_ClearSessionCreatesEmptyInheritedSuccessor(t *testing.T) {
 	}
 	if len(sess.Conversation.Messages) != 0 || sess.EnvironmentRef.ID != adrPrivateRoot {
 		t.Fatalf("successor = %+v", sess)
+	}
+	if got := cleared.GetPlacement(); got.GetLabel() != "Primary repository" || got.GetBranch() != "main" || got.GetRevision() != "display-rev" {
+		t.Fatalf("clear placement metadata = %+v", got)
 	}
 	if strings.Contains(cleared.String(), adrPrivateRoot) {
 		t.Fatalf("private path escaped: %v", cleared)

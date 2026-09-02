@@ -376,7 +376,7 @@ func TestServiceToRealFactoryRemintsClampedEffort(t *testing.T) {
 	factory := sessionEngineFactory(Config{Model: "gpt-5"}, reg, reg.entries[providerOpenAI].provider,
 		store, permpolicy.NewPolicy(defaultRules(), nil), hookexec.New(nil), nil, prompt.RootAssembler{}, catalogAssets{}, nil)
 
-	svc, err := server.NewService(server.Config{
+	svc, err := newTestServerService(server.Config{
 		Engine: agent.NewEngine(agent.Deps{
 			LLM:     mockllm.New(mockllm.TextTurn("SHARED")),
 			Catalog: tool.NewCatalog(),

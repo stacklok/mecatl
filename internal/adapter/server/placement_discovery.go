@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
@@ -63,42 +64,33 @@ func (s *Service) ListCommandsForSession(ctx context.Context, id session.Session
 // enumeration, then issues caller/source-scoped selectors without retaining
 // them. A no-FS source is an empty result and invokes no lister.
 func (s *Service) ListWorktreesForSession(ctx context.Context, id session.SessionID) ([]ScopedWorktree, error) {
-	sess, env, err := s.ownedSessionEnvironment(ctx, id)
+	sess, _, err := s.ownedSessionEnvironment(ctx, id)
 	if err != nil {
 		return nil, err
 	}
-	if sess.EnvironmentRef.Kind == session.EnvKindNoFS || s.cfg.Worktrees == nil {
+	if sess.EnvironmentRef.Kind == session.EnvKindNoFS {
 		return nil, nil
 	}
-	if s.worktreeSelectors == nil {
-		return nil, fmt.Errorf("%w: worktree selectors are unavailable", ErrFailedPrecondition)
+	provider, ok := s.cfg.PlacementProvider.(PlacementDiscoverer)
+	if !ok {
+		return nil, fmt.Errorf("%w: worktree discovery is unavailable", ErrPlacementUnavailable)
 	}
-	current, err := s.cfg.Worktrees.List(ctx, env.Workspace().Root())
+	current, err := provider.ListWorktrees(ctx, PlacementDiscoveryRequest{
+		Source: id, SourceRef: sess.EnvironmentRef,
+		Principal: session.PrincipalFromContext(ctx), Scope: s.cfg.PlacementScope,
+	})
 	if err != nil {
-		return nil, fmt.Errorf("%w: list worktrees: %v", ErrInternal, err)
+		err = sanitizePlacementProviderError(err)
+		s.logPlacementProviderError(ctx, "discover", err)
+		return nil, err
 	}
-	principal := session.PrincipalFromContext(ctx)
-	out := make([]ScopedWorktree, 0, len(current))
-	for _, choice := range current {
-		label := choice.Branch
-		if label == "" {
-			label = "Detached worktree"
+	for i := range current {
+		if !safePlacementText(current[i].Selector, maxPlacementIdentityRunes) || strings.ContainsAny(current[i].Selector, `/\\`) {
+			return nil, ErrInvalidPlacementBinding
 		}
-		out = append(out, ScopedWorktree{
-			Selector: s.worktreeSelectors.Issue(principal, id, choice),
-			Label:    label, Branch: choice.Branch, Revision: choice.Head, Bare: choice.Bare,
-		})
+		current[i].Label = sanitizePlacementDisplay(current[i].Label, maxPlacementNameRunes)
+		current[i].Branch = sanitizePlacementDisplay(current[i].Branch, maxPlacementNameRunes)
+		current[i].Revision = sanitizePlacementDisplay(current[i].Revision, maxPlacementIdentityRunes)
 	}
-	return out, nil
-}
-
-func (s *Service) matchCurrentWorktree(ctx context.Context, source session.SessionID, selector string, env tool.Environment) (Worktree, error) {
-	if s.worktreeSelectors == nil || s.cfg.Worktrees == nil {
-		return Worktree{}, ErrPlacementNotFound
-	}
-	current, err := s.cfg.Worktrees.List(ctx, env.Workspace().Root())
-	if err != nil {
-		return Worktree{}, fmt.Errorf("%w: list worktrees: %v", ErrInternal, err)
-	}
-	return s.worktreeSelectors.Match(selector, session.PrincipalFromContext(ctx), source, current)
+	return current, nil
 }

@@ -17,7 +17,7 @@ import (
 // "test" backend ref and an optional bound runner. It panics on a nil workspace
 // (which would be a test-setup bug, not a runtime condition).
 func testEnvironment(ws tool.Workspace, runner tool.CommandRunner) tool.Environment {
-	return tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: "test", Revision: "test-v1"}, ws, runner)
+	return tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindLocal, ID: ws.Root(), Revision: "in-tree-v1"}, ws, runner)
 }
 
 // memEnv builds a shell-less in-memory Environment rooted at root for the many

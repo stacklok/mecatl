@@ -55,7 +55,6 @@
     method func (IncarnationID).Valid() bool
     method func (Limits).WithDefaults(d Limits) Limits
     method func (PendingAsk).Origin() AskOrigin
-    method func (PlacementSelector).Valid() bool
     method func (RetryDisposition).Valid() bool
     method func (State).IsTerminal() bool
     method func (StreamProgress).Valid() bool
@@ -132,9 +131,6 @@ const ModePlan PermissionMode = "plan"
 const ParallelBranchEnd ParallelEventKind = "branch_end"
 const ParallelBranchStart ParallelEventKind = "branch_start"
 const ParallelBranchTool ParallelEventKind = "branch_tool"
-const PlacementSelectorDefault PlacementSelectorKind = "default"
-const PlacementSelectorID PlacementSelectorKind = "id"
-const PlacementSelectorNoFS PlacementSelectorKind = "no-fs"
 const RequestPromptInstruction untyped string = "instruction"
 const RequestPromptSystem untyped string = "system"
 const RequestProvenanceCustom untyped string = "custom"
@@ -214,7 +210,6 @@ func CanonicalNetworkAttempt(in NetworkAttemptPayload, id SessionID, runSerial i
 func ClampTitle(s string) string
 func CloneMessages(msgs []Message) []Message
 func DebugTargetFingerprint(s *Session) string
-func DefaultPlacement() PlacementSelector
 func ForkSnapshot(c *Conversation) []Message
 func GrantTypeFromClaims(claims map[string]any) GrantType
 func IncarnationFingerprint(inc IncarnationID, id SessionID, owner *Principal) string
@@ -247,14 +242,12 @@ func NewToolResult(callID ToolCallID, content string) ToolResult
 func NewToolResultWithParts(callID ToolCallID, content string, parts []Content) ToolResult
 func NewUserMessage(text string) Message
 func NewUserMessageWithParts(text string, parts []Content) Message
-func NoFSPlacement() PlacementSelector
 func ParseArgs(call ToolCall, dst any) (msg string, ok bool)
 func PersistedIncarnationID(inc IncarnationID, id SessionID, createdAtUnixNano int64, owner *Principal) IncarnationID
 func PrincipalFromClaims(claims map[string]any) *Principal
 func PrincipalFromContext(ctx context.Context) *Principal
 func PrincipalScopeHash(p *Principal) [32]byte
 func RepairToolResult(r ToolResult) ToolResult
-func SelectPlacementID(id string) PlacementSelector
 func StripProviderState(messages []Message) []Message
 func ToValidUTF8(s string) string
 func ToolBlockText(b Content) string
@@ -293,8 +286,7 @@ type ParallelEventKind string
 type ParallelPayload struct{ParentCallID string; Kind ParallelEventKind; Join string; BranchCount int; BranchIndex int; ChildID string; ChildIncarnation IncarnationID; BranchLabel string; Goal string; RoutedCategory string; RoutedModel string; RoutingReason string; Model string; ToolName string; IsError bool; ToolCount int; Text string; Detail string; InnerKind EventType; Failed bool; Stop StopReason; Usage Usage; DurationMs int64; Winner int}
 type PendingAsk struct{AskID string; Tool string; Args json.RawMessage; Reason string; Call ToolCallID "json:\"call,omitempty\""; ConfiguredAsk bool; FlooredConfiguredAllow bool; HookOriginated bool "json:\"hook_originated,omitempty\""; PlanOriginated bool "json:\"plan_originated,omitempty\""}
 type PermissionMode string
-type PlacementSelector struct{Kind PlacementSelectorKind; ID string}
-type PlacementSelectorKind string
+type PlacementMetadata struct{Kind string "json:\"kind,omitempty\""; Label string "json:\"label,omitempty\""; Branch string "json:\"branch,omitempty\""; Revision string "json:\"revision,omitempty\""}
 type Principal struct{Issuer string; Subject string; GrantType GrantType; Name string}
 type RequestManifestPayload struct{Provider string "json:\"provider,omitempty\""; Model string "json:\"model,omitempty\""; ReasoningEffort string "json:\"reasoning_effort,omitempty\""; ContextWindow int "json:\"context_window,omitempty\""; ToolNames []string "json:\"tool_names\""; ToolDecisions []RequestToolDecision "json:\"tool_decisions\""; MessageCount int "json:\"message_count\""; MessageBytes int "json:\"message_bytes\""; Prompt []RequestPromptComponent "json:\"prompt\""}
 type RequestPromptComponent struct{Kind string "json:\"kind\""; Provenance string "json:\"provenance\""; Bytes int "json:\"bytes\""}
@@ -303,7 +295,7 @@ type ResultPayload struct{Stop StopReason; Text string; Usage Usage; Error strin
 type RetryDisposition uint8
 type Role string
 type SchedulePayload struct{ScheduleName string; FireID string; SessionID SessionID; Kind string; Stop StopReason; Err string}
-type Session struct{ID SessionID; State State; Mode PermissionMode; Conversation *Conversation; Limits Limits; Counters Counters; Usage Usage; EnvironmentRef EnvironmentRef; Profile string; ProviderID string; ModelID string; ReasoningEffort string; DebugMCPServers []string; DebugMCPTools []string; DebugTargetFingerprint string; Title string; TitleProvenance TitleProvenance; Owner *Principal; Authority Authority; Kind SessionKind; Relationship SessionRelationship; CreatedAt time.Time}
+type Session struct{ID SessionID; State State; Mode PermissionMode; Conversation *Conversation; Limits Limits; Counters Counters; Usage Usage; EnvironmentRef EnvironmentRef; Placement PlacementMetadata; Profile string; ProviderID string; ModelID string; ReasoningEffort string; DebugMCPServers []string; DebugMCPTools []string; DebugTargetFingerprint string; Title string; TitleProvenance TitleProvenance; Owner *Principal; Authority Authority; Kind SessionKind; Relationship SessionRelationship; CreatedAt time.Time}
 type SessionID string
 type SessionKind string
 type SessionRelationship struct{ScheduleName string "json:\"schedule_name,omitempty\""; OriginSessionID SessionID "json:\"origin_session_id,omitempty\""; OriginIncarnation IncarnationID "json:\"origin_incarnation,omitempty\""; ParentSessionID SessionID "json:\"parent_session_id,omitempty\""; ParentIncarnation IncarnationID "json:\"parent_incarnation,omitempty\""; CallID ToolCallID "json:\"call_id,omitempty\""; BranchIndex *int "json:\"branch_index,omitempty\""; TeamID string "json:\"team_id,omitempty\""; MemberName string "json:\"member_name,omitempty\""; DebugTargetID SessionID "json:\"debug_target_id,omitempty\""; DebugTargetIncarnation IncarnationID "json:\"debug_target_incarnation,omitempty\""}

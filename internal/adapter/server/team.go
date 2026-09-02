@@ -117,26 +117,24 @@ type teamState struct {
 // server budget; a positive value applies only when it is lower.
 //
 // It returns ErrTeamsDisabled when teams are not enabled.
+// CreateTeam is the trusted default-placement entry used by in-process callers.
+// The legacy workspace argument is ignored and can never select authority.
 func (s *Service) CreateTeam(ctx context.Context, workspace, name, goal string, maxTeamTokens int, members []agent.MemberSpec) (string, []team.Member, error) {
 	if s.cfg.MemberEngine == nil {
 		return "", nil, ErrTeamsDisabled
 	}
-	workspace, _, err := s.workspaceForCreate(workspace, ProfileDefault)
+	selector := DefaultPlacement()
+	if workspace != "" {
+		selector = SelectPlacementID(workspace)
+	}
+	binding, err := s.BindPlacement(ctx, selector, PlacementOperationCreate)
 	if err != nil {
 		return "", nil, err
 	}
-	baseWS := s.cfg.Workspaces(workspace)
-	var baseRunner tool.CommandRunner
-	if workspace == s.cfg.DefaultWorkspace {
-		baseRunner = s.cfg.CommandRunner
-	} else if s.cfg.CommandRunnerFactory != nil {
-		baseRunner = s.cfg.CommandRunnerFactory(workspace)
+	if binding.Close != nil {
+		defer func() { _ = binding.Close() }()
 	}
-	base, err := tool.NewEnvironment(session.EnvironmentRef{Kind: session.EnvKindLocal, ID: workspace, Revision: inTreeEnvironmentRevision}, baseWS, baseRunner)
-	if err != nil {
-		return "", nil, fmt.Errorf("%w: team workspace could not be built: %w", ErrInvalidArgument, err)
-	}
-	return s.createTeamInEnvironment(ctx, base, name, goal, maxTeamTokens, members)
+	return s.createTeamInEnvironment(ctx, binding.Environment, name, goal, maxTeamTokens, members)
 }
 
 // CreateTeamForSession creates a team in an owning session's exact authorized

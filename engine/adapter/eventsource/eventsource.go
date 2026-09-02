@@ -87,6 +87,8 @@ type SessionMeta struct {
 	Limits session.Limits
 	// EnvironmentRef is the exact durable execution-environment identity.
 	EnvironmentRef session.EnvironmentRef
+	// Placement is safe display-only metadata; it is never used for reattachment.
+	Placement session.PlacementMetadata
 	// Profile is the opaque tool-surface profile label ("" = default).
 	Profile string
 	// ProviderID and ModelID are the opaque neutral provider+model selector pair
@@ -173,6 +175,7 @@ func Fold(meta SessionMeta, events iter.Seq2[session.Event, error]) (*session.Se
 	// Inert creation labels — opaque to the domain, restored by direct assignment
 	// exactly as sessnap.Restore does (these are authoritative exported values, not
 	// state transitions).
+	s.Placement = meta.Placement
 	s.Profile = meta.Profile
 	s.ProviderID = meta.ProviderID
 	s.ModelID = meta.ModelID

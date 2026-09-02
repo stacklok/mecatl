@@ -74,7 +74,7 @@ func defaultLiveWindowServiceCfg(t *testing.T, reg *providerRegistry, provider *
 	sharedDeps := baseEngineDeps(cfg, reg, provider, store, policy, hookexec.New(nil), nil, prompt.RootAssembler{})
 	sharedDeps.Catalog = tool.NewCatalog()
 	shared := agent.NewEngine(sharedDeps)
-	svc, err := server.NewService(server.Config{
+	svc, err := newTestServerService(server.Config{
 		Engine:               shared,
 		Store:                store,
 		Workspaces:           func(root string) tool.Workspace { return memfs.NewWorkspace(root) },

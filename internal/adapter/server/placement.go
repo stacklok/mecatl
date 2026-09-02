@@ -4,10 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/stacklok/mecatl/engine/adapter/nofs"
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 )
@@ -17,8 +18,10 @@ const inTreeEnvironmentRevision = "in-tree-v1"
 var (
 	// ErrInvalidPlacementSelection reports a malformed selector or binding request.
 	ErrInvalidPlacementSelection = errors.New("server: invalid placement selection")
-	// ErrPlacementNotFound deliberately covers both absent and authorization-hidden IDs.
-	ErrPlacementNotFound = errors.New("server: placement not found")
+	// ErrPlacementNotFound deliberately covers absent and authorization-hidden selectors.
+	ErrPlacementNotFound = errors.New("server: placement selector not found")
+	// ErrPlacementStale reports an expired selector without disclosing hidden choices.
+	ErrPlacementStale = errors.New("server: placement selector is stale")
 	// ErrPlacementUnavailable reports a known, authorized placement whose backend is unavailable.
 	ErrPlacementUnavailable = errors.New("server: placement unavailable")
 	// ErrPlacementChanged reports an inventory revision race during Bind.
@@ -42,10 +45,74 @@ const (
 	PlacementOperationSuccessor PlacementOperation = "successor"
 )
 
+// PlacementSelector is the private server/provider binding protocol. It never
+// crosses the engine or public transport boundary.
+type PlacementSelector struct {
+	Kind      PlacementSelectorKind
+	ID        string
+	Source    session.SessionID
+	SourceRef session.EnvironmentRef
+}
+
+// PlacementSelectorKind is the closed private binding vocabulary.
+type PlacementSelectorKind string
+
+// Private placement selector kinds.
+const (
+	PlacementSelectorDefault  PlacementSelectorKind = "default"
+	PlacementSelectorNoFS     PlacementSelectorKind = "no-fs"
+	PlacementSelectorID       PlacementSelectorKind = "id"
+	PlacementSelectorWorktree PlacementSelectorKind = "worktree"
+)
+
+// DefaultPlacement selects the provider-owned deployment default.
+func DefaultPlacement() PlacementSelector {
+	return PlacementSelector{Kind: PlacementSelectorDefault}
+}
+
+// NoFSPlacement selects explicit filesystem attenuation.
+func NoFSPlacement() PlacementSelector { return PlacementSelector{Kind: PlacementSelectorNoFS} }
+
+// SelectPlacementID carries a private in-process provider hint.
+func SelectPlacementID(id string) PlacementSelector {
+	return PlacementSelector{Kind: PlacementSelectorID, ID: id}
+}
+
+// SelectWorktree carries a source-scoped ephemeral selector to the provider.
+func SelectWorktree(source session.SessionID, ref session.EnvironmentRef, token string) PlacementSelector {
+	return PlacementSelector{Kind: PlacementSelectorWorktree, ID: token, Source: source, SourceRef: ref}
+}
+
+// IsDefault reports whether the deployment default was selected.
+func (s PlacementSelector) IsDefault() bool { return s.Kind == PlacementSelectorDefault }
+
+// IsNoFS reports whether filesystem attenuation was selected.
+func (s PlacementSelector) IsNoFS() bool { return s.Kind == PlacementSelectorNoFS }
+
+// IsID reports whether a private in-process hint was selected.
+func (s PlacementSelector) IsID() bool { return s.Kind == PlacementSelectorID }
+
+// IsWorktree reports whether a source-scoped worktree token was selected.
+func (s PlacementSelector) IsWorktree() bool { return s.Kind == PlacementSelectorWorktree }
+
+// Valid reports whether the selector has exactly one valid protocol shape.
+func (s PlacementSelector) Valid() bool {
+	switch s.Kind {
+	case PlacementSelectorDefault, PlacementSelectorNoFS:
+		return s.ID == "" && s.Source == "" && !s.SourceRef.Valid()
+	case PlacementSelectorID:
+		return s.ID != "" && s.Source == "" && !s.SourceRef.Valid()
+	case PlacementSelectorWorktree:
+		return s.ID != "" && s.Source != "" && s.SourceRef.Valid()
+	default:
+		return false
+	}
+}
+
 // PlacementBindRequest contains the complete authorization context a provider
 // needs to atomically authorize and resolve one placement record version.
 type PlacementBindRequest struct {
-	Selector  session.PlacementSelector
+	Selector  PlacementSelector
 	Principal *session.Principal
 	Scope     PlacementScope
 	Operation PlacementOperation
@@ -54,6 +121,12 @@ type PlacementBindRequest struct {
 // PlacementMetadata is the bounded, display-safe provider projection returned
 // with a binding. It contains no roots, locators, credentials, or authority.
 type PlacementMetadata struct {
+	Kind     string
+	Label    string
+	Branch   string
+	Revision string
+	// Name and Description are retained only for source compatibility with
+	// private providers; canonical projection uses Label/Branch/Revision.
 	Name        string
 	Description string
 }
@@ -63,12 +136,36 @@ type PlacementBinding struct {
 	Environment tool.Environment
 	Ref         session.EnvironmentRef
 	Metadata    PlacementMetadata
+	// Close releases provisional provider resources. It is called after creation
+	// because ordinary bindings are reattached fresh at run entry.
+	Close func() error
 }
 
 // PlacementProvider owns placement inventory, authorization, and atomic new
 // binding resolution.
 type PlacementProvider interface {
 	Bind(context.Context, PlacementBindRequest) (PlacementBinding, error)
+}
+
+// PrivatePlacementHintBinder marks trusted in-process providers that accept an
+// opaque private placement hint. Public transports never provide one.
+type PrivatePlacementHintBinder interface {
+	AcceptsPrivatePlacementHints()
+}
+
+// PlacementDiscoveryRequest scopes alternate-worktree discovery to an owned
+// source and its exact current placement.
+type PlacementDiscoveryRequest struct {
+	Source    session.SessionID
+	SourceRef session.EnvironmentRef
+	Principal *session.Principal
+	Scope     PlacementScope
+}
+
+// PlacementDiscoverer is the optional provider-owned discovery half. The same
+// provider that issues a selector must atomically consume it in Bind.
+type PlacementDiscoverer interface {
+	ListWorktrees(context.Context, PlacementDiscoveryRequest) ([]ScopedWorktree, error)
 }
 
 // PlacementReattacher is the exact persisted-ref half of a placement provider.
@@ -93,6 +190,49 @@ type PlacementBinder struct {
 	provider PlacementProvider
 }
 
+type placementProviderError struct {
+	public error
+	cause  error
+}
+
+func (e *placementProviderError) Error() string { return e.public.Error() }
+func (e *placementProviderError) Unwrap() error { return e.public }
+
+func sanitizePlacementProviderError(err error) error {
+	if err == nil {
+		return nil
+	}
+	public := ErrPlacementUnavailable
+	for _, candidate := range []error{
+		ErrInvalidPlacementSelection, ErrPlacementNotFound, ErrPlacementStale,
+		ErrPlacementUnavailable, ErrPlacementChanged, ErrInvalidPlacementBinding,
+	} {
+		if errors.Is(err, candidate) {
+			public = candidate
+			break
+		}
+	}
+	return &placementProviderError{public: public, cause: err}
+}
+
+func (s *Service) logPlacementProviderError(ctx context.Context, operation string, err error) {
+	var providerErr *placementProviderError
+	if s == nil || s.cfg.Diagnostics == nil || !errors.As(err, &providerErr) {
+		return
+	}
+	words := strings.Fields(session.ToValidUTF8(providerErr.cause.Error()))
+	for i, word := range words {
+		if strings.ContainsAny(word, `/\\`) {
+			words[i] = "[redacted]"
+		}
+	}
+	detail := strings.Join(words, " ")
+	if utf8.RuneCountInString(detail) > maxPlacementDetailRunes {
+		detail = string([]rune(detail)[:maxPlacementDetailRunes])
+	}
+	s.cfg.Diagnostics.Log(ctx, port.LevelWarn, "placement provider operation failed", "operation", operation, "cause", detail)
+}
+
 // NewPlacementBinder constructs the binding choke point.
 func NewPlacementBinder(provider PlacementProvider) (*PlacementBinder, error) {
 	if provider == nil {
@@ -103,7 +243,7 @@ func NewPlacementBinder(provider PlacementProvider) (*PlacementBinder, error) {
 
 func configuredPlacementBinder(ctx context.Context, cfg Config) (*PlacementBinder, error) {
 	if cfg.PlacementProvider == nil {
-		return nil, nil
+		return nil, fmt.Errorf("%w: PlacementProvider is required", ErrConfig)
 	}
 	if cfg.PlacementScope == "" {
 		return nil, fmt.Errorf("%w: PlacementScope is required with PlacementProvider", ErrConfig)
@@ -116,34 +256,28 @@ func configuredPlacementBinder(ctx context.Context, cfg Config) (*PlacementBinde
 	// default proves that its current record is authorized, available,
 	// revision-stable, and capable of constructing a complete environment. The
 	// result is deliberately not cached.
-	if _, err := binder.Bind(ctx, PlacementBindRequest{
-		Selector: session.DefaultPlacement(), Scope: cfg.PlacementScope,
+	validation, err := binder.Bind(ctx, PlacementBindRequest{
+		Selector: DefaultPlacement(), Scope: cfg.PlacementScope,
 		Operation: PlacementOperationCreate,
-	}); err != nil {
+	})
+	if err != nil {
 		return nil, fmt.Errorf("server: validate default placement: %w", err)
+	}
+	if validation.Close != nil {
+		_ = validation.Close()
 	}
 	return binder, nil
 }
 
-func configuredWorktreeSelectors(cfg Config) (*WorktreeSelectorIssuer, error) {
-	if cfg.PlacementSelectorKey == ([worktreeSelectorKeySize]byte{}) {
-		return nil, nil
-	}
-	issuer, err := NewWorktreeSelectorIssuer(cfg.PlacementSelectorKey[:])
-	if err != nil {
-		return nil, fmt.Errorf("server: initialize worktree selector issuer: %w", err)
-	}
-	return issuer, nil
-}
-
 func (s *Service) bindPlacementForCreate(ctx context.Context, workspace string, profile SessionProfile, owner *session.Principal) (string, *PlacementBinding, error) {
-	useBinder := s.placementBinder != nil
-	if !useBinder {
-		return workspace, nil, nil
+	selector := DefaultPlacement()
+	if workspace != "" {
+		if _, ok := s.cfg.PlacementProvider.(PrivatePlacementHintBinder); ok {
+			selector = SelectPlacementID(workspace)
+		}
 	}
-	selector := session.DefaultPlacement()
 	if profile == ProfileNoFS {
-		selector = session.NoFSPlacement()
+		selector = NoFSPlacement()
 	}
 	binding, err := s.placementBinder.Bind(ctx, PlacementBindRequest{
 		Selector: selector, Principal: owner, Scope: s.cfg.PlacementScope,
@@ -162,34 +296,17 @@ func (s *Service) bindPlacementForCreate(ctx context.Context, workspace string, 
 func (s *Service) persistPlacedCreatedSession(ctx context.Context, sess *session.Session, owner *session.Principal, request *createRequest, placement *PlacementBinding) (*session.Session, error) {
 	if placement != nil {
 		sess.EnvironmentRef = placement.Ref
+		sess.Placement = canonicalPlacementMetadata(*placement)
 	}
 	if !sess.EnvironmentRef.Valid() {
 		return nil, fmt.Errorf("%w: placement did not provide an exact environment ref", ErrInvalidPlacementBinding)
 	}
-	persisted, err := s.persistCreatedSession(ctx, sess, owner, request)
-	if err == nil && persisted == sess && placement != nil {
-		s.mu.Lock()
-		s.sessionEnvironments[sess.ID] = placement.Environment
-		s.mu.Unlock()
-	}
-	return persisted, err
+	return s.persistCreatedSession(ctx, sess, owner, request)
 }
 
 func (s *Service) resolveSchedulePlacement(ctx context.Context, ref session.EnvironmentRef, profile SessionProfile) (session.EnvironmentRef, string, SessionProfile, error) {
-	if s.placementBinder == nil {
-		if profile == ProfileNoFS {
-			return session.EnvironmentRef{Kind: session.EnvKindNoFS, ID: "none", Revision: inTreeEnvironmentRevision}, "legacy-local", profile, nil
-		}
-		if !ref.Valid() && s.cfg.DefaultWorkspace != "" {
-			ref = session.EnvironmentRef{Kind: session.EnvKindLocal, ID: s.cfg.DefaultWorkspace, Revision: inTreeEnvironmentRevision}
-		}
-		if !ref.Valid() {
-			return session.EnvironmentRef{}, "", profile, fmt.Errorf("%w: exact schedule placement is required", ErrFailedPrecondition)
-		}
-		return ref, "legacy-local", profile, nil
-	}
 	if profile == ProfileNoFS {
-		binding, err := s.BindPlacement(ctx, session.NoFSPlacement(), PlacementOperationCreate)
+		binding, err := s.BindPlacement(ctx, NoFSPlacement(), PlacementOperationCreate)
 		if err != nil {
 			return session.EnvironmentRef{}, "", profile, err
 		}
@@ -203,37 +320,12 @@ func (s *Service) resolveSchedulePlacement(ctx context.Context, ref session.Envi
 	if ref.Valid() {
 		binding, err = s.ReattachPlacement(ctx, ref)
 	} else {
-		binding, err = s.BindPlacement(ctx, session.DefaultPlacement(), PlacementOperationCreate)
+		binding, err = s.BindPlacement(ctx, DefaultPlacement(), PlacementOperationCreate)
 	}
 	if err != nil {
 		return session.EnvironmentRef{}, "", profile, err
 	}
 	return binding.Ref, string(s.cfg.PlacementScope), ProfileDefault, nil
-}
-
-func (s *Service) reattachLegacySchedulePlacement(ref session.EnvironmentRef) (PlacementBinding, error) {
-	if !ref.Valid() {
-		return PlacementBinding{}, ErrInvalidPlacementSelection
-	}
-	if ref.Kind == session.EnvKindNoFS {
-		env := tool.MustEnvironment(ref, nofs.New(), nil)
-		return PlacementBinding{Environment: env, Ref: ref}, nil
-	}
-	if ref.Kind != session.EnvKindLocal || s.cfg.Workspaces == nil {
-		return PlacementBinding{}, ErrPlacementUnavailable
-	}
-	ws := s.cfg.Workspaces(ref.ID)
-	var runner tool.CommandRunner
-	if ref.ID == s.cfg.DefaultWorkspace {
-		runner = s.cfg.CommandRunner
-	} else if s.cfg.CommandRunnerFactory != nil {
-		runner = s.cfg.CommandRunnerFactory(ref.ID)
-	}
-	env, err := tool.NewEnvironment(ref, ws, runner)
-	if err != nil {
-		return PlacementBinding{}, err
-	}
-	return PlacementBinding{Environment: env, Ref: ref}, nil
 }
 
 func (s *Service) privateWorkspace(ctx context.Context, sess *session.Session) (string, error) {
@@ -242,9 +334,6 @@ func (s *Service) privateWorkspace(ctx context.Context, sess *session.Session) (
 	s.mu.Unlock()
 	if ok && env.Ref() == sess.EnvironmentRef && env.Workspace() != nil {
 		return env.Workspace().Root(), nil
-	}
-	if s.placementBinder == nil {
-		return "", fmt.Errorf("%w: no PlacementProvider is configured", ErrFailedPrecondition)
 	}
 	binding, err := s.ReattachPlacement(ctx, sess.EnvironmentRef)
 	if err != nil {
@@ -265,7 +354,7 @@ func (b *PlacementBinder) Bind(ctx context.Context, req PlacementBindRequest) (P
 
 	binding, err := b.provider.Bind(ctx, clonePlacementRequest(req))
 	if err != nil {
-		return PlacementBinding{}, err
+		return PlacementBinding{}, sanitizePlacementProviderError(err)
 	}
 	if err := validatePlacementBinding(binding); err != nil {
 		return PlacementBinding{}, err
@@ -289,7 +378,7 @@ func (b *PlacementBinder) Reattach(ctx context.Context, req PlacementReattachReq
 	req.Principal = req.Principal.Clone()
 	binding, err := provider.Reattach(ctx, req)
 	if err != nil {
-		return PlacementBinding{}, err
+		return PlacementBinding{}, sanitizePlacementProviderError(err)
 	}
 	if binding.Ref != req.Ref {
 		return PlacementBinding{}, ErrInvalidPlacementBinding
@@ -339,15 +428,7 @@ func validatePlacementBinding(binding PlacementBinding) error {
 			return ErrInvalidPlacementBinding
 		}
 	}
-	if !safeOptionalPlacementText(binding.Metadata.Name, maxPlacementNameRunes) ||
-		!safeOptionalPlacementText(binding.Metadata.Description, maxPlacementDetailRunes) {
-		return ErrInvalidPlacementBinding
-	}
 	return nil
-}
-
-func safeOptionalPlacementText(value string, maxRunes int) bool {
-	return value == "" || safePlacementText(value, maxRunes)
 }
 
 func safePlacementText(value string, maxRunes int) bool {
@@ -360,4 +441,37 @@ func safePlacementText(value string, maxRunes int) bool {
 		}
 	}
 	return true
+}
+
+func canonicalPlacementMetadata(binding PlacementBinding) session.PlacementMetadata {
+	label := binding.Metadata.Label
+	if label == "" {
+		label = binding.Metadata.Name
+	}
+	return session.PlacementMetadata{
+		Kind:     sanitizePlacementDisplay(string(binding.Ref.Kind), maxPlacementKindRunes),
+		Label:    sanitizePlacementDisplay(label, maxPlacementNameRunes),
+		Branch:   sanitizePlacementDisplay(binding.Metadata.Branch, maxPlacementNameRunes),
+		Revision: sanitizePlacementDisplay(binding.Metadata.Revision, maxPlacementIdentityRunes),
+	}
+}
+
+func sanitizePlacementDisplay(value string, maxRunes int) string {
+	value = session.ToValidUTF8(value)
+	var b strings.Builder
+	for _, r := range value {
+		if !unicode.IsControl(r) && !unicode.Is(unicode.Cf, r) {
+			b.WriteRune(r)
+		}
+	}
+	value = strings.TrimSpace(b.String())
+	runes := []rune(value)
+	if len(runes) > maxRunes {
+		value = string(runes[:maxRunes])
+	}
+	if strings.HasPrefix(value, "/") || strings.HasPrefix(value, `\\`) ||
+		(len(value) > 2 && value[1] == ':' && (value[2] == '/' || value[2] == '\\')) {
+		return ""
+	}
+	return value
 }

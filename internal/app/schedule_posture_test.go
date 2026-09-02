@@ -335,7 +335,7 @@ func TestScheduleTool_MutatingCreateGatedByPlanMode(t *testing.T) {
 	}
 	defer func() { _ = res.Close() }()
 
-	ref := session.EnvironmentRef{Kind: session.EnvKindLocal, ID: localDefaultPlacementID, Revision: localDefaultPlacementRevision}
+	ref := configuredLocalPlacementRef(workspace)
 	sess := session.New("s1", session.ModePlan, ref, session.Limits{MaxTurns: 5}, time.Now())
 	// Save the session to the store the schedule manager validates against, so
 	// OriginSessionID validation (which checks the session exists) passes.
@@ -438,7 +438,7 @@ func TestScheduleTool_Scenario4_FullInChatFlow(t *testing.T) {
 	}
 	defer func() { _ = res.Close() }()
 
-	ref := session.EnvironmentRef{Kind: session.EnvKindLocal, ID: localDefaultPlacementID, Revision: localDefaultPlacementRevision}
+	ref := configuredLocalPlacementRef(workspace)
 	sess := session.New("s1", session.ModeDefault, ref, session.Limits{MaxTurns: 6}, time.Now())
 	// Save the session to the store the schedule manager validates against, so
 	// OriginSessionID validation (which checks the session exists) passes.

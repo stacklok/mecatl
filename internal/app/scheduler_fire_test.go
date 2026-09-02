@@ -64,7 +64,7 @@ func TestSchedulerFire(t *testing.T) {
 		Spec: port.ScheduleSpec{
 			Name:           schedName,
 			Prompt:         "say hello from the scheduler",
-			EnvironmentRef: session.EnvironmentRef{Kind: session.EnvKindLocal, ID: localDefaultPlacementID, Revision: localDefaultPlacementRevision},
+			EnvironmentRef: configuredLocalPlacementRef(workspace),
 			PlacementScope: string(defaultPlacementScope),
 			Trigger:        port.TriggerSpec{OneShot: due},
 		},
@@ -175,7 +175,7 @@ func TestMakeFireFuncUsesScheduleOwnerForRunEntry(t *testing.T) {
 		Model:   "test-model",
 		Store:   store,
 	})
-	svc, err := server.NewService(server.Config{
+	svc, err := newTestServerService(server.Config{
 		Engine:              engine,
 		Store:               store,
 		Workspaces:          func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
@@ -251,10 +251,10 @@ func TestInvariant_scheduled_placement_is_reauthorized_at_fire(t *testing.T) {
 	if len(provider.calls) != beforeBinds {
 		t.Fatalf("Bind calls changed from %d to %d at fire; exact fire must never follow the current default", beforeBinds, len(provider.calls))
 	}
-	if len(provider.reattachCalls) != 1 {
-		t.Fatalf("Reattach calls = %d, want exactly 1", len(provider.reattachCalls))
+	if len(provider.reattachCalls) != 2 {
+		t.Fatalf("Reattach calls = %d, want schedule authorization plus fresh run-entry reattachment", len(provider.reattachCalls))
 	}
-	req := provider.reattachCalls[0]
+	req := provider.reattachCalls[len(provider.reattachCalls)-1]
 	if req.Ref != ref || req.Scope != "deployment-a" || req.Principal == nil || !req.Principal.SameIdentity(owner) {
 		t.Fatalf("Reattach request = %+v, want exact ref/scope reauthorized as schedule owner", req)
 	}
@@ -278,7 +278,7 @@ func TestFireFailedUsesPresentedScheduleNameOnCreateFailure(t *testing.T) {
 		Model:   "test-model",
 		Store:   store,
 	})
-	svc, err := server.NewService(server.Config{
+	svc, err := newTestServerService(server.Config{
 		Engine:            engine,
 		Store:             store,
 		Workspaces:        func(string) tool.Workspace { return nil },
@@ -286,6 +286,8 @@ func TestFireFailedUsesPresentedScheduleNameOnCreateFailure(t *testing.T) {
 		EventLog:          store,
 		Diagnostics:       port.NopDiagnostics{},
 		OwnershipEnforced: true,
+		PlacementProvider: appTestPlacementProvider{root: "/workspace", failReattach: true},
+		PlacementScope:    "legacy-local",
 	})
 	if err != nil {
 		t.Fatalf("NewService: %v", err)
@@ -373,7 +375,7 @@ func TestMakeFireFuncReleasesSessionLease(t *testing.T) {
 		Store:   store,
 	})
 	lease := memlease.New(wallclock.Clock{}, 30*time.Second)
-	svc, err := server.NewService(server.Config{
+	svc, err := newTestServerService(server.Config{
 		Engine:              engine,
 		Store:               store,
 		Workspaces:          func(root string) tool.Workspace { return memfs.NewWorkspace(root) },

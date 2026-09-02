@@ -132,6 +132,8 @@ type Snapshot struct {
 	// EnvironmentRef is the sole durable execution-environment identity. It is
 	// required and must contain the exact provider revision used for reattachment.
 	EnvironmentRef session.EnvironmentRef `json:"environment_ref"`
+	// Placement is safe display-only metadata and is never used for reattachment.
+	Placement session.PlacementMetadata `json:"placement,omitempty"`
 }
 
 // messageDTO mirrors session.Message with JSON tags. session.Message is
@@ -190,6 +192,7 @@ func Of(s *session.Session) (Snapshot, error) {
 		Limits:                 s.Limits,
 		Counters:               s.Counters,
 		EnvironmentRef:         s.EnvironmentRef,
+		Placement:              s.Placement,
 		Profile:                s.Profile,
 		ProviderID:             s.ProviderID,
 		ModelID:                s.ModelID,
@@ -266,6 +269,7 @@ func (snap Snapshot) Restore() (*session.Session, error) {
 	s.ProviderID = snap.ProviderID
 	s.ModelID = snap.ModelID
 	s.ReasoningEffort = snap.ReasoningEffort
+	s.Placement = snap.Placement
 	s.DebugMCPServers = append([]string(nil), snap.DebugMCPServers...)
 	s.DebugMCPTools = append([]string(nil), snap.DebugMCPTools...)
 	s.DebugTargetFingerprint = snap.DebugTargetFingerprint

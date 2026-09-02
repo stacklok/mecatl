@@ -28,7 +28,7 @@ type resolverPlacementProvider struct {
 }
 
 func (resolverPlacementProvider) Bind(_ context.Context, req server.PlacementBindRequest) (server.PlacementBinding, error) {
-	if req.Selector.Kind == session.PlacementSelectorNoFS {
+	if req.Selector.Kind == server.PlacementSelectorNoFS {
 		ref := session.EnvironmentRef{Kind: session.EnvKindNoFS, ID: "none", Revision: "in-tree-v1"}
 		return server.PlacementBinding{Ref: ref, Environment: tool.MustEnvironment(ref, nofs.New(), nil)}, nil
 	}
@@ -37,6 +37,9 @@ func (resolverPlacementProvider) Bind(_ context.Context, req server.PlacementBin
 }
 
 func (p resolverPlacementProvider) Reattach(ctx context.Context, req server.PlacementReattachRequest) (server.PlacementBinding, error) {
+	if req.Ref.Kind == session.EnvKindLocal {
+		return server.PlacementBinding{Ref: req.Ref, Environment: tool.MustEnvironment(req.Ref, memfs.NewWorkspace(req.Ref.ID), nil)}, nil
+	}
 	if p.resolve == nil {
 		return server.PlacementBinding{}, server.ErrPlacementUnavailable
 	}
@@ -81,7 +84,6 @@ func newEnvTestServiceWithLLM(t *testing.T, resolver func(context.Context, sessi
 		CommandRunnerFactory: func(_ string) tool.CommandRunner { return nil },
 		DefaultLimits:        session.Limits{MaxTurns: 5},
 		Now:                  func() time.Time { return time.Unix(0, 0) },
-		EnvironmentResolver:  resolver,
 		PlacementProvider:    resolverPlacementProvider{resolve: resolver},
 		PlacementScope:       "test",
 		SessionEngine: func(context.Context, server.ProviderSelector, []mcp.ServerConfig, server.SessionProfile, string, session.PermissionMode) (server.SessionEngineResult, error) {
@@ -117,8 +119,8 @@ func TestEnvironmentResolverMissingFailsLoudly(t *testing.T) {
 	sess := remoteSessionWithRef(t, store, ref)
 
 	_, err := svc.StartRun(context.Background(), sess.ID, "go")
-	if !errors.Is(err, server.ErrFailedPrecondition) {
-		t.Fatalf("StartRun = %v, want ErrFailedPrecondition (no resolver wired)", err)
+	if !errors.Is(err, server.ErrPlacementUnavailable) {
+		t.Fatalf("StartRun = %v, want ErrPlacementUnavailable (no provider reattachment)", err)
 	}
 	if *factoryCalls != 0 {
 		t.Fatalf("factory called %d times, want 0 (resolver is independent of engine rehydration)", *factoryCalls)
@@ -138,8 +140,8 @@ func TestEnvironmentResolverWrongRefFailsLoudly(t *testing.T) {
 	sess := remoteSessionWithRef(t, store, ref)
 
 	_, err := svc.StartRun(context.Background(), sess.ID, "go")
-	if !errors.Is(err, server.ErrFailedPrecondition) {
-		t.Fatalf("StartRun = %v, want ErrFailedPrecondition (ref mismatch)", err)
+	if !errors.Is(err, server.ErrInvalidPlacementBinding) {
+		t.Fatalf("StartRun = %v, want ErrInvalidPlacementBinding (ref mismatch)", err)
 	}
 	if err == nil || !strings.Contains(err.Error(), server.ErrInvalidPlacementBinding.Error()) {
 		t.Fatalf("StartRun error = %v, want invalid exact binding", err)
@@ -157,8 +159,8 @@ func TestEnvironmentResolverNilWorkspaceFailsLoudly(t *testing.T) {
 	sess := remoteSessionWithRef(t, store, ref)
 
 	_, err := svc.StartRun(context.Background(), sess.ID, "go")
-	if !errors.Is(err, server.ErrFailedPrecondition) {
-		t.Fatalf("StartRun = %v, want ErrFailedPrecondition (nil workspace)", err)
+	if !errors.Is(err, server.ErrInvalidPlacementBinding) {
+		t.Fatalf("StartRun = %v, want ErrInvalidPlacementBinding (nil workspace)", err)
 	}
 	if err == nil || !strings.Contains(err.Error(), server.ErrInvalidPlacementBinding.Error()) {
 		t.Fatalf("StartRun error = %v, want invalid exact binding", err)
@@ -373,7 +375,6 @@ func newEnvTestServiceWithFactory(t *testing.T, resolver func(context.Context, s
 		CommandRunnerFactory: func(_ string) tool.CommandRunner { return nil },
 		DefaultLimits:        session.Limits{MaxTurns: 5},
 		Now:                  func() time.Time { return time.Unix(0, 0) },
-		EnvironmentResolver:  resolver,
 		PlacementProvider:    resolverPlacementProvider{resolve: resolver},
 		PlacementScope:       "test",
 		SessionEngine: func(_ context.Context, sel server.ProviderSelector, _ []mcp.ServerConfig, profile server.SessionProfile, _ string, mode session.PermissionMode) (server.SessionEngineResult, error) {

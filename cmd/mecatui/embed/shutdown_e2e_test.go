@@ -86,7 +86,7 @@ func TestCloseShutdownBoundedWithBlockedScheduledFire(t *testing.T) {
 			Name:           schedName,
 			Prompt:         "say hello from a blocking fire",
 			Trigger:        port.TriggerSpec{OneShot: due},
-			EnvironmentRef: session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "local-default", Revision: "configured-v1"},
+			EnvironmentRef: session.EnvironmentRef{Kind: session.EnvKindLocal, ID: workspace, Revision: "configured-v1"},
 			PlacementScope: "deployment",
 		},
 		State: port.ScheduleState{NextFireAt: due, Enabled: true},

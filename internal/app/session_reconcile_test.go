@@ -125,7 +125,7 @@ func newReconcileFixtureWithLease(t *testing.T, lease port.SessionLease) *reconc
 		Policy:  permpolicy.NewPolicy(nil, permstore.New()),
 		Model:   "test-model",
 	})
-	svc, err := server.NewService(server.Config{
+	svc, err := newTestServerService(server.Config{
 		Engine:       engine,
 		Store:        f.lists,
 		Workspaces:   func(root string) tool.Workspace { return memfs.NewWorkspace(root) },

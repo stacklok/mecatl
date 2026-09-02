@@ -987,6 +987,10 @@ func (r *Run) unregisterChildAsk(askID string) bool {
 // media parts pass through untouched and are recorded verbatim on the user message.
 func (e *Engine) Run(ctx context.Context, sess *session.Session, env tool.Environment, req RunRequest) *Run {
 	return e.startRun(ctx, sess, req, env.Workspace().Root(), func(ctx context.Context, r *Run) {
+		if sess.EnvironmentRef.Kind == env.Ref().Kind && sess.EnvironmentRef != env.Ref() {
+			e.terminate(ctx, r, sess, session.StopError, "", session.Usage{}, errors.New("agent: environment identity mismatch"), false)
+			return
+		}
 		e.drive(ctx, r, sess, env, req.Text, req.Parts)
 	})
 }

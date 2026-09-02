@@ -153,7 +153,7 @@ func newScheduleTestService(t *testing.T, store port.SessionStore, llm *mockllm.
 		Model:   "test-model",
 		Store:   store,
 	})
-	svc, err := server.NewService(server.Config{
+	svc, err := newTestServerService(server.Config{
 		Engine:              engine,
 		Store:               store,
 		DefaultWorkspace:    workspace,
@@ -698,7 +698,7 @@ func TestScheduleTool_FireOverlapRejected(t *testing.T) {
 			Name:           "singleton",
 			Prompt:         "x",
 			Trigger:        port.TriggerSpec{Cron: "@every 1m"},
-			EnvironmentRef: session.EnvironmentRef{Kind: session.EnvKindLocal, ID: localDefaultPlacementID, Revision: localDefaultPlacementRevision},
+			EnvironmentRef: configuredLocalPlacementRef(workspace),
 			PlacementScope: string(defaultPlacementScope),
 			Mode:           session.ModePlan,
 			Singleton:      true,
@@ -917,7 +917,7 @@ func TestScheduleTool_SchedulerOnByDefault(t *testing.T) {
 		Spec: port.ScheduleSpec{
 			Name:           schedName,
 			Prompt:         "say hello from the default-on scheduler",
-			EnvironmentRef: session.EnvironmentRef{Kind: session.EnvKindLocal, ID: localDefaultPlacementID, Revision: localDefaultPlacementRevision},
+			EnvironmentRef: configuredLocalPlacementRef(workspace),
 			PlacementScope: string(defaultPlacementScope),
 			Trigger:        port.TriggerSpec{OneShot: due},
 		},
@@ -1024,7 +1024,7 @@ func TestScheduleTool_NoSchedulerDisablesTickOnly(t *testing.T) {
 		Spec: port.ScheduleSpec{
 			Name:           schedName,
 			Prompt:         "must not auto-fire under --no-scheduler",
-			EnvironmentRef: session.EnvironmentRef{Kind: session.EnvKindLocal, ID: localDefaultPlacementID, Revision: localDefaultPlacementRevision},
+			EnvironmentRef: configuredLocalPlacementRef(workspace),
 			PlacementScope: string(defaultPlacementScope),
 			Trigger:        port.TriggerSpec{OneShot: due},
 		},

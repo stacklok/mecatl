@@ -69,7 +69,7 @@ func (p acpPlacementProvider) Bind(_ context.Context, req server.PlacementBindRe
 	if p.bindCalls != nil {
 		p.bindCalls.Add(1)
 	}
-	if req.Scope != "acp-test" || req.Selector.Kind != session.PlacementSelectorDefault {
+	if req.Scope != "acp-test" || req.Selector.Kind != server.PlacementSelectorDefault {
 		return server.PlacementBinding{}, server.ErrPlacementNotFound
 	}
 	return p.binding(), nil

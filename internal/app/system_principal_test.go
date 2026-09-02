@@ -55,6 +55,16 @@ func TestCallerSeparation_Scenario4_InternalWorkersUseOnlyClassifiedAccess(t *te
 // must cover it exactly. A goroutine that registers a root but forgets the wrap
 // at its call site fails its subtest (its port observes a nil principal); a root
 // registered with no driver here fails the coverage assertion.
+type systemTestPlacementProvider struct{}
+
+func (systemTestPlacementProvider) Bind(context.Context, server.PlacementBindRequest) (server.PlacementBinding, error) {
+	ref := session.EnvironmentRef{Kind: session.EnvKindMem, ID: "/ws", Revision: "test-v1"}
+	return server.PlacementBinding{Ref: ref, Environment: tool.MustEnvironment(ref, memfs.NewWorkspace("/ws"), nil)}, nil
+}
+func (systemTestPlacementProvider) Reattach(_ context.Context, req server.PlacementReattachRequest) (server.PlacementBinding, error) {
+	return server.PlacementBinding{Ref: req.Ref, Environment: tool.MustEnvironment(req.Ref, memfs.NewWorkspace("/ws"), nil)}, nil
+}
+
 func TestCallerIdentity_Scenario2_InternalGoroutinesRunAsSystem(t *testing.T) {
 	t.Parallel()
 
@@ -71,8 +81,9 @@ func TestCallerIdentity_Scenario2_InternalGoroutinesRunAsSystem(t *testing.T) {
 				Engine: agent.NewEngine(agent.Deps{
 					LLM: mockllm.New(), Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil),
 				}),
-				Store:      store,
-				Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+				Store:             store,
+				Workspaces:        func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+				PlacementProvider: systemTestPlacementProvider{}, PlacementScope: "test",
 			})
 			if err != nil {
 				t.Fatalf("NewService: %v", err)

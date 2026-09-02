@@ -138,7 +138,7 @@ func runFireCancelTest(t *testing.T, shareStore bool) {
 		Model:   "test-model",
 		Store:   engineStore,
 	})
-	svc, err := server.NewService(server.Config{
+	svc, err := newTestServerService(server.Config{
 		Engine:              engine,
 		Store:               store, // the Service store is ALWAYS the real one (create + Persist use it)
 		Workspaces:          func(root string) tool.Workspace { return memfs.NewWorkspace(root) },

@@ -67,7 +67,7 @@ func TestADR_0233_AuthorityEvaluator_Scenario6_MintedRootCanDescend(t *testing.T
 
 func TestADR_0233_AuthorityEvaluator_Scenario6_NonSpawnDerivationPointsAreExplicit(t *testing.T) {
 	root := mintRootAuthority(rootAuthorityCatalog(t), nil, session.SessionKindMain)
-	svc, err := server.NewService(server.Config{
+	svc, err := newTestServerService(server.Config{
 		Engine:        agent.NewEngine(agent.Deps{Catalog: tool.NewCatalog()}),
 		Store:         memstore.New(),
 		Workspaces:    func(root string) tool.Workspace { return memfs.NewWorkspace(root) },

@@ -93,7 +93,7 @@ func (h *HarnessServer) CreateSession(ctx context.Context, req *mecatlv1.CreateS
 			Audio: scaps.Audio,
 		},
 		ResolvedModel: resolvedModelToProto(h.svc.ResolvedModel(sess.ID)),
-		Placement:     placementMetadataToProto(sess.EnvironmentRef),
+		Placement:     placementMetadataToProto(sess.Placement),
 	}, nil
 }
 
@@ -224,7 +224,7 @@ func (h *HarnessServer) ClearSession(ctx context.Context, req *mecatlv1.ClearSes
 	if req.GetSourceSessionId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "source_session_id is required")
 	}
-	id, err := h.svc.ClearSessionSuccessor(ctx, session.SessionID(req.GetSourceSessionId()), SuccessorPlacement{Selector: req.GetWorktreeSelector()})
+	id, err := h.svc.ClearSessionSuccessor(ctx, session.SessionID(req.GetSourceSessionId()), SuccessorPlacement{Selector: req.GetWorktreeSelector(), SelectorPresent: req.WorktreeSelector != nil})
 	if err != nil {
 		return nil, toStatus(err)
 	}
@@ -232,7 +232,7 @@ func (h *HarnessServer) ClearSession(ctx context.Context, req *mecatlv1.ClearSes
 	if err != nil {
 		return nil, toStatus(err)
 	}
-	return &mecatlv1.ClearSessionResponse{SessionId: string(id), Placement: placementMetadataToProto(created.EnvironmentRef)}, nil
+	return &mecatlv1.ClearSessionResponse{SessionId: string(id), Placement: placementMetadataToProto(created.Placement)}, nil
 }
 
 // ForkSession creates a history-carrying successor.
@@ -241,7 +241,7 @@ func (h *HarnessServer) ForkSession(ctx context.Context, req *mecatlv1.ForkSessi
 		return nil, status.Error(codes.InvalidArgument, "source_session_id is required")
 	}
 	id, err := h.svc.ForkSessionSuccessor(ctx, ForkSuccessorRequest{
-		Source: session.SessionID(req.GetSourceSessionId()), Placement: SuccessorPlacement{Selector: req.GetWorktreeSelector()},
+		Source: session.SessionID(req.GetSourceSessionId()), Placement: SuccessorPlacement{Selector: req.GetWorktreeSelector(), SelectorPresent: req.WorktreeSelector != nil},
 		Title: req.GetTitle(), ProviderID: req.GetProviderId(), ModelID: req.GetModelId(), ReasoningEffort: req.GetReasoningEffort(),
 	})
 	if err != nil {
@@ -251,7 +251,7 @@ func (h *HarnessServer) ForkSession(ctx context.Context, req *mecatlv1.ForkSessi
 	if err != nil {
 		return nil, toStatus(err)
 	}
-	return &mecatlv1.ForkSessionResponse{SessionId: string(id), Placement: placementMetadataToProto(created.EnvironmentRef)}, nil
+	return &mecatlv1.ForkSessionResponse{SessionId: string(id), Placement: placementMetadataToProto(created.Placement)}, nil
 }
 
 // Converse drives one run over a bidi stream. The first frame MUST be a Prompt

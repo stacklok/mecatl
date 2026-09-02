@@ -12,7 +12,7 @@ import (
 
 func TestADR_0280_ArtifactHandlesCannotReplayAsPlacementSelectors(t *testing.T) {
 	t.Parallel()
-	if reflect.TypeOf(agent.ArtifactHandle("")) == reflect.TypeOf(session.PlacementSelector{}) {
+	if reflect.TypeOf(agent.ArtifactHandle("")) == reflect.TypeOf(server.PlacementSelector{}) {
 		t.Fatal("artifact handles and placement selectors share a type")
 	}
 	issuer, err := server.NewWorktreeSelectorIssuer(make([]byte, 32))

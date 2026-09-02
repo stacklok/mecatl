@@ -806,7 +806,7 @@ func toProtoSession(s *session.Session, rm ResolvedModel, caps *mecatlv1.ServerC
 		Relationship:    toProtoSessionRelationship(s.Relationship),
 		DebugMcpServers: validStrings(s.DebugMCPServers),
 		DebugMcpTools:   validStrings(s.DebugMCPTools),
-		Placement:       placementMetadataToProto(s.EnvironmentRef),
+		Placement:       placementMetadataToProto(s.Placement),
 	}
 }
 
@@ -972,12 +972,13 @@ func toProtoCommands(cs []Command) []*mecatlv1.Command {
 	return out
 }
 
-func placementMetadataToProto(ref session.EnvironmentRef) *mecatlv1.PlacementMetadata {
-	kind := string(ref.Kind)
-	if kind == "" {
+func placementMetadataToProto(meta session.PlacementMetadata) *mecatlv1.PlacementMetadata {
+	if meta.Kind == "" {
 		return nil
 	}
-	return &mecatlv1.PlacementMetadata{Kind: valid(kind)}
+	return &mecatlv1.PlacementMetadata{
+		Kind: valid(meta.Kind), Label: valid(meta.Label), Branch: valid(meta.Branch), Revision: valid(meta.Revision),
+	}
 }
 
 func toProtoScopedWorktrees(wts []ScopedWorktree) []*mecatlv1.Worktree {
@@ -1004,7 +1005,7 @@ func toProtoSessionSummary(s SessionSummary) *mecatlv1.SessionSummary {
 		CreatedAtUnix:   s.CreatedAtUnix,
 		Title:           valid(s.Title),
 		TitleProvenance: string(s.TitleProvenance),
-		Placement:       placementMetadataToProto(session.EnvironmentRef{Kind: s.PlacementKind}),
+		Placement:       placementMetadataToProto(s.Placement),
 		Owner:           toProtoPrincipal(s.Owner),
 		Kind:            string(s.Kind),
 		Relationship:    toProtoSessionRelationship(s.Relationship),

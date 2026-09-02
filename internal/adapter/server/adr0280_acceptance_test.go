@@ -42,13 +42,30 @@ type placementProviderSpy struct {
 	bindCalls     int
 	reattachCalls int
 	reattachRef   session.EnvironmentRef
+	worktrees     WorktreeLister
+	selectors     *WorktreeSelectorIssuer
 }
 
 func (p *placementProviderSpy) Bind(_ context.Context, req PlacementBindRequest) (PlacementBinding, error) {
 	p.mu.Lock()
 	p.bindCalls++
 	p.mu.Unlock()
-	if req.Selector.Kind == session.PlacementSelectorNoFS {
+	if req.Selector.IsWorktree() {
+		current, err := p.worktrees.List(context.Background(), req.Selector.SourceRef.ID)
+		if err != nil {
+			return PlacementBinding{}, ErrPlacementUnavailable
+		}
+		choice, err := p.selectors.Match(req.Selector.ID, req.Principal, req.Selector.Source, current)
+		if err != nil {
+			return PlacementBinding{}, err
+		}
+		if choice.Path == "/unavailable" {
+			return PlacementBinding{}, ErrPlacementUnavailable
+		}
+		ref := session.EnvironmentRef{Kind: session.EnvKindLocal, ID: choice.Path, Revision: choice.Head}
+		return PlacementBinding{Ref: ref, Environment: tool.MustEnvironment(ref, memfs.NewWorkspace(choice.Path), nil)}, nil
+	}
+	if req.Selector.Kind == PlacementSelectorNoFS {
 		ref := session.EnvironmentRef{Kind: session.EnvKindNoFS, ID: "none", Revision: "v1"}
 		return PlacementBinding{Ref: ref, Environment: tool.MustEnvironment(ref, nofs.New(), nil)}, nil
 	}
@@ -65,6 +82,18 @@ func (p *placementProviderSpy) Reattach(_ context.Context, req PlacementReattach
 		return PlacementBinding{Ref: req.Ref, Environment: tool.MustEnvironment(req.Ref, nofs.New(), nil)}, nil
 	}
 	return PlacementBinding{Ref: req.Ref, Environment: tool.MustEnvironment(req.Ref, memfs.NewWorkspace(req.Ref.ID), nil)}, nil
+}
+
+func (p *placementProviderSpy) ListWorktrees(ctx context.Context, req PlacementDiscoveryRequest) ([]ScopedWorktree, error) {
+	current, err := p.worktrees.List(ctx, req.SourceRef.ID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]ScopedWorktree, 0, len(current))
+	for _, choice := range current {
+		out = append(out, ScopedWorktree{Selector: p.selectors.Issue(req.Principal, req.Source, choice), Label: choice.Branch, Branch: choice.Branch, Revision: choice.Head})
+	}
+	return out, nil
 }
 
 func (p *placementProviderSpy) reset() {
@@ -129,9 +158,14 @@ func newPlacementProofService(t *testing.T, store *placementStoreSpy, provider *
 	for i := range key {
 		key[i] = byte(i + 1)
 	}
+	issuer, err := NewWorktreeSelectorIssuer(key[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider.worktrees, provider.selectors = worktrees, issuer
 	next := 0
 	svc, err := NewService(Config{
-		Engine: eng, Store: store, PlacementProvider: provider, PlacementScope: "tenant", PlacementSelectorKey: key,
+		Engine: eng, Store: store, PlacementProvider: provider, PlacementScope: "tenant",
 		Workspaces: func(root string) tool.Workspace {
 			if workspaceCalls != nil {
 				*workspaceCalls++

@@ -95,7 +95,7 @@ func TestACPShellLessEnvironmentDropsBashAndDocumentsPosture(t *testing.T) {
 
 	// Run against a SHELL-LESS Environment (nil runner) — the ACP override shape.
 	sess := session.New("acp", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: cfg.Workspace, Revision: "in-tree-v1"}, session.Limits{MaxTurns: 1}, time.Now())
-	shellLessEnv := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindLocal, ID: cfg.Workspace},
+	shellLessEnv := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindLocal, ID: cfg.Workspace, Revision: "in-tree-v1"},
 		memfs.NewWorkspace(cfg.Workspace), nil)
 	run := eng.Run(context.Background(), sess, shellLessEnv, agent.RunRequest{Text: "run a build"})
 	for range run.Events() {
@@ -149,7 +149,7 @@ func TestACPShellLessEnvironmentStaleBashCallIsHonestToolError(t *testing.T) {
 		t.Fatalf("precondition: the shell-bearing engine's catalog must carry Bash")
 	}
 	sess := session.New("acp2", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: cfg.Workspace, Revision: "in-tree-v1"}, session.Limits{MaxTurns: 3}, time.Now())
-	shellLessEnv := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindLocal, ID: cfg.Workspace},
+	shellLessEnv := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindLocal, ID: cfg.Workspace, Revision: "in-tree-v1"},
 		memfs.NewWorkspace(cfg.Workspace), nil)
 	run := eng.Run(context.Background(), sess, shellLessEnv, agent.RunRequest{Text: "run echo hi"})
 	var sawNoShell bool
@@ -189,7 +189,7 @@ func TestShellBearingEnvironmentAdvertisesBashAndLacksNote(t *testing.T) {
 	if runner == nil {
 		t.Fatal("precondition: buildCommandRunner must return a non-nil runner for a shell-bearing cfg")
 	}
-	shellEnv := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindLocal, ID: cfg.Workspace},
+	shellEnv := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindLocal, ID: cfg.Workspace, Revision: "in-tree-v1"},
 		memfs.NewWorkspace(cfg.Workspace), runner)
 	sess := session.New("sh", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: cfg.Workspace, Revision: "in-tree-v1"}, session.Limits{MaxTurns: 1}, time.Now())
 	run := eng.Run(context.Background(), sess, shellEnv, agent.RunRequest{Text: "hello"})

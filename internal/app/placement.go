@@ -25,26 +25,30 @@ type localPlacementProvider struct {
 	root          string
 	workspace     server.WorkspaceFactory
 	runnerForRoot func(string) tool.CommandRunner
+	worktrees     server.WorktreeLister
+	selectors     *server.WorktreeSelectorIssuer
 }
 
-func (p *localPlacementProvider) Bind(_ context.Context, req server.PlacementBindRequest) (server.PlacementBinding, error) {
+func (p *localPlacementProvider) Bind(ctx context.Context, req server.PlacementBindRequest) (server.PlacementBinding, error) {
 	if req.Scope != p.scope {
 		return server.PlacementBinding{}, server.ErrPlacementNotFound
 	}
 
-	switch req.Selector.Kind {
-	case session.PlacementSelectorNoFS:
+	switch {
+	case req.Selector.IsNoFS():
 		return p.bindNoFS()
-	case session.PlacementSelectorDefault:
+	case req.Selector.IsDefault():
 		if p.root == "" {
 			return p.bindNoFS()
 		}
 		return p.bindLocal()
-	case session.PlacementSelectorID:
+	case req.Selector.IsWorktree():
+		return p.bindSelectedWorktree(ctx, req)
+	case req.Selector.IsID():
 		switch req.Selector.ID {
 		case noFSPlacementID:
 			return p.bindNoFS()
-		case localDefaultPlacementID:
+		case localDefaultPlacementID, p.root:
 			if p.root == "" {
 				return server.PlacementBinding{}, server.ErrPlacementUnavailable
 			}
@@ -57,20 +61,125 @@ func (p *localPlacementProvider) Bind(_ context.Context, req server.PlacementBin
 	}
 }
 
-func (p *localPlacementProvider) Reattach(_ context.Context, req server.PlacementReattachRequest) (server.PlacementBinding, error) {
+func (p *localPlacementProvider) Reattach(ctx context.Context, req server.PlacementReattachRequest) (server.PlacementBinding, error) {
 	if req.Scope != p.scope {
 		return server.PlacementBinding{}, server.ErrPlacementNotFound
 	}
-	switch req.Ref {
-	case session.EnvironmentRef{Kind: session.EnvKindLocal, ID: localDefaultPlacementID, Revision: localDefaultPlacementRevision}:
+	if req.Ref == configuredLocalPlacementRef(p.root) {
 		if p.root == "" {
 			return server.PlacementBinding{}, server.ErrPlacementUnavailable
 		}
 		return p.bindLocal()
-	case session.EnvironmentRef{Kind: session.EnvKindNoFS, ID: noFSPlacementID, Revision: noFSPlacementRevision}:
+	}
+	if req.Ref == (session.EnvironmentRef{Kind: session.EnvKindNoFS, ID: noFSPlacementID, Revision: noFSPlacementRevision}) {
 		return p.bindNoFS()
-	default:
+	}
+	if choice, ok := p.currentWorktree(ctx, req.Ref); ok {
+		return p.bindWorktree(choice)
+	}
+	return server.PlacementBinding{}, server.ErrPlacementNotFound
+}
+
+func (p *localPlacementProvider) ListWorktrees(ctx context.Context, req server.PlacementDiscoveryRequest) ([]server.ScopedWorktree, error) {
+	if req.Scope != p.scope || p.worktrees == nil || p.selectors == nil || !p.authorizedSource(ctx, req.SourceRef) {
+		return nil, server.ErrPlacementNotFound
+	}
+	current, err := p.worktrees.List(ctx, req.SourceRef.ID)
+	if err != nil {
+		return nil, server.ErrPlacementUnavailable
+	}
+	out := make([]server.ScopedWorktree, 0, len(current))
+	for _, choice := range current {
+		label := choice.Branch
+		if label == "" {
+			label = "Detached worktree"
+		}
+		out = append(out, server.ScopedWorktree{
+			Selector: p.selectors.Issue(req.Principal, req.Source, choice),
+			Label:    label, Branch: choice.Branch, Revision: choice.Head, Bare: choice.Bare,
+		})
+	}
+	return out, nil
+}
+
+func (p *localPlacementProvider) bindSelectedWorktree(ctx context.Context, req server.PlacementBindRequest) (server.PlacementBinding, error) {
+	if p.worktrees == nil || p.selectors == nil || !p.authorizedSource(ctx, req.Selector.SourceRef) {
 		return server.PlacementBinding{}, server.ErrPlacementNotFound
+	}
+	current, err := p.worktrees.List(ctx, req.Selector.SourceRef.ID)
+	if err != nil {
+		return server.PlacementBinding{}, server.ErrPlacementUnavailable
+	}
+	choice, err := p.selectors.Match(req.Selector.ID, req.Principal, req.Selector.Source, current)
+	if err != nil {
+		return server.PlacementBinding{}, server.ErrPlacementNotFound
+	}
+	// Re-enumerate immediately before construction so a replaced worktree choice
+	// cannot be opened under an authorization decision for an older revision.
+	current, err = p.worktrees.List(ctx, req.Selector.SourceRef.ID)
+	if err != nil {
+		return server.PlacementBinding{}, server.ErrPlacementUnavailable
+	}
+	matched := false
+	for _, candidate := range current {
+		if candidate.Path == choice.Path && candidate.Head == choice.Head && candidate.Branch == choice.Branch && candidate.Bare == choice.Bare {
+			matched = true
+			break
+		}
+	}
+	if !matched {
+		return server.PlacementBinding{}, server.ErrPlacementChanged
+	}
+	return p.bindWorktree(choice)
+}
+
+func (p *localPlacementProvider) authorizedSource(ctx context.Context, ref session.EnvironmentRef) bool {
+	if ref == configuredLocalPlacementRef(p.root) {
+		return true
+	}
+	_, ok := p.currentWorktree(ctx, ref)
+	return ok
+}
+
+func (p *localPlacementProvider) currentWorktree(ctx context.Context, ref session.EnvironmentRef) (server.Worktree, bool) {
+	if p.worktrees == nil || ref.Kind != session.EnvKindLocal {
+		return server.Worktree{}, false
+	}
+	current, err := p.worktrees.List(ctx, p.root)
+	if err != nil {
+		return server.Worktree{}, false
+	}
+	for _, choice := range current {
+		if choice.Path == ref.ID && choice.Head == ref.Revision {
+			return choice, true
+		}
+	}
+	return server.Worktree{}, false
+}
+
+func (p *localPlacementProvider) bindWorktree(choice server.Worktree) (server.PlacementBinding, error) {
+	ref := session.EnvironmentRef{Kind: session.EnvKindLocal, ID: choice.Path, Revision: choice.Head}
+	ws := p.workspace(choice.Path)
+	if ws == nil {
+		return server.PlacementBinding{}, server.ErrPlacementUnavailable
+	}
+	var runner tool.CommandRunner
+	if p.runnerForRoot != nil {
+		runner = p.runnerForRoot(ws.Root())
+	}
+	env, err := tool.NewEnvironment(ref, ws, runner)
+	if err != nil {
+		return server.PlacementBinding{}, server.ErrPlacementUnavailable
+	}
+	return server.PlacementBinding{Environment: env, Ref: ref, Metadata: server.PlacementMetadata{
+		Label: choice.Branch, Branch: choice.Branch, Revision: choice.Head,
+	}}, nil
+}
+
+func configuredLocalPlacementRef(root string) session.EnvironmentRef {
+	return session.EnvironmentRef{
+		Kind: session.EnvKindLocal, ID: root,
+		Revision: localDefaultPlacementRevision,
 	}
 }
 
@@ -81,18 +190,19 @@ func (p *localPlacementProvider) bindLocal() (server.PlacementBinding, error) {
 	if ws == nil {
 		return server.PlacementBinding{}, server.ErrPlacementUnavailable
 	}
-	ref := session.EnvironmentRef{
-		Kind: session.EnvKindLocal, ID: localDefaultPlacementID,
-		Revision: localDefaultPlacementRevision,
+	ref := configuredLocalPlacementRef(p.root)
+	var runner tool.CommandRunner
+	if p.runnerForRoot != nil {
+		runner = p.runnerForRoot(ws.Root())
 	}
-	env, err := tool.NewEnvironment(ref, ws, p.runnerForRoot(ws.Root()))
+	env, err := tool.NewEnvironment(ref, ws, runner)
 	if err != nil {
 		return server.PlacementBinding{}, server.ErrPlacementUnavailable
 	}
 	return server.PlacementBinding{
 		Environment: env,
 		Ref:         ref,
-		Metadata:    server.PlacementMetadata{Name: "Local workspace"},
+		Metadata:    server.PlacementMetadata{Label: "Local workspace", Revision: "configured"},
 	}, nil
 }
 
@@ -108,6 +218,6 @@ func (*localPlacementProvider) bindNoFS() (server.PlacementBinding, error) {
 	return server.PlacementBinding{
 		Environment: env,
 		Ref:         ref,
-		Metadata:    server.PlacementMetadata{Name: "No filesystem"},
+		Metadata:    server.PlacementMetadata{Label: "No filesystem"},
 	}, nil
 }

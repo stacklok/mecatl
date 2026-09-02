@@ -29,7 +29,7 @@ func TestBuildBindsServerOwnedDefaultPlacement(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
-	if sess.EnvironmentRef.ID != localDefaultPlacementID || sess.EnvironmentRef.ID == selected || sess.EnvironmentRef.ID == root {
-		t.Fatalf("session placement = %+v, want opaque server-owned default", sess.EnvironmentRef)
+	if sess.EnvironmentRef.ID != root || sess.EnvironmentRef.ID == selected {
+		t.Fatalf("session placement = %+v, want exact private server-owned root", sess.EnvironmentRef)
 	}
 }

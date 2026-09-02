@@ -46,7 +46,7 @@ func newReconcileTestService(t *testing.T) (store *jsonlstore.Store, schedStore 
 		Model:   "test-model",
 		Store:   s,
 	})
-	sv, err := server.NewService(server.Config{
+	sv, err := newTestServerService(server.Config{
 		Engine:              engine,
 		Store:               s,
 		Workspaces:          func(root string) tool.Workspace { return memfs.NewWorkspace(root) },

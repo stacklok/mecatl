@@ -19,7 +19,7 @@ type ACPEnvironmentOverlay func(session.SessionID, tool.Environment) (tool.Envir
 // consults the ACP cwd assertion. cwd can only confirm that trusted binding; it
 // is never used to construct or select an environment.
 func (s *Service) CreateACPSession(ctx context.Context, cwd string, mode session.PermissionMode, limits session.Limits, specs []mcp.ServerConfig, overlay ACPEnvironmentOverlay) (*session.Session, error) {
-	binding, err := s.BindPlacement(ctx, session.DefaultPlacement(), PlacementOperationCreate)
+	binding, err := s.BindPlacement(ctx, DefaultPlacement(), PlacementOperationCreate)
 	if err != nil {
 		return nil, err
 	}
@@ -32,13 +32,20 @@ func (s *Service) CreateACPSession(ctx context.Context, cwd string, mode session
 		if err != nil {
 			return nil, fmt.Errorf("%w: editor filesystem overlay unavailable", ErrFailedPrecondition)
 		}
-		if binding.Environment.Ref() != binding.Ref {
-			return nil, ErrInvalidPlacementBinding
+		if err := validatePlacementBinding(binding); err != nil {
+			return nil, err
 		}
 	}
-	return s.createSession(ctx, "", mode, limits, ProviderSelector{}, specs, ProfileDefault, createSessionOpts{
+	created, err := s.createSession(ctx, "", mode, limits, ProviderSelector{}, specs, ProfileDefault, createSessionOpts{
 		id: id, idSet: true, placement: &binding,
 	})
+	if err != nil {
+		return nil, err
+	}
+	if overlay != nil {
+		s.SetSessionEnvironment(created.ID, binding.Environment)
+	}
+	return created, nil
 }
 
 // LoadACPSession owner-authorizes the snapshot, reattaches its exact persisted
@@ -64,8 +71,9 @@ func (s *Service) LoadACPSession(ctx context.Context, id session.SessionID, cwd 
 		if err != nil {
 			return nil, fmt.Errorf("%w: editor filesystem overlay unavailable", ErrFailedPrecondition)
 		}
-		if binding.Environment.Ref() != persisted.EnvironmentRef {
-			return nil, ErrInvalidPlacementBinding
+		binding.Ref = persisted.EnvironmentRef
+		if err := validatePlacementBinding(binding); err != nil {
+			return nil, err
 		}
 	}
 	sess, err := s.LoadSessionWithMCP(ctx, id, specs)

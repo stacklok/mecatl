@@ -58,7 +58,7 @@ func TestADR_0280_BindRejectsRebindBetweenAuthorizationAndResolution(t *testing.
 	done := make(chan error, 1)
 	go func() {
 		_, bindErr := binder.Bind(context.Background(), PlacementBindRequest{
-			Selector:  session.SelectPlacementID("wt-opaque-7"),
+			Selector:  SelectPlacementID("wt-opaque-7"),
 			Operation: PlacementOperationCreate,
 			Scope:     "tenant-a",
 		})
@@ -83,14 +83,14 @@ func TestInvariant_server_owned_placement_ids_fail_closed(t *testing.T) {
 
 	const availableID = "opaque-available"
 	var environmentConstructions, trustEvaluations, persistenceWrites, providerCalls int
-	var providerSelectors []session.PlacementSelector
+	var providerSelectors []PlacementSelector
 	notFound := func() (PlacementBinding, error) {
 		return PlacementBinding{}, ErrPlacementNotFound
 	}
 	provider := placementProviderFunc(func(_ context.Context, req PlacementBindRequest) (PlacementBinding, error) {
 		providerCalls++
 		providerSelectors = append(providerSelectors, req.Selector)
-		if req.Selector.Kind != session.PlacementSelectorID || req.Selector.ID != availableID || req.Scope != "tenant-a" {
+		if req.Selector.Kind != PlacementSelectorID || req.Selector.ID != availableID || req.Scope != "tenant-a" {
 			return notFound()
 		}
 		return PlacementBinding{}, ErrPlacementUnavailable
@@ -102,16 +102,16 @@ func TestInvariant_server_owned_placement_ids_fail_closed(t *testing.T) {
 
 	tests := []struct {
 		name     string
-		selector session.PlacementSelector
+		selector PlacementSelector
 		scope    PlacementScope
 		want     error
 	}{
-		{name: "absent", selector: session.SelectPlacementID("absent"), scope: "tenant-a", want: ErrPlacementNotFound},
-		{name: "authorization-hidden", selector: session.SelectPlacementID("hidden"), scope: "tenant-a", want: ErrPlacementNotFound},
-		{name: "stale", selector: session.SelectPlacementID("stale"), scope: "tenant-a", want: ErrPlacementNotFound},
-		{name: "wrong scope", selector: session.SelectPlacementID(availableID), scope: "tenant-b", want: ErrPlacementNotFound},
-		{name: "unavailable", selector: session.SelectPlacementID(availableID), scope: "tenant-a", want: ErrPlacementUnavailable},
-		{name: "invalid selector", selector: session.PlacementSelector{Kind: session.PlacementSelectorID}, scope: "tenant-a", want: ErrInvalidPlacementSelection},
+		{name: "absent", selector: SelectPlacementID("absent"), scope: "tenant-a", want: ErrPlacementNotFound},
+		{name: "authorization-hidden", selector: SelectPlacementID("hidden"), scope: "tenant-a", want: ErrPlacementNotFound},
+		{name: "stale", selector: SelectPlacementID("stale"), scope: "tenant-a", want: ErrPlacementNotFound},
+		{name: "wrong scope", selector: SelectPlacementID(availableID), scope: "tenant-b", want: ErrPlacementNotFound},
+		{name: "unavailable", selector: SelectPlacementID(availableID), scope: "tenant-a", want: ErrPlacementUnavailable},
+		{name: "invalid selector", selector: PlacementSelector{Kind: PlacementSelectorID}, scope: "tenant-a", want: ErrInvalidPlacementSelection},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -131,7 +131,7 @@ func TestInvariant_server_owned_placement_ids_fail_closed(t *testing.T) {
 		t.Fatalf("provider Bind calls = %d, want %d (invalid selector must stop at binder)", providerCalls, len(tests)-1)
 	}
 	for _, selector := range providerSelectors {
-		if selector.Kind == session.PlacementSelectorDefault {
+		if selector.Kind == PlacementSelectorDefault {
 			t.Fatal("failed explicit ID silently fell back to the default selector")
 		}
 	}
@@ -155,7 +155,6 @@ func TestPlacementBinderRejectsMismatchedOrUnsafeProviderOutput(t *testing.T) {
 		{name: "missing revision", binding: PlacementBinding{Ref: session.EnvironmentRef{Kind: "remote", ID: "r1"}, Environment: placementTestEnvironment(session.EnvironmentRef{Kind: "remote", ID: "r1"})}},
 		{name: "mismatched identity", binding: PlacementBinding{Ref: session.EnvironmentRef{Kind: "remote", ID: "r1", Revision: "v1"}, Environment: placementTestEnvironment(session.EnvironmentRef{Kind: "remote", ID: "r2", Revision: "v1"})}},
 		{name: "mismatched revision", binding: PlacementBinding{Ref: session.EnvironmentRef{Kind: "remote", ID: "r1", Revision: "v1"}, Environment: placementTestEnvironment(session.EnvironmentRef{Kind: "remote", ID: "r1", Revision: "v2"})}},
-		{name: "unsafe metadata", binding: PlacementBinding{Ref: session.EnvironmentRef{Kind: "remote", ID: "r1", Revision: "v1"}, Environment: placementTestEnvironment(session.EnvironmentRef{Kind: "remote", ID: "r1"}), Metadata: PlacementMetadata{Name: "bad\nname"}}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -165,7 +164,7 @@ func TestPlacementBinderRejectsMismatchedOrUnsafeProviderOutput(t *testing.T) {
 			if err != nil {
 				t.Fatalf("NewPlacementBinder: %v", err)
 			}
-			if _, err := binder.Bind(context.Background(), PlacementBindRequest{Selector: session.DefaultPlacement(), Operation: PlacementOperationCreate, Scope: "tenant-a"}); !errors.Is(err, ErrInvalidPlacementBinding) {
+			if _, err := binder.Bind(context.Background(), PlacementBindRequest{Selector: DefaultPlacement(), Operation: PlacementOperationCreate, Scope: "tenant-a"}); !errors.Is(err, ErrInvalidPlacementBinding) {
 				t.Fatalf("Bind error = %v, want ErrInvalidPlacementBinding", err)
 			}
 		})

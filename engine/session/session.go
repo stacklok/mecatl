@@ -356,6 +356,10 @@ type Session struct {
 	// It is minted by the placement provider and must be valid before persistence
 	// or execution. Resolution to live capabilities belongs to composition.
 	EnvironmentRef EnvironmentRef
+	// Placement is safe display-only metadata minted by the placement provider.
+	// It is persisted for public inventory projection but never used to bind or
+	// reattach an environment.
+	Placement PlacementMetadata
 	// Profile is an opaque tool-surface profile label (e.g. "" for the default
 	// filesystem profile, "no-fs" for the no-filesystem one). The aggregate STORES
 	// it but never interprets it: the meaning lives entirely in the composition
@@ -506,6 +510,9 @@ func clampSnapshotRunes(s string, n int) string {
 // durable environment identity. Callers must provide a valid provider-minted
 // reference; persistence and run entry enforce the same invariant.
 func New(id SessionID, mode PermissionMode, ref EnvironmentRef, limits Limits, createdAt time.Time) *Session {
+	if !ref.Valid() {
+		panic("session: New requires a valid environment ref")
+	}
 	return &Session{
 		ID:             id,
 		State:          StateIdle,

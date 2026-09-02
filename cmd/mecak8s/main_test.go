@@ -284,8 +284,8 @@ func TestMecak8sMountedWorkspaceIsServerAssigned(t *testing.T) {
 	if sess.Profile != "" {
 		t.Errorf("session profile = %q, want default (filesystem) on a mounted deployment", sess.Profile)
 	}
-	if sess.EnvironmentRef.ID != "local-default" {
-		t.Errorf("session placement ID = %q, want opaque server-owned identity", sess.EnvironmentRef.ID)
+	if sess.EnvironmentRef.ID != mount {
+		t.Errorf("private session placement ID = %q, want exact configured mount %q", sess.EnvironmentRef.ID, mount)
 	}
 
 	// A client cannot send placement authority; the generated request has no such field.

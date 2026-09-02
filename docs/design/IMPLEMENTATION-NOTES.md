@@ -6098,25 +6098,30 @@ reaches the checker). Default `false` is the byte-identical un-routed posture ta
 
 Placement is server-owned across embedded, loopback, remote, and cloud-native composition.
 `internal/app/placement.go` installs the local immutable provider over the operator's private
-configured root plus no-FS attenuation. `server.PlacementBinder` is the single Bind choke point;
-provider authorization and resolution happen in one snapshot and return a complete Environment,
-exact `EnvironmentRef{Kind, ID, Revision}`, and bounded display metadata. Startup validates the
-deployment default without caching it. A remote provider may implement the same contract; no
-public placement-ID registry is required.
+configured root plus no-FS attenuation. `server.PlacementBinder` is mandatory and is the single Bind
+choke point; provider authorization and resolution happen in one snapshot and return a complete
+Environment, exact `EnvironmentRef{Kind, ID, Revision}`, and bounded display metadata. Startup
+validates the deployment default without caching it, and ordinary run entry always reattaches a
+fresh Environment so the read ledger resets; `sessionEnvironments` remains overrides-only (ACP and
+other explicitly owned overlays). A remote provider may implement the same contract; no public
+placement-ID registry or server-side `Workspaces(path)` fallback exists.
 
 Public Create accepts only omitted/default placement or `profile:"no-fs"`; workspace and source
 fields are reserved. Discovery takes an owned `session_id`: `ListCommandsForSession` and
 `ListWorktreesForSession` authorize and exactly reattach before touching command/git providers,
 and no-FS returns empty first. Worktrees expose display-only label/branch/revision plus an opaque
-selector. `WorktreeSelectorIssuer` HMACs provider-private current identity with caller/source scope
-using one random Build-owned key. Use re-lists current choices and constant-time matches; no token
-is decoded or stored, no registry/map exists, and restart invalidates selectors so clients relist.
+selector. The local placement provider owns `WorktreeSelectorIssuer`, which HMACs provider-private
+current identity with caller/source scope using one random Build-owned key. Discovery and selected
+successor Bind therefore use the same provider inventory seam; use re-lists current choices and
+constant-time matches before environment construction. No token is decoded or stored, no registry/map
+exists, and restart invalidates selectors so clients relist.
 
 Only ClearSession and ForkSession consume a worktree selector. Omitted selector exactly inherits
 the source placement. Clear creates a fresh empty-history successor; Fork copies valid history and
 may apply authorized provider/model/reasoning overrides in the same atomic publication. Both lock
-and lease the owned source, reattach before selection, build any per-session engine, and persist
-only after every step succeeds. Mecatui `/clear`, `/worktrees`, `/effort`, and inventory fork use
+and lease the owned source, derive a cancellation context from the held mutation lease, build any
+per-session engine, re-check the held lease immediately before persistence, and tear down provisional
+bindings/engines if ownership is lost. Mecatui `/clear`, `/worktrees`, `/effort`, and inventory fork use
 these successor RPCs and keep the active source selected if relist/switch fails.
 
 Schedules resolve placement at creation and persist exact private ref, owner principal, and trusted

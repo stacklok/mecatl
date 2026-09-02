@@ -1789,12 +1789,18 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		return nil, fmt.Errorf("initialize placement selector signer: %w", err)
 	}
 	placementProvider := cfg.PlacementProvider
+	worktreeLister := buildWorktreeLister(cfg)
 	if placementProvider == nil {
+		selectorIssuer, err := server.NewWorktreeSelectorIssuer(placementSelectorKey[:])
+		if err != nil {
+			return nil, fmt.Errorf("initialize placement selector issuer: %w", err)
+		}
 		placementProvider = &localPlacementProvider{
 			scope: placementScope, root: cfg.Workspace, workspace: workspaceFactory,
 			runnerForRoot: func(root string) tool.CommandRunner {
 				return buildCommandRunnerForRoot(cfg, root)
 			},
+			worktrees: worktreeLister, selectors: selectorIssuer,
 		}
 	}
 	svcCfg := server.Config{
@@ -1828,7 +1834,6 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		Workspaces:               workspaceFactory,
 		PlacementProvider:        placementProvider,
 		PlacementScope:           placementScope,
-		PlacementSelectorKey:     placementSelectorKey,
 		RootAuthority: func(kind session.SessionKind) session.Authority {
 			return mintRootAuthority(assets.rootCatalog, mcpResourceCapabilities(assets.globalMgr), kind)
 		},
@@ -1848,7 +1853,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		CommandRunnerFactory: func(root string) tool.CommandRunner {
 			return buildCommandRunnerForRoot(cfg, root)
 		},
-		Worktrees:     buildWorktreeLister(cfg),
+		Worktrees:     worktreeLister,
 		DefaultLimits: defaultLimits(),
 		MCPProvider:   mcpProvider,
 		MCPSources:    mcpInventory,

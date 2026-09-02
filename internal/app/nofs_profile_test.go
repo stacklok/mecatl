@@ -420,20 +420,19 @@ func TestCreateSessionNoFSRejectsWorkspace(t *testing.T) {
 	svc := nofsRejectionService(t)
 	_, err := svc.CreateSessionWithProfile(context.Background(), "/some/where", session.ModeDefault, session.Limits{},
 		server.ProviderSelector{}, server.ProfileNoFS)
-	if err == nil || !strings.Contains(err.Error(), "must not carry a workspace") {
+	if err == nil || !strings.Contains(err.Error(), "cannot carry a workspace") {
 		t.Fatalf("no-fs + workspace must be rejected loudly, got: %v", err)
 	}
 }
 
-// TestCreateSessionDefaultProfileRequiresWorkspace: today's behaviour is
-// preserved byte-for-byte for the default profile — an empty workspace is still
-// rejected.
-func TestCreateSessionDefaultProfileRequiresWorkspace(t *testing.T) {
+// TestCreateSessionDefaultProfileUsesServerPlacement proves an omitted workspace
+// binds the provider-owned default.
+func TestCreateSessionDefaultProfileUsesServerPlacement(t *testing.T) {
 	svc := nofsRejectionService(t)
-	_, err := svc.CreateSessionWithProfile(context.Background(), "", session.ModeDefault, session.Limits{},
+	sess, err := svc.CreateSessionWithProfile(context.Background(), "", session.ModeDefault, session.Limits{},
 		server.ProviderSelector{}, server.ProfileDefault)
-	if err == nil || !strings.Contains(err.Error(), "workspace is required") {
-		t.Fatalf("default profile + empty workspace must be rejected, got: %v", err)
+	if err != nil || !sess.EnvironmentRef.Valid() {
+		t.Fatalf("default profile server placement = %+v, %v", sess, err)
 	}
 }
 
@@ -458,7 +457,7 @@ func nofsRejectionService(t *testing.T) *server.Service {
 		Policy:  permpolicy.NewPolicy(defaultRules(), nil),
 		Hooks:   hookexec.New(nil),
 	})
-	svc, err := server.NewService(server.Config{
+	svc, err := newTestServerService(server.Config{
 		Engine:     eng,
 		Store:      memstore.New(),
 		Workspaces: func(string) tool.Workspace { return nofs.New() },

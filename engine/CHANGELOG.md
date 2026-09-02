@@ -13,7 +13,7 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 ### Added
 
-- **Session placement cutover** — removes the duplicate `Session.Workspace`, snapshot `workspace`, and legacy adoption metadata. Session constructors now require the exact valid `EnvironmentRef`; runtime consumers derive a private root only from the reattached live `tool.Environment`. Changed (breaking, pre-v1 minor).
+- **Session placement authority repair** — removes the orphan exported `session.PlacementSelector` protocol, adds persisted display-only `session.PlacementMetadata`, requires a valid `EnvironmentRef` at aggregate construction, and rejects direct engine runs whose live environment does not match the session identity. Changed (breaking, pre-v1 minor).
 
 - **Delegation artifact boundary (ADR 0280)** — adds the distinct `agent.ArtifactHandle` type, changes `agent.PreservedForkStore.Preserve` to key retained forks by that opaque handle rather than a physical root, and removes `Workspace`/`WinnerWorkspace` from `session.ParallelPayload`. Parallel results now expose an opaque preserved-artifact handle while physical fork roots remain private orchestration state. Changed (breaking, pre-v1 minor).
 

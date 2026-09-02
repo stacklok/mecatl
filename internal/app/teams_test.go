@@ -182,7 +182,7 @@ func TestMaxTeamTokensPropagates(t *testing.T) {
 		}
 		return ws
 	}
-	svc, err := server.NewService(server.Config{
+	svc, err := newTestServerService(server.Config{
 		Engine:          noopEngine(),
 		Store:           memstore.New(),
 		Workspaces:      osfsWS,
@@ -237,8 +237,9 @@ func TestTeamsDisabledWhenNoFactory(t *testing.T) {
 // and whose single-member team runs to quiescence — the flag really wires the
 // factory, forker, and team hooks into server.Config.
 func TestBuildEnableTeamsRunsTeam(t *testing.T) {
+	root := t.TempDir()
 	built, err := Build(context.Background(), Config{
-		Workspace:   t.TempDir(),
+		Workspace:   root,
 		Model:       "mock",
 		UseMock:     true,
 		EnableTeams: true,
@@ -249,7 +250,7 @@ func TestBuildEnableTeamsRunsTeam(t *testing.T) {
 	defer built.Close()
 
 	ctx := context.Background()
-	teamID, _, err := built.Service.CreateTeam(ctx, t.TempDir(), "test", "", 0, nil)
+	teamID, _, err := built.Service.CreateTeam(ctx, root, "test", "", 0, nil)
 	if errors.Is(err, server.ErrTeamsDisabled) {
 		t.Fatal("CreateTeam returned ErrTeamsDisabled with EnableTeams:true")
 	}
@@ -333,7 +334,7 @@ func TestReadOnlyMemberRunsGitInWorktreeEndToEnd(t *testing.T) {
 		}
 		return ws
 	}
-	svc, err := server.NewService(server.Config{
+	svc, err := newTestServerService(server.Config{
 		Engine:         noopEngine(),
 		Store:          memstore.New(),
 		Workspaces:     osfsWS,
@@ -450,7 +451,7 @@ func teamServiceWithFactory(t *testing.T, factory server.MemberEngineFactory) *s
 		}
 		return ws
 	}
-	svc, err := server.NewService(server.Config{
+	svc, err := newTestServerService(server.Config{
 		Engine:       noopEngine(),
 		Store:        memstore.New(),
 		Workspaces:   osfsWS,
@@ -497,7 +498,7 @@ func TestTeamReturnsConsolidatedReportEndToEnd(t *testing.T) {
 		}
 		return ws
 	}
-	svc, err := server.NewService(server.Config{
+	svc, err := newTestServerService(server.Config{
 		Engine:       noopEngine(),
 		Store:        store,
 		Workspaces:   osfsWS,
@@ -566,7 +567,7 @@ func TestTeamRunTeamPathSurfacesTeamID(t *testing.T) {
 		}
 		return ws
 	}
-	svc, err := server.NewService(server.Config{
+	svc, err := newTestServerService(server.Config{
 		Engine:       noopEngine(),
 		Store:        store,
 		Workspaces:   osfsWS,

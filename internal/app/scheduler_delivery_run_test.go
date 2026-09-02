@@ -79,7 +79,7 @@ func TestScheduleDeliveryAuthorizesOriginBeforeEnqueue(t *testing.T) {
 						Model:   "m",
 						Store:   store,
 					})
-					svc, err := server.NewService(server.Config{
+					svc, err := newTestServerService(server.Config{
 						Engine:              engine,
 						Store:               store,
 						Workspaces:          func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
@@ -177,7 +177,7 @@ func TestScheduleDeliveryMissingOriginPreservesNoVerifierCompatibility(t *testin
 				Policy: permpolicy.NewPolicy(permpolicy.AllowAllFloorRules(), nil), Model: "m", Store: store,
 			})
 			diag := &captureDiag{}
-			svc, err := server.NewService(server.Config{
+			svc, err := newTestServerService(server.Config{
 				Engine: engine, Store: store,
 				Workspaces:          func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
 				Now:                 time.Now,
@@ -223,7 +223,7 @@ func TestScheduleDeliveryRejectsOwnerlessScheduleUnderSystemContext(t *testing.T
 				Policy: permpolicy.NewPolicy(permpolicy.AllowAllFloorRules(), nil), Model: "m", Store: store,
 			})
 			diag := &captureDiag{}
-			svc, err := server.NewService(server.Config{
+			svc, err := newTestServerService(server.Config{
 				Engine: engine, Store: store,
 				Workspaces:          func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
 				Now:                 time.Now,
@@ -316,7 +316,7 @@ func TestScheduleDeliveryReauthorizesImmediatelyBeforeEnqueue(t *testing.T) {
 				Policy: permpolicy.NewPolicy(permpolicy.AllowAllFloorRules(), nil), Model: "m", Store: store,
 			})
 			diag := &captureDiag{}
-			svc, err := server.NewService(server.Config{
+			svc, err := newTestServerService(server.Config{
 				Engine: engine, Store: store,
 				Workspaces:          func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
 				Now:                 time.Now,
@@ -398,7 +398,7 @@ func newDeliveryTestEnv(t *testing.T, originTurns ...mockllm.Turn) *deliveryTest
 		Store:         store,
 		DeliveryQueue: queue,
 	})
-	svc, err := server.NewService(server.Config{
+	svc, err := newTestServerService(server.Config{
 		Engine:              engine,
 		Store:               store,
 		Workspaces:          func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
@@ -619,7 +619,7 @@ func TestFireDelivery_Scenario3_DeliveryFailureNeverFailsFire(t *testing.T) {
 		Store:         store,
 		DeliveryQueue: queue,
 	})
-	svc, err := server.NewService(server.Config{
+	svc, err := newTestServerService(server.Config{
 		Engine: engine, Store: store,
 		Workspaces:          func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
 		Now:                 time.Now,
@@ -843,7 +843,7 @@ func TestFireDelivery_Scenario4_BusyOriginQueuesNotCollides(t *testing.T) {
 	})
 	// Replace the env's engine with this one by building a fresh service.
 	diag := &captureDiag{}
-	svc, err := server.NewService(server.Config{
+	svc, err := newTestServerService(server.Config{
 		Engine: engine, Store: env.store,
 		Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
 		Now:        time.Now, DefaultCapabilities: env.originLLM.Capabilities(),
@@ -1037,7 +1037,7 @@ func TestFireDelivery_Scenario4_NonDeliverableChildOriginDropsWithWarn(t *testin
 				Policy: permpolicy.NewPolicy(permpolicy.AllowAllFloorRules(), nil),
 				Model:  "m", Store: store, DeliveryQueue: queue,
 			})
-			svc, err := server.NewService(server.Config{
+			svc, err := newTestServerService(server.Config{
 				Engine: engine, Store: store,
 				Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
 				Now:        time.Now, DefaultCapabilities: mockllm.New().Capabilities(),
@@ -1157,7 +1157,7 @@ func TestFireStarted_BusyOriginEnqueueOnly(t *testing.T) {
 		Store:         store,
 		DeliveryQueue: queue,
 	})
-	svc, err := server.NewService(server.Config{
+	svc, err := newTestServerService(server.Config{
 		Engine: engine, Store: store,
 		Workspaces:          func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
 		Now:                 time.Now,

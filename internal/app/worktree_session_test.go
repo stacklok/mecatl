@@ -94,8 +94,8 @@ func TestClientWorkspaceCannotOverrideServerPlacement(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateSession(wtB): %v", err)
 	}
-	if sess.EnvironmentRef.ID != localDefaultPlacementID {
-		t.Fatalf("session placement = %q, want server-owned %q", sess.EnvironmentRef.ID, localDefaultPlacementID)
+	if sess.EnvironmentRef.ID != base {
+		t.Fatalf("session placement = %q, want server-owned %q", sess.EnvironmentRef.ID, base)
 	}
 
 	run, err := svc.StartRun(ctx, sess.ID, "write a marker file")

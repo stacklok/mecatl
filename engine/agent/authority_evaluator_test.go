@@ -304,7 +304,12 @@ func TestADR_0233_AuthorityEvaluator_Scenario7_ResourceAttributeIsDerivedWithout
 			AuthorityEvaluator: evaluator,
 		})
 
-		drain(eng.Run(context.Background(), authoritySession(t, "Write"), agent.MemEnv("/workspace"), agent.RunRequest{Text: "write"}))
+		env := agent.MemEnv("/workspace")
+		sess := authoritySession(t, "Write")
+		if err := sess.Rehome(env.Ref()); err != nil {
+			t.Fatal(err)
+		}
+		drain(eng.Run(context.Background(), sess, env, agent.RunRequest{Text: "write"}))
 		if got := write.ran.Load(); got != 1 {
 			t.Fatalf("write executions = %d, want 1", got)
 		}

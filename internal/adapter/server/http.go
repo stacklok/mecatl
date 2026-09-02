@@ -261,11 +261,11 @@ type resolvedModelJSON struct {
 	ReasoningEffort string `json:"reasoning_effort,omitempty"`
 }
 
-func placementMetadataToJSON(ref session.EnvironmentRef) *placementMetadataJSON {
-	if !ref.Valid() {
+func placementMetadataToJSON(meta session.PlacementMetadata) *placementMetadataJSON {
+	if meta.Kind == "" {
 		return nil
 	}
-	return &placementMetadataJSON{Kind: string(ref.Kind)}
+	return &placementMetadataJSON{Kind: meta.Kind, Label: meta.Label, Branch: meta.Branch, Revision: meta.Revision}
 }
 
 // resolvedModelToJSON maps the server-side ResolvedModel to its JSON form, nil for
@@ -465,6 +465,10 @@ func (h *HTTPHandler) createSession(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid JSON body: "+err.Error())
 		return
 	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		writeError(w, http.StatusBadRequest, "invalid JSON body: multiple JSON values")
+		return
+	}
 	// Session profile (issue #55): the workspace requirement is PROFILE-AWARE and
 	// enforced in the service (default requires one; no-fs requires an EMPTY one),
 	// so there is deliberately NO unconditional empty-workspace guard here.
@@ -511,7 +515,7 @@ func (h *HTTPHandler) createSession(w http.ResponseWriter, r *http.Request) {
 		Capabilities:        capabilitiesJSON(h.svc.capabilities()),
 		SessionCapabilities: &sessionCapabilitiesJSON{Image: scaps.Image, Audio: scaps.Audio},
 		ResolvedModel:       resolvedModelToJSON(h.svc.ResolvedModel(sess.ID)),
-		Placement:           placementMetadataToJSON(sess.EnvironmentRef),
+		Placement:           placementMetadataToJSON(sess.Placement),
 	})
 }
 
@@ -566,7 +570,16 @@ func decodeOptionalStrictJSON(r *http.Request, dst any) error {
 	}
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
-	return decoder.Decode(dst)
+	if err := decoder.Decode(dst); err != nil {
+		return err
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return errors.New("multiple JSON values")
+		}
+		return err
+	}
+	return nil
 }
 
 func (h *HTTPHandler) clearSession(w http.ResponseWriter, r *http.Request) {
@@ -579,7 +592,7 @@ func (h *HTTPHandler) clearSession(w http.ResponseWriter, r *http.Request) {
 	if body.WorktreeSelector != nil {
 		selector = *body.WorktreeSelector
 	}
-	newID, err := h.svc.ClearSessionSuccessor(r.Context(), session.SessionID(r.PathValue("id")), SuccessorPlacement{Selector: selector})
+	newID, err := h.svc.ClearSessionSuccessor(r.Context(), session.SessionID(r.PathValue("id")), SuccessorPlacement{Selector: selector, SelectorPresent: body.WorktreeSelector != nil})
 	if err != nil {
 		writeServiceError(w, err)
 		return
@@ -598,7 +611,7 @@ func (h *HTTPHandler) forkSession(w http.ResponseWriter, r *http.Request) {
 		selector = *body.WorktreeSelector
 	}
 	newID, err := h.svc.ForkSessionSuccessor(r.Context(), ForkSuccessorRequest{
-		Source: session.SessionID(r.PathValue("id")), Placement: SuccessorPlacement{Selector: selector},
+		Source: session.SessionID(r.PathValue("id")), Placement: SuccessorPlacement{Selector: selector, SelectorPresent: body.WorktreeSelector != nil},
 		Title: body.Title, ProviderID: body.ProviderID, ModelID: body.ModelID, ReasoningEffort: body.ReasoningEffort,
 	})
 	if err != nil {
@@ -617,7 +630,7 @@ func (h *HTTPHandler) writeSuccessor(ctx context.Context, w http.ResponseWriter,
 	writeJSON(w, http.StatusCreated, struct {
 		SessionID string                 `json:"session_id"`
 		Placement *placementMetadataJSON `json:"placement,omitempty"`
-	}{string(id), placementMetadataToJSON(created.EnvironmentRef)})
+	}{string(id), placementMetadataToJSON(created.Placement)})
 }
 
 func (h *HTTPHandler) writeSession(w http.ResponseWriter, status int, sess *session.Session) {
@@ -630,7 +643,7 @@ func (h *HTTPHandler) writeSession(w http.ResponseWriter, status int, sess *sess
 		SessionID:       string(sess.ID),
 		State:           string(sess.State),
 		Mode:            string(sess.Mode),
-		Placement:       placementMetadataToJSON(sess.EnvironmentRef),
+		Placement:       placementMetadataToJSON(sess.Placement),
 		Turns:           sess.Counters.Turns,
 		ToolCalls:       sess.Counters.ToolCalls,
 		Title:           title,
@@ -1170,6 +1183,10 @@ func (h *HTTPHandler) createTeam(w http.ResponseWriter, r *http.Request) {
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON body: "+err.Error())
+		return
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		writeError(w, http.StatusBadRequest, "invalid JSON body: multiple JSON values")
 		return
 	}
 	var specs []agent.MemberSpec

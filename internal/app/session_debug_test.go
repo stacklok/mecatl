@@ -276,7 +276,7 @@ func TestDebugSessionRestartRehydratesBoundEngine(t *testing.T) {
 	factory := debugSessionEngineFactory(cfg, reg, provider, store, nil, nil, nil)
 	shared := agent.NewEngine(agent.Deps{LLM: provider, Catalog: tool.NewCatalog(), Model: cfg.Model})
 	newService := func() *server.Service {
-		svc, err := server.NewService(server.Config{
+		svc, err := newTestServerService(server.Config{
 			Engine: shared, Store: store, Workspaces: func(string) tool.Workspace { return nofs.New() },
 			DebugSessionEngine: factory, Now: func() time.Time { return time.Unix(10, 0) },
 		})

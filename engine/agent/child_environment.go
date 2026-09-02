@@ -7,8 +7,6 @@ import (
 	"github.com/stacklok/mecatl/engine/tool"
 )
 
-const inTreeEnvironmentRevision = "in-tree-v1"
-
 func newChildSessionInEnvironment(id session.SessionID, mode session.PermissionMode, env tool.Environment, limits session.Limits, createdAt time.Time) *session.Session {
 	child := session.New(id, mode, env.Ref(), limits, createdAt)
 	return child

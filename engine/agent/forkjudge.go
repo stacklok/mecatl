@@ -124,7 +124,7 @@ func (j *engineJudge) Judge(ctx context.Context, candidates []BranchSummary, cri
 	sess := session.New(
 		session.SessionID(fmt.Sprintf("%s-%d", j.idPrefix, childSerial.Add(1))),
 		j.childMode,
-		session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/", Revision: inTreeEnvironmentRevision},
+		judgeEnvironment.Ref(),
 		j.limits,
 		j.engine.now(),
 	)
@@ -275,4 +275,4 @@ var (
 // scores text without touching the parent tree. Built once via MustEnvironment
 // (a process-wide var is safe — the Environment is immutable and carries no
 // per-run state).
-var judgeEnvironment = tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: "judge"}, judgeWorkspace{}, nil)
+var judgeEnvironment = tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: "judge", Revision: "in-tree-v1"}, judgeWorkspace{}, nil)

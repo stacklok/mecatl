@@ -622,7 +622,7 @@ func TestHalfBSelectedSessionCapBounded(t *testing.T) {
 		}
 		return ws
 	}
-	svc, err := server.NewService(server.Config{
+	svc, err := newTestServerService(server.Config{
 		Engine:            noopEngine(),
 		Store:             store,
 		Workspaces:        wsFactory,

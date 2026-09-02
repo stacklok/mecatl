@@ -258,7 +258,8 @@ type Config struct {
 	// existing caller-selected ID, and the store must implement port.SessionCreator
 	// so no generated, forked, or scheduled session can overwrite an existing snapshot.
 	OwnershipEnforced bool
-	// Workspaces builds a Workspace for a session root. Required.
+	// Workspaces is a deprecated test-fixture input. Service never invokes it;
+	// production workspace construction is private to PlacementProvider.
 	Workspaces WorkspaceFactory
 	// ClientMCPOnCreate permits CLIENT-PROVIDED MCP servers on a session-creating
 	// API request (CreateSessionRequest.mcp_servers and its HTTP peer). It is a
@@ -300,39 +301,15 @@ type Config struct {
 	// shell-less Environment (Bash surfaces ErrNoShell) — acceptable for no-fs /
 	// ACP / cloud deployments. The factory returns nil when Bash is disabled.
 	CommandRunnerFactory func(root string) tool.CommandRunner
-	// EnvironmentResolver, when non-nil, resolves a persisted session.EnvironmentRef
-	// to a LIVE tool.Environment for a non-in-tree Kind (ADR 0214, issue #462 phase
-	// 3). It is the reattachment half of the Environment seam: a restarted process
-	// reads the persisted ref off a loaded session and reattaches a live
-	// Environment to the SAME backend (a remote worker, a container) rather than
-	// silently re-deriving one from the workspace/profile. Context is required
-	// (a future network backend may dial out). The resolver MUST return an
-	// Environment whose Ref() equals the requested ref; a nil/mismatch/nil-
-	// Workspace result fails loudly (composition maps it to ErrFailedPrecondition,
-	// never a silent local fallback). Local/mem/nofs NEVER reach the resolver:
-	// a zero ref uses the legacy Workspace-derived resolution, and the in-tree
-	// Kinds resolve through the existing Workspaces/CommandRunnerFactory path.
-	// nil (the default) means any non-in-tree Kind fails loudly — the feature is
-	// off, byte-identical to a pre-phase-3 build. Do NOT conflate this with
-	// per-session engine rehydration: rehydration rebuilds the ENGINE for a
-	// persisted provider/model selector; this reattaches the ENVIRONMENT for a
-	// persisted environment ref. The two are independent (a session may need
-	// either, both, or neither).
-	EnvironmentResolver func(context.Context, session.EnvironmentRef) (tool.Environment, error)
 	// PlacementProvider is the deployment-owned atomic placement seam (ADR 0280).
 	// Bind is its only operation: possession of an opaque ID never bypasses the
 	// provider's caller, operation, scope, inventory, and revision checks. app.Build
 	// always supplies the trusted local default; alternative composition may supply
-	// one provider that owns worktree or remote placements. nil preserves legacy
-	// hand-built Service configurations until their creation consumers migrate.
+	// one provider that owns worktree or remote placements. It is mandatory.
 	PlacementProvider PlacementProvider
 	// PlacementScope is the trusted deployment scope supplied to every provider
 	// Bind. It must be non-empty when PlacementProvider is configured.
 	PlacementScope PlacementScope
-	// PlacementSelectorKey is the Build-owned random process key used to issue
-	// source-scoped ephemeral worktree selectors. A zero key disables the additive
-	// selector service for legacy hand-built configurations.
-	PlacementSelectorKey [worktreeSelectorKeySize]byte
 	// RootAuthority mints a complete authority set for a newly composed root.
 	// A nil callback preserves host-managed legacy sessions; app.Build always wires
 	// this callback with its assembled catalog. Carryover forks copy their source
@@ -841,8 +818,7 @@ type Service struct {
 
 	// placementBinder is the sole creation/successor placement binding seam.
 	// It is nil only for legacy hand-built configurations that have not migrated.
-	placementBinder   *PlacementBinder
-	worktreeSelectors *WorktreeSelectorIssuer
+	placementBinder *PlacementBinder
 
 	// models is the selectable-model inventory, SEEDED from cfg.Models at
 	// construction and atomically SWAPPED by SetModels when the composition layer's
@@ -1235,9 +1211,6 @@ func NewServiceContext(ctx context.Context, cfg Config) (*Service, error) {
 	if cfg.Store == nil {
 		return nil, fmt.Errorf("%w: Store is required", ErrConfig)
 	}
-	if cfg.Workspaces == nil {
-		return nil, fmt.Errorf("%w: Workspaces is required", ErrConfig)
-	}
 	placementBinder, err := configuredPlacementBinder(ctx, cfg)
 	if err != nil {
 		return nil, err
@@ -1276,15 +1249,10 @@ func NewServiceContext(ctx context.Context, cfg Config) (*Service, error) {
 	if _, err := rand.Read(cleanupTokenKey[:]); err != nil {
 		return nil, fmt.Errorf("server: initialize cleanup token signer: %w", err)
 	}
-	worktreeSelectors, err := configuredWorktreeSelectors(cfg)
-	if err != nil {
-		return nil, err
-	}
 	_, shutdownCancel := context.WithCancel(context.Background())
 	svc := &Service{
 		cfg:                 cfg,
 		placementBinder:     placementBinder,
-		worktreeSelectors:   worktreeSelectors,
 		shutdownCancel:      shutdownCancel,
 		runs:                make(map[session.SessionID]*runState),
 		teams:               make(map[string]*teamState),
@@ -1355,16 +1323,20 @@ func NewServiceContext(ctx context.Context, cfg Config) (*Service, error) {
 // deployment provider. The caller principal comes only from the authenticated
 // context and the scope only from trusted composition; neither is supplied by
 // the selector or inferred from possession of its opaque ID.
-func (s *Service) BindPlacement(ctx context.Context, selector session.PlacementSelector, operation PlacementOperation) (PlacementBinding, error) {
+func (s *Service) BindPlacement(ctx context.Context, selector PlacementSelector, operation PlacementOperation) (PlacementBinding, error) {
 	if s == nil || s.placementBinder == nil {
 		return PlacementBinding{}, fmt.Errorf("%w: no PlacementProvider is configured", ErrConfig)
 	}
-	return s.placementBinder.Bind(ctx, PlacementBindRequest{
+	binding, err := s.placementBinder.Bind(ctx, PlacementBindRequest{
 		Selector:  selector,
 		Principal: session.PrincipalFromContext(ctx),
 		Scope:     s.cfg.PlacementScope,
 		Operation: operation,
 	})
+	if err != nil {
+		s.logPlacementProviderError(ctx, "bind", err)
+	}
+	return binding, err
 }
 
 // ReattachPlacement authorizes and resolves the exact persisted environment
@@ -1377,15 +1349,13 @@ func (s *Service) ReattachPlacement(ctx context.Context, ref session.Environment
 		Ref: ref, Principal: session.PrincipalFromContext(ctx), Scope: s.cfg.PlacementScope,
 	})
 	if err != nil {
-		return PlacementBinding{}, fmt.Errorf("%w: exact placement reattachment failed: %v", ErrFailedPrecondition, err)
+		s.logPlacementProviderError(ctx, "reattach", err)
+		return PlacementBinding{}, err
 	}
 	return binding, nil
 }
 
 func (s *Service) schedulePlacementScope() PlacementScope {
-	if s.cfg.PlacementScope == "" && s.placementBinder == nil {
-		return "legacy-local"
-	}
 	return s.cfg.PlacementScope
 }
 
@@ -1394,9 +1364,6 @@ func (s *Service) schedulePlacementScope() PlacementScope {
 func (s *Service) ReattachPlacementInScope(ctx context.Context, ref session.EnvironmentRef, scope string) (PlacementBinding, error) {
 	if s == nil || scope == "" || PlacementScope(scope) != s.schedulePlacementScope() {
 		return PlacementBinding{}, fmt.Errorf("%w: scheduled placement scope changed", ErrFailedPrecondition)
-	}
-	if s.placementBinder == nil {
-		return s.reattachLegacySchedulePlacement(ref)
 	}
 	return s.ReattachPlacement(ctx, ref)
 }
@@ -1968,48 +1935,6 @@ func (s *Service) resolveCreateCollision(ctx context.Context, id session.Session
 	return winner, err == nil, err
 }
 
-// profileForCreate resolves the deployment's effective profile for a request.
-// A file-less deployment reads the wire's empty (omitted/default) profile as
-// no-FS and refuses every other profile, so a caller cannot ask a deployment
-// with no filesystem root for a filesystem session.
-func (*Service) profileForCreate(profile SessionProfile) (SessionProfile, error) {
-	switch profile {
-	case ProfileDefault, ProfileNoFS:
-		return profile, nil
-	default:
-		return "", fmt.Errorf("%w: unknown session profile %q (supported: \"\" (default) and %q)", ErrInvalidArgument, profile, ProfileNoFS)
-	}
-}
-
-// workspaceForCreate enforces the profile-aware request contract before any
-// factory, trust, or environment seam receives a root. Server-assigned mode
-// intentionally checks only direct-request emptiness: client input is never
-// cleaned or compared with the configured root. It returns the EFFECTIVE profile
-// alongside the root so every caller persists the profile the deployment
-// actually applied, rather than the requested one.
-func (s *Service) workspaceForCreate(workspace string, profile SessionProfile) (string, SessionProfile, error) {
-	profile, err := s.profileForCreate(profile)
-	if err != nil {
-		return "", "", err
-	}
-	switch profile {
-	case ProfileDefault:
-		if workspace == "" {
-			return "", "", fmt.Errorf("%w: workspace is required", ErrInvalidArgument)
-		}
-		return workspace, profile, nil
-	case ProfileNoFS:
-		if workspace != "" {
-			return "", "", fmt.Errorf("%w: profile %q must not carry a workspace (a no-FS session has no filesystem to root); got %q", ErrInvalidArgument, ProfileNoFS, workspace)
-		}
-		return "", profile, nil
-	default:
-		// Defensive: the wire handlers ParseSessionProfile first, but an
-		// in-process caller could hand anything.
-		return "", "", fmt.Errorf("%w: unknown session profile %q (supported: \"\" (default) and %q)", ErrInvalidArgument, profile, ProfileNoFS)
-	}
-}
-
 func (s *Service) authorizeDebugTarget(ctx context.Context, id session.SessionID) error {
 	target, err := s.cfg.Store.Load(ctx, id)
 	if err != nil {
@@ -2060,25 +1985,16 @@ func (s *Service) bindRelatedIncarnations(ctx context.Context, opts *createSessi
 
 //nolint:gocyclo // Creation intentionally keeps placement, ownership, limits, engine selection, and persistence in one transaction.
 func (s *Service) createSession(ctx context.Context, workspace string, mode session.PermissionMode, limits session.Limits, sel ProviderSelector, specs []mcp.ServerConfig, profile SessionProfile, opts createSessionOpts) (*session.Session, error) {
+	if profile != ProfileDefault && profile != ProfileNoFS {
+		return nil, fmt.Errorf("%w: unknown session profile %q", ErrInvalidArgument, profile)
+	}
+	if workspace != "" && profile == ProfileNoFS {
+		return nil, fmt.Errorf("%w: no-fs placement cannot carry a workspace", ErrInvalidArgument)
+	}
 	if err := s.validateDebugCreate(ctx, workspace, profile, specs, opts); err != nil {
 		return nil, err
 	}
 	var err error
-	if opts.placement == nil {
-		if s.placementBinder == nil {
-			workspace, profile, err = s.workspaceForCreate(workspace, profile)
-			if err != nil {
-				return nil, err
-			}
-		} else if workspace != "" {
-			// The public wire no longer carries a workspace. The legacy in-process
-			// argument is ignored: placement is always selected and bound by the
-			// deployment provider.
-			workspace = ""
-		}
-	} else if workspace != "" {
-		return nil, fmt.Errorf("%w: trusted exact placement must not also carry a workspace", ErrInvalidArgument)
-	}
 	if mode == "" {
 		mode = s.cfg.DefaultMode
 	}
@@ -2110,6 +2026,9 @@ func (s *Service) createSession(ctx context.Context, workspace string, mode sess
 		if placement != nil && placement.Ref.Kind == session.EnvKindNoFS {
 			profile = ProfileNoFS
 		}
+	}
+	if placement != nil && placement.Close != nil {
+		defer func() { _ = placement.Close() }()
 	}
 	if err := s.bindRelatedIncarnations(ctx, &opts); err != nil {
 		return nil, err
@@ -2279,6 +2198,7 @@ func (s *Service) createPerSessionEngine(ctx context.Context, mintID func() sess
 	}
 	if placement != nil {
 		sess.EnvironmentRef = placement.Ref
+		sess.Placement = canonicalPlacementMetadata(*placement)
 	}
 	if err := seedCarryover(sess, carrySnap); err != nil {
 		if closeFn != nil {
@@ -2310,18 +2230,6 @@ func (s *Service) createPerSessionEngine(ctx context.Context, mintID func() sess
 		reasoningEffort: res.ReasoningEffort,
 		builtForMode:    res.BuiltForMode,
 		close:           closeFn,
-	}
-	if placement != nil {
-		s.sessionEnvironments[sess.ID] = placement.Environment
-	} else if profile == ProfileNoFS {
-
-		// environment OVERRIDE under the SAME lock as the engine registration,
-		// so the moment the session is visible StartRun resolves its environment
-		// here and NEVER hands the empty root to the shared osfs Workspaces
-		// factory (which would MkdirAll/OpenRoot the server process's cwd — the
-		// exact hazard). It is a complete shell-less Environment with an honest
-		// nofs ref (no command runner: a file-less namespace has no shell).
-		s.sessionEnvironments[sess.ID] = tool.MustEnvironment(sess.EnvironmentRef, nofs.New(), nil)
 	}
 	s.mu.Unlock()
 
@@ -4418,24 +4326,8 @@ func (s *Service) engineAndEnvironmentFor(ctx context.Context, sess *session.Ses
 			return nil, tool.Environment{}, err
 		}
 		hasEngine = true
-		if !isRemoteEnvironmentRef(sess.EnvironmentRef) && (sess.Profile == string(ProfileNoFS) || sess.EnvironmentRef.ID == "") {
-			// rehydrateSession re-registered the no-fs environment override (same as
-			// create); read it back so the resolution below uses the complete override.
-			// A REMOTE EnvironmentRef (ADR 0214) is excluded: its Environment is
-			// reattached at run entry through the EnvironmentResolver, NOT relabeled
-			// no-fs from its empty persisted Workspace (a remote backend's filesystem
-			// is not a local root). Reading the no-fs override here would preempt the
-			// resolver below (issue #462 phase-3 finding #1).
-			s.mu.Lock()
-			envOverride, hasEnvOverride = s.sessionEnvironments[id]
-			s.mu.Unlock()
-			if !hasEnvOverride {
-				// Defensive: if the override somehow was not registered, install the
-				// honest file-less environment directly (the no-fs chokepoint).
-				envOverride = tool.MustEnvironment(sess.EnvironmentRef, nofs.New(), nil)
-				hasEnvOverride = true
-			}
-		}
+		// Placement environments are never restored from the override registry;
+		// every ordinary run reattaches a fresh provider binding below.
 	}
 	if hasEngine {
 		engine = se.engine
@@ -4452,128 +4344,14 @@ func (s *Service) engineAndEnvironmentFor(ctx context.Context, sess *session.Ses
 		// save (ADR 0214, issue #462 phase 3).
 		return engine, envOverride, nil
 	}
-	// A revisioned provider ref with no explicit live override reattaches exactly;
-	// it never falls through to workspace inference or a current default.
-	if s.placementBinder != nil && sess.EnvironmentRef.Valid() {
-		binding, rerr := s.ReattachPlacement(ctx, sess.EnvironmentRef)
-		if rerr != nil {
-			return nil, tool.Environment{}, rerr
-		}
-		return engine, binding.Environment, nil
+	if !sess.EnvironmentRef.Valid() {
+		return nil, tool.Environment{}, ErrInvalidPlacementSelection
 	}
-	// ENVIRONMENT REATTACHMENT (ADR 0214, issue #462 phase 3): a loaded session
-	// with a PERSISTED non-in-tree EnvironmentRef (a remote worker, a container)
-	// reattaches a LIVE Environment through the configured resolver. This runs
-	// ONLY when no in-process override is registered (a remote session registers
-	// none — its Environment is the reattached one, not an ACP/no-fs override).
-	// A zero ref (legacy snapshot, or a pre-phase-3 session) and the in-tree
-	// Kinds (local/mem/nofs) NEVER reach the resolver: the zero ref falls
-	// through to the Workspace-derived default path below (and gets a fresh ref
-	// stamped there), and the in-tree Kinds resolve through the existing
-	// Workspaces/CommandRunnerFactory path. A non-in-tree Kind with no resolver
-	// wired, a ref mismatch, or a nil-Workspace result fails loudly
-	// (ErrFailedPrecondition) — never a silent local fallback.
-	if isRemoteEnvironmentRef(sess.EnvironmentRef) {
-		env, rerr := s.resolveEnvironmentRef(ctx, sess.EnvironmentRef)
-		if rerr != nil {
-			return nil, tool.Environment{}, rerr
-		}
-		return engine, env, nil
+	binding, rerr := s.ReattachPlacement(ctx, sess.EnvironmentRef)
+	if rerr != nil {
+		return nil, tool.Environment{}, rerr
 	}
-	// Default path: build the environment from the shared Workspace + runner
-	// factories. The workspace requirement is profile-aware: an empty persisted
-	// workspace is a no-fs session (the defensive chokepoint — normally
-	// unreachable, since create/rehydrate register the override).
-	var ws tool.Workspace
-	if sess.EnvironmentRef.ID == "" {
-		// DEFENSIVE CHOKEPOINT (issue #55): never hand an EMPTY root to the
-		// shared Workspaces factory — the osfs factory would MkdirAll/OpenRoot
-		// the server process's cwd. An empty persisted workspace is by
-		// construction a no-fs session, so the honest no-filesystem workspace
-		// is the only sound value here (normally unreachable: create and the
-		// rehydration above both register the override).
-		ws = nofs.New()
-	} else {
-		ws = s.cfg.Workspaces(sess.EnvironmentRef.ID)
-	}
-	env, err := s.buildSessionEnvironment(sess, ws)
-	if err != nil {
-		return nil, tool.Environment{}, err
-	}
-	// Stamp the resolved default ref from the live Environment so a legacy
-	// zero-ref session persists it on the next ordinary save (ADR 0214, issue
-	// #462 phase 3 — no migration sweep).
-	return engine, env, nil
-}
-
-// isRemoteEnvironmentRef reports whether ref names a non-in-tree backend that
-// requires an EnvironmentResolver to reattach (ADR 0214). The zero ref and the
-// in-tree Kinds (local/mem/nofs) return false; any other Kind returns true. The
-// in-tree set is closed here (the session package owns the constants); a
-// future remote transport adds its own Kind label and this predicate returns
-// true for it without widening the session package.
-func isRemoteEnvironmentRef(ref session.EnvironmentRef) bool {
-	if ref == (session.EnvironmentRef{}) {
-		return false
-	}
-	switch ref.Kind {
-	case session.EnvKindLocal, session.EnvKindMem, session.EnvKindNoFS:
-		return false
-	}
-	return true
-}
-
-// resolveEnvironmentRef reattaches a LIVE tool.Environment for a persisted
-// non-in-tree EnvironmentRef via the configured EnvironmentResolver (ADR 0214,
-// issue #462 phase 3). It validates the returned Environment's Ref() equals
-// the requested ref and carries a non-nil Workspace; a nil resolver, a ref
-// mismatch, or a nil-Workspace result fails loudly (ErrFailedPrecondition),
-// never a silent local fallback. The resolver is composition-owned — the loop
-// and the engine stay storage/transport-agnostic.
-func (s *Service) resolveEnvironmentRef(ctx context.Context, ref session.EnvironmentRef) (tool.Environment, error) {
-	if s.cfg.EnvironmentResolver == nil {
-		return tool.Environment{}, fmt.Errorf("%w: session environment ref %q (kind %q) requires an EnvironmentResolver but none is configured", ErrFailedPrecondition, ref.ID, ref.Kind)
-	}
-	env, err := s.cfg.EnvironmentResolver(ctx, ref)
-	if err != nil {
-		return tool.Environment{}, fmt.Errorf("%w: resolve environment %q (kind %q): %v", ErrFailedPrecondition, ref.ID, ref.Kind, err)
-	}
-	if env.Workspace() == nil {
-		return tool.Environment{}, fmt.Errorf("%w: EnvironmentResolver returned an Environment with a nil workspace for ref %q (kind %q)", ErrFailedPrecondition, ref.ID, ref.Kind)
-	}
-	if got := env.Ref(); got != ref {
-		return tool.Environment{}, fmt.Errorf("%w: EnvironmentResolver returned a mismatched ref: got %q (kind %q), want %q (kind %q)", ErrFailedPrecondition, got.ID, got.Kind, ref.ID, ref.Kind)
-	}
-	return env, nil
-}
-
-// buildSessionEnvironment wraps a session's resolved Workspace into a complete
-// tool.Environment for the DEFAULT (non-override) path, binding the command
-// runner appropriate to the session's namespace (issue #462). It is called ONLY
-// when no per-session Environment override is registered: the main session
-// (running on the DEFAULT workspace) binds the main CommandRunner; a session on
-// a DIFFERENT root (a worktree binding) builds a runner bound to that root via
-// CommandRunnerFactory when wired, else is shell-less; an empty persisted
-// workspace (a no-fs session that somehow reached the default path — normally
-// unreachable, since create/rehydrate register the override) is shell-less with
-// a nofs ref. The Environment carries the session's backend ref (local for an
-// osfs workspace, nofs for a no-fs profile). Override creators (ACP, no-fs)
-// supply their OWN complete Environment with an accurate ref via
-// SetSessionEnvironment — this function never guesses a ref or runner for an
-// override (issue #462 phase-2 finding #2).
-func (s *Service) buildSessionEnvironment(sess *session.Session, ws tool.Workspace) (tool.Environment, error) {
-	if ws == nil {
-		return tool.Environment{}, tool.ErrEnvironmentNoWorkspace
-	}
-	var runner tool.CommandRunner
-	if ws.Root() != "" {
-		if ws.Root() == s.cfg.DefaultWorkspace {
-			runner = s.cfg.CommandRunner
-		} else if s.cfg.CommandRunnerFactory != nil {
-			runner = s.cfg.CommandRunnerFactory(ws.Root())
-		}
-	}
-	return tool.NewEnvironment(sess.EnvironmentRef, ws, runner)
+	return engine, binding.Environment, nil
 }
 
 // sessionNeedsPerFactory reports whether a CreateSession with the given inputs
@@ -6671,8 +6449,8 @@ type SessionSummary struct {
 	// TitleProvenance reports whether the title is prompt-derived, operator-authored,
 	// or legacy/unknown.
 	TitleProvenance session.TitleProvenance
-	// PlacementKind is the bounded display-safe placement class.
-	PlacementKind session.EnvironmentKind
+	// Placement is bounded display-only placement metadata.
+	Placement session.PlacementMetadata
 	// Owner is the verified caller the session is attributed to.
 	Owner *session.Principal
 	// Kind and Relationship are the durable trusted-producer taxonomy.
@@ -7090,7 +6868,7 @@ func (s *Service) ListSessions(ctx context.Context) ([]SessionSummary, error) {
 			}
 			summary.Title = DeriveTitle(sess)
 			summary.TitleProvenance = sess.TitleProvenance
-			summary.PlacementKind = sess.EnvironmentRef.Kind
+			summary.Placement = sess.Placement
 			// Clone: the row must not carry a live pointer into the loaded
 			// session, or a consumer of the row can rewrite the recorded owner.
 			summary.Owner = sess.Owner.Clone()
