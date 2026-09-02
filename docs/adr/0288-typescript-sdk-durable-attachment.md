@@ -272,26 +272,56 @@ for a *named* dependency rather than a nice-to-have.
 **3. The SDK cursor is a versioned, serializable, opaque string branded with
 its effective server filter.**
 
-The wire form is `base64url({v: "sdkcur/1", token, filter})` — a versioned
+The wire form is `base64url({v: "sdkcur/1", token, filter, run})` — a versioned
 envelope for the same reason
 [`engine/port/cursoreventlog.go`](../../engine/port/cursoreventlog.go)'s
 `cur/1` has one: a future encoding change must be distinguishable from
-corruption. `token` is the server's opaque cursor; `filter` is the `run_id` the
-watch was **issued to the server** under (`""` when none was).
+corruption. The three payload fields answer three different questions and an
+earlier draft collapsed two of them:
+
+- `token` — the server's opaque cursor. *Where* in the log.
+- `filter` — the `run_id` the watch was **issued to the server** under (`""`
+  when none was). What the position *means*, i.e. which records it advanced
+  over.
+- `run` — the run the attachment is **bound to**, which for an implicit
+  `attach()` is chosen client-side and is therefore **not** the same as
+  `filter`. *Which run* this cursor belongs to.
+
+Keeping `run` separate is what makes the reload case work at all. An implicit
+`attach()` opens an unfiltered watch (Decision 2) and filters run-side, so its
+cursor carries `filter: ""` while being bound to run `R`. With only `filter`
+stored, a reload had no good move: `attach(R, {from: cursor})` was refused for
+scope mismatch, and `attach(undefined, {from: cursor})` re-derived "the newest
+run in the log", which after a later run exists silently attaches to a
+*different* run — or fails `NoRunsError`. Both outcomes break the headline
+scenario for the commonest way to reach it. With `run` in the envelope, a
+resume restores the binding rather than re-deriving it.
 
 A **string**, not a branded type, because Context point 4's headline case is a
 page reload: the cursor has to survive `JSON.stringify` into application
 storage and come back to a different `Client`. A TypeScript brand would pass
 every in-process test and evaporate on that round trip.
 
-Branding on the **effective server filter** is what makes the check precise
-rather than merely strict. What determines a position's meaning is which
-records the *server* skipped: an unfiltered watch's position advanced over
-everything, so its cursor is interchangeable with `activity()`'s and with a
-client-side-filtered `attach()`'s. A server-filtered watch's position advanced
-past other runs' records, so its cursor is not. Handing a `filter: "R"` cursor
-to `activity()`, or to an attachment on a different run, fails **locally** with
-`CursorScopeError` before any request.
+**The scope rule is an asymmetric containment check, not equality.** What
+determines a position's meaning is which records the *server* skipped, and that
+makes the two directions genuinely different:
+
+- A cursor with `filter: ""` advanced over **every** record, so resuming it
+  under *any* server filter is safe — the filter only removes records from what
+  arrives next, and skips nothing the caller has not already passed. It is
+  therefore usable by `activity()`, by an implicit `attach()`, and by an
+  explicit `attach(R)`.
+- A cursor with `filter: "R"` advanced **past** other runs' records, so resuming
+  it unfiltered, or under a different run's filter, would silently skip events
+  the wider watch would have delivered. It is usable only under the identical
+  filter.
+
+So the check is "the cursor's basis must be at least as broad as the watch it is
+being handed to", and a violation fails **locally** with `CursorScopeError`
+before any request. Equality would have been simpler and is what an earlier
+draft specified, but it is over-strict in exactly the direction the reload case
+needs — it rejects a perfectly sound unfiltered cursor merely because the caller
+now names the run it was already bound to.
 
 This is the one guarantee the SDK adds beyond the server's, and it is
 justified by the server structurally not being able to add it. We keep that
@@ -534,9 +564,22 @@ Cancellation is unaffected and ships, so an observer can still stop a run it is
 watching. The cost is real and is #821's, not ours to wave away: "an attached
 run has explicit approve/steer/cancel methods" is one third fulfilled in M2.
 
-The control-request construction path is **shared** with M1's owned `Run` — the
-existing `RunOperations` seam — so the ADR 0249 `expected_run_id` stale-control
-contract is implemented once. Its *verdict* mapping is not in play: the only
+**Attached `cancel()` needs a new seam; M1's does not fit.** `RunOperations` is
+`{ transportKind, send(frame): void }` — a *synchronous* push of a
+`ConverseRequest` frame onto a stream the owned `Run` already holds. An
+attachment has no such stream, and `cancel()` must **await** its outcome: the
+`204` that means accepted, or the typed stale-control failure that means the
+run it named is gone. A `void` send can express neither.
+
+M2 therefore adds a small out-of-band control seam alongside it —
+`{ transportKind, cancelRun(sessionId, runId): Promise<void> }` — implemented
+over HTTP by the prompt-free `/cancel` route and by a typed unsupported error
+over gRPC. What stays **shared** with M1 is the thing worth sharing: the
+[ADR 0249](./0249-durable-run-identity.md) `expected_run_id` stale-control
+contract and its error mapping are expressed once and consumed by both seams.
+What is deliberately not shared is the delivery mechanism, because "put a frame
+on my stream" and "make a request about someone else's run" are different
+operations that only look alike. Its *verdict* mapping is not in play: the only
 control M2 ships is `cancel()`, which carries no verdict, and the verdict
 vocabulary comes back into scope with the deferred approval methods. What is
 *not* shared is an interface across `Run` and `AttachedRun`: `cancel()` means
@@ -637,7 +680,8 @@ interface SessionActivity extends AsyncIterable<WatchEnvelope>, AsyncDisposable 
 interface AttachedRun extends SessionActivity {
   readonly runId: string;
   readonly live: boolean;                 // getter; false once the terminal is observed
-  cancel(): Promise<void>;                // HTTP: the 204 ack route. gRPC: typed unsupported
+  cancel(): Promise<void>;                // awaits the 204, or rejects typed-stale.
+                                          // HTTP only; gRPC: typed unsupported
   approve(askId: string, allow: boolean): Promise<never>;        // deferred in M2
   resolveAsk(askId: string, v: PermissionVerdict): Promise<never>; // deferred in M2
   steer(text: string): Promise<never>;                            // deferred in M2

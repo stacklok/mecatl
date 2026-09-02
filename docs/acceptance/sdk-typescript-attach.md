@@ -3,7 +3,7 @@
 **Phase:** capability — `@stacklok/mecatl-sdk` M2: durable attachment and connection authority
 **Status:** draft, 2026-09-02. Synthesised from [#821](https://github.com/stacklok/mecatl/issues/821)'s settled "Attachment and reconnection" contract plus the client-side decisions ADR 0279 deferred to this milestone.
 **Issue:** [stacklok/mecatl#821](https://github.com/stacklok/mecatl/issues/821) (parent: [#761](https://github.com/stacklok/mecatl/issues/761)).
-**ADR:** [ADR-0288](../adr/0288-typescript-sdk-durable-attachment.md) — the envelope union, `attach`/`activity` semantics, the serializable filter-branded cursor, the reconnect authority, the HTTP-only attached `cancel` (approval deferred), and the status arbitration rule.
+**ADR:** [ADR-0288](../adr/0288-typescript-sdk-durable-attachment.md) — the envelope union, `attach`/`activity` semantics, the serializable run-and-filter-scoped cursor, the reconnect authority, the HTTP-only attached `cancel` (approval deferred), and the status arbitration rule.
 **Accumulator branch:** `acc/sdk-typescript-attach` (off `main`).
 
 The smallest set of work that lets a TypeScript client rejoin a running
@@ -66,7 +66,9 @@ not which modules exist on disk.
   to a real, wrong position. The SDK cursor is a versioned **serializable
   string** (not a TypeScript brand, which would evaporate through
   `localStorage` — the reload case is the whole point) carrying the effective
-  server filter.
+  server filter *and*, separately, the run the attachment bound to — an implicit
+  `attach()` filters run-side, so those two are not the same value, and storing
+  only the filter would leave its cursor unresumable.
 - **The default event filter is derived from the server, not written down.**
   `relayLiveEvent` is not simply "the three log-only kinds" — it *relays* a
   scheduled-fire `user_prompt` — and `isPublicEvent` strips `network.attempt`
@@ -351,11 +353,13 @@ locally with `CursorScopeError`, because the server structurally cannot catch it
   resumes correctly when handed to a **freshly constructed** `Client` — the
   reload case — retaining its filter brand across the round trip.
   - verify: vitest:sdk/typescript/test/attach-cursor.test.ts#YSBzZXJpYWxpemVkIGN1cnNvciByZXN1bWVzIHRocm91Z2ggYSBmcmVzaCBjbGllbnQ — `sdk/typescript/test/attach-cursor.test.ts :: "a serialized cursor resumes through a fresh client"`
-- AC4.6: A cursor issued under a server `run_id` filter handed to `activity()`,
-  or to an attachment on a different run, fails with `CursorScopeError` before
-  any request is sent; a cursor from an unfiltered `attach()` and one from
-  `activity()` are interchangeable, because both advanced over every record.
-  - verify: vitest:sdk/typescript/test/attach-cursor.test.ts#YSBjdXJzb3IgaXMgc2NvcGVkIHRvIGl0cyBlZmZlY3RpdmUgc2VydmVyIGZpbHRlcg — `sdk/typescript/test/attach-cursor.test.ts :: "a cursor is scoped to its effective server filter"`
+- AC4.6: Cursor scope is an **asymmetric containment check**, not equality. A
+  cursor issued under a server `run_id` filter, handed to `activity()` or to an
+  attachment on a different run, fails with `CursorScopeError` before any
+  request — its position advanced past other runs' records. A cursor issued
+  under **no** server filter is accepted everywhere, including by an explicit
+  `attach(R)`, because it advanced over every record and so can skip nothing.
+  - verify: vitest:sdk/typescript/test/attach-cursor.test.ts#Y3Vyc29yIHNjb3BlIGlzIGFuIGFzeW1tZXRyaWMgY29udGFpbm1lbnQgY2hlY2sgcmF0aGVyIHRoYW4gZXF1YWxpdHk — `sdk/typescript/test/attach-cursor.test.ts :: "cursor scope is an asymmetric containment check rather than equality"`
 - AC4.7: Cursor acceptance is **structural**, not provenance-based: a value
   that is not a well-formed `sdkcur/1` envelope — wrong version, undecodable,
   missing fields, or a raw server token from the raw seam — is refused locally
@@ -374,6 +378,12 @@ locally with `CursorScopeError`, because the server structurally cannot catch it
   the same attachment fails with a typed invalid-state error rather than
   silently splitting the envelope stream across two readers of one checkpoint.
   - verify: vitest:sdk/typescript/test/attach-cursor.test.ts#YW4gYXR0YWNobWVudCBoYXMgZXhhY3RseSBvbmUgY29uc3VtZXI — `sdk/typescript/test/attach-cursor.test.ts :: "an attachment has exactly one consumer"`
+- AC4.10: An implicit `attach()`'s cursor carries the run it bound to, distinct
+  from its (empty) server filter, so a resume through a fresh `Client` reattaches
+  to **that** run — not to whichever run is newest by then, and not
+  `NoRunsError` — even when later runs have since been appended. The run
+  identity is restored from the cursor rather than re-derived.
+  - verify: vitest:sdk/typescript/test/attach-cursor.test.ts#YW4gaW1wbGljaXQgYXR0YWNoIGN1cnNvciByZXN0b3JlcyBpdHMgcnVuIHJhdGhlciB0aGFuIHJlLWRlcml2aW5nIG9uZQ — `sdk/typescript/test/attach-cursor.test.ts :: "an implicit attach cursor restores its run rather than re-deriving one"`
 
 ---
 
@@ -581,20 +591,30 @@ safe to attach.
 
 **Acceptance:**
 - AC8.1: Every `cancel` issued through an `AttachedRun` over HTTP carries that
-  run's id as `expected_run_id`, built through the same control-request path the
-  owned `Run` uses, and rides the prompt-free `POST /v1/sessions/{id}/cancel`
-  route, which is a `204` ack with no response body.
-  - verify: vitest:sdk/typescript/test/attached-controls.test.ts#YXR0YWNoZWQgY2FuY2VsIGNhcnJpZXMgZXhwZWN0ZWRfcnVuX2lkIG92ZXIgdGhlIGFjay1vbmx5IHJvdXRl — `sdk/typescript/test/attached-controls.test.ts :: "attached cancel carries expected_run_id over the ack-only route"`
-- AC8.2: A `cancel` issued through an attachment whose run has since terminated
+  run's id as `expected_run_id` and rides the prompt-free
+  `POST /v1/sessions/{id}/cancel` route, which is a `204` ack with no response
+  body. It goes through a dedicated **asynchronous out-of-band control seam**
+  (`cancelRun(sessionId, runId): Promise<void>`), not M1's `RunOperations.send`,
+  which is a synchronous `void` push of a `ConverseRequest` frame onto a stream
+  an attachment does not have. The ADR-0249 `expected_run_id` contract and its
+  error mapping are shared between the two seams; the delivery mechanism is not.
+  - verify: vitest:sdk/typescript/test/attached-controls.test.ts#YXR0YWNoZWQgY2FuY2VsIGdvZXMgdGhyb3VnaCB0aGUgYXN5bmMgb3V0LW9mLWJhbmQgY29udHJvbCBzZWFt — `sdk/typescript/test/attached-controls.test.ts :: "attached cancel goes through the async out-of-band control seam"`
+- AC8.2: `cancel()` itself **resolves from the response**: the returned promise
+  settles only after the server accepts (`204`), and a caller that awaits it and
+  then reads the attachment observes the cancelled terminal. A transport failure
+  on the cancel request rejects that same promise rather than being swallowed by
+  a fire-and-forget send.
+  - verify: vitest:sdk/typescript/test/attached-controls.test.ts#Y2FuY2VsIHJlc29sdmVzIGZyb20gdGhlIHJlc3BvbnNlIGFuZCByZWplY3RzIG9uIHRyYW5zcG9ydCBmYWlsdXJl — `sdk/typescript/test/attached-controls.test.ts :: "cancel resolves from the response and rejects on transport failure"`
+- AC8.3: A `cancel` issued through an attachment whose run has since terminated
   surfaces the server's typed stale-control failure, and a newer run on the same
   session is observably untouched by it.
   - verify: vitest:sdk/typescript/test/attached-controls.test.ts#YSBzdGFsZSBhdHRhY2hlZCBjb250cm9sIGZhaWxzIHR5cGVkIGFuZCBsZWF2ZXMgYSBuZXdlciBydW4gdW50b3VjaGVk — `sdk/typescript/test/attached-controls.test.ts :: "a stale attached control fails typed and leaves a newer run untouched"`
-- AC8.3: `cancel` over the gRPC transport fails with a typed
+- AC8.4: `cancel` over the gRPC transport fails with a typed
   unsupported-feature error naming the absent prompt-free control channel — not
   a generic transport error, and never by opening a `Converse` stream with a
   prompt.
   - verify: vitest:sdk/typescript/test/attached-controls.test.ts#YXR0YWNoZWQgY2FuY2VsIG92ZXIgZ1JQQyBpcyBhIHR5cGVkIHVuc3VwcG9ydGVkLWZlYXR1cmUgZXJyb3I — `sdk/typescript/test/attached-controls.test.ts :: "attached cancel over gRPC is a typed unsupported-feature error"`
-- AC8.4: `AttachedRun.approve()` and `resolveAsk()` fail with a typed
+- AC8.5: `AttachedRun.approve()` and `resolveAsk()` fail with a typed
   unsupported-feature error on both transports, each naming its **own** distinct
   dependency rather than one blanket reason — over HTTP the absent ack-only
   approve response (`approve_ack_only`), over gRPC the absent prompt-free
@@ -609,11 +629,11 @@ safe to attach.
   closed (that cancels the run), left unread (that stalls the relay), or drained
   to EOF (unbounded, because the resumed run can park on another ask).
   - verify: vitest:sdk/typescript/test/attached-controls.test.ts#YXR0YWNoZWQgYXBwcm92YWwgbmFtZXMgYSBkaXN0aW5jdCBhYnNlbnQgZmVhdHVyZSBwZXIgdHJhbnNwb3J0 — `sdk/typescript/test/attached-controls.test.ts :: "attached approval names a distinct absent feature per transport"`
-- AC8.5: `AttachedRun.steer()` fails with a typed unsupported-feature error on
+- AC8.6: `AttachedRun.steer()` fails with a typed unsupported-feature error on
   both transports and never promotes into a fresh run, which would mint a run id
   the attachment's filter can never match and turn a refusal into silence.
   - verify: vitest:sdk/typescript/test/attached-controls.test.ts#YXR0YWNoZWQgc3RlZXIgaXMgdW5zdXBwb3J0ZWQgb24gYm90aCB0cmFuc3BvcnRzIGFuZCBuZXZlciBwcm9tb3Rlcw — `sdk/typescript/test/attached-controls.test.ts :: "attached steer is unsupported on both transports and never promotes"`
-- AC8.6: Aborting the signal, disposing via `Symbol.asyncDispose`, and `break`ing
+- AC8.7: Aborting the signal, disposing via `Symbol.asyncDispose`, and `break`ing
   out of iteration each release the watch without sending a cancel; the run
   continues to its own terminal and a fresh attachment observes that terminal.
   - verify: vitest:sdk/typescript/test/attached-controls.test.ts#ZXZlcnkgZGV0YWNoIHBhdGggbGVhdmVzIHRoZSBydW4gcnVubmluZw — `sdk/typescript/test/attached-controls.test.ts :: "every detach path leaves the run running"`
