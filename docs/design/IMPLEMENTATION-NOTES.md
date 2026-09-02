@@ -8186,6 +8186,24 @@ combined attachment/client/caller abort signal owns both the current watch and t
 therefore converge on one release path that clears the timer and returns the watch without sending
 a run control.
 
+Connection status is an arbitration result, not a last-writer register. `sdk/typescript/src/client.ts`
+keeps the M1 request outcome plus a map entry for every `WatchConnection` and selects the first
+present value from `incompatible > unauthorized > reconnecting > connecting > offline > online`.
+`sdk/typescript/src/watch.ts` updates its entry before reconnect work begins, preserves
+`unauthorized` across the credential-refresh attempt, and returns it to `online` only after the next
+watch envelope. The watch uses a status-neutral raw stream path, so the ordinary stream observer
+cannot publish `offline` between a resumable failure and `WatchConnection` taking authority; feature
+re-probes still update the request input, and precedence prevents their success from masking a
+retrying peer. A terminal compatibility floor also updates the request input so the deployment fact
+survives automatic iterator cleanup until a later successful exchange clears it. Removing the
+attachment entry on close cannot cancel a run.
+
+Attachment entries do not participate in `ConnectionStatusStore.subscribe` accounting. Only the
+first real status subscriber installs the browser visibility listener and schedules the 30-second
+heartbeat; removing the last stops both even while attachments remain open. Conversely, a hidden
+page stops only that heartbeat. No visibility event reaches `WatchConnection`, so its watch and
+reconnect scheduler keep consuming until their own caller/client abort or disposal path fires.
+
 Attached cancellation does not reuse `RunOperations.send`: that method is the synchronous push
 onto an owned Converse stream, while an attachment has no such stream and must await an HTTP
 response. `sdk/typescript/src/watch.ts` (`AttachmentOperations.cancelRun`) is the asynchronous

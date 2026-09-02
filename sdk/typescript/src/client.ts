@@ -147,8 +147,16 @@ interface ClientCoreOptions {
   visibility: boolean;
 }
 
+type AttachmentConnectionStatus = "online" | "reconnecting" | "unauthorized" | "incompatible";
+
+interface AttachmentStatusWriter {
+  close(): void;
+  set(status: AttachmentConnectionStatus): void;
+}
+
 interface SessionOperations {
   assertOpen(): void;
+  attachmentStatus(): AttachmentStatusWriter;
   cancelRun(sessionId: string, runId: string): Promise<void>;
   readonly clientSignal: AbortSignal;
   features(): Promise<ReadonlySet<string>>;
@@ -177,6 +185,14 @@ type DisposableTransport = Transport & {
 };
 
 const HEARTBEAT_INTERVAL_MS = 30_000;
+const CONNECTION_STATUS_PRECEDENCE: readonly ConnectionStatus[] = [
+  "incompatible",
+  "unauthorized",
+  "reconnecting",
+  "connecting",
+  "offline",
+  "online",
+];
 
 class SessionImpl implements Session {
   readonly id: string;
@@ -297,6 +313,7 @@ class ClientImpl implements Client {
   readonly status: ConnectionStatusStore;
 
   readonly #abort = new AbortController();
+  readonly #attachmentStatuses = new Map<symbol, AttachmentConnectionStatus>();
   readonly #listeners = new Set<ConnectionStatusListener>();
   readonly #operations: SessionOperations;
   readonly #owned: boolean;
@@ -308,6 +325,7 @@ class ClientImpl implements Client {
   #closePromise: Promise<void> | undefined;
   #heartbeat: ReturnType<typeof setTimeout> | undefined;
   #heartbeatAbort: AbortController | undefined;
+  #requestStatus: ConnectionStatus = "connecting";
   #snapshot: ConnectionStatus = "connecting";
   #visibilityTarget: Document | undefined;
 
@@ -322,6 +340,7 @@ class ClientImpl implements Client {
     });
     this.#operations = {
       assertOpen: () => this.#assertOpen(),
+      attachmentStatus: () => this.#createAttachmentStatus(),
       cancelRun: (sessionId, runId) => this.#cancelRun(sessionId, runId),
       clientSignal: this.#abort.signal,
       features: () => this.#features(),
@@ -330,7 +349,7 @@ class ClientImpl implements Client {
       transportKind: this.#transportKind,
       unary: (method, input) => this.#unary(method, input),
       watch: (sessionId, runId, cursor, signal) =>
-        this.#stream(
+        this.#watch(
           HarnessService.method.watchSessionEvents,
           singleValue({ cursor, runId, sessionId }),
           signal,
@@ -389,6 +408,7 @@ class ClientImpl implements Client {
         transport: this.#transportKind,
       }),
     );
+    this.#attachmentStatuses.clear();
     this.#stopHeartbeat();
     this.#detachVisibility();
     this.#listeners.clear();
@@ -424,10 +444,10 @@ class ClientImpl implements Client {
     input: MessageInitShape<I>,
   ): Promise<MessageShape<O>> {
     this.#assertOpen();
-    if (this.#snapshot === "offline") this.#publish("reconnecting");
+    if (this.#requestStatus === "offline") this.#setRequestStatus("reconnecting");
     try {
       const response = await this.#raw.unary(method, input, { signal: this.#abort.signal });
-      this.#publish("online");
+      this.#setRequestStatus("online");
       return response;
     } catch (error) {
       this.#observeError(error);
@@ -444,10 +464,10 @@ class ClientImpl implements Client {
     if (cancel === undefined) {
       throw new UnsupportedFeatureError("attached_cancel", { transport: "http" });
     }
-    if (this.#snapshot === "offline") this.#publish("reconnecting");
+    if (this.#requestStatus === "offline") this.#setRequestStatus("reconnecting");
     try {
       await cancel(sessionId, runId, this.#abort.signal);
-      this.#publish("online");
+      this.#setRequestStatus("online");
     } catch (error) {
       this.#observeError(error);
       throw error;
@@ -456,10 +476,10 @@ class ClientImpl implements Client {
 
   async #features(): Promise<ReadonlySet<string>> {
     this.#assertOpen();
-    if (this.#snapshot === "offline") this.#publish("reconnecting");
+    if (this.#requestStatus === "offline") this.#setRequestStatus("reconnecting");
     try {
       const features = await this.#raw.features({ signal: this.#abort.signal });
-      this.#publish("online");
+      this.#setRequestStatus("online");
       return features;
     } catch (error) {
       this.#observeError(error);
@@ -478,7 +498,7 @@ class ClientImpl implements Client {
         signal === undefined ? this.#abort.signal : AbortSignal.any([this.#abort.signal, signal]),
     });
     const observeError = (error: unknown) => this.#observeError(error);
-    const publishOnline = () => this.#publish("online");
+    const publishOnline = () => this.#setRequestStatus("online");
     return (async function* () {
       try {
         for await (const message of raw) {
@@ -492,9 +512,20 @@ class ClientImpl implements Client {
     })();
   }
 
+  #watch<I extends DescMessage, O extends DescMessage>(
+    method: DescMethodStreaming<I, O>,
+    input: AsyncIterable<MessageInitShape<I>>,
+    signal: AbortSignal,
+  ): AsyncIterable<MessageShape<O>> {
+    this.#assertOpen();
+    return this.#raw.stream(method, input, {
+      signal: AbortSignal.any([this.#abort.signal, signal]),
+    });
+  }
+
   async #probe(raw: RawClient, signal: AbortSignal = this.#abort.signal): Promise<void> {
     this.#assertOpen();
-    if (this.#snapshot === "offline") this.#publish("reconnecting");
+    if (this.#requestStatus === "offline") this.#setRequestStatus("reconnecting");
     try {
       await raw.unary(
         HarnessService.method.getCompatibilityInfo,
@@ -503,7 +534,7 @@ class ClientImpl implements Client {
           signal,
         },
       );
-      this.#publish("online");
+      this.#setRequestStatus("online");
     } catch (error) {
       this.#observeError(error);
       throw error;
@@ -513,22 +544,57 @@ class ClientImpl implements Client {
   #observeError(error: unknown): void {
     if (this.#closed) return;
     if (error instanceof AuthenticationError) {
-      this.#publish("unauthorized");
+      this.#setRequestStatus("unauthorized");
       return;
     }
     if (error instanceof IncompatibleServerError) {
-      this.#publish("incompatible");
+      this.#setRequestStatus("incompatible");
       return;
     }
     if (error instanceof TransportError) {
-      this.#publish("reconnecting");
-      this.#publish("offline");
+      this.#setRequestStatus("reconnecting");
+      this.#setRequestStatus("offline");
       return;
     }
-    if (error instanceof ServerError) this.#publish("online");
+    if (error instanceof ServerError) this.#setRequestStatus("online");
   }
 
-  #publish(status: ConnectionStatus): void {
+  #createAttachmentStatus(): AttachmentStatusWriter {
+    const id = Symbol("attachment-status");
+    let open = true;
+    this.#attachmentStatuses.set(id, "online");
+    this.#publishResolvedStatus();
+    return {
+      close: () => {
+        if (!open) return;
+        open = false;
+        this.#attachmentStatuses.delete(id);
+        this.#publishResolvedStatus();
+      },
+      set: (status) => {
+        if (!open || this.#closed) return;
+        this.#attachmentStatuses.set(id, status);
+        // A terminal floor failure remains useful after its attachment closes;
+        // the next successful ordinary exchange clears the deployment fact.
+        if (status === "incompatible") this.#requestStatus = status;
+        this.#publishResolvedStatus();
+      },
+    };
+  }
+
+  #setRequestStatus(status: ConnectionStatus): void {
+    if (this.#closed) return;
+    this.#requestStatus = status;
+    this.#publishResolvedStatus();
+  }
+
+  #publishResolvedStatus(): void {
+    const inputs = new Set<ConnectionStatus>([
+      this.#requestStatus,
+      ...this.#attachmentStatuses.values(),
+    ]);
+    const status = CONNECTION_STATUS_PRECEDENCE.find((candidate) => inputs.has(candidate));
+    if (status === undefined) return;
     if (this.#closed || status === this.#snapshot) return;
     this.#snapshot = status;
     for (const listener of [...this.#listeners]) {

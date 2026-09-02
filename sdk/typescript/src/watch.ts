@@ -3,6 +3,7 @@ import {
   AuthenticationError,
   CursorMalformedError,
   CursorScopeError,
+  IncompatibleServerError,
   InvalidStateError,
   MecatlError,
   NoRunsError,
@@ -107,6 +108,7 @@ export interface AttachedRun extends SessionActivity {
 }
 
 interface AttachmentOperations {
+  attachmentStatus?(): AttachmentStatusWriter;
   cancelRun(sessionId: string, runId: string): Promise<void>;
   readonly clientSignal: AbortSignal;
   features(): Promise<ReadonlySet<string>>;
@@ -120,6 +122,13 @@ interface AttachmentOperations {
   ): AsyncIterable<WatchSessionEventsResponse>;
 }
 
+type AttachmentConnectionStatus = "online" | "reconnecting" | "unauthorized" | "incompatible";
+
+interface AttachmentStatusWriter {
+  close(): void;
+  set(status: AttachmentConnectionStatus): void;
+}
+
 interface AttachmentScheduler {
   delayFor(attempt: number): number;
   sleep(ms: number, signal: AbortSignal): Promise<void>;
@@ -131,6 +140,10 @@ interface AttachmentInternalOptions {
 
 const RECONNECT_BASE_MS = 100;
 const RECONNECT_CAP_MS = 5_000;
+const NOOP_ATTACHMENT_STATUS: AttachmentStatusWriter = {
+  close: () => undefined,
+  set: () => undefined,
+};
 
 function delayFor(attempt: number): number {
   const exponent = Math.min(Math.max(0, attempt), 30);
@@ -314,6 +327,7 @@ class WatchConnection {
   readonly #scheduler: AttachmentScheduler;
   readonly #sessionId: string;
   readonly #signal: AbortSignal;
+  readonly #status: AttachmentStatusWriter;
   #attempt = 0;
   #closed = false;
   #source: AsyncIterator<WatchSessionEventsResponse> | undefined;
@@ -337,6 +351,7 @@ class WatchConnection {
       delayFor: internal.scheduler?.delayFor ?? delayFor,
       sleep: internal.scheduler?.sleep ?? sleep,
     };
+    this.#status = operations.attachmentStatus?.() ?? NOOP_ATTACHMENT_STATUS;
   }
 
   async next(cursor: string): Promise<IteratorResult<WatchSessionEventsResponse>> {
@@ -347,12 +362,18 @@ class WatchConnection {
         const next = await this.#source.next();
         if (!next.done) {
           this.#attempt = 0;
+          this.#status.set("online");
           return next;
         }
       } catch (error) {
         if (this.#closed || this.#signal.aborted) return { done: true, value: undefined };
-        if (watchFailureDisposition(error) !== "resume") throw error;
+        const disposition = watchFailureDisposition(error);
+        this.#observeFailure(error, disposition);
+        if (disposition !== "resume") throw error;
+        if (!(await this.#reconnect(cursor))) return { done: true, value: undefined };
+        continue;
       }
+      this.#status.set("reconnecting");
       if (!(await this.#reconnect(cursor))) return { done: true, value: undefined };
     }
   }
@@ -362,6 +383,7 @@ class WatchConnection {
     this.#closed = true;
     this.#abort.abort();
     await this.#releaseSource();
+    this.#status.close();
   }
 
   #open(cursor: string): AsyncIterator<WatchSessionEventsResponse> {
@@ -390,7 +412,9 @@ class WatchConnection {
         return true;
       } catch (error) {
         if (this.#closed || this.#signal.aborted) return false;
-        if (watchFailureDisposition(error) !== "resume") throw error;
+        const disposition = watchFailureDisposition(error);
+        this.#observeFailure(error, disposition);
+        if (disposition !== "resume") throw error;
         this.#operations.invalidateCompatibility();
       }
     }
@@ -404,6 +428,19 @@ class WatchConnection {
       await source?.return?.();
     } catch {
       // Releasing a failed or aborted transport stream is best-effort.
+    }
+  }
+
+  #observeFailure(error: unknown, disposition: WatchFailureDisposition): void {
+    if (
+      error instanceof IncompatibleServerError ||
+      (error instanceof MecatlError && error.code === "incompatible_server")
+    ) {
+      this.#status.set("incompatible");
+    } else if (error instanceof AuthenticationError) {
+      this.#status.set("unauthorized");
+    } else if (disposition === "resume") {
+      this.#status.set("reconnecting");
     }
   }
 }

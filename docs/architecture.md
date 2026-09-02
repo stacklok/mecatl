@@ -281,6 +281,15 @@ reconnect point. Reconnected watches do not re-announce the replay-to-live bound
 `AttachOptions.signal`, iterator release, explicit disposal, or `Client.close()` aborts backoff and
 releases the current watch without cancelling the run.
 
+The client connection monitor combines its ordinary request outcome with one private input per
+open attachment. It resolves those inputs by fixed precedence — `incompatible` above
+`unauthorized`, `reconnecting`, `connecting`, `offline`, then `online` — so one healthy stream or
+successful unary call cannot hide another attachment's retry. A retrying watch reports
+`reconnecting` (or `unauthorized` while refreshing credentials) and never publishes the ordinary
+request path's transient `offline`; its next envelope restores `online` once no higher-ranked input
+remains. Opening an attachment does not subscribe to status or start/retain the heartbeat. Browser
+visibility still pauses the subscriber-gated heartbeat, but it neither pauses nor detaches a watch.
+
 Attached controls deliberately use a different path from an owned `Run`'s Converse frames.
 `AttachedRun.cancel()` is an asynchronous out-of-band operation: over HTTP it posts the attached
 run id as `expected_run_id` to `/v1/sessions/{id}/cancel` and resolves only after the server's
