@@ -460,6 +460,26 @@ func cardTextWidth(width int) int {
 	return w
 }
 
+// focusCardTextWidth returns the usable card body width for a focus overlay. Unlike
+// cardTextWidth, a known positive viewport must never disable trace wrapping: even
+// a viewport narrower than the card chrome gets a one-cell budget so a long token
+// cannot make the centred card wider.
+func focusCardTextWidth(width int) int {
+	if budget := cardTextWidth(width); budget > 0 || width <= 0 {
+		return budget
+	}
+	return max(1, width-6) // askCard border (2) + horizontal padding (2*2)
+}
+
+// wrapFocusMetadata wraps a complete focus-card row to its positive body budget.
+// A zero viewport remains deliberately unbounded, matching the other overlays.
+func wrapFocusMetadata(s string, width int) string {
+	if budget := focusCardTextWidth(width); budget > 0 {
+		return ansi.Wrap(s, budget, "")
+	}
+	return s
+}
+
 // indentWrap word-wraps s to the text budget and indents every resulting line by
 // two spaces (the inventory's description indent) so continuation lines align
 // under the first. A budget <= 0 falls back to a single indented line (unknown
@@ -469,6 +489,9 @@ func indentWrap(s string, budget int) string {
 	const indent = "  "
 	if budget <= 0 {
 		return indent + s
+	}
+	if budget <= len(indent) {
+		return ansi.Wrap(s, budget, "")
 	}
 	wrapped := ansi.Wrap(s, budget-len(indent), "")
 	lines := strings.Split(wrapped, "\n")

@@ -86,6 +86,10 @@ type renderer struct {
 	th    theme.Theme
 	width int
 
+	// traceWidth is the available width of a delegation-inspector card's body. A
+	// zero value preserves the transcript renderer's existing trace layout.
+	traceWidth int
+
 	// marks carries the LIVE chord markings derived from the model's keyMap at
 	// construction (keyMarkings). The inline-card affordances that reference
 	// rebindable actions — the ExpandTools chord ("ctrl+t" by default) in the
@@ -1464,15 +1468,25 @@ func (r *renderer) renderTool(b *block, expand bool) string {
 	}
 
 	card := r.th.Style("toolCard")
+	var outerWidth int
 	if cw := r.contentWidth(); cw > card.GetHorizontalFrameSize()+2 {
 		// Width includes the card's border and padding. Keep the 2-cell right inset
 		// without letting the indented card exceed the viewport.
-		card = card.Width(min(cw-2, toolCardMaxWidth))
+		outerWidth = min(cw-2, toolCardMaxWidth)
+		card = card.Width(outerWidth)
 	} else if cw > 0 {
 		// A bordered, padded card has no content column at this width. Drop its frame
 		// rather than leaving Width unset, which lets an unbreakable tool command grow
 		// the card past the viewport.
-		card = card.Border(lipgloss.Border{}).Padding(0).Width(cw)
+		outerWidth = cw
+		card = card.Border(lipgloss.Border{}).Padding(0).Width(outerWidth)
+	}
+	// lipgloss Width sets the card's outer width (including its horizontal frame),
+	// but does not split an unbreakable body token. Hard-wrap collapsed content to
+	// the actual remaining content width when terminal geometry is known; expanded
+	// content retains Lipgloss's prior rendering behavior.
+	if !expand && outerWidth > 0 {
+		head = ansi.Hardwrap(head, outerWidth-card.GetHorizontalFrameSize(), true)
 	}
 	return card.Render(head)
 }
@@ -1761,11 +1775,31 @@ func (r *renderer) chipContentWidth() int {
 	return w
 }
 
+// traceChipWidth returns the width available after a trace line's two-cell
+// indent. Inspector renderers set traceWidth from their bounded card body;
+// ordinary transcript rendering retains chipContentWidth's existing behavior.
+func (r *renderer) traceChipWidth() int {
+	if r.traceWidth > 2 {
+		return r.traceWidth - 2
+	}
+	return r.chipContentWidth()
+}
+
+// wrapTraceLine wraps a complete inspector trace line at its card-body width.
+// traceWidth == 0 deliberately retains the unbounded layout used outside a
+// bounded overlay.
+func (r *renderer) wrapTraceLine(s string) string {
+	if r.traceWidth <= 0 {
+		return s
+	}
+	return ansi.Wrap(s, r.traceWidth, "")
+}
+
 // wrapChips packs already-rendered chips into rows separated by chipSep, breaking
 // to a new line BETWEEN chips when the next chip would overflow width (measured by
 // visible width via lipgloss.Width, which ignores ANSI). A width <= 0 disables
-// wrapping (all chips on one row). A chip wider than width still gets its own row
-// rather than being split.
+// wrapping (all chips on one row). A chip wider than width gets its own row;
+// inspector renderers additionally wrap that row through wrapTraceLine.
 func wrapChips(chips []string, width int) string {
 	if len(chips) == 0 {
 		return ""
@@ -1800,6 +1834,10 @@ func wrapChips(chips []string, width int) string {
 // 0079); the server already bounds previews, this is a belt-and-braces clamp so one
 // verbose child can't dominate the card.
 const maxTraceMessageLen = 200
+
+// maxTraceToolNameLen bounds a tool name in delegation rows and traces before it
+// joins other metadata. The inspector still wraps it to the card width.
+const maxTraceToolNameLen = 20
 
 // maxTraceDetailLen caps how many runes of a tool chip's arg/result preview show
 // next to it in the expanded trace. Server-bounded already (≤200 runes); this keeps
@@ -2022,7 +2060,7 @@ func teamLaneState(ln *teamLane, teamDone bool) string {
 	}
 	label := "working"
 	if ln.current != "" {
-		label = sanitizeTerminal(ln.current)
+		label = truncate(sanitizeTerminal(ln.current), maxTraceToolNameLen)
 	}
 	return label + "…"
 }
@@ -2067,10 +2105,11 @@ func (r *renderer) renderTrace(trace []teamTrace) string {
 		if b.Len() > 0 {
 			b.WriteString("\n")
 		}
-		b.WriteString("  " + wrapChips(chips, r.chipContentWidth()))
+		b.WriteString(r.wrapTraceLine("  " + wrapChips(chips, r.traceChipWidth())))
 		chips = nil
 	}
 	writeLine := func(s string) {
+		s = r.wrapTraceLine(s)
 		flush()
 		if b.Len() > 0 {
 			b.WriteString("\n")
@@ -2085,7 +2124,7 @@ func (r *renderer) renderTrace(trace []teamTrace) string {
 			if t.isError {
 				glyph = errStyle.Render("✗")
 			}
-			chip := glyph + " " + nameStyle.Render(sanitizeTerminal(t.name))
+			chip := glyph + " " + nameStyle.Render(truncate(sanitizeTerminal(t.name), maxTraceToolNameLen))
 			if detail := sanitizeTerminal(oneLine(t.detail)); detail != "" {
 				// A chip with a preview gets a dedicated line so its detail is readable.
 				writeLine("  " + chip + muted.Render(" — "+truncate(detail, maxTraceDetailLen)))

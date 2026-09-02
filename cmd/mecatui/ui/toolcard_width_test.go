@@ -4,7 +4,10 @@ import (
 	"strings"
 	"testing"
 
+	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+
+	"github.com/stacklok/mecatl/cmd/mecatui/client"
 )
 
 // TestToolCardWidthCap pins decision 7: a tool card never grows past
@@ -45,6 +48,48 @@ func TestToolCardWidthCap(t *testing.T) {
 	}
 }
 
+// TestToolCardWidthHardWrapsKnownRenderer covers the normal known-width card path:
+// a collapsed Bash result's unbreakable divider must not escape the capped card.
+func TestToolCardWidthHardWrapsKnownRenderer(t *testing.T) {
+	r := newTestRenderer()
+	r.setWidth(185)
+	resultLines := make([]string, 0, maxToolResultLines+27)
+	resultLines = append(resultLines, strings.Repeat("-", 220))
+	for range maxToolResultLines - 1 + 27 {
+		resultLines = append(resultLines, "completed result line")
+	}
+	b := &block{
+		kind:       blockTool,
+		toolID:     "bash-1",
+		toolName:   "Bash",
+		toolArgs:   mustJSON(t, map[string]string{"command": strings.Repeat("x", toolCardMaxWidth+1)}),
+		resolved:   true,
+		resultBody: strings.Join(resultLines, "\n"),
+	}
+
+	out := r.renderTool(b, false)
+	plain := stripANSIstr(out)
+	if !strings.Contains(plain, "+27 more lines · ctrl+t expand") {
+		t.Fatalf("collapsed Bash card lost its expansion marker:\n%s", plain)
+	}
+	if got := strings.Count(plain, "-"); got != 220 {
+		t.Errorf("divider lost content while wrapping: got %d dashes, want 220", got)
+	}
+	maxWidth := 0
+	for i, line := range strings.Split(out, "\n") {
+		got := maxLineWidth(line)
+		if got > maxWidth {
+			maxWidth = got
+		}
+		if got > toolCardMaxWidth {
+			t.Errorf("line %d exceeds card width %d (got %d): %q", i, toolCardMaxWidth, got, stripANSIstr(line))
+		}
+	}
+	if maxWidth != toolCardMaxWidth {
+		t.Errorf("card should be bounded at width %d, got %d", toolCardMaxWidth, maxWidth)
+	}
+}
+
 // TestResolvedBashToolCardFitsViewport renders the normal transcript path, including
 // the conversation indent, for a resolved Bash call whose command and result have no
 // natural break points. Both views must remain within a narrow terminal.
@@ -70,6 +115,75 @@ func TestResolvedBashToolCardFitsViewport(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestTranscriptReflowsOnWidthOnlyResize covers the line-slice SetContentLines
+// handoff used by the normal transcript. A narrow resize with unchanged body height
+// must replace, rather than retain, a wide Bash card render.
+func TestTranscriptReflowsOnWidthOnlyResize(t *testing.T) {
+	const (
+		wideWidth   = 160
+		narrowWidth = 100
+		height      = 30
+	)
+	command := "task docs && task site:build && git status --short --branch && git diff --check && git diff --stat && git diff --name-only --cached"
+	m := newMCPModel(t, aztec(), nil)
+	m = applyAll(m,
+		tea.WindowSizeMsg{Width: wideWidth, Height: height},
+		client.ToolCallMsg{ID: "bash-1", Name: "Bash", Args: mustJSON(t, map[string]string{"command": command})},
+		client.ToolResultMsg{CallID: "bash-1", Content: "docs and site passed\n M cmd/mecatui/ui/update.go"},
+	)
+	if m.sel.active || m.expandTools {
+		t.Fatal("precondition: normal transcript must use SetContentLines")
+	}
+	bodyHeight := m.vp.Height()
+
+	m = applyAll(m, tea.WindowSizeMsg{Width: narrowWidth, Height: height})
+	if m.vp.Height() != bodyHeight {
+		t.Fatalf("precondition: width-only resize changed body height from %d to %d", bodyHeight, m.vp.Height())
+	}
+	for i, line := range strings.Split(m.vp.GetContent(), "\n") {
+		if width := maxLineWidth(line); width > narrowWidth {
+			t.Errorf("viewport line %d exceeds width %d (got %d): %q", i, narrowWidth, width, stripANSIstr(line))
+		}
+	}
+}
+
+// TestTranscriptWidthOnlyResizeResticksAndFollowsTranscript covers the scroll-state
+// half of the normal transcript width-only refresh. Reflow can reduce the transcript
+// until an initially unstuck viewport is now at its bottom; the resize must derive
+// stuck from that resulting position before the next transcript event arrives.
+func TestTranscriptWidthOnlyResizeResticksAndFollowsTranscript(t *testing.T) {
+	const (
+		narrowWidth = 100
+		wideWidth   = 200
+		height      = 30
+	)
+	m := newMCPModel(t, aztec(), nil)
+	m = applyAll(m,
+		tea.WindowSizeMsg{Width: narrowWidth, Height: height},
+		client.TurnStartMsg{Turn: 1},
+		client.AssistantDeltaMsg{Turn: 1, Text: strings.Repeat("reflowed transcript text ", 100)},
+		renderTickMsg{},
+	)
+
+	m, _ = pressKey(m, tea.KeyPressMsg{Code: tea.KeyPgUp})
+	if m.stuck || m.vp.AtBottom() {
+		t.Fatalf("precondition: pgup should leave the narrow viewport unstuck (stuck=%v atBottom=%v)", m.stuck, m.vp.AtBottom())
+	}
+
+	m = applyAll(m, tea.WindowSizeMsg{Width: wideWidth, Height: height})
+	if m.stuck != m.vp.AtBottom() {
+		t.Fatalf("width-only resize must synchronize stuck: stuck=%v atBottom=%v", m.stuck, m.vp.AtBottom())
+	}
+	if !m.stuck {
+		t.Fatal("precondition: wider reflow should leave the viewport at bottom")
+	}
+
+	m = applyAll(m, client.ToolCallMsg{ID: "follow-1", Name: "Read", Args: `{"path":"README.md"}`})
+	if !m.vp.AtBottom() {
+		t.Fatal("a transcript event after the re-synchronized resize should follow the bottom")
 	}
 }
 

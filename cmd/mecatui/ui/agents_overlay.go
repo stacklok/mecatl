@@ -379,7 +379,7 @@ func renderAgentsOverlay(th theme.Theme, tab agentsTab, sub subagentState, par p
 	case tabSubagents:
 		body = renderSubagentTab(th, sub, fleet, hk, width, bodyHeight)
 	case tabParallel:
-		body = renderParallelTab(th, par, groups, hk, bodyHeight)
+		body = renderParallelTab(th, par, groups, hk, width, bodyHeight)
 	default:
 		body = renderTeamsTab(th, team, b, hk, width, bodyHeight)
 	}
@@ -602,7 +602,7 @@ func subagentFailureLine(ln *subagentLane, width int) string {
 	// i.e. it would no longer provide the bound this comment claims. strings.Fields splits
 	// on every unicode.IsSpace, which is what "one logical line" has to mean for an
 	// untrusted peer string.
-	return indentWrap("failed: "+truncate(sanitizeTerminal(strings.Join(strings.Fields(ln.cause), " ")), maxSubagentCauseWidth), cardTextWidth(width))
+	return indentWrap("failed: "+truncate(sanitizeTerminal(strings.Join(strings.Fields(ln.cause), " ")), maxSubagentCauseWidth), focusCardTextWidth(width))
 }
 
 // subagentBackgroundMarker flags a detached-delivery (background: true) child on its
@@ -639,7 +639,7 @@ func subagentLaneState(ln *subagentLane) string {
 		return subagentStopLabel(ln.stop)
 	}
 	if ln.current != "" {
-		return sanitizeTerminal(ln.current) + "…"
+		return truncate(sanitizeTerminal(ln.current), maxTraceToolNameLen) + "…"
 	}
 	return "working…"
 }
@@ -682,11 +682,12 @@ func renderSubagentFocus(th theme.Theme, fleet []subagentLane, child string, hk 
 	if goal == "" {
 		goal = "subagent"
 	}
-	out.WriteString(th.Style("askTitle").Render("subagent · " + goal))
+	budget := focusCardTextWidth(width)
+	out.WriteString(th.Style("askTitle").Render(wrapFocusMetadata("subagent · "+goal, width)))
 	out.WriteString("\n")
-	out.WriteString(muted.Render(subagentRosterLine(ln)))
+	out.WriteString(muted.Render(wrapFocusMetadata(subagentRosterLine(ln), width)))
 	out.WriteString("\n")
-	out.WriteString(muted.Render(indentWrap(boundedPreviewsSubNote, cardTextWidth(width))))
+	out.WriteString(muted.Render(indentWrap(boundedPreviewsSubNote, budget)))
 	if fail := subagentFailureLine(ln, width); fail != "" {
 		// The ONE place the fleet answers "why did it fail". The inline Subagent card
 		// already carries the cause inside the tool result the agent received, but a
@@ -703,11 +704,11 @@ func renderSubagentFocus(th theme.Theme, fleet []subagentLane, child string, hk 
 		if ln.done {
 			note = "  background: done — result ready for the agent (SubagentStatus)"
 		}
-		out.WriteString("\n" + muted.Render(note))
+		out.WriteString("\n" + muted.Render(wrapFocusMetadata(note, width)))
 	}
 	out.WriteString("\n\n")
 
-	r := &renderer{th: th, marks: hk} // width-0 renderer: chips don't wrap, trace renders full
+	r := &renderer{th: th, marks: hk, traceWidth: focusCardTextWidth(width)}
 	trace := r.renderTrace(ln.trace)
 	if trace == "" {
 		out.WriteString(muted.Render("(no activity yet)"))
@@ -754,9 +755,9 @@ func subagentStopErrored(stop string) bool {
 
 // renderParallelTab renders the Parallel tab body: the GROUP roster (one row per Parallel
 // call) or one focused group's branches inline.
-func renderParallelTab(th theme.Theme, st parallelState, groups []parallelGroup, hk helpKeys, height int) string {
+func renderParallelTab(th theme.Theme, st parallelState, groups []parallelGroup, hk helpKeys, width, height int) string {
 	if st.view == parallelGroupView {
-		return renderParallelGroupFocus(th, st, groups, hk, height)
+		return renderParallelGroupFocus(th, st, groups, hk, width, height)
 	}
 	return renderParallelRoster(th, st, groups, hk, height)
 }
@@ -853,7 +854,7 @@ func parallelWinnerLabel(g *parallelGroup) string {
 func branchHumanLabel(g *parallelGroup, index int) string {
 	for i := range g.branches {
 		if g.branches[i].index == index && g.branches[i].label != "" {
-			return sanitizeTerminal(g.branches[i].label)
+			return truncate(sanitizeTerminal(g.branches[i].label), maxParallelBranchLabelLen)
 		}
 	}
 	return fmt.Sprintf("branch-%d", index+1)
@@ -867,7 +868,7 @@ func branchHumanLabel(g *parallelGroup, index int) string {
 // cancel key addresses, the WINNER row a "★") with its interleaved trace in the Team
 // focus format below its roster line, and the preserved winner fork path. A focused
 // ParentCallID with no matching group reads as a muted note.
-func renderParallelGroupFocus(th theme.Theme, st parallelState, groups []parallelGroup, hk helpKeys, height int) string {
+func renderParallelGroupFocus(th theme.Theme, st parallelState, groups []parallelGroup, hk helpKeys, width, height int) string {
 	muted := th.Style("muted")
 	g := findParallelGroup(groups, st.group)
 	if g == nil {
@@ -881,16 +882,17 @@ func renderParallelGroupFocus(th theme.Theme, st parallelState, groups []paralle
 	if join == "" {
 		join = "all"
 	}
-	out.WriteString(th.Style("askTitle").Render("parallel · join=" + join))
+	budget := focusCardTextWidth(width)
+	out.WriteString(th.Style("askTitle").Render(wrapFocusMetadata("parallel · join="+join, width)))
 	out.WriteString("\n")
-	out.WriteString(muted.Render(parallelRosterLine(g)))
+	out.WriteString(muted.Render(wrapFocusMetadata(parallelRosterLine(g), width)))
 	// Run-level stop, focus-only (NOT on the shared parallelRosterLine). Empty-guarded:
 	// a join=all run carries no winner-bearing stop by contract, so it renders no line.
 	if g.done && g.stop != "" {
-		out.WriteString("\n" + muted.Render("run stop: "+subagentStopLabel(g.stop)))
+		out.WriteString("\n" + muted.Render(wrapFocusMetadata("run stop: "+subagentStopLabel(g.stop), width)))
 	}
 	out.WriteString("\n")
-	out.WriteString(muted.Render("  " + boundedPreviewsParNote))
+	out.WriteString(muted.Render(indentWrap(boundedPreviewsParNote, budget)))
 	out.WriteString("\n\n")
 
 	// Branch events arrive concurrently and OUT OF ORDER on the wire (branch-2's events can
@@ -901,7 +903,7 @@ func renderParallelGroupFocus(th theme.Theme, st parallelState, groups []paralle
 	rows := teamFocusRows(height)
 	used := 0
 	cancellable := false
-	r := &renderer{th: th, marks: hk} // a width-0 renderer: chips don't wrap, traces render full
+	r := &renderer{th: th, marks: hk, traceWidth: focusCardTextWidth(width)}
 	for i := range ordered {
 		br := &ordered[i]
 		if !br.done && br.childID != "" {
@@ -914,12 +916,12 @@ func renderParallelGroupFocus(th theme.Theme, st parallelState, groups []paralle
 			out.WriteString(muted.Render(fmt.Sprintf("  · +%d more branch(es)", len(ordered)-i)) + "\n")
 			break
 		}
-		out.WriteString(renderParallelBranchRow(th, br, g.winner, i == cursor))
+		out.WriteString(renderParallelBranchRow(th, br, g.winner, i == cursor, budget))
 		used += 1 + renderParallelBranchTrace(&out, th, r, br, remaining)
 	}
 
 	if g.winnerWorkspace != "" {
-		out.WriteString("\n" + muted.Render("winner fork (preserved): "+sanitizeTerminal(g.winnerWorkspace)))
+		out.WriteString("\n" + muted.Render(indentWrap("winner fork (preserved): "+sanitizeTerminal(g.winnerWorkspace), budget)))
 	}
 	// The cancel hint shows only while some branch is still cancellable (running with a
 	// known child id); the selection arrows are always live on a populated list. The chords
@@ -938,15 +940,15 @@ func renderParallelGroupFocus(th theme.Theme, st parallelState, groups []paralle
 // renderParallelBranchRow renders one branch's roster line within a focused group: the
 // "›" cursor on the SELECTED row (the one the `x` cancel key addresses), the "★" on the
 // WINNER row, else a muted plain row. It always ends with a newline.
-func renderParallelBranchRow(th theme.Theme, br *parallelBranch, winner int, selected bool) string {
+func renderParallelBranchRow(th theme.Theme, br *parallelBranch, winner int, selected bool, width int) string {
 	line := parallelBranchLine(br)
 	switch {
 	case selected:
-		return th.Style("askButtonActive").Render("› "+line) + "\n"
+		return th.Style("askButtonActive").Render(wrapFocusMetadata("› "+line, width)) + "\n"
 	case br.index == winner:
-		return th.Style("askButtonActive").Render("★ "+line) + "\n"
+		return th.Style("askButtonActive").Render(wrapFocusMetadata("★ "+line, width)) + "\n"
 	default:
-		return th.Style("muted").Render("  "+line) + "\n"
+		return th.Style("muted").Render(wrapFocusMetadata("  "+line, width)) + "\n"
 	}
 }
 
@@ -977,6 +979,10 @@ func renderParallelBranchTrace(out *strings.Builder, th theme.Theme, r *renderer
 	return traceLines
 }
 
+// maxParallelBranchLabelLen caps a server-provided branch label in the focus row,
+// which has no independent card wrapper.
+const maxParallelBranchLabelLen = 24
+
 // parallelBranchLine is one branch row within a focused group: a state glyph (◐ running /
 // ✓ done / ✗ failed), the branch label, its goal, the current/last tool, the tool count,
 // and token usage. It holds only redacted metadata; the branch's bounded previews live
@@ -994,6 +1000,7 @@ func parallelBranchLine(br *parallelBranch) string {
 	if label == "" {
 		label = fmt.Sprintf("branch-%d", br.index+1)
 	}
+	label = truncate(sanitizeTerminal(label), maxParallelBranchLabelLen)
 	goal := truncate(sanitizeTerminal(br.goal), maxSubagentGoalLen)
 	state := "working…"
 	if br.done {
@@ -1002,7 +1009,7 @@ func parallelBranchLine(br *parallelBranch) string {
 			state += " · " + humanizeDuration(br.durationMs)
 		}
 	} else if br.current != "" {
-		state = sanitizeTerminal(br.current) + "…"
+		state = truncate(sanitizeTerminal(br.current), maxTraceToolNameLen) + "…"
 	}
 	routed := ""
 	if r := subagentModelLabel(br.routedCategory, br.routedModel, br.routingReason, br.model); r != "" {

@@ -1448,6 +1448,8 @@ func applyTeamTo(c *conversation, msg client.TeamMsg) {
 // chrome (which relayout measures) reflect the NEW width before the body height is
 // computed from them.
 func (m Model) onResize(msg tea.WindowSizeMsg) (tea.Model, tea.Cmd) {
+	widthChanged := m.width != msg.Width
+	viewportHeight := m.vp.Height()
 	m.width = msg.Width
 	m.height = msg.Height
 	m.vp.SetWidth(m.width)
@@ -1465,10 +1467,16 @@ func (m Model) onResize(msg tea.WindowSizeMsg) (tea.Model, tea.Cmd) {
 	m.rend.setWidth(m.width)
 	// relayout sizes the viewport height from the measured layout (header + transients
 	// + input + footer) and, when the height changed, re-renders + re-derives
-	// auto-follow — the tail onResize used to do inline. The magic taH=4/footerH=2 and
+	// auto-follow — the tail onResize used to do inline. A width-only resize leaves
+	// that layout unchanged, so re-render below to replace any stale wrapped lines.
+	// The magic taH=4/footerH=2 and
 	// the header arithmetic are GONE; the heights are measured via lipgloss.Height of
 	// the rendered regions in chrome().
 	m.relayout()
+	if widthChanged && m.vp.Height() == viewportHeight {
+		m.refreshView()
+		m.syncStuck()
+	}
 	// Open modal surfaces derive geometry at Render time; no resize fan-out is needed.
 	return m, m.maybeKittyTransmit()
 }

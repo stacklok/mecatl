@@ -447,8 +447,9 @@ func renderTeamFocus(th theme.Theme, b *block, member string, hk helpKeys, width
 			muted.Render(focusBackHint(hk))
 	}
 
+	budget := focusCardTextWidth(width)
 	var out strings.Builder
-	out.WriteString(th.Style("askTitle").Render("agent · " + truncate(sanitizeTerminal(ln.name), maxTeamNameWidth)))
+	out.WriteString(th.Style("askTitle").Render(wrapFocusMetadata("agent · "+truncate(sanitizeTerminal(ln.name), maxTeamNameWidth), width)))
 	out.WriteString("\n")
 	// The member's own lane line (reusing the inline vocabulary) as a sub-header so
 	// the focus pane is self-describing: glyph, mutating cue, name, [lead], state,
@@ -458,10 +459,10 @@ func renderTeamFocus(th theme.Theme, b *block, member string, hk helpKeys, width
 	if ln.ctxWindow > 0 {
 		subhead += " · " + renderContextMeter(th, ln.ctxUsed, ln.ctxWindow)
 	}
-	out.WriteString(muted.Render(subhead))
+	out.WriteString(muted.Render(wrapFocusMetadata(subhead, width)))
 	out.WriteString("\n\n")
 
-	r := &renderer{th: th, marks: hk} // a width-0 renderer: chips don't wrap, traces render full
+	r := &renderer{th: th, marks: hk, traceWidth: budget}
 	trace := r.renderTrace(ln.trace)
 	if trace == "" {
 		out.WriteString(muted.Render("(no activity yet)"))
@@ -527,7 +528,7 @@ func teamFailureLine(ln *teamLane, width int) string {
 	if !ln.stopped || ln.stopReason != teamStopReasonError || ln.cause == "" {
 		return ""
 	}
-	return indentWrap("failed: "+truncate(sanitizeTerminal(strings.Join(strings.Fields(ln.cause), " ")), maxSubagentCauseWidth), cardTextWidth(width))
+	return indentWrap("failed: "+truncate(sanitizeTerminal(strings.Join(strings.Fields(ln.cause), " ")), maxSubagentCauseWidth), focusCardTextWidth(width))
 }
 
 // teamFindLane returns the lane named member off the team block, or nil. Names

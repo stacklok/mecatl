@@ -9,6 +9,7 @@ package ui
 // subagent.* / team.* event projection — no child content (gauntlet #7).
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 
@@ -879,6 +880,119 @@ func assertFitsViewport(t *testing.T, got []byte, width int) {
 		if w := lipgloss.Width(line); w > width {
 			t.Errorf("rendered line %d overflows the %d-col viewport (width %d): %q", i, width, w, line)
 		}
+	}
+}
+
+func TestFocusTraceWidthStaysBoundedOnTinyViewports(t *testing.T) {
+	trace := []teamTrace{
+		{name: strings.Repeat("x", 200)},
+		{name: strings.Repeat("y", 200)},
+	}
+	for width := 1; width < 20; width++ {
+		t.Run("width-"+strconv.Itoa(width), func(t *testing.T) {
+			budget := focusCardTextWidth(width)
+			if budget < 1 {
+				t.Fatalf("focusCardTextWidth(%d) = %d, want positive", width, budget)
+			}
+			r := &renderer{th: aztec(), traceWidth: budget}
+			assertFitsViewport(t, stripANSI([]byte(r.renderTrace(trace))), budget)
+		})
+	}
+}
+
+func TestParallelFocusLongBranchLabelFitsViewport(t *testing.T) {
+	const viewportWidth = 90
+	label := strings.Repeat("x", 200)
+	m := newMCPModel(t, aztec(), nil)
+	m = seedParallel(m, "p1",
+		startPar("p1", "all", 1),
+		branchStartPar("p1", 0, label, "inspect"),
+		endPar("p1", "all", 1, 0, "", "end_turn"),
+	)
+	m.agentsTab = tabParallel
+	m.parallel = parallelState{view: parallelGroupView, group: "p1"}
+	mm, _ := m.Update(tea.WindowSizeMsg{Width: viewportWidth, Height: 30})
+	m = mm.(Model)
+	out := stripANSI([]byte(m.View().Content))
+	assertFitsViewport(t, out, viewportWidth)
+	if strings.Contains(string(out), label) {
+		t.Error("parallel focus rendered the unbounded branch label")
+	}
+}
+
+// TestDelegationFocusLongToolDataFitsViewport exercises the bounded-card rendering
+// path for every delegation inspector. Tool projections are server metadata and can
+// contain no-break identifiers, so both names and details must fit the physical
+// canvas rather than widening the centered overlay.
+func TestDelegationFocusLongToolDataFitsViewport(t *testing.T) {
+	const viewportWidth = 90
+	long := strings.Repeat("x", 200)
+	bareTools := []string{long + "a", long + "b", long + "c", long + "d"}
+	resize := func(m Model) Model {
+		mm, _ := m.Update(tea.WindowSizeMsg{Width: viewportWidth, Height: 30})
+		return mm.(Model)
+	}
+
+	cases := []struct {
+		name  string
+		build func(Model) Model
+	}{
+		{
+			name: "subagent",
+			build: func(m Model) Model {
+				m = seedSubagents(m, "p1", startSub("p1", "child-1", "inspect"))
+				for i, tool := range bareTools {
+					mm, _ := m.Update(toolSub("p1", "child-1", tool, false, i+1))
+					m = mm.(Model)
+				}
+				mm, _ := m.Update(toolSubPreview("p1", "child-1", "tool.call", long, long, len(bareTools)+1))
+				m = mm.(Model)
+				m.agentsTab = tabSubagents
+				m.team.view = teamRoster
+				m.subagents = subagentState{view: subagentFocus, child: "child-1"}
+				return m
+			},
+		},
+		{
+			name: "team",
+			build: func(m Model) Model {
+				m = seedTeam(m, func(c *conversation) {
+					c.setTeamStart("t1", "", roster())
+					for _, tool := range bareTools {
+						c.addTeamMember(member("scout", "tool.call", client.TeamMsg{ToolName: tool}))
+					}
+					c.addTeamMember(member("scout", "tool.call", client.TeamMsg{ToolName: long, Detail: long}))
+				})
+				m.agentsTab = tabTeams
+				m.team = teamState{view: teamFocus, member: "scout"}
+				return m
+			},
+		},
+		{
+			name: "parallel",
+			build: func(m Model) Model {
+				events := []client.ParallelMsg{
+					startPar("p1", "all", 1),
+					branchStartPar("p1", 0, long, "inspect"),
+				}
+				for i, tool := range bareTools {
+					events = append(events, branchToolPar("p1", 0, tool, false, i+1))
+				}
+				events = append(events, branchToolParPreview("p1", 0, "tool.call", long, long, len(bareTools)+1))
+				m = seedParallel(m, "p1", events...)
+				m.agentsTab = tabParallel
+				m.team.view = teamRoster
+				m.parallel = parallelState{view: parallelGroupView, group: "p1"}
+				return m
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m := resize(tc.build(newMCPModel(t, aztec(), nil)))
+			assertFitsViewport(t, stripANSI([]byte(m.View().Content)), viewportWidth)
+		})
 	}
 }
 
