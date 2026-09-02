@@ -102,6 +102,7 @@ when the code that satisfies the plan has landed.
 - [Delegation observability convergence](delegation-observability-convergence.md) —
   bounded previews for Subagent/Parallel, converging the delegation observability
   surface on two tiers (Team-unique structures stay Team-only). Status: landed.
+- [OAuth protected-resource discovery](oauth-protected-resource-discovery.md) — RFC 9728 metadata from mecated/mecak8s and mecatui shorthand enrollment with issuer/audience/client hints. Status: draft.
 - [Caller identity](caller-identity.md) — completed acceptance record for optional
   OIDC caller attribution: a verified principal, durable session/schedule ownership,
   and log-only event actors; no authorization. Status: landed.
