@@ -1,7 +1,7 @@
 # Session title generation and auxiliary usage — acceptance plan
 
 **Phase:** mecatui session-title UX and opt-in auxiliary model accounting  
-**Status:** draft, 2026-08-30. Reconciled with ADR 0290.  
+**Status:** in-progress, 2026-08-30. Reconciled with ADR 0290.
 **Issue:** [stacklok/mecatl#621](https://github.com/stacklok/mecatl/issues/621).  
 **ADR:** [ADR 0290](../adr/0290-session-title-generation-and-auxiliary-usage.md) — server-owned asynchronous title lifecycle, opt-in title slot, and auxiliary usage boundary.  
 **Accumulator branch:** `acc/session-title-generation` (off `main`).
