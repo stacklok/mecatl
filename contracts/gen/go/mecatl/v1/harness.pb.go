@@ -6492,9 +6492,9 @@ type Event struct {
 	// parallel.branch / parallel.end): a REDACTED, metadata-only projection of a
 	// Parallel fork-join run. Like subagent it NEVER carries branch content (no
 	// message text, tool args, or result bodies) — only ids, a goal label, tool
-	// names/counts, usage, stop, duration, the join strategy, the winner index, and
-	// the per-branch / winner fork-root PATHS (a handle already in the result text,
-	// not branch content). The branch summaries fold into the parent conversation
+	// names/counts, usage, stop, duration, the join strategy, and the winner index.
+	// Physical fork roots and reusable placement authority are never projected. The
+	// branch summaries fold into the parent conversation
 	// only via the Parallel tool result.
 	Parallel *Parallel `protobuf:"bytes,14,opt,name=parallel,proto3" json:"parallel,omitempty"`
 	// schedule.* — the scheduler lifecycle (EvScheduleFired/Skipped/Failed). For v1
@@ -8084,23 +8084,21 @@ func (x *Team) GetCause() string {
 // on branch_tool events — text is a rune-capped preview of the branch's message
 // text, detail a rune-capped preview of a branch tool call's args or result body —
 // so a client can render a Parallel fork-join run's activity (a join strategy, a
-// grouped roster of branches with tool traces, a winner highlight, and fork paths)
-// without ever seeing unbounded branch content, preserving context isolation. The
-// fork-root paths it carries are the no-auto-merge handles already surfaced in the
-// Parallel tool result, not branch content.
+// grouped roster of branches with tool traces and a winner highlight) without ever
+// seeing unbounded branch content, preserving context isolation. Physical fork roots,
+// exact environment refs, and reusable placement authority are never projected.
 //
 // Unlike the FLAT Subagent fleet, a Parallel run is a GROUP: N branches of ONE call
-// (keyed by parent_call_id) sharing a join strategy + a single winner + preserved
-// per-branch fork paths. Those are RUN-LEVEL facts on the start/end events; the
-// per-branch events carry per-branch metadata keyed by branch_index.
+// (keyed by parent_call_id) sharing a join strategy and a single winner. The
+// per-branch events carry metadata keyed by branch_index.
 //
 // Which fields are set depends on the event kind:
 //   - parallel.start:                  parent_call_id, join, branch_count.
 //   - parallel.branch (branch_start):  parent_call_id, kind, branch_index, branch_label, goal, routed_category, routed_model, model.
 //   - parallel.branch (branch_tool):   parent_call_id, kind, branch_index, tool_name, is_error, tool_count,
 //     and — when a preview is available — text / detail / inner_kind.
-//   - parallel.branch (branch_end):    parent_call_id, kind, branch_index, tool_count, stop, usage, duration_ms, failed, workspace.
-//   - parallel.end:                    parent_call_id, join, branch_count, winner, winner_workspace, usage (run total), stop.
+//   - parallel.branch (branch_end):    parent_call_id, kind, branch_index, tool_count, stop, usage, duration_ms, failed.
+//   - parallel.end:                    parent_call_id, join, branch_count, winner, usage (run total), stop.
 type Parallel struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// parent_call_id is the parent's Parallel tool-call id and the GROUP key (one

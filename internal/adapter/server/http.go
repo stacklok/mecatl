@@ -1179,16 +1179,7 @@ func (h *HTTPHandler) createTeam(w http.ResponseWriter, r *http.Request) {
 			specs = append(specs, m.toMemberSpec())
 		}
 	}
-	_, env, err := h.svc.ownedSessionEnvironment(r.Context(), session.SessionID(body.SessionID))
-	if err != nil {
-		writeServiceError(w, err)
-		return
-	}
-	if env.Workspace() == nil || env.Workspace().Root() == "" {
-		writeServiceError(w, fmt.Errorf("%w: session has no filesystem placement", ErrFailedPrecondition))
-		return
-	}
-	id, enrolled, err := h.svc.CreateTeam(r.Context(), env.Workspace().Root(), body.Name, body.Goal, int(body.MaxTeamTokens), specs)
+	id, enrolled, err := h.svc.CreateTeamForSession(r.Context(), session.SessionID(body.SessionID), body.Name, body.Goal, int(body.MaxTeamTokens), specs)
 	if err != nil {
 		writeServiceError(w, err)
 		return

@@ -689,8 +689,7 @@ func TestToProtoTable(t *testing.T) {
 			in: session.Event{Type: session.EvParallelBranch, Seq: 43, Turn: 1,
 				Parallel: &session.ParallelPayload{ParentCallID: "p1", Kind: session.ParallelBranchEnd,
 					BranchIndex: 2, ChildID: "parallel-p1-2", ToolCount: 4, Failed: true,
-					Workspace: "/fork/branch-3",
-					Stop:      session.StopError, DurationMs: 555,
+					Stop: session.StopError, DurationMs: 555,
 					Usage: session.Usage{InputTokens: 12, OutputTokens: 3}}},
 			assert: func(t *testing.T, got *mecatlv1.Event) {
 				p := got.GetParallel()
@@ -711,7 +710,7 @@ func TestToProtoTable(t *testing.T) {
 			name: "parallel.end winner",
 			in: session.Event{Type: session.EvParallelEnd, Seq: 44, Turn: 1,
 				Parallel: &session.ParallelPayload{ParentCallID: "p1", Join: "judge", BranchCount: 3,
-					Winner: 1, WinnerWorkspace: "/fork/branch-2", Stop: session.StopEndTurn,
+					Winner: 1, Stop: session.StopEndTurn,
 					Usage: session.Usage{InputTokens: 100, OutputTokens: 20}}},
 			assert: func(t *testing.T, got *mecatlv1.Event) {
 				p := got.GetParallel()
@@ -1380,7 +1379,7 @@ func TestToProtoNeverFailsMarshalOnInvalidUTF8(t *testing.T) {
 		}},
 		"parallel": {Type: session.EvParallelBranch, Parallel: &session.ParallelPayload{
 			ParentCallID: "p1", Kind: session.ParallelBranchTool, BranchLabel: "bl " + badUTF8, Goal: "g " + badUTF8,
-			Text: "t " + badUTF8, Detail: "d " + badUTF8, Workspace: "/ws/" + badUTF8, WinnerWorkspace: "/ww/" + badUTF8,
+			Text: "t " + badUTF8, Detail: "d " + badUTF8,
 		}},
 		"schedule": {Type: session.EvScheduleFired, Schedule: &session.SchedulePayload{
 			ScheduleName: "s", FireID: "f", SessionID: "sid", Kind: "fired", Err: "e " + badUTF8,

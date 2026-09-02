@@ -176,9 +176,9 @@ var oracleSteps = []struct {
 	}},
 	{"parallelBranchEnd", func(c *conversation) {
 		c.parallelBranchEnd("call-par", 0, "parallel-call-par-0",
-			client.Usage{InputTokens: 500, OutputTokens: 90}, 2, "end_turn", false, "/forks/fork-0", 900)
+			client.Usage{InputTokens: 500, OutputTokens: 90}, 2, "end_turn", false, 900)
 	}},
-	{"parallelEnd", func(c *conversation) { c.parallelEnd("call-par", "first", 2, 0, "/forks/fork-0", "end_turn") }},
+	{"parallelEnd", func(c *conversation) { c.parallelEnd("call-par", "first", 2, 0, "end_turn") }},
 	{"addHook", func(c *conversation) { c.addHook("blocked by PreToolUse hook", "PreToolUse", "Bash", "blocked") }},
 	{"addError", func(c *conversation) { c.addError("stream failed: boom") }},
 	{"addPermanentError", func(c *conversation) { c.addPermanentError("permanent provider error: auth failed") }},

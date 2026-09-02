@@ -21,14 +21,7 @@ func (h *HarnessServer) CreateTeam(ctx context.Context, req *mecatlv1.CreateTeam
 	if req.GetSessionId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "session_id is required")
 	}
-	_, env, err := h.svc.ownedSessionEnvironment(ctx, session.SessionID(req.GetSessionId()))
-	if err != nil {
-		return nil, toStatus(err)
-	}
-	if env.Workspace() == nil || env.Workspace().Root() == "" {
-		return nil, status.Error(codes.FailedPrecondition, "session has no filesystem placement")
-	}
-	id, enrolled, err := h.svc.CreateTeam(ctx, env.Workspace().Root(), req.GetName(), req.GetGoal(), int(req.GetMaxTeamTokens()), fromProtoTeammateSpecs(req.GetMembers()))
+	id, enrolled, err := h.svc.CreateTeamForSession(ctx, session.SessionID(req.GetSessionId()), req.GetName(), req.GetGoal(), int(req.GetMaxTeamTokens()), fromProtoTeammateSpecs(req.GetMembers()))
 	if err != nil {
 		return nil, toStatus(err)
 	}

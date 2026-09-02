@@ -516,8 +516,8 @@ func TestParallelAutoMergeConflictSurfacesToolError(t *testing.T) {
 	if !strings.Contains(res.Content, "auto-merge") || !strings.Contains(res.Content, "FAILED") {
 		t.Fatalf("error must name the auto-merge failure, got:\n%s", res.Content)
 	}
-	if !strings.Contains(res.Content, "winner workspace path") || !strings.Contains(res.Content, "ephemeral") {
-		t.Fatalf("error must accurately describe the ephemeral winner workspace path, got:\n%s", res.Content)
+	if !strings.Contains(res.Content, "preserved artifact") || !strings.Contains(res.Content, "graceful app shutdown") {
+		t.Fatalf("error must identify the ephemeral preserved artifact for authorized inspection, got:\n%s", res.Content)
 	}
 }
 
@@ -623,8 +623,8 @@ func TestParallelAutoMergeNilMergerIsNoOp(t *testing.T) {
 	if strings.Contains(res.Content, "auto-merged") {
 		t.Fatalf("nil-merger result must not claim an auto-merge, got:\n%s", res.Content)
 	}
-	if !strings.Contains(res.Content, "inspect or merge before LRU eviction") {
-		t.Fatalf("nil-merger result must still carry the preserved-workspace guidance, got:\n%s", res.Content)
+	if !strings.Contains(res.Content, "winner artifact (PRESERVED):") || !strings.Contains(res.Content, "inspect or merge before LRU eviction") {
+		t.Fatalf("nil-merger result must carry the preserved artifact handle and retention guidance, got:\n%s", res.Content)
 	}
 }
 

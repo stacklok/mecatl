@@ -917,22 +917,20 @@ type SubagentPayload struct {
 // unbounded args/result/message body can never be copied verbatim, and a branch's
 // permission.ask is DROPPED entirely: it is NEVER forwarded, so a pending-ask reason
 // (which can quote secrets or sensitive args) never reaches the stream. The only
-// other non-scalar it carries is the per-branch fork-root PATHS (a handle the model
-// is already given in the Parallel ToolResult text, not branch content). The
+// payload forwards only bounded previews and non-sensitive lifecycle metadata. The
 // forwarding is CLIENT-ONLY: nothing here ever enters the parent Session's
 // Conversation (gauntlet #7 unchanged).
 //
 // Unlike the FLAT SubagentPayload, a Parallel run is a GROUP: N branches of ONE call
-// (keyed by ParentCallID) sharing a join strategy, a single winner (join=first/judge),
-// and preserved per-branch fork paths. Those are RUN-LEVEL facts carried on the
-// start/end events; the per-branch events carry per-branch metadata keyed by BranchIndex.
+// (keyed by ParentCallID) sharing a join strategy and a single winner
+// (join=first/judge). The per-branch events carry metadata keyed by BranchIndex.
 //
 // Which fields are set depends on the event kind:
 //   - EvParallelStart:                       ParentCallID, Join, BranchCount.
 //   - EvParallelBranch (Kind=branch_start):  ParentCallID, Kind, BranchIndex, ChildID, BranchLabel, Goal, [RoutedCategory, RoutedModel, RoutingReason], Model.
 //   - EvParallelBranch (Kind=branch_tool):   ParentCallID, Kind, BranchIndex, ToolName, IsError, ToolCount, and — when a preview is available — Text / Detail / InnerKind.
-//   - EvParallelBranch (Kind=branch_end):    ParentCallID, Kind, BranchIndex, ChildID, ToolCount, Stop, Usage, DurationMs, Failed, Workspace.
-//   - EvParallelEnd:                         ParentCallID, Join, BranchCount, Winner, WinnerWorkspace, Usage (run total), Stop.
+//   - EvParallelBranch (Kind=branch_end):    ParentCallID, Kind, BranchIndex, ChildID, ToolCount, Stop, Usage, DurationMs, Failed.
+//   - EvParallelEnd:                         ParentCallID, Join, BranchCount, Winner, Usage (run total), Stop.
 type ParallelPayload struct {
 	// ParentCallID is the parent's Parallel tool-call id; it is the GROUP key (one
 	// Parallel call = one group) and attributes every parallel.* event to the
@@ -1026,10 +1024,6 @@ type ParallelPayload struct {
 	// Failed reports whether the branch's child run failed (StopError / cancelled /
 	// fork failure). Set on the branch_end kind.
 	Failed bool
-	// Workspace is this branch's forked workspace ROOT path — the no-auto-merge handle
-	// (the same path surfaced in the Parallel ToolResult text). It is server-side path
-	// text, NOT branch conversation content. Set on the branch_end kind.
-	Workspace string
 
 	// Stop is the branch's terminal stop reason (branch_end) or the run-level stop
 	// (EvParallelEnd; the winner's stop for join=first/judge, zero/omitted for join=all).
@@ -1044,10 +1038,6 @@ type ParallelPayload struct {
 	// BranchIndex for join=first/judge, or -1 for join=all and none-succeeded. Set on
 	// EvParallelEnd only.
 	Winner int
-	// WinnerWorkspace is the PRESERVED winner fork root on EvParallelEnd (the deliverable
-	// handle for join=first/judge); empty for join=all / none-succeeded. Set on
-	// EvParallelEnd only.
-	WinnerWorkspace string
 }
 
 // SchedulePayload is the structured detail carried by the schedule.* events

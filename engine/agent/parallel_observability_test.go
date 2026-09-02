@@ -76,9 +76,6 @@ func TestParallelEmitsObservabilityStreamAll(t *testing.T) {
 			if ev.Parallel.Winner != -1 {
 				t.Fatalf("join=all winner=%d want -1", ev.Parallel.Winner)
 			}
-			if ev.Parallel.WinnerWorkspace != "" {
-				t.Fatalf("join=all winnerWorkspace=%q want empty", ev.Parallel.WinnerWorkspace)
-			}
 			if ev.Parallel.BranchCount != 3 {
 				t.Fatalf("end count=%d want 3", ev.Parallel.BranchCount)
 			}
@@ -88,8 +85,7 @@ func TestParallelEmitsObservabilityStreamAll(t *testing.T) {
 		t.Fatalf("starts=%d ends=%d want 1/1", starts, ends)
 	}
 
-	// Per branch: exactly one branch_start + one branch_end; every branch_end carries a
-	// non-empty fork workspace (the no-auto-merge handle).
+	// Per branch: exactly one branch_start + one branch_end.
 	bstart := map[int]int{}
 	bend := map[int]int{}
 	for _, p := range ps {
@@ -101,9 +97,6 @@ func TestParallelEmitsObservabilityStreamAll(t *testing.T) {
 			}
 		case session.ParallelBranchEnd:
 			bend[p.BranchIndex]++
-			if p.Workspace == "" {
-				t.Fatalf("branch_end idx=%d missing fork workspace", p.BranchIndex)
-			}
 		}
 	}
 	for i := 0; i < 3; i++ {
@@ -114,8 +107,7 @@ func TestParallelEmitsObservabilityStreamAll(t *testing.T) {
 }
 
 // TestParallelEmitsWinnerJudge drives join=judge where the WINNING branch is NOT index 0
-// (the judge picks "beta", task index 1), and asserts parallel.end.Winner carries the REAL
-// branch index (off-by-one guard, plan Q7) with a non-empty preserved WinnerWorkspace.
+// and asserts parallel.end.Winner carries the REAL branch index (off-by-one guard).
 func TestParallelEmitsWinnerJudge(t *testing.T) {
 	childEngine := childEngineWith(&routingBranchProvider{summaries: map[string]string{
 		"alpha": "alpha result",
@@ -150,17 +142,10 @@ func TestParallelEmitsWinnerJudge(t *testing.T) {
 	if end.Winner != 1 {
 		t.Fatalf("winner=%d want 1 (branch beta, the non-zero index)", end.Winner)
 	}
-	if end.WinnerWorkspace == "" {
-		t.Fatalf("judge winner has empty preserved workspace")
-	}
-	// The winner workspace matches branch-2's fork (1-based label, 0-based index 1).
-	if want := lf.root("branch-2"); end.WinnerWorkspace != want {
-		t.Fatalf("winnerWorkspace=%q want %q", end.WinnerWorkspace, want)
-	}
 }
 
 // TestParallelEmitsWinnerFirst drives join=first and asserts parallel.end carries a real
-// winner index + preserved workspace (and Winner is a SUCCEEDING branch).
+// winner index belonging to the succeeding set.
 func TestParallelEmitsWinnerFirst(t *testing.T) {
 	childEngine := childEngineWith(&routingBranchProvider{summaries: map[string]string{
 		"one": "one done", "two": "two done",
@@ -190,19 +175,9 @@ func TestParallelEmitsWinnerFirst(t *testing.T) {
 		t.Fatalf("end join=%q want first", end.Join)
 	}
 	// The first-success winner is decided by completion ORDER, which is genuinely
-	// non-deterministic here (both branches succeed). So rather than pinning a specific
-	// index (race-y), assert the winner is a MEMBER of the succeeding set {0,1} and that
-	// its WinnerWorkspace matches THAT branch's fork root — coupling the reported winner to
-	// its preserved workspace with no race dependence.
+	// non-deterministic here (both branches succeed). Assert membership in {0,1}.
 	if end.Winner != 0 && end.Winner != 1 {
 		t.Fatalf("join=first winner=%d want a succeeding branch index (0 or 1)", end.Winner)
-	}
-	wantRoot := lf.root(fmt.Sprintf("branch-%d", end.Winner+1))
-	if wantRoot == "" {
-		t.Fatalf("winning branch-%d has no recorded fork root", end.Winner+1)
-	}
-	if end.WinnerWorkspace != wantRoot {
-		t.Fatalf("winnerWorkspace=%q want the winning branch's root %q", end.WinnerWorkspace, wantRoot)
 	}
 }
 
@@ -383,9 +358,8 @@ func TestParallelPayloadHasNoContentFields(t *testing.T) {
 	allowed := map[string]bool{
 		"ParentCallID": true, "Kind": true, "Join": true, "BranchCount": true,
 		"BranchIndex": true, "BranchLabel": true, "Goal": true, "ToolName": true,
-		"IsError": true, "ToolCount": true, "Failed": true, "Workspace": true,
+		"IsError": true, "ToolCount": true, "Failed": true,
 		"Stop": true, "Usage": true, "DurationMs": true, "Winner": true,
-		"WinnerWorkspace": true,
 		// ChildID is the branch's child SESSION id ("parallel-<callID>-<i>") — a
 		// HARNESS-derived addressing handle (the CancelChild target, D16), never
 		// branch content: it is composed of the id prefix + the parent call id + the
@@ -542,9 +516,9 @@ func TestParallelBranchCancelledBeforeStartRepresented(t *testing.T) {
 		if end == nil {
 			t.Fatalf("branch %d: missing branch_end (no missing event)", i)
 		}
-		// A cancelled-before-start branch is Failed + StopCancelled with a zero fork
-		// workspace (it never forked) and zero usage/duration/toolcount.
-		if end.Failed && end.Stop == session.StopCancelled && end.Workspace == "" &&
+		// A cancelled-before-start branch is Failed + StopCancelled with zero
+		// usage/duration/toolcount.
+		if end.Failed && end.Stop == session.StopCancelled &&
 			end.ToolCount == 0 && end.Usage == (session.Usage{}) && end.DurationMs == 0 {
 			cancelledBeforeStart++
 		}

@@ -1,7 +1,7 @@
     ifacemethod func (BranchJudge).Judge(ctx context.Context, candidates []BranchSummary, criteria string) (winner int, rationale string, err error)
     ifacemethod func (ChildAskReviewer).Review(ctx context.Context, req ChildAskReviewRequest) (ChildAskReview, error)
     ifacemethod func (Compactor).Compact(ctx context.Context, conv *session.Conversation) (compacted []session.Message, summary string, err error)
-    ifacemethod func (PreservedForkStore).Preserve(root string, cleanup func() error)
+    ifacemethod func (PreservedForkStore).Preserve(handle ArtifactHandle, cleanup func() error)
     ifacemethod func (TokenCounter).Count(text string) int
     ifacemethod func (TokenCounter).CountMessages(msgs []session.Message) int
     method func (*BashStatusTool).Execute(_ context.Context, call session.ToolCall, _ tool.Environment) (session.ToolResult, error)
@@ -27,7 +27,7 @@
     method func (*InspectSubagentTool).Spec() tool.ToolSpec
     method func (*LRUForkReaper).Close()
     method func (*LRUForkReaper).Len() int
-    method func (*LRUForkReaper).Preserve(root string, cleanup func() error)
+    method func (*LRUForkReaper).Preserve(handle ArtifactHandle, cleanup func() error)
     method func (*ParallelTool).Execute(ctx context.Context, call session.ToolCall, env tool.Environment) (session.ToolResult, error)
     method func (*ParallelTool).ExecuteWithParent(ctx context.Context, call session.ToolCall, env tool.Environment, emit func(session.Event), caps parentCaps) (session.ToolResult, error)
     method func (*ParallelTool).MutatesParent(call session.ToolCall) bool
@@ -192,6 +192,7 @@ func WithWinnerReaper(s PreservedForkStore) ParallelOption
 func WithWritableChildEngine(e *Engine) SubagentOption
 func WithWritableEngineFactory(f func(model string) (*Engine, bool)) SubagentOption
 type AgentMeta struct{Name string; Description string; Limits session.Limits; AuthorityCeiling governance.CapabilitySet; WritableAuthorityCeiling governance.CapabilitySet; Managed bool}
+type ArtifactHandle string
 type BashStatusTool struct{}
 type BashTool struct{}
 type BranchJudge interface{Judge(ctx context.Context, candidates []BranchSummary, criteria string) (winner int, rationale string, err error)}
@@ -223,7 +224,7 @@ type ModelRouteCategory struct{Name string; Description string}
 type ModelRouteRequest struct{TaskPrompt string; Categories []ModelRouteCategory; Default string}
 type ParallelOption func(*ParallelTool)
 type ParallelTool struct{}
-type PreservedForkStore interface{Preserve(root string, cleanup func() error)}
+type PreservedForkStore interface{Preserve(handle ArtifactHandle, cleanup func() error)}
 type ReflectionLimits struct{InputBytes int; Events int; Existing int; Candidates int; EvidencePerCandidate int; OutputBytes int; Tokens int; Timeout time.Duration}
 type Run struct{}
 type RunRequest struct{Text string; Parts []session.Content; MaxRunTokensOverride int; ExtraTools []tool.Tool; RunID string; AskIDDiscriminator string}

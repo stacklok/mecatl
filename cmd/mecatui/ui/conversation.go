@@ -779,25 +779,23 @@ type parallelBranch struct {
 	failed     bool
 	stop       string
 	durationMs int64
-	workspace  string
 }
 
 // parallelGroup is the fan-out GROUP projection of ONE Parallel call, keyed by
 // ParentCallID. It holds the run-level facts that have no home on a flat per-branch row —
-// the join strategy, the single winner index (-1 = none/all), the preserved winner fork
-// path, the run-level stop — plus the ordered list of its branches. It is the grouped
+// the join strategy, the single winner index (-1 = none/all), and the run-level
+// stop, plus the ordered list of its branches. It is the grouped
 // analogue of the subagentFleet (which is flat). branches preserves first-seen index order
 // via branchIndex (BranchIndex → slot).
 type parallelGroup struct {
-	parentCallID    string
-	join            string
-	branchCount     int
-	winner          int // -1 until parallel.end resolves a winner (join=all stays -1)
-	winnerWorkspace string
-	stop            string
-	done            bool
-	branches        []parallelBranch
-	branchIndex     map[int]int // BranchIndex → slot in branches
+	parentCallID string
+	join         string
+	branchCount  int
+	winner       int // -1 until parallel.end resolves a winner (join=all stays -1)
+	stop         string
+	done         bool
+	branches     []parallelBranch
+	branchIndex  map[int]int // BranchIndex → slot in branches
 }
 
 // parallelGroups is the insertion-ordered collection of Parallel groups keyed by
@@ -888,7 +886,7 @@ func (c *conversation) parallelBranchTool(msg client.ParallelMsg) {
 // parallelBranchEnd records a branch's resolved terminal stats (done gates them).
 // The child id backfills defensively (branch_start can be missed), only when
 // non-empty.
-func (c *conversation) parallelBranchEnd(parentCallID string, index int, childID string, usage client.Usage, toolCount int, stop string, failed bool, workspace string, durationMs int64) {
+func (c *conversation) parallelBranchEnd(parentCallID string, index int, childID string, usage client.Usage, toolCount int, stop string, failed bool, durationMs int64) {
 	if parentCallID == "" {
 		return
 	}
@@ -901,13 +899,11 @@ func (c *conversation) parallelBranchEnd(parentCallID string, index int, childID
 	br.toolCount = toolCount
 	br.stop = stop
 	br.failed = failed
-	br.workspace = workspace
 	br.durationMs = durationMs
 }
 
-// parallelEnd records the run-level terminal facts on a group: the join, the resolved
-// winner index (-1 = none/all), the preserved winner workspace, and the run stop.
-func (c *conversation) parallelEnd(parentCallID, join string, branchCount, winner int, winnerWorkspace, stop string) {
+// parallelEnd records the run-level terminal facts on a group.
+func (c *conversation) parallelEnd(parentCallID, join string, branchCount, winner int, stop string) {
 	if parentCallID == "" {
 		return
 	}
@@ -918,7 +914,6 @@ func (c *conversation) parallelEnd(parentCallID, join string, branchCount, winne
 		g.branchCount = branchCount
 	}
 	g.winner = winner
-	g.winnerWorkspace = winnerWorkspace
 	g.stop = stop
 }
 

@@ -866,8 +866,8 @@ func branchHumanLabel(g *parallelGroup, index int) string {
 // conversation, not the client), every branch inline (glyph + label + goal +
 // current/last tool + count + usage; the SELECTED row carries the "›" cursor the `x`
 // cancel key addresses, the WINNER row a "★") with its interleaved trace in the Team
-// focus format below its roster line, and the preserved winner fork path. A focused
-// ParentCallID with no matching group reads as a muted note.
+// focus format below its roster line. A focused ParentCallID with no matching
+// group reads as a muted note.
 func renderParallelGroupFocus(th theme.Theme, st parallelState, groups []parallelGroup, hk helpKeys, width, height int) string {
 	muted := th.Style("muted")
 	g := findParallelGroup(groups, st.group)
@@ -918,10 +918,6 @@ func renderParallelGroupFocus(th theme.Theme, st parallelState, groups []paralle
 		}
 		out.WriteString(renderParallelBranchRow(th, br, g.winner, i == cursor, budget))
 		used += 1 + renderParallelBranchTrace(&out, th, r, br, remaining)
-	}
-
-	if g.winnerWorkspace != "" {
-		out.WriteString("\n" + muted.Render(indentWrap("winner fork (preserved): "+sanitizeTerminal(g.winnerWorkspace), budget)))
 	}
 	// The cancel hint shows only while some branch is still cancellable (running with a
 	// known child id); the selection arrows are always live on a populated list. The chords

@@ -387,19 +387,18 @@ const (
 	ParallelBranchStart ParallelKind = "branch_start"
 	// ParallelBranchTool marks one branch's child tool resolving (ToolName/IsError/ToolCount set).
 	ParallelBranchTool ParallelKind = "branch_tool"
-	// ParallelBranchEnd marks one branch finishing (Stop/Usage/DurationMs/Failed/Workspace set).
+	// ParallelBranchEnd marks one branch finishing (Stop/Usage/DurationMs/Failed set).
 	ParallelBranchEnd ParallelKind = "branch_end"
-	// ParallelEnd marks a Parallel run finishing (Join/Winner/WinnerWorkspace/Usage/Stop set).
+	// ParallelEnd marks a Parallel run finishing (Join/Winner/Usage/Stop set).
 	ParallelEnd ParallelKind = "end"
 )
 
 // ParallelMsg is the BOUNDED projection of a Parallel fork-join run, as plain data
 // the ui renders in the ctrl+a Parallel tab. Unlike the FLAT SubagentMsg, a
 // Parallel run is a GROUP: N branches of ONE call (keyed by ParentCallID) sharing a
-// join strategy + a single winner + preserved per-branch fork paths. It carries ids,
-// a goal label, child tool names/counts, usage, stop, duration, the join strategy,
-// the winner index, the fork-root PATHS (handles already in the result text, not
-// branch content) — plus the BOUNDED content previews the server clamp-scrubs per
+// join strategy and a single winner. It carries ids, a goal label, child tool
+// names/counts, usage, stop, duration, the join strategy, and the winner index —
+// plus the BOUNDED content previews the server clamp-scrubs per
 // ADR 0079 (InnerKind/Text/Detail on a branch_tool event), bounded, scrubbed, and
 // client-only (never entering the parent conversation — gauntlet #7).
 // ParentCallID is the group key.
@@ -445,19 +444,17 @@ type ParallelMsg struct {
 	Text      string
 	Detail    string
 	ToolCount int
-	// Failed / Workspace are set on ParallelBranchEnd (Workspace is the branch's fork root).
-	Failed    bool
-	Workspace string
+	// Failed is set on ParallelBranchEnd.
+	Failed bool
 	// Stop is the branch terminal (branch_end) or the run-level stop (end).
 	Stop string
 	// Usage is the branch's cumulative usage (branch_end) or the run total (end).
 	Usage Usage
 	// DurationMs is the branch's wall-clock duration (branch_end).
 	DurationMs int64
-	// Winner / WinnerWorkspace are set on ParallelEnd: the real winning branch index
-	// (-1 for join=all / none-succeeded) and its preserved fork root.
-	Winner          int
-	WinnerWorkspace string
+	// Winner is set on ParallelEnd: the real winning branch index
+	// (-1 for join=all / none-succeeded).
+	Winner int
 }
 
 // ModelRetryMsg is the durable, client-visible failed-step retry lifecycle notice.

@@ -30,18 +30,18 @@ func branchToolPar(parent string, idx int, tool string, isErr bool, count int) c
 	return client.ParallelMsg{Kind: client.ParallelBranchTool, ParentCallID: parent, BranchIndex: idx, ToolName: tool, IsError: isErr, ToolCount: count}
 }
 
-func branchEndPar(parent string, idx int, in, out int64, count int, stop string, failed bool, ws string) client.ParallelMsg {
+func branchEndPar(parent string, idx int, in, out int64, count int, stop string, failed bool, _ string) client.ParallelMsg {
 	return client.ParallelMsg{
 		Kind: client.ParallelBranchEnd, ParentCallID: parent, BranchIndex: idx,
 		Usage: client.Usage{InputTokens: in, OutputTokens: out}, ToolCount: count,
-		Stop: stop, Failed: failed, Workspace: ws, DurationMs: 900,
+		Stop: stop, Failed: failed, DurationMs: 900,
 	}
 }
 
-func endPar(parent, join string, count, winner int, winnerWS, stop string) client.ParallelMsg {
+func endPar(parent, join string, count, winner int, _ string, stop string) client.ParallelMsg {
 	return client.ParallelMsg{
 		Kind: client.ParallelEnd, ParentCallID: parent, Join: join, BranchCount: count,
-		Winner: winner, WinnerWorkspace: winnerWS, Stop: stop,
+		Winner: winner, Stop: stop,
 	}
 }
 
@@ -136,8 +136,8 @@ func TestParallelGroupFocusWinnerHighlight(t *testing.T) {
 	if !strings.Contains(out, "branch-1") || !strings.Contains(out, "branch-2") {
 		t.Errorf("group focus should list all branches inline:\n%s", out)
 	}
-	if !strings.Contains(out, "winner fork (preserved)") || !strings.Contains(out, "/fork/branch-2") {
-		t.Errorf("group focus should show the preserved winner fork path:\n%s", out)
+	if strings.Contains(out, "/fork/branch-2") {
+		t.Errorf("group focus leaked the private winner fork path:\n%s", out)
 	}
 	if !strings.Contains(out, "bounded previews") {
 		t.Errorf("group focus should carry the bounded-previews honesty note:\n%s", out)

@@ -315,13 +315,14 @@ var serviceAccessTable = map[string]ClassificationEntry{
 	"FireNow":        {KindCallerOwned, "authorizes via GetSchedule before manually firing"},
 
 	// --- caller-owned: teams ---
-	"CreateTeam":          {KindCallerOwned, "binds the verified context principal as the team's owner at registration"},
-	"SpawnTeammate":       {KindCallerOwned, "authorizes via the shared lookupTeam (ownsResource) before enrolling a member"},
-	"SendTeammateMessage": {KindCallerOwned, "authorizes via the shared lookupTeam before posting to a member's inbox"},
-	"CancelTeammate":      {KindCallerOwned, "authorizes via the shared lookupTeam before cancelling a member mid-round"},
-	"RunTeam":             {KindCallerOwned, "authorizes via the shared lookupTeam before claiming and driving the team"},
-	"ListTeam":            {KindCallerOwned, "authorizes via the shared lookupTeam before reading the roster/tasks"},
-	"CleanupTeam":         {KindCallerOwned, "authorizes via ownsResource before dropping the registry entry (issue #368 task 06 fix — CleanupTeam previously ignored its ctx)"},
+	"CreateTeam":           {KindCallerOwned, "binds the verified context principal as the team's owner at registration"},
+	"CreateTeamForSession": {KindCallerOwned, "owner-authorizes and exactly reattaches the source session before deriving the team's complete environment"},
+	"SpawnTeammate":        {KindCallerOwned, "authorizes via the shared lookupTeam (ownsResource) before enrolling a member"},
+	"SendTeammateMessage":  {KindCallerOwned, "authorizes via the shared lookupTeam before posting to a member's inbox"},
+	"CancelTeammate":       {KindCallerOwned, "authorizes via the shared lookupTeam before cancelling a member mid-round"},
+	"RunTeam":              {KindCallerOwned, "authorizes via the shared lookupTeam before claiming and driving the team"},
+	"ListTeam":             {KindCallerOwned, "authorizes via the shared lookupTeam before reading the roster/tasks"},
+	"CleanupTeam":          {KindCallerOwned, "authorizes via ownsResource before dropping the registry entry (issue #368 task 06 fix — CleanupTeam previously ignored its ctx)"},
 
 	// --- derived: resolve ownership through an already-classified caller-owned call ---
 	"SessionCapabilities":          {KindDerived, "reads the per-session engine registry keyed on an id the caller only holds from an authorized CreateSession*/GetSession* echo; carries no ctx to re-check"},
