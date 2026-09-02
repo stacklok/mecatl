@@ -154,40 +154,39 @@ Those questions have different owners and may have different storage backends.
 
 ### A generic session-scoped state facility
 
-A restored `Session` should carry a session-scoped state view. The view is
-namespaced and byte-oriented so the session package and storage adapters do not
-need to understand each feature's schema.
+A restored `Session` should carry generic, session-scoped key-value state.
+Stable namespaces isolate component-owned keys so the read ledger and future
+state consumers share one persistence mechanism without sharing schemas.
 
-An illustrative API is:
+This proposal deliberately does not settle the exact Go interface, generic type
+shape, namespace-registration API, or serialization format. Those belong in the
+implementation ADR. The architectural contract is:
 
-```go
-type State interface {
-    Get(ctx context.Context, namespace, key string) (value []byte, found bool, err error)
-    Put(ctx context.Context, namespace, key string, value []byte) error
-    Delete(ctx context.Context, namespace, key string) error
-}
-
-func (s *Session) State() State
-```
-
-The exact names are open, but several properties are required:
-
-- The state handle is already bound to one `SessionID`; callers never supply a
+- The state view is already bound to one `SessionID`; callers never supply a
   second session identity.
-- Namespaces are stable, versioned component identifiers, not Go package names.
-  The ledger might use `file/read-ledger/v1`.
-- Keys and values are opaque to the generic facility. The owning component
-  defines encoding, validation, and corruption handling.
-- `Get` distinguishes absence from backend or decode failure.
+- Components address values by stable, versioned namespace and key.
+- The interface provides exact-key Get, Put, and Delete operations. Whether
+  those operations expose typed values directly is an API-design detail.
+- Components own their value schema, validation, and corruption handling;
+  storage adapters remain schema-agnostic.
+- Get distinguishes absence from storage or decode failure.
 - Operations are context-aware and concurrency-safe because read-only tools may
   execute concurrently.
-- Enumeration is not required for the ledger hot path. Exact-key lookup is the
-  primary operation and permits lazy restoration.
+- Enumeration is not required for the ledger hot path. Exact-key lookup permits
+  lazy restoration where a backend supports it.
 - Session deletion removes every namespace. Session-ID reuse starts empty.
 
 This is intentionally smaller than a general database. Add iteration, bulk
 operations, or transactions only when a real second state consumer requires
 them.
+
+### Session ownership
+
+The `Session` owns and exposes its bound state view; the persistence adapter owns
+the backing storage. The view is attached when a session is created or restored,
+is permanently scoped to that session ID, and cannot be rebound. A child session
+receives new empty state, and copying conversation history does not copy session
+state. Deleting the session removes both its core state and extensible state.
 
 ### Storage ownership
 
@@ -215,7 +214,7 @@ adapter may use replay plus compaction, a generic sidecar, or an eager snapshot
 extension. The ADR must choose deliberately rather than pretending Redis's
 physical layout fits every store.
 
-The ledger component supplies only its namespace and value codec. It has no
+The ledger component supplies only its namespace and value contract. It has no
 Redis client, JSONL format, gRPC client, or backend-specific cleanup code.
 
 The generic state facility may be exposed as an extension of `SessionStore`, or
@@ -387,27 +386,6 @@ must not be a process-local Go pointer, and session reattachment must fail close
 if the identity cannot be reproduced. Choosing that identity belongs in the
 filesystem/grant contract; the generic session-state store merely retains the
 opaque key and value.
-
-### Is extensible state part of the aggregate or attached to it?
-
-The proposal requires session ownership and one storage lifecycle, but the exact
-Go representation remains open. A `Session` may hold a lazy `State` handle, or
-composition may attach a state view while reconstructing it. In either case:
-
-- callers access it through the loaded session, not through `Environment`;
-- the handle is permanently scoped to that session ID;
-- adapters remain behind the session-store boundary; and
-- cloning, adoption, deletion, event-sourced reconstruction, and child-session
-  creation need explicit state semantics.
-
-### Snapshot and event-log reconstruction
-
-The current reference event fold reconstructs core session state from durable
-events. Extensible state introduces a choice: emit state mutations into the
-event log, treat the generic state store as an additional source of truth, or
-support both with explicit precedence. This proposal does not choose among them,
-but a final design must not claim event-log-only reconstruction is complete if
-ledger state is absent.
 
 ## Sequencing
 
