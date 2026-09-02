@@ -18,6 +18,28 @@ import {
 import type { GetCompatibilityInfoResponse } from "./gen/mecatl/v1/harness_pb.js";
 import { HarnessService } from "./gen/mecatl/v1/harness_pb.js";
 
+/** Canonical routing hint for session-bound mecatl requests. It grants no authority. @public */
+export const SESSION_ID_HEADER_NAME = "X-Mecatl-Session-ID";
+
+/**
+ * Returns call options bound to one explicit session without replacing caller headers.
+ *
+ * The binding is a routing hint only; authentication and authorization remain independent.
+ * @public
+ */
+export function withSessionAffinity(sessionId: string, options: CallOptions = {}): CallOptions {
+  const headers = new Headers(options.headers);
+  headers.set(SESSION_ID_HEADER_NAME, sessionId);
+  return { ...options, headers };
+}
+
+function withoutSessionAffinity(options?: CallOptions): CallOptions | undefined {
+  if (options?.headers === undefined) return options;
+  const headers = new Headers(options.headers);
+  headers.delete(SESSION_ID_HEADER_NAME);
+  return { ...options, headers };
+}
+
 /** @public */
 export const SUPPORTED_API_MAJOR = 1;
 
@@ -111,14 +133,15 @@ export function createRawClient(options: RawClientOptions): RawClient {
   let compatibility: Promise<CompatibilityResult> | undefined;
 
   const ensureCompatibility = (callOptions?: CallOptions): Promise<CompatibilityResult> => {
+    const probeOptions = withoutSessionAffinity(callOptions);
     compatibility ??= transport
       .unary(
         HarnessService.method.getCompatibilityInfo,
-        callOptions?.signal,
-        callOptions?.timeoutMs,
-        callOptions?.headers,
+        probeOptions?.signal,
+        probeOptions?.timeoutMs,
+        probeOptions?.headers,
         {},
-        callOptions?.contextValues,
+        probeOptions?.contextValues,
       )
       .then((response) => {
         const info = response.message;

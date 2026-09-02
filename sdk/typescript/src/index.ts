@@ -111,7 +111,13 @@ export {
   textPart,
 } from "./media.js";
 export type { RawClient, RawClientOptions } from "./raw.js";
-export { createRawClient, getRawJson, SUPPORTED_API_MAJOR } from "./raw.js";
+export {
+  createRawClient,
+  getRawJson,
+  SESSION_ID_HEADER_NAME,
+  SUPPORTED_API_MAJOR,
+  withSessionAffinity,
+} from "./raw.js";
 export type {
   PermissionAskResponder,
   PermissionVerdict,
