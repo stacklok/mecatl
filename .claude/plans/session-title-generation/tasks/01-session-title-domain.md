@@ -2,7 +2,7 @@
 id: 01-session-title-domain
 title: Durable session-title lifecycle and accounting
 blocked_by: []
-status: pending
+status: in-progress
 branch: ""
 worktree: ""
 issue: "621"
