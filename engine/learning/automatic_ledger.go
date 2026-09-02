@@ -133,7 +133,10 @@ func (f AutomaticReservationFence) ValidAt(now time.Time) bool {
 
 // AutomaticReservation records one count charge and Tokens token charges.
 // ChargeExpiresAt bounds budget accounting; DedupeExpiresAt may outlive it.
-// AttemptCreated is monotonic and requires ChargeRetained.
+// AttemptCreated is monotonic and records that the current reservation fence was
+// durably consumed to authorize the linked attempt-create boundary. Because the
+// attempt repository is independent, it may be true while create's outcome is
+// uncertain; that conservative charge cannot be reclaimed.
 type AutomaticReservation struct {
 	ID              AutomaticReservationID
 	AttemptID       AttemptID
@@ -216,10 +219,12 @@ func (r AutomaticReservation) validChargeState() bool {
 // they expire again. A reconciler checks AttemptRepository and then retains or
 // reclaims under that fresh fence.
 //
-// Retain records that
-// the linked attempt was created and makes its charge non-reclaimable; later
-// attempt failure, timeout, or abandonment does not refund it. Reclaim is valid
-// only before attempt creation and releases count, token, cooldown, and dedupe
+// Retain consumes the current fence as durable authority for the linked
+// attempt-create boundary and makes its charge non-reclaimable. The caller must
+// retain before AttemptRepository.Create; if create fails or its response is
+// lost, the conservative charge remains and only a same-identity retry may
+// finish creation. Later attempt failure, timeout, or abandonment does not refund
+// it. Reclaim is valid only before create authority is consumed and releases
 // effects atomically. Thus a successor first reassigns an expired uncertain
 // reservation, checks AttemptRepository, then retains or reclaims exactly once.
 // Natural charge, dedupe, and ownership expiry are evaluated against the

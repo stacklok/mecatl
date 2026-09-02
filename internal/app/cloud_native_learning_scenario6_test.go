@@ -26,9 +26,9 @@ import (
 
 type reservationOrderAttemptRepository struct {
 	learning.AttemptRepository
-	ledger learning.AutomaticAdmissionLedger
-	mu     sync.Mutex
-	held   bool
+	ledger   learning.AutomaticAdmissionLedger
+	mu       sync.Mutex
+	retained bool
 }
 
 func (r *reservationOrderAttemptRepository) Create(ctx context.Context, partition learning.AttemptPartition, create learning.AttemptCreate) (learning.AttemptRecord, error) {
@@ -36,16 +36,16 @@ func (r *reservationOrderAttemptRepository) Create(ctx context.Context, partitio
 	if err == nil {
 		reservation, found, getErr := r.ledger.Get(ctx, id)
 		r.mu.Lock()
-		r.held = getErr == nil && found && reservation.Charge == learning.AutomaticChargeHeld && !reservation.AttemptCreated
+		r.retained = getErr == nil && found && reservation.Charge == learning.AutomaticChargeRetained && reservation.AttemptCreated
 		r.mu.Unlock()
 	}
 	return r.AttemptRepository.Create(ctx, partition, create)
 }
 
-func (r *reservationOrderAttemptRepository) sawHeldReservation() bool {
+func (r *reservationOrderAttemptRepository) sawRetainedReservation() bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return r.held
+	return r.retained
 }
 
 func TestCloudNativeLearning_Scenario6_WeightedAdmissionUsesAttemptLifecycle(t *testing.T) {
@@ -155,8 +155,8 @@ func TestCloudNativeLearning_Scenario6_WeightedAdmissionUsesAttemptLifecycle(t *
 		}
 		runtime.Gosched()
 	}
-	if !orderedAttempts.sawHeldReservation() {
-		t.Fatal("durable attempt was created before its global automatic reservation was held")
+	if !orderedAttempts.sawRetainedReservation() {
+		t.Fatal("durable attempt was created before its global automatic charge was retained")
 	}
 	if record.State != learning.AttemptCompleted || record.Outcome != learning.AttemptOutcomeSucceeded || record.ProposalID == "" {
 		t.Fatalf("weighted durable attempt = %+v, want completed success with downstream proposal link", record)

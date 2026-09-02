@@ -4293,10 +4293,9 @@ cooldown and explicit host-requested reflection does not enter this automatic se
 is reassigned with a newer opaque fence without adding a charge. Bounded `DiscoverExpired` is also
 backend-authoritative: local and remote implementations atomically select only held records whose
 fences have expired by backend time and return them under fresh fences. `internal/app/automatic_reservation_reconciliation.go`
-(`automaticReservationReconciler`, `automaticReservationReconciliationLoop`) closes the non-transactional boundary: it reserves before durable
-attempt create, while one Build-owned cancellation-aware joined loop continuously discovers crash
+(`automaticReservationReconciler`, `automaticReservationReconciliationLoop`) closes the non-transactional boundary: it reserves, then atomically retains under the current backend fence before durable attempt create. If an expired-reservation reconciler reclaims first, the stale creator's retain fails and it never reaches `AttemptRepository.Create`; if retain wins, create failure or response loss stays conservatively charged until backend window/retention expiry and a same-identity retry can converge it. One Build-owned cancellation-aware joined loop continuously discovers crash
 orphans, reads the linked `AttemptRepository`, and retains after the attempt is observable or reclaims
-only when no attempt was created. `Built.Close` cancels and joins that loop before borrowed repository
+only when no create authority has already been consumed. `Built.Close` cancels and joins that loop before borrowed repository
 resources close. Retained charges are not refunded by later failure, timeout, or abandonment. The
 local durable document prunes resolved records after dedupe retention and admits at most 512 records
 globally and 128 per opaque principal partition; unresolved saturation fails closed rather than

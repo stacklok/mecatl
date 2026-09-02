@@ -135,10 +135,21 @@ func (r automaticReservationReconciler) reconcileReservation(ctx context.Context
 		}
 		switch reservation.Charge {
 		case learning.AutomaticChargeRetained:
-			if !found {
-				return learning.AutomaticReservation{}, learning.ErrAutomaticReservationState
+			if found {
+				return reservation, nil
 			}
-			return reservation, nil
+			if create == nil {
+				// Retaining consumes create authority before crossing into the
+				// independent attempt repository. An uncertain failed create stays
+				// conservatively charged and a same-identity admission retry may
+				// finish it.
+				return reservation, nil
+			}
+			_, err = r.attempts.Create(ctx, reservation.Principal, *create)
+			if err != nil {
+				return learning.AutomaticReservation{}, err
+			}
+			continue
 		case learning.AutomaticChargeReclaimed:
 			return learning.AutomaticReservation{}, learning.ErrAutomaticReservationState
 		case learning.AutomaticChargeHeld:
@@ -152,8 +163,13 @@ func (r automaticReservationReconciler) reconcileReservation(ctx context.Context
 		} else if create == nil {
 			updated, err = r.ledger.Reclaim(ctx, reservation.ID, reservation.Version, reservation.Fence)
 		} else {
-			_, err = r.attempts.Create(ctx, reservation.Principal, *create)
+			// Consume the current backend fence before attempting the
+			// non-transactional create. A concurrent reclaimer either wins
+			// first and fences this creator out, or observes a retained charge
+			// that cannot be released while create is uncertain.
+			updated, err = r.ledger.Retain(ctx, reservation.ID, reservation.Version, reservation.Fence)
 			if err == nil {
+				reservation = updated
 				continue
 			}
 		}

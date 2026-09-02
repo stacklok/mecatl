@@ -214,6 +214,97 @@ func TestADR_0254_AutomaticReservationsReconcileWithoutExceedingGlobalMaximum(t 
 		}
 	})
 
+	t.Run("failed create keeps conservative charge until same identity retries", func(t *testing.T) {
+		ledger, attempts := automaticRepositories(t, policy)
+		failing := &createFailureRepository{AttemptRepository: attempts}
+		reconciler := automaticReservationReconciler{ledger: ledger, attempts: failing}
+		req := automaticRequestForAttempt(t, create.ID, partition, "digest-primary", policy)
+		if _, err := reconciler.reserveAndCreate(ctx, req, create); !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("failed create error = %v", err)
+		}
+		reservation, found, err := ledger.Get(ctx, req.ID)
+		if err != nil || !found || reservation.Charge != learning.AutomaticChargeRetained {
+			t.Fatalf("failed-create reservation = %+v, found=%v, err=%v", reservation, found, err)
+		}
+		if _, found, err = attempts.Get(ctx, partition, create.ID); err != nil || found {
+			t.Fatalf("failed create attempt found=%v, err=%v", found, err)
+		}
+		replacementPartition, replacement := automaticAttemptFixture(t, "failed-create-replacement")
+		_, err = ledger.Reserve(ctx, automaticRequestForAttempt(t, replacement.ID, replacementPartition, "digest-failed-create-replacement", policy))
+		if !errors.Is(err, learning.ErrAutomaticAdmissionLimit) {
+			t.Fatalf("replacement reserve error = %v, want retained global charge", err)
+		}
+		reconciler.attempts = attempts
+		if _, err = reconciler.reserveAndCreate(ctx, req, create); err != nil {
+			t.Fatalf("same-identity retry: %v", err)
+		}
+		assertOneAttemptAndNoReplacement(ctx, t, attempts, ledger, partition, create.ID, policy)
+	})
+
+	t.Run("reconciler reclaim fences a paused late creator", func(t *testing.T) {
+		clock := automaticconformance.NewClock(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+		ledger, attempts := automaticRepositoriesWithClock(t, policy, clock)
+		paused := &pauseAfterAbsentGetRepository{
+			AttemptRepository: attempts,
+			seenAbsent:        make(chan struct{}),
+			resume:            make(chan struct{}),
+		}
+		reconciler := automaticReservationReconciler{ledger: ledger, attempts: paused}
+		req := automaticRequestForAttempt(t, create.ID, partition, "digest-primary", policy)
+		creatorDone := make(chan error, 1)
+		go func() {
+			_, err := reconciler.reserveAndCreate(ctx, req, create)
+			creatorDone <- err
+		}()
+
+		select {
+		case <-paused.seenAbsent:
+		case <-time.After(time.Second):
+			t.Fatal("creator did not pause after observing the absent attempt")
+		}
+		reservation, found, err := ledger.Get(ctx, req.ID)
+		if err != nil || !found {
+			t.Fatalf("held reservation = %+v, found=%v, err=%v", reservation, found, err)
+		}
+		clock.Set(reservation.Fence.ExpiresAt)
+		expired, err := ledger.DiscoverExpired(ctx, 1)
+		if err != nil || len(expired) != 1 {
+			t.Fatalf("expired reservations = %+v, err=%v", expired, err)
+		}
+		background := automaticReservationReconciler{ledger: ledger, attempts: attempts}
+		resolved, err := background.reconcileReservation(ctx, expired[0], nil)
+		if err != nil || resolved.Charge != learning.AutomaticChargeReclaimed {
+			t.Fatalf("background reclaim = %+v, err=%v", resolved, err)
+		}
+
+		replacementPartition, replacement := automaticAttemptFixture(t, "paused-replacement")
+		replacementReq := automaticRequestForAttempt(t, replacement.ID, replacementPartition, "digest-paused-replacement", policy)
+		if _, err = background.reserveAndCreate(ctx, replacementReq, replacement); err != nil {
+			t.Fatalf("replacement create: %v", err)
+		}
+		close(paused.resume)
+		select {
+		case err = <-creatorDone:
+			if err == nil {
+				t.Fatal("stale creator proceeded after its reservation was reclaimed")
+			}
+		case <-time.After(time.Second):
+			t.Fatal("stale creator did not finish")
+		}
+		if _, found, err = attempts.Get(ctx, partition, create.ID); err != nil || found {
+			t.Fatalf("stale primary attempt found=%v, err=%v", found, err)
+		}
+		page, err := attempts.List(ctx, replacementPartition, learning.AttemptList{})
+		if err != nil || len(page.Records) != 1 || page.Records[0].ID != replacement.ID {
+			t.Fatalf("replacement attempts = %+v, err=%v", page.Records, err)
+		}
+		thirdPartition, third := automaticAttemptFixture(t, "paused-third")
+		_, err = ledger.Reserve(ctx, automaticRequestForAttempt(t, third.ID, thirdPartition, "digest-paused-third", policy))
+		if !errors.Is(err, learning.ErrAutomaticAdmissionLimit) {
+			t.Fatalf("third reserve error = %v, want global limit", err)
+		}
+	})
+
 	t.Run("abandoned created attempt retains charge", func(t *testing.T) {
 		ledger, attempts := automaticRepositories(t, policy)
 		reconciler := automaticReservationReconciler{ledger: ledger, attempts: attempts}
@@ -233,6 +324,32 @@ func TestADR_0254_AutomaticReservationsReconcileWithoutExceedingGlobalMaximum(t 
 	})
 }
 
+type pauseAfterAbsentGetRepository struct {
+	learning.AttemptRepository
+	seenAbsent chan struct{}
+	resume     chan struct{}
+	once       sync.Once
+}
+
+func (r *pauseAfterAbsentGetRepository) Get(ctx context.Context, partition learning.AttemptPartition, id learning.AttemptID) (learning.AttemptRecord, bool, error) {
+	record, found, err := r.AttemptRepository.Get(ctx, partition, id)
+	if err == nil && !found {
+		paused := false
+		r.once.Do(func() {
+			paused = true
+			close(r.seenAbsent)
+		})
+		if paused {
+			select {
+			case <-ctx.Done():
+				return learning.AttemptRecord{}, false, ctx.Err()
+			case <-r.resume:
+			}
+		}
+	}
+	return record, found, err
+}
+
 type reserveResponseLossLedger struct {
 	learning.AutomaticAdmissionLedger
 	lost bool
@@ -245,6 +362,14 @@ func (l *reserveResponseLossLedger) Reserve(ctx context.Context, req learning.Au
 		return learning.AutomaticReservation{}, context.DeadlineExceeded
 	}
 	return reservation, err
+}
+
+type createFailureRepository struct {
+	learning.AttemptRepository
+}
+
+func (*createFailureRepository) Create(context.Context, learning.AttemptPartition, learning.AttemptCreate) (learning.AttemptRecord, error) {
+	return learning.AttemptRecord{}, context.DeadlineExceeded
 }
 
 type createResponseLossRepository struct {

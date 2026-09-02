@@ -1266,8 +1266,7 @@ retain, and reclaim decision. Clients carry only identity, charge demand, and th
 revision; they cannot enlarge limits or age out a charge/fence by submitting policy or wall time.
 Reservation uses the selected
 provider/model token counter for bounded canonical input plus a 4096-token output cap. The ledger
-reserves by deterministic attempt identity before `AttemptRepository.Create`; failed creation is
-reconciled to one retained or reclaimed charge. A Build-owned cancellation-aware worker repeatedly
+reserves by deterministic attempt identity, then consumes the current backend fence by durably retaining the charge before `AttemptRepository.Create`. A reclaimer that wins before retention fences the stale creator out; once retention wins, create failure or response loss leaves a conservative charge until backend window/retention expiry, and only the same deterministic identity may finish creation. A Build-owned cancellation-aware worker repeatedly
 asks the selected local or remote ledger to atomically discover and re-fence a bounded batch of
 expired held reservations, then reads `AttemptRepository`: an existing linked attempt retains the
 charge, while absence reclaims it. `Built.Close` cancels and joins this worker before repository
