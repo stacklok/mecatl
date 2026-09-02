@@ -32,7 +32,7 @@ an editor that spawned it.
 
 ## Build identity and safe diagnostics
 
-Every shipped executable accepts exact top-level `--version` and prints its build id without starting normal configuration or services. Authenticated clients can read the server build identity and sanitized diagnostic display endpoint projections through gRPC `GetServerInfo` or HTTP `GET /v1/info`; these are not connection configuration or instructions. The detailed transport contracts are in [the gRPC API](usage/grpc-api.md) and [the HTTP/SSE API](usage/http-sse-api.md). Mecatui's `/diagnostics` behavior is documented in [the TUI guide](tui.md).
+Every shipped executable accepts exact top-level `--version` and prints its build id without starting normal configuration or services. A nonempty linker stamp is retained exactly (including an explicit `dev`); an unstamped build uses an embedded valid VCS revision as `dev+<12-char-vcs-revision>` (with `.dirty` only for a dirty tree), and unavailable or invalid metadata falls back to `dev`. Ordinary `task build` and `task install` intentionally leave the stamp empty so this source-build form is available; use `BUILD_ID=<value> task build` or `BUILD_ID=<value> task install` for an explicit local/operator stamp. Authenticated clients can read the server build identity and sanitized diagnostic display endpoint projections through gRPC `GetServerInfo` or HTTP `GET /v1/info`; these are not connection configuration or instructions. The detailed transport contracts are in [the gRPC API](usage/grpc-api.md) and [the HTTP/SSE API](usage/http-sse-api.md). Mecatui's `/diagnostics` behavior is documented in [the TUI guide](tui.md).
 
 ---
 

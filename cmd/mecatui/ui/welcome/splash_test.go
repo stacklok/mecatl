@@ -193,19 +193,20 @@ func TestModelLine(t *testing.T) {
 	}
 }
 
-// TestSplashVersionOmittedWhenEmpty asserts a "" Version omits the version line
-// (no bare "mecatui " label), while a set Version includes it.
+// TestSplashVersionOmittedWhenEmpty asserts a resolved development Version renders
+// unchanged, while an empty Version omits the version line.
 func TestSplashVersionOmittedWhenEmpty(t *testing.T) {
 	// A generous height so the (low keep-priority) version line is INCLUDED by the
 	// greedy fit — the omit-when-empty check below is then unambiguous.
-	with := Splash(splashTheme(), splashInfo(false), 100, 60)
-	if !strings.Contains(stripSGR(with), "mecatui v9.9.9-test") {
-		t.Error("a set Version should render the version line at a generous height")
-	}
 	in := splashInfo(false)
+	in.Version = "dev+0123456789ab.dirty"
+	with := Splash(splashTheme(), in, 100, 60)
+	if !strings.Contains(stripSGR(with), "mecatui dev+0123456789ab.dirty") {
+		t.Error("a resolved development Version should render the version line at a generous height")
+	}
 	in.Version = ""
 	without := stripSGR(Splash(splashTheme(), in, 100, 60))
-	if strings.Contains(without, "  mecatui v") {
+	if strings.Contains(without, "  mecatui ") {
 		t.Error("an empty Version must omit the version line")
 	}
 }

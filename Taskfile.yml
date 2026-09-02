@@ -31,9 +31,11 @@ includes:
 
 vars:
   PKG: github.com/stacklok/mecatl
+  # Optional explicit linker stamp. Leave empty for Go's embedded VCS metadata to
+  # produce the source-build identity; release workflows set VERSION for ko directly.
   BUILD_ID:
-    sh: git describe --tags --always --dirty 2>/dev/null || echo dev
-  BUILD_LDFLAGS: -X github.com/stacklok/mecatl/internal/buildinfo.BuildID={{.BUILD_ID}}
+    sh: printf %s "${BUILD_ID:-}"
+  BUILD_LDFLAGS: '{{if .BUILD_ID}}-X github.com/stacklok/mecatl/internal/buildinfo.BuildID={{.BUILD_ID}}{{end}}'
 
 tasks:
   default:

@@ -15,7 +15,7 @@ $ task build
 go build -o bin/mecated ./cmd/mecated
 go build -o bin/mecademo ./cmd/mecademo
 go build -o bin/mecatequi ./cmd/mecatequi
-go build -ldflags "-X main.version=..." -o bin/mecatui ./cmd/mecatui
+go build -o bin/mecatui ./cmd/mecatui
 ```
 
 This produces `bin/mecated` (the server), `bin/mecatui` (the terminal UI),
@@ -28,7 +28,11 @@ $ task install
 ```
 
 `task install` installs `mecated` and `mecatui`; it intentionally skips
-`mecademo`, which is only a demo binary.
+`mecademo`, which is only a demo binary. Both `task build` and `task install`
+leave the linker stamp empty so Go's embedded VCS metadata can produce the
+source-build ID (`dev+<12-char-vcs-revision>[.dirty]`). To stamp an explicit
+release or operator ID instead, run `BUILD_ID=<value> task build` or
+`BUILD_ID=<value> task install`; an explicit `dev` remains `dev`.
 
 The repo is a **Go workspace** (a committed `go.work`) spanning two modules: the
 root (`github.com/stacklok/mecatl`) and the importable core

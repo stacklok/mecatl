@@ -28,8 +28,12 @@ list below; the reading map owns audience routing.
 ## Build identity
 
 All shipped commands share the linker-stamped build identity in
-`internal/buildinfo/buildinfo.go`. Exact top-level `--version` exits before normal
-The server exposes its build identity plus sanitized diagnostic display endpoint projections through authenticated gRPC
+`internal/buildinfo/buildinfo.go`. A nonempty linker stamp is retained exactly,
+including an explicit `dev`; an unstamped source build derives
+`dev+<12-char-vcs-revision>` from Go's embedded build metadata and appends `.dirty`
+only for a dirty tree, falling back to `dev` when that metadata is unavailable or
+invalid. Exact top-level `--version` exits before normal
+startup. The server exposes its build identity plus sanitized diagnostic display endpoint projections through authenticated gRPC
 `GetServerInfo` and HTTP `GET /v1/info?provider_id=<active-provider>`; neither endpoint reads session or workspace
 state, and the provider display projection is available only when the caller supplies its already-known active provider and never triggers discovery or configuration reads. These values are not connection instructions. Mecatui's palette-visible `/diagnostics` converts the exact
 lower-case command into a sanitized report sent through the normal model prompt path;

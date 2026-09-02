@@ -4,10 +4,60 @@ package buildinfo
 import (
 	"fmt"
 	"io"
+	"runtime/debug"
 )
 
-// BuildID defaults for development builds and is overridden with -ldflags -X.
-var BuildID = "dev"
+// BuildID is an optional linker stamp. An empty value lets init derive a source-build
+// identity from embedded VCS metadata.
+var BuildID string
+
+func init() {
+	var settings []debug.BuildSetting
+	if info, ok := debug.ReadBuildInfo(); ok {
+		settings = info.Settings
+	}
+	BuildID = resolveBuildID(BuildID, settings)
+}
+
+// resolveBuildID preserves an explicit nonempty linker stamp, including "dev".
+// For an unstamped source build, it derives a reproducible identifier from Go
+// build metadata.
+func resolveBuildID(buildID string, settings []debug.BuildSetting) string {
+	if buildID != "" {
+		return buildID
+	}
+
+	var revision, modified string
+	for _, setting := range settings {
+		switch setting.Key {
+		case "vcs.revision":
+			revision = setting.Value
+		case "vcs.modified":
+			modified = setting.Value
+		}
+	}
+	if !validRevision(revision) {
+		return "dev"
+	}
+
+	buildID = "dev+" + revision[:12]
+	if modified == "true" {
+		buildID += ".dirty"
+	}
+	return buildID
+}
+
+func validRevision(revision string) bool {
+	if len(revision) < 12 {
+		return false
+	}
+	for _, r := range revision {
+		if ('0' > r || r > '9') && ('a' > r || r > 'f') && ('A' > r || r > 'F') {
+			return false
+		}
+	}
+	return true
+}
 
 // IsVersion reports whether args request the side-effect-free version action.
 func IsVersion(args []string) bool {

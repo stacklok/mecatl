@@ -76,10 +76,13 @@ KO_DOCKER_REPO=ghcr.io/stacklok/mecatl/mecatui task ko:publish:mecatui
 
 The `mecatui` build entry in `.ko.yaml` overrides the distroless base with the
 brood-box wolfi base (`baseImageOverrides`) — brood-box connects over SSH and
-needs a shell, which the distroless static base lacks. The build version is
-stamped into the welcome splash via
-`-X github.com/stacklok/mecatl/internal/buildinfo.Version` (fed from the
-`VERSION` env var through ko's `{{.Env.VERSION}}` ldflag template).
+needs a shell, which the distroless static base lacks. The build ID is stamped
+into the welcome splash via
+`-X github.com/stacklok/mecatl/internal/buildinfo.BuildID`. `VERSION` is optional:
+a nonempty value is retained verbatim as the linker stamp (including `dev`);
+otherwise a valid Go-embedded VCS revision displays as
+`dev+<12-char-vcs-revision>` (with `.dirty` for a dirty tree), and unavailable or
+invalid metadata displays as `dev`.
 
 ---
 

@@ -339,7 +339,8 @@ func runWithOptions(argv []string, options runOptions) error {
 		Mode:      cfg.mode,
 		Resume:    resume,
 		Ctx:       ctx,
-		// Build version for the welcome splash (ldflags-set; "dev" by default).
+		// Build identity for the welcome splash (explicit linker stamp, or a
+		// VCS-derived source-build ID when embedded metadata is available).
 		Version: buildinfo.BuildID,
 		// Suppress the rich welcome splash under --no-banner, --quiet, or a
 		// non-interactive stdin (the OR lives here so config.go stays pure — it owns
