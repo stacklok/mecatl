@@ -46,6 +46,8 @@ In particular, it does not:
 
 - design the initial Redis-backed filesystem from
   [issue #889](https://github.com/stacklok/mecatl/issues/889);
+- change any existing read-before-write, stale-read, create-only, or final-CAS
+  behavior; this proposal changes ownership and wiring only;
 - add POSIX-like filesystem operations such as rename, remove, mkdir, or chmod;
   that is an orthogonal filesystem-interface effort;
 - change Bash behavior or require Bash writes to participate in the ledger;
@@ -54,9 +56,10 @@ In particular, it does not:
 - require every session-state backend to use the same physical representation.
 
 Implementation of this proposal is sequenced **after** the initial Redis-backed
-filesystem. That sequencing lets the first remote content backend establish its
-version and conditional-mutation contract before the harness reorganizes how
-session observations are retained.
+filesystem. The remote filesystem should land without waiting for this software-
+architecture cleanup. Its authoritative version and conditional-mutation
+contract then gives the cleanup a concrete backend against which to validate the
+new ownership boundary.
 
 ## Background: the current shape
 
@@ -296,80 +299,22 @@ Read(path)
 The tool neither sees nor records `FileVersion`. If state persistence fails, the
 operation reports that the content was read but its evidence was not retained.
 
-### Existing-file mutation
+### Mutation behavior
 
-Edit must **not** use the ledger-recording Read operation for its internal
-content fetch; doing so would overwrite the earlier evidence and let Edit
-authorize itself. It calls the decorator's non-recording `ReadVersion` primitive
-to obtain current content and `callerCurrentVersion`, computes the replacement,
-and then calls `ReplaceFile`. The decorator performs the session check and sends
-the earlier ledgered version to the authoritative backend:
-
-```text
-Edit(path)
-  1. decorated Workspace.ReadVersion(path) → content, callerCurrentVersion
-     (does not update the ledger)
-  2. compute newContent
-  3. decorated Workspace.ReplaceFile(path, callerCurrentVersion, newContent)
-
-ReplaceFile(path, callerCurrentVersion, newContent)
-  1. Session.State.Get(ledger namespace, normalized path) → observedVersion
-  2. require observedVersion == callerCurrentVersion
-  3. raw Workspace.ReplaceFile(path, observedVersion, newContent) → newVersion
-  4. Session.State.Put(..., encoded newVersion)
-```
-
-An Edit with no earlier agent-facing Read therefore fails even though Edit is
-allowed to fetch the current contents to construct a replacement. This invariant
-needs an explicit test at the decorator/tool boundary.
-
-Step 2 of `ReplaceFile` catches a file changed since the session's model-visible
-Read. Step 3 is the final CAS and catches a mutation that races after Edit's
-current read. The backend receives the ledgered expected version; the decorator
-does not weaken or emulate its atomicity.
-
-Existing-file Write follows the same path. New-file Write remains create-only;
-a successful `CreateFile` records the returned version in session state.
-
-A post-mutation state-write failure cannot roll back an independently committed
-filesystem mutation. It must therefore report both facts truthfully: content
-changed, but the new observation was not retained. The next mutation will
-normally encounter stale or absent evidence and require another Read.
-
-The existing Workspace return shapes need a small shared error contract to keep
-that honesty behind the decorator. A Read whose content fetch succeeded but
-whose evidence write failed, and a Create/Replace whose content commit succeeded
-but whose evidence write failed, must return typed errors that preserve the
-successful half. The file-tool result mapper can recognize those generic types
-and report both facts; it must not infer commit status from an arbitrary error
-string. This is still transparent protocol enforcement: tools map one outcome,
-rather than sequencing ledger operations themselves.
+Edit and Write retain their existing semantics: prior agent-facing Read is
+required, stale evidence fails, existing-file replacement ends with the raw
+Workspace's authoritative CAS, and new-file Write remains create-only. The
+decorator enforces that protocol without allowing Edit's internal content read
+to update the observation. This proposal changes where the evidence lives and
+where the protocol is enforced, not its behavior.
 
 ## Subagents and shared filesystems
 
-Optimistic concurrency across agents does not require a shared ledger. It
-requires independent observations plus a shared authoritative version source.
-
-```text
-Parent session ── parent ledger ─┐
-                                ├── shared content Workspace
-Child session  ── child ledger ──┘
-```
-
-If the child changes a file from version V1 to V2, the parent's ledger still
-contains V1. Its next Edit or existing-file Write fails when V1 is compared with
-V2, or at the final backend CAS if the mutation races later.
-
-Every child session therefore receives its own state view and its own Workspace
-decorator:
-
-- a direct-write child wraps the shared raw content Workspace with child state;
-- an isolated child wraps its fork Workspace with child state; and
-- ledger entries are neither inherited from the parent nor merged back.
-
-Decorator stacking must be prohibited. A child must wrap the raw content
-Workspace, not the parent's already session-bound decorator, or one read could
-update two sessions' ledgers.
+Today each parent or child session owns an independent ledger, even when agents
+share an authoritative content Workspace. A child mutation therefore leaves the
+parent's earlier observation stale. This proposal preserves that behavior: every
+child receives its own session state and session-bound Workspace decorator;
+ledger state is not inherited or merged.
 
 ## Relationship to scoped resource grants
 
@@ -463,14 +408,6 @@ event log, treat the generic state store as an additional source of truth, or
 support both with explicit precedence. This proposal does not choose among them,
 but a final design must not claim event-log-only reconstruction is complete if
 ledger state is absent.
-
-### State consistency and revisions
-
-A future second state consumer may require compare-and-set, bulk reads, or an
-atomic relationship with core session Save. Those operations should be added
-from demonstrated requirements, not anticipated now. The ledger requires exact
-lookup, durable put, absence/error distinction, concurrency safety, and cleanup;
-that is the initial generic contract.
 
 ## Sequencing
 
