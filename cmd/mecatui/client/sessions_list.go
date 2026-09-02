@@ -174,8 +174,8 @@ func listSessionsFromProto(in []*mecatlv1.SessionSummary) []SessionListItem {
 		reasons := caps.GetReasons()
 		out = append(out, SessionListItem{
 			ID: s.GetSessionId(), ModifiedAt: s.GetModifiedAtUnix(), State: s.GetState(),
-			Turns: s.GetTurns(), ModelID: s.GetModelId(), CreatedAt: s.GetCreatedAtUnix(), Title: s.GetTitle(),
-			TitleProvenance: s.GetTitleProvenance(), TitleMetadata: sessionTitleMsg(s.GetTitleMetadata()),
+			Turns: s.GetTurns(), ModelID: s.GetModelId(), CreatedAt: s.GetCreatedAtUnix(), Title: titleFromSummary(s),
+			TitleProvenance: titleProvenanceFromSummary(s), TitleMetadata: sessionTitleMsg(s.GetTitleMetadata()),
 			Placement: placementFrom(s.GetPlacement()), Kind: SessionKind(s.GetKind()),
 			Relationship: SessionRelationship{
 				ParentSessionID: rel.GetParentSessionId(), CallID: rel.GetCallId(), BranchIndex: branchIndex,
@@ -197,6 +197,22 @@ func listSessionsFromProto(in []*mecatlv1.SessionSummary) []SessionListItem {
 		})
 	}
 	return out
+}
+
+func titleFromSummary(s *mecatlv1.SessionSummary) string {
+	if title := s.GetTitleMetadata().GetTitle(); title != "" {
+		return title
+	}
+	//nolint:staticcheck // compatibility fallback for a pre-SessionTitle server.
+	return s.GetTitle()
+}
+
+func titleProvenanceFromSummary(s *mecatlv1.SessionSummary) string {
+	if provenance := s.GetTitleMetadata().GetProvenance(); provenance != "" {
+		return provenance
+	}
+	//nolint:staticcheck // compatibility fallback for a pre-SessionTitle server.
+	return s.GetTitleProvenance()
 }
 
 // SessionPager fetches one bounded stored-session inventory page.

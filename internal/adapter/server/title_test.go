@@ -243,8 +243,8 @@ func TestListSessionsCarriesTitle(t *testing.T) {
 			t.Fatalf("sessions = %d, want 1", len(resp.GetSessions()))
 		}
 		row := resp.GetSessions()[0]
-		if row.GetTitle() != "List my sessions please" {
-			t.Errorf("gRPC row Title = %q, want %q", row.GetTitle(), "List my sessions please")
+		if row.GetTitleMetadata().GetTitle() != "List my sessions please" {
+			t.Errorf("gRPC row Title = %q, want %q", row.GetTitleMetadata().GetTitle(), "List my sessions please")
 		}
 	})
 	t.Run("HTTP", func(t *testing.T) {
@@ -257,7 +257,7 @@ func TestListSessionsCarriesTitle(t *testing.T) {
 		if len(resp.GetSessions()) != 1 {
 			t.Fatalf("sessions = %d, want 1", len(resp.GetSessions()))
 		}
-		if got := resp.GetSessions()[0].GetTitle(); got != "List my sessions please" {
+		if got := resp.GetSessions()[0].GetTitleMetadata().GetTitle(); got != "List my sessions please" {
 			t.Errorf("HTTP row Title = %q, want %q", got, "List my sessions please")
 		}
 	})
@@ -281,7 +281,7 @@ func TestGetSessionCarriesTitle(t *testing.T) {
 		if err != nil {
 			t.Fatalf("GetSession: %v", err)
 		}
-		if got := resp.GetSession().GetTitle(); got != "Seeded title prompt" {
+		if got := resp.GetSession().GetTitleMetadata().GetTitle(); got != "Seeded title prompt" {
 			t.Errorf("gRPC seeded Title = %q, want %q", got, "Seeded title prompt")
 		}
 	})
@@ -292,7 +292,7 @@ func TestGetSessionCarriesTitle(t *testing.T) {
 		if err != nil {
 			t.Fatalf("GetSession: %v", err)
 		}
-		if got := resp.GetSession().GetTitle(); got != "Lazy fallback prompt" {
+		if got := resp.GetSession().GetTitleMetadata().GetTitle(); got != "Lazy fallback prompt" {
 			t.Errorf("gRPC lazy Title = %q, want %q (derived fallback)", got, "Lazy fallback prompt")
 		}
 		// sess.Title must NOT have been mutated by the GetSession read.

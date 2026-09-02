@@ -200,7 +200,7 @@ func titleGeneratorForSession(cfg Config, reg *providerRegistry) func(server.Pro
 		if !ok {
 			return nil
 		}
-		generator, err := server.NewSessionTitleGenerator(entry.provider, model)
+		generator, err := server.NewSessionTitleGeneratorWithAttribution(entry.provider, providerID, model)
 		if err != nil {
 			return nil
 		}

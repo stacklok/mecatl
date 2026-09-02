@@ -242,14 +242,14 @@ func TestFoldContractDocMatchesSessionFields(t *testing.T) {
 	//     TitleProvenance fallback (seeded from the first genuine EvUserPrompt via
 	//     SetTitle)
 	//   run-scoped (latest segment): Counters
-	//   supplied via SessionMeta (not event-carried): ID, Mode, Limits,
+	//   supplied via SessionMeta (not event-carried): ID, Mode, Limits, TokenUsage,
 	//     EnvironmentRef, Placement, Profile, ProviderID, ModelID, ReasoningEffort,
 	//     DebugMCPServers, DebugMCPTools, DebugTargetFingerprint, Title,
 	//     TitleProvenance, TitleGeneration, Kind, Relationship, CreatedAt
 	//   not-event-carried identity labels: Owner and Authority
 	wantSessionFields := map[string]struct{}{
 		"ID": {}, "State": {}, "Mode": {}, "Conversation": {}, "Limits": {},
-		"Counters": {}, "Usage": {}, "Profile": {}, "EnvironmentRef": {}, "Placement": {},
+		"Counters": {}, "Usage": {}, "TokenUsage": {}, "Profile": {}, "EnvironmentRef": {}, "Placement": {},
 		"ProviderID": {}, "ModelID": {}, "ReasoningEffort": {}, "DebugMCPServers": {}, "DebugMCPTools": {}, "DebugTargetFingerprint": {}, "Kind": {},
 		"Relationship": {}, "CreatedAt": {},
 		"Title": {}, "TitleProvenance": {}, "TitleGeneration": {}, "Owner": {}, "Authority": {},

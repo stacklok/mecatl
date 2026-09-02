@@ -18,7 +18,7 @@ func TestADR_0284_TitleGenerationServerOwnsInputAndModel(t *testing.T) {
 	provider := mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(func(got port.LLMRequest) {
 		request = got
 	})}, mockllm.TextTurn(`{"title":"Fix title generation"}`))
-	generator, err := NewSessionTitleGenerator(provider, "selected-title-model")
+	generator, err := NewSessionTitleGeneratorWithAttribution(provider, "title-provider", "selected-title-model")
 	if err != nil {
 		t.Fatalf("NewSessionTitleGenerator: %v", err)
 	}
@@ -26,6 +26,9 @@ func TestADR_0284_TitleGenerationServerOwnsInputAndModel(t *testing.T) {
 	result := generator.Generate(context.Background(), []string{"the server-owned prompt"})
 	if result.Outcome != session.TitleAttemptSucceeded || result.Title != "Fix title generation" {
 		t.Fatalf("Generate = %#v, want successful generated title", result)
+	}
+	if result.ProviderID != "title-provider" || result.ModelID != "selected-title-model" {
+		t.Fatalf("attribution = %q/%q, want composition-selected title slot", result.ProviderID, result.ModelID)
 	}
 	if provider.Calls() != 1 {
 		t.Fatalf("provider calls = %d, want exactly 1", provider.Calls())

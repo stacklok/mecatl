@@ -749,7 +749,7 @@ func TestSessionManagementGRPCAndHTTPParity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("gRPC RenameSession: %v", err)
 	}
-	if got := grpcRename.GetSession(); got.GetTitle() != "renamed" || got.GetTitleProvenance() != string(session.TitleProvenanceOperator) {
+	if got := grpcRename.GetSession(); got.GetTitleMetadata().GetTitle() != "renamed" || got.GetTitleMetadata().GetProvenance() != string(session.TitleProvenanceOperator) {
 		t.Fatalf("gRPC rename response = %+v", got)
 	}
 	if _, err := grpcServer.DeleteSession(ctx, &mecatlv1.DeleteSessionRequest{SessionId: string(grpcSession.ID)}); err != nil {

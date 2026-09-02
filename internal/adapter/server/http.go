@@ -401,6 +401,8 @@ type sessionResp struct {
 	TitleProvenance string `json:"title_provenance,omitempty"`
 	// TitleMetadata is the bounded source-free title lifecycle projection.
 	TitleMetadata *sessionTitleJSON `json:"title_metadata,omitempty"`
+	// TokenUsage is the canonical durable accounting projection.
+	TokenUsage map[string]tokenUsageJSON `json:"token_usage,omitempty"`
 	// ResolvedModel mirrors the gRPC Session snapshot's resolved_model so the HTTP
 	// read surface is consistent with gRPC GetSession: the EFFECTIVE provider+model
 	// this session resolved to (from Service.ResolvedModel, the composition single
@@ -411,11 +413,10 @@ type sessionResp struct {
 }
 
 type sessionTitleJSON struct {
-	Title           string                     `json:"title"`
-	Provenance      string                     `json:"provenance"`
-	GenerationState string                     `json:"generation_state"`
-	LatestAttempt   *titleAttemptSummaryJSON   `json:"latest_attempt,omitempty"`
-	LatestUsage     *auxiliaryUsageSummaryJSON `json:"latest_usage,omitempty"`
+	Title           string                   `json:"title"`
+	Provenance      string                   `json:"provenance"`
+	GenerationState string                   `json:"generation_state"`
+	LatestAttempt   *titleAttemptSummaryJSON `json:"latest_attempt,omitempty"`
 }
 
 type titleAttemptSummaryJSON struct {
@@ -424,23 +425,23 @@ type titleAttemptSummaryJSON struct {
 	CreatedAtUnix int64  `json:"created_at_unix"`
 }
 
-type auxiliaryUsageSummaryJSON struct {
-	Operation      string `json:"operation"`
-	ProviderID     string `json:"provider_id"`
-	ModelID        string `json:"model_id"`
-	InputTokens    int64  `json:"input_tokens"`
-	OutputTokens   int64  `json:"output_tokens"`
-	RecordedAtUnix int64  `json:"recorded_at_unix"`
-	Outcome        string `json:"outcome"`
+type tokenUsageJSON struct {
+	Total  usageJSON            `json:"total"`
+	Models map[string]usageJSON `json:"models"`
+}
+
+type usageJSON struct {
+	InputTokens      int `json:"input_tokens"`
+	OutputTokens     int `json:"output_tokens"`
+	CacheReadTokens  int `json:"cache_read_tokens"`
+	CacheWriteTokens int `json:"cache_write_tokens"`
+	ReasoningTokens  int `json:"reasoning_tokens"`
 }
 
 func sessionTitleToJSON(p session.TitlePayload) *sessionTitleJSON {
 	out := &sessionTitleJSON{Title: valid(p.Title), Provenance: valid(string(p.Provenance)), GenerationState: valid(string(p.GenerationState))}
 	if p.LatestAttempt != nil {
 		out.LatestAttempt = &titleAttemptSummaryJSON{ID: valid(p.LatestAttempt.ID), Outcome: valid(string(p.LatestAttempt.Outcome)), CreatedAtUnix: p.LatestAttempt.CreatedAt.Unix()}
-	}
-	if p.LatestUsage != nil {
-		out.LatestUsage = &auxiliaryUsageSummaryJSON{Operation: valid(string(p.LatestUsage.Operation)), ProviderID: valid(p.LatestUsage.ProviderID), ModelID: valid(p.LatestUsage.ModelID), InputTokens: int64(p.LatestUsage.Usage.InputTokens), OutputTokens: int64(p.LatestUsage.Usage.OutputTokens), RecordedAtUnix: p.LatestUsage.RecordedAt.Unix(), Outcome: valid(string(p.LatestUsage.Outcome))}
 	}
 	return out
 }
@@ -738,10 +739,27 @@ func (h *HTTPHandler) writeSession(w http.ResponseWriter, status int, sess *sess
 		Title:           valid(title),
 		TitleProvenance: valid(string(sess.TitleProvenance)),
 		TitleMetadata:   sessionTitleToJSON(titlePayload(sess)),
+		TokenUsage:      tokenUsageToJSON(sess.TokenUsage),
 		ResolvedModel:   resolvedModelToJSON(h.svc.ResolvedModel(sess.ID)),
 		Kind:            string(sess.Kind),
 		Relationship:    toProtoSessionRelationship(sess.Relationship),
 	})
+}
+
+func tokenUsageToJSON(in map[session.UsageKind]session.TokenUsage) map[string]tokenUsageJSON {
+	out := make(map[string]tokenUsageJSON, len(in))
+	for kind, bucket := range in {
+		models := make(map[string]usageJSON, len(bucket.Models))
+		for model, usage := range bucket.Models {
+			models[valid(model)] = usageToJSON(usage)
+		}
+		out[string(kind)] = tokenUsageJSON{Total: usageToJSON(bucket.Total), Models: models}
+	}
+	return out
+}
+
+func usageToJSON(usage session.Usage) usageJSON {
+	return usageJSON{InputTokens: usage.InputTokens, OutputTokens: usage.OutputTokens, CacheReadTokens: usage.CacheReadTokens, CacheWriteTokens: usage.CacheWriteTokens, ReasoningTokens: usage.ReasoningTokens}
 }
 
 // maxPromptBodyBytes bounds the POST /prompt request body so an oversized

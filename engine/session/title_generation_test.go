@@ -65,6 +65,9 @@ func TestSessionTitleGeneration_Scenario5_RecordsAuxiliaryUsage(t *testing.T) {
 	if got, want := entries[0].ModelID, "model"; got != want {
 		t.Errorf("model = %q, want %q", got, want)
 	}
+	if got := s.TokenUsage[UsageKindSessionTitle]; got.Total != (Usage{InputTokens: 11, OutputTokens: 7}) || got.Models["openrouter/model"] != got.Total {
+		t.Fatalf("canonical title token usage = %#v, want exact attributed total", got)
+	}
 	if s.Usage != mainUsage {
 		t.Fatalf("main Usage = %#v, want unchanged %#v", s.Usage, mainUsage)
 	}

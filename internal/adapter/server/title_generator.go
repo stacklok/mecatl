@@ -38,33 +38,46 @@ type SessionTitleGenerator interface {
 // sessionTitleGenerator binds the standard implementation to the already
 // selected provider and model.
 type sessionTitleGenerator struct {
-	provider port.LLMProvider
-	model    string
+	provider   port.LLMProvider
+	providerID string
+	model      string
 }
 
 // TitleGenerationResult is the source-free result of one physical title call.
 // The Service owns persistence, lifecycle transitions, and any retry policy.
 type TitleGenerationResult struct {
-	Title     string
-	Outcome   session.TitleAttemptOutcome
-	Usage     session.Usage
-	Err       error
-	Retryable bool
+	Title      string
+	Outcome    session.TitleAttemptOutcome
+	Usage      session.Usage
+	ProviderID string
+	ModelID    string
+	Err        error
+	Retryable  bool
 }
 
 // NewSessionTitleGenerator binds the generator to one composition-selected,
 // provider-scoped provider and resolved model. It accepts no client routing,
 // credentials, store, or session authority.
 func NewSessionTitleGenerator(provider port.LLMProvider, model string) (SessionTitleGenerator, error) {
+	return NewSessionTitleGeneratorWithAttribution(provider, "", model)
+}
+
+// NewSessionTitleGeneratorWithAttribution binds the opaque composition-selected
+// provider/model attribution used by canonical token accounting.
+func NewSessionTitleGeneratorWithAttribution(provider port.LLMProvider, providerID, model string) (SessionTitleGenerator, error) {
 	if provider == nil || strings.TrimSpace(model) == "" {
 		return nil, errTitleGeneratorConfig
 	}
-	return &sessionTitleGenerator{provider: provider, model: model}, nil
+	return &sessionTitleGenerator{provider: provider, providerID: providerID, model: model}, nil
 }
 
 // Generate makes exactly one tool-less direct Stream call. It does not mutate a
 // session; callers decide how a strict result changes durable title lifecycle.
-func (g *sessionTitleGenerator) Generate(ctx context.Context, sources []string) TitleGenerationResult {
+func (g *sessionTitleGenerator) Generate(ctx context.Context, sources []string) (result TitleGenerationResult) {
+	defer func() {
+		result.ProviderID = g.providerID
+		result.ModelID = g.model
+	}()
 	if err := ctx.Err(); err != nil {
 		return TitleGenerationResult{Outcome: session.TitleAttemptInterrupted, Err: err}
 	}

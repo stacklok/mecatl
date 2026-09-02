@@ -29,6 +29,15 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 - **Unified environment and placement identity** — adds `Revision` and `Valid` to `session.EnvironmentRef`, makes that exact `{Kind, ID, Revision}` value the runtime and durable placement identity, and removes the short-lived duplicate `session.PlacementRef`/`PlacementKind` types. Engine-created Subagent, Parallel, and Team child sessions now persist the identity carried by their `tool.Environment`; `port.ScheduleSpec` and `port.SessionDiscoveryMeta` replace workspace paths with the exact private environment identity, with schedules also retaining their trusted placement scope. Changed (breaking, pre-v1 minor).
 
 - **`agent.Run.RetractPermissionAsk`** ([ADR 0294](../docs/adr/0294-session-correlation-and-affinity.md)) — lets a lease-owning host atomically withdraw one still-pending local permission ask without resolving it, emitting the matching retraction before cancellation while leaving an already-durable awaiting snapshot untouched for successor handoff. Added (minor).
+- **Canonical token-usage buckets and title lifecycle projection** — adds
+  `session.UsageKind`/`TokenUsage` and `Session.TokenUsage`, the canonical
+  `main` and `session_title` totals plus opaque model attribution maps. Each
+  total is normalized to the sum of its model entries; legacy snapshots map
+  unattributed usage to `unknown`. `Session.Usage` and its snapshot projection
+  remain dual-written compatibility data. `SessionTitle` is the source-free
+  canonical title lifecycle projection; its nested usage is removed. Added
+  (minor); the retained wire title/provenance fields are deprecated (pre-v1
+  breaking compatibility classification).
 
 - **`tool.TemporaryScope`, `tool.CommandTemporaryScopeRunner`, and `tool.CommandTemporaryScopeStreamer`** ([ADR 0281](../docs/adr/0281-managed-temporary-command-leases.md)) — optional bound-runner capabilities for the closed managed/system temporary-storage scope selection. The capability carries no path or environment value and preserves the existing `CommandRunner` fallback for runners that do not manage temporary storage. Added (minor).
 

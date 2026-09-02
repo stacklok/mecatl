@@ -113,7 +113,6 @@ type TitlePayload struct {
 	Provenance      TitleProvenance
 	GenerationState TitleGenerationState
 	LatestAttempt   *TitleAttempt
-	LatestUsage     *AuxiliaryUsage
 }
 
 // IsSynthesisedSummary reports whether a message's text is a harness-synthesised
@@ -233,6 +232,7 @@ func (s *Session) RecordAuxiliaryUsage(entry AuxiliaryUsage) {
 	}
 	entry.ProviderID = strings.Join(strings.Fields(entry.ProviderID), " ")
 	entry.ModelID = strings.Join(strings.Fields(entry.ModelID), " ")
+	s.recordTokenUsage(UsageKindSessionTitle, modelAttribution(entry.ProviderID, entry.ModelID), entry.Usage)
 	if len(s.auxiliaryUsage) == maxAuxiliaryUsage {
 		s.auxiliaryUsage = append([]AuxiliaryUsage(nil), s.auxiliaryUsage[1:]...)
 	}

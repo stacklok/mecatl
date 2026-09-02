@@ -7037,6 +7037,8 @@ type SessionSummary struct {
 	TitleProvenance session.TitleProvenance
 	// TitleMetadata is the bounded source-free title lifecycle projection.
 	TitleMetadata session.TitlePayload
+	// TokenUsage is the canonical durable accounting ledger for this row.
+	TokenUsage map[session.UsageKind]session.TokenUsage
 	// Placement is bounded display-only placement metadata.
 	Placement session.PlacementMetadata
 	// Owner is the verified caller the session is attributed to.
@@ -7457,6 +7459,7 @@ func (s *Service) ListSessions(ctx context.Context) ([]SessionSummary, error) {
 			summary.Title = DeriveTitle(sess)
 			summary.TitleProvenance = sess.TitleProvenance
 			summary.TitleMetadata = titlePayload(sess)
+			summary.TokenUsage = sess.TokenUsage
 			summary.Placement = sess.Placement
 			// Clone: the row must not carry a live pointer into the loaded
 			// session, or a consumer of the row can rewrite the recorded owner.

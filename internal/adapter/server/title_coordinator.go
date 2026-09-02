@@ -151,7 +151,7 @@ func (c *titleCoordinator) commit(id session.SessionID, attemptID string, result
 	}
 	attempts[len(attempts)-1].Outcome = result.Outcome
 	sess.RestoreTitleMetadata(sess.TitleGeneration, sess.TitleSourcePrompts(), attempts, sess.AuxiliaryUsage())
-	sess.RecordAuxiliaryUsage(session.AuxiliaryUsage{Operation: session.AuxiliaryOperationSessionTitle, Usage: result.Usage, RecordedAt: c.svc.cfg.Now(), Outcome: result.Outcome})
+	sess.RecordAuxiliaryUsage(session.AuxiliaryUsage{Operation: session.AuxiliaryOperationSessionTitle, ProviderID: result.ProviderID, ModelID: result.ModelID, Usage: result.Usage, RecordedAt: c.svc.cfg.Now(), Outcome: result.Outcome})
 
 	switch result.Outcome {
 	case session.TitleAttemptSucceeded:

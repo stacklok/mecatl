@@ -68,6 +68,14 @@ func TestSessionTitleGeneration_Scenario5_AuxiliaryUsageRoundTripAndProjection(t
 	if restored.Usage != (session.Usage{}) {
 		t.Errorf("main Usage = %#v, want zero", restored.Usage)
 	}
+	legacy := Snapshot{ID: "legacy", State: session.StateIdle, Mode: session.ModeDefault, Usage: &session.Usage{InputTokens: 5}}
+	legacyRestored, err := legacy.Restore()
+	if err != nil {
+		t.Fatalf("restore legacy usage: %v", err)
+	}
+	if got := legacyRestored.TokenUsage[session.UsageKindMain]; got.Total.InputTokens != 5 || got.Models["unknown"].InputTokens != 5 {
+		t.Fatalf("legacy token usage = %#v, want unknown attribution", got)
+	}
 }
 
 func equalStrings(got, want []string) bool {
