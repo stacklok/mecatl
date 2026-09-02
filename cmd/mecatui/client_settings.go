@@ -63,11 +63,13 @@ type statusSurfaceTemplates struct {
 	Minimal string `yaml:"minimal"`
 }
 
-// statusCommand is a trusted user-global direct executable selection. It has no
-// environment or working-directory fields: the status source owns both.
+// statusCommand is a trusted user-global direct executable selection. Its
+// PassthroughEnv list is an explicit allowlist; the status source owns the
+// remaining environment and working-directory policy.
 type statusCommand struct {
-	Path string   `yaml:"executable"`
-	Args []string `yaml:"args"`
+	Path           string   `yaml:"executable"`
+	Args           []string `yaml:"args"`
+	PassthroughEnv []string `yaml:"passthrough_env"`
 }
 
 // legacySettings mirrors the keymap: key out of the SERVER-owned operator-tier
@@ -147,6 +149,10 @@ func readClientSettings() (clientSettings, error) {
 	}
 	status, err := decodeStatusCustomization(raw.StatusCustomization)
 	if err != nil {
+		var passthroughErr *statusline.PassthroughEnvError
+		if errors.As(err, &passthroughErr) {
+			return clientSettings{}, fmt.Errorf("parsing %s: %w", path, err)
+		}
 		return clientSettings{}, fmt.Errorf("parsing %s: invalid status_customization configuration", path)
 	}
 	return clientSettings{Keymap: raw.Keymap, StatusCustomization: status}, nil
@@ -185,7 +191,7 @@ func newSource(customization statusCustomization) statusline.Source {
 	if customization.Command != nil {
 		launchDir, _ := os.Getwd()
 		return statusline.NewCommandSource(statusline.Command{
-			Path: customization.Command.Path, Args: customization.Command.Args, LaunchDir: launchDir, RefreshInterval: customization.Interval,
+			Path: customization.Command.Path, Args: customization.Command.Args, PassthroughEnv: customization.Command.PassthroughEnv, LaunchDir: launchDir, RefreshInterval: customization.Interval,
 		})
 	}
 	if customization.Templates == nil {
@@ -227,10 +233,16 @@ func decodeStatusCustomization(raw *statusCustomizationYAML) (*statusCustomizati
 	if raw.Templates != nil && raw.Templates.Header == nil && raw.Templates.Footer == nil {
 		return nil, errors.New("template source has no surface")
 	}
-	if raw.Command != nil && !(statusline.Command{
-		Path: raw.Command.Path, Args: raw.Command.Args,
-	}).Valid() {
-		return nil, errors.New("invalid command")
+	if raw.Command != nil {
+		command := statusline.Command{
+			Path: raw.Command.Path, Args: raw.Command.Args, PassthroughEnv: raw.Command.PassthroughEnv,
+		}
+		if err := command.ValidatePassthroughEnv(); err != nil {
+			return nil, err
+		}
+		if !command.Valid() {
+			return nil, errors.New("invalid command")
+		}
 	}
 	if raw.Templates != nil && (!validStatusSurfaceTemplates(raw.Templates.Header) || !validStatusSurfaceTemplates(raw.Templates.Footer)) {
 		return nil, errors.New("template source has no variant")

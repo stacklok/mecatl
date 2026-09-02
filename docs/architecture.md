@@ -28,8 +28,16 @@ list below; the reading map owns audience routing.
 ## Build identity
 
 All shipped commands share the linker-stamped build identity in
-`internal/buildinfo/buildinfo.go`. Exact top-level `--version` exits before normal
-The server exposes its build identity plus sanitized diagnostic display endpoint projections through authenticated gRPC
+`internal/buildinfo/buildinfo.go`. Ordinary `task build`, `task install`, and
+Taskfile-driven ko builds resolve the source checkout at build time with
+`git describe --tags --match 'v[0-9]*' --always --dirty`; this yields the most
+recent root release tag, commits since it, abbreviated SHA, and an optional dirty
+suffix (for example, `v0.0.22-28-g40a6b3fc6-dirty`). A nonempty `BUILD_ID` stamp
+is retained exactly, including an explicit `dev`. Direct Go or ko builds with no
+stamp never invoke git at runtime: they fall back to Go's embedded VCS metadata as
+`dev+<12-char-vcs-revision>[.dirty]`, or to `dev` if metadata is unavailable or
+invalid. Exact top-level `--version` exits before normal
+startup. The server exposes its build identity plus sanitized diagnostic display endpoint projections through authenticated gRPC
 `GetServerInfo` and HTTP `GET /v1/info?provider_id=<active-provider>`; neither endpoint reads session or workspace
 state, and the provider display projection is available only when the caller supplies its already-known active provider and never triggers discovery or configuration reads. These values are not connection instructions. Mecatui's palette-visible `/diagnostics` converts the exact
 lower-case command into a sanitized report sent through the normal model prompt path;
@@ -507,7 +515,12 @@ cancellation; the UI owns theme resolution, renderer chrome, clipping, and
 alignment. Settings live only in `$XDG_CONFIG_HOME/mecatui/settings.yaml`; a
 remote server or project never selects a local executable. Templates get a
 StatusML-escaped projection, commands get raw JSON on stdin, and StatusML carries
-semantic tokens rather than ANSI/OSC. This preserves `ui` as a pure render layer
+semantic tokens rather than ANSI/OSC. Its command environment retains a fixed
+safe baseline; `passthrough_env` may add only explicitly named user-global values,
+never ambient environment values; reserved baseline and source-owned terminal-dimension
+names are rejected during settings validation. Before StatusML parsing, command output trims only boundary
+ASCII whitespace, so a normal `print` newline is accepted without changing internal
+text. This preserves `ui` as a pure render layer
 while allowing autonomous source updates. Its `/clear` command uses the existing
 create-session RPC to create a new empty session first (preserving the current
 workspace, effective model/reasoning effort, and permission mode), then rebinds

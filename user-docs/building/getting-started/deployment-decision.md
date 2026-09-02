@@ -57,14 +57,14 @@ The cost: you run a process and keep it alive. Durable sessions mean a PV or sha
 
 ## mecak8s
 
-`mecak8s` is a thin peer of `mecated` with Kubernetes-native defaults baked in. It runs two replicas with no PVC: session state lives in Redis, and single-writer enforcement uses `coordination.k8s.io` Leases. The pod is disposable for durable state: on graceful SIGTERM it drains and releases its leases so a survivor can take over immediately; after a crash, a survivor waits for the lease TTL. Interrupted sessions are recoverable from the last persisted Redis snapshot on a later run.
+`mecak8s` runs two replicas by default with no PVC: session state lives in Redis, and single-writer enforcement uses `coordination.k8s.io` Leases. Set `replicaCount: 1` for a supported single-pod deployment when lower resource usage and simpler session routing matter more than high availability. In that mode, planned drains and pod failures can cause downtime; the chart omits the PDB because there is no second pod to protect. The pod is disposable for durable state: on graceful SIGTERM it drains and releases its leases so a successor can take over; after a crash, a successor waits for the lease TTL. Interrupted sessions are recoverable from the last persisted Redis snapshot on a later run.
 
 `mecak8s` inverts `mecated`'s interactive defaults: `--headless` is on and
 `--posture` defaults to `auto`. It is optimized for unattended daemon operation,
 but it can serve interactive remote clients when configured with
 `--headless=false`.
 
-The `deploy/helm/mecak8s/` Helm chart provides the production deployment contract: namespace-scoped RBAC for `leases`, a storage-free agent Deployment (two replicas, no PVC), Service, and PodDisruptionBudget. The production profile does not create Redis and does not ship a general workload NetworkPolicy; the Kind/local profile can create a disposable Redis fixture, and enabling OIDC can render a narrow raw-driver NetworkPolicy. General network isolation remains the cluster policy layer.
+The `deploy/helm/mecak8s/` Helm chart provides the production deployment contract: namespace-scoped RBAC for `leases`, a storage-free agent Deployment (two replicas by default, or one when explicitly configured), Service, and a PodDisruptionBudget for the multi-replica mode. The production profile does not create Redis and does not ship a general workload NetworkPolicy; the Kind/local profile can create a disposable Redis fixture, and enabling OIDC can render a narrow raw-driver NetworkPolicy. General network isolation remains the cluster policy layer.
 
 The cost: Redis is a required dependency — you need a managed Redis or a Redis StatefulSet in-cluster. The ServiceAccount needs `get,create,update,delete` on `leases` in `coordination.k8s.io`. The Prometheus/OTel admin surface and the `perf-mcp` subcommand are dropped (not exposed by `mecak8s`). If you need those or want to keep the operator surface identical to `mecated`, run `mecated` with `--redis-url` is not an option — `mecated` does not expose that flag; the Redis store is wired only by `cmd/mecak8s`.
 

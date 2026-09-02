@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -20,13 +21,29 @@ const maxCommandOutputBytes = 4 << 10
 
 var errCommandOutputLimit = errors.New("status command output limit exceeded")
 
+// PassthroughEnvError reports an invalid passthrough environment name. ReservedName
+// is empty when the value does not match the supported environment-name grammar.
+type PassthroughEnvError struct {
+	ReservedName string
+}
+
+func (e *PassthroughEnvError) Error() string {
+	if e.ReservedName != "" {
+		return fmt.Sprintf("Invalid passthrough_env value. You cannot override reserved variable name %s.", e.ReservedName)
+	}
+	return "Invalid passthrough_env value. Values must match [A-Za-z_][A-Za-z0-9_]*."
+}
+
 // Command is a validated local status command. Path is an absolute executable and
 // Args are passed literally. LaunchDir remains private command-runner state and is
 // never projected into Input.
 type Command struct {
-	Path      string
-	Args      []string
-	LaunchDir string
+	Path string
+	Args []string
+	// PassthroughEnv names additional parent environment variables explicitly
+	// allowed into the command's otherwise fixed environment.
+	PassthroughEnv []string
+	LaunchDir      string
 	// RefreshInterval optionally refreshes an otherwise idle command. Values below
 	// one second are disabled; input changes still use the command debounce.
 	RefreshInterval time.Duration
@@ -41,6 +58,45 @@ func (c Command) Valid() bool {
 		if !validCommandPart(arg) {
 			return false
 		}
+	}
+	return c.ValidatePassthroughEnv() == nil
+}
+
+// ValidatePassthroughEnv reports whether PassthroughEnv has valid names that do
+// not override values owned by the status-command environment.
+func (c Command) ValidatePassthroughEnv() error {
+	for _, name := range c.PassthroughEnv {
+		if !validEnvName(name) {
+			return &PassthroughEnvError{}
+		}
+		if reservedEnvName(name) {
+			return &PassthroughEnvError{ReservedName: name}
+		}
+	}
+	return nil
+}
+
+func reservedEnvName(name string) bool {
+	switch name {
+	case "HOME", "PATH", "TERM", "LANG", "LC_ALL", "COLUMNS", "LINES":
+		return true
+	default:
+		return false
+	}
+}
+
+func validEnvName(name string) bool {
+	if name == "" {
+		return false
+	}
+	for i, r := range name {
+		if r == '_' || r >= 'A' && r <= 'Z' || r >= 'a' && r <= 'z' {
+			continue
+		}
+		if i > 0 && r >= '0' && r <= '9' {
+			continue
+		}
+		return false
 	}
 	return true
 }
@@ -70,7 +126,7 @@ func NewCommandSource(command Command) Source {
 		if err != nil {
 			return renderedStatusLine{line: fallback, err: err}
 		}
-		doc, ok := parse(string(output))
+		doc, ok := parse(strings.Trim(string(output), " \t\n\r\v\f"))
 		if !ok {
 			return renderedStatusLine{line: fallback, err: errors.New("invalid status command output")}
 		}
@@ -99,7 +155,7 @@ func runCommand(ctx context.Context, command Command, input Input) ([]byte, erro
 	}
 	cmd := exec.CommandContext(ctx, command.Path, command.Args...)
 	cmd.Dir = commandCWD(command, input)
-	cmd.Env = commandEnv(input)
+	cmd.Env = commandEnv(command, input)
 	procgroup.Configure(cmd)
 	cmd.WaitDelay = commandDeadline
 	cmd.Stdin = bytes.NewReader(payload)
@@ -122,9 +178,12 @@ func commandCWD(command Command, input Input) string {
 	return command.LaunchDir
 }
 
-func commandEnv(input Input) []string {
-	env := make([]string, 0, 7)
-	for _, key := range []string{"HOME", "PATH", "TERM", "LANG", "LC_ALL"} {
+func commandEnv(command Command, input Input) []string {
+	baseline := []string{"HOME", "PATH", "TERM", "LANG", "LC_ALL"}
+	env := make([]string, 0, len(baseline)+2+len(command.PassthroughEnv))
+	reserved := make(map[string]struct{}, len(baseline)+2)
+	for _, key := range baseline {
+		reserved[key] = struct{}{}
 		if value, ok := os.LookupEnv(key); ok {
 			env = append(env, key+"="+value)
 		}
@@ -134,6 +193,17 @@ func commandEnv(input Input) []string {
 	}
 	if input.Terminal.Rows > 0 {
 		env = append(env, "LINES="+strconv.Itoa(input.Terminal.Rows))
+	}
+	reserved["COLUMNS"] = struct{}{}
+	reserved["LINES"] = struct{}{}
+	for _, key := range command.PassthroughEnv {
+		if _, owned := reserved[key]; owned {
+			continue
+		}
+		reserved[key] = struct{}{}
+		if value, ok := os.LookupEnv(key); ok {
+			env = append(env, key+"="+value)
+		}
 	}
 	return env
 }

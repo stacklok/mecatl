@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -164,7 +165,7 @@ func TestStatusLineCommandEnvironmentIsExactAllowlist(t *testing.T) {
 	t.Setenv("LANG", "C.UTF-8")
 	t.Setenv("LC_ALL", "C")
 	t.Setenv("STATUS_SECRET", "do-not-leak")
-	got := commandEnv(Input{Terminal: Terminal{Cols: 120, Rows: 40}})
+	got := commandEnv(Command{}, Input{Terminal: Terminal{Cols: 120, Rows: 40}})
 	want := map[string]bool{
 		"HOME=/home/operator": true, "PATH=/bin": true, "TERM=xterm-256color": true,
 		"LANG=C.UTF-8": true, "LC_ALL=C": true, "COLUMNS=120": true, "LINES=40": true,
@@ -176,6 +177,48 @@ func TestStatusLineCommandEnvironmentIsExactAllowlist(t *testing.T) {
 		if !want[entry] {
 			t.Fatalf("environment leaked non-allowlisted entry %q", entry)
 		}
+	}
+}
+
+func TestStatusLineCommandEnvironmentPassesExplicitVariables(t *testing.T) {
+	t.Setenv("HOME", "/home/operator")
+	t.Setenv("PATH", "/bin")
+	t.Setenv("TERM", "xterm-256color")
+	t.Setenv("LANG", "C.UTF-8")
+	t.Setenv("LC_ALL", "C")
+	t.Setenv("TMUX", "socket,123,0")
+	t.Setenv("STATUS_EMPTY", "")
+	t.Setenv("COLUMNS", "999")
+	t.Setenv("STATUS_SECRET", "do-not-leak")
+	got := commandEnv(Command{PassthroughEnv: []string{"TMUX", "STATUS_EMPTY", "TMUX", "HOME", "COLUMNS", "MISSING"}}, Input{Terminal: Terminal{Cols: 120, Rows: 40}})
+	want := []string{
+		"HOME=/home/operator", "PATH=/bin", "TERM=xterm-256color", "LANG=C.UTF-8", "LC_ALL=C",
+		"COLUMNS=120", "LINES=40", "TMUX=socket,123,0", "STATUS_EMPTY=",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("environment = %q, want exact environment %q", got, want)
+	}
+}
+
+func TestStatusLineCommandTrimsASCIIOutputBoundary(t *testing.T) {
+	dir := t.TempDir()
+	source := NewCommandSource(Command{Path: "/bin/sh", Args: []string{"-c", `read input; printf ' \t\n<status><footer><text>inside  text</text></footer></status>\r\n\v\f'`}, LaunchDir: dir})
+	t.Cleanup(func() { _ = source.Close(context.Background()) })
+	source.Submit(Input{Terminal: Terminal{FooterAvailCols: 80}})
+	waitStatusChange(t, source)
+	if got, want := statusSurfaceText(source.Latest().Footer), "inside  text"; got != want {
+		t.Fatalf("trimmed command footer = %q, want %q", got, want)
+	}
+}
+
+func TestStatusLineCommandDoesNotTrimNonASCIIOutputBoundary(t *testing.T) {
+	dir := t.TempDir()
+	source := NewCommandSource(Command{Path: "/bin/sh", Args: []string{"-c", `read input; printf '\302\240<status><footer><text>must not render</text></footer></status>'`}, LaunchDir: dir})
+	t.Cleanup(func() { _ = source.Close(context.Background()) })
+	source.Submit(Input{Terminal: Terminal{FooterAvailCols: 80}})
+	waitStatusChange(t, source)
+	if got := statusSurfaceText(source.Latest().Footer); strings.Contains(got, "must not render") {
+		t.Fatalf("non-ASCII boundary whitespace was trimmed: %q", got)
 	}
 }
 

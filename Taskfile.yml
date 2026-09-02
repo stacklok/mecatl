@@ -31,9 +31,16 @@ includes:
 
 vars:
   PKG: github.com/stacklok/mecatl
+  # BUILD_ID is an optional explicit linker stamp. Otherwise, resolve the source
+  # checkout identity at build time; direct Go/ko builds retain the runtime VCS fallback.
   BUILD_ID:
-    sh: git describe --tags --always --dirty 2>/dev/null || echo dev
-  BUILD_LDFLAGS: -X github.com/stacklok/mecatl/internal/buildinfo.BuildID={{.BUILD_ID}}
+    sh: |
+      if [ -n "${BUILD_ID:-}" ]; then
+        printf %s "$BUILD_ID"
+      else
+        git describe --tags --match 'v[0-9]*' --always --dirty 2>/dev/null || printf %s dev
+      fi
+  BUILD_LDFLAGS: '-X github.com/stacklok/mecatl/internal/buildinfo.BuildID={{.BUILD_ID}}'
 
 tasks:
   default:

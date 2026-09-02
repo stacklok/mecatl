@@ -259,9 +259,9 @@ type Deps struct {
 	// It is presentation/control state only; the client adapter owns wire projection.
 	DebugTarget string
 
-	// Version is the mecatui build version, shown on the first-run welcome splash
-	// (e.g. "v0.3.1" or "dev"). Threaded from the shared
-	// internal/buildinfo.BuildID (ldflags-set); "" omits the version line.
+	// Version is the mecatui build identity, shown on the first-run welcome splash
+	// (e.g. "v0.3.1", "dev+0123456789ab", or "dev"). Threaded from the shared
+	// internal/buildinfo.BuildID; "" omits the version line.
 	// Display-only.
 	Version string
 

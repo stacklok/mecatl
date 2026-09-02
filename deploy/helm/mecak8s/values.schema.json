@@ -63,7 +63,7 @@
         "tlsTerminatedUpstream": {"type": "boolean"}
       }
     },
-    "replicaCount": {"type": "integer", "minimum": 2},
+    "replicaCount": {"type": "integer", "minimum": 1},
     "mockProvider": {"type": "boolean"},
     "defaultProvider": {"type": "string", "enum": ["", "openai", "openai-codex", "openrouter", "anthropic", "opencode", "toolhive"]},
     "model": {

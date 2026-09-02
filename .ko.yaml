@@ -12,7 +12,10 @@
 #
 # Build:   KO_DOCKER_REPO=ko.local ko build --local ./cmd/mecated   (or `task ko:build`)
 # Publish: KO_DOCKER_REPO=<registry> ko build --push ./cmd/mecated  (or `task ko:publish`)
-# Build IDs are supplied through VERSION by the Taskfile's shared BUILD_ID value.
+# `task build`, `task install`, and Taskfile-driven ko builds set VERSION from the
+# rooted build-time `git describe --tags --match 'v[0-9]*' --always --dirty` result.
+# Direct ko builds may leave VERSION unset; then runtime uses only embedded VCS metadata.
+# Release workflows set VERSION explicitly.
 
 defaultBaseImage: cgr.dev/chainguard/static@sha256:d6a97eb401cbc7c6d48be76ad81d7899b94303580859d396b52b67bc84ea7345
 
@@ -32,7 +35,7 @@ builds:
       - CGO_ENABLED=0
     ldflags:
       - -s -w
-      - -X github.com/stacklok/mecatl/internal/buildinfo.BuildID={{with index .Env "VERSION"}}{{.}}{{else}}dev{{end}}
+      - '{{with index .Env "VERSION"}}-X github.com/stacklok/mecatl/internal/buildinfo.BuildID={{.}}{{end}}'
   # mecak8s (ADR 0048): the storage-free k8s-native agent binary. Same distroless
   # base + build flags as mecated — it is a thin peer of mecated that composes
   # app.Build with k8s-native defaults (Redis store + k8s lease + drain gate).
@@ -44,12 +47,12 @@ builds:
       - CGO_ENABLED=0
     ldflags:
       - -s -w
-      - -X github.com/stacklok/mecatl/internal/buildinfo.BuildID={{with index .Env "VERSION"}}{{.}}{{else}}dev{{end}}
+      - '{{with index .Env "VERSION"}}-X github.com/stacklok/mecatl/internal/buildinfo.BuildID={{.}}{{end}}'
   # mecatui (issue #302): the optional Bubble Tea TUI binary. It overrides the
   # distroless base with the brood-box wolfi base (see baseImageOverrides above —
   # brood-box connects over SSH and needs a shell) and ships a kodata/agent.yaml
-  # brood-box manifest alongside the binary. The build version is stamped from
-  # VERSION when set, otherwise the template explicitly keeps the `dev` default.
+  # brood-box manifest alongside the binary. VERSION, when nonempty, is retained
+  # verbatim as the explicit linker stamp.
   - id: mecatui
     main: ./cmd/mecatui
     flags:
@@ -58,4 +61,4 @@ builds:
       - CGO_ENABLED=0
     ldflags:
       - -s -w
-      - -X github.com/stacklok/mecatl/internal/buildinfo.BuildID={{with index .Env "VERSION"}}{{.}}{{else}}dev{{end}}
+      - '{{with index .Env "VERSION"}}-X github.com/stacklok/mecatl/internal/buildinfo.BuildID={{.}}{{end}}'

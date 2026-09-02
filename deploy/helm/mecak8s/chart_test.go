@@ -18,6 +18,7 @@ import (
 	"github.com/google/jsonschema-go/jsonschema"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	policyv1 "k8s.io/api/policy/v1"
 	"sigs.k8s.io/yaml"
 
 	mcpadapter "github.com/stacklok/mecatl/internal/adapter/mcp"
@@ -97,6 +98,24 @@ func deploymentFromRender(t *testing.T, rendered string) *appsv1.Deployment {
 		return &deployment
 	}
 	t.Fatal("rendered chart has no Deployment")
+	return nil
+}
+
+func pdbFromRender(t *testing.T, rendered string) *policyv1.PodDisruptionBudget {
+	t.Helper()
+	for _, document := range strings.Split(rendered, "\n---") {
+		var meta struct {
+			Kind string `yaml:"kind"`
+		}
+		if err := yaml.Unmarshal([]byte(document), &meta); err != nil || meta.Kind != "PodDisruptionBudget" {
+			continue
+		}
+		var pdb policyv1.PodDisruptionBudget
+		if err := yaml.Unmarshal([]byte(document), &pdb); err != nil {
+			t.Fatal(err)
+		}
+		return &pdb
+	}
 	return nil
 }
 
@@ -752,6 +771,53 @@ func TestMecak8sHelmChart_ExternalEndpointRequiresNumericPort(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestMecak8sHelmChart_ReplicaCountControlsDisruptionBudget(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		replicaCount string
+		wantPDB      bool
+		wantMinAvail int32
+	}{
+		{name: "single replica", replicaCount: "1", wantPDB: false},
+		{name: "two replicas", replicaCount: "2", wantPDB: true, wantMinAvail: 1},
+		{name: "three replicas", replicaCount: "3", wantPDB: true, wantMinAvail: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			args := append(productionArgs(), "--set", "replicaCount="+tc.replicaCount)
+			rendered, err := helm(t, args...)
+			if err != nil {
+				t.Fatalf("render replica count %s: %v", tc.replicaCount, err)
+			}
+			deployment := deploymentFromRender(t, rendered)
+			if deployment.Spec.Replicas == nil || *deployment.Spec.Replicas != int32(mustParseInt(t, tc.replicaCount)) {
+				t.Fatalf("Deployment replicas = %v, want %s", deployment.Spec.Replicas, tc.replicaCount)
+			}
+			pdb := pdbFromRender(t, rendered)
+			if (pdb != nil) != tc.wantPDB {
+				t.Fatalf("PDB present = %t, want %t", pdb != nil, tc.wantPDB)
+			}
+			if pdb == nil {
+				return
+			}
+			if pdb.Spec.MinAvailable == nil || pdb.Spec.MinAvailable.IntVal != tc.wantMinAvail {
+				t.Fatalf("PDB minAvailable = %v, want %d", pdb.Spec.MinAvailable, tc.wantMinAvail)
+			}
+			if !reflect.DeepEqual(pdb.Spec.Selector, deployment.Spec.Selector) {
+				t.Fatalf("PDB selector = %#v, Deployment selector = %#v", pdb.Spec.Selector, deployment.Spec.Selector)
+			}
+		})
+	}
+}
+
+func mustParseInt(t *testing.T, value string) int {
+	t.Helper()
+	var parsed int
+	if _, err := fmt.Sscan(value, &parsed); err != nil {
+		t.Fatal(err)
+	}
+	return parsed
 }
 
 func TestInvariant_mecak8s_storage_free_restricted_workload(t *testing.T) {
