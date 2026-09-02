@@ -1264,7 +1264,14 @@ revision; they cannot enlarge limits or age out a charge/fence by submitting pol
 Reservation uses the selected
 provider/model token counter for bounded canonical input plus a 4096-token output cap. The ledger
 reserves by deterministic attempt identity before `AttemptRepository.Create`; failed creation is
-reconciled to one retained or reclaimed charge. Failures, timeouts, and abstentions after create
+reconciled to one retained or reclaimed charge. A Build-owned cancellation-aware worker repeatedly
+asks the selected local or remote ledger to atomically discover and re-fence a bounded batch of
+expired held reservations, then reads `AttemptRepository`: an existing linked attempt retains the
+charge, while absence reclaims it. `Built.Close` cancels and joins this worker before repository
+resources close. The local ledger additionally caps durable records at 512 globally and 128 per
+opaque principal partition; resolved entries age out after deduplication retention, while saturation
+by unresolved records fails closed instead of growing the 16 MiB document without bound.
+Failures, timeouts, and abstentions after create
 retain the charge. Hard current-principal intent bypasses cooldown only; authenticated explicit
 reflection remains outside automatic accounting.
 

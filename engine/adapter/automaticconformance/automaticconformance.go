@@ -151,6 +151,34 @@ func Run(t *testing.T, factory Factory) {
 		}
 	})
 
+	t.Run("authoritative discovery reassigns only expired held reservations", func(t *testing.T) {
+		cfg := policy()
+		ledger, clock := newLedger(t, cfg)
+		first := mustReserve(t, ledger, request(t, "discover-first", "a", "1", learning.AdmissionHard, 10, cfg))
+		second := mustReserve(t, ledger, request(t, "discover-second", "b", "2", learning.AdmissionHard, 10, cfg))
+		if got, err := ledger.DiscoverExpired(context.Background(), learning.MaxAutomaticReservationDiscoveryBatch); err != nil || len(got) != 0 {
+			t.Fatalf("live discovery = %+v, err=%v; want empty", got, err)
+		}
+		clock.Set(first.Fence.ExpiresAt)
+		got, err := ledger.DiscoverExpired(context.Background(), 1)
+		if err != nil || len(got) != 1 {
+			t.Fatalf("bounded expired discovery = %+v, err=%v", got, err)
+		}
+		previous := map[learning.AutomaticReservationID]learning.AutomaticReservationFence{
+			first.ID: first.Fence, second.ID: second.Fence,
+		}
+		if got[0].Fence.Generation <= 1 || got[0].Charge != learning.AutomaticChargeHeld {
+			t.Fatalf("discovered reservation was not authoritatively reassigned: new=%+v", got[0])
+		}
+		if _, err = ledger.Retain(context.Background(), got[0].ID, got[0].Version, previous[got[0].ID]); !errors.Is(err, learning.ErrAutomaticReservationFence) {
+			t.Fatalf("old fence retained discovered reservation: %v", err)
+		}
+		remaining, err := ledger.DiscoverExpired(context.Background(), learning.MaxAutomaticReservationDiscoveryBatch)
+		if err != nil || len(remaining) != 1 || remaining[0].ID == got[0].ID {
+			t.Fatalf("second discovery = %+v, err=%v; want the other expired reservation", remaining, err)
+		}
+	})
+
 	t.Run("reclaimed charge releases effects while retained charge ages out", func(t *testing.T) {
 		cfg := withLimits(1, 100, 1, 100)
 		cfg.Cooldown = 10 * time.Minute

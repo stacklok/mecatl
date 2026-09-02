@@ -51,6 +51,25 @@ func (l *AutomaticAdmissionLedger) Get(ctx context.Context, id learning.Automati
 	return record, err == nil, err
 }
 
+func (l *AutomaticAdmissionLedger) DiscoverExpired(ctx context.Context, limit uint32) ([]learning.AutomaticReservation, error) {
+	resp, err := l.client.DiscoverExpiredAutomaticReservations(ctx, &driverv1.DiscoverExpiredAutomaticReservationsRequest{Limit: limit})
+	if err != nil {
+		return nil, automaticStatusToErr(ctx, err)
+	}
+	if len(resp.GetReservations()) > int(learning.MaxAutomaticReservationDiscoveryBatch) {
+		return nil, errors.New("grpcdriver: automatic reservation discovery exceeded bound")
+	}
+	result := make([]learning.AutomaticReservation, 0, len(resp.GetReservations()))
+	for _, wire := range resp.GetReservations() {
+		reservation, decodeErr := automaticReservationFromProto(wire)
+		if decodeErr != nil {
+			return nil, decodeErr
+		}
+		result = append(result, reservation)
+	}
+	return result, nil
+}
+
 func (l *AutomaticAdmissionLedger) Reassign(ctx context.Context, id learning.AutomaticReservationID, expected learning.AutomaticReservationVersion) (learning.AutomaticReservation, error) {
 	resp, err := l.client.ReassignAutomaticReservation(ctx, &driverv1.ReassignAutomaticReservationRequest{
 		Id: string(id), ExpectedVersion: string(expected),

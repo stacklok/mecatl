@@ -51,6 +51,27 @@ func (s *automaticAdmissionLedgerServer) GetAutomaticReservation(ctx context.Con
 	return &driverv1.GetAutomaticReservationResponse{Found: true, Reservation: automaticReservationToProto(reservation)}, nil
 }
 
+func (s *automaticAdmissionLedgerServer) DiscoverExpiredAutomaticReservations(ctx context.Context, req *driverv1.DiscoverExpiredAutomaticReservationsRequest) (*driverv1.DiscoverExpiredAutomaticReservationsResponse, error) {
+	if req.GetLimit() == 0 || req.GetLimit() > learning.MaxAutomaticReservationDiscoveryBatch {
+		return nil, automaticRepositoryStatus(learning.ErrInvalidAutomaticReservation)
+	}
+	reservations, err := s.ledger.DiscoverExpired(ctx, req.GetLimit())
+	if err != nil {
+		return nil, automaticRepositoryStatus(err)
+	}
+	if len(reservations) > int(req.GetLimit()) {
+		return nil, status.Error(codes.Internal, "automatic ledger exceeded discovery bound")
+	}
+	wire := make([]*driverv1.AutomaticReservation, 0, len(reservations))
+	for _, reservation := range reservations {
+		if err = reservation.Validate(); err != nil {
+			return nil, status.Error(codes.Internal, "automatic ledger returned an invalid reservation")
+		}
+		wire = append(wire, automaticReservationToProto(reservation))
+	}
+	return &driverv1.DiscoverExpiredAutomaticReservationsResponse{Reservations: wire}, nil
+}
+
 func (s *automaticAdmissionLedgerServer) ReassignAutomaticReservation(ctx context.Context, req *driverv1.ReassignAutomaticReservationRequest) (*driverv1.AutomaticReservationResponse, error) {
 	if req.GetId() == "" || req.GetExpectedVersion() == "" {
 		return nil, automaticRepositoryStatus(learning.ErrInvalidAutomaticReservation)

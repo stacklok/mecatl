@@ -4,11 +4,76 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
+	"time"
 
 	"github.com/stacklok/mecatl/engine/learning"
 )
 
-const maxAutomaticReconcileAttempts = 8
+const (
+	maxAutomaticReconcileAttempts     = 8
+	defaultAutomaticReconcileInterval = time.Second
+)
+
+type automaticReservationReconciliationLoop struct {
+	cancel context.CancelFunc
+	done   sync.WaitGroup
+}
+
+func newAutomaticReservationReconciliationLoop(parent context.Context, ledger learning.AutomaticAdmissionLedger, attempts learning.AttemptRepository, interval time.Duration, reportError func(error)) *automaticReservationReconciliationLoop {
+	if ledger == nil || attempts == nil {
+		return nil
+	}
+	if interval <= 0 {
+		interval = defaultAutomaticReconcileInterval
+	}
+	ctx, cancel := context.WithCancel(parent)
+	loop := &automaticReservationReconciliationLoop{cancel: cancel}
+	loop.done.Add(1)
+	go func() {
+		defer loop.done.Done()
+		timer := time.NewTimer(0)
+		defer timer.Stop()
+		failed := false
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-timer.C:
+			}
+			reservations, err := ledger.DiscoverExpired(ctx, learning.MaxAutomaticReservationDiscoveryBatch)
+			if err == nil {
+				reconciler := automaticReservationReconciler{ledger: ledger, attempts: attempts}
+				for _, reservation := range reservations {
+					if ctx.Err() != nil {
+						return
+					}
+					if _, reconcileErr := reconciler.reconcileReservation(ctx, reservation, nil); reconcileErr != nil && !errors.Is(reconcileErr, context.Canceled) {
+						err = reconcileErr
+					}
+				}
+			}
+			if err != nil && !failed && reportError != nil && !errors.Is(err, context.Canceled) {
+				reportError(err)
+			}
+			failed = err != nil
+			if err == nil && len(reservations) == int(learning.MaxAutomaticReservationDiscoveryBatch) {
+				timer.Reset(0)
+			} else {
+				timer.Reset(interval)
+			}
+		}
+	}()
+	return loop
+}
+
+func (l *automaticReservationReconciliationLoop) Close() {
+	if l == nil {
+		return
+	}
+	l.cancel()
+	l.done.Wait()
+}
 
 // automaticReservationReconciler closes the non-transactional reservation and
 // attempt-create boundary. Both records use the deterministic attempt identity,

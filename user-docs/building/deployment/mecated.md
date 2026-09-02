@@ -558,7 +558,10 @@ for attempts, staged proposals, learned skills, and—when automatic learning is
 non-off—the automatic admission ledger. The target must implement
 `LearningRepositoryCapabilitiesService` and advertise all required repositories;
 startup rejects an old or partial driver rather than silently keeping any local
-repository or accounting authority. Equal driver targets reuse one Build-owned connection and shutdown
+repository or accounting authority. The automatic-ledger service includes bounded,
+backend-authoritative discovery of expired held reservations; replacement Builds use it to retain
+charges linked to an existing deterministic attempt or reclaim absent attempts without replaying
+admission. Equal driver targets reuse one Build-owned connection and shutdown
 path. Proposal and skill partition keys are opaque hashes on this wire, not raw
 workspace paths or identity claims. The current raw repository RPCs are trusted,
 single-tenant infrastructure only, and may be composed only with `OwnershipEnforced=false`.

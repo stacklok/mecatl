@@ -16,6 +16,7 @@ import "google/protobuf/timestamp.proto";
 service AutomaticAdmissionLedgerService {
   rpc ReserveAutomaticAdmission(AutomaticReservationRequest) returns (AutomaticReservationResponse);
   rpc GetAutomaticReservation(GetAutomaticReservationRequest) returns (GetAutomaticReservationResponse);
+  rpc DiscoverExpiredAutomaticReservations(DiscoverExpiredAutomaticReservationsRequest) returns (DiscoverExpiredAutomaticReservationsResponse);
   rpc ReassignAutomaticReservation(ReassignAutomaticReservationRequest) returns (AutomaticReservationResponse);
   rpc RetainAutomaticReservation(ResolveAutomaticReservationRequest) returns (AutomaticReservationResponse);
   rpc ReclaimAutomaticReservation(ResolveAutomaticReservationRequest) returns (AutomaticReservationResponse);
@@ -83,6 +84,14 @@ message GetAutomaticReservationRequest {
 message GetAutomaticReservationResponse {
   bool found = 1;
   AutomaticReservation reservation = 2;
+}
+
+message DiscoverExpiredAutomaticReservationsRequest {
+  uint32 limit = 1 [(buf.validate.field).uint32 = {gte: 1, lte: 128}];
+}
+
+message DiscoverExpiredAutomaticReservationsResponse {
+  repeated AutomaticReservation reservations = 1 [(buf.validate.field).repeated.max_items = 128];
 }
 
 message ReassignAutomaticReservationRequest {

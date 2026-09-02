@@ -175,7 +175,11 @@ permissions or tools.
 - Automatic learning is off unless an operator explicitly enables `review` or
   `auto`; configuring dream/consolidation intervals does not enable it.
 - Standard non-off composition claims global automatic count/token budgets,
-  cooldown, and deduplication only after its durable ledger is selected. An unwired
+  cooldown, and deduplication only after its durable ledger is selected. A Build-owned
+  joined worker uses local or remote backend-authoritative discovery to reconcile an expired
+  reservation after restart: an existing deterministic attempt retains the charge and absence
+  reclaims it, without replaying admission or creating a duplicate. The local ledger caps durable
+  reservation records at 512 globally and 128 per opaque principal partition. An unwired
   embedding retains the process-local ADR-0114 limitation and must report it honestly.
 - `--learning-store-url` is currently for explicitly trusted single-tenant
   infrastructure only. Its attempt repository must implement bounded worker discovery:

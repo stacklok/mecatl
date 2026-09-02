@@ -119,9 +119,14 @@ disables automatic reflection under that bound; cooldown zero disables only cool
 The window must be 1m–24h. A reservation estimates the selected reflection model's
 bounded canonical input plus a 4096-token output cap and remains consumed after failure,
 timeout, or abstention. Queue-full does not consume it. The deterministic attempt ID binds
-reservation to durable attempt create; a crash before create is reconciled to a reclaimed
-charge, while an observable attempt retains its charge. Local composition stores the ledger
-beside the attempt store, so cooperating processes share global/principal count and token
+reservation to durable attempt create; after its backend-minted fence expires, a Build-owned
+joined reconciler discovers it through either local or remote storage without replaying the original
+admission. A crash before create is reclaimed, while an observable attempt retains its charge.
+Local composition stores the ledger
+beside the attempt store, caps durable reservation records at 512 globally and 128 per opaque
+principal partition, and prunes resolved records after deduplication retention; unresolved
+saturation fails closed instead of growing the bounded document indefinitely. Cooperating processes
+share global/principal count and token
 windows, cooldown, and 24-hour digest deduplication. A configured learning driver must
 advertise and serve the ledger whenever automatic learning is enabled; startup fails rather
 than falling back to per-process accounting. An embedding that does not wire the durable

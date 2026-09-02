@@ -5,16 +5,65 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"path/filepath"
+	"runtime"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/stacklok/mecatl/engine/adapter/automaticconformance"
+	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/wallclock"
 	"github.com/stacklok/mecatl/engine/learning"
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/internal/adapter/attemptstore"
 	"github.com/stacklok/mecatl/internal/adapter/automaticstore"
 )
+
+func TestInvariant_automatic_reservation_reconciliation_is_build_owned_and_joined(t *testing.T) {
+	policy := learning.AutomaticAdmissionPolicy{
+		Window: time.Hour, DedupeWindow: 24 * time.Hour, MaxCount: 1, MaxTokens: 100,
+		MaxCountPerPrincipal: 1, MaxTokensPerPrincipal: 100, ReservationClaimDuration: time.Minute,
+	}
+	ledger, attempts := automaticRepositories(t, policy)
+	blocking := &blockingDiscoveryLedger{AutomaticAdmissionLedger: ledger, entered: make(chan struct{}), exited: make(chan struct{})}
+	loop := newAutomaticReservationReconciliationLoop(context.Background(), blocking, attempts, time.Hour, nil)
+	select {
+	case <-blocking.entered:
+	case <-time.After(time.Second):
+		t.Fatal("reconciliation loop did not start discovery")
+	}
+	closed := make(chan struct{})
+	go func() {
+		loop.Close()
+		close(closed)
+	}()
+	select {
+	case <-closed:
+	case <-time.After(time.Second):
+		t.Fatal("Close did not cancel and join reservation discovery")
+	}
+	select {
+	case <-blocking.exited:
+	default:
+		t.Fatal("Close returned before discovery exited")
+	}
+}
+
+type blockingDiscoveryLedger struct {
+	learning.AutomaticAdmissionLedger
+	entered chan struct{}
+	exited  chan struct{}
+	once    sync.Once
+}
+
+func (l *blockingDiscoveryLedger) DiscoverExpired(ctx context.Context, _ uint32) ([]learning.AutomaticReservation, error) {
+	l.once.Do(func() { close(l.entered) })
+	<-ctx.Done()
+	close(l.exited)
+	return nil, ctx.Err()
+}
 
 func TestADR_0254_AutomaticReservationsReconcileWithoutExceedingGlobalMaximum(t *testing.T) {
 	ctx := context.Background()
@@ -116,6 +165,55 @@ func TestADR_0254_AutomaticReservationsReconcileWithoutExceedingGlobalMaximum(t 
 		}
 	})
 
+	t.Run("replacement Build discovers crash immediately after Reserve and reclaims", func(t *testing.T) {
+		base, ledger, attempts, buildPolicy := automaticBuildRepositories(t)
+		buildPartition, buildCreate := automaticAttemptFixture(t, "build-reserve")
+		req := automaticRequestForAttempt(t, buildCreate.ID, buildPartition, "digest-build-reserve", buildPolicy)
+		reserved, err := ledger.Reserve(ctx, req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !time.Now().After(reserved.Fence.ExpiresAt) {
+			t.Fatalf("crash fixture fence is not expired: %+v", reserved.Fence)
+		}
+		replacement := startAutomaticReplacementBuild(t, base)
+		defer replacement.Close()
+		resolved := waitForAutomaticCharge(t, ledger, req.ID, learning.AutomaticChargeReclaimed)
+		if resolved.AttemptCreated {
+			t.Fatalf("reserve-only crash invented attempt linkage: %+v", resolved)
+		}
+		page, err := attempts.List(ctx, buildPartition, learning.AttemptList{})
+		if err != nil || len(page.Records) != 0 {
+			t.Fatalf("reserve-only replacement created attempts: %+v, err=%v", page.Records, err)
+		}
+	})
+
+	t.Run("replacement Build discovers crash after attempt Create and retains without duplicate", func(t *testing.T) {
+		base, ledger, attempts, buildPolicy := automaticBuildRepositories(t)
+		buildPartition, buildCreate := automaticAttemptFixture(t, "build-create")
+		req := automaticRequestForAttempt(t, buildCreate.ID, buildPartition, "digest-build-create", buildPolicy)
+		reserved, err := ledger.Reserve(ctx, req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err = attempts.Create(ctx, buildPartition, buildCreate); err != nil {
+			t.Fatal(err)
+		}
+		if !time.Now().After(reserved.Fence.ExpiresAt) {
+			t.Fatalf("crash fixture fence is not expired: %+v", reserved.Fence)
+		}
+		replacement := startAutomaticReplacementBuild(t, base)
+		defer replacement.Close()
+		resolved := waitForAutomaticCharge(t, ledger, req.ID, learning.AutomaticChargeRetained)
+		if !resolved.AttemptCreated {
+			t.Fatalf("post-create crash did not retain linkage: %+v", resolved)
+		}
+		page, err := attempts.List(ctx, buildPartition, learning.AttemptList{})
+		if err != nil || len(page.Records) != 1 || page.Records[0].ID != buildCreate.ID {
+			t.Fatalf("replacement attempts = %+v, err=%v; want one %q", page.Records, err, buildCreate.ID)
+		}
+	})
+
 	t.Run("abandoned created attempt retains charge", func(t *testing.T) {
 		ledger, attempts := automaticRepositories(t, policy)
 		reconciler := automaticReservationReconciler{ledger: ledger, attempts: attempts}
@@ -163,10 +261,46 @@ func (r *createResponseLossRepository) Create(ctx context.Context, partition lea
 	return record, err
 }
 
+func automaticBuildRepositories(t *testing.T) (string, learning.AutomaticAdmissionLedger, learning.AttemptRepository, learning.AutomaticAdmissionPolicy) {
+	t.Helper()
+	base := t.TempDir()
+	policy, err := automaticAdmissionPolicy(defaultLearningAutomaticConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	clock := automaticconformance.NewClock(time.Now().UTC().Add(-2 * policy.ReservationClaimDuration))
+	ledger, err := automaticstore.New(filepath.Join(base, "automatic-admission"), policy, clock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	attempts, err := attemptstore.New(filepath.Join(base, "learning-attempts"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return base, ledger, attempts, policy
+}
+
+func startAutomaticReplacementBuild(t *testing.T, base string) *Built {
+	t.Helper()
+	built, err := Build(context.Background(), Config{
+		Model: "mock", Workspace: t.TempDir(), NoSoul: true, LearningMode: learning.Review,
+		UserModelDir: base, MemoryDir: t.TempDir(), MockProvider: mockllm.New(mockllm.TextTurn("unused")),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return built
+}
+
 func automaticRepositories(t *testing.T, policy learning.AutomaticAdmissionPolicy) (learning.AutomaticAdmissionLedger, learning.AttemptRepository) {
 	t.Helper()
+	return automaticRepositoriesWithClock(t, policy, wallclock.Clock{})
+}
+
+func automaticRepositoriesWithClock(t *testing.T, policy learning.AutomaticAdmissionPolicy, clock port.Clock) (learning.AutomaticAdmissionLedger, learning.AttemptRepository) {
+	t.Helper()
 	root := t.TempDir()
-	ledger, err := automaticstore.New(root+"/ledger", policy, wallclock.Clock{})
+	ledger, err := automaticstore.New(root+"/ledger", policy, clock)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -175,6 +309,23 @@ func automaticRepositories(t *testing.T, policy learning.AutomaticAdmissionPolic
 		t.Fatal(err)
 	}
 	return ledger, attempts
+}
+
+func waitForAutomaticCharge(t *testing.T, ledger learning.AutomaticAdmissionLedger, id learning.AutomaticReservationID, want learning.AutomaticChargeDisposition) learning.AutomaticReservation {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		reservation, found, err := ledger.Get(context.Background(), id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if found && reservation.Charge == want {
+			return reservation
+		}
+		runtime.Gosched()
+	}
+	t.Fatalf("reservation %q did not converge to %q", id, want)
+	return learning.AutomaticReservation{}
 }
 
 func automaticAttemptFixture(t *testing.T, key string) (learning.AttemptPartition, learning.AttemptCreate) {

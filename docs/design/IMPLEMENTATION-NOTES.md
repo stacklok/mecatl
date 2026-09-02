@@ -4290,10 +4290,17 @@ durable local document persists the policy revision and refuses a differently co
 while the driver protocol exposes neither client policy nor client time. One atomic admission applies
 global and opaque-principal count/token windows, global digest deduplication, and weighted cooldown; hard admission bypasses only
 cooldown and explicit host-requested reflection does not enter this automatic seam. Expired ownership
-is reassigned with a newer opaque fence without adding a charge. `internal/app/automatic_reservation_reconciliation.go`
-(`automaticReservationReconciler`) closes the non-transactional boundary: it reserves before durable
-attempt create, retains after the attempt is observable, and reclaims only when no attempt was created.
-Retained charges are not refunded by later failure, timeout, or abandonment.
+is reassigned with a newer opaque fence without adding a charge. Bounded `DiscoverExpired` is also
+backend-authoritative: local and remote implementations atomically select only held records whose
+fences have expired by backend time and return them under fresh fences. `internal/app/automatic_reservation_reconciliation.go`
+(`automaticReservationReconciler`, `automaticReservationReconciliationLoop`) closes the non-transactional boundary: it reserves before durable
+attempt create, while one Build-owned cancellation-aware joined loop continuously discovers crash
+orphans, reads the linked `AttemptRepository`, and retains after the attempt is observable or reclaims
+only when no attempt was created. `Built.Close` cancels and joins that loop before borrowed repository
+resources close. Retained charges are not refunded by later failure, timeout, or abandonment. The
+local durable document prunes resolved records after dedupe retention and admits at most 512 records
+globally and 128 per opaque principal partition; unresolved saturation fails closed rather than
+allowing held orphans to grow the 16 MiB document indefinitely.
 
 `internal/adapter/automaticstore/store.go` is the local cooperating-process backend: every operation
 reloads one bounded, content-free document under a stable flock and crash-safe atomic replace, so

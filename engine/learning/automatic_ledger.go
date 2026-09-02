@@ -12,7 +12,12 @@ import (
 	"time"
 )
 
-const MaxAutomaticReservationIDBytes = 96
+const (
+	MaxAutomaticReservationIDBytes             = 96
+	MaxAutomaticReservationDiscoveryBatch      = 128
+	MaxAutomaticReservationRecords             = 512
+	MaxAutomaticReservationRecordsPerPrincipal = 128
+)
 
 var (
 	ErrInvalidAutomaticReservation  = errors.New("learning: invalid automatic reservation")
@@ -202,7 +207,16 @@ func (r AutomaticReservation) validChargeState() bool {
 // returns ErrAutomaticReservationFence, both without a write. Reassign accepts
 // only a held reservation at or after backend-clock fence expiry, mints its new
 // expiry from the original ClaimDuration, advances generation, and never adds a
-// second count/token charge. Retain records that
+// second count/token charge. DiscoverExpired is the backend-authoritative
+// recovery claim: it atomically selects at most limit held reservations whose
+// fences have expired according to backend time, reassigns each under a fresh
+// fence, and returns only those successfully claimed by this caller. A zero or
+// over-maximum limit is invalid. The returned order is stable but carries no
+// durable cursor; newly live fences naturally exclude claimed records until
+// they expire again. A reconciler checks AttemptRepository and then retains or
+// reclaims under that fresh fence.
+//
+// Retain records that
 // the linked attempt was created and makes its charge non-reclaimable; later
 // attempt failure, timeout, or abandonment does not refund it. Reclaim is valid
 // only before attempt creation and releases count, token, cooldown, and dedupe
@@ -210,9 +224,14 @@ func (r AutomaticReservation) validChargeState() bool {
 // reservation, checks AttemptRepository, then retains or reclaims exactly once.
 // Natural charge, dedupe, and ownership expiry are evaluated against the
 // backend-owned clock; callers cannot accelerate any transition with skew.
+// Implementations retain at most MaxAutomaticReservationRecords globally and
+// MaxAutomaticReservationRecordsPerPrincipal in one opaque principal partition.
+// Resolved records may be removed only after dedupe expiry; unresolved saturation
+// fails closed with ErrAutomaticAdmissionLimit rather than evicting held work.
 type AutomaticAdmissionLedger interface {
 	Reserve(context.Context, AutomaticReservationRequest) (AutomaticReservation, error)
 	Get(context.Context, AutomaticReservationID) (AutomaticReservation, bool, error)
+	DiscoverExpired(context.Context, uint32) ([]AutomaticReservation, error)
 	Reassign(context.Context, AutomaticReservationID, AutomaticReservationVersion) (AutomaticReservation, error)
 	Retain(context.Context, AutomaticReservationID, AutomaticReservationVersion, AutomaticReservationFence) (AutomaticReservation, error)
 	Reclaim(context.Context, AutomaticReservationID, AutomaticReservationVersion, AutomaticReservationFence) (AutomaticReservation, error)

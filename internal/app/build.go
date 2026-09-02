@@ -1799,6 +1799,13 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		return nil, err
 	}
 	logMCPInventory(ctx, cfg.diag(), mcpInventory)
+	reservations := newAutomaticReservationReconciliationLoop(ctx, assets.automaticAdmissionLedger, assets.attemptRepository, defaultAutomaticReconcileInterval, func(error) {
+		cfg.diag().Log(ctx, port.LevelWarn, "durable automatic reservation reconciliation unavailable")
+	})
+	if reservations != nil {
+		previousClose := mcpClose
+		mcpClose = func() { reservations.Close(); previousClose() }
+	}
 	attempts := startAttemptRecovery(ctx, cfg, reg, store, eventLog, assets.attemptRepository, assets.reflectionRepository, assets)
 	if attempts != nil {
 		previousClose := mcpClose

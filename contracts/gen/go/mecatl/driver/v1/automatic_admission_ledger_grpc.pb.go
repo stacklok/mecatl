@@ -27,11 +27,12 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	AutomaticAdmissionLedgerService_ReserveAutomaticAdmission_FullMethodName    = "/mecatl.driver.v1.AutomaticAdmissionLedgerService/ReserveAutomaticAdmission"
-	AutomaticAdmissionLedgerService_GetAutomaticReservation_FullMethodName      = "/mecatl.driver.v1.AutomaticAdmissionLedgerService/GetAutomaticReservation"
-	AutomaticAdmissionLedgerService_ReassignAutomaticReservation_FullMethodName = "/mecatl.driver.v1.AutomaticAdmissionLedgerService/ReassignAutomaticReservation"
-	AutomaticAdmissionLedgerService_RetainAutomaticReservation_FullMethodName   = "/mecatl.driver.v1.AutomaticAdmissionLedgerService/RetainAutomaticReservation"
-	AutomaticAdmissionLedgerService_ReclaimAutomaticReservation_FullMethodName  = "/mecatl.driver.v1.AutomaticAdmissionLedgerService/ReclaimAutomaticReservation"
+	AutomaticAdmissionLedgerService_ReserveAutomaticAdmission_FullMethodName            = "/mecatl.driver.v1.AutomaticAdmissionLedgerService/ReserveAutomaticAdmission"
+	AutomaticAdmissionLedgerService_GetAutomaticReservation_FullMethodName              = "/mecatl.driver.v1.AutomaticAdmissionLedgerService/GetAutomaticReservation"
+	AutomaticAdmissionLedgerService_DiscoverExpiredAutomaticReservations_FullMethodName = "/mecatl.driver.v1.AutomaticAdmissionLedgerService/DiscoverExpiredAutomaticReservations"
+	AutomaticAdmissionLedgerService_ReassignAutomaticReservation_FullMethodName         = "/mecatl.driver.v1.AutomaticAdmissionLedgerService/ReassignAutomaticReservation"
+	AutomaticAdmissionLedgerService_RetainAutomaticReservation_FullMethodName           = "/mecatl.driver.v1.AutomaticAdmissionLedgerService/RetainAutomaticReservation"
+	AutomaticAdmissionLedgerService_ReclaimAutomaticReservation_FullMethodName          = "/mecatl.driver.v1.AutomaticAdmissionLedgerService/ReclaimAutomaticReservation"
 )
 
 // AutomaticAdmissionLedgerServiceClient is the client API for AutomaticAdmissionLedgerService service.
@@ -40,6 +41,7 @@ const (
 type AutomaticAdmissionLedgerServiceClient interface {
 	ReserveAutomaticAdmission(ctx context.Context, in *AutomaticReservationRequest, opts ...grpc.CallOption) (*AutomaticReservationResponse, error)
 	GetAutomaticReservation(ctx context.Context, in *GetAutomaticReservationRequest, opts ...grpc.CallOption) (*GetAutomaticReservationResponse, error)
+	DiscoverExpiredAutomaticReservations(ctx context.Context, in *DiscoverExpiredAutomaticReservationsRequest, opts ...grpc.CallOption) (*DiscoverExpiredAutomaticReservationsResponse, error)
 	ReassignAutomaticReservation(ctx context.Context, in *ReassignAutomaticReservationRequest, opts ...grpc.CallOption) (*AutomaticReservationResponse, error)
 	RetainAutomaticReservation(ctx context.Context, in *ResolveAutomaticReservationRequest, opts ...grpc.CallOption) (*AutomaticReservationResponse, error)
 	ReclaimAutomaticReservation(ctx context.Context, in *ResolveAutomaticReservationRequest, opts ...grpc.CallOption) (*AutomaticReservationResponse, error)
@@ -67,6 +69,16 @@ func (c *automaticAdmissionLedgerServiceClient) GetAutomaticReservation(ctx cont
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(GetAutomaticReservationResponse)
 	err := c.cc.Invoke(ctx, AutomaticAdmissionLedgerService_GetAutomaticReservation_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *automaticAdmissionLedgerServiceClient) DiscoverExpiredAutomaticReservations(ctx context.Context, in *DiscoverExpiredAutomaticReservationsRequest, opts ...grpc.CallOption) (*DiscoverExpiredAutomaticReservationsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DiscoverExpiredAutomaticReservationsResponse)
+	err := c.cc.Invoke(ctx, AutomaticAdmissionLedgerService_DiscoverExpiredAutomaticReservations_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -109,6 +121,7 @@ func (c *automaticAdmissionLedgerServiceClient) ReclaimAutomaticReservation(ctx 
 type AutomaticAdmissionLedgerServiceServer interface {
 	ReserveAutomaticAdmission(context.Context, *AutomaticReservationRequest) (*AutomaticReservationResponse, error)
 	GetAutomaticReservation(context.Context, *GetAutomaticReservationRequest) (*GetAutomaticReservationResponse, error)
+	DiscoverExpiredAutomaticReservations(context.Context, *DiscoverExpiredAutomaticReservationsRequest) (*DiscoverExpiredAutomaticReservationsResponse, error)
 	ReassignAutomaticReservation(context.Context, *ReassignAutomaticReservationRequest) (*AutomaticReservationResponse, error)
 	RetainAutomaticReservation(context.Context, *ResolveAutomaticReservationRequest) (*AutomaticReservationResponse, error)
 	ReclaimAutomaticReservation(context.Context, *ResolveAutomaticReservationRequest) (*AutomaticReservationResponse, error)
@@ -127,6 +140,9 @@ func (UnimplementedAutomaticAdmissionLedgerServiceServer) ReserveAutomaticAdmiss
 }
 func (UnimplementedAutomaticAdmissionLedgerServiceServer) GetAutomaticReservation(context.Context, *GetAutomaticReservationRequest) (*GetAutomaticReservationResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetAutomaticReservation not implemented")
+}
+func (UnimplementedAutomaticAdmissionLedgerServiceServer) DiscoverExpiredAutomaticReservations(context.Context, *DiscoverExpiredAutomaticReservationsRequest) (*DiscoverExpiredAutomaticReservationsResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method DiscoverExpiredAutomaticReservations not implemented")
 }
 func (UnimplementedAutomaticAdmissionLedgerServiceServer) ReassignAutomaticReservation(context.Context, *ReassignAutomaticReservationRequest) (*AutomaticReservationResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ReassignAutomaticReservation not implemented")
@@ -191,6 +207,24 @@ func _AutomaticAdmissionLedgerService_GetAutomaticReservation_Handler(srv interf
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(AutomaticAdmissionLedgerServiceServer).GetAutomaticReservation(ctx, req.(*GetAutomaticReservationRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _AutomaticAdmissionLedgerService_DiscoverExpiredAutomaticReservations_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DiscoverExpiredAutomaticReservationsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AutomaticAdmissionLedgerServiceServer).DiscoverExpiredAutomaticReservations(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AutomaticAdmissionLedgerService_DiscoverExpiredAutomaticReservations_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AutomaticAdmissionLedgerServiceServer).DiscoverExpiredAutomaticReservations(ctx, req.(*DiscoverExpiredAutomaticReservationsRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -263,6 +297,10 @@ var AutomaticAdmissionLedgerService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetAutomaticReservation",
 			Handler:    _AutomaticAdmissionLedgerService_GetAutomaticReservation_Handler,
+		},
+		{
+			MethodName: "DiscoverExpiredAutomaticReservations",
+			Handler:    _AutomaticAdmissionLedgerService_DiscoverExpiredAutomaticReservations_Handler,
 		},
 		{
 			MethodName: "ReassignAutomaticReservation",

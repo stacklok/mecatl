@@ -37,7 +37,7 @@ func TestAutomaticLedgerDriverConformance(t *testing.T) {
 	})
 }
 
-func TestADR_0259_AutomaticLedgerRejectsClientPolicyAndClockAuthority(t *testing.T) {
+func TestADR_0254_AutomaticLedgerRejectsClientPolicyAndClockAuthority(t *testing.T) {
 	policy := automaticPolicy(1, 100, 10, 100, 0)
 	backendClock := automaticconformance.NewClock(time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC))
 	clients := newIndependentAutomaticClients(t, policy, backendClock)
@@ -82,6 +82,47 @@ func TestADR_0259_AutomaticLedgerRejectsClientPolicyAndClockAuthority(t *testing
 		_, reserveErr := clients[1].Reserve(context.Background(), automaticRequest(t, "skewed-clock", automaticInput{"b", "three", 10}, policy))
 		if !errors.Is(reserveErr, learning.ErrAutomaticAdmissionLimit) {
 			t.Fatalf("Reserve from skewed client error = %v, want ErrAutomaticAdmissionLimit", reserveErr)
+		}
+	})
+}
+
+func TestInvariant_automatic_reservation_records_are_durably_bounded(t *testing.T) {
+	policy := automaticPolicy(10000, 10000, 10000, 10000, 0)
+	start := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
+
+	t.Run("per principal", func(t *testing.T) {
+		clock := automaticconformance.NewClock(start)
+		ledger, err := automaticstore.New(t.TempDir(), policy, clock)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i := range learning.MaxAutomaticReservationRecordsPerPrincipal {
+			if _, err = ledger.Reserve(context.Background(), automaticRequest(t, fmt.Sprintf("owner-%d", i), automaticInput{"same", fmt.Sprintf("digest-%d", i), 1}, policy)); err != nil {
+				t.Fatalf("Reserve %d: %v", i, err)
+			}
+			clock.Set(clock.Now().Add(policy.Window))
+		}
+		_, err = ledger.Reserve(context.Background(), automaticRequest(t, "owner-overflow", automaticInput{"same", "overflow", 1}, policy))
+		if !errors.Is(err, learning.ErrAutomaticAdmissionLimit) {
+			t.Fatalf("per-principal overflow error = %v, want ErrAutomaticAdmissionLimit", err)
+		}
+	})
+
+	t.Run("global", func(t *testing.T) {
+		clock := automaticconformance.NewClock(start)
+		ledger, err := automaticstore.New(t.TempDir(), policy, clock)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i := range learning.MaxAutomaticReservationRecords {
+			if _, err = ledger.Reserve(context.Background(), automaticRequest(t, fmt.Sprintf("global-%d", i), automaticInput{fmt.Sprintf("owner-%d", i), fmt.Sprintf("digest-%d", i), 1}, policy)); err != nil {
+				t.Fatalf("Reserve %d: %v", i, err)
+			}
+			clock.Set(clock.Now().Add(policy.Window))
+		}
+		_, err = ledger.Reserve(context.Background(), automaticRequest(t, "global-overflow", automaticInput{"overflow", "overflow", 1}, policy))
+		if !errors.Is(err, learning.ErrAutomaticAdmissionLimit) {
+			t.Fatalf("global overflow error = %v, want ErrAutomaticAdmissionLimit", err)
 		}
 	})
 }

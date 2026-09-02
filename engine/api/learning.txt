@@ -12,6 +12,7 @@
     ifacemethod func (AttemptRepository).ReleaseClaim(context.Context, AttemptPartition, AttemptID, AttemptVersion, AttemptClaim) (AttemptRecord, error)
     ifacemethod func (AttemptRepository).RenewClaim(context.Context, AttemptPartition, AttemptID, AttemptVersion, AttemptClaim, time.Duration) (AttemptRecord, AttemptClaim, error)
     ifacemethod func (AttemptRepository).Retry(context.Context, AttemptPartition, AttemptID, AttemptVersion) (AttemptRecord, error)
+    ifacemethod func (AutomaticAdmissionLedger).DiscoverExpired(context.Context, uint32) ([]AutomaticReservation, error)
     ifacemethod func (AutomaticAdmissionLedger).Get(context.Context, AutomaticReservationID) (AutomaticReservation, bool, error)
     ifacemethod func (AutomaticAdmissionLedger).Reassign(context.Context, AutomaticReservationID, AutomaticReservationVersion) (AutomaticReservation, error)
     ifacemethod func (AutomaticAdmissionLedger).Reclaim(context.Context, AutomaticReservationID, AutomaticReservationVersion, AutomaticReservationFence) (AutomaticReservation, error)
@@ -161,7 +162,10 @@ const MaxAttemptRetentionAge time.Duration = 315360000000000000
 const MaxAttemptVersionBytes untyped int = 128
 const MaxAttemptWorkBatch untyped int = 200
 const MaxAttemptsPerPartition untyped int = 256
+const MaxAutomaticReservationDiscoveryBatch untyped int = 128
 const MaxAutomaticReservationIDBytes untyped int = 96
+const MaxAutomaticReservationRecords untyped int = 512
+const MaxAutomaticReservationRecordsPerPrincipal untyped int = 128
 const MaxCandidateBodyBytes untyped int = 8192
 const MaxCandidateDescriptionBytes untyped int = 2048
 const MaxCandidateEvidence untyped int = 16
@@ -325,7 +329,7 @@ type AttemptWork struct{Partition AttemptPartition; Record AttemptRecord}
 type AttemptWorkCursor struct{Partition AttemptPartition; ID AttemptID}
 type AttemptWorkList struct{After AttemptWorkCursor; Limit int}
 type AttemptWorkPage struct{Work []AttemptWork; Next AttemptWorkCursor}
-type AutomaticAdmissionLedger interface{Get(context.Context, AutomaticReservationID) (AutomaticReservation, bool, error); Reassign(context.Context, AutomaticReservationID, AutomaticReservationVersion) (AutomaticReservation, error); Reclaim(context.Context, AutomaticReservationID, AutomaticReservationVersion, AutomaticReservationFence) (AutomaticReservation, error); Reserve(context.Context, AutomaticReservationRequest) (AutomaticReservation, error); Retain(context.Context, AutomaticReservationID, AutomaticReservationVersion, AutomaticReservationFence) (AutomaticReservation, error)}
+type AutomaticAdmissionLedger interface{DiscoverExpired(context.Context, uint32) ([]AutomaticReservation, error); Get(context.Context, AutomaticReservationID) (AutomaticReservation, bool, error); Reassign(context.Context, AutomaticReservationID, AutomaticReservationVersion) (AutomaticReservation, error); Reclaim(context.Context, AutomaticReservationID, AutomaticReservationVersion, AutomaticReservationFence) (AutomaticReservation, error); Reserve(context.Context, AutomaticReservationRequest) (AutomaticReservation, error); Retain(context.Context, AutomaticReservationID, AutomaticReservationVersion, AutomaticReservationFence) (AutomaticReservation, error)}
 type AutomaticAdmissionPolicy struct{Window time.Duration; Cooldown time.Duration; DedupeWindow time.Duration; MaxCount uint64; MaxTokens uint64; MaxCountPerPrincipal uint64; MaxTokensPerPrincipal uint64; ReservationClaimDuration time.Duration}
 type AutomaticAdmissionPolicyRevision string
 type AutomaticChargeDisposition string

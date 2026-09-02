@@ -14,6 +14,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"syscall"
@@ -33,6 +34,8 @@ const (
 	lockRetry    = 5 * time.Millisecond
 	lockTimeout  = 5 * time.Second
 )
+
+var errNoExpiredReservations = errors.New("automaticstore: no expired reservations")
 
 type entry struct {
 	Reservation learning.AutomaticReservation `json:"reservation"`
@@ -266,6 +269,9 @@ func (s *Store) Reserve(ctx context.Context, req learning.AutomaticReservationRe
 		if err := s.admissionError(*doc, req, now); err != nil {
 			return err
 		}
+		if err := reservationQuotaError(*doc, req.Principal); err != nil {
+			return err
+		}
 		version, err := newVersion()
 		if err != nil {
 			return err
@@ -289,6 +295,22 @@ func pruneResolved(doc *document, now time.Time) {
 			delete(doc.Records, id)
 		}
 	}
+}
+
+func reservationQuotaError(doc document, principal learning.AttemptPartition) error {
+	if len(doc.Records) >= learning.MaxAutomaticReservationRecords {
+		return learning.ErrAutomaticAdmissionLimit
+	}
+	owned := 0
+	for _, stored := range doc.Records {
+		if stored.Reservation.Principal == principal {
+			owned++
+		}
+	}
+	if owned >= learning.MaxAutomaticReservationRecordsPerPrincipal {
+		return learning.ErrAutomaticAdmissionLimit
+	}
+	return nil
 }
 
 func sameImmutable(stored entry, req learning.AutomaticReservationRequest) bool {
@@ -342,6 +364,58 @@ func (s *Store) Get(ctx context.Context, id learning.AutomaticReservationID) (le
 		return nil
 	})
 	return result, found, err
+}
+
+// DiscoverExpired atomically claims a bounded set of expired held records using
+// this store's authoritative clock.
+func (s *Store) DiscoverExpired(ctx context.Context, limit uint32) ([]learning.AutomaticReservation, error) {
+	if limit == 0 || limit > learning.MaxAutomaticReservationDiscoveryBatch {
+		return nil, learning.ErrInvalidAutomaticReservation
+	}
+	now := s.clock.Now().UTC()
+	if now.IsZero() {
+		return nil, learning.ErrInvalidAutomaticReservation
+	}
+	var result []learning.AutomaticReservation
+	err := s.transaction(ctx, true, func(doc *document) error {
+		ids := make([]string, 0, len(doc.Records))
+		for id, stored := range doc.Records {
+			r := stored.Reservation
+			if r.Charge == learning.AutomaticChargeHeld && !now.Before(r.Fence.ExpiresAt) {
+				ids = append(ids, string(id))
+			}
+		}
+		if len(ids) == 0 {
+			return errNoExpiredReservations
+		}
+		sort.Strings(ids)
+		if len(ids) > int(limit) {
+			ids = ids[:limit]
+		}
+		result = make([]learning.AutomaticReservation, 0, len(ids))
+		for _, rawID := range ids {
+			id := learning.AutomaticReservationID(rawID)
+			stored := doc.Records[id]
+			version, err := newVersion()
+			if err != nil {
+				return err
+			}
+			r := stored.Reservation
+			r.Version = version
+			r.Fence = learning.AutomaticReservationFence{Generation: r.Fence.Generation + 1, ExpiresAt: now.Add(r.ClaimDuration)}
+			if err = r.Validate(); err != nil {
+				return fmt.Errorf("automaticstore: invalid discovery mutation: %w", err)
+			}
+			stored.Reservation = r
+			doc.Records[id] = stored
+			result = append(result, r)
+		}
+		return nil
+	})
+	if errors.Is(err, errNoExpiredReservations) {
+		return nil, nil
+	}
+	return result, err
 }
 
 func (s *Store) Reassign(ctx context.Context, id learning.AutomaticReservationID, expected learning.AutomaticReservationVersion) (learning.AutomaticReservation, error) {
