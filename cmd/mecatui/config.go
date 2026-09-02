@@ -524,7 +524,11 @@ func parseTransportFlags(mode transportMode, out io.Writer, args []string, brows
 
 // resolveRemoteTLSPolicy applies the connect transport policy only after the
 // command grammar has supplied its target. tlsExplicit preserves the distinction
-// between an omitted --tls and an explicit --tls=false.
+// between an omitted --tls and an explicit --tls=false. It classifies targets
+// with client.IsLocalTarget, the SAME predicate client.Dial gates its plaintext
+// guards on, so the policy layer can never default a target to TLS that the
+// transport layer would then dial in plaintext (or vice versa) — notably a
+// "unix://" socket, which is local but not a loopback host:port.
 func resolveRemoteTLSPolicy(cfg *config) error {
 	if cfg.transportMode != modeConnect {
 		return nil
@@ -536,12 +540,12 @@ func resolveRemoteTLSPolicy(cfg *config) error {
 		if cfg.tlsCA != "" || cfg.insecure {
 			return errors.New("--tls=false conflicts with --tls-ca or --insecure")
 		}
-		if cfg.authToken != "" && !client.IsLoopbackHost(cfg.connectAddress) {
+		if cfg.authToken != "" && !client.IsLocalTarget(cfg.connectAddress) {
 			return errors.New("refusing static bearer over explicit plaintext to non-loopback target; remove --tls=false")
 		}
 		return nil
 	}
-	if cfg.tlsExplicit || cfg.tlsCA != "" || cfg.insecure || !client.IsLoopbackHost(cfg.connectAddress) {
+	if cfg.tlsExplicit || cfg.tlsCA != "" || cfg.insecure || !client.IsLocalTarget(cfg.connectAddress) {
 		cfg.useTLS = true
 	}
 	return nil

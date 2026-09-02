@@ -40,7 +40,9 @@ bin/mecatui connect 127.0.0.1:8080 \
 
 For a non-loopback endpoint, verified TLS is automatic; `--tls`, `--tls=true`,
 and `--tls-ca` also select verified TLS. `--insecure` instead uses encrypted TLS
-without certificate verification and is only for controlled testing. `--tls=false`
+without certificate verification and is only for controlled testing — it cannot
+carry a bearer to a non-loopback server, because an unverified certificate hides
+an interceptor that would read the token. `--tls=false`
 is the explicit plaintext downgrade; use it only for controlled, non-bearer testing.
 Add a CA bundle with `--tls-ca` only when the server uses a private CA.
 

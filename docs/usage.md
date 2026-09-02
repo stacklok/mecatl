@@ -87,7 +87,9 @@ eligible failure exists. Historical transcript replay never triggers automatic r
 uses verified TLS for non-loopback or unparseable targets and plaintext for
 loopback. `--tls`/`--tls=true`, `--tls-ca`, and `--insecure` select TLS;
 `--tls=false` is the explicit plaintext downgrade. It conflicts with
-`--tls-ca` and `--insecure`, which also conflict with each other. A saved OIDC
+`--tls-ca` and `--insecure`, which also conflict with each other. A bearer is
+refused on both unsafe transports to a non-loopback target: explicit plaintext
+and `--insecure`, whose unverified TLS hides an MITM rather than a listener. A saved OIDC
 connection always verifies the gRPC server TLS, and its issuer CA is never used
 as server trust; `connect --tls-ca` is the sole custom server-CA input.
 

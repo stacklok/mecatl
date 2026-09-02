@@ -3506,6 +3506,10 @@ only dials; it never implicitly opens a browser. `cmd/mecatui/config.go`
 and unparseable targets verify TLS, loopback defaults plaintext, and `--tls=false` is
 the explicit downgrade. `cmd/mecatui/client/client.go` (`Dial`) independently refuses
 remote plaintext without that explicit authorization and never permits a bearer there.
+Both layers classify targets with the SINGLE predicate `cmd/mecatui/client/client.go`
+(`IsLocalTarget`) — loopback host:port OR a `unix://` socket — which also feeds
+`bearerCreds.allowInsecure`, so the policy default, the two pre-dial guards, and the
+per-RPC credential can never disagree about one target.
 A registry hit overrides the loopback default to verified gRPC TLS and rejects explicit
 plaintext or `--insecure`; the saved issuer CA is passed only to the issuer client, never
 to `DialConfig.TLSCAFile`.

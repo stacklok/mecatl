@@ -53,6 +53,23 @@ func TestDialBearerCleartextGuard(t *testing.T) {
 			cfg:     DialConfig{Server: "localhost:8080", AuthToken: "x", UseTLS: false},
 			wantErr: false,
 		},
+		{
+			// Encrypted but unauthenticated: an MITM with any certificate reads
+			// the bearer, so this is refused exactly like the cleartext case.
+			name:    "non-loopback with token over unverified TLS is refused",
+			cfg:     DialConfig{Server: "example.com:8080", AuthToken: "x", UseTLS: true, Insecure: true},
+			wantErr: true,
+		},
+		{
+			name:    "loopback with token over unverified TLS is allowed",
+			cfg:     DialConfig{Server: "127.0.0.1:8080", AuthToken: "x", UseTLS: true, Insecure: true},
+			wantErr: false,
+		},
+		{
+			name:    "unverified TLS without a token is allowed",
+			cfg:     DialConfig{Server: "example.com:8080", UseTLS: true, Insecure: true},
+			wantErr: false,
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -102,6 +119,20 @@ func TestDialDynamicBearerCleartextGuard(t *testing.T) {
 	if err == nil {
 		t.Fatal("dynamic bearer plaintext dial succeeded")
 	}
+
+	// A dynamic bearer leaks to an MITM over unverified TLS exactly as a static
+	// one does, so both guards must read the TokenSource arm too.
+	cl, err = Dial(DialConfig{Server: "example.com:443", UseTLS: true, Insecure: true,
+		TokenSource: tokenSourceFunc(func(context.Context) (string, error) {
+			t.Fatal("Dial must not call token source")
+			return "", nil
+		})})
+	if cl != nil {
+		_ = cl.Close()
+	}
+	if err == nil {
+		t.Fatal("dynamic bearer unverified-TLS dial succeeded")
+	}
 }
 
 // TestIsLoopbackHost covers the host classification used to gate the token and remote workspace authority.
@@ -116,10 +147,14 @@ func TestIsLoopbackHost(t *testing.T) {
 		"LocalHost":          true,
 		"localhost:not-port": false,
 		"localhost:":         false,
-		"10.0.0.5:8080":      false,
-		"example.com:80":     false,
-		"0.0.0.0:8080":       false,
-		"":                   false,
+		// A named service port is rare in a gRPC target and classifying it
+		// fails CLOSED (verified TLS), which is the safe direction. Pinned so
+		// the choice is a recorded decision rather than a ParseUint accident.
+		"localhost:http": false,
+		"10.0.0.5:8080":  false,
+		"example.com:80": false,
+		"0.0.0.0:8080":   false,
+		"":               false,
 	}
 	for host, want := range cases {
 		if got := IsLoopbackHost(host); got != want {
@@ -169,5 +204,43 @@ func TestAnonymousDialHintOnlyAnnotatesUnauthenticated(t *testing.T) {
 		if out := anonymousDialHint(server, in); out.Error() != in.Error() {
 			t.Fatalf("%v was annotated: %v", code, out)
 		}
+	}
+}
+
+// TestIsLocalTarget covers the predicate that gates every plaintext decision:
+// loopback host:port PLUS unix:// sockets, which the filesystem protects.
+func TestIsLocalTarget(t *testing.T) {
+	cases := map[string]bool{
+		"unix:///run/user/1000/mecated.sock": true,
+		"unix://relative.sock":               true,
+		"  unix:///tmp/a.sock  ":             true,
+		"127.0.0.1:8080":                     true,
+		"localhost":                          true,
+		"unix-abstract:mecated":              false, // not the unix:// scheme
+		"10.0.0.5:8080":                      false,
+		"":                                   false,
+	}
+	for target, want := range cases {
+		if got := IsLocalTarget(target); got != want {
+			t.Errorf("IsLocalTarget(%q) = %v, want %v", target, got, want)
+		}
+	}
+}
+
+// TestDialUnixSocketWithBearer pins the guard/credential agreement: a unix://
+// target accepted by the pre-dial guards must ALSO be accepted by the per-RPC
+// credential. When allowInsecure tracked only loopback, this dial failed with
+// gRPC's opaque "credentials require transport level security" -- exactly the
+// error the pre-dial guard exists to replace.
+func TestDialUnixSocketWithBearer(t *testing.T) {
+	for _, cfg := range []DialConfig{
+		{Server: "unix:///tmp/mecatl-test.sock", AuthToken: "tok"},
+		{Server: "unix:///tmp/mecatl-test.sock", TokenSource: tokenSourceFunc(func(context.Context) (string, error) { return "tok", nil })},
+	} {
+		cl, err := Dial(cfg)
+		if err != nil {
+			t.Fatalf("Dial(%+v) = %v, want a plaintext unix dial to succeed", cfg.Server, err)
+		}
+		_ = cl.Close()
 	}
 }

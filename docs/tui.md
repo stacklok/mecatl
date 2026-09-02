@@ -436,7 +436,7 @@ a short directive with a longer brief. The seed fires ONCE: a `/models` restart 
 | `--auth-token` | – | bearer token for an **external** server (or `MECATL_AUTH_TOKEN`) |
 | `--tls` | target-aware | verified TLS for an external server when given; omitted selects verified TLS for non-loopback/unparseable targets and plaintext for loopback; `--tls=false` explicitly permits remote plaintext |
 | `--tls-ca` | – | path to a PEM CA bundle for verified external-server TLS (also implies TLS) |
-| `--insecure` | off | encrypted TLS without certificate verification (controlled testing only; implies TLS) |
+| `--insecure` | off | encrypted TLS without certificate verification (controlled testing only; implies TLS; a bearer is refused over it for a non-loopback target) |
 | `--list-themes` | – | print available themes and exit |
 | `--version` | – | print the build identity and exit before normal startup |
 | `--inline` / `--no-alt-screen` | off | render inline in the terminal's normal buffer instead of the alternate screen, preserving native scrollback/search (no mouse capture; see `--no-mouse` below) |

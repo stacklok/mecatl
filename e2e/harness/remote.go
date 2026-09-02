@@ -30,9 +30,16 @@ func NewRemote(addr string) (*Remote, error) {
 	if ws == "" {
 		return nil, fmt.Errorf("MECATL_E2E_TARGET is set (%s) but MECATL_E2E_WORKSPACE is not: the remote target needs the absolute session workspace root on the server host", addr)
 	}
+	// RemotePlaintextAllowed is THE controlled, unauthenticated testing caller
+	// ADR 0287 carves out: an operator who exports MECATL_E2E_TARGET has already
+	// chosen the transport for their own qualification server. Without it a
+	// non-loopback target is refused at Dial. The bearer guard is NOT waived by
+	// this flag, so MECATL_E2E_AUTH_TOKEN against a plaintext non-loopback target
+	// still fails closed and needs a TLS-terminating endpoint.
 	cli, err := client.Dial(client.DialConfig{
-		Server:    addr,
-		AuthToken: os.Getenv("MECATL_E2E_AUTH_TOKEN"),
+		Server:                 addr,
+		AuthToken:              os.Getenv("MECATL_E2E_AUTH_TOKEN"),
+		RemotePlaintextAllowed: true,
 	})
 	if err != nil {
 		return nil, err
