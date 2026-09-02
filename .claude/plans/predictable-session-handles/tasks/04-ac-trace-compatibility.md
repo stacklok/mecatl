@@ -14,7 +14,7 @@ accumulator: acc/predictable-session-handles
 # Task brief
 
 Historical traceability repair for the first implementation. Panel review replaces its thin
-compatibility-alias strategy: the older landed plan now points directly to ADR-0280 scenario tests,
+compatibility-alias strategy: the older landed plan now points directly to ADR-0284 scenario tests,
 and task 06 removes stale ADR-0108/digest aliases. This done task owns no current numbered AC.
 
 ## Acceptance ownership

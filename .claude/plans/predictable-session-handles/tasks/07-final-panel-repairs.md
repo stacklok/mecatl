@@ -13,7 +13,7 @@ accumulator: acc/predictable-session-handles
 
 # Task brief
 
-Close the final panel findings without widening scope. Make the CLI error for a positional leading-hyphen exact ID explicitly direct the operator to `debug --exact SESSION_ID`; keep leading hyphen disallowed positionally so it cannot be confused with flags. Update the connected debugger grammar paragraph to include its `--exact` form. Record ADR-0280 as superseding ADR-0254's `DEBUG target #<digest>` presentation clause only and retain the scoped backlink already added to ADR-0254; do not alter debugger authority/evidence/incarnation decisions.
+Close the final panel findings without widening scope. Make the CLI error for a positional leading-hyphen exact ID explicitly direct the operator to `debug --exact SESSION_ID`; keep leading hyphen disallowed positionally so it cannot be confused with flags. Update the connected debugger grammar paragraph to include its `--exact` form. Record ADR-0284 as superseding ADR-0254's `DEBUG target #<digest>` presentation clause only and retain the scoped backlink already added to ADR-0254; do not alter debugger authority/evidence/incarnation decisions.
 
 ## Acceptance criteria
 
@@ -31,7 +31,7 @@ Close the final panel findings without widening scope. Make the CLI error for a 
   `--exact`, explain that a leading-hyphen exact ID requires `--exact`, and show no leading `#`
   marker.
   - verify: `TestPredictableSessionHandles_Scenario3_CommandHelpAndExactBypass`
-- AC3.5: ADR-0280 explicitly supersedes only ADR-0217's ordinary display-handle decision and
+- AC3.5: ADR-0284 explicitly supersedes only ADR-0217's ordinary display-handle decision and
   ADR-0254's `DEBUG target #<digest>` presentation clause; both older ADRs carry scoped backlinks,
   while every debugger authority, evidence, and incarnation decision remains in force.
   - verify: inspection — `task docs` validates ADR metadata and links

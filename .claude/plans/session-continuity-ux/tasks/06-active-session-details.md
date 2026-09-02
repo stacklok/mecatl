@@ -13,7 +13,7 @@ accumulator: acc/session-continuity-ux
 
 # Task brief
 
-Add a read-only `/session` details surface using the active session metadata and existing clipboard abstraction. Render full IDs reversibly/safely, copy exact valid UTF-8 IDs, use ADR-0280's fixed ordinary handle in the width-safe header, and keep every rebind path authoritative. Update help/docs/user-docs; generated docs remain orchestrator-owned.
+Add a read-only `/session` details surface using the active session metadata and existing clipboard abstraction. Render full IDs reversibly/safely, copy exact valid UTF-8 IDs, use ADR-0284's fixed ordinary handle in the width-safe header, and keep every rebind path authoritative. Update help/docs/user-docs; generated docs remain orchestrator-owned.
 
 ## Acceptance criteria
 
@@ -23,7 +23,7 @@ Add a read-only `/session` details surface using the active session metadata and
   - verify: `TestSessionContinuityUX_Scenario5_CopyExactID`
 - AC5.3: Stored-session continuation, model carryover, effort fork, and worktree switch each update the details/copy target to the final adopted ID.
   - verify: `TestSessionContinuityUX_Scenario5_RebindMatrix`
-- AC5.4: The compact header uses ADR-0280's fixed ordinary handle, remains width-safe, and `/session` is discoverable from slash completion and `?` help.
+- AC5.4: The compact header uses ADR-0284's fixed ordinary handle, remains width-safe, and `/session` is discoverable from slash completion and `?` help.
   - verify: `TestSessionContinuityUX_Scenario5_HeaderAndHelp`
 - AC5.5: Newline/control-bearing, empty, and very long valid-UTF-8 IDs render safely while clipboard copy remains exact; a persisted invalid-UTF-8 ID is rejected as corrupt before protobuf mapping rather than repaired into a different handle.
   - verify: `TestInvariant_session_details_render_safe_copy_exact`

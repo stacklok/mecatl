@@ -14,7 +14,7 @@ accumulator: acc/predictable-session-handles
 # Task brief
 
 Historical documentation wave for the first implementation. Panel review superseded its
-ADR identity and compatibility-alias strategy. Task 06 owns ADR-0280 references, exact-bypass
+ADR identity and compatibility-alias strategy. Task 06 owns ADR-0284 references, exact-bypass
 help/docs, landed-plan traceability updates, and stale alias removal. Do not use this done brief as
 current acceptance ownership.
 

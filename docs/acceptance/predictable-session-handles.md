@@ -3,7 +3,7 @@
 **Phase:** capability — mecatui session discovery and debugger UX
 **Status:** landed, 2026-09-01.
 **Issue:** [stacklok/mecatl#922](https://github.com/stacklok/mecatl/issues/922).
-**ADR:** [ADR-0280](../adr/0280-predictable-mecatui-session-handles.md) — one fixed client-side actionable short-handle contract, superseding ADR-0217's display-only digest decision.
+**ADR:** [ADR-0284](../adr/0284-predictable-mecatui-session-handles.md) — one fixed client-side actionable short-handle contract, superseding ADR-0217's display-only digest decision.
 **Related debugger boundaries:** [ADR-0254](../adr/0254-session-debugger-admin-transport.md), [ADR-0256](../adr/0256-session-debugger-evidence-and-reporting.md), and [ADR-0258](../adr/0258-cryptographic-session-incarnations.md).
 **Accumulator branch:** `acc/predictable-session-handles` (off `main`).
 
@@ -32,7 +32,7 @@ mecatui client can demonstrate, not a package-level implementation detail.
   [`cmd/mecatui/client/sessions_list.go`](../../cmd/mecatui/client/sessions_list.go); no proto,
   server API, streaming scan, alternate-ID authorization surface, or paging abstraction is
   introduced.
-- **Fixed escaped raw-ID prefixes, not digests.** [ADR-0280](../adr/0280-predictable-mecatui-session-handles.md)
+- **Fixed escaped raw-ID prefixes, not digests.** [ADR-0284](../adr/0284-predictable-mecatui-session-handles.md)
   replaces only ADR-0217 decision 8's ordinary display-digest choice. The fixed projection keeps
   generated IDs recognizable and makes arbitrary valid-UTF-8 IDs safe without claiming that an
   escaped display token is a server ID. Invalid UTF-8 remains corrupt input: it emits no handle,
@@ -181,12 +181,12 @@ in [`AGENTS.md`](../../AGENTS.md) requires both living docs and `user-docs/` cov
   transport-spanning proof is composition-level and introduces no new proto/gRPC dependency into
   `cmd/mecatui/ui`.
   - verify: `TestPredictableSessionHandles_Scenario3_PresentationParitySafetyAndLayering`
-- AC3.4: The landed session-continuity plan's AC4.2 and AC4.3 point directly to current ADR-0280
+- AC3.4: The landed session-continuity plan's AC4.2 and AC4.3 point directly to current ADR-0284
   scenario tests. Stale `TestADR_0108_DisplayDigestIsNotAnID`, digest-named compatibility aliases,
-  and pre-ADR-0280 session-handle test names are absent; ordinary presentation is never described as a
+  and pre-ADR-0284 session-handle test names are absent; ordinary presentation is never described as a
   debugger evidence digest.
-  - verify: `TestADR_0280_OrdinaryHandleDoesNotAlterDebuggerEvidenceHandles`
-- AC3.5: ADR-0280 explicitly supersedes only ADR-0217's ordinary display-handle decision and
+  - verify: `TestADR_0284_OrdinaryHandleDoesNotAlterDebuggerEvidenceHandles`
+- AC3.5: ADR-0284 explicitly supersedes only ADR-0217's ordinary display-handle decision and
   ADR-0254's `DEBUG target #<digest>` presentation clause; both older ADRs carry scoped backlinks,
   while every debugger authority, evidence, and incarnation decision remains in force.
   - verify: inspection — `task docs` validates ADR metadata and links
@@ -211,11 +211,11 @@ in [`AGENTS.md`](../../AGENTS.md) requires both living docs and `user-docs/` cov
 
 | Item | Defer-to | ADR / decision |
 |---|---|---|
-| Server/proto alternate session-ID or short-handle API | never for this capability | [ADR-0280](../adr/0280-predictable-mecatui-session-handles.md) |
+| Server/proto alternate session-ID or short-handle API | never for this capability | [ADR-0284](../adr/0284-predictable-mecatui-session-handles.md) |
 | Changing session ID generation, physical store naming, or ownership authorization | separate storage/identity work | [ADR-0104](../adr/0104-session-family-physical-naming.md), [ADR-0217](../adr/0217-session-discovery-continuation.md) |
 | Changing `/session` full-ID display/copy semantics | not needed | [ADR-0217](../adr/0217-session-discovery-continuation.md) |
 | `InspectSession` related/history handles, evidence/manifest digests, or target+incarnation cryptographic handles | explicitly preserved | [ADR-0254](../adr/0254-session-debugger-admin-transport.md), [ADR-0256](../adr/0256-session-debugger-evidence-and-reporting.md), [ADR-0258](../adr/0258-cryptographic-session-incarnations.md) |
-| Collision-free short handles or inventory-dependent presentation | never for this capability | [ADR-0280](../adr/0280-predictable-mecatui-session-handles.md) |
+| Collision-free short handles or inventory-dependent presentation | never for this capability | [ADR-0284](../adr/0284-predictable-mecatui-session-handles.md) |
 
 ## Sequencing recommendation
 
@@ -230,7 +230,7 @@ server-side handle parser, or alter debugger evidence handles.
 - `TestPredictableSessionHandles_Scenario1_*`
 - `TestPredictableSessionHandles_Scenario2_*`
 - `TestPredictableSessionHandles_Scenario3_*`
-- `TestADR_0280_*`
+- `TestADR_0284_*`
 
 ## Definition of done
 

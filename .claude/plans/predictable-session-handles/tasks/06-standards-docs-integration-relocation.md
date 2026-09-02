@@ -1,6 +1,6 @@
 ---
 id: 06-standards-docs-integration-relocation
-title: ADR-0280 standards repair, documentation, and integration-test relocation
+title: ADR-0284 standards repair, documentation, and integration-test relocation
 blocked_by: [05-resolver-exact-semantics-api-cleanup]
 status: done
 branch: "plan-predictable-session-handles/06-standards-docs-integration-relocation"
@@ -20,13 +20,13 @@ widening production APIs merely for test access; `cmd/mecatui/ui` production and
 neither protobuf nor gRPC. Keep the resulting request-boundary proof for normal and escaped control-bearing valid-UTF-8
 IDs.
 
-Apply ADR-0280 identity consistently across plan, ADR index, task references, docs, and future test
+Apply ADR-0284 identity consistently across plan, ADR index, task references, docs, and future test
 names. Preserve ADR-0217's body and its decision-8-only supersession backlink. Update command help,
 `docs/tui.md`, `docs/usage.md`, status-line reference, relevant architecture/implementation notes,
 and existing `user-docs/` material for leading-hyphen encoding, gather-all ambiguity, and embedded
 and connected `--exact` forms. Update landed session-continuity AC4.2/AC4.3 verification names to
 the current scenario tests, then remove stale `TestADR_0108_DisplayDigestIsNotAnID`, other
-digest-named compatibility aliases, and pre-ADR-0280 session-handle test names. Preserve
+digest-named compatibility aliases, and pre-ADR-0284 session-handle test names. Preserve
 `InspectSession` scope/history handles, evidence/manifest digests, and target+incarnation digests
 unchanged. Regenerate docs as required and run the acceptance trace checks.
 
@@ -51,8 +51,8 @@ unchanged. Regenerate docs as required and run the acceptance trace checks.
   transport-spanning proof is composition-level and introduces no new proto/gRPC dependency into
   `cmd/mecatui/ui`.
   - verify: `TestPredictableSessionHandles_Scenario3_PresentationParitySafetyAndLayering`
-- AC3.4: The landed session-continuity plan's AC4.2 and AC4.3 point directly to current ADR-0280
+- AC3.4: The landed session-continuity plan's AC4.2 and AC4.3 point directly to current ADR-0284
   scenario tests. Stale `TestADR_0108_DisplayDigestIsNotAnID`, digest-named compatibility aliases,
-  and pre-ADR-0280 session-handle test names are absent; ordinary presentation is never described
+  and pre-ADR-0284 session-handle test names are absent; ordinary presentation is never described
   as a debugger evidence digest.
-  - verify: `TestADR_0280_OrdinaryHandleDoesNotAlterDebuggerEvidenceHandles`
+  - verify: `TestADR_0284_OrdinaryHandleDoesNotAlterDebuggerEvidenceHandles`
