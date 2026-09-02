@@ -2,8 +2,8 @@
 id: 08-consolidate-title-accounting
 title: Consolidate title metadata and durable token usage
 blocked_by: [05-title-coordinator]
-status: in-progress
-branch: ""
+status: done
+branch: "plan-session-title-generation/08-consolidate-title-accounting"
 worktree: ""
 issue: "621"
 retries: 0
