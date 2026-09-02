@@ -2,8 +2,8 @@
 id: 08-session-mutation-lease-inventory
 title: Lease-owned session mutation inventory
 blocked_by: [01-session-header-contract]
-status: in-progress
-branch: ""
+status: done
+branch: "plan-session-affinity-and-handoff/08-session-mutation-lease-inventory"
 worktree: ".scratch/task-session-affinity-08"
 issue: ""
 retries: 0

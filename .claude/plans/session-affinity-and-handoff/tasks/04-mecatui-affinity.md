@@ -2,9 +2,9 @@
 id: 04-mecatui-affinity
 title: mecatui session-bound metadata propagation
 blocked_by: [02-grpc-affinity-validation]
-status: pending
+status: in-progress
 branch: ""
-worktree: ""
+worktree: ".scratch/task-session-affinity-04"
 issue: ""
 retries: 0
 last_error: ""

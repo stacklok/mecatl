@@ -2,8 +2,8 @@
 id: 02-grpc-affinity-validation
 title: gRPC session-affinity validation
 blocked_by: [01-session-header-contract]
-status: in-progress
-branch: ""
+status: done
+branch: "plan-session-affinity-and-handoff/02-grpc-affinity-validation"
 worktree: ".scratch/task-session-affinity-02"
 issue: ""
 retries: 0
