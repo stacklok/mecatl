@@ -200,6 +200,7 @@ func kindKeycloakFixtureArgs() []string {
 // only the mecak8s-vmcp fixture's own setup creates, and the e2e pod would
 // hang mounting a missing volume until the install times out (the regression
 // this test exists to catch).
+
 func TestMecak8sHelmChart_KindProfileAloneHasNoSecretDependency(t *testing.T) {
 	values, err := os.ReadFile("values-kind.yaml")
 	if err != nil {
@@ -243,6 +244,31 @@ func TestMecak8sHelmChart_KindProfileAloneHasNoSecretDependency(t *testing.T) {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("bare Kind render missing %q", want)
 		}
+	}
+}
+
+func TestADR_0290_HelmProtectedResourceProfile(t *testing.T) {
+	rendered, err := helm(t, "template", "profile", ".", "--set", "mockProvider=true", "--set", "redis.local.enabled=true", "--set", "oidc.enabled=true", "--set", "oidc.issuer=https://idp.example.com", "--set", "oidc.audience=mecatl", "--set", "oidc.resource=https://api.example.com/mcp", "--set", "oidc.clientID=mecatui", "--set", "oidc.scopes[0]=openid", "--set", "oidc.scopes[1]=profile")
+	if err != nil {
+		t.Fatalf("render protected-resource profile: %v\n%s", err, rendered)
+	}
+	deployment := deploymentFromRender(t, rendered)
+	args := deployment.Spec.Template.Spec.Containers[0].Args
+	for _, want := range []string{"--oidc-resource=https://api.example.com/mcp", "--oidc-client-id=mecatui", "--oidc-scopes=openid,profile"} {
+		if !slices.Contains(args, want) {
+			t.Fatalf("rendered args missing %q: %v", want, args)
+		}
+	}
+	for name, values := range map[string]string{
+		"partial":  "oidc.enabled=true,oidc.issuer=https://idp.example.com,oidc.audience=mecatl,oidc.resource=https://api.example.com/mcp",
+		"disabled": "oidc.enabled=false,oidc.issuer=https://idp.example.com,oidc.audience=mecatl,oidc.resource=https://api.example.com/mcp,oidc.clientID=mecatui",
+		"scope":    "oidc.enabled=true,oidc.issuer=https://idp.example.com,oidc.audience=mecatl,oidc.resource=https://api.example.com/mcp,oidc.clientID=mecatui,oidc.scopes={open%20id}",
+	} {
+		t.Run(name, func(t *testing.T) {
+			if output, err := helm(t, "template", name, ".", "--set", "mockProvider=true", "--set", values); err == nil {
+				t.Fatalf("malformed profile rendered successfully:\n%s", output)
+			}
+		})
 	}
 }
 

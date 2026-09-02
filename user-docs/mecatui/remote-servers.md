@@ -85,7 +85,17 @@ workspace authority.
 
 Caller identity is attribution, not tenant isolation: authenticated callers can still list and act on other callers' sessions. Do not treat a token-authenticated shared server as a tenancy boundary.
 
-## Remote OIDC login
+## Remote protected-resource discovery
+
+When the server publishes the optional RFC 9728 profile, `mecatui login` can
+accept a bare host or canonical HTTPS resource URL and discover the issuer,
+audience, public client hint, and scopes before confirmation. Metadata and issuer
+lookup use anonymous verified HTTPS bootstrap; the resulting authenticated gRPC
+connection is a separate transport decision. The RFC fields remain distinct from
+mecatl extension fields, and ToolHive/ToolHive-Core are implementation
+provenance rather than an engine dependency. Existing explicit issuer/client/
+audience login remains supported.
+
 
 Remote enrollment and connecting are separate actions:
 

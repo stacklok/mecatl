@@ -42,7 +42,10 @@
         "maxJWKSStaleness": {"type": "string"},
         "allowPrivateHTTPSIssuer": {"type": "boolean"},
         "caSecret": {"type": "string"},
-        "caKey": {"type": "string"}
+        "caKey": {"type": "string"},
+        "resource": {"type": "string"},
+        "clientID": {"type": "string"},
+        "scopes": {"type": "array", "items": {"type": "string"}}
       }
     },
     "tls": {

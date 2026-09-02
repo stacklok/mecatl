@@ -4,9 +4,12 @@ import (
 	"context"
 	"errors"
 	"io"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/adrg/xdg"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/internal/adapter/clientauth"
@@ -155,6 +158,44 @@ func TestADR_0277_ExplicitEnrollmentCompatibility(t *testing.T) {
 	err := runRemoteLogin("remote.example:443", []string{"--issuer", "https://issuer.example", "--client-id", "client", "--audience", "audience", "--tls-ca", "ca.pem", "--private-issuer", "--scopes", "custom"})
 	if !errors.Is(err, marker) {
 		t.Fatalf("explicit enrollment error = %v", err)
+	}
+}
+
+func TestOAuthProtectedResource_Scenario6_EndToEnd(t *testing.T) {
+	oldConfigHome := xdg.ConfigHome
+	xdg.ConfigHome = t.TempDir()
+	t.Cleanup(func() { xdg.ConfigHome = oldConfigHome })
+	originalDiscover, originalConfirm, originalLogin := discoverRemoteResource, confirmDiscoveredEnrollment, executeRemoteLogin
+	t.Cleanup(func() {
+		discoverRemoteResource, confirmDiscoveredEnrollment, executeRemoteLogin = originalDiscover, originalConfirm, originalLogin
+	})
+	profile := discoveredResource{protectedResource: protectedResource{Resource: "https://api.example.com/mcp", MetadataURL: "https://api.example.com/.well-known/oauth-protected-resource/mcp", GRPCTarget: "api.example.com:443"}, Issuer: "https://issuer.example.com", Audience: "api://mecatl", ClientID: "mecatui", Scopes: []string{"openid", "api.read"}}
+	discoverRemoteResource = func(context.Context, protectedResource) (discoveredResource, error) { return profile, nil }
+	confirmed := false
+	confirmDiscoveredEnrollment = func(io.Reader, io.Writer, discoveredEnrollment) (bool, error) { confirmed = true; return true, nil }
+	executeRemoteLogin = func(_ context.Context, conn clientauth.Connection, _ bool) error {
+		registry, err := clientauth.OpenRegistry(filepath.Join(xdg.ConfigHome, "mecatl"))
+		if err != nil {
+			return err
+		}
+		_, err = registry.Upsert(conn)
+		return err
+	}
+	if err := runRemoteLogin("api.example.com", nil); err != nil {
+		t.Fatal(err)
+	}
+	if !confirmed {
+		t.Fatal("metadata confirmation was not required")
+	}
+	conn, err := savedConnection("https://api.example.com/mcp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if conn.ResourceURL != profile.Resource || conn.Identity.Target != "api.example.com:443" || conn.Identity.Issuer != profile.Issuer || conn.Identity.ClientID != profile.ClientID {
+		t.Fatalf("persisted confirmed connection = %#v", conn)
+	}
+	if conn.IssuerAddressPolicy != clientauth.IssuerAddressPolicyPublic {
+		t.Fatalf("issuer policy = %q", conn.IssuerAddressPolicy)
 	}
 }
 

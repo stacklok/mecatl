@@ -16,7 +16,6 @@ import (
 type fakeValidator struct{}
 
 func (fakeValidator) Validate(context.Context, string) (*session.Principal, error) { return nil, nil }
-
 func TestOIDCMaxJWKSStalenessFlag(t *testing.T) {
 	tests := []struct {
 		name string
@@ -40,6 +39,32 @@ func TestOIDCMaxJWKSStalenessFlag(t *testing.T) {
 				t.Fatalf("MaxJWKSStaleness = %v, want %v", cfg.MaxJWKSStaleness, tc.want)
 			}
 		})
+	}
+}
+
+func TestADR_0290_ServerCompositionParity(t *testing.T) {
+	for _, name := range []string{"oidc-issuer", "oidc-audience", "oidc-resource", "oidc-client-id", "oidc-scopes"} {
+		fs := flag.NewFlagSet(name, flag.ContinueOnError)
+		fs.SetOutput(io.Discard)
+		var cfg OIDCConfig
+		RegisterOIDCFlags(fs, &cfg)
+		if fs.Lookup(name) == nil {
+			t.Fatalf("shared OIDC flag %q is not registered", name)
+		}
+	}
+	var cfg OIDCConfig
+	fs := flag.NewFlagSet("parity", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	RegisterOIDCFlags(fs, &cfg)
+	if err := fs.Parse([]string{"--oidc-issuer=https://issuer.example", "--oidc-audience=api", "--oidc-resource=https://resource.example", "--oidc-client-id=mecatui", "--oidc-scopes=profile,openid,profile"}); err != nil {
+		t.Fatal(err)
+	}
+	projection, err := cfg.ProfileProjection()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if projection.Resource != "https://resource.example" || projection.ClientID != "mecatui" || len(projection.Scopes) != 2 {
+		t.Fatalf("shared composition contract = %#v", projection)
 	}
 }
 

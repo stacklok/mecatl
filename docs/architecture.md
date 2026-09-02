@@ -69,6 +69,17 @@ This page is the overview and router; the big picture and the layering rule are 
 - **[Extensibility — MCP, tools & progressive disclosure](architecture/extensibility.md)**
 - **[Deployment & server hardening](architecture/deployment-and-hardening.md)**
 
+### Protected-resource discovery
+
+Both `mecated` and `mecak8s` use the shared OIDC profile flags. When configured,
+`--oidc-resource` publishes the RFC 9728 canonical resource and
+`--oidc-client-id` publishes mecatl's public client hint; `--oidc-scopes` is the
+shared CSV syntax. These values are not inferred from listeners, and discovery
+is an anonymous HTTPS bootstrap path distinct from authenticated gRPC. ToolHive
+and ToolHive-Core are implementation provenance for client discovery only; the
+engine remains provider- and transport-neutral. Existing issuer/audience
+projection and explicit OIDC login remain compatible.
+
 ### Internal credential store
 
 `internal/adapter/credentialstore` is a host-internal, credential-format-agnostic

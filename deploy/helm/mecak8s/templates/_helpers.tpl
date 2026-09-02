@@ -56,17 +56,24 @@ mounted
 {{- end -}}
 {{- end -}}
 {{- define "mecak8s.validateOIDC" -}}
+{{- $profileSet := or .Values.oidc.resource .Values.oidc.clientID (gt (len .Values.oidc.scopes) 0) -}}
+{{- if $profileSet -}}
+{{- if not .Values.oidc.enabled -}}{{ fail "oidc protected-resource profile requires oidc.enabled=true" }}{{- end -}}
+{{- if not .Values.oidc.resource -}}{{ fail "oidc.resource is required when protected-resource profile is set" }}{{- end -}}
+{{- if not .Values.oidc.clientID -}}{{ fail "oidc.clientID is required when protected-resource profile is set" }}{{- end -}}
+{{- if not (regexMatch "^https://[^/?#[:space:]]+(/[^?#[:space:]]*)?$" .Values.oidc.resource) -}}{{ fail "oidc.resource must be an absolute HTTPS URL without credentials, query, or fragment" }}{{- end -}}
+{{- if regexMatch "[\\x00-\\x1f\\x7f]" .Values.oidc.clientID -}}{{ fail "oidc.clientID must not contain control characters" }}{{- end -}}
+{{- range $scope := .Values.oidc.scopes -}}
+{{- if or (eq (trim $scope) "") (not (regexMatch "^[!-~]+$" $scope)) (contains $scope ",") (contains $scope "\\\"") (contains $scope "\\\\") -}}{{ fail (printf "oidc.scopes entry %q is invalid" $scope) }}{{- end -}}
+{{- end -}}
+{{- end -}}
 {{- if .Values.oidc.enabled -}}
 {{- $_ := required "oidc.issuer is required when oidc.enabled is true" .Values.oidc.issuer -}}
 {{- $_ := required "oidc.audience is required when oidc.enabled is true" .Values.oidc.audience -}}
 {{- end -}}
 {{- if .Values.oidc.allowPrivateHTTPSIssuer -}}
-{{- if not .Values.oidc.enabled -}}
-{{- fail "oidc.allowPrivateHTTPSIssuer requires oidc.enabled" -}}
-{{- end -}}
-{{- if not (hasPrefix "https://" .Values.oidc.issuer) -}}
-{{- fail "oidc.allowPrivateHTTPSIssuer requires an https:// oidc.issuer" -}}
-{{- end -}}
+{{- if not .Values.oidc.enabled -}}{{ fail "oidc.allowPrivateHTTPSIssuer requires oidc.enabled" }}{{- end -}}
+{{- if not (hasPrefix "https://" .Values.oidc.issuer) -}}{{ fail "oidc.allowPrivateHTTPSIssuer requires an https:// oidc.issuer" }}{{- end -}}
 {{- $_ := required "oidc.caSecret is required when oidc.allowPrivateHTTPSIssuer is true" .Values.oidc.caSecret -}}
 {{- $_ := required "oidc.caKey is required when oidc.allowPrivateHTTPSIssuer is true" .Values.oidc.caKey -}}
 {{- end -}}

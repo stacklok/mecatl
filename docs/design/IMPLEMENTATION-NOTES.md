@@ -103,7 +103,16 @@ do not project to a principal, and owns an explicit `Close` for the background r
 `internal/cliconfig` adapts those errors to the unchanged server sentinels and retains
 the server-root system context and all existing flag behavior.
 
-### mecak8s projected credentials and Helm runtime contract
+### RFC 9728 protected-resource profile
+
+The optional profile is shared by `mecated` and `mecak8s`: `--oidc-resource`,
+`--oidc-client-id`, and CSV `--oidc-scopes` are parsed once in
+`internal/cliconfig` and projected by the HTTP metadata handler. RFC fields are
+kept distinct from mecatl extensions for audience and client ID. Discovery is
+anonymous HTTPS bootstrap and transport-separated from authenticated gRPC; it
+never adopts private issuer trust settings. ToolHive/ToolHive-Core are recorded
+as implementation provenance for the client path, not imported by the engine.
+
 
 `internal/adapter/tlsreload` owns mecak8s server-certificate loading, complete-chain
 validation, atomic last-valid publication, projected-Secret watching, and a fixed periodic

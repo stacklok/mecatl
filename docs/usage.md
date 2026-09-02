@@ -30,7 +30,18 @@ an editor that spawned it.
 
 ---
 
-## Build identity and safe diagnostics
+## OAuth protected-resource discovery
+
+`mecated` and `mecak8s` share the optional RFC 9728 profile flags
+`--oidc-resource`, `--oidc-client-id`, and `--oidc-scopes`. The resource must be
+an operator-supplied absolute HTTPS URL; Helm exposes the equivalent
+`oidc.resource`, `oidc.clientID`, and `oidc.scopes` values. RFC metadata fields
+are distinct from mecatl's audience/client-id extensions. Anonymous metadata
+and OIDC discovery are bootstrap-only and remain separate from authenticated
+gRPC transport. ToolHive is implementation provenance for the remote client
+adapter, not a runtime engine dependency. Without the profile, explicit OIDC
+login and existing issuer/audience behavior are unchanged.
+
 
 Every shipped executable accepts exact top-level `--version` and prints its build id without starting normal configuration or services. Ordinary `task build`, `task install`, and Taskfile-driven ko builds resolve their source identity at build time with `git describe --tags --match 'v[0-9]*' --always --dirty`: the most recent root release tag, commits since it, abbreviated SHA, and an optional dirty suffix (for example, `v0.0.22-28-g40a6b3fc6-dirty`). `BUILD_ID=<value>` preserves that explicit linker stamp verbatim, including `dev`. Direct Go or ko builds without a stamp do not invoke git at runtime; they fall back to embedded VCS metadata as `dev+<12-char-vcs-revision>[.dirty]`, or `dev` if metadata is unavailable or invalid. Authenticated clients can read the server build identity and sanitized diagnostic display endpoint projections through gRPC `GetServerInfo` or HTTP `GET /v1/info`; these are not connection configuration or instructions. The detailed transport contracts are in [the gRPC API](usage/grpc-api.md) and [the HTTP/SSE API](usage/http-sse-api.md). Mecatui's `/diagnostics` behavior is documented in [the TUI guide](tui.md).
 

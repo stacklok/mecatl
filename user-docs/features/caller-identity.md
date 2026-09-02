@@ -81,7 +81,10 @@ The essential server settings are:
 | `--oidc-audience` | Required accepted `aud` value; prevents accepting tokens minted for another service. |
 | `--oidc-jwks-uri` | Optional pinned JWKS endpoint; otherwise discovery obtains it from the issuer. |
 | `--oidc-max-jwks-staleness` | Maximum age of a last-good signing-key cache during an IdP outage. `0` deliberately removes the bound. |
-| `--auth-token` | Separate static bearer authentication option when OIDC identity is not needed. |
+| `--oidc-resource` | Optional canonical external HTTPS protected-resource URL (RFC 9728). |
+| `--oidc-client-id` | Optional public mecatui client-registration hint; a mecatl extension, not an RFC 9728 field. |
+| `--oidc-scopes` | Optional CSV scope list advertised as `scopes_supported`; the same parser is used by mecated and mecak8s. |
+
 
 A typical configuration uses the issuer and audience together:
 
@@ -105,7 +108,20 @@ until the staleness limit; after that the service returns `503` until it can
 refresh. A malformed, expired, wrong-issuer, or wrong-audience token returns
 `401`. The cache is not persisted, so a restarted process fetches keys again.
 
-## Use an authenticated client
+## Protected-resource discovery (RFC 9728)
+
+A deployment may publish a canonical HTTPS resource profile with
+`--oidc-resource`, `--oidc-client-id`, and optional `--oidc-scopes`. RFC 9728
+fields (`resource`, `authorization_servers`, and `scopes_supported`) are kept
+separate from mecatl extensions (`com.stacklok.mecatl.audience` and
+`com.stacklok.mecatl.client_id`). The existing issuer and audience remain the
+OIDC validator's source of truth. Discovery is anonymous HTTPS bootstrap and is
+separate from authenticated gRPC transport; it never inherits private-issuer CA
+exceptions. ToolHive's metadata/networking code is provenance for the client
+implementation, not a runtime dependency of the engine or a promise of generic
+RFC 8707 support. Existing explicit `mecatui login --issuer ...` remains
+compatible when no profile is configured.
+
 
 For a static bearer, obtain a token through your identity provider and pass it to
 mecatui or another client. Keep it out of shell history where possible. This mode does
