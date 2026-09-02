@@ -105,9 +105,7 @@ func TestGRPCCreateSessionProfileValidation(t *testing.T) {
 		req  *mecatlv1.CreateSessionRequest
 		want string
 	}{
-		{"default profile still requires workspace", &mecatlv1.CreateSessionRequest{}, "workspace is required"},
-		{"no-fs rejects a workspace", &mecatlv1.CreateSessionRequest{Profile: "no-fs", Workspace: "/ws"}, "must not carry a workspace"},
-		{"unknown profile rejected", &mecatlv1.CreateSessionRequest{Profile: "ram-only", Workspace: "/ws"}, "unknown session profile"},
+		{"unknown profile rejected", &mecatlv1.CreateSessionRequest{Profile: "ram-only"}, "unknown session profile"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

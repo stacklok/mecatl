@@ -152,15 +152,15 @@ func TestAuthWiringGRPC(t *testing.T) {
 	defer cancel()
 
 	// reject: no token.
-	if _, err := client.CreateSession(ctx, &mecatlv1.CreateSessionRequest{Workspace: "/ws"}); status.Code(err) != codes.Unauthenticated {
+	if _, err := client.CreateSession(ctx, &mecatlv1.CreateSessionRequest{}); status.Code(err) != codes.Unauthenticated {
 		t.Fatalf("no-token code = %v, want Unauthenticated", status.Code(err))
 	}
 	// reject: wrong token.
-	if _, err := client.CreateSession(grpcBearer(ctx, "nope"), &mecatlv1.CreateSessionRequest{Workspace: "/ws"}); status.Code(err) != codes.Unauthenticated {
+	if _, err := client.CreateSession(grpcBearer(ctx, "nope"), &mecatlv1.CreateSessionRequest{}); status.Code(err) != codes.Unauthenticated {
 		t.Fatalf("wrong-token code = %v, want Unauthenticated", status.Code(err))
 	}
 	// accept: correct token.
-	if _, err := client.CreateSession(grpcBearer(ctx, token), &mecatlv1.CreateSessionRequest{Workspace: "/ws"}); err != nil {
+	if _, err := client.CreateSession(grpcBearer(ctx, token), &mecatlv1.CreateSessionRequest{}); err != nil {
 		t.Fatalf("correct-token CreateSession through wired auth: %v", err)
 	}
 }
@@ -175,7 +175,7 @@ func TestAuthWiringHTTP(t *testing.T) {
 	srv := httptest.NewServer(wiredHTTP(svc, auth))
 	defer srv.Close()
 
-	body := func() *strings.Reader { return strings.NewReader(`{"workspace":"/ws"}`) }
+	body := func() *strings.Reader { return strings.NewReader(`{}`) }
 
 	// reject: no token.
 	resp, err := http.Post(srv.URL+"/v1/sessions", "application/json", body())
@@ -235,10 +235,10 @@ func TestAuthWiringTokenFromEnv(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	if _, err := client.CreateSession(ctx, &mecatlv1.CreateSessionRequest{Workspace: "/ws"}); status.Code(err) != codes.Unauthenticated {
+	if _, err := client.CreateSession(ctx, &mecatlv1.CreateSessionRequest{}); status.Code(err) != codes.Unauthenticated {
 		t.Fatalf("env-token no-credential code = %v, want Unauthenticated", status.Code(err))
 	}
-	if _, err := client.CreateSession(grpcBearer(ctx, token), &mecatlv1.CreateSessionRequest{Workspace: "/ws"}); err != nil {
+	if _, err := client.CreateSession(grpcBearer(ctx, token), &mecatlv1.CreateSessionRequest{}); err != nil {
 		t.Fatalf("env-token correct-credential CreateSession: %v", err)
 	}
 }

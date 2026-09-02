@@ -363,7 +363,7 @@ func TestGRPCCreateSessionEchoesResolvedModel(t *testing.T) {
 	h := server.NewHarnessServer(svc)
 
 	t.Run("default selector echoes the composition default", func(t *testing.T) {
-		resp, err := h.CreateSession(context.Background(), &mecatlv1.CreateSessionRequest{Workspace: "/ws"})
+		resp, err := h.CreateSession(context.Background(), &mecatlv1.CreateSessionRequest{})
 		if err != nil {
 			t.Fatalf("CreateSession: %v", err)
 		}
@@ -378,7 +378,6 @@ func TestGRPCCreateSessionEchoesResolvedModel(t *testing.T) {
 		// "anthropic" provider with a 200000 window. The echo must reflect the RESOLVED
 		// values from Service.ResolvedModel, not be a naive read-back of the request.
 		resp, err := h.CreateSession(context.Background(), &mecatlv1.CreateSessionRequest{
-			Workspace:  "/ws",
 			ProviderId: "anthropic",
 			ModelId:    "claude-opus-4.5",
 		})
@@ -416,7 +415,6 @@ func TestGRPCGetSessionEchoesResolvedModel(t *testing.T) {
 	h := server.NewHarnessServer(svc)
 
 	createResp, err := h.CreateSession(context.Background(), &mecatlv1.CreateSessionRequest{
-		Workspace:  "/ws",
 		ProviderId: "anthropic",
 		ModelId:    "claude-opus-4.5",
 	})

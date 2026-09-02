@@ -98,8 +98,8 @@ func TestCreateDebugSessionProjectsBoundNoFSRequest(t *testing.T) {
 	if id != "debug-created" || target != "target-123" || !caps.SessionDebug {
 		t.Fatalf("result = %q target=%q %+v", id, target, caps)
 	}
-	if got := fake.request; got.GetProfile() != "no-fs" || got.GetWorkspace() != "" || got.GetDebugTargetSessionId() != "target-123" {
-		t.Fatalf("request = %+v, want no-fs, empty workspace, bound target", got)
+	if got := fake.request; got.GetProfile() != "no-fs" || got.GetDebugTargetSessionId() != "target-123" {
+		t.Fatalf("request = %+v, want no-fs and bound target", got)
 	}
 }
 

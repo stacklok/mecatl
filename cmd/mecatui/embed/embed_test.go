@@ -40,7 +40,7 @@ import (
 // assertion downstream. It uses the generated proto client directly (this package
 // is one of the few allowed to import contracts/gen) because the higher-level
 // client.Stream exposes no synchronous Recv for a test to drain.
-func driveTurn(ctx context.Context, t *testing.T, target, workspace string) {
+func driveTurn(ctx context.Context, t *testing.T, target, _ string) {
 	t.Helper()
 	conn, err := grpc.NewClient(target, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
@@ -49,7 +49,7 @@ func driveTurn(ctx context.Context, t *testing.T, target, workspace string) {
 	defer func() { _ = conn.Close() }()
 	svc := mecatlv1.NewHarnessServiceClient(conn)
 
-	cs, err := svc.CreateSession(ctx, &mecatlv1.CreateSessionRequest{Workspace: workspace})
+	cs, err := svc.CreateSession(ctx, &mecatlv1.CreateSessionRequest{})
 	if err != nil {
 		t.Fatalf("CreateSession for turn: %v", err)
 	}
@@ -801,7 +801,7 @@ func TestFireDelivery_EmbeddedEndToEnd(t *testing.T) {
 	hc := mecatlv1.NewHarnessServiceClient(conn)
 
 	// 1. Create the ORIGIN session S over the real socket.
-	cs, err := hc.CreateSession(ctx, &mecatlv1.CreateSessionRequest{Workspace: workspace})
+	cs, err := hc.CreateSession(ctx, &mecatlv1.CreateSessionRequest{})
 	if err != nil {
 		t.Fatalf("CreateSession origin: %v", err)
 	}

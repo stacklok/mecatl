@@ -69,7 +69,7 @@ func writeOperatorSteerFile(t *testing.T, value string) string {
 func steerCapsFromBuild(t *testing.T, built *Built) *mecatlv1.ServerCapabilities {
 	t.Helper()
 	resp, err := server.NewHarnessServer(built.Service).CreateSession(context.Background(),
-		&mecatlv1.CreateSessionRequest{Workspace: t.TempDir()})
+		&mecatlv1.CreateSessionRequest{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}

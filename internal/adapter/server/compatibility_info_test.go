@@ -90,7 +90,7 @@ func TestSDKServerEnablers_Scenario1_CompatibilityInfoMatchesCapabilities(t *tes
 	// The capabilities half must be the SAME projection CreateSession echoes. A
 	// second projection would drift and let a server contradict itself about its
 	// own configuration.
-	cs, err := client.CreateSession(ctx, &mecatlv1.CreateSessionRequest{Workspace: "/ws"})
+	cs, err := client.CreateSession(ctx, &mecatlv1.CreateSessionRequest{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -292,7 +292,7 @@ func TestInvariant_capability_truth_single_intersection(t *testing.T) {
 	}
 
 	// The session echo is the authority and must agree with the one source.
-	cs, err := client.CreateSession(ctx, &mecatlv1.CreateSessionRequest{Workspace: "/ws"})
+	cs, err := client.CreateSession(ctx, &mecatlv1.CreateSessionRequest{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}

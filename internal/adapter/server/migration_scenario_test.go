@@ -589,10 +589,9 @@ func TestSessionStorageContinuity_Scenario4_MigrationAuthorizationAndNoOracle(t 
 	writeV1Family(t, dir, newLegacySession(t, "private-family", owner), nil, nil, time.Unix(1700000000, 0))
 	svc := migrationService(t, store, func(ctx context.Context) bool {
 		p := session.PrincipalFromContext(ctx)
-		return p != nil && p.Subject != "mallory"
+		return p == nil || p.Subject != "mallory"
 	}, nil)
-	alicePrincipal := &session.Principal{Issuer: "https://idp.example", Subject: "alice", GrantType: session.GrantTypeUser}
-	grpcClient, closeClient := adoptionGRPCClient(t, svc, alicePrincipal)
+	grpcClient, closeClient := dialGRPC(t, svc)
 	defer closeClient()
 	wirePlan, err := grpcClient.PlanSessionMigration(context.Background(), &mecatlv1.PlanSessionMigrationRequest{})
 	if err != nil || wirePlan.GetV1Families() != 1 {

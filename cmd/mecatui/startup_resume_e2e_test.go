@@ -419,7 +419,7 @@ func startStartupResumeConnect(t *testing.T, cfg app.Config) (string, func()) {
 	}
 }
 
-func seedStartupResumeSession(ctx context.Context, t *testing.T, target, workspace string) string {
+func seedStartupResumeSession(ctx context.Context, t *testing.T, target, _ string) string {
 	t.Helper()
 	conn, err := grpc.NewClient(target, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
@@ -427,7 +427,7 @@ func seedStartupResumeSession(ctx context.Context, t *testing.T, target, workspa
 	}
 	defer func() { _ = conn.Close() }()
 	svc := mecatlv1.NewHarnessServiceClient(conn)
-	created, err := svc.CreateSession(ctx, &mecatlv1.CreateSessionRequest{Workspace: workspace})
+	created, err := svc.CreateSession(ctx, &mecatlv1.CreateSessionRequest{})
 	if err != nil {
 		t.Fatalf("create seed session: %v", err)
 	}

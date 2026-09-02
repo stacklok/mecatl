@@ -44,6 +44,10 @@ func (noopMemStore) Search(context.Context, string, int) ([]tool.MemoryEntry, er
 	return nil, nil
 }
 
+type stubCommandLister struct{}
+
+func (*stubCommandLister) List(context.Context, string) ([]server.Command, error) { return nil, nil }
+
 // stubMemberEngine satisfies Config.MemberEngine (MemberEngineFactory) just
 // enough to be non-nil; the Service only nil-checks it for the teams cap. It is
 // never invoked.
@@ -105,7 +109,7 @@ func capsFromCreate(t *testing.T, svc *server.Service) *mecatlv1.ServerCapabilit
 	defer cleanup()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	resp, err := client.CreateSession(ctx, &mecatlv1.CreateSessionRequest{Workspace: "/ws"})
+	resp, err := client.CreateSession(ctx, &mecatlv1.CreateSessionRequest{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}

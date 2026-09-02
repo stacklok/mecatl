@@ -80,7 +80,7 @@ func runWriteSession(t *testing.T, client mecatlv1.HarnessServiceClient, workspa
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	cs, err := client.CreateSession(ctx, &mecatlv1.CreateSessionRequest{Workspace: workspace})
+	cs, err := client.CreateSession(ctx, &mecatlv1.CreateSessionRequest{})
 	if err != nil {
 		t.Fatalf("CreateSession(%s): %v", workspace, err)
 	}
@@ -154,7 +154,7 @@ func TestE2EPerSessionConfigDiverges(t *testing.T) {
 	// Session B: no config → built-in ask fires. Drive it manually so we can prove
 	// the ask actually GATES (not cosmetic): the Write tool must NOT have run at the
 	// moment the ask is surfaced, and the permission.ask must precede the tool.result.
-	cs, err := client.CreateSession(context.Background(), &mecatlv1.CreateSessionRequest{Workspace: "/repo-plain"})
+	cs, err := client.CreateSession(context.Background(), &mecatlv1.CreateSessionRequest{})
 	if err != nil {
 		t.Fatalf("CreateSession(B): %v", err)
 	}

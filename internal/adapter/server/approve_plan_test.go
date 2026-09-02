@@ -696,8 +696,7 @@ func TestApprovePlanGRPCStreaming(t *testing.T) {
 	defer cancel()
 
 	cs, err := client.CreateSession(ctx, &mecatlv1.CreateSessionRequest{
-		Workspace: "/ws",
-		Mode:      mecatlv1.PermissionMode_PERMISSION_MODE_PLAN,
+		Mode: mecatlv1.PermissionMode_PERMISSION_MODE_PLAN,
 	})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
@@ -764,7 +763,7 @@ func TestApprovePlanGRPCMidRunFailsPrecondition(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	cs, err := client.CreateSession(ctx, &mecatlv1.CreateSessionRequest{Workspace: "/ws"})
+	cs, err := client.CreateSession(ctx, &mecatlv1.CreateSessionRequest{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}

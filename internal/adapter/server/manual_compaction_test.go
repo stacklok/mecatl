@@ -353,7 +353,7 @@ func TestCompactSessionWireSurfaces(t *testing.T) {
 func TestCompactSessionCapabilityAdvertised(t *testing.T) {
 	store, _, _ := compactFixture(t, session.StateIdle)
 	svc := newCompactService(t, store, serviceCompactCompactor{}, false, nil, nil)
-	resp, err := server.NewHarnessServer(svc).CreateSession(context.Background(), &mecatlv1.CreateSessionRequest{Workspace: "/ws"})
+	resp, err := server.NewHarnessServer(svc).CreateSession(context.Background(), &mecatlv1.CreateSessionRequest{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}

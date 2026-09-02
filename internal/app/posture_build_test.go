@@ -34,7 +34,7 @@ func writeOperatorPostureFile(t *testing.T, tier string) string {
 func postureEchoFromBuild(t *testing.T, built *Built) string {
 	t.Helper()
 	resp, err := server.NewHarnessServer(built.Service).CreateSession(context.Background(),
-		&mecatlv1.CreateSessionRequest{Workspace: t.TempDir()})
+		&mecatlv1.CreateSessionRequest{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}

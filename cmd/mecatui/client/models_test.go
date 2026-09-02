@@ -148,9 +148,6 @@ func TestCreateSessionCarriesModelSelection(t *testing.T) {
 			t.Fatalf("request = provider:%q model:%q, want openrouter/anthropic-claude",
 				fake.lastCreate.GetProviderId(), fake.lastCreate.GetModelId())
 		}
-		if fake.lastCreate.GetWorkspace() != "/ws" {
-			t.Fatalf("workspace = %q, want /ws", fake.lastCreate.GetWorkspace())
-		}
 	})
 	t.Run("zero selection leaves both empty (server default)", func(t *testing.T) {
 		fake := &fakeModelsClient{}

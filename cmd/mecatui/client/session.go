@@ -38,7 +38,6 @@ func snapshotFrom(s *mecatlv1.Session) SessionSnapshot {
 	return SessionSnapshot{
 		Mode:            ModeString(s.GetMode()),
 		State:           s.GetState(),
-		Workspace:       s.GetWorkspace(),
 		CreatedAt:       s.GetCreatedAtUnix(),
 		ResolvedModel:   resolvedModelFrom(s.GetResolvedModel()),
 		Title:           s.GetTitle(),

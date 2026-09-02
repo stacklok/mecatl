@@ -2128,9 +2128,13 @@ func (s *Service) createSession(ctx context.Context, workspace string, mode sess
 		return nil, err
 	}
 	var err error
-	workspace, profile, err = s.workspaceForCreate(workspace, profile)
-	if err != nil {
-		return nil, err
+	if s.placementBinder == nil {
+		workspace, profile, err = s.workspaceForCreate(workspace, profile)
+		if err != nil {
+			return nil, err
+		}
+	} else if workspace != "" {
+		return nil, fmt.Errorf("%w: public placement is server-owned", ErrInvalidArgument)
 	}
 	if mode == "" {
 		mode = s.cfg.DefaultMode
@@ -2438,7 +2442,6 @@ func (s *Service) capabilities() *mecatlv1.ServerCapabilities {
 		StorageHealth:     s.cfg.StorageManagementAuthorized != nil && (implementsStorageHealth(s.cfg.Store) || s.scheduleStore() != nil),
 		StorageMigration:  s.cfg.StorageManagementAuthorized != nil && s.maintenanceMutationAvailable() && func() bool { _, ok := migrationStore(s.cfg.Store); return ok }(),
 		StorageCleanup:    s.cfg.StorageManagementAuthorized != nil && s.maintenanceMutationAvailable() && supportsCleanupDelete(s.cfg.Store),
-		LegacyAdoption:    s.cfg.OwnershipEnforced && s.cfg.SessionEngine != nil,
 		ManualDream:       toProtoDreamCapabilities(s.ManualDreamCapabilities()),
 		// Steer reads the SAME wired engine knob the runs consult (Deps.EnableSteer
 		// via Engine.SteerEnabled) — the advertisement can never claim a steer
@@ -6796,8 +6799,8 @@ type SessionSummary struct {
 	// TitleProvenance reports whether the title is prompt-derived, operator-authored,
 	// or legacy/unknown.
 	TitleProvenance session.TitleProvenance
-	// Workspace is the stored session root used for search and display.
-	Workspace string
+	// PlacementKind is the bounded display-safe placement class.
+	PlacementKind session.EnvironmentKind
 	// Owner is the verified caller the session is attributed to.
 	Owner *session.Principal
 	// Kind and Relationship are the durable trusted-producer taxonomy.
@@ -7095,7 +7098,7 @@ func (s *Service) summaryFromDiscoveryMeta(meta port.SessionDiscoveryMeta) Sessi
 		SessionID: string(meta.ID), ModifiedAtUnix: meta.ModifiedAt.Unix(), State: string(meta.State),
 		Turns: meta.Turns, ModelID: meta.ModelID, CreatedAtUnix: created, Title: meta.Title,
 		TitleProvenance: meta.TitleProvenance,
-		Workspace:       meta.Workspace, Owner: meta.Owner.Clone(), Kind: kind, Relationship: meta.Relationship,
+		Owner:           meta.Owner.Clone(), Kind: kind, Relationship: meta.Relationship,
 		Capabilities: caps, Reasons: reasons, ReasonCode: reasons.PublicChat,
 	}
 }
@@ -7215,7 +7218,7 @@ func (s *Service) ListSessions(ctx context.Context) ([]SessionSummary, error) {
 			}
 			summary.Title = DeriveTitle(sess)
 			summary.TitleProvenance = sess.TitleProvenance
-			summary.Workspace = sess.Workspace
+			summary.PlacementKind = sess.EnvironmentRef.Kind
 			// Clone: the row must not carry a live pointer into the loaded
 			// session, or a consumer of the row can rewrite the recorded owner.
 			summary.Owner = sess.Owner.Clone()

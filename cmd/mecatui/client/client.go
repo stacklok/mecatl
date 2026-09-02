@@ -254,9 +254,8 @@ func (c *Client) Close() error {
 // The ResolvedModel is the EFFECTIVE provider+model the server resolved the session
 // to (echoed verbatim); an older server that omits the field yields the zero value
 // (see resolvedModelFrom), which the ui renders as no model segment.
-func (c *Client) CreateSession(ctx context.Context, workspace string, mode mecatlv1.PermissionMode, sel ModelSelection) (string, Capabilities, ResolvedModel, error) {
+func (c *Client) CreateSession(ctx context.Context, _ string, mode mecatlv1.PermissionMode, sel ModelSelection) (string, Capabilities, ResolvedModel, error) {
 	return c.createSession(ctx, &mecatlv1.CreateSessionRequest{
-		Workspace:       workspace,
 		Mode:            mode,
 		ProviderId:      sel.ProviderID,
 		ModelId:         sel.ModelID,
@@ -423,14 +422,20 @@ func isUpperHex(b byte) bool {
 // for the carryover selector — the ui passes plain strings and never sees the
 // proto.
 func (c *Client) CreateSessionWithCarryover(ctx context.Context, workspace string, mode mecatlv1.PermissionMode, sel ModelSelection, sourceSessionID string) (string, Capabilities, ResolvedModel, error) {
-	return c.createSession(ctx, &mecatlv1.CreateSessionRequest{
-		Workspace:       workspace,
-		Mode:            mode,
-		ProviderId:      sel.ProviderID,
-		ModelId:         sel.ModelID,
-		ReasoningEffort: sel.ReasoningEffort,
-		SourceSessionId: sourceSessionID,
+	if sourceSessionID == "" {
+		return c.CreateSession(ctx, workspace, mode, sel)
+	}
+	resp, err := c.svc.ForkSession(ctx, &mecatlv1.ForkSessionRequest{
+		SourceSessionId: sourceSessionID, ProviderId: sel.ProviderID, ModelId: sel.ModelID, ReasoningEffort: sel.ReasoningEffort,
 	})
+	if err != nil {
+		return "", Capabilities{}, ResolvedModel{}, fmt.Errorf("fork session: %w", err)
+	}
+	snapshot, err := c.GetSession(ctx, resp.GetSessionId())
+	if err != nil {
+		return "", Capabilities{}, ResolvedModel{}, err
+	}
+	return resp.GetSessionId(), snapshot.Capabilities, snapshot.ResolvedModel, nil
 }
 
 // createSession is the shared proto-build→call→unwrap body for both CreateSession

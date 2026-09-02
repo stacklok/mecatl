@@ -695,7 +695,7 @@ func TestToProtoTable(t *testing.T) {
 			assert: func(t *testing.T, got *mecatlv1.Event) {
 				p := got.GetParallel()
 				if p == nil || p.GetKind() != "branch_end" || p.GetBranchIndex() != 2 ||
-					!p.GetFailed() || p.GetWorkspace() != "/fork/branch-3" ||
+					!p.GetFailed() ||
 					p.GetStop() != "error" || p.GetDurationMs() != 555 || p.GetToolCount() != 4 {
 					t.Fatalf("parallel branch_end payload mismatch: %+v", p)
 				}
@@ -718,7 +718,7 @@ func TestToProtoTable(t *testing.T) {
 				if got.GetType() != "parallel.end" {
 					t.Fatalf("type = %q, want parallel.end", got.GetType())
 				}
-				if p == nil || p.GetWinner() != 1 || p.GetWinnerWorkspace() != "/fork/branch-2" ||
+				if p == nil || p.GetWinner() != 1 ||
 					p.GetJoin() != "judge" || p.GetBranchCount() != 3 || p.GetStop() != "end_turn" {
 					t.Fatalf("parallel.end payload mismatch: %+v", p)
 				}
@@ -733,7 +733,7 @@ func TestToProtoTable(t *testing.T) {
 				Parallel: &session.ParallelPayload{ParentCallID: "p1", Join: "all", BranchCount: 2, Winner: -1}},
 			assert: func(t *testing.T, got *mecatlv1.Event) {
 				p := got.GetParallel()
-				if p == nil || p.GetWinner() != -1 || p.GetWinnerWorkspace() != "" {
+				if p == nil || p.GetWinner() != -1 {
 					t.Fatalf("parallel.end (all) should carry Winner=-1, no workspace: %+v", p)
 				}
 			},
@@ -1415,7 +1415,7 @@ func TestMapperBackstopNonEventMessages(t *testing.T) {
 	check("McpPrompt", toProtoMcpPrompt(mcp.Prompt{Server: "s", Name: "n" + badUTF8, Title: "t" + badUTF8, Description: "d" + badUTF8, Arguments: []mcp.PromptArgument{{Name: "a" + badUTF8, Title: "at" + badUTF8, Description: "ad" + badUTF8}}}))
 	check("McpPromptMessage", toProtoMcpPromptMessage(mcp.PromptMessage{Role: "user" + badUTF8, Text: "x" + badUTF8}))
 	check("McpSource", toProtoMcpSource(source.SourceInfo{Name: "n" + badUTF8, Kind: "k", Group: "g" + badUTF8, Servers: []source.ServerInfo{{Name: "sv" + badUTF8, URL: "u" + badUTF8, Transport: "http", Group: "g" + badUTF8}}, Diagnostics: []string{"d" + badUTF8}}))
-	check("Worktree", toProtoWorktree(Worktree{Path: "/p" + badUTF8, Branch: "b" + badUTF8, Head: "h" + badUTF8}))
+	check("Worktree", toProtoScopedWorktrees([]ScopedWorktree{{Selector: "s" + badUTF8, Label: "l" + badUTF8, Branch: "b" + badUTF8, Revision: "h" + badUTF8}})[0])
 	check("SessionSummary", toProtoSessionSummary(SessionSummary{SessionID: "s", State: "idle", ModelID: "m", Title: "t" + badUTF8}))
 	check("TeamMember", toProtoTeamMember(team.Member{Name: "n" + badUTF8, AgentType: "a" + badUTF8}))
 	check("TeamTask", toProtoTeamTask(team.Task{ID: "1", Description: "d" + badUTF8, Assignee: "a" + badUTF8, Deps: []team.TaskID{team.TaskID("x" + badUTF8)}}))

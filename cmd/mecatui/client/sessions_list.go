@@ -180,7 +180,7 @@ func listSessionsFromProto(in []*mecatlv1.SessionSummary) []SessionListItem {
 		out = append(out, SessionListItem{
 			ID: s.GetSessionId(), ModifiedAt: s.GetModifiedAtUnix(), State: s.GetState(),
 			Turns: s.GetTurns(), ModelID: s.GetModelId(), CreatedAt: s.GetCreatedAtUnix(), Title: s.GetTitle(),
-			TitleProvenance: s.GetTitleProvenance(), Workspace: s.GetWorkspace(), Kind: SessionKind(s.GetKind()),
+			TitleProvenance: s.GetTitleProvenance(), Kind: SessionKind(s.GetKind()),
 			Relationship: SessionRelationship{
 				ParentSessionID: rel.GetParentSessionId(), CallID: rel.GetCallId(), BranchIndex: branchIndex,
 				ScheduleName: rel.GetScheduleName(), OriginSessionID: rel.GetOriginSessionId(),

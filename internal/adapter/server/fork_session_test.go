@@ -439,7 +439,7 @@ func TestGRPCForkSessionRoundTrip(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	cs, err := client.CreateSession(ctx, &mecatlv1.CreateSessionRequest{Workspace: "/ws/grpc"})
+	cs, err := client.CreateSession(ctx, &mecatlv1.CreateSessionRequest{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -475,8 +475,8 @@ func TestGRPCForkSessionRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetSession on fork: %v", err)
 	}
-	if got.GetSession().GetWorkspace() != "/ws/grpc" {
-		t.Fatalf("fork workspace = %q, want source's /ws/grpc", got.GetSession().GetWorkspace())
+	if got.GetSession().GetPlacement().GetKind() == "" {
+		t.Fatal("fork placement metadata is missing")
 	}
 	if got.GetSession().GetState() != "idle" {
 		t.Fatalf("fork state = %q, want idle", got.GetSession().GetState())

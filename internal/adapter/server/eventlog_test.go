@@ -295,7 +295,7 @@ func TestDirectTeamTransportsOmitNetworkAttemptWithoutAffectingDurableObservatio
 				client, cleanup := dialGRPC(t, svc)
 				defer cleanup()
 				created, err := client.CreateTeam(context.Background(), &mecatlv1.CreateTeamRequest{
-					Workspace: "/ws", Name: "test",
+					SessionId: "source", Name: "test",
 					Members: []*mecatlv1.TeammateSpec{{Name: "lead", Lead: true, InitialPrompt: "go"}},
 				})
 				if err != nil {

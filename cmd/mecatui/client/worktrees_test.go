@@ -33,8 +33,8 @@ func (f *fakeWorktreesClient) ListWorktrees(_ context.Context, in *mecatlv1.List
 
 func TestListWorktreesMapping(t *testing.T) {
 	fake := &fakeWorktreesClient{resp: &mecatlv1.ListWorktreesResponse{Worktrees: []*mecatlv1.Worktree{
-		{Path: "/repo", Branch: "refs/heads/main", Head: "abcdef1"},
-		{Path: "/repo-wt", Branch: "refs/heads/feature", Head: "1234567"},
+		{Selector: "s1", Label: "repo", Branch: "refs/heads/main", Revision: "abcdef1"},
+		{Selector: "s2", Label: "repo-wt", Branch: "refs/heads/feature", Revision: "1234567"},
 	}}}
 	cl := newFakeClient(fake)
 
@@ -42,8 +42,8 @@ func TestListWorktreesMapping(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListWorktrees: %v", err)
 	}
-	if fake.lastReq.GetWorkspace() != "/repo" {
-		t.Fatalf("request workspace = %q, want /repo", fake.lastReq.GetWorkspace())
+	if fake.lastReq.GetSessionId() != "/repo" {
+		t.Fatalf("request session = %q, want /repo", fake.lastReq.GetSessionId())
 	}
 	if len(wts) != 2 {
 		t.Fatalf("worktrees = %d, want 2", len(wts))
@@ -58,7 +58,7 @@ func TestListWorktreesMapping(t *testing.T) {
 
 func TestListWorktreesCmdSuccess(t *testing.T) {
 	fake := &fakeWorktreesClient{resp: &mecatlv1.ListWorktreesResponse{Worktrees: []*mecatlv1.Worktree{
-		{Path: "/repo", Branch: "refs/heads/main"},
+		{Selector: "s1", Label: "repo", Branch: "refs/heads/main"},
 	}}}
 	cl := newFakeClient(fake)
 

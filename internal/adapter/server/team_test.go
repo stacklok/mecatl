@@ -441,7 +441,7 @@ func TestCreateTeamGoalTrustOptIn(t *testing.T) {
 		ctx := context.Background()
 
 		createResp, err := h.CreateTeam(ctx, &mecatlv1.CreateTeamRequest{
-			Workspace: "/ws", Name: "test", Goal: goal,
+			SessionId: "source", Name: "test", Goal: goal,
 			Members: []*mecatlv1.TeammateSpec{{Name: "lead", Lead: true, InitialPrompt: "go"}},
 		})
 		if err != nil {
@@ -472,8 +472,8 @@ func TestCreateTeamGoalTrustOptIn(t *testing.T) {
 	})
 }
 
-func newCreateTeam(workspace string) *mecatlv1.CreateTeamRequest {
-	return &mecatlv1.CreateTeamRequest{Workspace: workspace, Name: "test"}
+func newCreateTeam(sessionID string) *mecatlv1.CreateTeamRequest {
+	return &mecatlv1.CreateTeamRequest{SessionId: sessionID, Name: "test"}
 }
 
 func newSpawn(teamID, name string, lead bool, initialPrompt string) *mecatlv1.SpawnTeammateRequest {
@@ -484,8 +484,8 @@ func newSpawn(teamID, name string, lead bool, initialPrompt string) *mecatlv1.Sp
 
 // newCreateTeamWith builds a CreateTeamRequest carrying an initial roster — the
 // atomic create+populate path.
-func newCreateTeamWith(workspace string, members ...*mecatlv1.TeammateSpec) *mecatlv1.CreateTeamRequest {
-	return &mecatlv1.CreateTeamRequest{Workspace: workspace, Name: "test", Members: members}
+func newCreateTeamWith(sessionID string, members ...*mecatlv1.TeammateSpec) *mecatlv1.CreateTeamRequest {
+	return &mecatlv1.CreateTeamRequest{SessionId: sessionID, Name: "test", Members: members}
 }
 
 // wantRunningSentinel asserts a Service-level method returned the ErrTeamRunning

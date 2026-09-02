@@ -8,6 +8,7 @@ import (
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 	"github.com/stacklok/mecatl/engine/agent"
+	"github.com/stacklok/mecatl/engine/session"
 )
 
 // grpc_team.go implements the agent-team RPCs over the shared Service. Event
@@ -17,7 +18,17 @@ import (
 // initial roster atomically (any member failure abandons the whole team). The
 // enrolled roster is echoed back so the caller need not follow up with ListTeam.
 func (h *HarnessServer) CreateTeam(ctx context.Context, req *mecatlv1.CreateTeamRequest) (*mecatlv1.CreateTeamResponse, error) {
-	id, enrolled, err := h.svc.CreateTeam(ctx, req.GetWorkspace(), req.GetName(), req.GetGoal(), int(req.GetMaxTeamTokens()), fromProtoTeammateSpecs(req.GetMembers()))
+	if req.GetSessionId() == "" {
+		return nil, status.Error(codes.InvalidArgument, "session_id is required")
+	}
+	_, env, err := h.svc.ownedSessionEnvironment(ctx, session.SessionID(req.GetSessionId()))
+	if err != nil {
+		return nil, toStatus(err)
+	}
+	if env.Workspace() == nil || env.Workspace().Root() == "" {
+		return nil, status.Error(codes.FailedPrecondition, "session has no filesystem placement")
+	}
+	id, enrolled, err := h.svc.CreateTeam(ctx, env.Workspace().Root(), req.GetName(), req.GetGoal(), int(req.GetMaxTeamTokens()), fromProtoTeammateSpecs(req.GetMembers()))
 	if err != nil {
 		return nil, toStatus(err)
 	}

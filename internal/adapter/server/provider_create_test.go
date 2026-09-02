@@ -109,7 +109,6 @@ func TestCreateSessionUnknownProviderInvalidArgument(t *testing.T) {
 	client, cleanup := dialGRPC(t, svc)
 	defer cleanup()
 	_, gerr := client.CreateSession(context.Background(), &mecatlv1.CreateSessionRequest{
-		Workspace:  "/ws",
 		ProviderId: "nope",
 	})
 	if status.Code(gerr) != codes.InvalidArgument {
@@ -141,8 +140,7 @@ func TestCreateSessionModelWithoutProviderInvalidArgument(t *testing.T) {
 	client, cleanup := dialGRPC(t, svc)
 	defer cleanup()
 	_, gerr := client.CreateSession(context.Background(), &mecatlv1.CreateSessionRequest{
-		Workspace: "/ws",
-		ModelId:   "gpt-x",
+		ModelId: "gpt-x",
 	})
 	if status.Code(gerr) != codes.InvalidArgument {
 		t.Fatalf("gRPC code = %v, want InvalidArgument", status.Code(gerr))
@@ -180,7 +178,7 @@ func TestGRPCCreateSessionNoSelectorOldClientContract(t *testing.T) {
 	defer cleanup()
 
 	// Old-client shape: no provider_id / model_id on the request.
-	resp, err := client.CreateSession(context.Background(), &mecatlv1.CreateSessionRequest{Workspace: "/ws"})
+	resp, err := client.CreateSession(context.Background(), &mecatlv1.CreateSessionRequest{})
 	if err != nil {
 		t.Fatalf("CreateSession(no selector): %v", err)
 	}
@@ -265,7 +263,7 @@ func TestCreateSessionEnginesCapped(t *testing.T) {
 	// And over gRPC it maps to ResourceExhausted.
 	client, cleanup := dialGRPC(t, svc)
 	defer cleanup()
-	_, gerr := client.CreateSession(ctx, &mecatlv1.CreateSessionRequest{Workspace: "/ws", ProviderId: "openrouter"})
+	_, gerr := client.CreateSession(ctx, &mecatlv1.CreateSessionRequest{ProviderId: "openrouter"})
 	if status.Code(gerr) != codes.ResourceExhausted {
 		t.Fatalf("gRPC create past cap: code = %v, want ResourceExhausted (err=%v)", status.Code(gerr), gerr)
 	}

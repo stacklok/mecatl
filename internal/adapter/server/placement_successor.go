@@ -20,6 +20,8 @@ type ForkSuccessorRequest struct {
 	Source          session.SessionID
 	Placement       SuccessorPlacement
 	Title           string
+	ProviderID      string
+	ModelID         string
 	ReasoningEffort string
 }
 
@@ -64,9 +66,9 @@ func (s *Service) createPlacedSuccessor(ctx context.Context, req ForkSuccessorRe
 	}
 
 	created := session.New(s.cfg.NewID(), source.Mode, binding.Environment.Workspace().Root(), source.Limits, s.cfg.Now())
-	selector := ProviderSelector{ProviderID: source.ProviderID, ModelID: source.ModelID, ReasoningEffort: source.ReasoningEffort}
-	if req.ReasoningEffort != "" {
-		selector.ReasoningEffort = req.ReasoningEffort
+	selector, err := successorProviderSelector(source, req)
+	if err != nil {
+		return "", err
 	}
 	authority, bound := source.BoundAuthority()
 	if !bound {
@@ -98,6 +100,23 @@ func (s *Service) createPlacedSuccessor(ctx context.Context, req ForkSuccessorRe
 	s.sessionEnvironments[created.ID] = binding.Environment
 	s.mu.Unlock()
 	return created.ID, nil
+}
+
+func successorProviderSelector(source *session.Session, req ForkSuccessorRequest) (ProviderSelector, error) {
+	selector := ProviderSelector{ProviderID: source.ProviderID, ModelID: source.ModelID, ReasoningEffort: source.ReasoningEffort}
+	if req.ProviderID != "" {
+		selector.ProviderID = req.ProviderID
+	}
+	if req.ModelID != "" {
+		if req.ProviderID == "" {
+			return ProviderSelector{}, fmt.Errorf("%w: model_id requires provider_id", ErrInvalidArgument)
+		}
+		selector.ModelID = req.ModelID
+	}
+	if req.ReasoningEffort != "" {
+		selector.ReasoningEffort = req.ReasoningEffort
+	}
+	return selector, nil
 }
 
 func (s *Service) successorPlacement(ctx context.Context, source *session.Session, requested SuccessorPlacement) (PlacementBinding, error) {

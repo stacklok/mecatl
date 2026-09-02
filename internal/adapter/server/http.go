@@ -66,8 +66,7 @@ func NewHTTPHandler(svc *Service) *HTTPHandler {
 	h.mux.HandleFunc("POST /v1/sessions/{id}/cancel", h.cancel)
 	h.mux.HandleFunc("POST /v1/sessions/{id}/cancel-child", h.cancelChild)
 	h.mux.HandleFunc("POST /v1/sessions/{id}/fork", h.forkSession)
-	h.mux.HandleFunc("POST /v1/sessions/{id}/adoption:preflight", h.preflightSessionAdoption)
-	h.mux.HandleFunc("POST /v1/sessions/{id}/adopt", h.adoptSession)
+	h.mux.HandleFunc("POST /v1/sessions/{id}/clear", h.clearSession)
 	h.mux.HandleFunc("POST /v1/sessions/{id}/reflect", h.reflectSession)
 	h.mux.HandleFunc("POST /v1/dream/plans", h.generateDreamPlan)
 	h.mux.HandleFunc("POST /v1/dream/plans/{plan_id}/decision", h.decideDreamPlan)
@@ -149,9 +148,8 @@ func (h *HTTPHandler) getServerInfo(w http.ResponseWriter, r *http.Request) {
 // --- request/response bodies ------------------------------------------------
 
 type createSessionBody struct {
-	Workspace string    `json:"workspace"`
-	Mode      string    `json:"mode,omitempty"`
-	Limits    *limitsIn `json:"limits,omitempty"`
+	Mode   string    `json:"mode,omitempty"`
+	Limits *limitsIn `json:"limits,omitempty"`
 	// ProviderID / ModelID select a per-session provider+model (multi-provider
 	// Phase 0, S3). Empty both => the server default provider. ProviderID without
 	// ModelID => the provider's default model; ModelID without ProviderID is a
@@ -169,13 +167,6 @@ type createSessionBody struct {
 	// capability-gates it; an unknown value falls back to the operator default with
 	// a WARN. The effective value is echoed on resolved_model.reasoning_effort.
 	ReasoningEffort string `json:"reasoning_effort,omitempty"`
-	// SourceSessionID, when non-empty, seeds the new session's conversation history
-	// from the named source session (issue #20: model-switch context carryover).
-	// Always allowed across providers: same-provider replays verbatim,
-	// cross-provider seeds a provider-neutral copy (blobs stripped). A
-	// running/awaiting source is a 4xx (FailedPrecondition). Empty means no
-	// carryover.
-	SourceSessionID string `json:"source_session_id,omitempty"`
 	// DebugTargetSessionID creates a separate no-fs diagnostic session bound to
 	// one authorized target; it never copies target conversation state.
 	DebugTargetSessionID string   `json:"debug_target_session_id,omitempty"`
@@ -242,7 +233,15 @@ type createSessionResp struct {
 	// (the composition single source via Service.ResolvedModel), so an HTTP client
 	// shows the same effective model the gRPC client gets. Omitted (nil) when no
 	// model resolved (older-server-equivalent fallback).
-	ResolvedModel *resolvedModelJSON `json:"resolved_model,omitempty"`
+	ResolvedModel *resolvedModelJSON     `json:"resolved_model,omitempty"`
+	Placement     *placementMetadataJSON `json:"placement,omitempty"`
+}
+
+type placementMetadataJSON struct {
+	Kind     string `json:"kind,omitempty"`
+	Label    string `json:"label,omitempty"`
+	Branch   string `json:"branch,omitempty"`
+	Revision string `json:"revision,omitempty"`
 }
 
 // sessionCapabilitiesJSON mirrors mecatlv1.SessionCapabilities for the JSON
@@ -260,6 +259,13 @@ type resolvedModelJSON struct {
 	ModelID         string `json:"model_id"`
 	ContextWindow   int64  `json:"context_window"`
 	ReasoningEffort string `json:"reasoning_effort,omitempty"`
+}
+
+func placementMetadataToJSON(ref session.EnvironmentRef) *placementMetadataJSON {
+	if !ref.Valid() {
+		return nil
+	}
+	return &placementMetadataJSON{Kind: string(ref.Kind)}
 }
 
 // resolvedModelToJSON maps the server-side ResolvedModel to its JSON form, nil for
@@ -292,7 +298,6 @@ type serverCapabilitiesJSON struct {
 	StorageHealth     bool                              `json:"storage_health"`
 	StorageMigration  bool                              `json:"storage_migration"`
 	StorageCleanup    bool                              `json:"storage_cleanup"`
-	LegacyAdoption    bool                              `json:"legacy_adoption"`
 	SessionDebug      bool                              `json:"session_debug"`
 	DebugMCP          bool                              `json:"debug_mcp"`
 	ManualDream       *mecatlv1.ManualDreamCapabilities `json:"manual_dream,omitempty"`
@@ -322,7 +327,6 @@ func capabilitiesJSON(c *mecatlv1.ServerCapabilities) *serverCapabilitiesJSON {
 		StorageHealth:     c.GetStorageHealth(),
 		StorageMigration:  c.GetStorageMigration(),
 		StorageCleanup:    c.GetStorageCleanup(),
-		LegacyAdoption:    c.GetLegacyAdoption(),
 		SessionDebug:      c.GetSessionDebug(),
 		DebugMCP:          c.GetDebugMcp(),
 		ManualDream:       c.GetManualDream(),
@@ -333,12 +337,12 @@ func capabilitiesJSON(c *mecatlv1.ServerCapabilities) *serverCapabilitiesJSON {
 }
 
 type sessionResp struct {
-	SessionID string `json:"session_id"`
-	State     string `json:"state"`
-	Mode      string `json:"mode"`
-	Workspace string `json:"workspace"`
-	Turns     int    `json:"turns"`
-	ToolCalls int    `json:"tool_calls"`
+	SessionID string                 `json:"session_id"`
+	State     string                 `json:"state"`
+	Mode      string                 `json:"mode"`
+	Placement *placementMetadataJSON `json:"placement,omitempty"`
+	Turns     int                    `json:"turns"`
+	ToolCalls int                    `json:"tool_calls"`
 	// Title is the human-readable session label (snapshot Title, or the lazy
 	// deriveTitle fallback when the snapshot Title is empty). Omitted via
 	// omitempty only when both are empty (no genuine prompt).
@@ -479,9 +483,6 @@ func (h *HTTPHandler) createSession(w http.ResponseWriter, r *http.Request) {
 	}
 	sel := ProviderSelector{ProviderID: body.ProviderID, ModelID: body.ModelID, ReasoningEffort: body.ReasoningEffort}
 	var opts []CreateSessionOption
-	if body.SourceSessionID != "" {
-		opts = append(opts, WithSourceSession(session.SessionID(body.SourceSessionID)))
-	}
 	if body.DebugTargetSessionID != "" {
 		opts = append(opts, WithDebugTarget(session.SessionID(body.DebugTargetSessionID)))
 	}
@@ -499,7 +500,7 @@ func (h *HTTPHandler) createSession(w http.ResponseWriter, r *http.Request) {
 	if !grant.IsEmpty() {
 		opts = append(opts, WithClientMCP(grant))
 	}
-	sess, err := h.svc.CreateSessionWithProfile(r.Context(), body.Workspace, modeFromString(body.Mode), limits, sel, profile, opts...)
+	sess, err := h.svc.CreateSessionWithProfile(r.Context(), "", modeFromString(body.Mode), limits, sel, profile, opts...)
 	if err != nil {
 		writeServiceError(w, err)
 		return
@@ -510,6 +511,7 @@ func (h *HTTPHandler) createSession(w http.ResponseWriter, r *http.Request) {
 		Capabilities:        capabilitiesJSON(h.svc.capabilities()),
 		SessionCapabilities: &sessionCapabilitiesJSON{Image: scaps.Image, Audio: scaps.Audio},
 		ResolvedModel:       resolvedModelToJSON(h.svc.ResolvedModel(sess.ID)),
+		Placement:           placementMetadataToJSON(sess.EnvironmentRef),
 	})
 }
 
@@ -550,110 +552,72 @@ func (h *HTTPHandler) setMode(w http.ResponseWriter, r *http.Request) {
 	h.writeSession(w, http.StatusOK, sess)
 }
 
-// forkSession handles POST /v1/sessions/{id}/fork, creating a peer session whose
-// conversation history is a snapshot of {id}'s (ADR 0065). The new session
-// inherits the source's mode, workspace, limits, and provider/model/profile
-// labels; same provider and model only. The source must be at a turn boundary
-// (idle/terminal); a running/awaiting source is rejected with 412. An OPTIONAL
-// JSON body `{"title": "...", "reasoning_effort": "..."}` overrides the forked
-// session's title and/or reasoning-effort tier (ADR 0068; empty/absent inherits
-// the source's — provider and model always inherit). Returns 201 + the new
-// session id.
+type successorBody struct {
+	WorktreeSelector *string `json:"worktree_selector,omitempty"`
+	Title            string  `json:"title,omitempty"`
+	ProviderID       string  `json:"provider_id,omitempty"`
+	ModelID          string  `json:"model_id,omitempty"`
+	ReasoningEffort  string  `json:"reasoning_effort,omitempty"`
+}
+
+func decodeOptionalStrictJSON(r *http.Request, dst any) error {
+	if r.ContentLength == 0 {
+		return nil
+	}
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	return decoder.Decode(dst)
+}
+
+func (h *HTTPHandler) clearSession(w http.ResponseWriter, r *http.Request) {
+	var body successorBody
+	if err := decodeOptionalStrictJSON(r, &body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body: "+err.Error())
+		return
+	}
+	selector := ""
+	if body.WorktreeSelector != nil {
+		selector = *body.WorktreeSelector
+	}
+	newID, err := h.svc.ClearSessionSuccessor(r.Context(), session.SessionID(r.PathValue("id")), SuccessorPlacement{Selector: selector})
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	h.writeSuccessor(r.Context(), w, newID)
+}
+
 func (h *HTTPHandler) forkSession(w http.ResponseWriter, r *http.Request) {
-	id := session.SessionID(r.PathValue("id"))
-	var body struct {
-		Title           string `json:"title"`
-		ReasoningEffort string `json:"reasoning_effort"`
+	var body successorBody
+	if err := decodeOptionalStrictJSON(r, &body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body: "+err.Error())
+		return
 	}
-	// An empty body is valid (title/effort inherit the source's); only a malformed
-	// non-empty body is an error.
-	if r.ContentLength != 0 {
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid JSON body")
-			return
-		}
+	selector := ""
+	if body.WorktreeSelector != nil {
+		selector = *body.WorktreeSelector
 	}
-	newID, err := h.svc.ForkSession(r.Context(), id, body.Title, body.ReasoningEffort)
+	newID, err := h.svc.ForkSessionSuccessor(r.Context(), ForkSuccessorRequest{
+		Source: session.SessionID(r.PathValue("id")), Placement: SuccessorPlacement{Selector: selector},
+		Title: body.Title, ProviderID: body.ProviderID, ModelID: body.ModelID, ReasoningEffort: body.ReasoningEffort,
+	})
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	h.writeSuccessor(r.Context(), w, newID)
+}
+
+func (h *HTTPHandler) writeSuccessor(ctx context.Context, w http.ResponseWriter, id session.SessionID) {
+	created, err := h.svc.GetSession(ctx, id)
 	if err != nil {
 		writeServiceError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusCreated, struct {
-		SessionID string `json:"session_id"`
-	}{SessionID: string(newID)})
-}
-
-type adoptionBindingsJSON struct {
-	Workspace       string `json:"workspace"`
-	EnvironmentKind string `json:"environment_kind"`
-	EnvironmentID   string `json:"environment_id"`
-	ProviderID      string `json:"provider_id"`
-	ModelID         string `json:"model_id"`
-	Profile         string `json:"profile"`
-	IdempotencyKey  string `json:"idempotency_key,omitempty"`
-}
-
-func (b adoptionBindingsJSON) bindings() (AdoptionBindings, error) {
-	profile, err := ParseSessionProfile(b.Profile)
-	if err != nil {
-		return AdoptionBindings{}, err
-	}
-	return AdoptionBindings{Workspace: b.Workspace, EnvironmentRef: session.EnvironmentRef{Kind: session.EnvironmentKind(b.EnvironmentKind), ID: b.EnvironmentID}, ProviderID: b.ProviderID, ModelID: b.ModelID, Profile: profile}, nil
-}
-
-func adoptionBindingsJSONFrom(binding AdoptionBindings) adoptionBindingsJSON {
-	return adoptionBindingsJSON{Workspace: binding.Workspace, EnvironmentKind: string(binding.EnvironmentRef.Kind), EnvironmentID: binding.EnvironmentRef.ID, ProviderID: binding.ProviderID, ModelID: binding.ModelID, Profile: string(binding.Profile)}
-}
-
-const maxAdoptionBodyBytes = 1 << 20
-
-func (h *HTTPHandler) preflightSessionAdoption(w http.ResponseWriter, r *http.Request) {
-	r.Body = http.MaxBytesReader(w, r.Body, maxAdoptionBodyBytes)
-	var body adoptionBindingsJSON
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid JSON body")
-		return
-	}
-	bindings, err := body.bindings()
-	if err != nil {
-		writeServiceError(w, err)
-		return
-	}
-	result, err := h.svc.PreflightSessionAdoption(r.Context(), session.SessionID(r.PathValue("id")), bindings)
-	if err != nil {
-		writeServiceError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, struct {
-		Eligible bool                 `json:"eligible"`
-		Reason   string               `json:"reason_code,omitempty"`
-		Bindings adoptionBindingsJSON `json:"bindings"`
-	}{result.Eligible, string(result.Reason), adoptionBindingsJSONFrom(result.Bindings)})
-}
-
-func (h *HTTPHandler) adoptSession(w http.ResponseWriter, r *http.Request) {
-	r.Body = http.MaxBytesReader(w, r.Body, maxAdoptionBodyBytes)
-	var body adoptionBindingsJSON
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid JSON body")
-		return
-	}
-	bindings, err := body.bindings()
-	if err != nil {
-		writeServiceError(w, err)
-		return
-	}
-	sess, err := h.svc.AdoptSession(r.Context(), session.SessionID(r.PathValue("id")), body.IdempotencyKey, bindings)
-	if err != nil {
-		writeServiceError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusCreated, struct {
-		SessionID       string                  `json:"session_id"`
-		SourceSessionID string                  `json:"source_session_id"`
-		Capabilities    *serverCapabilitiesJSON `json:"capabilities"`
-		ResolvedModel   *resolvedModelJSON      `json:"resolved_model"`
-	}{string(sess.ID), string(adoptionSourceID(sess)), capabilitiesJSON(h.svc.capabilities()), resolvedModelToJSON(h.svc.ResolvedModel(sess.ID))})
+		SessionID string                 `json:"session_id"`
+		Placement *placementMetadataJSON `json:"placement,omitempty"`
+	}{string(id), placementMetadataToJSON(created.EnvironmentRef)})
 }
 
 func (h *HTTPHandler) writeSession(w http.ResponseWriter, status int, sess *session.Session) {
@@ -666,7 +630,7 @@ func (h *HTTPHandler) writeSession(w http.ResponseWriter, status int, sess *sess
 		SessionID:       string(sess.ID),
 		State:           string(sess.State),
 		Mode:            string(sess.Mode),
-		Workspace:       sess.Workspace,
+		Placement:       placementMetadataToJSON(sess.EnvironmentRef),
 		Turns:           sess.Counters.Turns,
 		ToolCalls:       sess.Counters.ToolCalls,
 		Title:           title,
@@ -1173,7 +1137,7 @@ func (b teammateSpecBody) toMemberSpec() agent.MemberSpec {
 }
 
 type createTeamBody struct {
-	Workspace string             `json:"workspace"`
+	SessionID string             `json:"session_id"`
 	Name      string             `json:"name,omitempty"`
 	Goal      string             `json:"goal,omitempty"`
 	Members   []teammateSpecBody `json:"members,omitempty"`
@@ -1202,8 +1166,10 @@ type cancelTeammateBody struct {
 // surfaces share one shape.
 func (h *HTTPHandler) createTeam(w http.ResponseWriter, r *http.Request) {
 	var body createTeamBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid JSON body")
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body: "+err.Error())
 		return
 	}
 	var specs []agent.MemberSpec
@@ -1213,7 +1179,16 @@ func (h *HTTPHandler) createTeam(w http.ResponseWriter, r *http.Request) {
 			specs = append(specs, m.toMemberSpec())
 		}
 	}
-	id, enrolled, err := h.svc.CreateTeam(r.Context(), body.Workspace, body.Name, body.Goal, int(body.MaxTeamTokens), specs)
+	_, env, err := h.svc.ownedSessionEnvironment(r.Context(), session.SessionID(body.SessionID))
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	if env.Workspace() == nil || env.Workspace().Root() == "" {
+		writeServiceError(w, fmt.Errorf("%w: session has no filesystem placement", ErrFailedPrecondition))
+		return
+	}
+	id, enrolled, err := h.svc.CreateTeam(r.Context(), env.Workspace().Root(), body.Name, body.Goal, int(body.MaxTeamTokens), specs)
 	if err != nil {
 		writeServiceError(w, err)
 		return
@@ -1983,9 +1958,14 @@ func (h *HTTPHandler) undoLearningPromotion(w http.ResponseWriter, r *http.Reque
 	writeJSON(w, http.StatusOK, &mecatlv1.UndoLearningPromotionResponse{Proposal: proposal})
 }
 
-// listCommands handles GET /v1/commands?workspace=.
+// listCommands handles GET /v1/commands?session_id=.
 func (h *HTTPHandler) listCommands(w http.ResponseWriter, r *http.Request) {
-	cmds, err := h.svc.ListCommands(r.Context(), r.URL.Query().Get("workspace"))
+	id := r.URL.Query().Get("session_id")
+	if id == "" {
+		writeServiceError(w, fmt.Errorf("%w: session_id is required", ErrInvalidArgument))
+		return
+	}
+	cmds, err := h.svc.ListCommandsForSession(r.Context(), session.SessionID(id))
 	if err != nil {
 		writeServiceError(w, err)
 		return
@@ -1993,14 +1973,19 @@ func (h *HTTPHandler) listCommands(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, &mecatlv1.ListCommandsResponse{Commands: toProtoCommands(cmds)})
 }
 
-// listWorktrees handles GET /v1/worktrees?workspace= (issue #102).
+// listWorktrees handles GET /v1/worktrees?session_id=.
 func (h *HTTPHandler) listWorktrees(w http.ResponseWriter, r *http.Request) {
-	wts, err := h.svc.ListWorktrees(r.Context(), r.URL.Query().Get("workspace"))
+	id := r.URL.Query().Get("session_id")
+	if id == "" {
+		writeServiceError(w, fmt.Errorf("%w: session_id is required", ErrInvalidArgument))
+		return
+	}
+	wts, err := h.svc.ListWorktreesForSession(r.Context(), session.SessionID(id))
 	if err != nil {
 		writeServiceError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, &mecatlv1.ListWorktreesResponse{Worktrees: toProtoWorktrees(wts)})
+	writeJSON(w, http.StatusOK, &mecatlv1.ListWorktreesResponse{Worktrees: toProtoScopedWorktrees(wts)})
 }
 
 // listSessions handles GET /v1/sessions — the stored-session inventory picker

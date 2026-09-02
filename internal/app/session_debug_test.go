@@ -395,7 +395,7 @@ func TestDebugSessionConverseAdvertisesAndExecutesInspectSession(t *testing.T) {
 			defer conn.Close()
 			client := mecatlv1.NewHarnessServiceClient(conn)
 
-			target, err := client.CreateSession(ctx, &mecatlv1.CreateSessionRequest{Workspace: cfg.Workspace})
+			target, err := client.CreateSession(ctx, &mecatlv1.CreateSessionRequest{})
 			if err != nil {
 				t.Fatalf("create target: %v", err)
 			}

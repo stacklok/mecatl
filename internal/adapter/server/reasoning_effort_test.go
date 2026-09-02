@@ -54,7 +54,6 @@ func TestCreateSessionCarriesReasoningEffort(t *testing.T) {
 	defer cleanup()
 
 	resp, err := client.CreateSession(context.Background(), &mecatlv1.CreateSessionRequest{
-		Workspace:       "/ws",
 		ProviderId:      "openai",
 		ModelId:         "gpt-5.2",
 		ReasoningEffort: "max", // requested max; the factory echoes the clamped "high"

@@ -38,8 +38,8 @@ type WorktreesMsg struct {
 
 // ListWorktrees lists the git worktrees of the repo rooted at workspace
 // ("" => empty). It is the proto-build point for the /worktrees overlay.
-func (c *Client) ListWorktrees(ctx context.Context, workspace string) ([]Worktree, error) {
-	resp, err := c.svc.ListWorktrees(ctx, &mecatlv1.ListWorktreesRequest{Workspace: workspace})
+func (c *Client) ListWorktrees(ctx context.Context, sessionID string) ([]Worktree, error) {
+	resp, err := c.svc.ListWorktrees(ctx, &mecatlv1.ListWorktreesRequest{SessionId: sessionID})
 	if err != nil {
 		return nil, err
 	}
@@ -51,9 +51,9 @@ func mapWorktrees(in []*mecatlv1.Worktree) []Worktree {
 	out := make([]Worktree, 0, len(in))
 	for _, w := range in {
 		out = append(out, Worktree{
-			Path:   w.GetPath(),
+			Path:   w.GetLabel(),
 			Branch: w.GetBranch(),
-			Head:   w.GetHead(),
+			Head:   w.GetRevision(),
 			Bare:   w.GetBare(),
 		})
 	}

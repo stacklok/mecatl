@@ -495,7 +495,6 @@ func TestSessionCapabilitiesNoSecrets(t *testing.T) {
 	h := server.NewHarnessServer(svc)
 	imgModel, _ := firstImageModel(t, providerOpenRouter)
 	resp, err := h.CreateSession(ctx, &mecatlv1.CreateSessionRequest{
-		Workspace:  workspace,
 		ProviderId: providerOpenRouter,
 		ModelId:    imgModel,
 	})

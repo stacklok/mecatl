@@ -87,21 +87,13 @@ service HarnessService {
   // session at a turn boundary. It creates no model turn.
   rpc CompactSession(CompactSessionRequest) returns (CompactSessionResponse);
 
-  // ForkSession creates a new peer session whose conversation history is a
-  // snapshot of an existing session's, inheriting the source's mode, workspace,
-  // limits, and provider/model/profile labels. Same provider and model only;
-  // the ONE permitted selector delta is an OPTIONAL reasoning-effort override
-  // (ADR 0068). The source must be at a turn boundary (idle/terminal); a
-  // running/awaiting source is rejected. No streaming.
+  // ClearSession creates a distinct empty-history successor that inherits the
+  // source session's placement unless a fresh source-scoped selector is supplied.
+  rpc ClearSession(ClearSessionRequest) returns (ClearSessionResponse);
+
+  // ForkSession creates a history-carrying successor with optional placement and
+  // model-routing overrides.
   rpc ForkSession(ForkSessionRequest) returns (ForkSessionResponse);
-
-  // PreflightSessionAdoption evaluates one authenticated caller-owned legacy
-  // source against explicit workspace/environment/provider/model bindings.
-  rpc PreflightSessionAdoption(PreflightSessionAdoptionRequest) returns (PreflightSessionAdoptionResponse);
-
-  // AdoptSession atomically publishes a new explicit-main copy of one eligible
-  // legacy source. Retries are caller+source-bound by idempotency_key.
-  rpc AdoptSession(AdoptSessionRequest) returns (AdoptSessionResponse);
 
   // Converse drives one run. The first frame MUST be `prompt`; subsequent
   // frames are zero or more `resume_approval` / `cancel` control frames. The
@@ -484,16 +476,8 @@ message Limits {
 
 // CreateSessionRequest opens a new session.
 message CreateSessionRequest {
-  // workspace is the absolute session root tools operate against.
-  //
-  // CROSS-FIELD RULE (profile-aware, enforced by the server — which is why this
-  // field no longer carries a wire-level min_len): the DEFAULT profile
-  // (profile == "") REQUIRES a non-empty workspace, exactly as before; the
-  // "no-fs" profile REQUIRES an EMPTY workspace — a no-fs request that also
-  // names a workspace is a loud InvalidArgument (the combination is
-  // contradictory: a no-FS session has no filesystem to root), never a silent
-  // drop of either field.
-  string workspace = 1;
+  reserved 1, 8;
+  reserved "workspace", "source_session_id";
   // mode is the permission posture; unspecified defaults to DEFAULT.
   PermissionMode mode = 2;
   // limits are the optional stop conditions.
@@ -516,19 +500,8 @@ message CreateSessionRequest {
   // InvalidArgument (a bare model on an env-derived default provider is ambiguous).
   string model_id = 5;
 
-  // profile selects the session's TOOL-SURFACE profile, enum-as-string (the
-  // Event.type / Result.stop idiom — no proto enum, additive values):
-  //
-  //   - "" (default): the full filesystem profile — today's behaviour,
-  //     byte-identical. REQUIRES a non-empty workspace.
-  //   - "no-fs": a session with NO filesystem at all — no workspace, no
-  //     Read/Edit/Write/Grep/Glob/Bash, no Parallel, no SkillDraft; the agent
-  //     works through MCP tools, memory, web fetch, Skill bodies, and
-  //     delegation (Subagent/Team with the same file-less surface). REQUIRES an
-  //     EMPTY workspace (see the workspace cross-field rule above).
-  //
-  // Any other value is a loud InvalidArgument, never a silent fallback to the
-  // default profile. The profile is FIXED for the session lifetime.
+  // profile selects the session's TOOL-SURFACE profile. Empty binds the
+  // deployment default; "no-fs" explicitly attenuates filesystem access.
   string profile = 6;
 
   // reasoning_effort sets this session's reasoning-effort tier, enum-as-string
@@ -547,25 +520,7 @@ message CreateSessionRequest {
   // EFFECTIVE resolved value is echoed back on resolved_model.reasoning_effort.
   string reasoning_effort = 7;
 
-  // source_session_id, when non-empty, seeds the NEW session's conversation
-  // history from the source session's (via session.ForkSnapshot + SeedHistory).
-  // Carryover is ALWAYS allowed across providers: a model switch must never
-  // drop the conversation. A SAME-provider carryover replays the history
-  // VERBATIM (provider-private replay blobs intact, warm cache); a
-  // CROSS-provider carryover seeds a PROVIDER-NEUTRAL copy — Reasoning /
-  // ProviderPhase / ToolCall.ItemID are stripped (session.StripProviderState),
-  // so the history replays safely to any provider (the new session's
-  // thinking/reasoning config is derived from the NEW model, not the history).
-  // The source must be at a turn boundary (idle/completed/cancelled/failed —
-  // the run-entry funnel recovers terminal states); a running/awaiting source
-  // is rejected with FailedPrecondition. Empty means no carryover
-  // (byte-identical default).
-  string source_session_id = 8;
-
-  // debug_target_session_id creates a separate diagnostic session bound to the
-  // named target. It requires profile "no-fs" and an empty workspace, cannot be
-  // combined with source_session_id, and never copies or mutates target history.
-  // Missing and foreign-owned targets are both reported as NotFound.
+  // debug_target_session_id creates a separate diagnostic no-FS session.
   string debug_target_session_id = 9;
 
   // debug_mcp_servers explicitly selects already-configured server-global
@@ -767,9 +722,8 @@ message ServerCapabilities {
   bool learning_proposals = 17;
   // learned_skills is true when the caller-partitioned lifecycle API is available.
   bool learned_skills = 18;
-  // legacy_adoption is true only when authenticated, caller-owned adoption with
-  // explicit engine bindings is available.
-  bool legacy_adoption = 20;
+  reserved 20;
+  reserved "legacy_adoption";
   // storage_migration is true only when the backend implements durable bounded
   // v1-to-v2 maintenance, a management authorizer is configured, and destructive
   // mutation has cross-process lease exclusion (or explicitly proven private
@@ -836,6 +790,17 @@ message CreateSessionResponse {
   // GetSession after a mode change. Nil/absent from an older server → the client
   // falls back to today's behavior (no model segment in the header).
   ResolvedModel resolved_model = 4;
+  // placement is bounded display-only metadata, never reusable authority.
+  PlacementMetadata placement = 5;
+}
+
+// PlacementMetadata is safe display data. It never contains a filesystem path,
+// backend locator, exact EnvironmentRef, or reusable selector.
+message PlacementMetadata {
+  string kind = 1;
+  string label = 2;
+  string branch = 3;
+  string revision = 4;
 }
 
 // ResolvedModel is the per-session EFFECTIVE model: the provider+model id this
@@ -1066,10 +1031,11 @@ message SessionSummary {
   SessionInventoryCapabilities capabilities = 11;
   // reason_code explains why a capability is unavailable. Empty means no denial.
   string reason_code = 12;
-  // workspace is the stored session root used for inventory search/display.
-  string workspace = 13;
+  reserved 13;
+  reserved "workspace";
   // title_provenance is "first-prompt", "operator", or empty for legacy/unknown.
   string title_provenance = 14;
+  PlacementMetadata placement = 15;
 }
 
 // SessionRelationship carries the validated links appropriate to a session kind.
@@ -1315,62 +1281,30 @@ message DeleteSessionRequest {
 
 message DeleteSessionResponse {}
 
+// ClearSessionRequest creates an empty-history successor.
+message ClearSessionRequest {
+  string source_session_id = 1 [(buf.validate.field).string.min_len = 1];
+  optional string worktree_selector = 2;
+}
+
+message ClearSessionResponse {
+  string session_id = 1;
+  PlacementMetadata placement = 2;
+}
+
 // ForkSessionRequest names the source session to fork from.
 message ForkSessionRequest {
-  // source_session_id is the session whose conversation history is snapshotted
-  // into the new peer session.
   string source_session_id = 1 [(buf.validate.field).string.min_len = 1];
-  // title is an OPTIONAL override for the forked session's title. Empty (the
-  // default) inherits the source's title verbatim; a non-empty value overrides
-  // it so the operator can distinguish "implement feature X" from "fix the bug
-  // first" in ListSessions without a separate rename RPC.
   string title = 2;
-  // reasoning_effort is an OPTIONAL override for the forked session's
-  // reasoning-effort tier (ADR 0068). Empty (the default) inherits the source's
-  // effort verbatim; provider and model ALWAYS inherit — the effort is the ONE
-  // selector delta a fork may carry.
   string reasoning_effort = 3;
+  optional string worktree_selector = 4;
+  string provider_id = 5;
+  string model_id = 6;
 }
 
-// ForkSessionResponse carries the new forked session's id.
 message ForkSessionResponse {
-  // session_id is the id of the newly-created forked session.
   string session_id = 1;
-}
-
-// AdoptionBindings are explicit; omitted fields never select a server default.
-message AdoptionBindings {
-  string workspace = 1;
-  string environment_kind = 2;
-  string environment_id = 3;
-  string provider_id = 4;
-  string model_id = 5;
-  string profile = 6;
-}
-
-message PreflightSessionAdoptionRequest {
-  string source_session_id = 1 [(buf.validate.field).string.min_len = 1];
-  AdoptionBindings bindings = 2;
-}
-
-message PreflightSessionAdoptionResponse {
-  bool eligible = 1;
-  string reason_code = 2;
-  AdoptionBindings bindings = 3;
-}
-
-message AdoptSessionRequest {
-  string source_session_id = 1 [(buf.validate.field).string.min_len = 1];
-  string idempotency_key = 2 [(buf.validate.field).string.min_len = 1];
-  AdoptionBindings bindings = 3;
-}
-
-message AdoptSessionResponse {
-  string session_id = 1;
-  string source_session_id = 2;
-  ServerCapabilities capabilities = 3;
-  SessionCapabilities session_capabilities = 4;
-  ResolvedModel resolved_model = 5;
+  PlacementMetadata placement = 2;
 }
 
 // Session is a snapshot of server-side session state.
@@ -1381,8 +1315,8 @@ message Session {
   string state = 2;
   // mode is the permission posture.
   PermissionMode mode = 3;
-  // workspace is the session root.
-  string workspace = 4;
+  reserved 4, 13;
+  reserved "workspace", "adoption_source_session_id";
   // limits are the configured stop conditions.
   Limits limits = 5;
   // turns is the number of model calls begun.
@@ -1413,9 +1347,6 @@ message Session {
   // second CreateSession. An older server omits the field → client sees a zero value
   // and keeps its current caps untouched (fail-conservative).
   ServerCapabilities capabilities = 11;
-  // adoption_source_session_id is the immutable audit relationship on a main
-  // session created by explicit legacy adoption.
-  string adoption_source_session_id = 13;
   // kind and relationship preserve the durable trusted-producer identity.
   string kind = 14;
   SessionRelationship relationship = 15;
@@ -1423,6 +1354,7 @@ message Session {
   // These contain no URLs, headers, credentials, or inline MCP configuration.
   repeated string debug_mcp_servers = 16;
   repeated string debug_mcp_tools = 17;
+  PlacementMetadata placement = 18;
 }
 
 // ConverseRequest is a client-to-server frame on the Converse stream. The
@@ -2302,9 +2234,8 @@ message Parallel {
   int32 tool_count = 10;
   // failed reports whether the branch's child run failed (branch_end).
   bool failed = 11;
-  // workspace is the branch's forked workspace ROOT path — the no-auto-merge handle
-  // (branch_end). Server-side path text, not branch content.
-  string workspace = 12;
+  reserved 12, 17;
+  reserved "workspace", "winner_workspace";
   // stop is the branch's terminal stop reason (branch_end) or the run-level stop
   // (parallel.end; the winner's stop for first/judge, empty for all).
   string stop = 13;
@@ -2316,9 +2247,6 @@ message Parallel {
   // winner is the branch index of the selected winner on parallel.end — a real
   // branch_index for first/judge, or -1 for all / none-succeeded.
   int32 winner = 16;
-  // winner_workspace is the PRESERVED winner fork root on parallel.end (the deliverable
-  // handle for first/judge); empty for all / none-succeeded.
-  string winner_workspace = 17;
   // child_id is the branch's child SESSION id ("parallel-<callID>-<i>") on
   // branch_start/branch_end — the CancelChild handle, carried explicitly so a
   // client never derives ids from the (internal) id grammar.
@@ -2709,11 +2637,8 @@ message Command {
   string description = 2;
 }
 
-// ListCommandsRequest requests the available slash commands for a workspace.
 message ListCommandsRequest {
-  // workspace is the session root whose command directories are scanned. Empty
-  // returns an empty list (there is no workspace to discover commands under).
-  string workspace = 1;
+  string session_id = 1 [(buf.validate.field).string.min_len = 1];
 }
 
 // ListCommandsResponse carries the discovered slash commands.
@@ -2724,26 +2649,19 @@ message ListCommandsResponse {
 
 // --- Worktree discovery (issue #102) -----------------------------------------
 
-// Worktree is one discovered git worktree of a repo, mirroring a
-// `git worktree list --porcelain` record. Path is the absolute working-tree path
-// (the value handed to CreateSessionRequest.workspace to bind a session there);
-// branch is empty for a detached HEAD; head is the commit SHA the worktree is at.
+// Worktree is one display-safe eligible placement choice. Selector is opaque,
+// caller/source scoped, and accepted only by ClearSession or ForkSession.
 message Worktree {
-  // path is the absolute working-tree path; required.
-  string path = 1;
-  // branch is the checked-out ref name; empty for a detached HEAD.
-  string branch = 2;
-  // head is the commit SHA the worktree is at.
-  string head = 3;
-  // bare is true for a bare worktree.
-  bool bare = 4;
+  string selector = 1;
+  string kind = 2;
+  string label = 3;
+  string branch = 4;
+  string revision = 5;
+  bool bare = 6;
 }
 
-// ListWorktreesRequest names the workspace whose repo's worktrees are listed.
 message ListWorktreesRequest {
-  // workspace is the session root whose repo's worktrees are enumerated. Empty
-  // returns an empty list (there is no repo to enumerate).
-  string workspace = 1;
+  string session_id = 1 [(buf.validate.field).string.min_len = 1];
 }
 
 // ListWorktreesResponse carries the discovered worktrees.
@@ -3206,11 +3124,9 @@ message ListSkillChangesResponse {
 
 // --- Agent team messages ----------------------------------------------------
 
-// CreateTeamRequest creates a new agent team over a base workspace, optionally
-// with an initial roster enrolled in the same atomic call.
+// CreateTeamRequest creates a team owned by an existing session.
 message CreateTeamRequest {
-  // workspace is the base workspace root the team operates against.
-  string workspace = 1 [(buf.validate.field).string.min_len = 1];
+  string session_id = 1 [(buf.validate.field).string.min_len = 1];
   // name is an optional human label; the server assigns the canonical id.
   string name = 2;
   // members is the optional initial roster, enrolled atomically: if any member

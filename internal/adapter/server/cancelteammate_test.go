@@ -221,7 +221,7 @@ func TestGRPCCancelTeammateMidRunTeam(t *testing.T) {
 	defer cancel()
 
 	created, err := client.CreateTeam(ctx, &mecatlv1.CreateTeamRequest{
-		Workspace: "/ws", Name: "test", Goal: "fix the bug",
+		SessionId: "source", Name: "test", Goal: "fix the bug",
 		Members: []*mecatlv1.TeammateSpec{
 			{Name: "lead", Lead: true, InitialPrompt: "coordinate"},
 			{Name: "worker", InitialPrompt: "investigate"},

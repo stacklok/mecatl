@@ -105,7 +105,6 @@ func capabilitiesFrom(c *mecatlv1.ServerCapabilities) Capabilities {
 		StorageHealth:     c.GetStorageHealth(),
 		StorageMigration:  c.GetStorageMigration(),
 		StorageCleanup:    c.GetStorageCleanup(),
-		LegacyAdoption:    c.GetLegacyAdoption(),
 		ManualDream:       manualDreamCapabilitiesFrom(c.GetManualDream()),
 		Steer:             c.GetSteer(),
 		ManualCompaction:  c.GetManualCompaction(),

@@ -236,8 +236,6 @@ func TestListenerScopedWorkspaceAuthority_Scenario4_Mecak8sRejectsFilesystemProf
 		name string
 		req  *mecatlv1.CreateSessionRequest
 	}{
-		{name: "empty wire profile with workspace", req: &mecatlv1.CreateSessionRequest{Workspace: "/caller/workspace"}},
-		{name: "no-fs with workspace", req: &mecatlv1.CreateSessionRequest{Profile: string(server.ProfileNoFS), Workspace: "/caller/workspace"}},
 		{name: "unsupported filesystem profile", req: &mecatlv1.CreateSessionRequest{Profile: "filesystem"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -293,11 +291,7 @@ func TestListenerScopedWorkspaceAuthority_Scenario4_Mecak8sMountedWorkspaceIsSer
 		t.Errorf("session workspace = %q, want the deployment mount %q", sess.Workspace, mount)
 	}
 
-	// A client cannot select a different root: server-assigned rejects a non-empty
-	// client workspace before any filesystem access.
-	if _, err := harness.CreateSession(context.Background(), &mecatlv1.CreateSessionRequest{Workspace: "/client/root"}); status.Code(err) != codes.InvalidArgument {
-		t.Fatalf("CreateSession(client workspace) status = %s, want InvalidArgument", status.Code(err))
-	}
+	// A client cannot send placement authority; the generated request has no such field.
 }
 
 func TestParseFlagsMecak8sRejectsRelativeWorkspace(t *testing.T) {
