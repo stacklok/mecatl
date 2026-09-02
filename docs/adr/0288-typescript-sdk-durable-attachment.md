@@ -233,13 +233,19 @@ Every fix is worse than the disclosure:
 - *Retry briefly, unconditionally.* Same arbitrary bound, paid by every
   legitimately empty session.
 
-The ergonomic mitigation is that the race is nearly unreachable in the shape
-that matters: a caller who just started a run **holds its id** from
-`session.run()`, and `attach(runId)` never consults the replay for selection at
-all. The window only opens for a caller attaching blind to a session someone
-else started microseconds earlier. It closes properly with the deferred
-server-side active-run field, which is the same dependency the replay scan
-wants. The two demand opposite caller responses — create a run, versus fix
+What makes this tolerable is that the caller who would care most is
+**structurally immune**, though not by the route an earlier draft claimed. That
+draft said a caller could mitigate by passing the id from `session.run()`; that
+is not a mitigation, it is an impossibility — `session.run()` resolves only
+after the first run-ID-bearing event arrives, and the relay appends every event
+to the durable log *before* sending it. So by the time any caller holds a run
+id from `run()`, the log already contains the record that ends the window. The
+window cannot be observed by the caller who started the run; it is reachable
+only by a third party attaching blind to a session someone else started
+microseconds earlier, with no id in hand.
+
+It closes properly with the deferred server-side active-run field, which is the
+same dependency the replay scan wants. The two demand opposite caller responses — create a run, versus fix
 your id or your credentials — so conflating them would teach applications to
 swallow an authorization failure.
 
@@ -389,8 +395,18 @@ its own filter.
   HTTP/SSE that arrives as a body that simply finishes, so an attachment that
   classified only *errors* would complete silently, mid-run, having observed no
   terminal event — the exact silence this milestone exists to abolish. The rule
-  is therefore: a stream that ends without a terminal `result` and without an
-  error is a **resume**, not a completion.
+  is therefore: a stream that ends without an error, and without the terminal
+  this attachment is waiting for, is a **resume**, not a completion.
+
+  "The terminal this attachment is waiting for" is the load-bearing clause,
+  because the two attachment types have different ones. An `AttachedRun`
+  completes on its run's `result`. **`SessionActivity` has no terminal at
+  all** — it is a session timeline, so a `result` in it belongs to one run and
+  says nothing about whether more runs will follow. An activity stream
+  therefore reconnects on **every** clean EOF, including EOFs that arrive long
+  after it has observed one or several `result` events. Collapsing the two
+  would make `activity()` quietly stop at the first run's end, which is both
+  wrong and invisible.
   `authentication` resumes because it is the one refusal a retry can actually
   clear: M1's credentials seam supports an async per-request provider, so the
   next attempt re-invokes it and may present a fresh token. The attachment
@@ -416,11 +432,13 @@ its own filter.
   `incompatible_server` terminates because a floor failure is a deployment fact
   rather than a transient one. But a reconnect can legitimately meet a
   **different build** — AC10.4 and AC10.5 restart the daemon under a live
-  attachment — so the cached compatibility info is **invalidated whenever a
-  reconnect succeeds after the client left `online`**, and the next feature gate
-  re-probes rather than trusting a floor it learned from a process that no
-  longer exists. Without that invalidation a restarted-and-downgraded daemon
-  would keep serving a client that believes it still supports the watch.
+  attachment — so the cached compatibility info is **invalidated before the
+  first reconnect attempt**, the moment the attachment leaves `online`, and
+  re-probed as part of that attempt. Invalidating on success instead would be
+  too late by exactly one attempt: that attempt would already have been made on
+  the strength of a floor learned from a process that may no longer exist, so a
+  restarted-and-downgraded daemon would be dialled once by a client still
+  believing it supports the watch, and only afterwards re-checked.
 - **Never retried at all** — every non-watch operation. **The watch read is the
   only thing the SDK ever retries automatically**, decided where the operation
   is *named* rather than inferred from an error, because an allowlist a future
@@ -471,31 +489,41 @@ run id the attachment's filter can never match — turning a refusal into
 silence — the strict, never-promoting reading M1 pinned for owned runs is the
 only acceptable one here too.
 
-One consequence to handle rather than luck into, and the one an earlier draft
-of this ADR got backwards: the HTTP approve route **relays the resumed run's
-events as SSE on the approve response**, and that body may **not** be
-abandoned. `relayRunSSE` starts a goroutine on the request context — "If the
-client disconnects, cancel the run" — so closing the body early *cancels the
-run the caller just approved*, and leaving it unread stalls the relay and leaks
-the connection. The server's drain-to-discard protects the server from a dead
-client; it does not make the client's abandonment safe. The repo's own
-`eventlog_test.go` drains it deliberately, commenting that the drain is what
-lets the resumed run complete and finish appending its terminal `EvResult`.
+**`AttachedRun` exposes `cancel()` only. `approve()` and `resolveAsk()` are
+deferred**, for a reason two review rounds converged on: over HTTP the approve
+route's response body cannot be safely handled by any client-side strategy.
 
-So `AttachedRun.approve()` **resolves on acceptance and drains in the
-background**: the promise settles once the response is accepted, while a
-detached task reads the body to EOF and discards every byte. The attachment's
-own watch remains the delivery channel, so the consumer never sees a second
-copy.
+`POST /v1/sessions/{id}/cancel` is a plain `204 No Content` — no body, nothing
+to drain, no leak. `POST .../approve` has two paths. On the **same-process**
+path (`run == nil`) it is also a 204: a live run resolves the ask over its own
+channel and the existing stream delivers the effects. On the **rehydrate**
+path — the process that parked the ask died and the loop re-entered here, i.e.
+exactly the restart case — the resumed run has no stream to ride, so the
+handler relays its events as SSE on the approve response.
 
-That drain is deliberately **exempt from disposal** — neither detaching the
-attachment nor `Client.close()` aborts it, because aborting it is exactly the
-`run.Cancel()` this paragraph exists to avoid. It is bounded instead by the
-run's own completion, which is what ends the stream. This is the single
-documented exception to Decision 5's "closing the client stops everything", and
-it is a wart we own rather than a subtlety we hope nobody hits. The alternative
-— a server-side ack-only approve that does not relay — is a production-server
-change this milestone is scoped out of.
+That body is a trap from both ends. `relayRunSSE` spawns a goroutine on the
+request context — "If the client disconnects, cancel the run" — so closing it
+early cancels the run the caller just approved. Leaving it unread stalls the
+relay. And draining it to EOF is **unbounded**: the resumed run can reach
+another permission ask and park indefinitely, so a drain that survives
+`Client.close()` (as it must, since aborting it is the cancel) holds a socket
+open and keeps a Node event loop alive for as long as that run is parked. An
+earlier draft of this ADR claimed the drain was "bounded by the run's own
+completion"; a run awaiting approval has no such bound.
+
+The server already contains the right shape and simply does not expose it: when
+the `ResponseWriter` is not a `Flusher`, the same handler acks 204 and drains
+the run itself on a cancel-detached context, recording every event to the
+durable log. That branch is selected by a server-side type assertion no client
+can influence. **The fix is to make it selectable** — an ack-only approve — and
+that is a production-server change this milestone is scoped out of. Shipping an
+`approve()` whose only implementation strategy is a documented resource leak
+would be worse than not shipping it, so `approve()`/`resolveAsk()` raise a
+typed unsupported-feature error on both transports in M2, naming the ack-only
+route as the dependency.
+
+Cancellation is unaffected and ships, so an observer can still stop a run it is
+watching.
 
 The control-request construction path is **shared** with M1's owned `Run` (the
 existing `RunOperations` seam plus its verdict mapping), so the ADR 0249
@@ -511,7 +539,7 @@ taxonomy.**
 | Error | From | Code |
 |---|---|---|
 | `CursorExpiredError` | server | `cursor_expired` |
-| `CursorMalformedError` | server, or a cursor the SDK did not issue | `cursor_malformed` |
+| `CursorMalformedError` | server, or a structurally invalid `sdkcur/1` value | `cursor_malformed` |
 | `ActivityGapError` | server, **or** the `gap` envelope arm | `activity_gap` |
 | `NoRunsError` | local — `attach()` found no run | `no_runs` (new `SDKErrorCode`) |
 | `CursorScopeError` | local — Decision 3 brand check | `cursor_scope` (new `SDKErrorCode`) |
@@ -546,8 +574,22 @@ The six values stay closed (`connecting`, `online`, `reconnecting`, `offline`,
 `unauthorized`, `incompatible`) — M1's contract, unchanged. What M2 adds is
 that a long-lived attachment's transport outcomes drive them.
 
-**Arbitration is any-not-last, and a reconnect loop never publishes
-`offline`.** M2 adds a second long-lived writer to a single client-level value,
+**Arbitration is a fixed precedence over all inputs, not last-writer-wins.**
+The states are ranked, highest first:
+
+1. `incompatible` — a floor failure; terminal and a deployment fact.
+2. `unauthorized` — any attachment or request is being refused for credentials.
+3. `reconnecting` — any attachment is between attempts.
+4. `connecting` — the client has not yet completed its first exchange.
+5. `offline` — no attachment is reconnecting and the last outcome failed.
+6. `online` — none of the above.
+
+The ranking resolves the two rules that would otherwise collide: an attachment
+retrying an `authentication` failure is *both* reconnecting and unauthorized,
+and it reports `unauthorized`, because the credential is the actionable fact
+and "reconnecting" would hide it behind a state that looks self-healing. A
+reconnect loop consequently never publishes `offline` — `offline` sits below
+`reconnecting`, so it can only be reached once nothing is retrying. M2 adds a second long-lived writer to a single client-level value,
 and M1's error mapping moves `TransportError` → `reconnecting` → `offline`
 immediately. Under last-writer-wins a healthy attachment's next frame would
 report `online` while another is still down, and a genuinely reconnecting
@@ -581,11 +623,11 @@ interface SessionActivity extends AsyncIterable<WatchEnvelope>, AsyncDisposable 
 
 interface AttachedRun extends SessionActivity {
   readonly runId: string;
-  readonly live: boolean;              // getter; false once the terminal is observed
-  approve(askId: string, allow: boolean): Promise<void>;
-  resolveAsk(askId: string, verdict: PermissionVerdict): Promise<void>;
-  cancel(): Promise<void>;
-  steer(text: string): Promise<never>; // typed unsupported in M2 (Decision 6)
+  readonly live: boolean;                 // getter; false once the terminal is observed
+  cancel(): Promise<void>;                // HTTP: the 204 ack route. gRPC: typed unsupported
+  approve(askId: string, allow: boolean): Promise<never>;        // deferred in M2
+  resolveAsk(askId: string, v: PermissionVerdict): Promise<never>; // deferred in M2
+  steer(text: string): Promise<never>;                            // deferred in M2
 }
 ```
 

@@ -222,12 +222,14 @@ gauntlet-#7 guard).
   - verify: vitest:sdk/typescript/test/attach.test.ts#YSByZWFkYWJsZSBzZXNzaW9uIHdpdGggbm8gcnVuLWJlYXJpbmcgZXZlbnRzIGlzIE5vUnVuc0Vycm9y — `sdk/typescript/test/attach.test.ts :: "a readable session with no run-bearing events is NoRunsError"`
 - AC2.4: `attach()` racing a just-started run — the id minted and stamped on
   the aggregate before the engine goroutine emits its first event — reports
-  `NoRunsError` rather than hanging, and `attach(runId)` with the id the caller
-  already holds from `session.run()` attaches successfully in that same window.
-  The false positive is the documented cost of reading run identity from the log
-  instead of a second round-trip; the test pins both halves so the boundary is a
-  decision rather than a surprise.
-  - verify: vitest:sdk/typescript/test/attach.test.ts#YSBqdXN0LXN0YXJ0ZWQgcnVuIHJhY2VzIE5vUnVuc0Vycm9yIHdoaWxlIGFuIGV4cGxpY2l0IHJ1biBpZCBkb2VzIG5vdA — `sdk/typescript/test/attach.test.ts :: "a just-started run races NoRunsError while an explicit run id does not"`
+  `NoRunsError` rather than hanging. The window is proven with a scripted
+  transport whose session is running while its log is still empty, because it is
+  **unreachable through the public API**: `session.run()` resolves only after
+  the first run-ID-bearing event, and the relay appends every event to the
+  durable log before sending it, so any caller holding a run id necessarily
+  holds it after the record that closes the window. Only a third party attaching
+  blind can observe it.
+  - verify: vitest:sdk/typescript/test/attach.test.ts#YSBydW5uaW5nIHNlc3Npb24gd2l0aCBhbiBlbXB0eSBsb2cgcmVwb3J0cyBOb1J1bnNFcnJvcg — `sdk/typescript/test/attach.test.ts :: "a running session with an empty log reports NoRunsError"`
 - AC2.5: `attach()` on an unknown or foreign session id under an
   ownership-enforcing deployment surfaces the server's typed
   `session_not_found` — **never** `NoRunsError`, because "create a run" and "fix
@@ -474,27 +476,33 @@ public surface, as the bounds are not caller configuration.
   that simply finishes; an attachment that completed there would end silently
   mid-run.
   - verify: vitest:sdk/typescript/test/attach-reconnect.test.ts#YSBjbGVhbiBub24tdGVybWluYWwgc3RyZWFtIGVuZCByZXN1bWVzIHJhdGhlciB0aGFuIGNvbXBsZXRpbmc — `sdk/typescript/test/attach-reconnect.test.ts :: "a clean non-terminal stream end resumes rather than completing"`
-- AC6.7: An ordinary `authentication` failure on a reconnect attempt resumes,
+- AC6.7: A `SessionActivity` reconnects on **every** clean EOF, including one
+  arriving after it has already observed one or more `result` events — an
+  activity stream has no terminal, so a run ending is not the timeline ending.
+  An `AttachedRun`, by contrast, completes on its own run's `result` and
+  resumes only on a clean EOF that precedes it.
+  - verify: vitest:sdk/typescript/test/attach-reconnect.test.ts#YWN0aXZpdHkgcmVzdW1lcyBhZnRlciBhIGNsZWFuIEVPRiB0aGF0IGZvbGxvd3MgYSBydW4gcmVzdWx0 — `sdk/typescript/test/attach-reconnect.test.ts :: "activity resumes after a clean EOF that follows a run result"`
+- AC6.8: An ordinary `authentication` failure on a reconnect attempt resumes,
   re-invoking the credential provider so a refreshed token is presented on the
   next attempt, while `management_unauthorized` terminates — the 401/403 split
   the server's own registry draws, since no refresh changes an authorization
   decision.
   - verify: vitest:sdk/typescript/test/attach-reconnect.test.ts#YXV0aGVudGljYXRpb24gcmVzdW1lcyB3aXRoIGEgcmVmcmVzaGVkIGNyZWRlbnRpYWwgd2hpbGUgbWFuYWdlbWVudF91bmF1dGhvcml6ZWQgdGVybWluYXRlcw — `sdk/typescript/test/attach-reconnect.test.ts :: "authentication resumes with a refreshed credential while management_unauthorized terminates"`
-- AC6.8: A reconnect that succeeds after the client left `online` invalidates
-  the cached compatibility info, so the next feature gate re-probes rather than
-  trusting a floor learned from a process that may have been replaced; a
-  restarted daemon that no longer advertises `watch_session_events` is observed
-  as such instead of being served from cache.
+- AC6.9: The cached compatibility info is invalidated **before the first
+  reconnect attempt**, the moment the attachment leaves `online`, and re-probed
+  as part of that attempt — not after a reconnect succeeds, which would already
+  have spent one attempt on a stale floor. A daemon restarted without
+  `watch_session_events` is observed as unsupported on the very first attempt
+  rather than dialled once and re-checked afterwards.
   - verify: vitest:sdk/typescript/test/attach-reconnect.test.ts#YSByZWNvbm5lY3QgYWZ0ZXIgYSBnYXAgaW52YWxpZGF0ZXMgdGhlIGNvbXBhdGliaWxpdHkgY2FjaGU — `sdk/typescript/test/attach-reconnect.test.ts :: "a reconnect after a gap invalidates the compatibility cache"`
-- AC6.9: An attachment that reconnects announces the replay→live boundary
+- AC6.10: An attachment that reconnects announces the replay→live boundary
   **once**, on its first crossing — the resumed watch's own boundary frame is
   not re-yielded, so a consumer that switches from transcript to live view on
   the boundary does not flap on every network blip.
   - verify: vitest:sdk/typescript/test/attach-reconnect.test.ts#YSByZWNvbm5lY3QgZG9lcyBub3QgcmUtYW5ub3VuY2UgdGhlIHJlcGxheS10by1saXZlIGJvdW5kYXJ5 — `sdk/typescript/test/attach-reconnect.test.ts :: "a reconnect does not re-announce the replay-to-live boundary"`
-- AC6.10: Aborting the signal, `Symbol.asyncDispose`, `break`ing out of
+- AC6.11: Aborting the signal, `Symbol.asyncDispose`, `break`ing out of
   `for await`, and closing the owning `Client` mid-backoff each stop the loop,
-  clear the pending timer, release the watch, and issue no further request —
-  with the single exception AC8.7 names.
+  clear the pending timer, release the watch, and issue no further request.
   - verify: vitest:sdk/typescript/test/attach-reconnect.test.ts#ZXZlcnkgcmVsZWFzZSBwYXRoIHN0b3BzIHRoZSBsb29wIGFuZCBjbGVhcnMgdGhlIHRpbWVy — `sdk/typescript/test/attach-reconnect.test.ts :: "every release path stops the loop and clears the timer"`
 
 ---
@@ -539,56 +547,60 @@ fact about DELIVERY, not something that happened in the run").
 
 ### Scenario 8 — Attached controls: HTTP-only, stale-guarded, and detach-safe
 
-`AttachedRun` exposes `approve` / `resolveAsk` / `cancel`, each carrying
-`expected_run_id` for the run it attached to — the
+`AttachedRun` exposes `cancel()`, carrying `expected_run_id` for the run it
+attached to — the
 [ADR-0249](../adr/0249-durable-run-identity.md) stale-control contract,
 constructed through the **same** request path M1's owned `Run` uses so the
-contract and the verdict vocabulary are implemented once. Over HTTP they ride
-the prompt-free `POST /v1/sessions/{id}/approve` and `/cancel` routes; **over
-gRPC they raise a typed unsupported-feature error naming the missing channel**,
-because there is no prompt-free control RPC and `Converse`'s first frame must be
-a prompt ([ADR-0288](../adr/0288-typescript-sdk-durable-attachment.md)
-Decision 6).
+contract and the verdict vocabulary are implemented once. Over HTTP it rides the prompt-free `POST /v1/sessions/{id}/cancel` route, a
+`204` ack with no body; **over gRPC it raises a typed unsupported-feature error
+naming the missing channel**, because there is no prompt-free control RPC and
+`Converse`'s first frame must be a prompt.
+
+`approve()` and `resolveAsk()` are **deferred** (AC8.4). The approve route acks
+`204` on the same-process path, but on the cross-process rehydrate path it
+relays the resumed run's events as SSE — a body that cannot be closed early
+(that cancels the run), left unread (that stalls the relay), or drained to EOF
+(unbounded: the resumed run can park on another ask, so a drain surviving
+`Client.close()` holds a socket and keeps the event loop alive). The server
+already acks-and-drains itself when the writer is not a `Flusher`; making that
+selectable is the fix, and it is a server change out of scope here
+([ADR-0288](../adr/0288-typescript-sdk-durable-attachment.md) Decision 6).
 
 **Detach never cancels:** releasing an attachment by any path releases the watch
 and nothing else, and the run continues — the property that makes an observer
 safe to attach.
 
 **Acceptance:**
-- AC8.1: Every `approve`, `resolveAsk`, and `cancel` issued through an
-  `AttachedRun` over HTTP carries that run's id as `expected_run_id`, built
-  through the same control-request path the owned `Run` uses.
-  - verify: vitest:sdk/typescript/test/attached-controls.test.ts#YXR0YWNoZWQgY29udHJvbHMgYWx3YXlzIGNhcnJ5IGV4cGVjdGVkX3J1bl9pZA — `sdk/typescript/test/attached-controls.test.ts :: "attached controls always carry expected_run_id"`
-- AC8.2: A control issued through an attachment whose run has since terminated
+- AC8.1: Every `cancel` issued through an `AttachedRun` over HTTP carries that
+  run's id as `expected_run_id`, built through the same control-request path the
+  owned `Run` uses, and rides the prompt-free `POST /v1/sessions/{id}/cancel`
+  route, which is a `204` ack with no response body.
+  - verify: vitest:sdk/typescript/test/attached-controls.test.ts#YXR0YWNoZWQgY2FuY2VsIGNhcnJpZXMgZXhwZWN0ZWRfcnVuX2lkIG92ZXIgdGhlIGFjay1vbmx5IHJvdXRl — `sdk/typescript/test/attached-controls.test.ts :: "attached cancel carries expected_run_id over the ack-only route"`
+- AC8.2: A `cancel` issued through an attachment whose run has since terminated
   surfaces the server's typed stale-control failure, and a newer run on the same
   session is observably untouched by it.
   - verify: vitest:sdk/typescript/test/attached-controls.test.ts#YSBzdGFsZSBhdHRhY2hlZCBjb250cm9sIGZhaWxzIHR5cGVkIGFuZCBsZWF2ZXMgYSBuZXdlciBydW4gdW50b3VjaGVk — `sdk/typescript/test/attached-controls.test.ts :: "a stale attached control fails typed and leaves a newer run untouched"`
-- AC8.3: The same controls over the gRPC transport fail with a typed
+- AC8.3: `cancel` over the gRPC transport fails with a typed
   unsupported-feature error naming the absent prompt-free control channel — not
   a generic transport error, and never by opening a `Converse` stream with a
   prompt.
-  - verify: vitest:sdk/typescript/test/attached-controls.test.ts#YXR0YWNoZWQgY29udHJvbHMgb3ZlciBnUlBDIGFyZSBhIHR5cGVkIHVuc3VwcG9ydGVkLWZlYXR1cmUgZXJyb3I — `sdk/typescript/test/attached-controls.test.ts :: "attached controls over gRPC are a typed unsupported-feature error"`
-- AC8.4: `AttachedRun.steer()` fails with a typed unsupported-feature error on
-  **both** transports in M2 — gRPC has no channel, HTTP's route waits on #873 —
-  and never promotes into a fresh run, which would mint a run id the
-  attachment's filter can never match and turn a refusal into silence.
+  - verify: vitest:sdk/typescript/test/attached-controls.test.ts#YXR0YWNoZWQgY2FuY2VsIG92ZXIgZ1JQQyBpcyBhIHR5cGVkIHVuc3VwcG9ydGVkLWZlYXR1cmUgZXJyb3I — `sdk/typescript/test/attached-controls.test.ts :: "attached cancel over gRPC is a typed unsupported-feature error"`
+- AC8.4: `AttachedRun.approve()` and `resolveAsk()` fail with a typed
+  unsupported-feature error on **both** transports, naming the ack-only approve
+  route as the dependency — never by posting to the SSE-relaying approve route,
+  whose body cannot be closed (that cancels the run), left unread (that stalls
+  the relay), or drained to EOF (unbounded, because the resumed run can park on
+  another ask).
+  - verify: vitest:sdk/typescript/test/attached-controls.test.ts#YXR0YWNoZWQgYXBwcm92ZSBpcyBkZWZlcnJlZCByYXRoZXIgdGhhbiBwb3N0aW5nIHRvIHRoZSByZWxheWluZyByb3V0ZQ — `sdk/typescript/test/attached-controls.test.ts :: "attached approve is deferred rather than posting to the relaying route"`
+- AC8.5: `AttachedRun.steer()` fails with a typed unsupported-feature error on
+  both transports and never promotes into a fresh run, which would mint a run id
+  the attachment's filter can never match and turn a refusal into silence.
   - verify: vitest:sdk/typescript/test/attached-controls.test.ts#YXR0YWNoZWQgc3RlZXIgaXMgdW5zdXBwb3J0ZWQgb24gYm90aCB0cmFuc3BvcnRzIGFuZCBuZXZlciBwcm9tb3Rlcw — `sdk/typescript/test/attached-controls.test.ts :: "attached steer is unsupported on both transports and never promotes"`
-- AC8.5: Aborting the signal, disposing via `Symbol.asyncDispose`, and `break`ing
+- AC8.6: Aborting the signal, disposing via `Symbol.asyncDispose`, and `break`ing
   out of iteration each release the watch without sending a cancel; the run
   continues to its own terminal and a fresh attachment observes that terminal.
   - verify: vitest:sdk/typescript/test/attached-controls.test.ts#ZXZlcnkgZGV0YWNoIHBhdGggbGVhdmVzIHRoZSBydW4gcnVubmluZw — `sdk/typescript/test/attached-controls.test.ts :: "every detach path leaves the run running"`
-- AC8.6: `approve()` over HTTP resolves once the verdict is accepted, then
-  drains the approve route's SSE rehydrate body to EOF on a detached task and
-  discards it — the body is never closed early and never left unread, because
-  `relayRunSSE` cancels the resumed run when the request context ends. The
-  attachment's own watch delivers the resumed run's events exactly once, so the
-  consumer sees no second copy, and the run reaches its own terminal.
-  - verify: vitest:sdk/typescript/test/attached-controls.test.ts#YXBwcm92ZSBkcmFpbnMgdGhlIHJlaHlkcmF0ZSBib2R5IGluc3RlYWQgb2YgY2FuY2VsbGluZyB0aGUgcnVu — `sdk/typescript/test/attached-controls.test.ts :: "approve drains the rehydrate body instead of cancelling the run"`
-- AC8.7: The background drain survives disposal: detaching the attachment or
-  closing the owning `Client` while it is in flight does not abort it, and the
-  approved run still completes — the one documented exception to AC6.10, because
-  aborting the body is what cancels the run.
-  - verify: vitest:sdk/typescript/test/attached-controls.test.ts#ZGlzcG9zYWwgZG9lcyBub3QgYWJvcnQgYW4gaW4tZmxpZ2h0IHJlaHlkcmF0ZSBkcmFpbg — `sdk/typescript/test/attached-controls.test.ts :: "disposal does not abort an in-flight rehydrate drain"`
+
 
 ---
 
@@ -618,12 +630,13 @@ matrix rather than guessed here.
   attachment is reconnecting, and a successful unary request while an attachment
   is down does not report `online`.
   - verify: vitest:sdk/typescript/test/attach-status.test.ts#cmVjb25uZWN0aW5nIHdpbnMgd2hpbGUgYW55IGF0dGFjaG1lbnQgaXMgcmVjb25uZWN0aW5n — `sdk/typescript/test/attach-status.test.ts :: "reconnecting wins while any attachment is reconnecting"`
-- AC9.3: An `authentication` failure on a reconnect attempt reports
-  `unauthorized` **while the attachment keeps retrying** (AC6.7), and a
-  compatibility-floor failure reports `incompatible` **as the attachment
-  terminates** (AC6.5); neither is collapsed to `offline`, and a reconnecting
-  attachment never publishes `offline`.
-  - verify: vitest:sdk/typescript/test/attach-status.test.ts#YSByZWNvbm5lY3RpbmcgYXR0YWNobWVudCBuZXZlciByZXBvcnRzIG9mZmxpbmU — `sdk/typescript/test/attach-status.test.ts :: "a reconnecting attachment never reports offline"`
+- AC9.3: Status resolves by a fixed precedence — `incompatible` >
+  `unauthorized` > `reconnecting` > `connecting` > `offline` > `online` — not by
+  last writer. An attachment retrying an `authentication` failure is both
+  reconnecting and unauthorized and reports `unauthorized`, because the
+  credential is the actionable fact; a reconnecting attachment therefore never
+  publishes `offline`, which sits below `reconnecting` in the ranking.
+  - verify: vitest:sdk/typescript/test/attach-status.test.ts#c3RhdHVzIHJlc29sdmVzIGJ5IGZpeGVkIHByZWNlZGVuY2UgcmF0aGVyIHRoYW4gbGFzdCB3cml0ZXI — `sdk/typescript/test/attach-status.test.ts :: "status resolves by fixed precedence rather than last writer"`
 - AC9.4: An open attachment with no status subscriber starts no heartbeat, and
   an attachment does not keep a heartbeat alive after the last status subscriber
   unsubscribes.
@@ -822,11 +835,12 @@ suites under `sdk/typescript/`, cited per AC.
   accepted whoever built it (AC4.7). Signing would need a client-side secret the
   SDK cannot hold, and a caller lying to itself about its own cursor is not a
   threat model.
-- **The approve rehydrate drain is an intentional exception to disposal.**
-  `Client.close()` stops everything except an in-flight approve-body drain
-  (AC8.7), because aborting that body cancels the run the caller just approved.
-  It is bounded by the run's own completion, but it is a wart, and the clean fix
-  is a server-side ack-only approve route.
+- **Attached `approve`/`resolveAsk` do not ship in M2.** No client-side
+  strategy for the rehydrate path's SSE body is sound — close cancels the run,
+  unread stalls the relay, and drain-to-EOF is unbounded because the resumed run
+  can park on another ask. Deferred to an ack-only approve route, which the
+  server already implements for non-`Flusher` writers but does not expose.
+  `cancel` is unaffected and ships.
 - **An `AttachedRun` cannot survive a daemon restart** — its filter names a run
   that does not continue. Only `activity()` (AC10.4) and the awaiting-approval
   resume (AC10.5) cross a process boundary; there is deliberately no general
