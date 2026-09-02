@@ -2,7 +2,7 @@
 id: 07-background-job-leases
 title: Background Bash job lease lifecycle
 blocked_by: [05-foreground-managed-leases]
-status: pending
+status: in-progress
 branch: ""
 worktree: ""
 issue: ""
