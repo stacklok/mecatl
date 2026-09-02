@@ -2,7 +2,7 @@
 id: 42-learning-repair-documentation-status
 title: Reconcile final learning repair documentation and status
 blocked_by: [37-partitioned-attempt-quota-retention, 38-durable-evidence-execution-unification, 39-backend-authoritative-attempt-time, 40-durable-reservation-reconciliation, 41-undeliverable-attempt-recovery]
-status: pending
+status: in-progress
 branch: plan-cloud-native-learning/42-learning-repair-documentation-status
 worktree: .scratch/worktrees/42-learning-repair-documentation-status
 issue: ""
