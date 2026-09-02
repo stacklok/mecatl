@@ -106,6 +106,11 @@ type SessionMeta struct {
 	// supplied. A legacy empty title is derived from the first genuine user event.
 	Title           string
 	TitleProvenance session.TitleProvenance
+	// Title-generation metadata is authoritative metadata, not event-carried run data.
+	TitleGeneration    session.TitleGenerationState
+	TitleSourcePrompts []string
+	TitleAttempts      []session.TitleAttempt
+	AuxiliaryUsage     []session.AuxiliaryUsage
 	// Kind and Relationship are the trusted producer taxonomy supplied alongside
 	// the event stream. An empty kind is legacy and folds to unknown.
 	Kind         session.SessionKind
@@ -190,6 +195,7 @@ func Fold(meta SessionMeta, events iter.Seq2[session.Event, error]) (*session.Se
 	}
 	s.Title = meta.Title
 	s.TitleProvenance = meta.TitleProvenance
+	s.RestoreTitleMetadata(meta.TitleGeneration, meta.TitleSourcePrompts, meta.TitleAttempts, meta.AuxiliaryUsage)
 
 	if f.pending != nil {
 		// AWAITING: the live session at pause time holds the assistant message WITH its

@@ -13,6 +13,13 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 ### Added
 
+- **Session title-generation domain metadata** — adds generated title provenance,
+  durable title-generation lifecycle/source/attempt records, and a bounded
+  `session_title` auxiliary-usage ledger. The ledger is intentionally separate
+  from `Session.Usage`, normal run budgets, result usage, and conversation.
+  Snapshot and event-source metadata round-trip the title-specific state. Added
+  (minor).
+
 - **`port.CursorEventLog`, `port.Cursor`, `port.EncodeCursor`/`DecodeCursor`, `port.LogRecord`/`LogRecordKind`, `port.ReadOptions`, `port.ErrCursorMalformed`/`ErrCursorExpired`** (issue #821, [ADR 0250](../docs/adr/0250-durable-cursors-and-watch.md)) — durable positions over the event log: an append reports WHERE the record landed, and a read resumes from a position rather than always from the start.
 
   It exists because the two read paths the engine shipped cannot express replay-then-follow as one operation. `port.EventLog.Read` is a complete, ordered, durable replay with no position and no follow — it reads the whole log and stops — so catching up and then watching means reading everything and THEN subscribing, and any event appended between those two steps is silently lost. `CursorEventLog.ReadAfter` closes that window: `ReadOptions.Follow` keeps the iterator open at the tail, and `LogRecord.Live` reports the replay/live boundary a follower needs in order to tell a caller it is caught up.

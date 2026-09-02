@@ -1854,6 +1854,8 @@ func (e *Engine) recordPrompt(ctx context.Context, r *Run, sess *session.Session
 	// notice never seeds or overwrites the title. A multimodal-only prompt
 	// (finalText=="" with parts) leaves Title=="" — the lazy fallback applies.
 	sess.SetTitle(finalText)
+	// This is the sole title-source ingress. Continuations deliberately bypass it.
+	sess.RecordTitleSourcePrompt(finalText)
 	// Emit the durable, log-only EvUserPrompt so the EventLog records WHAT THE USER
 	// ASKED (the relay never re-emits the prompt to the client). Turn 0 — the genuine
 	// prompt opens the run. parts ride verbatim so a fold rebuilds a multimodal prompt.

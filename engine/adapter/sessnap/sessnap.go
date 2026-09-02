@@ -77,6 +77,11 @@ type Snapshot struct {
 	// Profile), restored by direct assignment, NOT a state transition.
 	Title           string                  `json:"title,omitempty"`
 	TitleProvenance session.TitleProvenance `json:"title_provenance,omitempty"`
+	// TitleGeneration metadata is distinct from main Usage and conversation.
+	TitleGeneration    session.TitleGenerationState `json:"title_generation,omitempty"`
+	TitleSourcePrompts []string                     `json:"title_source_prompts,omitempty"`
+	TitleAttempts      []session.TitleAttempt       `json:"title_attempts,omitempty"`
+	AuxiliaryUsage     []session.AuxiliaryUsage     `json:"auxiliary_usage,omitempty"`
 	// Usage is the cumulative run-token accounting, a POINTER for true omitempty
 	// (matching the Pending precedent): a zero Usage marshals nothing and a v1
 	// snapshot with no "usage" key decodes to a nil pointer => the zero Usage on
@@ -213,6 +218,10 @@ func Of(s *session.Session) (Snapshot, error) {
 		DebugTargetFingerprint: s.DebugTargetFingerprint,
 		Title:                  s.Title,
 		TitleProvenance:        s.TitleProvenance,
+		TitleGeneration:        s.TitleGeneration,
+		TitleSourcePrompts:     s.TitleSourcePrompts(),
+		TitleAttempts:          s.TitleAttempts(),
+		AuxiliaryUsage:         s.AuxiliaryUsage(),
 		Kind:                   s.Kind,
 		Relationship:           relationship,
 		CreatedAt:              s.CreatedAt,
@@ -289,6 +298,7 @@ func (snap Snapshot) Restore() (*session.Session, error) {
 	s.BeginRun(snap.RunID)
 	s.Title = snap.Title
 	s.TitleProvenance = snap.TitleProvenance
+	s.RestoreTitleMetadata(snap.TitleGeneration, snap.TitleSourcePrompts, snap.TitleAttempts, snap.AuxiliaryUsage)
 	// The identity labels go through the WRITE-ONCE aggregate method rather than a
 	// field poke (Session is an aggregate) and rather than a RestoreState
 	// parameter (that widening is Changed/breaking; this stays Added/minor).

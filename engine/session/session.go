@@ -435,6 +435,16 @@ type Session struct {
 	// TitleProvenance records whether Title came from the first genuine prompt or
 	// an explicit operator rename. The zero value means legacy/unknown.
 	TitleProvenance TitleProvenance
+	// TitleGeneration is automatic title generation's durable lifecycle. New
+	// sessions default to disabled until composition explicitly enables it.
+	TitleGeneration TitleGenerationState
+	// titleSourcePrompts captures only the first three genuine non-empty principal
+	// text prompts at prompt ingress; it never derives candidates from history.
+	titleSourcePrompts []string
+	// titleAttempts records durable title-generation lifecycle attempts.
+	titleAttempts []TitleAttempt
+	// auxiliaryUsage is a bounded ledger distinct from the main run Usage.
+	auxiliaryUsage []AuxiliaryUsage
 	// Owner is the verified caller this session is attributed to, or nil when the
 	// session is ownerless (a pre-ship snapshot, or a deployment with no identity
 	// verifier wired). It is a WRITE-ONCE label stamped through RestoreLabels —
@@ -538,15 +548,16 @@ func clampSnapshotRunes(s string, n int) string {
 // New constructs an idle Session with an empty conversation.
 func New(id SessionID, mode PermissionMode, workspace string, limits Limits, createdAt time.Time) *Session {
 	return &Session{
-		ID:           id,
-		State:        StateIdle,
-		Mode:         mode,
-		Conversation: &Conversation{},
-		Limits:       limits,
-		Workspace:    workspace,
-		Kind:         SessionKindMain,
-		CreatedAt:    createdAt,
-		incarnation:  NewIncarnationID(),
+		ID:              id,
+		State:           StateIdle,
+		Mode:            mode,
+		Conversation:    &Conversation{},
+		Limits:          limits,
+		Workspace:       workspace,
+		Kind:            SessionKindMain,
+		TitleGeneration: TitleGenerationDisabled,
+		CreatedAt:       createdAt,
+		incarnation:     NewIncarnationID(),
 	}
 }
 

@@ -244,7 +244,7 @@ func TestFoldContractDocMatchesSessionFields(t *testing.T) {
 	//   supplied via SessionMeta (not event-carried): ID, Mode, Limits, Workspace,
 	//     Profile, ProviderID, ModelID, ReasoningEffort, DebugMCPServers,
 	//     DebugMCPTools, DebugTargetFingerprint, Title, TitleProvenance,
-	//     Kind, Relationship, CreatedAt; adoption metadata is supplied via
+	//     TitleGeneration, Kind, Relationship, CreatedAt; adoption metadata is supplied via
 	//     SessionMeta and restored as optional Session.Adoption metadata
 	//   not-event-carried identity labels (ADR 0204/0214): Owner, Authority,
 	//     EnvironmentRef — the event annotation is log-only and the fold neither
@@ -257,7 +257,7 @@ func TestFoldContractDocMatchesSessionFields(t *testing.T) {
 		"Counters": {}, "Usage": {}, "Workspace": {}, "Profile": {},
 		"ProviderID": {}, "ModelID": {}, "ReasoningEffort": {}, "DebugMCPServers": {}, "DebugMCPTools": {}, "DebugTargetFingerprint": {}, "Kind": {},
 		"Relationship": {}, "Adoption": {}, "CreatedAt": {},
-		"Title": {}, "TitleProvenance": {}, "Owner": {}, "Authority": {}, "EnvironmentRef": {},
+		"Title": {}, "TitleProvenance": {}, "TitleGeneration": {}, "Owner": {}, "Authority": {}, "EnvironmentRef": {},
 	}
 	assertExportedFields(t, reflect.TypeOf(session.Session{}), wantSessionFields,
 		"session.Session — classify the new field in COMPATIBILITY.md's reconstruction contract")
