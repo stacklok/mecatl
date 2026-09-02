@@ -2,7 +2,7 @@
 
 **Phase:** capability — durable, distributed procedure learning
 **Status:** landed, 2026-08-31. Settled design synthesis.
-**ADR:** [ADR-0294](../adr/0294-cloud-native-learning.md) — authoritative learning attempts and distributed downstream authority.
+**ADR:** [ADR-0295](../adr/0295-cloud-native-learning.md) — authoritative learning attempts and distributed downstream authority.
 **Accumulator branch:** `acc/cloud-native-learning` (off `main`).
 
 The smallest incremental body of work that makes an explicit principal request to learn a procedure durable, recoverable across replicas, and eventually callable from every eligible replica. It fixes the current explicit-intent false negative before adding distributed work, then promotes only work that crossed admission into a durable attempt lifecycle.
@@ -11,8 +11,8 @@ This plan is scenario-first: each wave is independently demonstrable and later w
 
 ## Why these scope cuts
 
-- [ADR-0294](../adr/0294-cloud-native-learning.md) makes an admitted attempt, not `EventLog` or a process-local receipt, the workflow authority. This preserves the loop's storage-agnostic boundary.
-- [ADR-0114](../adr/0114-configurable-learning-trigger-policy.md) remains authoritative for the weighted admission policy until the later distributed-budget wave; its process-local reset semantics are superseded only where ADR-0294 says so.
+- [ADR-0295](../adr/0295-cloud-native-learning.md) makes an admitted attempt, not `EventLog` or a process-local receipt, the workflow authority. This preserves the loop's storage-agnostic boundary.
+- [ADR-0114](../adr/0114-configurable-learning-trigger-policy.md) remains authoritative for the weighted admission policy until the later distributed-budget wave; its process-local reset semantics are superseded only where ADR-0295 says so.
 - [ADR-0111](../adr/0111-hardened-agent-owned-skill-publication.md) already pins repository CAS, provenance, evaluation, activation, and partitioned catalog safety. The distributed slice preserves rather than replaces those invariants.
 - [ADR-0249](../adr/0249-durable-run-identity.md) and [ADR-0250](../adr/0250-durable-cursors-and-watch.md) are explicit dependencies: source reconstruction needs durable `run_id`; cursor/watch transport must not be assumed landed before its own acceptance gate.
 
@@ -24,11 +24,11 @@ A main-session completion with a verified current principal-authored imperative 
 
 **Acceptance:**
 - AC1.1: Each listed genuine, current principal-authored imperative produces hard procedure admission without a weighted signal only when the main-session terminal is one of ADR-0114's exact hard-stop set: `end_turn`, max-turn, max-tool-call, or run-budget. Failed, cancelled, awaiting, no-progress, timeout, and structured-output terminals do not admit.
-  - verify: `TestADR_0294_ExplicitIntentUsesOnlyADRElevenFourHardStops`
+  - verify: `TestADR_0295_ExplicitIntentUsesOnlyADRElevenFourHardStops`
 - AC1.2: Negated imperatives and meta/capability questions do not admit learning.
   - verify: `TestCloudNativeLearning_Scenario1_NegatedAndMetaIntentRejected`
 - AC1.3: Assistant, tool, web, repository, historical, synthetic, non-main, compacted, and unverifiable text cannot manufacture explicit learning authority.
-  - verify: `TestADR_0294_ExplicitIntentRequiresVerifiedCurrentPrincipalPrompt`
+  - verify: `TestADR_0295_ExplicitIntentRequiresVerifiedCurrentPrincipalPrompt`
 - AC1.4: A direct `SkillDraft` remains Draft/inactive after this detector admits or rejects a procedure request.
   - verify: `TestCloudNativeLearning_Scenario1_DirectSkillDraftRemainsInactive`
 
@@ -40,13 +40,13 @@ After explicit or weighted admission succeeds, and only after landed ADR-0249 su
 
 **Acceptance:**
 - AC2.1: `queued` is returned only after landed ADR-0249 supplies a non-zero durable `RunID` and durable create succeeds; absent, zero, or non-durable RunID refuses admission before queuing and creates no attempt. A reload from a second process finds the same deterministic attempt in `queued`, `running`, or a terminal state; duplicate admission converges to that attempt.
-  - verify: `TestADR_0294_QueuedAttemptRequiresDurableRunIDAndIsIdempotent`
+  - verify: `TestADR_0295_QueuedAttemptRequiresDurableRunIDAndIsIdempotent`
 - AC2.2: The immutable, content-free provenance records admission class plus the exact current-prompt/RunID/canonical-digest binding. Workers never re-derive explicit authority from replayed user-role text; forged provenance fields and synthetic continuations fail closed.
-  - verify: `TestADR_0294_AdmissionProvenanceBindsCurrentPromptAndRejectsForgery`
+  - verify: `TestADR_0295_AdmissionProvenanceBindsCurrentPromptAndRejectsForgery`
 - AC2.3: Attempts permit only legal CAS transitions. An expired, released, superseded, retried, or abandoned claim cannot renew, checkpoint, release, or finalize its attempt; cannot finalize a successor; and cannot rewrite an abandoned attempt to success.
-  - verify: `TestADR_0294_StaleClaimCannotTransitionAttempt`
+  - verify: `TestADR_0295_StaleClaimCannotTransitionAttempt`
 - AC2.4: Attempt projections and stored records contain only bounded safe metadata and closed failure codes; structural tests reject raw content, paths, principal values, credentials, tokens, headers, secret-shaped values, driver-error text, diagnostics, metrics, watch envelopes, and optional EventLog projections.
-  - verify: `TestADR_0294_AttemptSurfacesContainNoContentOrSecrets`
+  - verify: `TestADR_0295_AttemptSurfacesContainNoContentOrSecrets`
 - AC2.5: A skipped or non-admitted completion produces immediate status plus content-free metrics but creates no attempt record.
   - verify: `TestCloudNativeLearning_Scenario2_NonAdmittedWorkIsNotDurable`
 - AC2.6: Retention/deletion are caller-partitioned, CAS-safe where applicable, and cannot delete a claimed nonterminal attempt.
@@ -62,13 +62,13 @@ An explicit accepted request drives a durable attempt through claim, evidence re
 - AC3.1: An explicit imperative request returns a durable queued attempt and, across Build/process replacement, reaches a terminal attempt linked to its authorized proposal and/or skill when downstream capabilities are wired.
   - verify: `TestCloudNativeLearning_Scenario3_ExplicitProcedureAttemptSurvivesRestart`
 - AC3.2: The worker uses its private immutable owner binding and exact-source delegated access to reconstruct the existing bounded, secret-safe canonical learning projection from the exact source session, `RunID`, and digest. It fences that projection at every remote/restarted model boundary; raw transcript, archive, tool, and event text never cross the boundary, and prompt-injection/framing payloads cannot alter authority or instructions.
-  - verify: `TestADR_0294_EvidenceProjectionIsBoundedFencedAndInjectionSafe`
+  - verify: `TestADR_0295_EvidenceProjectionIsBoundedFencedAndInjectionSafe`
 - AC3.3: Missing, gap-marked, compacted-without-recoverable-archive, unauthorized, or digest/run-mismatched evidence terminally fails closed with a safe code and creates no proposal/skill mutation. No caller-supplied principal or system-principal bypass is accepted; inaccessible foreign or missing source evidence has the same absence-style result.
-  - verify: `TestADR_0294_WorkerSourceAuthorityFailsClosedWithoutIdentityOracle`
+  - verify: `TestADR_0295_WorkerSourceAuthorityFailsClosedWithoutIdentityOracle`
 - AC3.4: `abstained`/`no_candidate` is a valid distinct terminal, separate from evidence failure, evaluation rejection, and publication failure.
-  - verify: `TestADR_0294_AbstentionIsASeparateTerminalOutcome`
+  - verify: `TestADR_0295_AbstentionIsASeparateTerminalOutcome`
 - AC3.5: Crash after claim or after a downstream durable boundary is reconciled idempotently; a retry neither duplicates a proposal/skill nor reports an invented success.
-  - verify: `TestADR_0294_AttemptReconciliationIsIdempotent`
+  - verify: `TestADR_0295_AttemptReconciliationIsIdempotent`
 - AC3.6: With learning unwired (including the default/off configuration without `--learning-store-url`), engine composition and ordinary runs remain byte-identical and allocate no attempt repository, worker, or durable attempt. Off mode with an explicitly configured remote learning store still dials, probes, and composes that repository set for explicit reflection, learned-skill inspection, and recovery of already-admitted work; an ordinary off-mode run does not itself admit a new automatic attempt, and explicit `/reflect` semantics remain unchanged.
   - verify: `TestCloudNativeLearning_Scenario3_UnwiredLearningIsByteIdentical`
 
@@ -82,11 +82,11 @@ The distributed contract reaches beyond the queue: `ProposalRepository` and `Ski
 - AC4.1: Distributed ProposalRepository and SkillRepository implementations satisfy their existing shared conformance suites, including opaque CAS, provenance, evaluation, activation, recovery, and partition isolation.
   - verify: `TestCloudNativeLearning_Scenario4_DistributedRepositoriesConform`
 - AC4.2: Crash and claim-loss races converge through deterministic IDs and CAS: no duplicate artifact, overwrite of a newer target revision, two active versions, invented attempt success, or partition crossing. An independently valid late downstream commit is allowed; authoritative reread adopts only a compatible deterministic artifact, otherwise leaves inactive/unlinked residue or reaches safe non-success.
-  - verify: `TestADR_0294_IndependentDownstreamCommitReconcilesAfterClaimLoss`
+  - verify: `TestADR_0295_IndependentDownstreamCommitReconcilesAfterClaimLoss`
 - AC4.3: Catalog publication, hydration, and invalidation converge by authoritative per-partition monotonic generation after Active, archive, rollback, or replacement transitions. An authorized session on replica B serves a wholly old or wholly new partition snapshot; delayed old publish/invalidate cannot replace or revoke a newer generation. Instant claim-driven invalidation is not promised, and an unauthorized or non-admitted partition sees nothing.
-  - verify: `TestADR_0294_ReplicaHydrationConvergesAcrossReplacementAndRollback`
+  - verify: `TestADR_0295_ReplicaHydrationConvergesAcrossReplacementAndRollback`
 - AC4.4: Publication/hydration uncertainty fail-closes only the affected partition and cannot revoke a newer durable active generation.
-  - verify: `TestADR_0294_LearnedSkillPartitionPublicationIsolation`
+  - verify: `TestADR_0295_LearnedSkillPartitionPublicationIsolation`
 
 ---
 
@@ -96,13 +96,13 @@ The service exposes caller-authorized attempt get/list state and defined manual 
 
 **Acceptance:**
 - AC5.1: The owner can get and page through attempt projections, while another caller cannot infer existence, metadata, proposal IDs, skill IDs, counts, cursors, timing, or diagnostics. This non-disclosure holds before locks/signals/diagnostics and pagination/count/cursor construction; foreign and missing requests have the same absence-style result.
-  - verify: `TestADR_0294_AttemptControlsAreNonDisclosingBeforeSideEffects`
+  - verify: `TestADR_0295_AttemptControlsAreNonDisclosingBeforeSideEffects`
 - AC5.2: Attempt API projections expose only bounded state, timestamps, safe codes, and authorized identifiers; they never expose transcript, tool output, provider text, paths, principal values, credentials, tokens, headers, secret-shaped values, driver errors, diagnostics, metrics, watch envelopes, or optional EventLog projections.
-  - verify: `TestADR_0294_AttemptAPIIsContentFree`
+  - verify: `TestADR_0295_AttemptAPIIsContentFree`
 - AC5.3: Manual retry and abandon perform only defined attempt CAS transitions; abandon is non-compensating and does not promise downstream rollback. Stale versions, terminal conflicts, and a live fenced claim return closed typed errors without changing the attempt. Private owner binding and exact-source delegation are enforced without caller-supplied principal or system-principal bypass.
-  - verify: `TestADR_0294_AttemptControlsRequirePrivateOwnerBinding`
+  - verify: `TestADR_0295_AttemptControlsRequirePrivateOwnerBinding`
 - AC5.4: The shipped raw learning repository RPCs do not claim workload-authenticated ownership enforcement. With `OwnershipEnforced=true`, configuring `--learning-store-url` fails closed until ADR-0213 middleware, a private owner registry, and separated maintenance RPCs exist, regardless of a driver's self-advertised `enforced` value. Only a capability-complete driver explicitly trusted as single-tenant infrastructure may compose when `OwnershipEnforced=false`; proposal and skill project namespaces are opaque rather than raw workspace paths.
-  - verify: `TestADR_0294_LearningDriversEnforceOwnershipOrFailClosed`
+  - verify: `TestADR_0295_LearningDriversEnforceOwnershipOrFailClosed`
 - AC5.5: Attempt watch is deferred. ADR-0250 session `EventLog` watch is explicitly not an attempt-watch feed; no endpoint, cursor, process-local substitute, or watch envelope is introduced in this plan.
   - verify: none — deferred to a separately specified durable attempt-change feed
 
@@ -116,9 +116,9 @@ Weighted automatic work joins the same durable attempt queue only after explicit
 - AC6.1: Automatic weighted admission creates the same deterministic durable attempt lifecycle as explicit admission and cannot bypass queue capacity, evidence reconstruction, or downstream authority.
   - verify: `TestCloudNativeLearning_Scenario6_WeightedAdmissionUsesAttemptLifecycle`
 - AC6.2: Concurrent replicas enforce one configured global automatic count/token budget, cooldown, and deduplication window without multiplying spend or durable attempts.
-  - verify: `TestADR_0294_AutomaticAdmissionControlsAreProcessIndependent`
+  - verify: `TestADR_0295_AutomaticAdmissionControlsAreProcessIndependent`
 - AC6.3: Distributed automatic reservation is tied to deterministic attempt identity. Failure-injection covers reserve/create linkage; crashes before and after each boundary; timeout, expiry, reassignment, and abandonment; retained versus reclaimed charge; and proves that retries never exceed the configured global maximum.
-  - verify: `TestADR_0294_AutomaticReservationsReconcileWithoutExceedingGlobalMaximum`
+  - verify: `TestADR_0295_AutomaticReservationsReconcileWithoutExceedingGlobalMaximum`
 - AC6.4: Documentation and capability reporting do not claim global automatic bounds until AC6.2 is wired; the earlier explicit-only slice says so plainly.
   - verify: `TestCloudNativeLearning_Scenario6_NoPrematureGlobalBoundClaim`
 
@@ -126,8 +126,8 @@ Weighted automatic work joins the same durable attempt queue only after explicit
 
 | Item | Defer-to | ADR / decision |
 |---|---|---|
-| A process-local learning status API or receipt cache as durable authority | Never; use AttemptRepository | [ADR-0294](../adr/0294-cloud-native-learning.md) |
-| EventLog as learning workflow state or transcript duplication in attempts | Never; EventLog is evidence/projection only | [ADR-0294](../adr/0294-cloud-native-learning.md) |
+| A process-local learning status API or receipt cache as durable authority | Never; use AttemptRepository | [ADR-0295](../adr/0295-cloud-native-learning.md) |
+| EventLog as learning workflow state or transcript duplication in attempts | Never; EventLog is evidence/projection only | [ADR-0295](../adr/0295-cloud-native-learning.md) |
 | Automatic global budgets/cooldowns/dedupe before their durable distributed ledger lands | Scenario 6 | [ADR-0114](../adr/0114-configurable-learning-trigger-policy.md) |
 | Attempt watch, including cursor binding to caller/query-or-attempt scope/generation and indistinguishable rejection of tampered, expired, or foreign cursors | Separately specified follow-up after this plan | Must use a durable attempt-change feed; ADR-0250 session EventLog watch is not that feed |
 | A process-local or session-EventLog-derived substitute for attempt watch | Never | Attempt notifications are advisory only; clients must re-read AttemptRepository under authority |
@@ -149,7 +149,7 @@ Land Scenario 1 alone first. Scenarios 2 and 3 form the first durable vertical s
 
 ## Deferred decisions and known risks
 
-- **Attempt store topology and driver RPC shape.** ADR-0294 fixes the port contract, fencing, and semantics, but the concrete backing-store/driver schema selection should follow the existing driver-conformance pattern in the implementation wave.
+- **Attempt store topology and driver RPC shape.** ADR-0295 fixes the port contract, fencing, and semantics, but the concrete backing-store/driver schema selection should follow the existing driver-conformance pattern in the implementation wave.
 - **Evidence retention versus attempt retention.** An attempt may outlive its reconstructable session/log evidence; terminal `evidence_unavailable` is the intentional honest result. Retention durations and operator policy remain a bounded configuration design for the implementation slice.
 - **Attempt notifications.** Attempt watch is deferred to a separate ADR. It must define durable attempt-change records and cursors bound to caller, query/attempt scope, and generation; notifications are advisory and clients re-read `AttemptRepository` under authority. ADR-0250's session `EventLog` watch is not this feed.
 - **Global automatic ledger mechanics.** Scenario 6 requires atomic distributed reservation semantics, including deterministic reserve/create linkage, crash-boundary charge reconciliation, expiry/reassignment, and a global-maximum proof, but intentionally does not pre-select Redis, a driver, or another backend before its conformance and deployment constraints are specified.

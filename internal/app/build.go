@@ -1810,12 +1810,6 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		previousClose := mcpClose
 		mcpClose = func() { reservations.Close(); previousClose() }
 	}
-	attempts := startAttemptRecovery(ctx, cfg, reg, store, eventLog, assets.attemptRepository, assets.reflectionRepository, assets)
-	if attempts != nil {
-		previousClose := mcpClose
-		mcpClose = func() { attempts.Close(); previousClose() }
-	}
-
 	// Stash the resolved skill seam's command-bridge inputs onto the Build-scope
 	// cfg (the commandSource precedent) so buildCommandLister — which runs HERE,
 	// after buildEngine returned the assets — composes a SkillCommandSource over
@@ -1856,6 +1850,11 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 			},
 			worktrees: worktreeLister, selectors: selectorIssuer,
 		}
+	}
+	attempts := startAttemptRecovery(ctx, cfg, reg, store, eventLog, assets.attemptRepository, assets.reflectionRepository, assets, placementProvider, placementScope)
+	if attempts != nil {
+		previousClose := mcpClose
+		mcpClose = func() { attempts.Close(); previousClose() }
 	}
 	svcCfg := server.Config{
 		BuildID:              buildinfo.BuildID,

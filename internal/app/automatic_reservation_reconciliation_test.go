@@ -65,7 +65,7 @@ func (l *blockingDiscoveryLedger) DiscoverExpired(ctx context.Context, _ uint32)
 	return nil, ctx.Err()
 }
 
-func TestADR_0254_AutomaticReservationsReconcileWithoutExceedingGlobalMaximum(t *testing.T) {
+func TestADR_0295_AutomaticReservationsReconcileWithoutExceedingGlobalMaximum(t *testing.T) {
 	ctx := context.Background()
 	policy := learning.AutomaticAdmissionPolicy{
 		Window: time.Hour, Cooldown: 0, DedupeWindow: 24 * time.Hour,

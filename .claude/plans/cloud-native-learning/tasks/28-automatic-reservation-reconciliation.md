@@ -18,4 +18,4 @@ Implement reserve/create linkage and reconciliation keyed by deterministic attem
 ## Acceptance criteria
 
 - AC6.3: Distributed automatic reservation is tied to deterministic attempt identity. Failure-injection covers reserve/create linkage; crashes before and after each boundary; timeout, expiry, reassignment, and abandonment; retained versus reclaimed charge; and proves that retries never exceed the configured global maximum.
-  - verify: `TestADR_0254_AutomaticReservationsReconcileWithoutExceedingGlobalMaximum`
+  - verify: `TestADR_0295_AutomaticReservationsReconcileWithoutExceedingGlobalMaximum`

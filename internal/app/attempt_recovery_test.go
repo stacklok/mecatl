@@ -192,7 +192,7 @@ func TestAttemptRecoveryConfiguredTimeoutBoundsBlockingStoreAndPersistsRetry(t *
 	item := learning.AttemptWork{Partition: partition, Record: record}
 
 	startedAt := time.Now()
-	err := recoverAttempt(context.Background(), Config{LearningAttemptTimeout: 20 * time.Millisecond}, nil, store, nil, repository, nil, catalogAssets{}, item)
+	err := recoverAttempt(context.Background(), Config{LearningAttemptTimeout: 20 * time.Millisecond}, nil, store, nil, repository, nil, catalogAssets{}, appTestPlacementProvider{}, "legacy-local", item)
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("recoverAttempt error = %v, want deadline", err)
 	}

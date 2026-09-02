@@ -15,7 +15,7 @@ import (
 	"github.com/stacklok/mecatl/engine/session"
 )
 
-func TestADR_0254_EvidenceProjectionIsBoundedFencedAndInjectionSafe(t *testing.T) {
+func TestADR_0295_EvidenceProjectionIsBoundedFencedAndInjectionSafe(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	owner := &session.Principal{Issuer: "issuer", Subject: "alice", GrantType: session.GrantTypeUser}
@@ -24,7 +24,7 @@ func TestADR_0254_EvidenceProjectionIsBoundedFencedAndInjectionSafe(t *testing.T
 	oversized := strings.Repeat("bounded-evidence-", 2000)
 
 	store := memstore.New()
-	source := session.New("source-fenced", session.ModeDefault, "/workspace", session.Limits{}, time.Unix(1, 0))
+	source := session.New("source-fenced", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/workspace", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1, 0))
 	if err := source.RestoreLabels(owner, session.Authority{}); err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +77,7 @@ func TestADR_0254_EvidenceProjectionIsBoundedFencedAndInjectionSafe(t *testing.T
 		}
 	}
 
-	trajectory := learning.NewTrajectory(source.ID, source.Workspace, session.StopEndTurn, usage, source.Conversation.Messages)
+	trajectory := learning.NewTrajectory(source.ID, "/workspace", session.StopEndTurn, usage, source.Conversation.Messages)
 	trajectory.RunID = runID
 	trajectory.Kind = source.Kind
 	trajectory.Counters = source.Counters
@@ -108,7 +108,7 @@ func TestADR_0254_EvidenceProjectionIsBoundedFencedAndInjectionSafe(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	outcome, failure, err := reflectAttemptEvidence(ctx, newLearningEvidenceLoader(store, events), reflector, partition, learning.AttemptRecord{Provenance: provenance})
+	outcome, failure, err := reflectAttemptEvidence(ctx, newLearningEvidenceLoader(store, events), reflector, partition, learning.AttemptRecord{Provenance: provenance}, "/workspace")
 	if err != nil || failure != learning.FailureNone || outcome.Kind != learning.OutcomeAbstained {
 		t.Fatalf("reflection = outcome %+v failure %q err %v", outcome, failure, err)
 	}

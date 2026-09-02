@@ -24,7 +24,7 @@ Repair proof only; AC ownership remains with the existing exact-source-evidence 
 
 > AC3.3: Missing, gap-marked, compacted-without-recoverable-archive, unauthorized, or digest/run-mismatched evidence terminally fails closed with a safe code and creates no proposal/skill mutation. No caller-supplied principal or system-principal bypass is accepted; inaccessible foreign or missing source evidence has the same absence-style result.
 >
-> - verify: `TestADR_0259_WorkerSourceAuthorityFailsClosedWithoutIdentityOracle`
+> - verify: `TestADR_0295_WorkerSourceAuthorityFailsClosedWithoutIdentityOracle`
 
 Add offline proofs for a real missing sequence record and a gap in otherwise correctly ordered
 records; both must reject without downstream mutation.

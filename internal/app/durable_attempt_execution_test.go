@@ -34,14 +34,14 @@ func (*projectionCapturingReflector) RequestTokenEstimate(learning.Input) (int, 
 	return 1, nil
 }
 
-func TestADR_0259_DurableExecutionReloadsPersistedRunEvidence(t *testing.T) {
+func TestADR_0295_DurableExecutionReloadsPersistedRunEvidence(t *testing.T) {
 	ctx := context.Background()
 	owner := &session.Principal{Issuer: "issuer", Subject: "owner", GrantType: session.GrantTypeUser}
 	const runID = "run_aaaaaaaaaaaaaaaaaaaaaaaaaa"
 	const persistedPrompt = "Create a skill from the persisted workflow"
 
 	sessions := memstore.New()
-	source := session.New("source-first-process", session.ModeDefault, "/workspace", session.Limits{}, time.Unix(1, 0))
+	source := session.New("source-first-process", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/workspace", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1, 0))
 	if err := source.RestoreLabels(owner, session.Authority{}); err != nil {
 		t.Fatal(err)
 	}
@@ -62,7 +62,7 @@ func TestADR_0259_DurableExecutionReloadsPersistedRunEvidence(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	trajectory := learning.NewTrajectory(source.ID, source.Workspace, session.StopEndTurn, session.Usage{}, source.Conversation.Messages)
+	trajectory := learning.NewTrajectory(source.ID, "/workspace", session.StopEndTurn, session.Usage{}, source.Conversation.Messages)
 	trajectory.Principal = owner
 	trajectory.RunID = runID
 	trajectory.Kind = session.SessionKindMain
@@ -111,10 +111,10 @@ func TestADR_0259_DurableExecutionReloadsPersistedRunEvidence(t *testing.T) {
 	}
 	log := memstore.NewEventLog()
 	loader := newLearningEvidenceLoader(sessions, log)
-	if projection, failure := loader.Load(ctx, partition, record); failure != learning.FailureEvidenceUnavailable || len(projection.Messages) != 0 {
+	if projection, failure := loader.Load(ctx, partition, record, "/workspace"); failure != learning.FailureEvidenceUnavailable || len(projection.Messages) != 0 {
 		t.Fatalf("reflection ran without terminal persisted event sequence: failure=%q projection=%+v", failure, projection)
 	}
-	if _, _, failure, loadErr := loader.loadForExecution(ctx, partition, record); failure != learning.FailureNone || !errors.Is(loadErr, errLearningEvidenceNotReady) {
+	if _, _, failure, loadErr := loader.loadForExecution(ctx, partition, record, "/workspace"); failure != learning.FailureNone || !errors.Is(loadErr, errLearningEvidenceNotReady) {
 		t.Fatalf("incomplete terminal evidence failure=%q err=%v; want retryable not-ready", failure, loadErr)
 	}
 
@@ -128,7 +128,7 @@ func TestADR_0259_DurableExecutionReloadsPersistedRunEvidence(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	outcome, failure, err := reflectAttemptEvidence(ctx, loader, reflector, partition, record)
+	outcome, failure, err := reflectAttemptEvidence(ctx, loader, reflector, partition, record, "/workspace")
 	if err != nil || failure != learning.FailureNone || outcome.Kind != learning.OutcomeAbstained {
 		t.Fatalf("persisted reflection outcome=%+v failure=%q err=%v", outcome, failure, err)
 	}

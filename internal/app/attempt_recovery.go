@@ -11,6 +11,7 @@ import (
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	memoryadapter "github.com/stacklok/mecatl/internal/adapter/memory"
+	"github.com/stacklok/mecatl/internal/adapter/server"
 )
 
 const defaultAttemptDiscoveryInterval = time.Second
@@ -68,12 +69,12 @@ func newAttemptRecoveryLoop(parent context.Context, repository learning.AttemptR
 	return recovery
 }
 
-func startAttemptRecovery(parent context.Context, cfg Config, reg *providerRegistry, sessions port.SessionStore, events port.EventLog, repository learning.AttemptRepository, proposals learning.ProposalRepository, assets catalogAssets) *attemptRecovery {
+func startAttemptRecovery(parent context.Context, cfg Config, reg *providerRegistry, sessions port.SessionStore, events port.EventLog, repository learning.AttemptRepository, proposals learning.ProposalRepository, assets catalogAssets, placements server.PlacementProvider, placementScope server.PlacementScope) *attemptRecovery {
 	if repository == nil || events == nil || proposals == nil {
 		return nil
 	}
 	recovery := newAttemptRecoveryLoop(parent, repository, defaultAttemptDiscoveryInterval, func(ctx context.Context, item learning.AttemptWork) error {
-		err := recoverAttempt(ctx, cfg, reg, sessions, events, repository, proposals, assets, item)
+		err := recoverAttempt(ctx, cfg, reg, sessions, events, repository, proposals, assets, placements, placementScope, item)
 		if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, errLearningEvidenceNotReady) && !errors.Is(err, learning.ErrAttemptClaimConflict) && !errors.Is(err, learning.ErrAttemptVersionConflict) {
 			cfg.diag().Log(ctx, port.LevelWarn, "durable learning attempt recovery failed", "attempt_id", item.Record.ID)
 		}
@@ -93,9 +94,16 @@ func (r *attemptRecovery) Close() {
 }
 
 //nolint:gocyclo // exact-source reconstruction and claim-fenced publication stay visibly ordered
-func recoverAttempt(ctx context.Context, cfg Config, reg *providerRegistry, sessions port.SessionStore, events port.EventLog, repository learning.AttemptRepository, proposals learning.ProposalRepository, assets catalogAssets, item learning.AttemptWork) error {
+func recoverAttempt(ctx context.Context, cfg Config, reg *providerRegistry, sessions port.SessionStore, events port.EventLog, repository learning.AttemptRepository, proposals learning.ProposalRepository, assets catalogAssets, placements server.PlacementProvider, placementScope server.PlacementScope, item learning.AttemptWork) error {
 	loader := newLearningEvidenceLoader(sessions, events)
 	var source *session.Session
+	var workspace string
+	var closePlacement func() error
+	defer func() {
+		if closePlacement != nil {
+			_ = closePlacement()
+		}
+	}()
 	var reflector *agent.EvidenceReflector
 	var workerCfg Config
 	var input learning.Input
@@ -103,7 +111,7 @@ func recoverAttempt(ctx context.Context, cfg Config, reg *providerRegistry, sess
 	var loadErr error
 	load := func(loadCtx context.Context, record learning.AttemptRecord) learning.AttemptFailureCode {
 		var failure learning.AttemptFailureCode
-		input, projection, failure, loadErr = loader.loadForExecution(loadCtx, item.Partition, record)
+		input, projection, failure, loadErr = loader.loadForExecution(loadCtx, item.Partition, record, workspace)
 		return failure
 	}
 	setupProvider := func() error {
@@ -123,9 +131,9 @@ func recoverAttempt(ctx context.Context, cfg Config, reg *providerRegistry, sess
 			}
 		}
 		workerCfg = cfg
-		workerCfg.Workspace = source.Workspace
+		workerCfg.Workspace = workspace
 		workerCfg.Model = model
-		workerCfg.LearningMode, workerCfg.LearningSensitivity, workerCfg.SkillActivationPolicy = learningPolicyForWorkspace(cfg, source.Workspace)
+		workerCfg.LearningMode, workerCfg.LearningSensitivity, workerCfg.SkillActivationPolicy = learningPolicyForWorkspace(cfg, workspace)
 		var err error
 		reflector, err = agent.NewEvidenceReflector(entry.provider, model, buildTokenCounter(workerCfg), agent.ReflectionLimits{})
 		if err != nil {
@@ -144,6 +152,18 @@ func recoverAttempt(ctx context.Context, cfg Config, reg *providerRegistry, sess
 				return learning.FailureEvidenceUnavailable, nil
 			}
 			source = loaded
+			reattacher, ok := placements.(server.PlacementReattacher)
+			if !ok {
+				return learning.FailureNone, errAttemptSetupTransient
+			}
+			binding, err := reattacher.Reattach(prepareCtx, server.PlacementReattachRequest{
+				Ref: source.EnvironmentRef, Principal: source.Owner, Scope: placementScope,
+			})
+			if err != nil || binding.Ref != source.EnvironmentRef || binding.Environment.Workspace() == nil {
+				return learning.FailureNone, errAttemptSetupTransient
+			}
+			workspace = binding.Environment.Workspace().Root()
+			closePlacement = binding.Close
 			if record.CheckpointStage == learning.AttemptCheckpointNone {
 				return learning.FailureNone, nil
 			}
@@ -175,9 +195,9 @@ func recoverAttempt(ctx context.Context, cfg Config, reg *providerRegistry, sess
 			digest := string(item.Record.Provenance.Source.CanonicalDigest)
 			principal := reflectionPrincipal(source.Owner)
 			procedure := buildProcedureProcessor(workerCfg, assets)
-			processed, processErr := processReflectionOutcome(memoryadapter.WithWorkspace(publishCtx, source.Workspace), proposals,
+			processed, processErr := processReflectionOutcome(memoryadapter.WithWorkspace(publishCtx, workspace), proposals,
 				assets.userModelStore, assets.memStore, principal, input, digest, outcome, input.Signals,
-				workerCfg.LearningMode, projectIngestionAdmitted(workerCfg), workerCfg.Workspace, procedure)
+				workerCfg.LearningMode, projectIngestionAdmitted(workerCfg), workspace, procedure)
 			if processErr != nil {
 				failure := learning.FailurePublicationFailed
 				if errors.Is(processErr, learning.ErrInvalidOutcome) || errors.Is(processErr, learning.ErrInvalidProposal) {

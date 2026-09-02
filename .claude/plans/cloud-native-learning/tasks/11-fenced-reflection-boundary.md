@@ -18,4 +18,4 @@ Feed only the bounded canonical projection from task 10 into reflection/material
 ## Acceptance criteria
 
 - AC3.2: The worker uses its private immutable owner binding and exact-source delegated access to reconstruct the existing bounded, secret-safe canonical learning projection from the exact source session, `RunID`, and digest. It fences that projection at every remote/restarted model boundary; raw transcript, archive, tool, and event text never cross the boundary, and prompt-injection/framing payloads cannot alter authority or instructions.
-  - verify: `TestADR_0254_EvidenceProjectionIsBoundedFencedAndInjectionSafe`
+  - verify: `TestADR_0295_EvidenceProjectionIsBoundedFencedAndInjectionSafe`

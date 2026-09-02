@@ -107,8 +107,8 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0228 — Manual dream review](./0228-manual-dream-review.md)
 - [0110 — Evaluated, versioned agent-owned skills](./0110-evaluated-agent-owned-skills.md) *(superseded by 0111)*
 - [0111 — Hardened publication and recovery for agent-owned skills](./0111-hardened-agent-owned-skill-publication.md)
-- [0114 — Configurable learning-trigger policy](./0114-configurable-learning-trigger-policy.md) *(process-local coordinator/accounting decisions superseded where ADR 0294 is wired)*
-- [0294 — Cloud-native learning uses durable, authoritative attempts](./0294-cloud-native-learning.md) *(Accepted)*
+- [0114 — Configurable learning-trigger policy](./0114-configurable-learning-trigger-policy.md) *(process-local coordinator/accounting decisions superseded where ADR 0295 is wired)*
+- [0295 — Cloud-native learning uses durable, authoritative attempts](./0295-cloud-native-learning.md) *(Accepted)*
 
 ### Core tools & shell
 - [0281 — Managed temporary command leases and deterministic reaping](./0281-managed-temporary-command-leases.md) *(proposed)*

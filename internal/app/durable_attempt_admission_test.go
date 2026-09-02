@@ -27,7 +27,7 @@ func durableAdmissionTrajectory(runID string) learning.Trajectory {
 func persistedAdmissionSource(t *testing.T, trajectory learning.Trajectory) *memstore.Store {
 	t.Helper()
 	store := memstore.New()
-	source := session.New(trajectory.SessionID, session.ModeDefault, "", session.Limits{}, time.Unix(1, 0))
+	source := session.New(trajectory.SessionID, session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindNoFS, ID: "none", Revision: "v1"}, session.Limits{}, time.Unix(1, 0))
 	source.BeginRun(trajectory.RunID)
 	if err := store.Save(context.Background(), source); err != nil {
 		t.Fatal(err)
@@ -35,7 +35,7 @@ func persistedAdmissionSource(t *testing.T, trajectory learning.Trajectory) *mem
 	return store
 }
 
-func TestADR_0254_QueuedAttemptRequiresDurableRunIDAndIsIdempotent(t *testing.T) {
+func TestADR_0295_QueuedAttemptRequiresDurableRunIDAndIsIdempotent(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
 	attempts, err := attemptstore.New(dir)

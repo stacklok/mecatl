@@ -102,7 +102,7 @@ func TestAutomaticReflectionEmitsCorrelatedClosedMetrics(t *testing.T) {
 		result.RunID = "run_aaaaaaaaaaaaaaaaaaaaaaaaaa"
 		result.Kind = session.SessionKindMain
 		result.Current = learning.MessageSpan{Start: 0, End: len(messages)}
-		source := session.New(result.SessionID, session.ModeDefault, "", session.Limits{}, time.Unix(1, 0))
+		source := session.New(result.SessionID, session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/workspace", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1, 0))
 		source.BeginRun(result.RunID)
 		if err := sourceStore.Save(context.Background(), source); err != nil {
 			t.Fatal(err)

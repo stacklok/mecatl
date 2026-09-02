@@ -179,6 +179,13 @@ func discoveredSessionMutationBoundaries(t *testing.T) []string {
 				}
 				sel, ok := call.Fun.(*ast.SelectorExpr)
 				if ok && mutatingCalls[sel.Sel.Name] {
+					// AttemptRepository.Abandon mutates the separate learning-attempt
+					// family, not a durable session family.
+					if sel.Sel.Name == "Abandon" {
+						if receiver, receiverOK := sel.X.(*ast.SelectorExpr); receiverOK && receiver.Sel.Name == "Attempts" {
+							return true
+						}
+					}
 					seen[fn.Name.Name] = true
 				}
 				return true

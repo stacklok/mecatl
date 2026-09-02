@@ -176,7 +176,7 @@ func TestCloudNativeLearning_Scenario1_DirectSkillDraftRemainsInactive(t *testin
 			defer built.Close()
 
 			ctx := session.WithPrincipal(context.Background(), &session.Principal{Issuer: "test", Subject: "alice", GrantType: session.GrantTypeUser})
-			sess, err := built.Service.CreateSession(ctx, workspace, session.ModeDefault, defaultLimits())
+			sess, err := built.Service.CreateSession(ctx, session.ModeDefault, defaultLimits())
 			if err != nil {
 				t.Fatal(err)
 			}

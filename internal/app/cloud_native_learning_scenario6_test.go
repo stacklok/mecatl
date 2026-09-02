@@ -74,7 +74,7 @@ func TestCloudNativeLearning_Scenario6_WeightedAdmissionUsesAttemptLifecycle(t *
 
 	sources := memstore.New()
 	events := memstore.NewEventLog()
-	source := session.New(trajectory.SessionID, session.ModeDefault, trajectory.Workspace, session.Limits{}, time.Unix(1, 0))
+	source := session.New(trajectory.SessionID, session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindMem, ID: trajectory.Workspace, Revision: "v1"}, session.Limits{}, time.Unix(1, 0))
 	source.Owner = owner.Clone()
 	source.BeginRun(trajectory.RunID)
 	if err := sources.Save(ctx, source); err != nil {
@@ -129,7 +129,7 @@ func TestCloudNativeLearning_Scenario6_WeightedAdmissionUsesAttemptLifecycle(t *
 		return recoverAttempt(recoveryCtx, cfg, registry, sources, events, orderedAttempts, proposals, catalogAssets{
 			userModelStore:       userMemory,
 			reflectionRepository: proposals,
-		}, item)
+		}, appTestPlacementProvider{}, "legacy-local", item)
 	}, nil)
 	t.Cleanup(recovery.Close)
 	if err := observer.Observe(ctx, trajectory); err != nil {
@@ -196,12 +196,12 @@ func TestCloudNativeLearning_Scenario6_NoPrematureGlobalBoundClaim(t *testing.T)
 		factory := sessionEngineFactory(cfg, regForTest(provider, providerOpenAI, cfg.Model), provider,
 			memstore.New(), permpolicy.NewPolicy(defaultRules(), nil), hookexec.New(nil), nil,
 			prompt.RootAssembler{}, catalogAssets{automaticAdmissionLedger: ledger}, nil)
-		result, err := factory(context.Background(), server.ProviderSelector{}, nil, server.ProfileDefault, "", session.ModeDefault)
+		result, err := factory(context.Background(), server.ProviderSelector{}, nil, server.ProfileDefault, "/ws", session.ModeDefault)
 		if err != nil {
 			t.Fatalf("factory: %v", err)
 		}
 		defer func() { _ = result.Close() }()
-		run := result.Engine.Run(context.Background(), session.New("s", session.ModeDefault, "/ws", session.Limits{MaxTurns: 1}, time.Unix(1, 0)), memEnvironment("/ws"), agent.RunRequest{Text: "hi"})
+		run := result.Engine.Run(context.Background(), session.New("s", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{MaxTurns: 1}, time.Unix(1, 0)), memEnvironment("/ws"), agent.RunRequest{Text: "hi"})
 		for range run.Events() {
 		}
 		return captured

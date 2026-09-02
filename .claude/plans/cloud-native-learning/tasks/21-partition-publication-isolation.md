@@ -18,4 +18,4 @@ Harden the convergence path so repository/publication uncertainty clears or bloc
 ## Acceptance criteria
 
 - AC4.4: Publication/hydration uncertainty fail-closes only the affected partition and cannot revoke a newer durable active generation.
-  - verify: `TestADR_0254_LearnedSkillPartitionPublicationIsolation`
+  - verify: `TestADR_0295_LearnedSkillPartitionPublicationIsolation`

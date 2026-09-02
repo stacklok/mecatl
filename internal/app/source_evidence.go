@@ -32,11 +32,11 @@ const (
 	evidenceReadComplete
 )
 
-func reflectAttemptEvidence(ctx context.Context, loader *learningEvidenceLoader, reflector canonicalEvidenceReflector, partition learning.AttemptPartition, attempt learning.AttemptRecord) (learning.Outcome, learning.AttemptFailureCode, error) {
+func reflectAttemptEvidence(ctx context.Context, loader *learningEvidenceLoader, reflector canonicalEvidenceReflector, partition learning.AttemptPartition, attempt learning.AttemptRecord, workspace string) (learning.Outcome, learning.AttemptFailureCode, error) {
 	if reflector == nil {
 		return learning.Outcome{}, learning.FailureEvidenceUnavailable, nil
 	}
-	projection, failure := loader.Load(ctx, partition, attempt)
+	projection, failure := loader.Load(ctx, partition, attempt, workspace)
 	if failure != learning.FailureNone {
 		return learning.Outcome{}, failure, nil
 	}
@@ -51,8 +51,8 @@ func newLearningEvidenceLoader(sessions port.SessionStore, events port.EventLog)
 // Load reconstructs evidence using the attempt's repository partition as the
 // private owner authority. Caller identity in ctx is deliberately irrelevant:
 // a worker cannot substitute either a user or system principal for that binding.
-func (l *learningEvidenceLoader) Load(ctx context.Context, partition learning.AttemptPartition, attempt learning.AttemptRecord) (learning.Projection, learning.AttemptFailureCode) {
-	_, projection, failure, err := l.loadForExecution(ctx, partition, attempt)
+func (l *learningEvidenceLoader) Load(ctx context.Context, partition learning.AttemptPartition, attempt learning.AttemptRecord, workspace string) (learning.Projection, learning.AttemptFailureCode) {
+	_, projection, failure, err := l.loadForExecution(ctx, partition, attempt, workspace)
 	if err != nil {
 		return learning.Projection{}, learning.FailureEvidenceUnavailable
 	}
@@ -60,7 +60,7 @@ func (l *learningEvidenceLoader) Load(ctx context.Context, partition learning.At
 }
 
 //nolint:gocyclo // the fail-closed source, owner, run, archive, and digest checks form one boundary
-func (l *learningEvidenceLoader) loadForExecution(ctx context.Context, partition learning.AttemptPartition, attempt learning.AttemptRecord) (learning.Input, learning.Projection, learning.AttemptFailureCode, error) {
+func (l *learningEvidenceLoader) loadForExecution(ctx context.Context, partition learning.AttemptPartition, attempt learning.AttemptRecord, workspace string) (learning.Input, learning.Projection, learning.AttemptFailureCode, error) {
 	unavailable := func() (learning.Input, learning.Projection, learning.AttemptFailureCode, error) {
 		return learning.Input{}, learning.Projection{}, learning.FailureEvidenceUnavailable, nil
 	}
@@ -93,7 +93,8 @@ func (l *learningEvidenceLoader) loadForExecution(ctx context.Context, partition
 		ID:              sess.ID,
 		Mode:            sess.Mode,
 		Limits:          sess.Limits,
-		Workspace:       sess.Workspace,
+		EnvironmentRef:  sess.EnvironmentRef,
+		Placement:       sess.Placement,
 		Profile:         sess.Profile,
 		ProviderID:      sess.ProviderID,
 		ModelID:         sess.ModelID,
@@ -117,7 +118,7 @@ func (l *learningEvidenceLoader) loadForExecution(ctx context.Context, partition
 		return unavailable()
 	}
 
-	trajectory := learning.NewTrajectory(sess.ID, sess.Workspace, terminal.Stop, terminal.Usage, reconstructed.Conversation.Messages)
+	trajectory := learning.NewTrajectory(sess.ID, workspace, terminal.Stop, terminal.Usage, reconstructed.Conversation.Messages)
 	trajectory.RunID = string(provenance.Source.RunID)
 	trajectory.Kind = sess.Kind
 	trajectory.Counters = reconstructed.Counters

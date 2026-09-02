@@ -18,4 +18,4 @@ Implement the distributed automatic ledger against the selected durable backend 
 ## Acceptance criteria
 
 - AC6.2: Concurrent replicas enforce one configured global automatic count/token budget, cooldown, and deduplication window without multiplying spend or durable attempts.
-  - verify: `TestADR_0254_AutomaticAdmissionControlsAreProcessIndependent`
+  - verify: `TestADR_0295_AutomaticAdmissionControlsAreProcessIndependent`

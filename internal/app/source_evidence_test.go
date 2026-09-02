@@ -19,14 +19,14 @@ func (r *countingCanonicalEvidenceReflector) ReflectProjection(context.Context, 
 	return learning.Outcome{Kind: learning.OutcomeProposed}, nil
 }
 
-func TestADR_0254_WorkerSourceAuthorityFailsClosedWithoutIdentityOracle(t *testing.T) {
+func TestADR_0295_WorkerSourceAuthorityFailsClosedWithoutIdentityOracle(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	owner := &session.Principal{Issuer: "issuer", Subject: "alice", GrantType: session.GrantTypeUser}
 	const runID = "run_aaaaaaaaaaaaaaaaaaaaaaaaaa"
 
 	store := memstore.New()
-	source := session.New("source", session.ModeDefault, "/workspace", session.Limits{}, time.Unix(1, 0))
+	source := session.New("source", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/workspace", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1, 0))
 	if err := source.RestoreLabels(owner, session.Authority{}); err != nil {
 		t.Fatal(err)
 	}
@@ -78,7 +78,7 @@ func TestADR_0254_WorkerSourceAuthorityFailsClosedWithoutIdentityOracle(t *testi
 		}
 	}
 
-	trajectory := learning.NewTrajectory(source.ID, source.Workspace, session.StopEndTurn, usage, source.Conversation.Messages)
+	trajectory := learning.NewTrajectory(source.ID, "/workspace", session.StopEndTurn, usage, source.Conversation.Messages)
 	trajectory.RunID = runID
 	trajectory.Kind = source.Kind
 	trajectory.Counters = source.Counters
@@ -104,7 +104,7 @@ func TestADR_0254_WorkerSourceAuthorityFailsClosedWithoutIdentityOracle(t *testi
 	}
 	record := learning.AttemptRecord{Provenance: provenance}
 
-	projection, code := newLearningEvidenceLoader(store, events).Load(ctx, partition, record)
+	projection, code := newLearningEvidenceLoader(store, events).Load(ctx, partition, record, "/workspace")
 	if code != learning.FailureNone {
 		t.Fatalf("valid exact source code = %q", code)
 	}
@@ -119,7 +119,7 @@ func TestADR_0254_WorkerSourceAuthorityFailsClosedWithoutIdentityOracle(t *testi
 		t.Helper()
 		t.Run(name, func(t *testing.T) {
 			t.Helper()
-			got, failure := loader.Load(session.WithPrincipal(ctx, &session.Principal{Issuer: "system", Subject: "root", GrantType: session.GrantTypeSystem}), p, attempt)
+			got, failure := loader.Load(session.WithPrincipal(ctx, &session.Principal{Issuer: "system", Subject: "root", GrantType: session.GrantTypeSystem}), p, attempt, "/workspace")
 			if failure != learning.FailureEvidenceUnavailable {
 				t.Fatalf("failure = %q, want %q", failure, learning.FailureEvidenceUnavailable)
 			}
@@ -127,7 +127,7 @@ func TestADR_0254_WorkerSourceAuthorityFailsClosedWithoutIdentityOracle(t *testi
 				t.Fatalf("unavailable source returned evidence: %+v", got)
 			}
 			reflector := &countingCanonicalEvidenceReflector{}
-			outcome, reflectedFailure, err := reflectAttemptEvidence(ctx, loader, reflector, p, attempt)
+			outcome, reflectedFailure, err := reflectAttemptEvidence(ctx, loader, reflector, p, attempt, "/workspace")
 			if err != nil || reflectedFailure != learning.FailureEvidenceUnavailable || outcome.Kind != "" || reflector.calls != 0 {
 				t.Fatalf("failed evidence reached downstream reflection: outcome=%+v failure=%q calls=%d err=%v", outcome, reflectedFailure, reflector.calls, err)
 			}
@@ -197,7 +197,7 @@ func TestADR_0254_WorkerSourceAuthorityFailsClosedWithoutIdentityOracle(t *testi
 	assertUnavailable("invalid event ordering", newLearningEvidenceLoader(store, outOfOrder), partition, record)
 
 	compactedStore := memstore.New()
-	compacted := session.New("compacted", session.ModeDefault, "/workspace", session.Limits{}, time.Unix(1, 0))
+	compacted := session.New("compacted", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/workspace", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1, 0))
 	if err := compacted.RestoreLabels(owner, session.Authority{}); err != nil {
 		t.Fatal(err)
 	}
@@ -222,7 +222,7 @@ func TestADR_0254_WorkerSourceAuthorityFailsClosedWithoutIdentityOracle(t *testi
 	if err := compactedStore.Save(ctx, compacted); err != nil {
 		t.Fatal(err)
 	}
-	compactedTrajectory := learning.NewTrajectory(compacted.ID, compacted.Workspace, session.StopEndTurn, session.Usage{}, compacted.Conversation.Messages)
+	compactedTrajectory := learning.NewTrajectory(compacted.ID, "/workspace", session.StopEndTurn, session.Usage{}, compacted.Conversation.Messages)
 	compactedTrajectory.RunID = runID
 	compactedTrajectory.Kind = compacted.Kind
 	compactedTrajectory.Counters = compacted.Counters
@@ -272,7 +272,7 @@ func TestADR_0254_WorkerSourceAuthorityFailsClosedWithoutIdentityOracle(t *testi
 			t.Fatal(err)
 		}
 	}
-	archivedProjection, archivedCode := newLearningEvidenceLoader(compactedStore, archiveEvents).Load(ctx, partition, learning.AttemptRecord{Provenance: compactedProvenance})
+	archivedProjection, archivedCode := newLearningEvidenceLoader(compactedStore, archiveEvents).Load(ctx, partition, learning.AttemptRecord{Provenance: compactedProvenance}, "/workspace")
 	if archivedCode != learning.FailureNone || len(archivedProjection.Events) != 6 {
 		t.Fatalf("recoverable archive result = code %q projection %+v", archivedCode, archivedProjection)
 	}
@@ -292,7 +292,7 @@ func TestLearningEvidenceLoader_LoadsSourceRunAfterSnapshotAdvances(t *testing.T
 
 	store := memstore.New()
 	events := memstore.NewEventLog()
-	source := session.New("source-advanced", session.ModeDefault, "/workspace", session.Limits{}, time.Unix(1, 0))
+	source := session.New("source-advanced", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/workspace", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1, 0))
 	if err := source.RestoreLabels(owner, session.Authority{}); err != nil {
 		t.Fatal(err)
 	}
@@ -324,7 +324,7 @@ func TestLearningEvidenceLoader_LoadsSourceRunAfterSnapshotAdvances(t *testing.T
 		}
 	}
 
-	trajectory := learning.NewTrajectory(source.ID, source.Workspace, session.StopEndTurn, usageA, source.Conversation.Messages)
+	trajectory := learning.NewTrajectory(source.ID, "/workspace", session.StopEndTurn, usageA, source.Conversation.Messages)
 	trajectory.RunID = runA
 	trajectory.Kind = source.Kind
 	trajectory.Counters = source.Counters
@@ -379,7 +379,7 @@ func TestLearningEvidenceLoader_LoadsSourceRunAfterSnapshotAdvances(t *testing.T
 		}
 	}
 
-	projection, code := newLearningEvidenceLoader(store, events).Load(ctx, partition, learning.AttemptRecord{Provenance: provenance})
+	projection, code := newLearningEvidenceLoader(store, events).Load(ctx, partition, learning.AttemptRecord{Provenance: provenance}, "/workspace")
 	if code != learning.FailureNone {
 		t.Fatalf("source run A after run B code = %q, want success", code)
 	}

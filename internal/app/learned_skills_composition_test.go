@@ -77,7 +77,7 @@ func TestBuildRestartHydratesCallerBoundLearnedSkillIntoListAndTool(t *testing.T
 	}
 }
 
-func TestADR_0254_ReplicaHydrationConvergesAcrossReplacementAndRollback(t *testing.T) {
+func TestADR_0295_ReplicaHydrationConvergesAcrossReplacementAndRollback(t *testing.T) {
 	workspace := t.TempDir()
 	storeDir := t.TempDir()
 	userModelDir := t.TempDir()
@@ -107,11 +107,11 @@ func TestADR_0254_ReplicaHydrationConvergesAcrossReplacementAndRollback(t *testi
 		t.Fatal(err)
 	}
 	defer replicaB.Close()
-	aliceSession, err := replicaB.Service.CreateSession(aliceCtx, workspace, session.ModeDefault, session.Limits{})
+	aliceSession, err := replicaB.Service.CreateSession(aliceCtx, session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	bobSession, err := replicaB.Service.CreateSession(bobCtx, workspace, session.ModeDefault, session.Limits{})
+	bobSession, err := replicaB.Service.CreateSession(bobCtx, session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatal(err)
 	}

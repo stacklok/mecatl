@@ -18,7 +18,7 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/grpcdriver"
 )
 
-func TestADR_0254_LearningDriversEnforceOwnershipOrFailClosed(t *testing.T) {
+func TestADR_0295_LearningDriversEnforceOwnershipOrFailClosed(t *testing.T) {
 	enforcedAddr := startSourceDriver(t, func(server *grpc.Server) {
 		driverv1.RegisterLearningRepositoryCapabilitiesServiceServer(server, grpcdriver.NewLearningRepositoryCapabilitiesServer(grpcdriver.LearningRepositoryCapabilities{
 			AttemptRepository: true, ProposalRepository: true, SkillRepository: true,

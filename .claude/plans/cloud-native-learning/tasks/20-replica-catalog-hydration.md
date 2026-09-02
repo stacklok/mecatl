@@ -18,4 +18,4 @@ Wire caller-bound Skill-tool selection to reconcile the affected learned-skill p
 ## Acceptance criteria
 
 - AC4.3: Catalog publication, hydration, and invalidation converge by authoritative per-partition monotonic generation after Active, archive, rollback, or replacement transitions. An authorized session on replica B serves a wholly old or wholly new partition snapshot; delayed old publish/invalidate cannot replace or revoke a newer generation. Instant claim-driven invalidation is not promised, and an unauthorized or non-admitted partition sees nothing.
-  - verify: `TestADR_0254_ReplicaHydrationConvergesAcrossReplacementAndRollback`
+  - verify: `TestADR_0295_ReplicaHydrationConvergesAcrossReplacementAndRollback`

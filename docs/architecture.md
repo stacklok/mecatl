@@ -1222,7 +1222,7 @@ failed/cancelled/awaiting, plan, no-progress, timeout, structured-output, and un
 spans fail closed before a provider call.
 
 A durable admitted attempt is the workflow authority for admitted learning, not the
-coordinator queue, its receipt cache, or `EventLog` ([ADR 0254](adr/0254-cloud-native-learning.md)).
+coordinator queue, its receipt cache, or `EventLog` ([ADR 0295](adr/0295-cloud-native-learning.md)).
 Before reporting `queued`, composition reloads the source session, requires its exact non-empty
 ADR-0249 `RunID`, binds the verified current principal prompt and canonical digest into
 content-free immutable provenance, and idempotently creates the deterministic caller/session/run

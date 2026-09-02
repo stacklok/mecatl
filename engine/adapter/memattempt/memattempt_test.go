@@ -41,7 +41,7 @@ func TestMemattemptConformance(t *testing.T) {
 	})
 }
 
-func TestADR_0254_StaleClaimCannotTransitionAttempt(t *testing.T) {
+func TestADR_0295_StaleClaimCannotTransitionAttempt(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	now := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)

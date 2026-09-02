@@ -65,7 +65,7 @@ func TestCloudNativeLearning_Scenario3_ExplicitProcedureAttemptSurvivesRestart(t
 		t.Fatal(err)
 	}
 	firstClient, closeFirstRelay := learningHarnessClient(t, first.Service, owner)
-	created, err := firstClient.CreateSession(ctx, &mecatlv1.CreateSessionRequest{Workspace: workspace})
+	created, err := firstClient.CreateSession(ctx, &mecatlv1.CreateSessionRequest{})
 	if err != nil {
 		closeFirstRelay()
 		first.Close()
@@ -229,7 +229,7 @@ func driveLearningConverse(t *testing.T, client mecatlv1.HarnessServiceClient, s
 	}
 }
 
-func TestADR_0259_WorkerSourceAuthorityFailsClosedWhenSourceDeletedAcrossBuild(t *testing.T) {
+func TestADR_0295_WorkerSourceAuthorityFailsClosedWhenSourceDeletedAcrossBuild(t *testing.T) {
 	ctx := context.Background()
 	workspace := t.TempDir()
 	storeDir := t.TempDir()
@@ -242,7 +242,7 @@ func TestADR_0259_WorkerSourceAuthorityFailsClosedWhenSourceDeletedAcrossBuild(t
 	if err != nil {
 		t.Fatal(err)
 	}
-	sess, err := first.Service.CreateSession(ownerCtx, workspace, session.ModeDefault, defaultLimits())
+	sess, err := first.Service.CreateSession(ownerCtx, session.ModeDefault, defaultLimits())
 	if err != nil {
 		first.Close()
 		t.Fatal(err)
@@ -310,7 +310,7 @@ func TestCloudNativeLearning_Scenario3_UnwiredLearningIsByteIdentical(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	baselineSession, err := baseline.Service.CreateSession(ctx, workspace, session.ModeDefault, defaultLimits())
+	baselineSession, err := baseline.Service.CreateSession(ctx, session.ModeDefault, defaultLimits())
 	if err != nil {
 		baseline.Close()
 		t.Fatal(err)
@@ -337,7 +337,7 @@ func TestCloudNativeLearning_Scenario3_UnwiredLearningIsByteIdentical(t *testing
 		t.Fatal(err)
 	}
 	defer off.Close()
-	offSession, err := off.Service.CreateSession(ctx, workspace, session.ModeDefault, defaultLimits())
+	offSession, err := off.Service.CreateSession(ctx, session.ModeDefault, defaultLimits())
 	if err != nil {
 		t.Fatal(err)
 	}
