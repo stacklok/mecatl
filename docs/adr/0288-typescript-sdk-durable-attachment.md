@@ -512,19 +512,24 @@ the `ResponseWriter` is not a `Flusher`, the same handler acks 204 and drains
 the run itself on a cancel-detached context, recording every event to the
 durable log. That branch is selected by a server-side type assertion no client
 can influence. **The fix is to make it selectable** — an ack-only approve — and
-that is a production-server change this milestone is scoped out of. Shipping an
-`approve()` whose only implementation strategy is a documented resource leak
-would be worse than not shipping it, so `approve()`/`resolveAsk()` raise a
-typed unsupported-feature error on both transports in M2, naming the ack-only
-route as the dependency.
+that is a production-server change this milestone is scoped out of. Shipping an `approve()` whose only implementation strategy is a documented
+resource leak would be worse than not shipping it, so `approve()` and
+`resolveAsk()` raise a typed unsupported-feature error on both transports —
+each naming its **own** dependency, because they are two independent server
+changes: `approve_ack_only` over HTTP, `prompt_free_controls` over gRPC. One
+identifier could not describe both, and gating per-transport on the feature
+string lets each side clear the moment its server half lands, with no SDK
+change — the mechanism M1 already uses for `http_steer`.
 
 Cancellation is unaffected and ships, so an observer can still stop a run it is
 watching. The cost is real and is #821's, not ours to wave away: "an attached
 run has explicit approve/steer/cancel methods" is one third fulfilled in M2.
 
-The control-request construction path is **shared** with M1's owned `Run` (the
-existing `RunOperations` seam plus its verdict mapping), so the ADR 0249
-stale-control contract and the verdict vocabulary are implemented once. What is
+The control-request construction path is **shared** with M1's owned `Run` — the
+existing `RunOperations` seam — so the ADR 0249 `expected_run_id` stale-control
+contract is implemented once. Its *verdict* mapping is not in play: the only
+control M2 ships is `cancel()`, which carries no verdict, and the verdict
+vocabulary comes back into scope with the deferred approval methods. What is
 *not* shared is an interface across `Run` and `AttachedRun`: `cancel()` means
 "abort and end my stream" on one and "abort the run, keep watching" on the
 other, so a common `RunControls` would be a Liskov violation dressed as
@@ -591,10 +596,12 @@ and M1's error mapping moves `TransportError` → `reconnecting` → `offline`
 immediately. Under last-writer-wins a healthy attachment's next frame would
 report `online` while another is still down, and a genuinely reconnecting
 attachment would report `offline` — which makes the whole scenario vacuous. So:
-the client reports `reconnecting` while **any** attachment is reconnecting,
-`online` only when none is, and `unauthorized` / `incompatible` stay until the
-condition clears, because they name a deployment fact rather than one stream's
-luck.
+the client reports `reconnecting` while **any** attachment is reconnecting
+*unless a higher-ranked state applies*, and `online` only when none is.
+`unauthorized` and `incompatible` outrank it and stay until the condition
+clears, because they name a deployment fact rather than one stream's luck —
+which is what the ranking above encodes, and why "any reconnecting attachment
+wins" is a rule about ties within one rank, never a rule that beats them.
 
 An attachment is **not** a status subscriber — it must not keep a heartbeat
 alive, because a long attachment is exactly where the heartbeat is redundant:

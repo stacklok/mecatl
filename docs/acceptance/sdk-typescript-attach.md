@@ -3,7 +3,7 @@
 **Phase:** capability — `@stacklok/mecatl-sdk` M2: durable attachment and connection authority
 **Status:** draft, 2026-09-02. Synthesised from [#821](https://github.com/stacklok/mecatl/issues/821)'s settled "Attachment and reconnection" contract plus the client-side decisions ADR 0279 deferred to this milestone.
 **Issue:** [stacklok/mecatl#821](https://github.com/stacklok/mecatl/issues/821) (parent: [#761](https://github.com/stacklok/mecatl/issues/761)).
-**ADR:** [ADR-0288](../adr/0288-typescript-sdk-durable-attachment.md) — the envelope union, `attach`/`activity` semantics, the serializable filter-branded cursor, the reconnect authority, the HTTP-only attached controls, and the status arbitration rule.
+**ADR:** [ADR-0288](../adr/0288-typescript-sdk-durable-attachment.md) — the envelope union, `attach`/`activity` semantics, the serializable filter-branded cursor, the reconnect authority, the HTTP-only attached `cancel` (approval deferred), and the status arbitration rule.
 **Accumulator branch:** `acc/sdk-typescript-attach` (off `main`).
 
 The smallest set of work that lets a TypeScript client rejoin a running
@@ -36,7 +36,7 @@ not which modules exist on disk.
   the four arms, the `boundary` naming, the narrowed `phase`, the cursor-free
   `gap` arm, and the once-per-attachment boundary up front. Decision 9 fixes the
   two attachment type signatures for the same reason.
-- **Attached controls are HTTP-only, with a typed gRPC refusal.** Enumerating
+- **`cancel()` is the one attached control M2 ships.** Enumerating
   every `rpc` in `HarnessService` yields no prompt-free `Approve`/`Cancel`/
   `Steer`: they exist only as `ConverseRequest` frames, and the gRPC handler
   enforces "first frame must be a prompt or retry", so an attachment — which
@@ -76,8 +76,10 @@ not which modules exist on disk.
   `TestSDKTypescriptCore_Scenario6_LogOnlyKindsAudited` already uses.
 - **The status monitor gains an input and an arbitration rule, not a
   vocabulary.** M1 shipped the closed six values and the subscriber-gated
-  heartbeat; M2 adds a second long-lived writer, so "any attachment
-  reconnecting wins" has to be stated or the scenario is vacuous.
+  heartbeat; M2 adds a second long-lived writer, so the combining rule has to be
+  stated or the scenario is vacuous — and it is a full precedence ranking, not
+  just "any attachment reconnecting wins", since a retrying attachment can also
+  be `unauthorized`.
 - **Verify names follow M1's convention.** Go proofs are
   `TestSDKTypescriptAttach_ScenarioN_*`; TypeScript proofs use the strict
   `vitest:<path>#<base64url-title>` resolver form throughout, so a renamed or
@@ -591,12 +593,17 @@ safe to attach.
   prompt.
   - verify: vitest:sdk/typescript/test/attached-controls.test.ts#YXR0YWNoZWQgY2FuY2VsIG92ZXIgZ1JQQyBpcyBhIHR5cGVkIHVuc3VwcG9ydGVkLWZlYXR1cmUgZXJyb3I — `sdk/typescript/test/attached-controls.test.ts :: "attached cancel over gRPC is a typed unsupported-feature error"`
 - AC8.4: `AttachedRun.approve()` and `resolveAsk()` fail with a typed
-  unsupported-feature error on **both** transports, naming the ack-only approve
-  route as the dependency — never by posting to the SSE-relaying approve route,
-  whose body cannot be closed (that cancels the run), left unread (that stalls
-  the relay), or drained to EOF (unbounded, because the resumed run can park on
-  another ask).
-  - verify: vitest:sdk/typescript/test/attached-controls.test.ts#YXR0YWNoZWQgYXBwcm92ZSBpcyBkZWZlcnJlZCByYXRoZXIgdGhhbiBwb3N0aW5nIHRvIHRoZSByZWxheWluZyByb3V0ZQ — `sdk/typescript/test/attached-controls.test.ts :: "attached approve is deferred rather than posting to the relaying route"`
+  unsupported-feature error on both transports, each naming its **own** distinct
+  dependency rather than one blanket reason — over HTTP the absent ack-only
+  approve response (`approve_ack_only`), over gRPC the absent prompt-free
+  control RPC (`prompt_free_controls`). They are different server changes that
+  will land independently, so one identifier could not describe either honestly,
+  and gating on the feature string means each side clears without an SDK change
+  once its server half exists — the mechanism M1 already uses for `http_steer`.
+  Neither ever posts to the SSE-relaying approve route, whose body cannot be
+  closed (that cancels the run), left unread (that stalls the relay), or drained
+  to EOF (unbounded, because the resumed run can park on another ask).
+  - verify: vitest:sdk/typescript/test/attached-controls.test.ts#YXR0YWNoZWQgYXBwcm92YWwgbmFtZXMgYSBkaXN0aW5jdCBhYnNlbnQgZmVhdHVyZSBwZXIgdHJhbnNwb3J0 — `sdk/typescript/test/attached-controls.test.ts :: "attached approval names a distinct absent feature per transport"`
 - AC8.5: `AttachedRun.steer()` fails with a typed unsupported-feature error on
   both transports and never promotes into a fresh run, which would mint a run id
   the attachment's filter can never match and turn a refusal into silence.
@@ -615,9 +622,10 @@ The six-value vocabulary stays closed — M1's contract, unchanged. What M2 adds
 is a *second* long-lived writer, so the rule for combining them has to be stated
 or every assertion is satisfied by last-writer-wins
 ([ADR-0288](../adr/0288-typescript-sdk-durable-attachment.md) Decision 8): the
-client reports `reconnecting` while **any** attachment is reconnecting and
-`online` only when none is, and a reconnecting attachment never publishes
-`offline` even though M1's error mapping would.
+client reports `reconnecting` while **any** attachment is reconnecting — unless
+`unauthorized` or `incompatible` outranks it (AC9.3) — and `online` only when
+none is, and a reconnecting attachment never publishes `offline` even though
+M1's error mapping would.
 
 An attachment is deliberately **not** a status subscriber: it must not keep a
 heartbeat alive, because a long attachment is exactly the case where the
@@ -631,7 +639,8 @@ matrix rather than guessed here.
   latest `subscribe()` emission throughout.
   - verify: vitest:sdk/typescript/test/attach-status.test.ts#YSByZWNvbm5lY3RpbmcgYXR0YWNobWVudCBkcml2ZXMgdGhlIGNvbm5lY3Rpb24gc3RhdHVzIG1vbml0b3I — `sdk/typescript/test/attach-status.test.ts :: "a reconnecting attachment drives the connection status monitor"`
 - AC9.2: With two attachments where one is reconnecting and the other is
-  healthy, the client reports `reconnecting`; it reports `online` only once no
+  healthy, the client reports `reconnecting` — absent a higher-precedence
+  `unauthorized` or `incompatible` (AC9.3); it reports `online` only once no
   attachment is reconnecting, and a successful unary request while an attachment
   is down does not report `online`.
   - verify: vitest:sdk/typescript/test/attach-status.test.ts#cmVjb25uZWN0aW5nIHdpbnMgd2hpbGUgYW55IGF0dGFjaG1lbnQgaXMgcmVjb25uZWN0aW5n — `sdk/typescript/test/attach-status.test.ts :: "reconnecting wins while any attachment is reconnecting"`
@@ -703,14 +712,17 @@ brings a second one up on the same durable store directory.
   empty-but-correct stream and prove nothing.
   - verify: vitest:sdk/typescript/e2e/activity.e2e.test.ts#YSBkYWVtb24gcmVzdGFydCBtaWQtd2F0Y2ggcmVzdW1lcyBmcm9tIHRoZSBjdXJzb3IgYWNyb3NzIGEgbmV3IHJ1bg — `sdk/typescript/e2e/activity.e2e.test.ts :: "a daemon restart mid-watch resumes from the cursor across a new run"`
 - AC10.5: With an attachment open on a session parked `awaiting`, restarting the
-  daemon over the same store and then resolving the ask **through an actor
-  outside the attachment** — the raw seam posting to `/approve` and draining
-  that response itself, which the test may do because a bounded drain in test
-  code is not an SDK contract (AC8.4) — delivers the resumed run's envelopes on
-  the **same** `run_id` the attachment holds, and the attachment never has to
-  re-`attach()`. This is the only shape in which a *filtered* attachment
+  daemon over the same store and then resolving the ask **from outside the SDK
+  entirely** — the e2e harness posting to `/v1/sessions/{id}/approve` with a
+  direct `fetch` and draining that response itself — delivers the resumed run's
+  envelopes on the **same** `run_id` the attachment holds, and the attachment
+  never has to re-`attach()`. It must be a harness `fetch` rather than the raw
+  seam: `RawClient` exposes only descriptor-backed `unary`/`stream`, there is no
+  standalone approval RPC to name, and the HTTP transport's control path is
+  private. A bounded drain in harness code is fine; it is only unsound as an SDK
+  contract (AC8.4). This is the one shape in which a *filtered* attachment
   survives a restart, because `resumeFromAwaiting` reuses the persisted run id.
-  - verify: vitest:sdk/typescript/e2e/attach.e2e.test.ts#YW4gYXdhaXRpbmcgYXBwcm92YWwgcmVzb2x2ZWQgZXh0ZXJuYWxseSBzdXJ2aXZlcyBhIHJlc3RhcnQgb24gdGhlIHNhbWUgcnVuIGlk — `sdk/typescript/e2e/attach.e2e.test.ts :: "an awaiting approval resolved externally survives a restart on the same run id"`
+  - verify: vitest:sdk/typescript/e2e/attach.e2e.test.ts#YW4gYXdhaXRpbmcgYXBwcm92YWwgcmVzb2x2ZWQgb3V0c2lkZSB0aGUgU0RLIHN1cnZpdmVzIGEgcmVzdGFydCBvbiB0aGUgc2FtZSBydW4gaWQ — `sdk/typescript/e2e/attach.e2e.test.ts :: "an awaiting approval resolved outside the SDK survives a restart on the same run id"`
 - AC10.6: An attached `cancel` over HTTP stops a real in-flight run on the wire
   carrying `expected_run_id`, the attachment observes the cancelled terminal,
   and a `cancel` naming a run that already finished fails typed without touching
