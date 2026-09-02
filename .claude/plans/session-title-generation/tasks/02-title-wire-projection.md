@@ -2,7 +2,7 @@
 id: 02-title-wire-projection
 title: Additive session and title-event wire projection
 blocked_by: [01-session-title-domain]
-status: pending
+status: in-progress
 branch: ""
 worktree: ""
 issue: "621"
