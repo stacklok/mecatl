@@ -2,11 +2,28 @@ package main
 
 import (
 	"bytes"
+	"context"
+	"net/http"
 	"strings"
 	"testing"
 
 	"github.com/stacklok/mecatl/internal/adapter/clientauth"
 )
+
+func TestLogoutHTTPClientUsesSystemRootsForPublicIssuer(t *testing.T) {
+	client, owned, err := logoutHTTPClient(context.Background(), []clientauth.Connection{{
+		Identity: clientauth.Identity{Issuer: "https://issuer.example"},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !owned {
+		t.Fatal("logout HTTP client is caller-owned")
+	}
+	if _, ok := client.Transport.(*http.Transport); !ok {
+		t.Fatalf("logout transport = %T, want dedicated system-root transport", client.Transport)
+	}
+}
 
 func TestLogoutOutputIsSecretFreeAndHonestAboutPartialState(t *testing.T) {
 	const access = "access-super-secret"

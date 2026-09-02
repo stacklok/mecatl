@@ -7,9 +7,11 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 
 	"github.com/adrg/xdg"
@@ -55,30 +57,7 @@ func runRemoteLogout(address string, args []string) error {
 	}
 	result, err := clientauth.Logout(ctx, address, clientauth.LogoutConfig{
 		Registry: registry, Credentials: creds,
-		// Called at most once per logout, with every retained connection needing
-		// revocation, so one scoped client (its dial-approval policy spans every
-		// retained issuer) is reused for the whole operation instead of rebuilt
-		// per credential (ADR 0275's bounded-keep-alive intent). Each issuer's
-		// own CA maps ONLY to that issuer's own endpoint -- scopedhttps.NewClient
-		// verifies each connection against its dialed endpoint's own pool only,
-		// never a union, so one retained connection's CA can never authenticate
-		// a different retained connection's issuer.
-		HTTPClientOwned: func(ctx context.Context, conns []clientauth.Connection) (*http.Client, bool, error) {
-			endpointCAs := make(map[string][]byte, len(conns))
-			for _, conn := range conns {
-				ca, err := os.ReadFile(conn.IssuerCAFile)
-				if err != nil {
-					return nil, false, err
-				}
-				// Two retained connections can share an issuer with different
-				// CA files (e.g. a rotation where the registry still has a
-				// stale entry) -- union rather than overwrite, so the pool
-				// scopedhttps builds for that issuer's host accepts either.
-				endpointCAs[conn.Identity.Issuer] = append(append(endpointCAs[conn.Identity.Issuer], ca...), '\n')
-			}
-			client, err := scopedhttps.NewClient(ctx, endpointCAs)
-			return client, true, err
-		},
+		HTTPClientOwned: logoutHTTPClient,
 	})
 	if err != nil {
 		if errors.Is(err, clientauth.ErrIncompleteLogout) {
@@ -89,6 +68,71 @@ func runRemoteLogout(address string, args []string) error {
 	}
 	writeLogoutResult(os.Stderr, result)
 	return nil
+}
+
+type issuerRevocationTransport struct {
+	public             http.RoundTripper
+	private            http.RoundTripper
+	privateAuthorities map[string]struct{}
+}
+
+func (t issuerRevocationTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if _, ok := t.privateAuthorities[strings.ToLower(req.URL.Host)]; ok {
+		return t.private.RoundTrip(req)
+	}
+	return t.public.RoundTrip(req)
+}
+
+func (t issuerRevocationTransport) CloseIdleConnections() {
+	if closer, ok := t.public.(interface{ CloseIdleConnections() }); ok {
+		closer.CloseIdleConnections()
+	}
+	if closer, ok := t.private.(interface{ CloseIdleConnections() }); ok {
+		closer.CloseIdleConnections()
+	}
+}
+
+// logoutHTTPClient keeps private issuer roots confined to their authorities while
+// public issuers continue to use the system trust store.
+func logoutHTTPClient(ctx context.Context, conns []clientauth.Connection) (*http.Client, bool, error) {
+	endpointCAs := make(map[string][]byte, len(conns))
+	privateAuthorities := make(map[string]struct{}, len(conns))
+	for _, conn := range conns {
+		if conn.IssuerCAFile == "" {
+			continue
+		}
+		ca, err := os.ReadFile(conn.IssuerCAFile)
+		if err != nil {
+			return nil, false, err
+		}
+		issuer, err := url.Parse(conn.Identity.Issuer)
+		if err != nil {
+			return nil, false, err
+		}
+		privateAuthorities[strings.ToLower(issuer.Host)] = struct{}{}
+		endpointCAs[conn.Identity.Issuer] = append(append(endpointCAs[conn.Identity.Issuer], ca...), '\n')
+	}
+
+	publicTransport := http.DefaultTransport.(*http.Transport).Clone()
+	client := &http.Client{
+		Transport: publicTransport,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return errors.New("HTTPS redirect refused")
+		},
+	}
+	if len(endpointCAs) == 0 {
+		return client, true, nil
+	}
+	privateClient, err := scopedhttps.NewClient(ctx, endpointCAs)
+	if err != nil {
+		return nil, false, err
+	}
+	client.Transport = issuerRevocationTransport{
+		public:             publicTransport,
+		private:            privateClient.Transport,
+		privateAuthorities: privateAuthorities,
+	}
+	return client, true, nil
 }
 
 func writeLogoutResult(out io.Writer, result clientauth.LogoutResult) {

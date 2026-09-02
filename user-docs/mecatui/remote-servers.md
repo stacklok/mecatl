@@ -64,10 +64,11 @@ bin/mecatui connect mecated.example.internal:443 \
 ```
 
 `mecatui login ADDRESS` runs the public OIDC Authorization Code + PKCE flow and
-requires all four options shown. The login `--tls-ca` verifies the issuer's discovery,
-token, JWKS, refresh, and revocation endpoints; it does not configure server transport
-trust. The issuer CA bundle path/reference, not the CA contents, is saved as public target
-metadata; the later
+requires `--issuer`, `--client-id`, and `--audience`. Its `--tls-ca` is optional: omit
+it when the issuer chains to a system trust root; provide it for a private issuer. The
+login CA verifies the issuer's discovery, token, JWKS, refresh, and revocation endpoints;
+it does not configure server transport trust. An explicit issuer CA bundle path/reference,
+not its contents, is saved as public target metadata; the later
 `connect --tls-ca` independently verifies the gRPC server. Login saves
 public target metadata in the connection registry and stores the credential in a
 canonical-root-scoped, keyring-wrapped encrypted store. The credential is bound to the

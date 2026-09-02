@@ -158,9 +158,10 @@ or fallback:
 
 - **`mecatui login ADDRESS`** — performs the remote server's public OIDC
   Authorization Code + PKCE login, then records target metadata and an encrypted,
-  target-bound credential. It requires `--issuer`, `--client-id`, `--audience`, and
-  `--tls-ca`; this CA verifies the issuer endpoints and is not the optional server CA
-  supplied to `connect`. It exits without starting a session. `--no-browser` prints the
+  target-bound credential. It requires `--issuer`, `--client-id`, and `--audience`.
+  `--tls-ca` is optional: omit it for an issuer trusted by the system roots; supply it
+  for a private HTTPS issuer. This CA verifies issuer endpoints and is not the optional
+  server CA supplied to `connect`. It exits without starting a session. `--no-browser` prints the
   authorization URL instead of opening a browser and then waits for the fixed
   `http://127.0.0.1:18473/oauth/callback` callback (headless/SSH use). For SSH, open
   that URL on the operator workstation and forward the fixed callback port to the host
@@ -207,9 +208,9 @@ or fallback:
 `mecatui login ADDRESS` is the enrollment path for a remote `mecated`/`mecak8s`
 caller-identity deployment. The issuer, public client, audience, redirect URI, and
 scopes are bound to the canonical `host:port` target. Login validates discovery,
-PKCE, and the resulting token, and private HTTPS requires an explicit issuer CA bundle
-path. The registry saves that path/reference—not CA contents—for issuer discovery,
-token, JWKS, refresh, and revocation only;
+PKCE, and the resulting token. A public issuer uses system trust roots; private HTTPS
+requires an explicit issuer CA bundle path. The registry saves an explicit path/reference
+only—not CA contents—for issuer discovery, token, JWKS, refresh, and revocation;
 `connect --tls-ca` independently verifies the gRPC server. The connection registry
 contains public metadata only; credentials are encrypted on disk using a canonical-
 root-scoped key held by the OS keyring. Under a root lock, an old unsuffixed keyring key

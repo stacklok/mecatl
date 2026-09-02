@@ -64,6 +64,52 @@ func TestRemoteLoginStoresAbsoluteIssuerCAReferenceAcrossCWDChanges(t *testing.T
 	}
 }
 
+func TestRemoteLoginAllowsSystemIssuerRoots(t *testing.T) {
+	original := executeRemoteLogin
+	t.Cleanup(func() { executeRemoteLogin = original })
+	marker := errors.New("stop after connection capture")
+	executeRemoteLogin = func(_ context.Context, conn clientauth.Connection, _ bool) error {
+		if conn.IssuerCAFile != "" {
+			t.Fatalf("issuer CA = %q, want system roots", conn.IssuerCAFile)
+		}
+		return marker
+	}
+
+	err := runRemoteLogin("remote.example:443", []string{
+		"--issuer", "https://issuer.example", "--client-id", "client", "--audience", "audience",
+	})
+	if !errors.Is(err, marker) {
+		t.Fatalf("runRemoteLogin error = %v, want capture marker", err)
+	}
+}
+
+func TestIssuerLoginConfigUsesSystemRootsWithoutCA(t *testing.T) {
+	cfg, err := issuerLoginConfig(clientauth.Connection{Identity: clientauth.Identity{Issuer: "https://issuer.example"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.PrivateHTTPS || len(cfg.TrustedCAPEM) != 0 {
+		t.Fatalf("issuer config = %+v, want system-root HTTPS", cfg)
+	}
+}
+
+func TestIssuerLoginConfigUsesPrivateHTTPSWithCA(t *testing.T) {
+	caPath := filepath.Join(t.TempDir(), "issuer-ca.pem")
+	if err := os.WriteFile(caPath, []byte("fixture CA"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := issuerLoginConfig(clientauth.Connection{
+		Identity:     clientauth.Identity{Issuer: "https://issuer.example"},
+		IssuerCAFile: caPath,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.PrivateHTTPS || string(cfg.TrustedCAPEM) != "fixture CA" {
+		t.Fatalf("issuer config = %+v, want private HTTPS with supplied CA", cfg)
+	}
+}
+
 func TestRemoteLoginWiresExactRedirectURL(t *testing.T) {
 	t.Run("command identity", func(t *testing.T) {
 		original := executeRemoteLogin

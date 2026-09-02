@@ -63,7 +63,7 @@ func runRemoteLogin(address string, args []string) error {
 	fs.BoolVar(&noBrowser, "no-browser", false, "print the OIDC authorization URL instead of opening a browser, then wait for the loopback callback (headless/SSH use)")
 	fs.DurationVar(&timeout, "callback-timeout", 5*time.Minute, "maximum time to wait for the loopback OAuth callback")
 	fs.Usage = func() {
-		fmt.Fprintln(os.Stderr, "Usage: mecatui login ADDRESS --issuer HTTPS_URL --client-id ID --audience AUDIENCE --tls-ca PATH")
+		fmt.Fprintln(os.Stderr, "Usage: mecatui login ADDRESS --issuer HTTPS_URL --client-id ID --audience AUDIENCE")
 		fs.PrintDefaults()
 	}
 	if err := fs.Parse(args); err != nil {
@@ -72,14 +72,18 @@ func runRemoteLogin(address string, args []string) error {
 	if fs.NArg() != 0 {
 		return fmt.Errorf("login: unexpected arguments after ADDRESS; usage: mecatui login ADDRESS")
 	}
-	if issuer == "" || clientID == "" || audience == "" || tlsCA == "" || timeout <= 0 {
-		return errors.New("login: --issuer, --client-id, --audience, --tls-ca, and a positive --callback-timeout are required")
+	if issuer == "" || clientID == "" || audience == "" || timeout <= 0 {
+		return errors.New("login: --issuer, --client-id, --audience, and a positive --callback-timeout are required")
 	}
-	issuerCAFile, err := filepath.Abs(tlsCA)
-	if err != nil {
-		return fmt.Errorf("login: resolve --tls-ca: %w", err)
+	issuerCAFile := ""
+	if tlsCA != "" {
+		var err error
+		issuerCAFile, err = filepath.Abs(tlsCA)
+		if err != nil {
+			return fmt.Errorf("login: resolve --tls-ca: %w", err)
+		}
+		issuerCAFile = filepath.Clean(issuerCAFile)
 	}
-	issuerCAFile = filepath.Clean(issuerCAFile)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	ctx, cancel := context.WithTimeout(ctx, timeout)
@@ -206,6 +210,22 @@ func prepareExistingSavedRemoteLogin(ctx context.Context, conn clientauth.Connec
 	return preparedSavedLogin{registry: registry, creds: creds, close: closeStore, expectedTarget: &expected, expectedCredential: expectedCredential}, nil
 }
 
+// issuerLoginConfig selects system roots for public issuers and the hardened
+// private-HTTPS transport only when the saved connection names an issuer CA.
+func issuerLoginConfig(conn clientauth.Connection) (clientauth.LoginConfig, error) {
+	cfg := clientauth.LoginConfig{Identity: conn.Identity}
+	if conn.IssuerCAFile == "" {
+		return cfg, nil
+	}
+	ca, err := os.ReadFile(conn.IssuerCAFile)
+	if err != nil {
+		return clientauth.LoginConfig{}, err
+	}
+	cfg.PrivateHTTPS = true
+	cfg.TrustedCAPEM = ca
+	return cfg, nil
+}
+
 // runSavedRemoteLogin performs the ordinary OIDC flow for an already-saved public
 // target. It runs only after Bubble Tea has exited; neither the UI nor its restart
 // intent receives OAuth material.
@@ -220,7 +240,7 @@ func runExistingSavedRemoteLogin(ctx context.Context, conn clientauth.Connection
 }
 
 func runSavedRemoteLoginWith(ctx context.Context, conn clientauth.Connection, noBrowser bool, prepare func(context.Context, clientauth.Connection) (preparedSavedLogin, error)) error {
-	ca, err := os.ReadFile(conn.IssuerCAFile)
+	loginCfg, err := issuerLoginConfig(conn)
 	if err != nil {
 		return &client.AuthError{Reason: client.AuthStorageUnavailable}
 	}
@@ -248,7 +268,8 @@ func runSavedRemoteLoginWith(ctx context.Context, conn clientauth.Connection, no
 		})
 		return result, err
 	})
-	token, err := clientauth.Login(ctx, clientauth.LoginConfig{Identity: conn.Identity, Presenter: presenter, PrivateHTTPS: true, TrustedCAPEM: ca})
+	loginCfg.Presenter = presenter
+	token, err := clientauth.Login(ctx, loginCfg)
 	if err != nil {
 		return signinError(err)
 	}

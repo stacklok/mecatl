@@ -4,7 +4,7 @@
 - Date: 2026-08-28
 - Scope: `mecatui` remote OIDC enrollment, credential lifecycle, connection recovery, and logout
 - Supersedes: ADR 0270, ADR 0271, ADR 0272, ADR 0273
-- Superseded by: ADR 0274 (logout provider budget only), ADR 0275 (credential-recovery classification only)
+- Superseded by: ADR 0274 (logout provider budget only), ADR 0275 (credential-recovery classification only), [ADR 0284](./0284-optional-system-trust-remote-oidc.md) (mandatory issuer-CA requirement only)
 
 ## Context
 

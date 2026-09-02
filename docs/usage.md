@@ -69,7 +69,7 @@ corresponding command-specific help; direct `sessions --help`, `connect --help`,
 flags, or `--help-all` with bare `mecatui`, `sessions`, or `connect` for every applicable
 flag. `mecatui llm login` supports standard help and `--skip-browser`; it opens
 the ToolHive LLM gateway OIDC flow only. `mecatui login ADDRESS` instead supports the
-remote issuer/client/audience/CA/callback options and enrolls that remote target.
+remote issuer/client/audience/optional-CA/callback options and enrolls that remote target.
 
 Inside the TUI, `/retry` manually repeats the last typed `retryable` failed model
 step when it is still retry-pending. Mecatui automatically retries
