@@ -125,6 +125,27 @@ and adopted afterward, as requested by the sequencing below.
 
 ## Proposed conceptual model
 
+This is also a boundary-simplification proposal. `Workspace` and `Environment`
+should be thin, client-like interfaces to execution resources: a Workspace
+provides content, opaque versions, and conditional mutation, while an
+Environment identifies that Workspace and optionally provides command execution.
+They should not maintain behavior or state that exists only to support the agent
+loop.
+
+The read ledger exists for the engine's sake: it remembers what one session was
+shown so the engine can decide whether a later mutation is safe. It therefore
+belongs with engine-owned session state, not in the client-like Workspace or
+Environment layer. The engine can add the behavior by decorating a simpler
+Workspace rather than requiring every Workspace implementation to understand
+session observation history.
+
+This thinning matters for alternative implementations. A local filesystem,
+remote Redis filesystem, ACP workspace, or future granted filesystem then needs
+to implement only the resource-client contract. It does not also need a
+session-state implementation or engine-specific lifecycle wiring. Supporting a
+new backend becomes primarily a matter of implementing another client rather
+than reproducing part of the engine.
+
 Separate three concerns explicitly:
 
 ```text
@@ -135,7 +156,7 @@ Session
 │   └── extensible session state
 │       └── file/read-ledger/v1
 │
-Execution Environment
+Execution Environment (thin client-like capabilities)
 ├── EnvironmentRef
 ├── content Workspace
 └── optional CommandRunner
