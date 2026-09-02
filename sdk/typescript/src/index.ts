@@ -117,6 +117,7 @@ export type {
 } from "./run.js";
 export type {
   AttachedRun,
+  AttachOptions,
   SdkCursor,
   SessionActivity,
   UnknownWatchEnvelope,

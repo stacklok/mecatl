@@ -237,6 +237,13 @@ ids remain distinct typed server refusals. `AttachedRun.live` reflects events ob
 through that attachment and becomes false when its selected run's terminal `result` is
 delivered.
 
+The attachment is one replay-then-follow operation: it yields the selected run's durable
+replay in append order, announces the live boundary once, follows new appends, and completes
+at that run's terminal `result`. A run that already finished therefore completes from replay
+without parking. `attach(runId, { from: "now" })` still opens the ordinary watch with an
+empty wire cursor and receives the replay, but discards replay envelopes client-side before
+yielding the live boundary; the mode is rejected locally when no explicit run id is supplied.
+
 Around that core, every capability beyond the minimal loop is a **seam with a
 default and a swap-in adapter**, so the production build stays static and
 network-free unless you wire something in. The current adapters cover, grouped:

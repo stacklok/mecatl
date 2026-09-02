@@ -8112,6 +8112,16 @@ client-rejected. `AttachedRun.live` is backed by iterator state, not captured at
 construction: delivery of that run's decoded `result` flips the getter to false and
 ends the attached iterator.
 
+The lifecycle remains one `WatchSessionEvents` request and one iterator in
+`sdk/typescript/src/watch.ts`: replay envelopes, the replay-to-live boundary, live appends,
+and the terminal `result` are consumed in wire order. Encountering that terminal in replay
+ends an already-finished attachment immediately; no follow read is requested. `AttachOptions`
+adds `from: "start" | "now"`. The `now` arm is deliberately a yield-time client filter, not a
+request capability: `sdk/typescript/src/client.ts` still sends `cursor: ""`, the iterator reads
+and discards every replay envelope, and the boundary is its first yielded value. It requires a
+non-empty explicit run id and rejects locally before compatibility probing or watch creation
+otherwise, avoiding an unfiltered discovery scan whose result would be thrown away.
+
 ## Live e2e — `e2e/` (see `e2e/README.md`)
 
 A LIVE, ginkgo-driven BDD suite proving the harness's features against a REAL model: it

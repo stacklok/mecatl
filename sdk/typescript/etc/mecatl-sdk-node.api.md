@@ -69,6 +69,11 @@ export interface AttachedRun extends SessionActivity {
 }
 
 // @public
+export interface AttachOptions {
+    from?: "now" | "start";
+}
+
+// @public
 export function audioPart(options: MediaPartOptions): AudioPromptPart;
 
 // @public
@@ -719,7 +724,7 @@ export type ServerErrorCode = (typeof MECATL_ERROR_CODES)[number] | "unknown";
 // @public
 export interface Session {
     activity(): Promise<SessionActivity>;
-    attach(runId?: string): Promise<AttachedRun>;
+    attach(runId?: string, options?: AttachOptions): Promise<AttachedRun>;
     close(): Promise<void>;
     delete(): Promise<void>;
     // (undocumented)

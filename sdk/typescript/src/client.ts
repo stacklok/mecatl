@@ -31,6 +31,7 @@ import { createRawClient, type RawClient } from "./raw.js";
 import { type ConverseFrame, type Run, RunImpl, type RunOptions } from "./run.js";
 import {
   type AttachedRun,
+  type AttachOptions,
   createAttachedRun,
   createSessionActivity,
   type SessionActivity,
@@ -107,7 +108,7 @@ export interface ForkSessionOptions {
 export interface Session {
   readonly id: string;
   /** Attaches to an explicit run, or selects the newest run in the durable log. */
-  attach(runId?: string): Promise<AttachedRun>;
+  attach(runId?: string, options?: AttachOptions): Promise<AttachedRun>;
   /** Opens the durable cross-run activity stream for this session. */
   activity(): Promise<SessionActivity>;
   /** Starts a run and resolves once its first run-ID-bearing event arrives. */
@@ -183,9 +184,9 @@ class SessionImpl implements Session {
     this.#promptCapabilities = promptCapabilities;
   }
 
-  async attach(runId?: string): Promise<AttachedRun> {
+  async attach(runId?: string, options: AttachOptions = {}): Promise<AttachedRun> {
     this.#operations.assertOpen();
-    return createAttachedRun(this.id, runId, this.#operations);
+    return createAttachedRun(this.id, runId, this.#operations, options);
   }
 
   async activity(): Promise<SessionActivity> {

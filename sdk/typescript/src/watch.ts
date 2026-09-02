@@ -36,6 +36,12 @@ export const WATCH_SESSION_EVENTS_FEATURE = "watch_session_events";
 /** A serializable cursor issued by an ergonomic SDK attachment. @public */
 export type SdkCursor = string;
 
+/** Where an attached run begins reading its durable activity. @public */
+export interface AttachOptions {
+  /** `now` still reads the durable replay over the wire, but discards it locally. */
+  from?: "now" | "start";
+}
+
 /** A replayed or live durable event. @public */
 export interface WatchEventEnvelope {
   readonly cursor: SdkCursor;
@@ -164,6 +170,7 @@ class SessionActivityImpl implements SessionActivity {
   readonly #transport: TransportKind;
   readonly #runId: string | undefined;
   readonly #observe: (envelope: WatchEnvelope) => void;
+  readonly #discardReplay: boolean;
   #closed = false;
   #closePromise: Promise<void> | undefined;
   #consumed = false;
@@ -176,6 +183,7 @@ class SessionActivityImpl implements SessionActivity {
     runId: string | undefined,
     buffer: WatchEnvelope[] = [],
     observe: (envelope: WatchEnvelope) => void = () => undefined,
+    discardReplay = false,
   ) {
     this.#source = source;
     this.#transport = transport;
@@ -183,6 +191,7 @@ class SessionActivityImpl implements SessionActivity {
     this.#runId = runId;
     this.#buffer = buffer;
     this.#observe = observe;
+    this.#discardReplay = discardReplay;
   }
 
   get cursor(): SdkCursor {
@@ -213,8 +222,9 @@ class SessionActivityImpl implements SessionActivity {
       for (;;) {
         const envelope = await this.#nextEnvelope();
         if (envelope === undefined) return;
-        this.#observe(envelope);
         if ("cursor" in envelope) this.#cursor = envelope.cursor;
+        if (this.#discardReplay && envelope.phase === "replay") continue;
+        this.#observe(envelope);
 
         const event = envelopeEvent(envelope);
         if (this.#runId !== undefined && event !== undefined && event.runId !== this.#runId) {
@@ -265,12 +275,21 @@ class AttachedRunImpl extends SessionActivityImpl implements AttachedRun {
     transport: TransportKind,
     abort: AbortController,
     buffer: WatchEnvelope[] = [],
+    discardReplay = false,
   ) {
     const liveState = { value: true };
-    super(source, transport, abort, runId, buffer, (envelope) => {
-      const event = envelopeEvent(envelope);
-      if (event?.runId === runId && event.kind === "result") liveState.value = false;
-    });
+    super(
+      source,
+      transport,
+      abort,
+      runId,
+      buffer,
+      (envelope) => {
+        const event = envelopeEvent(envelope);
+        if (event?.runId === runId && event.kind === "result") liveState.value = false;
+      },
+      discardReplay,
+    );
     this.runId = runId;
     this.#transport = transport;
     this.#liveState = liveState;
@@ -338,11 +357,24 @@ export async function createAttachedRun(
   sessionId: string,
   runId: string | undefined,
   operations: AttachmentOperations,
+  options: AttachOptions = {},
 ): Promise<AttachedRun> {
+  if (options.from === "now" && (runId === undefined || runId === "")) {
+    throw new InvalidStateError('Attaching from "now" requires an explicit run id', {
+      transport: "local",
+    });
+  }
   await requireWatchFeature(operations);
   const opened = watch(sessionId, runId ?? "", operations);
   if (runId !== undefined) {
-    return new AttachedRunImpl(runId, opened.source, operations.transportKind, opened.abort);
+    return new AttachedRunImpl(
+      runId,
+      opened.source,
+      operations.transportKind,
+      opened.abort,
+      [],
+      options.from === "now",
+    );
   }
 
   const replay: WatchEnvelope[] = [];
