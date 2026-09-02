@@ -254,6 +254,8 @@ var serviceAccessTable = map[string]ClassificationEntry{
 	"CreateSessionWithProvider": {KindCallerOwned, "delegates to CreateSessionWithProfile's atomic owner bind"},
 	"CreateSessionWithProfile":  {KindCallerOwned, "atomic owner bind at creation (reserveSessionID); ForkSession/carryover sources are authorized via authorizeSession before copying history"},
 	"CreateSessionWithMCP":      {KindCallerOwned, "delegates to CreateSessionWithProfile's atomic owner bind"},
+	"CreateACPSession":          {KindCallerOwned, "binds the trusted composition default before treating ACP cwd solely as an equality assertion"},
+	"LoadACPSession":            {KindCallerOwned, "owner-authorizes and reattaches the exact persisted placement before checking ACP cwd or mounting client MCP"},
 	"BindPlacement":             {KindCallerOwned, "passes the verified context principal and trusted composition scope to the provider's single atomic authorization-and-resolution operation"},
 	"ReattachPlacement":         {KindCallerOwned, "passes the exact persisted ref, verified context principal, and trusted scope to the provider without falling back to Bind"},
 	"ReattachPlacementInScope":  {KindCallerOwned, "requires the durable schedule scope to equal trusted composition scope, then reauthorizes the exact persisted ref as the verified owner without default fallback"},

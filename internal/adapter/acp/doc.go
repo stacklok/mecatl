@@ -21,16 +21,17 @@
 // fs.writeTextFile at initialize, a per-session workspace (fsworkspace.go) routes
 // file Read/Write through the editor's buffers (fs/read_text_file /
 // fs/write_text_file) instead of disk; Stat/Glob/Grep are composed from a local
-// osfs view at the same root, and the Edit read-ledger is synthesized buffer-keyed
-// over the delegated reads. When the caps are absent (or on session/load) it falls
-// back to the osfs workspace rooted at the session cwd. See the ADR for the bounded
-// hybrid's residual (grep sees disk) and the load asymmetry.
+// osfs view at the same trusted placement root, and the Edit read-ledger is
+// synthesized buffer-keyed over delegated reads. The same overlay is restored on
+// session/load after exact placement reattachment. Without the caps, both paths
+// use the composition-owned placement environment; ACP cwd is only an equality
+// assertion and never constructs the root. See the ADR for the hybrid's residual
+// (grep sees disk).
 //
 // SCOPE — the following are DEFERRED to later phases and documented in
 // docs/adr/0001-acp-adapter.md (Phase 2/3 landed diff blocks, allow_always rule
 // learning, session/load + replay, modes, and slash commands — see the ADR):
-//   - grep/glob over editor BUFFERS (the fs/* hybrid searches disk) and fs/*
-//     delegation on session/load (a resumed session uses osfs).
+//   - grep/glob over editor BUFFERS (the fs/* hybrid searches disk).
 //   - DURABLE / broader-granularity learned permissions (today: in-memory,
 //     per-session, tool + exact-pattern only).
 //   - full-fidelity projection of turn.*/compaction events (dropped or folded
