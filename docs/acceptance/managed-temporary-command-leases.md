@@ -1,7 +1,7 @@
 # Managed temporary command leases — acceptance plan
 
 **Phase:** capability — deterministic lifecycle for command and background-job temporary storage.
-**Status:** in-progress, 2026-09-01. Derived from the still-proposed ADR; this plan is the implementation contract, not acceptance of the decision.
+**Status:** landed, 2026-09-01. Derived from the still-proposed ADR; this plan is the implementation contract, not acceptance of the decision.
 **ADR:** [ADR-0281](../adr/0281-managed-temporary-command-leases.md) — managed and system scopes, validated private leases, and deterministic reaping.
 **Accumulator branch:** `acc/managed-temporary-command-leases` (off `main`).
 
