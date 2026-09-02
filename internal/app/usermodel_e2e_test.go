@@ -228,7 +228,7 @@ func TestUserModelE2E(t *testing.T) {
 	defer built.Close()
 
 	svc := built.Service
-	svcSess, err := svc.CreateSession(ctx, workspace, session.ModeDefault, defaultLimits())
+	svcSess, err := svc.CreateSession(ctx, session.ModeDefault, defaultLimits())
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}

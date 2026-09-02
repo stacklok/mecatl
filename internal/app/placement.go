@@ -44,18 +44,6 @@ func (p *localPlacementProvider) Bind(ctx context.Context, req server.PlacementB
 		return p.bindLocal()
 	case req.Selector.IsWorktree():
 		return p.bindSelectedWorktree(ctx, req)
-	case req.Selector.IsID():
-		switch req.Selector.ID {
-		case noFSPlacementID:
-			return p.bindNoFS()
-		case localDefaultPlacementID, p.root:
-			if p.root == "" {
-				return server.PlacementBinding{}, server.ErrPlacementUnavailable
-			}
-			return p.bindLocal()
-		default:
-			return server.PlacementBinding{}, server.ErrPlacementNotFound
-		}
 	default:
 		return server.PlacementBinding{}, server.ErrInvalidPlacementSelection
 	}

@@ -80,7 +80,6 @@ func TestSelectorSessionRehydratesWithPersistedSelector(t *testing.T) {
 	ctx := context.Background()
 	store := memstore.New()
 
-	const wantWorkspace = "/work/selectorsess"
 	wantSel := server.ProviderSelector{ProviderID: "openrouter", ModelID: "anthropic/claude-3.5-sonnet"}
 
 	// "Before the restart": create the selector session over a real workspace.
@@ -89,7 +88,7 @@ func TestSelectorSessionRehydratesWithPersistedSelector(t *testing.T) {
 		calls  atomic.Int32
 	)
 	svc1 := selectorServiceOverStore(t, store, selectorRecordingFactory("PRE-RESTART", &gotSel, &calls), nil)
-	sess, err := svc1.CreateSessionWithProvider(ctx, wantWorkspace, session.ModeDefault, session.Limits{}, wantSel)
+	sess, err := svc1.CreateSessionWithProvider(ctx, session.ModeDefault, session.Limits{}, wantSel)
 	if err != nil {
 		t.Fatalf("CreateSessionWithProvider: %v", err)
 	}
@@ -157,7 +156,7 @@ func TestDefaultFSSessionDoesNotRehydrate(t *testing.T) {
 		calls  atomic.Int32
 	)
 	svc1 := selectorServiceOverStore(t, store, selectorRecordingFactory("UNUSED", &gotSel, &calls), nil)
-	sess, err := svc1.CreateSession(ctx, "/work/plain", session.ModeDefault, session.Limits{})
+	sess, err := svc1.CreateSession(ctx, session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}

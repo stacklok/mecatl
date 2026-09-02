@@ -172,7 +172,7 @@ func (m Model) carryoverCmd(oldID string, sel client.ModelSelection, token uint6
 	deps := m.deps
 	mode := m.desiredMode()
 	return func() tea.Msg {
-		id, caps, resolved, err := deps.Session.CreateSessionWithCarryover(deps.Ctx, oldID, sel, mode)
+		id, caps, resolved, err := deps.Session.CreateSessionWithCarryover(deps.Ctx, oldID, sel)
 		if err != nil {
 			return modelSwitchFailedMsg{token: token, sourceID: oldID, model: modelSelLabel(sel), err: err}
 		}

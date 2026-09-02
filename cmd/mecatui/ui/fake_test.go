@@ -398,16 +398,16 @@ func (c *fakeConv) CreateSession(_ context.Context, sel client.ModelSelection, m
 // was called with the right source, not transcript preservation, which the
 // server-side create_carryover_test.go owns). carryoverCount + carryoverIDs let
 // a test assert it was NOT called.
-func (c *fakeConv) CreateSessionWithCarryover(ctx context.Context, sourceSessionID string, sel client.ModelSelection, mode string) (string, client.Capabilities, client.ResolvedModel, error) {
+func (c *fakeConv) CreateSessionWithCarryover(ctx context.Context, sourceSessionID string, sel client.ModelSelection) (string, client.Capabilities, client.ResolvedModel, error) {
 	c.mu.Lock()
 	c.carryoverFrom = sourceSessionID
 	c.carryoverCount++
 	c.carryoverIDs = append(c.carryoverIDs, sourceSessionID)
 	c.mu.Unlock()
-	return c.CreateSession(ctx, sel, mode)
+	return c.CreateSession(ctx, sel, c.mode)
 }
 
-func (c *fakeConv) ClearSession(ctx context.Context, _ string, selector *string) (string, client.SessionSnapshot, error) {
+func (c *fakeConv) ClearSession(ctx context.Context, _ string, selector *client.WorktreeSelector) (string, client.SessionSnapshot, error) {
 	id, caps, resolved, err := c.CreateSession(ctx, client.ModelSelection{}, c.mode)
 	c.mu.Lock()
 	if n := len(c.operations); n > 0 {
@@ -419,7 +419,7 @@ func (c *fakeConv) ClearSession(ctx context.Context, _ string, selector *string)
 	}
 	placement := client.Placement{Kind: "local", Label: "default"}
 	if selector != nil {
-		placement.Label = *selector
+		placement.Label = "selected worktree"
 	}
 	return id, client.SessionSnapshot{Mode: c.mode, Placement: placement, ResolvedModel: resolved, Capabilities: caps}, nil
 }

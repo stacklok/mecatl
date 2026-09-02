@@ -135,7 +135,7 @@ func TestSessionDebuggerCrossBoundaryAcceptance(t *testing.T) {
 	if err != nil {
 		t.Fatalf("target Build: %v", err)
 	}
-	target, err := built1.Service.CreateSession(ctx, workspace, session.ModeDefault, session.Limits{})
+	target, err := built1.Service.CreateSession(ctx, session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatal(err)
 	}

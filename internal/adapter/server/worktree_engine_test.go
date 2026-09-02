@@ -12,6 +12,7 @@ import (
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
+	"github.com/stacklok/mecatl/internal/adapter/mcp"
 	"github.com/stacklok/mecatl/internal/adapter/server"
 )
 
@@ -49,39 +50,62 @@ func worktreeEngineService(t *testing.T, defaultWorkspace string, factoryCalled 
 	return svc
 }
 
-// TestWorktreeSessionRoutesThroughPerSessionFactory asserts the D1 widening: a
-// CreateSession whose workspace DIFFERS from DefaultWorkspace routes through the
-// per-session engine factory (HasSessionEngine true), while one EQUAL to
-// DefaultWorkspace stays on the shared-engine fast path (HasSessionEngine false).
-func TestClientWorkspaceDoesNotRoutePerSessionFactory(t *testing.T) {
+// TestCreateSessionUsesServerDefaultPlacement proves direct Service creation has no
+// path input and stays on the shared engine for the configured default placement.
+func TestCreateSessionUsesServerDefaultPlacement(t *testing.T) {
 	ctx := context.Background()
 	const base = "/srv/base"
-	const wtB = "/srv/wtB"
 
-	// A different-workspace session registers a per-session engine.
 	var called bool
 	svc := worktreeEngineService(t, base, &called)
-	sess, err := svc.CreateSession(ctx, wtB, session.ModeDefault, session.Limits{})
+	sess, err := svc.CreateSession(ctx, session.ModeDefault, session.Limits{})
 	if err != nil {
-		t.Fatalf("CreateSession(wtB): %v", err)
+		t.Fatalf("CreateSession: %v", err)
 	}
 	if called {
-		t.Error("client workspace unexpectedly selected a per-session engine")
+		t.Error("default placement unexpectedly selected a per-session engine")
 	}
 	if svc.HasSessionEngineForTest(sess.ID) {
-		t.Error("client workspace unexpectedly registered a per-session engine")
+		t.Error("default placement unexpectedly registered a per-session engine")
 	}
 	if sess.EnvironmentRef.ID != base {
 		t.Fatalf("placement ID = %q, want server-owned %q", sess.EnvironmentRef.ID, base)
 	}
+}
 
-	// A same-as-DefaultWorkspace session stays on the shared engine (no factory call).
-	called = false
-	if _, err := svc.CreateSession(ctx, base, session.ModeDefault, session.Limits{}); err != nil {
-		t.Fatalf("CreateSession(base): %v", err)
+func TestInvariant_alternate_placement_rehydrates_root_scoped_engine(t *testing.T) {
+	const base = "/srv/base"
+	const alternate = "/srv/worktree"
+	store := memstore.New()
+	ref := session.EnvironmentRef{Kind: session.EnvKindLocal, ID: alternate, Revision: "worktree-head"}
+	persisted := session.New("alternate", session.ModeDefault, ref, session.Limits{MaxTurns: 1}, time.Unix(0, 0))
+	if err := store.Save(context.Background(), persisted); err != nil {
+		t.Fatal(err)
 	}
-	if called {
-		t.Error("CreateSession(base) called the SessionEngine factory — a default-FS session must stay on the shared engine (byte-identical to pre-#102)")
+	var factoryRoot string
+	factory := func(_ context.Context, _ server.ProviderSelector, _ []mcp.ServerConfig, _ server.SessionProfile, root string, _ session.PermissionMode) (server.SessionEngineResult, error) {
+		factoryRoot = root
+		return server.SessionEngineResult{Engine: agent.NewEngine(agent.Deps{LLM: mockllm.New(mockllm.TextTurn("reattached")), Catalog: tool.NewCatalog()})}, nil
+	}
+	svc, err := newPlacementTestService(server.Config{
+		Engine: agent.NewEngine(agent.Deps{LLM: mockllm.New(mockllm.TextTurn("shared-default-must-not-run")), Catalog: tool.NewCatalog()}),
+		Store:  store, DefaultWorkspace: base, SessionEngine: factory,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := svc.StartRun(context.Background(), persisted.ID, "continue")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var text string
+	for ev := range run.Events() {
+		if ev.Type == session.EvMessageDelta {
+			text += ev.Text
+		}
+	}
+	if factoryRoot != alternate || text != "reattached" {
+		t.Fatalf("restart root/reply = %q/%q, want verified alternate root and rehydrated engine", factoryRoot, text)
 	}
 }
 
@@ -106,7 +130,7 @@ func TestNeedsRehydrationIgnoresObsoleteWorkspaceIdentity(t *testing.T) {
 			want:             false,
 		},
 		{
-			name:             "obsolete worktree-shaped ref does not imply engine rehydration",
+			name:             "opaque local ref is not guessed to be alternate without provider verification",
 			defaultWorkspace: base,
 			sess:             session.New("s2", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: wtB, Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0)),
 			want:             false,

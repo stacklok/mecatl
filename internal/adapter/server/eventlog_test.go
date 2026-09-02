@@ -64,7 +64,7 @@ func TestGRPCRelayStreamsOriginalChunksAndDurablyCoalesces(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sess, err := svc.CreateSession(context.Background(), "/ws", session.ModeDefault, session.Limits{})
+	sess, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -144,7 +144,7 @@ func TestLiveRelaysPersistButOmitObservedNetworkAttempt(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			sess, err := svc.CreateSession(context.Background(), "/ws", session.ModeDefault, session.Limits{})
+			sess, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -271,7 +271,7 @@ func observedAttemptTeamService(t *testing.T, log port.EventLog, logID session.S
 	engine := agent.NewEngine(agent.Deps{
 		LLM: mockllm.New(mockllm.TextTurn("unused")), Catalog: tool.NewCatalog(), Policy: allow, Model: "mock",
 	})
-	svc, err := newPlacementTestService(server.Config{
+	svc, err := newPlacementTeamTestService(server.Config{
 		Engine: engine, Store: memstore.New(), EventLog: log,
 		Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
 		Now:        func() time.Time { return time.Unix(0, 0) }, MemberEngine: memberEngine,
@@ -385,7 +385,7 @@ func askingEventLogService(t *testing.T, log port.EventLog) (*server.Service, *m
 	if err != nil {
 		t.Fatalf("new service: %v", err)
 	}
-	cs, err := svc.CreateSession(context.Background(), "/ws", session.ModeDefault, session.Limits{})
+	cs, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -604,7 +604,7 @@ func TestEventLogInheritsStreamRedaction(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new service: %v", err)
 	}
-	cs, err := svc.CreateSession(context.Background(), "/ws", session.ModeDefault, session.Limits{})
+	cs, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -724,7 +724,7 @@ func TestEventLogRecordsResumePathVerdict(t *testing.T) {
 	var ran1 atomic.Int64
 	svc1 := askingEventLogServiceOverStore(t, store1, log, permstore.New(), &ran1,
 		mockllm.New(mockllm.ToolCallTurn(session.NewToolCall("w1", "Write", json.RawMessage(`{"path":"a.go"}`)))), false)
-	sess, err := svc1.CreateSession(context.Background(), "/ws", session.ModeDefault, session.Limits{})
+	sess, err := svc1.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -839,7 +839,7 @@ func TestEventLogSurvivesClientDisconnect(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new service: %v", err)
 	}
-	cs, err := svc.CreateSession(context.Background(), "/ws", session.ModeDefault, session.Limits{})
+	cs, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}

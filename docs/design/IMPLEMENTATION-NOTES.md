@@ -6102,8 +6102,12 @@ configured root plus no-FS attenuation. `server.PlacementBinder` is mandatory an
 choke point; provider authorization and resolution happen in one snapshot and return a complete
 Environment, exact `EnvironmentRef{Kind, ID, Revision}`, and bounded display metadata. Startup
 validates the deployment default without caching it, and ordinary run entry always reattaches a
-fresh Environment so the read ledger resets; `sessionEnvironments` remains overrides-only (ACP and
-other explicitly owned overlays). A remote provider may implement the same contract; no public
+fresh Environment so the read ledger resets; after restart, a verified local binding whose workspace
+root differs from the configured default rebuilds its root-scoped per-session engine and policy before
+running rather than using the shared default-root engine. `sessionEnvironments` remains overrides-only
+(ACP and other explicitly owned overlays). Placement-provider, discovery, and storage failures cross
+public gRPC/HTTP only as stable content-free categories; bounded detailed causes remain on injected
+operator diagnostics. A remote provider may implement the same contract; no public
 placement-ID registry or server-side `Workspaces(path)` fallback exists.
 
 Public Create accepts only omitted/default placement or `profile:"no-fs"`; workspace and source
@@ -6121,7 +6125,12 @@ the source placement. Clear creates a fresh empty-history successor; Fork copies
 may apply authorized provider/model/reasoning overrides in the same atomic publication. Both lock
 and lease the owned source, derive a cancellation context from the held mutation lease, build any
 per-session engine, re-check the held lease immediately before persistence, and tear down provisional
-bindings/engines if ownership is lost. Mecatui `/clear`, `/worktrees`, `/effort`, and inventory fork use
+bindings/engines if ownership is lost. The current `SessionStore` seam has no lease-token
+conditional create, so there is an accepted residual window after the final held-lease check and
+before or during publication: a concurrent renewal loss cancels the context but cannot make every
+supported store's already-started commit atomic. This is not claimed as cancellation atomicity;
+closing it requires a follow-up acceptance plan for a token-fenced create/CAS store seam.
+Mecatui `/clear`, `/worktrees`, `/effort`, and inventory fork use
 these successor RPCs and keep the active source selected if relist/switch fails.
 
 Schedules resolve placement at creation and persist exact private ref, owner principal, and trusted

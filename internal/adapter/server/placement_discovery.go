@@ -28,7 +28,8 @@ func (s *Service) ownedSessionEnvironment(ctx context.Context, id session.Sessio
 		if errors.Is(err, port.ErrSessionNotFound) {
 			return nil, tool.Environment{}, fmt.Errorf("%w: %q", ErrNotFound, id)
 		}
-		return nil, tool.Environment{}, fmt.Errorf("%w: load session: %v", ErrInternal, err)
+		s.logDiscoveryError(ctx, "load session", err)
+		return nil, tool.Environment{}, fmt.Errorf("%w: discovery backend failed", ErrInternal)
 	}
 	if sess == nil || sess.ID != id || s.authorizeSession(ctx, sess) != nil {
 		return nil, tool.Environment{}, fmt.Errorf("%w: %q", ErrNotFound, id)
@@ -55,7 +56,8 @@ func (s *Service) ListCommandsForSession(ctx context.Context, id session.Session
 	}
 	commands, err := s.cfg.Commands.List(ctx, env.Workspace().Root())
 	if err != nil {
-		return nil, fmt.Errorf("%w: list commands: %v", ErrInternal, err)
+		s.logDiscoveryError(ctx, "list commands", err)
+		return nil, fmt.Errorf("%w: command discovery failed", ErrInternal)
 	}
 	return commands, nil
 }

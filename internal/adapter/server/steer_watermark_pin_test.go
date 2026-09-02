@@ -19,7 +19,7 @@ import (
 func TestLookupSteerMessageIDExactUnderDuplicateTexts(t *testing.T) {
 	svc := newSteerService(t, nil, nil)
 	ctx := context.Background()
-	sess, err := svc.CreateSession(ctx, "/ws", session.ModeDefault, session.Limits{})
+	sess, err := svc.CreateSession(ctx, session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -49,7 +49,7 @@ func TestSteer_IngressRepairCannotBreakCorrelation(t *testing.T) {
 		mockllm.TextTurn("done"),
 	), nil, block)
 	ctx := context.Background()
-	sess, err := svc.CreateSession(ctx, "/ws", session.ModeDefault, session.Limits{})
+	sess, err := svc.CreateSession(ctx, session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}

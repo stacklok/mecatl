@@ -204,7 +204,7 @@ func TestADR_0280_ScopedWorktreeSelectorsFailClosed(t *testing.T) {
 	svc.cfg.OwnershipEnforced = true
 
 	for _, id := range []session.SessionID{"source-a", "source-b"} {
-		if _, err := svc.CreateSession(aliceCtx, "", session.ModeDefault, session.Limits{}); err != nil {
+		if _, err := svc.CreateSession(aliceCtx, session.ModeDefault, session.Limits{}); err != nil {
 			t.Fatalf("create %s: %v", id, err)
 		}
 	}
@@ -298,7 +298,7 @@ func TestADR_0280_ClearSessionIsLeaseSafeAndNonDestructive(t *testing.T) {
 	provider := &placementProviderSpy{}
 	lease := &placementLeaseSpy{}
 	svc := newPlacementProofService(t, store, provider, nil, nil, lease, nil, "source", "must-not-exist")
-	source, err := svc.CreateSession(context.Background(), "", session.ModePlan, session.Limits{MaxTurns: 7})
+	source, err := svc.CreateSession(context.Background(), session.ModePlan, session.Limits{MaxTurns: 7})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -332,7 +332,7 @@ func TestInvariant_fork_placement_is_atomic_and_server_authorized(t *testing.T) 
 	inventory := &discoverySpy{worktrees: []Worktree{{Path: "/feature", Branch: "feature", Head: "h1"}}}
 	workspaceCalls := 0
 	svc := newPlacementProofService(t, store, provider, inventory, nil, nil, &workspaceCalls, "source", "fork")
-	source, err := svc.CreateSession(context.Background(), "", session.ModeDefault, session.Limits{})
+	source, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatal(err)
 	}

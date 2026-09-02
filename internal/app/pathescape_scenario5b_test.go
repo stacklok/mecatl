@@ -73,7 +73,7 @@ func TestPathEscapePosture_Scenario5_SharedWorkspaceChildNotRelaxed(t *testing.T
 					t.Fatalf("Build: %v", err)
 				}
 				defer built.Close()
-				sess, err := built.Service.CreateSession(context.Background(), f.workspace, session.ModeDefault, session.Limits{})
+				sess, err := built.Service.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 				if err != nil {
 					t.Fatalf("CreateSession: %v", err)
 				}
@@ -170,7 +170,7 @@ func TestPathEscapePosture_Scenario5_SharedWorkspaceChildWriteDenied(t *testing.
 		t.Fatalf("Build: %v", err)
 	}
 	defer built.Close()
-	sess, err := built.Service.CreateSession(context.Background(), f.workspace, session.ModeDefault, session.Limits{})
+	sess, err := built.Service.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}

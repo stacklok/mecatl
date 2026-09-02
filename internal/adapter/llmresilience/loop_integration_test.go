@@ -41,7 +41,7 @@ func newEngine(d agent.Deps) *agent.Engine {
 
 func newSession(t *testing.T, limits session.Limits) *session.Session {
 	t.Helper()
-	return session.New("s1", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, limits, time.Unix(0, 0))
+	return session.New("s1", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindMem, ID: "/ws", Revision: "v1"}, limits, time.Unix(0, 0))
 }
 
 func catalogWith(t *testing.T, tools ...tool.Tool) *tool.Catalog {
@@ -126,7 +126,7 @@ func TestEstablishErrorTerminatesStopError(t *testing.T) {
 
 	e := newEngine(agent.Deps{LLM: llm, Catalog: catalogWith(t), EnableDurableEvidence: true})
 	ws := memfs.NewWorkspace("/ws")
-	env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: "/ws"}, ws, nil)
+	env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: "/ws", Revision: "v1"}, ws, nil)
 	r := e.Run(context.Background(), newSession(t, session.Limits{}), env, agent.RunRequest{Text: "go"})
 
 	events := drain(r)
@@ -215,7 +215,7 @@ func TestStreamRateLimitErrorIsRetried(t *testing.T) {
 
 	e := newEngine(agent.Deps{LLM: llm, Catalog: catalogWith(t), EnableDurableEvidence: true})
 	ws := memfs.NewWorkspace("/ws")
-	env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: "/ws"}, ws, nil)
+	env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: "/ws", Revision: "v1"}, ws, nil)
 	r := e.Run(context.Background(), newSession(t, session.Limits{}), env, agent.RunRequest{Text: "go"})
 
 	events := drain(r)
@@ -347,7 +347,7 @@ func TestFirstChunkErrorTerminatesStopError(t *testing.T) {
 
 	e := newEngine(agent.Deps{LLM: llm, Catalog: catalogWith(t), EnableDurableEvidence: true})
 	ws := memfs.NewWorkspace("/ws")
-	env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: "/ws"}, ws, nil)
+	env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: "/ws", Revision: "v1"}, ws, nil)
 	r := e.Run(context.Background(), newSession(t, session.Limits{}), env, agent.RunRequest{Text: "go"})
 
 	res := lastResult(t, drain(r))
@@ -416,7 +416,7 @@ func TestLoopPreCommitReasoningErrorRetriedAndSucceeds(t *testing.T) {
 
 	e := newEngine(agent.Deps{LLM: llm, Catalog: catalogWith(t)})
 	ws := memfs.NewWorkspace("/ws")
-	env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: "/ws"}, ws, nil)
+	env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: "/ws", Revision: "v1"}, ws, nil)
 	r := e.Run(context.Background(), newSession(t, session.Limits{}), env, agent.RunRequest{Text: "go"})
 
 	res := lastResult(t, drain(r))
@@ -476,7 +476,7 @@ func TestLoopDiscardsFailedTentativeToolCallAndDispatchesSuccessfulRetryOnce(t *
 	counter := &countedTool{}
 	e := newEngine(agent.Deps{LLM: llm, Catalog: catalogWith(t, counter)})
 	ws := memfs.NewWorkspace("/ws")
-	env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: "/ws"}, ws, nil)
+	env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: "/ws", Revision: "v1"}, ws, nil)
 	events := drain(e.Run(context.Background(), newSession(t, session.Limits{}), env, agent.RunRequest{Text: "go"}))
 
 	if got := counter.executions.Load(); got != 1 {
@@ -509,7 +509,7 @@ func TestLoopAccountsRetriedUsageInSessionResultAndBudget(t *testing.T) {
 	counter := &countedTool{}
 	e := newEngine(agent.Deps{LLM: llm, Catalog: catalogWith(t, counter), MaxRunTokens: 10})
 	ws := memfs.NewWorkspace("/ws")
-	env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: "/ws"}, ws, nil)
+	env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: "/ws", Revision: "v1"}, ws, nil)
 	sess := newSession(t, session.Limits{})
 	result := lastResult(t, drain(e.Run(context.Background(), sess, env, agent.RunRequest{Text: "go"})))
 
@@ -530,7 +530,7 @@ func TestLoopRecordsUsageOnExhaustedStream(t *testing.T) {
 	llm := llmresilience.Wrap(inner, llmresilience.Config{MaxAttempts: 1})
 	e := newEngine(agent.Deps{LLM: llm, Catalog: catalogWith(t)})
 	ws := memfs.NewWorkspace("/ws")
-	env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: "/ws"}, ws, nil)
+	env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: "/ws", Revision: "v1"}, ws, nil)
 	sess := newSession(t, session.Limits{})
 	result := lastResult(t, drain(e.Run(context.Background(), sess, env, agent.RunRequest{Text: "go"})))
 
@@ -591,7 +591,7 @@ func TestLoopCancellationAfterTentativeToolCallStopsCancelledWithoutDispatch(t *
 	llm := llmresilience.Wrap(inner, llmresilience.Config{MaxAttempts: 2})
 	e := newEngine(agent.Deps{LLM: llm, Catalog: catalogWith(t, counter)})
 	ws := memfs.NewWorkspace("/ws")
-	env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: "/ws"}, ws, nil)
+	env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: "/ws", Revision: "v1"}, ws, nil)
 	ctx, cancel := context.WithCancel(context.Background())
 	run := e.Run(ctx, newSession(t, session.Limits{}), env, agent.RunRequest{Text: "go"})
 	<-inner.started

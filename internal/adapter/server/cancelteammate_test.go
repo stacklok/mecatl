@@ -69,7 +69,7 @@ func cancelTeammateService(t *testing.T, providers map[string]*mockllm.Provider,
 	engine := agent.NewEngine(agent.Deps{
 		LLM: mockllm.New(mockllm.TextTurn("x")), Catalog: tool.NewCatalog(), Policy: allow, Model: "mock",
 	})
-	svc, err := newPlacementTestService(server.Config{
+	svc, err := newPlacementTeamTestService(server.Config{
 		Engine:       engine,
 		Store:        memstore.New(),
 		Workspaces:   func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
@@ -122,7 +122,7 @@ func TestCancelTeammateMidRound(t *testing.T) {
 	svc, teamOf := cancelTeammateService(t, parkedWorkerProviders(), park)
 	ctx := context.Background()
 
-	id, _, err := svc.CreateTeam(ctx, "/ws", "test", "fix the bug", 0, parkedRoster())
+	id, _, err := svc.CreateTeam(ctx, "test", "fix the bug", 0, parkedRoster())
 	if err != nil {
 		t.Fatalf("CreateTeam: %v", err)
 	}
@@ -318,7 +318,7 @@ func TestCancelTeammateIdleBetweenRounds(t *testing.T) {
 
 	// The worker has NO initial prompt: round 0 schedules only the lead, so the
 	// worker is genuinely idle while the lead parks.
-	id, _, err := svc.CreateTeam(ctx, "/ws", "test", "fix the bug", 0, []agent.MemberSpec{
+	id, _, err := svc.CreateTeam(ctx, "test", "fix the bug", 0, []agent.MemberSpec{
 		{Name: "lead", Lead: true, InitialPrompt: "coordinate"},
 		{Name: "worker"},
 	})
@@ -415,7 +415,7 @@ func TestCancelTeammateFinishedMemberNoOp(t *testing.T) {
 	svc, _ := cancelTeammateService(t, providers, park)
 	ctx := context.Background()
 
-	id, _, err := svc.CreateTeam(ctx, "/ws", "test", "fix the bug", 0, parkedRoster())
+	id, _, err := svc.CreateTeam(ctx, "test", "fix the bug", 0, parkedRoster())
 	if err != nil {
 		t.Fatalf("CreateTeam: %v", err)
 	}
@@ -483,7 +483,7 @@ func TestCancelTeammatePhaseGates(t *testing.T) {
 	h := server.NewHarnessServer(svc)
 	ctx := context.Background()
 
-	id, _, err := svc.CreateTeam(ctx, "/ws", "test", "", 0, []agent.MemberSpec{
+	id, _, err := svc.CreateTeam(ctx, "test", "", 0, []agent.MemberSpec{
 		{Name: "lead", Lead: true, InitialPrompt: "go"},
 	})
 	if err != nil {
@@ -546,7 +546,7 @@ func TestHTTPCancelTeammate(t *testing.T) {
 	defer srv.Close()
 	ctx := context.Background()
 
-	id, _, err := svc.CreateTeam(ctx, "/ws", "test", "fix the bug", 0, parkedRoster())
+	id, _, err := svc.CreateTeam(ctx, "test", "fix the bug", 0, parkedRoster())
 	if err != nil {
 		t.Fatalf("CreateTeam: %v", err)
 	}

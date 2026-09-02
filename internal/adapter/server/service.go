@@ -1680,21 +1680,18 @@ func newCreatedSession(id session.SessionID, mode session.PermissionMode, worksp
 	}
 }
 
-// CreateSession allocates a new idle session on the SHARED engine, persists it,
-// and returns it. workspace must be non-empty. An unspecified mode falls back to
-// DefaultMode. It is the no-selector, no-MCP fast path: it delegates to the
-// generalized createSession with the zero selector, nil specs and the default
-// profile.
-func (s *Service) CreateSession(ctx context.Context, workspace string, mode session.PermissionMode, limits session.Limits) (*session.Session, error) {
-	return s.createSession(ctx, workspace, mode, limits, ProviderSelector{}, nil, ProfileDefault, createSessionOpts{})
+// CreateSession allocates a new idle session on the server-owned default placement,
+// persists it, and returns it. An unspecified mode falls back to DefaultMode. It
+// is the no-selector, no-MCP fast path.
+func (s *Service) CreateSession(ctx context.Context, mode session.PermissionMode, limits session.Limits) (*session.Session, error) {
+	return s.createSession(ctx, mode, limits, ProviderSelector{}, nil, ProfileDefault, createSessionOpts{})
 }
 
 // CreateSessionWithProvider creates a session bound to a non-default
 // provider/model selector (multi-provider Phase 0, S3) via a PER-SESSION engine,
-// with no client MCP and the DEFAULT profile. It delegates to
-// CreateSessionWithProfile; see there for the selector semantics.
-func (s *Service) CreateSessionWithProvider(ctx context.Context, workspace string, mode session.PermissionMode, limits session.Limits, sel ProviderSelector) (*session.Session, error) {
-	return s.CreateSessionWithProfile(ctx, workspace, mode, limits, sel, ProfileDefault)
+// with no client MCP and the DEFAULT profile.
+func (s *Service) CreateSessionWithProvider(ctx context.Context, mode session.PermissionMode, limits session.Limits, sel ProviderSelector) (*session.Session, error) {
+	return s.CreateSessionWithProfile(ctx, mode, limits, sel, ProfileDefault)
 }
 
 // CreateSessionWithProfile creates a session bound to an optional non-default
@@ -1705,13 +1702,14 @@ func (s *Service) CreateSessionWithProvider(ctx context.Context, workspace strin
 // ErrInvalidArgument) and resolves through the factory (an unknown/unavailable
 // provider id surfaces as ErrInvalidArgument). Setting ModelID with an empty
 // ProviderID is rejected (a bare model on the env-derived default provider is
-// ambiguous). The workspace requirement is PROFILE-AWARE — see createSession.
+// ambiguous). Placement is bound exclusively from the server-owned default or
+// explicit no-FS profile.
 //
 // opts is the variadic options pattern (CreateSessionOption): WithSessionID
 // overrides the minted id (ADR 0059 decision #7 Phase-2 — the scheduler fire
 // path mints a "sched--"-prefixed id). Zero opts is byte-identical to the
 // pre-Phase-2 signature.
-func (s *Service) CreateSessionWithProfile(ctx context.Context, workspace string, mode session.PermissionMode, limits session.Limits, sel ProviderSelector, profile SessionProfile, opts ...CreateSessionOption) (*session.Session, error) {
+func (s *Service) CreateSessionWithProfile(ctx context.Context, mode session.PermissionMode, limits session.Limits, sel ProviderSelector, profile SessionProfile, opts ...CreateSessionOption) (*session.Session, error) {
 	if sel.ProviderID == "" && sel.ModelID != "" {
 		return nil, fmt.Errorf("%w: model_id requires provider_id (a bare model on the default provider is ambiguous)", ErrInvalidArgument)
 	}
@@ -1719,14 +1717,14 @@ func (s *Service) CreateSessionWithProfile(ctx context.Context, workspace string
 	for _, opt := range opts {
 		opt(&o)
 	}
-	return s.createSessionWithOptions(ctx, workspace, mode, limits, sel, profile, o)
+	return s.createSessionWithOptions(ctx, mode, limits, sel, profile, o)
 }
 
-func (s *Service) createSessionWithOptions(ctx context.Context, workspace string, mode session.PermissionMode, limits session.Limits, sel ProviderSelector, profile SessionProfile, opts createSessionOpts) (*session.Session, error) {
+func (s *Service) createSessionWithOptions(ctx context.Context, mode session.PermissionMode, limits session.Limits, sel ProviderSelector, profile SessionProfile, opts createSessionOpts) (*session.Session, error) {
 	if err := validateDebugMCPNames(opts.debugTargetID, opts.debugMCPServers); err != nil {
 		return nil, err
 	}
-	return s.createSession(ctx, workspace, mode, limits, sel, opts.clientMCP, profile, opts)
+	return s.createSession(ctx, mode, limits, sel, opts.clientMCP, profile, opts)
 }
 
 // createSession is the single create path generalizing the shared-engine fast
@@ -1740,15 +1738,11 @@ func (s *Service) createSessionWithOptions(ctx context.Context, workspace string
 // the engine was built, the per-session MCP manager is torn down so a failed
 // create never leaks it.
 //
-// PROFILE-AWARE workspace rule (replacing the old unconditional empty-workspace
-// guard): the default profile REQUIRES a workspace (unchanged); the no-fs
-// profile REQUIRES an EMPTY one — the combination is contradictory and is
-// REJECTED loudly, never resolved by silently dropping either field. A no-fs
-// session persists Workspace == "" and registers the no-FS Workspace as its
-// per-session workspace OVERRIDE at create time (the ACP-buffer-workspace
-// mechanism, same lock as the engine registration), so StartRun can never hand
-// "" to the osfs workspace factory (which would MkdirAll/OpenRoot the process
-// cwd).
+// The placement binder returns the complete environment for either the
+// server-owned default or explicit no-FS attenuation. A no-FS session registers
+// that complete environment as its per-session OVERRIDE at create time (the
+// ACP-buffer-workspace mechanism, under the same lock as engine registration),
+// so run entry never constructs a filesystem workspace for it.
 // setSessionLabels records the neutral provider+model selector and the
 // tool-surface profile onto the freshly-created aggregate as write-once creation
 // labels. The aggregate stores them opaquely (it never interprets the
@@ -1890,15 +1884,16 @@ func (s *Service) reserveSessionID(ctx context.Context, id session.SessionID, ow
 		s.mu.Unlock()
 	}
 	// Probe the store for a persisted session under this id. A not-found error
-	// means the id is clear; any other error is an infra fault that must not
-	// silently pass, so it is propagated.
+	// means the id is clear; any other infrastructure fault fails closed and is
+	// exposed only through a content-free public category.
 	if existing, lerr := s.cfg.Store.Load(ctx, id); lerr == nil && existing != nil {
 		release()
 		winner, classifyErr := s.classifyCreateWinner(existing, owner, request)
 		return winner, nil, classifyErr
 	} else if lerr != nil && !errors.Is(lerr, port.ErrSessionNotFound) {
 		release()
-		return nil, nil, fmt.Errorf("server: probe session id %q: %w", id, lerr)
+		s.logDiscoveryError(ctx, "probe session placement", lerr)
+		return nil, nil, fmt.Errorf("%w: placement storage failed", ErrInternal)
 	}
 	return nil, release, nil
 }
@@ -1918,7 +1913,14 @@ func (s *Service) persistCreatedSession(ctx context.Context, sess *session.Sessi
 		if existing, ok, collisionErr := s.resolveCreateCollision(ctx, sess.ID, owner, request, err); ok || collisionErr != nil {
 			return existing, collisionErr
 		}
-		return nil, fmt.Errorf("server: persist session: %w", err)
+		if errors.Is(err, port.ErrSessionAlreadyExists) {
+			return nil, fmt.Errorf("%w", port.ErrSessionAlreadyExists)
+		}
+		if errors.Is(err, ErrConfig) {
+			return nil, err
+		}
+		s.logDiscoveryError(ctx, "persist session placement", err)
+		return nil, fmt.Errorf("%w: placement storage failed", ErrInternal)
 	}
 	return sess, nil
 }
@@ -1929,7 +1931,8 @@ func (s *Service) resolveCreateCollision(ctx context.Context, id session.Session
 	}
 	existing, err := s.cfg.Store.Load(ctx, id)
 	if err != nil {
-		return nil, false, fmt.Errorf("server: load session create winner: %w", err)
+		s.logDiscoveryError(ctx, "load session placement collision", err)
+		return nil, false, fmt.Errorf("%w: placement storage failed", ErrInternal)
 	}
 	winner, err := s.classifyCreateWinner(existing, owner, *request)
 	return winner, err == nil, err
@@ -1949,12 +1952,12 @@ func (s *Service) authorizeDebugTarget(ctx context.Context, id session.SessionID
 	return nil
 }
 
-func (s *Service) validateDebugCreate(ctx context.Context, workspace string, profile SessionProfile, specs []mcp.ServerConfig, opts createSessionOpts) error {
+func (s *Service) validateDebugCreate(ctx context.Context, profile SessionProfile, specs []mcp.ServerConfig, opts createSessionOpts) error {
 	if opts.debugTargetID == "" {
 		return nil
 	}
-	if profile != ProfileNoFS || workspace != "" {
-		return fmt.Errorf("%w: debug sessions require profile %q and an empty workspace", ErrInvalidArgument, ProfileNoFS)
+	if profile != ProfileNoFS {
+		return fmt.Errorf("%w: debug sessions require profile %q", ErrInvalidArgument, ProfileNoFS)
 	}
 	if opts.sourceSessionID != "" || opts.scheduled != nil || len(specs) > 0 {
 		return fmt.Errorf("%w: debug target cannot be combined with source, scheduled, or client MCP relationships", ErrInvalidArgument)
@@ -1984,17 +1987,17 @@ func (s *Service) bindRelatedIncarnations(ctx context.Context, opts *createSessi
 }
 
 //nolint:gocyclo // Creation intentionally keeps placement, ownership, limits, engine selection, and persistence in one transaction.
-func (s *Service) createSession(ctx context.Context, workspace string, mode session.PermissionMode, limits session.Limits, sel ProviderSelector, specs []mcp.ServerConfig, profile SessionProfile, opts createSessionOpts) (*session.Session, error) {
+func (s *Service) createSession(ctx context.Context, mode session.PermissionMode, limits session.Limits, sel ProviderSelector, specs []mcp.ServerConfig, profile SessionProfile, opts createSessionOpts) (*session.Session, error) {
 	if profile != ProfileDefault && profile != ProfileNoFS {
 		return nil, fmt.Errorf("%w: unknown session profile %q", ErrInvalidArgument, profile)
 	}
-	if workspace != "" && profile == ProfileNoFS {
-		return nil, fmt.Errorf("%w: no-fs placement cannot carry a workspace", ErrInvalidArgument)
-	}
-	if err := s.validateDebugCreate(ctx, workspace, profile, specs, opts); err != nil {
+	if err := s.validateDebugCreate(ctx, profile, specs, opts); err != nil {
 		return nil, err
 	}
-	var err error
+	var (
+		err       error
+		workspace string
+	)
 	if mode == "" {
 		mode = s.cfg.DefaultMode
 	}
@@ -2019,7 +2022,7 @@ func (s *Service) createSession(ctx context.Context, workspace string, mode sess
 			return nil, ErrInvalidPlacementBinding
 		}
 	} else {
-		workspace, placement, err = s.bindPlacementForCreate(ctx, workspace, profile, owner)
+		workspace, placement, err = s.bindPlacementForCreate(ctx, profile, owner)
 		if err != nil {
 			return nil, err
 		}
@@ -2451,14 +2454,14 @@ func (s *Service) ClientMCPFromWire(servers []mcp.ClientServer) (ClientMCPGrant,
 //
 // The per-session engine's MCP manager is torn down by CloseSession (editor
 // disconnect) or by the Service's Close.
-func (s *Service) CreateSessionWithMCP(ctx context.Context, workspace string, mode session.PermissionMode, limits session.Limits, specs []mcp.ServerConfig) (*session.Session, error) {
+func (s *Service) CreateSessionWithMCP(ctx context.Context, mode session.PermissionMode, limits session.Limits, specs []mcp.ServerConfig) (*session.Session, error) {
 	// Thin wrapper over the generalized create path with the ZERO provider
 	// selector and the DEFAULT profile: no specs uses the shared engine (today's
 	// behaviour), specs build a per-session engine. The zero selector leaves the
 	// per-session engine bound to the DEFAULT provider, matching the pre-S3 MCP
 	// path exactly. (ACP carries no profile in P0 — every ACP session is the
 	// default filesystem profile.)
-	return s.createSession(ctx, workspace, mode, limits, ProviderSelector{}, specs, ProfileDefault, createSessionOpts{})
+	return s.createSession(ctx, mode, limits, ProviderSelector{}, specs, ProfileDefault, createSessionOpts{})
 }
 
 // SetSessionEnvironment registers a per-session Environment OVERRIDE for id, so a
@@ -4306,7 +4309,17 @@ func (s *Service) engineAndEnvironmentFor(ctx context.Context, sess *session.Ses
 		}
 		se, hasEngine = promoted, true
 	}
-	if !hasEngine && s.needsRehydration(sess) {
+	var verifiedPlacement *PlacementBinding
+	placementNeedsEngine := false
+	if !hasEngine && !s.needsRehydration(sess) && sess.EnvironmentRef.Kind == session.EnvKindLocal && s.cfg.DefaultWorkspace != "" {
+		binding, err := s.ReattachPlacement(ctx, sess.EnvironmentRef)
+		if err != nil {
+			return nil, tool.Environment{}, err
+		}
+		verifiedPlacement = &binding
+		placementNeedsEngine = binding.Environment.Workspace().Root() != s.cfg.DefaultWorkspace
+	}
+	if !hasEngine && (s.needsRehydration(sess) || placementNeedsEngine) {
 		// RESTART REHYDRATION (issue #55, widened in the cloud-native Phase 1): a
 		// PERSISTED session that needed a PER-SESSION engine — a non-default
 		// provider/model selector, OR the no-fs profile — has its engine + (for no-fs)
@@ -4346,6 +4359,9 @@ func (s *Service) engineAndEnvironmentFor(ctx context.Context, sess *session.Ses
 	}
 	if !sess.EnvironmentRef.Valid() {
 		return nil, tool.Environment{}, ErrInvalidPlacementSelection
+	}
+	if verifiedPlacement != nil {
+		return engine, verifiedPlacement.Environment, nil
 	}
 	binding, rerr := s.ReattachPlacement(ctx, sess.EnvironmentRef)
 	if rerr != nil {

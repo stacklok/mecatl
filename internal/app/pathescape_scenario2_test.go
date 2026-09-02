@@ -133,7 +133,7 @@ func TestPathEscapePosture_Scenario2_YoloReadEscapeAllowed(t *testing.T) {
 		t.Fatalf("Build: %v", err)
 	}
 	defer built.Close()
-	sess, err := built.Service.CreateSession(context.Background(), f.workspace, session.ModeDefault, session.Limits{})
+	sess, err := built.Service.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -163,7 +163,7 @@ func TestPathEscapePosture_Scenario2_AutoReadEscapeAllowed(t *testing.T) {
 		t.Fatalf("Build: %v", err)
 	}
 	defer built.Close()
-	sess, err := built.Service.CreateSession(context.Background(), f.workspace, session.ModeDefault, session.Limits{})
+	sess, err := built.Service.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -194,7 +194,7 @@ func TestPathEscapePosture_Scenario2_ReadEscapeAuditParity(t *testing.T) {
 		t.Fatalf("Build: %v", err)
 	}
 	defer built.Close()
-	sess, err := built.Service.CreateSession(context.Background(), f.workspace, session.ModeDefault, session.Limits{})
+	sess, err := built.Service.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -237,7 +237,7 @@ func TestPathEscapePosture_Scenario2_StrictReadUnchanged(t *testing.T) {
 		t.Fatalf("Build: %v", err)
 	}
 	defer built.Close()
-	sess, err := built.Service.CreateSession(context.Background(), f.workspace, session.ModeDefault, session.Limits{})
+	sess, err := built.Service.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -301,7 +301,7 @@ func TestPathEscapePosture_Scenario2_ProcEnvironNotExposed(t *testing.T) {
 		t.Fatalf("Build: %v", err)
 	}
 	defer built.Close()
-	sess, err := built.Service.CreateSession(context.Background(), f.workspace, session.ModeDefault, session.Limits{})
+	sess, err := built.Service.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -355,7 +355,7 @@ func TestPathEscapePosture_Scenario2_NestedSymlinkEscapeRejected(t *testing.T) {
 		t.Fatalf("Build: %v", err)
 	}
 	defer built.Close()
-	sess, err := built.Service.CreateSession(context.Background(), f.workspace, session.ModeDefault, session.Limits{})
+	sess, err := built.Service.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -390,7 +390,7 @@ func TestPathEscapePosture_Scenario2_RestartRehydratesRelaxedWorkspace(t *testin
 	if err != nil {
 		t.Fatalf("Build #1: %v", err)
 	}
-	sess, err := built1.Service.CreateSession(context.Background(), f.workspace, session.ModeDefault, session.Limits{})
+	sess, err := built1.Service.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		built1.Close()
 		t.Fatalf("CreateSession: %v", err)

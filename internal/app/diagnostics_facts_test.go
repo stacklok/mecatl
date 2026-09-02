@@ -194,7 +194,7 @@ func TestBuildNarratesFamilyFactsExactlyOnceAcrossSessions(t *testing.T) {
 	// A non-zero selector forces a PER-SESSION engine — the factory invokes
 	// assembleCatalog a second time (narrate=false), which must add ZERO new
 	// family narration lines.
-	if _, err := built.Service.CreateSessionWithProvider(context.Background(), t.TempDir(),
+	if _, err := built.Service.CreateSessionWithProvider(context.Background(),
 		session.ModeDefault, session.Limits{}, server.ProviderSelector{ProviderID: providerMock}); err != nil {
 		t.Fatalf("CreateSessionWithProvider(selector): %v", err)
 	}

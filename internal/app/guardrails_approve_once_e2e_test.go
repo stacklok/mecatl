@@ -146,7 +146,7 @@ func TestGuardrailApproveOnceE2EInteractiveAllow(t *testing.T) {
 		t.Fatalf("Build: %v", err)
 	}
 	defer built.Close()
-	sess, err := built.Service.CreateSession(ctx, cfg.Workspace, session.ModeDefault, session.Limits{})
+	sess, err := built.Service.CreateSession(ctx, session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -197,7 +197,7 @@ func TestGuardrailApproveOnceE2EInteractiveDeny(t *testing.T) {
 		t.Fatalf("Build: %v", err)
 	}
 	defer built.Close()
-	sess, err := built.Service.CreateSession(ctx, cfg.Workspace, session.ModeDefault, session.Limits{})
+	sess, err := built.Service.CreateSession(ctx, session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -243,7 +243,7 @@ func TestGuardrailApproveOnceE2EHeadlessTerminalBlock(t *testing.T) {
 		t.Fatalf("Build: %v", err)
 	}
 	defer built.Close()
-	sess, err := built.Service.CreateSession(ctx, cfg.Workspace, session.ModeDefault, session.Limits{})
+	sess, err := built.Service.CreateSession(ctx, session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -280,7 +280,7 @@ func TestGuardrailApproveOnceE2EYoloAdvisory(t *testing.T) {
 		t.Fatalf("Build: %v", err)
 	}
 	defer built.Close()
-	sess, err := built.Service.CreateSession(ctx, cfg.Workspace, session.ModeDefault, session.Limits{})
+	sess, err := built.Service.CreateSession(ctx, session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}

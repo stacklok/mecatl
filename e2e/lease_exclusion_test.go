@@ -66,7 +66,7 @@ func leaseExclusionSpecs() {
 				}()
 
 				cliA := localA.Client()
-				sessionID, _, _, err := cliA.CreateSession(ctx, localA.Workspace(),
+				sessionID, _, _, err := cliA.CreateSession(ctx,
 					client.ModeFromString("default"),
 					client.ModelSelection{ProviderID: harness.ProviderID, ModelID: haikuLane})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred(), "create session on replica A")

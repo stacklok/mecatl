@@ -84,7 +84,7 @@ func (p *blockingRetryLLM) Stream(ctx context.Context, _ port.LLMRequest) (iter.
 func failedSession(t *testing.T, llm *mockllm.Provider, id string) (*server.Service, session.SessionID) {
 	t.Helper()
 	svc := newService(t, llm, nil)
-	sess, err := svc.CreateSessionWithProfile(context.Background(), "/ws", session.ModeDefault, session.Limits{}, server.ProviderSelector{}, server.ProfileDefault, server.WithSessionID(session.SessionID(id)))
+	sess, err := svc.CreateSessionWithProfile(context.Background(), session.ModeDefault, session.Limits{}, server.ProviderSelector{}, server.ProfileDefault, server.WithSessionID(session.SessionID(id)))
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -118,7 +118,7 @@ func TestRetryFailedRunEligibility(t *testing.T) {
 	}
 
 	svc := newService(t, mockllm.New(), nil)
-	idle, err := svc.CreateSessionWithProfile(context.Background(), "/ws", session.ModeDefault, session.Limits{}, server.ProviderSelector{}, server.ProfileDefault, server.WithSessionID("nonfailed"))
+	idle, err := svc.CreateSessionWithProfile(context.Background(), session.ModeDefault, session.Limits{}, server.ProviderSelector{}, server.ProfileDefault, server.WithSessionID("nonfailed"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -133,7 +133,7 @@ func TestRetryFailedRunEligibility(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	active, err := activeSvc.CreateSession(context.Background(), "/ws", session.ModeDefault, session.Limits{})
+	active, err := activeSvc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -152,7 +152,7 @@ func TestRetryFailedRunEligibility(t *testing.T) {
 	activeSvc.FinishRun(active.ID, activeRun)
 
 	childSvc := newService(t, mockllm.New(), nil)
-	child, err := childSvc.CreateSessionWithProfile(context.Background(), "/ws", session.ModeDefault, session.Limits{}, server.ProviderSelector{}, server.ProfileDefault, server.WithSessionID(agent.SubagentSessionPrefix+"child"))
+	child, err := childSvc.CreateSessionWithProfile(context.Background(), session.ModeDefault, session.Limits{}, server.ProviderSelector{}, server.ProfileDefault, server.WithSessionID(agent.SubagentSessionPrefix+"child"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -161,7 +161,7 @@ func TestRetryFailedRunEligibility(t *testing.T) {
 	}
 
 	scheduledSvc := newService(t, mockllm.New(), nil)
-	scheduled, err := scheduledSvc.CreateSessionWithProfile(context.Background(), "/ws", session.ModeDefault, session.Limits{}, server.ProviderSelector{}, server.ProfileDefault,
+	scheduled, err := scheduledSvc.CreateSessionWithProfile(context.Background(), session.ModeDefault, session.Limits{}, server.ProviderSelector{}, server.ProfileDefault,
 		server.WithSessionID("sched--retry"), server.WithScheduledRelationship("job", ""))
 	if err != nil {
 		t.Fatal(err)
@@ -189,7 +189,7 @@ func TestRetryFailedRunRehydratesPersistedSelector(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sess, err := svc1.CreateSessionWithProvider(ctx, "/ws", session.ModeDefault, session.Limits{}, selector)
+	sess, err := svc1.CreateSessionWithProvider(ctx, session.ModeDefault, session.Limits{}, selector)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -339,7 +339,7 @@ func TestGRPCRetryEmitsAndPersistsModelRetry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sess, err := svc.CreateSession(context.Background(), "/ws", session.ModeDefault, session.Limits{})
+	sess, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -451,7 +451,7 @@ func TestGRPCConverseRetrySupportsApprovalControl(t *testing.T) {
 		mockllm.TextTurn("approved retry"),
 	)
 	svc := newService(t, llm, nil, read)
-	sess, err := svc.CreateSessionWithProfile(context.Background(), "/ws", session.ModeDefault, session.Limits{}, server.ProviderSelector{}, server.ProfileDefault, server.WithSessionID("grpc-control-retry"))
+	sess, err := svc.CreateSessionWithProfile(context.Background(), session.ModeDefault, session.Limits{}, server.ProviderSelector{}, server.ProfileDefault, server.WithSessionID("grpc-control-retry"))
 	if err != nil {
 		t.Fatal(err)
 	}

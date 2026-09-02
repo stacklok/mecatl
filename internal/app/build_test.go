@@ -319,10 +319,10 @@ func TestBuildAcceptsCataloguedDefaultPair(t *testing.T) {
 		t.Fatalf("configured-default INFO emitted %d times, want exactly 1 (build-once fact)", n)
 	}
 
-	if _, err := built.Service.CreateSession(ctx, t.TempDir(), session.ModeDefault, defaultLimits()); err != nil {
+	if _, err := built.Service.CreateSession(ctx, session.ModeDefault, defaultLimits()); err != nil {
 		t.Fatalf("CreateSession(zero-selector): %v", err)
 	}
-	if _, err := built.Service.CreateSessionWithProvider(ctx, t.TempDir(), session.ModeDefault, defaultLimits(),
+	if _, err := built.Service.CreateSessionWithProvider(ctx, session.ModeDefault, defaultLimits(),
 		server.ProviderSelector{ProviderID: providerOpenRouter}); err != nil {
 		t.Fatalf("CreateSessionWithProvider(selector): %v", err)
 	}
@@ -366,7 +366,7 @@ func TestBuildAcceptsProviderOnlyDefault(t *testing.T) {
 		t.Fatalf("configured-default INFO emitted %d times, want exactly 1", n)
 	}
 
-	sess, err := built.Service.CreateSession(ctx, t.TempDir(), session.ModeDefault, defaultLimits())
+	sess, err := built.Service.CreateSession(ctx, session.ModeDefault, defaultLimits())
 	if err != nil {
 		t.Fatalf("CreateSession(zero-selector): %v", err)
 	}

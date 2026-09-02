@@ -232,7 +232,7 @@ func TestFailedStepRetryRunBalancesActiveRunMetric(t *testing.T) {
 	if err := sess.PrepareFailedStepRetry(); err != nil {
 		t.Fatal(err)
 	}
-	env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: "/ws"}, memfs.NewWorkspace("/ws"), nil)
+	env := tool.MustEnvironment(sess.EnvironmentRef, memfs.NewWorkspace("/ws"), nil)
 	run := eng.RetryFailedStep(context.Background(), sess, env)
 	for range run.Events() {
 	}

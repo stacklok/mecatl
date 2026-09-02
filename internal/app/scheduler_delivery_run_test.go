@@ -426,7 +426,7 @@ func newDeliveryTestEnv(t *testing.T, originTurns ...mockllm.Turn) *deliveryTest
 // produce a completed state (the standard pre-delivery state), and returns it.
 func (e *deliveryTestEnv) createOrigin(t *testing.T, prompt string) session.SessionID {
 	t.Helper()
-	sess, err := e.svc.CreateSession(context.Background(), e.workspace, session.ModeDefault, session.Limits{})
+	sess, err := e.svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -633,7 +633,7 @@ func TestFireDelivery_Scenario3_DeliveryFailureNeverFailsFire(t *testing.T) {
 	// The origin exists and is authorized; fail the queue operation itself so
 	// this test continues to cover an actionable delivery failure rather than an
 	// absent target (absence is deliberately silent at the ownership boundary).
-	origin, err := svc.CreateSession(context.Background(), t.TempDir(), session.ModeDefault, session.Limits{})
+	origin, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -1168,7 +1168,7 @@ func TestFireStarted_BusyOriginEnqueueOnly(t *testing.T) {
 		t.Fatalf("NewService: %v", err)
 	}
 	// Create an origin session and start a blocking run.
-	sess, err := svc.CreateSession(context.Background(), t.TempDir(), session.ModeDefault, session.Limits{})
+	sess, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}

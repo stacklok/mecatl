@@ -58,7 +58,7 @@ func TestADR_0280_BindRejectsRebindBetweenAuthorizationAndResolution(t *testing.
 	done := make(chan error, 1)
 	go func() {
 		_, bindErr := binder.Bind(context.Background(), PlacementBindRequest{
-			Selector:  SelectPlacementID("wt-opaque-7"),
+			Selector:  SelectWorktree("source", session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "source", Revision: "rev-1"}, "opaque-token"),
 			Operation: PlacementOperationCreate,
 			Scope:     "tenant-a",
 		})
@@ -81,66 +81,20 @@ func TestADR_0280_BindRejectsRebindBetweenAuthorizationAndResolution(t *testing.
 func TestInvariant_server_owned_placement_ids_fail_closed(t *testing.T) {
 	t.Parallel()
 
-	const availableID = "opaque-available"
-	var environmentConstructions, trustEvaluations, persistenceWrites, providerCalls int
-	var providerSelectors []PlacementSelector
-	notFound := func() (PlacementBinding, error) {
-		return PlacementBinding{}, ErrPlacementNotFound
-	}
-	provider := placementProviderFunc(func(_ context.Context, req PlacementBindRequest) (PlacementBinding, error) {
+	providerCalls := 0
+	binder, err := NewPlacementBinder(placementProviderFunc(func(context.Context, PlacementBindRequest) (PlacementBinding, error) {
 		providerCalls++
-		providerSelectors = append(providerSelectors, req.Selector)
-		if req.Selector.Kind != PlacementSelectorID || req.Selector.ID != availableID || req.Scope != "tenant-a" {
-			return notFound()
-		}
-		return PlacementBinding{}, ErrPlacementUnavailable
-	})
-	binder, err := NewPlacementBinder(provider)
+		return PlacementBinding{}, nil
+	}))
 	if err != nil {
-		t.Fatalf("NewPlacementBinder: %v", err)
+		t.Fatal(err)
 	}
-
-	tests := []struct {
-		name     string
-		selector PlacementSelector
-		scope    PlacementScope
-		want     error
-	}{
-		{name: "absent", selector: SelectPlacementID("absent"), scope: "tenant-a", want: ErrPlacementNotFound},
-		{name: "authorization-hidden", selector: SelectPlacementID("hidden"), scope: "tenant-a", want: ErrPlacementNotFound},
-		{name: "stale", selector: SelectPlacementID("stale"), scope: "tenant-a", want: ErrPlacementNotFound},
-		{name: "wrong scope", selector: SelectPlacementID(availableID), scope: "tenant-b", want: ErrPlacementNotFound},
-		{name: "unavailable", selector: SelectPlacementID(availableID), scope: "tenant-a", want: ErrPlacementUnavailable},
-		{name: "invalid selector", selector: PlacementSelector{Kind: PlacementSelectorID}, scope: "tenant-a", want: ErrInvalidPlacementSelection},
+	legacyID := PlacementSelector{Kind: "id", ID: "/private/legacy/path"}
+	if _, err := binder.Bind(context.Background(), PlacementBindRequest{Selector: legacyID, Operation: PlacementOperationCreate, Scope: "tenant-a"}); !errors.Is(err, ErrInvalidPlacementSelection) {
+		t.Fatalf("legacy placement ID = %v, want invalid selection", err)
 	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			binding, bindErr := binder.Bind(context.Background(), PlacementBindRequest{
-				Selector: tc.selector, Operation: PlacementOperationCreate, Scope: tc.scope,
-			})
-			if !errors.Is(bindErr, tc.want) {
-				t.Fatalf("Bind error = %v, want %v", bindErr, tc.want)
-			}
-			if binding.Environment.Workspace() != nil {
-				t.Fatal("failed Bind returned an environment")
-			}
-		})
-	}
-
-	if providerCalls != len(tests)-1 {
-		t.Fatalf("provider Bind calls = %d, want %d (invalid selector must stop at binder)", providerCalls, len(tests)-1)
-	}
-	for _, selector := range providerSelectors {
-		if selector.Kind == PlacementSelectorDefault {
-			t.Fatal("failed explicit ID silently fell back to the default selector")
-		}
-	}
-
-	// These steps represent the only post-bind consumers. Every rejected ID must
-	// leave them unreachable; a successful result is the sole capability to proceed.
-	if environmentConstructions != 0 || trustEvaluations != 0 || persistenceWrites != 0 {
-		t.Fatalf("rejected IDs caused side effects: environment=%d trust=%d persistence=%d",
-			environmentConstructions, trustEvaluations, persistenceWrites)
+	if providerCalls != 0 {
+		t.Fatalf("legacy placement ID reached provider %d time(s)", providerCalls)
 	}
 }
 

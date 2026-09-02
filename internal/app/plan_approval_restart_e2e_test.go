@@ -66,7 +66,7 @@ func TestPlanApprovalRestartE2E(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Build #1: %v", err)
 	}
-	sess, err := built1.Service.CreateSession(ctx, workspace, session.ModePlan, session.Limits{})
+	sess, err := built1.Service.CreateSession(ctx, session.ModePlan, session.Limits{})
 	if err != nil {
 		built1.Close()
 		t.Fatalf("CreateSession: %v", err)

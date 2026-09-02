@@ -32,7 +32,7 @@ func TestCreateTeamStampsComposedRootAuthority(t *testing.T) {
 			LLM: mockllm.New(mockllm.TextTurn("round complete"), mockllm.TextTurn("report")), Catalog: catalog, Policy: allow, Model: "mock",
 		})}
 	}
-	svc, err := newPlacementTestService(server.Config{
+	svc, err := newPlacementTeamTestService(server.Config{
 		Engine:        agent.NewEngine(agent.Deps{Catalog: tool.NewCatalog()}),
 		Store:         store,
 		Workspaces:    func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
@@ -42,7 +42,7 @@ func TestCreateTeamStampsComposedRootAuthority(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewService: %v", err)
 	}
-	teamID, _, err := svc.CreateTeam(context.Background(), "/workspace", "test", "complete work", 0, []agent.MemberSpec{{Name: "lead", Lead: true, InitialPrompt: "work"}})
+	teamID, _, err := svc.CreateTeam(context.Background(), "test", "complete work", 0, []agent.MemberSpec{{Name: "lead", Lead: true, InitialPrompt: "work"}})
 	if err != nil {
 		t.Fatalf("CreateTeam: %v", err)
 	}

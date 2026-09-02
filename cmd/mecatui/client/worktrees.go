@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"fmt"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -15,11 +16,26 @@ import (
 // renders purely from the structs and msgs below, and the mapping is exercised
 // offline against a fake client.
 
+// WorktreeSelector is opaque source-scoped authority issued by the server.
+// Its token cannot be read or fabricated outside this package.
+type WorktreeSelector struct{ token string }
+
+// NewWorktreeSelector validates and wraps an opaque server-issued selector.
+func NewWorktreeSelector(token string) (WorktreeSelector, error) {
+	if token == "" {
+		return WorktreeSelector{}, fmt.Errorf("worktree selector must not be empty")
+	}
+	return WorktreeSelector{token: token}, nil
+}
+
+// IsZero reports whether the selector is absent or invalid.
+func (s WorktreeSelector) IsZero() bool { return s.token == "" }
+
 // Worktree is one display-safe, server-authorized placement choice. Selector is
 // opaque authority scoped to the current source session; all other fields are
 // display metadata and must never be interpreted as paths.
 type Worktree struct {
-	Selector string
+	Selector WorktreeSelector
 	Kind     string
 	Label    string
 	Branch   string
@@ -50,7 +66,7 @@ func mapWorktrees(in []*mecatlv1.Worktree) []Worktree {
 	out := make([]Worktree, 0, len(in))
 	for _, w := range in {
 		out = append(out, Worktree{
-			Selector: w.GetSelector(),
+			Selector: WorktreeSelector{token: w.GetSelector()},
 			Kind:     w.GetKind(),
 			Label:    w.GetLabel(),
 			Branch:   w.GetBranch(),

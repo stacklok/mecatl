@@ -23,6 +23,42 @@ func TestInvariant_session_environment_identity_required(t *testing.T) {
 		_ = session.New("invalid", session.ModeDefault, session.EnvironmentRef{}, session.Limits{}, time.Unix(0, 0))
 	})
 
+	for _, entry := range []struct {
+		name string
+		run  func(*agent.Engine, *session.Session, tool.Environment) *agent.Run
+	}{
+		{name: "run", run: func(e *agent.Engine, s *session.Session, env tool.Environment) *agent.Run {
+			return e.Run(context.Background(), s, env, agent.RunRequest{Text: "hello"})
+		}},
+		{name: "retry failed step", run: func(e *agent.Engine, s *session.Session, env tool.Environment) *agent.Run {
+			return e.RetryFailedStep(context.Background(), s, env)
+		}},
+		{name: "resume approval", run: func(e *agent.Engine, s *session.Session, env tool.Environment) *agent.Run {
+			return e.ResumeApproval(context.Background(), s, env, "ask", session.VerdictAllowOnce)
+		}},
+	} {
+		t.Run(entry.name+" rejects mismatch before activity", func(t *testing.T) {
+			llm := mockllm.New(mockllm.TextTurn("provider ran"))
+			eng := agent.NewEngine(agent.Deps{LLM: llm, Catalog: tool.NewCatalog()})
+			ref := session.EnvironmentRef{Kind: session.EnvKindMem, ID: "placement", Revision: "v1"}
+			sess := session.New("environment-entry-all", session.ModeDefault, ref, session.Limits{}, time.Unix(0, 0))
+			env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: "other", Revision: "v1"}, memfs.NewWorkspace("/private/other"), nil)
+
+			var cause string
+			for ev := range entry.run(eng, sess, env).Events() {
+				if ev.Result != nil {
+					cause = ev.Result.Error
+				}
+			}
+			if llm.Calls() != 0 {
+				t.Fatalf("provider calls = %d, want 0", llm.Calls())
+			}
+			if !strings.Contains(cause, "environment identity mismatch") {
+				t.Fatalf("terminal cause = %q, want identity mismatch", cause)
+			}
+		})
+	}
+
 	t.Run("run requires an exact valid live environment before provider access", func(t *testing.T) {
 		validRef := session.EnvironmentRef{Kind: session.EnvKindMem, ID: "placement", Revision: "v1"}
 		tests := []struct {

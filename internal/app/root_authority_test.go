@@ -76,7 +76,7 @@ func TestADR_0233_AuthorityEvaluator_Scenario6_NonSpawnDerivationPointsAreExplic
 	if err != nil {
 		t.Fatalf("NewService: %v", err)
 	}
-	main, err := svc.CreateSession(context.Background(), "/workspace", session.ModeDefault, session.Limits{})
+	main, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -96,7 +96,7 @@ func TestADR_0233_AuthorityEvaluator_Scenario6_NonSpawnDerivationPointsAreExplic
 	if !bound || !forkAuthority.CapabilitySet.Contains(mainAuthority.CapabilitySet) || !mainAuthority.CapabilitySet.Contains(forkAuthority.CapabilitySet) || forkAuthority.Provenance != mainAuthority.Provenance {
 		t.Fatalf("fork authority = %+v bound=%t, want verbatim source authority %+v", forkAuthority, bound, mainAuthority)
 	}
-	scheduled, err := svc.CreateSessionWithProfile(context.Background(), "/workspace", session.ModeDefault, session.Limits{}, server.ProviderSelector{}, server.ProfileDefault,
+	scheduled, err := svc.CreateSessionWithProfile(context.Background(), session.ModeDefault, session.Limits{}, server.ProviderSelector{}, server.ProfileDefault,
 		server.WithScheduledRelationship("nightly", main.ID))
 	if err != nil {
 		t.Fatalf("CreateSessionWithProfile(scheduled): %v", err)

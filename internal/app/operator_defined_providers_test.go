@@ -298,7 +298,7 @@ func TestInvariant_custom_provider_matching_live_model_replaces_floor_metadata(t
 		t.Fatalf("listed models = %v, want one gateway/%s row with context limit %d", models, model, contextWindow)
 	}
 
-	selected, err := built.Service.CreateSessionWithProvider(context.Background(), workspace, session.ModeDefault, defaultLimits(),
+	selected, err := built.Service.CreateSessionWithProvider(context.Background(), session.ModeDefault, defaultLimits(),
 		serveradapter.ProviderSelector{ProviderID: "gateway", ModelID: model})
 	if err != nil {
 		t.Fatalf("CreateSessionWithProvider: %v", err)

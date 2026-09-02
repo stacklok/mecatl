@@ -102,7 +102,7 @@ func TestPathEscapePosture_Scenario3_YoloWriteEscapeAllowed(t *testing.T) {
 		t.Fatalf("Build: %v", err)
 	}
 	defer built.Close()
-	sess, err := built.Service.CreateSession(context.Background(), f.workspace, session.ModeDefault, session.Limits{})
+	sess, err := built.Service.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -160,7 +160,7 @@ func TestPathEscapePosture_Scenario3_AutoWriteEscapeAsks(t *testing.T) {
 			t.Fatalf("Build: %v", err)
 		}
 		defer built.Close()
-		sess, err := built.Service.CreateSession(context.Background(), f.workspace, session.ModeDefault, session.Limits{})
+		sess, err := built.Service.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 		if err != nil {
 			t.Fatalf("CreateSession: %v", err)
 		}
@@ -202,7 +202,7 @@ func TestPathEscapePosture_Scenario3_AutoWriteEscapeAsks(t *testing.T) {
 			t.Fatalf("Build: %v", err)
 		}
 		defer built.Close()
-		sess, err := built.Service.CreateSession(context.Background(), f.workspace, session.ModeDefault, session.Limits{})
+		sess, err := built.Service.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 		if err != nil {
 			t.Fatalf("CreateSession: %v", err)
 		}
@@ -347,7 +347,7 @@ func TestPathEscapePosture_Scenario3_EditLedgerOutOfRoot(t *testing.T) {
 		t.Fatalf("Build: %v", err)
 	}
 	defer built.Close()
-	sess, err := built.Service.CreateSession(context.Background(), f.workspace, session.ModeDefault, session.Limits{})
+	sess, err := built.Service.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -530,7 +530,7 @@ func TestPathEscapePosture_Scenario3_WriteEscapeMutateSerial(t *testing.T) {
 		t.Fatalf("Build: %v", err)
 	}
 	defer built.Close()
-	sess, err := built.Service.CreateSession(context.Background(), f.workspace, session.ModeDefault, session.Limits{})
+	sess, err := built.Service.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -609,7 +609,7 @@ func TestPathEscapePosture_Scenario3_WriteEscapeServedThroughOsRoot(t *testing.T
 		t.Fatalf("Build: %v", err)
 	}
 	defer built.Close()
-	sess, err := built.Service.CreateSession(context.Background(), f.workspace, session.ModeDefault, session.Limits{})
+	sess, err := built.Service.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}

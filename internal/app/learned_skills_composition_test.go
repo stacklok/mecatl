@@ -39,7 +39,7 @@ func TestBuildRestartHydratesCallerBoundLearnedSkillIntoListAndTool(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	sess, err := built1.Service.CreateSession(aliceCtx, workspace, session.ModeDefault, session.Limits{})
+	sess, err := built1.Service.CreateSession(aliceCtx, session.ModeDefault, session.Limits{})
 	if err != nil {
 		built1.Close()
 		t.Fatal(err)

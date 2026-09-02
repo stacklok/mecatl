@@ -88,7 +88,7 @@ func TestMCPOAuthHermeticAcceptance(t *testing.T) {
 			t.Fatal("first serving process Build failed")
 		}
 		defer builtA.Close()
-		warm, err := runAcceptanceTool(builtA, settings, "warm restore")
+		warm, err := runAcceptanceTool(builtA, "warm restore")
 		surfaces = append(surfaces, warm...)
 		collectError(&surfaces, err)
 		assertNoAcceptanceSecrets(t, surfaces, canaries)
@@ -123,7 +123,7 @@ func TestMCPOAuthHermeticAcceptance(t *testing.T) {
 			t.Fatal("refresh serving process Build failed")
 		}
 		defer builtB.Close()
-		refreshed, err := runAcceptanceTool(builtB, settings, "lazy refresh")
+		refreshed, err := runAcceptanceTool(builtB, "lazy refresh")
 		surfaces = append(surfaces, refreshed...)
 		collectError(&surfaces, err)
 		assertNoAcceptanceSecrets(t, surfaces, canaries)
@@ -156,7 +156,7 @@ func TestMCPOAuthHermeticAcceptance(t *testing.T) {
 			t.Fatal("restart serving process Build failed")
 		}
 		defer builtC.Close()
-		restarted, err := runAcceptanceTool(builtC, settings, "second restart")
+		restarted, err := runAcceptanceTool(builtC, "second restart")
 		surfaces = append(surfaces, restarted...)
 		collectError(&surfaces, err)
 		assertNoAcceptanceSecrets(t, surfaces, canaries)
@@ -191,7 +191,7 @@ func TestMCPOAuthHermeticAcceptance(t *testing.T) {
 			t.Fatal("successor refresh serving process Build failed")
 		}
 		defer builtD.Close()
-		successor, err := runAcceptanceTool(builtD, settings, "successor refresh")
+		successor, err := runAcceptanceTool(builtD, "successor refresh")
 		surfaces = append(surfaces, successor...)
 		collectError(&surfaces, err)
 		surfaces = append(surfaces, diagnosticSurfaces(diagD)...)
@@ -240,7 +240,7 @@ func TestMCPOAuthHermeticAcceptance(t *testing.T) {
 			t.Fatal("headless clean-store Build failed")
 		}
 		defer built.Close()
-		runSurfaces, runErr := runAcceptanceTool(built, settings, "headless")
+		runSurfaces, runErr := runAcceptanceTool(built, "headless")
 		surfaces = append(surfaces, runSurfaces...)
 		collectError(&surfaces, runErr)
 		surfaces = append(surfaces, diagnosticSurfaces(diag)...)
@@ -335,7 +335,7 @@ func TestMCPOAuthHermeticAcceptance(t *testing.T) {
 				t.Fatalf("%s Build failed", mode)
 			}
 			defer built.Close()
-			runSurfaces, runErr := runAcceptanceTool(built, settings, mode)
+			runSurfaces, runErr := runAcceptanceTool(built, mode)
 			surfaces = append(surfaces, runSurfaces...)
 			collectError(&surfaces, runErr)
 			surfaces = append(surfaces, diagnosticSurfaces(diag)...)
@@ -445,10 +445,10 @@ func buildAcceptanceMCPConfig(t *testing.T, settings string, lookup func(string)
 	})
 }
 
-func runAcceptanceTool(built *app.Built, settings, prompt string) ([]string, error) {
+func runAcceptanceTool(built *app.Built, prompt string) ([]string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	sess, err := built.Service.CreateSession(ctx, filepath.Dir(settings), session.ModeDefault, session.Limits{})
+	sess, err := built.Service.CreateSession(ctx, session.ModeDefault, session.Limits{})
 	if err != nil {
 		return nil, err
 	}

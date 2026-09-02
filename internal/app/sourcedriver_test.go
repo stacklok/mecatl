@@ -297,12 +297,7 @@ func TestRemoteSkillSourceBuildRunDefaultAndNoFS(t *testing.T) {
 			}
 			defer built.Close()
 
-			var sess *session.Session
-			if profile == server.ProfileNoFS {
-				sess, err = built.Service.CreateSessionWithProfile(ctx, "", session.ModeDefault, session.Limits{}, server.ProviderSelector{}, profile)
-			} else {
-				sess, err = built.Service.CreateSessionWithProfile(ctx, t.TempDir(), session.ModeDefault, session.Limits{}, server.ProviderSelector{}, profile)
-			}
+			sess, err := built.Service.CreateSessionWithProfile(ctx, session.ModeDefault, session.Limits{}, server.ProviderSelector{}, profile)
 			if err != nil {
 				t.Fatalf("CreateSessionWithProfile: %v", err)
 			}
@@ -830,7 +825,7 @@ func TestBuildCommandDriverProbeOnceAcrossSessionEngines(t *testing.T) {
 	// TWO per-session engines through the production factory (a non-zero
 	// provider selector forces the per-session path).
 	for i := range 2 {
-		if _, serr := built.Service.CreateSessionWithProvider(context.Background(), t.TempDir(),
+		if _, serr := built.Service.CreateSessionWithProvider(context.Background(),
 			session.ModeDefault, defaultLimits(), server.ProviderSelector{ProviderID: providerMock}); serr != nil {
 			t.Fatalf("CreateSessionWithProvider #%d: %v", i, serr)
 		}

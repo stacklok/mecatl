@@ -96,7 +96,7 @@ func TestSettleIfStaleSkipsGenuinelyLiveSession(t *testing.T) {
 	store := memstore.New()
 	svc := newSettleService(t, store)
 
-	sess, err := svc.CreateSession(ctx, "/ws", session.ModeDefault, session.Limits{})
+	sess, err := svc.CreateSession(ctx, session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}

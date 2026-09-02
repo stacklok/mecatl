@@ -560,7 +560,7 @@ func TestSessionManagementRenameDeleteAndOwnership(t *testing.T) {
 	svc, store := newSessionManagementService(t, true, nil, nil)
 	alice := session.WithPrincipal(context.Background(), &session.Principal{Issuer: "issuer", Subject: "alice", GrantType: session.GrantTypeUser})
 	bob := session.WithPrincipal(context.Background(), &session.Principal{Issuer: "issuer", Subject: "bob", GrantType: session.GrantTypeUser})
-	sess, err := svc.CreateSession(alice, "/ws", session.ModeDefault, session.Limits{})
+	sess, err := svc.CreateSession(alice, session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -628,7 +628,7 @@ func TestSessionManagementRejectsKindAwaitingAndLive(t *testing.T) {
 		t.Fatalf("DeleteSession(child) = %v, want ErrFailedPrecondition", err)
 	}
 
-	awaiting, err := svc.CreateSession(ctx, "/ws", session.ModeDefault, session.Limits{})
+	awaiting, err := svc.CreateSession(ctx, session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("Create awaiting: %v", err)
 	}
@@ -658,7 +658,7 @@ func TestSessionManagementRejectsKindAwaitingAndLive(t *testing.T) {
 		t.Fatalf("DeleteSession(awaiting) = %v, want ErrFailedPrecondition", err)
 	}
 
-	live, err := svc.CreateSession(ctx, "/ws", session.ModeDefault, session.Limits{})
+	live, err := svc.CreateSession(ctx, session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("Create live: %v", err)
 	}
@@ -684,7 +684,7 @@ func TestSessionManagementRejectsKindAwaitingAndLive(t *testing.T) {
 func TestSessionManagementRejectsLeaseHeldElsewhere(t *testing.T) {
 	lease := &fakeLease{acquireErr: port.ErrLeaseHeld}
 	svc, _ := newSessionManagementService(t, false, lease, nil)
-	sess, err := svc.CreateSession(context.Background(), "/ws", session.ModeDefault, session.Limits{})
+	sess, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -703,7 +703,7 @@ func TestRetentionDeleteRevalidatesCandidateAfterPlanning(t *testing.T) {
 	svc, store := newSessionManagementService(t, false, nil, nil)
 	ctx := context.Background()
 
-	running, err := svc.CreateSession(ctx, "/ws", session.ModeDefault, session.Limits{})
+	running, err := svc.CreateSession(ctx, session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -742,7 +742,7 @@ func TestSessionManagementGRPCAndHTTPParity(t *testing.T) {
 	httpServer := httptest.NewServer(server.NewHTTPHandler(svc))
 	defer httpServer.Close()
 
-	grpcSession, err := svc.CreateSession(ctx, "/grpc", session.ModeDefault, session.Limits{})
+	grpcSession, err := svc.CreateSession(ctx, session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("Create gRPC session: %v", err)
 	}
@@ -760,7 +760,7 @@ func TestSessionManagementGRPCAndHTTPParity(t *testing.T) {
 		t.Fatalf("gRPC idempotent delete = %v", err)
 	}
 
-	httpSession, err := svc.CreateSession(ctx, "/http", session.ModeDefault, session.Limits{})
+	httpSession, err := svc.CreateSession(ctx, session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("Create HTTP session: %v", err)
 	}
@@ -814,7 +814,7 @@ func TestSessionInventoryProjectsDeleteStorageCapability(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			svc := newSessionManagementServiceWithStore(t, tc.store, nil)
-			sess, err := svc.CreateSession(context.Background(), "/ws", session.ModeDefault, session.Limits{})
+			sess, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 			if err != nil {
 				t.Fatalf("CreateSession: %v", err)
 			}
@@ -836,7 +836,7 @@ func TestSessionManagementActionReasonsTransportParity(t *testing.T) {
 	store := &pagingOnlySessionStore{inner: memstore.New(memstore.WithNow(func() time.Time { return time.Unix(2_000, 0) }))}
 	svc := newSessionManagementServiceWithStore(t, store, nil)
 	ctx := context.Background()
-	main, err := svc.CreateSession(ctx, "/main", session.ModeDefault, session.Limits{})
+	main, err := svc.CreateSession(ctx, session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -910,7 +910,7 @@ func TestForkSessionUsesManagementGateAndScopedLease(t *testing.T) {
 	svc, store := newSessionManagementService(t, true, lease, nil)
 	alice := session.WithPrincipal(context.Background(), &session.Principal{Issuer: "issuer", Subject: "alice", GrantType: session.GrantTypeUser})
 	bob := session.WithPrincipal(context.Background(), &session.Principal{Issuer: "issuer", Subject: "bob", GrantType: session.GrantTypeUser})
-	src, err := svc.CreateSession(alice, "/ws", session.ModeDefault, session.Limits{})
+	src, err := svc.CreateSession(alice, session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -949,7 +949,7 @@ func TestSessionManagementMutationLeasesAreScoped(t *testing.T) {
 	lease := &fakeLease{}
 	svc, _ := newSessionManagementService(t, false, lease, nil)
 	ctx := context.Background()
-	rename, err := svc.CreateSession(ctx, "/ws", session.ModeDefault, session.Limits{})
+	rename, err := svc.CreateSession(ctx, session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("Create rename: %v", err)
 	}
@@ -960,7 +960,7 @@ func TestSessionManagementMutationLeasesAreScoped(t *testing.T) {
 		t.Fatalf("rename lease calls = acquire %d release %d, want 1/1", lease.acquires, lease.releaseCount())
 	}
 
-	preheld, err := svc.CreateSession(ctx, "/ws", session.ModeDefault, session.Limits{})
+	preheld, err := svc.CreateSession(ctx, session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("Create preheld: %v", err)
 	}
@@ -985,7 +985,7 @@ func TestSessionManagementFailedDeleteLeaseOwnership(t *testing.T) {
 		lease := &fakeLease{}
 		store := &failingDeleteSessionStore{Store: memstore.New(), err: errors.New("delete failed")}
 		svc := newSessionManagementServiceWithStore(t, store, lease)
-		sess, err := svc.CreateSession(context.Background(), "/ws", session.ModeDefault, session.Limits{})
+		sess, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 		if err != nil {
 			t.Fatalf("CreateSession: %v", err)
 		}
@@ -1001,7 +1001,7 @@ func TestSessionManagementFailedDeleteLeaseOwnership(t *testing.T) {
 		lease := &fakeLease{}
 		store := &failingDeleteSessionStore{Store: memstore.New(), err: errors.New("delete failed")}
 		svc := newSessionManagementServiceWithStore(t, store, lease)
-		sess, err := svc.CreateSession(context.Background(), "/ws", session.ModeDefault, session.Limits{})
+		sess, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 		if err != nil {
 			t.Fatalf("CreateSession: %v", err)
 		}

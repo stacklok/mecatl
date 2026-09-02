@@ -12,6 +12,14 @@ import (
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
 )
 
+func testWorktreeSelector(token string) client.WorktreeSelector {
+	selector, err := client.NewWorktreeSelector(token)
+	if err != nil {
+		panic(err)
+	}
+	return selector
+}
+
 type fakeWorktreeLister struct {
 	wts       []client.Worktree
 	err       error
@@ -41,7 +49,7 @@ func newWorktreesModel(t *testing.T, conv *fakeConv, fw *fakeWorktreeLister) Mod
 }
 
 func TestWorktreesDiscoveryIsSessionScoped(t *testing.T) {
-	fw := &fakeWorktreeLister{wts: []client.Worktree{{Selector: "opaque-1", Kind: "git", Label: "feature", Branch: "refs/heads/feature", Revision: "abcdef1"}}}
+	fw := &fakeWorktreeLister{wts: []client.Worktree{{Selector: testWorktreeSelector("opaque-1"), Kind: "git", Label: "feature", Branch: "refs/heads/feature", Revision: "abcdef1"}}}
 	m := newWorktreesModel(t, &fakeConv{}, fw)
 	mm, cmd := m.openWorktrees()
 	m = mm.(Model)
@@ -55,7 +63,7 @@ func TestWorktreesDiscoveryIsSessionScoped(t *testing.T) {
 }
 
 func TestWorktreeSwitchUsesOpaqueSelectorAndClosesAfterBinding(t *testing.T) {
-	wt := client.Worktree{Selector: "opaque-selector", Kind: "git", Label: "feature", Branch: "refs/heads/feature"}
+	wt := client.Worktree{Selector: testWorktreeSelector("opaque-selector"), Kind: "git", Label: "feature", Branch: "refs/heads/feature"}
 	conv := &fakeConv{}
 	m := newWorktreesModel(t, conv, &fakeWorktreeLister{wts: []client.Worktree{wt}})
 	m.conv.addUser("source transcript")
@@ -74,7 +82,7 @@ func TestWorktreeSwitchUsesOpaqueSelectorAndClosesAfterBinding(t *testing.T) {
 	}
 	mm, closeCmd := m.Update(ready)
 	m = mm.(Model)
-	if m.sessionID == "source-session" || m.activePlacement.Label != "opaque-selector" {
+	if m.sessionID == "source-session" || m.activePlacement.Label != "selected worktree" {
 		t.Fatalf("successor not bound from server metadata: id=%q placement=%+v", m.sessionID, m.activePlacement)
 	}
 	runBatchLeaves(closeCmd)
@@ -84,7 +92,7 @@ func TestWorktreeSwitchUsesOpaqueSelectorAndClosesAfterBinding(t *testing.T) {
 }
 
 func TestServerOwnedSessionPlacement_Scenario3_OwnershipRelistAndSafeSwitch(t *testing.T) {
-	wt := client.Worktree{Selector: "expired-after-restart", Label: "feature"}
+	wt := client.Worktree{Selector: testWorktreeSelector("expired-after-restart"), Label: "feature"}
 	conv := &fakeConv{createErr: errors.New("selector is stale")}
 	m := newWorktreesModel(t, conv, &fakeWorktreeLister{wts: []client.Worktree{wt}})
 	m.conv.addUser("keep me")
@@ -114,9 +122,9 @@ func TestServerOwnedSessionPlacement_Scenario3_OwnershipRelistAndSafeSwitch(t *t
 }
 
 func TestWorktreeFilterUsesDisplayMetadata(t *testing.T) {
-	wts := []client.Worktree{{Selector: "a", Label: "main"}, {Selector: "b", Label: "feature", Branch: "refs/heads/topic"}}
+	wts := []client.Worktree{{Selector: testWorktreeSelector("a"), Label: "main"}, {Selector: testWorktreeSelector("b"), Label: "feature", Branch: "refs/heads/topic"}}
 	got := filterWorktrees(wts, "topic")
-	if len(got) != 1 || got[0].Selector != "b" {
+	if len(got) != 1 || got[0].Selector.IsZero() {
 		t.Fatalf("filtered worktrees = %+v", got)
 	}
 }

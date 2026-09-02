@@ -44,11 +44,23 @@ func TestClearSessionUsesSourceAndNoSelector(t *testing.T) {
 func TestClearSessionSendsOnlyOpaqueWorktreeSelector(t *testing.T) {
 	fake := &fakePlacementClient{}
 	cl := newFakeClient(fake)
-	selector := "opaque-hmac-selector"
+	selector := WorktreeSelector{token: "opaque-hmac-selector"}
 	if _, _, err := cl.ClearSession(t.Context(), "source", &selector); err != nil {
 		t.Fatal(err)
 	}
-	if fake.clearReq.GetWorktreeSelector() != selector {
+	if fake.clearReq.GetWorktreeSelector() != selector.token {
 		t.Fatalf("selector = %q", fake.clearReq.GetWorktreeSelector())
+	}
+}
+
+func TestClearSessionRejectsPresentEmptySelectorBeforeRPC(t *testing.T) {
+	fake := &fakePlacementClient{}
+	cl := newFakeClient(fake)
+	empty := WorktreeSelector{}
+	if _, _, err := cl.ClearSession(t.Context(), "source", &empty); err == nil {
+		t.Fatal("present-empty selector was accepted")
+	}
+	if fake.clearReq != nil {
+		t.Fatal("present-empty selector reached RPC")
 	}
 }

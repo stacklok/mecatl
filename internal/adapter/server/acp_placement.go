@@ -36,7 +36,7 @@ func (s *Service) CreateACPSession(ctx context.Context, cwd string, mode session
 			return nil, err
 		}
 	}
-	created, err := s.createSession(ctx, "", mode, limits, ProviderSelector{}, specs, ProfileDefault, createSessionOpts{
+	created, err := s.createSession(ctx, mode, limits, ProviderSelector{}, specs, ProfileDefault, createSessionOpts{
 		id: id, idSet: true, placement: &binding,
 	})
 	if err != nil {

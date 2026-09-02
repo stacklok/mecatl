@@ -72,7 +72,7 @@ func (h *HarnessServer) CreateSession(ctx context.Context, req *mecatlv1.CreateS
 	if !grant.IsEmpty() {
 		opts = append(opts, WithClientMCP(grant))
 	}
-	sess, err := h.svc.CreateSessionWithProfile(ctx, "", modeFromProto(req.GetMode()), limitsFromProto(req.GetLimits()), sel, profile, opts...)
+	sess, err := h.svc.CreateSessionWithProfile(ctx, modeFromProto(req.GetMode()), limitsFromProto(req.GetLimits()), sel, profile, opts...)
 	if err != nil {
 		return nil, toStatus(err)
 	}

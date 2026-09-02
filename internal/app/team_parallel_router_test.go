@@ -338,7 +338,7 @@ func TestTeamRoutesMembersToCategoryModelsE2E(t *testing.T) {
 	}
 	defer built.Close()
 
-	sess, err := built.Service.CreateSession(ctx, workspace, session.ModeDefault, defaultLimits())
+	sess, err := built.Service.CreateSession(ctx, session.ModeDefault, defaultLimits())
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -387,7 +387,7 @@ func TestTeamRouterOffByteIdenticalE2E(t *testing.T) {
 	}
 	defer built.Close()
 
-	sess, err := built.Service.CreateSession(ctx, workspace, session.ModeDefault, defaultLimits())
+	sess, err := built.Service.CreateSession(ctx, session.ModeDefault, defaultLimits())
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -422,7 +422,7 @@ func TestParallelRoutesBranchesToCategoryModelsE2E(t *testing.T) {
 	}
 	defer built.Close()
 
-	sess, err := built.Service.CreateSession(ctx, workspace, session.ModeDefault, defaultLimits())
+	sess, err := built.Service.CreateSession(ctx, session.ModeDefault, defaultLimits())
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -520,7 +520,7 @@ func TestParallelRouterOffByteIdenticalE2E(t *testing.T) {
 	}
 	defer built.Close()
 
-	sess, err := built.Service.CreateSession(ctx, workspace, session.ModeDefault, defaultLimits())
+	sess, err := built.Service.CreateSession(ctx, session.ModeDefault, defaultLimits())
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}

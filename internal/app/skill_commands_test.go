@@ -314,7 +314,7 @@ func TestSkillCommandExpandsThroughEngineLoop(t *testing.T) {
 	}
 	defer built.Close()
 
-	sess, err := built.Service.CreateSession(context.Background(), t.TempDir(), session.ModeDefault, session.Limits{})
+	sess, err := built.Service.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}

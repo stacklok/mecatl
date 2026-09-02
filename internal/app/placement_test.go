@@ -116,7 +116,6 @@ func TestADR_0280_CompositionConfiguresProviderOwnedPlacements(t *testing.T) {
 		selectors := []server.PlacementSelector{
 			server.DefaultPlacement(),
 			server.NoFSPlacement(),
-			server.SelectPlacementID("opaque-id"),
 		}
 		for _, selector := range selectors {
 			if !selector.Valid() {
@@ -198,9 +197,9 @@ func TestADR_0280_CompositionConfiguresProviderOwnedPlacements(t *testing.T) {
 				t.Fatalf("startup Bind calls = %+v, want exactly one default Bind", provider.calls)
 			}
 
-			binding, err := built.Service.BindPlacement(context.Background(), server.SelectPlacementID(ref.ID), server.PlacementOperationCreate)
+			binding, err := built.Service.BindPlacement(context.Background(), server.DefaultPlacement(), server.PlacementOperationCreate)
 			if err != nil {
-				t.Fatalf("BindPlacement(id): %v", err)
+				t.Fatalf("BindPlacement(default): %v", err)
 			}
 			if binding.Ref != ref {
 				t.Fatalf("provider ref = %+v, want stable exact %+v", binding.Ref, ref)

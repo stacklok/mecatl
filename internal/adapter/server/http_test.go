@@ -19,7 +19,7 @@ import (
 
 func teamSource(t *testing.T, svc *server.Service) string {
 	t.Helper()
-	sess, err := svc.CreateSession(context.Background(), "", session.ModeDefault, session.Limits{})
+	sess, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession(team source): %v", err)
 	}

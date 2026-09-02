@@ -41,7 +41,7 @@ func TestSetSessionEnvironmentOverrideIsUsedVerbatim(t *testing.T) {
 	}
 
 	cwd := t.TempDir()
-	sess, err := svc.CreateSession(context.Background(), cwd, session.ModeDefault, session.Limits{})
+	sess, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}

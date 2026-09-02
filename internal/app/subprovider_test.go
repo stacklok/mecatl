@@ -305,7 +305,7 @@ func TestDefaultConfigPolicyEvaluatesWithoutPanic(t *testing.T) {
 	defer built.Close()
 	svc := built.Service
 
-	sess, err := svc.CreateSession(ctx, workspace, session.ModeDefault, defaultLimits())
+	sess, err := svc.CreateSession(ctx, session.ModeDefault, defaultLimits())
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -387,7 +387,7 @@ func TestSubproviderHalfAFullBuildE2E(t *testing.T) {
 	defer built.Close()
 	svc := built.Service
 
-	sess, err := svc.CreateSession(ctx, workspace, session.ModeDefault, defaultLimits())
+	sess, err := svc.CreateSession(ctx, session.ModeDefault, defaultLimits())
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -637,18 +637,18 @@ func TestHalfBSelectedSessionCapBounded(t *testing.T) {
 
 	// Cap is 1: a single selected session fills the one slot regardless of its 3
 	// per-def child engines; CloseSession frees it; a second create then succeeds.
-	sess, err := svc.CreateSessionWithProvider(context.Background(), t.TempDir(), session.ModeDefault, defaultLimits(),
+	sess, err := svc.CreateSessionWithProvider(context.Background(), session.ModeDefault, defaultLimits(),
 		server.ProviderSelector{ProviderID: providerOpenRouter})
 	if err != nil {
 		t.Fatalf("first selected create (with 3 per-def children): %v", err)
 	}
 	// A second selected session must hit the cap (proving the first counts as ONE).
-	if _, err := svc.CreateSessionWithProvider(context.Background(), t.TempDir(), session.ModeDefault, defaultLimits(),
+	if _, err := svc.CreateSessionWithProvider(context.Background(), session.ModeDefault, defaultLimits(),
 		server.ProviderSelector{ProviderID: providerOpenRouter}); err == nil {
 		t.Fatal("second selected create should hit MaxSessionEngines=1 (the first counts as ONE entry)")
 	}
 	svc.CloseSession(sess.ID)
-	if _, err := svc.CreateSessionWithProvider(context.Background(), t.TempDir(), session.ModeDefault, defaultLimits(),
+	if _, err := svc.CreateSessionWithProvider(context.Background(), session.ModeDefault, defaultLimits(),
 		server.ProviderSelector{ProviderID: providerOpenRouter}); err != nil {
 		t.Fatalf("after CloseSession the slot should free: %v", err)
 	}

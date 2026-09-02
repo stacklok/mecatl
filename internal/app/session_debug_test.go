@@ -193,8 +193,9 @@ func TestDebugSessionFactoryExactCatalogAndStablePrefix(t *testing.T) {
 	// the target-bound debug contract.
 	normalDeps := baseEngineDeps(cfg, reg, provider, store, nil, nil, nil, nil)
 	normalDeps.Catalog = tool.NewCatalog()
-	normal := session.New("normal", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/workspace", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(3, 0))
-	drainRun(agent.NewEngine(normalDeps).Run(context.Background(), normal, testEnvironment(nofs.New(), nil), agent.RunRequest{Text: "hello"}))
+	normalEnv := testEnvironment(nofs.New(), nil)
+	normal := session.New("normal", session.ModeDefault, normalEnv.Ref(), session.Limits{}, time.Unix(3, 0))
+	drainRun(agent.NewEngine(normalDeps).Run(context.Background(), normal, normalEnv, agent.RunRequest{Text: "hello"}))
 
 	mu.Lock()
 	defer mu.Unlock()
@@ -288,11 +289,11 @@ func TestDebugSessionRestartRehydratesBoundEngine(t *testing.T) {
 	svc1 := newService()
 	alice := session.WithPrincipal(ctx, &session.Principal{Issuer: "issuer", Subject: "alice", GrantType: session.GrantTypeUser})
 	bob := session.WithPrincipal(ctx, &session.Principal{Issuer: "issuer", Subject: "bob", GrantType: session.GrantTypeClientCredentials})
-	target, err := svc1.CreateSession(alice, "/target", session.ModeDefault, session.Limits{})
+	target, err := svc1.CreateSession(alice, session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	debug, err := svc1.CreateSessionWithProfile(bob, "", session.ModeDefault, session.Limits{}, server.ProviderSelector{}, server.ProfileNoFS, server.WithDebugTarget(target.ID))
+	debug, err := svc1.CreateSessionWithProfile(bob, session.ModeDefault, session.Limits{}, server.ProviderSelector{}, server.ProfileNoFS, server.WithDebugTarget(target.ID))
 	if err != nil {
 		t.Fatal(err)
 	}

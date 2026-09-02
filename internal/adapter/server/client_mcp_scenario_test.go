@@ -436,7 +436,7 @@ func TestSDKServerEnablers_Scenario9_ClientMCPRefusalIsWireScoped(t *testing.T) 
 	rec := &mcpSpecRecorder{}
 	svc := clientMCPService(t, false, rec, nil, mockllm.New(mockllm.TextTurn("ok")))
 
-	if _, err := svc.CreateSessionWithMCP(context.Background(), "/ws", session.ModeDefault, session.Limits{}, []mcp.ServerConfig{{
+	if _, err := svc.CreateSessionWithMCP(context.Background(), session.ModeDefault, session.Limits{}, []mcp.ServerConfig{{
 		Name: "notes", URL: "https://mcp.example/mcp", Timeout: mcp.ClientConnectTimeout,
 	}}); err != nil {
 		t.Fatalf("the in-process ACP entry was refused by a WIRE deployment policy: %v", err)
@@ -1090,7 +1090,7 @@ func TestSDKServerEnablers_Scenario9_PartialMountToleratedOnACPPath(t *testing.T
 	rec := &mcpSpecRecorder{}
 	svc := clientMCPServiceUnreachable(t, true, rec, nil, mockllm.New(mockllm.TextTurn("ok")), []string{"calendar"})
 
-	sess, err := svc.CreateSessionWithMCP(context.Background(), "/ws", session.ModeDefault, session.Limits{}, []mcp.ServerConfig{
+	sess, err := svc.CreateSessionWithMCP(context.Background(), session.ModeDefault, session.Limits{}, []mcp.ServerConfig{
 		{Name: "notes", URL: "https://notes.example/mcp", Timeout: mcp.ClientConnectTimeout},
 		{Name: "calendar", URL: "https://cal.example/mcp", Timeout: mcp.ClientConnectTimeout},
 	})
@@ -1413,7 +1413,7 @@ func TestSDKServerEnablers_Scenario9_ClientMCPGrantIsUnforgeable(t *testing.T) {
 	// nothing mounted (which would fail every create).
 	rec := &mcpSpecRecorder{}
 	svc := clientMCPService(t, false, rec, nil, mockllm.New(mockllm.TextTurn("ok")))
-	sess, err := svc.CreateSessionWithProfile(context.Background(), "/ws", session.ModeDefault,
+	sess, err := svc.CreateSessionWithProfile(context.Background(), session.ModeDefault,
 		session.Limits{}, server.ProviderSelector{}, server.ProfileDefault, server.WithClientMCP(forged))
 	if err != nil {
 		t.Fatalf("an empty grant must be a no-op, but the create failed: %v", err)

@@ -86,7 +86,7 @@ func verdictReplaySpecs() {
 				cli1 := local1.Client()
 				// ModeDefault: the Write tool resolves to Ask, so the run parks at the
 				// first Write and we can resolve it allow-always.
-				sessionID, _, _, err := cli1.CreateSession(ctx, local1.Workspace(),
+				sessionID, _, _, err := cli1.CreateSession(ctx,
 					client.ModeFromString("default"),
 					client.ModelSelection{ProviderID: harness.ProviderID, ModelID: haikuLane})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred(), "create session on local #1")

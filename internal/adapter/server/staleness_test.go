@@ -46,7 +46,7 @@ func TestSessionStaleWithinAgeWindowNeverStale(t *testing.T) {
 func TestSessionStaleNoLeaseIsLiveNotStale(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 	svc := newLeasedService(t, nil, blockingProvider{}, func() time.Time { return now })
-	sess, err := svc.CreateSession(context.Background(), "/ws", session.ModeDefault, session.Limits{})
+	sess, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -115,7 +115,7 @@ func TestSessionStaleLeaseSelfHeldIsStale(t *testing.T) {
 	lease := memlease.New(clk, time.Hour) // generous TTL: no expiry surprises mid-test
 	svc := newLeasedService(t, lease, mockllm.New(mockllm.TextTurn("ok")), func() time.Time { return now })
 
-	sess, err := svc.CreateSession(context.Background(), "/ws", session.ModeDefault, session.Limits{})
+	sess, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}

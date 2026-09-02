@@ -93,7 +93,7 @@ func TestCrossProcessLeaseExclusion(t *testing.T) {
 	}
 	defer built1.Close()
 
-	sess, err := built1.Service.CreateSession(ctx, workspace, session.ModeDefault, session.Limits{})
+	sess, err := built1.Service.CreateSession(ctx, session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -176,7 +176,7 @@ func TestCrossProcessLeaseExpiryTakeover(t *testing.T) {
 	}
 	defer built1.Close()
 
-	sess, err := built1.Service.CreateSession(ctx, workspace, session.ModeDefault, session.Limits{})
+	sess, err := built1.Service.CreateSession(ctx, session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -262,7 +262,7 @@ func TestCrossProcessDoubleExecutionPreventedByLease(t *testing.T) {
 		t.Fatalf("Build #1: %v", err)
 	}
 	defer built1.Close()
-	sess, err := built1.Service.CreateSession(ctx, workspace, session.ModeDefault, session.Limits{})
+	sess, err := built1.Service.CreateSession(ctx, session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -337,7 +337,7 @@ func TestBuildChildLeaseBlocksRemoteRetention(t *testing.T) {
 	}
 	defer built2.Close()
 
-	teamID, _, err := built1.Service.CreateTeam(ctx, workspace, "lease-test", "hold", 0,
+	teamID, _, err := built1.Service.CreateTeam(ctx, "lease-test", "hold", 0,
 		[]agent.MemberSpec{{Name: "lead", Lead: true, InitialPrompt: "wait"}})
 	if err != nil {
 		t.Fatalf("CreateTeam: %v", err)
@@ -424,7 +424,7 @@ func TestCompositionAutoWiresLocalStoreLease(t *testing.T) {
 	defer built.Close()
 
 	// The automatically wired local lease is uncontended, so the run proceeds.
-	sess, err := built.Service.CreateSession(ctx, workspace, session.ModeDefault, session.Limits{})
+	sess, err := built.Service.CreateSession(ctx, session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}

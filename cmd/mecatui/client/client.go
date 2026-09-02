@@ -404,9 +404,9 @@ func isUpperHex(b byte) bool {
 
 // CreateSessionWithCarryover forks sourceSessionID with model overrides. Server
 // inheritance supplies placement, mode, limits, and any omitted model fields.
-func (c *Client) CreateSessionWithCarryover(ctx context.Context, mode mecatlv1.PermissionMode, sel ModelSelection, sourceSessionID string) (string, Capabilities, ResolvedModel, error) {
+func (c *Client) CreateSessionWithCarryover(ctx context.Context, sel ModelSelection, sourceSessionID string) (string, Capabilities, ResolvedModel, error) {
 	if sourceSessionID == "" {
-		return c.CreateSession(ctx, mode, sel)
+		return "", Capabilities{}, ResolvedModel{}, fmt.Errorf("fork session: source session ID is required")
 	}
 	resp, err := c.svc.ForkSession(ctx, &mecatlv1.ForkSessionRequest{
 		SourceSessionId: sourceSessionID, ProviderId: sel.ProviderID, ModelId: sel.ModelID, ReasoningEffort: sel.ReasoningEffort,
@@ -436,8 +436,15 @@ func (c *Client) createSession(ctx context.Context, req *mecatlv1.CreateSessionR
 // source placement; a non-nil selector must be one returned by ListWorktrees for
 // this source session. The successor is fetched before return so callers bind
 // only server-authored metadata.
-func (c *Client) ClearSession(ctx context.Context, sourceID string, selector *string) (string, SessionSnapshot, error) {
-	resp, err := c.svc.ClearSession(ctx, &mecatlv1.ClearSessionRequest{SourceSessionId: sourceID, WorktreeSelector: selector})
+func (c *Client) ClearSession(ctx context.Context, sourceID string, selector *WorktreeSelector) (string, SessionSnapshot, error) {
+	var token *string
+	if selector != nil {
+		if selector.IsZero() {
+			return "", SessionSnapshot{}, fmt.Errorf("clear session: worktree selector must not be empty")
+		}
+		token = &selector.token
+	}
+	resp, err := c.svc.ClearSession(ctx, &mecatlv1.ClearSessionRequest{SourceSessionId: sourceID, WorktreeSelector: token})
 	if err != nil {
 		return "", SessionSnapshot{}, fmt.Errorf("clear session: %w", err)
 	}

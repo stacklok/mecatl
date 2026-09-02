@@ -166,7 +166,7 @@ func (m Model) onWorktreesConfirmKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, b
 // only the opaque selector issued for the current session. The old session and
 // transcript stay selected until the server has created and returned the target.
 func (m Model) switchToWorktree(wt client.Worktree) (tea.Model, tea.Cmd, bool) {
-	if m.sessionID == "" || wt.Selector == "" {
+	if m.sessionID == "" || wt.Selector.IsZero() {
 		m.worktrees.view = worktreesPanel
 		m.worktrees.err = errors.New("worktree choice is stale; relist and try again")
 		return m, nil, true

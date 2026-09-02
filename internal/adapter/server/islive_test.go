@@ -28,7 +28,7 @@ func TestServiceIsLiveTracksRunRegistry(t *testing.T) {
 	if svc.IsLive("never-seen") {
 		t.Error("IsLive(unknown id) = true, want false")
 	}
-	sess, err := svc.CreateSession(ctx, "/ws", session.ModeDefault, session.Limits{})
+	sess, err := svc.CreateSession(ctx, session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}

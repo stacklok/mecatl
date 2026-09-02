@@ -148,7 +148,7 @@ func TestToolhiveSole_ProbeDown_HealedDefaultReachesZeroSelectorSession(t *testi
 
 	// Pre-heal: a zero-selector session's resolved model is empty (the
 	// R1.4-broken state the review flagged).
-	preSess, err := built.Service.CreateSession(ctx, workspace, session.ModeDefault, session.Limits{})
+	preSess, err := built.Service.CreateSession(ctx, session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession (pre-heal): %v", err)
 	}
@@ -168,7 +168,7 @@ func TestToolhiveSole_ProbeDown_HealedDefaultReachesZeroSelectorSession(t *testi
 	// A FRESH zero-selector session, created AFTER the heal, must resolve to
 	// the healed model — proving the heal reaches session creation, not just
 	// the registry accessor / picker.
-	postSess, err := built.Service.CreateSession(ctx, workspace, session.ModeDefault, session.Limits{})
+	postSess, err := built.Service.CreateSession(ctx, session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession (post-heal): %v", err)
 	}

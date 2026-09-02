@@ -341,7 +341,7 @@ func TestFireDelivery_Scenario6_TransportProjectionParity(t *testing.T) {
 func TestCallerSeparation_Scenario3_LiveSubscriptionIsOwnerCheckedOverGRPC(t *testing.T) {
 	svc := newLiveSubscriptionServiceOwnershipEnforced(t)
 	aliceCtx := session.WithPrincipal(context.Background(), &session.Principal{Issuer: "https://idp.example", Subject: "alice", GrantType: session.GrantTypeUser})
-	sess, err := svc.CreateSessionWithProfile(aliceCtx, "/tmp/live-sub-owner-test", session.ModeDefault, session.Limits{},
+	sess, err := svc.CreateSessionWithProfile(aliceCtx, session.ModeDefault, session.Limits{},
 		server.ProviderSelector{}, server.ProfileDefault)
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
@@ -506,7 +506,7 @@ func warmupLiveConn(t *testing.T, cl mecatlv1.HarnessServiceClient, id session.S
 // completed so a delivery run can deliver into it.
 func createLiveSubscriptionOrigin(t *testing.T, svc *server.Service) session.SessionID {
 	t.Helper()
-	sess, err := svc.CreateSessionWithProfile(context.Background(), "/tmp/live-sub-test", session.ModeDefault, session.Limits{},
+	sess, err := svc.CreateSessionWithProfile(context.Background(), session.ModeDefault, session.Limits{},
 		server.ProviderSelector{}, server.ProfileDefault)
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)

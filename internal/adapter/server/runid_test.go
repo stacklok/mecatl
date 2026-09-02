@@ -242,7 +242,7 @@ func TestSDKServerEnablers_Scenario4_PlanResolutionSpansTwoRunIDs(t *testing.T) 
 	)
 	svc := planApprovalService(t, llm, allowRules())
 
-	sess, err := svc.CreateSession(context.Background(), "/ws", session.ModePlan, session.Limits{})
+	sess, err := svc.CreateSession(context.Background(), session.ModePlan, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}

@@ -42,7 +42,7 @@ func TestCloseCancelsInFlightRun(t *testing.T) {
 	}
 	// Do NOT call svc.Close in Cleanup — the test calls it explicitly.
 
-	sess, err := svc.CreateSession(context.Background(), "/ws", session.ModeDefault, session.Limits{})
+	sess, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -136,7 +136,7 @@ func TestCloseEngineTimeoutBound(t *testing.T) {
 
 	// An explicit selector requires a per-session engine without relying on
 	// client-selected workspace placement.
-	sess, err := svc.CreateSessionWithProvider(context.Background(), "", session.ModeDefault, session.Limits{}, server.ProviderSelector{ProviderID: "test"})
+	sess, err := svc.CreateSessionWithProvider(context.Background(), session.ModeDefault, session.Limits{}, server.ProviderSelector{ProviderID: "test"})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}

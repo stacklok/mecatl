@@ -207,7 +207,7 @@ func TestTelemetryMetricsAddrServesPrometheus(t *testing.T) {
 
 	// Drive a run so the instruments record data before scraping. mecak8s is a
 	// file-less deployment (ADR 0237), so the session carries no workspace.
-	sess, err := built.Service.CreateSession(context.Background(), "", session.ModeDefault, session.Limits{})
+	sess, err := built.Service.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -319,7 +319,7 @@ func TestTelemetryPushesRunMetricsOnExit(t *testing.T) {
 
 	// Drive a run so the instruments record data before the SIGTERM flush. mecak8s
 	// is a file-less deployment (ADR 0237), so the session carries no workspace.
-	sess, err := built.Service.CreateSession(context.Background(), "", session.ModeDefault, session.Limits{})
+	sess, err := built.Service.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}

@@ -442,7 +442,7 @@ func TestServiceCancelChildFallbacks(t *testing.T) {
 	if err := svc.CancelChild(context.Background(), "nope", "subagent-x"); !errors.Is(err, server.ErrNotFound) {
 		t.Fatalf("unknown session: got %v, want ErrNotFound", err)
 	}
-	sess, err := svc.CreateSession(context.Background(), "/ws", session.ModeDefault, session.Limits{})
+	sess, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}

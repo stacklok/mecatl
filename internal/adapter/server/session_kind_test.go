@@ -23,7 +23,7 @@ func TestADR_0108_PublicCreateCannotForgeKind(t *testing.T) {
 	ctx := context.Background()
 	svc, _ := newMCPServiceStore(t, "ok", nil)
 
-	created, err := svc.CreateSession(ctx, "/ws", session.ModeDefault, session.Limits{})
+	created, err := svc.CreateSession(ctx, session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -41,7 +41,7 @@ func TestSessionContinuityUX_Scenario1_PeerRebindsRemainMain(t *testing.T) {
 	ctx := context.Background()
 	svc, store := newMCPServiceStore(t, "ok", carryoverFactory("ok", nil))
 
-	source, err := svc.CreateSession(ctx, "/ws", session.ModeDefault, session.Limits{})
+	source, err := svc.CreateSession(ctx, session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession source: %v", err)
 	}
@@ -66,7 +66,7 @@ func TestSessionContinuityUX_Scenario1_PeerRebindsRemainMain(t *testing.T) {
 	}
 	assertMainWithoutLineage(t, forked)
 
-	carried, err := svc.CreateSessionWithProfile(ctx, "/ws", session.ModeDefault, session.Limits{}, server.ProviderSelector{}, server.ProfileDefault, server.WithSourceSession(source.ID))
+	carried, err := svc.CreateSessionWithProfile(ctx, session.ModeDefault, session.Limits{}, server.ProviderSelector{}, server.ProfileDefault, server.WithSourceSession(source.ID))
 	if err != nil {
 		t.Fatalf("CreateSessionWithProfile carryover: %v", err)
 	}

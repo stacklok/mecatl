@@ -974,22 +974,31 @@ func (r *Run) unregisterChildAsk(askID string) bool {
 	return r.childAsks != nil && r.childAsks.unregister(askID)
 }
 
-// Run is the single normal entry point: it starts processing req.Text and/or
-// req.Parts against sess in a background goroutine and returns immediately with a Run
-// handle. The loop runs until it produces a terminal result Event, then closes the
-// Events channel. ws is the session-scoped workspace tools execute against.
-//
-// req carries the user prompt (text and/or non-text media parts) plus the run-scoped
-// overrides (a tighten-only token ceiling and run-scoped extra tools). The zero value of
-// the override fields is the legacy run (no override, no extras). For a text-only prompt
-// set only req.Text; for a multimodal prompt set req.Parts (and req.Text, which may be
-// empty). Command expansion and the UserPromptSubmit hook operate on the TEXT only; the
-// media parts pass through untouched and are recorded verbatim on the user message.
+// validateRunEnvironment enforces exact durable/live placement identity before
+// any provider or tool activity.
+func validateRunEnvironment(sess *session.Session, env tool.Environment) error {
+	ref := env.Ref()
+	if !sess.EnvironmentRef.Valid() || !ref.Valid() || sess.EnvironmentRef != ref {
+		return errors.New("agent: environment identity mismatch")
+	}
+	return nil
+}
+
+func (e *Engine) prepareRunEnvironment(ctx context.Context, r *Run, sess *session.Session, env tool.Environment) bool {
+	if err := validateRunEnvironment(sess, env); err != nil {
+		e.emit(r, session.Event{Type: session.EvSessionInit})
+		e.terminate(ctx, r, sess, session.StopError, "", session.Usage{}, err, false)
+		return false
+	}
+	r.workspace = env.Workspace().Root()
+	return true
+}
+
+// Run starts processing req against sess with the exact supplied environment and
+// returns immediately with a handle to the background run.
 func (e *Engine) Run(ctx context.Context, sess *session.Session, env tool.Environment, req RunRequest) *Run {
-	return e.startRun(ctx, sess, req, env.Workspace().Root(), func(ctx context.Context, r *Run) {
-		ref := env.Ref()
-		if !sess.EnvironmentRef.Valid() || !ref.Valid() || sess.EnvironmentRef != ref {
-			e.terminate(ctx, r, sess, session.StopError, "", session.Usage{}, errors.New("agent: environment identity mismatch"), false)
+	return e.startRun(ctx, sess, req, "", func(ctx context.Context, r *Run) {
+		if !e.prepareRunEnvironment(ctx, r, sess, env) {
 			return
 		}
 		e.drive(ctx, r, sess, env, req.Text, req.Parts)
@@ -1001,7 +1010,10 @@ func (e *Engine) Run(ctx context.Context, sess *session.Session, env tool.Enviro
 // instructions and system prompt inputs are re-resolved by the normal request builder.
 // sess must carry durable failed-step retry intent prepared by the host.
 func (e *Engine) RetryFailedStep(ctx context.Context, sess *session.Session, env tool.Environment) *Run {
-	return e.startRun(ctx, sess, RunRequest{}, env.Workspace().Root(), func(ctx context.Context, r *Run) {
+	return e.startRun(ctx, sess, RunRequest{}, "", func(ctx context.Context, r *Run) {
+		if !e.prepareRunEnvironment(ctx, r, sess, env) {
+			return
+		}
 		e.emit(r, session.Event{Type: session.EvSessionInit})
 		disposition, progress, pending := sess.FailedStepRetryPending()
 		if !pending {
@@ -1055,7 +1067,10 @@ func (e *Engine) ResumeApproval(ctx context.Context, sess *session.Session, env 
 	// never read the id off the session: a reused session still carries the id of
 	// the run that just ended, and inheriting it would silently attribute a brand
 	// new run's events to the previous one.
-	return e.startRun(ctx, sess, RunRequest{RunID: sess.RunID()}, env.Workspace().Root(), func(ctx context.Context, r *Run) {
+	return e.startRun(ctx, sess, RunRequest{RunID: sess.RunID()}, "", func(ctx context.Context, r *Run) {
+		if !e.prepareRunEnvironment(ctx, r, sess, env) {
+			return
+		}
 		e.driveFromAwaiting(ctx, r, sess, env, askID, verdict)
 	})
 }

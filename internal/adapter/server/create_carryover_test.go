@@ -108,7 +108,7 @@ func TestOpenAICodexCarryoverReplayIDs(t *testing.T) {
 			{ID: "c1", Name: "Read", Args: json.RawMessage(`{"path":"f.go"}`), ItemID: "fc_item_1"},
 			{ID: "c2", Name: "Grep", Args: json.RawMessage(`{"pattern":"needle"}`), ItemID: "fc_item_2"},
 		})
-		created, err := svc.CreateSessionWithProfile(ctx, "/ws/codex-carryover", session.ModeDefault, session.Limits{}, server.ProviderSelector{ProviderID: dstProvider, ModelID: "gpt-5"}, server.ProfileDefault, server.WithSourceSession(srcID))
+		created, err := svc.CreateSessionWithProfile(ctx, session.ModeDefault, session.Limits{}, server.ProviderSelector{ProviderID: dstProvider, ModelID: "gpt-5"}, server.ProfileDefault, server.WithSourceSession(srcID))
 		if err != nil {
 			t.Fatalf("carryover %s -> %s: %v", srcProvider, dstProvider, err)
 		}
@@ -206,7 +206,7 @@ func TestCarryoverSeedsHistory(t *testing.T) {
 	// Reset the factory recorder so the next call is unambiguously the new
 	// session's rehydration.
 	seen.Store(server.ProviderSelector{})
-	newSess, err := svc.CreateSessionWithProfile(ctx, "/work/carry-new", session.ModeAccept, session.Limits{MaxTurns: 7}, srcSel, server.ProfileDefault, server.WithSourceSession("src-blobs"))
+	newSess, err := svc.CreateSessionWithProfile(ctx, session.ModeAccept, session.Limits{MaxTurns: 7}, srcSel, server.ProfileDefault, server.WithSourceSession("src-blobs"))
 	if err != nil {
 		t.Fatalf("CreateSessionWithProfile WithSourceSession: %v", err)
 	}
@@ -366,7 +366,7 @@ func TestCarryoverCrossProviderStripsBlobs(t *testing.T) {
 	// is exercised — the OpenAI-synthesis path has its own dedicated test.
 	newSel := server.ProviderSelector{ProviderID: "anthropic", ModelID: "claude-3-5-sonnet"}
 	seen.Store(server.ProviderSelector{})
-	newSess, err := svc.CreateSessionWithProfile(ctx, "/work/carry-cross", session.ModeAccept, session.Limits{MaxTurns: 7}, newSel, server.ProfileDefault, server.WithSourceSession("src-blobs-cross"))
+	newSess, err := svc.CreateSessionWithProfile(ctx, session.ModeAccept, session.Limits{MaxTurns: 7}, newSel, server.ProfileDefault, server.WithSourceSession("src-blobs-cross"))
 	if err != nil {
 		t.Fatalf("cross-provider carryover: err = %v, want nil (carryover is always allowed)", err)
 	}
@@ -524,7 +524,7 @@ func TestCarryoverCrossProviderToOpenAISynthesizesItemIDs(t *testing.T) {
 
 	newSel := server.ProviderSelector{ProviderID: "openai", ModelID: "gpt-4o"}
 	seen.Store(server.ProviderSelector{})
-	newSess, err := svc.CreateSessionWithProfile(ctx, "/work/carry-openai", session.ModeAccept, session.Limits{MaxTurns: 7}, newSel, server.ProfileDefault, server.WithSourceSession("src-blobs-openai"))
+	newSess, err := svc.CreateSessionWithProfile(ctx, session.ModeAccept, session.Limits{MaxTurns: 7}, newSel, server.ProfileDefault, server.WithSourceSession("src-blobs-openai"))
 	if err != nil {
 		t.Fatalf("cross-provider carryover to openai: err = %v, want nil", err)
 	}
@@ -618,7 +618,7 @@ func TestCarryoverCrossProviderToOpenAISynthesizesItemIDs(t *testing.T) {
 
 	// DETERMINISM: carrying the SAME source again yields the SAME ItemIDs.
 	seen.Store(server.ProviderSelector{})
-	sess2, err := svc.CreateSessionWithProfile(ctx, "/work/carry-openai-2", session.ModeAccept, session.Limits{MaxTurns: 7}, newSel, server.ProfileDefault, server.WithSourceSession("src-blobs-openai"))
+	sess2, err := svc.CreateSessionWithProfile(ctx, session.ModeAccept, session.Limits{MaxTurns: 7}, newSel, server.ProfileDefault, server.WithSourceSession("src-blobs-openai"))
 	if err != nil {
 		t.Fatalf("second cross-provider carryover to openai: err = %v, want nil", err)
 	}
@@ -675,7 +675,7 @@ func TestCarryoverBothDefaultProvider(t *testing.T) {
 		t.Fatalf("new service: %v", err)
 	}
 
-	src, err := svc.CreateSession(ctx, "/ws/default-src", session.ModeDefault, session.Limits{})
+	src, err := svc.CreateSession(ctx, session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -685,7 +685,7 @@ func TestCarryoverBothDefaultProvider(t *testing.T) {
 		t.Fatalf("source has no history to carry over")
 	}
 
-	newSess, err := svc.CreateSessionWithProfile(ctx, "/ws/default-new", session.ModeDefault, session.Limits{}, server.ProviderSelector{}, server.ProfileDefault, server.WithSourceSession(src.ID))
+	newSess, err := svc.CreateSessionWithProfile(ctx, session.ModeDefault, session.Limits{}, server.ProviderSelector{}, server.ProfileDefault, server.WithSourceSession(src.ID))
 	if err != nil {
 		t.Fatalf("CreateSessionWithProfile WithSourceSession (both default): %v", err)
 	}
@@ -711,7 +711,7 @@ func TestCarryoverRejectsRunningOrAwaitingSource(t *testing.T) {
 	ctx := context.Background()
 	svc, store := newMCPServiceStore(t, "shared", nil)
 
-	sess, err := svc.CreateSession(ctx, "/ws", session.ModeDefault, session.Limits{})
+	sess, err := svc.CreateSession(ctx, session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -728,7 +728,7 @@ func TestCarryoverRejectsRunningOrAwaitingSource(t *testing.T) {
 		t.Fatalf("Save running: %v", err)
 	}
 
-	_, err = svc.CreateSessionWithProfile(ctx, "/ws/new", session.ModeDefault, session.Limits{}, server.ProviderSelector{}, server.ProfileDefault, server.WithSourceSession(sess.ID))
+	_, err = svc.CreateSessionWithProfile(ctx, session.ModeDefault, session.Limits{}, server.ProviderSelector{}, server.ProfileDefault, server.WithSourceSession(sess.ID))
 	if !errors.Is(err, server.ErrFailedPrecondition) {
 		t.Fatalf("carryover on a running source: err = %v, want ErrFailedPrecondition", err)
 	}
@@ -745,7 +745,7 @@ func TestCarryoverRejectsAwaitingSource(t *testing.T) {
 	ctx := context.Background()
 	svc, store := newMCPServiceStore(t, "shared", nil)
 
-	sess, err := svc.CreateSession(ctx, "/ws", session.ModeDefault, session.Limits{})
+	sess, err := svc.CreateSession(ctx, session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -773,7 +773,7 @@ func TestCarryoverRejectsAwaitingSource(t *testing.T) {
 		t.Fatalf("Save awaiting: %v", err)
 	}
 
-	_, err = svc.CreateSessionWithProfile(ctx, "/ws/new", session.ModeDefault, session.Limits{}, server.ProviderSelector{}, server.ProfileDefault, server.WithSourceSession(sess.ID))
+	_, err = svc.CreateSessionWithProfile(ctx, session.ModeDefault, session.Limits{}, server.ProviderSelector{}, server.ProfileDefault, server.WithSourceSession(sess.ID))
 	if !errors.Is(err, server.ErrFailedPrecondition) {
 		t.Fatalf("carryover on an awaiting source: err = %v, want ErrFailedPrecondition", err)
 	}
@@ -785,7 +785,7 @@ func TestCarryoverMissingSource(t *testing.T) {
 	ctx := context.Background()
 	svc, _ := newMCPServiceStore(t, "shared", nil)
 
-	_, err := svc.CreateSessionWithProfile(ctx, "/ws/new", session.ModeDefault, session.Limits{}, server.ProviderSelector{}, server.ProfileDefault, server.WithSourceSession("no-such-session"))
+	_, err := svc.CreateSessionWithProfile(ctx, session.ModeDefault, session.Limits{}, server.ProviderSelector{}, server.ProfileDefault, server.WithSourceSession("no-such-session"))
 	if !errors.Is(err, server.ErrNotFound) {
 		t.Fatalf("carryover on a missing source: err = %v, want ErrNotFound", err)
 	}

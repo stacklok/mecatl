@@ -201,7 +201,7 @@ func TestNoFSSessionUsesWorkspaceOverride(t *testing.T) {
 		t.Fatalf("NewService: %v", err)
 	}
 
-	sess, err := svc.CreateSessionWithProfile(context.Background(), "", session.ModeDefault, session.Limits{},
+	sess, err := svc.CreateSessionWithProfile(context.Background(), session.ModeDefault, session.Limits{},
 		server.ProviderSelector{}, server.ProfileNoFS)
 	if err != nil {
 		t.Fatalf("CreateSessionWithProfile: %v", err)
@@ -270,7 +270,7 @@ func TestNoFSSessionRehydratesAfterRestart(t *testing.T) {
 		calls      atomic.Int32
 	)
 	svc1 := noFSServiceOverStore(t, store, profileRecordingFactory("PRE-RESTART", &gotProfile, &calls), nil)
-	sess, err := svc1.CreateSessionWithProfile(ctx, "", session.ModeDefault, session.Limits{},
+	sess, err := svc1.CreateSessionWithProfile(ctx, session.ModeDefault, session.Limits{},
 		server.ProviderSelector{}, server.ProfileNoFS)
 	if err != nil {
 		t.Fatalf("CreateSessionWithProfile: %v", err)

@@ -118,16 +118,11 @@ type teamState struct {
 //
 // It returns ErrTeamsDisabled when teams are not enabled.
 // CreateTeam is the trusted default-placement entry used by in-process callers.
-// The legacy workspace argument is ignored and can never select authority.
-func (s *Service) CreateTeam(ctx context.Context, workspace, name, goal string, maxTeamTokens int, members []agent.MemberSpec) (string, []team.Member, error) {
+func (s *Service) CreateTeam(ctx context.Context, name, goal string, maxTeamTokens int, members []agent.MemberSpec) (string, []team.Member, error) {
 	if s.cfg.MemberEngine == nil {
 		return "", nil, ErrTeamsDisabled
 	}
-	selector := DefaultPlacement()
-	if workspace != "" {
-		selector = SelectPlacementID(workspace)
-	}
-	binding, err := s.BindPlacement(ctx, selector, PlacementOperationCreate)
+	binding, err := s.BindPlacement(ctx, DefaultPlacement(), PlacementOperationCreate)
 	if err != nil {
 		return "", nil, err
 	}

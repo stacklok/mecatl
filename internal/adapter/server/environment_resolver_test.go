@@ -308,8 +308,7 @@ func TestEnvironmentResolverDoesNotRebuildSessionEngine(t *testing.T) {
 	})
 	// A plain default-FS session: createSession stamps a local ref, so the
 	// resolver must NOT be consulted.
-	cwd := t.TempDir()
-	sess, err := svc.CreateSession(context.Background(), cwd, session.ModeDefault, session.Limits{})
+	sess, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -582,7 +581,7 @@ func TestNoFSCreateSessionStampsNoFSRef(t *testing.T) {
 	}
 
 	wantRef := session.EnvironmentRef{Kind: session.EnvKindNoFS, ID: "none", Revision: "in-tree-v1"}
-	sess, err := svc.CreateSessionWithProfile(ctx, "", session.ModeDefault, session.Limits{},
+	sess, err := svc.CreateSessionWithProfile(ctx, session.ModeDefault, session.Limits{},
 		server.ProviderSelector{}, server.ProfileNoFS)
 	if err != nil {
 		t.Fatalf("CreateSessionWithProfile: %v", err)

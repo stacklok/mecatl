@@ -47,11 +47,11 @@ func TestCallerSeparation_Scenario1_AtomicCreationBindsVerifiedOwner(t *testing.
 	id := session.SessionID("caller-selected-id")
 	alice := &session.Principal{Issuer: "https://idp.example/alice", Subject: "same", GrantType: session.GrantTypeUser}
 	bob := &session.Principal{Issuer: "https://idp.example/bob", Subject: "same", GrantType: session.GrantTypeUser}
-	request := func(ctx context.Context, workspace string) (*session.Session, error) {
-		return svc.CreateSessionWithProfile(ctx, workspace, session.ModeDefault, session.Limits{}, server.ProviderSelector{}, server.ProfileDefault, server.WithSessionID(id))
+	request := func(ctx context.Context) (*session.Session, error) {
+		return svc.CreateSessionWithProfile(ctx, session.ModeDefault, session.Limits{}, server.ProviderSelector{}, server.ProfileDefault, server.WithSessionID(id))
 	}
 
-	created, err := request(session.WithPrincipal(context.Background(), alice), "/ws")
+	created, err := request(session.WithPrincipal(context.Background(), alice))
 	if err != nil {
 		t.Fatalf("first create: %v", err)
 	}
@@ -61,7 +61,7 @@ func TestCallerSeparation_Scenario1_AtomicCreationBindsVerifiedOwner(t *testing.
 
 	retry, err := request(session.WithPrincipal(context.Background(), &session.Principal{
 		Issuer: alice.Issuer, Subject: alice.Subject, GrantType: session.GrantTypeClientCredentials, Name: "untrusted display",
-	}), "/ws")
+	}))
 	if err != nil {
 		t.Fatalf("same-owner identical retry: %v", err)
 	}
@@ -69,10 +69,7 @@ func TestCallerSeparation_Scenario1_AtomicCreationBindsVerifiedOwner(t *testing.
 		t.Fatalf("retry = %+v, want the original owned session", retry)
 	}
 
-	if retry, err := request(session.WithPrincipal(context.Background(), alice), "/other"); err != nil || retry.ID != created.ID {
-		t.Fatalf("client workspace must be ignored by server-owned placement: retry=%+v err=%v", retry, err)
-	}
-	if _, err := request(session.WithPrincipal(context.Background(), bob), "/ws"); !errors.Is(err, server.ErrNotFound) {
+	if _, err := request(session.WithPrincipal(context.Background(), bob)); !errors.Is(err, server.ErrNotFound) {
 		t.Fatalf("cross-owner collision error = %v, want ErrNotFound", err)
 	}
 	persisted, err := store.Load(context.Background(), id)
@@ -110,7 +107,7 @@ func callerSchedule(name string) port.ScheduleSpec {
 
 func TestCallerSeparation_Scenario1_OwnerCanAccessOwnedResources(t *testing.T) {
 	svc, _, _, alice, _ := callerSeparationFixture(t)
-	sess, err := svc.CreateSession(alice, "/ws", session.ModeDefault, session.Limits{})
+	sess, err := svc.CreateSession(alice, session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -152,14 +149,14 @@ func TestCallerSeparation_Scenario1_OwnerlessResourcesAreNotAdopted(t *testing.T
 
 func TestCallerSeparation_Scenario1_ForkAndCarryoverAuthorizeSource(t *testing.T) {
 	svc, sessions, _, alice, bob := callerSeparationFixture(t)
-	source, err := svc.CreateSession(alice, "/ws", session.ModeDefault, session.Limits{})
+	source, err := svc.CreateSession(alice, session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession source: %v", err)
 	}
 	if _, err := svc.ForkSession(bob, source.ID, "", ""); !errors.Is(err, server.ErrNotFound) {
 		t.Fatalf("Bob ForkSession = %v, want ErrNotFound", err)
 	}
-	if _, err := svc.CreateSessionWithProfile(bob, "/ws", session.ModeDefault, session.Limits{}, server.ProviderSelector{}, server.ProfileDefault, server.WithSourceSession(source.ID)); !errors.Is(err, server.ErrNotFound) {
+	if _, err := svc.CreateSessionWithProfile(bob, session.ModeDefault, session.Limits{}, server.ProviderSelector{}, server.ProfileDefault, server.WithSourceSession(source.ID)); !errors.Is(err, server.ErrNotFound) {
 		t.Fatalf("Bob carryover = %v, want ErrNotFound", err)
 	}
 	stored, err := sessions.Load(context.Background(), source.ID)
@@ -169,17 +166,17 @@ func TestCallerSeparation_Scenario1_ForkAndCarryoverAuthorizeSource(t *testing.T
 	if _, err := svc.ForkSession(alice, source.ID, "", ""); err != nil {
 		t.Fatalf("Alice ForkSession: %v", err)
 	}
-	if _, err := svc.CreateSessionWithProfile(alice, "/ws", session.ModeDefault, session.Limits{}, server.ProviderSelector{}, server.ProfileDefault, server.WithSourceSession(source.ID)); err != nil {
+	if _, err := svc.CreateSessionWithProfile(alice, session.ModeDefault, session.Limits{}, server.ProviderSelector{}, server.ProfileDefault, server.WithSourceSession(source.ID)); err != nil {
 		t.Fatalf("Alice carryover: %v", err)
 	}
 }
 
 func TestCallerSeparation_Scenario2_ListMetadataIsOwnerScoped(t *testing.T) {
 	svc, _, _, alice, bob := callerSeparationFixture(t)
-	if _, err := svc.CreateSession(alice, "/ws", session.ModeDefault, session.Limits{}); err != nil {
+	if _, err := svc.CreateSession(alice, session.ModeDefault, session.Limits{}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.CreateSession(bob, "/ws", session.ModeDefault, session.Limits{}); err != nil {
+	if _, err := svc.CreateSession(bob, session.ModeDefault, session.Limits{}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := svc.CreateSchedule(alice, callerSchedule("alice-list")); err != nil {
@@ -200,7 +197,7 @@ func TestCallerSeparation_Scenario2_ListMetadataIsOwnerScoped(t *testing.T) {
 
 func TestCallerSeparation_Scenario2_OwnerMismatchIsNotFound(t *testing.T) {
 	svc, _, _, alice, bob := callerSeparationFixture(t)
-	sess, err := svc.CreateSession(alice, "/ws", session.ModeDefault, session.Limits{})
+	sess, err := svc.CreateSession(alice, session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -214,7 +211,7 @@ func TestCallerSeparation_Scenario2_OwnerMismatchIsNotFound(t *testing.T) {
 
 func TestCallerSeparation_Scenario2_EventStreamsResolveParentOwner(t *testing.T) {
 	svc, _, _, alice, bob := callerSeparationFixture(t)
-	sess, err := svc.CreateSession(alice, "/ws", session.ModeDefault, session.Limits{})
+	sess, err := svc.CreateSession(alice, session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -572,7 +569,7 @@ func callerScheduleWithOrigin(name string, origin session.SessionID) port.Schedu
 func TestCallerSeparation_Scenario_ForeignScheduleOriginIsRejected(t *testing.T) {
 	svc, sessions, schedules, alice, bob := callerSeparationFixture(t)
 
-	bobSess, err := svc.CreateSession(bob, "/ws", session.ModeDefault, session.Limits{})
+	bobSess, err := svc.CreateSession(bob, session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("Bob CreateSession: %v", err)
 	}
@@ -621,7 +618,7 @@ func TestCallerSeparation_Scenario_ForeignScheduleOriginIsRejected(t *testing.T)
 func TestCallerSeparation_Scenario_ForeignAndMissingScheduleOriginErrorsAreIndistinguishable(t *testing.T) {
 	svc, _, _, alice, bob := callerSeparationFixture(t)
 
-	bobSess, err := svc.CreateSession(bob, "/ws", session.ModeDefault, session.Limits{})
+	bobSess, err := svc.CreateSession(bob, session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("Bob CreateSession: %v", err)
 	}
@@ -657,7 +654,7 @@ func TestCallerSeparation_Scenario_ForeignAndMissingScheduleOriginErrorsAreIndis
 func TestCallerSeparation_Scenario_OwnScheduleOriginIsStillAccepted(t *testing.T) {
 	svc, _, _, alice, _ := callerSeparationFixture(t)
 
-	aliceSess, err := svc.CreateSession(alice, "/ws", session.ModeDefault, session.Limits{})
+	aliceSess, err := svc.CreateSession(alice, session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("Alice CreateSession: %v", err)
 	}

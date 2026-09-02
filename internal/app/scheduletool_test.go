@@ -641,7 +641,7 @@ func fireFuncForScheduleTest(svc *server.Service) scheduler.FireFunc {
 		if err != nil {
 			return port.ScheduleFire{ID: fireID, ScheduleName: sched.Spec.Name, FiredAt: now, Stop: session.StopError, Err: err.Error()}, err
 		}
-		sess, err := svc.CreateSessionWithProfile(ctx, "", mode, limits, server.ProviderSelector{}, server.ProfileDefault,
+		sess, err := svc.CreateSessionWithProfile(ctx, mode, limits, server.ProviderSelector{}, server.ProfileDefault,
 			server.WithSessionID(session.SessionID(fireID)),
 			server.WithPlacementBinding(placement),
 			server.WithScheduledRelationship(sched.Spec.Name, sched.Spec.OriginSessionID))

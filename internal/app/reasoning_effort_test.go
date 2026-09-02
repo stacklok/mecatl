@@ -393,7 +393,7 @@ func TestServiceToRealFactoryRemintsClampedEffort(t *testing.T) {
 		t.Fatalf("NewService: %v", err)
 	}
 
-	sess, err := svc.CreateSessionWithProvider(ctx, "/ws", session.ModeDefault, session.Limits{},
+	sess, err := svc.CreateSessionWithProvider(ctx, session.ModeDefault, session.Limits{},
 		server.ProviderSelector{ProviderID: providerOpenAI, ModelID: "gpt-5", ReasoningEffort: "max"})
 	if err != nil {
 		t.Fatalf("CreateSessionWithProvider: %v", err)

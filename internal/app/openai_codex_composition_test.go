@@ -139,7 +139,7 @@ func TestOpenAICodexCompositionScenario(t *testing.T) {
 		t.Fatalf("ListModels provider inventory = Codex:%t API-OpenAI:%t, want both independently selectable", sawCodex, sawAPI)
 	}
 
-	codexSession, err := built.Service.CreateSessionWithProvider(ctx, workspace, session.ModeDefault, defaultLimits(),
+	codexSession, err := built.Service.CreateSessionWithProvider(ctx, session.ModeDefault, defaultLimits(),
 		server.ProviderSelector{ProviderID: providerOpenAICodex, ModelID: "gpt-5"})
 	if err != nil {
 		t.Fatalf("create Codex session: %v", err)
@@ -159,7 +159,7 @@ func TestOpenAICodexCompositionScenario(t *testing.T) {
 		t.Fatalf("continuation request omitted the real Read result: %s", bodies[1])
 	}
 
-	apiSession, err := built.Service.CreateSessionWithProvider(ctx, workspace, session.ModeDefault, defaultLimits(),
+	apiSession, err := built.Service.CreateSessionWithProvider(ctx, session.ModeDefault, defaultLimits(),
 		server.ProviderSelector{ProviderID: providerOpenAI, ModelID: "gpt-5"})
 	if err != nil {
 		t.Fatalf("create API OpenAI session: %v", err)
@@ -284,8 +284,9 @@ func TestOpenAICodexRemintAndInheritance(t *testing.T) {
 			t.Fatalf("no-FS factory: %v", err)
 		}
 		defer func() { _ = res.Close() }()
-		noFSSess := session.New("codex-nofs", session.ModePlan, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/workspace", Revision: "in-tree-v1"}, session.Limits{MaxTurns: 3}, time.Unix(0, 0))
-		if got := drainRun(res.Engine.Run(ctx, noFSSess, testEnvironment(nofs.New(), nil), agent.RunRequest{Text: "answer without files"})); got != "NOFS-CODEX" {
+		noFSEnv := testEnvironment(nofs.New(), nil)
+		noFSSess := session.New("codex-nofs", session.ModePlan, noFSEnv.Ref(), session.Limits{MaxTurns: 3}, time.Unix(0, 0))
+		if got := drainRun(res.Engine.Run(ctx, noFSSess, noFSEnv, agent.RunRequest{Text: "answer without files"})); got != "NOFS-CODEX" {
 			t.Fatalf("no-FS result = %q", got)
 		}
 		sort.Strings(offered)
@@ -338,7 +339,7 @@ func TestOpenAICodexExplicitSelectorRehydrates(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Build #1: %v", err)
 	}
-	sess, err := built1.Service.CreateSessionWithProvider(ctx, workspace, session.ModeDefault, defaultLimits(),
+	sess, err := built1.Service.CreateSessionWithProvider(ctx, session.ModeDefault, defaultLimits(),
 		server.ProviderSelector{ProviderID: providerOpenAICodex, ModelID: "gpt-5", ReasoningEffort: "high"})
 	if err != nil {
 		built1.Close()
@@ -383,7 +384,7 @@ func TestZeroSelectorStillFollowsDeploymentDefault(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Build #1: %v", err)
 	}
-	sess, err := built1.Service.CreateSession(ctx, workspace, session.ModeDefault, defaultLimits())
+	sess, err := built1.Service.CreateSession(ctx, session.ModeDefault, defaultLimits())
 	if err != nil {
 		built1.Close()
 		t.Fatalf("CreateSession: %v", err)
@@ -464,7 +465,7 @@ func TestADR_0104_OpenAICodexSecretSentinels(t *testing.T) {
 	}
 	addArtifact("provider status", statusJSON)
 
-	sess, err := built.Service.CreateSessionWithProvider(ctx, workspace, session.ModeDefault, defaultLimits(),
+	sess, err := built.Service.CreateSessionWithProvider(ctx, session.ModeDefault, defaultLimits(),
 		server.ProviderSelector{ProviderID: providerOpenAICodex, ModelID: "gpt-5"})
 	if err != nil {
 		built.Close()

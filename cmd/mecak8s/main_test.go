@@ -315,7 +315,7 @@ func TestMecak8sFixtureRunsNoFS(t *testing.T) {
 	}
 	defer built.Close()
 
-	sess, err := built.Service.CreateSession(context.Background(), "", session.ModeDefault, session.Limits{})
+	sess, err := built.Service.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -368,7 +368,7 @@ func TestBuildOverRedisDrivesRunToCompletion(t *testing.T) {
 	}
 	defer built.Close()
 
-	sess, err := built.Service.CreateSession(context.Background(), t.TempDir(), session.ModeDefault, session.Limits{})
+	sess, err := built.Service.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -420,7 +420,7 @@ func TestDrainRejectsNewRunsViaComposition(t *testing.T) {
 	if built.Service.IsDraining() {
 		t.Fatal("IsDraining = true on a fresh service, want false")
 	}
-	sess, err := built.Service.CreateSession(context.Background(), t.TempDir(), session.ModeDefault, session.Limits{})
+	sess, err := built.Service.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}

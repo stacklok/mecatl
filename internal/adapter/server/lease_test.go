@@ -150,7 +150,7 @@ func TestLeaseRenewLossCancelsRun(t *testing.T) {
 	// A run that BLOCKS until cancelled, so the renewer's Cancel has a live run to
 	// hit (blockingProvider streams nothing until ctx is cancelled).
 	svc := newLeasedService(t, lease, blockingProvider{})
-	sess, err := svc.CreateSession(context.Background(), "/ws", session.ModeDefault, session.Limits{})
+	sess, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -182,7 +182,7 @@ func TestLeaseRenewLossCancelsRun(t *testing.T) {
 func TestLeaseUnsupportedStickyDisable(t *testing.T) {
 	lease := &fakeLease{acquireErr: port.ErrLeaseUnsupported}
 	svc := newLeasedService(t, lease, mockllm.New(mockllm.TextTurn("ok")))
-	sess, err := svc.CreateSession(context.Background(), "/ws", session.ModeDefault, session.Limits{})
+	sess, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -216,7 +216,7 @@ func TestLeaseUnsupportedStickyDisable(t *testing.T) {
 func TestLeaseReleasedOnCloseSession(t *testing.T) {
 	lease := &fakeLease{}
 	svc := newLeasedService(t, lease, mockllm.New(mockllm.TextTurn("ok")))
-	sess, err := svc.CreateSession(context.Background(), "/ws", session.ModeDefault, session.Limits{})
+	sess, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -242,7 +242,7 @@ func TestLeaseReleasedOnCloseSession(t *testing.T) {
 func TestLeaseHeldElsewhereRefusesRun(t *testing.T) {
 	lease := &fakeLease{acquireErr: port.ErrLeaseHeld}
 	svc := newLeasedService(t, lease, mockllm.New(mockllm.TextTurn("never runs")))
-	sess, err := svc.CreateSession(context.Background(), "/ws", session.ModeDefault, session.Limits{})
+	sess, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -277,7 +277,7 @@ func TestLeaseRenewedWhileRunLive(t *testing.T) {
 		}, nil
 	}
 	svc := newLeasedService(t, lease, blockingProvider{})
-	sess, err := svc.CreateSession(context.Background(), "/ws", session.ModeDefault, session.Limits{})
+	sess, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -326,7 +326,7 @@ func TestRenewerRaceWithClose(t *testing.T) {
 		return port.Lease{SessionID: l.SessionID, Owner: l.Owner, Token: l.Token, Expiry: time.Now().Add(time.Hour)}, nil
 	}
 	svc := newLeasedService(t, lease, blockingProvider{})
-	sess, err := svc.CreateSession(context.Background(), "/ws", session.ModeDefault, session.Limits{})
+	sess, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -363,7 +363,7 @@ func TestLeaseTransientRenewBlipKeepsRun(t *testing.T) {
 		return l, nil // recover on the next tick.
 	}
 	svc := newLeasedService(t, lease, blockingProvider{}, clk)
-	sess, err := svc.CreateSession(context.Background(), "/ws", session.ModeDefault, session.Limits{})
+	sess, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}

@@ -81,7 +81,7 @@ func newRedisTestService(t *testing.T, st *redisstore.Store) *server.Service {
 // byte-identical to pre-ADR-0048 when Drain has not been called).
 func TestDrainGateStartsFalse(t *testing.T) {
 	svc := newDrainTestService(t)
-	sess, err := svc.CreateSession(context.Background(), "/ws", session.ModeDefault, session.Limits{})
+	sess, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -102,7 +102,7 @@ func TestDrainGateStartsFalse(t *testing.T) {
 // after launching.
 func TestDrainRejectsNewRuns(t *testing.T) {
 	svc := newDrainTestService(t)
-	sess, err := svc.CreateSession(context.Background(), "/ws", session.ModeDefault, session.Limits{})
+	sess, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -134,7 +134,7 @@ func TestDrainIsIdempotent(t *testing.T) {
 	if !svc.IsDraining() {
 		t.Fatalf("IsDraining = false after double Drain, want true")
 	}
-	sess, err := svc.CreateSession(context.Background(), "/ws", session.ModeDefault, session.Limits{})
+	sess, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -152,7 +152,7 @@ func TestDrainIsIdempotent(t *testing.T) {
 // have imposed — proving Drain did not touch the in-flight run).
 func TestDrainDoesNotBlockExistingRun(t *testing.T) {
 	svc := newLeasedService(t, nil, blockingProvider{})
-	sess, err := svc.CreateSession(context.Background(), "/ws", session.ModeDefault, session.Limits{})
+	sess, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -197,7 +197,7 @@ func TestDrainDoesNotBlockExistingRun(t *testing.T) {
 // Approve — an in-flight same-process Approve on a LIVE run stays allowed).
 func TestDrainAwaitingResumePathGated(t *testing.T) {
 	svc := newDrainTestService(t)
-	sess, err := svc.CreateSession(context.Background(), "/ws", session.ModeDefault, session.Limits{})
+	sess, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -219,7 +219,7 @@ func TestDrainAwaitingResumePathGated(t *testing.T) {
 func TestDrainGateRefusesBeforeAcquire(t *testing.T) {
 	lease := &fakeLease{}
 	svc := newLeasedService(t, lease, mockllm.New(mockllm.TextTurn("never runs")))
-	sess, err := svc.CreateSession(context.Background(), "/ws", session.ModeDefault, session.Limits{})
+	sess, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}

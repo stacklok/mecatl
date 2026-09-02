@@ -56,7 +56,7 @@ func TestScheduleSharedCatalog_Scenario2_SharedCatalogHasScheduleTools(t *testin
 	defer built.Close()
 
 	ctx := context.Background()
-	sess, err := built.Service.CreateSession(ctx, "", session.ModeDefault, session.Limits{})
+	sess, err := built.Service.CreateSession(ctx, session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}

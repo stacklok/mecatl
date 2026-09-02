@@ -81,7 +81,7 @@ func snapshotFidelitySpecs() {
 				cli1 := local1.Client()
 				// Explicit haiku selector: the session persists this selector, and the
 				// restart leg must rebuild the SAME engine from it (rehydrateSession).
-				sessionID, _, resolved1, err := cli1.CreateSession(ctx, local1.Workspace(),
+				sessionID, _, resolved1, err := cli1.CreateSession(ctx,
 					client.ModeFromString("default"),
 					client.ModelSelection{ProviderID: harness.ProviderID, ModelID: haikuLane})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred(), "create session on local #1")

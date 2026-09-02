@@ -124,7 +124,7 @@ func TestApprovalReplayAfterRestartE2E(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Build #1: %v", err)
 	}
-	sess, err := built1.Service.CreateSession(ctx, workspace, session.ModeDefault, session.Limits{})
+	sess, err := built1.Service.CreateSession(ctx, session.ModeDefault, session.Limits{})
 	if err != nil {
 		built1.Close()
 		t.Fatalf("CreateSession: %v", err)
@@ -265,7 +265,7 @@ func TestApprovalReplayClearedOnCloseSession(t *testing.T) {
 	srv := httptest.NewServer(server.NewHTTPHandler(built.Service))
 	defer srv.Close()
 
-	sess, err := built.Service.CreateSession(ctx, workspace, session.ModeDefault, session.Limits{})
+	sess, err := built.Service.CreateSession(ctx, session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -337,7 +337,7 @@ func TestApprovalReplayIgnoresNonAllowAlways(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Build #1: %v", err)
 	}
-	sess, err := built1.Service.CreateSession(ctx, workspace, session.ModeDefault, session.Limits{})
+	sess, err := built1.Service.CreateSession(ctx, session.ModeDefault, session.Limits{})
 	if err != nil {
 		built1.Close()
 		t.Fatalf("CreateSession: %v", err)

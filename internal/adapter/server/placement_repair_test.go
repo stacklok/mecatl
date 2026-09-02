@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -62,7 +63,7 @@ func TestInvariant_ordinary_placement_bindings_are_not_environment_overrides(t *
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.CreateSession(context.Background(), "", session.ModeDefault, session.Limits{}); err != nil {
+	if _, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{}); err != nil {
 		t.Fatal(err)
 	}
 	svc.mu.Lock()
@@ -141,12 +142,91 @@ func TestInvariant_successor_lease_loss_cleans_provisional_binding(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = svc.ClearSessionSuccessor(context.Background(), source.ID, SuccessorPlacement{})
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, err = svc.ClearSessionSuccessor(ctx, source.ID, SuccessorPlacement{})
 	if !errors.Is(err, ErrSessionLeasedElsewhere) || closed.Load() != 1 {
 		t.Fatalf("lease-loss successor = %v, provisional closes = %d", err, closed.Load())
 	}
 	if _, loadErr := store.Load(context.Background(), "successor"); !errors.Is(loadErr, port.ErrSessionNotFound) {
 		t.Fatalf("lease-loss successor persisted: %v", loadErr)
+	}
+}
+
+type repairDiagnostics struct{ text string }
+
+func (d *repairDiagnostics) Log(_ context.Context, _ port.Level, msg string, args ...any) {
+	d.text += fmt.Sprint(append([]any{msg}, args...)...)
+}
+func (d *repairDiagnostics) With(...any) port.Diagnostics { return d }
+
+type errorCommandLister struct{ err error }
+
+func (l errorCommandLister) List(context.Context, string) ([]Command, error) { return nil, l.err }
+
+func TestInvariant_command_discovery_errors_are_content_free(t *testing.T) {
+	private := "/srv/private/tenant/commands.yaml"
+	ref := session.EnvironmentRef{Kind: session.EnvKindMem, ID: "placement", Revision: "v1"}
+	provider := &repairPlacementProvider{binding: PlacementBinding{Ref: ref, Environment: tool.MustEnvironment(ref, memfs.NewWorkspace("/bound"), nil)}}
+	store := memstore.New()
+	source := session.New("source", session.ModeDefault, ref, session.Limits{}, time.Unix(1, 0))
+	if err := store.Save(context.Background(), source); err != nil {
+		t.Fatal(err)
+	}
+	diag := &repairDiagnostics{}
+	svc, err := NewService(Config{Engine: repairEngine(), Store: store, PlacementProvider: provider, PlacementScope: "test", Commands: errorCommandLister{err: errors.New("read " + private + ": denied")}, Diagnostics: diag})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = svc.ListCommandsForSession(context.Background(), source.ID)
+	if !errors.Is(err, ErrInternal) || strings.Contains(err.Error(), private) {
+		t.Fatalf("public command discovery error = %q", err)
+	}
+	if !strings.Contains(diag.text, "[redacted]") || strings.Contains(diag.text, private) {
+		t.Fatalf("diagnostic was not detailed and sanitized: %q", diag.text)
+	}
+}
+
+type failingPlacementStore struct {
+	*memstore.Store
+	err error
+}
+
+func (s failingPlacementStore) Create(context.Context, *session.Session) error { return s.err }
+
+func TestInvariant_placement_storage_errors_are_content_free(t *testing.T) {
+	private := "/srv/private/tenant/sessions.db"
+	diag := &repairDiagnostics{}
+	ref := session.EnvironmentRef{Kind: session.EnvKindMem, ID: "placement", Revision: "v1"}
+	svc, err := NewService(Config{
+		Engine: repairEngine(), Store: failingPlacementStore{Store: memstore.New(), err: errors.New("write " + private + ": denied")},
+		PlacementProvider: &repairPlacementProvider{binding: PlacementBinding{Ref: ref, Environment: tool.MustEnvironment(ref, memfs.NewWorkspace("/bound"), nil)}}, PlacementScope: "test", Diagnostics: diag,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
+	if !errors.Is(err, ErrInternal) || strings.Contains(err.Error(), private) {
+		t.Fatalf("public placement storage error = %q", err)
+	}
+	if !strings.Contains(diag.text, "[redacted]") || strings.Contains(diag.text, private) {
+		t.Fatalf("placement storage diagnostic was not detailed and sanitized: %q", diag.text)
+	}
+}
+
+func TestInvariant_successor_lease_publication_window_is_explicit(t *testing.T) {
+	source, err := os.ReadFile("placement_successor.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	docs, err := os.ReadFile("../../../docs/design/IMPLEMENTATION-NOTES.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(source), "SessionStore has no lease-token CAS Save") ||
+		!strings.Contains(string(docs), "accepted residual window") ||
+		!strings.Contains(string(docs), "not claimed as cancellation atomicity") {
+		t.Fatal("successor lease-publication residual is not explicitly documented in code and design notes")
 	}
 }
 

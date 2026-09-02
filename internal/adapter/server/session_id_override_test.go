@@ -30,7 +30,7 @@ func TestCreateSessionWithSessionIDOverride(t *testing.T) {
 
 	const want = "sched--nightly-20260713-010203-deadbeef"
 	sess, err := svc.CreateSessionWithProfile(
-		context.Background(), "/ws", session.ModeDefault, session.Limits{},
+		context.Background(), session.ModeDefault, session.Limits{},
 		server.ProviderSelector{}, server.ProfileDefault,
 		server.WithSessionID(session.SessionID(want)),
 	)
@@ -77,7 +77,7 @@ func TestCreateSessionWithSessionIDNoOverrideIsByteIdentical(t *testing.T) {
 	}
 
 	sess, err := svc.CreateSessionWithProfile(
-		context.Background(), "/ws", session.ModeDefault, session.Limits{},
+		context.Background(), session.ModeDefault, session.Limits{},
 		server.ProviderSelector{}, server.ProfileDefault,
 	)
 	if err != nil {
@@ -118,7 +118,7 @@ func TestGeneratedSessionIDCollisionDoesNotOverwriteForeignSnapshot(t *testing.T
 		t.Fatalf("NewService: %v", err)
 	}
 	alice := session.Principal{Issuer: "https://issuer.example", Subject: "alice"}
-	_, err = svc.CreateSession(session.WithPrincipal(context.Background(), &alice), "/alice", session.ModeDefault, session.Limits{})
+	_, err = svc.CreateSession(session.WithPrincipal(context.Background(), &alice), session.ModeDefault, session.Limits{})
 	if !errors.Is(err, port.ErrSessionAlreadyExists) {
 		t.Fatalf("CreateSession(collision) = %v, want ErrSessionAlreadyExists", err)
 	}
@@ -146,7 +146,7 @@ func TestOwnershipServiceCannotCreateWithoutAtomicStoreCapability(t *testing.T) 
 		t.Fatalf("NewService: %v", err)
 	}
 	alice := session.Principal{Issuer: "https://issuer.example", Subject: "alice"}
-	_, err = svc.CreateSession(session.WithPrincipal(context.Background(), &alice), "/ws", session.ModeDefault, session.Limits{})
+	_, err = svc.CreateSession(session.WithPrincipal(context.Background(), &alice), session.ModeDefault, session.Limits{})
 	if !errors.Is(err, server.ErrConfig) {
 		t.Fatalf("CreateSession(save-only ownership store) = %v, want ErrConfig", err)
 	}
@@ -227,7 +227,7 @@ func TestExplicitCreateRetryRejectsDifferentSessionTaxonomy(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewService: %v", err)
 	}
-	_, err = svc.CreateSessionWithProfile(session.WithPrincipal(context.Background(), &alice), "/ws", session.ModeDefault,
+	_, err = svc.CreateSessionWithProfile(session.WithPrincipal(context.Background(), &alice), session.ModeDefault,
 		session.Limits{}, server.ProviderSelector{}, server.ProfileDefault, server.WithSessionID(id))
 	if !errors.Is(err, server.ErrInvalidArgument) || !strings.Contains(err.Error(), "different request") {
 		t.Fatalf("main create over scheduled session = %v, want different-request refusal", err)
@@ -254,7 +254,7 @@ func TestCreateSessionWithSessionIDCollisionRejected(t *testing.T) {
 	// per-session engine in the sessionEngines map).
 	const live = "sched--live-1234"
 	first, err := svc.CreateSessionWithProfile(
-		context.Background(), "/ws", session.ModeDefault, session.Limits{},
+		context.Background(), session.ModeDefault, session.Limits{},
 		server.ProviderSelector{ProviderID: "openai", ModelID: "gpt-x"},
 		server.ProfileDefault,
 		server.WithSessionID(session.SessionID(live)),
@@ -271,7 +271,7 @@ func TestCreateSessionWithSessionIDCollisionRejected(t *testing.T) {
 	// collides). This is the shared-engine fast path (zero selector), which still
 	// consults the sessionEngines map for the collision check.
 	_, err = svc.CreateSessionWithProfile(
-		context.Background(), "/ws", session.ModeDefault, session.Limits{},
+		context.Background(), session.ModeDefault, session.Limits{},
 		server.ProviderSelector{},
 		server.ProfileDefault,
 		server.WithSessionID(session.SessionID(live)),
@@ -298,7 +298,7 @@ func TestCreateSessionWithSessionIDSharedEngineCollisionRejected(t *testing.T) {
 
 	const id = "sched--shared-5678"
 	first, err := svc.CreateSessionWithProfile(
-		context.Background(), "/ws", session.ModeDefault, session.Limits{},
+		context.Background(), session.ModeDefault, session.Limits{},
 		server.ProviderSelector{}, server.ProfileDefault,
 		server.WithSessionID(session.SessionID(id)),
 	)
@@ -313,7 +313,7 @@ func TestCreateSessionWithSessionIDSharedEngineCollisionRejected(t *testing.T) {
 	// the shared-engine fast path (never entered sessionEngines) but IS persisted,
 	// so the store probe detects the collision.
 	_, err = svc.CreateSessionWithProfile(
-		context.Background(), "/ws", session.ModeDefault, session.Limits{},
+		context.Background(), session.ModeDefault, session.Limits{},
 		server.ProviderSelector{}, server.ProfileDefault,
 		server.WithSessionID(session.SessionID(id)),
 	)
@@ -346,7 +346,7 @@ func TestCreateSessionWithSessionIDConcurrentTOCTOU(t *testing.T) {
 		go func(i int) {
 			defer wg.Done()
 			_, err := svc.CreateSessionWithProfile(
-				context.Background(), "/ws", session.ModeDefault, session.Limits{},
+				context.Background(), session.ModeDefault, session.Limits{},
 				server.ProviderSelector{}, server.ProfileDefault,
 				server.WithSessionID(session.SessionID(id)),
 			)
@@ -399,7 +399,7 @@ func TestCreateSessionWithSessionIDCrossServiceRetryIsIdempotent(t *testing.T) {
 	for i := range services {
 		go func(i int) {
 			defer wg.Done()
-			results[i], errs[i] = services[i].CreateSessionWithProfile(ctx, "/ws", session.ModeDefault, session.Limits{},
+			results[i], errs[i] = services[i].CreateSessionWithProfile(ctx, session.ModeDefault, session.Limits{},
 				server.ProviderSelector{}, server.ProfileDefault, server.WithSessionID(id))
 		}(i)
 	}
@@ -439,7 +439,7 @@ func (s *barrierCreateStore) Create(ctx context.Context, sess *session.Session) 
 func TestCreateSessionWithSessionIDEmptyRejected(t *testing.T) {
 	svc := newService(t, mockllm.New(mockllm.TextTurn("ok")), nil)
 	_, err := svc.CreateSessionWithProfile(
-		context.Background(), "/ws", session.ModeDefault, session.Limits{},
+		context.Background(), session.ModeDefault, session.Limits{},
 		server.ProviderSelector{}, server.ProfileDefault,
 		server.WithSessionID(""),
 	)
@@ -464,23 +464,19 @@ func (s *loadErrStore) Load(context.Context, session.SessionID) (*session.Sessio
 }
 
 // TestCreateSessionWithSessionIDLoadProbeInfraFault: when the store's Load
-// returns an infra fault (not ErrSessionNotFound) during the collision probe,
-// createSession PROPAGATES it — it must not be swallowed (a silent pass could
-// clobber a persisted session) nor mislabelled ErrInvalidArgument.
+// returns an infra fault during the collision probe, creation fails closed with a
+// content-free internal category rather than exposing backend details.
 func TestCreateSessionWithSessionIDLoadProbeInfraFault(t *testing.T) {
 	infra := errors.New("boom: store backend unreachable")
 	store := &loadErrStore{Store: memstore.New(), loadErr: infra}
 	svc := newServiceWithStore(t, store)
 
 	_, err := svc.CreateSessionWithProfile(
-		context.Background(), "/ws", session.ModeDefault, session.Limits{},
+		context.Background(), session.ModeDefault, session.Limits{},
 		server.ProviderSelector{}, server.ProfileDefault,
 		server.WithSessionID("sched--probe-1"),
 	)
-	if !errors.Is(err, infra) {
-		t.Fatalf("err = %v, want the infra fault propagated", err)
-	}
-	if errors.Is(err, server.ErrInvalidArgument) {
-		t.Errorf("infra fault must NOT be classified ErrInvalidArgument: %v", err)
+	if !errors.Is(err, server.ErrInternal) || strings.Contains(err.Error(), infra.Error()) {
+		t.Fatalf("err = %v, want content-free ErrInternal", err)
 	}
 }

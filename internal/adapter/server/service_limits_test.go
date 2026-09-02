@@ -41,7 +41,7 @@ func TestCreateSessionAppliesDefaultLimits(t *testing.T) {
 	def := session.Limits{MaxTurns: 50, MaxToolCalls: 200, MaxConsecutiveFailures: 5}
 	svc := newLimitsService(t, def)
 
-	sess, err := svc.CreateSession(context.Background(), "/ws", "", session.Limits{})
+	sess, err := svc.CreateSession(context.Background(), "", session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -57,7 +57,7 @@ func TestCreateSessionKeepsFullyExplicitLimits(t *testing.T) {
 	svc := newLimitsService(t, def)
 
 	explicit := session.Limits{MaxTurns: 3, MaxToolCalls: 9, MaxConsecutiveFailures: 2}
-	sess, err := svc.CreateSession(context.Background(), "/ws", "", explicit)
+	sess, err := svc.CreateSession(context.Background(), "", explicit)
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -74,7 +74,7 @@ func TestCreateSessionPerFieldDefaultsPreserveOtherCaps(t *testing.T) {
 	def := session.Limits{MaxTurns: 50, MaxToolCalls: 200, MaxConsecutiveFailures: 5}
 	svc := newLimitsService(t, def)
 
-	sess, err := svc.CreateSession(context.Background(), "/ws", "", session.Limits{MaxTurns: 3})
+	sess, err := svc.CreateSession(context.Background(), "", session.Limits{MaxTurns: 3})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}

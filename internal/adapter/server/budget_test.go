@@ -85,7 +85,7 @@ func TestServiceBudgetSurfacesAndReopens(t *testing.T) {
 		t.Fatalf("new service: %v", err)
 	}
 
-	sess, err := svc.CreateSession(context.Background(), "/ws", session.ModeDefault, session.Limits{})
+	sess, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}

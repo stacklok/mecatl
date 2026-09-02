@@ -31,9 +31,6 @@ func (p appTestPlacementProvider) Bind(_ context.Context, req server.PlacementBi
 		return server.PlacementBinding{Ref: ref, Environment: tool.MustEnvironment(ref, nofs.New(), nil)}, nil
 	}
 	root := p.root
-	if req.Selector.IsID() {
-		root = req.Selector.ID
-	}
 	ref := session.EnvironmentRef{Kind: session.EnvKindMem, ID: root, Revision: "test-v1"}
 	return server.PlacementBinding{Ref: ref, Environment: tool.MustEnvironment(ref, memfs.NewWorkspace(root), nil)}, nil
 }

@@ -36,7 +36,7 @@ func TestFireDelivery_Scenario5_ConnectedTUIRendersDeliveryLive(t *testing.T) {
 
 	// Create an origin session and drive it to completed.
 	originID := session.SessionID("origin-1")
-	sess, err := svc.CreateSessionWithProfile(ctx, "/tmp/sub-test", session.ModeDefault, session.Limits{},
+	sess, err := svc.CreateSessionWithProfile(ctx, session.ModeDefault, session.Limits{},
 		server.ProviderSelector{}, server.ProfileDefault)
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
@@ -139,7 +139,7 @@ func TestFireDelivery_Scenario5_TUIRendersRecordedNoteNotRaw(t *testing.T) {
 	ctx := context.Background()
 
 	// Create an origin session.
-	sess, err := svc.CreateSessionWithProfile(ctx, "/tmp/sub-test", session.ModeDefault, session.Limits{},
+	sess, err := svc.CreateSessionWithProfile(ctx, session.ModeDefault, session.Limits{},
 		server.ProviderSelector{}, server.ProfileDefault)
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
@@ -238,7 +238,7 @@ func TestFireDelivery_Scenario6_DeadClientDrainsWithoutWedgingHelper(t *testing.
 	ctx := context.Background()
 
 	// Create an origin session.
-	sess, err := svc.CreateSessionWithProfile(ctx, "/tmp/sub-test", session.ModeDefault, session.Limits{},
+	sess, err := svc.CreateSessionWithProfile(ctx, session.ModeDefault, session.Limits{},
 		server.ProviderSelector{}, server.ProfileDefault)
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)

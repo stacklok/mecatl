@@ -238,7 +238,7 @@ func TestADR_0250_EmptyLogAnnouncesTheBoundaryImmediately(t *testing.T) {
 	svc := watchService(t, memstore.NewEventLog(), false)
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	sess, err := svc.CreateSession(ctx, "/ws", session.ModeDefault, session.Limits{})
+	sess, err := svc.CreateSession(ctx, session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}

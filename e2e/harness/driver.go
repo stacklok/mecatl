@@ -94,7 +94,7 @@ func (d *Driver) Run(ctx context.Context, opts RunOpts, prompt string) (*RunResu
 
 	res.SessionID = opts.SessionID
 	if res.SessionID == "" {
-		id, caps, resolved, err := cli.CreateSession(runCtx, d.target.Workspace(), client.ModeFromString("default"), client.ModelSelection{
+		id, caps, resolved, err := cli.CreateSession(runCtx, client.ModeFromString("default"), client.ModelSelection{
 			ProviderID: ProviderID,
 			ModelID:    model,
 		})

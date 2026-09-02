@@ -504,7 +504,7 @@ func (h *HTTPHandler) createSession(w http.ResponseWriter, r *http.Request) {
 	if !grant.IsEmpty() {
 		opts = append(opts, WithClientMCP(grant))
 	}
-	sess, err := h.svc.CreateSessionWithProfile(r.Context(), "", modeFromString(body.Mode), limits, sel, profile, opts...)
+	sess, err := h.svc.CreateSessionWithProfile(r.Context(), modeFromString(body.Mode), limits, sel, profile, opts...)
 	if err != nil {
 		writeServiceError(w, err)
 		return

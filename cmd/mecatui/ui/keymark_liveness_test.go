@@ -854,7 +854,7 @@ func TestWorktreesOverlayHintsReflectKeyOverride(t *testing.T) {
 	hk := liveHK()
 	th := theme.New("aztec", theme.AztecPalette())
 	t.Run("panel", func(t *testing.T) {
-		st := worktreesState{view: worktreesPanel, filtered: []client.Worktree{{Selector: "opaque", Label: "p", Branch: "b"}}}
+		st := worktreesState{view: worktreesPanel, filtered: []client.Worktree{{Selector: testWorktreeSelector("opaque"), Label: "p", Branch: "b"}}}
 		got := stripANSIstr(renderWorktreesOverlay(th, st, client.Capabilities{}, hk, 100, 30))
 		if !strings.Contains(got, "ctrl+f17: select  ctrl+f16: close") {
 			t.Errorf("worktrees panel hint should carry live select/close: %q", got)

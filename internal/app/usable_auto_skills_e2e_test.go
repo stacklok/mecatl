@@ -41,7 +41,7 @@ func TestUsableAutoSkillsStockBuildPublishesReflectedProcedure(t *testing.T) {
 	defer built.Close()
 	principal := &session.Principal{Issuer: "test", Subject: "alice", GrantType: session.GrantTypeUser}
 	ctx := session.WithPrincipal(context.Background(), principal)
-	sess, err := built.Service.CreateSession(ctx, workspace, session.ModeDefault, defaultLimits())
+	sess, err := built.Service.CreateSession(ctx, session.ModeDefault, defaultLimits())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,7 +81,7 @@ func TestUsableAutoSkillsStockBuildPublishesReflectedProcedure(t *testing.T) {
 		t.Fatalf("learned skill = %+v", got)
 	}
 
-	second, err := built.Service.CreateSession(ctx, workspace, session.ModeDefault, defaultLimits())
+	second, err := built.Service.CreateSession(ctx, session.ModeDefault, defaultLimits())
 	if err != nil {
 		t.Fatal(err)
 	}

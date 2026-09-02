@@ -62,8 +62,8 @@ func TestDefaultModelPendingRoutesZeroSelectorThroughPerSessionFactory(t *testin
 
 	t.Run("pending=true routes through the factory", func(t *testing.T) {
 		var called bool
-		svc, workspace := pendingDefaultService(t, true, &called)
-		sess, err := svc.CreateSession(ctx, workspace, session.ModeDefault, session.Limits{})
+		svc, _ := pendingDefaultService(t, true, &called)
+		sess, err := svc.CreateSession(ctx, session.ModeDefault, session.Limits{})
 		if err != nil {
 			t.Fatalf("CreateSession: %v", err)
 		}
@@ -77,8 +77,8 @@ func TestDefaultModelPendingRoutesZeroSelectorThroughPerSessionFactory(t *testin
 
 	t.Run("pending=false stays on the shared engine (byte-identical)", func(t *testing.T) {
 		var called bool
-		svc, workspace := pendingDefaultService(t, false, &called)
-		if _, err := svc.CreateSession(ctx, workspace, session.ModeDefault, session.Limits{}); err != nil {
+		svc, _ := pendingDefaultService(t, false, &called)
+		if _, err := svc.CreateSession(ctx, session.ModeDefault, session.Limits{}); err != nil {
 			t.Fatalf("CreateSession: %v", err)
 		}
 		if called {

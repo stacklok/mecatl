@@ -94,7 +94,7 @@ func makeFireFunc(svc *server.Service, store port.ScheduleStore, defaultTimeout 
 		// override means the fire's persisted session carries the sched-- family
 		// prefix the GC retention sweep (ScheduleFireRetention) partitions on.
 		fireID := newFireID(literalName, now)
-		sess, err := svc.CreateSessionWithProfile(ownerCtx, "", mode, limits, sel, profile,
+		sess, err := svc.CreateSessionWithProfile(ownerCtx, mode, limits, sel, profile,
 			server.WithSessionID(session.SessionID(fireID)),
 			server.WithOwner(fireSessionOwner(sched.Spec.Owner)),
 			server.WithPlacementBinding(placement),

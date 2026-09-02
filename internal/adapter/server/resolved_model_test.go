@@ -85,7 +85,7 @@ func TestServiceResolvedModelLiveFirstWindow(t *testing.T) {
 	}
 	svc := newResolvedModelServiceWithResolver(t, dflt, nil, resolve)
 
-	sess, err := svc.CreateSessionWithProvider(context.Background(), "/ws", session.ModeDefault, session.Limits{}, server.ProviderSelector{})
+	sess, err := svc.CreateSessionWithProvider(context.Background(), session.ModeDefault, session.Limits{}, server.ProviderSelector{})
 	if err != nil {
 		t.Fatalf("CreateSessionWithProvider(zero): %v", err)
 	}
@@ -122,7 +122,7 @@ func TestServiceResolvedModelLiveOnlyDefaultProvisionalThenHeals(t *testing.T) {
 	}
 	svc := newResolvedModelServiceWithResolver(t, dflt, nil, resolve)
 
-	sess, err := svc.CreateSessionWithProvider(context.Background(), "/ws", session.ModeDefault, session.Limits{}, server.ProviderSelector{})
+	sess, err := svc.CreateSessionWithProvider(context.Background(), session.ModeDefault, session.Limits{}, server.ProviderSelector{})
 	if err != nil {
 		t.Fatalf("CreateSessionWithProvider(zero): %v", err)
 	}
@@ -148,7 +148,7 @@ func TestServiceResolvedModelNilResolverByteIdentical(t *testing.T) {
 	dflt := server.ResolvedModel{ProviderID: "openai", ModelID: "gpt-default", ContextWindow: 128000}
 	svc := newResolvedModelServiceWithResolver(t, dflt, nil, nil) // nil resolver
 
-	sess, err := svc.CreateSessionWithProvider(context.Background(), "/ws", session.ModeDefault, session.Limits{}, server.ProviderSelector{})
+	sess, err := svc.CreateSessionWithProvider(context.Background(), session.ModeDefault, session.Limits{}, server.ProviderSelector{})
 	if err != nil {
 		t.Fatalf("CreateSessionWithProvider(zero): %v", err)
 	}
@@ -174,7 +174,7 @@ func TestServiceResolvedModelResolverZeroKeepsBaked(t *testing.T) {
 	resolve := func(_, _ string) int64 { return 0 }
 	svc := newResolvedModelServiceWithResolver(t, dflt, nil, resolve)
 
-	sess, err := svc.CreateSessionWithProvider(context.Background(), "/ws", session.ModeDefault, session.Limits{}, server.ProviderSelector{})
+	sess, err := svc.CreateSessionWithProvider(context.Background(), session.ModeDefault, session.Limits{}, server.ProviderSelector{})
 	if err != nil {
 		t.Fatalf("CreateSessionWithProvider(zero): %v", err)
 	}
@@ -199,7 +199,7 @@ func TestServiceResolvedModelResolverNeverLowers(t *testing.T) {
 	}
 	svc := newResolvedModelServiceWithResolver(t, dflt, nil, resolve)
 
-	sess, err := svc.CreateSessionWithProvider(context.Background(), "/ws", session.ModeDefault, session.Limits{}, server.ProviderSelector{})
+	sess, err := svc.CreateSessionWithProvider(context.Background(), session.ModeDefault, session.Limits{}, server.ProviderSelector{})
 	if err != nil {
 		t.Fatalf("CreateSessionWithProvider(zero): %v", err)
 	}
@@ -245,7 +245,7 @@ func TestServiceResolvedModelSelectorLiveFirst(t *testing.T) {
 	svc := newResolvedModelServiceWithResolver(t, dflt, factory, resolve)
 
 	sel := server.ProviderSelector{ProviderID: "openrouter", ModelID: "openai/gpt-5.5"}
-	sess, err := svc.CreateSessionWithProvider(context.Background(), "/ws", session.ModeDefault, session.Limits{}, sel)
+	sess, err := svc.CreateSessionWithProvider(context.Background(), session.ModeDefault, session.Limits{}, sel)
 	if err != nil {
 		t.Fatalf("CreateSessionWithProvider: %v", err)
 	}
@@ -273,7 +273,7 @@ func TestServiceResolvedModelDefaultPath(t *testing.T) {
 	dflt := server.ResolvedModel{ProviderID: "openai", ModelID: "gpt-default", ContextWindow: 128000}
 	svc := newResolvedModelService(t, dflt, nil)
 
-	sess, err := svc.CreateSessionWithProvider(context.Background(), "/ws", session.ModeDefault, session.Limits{}, server.ProviderSelector{})
+	sess, err := svc.CreateSessionWithProvider(context.Background(), session.ModeDefault, session.Limits{}, server.ProviderSelector{})
 	if err != nil {
 		t.Fatalf("CreateSessionWithProvider(zero): %v", err)
 	}
@@ -320,7 +320,7 @@ func TestServiceResolvedModelPerSession(t *testing.T) {
 	svc := newResolvedModelServiceWithResolver(t, dflt, factory, resolve)
 
 	sel := server.ProviderSelector{ProviderID: "anthropic", ModelID: "claude-opus-4.5"}
-	sess, err := svc.CreateSessionWithProvider(context.Background(), "/ws", session.ModeDefault, session.Limits{}, sel)
+	sess, err := svc.CreateSessionWithProvider(context.Background(), session.ModeDefault, session.Limits{}, sel)
 	if err != nil {
 		t.Fatalf("CreateSessionWithProvider: %v", err)
 	}

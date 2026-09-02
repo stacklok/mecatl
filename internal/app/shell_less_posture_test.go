@@ -267,12 +267,12 @@ func TestNoFSProfileDoesNotDuplicateShellLessClause(t *testing.T) {
 	}
 	defer func() { _ = res.Close() }()
 
-	sess := session.New("nofs", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/workspace", Revision: "in-tree-v1"}, session.Limits{MaxTurns: 1}, time.Now())
 	// A no-FS Environment: the nofs ref + nofs workspace + nil runner is what the
 	// service installs (buildSessionEnvironment / SetSessionEnvironment). This is
 	// the capability truth buildRequest reads: env.Ref().Kind == EnvKindNoFS ⇒
 	// the shell-less clause is WITHHELD even though env.CommandRunner() == nil.
 	noFSEnv := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindNoFS, ID: "none", Revision: "in-tree-v1"}, nofs.New(), nil)
+	sess := session.New("nofs", session.ModeDefault, noFSEnv.Ref(), session.Limits{MaxTurns: 1}, time.Now())
 	run := res.Engine.Run(ctx, sess, noFSEnv, agent.RunRequest{Text: "hello"})
 	for range run.Events() {
 	}

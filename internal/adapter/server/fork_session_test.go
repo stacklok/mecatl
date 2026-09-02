@@ -51,7 +51,6 @@ func driveCompletedTurn(t *testing.T, svc *server.Service, id session.SessionID,
 func TestForkSessionInheritsHistoryAndLabels(t *testing.T) {
 	ctx := context.Background()
 
-	const wantWorkspace = "/work/forksrc"
 	wantSel := server.ProviderSelector{ProviderID: "openrouter", ModelID: "anthropic/claude-3.5-sonnet"}
 
 	var (
@@ -74,7 +73,7 @@ func TestForkSessionInheritsHistoryAndLabels(t *testing.T) {
 	}
 	svc, store := newMCPServiceStore(t, srcText, factory)
 
-	src, err := svc.CreateSessionWithProvider(ctx, wantWorkspace, session.ModeAccept, session.Limits{MaxTurns: 7}, wantSel)
+	src, err := svc.CreateSessionWithProvider(ctx, session.ModeAccept, session.Limits{MaxTurns: 7}, wantSel)
 	if err != nil {
 		t.Fatalf("CreateSessionWithProvider: %v", err)
 	}
@@ -190,7 +189,7 @@ func TestForkSessionEffortOverride(t *testing.T) {
 	}
 	svc, store := newMCPServiceStore(t, "shared", factory)
 
-	src, err := svc.CreateSessionWithProvider(ctx, "/work/forksrc", session.ModeDefault, session.Limits{}, wantSel)
+	src, err := svc.CreateSessionWithProvider(ctx, session.ModeDefault, session.Limits{}, wantSel)
 	if err != nil {
 		t.Fatalf("CreateSessionWithProvider: %v", err)
 	}
@@ -259,7 +258,7 @@ func TestForkSessionEmptyEffortInherits(t *testing.T) {
 	}
 	svc, store := newMCPServiceStore(t, "shared", factory)
 
-	src, err := svc.CreateSessionWithProvider(ctx, "/ws", session.ModeDefault, session.Limits{}, wantSel)
+	src, err := svc.CreateSessionWithProvider(ctx, session.ModeDefault, session.Limits{}, wantSel)
 	if err != nil {
 		t.Fatalf("CreateSessionWithProvider: %v", err)
 	}
@@ -287,7 +286,7 @@ func TestForkSessionTitleOverride(t *testing.T) {
 	ctx := context.Background()
 	svc, store := newMCPServiceStore(t, "shared", nil)
 
-	src, err := svc.CreateSession(ctx, "/ws", session.ModeDefault, session.Limits{})
+	src, err := svc.CreateSession(ctx, session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -345,7 +344,7 @@ func TestForkSessionDefaultFSRidesSharedEngine(t *testing.T) {
 		t.Fatalf("new service: %v", err)
 	}
 
-	src, err := svc.CreateSession(ctx, "/ws/default", session.ModeDefault, session.Limits{})
+	src, err := svc.CreateSession(ctx, session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -375,7 +374,7 @@ func TestForkSessionRejectsRunningSource(t *testing.T) {
 	ctx := context.Background()
 	svc, store := newMCPServiceStore(t, "shared", nil)
 
-	sess, err := svc.CreateSession(ctx, "/ws", session.ModeDefault, session.Limits{})
+	sess, err := svc.CreateSession(ctx, session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -604,7 +603,7 @@ func TestGRPCForkSessionEffortOverride(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	src, err := svc.CreateSessionWithProvider(ctx, "/ws/grpc", session.ModeDefault, session.Limits{},
+	src, err := svc.CreateSessionWithProvider(ctx, session.ModeDefault, session.Limits{},
 		server.ProviderSelector{ProviderID: "openrouter", ModelID: "m", ReasoningEffort: "low"})
 	if err != nil {
 		t.Fatalf("CreateSessionWithProvider: %v", err)
@@ -642,7 +641,7 @@ func TestHTTPForkSessionEffortOverride(t *testing.T) {
 	defer srv.Close()
 
 	ctx := context.Background()
-	src, err := svc.CreateSessionWithProvider(ctx, "/ws", session.ModeDefault, session.Limits{},
+	src, err := svc.CreateSessionWithProvider(ctx, session.ModeDefault, session.Limits{},
 		server.ProviderSelector{ProviderID: "openrouter", ModelID: "m", ReasoningEffort: "low"})
 	if err != nil {
 		t.Fatalf("CreateSessionWithProvider: %v", err)
@@ -715,7 +714,7 @@ func TestForkSessionRespectsEngineCap(t *testing.T) {
 	var closed atomic.Int32
 	svc := cappedSelectorService(t, 1, &closed)
 
-	src, err := svc.CreateSessionWithProvider(ctx, "/ws", session.ModeDefault, session.Limits{},
+	src, err := svc.CreateSessionWithProvider(ctx, session.ModeDefault, session.Limits{},
 		server.ProviderSelector{ProviderID: "openrouter"})
 	if err != nil {
 		t.Fatalf("CreateSessionWithProvider: %v", err)

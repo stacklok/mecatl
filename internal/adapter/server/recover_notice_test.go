@@ -40,7 +40,7 @@ func TestRecoverNoticeEmittedOnPermanentFailure(t *testing.T) {
 	)
 	svc := newService(t, llm, allowRules())
 
-	sess, err := svc.CreateSession(context.Background(), "/ws", session.ModeDefault, session.Limits{MaxTurns: 1})
+	sess, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{MaxTurns: 1})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -129,7 +129,7 @@ func TestNoRecoverNoticeOnTransientFailure(t *testing.T) {
 	)
 	svc := newService(t, llm, allowRules())
 
-	sess, err := svc.CreateSession(context.Background(), "/ws", session.ModeDefault, session.Limits{MaxTurns: 1})
+	sess, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{MaxTurns: 1})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -183,7 +183,7 @@ func TestRecoverNoticeCrossesGRPCWire(t *testing.T) {
 	)
 	svc := newService(t, llm, allowRules())
 
-	sess, err := svc.CreateSession(context.Background(), "/ws", session.ModeDefault, session.Limits{MaxTurns: 1})
+	sess, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{MaxTurns: 1})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -324,7 +324,7 @@ func TestRecoverNoticeSweptOnCloseSession(t *testing.T) {
 	)
 	svc := newService(t, llm, allowRules())
 
-	sess, err := svc.CreateSession(context.Background(), "/ws", session.ModeDefault, session.Limits{MaxTurns: 1})
+	sess, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{MaxTurns: 1})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}

@@ -99,7 +99,7 @@ func TestUsableAutoSkillsStockBuildPolicyMatrix(t *testing.T) {
 			}
 			defer built.Close()
 			ctx := session.WithPrincipal(context.Background(), &session.Principal{Issuer: "test", Subject: "matrix", GrantType: session.GrantTypeUser})
-			sess, err := built.Service.CreateSession(ctx, workspace, session.ModeDefault, defaultLimits())
+			sess, err := built.Service.CreateSession(ctx, session.ModeDefault, defaultLimits())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -149,7 +149,7 @@ func TestUsableAutoSkillsStockBuildPolicyMatrix(t *testing.T) {
 					t.Fatalf("skill = %+v, want state=%s operation=%s", got, tc.wantState, tc.wantOperation)
 				}
 			}
-			second, err := built.Service.CreateSession(ctx, workspace, session.ModeDefault, defaultLimits())
+			second, err := built.Service.CreateSession(ctx, session.ModeDefault, defaultLimits())
 			if err != nil {
 				t.Fatal(err)
 			}

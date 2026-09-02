@@ -92,7 +92,7 @@ func TestRunEndToEndMockProvider(t *testing.T) {
 	defer built.Close()
 
 	var human bytes.Buffer
-	outcome, err := run(ctx, built.Service, repo, session.Limits{}, "summarise the repo", &human)
+	outcome, err := run(ctx, built.Service, session.Limits{}, "summarise the repo", &human)
 	if err != nil {
 		t.Fatalf("run: %v", err)
 	}
@@ -155,7 +155,7 @@ func TestRunUsageAndFinalTextFaithfullyCopied(t *testing.T) {
 	svc := scriptedService(t, nil, nil, turn)
 
 	var human bytes.Buffer
-	outcome, err := run(context.Background(), svc, "/ws", session.Limits{}, "answer", &human)
+	outcome, err := run(context.Background(), svc, session.Limits{}, "answer", &human)
 	if err != nil {
 		t.Fatalf("run: %v", err)
 	}
@@ -185,7 +185,7 @@ func TestRunFinalTextClamped(t *testing.T) {
 	svc := scriptedService(t, nil, nil, turn)
 
 	var human bytes.Buffer
-	outcome, err := run(context.Background(), svc, "/ws", session.Limits{}, "answer", &human)
+	outcome, err := run(context.Background(), svc, session.Limits{}, "answer", &human)
 	if err != nil {
 		t.Fatalf("run: %v", err)
 	}
@@ -223,18 +223,14 @@ func TestExitCodeCleanIsZero(t *testing.T) {
 	}
 }
 
-type scriptedPlacementProvider struct{ workspaces func(string) tool.Workspace }
+type scriptedPlacementProvider struct {
+	root       string
+	workspaces func(string) tool.Workspace
+}
 
-func (scriptedPlacementProvider) AcceptsPrivatePlacementHints() {}
-
-func (p scriptedPlacementProvider) Bind(_ context.Context, req server.PlacementBindRequest) (server.PlacementBinding, error) {
-	root := "/ws"
-	workspace := tool.Workspace(memfs.NewWorkspace(root))
-	if req.Selector.IsID() {
-		root = req.Selector.ID
-		workspace = p.workspaces(root)
-	}
-	ref := session.EnvironmentRef{Kind: session.EnvKindLocal, ID: root, Revision: "test-v1"}
+func (p scriptedPlacementProvider) Bind(_ context.Context, _ server.PlacementBindRequest) (server.PlacementBinding, error) {
+	workspace := p.workspaces(p.root)
+	ref := session.EnvironmentRef{Kind: session.EnvKindLocal, ID: p.root, Revision: "test-v1"}
 	return server.PlacementBinding{Ref: ref, Environment: tool.MustEnvironment(ref, workspace, nil)}, nil
 }
 func (p scriptedPlacementProvider) Reattach(_ context.Context, req server.PlacementReattachRequest) (server.PlacementBinding, error) {
@@ -247,6 +243,10 @@ func (p scriptedPlacementProvider) Reattach(_ context.Context, req server.Placem
 // into the catalog (e.g. a real Write tool); workspaces, when non-nil, overrides the
 // default memfs factory (e.g. an osfs factory for a real-FS diff test).
 func scriptedService(t *testing.T, extraTools []tool.Tool, workspaces func(string) tool.Workspace, turns ...mockllm.Turn) *server.Service {
+	return scriptedServiceAtRoot(t, "/ws", extraTools, workspaces, turns...)
+}
+
+func scriptedServiceAtRoot(t *testing.T, root string, extraTools []tool.Tool, workspaces func(string) tool.Workspace, turns ...mockllm.Turn) *server.Service {
 	t.Helper()
 	llm := mockllm.New(turns...)
 	cat := tool.NewCatalog()
@@ -266,7 +266,7 @@ func scriptedService(t *testing.T, extraTools []tool.Tool, workspaces func(strin
 		Engine:              engine,
 		Store:               memstore.New(),
 		Workspaces:          workspaces,
-		PlacementProvider:   scriptedPlacementProvider{workspaces: workspaces},
+		PlacementProvider:   scriptedPlacementProvider{root: root, workspaces: workspaces},
 		PlacementScope:      "test",
 		Now:                 func() time.Time { return time.Unix(0, 0) },
 		DefaultCapabilities: llm.Capabilities(),
@@ -290,7 +290,7 @@ func TestRunNonEmptyDiffWhenAgentWritesFile(t *testing.T) {
 	// modification and the patch BODY carries the new content.
 	readCall := session.NewToolCall("r1", "Read", []byte(`{"path":"f.txt"}`))
 	writeCall := session.NewToolCall("w1", "Write", []byte(`{"path":"f.txt","content":"CHANGED BY THE AGENT\n"}`))
-	svc := scriptedService(t,
+	svc := scriptedServiceAtRoot(t, repo,
 		[]tool.Tool{tools.ReadTool{}, tools.WriteTool{}},
 		func(root string) tool.Workspace {
 			ws, err := osfs.NewWorkspace(root)
@@ -305,7 +305,7 @@ func TestRunNonEmptyDiffWhenAgentWritesFile(t *testing.T) {
 	)
 
 	var human bytes.Buffer
-	outcome, err := run(context.Background(), svc, repo, session.Limits{}, "edit f.txt", &human)
+	outcome, err := run(context.Background(), svc, session.Limits{}, "edit f.txt", &human)
 	if err != nil {
 		t.Fatalf("run: %v", err)
 	}
@@ -332,7 +332,7 @@ func TestRunAdversarialError(t *testing.T) {
 	svc := scriptedService(t, nil, nil, mockllm.ErrorTurn(errors.New("upstream 503 exhausted retries")))
 
 	var human bytes.Buffer
-	outcome, err := run(context.Background(), svc, "/ws", session.Limits{}, "do the thing", &human)
+	outcome, err := run(context.Background(), svc, session.Limits{}, "do the thing", &human)
 	if err != nil {
 		t.Fatalf("run (a model error is reported in the Summary, NOT as a setup error): %v", err)
 	}
@@ -366,7 +366,7 @@ func TestRunAdversarialNoProgress(t *testing.T) {
 	svc := scriptedService(t, nil, nil, turns...)
 
 	var human bytes.Buffer
-	outcome, err := run(context.Background(), svc, "/ws", session.Limits{}, "do nothing useful", &human)
+	outcome, err := run(context.Background(), svc, session.Limits{}, "do nothing useful", &human)
 	if err != nil {
 		t.Fatalf("run: %v", err)
 	}
@@ -393,7 +393,7 @@ func TestRunAdversarialCancelled(t *testing.T) {
 	svc := scriptedService(t, nil, nil, mockllm.EmptyTurnWithStop(session.StopCancelled))
 
 	var human bytes.Buffer
-	outcome, err := run(context.Background(), svc, "/ws", session.Limits{}, "abandon", &human)
+	outcome, err := run(context.Background(), svc, session.Limits{}, "abandon", &human)
 	if err != nil {
 		t.Fatalf("run: %v", err)
 	}
@@ -427,7 +427,7 @@ func TestRunCancelOnMainAskBoundsAndExits(t *testing.T) {
 		Engine:              engine,
 		Store:               memstore.New(),
 		Workspaces:          ws,
-		PlacementProvider:   scriptedPlacementProvider{workspaces: ws},
+		PlacementProvider:   scriptedPlacementProvider{root: "/ws", workspaces: ws},
 		PlacementScope:      "test",
 		Now:                 func() time.Time { return time.Unix(0, 0) },
 		DefaultCapabilities: llm.Capabilities(),
@@ -446,7 +446,7 @@ func TestRunCancelOnMainAskBoundsAndExits(t *testing.T) {
 	var runErr error
 	go func() {
 		var human bytes.Buffer
-		outcome, runErr = run(ctx, svc, "/ws", session.Limits{}, "write a file", &human)
+		outcome, runErr = run(ctx, svc, session.Limits{}, "write a file", &human)
 		close(done)
 	}()
 	select {
@@ -774,7 +774,7 @@ func TestRunUnknownToolTurnCleanTerminal(t *testing.T) {
 		mockllm.TextTurn("recovered and done"),
 	)
 	var human bytes.Buffer
-	outcome, err := run(context.Background(), svc, "/ws", session.Limits{}, "call a bad tool", &human)
+	outcome, err := run(context.Background(), svc, session.Limits{}, "call a bad tool", &human)
 	if err != nil {
 		t.Fatalf("run: %v", err)
 	}
@@ -796,7 +796,7 @@ func TestRunMaxTurnsCapFromLimits(t *testing.T) {
 	)
 
 	var human bytes.Buffer
-	outcome, err := run(context.Background(), svc, "/ws", session.Limits{MaxTurns: 1}, "loop", &human)
+	outcome, err := run(context.Background(), svc, session.Limits{MaxTurns: 1}, "loop", &human)
 	if err != nil {
 		t.Fatalf("run: %v", err)
 	}

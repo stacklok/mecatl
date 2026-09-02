@@ -59,7 +59,7 @@ func callerSeparationLiveService(t *testing.T) (*server.Service, context.Context
 
 func callerSeparationAwaitingRun(owner context.Context, t *testing.T, svc *server.Service) (*session.Session, *agent.Run, string) {
 	t.Helper()
-	sess, err := svc.CreateSession(owner, "/ws", session.ModeDefault, session.Limits{})
+	sess, err := svc.CreateSession(owner, session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -80,7 +80,7 @@ func callerSeparationAwaitingRun(owner context.Context, t *testing.T, svc *serve
 // every prompt request re-evaluates the session owner before run entry.
 func TestCallerSeparation_Scenario3_RepeatedForeignPromptIsNotFound(t *testing.T) {
 	svc, aliceCtx, bobCtx := callerSeparationLiveService(t)
-	sess, err := svc.CreateSession(aliceCtx, "/ws", session.ModeDefault, session.Limits{})
+	sess, err := svc.CreateSession(aliceCtx, session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -252,7 +252,7 @@ func TestCallerSeparation_Scenario3_ForeignLiveRunReplayIsNotFound(t *testing.T)
 // event Alice's run produces is ever fanned to him. Alice can open her own.
 func TestCallerSeparation_Scenario3_LiveSubscriptionIsOwnerChecked(t *testing.T) {
 	svc, aliceCtx, bobCtx := callerSeparationLiveService(t)
-	sess, err := svc.CreateSession(aliceCtx, "/ws", session.ModeDefault, session.Limits{})
+	sess, err := svc.CreateSession(aliceCtx, session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatal(err)
 	}

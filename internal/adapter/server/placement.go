@@ -61,7 +61,6 @@ type PlacementSelectorKind string
 const (
 	PlacementSelectorDefault  PlacementSelectorKind = "default"
 	PlacementSelectorNoFS     PlacementSelectorKind = "no-fs"
-	PlacementSelectorID       PlacementSelectorKind = "id"
 	PlacementSelectorWorktree PlacementSelectorKind = "worktree"
 )
 
@@ -72,11 +71,6 @@ func DefaultPlacement() PlacementSelector {
 
 // NoFSPlacement selects explicit filesystem attenuation.
 func NoFSPlacement() PlacementSelector { return PlacementSelector{Kind: PlacementSelectorNoFS} }
-
-// SelectPlacementID carries a private in-process provider hint.
-func SelectPlacementID(id string) PlacementSelector {
-	return PlacementSelector{Kind: PlacementSelectorID, ID: id}
-}
 
 // SelectWorktree carries a source-scoped ephemeral selector to the provider.
 func SelectWorktree(source session.SessionID, ref session.EnvironmentRef, token string) PlacementSelector {
@@ -89,9 +83,6 @@ func (s PlacementSelector) IsDefault() bool { return s.Kind == PlacementSelector
 // IsNoFS reports whether filesystem attenuation was selected.
 func (s PlacementSelector) IsNoFS() bool { return s.Kind == PlacementSelectorNoFS }
 
-// IsID reports whether a private in-process hint was selected.
-func (s PlacementSelector) IsID() bool { return s.Kind == PlacementSelectorID }
-
 // IsWorktree reports whether a source-scoped worktree token was selected.
 func (s PlacementSelector) IsWorktree() bool { return s.Kind == PlacementSelectorWorktree }
 
@@ -100,8 +91,6 @@ func (s PlacementSelector) Valid() bool {
 	switch s.Kind {
 	case PlacementSelectorDefault, PlacementSelectorNoFS:
 		return s.ID == "" && s.Source == "" && !s.SourceRef.Valid()
-	case PlacementSelectorID:
-		return s.ID != "" && s.Source == "" && !s.SourceRef.Valid()
 	case PlacementSelectorWorktree:
 		return s.ID != "" && s.Source != "" && s.SourceRef.Valid()
 	default:
@@ -145,12 +134,6 @@ type PlacementBinding struct {
 // binding resolution.
 type PlacementProvider interface {
 	Bind(context.Context, PlacementBindRequest) (PlacementBinding, error)
-}
-
-// PrivatePlacementHintBinder marks trusted in-process providers that accept an
-// opaque private placement hint. Public transports never provide one.
-type PrivatePlacementHintBinder interface {
-	AcceptsPrivatePlacementHints()
 }
 
 // PlacementDiscoveryRequest scopes alternate-worktree discovery to an owned
@@ -215,12 +198,8 @@ func sanitizePlacementProviderError(err error) error {
 	return &placementProviderError{public: public, cause: err}
 }
 
-func (s *Service) logPlacementProviderError(ctx context.Context, operation string, err error) {
-	var providerErr *placementProviderError
-	if s == nil || s.cfg.Diagnostics == nil || !errors.As(err, &providerErr) {
-		return
-	}
-	words := strings.Fields(session.ToValidUTF8(providerErr.cause.Error()))
+func sanitizedPlacementDiagnosticCause(err error) string {
+	words := strings.Fields(session.ToValidUTF8(err.Error()))
 	for i, word := range words {
 		if strings.ContainsAny(word, `/\\`) {
 			words[i] = "[redacted]"
@@ -230,7 +209,22 @@ func (s *Service) logPlacementProviderError(ctx context.Context, operation strin
 	if utf8.RuneCountInString(detail) > maxPlacementDetailRunes {
 		detail = string([]rune(detail)[:maxPlacementDetailRunes])
 	}
-	s.cfg.Diagnostics.Log(ctx, port.LevelWarn, "placement provider operation failed", "operation", operation, "cause", detail)
+	return detail
+}
+
+func (s *Service) logPlacementProviderError(ctx context.Context, operation string, err error) {
+	var providerErr *placementProviderError
+	if s == nil || s.cfg.Diagnostics == nil || !errors.As(err, &providerErr) {
+		return
+	}
+	s.cfg.Diagnostics.Log(ctx, port.LevelWarn, "placement provider operation failed", "operation", operation, "cause", sanitizedPlacementDiagnosticCause(providerErr.cause))
+}
+
+func (s *Service) logDiscoveryError(ctx context.Context, operation string, err error) {
+	if s == nil || s.cfg.Diagnostics == nil || err == nil {
+		return
+	}
+	s.cfg.Diagnostics.Log(ctx, port.LevelWarn, "placement discovery failed", "operation", operation, "cause", sanitizedPlacementDiagnosticCause(err))
 }
 
 // NewPlacementBinder constructs the binding choke point.
@@ -269,13 +263,8 @@ func configuredPlacementBinder(ctx context.Context, cfg Config) (*PlacementBinde
 	return binder, nil
 }
 
-func (s *Service) bindPlacementForCreate(ctx context.Context, workspace string, profile SessionProfile, owner *session.Principal) (string, *PlacementBinding, error) {
+func (s *Service) bindPlacementForCreate(ctx context.Context, profile SessionProfile, owner *session.Principal) (string, *PlacementBinding, error) {
 	selector := DefaultPlacement()
-	if workspace != "" {
-		if _, ok := s.cfg.PlacementProvider.(PrivatePlacementHintBinder); ok {
-			selector = SelectPlacementID(workspace)
-		}
-	}
 	if profile == ProfileNoFS {
 		selector = NoFSPlacement()
 	}

@@ -139,7 +139,7 @@ func TestCallerIdentity_Scenario4_EventActorStampedAtAppendOnly(t *testing.T) {
 
 	newAliceSession := func() *session.Session {
 		t.Helper()
-		s, err := svc.CreateSession(ctx, "/ws", session.ModeDefault, session.Limits{MaxTurns: 4})
+		s, err := svc.CreateSession(ctx, session.ModeDefault, session.Limits{MaxTurns: 4})
 		if err != nil {
 			t.Fatalf("CreateSession: %v", err)
 		}
@@ -186,7 +186,7 @@ func TestCallerIdentity_Scenario4_EventActorStampedAtAppendOnly(t *testing.T) {
 
 	// (c) The loop half: a session drained straight off Run.Events() so no relay
 	// (and therefore no appendEvent) is involved.
-	direct, err := svc.CreateSession(ctx, "/ws", session.ModeDefault, session.Limits{MaxTurns: 4})
+	direct, err := svc.CreateSession(ctx, session.ModeDefault, session.Limits{MaxTurns: 4})
 	if err != nil {
 		t.Fatalf("CreateSession (direct): %v", err)
 	}
@@ -222,7 +222,7 @@ func TestCallerIdentity_Scenario4_EventActorLogOnly(t *testing.T) {
 	ctx := session.WithPrincipal(context.Background(), alice)
 	log := memstore.NewEventLog()
 	svc := eventActorService(t, log)
-	sess, err := svc.CreateSession(ctx, "/ws", session.ModeDefault, session.Limits{MaxTurns: 4})
+	sess, err := svc.CreateSession(ctx, session.ModeDefault, session.Limits{MaxTurns: 4})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -302,7 +302,7 @@ func TestCallerIdentity_Scenario4_OwnerlessEventActorAbsent(t *testing.T) {
 	log := memstore.NewEventLog()
 	svc := eventActorService(t, log)
 	// No principal in the context: the pre-ship / no-auth path.
-	sess, err := svc.CreateSession(context.Background(), "/ws", session.ModeDefault, session.Limits{MaxTurns: 4})
+	sess, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{MaxTurns: 4})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -312,7 +312,7 @@ func TestCallerIdentity_Scenario4_OwnerlessEventActorAbsent(t *testing.T) {
 	driveConverse(t, svc, sess.ID)
 
 	// An OWNED session driven with no verified caller on the context.
-	owned, err := svc.CreateSession(session.WithPrincipal(context.Background(), alice), "/ws", session.ModeDefault, session.Limits{MaxTurns: 4})
+	owned, err := svc.CreateSession(session.WithPrincipal(context.Background(), alice), session.ModeDefault, session.Limits{MaxTurns: 4})
 	if err != nil {
 		t.Fatalf("CreateSession (owned): %v", err)
 	}

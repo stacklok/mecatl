@@ -161,7 +161,7 @@ func TestApprovePlanAllowOnceFlipsModeAndRunsExecution(t *testing.T) {
 	)
 	svc := planApprovalService(t, llm, allowRules())
 
-	sess, err := svc.CreateSession(context.Background(), "/ws", session.ModePlan, session.Limits{})
+	sess, err := svc.CreateSession(context.Background(), session.ModePlan, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -230,7 +230,7 @@ func TestApprovePlanAllowAlwaysFlipsToAcceptEdits(t *testing.T) {
 	)
 	svc := planApprovalService(t, llm, allowRules())
 
-	sess, err := svc.CreateSession(context.Background(), "/ws", session.ModePlan, session.Limits{})
+	sess, err := svc.CreateSession(context.Background(), session.ModePlan, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -267,7 +267,7 @@ func TestApprovePlanDenyIterates(t *testing.T) {
 	)
 	svc := planApprovalService(t, llm, allowRules())
 
-	sess, err := svc.CreateSession(context.Background(), "/ws", session.ModePlan, session.Limits{})
+	sess, err := svc.CreateSession(context.Background(), session.ModePlan, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -371,7 +371,7 @@ func TestApprovePlanMidRunFailsPrecondition(t *testing.T) {
 	)
 	svc := newService(t, llm, allowRules(), read)
 
-	sess, err := svc.CreateSession(context.Background(), "/ws", session.ModeDefault, session.Limits{})
+	sess, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -399,7 +399,7 @@ func TestApprovePlanNotAwaitingFails(t *testing.T) {
 	llm := mockllm.New()
 	svc := planApprovalService(t, llm, allowRules())
 
-	sess, err := svc.CreateSession(context.Background(), "/ws", session.ModePlan, session.Limits{})
+	sess, err := svc.CreateSession(context.Background(), session.ModePlan, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -446,7 +446,7 @@ func TestApprovePlanNotPlanAskFails(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewService: %v", err)
 	}
-	sess, err := svc.CreateSession(context.Background(), "/ws", session.ModeDefault, session.Limits{})
+	sess, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -489,7 +489,7 @@ func TestApprovePlanRecordsProceedMessage(t *testing.T) {
 	)
 	svc := planApprovalService(t, llm, allowRules())
 
-	sess, err := svc.CreateSession(context.Background(), "/ws", session.ModePlan, session.Limits{})
+	sess, err := svc.CreateSession(context.Background(), session.ModePlan, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}

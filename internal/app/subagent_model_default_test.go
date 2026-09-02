@@ -441,7 +441,7 @@ func TestBuildNarratesSubagentModelExactlyOnce(t *testing.T) {
 
 	// A selector session forces a PER-SESSION engine (fresh child engines); it must
 	// not re-narrate the build-once fact.
-	if _, err := built.Service.CreateSessionWithProvider(context.Background(), t.TempDir(),
+	if _, err := built.Service.CreateSessionWithProvider(context.Background(),
 		session.ModeDefault, session.Limits{}, server.ProviderSelector{ProviderID: providerMock}); err != nil {
 		t.Fatalf("CreateSessionWithProvider(selector): %v", err)
 	}
@@ -602,7 +602,7 @@ func TestSubagentModelRoutesChildToCheapModel(t *testing.T) {
 	defer built.Close()
 	svc := built.Service
 
-	sess, err := svc.CreateSession(ctx, workspace, session.ModeDefault, defaultLimits())
+	sess, err := svc.CreateSession(ctx, session.ModeDefault, defaultLimits())
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}

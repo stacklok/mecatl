@@ -90,7 +90,7 @@ func TestClientWorkspaceCannotOverrideServerPlacement(t *testing.T) {
 	defer built.Close()
 	svc := built.Service
 
-	sess, err := svc.CreateSession(ctx, wtB, session.ModeDefault, session.Limits{})
+	sess, err := svc.CreateSession(ctx, session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession(wtB): %v", err)
 	}
@@ -166,7 +166,7 @@ func TestServerPlacementReattachesAfterRestart(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Build 1: %v", err)
 	}
-	sess, err := built1.Service.CreateSession(ctx, wtB, session.ModeDefault, session.Limits{})
+	sess, err := built1.Service.CreateSession(ctx, session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession(wtB): %v", err)
 	}

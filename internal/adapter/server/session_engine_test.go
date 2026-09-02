@@ -92,7 +92,7 @@ func TestCreateSessionWithMCPEmptySpecsSharedEngine(t *testing.T) {
 	}
 	svc := newMCPService(t, "shared reply", factory)
 
-	sess, err := svc.CreateSessionWithMCP(context.Background(), "/ws", session.ModeDefault, session.Limits{}, nil)
+	sess, err := svc.CreateSessionWithMCP(context.Background(), session.ModeDefault, session.Limits{}, nil)
 	if err != nil {
 		t.Fatalf("CreateSessionWithMCP: %v", err)
 	}
@@ -114,7 +114,7 @@ func TestCreateSessionWithMCPEmptySpecsSharedEngine(t *testing.T) {
 // SessionEngine factory configured is an invalid-argument error.
 func TestCreateSessionWithMCPNilFactory(t *testing.T) {
 	svc := newMCPService(t, "shared", nil) // no SessionEngine
-	_, err := svc.CreateSessionWithMCP(context.Background(), "/ws", session.ModeDefault, session.Limits{},
+	_, err := svc.CreateSessionWithMCP(context.Background(), session.ModeDefault, session.Limits{},
 		[]mcp.ServerConfig{{Name: "docs", URL: "https://example.test/mcp"}})
 	if err == nil || !errors.Is(err, server.ErrInvalidArgument) {
 		t.Fatalf("want ErrInvalidArgument for specs without a factory, got %v", err)
@@ -139,7 +139,7 @@ func TestStartRunRoutesToPerSessionEngine(t *testing.T) {
 	}
 	svc := newMCPService(t, "shared reply", factory)
 
-	sess, err := svc.CreateSessionWithMCP(context.Background(), "/ws", session.ModeDefault, session.Limits{},
+	sess, err := svc.CreateSessionWithMCP(context.Background(), session.ModeDefault, session.Limits{},
 		[]mcp.ServerConfig{{Name: "docs", URL: "https://example.test/mcp"}})
 	if err != nil {
 		t.Fatalf("CreateSessionWithMCP: %v", err)
@@ -213,7 +213,7 @@ func TestEndSessionEvictsLearnedAndTearsDown(t *testing.T) {
 		t.Fatalf("new service: %v", err)
 	}
 
-	sess, err := svc.CreateSessionWithMCP(context.Background(), "/ws", session.ModeDefault, session.Limits{},
+	sess, err := svc.CreateSessionWithMCP(context.Background(), session.ModeDefault, session.Limits{},
 		[]mcp.ServerConfig{{Name: "docs", URL: "https://example.test/mcp"}})
 	if err != nil {
 		t.Fatalf("CreateSessionWithMCP: %v", err)
@@ -253,11 +253,11 @@ func TestServiceCloseTearsDownSessionEngines(t *testing.T) {
 		return server.SessionEngineResult{Engine: eng, Close: func() error { closed.Add(1); return nil }}, nil
 	}
 	svc := newMCPService(t, "shared", factory)
-	if _, err := svc.CreateSessionWithMCP(context.Background(), "/ws", session.ModeDefault, session.Limits{},
+	if _, err := svc.CreateSessionWithMCP(context.Background(), session.ModeDefault, session.Limits{},
 		[]mcp.ServerConfig{{Name: "a", URL: "https://a.test/mcp"}}); err != nil {
 		t.Fatalf("create a: %v", err)
 	}
-	if _, err := svc.CreateSessionWithMCP(context.Background(), "/ws", session.ModeDefault, session.Limits{},
+	if _, err := svc.CreateSessionWithMCP(context.Background(), session.ModeDefault, session.Limits{},
 		[]mcp.ServerConfig{{Name: "b", URL: "https://b.test/mcp"}}); err != nil {
 		t.Fatalf("create b: %v", err)
 	}

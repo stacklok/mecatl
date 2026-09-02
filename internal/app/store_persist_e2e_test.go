@@ -39,7 +39,7 @@ func TestBuildDisablesDurableEvidenceWithoutEventLog(t *testing.T) {
 		t.Fatalf("Build: %v", err)
 	}
 	defer built.Close()
-	sess, err := built.Service.CreateSession(ctx, workspace, session.ModeDefault, session.Limits{})
+	sess, err := built.Service.CreateSession(ctx, session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -88,7 +88,7 @@ func TestStorePersistsAcrossBuildsE2E(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Build #1: %v", err)
 	}
-	sess, err := built1.Service.CreateSession(ctx, workspace, session.ModeDefault, session.Limits{})
+	sess, err := built1.Service.CreateSession(ctx, session.ModeDefault, session.Limits{})
 	if err != nil {
 		built1.Close()
 		t.Fatalf("CreateSession: %v", err)

@@ -12,7 +12,7 @@ import (
 
 func TestCallerSeparation_Scenario4_SystemPrincipalIsNotUniversalBypass(t *testing.T) {
 	svc, _, _, alice, _ := callerSeparationFixture(t)
-	owned, err := svc.CreateSession(alice, "/ws", session.ModeDefault, session.Limits{})
+	owned, err := svc.CreateSession(alice, session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}

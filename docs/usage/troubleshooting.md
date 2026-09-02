@@ -133,10 +133,11 @@ when that embedded id exactly matches the request.
 **`✗ … — retrying won't help; the request is rejected.` (permanent provider error)**
 The provider returned a **permanent** rejection — a 4xx status other than 408/429, a
 context-window overflow, or a content-policy block. Replaying the identical request
-cannot succeed. Start a new session (a new `CreateSession`, or restart the mecatui
-client — `/clear` only wipes the local transcript and the next prompt re-enters the
-SAME poisoned server session), change your prompt to stay within the budget or avoid
-the blocked content, or fix the credential/permission on the provider side. A
+cannot succeed. Create a fresh server-side successor with `/clear`; the client
+switches only after the successor is created and fetched, so a creation failure preserves
+the current session and transcript. Alternatively, start a separate session, change your
+prompt to stay within the budget or avoid the blocked content, or fix the
+credential/permission on the provider side. A
 transient failure (5xx, rate limit, or an unknown error) shows the usual error block
 instead — those may succeed on retry.
 

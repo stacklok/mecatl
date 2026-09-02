@@ -68,7 +68,7 @@ func captureBuiltDelegationPrompt(t *testing.T, parallel, teams bool) prompt.Lay
 	}
 	defer built.Close()
 
-	sess, err := built.Service.CreateSession(context.Background(), workspace, session.ModeDefault, session.Limits{})
+	sess, err := built.Service.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}

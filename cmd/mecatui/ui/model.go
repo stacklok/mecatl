@@ -36,10 +36,10 @@ type SessionCreator interface {
 	CreateSession(ctx context.Context, sel client.ModelSelection, mode string) (string, client.Capabilities, client.ResolvedModel, error)
 	// CreateSessionWithCarryover forks the current transcript with optional model
 	// overrides; placement and omitted settings are inherited by the server.
-	CreateSessionWithCarryover(ctx context.Context, sourceSessionID string, sel client.ModelSelection, mode string) (string, client.Capabilities, client.ResolvedModel, error)
+	CreateSessionWithCarryover(ctx context.Context, sourceSessionID string, sel client.ModelSelection) (string, client.Capabilities, client.ResolvedModel, error)
 	// ClearSession creates an empty-history successor. selector is nil for ordinary
 	// /clear and points only to an opaque ListWorktrees result for a worktree switch.
-	ClearSession(ctx context.Context, sourceSessionID string, selector *string) (string, client.SessionSnapshot, error)
+	ClearSession(ctx context.Context, sourceSessionID string, selector *client.WorktreeSelector) (string, client.SessionSnapshot, error)
 	// CloseSession ends a server-side session by id. The /models restart-now handoff
 	// closes the OLD session before creating the new one so a model switch leaves no
 	// orphaned server-side session. Best-effort: the caller proceeds with the new

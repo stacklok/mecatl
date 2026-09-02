@@ -20,16 +20,23 @@ func newPlacementTestService(cfg server.Config) (*server.Service, error) {
 		cfg.PlacementProvider = testPlacementProvider{root: root, workspaces: cfg.Workspaces, firstBind: &atomic.Bool{}}
 		cfg.PlacementScope = "test"
 	}
-	svc, err := server.NewService(cfg)
+	return server.NewService(cfg)
+}
+
+func newPlacementTeamTestService(cfg server.Config) (*server.Service, error) {
+	svc, err := newPlacementTestService(cfg)
 	if err != nil {
 		return nil, err
 	}
-	if cfg.MemberEngine != nil {
-		if _, err := svc.CreateSessionWithProfile(context.Background(), "", session.ModeDefault, session.Limits{}, server.ProviderSelector{}, server.ProfileDefault, server.WithSessionID("source")); err != nil {
-			return nil, err
-		}
+	if err := createPlacementTestSource(svc); err != nil {
+		return nil, err
 	}
 	return svc, nil
+}
+
+func createPlacementTestSource(svc *server.Service) error {
+	_, err := svc.CreateSessionWithProfile(context.Background(), session.ModeDefault, session.Limits{}, server.ProviderSelector{}, server.ProfileDefault, server.WithSessionID("source"))
+	return err
 }
 
 type testPlacementProvider struct {

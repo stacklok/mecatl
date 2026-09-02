@@ -340,7 +340,7 @@ func (l *Local) waitReady(timeout time.Duration) error {
 		default:
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		id, _, _, err := l.cli.CreateSession(ctx, l.Workspace(), client.ModeFromString("default"), client.ModelSelection{})
+		id, _, _, err := l.cli.CreateSession(ctx, client.ModeFromString("default"), client.ModelSelection{})
 		if err == nil {
 			_ = l.cli.CloseSession(ctx, id)
 			cancel()
