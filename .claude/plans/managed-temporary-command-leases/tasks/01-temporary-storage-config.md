@@ -2,8 +2,8 @@
 id: 01-temporary-storage-config
 title: Operator-only temporary-storage configuration
 blocked_by: []
-status: in-progress
-branch: ""
+status: done
+branch: "plan-managed-temporary-command-leases/01-temporary-storage-config"
 worktree: ""
 issue: ""
 retries: 0
