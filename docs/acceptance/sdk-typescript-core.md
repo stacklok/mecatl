@@ -581,6 +581,12 @@ proofs are vitest suites under `sdk/typescript/`, cited per AC.
   file plus the exact title encoded as base64url. The repository-owned resolver
   parses the TypeScript AST and requires exactly one matching Vitest case, so a
   deleted or renamed title fails instead of degrading to a file-level proof.
+  That parse uses the TypeScript compiler out of `sdk/typescript/node_modules`,
+  so the three `task ac-trace*` targets take `sdk:install` as a real dependency:
+  without it every vitest proof is rejected as unresolvable — merely noisy while
+  a plan is `draft`, and **fatal** under `--strict` once it lands. The install
+  task is fingerprinted on `package.json` + `pnpm-lock.yaml`, so it is a no-op
+  on an already-installed tree.
 - **HTTP steer lands out from under AC3.7** — if
   [#873](https://github.com/stacklok/mecatl/issues/873) merges mid-plan, the
   worker may wire HTTP steer behind the same `http_steer` feature gate and

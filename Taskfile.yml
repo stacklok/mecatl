@@ -846,6 +846,14 @@ tasks:
 
   ac-trace:
     desc: "Report acceptance-criteria → test coverage for every docs/acceptance/ plan (report-only)"
+    # sdk:install is a REAL dependency, not a convenience: .actrace.yml resolves
+    # `vitest:` proofs through scripts/resolve-vitest-proof.mjs, which parses the
+    # TypeScript AST using the compiler from sdk/typescript/node_modules. Without
+    # it every vitest proof is rejected ("TypeScript is unavailable"), which is
+    # merely noisy here but FATAL under --strict once a plan carrying vitest
+    # proofs is landed. The install task is fingerprinted on package.json +
+    # pnpm-lock.yaml, so this is a no-op on an already-installed tree.
+    deps: [sdk:install]
     cmds:
       # go run (pinned), NOT a go.mod `tool` directive — ac-trace is an INTERNAL
       # module, and a tool directive would force EVERY build of the root module
@@ -855,11 +863,13 @@ tasks:
 
   ac-trace-strict:
     desc: "Gate a landed plan's verify: contract — exit non-zero when a named proof doesn't resolve"
+    deps: [sdk:install]
     cmds:
       - go run github.com/stacklok/ac-trace/cmd/actrace@v0.0.3 --strict
 
   ac-trace-matrix:
     desc: "Regenerate the committed docs/acceptance/traceability.md matrix (AC → proof); never gates"
+    deps: [sdk:install]
     cmds:
       - go run github.com/stacklok/ac-trace/cmd/actrace@v0.0.3 --matrix
 
