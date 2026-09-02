@@ -1,4 +1,4 @@
-# ADR 0280 — Server-owned session placement
+# ADR 0288 — Server-owned session placement
 
 - Status: Proposed
 - Date: 2026-09-01

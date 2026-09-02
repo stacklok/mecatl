@@ -2,7 +2,7 @@
 
 **Phase:** public placement capability redesign
 **Status:** landed, 2026-09-01
-**ADR:** [ADR 0280](../adr/0280-server-owned-session-placement.md)
+**ADR:** [ADR 0288](../adr/0288-server-owned-session-placement.md)
 **Accumulator branch:** `acc/server-owned-session-placement` (off `main`)
 
 This clean break removes client filesystem-path authority from every session lifecycle.
@@ -39,7 +39,7 @@ default. ACP cwd remains solely a local assertion against trusted configuration.
 
 ### Scenario 1 — Create binds the server-owned default or no-FS
 
-This scenario enforces [ADR 0280](../adr/0280-server-owned-session-placement.md) at the public creation boundary.
+This scenario enforces [ADR 0288](../adr/0288-server-owned-session-placement.md) at the public creation boundary.
 
 - AC1.1: `CreateSession` accepts only omitted deployment default or explicit no-FS
 attenuation; it accepts no general placement ID or selector. Its response exposes only a
@@ -191,7 +191,7 @@ introduced.
 | Item | Decision |
 |---|---|
 | Compatibility aliases, legacy path migration, or adoption | Deleted, not redesigned; no compatibility users are supported. |
-| Client-selected host paths, including embedded/loopback | Permanently excluded by [ADR 0280](../adr/0280-server-owned-session-placement.md). |
+| Client-selected host paths, including embedded/loopback | Permanently excluded by [ADR 0288](../adr/0288-server-owned-session-placement.md). |
 | Filesystem CAS, read ledger, runner affinity, or fork/merge mechanics | Preserved by [ADR 0208](../adr/0208-execution-environment.md) and [ADR 0211](../adr/0211-execution-environment-runtime-seam.md). |
 | Stable public placement IDs, selectors as bearer grants, encoded paths, or portable deployment aliases | Permanently excluded. |
 

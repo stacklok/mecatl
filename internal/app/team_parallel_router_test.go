@@ -4,6 +4,7 @@ import (
 	"context"
 	"iter"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -455,6 +456,8 @@ func TestParallelRoutesBranchesToCategoryModelsE2E(t *testing.T) {
 func TestBuiltCloseReapsPreservedParallelWinner(t *testing.T) {
 	ctx := context.Background()
 	workspace := t.TempDir()
+	forkBase := t.TempDir()
+	t.Setenv("TMPDIR", forkBase)
 	parallelCall := session.NewToolCall("c1", "Parallel", []byte(`{"tasks":["one","two"],"join":"first"}`))
 	prov := &routingProvider{parentTool: "Parallel", parentCall: parallelCall}
 	built, err := Build(ctx, routerE2ECfg(workspace, func() port.LLMProvider { return prov },
@@ -464,7 +467,7 @@ func TestBuiltCloseReapsPreservedParallelWinner(t *testing.T) {
 	}
 	t.Cleanup(built.Close)
 
-	sess, err := built.Service.CreateSession(ctx, workspace, session.ModeDefault, defaultLimits())
+	sess, err := built.Service.CreateSession(ctx, session.ModeDefault, defaultLimits())
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -478,28 +481,38 @@ func TestBuiltCloseReapsPreservedParallelWinner(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetSession: %v", err)
 	}
-	var root string
+	var result string
 	for _, message := range stored.Conversation.Messages {
-		if message.Role != session.RoleTool || message.ToolResult == nil || message.ToolResult.CallID != "c1" {
-			continue
-		}
-		for _, line := range strings.Split(message.ToolResult.Content, "\n") {
-			if _, after, ok := strings.Cut(line, "): "); ok && strings.Contains(line, "winner workspace (ephemeral") {
-				root = after
-				break
-			}
+		if message.Role == session.RoleTool && message.ToolResult != nil && message.ToolResult.CallID == "c1" {
+			result = message.ToolResult.Content
+			break
 		}
 	}
-	if root == "" {
-		t.Fatal("Parallel result did not report a winner workspace path")
+	if !strings.Contains(result, "winner artifact (PRESERVED):") {
+		t.Fatalf("Parallel result did not report an opaque winner artifact: %q", result)
 	}
-	if _, err := os.Stat(root); err != nil {
-		t.Fatalf("winner workspace %q before shutdown: %v", root, err)
+	if strings.Contains(result, forkBase) {
+		t.Fatalf("Parallel result leaked the private fork root: %q", result)
 	}
+
+	entries, err := os.ReadDir(forkBase)
+	if err != nil {
+		t.Fatalf("read fork base: %v", err)
+	}
+	var roots []string
+	for _, entry := range entries {
+		if entry.IsDir() && strings.HasPrefix(entry.Name(), "mecatlfork-") {
+			roots = append(roots, filepath.Join(forkBase, entry.Name()))
+		}
+	}
+	if len(roots) != 1 {
+		t.Fatalf("preserved winner roots before shutdown = %v, want exactly one", roots)
+	}
+	root := roots[0]
 
 	built.Close()
 	if _, err := os.Stat(root); !os.IsNotExist(err) {
-		t.Fatalf("preserved winner workspace %q remains after Built.Close: %v", root, err)
+		t.Fatalf("preserved winner workspace remains after Built.Close: %v", err)
 	}
 }
 

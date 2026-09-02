@@ -97,7 +97,7 @@ clients never receive it or a physical path.
 Schedules persist an already-resolved exact ref, owner, and placement scope and reauthorize
 and reattach at fire. Delegation derives/forks the parent Environment; artifact and child
 handles cannot act as selectors. ACP uses cwd only as a local assertion against this trusted
-configuration. See [ADR 0280](../adr/0280-server-owned-session-placement.md).
+configuration. See [ADR 0288](../adr/0288-server-owned-session-placement.md).
 
 ### Flags
 

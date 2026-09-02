@@ -219,6 +219,7 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0247 — mecatui generated status lines](./0247-mecatui-status-line.md) *(superseded by 0289)*
 - [0289 — Hardened status-command output and environment extension](./0289-hardened-status-command-boundary.md)
 - [0280 — Automatic light theme selection in mecatui](./0280-mecatui-light-theme-autodetect.md)
+- [0288 — Server-owned session placement](./0288-server-owned-session-placement.md)
 
 ### Retired
 - [0029 — Repo-map tree-sitter](./0029-repomap-tree-sitter.md) *(retired)*

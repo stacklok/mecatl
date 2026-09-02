@@ -117,7 +117,7 @@ member's per-drive usage and surfacing via `TeamOutcome.BudgetExhausted` plus
 a `StopBudget` team stop. It is orthogonal to `--max-run-tokens`, which each
 member inherits per-run.
 
-## Worktree placement — server-owned existing worktrees (ADR 0280)
+## Worktree placement — server-owned existing worktrees (ADR 0288)
 
 The fork seam above creates ephemeral internal environments for isolation. Operator-facing
 worktree selection is a different, source-session-scoped capability. Clients cannot pass a

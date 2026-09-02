@@ -19,7 +19,7 @@ reach the right run.
   OPTIONAL per-session `provider_id` / `model_id` selector (multi-provider Phase 0; see [multi-provider](providers.md))
   AND an OPTIONAL `profile` (enum-as-string: `""` = default, `"no-fs"`).
 
-  Placement is server-owned ([ADR 0280](../adr/0280-server-owned-session-placement.md)).
+  Placement is server-owned ([ADR 0288](../adr/0288-server-owned-session-placement.md)).
   Create has no workspace/cwd/placement-id/selector field: omitted profile binds the
   trusted deployment default and `"no-fs"` binds explicit attenuation. Every session
   receives a valid exact `EnvironmentRef{Kind,ID,Revision}` before persistence. Public
