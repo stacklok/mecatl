@@ -2926,6 +2926,7 @@ func sessionEngineFactory(
 		// tool it cannot call).
 		deps.PromptConfig = applySchedulePosture(deps.PromptConfig, scheduleManagerPresent(assets))
 		deps.PromptConfig = applyAgentModelDiscoveryPosture(deps.PromptConfig, deps.Catalog)
+		deps.PromptConfig = applyTemporaryStoragePosture(deps.PromptConfig, bashAvailable(cfg))
 		deps.PromptConfig = applyDiagnosticsPosture(deps.PromptConfig)
 		deps.PromptConfig = applyLearningPosture(deps.PromptConfig, learningCfg.LearningMode, learningCfg.SkillActivationPolicy, learningCfg.automaticAdmissionLedger)
 		// MODEL-VISIBLE no-FS posture (ADR 0070, the #40 pattern): tell the model up
@@ -3817,6 +3818,7 @@ func buildEngine(ctx context.Context, cfg Config, reg *providerRegistry, provide
 	// note (the model is never told about a tool it cannot call).
 	deps.PromptConfig = applySchedulePosture(deps.PromptConfig, scheduleManagerPresent(assets))
 	deps.PromptConfig = applyAgentModelDiscoveryPosture(deps.PromptConfig, deps.Catalog)
+	deps.PromptConfig = applyTemporaryStoragePosture(deps.PromptConfig, bashAvailable(cfg))
 	deps.PromptConfig = applyDiagnosticsPosture(deps.PromptConfig)
 	deps.PromptConfig = applyLearningPosture(deps.PromptConfig, cfg.LearningMode, cfg.SkillActivationPolicy, assets.automaticAdmissionLedger)
 	// The shell-less default-FS posture is NOT baked into the shared engine's
@@ -5927,7 +5929,10 @@ func buildCommandRunnerForRoot(cfg Config, root string) tool.CommandRunner {
 }
 
 func newCommandRunnerForRoot(cfg Config, root string, env []string, failure string) tool.CommandRunner {
-	opts := []osfs.CommandRunnerOption{osfs.WithCommandEnvList(env)}
+	opts := []osfs.CommandRunnerOption{
+		osfs.WithCommandEnvList(env),
+		osfs.WithSystemTemporaryDirectory(cfg.temporaryStorage.SystemTempDir),
+	}
 	if cfg.managedTemp != nil {
 		workspace, err := cfg.managedTemp.workspace(root)
 		if err != nil {
@@ -7836,6 +7841,25 @@ func applyAgentModelDiscoveryPosture(pc prompt.Config, catalog *tool.Catalog) pr
 		pc.Role = prompt.DefaultRole()
 	}
 	pc.Role += "\n\n" + agentModelDiscoveryPostureNote
+	return pc
+}
+
+// temporaryStoragePostureNote describes the temporary-storage lifecycle choice
+// Bash exposes. It is deliberately explicit that scope is not a sandbox.
+const temporaryStoragePostureNote = "Bash temporary storage defaults to managed storage; managed storage is disposable after the command. Use temp_scope: system only when a command needs host-shared or longer-lived temporary state. temp_scope is not a filesystem sandbox: ordinary Bash authority still governs every command and path."
+
+func bashAvailable(cfg Config) bool {
+	return !cfg.NoBash && cfg.Shell != ""
+}
+
+func applyTemporaryStoragePosture(pc prompt.Config, enabled bool) prompt.Config {
+	if !enabled {
+		return pc
+	}
+	if pc.Role == "" {
+		pc.Role = prompt.DefaultRole()
+	}
+	pc.Role += "\n\n" + temporaryStoragePostureNote
 	return pc
 }
 

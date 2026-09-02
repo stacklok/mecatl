@@ -634,13 +634,63 @@ func (e *Engine) surfaceAsk(ctx context.Context, r *Run, sess *session.Session, 
 	return verdictResult, true, true
 }
 
+// permissionDecision evaluates normal Bash authority and, only for the declared
+// system temporary scope, the independent tool-wide escape capability. The
+// synthetic capability is never dispatched or registered as a tool.
+func (e *Engine) permissionDecision(ctx context.Context, sess *session.Session, env tool.Environment, c session.ToolCall) governance.PermissionDecision {
+	ordinary := e.deps.Policy.Evaluate(ctx, sess.ID, sess.Mode, c, env.Workspace())
+	if !bashSystemScope(c) || ordinary.Effect == governance.Deny {
+		return ordinary
+	}
+	system := e.deps.Policy.Evaluate(ctx, sess.ID, sess.Mode, session.ToolCall{Name: bashSystemTempToolName}, env.Workspace())
+	if system.Effect == governance.Deny {
+		return system
+	}
+	if ordinary.Effect == governance.Ask {
+		return ordinary
+	}
+	return system
+}
+
+func bashSystemScope(c session.ToolCall) bool {
+	if c.Name != tool.BashToolName {
+		return false
+	}
+	args, _, ok := parseBashArgs(c)
+	return ok && bashScope(args) == tool.TemporaryScopeSystem
+}
+
+// systemScopeApprovalArgs projects only the requested scope and a command verb.
+// It must never include a runner-owned temporary path or environment value.
+func systemScopeApprovalArgs(c session.ToolCall) []byte {
+	args, _, ok := parseBashArgs(c)
+	if !ok {
+		return []byte(`{"temp_scope":"system","command_summary":"Bash command"}`)
+	}
+	summary := "Bash command"
+	if fields := strings.Fields(args.Command); len(fields) > 0 {
+		summary = fields[0]
+		if len(fields) > 1 {
+			summary += " " + fields[1]
+		}
+	}
+	out, err := json.Marshal(struct {
+		TempScope string `json:"temp_scope"`
+		Summary   string `json:"command_summary"`
+	}{TempScope: "system", Summary: summary})
+	if err != nil {
+		return []byte(`{"temp_scope":"system","command_summary":"Bash command"}`)
+	}
+	return out
+}
+
 // authorize evaluates the permission policy for a call and, on Ask, pauses the
 // loop until the client approves or denies (or ctx cancels). It returns the
 // effective decision (Allow or Deny — an approved Ask becomes Allow, a denied or
 // cancelled Ask becomes Deny) and a cancelled flag set only when ctx was
 // cancelled while awaiting.
 func (e *Engine) authorize(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, turnIdx int, c session.ToolCall) (governance.PermissionDecision, bool) {
-	decision := e.deps.Policy.Evaluate(ctx, sess.ID, sess.Mode, c, env.Workspace())
+	decision := e.permissionDecision(ctx, sess, env, c)
 	if decision.Effect != governance.Ask {
 		// Operator visibility for a policy DENY: the deny reason otherwise reaches
 		// only the client event (via denyResult), never the operator channel. Emit
@@ -655,10 +705,14 @@ func (e *Engine) authorize(ctx context.Context, r *Run, sess *session.Session, e
 	}
 
 	askID := newAskID(sess.ID, sess.Counters.ToolCalls, c.ID, r.askDiscriminator)
+	args := c.Args
+	if bashSystemScope(c) {
+		args = systemScopeApprovalArgs(c)
+	}
 	ask := session.PendingAsk{
 		AskID:  askID,
 		Tool:   c.Name,
-		Args:   c.Args,
+		Args:   args,
 		Reason: decision.Reason,
 		Call:   c.ID,
 		// The two child-ask decision bits ride the PendingAsk verbatim (issue #32)

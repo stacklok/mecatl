@@ -104,6 +104,7 @@ var _ tool.Tool = BashTool{}
 type bashArgs struct {
 	Command   string `json:"command"`
 	TimeoutMS int    `json:"timeout_ms"`
+	TempScope string `json:"temp_scope"`
 }
 
 // Spec returns the model-facing specification of the Bash tool.
@@ -115,7 +116,8 @@ func (BashTool) Spec() tool.ToolSpec {
   "type": "object",
   "properties": {
     "command": {"type": "string", "description": "Shell command line to run in the workspace root."},
-    "timeout_ms": {"type": "integer", "description": "Optional timeout in milliseconds."}
+    "timeout_ms": {"type": "integer", "description": "Optional timeout in milliseconds."},
+    "temp_scope": {"type": "string", "enum": ["managed", "system"], "description": "Optional temporary-storage scope; managed is disposable, system requests host-shared temporary storage."}
   },
   "required": ["command"]
 }`),
@@ -144,6 +146,9 @@ func (BashTool) Execute(ctx context.Context, in session.ToolCall, env tool.Envir
 	if args.TimeoutMS < 0 {
 		return session.NewToolError(in.ID, "\"timeout_ms\" must be non-negative"), nil
 	}
+	if args.TempScope != "" && args.TempScope != string(tool.TemporaryScopeManaged) && args.TempScope != string(tool.TemporaryScopeSystem) {
+		return session.NewToolError(in.ID, "\"temp_scope\" must be managed or system"), nil
+	}
 	runner := env.CommandRunner()
 	if runner == nil {
 		// Route through the SAME composer every runner-error path uses, so the
@@ -159,7 +164,7 @@ func (BashTool) Execute(ctx context.Context, in session.ToolCall, env tool.Envir
 		defer cancel()
 	}
 
-	res, err := runner.Run(ctx, args.Command)
+	res, err := runWithTemporaryScope(ctx, runner, args.Command, fstoolsTemporaryScope(args.TempScope))
 	if err != nil {
 		// Surface command-execution failures (no shell, timeout, cancellation)
 		// to the model so it can adapt, rather than aborting the harness. The
@@ -178,6 +183,20 @@ func (BashTool) Execute(ctx context.Context, in session.ToolCall, env tool.Envir
 		return session.NewToolError(in.ID, out), nil
 	}
 	return session.NewToolResult(in.ID, out), nil
+}
+
+func fstoolsTemporaryScope(scope string) tool.TemporaryScope {
+	if scope == string(tool.TemporaryScopeSystem) {
+		return tool.TemporaryScopeSystem
+	}
+	return tool.TemporaryScopeManaged
+}
+
+func runWithTemporaryScope(ctx context.Context, runner tool.CommandRunner, command string, scope tool.TemporaryScope) (tool.CommandResult, error) {
+	if scoped, ok := runner.(tool.CommandTemporaryScopeRunner); ok {
+		return scoped.RunWithTemporaryScope(ctx, command, scope)
+	}
+	return runner.Run(ctx, command)
 }
 
 // bashCombinedOutput renders a CommandResult as the model-facing combined output:

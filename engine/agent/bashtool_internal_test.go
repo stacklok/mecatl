@@ -22,6 +22,7 @@ type fakeBashRunner struct {
 
 	mu      sync.Mutex
 	command string
+	scope   tool.TemporaryScope
 }
 
 func (f *fakeBashRunner) Run(_ context.Context, command string) (tool.CommandResult, error) {
@@ -32,6 +33,13 @@ func (f *fakeBashRunner) Run(_ context.Context, command string) (tool.CommandRes
 }
 
 func (f *fakeBashRunner) RunWithEnvironment(ctx context.Context, command string, _ tool.CommandEnvironmentOverlay) (tool.CommandResult, error) {
+	return f.Run(ctx, command)
+}
+
+func (f *fakeBashRunner) RunWithTemporaryScope(ctx context.Context, command string, scope tool.TemporaryScope) (tool.CommandResult, error) {
+	f.mu.Lock()
+	f.scope = scope
+	f.mu.Unlock()
 	return f.Run(ctx, command)
 }
 

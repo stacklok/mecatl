@@ -1166,6 +1166,9 @@ type CommandRunner struct {
 	// managedWorkspace owns foreground command leases. It is nil for system
 	// temporary storage and for runners that cannot make the managed guarantee.
 	managedWorkspace *managedtemp.Workspace
+	// systemTempDir is the configured/inherited host temporary directory applied
+	// only when the trusted caller selects the system scope.
+	systemTempDir string
 	// waitDelay is the per-command cmd.WaitDelay (defaultCommandWaitDelay unless
 	// overridden via WithCommandWaitDelay — tests use a short one). See
 	// defaultCommandWaitDelay for the grandchild-pipe rationale (A7).
@@ -1201,6 +1204,12 @@ func WithCommandEnvList(env []string) CommandRunnerOption {
 // lease paths through shell text or tool arguments.
 func WithManagedTemporaryWorkspace(workspace *managedtemp.Workspace) CommandRunnerOption {
 	return func(r *CommandRunner) { r.managedWorkspace = workspace }
+}
+
+// WithSystemTemporaryDirectory sets the configured/inherited system temporary
+// directory used for explicit system-scope Bash calls.
+func WithSystemTemporaryDirectory(dir string) CommandRunnerOption {
+	return func(r *CommandRunner) { r.systemTempDir = dir }
 }
 
 // WithCommandWaitDelay overrides the runner's cmd.WaitDelay (default
@@ -1248,10 +1257,12 @@ func NewCommandRunnerShell(dir, shell string, opts ...CommandRunnerOption) (tool
 // OPTIONAL streaming capability (a background command's tail-ring capture runs
 // through it).
 var (
-	_ tool.CommandRunner              = (*CommandRunner)(nil)
-	_ tool.CommandStreamer            = (*CommandRunner)(nil)
-	_ tool.CommandEnvironmentRunner   = (*CommandRunner)(nil)
-	_ tool.CommandEnvironmentStreamer = (*CommandRunner)(nil)
+	_ tool.CommandRunner                 = (*CommandRunner)(nil)
+	_ tool.CommandStreamer               = (*CommandRunner)(nil)
+	_ tool.CommandEnvironmentRunner      = (*CommandRunner)(nil)
+	_ tool.CommandEnvironmentStreamer    = (*CommandRunner)(nil)
+	_ tool.CommandTemporaryScopeRunner   = (*CommandRunner)(nil)
+	_ tool.CommandTemporaryScopeStreamer = (*CommandRunner)(nil)
 )
 
 // Run runs command via /bin/sh -c, capturing (and truncating) stdout/stderr and
@@ -1266,6 +1277,21 @@ var (
 // CommandResult.ExitCode, not as an error.
 func (r *CommandRunner) Run(ctx context.Context, command string) (tool.CommandResult, error) {
 	return r.runResult(ctx, command, tool.CommandEnvironmentOverlay{}, true)
+}
+
+// RunWithTemporaryScope selects the closed temporary-storage scope for this
+// invocation. System scope never allocates a managed lease.
+func (r *CommandRunner) RunWithTemporaryScope(ctx context.Context, command string, scope tool.TemporaryScope) (tool.CommandResult, error) {
+	overlay := tool.CommandEnvironmentOverlay{}
+	managed := scope == tool.TemporaryScopeManaged
+	if scope == tool.TemporaryScopeSystem || r.managedWorkspace == nil {
+		managed = false
+		if r.systemTempDir != "" {
+			overlay.TempDir = r.systemTempDir
+			overlay.GoTempDir = r.systemTempDir
+		}
+	}
+	return r.runResult(ctx, command, overlay, managed)
 }
 
 // RunWithEnvironment runs command with overlay applied only to this invocation.
@@ -1298,6 +1324,21 @@ func (r *CommandRunner) runResult(ctx context.Context, command string, overlay t
 // this path: a non-zero exit is reported there, not as an error.
 func (r *CommandRunner) RunStreaming(ctx context.Context, command string, out io.Writer) (int, error) {
 	return r.run(ctx, command, tool.CommandEnvironmentOverlay{}, false, out, out)
+}
+
+// RunStreamingWithTemporaryScope is RunStreaming with a trusted temporary
+// scope selection. System scope never allocates a managed lease.
+func (r *CommandRunner) RunStreamingWithTemporaryScope(ctx context.Context, command string, scope tool.TemporaryScope, out io.Writer) (int, error) {
+	overlay := tool.CommandEnvironmentOverlay{}
+	managed := scope == tool.TemporaryScopeManaged
+	if scope == tool.TemporaryScopeSystem || r.managedWorkspace == nil {
+		managed = false
+		if r.systemTempDir != "" {
+			overlay.TempDir = r.systemTempDir
+			overlay.GoTempDir = r.systemTempDir
+		}
+	}
+	return r.run(ctx, command, overlay, managed, out, out)
 }
 
 // RunStreamingWithEnvironment streams command output with overlay applied only

@@ -141,6 +141,32 @@ type CommandRunner interface {
 	Run(ctx context.Context, command string) (CommandResult, error)
 }
 
+// TemporaryScope selects the runner-owned temporary-storage overlay for one Bash
+// invocation. It is a lifecycle choice, never a filesystem sandbox.
+type TemporaryScope string
+
+const (
+	// TemporaryScopeManaged selects runner-owned disposable storage.
+	TemporaryScopeManaged TemporaryScope = "managed"
+	// TemporaryScopeSystem selects the configured/inherited system directory.
+	TemporaryScopeSystem TemporaryScope = "system"
+)
+
+// CommandTemporaryScopeRunner is the optional CommandRunner capability for a
+// trusted temporary-storage scope selection. Tool arguments select only these
+// closed values; paths and environment values never cross this seam.
+type CommandTemporaryScopeRunner interface {
+	CommandRunner
+	RunWithTemporaryScope(ctx context.Context, command string, scope TemporaryScope) (CommandResult, error)
+}
+
+// CommandTemporaryScopeStreamer is CommandTemporaryScopeRunner's streaming
+// counterpart for background Bash jobs.
+type CommandTemporaryScopeStreamer interface {
+	CommandStreamer
+	RunStreamingWithTemporaryScope(ctx context.Context, command string, scope TemporaryScope, out io.Writer) (exitCode int, err error)
+}
+
 // CommandEnvironmentOverlay is a trusted, per-invocation set of
 // temporary-storage values. It is overlaid onto the runner's complete base
 // environment for one command only; it never changes the runner's bound
