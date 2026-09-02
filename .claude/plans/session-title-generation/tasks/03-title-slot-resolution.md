@@ -2,7 +2,7 @@
 id: 03-title-slot-resolution
 title: Resolve opt-in title slot at session creation
 blocked_by: [01-session-title-domain]
-status: pending
+status: in-progress
 branch: ""
 worktree: ""
 issue: "621"
