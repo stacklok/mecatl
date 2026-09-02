@@ -2,7 +2,7 @@
 id: 02-managed-namespace-safety
 title: Private managed namespace and workspace identity
 blocked_by: [01-temporary-storage-config]
-status: pending
+status: in-progress
 branch: ""
 worktree: ""
 issue: ""
