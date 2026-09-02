@@ -25,7 +25,7 @@ func (f placementProviderFunc) Bind(ctx context.Context, req PlacementBindReques
 	return f(ctx, req)
 }
 
-func TestADR_0280_BindRejectsRebindBetweenAuthorizationAndResolution(t *testing.T) {
+func TestADR_0288_BindRejectsRebindBetweenAuthorizationAndResolution(t *testing.T) {
 	t.Parallel()
 
 	authorized := make(chan struct{})

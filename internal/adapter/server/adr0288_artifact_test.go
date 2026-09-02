@@ -10,7 +10,7 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/server"
 )
 
-func TestADR_0280_ArtifactHandlesCannotReplayAsPlacementSelectors(t *testing.T) {
+func TestADR_0288_ArtifactHandlesCannotReplayAsPlacementSelectors(t *testing.T) {
 	t.Parallel()
 	if reflect.TypeOf(agent.ArtifactHandle("")) == reflect.TypeOf(server.PlacementSelector{}) {
 		t.Fatal("artifact handles and placement selectors share a type")

@@ -133,7 +133,7 @@ type Config struct {
 	ServerImplementation string
 	Workspace            string
 	// PlacementProvider optionally replaces the trusted local default with one
-	// deployment-owned provider implementing ADR 0280's atomic Bind protocol.
+	// deployment-owned provider implementing ADR 0288's atomic Bind protocol.
 	// The provider owns any worktree/remote inventory and stable opaque IDs; Build
 	// creates no registry, signer, cache, or path-derived public identifier.
 	PlacementProvider server.PlacementProvider

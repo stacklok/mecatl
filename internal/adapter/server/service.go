@@ -281,7 +281,7 @@ type Config struct {
 	// The SAME value drives the mcp_servers_on_create advertisement (FeatureScope),
 	// so a deployment cannot advertise what it will refuse.
 	ClientMCPOnCreate bool
-	// PlacementProvider is the deployment-owned atomic placement seam (ADR 0280).
+	// PlacementProvider is the deployment-owned atomic placement seam (ADR 0288).
 	// Bind is its only operation: possession of an opaque ID never bypasses the
 	// provider's caller, operation, scope, inventory, and revision checks. app.Build
 	// always supplies the trusted local default; alternative composition may supply

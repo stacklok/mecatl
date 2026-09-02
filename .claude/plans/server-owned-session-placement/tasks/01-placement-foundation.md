@@ -31,7 +31,7 @@ documentation; later tasks own those surfaces.
 - AC1.2: `Bind` constructs the complete environment and exact private ref from one
 immutable provider snapshot; an authorization/resolution or inventory revision race fails
 closed before persistence or filesystem access, never binding a mixed generation.
-  - verify: `TestADR_0280_BindRejectsRebindBetweenAuthorizationAndResolution`
+  - verify: `TestADR_0288_BindRejectsRebindBetweenAuthorizationAndResolution`
 - AC8.2: Trusted composition configures and validates the local deployment default and
 placement providers before serving; no stable public placement-ID registry is required.
-  - verify: `TestADR_0280_CompositionConfiguresProviderOwnedPlacements`
+  - verify: `TestADR_0288_CompositionConfiguresProviderOwnedPlacements`
