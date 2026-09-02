@@ -181,8 +181,10 @@ mcp:
 
 `insecureHTTP: true` adds the matching
 `--mcp-server-insecure-http=<name>` acknowledgement. It is valid only for a
-plain-HTTP non-OAuth entry; use it only for a tightly isolated in-cluster
-endpoint. A bearer then crosses the pod network in cleartext. Prefer HTTPS and
+non-loopback plain-HTTP non-OAuth entry; loopback HTTP is already accepted and
+must omit this stale acknowledgement. Use it only for a tightly isolated
+in-cluster endpoint. A bearer then crosses the pod network in cleartext. Prefer
+HTTPS and
 enforce egress with NetworkPolicy or a mesh—the chart intentionally ships no
 general NetworkPolicy. OAuth always requires HTTPS and cannot use this escape
 hatch.

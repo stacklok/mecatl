@@ -111,12 +111,21 @@ mounted
 {{- if and $server.insecureHTTP (eq $server.auth.mode "oauth") -}}{{ fail (printf "mcp.servers[%s].insecureHTTP is invalid for oauth" $server.name) }}{{- end -}}
 {{- if $server.insecureHTTP -}}
 {{- if not (regexMatch "^http://[^/]+(/.*)?$" $server.url) -}}{{ fail (printf "mcp.servers[%s].insecureHTTP requires a plain http URL" $server.name) }}{{- end -}}
+{{- if regexMatch "^http://(localhost|127([.][0-9]+){3}|[[]::1[]])(:[0-9]+)?(/|$)" $server.url -}}{{ fail (printf "mcp.servers[%s].insecureHTTP is a stale acknowledgement for loopback HTTP" $server.name) }}{{- end -}}
 {{- end -}}
 {{- if eq $server.auth.mode "staticBearer" -}}
 {{- if and (hasPrefix "http://" $server.url) (not $server.insecureHTTP) (not (regexMatch "^http://(localhost|127([.][0-9]+){3}|[[]::1[]])(:[0-9]+)?(/|$)" $server.url)) -}}{{ fail (printf "mcp.servers[%s] staticBearer over non-loopback HTTP requires insecureHTTP: true" $server.name) }}{{- end -}}
 {{- $_ := set $ownedEnv (printf "MCP_%s_TOKEN" $envBase) true -}}
 {{- end -}}
 {{- if eq $server.auth.mode "oauth" -}}
+{{- range $field, $value := dict "profile" $server.auth.oauth.profile "principal" $server.auth.oauth.principal -}}
+{{- if or (eq (trim $value) "") (regexMatch "[\x00-\x1f\x7f]" $value) -}}{{ fail (printf "mcp.servers[%s].auth.oauth.%s must be non-blank and contain no control characters" $server.name $field) }}{{- end -}}
+{{- end -}}
+{{- range $scope := $server.auth.oauth.scopes -}}{{- if or (eq (trim $scope) "") (regexMatch "[\x00-\x1f\x7f]" $scope) -}}{{ fail (printf "mcp.servers[%s].auth.oauth.scopes must be non-blank and contain no control characters" $server.name) }}{{- end -}}{{- end -}}
+{{- $origins := concat (list $server.auth.oauth.issuer) $server.auth.oauth.network.additionalOrigins $server.auth.oauth.network.privateOrigins -}}
+{{- range $origin := $origins -}}
+{{- if or (ne $origin (lower $origin)) (regexMatch "^https://.*:443$|^http://.*:80$" $origin) -}}{{ fail (printf "mcp.servers[%s] OAuth origins must use canonical lowercase form without default ports: %q" $server.name $origin) }}{{- end -}}
+{{- end -}}
 {{- if not (hasPrefix "https://" $server.url) -}}{{ fail (printf "mcp.servers[%s] oauth requires an https URL" $server.name) }}{{- end -}}
 {{- $resourceOrigin := regexReplaceAll "^(https?://[^/]+).*$" $server.url "${1}" -}}
 {{- $issuerOrigin := trimSuffix "/" $server.auth.oauth.issuer -}}
@@ -125,6 +134,9 @@ mounted
 {{- if eq $server.auth.oauth.client.mode "cimd" -}}
 {{- $documentOrigin := regexReplaceAll "^(https?://[^/]+).*$" $server.auth.oauth.client.cimd.documentURL "${1}" -}}
 {{- if not (hasKey $allowedOrigins $documentOrigin) -}}{{ fail (printf "mcp.servers[%s] CIMD document origin must be the issuer, resource, or an additionalOrigin" $server.name) }}{{- end -}}
+{{- else -}}
+{{- $clientID := $server.auth.oauth.client.preregistered.id -}}
+{{- if or (eq (trim $clientID) "") (regexMatch "[\x00-\x1f\x7f]" $clientID) -}}{{ fail (printf "mcp.servers[%s].auth.oauth.client.preregistered.id must be non-blank and contain no control characters" $server.name) }}{{- end -}}
 {{- end -}}
 {{- range $origin := $server.auth.oauth.network.privateOrigins -}}{{- if not (hasKey $allowedOrigins $origin) -}}{{ fail (printf "mcp.servers[%s] privateOrigin %q must also be the issuer, resource, or an additionalOrigin" $server.name $origin) }}{{- end -}}{{- end -}}
 {{- $_ := set $ownedEnv (printf "MECATL_MCP_%s_CREDENTIAL" $envBase) true -}}

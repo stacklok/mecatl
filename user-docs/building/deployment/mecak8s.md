@@ -308,9 +308,10 @@ for the complete OAuth values shape.
 
 Keep MCP and OAuth endpoints on HTTPS and provide pod egress through your
 NetworkPolicy or mesh; this chart has no general NetworkPolicy. The explicit
-`insecureHTTP: true` acknowledgement is available only for non-OAuth plain-HTTP
-servers and means a bearer may cross the pod network in cleartext. Use it only
-for a tightly isolated in-cluster endpoint.
+`insecureHTTP: true` acknowledgement is available only for non-loopback,
+non-OAuth plain-HTTP servers and means a bearer may cross the pod network in
+cleartext. Loopback HTTP is already accepted and must omit the
+acknowledgement. Use it only for a tightly isolated in-cluster endpoint.
 
 OAuth profile changes alter a pod-template checksum and trigger a rollout.
 Secret-backed environment variables do not rotate inside a running pod, so roll
