@@ -462,24 +462,21 @@ the pending timer, and issues no further request. M1 shipped the sibling
 contract for its own resources; M2 adds the first client-owned object with a
 *timer*, and a leaked `setTimeout` keeps a Node event loop alive.
 
-**6. Attached controls are HTTP-only in M2, with a typed gRPC refusal.**
+**6. `cancel()` is the only attached control in M2: HTTP-only, with a typed
+gRPC refusal. `approve()`, `resolveAsk()`, and `steer()` are deferred.**
 
-`AttachedRun` exposes `approve` / `resolveAsk` / `cancel`, each carrying
-`expected_run_id` for the run it attached to — the
-[ADR 0249](./0249-durable-run-identity.md) stale-control contract, identical to
-M1's owned-`Run` path. Over HTTP they ride the prompt-free
-`POST /v1/sessions/{id}/approve` and `/cancel` routes. **Over gRPC they raise a
-typed unsupported-feature error naming the missing channel**, because Context
-point 6 establishes there is none: controls are `Converse` frames and
-`Converse`'s first frame must be a prompt.
+`AttachedRun` exposes `cancel()`, carrying `expected_run_id` for the run it
+attached to — the [ADR 0249](./0249-durable-run-identity.md) stale-control
+contract, identical to M1's owned-`Run` path. Over HTTP it rides the
+prompt-free `POST /v1/sessions/{id}/cancel` route, a `204` ack with no response
+body. **Over gRPC it raises a typed unsupported-feature error naming the
+missing channel**, because Context point 6 establishes there is none: controls
+are `Converse` frames and `Converse`'s first frame must be a prompt.
 
-This is the exact mirror of how M1 handles `http_steer` — a capability gap
-surfaced as a typed error rather than a silent degrade — and it is chosen over
-the two alternatives deliberately. Adding a prompt-free control RPC is the
-design that wants to exist, but it is a proto plus production-server change
-this milestone is scoped out of. Making `AttachedRun` observation-only would
-leave #821's "an attached run has explicit approve/steer/cancel methods" wholly
-unfulfilled where half of it is reachable today.
+That gRPC refusal is the exact mirror of how M1 handles `http_steer` — a
+capability gap surfaced as a typed error rather than a silent degrade. Adding a
+prompt-free control RPC is the design that wants to exist, but it is a proto
+plus production-server change this milestone is scoped out of.
 
 **Attached `steer` is unsupported on BOTH transports in M2** and says so: gRPC
 has no channel, and HTTP's steer route waits on
@@ -489,12 +486,11 @@ run id the attachment's filter can never match — turning a refusal into
 silence — the strict, never-promoting reading M1 pinned for owned runs is the
 only acceptable one here too.
 
-**`AttachedRun` exposes `cancel()` only. `approve()` and `resolveAsk()` are
-deferred**, for a reason two review rounds converged on: over HTTP the approve
-route's response body cannot be safely handled by any client-side strategy.
+**Why approval is deferred rather than shipped over HTTP alongside `cancel`:**
+the approve route's response body cannot be safely handled by any client-side
+strategy.
 
-`POST /v1/sessions/{id}/cancel` is a plain `204 No Content` — no body, nothing
-to drain, no leak. `POST .../approve` has two paths. On the **same-process**
+`POST .../approve` has two paths. On the **same-process**
 path (`run == nil`) it is also a 204: a live run resolves the ask over its own
 channel and the existing stream delivers the effects. On the **rehydrate**
 path — the process that parked the ask died and the loop re-entered here, i.e.
@@ -523,7 +519,8 @@ typed unsupported-feature error on both transports in M2, naming the ack-only
 route as the dependency.
 
 Cancellation is unaffected and ships, so an observer can still stop a run it is
-watching.
+watching. The cost is real and is #821's, not ours to wave away: "an attached
+run has explicit approve/steer/cancel methods" is one third fulfilled in M2.
 
 The control-request construction path is **shared** with M1's owned `Run` (the
 existing `RunOperations` seam plus its verdict mapping), so the ADR 0249
@@ -668,11 +665,15 @@ stream ("activity") instead of introducing a third vocabulary.
   mitigation is passing a known `runId`; `from: "now"` does **not** help
   (Decision 4), and the proper fix is a server-side active-run field this
   milestone is scoped out of.
-- **Attached controls are transport-asymmetric, and that is visible.** A
-  Node/gRPC consumer that wants attach-then-approve must use the HTTP transport
-  or wait for a server RPC. We chose an honest typed error over either a proto
-  change or a silently amputated surface, but it is a real wart and the first
-  thing a user will file.
+- **The attached-control surface is one method wide, and that is visible.**
+  `cancel()` ships (HTTP only); `approve()`, `resolveAsk()`, and `steer()` all
+  raise typed unsupported errors. A consumer that wants attach-then-approve —
+  the natural reading of #821 — cannot have it in M2 on either transport, and
+  this is the first thing a user will file. Two distinct server changes unblock
+  it: an ack-only approve response (which the handler already implements for
+  non-`Flusher` writers) and a prompt-free control RPC for gRPC. We chose honest
+  typed errors over shipping a method whose only implementation strategy is a
+  resource leak.
 - **The SDK brands cursors, so SDK cursors and raw server cursors are not
   interchangeable.** An application holding a raw token from the raw seam
   cannot hand it to `attach()`. Documented; the raw seam keeps taking raw

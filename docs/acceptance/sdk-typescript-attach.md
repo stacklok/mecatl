@@ -41,9 +41,14 @@ not which modules exist on disk.
   `Steer`: they exist only as `ConverseRequest` frames, and the gRPC handler
   enforces "first frame must be a prompt or retry", so an attachment — which
   owns no run — has no stream to put one on. HTTP's `POST
-  /v1/sessions/{id}/approve` and `/cancel` are prompt-free. The asymmetry is
-  structural, so M2 surfaces it as a typed unsupported-feature error rather
-  than shipping ACs that pass against a fake and fail on the wire
+  /v1/sessions/{id}/cancel` is prompt-free and acks `204`, so **`cancel()` is
+  the one attached control M2 ships**. Attached `approve`/`resolveAsk` are
+  deferred: `/approve`'s cross-process rehydrate path relays SSE, and that body
+  has no sound client handling — closing it cancels the run, leaving it unread
+  stalls the relay, draining it is unbounded. Attached `steer` waits on
+  [#873](https://github.com/stacklok/mecatl/issues/873). Each is a typed
+  unsupported-feature error rather than an AC that passes against a fake and
+  fails on the wire
   ([ADR-0288](../adr/0288-typescript-sdk-durable-attachment.md) Decision 6).
 - **`attach()` derives its run from the log with ONE watch.** The proto's
   `Session` carries `state` but no `run_id`, and there is no `ListRuns`. Since
@@ -545,7 +550,7 @@ fact about DELIVERY, not something that happened in the run").
 
 ---
 
-### Scenario 8 — Attached controls: HTTP-only, stale-guarded, and detach-safe
+### Scenario 8 — Attached cancel: HTTP-only, stale-guarded, and detach-safe
 
 `AttachedRun` exposes `cancel()`, carrying `expected_run_id` for the run it
 attached to — the
@@ -664,7 +669,8 @@ Redis LIST became a Stream; a same-process reconnect cannot distinguish the two.
 It uses `activity()` because a run does not survive its daemon, so an
 `AttachedRun`'s `run_id` filter would exclude everything appended afterwards.
 The **awaiting-approval restart** is the one case where a *filtered* attachment
-does survive, because
+does survive — with the ask resolved by an actor outside the attachment, since
+attached approval is deferred (AC8.4) — because
 [ADR-0249](../adr/0249-durable-run-identity.md) has `resumeFromAwaiting` reuse
 the persisted run id rather than mint one, and if that ever regressed the
 attachment would go permanently *quiet* while the run completed normally —
@@ -697,15 +703,19 @@ brings a second one up on the same durable store directory.
   empty-but-correct stream and prove nothing.
   - verify: vitest:sdk/typescript/e2e/activity.e2e.test.ts#YSBkYWVtb24gcmVzdGFydCBtaWQtd2F0Y2ggcmVzdW1lcyBmcm9tIHRoZSBjdXJzb3IgYWNyb3NzIGEgbmV3IHJ1bg — `sdk/typescript/e2e/activity.e2e.test.ts :: "a daemon restart mid-watch resumes from the cursor across a new run"`
 - AC10.5: With an attachment open on a session parked `awaiting`, restarting the
-  daemon over the same store and then resolving the ask delivers the resumed
-  run's envelopes on the **same** `run_id` the attachment holds, and an attached
-  control carrying that `expected_run_id` is accepted — the attachment never has
-  to re-`attach()`.
-  - verify: vitest:sdk/typescript/e2e/attach.e2e.test.ts#YW4gYXdhaXRpbmcgYXBwcm92YWwgc3Vydml2ZXMgYSByZXN0YXJ0IG9uIHRoZSBzYW1lIHJ1biBpZA — `sdk/typescript/e2e/attach.e2e.test.ts :: "an awaiting approval survives a restart on the same run id"`
-- AC10.6: An attached `approve` over HTTP resolves a real permission ask on the
-  wire and the run completes; the attachment observes the post-approval events
-  exactly once.
-  - verify: vitest:sdk/typescript/e2e/attach.e2e.test.ts#YW4gYXR0YWNoZWQgYXBwcm92ZSByZXNvbHZlcyBhIHJlYWwgYXNrIG92ZXIgSFRUUA — `sdk/typescript/e2e/attach.e2e.test.ts :: "an attached approve resolves a real ask over HTTP"`
+  daemon over the same store and then resolving the ask **through an actor
+  outside the attachment** — the raw seam posting to `/approve` and draining
+  that response itself, which the test may do because a bounded drain in test
+  code is not an SDK contract (AC8.4) — delivers the resumed run's envelopes on
+  the **same** `run_id` the attachment holds, and the attachment never has to
+  re-`attach()`. This is the only shape in which a *filtered* attachment
+  survives a restart, because `resumeFromAwaiting` reuses the persisted run id.
+  - verify: vitest:sdk/typescript/e2e/attach.e2e.test.ts#YW4gYXdhaXRpbmcgYXBwcm92YWwgcmVzb2x2ZWQgZXh0ZXJuYWxseSBzdXJ2aXZlcyBhIHJlc3RhcnQgb24gdGhlIHNhbWUgcnVuIGlk — `sdk/typescript/e2e/attach.e2e.test.ts :: "an awaiting approval resolved externally survives a restart on the same run id"`
+- AC10.6: An attached `cancel` over HTTP stops a real in-flight run on the wire
+  carrying `expected_run_id`, the attachment observes the cancelled terminal,
+  and a `cancel` naming a run that already finished fails typed without touching
+  the session's next run.
+  - verify: vitest:sdk/typescript/e2e/attach.e2e.test.ts#YW4gYXR0YWNoZWQgY2FuY2VsIHN0b3BzIGEgcmVhbCBydW4gYW5kIGEgc3RhbGUgb25lIGZhaWxzIHR5cGVk — `sdk/typescript/e2e/attach.e2e.test.ts :: "an attached cancel stops a real run and a stale one fails typed"`
 - AC10.7: A watch opened with a malformed cursor over HTTP/SSE receives a 200
   followed by a terminal `event: error` frame carrying `cursor_malformed`, which
   the SDK surfaces as the typed error — the real-wire proof of the SSE

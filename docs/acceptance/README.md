@@ -128,7 +128,8 @@ when the code that satisfies the plan has landed.
   unknown phases, `session.attach()` / `session.activity()`, a serializable
   filter-branded cursor with consumption-time checkpointing, explicit gap and
   cursor-fault errors, a three-arm reconnect authority over a closed terminal code
-  set, HTTP-only attached controls carrying `expected_run_id`, and the offline
+  set, an HTTP-only attached `cancel` carrying `expected_run_id` (attached
+  approval deferred to an ack-only server route), and the offline
   daemon-restart and awaiting-resume e2e. Status: draft.
 
 ## See also
