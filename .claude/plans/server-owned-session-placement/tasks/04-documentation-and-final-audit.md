@@ -2,9 +2,9 @@
 id: 04-documentation-and-final-audit
 title: Documentation and final audit
 blocked_by: [03-atomic-server-owned-placement-cutover]
-status: in-progress
-branch: ""
-worktree: ""
+status: done
+branch: "plan-server-owned-session-placement/04-documentation-and-final-audit"
+worktree: ".scratch/worktrees/04-documentation-and-final-audit"
 issue: ""
 retries: 0
 last_error: ""
