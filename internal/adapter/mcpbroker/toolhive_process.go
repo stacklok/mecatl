@@ -25,6 +25,7 @@ import (
 	"github.com/stacklok/toolhive/pkg/vmcp/router"
 	vmcpserver "github.com/stacklok/toolhive/pkg/vmcp/server"
 	vmcpsession "github.com/stacklok/toolhive/pkg/vmcp/session"
+	"golang.org/x/oauth2"
 
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
@@ -80,7 +81,7 @@ func NewToolHiveProcess(ctx context.Context, config ToolHiveConfig) (*Process, e
 	}
 	catalogue := &Catalogue{routes: routes}
 	caller := anonymousCaller(construction.anonymous)
-	runtime, err := New(catalogue, caller)
+	runtime, err := New(catalogue, caller, WithAuthorizedCaller(toolHiveProtectedCaller(config.Profiles)))
 	if err != nil {
 		return nil, err
 	}
@@ -226,6 +227,36 @@ func discoverAnonymous(ctx context.Context, profiles []ToolHiveProfile, occupied
 	}
 	sortRoutes(routes)
 	return routes, nil
+}
+
+func toolHiveProtectedCaller(profiles []ToolHiveProfile) AuthorizedCaller {
+	servers := make(map[string]mcpadapter.ServerConfig, len(profiles))
+	for _, profile := range profiles {
+		if profile.Auth == authOAuth {
+			servers[profile.Name] = mcpadapter.ServerConfig{Name: profile.Name, URL: profile.URL}
+		}
+	}
+	return func(ctx context.Context, _ SessionRef, backend string, call session.ToolCall, tokens oauth2.TokenSource) (session.ToolResult, error) {
+		config, ok := servers[backend]
+		if !ok {
+			return session.ToolResult{}, fmt.Errorf("%w: protected upstream is not configured", ErrInvalidCatalogue)
+		}
+		if tokens == nil {
+			return session.ToolResult{}, fmt.Errorf("%w: protected upstream token source is required", ErrInvalidCatalogue)
+		}
+		config.TokenSource = tokens
+		upstream, err := mcpadapter.Connect(ctx, config, nil)
+		if err != nil {
+			return session.ToolResult{}, fmt.Errorf("mcpbroker: connect protected upstream: %w", err)
+		}
+		defer func() { _ = upstream.Close() }()
+		for _, wrapped := range upstream.Tools() {
+			if wrapped.Spec().Name == call.Name {
+				return wrapped.Execute(ctx, call, tool.Environment{})
+			}
+		}
+		return session.ToolResult{}, fmt.Errorf("mcpbroker: protected upstream omitted tool %q", call.Name)
+	}
 }
 
 func anonymousCaller(profiles []ToolHiveProfile) Caller {

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
+	"golang.org/x/oauth2"
 
 	"github.com/stacklok/mecatl/engine/session"
 	contract "github.com/stacklok/mecatl/internal/mcpbroker"
@@ -85,6 +86,9 @@ func TestToolHiveProcessAnonymousDiscoveryOmitsProtectedAndStaticTools(t *testin
 		t.Fatalf("NewToolHiveProcess: %v", err)
 	}
 	t.Cleanup(func() { _ = process.Close() })
+	if process.Runtime.authorizedCaller == nil {
+		t.Fatal("protected execution transport is not wired")
+	}
 	if anonymousRequests.Load() == 0 {
 		t.Fatal("anonymous upstream was not discovered")
 	}
@@ -96,6 +100,39 @@ func TestToolHiveProcessAnonymousDiscoveryOmitsProtectedAndStaticTools(t *testin
 	}
 	if got := process.construction.staticByBackend["GitHub_API"]; len(got) != 1 || got[0].Name != "reviewed" {
 		t.Fatalf("protected static declarations = %#v", got)
+	}
+}
+
+func TestToolHiveProtectedCallerInjectsSessionBearer(t *testing.T) {
+	server := mcpsdk.NewServer(&mcpsdk.Implementation{Name: "protected", Version: "v1"}, nil)
+	mcpsdk.AddTool(server, &mcpsdk.Tool{Name: "echo", Description: "echoes input"}, func(_ context.Context, _ *mcpsdk.CallToolRequest, input struct {
+		Text string `json:"text"`
+	}) (*mcpsdk.CallToolResult, any, error) {
+		return &mcpsdk.CallToolResult{Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: "protected:" + input.Text}}}, nil, nil
+	})
+	var requests, rejected atomic.Int32
+	handler := mcpsdk.NewStreamableHTTPHandler(func(*http.Request) *mcpsdk.Server { return server }, nil)
+	httpServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		requests.Add(1)
+		if request.Header.Get("Authorization") != "Bearer session-bearer" {
+			rejected.Add(1)
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		handler.ServeHTTP(w, request)
+	}))
+	t.Cleanup(httpServer.Close)
+
+	caller := toolHiveProtectedCaller([]ToolHiveProfile{{Name: "private", URL: httpServer.URL, Auth: authOAuth}})
+	result, err := caller(t.Context(), SessionRef{}, "private", session.NewToolCall("call-1", "mcp__private__echo", json.RawMessage(`{"text":"hello"}`)), oauth2.StaticTokenSource(&oauth2.Token{AccessToken: "session-bearer", TokenType: "Bearer"}))
+	if err != nil {
+		t.Fatalf("protected caller: %v", err)
+	}
+	if rejected.Load() != 0 || requests.Load() == 0 {
+		t.Fatalf("requests = %d, rejected = %d", requests.Load(), rejected.Load())
+	}
+	if result.CallID != "call-1" || result.Content != "protected:hello" || result.IsError {
+		t.Fatalf("result = %#v", result)
 	}
 }
 
