@@ -2,8 +2,8 @@
 id: 08-reaper-worker-and-docs
 title: Deterministic reaper, Build worker, and lifecycle docs
 blocked_by: [03-lease-protocol, 05-foreground-managed-leases, 07-background-job-leases]
-status: in-progress
-branch: ""
+status: done
+branch: "plan-managed-temporary-command-leases/08-reaper-worker-and-docs"
 worktree: ""
 issue: ""
 retries: 0
