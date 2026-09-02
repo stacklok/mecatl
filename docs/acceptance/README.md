@@ -62,6 +62,9 @@ when the code that satisfies the plan has landed.
 - [Session-load observability](session-load-observability.md) — target-free operator
   classification and metrics for snapshot load failures while preserving ownership
   concealment. Status: landed.
+- [Managed temporary command leases](managed-temporary-command-leases.md) — private,
+  attributable Linux and macOS command/job temporary storage with a permission-visible
+  system escape and deterministic crash-residue reaping. Status: landed.
 - [Local mecak8s Kind fixture](mecak8s-kind-fixture.md) — cleanly separates an
   operator-run mock/real-provider mecak8s fixture, optional Keycloak caller
   identity, and the deferred ToolHive/vMCP delegation extension. Status: draft.

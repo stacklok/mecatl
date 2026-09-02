@@ -61,9 +61,11 @@ temporary_storage:
   system_temp_dir: ""           # empty: inherit TMPDIR/TMP/TEMP from the server
   command_reap_after: 1h
   reap_interval: 1h
+  reap_timeout: 5m             # maximum duration of one startup/periodic sweep
+  shutdown_reap_timeout: 1m    # maximum worker-join grace during shutdown
 ```
 
-Configured managed roots may be absolute or relative. A relative root is cleaned lexically, must not escape with `..`, and is resolved beneath the inherited system temporary directory (`TMPDIR`, then `TMP`, then `TEMP`, then the platform default). An absolute root must be owner-controlled. An empty `system_temp_dir` inherits that same system temporary directory; a non-empty value follows the same absolute/relative validation. `command_reap_after` must be between one minute and thirty days; `reap_interval` must be between one minute and twenty-four hours.
+Configured managed roots may be absolute or relative. A relative root is cleaned lexically, must not escape with `..`, and is resolved beneath the inherited system temporary directory (`TMPDIR`, then `TMP`, then `TEMP`, then the platform default). An absolute root must be owner-controlled. An empty `system_temp_dir` inherits that same system temporary directory; a non-empty value follows the same absolute/relative validation. `command_reap_after` must be between one minute and thirty days; `reap_interval` must be between one minute and twenty-four hours; `reap_timeout` must be between one second and one hour; and `shutdown_reap_timeout` must be between one second and five minutes.
 
 A previously absent managed root is created private by the harness. A later process may adopt an existing root only when it is a non-symlinked directory owned by the current user with private permissions, and every managed child it opens satisfies the same owner/type/no-link checks. Allocation and cleanup use handle-rooted traversal that refuses link traversal, then revalidate the opened target immediately before mutation or deletion; they never validate one string path and recursively delete another. Managed mode is Linux-only in this first version: on every other platform, selecting `mode: managed` fails configuration validation loudly and the operator must select `mode: system`.
 
@@ -145,9 +147,9 @@ The root lock does not gate command execution or allocation. It prevents repeate
 
 ### 5. Own and bound periodic maintenance explicitly
 
-`app.Build` owns the managed-temp maintenance worker. It performs one interval-gated best-effort startup attempt, then attempts the same sweep on the configured cadence while the Build remains live. Each sweep is individually time-bounded and contends only on the root GC lock; it never delays command execution.
+`app.Build` owns the managed-temp maintenance worker. It performs one interval-gated best-effort startup attempt, then attempts the same sweep on the configured cadence while the Build remains live. Each startup or periodic sweep runs with `temporary_storage.reap_timeout` (five minutes by default) and contends only on the root GC lock; it never delays command execution.
 
-`Built.Close` cancels and joins the maintenance worker before cache/store teardown. A disabled or unsupported managed-temp backend returns a no-op cleanup. The sweep's completion state is durable coordination data, but the worker's in-memory ticker and active state reset on restart.
+`Built.Close` cancels the maintenance worker and waits for it to join for at most `temporary_storage.shutdown_reap_timeout` (one minute by default) before cache/store teardown. The worker must observe cancellation during every scan and metadata operation; a shutdown deadline expiry is reported as a bounded shutdown failure, never recorded as a successful sweep. A disabled or unsupported managed-temp backend returns a no-op cleanup. The sweep's completion state is durable coordination data, but the worker's in-memory ticker and active state reset on restart.
 
 The worker, root lock, and completion record are new outlives-a-call resources. Their owner, scope, cleanup, and restart disposition must be recorded in the cloud-native resource inventory with the implementation.
 
