@@ -1,9 +1,9 @@
 # Session title generation and auxiliary usage — acceptance plan
 
 **Phase:** mecatui session-title UX and opt-in auxiliary model accounting  
-**Status:** draft, 2026-08-30. Reconciled with ADR 0247.  
+**Status:** draft, 2026-08-30. Reconciled with ADR 0290.  
 **Issue:** [stacklok/mecatl#621](https://github.com/stacklok/mecatl/issues/621).  
-**ADR:** [ADR 0247](../adr/0247-session-title-generation-and-auxiliary-usage.md) — server-owned asynchronous title lifecycle, opt-in title slot, and auxiliary usage boundary.  
+**ADR:** [ADR 0290](../adr/0290-session-title-generation-and-auxiliary-usage.md) — server-owned asynchronous title lifecycle, opt-in title slot, and auxiliary usage boundary.  
 **Accumulator branch:** `acc/session-title-generation` (off `main`).
 
 The smallest set of work that lets a mecatui operator set an active session title directly and,
@@ -45,7 +45,7 @@ record but wires only title generation.
   ledger only. Auxiliary usage never changes `Session.Usage`, run budgets, ordinary result usage,
   or conversation history.
 
-These cuts follow [ADR 0247](../adr/0247-session-title-generation-and-auxiliary-usage.md),
+These cuts follow [ADR 0290](../adr/0290-session-title-generation-and-auxiliary-usage.md),
 [ADR 0030](../adr/0030-model-selection-heuristics.md),
 [ADR 0016](../adr/0016-multi-provider.md),
 [ADR 0020](../adr/0020-diagnostics.md), and the aggregate, provider-neutrality, durable-event, and
@@ -114,12 +114,12 @@ prompts. The generator uses one bounded direct stream call and returns only stri
   - verify: `TestSessionTitleGeneration_Scenario3_TitleSlotRoutesOnlyGenerator`
 - AC3.3: The generator has no routing, credential, store, or mutation authority and receives no
   client-supplied title input, model, provider, or system prompt.
-  - verify: `TestADR_0247_TitleGenerationServerOwnsInputAndModel`
+  - verify: `TestADR_0290_TitleGenerationServerOwnsInputAndModel`
 - AC3.4: Input is fenced as untrusted data and bounded before the provider call. Valid generated
   output is strict, UTF-8, whitespace-canonicalized to one line, and capped at 80 runes total
   including truncation. First-prompt and operator titles retain their existing length limit but use
   the same one-line whitespace canonicalization.
-  - verify: `TestADR_0247_TitleGenerationInputOutputBoundary`
+  - verify: `TestADR_0290_TitleGenerationInputOutputBoundary`
 - AC3.5: `defer` permits an attempt after source prompt two or three; a valid title, malformed
   output, unavailable configuration, or third-prompt exhaustion ends the lifecycle with the
   fallback retained.
@@ -179,7 +179,7 @@ compaction, guardrail, reviewer, judge, and reflection calls are not migrated.
   - verify: `TestSessionTitleGeneration_Scenario5_AuxiliaryUsageRoundTripAndProjection`
 - AC5.4: Title-generation tokens do not alter `Session.Usage`, `MaxRunTokens`, normal turn/result
   usage, or the agent conversation.
-  - verify: `TestADR_0247_AuxiliaryUsageDoesNotSpendRunBudget`
+  - verify: `TestADR_0290_AuxiliaryUsageDoesNotSpendRunBudget`
 - AC5.5: Existing auxiliary callers remain unchanged.
   - verify: `TestSessionTitleGeneration_Scenario5_OnlyTitleIsPlumbed`
 
@@ -187,7 +187,7 @@ compaction, guardrail, reviewer, judge, and reflection calls are not migrated.
 
 | Item | Decision |
 |---|---|
-| Currency/price estimates, rate history, and billing reconciliation | Deferred; ADR 0247 records tokens only. |
+| Currency/price estimates, rate history, and billing reconciliation | Deferred; ADR 0290 records tokens only. |
 | Migrating existing auxiliary calls into the ledger | Deferred; this plan wires `session_title` only. |
 | Client-triggered generation or arbitrary client model invocation | Rejected; automatic work is Service-owned. |
 | Generic auxiliary-operation RPC/dispatcher | Rejected; later operations require their own authorization, input, lifecycle, accounting, and notification design. |

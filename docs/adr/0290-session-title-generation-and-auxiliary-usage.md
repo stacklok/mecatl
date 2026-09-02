@@ -1,4 +1,4 @@
-# ADR 0247 — Asynchronous session-title generation and auxiliary model usage
+# ADR 0290 — Asynchronous session-title generation and auxiliary model usage
 
 - Status: Proposed
 - Date: 2026-08-30
