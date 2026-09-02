@@ -288,6 +288,7 @@ Strict OPERATOR-TIER Streamable HTTP MCP authority configuration. Mode selects o
 | `mcp.servers[].auth.oauth.network.additional_origins` | `[]string` | `(absent)` | AdditionalOrigins lists canonical exact origins additionally allowed for OAuth traffic. |
 | `mcp.servers[].auth.oauth.network.private_origins` | `[]string` | `(absent)` | PrivateOrigins lists allowed origins that may resolve only to RFC1918 IPv4 or ULA IPv6 addresses. Loopback, link-local, metadata, unspecified, multicast, mapped, public, and other special addresses remain denied. |
 | `mcp.servers[].auth.oauth.network.max_redirects` | `int` | `0` | MaxRedirects is the redirect bound, from zero through five. |
+| `mcp.servers[].auth.oauth.tools` | `[]mcpstatictoolprofile` | `(absent)` | Tools are comparison-only declarations for protected backends. They are retained privately during startup and never become executable routes. |
 
 ## Flag- / file-configured features (NOT in `settings.yaml`)
 
