@@ -2,8 +2,8 @@
 id: 01-session-title-domain
 title: Durable session-title lifecycle and accounting
 blocked_by: []
-status: in-progress
-branch: ""
+status: done
+branch: "plan-session-title-generation/01-session-title-domain"
 worktree: ""
 issue: "621"
 retries: 0
