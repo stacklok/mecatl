@@ -2,8 +2,8 @@
 id: 03-client-discovery
 title: Hardened resource metadata discovery
 blocked_by: [02-server-metadata]
-status: pending
-branch: ""
+status: done
+branch: plan-oauth-protected-resource-discovery/03-client-discovery
 worktree: ""
 issue: "1033"
 retries: 0
