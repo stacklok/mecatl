@@ -4619,8 +4619,9 @@ func (s *Service) awaitRunDeregister(ctx context.Context, id session.SessionID, 
 // Approve resolves the paused permission ask on the session's in-flight run with
 // the client's three-way verdict (deny / allow-once / allow-always).
 //
-// SAME-PROCESS path FIRST and unchanged: a live registered run resolves the ask
-// over its in-memory channel exactly as before. On a LookupRun MISS — typically the
+// SAME-PROCESS path FIRST: a live registered run resolves the ask over its
+// in-memory channel while this process still holds the session lease. On a
+// LookupRun MISS — typically the
 // process that parked the ask died and a different process now serves the Approve —
 // it falls to resumeFromAwaiting (cloud-native Phase 2): if the persisted session is
 // in StateAwaiting it loads the snapshot, rebuilds the engine, re-enters the loop AT
@@ -4648,7 +4649,8 @@ func (s *Service) Approve(ctx context.Context, id session.SessionID, askID strin
 // decision is therefore serialized per session via s.resumeMu: under the per-session
 // lock the loser re-checks LookupRun, sees the winner's now-registered run, and
 // routes its verdict to that run's channel (the same-process path) — the pending tool
-// runs EXACTLY ONCE. The common live-run case takes a lock-free fast path first.
+// runs EXACTLY ONCE. The common live-run case takes the service lock only long
+// enough to order approval against lease-loss invalidation.
 //
 // WIRE EXPOSURE: the rehydrate-resume path (no live run → resumeFromAwaiting) is
 // reachable only through the HTTP POST /v1/sessions/{id}/approve endpoint, which
@@ -4665,17 +4667,33 @@ func (s *Service) ApproveRun(ctx context.Context, id session.SessionID, askID st
 	if _, err := s.GetSession(ctx, id); err != nil {
 		return nil, err
 	}
-	// Fast path (lock-free): a live registered run resolves the ask over its channel.
-	if run, ok := s.LookupRun(id); ok {
+	// Fast path: resolve a live local ask only while this process still owns its
+	// session mutation capability. Keep the service lock through the registry
+	// resolution so lease-loss invalidation and approval are ordered: whichever
+	// wins the lock wins, and a verdict can never enter after declared loss.
+	s.mu.Lock()
+	st, ok := s.runs[id]
+	if ok {
+		if s.cfg.SessionLease != nil && !s.leaseDisabled {
+			h := s.heldLeases[id]
+			if h == nil || !h.valid || h.ctx.Err() != nil {
+				s.mu.Unlock()
+				return nil, fmt.Errorf("%w: %q", ErrSessionLeasedElsewhere, id)
+			}
+		}
+		run := st.run
 		// Compare against the run that would ACTUALLY receive the verdict, not the
 		// session's stored id: after a terminal race those can differ, and the
 		// whole point of expected_run_id is to refuse exactly that case (ADR 0249).
 		if err := checkExpectedRun(expectedRunID, run.RunID()); err != nil {
+			s.mu.Unlock()
 			return nil, err
 		}
 		run.Approve(askID, verdict)
+		s.mu.Unlock()
 		return nil, nil
 	}
+	s.mu.Unlock()
 	return s.resumeFromAwaiting(ctx, id, askID, verdict, expectedRunID)
 }
 
@@ -4706,12 +4724,23 @@ func (s *Service) resumeFromAwaiting(ctx context.Context, id session.SessionID, 
 	defer unlock()
 
 	// Re-check under the lock: a concurrent resume that won the race has registered a
-	// live run. Route this verdict to its channel (same-process) instead of spawning a
-	// second run — the exactly-once guarantee for the pending tool.
-	if run, ok := s.LookupRun(id); ok {
-		run.Approve(askID, verdict)
+	// live run. Route this verdict only while its local lease capability remains
+	// valid, using the same service-lock ordering as ApproveRun's fast path.
+	s.mu.Lock()
+	st, ok := s.runs[id]
+	if ok {
+		if s.cfg.SessionLease != nil && !s.leaseDisabled {
+			h := s.heldLeases[id]
+			if h == nil || !h.valid || h.ctx.Err() != nil {
+				s.mu.Unlock()
+				return nil, fmt.Errorf("%w: %q", ErrSessionLeasedElsewhere, id)
+			}
+		}
+		st.run.Approve(askID, verdict)
+		s.mu.Unlock()
 		return nil, nil
 	}
+	s.mu.Unlock()
 
 	// GetSession (read-only snapshot load): ErrNotFound for an unknown session. We do
 	// NOT use loadAndReopen here — its job is to drive completed/cancelled/failed back
@@ -5566,10 +5595,15 @@ func (s *Service) renewLoop(renewCtx context.Context, id session.SessionID, expe
 }
 
 // onLeaseLost handles a declared lease loss only when expected remains the
-// current hold. The mutation gate is invalidated and the hold becomes a tombstone
-// atomically with that generation check, so a delayed renewer cannot affect a
-// successor and this stale Service cannot immediately reacquire the session.
+// current hold. Local mutation capability is invalidated before the owning run
+// is stopped. For a durably parked awaiting run, its exact local ask is withdrawn
+// before cancellation and the run is removed from the local registry; cancellation
+// can then unwind only in memory and cannot overwrite the durable awaiting handoff
+// point. The invalid tombstone remains session-scoped until local teardown and
+// prevents this stale Service from immediately reacquiring the session.
 func (s *Service) onLeaseLost(ctx context.Context, id session.SessionID, expected *heldLease, cause error) {
+	var run *agent.Run
+	var askID string
 	s.mu.Lock()
 	if s.heldLeases[id] != expected || !expected.valid {
 		s.mu.Unlock()
@@ -5578,11 +5612,25 @@ func (s *Service) onLeaseLost(ctx context.Context, id session.SessionID, expecte
 	expected.valid = false
 	s.cfg.MutationCapability.invalidate(id)
 	expected.cancel()
+	if st := s.runs[id]; st != nil {
+		run = st.run
+		if st.awaiting.Load() {
+			if ask, pending := st.sess.PendingAsk(); pending {
+				askID = ask.AskID
+			}
+		}
+		// Invalidate the local control/persistence handle immediately. The relay's
+		// eventual FinishRun remains harmless because deregister is identity-safe.
+		delete(s.runs, id)
+	}
 	s.mu.Unlock()
 
 	s.cfg.Diagnostics.Log(ctx, port.LevelWarn, "lost session lease; cancelling run",
 		"session", string(id), "owner", s.cfg.LeaseOwner, "err", cause.Error())
-	if run, ok := s.LookupRun(id); ok {
+	if run != nil {
+		if askID != "" {
+			run.RetractPermissionAsk(askID)
+		}
 		run.Cancel()
 	}
 
