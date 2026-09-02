@@ -48,6 +48,7 @@ when the code that satisfies the plan has landed.
 
 ## Plans
 
+- [Session title generation and auxiliary usage](session-title-generation.md) — mecatui `/title`, an opt-in routed model title after up to three genuine prompts, and durable title-only auxiliary token attribution. Status: draft.
 - [Local mecak8s Kind fixture](mecak8s-kind-fixture.md) — cleanly separates an
   operator-run mock/real-provider mecak8s fixture, optional Keycloak caller
   identity, and the deferred ToolHive/vMCP delegation extension. Status: draft.
