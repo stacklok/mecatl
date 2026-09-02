@@ -50,6 +50,9 @@ extraVolumeMounts: []
 skills:
   autoDiscover: false
 
+# Run one pod for lower resource usage and simpler session routing, at the cost of
+# high availability. The PDB is omitted at this value, so voluntary eviction can
+# interrupt service. The default of two keeps the HA-oriented PDB protection.
 replicaCount: 2
 mockProvider: false
 
