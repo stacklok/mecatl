@@ -368,17 +368,20 @@ func TestStatusCustomization_Scenario1_UserSettingsOwnCustomization(t *testing.T
 
 func TestReadStatusCustomizationRejectsInvalidConfigurationWithoutEchoingValues(t *testing.T) {
 	for _, tc := range []struct {
-		name string
-		body string
+		name      string
+		body      string
+		wantError string
+		forbidden []string
 	}{
-		{"both sources", "status_customization:\n  templates:\n    wide: status\n  command:\n    executable: /usr/local/bin/status\n"},
-		{"interval too short", "status_customization:\n  templates:\n    wide: status\n  interval: 500ms\n"},
-		{"unsafe command path", "status_customization:\n  command:\n    executable: ' bad-command '\n"},
-		{"invalid passthrough environment name", "status_customization:\n  command:\n    executable: /usr/local/bin/status\n    passthrough_env: [INVALID-PASSTHROUGH]\n"},
-		{"passthrough name starts with digit", "status_customization:\n  command:\n    executable: /usr/local/bin/status\n    passthrough_env: [1LEADING]\n"},
-		{"non-ASCII passthrough name", "status_customization:\n  command:\n    executable: /usr/local/bin/status\n    passthrough_env: [NÁME]\n"},
-		{"removed shell fields", "status_customization:\n  command:\n    shell: /bin/sh\n    source: 'printf status'\n"},
-		{"unknown nested key", "status_customization:\n  templates:\n    tablet: status\n"},
+		{"both sources", "status_customization:\n  templates:\n    wide: status\n  command:\n    executable: /usr/local/bin/status\n", "", nil},
+		{"interval too short", "status_customization:\n  templates:\n    wide: status\n  interval: 500ms\n", "", nil},
+		{"unsafe command path", "status_customization:\n  command:\n    executable: ' bad-command '\n", "", []string{"bad-command"}},
+		{"invalid passthrough environment name", "status_customization:\n  command:\n    executable: /usr/local/bin/status\n    passthrough_env: [INVALID-PASSTHROUGH]\n", "Invalid passthrough_env value. Values must match [A-Za-z_][A-Za-z0-9_]*.", []string{"INVALID-PASSTHROUGH"}},
+		{"passthrough name starts with digit", "status_customization:\n  command:\n    executable: /usr/local/bin/status\n    passthrough_env: [1LEADING]\n", "Invalid passthrough_env value. Values must match [A-Za-z_][A-Za-z0-9_]*.", []string{"1LEADING"}},
+		{"non-ASCII passthrough name", "status_customization:\n  command:\n    executable: /usr/local/bin/status\n    passthrough_env: [NÁME]\n", "Invalid passthrough_env value. Values must match [A-Za-z_][A-Za-z0-9_]*.", []string{"NÁME"}},
+		{"reserved passthrough name", "status_customization:\n  command:\n    executable: /usr/local/bin/status\n    passthrough_env: [COLUMNS]\n", "Invalid passthrough_env value. You cannot override reserved variable name COLUMNS.", nil},
+		{"removed shell fields", "status_customization:\n  command:\n    shell: /bin/sh\n    source: 'printf status'\n", "", nil},
+		{"unknown nested key", "status_customization:\n  templates:\n    tablet: status\n", "", nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("XDG_CONFIG_HOME", t.TempDir())
@@ -387,7 +390,10 @@ func TestReadStatusCustomizationRejectsInvalidConfigurationWithoutEchoingValues(
 			if err == nil {
 				t.Fatal("invalid status customization must fail")
 			}
-			for _, forbidden := range []string{"bad-command", "INVALID-PASSTHROUGH", "1LEADING", "NÁME"} {
+			if tc.wantError != "" && !strings.Contains(err.Error(), tc.wantError) {
+				t.Errorf("error = %q, want %q", err, tc.wantError)
+			}
+			for _, forbidden := range tc.forbidden {
 				if strings.Contains(err.Error(), forbidden) {
 					t.Errorf("error must not echo configuration value %q: %v", forbidden, err)
 				}

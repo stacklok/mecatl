@@ -509,7 +509,8 @@ remote server or project never selects a local executable. Templates get a
 StatusML-escaped projection, commands get raw JSON on stdin, and StatusML carries
 semantic tokens rather than ANSI/OSC. Its command environment retains a fixed
 safe baseline; `passthrough_env` may add only explicitly named user-global values,
-never ambient environment values, and cannot replace source-owned terminal dimensions. Before StatusML parsing, command output trims only boundary
+never ambient environment values; reserved baseline and source-owned terminal-dimension
+names are rejected during settings validation. Before StatusML parsing, command output trims only boundary
 ASCII whitespace, so a normal `print` newline is accepted without changing internal
 text. This preserves `ui` as a pure render layer
 while allowing autonomous source updates. Its `/clear` command uses the existing

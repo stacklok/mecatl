@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -19,6 +20,19 @@ import (
 const maxCommandOutputBytes = 4 << 10
 
 var errCommandOutputLimit = errors.New("status command output limit exceeded")
+
+// PassthroughEnvError reports an invalid passthrough environment name. ReservedName
+// is empty when the value does not match the supported environment-name grammar.
+type PassthroughEnvError struct {
+	ReservedName string
+}
+
+func (e *PassthroughEnvError) Error() string {
+	if e.ReservedName != "" {
+		return fmt.Sprintf("Invalid passthrough_env value. You cannot override reserved variable name %s.", e.ReservedName)
+	}
+	return "Invalid passthrough_env value. Values must match [A-Za-z_][A-Za-z0-9_]*."
+}
 
 // Command is a validated local status command. Path is an absolute executable and
 // Args are passed literally. LaunchDir remains private command-runner state and is
@@ -45,12 +59,30 @@ func (c Command) Valid() bool {
 			return false
 		}
 	}
+	return c.ValidatePassthroughEnv() == nil
+}
+
+// ValidatePassthroughEnv reports whether PassthroughEnv has valid names that do
+// not override values owned by the status-command environment.
+func (c Command) ValidatePassthroughEnv() error {
 	for _, name := range c.PassthroughEnv {
 		if !validEnvName(name) {
-			return false
+			return &PassthroughEnvError{}
+		}
+		if reservedEnvName(name) {
+			return &PassthroughEnvError{ReservedName: name}
 		}
 	}
-	return true
+	return nil
+}
+
+func reservedEnvName(name string) bool {
+	switch name {
+	case "HOME", "PATH", "TERM", "LANG", "LC_ALL", "COLUMNS", "LINES":
+		return true
+	default:
+		return false
+	}
 }
 
 func validEnvName(name string) bool {

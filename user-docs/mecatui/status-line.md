@@ -221,7 +221,8 @@ status_customization:
 
 Use `command` when local information needs a program. `executable` must be an
 absolute path and `args` are literal arguments. The optional `passthrough_env` list
-is the only environment extension: each name must match `[A-Za-z_][A-Za-z0-9_]*`.
+is the only environment extension: each name must match `[A-Za-z_][A-Za-z0-9_]*` and
+must not be one of the reserved baseline or terminal-dimension names.
 There are no shell, `source`, command-string, or CWD fields in the schema. `/bin/sh` is permitted
 only by explicitly selecting it as `executable` and supplying its literal arguments;
 it is not a shell mode or a default.
@@ -280,9 +281,8 @@ baseline: `HOME`, `PATH`, `TERM`, `LANG`, `LC_ALL`, `COLUMNS`, and `LINES` when
 available. `COLUMNS` and `LINES` come from the submitted terminal dimensions.
 
 `passthrough_env` may add only explicitly named parent variables. Each name must
-match `[A-Za-z_][A-Za-z0-9_]*`; names are deduplicated, unset variables are omitted,
-and a set-empty variable is retained. It cannot override baseline or source-owned
-values such as `COLUMNS` and `LINES`. Do not list secrets: no other parent
+match `[A-Za-z_][A-Za-z0-9_]*`; reserved baseline and source-owned names are rejected
+rather than silently ignored. Names are deduplicated, unset variables are omitted, Do not list secrets: no other parent
 environment value is inherited, and mecatui never uses `os.Environ` for this command
 boundary. For example, `[TMUX]` makes an existing `TMUX` value available for a local
 tmux-aware integration.

@@ -22,8 +22,9 @@ content beyond the command-document boundary.
 Keep the status-command environment fixed to its existing safe baseline. Permit only
 additional names listed in the user-global `status_customization.command.passthrough_env`
 allowlist. Each name must match `[A-Za-z_][A-Za-z0-9_]*`; unset names are omitted,
-including no fallback from `os.Environ`. Deduplicate names, and never let a requested
-name replace baseline or source-owned values such as terminal `COLUMNS` and `LINES`.
+including no fallback from `os.Environ`. Deduplicate names, and reject requested
+baseline or source-owned names such as terminal `COLUMNS` and `LINES` during settings
+validation.
 
 Immediately before StatusML parsing, trim only leading and trailing ASCII space,
 tab, LF, CR, vertical tab, and form feed. Preserve all interior bytes; malformed

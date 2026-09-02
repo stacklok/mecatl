@@ -149,6 +149,10 @@ func readClientSettings() (clientSettings, error) {
 	}
 	status, err := decodeStatusCustomization(raw.StatusCustomization)
 	if err != nil {
+		var passthroughErr *statusline.PassthroughEnvError
+		if errors.As(err, &passthroughErr) {
+			return clientSettings{}, fmt.Errorf("parsing %s: %w", path, err)
+		}
 		return clientSettings{}, fmt.Errorf("parsing %s: invalid status_customization configuration", path)
 	}
 	return clientSettings{Keymap: raw.Keymap, StatusCustomization: status}, nil
@@ -229,10 +233,16 @@ func decodeStatusCustomization(raw *statusCustomizationYAML) (*statusCustomizati
 	if raw.Templates != nil && raw.Templates.Header == nil && raw.Templates.Footer == nil {
 		return nil, errors.New("template source has no surface")
 	}
-	if raw.Command != nil && !(statusline.Command{
-		Path: raw.Command.Path, Args: raw.Command.Args, PassthroughEnv: raw.Command.PassthroughEnv,
-	}).Valid() {
-		return nil, errors.New("invalid command")
+	if raw.Command != nil {
+		command := statusline.Command{
+			Path: raw.Command.Path, Args: raw.Command.Args, PassthroughEnv: raw.Command.PassthroughEnv,
+		}
+		if err := command.ValidatePassthroughEnv(); err != nil {
+			return nil, err
+		}
+		if !command.Valid() {
+			return nil, errors.New("invalid command")
+		}
 	}
 	if raw.Templates != nil && (!validStatusSurfaceTemplates(raw.Templates.Header) || !validStatusSurfaceTemplates(raw.Templates.Footer)) {
 		return nil, errors.New("template source has no variant")
