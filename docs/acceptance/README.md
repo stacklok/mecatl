@@ -123,6 +123,13 @@ when the code that satisfies the plan has landed.
   raw transports behind an injected-Transport seam, typed errors and the compatibility
   floor, `Client`/`Session`/`Run` choreography with permissions and strict steer,
   multimodal helpers, and the offline e2e against `mecated --mock`. Status: landed.
+- [TypeScript SDK durable attachment (M2)](sdk-typescript-attach.md) — the client
+  half of the durable watch: the `WatchSessionEvents` envelope union with tolerated
+  unknown phases, `session.attach()` / `session.activity()`, a serializable
+  filter-branded cursor with consumption-time checkpointing, explicit gap and
+  cursor-fault errors, a three-arm reconnect authority over a closed terminal code
+  set, HTTP-only attached controls carrying `expected_run_id`, and the offline
+  daemon-restart and awaiting-resume e2e. Status: draft.
 
 ## See also
 
