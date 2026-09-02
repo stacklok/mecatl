@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"io"
+	"reflect"
 	"testing"
 	"time"
 
@@ -77,6 +78,121 @@ func TestOIDCPrivateHTTPSIssuerFlagsAndValidation(t *testing.T) {
 				t.Fatalf("OIDCValidator(%#v) error = %v, want error=%t", tc.cfg, err, tc.want)
 			}
 		})
+	}
+}
+
+func TestADR_0290_ProfileProjection(t *testing.T) {
+	var got OIDCConfig
+	cfg := OIDCConfig{Issuer: "https://issuer.example", Audience: "api://mecatl", Resource: "https://api.example.com", ClientID: "mecatui"}
+	cfg.NewValidator = func(_ context.Context, c OIDCConfig) (server.PrincipalValidator, error) {
+		got = c
+		return fakeValidator{}, nil
+	}
+	if _, err := OIDCValidator(context.Background(), cfg); err != nil {
+		t.Fatalf("OIDCValidator: %v", err)
+	}
+	if got.Issuer != cfg.Issuer || got.Audience != cfg.Audience {
+		t.Fatalf("validator projection = issuer %q audience %q, want %q %q", got.Issuer, got.Audience, cfg.Issuer, cfg.Audience)
+	}
+	projection, err := cfg.ProfileProjection()
+	if err != nil {
+		t.Fatalf("ProfileProjection: %v", err)
+	}
+	if projection.Issuer != cfg.Issuer || projection.Audience != cfg.Audience {
+		t.Fatalf("metadata projection = issuer %q audience %q, want %q %q", projection.Issuer, projection.Audience, cfg.Issuer, cfg.Audience)
+	}
+}
+
+func TestADR_0290_ProfileConfigurationMatrix(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		cfg         OIDCConfig
+		wantEnabled bool
+		wantErr     bool
+	}{
+		{name: "absent", wantEnabled: false},
+		{name: "complete", cfg: OIDCConfig{Issuer: "https://issuer", Audience: "api", Resource: "https://resource", ClientID: "client"}, wantEnabled: true},
+		{name: "resource only", cfg: OIDCConfig{Issuer: "https://issuer", Audience: "api", Resource: "https://resource"}, wantErr: true},
+		{name: "client only", cfg: OIDCConfig{Issuer: "https://issuer", Audience: "api", ClientID: "client"}, wantErr: true},
+		{name: "without OIDC", cfg: OIDCConfig{Resource: "https://resource", ClientID: "client"}, wantErr: true},
+		{name: "scopes only", cfg: OIDCConfig{Issuer: "https://issuer", Audience: "api", ScopesCSV: "read"}, wantErr: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.cfg.ValidateOIDCProfile()
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("ValidateOIDCProfile: %v, want error %t", err, tc.wantErr)
+			}
+			if !tc.wantErr && tc.cfg.ProtectedResourceEnabled() != tc.wantEnabled {
+				t.Fatalf("ProtectedResourceEnabled = %t, want %t", tc.cfg.ProtectedResourceEnabled(), tc.wantEnabled)
+			}
+		})
+	}
+}
+
+func TestADR_0290_ScopeCSV(t *testing.T) {
+	for _, tc := range []struct {
+		csv     string
+		want    []string
+		wantErr bool
+	}{
+		{csv: " z, a, z,b ", want: []string{"a", "b", "z"}},
+		{csv: "", want: nil},
+		{csv: "read,,write", wantErr: true},
+		{csv: "read,not safe", wantErr: true},
+		{csv: "read,\"write\"", wantErr: true},
+	} {
+		got, err := ParseOIDCScopes(tc.csv)
+		if (err != nil) != tc.wantErr {
+			t.Fatalf("ParseOIDCScopes(%q): %v, want error %t", tc.csv, err, tc.wantErr)
+		}
+		if !tc.wantErr && !reflect.DeepEqual(got, tc.want) {
+			t.Fatalf("ParseOIDCScopes(%q) = %#v, want %#v", tc.csv, got, tc.want)
+		}
+	}
+	cfg := OIDCConfig{Issuer: "https://issuer", Audience: "api", Resource: "https://resource", ClientID: "client"}
+	if err := cfg.ValidateOIDCProfile(); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Scopes != nil {
+		t.Fatalf("absent scopes = %#v, want nil", cfg.Scopes)
+	}
+	fs := flag.NewFlagSet("oidc-profile", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	flagCfg := OIDCConfig{}
+	RegisterOIDCFlags(fs, &flagCfg)
+	if err := fs.Parse([]string{"--oidc-scopes", " z, a, z,b "}); err != nil {
+		t.Fatalf("Parse flags: %v", err)
+	}
+	flagCfg.Issuer, flagCfg.Audience = "https://issuer", "api"
+	flagCfg.Resource, flagCfg.ClientID = "https://resource", "client"
+	if err := flagCfg.ValidateOIDCProfile(); err != nil {
+		t.Fatalf("ValidateOIDCProfile after flag parse: %v", err)
+	}
+	if !reflect.DeepEqual(flagCfg.Scopes, []string{"a", "b", "z"}) {
+		t.Fatalf("flag scopes = %#v, want [a b z]", flagCfg.Scopes)
+	}
+	emptyFlags := flag.NewFlagSet("oidc-empty-scope", flag.ContinueOnError)
+	emptyFlags.SetOutput(io.Discard)
+	emptyCfg := OIDCConfig{}
+	RegisterOIDCFlags(emptyFlags, &emptyCfg)
+	if err := emptyFlags.Parse([]string{"--oidc-scopes="}); err != nil {
+		t.Fatalf("Parse empty scopes: %v", err)
+	}
+	if err := emptyCfg.ValidateOIDCProfile(); err == nil {
+		t.Fatal("supplied empty --oidc-scopes unexpectedly accepted")
+	}
+}
+
+func TestADR_0290_ProfileValidation(t *testing.T) {
+	cases := []OIDCConfig{
+		{Issuer: "https://issuer", Audience: "api", Resource: "http://resource", ClientID: "client"},
+		{Issuer: "https://issuer", Audience: "api", Resource: "https://resource", ClientID: "client", ScopesCSV: "read,,write"},
+		{Issuer: "https://issuer", Audience: "api", Resource: "https://resource"},
+	}
+	for _, cfg := range cases {
+		if err := cfg.ValidateOIDCProfile(); err == nil {
+			t.Fatalf("ValidateOIDCProfile(%#v) = nil, want startup error", cfg)
+		}
 	}
 }
 
