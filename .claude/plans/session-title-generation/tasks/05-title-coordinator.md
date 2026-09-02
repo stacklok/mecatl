@@ -2,7 +2,7 @@
 id: 05-title-coordinator
 title: Server-owned title coordinator and durable commit
 blocked_by: [01-session-title-domain, 02-title-wire-projection, 03-title-slot-resolution, 04-title-generator]
-status: pending
+status: in-progress
 branch: ""
 worktree: ""
 issue: "621"
