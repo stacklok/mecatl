@@ -1163,8 +1163,9 @@ type CommandRunner struct {
 	// inherited git danger is REMOVED, not merely overridden. osfs stays free of
 	// git-specific knowledge — it just sets whatever complete env it is handed.
 	env []string
-	// managedWorkspace owns foreground command leases. It is nil for system
-	// temporary storage and for runners that cannot make the managed guarantee.
+	// managedWorkspace owns foreground command and background-job leases. It is
+	// nil for system temporary storage and for runners that cannot make the managed
+	// guarantee.
 	managedWorkspace *managedtemp.Workspace
 	// systemTempDir is the configured/inherited host temporary directory applied
 	// only when the trusted caller selects the system scope.
@@ -1305,7 +1306,7 @@ func (r *CommandRunner) runResult(ctx context.Context, command string, overlay t
 	stdout.cap = maxCommandOutput
 	stderr.cap = maxCommandOutput
 
-	exitCode, err := r.run(ctx, command, overlay, managed, &stdout, &stderr)
+	exitCode, err := r.run(ctx, command, overlay, managed, "cmd", &stdout, &stderr)
 	res := tool.CommandResult{
 		Stdout:   stdout.String(),
 		Stderr:   stderr.String(),
@@ -1323,7 +1324,7 @@ func (r *CommandRunner) runResult(ctx context.Context, command string, overlay t
 // retain the stream itself. The returned exitCode replaces CommandResult for
 // this path: a non-zero exit is reported there, not as an error.
 func (r *CommandRunner) RunStreaming(ctx context.Context, command string, out io.Writer) (int, error) {
-	return r.run(ctx, command, tool.CommandEnvironmentOverlay{}, false, out, out)
+	return r.run(ctx, command, tool.CommandEnvironmentOverlay{}, false, "", out, out)
 }
 
 // RunStreamingWithTemporaryScope is RunStreaming with a trusted temporary
@@ -1338,14 +1339,14 @@ func (r *CommandRunner) RunStreamingWithTemporaryScope(ctx context.Context, comm
 			overlay.GoTempDir = r.systemTempDir
 		}
 	}
-	return r.run(ctx, command, overlay, managed, out, out)
+	return r.run(ctx, command, overlay, managed, "job", out, out)
 }
 
 // RunStreamingWithEnvironment streams command output with overlay applied only
 // to this invocation. It preserves the runner's bound root and does not retain
 // the overlay.
 func (r *CommandRunner) RunStreamingWithEnvironment(ctx context.Context, command string, overlay tool.CommandEnvironmentOverlay, out io.Writer) (int, error) {
-	return r.run(ctx, command, overlay, false, out, out)
+	return r.run(ctx, command, overlay, false, "", out, out)
 }
 
 // run is the ONE spawn/wait tail Run and RunStreaming share, so the two cannot
@@ -1357,14 +1358,14 @@ func (r *CommandRunner) RunStreamingWithEnvironment(ctx context.Context, command
 // whatever output the writers captured so far standing; and a WaitDelay expiry
 // on a successfully-exited shell is a SUCCESS carrying the partial output (see
 // the exec.ErrWaitDelay branch below), not a harness failure.
-func (r *CommandRunner) run(ctx context.Context, command string, overlay tool.CommandEnvironmentOverlay, managed bool, stdout, stderr io.Writer) (exitCode int, err error) {
+func (r *CommandRunner) run(ctx context.Context, command string, overlay tool.CommandEnvironmentOverlay, managed bool, leaseKind string, stdout, stderr io.Writer) (exitCode int, err error) {
 	if _, ok := ctx.Deadline(); !ok {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, defaultCommandTimeout)
 		defer cancel()
 	}
 
-	lease, overlay, leaseErr := r.managedLease(managed, overlay)
+	lease, overlay, leaseErr := r.managedLease(managed, leaseKind, overlay)
 	if leaseErr != nil {
 		return 0, leaseErr
 	}
@@ -1439,11 +1440,11 @@ func (r *CommandRunner) run(ctx context.Context, command string, overlay tool.Co
 	return 0, nil
 }
 
-func (r *CommandRunner) managedLease(managed bool, overlay tool.CommandEnvironmentOverlay) (*managedtemp.Lease, tool.CommandEnvironmentOverlay, error) {
+func (r *CommandRunner) managedLease(managed bool, kind string, overlay tool.CommandEnvironmentOverlay) (*managedtemp.Lease, tool.CommandEnvironmentOverlay, error) {
 	if !managed || r.managedWorkspace == nil {
 		return nil, overlay, nil
 	}
-	lease, err := r.managedWorkspace.Allocate("cmd")
+	lease, err := r.managedWorkspace.Allocate(kind)
 	if err != nil {
 		return nil, overlay, fmt.Errorf("osfs: allocate managed command lease: %w", err)
 	}
