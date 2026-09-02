@@ -15,10 +15,11 @@ func TestToolHiveImportsStayBehindApprovedAdapterLeaves(t *testing.T) {
 		t.Fatal(err)
 	}
 	allowed := map[string]bool{
-		"internal/adapter/mcp/source/toolhive.go":             true,
-		"internal/adapter/mcpbroker/toolhive_construction.go": true,
-		"internal/adapter/mcpbroker/toolhive_process.go":      true,
-		"internal/adapter/toolhivellm/tokensource.go":         true,
+		"internal/adapter/mcp/source/toolhive.go":               true,
+		"internal/adapter/mcpbroker/authenticated_discovery.go": true,
+		"internal/adapter/mcpbroker/toolhive_construction.go":   true,
+		"internal/adapter/mcpbroker/toolhive_process.go":        true,
+		"internal/adapter/toolhivellm/tokensource.go":           true,
 	}
 	const toolHiveModule = "github.com/stacklok/toolhive"
 	if err := filepath.WalkDir(root, func(sourcePath string, entry fs.DirEntry, walkErr error) error {

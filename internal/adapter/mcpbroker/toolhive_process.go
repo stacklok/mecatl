@@ -48,7 +48,11 @@ type Process struct {
 	Handlers HandlerBundle
 
 	ctx          context.Context
+	cancel       context.CancelFunc
+	lifecycleMu  sync.Mutex
+	closed       bool
 	construction toolHiveConstruction
+	discovery    *authenticatedDiscovery
 	resources    []ownedResource
 	closeOnce    sync.Once
 	closeErr     error
@@ -81,7 +85,7 @@ func NewToolHiveProcess(ctx context.Context, config ToolHiveConfig) (*Process, e
 	}
 
 	processCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
-	process := &Process{Runtime: runtime, ctx: processCtx, construction: construction}
+	process := &Process{Runtime: runtime, ctx: processCtx, cancel: cancel, construction: construction}
 	process.resources = append(process.resources, ownedResource{name: "process-context", close: func() error { cancel(); return nil }})
 	rollback := func(cause error) (*Process, error) {
 		process.rollback()
@@ -99,6 +103,7 @@ func NewToolHiveProcess(ctx context.Context, config ToolHiveConfig) (*Process, e
 	}
 
 	var auth *runner.EmbeddedAuthServer
+	var tokens upstreamCredentialReader
 	var incoming func(http.Handler) http.Handler
 	var authInfo http.Handler
 	if len(construction.protectedBackends) != 0 {
@@ -111,6 +116,7 @@ func NewToolHiveProcess(ctx context.Context, config ToolHiveConfig) (*Process, e
 		}
 		process.resources = append(process.resources, ownedResource{name: "authserver", close: auth.Close})
 		reader := upstreamtoken.NewInProcessService(auth.IDPTokenStorage(), auth.UpstreamTokenRefresher())
+		tokens = reader
 		incoming, _, authInfo, err = factory.NewIncomingAuthMiddleware(processCtx, &vmcpconfig.IncomingAuthConfig{
 			Type: "oidc", OIDC: &vmcpconfig.OIDCConfig{Issuer: issuer, Audience: issuer, Resource: issuer, JWKSURL: issuer + "/.well-known/jwks.json"},
 		}, "mecatl-broker", nil, reader, auth.KeyProvider())
@@ -127,13 +133,23 @@ func NewToolHiveProcess(ctx context.Context, config ToolHiveConfig) (*Process, e
 	if err != nil {
 		return rollback(fmt.Errorf("mcpbroker: create conflict resolver: %w", err))
 	}
+	capabilityAggregator := aggregator.NewDefaultAggregator(backendClient, resolver, nil, nil)
 	serverConfig := &vmcpserver.Config{Name: "mecatl-broker", Version: "v1", EndpointPath: toolHiveMCPPath,
 		AuthMiddleware: incoming, AuthInfoHandler: authInfo, AuthServer: auth,
-		Aggregator: aggregator.NewDefaultAggregator(backendClient, resolver, nil, nil), SessionFactory: vmcpsession.NewSessionFactory(outgoing),
+		Aggregator: capabilityAggregator, SessionFactory: vmcpsession.NewSessionFactory(outgoing),
 	}
-	server, err := vmcpserver.New(processCtx, serverConfig, router.NewSessionRouter(&vmcp.RoutingTable{}), backendClient, vmcp.NewImmutableRegistry(construction.backends), nil)
+	backendRegistry := vmcp.NewImmutableRegistry(construction.backends)
+	server, err := vmcpserver.New(processCtx, serverConfig, router.NewSessionRouter(&vmcp.RoutingTable{}), backendClient, backendRegistry, nil)
 	if err != nil {
 		return rollback(fmt.Errorf("mcpbroker: create vMCP server: %w", err))
+	}
+	if len(construction.protectedBackends) != 0 {
+		process.discovery = &authenticatedDiscovery{
+			capabilities: capabilityAggregator,
+			backends:     backendRegistry,
+			tokens:       tokens,
+			providers:    cloneProviderByBackend(construction.providerByBackend),
+		}
 	}
 	process.resources = append(process.resources, ownedResource{name: "vmcp", close: func() error { return server.Stop(context.Background()) }})
 	vmcpHandler, err := server.Handler(processCtx)
@@ -274,13 +290,20 @@ func (p *Process) closeResources() error {
 	return result
 }
 
-// Close first drains the neutral Runtime, then stops vMCP, closes authserver,
-// and finally cancels the process-owned context. It is idempotent.
+// Close first cancels process-owned work, then drains the neutral Runtime,
+// stops vMCP, and closes authserver. It is idempotent.
 func (p *Process) Close() error {
 	if p == nil {
 		return nil
 	}
 	p.closeOnce.Do(func() {
+		p.lifecycleMu.Lock()
+		p.closed = true
+		cancel := p.cancel
+		p.lifecycleMu.Unlock()
+		if cancel != nil {
+			cancel()
+		}
 		if p.Runtime != nil {
 			p.closeErr = p.Runtime.Close()
 		}

@@ -168,3 +168,11 @@ func cloneStaticTools(in []StaticTool) []StaticTool {
 	}
 	return out
 }
+
+func cloneProviderByBackend(in map[string]string) map[string]string {
+	out := make(map[string]string, len(in))
+	for backend, provider := range in {
+		out[backend] = provider
+	}
+	return out
+}
