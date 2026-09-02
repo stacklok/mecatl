@@ -1,9 +1,9 @@
-# Session title generation and auxiliary usage — acceptance plan
+# Session title generation and token usage — acceptance plan
 
-**Phase:** mecatui session-title UX and opt-in auxiliary model accounting  
-**Status:** in-progress, 2026-08-30. Reconciled with ADR 0290.
+**Phase:** mecatui session-title UX and opt-in title-model accounting  
+**Status:** in-progress, 2026-08-30. Reconciled with ADR 0290.  
 **Issue:** [stacklok/mecatl#621](https://github.com/stacklok/mecatl/issues/621).  
-**ADR:** [ADR 0290](../adr/0290-session-title-generation-and-auxiliary-usage.md) — server-owned asynchronous title lifecycle, opt-in title slot, and auxiliary usage boundary.  
+**ADR:** [ADR 0290](../adr/0290-session-title-generation-and-auxiliary-usage.md) — server-owned asynchronous title lifecycle, opt-in title slot, and token usage boundary.
 **Accumulator branch:** `acc/session-title-generation` (off `main`).
 
 The smallest set of work that lets a mecatui operator set an active session title directly and,
@@ -12,15 +12,15 @@ model-generated title after the first real prompt establishes a topic. Generated
 single-line normalized and capped at 80 runes total, including a truncation ellipsis. Every title,
 including existing first-prompt and operator titles, canonicalizes all whitespace to a single space
 so it remains one line. Automatic generation is not an agent turn, cannot delay or alter chat, and
-does not spend the main session's run budget. This plan establishes an extensible auxiliary-usage
-record but wires only title generation.
+does not spend the main session's run budget. Canonical token usage is aggregated by usage
+kind and opaque selected-model attribution; title generation contributes only to its title bucket.
 
 ## Design boundaries
 
 - `/title <text>` is a mecatui-only client command over the existing `RenameSession` operation;
   it is not an engine tool, prompt command, or synthetic conversation message.
-- There is no `GenerateSessionTitle`, `RunSessionAuxiliaryOperation`, or generic auxiliary-operation
-  client RPC. The Service owns automatic job admission and every client benefits from it.
+- There is no `GenerateSessionTitle` or generic client model-invocation RPC. The Service owns
+automatic job admission and every client benefits from it.
 - At creation, composition resolves whether `models.slots.title` can run on the session's fixed
   provider. The aggregate durably records `pending` or `disabled` intent; it never persists model
   configuration and every attempt revalidates current policy.
@@ -39,11 +39,12 @@ record but wires only title generation.
   authority. It makes one zero-tool direct stream call with a 30-second timeout and returns strict
   `title` or `defer`.
 - Every persisted title/title-generation change emits a `session.title` event, appended to the
-  EventLog when enabled and published through `StreamSessionLive`. Push is best-effort; clients
-  reconcile with `GetSession` on reconnect or reopen.
-- The engine owns title provenance, sources/lifecycle, event value, and a bounded auxiliary-usage
-  ledger only. Auxiliary usage never changes `Session.Usage`, run budgets, ordinary result usage,
-  or conversation history.
+  EventLog when enabled and published through gRPC `StreamSessionLive`. That live push is
+  best-effort. Per-run HTTP SSE has no out-of-band title push; HTTP clients discover title changes
+  from the authoritative session snapshot and durable event stream.
+- The engine owns title provenance, sources/lifecycle, event value, and canonical token usage.
+  Title usage never changes `Session.Usage`, run budgets, ordinary result usage, or conversation
+  history.
 
 These cuts follow [ADR 0290](../adr/0290-session-title-generation-and-auxiliary-usage.md),
 [ADR 0030](../adr/0030-model-selection-heuristics.md),
@@ -160,43 +161,51 @@ muted client-only notice directing the operator to `/title <text>`; it contains 
   detail that retains the fallback and directs the operator to `/title <text>` for a manual title.
   - verify: `TestSessionTitleGeneration_Scenario4_QuietFailureOffersManualTitle`
 
-### Scenario 5 — Auxiliary title-model spend is durable and distinct from run usage
+### Scenario 5 — Title-model token usage is durable and distinct from run usage
 
-Every admitted physical title call records bounded `session_title` auxiliary usage: normalized
-resolved provider/model, input/output tokens, time, and outcome. The aggregate retains at most 16
-entries. This title-only ledger is durable session metadata and is not main-run accounting; existing
-compaction, guardrail, reviewer, judge, and reflection calls are not migrated.
+Every admitted physical title call aggregates `session_title` token usage by the selected opaque
+provider/model key. The title lifecycle retains only an attempt identity, outcome, and time; it has
+no per-attempt usage ledger.
 
 **Acceptance:**
-- AC5.1: Each physical title-generation attempt has one bounded `session_title` usage record,
-  including a distinct unknown/interrupted outcome when provider usage is unrecoverable.
-  - verify: `TestSessionTitleGeneration_Scenario5_RecordsAuxiliaryUsage`
-- AC5.2: The aggregate caps retention at 16 records and validates its currently closed operation
-  vocabulary without exposing generic model invocation.
-  - verify: `TestSessionTitleGeneration_Scenario5_AuxiliaryUsageIsBoundedAndClosed`
-- AC5.3: Auxiliary usage and title lifecycle round-trip through every in-tree snapshot/store and
-  event-sourced reconstruction path, and authorized projections expose only the bounded summary.
-  - verify: `TestSessionTitleGeneration_Scenario5_AuxiliaryUsageRoundTripAndProjection`
+- AC5.1: Each physical title-generation call aggregates its input/output tokens in the
+  `session_title` usage kind under the selected model attribution.
+  - verify: `TestSessionTitleGeneration_Scenario5_RecordsTokenUsage`
+- AC5.2: Token usage is canonical durable accounting: each `TokenUsage.Total` is the sum of its
+  opaque model entries.
+  - verify: `TestSessionTitleGeneration_Scenario5_RecordsTokenUsage`
+- AC5.3: Token usage and title lifecycle round-trip through every in-tree snapshot/store and
+  event-sourced reconstruction path, and authorized projections expose the canonical aggregate.
+  - verify: `TestSessionTitleGeneration_Scenario5_TokenUsageRoundTripAndProjection`
 - AC5.4: Title-generation tokens do not alter `Session.Usage`, `MaxRunTokens`, normal turn/result
   usage, or the agent conversation.
+<<<<<<< HEAD
   - verify: `TestADR_0290_AuxiliaryUsageDoesNotSpendRunBudget`
 - AC5.5: Existing auxiliary callers remain unchanged.
   - verify: `TestSessionTitleGeneration_Scenario5_OnlyTitleIsPlumbed`
+=======
+  - verify: `TestADR_0284_TitleUsageDoesNotSpendRunBudget`
+>>>>>>> 088bb7aac (refactor: simplify title token usage)
 
 ## Out of scope
 
 | Item | Decision |
 |---|---|
+<<<<<<< HEAD
 | Currency/price estimates, rate history, and billing reconciliation | Deferred; ADR 0290 records tokens only. |
 | Migrating existing auxiliary calls into the ledger | Deferred; this plan wires `session_title` only. |
+=======
+| Currency/price estimates, rate history, and billing reconciliation | Deferred; ADR 0284 records tokens only. |
+| Migrating other model calls into canonical token usage | Deferred; this plan wires `session_title` only. |
+>>>>>>> 088bb7aac (refactor: simplify title token usage)
 | Client-triggered generation or arbitrary client model invocation | Rejected; automatic work is Service-owned. |
-| Generic auxiliary-operation RPC/dispatcher | Rejected; later operations require their own authorization, input, lifecycle, accounting, and notification design. |
+| Generic model-invocation RPC/dispatcher | Rejected; later operations require their own authorization, input, lifecycle, accounting, and notification design. |
 | Regenerating an accepted generated title | Deferred to future explicit UX. |
 
 ## Cross-cutting deliverables
 
 - Update `docs/architecture.md`, `docs/usage.md`, and relevant `user-docs/` coverage for `/title`,
-  explicit title-slot enablement, automatic lifecycle, live reconciliation, and auxiliary usage.
+  explicit title-slot enablement, automatic lifecycle, live reconciliation, and token usage.
 - Add the `title` slot to validation/configuration/help while preserving provider-neutral
   `port.LLMRequest`.
 - Add the coordinator to [ADR 0027](../adr/0027-cloud-native.md) Lists 1 and 2 with owner,

@@ -81,7 +81,6 @@ type Snapshot struct {
 	TitleGeneration    session.TitleGenerationState `json:"title_generation,omitempty"`
 	TitleSourcePrompts []string                     `json:"title_source_prompts,omitempty"`
 	TitleAttempts      []session.TitleAttempt       `json:"title_attempts,omitempty"`
-	AuxiliaryUsage     []session.AuxiliaryUsage     `json:"auxiliary_usage,omitempty"`
 	// TokenUsage is the canonical durable usage ledger. A missing map is legacy;
 	// restore derives honest unknown attribution from deprecated projections.
 	TokenUsage map[session.UsageKind]session.TokenUsage `json:"token_usage,omitempty"`
@@ -224,7 +223,6 @@ func Of(s *session.Session) (Snapshot, error) {
 		TitleGeneration:        s.TitleGeneration,
 		TitleSourcePrompts:     s.TitleSourcePrompts(),
 		TitleAttempts:          s.TitleAttempts(),
-		AuxiliaryUsage:         s.AuxiliaryUsage(),
 		TokenUsage:             cloneTokenUsage(s.TokenUsage),
 		Kind:                   s.Kind,
 		Relationship:           relationship,
@@ -302,7 +300,7 @@ func (snap Snapshot) Restore() (*session.Session, error) {
 	s.BeginRun(snap.RunID)
 	s.Title = snap.Title
 	s.TitleProvenance = snap.TitleProvenance
-	s.RestoreTitleMetadata(snap.TitleGeneration, snap.TitleSourcePrompts, snap.TitleAttempts, snap.AuxiliaryUsage)
+	s.RestoreTitleMetadata(snap.TitleGeneration, snap.TitleSourcePrompts, snap.TitleAttempts)
 	if snap.TokenUsage != nil {
 		s.RestoreTokenUsage(snap.TokenUsage)
 	}

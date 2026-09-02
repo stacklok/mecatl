@@ -32,17 +32,6 @@ type TitleAttemptSummary struct {
 	CreatedAtUnix int64
 }
 
-// AuxiliaryUsageSummary is the latest title-only auxiliary usage projection.
-type AuxiliaryUsageSummary struct {
-	Operation      string
-	ProviderID     string
-	ModelID        string
-	InputTokens    int64
-	OutputTokens   int64
-	RecordedAtUnix int64
-	Outcome        string
-}
-
 // SessionInitMsg marks the run stream as live (proto type "session.init").
 type SessionInitMsg struct{ Seq int64 }
 

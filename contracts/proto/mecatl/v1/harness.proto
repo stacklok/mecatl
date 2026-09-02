@@ -1070,8 +1070,7 @@ message SessionSummary {
   string title_provenance = 14 [deprecated = true];
   // title_metadata is the canonical bounded, source-free title lifecycle projection.
   SessionTitle title_metadata = 15;
-  // token_usage is canonical durable accounting keyed only by "main" and
-  // "session_title". Every bucket total equals the sum of its models entries.
+  // token_usage is canonical durable accounting.
   map<string, TokenUsage> token_usage = 16;
 }
 
@@ -1426,8 +1425,7 @@ message Session {
   repeated string debug_mcp_tools = 17;
   // title_metadata is the canonical bounded, source-free title lifecycle projection.
   SessionTitle title_metadata = 18;
-  // token_usage is canonical durable accounting keyed only by "main" and
-  // "session_title". Every bucket total equals the sum of its models entries.
+  // token_usage is canonical durable accounting.
   map<string, TokenUsage> token_usage = 19;
 }
 

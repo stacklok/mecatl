@@ -14,11 +14,12 @@ func TestFoldRestoresTitleGenerationMetadata(t *testing.T) {
 	m.TitleGeneration = session.TitleGenerationGenerated
 	m.TitleSourcePrompts = []string{"first prompt", "second prompt"}
 	m.TitleAttempts = []session.TitleAttempt{{ID: "attempt-1", Outcome: session.TitleAttemptSucceeded}}
-	m.AuxiliaryUsage = []session.AuxiliaryUsage{{
-		Operation: session.AuxiliaryOperationSessionTitle,
-		Usage:     session.Usage{InputTokens: 5, OutputTokens: 3},
-		Outcome:   session.TitleAttemptSucceeded,
-	}}
+	m.TokenUsage = map[session.UsageKind]session.TokenUsage{
+		session.UsageKindSessionTitle: {
+			Total:  session.Usage{InputTokens: 5, OutputTokens: 3},
+			Models: map[string]session.Usage{"unknown": {InputTokens: 5, OutputTokens: 3}},
+		},
+	}
 
 	s, err := eventsource.Fold(m, seq(nil))
 	if err != nil {
@@ -33,8 +34,8 @@ func TestFoldRestoresTitleGenerationMetadata(t *testing.T) {
 	if got := s.TitleAttempts(); len(got) != 1 || got[0].ID != "attempt-1" {
 		t.Errorf("TitleAttempts = %#v, want restored attempt", got)
 	}
-	if got := s.AuxiliaryUsage(); len(got) != 1 || got[0].Usage.OutputTokens != 3 {
-		t.Errorf("AuxiliaryUsage = %#v, want restored ledger", got)
+	if got := s.TokenUsage[session.UsageKindSessionTitle]; got.Total.OutputTokens != 3 || got.Models["unknown"].InputTokens != 5 {
+		t.Errorf("TokenUsage = %#v, want restored ledger", got)
 	}
 	if got := s.Usage; got != (session.Usage{}) {
 		t.Errorf("main Usage = %#v, want unchanged", got)

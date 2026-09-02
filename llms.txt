@@ -1,6 +1,6 @@
 # mecatl
 
-> A markdown documentation corpus of 285 document(s) across 12 component(s), with 2838 heading(s) and 2809 resolved reference(s). Entries are ordered by importance (most-connected first). 19 document(s) excluded from rendering by emitExclude (still in the corpus: link-checked and ranked). Compactness 0.85, docs ~2.2 clicks apart.
+> A markdown documentation corpus of 285 document(s) across 12 component(s), with 2840 heading(s) and 2809 resolved reference(s). Entries are ordered by importance (most-connected first). 19 document(s) excluded from rendering by emitExclude (still in the corpus: link-checked and ranked). Compactness 0.85, docs ~2.2 clicks apart.
 
 ## Documentation
 
@@ -165,7 +165,7 @@
 - [ADR 0286 — Public and private OIDC issuers are two transports, not one policy](docs/adr/0286-issuer-transport-split.md): ADR 0286 — Public and private OIDC issuers are two transports, not one policy (linked from: docs/acceptance/README.md, docs/acceptance/spine-convergence.md, docs/adr/0277-remote-mecatui-oidc.md, docs/adr/README.md, docs/design/principles.md, docs/development-process.md)
 - [ADR 0108 — Read skill assets on demand by logical name](docs/adr/0108-on-demand-logical-skill-assets.md): ADR 0108 — Read skill assets on demand by logical name (linked from: docs/acceptance/README.md, docs/acceptance/spine-convergence.md, docs/adr/0005-driver-seams.md, docs/adr/0047-absolute-path-resolution.md, docs/adr/README.md, docs/design/principles.md, docs/design/surface-migration-plan.md, docs/development-process.md)
 - [ADR 0096 — mecatui live-feed reconnect: client-owned backoff + durable catch-up, no server cursor](docs/adr/0096-live-feed-reconnect.md): ADR 0096 — mecatui live-feed reconnect: client-owned backoff + durable catch-up, no server cursor (linked from: docs/acceptance/README.md, docs/acceptance/spine-convergence.md, docs/adr/0097-scheduled-fire-inflight-state.md, docs/adr/README.md, docs/design/principles.md, docs/development-process.md)
-- [ADR 0290 — Asynchronous session-title generation and auxiliary model usage](docs/adr/0290-session-title-generation-and-auxiliary-usage.md): ADR 0290 — Asynchronous session-title generation and auxiliary model usage (linked from: docs/acceptance/README.md, docs/acceptance/session-title-generation.md, docs/acceptance/spine-convergence.md, docs/adr/README.md, docs/design/principles.md, docs/development-process.md)
+- [ADR 0290 — Asynchronous session-title generation and durable token usage](docs/adr/0290-session-title-generation-and-auxiliary-usage.md): ADR 0290 — Asynchronous session-title generation and durable token usage (linked from: docs/acceptance/README.md, docs/acceptance/session-title-generation.md, docs/acceptance/spine-convergence.md, docs/adr/README.md, docs/design/principles.md, docs/development-process.md)
 - [ADR 0080 — Guardrail-routed path-escape checking (composition pre-check, auto-only)](docs/adr/0080-guardrail-routed-escape-checking.md): ADR 0080 — Guardrail-routed path-escape checking (composition pre-check, auto-only) (linked from: docs/acceptance/README.md, docs/acceptance/path-escape-posture.md, docs/acceptance/spine-convergence.md, docs/adr/README.md, docs/design/principles.md, docs/development-process.md)
 - [ADR 0094 — Opt-in project ingestion: two-axis positive grants](docs/adr/0094-opt-in-project-ingestion.md): ADR 0094 — Opt-in project ingestion: two-axis positive grants (linked from: docs/acceptance/README.md, docs/acceptance/spine-convergence.md, docs/adr/0095-root-aware-project-trust.md, docs/adr/README.md, docs/design/principles.md, docs/development-process.md)
 - [ADR 0222 — mecatui: ctrl+t routes by ask type; full-screen ask-args view](docs/adr/0222-mecatui-ask-args-view.md): ADR 0222 — mecatui: ctrl+t routes by ask type; full-screen ask-args view (linked from: docs/acceptance/README.md, docs/acceptance/spine-convergence.md, docs/adr/README.md, docs/design/principles.md, docs/development-process.md, docs/tui.md)
@@ -229,7 +229,7 @@
 - [TypeScript SDK core (M1) — acceptance plan](docs/acceptance/sdk-typescript-core.md): TypeScript SDK core (M1) — acceptance plan (linked from: docs/acceptance/README.md)
 - [Session continuity UX — acceptance plan](docs/acceptance/session-continuity-ux.md): Session continuity UX — acceptance plan (linked from: docs/acceptance/README.md)
 - [Session storage continuity — acceptance plan](docs/acceptance/session-storage-continuity.md): Session storage continuity — acceptance plan (linked from: docs/acceptance/README.md)
-- [Session title generation and auxiliary usage — acceptance plan](docs/acceptance/session-title-generation.md): Session title generation and auxiliary usage — acceptance plan (linked from: docs/acceptance/README.md)
+- [Session title generation and token usage — acceptance plan](docs/acceptance/session-title-generation.md): Session title generation and token usage — acceptance plan (linked from: docs/acceptance/README.md)
 - [Spine convergence — acceptance plan](docs/acceptance/spine-convergence.md): Spine convergence — acceptance plan (linked from: docs/acceptance/README.md)
 - [Surface approval migration — acceptance plan](docs/acceptance/surface-approval-migration.md): Surface approval migration — acceptance plan (linked from: docs/acceptance/README.md)
 - [The agent loop & permission pause/resume](docs/architecture/agent-loop.md): The agent loop & permission pause/resume (linked from: docs/READING.md, docs/adr/0069-plan-approval-gate.md, docs/adr/0106-optional-learning-seam.md, docs/adr/0107-operator-profile-memory-lifecycle.md, docs/adr/0203-permanent-provider-error-signal.md, docs/adr/0232-steer-while-running.md, docs/adr/0234-authority-evaluator-port.md, docs/adr/0251-multimodal-steer.md, docs/architecture.md, docs/architecture/api-surface.md, docs/architecture/context-and-compaction.md, docs/architecture/domain-model.md, docs/architecture/extensibility.md, docs/architecture/hooks-and-guardrails.md, docs/architecture/memory.md, docs/architecture/parallelism.md, docs/architecture/ports.md, docs/architecture/subagents-and-teams.md, docs/design/PRODUCTION-READINESS.md)
@@ -546,7 +546,7 @@ _Associative trails (Bush 1945): a topologically-valid path through each cluster
 245. [Acceptance plans](docs/acceptance/README.md)
 246. [Development process](docs/development-process.md)
 247. [engine/api/ — committed public-API snapshots](engine/api/README.md)
-248. [ADR 0290 — Asynchronous session-title generation and auxiliary model usage](docs/adr/0290-session-title-generation-and-auxiliary-usage.md)
+248. [ADR 0290 — Asynchronous session-title generation and durable token usage](docs/adr/0290-session-title-generation-and-auxiliary-usage.md)
 249. [ADR 0227 — Dream consolidation safety boundary](docs/adr/0227-dream-consolidation-safety-boundary.md)
 250. [Path-escape posture relax — acceptance plan](docs/acceptance/path-escape-posture.md)
 251. [ADR 0288 — TypeScript SDK durable attachment: the watch envelope union, attach/activity semantics, and reconnect authority](docs/adr/0288-typescript-sdk-durable-attachment.md)
@@ -576,7 +576,7 @@ _Associative trails (Bush 1945): a topologically-valid path through each cluster
 275. [TypeScript SDK core (M1) — acceptance plan](docs/acceptance/sdk-typescript-core.md)
 276. [Session continuity UX — acceptance plan](docs/acceptance/session-continuity-ux.md)
 277. [Session storage continuity — acceptance plan](docs/acceptance/session-storage-continuity.md)
-278. [Session title generation and auxiliary usage — acceptance plan](docs/acceptance/session-title-generation.md)
+278. [Session title generation and token usage — acceptance plan](docs/acceptance/session-title-generation.md)
 279. [Spine convergence — acceptance plan](docs/acceptance/spine-convergence.md)
 280. [Surface approval migration — acceptance plan](docs/acceptance/surface-approval-migration.md)
 281. [Commit style](docs/examples/skills/commit-style/SKILL.md)

@@ -30,10 +30,7 @@ func TestSessionTitleGeneration_Scenario2_TitleMetadataRoundTrip(t *testing.T) {
 	s.SetTitle("First prompt")
 	s.SetTitleGeneration(session.TitleGenerationPending)
 	s.RecordTitleAttempt(session.TitleAttempt{ID: "attempt-1", Outcome: session.TitleAttemptDeferred, CreatedAt: at})
-	s.RecordAuxiliaryUsage(session.AuxiliaryUsage{
-		Operation: session.AuxiliaryOperationSessionTitle, ProviderID: "provider", ModelID: "model",
-		Usage: session.Usage{InputTokens: 3, OutputTokens: 2}, RecordedAt: at, Outcome: session.TitleAttemptDeferred,
-	})
+	s.RecordTokenUsage(session.UsageKindSessionTitle, "provider", "model", session.Usage{InputTokens: 3, OutputTokens: 2})
 
 	got := toProtoSession(s, ResolvedModel{}, nil)
 	meta := got.GetTitleMetadata()
@@ -72,18 +69,18 @@ func TestSessionTitleGeneration_Scenario4_TitleEventIsAuthoritativeAndSanitized(
 	}
 }
 
-func TestSessionTitleGeneration_Scenario5_AuxiliaryUsageRoundTripAndProjection(t *testing.T) {
+func TestSessionTitleGeneration_Scenario5_TokenUsageRoundTripAndProjection(t *testing.T) {
 	t.Parallel()
 
 	at := time.Date(2026, time.August, 30, 12, 0, 0, 0, time.UTC)
 	s := session.New("session-1", session.ModeDefault, "", session.Limits{}, at)
 	for i := range 17 {
-		s.RecordAuxiliaryUsage(session.AuxiliaryUsage{Operation: session.AuxiliaryOperationSessionTitle, ProviderID: "provider", ModelID: "model", Usage: session.Usage{InputTokens: i}})
+		s.RecordTokenUsage(session.UsageKindSessionTitle, "provider", "model", session.Usage{InputTokens: i})
 	}
 
 	usage := toProtoSession(s, ResolvedModel{}, nil).GetTokenUsage()["session_title"]
 	if got := usage.GetTotal(); got.GetInputTokens() != 136 || usage.GetModels()["provider/model"].GetInputTokens() != 136 {
-		t.Fatalf("canonical bounded usage = %#v", usage)
+		t.Fatalf("canonical aggregated usage = %#v", usage)
 	}
 	summary := toProtoSessionSummary(SessionSummary{TitleMetadata: titlePayload(s), TokenUsage: s.TokenUsage})
 	if got := summary.GetTokenUsage()["session_title"]; got.GetTotal().GetInputTokens() != 136 {
