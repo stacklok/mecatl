@@ -2,7 +2,7 @@
 
 **Phase:** public placement capability redesign
 **Status:** landed, 2026-09-01
-**ADR:** [ADR 0289](../adr/0289-server-owned-session-placement.md)
+**ADR:** [ADR 0290](../adr/0290-server-owned-session-placement.md)
 **Accumulator branch:** `acc/server-owned-session-placement` (off `main`)
 
 This clean break removes client filesystem-path authority from every session lifecycle.
@@ -39,24 +39,24 @@ default. ACP cwd remains solely a local assertion against trusted configuration.
 
 ### Scenario 1 — Create binds the server-owned default or no-FS
 
-This scenario enforces [ADR 0289](../adr/0289-server-owned-session-placement.md) at the public creation boundary.
+This scenario enforces [ADR 0290](../adr/0290-server-owned-session-placement.md) at the public creation boundary.
 
 - AC1.1: `CreateSession` accepts only omitted deployment default or explicit no-FS
 attenuation; it accepts no general placement ID or selector. Its response exposes only a
 session ID and bounded display metadata, never the exact private `EnvironmentRef`.
-  - verify: `TestADR_0289_CreateSessionAcceptsOnlyDefaultOrNoFS`
+  - verify: `TestADR_0290_CreateSessionAcceptsOnlyDefaultOrNoFS`
 - AC1.2: `Bind` constructs the complete environment and exact private ref from one
 immutable provider snapshot; an authorization/resolution or inventory revision race fails
 closed before persistence or filesystem access, never binding a mixed generation.
-  - verify: `TestADR_0289_BindRejectsRebindBetweenAuthorizationAndResolution`
+  - verify: `TestADR_0290_BindRejectsRebindBetweenAuthorizationAndResolution`
 - AC1.3: Unknown, stale, wrong-owner, wrong-source, unauthorized, or unavailable selectors
 fail before environment construction, trust evaluation, or persistence; hidden and absent
 choices are indistinguishable and never fall back to a default.
-  - verify: `TestADR_0289_ScopedWorktreeSelectorsFailClosed`
+  - verify: `TestADR_0290_ScopedWorktreeSelectorsFailClosed`
 - AC1.4: Harness protobuf/HTTP requests and responses, generated clients, and public session
 inventory contain no filesystem path, cwd, workspace root, mount, exact private
 `EnvironmentRef`, or path-shaped selector. Old path-bearing requests are unsupported.
-  - verify: `TestADR_0289_PublicHarnessContractContainsNoFilesystemPaths`
+  - verify: `TestADR_0290_PublicHarnessContractContainsNoFilesystemPaths`
 
 ### Scenario 2 — Durable sessions reattach exactly
 
@@ -66,7 +66,7 @@ This scenario preserves the exact-reattachment invariant from [ADR 0214](../adr/
 `EnvironmentRef{Kind, ID, Revision}` as runtime identity and contain no duplicate
 `Workspace`, live runner, credential, transport, or process handle. A local private ID may
 identify its configured physical root.
-  - verify: `TestADR_0289_SessionAndSnapshotPersistOnlyEnvironmentRef`
+  - verify: `TestADR_0290_SessionAndSnapshotPersistOnlyEnvironmentRef`
 - AC2.2: On load and at run entry, `Reattach` requires the exact persisted ref/revision and
 returns a complete environment whose identity and bound runner share its namespace.
 Missing resolver/provider, authorization drift, revision mismatch, nil workspace, or
@@ -75,7 +75,7 @@ identity mismatch is a failed precondition with no fallback.
 - AC2.3: Zero refs, duplicate legacy `Workspace` state, and otherwise invalid snapshots are
 rejected; there is no lazy stamping, migration sweep, workspace inference, adoption, or
 alternate authority path.
-  - verify: `TestADR_0289_LegacyDuplicatePlacementStateIsUnsupported`
+  - verify: `TestADR_0290_LegacyDuplicatePlacementStateIsUnsupported`
 - AC2.4: Public projections, events, client-visible logs, and errors expose only bounded
 display metadata and never an exact private ref, physical path, or secret backend locator.
 Trusted operator diagnostics may retain physical roots.
@@ -89,15 +89,15 @@ This scenario retains the worktree workflow from [ADR 0032](../adr/0032-worktree
 the owned session before discovery; neither accepts a root or client-provided selector.
 Worktree entries contain an opaque selector plus bounded display-only kind/label/branch/
 revision metadata.
-  - verify: `TestADR_0289_DiscoveryIsSessionScopedAndOwnerAuthorized`
+  - verify: `TestADR_0290_DiscoveryIsSessionScopedAndOwnerAuthorized`
 - AC3.2: For a no-FS session, both discovery calls return the documented empty/unsupported
 result without invoking a filesystem/default resolver, command source, or worktree lister.
-  - verify: `TestADR_0289_NoFSDiscoveryDoesNotInvokeFilesystemProviders`
+  - verify: `TestADR_0290_NoFSDiscoveryDoesNotInvokeFilesystemProviders`
 - AC3.3: A local selector is an HMAC-SHA256 digest scoped to caller and source session. On
 use, the server re-enumerates currently eligible source-placement worktrees and
 constant-time matches in one provider snapshot; it never decodes the token or consults a
 registry/map.
-  - verify: `TestADR_0289_WorktreeSelectorIsScopedAndMatchedAgainstCurrentInventory`
+  - verify: `TestADR_0290_WorktreeSelectorIsScopedAndMatchedAgainstCurrentInventory`
 - AC3.4: A hidden/unknown session cannot probe another owner's placement or server layout.
 Selectors expire on process restart, so mecatui relists and retains its selected session
 on relist or switch failure.
@@ -111,12 +111,12 @@ This scenario extends the history-carrying successor semantics of [ADR 0065](../
 empty-history successor. Ordinary `/clear` omits the selector and inherits the exact
 source placement, owner, applicable mode, provider/model/effort, limits, and permission
 posture; the response exposes no exact private ref or path.
-  - verify: `TestADR_0289_ClearSessionCreatesEmptyInheritedSuccessor`
+  - verify: `TestADR_0290_ClearSessionCreatesEmptyInheritedSuccessor`
 - AC4.2: Clear reauthorizes the source, observes source-state/run-entry serialization and
 lease rules, and exactly reattaches inherited placement or atomically resolves a current
 source-scoped selector. Failure persists no successor and changes neither source nor
 client binding.
-  - verify: `TestADR_0289_ClearSessionIsLeaseSafeAndNonDestructive`
+  - verify: `TestADR_0290_ClearSessionIsLeaseSafeAndNonDestructive`
 - AC4.3: `ForkSession(source_session_id, optional selector, model overrides)` copies valid
 history and inherits the exact source ref when selector is omitted. A selector and model/
 provider/effort overrides are fully authorized and atomically resolved; failure leaves no
@@ -134,10 +134,10 @@ selector, placement ID, or path; models cannot choose selectors and no-FS cannot
 - AC5.2: Preserved-fork, delegation, and artifact handles are distinct typed handles and
 are never accepted as worktree selectors. Every inspection consumer reauthorizes the owner
 and original placement scope before access.
-  - verify: `TestADR_0289_ArtifactHandlesCannotReplayAsPlacementSelectors`
+  - verify: `TestADR_0290_ArtifactHandlesCannotReplayAsPlacementSelectors`
 - AC5.3: Delegation results, inspection surfaces, events, and model-visible summaries expose
 no fork root, placement path, exact private ref, or reusable selector.
-  - verify: `TestADR_0289_DelegationObservabilityContainsNoPlacementPath`
+  - verify: `TestADR_0290_DelegationObservabilityContainsNoPlacementPath`
 
 ### Scenario 6 — Deferred creation persists resolved owner and placement
 
@@ -147,7 +147,7 @@ This scenario applies the deferred-session contract from [ADR 0059](../adr/0059-
 source-scoped selector, then persists the durable owner principal, original scope, and
 exact private `EnvironmentRef`. It never persists a selector or “follow current default”
 intent; models cannot choose schedule selectors.
-  - verify: `TestADR_0289_ScheduleResolvesSelectorBeforePersistingExactEnvironmentRef`
+  - verify: `TestADR_0290_ScheduleResolvesSelectorBeforePersistingExactEnvironmentRef`
 - AC6.2: Each fire reauthorizes and exactly reattaches with that owner and scope, not daemon
 identity. Drift, unavailability, or mismatch records an operator-visible failure without
 creating a session or accessing a filesystem.
@@ -160,11 +160,11 @@ This scenario keeps remote environment reattachment aligned with [ADR 0214](../a
 - AC7.1: Trusted driver storage messages carry the exact private `EnvironmentRef`, which
 may include a local physical root, and driver results enter runtime only through exact
 `Reattach`. No public Harness/HTTP/client mapper projects that ref.
-  - verify: `TestADR_0289_DriverStorageCarriesExactPrivateEnvironmentRef`
+  - verify: `TestADR_0290_DriverStorageCarriesExactPrivateEnvironmentRef`
 - AC7.2: ACP `session/new` and `session/load` bind or reattach from server state before
 access. A required ACP cwd is checked only for consistency with trusted configured
 placement; mismatch is rejected and cwd cannot select or construct authority.
-  - verify: `TestADR_0289_ACPBindAndLoadAssertConfiguredPlacement`
+  - verify: `TestADR_0290_ACPBindAndLoadAssertConfiguredPlacement`
 - AC7.3: Apart from the local cwd assertion, ACP-visible sessions, discovery, errors, and
 events obey the same public no-path and no-exact-ref projection rule.
   - verify: `TestServerOwnedSessionPlacement_Scenario7_ACPProjectsNoPhysicalPaths`
@@ -176,22 +176,22 @@ public projections from private session/snapshot/driver storage, runtime adapter
 operator diagnostics, composition, and ACP cwd. Public surfaces are path-free; private
 storage may retain the exact ref, `Session.Workspace` is removed, and ACP cwd is assertion
 only.
-  - verify: `TestADR_0289_PathSurfaceInventoryEnforcesPublicBoundary`
+  - verify: `TestADR_0290_PathSurfaceInventoryEnforcesPublicBoundary`
 - AC8.2: Trusted composition configures and validates the local deployment default and
 placement providers before serving; no stable public placement-ID registry is required.
-  - verify: `TestADR_0289_CompositionConfiguresProviderOwnedPlacements`
+  - verify: `TestADR_0290_CompositionConfiguresProviderOwnedPlacements`
 - AC8.3: ADR 0027 List 1 inventories the random HMAC key as a Build-owned,
 process-lifetime resource, and List 2 records its reset-by-design restart semantics.
 Selectors are not persisted, restart requires relisting, and no selector registry/map is
 introduced.
-  - verify: `TestADR_0289_PlacementReauditInventoriesEphemeralSelectorKey`
+  - verify: `TestADR_0290_PlacementReauditInventoriesEphemeralSelectorKey`
 
 ## Out of scope
 
 | Item | Decision |
 |---|---|
 | Compatibility aliases, legacy path migration, or adoption | Deleted, not redesigned; no compatibility users are supported. |
-| Client-selected host paths, including embedded/loopback | Permanently excluded by [ADR 0289](../adr/0289-server-owned-session-placement.md). |
+| Client-selected host paths, including embedded/loopback | Permanently excluded by [ADR 0290](../adr/0290-server-owned-session-placement.md). |
 | Filesystem CAS, read ledger, runner affinity, or fork/merge mechanics | Preserved by [ADR 0208](../adr/0208-execution-environment.md) and [ADR 0211](../adr/0211-execution-environment-runtime-seam.md). |
 | Stable public placement IDs, selectors as bearer grants, encoded paths, or portable deployment aliases | Permanently excluded. |
 

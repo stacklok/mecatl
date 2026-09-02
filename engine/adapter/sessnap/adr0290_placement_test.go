@@ -11,7 +11,7 @@ import (
 	"github.com/stacklok/mecatl/engine/session"
 )
 
-func TestADR_0289_SessionAndSnapshotPersistOnlyEnvironmentRef(t *testing.T) {
+func TestADR_0290_SessionAndSnapshotPersistOnlyEnvironmentRef(t *testing.T) {
 	ref := session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/private/root", Revision: "inventory-v7"}
 	sess := session.New("placement-only", session.ModeDefault, ref, session.Limits{}, time.Unix(1, 0).UTC())
 
@@ -49,7 +49,7 @@ func TestADR_0289_SessionAndSnapshotPersistOnlyEnvironmentRef(t *testing.T) {
 	}
 }
 
-func TestADR_0289_LegacyDuplicatePlacementStateIsUnsupported(t *testing.T) {
+func TestADR_0290_LegacyDuplicatePlacementStateIsUnsupported(t *testing.T) {
 	ref := session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/private/root", Revision: "inventory-v7"}
 	line := mustMarshal(t, session.New("legacy-placement", session.ModeDefault, ref, session.Limits{}, time.Unix(1, 0).UTC()))
 	var object map[string]json.RawMessage

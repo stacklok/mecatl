@@ -19,7 +19,7 @@ import (
 	"github.com/stacklok/mecatl/engine/session"
 )
 
-func TestADR_0289_PathSurfaceInventoryEnforcesPublicBoundary(t *testing.T) {
+func TestADR_0290_PathSurfaceInventoryEnforcesPublicBoundary(t *testing.T) {
 	forbidden := map[protoreflect.Name]bool{
 		"path": true, "workspace": true, "cwd": true, "root": true, "mount": true,
 		"environment_ref": true, "environment_id": true, "winner_workspace": true,

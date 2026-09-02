@@ -104,7 +104,7 @@ func newADR0289Service(t *testing.T) *Service {
 	return svc
 }
 
-func TestADR_0289_CreateSessionAcceptsOnlyDefaultOrNoFS(t *testing.T) {
+func TestADR_0290_CreateSessionAcceptsOnlyDefaultOrNoFS(t *testing.T) {
 	h := NewHarnessServer(newADR0289Service(t))
 	for _, req := range []*mecatlv1.CreateSessionRequest{{}, {Profile: "no-fs"}} {
 		resp, err := h.CreateSession(context.Background(), req)
@@ -123,7 +123,7 @@ func TestADR_0289_CreateSessionAcceptsOnlyDefaultOrNoFS(t *testing.T) {
 	}
 }
 
-func TestADR_0289_PublicHarnessContractContainsNoFilesystemPaths(t *testing.T) {
+func TestADR_0290_PublicHarnessContractContainsNoFilesystemPaths(t *testing.T) {
 	for _, msg := range []interface{ ProtoReflect() protoreflect.Message }{
 		&mecatlv1.CreateSessionRequest{}, &mecatlv1.Session{}, &mecatlv1.SessionSummary{},
 		&mecatlv1.ListCommandsRequest{}, &mecatlv1.ListWorktreesRequest{}, &mecatlv1.Worktree{},
@@ -166,7 +166,7 @@ func TestInvariant_physical_placement_paths_never_cross_public_api(t *testing.T)
 	}
 }
 
-func TestADR_0289_DiscoveryIsSessionScopedAndOwnerAuthorized(t *testing.T) {
+func TestADR_0290_DiscoveryIsSessionScopedAndOwnerAuthorized(t *testing.T) {
 	svc := newADR0289Service(t)
 	h := NewHarnessServer(svc)
 	created, err := h.CreateSession(context.Background(), &mecatlv1.CreateSessionRequest{})
@@ -187,7 +187,7 @@ func TestADR_0289_DiscoveryIsSessionScopedAndOwnerAuthorized(t *testing.T) {
 	}
 }
 
-func TestADR_0289_ClearSessionCreatesEmptyInheritedSuccessor(t *testing.T) {
+func TestADR_0290_ClearSessionCreatesEmptyInheritedSuccessor(t *testing.T) {
 	svc := newADR0289Service(t)
 	h := NewHarnessServer(svc)
 	created, err := h.CreateSession(context.Background(), &mecatlv1.CreateSessionRequest{})

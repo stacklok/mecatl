@@ -30,4 +30,4 @@ Expected focus: `docs/architecture.md`, `docs/usage.md`,
 process-lifetime resource, and List 2 records its reset-by-design restart semantics.
 Selectors are not persisted, restart requires relisting, and no selector registry/map is
 introduced.
-  - verify: `TestADR_0289_PlacementReauditInventoriesEphemeralSelectorKey`
+  - verify: `TestADR_0290_PlacementReauditInventoriesEphemeralSelectorKey`

@@ -103,7 +103,7 @@ requires relisting. Schedules persist an already-resolved exact ref plus owner/s
 delegation derives or server-forks the parent Environment and artifact handles cannot be
 replayed as selectors. Mecak8s binds its storage-free default to no-FS; a future remote
 placement provider uses the same private Bind/Reattach contract. See
-[ADR 0289](../adr/0289-server-owned-session-placement.md).
+[ADR 0290](../adr/0290-server-owned-session-placement.md).
 
 ### Multi-replica deployment & single-writer enforcement
 

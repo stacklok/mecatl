@@ -298,7 +298,7 @@ func TestSaveLoadOverWire(t *testing.T) {
 	}
 }
 
-func TestADR_0289_DriverStorageCarriesExactPrivateEnvironmentRef(t *testing.T) {
+func TestADR_0290_DriverStorageCarriesExactPrivateEnvironmentRef(t *testing.T) {
 	want := session.EnvironmentRef{Kind: "remote", ID: "opaque-private-id", Revision: "inventory-r17"}
 	entry, err := metadataToProto(port.SessionDiscoveryMeta{ID: "s1", EnvironmentRef: want})
 	if err != nil {
