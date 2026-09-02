@@ -42,7 +42,7 @@ func worktreeEngineService(t *testing.T, defaultWorkspace string, factoryCalled 
 	if factoryCalled != nil {
 		cfg.SessionEngine = fakeSessionEngineFactory(factoryCalled)
 	}
-	svc, err := server.NewService(cfg)
+	svc, err := newPlacementTestService(cfg)
 	if err != nil {
 		t.Fatalf("new service: %v", err)
 	}
@@ -53,7 +53,7 @@ func worktreeEngineService(t *testing.T, defaultWorkspace string, factoryCalled 
 // CreateSession whose workspace DIFFERS from DefaultWorkspace routes through the
 // per-session engine factory (HasSessionEngine true), while one EQUAL to
 // DefaultWorkspace stays on the shared-engine fast path (HasSessionEngine false).
-func TestWorktreeSessionRoutesThroughPerSessionFactory(t *testing.T) {
+func TestClientWorkspaceDoesNotRoutePerSessionFactory(t *testing.T) {
 	ctx := context.Background()
 	const base = "/srv/base"
 	const wtB = "/srv/wtB"
@@ -65,11 +65,14 @@ func TestWorktreeSessionRoutesThroughPerSessionFactory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateSession(wtB): %v", err)
 	}
-	if !called {
-		t.Error("CreateSession(wtB) did NOT call the SessionEngine factory — a worktree session must route through the per-session factory (D1)")
+	if called {
+		t.Error("client workspace unexpectedly selected a per-session engine")
 	}
-	if !svc.HasSessionEngineForTest(sess.ID) {
-		t.Error("CreateSession(wtB) did not register a per-session engine (HasSessionEngine false)")
+	if svc.HasSessionEngineForTest(sess.ID) {
+		t.Error("client workspace unexpectedly registered a per-session engine")
+	}
+	if sess.EnvironmentRef.ID != base {
+		t.Fatalf("placement ID = %q, want server-owned %q", sess.EnvironmentRef.ID, base)
 	}
 
 	// A same-as-DefaultWorkspace session stays on the shared engine (no factory call).
@@ -87,7 +90,7 @@ func TestWorktreeSessionRoutesThroughPerSessionFactory(t *testing.T) {
 // worktree session (Workspace != DefaultWorkspace) DOES; and a
 // no-DefaultWorkspace server (child/cloud) does NOT spuriously rehydrate on a
 // non-empty workspace.
-func TestNeedsRehydrationWorktreeAndDefault(t *testing.T) {
+func TestNeedsRehydrationIgnoresObsoleteWorkspaceIdentity(t *testing.T) {
 	const base = "/srv/base"
 	const wtB = "/srv/wtB"
 	cases := []struct {
@@ -103,10 +106,10 @@ func TestNeedsRehydrationWorktreeAndDefault(t *testing.T) {
 			want:             false,
 		},
 		{
-			name:             "worktree session rehydrates",
+			name:             "obsolete worktree-shaped ref does not imply engine rehydration",
 			defaultWorkspace: base,
 			sess:             session.New("s2", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: wtB, Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0)),
-			want:             true,
+			want:             false,
 		},
 		{
 			name:             "no-DefaultWorkspace (child/cloud): non-empty workspace does NOT spuriously rehydrate",

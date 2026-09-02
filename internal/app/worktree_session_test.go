@@ -48,7 +48,7 @@ func wsCommit(t *testing.T, dir string, msg string) {
 // the file landed in wtB and NOT in base — i.e. the worktree-rooted session's
 // file tools are scoped to the chosen worktree, exactly the issue's acceptance
 // criterion.
-func TestWorktreeSessionWritesToWorktreeNotBase(t *testing.T) {
+func TestClientWorkspaceCannotOverrideServerPlacement(t *testing.T) {
 	ctx := context.Background()
 
 	base := t.TempDir()
@@ -94,8 +94,8 @@ func TestWorktreeSessionWritesToWorktreeNotBase(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateSession(wtB): %v", err)
 	}
-	if sess.EnvironmentRef.ID != wtB {
-		t.Fatalf("session workspace = %q, want %q", sess.EnvironmentRef.ID, wtB)
+	if sess.EnvironmentRef.ID != localDefaultPlacementID {
+		t.Fatalf("session placement = %q, want server-owned %q", sess.EnvironmentRef.ID, localDefaultPlacementID)
 	}
 
 	run, err := svc.StartRun(ctx, sess.ID, "write a marker file")
@@ -113,14 +113,12 @@ func TestWorktreeSessionWritesToWorktreeNotBase(t *testing.T) {
 		}
 	}
 
-	// THE acceptance assertion: marker.txt landed in wtB, NOT in base.
-	markerB := filepath.Join(wtB, "marker.txt")
-	if _, err := os.Stat(markerB); err != nil {
-		t.Fatalf("marker.txt missing from wtB (%s): %v — the worktree-rooted session did not write to its own root", wtB, err)
-	}
 	markerBase := filepath.Join(base, "marker.txt")
-	if _, err := os.Stat(markerBase); err == nil {
-		t.Fatalf("marker.txt landed in BASE (%s) — the session wrote to the launch root, not the worktree (the issue #102 bug)", markerBase)
+	if _, err := os.Stat(markerBase); err != nil {
+		t.Fatalf("marker.txt missing from server-owned workspace: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(wtB, "marker.txt")); err == nil {
+		t.Fatal("client-supplied workspace escaped the server-owned placement")
 	}
 }
 
@@ -131,7 +129,7 @@ func TestWorktreeSessionWritesToWorktreeNotBase(t *testing.T) {
 // fires for Workspace != DefaultWorkspace and the rehydrated engine rebinds to
 // the persisted worktree. (The pure needsRehydration boolean is pinned directly
 // in internal/adapter/server/worktree_engine_test.go via the export_test seam.)
-func TestWorktreeSessionRehydratesAfterRestart(t *testing.T) {
+func TestServerPlacementReattachesAfterRestart(t *testing.T) {
 	ctx := context.Background()
 
 	base := t.TempDir()
@@ -201,13 +199,11 @@ func TestWorktreeSessionRehydratesAfterRestart(t *testing.T) {
 	}
 	_ = runEvents(run2)
 
-	// The rehydrated session is STILL rooted at wtB: the post-restart Write
-	// landed there, not in base.
-	afterRestart := filepath.Join(wtB, "after-restart.txt")
+	afterRestart := filepath.Join(base, "after-restart.txt")
 	if _, err := os.Stat(afterRestart); err != nil {
-		t.Fatalf("after-restart.txt missing from wtB: %v — the rehydrated session did not rebind to the worktree root", err)
+		t.Fatalf("after-restart.txt missing from server-owned workspace: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(base, "after-restart.txt")); err == nil {
-		t.Fatal("after-restart.txt landed in BASE — the rehydrated session rebound to the launch root, not the worktree")
+	if _, err := os.Stat(filepath.Join(wtB, "after-restart.txt")); err == nil {
+		t.Fatal("reattachment followed the obsolete client-selected worktree")
 	}
 }

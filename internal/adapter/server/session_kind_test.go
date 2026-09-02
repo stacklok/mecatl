@@ -263,7 +263,7 @@ func runPurposeService(t *testing.T, ownership bool) (*server.Service, *memstore
 		Model:   "test-model",
 		Store:   store,
 	})
-	svc, err := server.NewService(server.Config{
+	svc, err := newPlacementTestService(server.Config{
 		Engine:            eng,
 		Store:             store,
 		EventLog:          memstore.NewEventLog(),

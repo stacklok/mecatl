@@ -1365,7 +1365,7 @@ func TestBuildToolsStrictOff(t *testing.T) {
 // function_call_output for every function_call — no orphan that OpenAI would
 // reject.
 func TestRequestNoOrphanedFunctionCallAfterInterrupt(t *testing.T) {
-	sess := session.New("s1", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
+	sess := &session.Session{ID: "s1", Mode: session.ModeDefault, State: session.StateIdle, Conversation: &session.Conversation{}}
 	if err := sess.RecordUserPrompt("read the file", nil); err != nil {
 		t.Fatalf("RecordUserPrompt: %v", err)
 	}

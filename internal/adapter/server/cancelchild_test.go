@@ -61,7 +61,7 @@ func newInteractiveSubagentService(t *testing.T) (*server.Service, *scriptTool) 
 		Model:       "test-model",
 		Interactive: true, // the child ask SURFACES instead of auto-denying
 	})
-	svc, err := server.NewService(server.Config{
+	svc, err := newPlacementTestService(server.Config{
 		Engine:              engine,
 		Store:               memstore.New(),
 		Workspaces:          func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
@@ -302,7 +302,7 @@ func newTeamConverseService(t *testing.T) (*server.Service, *parkTool) {
 		Policy:  permpolicy.NewPolicy(allowRules(), nil),
 		Model:   "test-model",
 	})
-	svc, err := server.NewService(server.Config{
+	svc, err := newPlacementTestService(server.Config{
 		Engine:              engine,
 		Store:               memstore.New(),
 		Workspaces:          func(root string) tool.Workspace { return memfs.NewWorkspace(root) },

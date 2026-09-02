@@ -449,7 +449,7 @@ func newLiveSubscriptionServiceOwnershipEnforced(t *testing.T, turns ...mockllm.
 		Model:   "test-model",
 		Store:   store,
 	})
-	svc, err := server.NewService(server.Config{
+	svc, err := newPlacementTestService(server.Config{
 		Engine:              engine,
 		Store:               store,
 		Workspaces:          func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
@@ -678,7 +678,7 @@ func newLiveSubscriptionService(t *testing.T, turns ...mockllm.Turn) *server.Ser
 		Model:   "test-model",
 		Store:   store,
 	})
-	svc, err := server.NewService(server.Config{
+	svc, err := newPlacementTestService(server.Config{
 		Engine:              engine,
 		Store:               store,
 		Workspaces:          func(root string) tool.Workspace { return memfs.NewWorkspace(root) },

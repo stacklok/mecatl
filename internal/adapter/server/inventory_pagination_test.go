@@ -29,7 +29,7 @@ func inventoryService(t *testing.T, store port.SessionStore, ownership bool) *se
 		LLM: mockllm.New(mockllm.TextTurn("ok")), Catalog: tool.NewCatalog(),
 		Policy: permpolicy.NewPolicy(nil, nil),
 	})
-	svc, err := server.NewService(server.Config{
+	svc, err := newPlacementTestService(server.Config{
 		Engine: eng, Store: store, OwnershipEnforced: ownership,
 		Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
 		Now:        time.Now,

@@ -39,7 +39,7 @@ func newDrainService(t *testing.T, llm *mockllm.Provider) *server.Service {
 		Model:   "test-model",
 		Store:   store,
 	})
-	svc, err := server.NewService(server.Config{
+	svc, err := newPlacementTestService(server.Config{
 		Engine:              engine,
 		Store:               store,
 		Workspaces:          func(root string) tool.Workspace { return memfs.NewWorkspace(root) },

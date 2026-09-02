@@ -130,7 +130,7 @@ func mcpService(t *testing.T, provider mcp.Provider, sources []source.SourceInfo
 		Policy:  permpolicy.NewPolicy(allowRules(), nil),
 		Model:   "test-model",
 	})
-	svc, err := server.NewService(server.Config{
+	svc, err := newPlacementTestService(server.Config{
 		Engine:      engine,
 		Store:       memstore.New(),
 		Workspaces:  func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
@@ -341,7 +341,7 @@ func TestServiceMcpSourceProberReflectsLiveStatus(t *testing.T) {
 		Policy:  permpolicy.NewPolicy(allowRules(), nil),
 		Model:   "test-model",
 	})
-	svc, err := server.NewService(server.Config{
+	svc, err := newPlacementTestService(server.Config{
 		Engine:     engine,
 		Store:      memstore.New(),
 		Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
@@ -381,7 +381,7 @@ func TestServiceMcpSourceProberFailSoft(t *testing.T) {
 		Policy:  permpolicy.NewPolicy(allowRules(), nil),
 		Model:   "test-model",
 	})
-	svc, err := server.NewService(server.Config{
+	svc, err := newPlacementTestService(server.Config{
 		Engine:          engine,
 		Store:           memstore.New(),
 		Workspaces:      func(root string) tool.Workspace { return memfs.NewWorkspace(root) },

@@ -153,7 +153,7 @@ func (s *Service) bindPlacementForCreate(ctx context.Context, workspace string, 
 		return "", nil, err
 	}
 	boundRoot := binding.Environment.Workspace().Root()
-	if profile == ProfileNoFS && boundRoot != "" || profile != ProfileNoFS && boundRoot == "" {
+	if profile == ProfileNoFS && boundRoot != "" {
 		return "", nil, ErrInvalidPlacementBinding
 	}
 	return boundRoot, &binding, nil

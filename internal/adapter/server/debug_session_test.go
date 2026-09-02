@@ -30,7 +30,7 @@ func debugTestEngine(text string) *agent.Engine {
 
 func debugTestService(t *testing.T, store port.SessionStore, ownerEnforced bool, factory server.DebugSessionEngineFactory) *server.Service {
 	t.Helper()
-	svc, err := server.NewService(server.Config{
+	svc, err := newPlacementTestService(server.Config{
 		Engine: debugTestEngine("shared"), Store: store,
 		Workspaces:        func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
 		Now:               func() time.Time { return time.Unix(1700000000, 0).UTC() },
@@ -272,7 +272,7 @@ func TestDebuggerLifecycleNeverMutatesOrLeasesTarget(t *testing.T) {
 	newService := func() *server.Service {
 		t.Helper()
 		calls := 0
-		svc, err := server.NewService(server.Config{
+		svc, err := newPlacementTestService(server.Config{
 			Engine: debugTestEngine("shared"), Store: store,
 			Workspaces:         func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
 			Now:                func() time.Time { return time.Unix(1700000000, 0).UTC() },

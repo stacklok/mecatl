@@ -178,7 +178,7 @@ func TestAppConfigHeadlessDefault(t *testing.T) {
 	}
 }
 
-func TestListenerScopedWorkspaceAuthority_Scenario4_Mecak8sDefaultsToNoFS(t *testing.T) {
+func TestMecak8sDefaultsToNoFS(t *testing.T) {
 	cfg, err := parseFlags([]string{"--mock", "--posture", "strict", "--no-soul", "--no-user-model", "--permissions-conventional=false", "--agents-conventional=false"})
 	if err != nil {
 		t.Fatalf("parseFlags: %v", err)
@@ -215,7 +215,7 @@ func TestListenerScopedWorkspaceAuthority_Scenario4_Mecak8sDefaultsToNoFS(t *tes
 	}
 }
 
-func TestListenerScopedWorkspaceAuthority_Scenario4_Mecak8sRejectsFilesystemProfileAndWorkspace(t *testing.T) {
+func TestMecak8sRejectsUnsupportedFilesystemProfile(t *testing.T) {
 	cfg, err := parseFlags([]string{"--mock", "--posture", "strict", "--no-soul", "--no-user-model", "--permissions-conventional=false", "--agents-conventional=false"})
 	if err != nil {
 		t.Fatalf("parseFlags: %v", err)
@@ -247,7 +247,7 @@ func TestListenerScopedWorkspaceAuthority_Scenario4_Mecak8sRejectsFilesystemProf
 	}
 }
 
-func TestListenerScopedWorkspaceAuthority_Scenario4_Mecak8sMountedWorkspaceIsServerAssigned(t *testing.T) {
+func TestMecak8sMountedWorkspaceIsServerAssigned(t *testing.T) {
 	// A configured --workspace (a mounted PVC path) is an operator-enabled
 	// filesystem deployment: server-assigned authority rooted at the mount, so a
 	// default-profile session mints on that root and a client cannot select
@@ -284,8 +284,8 @@ func TestListenerScopedWorkspaceAuthority_Scenario4_Mecak8sMountedWorkspaceIsSer
 	if sess.Profile != "" {
 		t.Errorf("session profile = %q, want default (filesystem) on a mounted deployment", sess.Profile)
 	}
-	if sess.EnvironmentRef.ID != mount {
-		t.Errorf("session placement ID = %q, want the deployment mount %q", sess.EnvironmentRef.ID, mount)
+	if sess.EnvironmentRef.ID != "local-default" {
+		t.Errorf("session placement ID = %q, want opaque server-owned identity", sess.EnvironmentRef.ID)
 	}
 
 	// A client cannot send placement authority; the generated request has no such field.
@@ -297,7 +297,7 @@ func TestParseFlagsMecak8sRejectsRelativeWorkspace(t *testing.T) {
 	}
 }
 
-func TestListenerScopedWorkspaceAuthority_Scenario4_Mecak8sFixtureRunsNoFS(t *testing.T) {
+func TestMecak8sFixtureRunsNoFS(t *testing.T) {
 	cfg, err := parseFlags([]string{"--mock", "--posture", "strict", "--no-soul", "--no-user-model", "--permissions-conventional=false", "--agents-conventional=false"})
 	if err != nil {
 		t.Fatalf("parseFlags: %v", err)

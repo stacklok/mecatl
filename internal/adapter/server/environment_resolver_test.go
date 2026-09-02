@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/nofs"
@@ -21,6 +22,30 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/server"
 	"github.com/stacklok/mecatl/internal/adapter/tools"
 )
+
+type resolverPlacementProvider struct {
+	resolve func(context.Context, session.EnvironmentRef) (tool.Environment, error)
+}
+
+func (resolverPlacementProvider) Bind(_ context.Context, req server.PlacementBindRequest) (server.PlacementBinding, error) {
+	if req.Selector.Kind == session.PlacementSelectorNoFS {
+		ref := session.EnvironmentRef{Kind: session.EnvKindNoFS, ID: "none", Revision: "in-tree-v1"}
+		return server.PlacementBinding{Ref: ref, Environment: tool.MustEnvironment(ref, nofs.New(), nil)}, nil
+	}
+	ref := session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}
+	return server.PlacementBinding{Ref: ref, Environment: tool.MustEnvironment(ref, memfs.NewWorkspace("/ws"), nil)}, nil
+}
+
+func (p resolverPlacementProvider) Reattach(ctx context.Context, req server.PlacementReattachRequest) (server.PlacementBinding, error) {
+	if p.resolve == nil {
+		return server.PlacementBinding{}, server.ErrPlacementUnavailable
+	}
+	env, err := p.resolve(ctx, req.Ref)
+	if err != nil {
+		return server.PlacementBinding{}, err
+	}
+	return server.PlacementBinding{Ref: req.Ref, Environment: env}, nil
+}
 
 // newEnvTestService builds a minimal Service for the environment-resolver tests.
 // It returns the service, the backing store (so a test can persist a session
@@ -49,7 +74,7 @@ func newEnvTestServiceWithLLM(t *testing.T, resolver func(context.Context, sessi
 		Model:   "test-model",
 	})
 	store := memstore.New()
-	svc, err := server.NewService(server.Config{
+	svc, err := newPlacementTestService(server.Config{
 		Engine:               shared,
 		Store:                store,
 		Workspaces:           func(_ string) tool.Workspace { return nofs.New() },
@@ -57,6 +82,8 @@ func newEnvTestServiceWithLLM(t *testing.T, resolver func(context.Context, sessi
 		DefaultLimits:        session.Limits{MaxTurns: 5},
 		Now:                  func() time.Time { return time.Unix(0, 0) },
 		EnvironmentResolver:  resolver,
+		PlacementProvider:    resolverPlacementProvider{resolve: resolver},
+		PlacementScope:       "test",
 		SessionEngine: func(context.Context, server.ProviderSelector, []mcp.ServerConfig, server.SessionProfile, string, session.PermissionMode) (server.SessionEngineResult, error) {
 			factoryCalls++
 			return server.SessionEngineResult{}, errors.New("factory must not be called")
@@ -114,8 +141,8 @@ func TestEnvironmentResolverWrongRefFailsLoudly(t *testing.T) {
 	if !errors.Is(err, server.ErrFailedPrecondition) {
 		t.Fatalf("StartRun = %v, want ErrFailedPrecondition (ref mismatch)", err)
 	}
-	if err == nil || !strings.Contains(err.Error(), "mismatched ref") {
-		t.Fatalf("StartRun error = %v, want one naming a ref mismatch", err)
+	if err == nil || !strings.Contains(err.Error(), server.ErrInvalidPlacementBinding.Error()) {
+		t.Fatalf("StartRun error = %v, want invalid exact binding", err)
 	}
 }
 
@@ -133,8 +160,8 @@ func TestEnvironmentResolverNilWorkspaceFailsLoudly(t *testing.T) {
 	if !errors.Is(err, server.ErrFailedPrecondition) {
 		t.Fatalf("StartRun = %v, want ErrFailedPrecondition (nil workspace)", err)
 	}
-	if !strings.Contains(err.Error(), "nil workspace") {
-		t.Fatalf("StartRun error = %v, want one naming a nil workspace", err)
+	if err == nil || !strings.Contains(err.Error(), server.ErrInvalidPlacementBinding.Error()) {
+		t.Fatalf("StartRun error = %v, want invalid exact binding", err)
 	}
 }
 
@@ -287,8 +314,8 @@ func TestEnvironmentResolverDoesNotRebuildSessionEngine(t *testing.T) {
 	if sess.EnvironmentRef.Kind != session.EnvKindLocal {
 		t.Fatalf("create stamped Kind = %q, want local", sess.EnvironmentRef.Kind)
 	}
-	if sess.EnvironmentRef.ID != cwd {
-		t.Fatalf("create stamped ID = %q, want %q", sess.EnvironmentRef.ID, cwd)
+	if sess.EnvironmentRef.ID != "/ws" {
+		t.Fatalf("create stamped ID = %q, want opaque test placement", sess.EnvironmentRef.ID)
 	}
 
 	run, err := svc.StartRun(context.Background(), sess.ID, "go")
@@ -314,7 +341,7 @@ func TestEnvironmentResolverDoesNotRebuildSessionEngine(t *testing.T) {
 	if lerr != nil {
 		t.Fatalf("GetSession: %v", lerr)
 	}
-	wantRef := session.EnvironmentRef{Kind: session.EnvKindLocal, ID: cwd, Revision: "in-tree-v1"}
+	wantRef := session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}
 	if loaded.EnvironmentRef != wantRef {
 		t.Fatalf("post-run EnvironmentRef = %+v, want %+v (the live ref stamped at run entry must equal the create-stamped ref — one shared derivation)", loaded.EnvironmentRef, wantRef)
 	}
@@ -339,7 +366,7 @@ func newEnvTestServiceWithFactory(t *testing.T, resolver func(context.Context, s
 		Model:   "test-model",
 	})
 	store := memstore.New()
-	svc, err := server.NewService(server.Config{
+	svc, err := newPlacementTestService(server.Config{
 		Engine:               shared,
 		Store:                store,
 		Workspaces:           func(_ string) tool.Workspace { return nofs.New() },
@@ -347,6 +374,8 @@ func newEnvTestServiceWithFactory(t *testing.T, resolver func(context.Context, s
 		DefaultLimits:        session.Limits{MaxTurns: 5},
 		Now:                  func() time.Time { return time.Unix(0, 0) },
 		EnvironmentResolver:  resolver,
+		PlacementProvider:    resolverPlacementProvider{resolve: resolver},
+		PlacementScope:       "test",
 		SessionEngine: func(_ context.Context, sel server.ProviderSelector, _ []mcp.ServerConfig, profile server.SessionProfile, _ string, mode session.PermissionMode) (server.SessionEngineResult, error) {
 			factoryCalls++
 			// Mirror a real composition factory: build a per-session engine on the
@@ -529,7 +558,7 @@ func TestNoFSCreateSessionStampsNoFSRef(t *testing.T) {
 		Model:   "test-model",
 	})
 	store := memstore.New()
-	svc, err := server.NewService(server.Config{
+	svc, err := newPlacementTestService(server.Config{
 		Engine: agent.NewEngine(agent.Deps{
 			LLM:     mockllm.New(mockllm.TextTurn("shared")),
 			Catalog: tool.NewCatalog(),

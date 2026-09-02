@@ -163,8 +163,8 @@ func TestScheduleTool_VerbDispatch(t *testing.T) {
 	if spec.Name != "nightly" || spec.Prompt != "check ci" || spec.Trigger.Cron != "0 3 * * *" {
 		t.Fatalf("spec = %+v", spec)
 	}
-	if want := (session.EnvironmentRef{Kind: session.EnvKindMem, ID: "test", Revision: "test-v1"}); spec.EnvironmentRef != want {
-		t.Fatalf("spec EnvironmentRef = %+v, want invoking environment %+v", spec.EnvironmentRef, want)
+	if spec.EnvironmentRef.Valid() {
+		t.Fatalf("spec EnvironmentRef = %+v, want no client-visible exact placement without an origin session", spec.EnvironmentRef)
 	}
 	if spec.Mode != session.ModePlan {
 		t.Fatalf("read-leaning create Mode = %q, want plan (the tool pins read-leaning to plan)", spec.Mode)

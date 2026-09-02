@@ -538,7 +538,7 @@ func newServiceWithEngineOverStore(t *testing.T, store port.SessionStore, llm *m
 		Model:   "test-model",
 		Store:   store,
 	})
-	svc, err := server.NewService(server.Config{
+	svc, err := newPlacementTestService(server.Config{
 		Engine:     eng,
 		Store:      store,
 		Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },

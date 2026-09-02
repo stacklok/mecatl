@@ -511,6 +511,9 @@ type runner struct {
 // Compile-time assertion that runner satisfies the runner port.
 var _ tool.CommandRunner = (*runner)(nil)
 
+// BoundWorkspaceRoot reports the namespace identity shared with the workspace.
+func (r *runner) BoundWorkspaceRoot() string { return r.ns.id }
+
 // Run executes the tiny test protocol against the bound namespace.
 func (r *runner) Run(ctx context.Context, command string) (tool.CommandResult, error) {
 	if err := ctx.Err(); err != nil {

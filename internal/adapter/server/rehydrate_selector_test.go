@@ -42,7 +42,7 @@ func selectorRecordingFactory(reply string, got *atomic.Value, calls *atomic.Int
 // the recorder lets a test assert the workspace path round-tripped.
 func selectorServiceOverStore(t *testing.T, store *memstore.Store, factory server.SessionEngineFactory, factoryRoots *[]string) *server.Service {
 	t.Helper()
-	svc, err := server.NewService(server.Config{
+	svc, err := newPlacementTestService(server.Config{
 		Engine: agent.NewEngine(agent.Deps{
 			LLM:     mockllm.New(mockllm.TextTurn("SHARED-ENGINE-REPLY")),
 			Catalog: tool.NewCatalog(),
@@ -130,16 +130,15 @@ func TestSelectorSessionRehydratesWithPersistedSelector(t *testing.T) {
 	if got := gotSel2.Load(); got != wantSel {
 		t.Fatalf("rehydration factory saw selector %v, want the persisted %v (a zero selector is the wrong-model bug)", got, wantSel)
 	}
-	// The persisted workspace round-tripped to the shared Workspaces factory (a
-	// selector session has a real workspace, unlike a no-fs one).
+	// The factory receives the private root resolved from the exact placement.
 	sawWorkspace := false
 	for _, r := range factoryRoots {
-		if r == wantWorkspace {
+		if r == "/ws" {
 			sawWorkspace = true
 		}
 	}
 	if !sawWorkspace {
-		t.Fatalf("the persisted workspace %q never reached the Workspaces factory (roots seen: %v)", wantWorkspace, factoryRoots)
+		t.Fatalf("the exact placement root never reached the engine factory (roots seen: %v)", factoryRoots)
 	}
 }
 

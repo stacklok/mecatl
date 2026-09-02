@@ -34,7 +34,7 @@ func newDrainTestService(t *testing.T) *server.Service {
 		Policy:  permpolicy.NewPolicy(nil, ps),
 		Model:   "test-model",
 	})
-	svc, err := server.NewService(server.Config{
+	svc, err := newPlacementTestService(server.Config{
 		Engine:     engine,
 		Store:      store,
 		Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
@@ -65,7 +65,7 @@ func newRedisTestService(t *testing.T, st *redisstore.Store) *server.Service {
 		Policy:  permpolicy.NewPolicy(nil, ps),
 		Model:   "test-model",
 	})
-	svc, err := server.NewService(server.Config{
+	svc, err := newPlacementTestService(server.Config{
 		Engine:     engine,
 		Store:      st,
 		Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },

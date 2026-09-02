@@ -22,6 +22,7 @@ import (
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
 	"github.com/stacklok/mecatl/engine/agent"
+	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/server"
 )
@@ -36,6 +37,18 @@ import (
 // BOTH surfaces (gRPC codes.Unauthenticated + HTTP 401). They are fully offline
 // (mockllm provider, loopback bufconn/httptest only) and the asserted request —
 // CreateSession — is rejected PRE-auth, so they consume ZERO provider turns.
+
+type offlinePlacementProvider struct{}
+
+func (offlinePlacementProvider) Bind(context.Context, server.PlacementBindRequest) (server.PlacementBinding, error) {
+	ref := session.EnvironmentRef{Kind: session.EnvKindMem, ID: "offline", Revision: "v1"}
+	return server.PlacementBinding{Ref: ref, Environment: tool.MustEnvironment(ref, memfs.NewWorkspace("/ws"), nil)}, nil
+}
+
+func (offlinePlacementProvider) Reattach(context.Context, server.PlacementReattachRequest) (server.PlacementBinding, error) {
+	ref := session.EnvironmentRef{Kind: session.EnvKindMem, ID: "offline", Revision: "v1"}
+	return server.PlacementBinding{Ref: ref, Environment: tool.MustEnvironment(ref, memfs.NewWorkspace("/ws"), nil)}, nil
+}
 
 // newOfflineService builds a *server.Service over the offline reference adapters
 // (mockllm provider, in-memory store + workspace), the same way the server
@@ -58,6 +71,8 @@ func newOfflineService(t *testing.T) *server.Service {
 		Workspaces:          func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
 		Now:                 func() time.Time { return time.Unix(0, 0) },
 		DefaultCapabilities: llm.Capabilities(),
+		PlacementProvider:   offlinePlacementProvider{},
+		PlacementScope:      "test",
 	})
 	if err != nil {
 		t.Fatalf("new offline service: %v", err)

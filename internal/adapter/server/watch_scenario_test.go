@@ -42,7 +42,7 @@ func watchService(t *testing.T, log port.EventLog, ownership bool) *server.Servi
 		mockllm.ChunksTurn(mockllm.TextChunk("again"), mockllm.DoneChunk(session.StopEndTurn)),
 		mockllm.ChunksTurn(mockllm.TextChunk("third"), mockllm.DoneChunk(session.StopEndTurn)),
 	)
-	svc, err := server.NewService(server.Config{
+	svc, err := newPlacementTestService(server.Config{
 		Engine: agent.NewEngine(agent.Deps{
 			LLM: llm, Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil), Model: "test-model",
 		}),

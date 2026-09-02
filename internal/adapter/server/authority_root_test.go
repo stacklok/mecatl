@@ -32,7 +32,7 @@ func TestCreateTeamStampsComposedRootAuthority(t *testing.T) {
 			LLM: mockllm.New(mockllm.TextTurn("round complete"), mockllm.TextTurn("report")), Catalog: catalog, Policy: allow, Model: "mock",
 		})}
 	}
-	svc, err := server.NewService(server.Config{
+	svc, err := newPlacementTestService(server.Config{
 		Engine:        agent.NewEngine(agent.Deps{Catalog: tool.NewCatalog()}),
 		Store:         store,
 		Workspaces:    func(root string) tool.Workspace { return memfs.NewWorkspace(root) },

@@ -3467,10 +3467,10 @@ func (s *Service) validateCarryover(ctx context.Context, srcID session.SessionID
 	// yields an ownerless fork, never a fabricated one.
 	srcOwner := src.Owner
 	srcAuthority, srcAuthorityBound := src.BoundAuthority()
-	// Canonicalise each side: empty => the server default provider, mirroring how
-	// createSession resolves the selector (a zero ProviderSelector rides the
-	// shared/default engine). DefaultResolvedModel.ProviderID is the composition-
-	// computed canonical default id (reg.Default()).
+	return s.providerCarryoverSnapshot(src, newProviderID), srcOwner, srcAuthority, srcAuthorityBound, nil
+}
+
+func (s *Service) providerCarryoverSnapshot(src *session.Session, newProviderID string) []session.Message {
 	defaultProv := s.cfg.DefaultResolvedModel.ProviderID
 	srcProv := src.ProviderID
 	if srcProv == "" {
@@ -3481,32 +3481,14 @@ func (s *Service) validateCarryover(ctx context.Context, srcID session.SessionID
 		newProv = defaultProv
 	}
 	snap := session.ForkSnapshot(src.Conversation)
-	if srcProv != newProv {
-		// Cross-provider: strip the provider-private replay blobs so the history
-		// is provider-neutral (session.StripProviderState clears Reasoning/
-		// ProviderPhase/ItemID, preserving text/roles/tool-call IDs/Args/results).
-		stripped := session.StripProviderState(snap)
-		// When the new provider rides the openai adapter, every stripped ToolCall
-		// has an empty ItemID. The openai adapter is store:false (full history
-		// replay every turn) and uses ItemID (the provider's "id" field, e.g.
-		// "fc_1") to de-duplicate replayed function_call items
-		// (request.go:353-359). Without stable unique ids the provider
-		// auto-assigns sequential fc_N values; on the SECOND post-carryover turn
-		// those collide with the current response's items → "Duplicate item
-		// found with id fc_N" HTTP 400 (observed on Azure GPT-5.x). Synthesise
-		// stable, unique, positional ids with a carryover-namespaced prefix that
-		// cannot collide with the provider's fc_ scheme. "openrouter" rides the
-		// SAME openai adapter construction (internal/app/registry.go
-		// newOpenAICompatEntry), so it needs the same synthesis — this is a
-		// provider-id check, not an adapter-type check, because the server
-		// layer only has the resolved id, not the adapter.
-		if usesResponsesReplayIDs(newProv) {
-			return synthesizeOpenAIItemIDs(stripped), srcOwner, srcAuthority, srcAuthorityBound, nil
-		}
-		return stripped, srcOwner, srcAuthority, srcAuthorityBound, nil
+	if srcProv == newProv {
+		return snap
 	}
-	// Same provider: replay the blobs verbatim (warm cache).
-	return snap, srcOwner, srcAuthority, srcAuthorityBound, nil
+	stripped := session.StripProviderState(snap)
+	if usesResponsesReplayIDs(newProv) {
+		return synthesizeOpenAIItemIDs(stripped)
+	}
+	return stripped
 }
 
 // usesResponsesReplayIDs reports whether a resolved provider replays through

@@ -36,7 +36,7 @@ func TestStaleMaintenanceBoundaryEnumeratesOwnedCandidatesOnly(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	svc, err := server.NewService(server.Config{
+	svc, err := newPlacementTestService(server.Config{
 		Engine: agent.NewEngine(agent.Deps{LLM: mockllm.New(), Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil)}),
 		Store:  store, Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
 		OwnershipEnforced: true,

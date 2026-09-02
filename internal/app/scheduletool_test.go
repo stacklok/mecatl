@@ -161,6 +161,12 @@ func newScheduleTestService(t *testing.T, store port.SessionStore, llm *mockllm.
 		Now:                 time.Now,
 		DefaultCapabilities: llm.Capabilities(),
 		Diagnostics:         port.NopDiagnostics{},
+		PlacementProvider: &localPlacementProvider{
+			scope: defaultPlacementScope, root: workspace,
+			workspace:     func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+			runnerForRoot: func(string) tool.CommandRunner { return nil },
+		},
+		PlacementScope: defaultPlacementScope,
 	})
 	if err != nil {
 		t.Fatalf("NewService: %v", err)

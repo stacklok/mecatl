@@ -114,7 +114,7 @@ func (l *countingLease) Release(ctx context.Context, lease port.Lease) error {
 func newTranscriptService(t *testing.T, store port.SessionStore, eventLog port.EventLog, ownership bool, effects *atomic.Int32, lease port.SessionLease) *server.Service {
 	t.Helper()
 	eng := agent.NewEngine(agent.Deps{LLM: mockllm.New(), Catalog: tool.NewCatalog(), Model: "test"})
-	svc, err := server.NewService(server.Config{
+	svc, err := newPlacementTestService(server.Config{
 		Engine:            eng,
 		Store:             store,
 		EventLog:          eventLog,
@@ -173,7 +173,7 @@ func TestSessionContinuityUX_Scenario3_AuthoritativeTranscript(t *testing.T) {
 func TestADR_0108_TranscriptBackendErrorsAreRedacted(t *testing.T) {
 	const raw = "snapshot decode failed at /secret/backend/session.jsonl"
 	diag := &recordingDiagnostics{}
-	svc, err := server.NewService(server.Config{
+	svc, err := newPlacementTestService(server.Config{
 		Engine:      agent.NewEngine(agent.Deps{LLM: mockllm.New(), Catalog: tool.NewCatalog(), Model: "test"}),
 		Store:       &transcriptStore{inner: memstore.New(), loadErr: errors.New(raw)},
 		Workspaces:  func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
@@ -263,7 +263,7 @@ func TestStoreFailureIsVisibleToTheOperatorButNotCorrelated(t *testing.T) {
 	loadFailure := errors.New("decode failed reading /var/lib/mecatl/broken-record.json")
 	store := &transcriptStore{inner: base, loadErrByID: map[session.SessionID]error{brokenID: loadFailure}}
 	diag := &recordingDiagnostics{}
-	svc, err := server.NewService(server.Config{
+	svc, err := newPlacementTestService(server.Config{
 		Engine:            agent.NewEngine(agent.Deps{LLM: mockllm.New(), Catalog: tool.NewCatalog(), Model: "test"}),
 		Store:             store,
 		OwnershipEnforced: true,
@@ -312,7 +312,7 @@ func TestTranscriptOwnershipModeConcealsLoadFailure(t *testing.T) {
 	loadFailure := errors.New("snapshot decode failed for foreign record")
 	store := &transcriptStore{inner: base, loadErrByID: map[session.SessionID]error{foreignID: loadFailure}}
 	diag := &recordingDiagnostics{}
-	svc, err := server.NewService(server.Config{
+	svc, err := newPlacementTestService(server.Config{
 		Engine:            agent.NewEngine(agent.Deps{LLM: mockllm.New(), Catalog: tool.NewCatalog(), Model: "test"}),
 		Store:             store,
 		OwnershipEnforced: true,

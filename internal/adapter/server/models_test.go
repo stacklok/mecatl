@@ -26,7 +26,7 @@ func modelsService(t *testing.T, snapshot []*mecatlv1.ModelInfo) *server.Service
 		Policy:  permpolicy.NewPolicy(allowRules(), nil),
 		Model:   "test-model",
 	})
-	svc, err := server.NewService(server.Config{
+	svc, err := newPlacementTestService(server.Config{
 		Engine:     engine,
 		Store:      memstore.New(),
 		Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },

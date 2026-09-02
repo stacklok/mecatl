@@ -29,7 +29,7 @@ func newSessionManagementService(t *testing.T, ownership bool, lease port.Sessio
 		llm = mockllm.New()
 	}
 	store := memstore.New()
-	svc, err := server.NewService(server.Config{
+	svc, err := newPlacementTestService(server.Config{
 		Engine: agent.NewEngine(agent.Deps{LLM: llm, Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil), Model: "test"}),
 		Store:  store, Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
 		Now: func() time.Time { return time.Unix(1, 0) }, OwnershipEnforced: ownership,
@@ -199,7 +199,7 @@ func (s *managementBarrierStore) counts() (int, int) {
 
 func newManagementBarrierService(t *testing.T, store port.SessionStore, lease port.SessionLease) *server.Service {
 	t.Helper()
-	svc, err := server.NewService(server.Config{
+	svc, err := newPlacementTestService(server.Config{
 		Engine: agent.NewEngine(agent.Deps{LLM: mockllm.New(), Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil), Model: "test"}),
 		Store:  store, Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
 		Now: time.Now, OwnershipEnforced: true,
@@ -237,7 +237,7 @@ func newManagementBarrierFixture(t *testing.T) (*managementBarrierStore, *sessio
 
 func newSessionManagementServiceWithStore(t *testing.T, store port.SessionStore, lease port.SessionLease) *server.Service {
 	t.Helper()
-	svc, err := server.NewService(server.Config{
+	svc, err := newPlacementTestService(server.Config{
 		Engine: agent.NewEngine(agent.Deps{LLM: mockllm.New(), Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil), Model: "test"}),
 		Store:  store, Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
 		Now: time.Now, SessionLease: lease, LeaseOwner: "manager", LeaseTTL: time.Hour, LeaseRenewInterval: time.Hour,

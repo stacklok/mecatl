@@ -72,7 +72,7 @@ func newServiceWithImplementation(t *testing.T, llm *mockllm.Provider, rules []g
 		Policy:  permpolicy.NewPolicy(rules, nil),
 		Model:   "test-model",
 	})
-	svc, err := server.NewService(server.Config{
+	svc, err := newPlacementTestService(server.Config{
 		Engine:               engine,
 		BuildID:              "test-build",
 		ServerImplementation: implementation,
@@ -436,7 +436,7 @@ func newLearningService(t *testing.T, llm *mockllm.Provider, rules []governance.
 		Model:   "test-model",
 		Store:   store,
 	})
-	svc, err := server.NewService(server.Config{
+	svc, err := newPlacementTestService(server.Config{
 		Engine:              engine,
 		Store:               store,
 		Workspaces:          func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
@@ -743,7 +743,7 @@ func TestGRPCCreateSessionCrossProviderCarryover(t *testing.T) {
 		Model:   "test-model",
 	})
 	store := memstore.New()
-	svc, err := server.NewService(server.Config{
+	svc, err := newPlacementTestService(server.Config{
 		Engine:        shared,
 		Store:         store,
 		Workspaces:    func(root string) tool.Workspace { return memfs.NewWorkspace(root) },

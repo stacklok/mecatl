@@ -29,7 +29,7 @@ func newResolvedModelService(t *testing.T, dflt server.ResolvedModel, factory se
 		Policy:  permpolicy.NewPolicy(nil, nil),
 		Model:   "test-model",
 	})
-	svc, err := server.NewService(server.Config{
+	svc, err := newPlacementTestService(server.Config{
 		Engine:               shared,
 		Store:                memstore.New(),
 		Workspaces:           func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
@@ -54,7 +54,7 @@ func newResolvedModelServiceWithResolver(t *testing.T, dflt server.ResolvedModel
 		Policy:  permpolicy.NewPolicy(nil, nil),
 		Model:   "test-model",
 	})
-	svc, err := server.NewService(server.Config{
+	svc, err := newPlacementTestService(server.Config{
 		Engine:               shared,
 		Store:                memstore.New(),
 		Workspaces:           func(root string) tool.Workspace { return memfs.NewWorkspace(root) },

@@ -130,7 +130,7 @@ func newLeasedService(t *testing.T, lease port.SessionLease, llm port.LLMProvide
 	if len(now) > 0 && now[0] != nil {
 		cfg.Now = now[0]
 	}
-	svc, err := server.NewService(cfg)
+	svc, err := newPlacementTestService(cfg)
 	if err != nil {
 		t.Fatalf("new service: %v", err)
 	}

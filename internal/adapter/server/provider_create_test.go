@@ -218,7 +218,7 @@ func cappedSelectorService(t *testing.T, limit int, closed *atomic.Int32) *serve
 		})
 		return server.SessionEngineResult{Engine: eng, Close: func() error { closed.Add(1); return nil }}, nil
 	}
-	svc, err := server.NewService(server.Config{
+	svc, err := newPlacementTestService(server.Config{
 		Engine:            shared,
 		Store:             memstore.New(),
 		Workspaces:        func(root string) tool.Workspace { return memfs.NewWorkspace(root) },

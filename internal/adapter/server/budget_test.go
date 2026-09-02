@@ -74,7 +74,7 @@ func TestServiceBudgetSurfacesAndReopens(t *testing.T) {
 		Model:        "test-model",
 		MaxRunTokens: budget,
 	})
-	svc, err := server.NewService(server.Config{
+	svc, err := newPlacementTestService(server.Config{
 		Engine:              engine,
 		Store:               memstore.New(),
 		Workspaces:          func(root string) tool.Workspace { return memfs.NewWorkspace(root) },

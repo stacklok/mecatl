@@ -69,11 +69,10 @@ var flagMetaByFlag = map[string]flagMeta{
 	// Advanced — an operator running mecated by hand never sets them — and
 	// server-boundary, so absent from ACP help (a stdio ACP client already has
 	// its parent's lifetime and needs no socket or readiness barrier).
-	"grpc-unix-socket":    {group: groupServer, common: false, acp: acpExclude},
-	"ready-file":          {group: groupServer, common: false, acp: acpExclude},
-	"lifetime-pipe-fd":    {group: groupServer, common: false, acp: acpExclude},
-	"workspace-authority": {group: groupServer, common: false, acp: acpExclude},
-	"metrics-addr":        {group: groupServer, common: false, acp: acpExclude},
+	"grpc-unix-socket": {group: groupServer, common: false, acp: acpExclude},
+	"ready-file":       {group: groupServer, common: false, acp: acpExclude},
+	"lifetime-pipe-fd": {group: groupServer, common: false, acp: acpExclude},
+	"metrics-addr":     {group: groupServer, common: false, acp: acpExclude},
 
 	// ── Security (serve-only) ─────────────────────────────────────────────
 	"auth-token": {group: groupSecurity, common: true, acp: acpExclude},

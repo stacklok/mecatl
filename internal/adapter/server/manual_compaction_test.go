@@ -110,7 +110,7 @@ func newCompactService(t *testing.T, store *compactTrackingStore, compactor agen
 		LLM: mockllm.New(), Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil), Model: "test",
 		Compactor: compactor, TokenCounter: serviceCompactCounter{},
 	})
-	svc, err := server.NewService(server.Config{
+	svc, err := newPlacementTestService(server.Config{
 		Engine: eng, Store: store, EventLog: store,
 		Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
 		Now:        time.Now, OwnershipEnforced: ownership, SessionLease: lease,
@@ -361,7 +361,7 @@ func TestCompactSessionCapabilityAdvertised(t *testing.T) {
 		t.Fatal("manual_compaction capability is false on a service with an engine")
 	}
 
-	req := httptest.NewRequest(http.MethodPost, "/v1/sessions", strings.NewReader(`{"workspace":"/ws"}`))
+	req := httptest.NewRequest(http.MethodPost, "/v1/sessions", strings.NewReader(`{}`))
 	rr := httptest.NewRecorder()
 	server.NewHTTPHandler(svc).ServeHTTP(rr, req)
 	var body struct {
@@ -499,7 +499,7 @@ func TestCompactSessionLeaseLossCancelsCompactorAndPreventsSave(t *testing.T) {
 	}}
 	compactor := &countingServiceCompactor{wait: true}
 	eng := agent.NewEngine(agent.Deps{Compactor: compactor, TokenCounter: serviceCompactCounter{}})
-	svc, err := server.NewService(server.Config{
+	svc, err := newPlacementTestService(server.Config{
 		Engine: eng, Store: store, EventLog: store, Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
 		OwnershipEnforced: true, SessionLease: lease, LeaseOwner: "compact-loss", LeaseTTL: time.Hour, LeaseRenewInterval: 5 * time.Millisecond,
 	})

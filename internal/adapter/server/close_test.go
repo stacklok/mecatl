@@ -32,7 +32,7 @@ func TestCloseCancelsInFlightRun(t *testing.T) {
 		Policy:  permpolicy.NewPolicy(nil, ps),
 		Model:   "test-model",
 	})
-	svc, err := server.NewService(server.Config{
+	svc, err := newPlacementTestService(server.Config{
 		Engine:     engine,
 		Store:      store,
 		Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
@@ -110,7 +110,7 @@ func TestCloseEngineTimeoutBound(t *testing.T) {
 	})
 
 	// A SessionEngine factory that returns an engine whose Close blocks until release.
-	svc, err := server.NewService(server.Config{
+	svc, err := newPlacementTestService(server.Config{
 		Engine:           sharedEngine,
 		Store:            store,
 		Workspaces:       func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
@@ -134,9 +134,9 @@ func TestCloseEngineTimeoutBound(t *testing.T) {
 		t.Fatalf("NewService: %v", err)
 	}
 
-	// Create a session with a workspace DIFFERENT from DefaultWorkspace to trigger
-	// the per-session engine path (same mechanism as the worktree-routing tests).
-	sess, err := svc.CreateSession(context.Background(), "/other-ws", session.ModeDefault, session.Limits{})
+	// An explicit selector requires a per-session engine without relying on
+	// client-selected workspace placement.
+	sess, err := svc.CreateSessionWithProvider(context.Background(), "", session.ModeDefault, session.Limits{}, server.ProviderSelector{ProviderID: "test"})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}

@@ -93,7 +93,7 @@ func buildCapsService(
 	if teams {
 		cfg.MemberEngine = stubMemberEngine
 	}
-	svc, err := server.NewService(cfg)
+	svc, err := newPlacementTestService(cfg)
 	if err != nil {
 		t.Fatalf("new service: %v", err)
 	}
@@ -130,7 +130,7 @@ func TestCapabilitiesMediaFromProvider(t *testing.T) {
 		Policy:  permpolicy.NewPolicy(nil, nil),
 		Model:   "test-model",
 	})
-	svc, err := server.NewService(server.Config{
+	svc, err := newPlacementTestService(server.Config{
 		Engine:     engine,
 		Store:      memstore.New(),
 		Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
@@ -166,7 +166,7 @@ func TestCapabilitiesAgentsFromSnapshot(t *testing.T) {
 			Policy:  permpolicy.NewPolicy(nil, nil),
 			Model:   "test-model",
 		})
-		svc, err := server.NewService(server.Config{
+		svc, err := newPlacementTestService(server.Config{
 			Engine:     engine,
 			Store:      memstore.New(),
 			Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },

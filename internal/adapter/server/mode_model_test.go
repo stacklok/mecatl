@@ -55,7 +55,7 @@ func modeRecordingFactory(sessionModel, planModel string, modes *[]session.Permi
 // needsEngine nil ⇒ the byte-identical (no-promotion) deployment.
 func modeServiceOverStore(t *testing.T, store *memstore.Store, factory server.SessionEngineFactory, needsEngine func(session.PermissionMode) bool) *server.Service {
 	t.Helper()
-	svc, err := server.NewService(server.Config{
+	svc, err := newPlacementTestService(server.Config{
 		Engine: agent.NewEngine(agent.Deps{
 			// Script several identical turns so a multi-turn shared-engine session does
 			// not exhaust the mock (the byte-identical test runs two turns on it).
@@ -463,7 +463,7 @@ func TestModePromotionUnderFullCap(t *testing.T) {
 	var modes []session.PermissionMode
 	var calls atomic.Int32
 	// Build a Service with MaxSessionEngines = 1 (so one selector session saturates it).
-	svc, err := server.NewService(server.Config{
+	svc, err := newPlacementTestService(server.Config{
 		Engine: agent.NewEngine(agent.Deps{
 			LLM:     mockllm.New(mockllm.TextTurn("SHARED"), mockllm.TextTurn("SHARED")),
 			Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil), Model: "shared-model",
@@ -972,7 +972,7 @@ func TestEngineAndWorkspaceForResolutionMatrix(t *testing.T) {
 				var modes []session.PermissionMode
 				var calls atomic.Int32
 				// MaxSessionEngines = 1: one selector session saturates the cap.
-				svc, err := server.NewService(server.Config{
+				svc, err := newPlacementTestService(server.Config{
 					Engine: agent.NewEngine(agent.Deps{
 						LLM:     mockllm.New(mockllm.TextTurn("SHARED"), mockllm.TextTurn("SHARED")),
 						Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil), Model: "shared-model",

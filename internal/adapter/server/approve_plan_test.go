@@ -44,7 +44,7 @@ func planApprovalService(t *testing.T, llm *mockllm.Provider, rules []governance
 		Interactive: true,
 		Store:       store, // auto-save terminals so the resumed run's StateCompleted persists for the continuation
 	})
-	svc, err := server.NewService(server.Config{
+	svc, err := newPlacementTestService(server.Config{
 		Engine:              engine,
 		Store:               store,
 		Workspaces:          func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
@@ -436,7 +436,7 @@ func TestApprovePlanNotPlanAskFails(t *testing.T) {
 		Model:       "test-model",
 		Interactive: true,
 	})
-	svc, err := server.NewService(server.Config{
+	svc, err := newPlacementTestService(server.Config{
 		Engine:              engine,
 		Store:               memstore.New(),
 		Workspaces:          func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
@@ -610,7 +610,7 @@ func createHTTPSessionWithMode(t *testing.T, srv *httptest.Server, mode session.
 	default:
 		modeStr = "default"
 	}
-	body := strings.NewReader(`{"workspace":"/ws","mode":"` + modeStr + `"}`)
+	body := strings.NewReader(`{"mode":"` + modeStr + `"}`)
 	resp, err := http.Post(srv.URL+"/v1/sessions", "application/json", body)
 	if err != nil {
 		t.Fatalf("POST /v1/sessions: %v", err)
@@ -908,7 +908,7 @@ func TestApprovePlanHTTPNotPlanAsk409(t *testing.T) {
 		Model:       "test-model",
 		Interactive: true,
 	})
-	svc, err := server.NewService(server.Config{
+	svc, err := newPlacementTestService(server.Config{
 		Engine:              engine,
 		Store:               memstore.New(),
 		Workspaces:          func(root string) tool.Workspace { return memfs.NewWorkspace(root) },

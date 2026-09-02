@@ -36,7 +36,7 @@ func newScheduleService(t *testing.T, now time.Time) (*server.Service, port.Sche
 		Model:   "test-model",
 		Store:   store,
 	})
-	svc, err := server.NewService(server.Config{
+	svc, err := newPlacementTestService(server.Config{
 		Engine:           engine,
 		Store:            store,
 		DefaultWorkspace: "/tmp",
@@ -129,8 +129,8 @@ func TestCreateScheduleRejectsDuplicateName(t *testing.T) {
 		t.Errorf("persisted Prompt = %q, want %q (original NOT clobbered)", loaded.Spec.Prompt, "original prompt")
 	}
 	wantRef := session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/tmp", Revision: "in-tree-v1"}
-	if loaded.Spec.EnvironmentRef != wantRef || loaded.Spec.PlacementScope != "legacy-local" {
-		t.Errorf("persisted placement = (%+v, %q), want exact original (%+v, %q)", loaded.Spec.EnvironmentRef, loaded.Spec.PlacementScope, wantRef, "legacy-local")
+	if loaded.Spec.EnvironmentRef != wantRef || loaded.Spec.PlacementScope != "test" {
+		t.Errorf("persisted placement = (%+v, %q), want exact original (%+v, %q)", loaded.Spec.EnvironmentRef, loaded.Spec.PlacementScope, wantRef, "test")
 	}
 }
 
@@ -218,10 +218,10 @@ func TestADR_0280_ScheduleResolvesSelectorBeforePersistingExactEnvironmentRef(t 
 		t.Fatalf("Load: %v", err)
 	}
 	wantRef := session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/tmp", Revision: "in-tree-v1"}
-	if stored.Spec.EnvironmentRef != wantRef || stored.Spec.PlacementScope != "legacy-local" {
-		t.Fatalf("stored placement = (%+v, %q), want (%+v, %q)", stored.Spec.EnvironmentRef, stored.Spec.PlacementScope, wantRef, "legacy-local")
+	if stored.Spec.EnvironmentRef != wantRef || stored.Spec.PlacementScope != "test" {
+		t.Fatalf("stored placement = (%+v, %q), want (%+v, %q)", stored.Spec.EnvironmentRef, stored.Spec.PlacementScope, wantRef, "test")
 	}
-	if created.Spec.EnvironmentRef != wantRef || created.Spec.PlacementScope != "legacy-local" {
+	if created.Spec.EnvironmentRef != wantRef || created.Spec.PlacementScope != "test" {
 		t.Fatalf("returned placement = (%+v, %q), want exact persisted placement", created.Spec.EnvironmentRef, created.Spec.PlacementScope)
 	}
 }
@@ -254,7 +254,7 @@ func TestScheduleAccessorsNoStore(t *testing.T) {
 		Model:   "test-model",
 		Store:   memstore.New(),
 	})
-	svc, err := server.NewService(server.Config{
+	svc, err := newPlacementTestService(server.Config{
 		Engine:     engine,
 		Store:      memstore.New(),
 		Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },

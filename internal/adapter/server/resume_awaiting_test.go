@@ -63,7 +63,7 @@ func newAskingService(t *testing.T, store port.SessionStore, ps *permstore.Memor
 		Model:   "test-model",
 		Store:   engineStore,
 	})
-	svc, err := server.NewService(server.Config{
+	svc, err := newPlacementTestService(server.Config{
 		Engine:     engine,
 		Store:      store,
 		Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },

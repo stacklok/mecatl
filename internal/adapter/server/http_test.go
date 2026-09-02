@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -18,10 +17,19 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/server"
 )
 
+func teamSource(t *testing.T, svc *server.Service) string {
+	t.Helper()
+	sess, err := svc.CreateSession(context.Background(), "", session.ModeDefault, session.Limits{})
+	if err != nil {
+		t.Fatalf("CreateSession(team source): %v", err)
+	}
+	return string(sess.ID)
+}
+
 // createHTTPSession POSTs /v1/sessions and returns the new session id.
 func createHTTPSession(t *testing.T, srv *httptest.Server) string {
 	t.Helper()
-	body := strings.NewReader(`{"workspace":"/ws"}`)
+	body := strings.NewReader(`{}`)
 	resp, err := http.Post(srv.URL+"/v1/sessions", "application/json", body)
 	if err != nil {
 		t.Fatalf("POST /v1/sessions: %v", err)
@@ -264,12 +272,11 @@ func TestHTTPGetSession(t *testing.T) {
 	var out struct {
 		SessionID string `json:"session_id"`
 		State     string `json:"state"`
-		Workspace string `json:"workspace"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if out.SessionID != id || out.State != "idle" || out.Workspace != "/ws" {
+	if out.SessionID != id || out.State != "idle" {
 		t.Fatalf("snapshot = %+v", out)
 	}
 }
@@ -319,7 +326,7 @@ func TestHTTPCreateSessionEchoesResolvedModel(t *testing.T) {
 	srv := httptest.NewServer(server.NewHTTPHandler(svc))
 	defer srv.Close()
 
-	resp, err := http.Post(srv.URL+"/v1/sessions", "application/json", strings.NewReader(`{"workspace":"/ws"}`))
+	resp, err := http.Post(srv.URL+"/v1/sessions", "application/json", strings.NewReader(`{}`))
 	if err != nil {
 		t.Fatalf("POST /v1/sessions: %v", err)
 	}
@@ -460,7 +467,8 @@ func TestHTTPTeamLifecycle(t *testing.T) {
 	defer srv.Close()
 
 	// POST /v1/teams with an initial roster → 201, body has team_id + members.
-	createBody := `{"workspace":"/ws","name":"test","members":[` +
+	source := teamSource(t, svc)
+	createBody := `{"session_id":"` + source + `","name":"test","members":[` +
 		`{"name":"lead","lead":true,"initial_prompt":"go"},` +
 		`{"name":"worker"}]}`
 	resp, err := http.Post(srv.URL+"/v1/teams", "application/json", strings.NewReader(createBody))
@@ -554,7 +562,8 @@ func TestHTTPTeamsDisabled(t *testing.T) {
 	srv := httptest.NewServer(server.NewHTTPHandler(svc))
 	defer srv.Close()
 
-	resp, err := http.Post(srv.URL+"/v1/teams", "application/json", strings.NewReader(`{"workspace":"/ws"}`))
+	source := teamSource(t, svc)
+	resp, err := http.Post(srv.URL+"/v1/teams", "application/json", strings.NewReader(`{"session_id":"`+source+`"}`))
 	if err != nil {
 		t.Fatalf("POST /v1/teams: %v", err)
 	}
@@ -587,8 +596,10 @@ func TestHTTPTeamTooMany(t *testing.T) {
 	srv := httptest.NewServer(server.NewHTTPHandler(svc))
 	defer srv.Close()
 
+	source := teamSource(t, svc)
+	body := `{"session_id":"` + source + `"}`
 	// First create fills the only slot.
-	r1, err := http.Post(srv.URL+"/v1/teams", "application/json", strings.NewReader(`{"workspace":"/ws"}`))
+	r1, err := http.Post(srv.URL+"/v1/teams", "application/json", strings.NewReader(body))
 	if err != nil {
 		t.Fatalf("POST #1: %v", err)
 	}
@@ -598,7 +609,7 @@ func TestHTTPTeamTooMany(t *testing.T) {
 	}
 
 	// Second create is over the cap → 429.
-	r2, err := http.Post(srv.URL+"/v1/teams", "application/json", strings.NewReader(`{"workspace":"/ws"}`))
+	r2, err := http.Post(srv.URL+"/v1/teams", "application/json", strings.NewReader(body))
 	if err != nil {
 		t.Fatalf("POST #2: %v", err)
 	}
@@ -698,7 +709,8 @@ func TestHTTPRunTeamEmitsOutcomeFrame(t *testing.T) {
 	srv := httptest.NewServer(server.NewHTTPHandler(svc))
 	defer srv.Close()
 
-	createBody := `{"workspace":"/ws","name":"test","goal":"do one round of work",` +
+	source := teamSource(t, svc)
+	createBody := `{"session_id":"` + source + `","name":"test","goal":"do one round of work",` +
 		`"max_team_tokens":500,` +
 		`"members":[{"name":"lead","lead":true,"initial_prompt":"delegate then synthesise"},` +
 		`{"name":"worker","initial_prompt":"do the work"}]}`
@@ -764,8 +776,9 @@ func TestHTTPRunTeamEmptyTeamOutcomeOnly(t *testing.T) {
 	srv := httptest.NewServer(server.NewHTTPHandler(svc))
 	defer srv.Close()
 
+	source := teamSource(t, svc)
 	resp, err := http.Post(srv.URL+"/v1/teams", "application/json",
-		strings.NewReader(`{"workspace":"/ws","name":"empty"}`))
+		strings.NewReader(`{"session_id":"`+source+`","name":"empty"}`))
 	if err != nil {
 		t.Fatalf("POST /v1/teams: %v", err)
 	}
@@ -825,7 +838,7 @@ func TestHTTPScheduleLifecycle(t *testing.T) {
 	defer srv.Close()
 
 	// POST /v1/schedules → 201.
-	createBody := `{"name":"http-cron","prompt":"hello","workspace":"/ws",` +
+	createBody := `{"name":"http-cron","prompt":"hello",` +
 		`"mode":2,"trigger":{"cron":"@every 1m"}}`
 	resp, err := http.Post(srv.URL+"/v1/schedules", "application/json", strings.NewReader(createBody))
 	if err != nil {
@@ -921,7 +934,7 @@ func TestHTTPScheduleCreateOneShot(t *testing.T) {
 	defer srv.Close()
 
 	const oneShot = "2035-01-01T00:00:00Z"
-	createBody := `{"name":"once","prompt":"p","trigger":{"one_shot":"` + oneShot + `"},"mutating":true,"workspace":"/tmp"}`
+	createBody := `{"name":"once","prompt":"p","trigger":{"one_shot":"` + oneShot + `"},"mutating":true}`
 	resp, err := http.Post(srv.URL+"/v1/schedules", "application/json", strings.NewReader(createBody))
 	if err != nil {
 		t.Fatalf("POST /v1/schedules: %v", err)
@@ -960,7 +973,7 @@ func TestHTTPScheduleCreateOneShot(t *testing.T) {
 // in http.go leaves the new session with an EMPTY history — the len/content
 // assertions below go red (the handler still returns 201, so an error-path check
 // alone would not catch it).
-func TestHTTPCreateSessionWithCarryover(t *testing.T) {
+func TestHTTPCreateSessionRejectsLegacyCarryoverField(t *testing.T) {
 	// Two text turns: the source's prompt and the post-carryover prompt (each
 	// prompt re-registers the run, so a Persist while the run is live captures the
 	// history — the HTTP prompt handler defers deregister, unlike the
@@ -982,55 +995,13 @@ func TestHTTPCreateSessionWithCarryover(t *testing.T) {
 
 	// The wire field: source_session_id in the JSON body must cross the handler.
 	createResp, err := http.Post(srv.URL+"/v1/sessions", "application/json",
-		strings.NewReader(`{"workspace":"/ws","source_session_id":"`+srcID+`"}`))
+		strings.NewReader(`{"source_session_id":"`+srcID+`"}`))
 	if err != nil {
 		t.Fatalf("POST /v1/sessions with carryover: %v", err)
 	}
 	defer createResp.Body.Close()
-	if createResp.StatusCode != http.StatusCreated {
-		t.Fatalf("carryover create status = %d, want 201", createResp.StatusCode)
-	}
-	var out struct {
-		SessionID string `json:"session_id"`
-	}
-	if err := json.NewDecoder(createResp.Body).Decode(&out); err != nil {
-		t.Fatalf("decode carryover create: %v", err)
-	}
-	if out.SessionID == "" || out.SessionID == srcID {
-		t.Fatalf("carryover session id = %q, want a new distinct id", out.SessionID)
-	}
-
-	newSess, err := svc.GetSession(context.Background(), session.SessionID(out.SessionID))
-	if err != nil {
-		t.Fatalf("GetSession new: %v", err)
-	}
-	if len(newSess.Conversation.Messages) == 0 {
-		t.Fatalf("carryover seeded NO history — the source_session_id wiring did not reach the service")
-	}
-	var sawUser, sawAssistant bool
-	for _, m := range newSess.Conversation.Messages {
-		if m.Role == session.RoleUser && strings.Contains(m.Text, "carry this context") {
-			sawUser = true
-		}
-		if m.Role == session.RoleAssistant && strings.Contains(m.Text, "HTTP-CARRY-SRC-REPLY") {
-			sawAssistant = true
-		}
-	}
-	if !sawUser || !sawAssistant {
-		t.Fatalf("seeded history missing the source's user/assistant text (user=%v assistant=%v)", sawUser, sawAssistant)
-	}
-
-	// The seeded session runs a turn to completion over the WIRE: the carried
-	// history replays with no provider 400 (the ForkSnapshot+SeedHistory pairing).
-	promptResp, err := http.Post(srv.URL+"/v1/sessions/"+out.SessionID+"/prompt", "application/json",
-		strings.NewReader(`{"text":`+strconv.Quote("continue")+`}`))
-	if err != nil {
-		t.Fatalf("POST carryover prompt: %v", err)
-	}
-	events := parseSSE(t, bufio.NewReader(promptResp.Body))
-	promptResp.Body.Close()
-	if res := lastResult(t, events); res.GetStop() != "end_turn" {
-		t.Fatalf("carryover-session prompt result = %+v, want end_turn", res)
+	if createResp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("legacy carryover create status = %d, want 400", createResp.StatusCode)
 	}
 }
 
@@ -1043,7 +1014,7 @@ func TestHTTPScheduleNoStore501(t *testing.T) {
 
 	// POST /v1/schedules → 501.
 	resp, err := http.Post(srv.URL+"/v1/schedules", "application/json",
-		strings.NewReader(`{"name":"x","prompt":"y","workspace":"/ws","mode":2,"trigger":{"cron":"@every 1m"}}`))
+		strings.NewReader(`{"name":"x","prompt":"y","mode":2,"trigger":{"cron":"@every 1m"}}`))
 	if err != nil {
 		t.Fatalf("POST /v1/schedules: %v", err)
 	}

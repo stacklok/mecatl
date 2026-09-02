@@ -187,7 +187,7 @@ func clientMCPServiceUnreachable(t *testing.T, permit bool, rec *mcpSpecRecorder
 			}, nil
 		},
 	}
-	svc, err := server.NewService(cfg)
+	svc, err := newPlacementTestService(cfg)
 	if err != nil {
 		t.Fatalf("new service: %v", err)
 	}
@@ -323,7 +323,6 @@ func TestSDKServerEnablers_Scenario9_UDSSessionMountsMCPServers(t *testing.T) {
 		srv := httpFor(t, svc)
 
 		code, body := postCreate(t, srv, map[string]any{
-			"workspace":   "/ws",
 			"mcp_servers": []any{httpMCPEntry()},
 		})
 		if code != http.StatusCreated {
@@ -397,7 +396,6 @@ func TestSDKServerEnablers_Scenario9_McpServersRejectedOnTCPListener(t *testing.
 		srv := httpFor(t, svc)
 
 		code, body := postCreate(t, srv, map[string]any{
-			"workspace":   "/ws",
 			"mcp_servers": []any{httpMCPEntry()},
 		})
 		if code != http.StatusNotImplemented {
@@ -632,7 +630,6 @@ func TestInvariant_no_stdio_mcp_ever(t *testing.T) {
 
 				srv := httpFor(t, svc)
 				code, body := postCreate(t, srv, map[string]any{
-					"workspace": "/ws",
 					"mcp_servers": []any{map[string]any{
 						"name":    tc.spec.Name,
 						"url":     tc.spec.URL,
@@ -764,7 +761,6 @@ func TestSDKServerEnablers_Scenario9_McpHeadersNeverLogged(t *testing.T) {
 
 				srv := httpFor(t, svc)
 				_, body := postCreate(t, srv, map[string]any{
-					"workspace": "/ws",
 					"mcp_servers": []any{map[string]any{
 						"name":    "notes",
 						"url":     a.url,
@@ -802,7 +798,6 @@ func TestSDKServerEnablers_Scenario9_McpHeadersNeverLogged(t *testing.T) {
 
 		srv := httpFor(t, svc)
 		_, body := postCreate(t, srv, map[string]any{
-			"workspace":   "/ws",
 			"mcp_servers": []any{httpMCPEntry()},
 		})
 		assertClean(t, "http problem body", string(body))
@@ -1040,7 +1035,6 @@ func TestSDKServerEnablers_Scenario9_PartialMountFailsTheWireCreate(t *testing.T
 		srv := httpFor(t, svc)
 
 		code, body := postCreate(t, srv, map[string]any{
-			"workspace": "/ws",
 			"mcp_servers": []map[string]any{
 				{"name": "notes", "url": "https://notes.example/mcp", "type": "http"},
 				{"name": "calendar", "url": "https://cal.example/mcp", "type": "http"},
@@ -1169,7 +1163,7 @@ func sharedTestEngine() *agent.Engine {
 
 func mustService(t *testing.T, cfg server.Config) *server.Service {
 	t.Helper()
-	svc, err := server.NewService(cfg)
+	svc, err := newPlacementTestService(cfg)
 	if err != nil {
 		t.Fatalf("new service: %v", err)
 	}
@@ -1371,7 +1365,6 @@ func TestSDKServerEnablers_Scenario9_UnknownCreateFieldIsRejected(t *testing.T) 
 
 	t.Run("protojson spelling is a 400, not a silent drop", func(t *testing.T) {
 		code, body := postCreate(t, srv, map[string]any{
-			"workspace":  "/ws",
 			"mcpServers": []any{httpMCPEntry()},
 		})
 		if code != http.StatusBadRequest {
@@ -1385,7 +1378,6 @@ func TestSDKServerEnablers_Scenario9_UnknownCreateFieldIsRejected(t *testing.T) 
 
 	t.Run("the snake_case spelling still works", func(t *testing.T) {
 		code, body := postCreate(t, srv, map[string]any{
-			"workspace":   "/ws",
 			"mcp_servers": []any{httpMCPEntry()},
 		})
 		if code != http.StatusCreated {
@@ -1394,7 +1386,7 @@ func TestSDKServerEnablers_Scenario9_UnknownCreateFieldIsRejected(t *testing.T) 
 	})
 
 	t.Run("an ordinary create is unaffected", func(t *testing.T) {
-		code, body := postCreate(t, srv, map[string]any{"workspace": "/ws"})
+		code, body := postCreate(t, srv, map[string]any{})
 		if code != http.StatusCreated {
 			t.Fatalf("POST /v1/sessions = %d, want 201; body=%s", code, body)
 		}

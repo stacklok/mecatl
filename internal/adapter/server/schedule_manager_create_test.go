@@ -85,7 +85,7 @@ func newManagerBackedBy(t *testing.T, store port.ScheduleStore, now time.Time) *
 		Model:   "test-model",
 	})
 	sessions := memstore.New()
-	svc, err := server.NewService(server.Config{
+	svc, err := newPlacementTestService(server.Config{
 		Engine:           engine,
 		Store:            sessions,
 		ScheduleManager:  server.NewScheduleManager(server.ScheduleManagerConfig{Store: sessions, ScheduleStore: store, Now: func() time.Time { return now }}),

@@ -281,7 +281,7 @@ func TestFireFailedUsesPresentedScheduleNameOnCreateFailure(t *testing.T) {
 	svc, err := server.NewService(server.Config{
 		Engine:            engine,
 		Store:             store,
-		Workspaces:        func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+		Workspaces:        func(string) tool.Workspace { return nil },
 		Now:               time.Now,
 		EventLog:          store,
 		Diagnostics:       port.NopDiagnostics{},

@@ -1368,6 +1368,8 @@ func offlineServiceWithDeployment(t *testing.T, deploymentID string) *server.Ser
 		Now:                 func() time.Time { return time.Unix(0, 0) },
 		DefaultCapabilities: llm.Capabilities(),
 		DeploymentID:        deploymentID,
+		PlacementProvider:   offlinePlacementProvider{},
+		PlacementScope:      "test",
 	})
 	if err != nil {
 		t.Fatalf("new offline service: %v", err)

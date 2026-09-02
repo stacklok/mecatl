@@ -38,6 +38,7 @@ func (s *Service) ForkSessionSuccessor(ctx context.Context, req ForkSuccessorReq
 	return s.createPlacedSuccessor(ctx, req, true)
 }
 
+//nolint:gocyclo // Successor creation keeps validation, exact placement, engine setup, and publication atomic.
 func (s *Service) createPlacedSuccessor(ctx context.Context, req ForkSuccessorRequest, copyHistory bool) (session.SessionID, error) {
 	absent, err := s.managementOwnershipPreflight(ctx, req.Source, false)
 	if err != nil {
@@ -79,7 +80,7 @@ func (s *Service) createPlacedSuccessor(ctx context.Context, req ForkSuccessorRe
 	}
 	created.EnvironmentRef = binding.Ref
 	if copyHistory {
-		if err := created.SeedHistory(session.ForkSnapshot(source.Conversation)); err != nil {
+		if err := created.SeedHistory(s.providerCarryoverSnapshot(source, selector.ProviderID)); err != nil {
 			return "", fmt.Errorf("server: seed fork history: %w", err)
 		}
 		if req.Title == "" {
@@ -91,9 +92,28 @@ func (s *Service) createPlacedSuccessor(ctx context.Context, req ForkSuccessorRe
 			return "", fmt.Errorf("%w: %v", ErrInvalidArgument, err)
 		}
 	}
-	// Publish only after every source, placement, history, and label validation
-	// has succeeded. Source state and binding are never modified.
+	profile := profileForSession(created)
+	var builtEngine *sessionEngine
+	if s.sessionNeedsPerFactory(selector, nil, profile, binding.Environment.Workspace().Root()) {
+		if s.cfg.SessionEngine == nil {
+			return "", fmt.Errorf("%w: per-session engine not supported (no session-engine factory configured)", ErrInvalidArgument)
+		}
+		builtEngine, err = s.buildAndRegisterSessionEngine(ctx, created, selector, profile, created.Mode, false)
+		if err != nil {
+			return "", err
+		}
+	}
+	// Publish only after every source, placement, history, label, and engine
+	// validation has succeeded. Source state and binding are never modified.
 	if err := s.persistNewSession(ctx, created); err != nil {
+		if builtEngine != nil {
+			s.mu.Lock()
+			delete(s.sessionEngines, created.ID)
+			s.mu.Unlock()
+			if builtEngine.close != nil {
+				_ = builtEngine.close()
+			}
+		}
 		return "", fmt.Errorf("server: persist successor: %w", err)
 	}
 	s.mu.Lock()

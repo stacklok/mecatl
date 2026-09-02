@@ -41,7 +41,7 @@ func migrationService(t *testing.T, store port.SessionStore, authorize func(cont
 
 func migrationServiceWithUpdate(t *testing.T, store port.SessionStore, authorize func(context.Context) bool, lease port.SessionLease, update func(server.StorageMaintenanceEvent)) *server.Service {
 	t.Helper()
-	svc, err := server.NewService(server.Config{
+	svc, err := newPlacementTestService(server.Config{
 		Engine: agent.NewEngine(agent.Deps{LLM: mockllm.New(), Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil)}),
 		Store:  store, Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
 		StorageManagementAuthorized:         authorize,

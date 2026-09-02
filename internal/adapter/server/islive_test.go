@@ -90,7 +90,7 @@ func TestServiceIsLiveIncludesEngineChildren(t *testing.T) {
 	engine := agent.NewEngine(agent.Deps{
 		LLM: llm, Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(allowRules(), nil), Model: "test",
 	})
-	svc, err := server.NewService(server.Config{
+	svc, err := newPlacementTestService(server.Config{
 		Engine: engine, Store: memstore.New(), SessionLiveness: tracker,
 		Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
 	})

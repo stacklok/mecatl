@@ -79,7 +79,7 @@ func teamService(t *testing.T, llm *mockllm.Provider) *server.Service {
 		Policy:  allow,
 		Model:   "mock",
 	})
-	svc, err := server.NewService(server.Config{
+	svc, err := newPlacementTestService(server.Config{
 		Engine:       engine,
 		Store:        memstore.New(),
 		Workspaces:   func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
@@ -110,7 +110,7 @@ func teamServiceWithStore(t *testing.T, llm *mockllm.Provider) (*server.Service,
 	engine := agent.NewEngine(agent.Deps{
 		LLM: mockllm.New(mockllm.TextTurn("x")), Catalog: tool.NewCatalog(), Policy: allow, Model: "mock",
 	})
-	svc, err := server.NewService(server.Config{
+	svc, err := newPlacementTestService(server.Config{
 		Engine:       engine,
 		Store:        store,
 		Workspaces:   func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
@@ -197,7 +197,7 @@ func teamServicePerMember(t *testing.T, providers map[string]*mockllm.Provider, 
 	engine := agent.NewEngine(agent.Deps{
 		LLM: mockllm.New(mockllm.TextTurn("x")), Catalog: tool.NewCatalog(), Policy: allow, Model: "mock",
 	})
-	svc, err := server.NewService(server.Config{
+	svc, err := newPlacementTestService(server.Config{
 		Engine:          engine,
 		Store:           memstore.New(),
 		Workspaces:      func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
@@ -257,7 +257,7 @@ func teamServiceWithBudget(t *testing.T, llm *mockllm.Provider, budget int) *ser
 	engine := agent.NewEngine(agent.Deps{
 		LLM: mockllm.New(mockllm.TextTurn("x")), Catalog: tool.NewCatalog(), Policy: allow, Model: "mock",
 	})
-	svc, err := server.NewService(server.Config{
+	svc, err := newPlacementTestService(server.Config{
 		Engine:          engine,
 		Store:           memstore.New(),
 		Workspaces:      func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
@@ -381,7 +381,7 @@ func teamServiceWithGoalTrust(t *testing.T, llm *mockllm.Provider, goalUntrusted
 	engine := agent.NewEngine(agent.Deps{
 		LLM: mockllm.New(mockllm.TextTurn("x")), Catalog: tool.NewCatalog(), Policy: allow, Model: "mock",
 	})
-	svc, err := server.NewService(server.Config{
+	svc, err := newPlacementTestService(server.Config{
 		Engine:            engine,
 		Store:             store,
 		Workspaces:        func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
@@ -472,8 +472,8 @@ func TestCreateTeamGoalTrustOptIn(t *testing.T) {
 	})
 }
 
-func newCreateTeam(sessionID string) *mecatlv1.CreateTeamRequest {
-	return &mecatlv1.CreateTeamRequest{SessionId: sessionID, Name: "test"}
+func newCreateTeam(string) *mecatlv1.CreateTeamRequest {
+	return &mecatlv1.CreateTeamRequest{SessionId: "source", Name: "test"}
 }
 
 func newSpawn(teamID, name string, lead bool, initialPrompt string) *mecatlv1.SpawnTeammateRequest {
@@ -484,8 +484,8 @@ func newSpawn(teamID, name string, lead bool, initialPrompt string) *mecatlv1.Sp
 
 // newCreateTeamWith builds a CreateTeamRequest carrying an initial roster — the
 // atomic create+populate path.
-func newCreateTeamWith(sessionID string, members ...*mecatlv1.TeammateSpec) *mecatlv1.CreateTeamRequest {
-	return &mecatlv1.CreateTeamRequest{SessionId: sessionID, Name: "test", Members: members}
+func newCreateTeamWith(_ string, members ...*mecatlv1.TeammateSpec) *mecatlv1.CreateTeamRequest {
+	return &mecatlv1.CreateTeamRequest{SessionId: "source", Name: "test", Members: members}
 }
 
 // wantRunningSentinel asserts a Service-level method returned the ErrTeamRunning
@@ -672,7 +672,7 @@ func teamServiceMaxTeams(t *testing.T, llm *mockllm.Provider, maxTeams int) *ser
 	engine := agent.NewEngine(agent.Deps{
 		LLM: mockllm.New(mockllm.TextTurn("x")), Catalog: tool.NewCatalog(), Policy: allow, Model: "mock",
 	})
-	svc, err := server.NewService(server.Config{
+	svc, err := newPlacementTestService(server.Config{
 		Engine:       engine,
 		Store:        memstore.New(),
 		Workspaces:   func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
@@ -812,7 +812,7 @@ func TestDirectRunTeamProtectsMembersWithIndependentLiveness(t *testing.T) {
 		return agent.MemberBuild{Engine: agent.NewEngine(agent.Deps{LLM: llm, Catalog: cat, Policy: allow, Model: "mock"})}
 	}
 	engine := agent.NewEngine(agent.Deps{LLM: mockllm.New(mockllm.TextTurn("x")), Catalog: tool.NewCatalog(), Policy: allow, Model: "mock"})
-	svc, err := server.NewService(server.Config{
+	svc, err := newPlacementTestService(server.Config{
 		Engine: engine, Store: memstore.New(), Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
 		Now: func() time.Time { return time.Unix(0, 0) }, MemberEngine: memberEngine, SessionLiveness: tracker,
 	})
@@ -1068,22 +1068,14 @@ func TestCreateTeamNilWorkspaceFactoryReturnsErrorNotPanic(t *testing.T) {
 		Policy:  allow,
 		Model:   "mock",
 	})
-	svc, err := server.NewService(server.Config{
+	_, err := newPlacementTestService(server.Config{
 		Engine:       engine,
 		Store:        memstore.New(),
 		Workspaces:   func(_ string) tool.Workspace { return nil }, // nil factory return
 		Now:          func() time.Time { return time.Unix(0, 0) },
 		MemberEngine: memberEngine,
 	})
-	if err != nil {
-		t.Fatalf("new service: %v", err)
-	}
-
-	_, _, createErr := svc.CreateTeam(context.Background(), "/repo", "t", "g", 0, nil)
-	if createErr == nil {
-		t.Fatal("CreateTeam with a nil-workspace factory must return an error")
-	}
-	if !errors.Is(createErr, server.ErrInvalidArgument) {
-		t.Fatalf("CreateTeam err = %v, want ErrInvalidArgument", createErr)
+	if !errors.Is(err, server.ErrPlacementUnavailable) {
+		t.Fatalf("new service err = %v, want ErrPlacementUnavailable", err)
 	}
 }

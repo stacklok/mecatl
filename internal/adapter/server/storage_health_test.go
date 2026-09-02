@@ -49,7 +49,7 @@ func storageHealthService(t *testing.T, store port.SessionStore, authorize func(
 func storageHealthServiceWithUpdate(t *testing.T, store port.SessionStore, authorize func(context.Context) bool, update func(server.StorageMaintenanceEvent)) *server.Service {
 	t.Helper()
 	llm := mockllm.New()
-	svc, err := server.NewService(server.Config{
+	svc, err := newPlacementTestService(server.Config{
 		Engine: agent.NewEngine(agent.Deps{LLM: llm, Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil)}),
 		Store:  store, Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
 		StorageManagementAuthorized: authorize,
@@ -102,7 +102,7 @@ func TestStorageHealthIncludesOwnerlessCutoverInventory(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	svc, err := server.NewService(server.Config{
+	svc, err := newPlacementTestService(server.Config{
 		Engine: agent.NewEngine(agent.Deps{LLM: mockllm.New(), Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil)}),
 		Store:  sessions, Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
 		ScheduleManager:             server.NewScheduleManager(server.ScheduleManagerConfig{Store: sessions, ScheduleStore: schedules}),

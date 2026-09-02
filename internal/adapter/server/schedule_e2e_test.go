@@ -410,7 +410,7 @@ func buildScheduleService(t *testing.T, storeDir string, llm *mockllm.Provider) 
 		// session is durable as completed for the pull-only GetSession assertion.
 		Store: store,
 	})
-	svc, err := server.NewService(server.Config{
+	svc, err := newPlacementTestService(server.Config{
 		Engine:              engine,
 		Store:               store,
 		DefaultWorkspace:    "/workspace",

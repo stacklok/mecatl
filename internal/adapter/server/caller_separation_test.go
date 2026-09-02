@@ -28,7 +28,7 @@ import (
 // absence from a colliding caller-selected ID.
 func TestCallerSeparation_Scenario1_AtomicCreationBindsVerifiedOwner(t *testing.T) {
 	store := memstore.New()
-	svc, err := server.NewService(server.Config{
+	svc, err := newPlacementTestService(server.Config{
 		Engine: agent.NewEngine(agent.Deps{
 			LLM:     mockllm.New(),
 			Catalog: tool.NewCatalog(),
@@ -69,8 +69,8 @@ func TestCallerSeparation_Scenario1_AtomicCreationBindsVerifiedOwner(t *testing.
 		t.Fatalf("retry = %+v, want the original owned session", retry)
 	}
 
-	if _, err := request(session.WithPrincipal(context.Background(), alice), "/other"); !errors.Is(err, server.ErrInvalidArgument) {
-		t.Fatalf("same owner different immutable request error = %v, want ErrInvalidArgument", err)
+	if retry, err := request(session.WithPrincipal(context.Background(), alice), "/other"); err != nil || retry.ID != created.ID {
+		t.Fatalf("client workspace must be ignored by server-owned placement: retry=%+v err=%v", retry, err)
 	}
 	if _, err := request(session.WithPrincipal(context.Background(), bob), "/ws"); !errors.Is(err, server.ErrNotFound) {
 		t.Fatalf("cross-owner collision error = %v, want ErrNotFound", err)
@@ -88,7 +88,7 @@ func callerSeparationFixture(t *testing.T) (*server.Service, *memstore.Store, *m
 	t.Helper()
 	sessions := memstore.New()
 	schedules := memschedulestore.New()
-	svc, err := server.NewService(server.Config{
+	svc, err := newPlacementTestService(server.Config{
 		Engine: agent.NewEngine(agent.Deps{LLM: mockllm.New(), Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil), Model: "test-model"}),
 		Store:  sessions, EventLog: memstore.NewEventLog(),
 		ScheduleManager:  server.NewScheduleManager(server.ScheduleManagerConfig{Store: sessions, ScheduleStore: schedules, OwnershipEnforced: true}),
@@ -249,7 +249,7 @@ func TestCallerSeparation_Scenario2_ScheduleNotFoundDoesNotLeakPhysicalKey(t *te
 		t.Fatalf("redisstore.New: %v", err)
 	}
 	sessions := memstore.New()
-	svc, err := server.NewService(server.Config{
+	svc, err := newPlacementTestService(server.Config{
 		Engine:            agent.NewEngine(agent.Deps{LLM: mockllm.New(), Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil), Model: "test-model"}),
 		Store:             sessions,
 		ScheduleManager:   server.NewScheduleManager(server.ScheduleManagerConfig{Store: sessions, ScheduleStore: rst.ScheduleStore(), OwnershipEnforced: true}),
@@ -386,7 +386,7 @@ func TestCallerSeparation_Scenario6_CollisionProbeDoesNotLeakOtherOwner(t *testi
 func TestCallerSeparation_Scenario6_OwnerlessNamespaceUnchanged(t *testing.T) {
 	sessions := memstore.New()
 	schedules := memschedulestore.New()
-	svc, err := server.NewService(server.Config{
+	svc, err := newPlacementTestService(server.Config{
 		Engine: agent.NewEngine(agent.Deps{LLM: mockllm.New(), Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil), Model: "test-model"}),
 		Store:  sessions, EventLog: memstore.NewEventLog(),
 		ScheduleManager:  server.NewScheduleManager(server.ScheduleManagerConfig{Store: sessions, ScheduleStore: schedules}),
@@ -432,7 +432,7 @@ func redisCallerScheduleFixture(t *testing.T) (*server.Service, port.ScheduleSto
 	}
 	sessions := memstore.New()
 	schedules := rst.ScheduleStore()
-	svc, err := server.NewService(server.Config{
+	svc, err := newPlacementTestService(server.Config{
 		Engine:            agent.NewEngine(agent.Deps{LLM: mockllm.New(), Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil), Model: "test-model"}),
 		Store:             sessions,
 		ScheduleManager:   server.NewScheduleManager(server.ScheduleManagerConfig{Store: sessions, ScheduleStore: schedules, OwnershipEnforced: true}),
@@ -524,7 +524,7 @@ func TestCallerSeparation_Scenario2_GetFireRejectsForeignPhysicalParent(t *testi
 func TestCallerSeparation_Scenario2_OwnerlessGetFireKeepsOrphanCompatibility(t *testing.T) {
 	sessions := memstore.New()
 	schedules := memschedulestore.New()
-	svc, err := server.NewService(server.Config{
+	svc, err := newPlacementTestService(server.Config{
 		Engine:           agent.NewEngine(agent.Deps{LLM: mockllm.New(), Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil), Model: "test-model"}),
 		Store:            sessions,
 		ScheduleManager:  server.NewScheduleManager(server.ScheduleManagerConfig{Store: sessions, ScheduleStore: schedules}),

@@ -185,7 +185,7 @@ func TestStartRunContentLeavesLiveRunningSessionAlone(t *testing.T) {
 		Model:   "test-model",
 		Store:   cs,
 	})
-	svc, err := server.NewService(server.Config{
+	svc, err := newPlacementTestService(server.Config{
 		Engine:     engine,
 		Store:      cs,
 		Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
@@ -273,7 +273,7 @@ func TestStartRunContentRejectsDelegationChildSessionID(t *testing.T) {
 				Model:   "test-model",
 				Store:   cs,
 			})
-			svc, err := server.NewService(server.Config{
+			svc, err := newPlacementTestService(server.Config{
 				Engine:     engine,
 				Store:      cs,
 				Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },

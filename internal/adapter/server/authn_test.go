@@ -373,7 +373,7 @@ func TestHTTPAuthBearer(t *testing.T) {
 	srv := httptest.NewServer(secureHTTP(svc, auth))
 	defer srv.Close()
 
-	body := func() *strings.Reader { return strings.NewReader(`{"workspace":"/ws"}`) }
+	body := func() *strings.Reader { return strings.NewReader(`{}`) }
 
 	// No token -> 401.
 	resp, err := http.Post(srv.URL+"/v1/sessions", "application/json", body())

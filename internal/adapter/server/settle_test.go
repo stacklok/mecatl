@@ -151,7 +151,7 @@ func newSettleService(t *testing.T, store *memstore.Store) *server.Service {
 		Policy:  permpolicy.NewPolicy(nil, ps),
 		Model:   "test-model",
 	})
-	svc, err := server.NewService(server.Config{
+	svc, err := newPlacementTestService(server.Config{
 		Engine:     engine,
 		Store:      store,
 		Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },

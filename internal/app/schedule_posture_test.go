@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
@@ -14,6 +15,7 @@ import (
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/prompt"
 	"github.com/stacklok/mecatl/engine/session"
+	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/hookexec"
 	"github.com/stacklok/mecatl/internal/adapter/server"
 	"github.com/stacklok/mecatl/internal/adapter/store/jsonlstore"
@@ -333,13 +335,15 @@ func TestScheduleTool_MutatingCreateGatedByPlanMode(t *testing.T) {
 	}
 	defer func() { _ = res.Close() }()
 
-	sess := session.New("s1", session.ModePlan, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{MaxTurns: 5}, time.Now())
+	ref := session.EnvironmentRef{Kind: session.EnvKindLocal, ID: localDefaultPlacementID, Revision: localDefaultPlacementRevision}
+	sess := session.New("s1", session.ModePlan, ref, session.Limits{MaxTurns: 5}, time.Now())
 	// Save the session to the store the schedule manager validates against, so
 	// OriginSessionID validation (which checks the session exists) passes.
 	if err := jstore.Save(ctx, sess); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	run := res.Engine.Run(ctx, sess, memEnvironment("/ws"), agent.RunRequest{Text: "schedule the work", Parts: nil})
+	runEnv := tool.MustEnvironment(ref, memfs.NewWorkspace(workspace), nil)
+	run := res.Engine.Run(ctx, sess, runEnv, agent.RunRequest{Text: "schedule the work", Parts: nil})
 	var results []session.ToolResult
 	for ev := range run.Events() {
 		if ev.Type == session.EvToolResult && ev.ToolResult != nil {
@@ -434,13 +438,15 @@ func TestScheduleTool_Scenario4_FullInChatFlow(t *testing.T) {
 	}
 	defer func() { _ = res.Close() }()
 
-	sess := session.New("s1", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{MaxTurns: 6}, time.Now())
+	ref := session.EnvironmentRef{Kind: session.EnvKindLocal, ID: localDefaultPlacementID, Revision: localDefaultPlacementRevision}
+	sess := session.New("s1", session.ModeDefault, ref, session.Limits{MaxTurns: 6}, time.Now())
 	// Save the session to the store the schedule manager validates against, so
 	// OriginSessionID validation (which checks the session exists) passes.
 	if err := jstore.Save(ctx, sess); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	run := res.Engine.Run(ctx, sess, memEnvironment("/ws"), agent.RunRequest{Text: "schedule a nightly ci check and fire it once", Parts: nil})
+	runEnv := tool.MustEnvironment(ref, memfs.NewWorkspace(workspace), nil)
+	run := res.Engine.Run(ctx, sess, runEnv, agent.RunRequest{Text: "schedule a nightly ci check and fire it once", Parts: nil})
 	var results []session.ToolResult
 	var stop session.StopReason
 	for ev := range run.Events() {

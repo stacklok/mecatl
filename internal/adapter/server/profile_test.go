@@ -153,8 +153,8 @@ func TestHTTPCreateSessionProfileRoundTrip(t *testing.T) {
 	if got := gotProfile.Load(); got != server.ProfileNoFS {
 		t.Fatalf("factory saw profile %v, want ProfileNoFS", got)
 	}
-	if resp := post(`{}`); resp.StatusCode != http.StatusBadRequest {
-		t.Fatalf("default + empty workspace = %d, want 400 (today's behaviour preserved)", resp.StatusCode)
+	if resp := post(`{}`); resp.StatusCode != http.StatusCreated {
+		t.Fatalf("default placement create = %d, want 201", resp.StatusCode)
 	}
 	if resp := post(`{"profile":"no-fs","workspace":"/ws"}`); resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("no-fs + workspace = %d, want 400", resp.StatusCode)
@@ -179,7 +179,7 @@ func TestNoFSSessionUsesWorkspaceOverride(t *testing.T) {
 		Policy:  permpolicy.NewPolicy(nil, nil),
 		Model:   "test-model",
 	})
-	svc, err := server.NewService(server.Config{
+	svc, err := newPlacementTestService(server.Config{
 		Engine: agent.NewEngine(agent.Deps{
 			LLM:     mockllm.New(mockllm.TextTurn("shared")),
 			Catalog: tool.NewCatalog(),
@@ -227,7 +227,7 @@ func TestNoFSSessionUsesWorkspaceOverride(t *testing.T) {
 // seam); factoryRoots may be nil for tests that don't care.
 func noFSServiceOverStore(t *testing.T, store *memstore.Store, factory server.SessionEngineFactory, factoryRoots *[]string) *server.Service {
 	t.Helper()
-	svc, err := server.NewService(server.Config{
+	svc, err := newPlacementTestService(server.Config{
 		Engine: agent.NewEngine(agent.Deps{
 			LLM:     mockllm.New(mockllm.TextTurn("SHARED-ENGINE-REPLY")),
 			Catalog: tool.NewCatalog(),
@@ -340,7 +340,8 @@ func TestNoFSSessionRehydratesAfterRestart(t *testing.T) {
 func TestNoFSRehydrationWithoutFactoryFailsLoudly(t *testing.T) {
 	ctx := context.Background()
 	store := memstore.New()
-	sess := session.New("nofs-orphan", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/workspace", Revision: "in-tree-v1"}, session.Limits{MaxTurns: 3}, time.Unix(0, 0))
+	sess := session.New("nofs-orphan", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindNoFS, ID: "none", Revision: "in-tree-v1"}, session.Limits{MaxTurns: 3}, time.Unix(0, 0))
+	sess.Profile = string(server.ProfileNoFS)
 	if err := store.Save(ctx, sess); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
@@ -364,7 +365,8 @@ func TestNoFSRehydrationWithoutFactoryFailsLoudly(t *testing.T) {
 func TestLoadSessionWithMCPDerivesNoFSProfile(t *testing.T) {
 	ctx := context.Background()
 	store := memstore.New()
-	sess := session.New("nofs-acp", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/workspace", Revision: "in-tree-v1"}, session.Limits{MaxTurns: 3}, time.Unix(0, 0))
+	sess := session.New("nofs-acp", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindNoFS, ID: "none", Revision: "in-tree-v1"}, session.Limits{MaxTurns: 3}, time.Unix(0, 0))
+	sess.Profile = string(server.ProfileNoFS)
 	if err := store.Save(ctx, sess); err != nil {
 		t.Fatalf("Save: %v", err)
 	}

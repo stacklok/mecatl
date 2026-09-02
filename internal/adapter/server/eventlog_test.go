@@ -56,7 +56,7 @@ func TestGRPCRelayStreamsOriginalChunksAndDurablyCoalesces(t *testing.T) {
 	engine := agent.NewEngine(agent.Deps{
 		LLM: llm, Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil), Model: "test-model",
 	})
-	svc, err := server.NewService(server.Config{
+	svc, err := newPlacementTestService(server.Config{
 		Engine: engine, Store: memstore.New(), EventLog: log,
 		Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
 		Now:        func() time.Time { return time.Unix(0, 0) }, DefaultCapabilities: llm.Capabilities(),
@@ -136,7 +136,7 @@ func TestLiveRelaysPersistButOmitObservedNetworkAttempt(t *testing.T) {
 				},
 			}}
 			engine := agent.NewEngine(agent.Deps{LLM: llm, Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil), Model: "test-model", EnableDurableEvidence: true})
-			svc, err := server.NewService(server.Config{
+			svc, err := newPlacementTestService(server.Config{
 				Engine: engine, Store: memstore.New(), EventLog: log,
 				Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
 				Now:        func() time.Time { return time.Unix(0, 0) }, DefaultCapabilities: llm.Capabilities(),
@@ -271,7 +271,7 @@ func observedAttemptTeamService(t *testing.T, log port.EventLog, logID session.S
 	engine := agent.NewEngine(agent.Deps{
 		LLM: mockllm.New(mockllm.TextTurn("unused")), Catalog: tool.NewCatalog(), Policy: allow, Model: "mock",
 	})
-	svc, err := server.NewService(server.Config{
+	svc, err := newPlacementTestService(server.Config{
 		Engine: engine, Store: memstore.New(), EventLog: log,
 		Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
 		Now:        func() time.Time { return time.Unix(0, 0) }, MemberEngine: memberEngine,
@@ -313,7 +313,7 @@ func TestDirectTeamTransportsOmitNetworkAttemptWithoutAffectingDurableObservatio
 			case "http":
 				srv := httptest.NewServer(server.NewHTTPHandler(svc))
 				defer srv.Close()
-				create, err := http.Post(srv.URL+"/v1/teams", "application/json", strings.NewReader(`{"workspace":"/ws","name":"test","members":[{"name":"lead","lead":true,"initial_prompt":"go"}]}`))
+				create, err := http.Post(srv.URL+"/v1/teams", "application/json", strings.NewReader(`{"session_id":"source","name":"test","members":[{"name":"lead","lead":true,"initial_prompt":"go"}]}`))
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -374,7 +374,7 @@ func askingEventLogService(t *testing.T, log port.EventLog) (*server.Service, *m
 		Policy:  permpolicy.NewPolicy(nil, nil), // no rules: a mutating call asks
 		Model:   "test-model",
 	})
-	svc, err := server.NewService(server.Config{
+	svc, err := newPlacementTestService(server.Config{
 		Engine:              engine,
 		Store:               memstore.New(),
 		Workspaces:          func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
@@ -593,7 +593,7 @@ func TestEventLogInheritsStreamRedaction(t *testing.T) {
 		Policy:  permpolicy.NewPolicy(allowRules(), nil),
 		Model:   "test-model",
 	})
-	svc, err := server.NewService(server.Config{
+	svc, err := newPlacementTestService(server.Config{
 		Engine:              engine,
 		Store:               memstore.New(),
 		Workspaces:          func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
@@ -688,7 +688,7 @@ func askingEventLogServiceOverStore(t *testing.T, store port.SessionStore, log p
 		Model:   "test-model",
 		Store:   engineStore,
 	})
-	svc, err := server.NewService(server.Config{
+	svc, err := newPlacementTestService(server.Config{
 		Engine:     engine,
 		Store:      store,
 		Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
@@ -828,7 +828,7 @@ func TestEventLogSurvivesClientDisconnect(t *testing.T) {
 		Policy:  permpolicy.NewPolicy(allowRules(), nil),
 		Model:   "test-model",
 	})
-	svc, err := server.NewService(server.Config{
+	svc, err := newPlacementTestService(server.Config{
 		Engine:              engine,
 		Store:               memstore.New(),
 		Workspaces:          func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
@@ -1187,7 +1187,7 @@ func nilEventLogService(t *testing.T) *server.Service {
 		Policy:  permpolicy.NewPolicy(nil, nil),
 		Model:   "test-model",
 	})
-	svc, err := server.NewService(server.Config{
+	svc, err := newPlacementTestService(server.Config{
 		Engine:              engine,
 		Store:               memstore.New(),
 		Workspaces:          func(root string) tool.Workspace { return memfs.NewWorkspace(root) },

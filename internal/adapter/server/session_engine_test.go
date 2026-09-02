@@ -38,7 +38,7 @@ func newMCPServiceStore(t *testing.T, sharedReply string, factory server.Session
 		Model:   "test-model",
 	})
 	store := memstore.New()
-	svc, err := server.NewService(server.Config{
+	svc, err := newPlacementTestService(server.Config{
 		Engine:        shared,
 		Store:         store,
 		Workspaces:    func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
@@ -198,7 +198,7 @@ func TestEndSessionEvictsLearnedAndTearsDown(t *testing.T) {
 		Policy:  permpolicy.NewPolicy(nil, nil),
 		Model:   "test-model",
 	})
-	svc, err := server.NewService(server.Config{
+	svc, err := newPlacementTestService(server.Config{
 		Engine:        shared,
 		Store:         memstore.New(),
 		Workspaces:    func(root string) tool.Workspace { return memfs.NewWorkspace(root) },

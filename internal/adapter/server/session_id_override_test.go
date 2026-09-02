@@ -61,7 +61,7 @@ func TestCreateSessionWithSessionIDNoOverrideIsByteIdentical(t *testing.T) {
 		Policy:  permpolicy.NewPolicy(nil, nil),
 		Model:   "test-model",
 	})
-	svc, err := server.NewService(server.Config{
+	svc, err := newPlacementTestService(server.Config{
 		Engine:     shared,
 		Store:      memstore.New(),
 		Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
@@ -109,7 +109,7 @@ func TestGeneratedSessionIDCollisionDoesNotOverwriteForeignSnapshot(t *testing.T
 		LLM: mockllm.New(mockllm.TextTurn("ok")), Catalog: tool.NewCatalog(),
 		Policy: permpolicy.NewPolicy(nil, nil), Model: "test-model",
 	})
-	svc, err := server.NewService(server.Config{
+	svc, err := newPlacementTestService(server.Config{
 		Engine: shared, Store: store, OwnershipEnforced: true,
 		Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
 		Now:        func() time.Time { return time.Unix(2, 0) }, NewID: func() session.SessionID { return "forced-collision" },
@@ -137,7 +137,7 @@ func TestOwnershipServiceCannotCreateWithoutAtomicStoreCapability(t *testing.T) 
 		LLM: mockllm.New(mockllm.TextTurn("ok")), Catalog: tool.NewCatalog(),
 		Policy: permpolicy.NewPolicy(nil, nil), Model: "test-model",
 	})
-	svc, err := server.NewService(server.Config{
+	svc, err := newPlacementTestService(server.Config{
 		Engine: shared, Store: legacy, OwnershipEnforced: true,
 		Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
 		NewID:      func() session.SessionID { return "must-not-upsert" },
@@ -181,7 +181,7 @@ func TestForkDestinationCollisionDoesNotOverwriteForeignSnapshot(t *testing.T) {
 		LLM: mockllm.New(mockllm.TextTurn("ok")), Catalog: tool.NewCatalog(),
 		Policy: permpolicy.NewPolicy(nil, nil), Model: "test-model",
 	})
-	svc, err := server.NewService(server.Config{
+	svc, err := newPlacementTestService(server.Config{
 		Engine: shared, Store: store, OwnershipEnforced: true,
 		Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
 		Now:        func() time.Time { return time.Unix(2, 0) }, NewID: func() session.SessionID { return destination.ID },
@@ -220,7 +220,7 @@ func TestExplicitCreateRetryRejectsDifferentSessionTaxonomy(t *testing.T) {
 		LLM: mockllm.New(mockllm.TextTurn("ok")), Catalog: tool.NewCatalog(),
 		Policy: permpolicy.NewPolicy(nil, nil), Model: "test-model",
 	})
-	svc, err := server.NewService(server.Config{
+	svc, err := newPlacementTestService(server.Config{
 		Engine: shared, Store: store, OwnershipEnforced: true,
 		Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
 	})
@@ -378,7 +378,7 @@ func TestCreateSessionWithSessionIDCrossServiceRetryIsIdempotent(t *testing.T) {
 		Policy: permpolicy.NewPolicy(nil, nil), Model: "test-model",
 	})
 	newSvc := func() *server.Service {
-		svc, err := server.NewService(server.Config{
+		svc, err := newPlacementTestService(server.Config{
 			Engine: shared, Store: store, OwnershipEnforced: true,
 			Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
 		})

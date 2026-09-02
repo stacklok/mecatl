@@ -23,7 +23,7 @@ func newLimitsService(t *testing.T, def session.Limits) *server.Service {
 		Policy:  permpolicy.NewPolicy(permpolicy.AllowAllFloorRules(), nil),
 		Model:   "test-model",
 	})
-	svc, err := server.NewService(server.Config{
+	svc, err := newPlacementTestService(server.Config{
 		Engine:        engine,
 		Store:         memstore.New(),
 		Workspaces:    func(root string) tool.Workspace { return memfs.NewWorkspace(root) },

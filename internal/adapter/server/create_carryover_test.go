@@ -664,7 +664,7 @@ func TestCarryoverBothDefaultProvider(t *testing.T) {
 		Model:   "test-model",
 	})
 	store := memstore.New()
-	svc, err := server.NewService(server.Config{
+	svc, err := newPlacementTestService(server.Config{
 		Engine:        shared,
 		Store:         store,
 		Workspaces:    func(root string) tool.Workspace { return memfs.NewWorkspace(root) },

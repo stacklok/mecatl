@@ -330,7 +330,7 @@ func newDelegatingScheduleService(t *testing.T, store port.SessionStore, now tim
 		Diagnostics:         port.NopDiagnostics{},
 		ScheduleManager:     extra.ScheduleManager,
 	}
-	svc, err := server.NewService(cfg)
+	svc, err := newPlacementTestService(cfg)
 	if err != nil {
 		t.Fatalf("NewService: %v", err)
 	}

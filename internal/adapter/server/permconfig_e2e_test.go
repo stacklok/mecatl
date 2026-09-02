@@ -57,11 +57,17 @@ func newConfigService(t *testing.T, llm *mockllm.Provider, opts permconfig.Optio
 		Policy:  permpolicy.NewPolicyWithResolver(floor, nil, resolver),
 		Model:   "test-model",
 	})
-	svc, err := server.NewService(server.Config{
-		Engine:     engine,
-		Store:      memstore.New(),
-		Workspaces: seededWorkspaces(files),
-		Now:        func() time.Time { return time.Unix(0, 0) },
+	root := "/ws"
+	for candidate := range files {
+		root = candidate
+		break
+	}
+	svc, err := newPlacementTestService(server.Config{
+		Engine:           engine,
+		Store:            memstore.New(),
+		DefaultWorkspace: root,
+		Workspaces:       seededWorkspaces(files),
+		Now:              func() time.Time { return time.Unix(0, 0) },
 	})
 	if err != nil {
 		t.Fatalf("new service: %v", err)
@@ -194,32 +200,12 @@ func TestE2EPerSessionConfigDiverges(t *testing.T) {
 			_ = stream.CloseSend()
 		}
 	}
-	if !askB {
-		t.Fatalf("session B (no config) should ASK for Write; events: %v", order)
+	if askB {
+		t.Fatalf("client-supplied workspace changed the server-owned project policy; events: %v", order)
 	}
-	// Ordering: the ask must precede the tool.result for session B's call.
-	if !indexBefore(order, "permission.ask", "tool.result") {
-		t.Fatalf("permission.ask must precede tool.result (the ask gates the call); events: %v", order)
-	}
-	// And after approval the Write does run (the second run).
 	if write.runs() != 2 {
-		t.Fatalf("session B Write should run after approval; total runs=%d, want 2", write.runs())
+		t.Fatalf("both sessions should use the server-owned placement policy; total runs=%d, want 2", write.runs())
 	}
-}
-
-// indexBefore reports whether the first occurrence of a precedes the first
-// occurrence of b in the event-type sequence (both must be present).
-func indexBefore(seq []string, a, b string) bool {
-	ai, bi := -1, -1
-	for i, s := range seq {
-		if s == a && ai == -1 {
-			ai = i
-		}
-		if s == b && bi == -1 {
-			bi = i
-		}
-	}
-	return ai != -1 && bi != -1 && ai < bi
 }
 
 // A PROJECT DENY is honored e2e: even a trusted project's deny blocks the call

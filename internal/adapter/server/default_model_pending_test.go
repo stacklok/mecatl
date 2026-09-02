@@ -44,7 +44,7 @@ func pendingDefaultService(t *testing.T, pending bool, factoryCalled *bool) (*se
 	if factoryCalled != nil {
 		cfg.SessionEngine = fakeSessionEngineFactory(factoryCalled)
 	}
-	svc, err := server.NewService(cfg)
+	svc, err := newPlacementTestService(cfg)
 	if err != nil {
 		t.Fatalf("new service: %v", err)
 	}

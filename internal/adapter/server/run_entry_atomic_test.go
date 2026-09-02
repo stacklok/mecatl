@@ -69,7 +69,7 @@ func TestADR_0108_RunEntryLocksLoadAuthorizePurposeAndReopen(t *testing.T) {
 		}, mockllm.TextTurn("first")),
 		Catalog: tool.NewCatalog(), Model: "test",
 	})
-	svc, err := server.NewService(server.Config{
+	svc, err := newPlacementTestService(server.Config{
 		Engine: eng, Store: store,
 		Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
 	})
@@ -203,7 +203,7 @@ func TestCallerSeparation_ForeignPromptDoesNotContendOnOwnerRunEntry(t *testing.
 		Catalog: tool.NewCatalog(),
 		Model:   "test",
 	})
-	svc, err := server.NewService(server.Config{
+	svc, err := newPlacementTestService(server.Config{
 		Engine: eng, Store: store,
 		Workspaces:         func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
 		OwnershipEnforced:  true,
@@ -325,7 +325,7 @@ func TestCallerSeparation_RunEntryReloadReauthorizesAfterPreflight(t *testing.T)
 				return tt.mutate(ctx, base, sess.ID)
 			}
 			lease := &fakeLease{}
-			svc, err := server.NewService(server.Config{
+			svc, err := newPlacementTestService(server.Config{
 				Engine:             agent.NewEngine(agent.Deps{LLM: mockllm.New(mockllm.TextTurn("unexpected")), Catalog: tool.NewCatalog(), Model: "test"}),
 				Store:              store,
 				Workspaces:         func(root string) tool.Workspace { return memfs.NewWorkspace(root) },

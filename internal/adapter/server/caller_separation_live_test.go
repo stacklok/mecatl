@@ -37,7 +37,7 @@ func callerSeparationLiveService(t *testing.T) (*server.Service, context.Context
 	t.Helper()
 	catalog := tool.NewCatalog()
 	catalog.MustRegister(callerSeparationAskTool{})
-	svc, err := server.NewService(server.Config{
+	svc, err := newPlacementTestService(server.Config{
 		Engine: agent.NewEngine(agent.Deps{
 			LLM:     mockllm.New(mockllm.ToolCallTurn(session.NewToolCall("ask", "Ask", json.RawMessage(`{}`)))),
 			Catalog: catalog,

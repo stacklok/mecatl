@@ -45,7 +45,7 @@ func newValidatedScheduleService(t *testing.T, now time.Time, minInterval time.D
 		Model:   "test-model",
 		Store:   store,
 	})
-	svc, err := server.NewService(server.Config{
+	svc, err := newPlacementTestService(server.Config{
 		Engine:           engine,
 		Store:            store,
 		DefaultWorkspace: "/ws",

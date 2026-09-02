@@ -32,7 +32,7 @@ func TestCallerSeparation_Scenario5_LiveTeamOperationsAreOwnerChecked(t *testing
 			LLM: mockllm.New(), Catalog: cat, Policy: allow, Model: "mock",
 		})}
 	}
-	svc, err := server.NewService(server.Config{
+	svc, err := newPlacementTestService(server.Config{
 		Engine:            agent.NewEngine(agent.Deps{LLM: mockllm.New(), Catalog: tool.NewCatalog(), Policy: allow, Model: "mock"}),
 		Store:             memstore.New(),
 		Workspaces:        func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
@@ -96,7 +96,7 @@ func ownedTeamServiceWithCap(t *testing.T, llm *mockllm.Provider, maxTeams int) 
 			LLM: llm, Catalog: cat, Policy: allow, Model: "mock",
 		})}
 	}
-	svc, err := server.NewService(server.Config{
+	svc, err := newPlacementTestService(server.Config{
 		Engine: agent.NewEngine(agent.Deps{
 			LLM: mockllm.New(mockllm.TextTurn("x")), Catalog: tool.NewCatalog(), Policy: allow, Model: "mock",
 		}),
