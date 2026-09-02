@@ -2,8 +2,8 @@
 id: 05-registry-aliases
 title: Saved resource aliases and reconnect
 blocked_by: [04-shorthand-enrollment]
-status: pending
-branch: ""
+status: done
+branch: plan-oauth-protected-resource-discovery/05-registry-aliases
 worktree: ""
 issue: "1033"
 retries: 0
