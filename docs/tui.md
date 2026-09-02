@@ -134,22 +134,22 @@ or fallback:
   create a new chat with the launch workspace/mode/model defaults, or `esc` to
   quit without a session. Inspection `esc` returns to the startup inventory.
 
-- **`mecatui debug (SESSION_ID | --exact SESSION_ID) [flags]`** — create a separate durable no-filesystem
-  analysis session permanently bound to that stored target. A positional `SESSION_ID` may be an
-  exact full opaque ID or the displayed 12-column short handle: safe `[A-Za-z0-9._-]` bytes are
-  literal except that a leading `-` becomes `%2D`; every other UTF-8 byte is uppercase `%HH`, and
-  only complete atoms that fit are shown. The handle has no leading `#` marker. A leading-hyphen
-  exact ID is flag-like positionally, so use `mecatui debug --exact SESSION_ID`. A syntactically
-  valid positional handle gathers every distinct projected match from the complete caller-visible
-  inventory; exact equality does not beat a collision. Ambiguity, no match, or inventory failure
-  creates nothing. Use `/session` to copy the exact full ID, then use the mutually exclusive
-  inventory-free form `mecatui debug --exact SESSION_ID`. The invocation is the consent gesture:
-  and diagnostic evidence may contain prompts, outputs, tool arguments/results, file
-  paths, and secrets and will be sent to the selected model. It then submits a default
-  diagnostic prompt automatically. The target is never resumed, leased, mutated, or
-  used as the debugger's conversation.
+- **`mecatui debug TARGET [flags]`** — create a separate durable no-filesystem
+  analysis session permanently bound to that stored target. `TARGET` may be an exact full opaque
+  ID—including the exact ID printed when mecatui exits—or the displayed 12-column short handle:
+  safe `[A-Za-z0-9._-]` bytes are literal except that a leading `-` becomes `%2D`; every other
+  UTF-8 byte is uppercase `%HH`, and only complete atoms that fit are shown. The handle has no
+  leading `#` marker. A syntactically valid short target consults the complete caller-visible
+  inventory. Exact full-ID equality wins; otherwise one unique projected match resolves.
+  Ambiguous projections create nothing and direct you to copy the full exact ID from `/session`
+  and pass it as `TARGET` to the same command. If inventory fails or no handle matches, `TARGET`
+  is sent unchanged and the server's ordinary exact-ID authorization/not-found path decides.
+  The invocation is the consent gesture: diagnostic evidence may contain prompts, outputs, tool
+  arguments/results, file paths, and secrets and will be sent to the selected model. It then
+  submits a default diagnostic prompt automatically. The target is never resumed, leased,
+  mutated, or used as the debugger's conversation.
 
-- **`mecatui connect ADDRESS [sessions | debug (SESSION_ID | --exact SESSION_ID)] [flags]`** — always dial a running `mecated` at
+- **`mecatui connect ADDRESS [sessions | debug TARGET] [flags]`** — always dial a running `mecated` at
   `ADDRESS` (host:port); **never probe** loopback and **never embed** — the
   target must already be serving. Embedded-server flags (`--mock`,
   `--trust-project`, provider keys, …) are **rejected** here — only shared
@@ -159,7 +159,7 @@ or fallback:
   bin/mecated serve &                                 # listens on 127.0.0.1:8080
   bin/mecatui connect 127.0.0.1:8080 --workspace "$PWD"
   bin/mecatui connect 127.0.0.1:8080 sessions --workspace "$PWD"
-  bin/mecatui connect 127.0.0.1:8080 debug --exact SESSION_ID
+  bin/mecatui connect 127.0.0.1:8080 debug SESSION_ID
   bin/mecatui connect mecated.internal:443 --tls --auth-token "$MECATL_AUTH_TOKEN"
   ```
 
@@ -290,8 +290,8 @@ a usage error; choose one startup intent explicitly.
 ```sh
 mecatui debug 01JOPAQUETARG
 mecatui connect 127.0.0.1:8080 debug 01JOPAQUETARG
-mecatui debug --exact 01JOPAQUETARGET
-mecatui connect 127.0.0.1:8080 debug --exact 01JOPAQUETARGET
+mecatui debug 01JOPAQUETARGET
+mecatui connect 127.0.0.1:8080 debug 01JOPAQUETARGET
 mecatui connect 127.0.0.1:8080 debug 01JOPAQUETARG --debug-mcp github
 ```
 
@@ -301,17 +301,16 @@ server. After reviewing it, send a new current prompt such as `Publish this issu
 each mutating call opens an approval card even under yolo/configured allow. Allow once sends
 one request. A later mutation asks again; Allow always is deliberately not learned.
 
-These commands accept either an exact full opaque session ID or the displayed 12-column
-short handle as a positional operand. The handle renders safe `[A-Za-z0-9._-]` bytes literally
-except that a leading `-` becomes `%2D`; every other UTF-8 byte is an uppercase `%HH` atom, and
-rendering stops before an atom that would exceed 12 ASCII columns. The displayed literal has no
-leading `#` and is itself the debug argument. A syntactically valid positional handle gathers all
-distinct projected matches from the complete caller-visible session inventory before selection;
-an exact-ID row cannot hide a collision. Ambiguity, no match, or inventory failure creates no
-debug session: open `/session`, copy the exact full ID, and use `mecatui debug --exact SESSION_ID`
-or `mecatui connect ADDRESS debug --exact SESSION_ID`. The explicit form is mutually exclusive
-with a positional operand and bypasses inventory. These commands do not
-attach to or continue the target.
+These commands accept either an exact full opaque session ID or the displayed 12-column short
+handle as `TARGET`. The handle renders safe `[A-Za-z0-9._-]` bytes literally except that a leading
+`-` becomes `%2D`; every other UTF-8 byte is an uppercase `%HH` atom, and rendering stops before an
+atom that would exceed 12 ASCII columns. The displayed literal has no leading `#` and is itself the
+debug argument. A syntactically valid short target consults the complete caller-visible inventory.
+Exact full-ID equality wins; otherwise one unique projected match resolves. On ambiguity, open
+`/session`, copy the exact full ID, and pass it as `TARGET` through the same command. If inventory
+lookup fails or no projection matches, mecatui sends `TARGET` unchanged and reports the ordinary
+server exact-ID authorization/not-found result. These commands do not attach to or continue the
+target.
 They authorize it, create a separate durable no-filesystem debug session, print a privacy
 disclosure, and submit one first genuine user turn. That turn is ordered as the diagnosis
 objective, the required status/transcript/pagination workflow, the expected report sections,

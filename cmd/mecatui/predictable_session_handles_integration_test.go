@@ -104,6 +104,16 @@ func TestPredictableSessionHandles_Scenario2_RenderedHeaderCreatesBoundDebugger(
 			if target := service.createdTarget(); resolved != fullID || target != fullID {
 				t.Fatalf("rendered header literal %q resolved=%q request target=%q, want exact ID %q", headerLiteral, resolved, target, fullID)
 			}
+
+			// The final handoff prints fullID verbatim. Feeding that exact exit ID
+			// through the same API path must preserve the server identity.
+			_, resolved, _, _, err = cl.CreateDebugSession(context.Background(), fullID, 0, client.ModelSelection{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if target := service.createdTarget(); resolved != fullID || target != fullID {
+				t.Fatalf("exact exit ID resolved=%q request target=%q, want %q", resolved, target, fullID)
+			}
 		})
 	}
 }

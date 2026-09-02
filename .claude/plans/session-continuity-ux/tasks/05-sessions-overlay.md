@@ -21,7 +21,7 @@ Rework `/sessions` onto the server-authored taxonomy, capability reason codes, p
   - verify: `TestSessionContinuityUX_Scenario4_FamilyTabs`
 - AC4.2: Each titled row shows ADR-0284's fixed ordinary session handle; the current chat stays visible with a `current` marker and cannot be redundantly opened.
   - verify: `TestPredictableSessionHandles_Scenario1_SharedNormalHandle`
-- AC4.3: Ordinary handles are terminal-safe fixed projections and are never sent to server APIs as session IDs; ambiguous debug selection requires the explicit exact-ID path.
+- AC4.3: Ordinary handles are terminal-safe fixed projections and are never sent to server APIs as session IDs; debug uses one TARGET grammar where exact full-ID equality wins and ambiguous projections require the copied full ID.
   - verify: `TestPredictableSessionHandles_Scenario3_PresentationParitySafetyAndLayering`
 - AC4.4: Filtering matches title, full ID, visible handle, model, workspace, and child relationship names case-insensitively across fetched pages.
   - verify: `TestSessionContinuityUX_Scenario4_SearchFields`

@@ -6,76 +6,41 @@ import (
 	"testing"
 )
 
-func TestPredictableSessionHandles_Scenario2_HandleGrammarAndExactEscapeHatch(t *testing.T) {
+func TestPredictableSessionHandles_Scenario2_UnifiedTargetGrammar(t *testing.T) {
 	const target = "123456789012"
-	tests := []struct {
-		argv    []string
-		mode    transportMode
-		address string
-		exact   bool
+	for _, tc := range []struct {
+		argv        []string
+		mode        transportMode
+		address     string
+		debugTarget string
 	}{
-		{[]string{"mecatui", "debug", target, "--prompt", "why"}, modeLocal, "", false},
-		{[]string{"mecatui", "connect", "host:9443", "debug", target, "--tls"}, modeConnect, "host:9443", false},
-		{[]string{"mecatui", "debug", "--exact", target, "--prompt", "why"}, modeLocal, "", true},
-		{[]string{"mecatui", "connect", "host:9443", "debug", "--exact", target, "--tls"}, modeConnect, "host:9443", true},
-	}
-	for _, tc := range tests {
+		{[]string{"mecatui", "debug", target, "--prompt", "why"}, modeLocal, "", target},
+		{[]string{"mecatui", "connect", "host:9443", "debug", target, "--tls"}, modeConnect, "host:9443", target},
+		{[]string{"mecatui", "debug", "-leading"}, modeLocal, "", "-leading"},
+		{[]string{"mecatui", "connect", "host:9443", "debug", "-leading"}, modeConnect, "host:9443", "-leading"},
+	} {
 		res := resolveInvocation(tc.argv)
-		if res.err != nil || res.mode != tc.mode || res.address != tc.address || res.debugTarget != target || res.debugExact != tc.exact {
+		if res.err != nil || res.mode != tc.mode || res.address != tc.address || res.debugTarget != tc.debugTarget {
 			t.Fatalf("resolve(%v) = %+v", tc.argv, res)
 		}
 		cfg, err := parseRunConfig(res)
 		if err != nil {
 			t.Fatalf("parse(%v): %v", tc.argv, err)
 		}
-		if cfg.debugTarget != target || cfg.debugExact != tc.exact {
-			t.Fatalf("parse(%v) debug target=%q exact=%t", tc.argv, cfg.debugTarget, cfg.debugExact)
+		if cfg.debugTarget != res.debugTarget {
+			t.Fatalf("parse(%v) debug target=%q", tc.argv, cfg.debugTarget)
 		}
 	}
-	for _, argv := range [][]string{
-		{"mecatui", "debug", ""},
-		{"mecatui", "debug", "--exact", ""},
-	} {
+	for _, argv := range [][]string{{"mecatui", "debug", ""}, {"mecatui", "debug"}} {
 		if res := resolveInvocation(argv); res.err == nil {
-			t.Fatalf("resolve(%v) unexpectedly accepted an empty ID", argv)
-		}
-	}
-	for _, argv := range [][]string{
-		{"mecatui", "debug", target, "--exact", "other"},
-		{"mecatui", "connect", "host:9443", "debug", target, "--exact", "other"},
-	} {
-		if res := resolveInvocation(argv); res.err == nil || !strings.Contains(res.err.Error(), "mutually exclusive") {
-			t.Fatalf("resolve(%v) error = %v", argv, res.err)
+			t.Fatalf("resolve(%v) unexpectedly accepted a missing target", argv)
 		}
 	}
 }
 
-func TestResolveDebugRejectsLeadingHyphenExactIDWithExactGuidance(t *testing.T) {
-	tests := []struct {
-		argv []string
-		want string
-	}{
-		{
-			argv: []string{"mecatui", "debug", "-legacy"},
-			want: "use 'mecatui debug --exact SESSION_ID'",
-		},
-		{
-			argv: []string{"mecatui", "connect", "host:9443", "debug", "-legacy"},
-			want: "use 'mecatui connect ADDRESS debug --exact SESSION_ID'",
-		},
-	}
-	for _, tc := range tests {
-		res := resolveInvocation(tc.argv)
-		if res.err == nil || !strings.Contains(res.err.Error(), tc.want) {
-			t.Fatalf("resolve(%v) error = %v, want %q", tc.argv, res.err, tc.want)
-		}
-	}
-}
-
-func TestResolveDebugRejectsMissingFlagFirstAndExtraOperands(t *testing.T) {
+func TestResolveDebugRejectsMissingAndExtraOperands(t *testing.T) {
 	for _, argv := range [][]string{
 		{"mecatui", "debug"},
-		{"mecatui", "debug", "--prompt", "why"},
 		{"mecatui", "connect", "host:1", "debug"},
 	} {
 		if res := resolveInvocation(argv); res.err == nil {
@@ -91,28 +56,25 @@ func TestResolveDebugRejectsMissingFlagFirstAndExtraOperands(t *testing.T) {
 	}
 }
 
-func TestPredictableSessionHandles_Scenario3_CommandHelpAndExactBypass(t *testing.T) {
+func TestPredictableSessionHandles_Scenario3_CommandHelpUsesOneTargetFlow(t *testing.T) {
 	var out bytes.Buffer
 	writeTopLevelHelp(&out)
 	text := out.String()
 	words := strings.Join(strings.Fields(text), " ")
 	for _, want := range []string{
-		"mecatui debug (SESSION_ID | --exact SESSION_ID) [flags]",
-		"mecatui connect ADDRESS debug (SESSION_ID | --exact SESSION_ID) [flags]",
-		"positional exact ID or displayed 12-column short handle",
-		"gathers every projected match",
-		"bypass inventory with --exact SESSION_ID",
-		"mutually exclusive",
-		"inventory failure",
-		"use /session",
-		"leading-hyphen exact IDs require --exact",
+		"mecatui debug TARGET [flags]",
+		"mecatui connect ADDRESS debug TARGET [flags]",
+		"exact session ID or displayed 12-column short handle",
+		"exact identity wins",
+		"unique handle resolves automatically",
+		"full exact ID",
 	} {
 		if !strings.Contains(words, want) {
 			t.Fatalf("help missing %q:\n%s", want, text)
 		}
 	}
-	if strings.Contains(text, "#<handle>") || strings.Contains(text, "#HANDLE") {
-		t.Fatalf("help retains a leading handle marker:\n%s", text)
+	if strings.Contains(text, "--exact") || strings.Contains(text, "#<handle>") || strings.Contains(text, "#HANDLE") {
+		t.Fatalf("help retains an obsolete alternate grammar or handle marker:\n%s", text)
 	}
 }
 
@@ -174,18 +136,22 @@ func TestDebugHelpRoutesRenderDedicatedContract(t *testing.T) {
 		argv  []string
 		usage string
 	}{
-		{"direct", []string{"mecatui", "debug", "--help"}, "Usage: mecatui debug (SESSION_ID | --exact SESSION_ID) [flags]"},
-		{"alias", []string{"mecatui", "help", "debug"}, "Usage: mecatui debug (SESSION_ID | --exact SESSION_ID) [flags]"},
-		{"connect", []string{"mecatui", "connect", "example.test:9443", "debug", "--help"}, "Usage: mecatui connect ADDRESS debug (SESSION_ID | --exact SESSION_ID) [flags]"},
+		{"direct", []string{"mecatui", "debug", "--help"}, "Usage: mecatui debug TARGET [flags]"},
+		{"alias", []string{"mecatui", "help", "debug"}, "Usage: mecatui debug TARGET [flags]"},
+		{"connect", []string{"mecatui", "connect", "example.test:9443", "debug", "--help"}, "Usage: mecatui connect ADDRESS debug TARGET [flags]"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			out := runHelpCase(t, tc.argv, tc.usage)
 			for _, want := range []string{
-				"exact ID or the displayed 12-column short handle",
-				"collision or inventory failure",
-				"--exact SESSION_ID bypasses inventory",
-				"Leading-hyphen exact IDs require --exact SESSION_ID",
+				"TARGET is either the exact session ID",
+				"ID printed on exit",
+				"Exact identity wins automatically",
+				"unique short handle resolves",
+				"copy the full exact ID",
+				"pass it as TARGET to the same command",
+				"inventory is unavailable or no handle matches",
+				"sent unchanged",
 			} {
 				if !strings.Contains(out, want) {
 					t.Errorf("debug help missing %q:\n%s", want, out)

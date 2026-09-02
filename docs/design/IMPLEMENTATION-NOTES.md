@@ -309,12 +309,11 @@ that turn or expose the raw error. Durable authority, safety, and source hierarc
 header carries amber/bold `DEBUG target <handle>` immediately after `mecatui`; its fixed
 12-column handle renders safe `[A-Za-z0-9._-]` bytes literally except that a leading `-` is
 encoded as `%2D`, and renders every other UTF-8 byte as uppercase `%HH`, keeping only complete
-atoms that fit. It has no leading `#`. A syntactically valid positional handle gathers every
-distinct projected match from the complete caller-visible inventory before selection, so exact
-string equality cannot hide ambiguity. Ambiguity, a zero match, or inventory failure stops before
-create and directs the operator to copy the exact ID from `/session` and use `--exact`; both
-`mecatui debug --exact SESSION_ID` and
-`mecatui connect ADDRESS debug --exact SESSION_ID` bypass inventory and send that ID unchanged.
+atoms that fit. It has no leading `#`. A syntactically valid short target consults the complete
+caller-visible inventory: exact full-ID equality wins, otherwise one unique projected match
+resolves. Multiple projected matches stop before create and direct the operator to copy the exact
+ID from `/session` and pass it as `TARGET` through the same command. A zero match or inventory
+failure passes `TARGET` unchanged to the server's existing exact-ID authorization/not-found path.
 Width pressure removes
 model/mode/server detail before that complete identity, `/session` shows and copies the
 safely quoted exact target ID, and the target-derived title uses the same handle. Binding-breaking

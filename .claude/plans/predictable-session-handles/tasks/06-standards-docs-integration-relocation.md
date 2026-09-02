@@ -23,8 +23,9 @@ IDs.
 Apply ADR-0284 identity consistently across plan, ADR index, task references, docs, and future test
 names. Preserve ADR-0217's body and its decision-8-only supersession backlink. Update command help,
 `docs/tui.md`, `docs/usage.md`, status-line reference, relevant architecture/implementation notes,
-and existing `user-docs/` material for leading-hyphen encoding, gather-all ambiguity, and embedded
-and connected `--exact` forms. Update landed session-continuity AC4.2/AC4.3 verification names to
+and existing `user-docs/` material for leading-hyphen encoding, exact-ID precedence, projected
+ambiguity, and the embedded/connected one-`TARGET` grammar. Update landed session-continuity
+AC4.2/AC4.3 verification names to
 the current scenario tests, then remove stale `TestADR_0108_DisplayDigestIsNotAnID`, other
 digest-named compatibility aliases, and pre-ADR-0284 session-handle test names. Preserve
 `InspectSession` scope/history handles, evidence/manifest digests, and target+incarnation digests
@@ -41,7 +42,7 @@ unchanged. Regenerate docs as required and run the acceptance trace checks.
 - AC3.2: `docs/tui.md`, `docs/usage.md`, the relevant `user-docs/` session/debug guides, and the
   status-line input reference use the handle term, explain leading-hyphen encoding and the fixed
   escaped-prefix projection, preserve `/session` exact-copy guidance, and document both embedded
-  and connected `--exact` examples. They document the `Session.Digest` → `Session.Handle` schema
+  and connected one-`TARGET` examples. They document the `Session.Digest` → `Session.Handle` schema
   rename and protocol v2, with no digest alias.
   - verify: inspection — `task docs` and `task site:build` validate the reviewed documentation paths
 - AC3.3: Header, `/sessions`, debugger-target presentation, terminal title, status input, and

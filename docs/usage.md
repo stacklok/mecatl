@@ -119,20 +119,16 @@ exists, the TUI fails, or a signal interrupts/forces exit; stdout is unchanged. 
 
 ## Debug a stored session
 
-Use `mecatui debug SESSION_ID` against the embedded store, or
-`mecatui connect ADDRESS debug SESSION_ID` against a running server. A positional `SESSION_ID`
-may be an exact full opaque ID or the displayed 12-column short handle: safe
-`[A-Za-z0-9._-]` bytes are literal except that a leading `-` is encoded as `%2D`; other bytes
-are uppercase `%HH` atoms. The handle has no leading `#`; pass that displayed literal
-unchanged. A syntactically valid positional handle gathers every distinct projected match from
-the complete caller-visible inventory before selection, so exact equality does not hide a
-collision. Ambiguity, no match, or inventory failure creates nothing. Open `/session`, copy its
-exact full ID, and use the mutually exclusive inventory-free form:
-
-```sh
-mecatui debug --exact SESSION_ID
-mecatui connect ADDRESS debug --exact SESSION_ID
-```
+Use `mecatui debug TARGET` against the embedded store, or
+`mecatui connect ADDRESS debug TARGET` against a running server. `TARGET` may be an exact full
+opaque ID—including the exact final ID printed when mecatui exits—or the displayed 12-column short
+handle. Safe `[A-Za-z0-9._-]` bytes are literal except that a leading `-` is encoded as `%2D`;
+other bytes are uppercase `%HH` atoms. The handle has no leading `#`; pass that displayed literal
+unchanged. A syntactically valid short target consults the complete caller-visible inventory.
+Exact full-ID equality wins; otherwise one unique projected match resolves. On ambiguity, open
+`/session`, copy the exact full ID, and pass it as `TARGET` through the same command. If inventory
+fails or no projection matches, mecatui sends `TARGET` unchanged and reports the ordinary server
+exact-ID authorization/not-found result.
 
 The command creates a **separate durable
 debug session** and submits one first user turn containing the sanitized current debugger

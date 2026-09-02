@@ -49,20 +49,18 @@ visible conversation, approve permission requests, steer a running session, and 
 a dedicated debugger when the connected server supports it:
 
 ```sh
-mecatui debug SESSION_ID
-mecatui connect ADDRESS debug SESSION_ID
-mecatui debug --exact SESSION_ID
-mecatui connect ADDRESS debug --exact SESSION_ID
+mecatui debug TARGET
+mecatui connect ADDRESS debug TARGET
 ```
 
-A positional debug operand accepts an exact full opaque session ID or the displayed 12-column
-short handle. Safe `[A-Za-z0-9._-]` bytes are literal except that a leading `-` is encoded as
-`%2D`; other UTF-8 bytes are uppercase `%HH` atoms, and only complete atoms that fit are shown.
-The literal has no leading `#`. A syntactically valid positional handle gathers every distinct
-projected match from the complete caller-visible inventory; exact equality cannot hide a
-collision. If it is ambiguous, absent, or inventory cannot be loaded, mecatui creates nothing:
-open `/session`, copy the exact full ID, and use the mutually exclusive `--exact` form. Both
-embedded and connected `--exact` forms bypass inventory and send that ID unchanged.
+`TARGET` accepts an exact full opaque session ID—including the exact final ID printed on exit—or
+the displayed 12-column short handle. Safe `[A-Za-z0-9._-]` bytes are literal except that a leading
+`-` is encoded as `%2D`; other UTF-8 bytes are uppercase `%HH` atoms, and only complete atoms that
+fit are shown. The literal has no leading `#`. A syntactically valid short target consults the
+complete caller-visible inventory. Exact full-ID equality wins; otherwise one unique projected
+match resolves. On ambiguity, open `/session`, copy the full exact ID, and pass it as `TARGET`
+through the same command. If inventory cannot be loaded or no handle matches, mecatui sends
+`TARGET` unchanged and reports the server's ordinary exact-ID authorization/not-found result.
 It creates a separate no-filesystem analysis session and is explicit consent
 to send bounded stored-session evidence—which may include secrets—to the selected model.
 It never resumes or mutates the target. Its bounded network view can correlate persisted,

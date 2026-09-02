@@ -33,35 +33,32 @@ Save that value and use it with `--resume`.
 A debugger is intentionally different from continuing a chat:
 
 ```sh
-# Positional exact ID or displayed short handle.
+# Exact ID or displayed short handle: both use the same TARGET grammar.
 mecatui debug 01JOPAQUESES
 mecatui connect 127.0.0.1:8080 debug 01JOPAQUESES
-
-# Inventory-free exact-ID bypass (mutually exclusive with the positional form).
-mecatui debug --exact 01JOPAQUESESSIONID
-mecatui connect 127.0.0.1:8080 debug --exact 01JOPAQUESESSIONID
+mecatui debug 01JOPAQUESESSIONID
+mecatui connect 127.0.0.1:8080 debug 01JOPAQUESESSIONID
 
 # Add one or more already-configured global reporting servers by name.
 mecatui debug 01JOPAQUESES --debug-mcp github
 mecatui connect 127.0.0.1:8080 debug 01JOPAQUESES --debug-mcp github
 
 # Replace the automatic diagnosis question with a focused one.
-mecatui debug --exact 01JOPAQUESESSIONID \
+mecatui debug 01JOPAQUESESSIONID \
   --prompt "Why did the final tool call fail?"
 ```
 
 ### What happens
 
-1. Use the full target ID from `/session`, `/sessions`, or the
-   `mecatui: final-session-id=...` line printed when its TUI exits. You can instead
-   type the displayed 12-column short handle unchanged: safe `[A-Za-z0-9._-]` bytes
-   are literal except that a leading `-` is encoded as `%2D`; other UTF-8 bytes are
-   uppercase `%HH` atoms, and only complete atoms that fit are shown. It has no leading
-   `#`. A syntactically valid positional handle gathers every distinct projected match
-   from the complete visible inventory; exact equality cannot hide a collision. If the
-   handle is ambiguous, absent, or inventory cannot be loaded, mecatui creates nothing.
-   Open `/session`, copy the exact full ID, and use `debug --exact SESSION_ID`; that form
-   bypasses inventory and is mutually exclusive with a positional operand.
+1. Pass the full target ID from `/session`, `/sessions`, or the
+   `mecatui: final-session-id=...` line printed when its TUI exits as `TARGET`. You can instead
+   pass the displayed 12-column short handle unchanged: safe `[A-Za-z0-9._-]` bytes are literal
+   except that a leading `-` is encoded as `%2D`; other UTF-8 bytes are uppercase `%HH` atoms,
+   and only complete atoms that fit are shown. It has no leading `#`. A syntactically valid short
+   target consults the complete visible inventory. Exact full-ID equality wins; otherwise one
+   unique projected match resolves. If projections are ambiguous, open `/session`, copy the full
+   exact ID, and pass it as `TARGET` through the same command. If inventory fails or no handle
+   matches, mecatui sends `TARGET` unchanged and reports the ordinary server exact-ID result.
 2. Run `mecatui debug` against the same embedded store, or use
    `mecatui connect ADDRESS debug` against the server that owns the target.
 3. mecatui prints a privacy disclosure before entering the alternate screen.

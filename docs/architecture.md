@@ -386,19 +386,19 @@ works with no daemon. The `sessions` launch intent is orthogonal to that transpo
 `mecatui sessions` and `mecatui connect ADDRESS sessions` enter the same stored-session
 inventory without first creating a session, then continue/inspect through the existing
 authoritative transcript path or create only when the operator requests a new chat.
-The sibling `mecatui debug (SESSION_ID | --exact SESSION_ID)` and
-`mecatui connect ADDRESS debug (SESSION_ID | --exact SESSION_ID)` forms create a separate durable `debug` session whose trusted relationship metadata binds
+The sibling `mecatui debug TARGET` and
+`mecatui connect ADDRESS debug TARGET` forms create a separate durable `debug` session whose trusted relationship metadata binds
 one authorized target. The proto-free UI uses the same fixed 12-column,
 terminal-safe handle as the header: safe `[A-Za-z0-9._-]` bytes are literal except that
 a leading `-` is encoded as `%2D`; all other UTF-8 bytes are uppercase `%HH`, with only
 complete atoms that fit. The displayed literal has no leading `#`. A syntactically valid
-positional handle is resolved against the complete caller-filtered inventory by gathering every
-distinct projected match; exact equality cannot hide a collision. Ambiguous, zero-match, or
-inventory-failed resolution stops before creation with `/session` plus `--exact` guidance.
-The explicit `--exact` form bypasses inventory and sends the copied full ID unchanged; longer
-or malformed positional operands remain exact-ID inputs automatically. Only the selected exact
-ID crosses the real `Client.CreateDebugSession` request boundary, and the server remains the
-final authority.
+short target is resolved against the complete caller-filtered inventory: exact full-ID equality
+wins automatically, otherwise one unique projected match resolves. Multiple projections fail
+with guidance to copy and pass the full exact ID as `TARGET`. Inventory failure or no match
+passes `TARGET` unchanged to the existing server exact-ID authorization/not-found path. Longer
+or malformed targets likewise remain exact-ID inputs automatically. Only the resolved exact ID
+crosses the real `Client.CreateDebugSession` request boundary, and the server remains the final
+authority.
 That engine has no filesystem, carries a stable-prefix debugging
 contract, and always exposes the target-bound `InspectSession` tool; the model cannot
 choose another target or submit a raw session ID. A create request may additionally name

@@ -296,26 +296,19 @@ func SessionHandle(id string) string {
 
 // CreateDebugSession creates a separate no-filesystem analysis session bound to
 // targetID. A target with the canonical short-handle grammar is resolved against
-// the caller-visible session inventory; the server still receives and authorizes
-// only an exact ID. Capability absence is detected from the create response (the
-// first common response carrying ServerCapabilities); an older server may ignore
-// the new target field, so that accidentally-created ordinary session is closed
-// before this method fails closed.
+// the caller-visible session inventory. Exact inventory equality wins; otherwise
+// a unique projected handle resolves to its full ID. An inventory failure or no
+// projected match leaves the target unchanged so the server's exact-ID authority
+// decides the result. Capability absence is detected from the create response
+// (the first common response carrying ServerCapabilities); an older server may
+// ignore the new target field, so that accidentally-created ordinary session is
+// closed before this method fails closed.
 func (c *Client) CreateDebugSession(ctx context.Context, targetID string, mode mecatlv1.PermissionMode, sel ModelSelection, debugMCP ...string) (string, string, Capabilities, ResolvedModel, error) {
 	resolvedTarget, err := c.resolveDebugTarget(ctx, targetID)
 	if err != nil {
 		return "", "", Capabilities{}, ResolvedModel{}, err
 	}
 	return c.createDebugSession(ctx, resolvedTarget, mode, sel, debugMCP...)
-}
-
-// CreateDebugSessionExact creates a debug session for an explicit full ID
-// without consulting the caller-visible session inventory.
-func (c *Client) CreateDebugSessionExact(ctx context.Context, targetID string, mode mecatlv1.PermissionMode, sel ModelSelection, debugMCP ...string) (string, string, Capabilities, ResolvedModel, error) {
-	if err := validateDebugTarget(targetID); err != nil {
-		return "", "", Capabilities{}, ResolvedModel{}, err
-	}
-	return c.createDebugSession(ctx, targetID, mode, sel, debugMCP...)
 }
 
 func (c *Client) createDebugSession(ctx context.Context, resolvedTarget string, mode mecatlv1.PermissionMode, sel ModelSelection, debugMCP ...string) (string, string, Capabilities, ResolvedModel, error) {
@@ -343,7 +336,7 @@ func (c *Client) createDebugSession(ctx context.Context, resolvedTarget string, 
 	return id, resolvedTarget, caps, resolved, nil
 }
 
-const debugTargetExactCopyGuidance = "open /session to copy the exact full session ID, then retry with debug --exact SESSION_ID"
+const debugTargetExactCopyGuidance = "open /session, copy the full exact session ID, and pass it as TARGET"
 
 func validateDebugTarget(targetID string) error {
 	if targetID == "" {
@@ -364,12 +357,15 @@ func (c *Client) resolveDebugTarget(ctx context.Context, targetID string) (strin
 	}
 	sessions, err := c.ListSessions(ctx)
 	if err != nil {
-		return "", fmt.Errorf("resolve debug target: list sessions: %w; %s", err, debugTargetExactCopyGuidance)
+		return targetID, nil
 	}
 
 	ids := make(map[string]struct{}, len(sessions))
 	for _, item := range sessions {
 		ids[item.ID] = struct{}{}
+	}
+	if _, exact := ids[targetID]; exact {
+		return targetID, nil
 	}
 	matches := make([]string, 0, 1)
 	for id := range ids {
@@ -381,7 +377,7 @@ func (c *Client) resolveDebugTarget(ctx context.Context, targetID string) (strin
 		return "", fmt.Errorf("session handle %q is ambiguous; %s", targetID, debugTargetExactCopyGuidance)
 	}
 	if len(matches) == 0 {
-		return "", fmt.Errorf("session handle %q did not match a session; %s", targetID, debugTargetExactCopyGuidance)
+		return targetID, nil
 	}
 	return matches[0], nil
 }

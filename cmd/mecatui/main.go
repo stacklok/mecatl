@@ -283,7 +283,7 @@ func runWithOptions(argv []string, options runOptions) error {
 
 	connectionMode := resolveConnectionMode(cfg)
 	deps := applyLaunchIntent(cfg, ui.Deps{
-		Session:                &sessionAdapter{cl: cl, workspace: cfg.workspace, mode: cfg.mode, debugTarget: cfg.debugTarget, debugExact: cfg.debugExact, debugMCP: cfg.debugMCP},
+		Session:                &sessionAdapter{cl: cl, workspace: cfg.workspace, mode: cfg.mode, debugTarget: cfg.debugTarget, debugMCP: cfg.debugMCP},
 		Conv:                   cl,
 		MCP:                    cl,
 		Cmds:                   cl,
@@ -407,7 +407,6 @@ func parseRunConfig(res invocationResolution) (config, error) {
 	}
 	cfg.connectAddress = res.address
 	cfg.debugTarget = res.debugTarget
-	cfg.debugExact = res.debugExact
 	if err := configureWorkspaceForTransport(&cfg); err != nil {
 		return config{}, err
 	}
@@ -1345,7 +1344,6 @@ type sessionAdapter struct {
 	workspace   string
 	mode        string
 	debugTarget string
-	debugExact  bool
 	debugMCP    []string
 }
 
@@ -1354,15 +1352,7 @@ func (s *sessionAdapter) CreateSession(ctx context.Context, sel client.ModelSele
 		if mode == "" {
 			mode = s.mode
 		}
-		var id, target string
-		var caps client.Capabilities
-		var resolved client.ResolvedModel
-		var err error
-		if s.debugExact {
-			id, target, caps, resolved, err = s.cl.CreateDebugSessionExact(ctx, s.debugTarget, client.ModeFromString(mode), sel, s.debugMCP...)
-		} else {
-			id, target, caps, resolved, err = s.cl.CreateDebugSession(ctx, s.debugTarget, client.ModeFromString(mode), sel, s.debugMCP...)
-		}
+		id, target, caps, resolved, err := s.cl.CreateDebugSession(ctx, s.debugTarget, client.ModeFromString(mode), sel, s.debugMCP...)
 		if target != "" {
 			s.debugTarget = target
 		}

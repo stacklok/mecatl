@@ -64,15 +64,15 @@ var topLevelCommands = []topLevelCommand{
 	},
 	{
 		name:     "debug",
-		synopsis: "debug (SESSION_ID | --exact SESSION_ID) [flags]",
-		purpose:  "diagnose by a positional exact ID or displayed 12-column short handle; resolution gathers every projected match; bypass inventory with --exact SESSION_ID (mutually exclusive); leading-hyphen exact IDs require --exact; on ambiguity or inventory failure, use /session then --exact",
+		synopsis: "debug TARGET [flags]",
+		purpose:  "diagnose by an exact session ID or displayed 12-column short handle; exact identity wins, a unique handle resolves automatically, and ambiguity asks for the full exact ID",
 		resolve: func(args []string) invocationResolution {
 			return resolveDebugCommand(modeLocal, "", args)
 		},
 	},
 	{
 		name:     "connect",
-		synopsis: "connect ADDRESS [sessions | debug (SESSION_ID | --exact SESSION_ID)] [flags]",
+		synopsis: "connect ADDRESS [sessions | debug TARGET] [flags]",
 		purpose:  "dial a running mecated at ADDRESS (host:port), optionally browsing or debugging a stored session",
 		resolve:  resolveConnectCommand,
 	},
@@ -106,7 +106,6 @@ type invocationResolution struct {
 	address        string // connect or remote-login target; empty for local/login help
 	browseSessions bool   // launch directly into the shared stored-session inventory
 	debugTarget    string // immutable target for a dedicated no-filesystem debug session
-	debugExact     bool   // bypass local short-handle inventory resolution
 	debugHelp      bool   // render dedicated debug help instead of transport flag help
 	helpIndex      bool   // render the top-level command index
 	remaining      []string
@@ -280,29 +279,8 @@ func resolveDebugCommand(mode transportMode, address string, args []string) invo
 	if len(args) == 1 && isHelpMetaFlag(args[0]) {
 		return invocationResolution{mode: mode, address: address, debugHelp: true}
 	}
-	if len(args) == 0 {
-		return invocationResolution{err: helpUsageError("debug requires SESSION_ID or --exact SESSION_ID")}
-	}
-	if args[0] == "--exact" {
-		if len(args) < 2 || args[1] == "" {
-			return invocationResolution{err: helpUsageError("debug --exact requires a non-empty SESSION_ID")}
-		}
-		return invocationResolution{mode: mode, address: address, debugTarget: args[1], debugExact: true, remaining: args[2:]}
-	}
-	if args[0] == "" {
-		return invocationResolution{err: helpUsageError("debug requires SESSION_ID or --exact SESSION_ID")}
-	}
-	if strings.HasPrefix(args[0], "-") {
-		usage := "mecatui debug --exact SESSION_ID"
-		if mode == modeConnect {
-			usage = "mecatui connect ADDRESS debug --exact SESSION_ID"
-		}
-		return invocationResolution{err: helpUsageError(fmt.Sprintf("debug positional SESSION_ID %q is flag-like; use '%s'", args[0], usage))}
-	}
-	for _, arg := range args[1:] {
-		if arg == "--exact" {
-			return invocationResolution{err: helpUsageError("debug positional SESSION_ID and --exact are mutually exclusive")}
-		}
+	if len(args) == 0 || args[0] == "" {
+		return invocationResolution{err: helpUsageError("debug requires TARGET")}
 	}
 	return invocationResolution{mode: mode, address: address, debugTarget: args[0], remaining: args[1:]}
 }
@@ -356,8 +334,8 @@ func writeSoftWrapped(out io.Writer, indent, text string, width int) {
 // spellings and after a leading-word usage error.
 func writeTopLevelHelp(out io.Writer) {
 	_, _ = fmt.Fprintln(out, "Usage: mecatui [flags]")
-	_, _ = fmt.Fprintln(out, "       mecatui debug (SESSION_ID | --exact SESSION_ID) [flags]")
-	_, _ = fmt.Fprintln(out, "       mecatui connect ADDRESS debug (SESSION_ID | --exact SESSION_ID) [flags]")
+	_, _ = fmt.Fprintln(out, "       mecatui debug TARGET [flags]")
+	_, _ = fmt.Fprintln(out, "       mecatui connect ADDRESS debug TARGET [flags]")
 	_, _ = fmt.Fprintln(out, "       mecatui <command> [flags]")
 	_, _ = fmt.Fprintln(out)
 	_, _ = fmt.Fprintln(out, "Bare 'mecatui [flags]' hosts an embedded mecated server in-process (no loopback probe).")
@@ -372,15 +350,15 @@ func writeTopLevelHelp(out io.Writer) {
 // writeDebugHelp renders the debug command contract without falling through to
 // the generic transport flag reference.
 func writeDebugHelp(out io.Writer, connect bool) {
-	usage := "mecatui debug (SESSION_ID | --exact SESSION_ID) [flags]"
+	usage := "mecatui debug TARGET [flags]"
 	if connect {
-		usage = "mecatui connect ADDRESS debug (SESSION_ID | --exact SESSION_ID) [flags]"
+		usage = "mecatui connect ADDRESS debug TARGET [flags]"
 	}
 	_, _ = fmt.Fprintf(out, "Usage: %s\n\n", usage)
-	_, _ = fmt.Fprintln(out, "SESSION_ID may be an exact ID or the displayed 12-column short handle.")
-	_, _ = fmt.Fprintln(out, "Handle resolution gathers every projected match; on a collision or inventory failure, use /session then retry with --exact SESSION_ID.")
-	_, _ = fmt.Fprintln(out, "--exact SESSION_ID bypasses inventory and is mutually exclusive with a positional ID.")
-	_, _ = fmt.Fprintln(out, "Leading-hyphen exact IDs require --exact SESSION_ID.")
+	_, _ = fmt.Fprintln(out, "TARGET is either the exact session ID (including the ID printed on exit) or the displayed 12-column short handle.")
+	_, _ = fmt.Fprintln(out, "Exact identity wins automatically. A unique short handle resolves from the caller-visible session inventory.")
+	_, _ = fmt.Fprintln(out, "If a handle is ambiguous, open /session, copy the full exact ID, and pass it as TARGET to the same command.")
+	_, _ = fmt.Fprintln(out, "If inventory is unavailable or no handle matches, TARGET is sent unchanged for the server to authorize or reject as an exact ID.")
 }
 
 // unknownCommandError builds the error message for an unknown leading bare word.

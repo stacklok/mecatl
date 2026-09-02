@@ -1005,8 +1005,8 @@ func TestCommandSummaryUsesIndentedWrappedDescriptions(t *testing.T) {
 
 	for _, want := range []string{
 		"  sessions\n    browse stored sessions before creating or continuing a chat\n",
-		"  debug (SESSION_ID | --exact SESSION_ID) [flags]\n    diagnose by a positional exact ID or displayed 12-column short handle;\n    resolution gathers every projected match; bypass inventory with --exact\n    SESSION_ID (mutually exclusive); leading-hyphen exact IDs require --exact;\n    on ambiguity or inventory failure, use /session then --exact\n",
-		"  connect ADDRESS [sessions | debug (SESSION_ID | --exact SESSION_ID)] [flags]\n    dial a running mecated at ADDRESS (host:port), optionally browsing or\n    debugging a stored session\n",
+		"  debug TARGET [flags]\n    diagnose by an exact session ID or displayed 12-column short handle; exact\n    identity wins, a unique handle resolves automatically, and ambiguity asks\n    for the full exact ID\n",
+		"  connect ADDRESS [sessions | debug TARGET] [flags]\n    dial a running mecated at ADDRESS (host:port), optionally browsing or\n    debugging a stored session\n",
 		"  login ADDRESS\n    log in to a remote mecated at ADDRESS using OIDC\n",
 		"  llm login [--skip-browser]\n    run the ToolHive LLM gateway OIDC browser flow (no session)\n",
 	} {
@@ -1018,7 +1018,7 @@ func TestCommandSummaryUsesIndentedWrappedDescriptions(t *testing.T) {
 		t.Errorf("command summary put the connect description on its synopsis line:\n%s", summary)
 	}
 	unknown := unknownCommandError("unknown").Error()
-	if !strings.Contains(unknown, "  connect ADDRESS [sessions | debug (SESSION_ID | --exact SESSION_ID)] [flags]\n    dial a running mecated at ADDRESS (host:port), optionally browsing or\n    debugging a stored session\n") {
+	if !strings.Contains(unknown, "  connect ADDRESS [sessions | debug TARGET] [flags]\n    dial a running mecated at ADDRESS (host:port), optionally browsing or\n    debugging a stored session\n") {
 		t.Errorf("unknown-command output did not reuse the indented, wrapped command summary:\n%s", unknown)
 	}
 	for _, line := range strings.Split(strings.TrimSuffix(summary, "\n"), "\n") {
