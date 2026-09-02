@@ -1407,6 +1407,53 @@ func (h *HarnessServer) StreamSessionEvents(req *mecatlv1.StreamSessionEventsReq
 	return nil
 }
 
+func (h *HarnessServer) ConnectWorkspaceServices(ctx context.Context, req *mecatlv1.WorkspaceEnrollmentConnectRequest) (*mecatlv1.WorkspaceEnrollment, error) {
+	if req.GetSessionId() == "" {
+		return nil, status.Error(codes.InvalidArgument, "session_id is required")
+	}
+	result, err := h.svc.ConnectWorkspaceServices(ctx, session.SessionID(req.GetSessionId()))
+	if err != nil {
+		return nil, toStatus(err)
+	}
+	return toProtoWorkspaceEnrollment(result), nil
+}
+
+func (h *HarnessServer) RetryWorkspaceEnrollment(ctx context.Context, req *mecatlv1.WorkspaceEnrollmentControlRequest) (*mecatlv1.WorkspaceEnrollment, error) {
+	id := session.WorkspaceEnrollmentID(req.GetEnrollmentId())
+	if req.GetSessionId() == "" || !id.Valid() {
+		return nil, status.Error(codes.InvalidArgument, "valid session_id and enrollment_id are required")
+	}
+	result, err := h.svc.RetryWorkspaceEnrollment(ctx, session.SessionID(req.GetSessionId()), id)
+	if err != nil {
+		return nil, toStatus(err)
+	}
+	return toProtoWorkspaceEnrollment(result), nil
+}
+
+func (h *HarnessServer) CancelWorkspaceEnrollment(ctx context.Context, req *mecatlv1.WorkspaceEnrollmentControlRequest) (*mecatlv1.WorkspaceEnrollment, error) {
+	id := session.WorkspaceEnrollmentID(req.GetEnrollmentId())
+	if req.GetSessionId() == "" || !id.Valid() {
+		return nil, status.Error(codes.InvalidArgument, "valid session_id and enrollment_id are required")
+	}
+	result, err := h.svc.CancelWorkspaceEnrollment(ctx, session.SessionID(req.GetSessionId()), id)
+	if err != nil {
+		return nil, toStatus(err)
+	}
+	return toProtoWorkspaceEnrollment(result), nil
+}
+
+func toProtoWorkspaceEnrollment(result WorkspaceEnrollmentProjection) *mecatlv1.WorkspaceEnrollment {
+	status := string(result.Status)
+	switch status {
+	case "denied", "expired":
+		status = "failed"
+	}
+	return &mecatlv1.WorkspaceEnrollment{
+		EnrollmentId: string(result.Ref.ID), Status: status,
+		RequiredServices: result.Ref.RequiredServices, PresentationUrl: valid(result.URL),
+	}
+}
+
 // GetMcpAuthorizationPresentation returns the live browser URL for one owned,
 // still-pending authorization. The request carries correlation only.
 func (h *HarnessServer) GetMcpAuthorizationPresentation(ctx context.Context, req *mecatlv1.GetMcpAuthorizationPresentationRequest) (*mecatlv1.GetMcpAuthorizationPresentationResponse, error) {

@@ -542,6 +542,9 @@ type Config struct {
 	SessionEngineWithTools SessionEngineWithToolsFactory
 	// MCPBroker owns logical broker state; Service owns only local attachments.
 	MCPBroker brokercontract.Service
+	// WorkspaceEnrollment advertises the optional pre-prompt enrollment capability.
+	// It must be true only when MCPBroker attachments implement the enrollment boundary.
+	WorkspaceEnrollment bool
 
 	// ModeNeedsEngine reports whether a given session PermissionMode resolves a model
 	// that DIFFERS from the shared engine's model (ADR 0030 Layer 3) — i.e. whether a
@@ -2487,9 +2490,10 @@ func (s *Service) capabilities() *mecatlv1.ServerCapabilities {
 		Steer: s.cfg.Engine != nil && s.cfg.Engine.SteerEnabled(),
 		// Manual compaction uses the configured engine, or a per-session engine
 		// derived under the same service construction semantics.
-		ManualCompaction: s.cfg.Engine != nil,
-		SessionDebug:     s.cfg.DebugSessionEngine != nil,
-		DebugMcp:         s.cfg.DebugMCP,
+		ManualCompaction:    s.cfg.Engine != nil,
+		SessionDebug:        s.cfg.DebugSessionEngine != nil,
+		DebugMcp:            s.cfg.DebugMCP,
+		WorkspaceEnrollment: s.cfg.WorkspaceEnrollment,
 	}
 }
 

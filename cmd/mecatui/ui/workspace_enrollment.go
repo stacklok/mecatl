@@ -91,7 +91,8 @@ func (m Model) applyWorkspaceEnrollment(msg workspaceEnrollmentMsg) (tea.Model, 
 	m.enrollment.Status = msg.result.Status
 	m.enrollment.RequiredServices = msg.result.RequiredServices
 	m.enrollment.err = ""
-	if msg.result.Status == client.WorkspaceEnrollmentConnected {
+	switch msg.result.Status {
+	case client.WorkspaceEnrollmentConnected:
 		m.enrollment = workspaceEnrollmentState{}
 		m.phase = phaseIdle
 		focusCmd := m.prompt.Focus()
@@ -104,8 +105,9 @@ func (m Model) applyWorkspaceEnrollment(msg workspaceEnrollmentMsg) (tea.Model, 
 			return mm, tea.Batch(cmd, submitCmd)
 		}
 		return m, cmd
-	}
-	if msg.result.Status == client.WorkspaceEnrollmentCancelled {
+	case client.WorkspaceEnrollmentFailed:
+		m.enrollment.err = "workspace enrollment failed"
+	case client.WorkspaceEnrollmentCancelled:
 		m.enrollment.ID = ""
 	}
 	if presentationURL != "" && m.deps.OpenURL != nil {
