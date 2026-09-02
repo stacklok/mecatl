@@ -2,8 +2,8 @@
 id: 06-helm-docs-e2e
 title: Helm, docs, and end-to-end proof
 blocked_by: [05-registry-aliases]
-status: pending
-branch: ""
+status: done
+branch: plan-oauth-protected-resource-discovery/06-helm-docs-e2e
 worktree: ""
 issue: "1033"
 retries: 0
