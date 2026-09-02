@@ -5845,15 +5845,13 @@ the scoped WRITE path is deferred** (see below).
 
 ### Session profiles — `"no-fs"` (issue #55)
 
-The filesystem is **optional per session**. `CreateSessionRequest.profile`(6) is an
-enum-as-string (`""` default / `"no-fs"`; unknown ⇒ loud InvalidArgument, never a silent
-default), parsed by `server.ParseSessionProfile` and FIXED for the session lifetime. The
-workspace requirement is PROFILE-AWARE in `Service.createSession` (the old unconditional
-empty-workspace guards in grpc.go/http.go are gone): default REQUIRES a workspace, no-fs
-REQUIRES an EMPTY one — the contradictory combination is rejected loudly. A no-fs session
-ALWAYS takes the per-session engine path (`needPerSession` includes the profile — the shared
-engine has the FS tools baked in) and `server.SessionEngineFactory` grew a
-`profile SessionProfile` parameter, mirroring how the `ProviderSelector` flows.
+The filesystem is **optional per session**, but placement is always server-owned.
+`CreateSessionRequest.profile`(6) is an enum-as-string (`""` = bind the trusted
+deployment default; `"no-fs"` = explicit attenuation). Unknown values fail loudly.
+The public request has no workspace, cwd, placement ID, or selector. Composition's
+`PlacementProvider.Bind` returns a complete Environment plus an exact valid ref before
+the session is persisted. A no-fs session always takes the per-session engine path
+because the shared engine has FS tools baked in.
 
 - **Catalog profile:** `catalogSession.noFS` threads through `assembleCatalog`.
   `registerCoreTools(…, noFS)` registers `tools.NoFS()` = {WebFetch} PLUS WebSearch (both
@@ -5868,13 +5866,11 @@ engine has the FS tools baked in) and `server.SessionEngineFactory` grew a
 - **Skill stays ON, body-only:** a skill body is TEXT INJECTION, not a filesystem act; an
   out-of-workspace ASSET read fails honestly through the no-FS workspace (skills with
   payload files are effectively body-only in a no-fs session).
-- **Workspace:** `engine/adapter/nofs` — the HONEST empty `tool.Workspace` (reads/stats fail
-  `fs.ErrNotExist`, Glob/Grep empty, Write refuses with `ErrNoFilesystem`, `Root()` "");
-  deliberately NOT memfs, which would silently absorb writes nobody can ever read back —
-  with nofs nothing exists that can be lost. It is registered as the per-session workspace
-  OVERRIDE at CREATE time (the ACP-buffer-workspace seam, same lock as the engine
-  registration), so `StartRun` never hands the empty root to the osfs factory (which would
-  MkdirAll/OpenRoot the server process cwd). Persisted `Session.Workspace` is `""`.
+- **Workspace:** `engine/adapter/nofs` is the honest empty `tool.Workspace` (reads/stats
+  fail `fs.ErrNotExist`, Glob/Grep empty, Write refuses with `ErrNoFilesystem`, `Root()`
+  is empty). It is deliberately not memfs, which would silently absorb writes. The
+  placement provider binds it with a valid exact no-FS `EnvironmentRef` before persistence;
+  run entry exactly reattaches that ref and never treats an empty path as authority.
 - **Child surface (Subagent + Team):** `noFSChildCatalog(assets)` = memory six + WebFetch +
   WebSearch + global MCP — no FS tools, no shell, NO forkers (neither worktree nor force-copy; a
   Mutating team-member spawn fails loudly at `selectMemberWorkspace`). Per-def specialist
@@ -5889,29 +5885,13 @@ engine has the FS tools baked in) and `server.SessionEngineFactory` grew a
   `noFSMemberNote` (children) to the Role; `agent.WithSubagentNoFSNote()` replaces the WHOLE
   Subagent tool-surface description (no Read/Grep/Glob, no worktree, no Parallel claims) —
   byte-identical without the option (`TestSubagentSpecNoFSNoteOption`, mutation-verified).
-- **Restart rehydration (widened in cloud-native Phase 1):** the profile is now a persisted
-  snapshot label (`Session.Profile`; see the snapshot-fidelity note below) AND still
-  recoverable by inference — an empty persisted `Session.Workspace` can ONLY be a no-fs
-  session (default requires one, ACP persists a real cwd, CreateTeam rejects empty). At the
-  run-entry seam (`Service.StartRunContent`) a loaded session with no registered
-  per-session engine that `needsRehydration` (no-fs profile OR a persisted selector OR an
-  empty workspace) is REHYDRATED (`Service.rehydrateSession`, generalized from the former
-  no-fs-only `rehydrateNoFSSession`): the engine is rebuilt through the SAME
-  `SessionEngineFactory` path create used, reading the PERSISTED selector + profile back off
-  the loaded session (a no-fs session rebuilds the file-less catalog and re-registers the
-  nofs workspace override; a selector session rebuilds on the SAME provider+model), under
-  the create-time cap/lock discipline. Without this a no-fs session would silently ESCALATE
-  onto the shared engine over `osfs` opened at the server cwd, and a selector session would
-  DEGRADE onto the default provider. Two defenses can't regress independently:
-  `StartRunContent` never hands an empty root to the shared factory (serves `nofs.New()`),
-  and `osfsWorkspaceFactory` itself intercepts `root == ""` (ERROR log + nofs — the
-  chokepoint a future caller cannot bypass). `LoadSessionWithMCP` likewise re-derives the
-  selector + profile from the persisted labels. A DEFAULT FS session (empty selector,
-  default profile, non-empty workspace) does NOT trigger rehydration — it keeps riding the
-  shared engine. Guarded by `TestNoFSSessionRehydratesAfterRestart` +
-  `TestSelectorSessionRehydratesWithPersistedSelector` + `TestDefaultFSSessionDoesNotRehydrate`
-  (server seams) and `TestNoFSSessionSurvivesRestartE2E` + `TestSelectorSessionSurvivesRestartE2E`
-  (full Build over a shared jsonl store), mutation-verified per leg.
+- **Restart reattachment:** `Session.EnvironmentRef{Kind, ID, Revision}` is the sole
+  durable placement identity and every session persists a valid exact ref. On run entry
+  `PlacementReattacher.Reattach` must return a complete Environment with exactly that ref;
+  missing providers, authorization or revision drift, nil Workspace, and identity mismatch
+  fail closed. Zero refs, legacy duplicate `Workspace` state, empty-workspace inference,
+  lazy stamping, and fallback to the current default are unsupported. Provider/model/profile
+  labels still drive engine reconstruction independently of environment reattachment.
 - **Non-goals / known edges:** a REMOTE filesystem for no-fs sessions returns later as a
   driver (see `DRIVERS.md`). The awaiting-approval mid-turn resume is still Phase 2 (Phase 1
   widened only the engine-rebuild trigger, not the run-entry cursor). Skills with payload
@@ -5922,41 +5902,29 @@ engine has the FS tools baked in) and `server.SessionEngineFactory` grew a
 
 A coding agent ultimately needs one execution environment whose filesystem and command namespace are
 affined: the bytes Read/Edit see and the tree Bash builds must be the same place. ADR 0208 fixes the
-layering and the version protocol; ADR 0211 IMPLEMENTS the runtime seam (issue #462). Durable identity
-lives cycle-safely in `session.EnvironmentRef{Kind, ID}` (stdlib-only, so it CAN ride the
-snapshot/event log without pulling tool types in — but in phase 2 it is an IN-PROCESS identity only,
-NOT yet a snapshot field; persistence/remote transport are deferred to phase 3); the minimal immutable
-`tool.Environment` carries that ref plus a NON-NULL `Workspace`
-and an OPTIONAL bound `CommandRunner`. `Tool.Execute`, the observed/parent seams, `Engine.Run`/
-`ResumeApproval`, the loop/dispatch, and delegation now take `tool.Environment` (not `tool.Workspace`);
-narrow policy/prompt/hook APIs still receive `env.Workspace`/`WorkspaceReader`. `CommandRunner.Run`/
-`CommandStreamer.RunStreaming` LOST the per-call workdir — a runner is BOUND to one namespace at
-construction, so the command's cwd always matches the workspace the tool executes against; a nil
-runner surfaces `ErrNoShell`. `tool.EnvironmentForker` REPLACES `tool.WorkspaceForker` (Fork returns a
-complete child Environment whose Workspace and runner share the child namespace) and
-`tool.EnvironmentMerger` REPLACES `tool.ForkMerger` (Merge receives child/parent Environments, no
-forkRoot string). A direct-write Subagent uses the PARENT Environment; read-only/copy/worktree branches
-and Team use the CHILD Environment. Composition wires the forker's bound-runner builder
-(`forker.WithRunner`, the same envscrub/gitenv hardening as the parent runner); the Service binds the
-main `CommandRunner` + a `CommandRunnerFactory` for worktree-bound sessions.
+version protocol; ADR 0211 implements the runtime seam; ADR 0280 makes
+`session.EnvironmentRef{Kind, ID, Revision}` the sole durable identity. The minimal immutable
+`tool.Environment` carries that ref plus a non-null `Workspace` and an optional bound
+`CommandRunner`. `Tool.Execute`, the loop, and delegation take `tool.Environment`; narrow
+policy/prompt/hook APIs receive its Workspace view. A runner is bound at construction, so its
+cwd and the Workspace namespace cannot drift. `tool.EnvironmentForker` returns a complete child
+Environment and `tool.EnvironmentMerger` receives complete child/parent Environments. A
+direct-write Subagent uses the parent Environment; isolated Subagent, Parallel, and Team paths
+receive server-created children.
 
-**Persistence/reattachment (ADR 0214, issue #462 phase 3).** `EnvironmentRef` is now a DURABLE
-snapshot field: `session.Session.EnvironmentRef` is an inert exported label (the same posture as
-`Profile`/`ProviderID`), persisted via `sessnap.Snapshot.EnvironmentRef` (Go 1.26 `omitzero`, so a
-default/local session stays byte-identical to a pre-phase-3 snapshot; a legacy snapshot restores the
-zero ref). At `createSession` the resolved default ref is stamped (`local` ID=workspace root, `nofs`
-empty ID); a legacy zero ref is stamped from the first resolved live Environment at run entry (no
-migration sweep). `server.Config.EnvironmentResolver func(ctx, session.EnvironmentRef) (tool.Environment, error)`
-reattaches a live Environment for a non-in-tree Kind — the in-tree Kinds never reach it (they
-re-derive through the factories); a nil resolver, a ref mismatch, or a nil-Workspace result fails
-loudly (`ErrFailedPrecondition`), never a silent local fallback; the returned `Ref()` MUST equal the
-request. The resolver does NOT trigger/rebuild a per-session `SessionEngine` for a default
-provider/model — environment reattachment and engine rehydration are INDEPENDENT. `internal/adapter/remoteenv`
-is a deterministic, in-process reference fake (`Backend` ID→namespace registry; `NewEnvironment`/`Resolve`
-return Workspace+CommandRunner bound to the same namespace; `EnvironmentForker`/`EnvironmentMerger` over
-refs; a tiny `cat`/`write` test protocol; `FileVersion` CAS across handles; `const Kind = "remote-fake"`
-inside the adapter, NOT in `engine/session`). It is a contract proof only and is NOT wired by default
-`app.Build`. No production remote transport, flags, proto changes, or external dependencies.
+**Persistence/reattachment (ADR 0280, preserving ADR 0214 exactness).**
+`session.Session.EnvironmentRef` and `sessnap.Snapshot.EnvironmentRef` contain the exact private
+`Kind`, `ID`, and `Revision`; there is no `Session.Workspace` or snapshot Workspace. Trusted driver
+storage transports the same exact ref. Public Harness/HTTP/client mappers expose only bounded
+`PlacementMetadata` and never the ref or physical root. `PlacementProvider.Bind` is the atomic
+creation/successor operation; `PlacementReattacher.Reattach` accepts only the persisted ref and
+trusted principal/scope. Returned Environment identity and Workspace/runner namespace must agree.
+Any missing provider, stale authorization/revision, unavailable backend, nil Workspace, or ref
+mismatch is a failed precondition with no fallback. Every new session has a valid ref before Save;
+zero refs, lazy stamping, workspace inference, legacy adoption, and migration sweeps are removed.
+The local provider is composition-owned; remote providers may implement the same Bind/Reattach
+contract. ACP's cwd remains a local consistency assertion against the trusted configured binding,
+never a selector.
 
 The first migration stage is the version protocol in `engine/tool/tool.go` (`FileVersion`,
 `Workspace`). Plain Read remains for non-agent consumers, but public Workspace exposes no
@@ -6000,18 +5968,11 @@ instances over an arbitrary backend are not claimed to be globally serialized. A
 POSIX process bypassing Workspace does not participate; local osfs is not claimed as kernel-level CAS.
 A future remote backend owes true backend CAS.
 
-The ledger belongs to the live Environment instance. The default Service path constructs a
-fresh Environment per run (Workspace + bound CommandRunner + EnvironmentRef);
-`internal/adapter/server/service.go` (`sessionEnvironments`)
-is the per-session override map: a surface adapter (the ACP editor-buffer adapter, the
-no-fs profile) registers a COMPLETE Environment override via `SetSessionEnvironment`
-that carries an accurate ref (Kind/ID) and the correct CommandRunner (nil for a
-file-less/buffer namespace). An override is preferred over a fresh factory build and is
-evicted on `CloseSession` / editor disconnect. Rebuilding a default Environment —
-including the next user run — resets its ledger, so Edit/overwrite is refused until Read
-records a version through that instance. The overrides are in-memory (restart loses them);
-a restarted session re-derives its Environment through the same rehydration path (no-fs
-profile, ACP adapter reconnect). **EnvironmentRef is now a DURABLE snapshot field (ADR 0214, issue #462 phase 3):** `EnvironmentRef` persists via `sessnap.Snapshot.EnvironmentRef` (Go 1.26 `omitzero` — a default/local session stays byte-identical to a pre-phase-3 snapshot); a non-in-tree Kind reattaches a live `Environment` at run entry through `server.Config.EnvironmentResolver` (nil/mismatch/nil-Workspace fails loudly with `ErrFailedPrecondition`, never a silent local fallback; the in-tree Kinds never reach the resolver — they re-derive through the factories; the resolver does NOT trigger per-session engine rehydration — environment reattachment and engine rehydration are INDEPENDENT). A default `local`/`nofs` ref is stamped at `createSession`; a legacy zero ref is stamped from the first resolved live Environment on the next save (no migration sweep). See the Persistence/reattachment subsection above for the full detail.
+The read ledger belongs to the live Environment instance and resets when that Environment is
+rebuilt. `Service.sessionEnvironments` caches complete bound Environments for a session; entries
+carry the exact persisted ref and are evicted on session close. On restart the placement provider
+reattaches from that exact private ref; no public path, empty-root inference, or current-default
+fallback participates.
 
 ### Path-escape posture (`docs/acceptance/path-escape-posture.md` + ADR 0080)
 
@@ -6133,40 +6094,43 @@ deny-dominant (the inner fold runs first — a configured Deny or configured Ask
 reaches the checker). Default `false` is the byte-identical un-routed posture table. See
 `docs/adr/0080-guardrail-routed-escape-checking.md`.
 
-### Worktree binding (issue #102, `docs/adr/0032-worktree-binding.md`)
+### Server-owned session placement and worktree successors (ADR 0280)
 
-A session may bind to an EXISTING git worktree (not just the launch root) so all
-local tools root there. Three clear, separated interfaces:
+Placement is server-owned across embedded, loopback, remote, and cloud-native composition.
+`internal/app/placement.go` installs the local immutable provider over the operator's private
+configured root plus no-FS attenuation. `server.PlacementBinder` is the single Bind choke point;
+provider authorization and resolution happen in one snapshot and return a complete Environment,
+exact `EnvironmentRef{Kind, ID, Revision}`, and bounded display metadata. Startup validates the
+deployment default without caching it. A remote provider may implement the same contract; no
+public placement-ID registry is required.
 
-- **Discovery** — `server.WorktreeLister` (a composition-injected, nil-safe port
-  mirroring `CommandLister`) backs the `ListWorktrees` RPC. The osfs-backed
-  `buildWorktreeLister` (`internal/app/build.go`) shells out to
-  `git worktree list --porcelain` with the SAME scrubbed+neutralised git env as
-  `gitSnapshot` (`envscrub` then `gitenv`), TRUST-GATED (`cfg.TrustProject`), and
-  FAIL-SOFT (any git fault → `nil, nil`, never an error). nil when there is no
-  workspace / no shell / untrusted — then `ListWorktrees` returns empty and
-  `ServerCapabilities.worktrees` is false (the mecatui overlay is honestly
-  absent). Cloud-native compatible: a no-FS/cloud server wires no lister.
-- **Routing** — `server.Config.DefaultWorkspace` (the launch root; empty for a
-  child/member/cloud service). `needPerSession` and `needsRehydration` (now a
-  `*Service` method) are widened: a session whose
-  `workspace != "" && workspace != DefaultWorkspace` routes through the
-  per-session engine factory, which ALREADY re-pins the CHILD permission resolver
-  to the session root via `childPermResolverFor(cfg, workspace)` (closing the
-  child-resolver gap — a shared-engine child would otherwise read the launch
-  root's `.mecatl/settings.yaml`). The main policy ALREADY re-resolves
-  per-workspace. The session rehydrates to the SAME worktree-rooted engine after
-  a restart. When `DefaultWorkspace == ""` the new arm never fires, so the
-  cloud/no-root posture is byte-identical.
-- **Switching** — mecatui's `/worktrees` overlay (`cmd/mecatui/ui/worktrees.go`)
-  lists worktrees and, on select, closes the old session and creates a NEW one
-  rooted at the chosen worktree via the NEW `SessionCreator.CreateSessionInWorkspace`
-  method (the `/models` restart-now precedent; `restartFailedMsg` reused).
-  Operator-driven only; the model has no workspace-switch tool; a live session
-  is never mutated. osfs path confinement is unchanged.
+Public Create accepts only omitted/default placement or `profile:"no-fs"`; workspace and source
+fields are reserved. Discovery takes an owned `session_id`: `ListCommandsForSession` and
+`ListWorktreesForSession` authorize and exactly reattach before touching command/git providers,
+and no-FS returns empty first. Worktrees expose display-only label/branch/revision plus an opaque
+selector. `WorktreeSelectorIssuer` HMACs provider-private current identity with caller/source scope
+using one random Build-owned key. Use re-lists current choices and constant-time matches; no token
+is decoded or stored, no registry/map exists, and restart invalidates selectors so clients relist.
 
-Trust stays OPERATOR-tier at launch (worktrees share `.git`); per-worktree trust
-re-resolution is a documented follow-up, not blocked by the design.
+Only ClearSession and ForkSession consume a worktree selector. Omitted selector exactly inherits
+the source placement. Clear creates a fresh empty-history successor; Fork copies valid history and
+may apply authorized provider/model/reasoning overrides in the same atomic publication. Both lock
+and lease the owned source, reattach before selection, build any per-session engine, and persist
+only after every step succeeds. Mecatui `/clear`, `/worktrees`, `/effort`, and inventory fork use
+these successor RPCs and keep the active source selected if relist/switch fails.
+
+Schedules resolve placement at creation and persist exact private ref, owner principal, and trusted
+scope—never the ephemeral selector or current-default intent. Each fire reauthorizes and exactly
+reattaches before creating its fire session. Team derives the owning session placement; Subagent
+and Parallel receive the parent Environment or a server-created fork. Preserved-fork, delegation,
+inspection, and artifact handles are typed separately and cannot be replayed as selectors; their
+public projections reveal no root or exact ref. Driver session storage is trusted and therefore
+round-trips the exact private EnvironmentRef. ACP binds/reattaches first and treats editor cwd only
+as an assertion against trusted configured local placement.
+
+The Build-owned selector key is inventoried in ADR 0027 List 1; List 2 records reset-by-design,
+unpersisted selectors, and relist-after-restart. `TestADR_0280_PlacementReauditInventoriesEphemeralSelectorKey`
+pins that lifecycle text.
 
 ### Snapshot fidelity — persisted per-session facts (cloud-native Phase 1)
 

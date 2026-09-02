@@ -11,16 +11,16 @@ Build the binaries through the Taskfile:
 task build
 ```
 
-Launch in the checkout you want the agent to use. `--workspace` defaults to the current directory, but making it explicit avoids surprises:
+Launch in the checkout you want the embedded server to use. `--workspace` is private embedded/operator configuration and defaults to the current directory:
 
 ```sh
-OPENAI_API_KEY=sk-... bin/mecatui --workspace "$PWD"
+OPENAI_API_KEY=sk-... bin/mecatui
 ```
 
 Embedded mecatui detects Anthropic, OpenAI, or OpenRouter credentials from the environment. With no API key, use the offline provider deliberately:
 
 ```sh
-bin/mecatui --mock --workspace "$PWD"
+bin/mecatui --mock
 ```
 
 ## Start with a task
@@ -28,8 +28,7 @@ bin/mecatui --mock --workspace "$PWD"
 Type a request and press `enter`, or submit one initial task at launch. The TUI stays open for follow-ups.
 
 ```sh
-bin/mecatui --workspace "$PWD" \
-  --prompt "Summarize the failing tests and suggest the smallest fix"
+bin/mecatui --prompt "Summarize the failing tests and suggest the smallest fix"
 ```
 
 For a longer brief, use `--prompt-file path`; it can be combined with `--prompt`. A seed prompt runs once, even if you later change model or clear the conversation.
@@ -39,10 +38,13 @@ For a longer brief, use `--prompt-file path`; it can be combined with `--prompt`
 Use `connect` only for a server that is already running:
 
 ```sh
-bin/mecatui connect 127.0.0.1:8080 --workspace "$PWD"
+bin/mecatui connect 127.0.0.1:8080
 ```
 
-Remote mode does not use local provider keys or embedded-server flags. The workspace path is interpreted by the server, so it must name a workspace available **there**, not necessarily on your terminal host. See [Connect to a server](./remote-servers.md) for ownership boundaries, authenticated and TLS connections, and operator next steps.
+Remote mode does not use local provider keys, embedded-server flags, or a local workspace.
+The server owns placement; `connect` rejects `--workspace` even on loopback. New sessions
+bind the server default or no-FS, and `/worktrees` selects only server-advertised opaque
+choices from the owned source session. See [Connect to a server](./remote-servers.md) for ownership boundaries, authenticated and TLS connections, and operator next steps.
 
 ## Trust the workspace intentionally
 

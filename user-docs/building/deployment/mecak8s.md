@@ -22,6 +22,15 @@ flowchart TD
 
 Kill any pod. The survivor acquires the lease and resumes interrupted sessions from the Redis snapshot. The pod is disposable; the session is not.
 
+## Server-owned session placement
+
+Mecak8s uses the same path-free, server-owned placement contract as mecated. Its
+storage-free default binds new sessions to no-FS; clients omit placement or explicitly
+request `profile:"no-fs"` and never send a workspace/cwd/exact ref. Redis/driver state
+retains the exact private EnvironmentRef needed for reattachment. Schedule fires reauthorize
+that stored placement, and delegation cannot upgrade no-FS. A future remote filesystem
+provider can implement the same private Bind/Reattach contract without changing clients.
+
 ## Drain endpoint isolation
 
 The chart runs a plaintext, Pod-only drain listener on port 8082. Kubernetes calls
@@ -163,8 +172,8 @@ ordinary offline tests. See the [fixture's setup and CA instructions](https://gi
 | `--posture` default | `strict` | `auto` |
 | Project-tier ingestion + read-only child shell | granted at `auto`/`yolo` by the interactive ladder | one root-aware trust decision — explicit `--trust-project`, `trustedWorkspaces:`, or remembered trust admits BOTH; without trust, headless auto gives allow-all with neither |
 | Bind address default | `127.0.0.1` (loopback) | `0.0.0.0` (pod netns) |
-| Workspace authority | Loopback client-selected by default | **Always server-assigned; no mounted root by default** |
-| New-session profile | Default filesystem profile unless requested otherwise | **`no-fs`** when the wire profile is omitted or empty (no mounted root); a filesystem session when `--workspace` mounts one |
+| Session placement | Server-owned local default configured by the operator; public clients send no path | **Server-owned no-FS default; no mounted root by default** |
+| New-session profile | Omitted profile binds the configured default; `no-fs` explicitly attenuates | Omitted or `no-fs` binds the no-FS default; no public workspace field |
 | Session store | In-memory or JSONL on disk (`--store-dir`); optional `--session-store-url` | **Redis only** (`--redis-url`; no `--store-dir`) |
 | Session lease | Optional (`--session-lease-k8s-namespace`) | **On by default** (`--session-lease-k8s-namespace=mecatl`) |
 | Prometheus `/metrics` listener | Yes | Opt-in (`--metrics-addr`, loopback only) |

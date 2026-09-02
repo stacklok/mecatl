@@ -30,13 +30,13 @@ defaults **on** and `--posture` defaults to **`auto`** (an unattended daemon). L
 other shipped executables, exact top-level `mecak8s --version` prints its build identity
 and exits before loading normal configuration or starting listeners.
 
-`mecak8s` is always a server-assigned workspace deployment, but its normal
-storage-free pod has no mounted workspace. An omitted or empty wire `profile`
-therefore creates a `no-fs` session; clients must not send a workspace path, and
-any profile other than `no-fs` is rejected. The empty workspace/profile contract
-is intentional: it does not request a cwd from the client or an arbitrary path
-inside the pod. A mounted-workspace mode requires a future explicit operator
-design.
+`mecak8s` uses the same server-owned, path-free placement contract as every other
+composition root. Its normal storage-free pod configures the deployment default as no-FS,
+so omitted profile and explicit `"no-fs"` both bind the filesystem-free Environment;
+other profiles are rejected. Clients cannot send a workspace path, cwd, placement ID, or
+exact ref. A future remote filesystem provider can implement the same private Bind/Reattach
+contract without changing public clients. Exact private refs remain in snapshots/driver
+storage and each run or schedule fire reattaches them; delegation cannot upgrade no-FS.
 
 ```console
 $ go run ./cmd/mecak8s --redis-url redis:6379 --redis-allow-plaintext --session-lease-k8s-namespace mecatl --openai

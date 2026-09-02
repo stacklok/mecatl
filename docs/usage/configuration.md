@@ -199,12 +199,15 @@ environment-variable fallback. `auth.yaml` accepts only built-in IDs plus the
 validated custom IDs from the resolved operator configuration, so unknown or malformed
 entries fail closed without echoing credentials.
 
-### Workspace
+### Workspace and placement
 
-`--workspace` (server-wide default) and the per-session `workspace` field set
-the root all file/command tools operate against. The server builds an `osfs`
-workspace rooted there. A root that cannot be opened yields a nil workspace;
-tool calls then return readable errors the model can act on.
+`--workspace` is trusted server-side configuration for the local deployment default;
+it is never a per-session public field. `CreateSession` either omits `profile` to bind
+that default or sends `profile:"no-fs"` to attenuate filesystem access. Alternate
+worktrees are discovered from an owned source session and selected only with a fresh
+opaque selector on ClearSession/ForkSession. Sessions persist the exact private
+`EnvironmentRef`, not a duplicate workspace path; public inventory exposes bounded
+placement metadata only.
 
 ### Model
 

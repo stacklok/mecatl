@@ -1,7 +1,7 @@
 # Listener-scoped workspace authority — acceptance plan
 
 **Phase:** workspace-selection security hotfix
-**Status:** in-progress, 2026-08-25. Derived from the workspace-security handover and the agreed listener-topology policy.
+**Status:** draft, superseded 2026-09-02 by [ADR 0280](../adr/0280-server-owned-session-placement.md). This historical plan is retained for context only; its listener-scoped path-authority proofs were deleted by the clean break and are not strict traceability claims.
 **ADR:** [ADR 0237](../adr/0237-listener-scoped-workspace-authority.md) — client paths are authority only on a local deployment; network deployments assign the root.
 **Accumulator branch:** `acc/listener-scoped-workspace-authority` (off `main`).
 

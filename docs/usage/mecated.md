@@ -77,29 +77,27 @@ trusted source, the same way you would point `mecated serve --skills-dir` at a
 trusted directory. Start `mecated serve` with the same `--store-dir`, and
 explicitly enable the imported skills directory.
 
-### Workspace authority
+### Server-owned session placement
 
-`--workspace-authority` controls who may select the workspace for a filesystem
-session. The topology-derived default is `client-selected` only when both API
-listeners are loopback; any non-loopback, wildcard, or mixed listener defaults
-to `server-assigned`. Set `--workspace-authority=server-assigned` explicitly
-when a reverse proxy makes a loopback listener remotely reachable.
+`--workspace` is trusted composition configuration for the deployment's default local
+placement. It is never a client argument over Harness/HTTP, and listener topology does
+not change that rule: embedded, loopback, remote, and cloud-native clients all create
+sessions by omitting placement or requesting `profile:"no-fs"`. Composition validates
+and binds the default before listeners serve.
 
-In a server-assigned filesystem deployment, configure the one authoritative root
-with `--workspace` and have every client send an **empty** `workspace` field in
-its `CreateSession` request. The empty value means “use the server's configured
-root”; it never means “use my local cwd.” A non-empty client path is rejected as
-`InvalidArgument` before the service cleans it, touches the filesystem, evaluates
-trust, or creates an environment. The server also fails before opening listeners
-if server-assigned filesystem authority has no `--workspace`. This policy remains
-in force when a session is rehydrated or resumed, when a schedule fires, and for
-legacy adoption; stale or non-canonical stored roots fail closed.
+Alternate local worktrees are discovered from an owned source session. The server returns
+bounded display metadata plus an opaque caller/source-scoped selector accepted only by
+ClearSession or ForkSession. Selectors are HMAC-SHA256 values over current provider-private
+identity, are not decoded or persisted, and expire on restart; clients relist. Clear creates
+a distinct empty-history successor and Fork creates a history-carrying successor; omitted
+selector inherits the exact source placement. Every session persists only its exact private
+`EnvironmentRef{Kind,ID,Revision}`. Trusted driver storage may transport that ref; public
+clients never receive it or a physical path.
 
-Loopback-only and embedded deployments retain local developer behavior: clients
-may select an absolute checkout or sibling worktree. This is not an
-authorization scheme for a remote multi-workspace service. Use one deployment
-root, or wait for a future opaque scoped-grant design. See [ADR
-0237](../adr/0237-listener-scoped-workspace-authority.md).
+Schedules persist an already-resolved exact ref, owner, and placement scope and reauthorize
+and reattach at fire. Delegation derives/forks the parent Environment; artifact and child
+handles cannot act as selectors. ACP uses cwd only as a local assertion against this trusted
+configuration. See [ADR 0280](../adr/0280-server-owned-session-placement.md).
 
 ### Flags
 
@@ -110,8 +108,7 @@ root, or wait for a future opaque scoped-grant design. See [ADR
 | `--grpc-unix-socket` | `""` (off) | absolute path of a UNIX-domain socket to serve gRPC on **instead of a TCP port**; opens **no TCP port**. **Mutually exclusive** with a *configured* `--grpc-addr` (explicit flag or config-file `grpc_addr`) — rejected at startup. The socket is created **owner-only** inside an owner-only (`0700`) directory mecated creates when missing; a **stale** socket from a dead process is removed, one a **live** process is accepting on **refuses the start**. Path length is validated against `sockaddr_un.sun_path` (103 usable bytes on Darwin, 107 on Linux). **See the spawned-daemon-hosting note below.** |
 | `--ready-file` | `""` (off) | absolute path to write a JSON readiness document to, **atomically** (temp file + rename) and only **after** composition and every listener are up — so a spawning parent waits on a path instead of racing a connect loop. Carries pid, transport, bound gRPC/HTTP addresses, and the non-secret compatibility descriptor (`api_major`/`features`/`deployment`) — **never** a credential, TLS detail, or capability set. **See the spawned-daemon-hosting note below.** |
 | `--lifetime-pipe-fd` | `0` (off) | file descriptor of an **inherited** pipe whose read end mecated watches: **EOF means the spawning parent exited or crashed**, and the daemon stops through the ordinary graceful-shutdown path. The parent holds the write end and never writes. `0` disables; `0`/`1`/`2` are the standard streams and are **rejected**. **See the spawned-daemon-hosting note below.** |
-| `--workspace` | current working dir | default session workspace root |
-| `--workspace-authority` | topology-derived | `client-selected` or `server-assigned`. Loopback-only gRPC + HTTP/SSE keeps local client workspace/worktree selection; any public, wildcard, or mixed listener assigns `--workspace` server-side and requires filesystem requests to leave `workspace` empty. Set `server-assigned` explicitly behind a reverse proxy. A network filesystem deployment without `--workspace` fails before listeners start. |
+| `--workspace` | current working dir | trusted server-side default local root; embedded/operator configuration only, never accepted from CreateSession clients |
 | `--model` | `""` | model identifier sent to the provider. Empty → the server-configured default (`--default-model`, when set), else the selected provider's built-in default: `gpt-5` (OpenAI), `openai/gpt-5` (OpenRouter), `claude-sonnet-4-6` (Anthropic). |
 | `--default-provider` | `""` | server-configured **deployment-wide default provider** id shared by every client (also on `mecatui`'s embedded server); overrides the built-in provider preference for zero-selector sessions, while a client-side selector still wins. **Fail-fast:** an unknown or unavailable provider refuses startup. |
 | `--default-model` | `""` | server-configured **deployment-wide default model** for the default provider (also on `mecatui`'s embedded server); sits below client-side defaults and above the per-provider built-in. **Fail-fast:** a model not catalogued for the default provider refuses startup (stricter than per-session selectors, which allow passthrough). |
@@ -555,10 +552,9 @@ permission on one path.
   path, its length, and the limit, instead of surfacing `bind`'s bare `EINVAL`. On
   macOS the default `TMPDIR` (`/var/folders/xy/…/T/`) already consumes about half
   the budget, so this fires in practice.
-- **Workspace authority.** A UNIX socket is **not** a network boundary
-  ([ADR 0237](../adr/0237-listener-scoped-workspace-authority.md)), so a
-  socket-only daemon keeps `client-selected` authority and does **not** require
-  `--workspace`.
+- **Workspace placement.** Socket topology does not grant path authority. The daemon
+  binds its private operator-configured `--workspace` default, and every client uses the
+  same path-free CreateSession contract.
 
 **An empty `--http-addr`** disables the HTTP/SSE listener **and the admin/metrics
 listener**. The coupling is deliberate: both are TCP listeners the operator never

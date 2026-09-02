@@ -19,14 +19,15 @@ OPENAI_API_KEY=sk-... bin/mecatui --workspace "$PWD"
 
 ```sh
 bin/mecated serve &
-bin/mecatui connect 127.0.0.1:8080 --workspace "$PWD"
+bin/mecatui connect 127.0.0.1:8080
 ```
 
-For loopback connections, the client-selected workspace is evaluated on the server host
-and must be an absolute path available there. For a non-loopback target, mecatui sends
-an empty workspace and rejects `--workspace`; the remote server's listener authority
-chooses its configured root (or its no-FS profile). A client path is never a way to
-select a checkout inside a remote container or pod.
+Every connection uses the same path-free contract. `--workspace` is embedded/server
+operator configuration and is rejected by `mecatui connect`, including loopback. The
+server binds its configured default (or no-FS). `/worktrees` lists eligible alternatives
+from the owned source session and switches through an opaque short-lived selector; it
+never sends a path or exact environment ref. Selectors expire on server restart, so the
+client relists and keeps the current session if relist/switch fails.
 
 ## Connect securely
 
@@ -35,7 +36,7 @@ A loopback server can use its local single-user trust model. If the server requi
 ```sh
 export MECATL_AUTH_TOKEN="$(cat ~/.mecatl/token)"
 bin/mecatui connect 127.0.0.1:8080 \
-  --auth-token "$MECATL_AUTH_TOKEN" --workspace "$PWD"
+  --auth-token "$MECATL_AUTH_TOKEN"
 ```
 
 For a non-loopback endpoint, verified TLS is automatic; `--tls`, `--tls=true`,

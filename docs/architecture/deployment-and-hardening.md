@@ -81,39 +81,29 @@ under `pipefail` so a broken scan cannot pass vacuously). **`dependabot`**
 SHA-pinned GitHub Actions (grouping minor+patch, isolating majors); every action
 is **SHA-pinned** with a `# vX.Y.Z` comment that dependabot preserves.
 
-### Listener-scoped workspace authority
+### Server-owned session placement
 
-Workspace selection is a deployment policy fixed at composition, not a claim a
-network client can make with a path string. A loopback-only or embedded
-`mecated` deployment uses **client-selected** authority, so its client can pick
-an absolute checkout or sibling worktree. `mecated` switches to
-**server-assigned** authority for any non-loopback, wildcard, or mixed API
-listener (and operators must select it explicitly when a loopback listener sits
-behind a proxy). In that mode, `--workspace` is the one authoritative deployment
-root and every filesystem `CreateSession` request must carry an empty
-`workspace` field. A non-empty value is rejected as `InvalidArgument` before
-path cleaning, filesystem access, trust evaluation, or environment creation;
-it is never compared with or substituted for the configured root. A
-filesystem-bearing server-assigned deployment without `--workspace` fails before
-it starts listeners.
+Placement is a trusted composition decision on every listener topology. Public clients
+never submit workspace/cwd paths, placement IDs, or exact EnvironmentRefs. Create binds
+the configured deployment default or explicit no-FS attenuation. Local `--workspace`
+exists only as private operator configuration; embedded and loopback modes do not create
+a path-authority exception.
 
-This policy also validates persisted filesystem sessions, rehydration, scheduled
-fires, legacy adoption, and composition-created environment overrides. Stored
-roots must be non-empty, absolute, clean, and exactly equal to the configured
-clean root; relative/traversal spellings, symlink aliases, and roots made stale
-by configuration change fail closed before filesystem access. The direct wire
-rule is stricter: a non-empty client value is always rejected without cleaning
-or comparison. The wire field remains for compatibility: an empty workspace is
-an intentional request for the server's configured root, never a request to
-infer a path from the client host.
+Every persisted session carries exactly one private `EnvironmentRef{Kind,ID,Revision}`.
+Run entry reauthorizes and exactly reattaches that ref; missing providers, authorization or
+revision drift, nil Workspace, and identity mismatch fail closed without following a
+current default. Trusted snapshots and driver storage may retain physical locator data,
+while public session/event/error projections remain path-free. ACP cwd is a local assertion
+against trusted configuration, not authority.
 
-`mecak8s` is always server-assigned and has no mounted workspace by default. It
-maps an omitted or empty profile to `no-fs`, accepts no client workspace, and
-rejects any non-`no-fs` profile until a future operator-enabled mounted-workspace
-deployment defines that authority. A remote `mecatui` likewise refuses an
-explicit workspace locally, before resolving or sending its own cwd; the service
-remains the enforcement boundary for every other client. See
-[ADR 0237](../adr/0237-listener-scoped-workspace-authority.md).
+Alternate worktrees require an owned source session. Discovery emits display-safe metadata
+and an opaque caller/source-scoped HMAC selector accepted only by ClearSession/ForkSession.
+The Build-owned key and selectors are not persisted and no registry/map exists; restart
+requires relisting. Schedules persist an already-resolved exact ref plus owner/scope;
+delegation derives or server-forks the parent Environment and artifact handles cannot be
+replayed as selectors. Mecak8s binds its storage-free default to no-FS; a future remote
+placement provider uses the same private Bind/Reattach contract. See
+[ADR 0280](../adr/0280-server-owned-session-placement.md).
 
 ### Multi-replica deployment & single-writer enforcement
 

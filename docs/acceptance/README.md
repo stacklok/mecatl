@@ -86,9 +86,7 @@ when the code that satisfies the plan has landed.
   application sessions, schedules, teams, memory, event streams, live runs, and
   model-facing object access; remote-driver enforcement is deferred to #452. Status:
   draft.
-- [Session storage continuity](session-storage-continuity.md) — bounded current snapshots,
-  indexed metadata, maintenance jobs, and writable legacy-session adoption. Status:
-  landed.
+- [Session storage continuity](session-storage-continuity.md) — historical storage plan: bounded current snapshots, indexed metadata, and maintenance jobs landed; its writable legacy-adoption criteria were superseded by ADR 0280. Status: draft historical record.
 - [Session continuity UX](session-continuity-ux.md) — authoritative session-family
   metadata, honest replay/inspection, an active-session copy surface, startup resume,
   and a final session-ID handoff for mecatui. Status: landed.
@@ -112,10 +110,12 @@ when the code that satisfies the plan has landed.
   landed.
 
 - [Server-owned session placement](server-owned-session-placement.md) — removes public
-  client filesystem paths without compatibility: composition binds local, no-FS, or
-  remote environments; clients omit placement, attenuate to no-FS, or use a freshly
-  reauthorized opaque server-advertised placement ID. Status: draft.
-- [Listener-scoped workspace authority](listener-scoped-workspace-authority.md) — network listeners assign one operator-configured filesystem root while embedded and loopback deployments retain client-selected workspaces; mecak8s is no-FS by default. Status: draft.
+  filesystem-path authority: composition binds default/no-FS/remote environments;
+  alternate worktrees use fresh source-scoped opaque selectors only on clear/fork.
+  Status: in-progress.
+- [Listener-scoped workspace authority](listener-scoped-workspace-authority.md) — historical
+  draft superseded by ADR 0280's path-free contract; retained for context and excluded from
+  strict traceability. Status: draft.
 - [SDK server enablers](sdk-server-enablers.md) — the Go-side contracts the TypeScript
   SDK is built on: `GetServerInfo` + an open-string feature vocabulary, RFC 9457 typed
   errors, exact-origin CORS, a durable host-minted `run_id` with stale-control guards,

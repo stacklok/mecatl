@@ -93,6 +93,24 @@ and `--insecure`, whose unverified TLS hides an MITM rather than a listener. A s
 connection always verifies the gRPC server TLS, and its issuer CA is never used
 as server trust; `connect --tls-ca` is the sole custom server-CA input.
 
+## Server-owned session placement
+
+Clients never send a filesystem path, cwd, exact environment reference, or general
+placement ID when creating or resuming a session. `CreateSession` binds the trusted
+deployment default when `profile` is omitted, or the filesystem-free environment when
+`profile` is `no-fs`. Local `--workspace` configures the embedded/daemon server privately;
+it is not a field sent by `mecatui connect`.
+
+Alternate worktrees are discovered from an owned source session. `ListWorktrees(session_id)`
+returns bounded display metadata and an opaque caller/source-scoped selector. The selector
+is accepted only by `ClearSession` or `ForkSession`, is never a path, and expires on server
+restart; relist before retrying. `/clear` asks the server for a distinct empty-history
+successor that inherits the source's exact placement. `/worktrees`, `/effort`, and inventory
+fork use the history-carrying successor operation. Any failed relist or successor creation
+leaves the currently selected session unchanged. Schedules resolve and store an exact
+private placement at creation, while delegation derives placement from its parent; neither
+models nor delegation/artifact handles can select a host path.
+
 ## mecatui session identity
 
 The TUI header shows a compact short handle for the active session rather than a long
@@ -100,9 +118,9 @@ opaque ID. For a non-empty valid-UTF-8 ID, it renders safe `[A-Za-z0-9._-]` byte
 literally except that a leading `-` is encoded as `%2D`; every other UTF-8 byte is
 uppercase `%HH`. It takes the longest prefix of complete literal or `%HH` atoms that fits
 12 ASCII columns. The displayed literal has no leading `#` and can be passed unchanged to
-`mecatui debug`; type `/session` to
-inspect the safely quoted full ID, title, state, workspace, known timestamps, provider,
-and model, then press `c` in that overlay to copy the exact ID.
+`mecatui debug`; type `/session` to inspect the safely quoted full ID, title, state,
+bounded placement label, known timestamps, provider, and model, then press `c` in that
+overlay to copy the exact ID.
 Use `/sessions` separately to Continue a stored chat or Inspect scheduled, child, and
 unknown/other runs without changing the active chat. Its selected-row hints come from
 server capabilities: `y` copies the exact ID, `v` views without attaching, `f` forks an
@@ -301,10 +319,12 @@ in-chat `Schedule` tool, the REST/gRPC API):
 
 - A declaration with neither `cron` nor `oneShot`, or with both, is rejected by
   the create-seam (fail-closed).
-- **`workspace` is required** for a default-profile schedule (a fire mints a real
-  filesystem session), and must be OMITTED for a `no-fs`-profile schedule. The
-  create-seam validates this up front, so an empty-workspace default schedule is
-  rejected at create time rather than failing later at fire time.
+- **Placement is resolved at schedule creation.** The schedule inherits its source's
+  exact private `EnvironmentRef` or composition resolves the deployment default/no-FS
+  choice immediately. It persists that ref plus durable owner and trusted placement scope,
+  never a worktree selector or “follow current default” instruction. Every fire
+  reauthorizes and exactly reattaches before creating the fire session; drift records a
+  failure without filesystem access.
 - **`singleton` currently always effectively resolves to `true`.** The create-seam
   coerces `singleton: false` to `true` (overlap suppression) — a `false` value is
   accepted but silently overridden. Full opt-out support (allowing overlapping

@@ -106,10 +106,11 @@ is the bounded event-derived projection.
 
 ## Start fresh with `/clear`
 
-Use `/clear` when you want a fresh session and empty context while staying in the
-current workspace and model. The old conversation remains stored and discoverable
-through `/sessions`; mecatui releases its old runtime resources only on a best-effort
-basis after the replacement session is ready.
+Use `/clear` when you want empty context without changing placement. It calls the
+server's `ClearSession` operation, which creates a distinct empty-history successor that
+inherits the source's exact server-owned placement, owner, mode, model/effort, and limits.
+The source conversation remains stored and discoverable through `/sessions`. Mecatui
+switches only after successor creation succeeds; failure leaves the current chat selected.
 
 ## Reduce model history with `/compact`
 
@@ -131,6 +132,13 @@ bin/mecatui connect 127.0.0.1:8080 sessions
 Choose a main chat to **Continue**, or open scheduled, child, and other runs to **Inspect** their authoritative transcript without attaching to them. Eligible main chats can also be **Forked** into a new chat. The inventory can copy an ID, rename a session, and—when the server permits it—delete it. Actions are checked again by the server, so an old inventory row cannot bypass active-session or lease protections. Caller identity, where enabled, records ownership but does not isolate sessions between authenticated callers.
 
 Use `/sessions` from an open chat for the same inventory. It has separate tabs for chats, scheduled runs, child runs, and other rows; search and pagination keep large inventories usable.
+
+Use `/worktrees` to move a history-carrying successor to an eligible server-owned
+worktree. The client sends the source session ID, receives only safe display metadata plus
+a short-lived opaque selector, and passes that selector to `ForkSession`; no path or exact
+private environment ref crosses the API. Selectors expire on server restart, so mecatui
+relists. A stale selector, relist failure, or fork failure leaves the source chat active.
+No-FS sessions cannot upgrade through this surface.
 
 ## Privacy and maintenance
 

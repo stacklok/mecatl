@@ -61,14 +61,14 @@ task build          # → bin/mecated, bin/mecademo, bin/mecatui
 The simplest path needs no separate server — just launch the TUI with an LLM key:
 
 ```sh
-# Embedded server (default): mecatui hosts mecated in-process over a UNIX socket.
-# The provider is AUTO-DETECTED from whichever key is set:
-ANTHROPIC_API_KEY=sk-ant-... bin/mecatui --workspace "$PWD" # Anthropic (Claude)
-OPENAI_API_KEY=sk-...      bin/mecatui --workspace "$PWD"   # OpenAI
-OPENROUTER_API_KEY=sk-or-... bin/mecatui --workspace "$PWD" # OpenRouter
+# Embedded server (default): mecatui privately configures its server root from cwd
+# (or embedded-only --workspace) and never sends that path through CreateSession.
+ANTHROPIC_API_KEY=sk-ant-... bin/mecatui # Anthropic (Claude)
+OPENAI_API_KEY=sk-...      bin/mecatui # OpenAI
+OPENROUTER_API_KEY=sk-or-... bin/mecatui # OpenRouter
 
 # Offline, no network — uses the canned mock provider:
-bin/mecatui --mock --workspace "$PWD"
+bin/mecatui --mock
 ```
 
 Bare `mecatui` always hosts an **embedded** server itself (a UNIX socket in
@@ -106,22 +106,23 @@ To use a specific **external** server instead, use the `connect` subcommand:
 
 ```sh
 # External loopback server: omitted --tls is plaintext only for loopback.
-bin/mecated serve &                                    # listens on 127.0.0.1:8080
-bin/mecatui connect 127.0.0.1:8080 --workspace "$PWD"
+bin/mecated serve &                                    # server owns its configured root
+bin/mecatui connect 127.0.0.1:8080
 
 # Remote targets use verified TLS automatically; --tls=false is the explicit
 # plaintext downgrade and is appropriate only for controlled non-bearer testing.
 bin/mecatui connect mecated.example.internal:443
 ```
 
-`--workspace` defaults to the current directory for an embedded server and for a
-loopback client-selected `mecated`; it is resolved to an absolute path in those
-modes. For a non-loopback `connect` target, mecatui does **not** send its local cwd.
-An explicit `--workspace` is rejected locally before it is resolved or
-transmitted. A server-assigned deployment chooses its configured root from an
-empty wire workspace; `mecak8s` chooses its no-FS profile from its empty profile.
-The server independently enforces this contract for stale and non-mecatui
-clients.
+`--workspace` is embedded/operator configuration only. In embedded mode it defaults
+to the current directory, is resolved locally, and configures the hosted server's
+private deployment default. `mecatui connect` never accepts or transmits a workspace
+or cwd—even to loopback—because all CreateSession calls use the same path-free contract.
+The external `mecated` chooses its configured default; `mecak8s` normally binds no-FS.
+Alternate worktrees are selected only from `/worktrees`: the server lists an owned
+source session and issues an opaque, source-scoped selector for ClearSession/ForkSession.
+Selectors expire on server restart, so mecatui relists; a failed relist or switch keeps
+the current session.
 
 ### Transport commands
 
@@ -166,12 +167,15 @@ or fallback:
   session/UI flags and remote flags (`--auth-token`, `--tls`, …) apply.
 
   ```sh
-  bin/mecated serve &                                 # listens on 127.0.0.1:8080
-  bin/mecatui connect 127.0.0.1:8080 --workspace "$PWD"
-  bin/mecatui connect 127.0.0.1:8080 sessions --workspace "$PWD"
+  bin/mecated serve &                                 # server owns its configured root
+  bin/mecatui connect 127.0.0.1:8080
+  bin/mecatui connect 127.0.0.1:8080 sessions
   bin/mecatui connect 127.0.0.1:8080 debug SESSION_ID
   bin/mecatui connect mecated.internal:443 --tls --auth-token "$MECATL_AUTH_TOKEN"
   ```
+
+  `--workspace` is rejected in every connect form; configure the server root on
+  the server host.
 
 - **`mecatui login ADDRESS`** — performs the remote server's public OIDC
   Authorization Code + PKCE login, then records target metadata and an encrypted,
@@ -246,10 +250,9 @@ bin/mecatui connect 127.0.0.1:8080 --auth-token "$MECATL_AUTH_TOKEN"
 For a non-loopback endpoint, omitted `--tls` verifies TLS automatically; `--tls`
 and `--tls-ca` also select verified TLS. `--tls=false` is the explicit plaintext
 downgrade, and a bearer is refused on that remote plaintext transport. Use
-`connect --tls-ca` when the server uses a private CA. The remote server chooses
-its own workspace authority: mecatui sends no local cwd, and an explicit
-`--workspace` is rejected locally rather than being treated as a path inside an
-agent pod. See [Security & transport](usage/mecated.md#security--transport-auth-tls-rate-limiting) for the attribution model and its non-tenancy limits.
+`connect --tls-ca` when the server uses a private CA. The remote server owns
+placement: mecatui sends no local cwd, and `--workspace` is rejected in every connect
+form rather than being treated as a path inside an agent pod. See [Security & transport](usage/mecated.md#security--transport-auth-tls-rate-limiting) for the attribution model and its non-tenancy limits.
 
 On later `connect`, a saved target supplies a managed dynamic bearer source: each RPC
 asks for a currently validated access token. Application token demand, rather than RPC
@@ -378,9 +381,8 @@ mecatui connect 127.0.0.1:8080 --resume-latest
 ```
 
 Adoption does not create a temporary session: mecatui loads and displays the stored
-transcript, workspace, mode, model, and capabilities, then targets the same opaque ID.
-`--workspace` and `--mode` therefore describe only a newly created session; an adopted
-chat keeps its stored values. Scheduled runs, child runs, unknown legacy rows, chats
+transcript, placement label, mode, model, and capabilities, then targets the same opaque ID.
+`--mode` describes only a newly created session; an adopted chat keeps its stored values. Scheduled runs, child runs, unknown legacy rows, chats
 awaiting approval, active chats, and rows without a complete authoritative transcript
 are not eligible. Exact `--resume` reports why its row cannot be continued; `--resume-latest`
 skips ineligible or unreadable rows and tries the next one. A genuine inventory-list
@@ -417,7 +419,7 @@ prompt and pressing enter the moment the session is ready. The TUI then stays
 interactive for follow-ups; this is NOT a print-and-exit one-shot.
 
 ```sh
-mecatui -p "Summarize the failing tests in this repo" --workspace "$PWD"
+mecatui -p "Summarize the failing tests in this repo"
 ```
 
 `--prompt-file` reads a file at startup (fail-fast on an unreadable path) and is
@@ -430,7 +432,7 @@ a short directive with a longer brief. The seed fires ONCE: a `/models` restart 
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `--workspace` | cwd | absolute workspace root for a new session; an adopted chat keeps its stored workspace |
+| `--workspace` | cwd | **embedded only:** trusted operator configuration for the hosted server's default root; never sent in CreateSession and rejected by every `connect` form |
 | `--mode` | `default` | permission posture for a new session: `default` \| `plan` \| `accept-edits`; an adopted chat keeps its stored mode |
 | `--resume` | – | continue the owned main chat with this exact opaque session ID; loads its authoritative transcript without creating a throwaway session; mutually exclusive with `--resume-latest` |
 | `--resume-latest` | off | continue the newest eligible owned main chat with an available authoritative transcript; excludes active, awaiting, scheduled, child, and unknown sessions; when none is eligible, start a new chat; mutually exclusive with `--resume` |
@@ -667,10 +669,11 @@ root, not the render layer — no proto event, no change to `ui`/`theme`/`client
 
 **Built-in client-side slash commands always appear.** Typing `/` opens the
 palette with a set of commands the TUI itself ships — independent of workspace
-dirs and even when server slash-command expansion is off. `/clear` creates a new
-empty server session in the current workspace, using the current effective model,
-reasoning-effort, and permission mode, then clears the conversation and scrollback
-only after that session is ready; `/help` opens the keys-&-features overlay.
+dirs and even when server slash-command expansion is off. `/clear` calls the
+server's `ClearSession` successor RPC: it creates a distinct empty-history session
+that inherits the source's exact placement, effective model, reasoning effort, mode,
+limits, and owner. The source remains intact, and conversation/scrollback switch only
+after the successor and transcript load succeed. `/help` opens the keys-&-features overlay.
 `/diagnostics` is an exception to the local-only commands: the exact
 whitespace-trimmed lower-case bare command follows ordinary built-in dispatch,
 generates a concise sanitized report, and submits that report through the normal
@@ -683,7 +686,7 @@ authentication details, credentials, workspace paths, session content, or server
 configuration/state. In embedded mode it uses the locally known server identity
 and makes no RPC.
 These commands are *always* available because they are client-owned commands (with
-`/clear` using the existing session-create RPC); `/compact` (force one server-side
+`/clear` using the dedicated `ClearSession` RPC); `/compact` (force one server-side
 history compaction pass), `/mcp` (browse
 the MCP inventory), `/agents` (browse the agent-definition inventory — the
 resolved registry the `Subagent` tool routes delegations to), `/team` (the unified
@@ -870,8 +873,9 @@ restores its live feed, and returns to idle without claiming carryover; an unuse
 is best-effort closed after hydration failure. A source-close error does not undo a
 hydrated target. If no live session exists yet (pre-first-connect, or a failure left no
 session), the pick falls back to a plain `CreateSession` — there's no source to carry
-from. **Dropping the conversation is a separate action**: run `/clear` to reset the
-transcript and create a fresh empty session on the current workspace and effective model.
+from. **Dropping the conversation is a separate action**: run `/clear` to create a
+fresh empty-history successor that inherits the server-owned exact placement and
+effective model.
 
 `ctrl+g` sets the cursor row as the **client global default** (the `★` row) — used
 by new/unseen workspaces; it is control-modified so a bare `g` stays typeable in the
@@ -913,6 +917,15 @@ so the **transcript is kept** — no restart, no wipe, no confirm step. There's 
 brief "switching effort — forking conversation…" transition while the fork rebinds;
 the source session is then closed. `esc` closes the picker. The only RPC is the fork
 itself — the enum is fixed and client-owned (no filter).
+
+**`/worktrees` (server-owned placement picker).** The client sends only the current
+source session ID. The server owner-authorizes and exactly reattaches that session,
+then returns display-safe labels/branches/revisions plus opaque selectors; no filesystem
+path or exact EnvironmentRef crosses the API. Selecting a row calls `ForkSession` with
+the fresh selector, preserving conversation history. Selectors are caller/source scoped,
+expire on server restart, and are accepted only by ClearSession/ForkSession. A stale
+selector triggers a relist; a relist or switch failure leaves the source active and
+retains the current selection. No-FS sessions return an empty list and cannot upgrade.
 
 **Workspace slash commands are ON by default** on top of the built-ins, expanding
 `/<name>` inputs from the conventional workspace dirs `.mecatl/commands` and
@@ -1524,7 +1537,7 @@ client is wired; a fire whose `SessionID` is empty reports "fire has no session
 id" and stays in inspect.
 
 **`/session` (active session details).** This read-only overlay shows the current
-chat's safely quoted full opaque ID, title, lifecycle state, workspace, known creation
+chat's safely quoted full opaque ID, title, lifecycle state, bounded placement label, known creation
 and modification timestamps, provider, and model. The header intentionally shows only
 the compact short handle. Press **`c`** to copy the exact full ID byte-for-byte; mecatui reports
 clipboard failure or a session change instead of claiming a stale copy. `esc` closes it.
@@ -1555,16 +1568,12 @@ those launch forms establish no session until the operator continues a chat or
 presses `n` for a new one. At startup, `esc` quits; after opening an inspection,
 `esc` returns to this inventory.
 The Other tab keeps unknown legacy/custom rows inspect-only and visibly labels each
-one **`Legacy session — inspect only`** without classifying it from the opaque ID.
-For a selected legacy row, mecatui asks the authenticated server to preflight the
-explicit current workspace/environment and provider/model target. Only an eligible,
-source-correlated preflight adds **`a: adopt as chat`**; otherwise the footer keeps
-the action disabled and renders the server's stable reason. Missing target values
-stay unresolved until the operator explicitly selects them—there is no server-default
-fallback.
+one **`Legacy session — inspect only`**. ADR 0280 removed writable legacy adoption:
+there is no preflight/adopt action and no way to supply a replacement workspace or
+placement authority.
 `tab` switches tabs; the
 search box filters the current tab. Search matches the title, full session ID,
-its terminal-safe short handle, model, workspace, and the available
+its terminal-safe short handle, model, bounded placement label, and the available
 relationship metadata (parent/call, schedule/origin, team/member). This keeps
 scheduled fires and delegation children discoverable without making their IDs
 part of the UI contract.
@@ -1610,16 +1619,6 @@ without rebinding the active chat. Scheduled, child, active, awaiting, and
 unknown rows show only the subset the server reports; hidden actions are also
 rejected if invoked.
 
-The adoption review names the source ID and title, states that adoption creates a
-new main chat while leaving the legacy source inspect-only, and shows the target
-workspace/environment and provider/model. It also warns that future tool writes
-operate in the target workspace. `esc` cancels without disturbing progressive
-paging, selection, or scroll state. Confirmation revalidates the preflight under
-the server's mutation authority; a stale, cancelled, or caller-safe error remains
-on the stable review. Success does not trust the mutation response as conversation
-content: mecatui refetches the authoritative new snapshot and transcript, then opens
-that new chat writable. Adoption never deletes or relabels the source.
-
 The snapshot transcript is the conversation source of truth. Durable event
 replay may support live delivery catch-up, but is not used to establish a
 conversation's completeness or to reconstruct it for Continue/Inspect. An
@@ -1630,7 +1629,8 @@ continuation stays disabled and the transcript view offers **`r` Retry** and
 
 **Create form (Phase 3b).** The **`c`** action key opens an in-overlay Create
 form (peer of the inspect/confirm sub-views): fields for name, prompt, trigger
-(cron OR natural-language), workspace, and a mutating toggle. The trigger
+(cron OR natural-language), and a mutating toggle. Placement is inherited/resolved
+server-side and no workspace or worktree selector is accepted from the model/UI. The trigger
 field accepts EITHER a raw cron expression (`0 9 * * *`) OR a natural-language
 phrase (`every 30 minutes`, `daily at 9am`, `every weekday at 9am`, `next
 monday 3pm`, `in 2 hours`, `tomorrow at noon`) — compiled client-side by
@@ -1733,12 +1733,13 @@ stays context-isolated):
     once a first/judge run resolves. `enter` focuses ONE group (one level — plan Q4),
     showing **all its branches inline** with the **winner row highlighted (★)**, the
     **run-level stop** (`run stop: <label>`, when a first/judge run resolves one — a
-    join=all run carries none, so the line is omitted), and the **preserved winner fork
-    path** (`winner fork (preserved): <path>`). Each branch row carries its own glyph
+    join=all run carries none, so the line is omitted), and an opaque preserved-artifact
+    handle when one exists. Each branch row carries its own glyph
     (**◐**/**✓**/**✗** failed), label, goal, current/last tool (or, once done, its stop
     label and **wall-clock duration**), count, and usage. Branch args/results render as
-    bounded previews (capped + control-byte-scrubbed — client-only; gauntlet #7, ADR 0079). The fork paths are the model's no-auto-merge handle
-    and ride the tool RESULT too — these events are the client observability channel only.
+    bounded previews (capped + control-byte-scrubbed — client-only; gauntlet #7, ADR 0079).
+    Artifact/delegation handles are typed inspection capabilities, never filesystem paths,
+    exact placement refs, or worktree selectors; each use is owner/scope reauthorized.
   - **Teams** — the existing agent-team roster + per-member focus + task / findings
     sub-views, verbatim. The tasks sub-view rows show the truncated task **description**
     between the id and state (a description-less task keeps the compact id/state row).
