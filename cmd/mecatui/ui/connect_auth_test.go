@@ -31,6 +31,7 @@ func TestConnectAuthReasonsRenderHonestAffordances(t *testing.T) {
 		reason client.AuthReason
 		want   string
 	}{
+		{client.AuthNeverEnrolled, "Run mecatui login remote.example:443 first"},
 		{client.AuthNotEnrolled, "No saved login"},
 		{client.AuthSessionExpired, "session expired"},
 		{client.AuthCredentialUnusable, "corrupt"},
@@ -41,7 +42,7 @@ func TestConnectAuthReasonsRenderHonestAffordances(t *testing.T) {
 	} {
 		t.Run(string(tc.reason), func(t *testing.T) {
 			m := newConnectModel([]ConnectTarget{{Target: "remote.example:443"}})
-			m.connect = connectState{open: true, reason: tc.reason}
+			m.connect = connectState{open: true, reason: tc.reason, failedTarget: "remote.example:443"}
 			if got := stripANSIstr(m.View().Content); !strings.Contains(got, tc.want) {
 				t.Fatalf("overlay missing %q: %s", tc.want, got)
 			}
@@ -83,6 +84,7 @@ func TestConnectActionTable(t *testing.T) {
 		{"expired same", client.AuthSessionExpired, 0, Reauthenticate, true},
 		{"unusable same", client.AuthCredentialUnusable, 0, Reauthenticate, true},
 		{"storage same", client.AuthStorageUnavailable, 0, RetryAfterCleanup, true},
+		{"never enrolled same", client.AuthNeverEnrolled, 0, ConnectSaved, false},
 		{"not enrolled same", client.AuthNotEnrolled, 0, Reauthenticate, true},
 		{"cleanup same", client.AuthCredentialCleanup, 0, RetryAfterCleanup, true},
 		{"different target", client.AuthSessionExpired, 1, ConnectSaved, false},

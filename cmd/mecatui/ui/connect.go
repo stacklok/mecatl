@@ -222,6 +222,9 @@ func (m Model) renderConnectOverlay(th theme.Theme) string {
 }
 
 func connectAuthHint(reason client.AuthReason, target string) string {
+	if reason == client.AuthNeverEnrolled && target != "" {
+		return "No saved login for " + sanitizeTerminal(target) + ". Run mecatui login " + sanitizeTerminal(target) + " first, then reconnect."
+	}
 	if reason == client.AuthNotEnrolled && target != "" {
 		return "No saved login for " + sanitizeTerminal(target) + ". Select it to sign in, or choose another target."
 	}

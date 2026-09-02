@@ -12,7 +12,10 @@ import (
 type AuthReason string
 
 const (
-	// AuthNotEnrolled means no saved credential was supplied.
+	// AuthNeverEnrolled means the saved-login registry has no entry for the
+	// requested target, so connecting anonymously cannot succeed.
+	AuthNeverEnrolled AuthReason = "never_enrolled"
+	// AuthNotEnrolled means no saved credential was supplied for a known target.
 	AuthNotEnrolled AuthReason = "not_enrolled"
 	// AuthSessionExpired means a stored session can no longer refresh.
 	AuthSessionExpired AuthReason = "session_expired"
@@ -66,7 +69,7 @@ func localAuthFailure(err error) (AuthReason, bool) {
 		return "", false
 	}
 	switch local.Reason {
-	case AuthNotEnrolled, AuthSessionExpired, AuthCredentialUnusable, AuthStorageUnavailable, AuthCredentialCleanup, AuthTargetChanged, AuthRejected:
+	case AuthNeverEnrolled, AuthNotEnrolled, AuthSessionExpired, AuthCredentialUnusable, AuthStorageUnavailable, AuthCredentialCleanup, AuthTargetChanged, AuthRejected:
 		return local.Reason, true
 	default:
 		return "", false

@@ -74,8 +74,9 @@ canonical-root-scoped, keyring-wrapped encrypted store. The credential is bound 
 canonical target and OIDC identity. An old unsuffixed keyring key is copied without
 deletion only when that root already contains an actual encrypted credential record; an
 empty opened namespace does not trigger migration. A credential enrolled under a legacy zero-padded port spelling
-needs one login after upgrade. `mecatui connect
-ADDRESS` never opens a browser; an unenrolled target tells you to run `login`.
+needs one login after upgrade. `mecatui connect ADDRESS` never opens a browser; an
+unenrolled target is rejected before it dials and tells you to run `mecatui login
+ADDRESS` first.
 Add `--no-browser` to print the authorization URL for you to open yourself, which is
 what you want over SSH or on a headless host. Remote login listens at the registered
 `http://127.0.0.1:18473/oauth/callback`. Open the printed URL in a browser on your

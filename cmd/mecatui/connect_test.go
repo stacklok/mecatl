@@ -197,6 +197,29 @@ func TestCrossTargetRecoveryActionsDowngradeToFreshSavedConnect(t *testing.T) {
 	}
 }
 
+func TestNeverEnrolledTargetFailsBeforeDial(t *testing.T) {
+	oldConfigHome := xdg.ConfigHome
+	xdg.ConfigHome = t.TempDir()
+	t.Cleanup(func() { xdg.ConfigHome = oldConfigHome })
+
+	target, dial, cleanup, err := resolveTransport(t.Context(), config{
+		transportMode:  modeConnect,
+		connectAddress: "new.example:443",
+		useTLS:         true,
+	})
+	defer cleanup()
+	if target != "new.example:443" {
+		t.Fatalf("target = %q, want requested target", target)
+	}
+	if dial.Server != "" || dial.TokenSource != nil {
+		t.Fatalf("dial config = %#v, want no dial target or token source", dial)
+	}
+	reason, ok := client.AuthFailure(err, false)
+	if !ok || reason != client.AuthNeverEnrolled {
+		t.Fatalf("resolve error = %v, reason=%q ok=%v", err, reason, ok)
+	}
+}
+
 func TestRestartConnectActionsAndBrowserBoundary(t *testing.T) {
 	for _, action := range []ui.ConnectAction{ui.ConnectSaved, ui.RetryAfterCleanup, ui.Reauthenticate, ui.AddTarget} {
 		t.Run(string(rune('0'+action)), func(t *testing.T) {
