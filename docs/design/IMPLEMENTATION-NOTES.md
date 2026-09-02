@@ -8222,6 +8222,18 @@ unbounded SSE body. `steer()` also returns `Promise<never>`, naming `http_steer`
 `prompt_free_controls` on gRPC, and cannot promote into a new run. These methods have no latent
 feature-enabled branch: each deferred server capability needs a later SDK release.
 
+Scenario 10's real-wire proofs live in `sdk/typescript/e2e/attach.e2e.test.ts` and
+`sdk/typescript/e2e/activity.e2e.test.ts`. The restart helper in
+`sdk/typescript/e2e/harness.ts` stops the first daemon, waits out the deliberately short local-store
+lease, then starts a new process on the same TCP listeners, workspace, and JSONL store; a replacement
+mock script supplies only the turns the new process owns. The activity proof compares the envelopes
+consumed across restart with a fresh full replay, so consumption-time checkpoint advancement,
+consume-but-do-not-yield filtering, the `sdkcur/1` cursor envelope, the derived filter set, and the
+three-arm reconnect classification are exercised together rather than as isolated fakes. The
+awaiting proof resolves the persisted ask with a direct harness `fetch` and bounded SSE drain, then
+asserts the attachment observes the resumed tool result and terminal under the unchanged run id.
+That drain remains test-only: it does not weaken the M2 decision that attached approval is unsupported.
+
 ## Live e2e — `e2e/` (see `e2e/README.md`)
 
 A LIVE, ginkgo-driven BDD suite proving the harness's features against a REAL model: it

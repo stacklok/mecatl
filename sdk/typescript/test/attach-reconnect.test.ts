@@ -173,6 +173,33 @@ describe("attachment reconnect authority", () => {
     await client.close();
   });
 
+  it("a daemon-side gRPC cancel reconnects the watch", async () => {
+    const requests: string[] = [];
+    const transport = watchTransport(async function* (request) {
+      requests.push(request.cursor);
+      if (requests.length === 1) {
+        yield boundary("cancel-0");
+        yield event("cancel-1", "before restart");
+        throw new ConnectError("daemon stopped", Code.Canceled);
+      }
+      yield boundary(request.cursor);
+      yield event("cancel-2", "after restart");
+      yield result("cancel-3");
+    });
+    const { client, session } = await sessionFor(transport);
+    const seen: string[] = [];
+
+    for await (const envelope of await session.attach(runId)) {
+      if (envelope.kind === "event" && envelope.event.kind === "message.delta") {
+        seen.push(envelope.event.text);
+      }
+    }
+
+    expect(seen).toEqual(["before restart", "after restart"]);
+    expect(requests).toEqual(["", "cancel-1"]);
+    await client.close();
+  });
+
   it("backoff grows monotonically to a cap and is jittered", async () => {
     vi.spyOn(Math, "random").mockReturnValue(0);
     const delays: number[] = [];

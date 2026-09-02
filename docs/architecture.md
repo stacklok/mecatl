@@ -300,6 +300,14 @@ typed deferral (`approve_ack_only` over HTTP, `prompt_free_controls` over gRPC),
 steer remains unsupported on both transports. None of these deferrals changes detach semantics:
 aborting, disposing, or leaving iteration releases only the watch.
 
+The offline SDK lane exercises that contract against a same-checkout daemon rather than only
+an injected transport. Its restartable harness rebinds the same listeners over one JSONL store:
+an open `activity()` view resumes from its consumption checkpoint and observes a newly minted run,
+while a run-bound view crosses restart only in the persisted-awaiting case where an external HTTP
+approval resumes the original run id. The latter response is bounded and drained by test harness
+code, not exposed as an SDK approval contract. The same suites prove gRPC TCP, UDS, HTTP/SSE,
+attached stale-guarded cancellation, terminal SSE cursor errors, and default log-only filtering.
+
 Around that core, every capability beyond the minimal loop is a **seam with a
 default and a swap-in adapter**, so the production build stays static and
 network-free unless you wire something in. The current adapters cover, grouped:

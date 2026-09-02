@@ -1,3 +1,4 @@
+import { Code } from "@connectrpc/connect";
 import {
   ActivityGapError,
   AuthenticationError,
@@ -190,6 +191,11 @@ function watchFailureDisposition(error: unknown): WatchFailureDisposition {
   if (
     error instanceof AuthenticationError ||
     error instanceof TransportError ||
+    // A replacement daemon closes connect-node's in-flight HTTP/2 watch with
+    // CANCEL. Caller-driven cancellation is handled by WatchConnection's
+    // aborted-signal checks before classification, so this remaining shape is a
+    // transport drop of the one idempotent operation the SDK may reconnect.
+    (error instanceof MecatlError && error.status === Code.Canceled) ||
     (error instanceof MecatlError && error.code === "watch_lagging")
   ) {
     return "resume";
