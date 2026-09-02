@@ -82,7 +82,10 @@ type Snapshot struct {
 	TitleSourcePrompts []string                     `json:"title_source_prompts,omitempty"`
 	TitleAttempts      []session.TitleAttempt       `json:"title_attempts,omitempty"`
 	AuxiliaryUsage     []session.AuxiliaryUsage     `json:"auxiliary_usage,omitempty"`
-	// Usage is the cumulative run-token accounting, a POINTER for true omitempty
+	// TokenUsage is the canonical durable usage ledger. A missing map is legacy;
+	// restore derives honest unknown attribution from deprecated projections.
+	TokenUsage map[session.UsageKind]session.TokenUsage `json:"token_usage,omitempty"`
+	// Usage is the deprecated cumulative run-token accounting, a POINTER for true omitempty
 	// (matching the Pending precedent): a zero Usage marshals nothing and a v1
 	// snapshot with no "usage" key decodes to a nil pointer => the zero Usage on
 	// restore. It is what the MaxRunTokens budget brake is evaluated against, so
@@ -222,6 +225,7 @@ func Of(s *session.Session) (Snapshot, error) {
 		TitleSourcePrompts:     s.TitleSourcePrompts(),
 		TitleAttempts:          s.TitleAttempts(),
 		AuxiliaryUsage:         s.AuxiliaryUsage(),
+		TokenUsage:             cloneTokenUsage(s.TokenUsage),
 		Kind:                   s.Kind,
 		Relationship:           relationship,
 		CreatedAt:              s.CreatedAt,
@@ -299,6 +303,9 @@ func (snap Snapshot) Restore() (*session.Session, error) {
 	s.Title = snap.Title
 	s.TitleProvenance = snap.TitleProvenance
 	s.RestoreTitleMetadata(snap.TitleGeneration, snap.TitleSourcePrompts, snap.TitleAttempts, snap.AuxiliaryUsage)
+	if snap.TokenUsage != nil {
+		s.RestoreTokenUsage(snap.TokenUsage)
+	}
 	// The identity labels go through the WRITE-ONCE aggregate method rather than a
 	// field poke (Session is an aggregate) and rather than a RestoreState
 	// parameter (that widening is Changed/breaking; this stays Added/minor).
@@ -322,6 +329,11 @@ func (snap Snapshot) Restore() (*session.Session, error) {
 	// totals + cumulative usage. New() lands in StateIdle; RestoreState advances.
 	if err := RestoreState(s, snap.State, snap.StopReason, snap.Pending, snap.Counters, usage, snap.Permanent, snap.LastError); err != nil {
 		return nil, err
+	}
+	if snap.TokenUsage == nil && usage != (session.Usage{}) {
+		s.RestoreTokenUsage(map[session.UsageKind]session.TokenUsage{
+			session.UsageKindMain: {Total: usage, Models: map[string]session.Usage{"unknown": usage}},
+		})
 	}
 	if snap.State == session.StateFailed {
 		disposition := snap.RetryDisposition
@@ -476,6 +488,21 @@ func beginTurnPreservingCounters(s *session.Session, want session.Counters) erro
 	}
 	s.Counters = want
 	return nil
+}
+
+func cloneTokenUsage(in map[session.UsageKind]session.TokenUsage) map[session.UsageKind]session.TokenUsage {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[session.UsageKind]session.TokenUsage, len(in))
+	for kind, bucket := range in {
+		models := make(map[string]session.Usage, len(bucket.Models))
+		for model, usage := range bucket.Models {
+			models[model] = usage
+		}
+		out[kind] = session.TokenUsage{Total: bucket.Total, Models: models}
+	}
+	return out
 }
 
 // Marshal encodes the snapshot of s as a single JSON line (no trailing newline).

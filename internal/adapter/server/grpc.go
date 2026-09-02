@@ -144,7 +144,10 @@ func (h *HarnessServer) GetSession(ctx context.Context, req *mecatlv1.GetSession
 	// (or is empty) gets a derived label so GetSession shows one without a
 	// write-on-read — sess.Title is NOT mutated.
 	if sess.Title == "" {
-		proto.Title = DeriveTitle(sess)
+		derived := DeriveTitle(sess)
+		//nolint:staticcheck // dual-write compatibility title alongside canonical metadata.
+		proto.Title = derived
+		proto.TitleMetadata.Title = derived
 	}
 	return &mecatlv1.GetSessionResponse{Session: proto}, nil
 }

@@ -1,5 +1,75 @@
 package session
 
+import "strings"
+
+// UsageKind identifies a canonical token-usage bucket. "main" and its
+// descendants are reserved for normal agent-run accounting; "session_title" is
+// the server-owned title-generator bucket.
+type UsageKind string
+
+const (
+	// UsageKindMain is the reserved normal agent-run accounting bucket.
+	UsageKindMain UsageKind = "main"
+	// UsageKindSessionTitle is the server-owned title-generator accounting bucket.
+	UsageKindSessionTitle UsageKind = "session_title"
+)
+
+// TokenUsage is one canonical usage bucket. Total is always the element-wise
+// sum of Models. Model keys are opaque server-produced provider/model attributions;
+// legacy data without exact attribution uses "unknown".
+type TokenUsage struct {
+	Total  Usage
+	Models map[string]Usage
+}
+
+const unknownModelAttribution = "unknown"
+
+func modelAttribution(providerID, modelID string) string {
+	providerID = strings.Join(strings.Fields(providerID), " ")
+	modelID = strings.Join(strings.Fields(modelID), " ")
+	if providerID == "" || modelID == "" {
+		return unknownModelAttribution
+	}
+	return providerID + "/" + modelID
+}
+
+func (s *Session) recordTokenUsage(kind UsageKind, attribution string, usage Usage) {
+	if s.TokenUsage == nil {
+		s.TokenUsage = make(map[UsageKind]TokenUsage)
+	}
+	bucket := s.TokenUsage[kind]
+	if bucket.Models == nil {
+		bucket.Models = make(map[string]Usage)
+	}
+	if attribution == "" {
+		attribution = unknownModelAttribution
+	}
+	bucket.Models[attribution] = bucket.Models[attribution].Add(usage)
+	bucket.Total = bucket.Total.Add(usage)
+	s.TokenUsage[kind] = bucket
+}
+
+// RestoreTokenUsage restores the canonical accounting ledger from trusted
+// persistence. A nil ledger is legacy data; compatibility projections are retained.
+func (s *Session) RestoreTokenUsage(usage map[UsageKind]TokenUsage) {
+	s.TokenUsage = make(map[UsageKind]TokenUsage, len(usage))
+	for kind, bucket := range usage {
+		if kind != UsageKindMain && kind != UsageKindSessionTitle {
+			continue
+		}
+		models := make(map[string]Usage, len(bucket.Models))
+		var total Usage
+		for model, value := range bucket.Models {
+			if model == "" {
+				model = unknownModelAttribution
+			}
+			models[model] = models[model].Add(value)
+			total = total.Add(value)
+		}
+		s.TokenUsage[kind] = TokenUsage{Total: total, Models: models}
+	}
+}
+
 // Usage is an immutable value object accounting for the token cost of a single
 // model call (or an aggregate thereof). Construct it as a literal; it carries no
 // mutating methods.

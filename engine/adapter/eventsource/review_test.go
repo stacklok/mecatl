@@ -254,7 +254,7 @@ func TestFoldContractDocMatchesSessionFields(t *testing.T) {
 	//     the next run — never fabricated)
 	wantSessionFields := map[string]struct{}{
 		"ID": {}, "State": {}, "Mode": {}, "Conversation": {}, "Limits": {},
-		"Counters": {}, "Usage": {}, "Workspace": {}, "Profile": {},
+		"Counters": {}, "Usage": {}, "TokenUsage": {}, "Workspace": {}, "Profile": {},
 		"ProviderID": {}, "ModelID": {}, "ReasoningEffort": {}, "DebugMCPServers": {}, "DebugMCPTools": {}, "DebugTargetFingerprint": {}, "Kind": {},
 		"Relationship": {}, "Adoption": {}, "CreatedAt": {},
 		"Title": {}, "TitleProvenance": {}, "TitleGeneration": {}, "Owner": {}, "Authority": {}, "EnvironmentRef": {},

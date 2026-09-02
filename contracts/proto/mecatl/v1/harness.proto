@@ -1049,11 +1049,8 @@ message SessionSummary {
   // created_at_unix is the creation timestamp in Unix seconds. Zero when the
   // snapshot could not be loaded.
   int64 created_at_unix = 6;
-  // title is the human-readable session label seeded from the first genuine user
-  // prompt (clamped to 120 runes). Empty for a session with no label (a client
-  // may derive a fallback). Populated from the snapshot Title (or the lazy
-  // fallback) by ListSessions.
-  string title = 7;
+  // title is the deprecated compatibility title; use title_metadata.title.
+  string title = 7 [deprecated = true];
   // owner is the verified caller the session is attributed to (ADR 0204), stamped
   // write-once at CreateSession from the validated token — never from the request
   // body. UNSET for an ownerless session (a no-auth deployment, or a session
@@ -1068,10 +1065,14 @@ message SessionSummary {
   string reason_code = 12;
   // workspace is the stored session root used for inventory search/display.
   string workspace = 13;
-  // title_provenance is "first-prompt", "operator", "generated", or empty for legacy/unknown.
-  string title_provenance = 14;
-  // title_metadata is the bounded, source-free title lifecycle projection.
+  // title_provenance is deprecated compatibility provenance; use title_metadata.provenance.
+  // Allowed values: "first-prompt", "operator", "generated", or empty for legacy/unknown.
+  string title_provenance = 14 [deprecated = true];
+  // title_metadata is the canonical bounded, source-free title lifecycle projection.
   SessionTitle title_metadata = 15;
+  // token_usage is canonical durable accounting keyed only by "main" and
+  // "session_title". Every bucket total equals the sum of its models entries.
+  map<string, TokenUsage> token_usage = 16;
 }
 
 // SessionRelationship carries the validated links appropriate to a session kind.
@@ -1401,13 +1402,11 @@ message Session {
   // place a client re-reads the model AFTER a mode change. Nil/absent from an older
   // server → client falls back to today's behavior.
   ResolvedModel resolved_model = 9;
-  // title is the human-readable session label seeded from the first genuine user
-  // prompt (clamped to 120 runes). Empty for a session with no label (a client
-  // may derive a fallback). Populated from the snapshot Title (or the lazy
-  // fallback in GetSession) — the loop seeds it once via session.SetTitle.
-  string title = 10;
-  // title_provenance is "first-prompt", "operator", or empty for legacy/unknown.
-  string title_provenance = 12;
+  // title is the deprecated compatibility title; use title_metadata.title.
+  string title = 10 [deprecated = true];
+  // title_provenance is deprecated compatibility provenance; use title_metadata.provenance.
+  // Allowed values: "first-prompt", "operator", "generated", or empty for legacy/unknown.
+  string title_provenance = 12 [deprecated = true];
   // capabilities is the server's feature-advertisement snapshot (the SAME value
   // CreateSessionResponse carries). It rides the Session snapshot so a client
   // that re-hydrates a persisted session on restart or adopt (continue, /effort fork)
@@ -1425,36 +1424,42 @@ message Session {
   // These contain no URLs, headers, credentials, or inline MCP configuration.
   repeated string debug_mcp_servers = 16;
   repeated string debug_mcp_tools = 17;
-  // title_metadata is the bounded, source-free title lifecycle projection.
+  // title_metadata is the canonical bounded, source-free title lifecycle projection.
   SessionTitle title_metadata = 18;
+  // token_usage is canonical durable accounting keyed only by "main" and
+  // "session_title". Every bucket total equals the sum of its models entries.
+  map<string, TokenUsage> token_usage = 19;
 }
 
-// SessionTitle is the durable, source-free title lifecycle projection. It never
-// carries title-source prompts or provider error text.
+// SessionTitle is the canonical durable, source-free title lifecycle projection.
+// It never carries title-source prompts, provider error text, or token usage.
 message SessionTitle {
+  // title is the authoritative human-readable session label.
   string title = 1;
+  // provenance is "first-prompt", "operator", "generated", or empty for legacy/unknown.
   string provenance = 2;
+  // generation_state is "disabled", "pending", "generated", or "exhausted".
   string generation_state = 3;
+  // latest_attempt is the latest durable attempt without provider error detail.
   TitleAttemptSummary latest_attempt = 4;
-  AuxiliaryUsageSummary latest_usage = 5;
 }
 
 // TitleAttemptSummary is the latest durable title attempt without provider error detail.
 message TitleAttemptSummary {
+  // id is a server-minted opaque attempt identifier.
   string id = 1;
+  // outcome is "succeeded", "deferred", "failed", "interrupted", or empty while claimed.
   string outcome = 2;
+  // created_at_unix is the attempt creation time in Unix seconds.
   int64 created_at_unix = 3;
 }
 
-// AuxiliaryUsageSummary is the latest title-only auxiliary usage entry.
-message AuxiliaryUsageSummary {
-  string operation = 1;
-  string provider_id = 2;
-  string model_id = 3;
-  int64 input_tokens = 4;
-  int64 output_tokens = 5;
-  int64 recorded_at_unix = 6;
-  string outcome = 7;
+// TokenUsage is one canonical usage bucket. models maps opaque server-produced
+// provider/model attribution strings (or "unknown" for legacy data) to Usage;
+// total always equals the element-wise sum of models.
+message TokenUsage {
+  Usage total = 1;
+  map<string, Usage> models = 2;
 }
 
 // ConverseRequest is a client-to-server frame on the Converse stream. The

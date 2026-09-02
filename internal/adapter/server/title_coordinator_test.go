@@ -145,7 +145,7 @@ func TestSessionTitleGeneration_Scenario2_AutomaticWorkIsOutsideChatRun(t *testi
 	started := make(chan struct{}, 1)
 	generator := titleGeneratorFunc(func(context.Context, []string) TitleGenerationResult {
 		started <- struct{}{}
-		return TitleGenerationResult{Title: "Generated title", Outcome: session.TitleAttemptSucceeded}
+		return TitleGenerationResult{Title: "Generated title", Outcome: session.TitleAttemptSucceeded, ProviderID: "title-provider", ModelID: "title-model", Usage: session.Usage{InputTokens: 3, OutputTokens: 2}}
 	})
 	svc, err := NewService(Config{
 		Engine: agent.NewEngine(agent.Deps{LLM: mockllm.New(mockllm.TextTurn("main reply")), Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil)}),

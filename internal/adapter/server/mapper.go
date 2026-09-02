@@ -793,8 +793,24 @@ func toProtoUsage(u session.Usage) *mecatlv1.Usage {
 	}
 }
 
+func toProtoTokenUsage(in map[session.UsageKind]session.TokenUsage) map[string]*mecatlv1.TokenUsage {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]*mecatlv1.TokenUsage, len(in))
+	for kind, bucket := range in {
+		models := make(map[string]*mecatlv1.Usage, len(bucket.Models))
+		for model, usage := range bucket.Models {
+			models[valid(model)] = toProtoUsage(usage)
+		}
+		out[string(kind)] = &mecatlv1.TokenUsage{Total: toProtoUsage(bucket.Total), Models: models}
+	}
+	return out
+}
+
 // toProtoSession maps a session.Session aggregate to its proto snapshot.
 func toProtoSession(s *session.Session, rm ResolvedModel, caps *mecatlv1.ServerCapabilities) *mecatlv1.Session {
+	//nolint:staticcheck // title/provenance are intentionally dual-written compatibility fields.
 	return &mecatlv1.Session{
 		SessionId:               string(s.ID),
 		State:                   string(s.State),
@@ -808,6 +824,7 @@ func toProtoSession(s *session.Session, rm ResolvedModel, caps *mecatlv1.ServerC
 		Title:                   valid(s.Title),
 		TitleProvenance:         valid(string(s.TitleProvenance)),
 		TitleMetadata:           toProtoSessionTitle(titlePayload(s)),
+		TokenUsage:              toProtoTokenUsage(s.TokenUsage),
 		Capabilities:            caps,
 		AdoptionSourceSessionId: valid(string(adoptionSourceID(s))),
 		Kind:                    string(s.Kind),
@@ -819,15 +836,15 @@ func toProtoSession(s *session.Session, rm ResolvedModel, caps *mecatlv1.ServerC
 
 func titlePayload(s *session.Session) session.TitlePayload {
 	payload := session.TitlePayload{
-		Title:           s.Title,
+		Title:           DeriveTitle(s),
 		Provenance:      s.TitleProvenance,
 		GenerationState: s.TitleGeneration,
 	}
+	if s.Title == "" && payload.Title != "" {
+		payload.Provenance = session.TitleProvenanceFirstPrompt
+	}
 	if attempts := s.TitleAttempts(); len(attempts) > 0 {
 		payload.LatestAttempt = &attempts[len(attempts)-1]
-	}
-	if usage := s.AuxiliaryUsage(); len(usage) > 0 {
-		payload.LatestUsage = &usage[len(usage)-1]
 	}
 	return payload
 }
@@ -844,14 +861,6 @@ func toProtoSessionTitle(p session.TitlePayload) *mecatlv1.SessionTitle {
 		out.LatestAttempt = &mecatlv1.TitleAttemptSummary{
 			Id: valid(p.LatestAttempt.ID), Outcome: valid(string(p.LatestAttempt.Outcome)),
 			CreatedAtUnix: p.LatestAttempt.CreatedAt.Unix(),
-		}
-	}
-	if p.LatestUsage != nil {
-		out.LatestUsage = &mecatlv1.AuxiliaryUsageSummary{
-			Operation: valid(string(p.LatestUsage.Operation)), ProviderId: valid(p.LatestUsage.ProviderID),
-			ModelId: valid(p.LatestUsage.ModelID), InputTokens: int64(p.LatestUsage.Usage.InputTokens),
-			OutputTokens: int64(p.LatestUsage.Usage.OutputTokens), RecordedAtUnix: p.LatestUsage.RecordedAt.Unix(),
-			Outcome: valid(string(p.LatestUsage.Outcome)),
 		}
 	}
 	return out
@@ -1042,6 +1051,12 @@ func toProtoWorktrees(wts []Worktree) []*mecatlv1.Worktree {
 // picker row, issue #245 Phase 1) to its proto form. It projects ONLY the
 // picker metadata — no conversation content.
 func toProtoSessionSummary(s SessionSummary) *mecatlv1.SessionSummary {
+	metadata := s.TitleMetadata
+	if metadata.Title == "" {
+		metadata.Title = s.Title
+		metadata.Provenance = s.TitleProvenance
+	}
+	//nolint:staticcheck // title/provenance are intentionally dual-written compatibility fields.
 	return &mecatlv1.SessionSummary{
 		SessionId:       s.SessionID,
 		ModifiedAtUnix:  s.ModifiedAtUnix,
@@ -1051,7 +1066,8 @@ func toProtoSessionSummary(s SessionSummary) *mecatlv1.SessionSummary {
 		CreatedAtUnix:   s.CreatedAtUnix,
 		Title:           valid(s.Title),
 		TitleProvenance: valid(string(s.TitleProvenance)),
-		TitleMetadata:   toProtoSessionTitle(s.TitleMetadata),
+		TitleMetadata:   toProtoSessionTitle(metadata),
+		TokenUsage:      toProtoTokenUsage(s.TokenUsage),
 		Workspace:       valid(s.Workspace),
 		Owner:           toProtoPrincipal(s.Owner),
 		Kind:            string(s.Kind),

@@ -33,7 +33,7 @@ func (f *fakeSessionManagementClient) DeleteSession(_ context.Context, in *mecat
 }
 
 func TestRenameSessionWrapperAndCmd(t *testing.T) {
-	fake := &fakeSessionManagementClient{renameResp: &mecatlv1.RenameSessionResponse{Session: &mecatlv1.Session{Title: "server title", TitleProvenance: "operator"}}}
+	fake := &fakeSessionManagementClient{renameResp: &mecatlv1.RenameSessionResponse{Session: &mecatlv1.Session{TitleMetadata: &mecatlv1.SessionTitle{Title: "server title", Provenance: "operator"}}}}
 	cl := newFakeClient(fake)
 	msg := RenameSessionCmd(context.Background(), cl, "opaque\nID", "new title")()
 	got, ok := msg.(SessionRenamedMsg)

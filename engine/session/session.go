@@ -359,7 +359,11 @@ type Session struct {
 	Limits Limits
 	// Counters are the running totals for stop-condition evaluation.
 	Counters Counters
-	// Usage is the CUMULATIVE token accounting for the logical run. It is the value
+	// TokenUsage is the canonical durable accounting ledger. Each bucket total is
+	// the element-wise sum of its opaque server-produced model attributions.
+	// Session.Usage remains the deprecated compatibility projection of "main".
+	TokenUsage map[UsageKind]TokenUsage
+	// Usage is the deprecated cumulative main-token compatibility projection. It is
 	// the MaxRunTokens budget brake (StopBudget) is evaluated against, so it is
 	// persisted into the snapshot and the brake reads it DIRECTLY (the loop keeps a
 	// separate zero-based per-run delta for the EvResult figure; there is no seed) —
@@ -553,6 +557,7 @@ func New(id SessionID, mode PermissionMode, workspace string, limits Limits, cre
 		Mode:            mode,
 		Conversation:    &Conversation{},
 		Limits:          limits,
+		TokenUsage:      make(map[UsageKind]TokenUsage),
 		Workspace:       workspace,
 		Kind:            SessionKindMain,
 		TitleGeneration: TitleGenerationDisabled,
@@ -618,6 +623,7 @@ func (s *Session) RecordUsage(u Usage) error {
 		return fmt.Errorf("%w: RecordUsage from %q", ErrIllegalTransition, s.State)
 	}
 	s.Usage = s.Usage.Add(u)
+	s.recordTokenUsage(UsageKindMain, modelAttribution(s.ProviderID, s.ModelID), u)
 	return nil
 }
 
@@ -642,6 +648,7 @@ func (s *Session) ResetUsage() error {
 		return fmt.Errorf("%w: ResetUsage from %q", ErrIllegalTransition, s.State)
 	}
 	s.Usage = Usage{}
+	s.TokenUsage[UsageKindMain] = TokenUsage{}
 	return nil
 }
 

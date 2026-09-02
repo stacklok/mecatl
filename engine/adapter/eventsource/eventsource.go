@@ -111,6 +111,8 @@ type SessionMeta struct {
 	TitleSourcePrompts []string
 	TitleAttempts      []session.TitleAttempt
 	AuxiliaryUsage     []session.AuxiliaryUsage
+	// TokenUsage is the canonical durable accounting ledger supplied by snapshot metadata.
+	TokenUsage map[session.UsageKind]session.TokenUsage
 	// Kind and Relationship are the trusted producer taxonomy supplied alongside
 	// the event stream. An empty kind is legacy and folds to unknown.
 	Kind         session.SessionKind
@@ -196,6 +198,9 @@ func Fold(meta SessionMeta, events iter.Seq2[session.Event, error]) (*session.Se
 	s.Title = meta.Title
 	s.TitleProvenance = meta.TitleProvenance
 	s.RestoreTitleMetadata(meta.TitleGeneration, meta.TitleSourcePrompts, meta.TitleAttempts, meta.AuxiliaryUsage)
+	if meta.TokenUsage != nil {
+		s.RestoreTokenUsage(meta.TokenUsage)
+	}
 
 	if f.pending != nil {
 		// AWAITING: the live session at pause time holds the assistant message WITH its
@@ -216,6 +221,12 @@ func Fold(meta SessionMeta, events iter.Seq2[session.Event, error]) (*session.Se
 	// so the terminal-transition vocabulary lives in exactly one place.
 	if err := sessnap.RestoreState(s, f.restoreState(), f.stop, nil, f.finalCounters(), f.usage, f.permanent, f.lastError); err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrReconstruct, err)
+	}
+	if meta.TokenUsage == nil && f.usage != (session.Usage{}) {
+		s.RestoreTokenUsage(map[session.UsageKind]session.TokenUsage{
+			session.UsageKindMain:         {Total: f.usage, Models: map[string]session.Usage{"unknown": f.usage}},
+			session.UsageKindSessionTitle: s.TokenUsage[session.UsageKindSessionTitle],
+		})
 	}
 	if s.State == session.StateFailed {
 		if err := s.RecordFailureMetadata(f.disposition, f.progress); err != nil {

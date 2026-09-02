@@ -13,6 +13,16 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 ### Added
 
+- **Canonical token-usage buckets and title lifecycle projection** — adds
+  `session.UsageKind`/`TokenUsage` and `Session.TokenUsage`, the canonical
+  `main` and `session_title` totals plus opaque model attribution maps. Each
+  total is normalized to the sum of its model entries; legacy snapshots map
+  unattributed usage to `unknown`. `Session.Usage` and its snapshot projection
+  remain dual-written compatibility data. `SessionTitle` is the source-free
+  canonical title lifecycle projection; its nested usage is removed. Added
+  (minor); the retained wire title/provenance fields are deprecated (pre-v1
+  breaking compatibility classification).
+
 - **Session title-generation domain metadata and lifecycle event** — adds generated title provenance,
   durable title-generation lifecycle/source/attempt records, a bounded
   `session_title` auxiliary-usage ledger, and the source-free `EvSessionTitle` /

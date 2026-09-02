@@ -43,8 +43,8 @@ func TestSessionTitleGeneration_Scenario2_TitleMetadataRoundTrip(t *testing.T) {
 	if attempt := meta.GetLatestAttempt(); attempt.GetId() != "attempt-1" || attempt.GetOutcome() != "deferred" || attempt.GetCreatedAtUnix() != at.Unix() {
 		t.Fatalf("latest attempt = %#v", attempt)
 	}
-	if usage := meta.GetLatestUsage(); usage.GetOperation() != "session_title" || usage.GetProviderId() != "provider" || usage.GetModelId() != "model" || usage.GetInputTokens() != 3 || usage.GetOutputTokens() != 2 || usage.GetRecordedAtUnix() != at.Unix() || usage.GetOutcome() != "deferred" {
-		t.Fatalf("latest usage = %#v", usage)
+	if got := got.GetTokenUsage()["session_title"]; got.GetTotal().GetInputTokens() != 3 || got.GetModels()["provider/model"].GetOutputTokens() != 2 {
+		t.Fatalf("canonical token usage = %#v", got)
 	}
 }
 
@@ -55,7 +55,6 @@ func TestSessionTitleGeneration_Scenario4_TitleEventIsAuthoritativeAndSanitized(
 	ev := toProto(session.Event{Type: session.EvSessionTitle, Title: &session.TitlePayload{
 		Title: "valid\xff title", Provenance: session.TitleProvenanceGenerated, GenerationState: session.TitleGenerationGenerated,
 		LatestAttempt: &session.TitleAttempt{ID: "attempt-1", Outcome: session.TitleAttemptSucceeded, CreatedAt: at},
-		LatestUsage:   &session.AuxiliaryUsage{Operation: session.AuxiliaryOperationSessionTitle, ProviderID: "provider\xff", ModelID: "model\xff", Usage: session.Usage{InputTokens: 3, OutputTokens: 2}, RecordedAt: at, Outcome: session.TitleAttemptSucceeded},
 	}})
 
 	if ev.GetType() != "session.title" || ev.GetTitle() == nil {
@@ -64,8 +63,8 @@ func TestSessionTitleGeneration_Scenario4_TitleEventIsAuthoritativeAndSanitized(
 	if got := ev.GetTitle(); got.GetTitle() != "valid� title" || got.GetProvenance() != "generated" || got.GetGenerationState() != "generated" {
 		t.Fatalf("title payload = %#v", got)
 	}
-	if got := ev.GetTitle().GetLatestUsage(); got.GetProviderId() != "provider�" || got.GetModelId() != "model�" {
-		t.Fatalf("usage payload was not UTF-8 repaired: %#v", got)
+	if ev.GetTitle().ProtoReflect().Descriptor().Fields().ByName("latest_usage") != nil {
+		t.Fatal("title lifecycle projection must not contain nested usage")
 	}
 	body, err := json.Marshal(sessionTitleToJSON(session.TitlePayload{Title: "valid\xff title"}))
 	if err != nil || strings.Contains(string(body), "source") || strings.Contains(string(body), "error") {
@@ -82,12 +81,12 @@ func TestSessionTitleGeneration_Scenario5_AuxiliaryUsageRoundTripAndProjection(t
 		s.RecordAuxiliaryUsage(session.AuxiliaryUsage{Operation: session.AuxiliaryOperationSessionTitle, ProviderID: "provider", ModelID: "model", Usage: session.Usage{InputTokens: i}})
 	}
 
-	meta := toProtoSession(s, ResolvedModel{}, nil).GetTitleMetadata()
-	if got := meta.GetLatestUsage(); got.GetOperation() != "session_title" || got.GetInputTokens() != 16 {
-		t.Fatalf("latest bounded usage = %#v", got)
+	usage := toProtoSession(s, ResolvedModel{}, nil).GetTokenUsage()["session_title"]
+	if got := usage.GetTotal(); got.GetInputTokens() != 136 || usage.GetModels()["provider/model"].GetInputTokens() != 136 {
+		t.Fatalf("canonical bounded usage = %#v", usage)
 	}
-	summary := toProtoSessionSummary(SessionSummary{TitleMetadata: titlePayload(s)})
-	if got := summary.GetTitleMetadata().GetLatestUsage(); got.GetOperation() != "session_title" || got.GetInputTokens() != 16 {
-		t.Fatalf("summary latest bounded usage = %#v", got)
+	summary := toProtoSessionSummary(SessionSummary{TitleMetadata: titlePayload(s), TokenUsage: s.TokenUsage})
+	if got := summary.GetTokenUsage()["session_title"]; got.GetTotal().GetInputTokens() != 136 {
+		t.Fatalf("summary canonical usage = %#v", got)
 	}
 }

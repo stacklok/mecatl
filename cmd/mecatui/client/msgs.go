@@ -23,7 +23,6 @@ type SessionTitleMsg struct {
 	Provenance      string
 	GenerationState string
 	LatestAttempt   TitleAttemptSummary
-	LatestUsage     AuxiliaryUsageSummary
 }
 
 // TitleAttemptSummary is the latest durable title attempt projection.
@@ -1176,14 +1175,9 @@ func sessionTitleMsg(title *mecatlv1.SessionTitle) SessionTitleMsg {
 		return SessionTitleMsg{}
 	}
 	attempt := title.GetLatestAttempt()
-	usage := title.GetLatestUsage()
 	return SessionTitleMsg{
 		Title: title.GetTitle(), Provenance: title.GetProvenance(), GenerationState: title.GetGenerationState(),
 		LatestAttempt: TitleAttemptSummary{ID: attempt.GetId(), Outcome: attempt.GetOutcome(), CreatedAtUnix: attempt.GetCreatedAtUnix()},
-		LatestUsage: AuxiliaryUsageSummary{
-			Operation: usage.GetOperation(), ProviderID: usage.GetProviderId(), ModelID: usage.GetModelId(),
-			InputTokens: usage.GetInputTokens(), OutputTokens: usage.GetOutputTokens(), RecordedAtUnix: usage.GetRecordedAtUnix(), Outcome: usage.GetOutcome(),
-		},
 	}
 }
 
