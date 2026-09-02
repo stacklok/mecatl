@@ -10,7 +10,7 @@ Shared generated surfaces are serialized: task 07 reconciles engine/TypeScript A
 
 | Task | Title | Blocked by | Acceptance criteria |
 |---|---|---|---|
-| `01-session-header-contract` | Shared session header contract and provider projection | — | AC1.1, AC1.2, AC1.3, AC1.4, AC1.5 |
+| `01-session-header-contract` | Shared session header contract and provider parity | — | AC1.1, AC1.2, AC1.3, AC1.4, AC1.5 |
 | `02-grpc-affinity-validation` | gRPC session-affinity validation | `01-session-header-contract` | AC2.1, AC2.2, AC2.3, AC2.4, AC2.5 |
 | `03-http-affinity-validation` | HTTP session-route affinity validation | `01-session-header-contract` | AC3.1, AC3.2, AC3.3, AC3.4 |
 | `04-mecatui-affinity` | mecatui session-bound metadata propagation | `02-grpc-affinity-validation` | AC4.1, AC4.2 |

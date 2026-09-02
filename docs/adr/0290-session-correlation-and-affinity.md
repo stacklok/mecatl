@@ -34,15 +34,25 @@ client→gateway→mecak8s→provider correlation and affinity contract.
 Define the header name and its legal-value predicate once beside the session context
 helpers in `engine/port/sessioncontext.go`. A legal value is a non-empty session ID
 whose bytes are valid as one HTTP header field value. It is never trimmed, decoded,
-encoded, case-folded, truncated, or otherwise normalized. Reuse that contract in the
-three real provider adapters instead of private constants and validators. Preserve ADR
-0216's outbound behavior: providers derive the value from the authoritative run-bound
-context, attach it as a per-request option on every attempt and fallback, and omit it
-without failing inference when that context is absent or illegal. Per-request options
-must not mutate a shared provider client: a race-enabled concurrent proof shares one
-client between two sessions while interleaving their initial attempts, retries, and
-provider-specific fallbacks, and verifies that every outbound request carries only its
-originating run-bound session ID. They never blindly forward transport ingress metadata.
+encoded, case-folded, truncated, or otherwise normalized. Root server and client
+consumers use that exported contract.
+
+The independently versioned provider submodules continue to require the released
+standalone `engine` v0.12.0 under `GOWORK=off`. ADR 0093 forbids local `replace`
+directives, so this PR cannot import newly exported `engine/port` symbols there without
+requiring an unavailable engine release. The OpenAI Responses, OpenAI Chat Completions,
+and Anthropic production adapters therefore retain their existing private header
+constants and legal-value validators in this PR, preserving ADR 0216 byte behavior.
+One repository-owned exact legal/illegal vector fixture, consumed by the engine and
+provider test suites, and provider-specific parity tests guard those private validators
+against the canonical port contract; they are a contract proof, not an import. Preserve ADR 0216's outbound behavior: providers derive the value from the
+authoritative run-bound context, attach it as a per-request option on every attempt and
+fallback, and omit it without failing inference when that context is absent or illegal.
+Per-request options must not mutate a shared provider client: a race-enabled concurrent
+proof shares one client between two sessions while interleaving their initial attempts,
+retries, and provider-specific fallbacks, and verifies that every outbound request
+carries only its originating run-bound session ID. They never blindly forward transport
+ingress metadata.
 
 At every session-bound gRPC unary and server-streaming entry, accept an absent header
 for compatibility. Reject duplicate values, an illegal value, or a value that differs
@@ -158,6 +168,13 @@ invalidated and its local ask is retracted without replacing its durable resume 
 only the successor that acquires after expiry may resume that exact ask. A failed
 persistence attempt is diagnosed but does not replace the previously authoritative
 durable state.
+
+Provider production code intentionally does not consume the new exported port symbols
+in this PR. After an engine release exposes the contract to provider modules, a future
+provider release may raise its engine dependency and replace the private ADR 0216
+constants and validators; that migration is deferred, not a prerequisite for this
+one-PR capability. Until then, the shared vector fixture, parity tests, and concurrent
+isolation tests are the compatibility guard.
 
 Owner-to-owner live forwarding is deliberately deferred. If later required, it needs a
 separate ADR and acceptance plan because it adds a new authenticated internal protocol,

@@ -39,31 +39,39 @@ later scenarios assume earlier ones but do not weaken their acceptance criteria.
 
 ---
 
-### Scenario 1 — One exact header contract reaches every provider attempt
+### Scenario 1 — One exact header contract governs every provider attempt
 
-An engine embedder and all real provider adapters share one header name and one
-byte-level legal-value decision near
-[`engine/port/sessioncontext.go`](../../engine/port/sessioncontext.go). The provider
-still reads the actual run's context, never transport ingress, preserving
-[ADR-0216](../adr/0216-provider-session-correlation-header.md) and the provider-neutral
-request invariant in [`AGENTS.md`](../../AGENTS.md).
+An engine embedder has one canonical header name and byte-level legal-value decision
+near [`engine/port/sessioncontext.go`](../../engine/port/sessioncontext.go). The real
+provider adapters continue to read the actual run's context, never transport ingress,
+preserving [ADR-0216](../adr/0216-provider-session-correlation-header.md) and the
+provider-neutral request invariant in [`AGENTS.md`](../../AGENTS.md). Their separately
+versioned `GOWORK=off` engine v0.12.0 dependency cannot consume a newly exported port
+symbol in this PR, and ADR 0093 forbids a local replacement; provider production code
+therefore retains its private ADR-0216 header constants and validators.
 
 **Work:**
-- engine port: the shared `X-Mecatl-Session-ID` constant and legal-value predicate
-  beside the existing session-context helpers;
-- provider modules: OpenAI Responses, OpenAI Chat Completions, and Anthropic reuse the
-  shared contract for each per-request option, retry, and fallback;
+- engine port: add the canonical exported `X-Mecatl-Session-ID` constant and legal-value
+  predicate beside the existing session-context helpers, with one repository-owned exact
+  legal/illegal vector fixture consumed by the engine and provider test suites;
+- provider modules: retain their existing private production constants and validators,
+  and consume that exact vector fixture in parity tests while proving per-request projection,
+  retries, fallbacks, and concurrent isolation;
 - engine compatibility: API snapshots and `engine/CHANGELOG.md` are updated if either
-  shared symbol is exported.
+  shared symbol is exported. A future provider release may raise its engine dependency
+  and migrate production code after the engine release is available.
 
 **Acceptance:**
-- AC1.1: The shared contract accepts a non-empty legal HTTP field value byte-for-byte
-  and rejects empty, control-bearing, newline-bearing, or otherwise illegal values;
-  it never trims, encodes, truncates, or normalizes a session ID.
-  - verify: `TestADR_0290_SessionHeaderLegalValue`
-- AC1.2: OpenAI Responses, OpenAI Chat Completions, and Anthropic send the exact
-  run-bound session ID on the initial request and every retry or provider-specific
-  fallback, using per-request options rather than mutating a shared client.
+- AC1.1: The canonical port contract accepts a non-empty legal HTTP field value
+  byte-for-byte and rejects empty, control-bearing, newline-bearing, or otherwise
+  illegal values; it never trims, encodes, truncates, or normalizes a session ID. The
+  shared vector fixture proves each provider's retained private validator has the same
+  decision.
+  - verify: `TestADR_0290_SessionHeaderLegalValue` and provider parity vector tests
+- AC1.2: OpenAI Responses, OpenAI Chat Completions, and Anthropic retain ADR-0216's
+  private header constants and validators in this PR, yet send the exact run-bound
+  session ID on the initial request and every retry or provider-specific fallback, using
+  per-request options rather than mutating a shared client.
   - verify: `TestADR_0290_ProviderSessionHeaderExact`
 - AC1.3: When the run context has no session ID or carries an illegal value, each
   provider omits the field and continues inference, preserving ADR-0216's availability
