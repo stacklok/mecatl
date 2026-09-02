@@ -2,8 +2,8 @@
 id: 02-server-metadata
 title: ToolHive-derived metadata endpoint and challenge
 blocked_by: [01-profile-adr]
-status: pending
-branch: ""
+status: done
+branch: plan-oauth-protected-resource-discovery/02-server-metadata
 worktree: ""
 issue: "1033"
 retries: 0
