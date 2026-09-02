@@ -105,6 +105,17 @@ type AuxiliaryUsage struct {
 	Outcome    TitleAttemptOutcome
 }
 
+// TitlePayload is the bounded source-free projection emitted after a durable
+// title lifecycle change. It intentionally contains neither title-source prompts
+// nor provider error text.
+type TitlePayload struct {
+	Title           string
+	Provenance      TitleProvenance
+	GenerationState TitleGenerationState
+	LatestAttempt   *TitleAttempt
+	LatestUsage     *AuxiliaryUsage
+}
+
 // IsSynthesisedSummary reports whether a message's text is a harness-synthesised
 // compaction summary (the paths-summary OR the tier-4 LLM summary) rather than a
 // genuine user instruction. The back-snap and the title fallback use it to avoid

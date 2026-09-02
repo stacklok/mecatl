@@ -34,9 +34,10 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 - **`tool.CommandEnvironmentOverlay`, `tool.CommandEnvironmentRunner`, and `tool.CommandEnvironmentStreamer`** ([ADR 0281](../docs/adr/0281-managed-temporary-command-leases.md)) — an optional, per-invocation command-environment overlay for host-owned runtime values such as managed temporary storage. The optional capability preserves the existing bound-runner API and namespace affinity: callers that require an overlay must decline honestly when a runner does not implement it, never interpolate environment values into shell text or fall back to an unoverlayed call. Added (minor).
 
-- **Session title-generation domain metadata** — adds generated title provenance,
-  durable title-generation lifecycle/source/attempt records, and a bounded
-  `session_title` auxiliary-usage ledger. The ledger is intentionally separate
+- **Session title-generation domain metadata and lifecycle event** — adds generated title provenance,
+  durable title-generation lifecycle/source/attempt records, a bounded
+  `session_title` auxiliary-usage ledger, and the source-free `EvSessionTitle` /
+  `TitlePayload` event projection. The ledger is intentionally separate
   from `Session.Usage`, normal run budgets, result usage, and conversation.
   Snapshot and event-source metadata round-trip the title-specific state. Added
   (minor).

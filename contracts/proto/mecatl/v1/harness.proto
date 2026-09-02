@@ -1040,9 +1040,11 @@ message SessionSummary {
   string reason_code = 12;
   reserved 13;
   reserved "workspace";
-  // title_provenance is "first-prompt", "operator", or empty for legacy/unknown.
+  // title_provenance is "first-prompt", "operator", "generated", or empty for legacy/unknown.
   string title_provenance = 14;
   PlacementMetadata placement = 15;
+  // title_metadata is the bounded, source-free title lifecycle projection.
+  SessionTitle title_metadata = 16;
 }
 
 // SessionRelationship carries the validated links appropriate to a session kind.
@@ -1363,6 +1365,36 @@ message Session {
   repeated string debug_mcp_servers = 16;
   repeated string debug_mcp_tools = 17;
   PlacementMetadata placement = 18;
+  // title_metadata is the bounded, source-free title lifecycle projection.
+  SessionTitle title_metadata = 19;
+}
+
+// SessionTitle is the durable, source-free title lifecycle projection. It never
+// carries title-source prompts or provider error text.
+message SessionTitle {
+  string title = 1;
+  string provenance = 2;
+  string generation_state = 3;
+  TitleAttemptSummary latest_attempt = 4;
+  AuxiliaryUsageSummary latest_usage = 5;
+}
+
+// TitleAttemptSummary is the latest durable title attempt without provider error detail.
+message TitleAttemptSummary {
+  string id = 1;
+  string outcome = 2;
+  int64 created_at_unix = 3;
+}
+
+// AuxiliaryUsageSummary is the latest title-only auxiliary usage entry.
+message AuxiliaryUsageSummary {
+  string operation = 1;
+  string provider_id = 2;
+  string model_id = 3;
+  int64 input_tokens = 4;
+  int64 output_tokens = 5;
+  int64 recorded_at_unix = 6;
+  string outcome = 7;
 }
 
 // ConverseRequest is a client-to-server frame on the Converse stream. The
@@ -1780,6 +1812,9 @@ message Event {
   // an exact match and so never sees them; a client showing a session timeline
   // includes them.
   string run_id = 22;
+  // title is set on session.title events. It is the authoritative, source-free
+  // title lifecycle projection after a persisted title state change.
+  SessionTitle title = 23;
 
 }
 

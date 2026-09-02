@@ -88,6 +88,7 @@ type SessionListItem struct {
 	CreatedAt       int64
 	Title           string
 	TitleProvenance string
+	TitleMetadata   SessionTitleMsg
 	Placement       Placement
 	Kind            SessionKind
 	Relationship    SessionRelationship
@@ -174,7 +175,8 @@ func listSessionsFromProto(in []*mecatlv1.SessionSummary) []SessionListItem {
 		out = append(out, SessionListItem{
 			ID: s.GetSessionId(), ModifiedAt: s.GetModifiedAtUnix(), State: s.GetState(),
 			Turns: s.GetTurns(), ModelID: s.GetModelId(), CreatedAt: s.GetCreatedAtUnix(), Title: s.GetTitle(),
-			TitleProvenance: s.GetTitleProvenance(), Placement: placementFrom(s.GetPlacement()), Kind: SessionKind(s.GetKind()),
+			TitleProvenance: s.GetTitleProvenance(), TitleMetadata: sessionTitleMsg(s.GetTitleMetadata()),
+			Placement: placementFrom(s.GetPlacement()), Kind: SessionKind(s.GetKind()),
 			Relationship: SessionRelationship{
 				ParentSessionID: rel.GetParentSessionId(), CallID: rel.GetCallId(), BranchIndex: branchIndex,
 				ScheduleName: rel.GetScheduleName(), OriginSessionID: rel.GetOriginSessionId(),

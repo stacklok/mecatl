@@ -399,6 +399,8 @@ type sessionResp struct {
 	// TitleProvenance records whether Title is prompt-derived, operator-authored,
 	// or legacy/unknown.
 	TitleProvenance string `json:"title_provenance,omitempty"`
+	// TitleMetadata is the bounded source-free title lifecycle projection.
+	TitleMetadata *sessionTitleJSON `json:"title_metadata,omitempty"`
 	// ResolvedModel mirrors the gRPC Session snapshot's resolved_model so the HTTP
 	// read surface is consistent with gRPC GetSession: the EFFECTIVE provider+model
 	// this session resolved to (from Service.ResolvedModel, the composition single
@@ -406,6 +408,41 @@ type sessionResp struct {
 	ResolvedModel *resolvedModelJSON            `json:"resolved_model,omitempty"`
 	Kind          string                        `json:"kind,omitempty"`
 	Relationship  *mecatlv1.SessionRelationship `json:"relationship,omitempty"`
+}
+
+type sessionTitleJSON struct {
+	Title           string                     `json:"title"`
+	Provenance      string                     `json:"provenance"`
+	GenerationState string                     `json:"generation_state"`
+	LatestAttempt   *titleAttemptSummaryJSON   `json:"latest_attempt,omitempty"`
+	LatestUsage     *auxiliaryUsageSummaryJSON `json:"latest_usage,omitempty"`
+}
+
+type titleAttemptSummaryJSON struct {
+	ID            string `json:"id"`
+	Outcome       string `json:"outcome"`
+	CreatedAtUnix int64  `json:"created_at_unix"`
+}
+
+type auxiliaryUsageSummaryJSON struct {
+	Operation      string `json:"operation"`
+	ProviderID     string `json:"provider_id"`
+	ModelID        string `json:"model_id"`
+	InputTokens    int64  `json:"input_tokens"`
+	OutputTokens   int64  `json:"output_tokens"`
+	RecordedAtUnix int64  `json:"recorded_at_unix"`
+	Outcome        string `json:"outcome"`
+}
+
+func sessionTitleToJSON(p session.TitlePayload) *sessionTitleJSON {
+	out := &sessionTitleJSON{Title: valid(p.Title), Provenance: valid(string(p.Provenance)), GenerationState: valid(string(p.GenerationState))}
+	if p.LatestAttempt != nil {
+		out.LatestAttempt = &titleAttemptSummaryJSON{ID: valid(p.LatestAttempt.ID), Outcome: valid(string(p.LatestAttempt.Outcome)), CreatedAtUnix: p.LatestAttempt.CreatedAt.Unix()}
+	}
+	if p.LatestUsage != nil {
+		out.LatestUsage = &auxiliaryUsageSummaryJSON{Operation: valid(string(p.LatestUsage.Operation)), ProviderID: valid(p.LatestUsage.ProviderID), ModelID: valid(p.LatestUsage.ModelID), InputTokens: int64(p.LatestUsage.Usage.InputTokens), OutputTokens: int64(p.LatestUsage.Usage.OutputTokens), RecordedAtUnix: p.LatestUsage.RecordedAt.Unix(), Outcome: valid(string(p.LatestUsage.Outcome))}
+	}
+	return out
 }
 
 type dreamGenerateBody struct {
@@ -698,8 +735,9 @@ func (h *HTTPHandler) writeSession(w http.ResponseWriter, status int, sess *sess
 		Placement:       placementMetadataToJSON(sess.Placement),
 		Turns:           sess.Counters.Turns,
 		ToolCalls:       sess.Counters.ToolCalls,
-		Title:           title,
-		TitleProvenance: string(sess.TitleProvenance),
+		Title:           valid(title),
+		TitleProvenance: valid(string(sess.TitleProvenance)),
+		TitleMetadata:   sessionTitleToJSON(titlePayload(sess)),
 		ResolvedModel:   resolvedModelToJSON(h.svc.ResolvedModel(sess.ID)),
 		Kind:            string(sess.Kind),
 		Relationship:    toProtoSessionRelationship(sess.Relationship),
