@@ -32,8 +32,10 @@ type Namespace struct {
 
 // Workspace is one private workspace namespace below a Namespace.
 type Workspace struct {
-	path string
-	root *os.Root
+	path     string
+	backend  string
+	identity string
+	root     *os.Root
 }
 
 // Open creates or adopts an absolute managed root. Existing objects are never
@@ -106,6 +108,26 @@ func (n *Namespace) OpenWorkspace(backend, identity, currentPath string) (*Works
 	if err := validatePrivateDir(n.root, "workspaces"); err != nil {
 		return nil, fmt.Errorf("managedtemp: workspaces: %w", err)
 	}
+	indexLock, err := n.root.OpenFile("workspace-index.lock", os.O_RDWR, 0)
+	if err != nil {
+		return nil, fmt.Errorf("managedtemp: open workspace index lock: %w", err)
+	}
+	if err := lockExclusive(indexLock, false); err != nil {
+		_ = indexLock.Close()
+		return nil, fmt.Errorf("managedtemp: lock workspace index: %w", err)
+	}
+	defer func() { _ = unlockClose(indexLock) }()
+	return n.openWorkspaceLocked(backend, identity, currentPath, key)
+}
+
+func (n *Namespace) openWorkspaceLocked(backend, identity, currentPath, key string) (*Workspace, error) {
+	index, err := readWorkspaceIndex(n.root)
+	if err != nil {
+		return nil, err
+	}
+	if entry, ok := index.Workspaces[key]; ok && (entry.Backend != backend || entry.Identity != identity) {
+		return nil, errors.New("managedtemp: workspace index collision")
+	}
 	workspaces, err := n.root.OpenRoot("workspaces")
 	if err != nil {
 		return nil, fmt.Errorf("managedtemp: open workspaces: %w", err)
@@ -122,18 +144,12 @@ func (n *Namespace) OpenWorkspace(backend, identity, currentPath string) (*Works
 		_ = root.Close()
 		return nil, fmt.Errorf("managedtemp: validate workspace: %w", err)
 	}
-	w := &Workspace{path: filepath.Join(n.path, "workspaces", key), root: root}
+	w := &Workspace{path: filepath.Join(n.path, "workspaces", key), backend: backend, identity: identity, root: root}
 	if err := ensurePrivateFile(root, "workspace.lock"); err != nil {
 		_ = root.Close()
 		return nil, err
 	}
-	manifest, err := json.Marshal(struct {
-		Version     int    `json:"version"`
-		Key         string `json:"key"`
-		Backend     string `json:"backend"`
-		Identity    string `json:"identity"`
-		CurrentPath string `json:"current_path"`
-	}{1, key, backend, identity, currentPath})
+	manifest, err := json.Marshal(workspaceManifest{Version: manifestVersion, Key: key, Backend: backend, Identity: identity, CurrentPath: currentPath})
 	if err != nil {
 		_ = root.Close()
 		return nil, fmt.Errorf("managedtemp: marshal workspace manifest: %w", err)
@@ -141,6 +157,22 @@ func (n *Namespace) OpenWorkspace(backend, identity, currentPath string) (*Works
 	if err := w.createJSON("workspace.manifest", manifest); err != nil {
 		_ = root.Close()
 		return nil, err
+	}
+	if err := validateWorkspaceManifest(root, key, backend, identity); err != nil {
+		_ = root.Close()
+		return nil, err
+	}
+	if _, ok := index.Workspaces[key]; !ok {
+		index.Workspaces[key] = workspaceIndexEntry{Backend: backend, Identity: identity, CurrentPath: currentPath}
+		data, err := json.Marshal(index)
+		if err != nil {
+			_ = root.Close()
+			return nil, err
+		}
+		if err := replacePrivateFile(n.root, "workspace-index.manifest", data); err != nil {
+			_ = root.Close()
+			return nil, err
+		}
 	}
 	return w, nil
 }
