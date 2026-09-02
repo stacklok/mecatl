@@ -36,6 +36,11 @@ and `cmd/mecated` wires the knobs:
   the unchanged post-validation `(issuer, subject)` limiter.
 - **Health** — HTTP `/healthz` (liveness) + `/readyz` (readiness) mounted outside
   auth/rate-limit, plus standard `grpc_health_v1` `SERVING` (`internal/adapter/server/health.go`).
+- **mecak8s drain isolation** — a separate plaintext `--drain-addr` listener
+  defaults to `0.0.0.0:8082` and serves only kubelet's `GET /drain`; the normal
+  HTTP/SSE API listener has no drain route. The chart omits this port from the
+  Service, protecting normal Service/gateway traffic, but direct Pod-IP access
+  remains an operator-enforced NetworkPolicy or mesh-isolation residual ([ADR 0288](../adr/0288-mecak8s-drain-listener.md)).
 - **mecak8s secure real-provider transport** — three postures: in-pod TLS + OIDC,
   edge-terminated TLS + OIDC (`security.tlsTerminatedUpstream=true`, ClusterIP-only h2c),
   and the explicit unsafe bypass. The upstream value is an operator attestation the chart

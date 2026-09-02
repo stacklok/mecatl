@@ -42,12 +42,13 @@ import (
 
 // Cluster + manifest constants (ADR 0048 §4h, deploy/helm/mecak8s/).
 const (
-	kindClusterName = "mecatl-e2e"
-	kindNodeImage   = "kindest/node:v1.34.3"
-	k8sNamespace    = "mecatl"
-	agentComponent  = "agent" // app.kubernetes.io/component label value
-	agentGRPCPort   = 8080    // the gRPC listener (--grpc-addr default in the pod)
-	agentPodPort    = 8081    // the HTTP/SSE listener (--http-addr default in the pod)
+	kindClusterName  = "mecatl-e2e"
+	kindNodeImage    = "kindest/node:v1.34.3"
+	k8sNamespace     = "mecatl"
+	agentComponent   = "agent" // app.kubernetes.io/component label value
+	agentGRPCPort    = 8080    // the gRPC listener (--grpc-addr default in the pod)
+	agentPodPort     = 8081    // the HTTP/SSE listener (--http-addr default in the pod)
+	agentServiceName = "mecak8s-agent"
 
 	// liveProviderSecret is the k8s Secret holding OPENROUTER_API_KEY for the live
 	// specs. The key is staged from the test process's environment into a Secret —
@@ -349,6 +350,32 @@ func podNames() []string {
 	return names
 }
 
+func serviceReadyEndpointCount() int {
+	ginkgo.GinkgoHelper()
+	out := runCmdQuiet("kubectl", "get", "endpointslice", "-n", k8sNamespace,
+		"-l", "kubernetes.io/service-name="+agentServiceName,
+		"-o", "jsonpath={.items[*].endpoints[?(@.conditions.ready==true)].addresses[*]}")
+	return len(strings.Fields(out))
+}
+
+type servicePort struct {
+	Name       string `json:"name"`
+	Port       int32  `json:"port"`
+	TargetPort string `json:"targetPort"`
+}
+
+func agentServicePorts() []servicePort {
+	ginkgo.GinkgoHelper()
+	raw := runCmd(ginkgoSuiteCtx(), "kubectl", "get", "service", agentServiceName, "-n", k8sNamespace, "-o", "json")
+	var service struct {
+		Spec struct {
+			Ports []servicePort `json:"ports"`
+		} `json:"spec"`
+	}
+	gomega.ExpectWithOffset(1, json.Unmarshal([]byte(raw), &service)).To(gomega.Succeed(), "unmarshal Service %s", agentServiceName)
+	return service.Spec.Ports
+}
+
 // kubectlDeletePod deletes a pod. Graceful (the default) lets the preStop /drain
 // hook + SIGTERM fire, so the pod's Service.Close releases its held leases
 // before the TTL. force=true passes --force --grace-period=0, which skips the
@@ -429,22 +456,33 @@ func portForwardGRPC(podName string) (addr string, stop func()) {
 	return portForwardPort(podName, agentGRPCPort)
 }
 
-// portForwardPort starts `kubectl port-forward` from a free local port to a pod
-// listener and returns the local "host:port" address plus a stop function. The
-// forward runs for the lifetime of the returned context-cancellation / stop call.
+// portForwardService reaches the normal HTTP Service port rather than a selected
+// Pod, so it proves the Service cannot invoke a pod-only lifecycle endpoint.
+func portForwardService() (addr string, stop func()) {
+	return portForwardResource("service/"+agentServiceName, agentPodPort)
+}
+
 func portForwardPort(podName string, targetPort int) (addr string, stop func()) {
+	return portForwardResource("pod/"+podName, targetPort)
+}
+
+// portForwardResource starts `kubectl port-forward` from a free local port to a
+// Kubernetes resource port and returns the local "host:port" address plus a stop
+// function. The forward runs for the lifetime of the returned context-cancellation
+// / stop call.
+func portForwardResource(resource string, targetPort int) (addr string, stop func()) {
 	ginkgo.GinkgoHelper()
 	port := freeLocalPort()
 	ctx, cancel := context.WithCancel(ginkgoSuiteCtx())
 	cmd := exec.CommandContext(ctx, "kubectl", "port-forward",
 		"-n", k8sNamespace,
-		fmt.Sprintf("pod/%s", podName),
+		resource,
 		fmt.Sprintf("%d:%d", port, targetPort))
 	// port-forward writes progress to stderr; capture it for failure diagnosis.
 	var buf ginkgoWriter
 	cmd.Stderr = &buf
 	gomega.ExpectWithOffset(1, cmd.Start()).To(gomega.Succeed(),
-		"start kubectl port-forward for pod %s", podName)
+		"start kubectl port-forward for %s", resource)
 
 	addr = fmt.Sprintf("127.0.0.1:%d", port)
 	// Wait for the forward to be accepting connections before returning, so the
@@ -458,7 +496,7 @@ func portForwardPort(podName string, targetPort int) (addr string, stop func()) 
 		return true
 	}, 30*time.Second, 500*time.Millisecond).Should(gomega.BeTrue(),
 		"port-forward to pod %s never accepted on %s\n--- port-forward stderr ---\n%s",
-		podName, addr, buf.String())
+		resource, addr, buf.String())
 
 	return addr, func() {
 		cancel()

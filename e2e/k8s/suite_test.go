@@ -95,6 +95,7 @@ var _ = ginkgo.AfterSuite(func() {
 // teardown (the AfterSuite cluster delete always runs).
 var _ = ginkgo.Describe("mecak8s cloud-native properties (ADR 0048)", ginkgo.Serial, ginkgo.Ordered, ginkgo.ContinueOnFailure, func() {
 	leaseExclusionSpecs()
+	drainIsolationSpecs()
 	failoverSpecs()
 	persistenceSpecs()
 	liveSpecs()

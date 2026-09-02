@@ -43,8 +43,9 @@ import (
 // isolation, unlike mecated's single-user loopback trust model. Auth is still
 // configurable via --auth-token / --tls-* for a non-mesh deployment.
 const (
-	defaultGRPCAddr = "0.0.0.0:8080"
-	defaultHTTPAddr = "0.0.0.0:8081"
+	defaultGRPCAddr  = "0.0.0.0:8080"
+	defaultHTTPAddr  = "0.0.0.0:8081"
+	defaultDrainAddr = "0.0.0.0:8082"
 )
 
 // defaultK8sLeaseNamespace is the conventional namespace for the
@@ -78,6 +79,7 @@ type config struct {
 	diagnostics            port.Diagnostics
 	grpcAddr               string
 	httpAddr               string
+	drainAddr              string
 	workspace              string
 	model                  string
 	defaultProvider        string
@@ -272,7 +274,9 @@ func parseFlags(argv []string) (config, error) {
 	fs.StringVar(&cfg.grpcAddr, "grpc-addr", defaultGRPCAddr,
 		"gRPC listen address (a pod binds 0.0.0.0; set --auth-token and/or --tls-cert for a non-mesh deployment)")
 	fs.StringVar(&cfg.httpAddr, "http-addr", defaultHTTPAddr,
-		"HTTP/SSE listen address (carries /healthz, /readyz, /drain outside auth; the API mux inside auth)")
+		"HTTP/SSE listen address (carries /healthz and /readyz outside auth; the API mux inside auth)")
+	fs.StringVar(&cfg.drainAddr, "drain-addr", defaultDrainAddr,
+		"plaintext drain-only listen address (GET /drain for the kubelet preStop hook)")
 	fs.StringVar(&cfg.workspace, "workspace", "", "optional shared agent workspace root, e.g. a mounted PVC path. Empty (the default) is a FILE-LESS deployment: every session is no-FS. A non-empty ABSOLUTE path selects a server-assigned filesystem deployment rooted there — the operator vouches for the mount and clients cannot select another root (ADR 0237)")
 	fs.StringVar(&cfg.model, "model", "", "model identifier sent to the provider (empty: provider-appropriate default)")
 	fs.StringVar(&cfg.defaultProvider, "default-provider", "", "server-configured deployment-wide default provider id (e.g. openai, openrouter, anthropic); validated FAIL-FAST at startup")

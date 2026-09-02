@@ -27,7 +27,7 @@ import (
 
 // serve wires the built Service over gRPC + HTTP/SSE with k8s-native
 // operability: a DYNAMIC /readyz (drain-gated + storage-pinged via the SAME
-// store the Service serves traffic through), a /drain endpoint (the preStop
+// store the Service serves traffic through), a drain-only listener (the preStop
 // hook target), and a BOUNDED GracefulStop on SIGTERM that cancels in-flight
 // runs within the termination grace period.
 //
@@ -44,7 +44,89 @@ import (
 // Service serves traffic through (Service.StorageReady type-asserts the store
 // for a Pinger). A non-Redis store (the in-memory fallback) has no ping, so
 // readiness is drain-gated only.
+func normalHTTPMux(svc *server.Service, auth *server.Authenticator) http.Handler {
+	ready := server.ReadyFunc(func() bool {
+		if svc.IsDraining() {
+			return false
+		}
+		pingCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		return svc.StorageReady(pingCtx)
+	})
+
+	mux := http.NewServeMux()
+	server.NewHealthHandler(ready).RegisterHealth(mux)
+	mux.Handle("/", auth.Middleware(server.NewHTTPHandler(svc)))
+	return mux
+}
+
+func drainHTTPMux(svc *server.Service, wait func(time.Duration)) http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/drain", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			w.Header().Set("Allow", http.MethodGet)
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		svc.Drain()
+		slog.Info("drain armed via /drain; blocking for endpoint propagation", "delay", drainPropagationDelay)
+		wait(drainPropagationDelay)
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("draining\n"))
+	})
+	return mux
+}
+
+func listenCoreListeners(cfg config) (net.Listener, net.Listener, net.Listener, error) {
+	grpcLis, err := net.Listen("tcp", cfg.grpcAddr)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("listen grpc %q: %w", cfg.grpcAddr, err)
+	}
+	httpLis, err := net.Listen("tcp", cfg.httpAddr)
+	if err != nil {
+		_ = grpcLis.Close()
+		return nil, nil, nil, fmt.Errorf("listen http %q: %w", cfg.httpAddr, err)
+	}
+	drainLis, err := net.Listen("tcp", cfg.drainAddr)
+	if err != nil {
+		_ = httpLis.Close()
+		_ = grpcLis.Close()
+		return nil, nil, nil, fmt.Errorf("listen drain %q: %w", cfg.drainAddr, err)
+	}
+	return grpcLis, httpLis, drainLis, nil
+}
+
+func startMetricsServer(addr string, obs observability, errCh chan<- error) (*http.Server, error) {
+	if addr == "" {
+		return nil, nil
+	}
+	if obs.Registry == nil {
+		return nil, fmt.Errorf("metrics-addr %q set but telemetry registry is nil", addr)
+	}
+	metricsLis, err := net.Listen("tcp", addr)
+	if err != nil {
+		return nil, fmt.Errorf("listen metrics %q: %w", addr, err)
+	}
+	metricsSrv := &http.Server{
+		Addr:              addr,
+		Handler:           telemetry.NewAdminMux(obs.Registry, nil),
+		ReadHeaderTimeout: 10 * time.Second,
+	}
+	go func() {
+		slog.Info("metrics admin listener serving (loopback)", "addr", metricsLis.Addr().String())
+		if serveErr := metricsSrv.Serve(metricsLis); serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
+			errCh <- fmt.Errorf("metrics serve: %w", serveErr)
+		}
+	}()
+	return metricsSrv, nil
+}
+
 func serve(ctx context.Context, cfg config, svc *server.Service, obs observability) error {
+	return serveWithDrainWait(ctx, cfg, svc, obs, time.Sleep)
+}
+
+func serveWithDrainWait(ctx context.Context, cfg config, svc *server.Service, obs observability, drainWait func(time.Duration)) error {
 	tlsCfg, tlsLifecycle, err := buildTLSConfig(cfg)
 	if err != nil {
 		return err
@@ -74,43 +156,17 @@ func serve(ctx context.Context, cfg config, svc *server.Service, obs observabili
 	healthSrv.SetServingStatus("mecatl.v1.HarnessService", healthpb.HealthCheckResponse_SERVING)
 	healthSrv.SetServingStatus("mecatl.v1.ScheduleService", healthpb.HealthCheckResponse_SERVING)
 
-	// --- HTTP: health + /drain mounted OUTSIDE auth/rate-limit; the API mux
-	// wrapped in the auth middleware. The readiness probe is DYNAMIC:
-	// !draining && storageReady — so SIGTERM/preStop flips /readyz to
-	// not-ready (the endpoint controller removes the pod) and a Redis outage
-	// does too. StorageReady pings the SAME store the Service serves traffic
-	// through (not a second client), bounded by a short timeout so a stalled
-	// backend fails the probe quickly rather than wedging readiness. ---
-	ready := server.ReadyFunc(func() bool {
-		if svc.IsDraining() {
-			return false
-		}
-		pingCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		defer cancel()
-		return svc.StorageReady(pingCtx)
-	})
-
-	httpMux := http.NewServeMux()
-	healthH := server.NewHealthHandler(ready)
-	healthH.RegisterHealth(httpMux)
-	// /drain: the preStop hook target. Arms the drain gate (new runs → 503),
-	// blocks ~drainPropagationDelay for endpoint propagation, then returns 200.
-	// Mounted OUTSIDE auth (like the health endpoints) so the kubelet can call
-	// it without credentials.
-	httpMux.HandleFunc("GET /drain", func(w http.ResponseWriter, _ *http.Request) {
-		svc.Drain()
-		slog.Info("drain armed via /drain; blocking for endpoint propagation", "delay", drainPropagationDelay)
-		time.Sleep(drainPropagationDelay)
-		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("draining\n"))
-	})
-	httpMux.Handle("/", auth.Middleware(server.NewHTTPHandler(svc)))
+	// HTTP/SSE carries health endpoints outside auth and the API inside auth.
 	httpSrv := &http.Server{
 		Addr:              cfg.httpAddr,
-		Handler:           httpMux,
+		Handler:           normalHTTPMux(svc, auth),
 		ReadHeaderTimeout: 10 * time.Second,
 		TLSConfig:         tlsCfg,
+	}
+	drainSrv := &http.Server{
+		Addr:              cfg.drainAddr,
+		Handler:           drainHTTPMux(svc, drainWait),
+		ReadHeaderTimeout: 10 * time.Second,
 	}
 
 	// Caller identity counts as authentication: an OIDC deployment may carry no
@@ -118,42 +174,21 @@ func serve(ctx context.Context, cfg config, svc *server.Service, obs observabili
 	authed := cfg.authToken != "" || cfg.oidc.Enabled() || tlsCfg != nil
 	warnIfNonLoopback("grpc-addr", cfg.grpcAddr, authed)
 	warnIfNonLoopback("http-addr", cfg.httpAddr, authed)
+	warnDrainExposure(cfg.drainAddr)
 
-	grpcLis, err := net.Listen("tcp", cfg.grpcAddr)
+	grpcLis, httpLis, drainLis, err := listenCoreListeners(cfg)
 	if err != nil {
-		return fmt.Errorf("listen grpc %q: %w", cfg.grpcAddr, err)
+		return err
 	}
+	defer func() { _ = grpcLis.Close() }()
+	defer func() { _ = httpLis.Close() }()
+	defer func() { _ = drainLis.Close() }()
 
-	errCh := make(chan error, 3)
+	errCh := make(chan error, 4)
 
-	// Metrics loopback listener (issue #343, ADR 0098): when --metrics-addr is
-	// set, mount the admin mux (/metrics + the runtime-introspection surface) on a
-	// SEPARATE loopback listener. The Registry comes from the observability
-	// handles (non-nil when metricsAddr is set — buildObservability runs Setup for
-	// the scrape-only path too via Scrape=true). Fail-closed: parse-time loopback
-	// refusal already guaranteed by cliconfig.IsLoopbackAddr.
-	var metricsSrv *http.Server
-	if cfg.metricsAddr != "" {
-		reg := obs.Registry
-		if reg == nil {
-			return fmt.Errorf("metrics-addr %q set but telemetry registry is nil", cfg.metricsAddr)
-		}
-		metricsMux := telemetry.NewAdminMux(reg, nil)
-		metricsLis, lerr := net.Listen("tcp", cfg.metricsAddr)
-		if lerr != nil {
-			return fmt.Errorf("listen metrics %q: %w", cfg.metricsAddr, lerr)
-		}
-		metricsSrv = &http.Server{
-			Addr:              cfg.metricsAddr,
-			Handler:           metricsMux,
-			ReadHeaderTimeout: 10 * time.Second,
-		}
-		go func() {
-			slog.Info("metrics admin listener serving (loopback)", "addr", metricsLis.Addr().String())
-			if serveErr := metricsSrv.Serve(metricsLis); serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
-				errCh <- fmt.Errorf("metrics serve: %w", serveErr)
-			}
-		}()
+	metricsSrv, err := startMetricsServer(cfg.metricsAddr, obs, errCh)
+	if err != nil {
+		return err
 	}
 
 	go func() {
@@ -164,15 +199,22 @@ func serve(ctx context.Context, cfg config, svc *server.Service, obs observabili
 	}()
 
 	go func() {
-		slog.Info("HTTP/SSE server listening", "addr", cfg.httpAddr, "tls", tlsCfg != nil)
+		slog.Info("HTTP/SSE server listening", "addr", httpLis.Addr().String(), "tls", tlsCfg != nil)
 		var serveErr error
 		if tlsCfg != nil {
-			serveErr = httpSrv.ListenAndServeTLS("", "")
+			serveErr = httpSrv.ServeTLS(httpLis, "", "")
 		} else {
-			serveErr = httpSrv.ListenAndServe()
+			serveErr = httpSrv.Serve(httpLis)
 		}
 		if serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
 			errCh <- fmt.Errorf("http serve: %w", serveErr)
+		}
+	}()
+
+	go func() {
+		slog.Info("drain server listening", "addr", drainLis.Addr().String())
+		if serveErr := drainSrv.Serve(drainLis); serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
+			errCh <- fmt.Errorf("drain serve: %w", serveErr)
 		}
 	}()
 
@@ -181,11 +223,11 @@ func serve(ctx context.Context, cfg config, svc *server.Service, obs observabili
 		slog.Info("shutdown signal received; draining")
 	case err := <-errCh:
 		slog.Error("server failed; shutting down", "err", err)
-		boundedShutdown(grpcSrv, httpSrv, metricsSrv, svc)
+		boundedShutdown(grpcSrv, httpSrv, drainSrv, metricsSrv, svc)
 		return err
 	}
 
-	boundedShutdown(grpcSrv, httpSrv, metricsSrv, svc)
+	boundedShutdown(grpcSrv, httpSrv, drainSrv, metricsSrv, svc)
 	return nil
 }
 
@@ -219,7 +261,7 @@ func newAuthenticator(ctx context.Context, cfg config) (*server.Authenticator, e
 //  3. grpcSrv.GracefulStop() in a goroutine + select on gracefulStopTimeout.
 //  4. on timeout: grpcSrv.Stop() (hard) — in-flight runs cancelled,
 //     Recover-able on the successor (issue #51).
-//  5. httpSrv.Shutdown(10s ctx).
+//  5. httpSrv + drainSrv Shutdown(10s ctx).
 //
 // built.Close() (→ Service.Close()) is the CALLER's deferred responsibility
 // (run() defers it); it stops the held-lease renewers and releases every held
@@ -227,7 +269,7 @@ func newAuthenticator(ctx context.Context, cfg config) (*server.Authenticator, e
 // takes over immediately without the 30s TTL. The ctx that reached serve is
 // already cancelled by the signal handler, so boundedShutdown uses a fresh
 // background ctx for the HTTP shutdown.
-func boundedShutdown(grpcSrv *grpc.Server, httpSrv *http.Server, metricsSrv *http.Server, svc *server.Service) {
+func boundedShutdown(grpcSrv *grpc.Server, httpSrv *http.Server, drainSrv *http.Server, metricsSrv *http.Server, svc *server.Service) {
 	svc.Drain()
 	slog.Info("draining: active runs", "count", svc.ActiveRuns())
 
@@ -249,6 +291,9 @@ func boundedShutdown(grpcSrv *grpc.Server, httpSrv *http.Server, metricsSrv *htt
 	defer cancel()
 	if err := httpSrv.Shutdown(shutdownCtx); err != nil {
 		slog.Warn("http graceful shutdown", "err", err)
+	}
+	if err := drainSrv.Shutdown(shutdownCtx); err != nil {
+		slog.Warn("drain graceful shutdown", "err", err)
 	}
 	// The loopback metrics listener stops alongside the API listener; a metrics
 	// scrape failure during shutdown is non-fatal, so its error is logged only.
@@ -318,6 +363,20 @@ func warnIfNonLoopback(flagName, addr string, authed bool) {
 		return
 	}
 	slog.Warn("API bound to a NON-loopback address with NO authentication: it exposes UNAUTHENTICATED command/file execution to the network — set --auth-token / --tls-cert (or front it with a trusted mesh/NetworkPolicy) before doing this", "flag", flagName, "addr", addr)
+}
+
+// warnDrainExposure logs the drain-listener trust assumption. Unlike
+// warnIfNonLoopback's other two callers, --drain-addr has NO authentication
+// option at all (ADR 0288: kubelet's preStop httpGet calls it directly with
+// no credentials) — so the warning wording never suggests --auth-token/
+// --tls-cert, and a non-loopback bind is ALWAYS worth a WARNING, not merely
+// an info line, regardless of the deployment's auth posture elsewhere.
+func warnDrainExposure(addr string) {
+	if cliconfig.IsLoopbackAddr(addr) {
+		slog.Info("drain listener bound to loopback", "flag", "drain-addr", "addr", addr)
+		return
+	}
+	slog.Warn("drain listener bound to a NON-loopback address: it is ALWAYS unauthenticated (kubelet preStop carries no credentials) — do not expose it beyond the Pod without a NetworkPolicy/mesh restricting access to it", "flag", "drain-addr", "addr", addr)
 }
 
 // signalCtx returns a context cancelled on SIGINT/SIGTERM. It is the serve-time

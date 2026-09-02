@@ -82,6 +82,7 @@ spec:
           args:
             - --grpc-addr=0.0.0.0:8080
             - --http-addr=0.0.0.0:8081
+            - --drain-addr=0.0.0.0:8082
             - {{ printf "--redis-url=%s" .Values.redis.endpoint | quote }}
             - {{ printf "--session-lease-k8s-namespace=%s" .Release.Namespace | quote }}
             - --headless=true
@@ -181,6 +182,7 @@ spec:
           ports:
             - {name: grpc, containerPort: 8080}
             - {name: http, containerPort: 8081}
+            - {name: drain, containerPort: 8082}
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
@@ -209,9 +211,9 @@ spec:
           lifecycle:
             preStop:
               httpGet:
-                scheme: {{ if .Values.tls.enabled }}HTTPS{{ else }}HTTP{{ end }}
+                scheme: HTTP
                 path: /drain
-                port: http
+                port: drain
           resources: {{- toYaml .Values.resources | nindent 12 }}
           volumeMounts:
             - {name: tmp, mountPath: /tmp}

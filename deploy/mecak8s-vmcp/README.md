@@ -96,9 +96,11 @@ The exact entries managed by these tasks are:
 
 The Kind chart mounts the cert-manager-issued `mecak8s-tls` Secret as exact,
 read-only `tls.crt` and `tls.key` items and starts both gRPC and HTTP with the
-paired TLS flags. Its `/readyz`, `/healthz`, and `/drain` management endpoints
-remain explicit and are probed over HTTPS; they are not authenticated API
-requests. The chart mounts the public `tls.crt` item from `fixture-ca` and
+paired TLS flags. Its `/readyz` and `/healthz` management endpoints remain on
+HTTPS and are not authenticated API requests. The separate Pod-only `/drain`
+endpoint remains plaintext HTTP on port 8082 for the kubelet preStop hook and is
+not exposed by the Service; direct Pod-IP access needs operator NetworkPolicy or
+mesh isolation. The chart mounts the public `tls.crt` item from `fixture-ca` and
 passes its exact path through `--oidc-ca-cert-file`; it does not set the
 process-wide `SSL_CERT_FILE`. The Kind profile enables
 `--oidc-allow-private-https-issuer` only for the in-cluster Keycloak Service. The
