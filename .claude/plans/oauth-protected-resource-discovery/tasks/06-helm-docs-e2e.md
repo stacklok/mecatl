@@ -2,8 +2,9 @@
 id: 06-helm-docs-e2e
 title: Helm, docs, and end-to-end proof
 blocked_by: [05-registry-aliases]
-status: done
+status: blocked
 branch: plan-oauth-protected-resource-discovery/06-helm-docs-e2e
+last_error: "panel gate: AC6.2/AC6.3 proofs are shallow; final panel also found path-bearing issuer discovery, RFC 9728 challenge/resource mismatch, and resource-alias uniqueness/canonicalization blockers"
 worktree: ""
 issue: "1033"
 retries: 0
