@@ -29,10 +29,14 @@ $ task install
 
 `task install` installs `mecated` and `mecatui`; it intentionally skips
 `mecademo`, which is only a demo binary. Both `task build` and `task install`
-leave the linker stamp empty so Go's embedded VCS metadata can produce the
-source-build ID (`dev+<12-char-vcs-revision>[.dirty]`). To stamp an explicit
-release or operator ID instead, run `BUILD_ID=<value> task build` or
-`BUILD_ID=<value> task install`; an explicit `dev` remains `dev`.
+resolve a build-time source identity with
+`git describe --tags --match 'v[0-9]*' --always --dirty`: most recent root release
+tag, commit count, abbreviated SHA, and an optional `-dirty` suffix (for example,
+`v0.0.22-28-g40a6b3fc6-dirty`). To stamp an explicit release or operator ID
+instead, run `BUILD_ID=<value> task build` or `BUILD_ID=<value> task install`;
+the supplied value, including `dev`, is retained verbatim. Direct unstamped Go or
+ko builds use the runtime embedded-VCS fallback (`dev+<12-char-vcs-revision>[.dirty]`
+or `dev`) and never invoke git at runtime.
 
 The repo is a **Go workspace** (a committed `go.work`) spanning two modules: the
 root (`github.com/stacklok/mecatl`) and the importable core

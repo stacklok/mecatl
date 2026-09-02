@@ -12,8 +12,10 @@
 #
 # Build:   KO_DOCKER_REPO=ko.local ko build --local ./cmd/mecated   (or `task ko:build`)
 # Publish: KO_DOCKER_REPO=<registry> ko build --push ./cmd/mecated  (or `task ko:publish`)
-# VERSION is an optional explicit linker stamp. Leave it unset so Go's embedded
-# VCS metadata supplies the source-build identity; release workflows set VERSION.
+# `task build`, `task install`, and Taskfile-driven ko builds set VERSION from the
+# rooted build-time `git describe --tags --match 'v[0-9]*' --always --dirty` result.
+# Direct ko builds may leave VERSION unset; then runtime uses only embedded VCS metadata.
+# Release workflows set VERSION explicitly.
 
 defaultBaseImage: cgr.dev/chainguard/static@sha256:d6a97eb401cbc7c6d48be76ad81d7899b94303580859d396b52b67bc84ea7345
 

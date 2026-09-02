@@ -193,16 +193,16 @@ func TestModelLine(t *testing.T) {
 	}
 }
 
-// TestSplashVersionOmittedWhenEmpty asserts a resolved development Version renders
+// TestSplashVersionOmittedWhenEmpty asserts a Taskfile source-build Version renders
 // unchanged, while an empty Version omits the version line.
 func TestSplashVersionOmittedWhenEmpty(t *testing.T) {
 	// A generous height so the (low keep-priority) version line is INCLUDED by the
 	// greedy fit — the omit-when-empty check below is then unambiguous.
 	in := splashInfo(false)
-	in.Version = "dev+0123456789ab.dirty"
+	in.Version = "v0.0.22-28-g40a6b3fc6-dirty"
 	with := Splash(splashTheme(), in, 100, 60)
-	if !strings.Contains(stripSGR(with), "mecatui dev+0123456789ab.dirty") {
-		t.Error("a resolved development Version should render the version line at a generous height")
+	if !strings.Contains(stripSGR(with), "mecatui v0.0.22-28-g40a6b3fc6-dirty") {
+		t.Error("a Taskfile source-build Version should render the version line at a generous height")
 	}
 	in.Version = ""
 	without := stripSGR(Splash(splashTheme(), in, 100, 60))

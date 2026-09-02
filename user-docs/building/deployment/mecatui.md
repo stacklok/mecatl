@@ -78,11 +78,13 @@ The `mecatui` build entry in `.ko.yaml` overrides the distroless base with the
 brood-box wolfi base (`baseImageOverrides`) — brood-box connects over SSH and
 needs a shell, which the distroless static base lacks. The build ID is stamped
 into the welcome splash via
-`-X github.com/stacklok/mecatl/internal/buildinfo.BuildID`. `VERSION` is optional:
-a nonempty value is retained verbatim as the linker stamp (including `dev`);
-otherwise a valid Go-embedded VCS revision displays as
-`dev+<12-char-vcs-revision>` (with `.dirty` for a dirty tree), and unavailable or
-invalid metadata displays as `dev`.
+`-X github.com/stacklok/mecatl/internal/buildinfo.BuildID`. Taskfile-driven ko
+builds set it at build time from
+`git describe --tags --match 'v[0-9]*' --always --dirty` (for example,
+`v0.0.22-28-g40a6b3fc6-dirty`); `BUILD_ID` preserves an explicit stamp verbatim.
+A direct ko build may instead leave `VERSION` unset: its binary uses embedded VCS
+metadata as `dev+<12-char-vcs-revision>[.dirty]`, or `dev`, without invoking git
+at runtime.
 
 ---
 

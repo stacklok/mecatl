@@ -28,10 +28,14 @@ list below; the reading map owns audience routing.
 ## Build identity
 
 All shipped commands share the linker-stamped build identity in
-`internal/buildinfo/buildinfo.go`. A nonempty linker stamp is retained exactly,
-including an explicit `dev`; an unstamped source build derives
-`dev+<12-char-vcs-revision>` from Go's embedded build metadata and appends `.dirty`
-only for a dirty tree, falling back to `dev` when that metadata is unavailable or
+`internal/buildinfo/buildinfo.go`. Ordinary `task build`, `task install`, and
+Taskfile-driven ko builds resolve the source checkout at build time with
+`git describe --tags --match 'v[0-9]*' --always --dirty`; this yields the most
+recent root release tag, commits since it, abbreviated SHA, and an optional dirty
+suffix (for example, `v0.0.22-28-g40a6b3fc6-dirty`). A nonempty `BUILD_ID` stamp
+is retained exactly, including an explicit `dev`. Direct Go or ko builds with no
+stamp never invoke git at runtime: they fall back to Go's embedded VCS metadata as
+`dev+<12-char-vcs-revision>[.dirty]`, or to `dev` if metadata is unavailable or
 invalid. Exact top-level `--version` exits before normal
 startup. The server exposes its build identity plus sanitized diagnostic display endpoint projections through authenticated gRPC
 `GetServerInfo` and HTTP `GET /v1/info?provider_id=<active-provider>`; neither endpoint reads session or workspace

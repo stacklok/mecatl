@@ -7,8 +7,9 @@ import (
 	"runtime/debug"
 )
 
-// BuildID is an optional linker stamp. An empty value lets init derive a source-build
-// identity from embedded VCS metadata.
+// BuildID is an optional linker stamp. Taskfile builds stamp it from rooted git
+// describe output. Direct unstamped Go/ko builds derive a fallback from embedded VCS
+// metadata during initialization.
 var BuildID string
 
 func init() {
