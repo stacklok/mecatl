@@ -2,7 +2,7 @@
 id: 04-documentation-and-final-audit
 title: Documentation and final audit
 blocked_by: [03-atomic-server-owned-placement-cutover]
-status: pending
+status: in-progress
 branch: ""
 worktree: ""
 issue: ""

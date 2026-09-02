@@ -2,9 +2,9 @@
 id: 03-atomic-server-owned-placement-cutover
 title: Atomic server-owned placement cutover
 blocked_by: [02-unify-environment-placement-identity]
-status: in-progress
-branch: ""
-worktree: ""
+status: done
+branch: "plan-server-owned-session-placement/03-atomic-server-owned-placement-cutover"
+worktree: ".scratch/worktrees/03-atomic-server-owned-placement-cutover"
 issue: ""
 retries: 0
 last_error: ""
