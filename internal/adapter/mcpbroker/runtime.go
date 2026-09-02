@@ -290,15 +290,16 @@ func (r *Runtime) AttachSession(ctx context.Context, id session.SessionID) (cont
 	r.mu.Unlock()
 
 	attachment := &Attachment{runtime: r, logical: logical, creator: outcome == contract.AttachCreated}
-	attachment.tools = make([]tool.Tool, len(r.catalogue.routes))
+	tools := make([]tool.Tool, len(r.catalogue.routes))
 	for i, route := range r.catalogue.routes {
 		base := &sessionTool{attachment: attachment, route: route}
 		if route.oauth != nil {
-			attachment.tools[i] = &protectedSessionTool{sessionTool: base}
+			tools[i] = &protectedSessionTool{sessionTool: base}
 		} else {
-			attachment.tools[i] = base
+			tools[i] = base
 		}
 	}
+	attachment.catalogue = newAttachmentCatalogue(r.catalogue.routes, tools, nil)
 	return attachment, outcome, nil
 }
 
@@ -348,7 +349,7 @@ type Attachment struct {
 	settled        bool
 	activeOps      int
 	operationsDone chan struct{}
-	tools          []tool.Tool
+	catalogue      *attachmentCatalogue
 }
 
 var _ contract.Attachment = (*Attachment)(nil)
@@ -442,11 +443,13 @@ func (a *Attachment) Binding() string {
 	return a.runtime.bindingPrefix + "." + fmt.Sprint(a.logical.ref.generation)
 }
 
-// Tools returns a copy of this attachment's stable session-bound wrappers.
+// Tools returns a copy of the attachment's current whole catalogue. Publication
+// replaces the catalogue in one assignment, so callers cannot observe staged
+// protected tools.
 func (a *Attachment) Tools() []tool.Tool {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
-	return append([]tool.Tool(nil), a.tools...)
+	return a.catalogue.Tools()
 }
 
 func (a *Attachment) stateError() error {
@@ -561,6 +564,10 @@ func (t *sessionTool) Execute(ctx context.Context, call session.ToolCall, _ tool
 	defer done()
 	if call.Name != t.route.spec.Name {
 		return session.NewToolError(call.ID, "broker tool call does not match wrapper"), nil
+	}
+	resolved, ok := t.attachment.lookupRoute(call.Name)
+	if !ok || resolved.backend != t.route.backend {
+		return session.NewToolError(call.ID, "broker tool route is unavailable"), nil
 	}
 	if err := opCtx.Err(); err != nil {
 		return session.ToolResult{}, err

@@ -441,8 +441,8 @@ func (c *recordingDiscoveryCredentials) GetValidTokens(_ context.Context, sessio
 	if credential == nil {
 		return nil, errors.New("credential unavailable")
 	}
-	copy := *credential
-	return &copy, nil
+	credentialCopy := *credential
+	return &credentialCopy, nil
 }
 
 func (c *recordingDiscoveryCredentials) lookups() []credentialLookup {

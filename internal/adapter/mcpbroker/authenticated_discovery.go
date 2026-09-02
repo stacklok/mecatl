@@ -55,6 +55,9 @@ type authenticatedDiscovery struct {
 // is intentionally separate from catalogue construction: no discovered result
 // is admitted, frozen, or retained by the Process.
 func (p *Process) QueryAuthenticatedCapabilities(ctx context.Context, authSession ToolHiveAuthSessionID, backend string) (AuthenticatedCapabilities, error) {
+	if p != nil && p.queryAuthenticated != nil {
+		return p.queryAuthenticated(ctx, authSession, backend)
+	}
 	if p == nil || p.discovery == nil || authSession == "" || backend == "" {
 		return AuthenticatedCapabilities{}, ErrAuthenticatedDiscovery
 	}

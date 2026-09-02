@@ -47,15 +47,16 @@ type Process struct {
 	Runtime  *Runtime
 	Handlers HandlerBundle
 
-	ctx          context.Context
-	cancel       context.CancelFunc
-	lifecycleMu  sync.Mutex
-	closed       bool
-	construction toolHiveConstruction
-	discovery    *authenticatedDiscovery
-	resources    []ownedResource
-	closeOnce    sync.Once
-	closeErr     error
+	ctx                context.Context
+	cancel             context.CancelFunc
+	lifecycleMu        sync.Mutex
+	closed             bool
+	construction       toolHiveConstruction
+	discovery          *authenticatedDiscovery
+	queryAuthenticated func(context.Context, ToolHiveAuthSessionID, string) (AuthenticatedCapabilities, error)
+	resources          []ownedResource
+	closeOnce          sync.Once
+	closeErr           error
 }
 
 // NewToolHiveProcess discovers anonymous upstreams, constructs one ordered
