@@ -2,7 +2,7 @@
 id: 45-remote-production-e2e-final-docs
 title: Prove remote production learning and reconcile final documentation
 blocked_by: [43-bounded-attempt-callback-lifecycle, 44-reservation-before-create-fencing]
-status: pending
+status: in_progress
 branch: plan-cloud-native-learning/45-remote-production-e2e-final-docs
 worktree: .scratch/worktrees/45-remote-production-e2e-final-docs
 issue: ""
