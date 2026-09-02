@@ -1,0 +1,12 @@
+{{- $oauth := false -}}
+{{- range .Values.mcp.servers -}}{{- if eq .auth.mode "oauth" -}}{{- $oauth = true -}}{{- end -}}{{- end -}}
+{{- if $oauth }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "mecak8s.fullname" . }}-mcp
+  labels: {{- include "mecak8s.labels" . | nindent 4 }}
+data:
+  settings.yaml: |
+{{ include "mecak8s.mcpOAuthSettings" . | indent 4 }}
+{{- end }}

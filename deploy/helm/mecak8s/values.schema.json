@@ -77,6 +77,89 @@
     "maxTeamTokens": {"type": ["integer", "null"], "minimum": 1},
     "workspace": {"type": "string"},
     "imagePullSecrets": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["name"], "properties": {"name": {"type": "string", "minLength": 1}}}},
+    "mcp": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["servers"],
+      "properties": {
+        "servers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "url", "auth"],
+            "properties": {
+              "name": {"type": "string", "pattern": "^[A-Za-z0-9_]+$", "not": {"pattern": "__"}},
+              "url": {"type": "string", "pattern": "^https?://[^@/[:space:]#]+(?:/[^[:space:]#]*)?$"},
+              "insecureHTTP": {"type": "boolean", "default": false},
+              "auth": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["mode"],
+                "properties": {
+                  "mode": {"type": "string", "enum": ["none", "staticBearer", "oauth"]},
+                  "staticBearer": {
+                    "type": "object", "additionalProperties": false,
+                    "required": ["secretKeyRef"],
+                    "properties": {"secretKeyRef": {"$ref": "#/definitions/secretKeyRef"}}
+                  },
+                  "oauth": {
+                    "type": "object", "additionalProperties": false,
+                    "required": ["profile", "principal", "issuer", "client", "scopes", "credentials", "network"],
+                    "properties": {
+                      "profile": {"type": "string", "minLength": 1},
+                      "principal": {"type": "string", "minLength": 1},
+                      "issuer": {"type": "string", "pattern": "^https://[^@/?#[:space:]]+(?::[0-9]+)?$"},
+                      "client": {
+                        "type": "object", "additionalProperties": false, "required": ["mode"],
+                        "properties": {
+                          "mode": {"type": "string", "enum": ["preregistered", "cimd"]},
+                          "preregistered": {
+                            "type": "object", "additionalProperties": false, "required": ["id", "secretKeyRef"],
+                            "properties": {"id": {"type": "string", "minLength": 1}, "secretKeyRef": {"$ref": "#/definitions/secretKeyRef"}}
+                          },
+                          "cimd": {
+                            "type": "object", "additionalProperties": false, "required": ["documentURL"],
+                            "properties": {"documentURL": {"type": "string", "pattern": "^https://[^@/[:space:]#]+/[^[:space:]#]+$"}}
+                          }
+                        },
+                        "oneOf": [
+                          {"properties": {"mode": {"const": "preregistered"}}, "required": ["preregistered"], "not": {"required": ["cimd"]}},
+                          {"properties": {"mode": {"const": "cimd"}}, "required": ["cimd"], "not": {"required": ["preregistered"]}}
+                        ]
+                      },
+                      "scopes": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+                      "requestRefreshToken": {"type": "boolean", "default": false},
+                      "credentials": {
+                        "type": "object", "additionalProperties": false, "required": ["secretKeyRef"],
+                        "properties": {
+                          "secretKeyRef": {"$ref": "#/definitions/secretKeyRef"},
+                          "allowProcessLocalRefresh": {"type": "boolean", "default": false}
+                        }
+                      },
+                      "network": {
+                        "type": "object", "additionalProperties": false,
+                        "required": ["additionalOrigins", "privateOrigins", "maxRedirects"],
+                        "properties": {
+                          "additionalOrigins": {"type": "array", "items": {"type": "string", "pattern": "^https?://[^@/?#[:space:]]+(?::[0-9]+)?$"}},
+                          "privateOrigins": {"type": "array", "items": {"type": "string", "pattern": "^https?://[^@/?#[:space:]]+(?::[0-9]+)?$"}},
+                          "maxRedirects": {"type": "integer", "minimum": 0, "maximum": 5}
+                        }
+                      }
+                    }
+                  }
+                },
+                "oneOf": [
+                  {"properties": {"mode": {"const": "none"}}, "not": {"anyOf": [{"required": ["staticBearer"]}, {"required": ["oauth"]}]}},
+                  {"properties": {"mode": {"const": "staticBearer"}}, "required": ["staticBearer"], "not": {"required": ["oauth"]}},
+                  {"properties": {"mode": {"const": "oauth"}}, "required": ["oauth"], "not": {"required": ["staticBearer"]}}
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
     "extraEnv": {"type": "array", "items": {"type": "object"}},
     "extraArgs": {"type": "array", "items": {"type": "string", "minLength": 1}},
     "extraVolumeMounts": {
@@ -251,6 +334,15 @@
     }
   ],
   "definitions": {
+    "secretKeyRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "key"],
+      "properties": {
+        "name": {"type": "string", "minLength": 1, "maxLength": 253, "pattern": "^[a-z0-9]([-.a-z0-9]*[a-z0-9])?$"},
+        "key": {"type": "string", "minLength": 1, "maxLength": 253, "pattern": "^[-._a-zA-Z0-9]+$"}
+      }
+    },
     "volumeName": {"type": "string", "minLength": 1, "maxLength": 63, "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"},
     "kubernetesVolumeSource": {"type": "object"},
     "imageVolumeSource": {

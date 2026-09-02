@@ -30,6 +30,12 @@ extraEnv: []
 # extraArgs appends command-line arguments to the mecak8s agent container.
 extraArgs: []
 
+# First-class remote Streamable HTTP MCP connections. Authentication is an
+# explicit union: none, staticBearer, or oauth. Secret values are always read
+# from same-namespace Kubernetes Secrets; they are never Helm values.
+mcp:
+  servers: []
+
 # extraVolumes and extraVolumeMounts append restricted Kubernetes Volume and
 # VolumeMount entries. Keep configuration content read-only and immutable; XDG-
 # based skills/agents/rules can be projected from a ConfigMap, or a ToolHive OCI

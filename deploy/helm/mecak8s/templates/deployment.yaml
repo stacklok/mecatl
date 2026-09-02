@@ -3,6 +3,9 @@
 {{- include "mecak8s.validateOIDC" . -}}
 {{- include "mecak8s.validateTLS" . -}}
 {{- include "mecak8s.validateProviderSecurity" . -}}
+{{- include "mecak8s.validateMCP" . -}}
+{{- $mcpOAuth := false -}}
+{{- range .Values.mcp.servers -}}{{- if eq .auth.mode "oauth" -}}{{- $mcpOAuth = true -}}{{- end -}}{{- end -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -25,7 +28,10 @@ spec:
       {{- if and (not .Values.mockProvider) (not .Values.security.allowUnsafeRealProvider) .Values.security.tlsTerminatedUpstream }}
       {{- $_ := set $chartAnnotations "mecatl.stacklok.com/tls-terminated-upstream" "true" }}
       {{- end }}
-      {{- $userAnnotations := omit (deepCopy .Values.podAnnotations) "mecatl.stacklok.com/unsafe-real-provider" "mecatl.stacklok.com/tls-terminated-upstream" }}
+      {{- if $mcpOAuth }}
+      {{- $_ := set $chartAnnotations "checksum/mcp-profile" (include "mecak8s.mcpOAuthSettings" . | sha256sum) }}
+      {{- end }}
+      {{- $userAnnotations := omit (deepCopy .Values.podAnnotations) "mecatl.stacklok.com/unsafe-real-provider" "mecatl.stacklok.com/tls-terminated-upstream" "checksum/mcp-profile" }}
       {{- if or $userAnnotations $chartAnnotations }}
       annotations:
         {{- with $userAnnotations }}
@@ -134,11 +140,41 @@ spec:
             {{- if .Values.skills.autoDiscover }}
             - --skills-conventional=true
             {{- end }}
+            {{- range $server := .Values.mcp.servers }}
+            {{- if ne $server.auth.mode "oauth" }}
+            - {{ printf "--mcp-server=%s=%s" $server.name $server.url | quote }}
+            {{- end }}
+            {{- if $server.insecureHTTP }}
+            - {{ printf "--mcp-server-insecure-http=%s" $server.name | quote }}
+            {{- end }}
+            {{- end }}
+            {{- if $mcpOAuth }}
+            - --permission-config=/etc/mecatl-mcp/settings.yaml
+            {{- end }}
             {{- with .Values.extraArgs }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
-          {{- with .Values.extraEnv }}
-          env: {{- toYaml . | nindent 12 }}
+          {{- if or .Values.extraEnv .Values.mcp.servers }}
+          env:
+            {{- range $server := .Values.mcp.servers }}
+            {{- if eq $server.auth.mode "staticBearer" }}
+            - name: {{ printf "MCP_%s_TOKEN" (upper $server.name) }}
+              valueFrom:
+                secretKeyRef: {{- toYaml $server.auth.staticBearer.secretKeyRef | nindent 18 }}
+            {{- else if eq $server.auth.mode "oauth" }}
+            {{- if eq $server.auth.oauth.client.mode "preregistered" }}
+            - name: {{ printf "MECATL_MCP_%s_CLIENT_SECRET" (upper $server.name) }}
+              valueFrom:
+                secretKeyRef: {{- toYaml $server.auth.oauth.client.preregistered.secretKeyRef | nindent 18 }}
+            {{- end }}
+            - name: {{ printf "MECATL_MCP_%s_CREDENTIAL" (upper $server.name) }}
+              valueFrom:
+                secretKeyRef: {{- toYaml $server.auth.oauth.credentials.secretKeyRef | nindent 18 }}
+            {{- end }}
+            {{- end }}
+            {{- with .Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
           {{- end }}
           ports:
             - {name: grpc, containerPort: 8080}
@@ -186,6 +222,9 @@ spec:
             {{- if .Values.oidc.caSecret }}
             - {name: oidc-ca, mountPath: /var/run/secrets/oidc-ca, readOnly: true}
             {{- end }}
+            {{- if $mcpOAuth }}
+            - {name: mcp-profile, mountPath: /etc/mecatl-mcp, readOnly: true}
+            {{- end }}
             {{- with .Values.extraVolumeMounts }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
@@ -224,6 +263,14 @@ spec:
             defaultMode: 0440
             items:
               - {key: {{ .Values.oidc.caKey | quote }}, path: {{ .Values.oidc.caKey | quote }}}
+        {{- end }}
+        {{- if $mcpOAuth }}
+        - name: mcp-profile
+          configMap:
+            name: {{ include "mecak8s.fullname" . }}-mcp
+            defaultMode: 0444
+            items:
+              - {key: settings.yaml, path: settings.yaml}
         {{- end }}
         {{- with .Values.extraVolumes }}
         {{- toYaml . | nindent 8 }}
