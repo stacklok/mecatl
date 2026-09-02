@@ -203,25 +203,22 @@ implements generic extensible state once, rather than implementing each feature:
                               └── future component state
 
 memstore       → in-memory namespaced maps
-jsonlstore     → snapshot extension or generic state sidecar
+jsonlstore     → namespaced state records
 redisstore     → generic session-state hash/keyspace
 gRPC driver    → generic session-state operations
 ```
 
-The file-oriented choice is intentionally unresolved. `jsonlstore` is
-append-oriented, while the proposed hot path is exact-key Get/Put; its eventual
-adapter may use replay plus compaction, a generic sidecar, or an eager snapshot
-extension. The ADR must choose deliberately rather than pretending Redis's
-physical layout fits every store.
+The key-value model is a logical contract, not a required physical layout. Each
+backend may implement it using its native persistence model.
 
 The ledger component supplies only its namespace and value contract. It has no
 Redis client, JSONL format, gRPC client, or backend-specific cleanup code.
 
-The generic state facility may be exposed as an extension of `SessionStore`, or
-as a companion interface implemented by the same store. The important contract
-is that `Load` returns a `Session` bound to the correct state view and `Delete`
-cleans up both core and extensible state. A separate deployment-wide ledger
-resolver must not be required at every file-tool call.
+The exact Go interface remains an implementation-ADR decision. Architecturally,
+the session persistence implementation creates or restores a `Session` bound to
+the correct state view, and session deletion cleans up both core and extensible
+state. A separate deployment-wide ledger resolver must not be required at every
+file-tool call.
 
 ### Lazy restoration
 
