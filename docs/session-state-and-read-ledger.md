@@ -179,6 +179,15 @@ A restored `Session` should carry generic, session-scoped key-value state.
 Stable namespaces isolate component-owned keys so the read ledger and future
 state consumers share one persistence mechanism without sharing schemas.
 
+Making this facility extensible avoids adding a new persistence interface and
+set of backend adapters for every kind of session-scoped state. It also avoids
+expanding the core session snapshot with fields owned by individual engine
+features. Persistence backends implement the namespaced key-value contract once,
+while engine features remain responsible for the meaning of their own state.
+Its lifetime follows the Session naturally: restoring the Session restores its
+state, and deleting the Session reaps all of it without individual features or
+underlying resource clients managing cleanup.
+
 This proposal deliberately does not settle the exact Go interface, generic type
 shape, namespace-registration API, or serialization format. Those belong in the
 implementation ADR. The architectural contract is:
