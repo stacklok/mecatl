@@ -78,7 +78,7 @@ func TestFoldEqualsSnapshotLoad(t *testing.T) {
 	sess := session.New(sessID, session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
 	ctx := context.Background()
 	ws := memfs.NewWorkspace("/ws")
-	env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: "/ws"}, ws, nil)
+	env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, ws, nil)
 	r := e.Run(ctx, sess, env, agent.RunRequest{Text: "look at a.go"})
 
 	// Mimic the relay: append EVERY observed event to the durable log in order.

@@ -24,7 +24,7 @@ func testEnvironment(ws tool.Workspace, runner tool.CommandRunner) tool.Environm
 // agent tests that drive an engine against a throwaway memfs workspace without
 // a command runner (issue #462).
 func memEnv(root string) tool.Environment {
-	return tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: root, Revision: "test-v1"}, memfs.NewWorkspace(root), nil)
+	return tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindLocal, ID: root, Revision: "in-tree-v1"}, memfs.NewWorkspace(root), nil)
 }
 
 // MemEnv is the exported form of memEnv for the external agent_test package.
@@ -44,7 +44,7 @@ func forkEnv(ws tool.Workspace) tool.Environment {
 
 // memEnvRunner builds an in-memory Environment rooted at root with a bound runner.
 func memEnvRunner(root string, runner tool.CommandRunner) tool.Environment {
-	return tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: root, Revision: "test-v1"}, memfs.NewWorkspace(root), runner)
+	return tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindLocal, ID: root, Revision: "in-tree-v1"}, memfs.NewWorkspace(root), runner)
 }
 
 // MemEnvRunner is the exported form of memEnvRunner for the external agent_test

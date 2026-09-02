@@ -40,7 +40,7 @@ const (
 func seedFailedChildWithOrphanedToolCall(t *testing.T, store port.SessionStore, id session.SessionID, promptText string) session.ToolCallID {
 	t.Helper()
 	const orphanID = session.ToolCallID("orphan-1")
-	seed := session.New(id, session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindMem, ID: "/ws", Revision: "test-v1"}, session.Limits{}, time.Now())
+	seed := session.New(id, session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Now())
 	if err := seed.RecordUserPrompt(promptText, nil); err != nil {
 		t.Fatalf("seed RecordUserPrompt: %v", err)
 	}

@@ -90,7 +90,7 @@ func TestAttemptObserverRejectsProducerControlledPayloadsAtLoopChokePoint(t *tes
 	}}
 	engine := agent.NewEngine(agent.Deps{LLM: provider, Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil), Model: "test", EnableDurableEvidence: true})
 	sess := session.New("target", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Now())
-	env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: "/ws"}, memfs.NewWorkspace("/ws"), nil)
+	env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, memfs.NewWorkspace("/ws"), nil)
 	var attempts []session.NetworkAttemptPayload
 	var events []session.Event
 	for ev := range engine.Run(context.Background(), sess, env, agent.RunRequest{Text: "go"}).Events() {
@@ -146,7 +146,7 @@ func TestModelCallsCarryRunAndTurnCorrelation(t *testing.T) {
 	})
 	sess := session.New("correlation", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Now())
 	ws := memfs.NewWorkspace("/ws")
-	env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: "/ws"}, ws, nil)
+	env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, ws, nil)
 	for range engine.Run(context.Background(), sess, env, agent.RunRequest{Text: "go"}).Events() {
 	}
 	if len(provider.turns) != 2 || provider.turns[0] != 0 || provider.turns[1] != 1 {

@@ -62,7 +62,7 @@ func TestWebFetchToolThroughAgentLoop(t *testing.T) {
 		Policy:  permpolicy.NewPolicy(permpolicy.AllowAllFloorRules(), nil),
 	})
 	sess := session.New("webfetch-e2e", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
-	env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: "/ws"}, memfs.NewWorkspace("/ws"), nil)
+	env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, memfs.NewWorkspace("/ws"), nil)
 	run := engine.Run(context.Background(), sess, env, agent.RunRequest{Text: "read the release notes"})
 
 	var events []session.Event

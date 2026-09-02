@@ -59,7 +59,7 @@ func TestWebSearchModelFacingE2E(t *testing.T) {
 	sess := session.New("s1", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
 	ws := memfs.NewWorkspace("/ws")
 
-	env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: "/ws"}, ws, nil)
+	env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, ws, nil)
 	r := e.Run(context.Background(), sess, env, agent.RunRequest{Text: "find the go 1.26 release notes"})
 	var evs []session.Event
 	for ev := range r.Events() {

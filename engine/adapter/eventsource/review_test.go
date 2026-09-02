@@ -121,7 +121,7 @@ func TestFoldedAwaitingSessionIsDrivable(t *testing.T) {
 	})
 
 	ws := memfs.NewWorkspace("/ws")
-	env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: "/ws"}, ws, nil)
+	env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, ws, nil)
 	r := e.ResumeApproval(context.Background(), folded, env, askID, session.VerdictAllowOnce)
 	var result *session.ResultPayload
 	for ev := range r.Events() {
@@ -175,7 +175,7 @@ func TestFoldReasoningProviderDivergesOnSnapshotOnlyFields(t *testing.T) {
 	sess := session.New(sessID, session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
 	ctx := context.Background()
 	ws := memfs.NewWorkspace("/ws")
-	env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: "/ws"}, ws, nil)
+	env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, ws, nil)
 	r := e.Run(ctx, sess, env, agent.RunRequest{Text: "think"})
 	for ev := range r.Events() {
 		if err := log.Append(ctx, sessID, ev); err != nil {
@@ -364,7 +364,7 @@ func TestFoldRecoversLiveCompactionArchiveHead(t *testing.T) {
 	sess := session.New(sessID, session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
 	ctx := context.Background()
 	ws := memfs.NewWorkspace("/ws")
-	env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: "/ws"}, ws, nil)
+	env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, ws, nil)
 	r := e.Run(ctx, sess, env, agent.RunRequest{Text: "do work"})
 	sawArchive := false
 	for ev := range r.Events() {

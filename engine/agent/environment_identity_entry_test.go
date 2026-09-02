@@ -23,26 +23,56 @@ func TestInvariant_session_environment_identity_required(t *testing.T) {
 		_ = session.New("invalid", session.ModeDefault, session.EnvironmentRef{}, session.Limits{}, time.Unix(0, 0))
 	})
 
-	t.Run("run rejects a mismatched live environment before provider access", func(t *testing.T) {
-		llm := mockllm.New(mockllm.TextTurn("must not run"))
-		eng := agent.NewEngine(agent.Deps{LLM: llm, Catalog: tool.NewCatalog()})
-		sessionRef := session.EnvironmentRef{Kind: session.EnvKindMem, ID: "session", Revision: "v1"}
-		envRef := session.EnvironmentRef{Kind: session.EnvKindMem, ID: "other", Revision: "v1"}
-		sess := session.New("mismatch", session.ModeDefault, sessionRef, session.Limits{}, time.Unix(0, 0))
-		env := tool.MustEnvironment(envRef, memfs.NewWorkspace("/private/other"), nil)
+	t.Run("run requires an exact valid live environment before provider access", func(t *testing.T) {
+		validRef := session.EnvironmentRef{Kind: session.EnvKindMem, ID: "placement", Revision: "v1"}
+		tests := []struct {
+			name       string
+			sessionRef session.EnvironmentRef
+			envRef     session.EnvironmentRef
+			reject     bool
+		}{
+			{name: "exact match", sessionRef: validRef, envRef: validRef},
+			{name: "different kind", sessionRef: validRef, envRef: session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "placement", Revision: "v1"}, reject: true},
+			{name: "different id", sessionRef: validRef, envRef: session.EnvironmentRef{Kind: session.EnvKindMem, ID: "other", Revision: "v1"}, reject: true},
+			{name: "different revision", sessionRef: validRef, envRef: session.EnvironmentRef{Kind: session.EnvKindMem, ID: "placement", Revision: "v2"}, reject: true},
+			{name: "invalid session ref", sessionRef: session.EnvironmentRef{}, envRef: validRef, reject: true},
+			{name: "invalid live ref", sessionRef: validRef, envRef: session.EnvironmentRef{}, reject: true},
+		}
 
-		run := eng.Run(context.Background(), sess, env, agent.RunRequest{Text: "hello"})
-		var cause string
-		for ev := range run.Events() {
-			if ev.Result != nil {
-				cause = ev.Result.Error
-			}
-		}
-		if llm.Calls() != 0 {
-			t.Fatalf("provider calls = %d, want 0", llm.Calls())
-		}
-		if !strings.Contains(cause, "environment identity mismatch") {
-			t.Fatalf("terminal cause = %q, want identity mismatch", cause)
+		for _, tc := range tests {
+			t.Run(tc.name, func(t *testing.T) {
+				llm := mockllm.New(mockllm.TextTurn("provider ran"))
+				eng := agent.NewEngine(agent.Deps{LLM: llm, Catalog: tool.NewCatalog()})
+				sess := session.New("environment-entry", session.ModeDefault, validRef, session.Limits{}, time.Unix(0, 0))
+				// Session restoration validates this field, but direct Engine callers can
+				// hold and mutate the aggregate. Run entry must still fail closed.
+				sess.EnvironmentRef = tc.sessionRef
+				env := tool.MustEnvironment(tc.envRef, memfs.NewWorkspace("/private/placement"), nil)
+
+				run := eng.Run(context.Background(), sess, env, agent.RunRequest{Text: "hello"})
+				var cause string
+				for ev := range run.Events() {
+					if ev.Result != nil {
+						cause = ev.Result.Error
+					}
+				}
+
+				if tc.reject {
+					if llm.Calls() != 0 {
+						t.Fatalf("provider calls = %d, want 0", llm.Calls())
+					}
+					if !strings.Contains(cause, "environment identity mismatch") {
+						t.Fatalf("terminal cause = %q, want identity mismatch", cause)
+					}
+					return
+				}
+				if llm.Calls() != 1 {
+					t.Fatalf("provider calls = %d, want 1", llm.Calls())
+				}
+				if cause != "" {
+					t.Fatalf("terminal cause = %q, want success", cause)
+				}
+			})
 		}
 	})
 }
