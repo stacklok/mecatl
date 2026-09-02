@@ -302,26 +302,36 @@ page reload: the cursor has to survive `JSON.stringify` into application
 storage and come back to a different `Client`. A TypeScript brand would pass
 every in-process test and evaporate on that round trip.
 
-**The scope rule is an asymmetric containment check, not equality.** What
-determines a position's meaning is which records the *server* skipped, and that
-makes the two directions genuinely different:
+**The scope rule is delivered-set containment over BOTH fields.** The invariant
+is not "which records did the position advance over" — that framing was wrong,
+and it is what made an earlier draft unsafe. What matters is **which records the
+cursor's own view actually delivered**, because a resume can only ever start
+after the position: anything the earlier view advanced past *without yielding*
+is lost to every later view.
 
-- A cursor with `filter: ""` advanced over **every** record, so resuming it
-  under *any* server filter is safe — the filter only removes records from what
-  arrives next, and skips nothing the caller has not already passed. It is
-  therefore usable by `activity()`, by an implicit `attach()`, and by an
-  explicit `attach(R)`.
-- A cursor with `filter: "R"` advanced **past** other runs' records, so resuming
-  it unfiltered, or under a different run's filter, would silently skip events
-  the wider watch would have delivered. It is usable only under the identical
-  filter.
+That distinction bites precisely on the implicit `attach()` this decision
+introduced. Its watch is unfiltered, so its position advances over every record
+— including other runs' — while it yields only run `R`'s. Judged on position
+basis alone its cursor looks maximally broad and safe to hand anywhere. Judged
+on what it delivered, it is *narrow*: hand it to `activity()` and every other
+run's records between the log's start and that position are silently skipped,
+which is exactly the class of failure Context point 3 exists to prevent.
 
-So the check is "the cursor's basis must be at least as broad as the watch it is
-being handed to", and a violation fails **locally** with `CursorScopeError`
-before any request. Equality would have been simpler and is what an earlier
-draft specified, but it is over-strict in exactly the direction the reload case
-needs — it rejects a perfectly sound unfiltered cursor merely because the caller
-now names the run it was already bound to.
+So a cursor may be handed only to a view whose delivered set is a **subset** of
+its own, and `run` is the load-bearing field:
+
+- `run: "R"` (either attach form) resumes **only** a view bound to run `R`.
+  `activity()` and `attach(otherRun)` are refused with `CursorScopeError`.
+- `run: ""` (from `activity()`) resumes anything — `activity()`, or `attach(R)`
+  for any `R`, since an attachment yields a subset of what activity already
+  delivered.
+- `filter` is checked alongside it as the record of the position's server-side
+  basis: a cursor issued under a server filter may never be widened past it.
+  For same-run resumes this is automatically satisfied, which is why `run` does
+  the real work — but keeping the check explicit means a future server-side
+  scoping change cannot quietly invalidate stored cursors.
+
+Both checks run **locally**, before any request.
 
 This is the one guarantee the SDK adds beyond the server's, and it is
 justified by the server structurally not being able to add it. We keep that

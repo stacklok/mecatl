@@ -353,13 +353,17 @@ locally with `CursorScopeError`, because the server structurally cannot catch it
   resumes correctly when handed to a **freshly constructed** `Client` — the
   reload case — retaining its filter brand across the round trip.
   - verify: vitest:sdk/typescript/test/attach-cursor.test.ts#YSBzZXJpYWxpemVkIGN1cnNvciByZXN1bWVzIHRocm91Z2ggYSBmcmVzaCBjbGllbnQ — `sdk/typescript/test/attach-cursor.test.ts :: "a serialized cursor resumes through a fresh client"`
-- AC4.6: Cursor scope is an **asymmetric containment check**, not equality. A
-  cursor issued under a server `run_id` filter, handed to `activity()` or to an
-  attachment on a different run, fails with `CursorScopeError` before any
-  request — its position advanced past other runs' records. A cursor issued
-  under **no** server filter is accepted everywhere, including by an explicit
-  `attach(R)`, because it advanced over every record and so can skip nothing.
-  - verify: vitest:sdk/typescript/test/attach-cursor.test.ts#Y3Vyc29yIHNjb3BlIGlzIGFuIGFzeW1tZXRyaWMgY29udGFpbm1lbnQgY2hlY2sgcmF0aGVyIHRoYW4gZXF1YWxpdHk — `sdk/typescript/test/attach-cursor.test.ts :: "cursor scope is an asymmetric containment check rather than equality"`
+- AC4.6: Cursor scope is **delivered-set containment over both the run binding
+  and the server filter** — a cursor may be handed only to a view that delivers a
+  subset of what its own view delivered. A cursor bound to run `R` (from either
+  `attach()` form) resumes only a view bound to `R`; handing it to `activity()`
+  or to `attach(otherRun)` fails with `CursorScopeError` before any request,
+  because the bound view advanced its position past other runs' records **without
+  yielding them** and a wider view resuming there would skip them silently. An
+  unbound `activity()` cursor resumes anything, since an attachment yields a
+  subset of what activity already delivered. A cursor issued under a server
+  `run_id` filter is additionally never widened past it.
+  - verify: vitest:sdk/typescript/test/attach-cursor.test.ts#Y3Vyc29yIHNjb3BlIGlzIGRlbGl2ZXJlZC1zZXQgY29udGFpbm1lbnQgb3ZlciBydW4gYW5kIGZpbHRlcg — `sdk/typescript/test/attach-cursor.test.ts :: "cursor scope is delivered-set containment over run and filter"`
 - AC4.7: Cursor acceptance is **structural**, not provenance-based: a value
   that is not a well-formed `sdkcur/1` envelope — wrong version, undecodable,
   missing fields, or a raw server token from the raw seam — is refused locally
@@ -382,7 +386,8 @@ locally with `CursorScopeError`, because the server structurally cannot catch it
   from its (empty) server filter, so a resume through a fresh `Client` reattaches
   to **that** run — not to whichever run is newest by then, and not
   `NoRunsError` — even when later runs have since been appended. The run
-  identity is restored from the cursor rather than re-derived.
+  identity is restored from the cursor rather than re-derived, and the same
+  binding is what AC4.6 refuses to widen.
   - verify: vitest:sdk/typescript/test/attach-cursor.test.ts#YW4gaW1wbGljaXQgYXR0YWNoIGN1cnNvciByZXN0b3JlcyBpdHMgcnVuIHJhdGhlciB0aGFuIHJlLWRlcml2aW5nIG9uZQ — `sdk/typescript/test/attach-cursor.test.ts :: "an implicit attach cursor restores its run rather than re-deriving one"`
 
 ---
@@ -568,10 +573,15 @@ fact about DELIVERY, not something that happened in the run").
 
 `AttachedRun` exposes `cancel()`, carrying `expected_run_id` for the run it
 attached to — the
-[ADR-0249](../adr/0249-durable-run-identity.md) stale-control contract,
-constructed through the **same** request path M1's owned `Run` uses so the
-contract and the verdict vocabulary are implemented once. Over HTTP it rides the prompt-free `POST /v1/sessions/{id}/cancel` route, a
-`204` ack with no body; **over gRPC it raises a typed unsupported-feature error
+[ADR-0249](../adr/0249-durable-run-identity.md) stale-control contract. It does
+**not** ride M1's `RunOperations.send`, which is a synchronous `void` push of a
+`ConverseRequest` frame onto a stream an attachment does not have and cannot
+await; it goes through a dedicated asynchronous out-of-band control seam
+(AC8.1). What is shared with M1 is the `expected_run_id` contract and its error
+mapping — not the request path, and not the verdict vocabulary, which `cancel()`
+has no use for and which returns to scope only with the deferred approval
+methods. Over HTTP it rides the prompt-free `POST /v1/sessions/{id}/cancel`
+route, a `204` ack with no body; **over gRPC it raises a typed unsupported-feature error
 naming the missing channel**, because there is no prompt-free control RPC and
 `Converse`'s first frame must be a prompt.
 
