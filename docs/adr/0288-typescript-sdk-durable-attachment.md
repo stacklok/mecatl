@@ -210,7 +210,36 @@ not inferred from `Session.state`, so `attach()` needs no second round-trip
 whose answer could disagree with the log it is about to read. That is distinct
 from a session the caller may not read or that does not exist, which
 `watchLog` refuses eagerly with `session_not_found` when `OwnershipEnforced`
-is set. The two demand opposite caller responses — create a run, versus fix
+is set.
+
+**`NoRunsError` has a known false positive, and we ship it documented rather
+than papered over.** `Service.StartRunContent` mints the run id and stamps it
+on the aggregate *before* launching the engine goroutine — deliberately, so the
+id is on the snapshot the moment the run can park awaiting an approval. Between
+that stamp and the goroutine's first emitted event, the run genuinely exists
+and the log genuinely holds nothing about it, so an `attach()` landing in that
+window reads an empty replay and reports `NoRunsError` for a session that is
+actively running.
+
+Every fix is worse than the disclosure:
+
+- *Wait for a first event.* A truly run-less session then hangs instead of
+  answering, converting a wrong answer into no answer.
+- *Consult `Session.state` and wait only when `running`.* This is the least-bad
+  alternative and is genuinely tempting, but it reintroduces exactly the second
+  round-trip this decision removed, and its answer can disagree with the log it
+  is about to read — plus it needs an arbitrary wait bound that is a guess at
+  engine startup latency.
+- *Retry briefly, unconditionally.* Same arbitrary bound, paid by every
+  legitimately empty session.
+
+The ergonomic mitigation is that the race is nearly unreachable in the shape
+that matters: a caller who just started a run **holds its id** from
+`session.run()`, and `attach(runId)` never consults the replay for selection at
+all. The window only opens for a caller attaching blind to a session someone
+else started microseconds earlier. It closes properly with the deferred
+server-side active-run field, which is the same dependency the replay scan
+wants. The two demand opposite caller responses — create a run, versus fix
 your id or your credentials — so conflating them would teach applications to
 swallow an authorization failure.
 
@@ -268,10 +297,31 @@ in the port rather than per backend.
 **Opacity is a promise about authoring, not about serializability** — exactly
 the distinction [ADR 0250](./0250-durable-cursors-and-watch.md) already drew
 when it wrote that the encoding "is stateless and therefore inspectable by a
-determined client". What the SDK guarantees, and what is testable: the type
-exposes no member a caller can meaningfully author, and a value the SDK did not
-issue — hand-built, edited, or a raw server token lifted from the raw seam — is
-**refused**, not resolved.
+determined client".
+
+**And the SDK does not claim to detect provenance**, because it structurally
+cannot. The envelope is stateless and unsigned, so a fresh `Client` — which by
+Context point 4 is the entire point — holds no record of what it issued and
+cannot distinguish an issued cursor from a byte-identical hand-built one. An
+earlier draft promised exactly that, which would have been the kind of
+untestable claim this ADR refuses elsewhere. What the SDK guarantees is
+**validation, not issuance**:
+
+- a value that is not a well-formed `sdkcur/1` envelope — wrong version,
+  undecodable, missing fields, or a raw server token lifted from the raw seam —
+  is refused locally with `CursorMalformedError`;
+- a well-formed envelope whose `filter` disagrees with the attachment's
+  effective server filter is refused locally with `CursorScopeError`;
+- a well-formed, correctly-filtered envelope is **accepted**, whoever built it,
+  and its inner `token` then faces the server's own generation and session
+  validation — which is where a forged or stale position was always going to be
+  caught.
+
+Signing would buy real provenance and is deliberately not done: it needs a
+client-side secret the SDK has no way to hold, and the property it would protect
+(a caller lying to itself about its own cursor) is not a threat model. The
+public type still exposes no member a caller can meaningfully author, so the
+ergonomic path never invites hand-building one.
 
 **4. Filtering is a yield-time decision, consumption is a checkpoint-time one,
 and the filter set is DERIVED from the server rather than written down.**
@@ -327,19 +377,50 @@ An attachment reconnects until its `AbortSignal` fires or it is disposed, with
 bounded exponential backoff plus jitter, resuming from its own checkpoint under
 its own filter.
 
-- **Resume** — a transport-shaped failure, or `watch_lagging`. The latter is
-  explicitly resumable:
+- **Resume** — a transport-shaped failure; `watch_lagging`; a **clean
+  non-terminal EOF**; and an ordinary `authentication` failure.
+  `watch_lagging` is explicitly resumable:
   [`internal/adapter/server/watch.go`](../../internal/adapter/server/watch.go)
   documents that its error carries no cursor precisely because the client's own
-  last-received envelope is the correct resume point.
+  last-received envelope is the correct resume point. The clean-EOF arm is not
+  a defensive guess: `Service.closeWatches` ends every watch on shutdown and
+  says so — "A shutdown cancel is a CLEAN end, not a gap: no append failed, so
+  the stream simply ends and the client reconnects with its cursor". Over
+  HTTP/SSE that arrives as a body that simply finishes, so an attachment that
+  classified only *errors* would complete silently, mid-run, having observed no
+  terminal event — the exact silence this milestone exists to abolish. The rule
+  is therefore: a stream that ends without a terminal `result` and without an
+  error is a **resume**, not a completion.
+  `authentication` resumes because it is the one refusal a retry can actually
+  clear: M1's credentials seam supports an async per-request provider, so the
+  next attempt re-invokes it and may present a fresh token. The attachment
+  reports `unauthorized` while it does (Decision 8), so an application holding a
+  static header that will never change can see the state and abort — #821's
+  "reconnect indefinitely until aborted" puts that call with the caller.
 - **Terminate** — a refusal the server has durably answered. The set is
   **closed and enumerated in one place**, keyed on the stable `code` string
   rather than a status or an error shape, for the same anti-rot reason the
   operation axis gets: `cursor_expired`, `cursor_malformed`, `activity_gap`,
   `session_not_found`, `invalid_argument`, `management_unauthorized`,
-  `watch_unsupported`, `no_event_log`. `watch_unsupported` and `no_event_log`
-  are both registered `Unimplemented`, so a client that classified either as
-  transient would dial forever.
+  `incompatible_server`, `watch_unsupported`, `no_event_log`.
+  `watch_unsupported` and `no_event_log` are both registered `Unimplemented`, so
+  a client that classified either as transient would dial forever.
+
+  `management_unauthorized` sits here while `authentication` sits in the resume
+  arm because they are different questions — which is why the server registers
+  them as different codes. `management_unauthorized` is `PermissionDenied`/403,
+  an authorization *decision* about who this caller is, which no token refresh
+  changes: a 401 says "try again with better credentials", a 403 says "these are
+  your credentials and the answer is no".
+
+  `incompatible_server` terminates because a floor failure is a deployment fact
+  rather than a transient one. But a reconnect can legitimately meet a
+  **different build** — AC10.4 and AC10.5 restart the daemon under a live
+  attachment — so the cached compatibility info is **invalidated whenever a
+  reconnect succeeds after the client left `online`**, and the next feature gate
+  re-probes rather than trusting a floor it learned from a process that no
+  longer exists. Without that invalidation a restarted-and-downgraded daemon
+  would keep serving a client that believes it still supports the watch.
 - **Never retried at all** — every non-watch operation. **The watch read is the
   only thing the SDK ever retries automatically**, decided where the operation
   is *named* rather than inferred from an error, because an allowlist a future
@@ -390,12 +471,31 @@ run id the attachment's filter can never match — turning a refusal into
 silence — the strict, never-promoting reading M1 pinned for owned runs is the
 only acceptable one here too.
 
-One consequence to handle rather than luck into: the HTTP approve route
-**relays the resumed run's events as SSE on the approve response**.
-`AttachedRun.approve(): Promise<void>` must abandon that body — safe, because
-the server's drain-to-discard means "a client that does not consume the body
-still gets a correct run" — while its own watch delivers the same events
-durably. The consumer must not see a second copy.
+One consequence to handle rather than luck into, and the one an earlier draft
+of this ADR got backwards: the HTTP approve route **relays the resumed run's
+events as SSE on the approve response**, and that body may **not** be
+abandoned. `relayRunSSE` starts a goroutine on the request context — "If the
+client disconnects, cancel the run" — so closing the body early *cancels the
+run the caller just approved*, and leaving it unread stalls the relay and leaks
+the connection. The server's drain-to-discard protects the server from a dead
+client; it does not make the client's abandonment safe. The repo's own
+`eventlog_test.go` drains it deliberately, commenting that the drain is what
+lets the resumed run complete and finish appending its terminal `EvResult`.
+
+So `AttachedRun.approve()` **resolves on acceptance and drains in the
+background**: the promise settles once the response is accepted, while a
+detached task reads the body to EOF and discards every byte. The attachment's
+own watch remains the delivery channel, so the consumer never sees a second
+copy.
+
+That drain is deliberately **exempt from disposal** — neither detaching the
+attachment nor `Client.close()` aborts it, because aborting it is exactly the
+`run.Cancel()` this paragraph exists to avoid. It is bounded instead by the
+run's own completion, which is what ends the stream. This is the single
+documented exception to Decision 5's "closing the client stops everything", and
+it is a wart we own rather than a subtlety we hope nobody hits. The alternative
+— a server-side ack-only approve that does not relay — is a production-server
+change this milestone is scoped out of.
 
 The control-request construction path is **shared** with M1's owned `Run` (the
 existing `RunOperations` seam plus its verdict mapping), so the ADR 0249
@@ -510,6 +610,17 @@ stream ("activity") instead of introducing a third vocabulary.
 
 **Harder — the honest costs.**
 
+- **An `AttachedRun` does not survive a daemon restart, and cannot.** Its
+  filter names one `run_id`; a run interrupted by a process death does not
+  continue, and whatever runs next is a *new* run with a *new* id that the
+  filter excludes by construction. So a restart under an `AttachedRun` yields a
+  correctly-resumed cursor delivering nothing further — right, and useless. The
+  two things that *do* cross a restart are `activity()`, whose unfiltered
+  stream picks up the new run, and the **awaiting-approval resume**, where
+  `Service.resumeFromAwaiting` reuses the persisted id
+  ([ADR 0249](./0249-durable-run-identity.md)) so the same filter keeps
+  matching. Those are the two shapes the e2e proves; a general
+  "`AttachedRun` survives a restart" claim would be false.
 - **`attach()` without a `runId` still scans the replay phase.** On a
   long-lived session that is the whole log crossing the network. The only
   mitigation is passing a known `runId`; `from: "now"` does **not** help

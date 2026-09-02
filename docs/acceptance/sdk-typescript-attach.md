@@ -220,15 +220,23 @@ gauntlet-#7 guard).
 - AC2.3: `attach()` on an existing, readable session whose log is empty or holds
   only run-less records rejects with `NoRunsError` and opens no follow.
   - verify: vitest:sdk/typescript/test/attach.test.ts#YSByZWFkYWJsZSBzZXNzaW9uIHdpdGggbm8gcnVuLWJlYXJpbmcgZXZlbnRzIGlzIE5vUnVuc0Vycm9y — `sdk/typescript/test/attach.test.ts :: "a readable session with no run-bearing events is NoRunsError"`
-- AC2.4: `attach()` on an unknown or foreign session id under an
+- AC2.4: `attach()` racing a just-started run — the id minted and stamped on
+  the aggregate before the engine goroutine emits its first event — reports
+  `NoRunsError` rather than hanging, and `attach(runId)` with the id the caller
+  already holds from `session.run()` attaches successfully in that same window.
+  The false positive is the documented cost of reading run identity from the log
+  instead of a second round-trip; the test pins both halves so the boundary is a
+  decision rather than a surprise.
+  - verify: vitest:sdk/typescript/test/attach.test.ts#YSBqdXN0LXN0YXJ0ZWQgcnVuIHJhY2VzIE5vUnVuc0Vycm9yIHdoaWxlIGFuIGV4cGxpY2l0IHJ1biBpZCBkb2VzIG5vdA — `sdk/typescript/test/attach.test.ts :: "a just-started run races NoRunsError while an explicit run id does not"`
+- AC2.5: `attach()` on an unknown or foreign session id under an
   ownership-enforcing deployment surfaces the server's typed
   `session_not_found` — **never** `NoRunsError`, because "create a run" and "fix
   your credentials" are opposite instructions.
   - verify: vitest:sdk/typescript/test/attach.test.ts#YW4gdW5rbm93biBvciBmb3JlaWduIHNlc3Npb24gaWQgaXMgc2Vzc2lvbl9ub3RfZm91bmQsIG5ldmVyIE5vUnVuc0Vycm9y — `sdk/typescript/test/attach.test.ts :: "an unknown or foreign session id is session_not_found, never NoRunsError"`
-- AC2.5: `attach(runId)` with an explicit run id issues its watch with the
+- AC2.6: `attach(runId)` with an explicit run id issues its watch with the
   server's `run_id` filter set, and observes no unfiltered replay.
   - verify: vitest:sdk/typescript/test/attach.test.ts#YW4gZXhwbGljaXQgcnVuIGlkIHVzZXMgdGhlIHNlcnZlciBydW4gZmlsdGVy — `sdk/typescript/test/attach.test.ts :: "an explicit run id uses the server run filter"`
-- AC2.6: A server whose `GetCompatibilityInfo` omits `watch_session_events`
+- AC2.7: A server whose `GetCompatibilityInfo` omits `watch_session_events`
   fails `attach()` and `activity()` with the typed unsupported-feature error
   naming that feature before any watch request is sent, on **both** transports
   (the gate reads a shared features accessor, not one private to HTTP); a
@@ -236,7 +244,7 @@ gauntlet-#7 guard).
   server's own `watch_unsupported`, and one with no event log at all surfaces
   `no_event_log`.
   - verify: vitest:sdk/typescript/test/attach.test.ts#dGhlIHdhdGNoIGZlYXR1cmUgZ2F0ZSBmaXJlcyBvbiBib3RoIHRyYW5zcG9ydHM — `sdk/typescript/test/attach.test.ts :: "the watch feature gate fires on both transports"`
-- AC2.7: `attach()` or `activity()` on a delegation child session id
+- AC2.8: `attach()` or `activity()` on a delegation child session id
   (`subagent-*`, `parallel-*`, `team-*`) surfaces the server's typed
   invalid-argument refusal rather than an empty stream — a parent legitimately
   holds those ids from its own `agentId:` / `Team id:` result trailers — while a
@@ -337,10 +345,16 @@ locally with `CursorScopeError`, because the server structurally cannot catch it
   any request is sent; a cursor from an unfiltered `attach()` and one from
   `activity()` are interchangeable, because both advanced over every record.
   - verify: vitest:sdk/typescript/test/attach-cursor.test.ts#YSBjdXJzb3IgaXMgc2NvcGVkIHRvIGl0cyBlZmZlY3RpdmUgc2VydmVyIGZpbHRlcg — `sdk/typescript/test/attach-cursor.test.ts :: "a cursor is scoped to its effective server filter"`
-- AC4.7: A hand-built or edited cursor string, or a raw server token lifted from
-  the raw seam, is refused locally rather than sent; the public cursor type
-  exposes no member a caller can meaningfully author.
-  - verify: vitest:sdk/typescript/test/attach-cursor.test.ts#YSBjdXJzb3IgdGhlIFNESyBkaWQgbm90IGlzc3VlIGlzIHJlZnVzZWQgcmF0aGVyIHRoYW4gcmVzb2x2ZWQ — `sdk/typescript/test/attach-cursor.test.ts :: "a cursor the SDK did not issue is refused rather than resolved"`
+- AC4.7: Cursor acceptance is **structural**, not provenance-based: a value
+  that is not a well-formed `sdkcur/1` envelope — wrong version, undecodable,
+  missing fields, or a raw server token from the raw seam — is refused locally
+  with `CursorMalformedError` before any request, and the public cursor type
+  exposes no member a caller can meaningfully author. A well-formed,
+  correctly-filtered envelope is accepted whoever built it — the encoding is
+  stateless and unsigned, so a fresh `Client` cannot distinguish one it issued
+  from a byte-identical hand-built one, and its inner token then faces the
+  server's own generation and session validation.
+  - verify: vitest:sdk/typescript/test/attach-cursor.test.ts#Y3Vyc29yIGFjY2VwdGFuY2UgaXMgc3RydWN0dXJhbCByYXRoZXIgdGhhbiBwcm92ZW5hbmNlLWJhc2Vk — `sdk/typescript/test/attach-cursor.test.ts :: "cursor acceptance is structural rather than provenance-based"`
 - AC4.8: A complete attach → consume → reconnect → dispose cycle touches no
   `localStorage`, no `sessionStorage`, and no filesystem path; the SDK exposes
   cursors for the application to persist and persists nothing itself.
@@ -447,18 +461,40 @@ public surface, as the bounds are not caller configuration.
   - verify: vitest:sdk/typescript/test/attach-reconnect.test.ts#bXV0YXRpb25zLCBwcm9tcHRzLCBhcHByb3ZhbHMsIGFuZCBvd25lZCBydW5zIGFyZSBuZXZlciByZXRyaWVk — `sdk/typescript/test/attach-reconnect.test.ts :: "mutations, prompts, approvals, and owned runs are never retried"`
 - AC6.5: Each code in the closed terminal set — `cursor_expired`,
   `cursor_malformed`, `activity_gap`, `session_not_found`, `invalid_argument`,
-  `management_unauthorized`, `watch_unsupported`, `no_event_log` — ends the
-  attachment with its typed error and issues **no** further reconnect attempt;
-  the set is read from one place, so a code cannot be classified two ways.
+  `management_unauthorized`, `incompatible_server`, `watch_unsupported`,
+  `no_event_log` — ends the attachment with its typed error and issues **no**
+  further reconnect attempt; the set is read from one place, so a code cannot be
+  classified two ways.
   - verify: vitest:sdk/typescript/test/attach-reconnect.test.ts#YSBwZXJtYW5lbnQgcHJlY29uZGl0aW9uIGNvZGUgZW5kcyB0aGUgYXR0YWNobWVudCByYXRoZXIgdGhhbiByZXRyeWluZw — `sdk/typescript/test/attach-reconnect.test.ts :: "a permanent precondition code ends the attachment rather than retrying"`
-- AC6.6: An attachment that reconnects announces the replay→live boundary
+- AC6.6: A watch stream that ends **cleanly** — no error, no terminal `result`
+  — is treated as resumable and reconnects from the checkpoint, not as a
+  completed attachment. This is the shape a daemon shutdown produces
+  (`Service.closeWatches` ends every watch without an error and documents that
+  the client reconnects with its cursor), and over HTTP/SSE it arrives as a body
+  that simply finishes; an attachment that completed there would end silently
+  mid-run.
+  - verify: vitest:sdk/typescript/test/attach-reconnect.test.ts#YSBjbGVhbiBub24tdGVybWluYWwgc3RyZWFtIGVuZCByZXN1bWVzIHJhdGhlciB0aGFuIGNvbXBsZXRpbmc — `sdk/typescript/test/attach-reconnect.test.ts :: "a clean non-terminal stream end resumes rather than completing"`
+- AC6.7: An ordinary `authentication` failure on a reconnect attempt resumes,
+  re-invoking the credential provider so a refreshed token is presented on the
+  next attempt, while `management_unauthorized` terminates — the 401/403 split
+  the server's own registry draws, since no refresh changes an authorization
+  decision.
+  - verify: vitest:sdk/typescript/test/attach-reconnect.test.ts#YXV0aGVudGljYXRpb24gcmVzdW1lcyB3aXRoIGEgcmVmcmVzaGVkIGNyZWRlbnRpYWwgd2hpbGUgbWFuYWdlbWVudF91bmF1dGhvcml6ZWQgdGVybWluYXRlcw — `sdk/typescript/test/attach-reconnect.test.ts :: "authentication resumes with a refreshed credential while management_unauthorized terminates"`
+- AC6.8: A reconnect that succeeds after the client left `online` invalidates
+  the cached compatibility info, so the next feature gate re-probes rather than
+  trusting a floor learned from a process that may have been replaced; a
+  restarted daemon that no longer advertises `watch_session_events` is observed
+  as such instead of being served from cache.
+  - verify: vitest:sdk/typescript/test/attach-reconnect.test.ts#YSByZWNvbm5lY3QgYWZ0ZXIgYSBnYXAgaW52YWxpZGF0ZXMgdGhlIGNvbXBhdGliaWxpdHkgY2FjaGU — `sdk/typescript/test/attach-reconnect.test.ts :: "a reconnect after a gap invalidates the compatibility cache"`
+- AC6.9: An attachment that reconnects announces the replay→live boundary
   **once**, on its first crossing — the resumed watch's own boundary frame is
   not re-yielded, so a consumer that switches from transcript to live view on
   the boundary does not flap on every network blip.
   - verify: vitest:sdk/typescript/test/attach-reconnect.test.ts#YSByZWNvbm5lY3QgZG9lcyBub3QgcmUtYW5ub3VuY2UgdGhlIHJlcGxheS10by1saXZlIGJvdW5kYXJ5 — `sdk/typescript/test/attach-reconnect.test.ts :: "a reconnect does not re-announce the replay-to-live boundary"`
-- AC6.7: Aborting the signal, `Symbol.asyncDispose`, `break`ing out of
+- AC6.10: Aborting the signal, `Symbol.asyncDispose`, `break`ing out of
   `for await`, and closing the owning `Client` mid-backoff each stop the loop,
-  clear the pending timer, release the watch, and issue no further request.
+  clear the pending timer, release the watch, and issue no further request —
+  with the single exception AC8.7 names.
   - verify: vitest:sdk/typescript/test/attach-reconnect.test.ts#ZXZlcnkgcmVsZWFzZSBwYXRoIHN0b3BzIHRoZSBsb29wIGFuZCBjbGVhcnMgdGhlIHRpbWVy — `sdk/typescript/test/attach-reconnect.test.ts :: "every release path stops the loop and clears the timer"`
 
 ---
@@ -541,11 +577,18 @@ safe to attach.
   out of iteration each release the watch without sending a cancel; the run
   continues to its own terminal and a fresh attachment observes that terminal.
   - verify: vitest:sdk/typescript/test/attached-controls.test.ts#ZXZlcnkgZGV0YWNoIHBhdGggbGVhdmVzIHRoZSBydW4gcnVubmluZw — `sdk/typescript/test/attached-controls.test.ts :: "every detach path leaves the run running"`
-- AC8.6: `approve()` resolves once the verdict is accepted and abandons the
-  approve route's SSE rehydrate body without consuming it; the attachment's own
-  watch delivers the resumed run's events exactly once, so the consumer never
-  sees a second copy.
-  - verify: vitest:sdk/typescript/test/attached-controls.test.ts#YXBwcm92ZSBhYmFuZG9ucyB0aGUgcmVoeWRyYXRlIGJvZHkgd2l0aG91dCBkb3VibGUgZGVsaXZlcnk — `sdk/typescript/test/attached-controls.test.ts :: "approve abandons the rehydrate body without double delivery"`
+- AC8.6: `approve()` over HTTP resolves once the verdict is accepted, then
+  drains the approve route's SSE rehydrate body to EOF on a detached task and
+  discards it — the body is never closed early and never left unread, because
+  `relayRunSSE` cancels the resumed run when the request context ends. The
+  attachment's own watch delivers the resumed run's events exactly once, so the
+  consumer sees no second copy, and the run reaches its own terminal.
+  - verify: vitest:sdk/typescript/test/attached-controls.test.ts#YXBwcm92ZSBkcmFpbnMgdGhlIHJlaHlkcmF0ZSBib2R5IGluc3RlYWQgb2YgY2FuY2VsbGluZyB0aGUgcnVu — `sdk/typescript/test/attached-controls.test.ts :: "approve drains the rehydrate body instead of cancelling the run"`
+- AC8.7: The background drain survives disposal: detaching the attachment or
+  closing the owning `Client` while it is in flight does not abort it, and the
+  approved run still completes — the one documented exception to AC6.10, because
+  aborting the body is what cancels the run.
+  - verify: vitest:sdk/typescript/test/attached-controls.test.ts#ZGlzcG9zYWwgZG9lcyBub3QgYWJvcnQgYW4gaW4tZmxpZ2h0IHJlaHlkcmF0ZSBkcmFpbg — `sdk/typescript/test/attached-controls.test.ts :: "disposal does not abort an in-flight rehydrate drain"`
 
 ---
 
@@ -575,10 +618,11 @@ matrix rather than guessed here.
   attachment is reconnecting, and a successful unary request while an attachment
   is down does not report `online`.
   - verify: vitest:sdk/typescript/test/attach-status.test.ts#cmVjb25uZWN0aW5nIHdpbnMgd2hpbGUgYW55IGF0dGFjaG1lbnQgaXMgcmVjb25uZWN0aW5n — `sdk/typescript/test/attach-status.test.ts :: "reconnecting wins while any attachment is reconnecting"`
-- AC9.3: An authentication failure on a reconnect attempt reports
-  `unauthorized` and a compatibility-floor failure reports `incompatible`;
-  neither is collapsed to `offline`, and a reconnecting attachment never
-  publishes `offline`.
+- AC9.3: An `authentication` failure on a reconnect attempt reports
+  `unauthorized` **while the attachment keeps retrying** (AC6.7), and a
+  compatibility-floor failure reports `incompatible` **as the attachment
+  terminates** (AC6.5); neither is collapsed to `offline`, and a reconnecting
+  attachment never publishes `offline`.
   - verify: vitest:sdk/typescript/test/attach-status.test.ts#YSByZWNvbm5lY3RpbmcgYXR0YWNobWVudCBuZXZlciByZXBvcnRzIG9mZmxpbmU — `sdk/typescript/test/attach-status.test.ts :: "a reconnecting attachment never reports offline"`
 - AC9.4: An open attachment with no status subscriber starts no heartbeat, and
   an attachment does not keep a heartbeat alive after the last status subscriber
@@ -599,12 +643,15 @@ offline, mockllm-backed, never a live model). It extends M1's
 `sdk/typescript/e2e/` harness, which already spawns `mecated` over TCP and a
 Unix domain socket and reads its `--ready-file`.
 
-Two cases carry most of the value. The **daemon restart** is the only proof that
-the cursor is durable rather than process-local — the whole point of
-[ADR-0250](../adr/0250-durable-cursors-and-watch.md) and the reason the Redis
-LIST became a Stream; a same-process reconnect cannot distinguish the two. The
-**awaiting-approval restart** is the only case that spans the attachment filter,
-`expected_run_id`, the durable cursor, and a process boundary at once:
+Two cases carry most of the value, and they are deliberately the only two
+shapes that can cross a process boundary. The **`activity()` restart** is the
+only proof that the cursor is durable rather than process-local — the whole
+point of [ADR-0250](../adr/0250-durable-cursors-and-watch.md) and the reason the
+Redis LIST became a Stream; a same-process reconnect cannot distinguish the two.
+It uses `activity()` because a run does not survive its daemon, so an
+`AttachedRun`'s `run_id` filter would exclude everything appended afterwards.
+The **awaiting-approval restart** is the one case where a *filtered* attachment
+does survive, because
 [ADR-0249](../adr/0249-durable-run-identity.md) has `resumeFromAwaiting` reuse
 the persisted run id rather than mint one, and if that ever regressed the
 attachment would go permanently *quiet* while the run completed normally —
@@ -626,11 +673,16 @@ brings a second one up on the same durable store directory.
   `GET /v1/sessions/{id}/watch` yields the same normalized envelopes and
   terminal outcome.
   - verify: vitest:sdk/typescript/e2e/attach.e2e.test.ts#YXR0YWNoIHJlcGxheXMgYW5kIGZvbGxvd3MgYSBsaXZlIHJ1biBvdmVyIEhUVFAvU1NF — `sdk/typescript/e2e/attach.e2e.test.ts :: "attach replays and follows a live run over HTTP/SSE"`
-- AC10.4: With an attachment open, stopping the daemon and starting a fresh one
-  over the same durable store lets the attachment resume from its cursor and
-  deliver every envelope appended before the restart plus every one after, with
-  no missing record — the cursor is durable across processes, not process-local.
-  - verify: vitest:sdk/typescript/e2e/attach.e2e.test.ts#YSBkYWVtb24gcmVzdGFydCBtaWQtd2F0Y2ggcmVzdW1lcyBmcm9tIHRoZSBjdXJzb3I — `sdk/typescript/e2e/attach.e2e.test.ts :: "a daemon restart mid-watch resumes from the cursor"`
+- AC10.4: With an **`activity()`** attachment open, stopping the daemon and
+  starting a fresh one over the same durable store lets the attachment resume
+  from its cursor and deliver every envelope appended before the restart plus
+  every envelope of a **new run started after it**, with no missing record — the
+  cursor is durable across processes, not process-local. It is `activity()`
+  rather than `attach()` because a run does not survive its daemon: whatever
+  runs next carries a new `run_id` that an `AttachedRun`'s filter excludes by
+  construction, so the same test over `attach()` would assert an
+  empty-but-correct stream and prove nothing.
+  - verify: vitest:sdk/typescript/e2e/activity.e2e.test.ts#YSBkYWVtb24gcmVzdGFydCBtaWQtd2F0Y2ggcmVzdW1lcyBmcm9tIHRoZSBjdXJzb3IgYWNyb3NzIGEgbmV3IHJ1bg — `sdk/typescript/e2e/activity.e2e.test.ts :: "a daemon restart mid-watch resumes from the cursor across a new run"`
 - AC10.5: With an attachment open on a session parked `awaiting`, restarting the
   daemon over the same store and then resolving the ask delivers the resumed
   run's envelopes on the **same** `run_id` the attachment holds, and an attached
@@ -759,6 +811,26 @@ suites under `sdk/typescript/`, cited per AC.
   emits exactly three phases, so AC1.2 uses a scripted transport emitting a
   fourth. A forward-compatibility property has no other proof before the future
   exists.
+- **`NoRunsError` has a documented false positive.** The run id is stamped on
+  the aggregate before the engine goroutine emits, so an `attach()` landing in
+  that window reports no runs for a running session (AC2.4). Every alternative —
+  waiting, consulting `Session.state`, blind retry — either hangs a truly empty
+  session or reintroduces the second round-trip the design removed. Closed
+  properly by the deferred server-side active-run field.
+- **Cursor validation is structural, not provenance-based.** The envelope is
+  stateless and unsigned, so a well-formed, correctly-filtered cursor is
+  accepted whoever built it (AC4.7). Signing would need a client-side secret the
+  SDK cannot hold, and a caller lying to itself about its own cursor is not a
+  threat model.
+- **The approve rehydrate drain is an intentional exception to disposal.**
+  `Client.close()` stops everything except an in-flight approve-body drain
+  (AC8.7), because aborting that body cancels the run the caller just approved.
+  It is bounded by the run's own completion, but it is a wart, and the clean fix
+  is a server-side ack-only approve route.
+- **An `AttachedRun` cannot survive a daemon restart** — its filter names a run
+  that does not continue. Only `activity()` (AC10.4) and the awaiting-approval
+  resume (AC10.5) cross a process boundary; there is deliberately no general
+  "attachment survives restart" claim.
 - **The two restart e2e cases (AC10.4, AC10.5) are the plan's most fragile
   tests.** Both depend on a second daemon adopting the first's durable store
   directory. If they prove flaky rather than wrong, the fix is a deterministic
