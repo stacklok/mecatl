@@ -1,7 +1,7 @@
 # OAuth Protected Resource Discovery — acceptance plan
 
 **Phase:** Remote mecatui OAuth bootstrap
-**Status:** draft, 2026-09-02. Synthesized from [stacklok/mecatl#1033](https://github.com/stacklok/mecatl/issues/1033) and the Okta, Entra, OAuth, security, and ToolHive reviews.
+**Status:** in-progress, 2026-09-02. Synthesized from [stacklok/mecatl#1033](https://github.com/stacklok/mecatl/issues/1033) and the Okta, Entra, OAuth, security, and ToolHive reviews.
 **Issue:** [stacklok/mecatl#1033](https://github.com/stacklok/mecatl/issues/1033).
 **ADR:** [ADR 0290](../adr/0290-oauth-protected-resource-discovery.md) — RFC 9728 profile and resource/transport identity.
 **Accumulator branch:** `acc/oauth-protected-resource-discovery`.
