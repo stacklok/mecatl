@@ -2,8 +2,8 @@
 id: 03-lease-protocol
 title: Versioned leases, manifests, and safe ownership protocol
 blocked_by: [02-managed-namespace-safety]
-status: in-progress
-branch: ""
+status: done
+branch: "plan-managed-temporary-command-leases/03-lease-protocol"
 worktree: ""
 issue: ""
 retries: 0

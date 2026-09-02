@@ -2,7 +2,7 @@
 id: 05-foreground-managed-leases
 title: Foreground command leases and test-home containment
 blocked_by: [02-managed-namespace-safety, 03-lease-protocol, 04-command-environment-overlay]
-status: pending
+status: in-progress
 branch: ""
 worktree: ""
 issue: ""
