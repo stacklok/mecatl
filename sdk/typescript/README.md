@@ -17,13 +17,19 @@ checkpoint persistence. A checkpoint advances when the consumer requests the nex
 envelope, so reconnecting from the exposed cursor can redeliver the last processed
 envelope; consumers with side effects must therefore be idempotent.
 
+Both views omit log-only/debugger records by default; pass `includeLogOnly: true` to
+add them without changing the order or cursors of records already visible. Activity
+also includes run-less `schedule.*` records, even though the same session has no run
+for `attach()` to select.
+
 The guarantee is ordered, at-least-once delivery **for durably appended events**.
 It is deliberately not absolute: if the event-log backend is totally unavailable and
 the process recording the event is lost, the failed append can leave an undetectable
 gap. When a gap is detectable, the raw watch reports `{ kind: "gap" }`; the ergonomic
-attachment instead ends with `ActivityGapError` and leaves its cursor at the last
-envelope before the gap. `CursorExpiredError` also ends the attachment and requires the
-caller to choose an explicit restart from the beginning or a transcript reload.
+run attachment ends with `ActivityGapError`. Session activity yields the gap delivery
+fact, then raises the same error if iteration continues. Both leave the cursor at the
+last envelope before the gap. `CursorExpiredError` also ends the attachment and requires
+the caller to choose an explicit restart from the beginning or a transcript reload.
 
 ## Development
 

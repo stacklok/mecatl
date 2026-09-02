@@ -8102,6 +8102,12 @@ record is `NoRunsError`, even during the known running-but-empty-log window. The
 closes immediately at the boundary when no run exists, so it never turns a run-less
 session into an unbounded follow.
 
+`Session.activity()` uses the same iterator with no run binding and an empty server `run_id`
+filter. It therefore yields every run's records in durable append order, continues past each
+run's `result`, and also follows sessions whose log contains only run-less `schedule.*` events;
+the same log still makes implicit `Session.attach()` raise `NoRunsError`. Activity cursors keep
+both `{filter, run}` empty so they can later narrow to any run-bound view.
+
 The watch capability check goes through `sdk/typescript/src/raw.ts` (`RawClient.features`)
 for both transport kinds before `sdk/typescript/src/client.ts` opens the stream. A
 missing advertised `watch_session_events` feature is the existing local
@@ -8116,8 +8122,10 @@ The lifecycle remains one `WatchSessionEvents` request and one iterator in
 `sdk/typescript/src/watch.ts`: replay envelopes, the replay-to-live boundary, live appends,
 and the terminal `result` are consumed in wire order. Encountering that terminal in replay
 ends an already-finished attachment immediately; no follow read is requested. `AttachOptions`
-adds `from: "start" | "now" | SdkCursor`, and `Session.activity(options)` accepts the same
-checkpoint input. The `now` arm is deliberately a yield-time client filter, not a
+adds `from: "start" | "now" | SdkCursor` plus `includeLogOnly`, and
+`Session.activity(options)` accepts the same checkpoint input. The opt-in bypasses only the
+derived event-kind filter, so it adds records without changing existing order or cursor values.
+The `now` arm is deliberately a yield-time client filter, not a
 request capability: `sdk/typescript/src/client.ts` still sends `cursor: ""`, the iterator reads
 and discards every replay envelope, and the boundary is its first yielded value. It requires a
 non-empty explicit run id and rejects locally before compatibility probing or watch creation
@@ -8139,7 +8147,9 @@ processing but before the next pull re-delivers that envelope. Records omitted f
 replay-discard, or default-kind filtering have no consumer-visible delivery to acknowledge and
 therefore advance the checkpoint immediately. Observation happens before those yield filters:
 in particular, `approval` removes its matching `permission.ask` from attachment bookkeeping
-even though the default view never yields the approval record. The cursor stays application-
+even though the default view never yields the approval record. `includeLogOnly` restores every
+derived filtered kind without bypassing run selection, replay discard, or boundary handling.
+The cursor stays application-
 owned and serializable across a fresh `Client`; no SDK storage backend or filesystem path is
 introduced.
 
@@ -8148,10 +8158,11 @@ Gap and cursor-fault handling stays split at the raw/ergonomic boundary. The sha
 server-originated `activity_gap` into their dedicated classes from either a gRPC status or an
 HTTP terminal SSE error frame; the latter necessarily retains HTTP status 200 because cursor
 decoding occurs after the watch response is committed. `sdk/typescript/src/watch.ts` leaves
-`decodeWatchEnvelope` lossless for raw consumers, but its ergonomic iterator raises a local
-`ActivityGapError` before yielding the gap and never moves its checkpoint past the last preceding
-envelope. Cursor expiry is terminal here: restart-from-beginning remains caller-authored rather
-than an SDK fallback.
+`decodeWatchEnvelope` lossless for raw consumers. A run-bound ergonomic iterator raises a local
+`ActivityGapError` before yielding the gap; the unbound session activity iterator yields the gap
+so event-kind filtering cannot hide a delivery fact, then raises the same error if the consumer
+pulls again. Neither moves its checkpoint past the last preceding envelope. Cursor expiry is
+terminal here: restart-from-beginning remains caller-authored rather than an SDK fallback.
 
 Reconnect authority stays inside the named watch operation in `sdk/typescript/src/watch.ts`.
 `WatchConnection` resumes transport-shaped failures, `watch_lagging`, authentication failures,

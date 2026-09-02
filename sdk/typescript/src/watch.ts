@@ -46,6 +46,8 @@ export type SdkCursor = string;
 export interface AttachOptions {
   /** `now` still reads the durable replay over the wire, but discards it locally. */
   from?: "now" | "start" | SdkCursor;
+  /** Includes durable records omitted by the ergonomic view by default. */
+  includeLogOnly?: boolean;
   /** Detaches this view when aborted; it never cancels a run. */
   signal?: AbortSignal;
 }
@@ -413,6 +415,7 @@ class SessionActivityImpl implements SessionActivity {
   readonly #serverFilter: string;
   readonly #observe: (envelope: WatchEnvelope) => void;
   readonly #discardReplay: boolean;
+  readonly #includeLogOnly: boolean;
   #boundaryAnnounced = false;
   #closed = false;
   #closePromise: Promise<void> | undefined;
@@ -426,6 +429,7 @@ class SessionActivityImpl implements SessionActivity {
     runId: string | undefined,
     serverFilter: string,
     initialToken: string,
+    includeLogOnly: boolean,
     buffer: WatchEnvelope[] = [],
     observe: (envelope: WatchEnvelope) => void = () => undefined,
     discardReplay = false,
@@ -439,6 +443,7 @@ class SessionActivityImpl implements SessionActivity {
     this.#buffer = buffer;
     this.#observe = observe;
     this.#discardReplay = discardReplay;
+    this.#includeLogOnly = includeLogOnly;
   }
 
   get cursor(): SdkCursor {
@@ -469,7 +474,7 @@ class SessionActivityImpl implements SessionActivity {
       for (;;) {
         const envelope = await this.#nextEnvelope();
         if (envelope === undefined) return;
-        if (envelope.kind === "gap") throw new ActivityGapError();
+        if (envelope.kind === "gap" && this.#runId !== undefined) throw new ActivityGapError();
         this.#observe(envelope);
 
         const event = envelopeEvent(envelope);
@@ -485,13 +490,19 @@ class SessionActivityImpl implements SessionActivity {
           this.#checkpoint(envelope);
           continue;
         }
-        if (event !== undefined && event.kind !== "unknown" && filteredKinds.has(event.kind)) {
+        if (
+          !this.#includeLogOnly &&
+          event !== undefined &&
+          event.kind !== "unknown" &&
+          filteredKinds.has(event.kind)
+        ) {
           this.#checkpoint(envelope);
           continue;
         }
 
         if (envelope.kind === "boundary") this.#boundaryAnnounced = true;
         yield envelope;
+        if (envelope.kind === "gap") throw new ActivityGapError();
         this.#checkpoint(envelope);
         if (this.#runId !== undefined && event?.runId === this.#runId && event.kind === "result") {
           return;
@@ -545,6 +556,7 @@ class AttachedRunImpl extends SessionActivityImpl implements AttachedRun {
     transport: TransportKind,
     serverFilter: string,
     initialToken: string,
+    includeLogOnly: boolean,
     buffer: WatchEnvelope[] = [],
     discardReplay = false,
   ) {
@@ -555,6 +567,7 @@ class AttachedRunImpl extends SessionActivityImpl implements AttachedRun {
       runId,
       serverFilter,
       initialToken,
+      includeLogOnly,
       buffer,
       (envelope) => {
         const event = envelopeEvent(envelope);
@@ -626,7 +639,14 @@ export async function createSessionActivity(
   await requireWatchFeature(operations);
   const token = resume?.token ?? "";
   const connection = new WatchConnection(sessionId, "", operations, options.signal, internal);
-  return new SessionActivityImpl(connection, operations.transportKind, undefined, "", token);
+  return new SessionActivityImpl(
+    connection,
+    operations.transportKind,
+    undefined,
+    "",
+    token,
+    options.includeLogOnly ?? false,
+  );
 }
 
 /** Selects one run and creates its durable attachment view. */
@@ -663,6 +683,7 @@ export async function createAttachedRun(
       operations.transportKind,
       serverFilter,
       resume.token,
+      options.includeLogOnly ?? false,
     );
   }
 
@@ -683,6 +704,7 @@ export async function createAttachedRun(
       operations.transportKind,
       serverFilter,
       token,
+      options.includeLogOnly ?? false,
       [],
       options.from === "now",
     );
@@ -719,6 +741,7 @@ export async function createAttachedRun(
     operations.transportKind,
     serverFilter,
     token,
+    options.includeLogOnly ?? false,
     replay,
   );
 }

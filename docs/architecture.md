@@ -237,6 +237,15 @@ ids remain distinct typed server refusals. `AttachedRun.live` reflects events ob
 through that attachment and becomes false when its selected run's terminal `result` is
 delivered.
 
+`Session.activity()` keeps both the server filter and cursor run binding empty, so one
+ordered stream spans every run and also includes run-less `schedule.*` records. A run's
+terminal `result` does not end this session-level timeline. Both views omit the event kinds
+derived from the server's public/live relay filters by default; `includeLogOnly: true` adds
+those records without changing the order or cursors of records already visible. The filter
+applies only to event kinds: activity still yields a cursor-free `gap` delivery frame, then
+raises `ActivityGapError` if the consumer asks to continue. A run-bound attachment preserves
+its existing immediate typed-gap termination.
+
 The attachment is one replay-then-follow operation: it yields the selected run's durable
 replay in append order, announces the live boundary once, follows new appends, and completes
 at that run's terminal `result`. A run that already finished therefore completes from replay
@@ -253,9 +262,10 @@ records dropped by the ergonomic filter advance immediately, and a filtered `app
 retires its permission ask. The SDK exposes the string for application-owned persistence but
 does not write browser storage or files itself.
 
-A decoded `gap` remains visible on the raw watch, but the ergonomic iterator turns it into a
-local `ActivityGapError` before yielding or checkpointing it, leaving the exposed cursor at
-the last preceding envelope. Cursor faults use the same typed error classes on both transports:
+A decoded `gap` remains visible on the raw watch. A run-bound ergonomic attachment turns it
+into a local `ActivityGapError` before yielding; session activity yields the delivery fact but
+raises the same error on the next pull. Neither path checkpoints the gap, leaving the exposed
+cursor at the last preceding envelope. Cursor faults use the same typed error classes on both transports:
 gRPC carries the registry code in its terminal status, while HTTP has already committed 200 and
 therefore carries it in a terminal `event: error` SSE frame. An expired cursor never triggers an
 implicit restart from the beginning; that recovery remains an explicit application decision.
