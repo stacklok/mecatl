@@ -8092,6 +8092,26 @@ the feature id, and default-filtered kinds from the Go server sources; the sole 
 is explicit: the SDK filters every `user_prompt` instead of copying the server's fenced scheduled-
 delivery-note classifier.
 
+`sdk/typescript/src/watch.ts` also owns the fixed `SessionActivity` and `AttachedRun`
+interfaces and the initial attachment iterator. `Session.attach(runId)` issues
+`WatchSessionEvents` with `run_id`; `Session.attach()` instead consumes replay from one
+unfiltered request through its live-boundary marker, remembers the last non-empty
+`Event.runId`, and reuses the already-open iterator with a client-side run filter. It
+does not consult `GetSession.state` and does not retry the empty replay: no run-bearing
+record is `NoRunsError`, even during the known running-but-empty-log window. The scan
+closes immediately at the boundary when no run exists, so it never turns a run-less
+session into an unbounded follow.
+
+The watch capability check goes through `sdk/typescript/src/raw.ts` (`RawClient.features`)
+for both transport kinds before `sdk/typescript/src/client.ts` opens the stream. A
+missing advertised `watch_session_events` feature is the existing local
+`UnsupportedFeatureError`; once advertised, `session_not_found`, `watch_unsupported`,
+`no_event_log`, and delegation-child `invalid_argument` errors pass through the shared
+server-error normalization unchanged. Scheduled-fire session ids (`sched--*`) are not
+client-rejected. `AttachedRun.live` is backed by iterator state, not captured at
+construction: delivery of that run's decoded `result` flips the getter to false and
+ends the attached iterator.
+
 ## Live e2e — `e2e/` (see `e2e/README.md`)
 
 A LIVE, ginkgo-driven BDD suite proving the harness's features against a REAL model: it

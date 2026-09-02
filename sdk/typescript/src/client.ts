@@ -23,11 +23,18 @@ import {
   type ConverseResponse,
   type Event,
   HarnessService,
+  type WatchSessionEventsResponse,
 } from "./gen/mecatl/v1/harness_pb.js";
 import { createHttpTransport, type HttpTransportOptions } from "./http.js";
 import { encodePrompt, type PromptCapabilities, type PromptInput } from "./media.js";
 import { createRawClient, type RawClient } from "./raw.js";
 import { type ConverseFrame, type Run, RunImpl, type RunOptions } from "./run.js";
+import {
+  type AttachedRun,
+  createAttachedRun,
+  createSessionActivity,
+  type SessionActivity,
+} from "./watch.js";
 
 /** The complete connection-state vocabulary exposed by the SDK. @public */
 export type ConnectionStatus =
@@ -99,6 +106,10 @@ export interface ForkSessionOptions {
 /** A durable mecatl session handle. @public */
 export interface Session {
   readonly id: string;
+  /** Attaches to an explicit run, or selects the newest run in the durable log. */
+  attach(runId?: string): Promise<AttachedRun>;
+  /** Opens the durable cross-run activity stream for this session. */
+  activity(): Promise<SessionActivity>;
   /** Starts a run and resolves once its first run-ID-bearing event arrives. */
   run(prompt: PromptInput, options?: RunOptions): Promise<Run>;
   /** Releases runtime resources without removing the durable session. */
@@ -141,6 +152,11 @@ interface SessionOperations {
     method: DescMethodUnary<I, O>,
     input: MessageInitShape<I>,
   ): Promise<MessageShape<O>>;
+  watch(
+    sessionId: string,
+    runId: string,
+    signal: AbortSignal,
+  ): AsyncIterable<WatchSessionEventsResponse>;
 }
 
 type DisposableTransport = Transport & {
@@ -165,6 +181,16 @@ class SessionImpl implements Session {
     this.id = id;
     this.#operations = operations;
     this.#promptCapabilities = promptCapabilities;
+  }
+
+  async attach(runId?: string): Promise<AttachedRun> {
+    this.#operations.assertOpen();
+    return createAttachedRun(this.id, runId, this.#operations);
+  }
+
+  async activity(): Promise<SessionActivity> {
+    this.#operations.assertOpen();
+    return createSessionActivity(this.id, this.#operations);
   }
 
   async run(prompt: PromptInput, options: RunOptions = {}): Promise<Run> {
@@ -289,6 +315,12 @@ class ClientImpl implements Client {
       stream: (method, input) => this.#stream(method, input),
       transportKind: this.#transportKind,
       unary: (method, input) => this.#unary(method, input),
+      watch: (sessionId, runId, signal) =>
+        this.#stream(
+          HarnessService.method.watchSessionEvents,
+          singleValue({ cursor: "", runId, sessionId }),
+          signal,
+        ),
     };
     this.sessions = {
       create: async (input) => {
@@ -405,9 +437,13 @@ class ClientImpl implements Client {
   #stream<I extends DescMessage, O extends DescMessage>(
     method: DescMethodStreaming<I, O>,
     input: AsyncIterable<MessageInitShape<I>>,
+    signal?: AbortSignal,
   ): AsyncIterable<MessageShape<O>> {
     this.#assertOpen();
-    const raw = this.#raw.stream(method, input, { signal: this.#abort.signal });
+    const raw = this.#raw.stream(method, input, {
+      signal:
+        signal === undefined ? this.#abort.signal : AbortSignal.any([this.#abort.signal, signal]),
+    });
     const observeError = (error: unknown) => this.#observeError(error);
     const publishOnline = () => this.#publish("online");
     return (async function* () {
@@ -556,6 +592,10 @@ class ClientImpl implements Client {
     this.#visibilityTarget?.removeEventListener("visibilitychange", this.#visibilityChanged);
     this.#visibilityTarget = undefined;
   }
+}
+
+async function* singleValue<T>(value: T): AsyncGenerator<T> {
+  yield value;
 }
 
 class ConverseInput implements AsyncIterable<ConverseFrame> {

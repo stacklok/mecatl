@@ -76,6 +76,7 @@ export type SDKErrorCode =
   | "incompatible_server"
   | "invalid_prompt"
   | "invalid_state"
+  | "no_runs"
   | "protocol"
   | "transport"
   | "unsupported_feature";
@@ -170,6 +171,13 @@ export class UnsupportedFeatureError extends MecatlError {
 export class InvalidStateError extends MecatlError {
   constructor(message: string, options: Omit<MecatlErrorOptions, "code">) {
     super(message, { ...options, code: "invalid_state" });
+  }
+}
+
+/** The readable session log contains no event associated with a run. @public */
+export class NoRunsError extends MecatlError {
+  constructor() {
+    super("The session has no run-bearing events", { code: "no_runs", transport: "local" });
   }
 }
 

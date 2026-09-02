@@ -226,6 +226,17 @@ the raw/client seam rather than owned by HTTP, allowing both transports to gate 
 shared `watch_session_events` capability. See
 [ADR 0288](adr/0288-typescript-sdk-durable-attachment.md).
 
+`Session.attach(runId?)` builds the first ergonomic view over that watch. An explicit
+run id is sent as the server filter; without one, the client opens exactly one
+unfiltered watch, scans its replay to the boundary, selects the newest run id, and
+filters that same stream client-side. A readable log with no run-bearing record raises
+the local `NoRunsError`, including the deliberately documented interval where a run is
+already stamped on a running session but has emitted no durable event. Unknown or
+foreign sessions, unsupported watch deployments, missing logs, and delegation-child
+ids remain distinct typed server refusals. `AttachedRun.live` reflects events observed
+through that attachment and becomes false when its selected run's terminal `result` is
+delivered.
+
 Around that core, every capability beyond the minimal loop is a **seam with a
 default and a swap-in adapter**, so the production build stays static and
 network-free unless you wire something in. The current adapters cover, grouped:

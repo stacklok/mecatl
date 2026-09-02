@@ -53,6 +53,21 @@ export interface ArchivedConversationMessage {
 }
 
 // @public
+export interface AttachedRun extends SessionActivity {
+    // (undocumented)
+    approve(askId: string, allow: boolean): Promise<never>;
+    // (undocumented)
+    cancel(): Promise<void>;
+    readonly live: boolean;
+    // (undocumented)
+    resolveAsk(askId: string, verdict: PermissionVerdict): Promise<never>;
+    // (undocumented)
+    readonly runId: string;
+    // (undocumented)
+    steer(text: string): Promise<never>;
+}
+
+// @public
 export function audioPart(options: MediaPartOptions): AudioPromptPart;
 
 // @public
@@ -465,6 +480,11 @@ export interface ModelRetryEventPayload {
 }
 
 // @public
+export class NoRunsError extends MecatlError {
+    constructor();
+}
+
+// @public
 export interface ParallelEventPayload {
     // (undocumented)
     readonly branchCount: number;
@@ -655,7 +675,7 @@ export interface ScheduleEventPayload {
 export type SdkCursor = string;
 
 // @public (undocumented)
-export type SDKErrorCode = "authentication" | "incompatible_server" | "invalid_prompt" | "invalid_state" | "protocol" | "transport" | "unsupported_feature";
+export type SDKErrorCode = "authentication" | "incompatible_server" | "invalid_prompt" | "invalid_state" | "no_runs" | "protocol" | "transport" | "unsupported_feature";
 
 // @public (undocumented)
 export class ServerError extends MecatlError {
@@ -671,11 +691,20 @@ export type ServerErrorCode = (typeof MECATL_ERROR_CODES)[number] | "unknown";
 
 // @public
 export interface Session {
+    activity(): Promise<SessionActivity>;
+    attach(runId?: string): Promise<AttachedRun>;
     close(): Promise<void>;
     delete(): Promise<void>;
     // (undocumented)
     readonly id: string;
     run(prompt: PromptInput, options?: RunOptions): Promise<Run>;
+}
+
+// @public
+export interface SessionActivity extends AsyncIterable<WatchEnvelope>, AsyncDisposable {
+    close(): Promise<void>;
+    // (undocumented)
+    readonly cursor: SdkCursor;
 }
 
 // @public

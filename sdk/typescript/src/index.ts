@@ -36,6 +36,7 @@ export {
   InvalidStateError,
   MECATL_ERROR_CODES,
   MecatlError,
+  NoRunsError,
   PermissionAskAlreadyResolvedError,
   PromptValidationError,
   ProtocolError,
@@ -115,7 +116,9 @@ export type {
   RunResult,
 } from "./run.js";
 export type {
+  AttachedRun,
   SdkCursor,
+  SessionActivity,
   UnknownWatchEnvelope,
   WatchBoundaryEnvelope,
   WatchEnvelope,
