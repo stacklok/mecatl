@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/session"
@@ -162,5 +163,99 @@ func TestPreparedAfterAuthorizationGatesLoop(t *testing.T) {
 	}
 	if sess.State != session.StateCompleted {
 		t.Fatalf("state = %q", sess.State)
+	}
+}
+
+func TestPreparedAfterAuthorizationCanParkLaterProtectedCall(t *testing.T) {
+	protected := newGenericAuthorizationTool("mcp__protected__later")
+	engine := newEngine(agent.Deps{
+		LLM:     mockllm.New(mockllm.ToolCallTurn(toolCall("call-2", protected.name, `{}`))),
+		Catalog: catalogWith(t, protected),
+		Store:   memstore.New(),
+	})
+	sess := newSession(t, session.Limits{})
+	first := session.NewToolCall("call-1", "mcp__protected__first", nil)
+	if err := sess.BeginTurn(); err != nil {
+		t.Fatal(err)
+	}
+	if err := sess.RecordAssistant(session.NewAssistantMessage("", "", []session.ToolCall{first})); err != nil {
+		t.Fatal(err)
+	}
+	authorization := session.ExternalAuthorization{ID: "authorization", DisplayName: "Calendar", Binding: "binding", ExpiresAt: time.Now().Add(time.Hour)}
+	if err := sess.PauseForAuthorization(session.PendingAuthorization{Authorization: authorization, Call: first}); err != nil {
+		t.Fatal(err)
+	}
+	results, err := sess.AbortAuthorization(string(session.AuthorizationCancelled))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sess.RecordToolResults(results); err != nil {
+		t.Fatal(err)
+	}
+
+	run, transition := engine.PrepareAfterAuthorization(context.Background(), sess, agent.MemEnv("/ws"), authorization, first.ID, results, session.AuthorizationCancelled).Start()
+	if transition != agent.PreparedRunStarted {
+		t.Fatalf("Start = %q", transition)
+	}
+	for _, event := range drain(run) {
+		if event.Type == session.EvToolResult && event.ToolResult != nil && event.ToolResult.CallID == "call-2" && event.ToolResult.IsError {
+			t.Fatalf("later protected call hard-failed instead of parking: %s", event.ToolResult.Content)
+		}
+	}
+	if sess.State != session.StateAuthorizing {
+		t.Fatalf("state after later protected call = %q, want authorizing", sess.State)
+	}
+	if protected.requests != 1 {
+		t.Fatalf("later RequestAuthorization calls = %d, want 1", protected.requests)
+	}
+}
+
+func TestPreparedAuthorizationContinuationCanParkSecondProtectedCall(t *testing.T) {
+	var firstExecuted atomic.Int32
+	first := newGenericAuthorizationTool("mcp__protected__first")
+	first.exec = func(_ context.Context, call session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
+		firstExecuted.Add(1)
+		return session.NewToolResult(call.ID, "executed"), nil
+	}
+	second := newGenericAuthorizationTool("mcp__protected__second")
+	engine := newEngine(agent.Deps{
+		LLM:     mockllm.New(mockllm.ToolCallTurn(toolCall("call-2", second.name, `{}`))),
+		Catalog: catalogWith(t, first, second),
+		Store:   memstore.New(),
+	})
+	sess := newSession(t, session.Limits{})
+	call := session.NewToolCall("call-1", first.name, nil)
+	if err := sess.BeginTurn(); err != nil {
+		t.Fatal(err)
+	}
+	if err := sess.RecordAssistant(session.NewAssistantMessage("", "", []session.ToolCall{call})); err != nil {
+		t.Fatal(err)
+	}
+	if err := sess.PauseForAuthorization(session.PendingAuthorization{Authorization: first.authorization, Call: call}); err != nil {
+		t.Fatal(err)
+	}
+	pending, err := sess.ClaimAuthorization()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	prepared := engine.PrepareAuthorizationContinuation(context.Background(), sess, agent.MemEnv("/ws"), pending, session.AuthorizationGranted)
+	run, transition := prepared.Start()
+	if transition != agent.PreparedRunStarted {
+		t.Fatalf("Start = %q", transition)
+	}
+	for _, event := range drain(run) {
+		if event.Type == session.EvToolResult && event.ToolResult != nil && event.ToolResult.CallID == "call-2" && event.ToolResult.IsError {
+			t.Fatalf("second protected call hard-failed instead of parking: %s", event.ToolResult.Content)
+		}
+	}
+	if firstExecuted.Load() != 1 {
+		t.Fatalf("granted call executions = %d, want 1", firstExecuted.Load())
+	}
+	if sess.State != session.StateAuthorizing {
+		t.Fatalf("state after second protected call = %q, want authorizing", sess.State)
+	}
+	if second.requests != 1 {
+		t.Fatalf("second RequestAuthorization calls = %d, want 1", second.requests)
 	}
 }
