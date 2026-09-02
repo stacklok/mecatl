@@ -125,26 +125,24 @@ and adopted afterward, as requested by the sequencing below.
 
 ## Proposed conceptual model
 
-This is also a boundary-simplification proposal. `Workspace` and `Environment`
-should be thin, client-like interfaces to execution resources: a Workspace
-provides content, opaque versions, and conditional mutation, while an
-Environment identifies that Workspace and optionally provides command execution.
-They should not maintain behavior or state that exists only to support the agent
-loop.
+The concrete scope of this proposal is moving read-ledger behavior and state
+into the engine. The ledger exists for the agent loop: it remembers what one
+session was shown so the engine can decide whether a later mutation is safe.
+That behavior belongs with engine-owned session state, not in a backing
+filesystem implementation.
 
-The read ledger exists for the engine's sake: it remembers what one session was
-shown so the engine can decide whether a later mutation is safe. It therefore
-belongs with engine-owned session state, not in the client-like Workspace or
-Environment layer. The engine can add the behavior by decorating a simpler
-Workspace rather than requiring every Workspace implementation to understand
-session observation history.
+This change also illustrates a possible longer-term direction without attempting
+to complete that redesign here. `Workspace` becomes a thin filesystem client,
+while `Environment` bundles clients—currently a Workspace and an optional
+CommandRunner—that operate over the same underlying file state. Neither is
+responsible for maintaining engine behavior or session state.
 
-This thinning matters for alternative implementations. A local filesystem,
-remote Redis filesystem, ACP workspace, or future granted filesystem then needs
-to implement only the resource-client contract. It does not also need a
-session-state implementation or engine-specific lifecycle wiring. Supporting a
-new backend becomes primarily a matter of implementing another client rather
-than reproducing part of the engine.
+Keeping those responsibilities inside the engine makes the engine a complete,
+portable agent loop. It can be embedded in a single binary or run as a
+Kubernetes-hosted agent loop while filesystem, command, and other tool backends
+remain pluggable. Supporting an alternative backend then primarily means
+implementing another client contract, without also reproducing or risking the
+agent invariants enforced by the engine.
 
 Separate three concerns explicitly:
 
@@ -156,9 +154,8 @@ Session
 │   └── extensible session state
 │       └── file/read-ledger/v1
 │
-Execution Environment (thin client-like capabilities)
-├── EnvironmentRef
-├── content Workspace
+Execution Environment (clients sharing underlying file state)
+├── Workspace (filesystem client)
 └── optional CommandRunner
 
 Workspace backend
