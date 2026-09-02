@@ -281,7 +281,10 @@ The Redis Secret is mounted read-only with `defaultMode: 0440` and projects exac
 
 Use `mcp.servers` for global Streamable HTTP MCP connections. The chart supports
 no authentication, a bearer from a Kubernetes Secret, or the runtime's strict
-OAuth profile. It does not expose inline credentials, arbitrary headers,
+OAuth profile. Helm checks the values structure and Secret references; `mecak8s`
+is the authority for semantic URL, canonical-origin, and loopback validation and
+fails closed at startup. A successful chart render does not bypass those runtime
+checks. The chart does not expose inline credentials, arbitrary headers,
 stdio/SSE transports, browser login, or a writable credential store.
 
 ```yaml
@@ -308,10 +311,10 @@ for the complete OAuth values shape.
 
 Keep MCP and OAuth endpoints on HTTPS and provide pod egress through your
 NetworkPolicy or mesh; this chart has no general NetworkPolicy. The explicit
-`insecureHTTP: true` acknowledgement is available only for non-loopback,
-non-OAuth plain-HTTP servers and means a bearer may cross the pod network in
-cleartext. Loopback HTTP is already accepted and must omit the
-acknowledgement. Use it only for a tightly isolated in-cluster endpoint.
+`insecureHTTP: true` acknowledgement is accepted by the runtime only for
+non-loopback, non-OAuth plain-HTTP servers and means a bearer may cross the pod
+network in cleartext. Loopback HTTP is already accepted; a stale acknowledgement
+makes startup fail. Use it only for a tightly isolated in-cluster endpoint.
 
 OAuth profile changes alter a pod-template checksum and trigger a rollout.
 Secret-backed environment variables do not rotate inside a running pod, so roll

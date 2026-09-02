@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"os"
 	"os/exec"
@@ -15,12 +16,13 @@ import (
 	"testing"
 
 	"github.com/google/jsonschema-go/jsonschema"
-	mcpadapter "github.com/stacklok/mecatl/internal/adapter/mcp"
-	"github.com/stacklok/mecatl/internal/adapter/permconfig"
-	"github.com/stacklok/mecatl/internal/cliconfig"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/yaml"
+
+	mcpadapter "github.com/stacklok/mecatl/internal/adapter/mcp"
+	"github.com/stacklok/mecatl/internal/adapter/permconfig"
+	"github.com/stacklok/mecatl/internal/cliconfig"
 )
 
 func chartDir(t *testing.T) string {
@@ -1358,7 +1360,27 @@ mcp:
 	}
 }
 
-func TestMecak8sHelmChart_MCPStaticBearerLoopbackNeedsNoInsecureAcknowledgement(t *testing.T) {
+func TestMecak8sHelmChart_MCPNoAuthDoesNotRenderEnv(t *testing.T) {
+	rendered, err := renderMCPValues(t, `
+mcp:
+  servers:
+    - name: public
+      url: https://public.example/mcp
+      auth: {mode: none}
+`)
+	if err != nil {
+		t.Fatalf("render no-auth MCP values: %v", err)
+	}
+	container := deploymentFromRender(t, rendered).Spec.Template.Spec.Containers[0]
+	if len(container.Env) != 0 {
+		t.Fatalf("no-auth MCP environment = %#v, want empty", container.Env)
+	}
+	if strings.Contains(rendered, "\n          env:") {
+		t.Fatal("no-auth MCP render unexpectedly contains an env block")
+	}
+}
+
+func TestMecak8sHelmChart_MCPRuntimeOwnsLoopbackClassification(t *testing.T) {
 	for _, rawURL := range []string{
 		"http://127.0.0.1:9090/mcp",
 		"http://LOCALHOST:9090/mcp",
@@ -1366,6 +1388,7 @@ func TestMecak8sHelmChart_MCPStaticBearerLoopbackNeedsNoInsecureAcknowledgement(
 		"http://[0:0:0:0:0:0:0:1]:9090/mcp",
 		"http://[0::1]:9090/mcp",
 		"http://[::ffff:127.0.0.1]:9090/mcp",
+		"http://[::ffff:7f00:1]:9090/mcp",
 	} {
 		t.Run(rawURL, func(t *testing.T) {
 			if err := mcpadapter.ValidateClientURL(rawURL); err != nil {
@@ -1383,21 +1406,100 @@ mcp:
 `, rawURL)
 			rendered, err := renderMCPValues(t, values)
 			if err != nil {
-				t.Fatalf("render loopback MCP values: %v", err)
+				t.Fatalf("chart rejected URL accepted by the runtime: %v", err)
 			}
 			args := deploymentFromRender(t, rendered).Spec.Template.Spec.Containers[0].Args
 			if !slices.Contains(args, "--mcp-server=local="+rawURL) {
 				t.Fatalf("loopback MCP server arg missing: %#v", args)
 			}
 			if slices.Contains(args, "--mcp-server-insecure-http=local") {
-				t.Fatalf("loopback MCP server rendered a stale insecure acknowledgement: %#v", args)
-			}
-
-			if _, err := renderMCPValues(t, strings.Replace(values, "url: "+rawURL, "url: "+rawURL+"\n      insecureHTTP: true", 1)); err == nil {
-				t.Fatal("render accepted stale insecure acknowledgement for runtime-recognized loopback")
+				t.Fatalf("loopback MCP server rendered an unrequested insecure acknowledgement: %#v", args)
 			}
 		})
 	}
+}
+
+func TestMecak8sHelmChart_MCPLegacyURLSemanticsAreRuntimeValidated(t *testing.T) {
+	cases := []struct {
+		name        string
+		url         string
+		insecure    bool
+		wantRuntime bool
+	}{
+		{name: "off-host HTTP bearer", url: "http://mcp.example/mcp"},
+		{name: "stale HTTPS acknowledgement", url: "https://mcp.example/mcp", insecure: true},
+		{name: "stale loopback acknowledgement", url: "http://[::ffff:7f00:1]/mcp", insecure: true},
+		{name: "acknowledged off-host HTTP bearer", url: "http://mcp.example/mcp", insecure: true, wantRuntime: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ack := ""
+			if tc.insecure {
+				ack = "\n      insecureHTTP: true"
+			}
+			rendered, err := renderMCPValues(t, fmt.Sprintf(`
+mcp:
+  servers:
+    - name: protected
+      url: %s%s
+      auth:
+        mode: staticBearer
+        staticBearer:
+          secretKeyRef: {name: protected-mcp, key: token}
+`, tc.url, ack))
+			if err != nil {
+				t.Fatalf("chart rejected structurally valid MCP values: %v", err)
+			}
+
+			fs := flag.NewFlagSet("mcp-runtime", flag.ContinueOnError)
+			servers := cliconfig.RegisterMCPServerFlag(fs, "")
+			var mcpArgs []string
+			for _, arg := range deploymentFromRender(t, rendered).Spec.Template.Spec.Containers[0].Args {
+				if strings.HasPrefix(arg, "--mcp-server=") || strings.HasPrefix(arg, "--mcp-server-insecure-http=") {
+					mcpArgs = append(mcpArgs, arg)
+				}
+			}
+			if err := fs.Parse(mcpArgs); err != nil {
+				t.Fatalf("parse rendered MCP args: %v", err)
+			}
+			t.Setenv("MCP_PROTECTED_TOKEN", "secret")
+			err = servers.Finalize()
+			if tc.wantRuntime && err != nil {
+				t.Fatalf("runtime rejected rendered MCP args: %v", err)
+			}
+			if !tc.wantRuntime && err == nil {
+				t.Fatal("runtime accepted semantically invalid rendered MCP args")
+			}
+		})
+	}
+}
+
+func runtimeMCPProfileValidationError(t *testing.T, profile string) error {
+	t.Helper()
+	if err := permconfig.ValidateYAML([]byte(profile)); err != nil {
+		return err
+	}
+	path := filepath.Join(t.TempDir(), "settings.yaml")
+	if err := os.WriteFile(path, []byte(profile), 0o600); err != nil {
+		t.Fatalf("write generated MCP profile: %v", err)
+	}
+	operator := permconfig.New(permconfig.Options{ExplicitFiles: []string{path}}).OperatorMCP()
+	credential := base64.StdEncoding.EncodeToString([]byte("opaque-credential-record"))
+	profiles, err := cliconfig.LoadMCPProfiles(cliconfig.MCPProfileLoadOptions{
+		Operator: operator,
+		LookupEnv: func(name string) (string, bool) {
+			values := map[string]string{
+				"MECATL_MCP_OAUTH_CLIENT_SECRET": "client-secret",
+				"MECATL_MCP_OAUTH_CREDENTIAL":    credential,
+			}
+			value, ok := values[name]
+			return value, ok
+		},
+	})
+	if profiles != nil {
+		t.Cleanup(func() { _ = profiles.Close() })
+	}
+	return err
 }
 
 func runtimeMCPProfilesFromConfigMap(t *testing.T, profile string) *cliconfig.MCPProfiles {
@@ -1566,7 +1668,7 @@ mcp:
 	}
 }
 
-func TestMecak8sHelmChart_MCPValidation(t *testing.T) {
+func TestMecak8sHelmChart_MCPStructuralValidation(t *testing.T) {
 	validStatic := `
 mcp:
   servers:
@@ -1627,28 +1729,60 @@ mcp:
         mode: oauth
         oauth: {}
 `,
-		"stale insecure acknowledgement":      strings.Replace(validStatic, "url: https://mcp.example/mcp", "url: https://mcp.example/mcp\n      insecureHTTP: true", 1),
-		"loopback stale acknowledgement":      strings.Replace(validStatic, "url: https://mcp.example/mcp", "url: http://127.0.0.1:9090/mcp\n      insecureHTTP: true", 1),
-		"static HTTP without acknowledgement": strings.Replace(validStatic, "https://mcp.example/mcp", "http://mcp.example/mcp", 1),
-		"oauth HTTP":                          strings.Replace(validOAuth, "https://mcp.example/mcp", "http://mcp.example/mcp", 1),
-		"noncanonical OAuth issuer":           strings.Replace(validOAuth, "https://issuer.example", "https://ISSUER.example:443", 1),
-		"OAuth resource malformed escape":     strings.Replace(validOAuth, "https://mcp.example/mcp", "https://mcp.example/%zz", 1),
-		"noncanonical OAuth resource":         strings.Replace(validOAuth, "https://mcp.example/mcp", "https://MCP.example:443/a/../mcp", 1),
-		"OAuth resource underscore hostname":  strings.Replace(validOAuth, "https://mcp.example/mcp", "https://mcp_bad.example/mcp", 1),
-		"OAuth origin underscore hostname":    strings.Replace(validOAuth, "additionalOrigins: [https://client.example]", "additionalOrigins: [https://client_bad.example]", 1),
-		"OAuth issuer nonnumeric port":        strings.Replace(validOAuth, "https://issuer.example", "https://issuer.example:notaport", 1),
-		"OAuth issuer zero port":              strings.Replace(validOAuth, "https://issuer.example", "https://issuer.example:0", 1),
-		"OAuth issuer port out of range":      strings.Replace(validOAuth, "https://issuer.example", "https://issuer.example:65536", 1),
-		"OAuth expanded IPv6 origin":          strings.Replace(validOAuth, "https://issuer.example", "https://[0:0:0:0:0:0:0:1]", 1),
-		"OAuth padded IPv6 origin":            strings.Replace(validOAuth, "https://issuer.example", "https://[2001:0db8::1]", 1),
-		"OAuth principal control character":   strings.Replace(validOAuth, "principal: service-account:mecak8s", `principal: "service-account:\u0007mecak8s"`, 1),
-		"CIMD origin not allowed":             strings.Replace(validOAuth, "additionalOrigins: [https://client.example]", "additionalOrigins: []", 1),
-		"private origin not allowed":          strings.Replace(validOAuth, "privateOrigins: []", "privateOrigins: [https://private.example]", 1),
+		"OAuth principal control character": strings.Replace(validOAuth, "principal: service-account:mecak8s", `principal: "service-account:\u0007mecak8s"`, 1),
 	}
 	for name, values := range cases {
 		t.Run(name, func(t *testing.T) {
 			if _, err := renderMCPValues(t, values); err == nil {
 				t.Fatal("render accepted invalid MCP values")
+			}
+		})
+	}
+}
+
+func TestMecak8sHelmChart_MCPOAuthURLSemanticsAreRuntimeValidated(t *testing.T) {
+	valid := `
+mcp:
+  servers:
+    - name: oauth
+      url: https://mcp.example/mcp
+      auth:
+        mode: oauth
+        oauth:
+          profile: cluster
+          principal: service-account:mecak8s
+          issuer: https://issuer.example
+          client:
+            mode: cimd
+            cimd: {documentURL: https://client.example/mecatl.json}
+          scopes: [mcp.read]
+          credentials:
+            secretKeyRef: {name: oauth, key: credential}
+          network:
+            additionalOrigins: [https://client.example]
+            privateOrigins: []
+            maxRedirects: 0
+`
+	cases := map[string]string{
+		"HTTP resource":                strings.Replace(valid, "https://mcp.example/mcp", "http://mcp.example/mcp", 1),
+		"malformed resource escape":    strings.Replace(valid, "https://mcp.example/mcp", "https://mcp.example/%zz", 1),
+		"resource underscore hostname": strings.Replace(valid, "https://mcp.example/mcp", "https://mcp_bad.example/mcp", 1),
+		"issuer zero port":             strings.Replace(valid, "https://issuer.example", "https://issuer.example:0", 1),
+		"issuer port out of range":     strings.Replace(valid, "https://issuer.example", "https://issuer.example:65536", 1),
+		"expanded IPv6 issuer":         strings.Replace(valid, "https://issuer.example", "https://[0:0:0:0:0:0:0:1]", 1),
+		"padded IPv6 issuer":           strings.Replace(valid, "https://issuer.example", "https://[2001:0db8::1]", 1),
+		"CIMD origin not allowed":      strings.Replace(valid, "additionalOrigins: [https://client.example]", "additionalOrigins: []", 1),
+		"private origin not allowed":   strings.Replace(valid, "privateOrigins: []", "privateOrigins: [https://private.example]", 1),
+	}
+	for name, values := range cases {
+		t.Run(name, func(t *testing.T) {
+			rendered, err := renderMCPValues(t, values)
+			if err != nil {
+				t.Fatalf("chart rejected structurally valid OAuth values before runtime validation: %v", err)
+			}
+			profile := configMapFromRender(t, rendered, "production-mecak8s-mcp").Data["settings.yaml"]
+			if err := runtimeMCPProfileValidationError(t, profile); err == nil {
+				t.Fatalf("runtime settings parser accepted semantically invalid OAuth profile:\n%s", profile)
 			}
 		})
 	}

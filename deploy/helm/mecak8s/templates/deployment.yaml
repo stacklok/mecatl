@@ -154,7 +154,9 @@ spec:
             {{- with .Values.extraArgs }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
-          {{- if or .Values.extraEnv .Values.mcp.servers }}
+          {{- $mcpEnvServers := false }}
+          {{- range .Values.mcp.servers }}{{- if ne .auth.mode "none" }}{{- $mcpEnvServers = true }}{{- end }}{{- end }}
+          {{- if or .Values.extraEnv $mcpEnvServers }}
           env:
             {{- range $server := .Values.mcp.servers }}
             {{- if eq $server.auth.mode "staticBearer" }}

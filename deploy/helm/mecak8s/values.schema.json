@@ -90,7 +90,7 @@
             "required": ["name", "url", "auth"],
             "properties": {
               "name": {"type": "string", "pattern": "^[A-Za-z0-9_]+$", "not": {"pattern": "__"}},
-              "url": {"type": "string", "pattern": "^https?://[^@/[:space:]#]+(?:/[^[:space:]#]*)?$"},
+              "url": {"type": "string", "pattern": "^https?://[^@/\\s#]+(?:/[^\\s#]*)?$"},
               "insecureHTTP": {"type": "boolean", "default": false},
               "auth": {
                 "type": "object",
@@ -109,7 +109,7 @@
                     "properties": {
                       "profile": {"type": "string", "minLength": 1},
                       "principal": {"type": "string", "minLength": 1},
-                      "issuer": {"type": "string", "pattern": "^https://[^@/?#[:space:]]+(?::[0-9]+)?$"},
+                      "issuer": {"type": "string", "pattern": "^https://[^@/?#\\s]+(?::[0-9]+)?$"},
                       "client": {
                         "type": "object", "additionalProperties": false, "required": ["mode"],
                         "properties": {
@@ -120,7 +120,7 @@
                           },
                           "cimd": {
                             "type": "object", "additionalProperties": false, "required": ["documentURL"],
-                            "properties": {"documentURL": {"type": "string", "pattern": "^https://[^@/[:space:]#]+/[^[:space:]#]+$"}}
+                            "properties": {"documentURL": {"type": "string", "pattern": "^https://[^@/\\s#]+/[^\\s#]+$"}}
                           }
                         },
                         "oneOf": [
@@ -141,8 +141,8 @@
                         "type": "object", "additionalProperties": false,
                         "required": ["additionalOrigins", "privateOrigins", "maxRedirects"],
                         "properties": {
-                          "additionalOrigins": {"type": "array", "items": {"type": "string", "pattern": "^https?://[^@/?#[:space:]]+(?::[0-9]+)?$"}},
-                          "privateOrigins": {"type": "array", "items": {"type": "string", "pattern": "^https?://[^@/?#[:space:]]+(?::[0-9]+)?$"}},
+                          "additionalOrigins": {"type": "array", "items": {"type": "string", "pattern": "^https?://[^@/?#\\s]+(?::[0-9]+)?$"}},
+                          "privateOrigins": {"type": "array", "items": {"type": "string", "pattern": "^https?://[^@/?#\\s]+(?::[0-9]+)?$"}},
                           "maxRedirects": {"type": "integer", "minimum": 0, "maximum": 5}
                         }
                       }

@@ -153,7 +153,12 @@ The Secret is mounted read-only at `/var/run/secrets/redis` with `defaultMode: 0
 The chart's `mcp.servers` list configures global **Streamable HTTP** MCP
 connections without placing credentials in values, arguments, or a ConfigMap.
 Names must match `[A-Za-z0-9_]+`, must not contain `__`, and must be unique
-case-insensitively. The authentication `mode` is a closed union:
+case-insensitively. Helm validates this schema, authentication unions, Secret
+references, and generated environment-name collisions. It deliberately does not
+duplicate the runtime's Go URL parsing, canonical-origin, or loopback classifier:
+`mecak8s` validates those semantics authoritatively at startup and fails closed.
+A successful `helm template` therefore proves structural validity, not that every
+endpoint is runtime-valid. The authentication `mode` is a closed union:
 
 - `none` renders only `--mcp-server=<name>=<url>`;
 - `staticBearer` renders the same flag and projects its `secretKeyRef` into the
@@ -180,9 +185,9 @@ mcp:
 ```
 
 `insecureHTTP: true` adds the matching
-`--mcp-server-insecure-http=<name>` acknowledgement. It is valid only for a
-non-loopback plain-HTTP non-OAuth entry; loopback HTTP is already accepted and
-must omit this stale acknowledgement. Use it only for a tightly isolated
+`--mcp-server-insecure-http=<name>` acknowledgement. The runtime accepts it only
+for a non-loopback plain-HTTP non-OAuth entry; loopback HTTP is already accepted
+and a stale acknowledgement makes startup fail. Use it only for a tightly isolated
 in-cluster endpoint. A bearer then crosses the pod network in cleartext. Prefer
 HTTPS and
 enforce egress with NetworkPolicy or a mesh—the chart intentionally ships no
