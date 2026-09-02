@@ -263,7 +263,14 @@ tasks:
         msg: helm is required
     cmds:
       - task: cluster-ready
-      - helm upgrade --install {{.RELEASE}} deploy/helm/mecak8s --namespace={{.NAMESPACE}} --kubeconfig={{.KUBECONFIG}} --kube-context={{.CONTEXT}} --values=deploy/helm/mecak8s/values-kind.yaml --values=deploy/mecak8s-kind/kind-nodeports.yaml --values=deploy/helm/mecak8s/values-kind-keycloak.yaml --wait --timeout=4m
+      - cmd: |
+          set -eu
+          if [ -n "${OPENROUTER_API_KEY:-}" ]; then
+            provider_values=deploy/mecak8s-kind/kind-provider-real.yaml
+          else
+            provider_values=deploy/mecak8s-kind/kind-provider-mock.yaml
+          fi
+          helm upgrade --install {{.RELEASE}} deploy/helm/mecak8s --namespace={{.NAMESPACE}} --kubeconfig={{.KUBECONFIG}} --kube-context={{.CONTEXT}} --values=deploy/helm/mecak8s/values-kind.yaml --values=deploy/mecak8s-kind/kind-nodeports.yaml --values=deploy/helm/mecak8s/values-kind-keycloak.yaml --values="$provider_values" --wait --timeout=4m
       - kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} rollout status deployment/{{.RELEASE}}-mecak8s -n {{.NAMESPACE}} --timeout=240s
 
   chart-apply:
