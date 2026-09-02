@@ -120,6 +120,15 @@ func TestClientRejectsDifferentHostOrPort(t *testing.T) {
 	}
 }
 
+func TestPrivatePolicyRejectsMixedAnswers(t *testing.T) {
+	lookup := func(context.Context, string) ([]net.IP, error) {
+		return []net.IP{net.ParseIP("10.0.0.1"), net.ParseIP("8.8.8.8")}, nil
+	}
+	if _, err := newPolicy(context.Background(), map[string][]byte{"https://issuer.internal": unrelatedCertPEM(t)}, lookup); err == nil {
+		t.Fatal("private policy accepted mixed private/public DNS answers")
+	}
+}
+
 func TestPolicyRejectsDNSAddressDrift(t *testing.T) {
 	lookups := 0
 	lookup := func(context.Context, string) ([]net.IP, error) {

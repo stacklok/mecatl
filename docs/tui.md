@@ -166,9 +166,10 @@ or fallback:
 - **`mecatui login ADDRESS`** — performs the remote server's public OIDC
   Authorization Code + PKCE login, then records target metadata and an encrypted,
   target-bound credential. It requires `--issuer`, `--client-id`, and `--audience`.
-  `--tls-ca` is optional: omit it for an issuer trusted by the system roots; supply it
-  for a private HTTPS issuer. This CA verifies issuer endpoints and is not the optional
-  server CA supplied to `connect`. It exits without starting a session. `--no-browser` prints the
+  It defaults to public issuer addresses trusted by the system roots; `--tls-ca` is
+  optional there and REPLACES those roots. `--private-issuer` requires `--tls-ca` and
+  admits private issuer addresses only. This CA verifies the issuer endpoints and is not
+  the optional server CA supplied to `connect`. It exits without starting a session. `--no-browser` prints the
   authorization URL instead of opening a browser and then waits for the fixed
   `http://127.0.0.1:18473/oauth/callback` callback (headless/SSH use). For SSH, open
   that URL on the operator workstation and forward the fixed callback port to the host

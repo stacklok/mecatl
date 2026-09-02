@@ -515,9 +515,11 @@ leaves the old session and UI unchanged. Usage and configuration are documented 
 **Remote mecatui OIDC.** The remote-login path is separate from the ToolHive LLM
 login: `mecatui llm login` remains the ToolHive gateway flow, while `mecatui login
 ADDRESS` performs public-client OIDC enrollment for one remote target. Login requires
-issuer, public client ID, and audience; an issuer CA bundle is required only for a
-private issuer. When omitted, the issuer uses the system trust store. Only an explicit
-CA reference, never CA contents, is saved. The login `--tls-ca` path is distinct from the
+issuer, public client ID, and audience. It defaults to public, globally routable issuer
+addresses verified against the system trust store; optional `--tls-ca` replaces those
+roots. `--private-issuer` requires `--tls-ca` and selects private-address admission. The
+saved policy and an explicit CA reference, never CA contents, are used for later refresh
+and logout. The login `--tls-ca` path is distinct from the
 optional server CA supplied to `connect`. It validates discovery, PKCE, and
 the resulting token before saving. `mecatui connect ADDRESS` never opens a browser or
 guesses missing settings. An enrolled target uses a root-scoped OS-keyring key and a

@@ -106,14 +106,11 @@ func Enroll(ctx context.Context, conn Connection, token Token, cfg EnrollmentCon
 	if cfg.Registry == nil || cfg.Credentials == nil {
 		return errors.New("clientauth: registry and credentials are required")
 	}
-	id, err := conn.Identity.Canonical()
+	conn, err := normalizeConnection(conn)
 	if err != nil {
 		return err
 	}
-	if !validIssuerCAFile(conn.IssuerCAFile) {
-		return errors.New("clientauth: issuer CA path must be absolute and clean")
-	}
-	conn.Identity = id
+	id := conn.Identity
 	unlock, err := cfg.Registry.lockTarget(ctx, id.Target)
 	if err != nil {
 		return err

@@ -443,7 +443,7 @@ func TestMecak8sKindFixture_Scenario3_KeycloakDemoQuickstart(t *testing.T) {
 		"get secret fixture-ca", "fixture-ca.crt", "base64 -D <",
 		"wait_port Keycloak 8443", "wait_port mecak8s-gRPC 18080", "wait_port mecak8s-HTTPS 18081",
 		"mecatui login mecak8s-mecak8s.mecatl.svc.cluster.local:18080", "--client-id mecatui-kind", "--audience mecak8s",
-		"--scopes openid,profile,mecak8s:access,offline_access", "mecatui connect mecak8s-mecak8s.mecatl.svc.cluster.local:18080 --tls",
+		"--scopes openid,profile,mecak8s:access,offline_access", "--private-issuer", "mecatui connect mecak8s-mecak8s.mecatl.svc.cluster.local:18080 --tls",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("Keycloak demo quickstart missing %q", want)

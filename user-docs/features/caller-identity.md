@@ -117,7 +117,7 @@ command line:
 bin/mecatui login mecated.example.internal:443 \
   --issuer https://idp.example.internal \
   --client-id mecatui --audience mecatl \
-  --tls-ca /path/to/issuer-ca.pem
+  --tls-ca /path/to/issuer-ca.pem --private-issuer
 bin/mecatui connect mecated.example.internal:443 \
   --tls --tls-ca /path/to/server-ca.pem
 ```

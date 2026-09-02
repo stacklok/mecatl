@@ -3495,9 +3495,10 @@ flag; ACP help excludes it. See ADR 0088.
 
 The command taxonomy is deliberately explicit. `mecatui llm login` is the existing
 ToolHive gateway login and has no server/session meaning. `mecatui login ADDRESS` is
-remote enrollment: it requires `--issuer`, `--client-id`, `--audience`, and `--tls-ca`,
-then runs public Authorization Code + PKCE and saves the target metadata plus
-credential. The registry saves the issuer CA path/reference, never the CA contents, for
+remote enrollment: it requires `--issuer`, `--client-id`, and `--audience`; it defaults
+to public issuer address admission with system roots, while optional `--tls-ca` replaces
+them. `--private-issuer` requires that CA and selects scoped private admission. The registry
+saves the issuer policy and CA path/reference, never CA contents, for
 discovery/token/JWKS/refresh/revocation; the optional
 `connect --tls-ca` is separately the gRPC server trust root. `mecatui connect ADDRESS`
 only dials; it never implicitly opens a browser.

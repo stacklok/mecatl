@@ -7,16 +7,13 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
-	"strings"
 	"syscall"
 
 	"github.com/adrg/xdg"
 
-	"github.com/stacklok/mecatl/authn/oidc/scopedhttps"
 	"github.com/stacklok/mecatl/internal/adapter/clientauth"
 	"github.com/stacklok/mecatl/internal/adapter/credentialstore"
 )
@@ -57,7 +54,8 @@ func runRemoteLogout(address string, args []string) error {
 	}
 	result, err := clientauth.Logout(ctx, address, clientauth.LogoutConfig{
 		Registry: registry, Credentials: creds,
-		HTTPClientOwned: logoutHTTPClient,
+		// Each revocation uses its retained connection's own address policy and roots.
+		HTTPClientForConnection: logoutIssuerClient,
 	})
 	if err != nil {
 		if errors.Is(err, clientauth.ErrIncompleteLogout) {
@@ -70,69 +68,17 @@ func runRemoteLogout(address string, args []string) error {
 	return nil
 }
 
-type issuerRevocationTransport struct {
-	public             http.RoundTripper
-	private            http.RoundTripper
-	privateAuthorities map[string]struct{}
-}
-
-func (t issuerRevocationTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	if _, ok := t.privateAuthorities[strings.ToLower(req.URL.Host)]; ok {
-		return t.private.RoundTrip(req)
-	}
-	return t.public.RoundTrip(req)
-}
-
-func (t issuerRevocationTransport) CloseIdleConnections() {
-	if closer, ok := t.public.(interface{ CloseIdleConnections() }); ok {
-		closer.CloseIdleConnections()
-	}
-	if closer, ok := t.private.(interface{ CloseIdleConnections() }); ok {
-		closer.CloseIdleConnections()
-	}
-}
-
-// logoutHTTPClient keeps private issuer roots confined to their authorities while
-// public issuers continue to use the system trust store.
-func logoutHTTPClient(ctx context.Context, conns []clientauth.Connection) (*http.Client, bool, error) {
-	endpointCAs := make(map[string][]byte, len(conns))
-	privateAuthorities := make(map[string]struct{}, len(conns))
-	for _, conn := range conns {
-		if conn.IssuerCAFile == "" {
-			continue
-		}
-		ca, err := os.ReadFile(conn.IssuerCAFile)
+func logoutIssuerClient(ctx context.Context, conn clientauth.Connection) (*http.Client, bool, error) {
+	var ca []byte
+	if conn.IssuerCAFile != "" {
+		read, err := os.ReadFile(conn.IssuerCAFile)
 		if err != nil {
 			return nil, false, err
 		}
-		issuer, err := url.Parse(conn.Identity.Issuer)
-		if err != nil {
-			return nil, false, err
-		}
-		privateAuthorities[strings.ToLower(issuer.Host)] = struct{}{}
-		endpointCAs[conn.Identity.Issuer] = append(append(endpointCAs[conn.Identity.Issuer], ca...), '\n')
+		ca = read
 	}
-
-	publicTransport := http.DefaultTransport.(*http.Transport).Clone()
-	client := &http.Client{
-		Transport: publicTransport,
-		CheckRedirect: func(*http.Request, []*http.Request) error {
-			return errors.New("HTTPS redirect refused")
-		},
-	}
-	if len(endpointCAs) == 0 {
-		return client, true, nil
-	}
-	privateClient, err := scopedhttps.NewClient(ctx, endpointCAs)
-	if err != nil {
-		return nil, false, err
-	}
-	client.Transport = issuerRevocationTransport{
-		public:             publicTransport,
-		private:            privateClient.Transport,
-		privateAuthorities: privateAuthorities,
-	}
-	return client, true, nil
+	client, err := clientauth.IssuerHTTPClient(ctx, conn.IssuerAddressPolicy, conn.Identity.Issuer, ca)
+	return client, true, err
 }
 
 func writeLogoutResult(out io.Writer, result clientauth.LogoutResult) {

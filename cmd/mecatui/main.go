@@ -813,8 +813,12 @@ func resolveTransport(ctx context.Context, cfg config) (target string, dial clie
 				if !cfg.useTLS || cfg.insecure {
 					return target, client.DialConfig{}, noop, errors.New("saved remote authentication requires TLS; remove --insecure and use --tls")
 				}
-				loginCfg, configErr := issuerLoginConfig(conn)
-				if configErr != nil {
+				var ca []byte
+				var readErr error
+				if conn.IssuerCAFile != "" {
+					ca, readErr = os.ReadFile(conn.IssuerCAFile)
+				}
+				if readErr != nil {
 					return target, client.DialConfig{}, noop, &client.AuthError{Reason: client.AuthStorageUnavailable}
 				}
 				keys, keyErr := clientauth.NewExistingKeyringProvider(root)
@@ -846,8 +850,7 @@ func resolveTransport(ctx context.Context, cfg config) (target string, dial clie
 					}
 					return target, client.DialConfig{}, noop, &client.AuthError{Reason: client.AuthStorageUnavailable}
 				}
-				loginCfg.Registry = registry
-				source, sourceErr := clientauth.NewRefreshSource(ctx, creds, loginCfg)
+				source, sourceErr := clientauth.NewRefreshSource(ctx, creds, clientauth.LoginConfig{Identity: conn.Identity, IssuerAddressPolicy: conn.IssuerAddressPolicy, TrustedCAPEM: ca, Registry: registry})
 				if sourceErr != nil {
 					_ = store.Close()
 					// NewRefreshSource fails with ErrDiscovery when the issuer is

@@ -1438,6 +1438,19 @@ func TestRegistryPrecommitFailureCleansUniqueTemporary(t *testing.T) {
 	}
 }
 
+func TestConnectionIssuerAddressPolicyJSON(t *testing.T) {
+	legacy := `{"identity":{}}`
+	var conn Connection
+	if err := json.Unmarshal([]byte(legacy), &conn); err != nil || conn.IssuerAddressPolicy != IssuerAddressPolicyPrivate {
+		t.Fatalf("legacy policy = %q, %v; want private, nil", conn.IssuerAddressPolicy, err)
+	}
+	for _, raw := range []string{`{"issuer_address_policy":""}`, `{"issuer_address_policy":null}`, `{"issuer_address_policy":"unknown"}`} {
+		if err := json.Unmarshal([]byte(raw), &conn); err == nil {
+			t.Fatalf("policy %s unexpectedly accepted", raw)
+		}
+	}
+}
+
 func TestOpenExistingStoreDoesNotRepairExistingDirectoryModes(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "root")
 	if err := os.Mkdir(root, 0o700); err != nil {

@@ -58,17 +58,18 @@ Remote enrollment and connecting are separate actions:
 bin/mecatui login mecated.example.internal:443 \
   --issuer https://id.example.internal \
   --client-id mecatui --audience mecatl \
-  --tls-ca /path/to/issuer-ca.pem
+  --tls-ca /path/to/issuer-ca.pem --private-issuer
 bin/mecatui connect mecated.example.internal:443 \
   --tls --tls-ca /path/to/server-ca.pem
 ```
 
-`mecatui login ADDRESS` runs the public OIDC Authorization Code + PKCE flow and
-requires `--issuer`, `--client-id`, and `--audience`. Its `--tls-ca` is optional: omit
-it when the issuer chains to a system trust root; provide it for a private issuer. The
-login CA verifies the issuer's discovery, token, JWKS, refresh, and revocation endpoints;
-it does not configure server transport trust. An explicit issuer CA bundle path/reference,
-not its contents, is saved as public target metadata; the later
+`mecatui login ADDRESS` runs the public OIDC Authorization Code + PKCE flow. It
+requires `--issuer`, `--client-id`, and `--audience`. It defaults to a public issuer
+verified against the system roots; the example above is a PRIVATE issuer, so it passes
+`--private-issuer`, which requires `--tls-ca`. The login `--tls-ca` verifies the issuer's discovery,
+token, JWKS, refresh, and revocation endpoints; it does not configure server transport
+trust. An explicit issuer CA bundle path/reference, not its contents, is saved as public
+target metadata; the later
 `connect --tls-ca` independently verifies the gRPC server. Login saves
 public target metadata in the connection registry and stores the credential in a
 canonical-root-scoped, keyring-wrapped encrypted store. The credential is bound to the

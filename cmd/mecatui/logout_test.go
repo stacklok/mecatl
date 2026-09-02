@@ -3,27 +3,11 @@ package main
 import (
 	"bytes"
 	"context"
-	"net/http"
 	"strings"
 	"testing"
 
 	"github.com/stacklok/mecatl/internal/adapter/clientauth"
 )
-
-func TestLogoutHTTPClientUsesSystemRootsForPublicIssuer(t *testing.T) {
-	client, owned, err := logoutHTTPClient(context.Background(), []clientauth.Connection{{
-		Identity: clientauth.Identity{Issuer: "https://issuer.example"},
-	}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !owned {
-		t.Fatal("logout HTTP client is caller-owned")
-	}
-	if _, ok := client.Transport.(*http.Transport); !ok {
-		t.Fatalf("logout transport = %T, want dedicated system-root transport", client.Transport)
-	}
-}
 
 func TestLogoutOutputIsSecretFreeAndHonestAboutPartialState(t *testing.T) {
 	const access = "access-super-secret"
@@ -43,4 +27,14 @@ func TestLogoutOutputIsSecretFreeAndHonestAboutPartialState(t *testing.T) {
 			t.Errorf("logout output %q does not contain %q", got, want)
 		}
 	}
+}
+
+func TestLogoutPublicIssuerUsesManagedPublicPolicy(t *testing.T) {
+	client, owned, err := logoutIssuerClient(context.Background(), clientauth.Connection{
+		Identity: clientauth.Identity{Issuer: "https://8.8.8.8"}, IssuerAddressPolicy: clientauth.IssuerAddressPolicyPublic,
+	})
+	if err != nil || client == nil || !owned {
+		t.Fatalf("public logout issuer client = (%v, %t, %v), want managed client", client, owned, err)
+	}
+	client.CloseIdleConnections()
 }

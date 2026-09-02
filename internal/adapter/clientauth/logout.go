@@ -68,10 +68,9 @@ type LogoutConfig struct {
 	Registry    *Registry
 	Credentials *Credentials
 	HTTPClient  func(context.Context, []Connection) (*http.Client, error)
-	// HTTPClientOwned may return one client for this whole revocation attempt
-	// and whether Logout owns its idle-connection cleanup. HTTPClient remains
-	// caller-owned.
-	HTTPClientOwned func(context.Context, []Connection) (*http.Client, bool, error)
+	// HTTPClientForConnection builds an isolated managed client for one retained
+	// connection. It prevents roots or address policy from crossing authorities.
+	HTTPClientForConnection func(context.Context, Connection) (*http.Client, bool, error)
 }
 
 type pendingRevocation struct {
@@ -150,11 +149,11 @@ func Logout(ctx context.Context, target string, cfg LogoutConfig) (LogoutResult,
 	unlock()
 	locked = false
 
-	revokeLogoutTokens(ctx, revoke, cfg.HTTPClient, cfg.HTTPClientOwned, &result)
+	revokeLogoutTokens(ctx, revoke, cfg.HTTPClient, cfg.HTTPClientForConnection, &result)
 	return result, nil
 }
 
-func revokeLogoutTokens(ctx context.Context, revoke []pendingRevocation, clientFor func(context.Context, []Connection) (*http.Client, error), ownedClientFor func(context.Context, []Connection) (*http.Client, bool, error), result *LogoutResult) {
+func revokeLogoutTokens(ctx context.Context, revoke []pendingRevocation, clientFor func(context.Context, []Connection) (*http.Client, error), clientForConnection func(context.Context, Connection) (*http.Client, bool, error), result *LogoutResult) {
 	// Revocation is deliberately after local cleanup and outside the target
 	// transaction. One operation-wide budget covers client construction (including
 	// DNS), discovery, and every token; a stalled issuer must not block enrollment.
@@ -167,27 +166,36 @@ func revokeLogoutTokens(ctx context.Context, revoke []pendingRevocation, clientF
 			conns = append(conns, item.conn)
 		}
 	}
-	if len(conns) == 0 || (clientFor == nil && ownedClientFor == nil) {
+	if len(conns) == 0 || (clientFor == nil && clientForConnection == nil) {
+		return
+	}
+	if clientForConnection != nil {
+		for _, item := range revoke {
+			remaining := revocableTokenCount(item.token)
+			if remaining == 0 {
+				continue
+			}
+			client, owned, err := clientForConnection(cleanupCtx, item.conn)
+			if err == nil {
+				attempted, failed, revokeErr := revokeTokens(cleanupCtx, client, item.conn.Identity, item.token)
+				result.RevocationsAttempted += attempted
+				result.RevocationsFailed += failed
+				err = revokeErr
+			} else {
+				result.RevocationsFailed += remaining
+			}
+			if owned && client != nil {
+				client.CloseIdleConnections()
+			}
+			if err != nil {
+				recordRevocationError(result, item.conn.Identity, err)
+			}
+		}
 		return
 	}
 
-	var (
-		client *http.Client
-		owned  bool
-		err    error
-	)
-	if ownedClientFor != nil {
-		client, owned, err = ownedClientFor(cleanupCtx, conns)
-	} else {
-		client, err = clientFor(cleanupCtx, conns)
-	}
+	client, err := clientFor(cleanupCtx, conns)
 	if err != nil {
-		// A partially-constructed owned client (client non-nil alongside a
-		// non-nil error) still needs its idle-connection cleanup -- the builder
-		// failed some step after opening connections, not before.
-		if owned && client != nil {
-			client.CloseIdleConnections()
-		}
 		// The one operation-wide client failed to build; every retained
 		// credential's revocation is unattempted.
 		for _, item := range revoke {
@@ -198,10 +206,6 @@ func revokeLogoutTokens(ctx context.Context, revoke []pendingRevocation, clientF
 		}
 		return
 	}
-	if owned && client != nil {
-		defer client.CloseIdleConnections()
-	}
-
 	for _, item := range revoke {
 		remaining := revocableTokenCount(item.token)
 		if remaining == 0 {

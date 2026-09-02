@@ -17,7 +17,6 @@ import (
 	"golang.org/x/oauth2"
 
 	authoidc "github.com/stacklok/mecatl/authn/oidc"
-	"github.com/stacklok/mecatl/authn/oidc/scopedhttps"
 	"github.com/stacklok/mecatl/internal/adapter/credentialstore"
 	"github.com/stacklok/mecatl/mcp/oauthlogin"
 )
@@ -76,10 +75,11 @@ type LoginConfig struct {
 	Identity   Identity
 	Presenter  Presenter
 	HTTPClient *http.Client
-	// PrivateHTTPS allows fixture/private issuer HTTPS only with supplied CA bytes.
-	PrivateHTTPS  bool
-	TrustedCAPEM  []byte
-	TrustedCAFile string
+	// IssuerAddressPolicy selects the managed issuer transport. It is REQUIRED
+	// unless the caller supplies its own HTTPClient (tests and fixtures); the two
+	// are mutually exclusive, and there is no unmanaged default. See oidcClient.
+	IssuerAddressPolicy IssuerAddressPolicy
+	TrustedCAPEM        []byte
 	// Registry supplies target-scoped transaction locking to RefreshSource. Login
 	// itself does not use it, so browser interaction remains outside the lock.
 	Registry *Registry
@@ -421,20 +421,24 @@ func safeValidationError(err error) error {
 	}
 	return authoidc.ErrInvalidToken
 }
+
+// oidcClient resolves the transport for one login/refresh. Exactly one of the
+// two sources must be present: a caller-supplied HTTPClient (test fixtures), or
+// a managed IssuerAddressPolicy (every production path). There is deliberately
+// NO fallback: an unset policy used to yield a bare http.Client with system
+// roots and no address screening, which is a silent downgrade rather than an
+// error, so it now fails closed.
 func oidcClient(ctx context.Context, id Identity, cfg LoginConfig) (*http.Client, error) {
-	if cfg.PrivateHTTPS {
-		if cfg.HTTPClient != nil {
-			return nil, errors.New("custom HTTP client is not allowed with private HTTPS issuer mode")
-		}
-		if len(cfg.TrustedCAPEM) == 0 {
-			return nil, errors.New("private HTTPS issuer requires a CA bundle")
-		}
-		return scopedhttps.NewSingleIssuerClient(ctx, []string{id.Issuer}, cfg.TrustedCAPEM)
-	}
 	if cfg.HTTPClient != nil {
+		if cfg.IssuerAddressPolicy.valid() {
+			return nil, errors.New("custom HTTP client is not allowed with managed issuer policy")
+		}
 		return cfg.HTTPClient, nil
 	}
-	return &http.Client{Timeout: 15e9, CheckRedirect: func(*http.Request, []*http.Request) error { return errors.New("redirect refused") }}, nil
+	if !cfg.IssuerAddressPolicy.valid() {
+		return nil, errors.New("issuer address policy is required when no HTTP client is supplied")
+	}
+	return IssuerHTTPClient(ctx, cfg.IssuerAddressPolicy, id.Issuer, cfg.TrustedCAPEM)
 }
 func fetchDiscovery(ctx context.Context, client *http.Client, id Identity) (discovery, error) {
 	endpoint := strings.TrimSuffix(id.Issuer, "/") + "/.well-known/openid-configuration"

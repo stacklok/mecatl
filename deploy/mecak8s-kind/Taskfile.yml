@@ -96,7 +96,7 @@ tasks:
           # CALLER's own cwd; this deployment sets --workspace and rejects
           # any client-supplied value, so that combination fails with
           # codes.InvalidArgument. The DNS alias below is not cosmetic.
-          printf '%s\n' "mecatui login mecak8s-mecak8s.mecatl.svc.cluster.local:18080 --issuer https://keycloak.mecatl.svc.cluster.local:8443/realms/mecatl --client-id mecatui-kind --audience mecak8s --tls-ca $ca --scopes openid,profile,mecak8s:access,offline_access"
+          printf '%s\n' "mecatui login mecak8s-mecak8s.mecatl.svc.cluster.local:18080 --issuer https://keycloak.mecatl.svc.cluster.local:8443/realms/mecatl --client-id mecatui-kind --audience mecak8s --tls-ca $ca --private-issuer --scopes openid,profile,mecak8s:access,offline_access"
           printf '%s\n' "mecatui connect mecak8s-mecak8s.mecatl.svc.cluster.local:18080 --tls --tls-ca $ca"
           printf '\nThe CA is at %s. Kind maps container NodePorts directly to loopback host ports; this task exits after readiness checks.\n' "$ca"
           BASHEOF

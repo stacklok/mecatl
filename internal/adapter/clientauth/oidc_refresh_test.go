@@ -151,7 +151,7 @@ func (s failingRefreshSaveStore) Put(context.Context, []byte, []byte, *credentia
 	return credentialstore.Record{}, s.err
 }
 
-func TestLoginRejectsCustomClientWithPrivateHTTPSBeforeRequest(t *testing.T) {
+func TestLoginRejectsCustomClientWithManagedPolicyBeforeRequest(t *testing.T) {
 	var requests atomic.Int32
 	client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
 		requests.Add(1)
@@ -164,11 +164,11 @@ func TestLoginRejectsCustomClientWithPrivateHTTPSBeforeRequest(t *testing.T) {
 			t.Fatal("presenter must not be called")
 			return oauthlogin.Result{}, nil
 		}),
-		HTTPClient:   client,
-		PrivateHTTPS: true,
-		TrustedCAPEM: []byte("unused"),
+		HTTPClient:          client,
+		IssuerAddressPolicy: IssuerAddressPolicyPrivate,
+		TrustedCAPEM:        []byte("unused"),
 	})
-	if !errors.Is(err, ErrDiscovery) || !strings.Contains(err.Error(), "custom HTTP client is not allowed with private HTTPS issuer mode") {
+	if !errors.Is(err, ErrDiscovery) || !strings.Contains(err.Error(), "custom HTTP client is not allowed with managed issuer policy") {
 		t.Fatalf("Login error = %v, want private HTTPS custom-client rejection", err)
 	}
 	if got := requests.Load(); got != 0 {
@@ -176,7 +176,7 @@ func TestLoginRejectsCustomClientWithPrivateHTTPSBeforeRequest(t *testing.T) {
 	}
 }
 
-func TestNewRefreshSourceRejectsCustomClientWithPrivateHTTPSBeforeRequest(t *testing.T) {
+func TestNewRefreshSourceRejectsCustomClientWithManagedPolicyBeforeRequest(t *testing.T) {
 	var requests atomic.Int32
 	client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
 		requests.Add(1)
@@ -188,13 +188,13 @@ func TestNewRefreshSourceRejectsCustomClientWithPrivateHTTPSBeforeRequest(t *tes
 	}
 
 	source, err := NewRefreshSource(t.Context(), credentials(t), LoginConfig{
-		Identity:     identity("private.example:443"),
-		Registry:     registry,
-		HTTPClient:   client,
-		PrivateHTTPS: true,
-		TrustedCAPEM: []byte("unused"),
+		Identity:            identity("private.example:443"),
+		Registry:            registry,
+		HTTPClient:          client,
+		IssuerAddressPolicy: IssuerAddressPolicyPrivate,
+		TrustedCAPEM:        []byte("unused"),
 	})
-	if source != nil || !errors.Is(err, ErrDiscovery) || !strings.Contains(err.Error(), "custom HTTP client is not allowed with private HTTPS issuer mode") {
+	if source != nil || !errors.Is(err, ErrDiscovery) || !strings.Contains(err.Error(), "custom HTTP client is not allowed with managed issuer policy") {
 		t.Fatalf("NewRefreshSource = (%#v, %v), want nil private HTTPS custom-client rejection", source, err)
 	}
 	if got := requests.Load(); got != 0 {

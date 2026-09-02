@@ -188,9 +188,14 @@ func resolvePrivateIPs(ctx context.Context, host string, lookup func(context.Con
 	}
 	ips := make(map[string]struct{})
 	for _, ip := range addrs {
-		if ip != nil && isPrivateAddress(ip) {
-			ips[ip.String()] = struct{}{}
+		// A single non-private answer fails the WHOLE lookup rather than being
+		// filtered out. Filtering let a host that resolves to both a private and
+		// a public address still dial the private one, which is exactly the DNS
+		// answer shape a rebinding attempt produces.
+		if ip == nil || !isPrivateAddress(ip) {
+			return nil, errors.New("host has an address outside the private admission policy")
 		}
+		ips[ip.String()] = struct{}{}
 	}
 	if len(ips) == 0 {
 		return nil, errors.New("host has no private address")

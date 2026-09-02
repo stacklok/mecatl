@@ -627,21 +627,37 @@ type Registry struct {
 	targetLockAttempt func()
 }
 
+// IssuerAddressPolicy controls which network addresses the issuer transport may dial.
+type IssuerAddressPolicy string
+
+// The closed issuer address-policy vocabulary. A saved row carrying anything
+// else is quarantined rather than defaulted (see Connection.UnmarshalJSON).
+const (
+	IssuerAddressPolicyPrivate IssuerAddressPolicy = "private"
+	IssuerAddressPolicyPublic  IssuerAddressPolicy = "public"
+)
+
+func (p IssuerAddressPolicy) valid() bool {
+	return p == IssuerAddressPolicyPrivate || p == IssuerAddressPolicyPublic
+}
+
 // Connection is non-secret saved connection metadata. IssuerCAFile is used only
 // for OIDC discovery, JWKS, refresh, and revocation; it is not server transport
 // trust. UnmarshalJSON accepts the legacy tls_ca_file name for registry compatibility.
 type Connection struct {
-	Identity     Identity `json:"identity"`
-	IssuerCAFile string   `json:"issuer_ca_file,omitempty"`
+	Identity            Identity            `json:"identity"`
+	IssuerCAFile        string              `json:"issuer_ca_file,omitempty"`
+	IssuerAddressPolicy IssuerAddressPolicy `json:"issuer_address_policy,omitempty"`
 }
 
 // UnmarshalJSON reads the former tls_ca_file field as issuer trust. When both are
 // present, the explicit issuer_ca_file value wins, including an explicit empty value.
 func (c *Connection) UnmarshalJSON(data []byte) error {
 	var wire struct {
-		Identity     Identity `json:"identity"`
-		IssuerCAFile *string  `json:"issuer_ca_file"`
-		LegacyCAFile string   `json:"tls_ca_file"`
+		Identity     Identity        `json:"identity"`
+		IssuerCAFile *string         `json:"issuer_ca_file"`
+		LegacyCAFile string          `json:"tls_ca_file"`
+		Policy       json.RawMessage `json:"issuer_address_policy"`
 	}
 	if err := json.Unmarshal(data, &wire); err != nil {
 		return err
@@ -651,6 +667,11 @@ func (c *Connection) UnmarshalJSON(data []byte) error {
 		c.IssuerCAFile = *wire.IssuerCAFile
 	} else {
 		c.IssuerCAFile = wire.LegacyCAFile
+	}
+	if len(wire.Policy) == 0 {
+		c.IssuerAddressPolicy = IssuerAddressPolicyPrivate // legacy registry rows
+	} else if json.Unmarshal(wire.Policy, &c.IssuerAddressPolicy) != nil || !c.IssuerAddressPolicy.valid() {
+		return errors.New("invalid issuer address policy")
 	}
 	return nil
 }
@@ -768,7 +789,7 @@ func (r *Registry) readRows() ([]registryRow, error) {
 		valid := json.Unmarshal(raw, &fields) == nil && fields != nil && json.Unmarshal(raw, &conn) == nil
 		if valid {
 			for key := range fields {
-				if key != "identity" && key != "issuer_ca_file" && key != "tls_ca_file" {
+				if key != "identity" && key != "issuer_ca_file" && key != "tls_ca_file" && key != "issuer_address_policy" {
 					valid = false
 					break
 				}
@@ -776,7 +797,7 @@ func (r *Registry) readRows() ([]registryRow, error) {
 		}
 		if valid {
 			canonical, canonicalErr := conn.Identity.Canonical()
-			valid = canonicalErr == nil && validIssuerCAFile(conn.IssuerCAFile)
+			valid = canonicalErr == nil && validIssuerCAFile(conn.IssuerCAFile) && conn.IssuerAddressPolicy.valid()
 			if valid {
 				conn.Identity = canonical
 			}
@@ -811,6 +832,32 @@ func (r *Registry) FindTarget(target string) (Connection, error) {
 	return found[0], nil
 }
 
+// normalizeConnection canonicalises and validates a connection on the way IN to
+// the registry. Both write paths (Upsert and Enroll) MUST go through it: a row
+// that fails these rules is quarantined by readRows on the next load, so a
+// caller that skipped validation would report a successful login whose entry is
+// then invisible -- leaving its refresh token on disk, unreachable and
+// unrevoked.
+func normalizeConnection(conn Connection) (Connection, error) {
+	// Programmatic legacy callers predate the persisted policy. They enroll with
+	// the historical private posture; JSON input itself remains strict.
+	if conn.IssuerAddressPolicy == "" {
+		conn.IssuerAddressPolicy = IssuerAddressPolicyPrivate
+	}
+	id, err := conn.Identity.Canonical()
+	if err != nil {
+		return Connection{}, err
+	}
+	conn.Identity = id
+	if !validIssuerCAFile(conn.IssuerCAFile) {
+		return Connection{}, errors.New("clientauth: issuer CA path must be absolute and clean")
+	}
+	if !conn.IssuerAddressPolicy.valid() {
+		return Connection{}, errors.New("clientauth: invalid issuer connection policy")
+	}
+	return conn, nil
+}
+
 func validIssuerCAFile(path string) bool {
 	return path == "" || filepath.IsAbs(path) && filepath.Clean(path) == path
 }
@@ -820,13 +867,11 @@ func validIssuerCAFile(path string) bool {
 // caller holding the credential store must discard those: otherwise a superseded
 // refresh token stays on disk indefinitely, unreachable and unrevoked.
 func (r *Registry) Upsert(conn Connection) ([]Identity, error) {
-	id, err := conn.Identity.Canonical()
+	conn, err := normalizeConnection(conn)
 	if err != nil {
 		return nil, err
 	}
-	if !validIssuerCAFile(conn.IssuerCAFile) {
-		return nil, errors.New("clientauth: issuer CA path must be absolute and clean")
-	}
+	id := conn.Identity
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if err := r.lock.Lock(); err != nil {
@@ -856,7 +901,7 @@ func (r *Registry) Upsert(conn Connection) ([]Identity, error) {
 			displaced = append(displaced, existing.Identity)
 		}
 	}
-	kept = append(kept, registryRow{connection: Connection{Identity: id, IssuerCAFile: conn.IssuerCAFile}, valid: true})
+	kept = append(kept, registryRow{connection: Connection{Identity: id, IssuerCAFile: conn.IssuerCAFile, IssuerAddressPolicy: conn.IssuerAddressPolicy}, valid: true})
 	if err := r.writeRows(kept); err != nil {
 		return nil, err
 	}
@@ -913,7 +958,14 @@ func sameConnections(a, b []Connection) bool {
 	}
 	b = b[:len(a)]
 	for i, conn := range a {
-		if conn.IssuerCAFile != b[i].IssuerCAFile || !conn.Identity.Equal(b[i].Identity) {
+		left, right := conn.IssuerAddressPolicy, b[i].IssuerAddressPolicy
+		if left == "" {
+			left = IssuerAddressPolicyPrivate
+		}
+		if right == "" {
+			right = IssuerAddressPolicyPrivate
+		}
+		if conn.IssuerCAFile != b[i].IssuerCAFile || left != right || !conn.Identity.Equal(b[i].Identity) {
 			return false
 		}
 	}

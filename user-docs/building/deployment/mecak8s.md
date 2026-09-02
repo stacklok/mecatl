@@ -131,7 +131,7 @@ The authenticated workflow above covers the issuer mapping, hostname mapping, PK
 client, and TLS requirements.
 
 For an interactive remote client after setup, add the fixture host aliases, run
-`mecatui login ADDRESS … --tls-ca ISSUER_CA --scopes openid,profile,mecak8s:access,offline_access`,
+`mecatui login ADDRESS … --tls-ca ISSUER_CA --private-issuer --scopes openid,profile,mecak8s:access,offline_access`,
 then run `mecatui connect ADDRESS --tls --tls-ca SERVER_CA`. The fixture may publish
 the same public CA bundle for both roles, but they remain separate trust inputs. The
 client uses the `mecatui-kind` public OIDC client; there is no implicit browser flow in
@@ -810,7 +810,8 @@ policy layer's job.
 `mecatui` is an external gRPC client with two authentication modes. For a static
 bearer, obtain a token using your normal unmanaged IdP flow and pass it with `--auth-token` (or
 `MECATL_AUTH_TOKEN`); only this static-bearer path does not obtain or refresh the token. For managed OIDC, run
-`mecatui login ADDRESS` with the issuer, client ID, audience, and issuer CA bundle path, then
+`mecatui login ADDRESS` with the issuer, client ID, audience, and (for a private in-cluster
+issuer) `--tls-ca` plus `--private-issuer`, then
 `mecatui connect ADDRESS`; mecatui stores the credential encrypted and refreshes it on
 later application token demand. Login never happens implicitly during `connect`.
 
