@@ -245,14 +245,14 @@ func TestFoldContractDocMatchesSessionFields(t *testing.T) {
 	//   supplied via SessionMeta (not event-carried): ID, Mode, Limits,
 	//     EnvironmentRef, Placement, Profile, ProviderID, ModelID, ReasoningEffort,
 	//     DebugMCPServers, DebugMCPTools, DebugTargetFingerprint, Title,
-	//     TitleProvenance, Kind, Relationship, CreatedAt
+	//     TitleProvenance, TitleGeneration, Kind, Relationship, CreatedAt
 	//   not-event-carried identity labels: Owner and Authority
 	wantSessionFields := map[string]struct{}{
 		"ID": {}, "State": {}, "Mode": {}, "Conversation": {}, "Limits": {},
 		"Counters": {}, "Usage": {}, "Profile": {}, "EnvironmentRef": {}, "Placement": {},
 		"ProviderID": {}, "ModelID": {}, "ReasoningEffort": {}, "DebugMCPServers": {}, "DebugMCPTools": {}, "DebugTargetFingerprint": {}, "Kind": {},
 		"Relationship": {}, "CreatedAt": {},
-		"Title": {}, "TitleProvenance": {}, "Owner": {}, "Authority": {},
+		"Title": {}, "TitleProvenance": {}, "TitleGeneration": {}, "Owner": {}, "Authority": {},
 	}
 	assertExportedFields(t, reflect.TypeOf(session.Session{}), wantSessionFields,
 		"session.Session — classify the new field in COMPATIBILITY.md's reconstruction contract")
