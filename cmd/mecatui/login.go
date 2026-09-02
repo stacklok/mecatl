@@ -215,7 +215,7 @@ func discoveredEnrollmentFrom(discovered discoveredResource, grpcTarget, scopes 
 	if err != nil {
 		return discoveredEnrollment{}, err
 	}
-	return discoveredEnrollment{Resource: discovered.Resource, MetadataURL: discovered.MetadataURL, Connection: clientauth.Connection{Identity: identity, IssuerAddressPolicy: clientauth.IssuerAddressPolicyPublic}}, nil
+	return discoveredEnrollment{Resource: discovered.Resource, MetadataURL: discovered.MetadataURL, Connection: clientauth.Connection{Identity: identity, ResourceURL: discovered.Resource, IssuerAddressPolicy: clientauth.IssuerAddressPolicyPublic}}, nil
 }
 
 func confirmDiscoveredLogin(in io.Reader, out io.Writer, enrollment discoveredEnrollment) (bool, error) {

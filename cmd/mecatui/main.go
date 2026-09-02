@@ -807,7 +807,7 @@ func resolveTransport(ctx context.Context, cfg config) (target string, dial clie
 			if regErr != nil {
 				return target, client.DialConfig{}, noop, &client.AuthError{Reason: client.AuthStorageUnavailable}
 			}
-			conn, findErr := registry.FindTarget(cfg.connectAddress)
+			conn, findErr := registry.Find(cfg.connectAddress)
 			if findErr == nil {
 				target = conn.Identity.Target
 				dial.Server = target

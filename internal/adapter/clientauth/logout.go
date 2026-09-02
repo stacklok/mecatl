@@ -87,9 +87,13 @@ func Logout(ctx context.Context, target string, cfg LogoutConfig) (LogoutResult,
 	if cfg.Registry == nil {
 		return result, errors.New("clientauth: registry is required")
 	}
-	canonical, err := canonicalTarget(target)
+	canonical, err := cfg.Registry.targetForAlias(target)
+	if errors.Is(err, credentialstore.ErrNotFound) {
+		// Keep absent logout idempotent for either alias form.
+		return result, nil
+	}
 	if err != nil {
-		return result, ErrInvalidIdentity
+		return result, err
 	}
 	result.Target = canonical
 	// An existing-only registry whose root was never created has no state to log
