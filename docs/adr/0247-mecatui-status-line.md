@@ -4,7 +4,7 @@
 - Date: 2026-08-27
 - Scope: `cmd/mecatui` local status-line generation and rendering
 - Supersedes: none
-- Superseded by: ADR 0284
+- Superseded by: ADR 0289
 
 ## Context
 

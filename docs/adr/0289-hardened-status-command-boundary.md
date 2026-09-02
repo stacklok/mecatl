@@ -1,4 +1,4 @@
-# ADR 0284 — Hardened status-command output and environment extension
+# ADR 0289 — Hardened status-command output and environment extension
 
 - Status: Accepted
 - Date: 2026-09-01
