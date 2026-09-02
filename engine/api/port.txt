@@ -106,6 +106,7 @@ const RetryDispositionPermanent session.RetryDisposition = 2
 const RetryDispositionRetryable session.RetryDisposition = 1
 const RetryDispositionUnknown session.RetryDisposition = 0
 const SchedulerLeaderLeaseID session.SessionID = "__scheduler__"
+const SessionIDHeaderName untyped string = "X-Mecatl-Session-ID"
 const SessionLineagePruned SessionLineageState = "pruned"
 const SessionLineageRetained SessionLineageState = "retained"
 const SessionMigrationCancelled SessionMigrationState = "cancelled"
@@ -131,6 +132,7 @@ func SessionDiscoveryMetaEqual(a SessionDiscoveryMeta, b SessionDiscoveryMeta) b
 func SessionIDFromContext(ctx context.Context) (session.SessionID, bool)
 func SetAttemptTurnIndex(ctx context.Context, index int) bool
 func TurnIndexFromContext(ctx context.Context) (int, bool)
+func ValidSessionIDHeaderValue(value string) bool
 func ValidateSessionLineageQuery(query SessionLineageQuery) error
 func WithAttemptObserver(ctx context.Context, observer AttemptObserver) context.Context
 func WithRunAttemptContext(ctx context.Context, id session.SessionID, serial int64) context.Context

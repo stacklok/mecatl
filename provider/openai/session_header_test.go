@@ -3,10 +3,10 @@ package openai
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"sync"
 	"testing"
 
@@ -30,82 +30,183 @@ func drainSessionHeaderStream(ctx context.Context, t *testing.T, p *Provider, mo
 	}
 }
 
-func TestSessionIDHeader(t *testing.T) {
-	var (
-		mu       sync.Mutex
-		captured = map[string]string{}
-	)
+type sessionHeaderVector struct {
+	Name  string `json:"name"`
+	Value string `json:"value"`
+	Legal bool   `json:"legal"`
+}
+
+func sessionHeaderVectors(t *testing.T) []sessionHeaderVector {
+	t.Helper()
+	data, err := os.ReadFile("../../testdata/session_header_values.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var vectors []sessionHeaderVector
+	if err := json.Unmarshal(data, &vectors); err != nil {
+		t.Fatal(err)
+	}
+	return vectors
+}
+
+func TestADR_0290_SessionHeaderLegalValueParity(t *testing.T) {
+	if sessionIDHeaderName != "X-Mecatl-Session-ID" {
+		t.Fatalf("sessionIDHeaderName = %q", sessionIDHeaderName)
+	}
+	for _, vector := range sessionHeaderVectors(t) {
+		t.Run(vector.Name, func(t *testing.T) {
+			if got := validHTTPHeaderValue(vector.Value); got != vector.Legal {
+				t.Errorf("validHTTPHeaderValue(%q) = %v, want %v", vector.Value, got, vector.Legal)
+			}
+		})
+	}
+}
+
+func sessionHeaderFallbackRequest(model string) port.LLMRequest {
+	assistant := session.NewAssistantMessage("", "opaque-blob", nil)
+	assistant.ReasoningItemID = "rs_bad"
+	return port.LLMRequest{Model: model, Messages: []session.Message{session.NewUserMessage("hi"), assistant}}
+}
+
+func drainSessionHeaderFallbackStream(ctx context.Context, t *testing.T, p *Provider, model string) {
+	t.Helper()
+	seq, err := p.Stream(ctx, sessionHeaderFallbackRequest(model))
+	if err != nil {
+		t.Fatalf("Stream: %v", err)
+	}
+	for _, err := range seq {
+		if err != nil {
+			t.Fatalf("stream: %v", err)
+		}
+	}
+}
+
+func TestADR_0290_ProviderSessionHeaderExact(t *testing.T) {
+	const id = "session/exact:42?node=a&b=c"
+	headers := make(chan string, 4)
+	var requests int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var body struct {
-			Model string `json:"model"`
+		headers <- r.Header.Get(sessionIDHeaderName)
+		requests++
+		if requests%2 == 1 {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = io.WriteString(w, `{"error":{"message":"The encrypted content for item rs_bad could not be verified. Reason: Encrypted content could not be decrypted or parsed"}}`)
+			return
 		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			t.Errorf("decode request: %v", err)
-		}
-		mu.Lock()
-		captured[body.Model] = r.Header.Get(sessionIDHeaderName)
-		mu.Unlock()
 		w.Header().Set("Content-Type", "text/event-stream")
 		_, _ = io.WriteString(w, completedResponseSSE)
 	}))
 	defer srv.Close()
 	p := New(WithAPIKey("k"), WithBaseURL(srv.URL+"/v1"))
-
-	tests := []struct {
-		name string
-		id   *session.SessionID
-		want string
-	}{
-		{name: "absent"},
-		{name: "empty omitted", id: ptrSessionID("")},
-		{name: "exact", id: ptrSessionID("session/exact:42"), want: "session/exact:42"},
-		{name: "leading space omitted", id: ptrSessionID(" session")},
-		{name: "trailing space omitted", id: ptrSessionID("session ")},
-		{name: "leading tab omitted", id: ptrSessionID("\tsession")},
-		{name: "trailing tab omitted", id: ptrSessionID("session\t")},
-		{name: "internal space and tab preserved", id: ptrSessionID("session id\tpart"), want: "session id\tpart"},
-		{name: "carriage return omitted", id: ptrSessionID("bad\rid")},
-		{name: "newline omitted", id: ptrSessionID("bad\nid")},
-		{name: "control omitted", id: ptrSessionID("bad\x00id")},
-		{name: "DEL omitted", id: ptrSessionID("bad\x7fid")},
+	ctx := port.WithSessionID(context.Background(), id)
+	for range 2 {
+		drainSessionHeaderFallbackStream(ctx, t, p, "model")
 	}
-	for i, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			model := fmt.Sprintf("model-%d", i)
-			ctx := context.Background()
-			if tt.id != nil {
-				ctx = port.WithSessionID(ctx, *tt.id)
-			}
-			drainSessionHeaderStream(ctx, t, p, model)
-			mu.Lock()
-			got := captured[model]
-			mu.Unlock()
-			if got != tt.want {
-				t.Fatalf("X-Mecatl-Session-ID = %q, want %q", got, tt.want)
+	close(headers)
+	if requests != 4 {
+		t.Fatalf("request count = %d, want initial+fallback and retry+fallback", requests)
+	}
+	for got := range headers {
+		if got != id {
+			t.Errorf("session header = %q, want exact %q", got, id)
+		}
+	}
+}
+
+func TestADR_0290_ProviderSessionHeaderOptional(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		ctx  context.Context
+	}{
+		{name: "absent", ctx: context.Background()},
+		{name: "empty", ctx: port.WithSessionID(context.Background(), "")},
+		{name: "illegal", ctx: port.WithSessionID(context.Background(), "bad\nid")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			header := make(chan string, 1)
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				header <- r.Header.Get(sessionIDHeaderName)
+				w.Header().Set("Content-Type", "text/event-stream")
+				_, _ = io.WriteString(w, completedResponseSSE)
+			}))
+			defer srv.Close()
+			drainSessionHeaderStream(tc.ctx, t, New(WithAPIKey("k"), WithBaseURL(srv.URL+"/v1")), "model")
+			if got := <-header; got != "" {
+				t.Errorf("optional session header = %q, want omitted", got)
 			}
 		})
 	}
+}
 
+type sessionHeaderPairBarrier struct {
+	mu         sync.Mutex
+	cond       *sync.Cond
+	waiting    int
+	generation int
+}
+
+func newSessionHeaderPairBarrier() *sessionHeaderPairBarrier {
+	barrier := &sessionHeaderPairBarrier{}
+	barrier.cond = sync.NewCond(&barrier.mu)
+	return barrier
+}
+
+func (b *sessionHeaderPairBarrier) wait() {
+	b.mu.Lock()
+	generation := b.generation
+	b.waiting++
+	if b.waiting == 2 {
+		b.waiting = 0
+		b.generation++
+		b.cond.Broadcast()
+		b.mu.Unlock()
+		return
+	}
+	for generation == b.generation {
+		b.cond.Wait()
+	}
+	b.mu.Unlock()
+}
+
+func TestADR_0290_ProviderSessionHeaderConcurrentIsolationRace(t *testing.T) {
+	var (
+		mu       sync.Mutex
+		captured = map[string]int{}
+		barrier  = newSessionHeaderPairBarrier()
+	)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		barrier.wait()
+		id := r.Header.Get(sessionIDHeaderName)
+		mu.Lock()
+		captured[id]++
+		attempt := captured[id]
+		mu.Unlock()
+		if attempt%2 == 1 {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = io.WriteString(w, `{"error":{"message":"The encrypted content for item rs_bad could not be verified. Reason: Encrypted content could not be decrypted or parsed"}}`)
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, completedResponseSSE)
+	}))
+	defer srv.Close()
+	p := New(WithAPIKey("k"), WithBaseURL(srv.URL+"/v1"))
 	var wg sync.WaitGroup
-	for i := range 12 {
-		model := fmt.Sprintf("concurrent-%d", i)
-		id := session.SessionID("session-" + model)
+	for _, id := range []session.SessionID{"session-one", "session-two"} {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			drainSessionHeaderStream(port.WithSessionID(context.Background(), id), t, p, model)
+			for range 2 {
+				drainSessionHeaderFallbackStream(port.WithSessionID(context.Background(), id), t, p, string(id))
+			}
 		}()
 	}
 	wg.Wait()
 	mu.Lock()
 	defer mu.Unlock()
-	for i := range 12 {
-		model := fmt.Sprintf("concurrent-%d", i)
-		want := "session-" + model
-		if got := captured[model]; got != want {
-			t.Errorf("%s header = %q, want %q", model, got, want)
-		}
+	if captured["session-one"] != 4 || captured["session-two"] != 4 || len(captured) != 2 {
+		t.Fatalf("captured session headers = %v, want initial/fallback and retry/fallback for each originating session only", captured)
 	}
 }
-
-func ptrSessionID(id session.SessionID) *session.SessionID { return &id }

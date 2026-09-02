@@ -13,6 +13,25 @@ type turnIndexContextKey struct{}
 type runAttemptCarrierContextKey struct{}
 type attemptObserverContextKey struct{}
 
+// SessionIDHeaderName is the canonical HTTP field used for session affinity and
+// provider correlation. The value grants no authority.
+const SessionIDHeaderName = "X-Mecatl-Session-ID"
+
+// ValidSessionIDHeaderValue reports whether value can be sent unchanged as one
+// session ID HTTP field value. It deliberately performs no normalization.
+func ValidSessionIDHeaderValue(value string) bool {
+	if value == "" || value[0] == ' ' || value[0] == '\t' || value[len(value)-1] == ' ' || value[len(value)-1] == '\t' {
+		return false
+	}
+	for i := range len(value) {
+		c := value[i]
+		if (c < ' ' && c != '\t') || c == 0x7f {
+			return false
+		}
+	}
+	return true
+}
+
 // AttemptObserver receives producer-controlled provider-attempt evidence. It is
 // a run-local bridge: adapters observe, while the agent loop validates the whole
 // payload and remains the sole event producer; the server relay remains the sole
