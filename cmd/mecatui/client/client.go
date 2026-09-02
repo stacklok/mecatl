@@ -20,9 +20,11 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
+	engineport "github.com/stacklok/mecatl/engine/port"
 )
 
 // DialConfig is the connection-time configuration: address, optional bearer
@@ -55,6 +57,21 @@ type Client struct {
 	// displayServerEndpoint is a sanitized diagnostic projection of the configured
 	// connection target, never a reconnect target, server response, or TLS/auth setting.
 	displayServerEndpoint string
+}
+
+// withSessionAffinity adds the exact session identity to outgoing metadata while
+// preserving credentials and any other metadata already carried by ctx.
+func withSessionAffinity(ctx context.Context, id string) context.Context {
+	if !engineport.ValidSessionIDHeaderValue(id) {
+		return ctx
+	}
+	md, _ := metadata.FromOutgoingContext(ctx)
+	md = md.Copy()
+	if md == nil {
+		md = metadata.MD{}
+	}
+	md.Set(engineport.SessionIDHeaderName, id)
+	return metadata.NewOutgoingContext(ctx, md)
 }
 
 // Dial connects to mecated per cfg. It uses grpc.NewClient (not the deprecated
@@ -327,7 +344,7 @@ func (c *Client) CreateDebugSession(ctx context.Context, targetID string, mode m
 	if err != nil {
 		return "", "", Capabilities{}, ResolvedModel{}, err
 	}
-	return c.createDebugSession(ctx, resolvedTarget, mode, sel, debugMCP...)
+	return c.createDebugSession(withSessionAffinity(ctx, resolvedTarget), resolvedTarget, mode, sel, debugMCP...)
 }
 
 func (c *Client) createDebugSession(ctx context.Context, resolvedTarget string, mode mecatlv1.PermissionMode, sel ModelSelection, debugMCP ...string) (string, string, Capabilities, ResolvedModel, error) {
@@ -429,7 +446,7 @@ func (c *Client) CreateSessionWithCarryover(ctx context.Context, sel ModelSelect
 	if sourceSessionID == "" {
 		return "", Capabilities{}, ResolvedModel{}, fmt.Errorf("fork session: source session ID is required")
 	}
-	resp, err := c.svc.ForkSession(ctx, &mecatlv1.ForkSessionRequest{
+	resp, err := c.svc.ForkSession(withSessionAffinity(ctx, sourceSessionID), &mecatlv1.ForkSessionRequest{
 		SourceSessionId: sourceSessionID, ProviderId: sel.ProviderID, ModelId: sel.ModelID, ReasoningEffort: sel.ReasoningEffort,
 	})
 	if err != nil {
@@ -484,7 +501,7 @@ func (c *Client) ClearSession(ctx context.Context, sourceID string, selector *Wo
 // caller owns the follow-up GetSession refetch for the forked session's resolved
 // model/capabilities echo (ForkSessionResponse carries only the id, no streaming).
 func (c *Client) ForkSession(ctx context.Context, srcID, title, reasoningEffort string) (string, error) {
-	resp, err := c.svc.ForkSession(ctx, &mecatlv1.ForkSessionRequest{
+	resp, err := c.svc.ForkSession(withSessionAffinity(ctx, srcID), &mecatlv1.ForkSessionRequest{
 		SourceSessionId: srcID,
 		Title:           title,
 		ReasoningEffort: reasoningEffort,
@@ -606,18 +623,27 @@ func TransientResultError(text string) bool {
 // surfaces the server's error; the caller treats a close failure best-effort (the
 // new session is created regardless).
 func (c *Client) CloseSession(ctx context.Context, id string) error {
-	_, err := c.svc.CloseSession(ctx, &mecatlv1.CloseSessionRequest{SessionId: id})
+	_, err := c.svc.CloseSession(withSessionAffinity(ctx, id), &mecatlv1.CloseSessionRequest{SessionId: id})
 	if err != nil {
 		return fmt.Errorf("close session: %w", err)
 	}
 	return nil
 }
 
-// OpenConverse opens a fresh bidi Converse stream and wraps it in a Stream
-// (serialised Sends + a Recver for the reader goroutine). Each user prompt opens
-// one stream — matching the "one run per Converse" model. The stream's lifetime
-// is bound to ctx; cancelling ctx aborts the run.
+// OpenConverse opens a fresh unbound bidi Converse stream for compatibility
+// with raw callers. Mecatui uses OpenConverseForSession when it owns a target
+// session.
 func (c *Client) OpenConverse(ctx context.Context) (*Stream, error) {
+	return c.openConverse(ctx)
+}
+
+// OpenConverseForSession opens a Converse stream carrying the exact session
+// affinity metadata before the first prompt or retry frame is sent.
+func (c *Client) OpenConverseForSession(ctx context.Context, sessionID string) (*Stream, error) {
+	return c.openConverse(withSessionAffinity(ctx, sessionID))
+}
+
+func (c *Client) openConverse(ctx context.Context) (*Stream, error) {
 	bidi, err := c.svc.Converse(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("open converse: %w", err)

@@ -24,7 +24,7 @@ type SessionCompactedMsg struct {
 
 // CompactSession invokes one out-of-band compaction pass.
 func (c *Client) CompactSession(ctx context.Context, sessionID string) (bool, error) {
-	resp, err := c.svc.CompactSession(ctx, &mecatlv1.CompactSessionRequest{SessionId: sessionID})
+	resp, err := c.svc.CompactSession(withSessionAffinity(ctx, sessionID), &mecatlv1.CompactSessionRequest{SessionId: sessionID})
 	if err != nil {
 		return false, fmt.Errorf("compact session: %w", err)
 	}

@@ -2994,7 +2994,7 @@ func (m Model) startFailedStepRetry() (Model, tea.Cmd) {
 // exactly one Prompt or RetryStart before any control frame.
 func (m Model) openRun(retry bool, firstFrame func(*client.Stream) error) (Model, tea.Cmd) {
 	runCtx, cancel := context.WithCancel(m.deps.Ctx)
-	stream, err := m.deps.Conv.OpenConverse(runCtx)
+	stream, err := m.deps.Conv.OpenConverseForSession(runCtx, m.sessionID)
 	if err != nil {
 		return m.handleOpenError(err, cancel, retry)
 	}

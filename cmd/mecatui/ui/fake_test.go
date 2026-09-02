@@ -464,7 +464,7 @@ func (c *fakeConv) ops() []string {
 	return append([]string(nil), c.operations...)
 }
 
-func (c *fakeConv) OpenConverse(ctx context.Context) (*client.Stream, error) {
+func (c *fakeConv) OpenConverseForSession(ctx context.Context, _ string) (*client.Stream, error) {
 	// Observe the per-run context: when it is cancelled (the double-ctrl+c quit calls
 	// cancelRun, or endRun cancels), close runCancelled once. This is how the program
 	// test proves cancelRun fired without inspecting unexported model fields.

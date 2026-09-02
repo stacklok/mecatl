@@ -91,7 +91,7 @@ type ReflectionMsg struct {
 }
 
 func (c *Client) ReflectSession(ctx context.Context, sessionID string) (ReflectionReceipt, error) {
-	resp, err := c.svc.ReflectSession(ctx, &mecatlv1.ReflectSessionRequest{SessionId: sessionID})
+	resp, err := c.svc.ReflectSession(withSessionAffinity(ctx, sessionID), &mecatlv1.ReflectSessionRequest{SessionId: sessionID})
 	if err != nil {
 		return ReflectionReceipt{}, err
 	}

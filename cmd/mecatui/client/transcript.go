@@ -38,7 +38,7 @@ type ResumeSelection struct {
 
 // GetSessionTranscript fetches the authoritative snapshot-derived transcript.
 func (c *Client) GetSessionTranscript(ctx context.Context, id string) (SessionTranscript, error) {
-	resp, err := c.svc.GetSessionTranscript(ctx, &mecatlv1.GetSessionTranscriptRequest{SessionId: id})
+	resp, err := c.svc.GetSessionTranscript(withSessionAffinity(ctx, id), &mecatlv1.GetSessionTranscriptRequest{SessionId: id})
 	if err != nil {
 		return SessionTranscript{}, fmt.Errorf("get session transcript: %w", err)
 	}

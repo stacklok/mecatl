@@ -60,7 +60,7 @@ func snapshotFrom(s *mecatlv1.Session) SessionSnapshot {
 // returns it. A nil Session/ResolvedModel (older server) yields zero values (see
 // snapshotFrom / resolvedModelFrom).
 func (c *Client) GetSession(ctx context.Context, id string) (SessionSnapshot, error) {
-	resp, err := c.svc.GetSession(ctx, &mecatlv1.GetSessionRequest{SessionId: id})
+	resp, err := c.svc.GetSession(withSessionAffinity(ctx, id), &mecatlv1.GetSessionRequest{SessionId: id})
 	if err != nil {
 		return SessionSnapshot{}, fmt.Errorf("get session: %w", err)
 	}
@@ -71,7 +71,7 @@ func (c *Client) GetSession(ctx context.Context, id string) (SessionSnapshot, er
 // the updated authoritative mode. Mid-turn changes are rejected by the server;
 // callers that want next-prompt semantics should defer and retry once idle.
 func (c *Client) SetMode(ctx context.Context, id, mode string) (string, error) {
-	resp, err := c.svc.SetMode(ctx, &mecatlv1.SetModeRequest{SessionId: id, Mode: ModeFromString(mode)})
+	resp, err := c.svc.SetMode(withSessionAffinity(ctx, id), &mecatlv1.SetModeRequest{SessionId: id, Mode: ModeFromString(mode)})
 	if err != nil {
 		return "", fmt.Errorf("set mode: %w", err)
 	}
