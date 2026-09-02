@@ -12,6 +12,7 @@ import (
 	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/encoding/protowire"
 
@@ -33,6 +34,26 @@ type HarnessServer struct {
 // NewHarnessServer constructs a HarnessServer over svc.
 func NewHarnessServer(svc *Service) *HarnessServer {
 	return &HarnessServer{svc: svc}
+}
+
+const invalidSessionAffinityMessage = "invalid session affinity metadata"
+
+// validateGRPCSessionAffinity validates the optional routing hint without
+// granting it authority. An empty authoritativeID validates metadata shape only,
+// which lets Converse reject ambiguous metadata before its first Recv.
+func validateGRPCSessionAffinity(ctx context.Context, authoritativeID string) error {
+	md, ok := metadata.FromIncomingContext(ctx)
+	if !ok {
+		return nil
+	}
+	values := md.Get(port.SessionIDHeaderName)
+	if len(values) == 0 {
+		return nil
+	}
+	if len(values) != 1 || !port.ValidSessionIDHeaderValue(values[0]) || (authoritativeID != "" && values[0] != authoritativeID) {
+		return status.Error(codes.InvalidArgument, invalidSessionAffinityMessage)
+	}
+	return nil
 }
 
 // compile-time assertion that HarnessServer satisfies the generated interface.
@@ -151,6 +172,9 @@ func (h *HarnessServer) GetServerInfo(_ context.Context, req *mecatlv1.GetServer
 
 // GetSession returns a snapshot of the requested session.
 func (h *HarnessServer) GetSession(ctx context.Context, req *mecatlv1.GetSessionRequest) (*mecatlv1.GetSessionResponse, error) {
+	if err := validateGRPCSessionAffinity(ctx, req.GetSessionId()); err != nil {
+		return nil, err
+	}
 	if req.GetSessionId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "session_id is required")
 	}
@@ -170,6 +194,9 @@ func (h *HarnessServer) GetSession(ctx context.Context, req *mecatlv1.GetSession
 
 // GetSessionTranscript returns the owned session's snapshot-derived transcript.
 func (h *HarnessServer) GetSessionTranscript(ctx context.Context, req *mecatlv1.GetSessionTranscriptRequest) (*mecatlv1.GetSessionTranscriptResponse, error) {
+	if err := validateGRPCSessionAffinity(ctx, req.GetSessionId()); err != nil {
+		return nil, err
+	}
 	if req.GetSessionId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "session_id is required")
 	}
@@ -182,6 +209,9 @@ func (h *HarnessServer) GetSessionTranscript(ctx context.Context, req *mecatlv1.
 
 // SetMode changes the permission posture of the requested session.
 func (h *HarnessServer) SetMode(ctx context.Context, req *mecatlv1.SetModeRequest) (*mecatlv1.SetModeResponse, error) {
+	if err := validateGRPCSessionAffinity(ctx, req.GetSessionId()); err != nil {
+		return nil, err
+	}
 	if req.GetSessionId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "session_id is required")
 	}
@@ -197,6 +227,9 @@ func (h *HarnessServer) SetMode(ctx context.Context, req *mecatlv1.SetModeReques
 // (idempotent). It calls Service.EndSession, NOT the void Service.CloseSession, so
 // an unknown id surfaces as NotFound rather than a silent success.
 func (h *HarnessServer) CloseSession(ctx context.Context, req *mecatlv1.CloseSessionRequest) (*mecatlv1.CloseSessionResponse, error) {
+	if err := validateGRPCSessionAffinity(ctx, req.GetSessionId()); err != nil {
+		return nil, err
+	}
 	if req.GetSessionId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "session_id is required")
 	}
@@ -208,6 +241,9 @@ func (h *HarnessServer) CloseSession(ctx context.Context, req *mecatlv1.CloseSes
 
 // RenameSession explicitly replaces an idle main session's persisted title.
 func (h *HarnessServer) RenameSession(ctx context.Context, req *mecatlv1.RenameSessionRequest) (*mecatlv1.RenameSessionResponse, error) {
+	if err := validateGRPCSessionAffinity(ctx, req.GetSessionId()); err != nil {
+		return nil, err
+	}
 	if req.GetSessionId() == "" || strings.TrimSpace(req.GetTitle()) == "" {
 		return nil, status.Error(codes.InvalidArgument, "session_id and non-blank title are required")
 	}
@@ -220,6 +256,9 @@ func (h *HarnessServer) RenameSession(ctx context.Context, req *mecatlv1.RenameS
 
 // DeleteSession physically removes an idle main session and store-managed sidecars.
 func (h *HarnessServer) DeleteSession(ctx context.Context, req *mecatlv1.DeleteSessionRequest) (*mecatlv1.DeleteSessionResponse, error) {
+	if err := validateGRPCSessionAffinity(ctx, req.GetSessionId()); err != nil {
+		return nil, err
+	}
 	if req.GetSessionId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "session_id is required")
 	}
@@ -231,6 +270,9 @@ func (h *HarnessServer) DeleteSession(ctx context.Context, req *mecatlv1.DeleteS
 
 // CompactSession applies one out-of-band compaction pass to an owned session.
 func (h *HarnessServer) CompactSession(ctx context.Context, req *mecatlv1.CompactSessionRequest) (*mecatlv1.CompactSessionResponse, error) {
+	if err := validateGRPCSessionAffinity(ctx, req.GetSessionId()); err != nil {
+		return nil, err
+	}
 	if req.GetSessionId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "session_id is required")
 	}
@@ -243,6 +285,9 @@ func (h *HarnessServer) CompactSession(ctx context.Context, req *mecatlv1.Compac
 
 // ClearSession creates a distinct empty-history successor.
 func (h *HarnessServer) ClearSession(ctx context.Context, req *mecatlv1.ClearSessionRequest) (*mecatlv1.ClearSessionResponse, error) {
+	if err := validateGRPCSessionAffinity(ctx, req.GetSourceSessionId()); err != nil {
+		return nil, err
+	}
 	if req.GetSourceSessionId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "source_session_id is required")
 	}
@@ -259,6 +304,9 @@ func (h *HarnessServer) ClearSession(ctx context.Context, req *mecatlv1.ClearSes
 
 // ForkSession creates a history-carrying successor.
 func (h *HarnessServer) ForkSession(ctx context.Context, req *mecatlv1.ForkSessionRequest) (*mecatlv1.ForkSessionResponse, error) {
+	if err := validateGRPCSessionAffinity(ctx, req.GetSourceSessionId()); err != nil {
+		return nil, err
+	}
 	if req.GetSourceSessionId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "source_session_id is required")
 	}
@@ -276,6 +324,48 @@ func (h *HarnessServer) ForkSession(ctx context.Context, req *mecatlv1.ForkSessi
 	return &mecatlv1.ForkSessionResponse{SessionId: string(id), Placement: placementMetadataToProto(created.Placement)}, nil
 }
 
+func (h *HarnessServer) startConverse(ctx context.Context, first *mecatlv1.ConverseRequest) (session.SessionID, *agent.Run, bool, error) {
+	switch {
+	case first.GetPrompt() != nil:
+		prompt := first.GetPrompt()
+		if prompt.GetSessionId() == "" {
+			return "", nil, false, status.Error(codes.InvalidArgument, "converse: prompt session_id is required")
+		}
+		if prompt.GetText() == "" && len(prompt.GetParts()) == 0 {
+			return "", nil, false, status.Error(codes.InvalidArgument, "converse: prompt text or parts is required")
+		}
+		parts, err := contentFromProto(prompt.GetParts())
+		if err != nil {
+			return "", nil, false, status.Error(codes.InvalidArgument, err.Error())
+		}
+		id := session.SessionID(prompt.GetSessionId())
+		if err := validateGRPCSessionAffinity(ctx, string(id)); err != nil {
+			return "", nil, false, err
+		}
+		run, err := h.svc.StartRunContent(ctx, id, prompt.GetText(), parts)
+		if err != nil {
+			return "", nil, false, toStatus(err)
+		}
+		return id, run, false, nil
+	case first.GetRetry() != nil:
+		retry := first.GetRetry()
+		if retry.GetSessionId() == "" {
+			return "", nil, false, status.Error(codes.InvalidArgument, "converse: retry session_id is required")
+		}
+		id := session.SessionID(retry.GetSessionId())
+		if err := validateGRPCSessionAffinity(ctx, string(id)); err != nil {
+			return "", nil, false, err
+		}
+		run, err := h.svc.RetryFailedRun(ctx, id)
+		if err != nil {
+			return "", nil, false, toStatus(err)
+		}
+		return id, run, true, nil
+	default:
+		return "", nil, false, status.Error(codes.InvalidArgument, "converse: first frame must be a prompt or retry")
+	}
+}
+
 // Converse drives one run over a bidi stream. The first frame MUST be a Prompt
 // or RetryStart;
 // the server then relays the run's Events while concurrently reading
@@ -283,6 +373,9 @@ func (h *HarnessServer) ForkSession(ctx context.Context, req *mecatlv1.ForkSessi
 // terminal result was delivered) or the stream context is cancelled.
 func (h *HarnessServer) Converse(stream mecatlv1.HarnessService_ConverseServer) error {
 	ctx := stream.Context()
+	if err := validateGRPCSessionAffinity(ctx, ""); err != nil {
+		return err
+	}
 
 	first, err := stream.Recv()
 	if err != nil {
@@ -291,39 +384,9 @@ func (h *HarnessServer) Converse(stream mecatlv1.HarnessService_ConverseServer) 
 		}
 		return err
 	}
-	var (
-		id       session.SessionID
-		run      *agent.Run
-		retrying bool
-	)
-	switch {
-	case first.GetPrompt() != nil:
-		prompt := first.GetPrompt()
-		if prompt.GetSessionId() == "" {
-			return status.Error(codes.InvalidArgument, "converse: prompt session_id is required")
-		}
-		if prompt.GetText() == "" && len(prompt.GetParts()) == 0 {
-			return status.Error(codes.InvalidArgument, "converse: prompt text or parts is required")
-		}
-		parts, perr := contentFromProto(prompt.GetParts())
-		if perr != nil {
-			return status.Error(codes.InvalidArgument, perr.Error())
-		}
-		id = session.SessionID(prompt.GetSessionId())
-		run, err = h.svc.StartRunContent(ctx, id, prompt.GetText(), parts)
-	case first.GetRetry() != nil:
-		retry := first.GetRetry()
-		if retry.GetSessionId() == "" {
-			return status.Error(codes.InvalidArgument, "converse: retry session_id is required")
-		}
-		id = session.SessionID(retry.GetSessionId())
-		retrying = true
-		run, err = h.svc.RetryFailedRun(ctx, id)
-	default:
-		return status.Error(codes.InvalidArgument, "converse: first frame must be a prompt or retry")
-	}
+	id, run, retrying, err := h.startConverse(ctx, first)
 	if err != nil {
-		return toStatus(err)
+		return err
 	}
 	defer h.svc.deregister(id, run)
 
@@ -1083,6 +1146,9 @@ func (h *HarnessServer) GetUserModel(ctx context.Context, req *mecatlv1.GetUserM
 
 // ReflectSession submits one caller-owned completed session to the bounded coordinator.
 func (h *HarnessServer) ReflectSession(ctx context.Context, req *mecatlv1.ReflectSessionRequest) (*mecatlv1.ReflectSessionResponse, error) {
+	if err := validateGRPCSessionAffinity(ctx, req.GetSessionId()); err != nil {
+		return nil, err
+	}
 	receipt, err := h.svc.ReflectSession(ctx, session.SessionID(req.GetSessionId()))
 	if err != nil {
 		return nil, toStatus(err)
@@ -1228,6 +1294,9 @@ func (h *HarnessServer) ListWorktrees(ctx context.Context, req *mecatlv1.ListWor
 // StreamSessionEvents replays a session's durable event log as a server stream
 // of Event envelopes (issue #245 Phase 1; cloud-native Phase 3a read-back).
 func (h *HarnessServer) StreamSessionEvents(req *mecatlv1.StreamSessionEventsRequest, stream grpc.ServerStreamingServer[mecatlv1.Event]) error {
+	if err := validateGRPCSessionAffinity(stream.Context(), req.GetSessionId()); err != nil {
+		return err
+	}
 	if req.GetSessionId() == "" {
 		return status.Error(codes.InvalidArgument, ErrInvalidArgument.Error())
 	}
@@ -1281,6 +1350,9 @@ func (h *HarnessServer) StreamSessionEvents(req *mecatlv1.StreamSessionEventsReq
 // durable log records the tail regardless (it is appended by the relay/loop,
 // independent of this stream).
 func (h *HarnessServer) StreamSessionLive(req *mecatlv1.StreamSessionLiveRequest, stream grpc.ServerStreamingServer[mecatlv1.Event]) error {
+	if err := validateGRPCSessionAffinity(stream.Context(), req.GetSessionId()); err != nil {
+		return err
+	}
 	if req.GetSessionId() == "" {
 		return status.Error(codes.InvalidArgument, ErrInvalidArgument.Error())
 	}
@@ -1338,6 +1410,9 @@ func (h *HarnessServer) StreamSessionLive(req *mecatlv1.StreamSessionLiveRequest
 // There is no drain-to-discard to do — unlike a live relay, this stream pulls
 // from durable storage and has no run whose emits could wedge behind it.
 func (h *HarnessServer) WatchSessionEvents(req *mecatlv1.WatchSessionEventsRequest, stream grpc.ServerStreamingServer[mecatlv1.WatchSessionEventsResponse]) error {
+	if err := validateGRPCSessionAffinity(stream.Context(), req.GetSessionId()); err != nil {
+		return err
+	}
 	if req.GetSessionId() == "" {
 		return status.Error(codes.InvalidArgument, ErrInvalidArgument.Error())
 	}

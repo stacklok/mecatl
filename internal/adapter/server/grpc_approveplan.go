@@ -23,6 +23,9 @@ import (
 // verdict — streams the resumed run's AND the continuation run's events on one
 // response stream. See Service.ApprovePlan for the contract.
 func (h *HarnessServer) ApprovePlan(req *mecatlv1.ApprovePlanRequest, stream mecatlv1.HarnessService_ApprovePlanServer) error {
+	if err := validateGRPCSessionAffinity(stream.Context(), req.GetSessionId()); err != nil {
+		return err
+	}
 	if req.GetSessionId() == "" {
 		return status.Error(codes.InvalidArgument, "session_id is required")
 	}
