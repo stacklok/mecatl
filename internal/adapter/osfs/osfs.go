@@ -1236,8 +1236,10 @@ func NewCommandRunnerShell(dir, shell string, opts ...CommandRunnerOption) (tool
 // OPTIONAL streaming capability (a background command's tail-ring capture runs
 // through it).
 var (
-	_ tool.CommandRunner   = (*CommandRunner)(nil)
-	_ tool.CommandStreamer = (*CommandRunner)(nil)
+	_ tool.CommandRunner              = (*CommandRunner)(nil)
+	_ tool.CommandStreamer            = (*CommandRunner)(nil)
+	_ tool.CommandEnvironmentRunner   = (*CommandRunner)(nil)
+	_ tool.CommandEnvironmentStreamer = (*CommandRunner)(nil)
 )
 
 // Run runs command via /bin/sh -c, capturing (and truncating) stdout/stderr and
@@ -1251,11 +1253,21 @@ var (
 // portable backstop. A non-zero exit is reported via the returned
 // CommandResult.ExitCode, not as an error.
 func (r *CommandRunner) Run(ctx context.Context, command string) (tool.CommandResult, error) {
+	return r.runResult(ctx, command, tool.CommandEnvironmentOverlay{})
+}
+
+// RunWithEnvironment runs command with overlay applied only to this invocation.
+// It preserves the runner's bound root and does not retain the overlay.
+func (r *CommandRunner) RunWithEnvironment(ctx context.Context, command string, overlay tool.CommandEnvironmentOverlay) (tool.CommandResult, error) {
+	return r.runResult(ctx, command, overlay)
+}
+
+func (r *CommandRunner) runResult(ctx context.Context, command string, overlay tool.CommandEnvironmentOverlay) (tool.CommandResult, error) {
 	var stdout, stderr cappedBuffer
 	stdout.cap = maxCommandOutput
 	stderr.cap = maxCommandOutput
 
-	exitCode, err := r.run(ctx, command, &stdout, &stderr)
+	exitCode, err := r.run(ctx, command, overlay, &stdout, &stderr)
 	res := tool.CommandResult{
 		Stdout:   stdout.String(),
 		Stderr:   stderr.String(),
@@ -1273,7 +1285,14 @@ func (r *CommandRunner) Run(ctx context.Context, command string) (tool.CommandRe
 // retain the stream itself. The returned exitCode replaces CommandResult for
 // this path: a non-zero exit is reported there, not as an error.
 func (r *CommandRunner) RunStreaming(ctx context.Context, command string, out io.Writer) (int, error) {
-	return r.run(ctx, command, out, out)
+	return r.run(ctx, command, tool.CommandEnvironmentOverlay{}, out, out)
+}
+
+// RunStreamingWithEnvironment streams command output with overlay applied only
+// to this invocation. It preserves the runner's bound root and does not retain
+// the overlay.
+func (r *CommandRunner) RunStreamingWithEnvironment(ctx context.Context, command string, overlay tool.CommandEnvironmentOverlay, out io.Writer) (int, error) {
+	return r.run(ctx, command, overlay, out, out)
 }
 
 // run is the ONE spawn/wait tail Run and RunStreaming share, so the two cannot
@@ -1285,7 +1304,7 @@ func (r *CommandRunner) RunStreaming(ctx context.Context, command string, out io
 // whatever output the writers captured so far standing; and a WaitDelay expiry
 // on a successfully-exited shell is a SUCCESS carrying the partial output (see
 // the exec.ErrWaitDelay branch below), not a harness failure.
-func (r *CommandRunner) run(ctx context.Context, command string, stdout, stderr io.Writer) (exitCode int, err error) {
+func (r *CommandRunner) run(ctx context.Context, command string, overlay tool.CommandEnvironmentOverlay, stdout, stderr io.Writer) (exitCode int, err error) {
 	if _, ok := ctx.Deadline(); !ok {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, defaultCommandTimeout)
@@ -1306,12 +1325,16 @@ func (r *CommandRunner) run(ctx context.Context, command string, stdout, stderr 
 	// backgrounded grandchild would otherwise be orphaned (and keep holding the
 	// pipes past the WaitDelay until it exits on its own).
 	procgroup.Configure(cmd)
-	// A hardened (team-member) runner carries a COMPLETE, pre-scrubbed environment
-	// (computed in composition via gitenv.Scrub: inherited GIT_* danger removed,
-	// neutralising config appended); use it verbatim so removal of an inherited
-	// variable actually takes effect. An unhardened runner has r.env == nil, so
-	// cmd.Env stays nil and exec inherits os.Environ() unchanged, as before.
-	if r.env != nil {
+	// A hardened runner carries a COMPLETE, pre-scrubbed environment. A per-call
+	// overlay is merged over that same base only for this command, so it cannot
+	// change the runner's namespace or affect later invocations.
+	if overlay != (tool.CommandEnvironmentOverlay{}) {
+		env, envErr := overlayEnvironment(r.env, overlay)
+		if envErr != nil {
+			return 0, envErr
+		}
+		cmd.Env = env
+	} else if r.env != nil {
 		cmd.Env = r.env
 	}
 
@@ -1338,6 +1361,45 @@ func (r *CommandRunner) run(ctx context.Context, command string, stdout, stderr 
 		return 0, runErr
 	}
 	return 0, nil
+}
+
+// overlayEnvironment merges a trusted one-call temporary-storage overlay over
+// base without retaining either slice. A nil base means the process environment,
+// matching exec.Cmd's ordinary inheritance semantics. Replacing an existing key
+// avoids duplicate entries whose resolution varies by platform.
+func overlayEnvironment(base []string, overlay tool.CommandEnvironmentOverlay) ([]string, error) {
+	overlaid := map[string]string{}
+	if overlay.TempDir != "" {
+		overlaid["TMPDIR"] = overlay.TempDir
+	}
+	if overlay.GoTempDir != "" {
+		overlaid["GOTMPDIR"] = overlay.GoTempDir
+	}
+	if overlay.TestHomeMarker != "" {
+		overlaid["MECATL_TEST_TEMP_LEASE"] = overlay.TestHomeMarker
+	}
+	keys := make([]string, 0, len(overlaid))
+	for key, value := range overlaid {
+		if strings.ContainsRune(value, '\x00') {
+			return nil, fmt.Errorf("osfs: invalid command environment value for %q", key)
+		}
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	if base == nil {
+		base = os.Environ()
+	}
+	merged := make([]string, 0, len(base)+len(keys))
+	for _, entry := range base {
+		key, _, _ := strings.Cut(entry, "=")
+		if _, replaced := overlaid[key]; !replaced {
+			merged = append(merged, entry)
+		}
+	}
+	for _, key := range keys {
+		merged = append(merged, key+"="+overlaid[key])
+	}
+	return merged, nil
 }
 
 // cappedBuffer is a bytes.Buffer-like writer that stops accepting bytes once cap

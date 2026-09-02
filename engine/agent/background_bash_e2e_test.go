@@ -65,6 +65,10 @@ func (f *fakeBashStreamer) Run(_ context.Context, command string) (tool.CommandR
 	return tool.CommandResult{Stdout: "fg: " + command + "\n"}, nil
 }
 
+func (f *fakeBashStreamer) RunWithEnvironment(ctx context.Context, command string, _ tool.CommandEnvironmentOverlay) (tool.CommandResult, error) {
+	return f.Run(ctx, command)
+}
+
 // RunStreaming parks the invocation until released or cancelled. The returned
 // done channel closes when the invocation's terminal is certain (release → the
 // drive stores the result right after; ctx-cancel → the drive records the
@@ -97,6 +101,10 @@ func (f *fakeBashStreamer) RunStreaming(ctx context.Context, command string, out
 		close(h.done)
 		return 0, ctx.Err()
 	}
+}
+
+func (f *fakeBashStreamer) RunStreamingWithEnvironment(ctx context.Context, command string, _ tool.CommandEnvironmentOverlay, out io.Writer) (int, error) {
+	return f.RunStreaming(ctx, command, out)
 }
 
 // releaseOnce lets the (first) parked streaming invocation finish, exactly once.

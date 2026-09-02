@@ -1,5 +1,7 @@
     ifacemethod func (AgentDefSource).ListAgentDefs(ctx context.Context) ([]AgentDef, error)
     ifacemethod func (AuthorityResourceResolver).AuthorityResourcePath(path string) (target string, workspace string, err error)
+    ifacemethod func (CommandEnvironmentRunner).RunWithEnvironment(ctx context.Context, command string, overlay CommandEnvironmentOverlay) (CommandResult, error)
+    ifacemethod func (CommandEnvironmentStreamer).RunStreamingWithEnvironment(ctx context.Context, command string, overlay CommandEnvironmentOverlay, out io.Writer) (exitCode int, err error)
     ifacemethod func (CommandRunner).Run(ctx context.Context, command string) (CommandResult, error)
     ifacemethod func (CommandStreamer).RunStreaming(ctx context.Context, command string, out io.Writer) (exitCode int, err error)
     ifacemethod func (Disclosable).Advertised() ToolSpec
@@ -106,6 +108,9 @@ type AgentMCPServer struct{Name string; URL string; Headers map[string]string}
 type AgentOrigin string
 type AuthorityResourceResolver interface{AuthorityResourcePath(path string) (target string, workspace string, err error)}
 type Catalog struct{}
+type CommandEnvironmentOverlay struct{TempDir string; GoTempDir string; TestHomeMarker string}
+type CommandEnvironmentRunner interface{RunWithEnvironment(ctx context.Context, command string, overlay CommandEnvironmentOverlay) (CommandResult, error); CommandRunner}
+type CommandEnvironmentStreamer interface{RunStreamingWithEnvironment(ctx context.Context, command string, overlay CommandEnvironmentOverlay, out io.Writer) (exitCode int, err error); CommandStreamer}
 type CommandResult struct{Stdout string; Stderr string; ExitCode int}
 type CommandRunner interface{Run(ctx context.Context, command string) (CommandResult, error)}
 type CommandStreamer interface{RunStreaming(ctx context.Context, command string, out io.Writer) (exitCode int, err error)}

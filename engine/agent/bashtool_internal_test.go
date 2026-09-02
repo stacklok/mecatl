@@ -31,6 +31,10 @@ func (f *fakeBashRunner) Run(_ context.Context, command string) (tool.CommandRes
 	return f.res, f.err
 }
 
+func (f *fakeBashRunner) RunWithEnvironment(ctx context.Context, command string, _ tool.CommandEnvironmentOverlay) (tool.CommandResult, error) {
+	return f.Run(ctx, command)
+}
+
 // fakeStreamingRunner is a scriptable tool.CommandRunner + tool.CommandStreamer
 // for the BACKGROUND path. RunStreaming blocks in run (nil ⇒ return
 // immediately) so a test controls when the job lands its terminal.
@@ -78,6 +82,10 @@ func (f *fakeStreamingRunner) RunStreaming(ctx context.Context, _ string, out io
 		_, _ = io.WriteString(out, f.out)
 	}
 	return f.exitCode, f.err
+}
+
+func (f *fakeStreamingRunner) RunStreamingWithEnvironment(ctx context.Context, command string, _ tool.CommandEnvironmentOverlay, out io.Writer) (int, error) {
+	return f.RunStreaming(ctx, command, out)
 }
 
 // bashWS is the workspace every fake runs against (only Root() is read).

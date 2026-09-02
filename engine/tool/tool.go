@@ -141,6 +141,38 @@ type CommandRunner interface {
 	Run(ctx context.Context, command string) (CommandResult, error)
 }
 
+// CommandEnvironmentOverlay is a trusted, per-invocation set of
+// temporary-storage values. It is overlaid onto the runner's complete base
+// environment for one command only; it never changes the runner's bound
+// namespace or later calls.
+//
+// TempDir, GoTempDir, and TestHomeMarker respectively set TMPDIR, GOTMPDIR,
+// and MECATL_TEST_TEMP_LEASE when non-empty. The deliberately narrow shape
+// prevents this capability from restoring or overriding scrubbed credentials.
+// Tool arguments must never supply it.
+type CommandEnvironmentOverlay struct {
+	TempDir        string
+	GoTempDir      string
+	TestHomeMarker string
+}
+
+// CommandEnvironmentRunner is the optional CommandRunner capability for a
+// one-invocation environment overlay. A caller requiring an overlay must fail
+// honestly when its bound runner does not implement this interface; it must not
+// interpolate values into shell text or fall back to Run.
+type CommandEnvironmentRunner interface {
+	CommandRunner
+	RunWithEnvironment(ctx context.Context, command string, overlay CommandEnvironmentOverlay) (CommandResult, error)
+}
+
+// CommandEnvironmentStreamer is the optional streaming counterpart to
+// CommandEnvironmentRunner. It preserves CommandStreamer's bound namespace and
+// output semantics while applying its overlay to one invocation only.
+type CommandEnvironmentStreamer interface {
+	CommandStreamer
+	RunStreamingWithEnvironment(ctx context.Context, command string, overlay CommandEnvironmentOverlay, out io.Writer) (exitCode int, err error)
+}
+
 // CommandStreamer is an OPTIONAL CommandRunner capability for callers that need
 // the command's output streamed to a caller-owned sink instead of captured into
 // the runner's internal (head-capped, first-bytes-win) buffers — e.g. a
