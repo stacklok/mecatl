@@ -278,6 +278,8 @@ slow reasoning turn. Once the first chunk arrives, the timer is stopped and only
 | `--subagent-model` | `""` | Global default model for child engines (Subagent, Parallel branches, team members) that do not pin their own |
 | `--no-prompt-cache` | `false` | Disable provider-side prompt caching (on by default — see [ADR 0100](https://github.com/stacklok/mecatl/blob/main/docs/adr/0100-provider-prompt-caching.md)) |
 | `--anthropic-cache-ttl` | `""` (API default, `5m`) | TTL on every Anthropic ephemeral cache breakpoint: `5m` or `1h` |
+| `--mock` | `false` | Offline canned provider — one text turn, no credentials; smoke tests only |
+| `--mock-script` | `""` | Path to a strict JSON mock script; implies the offline provider and replaces its canned turn with ordered text/tool-call turns |
 
 Provider credentials are read from environment variables — `OPENAI_API_KEY`,
 `OPENROUTER_API_KEY`, `ANTHROPIC_API_KEY`, `OPENCODE_API_KEY` — never flag
@@ -297,6 +299,17 @@ keep the file owner-only, select `--default-provider openai-codex` (or an
 explicit session selector), and restart after replacing the token. `0600` does
 not stop same-UID Bash from reading a known plaintext file. See the
 [exact schema, lifecycle, and failure guidance](https://github.com/stacklok/mecatl/blob/main/docs/usage/mecated.md#openai-codex-subscription-manual-token-experimental).
+
+#### Offline mock providers (no credentials)
+
+`--mock` starts the daemon on a canned offline provider that answers with a
+single text turn — enough for a smoke test, never a tool call. `--mock-script
+PATH` reads one strict JSON document at startup (failing before the listener
+binds if it is missing or malformed) and replaces that canned turn with ordered
+text and tool-call turns, so an offline run can exercise permission asks and, via
+a turn's `delay_ms`, cancellation. Both imply the offline provider, so neither
+needs a provider credential. See the
+[scripted-mock schema and lifecycle](https://github.com/stacklok/mecatl/blob/main/docs/usage/mecated.md#scripted-offline-mock).
 
 #### The ToolHive LLM gateway (no API key needed)
 

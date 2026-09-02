@@ -105,12 +105,12 @@ func TestSDKServerEnablers_Scenario3_NearMissOriginsRejected(t *testing.T) {
 	}
 }
 
-// TestADR_0244_NoWildcardWithCredentials is AC3.3.
+// TestADR_0248_NoWildcardWithCredentials is AC3.3.
 //
 // Wildcard-with-credentials is forbidden by the CORS specification and is the
 // single most dangerous misconfiguration available here. It must be impossible
 // to reach by configuration, not merely absent by default.
-func TestADR_0244_NoWildcardWithCredentials(t *testing.T) {
+func TestADR_0248_NoWildcardWithCredentials(t *testing.T) {
 	for _, bad := range []string{"*", "null", "NULL", "https://*.example.com"} {
 		if _, err := server.NewCORSPolicy([]string{bad}); err == nil {
 			t.Errorf("NewCORSPolicy(%q) succeeded; it must be refused at startup", bad)
@@ -180,7 +180,7 @@ func TestSDKServerEnablers_Scenario3_PreflightDoesNotInvokeHandler(t *testing.T)
 	}
 }
 
-// TestADR_0244_PreflightEchoesRequestedHeaders covers the header-echo path,
+// TestADR_0248_PreflightEchoesRequestedHeaders covers the header-echo path,
 // which the review found had no test at all — the near-miss table asserts
 // methods, origin, and status, but nothing ever sent
 // Access-Control-Request-Headers to see what came back.
@@ -191,7 +191,7 @@ func TestSDKServerEnablers_Scenario3_PreflightDoesNotInvokeHandler(t *testing.T)
 // would tell an attacker's page which headers it may send. Both failure modes
 // are invisible without an assertion here, because a browser enforces them and
 // a Go test client does not.
-func TestADR_0244_PreflightEchoesRequestedHeaders(t *testing.T) {
+func TestADR_0248_PreflightEchoesRequestedHeaders(t *testing.T) {
 	policy, err := server.NewCORSPolicy([]string{testOrigin})
 	if err != nil {
 		t.Fatalf("NewCORSPolicy: %v", err)

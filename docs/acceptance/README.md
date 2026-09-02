@@ -122,7 +122,7 @@ when the code that satisfies the plan has landed.
   protobuf-es generation for `mecatl.v1` with a freshness gate, Connect-ES + HTTP/SSE
   raw transports behind an injected-Transport seam, typed errors and the compatibility
   floor, `Client`/`Session`/`Run` choreography with permissions and strict steer,
-  multimodal helpers, and the offline e2e against `mecated --mock`. Status: draft.
+  multimodal helpers, and the offline e2e against `mecated --mock`. Status: landed.
 
 ## See also
 

@@ -44,14 +44,14 @@ func TestSDKServerEnablers_Scenario5_MatchingExpectedRunIDSucceeds(t *testing.T)
 	drainRun(t, run)
 }
 
-// TestADR_0245_StaleControlCannotTouchNewerRun is AC5.2, and the reason this
+// TestADR_0249_StaleControlCannotTouchNewerRun is AC5.2, and the reason this
 // whole scenario exists.
 //
 // Controls are addressed at a SESSION, so before run ids a control still in
 // flight when a run ended would land on whatever started next — cancelling work
 // the user never asked to stop. `seq` cannot tell the two runs apart (it
 // restarts each run), so there was no way to express "this one".
-func TestADR_0245_StaleControlCannotTouchNewerRun(t *testing.T) {
+func TestADR_0249_StaleControlCannotTouchNewerRun(t *testing.T) {
 	llm := mockllm.New(mockllm.TextTurn("first"), mockllm.TextTurn("second"))
 	svc := newService(t, llm, allowRules())
 
@@ -116,14 +116,14 @@ func TestSDKServerEnablers_Scenario5_OmittedExpectedRunIDUnchanged(t *testing.T)
 	svc.FinishRun(sess.ID, run)
 }
 
-// TestADR_0245_StrictSteerNeverPromotes is AC5.4.
+// TestADR_0249_StrictSteerNeverPromotes is AC5.4.
 //
 // An unqualified steer that loses the terminal race is PROMOTED into a fresh
 // follow-up run — the operator meant "say this to the agent", and a new run says
 // it. A steer naming a specific run did NOT ask to start a different one, so it
 // is refused instead. This is what lets an SDK offer a steer that never
 // surprises a caller with an extra run.
-func TestADR_0245_StrictSteerNeverPromotes(t *testing.T) {
+func TestADR_0249_StrictSteerNeverPromotes(t *testing.T) {
 	llm := mockllm.New(mockllm.TextTurn("first"), mockllm.TextTurn("promoted"))
 	svc := newService(t, llm, allowRules())
 

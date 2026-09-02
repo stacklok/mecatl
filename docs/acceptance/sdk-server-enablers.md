@@ -48,11 +48,11 @@ The SDK's first call. One authenticated RPC answers "what is this server?" witho
 - AC1.3: `GetCompatibilityInfo` requires authentication — an unauthenticated call is rejected with the same discipline as every other RPC, and is distinguishable from `UNIMPLEMENTED`.
   - verify: `TestSDKServerEnablers_Scenario1_CompatibilityInfoRequiresAuth`
 - AC1.4: `features` contains an identifier for every landed enabler in this stack and none for an unlanded one; the registry is the single source of truth for both transports.
-  - verify: `TestADR_0244_FeatureRegistryIsSingleSource`
+  - verify: `TestADR_0248_FeatureRegistryIsSingleSource`
 - AC1.5: `capabilities` and `features` are independent: a `--no-bash` server reports `capabilities.bash == false` while its `features` set is unchanged.
-  - verify: `TestADR_0244_CapabilitiesAreNotFeatures`
+  - verify: `TestADR_0248_CapabilitiesAreNotFeatures`
 - AC1.6: `deployment` is empty unless `--deployment-id` is set, is length-bounded when set, and is never derived from hostname, pod name, or environment.
-  - verify: `TestADR_0244_DeploymentIdentityIsOperatorSetOnly`
+  - verify: `TestADR_0248_DeploymentIdentityIsOperatorSetOnly`
 - AC1.7: Media capability remains session-authoritative — the `GetCompatibilityInfo` `image`/`audio` hint never overrides the per-session `CreateSessionResponse` echo.
   - verify: `TestInvariant_capability_truth_single_intersection`
 
@@ -71,13 +71,13 @@ One stable machine-readable identity per failure, carried identically on both tr
 - AC2.2: The same domain failure over gRPC carries the identical code string in a status detail alongside its `codes.Code`.
   - verify: `TestSDKServerEnablers_Scenario2_ErrorCodeTransportParity`
 - AC2.3: Every registered code resolves to exactly one HTTP status and one gRPC code; the registry admits no duplicate or unmapped code.
-  - verify: `TestADR_0244_ErrorRegistryIsTotalAndUnambiguous`
+  - verify: `TestADR_0248_ErrorRegistryIsTotalAndUnambiguous`
 - AC2.4: No **harness-authored** half of a problem body carries a secret, a credential, a raw tool argument, or a deny-reason body — the structural no-secret guard walks `code`, `title`, and `type` for every registered code. `detail`/`error` carry the server's own `err.Error()` and are bounded and UTF-8-repaired (AC2.6) but deliberately **not** content-scrubbed: sanitising a free-text error would corrupt the diagnostic without being a real control, so the obligation not to put a secret in an error string stays with the backend that raises it, where the sensitive value is actually known.
-  - verify: `TestADR_0244_ProblemDetailsCarryNoSecrets`
+  - verify: `TestADR_0248_ProblemDetailsCarryNoSecrets`
 - AC2.5: A failure with no registered code degrades to a generic code rather than leaking an unmapped internal error string.
   - verify: `TestSDKServerEnablers_Scenario2_UnregisteredFailureDegrades`
 - AC2.6: Problem bodies are valid UTF-8 for every producer-influenced string, per the existing mapper discipline.
-  - verify: `TestInvariant_tool_result_valid_utf8`
+  - verify: `TestSDKServerEnablers_Scenario2_DetailIsBoundedAndValidUTF8`
 
 ---
 
@@ -94,7 +94,7 @@ The local-development browser path. Production remains a same-origin BFF.
 - AC3.2: A non-allowed origin — including a suffix, prefix, or scheme/port variant of an allowed one — receives no CORS grant.
   - verify: `TestSDKServerEnablers_Scenario3_NearMissOriginsRejected`
 - AC3.3: Credentials are permitted only for an exactly allowed origin; wildcard-with-credentials is never emitted under any configuration.
-  - verify: `TestADR_0244_NoWildcardWithCredentials`
+  - verify: `TestADR_0248_NoWildcardWithCredentials`
 - AC3.4: A preflight `OPTIONS` returns the correct allowed methods and headers for the route and does not invoke the handler.
   - verify: `TestSDKServerEnablers_Scenario3_PreflightDoesNotInvokeHandler`
 - AC3.5: With no `--cors-origins`, behaviour is byte-identical to today — no CORS headers on any response.
@@ -115,17 +115,17 @@ A stable, opaque, host-minted handle for one run, persisted across restart. See 
 - AC4.1: Every event of a run reaching the relay carries the same non-empty `RunID`; two consecutive runs of one session carry different ones.
   - verify: `TestSDKServerEnablers_Scenario4_EveryRunEventCarriesOneID`
 - AC4.2: The run id is supplied to the engine as `RunRequest.RunID`, and the engine derives the ask discriminator from it when `AskIDDiscriminator` is empty — so askIDs minted during the run embed it and are reconstructable across processes, from ONE host-set field.
-  - verify: `TestADR_0245_RunIDIsTheAskDiscriminator`
+  - verify: `TestADR_0249_RunIDIsTheAskDiscriminator`
 - AC4.3: Every event a run emits carries the run id, stamped by the loop at `Run.emit`/`emitOrAbort` beside the existing `Seq` stamp — so no relay, transport, or persistence path can omit it. A run with no supplied id emits an empty one, byte-identical to prior behaviour.
-  - verify: `TestADR_0245_LoopStampsEveryEmittedEvent`
+  - verify: `TestADR_0249_LoopStampsEveryEmittedEvent`
 - AC4.4: A session parked `awaiting` across a process restart resumes as **the same run** — the resume path reuses the persisted id and mints nothing.
-  - verify: `TestADR_0245_AwaitingResumeKeepsRunID`
+  - verify: `TestADR_0249_AwaitingResumeKeepsRunID`
 - AC4.5: `ApprovePlan` reuses the id for the resumed run and mints a distinct one for the continuation run.
   - verify: `TestSDKServerEnablers_Scenario4_PlanResolutionSpansTwoRunIDs`
 - AC4.6: An empty `RunID` at the append chokepoint is legal for exactly the three `schedule.*` types and fails CI for any other type.
-  - verify: `TestADR_0245_RunlessEventSetIsClosed`
+  - verify: `TestADR_0249_RunlessEventSetIsClosed`
 - AC4.7: `eventsource.Fold` ignores `RunID`; a folded session is byte-identical to one folded before this scenario landed.
-  - verify: `TestADR_0245_FoldIgnoresRunID`
+  - verify: `TestADR_0249_FoldIgnoresRunID`
 - AC4.8: A legacy snapshot with no `run_id` key restores with an empty id and is stamped on the next run; no migration sweep runs.
   - verify: `TestSDKServerEnablers_Scenario4_LegacySnapshotRestoresEmpty`
 
@@ -144,11 +144,11 @@ Stale controls fail instead of landing on a newer run. Closes a real current bug
 - AC5.1: A control carrying the active run's id succeeds exactly as before.
   - verify: `TestSDKServerEnablers_Scenario5_MatchingExpectedRunIDSucceeds`
 - AC5.2: A control carrying a stale run id fails with a typed error and leaves the newer run untouched — no verdict applied, no cancellation, no steer enqueued.
-  - verify: `TestADR_0245_StaleControlCannotTouchNewerRun`
+  - verify: `TestADR_0249_StaleControlCannotTouchNewerRun`
 - AC5.3: A control omitting `expected_run_id` behaves exactly as today, so `mecatui` is unaffected.
   - verify: `TestSDKServerEnablers_Scenario5_OmittedExpectedRunIDUnchanged`
 - AC5.4: A steer carrying `expected_run_id` is never promoted into a new run — naming a run is not asking to start a different one. It is refused with the typed stale-control error instead.
-  - verify: `TestADR_0245_StrictSteerNeverPromotes`
+  - verify: `TestADR_0249_StrictSteerNeverPromotes`
 - AC5.5: An UNQUALIFIED steer (no `expected_run_id`) that loses the terminal race still promotes into a follow-up run, exactly as ADR 0232 shipped it — the strictness is opt-in and must not silently start dropping operator input.
   - verify: `TestSDKServerEnablers_Scenario5_PromotionRetainedOnRawAPI`
 

@@ -289,7 +289,7 @@ result stays pull-able.
   child/`sched--` session, drops the delivery with a WARN and never fails the
   fire nor delivers into another fire's chat; the result remains pull-able via
   `ListFires`.
-  - verify: `TestFireDelivery_Scenario4_NonDeliverableOriginDropsWithWarn`
+  - verify: `TestFireDelivery_Scenario4_NonDeliverableChildOriginDropsWithWarn`
 - AC4.5: The pending-delivery queue is durable: a process restart with notes
   still pending drains them on the origin's next run-entry (the
   persist-in-snapshot List 2 decision), it does not lose them.

@@ -7,7 +7,7 @@ import (
 	"github.com/stacklok/mecatl/engine/session"
 )
 
-// TestADR_0245_RunlessEventSetIsClosed is AC4.6.
+// TestADR_0249_RunlessEventSetIsClosed is AC4.6.
 //
 // An empty Event.RunID is a MEANING — "session-scoped, not run-scoped" — and the
 // set of event types allowed to carry one is closed. This test is the gate that
@@ -17,7 +17,7 @@ import (
 // attachment filters to a single run and so will NEVER deliver the new type,
 // while a session activity stream will. That asymmetry is why the two are
 // separate operations, and it is invisible unless someone states it.
-func TestADR_0245_RunlessEventSetIsClosed(t *testing.T) {
+func TestADR_0249_RunlessEventSetIsClosed(t *testing.T) {
 	// Exactly the scheduler lifecycle triple, which composition emits outside any
 	// agent loop. If this fails, either a type was added without review or one was
 	// removed and the map is stale.
@@ -62,9 +62,9 @@ func TestADR_0245_RunlessEventSetIsClosed(t *testing.T) {
 	}
 }
 
-// TestADR_0245_MintedRunIDsAreOpaqueUniqueAndColonFree pins the properties the
+// TestADR_0249_MintedRunIDsAreOpaqueUniqueAndColonFree pins the properties the
 // askID grammar and the CWE-863 replay guard depend on.
-func TestADR_0245_MintedRunIDsAreOpaqueUniqueAndColonFree(t *testing.T) {
+func TestADR_0249_MintedRunIDsAreOpaqueUniqueAndColonFree(t *testing.T) {
 	const n = 1000
 	seen := make(map[string]struct{}, n)
 	for range n {

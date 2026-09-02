@@ -1,10 +1,11 @@
 # TypeScript SDK core (M1) — acceptance plan
 
 **Phase:** capability — `@stacklok/mecatl-sdk` M1: foundation, codegen, and core runs
-**Status:** in-progress, 2026-09-01. Synthesised from the settled #821 design contract plus the transport decision recorded in ADR 0279.
+**Status:** landed, 2026-09-02. Synthesised from the settled #821 design contract plus the transport decision recorded in ADR 0279.
 **Issue:** [stacklok/mecatl#821](https://github.com/stacklok/mecatl/issues/821) (parent: [#761](https://github.com/stacklok/mecatl/issues/761)).
 **ADR:** [ADR-0279](../adr/0279-typescript-sdk-architecture.md) — Connect-ES v2 + protobuf-es v2, the injected-Transport seam, the in-repo pnpm/biome/vitest toolchain, and the in-part supersession of [ADR-0253](../adr/0253-sdk-mocking-testkit.md).
-**Accumulator / stack:** `sdk/10-architecture-adr` is the stack trunk (PR #908). Subsequent layers are `sdk/11`…`sdk/19` via `gh stack` (linear, one PR per scenario — the plan's 4–8 parallelism is serialised because a stack cannot fork).
+**Accumulator / stack:** `sdk/10-architecture-adr` was the stack trunk (PR #908). Subsequent layers were `sdk/11`…`sdk/19` via `gh stack` (linear, one PR per scenario — the plan's 4–8 parallelism was serialised because a stack cannot fork).
+**Landed as:** ten squash-merges to `main` — [#908](https://github.com/stacklok/mecatl/pull/908) (ADR 0279, 2026-09-01), then [#924](https://github.com/stacklok/mecatl/pull/924) (Scenario 1), [#925](https://github.com/stacklok/mecatl/pull/925) (2), [#927](https://github.com/stacklok/mecatl/pull/927) (3), [#929](https://github.com/stacklok/mecatl/pull/929) (4), [#930](https://github.com/stacklok/mecatl/pull/930) (5), [#931](https://github.com/stacklok/mecatl/pull/931) (6), [#932](https://github.com/stacklok/mecatl/pull/932) (7), [#933](https://github.com/stacklok/mecatl/pull/933) (8), and [#934](https://github.com/stacklok/mecatl/pull/934) (9) on 2026-09-02. [#821](https://github.com/stacklok/mecatl/issues/821) stays open for M2–M4.
 
 The smallest set of work that makes `@stacklok/mecatl-sdk` real: a scaffolded,
 CI-gated `sdk/typescript/` tree; committed protobuf-es generation for
@@ -59,10 +60,13 @@ not which packages exist on disk.
   Go. `sdk/typescript/` is a new tree with no such contention; scenarios
   parallelize per the sequencing note instead.
 - **Verify names are scenario-numbered, not ADR-numbered** — the enabler
-  plan's `TestADR_0244_*`/`TestADR_0245_*` names now point at unrelated
-  ADRs after a renumber; this plan uses `TestSDKTypescriptCore_ScenarioN_*`
-  for Go proofs and `path :: "title"` vitest references for TypeScript
-  proofs throughout.
+  plan's pins were authored as `TestADR_0244_*`/`TestADR_0245_*` and a
+  later ADR renumber left them pointing at a missing ADR (0244) and an
+  unrelated one (0245 — safe build diagnostics). The M1 close-out
+  repointed them at their real ADRs, `TestADR_0248_*` and
+  `TestADR_0249_*`; this plan avoids the failure mode entirely by using
+  `TestSDKTypescriptCore_ScenarioN_*` for Go proofs and
+  `path :: "title"` vitest references for TypeScript proofs throughout.
 
 ## Out of scope
 

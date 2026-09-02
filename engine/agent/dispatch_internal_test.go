@@ -99,7 +99,7 @@ func TestNewAskIDDiscriminatorPreservesPrefix(t *testing.T) {
 	}
 }
 
-// TestADR_0245_RunIDIsTheAskDiscriminator is AC4.2: a host that sets ONLY
+// TestADR_0249_RunIDIsTheAskDiscriminator is AC4.2: a host that sets ONLY
 // RunRequest.RunID gets reconstructable askIDs, because the run id SUPPLIES the
 // ask discriminator.
 //
@@ -107,7 +107,7 @@ func TestNewAskIDDiscriminatorPreservesPrefix(t *testing.T) {
 // exist ("A durable host passes its own RunID"). Before ADR 0249 the seam was
 // real but unused: nothing in the repo set AskIDDiscriminator, so the property
 // was theoretical.
-func TestADR_0245_RunIDIsTheAskDiscriminator(t *testing.T) {
+func TestADR_0249_RunIDIsTheAskDiscriminator(t *testing.T) {
 	cases := []struct {
 		name         string
 		req          RunRequest

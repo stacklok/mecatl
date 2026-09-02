@@ -112,7 +112,7 @@ func TestSDKServerEnablers_Scenario2_RegistryPreservesPreRefactorMappings(t *tes
 	// one, so errors.Is(specific, general) is true — an errors.Is assertion here
 	// would hold both when the row is right and when it has been shadowed by the
 	// very row it wraps, passing in exactly the case it names.
-	// TestADR_0244_NoRegistryRowIsShadowed makes the same check over the whole
+	// TestADR_0248_NoRegistryRowIsShadowed makes the same check over the whole
 	// registry rather than just the golden subset; this one additionally proves it
 	// for sentinels that predate the registry.
 	for _, want := range preRefactorMappings {
@@ -128,8 +128,8 @@ func TestSDKServerEnablers_Scenario2_RegistryPreservesPreRefactorMappings(t *tes
 	}
 }
 
-// TestADR_0244_ErrorRegistryIsTotalAndUnambiguous is AC2.3.
-func TestADR_0244_ErrorRegistryIsTotalAndUnambiguous(t *testing.T) {
+// TestADR_0248_ErrorRegistryIsTotalAndUnambiguous is AC2.3.
+func TestADR_0248_ErrorRegistryIsTotalAndUnambiguous(t *testing.T) {
 	seenCode := map[string]error{}
 	for _, e := range errorRegistry {
 		if e.Sentinel == nil {
@@ -198,7 +198,7 @@ func TestSDKServerEnablers_Scenario2_SpecificSentinelsWinOverGeneral(t *testing.
 	}
 }
 
-// TestADR_0244_NoRegistryRowIsShadowed is the GENERIC form of the ordering
+// TestADR_0248_NoRegistryRowIsShadowed is the GENERIC form of the ordering
 // contract the test above pins for one known pair.
 //
 // TestSDKServerEnablers_Scenario2_SpecificSentinelsWinOverGeneral protects
@@ -213,7 +213,7 @@ func TestSDKServerEnablers_Scenario2_SpecificSentinelsWinOverGeneral(t *testing.
 // true. An errors.Is assertion would therefore hold both when the row resolves
 // correctly and when it has been shadowed by the very row it wraps — passing in
 // exactly the case it exists to catch. Only pointer identity distinguishes them.
-func TestADR_0244_NoRegistryRowIsShadowed(t *testing.T) {
+func TestADR_0248_NoRegistryRowIsShadowed(t *testing.T) {
 	for i, e := range errorRegistry {
 		if e.Sentinel == nil {
 			continue // reported by the totality test
@@ -267,13 +267,13 @@ func TestSDKServerEnablers_Scenario2_UnregisteredFailureDegrades(t *testing.T) {
 	}
 }
 
-// TestADR_0244_ProblemDetailsCarryNoSecrets is AC2.4.
+// TestADR_0248_ProblemDetailsCarryNoSecrets is AC2.4.
 //
 // It walks EVERY registered code's rendered problem body — the whole vocabulary,
 // not a sample — over the harness-authored halves (type, title, code). `detail`
 // and its `error` alias are NOT covered by that walk, and the boundary is a
 // deliberate contract rather than a gap in the test: see
-// TestADR_0244_DetailIsPassedThroughNotScrubbed below, which pins what actually
+// TestADR_0248_DetailIsPassedThroughNotScrubbed below, which pins what actually
 // happens to them.
 //
 // The two halves get DIFFERENT checks on purpose, and the difference is the
@@ -285,7 +285,7 @@ func TestSDKServerEnablers_Scenario2_UnregisteredFailureDegrades(t *testing.T) {
 // is that no secret VALUE reached it, so that half checks value SHAPES —
 // bearer-token forms, key=value assignments, and long opaque runs — instead of
 // vocabulary.
-func TestADR_0244_ProblemDetailsCarryNoSecrets(t *testing.T) {
+func TestADR_0248_ProblemDetailsCarryNoSecrets(t *testing.T) {
 	secretWords := []string{"token", "secret", "password", "api_key", "apikey", "bearer", "credential", "private_key"}
 	// A secret VALUE looks like an assignment or an opaque high-entropy run —
 	// never like a sentence.
@@ -336,7 +336,7 @@ func TestADR_0244_ProblemDetailsCarryNoSecrets(t *testing.T) {
 	}
 }
 
-// TestADR_0244_DetailIsPassedThroughNotScrubbed pins the boundary of the AC2.4
+// TestADR_0248_DetailIsPassedThroughNotScrubbed pins the boundary of the AC2.4
 // guarantee, which the review found was claiming more than the code delivers.
 //
 // The no-secret walk above covers code/title/type — the halves mecatl authors.
@@ -354,7 +354,7 @@ func TestADR_0244_ProblemDetailsCarryNoSecrets(t *testing.T) {
 // a guess that corrupts diagnostics. The obligation therefore sits with the
 // raising backend, which is where today's risky ones (migration, cleanup,
 // storage-health) already discharge it.
-func TestADR_0244_DetailIsPassedThroughNotScrubbed(t *testing.T) {
+func TestADR_0248_DetailIsPassedThroughNotScrubbed(t *testing.T) {
 	// Shapes the AC2.4 matcher WOULD flag if they appeared in a title.
 	for _, secretish := range []string{
 		"Bearer abcdef1234567890",
