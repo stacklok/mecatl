@@ -6,6 +6,10 @@
 {{- include "mecak8s.validateMCP" . -}}
 {{- $mcpOAuth := false -}}
 {{- range .Values.mcp.servers -}}{{- if eq .auth.mode "oauth" -}}{{- $mcpOAuth = true -}}{{- end -}}{{- end -}}
+{{/* mecak8s.mcpOAuthSettings renders a settings.yaml either way (oauth broker
+     profiles, or an explicit mode: global opt-out for an empty server list -
+     see the helper's doc comment); mount it whenever either applies. */}}
+{{- $mcpSettings := or $mcpOAuth (not .Values.mcp.servers) -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -28,7 +32,7 @@ spec:
       {{- if and (not .Values.mockProvider) (not .Values.security.allowUnsafeRealProvider) .Values.security.tlsTerminatedUpstream }}
       {{- $_ := set $chartAnnotations "mecatl.stacklok.com/tls-terminated-upstream" "true" }}
       {{- end }}
-      {{- if $mcpOAuth }}
+      {{- if $mcpSettings }}
       {{- $_ := set $chartAnnotations "checksum/mcp-profile" (include "mecak8s.mcpOAuthSettings" . | sha256sum) }}
       {{- end }}
       {{- $userAnnotations := omit (deepCopy .Values.podAnnotations) "mecatl.stacklok.com/unsafe-real-provider" "mecatl.stacklok.com/tls-terminated-upstream" "checksum/mcp-profile" }}
@@ -148,7 +152,7 @@ spec:
             - {{ printf "--mcp-server-insecure-http=%s" $server.name | quote }}
             {{- end }}
             {{- end }}
-            {{- if $mcpOAuth }}
+            {{- if $mcpSettings }}
             - --permission-config=/etc/mecatl-mcp/settings.yaml
             {{- end }}
             {{- with .Values.extraArgs }}
@@ -224,7 +228,7 @@ spec:
             {{- if .Values.oidc.caSecret }}
             - {name: oidc-ca, mountPath: /var/run/secrets/oidc-ca, readOnly: true}
             {{- end }}
-            {{- if $mcpOAuth }}
+            {{- if $mcpSettings }}
             - {name: mcp-profile, mountPath: /etc/mecatl-mcp, readOnly: true}
             {{- end }}
             {{- with .Values.extraVolumeMounts }}
@@ -266,7 +270,7 @@ spec:
             items:
               - {key: {{ .Values.oidc.caKey | quote }}, path: {{ .Values.oidc.caKey | quote }}}
         {{- end }}
-        {{- if $mcpOAuth }}
+        {{- if $mcpSettings }}
         - name: mcp-profile
           configMap:
             name: {{ include "mecak8s.fullname" . }}-mcp

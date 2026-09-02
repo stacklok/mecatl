@@ -197,7 +197,7 @@ func TestMecak8sHelmChart_EdgeTerminatedTLS(t *testing.T) {
 			t.Fatalf("edge TLS args unexpectedly contain %q: %q", absent, container.Args)
 		}
 	}
-	if deployment.Spec.Template.Annotations["mecatl.stacklok.com/tls-terminated-upstream"] != "true" || len(deployment.Spec.Template.Annotations) != 1 {
+	if deployment.Spec.Template.Annotations["mecatl.stacklok.com/tls-terminated-upstream"] != "true" || deployment.Spec.Template.Annotations["checksum/mcp-profile"] == "" || len(deployment.Spec.Template.Annotations) != 2 {
 		t.Fatalf("edge TLS annotations = %#v", deployment.Spec.Template.Annotations)
 	}
 	if _, ok := deployment.Spec.Template.Annotations["mecatl.stacklok.com/unsafe-real-provider"]; ok {
@@ -277,7 +277,7 @@ func TestMecak8sHelmChart_ChartOwnedAnnotationsCannotBeOverridden(t *testing.T) 
 				t.Fatal(err)
 			}
 			annotations := deploymentFromRender(t, rendered).Spec.Template.Annotations
-			if annotations[tc.want] != "true" || annotations["example.com/kept"] != "value" || len(annotations) != 2 {
+			if annotations[tc.want] != "true" || annotations["example.com/kept"] != "value" || annotations["checksum/mcp-profile"] == "" || len(annotations) != 3 {
 				t.Fatalf("chart-owned annotations = %#v", annotations)
 			}
 		})
@@ -363,6 +363,7 @@ func TestMecak8sHelmChart_DeployCheckProductionFixtureRuntimeAndSpread(t *testin
 		"--oidc-max-jwks-staleness=1h",
 		"--tls-cert=/var/run/secrets/tls/tls.crt",
 		"--tls-key=/var/run/secrets/tls/tls.key",
+		"--permission-config=/etc/mecatl-mcp/settings.yaml",
 	}
 	if got := deployment.Spec.Template.Spec.Containers[0].Args; !reflect.DeepEqual(got, wantArgs) {
 		t.Fatalf("production args = %#v, want %#v", got, wantArgs)
@@ -1308,14 +1309,25 @@ func configMapFromRender(t *testing.T, rendered, name string) *corev1.ConfigMap 
 	return nil
 }
 
+// TestMecak8sHelmChart_MCPDefaultsAreEmpty pins that a default render (no
+// mcp.servers configured) opts back into global MCP authority mode: mecak8s
+// hardcodes its authority default to broker (cmd/mecak8s/flags.go), which
+// would otherwise demand a verified caller identity for zero protected
+// backends (ADR 0289). No server-specific wiring (legacy flags, per-server
+// env vars) should render either way.
 func TestMecak8sHelmChart_MCPDefaultsAreEmpty(t *testing.T) {
 	rendered, err := helm(t, productionArgs()...)
 	if err != nil {
 		t.Fatalf("render defaults: %v", err)
 	}
-	for _, forbidden := range []string{"--mcp-server", "--permission-config=/etc/mecatl-mcp/settings.yaml", "MCP_", "MECATL_MCP_", "mcp-profile", "-mcp\n"} {
+	for _, forbidden := range []string{"--mcp-server", "MCP_", "MECATL_MCP_"} {
 		if strings.Contains(rendered, forbidden) {
 			t.Fatalf("default render unexpectedly contains MCP output %q", forbidden)
+		}
+	}
+	for _, required := range []string{"--permission-config=/etc/mecatl-mcp/settings.yaml", "mcp-profile", "mode: global"} {
+		if !strings.Contains(rendered, required) {
+			t.Fatalf("default render missing expected global-mode opt-out %q", required)
 		}
 	}
 }

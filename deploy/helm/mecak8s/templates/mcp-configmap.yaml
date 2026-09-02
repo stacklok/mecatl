@@ -1,6 +1,6 @@
 {{- $oauth := false -}}
 {{- range .Values.mcp.servers -}}{{- if eq .auth.mode "oauth" -}}{{- $oauth = true -}}{{- end -}}{{- end -}}
-{{- if $oauth }}
+{{- if or $oauth (not .Values.mcp.servers) }}
 apiVersion: v1
 kind: ConfigMap
 metadata:

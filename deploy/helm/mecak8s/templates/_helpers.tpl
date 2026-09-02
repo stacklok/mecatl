@@ -130,8 +130,19 @@ mounted
 {{- end -}}
 {{- end -}}
 
-{{/* Strict runtime operator profile generated only for OAuth entries. */}}
+{{/*
+Strict runtime operator profile. mecak8s hardcodes its MCP authority default to
+broker mode (cmd/mecak8s/flags.go); with zero mcp.servers configured that still
+demands a verified caller identity for no protective benefit (ADR 0289), so an
+empty server list explicitly opts back into global mode here. A non-empty list
+renders the OAuth broker profiles as before (only oauth entries are broker
+material; none/staticBearer servers ride the legacy --mcp-server flag instead).
+*/}}
 {{- define "mecak8s.mcpOAuthSettings" -}}
+{{- if not .Values.mcp.servers -}}
+mcp:
+  mode: global
+{{- else }}
 mcp:
   servers:
 {{- range $server := .Values.mcp.servers }}
@@ -165,6 +176,7 @@ mcp:
             additional_origins: {{ toJson $server.auth.oauth.network.additionalOrigins }}
             private_origins: {{ toJson $server.auth.oauth.network.privateOrigins }}
             max_redirects: {{ $server.auth.oauth.network.maxRedirects }}
+{{- end }}
 {{- end }}
 {{- end }}
 {{- end -}}
