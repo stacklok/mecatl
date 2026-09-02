@@ -57,6 +57,23 @@ func (p *localPlacementProvider) Bind(_ context.Context, req server.PlacementBin
 	}
 }
 
+func (p *localPlacementProvider) Reattach(_ context.Context, req server.PlacementReattachRequest) (server.PlacementBinding, error) {
+	if req.Scope != p.scope {
+		return server.PlacementBinding{}, server.ErrPlacementNotFound
+	}
+	switch req.Ref {
+	case session.EnvironmentRef{Kind: session.EnvKindLocal, ID: localDefaultPlacementID, Revision: localDefaultPlacementRevision}:
+		if p.root == "" {
+			return server.PlacementBinding{}, server.ErrPlacementUnavailable
+		}
+		return p.bindLocal()
+	case session.EnvironmentRef{Kind: session.EnvKindNoFS, ID: noFSPlacementID, Revision: noFSPlacementRevision}:
+		return p.bindNoFS()
+	default:
+		return server.PlacementBinding{}, server.ErrPlacementNotFound
+	}
+}
+
 func (p *localPlacementProvider) bindLocal() (server.PlacementBinding, error) {
 	// Authorization and selector resolution are complete before this first root
 	// access. The immutable provider has no generation that can race afterward.
@@ -68,7 +85,7 @@ func (p *localPlacementProvider) bindLocal() (server.PlacementBinding, error) {
 		Kind: session.EnvKindLocal, ID: localDefaultPlacementID,
 		Revision: localDefaultPlacementRevision,
 	}
-	env, err := tool.NewEnvironment(ref, ws, p.runnerForRoot(p.root))
+	env, err := tool.NewEnvironment(ref, ws, p.runnerForRoot(ws.Root()))
 	if err != nil {
 		return server.PlacementBinding{}, server.ErrPlacementUnavailable
 	}

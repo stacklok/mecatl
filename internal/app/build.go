@@ -1794,6 +1794,10 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	if placementScope == "" {
 		placementScope = defaultPlacementScope
 	}
+	var placementSelectorKey [32]byte
+	if _, err := rand.Read(placementSelectorKey[:]); err != nil {
+		return nil, fmt.Errorf("initialize placement selector signer: %w", err)
+	}
 	placementProvider := cfg.PlacementProvider
 	if placementProvider == nil {
 		placementRoot := cfg.Workspace
@@ -1838,6 +1842,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		Workspaces:               workspaceFactory,
 		PlacementProvider:        placementProvider,
 		PlacementScope:           placementScope,
+		PlacementSelectorKey:     placementSelectorKey,
 		RootAuthority: func(kind session.SessionKind) session.Authority {
 			return mintRootAuthority(assets.rootCatalog, mcpResourceCapabilities(assets.globalMgr), kind)
 		},

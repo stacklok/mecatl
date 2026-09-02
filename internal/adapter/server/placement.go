@@ -62,11 +62,25 @@ type PlacementBinding struct {
 	Metadata    PlacementMetadata
 }
 
-// PlacementProvider owns placement inventory, authorization, and resolution.
-// Bind is deliberately its only operation: implementations must authorize and
-// resolve one immutable record/revision atomically and fail on inventory drift.
+// PlacementProvider owns placement inventory, authorization, and atomic new
+// binding resolution.
 type PlacementProvider interface {
 	Bind(context.Context, PlacementBindRequest) (PlacementBinding, error)
+}
+
+// PlacementReattacher is the exact persisted-ref half of a placement provider.
+// It is separate from PlacementProvider so legacy providers cannot accidentally
+// receive a reattachment request through Bind and follow their current default.
+type PlacementReattacher interface {
+	Reattach(context.Context, PlacementReattachRequest) (PlacementBinding, error)
+}
+
+// PlacementReattachRequest carries the trusted authorization context and the
+// exact durable identity to reattach. Ref must include Kind, ID, and Revision.
+type PlacementReattachRequest struct {
+	Ref       session.EnvironmentRef
+	Principal *session.Principal
+	Scope     PlacementScope
 }
 
 // PlacementBinder is the server-owned choke point around one deployment
@@ -111,6 +125,56 @@ func configuredPlacementBinder(ctx context.Context, cfg Config) (*PlacementBinde
 	return binder, nil
 }
 
+func configuredWorktreeSelectors(cfg Config) (*WorktreeSelectorIssuer, error) {
+	if cfg.PlacementSelectorKey == ([worktreeSelectorKeySize]byte{}) {
+		return nil, nil
+	}
+	issuer, err := NewWorktreeSelectorIssuer(cfg.PlacementSelectorKey[:])
+	if err != nil {
+		return nil, fmt.Errorf("server: initialize worktree selector issuer: %w", err)
+	}
+	return issuer, nil
+}
+
+func (s *Service) bindPlacementForCreate(ctx context.Context, workspace string, profile SessionProfile, owner *session.Principal) (string, *PlacementBinding, error) {
+	useBinder := s.placementBinder != nil && (profile == ProfileNoFS ||
+		!s.cfg.WorkspaceAuthority.clientSelectsRoot() || workspace == s.cfg.DefaultWorkspace)
+	if !useBinder {
+		return workspace, nil, nil
+	}
+	selector := session.DefaultPlacement()
+	if profile == ProfileNoFS {
+		selector = session.NoFSPlacement()
+	}
+	binding, err := s.placementBinder.Bind(ctx, PlacementBindRequest{
+		Selector: selector, Principal: owner, Scope: s.cfg.PlacementScope,
+		Operation: PlacementOperationCreate,
+	})
+	if err != nil {
+		return "", nil, err
+	}
+	boundRoot := binding.Environment.Workspace().Root()
+	if profile == ProfileNoFS && boundRoot != "" || profile != ProfileNoFS && boundRoot == "" {
+		return "", nil, ErrInvalidPlacementBinding
+	}
+	return boundRoot, &binding, nil
+}
+
+func (s *Service) persistPlacedCreatedSession(ctx context.Context, sess *session.Session, owner *session.Principal, request *createRequest, placement *PlacementBinding) (*session.Session, error) {
+	if placement != nil {
+		sess.EnvironmentRef = placement.Ref
+	} else {
+		stampDefaultEnvironmentRef(sess)
+	}
+	persisted, err := s.persistCreatedSession(ctx, sess, owner, request)
+	if err == nil && persisted == sess && placement != nil {
+		s.mu.Lock()
+		s.sessionEnvironments[sess.ID] = placement.Environment
+		s.mu.Unlock()
+	}
+	return persisted, err
+}
+
 // Bind validates the request, delegates exactly one atomic operation to the
 // provider, then validates that the returned environment and exact ref agree.
 func (b *PlacementBinder) Bind(ctx context.Context, req PlacementBindRequest) (PlacementBinding, error) {
@@ -124,6 +188,33 @@ func (b *PlacementBinder) Bind(ctx context.Context, req PlacementBindRequest) (P
 	binding, err := b.provider.Bind(ctx, clonePlacementRequest(req))
 	if err != nil {
 		return PlacementBinding{}, err
+	}
+	if err := validatePlacementBinding(binding); err != nil {
+		return PlacementBinding{}, err
+	}
+	return binding, nil
+}
+
+// Reattach resolves only the exact persisted ref. Providers without the
+// explicit reattachment capability fail closed; Bind is never used as fallback.
+func (b *PlacementBinder) Reattach(ctx context.Context, req PlacementReattachRequest) (PlacementBinding, error) {
+	if b == nil || b.provider == nil {
+		return PlacementBinding{}, fmt.Errorf("%w: PlacementProvider is required", ErrConfig)
+	}
+	if !req.Ref.Valid() || req.Scope == "" {
+		return PlacementBinding{}, ErrInvalidPlacementSelection
+	}
+	provider, ok := b.provider.(PlacementReattacher)
+	if !ok {
+		return PlacementBinding{}, fmt.Errorf("%w: PlacementProvider does not support exact reattachment", ErrPlacementUnavailable)
+	}
+	req.Principal = req.Principal.Clone()
+	binding, err := provider.Reattach(ctx, req)
+	if err != nil {
+		return PlacementBinding{}, err
+	}
+	if binding.Ref != req.Ref {
+		return PlacementBinding{}, ErrInvalidPlacementBinding
 	}
 	if err := validatePlacementBinding(binding); err != nil {
 		return PlacementBinding{}, err
@@ -147,6 +238,10 @@ const (
 	maxPlacementDetailRunes   = 512
 )
 
+type boundWorkspaceRunner interface {
+	BoundWorkspaceRoot() string
+}
+
 func validatePlacementBinding(binding PlacementBinding) error {
 	if !binding.Ref.Valid() ||
 		!safePlacementText(string(binding.Ref.Kind), maxPlacementKindRunes) ||
@@ -159,6 +254,12 @@ func validatePlacementBinding(binding PlacementBinding) error {
 	}
 	if binding.Environment.Ref() != binding.Ref {
 		return ErrInvalidPlacementBinding
+	}
+	if runner := binding.Environment.CommandRunner(); runner != nil {
+		bound, ok := runner.(boundWorkspaceRunner)
+		if !ok || bound.BoundWorkspaceRoot() != binding.Environment.Workspace().Root() {
+			return ErrInvalidPlacementBinding
+		}
 	}
 	if !safeOptionalPlacementText(binding.Metadata.Name, maxPlacementNameRunes) ||
 		!safeOptionalPlacementText(binding.Metadata.Description, maxPlacementDetailRunes) {

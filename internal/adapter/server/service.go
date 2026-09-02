@@ -375,6 +375,10 @@ type Config struct {
 	// PlacementScope is the trusted deployment scope supplied to every provider
 	// Bind. It must be non-empty when PlacementProvider is configured.
 	PlacementScope PlacementScope
+	// PlacementSelectorKey is the Build-owned random process key used to issue
+	// source-scoped ephemeral worktree selectors. A zero key disables the additive
+	// selector service for legacy hand-built configurations.
+	PlacementSelectorKey [worktreeSelectorKeySize]byte
 	// RootAuthority mints a complete authority set for a newly composed root.
 	// A nil callback preserves host-managed legacy sessions; app.Build always wires
 	// this callback with its assembled catalog. Carryover forks copy their source
@@ -883,7 +887,8 @@ type Service struct {
 
 	// placementBinder is the sole creation/successor placement binding seam.
 	// It is nil only for legacy hand-built configurations that have not migrated.
-	placementBinder *PlacementBinder
+	placementBinder   *PlacementBinder
+	worktreeSelectors *WorktreeSelectorIssuer
 
 	// models is the selectable-model inventory, SEEDED from cfg.Models at
 	// construction and atomically SWAPPED by SetModels when the composition layer's
@@ -1346,10 +1351,15 @@ func NewServiceContext(ctx context.Context, cfg Config) (*Service, error) {
 	if _, err := rand.Read(cleanupTokenKey[:]); err != nil {
 		return nil, fmt.Errorf("server: initialize cleanup token signer: %w", err)
 	}
+	worktreeSelectors, err := configuredWorktreeSelectors(cfg)
+	if err != nil {
+		return nil, err
+	}
 	_, shutdownCancel := context.WithCancel(context.Background())
 	svc := &Service{
 		cfg:                 cfg,
 		placementBinder:     placementBinder,
+		worktreeSelectors:   worktreeSelectors,
 		shutdownCancel:      shutdownCancel,
 		runs:                make(map[session.SessionID]*runState),
 		teams:               make(map[string]*teamState),
@@ -1430,6 +1440,21 @@ func (s *Service) BindPlacement(ctx context.Context, selector session.PlacementS
 		Scope:     s.cfg.PlacementScope,
 		Operation: operation,
 	})
+}
+
+// ReattachPlacement authorizes and resolves the exact persisted environment
+// identity. It never invokes Bind and therefore cannot follow a changed default.
+func (s *Service) ReattachPlacement(ctx context.Context, ref session.EnvironmentRef) (PlacementBinding, error) {
+	if s == nil || s.placementBinder == nil {
+		return PlacementBinding{}, fmt.Errorf("%w: no PlacementProvider is configured", ErrFailedPrecondition)
+	}
+	binding, err := s.placementBinder.Reattach(ctx, PlacementReattachRequest{
+		Ref: ref, Principal: session.PrincipalFromContext(ctx), Scope: s.cfg.PlacementScope,
+	})
+	if err != nil {
+		return PlacementBinding{}, fmt.Errorf("%w: exact placement reattachment failed: %v", ErrFailedPrecondition, err)
+	}
+	return binding, nil
 }
 
 // wireScheduleManager attaches the post-construction seams the schedule manager
@@ -2018,16 +2043,19 @@ func (s *Service) workspaceForCreate(workspace string, profile SessionProfile) (
 	}
 	switch profile {
 	case ProfileDefault:
-		// Unreachable under Fileless (profileForCreate mapped every profile to
-		// no-FS), so this arm sees only ClientSelected and ServerAssigned.
 		if !s.cfg.WorkspaceAuthority.clientSelectsRoot() {
-			if workspace != "" {
-				return "", "", fmt.Errorf("%w: deployment assigns the workspace; filesystem session requests must leave workspace empty", ErrInvalidArgument)
-			}
 			if s.cfg.AuthoritativeWorkspace == "" {
-				// NewService rejects this combination; kept as a fail-closed guard so a
-				// future second constructor cannot turn it into an empty-root session.
 				return "", "", fmt.Errorf("%w: deployment assigns the workspace but no authoritative workspace is configured", ErrInvalidArgument)
+			}
+			// Transitional wire compatibility: the legacy field is an equality
+			// assertion only and can never select a root.
+			if workspace != "" {
+				if s.placementBinder == nil {
+					return "", "", fmt.Errorf("%w: deployment assigns the workspace; filesystem session requests must leave workspace empty", ErrInvalidArgument)
+				}
+				if workspace != s.cfg.AuthoritativeWorkspace {
+					return "", "", fmt.Errorf("%w: deployment assigns the workspace; requested workspace does not match it", ErrInvalidArgument)
+				}
 			}
 			return s.cfg.AuthoritativeWorkspace, profile, nil
 		}
@@ -2117,6 +2145,10 @@ func (s *Service) createSession(ctx context.Context, workspace string, mode sess
 	// The owner stamped on the new session: the explicit WithOwner injection, else
 	// the verified principal on the context, else nil (the ownerless no-auth path).
 	owner := resolveOwner(ctx, opts)
+	workspace, placement, err := s.bindPlacementForCreate(ctx, workspace, profile, owner)
+	if err != nil {
+		return nil, err
+	}
 	if err := s.bindRelatedIncarnations(ctx, &opts); err != nil {
 		return nil, err
 	}
@@ -2190,14 +2222,13 @@ func (s *Service) createSession(ctx context.Context, workspace string, mode sess
 		if err := setSessionLabels(sess, sel, profile, owner, s.rootAuthority(sess.Kind, carriedAuthority, carriedAuthorityBound)); err != nil {
 			return nil, err
 		}
-		stampDefaultEnvironmentRef(sess)
 		if err := seedCarryover(sess, carrySnap); err != nil {
 			return nil, err
 		}
-		return s.persistCreatedSession(ctx, sess, owner, retryRequest)
+		return s.persistPlacedCreatedSession(ctx, sess, owner, retryRequest, placement)
 	}
 
-	return s.createPerSessionEngine(ctx, mintID, mode, workspace, limits, sel, specs, profile, carrySnap, owner, opts, carriedAuthority, carriedAuthorityBound, retryRequest)
+	return s.createPerSessionEngine(ctx, mintID, mode, workspace, limits, sel, specs, profile, carrySnap, owner, opts, carriedAuthority, carriedAuthorityBound, retryRequest, placement)
 }
 
 // createPerSessionEngine is the per-session-engine create branch, factored out
@@ -2210,7 +2241,7 @@ func (s *Service) createSession(ctx context.Context, workspace string, mode sess
 // profile-aware workspace rule and the carryover snapshot semantics.
 //
 //nolint:gocyclo // Creation keeps factory, authorization, registration, and teardown in one transaction.
-func (s *Service) createPerSessionEngine(ctx context.Context, mintID func() session.SessionID, mode session.PermissionMode, workspace string, limits session.Limits, sel ProviderSelector, specs []mcp.ServerConfig, profile SessionProfile, carrySnap []session.Message, owner *session.Principal, opts createSessionOpts, carriedAuthority session.Authority, carriedAuthorityBound bool, retryRequest *createRequest) (*session.Session, error) {
+func (s *Service) createPerSessionEngine(ctx context.Context, mintID func() session.SessionID, mode session.PermissionMode, workspace string, limits session.Limits, sel ProviderSelector, specs []mcp.ServerConfig, profile SessionProfile, carrySnap []session.Message, owner *session.Principal, opts createSessionOpts, carriedAuthority session.Authority, carriedAuthorityBound bool, retryRequest *createRequest, placement *PlacementBinding) (*session.Session, error) {
 	factory := s.cfg.SessionEngine
 	if opts.debugTargetID != "" {
 		if s.cfg.DebugSessionEngine == nil {
@@ -2284,7 +2315,11 @@ func (s *Service) createPerSessionEngine(ctx context.Context, mintID func() sess
 	if debugTarget != nil {
 		sess.DebugTargetFingerprint = session.DebugTargetFingerprint(debugTarget)
 	}
-	stampDefaultEnvironmentRef(sess)
+	if placement != nil {
+		sess.EnvironmentRef = placement.Ref
+	} else {
+		stampDefaultEnvironmentRef(sess)
+	}
 	if err := seedCarryover(sess, carrySnap); err != nil {
 		if closeFn != nil {
 			_ = closeFn()
@@ -2316,8 +2351,10 @@ func (s *Service) createPerSessionEngine(ctx context.Context, mintID func() sess
 		builtForMode:    res.BuiltForMode,
 		close:           closeFn,
 	}
-	if profile == ProfileNoFS {
-		// Register the no-FS Environment as this session's per-session
+	if placement != nil {
+		s.sessionEnvironments[sess.ID] = placement.Environment
+	} else if profile == ProfileNoFS {
+
 		// environment OVERRIDE under the SAME lock as the engine registration,
 		// so the moment the session is visible StartRun resolves its environment
 		// here and NEVER hands the empty root to the shared osfs Workspaces
@@ -3843,7 +3880,7 @@ func (s *Service) LoadSessionWithMCP(ctx context.Context, id session.SessionID, 
 		builtForMode:    res.BuiltForMode,
 		close:           res.Close,
 	}
-	if profile == ProfileNoFS {
+	if profile == ProfileNoFS && (s.placementBinder == nil || !sess.EnvironmentRef.Valid()) {
 		// A no-fs session's environment override is re-registered with the engine
 		// under the same lock (the create-time discipline), so StartRun never
 		// consults the shared factory with the empty root. It is a complete
@@ -4504,6 +4541,15 @@ func (s *Service) engineAndEnvironmentFor(ctx context.Context, sess *session.Ses
 		stampDefaultEnvironmentRef(sess)
 		return engine, envOverride, nil
 	}
+	// A revisioned provider ref with no explicit live override reattaches exactly;
+	// it never falls through to workspace inference or a current default.
+	if s.placementBinder != nil && sess.EnvironmentRef.Valid() {
+		binding, rerr := s.ReattachPlacement(ctx, sess.EnvironmentRef)
+		if rerr != nil {
+			return nil, tool.Environment{}, rerr
+		}
+		return engine, binding.Environment, nil
+	}
 	// ENVIRONMENT REATTACHMENT (ADR 0214, issue #462 phase 3): a loaded session
 	// with a PERSISTED non-in-tree EnvironmentRef (a remote worker, a container)
 	// reattaches a LIVE Environment through the configured resolver. This runs
@@ -4885,7 +4931,7 @@ func (s *Service) buildAndRegisterSessionEngine(ctx context.Context, sess *sessi
 		}
 	}
 	s.sessionEngines[id] = se
-	if profile == ProfileNoFS {
+	if profile == ProfileNoFS && (s.placementBinder == nil || !sess.EnvironmentRef.Valid()) {
 		// Re-register the no-fs environment override under the SAME lock as the engine
 		// (the create-time discipline), so the run below — and every later run —
 		// resolves its environment here and never consults the shared factory with the

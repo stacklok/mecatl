@@ -1130,6 +1130,10 @@ type CommandRunner struct {
 	waitDelay time.Duration
 }
 
+// BoundWorkspaceRoot reports the immutable command namespace root. Placement
+// binding uses it to prove that a returned runner and Workspace share one root.
+func (r *CommandRunner) BoundWorkspaceRoot() string { return r.root }
+
 // CommandRunnerOption configures a CommandRunner at construction.
 type CommandRunnerOption func(*CommandRunner)
 
