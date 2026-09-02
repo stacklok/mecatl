@@ -804,6 +804,12 @@ func resolveTransport(ctx context.Context, cfg config) (target string, dial clie
 	if cfg.transportMode == modeConnect {
 		dial := client.DialConfig{Server: cfg.connectAddress, AuthToken: cfg.authToken, UseTLS: cfg.useTLS, TLSCAFile: cfg.tlsCA, Insecure: cfg.insecure, RemotePlaintextAllowed: cfg.tlsExplicit && !cfg.useTLS}
 		if cfg.authToken == "" && !cfg.noSavedAuth {
+			// A local mecated is anonymous by default. Do not require an OIDC
+			// enrolment merely to try it: client.Dial classifies a real server-side
+			// Unauthenticated response and sends the user to the login recovery flow.
+			if client.IsLocalTarget(cfg.connectAddress) {
+				return cfg.connectAddress, dial, noop, nil
+			}
 			root := filepath.Join(xdg.ConfigHome, "mecatl")
 			registry, regErr := clientauth.OpenExistingRegistry(root)
 			if regErr != nil {

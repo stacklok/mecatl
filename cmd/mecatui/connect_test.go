@@ -197,6 +197,27 @@ func TestCrossTargetRecoveryActionsDowngradeToFreshSavedConnect(t *testing.T) {
 	}
 }
 
+func TestLoopbackTargetDialsAnonymouslyWithoutSavedLogin(t *testing.T) {
+	oldConfigHome := xdg.ConfigHome
+	xdg.ConfigHome = t.TempDir()
+	t.Cleanup(func() { xdg.ConfigHome = oldConfigHome })
+
+	target, dial, cleanup, err := resolveTransport(t.Context(), config{
+		transportMode:  modeConnect,
+		connectAddress: "127.0.0.1:8080",
+	})
+	defer cleanup()
+	if err != nil {
+		t.Fatalf("resolveTransport() error = %v", err)
+	}
+	if target != "127.0.0.1:8080" {
+		t.Fatalf("target = %q, want loopback target", target)
+	}
+	if dial.Server != target || dial.TokenSource != nil {
+		t.Fatalf("dial config = %#v, want anonymous loopback dial", dial)
+	}
+}
+
 func TestNeverEnrolledTargetFailsBeforeDial(t *testing.T) {
 	oldConfigHome := xdg.ConfigHome
 	xdg.ConfigHome = t.TempDir()
