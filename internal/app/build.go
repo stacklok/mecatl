@@ -1336,9 +1336,9 @@ type Built struct {
 }
 
 // MountMCPBrokerHandlers mounts the complete fixed broker bundle on a
-// process-owned HTTP mux. A build with no callback surface is a no-op.
+// process-owned HTTP mux. A build with no broker HTTP surface is a no-op.
 func (b *Built) MountMCPBrokerHandlers(mux *http.ServeMux) error {
-	if b.MCPBrokerHandlers.Callback == nil {
+	if b.MCPBrokerHandlers.Empty() {
 		return nil
 	}
 	return b.MCPBrokerHandlers.Mount(mux, b.MCPBrokerCallbackPath)
@@ -1886,6 +1886,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	}
 
 	var brokerRuntime *mcpbroker.Runtime
+	var brokerProcess *mcpbroker.Process
 	var brokerHandlers mcpbroker.HandlerBundle
 	var brokerCallbackPath string
 	if brokerSelected {
@@ -1895,32 +1896,54 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 				occupied = append(occupied, registered.Spec().Name)
 			}
 		}
-		catalogue, compileErr := mcpbroker.Compile(brokerDeclaration, cfg.MCPBrokerDiscovered, occupied)
-		if compileErr != nil {
-			childLiveness.Close()
-			mcpClose()
-			agentClose()
-			storeClose()
-			commandConnClose()
-			return nil, fmt.Errorf("build MCP broker catalogue: %w", compileErr)
-		}
-		options := append([]mcpbroker.Option(nil), cfg.MCPBrokerOptions...)
-		if cfg.MCPBrokerAuthorizedCaller != nil {
-			options = append(options, mcpbroker.WithAuthorizedCaller(cfg.MCPBrokerAuthorizedCaller))
-		}
-		brokerRuntime, err = mcpbroker.New(catalogue, cfg.MCPBrokerCaller, options...)
-		if err != nil {
-			childLiveness.Close()
-			mcpClose()
-			agentClose()
-			storeClose()
-			commandConnClose()
-			return nil, fmt.Errorf("build MCP broker: %w", err)
+		if cfg.MCPBrokerCaller == nil && cfg.MCPBrokerAuthorizedCaller == nil && len(cfg.MCPBrokerDiscovered) == 0 && len(cfg.MCPBrokerOptions) == 0 {
+			brokerProcess, err = mcpbroker.NewToolHiveProcess(ctx, toolHiveBrokerConfig(brokerDeclaration.Routes, brokerDeclaration.CallbackURL, occupied))
+			if err != nil {
+				childLiveness.Close()
+				mcpClose()
+				agentClose()
+				storeClose()
+				commandConnClose()
+				return nil, fmt.Errorf("build bundled MCP broker: %w", err)
+			}
+			brokerRuntime = brokerProcess.Runtime
+			brokerHandlers = brokerProcess.Handlers
+		} else {
+			catalogue, compileErr := mcpbroker.Compile(brokerDeclaration, cfg.MCPBrokerDiscovered, occupied)
+			if compileErr != nil {
+				childLiveness.Close()
+				mcpClose()
+				agentClose()
+				storeClose()
+				commandConnClose()
+				return nil, fmt.Errorf("build MCP broker catalogue: %w", compileErr)
+			}
+			options := append([]mcpbroker.Option(nil), cfg.MCPBrokerOptions...)
+			if cfg.MCPBrokerAuthorizedCaller != nil {
+				options = append(options, mcpbroker.WithAuthorizedCaller(cfg.MCPBrokerAuthorizedCaller))
+			}
+			brokerRuntime, err = mcpbroker.New(catalogue, cfg.MCPBrokerCaller, options...)
+			if err != nil {
+				childLiveness.Close()
+				mcpClose()
+				agentClose()
+				storeClose()
+				commandConnClose()
+				return nil, fmt.Errorf("build MCP broker: %w", err)
+			}
 		}
 		if brokerDeclaration.CallbackURL != "" {
-			brokerHandlers, brokerCallbackPath, err = brokerRuntime.Handlers(brokerDeclaration.CallbackURL)
+			if brokerProcess == nil {
+				brokerHandlers, brokerCallbackPath, err = brokerRuntime.Handlers(brokerDeclaration.CallbackURL)
+			} else {
+				brokerCallbackPath, err = mcpBrokerCallbackPath(brokerDeclaration.CallbackURL)
+			}
 			if err != nil {
-				_ = brokerRuntime.Close()
+				if brokerProcess != nil {
+					_ = brokerProcess.Close()
+				} else {
+					_ = brokerRuntime.Close()
+				}
 				childLiveness.Close()
 				mcpClose()
 				agentClose()
@@ -1928,6 +1951,13 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 				commandConnClose()
 				return nil, fmt.Errorf("build MCP broker handlers: %w", err)
 			}
+		}
+	}
+	closeBroker := func() {
+		if brokerProcess != nil {
+			_ = brokerProcess.Close()
+		} else if brokerRuntime != nil {
+			_ = brokerRuntime.Close()
 		}
 	}
 
@@ -2436,9 +2466,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 
 	svc, err := server.NewServiceContext(ctx, svcCfg)
 	if err != nil {
-		if brokerRuntime != nil {
-			_ = brokerRuntime.Close()
-		}
+		closeBroker()
 		childLiveness.Close()
 		mcpClose()
 		agentClose()
@@ -2482,9 +2510,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		refreshClose()
 		svc.Close()
 		childLiveness.Close()
-		if brokerRuntime != nil {
-			_ = brokerRuntime.Close()
-		}
+		closeBroker()
 		mcpClose()
 		agentClose()
 		storeClose()
@@ -2530,9 +2556,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 			assets.forkReaper.Close()
 		}
 		childLiveness.Close()
-		if brokerRuntime != nil {
-			_ = brokerRuntime.Close()
-		}
+		closeBroker()
 		mcpClose()
 		closeProfiles()
 		agentClose()

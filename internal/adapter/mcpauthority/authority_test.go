@@ -66,6 +66,9 @@ func TestResultOwnsImmutableCopies(t *testing.T) {
 
 	routes := []permconfig.MCPServerProfile{{Name: "broker", Auth: permconfig.MCPAuthProfile{Mode: "oauth", OAuth: &permconfig.MCPOAuthProfile{
 		Scopes: []string{"read"},
+		Tools: []permconfig.MCPStaticToolProfile{{
+			Name: "reviewed", InputSchema: []byte(`{"type":"object","properties":{"title":{"type":"string"}}}`),
+		}},
 		Upstream: &permconfig.MCPOAuthUpstreamProfile{Mode: "oauth2", OAuth2: &permconfig.MCPOAuth2UpstreamProfile{
 			AuthorizationEndpoint: "https://auth.example/authorize", TokenEndpoint: "https://auth.example/token",
 		}},
@@ -74,13 +77,17 @@ func TestResultOwnsImmutableCopies(t *testing.T) {
 	broker := NewBroker(BrokerConfig{Routes: routes, CallbackURL: "https://agent.example/callback"})
 	routes[0].Name = "mutated"
 	routes[0].Auth.OAuth.Scopes[0] = "mutated"
+	routes[0].Auth.OAuth.Tools[0].Name = "mutated"
+	routes[0].Auth.OAuth.Tools[0].InputSchema[0] = '['
 	got, ok := broker.Broker()
-	if !ok || got.Routes[0].Name != "broker" || got.Routes[0].Auth.OAuth.Scopes[0] != "read" {
+	if !ok || got.Routes[0].Name != "broker" || got.Routes[0].Auth.OAuth.Scopes[0] != "read" || got.Routes[0].Auth.OAuth.Tools[0].Name != "reviewed" || string(got.Routes[0].Auth.OAuth.Tools[0].InputSchema) != `{"type":"object","properties":{"title":{"type":"string"}}}` {
 		t.Fatalf("broker aliases input: %#v", got)
 	}
 	got.Routes[0].Auth.OAuth.Upstream.OAuth2.TokenEndpoint = "https://mutated.example/token"
+	got.Routes[0].Auth.OAuth.Tools[0].Name = "returned mutation"
+	got.Routes[0].Auth.OAuth.Tools[0].InputSchema[0] = '['
 	again, _ := broker.Broker()
-	if again.Routes[0].Auth.OAuth.Upstream.OAuth2.TokenEndpoint != "https://auth.example/token" {
+	if again.Routes[0].Auth.OAuth.Upstream.OAuth2.TokenEndpoint != "https://auth.example/token" || again.Routes[0].Auth.OAuth.Tools[0].Name != "reviewed" || string(again.Routes[0].Auth.OAuth.Tools[0].InputSchema) != `{"type":"object","properties":{"title":{"type":"string"}}}` {
 		t.Fatalf("broker aliases accessor result: %#v", again)
 	}
 }

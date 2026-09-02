@@ -34,6 +34,7 @@ package permconfig
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -435,6 +436,43 @@ type MCPOAuthProfile struct {
 	Credentials MCPOAuthCredentialProfile `yaml:"credentials"`
 	// Network is required and declares immutable exact-origin egress policy.
 	Network *MCPOAuthNetworkProfile `yaml:"network"`
+	// Tools are comparison-only declarations for protected backends. They are
+	// retained privately during startup and never become executable routes.
+	Tools []MCPStaticToolProfile `yaml:"tools"`
+}
+
+// MCPStaticToolProfile is a reviewed protected-backend tool shape retained for
+// comparison with future authenticated discovery.
+type MCPStaticToolProfile struct {
+	Name        string          `yaml:"name"`
+	Description string          `yaml:"description"`
+	InputSchema json.RawMessage `yaml:"input_schema"`
+	ReadOnly    bool            `yaml:"read_only"`
+}
+
+// UnmarshalYAML strictly decodes one comparison-only protected tool declaration.
+func (t *MCPStaticToolProfile) UnmarshalYAML(node ast.Node) error {
+	var schema any
+	if err := decodeStrictMapping(node, "mcp.servers[].auth.oauth.tools[]", map[string]any{
+		"name": &t.Name, "description": &t.Description, "input_schema": &schema, "read_only": &t.ReadOnly,
+	}); err != nil {
+		return err
+	}
+	if err := validateMCPSafeValue("mcp.servers[].auth.oauth.tools[].name", t.Name); err != nil {
+		return err
+	}
+	if err := validateMCPSafeValue("mcp.servers[].auth.oauth.tools[].description", t.Description); err != nil {
+		return err
+	}
+	if schema == nil {
+		return errors.New("mcp.servers[].auth.oauth.tools[].input_schema is required")
+	}
+	raw, err := json.Marshal(schema)
+	if err != nil {
+		return fmt.Errorf("mcp.servers[].auth.oauth.tools[].input_schema: %w", err)
+	}
+	t.InputSchema = raw
+	return nil
 }
 
 // MCPOAuthUpstreamProfile is a strict OIDC/OAuth2 tagged union. Omitted means OIDC.
@@ -632,7 +670,7 @@ func (s *MCPStaticBearerProfile) UnmarshalYAML(node ast.Node) error {
 }
 
 func (o *MCPOAuthProfile) strictFields() map[string]any {
-	return map[string]any{"profile": &o.Profile, "principal": &o.Principal, "issuer": &o.Issuer, "upstream": newPermconfigNodePointer(&o.Upstream), "client": &o.Client, "scopes": &o.Scopes, "request_refresh_token": &o.RequestRefreshToken, "credentials": &o.Credentials, "network": newPermconfigNodePointer(&o.Network)}
+	return map[string]any{"profile": &o.Profile, "principal": &o.Principal, "issuer": &o.Issuer, "upstream": newPermconfigNodePointer(&o.Upstream), "client": &o.Client, "scopes": &o.Scopes, "request_refresh_token": &o.RequestRefreshToken, "credentials": &o.Credentials, "network": newPermconfigNodePointer(&o.Network), "tools": &o.Tools}
 }
 
 // UnmarshalYAML strictly decodes lossless OAuth metadata. Authority-specific

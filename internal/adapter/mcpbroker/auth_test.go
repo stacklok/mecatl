@@ -192,7 +192,7 @@ func TestRefreshFailureOnlyRevokesTerminalGrant(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			var requests int
-			tokenServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+			tokenServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				requests++
 				w.Header().Set("Content-Type", "application/json")
 				if requests == 1 {

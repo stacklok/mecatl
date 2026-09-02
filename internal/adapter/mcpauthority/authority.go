@@ -121,6 +121,10 @@ func cloneRoutes(in []permconfig.MCPServerProfile) []permconfig.MCPServerProfile
 		oauth := *auth.OAuth
 		auth.OAuth = &oauth
 		oauth.Scopes = append([]string(nil), oauth.Scopes...)
+		oauth.Tools = append([]permconfig.MCPStaticToolProfile(nil), oauth.Tools...)
+		for j := range oauth.Tools {
+			oauth.Tools[j].InputSchema = append([]byte(nil), oauth.Tools[j].InputSchema...)
+		}
 		if oauth.Upstream != nil {
 			upstream := *oauth.Upstream
 			oauth.Upstream = &upstream

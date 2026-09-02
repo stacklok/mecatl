@@ -93,6 +93,42 @@ func TestMCPValidTaggedUnionVariants(t *testing.T) {
 	}
 }
 
+func TestMCPStaticProtectedToolsAreStrictComparisonData(t *testing.T) {
+	const config = `mcp:
+  servers:
+    - name: protected
+      url: https://mcp.example/mcp
+      auth:
+        mode: oauth
+        oauth:
+          issuer: https://issuer.example
+          client:
+            mode: preregistered
+            preregistered: {id: client, secret_env: MECATL_CLIENT_SECRET}
+          scopes: [read]
+          credentials:
+            mode: local
+            local: {root: /credentials, key_env: MECATL_KEY}
+          network: {additional_origins: [], private_origins: [], max_redirects: 0}
+          tools:
+            - name: reviewed
+              description: comparison only
+              input_schema: {type: object}
+              read_only: true
+`
+	cfg, err := parseYAML([]byte(config))
+	if err != nil {
+		t.Fatalf("parse protected static tool: %v", err)
+	}
+	tool := cfg.MCP.Servers[0].Auth.OAuth.Tools[0]
+	if tool.Name != "reviewed" || string(tool.InputSchema) != `{"type":"object"}` || !tool.ReadOnly {
+		t.Fatalf("comparison-only tool = %#v", tool)
+	}
+	if _, err := parseYAML([]byte(strings.Replace(config, "read_only: true", "unexpected: value", 1))); err == nil {
+		t.Fatal("unknown static-tool field parsed successfully")
+	}
+}
+
 func TestMCPAuthoritySyntaxIsLosslessAndStrict(t *testing.T) {
 	cfg, err := parseYAML([]byte(`mcp:
   mode: broker
