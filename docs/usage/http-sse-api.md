@@ -59,6 +59,8 @@ compatibility. `build_id` is not a semantic-version API.
 | `POST /v1/sessions/{id}/plan:approve` | `{"target_mode": "default" \| "accept_edits" \| "plan", "note": "..."}` | `200` `text/event-stream` — atomically resolve a parked **plan-approval** ask ([ADR 0069](../adr/0069-plan-approval-gate.md)): on `default`/`accept_edits` resume the parked run AND start the continuation run (both streamed); on `plan`/`""` iterate (no continuation). `409` on a precondition failure (live run / not awaiting / not a plan ask), `404` on an unknown session |
 | `POST /v1/sessions/{id}/cancel` | — | `204` |
 | `POST /v1/sessions/{id}/cancel-child` | `{child_id}` | `204`; `404` for an unknown / already-finished child |
+| `POST /v1/sessions/{id}/steer` | `{text, message_id?}` | `200` `{outcome, message_id}` — enqueue a mid-run steer into the live run's inbox (`accepted` \| `appended` \| `too_late`; on `too_late` the caller keeps the text — see the steer section) |
+| `POST /v1/sessions/{id}/cancel-steer` | — | `200` `{outcome}` — retract the pending (un-drained) steer (`retracted` \| `none_pending`) |
 | `POST /v1/sessions/{id}/fork` | `{"title": "...", "reasoning_effort": "..."}` (both optional; empty/absent inherits the source's) | `201` `{session_id}` — create a peer session from `{id}`'s conversation history snapshot (ADR 0065); same provider/model only, with the ONE optional selector delta a reasoning-effort override (ADR 0068); `412` if `{id}` is not an idle/terminal main chat or is live in this process, `409` when another replica holds its lease |
 | `POST /v1/sessions/{id}/adoption:preflight` | `{workspace, environment_kind, environment_id, provider_id, model_id, profile?}` | `200` `{eligible, reason_code, bindings}`. Requires authenticated caller ownership; absent and foreign IDs are both `404`. Every binding is explicit and unresolved bindings return `binding_unresolved` rather than selecting a default |
 | `POST /v1/sessions/{id}/adopt` | the same explicit bindings plus `idempotency_key` | `201` `{session_id, source_session_id, capabilities, resolved_model}`. Revalidates under the source mutation lease; a retry returns the same complete target. The legacy source is unchanged |
@@ -342,18 +344,60 @@ $ curl -s -X POST http://127.0.0.1:8081/v1/sessions/<id>/cancel
 The run terminates with a `result` whose `stop` is `cancelled`. No in-flight run
 → `404` `{"error":"no in-flight run for session"}`.
 
-### Mid-run steer is gRPC-only (v1)
+### Mid-run steer
 
 The **steer** capability (steer-while-running, issue #512 — inject an operator
-instruction into an *in-flight* run, drained at the next turn boundary) rides the
-bidi gRPC `Converse` stream as a `steer` / `steer_cancel` request arm. The HTTP/SSE
-run path has **no mid-run client→server channel** — `POST /v1/sessions/{id}/runs`
-streams server→client only — so an HTTP/SSE client **cannot steer** in v1. Read the
-`steer` bit off the `CreateSession` capabilities echo: when present/true a gRPC
-client may send `steer` frames; when absent/false the server reports `too_late`
-(and, over gRPC, auto-promotes the text to a fresh follow-up run). A unary
-`POST /v1/sessions/{id}/steer` endpoint is a possible cheap follow-up (mirroring
-`approve`/`cancel`), deferred.
+instruction into an *in-flight* run, drained at the next turn boundary) is
+available on both wires: over bidi gRPC it rides the `Converse` stream as a
+`steer` / `steer_cancel` request arm; over HTTP it is a pair of unary endpoints
+(mirroring `approve`/`cancel` — the prompt SSE stream itself is server→client
+only). Gate the affordance on the `steer` bit of the `POST /v1/sessions`
+capabilities echo: when absent/false the server's steer knob is off and every
+steer reports `too_late`.
+
+Enqueue a steer while the prompt SSE stream is still open (a **second**
+connection, like `approve`):
+
+```console
+$ curl -s -X POST http://127.0.0.1:8081/v1/sessions/<id>/steer \
+       -d '{"text":"also check b.go","message_id":"m-1"}'
+{"outcome":"accepted","message_id":"m-1"}
+```
+
+The `outcome` is the engine's authoritative verdict, verbatim:
+
+- `"accepted"` — the text parked in the run's (empty) steer inbox; the run
+  drains it at the next turn boundary as an ordinary user message.
+- `"appended"` — the inbox already held a pending steer; the text merged into
+  that pending bundle (they drain together as one message).
+- `"too_late"` — the run is already terminal, no run is live, or the server's
+  steer capability is off. **The text was NOT enqueued and is NOT promoted**:
+  unlike the gRPC `steer` frame (whose text has no other home once the ack is
+  sent, so the server auto-promotes it into a fresh follow-up run), the HTTP
+  caller still holds the text — re-send it as an ordinary
+  `POST /v1/sessions/{id}/prompt` follow-up. Never drop it silently.
+
+`text` is required (`400`); an unknown session is `404`; the body is bounded
+like `/prompt` (oversized → `413`).
+
+`message_id` is an optional client-minted correlation id: it is echoed verbatim
+on the response (the ack-side echo), and when the steer lands the run's SSE
+stream emits a `steer` event — the drain echo, carrying the committed text plus
+the `message_id` **watermark** (the latest contributing send's id of the bundle
+that drained; sends up to and including it drained, later sends are still
+pending), so a client correlates positionally, never by text-match.
+
+Retract a still-pending (un-drained) steer:
+
+```console
+$ curl -s -X POST http://127.0.0.1:8081/v1/sessions/<id>/cancel-steer
+{"outcome":"retracted"}
+```
+
+`"retracted"` means the pending bundle was cleared before it drained (no `steer`
+echo will land); `"none_pending"` means there was nothing to retract — the steer
+already drained at a boundary (it is ordinary recorded history now) or no run is
+live. Unknown session → `404`.
 
 ### ACP over stdio (`mecated acp`)
 

@@ -293,7 +293,7 @@ var serviceAccessTable = map[string]ClassificationEntry{
 	"ApprovePlan":              {KindCallerOwned, "authorizes the session before resolving the parked plan ask"},
 	"Cancel":                   {KindCallerOwned, "authorizes via GetSession before signalling the in-flight run"},
 	"CancelChild":              {KindCallerOwned, "authorizes the PARENT session via GetSession before reaching into its child registry"},
-	"Steer":                    {KindCallerOwned, "authorizes via GetSession before enqueueing to the live run's inbox or promoting through StartRunContent"},
+	"Steer":                    {KindCallerOwned, "authorizes via GetSession before enqueueing to the live run's steer inbox, promoting through StartRunContent when no live run can take it"},
 	"CancelSteer":              {KindCallerOwned, "authorizes via GetSession before reaching into the live run's steer inbox"},
 	"Persist":                  {KindCallerOwned, "authorizes via GetSession before consulting the live run registry"},
 

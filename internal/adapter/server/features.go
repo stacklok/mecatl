@@ -65,6 +65,12 @@ const (
 	// mcp_servers HERE" — which is the only useful form of the answer, since a
 	// build-only claim would be true on a daemon that refuses every such request.
 	FeatureMCPServersOnCreate = "mcp_servers_on_create"
+
+	// FeatureHTTPSteer is the unary HTTP steer pair (ADR 0252):
+	// POST /v1/sessions/{id}/steer (text + multimodal parts +
+	// expected_run_id strict mode, promoted follow-ups relayed as SSE) and
+	// POST /v1/sessions/{id}/cancel-steer.
+	FeatureHTTPSteer = "http_steer"
 )
 
 // FeatureScope is what the DEPLOYMENT permits, as distinct from what the build
@@ -95,6 +101,7 @@ type FeatureScope struct {
 // repeated string and a client must treat it as a set, but a stable order keeps
 // diffs and golden fixtures readable.
 var allFeatures = []string{
+	FeatureHTTPSteer,
 	FeatureMCPServersOnCreate,
 	FeatureServerInfo,
 	FeatureWatchSessionEvents,

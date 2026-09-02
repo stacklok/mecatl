@@ -1,6 +1,6 @@
 # ADR 0252 — HTTP steer endpoint: `POST /v1/sessions/{id}/steer`
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-08-31
 - Scope: `internal/adapter/server` (`http.go`), the RFC 9457 error registry
   ([ADR 0248](./0248-sdk-compatibility-and-error-contract.md)), mecatl's HTTP

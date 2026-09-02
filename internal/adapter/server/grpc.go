@@ -573,25 +573,10 @@ func (h *HarnessServer) sendEvent(rl *runRelay, ev session.Event) {
 		return // log-only event: consumed by the durable log, not relayed to the client wire
 	}
 	proto := toProto(ev)
-	if ev.Type == session.EvSteer && proto.GetSteer() != nil {
-		// The EvSteer drain echo echoes the client-minted message_id of the
-		// Steer frame that parked this text: the engine inbox carries text only,
-		// so the id lives at the Service's wire-correlation FIFO — popped here
-		// positionally (the TAIL). An unmatched echo (an id-less steer) rides
-		// with "".
-		id := h.svc.LookupSteerMessageID(rl.id)
-		if id == "" {
-			// The correlation FAILED: the echo carries "" and the client cannot
-			// match it to the frame it sent (the queue can stall — the exact
-			// symptom this WARN exists to make visible). No session.Event owns a
-			// correlation miss, so it goes to diagnostics, text clamped to a prefix.
-			h.svc.Diagnostics().Log(rl.logCtx, port.LevelWarn, "steer echo uncorrelated (no message_id for drained text)", "session", string(rl.id), "text_prefix", valid(firstRunes(ev.Steer.Text, 40)))
-		} else {
-			h.svc.Diagnostics().Log(rl.logCtx, port.LevelInfo, "steer drain echo correlated",
-				"session", string(rl.id), "message_id", id, "text_len", len(ev.Steer.Text))
-		}
-		proto.GetSteer().MessageId = valid(id)
-	}
+	// The EvSteer drain-echo message_id stamp + its correlation diagnostics live
+	// in the ONE shared Service.stampSteerEcho (the HTTP SSE relay calls the
+	// same helper) — a non-steer event is a no-op inside it.
+	h.svc.stampSteerEcho(rl.logCtx, rl.id, ev, proto)
 	if err := rl.snd.Send(&mecatlv1.ConverseResponse{Event: proto}); err != nil {
 		rl.sendErr = err
 	}

@@ -4289,6 +4289,37 @@ func (s *Service) LookupSteerMessageID(id session.SessionID) string {
 	return watermark
 }
 
+// stampSteerEcho stamps the client-minted message_id onto an EvSteer drain
+// echo's proto projection, consuming the session's watermark FIFO
+// (LookupSteerMessageID). It is the SINGLE owner of the echo correlation — the
+// gRPC Converse relay (HarnessServer.sendEvent) and the HTTP SSE relay
+// (HTTPHandler.relayRunSSE) both call it, so the stamped id and the
+// correlated-INFO / uncorrelated-WARN diagnostics cannot drift between the two
+// wires. A non-EvSteer event (or a projection without the Steer payload) is a
+// no-op, so callers stamp unconditionally on the hot path.
+func (s *Service) stampSteerEcho(logCtx context.Context, id session.SessionID, ev session.Event, proto *mecatlv1.Event) {
+	if ev.Type != session.EvSteer || proto.GetSteer() == nil {
+		return
+	}
+	// The EvSteer drain echo echoes the client-minted message_id of the
+	// Steer frame that parked this text: the engine inbox carries text only,
+	// so the id lives at the Service's wire-correlation FIFO — popped here
+	// positionally (the TAIL). An unmatched echo (an id-less steer) rides
+	// with "".
+	msgID := s.LookupSteerMessageID(id)
+	if msgID == "" {
+		// The correlation FAILED: the echo carries "" and the client cannot
+		// match it to the frame it sent (the queue can stall — the exact
+		// symptom this WARN exists to make visible). No session.Event owns a
+		// correlation miss, so it goes to diagnostics, text clamped to a prefix.
+		s.Diagnostics().Log(logCtx, port.LevelWarn, "steer echo uncorrelated (no message_id for drained text)", "session", string(id), "text_prefix", valid(firstRunes(ev.Steer.Text, 40)))
+	} else {
+		s.Diagnostics().Log(logCtx, port.LevelInfo, "steer drain echo correlated",
+			"session", string(id), "message_id", msgID, "text_len", len(ev.Steer.Text))
+	}
+	proto.GetSteer().MessageId = valid(msgID)
+}
+
 // isDelegationChildSessionID reports whether id carries one of the delegation
 // families' child-session id prefixes: agent.SubagentSessionPrefix,
 // agent.ParallelSessionPrefix, agent.TeamSessionPrefix — the engine's exported

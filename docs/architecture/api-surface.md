@@ -101,6 +101,8 @@ v1 enforces required checks in the Go server (protovalidate runtime is deferred)
 | `POST /v1/sessions/{id}/approve` | `Run.Approve` | resolves the paused ask (verdict or legacy `allow`) |
 | `POST /v1/sessions/{id}/cancel` | `Run.Cancel` | cancels the in-flight run |
 | `POST /v1/sessions/{id}/cancel-child` | `Run.CancelChild` | cancels ONE child of the in-flight run |
+| `POST /v1/sessions/{id}/steer` | `Service.SteerEnqueue` | unary mid-run steer: enqueue to the live run's inbox (`accepted`/`appended`/`too_late`); never promotes — on `too_late` the caller keeps the text and drives its own follow-up prompt (the gRPC `steer` frame's in-server promote stays gRPC-only) |
+| `POST /v1/sessions/{id}/cancel-steer` | `Service.CancelSteer` | retracts the pending (un-drained) steer (`retracted`/`none_pending`) |
 | `POST /v1/sessions/{id}/adoption:preflight` | `PreflightSessionAdoption` | caller-owned eligibility and explicit-binding preflight; no source mutation |
 | `POST /v1/sessions/{id}/adopt` | `AdoptSession` | idempotent atomic new-main copy; source remains inspect-only |
 | `DELETE /v1/sessions/{id}` | `CloseSession` | frees the per-session engine slot |
