@@ -2,8 +2,8 @@
 id: 04-command-environment-overlay
 title: Bound command environment overlay API
 blocked_by: []
-status: in-progress
-branch: ""
+status: done
+branch: "plan-managed-temporary-command-leases/04-command-environment-overlay"
 worktree: ""
 issue: ""
 retries: 0
