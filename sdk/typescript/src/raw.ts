@@ -46,6 +46,8 @@ export function getRawJson(message: object): JsonValue | undefined {
 
 /** Transport-neutral, descriptor-driven operations beneath Client/Session/Run. @public */
 export interface RawClient {
+  /** Returns the build features learned from the shared compatibility probe. */
+  features(options?: CallOptions): Promise<ReadonlySet<string>>;
   unary<I extends DescMessage, O extends DescMessage>(
     method: DescMethodUnary<I, O>,
     input: MessageInitShape<I>,
@@ -121,6 +123,10 @@ export function createRawClient(options: RawClientOptions): RawClient {
   };
 
   return {
+    async features(callOptions?: CallOptions): Promise<ReadonlySet<string>> {
+      const result = await ensureCompatibility(callOptions);
+      return new Set(result.message.features);
+    },
     async unary<I extends DescMessage, O extends DescMessage>(
       method: DescMethodUnary<I, O>,
       input: MessageInitShape<I>,

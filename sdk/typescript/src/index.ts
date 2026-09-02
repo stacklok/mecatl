@@ -114,3 +114,12 @@ export type {
   RunOptions,
   RunResult,
 } from "./run.js";
+export type {
+  SdkCursor,
+  UnknownWatchEnvelope,
+  WatchBoundaryEnvelope,
+  WatchEnvelope,
+  WatchEventEnvelope,
+  WatchGapEnvelope,
+} from "./watch.js";
+export { MECATL_ATTACH_FILTERED_KINDS, MECATL_WATCH_PHASES } from "./watch.js";

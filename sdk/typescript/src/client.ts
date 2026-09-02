@@ -131,6 +131,7 @@ interface ClientCoreOptions {
 
 interface SessionOperations {
   assertOpen(): void;
+  features(): Promise<ReadonlySet<string>>;
   readonly transportKind: TransportKind;
   stream<I extends DescMessage, O extends DescMessage>(
     method: DescMethodStreaming<I, O>,
@@ -284,6 +285,7 @@ class ClientImpl implements Client {
     });
     this.#operations = {
       assertOpen: () => this.#assertOpen(),
+      features: () => this.#features(),
       stream: (method, input) => this.#stream(method, input),
       transportKind: this.#transportKind,
       unary: (method, input) => this.#unary(method, input),
@@ -381,6 +383,19 @@ class ClientImpl implements Client {
       const response = await this.#raw.unary(method, input, { signal: this.#abort.signal });
       this.#publish("online");
       return response;
+    } catch (error) {
+      this.#observeError(error);
+      throw error;
+    }
+  }
+
+  async #features(): Promise<ReadonlySet<string>> {
+    this.#assertOpen();
+    if (this.#snapshot === "offline") this.#publish("reconnecting");
+    try {
+      const features = await this.#raw.features({ signal: this.#abort.signal });
+      this.#publish("online");
+      return features;
     } catch (error) {
       this.#observeError(error);
       throw error;

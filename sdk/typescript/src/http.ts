@@ -388,6 +388,18 @@ class HttpTransport implements Transport {
         method: "GET",
         path: `/v1/sessions/${encodeURIComponent(stringField(jsonInput, "session_id"))}/events`,
       };
+    } else if (method.name === "WatchSessionEvents") {
+      const query = new URLSearchParams();
+      const cursor = stringField(jsonInput, "cursor");
+      const runId = stringField(jsonInput, "run_id");
+      if (cursor !== "") query.set("cursor", cursor);
+      if (runId !== "") query.set("run_id", runId);
+      const suffix = query.toString();
+      route = {
+        body: false,
+        method: "GET",
+        path: `/v1/sessions/${encodeURIComponent(stringField(jsonInput, "session_id"))}/watch${suffix === "" ? "" : `?${suffix}`}`,
+      };
     } else if (method.name === "Converse") {
       const frame = firstInput as unknown as ConverseRequest;
       const start = frame.kind;
@@ -484,6 +496,10 @@ class HttpTransport implements Transport {
         if (wrapEvent) {
           const event = (message as { readonly event?: object | undefined }).event;
           if (event !== undefined) registerRawJson(event, raw);
+        } else if (method.name === "WatchSessionEvents") {
+          const event = (message as { readonly event?: object | undefined }).event;
+          const rawEvent = record(raw).event;
+          if (event !== undefined && rawEvent !== undefined) registerRawJson(event, rawEvent);
         }
         yield message;
       }

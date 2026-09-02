@@ -27,6 +27,7 @@ coverage.*
 /.claude/agent-memory/
 
 # Local Claude Code runtime artifacts
+/.claude/plans/
 /.claude/worktrees/
 /.claude/scheduled_tasks.lock
 /mecatui

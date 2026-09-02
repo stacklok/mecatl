@@ -8034,7 +8034,7 @@ failures name only the class, never the value. The elapsed-time expiry leg is bo
 the only clock-dependent part because the official `oauth2.Token.Valid` has no injected
 clock.
 
-## TypeScript SDK — `sdk/typescript/` (M1 core, ADR 0279)
+## TypeScript SDK — `sdk/typescript/` (M1 core + M2 attachment, ADRs 0279 and 0288)
 
 The ESM-only `@stacklok/mecatl-sdk` has three exports. `.` owns the transport-neutral
 `Client`/`Session`/`Run` API, typed events/errors, prompt-media helpers, and the hand-written
@@ -8079,6 +8079,18 @@ existing `engine/adapter/mockllm` provider via `app.Config.MockProvider`, includ
 tool-call turns and a bounded per-turn delay for deterministic mid-flight cancellation. The
 SDK CI job runs frozen install, Biome, typecheck, unit Vitest, build, pack, API reports, Go+TS
 codegen freshness, and this e2e; each command remains a hard failure.
+
+The M2 durable-watch base lives in `sdk/typescript/src/watch.ts`. Its client-authored `kind`
+turns the generated `{event, cursor, phase}` response into `event | boundary | gap | unknown`;
+known phases narrow, future phases retain their raw string and optional event, and the gap arm
+deliberately drops the server token from the ergonomic shape. Event payloads still flow through
+`sdk/typescript/src/events.ts` (`decodeEvent`) rather than a watch-specific decoder. The HTTP
+transport maps the generated server-streaming method to `GET /v1/sessions/{id}/watch`, including
+terminal SSE error frames, while `sdk/typescript/src/raw.ts` exposes the compatibility feature set
+to client-level code for transport-neutral watch gating. Root-module parity tests derive phases,
+the feature id, and default-filtered kinds from the Go server sources; the sole filter divergence
+is explicit: the SDK filters every `user_prompt` instead of copying the server's fenced scheduled-
+delivery-note classifier.
 
 ## Live e2e — `e2e/` (see `e2e/README.md`)
 

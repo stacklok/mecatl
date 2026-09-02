@@ -4,7 +4,7 @@
 **Status:** draft, 2026-09-02. Synthesised from [#821](https://github.com/stacklok/mecatl/issues/821)'s settled "Attachment and reconnection" contract plus the client-side decisions ADR 0279 deferred to this milestone.
 **Issue:** [stacklok/mecatl#821](https://github.com/stacklok/mecatl/issues/821) (parent: [#761](https://github.com/stacklok/mecatl/issues/761)).
 **ADR:** [ADR-0288](../adr/0288-typescript-sdk-durable-attachment.md) — the envelope union, `attach`/`activity` semantics, the serializable run-and-filter-scoped cursor, the reconnect authority, the HTTP-only attached `cancel` (approval deferred), and the status arbitration rule.
-**Accumulator branch:** `acc/sdk-typescript-attach` (off `main`).
+**Accumulator / stack:** `sdk/21-envelope` is the stack root off `main`; subsequent layers are `sdk/22-attach` … `sdk/30-e2e` (linear, one PR per scenario).
 
 The smallest set of work that lets a TypeScript client rejoin a running
 mecatl session across a reload, a network drop, or a daemon restart, losing no

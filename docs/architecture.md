@@ -217,6 +217,15 @@ builds and spawns the same checkout's `mecated` with the offline mock provider t
 prove TCP, UDS, HTTP/SSE, asks, cancellation, and stale controls on real wire. See
 [ADR 0279](adr/0279-typescript-sdk-architecture.md).
 
+The durable-watch foundation uses the generated `WatchSessionEvents` descriptor on
+both transports and decodes each wire frame into a four-arm `WatchEnvelope`:
+`event`, the single replay-to-live `boundary`, cursor-free `gap`, or lossless
+`unknown`. Envelope events pass through the same M1 event decoder, so unknown event
+kinds retain transport-native raw data. The compatibility feature set is exposed at
+the raw/client seam rather than owned by HTTP, allowing both transports to gate the
+shared `watch_session_events` capability. See
+[ADR 0288](adr/0288-typescript-sdk-durable-attachment.md).
+
 Around that core, every capability beyond the minimal loop is a **seam with a
 default and a swap-in adapter**, so the production build stays static and
 network-free unless you wire something in. The current adapters cover, grouped:
