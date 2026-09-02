@@ -244,6 +244,15 @@ without parking. `attach(runId, { from: "now" })` still opens the ordinary watch
 empty wire cursor and receives the replay, but discards replay envelopes client-side before
 yielding the live boundary; the mode is rejected locally when no explicit run id is supplied.
 
+Ergonomic checkpoints are opaque, serializable `sdkcur/1` strings that wrap the server token
+with the view's run binding and effective server filter. The SDK validates that envelope and
+delivered-set scope before opening a watch: a run-bound cursor cannot widen to session
+activity or another run, while an unbound activity cursor can narrow to any run. Checkpoints
+advance when the consumer requests the next envelope, giving natural at-least-once delivery;
+records dropped by the ergonomic filter advance immediately, and a filtered `approval` still
+retires its permission ask. The SDK exposes the string for application-owned persistence but
+does not write browser storage or files itself.
+
 Around that core, every capability beyond the minimal loop is a **seam with a
 default and a swap-in adapter**, so the production build stays static and
 network-free unless you wire something in. The current adapters cover, grouped:

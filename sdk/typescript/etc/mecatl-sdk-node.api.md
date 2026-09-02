@@ -70,7 +70,7 @@ export interface AttachedRun extends SessionActivity {
 
 // @public
 export interface AttachOptions {
-    from?: "now" | "start";
+    from?: "now" | "start" | SdkCursor;
 }
 
 // @public
@@ -179,6 +179,16 @@ export interface CredentialOptions {
 
 // @public (undocumented)
 export type CredentialProvider = () => HeadersInit | Promise<HeadersInit>;
+
+// @public
+export class CursorMalformedError extends MecatlError {
+    constructor(message?: string, options?: Omit<MecatlErrorOptions, "code">);
+}
+
+// @public
+export class CursorScopeError extends MecatlError {
+    constructor(message?: string);
+}
 
 // @public
 export type ErrorOrigin = TransportKind | "local";
@@ -707,7 +717,7 @@ export interface ScheduleEventPayload {
 export type SdkCursor = string;
 
 // @public (undocumented)
-export type SDKErrorCode = "authentication" | "incompatible_server" | "invalid_prompt" | "invalid_state" | "no_runs" | "protocol" | "transport" | "unsupported_feature";
+export type SDKErrorCode = "authentication" | "cursor_scope" | "incompatible_server" | "invalid_prompt" | "invalid_state" | "no_runs" | "protocol" | "transport" | "unsupported_feature";
 
 // @public (undocumented)
 export class ServerError extends MecatlError {
@@ -723,7 +733,7 @@ export type ServerErrorCode = (typeof MECATL_ERROR_CODES)[number] | "unknown";
 
 // @public
 export interface Session {
-    activity(): Promise<SessionActivity>;
+    activity(options?: AttachOptions): Promise<SessionActivity>;
     attach(runId?: string, options?: AttachOptions): Promise<AttachedRun>;
     close(): Promise<void>;
     delete(): Promise<void>;

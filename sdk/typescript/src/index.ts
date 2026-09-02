@@ -32,6 +32,8 @@ export type {
 } from "./errors.js";
 export {
   AuthenticationError,
+  CursorMalformedError,
+  CursorScopeError,
   IncompatibleServerError,
   InvalidStateError,
   MECATL_ERROR_CODES,

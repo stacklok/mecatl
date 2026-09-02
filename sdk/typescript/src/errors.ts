@@ -73,6 +73,7 @@ export type ServerErrorCode = (typeof MECATL_ERROR_CODES)[number] | "unknown";
 /** @public */
 export type SDKErrorCode =
   | "authentication"
+  | "cursor_scope"
   | "incompatible_server"
   | "invalid_prompt"
   | "invalid_state"
@@ -171,6 +172,23 @@ export class UnsupportedFeatureError extends MecatlError {
 export class InvalidStateError extends MecatlError {
   constructor(message: string, options: Omit<MecatlErrorOptions, "code">) {
     super(message, { ...options, code: "invalid_state" });
+  }
+}
+
+/** An SDK cursor is not a structurally valid `sdkcur/1` envelope. @public */
+export class CursorMalformedError extends MecatlError {
+  constructor(
+    message = "The attachment cursor is malformed",
+    options: Omit<MecatlErrorOptions, "code"> = { transport: "local" },
+  ) {
+    super(message, { ...options, code: "cursor_malformed" });
+  }
+}
+
+/** An SDK cursor would widen the set of durable events delivered by its source view. @public */
+export class CursorScopeError extends MecatlError {
+  constructor(message = "The attachment cursor cannot resume the requested view") {
+    super(message, { code: "cursor_scope", transport: "local" });
   }
 }
 

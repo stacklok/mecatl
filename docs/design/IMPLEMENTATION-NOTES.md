@@ -8116,11 +8116,32 @@ The lifecycle remains one `WatchSessionEvents` request and one iterator in
 `sdk/typescript/src/watch.ts`: replay envelopes, the replay-to-live boundary, live appends,
 and the terminal `result` are consumed in wire order. Encountering that terminal in replay
 ends an already-finished attachment immediately; no follow read is requested. `AttachOptions`
-adds `from: "start" | "now"`. The `now` arm is deliberately a yield-time client filter, not a
+adds `from: "start" | "now" | SdkCursor`, and `Session.activity(options)` accepts the same
+checkpoint input. The `now` arm is deliberately a yield-time client filter, not a
 request capability: `sdk/typescript/src/client.ts` still sends `cursor: ""`, the iterator reads
 and discards every replay envelope, and the boundary is its first yielded value. It requires a
 non-empty explicit run id and rejects locally before compatibility probing or watch creation
 otherwise, avoiding an unfiltered discovery scan whose result would be thrown away.
+
+Attachment checkpoints in `sdk/typescript/src/watch.ts` are versioned, base64url-encoded
+`sdkcur/1` JSON strings carrying `{token, filter, run}`. `token` remains the opaque server
+position, `filter` records the effective server-side `run_id`, and `run` records the client-side
+binding that an implicit `attach()` selected. Cursor parsing is structural and stateless:
+wrong versions, undecodable values, missing string fields, and raw server tokens raise the
+local `CursorMalformedError`, while any well-formed value is accepted regardless of who built
+it. `CursorScopeError` enforces delivered-set containment before feature probing or stream
+creation: a non-empty source run must equal the target run, and a non-empty source filter may
+not be widened; an activity cursor with both fields empty may narrow to any attachment.
+
+The iterator separates delivery from consumption. A yielded envelope's branded cursor becomes
+the attachment checkpoint only when the next `next()` resumes the generator, so a crash after
+processing but before the next pull re-delivers that envelope. Records omitted for run,
+replay-discard, or default-kind filtering have no consumer-visible delivery to acknowledge and
+therefore advance the checkpoint immediately. Observation happens before those yield filters:
+in particular, `approval` removes its matching `permission.ask` from attachment bookkeeping
+even though the default view never yields the approval record. The cursor stays application-
+owned and serializable across a fresh `Client`; no SDK storage backend or filesystem path is
+introduced.
 
 ## Live e2e — `e2e/` (see `e2e/README.md`)
 

@@ -1,4 +1,6 @@
 import {
+  CursorMalformedError,
+  CursorScopeError,
   InvalidStateError,
   NoRunsError,
   ProtocolError,
@@ -39,7 +41,7 @@ export type SdkCursor = string;
 /** Where an attached run begins reading its durable activity. @public */
 export interface AttachOptions {
   /** `now` still reads the durable replay over the wire, but discards it locally. */
-  from?: "now" | "start";
+  from?: "now" | "start" | SdkCursor;
 }
 
 /** A replayed or live durable event. @public */
@@ -102,8 +104,74 @@ interface AttachmentOperations {
   watch(
     sessionId: string,
     runId: string,
+    cursor: string,
     signal: AbortSignal,
   ): AsyncIterable<WatchSessionEventsResponse>;
+}
+
+interface CursorEnvelope {
+  readonly filter: string;
+  readonly run: string;
+  readonly token: string;
+  readonly v: "sdkcur/1";
+}
+
+function encodeCursor(token: string, filter: string, run: string): SdkCursor {
+  const bytes = new TextEncoder().encode(JSON.stringify({ v: "sdkcur/1", token, filter, run }));
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/u, "");
+}
+
+function decodeCursor(cursor: SdkCursor): CursorEnvelope {
+  try {
+    if (cursor === "" || !/^[A-Za-z0-9_-]+$/u.test(cursor) || cursor.length % 4 === 1) {
+      throw new Error("invalid base64url");
+    }
+    const base64 = cursor.replaceAll("-", "+").replaceAll("_", "/");
+    const padded = base64.padEnd(base64.length + ((4 - (base64.length % 4)) % 4), "=");
+    const binary = atob(padded);
+    const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+    const value: unknown = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+    if (typeof value !== "object" || value === null || Array.isArray(value)) {
+      throw new Error("cursor payload is not an object");
+    }
+    const record = value as Record<string, unknown>;
+    if (
+      record.v !== "sdkcur/1" ||
+      typeof record.token !== "string" ||
+      typeof record.filter !== "string" ||
+      typeof record.run !== "string"
+    ) {
+      throw new Error("cursor payload has invalid fields");
+    }
+    return {
+      filter: record.filter,
+      run: record.run,
+      token: record.token,
+      v: "sdkcur/1",
+    };
+  } catch (error) {
+    if (error instanceof CursorMalformedError) throw error;
+    throw new CursorMalformedError("The attachment cursor is not a valid sdkcur/1 value", {
+      cause: error,
+      transport: "local",
+    });
+  }
+}
+
+function cursorFrom(options: AttachOptions): CursorEnvelope | undefined {
+  const from = options.from;
+  return from === undefined || from === "start" || from === "now" ? undefined : decodeCursor(from);
+}
+
+function requireCursorScope(cursor: CursorEnvelope, targetRun: string, targetFilter: string): void {
+  if (cursor.run !== "" && cursor.run !== targetRun) {
+    throw new CursorScopeError("The attachment cursor is bound to a different run");
+  }
+  if (cursor.filter !== "" && cursor.filter !== targetFilter) {
+    throw new CursorScopeError("The attachment cursor was issued under a narrower server filter");
+  }
 }
 
 const filteredKinds = new Set<string>(MECATL_ATTACH_FILTERED_KINDS);
@@ -169,18 +237,21 @@ class SessionActivityImpl implements SessionActivity {
   readonly #source: AsyncIterator<WatchSessionEventsResponse>;
   readonly #transport: TransportKind;
   readonly #runId: string | undefined;
+  readonly #serverFilter: string;
   readonly #observe: (envelope: WatchEnvelope) => void;
   readonly #discardReplay: boolean;
   #closed = false;
   #closePromise: Promise<void> | undefined;
   #consumed = false;
-  #cursor: SdkCursor = "";
+  #cursor: SdkCursor;
 
   constructor(
     source: AsyncIterator<WatchSessionEventsResponse>,
     transport: TransportKind,
     abort: AbortController,
     runId: string | undefined,
+    serverFilter: string,
+    initialToken: string,
     buffer: WatchEnvelope[] = [],
     observe: (envelope: WatchEnvelope) => void = () => undefined,
     discardReplay = false,
@@ -189,6 +260,8 @@ class SessionActivityImpl implements SessionActivity {
     this.#transport = transport;
     this.#abort = abort;
     this.#runId = runId;
+    this.#serverFilter = serverFilter;
+    this.#cursor = encodeCursor(initialToken, serverFilter, runId ?? "");
     this.#buffer = buffer;
     this.#observe = observe;
     this.#discardReplay = discardReplay;
@@ -222,19 +295,24 @@ class SessionActivityImpl implements SessionActivity {
       for (;;) {
         const envelope = await this.#nextEnvelope();
         if (envelope === undefined) return;
-        if ("cursor" in envelope) this.#cursor = envelope.cursor;
-        if (this.#discardReplay && envelope.phase === "replay") continue;
         this.#observe(envelope);
 
         const event = envelopeEvent(envelope);
+        if (this.#discardReplay && envelope.phase === "replay") {
+          this.#checkpoint(envelope);
+          continue;
+        }
         if (this.#runId !== undefined && event !== undefined && event.runId !== this.#runId) {
+          this.#checkpoint(envelope);
           continue;
         }
         if (event !== undefined && event.kind !== "unknown" && filteredKinds.has(event.kind)) {
+          this.#checkpoint(envelope);
           continue;
         }
 
         yield envelope;
+        this.#checkpoint(envelope);
         if (this.#runId !== undefined && event?.runId === this.#runId && event.kind === "result") {
           return;
         }
@@ -246,10 +324,24 @@ class SessionActivityImpl implements SessionActivity {
 
   async #nextEnvelope(): Promise<WatchEnvelope | undefined> {
     const buffered = this.#buffer.shift();
-    if (buffered !== undefined) return buffered;
+    if (buffered !== undefined) return this.#brandCursor(buffered);
     if (this.#closed) return undefined;
     const next = await this.#source.next();
-    return next.done ? undefined : decodeWatchEnvelope(next.value, this.#transport);
+    return next.done
+      ? undefined
+      : this.#brandCursor(decodeWatchEnvelope(next.value, this.#transport));
+  }
+
+  #brandCursor(envelope: WatchEnvelope): WatchEnvelope {
+    if (!("cursor" in envelope)) return envelope;
+    return {
+      ...envelope,
+      cursor: encodeCursor(envelope.cursor, this.#serverFilter, this.#runId ?? ""),
+    };
+  }
+
+  #checkpoint(envelope: WatchEnvelope): void {
+    if ("cursor" in envelope) this.#cursor = envelope.cursor;
   }
 
   async #close(): Promise<void> {
@@ -274,19 +366,31 @@ class AttachedRunImpl extends SessionActivityImpl implements AttachedRun {
     source: AsyncIterator<WatchSessionEventsResponse>,
     transport: TransportKind,
     abort: AbortController,
+    serverFilter: string,
+    initialToken: string,
     buffer: WatchEnvelope[] = [],
     discardReplay = false,
   ) {
-    const liveState = { value: true };
+    const liveState = { value: true, pendingAsks: new Set<string>() };
     super(
       source,
       transport,
       abort,
       runId,
+      serverFilter,
+      initialToken,
       buffer,
       (envelope) => {
         const event = envelopeEvent(envelope);
-        if (event?.runId === runId && event.kind === "result") liveState.value = false;
+        if (event?.runId !== runId) return;
+        if (event.kind === "permission.ask") liveState.pendingAsks.add(event.payload.askId);
+        if (event.kind === "permission.retract" || event.kind === "approval") {
+          liveState.pendingAsks.delete(event.payload.askId);
+        }
+        if (event.kind === "result") {
+          liveState.value = false;
+          liveState.pendingAsks.clear();
+        }
       },
       discardReplay,
     );
@@ -332,13 +436,14 @@ class AttachedRunImpl extends SessionActivityImpl implements AttachedRun {
 function watch(
   sessionId: string,
   runId: string,
+  cursor: string,
   operations: AttachmentOperations,
 ): {
   abort: AbortController;
   source: AsyncIterator<WatchSessionEventsResponse>;
 } {
   const abort = new AbortController();
-  const source = operations.watch(sessionId, runId, abort.signal)[Symbol.asyncIterator]();
+  const source = operations.watch(sessionId, runId, cursor, abort.signal)[Symbol.asyncIterator]();
   return { abort, source };
 }
 
@@ -346,10 +451,26 @@ function watch(
 export async function createSessionActivity(
   sessionId: string,
   operations: AttachmentOperations,
+  options: AttachOptions = {},
 ): Promise<SessionActivity> {
+  if (options.from === "now") {
+    throw new InvalidStateError('Opening activity from "now" requires an explicit run id', {
+      transport: "local",
+    });
+  }
+  const resume = cursorFrom(options);
+  if (resume !== undefined) requireCursorScope(resume, "", "");
   await requireWatchFeature(operations);
-  const opened = watch(sessionId, "", operations);
-  return new SessionActivityImpl(opened.source, operations.transportKind, opened.abort, undefined);
+  const token = resume?.token ?? "";
+  const opened = watch(sessionId, "", token, operations);
+  return new SessionActivityImpl(
+    opened.source,
+    operations.transportKind,
+    opened.abort,
+    undefined,
+    "",
+    token,
+  );
 }
 
 /** Selects one run and creates its durable attachment view. */
@@ -364,14 +485,37 @@ export async function createAttachedRun(
       transport: "local",
     });
   }
+  const resume = cursorFrom(options);
+  if (runId !== undefined && resume !== undefined) requireCursorScope(resume, runId, runId);
+
+  if (runId === undefined && resume?.run !== undefined && resume.run !== "") {
+    const restoredRun = resume.run;
+    const serverFilter = resume.filter;
+    requireCursorScope(resume, restoredRun, serverFilter);
+    await requireWatchFeature(operations);
+    const opened = watch(sessionId, serverFilter, resume.token, operations);
+    return new AttachedRunImpl(
+      restoredRun,
+      opened.source,
+      operations.transportKind,
+      opened.abort,
+      serverFilter,
+      resume.token,
+    );
+  }
+
   await requireWatchFeature(operations);
-  const opened = watch(sessionId, runId ?? "", operations);
+  const serverFilter = runId ?? resume?.filter ?? "";
+  const token = resume?.token ?? "";
+  const opened = watch(sessionId, serverFilter, token, operations);
   if (runId !== undefined) {
     return new AttachedRunImpl(
       runId,
       opened.source,
       operations.transportKind,
       opened.abort,
+      serverFilter,
+      token,
       [],
       options.from === "now",
     );
@@ -406,6 +550,8 @@ export async function createAttachedRun(
     opened.source,
     operations.transportKind,
     opened.abort,
+    serverFilter,
+    token,
     replay,
   );
 }

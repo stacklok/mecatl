@@ -110,7 +110,7 @@ export interface Session {
   /** Attaches to an explicit run, or selects the newest run in the durable log. */
   attach(runId?: string, options?: AttachOptions): Promise<AttachedRun>;
   /** Opens the durable cross-run activity stream for this session. */
-  activity(): Promise<SessionActivity>;
+  activity(options?: AttachOptions): Promise<SessionActivity>;
   /** Starts a run and resolves once its first run-ID-bearing event arrives. */
   run(prompt: PromptInput, options?: RunOptions): Promise<Run>;
   /** Releases runtime resources without removing the durable session. */
@@ -156,6 +156,7 @@ interface SessionOperations {
   watch(
     sessionId: string,
     runId: string,
+    cursor: string,
     signal: AbortSignal,
   ): AsyncIterable<WatchSessionEventsResponse>;
 }
@@ -189,9 +190,9 @@ class SessionImpl implements Session {
     return createAttachedRun(this.id, runId, this.#operations, options);
   }
 
-  async activity(): Promise<SessionActivity> {
+  async activity(options: AttachOptions = {}): Promise<SessionActivity> {
     this.#operations.assertOpen();
-    return createSessionActivity(this.id, this.#operations);
+    return createSessionActivity(this.id, this.#operations, options);
   }
 
   async run(prompt: PromptInput, options: RunOptions = {}): Promise<Run> {
@@ -316,10 +317,10 @@ class ClientImpl implements Client {
       stream: (method, input) => this.#stream(method, input),
       transportKind: this.#transportKind,
       unary: (method, input) => this.#unary(method, input),
-      watch: (sessionId, runId, signal) =>
+      watch: (sessionId, runId, cursor, signal) =>
         this.#stream(
           HarnessService.method.watchSessionEvents,
-          singleValue({ cursor: "", runId, sessionId }),
+          singleValue({ cursor, runId, sessionId }),
           signal,
         ),
     };
