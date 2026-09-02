@@ -2,7 +2,7 @@
 id: 06-temp-scope-permissions
 title: Bash temporary scope policy and guidance
 blocked_by: [01-temporary-storage-config, 04-command-environment-overlay, 05-foreground-managed-leases]
-status: pending
+status: in-progress
 branch: ""
 worktree: ""
 issue: ""
