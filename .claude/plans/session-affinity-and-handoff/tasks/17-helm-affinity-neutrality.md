@@ -2,8 +2,8 @@
 id: 17-helm-affinity-neutrality
 title: Helm external-boundary neutrality
 blocked_by: []
-status: in-progress
-branch: ""
+status: done
+branch: "plan-session-affinity-and-handoff/17-helm-affinity-neutrality"
 worktree: ".scratch/task-session-affinity-17"
 issue: ""
 retries: 0

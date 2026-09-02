@@ -2,9 +2,9 @@
 id: 03-http-affinity-validation
 title: HTTP session-route affinity validation
 blocked_by: [01-session-header-contract]
-status: pending
+status: in-progress
 branch: ""
-worktree: ""
+worktree: ".scratch/task-session-affinity-03"
 issue: ""
 retries: 0
 last_error: ""
