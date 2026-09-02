@@ -32,7 +32,7 @@ the outcome a user gets, then use this order when it applies:
 
 Keep shared-core behavior on feature pages. Put operational differences between
 `mecated`, `mecak8s`, and embedded `mecatui` in the deployment pages and the
-[capability matrix](/features/capability-matrix.md). `mecatui` is a terminal skin
+[capability matrix](./features/capability-matrix.md). `mecatui` is a terminal skin
 over an embedded or connected server, not a separate agent implementation.
 `mecak8s` is storage-free locally by design: its durable state is externalized
 rather than absent.

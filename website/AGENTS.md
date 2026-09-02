@@ -108,8 +108,7 @@ wanted — `sidebars.ts` is intentionally minimal.
 - **Mermaid.** `@docusaurus/theme-mermaid` is installed. Use `mermaid` fenced code
   blocks freely — they render as diagrams.
 - **Admonitions.** Custom titles require bracket syntax: `:::note[My Title]`. Blank
-  lines inside the block are required. See the global `~/.claude/CLAUDE.md` for the
-  full rule.
+  lines inside the block are required.
 - **Search.** `@easyops-cn/docusaurus-search-local` is wired up. It indexes `user-docs/`
   automatically; no config needed for new pages.
 
