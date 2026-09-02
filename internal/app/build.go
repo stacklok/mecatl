@@ -2283,8 +2283,9 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		// nil (no promotion, BYTE-IDENTICAL to pre-Phase-3) unless the predicate could
 		// ever return true, so a deployment with no plan slot pays zero cost and a mode
 		// flip changes nothing.
-		ModeNeedsEngine:         modeNeedsEngine(cfg),
-		TitleGenerationEligible: titleGenerationEligible(cfg, reg),
+		ModeNeedsEngine:          modeNeedsEngine(cfg),
+		TitleGenerationEligible:  titleGenerationEligible(cfg, reg),
+		TitleGeneratorForSession: titleGeneratorForSession(cfg, reg),
 		// Evict a session's LEARNED permission rules when the session is closed
 		// (issue #3): the rules are per-session and non-durable, so they must not
 		// outlive the session that learned them.
