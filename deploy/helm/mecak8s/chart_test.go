@@ -254,28 +254,86 @@ func TestMecak8sHelmChart_EdgeTerminatedTLS(t *testing.T) {
 }
 
 func TestMecak8sHelmChart_EdgeFixtureRendersNoExternalBoundaryResources(t *testing.T) {
-	rendered, err := helm(t, "template", "production", ".", "-f", "ci/production-edge-tls-values.yaml")
-	if err != nil {
-		t.Fatalf("render edge TLS fixture: %v", err)
+	fixtures := []struct {
+		name string
+		args []string
+	}{
+		{"production edge TLS", []string{"template", "production", ".", "-f", "ci/production-edge-tls-values.yaml"}},
+		{"production", []string{"template", "production", ".", "-f", "ci/production-values.yaml"}},
+		{"production OIDC", []string{"template", "production", ".", "-f", "ci/production-oidc-values.yaml"}},
+		{"production TLS", []string{"template", "production", ".", "-f", "ci/production-tls-values.yaml"}},
+		{"config mount", []string{"template", "config-mount", ".", "-f", "ci/config-mount-values.yaml"}},
+		{"Kind", []string{"template", "kind", ".", "-f", "values-kind.yaml"}},
+		{"Kind NodePort", kindFixtureArgs()},
+		{"Kind Keycloak", kindKeycloakFixtureArgs()},
+		{"Kind vMCP", kindVMCPArgs()},
 	}
-	for _, document := range strings.Split(rendered, "\n---") {
-		var meta struct {
-			Kind     string `yaml:"kind"`
-			Metadata struct {
-				Name string `yaml:"name"`
-			} `yaml:"metadata"`
-		}
-		if err := yaml.Unmarshal([]byte(document), &meta); err != nil {
-			t.Fatal(err)
-		}
-		switch meta.Kind {
-		case "Gateway", "HTTPRoute", "GRPCRoute", "TLSRoute", "Route", "Certificate":
-			t.Fatalf("edge fixture unexpectedly renders platform-owned %s", meta.Kind)
-		case "NetworkPolicy":
-			if !strings.HasSuffix(meta.Metadata.Name, "-raw-driver") {
-				t.Fatalf("edge fixture unexpectedly renders general NetworkPolicy %q", meta.Metadata.Name)
+	for _, fixture := range fixtures {
+		t.Run(fixture.name, func(t *testing.T) {
+			rendered, err := helm(t, fixture.args...)
+			if err != nil {
+				t.Fatalf("render fixture: %v", err)
 			}
-		}
+			for _, document := range strings.Split(rendered, "\n---") {
+				var meta struct {
+					Kind     string `yaml:"kind"`
+					Metadata struct {
+						Name string `yaml:"name"`
+					} `yaml:"metadata"`
+				}
+				if err := yaml.Unmarshal([]byte(document), &meta); err != nil {
+					t.Fatal(err)
+				}
+				switch meta.Kind {
+				case "Gateway", "HTTPRoute", "GRPCRoute", "TLSRoute", "Route", "Certificate", "BackendTrafficPolicy":
+					t.Fatalf("fixture unexpectedly renders platform-owned %s", meta.Kind)
+				case "NetworkPolicy":
+					if !strings.HasSuffix(meta.Metadata.Name, "-raw-driver") {
+						t.Fatalf("fixture unexpectedly renders general NetworkPolicy %q", meta.Metadata.Name)
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestADR_0290_HelmHasNoAffinityPolicySurface(t *testing.T) {
+	schemaJSON, err := os.ReadFile("values.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var schema struct {
+		Properties map[string]json.RawMessage `json:"properties"`
+	}
+	if err := json.Unmarshal(schemaJSON, &schema); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := schema.Properties["affinity"]; ok {
+		t.Fatal("values schema exposes an affinity subtree")
+	}
+
+	valuesYAML, err := os.ReadFile("values.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	valuesJSON, err := yaml.YAMLToJSON(valuesYAML)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var values map[string]json.RawMessage
+	if err := json.Unmarshal(valuesJSON, &values); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := values["affinity"]; ok {
+		t.Fatal("default values expose an affinity subtree")
+	}
+
+	deployment, err := os.ReadFile("templates/deployment.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(deployment), ".Values.affinity") {
+		t.Fatal("deployment template consumes an affinity values subtree")
 	}
 }
 
