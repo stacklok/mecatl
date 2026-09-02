@@ -78,7 +78,7 @@ func (p adrPlacementProvider) ListWorktrees(_ context.Context, req PlacementDisc
 	return out, nil
 }
 
-func newADR0288Service(t *testing.T) *Service {
+func newADR0289Service(t *testing.T) *Service {
 	t.Helper()
 	eng := agent.NewEngine(agent.Deps{LLM: mockllm.New(), Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil), Model: "test"})
 	var key [worktreeSelectorKeySize]byte
@@ -104,8 +104,8 @@ func newADR0288Service(t *testing.T) *Service {
 	return svc
 }
 
-func TestADR_0288_CreateSessionAcceptsOnlyDefaultOrNoFS(t *testing.T) {
-	h := NewHarnessServer(newADR0288Service(t))
+func TestADR_0289_CreateSessionAcceptsOnlyDefaultOrNoFS(t *testing.T) {
+	h := NewHarnessServer(newADR0289Service(t))
 	for _, req := range []*mecatlv1.CreateSessionRequest{{}, {Profile: "no-fs"}} {
 		resp, err := h.CreateSession(context.Background(), req)
 		if err != nil {
@@ -123,7 +123,7 @@ func TestADR_0288_CreateSessionAcceptsOnlyDefaultOrNoFS(t *testing.T) {
 	}
 }
 
-func TestADR_0288_PublicHarnessContractContainsNoFilesystemPaths(t *testing.T) {
+func TestADR_0289_PublicHarnessContractContainsNoFilesystemPaths(t *testing.T) {
 	for _, msg := range []interface{ ProtoReflect() protoreflect.Message }{
 		&mecatlv1.CreateSessionRequest{}, &mecatlv1.Session{}, &mecatlv1.SessionSummary{},
 		&mecatlv1.ListCommandsRequest{}, &mecatlv1.ListWorktreesRequest{}, &mecatlv1.Worktree{},
@@ -137,7 +137,7 @@ func TestADR_0288_PublicHarnessContractContainsNoFilesystemPaths(t *testing.T) {
 		}
 	}
 
-	svc := newADR0288Service(t)
+	svc := newADR0289Service(t)
 	req := httptest.NewRequest(http.MethodPost, "/v1/sessions", bytes.NewBufferString(`{"workspace":"/attacker"}`))
 	rec := httptest.NewRecorder()
 	NewHTTPHandler(svc).ServeHTTP(rec, req)
@@ -147,7 +147,7 @@ func TestADR_0288_PublicHarnessContractContainsNoFilesystemPaths(t *testing.T) {
 }
 
 func TestInvariant_physical_placement_paths_never_cross_public_api(t *testing.T) {
-	svc := newADR0288Service(t)
+	svc := newADR0289Service(t)
 	h := NewHarnessServer(svc)
 	created, err := h.CreateSession(context.Background(), &mecatlv1.CreateSessionRequest{})
 	if err != nil {
@@ -166,8 +166,8 @@ func TestInvariant_physical_placement_paths_never_cross_public_api(t *testing.T)
 	}
 }
 
-func TestADR_0288_DiscoveryIsSessionScopedAndOwnerAuthorized(t *testing.T) {
-	svc := newADR0288Service(t)
+func TestADR_0289_DiscoveryIsSessionScopedAndOwnerAuthorized(t *testing.T) {
+	svc := newADR0289Service(t)
 	h := NewHarnessServer(svc)
 	created, err := h.CreateSession(context.Background(), &mecatlv1.CreateSessionRequest{})
 	if err != nil {
@@ -187,8 +187,8 @@ func TestADR_0288_DiscoveryIsSessionScopedAndOwnerAuthorized(t *testing.T) {
 	}
 }
 
-func TestADR_0288_ClearSessionCreatesEmptyInheritedSuccessor(t *testing.T) {
-	svc := newADR0288Service(t)
+func TestADR_0289_ClearSessionCreatesEmptyInheritedSuccessor(t *testing.T) {
+	svc := newADR0289Service(t)
 	h := NewHarnessServer(svc)
 	created, err := h.CreateSession(context.Background(), &mecatlv1.CreateSessionRequest{})
 	if err != nil {

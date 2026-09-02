@@ -198,10 +198,10 @@ func TestCreateScheduleRejectsReadleaningWithWriteMode(t *testing.T) {
 	}
 }
 
-// TestADR_0288_ScheduleResolvesSelectorBeforePersistingExactEnvironmentRef
+// TestADR_0289_ScheduleResolvesSelectorBeforePersistingExactEnvironmentRef
 // proves a public create carries no private path/ref while the server resolves
 // its default selector and persists the exact durable identity and scope.
-func TestADR_0288_ScheduleResolvesSelectorBeforePersistingExactEnvironmentRef(t *testing.T) {
+func TestADR_0289_ScheduleResolvesSelectorBeforePersistingExactEnvironmentRef(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 	svc, schedStore := newScheduleService(t, now)
 	ctx := context.Background()
