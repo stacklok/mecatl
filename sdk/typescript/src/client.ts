@@ -27,7 +27,7 @@ import {
 } from "./gen/mecatl/v1/harness_pb.js";
 import { createHttpTransport, type HttpTransportOptions } from "./http.js";
 import { encodePrompt, type PromptCapabilities, type PromptInput } from "./media.js";
-import { createRawClient, type RawClient } from "./raw.js";
+import { createRawClient, invalidateRawCompatibility, type RawClient } from "./raw.js";
 import { type ConverseFrame, type Run, RunImpl, type RunOptions } from "./run.js";
 import {
   type AttachedRun,
@@ -143,7 +143,9 @@ interface ClientCoreOptions {
 
 interface SessionOperations {
   assertOpen(): void;
+  readonly clientSignal: AbortSignal;
   features(): Promise<ReadonlySet<string>>;
+  invalidateCompatibility(): void;
   readonly transportKind: TransportKind;
   stream<I extends DescMessage, O extends DescMessage>(
     method: DescMethodStreaming<I, O>,
@@ -313,7 +315,9 @@ class ClientImpl implements Client {
     });
     this.#operations = {
       assertOpen: () => this.#assertOpen(),
+      clientSignal: this.#abort.signal,
       features: () => this.#features(),
+      invalidateCompatibility: () => invalidateRawCompatibility(this.#raw),
       stream: (method, input) => this.#stream(method, input),
       transportKind: this.#transportKind,
       unary: (method, input) => this.#unary(method, input),

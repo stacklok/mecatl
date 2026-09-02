@@ -23,6 +23,7 @@ export const SUPPORTED_API_MAJOR = 1;
 
 const transportKinds = new WeakMap<Transport, TransportKind>();
 const rawJsonValues = new WeakMap<object, JsonValue>();
+const compatibilityInvalidators = new WeakMap<RawClient, () => void>();
 
 interface CompatibilityResult {
   header: Headers;
@@ -42,6 +43,11 @@ export function registerRawJson(message: object, value: JsonValue): void {
 /** Returns the exact JSON value received by the HTTP transport, including unknown fields. @public */
 export function getRawJson(message: object): JsonValue | undefined {
   return rawJsonValues.get(message);
+}
+
+/** Clears one raw client's cached compatibility descriptor before a reconnect. */
+export function invalidateRawCompatibility(client: RawClient): void {
+  compatibilityInvalidators.get(client)?.();
 }
 
 /** Transport-neutral, descriptor-driven operations beneath Client/Session/Run. @public */
@@ -122,7 +128,7 @@ export function createRawClient(options: RawClientOptions): RawClient {
     return compatibility;
   };
 
-  return {
+  const client: RawClient = {
     async features(callOptions?: CallOptions): Promise<ReadonlySet<string>> {
       const result = await ensureCompatibility(callOptions);
       return new Set(result.message.features);
@@ -180,4 +186,8 @@ export function createRawClient(options: RawClientOptions): RawClient {
       })();
     },
   };
+  compatibilityInvalidators.set(client, () => {
+    compatibility = undefined;
+  });
+  return client;
 }

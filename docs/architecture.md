@@ -260,6 +260,17 @@ gRPC carries the registry code in its terminal status, while HTTP has already co
 therefore carries it in a terminal `event: error` SSE frame. An expired cursor never triggers an
 implicit restart from the beginning; that recovery remains an explicit application decision.
 
+Attachment continuity is owned only by the durable watch. Transport failures,
+`watch_lagging`, authentication failures, and clean non-terminal EOF reconnect with bounded
+exponential backoff and jitter from the attachment checkpoint under the same filter. The client
+invalidates and re-probes cached compatibility before each reconnect, so a replacement daemon's
+feature set is authoritative on the first attempt. The closed permanent-code set ends the view;
+ordinary mutations, prompts, permission verdicts, and owned run streams remain one-shot. An
+`AttachedRun` stops after its own `result`, while session activity treats every clean EOF as a
+reconnect point. Reconnected watches do not re-announce the replay-to-live boundary. An optional
+`AttachOptions.signal`, iterator release, explicit disposal, or `Client.close()` aborts backoff and
+releases the current watch without cancelling the run.
+
 Around that core, every capability beyond the minimal loop is a **seam with a
 default and a swap-in adapter**, so the production build stays static and
 network-free unless you wire something in. The current adapters cover, grouped:

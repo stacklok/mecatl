@@ -8153,6 +8153,28 @@ decoding occurs after the watch response is committed. `sdk/typescript/src/watch
 envelope. Cursor expiry is terminal here: restart-from-beginning remains caller-authored rather
 than an SDK fallback.
 
+Reconnect authority stays inside the named watch operation in `sdk/typescript/src/watch.ts`.
+`WatchConnection` resumes transport-shaped failures, `watch_lagging`, authentication failures,
+and clean EOF from the iterator's raw checkpoint token and unchanged server filter. It applies
+bounded exponential delay with jitter through the internal `delayFor`/`sleep` scheduler bag; a
+successful envelope resets the attempt count. The code-driven terminal arm is the single
+`terminalWatchCodes` set: `cursor_expired`, `cursor_malformed`, `activity_gap`,
+`session_not_found`, `invalid_argument`, `management_unauthorized`, `incompatible_server`,
+`watch_unsupported`, and `no_event_log`. No retry policy is installed in
+`sdk/typescript/src/raw.ts` or `sdk/typescript/src/client.ts`, so every non-watch operation stays
+one-shot by construction.
+
+Before the first reconnect sleep, `WatchConnection` invokes the client operation that clears
+`sdk/typescript/src/raw.ts`'s compatibility promise; the following attempt runs the ordinary
+feature gate before opening the stream. This both re-invokes credential providers and prevents a
+new daemon from inheriting the old process's capability result. `SessionActivityImpl` tracks the
+consumer checkpoint separately from the current transport iterator, swallows every boundary after
+the attachment's first, and lets only a run-bound view's own `result` terminate iteration. Its
+combined attachment/client/caller abort signal owns both the current watch and the scheduler sleep.
+`AttachOptions.signal`, `close`/`Symbol.asyncDispose`, async-iterator `return`, and `Client.close()`
+therefore converge on one release path that clears the timer and returns the watch without sending
+a run control.
+
 ## Live e2e — `e2e/` (see `e2e/README.md`)
 
 A LIVE, ginkgo-driven BDD suite proving the harness's features against a REAL model: it

@@ -76,6 +76,7 @@ export interface AttachedRun extends SessionActivity {
 // @public
 export interface AttachOptions {
     from?: "now" | "start" | SdkCursor;
+    signal?: AbortSignal;
 }
 
 // @public

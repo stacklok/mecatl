@@ -1,10 +1,13 @@
 import {
   ActivityGapError,
+  AuthenticationError,
   CursorMalformedError,
   CursorScopeError,
   InvalidStateError,
+  MecatlError,
   NoRunsError,
   ProtocolError,
+  TransportError,
   type TransportKind,
   UnsupportedFeatureError,
 } from "./errors.js";
@@ -43,6 +46,8 @@ export type SdkCursor = string;
 export interface AttachOptions {
   /** `now` still reads the durable replay over the wire, but discards it locally. */
   from?: "now" | "start" | SdkCursor;
+  /** Detaches this view when aborted; it never cancels a run. */
+  signal?: AbortSignal;
 }
 
 /** A replayed or live durable event. @public */
@@ -100,7 +105,9 @@ export interface AttachedRun extends SessionActivity {
 }
 
 interface AttachmentOperations {
+  readonly clientSignal: AbortSignal;
   features(): Promise<ReadonlySet<string>>;
+  invalidateCompatibility(): void;
   readonly transportKind: TransportKind;
   watch(
     sessionId: string,
@@ -108,6 +115,71 @@ interface AttachmentOperations {
     cursor: string,
     signal: AbortSignal,
   ): AsyncIterable<WatchSessionEventsResponse>;
+}
+
+interface AttachmentScheduler {
+  delayFor(attempt: number): number;
+  sleep(ms: number, signal: AbortSignal): Promise<void>;
+}
+
+interface AttachmentInternalOptions {
+  scheduler?: Partial<AttachmentScheduler>;
+}
+
+const RECONNECT_BASE_MS = 100;
+const RECONNECT_CAP_MS = 5_000;
+
+function delayFor(attempt: number): number {
+  const exponent = Math.min(Math.max(0, attempt), 30);
+  const exponential = RECONNECT_BASE_MS * 2 ** exponent;
+  const jitter = 0.75 + Math.random() * 0.25;
+  return Math.min(RECONNECT_CAP_MS, Math.floor(exponential * jitter));
+}
+
+function sleep(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) {
+      reject(signal.reason);
+      return;
+    }
+    let timer: ReturnType<typeof setTimeout> | undefined = setTimeout(() => {
+      timer = undefined;
+      signal.removeEventListener("abort", aborted);
+      resolve();
+    }, ms);
+    const aborted = () => {
+      if (timer !== undefined) clearTimeout(timer);
+      timer = undefined;
+      reject(signal.reason);
+    };
+    signal.addEventListener("abort", aborted, { once: true });
+  });
+}
+
+const terminalWatchCodes = new Set([
+  "activity_gap",
+  "cursor_expired",
+  "cursor_malformed",
+  "incompatible_server",
+  "invalid_argument",
+  "management_unauthorized",
+  "no_event_log",
+  "session_not_found",
+  "watch_unsupported",
+]);
+
+type WatchFailureDisposition = "propagate" | "resume" | "terminate";
+
+function watchFailureDisposition(error: unknown): WatchFailureDisposition {
+  if (
+    error instanceof AuthenticationError ||
+    error instanceof TransportError ||
+    (error instanceof MecatlError && error.code === "watch_lagging")
+  ) {
+    return "resume";
+  }
+  if (error instanceof MecatlError && terminalWatchCodes.has(error.code)) return "terminate";
+  return "propagate";
 }
 
 interface CursorEnvelope {
@@ -232,24 +304,125 @@ async function requireWatchFeature(operations: AttachmentOperations): Promise<vo
   }
 }
 
+class WatchConnection {
+  readonly #abort = new AbortController();
+  readonly #operations: AttachmentOperations;
+  readonly #runId: string;
+  readonly #scheduler: AttachmentScheduler;
+  readonly #sessionId: string;
+  readonly #signal: AbortSignal;
+  #attempt = 0;
+  #closed = false;
+  #source: AsyncIterator<WatchSessionEventsResponse> | undefined;
+
+  constructor(
+    sessionId: string,
+    runId: string,
+    operations: AttachmentOperations,
+    externalSignal: AbortSignal | undefined,
+    internal: AttachmentInternalOptions,
+  ) {
+    this.#sessionId = sessionId;
+    this.#runId = runId;
+    this.#operations = operations;
+    this.#signal = AbortSignal.any([
+      this.#abort.signal,
+      operations.clientSignal,
+      ...(externalSignal === undefined ? [] : [externalSignal]),
+    ]);
+    this.#scheduler = {
+      delayFor: internal.scheduler?.delayFor ?? delayFor,
+      sleep: internal.scheduler?.sleep ?? sleep,
+    };
+  }
+
+  async next(cursor: string): Promise<IteratorResult<WatchSessionEventsResponse>> {
+    for (;;) {
+      if (this.#closed || this.#signal.aborted) return { done: true, value: undefined };
+      try {
+        this.#source ??= this.#open(cursor);
+        const next = await this.#source.next();
+        if (!next.done) {
+          this.#attempt = 0;
+          return next;
+        }
+      } catch (error) {
+        if (this.#closed || this.#signal.aborted) return { done: true, value: undefined };
+        if (watchFailureDisposition(error) !== "resume") throw error;
+      }
+      if (!(await this.#reconnect(cursor))) return { done: true, value: undefined };
+    }
+  }
+
+  async close(): Promise<void> {
+    if (this.#closed) return;
+    this.#closed = true;
+    this.#abort.abort();
+    await this.#releaseSource();
+  }
+
+  #open(cursor: string): AsyncIterator<WatchSessionEventsResponse> {
+    return this.#operations
+      .watch(this.#sessionId, this.#runId, cursor, this.#signal)
+      [Symbol.asyncIterator]();
+  }
+
+  async #reconnect(cursor: string): Promise<boolean> {
+    this.#operations.invalidateCompatibility();
+    await this.#releaseSource();
+    while (!this.#closed && !this.#signal.aborted) {
+      const delay = this.#scheduler.delayFor(this.#attempt);
+      this.#attempt += 1;
+      try {
+        await this.#scheduler.sleep(delay, this.#signal);
+      } catch (error) {
+        if (this.#closed || this.#signal.aborted) return false;
+        throw error;
+      }
+      if (this.#closed || this.#signal.aborted) return false;
+      try {
+        await requireWatchFeature(this.#operations);
+        if (this.#closed || this.#signal.aborted) return false;
+        this.#source = this.#open(cursor);
+        return true;
+      } catch (error) {
+        if (this.#closed || this.#signal.aborted) return false;
+        if (watchFailureDisposition(error) !== "resume") throw error;
+        this.#operations.invalidateCompatibility();
+      }
+    }
+    return false;
+  }
+
+  async #releaseSource(): Promise<void> {
+    const source = this.#source;
+    this.#source = undefined;
+    try {
+      await source?.return?.();
+    } catch {
+      // Releasing a failed or aborted transport stream is best-effort.
+    }
+  }
+}
+
 class SessionActivityImpl implements SessionActivity {
-  readonly #abort: AbortController;
   readonly #buffer: WatchEnvelope[];
-  readonly #source: AsyncIterator<WatchSessionEventsResponse>;
+  readonly #connection: WatchConnection;
   readonly #transport: TransportKind;
   readonly #runId: string | undefined;
   readonly #serverFilter: string;
   readonly #observe: (envelope: WatchEnvelope) => void;
   readonly #discardReplay: boolean;
+  #boundaryAnnounced = false;
   #closed = false;
   #closePromise: Promise<void> | undefined;
   #consumed = false;
   #cursor: SdkCursor;
+  #token: string;
 
   constructor(
-    source: AsyncIterator<WatchSessionEventsResponse>,
+    connection: WatchConnection,
     transport: TransportKind,
-    abort: AbortController,
     runId: string | undefined,
     serverFilter: string,
     initialToken: string,
@@ -257,12 +430,12 @@ class SessionActivityImpl implements SessionActivity {
     observe: (envelope: WatchEnvelope) => void = () => undefined,
     discardReplay = false,
   ) {
-    this.#source = source;
+    this.#connection = connection;
     this.#transport = transport;
-    this.#abort = abort;
     this.#runId = runId;
     this.#serverFilter = serverFilter;
     this.#cursor = encodeCursor(initialToken, serverFilter, runId ?? "");
+    this.#token = initialToken;
     this.#buffer = buffer;
     this.#observe = observe;
     this.#discardReplay = discardReplay;
@@ -308,11 +481,16 @@ class SessionActivityImpl implements SessionActivity {
           this.#checkpoint(envelope);
           continue;
         }
+        if (envelope.kind === "boundary" && this.#boundaryAnnounced) {
+          this.#checkpoint(envelope);
+          continue;
+        }
         if (event !== undefined && event.kind !== "unknown" && filteredKinds.has(event.kind)) {
           this.#checkpoint(envelope);
           continue;
         }
 
+        if (envelope.kind === "boundary") this.#boundaryAnnounced = true;
         yield envelope;
         this.#checkpoint(envelope);
         if (this.#runId !== undefined && event?.runId === this.#runId && event.kind === "result") {
@@ -328,7 +506,7 @@ class SessionActivityImpl implements SessionActivity {
     const buffered = this.#buffer.shift();
     if (buffered !== undefined) return this.#brandCursor(buffered);
     if (this.#closed) return undefined;
-    const next = await this.#source.next();
+    const next = await this.#connection.next(this.#token);
     return next.done
       ? undefined
       : this.#brandCursor(decodeWatchEnvelope(next.value, this.#transport));
@@ -343,18 +521,16 @@ class SessionActivityImpl implements SessionActivity {
   }
 
   #checkpoint(envelope: WatchEnvelope): void {
-    if ("cursor" in envelope) this.#cursor = envelope.cursor;
+    if ("cursor" in envelope) {
+      this.#cursor = envelope.cursor;
+      this.#token = decodeCursor(envelope.cursor).token;
+    }
   }
 
   async #close(): Promise<void> {
     if (this.#closed) return;
     this.#closed = true;
-    this.#abort.abort();
-    try {
-      await this.#source.return?.();
-    } catch {
-      // Detaching is best-effort: aborting the watch can reject its pending read.
-    }
+    await this.#connection.close();
   }
 }
 
@@ -365,9 +541,8 @@ class AttachedRunImpl extends SessionActivityImpl implements AttachedRun {
 
   constructor(
     runId: string,
-    source: AsyncIterator<WatchSessionEventsResponse>,
+    connection: WatchConnection,
     transport: TransportKind,
-    abort: AbortController,
     serverFilter: string,
     initialToken: string,
     buffer: WatchEnvelope[] = [],
@@ -375,9 +550,8 @@ class AttachedRunImpl extends SessionActivityImpl implements AttachedRun {
   ) {
     const liveState = { value: true, pendingAsks: new Set<string>() };
     super(
-      source,
+      connection,
       transport,
-      abort,
       runId,
       serverFilter,
       initialToken,
@@ -435,25 +609,12 @@ class AttachedRunImpl extends SessionActivityImpl implements AttachedRun {
   }
 }
 
-function watch(
-  sessionId: string,
-  runId: string,
-  cursor: string,
-  operations: AttachmentOperations,
-): {
-  abort: AbortController;
-  source: AsyncIterator<WatchSessionEventsResponse>;
-} {
-  const abort = new AbortController();
-  const source = operations.watch(sessionId, runId, cursor, abort.signal)[Symbol.asyncIterator]();
-  return { abort, source };
-}
-
 /** Creates the durable cross-run activity view for one session. */
 export async function createSessionActivity(
   sessionId: string,
   operations: AttachmentOperations,
   options: AttachOptions = {},
+  internal: AttachmentInternalOptions = {},
 ): Promise<SessionActivity> {
   if (options.from === "now") {
     throw new InvalidStateError('Opening activity from "now" requires an explicit run id', {
@@ -464,15 +625,8 @@ export async function createSessionActivity(
   if (resume !== undefined) requireCursorScope(resume, "", "");
   await requireWatchFeature(operations);
   const token = resume?.token ?? "";
-  const opened = watch(sessionId, "", token, operations);
-  return new SessionActivityImpl(
-    opened.source,
-    operations.transportKind,
-    opened.abort,
-    undefined,
-    "",
-    token,
-  );
+  const connection = new WatchConnection(sessionId, "", operations, options.signal, internal);
+  return new SessionActivityImpl(connection, operations.transportKind, undefined, "", token);
 }
 
 /** Selects one run and creates its durable attachment view. */
@@ -481,6 +635,7 @@ export async function createAttachedRun(
   runId: string | undefined,
   operations: AttachmentOperations,
   options: AttachOptions = {},
+  internal: AttachmentInternalOptions = {},
 ): Promise<AttachedRun> {
   if (options.from === "now" && (runId === undefined || runId === "")) {
     throw new InvalidStateError('Attaching from "now" requires an explicit run id', {
@@ -495,12 +650,17 @@ export async function createAttachedRun(
     const serverFilter = resume.filter;
     requireCursorScope(resume, restoredRun, serverFilter);
     await requireWatchFeature(operations);
-    const opened = watch(sessionId, serverFilter, resume.token, operations);
+    const connection = new WatchConnection(
+      sessionId,
+      serverFilter,
+      operations,
+      options.signal,
+      internal,
+    );
     return new AttachedRunImpl(
       restoredRun,
-      opened.source,
+      connection,
       operations.transportKind,
-      opened.abort,
       serverFilter,
       resume.token,
     );
@@ -509,13 +669,18 @@ export async function createAttachedRun(
   await requireWatchFeature(operations);
   const serverFilter = runId ?? resume?.filter ?? "";
   const token = resume?.token ?? "";
-  const opened = watch(sessionId, serverFilter, token, operations);
+  const connection = new WatchConnection(
+    sessionId,
+    serverFilter,
+    operations,
+    options.signal,
+    internal,
+  );
   if (runId !== undefined) {
     return new AttachedRunImpl(
       runId,
-      opened.source,
+      connection,
       operations.transportKind,
-      opened.abort,
       serverFilter,
       token,
       [],
@@ -525,34 +690,33 @@ export async function createAttachedRun(
 
   const replay: WatchEnvelope[] = [];
   let newestRunId = "";
+  let discoveryToken = token;
   try {
     for (;;) {
-      const next = await opened.source.next();
+      const next = await connection.next(discoveryToken);
       if (next.done) break;
       const envelope = decodeWatchEnvelope(next.value, operations.transportKind);
       if (envelope.kind === "gap") throw new ActivityGapError();
       replay.push(envelope);
+      if ("cursor" in envelope) discoveryToken = envelope.cursor;
       const event = envelopeEvent(envelope);
       if (event?.runId !== undefined && event.runId !== "") newestRunId = event.runId;
       if (envelope.kind === "boundary") break;
     }
   } catch (error) {
-    opened.abort.abort();
-    await opened.source.return?.().catch(() => undefined);
+    await connection.close();
     throw error;
   }
 
   if (newestRunId === "") {
-    opened.abort.abort();
-    await opened.source.return?.().catch(() => undefined);
+    await connection.close();
     throw new NoRunsError();
   }
 
   return new AttachedRunImpl(
     newestRunId,
-    opened.source,
+    connection,
     operations.transportKind,
-    opened.abort,
     serverFilter,
     token,
     replay,
