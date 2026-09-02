@@ -4,10 +4,10 @@ title: Shared session header contract and provider parity
 blocked_by: []
 status: in-progress
 branch: ""
-worktree: ".scratch/task-session-affinity-01"
+worktree: ".scratch/task-session-affinity-01-retry1"
 issue: ""
-retries: 0
-last_error: ""
+retries: 1
+last_error: "provider standalone modules pin released engine v0.12.0; plan revised to retain private provider production helpers and test parity"
 accumulator: acc/session-affinity-and-handoff
 ---
 
