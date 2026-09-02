@@ -208,10 +208,13 @@ server is authoritative.
   `--workspace` is rejected in every connect form; configure the server root on
   the server host.
 
-- **`mecatui login ADDRESS`** — performs the remote server's public OIDC
-  Authorization Code + PKCE login, then records target metadata and an encrypted,
-  target-bound credential. It requires `--issuer`, `--client-id`, and `--audience`.
-  It defaults to public issuer addresses trusted by the system roots; `--tls-ca` is
+- **`mecatui login ADDRESS`** — enrolls a remote server. With a bare DNS hostname
+  or HTTPS resource URL, it first performs anonymous RFC 9728 protected-resource
+  discovery and requires confirmation of the discovered values. For legacy or
+  private deployments without that profile, provide `--issuer`, `--client-id`, and
+  `--audience` explicitly. It then performs Authorization Code + PKCE login and
+  records target metadata and an encrypted, target-bound credential. It defaults to
+  public issuer addresses trusted by the system roots; `--tls-ca` is
   optional there and REPLACES those roots. `--private-issuer` requires `--tls-ca` and
   admits private issuer addresses only. This CA verifies the issuer endpoints and is not
   the optional server CA supplied to `connect`. It exits without starting a session. `--no-browser` prints the

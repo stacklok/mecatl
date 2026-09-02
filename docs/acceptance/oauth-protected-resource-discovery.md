@@ -49,8 +49,8 @@ The public HTTP listener exposes `GET /.well-known/oauth-protected-resource` out
   - verify: `TestADR_0290_MetadataDisabledCompatibility`
 - AC2.6: 401 responses carry one safe `resource_metadata` challenge derived only from operator configuration; unrelated routes retain existing behavior.
   - verify: `TestADR_0290_ChallengeMatrix`
-- AC2.7: Adapted output remains compatible with ToolHive fixtures except for documented mecatl extensions and hardening.
-  - verify: `TestADR_0290_ToolHiveParity`
+- AC2.7: Metadata includes the standard resource and authorization-server fields; ToolHive fixture parity remains unproven by this local serialization test.
+  - verify: `TestADR_0290_MetadataStandardFields`
 
 ### Scenario 3 — Hardened client discovery
 
@@ -167,6 +167,10 @@ Land ADR/profile validation first; adapt the ToolHive handler/path/challenge pri
 - Public-resource discovery is V1-only; private deployments retain explicit enrollment.
 - Okta RFC 8707 support is not assumed.
 - Scope metadata is an acquisition hint, not new authorization policy.
+- AC6.2 remains a live qualification gap: the existing offline registry and
+  composition tests do not exercise browser PKCE, persistence, authenticated
+  gRPC, and reconnect as one flow. They must not be treated as an end-to-end
+  proof; the documented Kind qualification path remains required.
 
 ## Exit criteria
 

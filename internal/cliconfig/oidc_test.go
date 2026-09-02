@@ -137,6 +137,8 @@ func TestADR_0290_ProfileConfigurationMatrix(t *testing.T) {
 	}{
 		{name: "absent", wantEnabled: false},
 		{name: "complete", cfg: OIDCConfig{Issuer: "https://issuer", Audience: "api", Resource: "https://resource", ClientID: "client"}, wantEnabled: true},
+		{name: "force query", cfg: OIDCConfig{Issuer: "https://issuer", Audience: "api", Resource: "https://resource?", ClientID: "client"}, wantErr: true},
+		{name: "insecure issuer", cfg: OIDCConfig{Issuer: "http://issuer", Audience: "api", Resource: "https://resource", ClientID: "client", InsecureAllowPrivateIssuer: true}, wantErr: true},
 		{name: "resource only", cfg: OIDCConfig{Issuer: "https://issuer", Audience: "api", Resource: "https://resource"}, wantErr: true},
 		{name: "client only", cfg: OIDCConfig{Issuer: "https://issuer", Audience: "api", ClientID: "client"}, wantErr: true},
 		{name: "without OIDC", cfg: OIDCConfig{Resource: "https://resource", ClientID: "client"}, wantErr: true},

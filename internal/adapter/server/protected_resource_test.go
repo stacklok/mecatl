@@ -45,6 +45,7 @@ func TestADR_0290_MetadataFields(t *testing.T) {
 	want := map[string]any{
 		"resource":                      "https://api.example.com/mecatl/v1",
 		"authorization_servers":         []any{"https://issuer.example.com"},
+		"bearer_methods_supported":      []any{"header"},
 		"scopes_supported":              []any{"profile", "read"},
 		"com.stacklok.mecatl.audience":  "api://mecatl",
 		"com.stacklok.mecatl.client_id": "public-client-id",
@@ -86,7 +87,9 @@ func TestADR_0290_WellKnownRouting(t *testing.T) {
 func TestADR_0290_WellKnownPathDerivation(t *testing.T) {
 	for _, tc := range []struct{ resource, want string }{
 		{"https://api.example.com", "https://api.example.com/.well-known/oauth-protected-resource"},
+		{"https://api.example.com/", "https://api.example.com/.well-known/oauth-protected-resource"},
 		{"https://api.example.com/mecatl/v1", "https://api.example.com/.well-known/oauth-protected-resource/mecatl/v1"},
+		{"https://api.example.com?", ""},
 	} {
 		if got := server.WellKnownProtectedResourceURL(tc.resource); got != tc.want {
 			t.Errorf("WellKnownProtectedResourceURL(%q) = %q, want %q", tc.resource, got, tc.want)
@@ -118,7 +121,17 @@ func TestADR_0290_ChallengeMatrix(t *testing.T) {
 	}
 }
 
-func TestADR_0290_ToolHiveParity(t *testing.T) {
+func TestADR_0290_ChallengeRejectsUnsafeQuotedValue(t *testing.T) {
+	auth := server.NewAuthenticator(server.SecurityConfig{AuthToken: "static-token", ResourceMetadataURL: "https://api.example/.well-known/oauth-protected-resource\\"})
+	defer auth.Close()
+	rec := httptest.NewRecorder()
+	auth.Middleware(http.NotFoundHandler()).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/sessions", nil))
+	if got := rec.Header().Get("WWW-Authenticate"); got != "Bearer" {
+		t.Fatalf("unsafe challenge = %q, want bare Bearer", got)
+	}
+}
+
+func TestADR_0290_MetadataStandardFields(t *testing.T) {
 	h := server.NewProtectedResourceHandler(server.ProtectedResourceProfile{
 		Resource: "https://api.example.com",
 		Issuer:   "https://issuer.example.com",

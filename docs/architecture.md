@@ -75,9 +75,9 @@ Both `mecated` and `mecak8s` use the shared OIDC profile flags. When configured,
 `--oidc-resource` publishes the RFC 9728 canonical resource and
 `--oidc-client-id` publishes mecatl's public client hint; `--oidc-scopes` is the
 shared CSV syntax. These values are not inferred from listeners, and discovery
-is an anonymous HTTPS bootstrap path distinct from authenticated gRPC. ToolHive
-and ToolHive-Core are implementation provenance for client discovery only; the
-engine remains provider- and transport-neutral. Existing issuer/audience
+is an anonymous HTTPS bootstrap path distinct from authenticated gRPC. The
+client-side flow is a narrow Apache-2.0-attributed adaptation of ToolHive and
+ToolHive-Core behavior; neither is an engine dependency. Existing issuer/audience
 projection and explicit OIDC login remain compatible.
 
 ### Internal credential store

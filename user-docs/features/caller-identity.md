@@ -119,8 +119,10 @@ OIDC validator's source of truth. Discovery is anonymous HTTPS bootstrap and is
 separate from authenticated gRPC transport; it never inherits private-issuer CA
 exceptions. ToolHive's metadata/networking code is provenance for the client
 implementation, not a runtime dependency of the engine or a promise of generic
-RFC 8707 support. Existing explicit `mecatui login --issuer ...` remains
-compatible when no profile is configured.
+RFC 8707 support. With a published profile, `mecatui login ADDRESS` discovers and
+confirms the public tuple from a hostname or HTTPS resource URL. The explicit
+`mecatui login --issuer ...` form remains compatible for deployments without a
+profile and for private issuers.
 
 
 For a static bearer, obtain a token through your identity provider and pass it to

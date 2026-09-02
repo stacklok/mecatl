@@ -15,6 +15,8 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/stacklok/toolhive/pkg/oauthproto"
+
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/internal/adapter/server"
 )
@@ -82,8 +84,25 @@ func parseIssuer(raw string) (string, error) {
 	if err != nil || u.Scheme != "https" || u.User != nil || u.Host == "" || u.Opaque != "" || u.RawQuery != "" || u.Fragment != "" || u.ForceQuery || !validAuthority(u) {
 		return "", errDiscoveryRejected
 	}
-	u.Host = canonicalAuthority(u)
-	return u.String(), nil
+	// Issuer identifiers are compared exactly (RFC 8414); validation must not
+	// rewrite their semantic spelling.
+	return raw, nil
+}
+
+func oidcMetadataURL(issuer string) string {
+	u, err := url.Parse(issuer)
+	if err != nil {
+		return ""
+	}
+	path := strings.TrimSuffix(u.EscapedPath(), "/")
+	if path == "" {
+		u.Path = oauthproto.WellKnownOIDCPath
+		u.RawPath = ""
+		return u.String()
+	}
+	u.Path = oauthproto.WellKnownOIDCPath + strings.TrimSuffix(u.Path, "/")
+	u.RawPath = oauthproto.WellKnownOIDCPath + path
+	return u.String()
 }
 
 func validAuthority(u *url.URL) bool {
@@ -220,7 +239,7 @@ func discoverProtectedResource(ctx context.Context, resource protectedResource, 
 	if err != nil {
 		return discoveredResource{}, errDiscoveryRejected
 	}
-	issuerBody, err := fetchDiscoveryJSON(ctx, client, profile.Issuer+"/.well-known/openid-configuration")
+	issuerBody, err := fetchDiscoveryJSON(ctx, client, oidcMetadataURL(profile.Issuer))
 	if err != nil || validateIssuerDocument(profile.Issuer, issuerBody) != nil {
 		return discoveredResource{}, errDiscoveryRejected
 	}
@@ -360,7 +379,7 @@ func safeDisplayValue(value string) bool {
 		return false
 	}
 	for _, r := range value {
-		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
+		if !unicode.IsPrint(r) || unicode.IsControl(r) || unicode.Is(unicode.Cf, r) || r == '\u2028' || r == '\u2029' {
 			return false
 		}
 	}

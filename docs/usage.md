@@ -35,8 +35,9 @@ an editor that spawned it.
 `mecated` and `mecak8s` share the optional RFC 9728 profile flags
 `--oidc-resource`, `--oidc-client-id`, and `--oidc-scopes`. The resource must be
 an operator-supplied absolute HTTPS URL; Helm exposes the equivalent
-`oidc.resource`, `oidc.clientID`, and `oidc.scopes` values. RFC metadata fields
-are distinct from mecatl's audience/client-id extensions. Anonymous metadata
+`oidc.resource`, `oidc.clientID`, and `oidc.scopes` values. Metadata advertises
+standard `resource`, `authorization_servers`, and `bearer_methods_supported: ["header"]`
+fields separately from mecatl's audience/client-id extensions. Anonymous metadata
 and OIDC discovery are bootstrap-only and remain separate from authenticated
 gRPC transport. ToolHive is implementation provenance for the remote client
 adapter, not a runtime engine dependency. Without the profile, explicit OIDC

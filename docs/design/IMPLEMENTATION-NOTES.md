@@ -107,8 +107,10 @@ the server-root system context and all existing flag behavior.
 
 The optional profile is shared by `mecated` and `mecak8s`: `--oidc-resource`,
 `--oidc-client-id`, and CSV `--oidc-scopes` are parsed once in
-`internal/cliconfig` and projected by the HTTP metadata handler. RFC fields are
-kept distinct from mecatl extensions for audience and client ID. Discovery is
+`internal/cliconfig` and projected by the HTTP metadata handler. RFC fields
+`resource`, `authorization_servers`, `bearer_methods_supported: ["header"]`, and
+optional `scopes_supported` are kept distinct from mecatl extensions for audience
+and client ID. Discovery is
 anonymous HTTPS bootstrap and transport-separated from authenticated gRPC; it
 never adopts private issuer trust settings. The discovery client uses its configured
 15-second `http.Client` timeout (rather than calling its transport directly), and

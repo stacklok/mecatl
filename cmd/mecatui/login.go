@@ -231,6 +231,9 @@ func discoveredEnrollmentFrom(discovered discoveredResource, grpcTarget, scopes 
 }
 
 func confirmDiscoveredLogin(in io.Reader, out io.Writer, enrollment discoveredEnrollment) (bool, error) {
+	if !safeDiscoveredEnrollment(enrollment) {
+		return false, errDiscoveryRejected
+	}
 	if _, err := fmt.Fprintf(out, "Discovered protected resource:\n  resource: %s\n  metadata: %s\n  issuer: %s\n  audience: %s\n  client ID: %s\n  scopes: %s\n  gRPC target: %s\nContinue with browser login? [y/N]: ", enrollment.Resource, enrollment.MetadataURL, enrollment.Connection.Identity.Issuer, enrollment.Connection.Identity.Audience, enrollment.Connection.Identity.ClientID, strings.Join(enrollment.Connection.Identity.Scopes, ","), enrollment.Connection.Identity.Target); err != nil {
 		return false, err
 	}
@@ -242,6 +245,24 @@ func confirmDiscoveredLogin(in io.Reader, out io.Writer, enrollment discoveredEn
 		return false, err
 	}
 	return strings.EqualFold(answer, "y") || strings.EqualFold(answer, "yes"), nil
+}
+
+func safeDiscoveredEnrollment(enrollment discoveredEnrollment) bool {
+	values := []string{
+		enrollment.Resource,
+		enrollment.MetadataURL,
+		enrollment.Connection.Identity.Issuer,
+		enrollment.Connection.Identity.Audience,
+		enrollment.Connection.Identity.ClientID,
+		enrollment.Connection.Identity.Target,
+		strings.Join(enrollment.Connection.Identity.Scopes, ","),
+	}
+	for _, value := range values {
+		if !safeDisplayValue(value) {
+			return false
+		}
+	}
+	return true
 }
 
 // preparedSavedLogin owns the local handles proven usable before interactive OIDC.

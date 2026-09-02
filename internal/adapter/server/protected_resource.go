@@ -30,7 +30,7 @@ type ProtectedResourceProfile struct {
 // resources cannot advertise one endpoint and serve another.
 func WellKnownProtectedResourceURL(resource string) string {
 	u, err := url.Parse(resource)
-	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || u.Opaque != "" || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" {
 		return ""
 	}
 	path := u.EscapedPath()
@@ -92,10 +92,11 @@ func (h protectedResourceHandler) ServeHTTP(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	metadata := protectedResourceMetadata{
-		Resource:             h.profile.Resource,
-		AuthorizationServers: []string{h.profile.Issuer},
-		Audience:             h.profile.Audience,
-		ClientID:             h.profile.ClientID,
+		Resource:               h.profile.Resource,
+		AuthorizationServers:   []string{h.profile.Issuer},
+		BearerMethodsSupported: []string{"header"},
+		Audience:               h.profile.Audience,
+		ClientID:               h.profile.ClientID,
 	}
 	if len(h.profile.Scopes) != 0 {
 		metadata.ScopesSupported = append([]string(nil), h.profile.Scopes...)
@@ -105,15 +106,16 @@ func (h protectedResourceHandler) ServeHTTP(w http.ResponseWriter, r *http.Reque
 }
 
 type protectedResourceMetadata struct {
-	Resource             string   `json:"resource"`
-	AuthorizationServers []string `json:"authorization_servers"`
-	ScopesSupported      []string `json:"scopes_supported,omitempty"`
-	Audience             string   `json:"com.stacklok.mecatl.audience"`
-	ClientID             string   `json:"com.stacklok.mecatl.client_id"`
+	Resource               string   `json:"resource"`
+	AuthorizationServers   []string `json:"authorization_servers"`
+	BearerMethodsSupported []string `json:"bearer_methods_supported"`
+	ScopesSupported        []string `json:"scopes_supported,omitempty"`
+	Audience               string   `json:"com.stacklok.mecatl.audience"`
+	ClientID               string   `json:"com.stacklok.mecatl.client_id"`
 }
 
 func protectedResourceChallenge(metadataURL string) string {
-	if metadataURL == "" || strings.ContainsAny(metadataURL, "\r\n\"") {
+	if metadataURL == "" || strings.ContainsAny(metadataURL, "\r\n\"\\") {
 		return "Bearer"
 	}
 	return `Bearer resource_metadata="` + metadataURL + `"`

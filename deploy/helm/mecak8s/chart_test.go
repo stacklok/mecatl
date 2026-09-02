@@ -271,9 +271,14 @@ func TestADR_0290_HelmProtectedResourceProfile(t *testing.T) {
 		})
 	}
 	for name, values := range map[string][]string{
-		"userinfo":       {"oidc.resource=https://user@api.example.com/mcp"},
-		"comma-resource": {"oidc.resource=https://api.example.com/mcp,other"},
-		"comma-scope":    {"oidc.scopes[0]=openid,profile"},
+		"userinfo":           {"oidc.resource=https://user@api.example.com/mcp"},
+		"malformed-url":      {"oidc.resource=https://api.example.com/%zz"},
+		"comma-resource":     {"oidc.resource=https://api.example.com/mcp,other"},
+		"quoted-resource":    {`oidc.resource=https://api.example.com/mcp"`},
+		"backslash-resource": {`oidc.resource=https://api.example.com/mcp\\\\`},
+		"comma-scope":        {"oidc.scopes[0]=openid,profile"},
+		"quoted-scope":       {`oidc.scopes[0]=openid"`},
+		"backslash-scope":    {`oidc.scopes[0]=openid\\\\`},
 	} {
 		t.Run(name, func(t *testing.T) {
 			args := []string{"template", name, ".", "--set", "mockProvider=true", "--set", "redis.local.enabled=true", "--set", "oidc.enabled=true", "--set", "oidc.issuer=https://idp.example.com", "--set", "oidc.audience=mecatl", "--set", "oidc.clientID=mecatui"}

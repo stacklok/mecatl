@@ -26,7 +26,7 @@ func TestADR_0290_ResourceInputGrammar(t *testing.T) {
 	if explicit.Resource != "https://api.example.com/rpc/v1" || explicit.GRPCTarget != "api.example.com:443" {
 		t.Fatalf("explicit identity = %#v", explicit)
 	}
-	for _, raw := range []string{"http://api.example.com", "https://user@api.example.com", "https://api.example.com?a=b", "https://api.example.com#x", "https://api.example.com/%zz", "https://api.example.com/\u202e", "api.example.com:443", "https://a@b@api.example.com"} {
+	for _, raw := range []string{"http://api.example.com", "https://user@api.example.com", "https://api.example.com?a=b", "https://api.example.com?", "https://api.example.com#x", "https://api.example.com/%zz", "https://api.example.com/\u202e", "api.example.com:443", "https://a@b@api.example.com"} {
 		if _, err := parseProtectedResource(raw); err == nil {
 			t.Errorf("parseProtectedResource(%q) unexpectedly succeeded", raw)
 		}
@@ -134,8 +134,21 @@ func TestADR_0290_IssuerBinding(t *testing.T) {
 	if err := validateIssuerDocument(issuer, []byte(`{"issuer":"https://issuer.example.com/tenant"}`)); err != nil {
 		t.Fatal(err)
 	}
-	if err := validateIssuerDocument(issuer, []byte(`{"issuer":"https://issuer.example.com/other"}`)); err == nil {
-		t.Fatal("issuer mismatch accepted")
+	for _, tc := range []struct {
+		issuer, want string
+	}{
+		{"https://issuer.example.com", "https://issuer.example.com/.well-known/openid-configuration"},
+		{"https://issuer.example.com/tenant", "https://issuer.example.com/.well-known/openid-configuration/tenant"},
+		{"https://issuer.example.com/tenant/", "https://issuer.example.com/.well-known/openid-configuration/tenant"},
+	} {
+		if got := oidcMetadataURL(tc.issuer); got != tc.want {
+			t.Errorf("oidcMetadataURL(%q) = %q, want %q", tc.issuer, got, tc.want)
+		}
+	}
+	if _, err := parseIssuer("https://ISSUER.example.com/tenant"); err != nil {
+		t.Fatal(err)
+	} else if err := validateIssuerDocument("https://ISSUER.example.com/tenant", []byte(`{"issuer":"https://issuer.example.com/tenant"}`)); err == nil {
+		t.Fatal("case-variant issuer identifier accepted")
 	}
 }
 

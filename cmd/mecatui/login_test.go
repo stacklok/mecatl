@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -242,5 +243,16 @@ func TestRemoteLoginIssuerPolicyFlags(t *testing.T) {
 	}
 	if err := runRemoteLogin("remote.example:443", append(args, "--private-issuer")); err == nil || !strings.Contains(err.Error(), "requires --tls-ca") {
 		t.Fatalf("private issuer without CA error = %v", err)
+	}
+}
+
+func TestConfirmDiscoveredLoginRejectsTerminalControls(t *testing.T) {
+	base := discoveredEnrollment{Resource: "https://api.example", MetadataURL: "https://api.example/.well-known/oauth-protected-resource", Connection: clientauth.Connection{Identity: clientauth.Identity{Issuer: "https://issuer.example", ClientID: "client", Audience: "audience", Target: "api.example:443", Scopes: []string{"openid"}}}}
+	for _, value := range []string{"line\nfeed", "line\u2028separator", "line\u2029separator", "\x1b[2J"} {
+		candidate := base
+		candidate.Connection.Identity.Audience = value
+		if _, err := confirmDiscoveredLogin(strings.NewReader("y\n"), io.Discard, candidate); !errors.Is(err, errDiscoveryRejected) {
+			t.Errorf("confirmation accepted unsafe metadata value %q: %v", value, err)
+		}
 	}
 }

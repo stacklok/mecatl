@@ -50,7 +50,8 @@ and produces deterministic deduplicated scope metadata for CLI and Helm.
 When enabled, mecated and mecak8s serve `GET
 /.well-known/oauth-protected-resource` on the public HTTP API listener outside
 bearer authentication. Path-bearing resources use RFC 9728 path insertion.
-The response contains the standard metadata plus:
+The response contains standard `resource`, `authorization_servers`, and
+`bearer_methods_supported: ["header"]` metadata plus:
 
 ```json
 {

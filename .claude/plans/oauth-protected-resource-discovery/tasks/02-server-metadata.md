@@ -26,5 +26,5 @@ Adapt the minimum Apache-2.0 ToolHive v0.40.0 metadata/routing/challenge code an
   - verify: `TestADR_0290_MetadataDisabledCompatibility`
 - AC2.6: 401 responses carry one safe `resource_metadata` challenge derived only from operator configuration; unrelated routes retain existing behavior.
   - verify: `TestADR_0290_ChallengeMatrix`
-- AC2.7: Adapted output remains compatible with ToolHive fixtures except for documented mecatl extensions and hardening.
-  - verify: `TestADR_0290_ToolHiveParity`
+- AC2.7: Metadata includes the standard resource and authorization-server fields; ToolHive fixture parity remains unproven by this local serialization test.
+  - verify: `TestADR_0290_MetadataStandardFields`

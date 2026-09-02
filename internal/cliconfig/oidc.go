@@ -218,8 +218,12 @@ func (c *OIDCConfig) ValidateOIDCProfile() error {
 		return fmt.Errorf("%w: --oidc-resource and --oidc-client-id must be provided together", ErrOIDCMisconfigured)
 	}
 	u, err := url.Parse(c.Resource)
-	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || u.Opaque != "" || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" {
 		return fmt.Errorf("%w: --oidc-resource must be an absolute HTTPS URL without credentials, query, or fragment", ErrOIDCMisconfigured)
+	}
+	issuer, err := url.Parse(c.Issuer)
+	if err != nil || issuer.Scheme != "https" || issuer.Host == "" {
+		return fmt.Errorf("%w: protected-resource profile requires an HTTPS --oidc-issuer", ErrOIDCMisconfigured)
 	}
 	if c.scopesSet && c.ScopesCSV == "" {
 		return fmt.Errorf("%w: --oidc-scopes must not be empty", ErrOIDCMisconfigured)
