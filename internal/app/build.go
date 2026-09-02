@@ -1753,7 +1753,13 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	childLiveness := newSessionLiveness(sessionLease, leaseOwner, cfg.SessionLeaseTTL,
 		cfg.SessionLeaseRenewInterval, cfg.diag())
 	cfg.sessionLiveness = childLiveness
-	engine, mainMgr, mcpProvider, mcpInventory, sessFactory, learned, policy, assets, scheduleMgr, mcpClose, err := buildEngine(ctx, cfg, reg, provider, store, agentReg)
+	// The local capability is shared by Service lease ownership and the engine's
+	// persistence/audit adapters. It gates only operation admission; backend calls
+	// already admitted may complete after a declared loss.
+	mutationCapability := server.NewSessionMutationCapability(sessionLease != nil)
+	engineStore := mutationCapability.GuardStore(store)
+	cfg.ToolCallRecorder = mutationCapability.GuardToolCallRecorder(cfg.ToolCallRecorder)
+	engine, mainMgr, mcpProvider, mcpInventory, sessFactory, learned, policy, assets, scheduleMgr, mcpClose, err := buildEngine(ctx, cfg, reg, provider, store, engineStore, agentReg)
 	if err != nil {
 		agentClose()
 		storeClose()
@@ -2209,6 +2215,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		// so the default path takes no lease, starts no renewer, and releases
 		// nothing — byte-identical. The owner identity is built once per Build.
 		SessionLease:       sessionLease,
+		MutationCapability: mutationCapability,
 		LeaseOwner:         leaseOwner,
 		LeaseTTL:           cfg.SessionLeaseTTL,
 		LeaseRenewInterval: cfg.SessionLeaseRenewInterval,
@@ -3447,7 +3454,7 @@ func chainClose(first, second func()) func() {
 // resolveAgentSeam (FS or driver) — threaded in, never re-resolved here, so
 // every consumer (catalog, per-session factory, snapshot, team wiring) shares
 // the same registry.
-func buildEngine(ctx context.Context, cfg Config, reg *providerRegistry, provider port.LLMProvider, store port.SessionStore, agentReg *agents.Registry) (*agent.Engine, *mcp.Manager, mcp.Provider, []mcpsource.SourceInfo, server.SessionEngineFactory, *permstore.Memory, port.PermissionPolicy, catalogAssets, *server.ScheduleManagerImpl, func(), error) {
+func buildEngine(ctx context.Context, cfg Config, reg *providerRegistry, provider port.LLMProvider, store, engineStore port.SessionStore, agentReg *agents.Registry) (*agent.Engine, *mcp.Manager, mcp.Provider, []mcpsource.SourceInfo, server.SessionEngineFactory, *permstore.Memory, port.PermissionPolicy, catalogAssets, *server.ScheduleManagerImpl, func(), error) {
 	// SkillDraft trust boundary: when enabled, the quarantine dir must live OUTSIDE
 	// the workspace root (so the model's workspace-confined Write/Edit cannot reach
 	// it) and be disjoint from every active skills dir. Fatal on a misconfig.
@@ -3655,7 +3662,7 @@ func buildEngine(ctx context.Context, cfg Config, reg *providerRegistry, provide
 		learningAdmission.controller = newAutomaticAdmissionController(cfg.LearningAutomatic, cfg.LearningMetricsEmitter)
 	}
 	assets.learningAdmission = learningAdmission
-	deps := baseEngineDeps(cfg, reg, provider, store, sharedPolicy, mainHooks, mcpProvider, instructions)
+	deps := baseEngineDeps(cfg, reg, provider, engineStore, sharedPolicy, mainHooks, mcpProvider, instructions)
 	attachOperatorProfile(&deps, userModelStore)
 	deps.LearningMode = cfg.LearningMode
 	deps.LearningObserver = buildReflectionObserver(cfg, provider, cfg.Model, userModelStore, memStore, assets.reflectionRepository, assets.reflectionCoordinator, learningAdmission, buildProcedureProcessor(cfg, assets))
@@ -3701,7 +3708,7 @@ func buildEngine(ctx context.Context, cfg Config, reg *providerRegistry, provide
 	// catalog is assembled over the SAME collaborators as the shared one. It keeps
 	// the UNWRAPPED hooks: the Phase-2b reviewer fires once per MAIN-engine Stop,
 	// not per per-session stop (one of the two sanctioned per-session deltas).
-	sessFactory := sessionEngineFactory(cfg, reg, provider, store, sharedPolicy, hooks, mcpProvider, instructions, assets, guardrailWaiver)
+	sessFactory := sessionEngineFactory(cfg, reg, provider, engineStore, sharedPolicy, hooks, mcpProvider, instructions, assets, guardrailWaiver)
 	// The build-once assets travel back to Build whole so every catalog assembly
 	// and service projection share the same resolved collaborators.
 	return agent.NewEngine(deps), assets.globalMgr, mcpProvider, mcpInventory, sessFactory, learned, sharedPolicy, assets, scheduleMgr, mcpClose, nil

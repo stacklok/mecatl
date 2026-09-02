@@ -629,6 +629,12 @@ type Config struct {
 	// ErrLeaseUnsupported is stickily disabled (one INFO, then the no-lease path).
 	SessionLease port.SessionLease
 
+	// MutationCapability is the process-local admission gate shared by Service
+	// and the engine's guarded persistence/recorder adapters. Composition supplies
+	// one instance to both. When nil, Service creates the matching local gate;
+	// no-lease and unsupported-lease paths remain pass-through.
+	MutationCapability *SessionMutationCapability
+
 	// LeaseOwner is this process's owner-identity string for SessionLease, built
 	// once per Build (e.g. "<hostname>-<pid>-<nonce>") so two Builds in one
 	// process get distinct owners. Ignored when SessionLease is nil.
@@ -1034,6 +1040,7 @@ type heldLease struct {
 	lease  port.Lease
 	ctx    context.Context
 	cancel context.CancelFunc
+	valid  bool
 }
 
 // sessionEngine couples a per-session engine (built over that session's
@@ -1194,6 +1201,9 @@ func NewServiceContext(ctx context.Context, cfg Config) (*Service, error) {
 	}
 	if cfg.Diagnostics == nil {
 		cfg.Diagnostics = port.NopDiagnostics{}
+	}
+	if cfg.MutationCapability == nil {
+		cfg.MutationCapability = NewSessionMutationCapability(cfg.SessionLease != nil)
 	}
 	if cfg.SessionLease != nil {
 		if cfg.LeaseTTL <= 0 {
@@ -5364,7 +5374,7 @@ func (s *Service) mutationLeaseHeld(id session.SessionID) bool {
 		return true
 	}
 	h := s.heldLeases[id]
-	return h != nil && h.ctx.Err() == nil
+	return h != nil && h.valid && h.ctx.Err() == nil
 }
 
 func (s *Service) mutationLeaseContext(parent context.Context, id session.SessionID) (context.Context, func(), func() bool) {
@@ -5384,7 +5394,7 @@ func (s *Service) mutationLeaseContext(parent context.Context, id session.Sessio
 	stillHeld := func() bool {
 		s.mu.Lock()
 		defer s.mu.Unlock()
-		return s.heldLeases[id] == h && h.ctx.Err() == nil
+		return s.heldLeases[id] == h && h.valid && h.ctx.Err() == nil
 	}
 	return ctx, cleanup, stillHeld
 }
@@ -5432,8 +5442,12 @@ func (s *Service) acquireLease(ctx context.Context, id session.SessionID) error 
 		s.mu.Unlock()
 		return nil
 	}
-	if _, held := s.heldLeases[id]; held {
+	if h, held := s.heldLeases[id]; held {
+		valid := h.valid
 		s.mu.Unlock()
+		if !valid {
+			return fmt.Errorf("%w: %q", ErrSessionLeasedElsewhere, id)
+		}
 		return nil // already ours for this session; acquire only on first entry.
 	}
 	s.mu.Unlock()
@@ -5449,6 +5463,7 @@ func (s *Service) acquireLease(ctx context.Context, id session.SessionID) error 
 		firstTime := !s.leaseDisabled
 		s.leaseDisabled = true
 		s.mu.Unlock()
+		s.cfg.MutationCapability.disable()
 		if firstTime {
 			s.cfg.Diagnostics.Log(ctx, port.LevelInfo, "session leasing unsupported by backend; disabling (running without cross-process exclusion)",
 				"owner", s.cfg.LeaseOwner)
@@ -5468,7 +5483,8 @@ func (s *Service) acquireLease(ctx context.Context, id session.SessionID) error 
 		cancel()
 		return nil
 	}
-	h := &heldLease{lease: lease, ctx: renewCtx, cancel: cancel}
+	h := &heldLease{lease: lease, ctx: renewCtx, cancel: cancel, valid: true}
+	s.cfg.MutationCapability.grant(id)
 	s.heldLeases[id] = h
 	s.mu.Unlock()
 	go s.renewLoop(renewCtx, id, h)
@@ -5550,17 +5566,18 @@ func (s *Service) renewLoop(renewCtx context.Context, id session.SessionID, expe
 }
 
 // onLeaseLost handles a declared lease loss only when expected remains the
-// current hold. Removal and cancellation are atomic with that identity check;
-// diagnostics, run cancellation, and backend Release happen only after it wins.
+// current hold. The mutation gate is invalidated and the hold becomes a tombstone
+// atomically with that generation check, so a delayed renewer cannot affect a
+// successor and this stale Service cannot immediately reacquire the session.
 func (s *Service) onLeaseLost(ctx context.Context, id session.SessionID, expected *heldLease, cause error) {
 	s.mu.Lock()
-	if s.heldLeases[id] != expected {
+	if s.heldLeases[id] != expected || !expected.valid {
 		s.mu.Unlock()
 		return
 	}
+	expected.valid = false
+	s.cfg.MutationCapability.invalidate(id)
 	expected.cancel()
-	delete(s.heldLeases, id)
-	lease := expected.lease
 	s.mu.Unlock()
 
 	s.cfg.Diagnostics.Log(ctx, port.LevelWarn, "lost session lease; cancelling run",
@@ -5568,12 +5585,7 @@ func (s *Service) onLeaseLost(ctx context.Context, id session.SessionID, expecte
 	if run, ok := s.LookupRun(id); ok {
 		run.Cancel()
 	}
-	releaseCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), leaseAcquireTimeout)
-	defer cancel()
-	if err := s.cfg.SessionLease.Release(releaseCtx, lease); err != nil {
-		s.cfg.Diagnostics.Log(releaseCtx, port.LevelWarn, "session lease release failed after loss",
-			"session", string(id), "owner", s.cfg.LeaseOwner, "err", err.Error())
-	}
+
 }
 
 // releaseLease stops the session's renewer and releases its cross-process lease,
@@ -5590,8 +5602,12 @@ func (s *Service) releaseLease(id session.SessionID) {
 	s.mu.Lock()
 	h, ok := s.heldLeases[id]
 	var lease port.Lease
+	valid := false
 	if ok {
 		lease = h.lease // guarded snapshot of the latest token/expiry.
+		valid = h.valid
+		h.valid = false
+		s.cfg.MutationCapability.invalidate(id)
 		delete(s.heldLeases, id)
 	}
 	s.mu.Unlock()
@@ -5599,6 +5615,9 @@ func (s *Service) releaseLease(id session.SessionID) {
 		return
 	}
 	h.cancel() // stop the renewer first.
+	if !valid {
+		return // declared loss: TTL/takeover owns transition; never release stale ownership.
+	}
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(context.Background()), leaseAcquireTimeout)
 	defer cancel()
 	if err := s.cfg.SessionLease.Release(ctx, lease); err != nil {
