@@ -283,7 +283,7 @@ func runWithOptions(argv []string, options runOptions) error {
 
 	connectionMode := resolveConnectionMode(cfg)
 	deps := applyLaunchIntent(cfg, ui.Deps{
-		Session:                &sessionAdapter{cl: cl, workspace: cfg.workspace, mode: cfg.mode, debugTarget: cfg.debugTarget, debugMCP: cfg.debugMCP},
+		Session:                &sessionAdapter{cl: cl, mode: cfg.mode, debugTarget: cfg.debugTarget, debugMCP: cfg.debugMCP},
 		Conv:                   cl,
 		MCP:                    cl,
 		Cmds:                   cl,
@@ -301,7 +301,6 @@ func runWithOptions(argv []string, options runOptions) error {
 		Migration:              cl,
 		Cleanup:                cl,
 		SessionManagement:      cl,
-		Adoption:               cl,
 		Transcript:             cl,
 		Replayer:               cl,
 		LiveStream:             cl,
@@ -1338,17 +1337,11 @@ func themeDirs(workspace, extraDir string) []string {
 	return dirs
 }
 
-// sessionAdapter bridges the ui's SessionCreator to the client's
-// CreateSession(ctx, workspace, mode, sel). The workspace is fixed at startup;
-// the mode and model selection are per-call so in-TUI mode switches and /models
-// restarts carry the current desired posture through the same proto-build point.
-// The ui never sees the proto request. CreateSessionInWorkspace (issue #102) is
-// the /worktrees switch path: it passes an explicit workspace (a sibling git
-// worktree); CreateSession delegates to it with the launch workspace so the
-// existing restart + connect paths are byte-identical.
+// sessionAdapter bridges the ui's SessionCreator to the path-free client API.
+// Embedded workspace configuration is consumed by app.Build; no session request
+// carries it. Mode and model selection remain per-call.
 type sessionAdapter struct {
 	cl          *client.Client
-	workspace   string
 	mode        string
 	debugTarget string
 	debugMCP    []string
@@ -1365,17 +1358,10 @@ func (s *sessionAdapter) CreateSession(ctx context.Context, sel client.ModelSele
 		}
 		return id, caps, resolved, err
 	}
-	return s.CreateSessionInWorkspace(ctx, s.workspace, sel, mode)
+	return s.cl.CreateSession(ctx, client.ModeFromString(mode), sel)
 }
 
 func (s *sessionAdapter) DebugTargetID() string { return s.debugTarget }
-
-func (s *sessionAdapter) CreateSessionInWorkspace(ctx context.Context, workspace string, sel client.ModelSelection, mode string) (string, client.Capabilities, client.ResolvedModel, error) {
-	if mode == "" {
-		mode = s.mode
-	}
-	return s.cl.CreateSession(ctx, workspace, client.ModeFromString(mode), sel)
-}
 
 // CreateSessionWithCarryover implements the ui SessionCreator's carryover seam
 // (issue #20): like CreateSession it carries the pick + mode, but it ALSO sets
@@ -1388,7 +1374,11 @@ func (s *sessionAdapter) CreateSessionWithCarryover(ctx context.Context, sourceS
 	if mode == "" {
 		mode = s.mode
 	}
-	return s.cl.CreateSessionWithCarryover(ctx, s.workspace, client.ModeFromString(mode), sel, sourceSessionID)
+	return s.cl.CreateSessionWithCarryover(ctx, client.ModeFromString(mode), sel, sourceSessionID)
+}
+
+func (s *sessionAdapter) ClearSession(ctx context.Context, sourceID string, selector *string) (string, client.SessionSnapshot, error) {
+	return s.cl.ClearSession(ctx, sourceID, selector)
 }
 
 func (s *sessionAdapter) CloseSession(ctx context.Context, id string) error {

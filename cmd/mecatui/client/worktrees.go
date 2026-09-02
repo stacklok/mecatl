@@ -15,16 +15,16 @@ import (
 // renders purely from the structs and msgs below, and the mapping is exercised
 // offline against a fake client.
 
-// Worktree is one discovered git worktree (proto Worktree, proto-free): the
-// absolute working-tree path (the value handed to CreateSession to bind a
-// session there), the checked-out branch (empty for detached HEAD), the commit
-// SHA the worktree is at, and whether it is bare. The ui's /worktrees overlay
-// lists these and, on select, creates a NEW session rooted at Path.
+// Worktree is one display-safe, server-authorized placement choice. Selector is
+// opaque authority scoped to the current source session; all other fields are
+// display metadata and must never be interpreted as paths.
 type Worktree struct {
-	Path   string
-	Branch string
-	Head   string
-	Bare   bool
+	Selector string
+	Kind     string
+	Label    string
+	Branch   string
+	Revision string
+	Bare     bool
 }
 
 // WorktreesMsg carries a ListWorktrees success (the overlay's worktree list).
@@ -36,8 +36,7 @@ type WorktreesMsg struct {
 	Err       error
 }
 
-// ListWorktrees lists the git worktrees of the repo rooted at workspace
-// ("" => empty). It is the proto-build point for the /worktrees overlay.
+// ListWorktrees lists server-issued choices scoped to sessionID.
 func (c *Client) ListWorktrees(ctx context.Context, sessionID string) ([]Worktree, error) {
 	resp, err := c.svc.ListWorktrees(ctx, &mecatlv1.ListWorktreesRequest{SessionId: sessionID})
 	if err != nil {
@@ -51,10 +50,12 @@ func mapWorktrees(in []*mecatlv1.Worktree) []Worktree {
 	out := make([]Worktree, 0, len(in))
 	for _, w := range in {
 		out = append(out, Worktree{
-			Path:   w.GetLabel(),
-			Branch: w.GetBranch(),
-			Head:   w.GetRevision(),
-			Bare:   w.GetBare(),
+			Selector: w.GetSelector(),
+			Kind:     w.GetKind(),
+			Label:    w.GetLabel(),
+			Branch:   w.GetBranch(),
+			Revision: w.GetRevision(),
+			Bare:     w.GetBare(),
 		})
 	}
 	return out
@@ -65,20 +66,18 @@ func mapWorktrees(in []*mecatlv1.Worktree) []Worktree {
 // *Client satisfies it. The method name List matches server.WorktreeLister.List
 // (house style for Config seam interfaces, matching CommandLister.List).
 type WorktreeLister interface {
-	List(ctx context.Context, workspace string) ([]Worktree, error)
+	List(ctx context.Context, sessionID string) ([]Worktree, error)
 }
 
-// List implements WorktreeLister. It delegates to ListWorktrees so *Client
-// satisfies the interface while keeping the public ListWorktrees name stable.
-func (c *Client) List(ctx context.Context, workspace string) ([]Worktree, error) {
-	return c.ListWorktrees(ctx, workspace)
+// List implements WorktreeLister for one owned source session.
+func (c *Client) List(ctx context.Context, sessionID string) ([]Worktree, error) {
+	return c.ListWorktrees(ctx, sessionID)
 }
 
-// ListWorktreesCmd fetches the worktrees for workspace off the update goroutine;
-// the result (success or error) arrives as a WorktreesMsg.
-func ListWorktreesCmd(ctx context.Context, c WorktreeLister, workspace string) tea.Cmd {
+// ListWorktreesCmd fetches source-session-scoped worktree choices.
+func ListWorktreesCmd(ctx context.Context, c WorktreeLister, sessionID string) tea.Cmd {
 	return func() tea.Msg {
-		wts, err := c.List(ctx, workspace)
+		wts, err := c.List(ctx, sessionID)
 		if err != nil {
 			return WorktreesMsg{Err: err}
 		}

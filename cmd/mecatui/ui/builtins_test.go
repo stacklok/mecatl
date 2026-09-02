@@ -379,7 +379,7 @@ func TestClearBuiltinCreatesThenBindsThenCloses(t *testing.T) {
 	m.stuck = false
 	m.resolvedSessionModel = client.ResolvedModel{ProviderID: "effective-provider", ModelID: "effective-model", ReasoningEffort: "high"}
 	m.createModelSelection = client.ModelSelection{ProviderID: "stale-provider", ModelID: "stale-model", ReasoningEffort: "low"}
-	m.activeWorkspace = "/current-worktree"
+	m.activePlacement = client.Placement{Kind: "local", Label: "current-worktree"}
 	oldID := m.sessionID
 
 	m.pendingMode = "plan"
@@ -401,14 +401,8 @@ func TestClearBuiltinCreatesThenBindsThenCloses(t *testing.T) {
 	if !ok {
 		t.Fatalf("clear create message = %T, want clearSessionReadyMsg", msg)
 	}
-	if got := conv.createdWksp; got != "/current-worktree" {
-		t.Errorf("clear workspace = %q, want current worktree", got)
-	}
-	if got := conv.createdSel; got != (client.ModelSelection{ProviderID: "effective-provider", ModelID: "effective-model", ReasoningEffort: "high"}) {
-		t.Errorf("clear selection = %+v, want effective model plus effort", got)
-	}
-	if got := conv.mode; got != m.desiredMode() {
-		t.Errorf("clear mode = %q, want desired mode %q", got, m.desiredMode())
+	if ready.placement.Label == "" {
+		t.Error("clear successor omitted server-authored placement metadata")
 	}
 	if got := conv.closed(); len(got) != 0 {
 		t.Fatalf("old session closed before successful new-session binding: %v", got)
@@ -429,7 +423,7 @@ func TestClearBuiltinCreatesThenBindsThenCloses(t *testing.T) {
 	// A delayed mode response for the old session must not alter the replacement.
 	mm, _ = m.Update(client.ModeChangedMsg{SessionID: oldID, Mode: "plan"})
 	m = mm.(Model)
-	if m.activeMode != "plan" {
+	if m.activeMode != "default" {
 		t.Errorf("stale old-session mode update changed replacement mode to %q", m.activeMode)
 	}
 	m.prompt.Rewrite("new prompt")
@@ -446,21 +440,11 @@ func TestClearBuiltinCreatesThenBindsThenCloses(t *testing.T) {
 	if got := conv.closed(); !reflect.DeepEqual(got, []string{oldID}) {
 		t.Errorf("closed sessions = %v, want old session only after binding", got)
 	}
-	if got := conv.ops(); !reflect.DeepEqual(got, []string{"create", "close"}) {
+	if got := conv.ops(); !reflect.DeepEqual(got, []string{"clear", "close"}) {
 		t.Errorf("session RPC order = %v, want [create close]", got)
 	}
 	if m.sessionID == oldID || m.sessionID == "" {
 		t.Errorf("best-effort close failure must retain new session: id=%q", m.sessionID)
-	}
-}
-
-func TestClearSessionSelectionFallsBackWithoutResolvedModel(t *testing.T) {
-	m, _ := builtinDispatchModel(t, client.Capabilities{}, false)
-	want := client.ModelSelection{ProviderID: "saved-provider", ModelID: "saved-model", ReasoningEffort: "medium"}
-	m.createModelSelection = want
-	m.resolvedSessionModel = client.ResolvedModel{} // older server: no create/session echo
-	if got := m.clearSessionSelection(); got != want {
-		t.Errorf("clear selection without echo = %+v, want %+v", got, want)
 	}
 }
 

@@ -573,12 +573,32 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 		m.statusMsg = m.deps.Theme.Style("muted").Render("ready")
 		m.refreshView()
 		return m, nil, true
+	case worktreeSwitchReadyMsg:
+		if m.sessionID != msg.oldID || m.phase != phaseConnecting {
+			return m, nil, true
+		}
+		m = m.resetSession()
+		m.activePlacement = msg.placement
+		mm, bindCmd, handled := m.applySessionReady(msg.ready)
+		m = mm.(Model)
+		m.statusMsg = m.deps.Theme.Style("success").Render("worktree switched")
+		m.refreshView()
+		return m, tea.Batch(bindCmd, m.closeSessionCmd(msg.oldID)), handled
+	case worktreeSwitchFailedMsg:
+		if m.sessionID != msg.sourceID || m.phase != phaseConnecting {
+			return m, nil, true
+		}
+		m.phase = phaseIdle
+		m.statusMsg = m.deps.Theme.Style("errorText").Render("could not switch worktree: " + sanitizeTerminal(msg.err.Error()) + "; relist and try again")
+		focusCmd := m.prompt.Focus()
+		return m, focusCmd, true
 	case clearSessionReadyMsg:
 		// The replacement exists, so it is now safe to discard the old transcript
 		// and bind through the ordinary SessionReady machinery. Do this before
 		// scheduling the best-effort close: a close failure cannot disturb the
 		// already-active replacement.
 		m = m.resetSession()
+		m.activePlacement = msg.placement
 		mm, bindCmd, handled := m.applySessionReady(msg.ready)
 		m = mm.(Model)
 		// The replacement was created with desiredMode, so its ready echo confirms
@@ -779,7 +799,7 @@ func (m Model) onResolvedModelMsg(msg client.ResolvedModelMsg) (Model, tea.Cmd, 
 	}
 	m.sessionState = msg.State
 	m.sessionCreatedAt = msg.CreatedAt
-	m.activeWorkspace = msg.Workspace
+	m.activePlacement = msg.Placement
 	if (&m).setResolvedSessionModel(msg.Resolved) {
 		m.refreshView()
 	}
@@ -1892,8 +1912,6 @@ func (m Model) applySessionsSurfaceIntent(intent surfaceIntent) (model tea.Model
 			m.prompt.Blur()
 		}
 		return m, nil, true, false
-	case sessionsAdoptionPreflightIntent:
-		return m, m.adoptionPreflightCmd(intent.row), true, false
 	case sessionsMigrationJobIntent:
 		m.maintenanceMigrationJobID = intent.jobID
 		return m, nil, true, false

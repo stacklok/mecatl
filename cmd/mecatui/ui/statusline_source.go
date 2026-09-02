@@ -1,7 +1,6 @@
 package ui
 
 import (
-	"path/filepath"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -137,12 +136,12 @@ func (m Model) statusLineInput(now time.Time) statusline.Input {
 		cachePercent = int(m.usage.CacheReadTokens * 100 / m.usage.InputTokens)
 	}
 	workspace := statusline.Workspace{Location: "unknown"}
-	if m.activeWorkspace != "" {
+	if m.activePlacement.Kind != "" || m.activePlacement.Label != "" {
+		workspace.Location = "local"
 		if m.deps.ConnectionMode == "connect" {
 			workspace.Location = "remote"
-		} else {
-			workspace = statusline.Workspace{Location: "local", Path: m.activeWorkspace, Basename: filepath.Base(m.activeWorkspace)}
 		}
+		workspace.Basename = m.activePlacement.Label
 	}
 	state, activity, approval := "idle", "", "none"
 	mode := m.activeMode

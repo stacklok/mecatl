@@ -38,12 +38,6 @@ const (
 	CapabilityReasonTranscriptUnavailable  CapabilityReason = "transcript_unavailable"
 	CapabilityReasonEnvironmentUnavailable CapabilityReason = "environment_unavailable"
 	CapabilityReasonStorageUnsupported     CapabilityReason = "storage_unsupported"
-	CapabilityReasonProtectedProvenance    CapabilityReason = "protected_provenance"
-	CapabilityReasonInvalidTranscript      CapabilityReason = "invalid_transcript"
-	CapabilityReasonAdoptionActive         CapabilityReason = "active"
-	CapabilityReasonAdoptionLeased         CapabilityReason = "leased"
-	CapabilityReasonBindingUnresolved      CapabilityReason = "binding_unresolved"
-	CapabilityReasonNotLegacy              CapabilityReason = "not_legacy"
 	CapabilityReasonUnknown                CapabilityReason = "unknown"
 )
 
@@ -94,7 +88,7 @@ type SessionListItem struct {
 	CreatedAt       int64
 	Title           string
 	TitleProvenance string
-	Workspace       string
+	Placement       Placement
 	Kind            SessionKind
 	Relationship    SessionRelationship
 	Capabilities    SessionInventoryCapabilities
@@ -180,7 +174,7 @@ func listSessionsFromProto(in []*mecatlv1.SessionSummary) []SessionListItem {
 		out = append(out, SessionListItem{
 			ID: s.GetSessionId(), ModifiedAt: s.GetModifiedAtUnix(), State: s.GetState(),
 			Turns: s.GetTurns(), ModelID: s.GetModelId(), CreatedAt: s.GetCreatedAtUnix(), Title: s.GetTitle(),
-			TitleProvenance: s.GetTitleProvenance(), Kind: SessionKind(s.GetKind()),
+			TitleProvenance: s.GetTitleProvenance(), Placement: placementFrom(s.GetPlacement()), Kind: SessionKind(s.GetKind()),
 			Relationship: SessionRelationship{
 				ParentSessionID: rel.GetParentSessionId(), CallID: rel.GetCallId(), BranchIndex: branchIndex,
 				ScheduleName: rel.GetScheduleName(), OriginSessionID: rel.GetOriginSessionId(),

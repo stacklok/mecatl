@@ -13,7 +13,7 @@ import (
 func startupSelection(id, state string) *client.ResumeSelection {
 	return &client.ResumeSelection{
 		Row: client.SessionListItem{
-			ID: id, Title: "Prior chat", State: state, Workspace: "/prior", CreatedAt: 10, ModifiedAt: 20,
+			ID: id, Title: "Prior chat", State: state, Placement: client.Placement{Kind: "local", Label: "prior"}, CreatedAt: 10, ModifiedAt: 20,
 			Kind: client.SessionKindMain, Capabilities: client.SessionInventoryCapabilities{PublicChat: true, Inspect: true},
 		},
 		Transcript: client.SessionTranscript{
@@ -21,7 +21,7 @@ func startupSelection(id, state string) *client.ResumeSelection {
 			Messages: []client.ConversationMessage{{Role: "user", Text: "original question"}, {Role: "assistant", Text: "original answer"}},
 		},
 		Snapshot: client.SessionSnapshot{
-			Title: "Prior chat", State: state, Workspace: "/prior", CreatedAt: 10,
+			Title: "Prior chat", State: state, Placement: client.Placement{Kind: "local", Label: "prior"}, CreatedAt: 10,
 		},
 	}
 }
@@ -52,8 +52,8 @@ func TestSessionContinuityUX_Scenario6_NoThrowawaySession(t *testing.T) {
 	if conv.createCount != 0 {
 		t.Fatalf("startup adoption called CreateSession %d times", conv.createCount)
 	}
-	if m.sessionID != "existing" || m.sessionTitle != "Prior chat" || m.activeWorkspace != "/prior" || m.phase != phaseIdle || len(m.conv.blocks) == 0 || !m.prompt.Focused() {
-		t.Fatalf("adopted model incomplete: id=%q title=%q workspace=%q phase=%v blocks=%d focused=%v", m.sessionID, m.sessionTitle, m.activeWorkspace, m.phase, len(m.conv.blocks), m.prompt.Focused())
+	if m.sessionID != "existing" || m.sessionTitle != "Prior chat" || m.activePlacement.Label != "prior" || m.phase != phaseIdle || len(m.conv.blocks) == 0 || !m.prompt.Focused() {
+		t.Fatalf("adopted model incomplete: id=%q title=%q workspace=%q phase=%v blocks=%d focused=%v", m.sessionID, m.sessionTitle, m.activePlacement.Label, m.phase, len(m.conv.blocks), m.prompt.Focused())
 	}
 }
 

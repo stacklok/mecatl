@@ -339,19 +339,19 @@ func TestQuitFatalSinglePressProgram(t *testing.T) {
 // reducer to phaseFatal for the single-press fatal-exit proof.
 type errSession struct{}
 
-func (errSession) CreateSession(ctx context.Context, sel client.ModelSelection, mode string) (string, client.Capabilities, client.ResolvedModel, error) {
-	return errSession{}.CreateSessionInWorkspace(ctx, "", sel, mode)
+func (errSession) CreateSession(_ context.Context, _ client.ModelSelection, _ string) (string, client.Capabilities, client.ResolvedModel, error) {
+	return "", client.Capabilities{}, client.ResolvedModel{}, context.DeadlineExceeded
 }
 
 // CreateSessionWithCarryover satisfies the SessionCreator carryover seam (issue #20).
 // errSession models a always-failing connect for the fatal-exit proof, so the
 // carryover variant fails identically — the source id is irrelevant to that path.
 func (errSession) CreateSessionWithCarryover(ctx context.Context, _ string, sel client.ModelSelection, mode string) (string, client.Capabilities, client.ResolvedModel, error) {
-	return errSession{}.CreateSessionInWorkspace(ctx, "", sel, mode)
+	return errSession{}.CreateSession(ctx, sel, mode)
 }
 
-func (errSession) CreateSessionInWorkspace(_ context.Context, _ string, _ client.ModelSelection, _ string) (string, client.Capabilities, client.ResolvedModel, error) {
-	return "", client.Capabilities{}, client.ResolvedModel{}, context.DeadlineExceeded
+func (errSession) ClearSession(_ context.Context, _ string, _ *string) (string, client.SessionSnapshot, error) {
+	return "", client.SessionSnapshot{}, context.DeadlineExceeded
 }
 
 func (errSession) CloseSession(_ context.Context, _ string) error { return nil }

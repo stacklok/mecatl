@@ -137,8 +137,8 @@ func TestPaletteFetchesOnce(t *testing.T) {
 	if fc.calls != 1 {
 		t.Fatalf("ListCommands called %d times, want 1", fc.calls)
 	}
-	if fc.gotWS != "/workspace" {
-		t.Fatalf("fetch workspace = %q, want /workspace", fc.gotWS)
+	if fc.gotWS != "sess-test-0001" {
+		t.Fatalf("fetch session = %q, want sess-test-0001", fc.gotWS)
 	}
 	// Merged: 5 built-ins + 3 fetched workspace rows = 8.
 	if !m.palette.open || len(m.palette.filtered) != 8 {

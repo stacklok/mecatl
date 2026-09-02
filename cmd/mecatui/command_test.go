@@ -106,9 +106,8 @@ func (f *sessionsLaunchCreator) CreateSession(context.Context, client.ModelSelec
 	return "", client.Capabilities{}, client.ResolvedModel{}, errors.New("CreateSession must not be called")
 }
 
-func (f *sessionsLaunchCreator) CreateSessionInWorkspace(context.Context, string, client.ModelSelection, string) (string, client.Capabilities, client.ResolvedModel, error) {
-	f.createCalls++
-	return "", client.Capabilities{}, client.ResolvedModel{}, errors.New("CreateSessionInWorkspace must not be called")
+func (*sessionsLaunchCreator) ClearSession(context.Context, string, *string) (string, client.SessionSnapshot, error) {
+	return "", client.SessionSnapshot{}, errors.New("ClearSession must not be called")
 }
 
 func (f *sessionsLaunchCreator) CreateSessionWithCarryover(context.Context, string, client.ModelSelection, string) (string, client.Capabilities, client.ResolvedModel, error) {

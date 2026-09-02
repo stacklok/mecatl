@@ -99,7 +99,7 @@ func TestStatusCustomization_Scenario1_StatusInputProjectsLiveUIState(t *testing
 	m.usage.CacheReadTokens = 9_840
 	m.usage.CacheWriteTokens = 1_200
 	m.contextTokens = 45_600
-	m.activeWorkspace = "/workspace/status-work"
+	m.activePlacement = client.Placement{Kind: "local", Label: "status-work"}
 	m.activeTool = "Read"
 	updated, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
 	m = updated.(Model)
@@ -129,7 +129,7 @@ func TestStatusCustomization_Scenario1_StatusInputProjectsLiveUIState(t *testing
 	if input.Context != (statusline.Context{Used: statusline.ContextAtom{Raw: 45_600, Human: "45.6K"}, Window: statusline.ContextAtom{Raw: 200_000, Human: "200K"}, Percent: 22}) {
 		t.Fatalf("context projection = %#v", input.Context)
 	}
-	if input.Workspace != (statusline.Workspace{Location: "local", Path: "/workspace/status-work", Basename: "status-work"}) {
+	if input.Workspace != (statusline.Workspace{Location: "local", Basename: "status-work"}) {
 		t.Fatalf("workspace projection = %#v", input.Workspace)
 	}
 	if input.MainAgent != (statusline.MainAgent{State: "running_tool", Activity: "Read", Approval: "none"}) || !input.Delegation.Valid() {
@@ -146,7 +146,7 @@ func TestStatusCustomization_Scenario1_StatusInputProjectsLiveUIState(t *testing
 func TestStatusCustomization_Scenario1_StatusInputExcludesRemoteWorkspacePath(t *testing.T) {
 	s := &statusSourceFake{changed: make(chan struct{})}
 	m := New(Deps{Ctx: context.Background(), Theme: theme.New("aztec", theme.AztecPalette()), StatusSource: s, ConnectionMode: "connect"})
-	m.activeWorkspace = "/remote/private/workspace"
+	m.activePlacement = client.Placement{Kind: "remote", Label: "safe-label"}
 	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	m = updated.(Model)
 
@@ -154,7 +154,7 @@ func TestStatusCustomization_Scenario1_StatusInputExcludesRemoteWorkspacePath(t 
 	if !ok {
 		t.Fatal("missing input")
 	}
-	if input.Workspace.Location != "remote" || input.Workspace.Path != "" || input.Workspace.Basename != "" {
+	if input.Workspace.Location != "remote" || input.Workspace.Path != "" || input.Workspace.Basename != "safe-label" {
 		t.Fatalf("remote workspace leaked as local command path: %#v", input.Workspace)
 	}
 }

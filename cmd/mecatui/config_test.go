@@ -206,30 +206,31 @@ func TestListenerScopedWorkspaceAuthority_Scenario3_RemoteConnectSendsEmptyWorks
 	}
 }
 
-// TestListenerScopedWorkspaceAuthority_Scenario3_LocalConnectPreservesWorkspaceDefault pins the embedded and loopback cwd default.
-func TestListenerScopedWorkspaceAuthority_Scenario3_LocalConnectPreservesWorkspaceDefault(t *testing.T) {
+// TestServerOwnedSessionPlacement_RemoteConnectNeverResolvesCWD pins that every
+// connect target, including loopback, leaves local placement to the server.
+func TestServerOwnedSessionPlacement_RemoteConnectNeverResolvesCWD(t *testing.T) {
+	for _, addr := range []string{"127.0.0.1:8080", "203.0.113.10:8080"} {
+		cfg, err := parseRunConfig(invocationResolution{mode: modeConnect, address: addr})
+		if err != nil {
+			t.Fatalf("parse connect %s: %v", addr, err)
+		}
+		if cfg.workspace != "" {
+			t.Fatalf("connect %s resolved local workspace %q", addr, cfg.workspace)
+		}
+	}
+}
+
+func TestServerOwnedSessionPlacement_EmbeddedWorkspaceConfiguresComposition(t *testing.T) {
 	want, err := os.Getwd()
 	if err != nil {
-		t.Fatalf("get cwd: %v", err)
+		t.Fatal(err)
 	}
-	for _, tc := range []struct {
-		name      string
-		mode      transportMode
-		addr      string
-		remaining []string
-	}{
-		{name: "embedded", mode: modeLocal, remaining: []string{"--mock"}},
-		{name: "loopback connect", mode: modeConnect, addr: "127.0.0.1:8080"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			cfg, err := parseRunConfig(invocationResolution{mode: tc.mode, address: tc.addr, remaining: tc.remaining})
-			if err != nil {
-				t.Fatalf("parse run config: %v", err)
-			}
-			if cfg.workspace != want || !filepath.IsAbs(cfg.workspace) {
-				t.Fatalf("local CreateSession workspace = %q, want absolute cwd %q", cfg.workspace, want)
-			}
-		})
+	cfg, err := parseRunConfig(invocationResolution{mode: modeLocal, remaining: []string{"--mock"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.workspace != want || !filepath.IsAbs(cfg.workspace) {
+		t.Fatalf("embedded workspace = %q, want %q", cfg.workspace, want)
 	}
 }
 
@@ -249,7 +250,7 @@ func TestListenerScopedWorkspaceAuthority_Scenario3_RemoteExplicitWorkspaceIsRej
 	})
 	if err == nil {
 		t.Fatal("remote explicit workspace was accepted")
-	} else if !strings.Contains(err.Error(), "--workspace") || !strings.Contains(err.Error(), "remote") {
+	} else if !strings.Contains(err.Error(), "--workspace") || !strings.Contains(err.Error(), "embedded") {
 		t.Fatalf("rejection = %q, want clear remote --workspace error", err)
 	}
 	if parsed.workspace != explicitWorkspace {

@@ -92,7 +92,7 @@ func TestScheduleTool_TuiEmbeddedSchedulerOn(t *testing.T) {
 		t.Fatalf("dial embedded server: %v", err)
 	}
 	defer func() { _ = cl.Close() }()
-	_, caps, _, err := cl.CreateSession(ctx, workspace, client.ModeFromString("default"), client.ModelSelection{})
+	_, caps, _, err := cl.CreateSession(ctx, client.ModeFromString("default"), client.ModelSelection{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}

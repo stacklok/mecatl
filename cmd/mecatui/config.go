@@ -12,7 +12,6 @@ import (
 
 	"github.com/charmbracelet/x/ansi"
 
-	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/internal/app"
 	"github.com/stacklok/mecatl/internal/cliconfig"
 )
@@ -355,7 +354,7 @@ func parseTransportFlags(mode transportMode, out io.Writer, args []string, brows
 	cfg.browseSessions = len(browseSessions) > 0 && browseSessions[0]
 	fs := flag.NewFlagSet("mecatui", flag.ContinueOnError)
 	fs.SetOutput(out)
-	fs.StringVar(&cfg.workspace, "workspace", "", "absolute workspace root for a new session (default: cwd); an adopted session keeps its stored workspace")
+	fs.StringVar(&cfg.workspace, "workspace", "", "embedded server only: absolute deployment workspace root (default: cwd); not accepted by connect")
 	fs.StringVar(&cfg.mode, "mode", "default", "permission mode: default | plan | accept-edits")
 	fs.Func("debug-mcp", "debug sessions only: select one already-configured server-global streaming-HTTP MCP server by name (repeatable)", func(value string) error {
 		cfg.debugMCP = append(cfg.debugMCP, value)
@@ -775,16 +774,9 @@ func transportUsage(fs *flag.FlagSet, mode transportMode, browseSessions ...bool
 // rejected before a dial or CreateSession call. Embedded and loopback workflows
 // retain the local cwd/worktree default.
 func configureWorkspaceForTransport(cfg *config) error {
-	if cfg.debugTarget != "" && cfg.transportMode == modeConnect {
+	if cfg.transportMode == modeConnect {
 		if cfg.workspaceExplicit {
-			return errors.New("--workspace is not allowed when connecting to a remote debug session")
-		}
-		cfg.workspace = ""
-		return nil
-	}
-	if cfg.transportMode == modeConnect && !client.IsLoopbackHost(cfg.connectAddress) {
-		if cfg.workspaceExplicit {
-			return errors.New("--workspace is not allowed when connecting to a remote server")
+			return errors.New("--workspace configures only the embedded server and is not allowed with connect")
 		}
 		cfg.workspace = ""
 		return nil
@@ -835,7 +827,7 @@ func (c config) validate() error {
 			return errors.New("debug conflicts with sessions launch")
 		}
 	}
-	if c.workspace == "" && c.debugTarget == "" && (c.transportMode != modeConnect || client.IsLoopbackHost(c.connectAddress)) {
+	if c.workspace == "" && c.debugTarget == "" && c.transportMode != modeConnect {
 		return errors.New("workspace is required")
 	}
 	if c.workspace != "" && !filepath.IsAbs(c.workspace) {

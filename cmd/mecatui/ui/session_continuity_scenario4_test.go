@@ -57,12 +57,12 @@ func TestSessionContinuityUX_Scenario4_FamilyTabs(t *testing.T) {
 
 func TestSessionContinuityUX_Scenario4_SearchFields(t *testing.T) {
 	row := client.SessionListItem{
-		ID: "opaque-full-id", Title: "Fix Scheduler", ModelID: "GPT-5", Workspace: "/Work/Repo",
+		ID: "opaque-full-id", Title: "Fix Scheduler", ModelID: "GPT-5", Placement: client.Placement{Kind: "git", Label: "Repo"},
 		Kind:         client.SessionKindTeamMember,
 		Relationship: client.SessionRelationship{ParentSessionID: "parent-alpha", CallID: "call-beta", TeamID: "team-gamma", MemberName: "Reviewer"},
 	}
 	handle := sessionDisplayHandles([]client.SessionListItem{row})[row.ID]
-	for _, query := range []string{"scheduler", "FULL-ID", handle, "gpt-5", "/work/repo", "PARENT-ALPHA", "CALL-BETA", "TEAM-GAMMA", "reviewer"} {
+	for _, query := range []string{"scheduler", "FULL-ID", handle, "gpt-5", "repo", "PARENT-ALPHA", "CALL-BETA", "TEAM-GAMMA", "reviewer"} {
 		if got := filterSessions([]client.SessionListItem{row}, map[string]string{row.ID: handle}, query); len(got) != 1 {
 			t.Errorf("query %q did not match all advertised fields", query)
 		}

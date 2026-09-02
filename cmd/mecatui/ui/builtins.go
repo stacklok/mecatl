@@ -302,50 +302,28 @@ func (m Model) runClear() (tea.Model, tea.Cmd) {
 	return m, tea.Batch(m.clearSessionCmd(oldID), m.sp.Tick)
 }
 
-// clearSessionSelection prefers the server's effective model echo, while retaining
-// the locally requested reasoning effort when an older server did not echo it.
-func (m Model) clearSessionSelection() client.ModelSelection {
-	sel := m.createModelSelection
-	if resolved := m.resolvedSessionModel; resolved.ProviderID != "" || resolved.ModelID != "" {
-		if resolved.ProviderID != "" {
-			sel.ProviderID = resolved.ProviderID
-		}
-		if resolved.ModelID != "" {
-			sel.ModelID = resolved.ModelID
-		}
-		if resolved.ReasoningEffort != "" {
-			sel.ReasoningEffort = resolved.ReasoningEffort
-		}
-	}
-	return sel
-}
-
-// clearSessionCmd creates the replacement before the old session is touched. The
-// reducer performs the local reset and binding before it schedules the best-effort
-// close, so a create failure leaves the old session entirely usable.
+// clearSessionCmd asks the server for an empty-history successor before the old
+// session is touched. Server inheritance carries placement, mode, model, effort,
+// limits, and permission posture.
 func (m Model) clearSessionCmd(oldID string) tea.Cmd {
 	deps := m.deps
-	workspace := m.activeWorkspace
-	if workspace == "" {
-		workspace = deps.Workspace
-	}
-	sel := m.clearSessionSelection()
-	mode := m.desiredMode()
 	return func() tea.Msg {
-		id, caps, resolved, err := deps.Session.CreateSessionInWorkspace(deps.Ctx, workspace, sel, mode)
+		id, snapshot, err := deps.Session.ClearSession(deps.Ctx, oldID, nil)
 		if err != nil {
 			return clearSessionFailedMsg{err: err}
 		}
 		return clearSessionReadyMsg{
-			ready: client.SessionReadyMsg{SessionID: id, Capabilities: caps, ResolvedModel: resolved, Mode: mode},
-			oldID: oldID,
+			ready:     client.SessionReadyMsg{SessionID: id, Capabilities: snapshot.Capabilities, ResolvedModel: snapshot.ResolvedModel, Mode: snapshot.Mode},
+			placement: snapshot.Placement,
+			oldID:     oldID,
 		}
 	}
 }
 
 type clearSessionReadyMsg struct {
-	ready client.SessionReadyMsg
-	oldID string
+	ready     client.SessionReadyMsg
+	placement client.Placement
+	oldID     string
 }
 
 type clearSessionFailedMsg struct{ err error }

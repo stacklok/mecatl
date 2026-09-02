@@ -40,7 +40,7 @@ func (m Model) openReflections() (tea.Model, tea.Cmd) {
 	m.prompt.Blur()
 	m.reflectionsGen++
 	m.reflections = reflectionsState{view: reflectionsList, loading: true}
-	return m, client.ListReflectionsCmd(m.deps.Ctx, m.deps.Reflections, "", client.ReflectionCursors{}, m.activeWorkspace, m.reflectionsGen)
+	return m, client.ListReflectionsCmd(m.deps.Ctx, m.deps.Reflections, "", client.ReflectionCursors{}, m.deps.Workspace, m.reflectionsGen)
 }
 func (m Model) runReflect() (tea.Model, tea.Cmd) {
 	if m.phase != phaseIdle || m.deps.Reflections == nil || m.sessionID == "" || m.conv.isEmpty() {
@@ -94,7 +94,7 @@ func (m Model) onReflectionsKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) 
 				m.reflections.cursors = next
 				m.reflectionsGen++
 				m.reflections.loading = true
-				return m, client.ListReflectionsCmd(m.deps.Ctx, m.deps.Reflections, "", next, m.activeWorkspace, m.reflectionsGen), true
+				return m, client.ListReflectionsCmd(m.deps.Ctx, m.deps.Reflections, "", next, m.deps.Workspace, m.reflectionsGen), true
 			}
 		case msg.String() == "p":
 			if n := len(m.reflections.previous); n > 0 {
@@ -103,7 +103,7 @@ func (m Model) onReflectionsKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) 
 				m.reflections.cursors = previous
 				m.reflectionsGen++
 				m.reflections.loading = true
-				return m, client.ListReflectionsCmd(m.deps.Ctx, m.deps.Reflections, "", previous, m.activeWorkspace, m.reflectionsGen), true
+				return m, client.ListReflectionsCmd(m.deps.Ctx, m.deps.Reflections, "", previous, m.deps.Workspace, m.reflectionsGen), true
 			}
 		case key.Matches(msg, m.keys.Choose):
 			if m.reflections.cursor < len(m.reflections.page.Proposals) {

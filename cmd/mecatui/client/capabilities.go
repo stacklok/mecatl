@@ -54,7 +54,6 @@ type Capabilities struct {
 	StorageHealth     bool
 	StorageMigration  bool
 	StorageCleanup    bool
-	LegacyAdoption    bool
 	// ManualDream is nil when an older server does not expose the capability object.
 	// A non-nil value keeps /dream discoverable even when both targets are unavailable,
 	// so the overlay can explain the target-specific reasons.

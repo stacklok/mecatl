@@ -49,24 +49,6 @@ func TestSessionsPickerErrorGolden(t *testing.T) {
 	compareGolden(t, "sessions_picker_error.golden", stripANSI([]byte(m.View().Content)))
 }
 
-func TestSessionsAdoptionGoldens(t *testing.T) {
-	legacy := client.SessionListItem{ID: "legacy-source", Title: "Old investigation", Kind: client.SessionKindUnknown, Capabilities: client.SessionInventoryCapabilities{Inspect: true}}
-	adopter := &scenario8Adopter{preflight: client.AdoptionPreflight{Eligible: true, Bindings: client.AdoptionBindings{Workspace: "/workspace", EnvironmentKind: "local", EnvironmentID: "/workspace", ProviderID: "openai", ModelID: "gpt-5"}}}
-	m := newSessionsGoldenModel(t, []client.SessionListItem{legacy})
-	m.deps.Adoption = adopter
-	m.activeWorkspace = "/workspace"
-	m.resolvedSessionModel = client.ResolvedModel{ProviderID: "openai", ModelID: "gpt-5"}
-	m = openAndLoad(t, m, []client.SessionListItem{legacy})
-	ensureActiveSessions(&m).tab = tabOtherRuns
-	ensureActiveSessions(&m).syncFilter()
-	m = applyAll(m, client.SessionAdoptionPreflightMsg{SourceID: legacy.ID, Preflight: adopter.preflight})
-	compareGolden(t, "sessions_legacy_adoption.golden", stripANSI([]byte(m.View().Content)))
-
-	mm, _, _ := m.onOverlayKey(tea.KeyPressMsg{Code: 'a', Text: "a"})
-	m = mm.(Model)
-	compareGolden(t, "sessions_adoption_review.golden", stripANSI([]byte(m.View().Content)))
-}
-
 func TestSessionsMaintenanceGoldens(t *testing.T) {
 	fake := &scenario8Maintenance{
 		migrationPlan: client.SessionMigrationPlan{ID: "plan-1", Available: true, V1Families: 12, V2Families: 40, InvalidFamilies: 2, SkippedFamilies: 3, CurrentBytes: 12 << 20, ReclaimableBytes: 8 << 20, TemporaryBytes: 2 << 20},

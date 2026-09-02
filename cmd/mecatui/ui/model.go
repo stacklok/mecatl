@@ -34,24 +34,12 @@ import (
 // segment).
 type SessionCreator interface {
 	CreateSession(ctx context.Context, sel client.ModelSelection, mode string) (string, client.Capabilities, client.ResolvedModel, error)
-	// CreateSessionInWorkspace creates a session bound to an explicit workspace
-	// root (the /worktrees switch path, issue #102). CreateSession (above)
-	// delegates to this with the launch workspace, so the /models restart + the
-	// connect paths are byte-identical and only the /worktrees switch passes a
-	// different root. The workspace becomes the session's tool root (Read/Edit/
-	// Write/Grep/Glob/Bash cwd all resolve there); osfs confinement is unchanged.
-	CreateSessionInWorkspace(ctx context.Context, workspace string, sel client.ModelSelection, mode string) (string, client.Capabilities, client.ResolvedModel, error)
-	// CreateSessionWithCarryover is CreateSession seeded with sourceSessionID's
-	// conversation history (issue #20, model-switch carryover): it restarts on a
-	// picked model AND carries the current session's transcript onto the new
-	// session. The server is the authority on same-vs-cross (a same-provider
-	// carryover replays verbatim; a cross-provider carryover strips the prior
-	// provider's replay blobs) and a turn-boundary source; the ui offers the
-	// switch unconditionally when a live session exists. The caller owns closing
-	// the source session AFTER the new one is ready (the server snapshotted it
-	// at create time). Same return shape as CreateSession so the
-	// footer/effective-model heal path is shared.
+	// CreateSessionWithCarryover forks the current transcript with optional model
+	// overrides; placement and omitted settings are inherited by the server.
 	CreateSessionWithCarryover(ctx context.Context, sourceSessionID string, sel client.ModelSelection, mode string) (string, client.Capabilities, client.ResolvedModel, error)
+	// ClearSession creates an empty-history successor. selector is nil for ordinary
+	// /clear and points only to an opaque ListWorktrees result for a worktree switch.
+	ClearSession(ctx context.Context, sourceSessionID string, selector *string) (string, client.SessionSnapshot, error)
 	// CloseSession ends a server-side session by id. The /models restart-now handoff
 	// closes the OLD session before creating the new one so a model switch leaves no
 	// orphaned server-side session. Best-effort: the caller proceeds with the new
@@ -153,9 +141,6 @@ type Deps struct {
 	// SessionManagement mutates stored main-chat metadata. nil leaves rename/delete
 	// undiscoverable even if a custom lister advertises those capabilities.
 	SessionManagement client.SessionManager
-	// Adoption is the authenticated legacy-copy surface. Eligibility is always
-	// taken from its source-correlated preflight, never inferred from row IDs.
-	Adoption client.SessionAdopter
 	// Transcript is the authoritative snapshot-derived conversation surface used
 	// by /sessions for both continuation and read-only inspection. Event replay is
 	// optional activity and never substitutes for this seam.
@@ -608,13 +593,9 @@ type Model struct {
 	// strips the metadata), and for any non-routed provider — the header then shows
 	// the bare model segment, never a stale or fabricated suffix.
 	providerRoute string
-	// activeWorkspace is the workspace root the CURRENT session is bound to. Seeded
-	// from Deps.Workspace at construction (the launch root) and updated by
-	// switchToWorktree (issue #102) to the chosen worktree path. Shown in the header
-	// when it differs from the launch workspace (Deps.Workspace), so the user can
-	// tell at a glance that the session is rooted at a sibling worktree rather than
-	// the launch directory. Empty = connecting (not yet bound).
-	activeWorkspace string
+	// activePlacement is bounded server-authored display metadata for the current
+	// session. It is never interpreted as a path or sent back as authority.
+	activePlacement client.Placement
 	// pickedThisSession is the (provider, model) the user EXPLICITLY chose via the
 	// /models picker's restart-now confirm during THIS process — set when a restart-now
 	// handoff rebinds the session to a picked model. It is the provenance signal that
@@ -987,7 +968,6 @@ func New(deps Deps) Model {
 		createModelSelection: deps.InitialModel,
 		activeMode:           client.ModeString(client.ModeFromString(deps.Mode)),
 		modelCatalog:         modelCatalog{active: deps.InitialModel, globalDefault: deps.GlobalDefault},
-		activeWorkspace:      deps.Workspace,
 		// Seed the CLI-supplied seed prompt (-p/--prompt + --prompt-file) for
 		// one-shot auto-submit on the FIRST session ready.
 		pendingInitialPrompt: deps.InitialPrompt,
@@ -1028,7 +1008,7 @@ func New(deps Deps) Model {
 		m.sessionState = resume.Snapshot.State
 		m.sessionCreatedAt = resume.Snapshot.CreatedAt
 		m.sessionModifiedAt = resume.Row.ModifiedAt
-		m.activeWorkspace = resume.Snapshot.Workspace
+		m.activePlacement = resume.Snapshot.Placement
 		m.activeMode = client.ModeString(client.ModeFromString(resume.Snapshot.Mode))
 		(&m).setResolvedSessionModel(resume.Snapshot.ResolvedModel)
 		m.caps = resume.Snapshot.Capabilities

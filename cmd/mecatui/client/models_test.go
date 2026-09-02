@@ -138,7 +138,7 @@ func TestCreateSessionCarriesModelSelection(t *testing.T) {
 	t.Run("non-zero selection sets both fields", func(t *testing.T) {
 		fake := &fakeModelsClient{}
 		cl := newFakeClient(fake)
-		_, _, _, err := cl.CreateSession(context.Background(), "/ws",
+		_, _, _, err := cl.CreateSession(context.Background(),
 			mecatlv1.PermissionMode_PERMISSION_MODE_DEFAULT,
 			ModelSelection{ProviderID: "openrouter", ModelID: "anthropic/claude"})
 		if err != nil {
@@ -152,7 +152,7 @@ func TestCreateSessionCarriesModelSelection(t *testing.T) {
 	t.Run("zero selection leaves both empty (server default)", func(t *testing.T) {
 		fake := &fakeModelsClient{}
 		cl := newFakeClient(fake)
-		_, _, _, err := cl.CreateSession(context.Background(), "/ws",
+		_, _, _, err := cl.CreateSession(context.Background(),
 			mecatlv1.PermissionMode_PERMISSION_MODE_DEFAULT, ModelSelection{})
 		if err != nil {
 			t.Fatalf("CreateSession: %v", err)
@@ -172,7 +172,7 @@ func TestCreateSessionCarriesReasoningEffort(t *testing.T) {
 	t.Run("effort set on the request", func(t *testing.T) {
 		fake := &fakeModelsClient{}
 		cl := newFakeClient(fake)
-		_, _, _, err := cl.CreateSession(context.Background(), "/ws",
+		_, _, _, err := cl.CreateSession(context.Background(),
 			mecatlv1.PermissionMode_PERMISSION_MODE_DEFAULT,
 			ModelSelection{ProviderID: "openai", ModelID: "gpt-5", ReasoningEffort: "high"})
 		if err != nil {
@@ -185,7 +185,7 @@ func TestCreateSessionCarriesReasoningEffort(t *testing.T) {
 	t.Run("effort-only selection (no provider/model) still carries the effort", func(t *testing.T) {
 		fake := &fakeModelsClient{}
 		cl := newFakeClient(fake)
-		_, _, _, err := cl.CreateSession(context.Background(), "/ws",
+		_, _, _, err := cl.CreateSession(context.Background(),
 			mecatlv1.PermissionMode_PERMISSION_MODE_DEFAULT,
 			ModelSelection{ReasoningEffort: "low"})
 		if err != nil {
@@ -202,7 +202,7 @@ func TestCreateSessionCarriesReasoningEffort(t *testing.T) {
 	t.Run("unset effort leaves the field empty", func(t *testing.T) {
 		fake := &fakeModelsClient{}
 		cl := newFakeClient(fake)
-		_, _, _, err := cl.CreateSession(context.Background(), "/ws",
+		_, _, _, err := cl.CreateSession(context.Background(),
 			mecatlv1.PermissionMode_PERMISSION_MODE_DEFAULT,
 			ModelSelection{ProviderID: "openai", ModelID: "gpt-5"})
 		if err != nil {
@@ -223,7 +223,7 @@ func TestCreateSessionCarriesReasoningEffort(t *testing.T) {
 			},
 		}}
 		cl := newFakeClient(fake)
-		_, _, resolved, err := cl.CreateSession(context.Background(), "/ws",
+		_, _, resolved, err := cl.CreateSession(context.Background(),
 			mecatlv1.PermissionMode_PERMISSION_MODE_DEFAULT,
 			ModelSelection{ProviderID: "openai", ModelID: "gpt-5", ReasoningEffort: "max"})
 		if err != nil {

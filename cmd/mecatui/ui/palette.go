@@ -144,7 +144,7 @@ func (m Model) syncPalette() (Model, tea.Cmd) {
 		// CommandsMsg and re-syncs the palette. Only when a Commander is wired —
 		// built-ins need no fetch.
 		m.palette.fetched = true
-		fetch = client.ListCommandsCmd(m.deps.Ctx, m.deps.Cmds, m.deps.Workspace)
+		fetch = client.ListCommandsCmd(m.deps.Ctx, m.deps.Cmds, m.sessionID)
 	}
 
 	if m.palette.dismissed {

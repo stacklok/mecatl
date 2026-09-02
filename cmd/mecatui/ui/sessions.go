@@ -19,7 +19,7 @@ type sessionDetailsView struct {
 	DebugTargetID string
 	Title         string
 	State         string
-	Workspace     string
+	Placement     client.Placement
 	CreatedAt     int64
 	ModifiedAt    int64
 	ProviderID    string
@@ -68,7 +68,6 @@ func (m *Model) newSessionsSurface(startup bool) *sessionsState {
 		healthFetcher:                 m.deps.StorageHealth,
 		migration:                     m.deps.Migration,
 		cleanup:                       m.deps.Cleanup,
-		adopter:                       m.deps.Adoption,
 		forker:                        m.deps.Session,
 		manager:                       m.deps.SessionManagement,
 		clipboard:                     m.deps.Clipboard,
@@ -98,7 +97,7 @@ func (m Model) bindSessionID(id string) Model {
 func (m Model) sessionDetails() sessionDetailsView {
 	return sessionDetailsView{
 		ID: m.sessionID, DebugTargetID: m.deps.DebugTarget, Title: m.sessionTitle, State: m.sessionState,
-		Workspace: m.activeWorkspace, CreatedAt: m.sessionCreatedAt,
+		Placement: m.activePlacement, CreatedAt: m.sessionCreatedAt,
 		ModifiedAt: m.sessionModifiedAt, ProviderID: m.resolvedSessionModel.ProviderID,
 		ModelID: m.resolvedSessionModel.ModelID,
 	}
@@ -202,7 +201,7 @@ func renderSessionDetails(th theme.Theme, details sessionDetailsView, hk helpKey
 	}
 	b.WriteString("Title: " + unknown(details.Title) + "\n")
 	b.WriteString("State: " + unknown(details.State) + "\n")
-	b.WriteString("Workspace: " + unknown(details.Workspace) + "\n")
+	b.WriteString("Placement: " + unknown(details.Placement.Label) + "\n")
 	b.WriteString("Created: " + formatSessionTimestamp(details.CreatedAt) + "\n")
 	b.WriteString("Modified: " + formatSessionTimestamp(details.ModifiedAt) + "\n")
 	b.WriteString("Provider: " + unknown(details.ProviderID) + "\n")
@@ -233,28 +232,6 @@ func (m Model) openSessions() (tea.Model, tea.Cmd) {
 		cmds = append(cmds, cleanupStatusCmd(m.deps.Ctx, m.deps.Cleanup, m.maintenanceCleanupJobID))
 	}
 	return m, tea.Batch(cmds...)
-}
-
-func (m Model) adoptionBindings() client.AdoptionBindings {
-	provider, model := m.resolvedSessionModel.ProviderID, m.resolvedSessionModel.ModelID
-	if provider == "" && model == "" {
-		provider, model = m.deps.InitialModel.ProviderID, m.deps.InitialModel.ModelID
-	}
-	return client.AdoptionBindings{
-		Workspace: m.activeWorkspace, EnvironmentKind: "local", EnvironmentID: m.activeWorkspace,
-		ProviderID: provider, ModelID: model,
-	}
-}
-
-func (m Model) adoptionPreflightCmd(row client.SessionListItem) tea.Cmd {
-	if row.Kind != client.SessionKindUnknown || m.deps.Adoption == nil {
-		return nil
-	}
-	bindings := m.adoptionBindings()
-	if !completeAdoptionBindings(bindings) {
-		return nil
-	}
-	return client.PreflightSessionAdoptionCmd(m.deps.Ctx, m.deps.Adoption, row.ID, bindings)
 }
 
 func (m Model) chooseSession() (tea.Model, tea.Cmd, bool) {
@@ -294,7 +271,7 @@ func (m Model) adoptAuthoritativeTranscript(row client.SessionListItem, loaded c
 	m.sessionState = row.State
 	m.sessionCreatedAt = row.CreatedAt
 	m.sessionModifiedAt = row.ModifiedAt
-	m.activeWorkspace = row.Workspace
+	m.activePlacement = row.Placement
 	m.conv = loaded
 	m.restartedThisRun = true
 	m.closeModal()

@@ -2,7 +2,6 @@ package ui
 
 import (
 	"fmt"
-	"path/filepath"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -364,12 +363,9 @@ func (m Model) headerIdentityParts(sid, withNext string) []string {
 	if mode != "" {
 		parts = append(parts, m.renderHeaderMode(mode))
 	}
-	// Workspace segment (issue #102): shown only when the session is rooted at a
-	// DIFFERENT workspace than the launch directory (no noise in the common case).
-	// Display just the last path component to keep the header compact.
-	if ws := m.activeWorkspace; ws != "" && ws != m.deps.Workspace {
-		wsPart := m.deps.Theme.Style("muted").Render("ws:" + filepath.Base(ws))
-		parts = append(parts, wsPart)
+	// Placement metadata is display-only; never derive or expose a server path.
+	if label := m.activePlacement.Label; label != "" {
+		parts = append(parts, m.deps.Theme.Style("muted").Render("place:"+sanitizeTerminal(label)))
 	}
 	if m.deps.Server != "" {
 		parts = append(parts, m.deps.Server)

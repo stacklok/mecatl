@@ -354,7 +354,7 @@ func TestWindowTitleHealRefetchRoundTrip(t *testing.T) {
 		SessionID: "sess-fork-0001",
 		Title:     "newer server title",
 		State:     "idle",
-		Workspace: "/workspace",
+		Placement: client.Placement{Kind: "local", Label: "workspace"},
 		CreatedAt: 1_700_000_000,
 	})
 	if m.sessionTitle != "forked carryover task" {

@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"errors"
 	"strings"
 
 	"charm.land/bubbles/v2/key"
@@ -63,7 +64,7 @@ func (m Model) openWorktrees() (tea.Model, tea.Cmd) {
 	ti.Focus()
 	m.worktrees.filter = ti
 	m.worktrees.filtered = nil
-	return m, tea.Batch(client.ListWorktreesCmd(m.deps.Ctx, m.deps.Worktrees, m.deps.Workspace), textinput.Blink)
+	return m, tea.Batch(client.ListWorktreesCmd(m.deps.Ctx, m.deps.Worktrees, m.sessionID), textinput.Blink)
 }
 
 // closeWorktrees dismisses the overlay and returns focus to the prompt input.
@@ -161,59 +162,48 @@ func (m Model) onWorktreesConfirmKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, b
 	return m, nil, true
 }
 
-// switchToWorktree performs the restart-now handoff for a worktree (issue #102):
-// it tears down ALL per-session client state bound to the OLD session, resets the
-// conversation transcript, drives the phase back to phaseConnecting, and fires
-// restartOnWorkspaceCmd (CloseSession(old) → CreateSessionInWorkspace(new, path)).
-// The new header/caps/resolvedSessionModel all arrive on the resulting SessionReadyMsg,
-// so the UI rebinds entirely from the NEW session. Mirrors restartOnModel
-// (models.go) but passes the worktree PATH as the new-session workspace.
+// switchToWorktree starts a create-first empty-history successor handoff using
+// only the opaque selector issued for the current session. The old session and
+// transcript stay selected until the server has created and returned the target.
 func (m Model) switchToWorktree(wt client.Worktree) (tea.Model, tea.Cmd, bool) {
-	// Cancel any in-flight run FIRST (see restartOnModel for the stream-subscription
-	// invalidation rationale). Safe when idle.
-	m = m.endRun("")
-
+	if m.sessionID == "" || wt.Selector == "" {
+		m.worktrees.view = worktreesPanel
+		m.worktrees.err = errors.New("worktree choice is stale; relist and try again")
+		return m, nil, true
+	}
 	oldID := m.sessionID
-	// Suppress the first-run welcome splash for the rest of the run (the restart's
-	// empty-idle frame would otherwise re-fire it).
-	m.restartedThisRun = true
-	m = m.resetSession()
-
-	m = m.bindSessionID("")
-	m.resolvedSessionModel = client.ResolvedModel{}
-	m.caps = client.Capabilities{}
-	m.restartFailed = false
-	m.restartFailedForkID = ""
 	m.phase = phaseConnecting
-	m.statusMsg = "switching workspace — reconnecting…"
-
-	m.activeWorkspace = wt.Path
-
-	mm, cmd := m.closeWorktrees()
-	m = mm.(Model)
+	m.statusMsg = "switching worktree — creating successor…"
+	m.worktrees.view = worktreesNone
 	m.refreshView()
-	return m, tea.Batch(cmd, m.restartOnWorkspaceCmd(oldID, wt.Path), m.sp.Tick), true
+	return m, m.switchWorktreeCmd(oldID, wt), true
 }
 
-// restartOnWorkspaceCmd closes the OLD session (best-effort) then creates a NEW
-// session rooted at workspace, off the update goroutine. On SUCCESS it returns
-// the same SessionReadyMsg the connect path uses, so the reducer rebinds
-// uniformly. On FAILURE it returns restartFailedMsg (reused from /models — its
-// reducer keeps the app RECOVERABLE), carrying the workspace path as the label.
-// A CloseSession failure is swallowed (orphaning a server-side session is
-// preferable to blocking the re-create). Mirrors restartOnModelCmd.
-func (m Model) restartOnWorkspaceCmd(oldID, workspace string) tea.Cmd {
+func (m Model) switchWorktreeCmd(oldID string, wt client.Worktree) tea.Cmd {
 	deps := m.deps
 	return func() tea.Msg {
-		if oldID != "" {
-			_ = deps.Session.CloseSession(deps.Ctx, oldID)
-		}
-		id, caps, resolved, err := deps.Session.CreateSessionInWorkspace(deps.Ctx, workspace, m.createModelSelection, m.desiredMode())
+		selector := wt.Selector
+		id, snapshot, err := deps.Session.ClearSession(deps.Ctx, oldID, &selector)
 		if err != nil {
-			return restartFailedMsg{err: err, model: workspace}
+			return worktreeSwitchFailedMsg{sourceID: oldID, err: err}
 		}
-		return client.SessionReadyMsg{SessionID: id, Capabilities: caps, ResolvedModel: resolved, Mode: m.desiredMode()}
+		return worktreeSwitchReadyMsg{
+			ready:     client.SessionReadyMsg{SessionID: id, Capabilities: snapshot.Capabilities, ResolvedModel: snapshot.ResolvedModel, Mode: snapshot.Mode},
+			placement: snapshot.Placement,
+			oldID:     oldID,
+		}
 	}
+}
+
+type worktreeSwitchReadyMsg struct {
+	ready     client.SessionReadyMsg
+	placement client.Placement
+	oldID     string
+}
+
+type worktreeSwitchFailedMsg struct {
+	sourceID string
+	err      error
 }
 
 // updateWorktreesMsg reduces a client.WorktreesMsg (the ListWorktrees RPC result):
@@ -247,9 +237,9 @@ func filterWorktrees(wts []client.Worktree, q string) []client.Worktree {
 	needle := strings.ToLower(q)
 	out := make([]client.Worktree, 0, len(wts))
 	for _, w := range wts {
-		if strings.Contains(strings.ToLower(w.Path), needle) ||
+		if strings.Contains(strings.ToLower(w.Label), needle) ||
 			strings.Contains(strings.ToLower(w.Branch), needle) ||
-			strings.Contains(strings.ToLower(w.Head), needle) {
+			strings.Contains(strings.ToLower(w.Revision), needle) {
 			out = append(out, w)
 		}
 	}
@@ -295,11 +285,11 @@ func renderWorktreesPanel(th theme.Theme, st worktreesState, _ client.Capabiliti
 		if i == st.cursor {
 			marker = "▶ "
 		}
-		line := marker + sanitizeTerminal(w.Path)
+		line := marker + sanitizeTerminal(w.Label)
 		if w.Branch != "" {
 			line += "  (" + sanitizeTerminal(w.Branch) + ")"
-		} else if w.Head != "" {
-			line += "  (" + sanitizeTerminal(shortSHA(w.Head)) + ")"
+		} else if w.Revision != "" {
+			line += "  (" + sanitizeTerminal(shortSHA(w.Revision)) + ")"
 		}
 		if i == st.cursor {
 			line = th.Style("accent").Render(line)
@@ -318,7 +308,7 @@ func renderWorktreesConfirm(th theme.Theme, st worktreesState, hk helpKeys, _, _
 	var b strings.Builder
 	b.WriteString(th.Style("title").Render("switch workspace") + "\n\n")
 	b.WriteString("start a new session rooted at:\n")
-	b.WriteString(th.Style("accent").Render("  "+sanitizeTerminal(w.Path)) + "\n")
+	b.WriteString(th.Style("accent").Render("  "+sanitizeTerminal(w.Label)) + "\n")
 	if w.Branch != "" {
 		b.WriteString(th.Style("muted").Render("  branch: "+sanitizeTerminal(w.Branch)) + "\n")
 	}

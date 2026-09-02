@@ -41,7 +41,7 @@ func (f *fakeStartupResumeSource) GetSession(_ context.Context, id string) (clie
 	if snapshot, ok := f.snapshots[id]; ok {
 		return snapshot, nil
 	}
-	return client.SessionSnapshot{State: "completed", Workspace: "/workspace"}, nil
+	return client.SessionSnapshot{State: "completed", Placement: client.Placement{Kind: "local", Label: "workspace"}}, nil
 }
 
 func TestSessionContinuityUX_Scenario6_FlagGrammar(t *testing.T) {
@@ -75,7 +75,7 @@ func TestSessionContinuityUX_Scenario6_ExactResumeDoesNotRequireInventory(t *tes
 			"opaque-id": {SessionID: "opaque-id", Complete: true, Kind: client.SessionKindMain},
 		},
 		snapshots: map[string]client.SessionSnapshot{
-			"opaque-id": {State: "completed", Workspace: "/workspace"},
+			"opaque-id": {State: "completed", Placement: client.Placement{Kind: "local", Label: "workspace"}},
 		},
 	}
 
@@ -168,7 +168,7 @@ func TestResumeLatest_AdoptsWhenEligible(t *testing.T) {
 			{ID: "newest", ModifiedAt: 60, Kind: client.SessionKindMain, State: "completed", Capabilities: client.SessionInventoryCapabilities{PublicChat: true}},
 		},
 		transcripts: map[string]client.SessionTranscript{"newest": {SessionID: "newest", Complete: true}},
-		snapshots:   map[string]client.SessionSnapshot{"newest": {State: "completed", Workspace: "/adopted"}},
+		snapshots:   map[string]client.SessionSnapshot{"newest": {State: "completed", Placement: client.Placement{Kind: "local", Label: "adopted"}}},
 	}
 	sel, ws, err := startupResumeConfig(context.Background(), source, config{resumeLatest: true, workspace: "/ws"})
 	if err != nil {
@@ -177,8 +177,8 @@ func TestResumeLatest_AdoptsWhenEligible(t *testing.T) {
 	if sel == nil || sel.Row.ID != "newest" {
 		t.Fatalf("resume-latest adopt selection = %+v", sel)
 	}
-	if ws != "/adopted" {
-		t.Fatalf("resume-latest adopt workspace = %q, want /adopted", ws)
+	if ws != "/ws" {
+		t.Fatalf("resume-latest local composition workspace = %q, want /ws", ws)
 	}
 }
 

@@ -48,10 +48,10 @@ func TestListWorktreesMapping(t *testing.T) {
 	if len(wts) != 2 {
 		t.Fatalf("worktrees = %d, want 2", len(wts))
 	}
-	if wts[0].Path != "/repo" || wts[0].Branch != "refs/heads/main" || wts[0].Head != "abcdef1" {
+	if wts[0].Selector != "s1" || wts[0].Label != "repo" || wts[0].Branch != "refs/heads/main" || wts[0].Revision != "abcdef1" {
 		t.Fatalf("wts[0] = %+v", wts[0])
 	}
-	if wts[1].Path != "/repo-wt" || wts[1].Head != "1234567" {
+	if wts[1].Selector != "s2" || wts[1].Label != "repo-wt" || wts[1].Revision != "1234567" {
 		t.Fatalf("wts[1] = %+v", wts[1])
 	}
 }
@@ -70,7 +70,7 @@ func TestListWorktreesCmdSuccess(t *testing.T) {
 	if wm.Err != nil {
 		t.Fatalf("unexpected err: %v", wm.Err)
 	}
-	if len(wm.Worktrees) != 1 || wm.Worktrees[0].Path != "/repo" {
+	if len(wm.Worktrees) != 1 || wm.Worktrees[0].Selector != "s1" || wm.Worktrees[0].Label != "repo" {
 		t.Fatalf("worktrees = %+v", wm.Worktrees)
 	}
 }
