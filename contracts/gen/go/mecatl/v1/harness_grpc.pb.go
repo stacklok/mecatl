@@ -148,10 +148,10 @@ type HarnessServiceClient interface {
 	// remains authoritative: a mid-turn change is rejected with InvalidArgument, so
 	// clients that want "next prompt" semantics must defer and retry once idle.
 	SetMode(ctx context.Context, in *SetModeRequest, opts ...grpc.CallOption) (*SetModeResponse, error)
-	// CloseSession ends a session and releases its server-side resources (per-session
-	// learned permission rules, per-session engine/workspace). Idempotent: closing an
-	// unknown or already-closed session via the wire returns NotFound only for a
-	// never-created id; an already-released session succeeds.
+	// CloseSession ends a session and releases its server-side resources (learned
+	// permission rules, bound placement, and any per-session engine). Idempotent:
+	// closing an unknown or already-closed session via the wire returns NotFound only
+	// for a never-created id; an already-released session succeeds.
 	CloseSession(ctx context.Context, in *CloseSessionRequest, opts ...grpc.CallOption) (*CloseSessionResponse, error)
 	// RenameSession explicitly replaces an idle main session's title.
 	RenameSession(ctx context.Context, in *RenameSessionRequest, opts ...grpc.CallOption) (*RenameSessionResponse, error)
@@ -199,21 +199,18 @@ type HarnessServiceClient interface {
 	// model, its effective read-only tool scope, permission mode, and UX color.
 	// Derived from the snapshot taken at startup; it performs no live discovery.
 	ListAgents(ctx context.Context, in *ListAgentsRequest, opts ...grpc.CallOption) (*ListAgentsResponse, error)
-	// ListCommands returns the available slash commands (name + short
-	// description) discovered under the configured command directories of the
-	// requested workspace. It powers the client's in-input command palette; it is
-	// DISCOVERY only — expanding a command remains a run-path concern (the server's
-	// CommandExpander handles it when a "/<cmd> args" prompt is submitted). An
-	// empty workspace, or a server with no command expander, returns an empty list.
+	// ListCommands returns slash commands discovered for one owned session's exact
+	// server-bound placement. It authorizes and reattaches that session before
+	// discovery and accepts no workspace/root input. It powers the client's command
+	// palette; command expansion remains a run-path concern. A no-FS session or a
+	// server with no command expander returns an empty list.
 	ListCommands(ctx context.Context, in *ListCommandsRequest, opts ...grpc.CallOption) (*ListCommandsResponse, error)
-	// ListWorktrees returns the git worktrees of the repo rooted at the requested
-	// workspace (issue #102). It powers the client's /worktrees overlay — the
-	// first-class operator workflow for binding a session to an EXISTING sibling
-	// worktree (a new session rooted there, not a live-session switch). It is
-	// DISCOVERY only, composition-injected (nil-safe: a no-FS/cloud server, or an
-	// untrusted workspace, returns an empty list); it never performs a live
-	// model/network call and never mutates anything. An empty workspace or a server
-	// with no worktree lister also returns an empty list.
+	// ListWorktrees discovers eligible alternatives for one owned source session's
+	// exactly reattached placement. Results carry bounded display metadata and an
+	// opaque source-scoped selector accepted only by ClearSession or ForkSession.
+	// The server re-enumerates and matches current choices on use; selectors are not
+	// paths, are not persisted, and expire on restart. A no-FS session or a server
+	// with no worktree lister returns an empty list.
 	ListWorktrees(ctx context.Context, in *ListWorktreesRequest, opts ...grpc.CallOption) (*ListWorktreesResponse, error)
 	// StreamSessionEvents replays a session's durable event log as a server stream
 	// of `Event` envelopes (cloud-native Phase 3a read-back). It is the client-tier
@@ -1202,10 +1199,10 @@ type HarnessServiceServer interface {
 	// remains authoritative: a mid-turn change is rejected with InvalidArgument, so
 	// clients that want "next prompt" semantics must defer and retry once idle.
 	SetMode(context.Context, *SetModeRequest) (*SetModeResponse, error)
-	// CloseSession ends a session and releases its server-side resources (per-session
-	// learned permission rules, per-session engine/workspace). Idempotent: closing an
-	// unknown or already-closed session via the wire returns NotFound only for a
-	// never-created id; an already-released session succeeds.
+	// CloseSession ends a session and releases its server-side resources (learned
+	// permission rules, bound placement, and any per-session engine). Idempotent:
+	// closing an unknown or already-closed session via the wire returns NotFound only
+	// for a never-created id; an already-released session succeeds.
 	CloseSession(context.Context, *CloseSessionRequest) (*CloseSessionResponse, error)
 	// RenameSession explicitly replaces an idle main session's title.
 	RenameSession(context.Context, *RenameSessionRequest) (*RenameSessionResponse, error)
@@ -1253,21 +1250,18 @@ type HarnessServiceServer interface {
 	// model, its effective read-only tool scope, permission mode, and UX color.
 	// Derived from the snapshot taken at startup; it performs no live discovery.
 	ListAgents(context.Context, *ListAgentsRequest) (*ListAgentsResponse, error)
-	// ListCommands returns the available slash commands (name + short
-	// description) discovered under the configured command directories of the
-	// requested workspace. It powers the client's in-input command palette; it is
-	// DISCOVERY only — expanding a command remains a run-path concern (the server's
-	// CommandExpander handles it when a "/<cmd> args" prompt is submitted). An
-	// empty workspace, or a server with no command expander, returns an empty list.
+	// ListCommands returns slash commands discovered for one owned session's exact
+	// server-bound placement. It authorizes and reattaches that session before
+	// discovery and accepts no workspace/root input. It powers the client's command
+	// palette; command expansion remains a run-path concern. A no-FS session or a
+	// server with no command expander returns an empty list.
 	ListCommands(context.Context, *ListCommandsRequest) (*ListCommandsResponse, error)
-	// ListWorktrees returns the git worktrees of the repo rooted at the requested
-	// workspace (issue #102). It powers the client's /worktrees overlay — the
-	// first-class operator workflow for binding a session to an EXISTING sibling
-	// worktree (a new session rooted there, not a live-session switch). It is
-	// DISCOVERY only, composition-injected (nil-safe: a no-FS/cloud server, or an
-	// untrusted workspace, returns an empty list); it never performs a live
-	// model/network call and never mutates anything. An empty workspace or a server
-	// with no worktree lister also returns an empty list.
+	// ListWorktrees discovers eligible alternatives for one owned source session's
+	// exactly reattached placement. Results carry bounded display metadata and an
+	// opaque source-scoped selector accepted only by ClearSession or ForkSession.
+	// The server re-enumerates and matches current choices on use; selectors are not
+	// paths, are not persisted, and expire on restart. A no-FS session or a server
+	// with no worktree lister returns an empty list.
 	ListWorktrees(context.Context, *ListWorktreesRequest) (*ListWorktreesResponse, error)
 	// StreamSessionEvents replays a session's durable event log as a server stream
 	// of `Event` envelopes (cloud-native Phase 3a read-back). It is the client-tier

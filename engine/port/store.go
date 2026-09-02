@@ -46,10 +46,11 @@ var (
 //     permanently-failed session reconstructs with FailurePermanence()==true and the
 //     recover advisory fires), cumulative Usage (the SUM of every per-run EvResult.Usage
 //     — the budget brake reads it), and the metadata the events do not carry (id, mode,
-//     limits, workspace, profile, provider/model selector, reasoning effort,
-//     authoritative title/provenance, session kind/relationship, adoption source/request
-//     digest, createdAt — supplied out-of-band, e.g. eventsource.SessionMeta). A legacy empty title/provenance may be
-//     derived from the first genuine EvUserPrompt.
+//     limits, exact EnvironmentRef, display-only placement metadata, profile,
+//     provider/model selector, reasoning effort, authoritative title/provenance,
+//     session kind/relationship, and createdAt — supplied out-of-band, e.g.
+//     eventsource.SessionMeta). An empty title/provenance may be derived from the
+//     first genuine EvUserPrompt.
 //   - Run-scoped: Counters reflect only the LATEST run segment (they reset on Reopen);
 //     the run plumbing (diagnostics binding, askID serials) is rebuilt fresh.
 //
@@ -144,8 +145,8 @@ type SessionMeta struct {
 }
 
 // SessionDiscoveryMeta is the additive bounded-inventory projection. It keeps
-// SessionMeta source-compatible while carrying the trusted taxonomy and workspace
-// needed by discovery clients.
+// SessionMeta source-compatible while carrying the trusted taxonomy and exact
+// private placement identity needed by storage/discovery consumers.
 type SessionDiscoveryMeta struct {
 	ID              session.SessionID
 	ModifiedAt      time.Time

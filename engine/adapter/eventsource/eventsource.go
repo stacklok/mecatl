@@ -40,9 +40,10 @@
 // carry, in a richer event schema) this contract boundary. This is a DOCUMENTED
 // CONTRACT LIMITATION (engine/COMPATIBILITY.md, ADR 0038), not a bug.
 //
-// CREATION METADATA is supplied via SessionMeta: the id, mode, limits, workspace,
-// profile, provider/model selector, reasoning effort, authoritative title/provenance,
-// kind/relationship, adoption source/request digest, and createdAt are facts that NO event carries, so the caller
+// CREATION METADATA is supplied via SessionMeta: id, mode, limits, exact
+// EnvironmentRef, display-only placement metadata, profile, provider/model selector,
+// reasoning effort, authoritative title/provenance, kind/relationship, and createdAt
+// are facts that NO event carries, so the caller
 // (who created or discovered the session and thus knows them) provides them alongside
 // the stream. A legacy empty title falls back to the first genuine EvUserPrompt.
 // There is deliberately no EvSessionCreated event (ADR 0038 records that as a
@@ -55,8 +56,8 @@
 // pre-compaction span recovered from EvCompactionArchive carries its user messages
 // verbatim. The reconstructed conversation is therefore COMPLETE except the
 // provider-private replay fields above. (Project-instruction messages discovered at
-// turn 0 — AGENTS.md/CLAUDE.md — are NOT event-carried; they are derivable from the
-// workspace and are out of the conversation the fold rebuilds.)
+// turn 0 — AGENTS.md/CLAUDE.md — are NOT event-carried; they are reassembled from
+// the exactly reattached environment and are out of the conversation the fold rebuilds.)
 //
 // This is an EXCLUDED reference adapter (engine/COMPATIBILITY.md): it carries no
 // public-API stability promise and is not part of the guarded core surface.

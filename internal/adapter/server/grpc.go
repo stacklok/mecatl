@@ -43,11 +43,10 @@ func (h *HarnessServer) CreateSession(ctx context.Context, req *mecatlv1.CreateS
 	if hasLegacyCreateSessionField(req.ProtoReflect().GetUnknown()) {
 		return nil, status.Error(codes.InvalidArgument, "legacy workspace placement fields are unsupported")
 	}
-	// Session profile (issue #55): "" = default (full filesystem), "no-fs" = the
-	// no-filesystem profile; anything else is a loud InvalidArgument. The
-	// workspace requirement is PROFILE-AWARE and enforced in the service
-	// (createSession): default requires a workspace, no-fs requires an EMPTY one
-	// — so there is deliberately NO unconditional empty-workspace guard here.
+	// Session profile: "" binds the server-owned default placement and "no-fs"
+	// requests explicit filesystem attenuation; anything else is a loud
+	// InvalidArgument. Binding and exact EnvironmentRef validation happen in the
+	// service, so this transport never accepts or derives a workspace.
 	profile, err := ParseSessionProfile(req.GetProfile())
 	if err != nil {
 		return nil, toStatus(err)

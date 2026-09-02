@@ -81,7 +81,7 @@ Before binding a non-loopback address, add `--tls-cert` / `--tls-key` and
 ### Server-owned session placement
 
 Every deployment owns session placement. `--workspace` configures the server's private
-local default; clients never send `CreateSession.workspace`, cwd, a placement ID, or an
+local default; the public session API has no workspace, cwd, placement ID, or
 exact environment ref—even over loopback or an embedded UNIX socket. Omit `profile` to
 bind that default or request `profile:"no-fs"` to attenuate filesystem access.
 

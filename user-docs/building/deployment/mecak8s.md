@@ -185,9 +185,9 @@ ordinary offline tests. See the [fixture's setup and CA instructions](https://gi
 The `--redis-url` flag exists **only on `cmd/mecak8s`**. `mecated` does not expose it. If you want Redis-backed state with `mecated`, you need `mecak8s`.
 
 The no-FS default is intentional. A standard mecak8s pod is storage-free and
-has no authoritative filesystem root, so a client must not send a workspace
-path. Empty profile/workspace values request the no-FS session; they never mean
-“use the client cwd” or “choose a pod path.”
+has no authoritative filesystem root, so the server binds omitted/default profile
+to its configured no-FS placement. Clients never send a workspace path; explicit
+`profile:"no-fs"` attenuates to the same filesystem-free surface.
 
 ### Mounted workspace (shared filesystem root)
 
@@ -195,10 +195,8 @@ To give sessions a real filesystem, mount a volume into the pod and point
 `--workspace` at it (for example a PVC mounted at `/workspace`). A configured
 root turns mecak8s into a **server-assigned filesystem deployment** rooted
 there: every session is assigned that single root, the filesystem tools and
-Bash operate on it, and — because authority is server-assigned — a client still
-cannot select a different root (a non-empty client workspace is rejected with
-`InvalidArgument`). The path must be absolute and clean; a relative value is
-refused at startup.
+Bash operate on it, and clients have no field with which to select another root.
+The path must be absolute and clean; a relative value is refused at startup.
 
 This does not change mecak8s's storage-free posture: harness and session state
 still live in Redis and the Kubernetes API, and the mounted volume holds only

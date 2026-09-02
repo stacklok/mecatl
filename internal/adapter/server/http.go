@@ -156,10 +156,9 @@ type createSessionBody struct {
 	// client error (a bare model on the default provider is ambiguous).
 	ProviderID string `json:"provider_id,omitempty"`
 	ModelID    string `json:"model_id,omitempty"`
-	// Profile selects the session's tool-surface profile (issue #55), mirroring
-	// the proto field: "" = default (full filesystem, REQUIRES workspace),
-	// "no-fs" = the no-filesystem profile (REQUIRES an EMPTY workspace). Any
-	// other value is a 400.
+	// Profile selects server-owned placement: "" binds the deployment default and
+	// "no-fs" explicitly attenuates filesystem access. The public request carries
+	// no workspace, cwd, placement ID, or selector. Any other value is a 400.
 	Profile string `json:"profile,omitempty"`
 	// ReasoningEffort sets the session's reasoning-effort tier (ADR 0055),
 	// mirroring the proto field: "" / "auto" = unset (operator/provider default),
@@ -469,9 +468,9 @@ func (h *HTTPHandler) createSession(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid JSON body: multiple JSON values")
 		return
 	}
-	// Session profile (issue #55): the workspace requirement is PROFILE-AWARE and
-	// enforced in the service (default requires one; no-fs requires an EMPTY one),
-	// so there is deliberately NO unconditional empty-workspace guard here.
+	// Parse only the public profile attenuation. The service binds either the
+	// deployment default or no-FS placement and validates the exact EnvironmentRef;
+	// this transport has no workspace-derived fallback.
 	profile, err := ParseSessionProfile(body.Profile)
 	if err != nil {
 		writeServiceError(w, err)

@@ -5339,9 +5339,10 @@ type Session struct {
 	TitleProvenance string `protobuf:"bytes,12,opt,name=title_provenance,json=titleProvenance,proto3" json:"title_provenance,omitempty"`
 	// capabilities is the server's feature-advertisement snapshot (the SAME value
 	// CreateSessionResponse carries). It rides the Session snapshot so a client
-	// that re-hydrates a persisted session on restart or adopt (continue, /effort fork)
-	// can re-derive its affordances in ONE round-trip (GetSession) instead of needing a
-	// second CreateSession. An older server omits the field → client sees a zero value
+	// that reloads or switches to a persisted session (continue, /effort fork,
+	// /clear successor) can re-derive its affordances in ONE round-trip (GetSession)
+	// instead of creating another session. An older server omits the field, so the
+	// client sees a zero value
 	// and keeps its current caps untouched (fail-conservative).
 	Capabilities *ServerCapabilities `protobuf:"bytes,11,opt,name=capabilities,proto3" json:"capabilities,omitempty"`
 	// kind and relationship preserve the durable trusted-producer identity.

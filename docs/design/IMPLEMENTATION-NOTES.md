@@ -158,18 +158,14 @@ non-main kinds. `engine/adapter/sessnap/sessnap.go`, every SessionStore adapter
 Restore rejects invalid combinations; a legacy absent kind becomes fail-closed
 `unknown` rather than gaining main-session continuation posture.
 
-Explicit legacy adoption (issue #593) remains a server/composition authority boundary,
-not an aggregate transition. `PreflightSessionAdoption` accepts only an authenticated,
-caller-owned `unknown` snapshot with a complete tool-paired transcript at an idle/terminal
-boundary and no reserved child/team/parallel/scheduled prefix or relationship. It reports
-stable reason codes and requires explicit workspace/`EnvironmentRef` plus provider/model
-bindings; resolution failures never fall through to defaults. `AdoptSession` repeats the
-checks while holding the source's `runEntryMu` and mutation lease, copies through the
-existing cross-provider state-stripping discipline, and saves one fresh main aggregate with
-optional `Adoption` metadata containing the source ID and a caller/source/request-bound digest. The deterministic opaque target
-ID makes a lost-response retry return that complete snapshot. Foreign and absent sources are
-both `ErrNotFound`; the source is never reopened, relabelled, or saved. There is no bulk,
-automatic, or client-transcript-upload path.
+Legacy/custom `unknown` sessions remain inspect-only. There is no adoption or
+preflight operation, no adoption metadata, and no client-supplied replacement workspace or
+placement authority. New writable main sessions come only from ordinary server-owned creation
+or from `ClearSession`/`ForkSession` successors of an owned main source: Clear starts with empty
+history, Fork copies valid history, and both inherit the source's exact `EnvironmentRef` unless
+they consume a fresh source-scoped worktree selector. The successor path reauthorizes and
+serializes the source under the mutation lease; failure publishes no partial target and leaves
+the source unchanged.
 
 ---
 
@@ -5902,7 +5898,7 @@ because the shared engine has FS tools baked in.
 
 A coding agent ultimately needs one execution environment whose filesystem and command namespace are
 affined: the bytes Read/Edit see and the tree Bash builds must be the same place. ADR 0208 fixes the
-version protocol; ADR 0211 implements the runtime seam; ADR 0288 makes
+version protocol; ADR 0211 implements the runtime seam; ADR 0290 makes
 `session.EnvironmentRef{Kind, ID, Revision}` the sole durable identity. The minimal immutable
 `tool.Environment` carries that ref plus a non-null `Workspace` and an optional bound
 `CommandRunner`. `Tool.Execute`, the loop, and delegation take `tool.Environment`; narrow
@@ -5912,7 +5908,7 @@ Environment and `tool.EnvironmentMerger` receives complete child/parent Environm
 direct-write Subagent uses the parent Environment; isolated Subagent, Parallel, and Team paths
 receive server-created children.
 
-**Persistence/reattachment (ADR 0288, preserving ADR 0214 exactness).**
+**Persistence/reattachment (ADR 0290, preserving ADR 0214 exactness).**
 `session.Session.EnvironmentRef` and `sessnap.Snapshot.EnvironmentRef` contain the exact private
 `Kind`, `ID`, and `Revision`; there is no `Session.Workspace` or snapshot Workspace. Trusted driver
 storage transports the same exact ref. Public Harness/HTTP/client mappers expose only bounded
@@ -6094,7 +6090,7 @@ deny-dominant (the inner fold runs first — a configured Deny or configured Ask
 reaches the checker). Default `false` is the byte-identical un-routed posture table. See
 `docs/adr/0080-guardrail-routed-escape-checking.md`.
 
-### Server-owned session placement and worktree successors (ADR 0288)
+### Server-owned session placement and worktree successors (ADR 0290)
 
 Placement is server-owned across embedded, loopback, remote, and cloud-native composition.
 `internal/app/placement.go` installs the local immutable provider over the operator's private

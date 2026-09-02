@@ -50,10 +50,9 @@ func (p resolverPlacementProvider) Reattach(ctx context.Context, req server.Plac
 	return server.PlacementBinding{Ref: req.Ref, Environment: env}, nil
 }
 
-// newEnvTestService builds a minimal Service for the environment-resolver tests.
-// It returns the service, the backing store (so a test can persist a session
-// carrying a non-in-tree ref directly), and a factory-call counter so a test
-// can assert the resolver path does NOT trigger per-session engine rehydration.
+// newEnvTestService builds a minimal Service for exact placement-reattachment tests.
+// It returns the service, backing store, and a factory-call counter so tests can
+// distinguish environment reattachment from per-session engine reconstruction.
 func newEnvTestService(t *testing.T, resolver func(context.Context, session.EnvironmentRef) (tool.Environment, error)) (*server.Service, port.SessionStore, *int32) {
 	t.Helper()
 	return newEnvTestServiceWithLLM(t, resolver, mockllm.New(mockllm.TextTurn("ok")), nil)
@@ -97,8 +96,8 @@ func newEnvTestServiceWithLLM(t *testing.T, resolver func(context.Context, sessi
 }
 
 // remoteSessionWithRef persists a session carrying a non-in-tree EnvironmentRef
-// directly through the store, so a subsequent StartRun exercises the resolver
-// path (createSession stamps only local/nofs refs).
+// directly through the store, so a subsequent StartRun exercises exact provider
+// reattachment (ordinary public creation cannot choose a remote ref).
 func remoteSessionWithRef(t *testing.T, store port.SessionStore, ref session.EnvironmentRef) *session.Session {
 	t.Helper()
 	sess := session.New("remote-1", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "remote-ws", Revision: "in-tree-v1"}, session.Limits{MaxTurns: 5}, time.Unix(0, 0))
@@ -109,9 +108,9 @@ func remoteSessionWithRef(t *testing.T, store port.SessionStore, ref session.Env
 	return sess
 }
 
-// TestEnvironmentResolverMissingFailsLoudly proves a persisted non-in-tree ref
-// with NO EnvironmentResolver wired fails loudly with ErrFailedPrecondition —
-// never a silent local fallback.
+// TestEnvironmentResolverMissingFailsLoudly proves a persisted non-local ref
+// with no provider-specific reattacher fails loudly and never follows the local
+// deployment default.
 func TestEnvironmentResolverMissingFailsLoudly(t *testing.T) {
 	svc, store, factoryCalls := newEnvTestService(t, nil)
 	ref := session.EnvironmentRef{Kind: remoteenv.Kind, ID: "ns-1", Revision: "r1"}
@@ -217,8 +216,7 @@ func TestEnvironmentResolverReattachesAndRuns(t *testing.T) {
 		t.Fatalf("factory called %d times, want 1 (remote root differs from the shared engine policy root)", *factoryCalls)
 	}
 
-	// The session's persisted ref survives the run (the run stamped the default
-	// only on a ZERO ref; a non-zero ref is preserved verbatim).
+	// The exact persisted ref remains unchanged across the run.
 	loaded, lerr := svc.GetSession(ctx, sess.ID)
 	if lerr != nil {
 		t.Fatalf("GetSession: %v", lerr)
@@ -294,19 +292,18 @@ func TestEnvironmentResolverReattachesAndRunsReadAndBash(t *testing.T) {
 	}
 }
 
-// TestEnvironmentResolverDoesNotRebuildSessionEngine proves a default-FS session
-// (no selector, default profile) whose workspace resolves through the DEFAULT
-// path — NOT the resolver — does NOT trigger per-session engine rehydration
-// even when an EnvironmentResolver is wired (the resolver is inert for the
-// in-tree Kinds).
+// TestEnvironmentResolverDoesNotRebuildSessionEngine proves a default-placement
+// session can use the shared engine even though run entry still exactly reattaches
+// its persisted local EnvironmentRef. The provider-specific remote callback stays
+// inert for a local ref.
 func TestEnvironmentResolverDoesNotRebuildSessionEngine(t *testing.T) {
 	called := false
 	svc, _, factoryCalls := newEnvTestService(t, func(_ context.Context, _ session.EnvironmentRef) (tool.Environment, error) {
 		called = true
 		return tool.Environment{}, nil
 	})
-	// A plain default-FS session: createSession stamps a local ref, so the
-	// resolver must NOT be consulted.
+	// A plain default-placement session: CreateSession binds an exact local ref,
+	// so the provider-specific remote callback must not be consulted.
 	sess, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
@@ -326,24 +323,21 @@ func TestEnvironmentResolverDoesNotRebuildSessionEngine(t *testing.T) {
 		t.Fatalf("run reply = %q, want ok", got)
 	}
 	if called {
-		t.Fatal("EnvironmentResolver was called for a default-FS session; it must be inert for in-tree Kinds")
+		t.Fatal("remote placement callback was called for an exact local ref")
 	}
 	if *factoryCalls != 0 {
 		t.Fatalf("factory called %d times, want 0 (default session must not rehydrate)", *factoryCalls)
 	}
 
-	// Finding #6: the create-stamped ref and the LIVE Environment's ref (stamped
-	// at run entry from defaultEnvironmentRef, the SINGLE shared derivation) must
-	// agree. The persisted ref after a run is the live ref stamped on the next
-	// save, so it must equal the create-stamped ref — proving the two derivations
-	// did not drift (one function, not two).
+	// The create-time and run-entry EnvironmentRefs must agree exactly, proving
+	// Bind and Reattach did not drift.
 	loaded, lerr := svc.GetSession(context.Background(), sess.ID)
 	if lerr != nil {
 		t.Fatalf("GetSession: %v", lerr)
 	}
 	wantRef := session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}
 	if loaded.EnvironmentRef != wantRef {
-		t.Fatalf("post-run EnvironmentRef = %+v, want %+v (the live ref stamped at run entry must equal the create-stamped ref — one shared derivation)", loaded.EnvironmentRef, wantRef)
+		t.Fatalf("post-run EnvironmentRef = %+v, want exact bound ref %+v", loaded.EnvironmentRef, wantRef)
 	}
 }
 
@@ -400,10 +394,8 @@ func newEnvTestServiceWithFactory(t *testing.T, resolver func(context.Context, s
 }
 
 // remoteSessionWithRefAndSelector persists a session carrying a non-in-tree
-// EnvironmentRef AND a non-default provider/model selector directly through the
-// store, so a subsequent StartRun exercises the selector-rehydration path. The
-// persisted Workspace is empty (a remote session's filesystem lives in the
-// remote backend, not on a local root).
+// EnvironmentRef and a non-default provider/model selector directly through the
+// store, so StartRun exercises engine reconstruction and exact placement reattachment.
 func remoteSessionWithRefAndSelector(t *testing.T, store port.SessionStore, ref session.EnvironmentRef, providerID, modelID string) *session.Session {
 	t.Helper()
 	sess := session.New("remote-sel-1", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/workspace", Revision: "in-tree-v1"}, session.Limits{MaxTurns: 5}, time.Unix(0, 0))
@@ -417,12 +409,9 @@ func remoteSessionWithRefAndSelector(t *testing.T, store port.SessionStore, ref 
 }
 
 // TestRemoteRefWithSelectorRehydratesEngineAndResolvesEnv (issue #462 phase-3
-// finding #1) proves a remote-ref session with an EMPTY persisted Workspace and
-// a NON-EMPTY ProviderID rehydrates its per-session engine through the factory
-// (the selector arm is independent of the environment) AND STILL reattaches the
-// remote Environment through the resolver — the resolver is NOT preempted by a
-// no-fs inference from the empty workspace. The run drives a Read tool through
-// the RESOLVED Environment's workspace so `remote-seed` reaches the tool result.
+// finding #1) proves a remote-ref session with a non-default ProviderID rebuilds
+// its per-session engine independently from exact provider reattachment. The run
+// drives Read through the reattached Environment, so remote-seed reaches the result.
 func TestRemoteRefWithSelectorRehydratesEngineAndResolvesEnv(t *testing.T) {
 	ctx := context.Background()
 	b := remoteenv.NewBackend()
@@ -478,12 +467,10 @@ func TestRemoteRefWithSelectorRehydratesEngineAndResolvesEnv(t *testing.T) {
 }
 
 // TestRemoteRefDefaultProviderEmptyWorkspaceResolvesEnv (issue #462 phase-3
-// finding #1) proves a remote-ref session with an EMPTY persisted Workspace and
-// NO provider/model selector (the default-provider case) does NOT rehydrate the
-// engine (the empty-workspace arm is guarded against the remote ref) and
-// reattaches the remote Environment through the resolver. This is the
-// regression for the headline bug: the empty-workspace inference must NOT
-// relabel a remote session no-fs.
+// finding #1) now proves the current exact-reattachment contract: a remote-ref
+// session using the default provider reattaches through the placement provider and
+// does not acquire a no-FS profile or invoke the per-session engine factory merely
+// because its backend is remote.
 func TestRemoteRefDefaultProviderEmptyWorkspaceResolvesEnv(t *testing.T) {
 	ctx := context.Background()
 	b := remoteenv.NewBackend()
@@ -500,10 +487,10 @@ func TestRemoteRefDefaultProviderEmptyWorkspaceResolvesEnv(t *testing.T) {
 		mockllm.ToolCallTurn(call("c1", "Read", `{"path":"seed.txt"}`)),
 		mockllm.TextTurn("done"),
 	)
-	// The factory ERRORS if called — the empty-workspace arm must NOT fire for a
-	// remote ref, so rehydration must not trigger.
+	// The factory ERRORS if called — exact remote placement alone does not require
+	// a per-session engine, so reattachment must proceed without that rebuild.
 	svc, store, factoryCalls := newEnvTestServiceWithLLM(t, b.Resolve, llm, []tool.Tool{&tools.ReadTool{}})
-	// Persist a remote-ref session with empty Workspace and no selector.
+	// Persist a remote-ref session with no provider/model selector.
 	sess := session.New("remote-default-1", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/workspace", Revision: "in-tree-v1"}, session.Limits{MaxTurns: 5}, time.Unix(0, 0))
 	sess.EnvironmentRef = ref
 	if err := store.Save(ctx, sess); err != nil {
@@ -542,11 +529,9 @@ func TestRemoteRefDefaultProviderEmptyWorkspaceResolvesEnv(t *testing.T) {
 	}
 }
 
-// TestNoFSCreateSessionStampsNoFSRef (issue #462 phase-3 finding #3) proves a
-// no-fs CreateSession stamps {Kind:EnvKindNoFS, ID:""} as the EnvironmentRef,
-// the persisted snapshot round-trips it verbatim, and a reloaded session keeps
-// it. This is the default-ref derivation contract for the in-tree no-fs backend:
-// the stamped ref must always match the live Environment's ref.
+// TestNoFSCreateSessionStampsNoFSRef (issue #462 phase-3 finding #3) proves
+// no-FS creation binds an exact valid no-FS EnvironmentRef, snapshot storage
+// round-trips it verbatim, and run entry reattaches the same identity.
 func TestNoFSCreateSessionStampsNoFSRef(t *testing.T) {
 	ctx := context.Background()
 	perSession := agent.NewEngine(agent.Deps{
@@ -582,7 +567,7 @@ func TestNoFSCreateSessionStampsNoFSRef(t *testing.T) {
 		t.Fatalf("CreateSessionWithProfile: %v", err)
 	}
 	if sess.EnvironmentRef != wantRef {
-		t.Fatalf("create-stamped EnvironmentRef = %+v, want %+v", sess.EnvironmentRef, wantRef)
+		t.Fatalf("bound EnvironmentRef = %+v, want %+v", sess.EnvironmentRef, wantRef)
 	}
 
 	// The persisted snapshot round-trips the ref verbatim.

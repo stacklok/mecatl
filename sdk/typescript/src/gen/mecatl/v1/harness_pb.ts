@@ -2688,9 +2688,10 @@ export type Session = Message<"mecatl.v1.Session"> & {
   /**
    * capabilities is the server's feature-advertisement snapshot (the SAME value
    * CreateSessionResponse carries). It rides the Session snapshot so a client
-   * that re-hydrates a persisted session on restart or adopt (continue, /effort fork)
-   * can re-derive its affordances in ONE round-trip (GetSession) instead of needing a
-   * second CreateSession. An older server omits the field → client sees a zero value
+   * that reloads or switches to a persisted session (continue, /effort fork,
+   * /clear successor) can re-derive its affordances in ONE round-trip (GetSession)
+   * instead of creating another session. An older server omits the field, so the
+   * client sees a zero value
    * and keeps its current caps untouched (fail-conservative).
    *
    * @generated from field: mecatl.v1.ServerCapabilities capabilities = 11;
@@ -9165,10 +9166,10 @@ export const HarnessService: GenService<{
     output: typeof SetModeResponseSchema;
   },
   /**
-   * CloseSession ends a session and releases its server-side resources (per-session
-   * learned permission rules, per-session engine/workspace). Idempotent: closing an
-   * unknown or already-closed session via the wire returns NotFound only for a
-   * never-created id; an already-released session succeeds.
+   * CloseSession ends a session and releases its server-side resources (learned
+   * permission rules, bound placement, and any per-session engine). Idempotent:
+   * closing an unknown or already-closed session via the wire returns NotFound only
+   * for a never-created id; an already-released session succeeds.
    *
    * @generated from rpc mecatl.v1.HarnessService.CloseSession
    */
@@ -9328,12 +9329,11 @@ export const HarnessService: GenService<{
     output: typeof ListAgentsResponseSchema;
   },
   /**
-   * ListCommands returns the available slash commands (name + short
-   * description) discovered under the configured command directories of the
-   * requested workspace. It powers the client's in-input command palette; it is
-   * DISCOVERY only — expanding a command remains a run-path concern (the server's
-   * CommandExpander handles it when a "/<cmd> args" prompt is submitted). An
-   * empty workspace, or a server with no command expander, returns an empty list.
+   * ListCommands returns slash commands discovered for one owned session's exact
+   * server-bound placement. It authorizes and reattaches that session before
+   * discovery and accepts no workspace/root input. It powers the client's command
+   * palette; command expansion remains a run-path concern. A no-FS session or a
+   * server with no command expander returns an empty list.
    *
    * @generated from rpc mecatl.v1.HarnessService.ListCommands
    */
@@ -9343,14 +9343,12 @@ export const HarnessService: GenService<{
     output: typeof ListCommandsResponseSchema;
   },
   /**
-   * ListWorktrees returns the git worktrees of the repo rooted at the requested
-   * workspace (issue #102). It powers the client's /worktrees overlay — the
-   * first-class operator workflow for binding a session to an EXISTING sibling
-   * worktree (a new session rooted there, not a live-session switch). It is
-   * DISCOVERY only, composition-injected (nil-safe: a no-FS/cloud server, or an
-   * untrusted workspace, returns an empty list); it never performs a live
-   * model/network call and never mutates anything. An empty workspace or a server
-   * with no worktree lister also returns an empty list.
+   * ListWorktrees discovers eligible alternatives for one owned source session's
+   * exactly reattached placement. Results carry bounded display metadata and an
+   * opaque source-scoped selector accepted only by ClearSession or ForkSession.
+   * The server re-enumerates and matches current choices on use; selectors are not
+   * paths, are not persisted, and expire on restart. A no-FS session or a server
+   * with no worktree lister returns an empty list.
    *
    * @generated from rpc mecatl.v1.HarnessService.ListWorktrees
    */

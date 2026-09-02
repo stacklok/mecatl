@@ -362,20 +362,20 @@ type Session struct {
 	Placement PlacementMetadata
 	// Profile is an opaque tool-surface profile label (e.g. "" for the default
 	// filesystem profile, "no-fs" for the no-filesystem one). The aggregate STORES
-	// it but never interprets it: the meaning lives entirely in the composition
-	// layer, the same inert-label posture as Workspace/ProviderID/ModelID. It is a
-	// write-once creation label set by the composition root after New (no mutator);
-	// persisting it lets a restarted process rebuild the same engine instead of
-	// inferring the profile from the empty-workspace pun.
+	// it but never interprets it: the meaning lives entirely in composition, like
+	// ProviderID and ModelID. It is a write-once creation label set by the
+	// composition root after New (no mutator); persisting it lets a restarted
+	// process rebuild the same tool surface. The exact EnvironmentRef remains the
+	// sole placement identity.
 	Profile string
 	// ProviderID and ModelID are the opaque neutral provider+model selector pair
 	// this session was bound to. The aggregate STORES them but never interprets
 	// them — the ProviderSelector type and all resolution stay in composition; only
-	// these two opaque strings cross into the domain (the same inert-label posture
-	// as Workspace). Persisting them lets a restarted process re-derive the SAME
-	// per-session engine via the factory instead of falling to the default-provider
-	// floor. Write-once creation labels set by the composition root after New (no
-	// mutator). The empty pair means "server default".
+	// these two opaque strings cross into the domain. Persisting them lets a
+	// restarted process re-derive the same per-session engine via the factory
+	// instead of falling to the default-provider floor. They are write-once
+	// creation labels set by composition after New (no mutator). The empty pair
+	// means "server default".
 	ProviderID string
 	ModelID    string
 	// ReasoningEffort is the opaque neutral reasoning-effort token (ADR 0055) this
@@ -979,7 +979,8 @@ func (s *Session) Fail() error {
 // Limits bound EACH prompt's work, matching their single-run meaning rather than
 // silently becoming a session-lifetime cap. A caller that wants a lifetime budget
 // (e.g. a team supervisor bounding total turns across a teammate's life) must
-// enforce it separately. Conversation, Mode, Limits, and Workspace are preserved.
+// enforce it separately. Conversation, Mode, Limits, EnvironmentRef, and Placement
+// are preserved.
 func (s *Session) Reopen() error {
 	if s.State != StateCompleted {
 		return fmt.Errorf("%w: Reopen from %q", ErrIllegalTransition, s.State)

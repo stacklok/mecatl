@@ -133,7 +133,7 @@ func startupResumeEligible(row client.SessionListItem, latest bool) bool {
 	if row.State == "awaiting" {
 		return false
 	}
-	// Exact adoption may display a crash-orphaned running transcript; only the
+	// Exact continuation may display a crash-orphaned running transcript; only the
 	// ordinary first-prompt funnel can prove it stale. Latest is conservative and
 	// never guesses among running rows.
 	return !latest || row.State != "running"

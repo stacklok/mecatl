@@ -515,10 +515,9 @@ func TestZeroUsageOmittedFromSnapshot(t *testing.T) {
 }
 
 // TestLoadV1SnapshotMissingPhase1FieldsLoads is the downgrade/adversarial guard:
-// a v1 snapshot with NONE of the Phase 1 keys still loads, with the profile
-// empty (the empty-workspace inference in composition is the second defense), an
-// empty selector, and a zero Usage (a nil usage pointer => the zero value, so the
-// budget brake simply starts fresh — no crash, no spurious budget).
+// a snapshot with none of the Phase 1 keys still loads with an empty profile,
+// empty selector, and zero Usage. Its exact EnvironmentRef remains authoritative;
+// composition does not infer placement from a duplicate workspace field.
 func TestLoadV1SnapshotMissingPhase1FieldsLoads(t *testing.T) {
 	v1 := `{"id":"old","state":"idle","mode":"default","limits":{},"counters":{},` +
 		`"environment_ref":{"Kind":"local","ID":"/ws","Revision":"in-tree-v1"},"created_at":"2023-11-14T22:13:20Z",` +

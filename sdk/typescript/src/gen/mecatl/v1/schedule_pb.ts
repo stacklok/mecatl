@@ -979,8 +979,8 @@ export const ScheduleService: GenService<{
    * created aggregate. The create-seam (composition) validates the spec — the
    * exactly-one-of(cron, one_shot) trigger XOR, the prompt-or-parts non-empty
    * rule, the cron grammar — fail-closed; the proto carries per-field
-   * constraints only (cross-field rules are server-enforced, the
-   * CreateSessionRequest.workspace posture).
+   * constraints only; cross-field rules and exact server-owned placement binding
+   * are server-enforced.
    *
    * @generated from rpc mecatl.v1.ScheduleService.CreateSchedule
    */

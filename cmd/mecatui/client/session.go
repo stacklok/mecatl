@@ -24,10 +24,10 @@ type SessionSnapshot struct {
 	Title           string
 	TitleProvenance string
 	// Capabilities is the server's feature-advertisement snapshot from the Session
-	// proto (the SAME value CreateSessionResponse carries). A client that re-hydrates
-	// a persisted session on adopt (continue, /effort fork) reads this to re-derive
-	// its affordances. An older server (nil field) yields the zero value, which the
-	// consumer treats as "keep current caps" (fail-conservative).
+	// proto (the SAME value CreateSessionResponse carries). A client that reloads
+	// or switches to a persisted session (continue, /effort fork, /clear successor)
+	// reads this to re-derive its affordances. An older server (nil field) yields
+	// the zero value, which the consumer treats as "keep current caps".
 	Capabilities Capabilities
 }
 

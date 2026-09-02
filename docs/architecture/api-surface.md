@@ -103,8 +103,6 @@ v1 enforces required checks in the Go server (protovalidate runtime is deferred)
 | `POST /v1/sessions/{id}/approve` | `Run.Approve` | resolves the paused ask (verdict or legacy `allow`) |
 | `POST /v1/sessions/{id}/cancel` | `Run.Cancel` | cancels the in-flight run |
 | `POST /v1/sessions/{id}/cancel-child` | `Run.CancelChild` | cancels ONE child of the in-flight run |
-| `POST /v1/sessions/{id}/adoption:preflight` | `PreflightSessionAdoption` | caller-owned eligibility and explicit-binding preflight; no source mutation |
-| `POST /v1/sessions/{id}/adopt` | `AdoptSession` | idempotent atomic new-main copy; source remains inspect-only |
 | `DELETE /v1/sessions/{id}` | `CloseSession` | frees the per-session engine slot |
 | `GET /v1/agents` · `/v1/skills` · `/v1/commands` · `/v1/soul` · `/v1/usermodel` | the inventory RPCs | read-only snapshots |
 | `GET /v1/mcp/resources` · `/v1/mcp/resources/read` · `/v1/mcp/prompts` · `POST /v1/mcp/prompts/get` · `GET /v1/mcp/sources` · `/v1/mcp/toolhive/groups` | MCP passthrough | mirrors the gRPC MCP family |

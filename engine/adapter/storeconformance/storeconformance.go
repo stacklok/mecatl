@@ -671,7 +671,7 @@ func RunConditionalPrunable(t *testing.T, newStore func(t *testing.T) port.Sessi
 	}
 }
 
-// newSession constructs an idle session with non-default limits, workspace,
+// newSession constructs an idle session with non-default limits, exact placement,
 // mode and a fixed (whole-nanosecond, UTC) creation time so timestamp
 // round-trip equality is well-defined.
 func newSession(id session.SessionID) *session.Session {

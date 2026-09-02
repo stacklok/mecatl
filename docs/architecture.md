@@ -584,12 +584,12 @@ ahead of lower-priority details, `/session` exposes and copies the safely quoted
 and the target-derived terminal title uses the same handle. See [ADR 0254](adr/0254-session-debugger-admin-transport.md), [ADR 0255](adr/0255-sanitized-network-attempt-evidence.md), [ADR 0256](adr/0256-session-debugger-evidence-and-reporting.md), and [ADR 0257](adr/0257-session-debugger-hardening.md). Each
 inventory row also carries server-authored action capabilities. The TUI uses those bits—not
 ID spelling—to expose exact-ID copy, detached transcript view, peer fork, operator-title
-rename, and confirmed physical deletion. The server also exposes authenticated legacy-adoption
-preflight and apply RPCs: an owned, transcript-complete `unknown` source can be copied into a
-new explicit-main session only with explicit workspace/environment and provider/model bindings.
-Apply revalidates under run-entry serialization and the mutation lease, persists a
-caller+source-bound idempotency proof and source audit link, and never rewrites the legacy source.
-The TUI adoption affordance is a separate client workflow. Fork/rename/delete are revalidated under the
+rename, and confirmed physical deletion. Unknown legacy/custom rows remain inspect-only:
+the server exposes no adoption or preflight API and accepts no replacement workspace or
+placement authority for them. Clear and fork instead create new main-session successors
+from an owned main source: Clear carries no history, Fork carries valid history, and both
+inherit the source's exact placement unless given a fresh source-scoped worktree selector.
+Fork/clear/rename/delete are revalidated under the
 server's run-entry serialization with ownership, kind, state, liveness, and optional lease
 checks; a stale UI row therefore cannot bypass the server gates, and a failed action does
 not rebind the prompt target. The
@@ -612,11 +612,11 @@ never ambient environment values; reserved baseline and source-owned terminal-di
 names are rejected during settings validation. Before StatusML parsing, command output trims only boundary
 ASCII whitespace, so a normal `print` newline is accepted without changing internal
 text. This preserves `ui` as a pure render layer
-while allowing autonomous source updates. Its `/clear` command uses the existing
-create-session RPC to create a new empty session first (preserving the current
-workspace, effective model/reasoning effort, and permission mode), then rebinds
-locally and only afterward best-effort closes the old session; a failed create
-leaves the old session and UI unchanged. Usage and configuration are documented in
+while allowing autonomous source updates. Its `/clear` command calls `ClearSession`
+to create a non-destructive empty-history successor that inherits the current session's
+exact placement, effective model/reasoning effort, and permission mode. It rebinds locally
+only after the successor and its authoritative snapshot are available; any failure leaves
+the source session and UI unchanged. Usage and configuration are documented in
 `docs/tui.md`.
 
 **Remote mecatui OIDC.** The remote-login path is separate from the ToolHive LLM
@@ -669,7 +669,7 @@ registry is an idempotent success, but pre-existing credential-only orphans rema
 because the credential store has no enumeration contract. `/connect` is a confirmed
 chooser. Ordinary saved-target selection and every target switch start a fresh remote
 session; during same-target authentication recovery only, an ownership-authorized
-completed, cancelled, or failed session may be adopted. Missing, ownership-hidden,
+completed, cancelled, or failed session may be resumed. Missing, ownership-hidden,
 active, awaiting, and infrastructure-ambiguous candidates are discarded. The closed
 `ConnectAction` separates saved-target connect, explicit reauthentication, cleanup-only
 retry, and add-target intent; it preserves the server CA path only for same-target

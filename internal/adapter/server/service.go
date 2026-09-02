@@ -281,11 +281,12 @@ type Config struct {
 	// The SAME value drives the mcp_servers_on_create advertisement (FeatureScope),
 	// so a deployment cannot advertise what it will refuse.
 	ClientMCPOnCreate bool
-	// PlacementProvider is the deployment-owned atomic placement seam (ADR 0288).
-	// Bind is its only operation: possession of an opaque ID never bypasses the
-	// provider's caller, operation, scope, inventory, and revision checks. app.Build
-	// always supplies the trusted local default; alternative composition may supply
-	// one provider that owns worktree or remote placements. It is mandatory.
+	// PlacementProvider is the deployment-owned atomic placement seam (ADR 0290).
+	// Bind authorizes creation/successor choices, Reattach resolves only an exact
+	// persisted EnvironmentRef, and ListWorktrees issues source-scoped ephemeral
+	// selectors. app.Build always supplies the trusted local default; alternative
+	// composition may supply one provider that owns worktree or remote placements.
+	// It is mandatory.
 	PlacementProvider PlacementProvider
 	// PlacementScope is the trusted deployment scope supplied to every provider
 	// Bind. It must be non-empty when PlacementProvider is configured.
@@ -3508,19 +3509,13 @@ func (s *Service) LoadSessionWithMCP(ctx context.Context, id session.SessionID, 
 	if err != nil {
 		return nil, err
 	}
-	// Re-mount client MCP on resume, re-deriving the provider+model selector AND the
-	// profile from the PERSISTED snapshot labels (cloud-native Phase 1) rather than
-	// hardcoding the default provider + inferring the profile from the empty
-	// workspace. A selector session keeps its SAME model on resume (the persisted
-	// ProviderID/ModelID), not the default-provider floor. The profile derivation
-	// keeps the empty-workspace inference as the second defense for a pre-label
-	// snapshot.
+	// Re-mount client MCP on resume, re-deriving provider/model and profile from
+	// persisted server-owned labels. EnvironmentRef is the sole placement identity;
+	// privateWorkspace exactly reattaches it and never infers authority from a path.
 	sel := ProviderSelector{ProviderID: sess.ProviderID, ModelID: sess.ModelID, ReasoningEffort: sess.ReasoningEffort}
-	// The profile derivation keeps the empty-workspace inference as the second defense
-	// for a pre-label snapshot (profileForSession).
 	profile := profileForSession(sess)
-	// The persisted workspace is the session's base root: the rebuilt engine's
-	// child permission resolver pins to IT (issue #32) — "" for no-fs. The MODE is the
+	// The exact persisted placement is the session's base namespace: the rebuilt
+	// engine's child permission resolver pins to that reattached root. The MODE is
 	// loaded session's persisted Mode (ADR 0030 Layer 3), so a session loaded into plan
 	// mode mounts the plan model; builtForMode is stamped from the result so a later
 	// in-process mode switch on this reloaded session triggers the CASE 1 rebuild.
@@ -4090,14 +4085,14 @@ func admitRunPurpose(sess *session.Session, purpose runPurpose) error {
 // registration did not survive a restart. It is the SINGLE resolution point shared
 // by the prompt run-entry (StartRunContent) and the awaiting-approval re-entry
 // (resumeFromAwaiting) so the two paths cannot drift — both rebuild the SAME engine
-// for a rehydrated selector/no-fs session, and both fall back to the shared engine
-// for a default FS session.
+// for a rehydrated model-routed or no-FS session. Every path exactly reattaches
+// the persisted EnvironmentRef; neither path follows the current default.
 //
-// Resolution order (unchanged from the inlined StartRunContent logic): a per-session
-// workspace override (e.g. the ACP fs/* buffer, the no-fs override) is preferred,
-// else built from the shared factory; a per-session engine (client MCP, selector, or
-// no-fs) is preferred, else the shared engine. The empty-workspace inference stays as
-// the SECOND defense after the profile/selector trigger.
+// Resolution order: exact placement reattachment validates the durable binding first.
+// An authorized per-session environment overlay (for example ACP buffers) may then be
+// used only when its identity and namespace match that binding. A per-session engine
+// (client MCP, provider/model routing, no-fs, or non-default placement root) is
+// preferred; otherwise the shared engine is used.
 //
 // MODE→MODEL RE-RESOLUTION (ADR 0030 Layer 3) widens the rebuild trigger between
 // turns, never mid-stream (this runs at the run-entry funnel, after loadAndReopen
@@ -4182,14 +4177,10 @@ func (s *Service) engineAndEnvironmentFor(ctx context.Context, sess *session.Ses
 		// provider/model selector, OR the no-fs profile — has its engine + (for no-fs)
 		// its environment override living only in process memory; after a restart both
 		// are gone. Without rehydration the session would silently DEGRADE onto the
-		// shared engine: a no-fs session would ESCALATE onto the full FS tools + Bash
-		// over a workspace built from the empty root, and a selector session would run
-		// on the WRONG (default-provider) model — wrong enough that its persisted
-		// MaxRunTokens budget would be metered through a different model. Rebuild the
-		// SAME engine through the factory path create used, reading the PERSISTED
-		// selector+profile back off the loaded session. The MaxSessionEngines cap is
-		// inherited by the widened trigger (rehydrateSession enforces it). The
-		// empty-workspace inference stays as the SECOND defense below.
+		// shared engine: a no-fs session would gain the wrong FS-capable tool surface,
+		// and a selector session could run the wrong model. Rebuild the same engine
+		// through the factory path used at creation, reading persisted selector and
+		// profile labels.
 		var err error
 		se, err = s.rehydrateSession(ctx, sess)
 		if err != nil {
@@ -4231,37 +4222,12 @@ func (s *Service) sessionNeedsPerFactory(sel ProviderSelector, specs []mcp.Serve
 		s.cfg.DefaultModelPending || workspace != s.cfg.SharedEngineRoot
 }
 
-// needsRehydration reports whether a loaded session that has NO live per-session
-// engine registered (i.e. its in-memory registrations did not survive a restart)
-// must have one rebuilt before it runs. It is the WIDENED Phase 1 trigger: the
-// original issue-#55 condition was empty-Workspace (no-fs only); a session also
-// needs rehydration when it persisted a non-default provider/model selector
-// (`ProviderID`/`ModelID` set) or the no-fs profile, because both require the
-// per-session factory engine, not the shared one. A default FS session (empty
-// selector, default profile, non-empty workspace) returns false: it keeps riding
-// the shared engine with zero rehydration overhead, exactly as before. The
-// empty-workspace check stays as the SECOND defense (a no-fs session that
-// somehow persisted no profile label still rehydrates) — but it is GUARDED
-// against a REMOTE EnvironmentRef (ADR 0214, issue #462 phase 3): a remote
-// session carries an empty persisted Workspace (its filesystem lives in the
-// remote backend, not on a local root), so the empty-workspace arm must NOT
-// fire for it — that would relabel it no-fs (profileForSession → ProfileNoFS),
-// register a no-fs environment override, and preempt the EnvironmentResolver at
-// run entry. A remote session still rehydrates when it carries a non-default
-// provider/model selector (the selector arms fire), but never via the
-// empty-workspace inference.
-//
-// Filesystem placement root affinity is evaluated after exact provider
-// reattachment in engineAndEnvironmentFor, not from persisted ref kind or ID.
-// A mismatch with SharedEngineRoot rebuilds the per-session engine even when the
-// shared root is empty; equality is the only shared-engine fast path.
-// The DefaultModelPending arm (issue #262 review finding 1) rehydrates a
-// PERSISTED zero-selector session too: setSessionLabels persists the
-// SELECTOR (ProviderID/ModelID/ReasoningEffort), which stays empty for a
-// zero-selector session, so none of the arms above would otherwise fire for
-// it — a session created before a restart into a still-down proxy would
-// keep riding whatever engine gets (re)built for it without ever picking up
-// a heal that lands after the restart.
+// needsRehydration reports whether a loaded session with no live per-session engine
+// must rebuild one before running. Persisted profile/provider/model/reasoning labels,
+// debug/learned-skill scope, and unresolved default-model intent drive this decision.
+// Placement does not: engineAndEnvironmentFor always exactly reattaches EnvironmentRef,
+// then separately compares the verified live root with SharedEngineRoot to decide whether
+// placement affinity needs a per-session engine.
 func (s *Service) needsRehydration(sess *session.Session) bool {
 	return s.cfg.LearnedSkills != nil && sess.Owner != nil && sess.Owner.Issuer != "" && sess.Owner.Subject != "" ||
 		sess.Kind == session.SessionKindDebug ||
@@ -4271,17 +4237,10 @@ func (s *Service) needsRehydration(sess *session.Session) bool {
 		s.cfg.DefaultModelPending
 }
 
-// profileForSession reconstructs the SessionProfile from a loaded session's persisted
-// inert labels (the SAME mapping rehydrateSession uses): the explicit no-fs label, or
-// the second-defense empty-workspace inference. It is the shared profile source for the
-// mode→model rebuild (CASE 1) so a no-fs session that switches mode rebuilds the no-FS
-// catalog, never silently escalating onto the FS tools. A REMOTE EnvironmentRef
-// (ADR 0214, issue #462 phase 3) is excluded from the empty-workspace inference: a
-// remote session carries an empty persisted Workspace (its filesystem lives in the
-// remote backend), so inferring no-fs from it would relabel the session and register a
-// no-fs environment override that preempts the EnvironmentResolver. A remote session
-// with an explicit no-fs profile label (a hybrid that opted into no-FS tools) still
-// honors the explicit label.
+// profileForSession reconstructs the tool-surface profile from server-owned durable
+// state. The explicit profile label is primary; an exact no-FS EnvironmentRef also
+// requires the no-FS catalog so profile metadata cannot widen its placement authority.
+// No path, workspace emptiness, or current deployment default participates.
 func profileForSession(sess *session.Session) SessionProfile {
 	switch {
 	case sess.Profile == string(ProfileNoFS):

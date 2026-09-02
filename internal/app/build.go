@@ -133,9 +133,9 @@ type Config struct {
 	ServerImplementation string
 	Workspace            string
 	// PlacementProvider optionally replaces the trusted local default with one
-	// deployment-owned provider implementing ADR 0288's atomic Bind protocol.
-	// The provider owns any worktree/remote inventory and stable opaque IDs; Build
-	// creates no registry, signer, cache, or path-derived public identifier.
+	// deployment-owned provider implementing ADR 0290's Bind/Reattach and scoped
+	// worktree-discovery protocol. The provider owns private placement identity and
+	// inventory; Build creates no public registry, cache, or path-derived identifier.
 	PlacementProvider server.PlacementProvider
 	// PlacementScope is the trusted authorization scope passed to the provider.
 	// Empty defaults to the process deployment scope.
@@ -4125,9 +4125,9 @@ func buildCommandExpander(cfg Config, mcpProvider mcp.Provider) prompt.CommandEx
 // engine consumes on the run path — so the palette enumerates exactly the
 // commands a "/<cmd>" prompt would expand. It returns nil (RPC yields an empty
 // list) when the expander cannot enumerate, i.e. it is the NoopExpander (commands
-// disabled) or does not implement prompt.CommandLister. The lister opens a fresh
-// osfs Workspace per request rooted at the requested workspace, so discovery
-// reflects the CURRENT command files on disk (not a startup snapshot).
+// disabled) or does not implement prompt.CommandLister. After Service authorizes
+// and exactly reattaches the owned session, this lister opens a fresh osfs Workspace
+// at that provider-verified private root so discovery reflects current command files.
 func buildCommandLister(cfg Config, mcpProvider mcp.Provider) server.CommandLister {
 	exp := buildCommandExpander(cfg, mcpProvider)
 	lister, ok := exp.(prompt.CommandLister)
@@ -8417,23 +8417,16 @@ func defaultLimits() session.Limits {
 // POLICY's call (read: allow at auto/yolo, ask at strict/trusted; write:
 // allow at yolo, ask everywhere below), and an escape the policy leaves at
 // Ask never reaches the tool body unapproved. At strict/trusted the relaxed
-// workspace is what lets an APPROVED escape execute (the Scenario-4 ask would
-// otherwise be un-actionable — approve and still hit ErrPathEscape); a
-// NON-approved escape still dead-ends exactly as before. The SAME factory is
-// the create-time AND the rehydration workspace source (the run-entry seam
-// rebuilds from the persisted root through Workspaces), so a restarted
-// session rehydrates the SAME escape-capable workspace. Child engines never
-// see this factory (their workspaces come from newForkWorkspace), so the
-// relax is main-session-only by construction.
+// options let an approved escape execute; a non-approved escape still dead-ends.
+// The same factory is used by the composition-owned local placement provider
+// whenever it binds or exactly reattaches a local EnvironmentRef. Child engines
+// never call it directly: their workspaces come from newForkWorkspace, so the
+// relaxation remains main-session-only by construction.
 //
-// EMPTY-ROOT CHOKEPOINT (issue #55): an empty root NEVER reaches osfs. An empty
-// persisted Session.Workspace can only be a no-fs session, and osfs.NewWorkspace("")
-// would MkdirAll/OpenRoot the server process's cwd — a filesystem escalation. The
-// Service intercepts this first (no-fs sessions carry a per-session workspace
-// override, restored by rehydrateSession after a restart), so this branch is
-// the defense a FUTURE caller cannot bypass: it serves the honest no-filesystem
-// workspace and logs loudly, because reaching it means a no-fs guard upstream
-// regressed.
+// EMPTY-ROOT CHOKEPOINT: an empty root never reaches osfs. Server-owned placement
+// binds no-FS through the nofs adapter before this factory and rejects invalid exact
+// refs; this guard prevents any future private composition caller from turning an
+// empty path into the server process cwd.
 func osfsWorkspaceFactory(d port.Diagnostics) server.WorkspaceFactory {
 	return func(root string) tool.Workspace {
 		if root == "" {
