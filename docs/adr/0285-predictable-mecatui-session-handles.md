@@ -1,4 +1,4 @@
-# ADR 0284 — Predictable actionable mecatui session handles
+# ADR 0285 — Predictable actionable mecatui session handles
 
 - Status: Accepted
 - Date: 2026-09-01
@@ -86,7 +86,7 @@ unchanged. Help presents only `TARGET`, may quote values for shell safety, and n
 select a resolution mode or remove display punctuation. The status-line protocol intentionally
 breaks from v1 `Digest` to v2 `Handle`; templates and documentation move together, without a
 compatibility alias. The already-landed session-continuity acceptance plan is updated to point its
-AC4.2/AC4.3 checks at the ADR-0284 scenario proofs, after which stale ADR-0108 and digest-named
+AC4.2/AC4.3 checks at the ADR-0285 scenario proofs, after which stale ADR-0108 and digest-named
 compatibility test aliases are removed; no frozen decision body is rewritten.
 
 The rendered-header-to-transport integration proof belongs in the composition-level

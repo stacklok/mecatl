@@ -14,7 +14,7 @@ accumulator: acc/predictable-session-handles
 # Task brief
 
 Close the final panel findings without widening scope. Keep exact IDs and terminal-safe displayed
-handles accepted by the positional debugger target. Record ADR-0284 as superseding ADR-0254's
+handles accepted by the positional debugger target. Record ADR-0285 as superseding ADR-0254's
 `DEBUG target #<digest>` presentation clause only and retain the scoped backlink already added to
 ADR-0254; do not alter debugger authority/evidence/incarnation decisions.
 
@@ -28,7 +28,7 @@ server exact-ID fallthrough on inventory failure or zero projected matches.
   - verify: `TestPredictableSessionHandles_Scenario2_UnifiedTargetGrammar`
 - AC3.1: command help leads with the one `TARGET` flow and contains no alternate-mode guidance.
   - verify: `TestPredictableSessionHandles_Scenario3_CommandHelpUsesOneTargetFlow`
-- AC3.5: ADR-0284 explicitly supersedes only ADR-0217's ordinary display-handle decision and
+- AC3.5: ADR-0285 explicitly supersedes only ADR-0217's ordinary display-handle decision and
   ADR-0254's `DEBUG target #<digest>` presentation clause; both older ADRs carry scoped backlinks,
   while every debugger authority, evidence, and incarnation decision remains in force.
   - verify: inspection — `task docs` validates ADR metadata and links

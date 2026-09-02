@@ -2,7 +2,7 @@
 
 Accumulator: `acc/predictable-session-handles`
 Acceptance plan: `docs/acceptance/predictable-session-handles.md` (`landed`)
-Decision: `docs/adr/0284-predictable-mecatui-session-handles.md`
+Decision: `docs/adr/0285-predictable-mecatui-session-handles.md`
 Issue: #922
 
 Tasks 01–04 are the historical landed implementation wave. Tasks 05–07 repaired projection,

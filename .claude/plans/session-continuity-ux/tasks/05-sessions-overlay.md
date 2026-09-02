@@ -19,7 +19,7 @@ Rework `/sessions` onto the server-authored taxonomy, capability reason codes, p
 
 - AC4.1: `/sessions` groups rows by server-authored kind into Chats, Scheduled runs, and Child runs; team-member rows are not presented as resumable teams.
   - verify: `TestSessionContinuityUX_Scenario4_FamilyTabs`
-- AC4.2: Each titled row shows ADR-0284's fixed ordinary session handle; the current chat stays visible with a `current` marker and cannot be redundantly opened.
+- AC4.2: Each titled row shows ADR-0285's fixed ordinary session handle; the current chat stays visible with a `current` marker and cannot be redundantly opened.
   - verify: `TestPredictableSessionHandles_Scenario1_SharedNormalHandle`
 - AC4.3: Ordinary handles are terminal-safe fixed projections and are never sent to server APIs as session IDs; debug uses one TARGET grammar where exact full-ID equality wins and ambiguous projections require the copied full ID.
   - verify: `TestPredictableSessionHandles_Scenario3_PresentationParitySafetyAndLayering`
