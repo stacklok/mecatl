@@ -2,7 +2,7 @@
 id: 44-reservation-before-create-fencing
 title: Fence reservations before durable attempt creation
 blocked_by: [42-learning-repair-documentation-status]
-status: pending
+status: in-progress
 branch: plan-cloud-native-learning/44-reservation-before-create-fencing
 worktree: .scratch/worktrees/44-reservation-before-create-fencing
 issue: ""

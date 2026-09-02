@@ -2,7 +2,7 @@
 id: 43-bounded-attempt-callback-lifecycle
 title: Bound attempt callback lifecycle and recovery
 blocked_by: [42-learning-repair-documentation-status]
-status: pending
+status: in-progress
 branch: plan-cloud-native-learning/43-bounded-attempt-callback-lifecycle
 worktree: .scratch/worktrees/43-bounded-attempt-callback-lifecycle
 issue: ""
