@@ -42,7 +42,7 @@ func TestNewUserMessageWithPartsNilIsTextOnly(t *testing.T) {
 }
 
 func TestRecordUserPromptWithParts(t *testing.T) {
-	s := New("s1", ModeDefault, "/ws", Limits{}, time.Unix(0, 0))
+	s := New("s1", ModeDefault, EnvironmentRef{Kind: EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, Limits{}, time.Unix(0, 0))
 	parts := []Content{{Kind: MediaImage, MIMEType: "image/jpeg", Data: []byte{1, 2, 3}}}
 	if err := s.RecordUserPromptWithParts("describe", parts, nil); err != nil {
 		t.Fatalf("RecordUserPromptWithParts: %v", err)
@@ -57,7 +57,7 @@ func TestRecordUserPromptWithParts(t *testing.T) {
 }
 
 func TestRecordUserPromptWithPartsInstructionsPrepended(t *testing.T) {
-	s := New("s1", ModeDefault, "/ws", Limits{}, time.Unix(0, 0))
+	s := New("s1", ModeDefault, EnvironmentRef{Kind: EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, Limits{}, time.Unix(0, 0))
 	instr := []Message{NewSystemMessage("CLAUDE.md")}
 	parts := []Content{{Kind: MediaImage, MIMEType: "image/png", Data: []byte{9}}}
 	if err := s.RecordUserPromptWithParts("go", parts, instr); err != nil {
@@ -75,7 +75,7 @@ func TestRecordUserPromptWithPartsInstructionsPrepended(t *testing.T) {
 }
 
 func TestRecordUserPromptWithPartsTerminalRejected(t *testing.T) {
-	s := New("s1", ModeDefault, "/ws", Limits{}, time.Unix(0, 0))
+	s := New("s1", ModeDefault, EnvironmentRef{Kind: EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, Limits{}, time.Unix(0, 0))
 	if err := s.Complete(); err != nil {
 		t.Fatalf("complete: %v", err)
 	}
@@ -86,7 +86,7 @@ func TestRecordUserPromptWithPartsTerminalRejected(t *testing.T) {
 }
 
 func TestRecordUserPromptDelegatesNilParts(t *testing.T) {
-	s := New("s1", ModeDefault, "/ws", Limits{}, time.Unix(0, 0))
+	s := New("s1", ModeDefault, EnvironmentRef{Kind: EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, Limits{}, time.Unix(0, 0))
 	if err := s.RecordUserPrompt("plain", nil); err != nil {
 		t.Fatalf("RecordUserPrompt: %v", err)
 	}

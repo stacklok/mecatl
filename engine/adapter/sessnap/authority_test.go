@@ -18,7 +18,7 @@ import (
 func TestADR_0233_AuthorityEvaluator_Scenario2_SetRoundTripsThroughSnapshotAndFold(t *testing.T) {
 	t.Parallel()
 	bound := authorityBinding(t)
-	s := session.New("authority-round-trip", session.ModeDefault, "/workspace", session.Limits{}, time.Unix(1, 0).UTC())
+	s := session.New("authority-round-trip", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/workspace", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1, 0).UTC())
 	if err := s.BindAuthority(bound); err != nil {
 		t.Fatalf("BindAuthority: %v", err)
 	}
@@ -30,7 +30,7 @@ func TestADR_0233_AuthorityEvaluator_Scenario2_SetRoundTripsThroughSnapshotAndFo
 	assertAuthorityBinding(t, restored, bound)
 
 	folded, err := eventsource.Fold(eventsource.SessionMeta{
-		ID: "authority-round-trip", Mode: session.ModeDefault, Workspace: "/workspace",
+		ID: "authority-round-trip", Mode: session.ModeDefault, EnvironmentRef: session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/workspace", Revision: "in-tree-v1"},
 		CreatedAt: time.Unix(1, 0).UTC(), Authority: &bound,
 	}, emptySeq())
 	if err != nil {
@@ -42,7 +42,7 @@ func TestADR_0233_AuthorityEvaluator_Scenario2_SetRoundTripsThroughSnapshotAndFo
 func TestADR_0233_AuthorityEvaluator_Scenario2_PayloadExcludesSensitiveRuntimeData(t *testing.T) {
 	t.Parallel()
 	bound := authorityBinding(t)
-	s := session.New("authority-payload", session.ModeDefault, "/workspace/secret", session.Limits{}, time.Unix(1, 0).UTC())
+	s := session.New("authority-payload", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/workspace/secret", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1, 0).UTC())
 	if err := s.BindAuthority(bound); err != nil {
 		t.Fatalf("BindAuthority: %v", err)
 	}
@@ -65,12 +65,12 @@ func TestADR_0233_AuthorityEvaluator_Scenario2_PayloadExcludesSensitiveRuntimeDa
 
 func TestADR_0233_AuthorityEvaluator_Scenario2_UndecodableSetFailsClosedLoudly(t *testing.T) {
 	t.Parallel()
-	line := []byte(`{"id":"malformed","state":"idle","mode":"default","limits":{},"counters":{},"workspace":"/workspace","created_at":"1970-01-01T00:00:01Z","authority":{"capability_set":{"tools":"not-a-list"},"provenance":"derived","definition_identity":"explicit:reviewer"}}`)
+	line := []byte(`{"id":"malformed","state":"idle","mode":"default","limits":{},"counters":{},"environment_ref":{"Kind":"local","ID":"/workspace","Revision":"in-tree-v1"},"created_at":"1970-01-01T00:00:01Z","authority":{"capability_set":{"tools":"not-a-list"},"provenance":"derived","definition_identity":"explicit:reviewer"}}`)
 	if _, err := sessnap.Unmarshal(line); err == nil || !strings.Contains(err.Error(), "authority") {
 		t.Fatalf("malformed claimed authority error = %v, want named authority failure", err)
 	}
 
-	legacy := []byte(`{"id":"legacy","state":"idle","mode":"default","limits":{},"counters":{},"workspace":"/workspace","created_at":"1970-01-01T00:00:01Z"}`)
+	legacy := []byte(`{"id":"legacy","state":"idle","mode":"default","limits":{},"counters":{},"environment_ref":{"Kind":"local","ID":"/workspace","Revision":"in-tree-v1"},"created_at":"1970-01-01T00:00:01Z"}`)
 	restored, err := sessnap.Unmarshal(legacy)
 	if err != nil {
 		t.Fatalf("legacy snapshot restore: %v", err)
@@ -82,7 +82,7 @@ func TestADR_0233_AuthorityEvaluator_Scenario2_UndecodableSetFailsClosedLoudly(t
 
 func TestADR_0233_AuthorityEvaluator_Scenario2_NoSilentBoundButEmptyState(t *testing.T) {
 	t.Parallel()
-	line := []byte(`{"id":"empty","state":"idle","mode":"default","limits":{},"counters":{},"workspace":"/workspace","created_at":"1970-01-01T00:00:01Z","authority":{"capability_set":{"tools":"not-a-list"},"provenance":"derived","definition_identity":"explicit:reviewer"}}`)
+	line := []byte(`{"id":"empty","state":"idle","mode":"default","limits":{},"counters":{},"environment_ref":{"Kind":"local","ID":"/workspace","Revision":"in-tree-v1"},"created_at":"1970-01-01T00:00:01Z","authority":{"capability_set":{"tools":"not-a-list"},"provenance":"derived","definition_identity":"explicit:reviewer"}}`)
 	restored, err := sessnap.Unmarshal(line)
 	if err == nil {
 		t.Fatal("malformed authority restored successfully")
@@ -94,7 +94,7 @@ func TestADR_0233_AuthorityEvaluator_Scenario2_NoSilentBoundButEmptyState(t *tes
 
 func TestADR_0233_AuthorityEvaluator_Scenario2_RestoreRejectsIncompleteAuthorityClaims(t *testing.T) {
 	t.Parallel()
-	const snapshotPrefix = `{"id":"incomplete","state":"idle","mode":"default","limits":{},"counters":{},"workspace":"/workspace","created_at":"1970-01-01T00:00:01Z",`
+	const snapshotPrefix = `{"id":"incomplete","state":"idle","mode":"default","limits":{},"counters":{},"environment_ref":{"Kind":"local","ID":"/workspace","Revision":"in-tree-v1"},"created_at":"1970-01-01T00:00:01Z",`
 	for name, authority := range map[string]string{
 		"null authority claim":                    `null`,
 		"authority object without capability set": `{}`,
@@ -136,7 +136,7 @@ func TestADR_0233_AuthorityEvaluator_Scenario2_TerminalRecoveryPreservesSet(t *t
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			s := session.New("authority-recovery", session.ModeDefault, "/workspace", session.Limits{}, time.Unix(1, 0).UTC())
+			s := session.New("authority-recovery", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/workspace", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1, 0).UTC())
 			bound := authorityBinding(t)
 			if err := s.BindAuthority(bound); err != nil {
 				t.Fatalf("BindAuthority: %v", err)

@@ -39,16 +39,13 @@ func TestChildSessionsUseEnvironmentIdentity(t *testing.T) {
 		if child.EnvironmentRef != env.Ref() {
 			t.Errorf("%s EnvironmentRef = %+v, want environment ref %+v", name, child.EnvironmentRef, env.Ref())
 		}
-		if child.Workspace != env.Workspace().Root() {
-			t.Errorf("%s Workspace = %q, want transitional root %q", name, child.Workspace, env.Workspace().Root())
-		}
 	}
 }
 
 func TestRehomeSessionUsesEnvironmentIdentity(t *testing.T) {
 	t.Parallel()
 
-	child := session.New("child", session.ModeDefault, "/old", session.Limits{}, time.Unix(1, 0))
+	child := session.New("child", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/old", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1, 0))
 	child.EnvironmentRef = session.EnvironmentRef{Kind: "remote", ID: "opaque", Revision: "v1"}
 	env := tool.MustEnvironment(
 		session.EnvironmentRef{Kind: "remote", ID: "opaque", Revision: "v2"},
@@ -60,8 +57,5 @@ func TestRehomeSessionUsesEnvironmentIdentity(t *testing.T) {
 	}
 	if child.EnvironmentRef != env.Ref() {
 		t.Fatalf("EnvironmentRef = %+v, want %+v", child.EnvironmentRef, env.Ref())
-	}
-	if child.Workspace != env.Workspace().Root() {
-		t.Fatalf("Workspace = %q, want %q", child.Workspace, env.Workspace().Root())
 	}
 }

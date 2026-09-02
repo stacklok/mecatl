@@ -322,7 +322,7 @@ func TestAskReviewerE2EHeadlessTeamAllow(t *testing.T) {
 	}
 	engine := agent.NewEngine(deps) // headless: Interactive false
 
-	sess := session.New("e2e-ask-reviewer", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
+	sess := session.New("e2e-ask-reviewer", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
 	run := engine.Run(context.Background(), sess, memEnvironment("/ws"), agent.RunRequest{Text: "inspect the tree"})
 
 	deadline := time.After(15 * time.Second)

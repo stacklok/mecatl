@@ -29,7 +29,7 @@ func main() {
 	})
 	ws := memfs.NewWorkspace("/workspace")
 	env := tool.MustEnvironment(session.EnvironmentRef{}, ws, nil)
-	sess := session.New("first-agent-openrouter", session.ModeDefault, "/workspace", session.Limits{}, time.Now())
+	sess := session.New("first-agent-openrouter", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/workspace", Revision: "in-tree-v1"}, session.Limits{}, time.Now())
 	run := engine.Run(context.Background(), sess, env, agent.RunRequest{Text: "Reply with exactly: Hello from OpenRouter."})
 	for event := range run.Events() {
 		if event.Type == session.EvResult && event.Result != nil {

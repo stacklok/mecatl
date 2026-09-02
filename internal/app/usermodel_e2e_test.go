@@ -172,7 +172,7 @@ func TestUserModelE2E(t *testing.T) {
 		OperatorProfileSource: storeB,
 	})
 
-	sess := session.New("sB", session.ModeDefault, "/ws", session.Limits{MaxTurns: 3}, time.Now())
+	sess := session.New("sB", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{MaxTurns: 3}, time.Now())
 	run := eng.Run(ctx, sess, memEnvironment("/ws"), agent.RunRequest{Text: "hello"})
 	for ev := range run.Events() {
 		_ = ev

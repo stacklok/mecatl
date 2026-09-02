@@ -24,7 +24,7 @@ func TestRedisMetadataIndexAdoptionThroughAuthenticatedMaintenanceJob(t *testing
 	t.Cleanup(mr.Close)
 	owner := &session.Principal{Issuer: "https://idp.example", Subject: "alice", GrantType: session.GrantTypeUser}
 	for i, id := range []session.SessionID{"legacy-a", "legacy-b", "legacy-c"} {
-		sess := session.New(id, session.ModeAccept, "/work", session.Limits{}, time.Unix(1700000000, 0).UTC())
+		sess := session.New(id, session.ModeAccept, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/work", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1700000000, 0).UTC())
 		if err := sess.RestoreLabels(owner, session.Authority{}); err != nil {
 			t.Fatal(err)
 		}
@@ -71,7 +71,7 @@ func TestRedisMetadataIndexAdoptionThroughAuthenticatedMaintenanceJob(t *testing
 
 	// Current Save and Delete race safely with the rebuild: Save publishes its row
 	// atomically, while Delete removes a legacy candidate and advances generation.
-	current := session.New("current-save", session.ModeAccept, "/work", session.Limits{}, time.Now().UTC())
+	current := session.New("current-save", session.ModeAccept, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/work", Revision: "in-tree-v1"}, session.Limits{}, time.Now().UTC())
 	if err := current.RestoreLabels(owner, session.Authority{}); err != nil {
 		t.Fatal(err)
 	}
@@ -145,7 +145,7 @@ func TestRedisMetadataIndexAdoptionCancellationIsDurableAndMonotonic(t *testing.
 	}
 	t.Cleanup(mr.Close)
 	for i, id := range []session.SessionID{"cancel-a", "cancel-b"} {
-		sess := session.New(id, session.ModeAccept, "/work", session.Limits{}, time.Now().UTC())
+		sess := session.New(id, session.ModeAccept, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/work", Revision: "in-tree-v1"}, session.Limits{}, time.Now().UTC())
 		blob, err := sessnap.Marshal(sess)
 		if err != nil {
 			t.Fatal(err)

@@ -16,7 +16,7 @@ import (
 
 func seedMigrationV1(t *testing.T, st *Store, id session.SessionID) string {
 	t.Helper()
-	sess := session.New(id, session.ModeDefault, "/ws", session.Limits{}, time.Unix(1700000000, 0))
+	sess := session.New(id, session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1700000000, 0))
 	if err := sess.RestoreSessionMetadata(session.SessionKindUnknown, session.SessionRelationship{}); err != nil {
 		t.Fatal(err)
 	}

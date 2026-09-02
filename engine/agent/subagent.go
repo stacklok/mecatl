@@ -2273,18 +2273,14 @@ func (t *SubagentTool) resolveEngineAndLimits(callID session.ToolCallID, args su
 func (t *SubagentTool) prepareChildSession(ctx context.Context, call session.ToolCall, env tool.Environment, args subagentArgs, resuming, writable bool, childID, parentID session.SessionID, parentIncarnation session.IncarnationID, limits session.Limits, forkHistory []session.Message) (child *session.Session, runEnv tool.Environment, cleanup func() error, advisory string, editsSurvived bool, errResult session.ToolResult, ok bool) {
 	noop := func() error { return nil }
 	var resumedChild *session.Session
-	// priorWorkspace is the resumed child's PERSISTED workspace root, captured here
-	// because buildChildSession's Rehome overwrites it. For a read-only child it is the
-	// throwaway worktree its earlier run executed in (long torn down); for a writable
-	// (direct-write, ADR 0077) child it is the real parent root, which still exists.
-	priorWorkspace := ""
+	priorRef := session.EnvironmentRef{}
 	if resuming {
 		loaded, errRes, rok := t.resolveResumeSession(ctx, call.ID, childID, args)
 		if !rok {
 			return nil, tool.Environment{}, noop, "", false, errRes, false
 		}
 		resumedChild = loaded
-		priorWorkspace = loaded.Workspace
+		priorRef = loaded.EnvironmentRef
 	}
 	// A mode:"read-write" child runs DIRECTLY against the parent workspace (no fork —
 	// ADR 0077): its Edit/Write/Bash mutate the real tree in place, exactly as the
@@ -2310,7 +2306,7 @@ func (t *SubagentTool) prepareChildSession(ctx context.Context, call session.Too
 	// that worktree, so it may genuinely have applied edits that are now GONE: telling it
 	// otherwise is the exact falsehood resumeWritableNote exists to prevent, inverted.
 	// The path comparison is the honest test and needs no new persisted field.
-	editsSurvived = writable && priorWorkspace != "" && priorWorkspace == env.Workspace().Root()
+	editsSurvived = writable && priorRef.Valid() && priorRef == env.Ref()
 	child, errRes, bok := t.buildChildSession(call.ID, childID, parentID, parentIncarnation, resumedChild, runEnv, limits, forkHistory)
 	if !bok {
 		_ = cleanupWS()

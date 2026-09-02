@@ -616,6 +616,9 @@ type Run struct {
 	// parent. It is set once before the run goroutine starts and only read after,
 	// so it needs no synchronisation.
 	ctx context.Context //nolint:containedctx // run-scoped carrier forwarded to the EventSink; never the request's own field
+	// workspace is the private runtime root of the live Environment. Durable
+	// EnvironmentRef IDs are provider-opaque and must never be interpreted as paths.
+	workspace string
 	// diag is the run-scoped operational-logging seam: deps.Diagnostics bound to
 	// this run's session id (and, for a child engine, its agent role) via With, so
 	// every line emitted through it carries the correlation keys. It is bound ONCE
@@ -983,7 +986,7 @@ func (r *Run) unregisterChildAsk(askID string) bool {
 // empty). Command expansion and the UserPromptSubmit hook operate on the TEXT only; the
 // media parts pass through untouched and are recorded verbatim on the user message.
 func (e *Engine) Run(ctx context.Context, sess *session.Session, env tool.Environment, req RunRequest) *Run {
-	return e.startRun(ctx, sess, req, func(ctx context.Context, r *Run) {
+	return e.startRun(ctx, sess, req, env.Workspace().Root(), func(ctx context.Context, r *Run) {
 		e.drive(ctx, r, sess, env, req.Text, req.Parts)
 	})
 }
@@ -993,7 +996,7 @@ func (e *Engine) Run(ctx context.Context, sess *session.Session, env tool.Enviro
 // instructions and system prompt inputs are re-resolved by the normal request builder.
 // sess must carry durable failed-step retry intent prepared by the host.
 func (e *Engine) RetryFailedStep(ctx context.Context, sess *session.Session, env tool.Environment) *Run {
-	return e.startRun(ctx, sess, RunRequest{}, func(ctx context.Context, r *Run) {
+	return e.startRun(ctx, sess, RunRequest{}, env.Workspace().Root(), func(ctx context.Context, r *Run) {
 		e.emit(r, session.Event{Type: session.EvSessionInit})
 		disposition, progress, pending := sess.FailedStepRetryPending()
 		if !pending {
@@ -1047,7 +1050,7 @@ func (e *Engine) ResumeApproval(ctx context.Context, sess *session.Session, env 
 	// never read the id off the session: a reused session still carries the id of
 	// the run that just ended, and inheriting it would silently attribute a brand
 	// new run's events to the previous one.
-	return e.startRun(ctx, sess, RunRequest{RunID: sess.RunID()}, func(ctx context.Context, r *Run) {
+	return e.startRun(ctx, sess, RunRequest{RunID: sess.RunID()}, env.Workspace().Root(), func(ctx context.Context, r *Run) {
 		e.driveFromAwaiting(ctx, r, sess, env, askID, verdict)
 	})
 }
@@ -1087,7 +1090,7 @@ func askDiscriminatorFor(req RunRequest, serial int64) (value string, colonRejec
 // LIFO seal/close discipline. It is the single Run-construction site shared by
 // Engine.Run (→ drive) and ResumeApproval (→ driveFromAwaiting) so the two
 // entry seams cannot drift in their concurrency setup.
-func (e *Engine) startRun(ctx context.Context, sess *session.Session, req RunRequest, body func(context.Context, *Run)) *Run {
+func (e *Engine) startRun(ctx context.Context, sess *session.Session, req RunRequest, workspace string, body func(context.Context, *Run)) *Run {
 	ctx, cancel := context.WithCancel(ctx)
 	serial := runSerial.Add(1)
 	ctx = port.WithRunAttemptContext(ctx, sess.ID, serial)
@@ -1108,6 +1111,7 @@ func (e *Engine) startRun(ctx context.Context, sess *session.Session, req RunReq
 		asks:      newAskRegistry(),
 		cancel:    cancel,
 		ctx:       ctx,
+		workspace: workspace,
 		req:       req,
 		hardAbort: make(chan struct{}),
 		serial:    serial,
@@ -1844,7 +1848,7 @@ func (e *Engine) recordPrompt(ctx context.Context, r *Run, sess *session.Session
 		return false, "", fmt.Errorf("agent: record user prompt: %w", rerr)
 	}
 	if messages := sess.Conversation.Messages; len(messages) > 0 {
-		owned := learning.NewTrajectory(sess.ID, sess.Workspace, session.StopNone, session.Usage{}, messages[len(messages)-1:])
+		owned := learning.NewTrajectory(sess.ID, env.Workspace().Root(), session.StopNone, session.Usage{}, messages[len(messages)-1:])
 		r.currentPrompt = &owned.Messages[0]
 	}
 	// Seed the session Title ONCE from this genuine prompt (set-once guard in
@@ -2195,7 +2199,7 @@ func (e *Engine) buildRequest(ctx context.Context, r *Run, sess *session.Session
 	cfg.Env.Model = e.deps.Model
 	cfg.Env.Mode = string(sess.Mode)
 	if cfg.Env.Cwd == "" {
-		cfg.Env.Cwd = sess.Workspace
+		cfg.Env.Cwd = env.Workspace().Root()
 	}
 	e.refreshOperatorProfile(ctx, r, &cfg)
 	// PromptBuilder (issue #127): a host-supplied builder replaces prompt.Build
@@ -2682,7 +2686,7 @@ func (e *Engine) observeCompletion(ctx context.Context, r *Run, sess *session.Se
 		sess.State != session.StateCompleted || reason == session.StopError || reason == session.StopCancelled {
 		return
 	}
-	tr := learning.NewTrajectory(sess.ID, sess.Workspace, reason, usage, sess.Conversation.Messages)
+	tr := learning.NewTrajectory(sess.ID, r.workspace, reason, usage, sess.Conversation.Messages)
 	tr.Principal = sess.Owner.Clone()
 	tr.Kind = sess.Kind
 	tr.Counters = sess.Counters

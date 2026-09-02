@@ -98,7 +98,7 @@ func (r *UserModelReviewer) Review(ctx context.Context, sessionID string) error 
 	// middleware already bound the caller's principal onto (authn.go) before the
 	// run — see reviewMessages.
 	ctx = session.WithPrincipal(ctx, sess.Owner)
-	return r.reviewMessages(ctx, sessionID, sess.Workspace, sess.Conversation.Messages)
+	return r.reviewMessages(ctx, sessionID, sess.EnvironmentRef.ID, sess.Conversation.Messages)
 }
 
 // Observe implements learning.Observer from an owned completed-trajectory snapshot.
@@ -123,7 +123,7 @@ func (r *UserModelReviewer) reviewMessages(ctx context.Context, sessionID, works
 		session.ModeDefault,
 		// No workspace root needed: the only tool is RememberUser. Use the user
 		// session's root as a harmless label so logs correlate.
-		workspace,
+		session.EnvironmentRef{Kind: session.EnvKindLocal, ID: workspace, Revision: "in-tree-v1"},
 		userModelReviewLimits,
 		r.engine.now(),
 	)

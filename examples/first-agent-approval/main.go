@@ -36,7 +36,7 @@ func main() {
 		mockllm.TextTurn("The approved tool replied: pong.")), Catalog: catalog, Policy: policy, Model: "mock"})
 	ws := memfs.NewWorkspace("/workspace")
 	env := tool.MustEnvironment(session.EnvironmentRef{}, ws, nil)
-	sess := session.New("first-agent-approval", session.ModeDefault, "/workspace", session.Limits{}, time.Now())
+	sess := session.New("first-agent-approval", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/workspace", Revision: "in-tree-v1"}, session.Limits{}, time.Now())
 	run := engine.Run(context.Background(), sess, env, agent.RunRequest{Text: "Ask before pinging the tool."})
 	for event := range run.Events() {
 		fmt.Println(event.Type)

@@ -57,7 +57,7 @@ func titleService(t *testing.T, store port.SessionStore) *server.Service {
 // non-empty snapshot branch. It returns the session after Save.
 func saveSessionWithPrompt(ctx context.Context, t *testing.T, st port.SessionStore, id session.SessionID, promptText string, seedTitle bool) *session.Session {
 	t.Helper()
-	s := session.New(id, session.ModeDefault, "/ws", session.Limits{}, time.Unix(1700000000, 0).UTC())
+	s := session.New(id, session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1700000000, 0).UTC())
 	if err := s.BeginTurn(); err != nil {
 		t.Fatalf("BeginTurn: %v", err)
 	}
@@ -112,7 +112,7 @@ func TestDeriveTitleFromFirstGenuine(t *testing.T) {
 func TestDeriveTitleSkipsSynthesisedSummary(t *testing.T) {
 	ctx := context.Background()
 	st := memstore.New()
-	s := session.New("t2", session.ModeDefault, "/ws", session.Limits{}, time.Unix(1700000000, 0).UTC())
+	s := session.New("t2", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1700000000, 0).UTC())
 	if err := s.BeginTurn(); err != nil {
 		t.Fatalf("BeginTurn: %v", err)
 	}
@@ -149,7 +149,7 @@ func TestDeriveTitleSkipsSynthesisedSummary(t *testing.T) {
 func TestDeriveTitleEmptyForCompacted(t *testing.T) {
 	ctx := context.Background()
 	st := memstore.New()
-	s := session.New("t3", session.ModeDefault, "/ws", session.Limits{}, time.Unix(1700000000, 0).UTC())
+	s := session.New("t3", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1700000000, 0).UTC())
 	if err := s.BeginTurn(); err != nil {
 		t.Fatalf("BeginTurn: %v", err)
 	}

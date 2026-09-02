@@ -678,7 +678,7 @@ func newSession(id session.SessionID) *session.Session {
 	s := session.New(
 		id,
 		session.ModeAccept,
-		"/work/space",
+		session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/work/space", Revision: "in-tree-v1"},
 		session.Limits{MaxTurns: 7, MaxToolCalls: 21, MaxConsecutiveFailures: 3},
 		time.Date(2026, 6, 1, 12, 30, 45, 123456789, time.UTC),
 	)
@@ -761,8 +761,8 @@ func assertSessionEqual(t *testing.T, got, want *session.Session) {
 	if got.Counters != want.Counters {
 		t.Errorf("Counters = %+v want %+v", got.Counters, want.Counters)
 	}
-	if got.Workspace != want.Workspace {
-		t.Errorf("Workspace = %q want %q", got.Workspace, want.Workspace)
+	if got.EnvironmentRef != want.EnvironmentRef {
+		t.Errorf("EnvironmentRef = %+v want %+v", got.EnvironmentRef, want.EnvironmentRef)
 	}
 	if got.Profile != want.Profile {
 		t.Errorf("Profile = %q want %q", got.Profile, want.Profile)

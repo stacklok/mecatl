@@ -67,7 +67,7 @@ func RunScenario(ctx context.Context, provider port.LLMProvider, model string) (
 	sess := session.New(
 		"demo-session",
 		session.ModeDefault,
-		demoWorkspaceRoot,
+		session.EnvironmentRef{Kind: session.EnvKindLocal, ID: demoWorkspaceRoot, Revision: "in-tree-v1"},
 		session.Limits{MaxTurns: 8, MaxToolCalls: 16, MaxConsecutiveFailures: 3},
 		time.Now(),
 	)
@@ -290,7 +290,7 @@ func RunBackgroundScenario(ctx context.Context) ([]session.Event, []string) {
 	sess := session.New(
 		"demo-background-session",
 		session.ModeDefault,
-		demoWorkspaceRoot,
+		session.EnvironmentRef{Kind: session.EnvKindLocal, ID: demoWorkspaceRoot, Revision: "in-tree-v1"},
 		session.Limits{MaxTurns: 8, MaxToolCalls: 16, MaxConsecutiveFailures: 3},
 		time.Now(),
 	)

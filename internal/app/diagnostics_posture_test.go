@@ -59,7 +59,7 @@ func TestDiagnosticsPostureFactoryPaths(t *testing.T) {
 
 func drivePrompt(t *testing.T, e *agent.Engine, id string) {
 	t.Helper()
-	run := e.Run(context.Background(), session.New(session.SessionID(id), session.ModeDefault, "/ws", session.Limits{MaxTurns: 1}, time.Now()), memEnvironment("/ws"), agent.RunRequest{Text: "hi"})
+	run := e.Run(context.Background(), session.New(session.SessionID(id), session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{MaxTurns: 1}, time.Now()), memEnvironment("/ws"), agent.RunRequest{Text: "hi"})
 	for range run.Events() {
 	}
 }

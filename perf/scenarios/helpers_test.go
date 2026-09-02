@@ -53,7 +53,7 @@ func scenarioCatalog(tools ...tool.Tool) *tool.Catalog {
 // scenarioSession builds a fresh default-mode session at the fixed epoch. A
 // session is a one-shot state machine, so the caller builds one per iteration.
 func scenarioSession(id string, limits session.Limits) *session.Session {
-	return session.New(session.SessionID(id), session.ModeDefault, scenarioWorkspaceRoot, limits, scenarioEpoch)
+	return session.New(session.SessionID(id), session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: scenarioWorkspaceRoot, Revision: "in-tree-v1"}, limits, scenarioEpoch)
 }
 
 // scenarioWorkspace returns a fresh shell-less in-memory Environment mounted at

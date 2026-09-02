@@ -148,26 +148,26 @@ func TestSessionDebuggerCrossBoundaryAcceptance(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	retained, err := session.NewSubagent("subagent-retained", session.ModeDefault, workspace, session.Limits{}, time.Unix(2, 0), target.ID, target.Incarnation(), "sub-call")
+	retained, err := session.NewSubagent("subagent-retained", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: workspace, Revision: "in-tree-v1"}, session.Limits{}, time.Unix(2, 0), target.ID, target.Incarnation(), "sub-call")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := retained.SeedHistory([]session.Message{{Role: session.RoleUser, Text: "investigate failure"}, {Role: session.RoleAssistant, Text: "retained child finding"}}); err != nil {
 		t.Fatal(err)
 	}
-	pruned, err := session.NewParallelBranch("parallel-pruned", session.ModeDefault, workspace, session.Limits{}, time.Unix(3, 0), target.ID, target.Incarnation(), "parallel-call", 0)
+	pruned, err := session.NewParallelBranch("parallel-pruned", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: workspace, Revision: "in-tree-v1"}, session.Limits{}, time.Unix(3, 0), target.ID, target.Incarnation(), "parallel-call", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	scheduled, err := session.NewScheduled("sched--related", session.ModeDefault, workspace, session.Limits{}, time.Unix(4, 0), "nightly", target.ID, target.Incarnation())
+	scheduled, err := session.NewScheduled("sched--related", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: workspace, Revision: "in-tree-v1"}, session.Limits{}, time.Unix(4, 0), "nightly", target.ID, target.Incarnation())
 	if err != nil {
 		t.Fatal(err)
 	}
-	team, err := session.NewTeamMember("team-related-member", session.ModeDefault, workspace, session.Limits{}, time.Unix(5, 0), "team-1", "reviewer", target.ID, target.Incarnation())
+	team, err := session.NewTeamMember("team-related-member", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: workspace, Revision: "in-tree-v1"}, session.Limits{}, time.Unix(5, 0), "team-1", "reviewer", target.ID, target.Incarnation())
 	if err != nil {
 		t.Fatal(err)
 	}
-	unrelated := session.New("unrelated-secret", session.ModeDefault, workspace, session.Limits{}, time.Unix(6, 0))
+	unrelated := session.New("unrelated-secret", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: workspace, Revision: "in-tree-v1"}, session.Limits{}, time.Unix(6, 0))
 	for _, s := range []*session.Session{retained, pruned, scheduled, team, unrelated} {
 		if err := store.Save(ctx, s); err != nil {
 			t.Fatal(err)

@@ -100,7 +100,7 @@ func TestCallerIdentity_Scenario3_ForkInheritsSourceOwner(t *testing.T) {
 				)
 				e := NewEngine(Deps{LLM: parentLLM, Catalog: cat, Policy: allow, Model: "parent-model"})
 
-				sess := session.New("owner-parent", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
+				sess := session.New("owner-parent", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
 				if err := sess.RestoreLabels(tc.parentOwner, session.Authority{}); err != nil {
 					t.Fatalf("RestoreLabels: %v", err)
 				}

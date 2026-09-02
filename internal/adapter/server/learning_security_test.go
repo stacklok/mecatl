@@ -45,7 +45,7 @@ func TestLearningProposalOwnershipAndEvidenceResolution(t *testing.T) {
 		t.Fatal(err)
 	}
 	store := memstore.New()
-	source := session.New("source", session.ModeDefault, "", session.Limits{}, time.Unix(1, 0))
+	source := session.New("source", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/workspace", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1, 0))
 	source.Owner = alice
 	if err := source.RecordUserPrompt("Remember concise output", nil); err != nil {
 		t.Fatal(err)
@@ -140,7 +140,7 @@ func TestExplicitReflectionEnforcesSessionOwnershipAndWorksHeadless(t *testing.T
 	alice := &session.Principal{Issuer: "issuer", Subject: "alice", GrantType: session.GrantTypeUser}
 	bob := &session.Principal{Issuer: "issuer", Subject: "bob", GrantType: session.GrantTypeUser}
 	completed := func(id session.SessionID, owner *session.Principal) *session.Session {
-		sess := session.New(id, session.ModeDefault, "", session.Limits{}, time.Unix(1, 0))
+		sess := session.New(id, session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/workspace", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1, 0))
 		sess.Owner = owner
 		if err := sess.BeginTurn(); err != nil {
 			t.Fatal(err)

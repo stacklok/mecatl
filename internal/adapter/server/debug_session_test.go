@@ -82,8 +82,8 @@ func TestDebugSessionCreateIsSeparateAndTargetImmutable(t *testing.T) {
 	if calls != 1 || debug.ID == target.ID || debug.Kind != session.SessionKindDebug || debug.Relationship.DebugTargetID != target.ID {
 		t.Fatalf("debug identity = id %q kind %q relationship %+v calls %d", debug.ID, debug.Kind, debug.Relationship, calls)
 	}
-	if debug.Workspace != "" || debug.Profile != string(server.ProfileNoFS) || len(debug.Conversation.Messages) != 0 {
-		t.Fatalf("debug session carried target state: workspace=%q profile=%q messages=%d", debug.Workspace, debug.Profile, len(debug.Conversation.Messages))
+	if debug.EnvironmentRef.Kind != session.EnvKindNoFS || debug.Profile != string(server.ProfileNoFS) || len(debug.Conversation.Messages) != 0 {
+		t.Fatalf("debug session carried target state: placement=%+v profile=%q messages=%d", debug.EnvironmentRef, debug.Profile, len(debug.Conversation.Messages))
 	}
 	after, err := store.Load(context.Background(), target.ID)
 	if err != nil {
@@ -190,7 +190,7 @@ func TestPersistedDebugSessionRejectsTargetReplacement(t *testing.T) {
 	if err := store.Delete(ctx, target.ID); err != nil {
 		t.Fatal(err)
 	}
-	replacement := session.New(target.ID, session.ModeDefault, "/target", session.Limits{}, target.CreatedAt)
+	replacement := session.New(target.ID, session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/target", Revision: "in-tree-v1"}, session.Limits{}, target.CreatedAt)
 	if replacement.Incarnation() == target.Incarnation() || replacement.ID != target.ID || replacement.CreatedAt != target.CreatedAt {
 		t.Fatal("replacement did not preserve identical ID/time while changing only incarnation")
 	}

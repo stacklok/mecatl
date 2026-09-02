@@ -94,8 +94,8 @@ func TestWorktreeSessionWritesToWorktreeNotBase(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateSession(wtB): %v", err)
 	}
-	if sess.Workspace != wtB {
-		t.Fatalf("session workspace = %q, want %q", sess.Workspace, wtB)
+	if sess.EnvironmentRef.ID != wtB {
+		t.Fatalf("session workspace = %q, want %q", sess.EnvironmentRef.ID, wtB)
 	}
 
 	run, err := svc.StartRun(ctx, sess.ID, "write a marker file")

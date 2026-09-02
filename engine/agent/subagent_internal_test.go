@@ -243,7 +243,7 @@ func TestDriveChildStructuredPlainTextExhaustsToCleanTerminal(t *testing.T) {
 
 	ws := memfs.NewWorkspace("/ws")
 	childID := session.SessionID("subagent-c1")
-	child := session.New(childID, session.ModeDefault, ws.Root(), session.Limits{}, time.Now())
+	child := session.New(childID, session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: ws.Root(), Revision: "in-tree-v1"}, session.Limits{}, time.Now())
 	submit := newSubmitResultTool(schema)
 	call := session.NewToolCall("c1", subagentToolName, nil)
 
@@ -297,7 +297,7 @@ func TestDriveChildStructuredRetryPreservesMaxRunTokensOverride(t *testing.T) {
 	})
 	ws := memfs.NewWorkspace("/ws")
 	childID := session.SessionID("subagent-budget-copy")
-	child := session.New(childID, session.ModeDefault, ws.Root(), session.Limits{}, time.Now())
+	child := session.New(childID, session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: ws.Root(), Revision: "in-tree-v1"}, session.Limits{}, time.Now())
 	schema := json.RawMessage(`{"type":"object","required":["answer"]}`)
 	submit := newSubmitResultTool(schema)
 	call := session.NewToolCall("c-budget-copy", subagentToolName, nil)
@@ -344,7 +344,7 @@ func TestSalvageEmptyStopPreservesMaxRunTokensOverride(t *testing.T) {
 	})
 	ws := memfs.NewWorkspace("/ws")
 	childID := session.SessionID("subagent-salvage-budget-copy")
-	child := session.New(childID, session.ModeDefault, ws.Root(), session.Limits{MaxTurns: 1}, time.Now())
+	child := session.New(childID, session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: ws.Root(), Revision: "in-tree-v1"}, session.Limits{MaxTurns: 1}, time.Now())
 	call := session.NewToolCall("c-salvage-copy", subagentToolName, nil)
 
 	final, stop, _, usage, _ := driveChild(context.Background(), engine, child, testEnvironment(ws, nil),
@@ -396,7 +396,7 @@ func TestSubmitResultOverlayWinsAndIsAdvertised(t *testing.T) {
 	}
 
 	// (b) buildRequest advertises the OVERLAY's spec for the colliding name, exactly once.
-	sess := session.New("s1", session.ModeDefault, "/ws", session.Limits{}, time.Now())
+	sess := session.New("s1", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Now())
 	req := engine.buildRequest(context.Background(), r, sess, memEnv("/ws"))
 	count, sawOverlay := 0, false
 	for _, spec := range req.Tools {

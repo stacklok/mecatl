@@ -435,7 +435,7 @@ func runSubagentAgent(t *testing.T, _ *mockllm.Provider, engines map[string]*age
 		Model:   "gpt-5",
 	})
 	r := e.Run(context.Background(),
-		session.New("s1", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0)),
+		session.New("s1", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0)),
 		memEnvironment("/ws"), agent.RunRequest{Text: "go"})
 
 	var last string
@@ -664,7 +664,7 @@ func runFactorySubagentTurn(t *testing.T, factory server.SessionEngineFactory, s
 		t.Fatalf("factory(%+v): %v", sel, err)
 	}
 	defer func() { _ = res.Close() }()
-	sess := session.New("s1", session.ModeDefault, "/ws", session.Limits{MaxTurns: 5}, time.Now())
+	sess := session.New("s1", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{MaxTurns: 5}, time.Now())
 	r := res.Engine.Run(context.Background(), sess, memEnvironment("/ws"), agent.RunRequest{Text: "go", Parts: nil})
 	var last string
 	for ev := range r.Events() {

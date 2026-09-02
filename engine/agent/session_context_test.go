@@ -43,7 +43,7 @@ func (p *contextObservingProvider) sessionIDs() []session.SessionID {
 func TestStartRunBindsExactLoadedSessionID(t *testing.T) {
 	const id session.SessionID = "persisted/session:exact-543"
 	policy := permpolicy.NewPolicy(nil, permstore.New())
-	sess := session.New(id, session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
+	sess := session.New(id, session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
 
 	write := &fakeTool{name: "Write", readOnly: false,
 		exec: func(_ context.Context, in session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {

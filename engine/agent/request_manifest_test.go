@@ -61,7 +61,7 @@ func TestRequestManifestDisabledByDefault(t *testing.T) {
 		}
 	})}, mockllm.TextTurn("done"))
 	eng := newEngine(agent.Deps{LLM: provider, Catalog: tool.NewCatalog(), Sink: sink})
-	run := eng.Run(context.Background(), session.New("manifest-off", session.ModeDefault, "/ws", session.Limits{}, time.Time{}), agent.MemEnv("/ws"), agent.RunRequest{Text: "hello"})
+	run := eng.Run(context.Background(), session.New("manifest-off", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Time{}), agent.MemEnv("/ws"), agent.RunRequest{Text: "hello"})
 	for _, ev := range drain(run) {
 		if ev.Type == session.EvRequestManifest {
 			t.Fatal("zero/default Deps emitted request.manifest")

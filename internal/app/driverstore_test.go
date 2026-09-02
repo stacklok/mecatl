@@ -207,7 +207,7 @@ func TestBuildStoreRedisURL(t *testing.T) {
 	}
 	// A Save/Load round-trip through the composition-wired adapter proves it is
 	// the real store, not a nil stub.
-	s := session.New("redis-build-test", session.ModeAccept, "/work", session.Limits{}, time.Now())
+	s := session.New("redis-build-test", session.ModeAccept, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/work", Revision: "in-tree-v1"}, session.Limits{}, time.Now())
 	if err := st.Save(context.Background(), s); err != nil {
 		t.Fatalf("Save through composition-wired redisstore: %v", err)
 	}

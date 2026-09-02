@@ -244,7 +244,7 @@ func TestOpenAICodexRemintAndInheritance(t *testing.T) {
 	}
 	mu.Unlock()
 
-	sess := session.New("codex-inherit", session.ModeDefault, "/ws", session.Limits{MaxTurns: 8}, time.Unix(0, 0))
+	sess := session.New("codex-inherit", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{MaxTurns: 8}, time.Unix(0, 0))
 	if got := drainRun(result.Engine.Run(ctx, sess, memEnvironment("/ws"), agent.RunRequest{Text: "delegate"})); got != "CODEX-PARENT" {
 		t.Fatalf("parent final = %q, want CODEX-PARENT (child must inherit selected Codex provider)", got)
 	}
@@ -284,7 +284,7 @@ func TestOpenAICodexRemintAndInheritance(t *testing.T) {
 			t.Fatalf("no-FS factory: %v", err)
 		}
 		defer func() { _ = res.Close() }()
-		noFSSess := session.New("codex-nofs", session.ModePlan, "", session.Limits{MaxTurns: 3}, time.Unix(0, 0))
+		noFSSess := session.New("codex-nofs", session.ModePlan, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/workspace", Revision: "in-tree-v1"}, session.Limits{MaxTurns: 3}, time.Unix(0, 0))
 		if got := drainRun(res.Engine.Run(ctx, noFSSess, testEnvironment(nofs.New(), nil), agent.RunRequest{Text: "answer without files"})); got != "NOFS-CODEX" {
 			t.Fatalf("no-FS result = %q", got)
 		}

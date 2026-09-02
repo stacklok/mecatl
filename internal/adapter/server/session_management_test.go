@@ -216,7 +216,7 @@ func newManagementBarrierFixture(t *testing.T) (*managementBarrierStore, *sessio
 	t.Helper()
 	base := memstore.New()
 	alice := &session.Principal{Issuer: "issuer", Subject: "alice", GrantType: session.GrantTypeUser}
-	sess := session.New("alice-session", session.ModeDefault, "/ws", session.Limits{}, time.Unix(1, 0))
+	sess := session.New("alice-session", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1, 0))
 	if err := sess.RestoreLabels(alice, session.Authority{}); err != nil {
 		t.Fatalf("RestoreLabels: %v", err)
 	}
@@ -424,7 +424,7 @@ func TestCallerSeparation_ManagementReloadReauthorizesAfterPreflight(t *testing.
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			store, sess, aliceCtx, _ := newManagementBarrierFixture(t)
-			replacement := session.New(sess.ID, session.ModeDefault, "/ws", session.Limits{}, time.Unix(2, 0))
+			replacement := session.New(sess.ID, session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(2, 0))
 			if err := replacement.RestoreLabels(&session.Principal{Issuer: "issuer", Subject: "bob", GrantType: session.GrantTypeUser}, session.Authority{}); err != nil {
 				t.Fatalf("RestoreLabels replacement: %v", err)
 			}
@@ -479,14 +479,14 @@ func TestCallerSeparation_ManagementReauthorizesAfterLeaseAcquisition(t *testing
 		t.Run(tt.name, func(t *testing.T) {
 			base := memstore.New()
 			alice := &session.Principal{Issuer: "issuer", Subject: "alice", GrantType: session.GrantTypeUser}
-			sess := session.New("alice-session", session.ModeDefault, "/ws", session.Limits{}, time.Unix(1, 0))
+			sess := session.New("alice-session", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1, 0))
 			if err := sess.RestoreLabels(alice, session.Authority{}); err != nil {
 				t.Fatalf("RestoreLabels: %v", err)
 			}
 			if err := base.Save(context.Background(), sess); err != nil {
 				t.Fatalf("Save fixture: %v", err)
 			}
-			replacement := session.New(sess.ID, session.ModeDefault, "/ws", session.Limits{}, time.Unix(2, 0))
+			replacement := session.New(sess.ID, session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(2, 0))
 			if err := replacement.RestoreLabels(&session.Principal{Issuer: "issuer", Subject: "bob", GrantType: session.GrantTypeUser}, session.Authority{}); err != nil {
 				t.Fatalf("RestoreLabels replacement: %v", err)
 			}
@@ -532,11 +532,11 @@ func TestSessionManagementRevalidatesAfterLeaseWithoutOwnership(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			base := memstore.New()
-			sess := session.New("session", session.ModeDefault, "/ws", session.Limits{}, time.Unix(1, 0))
+			sess := session.New("session", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1, 0))
 			if err := base.Save(context.Background(), sess); err != nil {
 				t.Fatalf("Save fixture: %v", err)
 			}
-			replacement := session.New(sess.ID, session.ModeDefault, "/ws", session.Limits{}, time.Unix(2, 0))
+			replacement := session.New(sess.ID, session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(2, 0))
 			if err := replacement.RestoreSessionMetadata(session.SessionKindSubagent, session.SessionRelationship{ParentSessionID: "parent", CallID: "call"}); err != nil {
 				t.Fatalf("RestoreSessionMetadata replacement: %v", err)
 			}
@@ -599,7 +599,7 @@ func TestSessionManagementRenameDeleteAndOwnership(t *testing.T) {
 
 func TestSessionManagementRejectsInvalidUTF8IDBeforeRenameResponse(t *testing.T) {
 	inner := memstore.New()
-	corrupt := session.New("bad\xffid", session.ModeDefault, "/workspace", session.Limits{}, time.Unix(1, 0))
+	corrupt := session.New("bad\xffid", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/workspace", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1, 0))
 	svc := newSessionManagementServiceWithStore(t, &corruptSessionIDStore{SessionStore: inner, sess: corrupt}, nil)
 
 	if _, err := svc.RenameSession(context.Background(), corrupt.ID, "renamed"); !errors.Is(err, server.ErrInternal) {
@@ -611,7 +611,7 @@ func TestSessionManagementRejectsKindAwaitingAndLive(t *testing.T) {
 	svc, store := newSessionManagementService(t, false, nil, blockingProvider{})
 	ctx := context.Background()
 
-	child := session.New("subagent-parent-call", session.ModeDefault, "/ws", session.Limits{}, time.Unix(1, 0))
+	child := session.New("subagent-parent-call", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1, 0))
 	if err := child.RestoreSessionMetadata(session.SessionKindSubagent, session.SessionRelationship{ParentSessionID: "parent", CallID: "call"}); err != nil {
 		t.Fatalf("RestoreSessionMetadata: %v", err)
 	}
@@ -720,7 +720,7 @@ func TestRetentionDeleteRevalidatesCandidateAfterPlanning(t *testing.T) {
 		t.Fatalf("running candidate was deleted: %v", err)
 	}
 
-	unknown := session.New("legacy-unknown", session.ModeDefault, "/ws", session.Limits{}, time.Now())
+	unknown := session.New("legacy-unknown", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Now())
 	if err := unknown.RestoreSessionMetadata(session.SessionKindUnknown, session.SessionRelationship{}); err != nil {
 		t.Fatalf("RestoreSessionMetadata: %v", err)
 	}
@@ -840,7 +840,7 @@ func TestSessionManagementActionReasonsTransportParity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
-	child := session.New("child", session.ModeDefault, "/child", session.Limits{}, time.Unix(1, 0))
+	child := session.New("child", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/child", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1, 0))
 	if err := child.RestoreSessionMetadata(session.SessionKindSubagent, session.SessionRelationship{ParentSessionID: main.ID, CallID: "call"}); err != nil {
 		t.Fatalf("RestoreSessionMetadata: %v", err)
 	}
@@ -921,7 +921,7 @@ func TestForkSessionUsesManagementGateAndScopedLease(t *testing.T) {
 		t.Fatalf("foreign fork acquired %d leases, want 0", lease.acquires)
 	}
 
-	child := session.New("subagent-legacy", session.ModeDefault, "/ws", session.Limits{}, time.Unix(1, 0))
+	child := session.New("subagent-legacy", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1, 0))
 	child.Owner = session.PrincipalFromContext(alice).Clone()
 	if err := child.RestoreSessionMetadata(session.SessionKindMain, session.SessionRelationship{}); err != nil {
 		t.Fatalf("RestoreSessionMetadata: %v", err)

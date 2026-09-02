@@ -478,7 +478,7 @@ func TestBuildMessagesUserTextFastPath(t *testing.T) {
 // closes out the orphan), and asserts the built request has a matching
 // tool_result for every tool_use — no orphan that Anthropic would 400 on.
 func TestRequestNoOrphanedToolUseAfterInterrupt(t *testing.T) {
-	sess := session.New("s1", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
+	sess := session.New("s1", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
 	if err := sess.RecordUserPrompt("read the file", nil); err != nil {
 		t.Fatalf("RecordUserPrompt: %v", err)
 	}

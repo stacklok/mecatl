@@ -12,6 +12,8 @@ import (
 	"github.com/stacklok/mecatl/engine/tool"
 )
 
+const inTreeEnvironmentRevision = "in-tree-v1"
+
 var (
 	// ErrInvalidPlacementSelection reports a malformed selector or binding request.
 	ErrInvalidPlacementSelection = errors.New("server: invalid placement selection")
@@ -100,9 +102,6 @@ func NewPlacementBinder(provider PlacementProvider) (*PlacementBinder, error) {
 }
 
 func configuredPlacementBinder(ctx context.Context, cfg Config) (*PlacementBinder, error) {
-	if err := validateWorkspaceAuthorityConfig(cfg); err != nil {
-		return nil, err
-	}
 	if cfg.PlacementProvider == nil {
 		return nil, nil
 	}
@@ -163,8 +162,9 @@ func (s *Service) bindPlacementForCreate(ctx context.Context, workspace string, 
 func (s *Service) persistPlacedCreatedSession(ctx context.Context, sess *session.Session, owner *session.Principal, request *createRequest, placement *PlacementBinding) (*session.Session, error) {
 	if placement != nil {
 		sess.EnvironmentRef = placement.Ref
-	} else {
-		stampDefaultEnvironmentRef(sess)
+	}
+	if !sess.EnvironmentRef.Valid() {
+		return nil, fmt.Errorf("%w: placement did not provide an exact environment ref", ErrInvalidPlacementBinding)
 	}
 	persisted, err := s.persistCreatedSession(ctx, sess, owner, request)
 	if err == nil && persisted == sess && placement != nil {
@@ -178,10 +178,10 @@ func (s *Service) persistPlacedCreatedSession(ctx context.Context, sess *session
 func (s *Service) resolveSchedulePlacement(ctx context.Context, ref session.EnvironmentRef, profile SessionProfile) (session.EnvironmentRef, string, SessionProfile, error) {
 	if s.placementBinder == nil {
 		if profile == ProfileNoFS {
-			return session.EnvironmentRef{Kind: session.EnvKindNoFS, ID: "none", Revision: "in-tree-v1"}, "legacy-local", profile, nil
+			return session.EnvironmentRef{Kind: session.EnvKindNoFS, ID: "none", Revision: inTreeEnvironmentRevision}, "legacy-local", profile, nil
 		}
 		if !ref.Valid() && s.cfg.DefaultWorkspace != "" {
-			ref = session.EnvironmentRef{Kind: session.EnvKindLocal, ID: s.cfg.DefaultWorkspace, Revision: "in-tree-v1"}
+			ref = session.EnvironmentRef{Kind: session.EnvKindLocal, ID: s.cfg.DefaultWorkspace, Revision: inTreeEnvironmentRevision}
 		}
 		if !ref.Valid() {
 			return session.EnvironmentRef{}, "", profile, fmt.Errorf("%w: exact schedule placement is required", ErrFailedPrecondition)
@@ -234,6 +234,23 @@ func (s *Service) reattachLegacySchedulePlacement(ref session.EnvironmentRef) (P
 		return PlacementBinding{}, err
 	}
 	return PlacementBinding{Environment: env, Ref: ref}, nil
+}
+
+func (s *Service) privateWorkspace(ctx context.Context, sess *session.Session) (string, error) {
+	s.mu.Lock()
+	env, ok := s.sessionEnvironments[sess.ID]
+	s.mu.Unlock()
+	if ok && env.Ref() == sess.EnvironmentRef && env.Workspace() != nil {
+		return env.Workspace().Root(), nil
+	}
+	if s.placementBinder == nil {
+		return "", fmt.Errorf("%w: no PlacementProvider is configured", ErrFailedPrecondition)
+	}
+	binding, err := s.ReattachPlacement(ctx, sess.EnvironmentRef)
+	if err != nil {
+		return "", err
+	}
+	return binding.Environment.Workspace().Root(), nil
 }
 
 // Bind validates the request, delegates exactly one atomic operation to the

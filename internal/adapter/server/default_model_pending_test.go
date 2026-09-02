@@ -94,7 +94,7 @@ func TestDefaultModelPendingRoutesZeroSelectorThroughPerSessionFactory(t *testin
 // the factory at run entry and picks up a heal that landed meanwhile.
 func TestNeedsRehydration_DefaultModelPending(t *testing.T) {
 	const workspace = "/srv/base"
-	sess := session.New("s1", session.ModeDefault, workspace, session.Limits{}, time.Unix(0, 0))
+	sess := session.New("s1", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: workspace, Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
 
 	svcPending, _ := pendingDefaultService(t, true, nil)
 	if !svcPending.NeedsRehydrationForTest(sess) {

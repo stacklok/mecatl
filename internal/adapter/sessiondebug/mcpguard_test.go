@@ -23,7 +23,7 @@ func (t *countingMCP) Execute(_ context.Context, call session.ToolCall, _ tool.E
 func TestSelectedMCPRevalidatesTargetAfterApprovalWait(t *testing.T) {
 	ctx := t.Context()
 	store := memstore.New()
-	target := session.New("target", session.ModeDefault, "", session.Limits{}, time.Unix(1, 0))
+	target := session.New("target", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/workspace", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1, 0))
 	if err := store.Save(ctx, target); err != nil {
 		t.Fatal(err)
 	}
@@ -34,7 +34,7 @@ func TestSelectedMCPRevalidatesTargetAfterApprovalWait(t *testing.T) {
 	if err := store.Delete(ctx, target.ID); err != nil {
 		t.Fatal(err)
 	}
-	replacement := session.New(target.ID, session.ModeDefault, "", session.Limits{}, time.Unix(2, 0))
+	replacement := session.New(target.ID, session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/workspace", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(2, 0))
 	if err := store.Create(ctx, replacement); err != nil {
 		t.Fatal(err)
 	}

@@ -56,7 +56,7 @@ func TestWebSearchModelFacingE2E(t *testing.T) {
 
 	policy := permpolicy.NewPolicy(permpolicy.AllowAllFloorRules(), nil)
 	e := agent.NewEngine(agent.Deps{LLM: llm, Catalog: cat, Clock: wallclock.Clock{}, Policy: policy})
-	sess := session.New("s1", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
+	sess := session.New("s1", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
 	ws := memfs.NewWorkspace("/ws")
 
 	env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: "/ws"}, ws, nil)

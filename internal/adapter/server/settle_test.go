@@ -23,7 +23,7 @@ import (
 // engine/session.TestAbandonFromRunningClosesOutOrphansAndIdles).
 func crashOrphanedSession(t *testing.T, id session.SessionID) *session.Session {
 	t.Helper()
-	sess := session.New(id, session.ModeDefault, "/tmp/ws", session.Limits{}, time.Unix(0, 0))
+	sess := session.New(id, session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/tmp/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
 	if err := sess.RecordUserPrompt("do two things", nil); err != nil {
 		t.Fatalf("RecordUserPrompt: %v", err)
 	}

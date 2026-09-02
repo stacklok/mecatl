@@ -140,19 +140,9 @@ type Config struct {
 	// PlacementScope is the trusted authorization scope passed to the provider.
 	// Empty defaults to the process deployment scope.
 	PlacementScope server.PlacementScope
-	// WorkspaceAuthority is the deployment's workspace-selection policy (ADR 0237).
-	// The zero value is client-selectable, preserving embedded and loopback use.
-	// The cmd/ main owns this decision: listener topology never reaches the server
-	// adapter.
-	WorkspaceAuthority server.WorkspaceAuthority
-	// AuthoritativeWorkspace is the root assigned to every filesystem session under
-	// WorkspaceAuthorityServerAssigned, which requires it. A file-less deployment
-	// selects WorkspaceAuthorityFileless and leaves this empty.
-	AuthoritativeWorkspace string
 	// ClientMCPOnCreate permits client-provided MCP servers on a session-creating
-	// API request (issue #821, ADR 0237 applied to outbound MCP). Like
-	// WorkspaceAuthority it is a deployment policy the cmd/ main decides from its
-	// listener topology and Build passes through verbatim; the zero value fails
+	// API request (issue #821, ADR 0237 applied to outbound MCP). It is a
+	// deployment policy the cmd/ main decides from its listener topology and Build passes through verbatim; the zero value fails
 	// closed, so a composition root that never sets it refuses the field.
 	ClientMCPOnCreate bool
 	Model             string
@@ -1800,12 +1790,8 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	}
 	placementProvider := cfg.PlacementProvider
 	if placementProvider == nil {
-		placementRoot := cfg.Workspace
-		if cfg.AuthoritativeWorkspace != "" {
-			placementRoot = cfg.AuthoritativeWorkspace
-		}
 		placementProvider = &localPlacementProvider{
-			scope: placementScope, root: placementRoot, workspace: workspaceFactory,
+			scope: placementScope, root: cfg.Workspace, workspace: workspaceFactory,
 			runnerForRoot: func(root string) tool.CommandRunner {
 				return buildCommandRunnerForRoot(cfg, root)
 			},
@@ -1847,10 +1833,6 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 			return mintRootAuthority(assets.rootCatalog, mcpResourceCapabilities(assets.globalMgr), kind)
 		},
 		DefaultWorkspace: cfg.Workspace, // the launch root; a session on a DIFFERENT root routes through the per-session factory (issue #102, docs/adr/0032)
-		// ADR 0237: the deployment's workspace-selection policy, decided by the cmd/
-		// main from its listener topology and passed through verbatim.
-		WorkspaceAuthority:     cfg.WorkspaceAuthority,
-		AuthoritativeWorkspace: cfg.AuthoritativeWorkspace,
 		// ADR 0237 applied to outbound MCP: the same deployment-policy discipline —
 		// decided by the cmd/ main from its listener topology, passed through here,
 		// never inferred from the server package's socket state.
@@ -2066,8 +2048,9 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		ReflectSession: func(ctx context.Context, sess *session.Session) (server.ReflectionReceipt, error) {
 			reflectionCfg := cfg
 			reflectionProvider := provider
-			reflectionCfg.Workspace = sess.Workspace
-			reflectionCfg.LearningMode, reflectionCfg.LearningSensitivity, reflectionCfg.SkillActivationPolicy = learningPolicyForWorkspace(cfg, sess.Workspace)
+			workspace := memory.WorkspaceFromContext(ctx)
+			reflectionCfg.Workspace = workspace
+			reflectionCfg.LearningMode, reflectionCfg.LearningSensitivity, reflectionCfg.SkillActivationPolicy = learningPolicyForWorkspace(cfg, workspace)
 			reflectionCfg.Model = sess.ModelID
 			if sess.ProviderID != "" {
 				entry, ok := reg.Lookup(sess.ProviderID)
@@ -2089,7 +2072,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 				return server.ReflectionReceipt{}, errors.New("reflection is not configured")
 			}
 			stop, _ := sess.StopReason()
-			trajectory := learning.NewTrajectory(sess.ID, sess.Workspace, stop, sess.Usage, sess.Conversation.Messages)
+			trajectory := learning.NewTrajectory(sess.ID, workspace, stop, sess.Usage, sess.Conversation.Messages)
 			trajectory.Principal = sess.Owner.Clone()
 			trajectory.Kind = sess.Kind
 			trajectory.Counters = sess.Counters

@@ -464,7 +464,7 @@ func TestUntrustedWorkspaceSubagentRunsBashless(t *testing.T) {
 	parentCat.MustRegister(task)
 	parentEng := newChildEngine(cfg, "", parentProvider, parentCat, cfg.Model, fixedDefaultWindow, promptConfig(cfg, cfg.gitStatus))
 
-	sess := session.New("parent", session.ModeDefault, cfg.Workspace, session.Limits{MaxTurns: 5}, time.Now())
+	sess := session.New("parent", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: cfg.Workspace, Revision: "in-tree-v1"}, session.Limits{MaxTurns: 5}, time.Now())
 	run := parentEng.Run(context.Background(), sess, parentEnv, agent.RunRequest{Text: "go"})
 	var sawResult bool
 	for ev := range run.Events() {

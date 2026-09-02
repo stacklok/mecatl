@@ -41,7 +41,7 @@ func TestOperatorProfileRefreshAndCustomBuilder(t *testing.T) {
 	src := &scriptedProfileSource{results: []profileSourceResult{{entries: []tool.MemoryEntry{first}}, {entries: []tool.MemoryEntry{second}}}}
 	var cfgs []prompt.Config
 	eng := newEngine(agent.Deps{LLM: mockllm.New(mockllm.ToolCallTurn(toolCall("c1", "Ping", `{}`)), mockllm.TextTurn("done")), Catalog: catalogWith(t, &fakeTool{name: "Ping", exec: okExec}), OperatorProfileSource: src, PromptBuilder: func(c prompt.Config) prompt.Layered { cfgs = append(cfgs, c); return prompt.Build(c) }})
-	sess := session.New("profile-refresh", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
+	sess := session.New("profile-refresh", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
 	drain(eng.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "hi"}))
 	if src.calls != 2 || len(cfgs) != 2 || cfgs[0].OperatorProfile.Entries[0].Value != "vim" || cfgs[1].OperatorProfile.Entries[0].Value != "zed" {
 		t.Fatalf("refresh calls/configs = %d/%#v", src.calls, cfgs)
@@ -60,7 +60,7 @@ func TestOperatorProfilePreservesTurnZeroProjectMemoryIndex(t *testing.T) {
 	var request port.LLMRequest
 	llm := mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(func(got port.LLMRequest) { request = got })}, mockllm.TextTurn("done"))
 	eng := newEngine(agent.Deps{LLM: llm, Catalog: tool.NewCatalog(), Instructions: assembler, OperatorProfileSource: src})
-	sess := session.New("profile-index", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
+	sess := session.New("profile-index", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
 	drain(eng.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "deploy"}))
 	if assembler.called != 1 || len(request.Messages) < 2 || !strings.Contains(request.Messages[0].Text, "project/deploy") {
 		t.Fatalf("project-memory fragment lost: called=%d messages=%#v", assembler.called, request.Messages)
@@ -82,7 +82,7 @@ func TestOperatorProfileFailureFallbackWarnOnce(t *testing.T) {
 	llm := mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(func(r port.LLMRequest) { suffixes = append(suffixes, r.System.VolatileSuffix) })}, mockllm.ToolCallTurn(toolCall("c1", "Ping", `{}`)), mockllm.ToolCallTurn(toolCall("c2", "Ping", `{}`)), mockllm.TextTurn("done"))
 	diag := newCapturingDiag()
 	eng := newEngine(agent.Deps{LLM: llm, Catalog: catalogWith(t, &fakeTool{name: "Ping", exec: okExec}), OperatorProfileSource: src, Diagnostics: diag})
-	sess := session.New("profile-fail", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
+	sess := session.New("profile-fail", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
 	drain(eng.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "hi"}))
 	if len(suffixes) != 3 || strings.Contains(suffixes[0], "operator-profile") || !strings.Contains(suffixes[1], "français") || suffixes[1] != suffixes[2] {
 		t.Fatalf("suffixes = %#v", suffixes)

@@ -302,7 +302,7 @@ func TestFireFailedUsesPresentedScheduleNameOnCreateFailure(t *testing.T) {
 		Spec: port.ScheduleSpec{
 			Name:           physical,
 			Prompt:         "say done",
-			EnvironmentRef: session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "", Revision: "in-tree-v1"},
+			EnvironmentRef: session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/workspace", Revision: "in-tree-v1"},
 			PlacementScope: "legacy-local",
 			Owner:          owner,
 		},

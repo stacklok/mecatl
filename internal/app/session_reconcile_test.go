@@ -25,7 +25,7 @@ import (
 // internal/adapter/server's own crashOrphanedSession fixture, issue #475).
 func crashOrphanedSessionFixture(t *testing.T, id session.SessionID, createdAt time.Time) *session.Session {
 	t.Helper()
-	sess := session.New(id, session.ModeDefault, "/tmp/ws", session.Limits{}, createdAt)
+	sess := session.New(id, session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/tmp/ws", Revision: "in-tree-v1"}, session.Limits{}, createdAt)
 	if err := sess.RecordUserPrompt("do the thing", nil); err != nil {
 		t.Fatalf("RecordUserPrompt: %v", err)
 	}
@@ -46,7 +46,7 @@ func crashOrphanedSessionFixture(t *testing.T, id session.SessionID, createdAt t
 // permission ask) — never a sweep candidate regardless of age.
 func awaitingSessionFixture(t *testing.T, id session.SessionID, createdAt time.Time) *session.Session {
 	t.Helper()
-	sess := session.New(id, session.ModeDefault, "/tmp/ws", session.Limits{}, createdAt)
+	sess := session.New(id, session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/tmp/ws", Revision: "in-tree-v1"}, session.Limits{}, createdAt)
 	if err := sess.RecordUserPrompt("do the thing", nil); err != nil {
 		t.Fatalf("RecordUserPrompt: %v", err)
 	}

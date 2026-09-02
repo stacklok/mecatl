@@ -138,7 +138,7 @@ func TestListSessionsOverJsonlstore(t *testing.T) {
 	// the session's OWN model, never the default engine's (the M1 regression this
 	// test guards).
 	mkSession := func(id session.SessionID, created time.Time, turns int, modelID string) *session.Session {
-		s := session.New(id, session.ModeDefault, "/ws", session.Limits{}, created)
+		s := session.New(id, session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, created)
 		s.ModelID = modelID
 		// Bump the turn counter by recording assistant turns.
 		for i := 0; i < turns; i++ {
@@ -444,11 +444,11 @@ func TestListSessionsGRPC(t *testing.T) {
 	if err != nil {
 		t.Fatalf("jsonlstore: %v", err)
 	}
-	sA := session.New("ls-a", session.ModeDefault, "/ws", session.Limits{}, time.Unix(1700000000, 0).UTC())
+	sA := session.New("ls-a", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1700000000, 0).UTC())
 	if err := st.Save(ctx, sA); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	sB := session.New("ls-b", session.ModeDefault, "/ws", session.Limits{}, time.Unix(1700000100, 0).UTC())
+	sB := session.New("ls-b", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1700000100, 0).UTC())
 	// sB used a non-default model at create time; its OWN persisted ModelID must
 	// surface here, never the service's DefaultResolvedModel ("test-model") — the
 	// M1 regression this test guards (a non-live row previously reported the
@@ -488,7 +488,7 @@ func TestListSessionsHTTP(t *testing.T) {
 	if err != nil {
 		t.Fatalf("jsonlstore: %v", err)
 	}
-	s := session.New("ls-http", session.ModeDefault, "/ws", session.Limits{}, time.Unix(1700000000, 0).UTC())
+	s := session.New("ls-http", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1700000000, 0).UTC())
 	if err := st.Save(ctx, s); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
@@ -645,7 +645,7 @@ func (s *corruptSessionIDStore) Load(context.Context, session.SessionID) (*sessi
 // malformed persisted bytes must not be repaired into a different clipboard handle.
 func TestGetSessionRejectsInvalidUTF8IDBeforeProtoMapping(t *testing.T) {
 	inner := memstore.New()
-	corrupt := session.New("bad\xffid", session.ModeDefault, "/workspace", session.Limits{}, time.Unix(1, 0))
+	corrupt := session.New("bad\xffid", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/workspace", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1, 0))
 	svc := listSessionsServiceOverStore(t, &corruptSessionIDStore{SessionStore: inner, sess: corrupt})
 
 	if _, err := svc.GetSession(context.Background(), "lookup-id"); !errors.Is(err, server.ErrInternal) {

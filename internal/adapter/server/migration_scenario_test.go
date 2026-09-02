@@ -151,7 +151,7 @@ func writeV1Family(t *testing.T, dir string, sess *session.Session, tools, event
 
 func newLegacySession(t *testing.T, id string, owner *session.Principal) *session.Session {
 	t.Helper()
-	sess := session.New(session.SessionID(id), session.ModePlan, "/workspace", session.Limits{MaxTurns: 7}, time.Unix(1700000000, 0).UTC())
+	sess := session.New(session.SessionID(id), session.ModePlan, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/workspace", Revision: "in-tree-v1"}, session.Limits{MaxTurns: 7}, time.Unix(1700000000, 0).UTC())
 	if err := sess.RestoreSessionMetadata(session.SessionKindUnknown, session.SessionRelationship{}); err != nil {
 		t.Fatalf("RestoreSessionMetadata: %v", err)
 	}

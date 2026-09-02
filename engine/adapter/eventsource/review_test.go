@@ -172,7 +172,7 @@ func TestFoldReasoningProviderDivergesOnSnapshotOnlyFields(t *testing.T) {
 		Policy:  permpolicy.NewPolicy(permpolicy.AllowAllFloorRules(), nil),
 		Model:   "test-model",
 	})
-	sess := session.New(sessID, session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
+	sess := session.New(sessID, session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
 	ctx := context.Background()
 	ws := memfs.NewWorkspace("/ws")
 	env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: "/ws"}, ws, nil)
@@ -192,7 +192,7 @@ func TestFoldReasoningProviderDivergesOnSnapshotOnlyFields(t *testing.T) {
 	}
 	folded, err := eventsource.Fold(eventsource.SessionMeta{
 		ID: sessID, Mode: session.ModeDefault, Limits: session.Limits{},
-		Workspace: "/ws", CreatedAt: time.Unix(0, 0),
+		EnvironmentRef: session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, CreatedAt: time.Unix(0, 0),
 	}, log.Read(ctx, sessID))
 	if err != nil {
 		t.Fatalf("fold: %v", err)
@@ -241,23 +241,17 @@ func TestFoldContractDocMatchesSessionFields(t *testing.T) {
 	//     TitleProvenance fallback (seeded from the first genuine EvUserPrompt via
 	//     SetTitle)
 	//   run-scoped (latest segment): Counters
-	//   supplied via SessionMeta (not event-carried): ID, Mode, Limits, Workspace,
-	//     Profile, ProviderID, ModelID, ReasoningEffort, DebugMCPServers,
-	//     DebugMCPTools, DebugTargetFingerprint, Title, TitleProvenance,
-	//     Kind, Relationship, CreatedAt; adoption metadata is supplied via
-	//     SessionMeta and restored as optional Session.Adoption metadata
-	//   not-event-carried identity labels (ADR 0204/0214): Owner, Authority,
-	//     EnvironmentRef — the event annotation is log-only and the fold neither
-	//     requires nor re-derives any of them, so a folded session keeps the
-	//     snapshot-restored value (ownerless stays ownerless, a zero ref stays
-	//     zero — composition stamps it from the first resolved live Environment on
-	//     the next run — never fabricated)
+	//   supplied via SessionMeta (not event-carried): ID, Mode, Limits,
+	//     EnvironmentRef, Profile, ProviderID, ModelID, ReasoningEffort,
+	//     DebugMCPServers, DebugMCPTools, DebugTargetFingerprint, Title,
+	//     TitleProvenance, Kind, Relationship, CreatedAt
+	//   not-event-carried identity labels: Owner and Authority
 	wantSessionFields := map[string]struct{}{
 		"ID": {}, "State": {}, "Mode": {}, "Conversation": {}, "Limits": {},
-		"Counters": {}, "Usage": {}, "Workspace": {}, "Profile": {},
+		"Counters": {}, "Usage": {}, "Profile": {}, "EnvironmentRef": {},
 		"ProviderID": {}, "ModelID": {}, "ReasoningEffort": {}, "DebugMCPServers": {}, "DebugMCPTools": {}, "DebugTargetFingerprint": {}, "Kind": {},
-		"Relationship": {}, "Adoption": {}, "CreatedAt": {},
-		"Title": {}, "TitleProvenance": {}, "Owner": {}, "Authority": {}, "EnvironmentRef": {},
+		"Relationship": {}, "CreatedAt": {},
+		"Title": {}, "TitleProvenance": {}, "Owner": {}, "Authority": {},
 	}
 	assertExportedFields(t, reflect.TypeOf(session.Session{}), wantSessionFields,
 		"session.Session — classify the new field in COMPATIBILITY.md's reconstruction contract")
@@ -367,7 +361,7 @@ func TestFoldRecoversLiveCompactionArchiveHead(t *testing.T) {
 		Model:         "test-model",
 		ContextWindow: func() int { return 1 }, // tiny window → compaction fires
 	})
-	sess := session.New(sessID, session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
+	sess := session.New(sessID, session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
 	ctx := context.Background()
 	ws := memfs.NewWorkspace("/ws")
 	env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: "/ws"}, ws, nil)
@@ -387,7 +381,7 @@ func TestFoldRecoversLiveCompactionArchiveHead(t *testing.T) {
 
 	folded, err := eventsource.Fold(eventsource.SessionMeta{
 		ID: sessID, Mode: session.ModeDefault, Limits: session.Limits{},
-		Workspace: "/ws", CreatedAt: time.Unix(0, 0),
+		EnvironmentRef: session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, CreatedAt: time.Unix(0, 0),
 	}, log.Read(ctx, sessID))
 	if err != nil {
 		t.Fatalf("fold: %v", err)

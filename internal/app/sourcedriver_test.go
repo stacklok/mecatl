@@ -875,7 +875,7 @@ func TestSessionEngineCommandExpanderUsesStashedDriverSource(t *testing.T) {
 		if ferr != nil {
 			t.Fatalf("factory #%d: %v", i, ferr)
 		}
-		sess := session.New(session.SessionID(fmt.Sprintf("cmd-sess-%d", i)), session.ModeDefault, "/ws",
+		sess := session.New(session.SessionID(fmt.Sprintf("cmd-sess-%d", i)), session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"},
 			session.Limits{MaxTurns: 3}, time.Now())
 		drainRun(res.Engine.Run(ctx, sess, memEnvironment("/ws"), agent.RunRequest{Text: "/driver-cmd fix-it", Parts: nil}))
 		expanded := false

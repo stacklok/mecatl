@@ -40,7 +40,7 @@ const (
 func seedFailedChildWithOrphanedToolCall(t *testing.T, store port.SessionStore, id session.SessionID, promptText string) session.ToolCallID {
 	t.Helper()
 	const orphanID = session.ToolCallID("orphan-1")
-	seed := session.New(id, session.ModeDefault, "/ws", session.Limits{}, time.Now())
+	seed := session.New(id, session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindMem, ID: "/ws", Revision: "test-v1"}, session.Limits{}, time.Now())
 	if err := seed.RecordUserPrompt(promptText, nil); err != nil {
 		t.Fatalf("seed RecordUserPrompt: %v", err)
 	}
@@ -372,7 +372,7 @@ func TestReadOnlyResumeNoteKeepsFreshCheckoutWording(t *testing.T) {
 // this child's earlier file changes did NOT survive.
 func seedFailedChildInForkRoot(t *testing.T, store port.SessionStore, id session.SessionID, forkRoot string) {
 	t.Helper()
-	seed := session.New(id, session.ModeDefault, forkRoot, session.Limits{}, time.Now())
+	seed := session.New(id, session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: forkRoot, Revision: "in-tree-v1"}, session.Limits{}, time.Now())
 	if err := seed.RecordUserPrompt("investigate the parser", nil); err != nil {
 		t.Fatalf("seed RecordUserPrompt: %v", err)
 	}

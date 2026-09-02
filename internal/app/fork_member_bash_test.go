@@ -76,7 +76,7 @@ func sawDispatchedTool(events []session.Event, callID session.ToolCallID) bool {
 // drainEngine runs an engine over a fresh session and returns the full event stream.
 func drainEngine(t *testing.T, eng *agent.Engine) []session.Event {
 	t.Helper()
-	sess := session.New("s", session.ModeDefault, "/ws", session.Limits{MaxTurns: 5}, time.Now())
+	sess := session.New("s", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{MaxTurns: 5}, time.Now())
 	run := eng.Run(context.Background(), sess, memEnvironment("/ws"), agent.RunRequest{Text: "go"})
 	var events []session.Event
 	for ev := range run.Events() {

@@ -16,7 +16,7 @@ func TestLineageTombstoneContainsNoPrincipalPII(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := session.New("owned", session.ModeDefault, "", session.Limits{}, time.Unix(1, 0))
+	s := session.New("owned", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/workspace", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1, 0))
 	s.Owner = &session.Principal{Issuer: "secret-issuer.example", Subject: "private-subject", GrantType: session.GrantTypeUser, Name: "Private Person"}
 	if err := st.Save(ctx, s); err != nil {
 		t.Fatal(err)
@@ -41,7 +41,7 @@ func TestLineageCrashBoundaryReconciliation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	original := session.New("root", session.ModeDefault, "", session.Limits{}, time.Unix(1, 0))
+	original := session.New("root", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/workspace", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1, 0))
 	if err := st.Save(ctx, original); err != nil {
 		t.Fatal(err)
 	}
@@ -73,7 +73,7 @@ func TestLineageCrashBoundaryReconciliation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	replacement := session.New(original.ID, session.ModeDefault, "", session.Limits{}, time.Unix(2, 0))
+	replacement := session.New(original.ID, session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/workspace", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(2, 0))
 	if err := st.Save(ctx, replacement); err != nil {
 		t.Fatal(err)
 	}

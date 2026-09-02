@@ -22,7 +22,7 @@ func TestSessionStorageContinuity_Scenario2_CatalogRebuildAndExternalChange(t *t
 	}
 
 	const transcriptMarker = "TRANSCRIPT-AUTHORITY-MUST-NOT-ENTER-CATALOG"
-	current := session.New("current", session.ModeDefault, "/workspace", session.Limits{}, time.Unix(1_700_000_000, 0).UTC())
+	current := session.New("current", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/workspace", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1_700_000_000, 0).UTC())
 	current.SetTitle("initial title")
 	if err := current.RecordUserPrompt(transcriptMarker, nil); err != nil {
 		t.Fatalf("RecordUserPrompt: %v", err)
@@ -121,7 +121,7 @@ func TestSessionStorageContinuity_Scenario2_CatalogRebuildAndExternalChange(t *t
 		t.Fatalf("second Save: %v", err)
 	}
 
-	legacy := session.New("legacy", session.ModeDefault, "/legacy", session.Limits{}, time.Unix(1_600_000_000, 0).UTC())
+	legacy := session.New("legacy", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/legacy", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1_600_000_000, 0).UTC())
 	legacy.SetTitle("bounded v1 tail")
 	if err := legacy.RecordUserPrompt(strings.Repeat("historical-transcript-", 20_000), nil); err != nil {
 		t.Fatalf("legacy RecordUserPrompt: %v", err)

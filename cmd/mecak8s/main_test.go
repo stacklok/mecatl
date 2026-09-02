@@ -210,8 +210,8 @@ func TestListenerScopedWorkspaceAuthority_Scenario4_Mecak8sDefaultsToNoFS(t *tes
 	if sess.Profile != string(server.ProfileNoFS) {
 		t.Errorf("session profile = %q, want %q", sess.Profile, server.ProfileNoFS)
 	}
-	if sess.Workspace != "" {
-		t.Errorf("session workspace = %q, want empty for no-FS", sess.Workspace)
+	if sess.EnvironmentRef.Kind != session.EnvKindNoFS {
+		t.Errorf("session workspace = %q, want empty for no-FS", sess.EnvironmentRef)
 	}
 }
 
@@ -260,11 +260,8 @@ func TestListenerScopedWorkspaceAuthority_Scenario4_Mecak8sMountedWorkspaceIsSer
 	// Disable the k8s session lease (no kubeconfig in this offline test).
 	cfg.sessionLeaseK8sNamespace = ""
 	ac := appConfig(cfg, port.NopDiagnostics{}, observability{})
-	if ac.WorkspaceAuthority != server.WorkspaceAuthorityServerAssigned {
-		t.Fatalf("WorkspaceAuthority = %v, want ServerAssigned for a configured mount", ac.WorkspaceAuthority)
-	}
-	if ac.AuthoritativeWorkspace != mount || ac.Workspace != mount {
-		t.Fatalf("authoritative/workspace = %q/%q, want the mount %q", ac.AuthoritativeWorkspace, ac.Workspace, mount)
+	if ac.Workspace != mount {
+		t.Fatalf("workspace = %q, want the mount %q", ac.Workspace, mount)
 	}
 
 	built, err := app.Build(context.Background(), ac)
@@ -287,8 +284,8 @@ func TestListenerScopedWorkspaceAuthority_Scenario4_Mecak8sMountedWorkspaceIsSer
 	if sess.Profile != "" {
 		t.Errorf("session profile = %q, want default (filesystem) on a mounted deployment", sess.Profile)
 	}
-	if sess.Workspace != mount {
-		t.Errorf("session workspace = %q, want the deployment mount %q", sess.Workspace, mount)
+	if sess.EnvironmentRef.ID != mount {
+		t.Errorf("session placement ID = %q, want the deployment mount %q", sess.EnvironmentRef.ID, mount)
 	}
 
 	// A client cannot send placement authority; the generated request has no such field.

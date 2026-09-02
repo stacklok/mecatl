@@ -26,8 +26,8 @@ func TestLegacyDelegationEventCannotAttachRecreatedChild(t *testing.T) {
 	log := memstore.NewEventLog()
 	owner := &session.Principal{Issuer: "issuer", Subject: "owner", GrantType: session.GrantTypeUser}
 	created := time.Unix(1700000000, 0).UTC()
-	root := session.New("root", session.ModeDefault, "", session.Limits{}, created)
-	child, err := session.NewSubagent("child", session.ModeDefault, "", session.Limits{}, created, root.ID, root.Incarnation(), "call")
+	root := session.New("root", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/workspace", Revision: "in-tree-v1"}, session.Limits{}, created)
+	child, err := session.NewSubagent("child", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/workspace", Revision: "in-tree-v1"}, session.Limits{}, created, root.ID, root.Incarnation(), "call")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,7 +44,7 @@ func TestLegacyDelegationEventCannotAttachRecreatedChild(t *testing.T) {
 	if err := base.Delete(ctx, child.ID); err != nil {
 		t.Fatal(err)
 	}
-	replacement, err := session.NewSubagent(child.ID, session.ModeDefault, "", session.Limits{}, created, root.ID, root.Incarnation(), "call")
+	replacement, err := session.NewSubagent(child.ID, session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/workspace", Revision: "in-tree-v1"}, session.Limits{}, created, root.ID, root.Incarnation(), "call")
 	if err != nil {
 		t.Fatal(err)
 	}

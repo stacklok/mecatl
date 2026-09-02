@@ -94,7 +94,7 @@ func TestCreateSessionWithSessionIDNoOverrideIsByteIdentical(t *testing.T) {
 func TestGeneratedSessionIDCollisionDoesNotOverwriteForeignSnapshot(t *testing.T) {
 	store := memstore.New()
 	bob := session.Principal{Issuer: "https://issuer.example", Subject: "bob"}
-	winner := session.New("forced-collision", session.ModeDefault, "/bob", session.Limits{}, time.Unix(1, 0))
+	winner := session.New("forced-collision", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/bob", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1, 0))
 	if err := winner.RestoreLabels(&bob, session.Authority{}); err != nil {
 		t.Fatalf("RestoreLabels(winner): %v", err)
 	}
@@ -126,8 +126,8 @@ func TestGeneratedSessionIDCollisionDoesNotOverwriteForeignSnapshot(t *testing.T
 	if err != nil {
 		t.Fatalf("Load(winner): %v", err)
 	}
-	if got.Owner == nil || !got.Owner.SameIdentity(&bob) || got.Workspace != "/bob" || len(got.Conversation.Messages) != 1 {
-		t.Fatalf("foreign winner was changed: owner=%+v workspace=%q history=%+v", got.Owner, got.Workspace, got.Conversation.Messages)
+	if got.Owner == nil || !got.Owner.SameIdentity(&bob) || got.EnvironmentRef.ID != "/bob" || len(got.Conversation.Messages) != 1 {
+		t.Fatalf("foreign winner was changed: owner=%+v workspace=%q history=%+v", got.Owner, got.EnvironmentRef.ID, got.Conversation.Messages)
 	}
 }
 
@@ -159,11 +159,11 @@ func TestForkDestinationCollisionDoesNotOverwriteForeignSnapshot(t *testing.T) {
 	store := memstore.New()
 	alice := session.Principal{Issuer: "https://issuer.example", Subject: "alice"}
 	bob := session.Principal{Issuer: "https://issuer.example", Subject: "bob"}
-	source := session.New("source", session.ModeDefault, "/alice", session.Limits{}, time.Unix(1, 0))
+	source := session.New("source", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/alice", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1, 0))
 	if err := source.RestoreLabels(&alice, session.Authority{}); err != nil {
 		t.Fatalf("RestoreLabels(source): %v", err)
 	}
-	destination := session.New("forced-fork-destination", session.ModeDefault, "/bob", session.Limits{}, time.Unix(1, 0))
+	destination := session.New("forced-fork-destination", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/bob", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1, 0))
 	if err := destination.RestoreLabels(&bob, session.Authority{}); err != nil {
 		t.Fatalf("RestoreLabels(destination): %v", err)
 	}
@@ -196,8 +196,8 @@ func TestForkDestinationCollisionDoesNotOverwriteForeignSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load(destination): %v", err)
 	}
-	if got.Owner == nil || !got.Owner.SameIdentity(&bob) || got.Workspace != "/bob" || !strings.Contains(got.Conversation.Messages[0].Text, "BOB_FORK_DESTINATION") {
-		t.Fatalf("foreign fork destination changed: owner=%+v workspace=%q history=%+v", got.Owner, got.Workspace, got.Conversation.Messages)
+	if got.Owner == nil || !got.Owner.SameIdentity(&bob) || got.EnvironmentRef.ID != "/bob" || !strings.Contains(got.Conversation.Messages[0].Text, "BOB_FORK_DESTINATION") {
+		t.Fatalf("foreign fork destination changed: owner=%+v workspace=%q history=%+v", got.Owner, got.EnvironmentRef.ID, got.Conversation.Messages)
 	}
 }
 
@@ -205,7 +205,7 @@ func TestExplicitCreateRetryRejectsDifferentSessionTaxonomy(t *testing.T) {
 	store := memstore.New()
 	alice := session.Principal{Issuer: "https://issuer.example", Subject: "alice"}
 	const id session.SessionID = "taxonomy-collision"
-	existing := session.New(id, session.ModeDefault, "/ws", session.Limits{}, time.Unix(1, 0))
+	existing := session.New(id, session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1, 0))
 	if err := existing.RestoreLabels(&alice, session.Authority{}); err != nil {
 		t.Fatalf("RestoreLabels(existing): %v", err)
 	}

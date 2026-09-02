@@ -1,4 +1,3 @@
-    method func (*AdoptionMetadata).Clone() *AdoptionMetadata
     method func (*Conversation).Append(m Message)
     method func (*Conversation).Len() int
     method func (*Principal).Clone() *Principal
@@ -32,7 +31,7 @@
     method func (*Session).RecordUserPromptWithParts(text string, parts []Content, instructions []Message) error
     method func (*Session).RecordedStopReason() (StopReason, bool)
     method func (*Session).Recover() error
-    method func (*Session).Rehome(workspace string) error
+    method func (*Session).Rehome(ref EnvironmentRef) error
     method func (*Session).RenameTitle(text string) error
     method func (*Session).Reopen() error
     method func (*Session).ReplaceHistory(messages []Message) error
@@ -223,23 +222,23 @@ func IsGenuineUserPrompt(m Message) bool
 func IsSynthesisedSummary(text string) bool
 func LegacyIncarnationID(id SessionID, createdAtUnixNano int64, owner *Principal) IncarnationID
 func NetworkCorrelationDigest(kind string, value string) (string, bool)
-func New(id SessionID, mode PermissionMode, workspace string, limits Limits, createdAt time.Time) *Session
+func New(id SessionID, mode PermissionMode, ref EnvironmentRef, limits Limits, createdAt time.Time) *Session
 func NewAssistantMessage(text string, reasoning string, calls []ToolCall) Message
 func NewAudioContent(mime string, data []byte) (Content, error)
 func NewAudioURLContent(mime string, rawURL string) (Content, error)
 func NewContent(kind MediaKind, mime string, data []byte, rawURL string) (Content, error)
-func NewDebug(id SessionID, mode PermissionMode, limits Limits, createdAt time.Time, target SessionID, targetIncarnation IncarnationID) (*Session, error)
+func NewDebug(id SessionID, mode PermissionMode, ref EnvironmentRef, limits Limits, createdAt time.Time, target SessionID, targetIncarnation IncarnationID) (*Session, error)
 func NewEmbeddedResourceBlock(uri string, mimeType string, text string, blob []byte, audience []string) (Content, error)
 func NewImageContent(mime string, data []byte) (Content, error)
 func NewImageURLContent(mime string, rawURL string) (Content, error)
 func NewIncarnationID() IncarnationID
-func NewParallelBranch(id SessionID, mode PermissionMode, workspace string, limits Limits, createdAt time.Time, parent SessionID, parentIncarnation IncarnationID, call ToolCallID, branchIndex int) (*Session, error)
+func NewParallelBranch(id SessionID, mode PermissionMode, ref EnvironmentRef, limits Limits, createdAt time.Time, parent SessionID, parentIncarnation IncarnationID, call ToolCallID, branchIndex int) (*Session, error)
 func NewResourceLinkBlock(uri string, name string, title string, description string, mimeType string, size int64, audience []string) Content
-func NewScheduled(id SessionID, mode PermissionMode, workspace string, limits Limits, createdAt time.Time, scheduleName string, origin SessionID, originIncarnation IncarnationID) (*Session, error)
+func NewScheduled(id SessionID, mode PermissionMode, ref EnvironmentRef, limits Limits, createdAt time.Time, scheduleName string, origin SessionID, originIncarnation IncarnationID) (*Session, error)
 func NewStructuredContentBlock(structuredJSON string) Content
-func NewSubagent(id SessionID, mode PermissionMode, workspace string, limits Limits, createdAt time.Time, parent SessionID, parentIncarnation IncarnationID, call ToolCallID) (*Session, error)
+func NewSubagent(id SessionID, mode PermissionMode, ref EnvironmentRef, limits Limits, createdAt time.Time, parent SessionID, parentIncarnation IncarnationID, call ToolCallID) (*Session, error)
 func NewSystemMessage(text string) Message
-func NewTeamMember(id SessionID, mode PermissionMode, workspace string, limits Limits, createdAt time.Time, teamID string, member string, parent SessionID, parentIncarnation IncarnationID) (*Session, error)
+func NewTeamMember(id SessionID, mode PermissionMode, ref EnvironmentRef, limits Limits, createdAt time.Time, teamID string, member string, parent SessionID, parentIncarnation IncarnationID) (*Session, error)
 func NewTextBlock(text string) Content
 func NewToolCall(id ToolCallID, name string, args json.RawMessage) ToolCall
 func NewToolError(callID ToolCallID, content string) ToolResult
@@ -268,7 +267,6 @@ func ValidateToolPairing(msgs []Message) error
 func ValidateToolResultParts(parts []Content) error
 func VerdictString(v ApprovalVerdict) string
 func WithPrincipal(ctx context.Context, p *Principal) context.Context
-type AdoptionMetadata struct{AdoptionSourceID SessionID "json:\"adoption_source_id,omitempty\""; AdoptionRequestDigest string "json:\"adoption_request_digest,omitempty\""}
 type ApprovalPayload struct{AskID string; Verdict string; Tool string; Call ToolCallID; AllowAlways bool}
 type ApprovalVerdict int
 type AskOrigin int
@@ -305,7 +303,7 @@ type ResultPayload struct{Stop StopReason; Text string; Usage Usage; Error strin
 type RetryDisposition uint8
 type Role string
 type SchedulePayload struct{ScheduleName string; FireID string; SessionID SessionID; Kind string; Stop StopReason; Err string}
-type Session struct{ID SessionID; State State; Mode PermissionMode; Conversation *Conversation; Limits Limits; Counters Counters; Usage Usage; Workspace string; EnvironmentRef EnvironmentRef; Profile string; ProviderID string; ModelID string; ReasoningEffort string; DebugMCPServers []string; DebugMCPTools []string; DebugTargetFingerprint string; Title string; TitleProvenance TitleProvenance; Owner *Principal; Authority Authority; Kind SessionKind; Relationship SessionRelationship; Adoption *AdoptionMetadata; CreatedAt time.Time}
+type Session struct{ID SessionID; State State; Mode PermissionMode; Conversation *Conversation; Limits Limits; Counters Counters; Usage Usage; EnvironmentRef EnvironmentRef; Profile string; ProviderID string; ModelID string; ReasoningEffort string; DebugMCPServers []string; DebugMCPTools []string; DebugTargetFingerprint string; Title string; TitleProvenance TitleProvenance; Owner *Principal; Authority Authority; Kind SessionKind; Relationship SessionRelationship; CreatedAt time.Time}
 type SessionID string
 type SessionKind string
 type SessionRelationship struct{ScheduleName string "json:\"schedule_name,omitempty\""; OriginSessionID SessionID "json:\"origin_session_id,omitempty\""; OriginIncarnation IncarnationID "json:\"origin_incarnation,omitempty\""; ParentSessionID SessionID "json:\"parent_session_id,omitempty\""; ParentIncarnation IncarnationID "json:\"parent_incarnation,omitempty\""; CallID ToolCallID "json:\"call_id,omitempty\""; BranchIndex *int "json:\"branch_index,omitempty\""; TeamID string "json:\"team_id,omitempty\""; MemberName string "json:\"member_name,omitempty\""; DebugTargetID SessionID "json:\"debug_target_id,omitempty\""; DebugTargetIncarnation IncarnationID "json:\"debug_target_incarnation,omitempty\""}

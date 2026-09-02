@@ -201,7 +201,7 @@ func (st *Store) PageSessionMetadata(_ context.Context, request port.SessionMeta
 // the cached scalar. Fixed overhead accounts for field names and scalar values,
 // while every variable-length persisted payload contributes its byte length.
 func estimateSnapshotBytes(snap sessnap.Snapshot) int64 {
-	size := int64(256 + len(snap.ID) + len(snap.State) + len(snap.Mode) + len(snap.Workspace) +
+	size := int64(256 + len(snap.ID) + len(snap.State) + len(snap.Mode) +
 		len(snap.StopReason) + len(snap.Kind) + len(snap.Profile) + len(snap.ProviderID) +
 		len(snap.ModelID) + len(snap.ReasoningEffort) + len(snap.Title) + len(snap.TitleProvenance) +
 		len(snap.LastError) + len(snap.Incarnation) + len(snap.EnvironmentRef.Kind) + len(snap.EnvironmentRef.ID) + len(snap.EnvironmentRef.Revision))
@@ -229,9 +229,6 @@ func estimateSnapshotBytes(snap sessnap.Snapshot) int64 {
 	}
 	if snap.Usage != nil {
 		size += 96
-	}
-	if snap.AdoptionMetadata != nil {
-		size += int64(64 + len(snap.AdoptionSourceID) + len(snap.AdoptionRequestDigest))
 	}
 
 	for _, message := range snap.Messages {

@@ -28,16 +28,16 @@ func TestScopedHandlesAreStableBoundAndRevalidated(t *testing.T) {
 	ctx := context.Background()
 	store := memstore.New()
 	owner := &session.Principal{Issuer: "issuer", Subject: "owner", GrantType: session.GrantTypeUser}
-	root := session.New("root-sensitive-id", session.ModeDefault, "/ws", session.Limits{}, time.Now())
+	root := session.New("root-sensitive-id", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Now())
 	root.Owner = owner.Clone()
 	childCreated := time.Unix(1700000000, 0)
-	child, err := session.NewSubagent("child-sensitive-id", session.ModeDefault, "/ws", session.Limits{}, childCreated, root.ID, root.Incarnation(), "call-1")
+	child, err := session.NewSubagent("child-sensitive-id", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, childCreated, root.ID, root.Incarnation(), "call-1")
 	if err != nil {
 		t.Fatal(err)
 	}
 	child.Owner = owner.Clone()
 	_ = child.SeedHistory([]session.Message{session.NewUserMessage("child transcript")})
-	grandchild, err := session.NewTeamMember("nested-child-sensitive-id", session.ModeDefault, "/ws", session.Limits{}, time.Now(), "team-1", "reviewer", child.ID, child.Incarnation())
+	grandchild, err := session.NewTeamMember("nested-child-sensitive-id", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Now(), "team-1", "reviewer", child.ID, child.Incarnation())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,7 +103,7 @@ func TestScopedHandlesAreStableBoundAndRevalidated(t *testing.T) {
 	if got := executeAs(ownedCtx, t, tool2, `{"view":"status","scope_handle":"`+handle+`"}`); !got.IsError {
 		t.Fatalf("stale handle accepted: %s", got.Content)
 	}
-	replacement, err := session.NewSubagent(child.ID, session.ModeDefault, "/ws", session.Limits{}, childCreated, root.ID, root.Incarnation(), "call-1")
+	replacement, err := session.NewSubagent(child.ID, session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, childCreated, root.ID, root.Incarnation(), "call-1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -158,9 +158,9 @@ func TestScopedViewFailsClosedWhenDescendantIsReplacedAfterResolution(t *testing
 	ctx := context.Background()
 	base := memstore.New()
 	owner := &session.Principal{Issuer: "issuer", Subject: "owner", GrantType: session.GrantTypeUser}
-	root := session.New("root", session.ModeDefault, "/ws", session.Limits{}, time.Unix(1, 0))
+	root := session.New("root", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1, 0))
 	root.Owner = owner.Clone()
-	child, err := session.NewSubagent("child", session.ModeDefault, "/ws", session.Limits{}, time.Unix(2, 0), root.ID, root.Incarnation(), "call-1")
+	child, err := session.NewSubagent("child", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(2, 0), root.ID, root.Incarnation(), "call-1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -177,7 +177,7 @@ func TestScopedViewFailsClosedWhenDescendantIsReplacedAfterResolution(t *testing
 		t.Fatalf("graph=%+v", graph)
 	}
 	handle := graph.Nodes[0].Handle
-	replacement, err := session.NewSubagent(child.ID, session.ModeDefault, "/ws", session.Limits{}, child.CreatedAt, root.ID, root.Incarnation(), "call-1")
+	replacement, err := session.NewSubagent(child.ID, session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, child.CreatedAt, root.ID, root.Incarnation(), "call-1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -200,11 +200,11 @@ func TestScopedViewFailsClosedWhenDescendantIsReplacedAfterResolution(t *testing
 func TestRelatedNeverLeaksForeignIDsAndClassifiesLineage(t *testing.T) {
 	ctx := context.Background()
 	store := memstore.New()
-	root := session.New("root", session.ModeDefault, "", session.Limits{}, time.Now())
+	root := session.New("root", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/workspace", Revision: "in-tree-v1"}, session.Limits{}, time.Now())
 	root.Owner = &session.Principal{Issuer: "i", Subject: "a", GrantType: session.GrantTypeUser}
-	foreign, _ := session.NewSubagent("foreign-raw-secret", session.ModeDefault, "", session.Limits{}, time.Now(), root.ID, root.Incarnation(), "call")
+	foreign, _ := session.NewSubagent("foreign-raw-secret", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/workspace", Revision: "in-tree-v1"}, session.Limits{}, time.Now(), root.ID, root.Incarnation(), "call")
 	foreign.Owner = &session.Principal{Issuer: "i", Subject: "b", GrantType: session.GrantTypeUser}
-	pruned, _ := session.NewSubagent("pruned-raw-secret", session.ModeDefault, "", session.Limits{}, time.Now(), root.ID, root.Incarnation(), "call2")
+	pruned, _ := session.NewSubagent("pruned-raw-secret", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/workspace", Revision: "in-tree-v1"}, session.Limits{}, time.Now(), root.ID, root.Incarnation(), "call2")
 	pruned.Owner = root.Owner.Clone()
 	for _, s := range []*session.Session{root, foreign, pruned} {
 		if err := store.Save(ctx, s); err != nil {
@@ -234,7 +234,7 @@ func TestDelegationHistoryManifestAndLifetimeEvidence(t *testing.T) {
 	ctx := context.Background()
 	store := memstore.New()
 	log := memstore.NewEventLog()
-	root := session.New("root", session.ModeDefault, "", session.Limits{}, time.Now())
+	root := session.New("root", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/workspace", Revision: "in-tree-v1"}, session.Limits{}, time.Now())
 	root.Owner = &session.Principal{Issuer: "i", Subject: "a", GrantType: session.GrantTypeUser}
 	call := session.NewToolCall("delegate-call", "Team", []byte(`{}`))
 	messages := []session.Message{session.NewAssistantMessage("", "", []session.ToolCall{call}), session.NewToolMessage(session.NewToolResult(call.ID, "team synthesis"))}

@@ -45,7 +45,7 @@ func BenchmarkBuildRequest(b *testing.B) {
 		},
 	})
 
-	sess := session.New("bench", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
+	sess := session.New("bench", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
 	// Prime a small, realistic conversation: user prompt → assistant reply → user
 	// follow-up. RecordUserPrompt is legal while idle; BeginTurn moves to running so
 	// RecordAssistant is legal.

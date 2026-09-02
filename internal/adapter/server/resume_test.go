@@ -72,7 +72,7 @@ func TestAutoResumeFromStore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetSession after restart: %v", err)
 	}
-	if got.ID != sess.ID || got.Workspace != "/ws" || got.Mode != session.ModeDefault {
+	if got.ID != sess.ID || got.EnvironmentRef.ID != "/ws" || got.Mode != session.ModeDefault {
 		t.Fatalf("loaded session mismatch: %+v", got)
 	}
 	if got.Limits.MaxTurns != 3 {

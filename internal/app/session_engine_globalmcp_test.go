@@ -95,7 +95,7 @@ func TestSessionEngineFactoryMountsGlobalMCPToolsForSelector(t *testing.T) {
 	eng2, close2 := res2.Engine, res2.Close
 	defer func() { _ = close2() }()
 
-	sess := session.New("s1", session.ModeDefault, "/ws", session.Limits{MaxTurns: 5}, time.Now())
+	sess := session.New("s1", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{MaxTurns: 5}, time.Now())
 	run := eng2.Run(context.Background(), sess, memEnvironment("/ws"), agent.RunRequest{Text: "go", Parts: nil})
 	var echoed bool
 	for ev := range run.Events() {
@@ -228,7 +228,7 @@ func runSelectorSubagentRefAndCheckEcho(t *testing.T, globalMgr *mcp.Manager, sp
 	}
 	defer func() { _ = res.Close() }()
 
-	sess := session.New("s1", session.ModeDefault, "/ws", session.Limits{MaxTurns: 8}, time.Now())
+	sess := session.New("s1", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{MaxTurns: 8}, time.Now())
 	run := res.Engine.Run(context.Background(), sess, memEnvironment("/ws"), agent.RunRequest{Text: "go", Parts: nil})
 	var resolved bool
 	for ev := range run.Events() {
@@ -327,7 +327,7 @@ func TestSelectorClientToolCollisionGlobalWins(t *testing.T) {
 	// Behavioral proof: execute the surviving tool and assert the GLOBAL server
 	// answered. "client:hi" here means the client tool shadowed the global one —
 	// the precedence inverted even though both names registered.
-	sess := session.New("s1", session.ModeDefault, "/ws", session.Limits{MaxTurns: 5}, time.Now())
+	sess := session.New("s1", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{MaxTurns: 5}, time.Now())
 	run := res.Engine.Run(context.Background(), sess, memEnvironment("/ws"), agent.RunRequest{Text: "go", Parts: nil})
 	var got string
 	for ev := range run.Events() {

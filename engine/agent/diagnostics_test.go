@@ -151,7 +151,7 @@ func TestRunDiagnosticsCarrySessionKey(t *testing.T) {
 		Model:       "m",
 		Diagnostics: diag,
 	})
-	sess := session.New("sess-A", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
+	sess := session.New("sess-A", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
 	drain(e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "edit a.go"}))
 
 	records := diag.snapshot()
@@ -188,7 +188,7 @@ func TestChildRunDiagnosticsCarryAgentRole(t *testing.T) {
 		Diagnostics: diag,
 		Role:        "member:explorer",
 	})
-	sess := session.New("sess-child", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
+	sess := session.New("sess-child", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
 	drain(e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "edit a.go"}))
 
 	records := diag.snapshot()
@@ -271,8 +271,8 @@ func TestRunDiagnosticsNoCrossTag(t *testing.T) {
 			Model:       "m",
 			Diagnostics: diag,
 		})
-		sessX := session.New("sess-X", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
-		sessY := session.New("sess-Y", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
+		sessX := session.New("sess-X", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
+		sessY := session.New("sess-Y", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
 
 		drive := func(s *session.Session) {
 			drain(eng.Run(context.Background(), s, agent.MemEnv("/ws"), agent.RunRequest{Text: "edit a.go"}))
@@ -329,7 +329,7 @@ func TestCompactionFailureEmitsWarn(t *testing.T) {
 		CompactionRatio: 0.8,
 		Diagnostics:     diag,
 	})
-	sess := session.New("sess-compact", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
+	sess := session.New("sess-compact", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
 	bigPrompt := strings.Repeat("word ", 200) // far over the threshold
 	evs := drain(e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: bigPrompt}))
 
@@ -406,7 +406,7 @@ func TestSaveFailureEmitsOneCorrelatedWarn(t *testing.T) {
 		Store:       store,
 		Diagnostics: diag,
 	})
-	sess := session.New("sess-save-fail", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
+	sess := session.New("sess-save-fail", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
 	evs := drain(e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "go"}))
 
 	// A failed persist must not abort an otherwise-fine run.
@@ -458,7 +458,7 @@ func TestPolicyDenyEmitsInfo(t *testing.T) {
 		Model:       "m",
 		Diagnostics: denyDiag,
 	})
-	sess := session.New("sess-deny", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
+	sess := session.New("sess-deny", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
 	drain(e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "edit a.go"}))
 
 	rec, ok := findMsg(denyDiag.snapshot(), "denied by policy")
@@ -500,7 +500,7 @@ func TestPolicyDenyEmitsInfo(t *testing.T) {
 		Model:       "m",
 		Diagnostics: allowDiag,
 	})
-	sess2 := session.New("sess-allow", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
+	sess2 := session.New("sess-allow", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
 	drain(e2.Run(context.Background(), sess2, agent.MemEnv("/ws"), agent.RunRequest{Text: "edit a.go"}))
 
 	if len(allowDiag.snapshot()) != 0 {

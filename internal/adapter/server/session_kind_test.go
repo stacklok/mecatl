@@ -84,10 +84,10 @@ func TestInvariant_non_main_sessions_cannot_start_as_chat(t *testing.T) {
 	t.Parallel()
 	created := time.Unix(0, 0)
 	branch := 2
-	scheduled, scheduledErr := session.NewScheduled("opaque-scheduled", session.ModeDefault, "/ws", session.Limits{}, created, "nightly", "", "")
-	subagent, subagentErr := session.NewSubagent("opaque-subagent", session.ModeDefault, "/ws", session.Limits{}, created, "parent", session.NewIncarnationID(), "call")
-	parallel, parallelErr := session.NewParallelBranch("opaque-parallel", session.ModeDefault, "/ws", session.Limits{}, created, "parent", session.NewIncarnationID(), "call", branch)
-	team, teamErr := session.NewTeamMember("opaque-team", session.ModeDefault, "/ws", session.Limits{}, created, "team", "worker", "parent", session.NewIncarnationID())
+	scheduled, scheduledErr := session.NewScheduled("opaque-scheduled", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, created, "nightly", "", "")
+	subagent, subagentErr := session.NewSubagent("opaque-subagent", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, created, "parent", session.NewIncarnationID(), "call")
+	parallel, parallelErr := session.NewParallelBranch("opaque-parallel", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, created, "parent", session.NewIncarnationID(), "call", branch)
+	team, teamErr := session.NewTeamMember("opaque-team", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, created, "team", "worker", "parent", session.NewIncarnationID())
 	fixtures := []struct {
 		name string
 		sess *session.Session
@@ -113,7 +113,7 @@ func TestInvariant_non_main_sessions_cannot_start_as_chat(t *testing.T) {
 func TestADR_0108_SchedulerPurposeOnlyDrivesScheduled(t *testing.T) {
 	t.Parallel()
 	svc, store := runPurposeService(t, false)
-	scheduledSession, scheduledErr := session.NewScheduled("custom-fire-id", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0), "nightly", "", "")
+	scheduledSession, scheduledErr := session.NewScheduled("custom-fire-id", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0), "nightly", "", "")
 	scheduled := mustRelatedSession(t, scheduledSession, scheduledErr)
 	if err := store.Save(context.Background(), scheduled); err != nil {
 		t.Fatalf("Save scheduled: %v", err)
@@ -127,7 +127,7 @@ func TestADR_0108_SchedulerPurposeOnlyDrivesScheduled(t *testing.T) {
 	}
 	assertRunCompleted(t, svc, scheduled.ID, run)
 
-	main := session.New("ordinary-main", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
+	main := session.New("ordinary-main", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
 	if err := store.Save(context.Background(), main); err != nil {
 		t.Fatalf("Save main: %v", err)
 	}
@@ -148,7 +148,7 @@ func TestADR_0108_LegacySafetyGate(t *testing.T) {
 			name := prefix + string(kind)
 			t.Run(name, func(t *testing.T) {
 				svc, store := runPurposeService(t, false)
-				sess := session.New(session.SessionID(prefix+"legacy"), session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
+				sess := session.New(session.SessionID(prefix+"legacy"), session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
 				if err := sess.RestoreSessionMetadata(kind, session.SessionRelationship{}); err != nil {
 					t.Fatalf("RestoreSessionMetadata: %v", err)
 				}
@@ -164,7 +164,7 @@ func TestADR_0108_LegacySafetyGate(t *testing.T) {
 
 	t.Run("legacy scheduled fallback is trusted-only", func(t *testing.T) {
 		svc, store := runPurposeService(t, false)
-		sess := session.New("sched--legacy-fire", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
+		sess := session.New("sched--legacy-fire", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
 		if err := sess.RestoreSessionMetadata(session.SessionKindUnknown, session.SessionRelationship{}); err != nil {
 			t.Fatal(err)
 		}
@@ -182,7 +182,7 @@ func TestADR_0108_LegacySafetyGate(t *testing.T) {
 func TestInvariant_session_ids_are_not_client_classifiers(t *testing.T) {
 	t.Parallel()
 	svc, store := runPurposeService(t, false)
-	sess := session.New("opaque/01JZ:custom.child", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
+	sess := session.New("opaque/01JZ:custom.child", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
 	if err := store.Save(context.Background(), sess); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
@@ -200,12 +200,12 @@ func TestSessionContinuityUX_Scenario2_OwnershipOracleClosed(t *testing.T) {
 	bob := &session.Principal{Issuer: "issuer", Subject: "bob", GrantType: session.GrantTypeUser}
 	aliceCtx := session.WithPrincipal(context.Background(), alice)
 
-	foreign := session.New("foreign", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
+	foreign := session.New("foreign", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
 	if err := foreign.RestoreLabels(bob, session.Authority{}); err != nil {
 		t.Fatal(err)
 	}
-	ownerless := session.New("ownerless", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
-	pruned := session.New("pruned", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
+	ownerless := session.New("ownerless", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
+	pruned := session.New("pruned", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
 	if err := pruned.RestoreLabels(alice, session.Authority{}); err != nil {
 		t.Fatal(err)
 	}

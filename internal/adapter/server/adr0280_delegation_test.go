@@ -47,7 +47,7 @@ func TestInvariant_delegation_cannot_escalate_placement(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	source := session.New("source", session.ModeDefault, privateRoot, session.Limits{}, time.Unix(1, 0))
+	source := session.New("source", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: privateRoot, Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1, 0))
 	source.EnvironmentRef = ref
 	if err := store.Create(ctx, source); err != nil {
 		t.Fatal(err)
@@ -67,7 +67,7 @@ func TestInvariant_delegation_cannot_escalate_placement(t *testing.T) {
 		t.Fatalf("source-owned team reconstructed placement from a root %d time(s)", workspaceCalls)
 	}
 
-	noFS := session.New("no-fs", session.ModeDefault, "", session.Limits{}, time.Unix(2, 0))
+	noFS := session.New("no-fs", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/workspace", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(2, 0))
 	noFS.EnvironmentRef = session.EnvironmentRef{Kind: session.EnvKindNoFS, ID: "none", Revision: "in-tree-v1"}
 	if err := store.Create(ctx, noFS); err != nil {
 		t.Fatal(err)

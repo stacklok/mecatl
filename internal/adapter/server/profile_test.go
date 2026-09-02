@@ -340,7 +340,7 @@ func TestNoFSSessionRehydratesAfterRestart(t *testing.T) {
 func TestNoFSRehydrationWithoutFactoryFailsLoudly(t *testing.T) {
 	ctx := context.Background()
 	store := memstore.New()
-	sess := session.New("nofs-orphan", session.ModeDefault, "", session.Limits{MaxTurns: 3}, time.Unix(0, 0))
+	sess := session.New("nofs-orphan", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/workspace", Revision: "in-tree-v1"}, session.Limits{MaxTurns: 3}, time.Unix(0, 0))
 	if err := store.Save(ctx, sess); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
@@ -364,7 +364,7 @@ func TestNoFSRehydrationWithoutFactoryFailsLoudly(t *testing.T) {
 func TestLoadSessionWithMCPDerivesNoFSProfile(t *testing.T) {
 	ctx := context.Background()
 	store := memstore.New()
-	sess := session.New("nofs-acp", session.ModeDefault, "", session.Limits{MaxTurns: 3}, time.Unix(0, 0))
+	sess := session.New("nofs-acp", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/workspace", Revision: "in-tree-v1"}, session.Limits{MaxTurns: 3}, time.Unix(0, 0))
 	if err := store.Save(ctx, sess); err != nil {
 		t.Fatalf("Save: %v", err)
 	}

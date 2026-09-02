@@ -272,7 +272,7 @@ func driveSubagentWithRoleMetrics(t *testing.T) []*dto.MetricFamily {
 	// the uniform-label property the cmd wiring establishes with WithRole(RoleMain).
 	parentEng := newChildEngine(cfg, "", parentProvider, parentCat, cfg.Model, fixedDefaultWindow, promptConfig(cfg, cfg.gitStatus))
 
-	sess := session.New("parent", session.ModeDefault, ws, session.Limits{MaxTurns: 5}, time.Now())
+	sess := session.New("parent", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: ws, Revision: "in-tree-v1"}, session.Limits{MaxTurns: 5}, time.Now())
 	parentWS := osfsWSForTest(t, ws)
 	run := parentEng.Run(context.Background(), sess, testEnvironment(parentWS, nil), agent.RunRequest{Text: "go"})
 	for ev := range run.Events() {

@@ -48,7 +48,10 @@ import (
 // engine/session — the EnvironmentKind set is open, and a real remote transport
 // (or another out-of-tree backend) adds its own label without widening the
 // session package.
-const Kind session.EnvironmentKind = "remote-fake"
+const (
+	Kind     session.EnvironmentKind = "remote-fake"
+	revision string                  = "remote-fake-v1"
+)
 
 // ErrUnknownNamespace is returned by Resolve/NewEnvironment when the requested
 // namespace id does not exist in the Backend's registry. A non-in-tree ref
@@ -130,7 +133,7 @@ func (b *Backend) NewEnvironment(label string) (tool.Environment, error) {
 	ns := b.createNamespace(id)
 	ws := &workspace{ns: ns}
 	runner := &runner{ns: ns}
-	return tool.NewEnvironment(session.EnvironmentRef{Kind: Kind, ID: id}, ws, runner)
+	return tool.NewEnvironment(session.EnvironmentRef{Kind: Kind, ID: id, Revision: revision}, ws, runner)
 }
 
 // Resolve reattaches a LIVE Environment to the namespace named by ref.ID,

@@ -140,7 +140,7 @@ func TestCallMcpWithQueryE2EFailClosedThenRecovery(t *testing.T) {
 		t.Fatal("engine catalog missing CallMcpWithQuery (mountGlobalMCP did not register the recovery meta-tool)")
 	}
 
-	sess := session.New("s1", session.ModeDefault, "/ws", session.Limits{MaxTurns: 10}, time.Now())
+	sess := session.New("s1", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{MaxTurns: 10}, time.Now())
 	run := res.Engine.Run(context.Background(), sess, memEnvironment("/ws"), agent.RunRequest{Text: "go", Parts: nil})
 
 	// Collect the two tool results by CallID; approve any permission ask (the direct

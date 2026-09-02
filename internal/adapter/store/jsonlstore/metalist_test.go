@@ -23,7 +23,7 @@ func TestMetaListProjectsSnapshotFields(t *testing.T) {
 	st, dir := newStore(t)
 
 	created := time.Unix(1700000000, 0).UTC()
-	s := session.New("meta-1", session.ModeDefault, "/ws", session.Limits{}, created)
+	s := session.New("meta-1", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, created)
 	if err := s.RestoreSessionMetadata(session.SessionKindSubagent, session.SessionRelationship{
 		ParentSessionID: "parent-1",
 		CallID:          "call-1",
@@ -109,7 +109,7 @@ func TestMetaListSkipsConversation(t *testing.T) {
 	ctx := context.Background()
 	st, _ := newStore(t)
 
-	s := session.New("big", session.ModeDefault, "/ws", session.Limits{}, time.Unix(1700000000, 0).UTC())
+	s := session.New("big", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1700000000, 0).UTC())
 	s.SetTitle("big conv")
 	// Record a large assistant message (many tool calls + a big text blob) so
 	// the snapshot line is large — MetaList must still decode the metadata cheaply.
@@ -150,7 +150,7 @@ func TestMetaListCorruptRowSurfacesZeroed(t *testing.T) {
 	st, dir := newStore(t)
 
 	// A valid session for sanity.
-	good := session.New("good", session.ModeDefault, "/ws", session.Limits{}, time.Unix(1700000000, 0).UTC())
+	good := session.New("good", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1700000000, 0).UTC())
 	good.SetTitle("good")
 	if err := st.Save(ctx, good); err != nil {
 		t.Fatalf("Save: %v", err)
@@ -190,7 +190,7 @@ func TestMetaListMultiSnapshotLatestWins(t *testing.T) {
 	ctx := context.Background()
 	st, _ := newStore(t)
 
-	s := session.New("multi", session.ModeDefault, "/ws", session.Limits{}, time.Unix(1700000000, 0).UTC())
+	s := session.New("multi", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1700000000, 0).UTC())
 	s.SetTitle("first")
 	_ = s.BeginTurn()
 	_ = s.RecordAssistant(session.NewAssistantMessage("a", "", nil))
@@ -238,7 +238,7 @@ func TestReadLastLineLargeFileTailRead(t *testing.T) {
 	ctx := context.Background()
 	st, dir := newStore(t)
 
-	s := session.New("large", session.ModeDefault, "/ws", session.Limits{}, time.Unix(1700000000, 0).UTC())
+	s := session.New("large", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1700000000, 0).UTC())
 	s.SetTitle("tail-read")
 	// Seed a historical v1 file with MANY snapshots so the bounded tail reader
 	// is exercised independently of the v2 current-snapshot writer.

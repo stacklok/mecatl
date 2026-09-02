@@ -175,7 +175,7 @@ func TestCallerSeparation_Scenario3_LiveRunVerbsAreOwnerChecked(t *testing.T) {
 // a model cannot use another caller's child or team transcript handle.
 func TestCallerSeparation_Scenario3_ModelFacingHandlesAreOwnerChecked(t *testing.T) {
 	store := memstore.New()
-	child := session.New("subagent-alice", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
+	child := session.New("subagent-alice", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
 	if err := child.RestoreLabels(&session.Principal{Issuer: "https://idp.example", Subject: "alice", GrantType: session.GrantTypeUser}, session.Authority{}); err != nil {
 		t.Fatal(err)
 	}
@@ -186,7 +186,7 @@ func TestCallerSeparation_Scenario3_ModelFacingHandlesAreOwnerChecked(t *testing
 		t.Fatal(err)
 	}
 	inspect := agent.NewInspectSubagentToolWithOwnership(store, true)
-	member := session.New(agent.MemberSessionID("team-alice", "researcher"), session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
+	member := session.New(agent.MemberSessionID("team-alice", "researcher"), session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
 	if err := member.RestoreLabels(&session.Principal{Issuer: "https://idp.example", Subject: "alice", GrantType: session.GrantTypeUser}, session.Authority{}); err != nil {
 		t.Fatal(err)
 	}

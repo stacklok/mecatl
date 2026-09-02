@@ -10,7 +10,6 @@ import (
 	"errors"
 	"fmt"
 	"iter"
-	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -34,40 +33,6 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/skills"
 	"github.com/stacklok/mecatl/internal/adapter/tools"
 )
-
-// WorkspaceAuthority controls whether a Service accepts a client-selected
-// workspace or binds every filesystem session to its configured deployment root.
-// It belongs at the server boundary: engine code never receives listener topology
-// or filesystem-authority policy.
-type WorkspaceAuthority uint8
-
-const (
-	// WorkspaceAuthorityClientSelected preserves the embedded and loopback behavior:
-	// callers select the workspace for filesystem sessions.
-	WorkspaceAuthorityClientSelected WorkspaceAuthority = iota
-	// WorkspaceAuthorityServerAssigned rejects every non-empty filesystem request
-	// and assigns Config.AuthoritativeWorkspace instead. It REQUIRES a configured
-	// AuthoritativeWorkspace.
-	WorkspaceAuthorityServerAssigned
-	// WorkspaceAuthorityFileless is a server-assigned deployment with no filesystem
-	// root at all (mecak8s): the wire's empty/omitted profile means ProfileNoFS and
-	// every filesystem profile is refused. It REQUIRES an EMPTY
-	// AuthoritativeWorkspace — which is why it is a distinct authority rather than
-	// a separate flag: "server-assigned with no root" is otherwise
-	// indistinguishable from "server-assigned, root not configured yet".
-	WorkspaceAuthorityFileless
-)
-
-// clientSelectsRoot reports whether the CALLER, not the deployment, chooses the
-// session root. Only the explicit client-selected authority does; every other
-// authority — server-assigned, file-less, and any value added later — is
-// deployment-assigned. Phrasing the ONE predicate around the single permissive
-// value is deliberate: a new authority constant is deployment-assigned by default
-// (the authority gates enforce), rather than silently client-selectable the way a
-// `== ServerAssigned || == Fileless` test would leave it.
-func (a WorkspaceAuthority) clientSelectsRoot() bool {
-	return a == WorkspaceAuthorityClientSelected
-}
 
 // WorkspaceFactory builds the session-scoped tool.Workspace for a session root.
 // The server is workspace-agnostic: the composition root injects memfs (tests)
@@ -295,15 +260,6 @@ type Config struct {
 	OwnershipEnforced bool
 	// Workspaces builds a Workspace for a session root. Required.
 	Workspaces WorkspaceFactory
-	// WorkspaceAuthority decides whether API callers choose filesystem roots or the
-	// deployment assigns one. The zero value preserves client-selectable local use.
-	WorkspaceAuthority WorkspaceAuthority
-	// AuthoritativeWorkspace is the configured root assigned to every filesystem
-	// session under WorkspaceAuthorityServerAssigned, which requires it to be a
-	// non-empty absolute, already-clean path; no symlink resolution is performed.
-	// It must be EMPTY under WorkspaceAuthorityFileless and is ignored under
-	// WorkspaceAuthorityClientSelected.
-	AuthoritativeWorkspace string
 	// ClientMCPOnCreate permits CLIENT-PROVIDED MCP servers on a session-creating
 	// API request (CreateSessionRequest.mcp_servers and its HTTP peer). It is a
 	// deployment/composition policy in the shape ADR 0237 requires, NOT an
@@ -315,11 +271,9 @@ type Config struct {
 	// ambient network authority to a remote principal, so a composition root that
 	// has not thought about it must not accidentally grant it. mecated derives it
 	// from listener topology (clientMCPOnCreateForListeners): permitted only on a
-	// UNIX-socket gRPC listener with HTTP disabled. That is STRICTER than the
-	// loopback-tolerant WorkspaceAuthority derivation above, because an
-	// attacker-named endpoint carrying caller-supplied credentials is a larger
-	// grant than a root the operator chose, and loopback TCP is reachable by every
-	// local process on the host.
+	// UNIX-socket gRPC listener with HTTP disabled. An attacker-named endpoint
+	// carrying caller-supplied credentials lends greater ambient authority than
+	// ordinary loopback traffic.
 	//
 	// It gates the WIRE surface only. The in-process CreateSessionWithMCP /
 	// LoadSessionWithMCP entries are unaffected: their caller is the ACP adapter,
@@ -1249,35 +1203,6 @@ func (k *keyedMutex) lock(key session.SessionID) func() {
 	}
 }
 
-// validateWorkspaceAuthorityConfig rejects an invalid configured root without
-// touching the filesystem. The client-selectable zero value intentionally ignores
-// an authority root so embedded callers retain their historical behavior.
-func validateWorkspaceAuthorityConfig(cfg Config) error {
-	switch cfg.WorkspaceAuthority {
-	case WorkspaceAuthorityClientSelected:
-		// The configured root is ignored, so an incidental value is not an error:
-		// embedded callers keep their historical behavior.
-		return nil
-	case WorkspaceAuthorityServerAssigned:
-		// A filesystem deployment with no root would build and then reject every
-		// filesystem request. Fail here instead, once, at construction.
-		if cfg.AuthoritativeWorkspace == "" {
-			return fmt.Errorf("%w: server-assigned workspace authority requires an authoritative workspace (use WorkspaceAuthorityFileless for a file-less deployment)", ErrConfig)
-		}
-		if !isCleanAbs(cfg.AuthoritativeWorkspace) {
-			return fmt.Errorf("%w: authoritative workspace must be a clean absolute path", ErrConfig)
-		}
-		return nil
-	case WorkspaceAuthorityFileless:
-		if cfg.AuthoritativeWorkspace != "" {
-			return fmt.Errorf("%w: file-less workspace authority must not configure an authoritative workspace; got %q", ErrConfig, cfg.AuthoritativeWorkspace)
-		}
-		return nil
-	default:
-		return fmt.Errorf("%w: unknown workspace authority %d", ErrConfig, cfg.WorkspaceAuthority)
-	}
-}
-
 // normalizeServerImplementation admits only a stable, non-identifying composition
 // family token for GetServerInfo. All other input is intentionally indistinguishable.
 func normalizeServerImplementation(value string) string {
@@ -1774,13 +1699,17 @@ func resolveOwner(ctx context.Context, opts createSessionOpts) *session.Principa
 }
 
 func newCreatedSession(id session.SessionID, mode session.PermissionMode, workspace string, limits session.Limits, createdAt time.Time, opts createSessionOpts) (*session.Session, error) {
+	ref := session.EnvironmentRef{Kind: session.EnvKindLocal, ID: workspace, Revision: inTreeEnvironmentRevision}
+	if workspace == "" {
+		ref = session.EnvironmentRef{Kind: session.EnvKindNoFS, ID: "none", Revision: inTreeEnvironmentRevision}
+	}
 	switch {
 	case opts.debugTargetID != "":
-		return session.NewDebug(id, mode, limits, createdAt, opts.debugTargetID, opts.debugTargetIncarnation)
+		return session.NewDebug(id, mode, ref, limits, createdAt, opts.debugTargetID, opts.debugTargetIncarnation)
 	case opts.scheduled != nil:
-		return session.NewScheduled(id, mode, workspace, limits, createdAt, opts.scheduled.ScheduleName, opts.scheduled.OriginSessionID, opts.scheduled.OriginIncarnation)
+		return session.NewScheduled(id, mode, ref, limits, createdAt, opts.scheduled.ScheduleName, opts.scheduled.OriginSessionID, opts.scheduled.OriginIncarnation)
 	default:
-		return session.New(id, mode, workspace, limits, createdAt), nil
+		return session.New(id, mode, ref, limits, createdAt), nil
 	}
 }
 
@@ -1936,7 +1865,7 @@ func newCreateRequest(workspace string, mode session.PermissionMode, limits sess
 }
 
 func (r createRequest) matches(sess *session.Session) bool {
-	return r.sourceID == "" && sess.Workspace == r.workspace && sess.Mode == r.mode &&
+	return r.sourceID == "" && sess.EnvironmentRef.ID == r.workspace && sess.Mode == r.mode &&
 		sess.Limits == r.limits && sess.ProviderID == r.selector.ProviderID &&
 		sess.ModelID == r.selector.ModelID && sess.ReasoningEffort == r.selector.ReasoningEffort &&
 		sess.Profile == string(r.profile) && sess.Kind == r.kind && sess.Relationship == r.relationship
@@ -2043,15 +1972,12 @@ func (s *Service) resolveCreateCollision(ctx context.Context, id session.Session
 // A file-less deployment reads the wire's empty (omitted/default) profile as
 // no-FS and refuses every other profile, so a caller cannot ask a deployment
 // with no filesystem root for a filesystem session.
-func (s *Service) profileForCreate(profile SessionProfile) (SessionProfile, error) {
-	if s.cfg.WorkspaceAuthority != WorkspaceAuthorityFileless {
-		return profile, nil
-	}
+func (*Service) profileForCreate(profile SessionProfile) (SessionProfile, error) {
 	switch profile {
 	case ProfileDefault, ProfileNoFS:
-		return ProfileNoFS, nil
+		return profile, nil
 	default:
-		return "", fmt.Errorf("%w: this deployment is file-less: profile %q is not available (supported: \"\" (default, treated as %q) and %q)", ErrInvalidArgument, profile, ProfileNoFS, ProfileNoFS)
+		return "", fmt.Errorf("%w: unknown session profile %q (supported: \"\" (default) and %q)", ErrInvalidArgument, profile, ProfileNoFS)
 	}
 }
 
@@ -2068,22 +1994,6 @@ func (s *Service) workspaceForCreate(workspace string, profile SessionProfile) (
 	}
 	switch profile {
 	case ProfileDefault:
-		if !s.cfg.WorkspaceAuthority.clientSelectsRoot() {
-			if s.cfg.AuthoritativeWorkspace == "" {
-				return "", "", fmt.Errorf("%w: deployment assigns the workspace but no authoritative workspace is configured", ErrInvalidArgument)
-			}
-			// Transitional wire compatibility: the legacy field is an equality
-			// assertion only and can never select a root.
-			if workspace != "" {
-				if s.placementBinder == nil {
-					return "", "", fmt.Errorf("%w: deployment assigns the workspace; filesystem session requests must leave workspace empty", ErrInvalidArgument)
-				}
-				if workspace != s.cfg.AuthoritativeWorkspace {
-					return "", "", fmt.Errorf("%w: deployment assigns the workspace; requested workspace does not match it", ErrInvalidArgument)
-				}
-			}
-			return s.cfg.AuthoritativeWorkspace, profile, nil
-		}
 		if workspace == "" {
 			return "", "", fmt.Errorf("%w: workspace is required", ErrInvalidArgument)
 		}
@@ -2161,12 +2071,10 @@ func (s *Service) createSession(ctx context.Context, workspace string, mode sess
 				return nil, err
 			}
 		} else if workspace != "" {
-			// The public wire no longer carries a workspace. Keep the in-process
-			// Service API source-compatible only for the composition default: it is
-			// not a selector and still binds through the provider's atomic default.
-			if workspace != s.cfg.DefaultWorkspace {
-				return nil, fmt.Errorf("%w: public placement is server-owned", ErrInvalidArgument)
-			}
+			// The public wire no longer carries a workspace. The legacy in-process
+			// argument is ignored: placement is always selected and bound by the
+			// deployment provider.
+			workspace = ""
 		}
 	} else if workspace != "" {
 		return nil, fmt.Errorf("%w: trusted exact placement must not also carry a workspace", ErrInvalidArgument)
@@ -2198,6 +2106,9 @@ func (s *Service) createSession(ctx context.Context, workspace string, mode sess
 		workspace, placement, err = s.bindPlacementForCreate(ctx, workspace, profile, owner)
 		if err != nil {
 			return nil, err
+		}
+		if placement != nil && placement.Ref.Kind == session.EnvKindNoFS {
+			profile = ProfileNoFS
 		}
 	}
 	if err := s.bindRelatedIncarnations(ctx, &opts); err != nil {
@@ -2368,8 +2279,6 @@ func (s *Service) createPerSessionEngine(ctx context.Context, mintID func() sess
 	}
 	if placement != nil {
 		sess.EnvironmentRef = placement.Ref
-	} else {
-		stampDefaultEnvironmentRef(sess)
 	}
 	if err := seedCarryover(sess, carrySnap); err != nil {
 		if closeFn != nil {
@@ -2412,7 +2321,7 @@ func (s *Service) createPerSessionEngine(ctx context.Context, mintID func() sess
 		// factory (which would MkdirAll/OpenRoot the server process's cwd — the
 		// exact hazard). It is a complete shell-less Environment with an honest
 		// nofs ref (no command runner: a file-less namespace has no shell).
-		s.sessionEnvironments[sess.ID] = tool.MustEnvironment(defaultEnvironmentRef(sess), nofs.New(), nil)
+		s.sessionEnvironments[sess.ID] = tool.MustEnvironment(sess.EnvironmentRef, nofs.New(), nil)
 	}
 	s.mu.Unlock()
 
@@ -3459,7 +3368,7 @@ func (s *Service) ForkSession(ctx context.Context, srcID session.SessionID, titl
 		return "", err
 	}
 	snap := session.ForkSnapshot(src.Conversation)
-	forked := session.New(s.cfg.NewID(), src.Mode, src.Workspace, src.Limits, s.cfg.Now())
+	forked := session.New(s.cfg.NewID(), src.Mode, src.EnvironmentRef, src.Limits, s.cfg.Now())
 	if err := forked.SeedHistory(snap); err != nil {
 		return "", fmt.Errorf("server: seed fork history: %w", err)
 	}
@@ -3498,7 +3407,7 @@ func (s *Service) ForkSession(ctx context.Context, srcID session.SessionID, titl
 	if err := s.persistNewSession(ctx, forked); err != nil {
 		return "", fmt.Errorf("server: persist forked session: %w", err)
 	}
-	if s.sessionNeedsPerFactory(sel, nil, profile, forked.Workspace) {
+	if s.sessionNeedsPerFactory(sel, nil, profile, forked.EnvironmentRef.ID) {
 		if _, err := s.rehydrateSession(ctx, forked); err != nil {
 			return "", err
 		}
@@ -3691,32 +3600,13 @@ func (s *Service) loadAndReopen(ctx context.Context, id session.SessionID) (*ses
 	return s.reopenLoadedSession(ctx, sess)
 }
 
-// validatePersistedWorkspace makes server-assigned authority durable. Unlike a
-// direct request, stored state is compared only under a narrow lexical identity:
-// both roots must be absolute and clean and their cleaned strings must match.
-// It intentionally never resolves symlinks or opens a workspace.
-func (s *Service) validatePersistedWorkspace(sess *session.Session) error {
-	if s.cfg.WorkspaceAuthority.clientSelectsRoot() || profileForSession(sess) == ProfileNoFS {
-		return nil
-	}
-	if !s.isAuthoritativeWorkspace(sess.Workspace) {
-		return fmt.Errorf("%w: persisted session %q workspace does not match the deployment-assigned workspace", ErrFailedPrecondition, sess.ID)
+// validatePersistedWorkspace keeps the run-entry call sites explicit while
+// placement reattachment validates the exact persisted EnvironmentRef.
+func (*Service) validatePersistedWorkspace(sess *session.Session) error {
+	if !sess.EnvironmentRef.Valid() {
+		return fmt.Errorf("%w: persisted session %q has no exact placement", ErrFailedPrecondition, sess.ID)
 	}
 	return nil
-}
-
-// isCleanAbs reports whether p is a non-empty, absolute, already-clean path — the
-// single lexical invariant the authoritative-root checks share. Kept in one place
-// so validateWorkspaceAuthorityConfig (the configured root) and
-// isAuthoritativeWorkspace (a stored root) cannot drift.
-func isCleanAbs(p string) bool {
-	return p != "" && filepath.IsAbs(p) && filepath.Clean(p) == p
-}
-
-func (s *Service) isAuthoritativeWorkspace(root string) bool {
-	// Once root == the configured value, the configured side's non-empty/abs/clean
-	// tests are implied by the same tests on root, so one isCleanAbs suffices.
-	return root == s.cfg.AuthoritativeWorkspace && isCleanAbs(root)
 }
 
 // validatePersistedSchedulePlacement rejects legacy or cross-scope schedule
@@ -3742,18 +3632,9 @@ func (s *Service) CanProcessSchedule(sched port.Schedule) bool {
 	return true
 }
 
-func (s *Service) validateEnvironmentOverride(sess *session.Session, env tool.Environment) error {
-	if s.cfg.WorkspaceAuthority.clientSelectsRoot() || profileForSession(sess) == ProfileNoFS {
-		return nil
-	}
-	ws := env.Workspace()
-	// Use the same lexical identity rule as the other persisted-root gates rather
-	// than a raw string compare: under WorkspaceAuthorityFileless the configured
-	// root is "", and a bare `ws.Root() != ""` would ACCEPT an empty-root override
-	// on a non-no-FS session, where isAuthoritativeWorkspace fails closed. Equivalent
-	// to the old compare under ServerAssigned (a non-empty clean absolute root).
-	if ws == nil || !s.isAuthoritativeWorkspace(ws.Root()) {
-		return fmt.Errorf("%w: environment override does not match the deployment-assigned workspace", ErrFailedPrecondition)
+func (*Service) validateEnvironmentOverride(sess *session.Session, env tool.Environment) error {
+	if env.Workspace() == nil || env.Ref() != sess.EnvironmentRef {
+		return fmt.Errorf("%w: environment override does not match the session's exact placement", ErrFailedPrecondition)
 	}
 	return nil
 }
@@ -3899,7 +3780,11 @@ func (s *Service) LoadSessionWithMCP(ctx context.Context, id session.SessionID, 
 	// loaded session's persisted Mode (ADR 0030 Layer 3), so a session loaded into plan
 	// mode mounts the plan model; builtForMode is stamped from the result so a later
 	// in-process mode switch on this reloaded session triggers the CASE 1 rebuild.
-	res, err := s.cfg.SessionEngine(ctx, sel, specs, profile, sess.Workspace, sess.Mode)
+	workspace, err := s.privateWorkspace(ctx, sess)
+	if err != nil {
+		return nil, err
+	}
+	res, err := s.cfg.SessionEngine(ctx, sel, specs, profile, workspace, sess.Mode)
 	if err != nil {
 		// The session was loaded + (if needed) reopened and re-persisted, but the
 		// per-session engine could not be built. We deliberately do NOT roll that
@@ -3930,7 +3815,7 @@ func (s *Service) LoadSessionWithMCP(ctx context.Context, id session.SessionID, 
 		// under the same lock (the create-time discipline), so StartRun never
 		// consults the shared factory with the empty root. It is a complete
 		// shell-less Environment with an honest nofs ref.
-		s.sessionEnvironments[id] = tool.MustEnvironment(defaultEnvironmentRef(sess), nofs.New(), nil)
+		s.sessionEnvironments[id] = tool.MustEnvironment(sess.EnvironmentRef, nofs.New(), nil)
 	}
 	s.mu.Unlock()
 	return sess, nil
@@ -4024,7 +3909,7 @@ func (s *Service) RetryFailedRun(ctx context.Context, id session.SessionID) (*ag
 		return nil, err
 	}
 
-	ctx = memory.WithWorkspace(ctx, sess.Workspace)
+	ctx = memory.WithWorkspace(ctx, env.Workspace().Root())
 	run := engine.RetryFailedStep(ctx, sess, env)
 	s.register(id, run, sess)
 	return run, nil
@@ -4172,7 +4057,7 @@ func (s *Service) startRunContent(ctx context.Context, id session.SessionID, tex
 	if err != nil {
 		return nil, err
 	}
-	ctx = memory.WithWorkspace(ctx, sess.Workspace)
+	ctx = memory.WithWorkspace(ctx, env.Workspace().Root())
 	// Mint this run's identity and stamp it on the aggregate BEFORE launching, so
 	// the id is on the snapshot the moment the run can park awaiting an approval —
 	// which is what lets a cross-process resume continue THE SAME run rather than
@@ -4551,7 +4436,7 @@ func (s *Service) engineAndEnvironmentFor(ctx context.Context, sess *session.Ses
 			return nil, tool.Environment{}, err
 		}
 		hasEngine = true
-		if !isRemoteEnvironmentRef(sess.EnvironmentRef) && (sess.Profile == string(ProfileNoFS) || sess.Workspace == "") {
+		if !isRemoteEnvironmentRef(sess.EnvironmentRef) && (sess.Profile == string(ProfileNoFS) || sess.EnvironmentRef.ID == "") {
 			// rehydrateSession re-registered the no-fs environment override (same as
 			// create); read it back so the resolution below uses the complete override.
 			// A REMOTE EnvironmentRef (ADR 0214) is excluded: its Environment is
@@ -4565,7 +4450,7 @@ func (s *Service) engineAndEnvironmentFor(ctx context.Context, sess *session.Ses
 			if !hasEnvOverride {
 				// Defensive: if the override somehow was not registered, install the
 				// honest file-less environment directly (the no-fs chokepoint).
-				envOverride = tool.MustEnvironment(defaultEnvironmentRef(sess), nofs.New(), nil)
+				envOverride = tool.MustEnvironment(sess.EnvironmentRef, nofs.New(), nil)
 				hasEnvOverride = true
 			}
 		}
@@ -4583,7 +4468,6 @@ func (s *Service) engineAndEnvironmentFor(ctx context.Context, sess *session.Ses
 		// override's presence (issue #462 phase-2 finding #2). Stamp the default ref
 		// from the live override so a legacy zero-ref session persists it on the next
 		// save (ADR 0214, issue #462 phase 3).
-		stampDefaultEnvironmentRef(sess)
 		return engine, envOverride, nil
 	}
 	// A revisioned provider ref with no explicit live override reattaches exactly;
@@ -4619,7 +4503,7 @@ func (s *Service) engineAndEnvironmentFor(ctx context.Context, sess *session.Ses
 	// workspace is a no-fs session (the defensive chokepoint — normally
 	// unreachable, since create/rehydrate register the override).
 	var ws tool.Workspace
-	if sess.Workspace == "" {
+	if sess.EnvironmentRef.ID == "" {
 		// DEFENSIVE CHOKEPOINT (issue #55): never hand an EMPTY root to the
 		// shared Workspaces factory — the osfs factory would MkdirAll/OpenRoot
 		// the server process's cwd. An empty persisted workspace is by
@@ -4628,7 +4512,7 @@ func (s *Service) engineAndEnvironmentFor(ctx context.Context, sess *session.Ses
 		// rehydration above both register the override).
 		ws = nofs.New()
 	} else {
-		ws = s.cfg.Workspaces(sess.Workspace)
+		ws = s.cfg.Workspaces(sess.EnvironmentRef.ID)
 	}
 	env, err := s.buildSessionEnvironment(sess, ws)
 	if err != nil {
@@ -4637,7 +4521,6 @@ func (s *Service) engineAndEnvironmentFor(ctx context.Context, sess *session.Ses
 	// Stamp the resolved default ref from the live Environment so a legacy
 	// zero-ref session persists it on the next ordinary save (ADR 0214, issue
 	// #462 phase 3 — no migration sweep).
-	stampDefaultEnvironmentRef(sess)
 	return engine, env, nil
 }
 
@@ -4697,55 +4580,18 @@ func (s *Service) resolveEnvironmentRef(ctx context.Context, ref session.Environ
 // SetSessionEnvironment — this function never guesses a ref or runner for an
 // override (issue #462 phase-2 finding #2).
 func (s *Service) buildSessionEnvironment(sess *session.Session, ws tool.Workspace) (tool.Environment, error) {
+	if ws == nil {
+		return tool.Environment{}, tool.ErrEnvironmentNoWorkspace
+	}
 	var runner tool.CommandRunner
-	if sess.Workspace != "" {
-		if sess.Workspace == s.cfg.DefaultWorkspace {
+	if ws.Root() != "" {
+		if ws.Root() == s.cfg.DefaultWorkspace {
 			runner = s.cfg.CommandRunner
 		} else if s.cfg.CommandRunnerFactory != nil {
-			// A worktree-bound session (or any root differing from the launch root):
-			// build a runner bound to the session root so Bash observes the session
-			// namespace, not the launch root.
-			runner = s.cfg.CommandRunnerFactory(sess.Workspace)
+			runner = s.cfg.CommandRunnerFactory(ws.Root())
 		}
 	}
-	// The ref is the SAME default derivation the create-time stamp uses
-	// (defaultEnvironmentRef is the single source — issue #462 phase-3 finding
-	// #6), so the live Environment's ref and the persisted/stamped ref always
-	// agree for the in-tree backends.
-	ref := defaultEnvironmentRef(sess)
-	return tool.NewEnvironment(ref, ws, runner)
-}
-
-// defaultEnvironmentRef computes the resolved default EnvironmentRef for a
-// session from its workspace/profile. It is the SINGLE source for the in-tree
-// default ref (ADR 0214, issue #462 phase 3 — finding #6 collapsed the
-// duplicate derivation): buildSessionEnvironment uses it for the LIVE
-// Environment's ref, and stampDefaultEnvironmentRef uses it for the ref STAMPED
-// at create time so the next ordinary save persists it. The two therefore
-// always agree for the in-tree backends: local (ID = workspace root) for a
-// filesystem session, nofs (empty ID) for a no-fs / empty-workspace session. A
-// non-zero persisted ref is NOT overwritten — only a zero (unspecified) ref
-// gets the default stamped. This is the create-time stamp; reattaching a ref
-// for a non-in-tree Kind goes through resolveEnvironmentRef at run entry.
-func defaultEnvironmentRef(sess *session.Session) session.EnvironmentRef {
-	if sess.Workspace == "" {
-		return session.EnvironmentRef{Kind: session.EnvKindNoFS, ID: "none", Revision: "in-tree-v1"}
-	}
-	return session.EnvironmentRef{Kind: session.EnvKindLocal, ID: sess.Workspace, Revision: "in-tree-v1"}
-}
-
-// stampDefaultEnvironmentRef stamps the resolved default EnvironmentRef onto a
-// freshly-created (or zero-ref) session. It is a no-op when the session already
-// carries a non-zero ref (a re-created carryover fork inherits its labels, an
-// override creator stamped its own). Called at createSession after setSessionLabels
-// so the first Store.Save persists the resolved default, and at run entry when a
-// loaded legacy session (zero ref) is first resolved to a live Environment — the
-// next ordinary save persists it (no migration sweep).
-func stampDefaultEnvironmentRef(sess *session.Session) {
-	if sess.EnvironmentRef != (session.EnvironmentRef{}) {
-		return
-	}
-	sess.EnvironmentRef = defaultEnvironmentRef(sess)
+	return tool.NewEnvironment(sess.EnvironmentRef, ws, runner)
 }
 
 // sessionNeedsPerFactory reports whether a CreateSession with the given inputs
@@ -4808,9 +4654,7 @@ func (s *Service) needsRehydration(sess *session.Session) bool {
 		sess.Profile == string(ProfileNoFS) ||
 		sess.ProviderID != "" || sess.ModelID != "" ||
 		sess.ReasoningEffort != "" ||
-		(sess.Workspace == "" && !isRemoteEnvironmentRef(sess.EnvironmentRef)) ||
-		s.cfg.DefaultModelPending ||
-		(sess.Workspace != "" && s.cfg.DefaultWorkspace != "" && sess.Workspace != s.cfg.DefaultWorkspace)
+		s.cfg.DefaultModelPending
 }
 
 // profileForSession reconstructs the SessionProfile from a loaded session's persisted
@@ -4828,7 +4672,7 @@ func profileForSession(sess *session.Session) SessionProfile {
 	switch {
 	case sess.Profile == string(ProfileNoFS):
 		return ProfileNoFS
-	case sess.Profile == "" && sess.Workspace == "" && !isRemoteEnvironmentRef(sess.EnvironmentRef):
+	case sess.Profile == "" && sess.EnvironmentRef.Kind == session.EnvKindNoFS:
 		return ProfileNoFS
 	default:
 		return ProfileDefault
@@ -4852,7 +4696,7 @@ func profileForSession(sess *session.Session) SessionProfile {
 // the winner's engine and tears its own down).
 func (s *Service) rehydrateSession(ctx context.Context, sess *session.Session) (*sessionEngine, error) {
 	if sess.Kind == session.SessionKindDebug {
-		if sess.Profile != string(ProfileNoFS) || sess.Workspace != "" || sess.Relationship.DebugTargetID == "" || sess.DebugTargetFingerprint == "" {
+		if sess.Profile != string(ProfileNoFS) || sess.EnvironmentRef.Kind != session.EnvKindNoFS || sess.Relationship.DebugTargetID == "" || sess.DebugTargetFingerprint == "" {
 			return nil, fmt.Errorf("%w: persisted debug session %q has invalid no-fs metadata", ErrInvalidArgument, sess.ID)
 		}
 		if s.cfg.DebugSessionEngine == nil {
@@ -4928,7 +4772,11 @@ func (s *Service) buildAndRegisterSessionEngine(ctx context.Context, sess *sessi
 		}
 		res, err = s.cfg.DebugSessionEngine(ctx, sel, profile, mode, sess.Relationship.DebugTargetID, sess.DebugTargetFingerprint, target.Owner, sess.DebugMCPServers, sess.DebugMCPTools)
 	} else {
-		res, err = s.cfg.SessionEngine(ctx, sel, nil, profile, sess.Workspace, mode)
+		workspace, workspaceErr := s.privateWorkspace(ctx, sess)
+		if workspaceErr != nil {
+			return nil, workspaceErr
+		}
+		res, err = s.cfg.SessionEngine(ctx, sel, nil, profile, workspace, mode)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("server: build session engine %q: %w", id, err)
@@ -4983,7 +4831,7 @@ func (s *Service) buildAndRegisterSessionEngine(ctx context.Context, sess *sessi
 		// empty root. It is a complete shell-less Environment with an honest nofs ref.
 		// A selector session with a real workspace needs no override: the run-entry
 		// seam builds its environment from the shared factory as usual.
-		s.sessionEnvironments[id] = tool.MustEnvironment(defaultEnvironmentRef(sess), nofs.New(), nil)
+		s.sessionEnvironments[id] = tool.MustEnvironment(sess.EnvironmentRef, nofs.New(), nil)
 	}
 	s.mu.Unlock()
 	// On a clean replace, free the displaced prior engine's MCP manager OUTSIDE the lock
@@ -5296,7 +5144,7 @@ func (s *Service) resumeFromAwaiting(ctx context.Context, id session.SessionID, 
 	if err != nil {
 		return nil, err
 	}
-	ctx = memory.WithWorkspace(ctx, sess.Workspace)
+	ctx = memory.WithWorkspace(ctx, env.Workspace().Root())
 	run := engine.ResumeApproval(ctx, sess, env, askID, verdict)
 	s.register(id, run, sess)
 	return run, nil

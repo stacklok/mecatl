@@ -2,7 +2,7 @@
 // of a session.Session that the store adapters (memstore, jsonlstore) share.
 //
 // The Session aggregate exposes its lifecycle data through exported fields
-// (ID, State, Mode, Conversation, Limits, Counters, Workspace, CreatedAt) and
+// (ID, State, Mode, Conversation, Limits, Counters, EnvironmentRef, CreatedAt) and
 // through the PendingAsk accessor. Two pieces of its state are unexported and
 // not directly addressable from outside the session package:
 //
@@ -36,7 +36,6 @@ type Snapshot struct {
 	Mode        session.PermissionMode `json:"mode"`
 	Limits      session.Limits         `json:"limits"`
 	Counters    session.Counters       `json:"counters"`
-	Workspace   string                 `json:"workspace"`
 	CreatedAt   time.Time              `json:"created_at"`
 	Incarnation session.IncarnationID  `json:"incarnation,omitempty"`
 	Messages    []messageDTO           `json:"messages"`
@@ -49,7 +48,7 @@ type Snapshot struct {
 	// Profile is the session's opaque tool-surface profile label. omitempty keeps a
 	// v1 snapshot with no "profile" key decoding to "" (the default profile) —
 	// purely additive, no format-tag bump (the same precedent as ProviderPhase /
-	// Parts). The empty-workspace inference stays as the second defense on restore.
+	// Parts).
 	Profile string `json:"profile,omitempty"`
 	// ProviderID and ModelID are the session's opaque neutral provider+model
 	// selector pair. omitempty keeps a v1 snapshot with no key decoding to the empty
@@ -130,21 +129,9 @@ type Snapshot struct {
 	// genuinely pre-feature legacy record; a present payload must decode to the
 	// one governance.CapabilitySet representation or restore fails closed.
 	Authority *session.Authority `json:"authority,omitempty"`
-	// EnvironmentRef is the resolved execution-environment identity this session
-	// runs against (ADR 0214, issue #462 phase 3). The ref is a value type
-	// (EnvironmentKind + opaque ID); a zero ref {Kind:"", ID:""} is the
-	// "unspecified" value. It uses Go 1.26's `omitzero` (NOT `omitempty`, which
-	// never omits a non-empty struct) so a default/local session with no remote
-	// ref stays byte-identical to a pre-phase-3 snapshot — purely additive, no
-	// format-tag bump. A legacy snapshot with no "environment_ref" key decodes to
-	// the zero ref. Persisting it lets a restarted process reattach a live
-	// Environment to the SAME backend for a non-in-tree Kind via
-	// server.Config.EnvironmentResolver; local/mem/nofs resolve through the
-	// existing factories.
-	EnvironmentRef session.EnvironmentRef `json:"environment_ref,omitzero"`
-	// AdoptionMetadata is embedded so its rare pointer does not inflate every
-	// Snapshot, while its existing v2 fields remain flat on the JSON wire.
-	*session.AdoptionMetadata
+	// EnvironmentRef is the sole durable execution-environment identity. It is
+	// required and must contain the exact provider revision used for reattachment.
+	EnvironmentRef session.EnvironmentRef `json:"environment_ref"`
 }
 
 // messageDTO mirrors session.Message with JSON tags. session.Message is
@@ -202,7 +189,6 @@ func Of(s *session.Session) (Snapshot, error) {
 		Mode:                   s.Mode,
 		Limits:                 s.Limits,
 		Counters:               s.Counters,
-		Workspace:              s.Workspace,
 		EnvironmentRef:         s.EnvironmentRef,
 		Profile:                s.Profile,
 		ProviderID:             s.ProviderID,
@@ -219,8 +205,7 @@ func Of(s *session.Session) (Snapshot, error) {
 		Incarnation:            s.Incarnation(),
 		// Owner is a pointer for true omitempty; Clone so the snapshot cannot
 		// alias (and later mutate) the aggregate's own principal.
-		Owner:            s.Owner.Clone(),
-		AdoptionMetadata: s.Adoption.Clone(),
+		Owner: s.Owner.Clone(),
 	}
 	if authority, ok := s.BoundAuthority(); ok {
 		snap.Authority = &authority
@@ -258,7 +243,10 @@ func Of(s *session.Session) (Snapshot, error) {
 // machine through its public constructors and transitions, so all invariants
 // hold on the rebuilt aggregate.
 func (snap Snapshot) Restore() (*session.Session, error) {
-	s := session.New(snap.ID, snap.Mode, snap.Workspace, snap.Limits, snap.CreatedAt)
+	if !snap.EnvironmentRef.Valid() {
+		return nil, errors.New("sessnap: missing or invalid environment_ref")
+	}
+	s := session.New(snap.ID, snap.Mode, snap.EnvironmentRef, snap.Limits, snap.CreatedAt)
 	if err := s.RestoreSessionMetadata(snap.Kind, snap.Relationship); err != nil {
 		return nil, fmt.Errorf("sessnap: restore session metadata: %w", err)
 	}
@@ -281,8 +269,6 @@ func (snap Snapshot) Restore() (*session.Session, error) {
 	s.DebugMCPServers = append([]string(nil), snap.DebugMCPServers...)
 	s.DebugMCPTools = append([]string(nil), snap.DebugMCPTools...)
 	s.DebugTargetFingerprint = snap.DebugTargetFingerprint
-	s.EnvironmentRef = snap.EnvironmentRef
-	s.Adoption = snap.Clone()
 	// RunID restores by direct assignment, like Profile/Title above: it is an
 	// inert stored label, not lifecycle state, so it does not belong in
 	// RestoreState's state-machine parameter list.
@@ -479,6 +465,15 @@ func Marshal(s *session.Session) ([]byte, error) {
 
 // Unmarshal decodes a JSON snapshot line and restores it into a Session.
 func Unmarshal(line []byte) (*session.Session, error) {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(line, &fields); err != nil {
+		return nil, fmt.Errorf("sessnap: decode snapshot: %w", err)
+	}
+	for _, legacy := range []string{"workspace", "adoption_source_id", "adoption_request_digest"} {
+		if _, ok := fields[legacy]; ok {
+			return nil, fmt.Errorf("sessnap: unsupported legacy duplicate placement field %q", legacy)
+		}
+	}
 	var wire struct {
 		Authority json.RawMessage `json:"authority"`
 	}

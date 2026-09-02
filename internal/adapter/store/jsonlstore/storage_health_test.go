@@ -15,7 +15,7 @@ func TestSessionStorageContinuity_Scenario6_HealthIsBoundedAndHonest(t *testing.
 		t.Fatalf("New: %v", err)
 	}
 	for _, s := range []*session.Session{
-		session.New("main", session.ModeDefault, "/secret/main", session.Limits{}, time.Unix(1, 0)),
+		session.New("main", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/secret/main", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1, 0)),
 	} {
 		if err := st.Save(context.Background(), s); err != nil {
 			t.Fatalf("Save: %v", err)

@@ -19,7 +19,7 @@ import (
 func TestCallerIdentity_Scenario0_OwnerSnapshotRoundTrip(t *testing.T) {
 	t.Parallel()
 
-	s := session.New("s1", session.ModeDefault, "/w", session.Limits{}, time.Unix(0, 0).UTC())
+	s := session.New("s1", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/w", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0).UTC())
 	owner := &session.Principal{
 		Issuer:    " https://例.example.com/領域 ",
 		Subject:   " álïçé\n",
@@ -76,7 +76,7 @@ func TestOwnerSnapshotRejectsNULDelimitedIdentity(t *testing.T) {
 		`{"issuer":"a","subject":"b\u0000c","grant_type":"user"}`,
 	} {
 		line := []byte(`{"id":"s1","state":"idle","mode":"default","limits":{},` +
-			`"counters":{},"workspace":"/w","created_at":"1970-01-01T00:00:00Z",` +
+			`"counters":{},"environment_ref":{"Kind":"local","ID":"/w","Revision":"in-tree-v1"},"created_at":"1970-01-01T00:00:00Z",` +
 			`"owner":` + owner + `,"authority":"must-not-apply","messages":[]}`)
 		if _, err := sessnap.Unmarshal(line); err == nil {
 			t.Fatalf("Unmarshal accepted unsafe owner %s", owner)
@@ -91,7 +91,7 @@ func TestCallerIdentity_Scenario0_PreShipSnapshotRestores(t *testing.T) {
 	t.Parallel()
 
 	const preShip = `{"id":"s1","state":"idle","mode":"default","limits":{},` +
-		`"counters":{},"workspace":"/w","created_at":"1970-01-01T00:00:00Z","messages":[]}`
+		`"counters":{},"environment_ref":{"Kind":"local","ID":"/w","Revision":"in-tree-v1"},"created_at":"1970-01-01T00:00:00Z","messages":[]}`
 
 	got, err := sessnap.Unmarshal([]byte(preShip))
 	if err != nil {
@@ -132,7 +132,7 @@ func TestCallerIdentity_Scenario0_APICompatAdditive(t *testing.T) {
 
 	// The pre-existing eight-parameter call site, verbatim. If RestoreState's
 	// signature widened, this file stops compiling — that is the assertion.
-	s := session.New("s1", session.ModeDefault, "/w", session.Limits{}, time.Unix(0, 0).UTC())
+	s := session.New("s1", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/w", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0).UTC())
 	if err := sessnap.RestoreState(
 		s,
 		session.StateIdle,

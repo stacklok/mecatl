@@ -99,19 +99,19 @@ func TestNeedsRehydrationWorktreeAndDefault(t *testing.T) {
 		{
 			name:             "default-FS session does not rehydrate",
 			defaultWorkspace: base,
-			sess:             session.New("s1", session.ModeDefault, base, session.Limits{}, time.Unix(0, 0)),
+			sess:             session.New("s1", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: base, Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0)),
 			want:             false,
 		},
 		{
 			name:             "worktree session rehydrates",
 			defaultWorkspace: base,
-			sess:             session.New("s2", session.ModeDefault, wtB, session.Limits{}, time.Unix(0, 0)),
+			sess:             session.New("s2", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: wtB, Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0)),
 			want:             true,
 		},
 		{
 			name:             "no-DefaultWorkspace (child/cloud): non-empty workspace does NOT spuriously rehydrate",
 			defaultWorkspace: "",
-			sess:             session.New("s3", session.ModeDefault, wtB, session.Limits{}, time.Unix(0, 0)),
+			sess:             session.New("s3", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: wtB, Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0)),
 			want:             false,
 		},
 	}

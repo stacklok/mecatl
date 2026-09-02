@@ -104,7 +104,7 @@ func TestBackgroundNoticeBatchesTwoFinishedChildren(t *testing.T) {
 	cat.MustRegister(await)
 	e := NewEngine(Deps{LLM: parentLLM, Catalog: cat, Policy: allow, Model: "parent-model"})
 
-	sess := session.New("notice-batch", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
+	sess := session.New("notice-batch", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
 	r := e.Run(context.Background(), sess, memEnv("/ws"), RunRequest{Text: "go"})
 	holder.run = r
 	close(holder.ready)

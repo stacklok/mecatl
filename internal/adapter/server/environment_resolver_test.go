@@ -73,7 +73,7 @@ func newEnvTestServiceWithLLM(t *testing.T, resolver func(context.Context, sessi
 // path (createSession stamps only local/nofs refs).
 func remoteSessionWithRef(t *testing.T, store port.SessionStore, ref session.EnvironmentRef) *session.Session {
 	t.Helper()
-	sess := session.New("remote-1", session.ModeDefault, "remote-ws", session.Limits{MaxTurns: 5}, time.Unix(0, 0))
+	sess := session.New("remote-1", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "remote-ws", Revision: "in-tree-v1"}, session.Limits{MaxTurns: 5}, time.Unix(0, 0))
 	sess.EnvironmentRef = ref
 	if err := store.Save(context.Background(), sess); err != nil {
 		t.Fatalf("store.Save: %v", err)
@@ -86,7 +86,7 @@ func remoteSessionWithRef(t *testing.T, store port.SessionStore, ref session.Env
 // never a silent local fallback.
 func TestEnvironmentResolverMissingFailsLoudly(t *testing.T) {
 	svc, store, factoryCalls := newEnvTestService(t, nil)
-	ref := session.EnvironmentRef{Kind: remoteenv.Kind, ID: "ns-1"}
+	ref := session.EnvironmentRef{Kind: remoteenv.Kind, ID: "ns-1", Revision: "r1"}
 	sess := remoteSessionWithRef(t, store, ref)
 
 	_, err := svc.StartRun(context.Background(), sess.ID, "go")
@@ -107,7 +107,7 @@ func TestEnvironmentResolverWrongRefFailsLoudly(t *testing.T) {
 		// Return a DIFFERENT ref than requested.
 		return other, nil
 	})
-	ref := session.EnvironmentRef{Kind: remoteenv.Kind, ID: "ns-1"}
+	ref := session.EnvironmentRef{Kind: remoteenv.Kind, ID: "ns-1", Revision: "r1"}
 	sess := remoteSessionWithRef(t, store, ref)
 
 	_, err := svc.StartRun(context.Background(), sess.ID, "go")
@@ -126,7 +126,7 @@ func TestEnvironmentResolverNilWorkspaceFailsLoudly(t *testing.T) {
 		// A zero Environment has a nil Workspace.
 		return tool.Environment{}, nil
 	})
-	ref := session.EnvironmentRef{Kind: remoteenv.Kind, ID: "ns-1"}
+	ref := session.EnvironmentRef{Kind: remoteenv.Kind, ID: "ns-1", Revision: "r1"}
 	sess := remoteSessionWithRef(t, store, ref)
 
 	_, err := svc.StartRun(context.Background(), sess.ID, "go")
@@ -314,7 +314,7 @@ func TestEnvironmentResolverDoesNotRebuildSessionEngine(t *testing.T) {
 	if lerr != nil {
 		t.Fatalf("GetSession: %v", lerr)
 	}
-	wantRef := session.EnvironmentRef{Kind: session.EnvKindLocal, ID: cwd}
+	wantRef := session.EnvironmentRef{Kind: session.EnvKindLocal, ID: cwd, Revision: "in-tree-v1"}
 	if loaded.EnvironmentRef != wantRef {
 		t.Fatalf("post-run EnvironmentRef = %+v, want %+v (the live ref stamped at run entry must equal the create-stamped ref — one shared derivation)", loaded.EnvironmentRef, wantRef)
 	}
@@ -379,7 +379,7 @@ func newEnvTestServiceWithFactory(t *testing.T, resolver func(context.Context, s
 // remote backend, not on a local root).
 func remoteSessionWithRefAndSelector(t *testing.T, store port.SessionStore, ref session.EnvironmentRef, providerID, modelID string) *session.Session {
 	t.Helper()
-	sess := session.New("remote-sel-1", session.ModeDefault, "", session.Limits{MaxTurns: 5}, time.Unix(0, 0))
+	sess := session.New("remote-sel-1", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/workspace", Revision: "in-tree-v1"}, session.Limits{MaxTurns: 5}, time.Unix(0, 0))
 	sess.EnvironmentRef = ref
 	sess.ProviderID = providerID
 	sess.ModelID = modelID
@@ -477,7 +477,7 @@ func TestRemoteRefDefaultProviderEmptyWorkspaceResolvesEnv(t *testing.T) {
 	// remote ref, so rehydration must not trigger.
 	svc, store, factoryCalls := newEnvTestServiceWithLLM(t, b.Resolve, llm, []tool.Tool{&tools.ReadTool{}})
 	// Persist a remote-ref session with empty Workspace and no selector.
-	sess := session.New("remote-default-1", session.ModeDefault, "", session.Limits{MaxTurns: 5}, time.Unix(0, 0))
+	sess := session.New("remote-default-1", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/workspace", Revision: "in-tree-v1"}, session.Limits{MaxTurns: 5}, time.Unix(0, 0))
 	sess.EnvironmentRef = ref
 	if err := store.Save(ctx, sess); err != nil {
 		t.Fatalf("store.Save: %v", err)
@@ -551,7 +551,7 @@ func TestNoFSCreateSessionStampsNoFSRef(t *testing.T) {
 		t.Fatalf("NewService: %v", err)
 	}
 
-	wantRef := session.EnvironmentRef{Kind: session.EnvKindNoFS, ID: ""}
+	wantRef := session.EnvironmentRef{Kind: session.EnvKindNoFS, ID: "none", Revision: "in-tree-v1"}
 	sess, err := svc.CreateSessionWithProfile(ctx, "", session.ModeDefault, session.Limits{},
 		server.ProviderSelector{}, server.ProfileNoFS)
 	if err != nil {

@@ -282,7 +282,7 @@ func TestContextCancelPassthrough(t *testing.T) {
 func TestSaveLoadOverWire(t *testing.T) {
 	st := newWiredSessionStore(t)
 	ctx := context.Background()
-	s := session.New("wire-1", session.ModeDefault, "/ws", session.Limits{}, time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC))
+	s := session.New("wire-1", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC))
 	if err := s.RecordUserPrompt("hello driver", nil); err != nil {
 		t.Fatalf("RecordUserPrompt: %v", err)
 	}
@@ -323,7 +323,7 @@ func TestServerWrapperSaveRejectsBadEnvelope(t *testing.T) {
 	srv := NewSessionStoreServer(memstore.New())
 	ctx := context.Background()
 
-	goodPayload, err := sessnap.Marshal(session.New("id-1", session.ModeDefault, "/ws", session.Limits{}, time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)))
+	goodPayload, err := sessnap.Marshal(session.New("id-1", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)))
 	if err != nil {
 		t.Fatalf("sessnap.Marshal: %v", err)
 	}

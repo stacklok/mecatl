@@ -33,7 +33,6 @@ import (
 
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/port"
-	"github.com/stacklok/mecatl/internal/adapter/server"
 	"github.com/stacklok/mecatl/internal/app"
 	"github.com/stacklok/mecatl/internal/cliconfig"
 )
@@ -511,21 +510,10 @@ const mecak8sServerImplementation = "mecak8s"
 // from the observability handles (issue #343): nil when telemetry is off (the
 // byte-identical no-metrics posture), non-nil when --otlp-* is set.
 func appConfig(cfg config, diag port.Diagnostics, obs observability) app.Config {
-	// Workspace authority is driven by whether an operator configured a root.
-	// Empty (the default) is a FILE-LESS deployment: never pass the process cwd
-	// (a container root) as an agent workspace — every session is no-FS. A
-	// non-empty root is a deliberately mounted filesystem (e.g. a PVC): a
-	// server-assigned deployment rooted there, so clients cannot select another
-	// root (ADR 0237). Session/harness state stays in Redis + the k8s API either
-	// way (ADR 0048); a mounted workspace holds agent working files, not state.
-	workspace, authority, authoritativeRoot := "", server.WorkspaceAuthorityFileless, ""
-	if cfg.workspace != "" {
-		workspace, authority, authoritativeRoot = cfg.workspace, server.WorkspaceAuthorityServerAssigned, cfg.workspace
-	}
+	// An empty configured root binds the deployment's no-FS placement; a
+	// non-empty root binds the operator-mounted filesystem.
 	out := app.Config{
-		Workspace:              workspace,
-		WorkspaceAuthority:     authority,
-		AuthoritativeWorkspace: authoritativeRoot,
+		Workspace:              cfg.workspace,
 		Model:                  cfg.model,
 		DefaultProvider:        cfg.defaultProvider,
 		DefaultModel:           cfg.defaultModel,

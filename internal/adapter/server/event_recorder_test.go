@@ -152,7 +152,7 @@ func TestRunEventRecorderThresholdFlushPreservesFirstObservedKindOrder(t *testin
 			}
 
 			folded, err := eventsource.Fold(eventsource.SessionMeta{
-				ID: "s1", Mode: session.ModeDefault, Workspace: ".", CreatedAt: time.Unix(1, 0),
+				ID: "s1", Mode: session.ModeDefault, EnvironmentRef: session.EnvironmentRef{Kind: session.EnvKindLocal, ID: ".", Revision: "in-tree-v1"}, CreatedAt: time.Unix(1, 0),
 			}, log.Read(context.Background(), "s1"))
 			if err != nil {
 				t.Fatalf("Fold: %v", err)
@@ -207,7 +207,7 @@ func TestRunEventRecorderPostWriteErrorIsNotRetriedAndLaterEventsContinue(t *tes
 		}
 	}
 	folded, err := eventsource.Fold(eventsource.SessionMeta{
-		ID: "s1", Mode: session.ModeDefault, Workspace: ".", CreatedAt: time.Unix(1, 0),
+		ID: "s1", Mode: session.ModeDefault, EnvironmentRef: session.EnvironmentRef{Kind: session.EnvKindLocal, ID: ".", Revision: "in-tree-v1"}, CreatedAt: time.Unix(1, 0),
 	}, log.Read(context.Background(), "s1"))
 	if err != nil {
 		t.Fatalf("Fold: %v", err)
@@ -275,7 +275,7 @@ func TestRunEventRecorderOversizedEscapedUTF8RoundTripsThroughJSONL(t *testing.T
 	}
 
 	folded, err := eventsource.Fold(eventsource.SessionMeta{
-		ID: "s1", Mode: session.ModeDefault, Workspace: ".", CreatedAt: time.Unix(1, 0),
+		ID: "s1", Mode: session.ModeDefault, EnvironmentRef: session.EnvironmentRef{Kind: session.EnvKindLocal, ID: ".", Revision: "in-tree-v1"}, CreatedAt: time.Unix(1, 0),
 	}, log.Read(context.Background(), "s1"))
 	if err != nil {
 		t.Fatalf("Fold: %v", err)

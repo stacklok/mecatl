@@ -37,7 +37,7 @@ func (textLengthCounter) CountMessages(msgs []session.Message) int {
 
 func manualSession(t *testing.T) *session.Session {
 	t.Helper()
-	sess := session.New("manual", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
+	sess := session.New("manual", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
 	if err := sess.SeedHistory([]session.Message{
 		session.NewUserMessage("a long original user instruction"),
 		session.NewAssistantMessage("a long original assistant response", "", nil),

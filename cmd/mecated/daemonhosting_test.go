@@ -484,36 +484,6 @@ func TestSDKServerEnablers_Scenario8_DisabledAndSocketListenersAreNotNetworkBoun
 			}
 		})
 	}
-
-	// The composed decision: a socket-plus-no-HTTP daemon keeps client-selected
-	// authority and therefore does not require --workspace.
-	cfg := udsConfig("/tmp/mecated/g.sock")
-	got, err := workspaceAuthorityForListeners(cfg)
-	if err != nil {
-		t.Fatalf("workspaceAuthorityForListeners: %v", err)
-	}
-	if got != server.WorkspaceAuthorityClientSelected {
-		t.Fatalf("authority = %v, want client-selected for a socket-only daemon", got)
-	}
-	if err := validateWorkspaceAuthority(cfg); err != nil {
-		t.Fatalf("a socket-only daemon must not require --workspace: %v", err)
-	}
-
-	// An empty --grpc-addr with NO socket is a wildcard-bound, unauthenticated
-	// gRPC listener. It must stay server-assigned: client-selected authority
-	// there would let any reachable caller name an arbitrary absolute workspace
-	// root, and would drop the --workspace requirement that is the backstop.
-	wildcard := config{grpcAddr: "", httpAddr: ""}
-	got, err = workspaceAuthorityForListeners(wildcard)
-	if err != nil {
-		t.Fatalf("workspaceAuthorityForListeners: %v", err)
-	}
-	if got != server.WorkspaceAuthorityServerAssigned {
-		t.Fatalf("authority = %v, want server-assigned: an empty --grpc-addr binds every interface", got)
-	}
-	if err := validateWorkspaceAuthority(wildcard); err == nil {
-		t.Fatal("validateWorkspaceAuthority = nil, want --workspace required for a wildcard-bound gRPC listener")
-	}
 }
 
 // ---------------------------------------------------------------------------

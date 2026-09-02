@@ -112,7 +112,7 @@ func TestCanonicalAndLegacyNamespacesAreDisjoint(t *testing.T) {
 	if filepath.Dir(st.resolver.canonicalPath(canonicalID, kindSnapshot)) == filepath.Dir(st.resolver.legacyPath(legacyID, kindSnapshot)) {
 		t.Fatal("canonical and legacy families share a directory")
 	}
-	if err := st.Save(context.Background(), session.New(canonicalID, session.ModeDefault, "/ws", session.Limits{}, time.Unix(1, 0))); err != nil {
+	if err := st.Save(context.Background(), session.New(canonicalID, session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1, 0))); err != nil {
 		t.Fatalf("Save canonical: %v", err)
 	}
 	writeBytes(t, st.resolver.legacyPath(legacyID, kindSnapshot), append(snapshotLine(t, legacyID, "legacy"), '\n'))
@@ -131,7 +131,7 @@ func TestSaveLoadFormerlyCollidingIDsAreIndependent(t *testing.T) {
 	}
 	ctx := context.Background()
 	for i, id := range []session.SessionID{"a/b", "a_b"} {
-		s := session.New(id, session.ModeDefault, "/ws", session.Limits{}, time.Unix(1, 0).UTC())
+		s := session.New(id, session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1, 0).UTC())
 		s.SetTitle("title:" + string(id))
 		if err := st.Save(ctx, s); err != nil {
 			t.Fatalf("Save(%q): %v", id, err)
@@ -180,7 +180,7 @@ func TestSaveLoadFormerlyCollidingIDsAreIndependent(t *testing.T) {
 func TestUnicodeSessionIDAcrossAdapterOperations(t *testing.T) {
 	st := newInternalStore(t)
 	id := session.SessionID("会話/雪だるま☃")
-	s := session.New(id, session.ModeDefault, "/ws", session.Limits{}, time.Unix(1, 0))
+	s := session.New(id, session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1, 0))
 	s.SetTitle("unicode")
 	if err := st.Save(context.Background(), s); err != nil {
 		t.Fatalf("Save: %v", err)
@@ -220,7 +220,7 @@ func TestUnicodeSessionIDAcrossAdapterOperations(t *testing.T) {
 func TestInvalidUTF8SessionIDWritesAreRejected(t *testing.T) {
 	st := newInternalStore(t)
 	id := session.SessionID(string([]byte{'x', 0xff}))
-	s := session.New(id, session.ModeDefault, "/ws", session.Limits{}, time.Unix(1, 0))
+	s := session.New(id, session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1, 0))
 	if err := st.Save(context.Background(), s); err == nil {
 		t.Fatal("Save accepted invalid UTF-8 session id")
 	}
@@ -302,7 +302,7 @@ func TestLoadLegacyMismatchIsNotFoundAndUntouched(t *testing.T) {
 		t.Fatalf("canonical events = %+v, want only seq 1", events)
 	}
 
-	requestedSession := session.New(requested, session.ModeDefault, "/ws", session.Limits{}, time.Unix(1, 0).UTC())
+	requestedSession := session.New(requested, session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1, 0).UTC())
 	if err := st.Save(context.Background(), requestedSession); err != nil {
 		t.Fatalf("Save mismatched id: %v", err)
 	}
@@ -551,7 +551,7 @@ func TestCanonicalSnapshotOwnershipMismatchFailsClosed(t *testing.T) {
 	if _, err := st.Load(context.Background(), requested); err == nil {
 		t.Fatal("Load accepted mismatched canonical snapshot")
 	}
-	if err := st.Save(context.Background(), session.New(requested, session.ModeDefault, "/ws", session.Limits{}, time.Unix(1, 0))); err == nil {
+	if err := st.Save(context.Background(), session.New(requested, session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1, 0))); err == nil {
 		t.Fatal("Save appended to mismatched canonical snapshot")
 	}
 	if err := st.Append(context.Background(), requested, session.Event{Type: session.EvResult}); err == nil {
@@ -766,7 +766,7 @@ func TestLongLegacyIDMigratesForward(t *testing.T) {
 			writeBytes(t, st.resolver.legacyPath(id, kindEvents),
 				append(eventRecordLine(t, session.Event{Type: session.EvResult, Seq: 1}), '\n'))
 
-			sess := session.New(id, session.ModeDefault, "/ws", session.Limits{}, time.Unix(2, 0).UTC())
+			sess := session.New(id, session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(2, 0).UTC())
 			sess.SetTitle("migrated")
 			if err := st.Save(context.Background(), sess); err != nil {
 				t.Fatalf("Save of a %d-byte legacy id = %v; want the family migrated forward", n, err)
@@ -873,7 +873,7 @@ func TestSaveHealsTornCanonicalSnapshot(t *testing.T) {
 	id := session.SessionID("torn-save")
 	tornCanonicalFamily(t, st, id)
 
-	sess := session.New(id, session.ModeDefault, "/ws", session.Limits{}, time.Unix(2, 0).UTC())
+	sess := session.New(id, session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(2, 0).UTC())
 	sess.SetTitle("after-the-repair")
 	if err := st.Save(context.Background(), sess); err != nil {
 		t.Fatalf("Save over torn canonical snapshot = %v; want nil", err)
@@ -910,7 +910,7 @@ func TestCorruptLegacySnapshotIsErrorNotNotOurs(t *testing.T) {
 			writeBytes(t, st.resolver.legacyPath(id, kindEvents), legacyEvents)
 
 			// prepareWrite, via Save: must refuse and migrate nothing.
-			err := st.Save(context.Background(), session.New(id, session.ModeDefault, "/ws", session.Limits{}, time.Unix(1, 0)))
+			err := st.Save(context.Background(), session.New(id, session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1, 0)))
 			if err == nil {
 				t.Fatal("Save proceeded on an unprovable legacy family; want an error")
 			}
@@ -974,7 +974,7 @@ func TestCreateCollisionDoesNotMigrateLegacyFamily(t *testing.T) {
 		writeBytes(t, first.resolver.legacyPath(id, kind), content)
 	}
 
-	loser := session.New(id, session.ModeAccept, "/loser", session.Limits{}, time.Unix(2, 0).UTC())
+	loser := session.New(id, session.ModeAccept, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/loser", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(2, 0).UTC())
 	if err := second.Create(ctx, loser); !errors.Is(err, port.ErrSessionAlreadyExists) {
 		t.Fatalf("Create(collision) = %v, want ErrSessionAlreadyExists", err)
 	}
@@ -996,7 +996,7 @@ func newInternalStore(t *testing.T) *Store {
 
 func snapshotLine(t *testing.T, id session.SessionID, title string) []byte {
 	t.Helper()
-	s := session.New(id, session.ModeDefault, "/ws", session.Limits{}, time.Unix(1, 0).UTC())
+	s := session.New(id, session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1, 0).UTC())
 	s.SetTitle(title)
 	line, err := sessnap.Marshal(s)
 	if err != nil {

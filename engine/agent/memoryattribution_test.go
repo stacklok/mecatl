@@ -32,7 +32,7 @@ func TestExplicitMemoryWriteCarriesCurrentRunAttributionWhenLearningOff(t *testi
 		Catalog:      memoryCatalog(t, memorytools.ProjectTools(store)),
 		LearningMode: learning.Off,
 	})
-	sess := session.New("original-explicit-session", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
+	sess := session.New("original-explicit-session", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
 	drain(eng.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "remember it"}))
 	record, found, err := store.Inspect(context.Background(), "project/editor")
 	if err != nil || !found {

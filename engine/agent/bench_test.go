@@ -152,5 +152,5 @@ func BenchmarkRunMutatingTurn(b *testing.B) {
 // takes a *testing.T; benchmarks construct the session directly to avoid that
 // dependency while keeping the same parameters.
 func benchSession() *session.Session {
-	return session.New("bench", session.ModeDefault, "/ws", session.Limits{}, benchEpoch)
+	return session.New("bench", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, benchEpoch)
 }

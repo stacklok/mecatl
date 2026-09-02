@@ -10,7 +10,7 @@ import (
 )
 
 func testEnvironment(ws tool.Workspace, runner tool.CommandRunner) tool.Environment {
-	return tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: ws.Root()}, ws, runner)
+	return tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: ws.Root(), Revision: "test-v1"}, ws, runner)
 }
 
 func memEnvironment(root string) tool.Environment {
@@ -27,5 +27,5 @@ func osfsEnvironment(t *testing.T, dir string, runner tool.CommandRunner) tool.E
 	if err != nil {
 		t.Fatalf("osfs workspace %q: %v", dir, err)
 	}
-	return tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindLocal, ID: dir}, ws, runner)
+	return tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindLocal, ID: dir, Revision: "test-v1"}, ws, runner)
 }

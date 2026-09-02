@@ -36,7 +36,7 @@ func main() {
 		mockllm.TextTurn("The tool replied: pong.")), Catalog: catalog, Policy: policy, Model: "mock"})
 	ws := memfs.NewWorkspace("/workspace")
 	env := tool.MustEnvironment(session.EnvironmentRef{}, ws, nil)
-	sess := session.New("first-agent-tool", session.ModeDefault, "/workspace", session.Limits{}, time.Now())
+	sess := session.New("first-agent-tool", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/workspace", Revision: "in-tree-v1"}, session.Limits{}, time.Now())
 	for event := range engine.Run(context.Background(), sess, env, agent.RunRequest{Text: "Ping the tool."}).Events() {
 		if event.Type == session.EvToolCall || event.Type == session.EvToolResult || event.Type == session.EvResult {
 			fmt.Println(event.Type)

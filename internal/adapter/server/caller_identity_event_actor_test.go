@@ -264,7 +264,7 @@ func TestCallerIdentity_Scenario4_EventActorLogOnly(t *testing.T) {
 		stamped[i].Actor = bob // a DIFFERENT principal than the snapshot owner
 	}
 	meta := eventsource.SessionMeta{
-		ID: "s-fold", Mode: session.ModeDefault, Workspace: "/ws", CreatedAt: time.Unix(0, 0),
+		ID: "s-fold", Mode: session.ModeDefault, EnvironmentRef: session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, CreatedAt: time.Unix(0, 0),
 	}
 	plain, err := eventsource.Fold(meta, evSeq(base))
 	if err != nil {

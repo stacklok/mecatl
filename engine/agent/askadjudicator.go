@@ -224,7 +224,7 @@ func (a *engineAskReviewer) Review(ctx context.Context, req ChildAskReviewReques
 	sess := session.New(
 		session.SessionID(fmt.Sprintf("%s-%d", a.idPrefix, childSerial.Add(1))),
 		session.ModeDefault,
-		"/",
+		session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/", Revision: inTreeEnvironmentRevision},
 		askReviewLimits,
 		a.engine.now(),
 	)

@@ -85,8 +85,8 @@ type SessionMeta struct {
 	Mode session.PermissionMode
 	// Limits are the configured stop conditions.
 	Limits session.Limits
-	// Workspace is the root directory tools operate against.
-	Workspace string
+	// EnvironmentRef is the exact durable execution-environment identity.
+	EnvironmentRef session.EnvironmentRef
 	// Profile is the opaque tool-surface profile label ("" = default).
 	Profile string
 	// ProviderID and ModelID are the opaque neutral provider+model selector pair
@@ -118,11 +118,6 @@ type SessionMeta struct {
 	// metadata. Nil is a documented pre-feature legacy record; a present payload
 	// is validated and bound before reconstruction proceeds.
 	Authority *session.Authority
-	// AdoptionSourceID and AdoptionRequestDigest are the immutable legacy-session
-	// adoption proof. They mirror sessnap's flat AdoptionMetadata fields because
-	// events do not carry creation metadata.
-	AdoptionSourceID      session.SessionID
-	AdoptionRequestDigest string
 	// CreatedAt is the creation timestamp.
 	CreatedAt time.Time
 }
@@ -159,7 +154,10 @@ func Fold(meta SessionMeta, events iter.Seq2[session.Event, error]) (*session.Se
 	}
 	f.finalizeOpenTurn()
 
-	s := session.New(meta.ID, meta.Mode, meta.Workspace, meta.Limits, meta.CreatedAt)
+	if !meta.EnvironmentRef.Valid() {
+		return nil, fmt.Errorf("%w: missing or invalid environment ref", ErrReconstruct)
+	}
+	s := session.New(meta.ID, meta.Mode, meta.EnvironmentRef, meta.Limits, meta.CreatedAt)
 	if err := s.RestoreSessionMetadata(meta.Kind, meta.Relationship); err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrReconstruct, err)
 	}
@@ -182,12 +180,6 @@ func Fold(meta SessionMeta, events iter.Seq2[session.Event, error]) (*session.Se
 	s.DebugMCPServers = append([]string(nil), meta.DebugMCPServers...)
 	s.DebugMCPTools = append([]string(nil), meta.DebugMCPTools...)
 	s.DebugTargetFingerprint = meta.DebugTargetFingerprint
-	if meta.AdoptionSourceID != "" || meta.AdoptionRequestDigest != "" {
-		s.Adoption = &session.AdoptionMetadata{
-			AdoptionSourceID:      meta.AdoptionSourceID,
-			AdoptionRequestDigest: meta.AdoptionRequestDigest,
-		}
-	}
 	s.Title = meta.Title
 	s.TitleProvenance = meta.TitleProvenance
 

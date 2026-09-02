@@ -51,7 +51,7 @@ func newDebugPublishMCPServer(t *testing.T) (string, *int32) {
 func TestDebugSessionMCPPublishJourneyRequiresFreshApproval(t *testing.T) {
 	ctx := context.Background()
 	store := memstore.New()
-	target := session.New("target-publish", session.ModeDefault, "/target", session.Limits{}, time.Unix(1, 0))
+	target := session.New("target-publish", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/target", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1, 0))
 	if err := store.Save(ctx, target); err != nil {
 		t.Fatal(err)
 	}
@@ -74,7 +74,7 @@ func TestDebugSessionMCPPublishJourneyRequiresFreshApproval(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	debug, err := session.NewDebug("debug-publish", session.ModeDefault, session.Limits{}, time.Unix(2, 0), target.ID, target.Incarnation())
+	debug, err := session.NewDebug("debug-publish", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindNoFS, ID: "none", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(2, 0), target.ID, target.Incarnation())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,7 +122,7 @@ func TestDebugSessionMCPPublishJourneyRequiresFreshApproval(t *testing.T) {
 func TestDebugSessionSelectedGlobalMCPIsExactAndBorrowed(t *testing.T) {
 	ctx := context.Background()
 	store := memstore.New()
-	target := session.New("target-mcp", session.ModeDefault, "/target", session.Limits{}, time.Unix(1, 0))
+	target := session.New("target-mcp", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/target", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1, 0))
 	if err := store.Save(ctx, target); err != nil {
 		t.Fatal(err)
 	}
@@ -165,7 +165,7 @@ func TestDebugSessionSelectedGlobalMCPIsExactAndBorrowed(t *testing.T) {
 
 func TestDebugSessionFactoryExactCatalogAndStablePrefix(t *testing.T) {
 	store := memstore.New()
-	target := session.New("target-exact", session.ModeDefault, "/target", session.Limits{}, time.Unix(1, 0))
+	target := session.New("target-exact", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/target", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1, 0))
 	if err := store.Save(context.Background(), target); err != nil {
 		t.Fatal(err)
 	}
@@ -183,7 +183,7 @@ func TestDebugSessionFactoryExactCatalogAndStablePrefix(t *testing.T) {
 	if err != nil {
 		t.Fatalf("debug factory: %v", err)
 	}
-	debug, err := session.NewDebug("debug", session.ModeDefault, session.Limits{}, time.Unix(2, 0), target.ID, target.Incarnation())
+	debug, err := session.NewDebug("debug", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindNoFS, ID: "none", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(2, 0), target.ID, target.Incarnation())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -193,7 +193,7 @@ func TestDebugSessionFactoryExactCatalogAndStablePrefix(t *testing.T) {
 	// the target-bound debug contract.
 	normalDeps := baseEngineDeps(cfg, reg, provider, store, nil, nil, nil, nil)
 	normalDeps.Catalog = tool.NewCatalog()
-	normal := session.New("normal", session.ModeDefault, "", session.Limits{}, time.Unix(3, 0))
+	normal := session.New("normal", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/workspace", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(3, 0))
 	drainRun(agent.NewEngine(normalDeps).Run(context.Background(), normal, testEnvironment(nofs.New(), nil), agent.RunRequest{Text: "hello"}))
 
 	mu.Lock()
@@ -227,7 +227,7 @@ func TestDebugSessionFactoryPreservesBaseInspectPolicy(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()
 			store := memstore.New()
-			target := session.New("target-policy", session.ModeDefault, "/target", session.Limits{}, time.Unix(1, 0))
+			target := session.New("target-policy", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/target", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1, 0))
 			if err := store.Save(ctx, target); err != nil {
 				t.Fatal(err)
 			}
@@ -242,7 +242,7 @@ func TestDebugSessionFactoryPreservesBaseInspectPolicy(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			debug, err := session.NewDebug("debug-policy", session.ModeDefault, session.Limits{}, time.Unix(2, 0), target.ID, target.Incarnation())
+			debug, err := session.NewDebug("debug-policy", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindNoFS, ID: "none", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(2, 0), target.ID, target.Incarnation())
 			if err != nil {
 				t.Fatal(err)
 			}

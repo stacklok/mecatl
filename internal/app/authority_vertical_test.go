@@ -490,7 +490,7 @@ func authoritySnapshotWithNarrowedTools(t *testing.T, source *session.Session, t
 		t.Fatal("cannot narrow an unbound authority")
 	}
 	authority.CapabilitySet.Tools = removeAuthorityTool(tools, removed)
-	narrowed := session.New(source.ID, source.Mode, source.Workspace, source.Limits, source.CreatedAt)
+	narrowed := session.New(source.ID, source.Mode, source.EnvironmentRef, source.Limits, source.CreatedAt)
 	if err := narrowed.RestoreLabels(source.Owner, authority); err != nil {
 		t.Fatalf("stamp narrowed authority snapshot: %v", err)
 	}

@@ -128,7 +128,7 @@ func compactFixture(t *testing.T, state session.State) (*compactTrackingStore, *
 	t.Helper()
 	store := &compactTrackingStore{Store: memstore.New()}
 	owner := &session.Principal{Issuer: "issuer", Subject: "alice", GrantType: session.GrantTypeUser}
-	sess := session.New("compact-session", session.ModeDefault, "/ws", session.Limits{}, time.Unix(1, 0))
+	sess := session.New("compact-session", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1, 0))
 	if err := sess.RestoreLabels(owner, session.Authority{}); err != nil {
 		t.Fatalf("RestoreLabels: %v", err)
 	}
@@ -528,9 +528,8 @@ func TestCompactSessionLeaseConflictAndNoFSRehydration(t *testing.T) {
 
 	t.Run("no-fs uses rehydrated engine", func(t *testing.T) {
 		store, sess, owner := compactFixture(t, session.StateIdle)
-		sess.Workspace = ""
 		sess.Profile = string(server.ProfileNoFS)
-		sess.EnvironmentRef = session.EnvironmentRef{Kind: session.EnvKindNoFS}
+		sess.EnvironmentRef = session.EnvironmentRef{Kind: session.EnvKindNoFS, ID: "none", Revision: "in-tree-v1"}
 		if err := store.Store.Save(context.Background(), sess); err != nil {
 			t.Fatal(err)
 		}

@@ -66,7 +66,7 @@ func (o *nestedMutatingObserver) Observe(ctx context.Context, tr learning.Trajec
 	if err != nil {
 		return err
 	}
-	o.before = learning.NewTrajectory("before", persisted.Workspace, tr.Stop, tr.Usage, persisted.Conversation.Messages).Messages
+	o.before = learning.NewTrajectory("before", persisted.EnvironmentRef.ID, tr.Stop, tr.Usage, persisted.Conversation.Messages).Messages
 	tr.Messages[0].ToolCalls[0].Args[2] = 'X'
 	tr.Messages[0].ToolCalls = append(tr.Messages[0].ToolCalls, session.ToolCall{})
 	tr.Messages[1].ToolResult.Content = "changed"

@@ -358,7 +358,7 @@ func TestSubagentResumeFailedRecovers(t *testing.T) {
 func TestSubagentResumeFailedTightensLimits(t *testing.T) {
 	store := memstore.New()
 	// Seed a FAILED child whose stored limits are tighter than the resume call's.
-	seed := session.New("subagent-p1", session.ModeDefault, "/ws",
+	seed := session.New("subagent-p1", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"},
 		session.Limits{MaxTurns: 2, MaxToolCalls: 1}, time.Now())
 	if err := seed.BeginTurn(); err != nil {
 		t.Fatalf("seed BeginTurn: %v", err)
@@ -472,7 +472,7 @@ func TestSubagentResumeNoStoreRejected(t *testing.T) {
 func TestSubagentConcurrentResumeGuard(t *testing.T) {
 	store := memstore.New()
 	// Seed a completed child so the resume can load it.
-	seed := session.New("subagent-p1", session.ModeDefault, "/ws", session.Limits{}, time.Now())
+	seed := session.New("subagent-p1", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Now())
 	if err := seed.BeginTurn(); err != nil {
 		t.Fatalf("seed BeginTurn: %v", err)
 	}
@@ -540,7 +540,7 @@ func TestSubagentConcurrentResumeGuard(t *testing.T) {
 func TestSubagentResumeBudgetTightenOnly(t *testing.T) {
 	store := memstore.New()
 	// Seed a completed child.
-	seed := session.New("subagent-p1", session.ModeDefault, "/ws", session.Limits{}, time.Now())
+	seed := session.New("subagent-p1", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Now())
 	_ = seed.BeginTurn()
 	_ = seed.RecordAssistant(session.NewAssistantMessage("seed", "", nil))
 	_ = seed.Complete()
@@ -575,7 +575,7 @@ func TestSubagentResumeBudgetTightenOnly(t *testing.T) {
 func TestSubagentResumeStructuredOutput(t *testing.T) {
 	store := memstore.New()
 	// Seed a completed child.
-	seed := session.New("subagent-p1", session.ModeDefault, "/ws", session.Limits{}, time.Now())
+	seed := session.New("subagent-p1", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Now())
 	_ = seed.BeginTurn()
 	_ = seed.RecordAssistant(session.NewAssistantMessage("seed", "", nil))
 	_ = seed.Complete()
@@ -627,7 +627,7 @@ func TestSubagentResumeStructuredOutput(t *testing.T) {
 // gate (only subagent ids are resumable) and nothing is driven.
 func TestSubagentResumeTeamMemberIDRejected(t *testing.T) {
 	store := memstore.New()
-	member := session.New("team-p1-worker", session.ModeDefault, "/ws", session.Limits{}, time.Now())
+	member := session.New("team-p1-worker", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Now())
 	_ = member.BeginTurn()
 	_ = member.RecordAssistant(session.NewAssistantMessage("member work", "", nil))
 	_ = member.Complete()
@@ -748,7 +748,7 @@ func TestParentResumesSubagentByTrailerID(t *testing.T) {
 func TestSubagentResumeForkerRehomesAndFailsFast(t *testing.T) {
 	store := memstore.New()
 	// Seed a completed child whose recorded workspace is the (now-dead) original root.
-	seed := session.New("subagent-p1", session.ModeDefault, "/dead/original-worktree", session.Limits{}, time.Now())
+	seed := session.New("subagent-p1", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/dead/original-worktree", Revision: "in-tree-v1"}, session.Limits{}, time.Now())
 	_ = seed.BeginTurn()
 	_ = seed.RecordAssistant(session.NewAssistantMessage("seed answer", "", nil))
 	_ = seed.Complete()
@@ -759,7 +759,7 @@ func TestSubagentResumeForkerRehomesAndFailsFast(t *testing.T) {
 	// for the fail-fast case: StateRunning hits resolveResumeSession's default arm, the
 	// one state that is still not resumable. (StateFailed is NOT usable here anymore —
 	// issue #318 made it recover, so it forks like any other resume.)
-	runningSeed := session.New("subagent-pr", session.ModeDefault, "/dead/original-worktree", session.Limits{}, time.Now())
+	runningSeed := session.New("subagent-pr", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/dead/original-worktree", Revision: "in-tree-v1"}, session.Limits{}, time.Now())
 	if err := runningSeed.BeginTurn(); err != nil {
 		t.Fatalf("running-seed BeginTurn: %v", err)
 	}
@@ -768,8 +768,8 @@ func TestSubagentResumeForkerRehomesAndFailsFast(t *testing.T) {
 	}
 
 	// Mirror the real composition: the child engine's PromptConfig pre-populates the
-	// prompt Env.Cwd with the BASE workspace, so the loop's sess.Workspace fallback
-	// never fires (assertion (c) depends on this being the wired shape).
+	// prompt Env.Cwd with the BASE workspace; durable placement identity is not a
+	// prompt-path fallback (assertion (c) depends on this wired shape).
 	const baseCwd = "/base-cwd"
 	var mu sync.Mutex
 	var suffixes []string
@@ -830,8 +830,9 @@ func TestSubagentResumeForkerRehomesAndFailsFast(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resumed child not re-persisted: %v", err)
 	}
-	if persisted.Workspace != forkRoot {
-		t.Fatalf("re-persisted Workspace = %q, want the new fork root %q (Rehome's effect)", persisted.Workspace, forkRoot)
+	wantRef := session.EnvironmentRef{Kind: session.EnvKindMem, ID: forkRoot, Revision: "test-v1"}
+	if persisted.EnvironmentRef != wantRef {
+		t.Fatalf("re-persisted EnvironmentRef = %+v, want %+v (Rehome's effect)", persisted.EnvironmentRef, wantRef)
 	}
 
 	// (c) The resumed child's prompt cwd is the BASE cwd from PromptConfig — the
@@ -857,7 +858,7 @@ func TestSubagentResumeForkerRehomesAndFailsFast(t *testing.T) {
 func TestSubagentResumePreservesStoredLimits(t *testing.T) {
 	store := memstore.New()
 	// Seed a completed child with a TIGHT stored MaxToolCalls of 1.
-	seed := session.New("subagent-p1", session.ModeDefault, "/ws",
+	seed := session.New("subagent-p1", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"},
 		session.Limits{MaxTurns: 12, MaxToolCalls: 1, MaxConsecutiveFailures: 3}, time.Now())
 	_ = seed.BeginTurn()
 	_ = seed.RecordAssistant(session.NewAssistantMessage("seed", "", nil))
@@ -906,7 +907,7 @@ func TestSubagentResumeBudgetCarriesPriorSpend(t *testing.T) {
 
 	// Persist a COMPLETED child carrying prior spend over the ceiling (the snapshot a
 	// prior, budget-heavy run would have saved). 400 >= 350.
-	prior := session.New("subagent-p1", session.ModeDefault, "/ws",
+	prior := session.New("subagent-p1", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"},
 		session.Limits{}, time.Unix(0, 0))
 	for _, step := range []struct {
 		op  string

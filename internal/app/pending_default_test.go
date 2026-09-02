@@ -107,7 +107,7 @@ func TestSessionEngineFactory_HealAdoption(t *testing.T) {
 // independently of the provider value).
 func driveOneTurn(t *testing.T, eng *agent.Engine) string {
 	t.Helper()
-	sess := session.New("s1", session.ModeDefault, "/ws", session.Limits{MaxTurns: 5}, time.Now())
+	sess := session.New("s1", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{MaxTurns: 5}, time.Now())
 	ws := memfs.NewWorkspace("/ws")
 	return drainRun(eng.Run(context.Background(), sess, testEnvironment(ws, nil), agent.RunRequest{Text: "hi", Parts: nil}))
 }

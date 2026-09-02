@@ -392,7 +392,7 @@ func TestParallelFanOutSharesBreakerRace(t *testing.T) {
 		},
 	})
 	// A parent session so the classifier-usage fold path runs under the breaker mutex.
-	sess := session.New("p-sess", session.ModeDefault, "/ws", session.Limits{}, time.Now())
+	sess := session.New("p-sess", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Now())
 	run := &Run{router: &modelRouterBreaker{max: defaultModelRouterMaxMisses}, children: newChildRunRegistry()}
 	caps := mainEngine.parentCaps(run, sess, 0)
 

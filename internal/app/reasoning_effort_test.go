@@ -247,7 +247,7 @@ func TestFactoryRemintsOnEffortDiffersFromDefault(t *testing.T) {
 		t.Errorf("echoed ReasoningEffort = %q, want high", res.ReasoningEffort)
 	}
 	// The turn runs on the re-minted provider.
-	sess := session.New("s1", session.ModeDefault, "/ws", session.Limits{MaxTurns: 5}, time.Now())
+	sess := session.New("s1", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{MaxTurns: 5}, time.Now())
 	got := drainRun(res.Engine.Run(context.Background(), sess, memEnvironment("/ws"), agent.RunRequest{Text: "hi", Parts: nil}))
 	if got != "REMINTED:high" {
 		t.Errorf("turn ran on %q, want the re-minted provider (REMINTED:high)", got)
@@ -356,7 +356,7 @@ func TestFactoryDefaultPathNoRemint(t *testing.T) {
 	if res.ReasoningEffort != "" {
 		t.Errorf("echoed ReasoningEffort = %q, want empty (unset)", res.ReasoningEffort)
 	}
-	sess := session.New("s1", session.ModeDefault, "/ws", session.Limits{MaxTurns: 5}, time.Now())
+	sess := session.New("s1", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{MaxTurns: 5}, time.Now())
 	got := drainRun(res.Engine.Run(context.Background(), sess, memEnvironment("/ws"), agent.RunRequest{Text: "hi", Parts: nil}))
 	if got != "DEFAULT-REPLY" {
 		t.Errorf("turn ran on %q, want the shared default provider (DEFAULT-REPLY)", got)

@@ -41,7 +41,7 @@ func newEngine(d agent.Deps) *agent.Engine {
 
 func newSession(t *testing.T, limits session.Limits) *session.Session {
 	t.Helper()
-	return session.New("s1", session.ModeDefault, "/ws", limits, time.Unix(0, 0))
+	return session.New("s1", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, limits, time.Unix(0, 0))
 }
 
 func catalogWith(t *testing.T, tools ...tool.Tool) *tool.Catalog {

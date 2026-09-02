@@ -94,7 +94,7 @@ func TestACPShellLessEnvironmentDropsBashAndDocumentsPosture(t *testing.T) {
 	}
 
 	// Run against a SHELL-LESS Environment (nil runner) — the ACP override shape.
-	sess := session.New("acp", session.ModeDefault, cfg.Workspace, session.Limits{MaxTurns: 1}, time.Now())
+	sess := session.New("acp", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: cfg.Workspace, Revision: "in-tree-v1"}, session.Limits{MaxTurns: 1}, time.Now())
 	shellLessEnv := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindLocal, ID: cfg.Workspace},
 		memfs.NewWorkspace(cfg.Workspace), nil)
 	run := eng.Run(context.Background(), sess, shellLessEnv, agent.RunRequest{Text: "run a build"})
@@ -148,7 +148,7 @@ func TestACPShellLessEnvironmentStaleBashCallIsHonestToolError(t *testing.T) {
 	if !eng.HasTool(tool.BashToolName) {
 		t.Fatalf("precondition: the shell-bearing engine's catalog must carry Bash")
 	}
-	sess := session.New("acp2", session.ModeDefault, cfg.Workspace, session.Limits{MaxTurns: 3}, time.Now())
+	sess := session.New("acp2", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: cfg.Workspace, Revision: "in-tree-v1"}, session.Limits{MaxTurns: 3}, time.Now())
 	shellLessEnv := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindLocal, ID: cfg.Workspace},
 		memfs.NewWorkspace(cfg.Workspace), nil)
 	run := eng.Run(context.Background(), sess, shellLessEnv, agent.RunRequest{Text: "run echo hi"})
@@ -191,7 +191,7 @@ func TestShellBearingEnvironmentAdvertisesBashAndLacksNote(t *testing.T) {
 	}
 	shellEnv := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindLocal, ID: cfg.Workspace},
 		memfs.NewWorkspace(cfg.Workspace), runner)
-	sess := session.New("sh", session.ModeDefault, cfg.Workspace, session.Limits{MaxTurns: 1}, time.Now())
+	sess := session.New("sh", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: cfg.Workspace, Revision: "in-tree-v1"}, session.Limits{MaxTurns: 1}, time.Now())
 	run := eng.Run(context.Background(), sess, shellEnv, agent.RunRequest{Text: "hello"})
 	for range run.Events() {
 	}
@@ -227,7 +227,7 @@ func TestNoBashDeploymentDocumentsShellLessOnVolatileSuffix(t *testing.T) {
 	if eng.HasTool(tool.BashToolName) {
 		t.Fatal("precondition: a NoBash engine's catalog must NOT carry Bash")
 	}
-	sess := session.New("nobash", session.ModeDefault, "/ws", session.Limits{MaxTurns: 1}, time.Now())
+	sess := session.New("nobash", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{MaxTurns: 1}, time.Now())
 	run := eng.Run(context.Background(), sess, memEnvironment("/ws"), agent.RunRequest{Text: "run a build"})
 	for range run.Events() {
 	}
@@ -267,12 +267,12 @@ func TestNoFSProfileDoesNotDuplicateShellLessClause(t *testing.T) {
 	}
 	defer func() { _ = res.Close() }()
 
-	sess := session.New("nofs", session.ModeDefault, "", session.Limits{MaxTurns: 1}, time.Now())
+	sess := session.New("nofs", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/workspace", Revision: "in-tree-v1"}, session.Limits{MaxTurns: 1}, time.Now())
 	// A no-FS Environment: the nofs ref + nofs workspace + nil runner is what the
 	// service installs (buildSessionEnvironment / SetSessionEnvironment). This is
 	// the capability truth buildRequest reads: env.Ref().Kind == EnvKindNoFS ⇒
 	// the shell-less clause is WITHHELD even though env.CommandRunner() == nil.
-	noFSEnv := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindNoFS, ID: ""}, nofs.New(), nil)
+	noFSEnv := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindNoFS, ID: "none", Revision: "in-tree-v1"}, nofs.New(), nil)
 	run := res.Engine.Run(ctx, sess, noFSEnv, agent.RunRequest{Text: "hello"})
 	for range run.Events() {
 	}

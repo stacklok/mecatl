@@ -325,22 +325,6 @@ var (
 	ErrNoPendingAsk = errors.New("session: no pending ask to resume")
 )
 
-// AdoptionMetadata records the immutable source and request proof for an
-// explicitly adopted legacy session. Ordinary sessions have no adoption metadata.
-type AdoptionMetadata struct {
-	AdoptionSourceID      SessionID `json:"adoption_source_id,omitempty"`
-	AdoptionRequestDigest string    `json:"adoption_request_digest,omitempty"`
-}
-
-// Clone returns an independent copy, preserving nil.
-func (m *AdoptionMetadata) Clone() *AdoptionMetadata {
-	if m == nil {
-		return nil
-	}
-	clone := *m
-	return &clone
-}
-
 // Session is the aggregate root of the Agent Session context. All mutation of
 // the conversation, counters, and lifecycle flows through its intention-revealing
 // methods so the state machine and stop conditions always hold. Outside code
@@ -368,23 +352,9 @@ type Session struct {
 	// (accumulate) or ResetUsage (the explicit fresh-allowance reset). CRITICAL:
 	// unlike Counters, it is NOT cleared by resetToIdle (see the comment there).
 	Usage Usage
-	// Workspace is the root directory tools operate against (the session cwd).
-	Workspace string
-	// EnvironmentRef is the resolved execution-environment identity this session
-	// runs against (ADR 0211 phase 3, issue #462). The aggregate STORES it but never
-	// interprets it — the EnvironmentKind/ID pair is opaque here, and resolution to a
-	// live tool.Environment lives entirely in composition (server.Config.
-	// EnvironmentResolver for a non-in-tree Kind). It is the durable identity half of
-	// the Environment seam: persisting it lets a restarted process reattach a live
-	// Environment to the SAME backend (a remote worker, a container) rather than
-	// silently re-deriving one from the workspace/profile. It is a write-once
-	// creation label stamped by the composition root after New (no mutator): for the
-	// in-tree backends the resolved default is `local` (ID = workspace root) for a
-	// filesystem session and `nofs` (empty ID) for a no-fs session. The zero value
-	// {Kind:"", ID:""} is the "unspecified" ref carried by a legacy snapshot or a
-	// session built without a ref; composition stamps it from the first
-	// successfully resolved live Environment so the next ordinary save persists it.
-	// Local/mem/nofs never need a resolver; any other Kind requires one.
+	// EnvironmentRef is the sole durable identity of the execution environment.
+	// It is minted by the placement provider and must be valid before persistence
+	// or execution. Resolution to live capabilities belongs to composition.
 	EnvironmentRef EnvironmentRef
 	// Profile is an opaque tool-surface profile label (e.g. "" for the default
 	// filesystem profile, "no-fs" for the no-filesystem one). The aggregate STORES
@@ -452,9 +422,6 @@ type Session struct {
 	// Relationship carries kind-specific durable lineage. It is empty for main
 	// and legacy unknown sessions.
 	Relationship SessionRelationship
-	// Adoption is non-nil only for the rare explicitly adopted main session, so
-	// ordinary sessions retain the aggregate's hot-path size class.
-	Adoption *AdoptionMetadata
 	// CreatedAt is the creation timestamp.
 	CreatedAt time.Time
 
@@ -535,18 +502,20 @@ func clampSnapshotRunes(s string, n int) string {
 	return string(r[:n]) + "…"
 }
 
-// New constructs an idle Session with an empty conversation.
-func New(id SessionID, mode PermissionMode, workspace string, limits Limits, createdAt time.Time) *Session {
+// New constructs an idle Session with an empty conversation and an exact
+// durable environment identity. Callers must provide a valid provider-minted
+// reference; persistence and run entry enforce the same invariant.
+func New(id SessionID, mode PermissionMode, ref EnvironmentRef, limits Limits, createdAt time.Time) *Session {
 	return &Session{
-		ID:           id,
-		State:        StateIdle,
-		Mode:         mode,
-		Conversation: &Conversation{},
-		Limits:       limits,
-		Workspace:    workspace,
-		Kind:         SessionKindMain,
-		CreatedAt:    createdAt,
-		incarnation:  NewIncarnationID(),
+		ID:             id,
+		State:          StateIdle,
+		Mode:           mode,
+		Conversation:   &Conversation{},
+		Limits:         limits,
+		EnvironmentRef: ref,
+		Kind:           SessionKindMain,
+		CreatedAt:      createdAt,
+		incarnation:    NewIncarnationID(),
 	}
 }
 
@@ -1181,20 +1150,17 @@ func (s *Session) Abandon() error {
 	return nil
 }
 
-// Rehome repoints the session's workspace root. Legal only from StateIdle (a
-// recovered, not-yet-running session). It keeps the persisted session's recorded
-// workspace consistent with where the resumed run actually executes: the resume
-// path re-forks a fresh checkout and the original worktree is torn down, so
-// without the re-home the re-persisted snapshot would record a dead path.
-//
-// NOTE: the child's prompt cwd is independently sourced from the engine's
-// PromptConfig and is NOT affected by this field (the loop's Workspace fallback
-// only fires when the configured prompt Env.Cwd is empty).
-func (s *Session) Rehome(workspace string) error {
+// Rehome replaces the exact environment identity of an idle delegated session
+// after a fresh child environment has been minted. The live environment used by
+// the caller must carry the same ref.
+func (s *Session) Rehome(ref EnvironmentRef) error {
 	if s.State != StateIdle {
 		return fmt.Errorf("%w: Rehome from %q", ErrIllegalTransition, s.State)
 	}
-	s.Workspace = workspace
+	if !ref.Valid() {
+		return fmt.Errorf("session: Rehome requires a valid environment ref")
+	}
+	s.EnvironmentRef = ref
 	return nil
 }
 

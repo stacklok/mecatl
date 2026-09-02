@@ -57,7 +57,7 @@ func newMCPServiceStore(t *testing.T, sharedReply string, factory server.Session
 // the reopen-if-completed path. It returns the session id.
 func persistCompleted(t *testing.T, store *memstore.Store) session.SessionID {
 	t.Helper()
-	sess := session.New("sess-1", session.ModeDefault, "/ws", session.Limits{MaxTurns: 3}, time.Unix(0, 0))
+	sess := session.New("sess-1", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{MaxTurns: 3}, time.Unix(0, 0))
 	if err := sess.BeginTurn(); err != nil {
 		t.Fatalf("BeginTurn: %v", err)
 	}

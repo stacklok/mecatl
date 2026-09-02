@@ -39,7 +39,7 @@ func RunSessionCreator(t *testing.T, newSharedStores func(t *testing.T) (port.Se
 			t.Fatalf("Save(winner): %v", err)
 		}
 		loser := newSession(winner.ID)
-		loser.Workspace = "/different"
+		loser.EnvironmentRef = session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/different", Revision: "in-tree-v1"}
 		if err := sessionCreator(t, st).Create(ctx, loser); !errors.Is(err, port.ErrSessionAlreadyExists) {
 			t.Fatalf("Create(after Save) = %v, want ErrSessionAlreadyExists", err)
 		}
@@ -61,7 +61,7 @@ func RunSessionCreator(t *testing.T, newSharedStores func(t *testing.T) (port.Se
 		}
 
 		loser := newSession(winner.ID)
-		loser.Workspace = "/different"
+		loser.EnvironmentRef = session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/different", Revision: "in-tree-v1"}
 		mustOK(t, "RestoreLabels(loser)", loser.RestoreLabels(owner, session.Authority{}))
 		if err := creator.Create(ctx, loser); !errors.Is(err, port.ErrSessionAlreadyExists) {
 			t.Fatalf("Create(collision) = %v, want ErrSessionAlreadyExists", err)
@@ -125,7 +125,7 @@ func RunSessionCreator(t *testing.T, newSharedStores func(t *testing.T) (port.Se
 		}
 
 		loser := newSession(winner.ID)
-		loser.Workspace = "/different"
+		loser.EnvironmentRef = session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/different", Revision: "in-tree-v1"}
 		if err := creator.Create(ctx, loser); !errors.Is(err, port.ErrSessionAlreadyExists) {
 			t.Fatalf("Create(collision) = %v, want ErrSessionAlreadyExists", err)
 		}
@@ -147,8 +147,8 @@ func RunSessionCreator(t *testing.T, newSharedStores func(t *testing.T) (port.Se
 		first, second := newSharedStores(t)
 		creators := []port.SessionCreator{sessionCreator(t, first), sessionCreator(t, second)}
 		candidates := []*session.Session{newSession("create-concurrent"), newSession("create-concurrent")}
-		candidates[0].Workspace = "/first"
-		candidates[1].Workspace = "/second"
+		candidates[0].EnvironmentRef = session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/first", Revision: "in-tree-v1"}
+		candidates[1].EnvironmentRef = session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/second", Revision: "in-tree-v1"}
 		start := make(chan struct{})
 		results := make(chan struct {
 			index int

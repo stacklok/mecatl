@@ -75,7 +75,7 @@ func TestFoldEqualsSnapshotLoad(t *testing.T) {
 		Model:   "test-model",
 	})
 
-	sess := session.New(sessID, session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
+	sess := session.New(sessID, session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
 	ctx := context.Background()
 	ws := memfs.NewWorkspace("/ws")
 	env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: "/ws"}, ws, nil)
@@ -98,11 +98,11 @@ func TestFoldEqualsSnapshotLoad(t *testing.T) {
 		t.Fatalf("load snapshot: %v", err)
 	}
 	folded, err := eventsource.Fold(eventsource.SessionMeta{
-		ID:        sessID,
-		Mode:      session.ModeDefault,
-		Limits:    session.Limits{},
-		Workspace: "/ws",
-		CreatedAt: time.Unix(0, 0),
+		ID:             sessID,
+		Mode:           session.ModeDefault,
+		Limits:         session.Limits{},
+		EnvironmentRef: session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"},
+		CreatedAt:      time.Unix(0, 0),
 	}, log.Read(ctx, sessID))
 	if err != nil {
 		t.Fatalf("fold: %v", err)

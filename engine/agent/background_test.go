@@ -365,7 +365,7 @@ func TestBackgroundChildCancelledAtRunEnd(t *testing.T) {
 		mockllm.TextTurn("parent 2 done"),
 	)
 	e2 := newEngine(agent.Deps{LLM: parent2, Catalog: cat})
-	sess2 := session.New("s2", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
+	sess2 := session.New("s2", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
 	r2 := e2.Run(context.Background(), sess2, agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 	evs2 := drainObserving(t, r2, nil)
 	resumed := resultByCallID(evs2)["q1"]
@@ -562,7 +562,7 @@ func TestRunEndDrainRetractsParkedAsk(t *testing.T) {
 		mockllm.TextTurn("parent 2 done"),
 	)
 	e2 := newEngine(agent.Deps{LLM: parent2, Catalog: cat})
-	sess2 := session.New("s2", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
+	sess2 := session.New("s2", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
 	r2 := e2.Run(context.Background(), sess2, agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 	evs2 := drainObserving(t, r2, nil)
 	resumed := resultByCallID(evs2)["q1"]

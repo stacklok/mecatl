@@ -9,7 +9,7 @@ import (
 )
 
 func TestSnapshotRoundTripsTypedFailureMetadata(t *testing.T) {
-	s := session.New("typed", session.ModeDefault, "/ws", session.Limits{}, time.Now())
+	s := session.New("typed", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Now())
 	if err := s.BeginTurn(); err != nil {
 		t.Fatal(err)
 	}
@@ -47,7 +47,7 @@ func TestSnapshotRoundTripsTypedFailureMetadata(t *testing.T) {
 func TestSnapshotRoundTripsPreparedFailedStepRetry(t *testing.T) {
 	for _, running := range []bool{false, true} {
 		t.Run(map[bool]string{false: "idle", true: "running"}[running], func(t *testing.T) {
-			s := session.New("pending", session.ModeDefault, "/ws", session.Limits{}, time.Now())
+			s := session.New("pending", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Now())
 			if err := s.BeginTurn(); err != nil {
 				t.Fatal(err)
 			}
@@ -95,7 +95,7 @@ func TestSnapshotRejectsInvalidRetryVocabulary(t *testing.T) {
 }
 
 func TestSnapshotNewPermanentSetsLegacyBool(t *testing.T) {
-	s := session.New("permanent", session.ModeDefault, "/ws", session.Limits{}, time.Now())
+	s := session.New("permanent", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Now())
 	if err := s.BeginTurn(); err != nil {
 		t.Fatal(err)
 	}
@@ -122,6 +122,7 @@ func TestSnapshotTypedDispositionWinsOverLegacyPermanent(t *testing.T) {
 		Permanent:        true,
 		RetryDisposition: session.RetryDispositionRetryable,
 		StreamProgress:   session.StreamProgressPrecommit,
+		EnvironmentRef:   session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"},
 		CreatedAt:        time.Now(),
 	}
 	got, err := snap.Restore()
@@ -134,7 +135,7 @@ func TestSnapshotTypedDispositionWinsOverLegacyPermanent(t *testing.T) {
 }
 
 func TestSnapshotLegacyPermanentRestoresTypedDisposition(t *testing.T) {
-	snap := Snapshot{ID: "legacy", State: session.StateFailed, StopReason: session.StopError, Permanent: true, CreatedAt: time.Now()}
+	snap := Snapshot{ID: "legacy", State: session.StateFailed, StopReason: session.StopError, Permanent: true, EnvironmentRef: session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, CreatedAt: time.Now()}
 	got, err := snap.Restore()
 	if err != nil {
 		t.Fatal(err)

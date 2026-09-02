@@ -9,7 +9,7 @@ import (
 )
 
 func newTestSession(limits Limits) *Session {
-	return New("s1", ModeDefault, "/tmp/ws", limits, time.Unix(0, 0))
+	return New("s1", ModeDefault, EnvironmentRef{Kind: EnvKindLocal, ID: "/tmp/ws", Revision: "in-tree-v1"}, limits, time.Unix(0, 0))
 }
 
 // mustOK fails the test immediately when a session-aggregate transition errors.
@@ -569,16 +569,17 @@ func TestReopenIllegalFromNonCompletedStates(t *testing.T) {
 	}
 }
 
-func TestRehomeFromIdleRepointsWorkspace(t *testing.T) {
+func TestRehomeFromIdleRepointsEnvironment(t *testing.T) {
 	s := newTestSession(Limits{})
 	if s.State != StateIdle {
 		t.Fatalf("precondition: state = %q, want idle", s.State)
 	}
-	if err := s.Rehome("/tmp/fresh-fork"); err != nil {
+	ref := EnvironmentRef{Kind: EnvKindLocal, ID: "/tmp/fresh-fork", Revision: "fork-2"}
+	if err := s.Rehome(ref); err != nil {
 		t.Fatalf("Rehome: %v", err)
 	}
-	if s.Workspace != "/tmp/fresh-fork" {
-		t.Fatalf("after Rehome workspace = %q, want /tmp/fresh-fork", s.Workspace)
+	if s.EnvironmentRef != ref {
+		t.Fatalf("after Rehome ref = %+v, want %+v", s.EnvironmentRef, ref)
 	}
 	if s.State != StateIdle {
 		t.Fatalf("after Rehome state = %q, want idle (unchanged)", s.State)
@@ -599,7 +600,7 @@ func TestRehomeIllegalFromNonIdleStates(t *testing.T) {
 		t.Run(mk.name, func(t *testing.T) {
 			s := newTestSession(Limits{})
 			mk.setup(s)
-			if err := s.Rehome("/tmp/fresh-fork"); !errors.Is(err, ErrIllegalTransition) {
+			if err := s.Rehome(EnvironmentRef{Kind: EnvKindLocal, ID: "/tmp/fresh-fork", Revision: "fork-2"}); !errors.Is(err, ErrIllegalTransition) {
 				t.Fatalf("Rehome from %s: err = %v, want ErrIllegalTransition", mk.name, err)
 			}
 		})

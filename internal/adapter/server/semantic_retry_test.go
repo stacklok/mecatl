@@ -286,7 +286,7 @@ func TestRetryFailedRunAdmitsVisibleAndSecondFailureGovernsNextRetry(t *testing.
 func TestRetryPendingRestartBlocksPromptAndRetryIsIdempotent(t *testing.T) {
 	ctx := context.Background()
 	store := memstore.New()
-	sess := session.New("retry-crash-window", session.ModeDefault, "/ws", session.Limits{}, time.Now())
+	sess := session.New("retry-crash-window", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Now())
 	if err := sess.BeginTurn(); err != nil {
 		t.Fatal(err)
 	}

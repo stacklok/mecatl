@@ -132,7 +132,7 @@ func (s *Service) CreateTeam(ctx context.Context, workspace, name, goal string, 
 	} else if s.cfg.CommandRunnerFactory != nil {
 		baseRunner = s.cfg.CommandRunnerFactory(workspace)
 	}
-	base, err := tool.NewEnvironment(session.EnvironmentRef{Kind: session.EnvKindLocal, ID: workspace}, baseWS, baseRunner)
+	base, err := tool.NewEnvironment(session.EnvironmentRef{Kind: session.EnvKindLocal, ID: workspace, Revision: inTreeEnvironmentRevision}, baseWS, baseRunner)
 	if err != nil {
 		return "", nil, fmt.Errorf("%w: team workspace could not be built: %w", ErrInvalidArgument, err)
 	}

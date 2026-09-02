@@ -32,7 +32,7 @@ func TestSkillDraftFactorySystemPromptDescribesLifecyclePolicy(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = result.Close() }()
-	sess := session.New("s", session.ModeDefault, "/ws", session.Limits{MaxTurns: 1}, time.Now())
+	sess := session.New("s", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{MaxTurns: 1}, time.Now())
 	run := result.Engine.Run(context.Background(), sess, memEnvironment("/ws"), agent.RunRequest{Text: "hi"})
 	for range run.Events() {
 	}
@@ -73,7 +73,7 @@ func TestPerSessionFactoryPromptUsesTrustedProjectTightenedSkillActivation(t *te
 		t.Fatal(err)
 	}
 	defer func() { _ = result.Close() }()
-	sess := session.New("s-tight", session.ModeDefault, root, session.Limits{MaxTurns: 1}, time.Now())
+	sess := session.New("s-tight", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: root, Revision: "in-tree-v1"}, session.Limits{MaxTurns: 1}, time.Now())
 	for range result.Engine.Run(context.Background(), sess, memEnvironment(root), agent.RunRequest{Text: "hi"}).Events() {
 	}
 	if !strings.Contains(captured.System.StablePrefix, "activation=evaluated") || strings.Contains(captured.System.StablePrefix, "activation=validated") {

@@ -149,7 +149,7 @@ func TestSessionContinuityUX_Scenario3_AuthoritativeTranscript(t *testing.T) {
 	lease := &countingLease{inner: memlease.New(wallclock.Clock{}, time.Minute)}
 	svc := newTranscriptService(t, store, nil, false, effects, lease)
 
-	sess := session.New("empty", session.ModeDefault, "/workspace", session.Limits{}, time.Unix(1, 0))
+	sess := session.New("empty", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/workspace", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1, 0))
 	if err := base.Save(ctx, sess); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
@@ -222,7 +222,7 @@ func TestSessionContinuityUX_TranscriptOwnershipIsCheckedOnSingleLoad(t *testing
 	store := &transcriptStore{inner: base}
 	alice := &session.Principal{Issuer: "https://idp.example", Subject: "alice", GrantType: session.GrantTypeUser}
 	bob := &session.Principal{Issuer: alice.Issuer, Subject: "bob", GrantType: session.GrantTypeUser}
-	sess := session.New("owned", session.ModeDefault, "/workspace", session.Limits{}, time.Unix(1, 0))
+	sess := session.New("owned", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/workspace", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1, 0))
 	if err := sess.RestoreLabels(alice, session.Authority{}); err != nil {
 		t.Fatalf("RestoreLabels: %v", err)
 	}
@@ -253,7 +253,7 @@ func TestStoreFailureIsVisibleToTheOperatorButNotCorrelated(t *testing.T) {
 	base := memstore.New()
 	alice := &session.Principal{Issuer: "https://idp.example", Subject: "alice", GrantType: session.GrantTypeUser}
 	brokenID := session.SessionID("broken-record")
-	broken := session.New(brokenID, session.ModeDefault, "/workspace", session.Limits{}, time.Unix(1, 0))
+	broken := session.New(brokenID, session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/workspace", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1, 0))
 	if err := broken.RestoreLabels(alice, session.Authority{}); err != nil {
 		t.Fatalf("RestoreLabels: %v", err)
 	}
@@ -302,7 +302,7 @@ func TestTranscriptOwnershipModeConcealsLoadFailure(t *testing.T) {
 	alice := &session.Principal{Issuer: "https://idp.example", Subject: "alice", GrantType: session.GrantTypeUser}
 	bob := &session.Principal{Issuer: alice.Issuer, Subject: "bob", GrantType: session.GrantTypeUser}
 	foreignID := session.SessionID("foreign-corrupt")
-	foreign := session.New(foreignID, session.ModeDefault, "/workspace", session.Limits{}, time.Unix(1, 0))
+	foreign := session.New(foreignID, session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/workspace", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1, 0))
 	if err := foreign.RestoreLabels(alice, session.Authority{}); err != nil {
 		t.Fatalf("RestoreLabels: %v", err)
 	}
@@ -354,7 +354,7 @@ func TestTranscriptOwnershipModeConcealsLoadFailure(t *testing.T) {
 func TestSessionContinuityUX_TranscriptHTTPProjection(t *testing.T) {
 	ctx := context.Background()
 	base := memstore.New()
-	sess := session.New("http-transcript", session.ModeDefault, "/workspace", session.Limits{}, time.Unix(1, 0))
+	sess := session.New("http-transcript", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/workspace", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1, 0))
 	if err := sess.SeedHistory([]session.Message{{
 		Role: session.RoleAssistant, Text: "visible", Reasoning: "private", ProviderPhase: "commentary", ReasoningItemID: "private-id",
 	}}); err != nil {
@@ -391,7 +391,7 @@ func TestSessionContinuityUX_TranscriptHTTPProjection(t *testing.T) {
 func TestSessionContinuityUX_Scenario3_CompactedAndReasoningTranscript(t *testing.T) {
 	ctx := context.Background()
 	base := memstore.New()
-	sess := session.New("compacted", session.ModeDefault, "/workspace", session.Limits{}, time.Unix(1, 0))
+	sess := session.New("compacted", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/workspace", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1, 0))
 	assistant := session.Message{Role: session.RoleAssistant, Text: "current tail", Reasoning: "provider-secret", ProviderPhase: "final_answer", ReasoningItemID: "rs-secret"}
 	want := []session.Message{session.NewUserMessage("Summary of earlier conversation"), assistant}
 	if err := sess.SeedHistory(want); err != nil {
@@ -433,7 +433,7 @@ func (l brokenActivityLog) Read(context.Context, session.SessionID) iter.Seq2[se
 func TestInvariant_event_replay_never_attests_model_context(t *testing.T) {
 	ctx := context.Background()
 	base := memstore.New()
-	sess := session.New("activity-gap", session.ModeDefault, "/workspace", session.Limits{}, time.Unix(1, 0))
+	sess := session.New("activity-gap", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/workspace", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1, 0))
 	if err := base.Save(ctx, sess); err != nil {
 		t.Fatalf("Save: %v", err)
 	}

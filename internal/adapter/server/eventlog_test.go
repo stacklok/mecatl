@@ -108,7 +108,7 @@ func TestGRPCRelayStreamsOriginalChunksAndDurablyCoalesces(t *testing.T) {
 		t.Fatalf("durable delta chunks = %q, want one bounded coalesced chunk", durable)
 	}
 	folded, err := eventsource.Fold(eventsource.SessionMeta{
-		ID: sess.ID, Mode: session.ModeDefault, Workspace: "/ws", CreatedAt: time.Unix(0, 0),
+		ID: sess.ID, Mode: session.ModeDefault, EnvironmentRef: session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, CreatedAt: time.Unix(0, 0),
 	}, log.Read(context.Background(), sess.ID))
 	if err != nil {
 		t.Fatal(err)

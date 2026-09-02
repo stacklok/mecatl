@@ -52,7 +52,7 @@ func (s *loadBarrierStore) Load(ctx context.Context, id session.SessionID) (*ses
 func TestADR_0108_RunEntryLocksLoadAuthorizePurposeAndReopen(t *testing.T) {
 	ctx := context.Background()
 	base := memstore.New()
-	sess := session.New("same-id", session.ModeDefault, "/workspace", session.Limits{}, time.Unix(1, 0))
+	sess := session.New("same-id", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/workspace", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1, 0))
 	if err := sess.Reopen(); err == nil {
 		t.Fatal("idle fixture unexpectedly reopened")
 	}
@@ -185,7 +185,7 @@ func TestCallerSeparation_ForeignPromptDoesNotContendOnOwnerRunEntry(t *testing.
 	t.Cleanup(cancelAlice)
 	aliceCtx := session.WithPrincipal(aliceBaseCtx, alice)
 	bobCtx := session.WithPrincipal(context.Background(), bob)
-	sess := session.New("alice-session", session.ModeDefault, "/workspace", session.Limits{}, time.Unix(1, 0))
+	sess := session.New("alice-session", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/workspace", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1, 0))
 	if err := sess.RestoreLabels(alice, session.Authority{}); err != nil {
 		t.Fatalf("RestoreLabels: %v", err)
 	}
@@ -297,7 +297,7 @@ func TestCallerSeparation_RunEntryReloadReauthorizesAfterPreflight(t *testing.T)
 		{
 			name: "owner replaced",
 			mutate: func(ctx context.Context, store *memstore.Store, id session.SessionID) error {
-				replacement := session.New(id, session.ModeDefault, "/workspace", session.Limits{}, time.Unix(2, 0))
+				replacement := session.New(id, session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/workspace", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(2, 0))
 				if err := replacement.RestoreLabels(bob, session.Authority{}); err != nil {
 					return err
 				}
@@ -309,7 +309,7 @@ func TestCallerSeparation_RunEntryReloadReauthorizesAfterPreflight(t *testing.T)
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			base := memstore.New()
-			sess := session.New("alice-session", session.ModeDefault, "/workspace", session.Limits{}, time.Unix(1, 0))
+			sess := session.New("alice-session", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/workspace", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1, 0))
 			if err := sess.RestoreLabels(alice, session.Authority{}); err != nil {
 				t.Fatalf("RestoreLabels: %v", err)
 			}

@@ -137,7 +137,7 @@ func TestMigrationFamilyCASRejectsLossBetweenPrecheckAndLuaWithoutSideEffects(t 
 		t.Fatal(err)
 	}
 	t.Cleanup(mr.Close)
-	sess := session.New("legacy-race", session.ModeAccept, "/work", session.Limits{}, time.Unix(1, 0))
+	sess := session.New("legacy-race", session.ModeAccept, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/work", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1, 0))
 	blob, err := sessnap.Marshal(sess)
 	if err != nil {
 		t.Fatal(err)
@@ -214,7 +214,7 @@ func TestInspectionRepairsMissingCoverageDespiteEqualOrphanCardinality(t *testin
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	sess := session.New("covered-session", session.ModeAccept, "/work", session.Limits{}, time.Unix(1, 0))
+	sess := session.New("covered-session", session.ModeAccept, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/work", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1, 0))
 	if err := st.Save(context.Background(), sess); err != nil {
 		t.Fatal(err)
 	}
@@ -289,7 +289,7 @@ func TestFinalizeSessionMigrationUsesBoundedCoverageProofAndConstantWorkCAS(t *t
 	t.Cleanup(func() { _ = st.Close() })
 	owner := &session.Principal{Issuer: "https://issuer.example", Subject: "owner"}
 	for i := range 250 {
-		sess := session.New(session.SessionID("covered-"+strconv.Itoa(i)), session.ModeAccept, "/work", session.Limits{}, time.Unix(1, 0))
+		sess := session.New(session.SessionID("covered-"+strconv.Itoa(i)), session.ModeAccept, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/work", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1, 0))
 		if err := sess.RestoreLabels(owner, session.Authority{}); err != nil {
 			t.Fatal(err)
 		}
@@ -363,7 +363,7 @@ func TestFinalizeRejectsUnmatchedOwnerMembershipsAndPublishesOnlyHealthyPaging(t
 				id    session.SessionID
 				owner *session.Principal
 			}{{"alice", alice}, {"bob", bob}} {
-				sess := session.New(fixture.id, session.ModeAccept, "/work", session.Limits{}, time.Unix(1, 0))
+				sess := session.New(fixture.id, session.ModeAccept, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/work", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1, 0))
 				if err := sess.RestoreLabels(fixture.owner, session.Authority{}); err != nil {
 					t.Fatal(err)
 				}
@@ -420,7 +420,7 @@ func TestFinalizeRejectsUnmatchedOwnerMembershipsAndPublishesOnlyHealthyPaging(t
 
 func TestFinalizeRejectsGenerationDriftAfterExactCoverageProof(t *testing.T) {
 	st, mr := newMetadataTestStore(t)
-	sess := session.New("drift", session.ModeAccept, "/work", session.Limits{}, time.Unix(1, 0))
+	sess := session.New("drift", session.ModeAccept, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/work", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1, 0))
 	if err := st.Save(context.Background(), sess); err != nil {
 		t.Fatal(err)
 	}

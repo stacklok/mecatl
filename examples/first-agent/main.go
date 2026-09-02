@@ -24,7 +24,7 @@ func main() {
 		Policy:  permpolicy.NewPolicy(nil, permstore.New()),
 		Model:   "mock",
 	})
-	sess := session.New("first-agent", session.ModeDefault, "/workspace", session.Limits{}, time.Now())
+	sess := session.New("first-agent", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/workspace", Revision: "in-tree-v1"}, session.Limits{}, time.Now())
 	run := engine.Run(context.Background(), sess, env, agent.RunRequest{Text: "Say hello."})
 	for event := range run.Events() {
 		if event.Type == session.EvResult && event.Result != nil {

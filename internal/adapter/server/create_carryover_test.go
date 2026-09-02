@@ -60,7 +60,7 @@ func persistBlobsSource(t *testing.T, store *memstore.Store, id session.SessionI
 
 func persistBlobsSourceCalls(t *testing.T, store *memstore.Store, id session.SessionID, providerID string, calls []session.ToolCall) {
 	t.Helper()
-	sess := session.New(id, session.ModeDefault, "/ws", session.Limits{MaxTurns: 10}, time.Unix(0, 0))
+	sess := session.New(id, session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{MaxTurns: 10}, time.Unix(0, 0))
 	sess.ProviderID = providerID
 	if err := sess.RecordUserPrompt("do the thing", nil); err != nil {
 		t.Fatalf("RecordUserPrompt: %v", err)

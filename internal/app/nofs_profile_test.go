@@ -348,8 +348,8 @@ func TestCreateSessionNoFSProfileNoWorkspace(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateSessionWithProfile(no-fs, empty workspace): %v", err)
 	}
-	if sess.Workspace != "" {
-		t.Fatalf("no-fs session persisted Workspace = %q, want \"\"", sess.Workspace)
+	if sess.EnvironmentRef.Kind != session.EnvKindNoFS {
+		t.Fatalf("no-fs session persisted EnvironmentRef = %+v, want nofs", sess.EnvironmentRef)
 	}
 
 	run, err := svc.StartRun(ctx, sess.ID, "do a file-free check")

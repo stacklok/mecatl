@@ -65,7 +65,7 @@ func (s *Service) createPlacedSuccessor(ctx context.Context, req ForkSuccessorRe
 		return "", err
 	}
 
-	created := session.New(s.cfg.NewID(), source.Mode, binding.Environment.Workspace().Root(), source.Limits, s.cfg.Now())
+	created := session.New(s.cfg.NewID(), source.Mode, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: binding.Environment.Workspace().Root(), Revision: inTreeEnvironmentRevision}, source.Limits, s.cfg.Now())
 	selector, err := successorProviderSelector(source, req)
 	if err != nil {
 		return "", err

@@ -177,7 +177,7 @@ func TestScheduleTool_EngineSystemPromptContainsScheduleContract(t *testing.T) {
 	defer func() { _ = res.Close() }()
 
 	// Drive a one-turn run to trigger buildRequest → prompt.Build → captured system.
-	sess := session.New("s1", session.ModeDefault, "/ws", session.Limits{MaxTurns: 1}, time.Now())
+	sess := session.New("s1", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{MaxTurns: 1}, time.Now())
 	run := res.Engine.Run(ctx, sess, memEnvironment("/ws"), agent.RunRequest{Text: "hi", Parts: nil})
 	for range run.Events() {
 	}
@@ -215,7 +215,7 @@ func TestScheduleTool_EngineSystemPromptContainsScheduleContract(t *testing.T) {
 		t.Fatalf("factory (no Schedule): %v", err)
 	}
 	defer func() { _ = resNone.Close() }()
-	sessNone := session.New("s2", session.ModeDefault, "/ws", session.Limits{MaxTurns: 1}, time.Now())
+	sessNone := session.New("s2", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{MaxTurns: 1}, time.Now())
 	runNone := resNone.Engine.Run(ctx, sessNone, memEnvironment("/ws"), agent.RunRequest{Text: "hi", Parts: nil})
 	for range runNone.Events() {
 	}
@@ -267,7 +267,7 @@ func TestFireDelivery_ScheduleToolNoteLands(t *testing.T) {
 	}
 	defer func() { _ = res.Close() }()
 
-	sess := session.New("s1", session.ModeDefault, "/ws", session.Limits{MaxTurns: 1}, time.Now())
+	sess := session.New("s1", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{MaxTurns: 1}, time.Now())
 	run := res.Engine.Run(ctx, sess, memEnvironment("/ws"), agent.RunRequest{Text: "hi", Parts: nil})
 	for range run.Events() {
 	}
@@ -333,7 +333,7 @@ func TestScheduleTool_MutatingCreateGatedByPlanMode(t *testing.T) {
 	}
 	defer func() { _ = res.Close() }()
 
-	sess := session.New("s1", session.ModePlan, "/ws", session.Limits{MaxTurns: 5}, time.Now())
+	sess := session.New("s1", session.ModePlan, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{MaxTurns: 5}, time.Now())
 	// Save the session to the store the schedule manager validates against, so
 	// OriginSessionID validation (which checks the session exists) passes.
 	if err := jstore.Save(ctx, sess); err != nil {
@@ -434,7 +434,7 @@ func TestScheduleTool_Scenario4_FullInChatFlow(t *testing.T) {
 	}
 	defer func() { _ = res.Close() }()
 
-	sess := session.New("s1", session.ModeDefault, "/ws", session.Limits{MaxTurns: 6}, time.Now())
+	sess := session.New("s1", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{MaxTurns: 6}, time.Now())
 	// Save the session to the store the schedule manager validates against, so
 	// OriginSessionID validation (which checks the session exists) passes.
 	if err := jstore.Save(ctx, sess); err != nil {

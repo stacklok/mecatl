@@ -150,7 +150,7 @@ func TestInspectMemberBounded(t *testing.T) {
 // reply, recorded through the aggregate methods, ready to persist.
 func seedMemberSession(t *testing.T, id session.SessionID, userText, assistantText string) *session.Session {
 	t.Helper()
-	s := session.New(id, session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
+	s := session.New(id, session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
 	if err := s.RecordUserPrompt(userText, nil); err != nil {
 		t.Fatalf("RecordUserPrompt: %v", err)
 	}

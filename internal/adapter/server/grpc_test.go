@@ -82,9 +82,11 @@ func newServiceWithImplementation(t *testing.T, llm *mockllm.Provider, rules []g
 			}
 			return "https://user:secret@provider.example:8443/api/../v1?token=secret#fragment"
 		},
-		Store:      memstore.New(),
-		Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
-		Now:        func() time.Time { return time.Unix(0, 0) },
+		Store:             memstore.New(),
+		Workspaces:        func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+		PlacementProvider: testPlacementProvider{},
+		PlacementScope:    "test",
+		Now:               func() time.Time { return time.Unix(0, 0) },
 		// The server reads DefaultCapabilities (composition-computed), not the engine.
 		// In these tests there is no catalog/selector, so the intersection is the bare
 		// adapter caps — mirror that by sourcing them from the wired provider.

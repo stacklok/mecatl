@@ -16,7 +16,7 @@ import (
 
 func driven(t *testing.T) *session.Session {
 	t.Helper()
-	s := session.New("s1", session.ModeAccept, "/ws", session.Limits{
+	s := session.New("s1", session.ModeAccept, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{
 		MaxTurns: 5, MaxToolCalls: 9, MaxConsecutiveFailures: 2,
 	}, time.Unix(1700000000, 0).UTC())
 	_ = s.BeginTurn()
@@ -58,13 +58,11 @@ func TestSaveDeepCopyNoAliasing(t *testing.T) {
 	ctx := context.Background()
 	st := memstore.New()
 	s := driven(t)
-	s.Adoption = &session.AdoptionMetadata{AdoptionSourceID: "legacy", AdoptionRequestDigest: "digest"}
 	if err := st.Save(ctx, s); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 	// Mutate the original after saving; the stored copy must be unaffected.
 	_ = s.RecordToolResults([]session.ToolResult{session.NewToolResult("c2", "more")})
-	s.Adoption.AdoptionRequestDigest = "changed"
 
 	got, err := st.Load(ctx, "s1")
 	if err != nil {
@@ -72,9 +70,6 @@ func TestSaveDeepCopyNoAliasing(t *testing.T) {
 	}
 	if got.Conversation.Len() != 2 {
 		t.Fatalf("stored conversation len = %d, want 2 (no aliasing to mutated original)", got.Conversation.Len())
-	}
-	if got.Adoption == nil || got.Adoption.AdoptionRequestDigest != "digest" {
-		t.Fatalf("stored adoption metadata aliased original: %+v", got.Adoption)
 	}
 }
 
@@ -156,7 +151,7 @@ func TestPageSessionMetadataWorkIsIndependentOfTranscriptSize(t *testing.T) {
 
 func sessionWithTranscript(t testing.TB, id session.SessionID, messages int, text string) *session.Session {
 	t.Helper()
-	s := session.New(id, session.ModeDefault, "/ws", session.Limits{}, time.Unix(1700000000, 0).UTC())
+	s := session.New(id, session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1700000000, 0).UTC())
 	if err := s.BeginTurn(); err != nil {
 		t.Fatal(err)
 	}
@@ -192,12 +187,12 @@ func TestWithNowStampsDeterministicModifiedAt(t *testing.T) {
 	current := time.Unix(1000, 0).UTC()
 	st := memstore.New(memstore.WithNow(func() time.Time { return current }))
 
-	a := session.New("clock-a", session.ModeDefault, "/ws", session.Limits{}, current)
+	a := session.New("clock-a", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, current)
 	if err := st.Save(ctx, a); err != nil {
 		t.Fatalf("Save(a): %v", err)
 	}
 	current = current.Add(time.Hour)
-	b := session.New("clock-b", session.ModeDefault, "/ws", session.Limits{}, current)
+	b := session.New("clock-b", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, current)
 	if err := st.Save(ctx, b); err != nil {
 		t.Fatalf("Save(b): %v", err)
 	}

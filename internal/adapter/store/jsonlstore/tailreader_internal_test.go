@@ -64,7 +64,7 @@ func TestStoreLoadAndMetaListSkipOversizedHistory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	sess := session.New("large-tail", session.ModeDefault, "/ws", session.Limits{}, time.Unix(1700000000, 0).UTC())
+	sess := session.New("large-tail", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1700000000, 0).UTC())
 	if err := sess.SeedHistory([]session.Message{session.NewUserMessage(strings.Repeat("z", 128*1024))}); err != nil {
 		t.Fatalf("SeedHistory: %v", err)
 	}

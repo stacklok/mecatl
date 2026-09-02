@@ -127,7 +127,7 @@ func TestCallerSeparation_Scenario1_OwnerCanAccessOwnedResources(t *testing.T) {
 
 func TestCallerSeparation_Scenario1_OwnerlessResourcesAreNotAdopted(t *testing.T) {
 	svc, sessions, schedules, alice, _ := callerSeparationFixture(t)
-	ownerless := session.New("ownerless", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
+	ownerless := session.New("ownerless", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
 	if err := sessions.Save(context.Background(), ownerless); err != nil {
 		t.Fatalf("save ownerless session: %v", err)
 	}

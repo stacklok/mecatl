@@ -102,12 +102,11 @@ type config struct {
 	// lifetimePipeFD is an INHERITED read-end descriptor whose EOF means the
 	// spawning parent died; the daemon then stops through the ordinary shutdown
 	// path. 0 disables it (0/1/2 are the standard streams, never a lifetime pipe).
-	lifetimePipeFD     int
-	workspace          string
-	workspaceAuthority string
-	model              string
-	defaultProvider    string
-	defaultModel       string
+	lifetimePipeFD  int
+	workspace       string
+	model           string
+	defaultProvider string
+	defaultModel    string
 	// defaultProviderFlagSet is true when --default-provider was passed explicitly
 	// (set after parse via fs.Visit), so composition lets CLI out-rank the
 	// operator-global settings.yaml models.default_provider: key.
@@ -1061,8 +1060,6 @@ const mecatedServerImplementation = "mecated"
 func appConfig(cfg config, sink port.EventSink, recorder port.ToolCallRecorder, roleScoper func(string) (port.EventSink, port.ToolCallRecorder), metrics *telemetry.Metrics, diag port.Diagnostics) app.Config {
 	out := app.Config{
 		Workspace:                     cfg.workspace,
-		WorkspaceAuthority:            mustWorkspaceAuthority(cfg),
-		AuthoritativeWorkspace:        cfg.workspace,
 		ClientMCPOnCreate:             clientMCPOnCreateForListeners(cfg),
 		Model:                         cfg.model,
 		DefaultProvider:               cfg.defaultProvider,
@@ -1381,48 +1378,11 @@ func (c config) tcpGRPCConfigured() bool {
 	return c.cliExplicit["grpc-addr"] || c.grpcAddrFromFile
 }
 
-// workspaceAuthorityForListeners derives mecated's API workspace policy from both
-// API listeners. Any listener that is a network boundary wins over a local
-// sibling. An explicit operator selection wins over topology.
-//
-// "Network boundary" is listenerIsNetworkBoundary's decision, not a loopback
-// string test: a UNIX-socket gRPC listener and a DISABLED HTTP listener are both
-// strictly narrower than the loopback TCP bind that already grants
-// client-selected authority, so a gRPC-over-socket daemon keeps it. Reading an
-// empty --http-addr as "not loopback" would have demanded --workspace from
-// exactly the local spawned daemon that has no network surface at all.
-//
-// DISABLED is asserted here, per listener, and only for HTTP — serve() skips
-// that listener when --http-addr is empty. gRPC has no disable path, so an empty
-// --grpc-addr is a WILDCARD bind and stays a boundary. The two are not
-// interchangeable: treating an empty --grpc-addr as "no listener" would grant
-// client-selected root selection on an unauthenticated listener reachable from
-// every interface.
-func workspaceAuthorityForListeners(cfg config) (server.WorkspaceAuthority, error) {
-	switch strings.ToLower(strings.TrimSpace(cfg.workspaceAuthority)) {
-	case "":
-		grpcNetwork := listenerIsNetworkBoundary(cfg.grpcAddr, cfg.grpcUnixSocket != "")
-		httpNetwork := cfg.httpAddr != "" && listenerIsNetworkBoundary(cfg.httpAddr, false)
-		if !grpcNetwork && !httpNetwork {
-			return server.WorkspaceAuthorityClientSelected, nil
-		}
-		return server.WorkspaceAuthorityServerAssigned, nil
-	case "client-selected":
-		return server.WorkspaceAuthorityClientSelected, nil
-	case "server-assigned":
-		return server.WorkspaceAuthorityServerAssigned, nil
-	default:
-		return 0, fmt.Errorf("--workspace-authority %q: want client-selected or server-assigned", cfg.workspaceAuthority)
-	}
-}
-
 // clientMCPOnCreateForListeners derives whether this deployment accepts
 // CLIENT-PROVIDED MCP servers on a session-creating API request (issue #821).
 //
 // The rule is a UNIX-SOCKET gRPC listener WITH HTTP DISABLED, and nothing else.
-// That is deliberately STRICTER than workspaceAuthorityForListeners, which
-// accepts a loopback TCP bind. The two look like the same question about
-// different authority, and the difference between them is the whole point:
+// The rule is intentionally UDS-only; loopback TCP is still a network listener.
 //
 //   - A workspace path lends the daemon's FILESYSTEM authority over a root the
 //     operator already chose. Loopback is accepted there as ADR 0237's shipped
@@ -1465,40 +1425,6 @@ func clientMCPOnCreateForListeners(cfg config) bool {
 	return cfg.grpcUnixSocket != "" && cfg.httpAddr == ""
 }
 
-// mustWorkspaceAuthority is used only after validateEffectiveConfig has accepted
-// the command configuration. Keep the fallback server-assigned so a direct caller
-// that bypasses validation never accidentally grants client root selection.
-func mustWorkspaceAuthority(cfg config) server.WorkspaceAuthority {
-	authority, err := workspaceAuthorityForListeners(cfg)
-	if err != nil {
-		return server.WorkspaceAuthorityServerAssigned
-	}
-	return authority
-}
-
-// validateWorkspaceAuthority rejects a network filesystem deployment without a
-// configured root before app.Build or either API listener starts. The server keeps
-// an empty authoritative root valid for file-less deployments: a later composition
-// root (mecak8s) can select server-assigned authority plus no-FS without inventing
-// a container-root workspace.
-func validateWorkspaceAuthority(cfg config) error {
-	authority, err := workspaceAuthorityForListeners(cfg)
-	if err != nil {
-		return err
-	}
-	if authority == server.WorkspaceAuthorityServerAssigned && cfg.workspace == "" {
-		return errors.New("server-assigned filesystem deployment requires --workspace")
-	}
-	// Mirror NewService's authoritative-root rule at the flag layer so a relative or
-	// unclean --workspace on a network listener fails here with a flag-level message,
-	// not two layers down from app.Build. Matches mecak8s, which rejects the same.
-	if authority == server.WorkspaceAuthorityServerAssigned && cfg.workspace != "" &&
-		(!filepath.IsAbs(cfg.workspace) || filepath.Clean(cfg.workspace) != cfg.workspace) {
-		return fmt.Errorf("--workspace %q must be a clean absolute path for a server-assigned deployment", cfg.workspace)
-	}
-	return nil
-}
-
 // validateEffectiveConfig runs the EFFECTIVE-value cross-validation that must
 // see the post-merge config: the perf-MCP loopback/empty-metrics guard and the
 // rate-limit/rate-burst sanity bounds. It is a PURE helper (no I/O, no side
@@ -1525,9 +1451,6 @@ func buildAPIHandler(corsPolicy *server.CORSPolicy, auth *server.Authenticator, 
 }
 
 func validateEffectiveConfig(cfg config) error {
-	if err := validateWorkspaceAuthority(cfg); err != nil {
-		return err
-	}
 	if err := validateDeploymentID(cfg.deploymentID); err != nil {
 		return err
 	}
@@ -1613,7 +1536,6 @@ func parseFlagsModeOut(mode commandMode, argv []string, out io.Writer) (*flag.Fl
 	fs.IntVar(&cfg.lifetimePipeFD, "lifetime-pipe-fd", 0,
 		"file descriptor of an INHERITED pipe whose read end this daemon watches: EOF means the spawning parent exited or crashed, and the daemon then stops through the ordinary graceful-shutdown path. The parent holds the write end and never writes to it — it has nothing to remember. 0 (default) disables; 0/1/2 are the standard streams and are rejected")
 	fs.StringVar(&cfg.workspace, "workspace", cwd, "default session workspace root")
-	fs.StringVar(&cfg.workspaceAuthority, "workspace-authority", "", "workspace authority: client-selected or server-assigned (default derives from gRPC + HTTP/SSE listener topology)")
 	fs.StringVar(&cfg.model, "model", "", "model identifier sent to the provider (empty: use the provider-appropriate default)")
 	fs.StringVar(&cfg.defaultProvider, "default-provider", "", "server-configured deployment-wide default provider id shared by every client (e.g. openai, openrouter, anthropic); overrides the built-in provider preference for zero-selector sessions while a client-side selector still wins. Validated FAIL-FAST at startup: an unknown or unavailable provider refuses to start")
 	fs.StringVar(&cfg.defaultModel, "default-model", "", "server-configured deployment-wide default model id for the default provider, shared by every client; sits BELOW client-side defaults and ABOVE the per-provider built-in default. Validated FAIL-FAST at startup: a model not catalogued for the default provider refuses to start (stricter than per-session selectors, which allow passthrough)")

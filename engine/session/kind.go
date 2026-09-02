@@ -159,33 +159,33 @@ func cloneSessionRelationship(rel SessionRelationship) SessionRelationship {
 }
 
 // NewScheduled constructs a validated scheduler-fire session.
-func NewScheduled(id SessionID, mode PermissionMode, workspace string, limits Limits, createdAt time.Time, scheduleName string, origin SessionID, originIncarnation IncarnationID) (*Session, error) {
-	return newRelated(id, mode, workspace, limits, createdAt, SessionKindScheduled, SessionRelationship{ScheduleName: scheduleName, OriginSessionID: origin, OriginIncarnation: originIncarnation})
+func NewScheduled(id SessionID, mode PermissionMode, ref EnvironmentRef, limits Limits, createdAt time.Time, scheduleName string, origin SessionID, originIncarnation IncarnationID) (*Session, error) {
+	return newRelated(id, mode, ref, limits, createdAt, SessionKindScheduled, SessionRelationship{ScheduleName: scheduleName, OriginSessionID: origin, OriginIncarnation: originIncarnation})
 }
 
 // NewSubagent constructs a validated Subagent child session.
-func NewSubagent(id SessionID, mode PermissionMode, workspace string, limits Limits, createdAt time.Time, parent SessionID, parentIncarnation IncarnationID, call ToolCallID) (*Session, error) {
-	return newRelated(id, mode, workspace, limits, createdAt, SessionKindSubagent, SessionRelationship{ParentSessionID: parent, ParentIncarnation: parentIncarnation, CallID: call})
+func NewSubagent(id SessionID, mode PermissionMode, ref EnvironmentRef, limits Limits, createdAt time.Time, parent SessionID, parentIncarnation IncarnationID, call ToolCallID) (*Session, error) {
+	return newRelated(id, mode, ref, limits, createdAt, SessionKindSubagent, SessionRelationship{ParentSessionID: parent, ParentIncarnation: parentIncarnation, CallID: call})
 }
 
 // NewParallelBranch constructs a validated Parallel branch session.
-func NewParallelBranch(id SessionID, mode PermissionMode, workspace string, limits Limits, createdAt time.Time, parent SessionID, parentIncarnation IncarnationID, call ToolCallID, branchIndex int) (*Session, error) {
-	return newRelated(id, mode, workspace, limits, createdAt, SessionKindParallelBranch, SessionRelationship{ParentSessionID: parent, ParentIncarnation: parentIncarnation, CallID: call, BranchIndex: &branchIndex})
+func NewParallelBranch(id SessionID, mode PermissionMode, ref EnvironmentRef, limits Limits, createdAt time.Time, parent SessionID, parentIncarnation IncarnationID, call ToolCallID, branchIndex int) (*Session, error) {
+	return newRelated(id, mode, ref, limits, createdAt, SessionKindParallelBranch, SessionRelationship{ParentSessionID: parent, ParentIncarnation: parentIncarnation, CallID: call, BranchIndex: &branchIndex})
 }
 
 // NewTeamMember constructs a validated team-member session. parent is optional
 // for a directly-driven team and is present for a tool-driven team.
-func NewTeamMember(id SessionID, mode PermissionMode, workspace string, limits Limits, createdAt time.Time, teamID, member string, parent SessionID, parentIncarnation IncarnationID) (*Session, error) {
-	return newRelated(id, mode, workspace, limits, createdAt, SessionKindTeamMember, SessionRelationship{TeamID: teamID, MemberName: member, ParentSessionID: parent, ParentIncarnation: parentIncarnation})
+func NewTeamMember(id SessionID, mode PermissionMode, ref EnvironmentRef, limits Limits, createdAt time.Time, teamID, member string, parent SessionID, parentIncarnation IncarnationID) (*Session, error) {
+	return newRelated(id, mode, ref, limits, createdAt, SessionKindTeamMember, SessionRelationship{TeamID: teamID, MemberName: member, ParentSessionID: parent, ParentIncarnation: parentIncarnation})
 }
 
 // NewDebug constructs a validated diagnostic session bound to target. It starts
 // with an empty conversation; target history is never copied into it.
-func NewDebug(id SessionID, mode PermissionMode, limits Limits, createdAt time.Time, target SessionID, targetIncarnation IncarnationID) (*Session, error) {
-	return newRelated(id, mode, "", limits, createdAt, SessionKindDebug, SessionRelationship{DebugTargetID: target, DebugTargetIncarnation: targetIncarnation})
+func NewDebug(id SessionID, mode PermissionMode, ref EnvironmentRef, limits Limits, createdAt time.Time, target SessionID, targetIncarnation IncarnationID) (*Session, error) {
+	return newRelated(id, mode, ref, limits, createdAt, SessionKindDebug, SessionRelationship{DebugTargetID: target, DebugTargetIncarnation: targetIncarnation})
 }
 
-func newRelated(id SessionID, mode PermissionMode, workspace string, limits Limits, createdAt time.Time, kind SessionKind, rel SessionRelationship) (*Session, error) {
+func newRelated(id SessionID, mode PermissionMode, ref EnvironmentRef, limits Limits, createdAt time.Time, kind SessionKind, rel SessionRelationship) (*Session, error) {
 	if err := ValidateSessionMetadata(kind, rel); err != nil {
 		return nil, err
 	}
@@ -195,7 +195,7 @@ func newRelated(id SessionID, mode PermissionMode, workspace string, limits Limi
 		kind == SessionKindDebug && !rel.DebugTargetIncarnation.Valid() {
 		return nil, fmt.Errorf("%w: new related session requires related incarnation", ErrInvalidSessionMetadata)
 	}
-	s := New(id, mode, workspace, limits, createdAt)
+	s := New(id, mode, ref, limits, createdAt)
 	s.Kind = kind
 	s.Relationship = rel
 	return s, nil

@@ -85,8 +85,8 @@ func TestStorageHealthIncludesOwnerlessCutoverInventory(t *testing.T) {
 	schedules := memschedulestore.New()
 	alice := &session.Principal{Issuer: "https://issuer.example", Subject: "alice", GrantType: session.GrantTypeUser}
 
-	legacy := session.New("legacy-session", session.ModeDefault, "/legacy", session.Limits{}, time.Now())
-	owned := session.New("owned-session", session.ModeDefault, "/owned", session.Limits{}, time.Now())
+	legacy := session.New("legacy-session", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/legacy", Revision: "in-tree-v1"}, session.Limits{}, time.Now())
+	owned := session.New("owned-session", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/owned", Revision: "in-tree-v1"}, session.Limits{}, time.Now())
 	if err := owned.RestoreLabels(alice, session.Authority{}); err != nil {
 		t.Fatal(err)
 	}

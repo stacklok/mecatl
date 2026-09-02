@@ -147,7 +147,7 @@ func TestCallerSeparation_Scenario3_SubagentResumeIsOwnerChecked(t *testing.T) {
 				mockllm.TextTurn("parent done"),
 			)
 			seedParent := agent.NewEngine(agent.Deps{LLM: seedParentLLM, Catalog: catalogWith(t, task), Policy: allowAll(), Model: "parent-model"})
-			seedSess := session.New("owner-parent", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
+			seedSess := session.New("owner-parent", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
 			if err := seedSess.RestoreLabels(resumeOwnerAlice, session.Authority{}); err != nil {
 				t.Fatalf("RestoreLabels: %v", err)
 			}
@@ -213,7 +213,7 @@ func TestCallerSeparation_Scenario3_SubagentResumeIsOwnerChecked(t *testing.T) {
 func TestSubagentResumeRequiresPrincipalWhenOwnershipEnforced(t *testing.T) {
 	store := memstore.New()
 	childID := session.SessionID("subagent-alice")
-	child := session.New(childID, session.ModeDefault, "/ws", session.Limits{}, time.Now())
+	child := session.New(childID, session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Now())
 	if err := child.RestoreLabels(resumeOwnerAlice, session.Authority{}); err != nil {
 		t.Fatalf("RestoreLabels: %v", err)
 	}
@@ -238,7 +238,7 @@ func TestSubagentResumeRequiresPrincipalWhenOwnershipEnforced(t *testing.T) {
 func TestCallerSeparation_SubagentResumeHidesForeignInFlightState(t *testing.T) {
 	store := memstore.New()
 	childID := session.SessionID("subagent-alice")
-	seed := session.New(childID, session.ModeDefault, "/ws", session.Limits{}, time.Now())
+	seed := session.New(childID, session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Now())
 	if err := seed.RestoreLabels(resumeOwnerAlice, session.Authority{}); err != nil {
 		t.Fatalf("RestoreLabels: %v", err)
 	}

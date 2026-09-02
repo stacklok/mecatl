@@ -130,7 +130,7 @@ func TestForkSessionInheritsHistoryAndLabels(t *testing.T) {
 		t.Fatalf("forked history missing user/assistant text (user=%v assistant=%v)", sawUser, sawAssistant)
 	}
 	// Labels inherited.
-	if forked.Mode != srcSnap.Mode || forked.Workspace != srcSnap.Workspace ||
+	if forked.Mode != srcSnap.Mode || forked.EnvironmentRef.ID != srcSnap.EnvironmentRef.ID ||
 		forked.ProviderID != srcSnap.ProviderID || forked.ModelID != srcSnap.ModelID ||
 		forked.ReasoningEffort != srcSnap.ReasoningEffort || forked.Profile != srcSnap.Profile ||
 		forked.Title != srcSnap.Title {
@@ -551,22 +551,18 @@ func TestHTTPForkSessionRoundTrip(t *testing.T) {
 		t.Fatalf("fork id = %q, want a new distinct id", forkID)
 	}
 
-	// GET the fork: workspace + idle.
+	// GET the fork: public state omits private placement paths.
 	getResp, err := http.Get(srv.URL + "/v1/sessions/" + forkID)
 	if err != nil {
 		t.Fatalf("GET fork: %v", err)
 	}
 	defer getResp.Body.Close()
 	var sess struct {
-		Workspace string `json:"workspace"`
-		State     string `json:"state"`
-		Turns     int32  `json:"turns"`
+		State string `json:"state"`
+		Turns int32  `json:"turns"`
 	}
 	if err := json.NewDecoder(getResp.Body).Decode(&sess); err != nil {
 		t.Fatalf("decode fork session: %v", err)
-	}
-	if sess.Workspace != "/ws" {
-		t.Fatalf("fork workspace = %q, want /ws", sess.Workspace)
 	}
 	if sess.State != "idle" {
 		t.Fatalf("fork state = %q, want idle", sess.State)

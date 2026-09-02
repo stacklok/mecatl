@@ -64,7 +64,7 @@ func TestBuildRequestNilPromptBuilderIsByteIdenticalToDefault(t *testing.T) {
 		// PromptBuilder intentionally nil — the v0.0.1 default path.
 	})
 
-	sess := session.New("s1", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
+	sess := session.New("s1", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
 	r := e.Run(context.Background(), sess, agent.MemEnvRunner("/ws", stubShellRunner{}), agent.RunRequest{Text: "hi"})
 	drain(r)
 
@@ -133,7 +133,7 @@ func TestBuildRequestHostPromptBuilderOwnsSystemPrompt(t *testing.T) {
 		},
 	})
 
-	sess := session.New("s1", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
+	sess := session.New("s1", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
 	r := e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "draft the weekly update"})
 	drain(r)
 
@@ -196,7 +196,7 @@ func TestPromptBuilderHostCanStillUseInventoryAndEnv(t *testing.T) {
 		},
 	})
 
-	sess := session.New("s1", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
+	sess := session.New("s1", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
 	r := e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "hi"})
 	drain(r)
 
@@ -268,7 +268,7 @@ func TestPromptBuilderDoesNotRouteThroughCompactionSummarizer(t *testing.T) {
 		},
 	})
 
-	sess := session.New("s1", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
+	sess := session.New("s1", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
 	bigPrompt := strings.Repeat("word ", 200) // ~250 tokens >> threshold of 8
 	r := e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: bigPrompt})
 	drain(r)
@@ -357,7 +357,7 @@ func TestPromptBuilderAppliesEveryTurn(t *testing.T) {
 		},
 	})
 
-	sess := session.New("s1", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
+	sess := session.New("s1", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
 	r := e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "look at a.go"})
 	drain(r)
 
@@ -397,7 +397,7 @@ func TestPromptBuilderEmptyLayeredIsHonoredNotBackfilled(t *testing.T) {
 		},
 	})
 
-	sess := session.New("s1", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
+	sess := session.New("s1", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
 	r := e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "hi"})
 	drain(r)
 

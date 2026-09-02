@@ -1179,7 +1179,7 @@ func TestRouteTaskFoldsClassifierUsageIntoParentSession(t *testing.T) {
 	})
 
 	// Build a parent session in StateRunning (the state RecordUsage requires).
-	parentSess := session.New("parent-fold-test", session.ModeDefault, "/", session.Limits{}, time.Now())
+	parentSess := session.New("parent-fold-test", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/", Revision: "in-tree-v1"}, session.Limits{}, time.Now())
 	if err := parentSess.RecordUserPrompt("go", nil); err != nil {
 		t.Fatalf("RecordUserPrompt: %v", err)
 	}
@@ -1225,7 +1225,7 @@ func TestRouteTaskFoldsClassifierUsageOnMissPath(t *testing.T) {
 		},
 	})
 
-	parentSess := session.New("parent-miss-fold-test", session.ModeDefault, "/", session.Limits{}, time.Now())
+	parentSess := session.New("parent-miss-fold-test", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/", Revision: "in-tree-v1"}, session.Limits{}, time.Now())
 	if err := parentSess.RecordUserPrompt("go", nil); err != nil {
 		t.Fatalf("RecordUserPrompt: %v", err)
 	}
@@ -1269,7 +1269,7 @@ func TestClassifierSpendTripsMaxRunTokens(t *testing.T) {
 		},
 	})
 
-	parentSess := session.New("parent-budget-trip-test", session.ModeDefault, "/", session.Limits{}, time.Now())
+	parentSess := session.New("parent-budget-trip-test", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/", Revision: "in-tree-v1"}, session.Limits{}, time.Now())
 	if err := parentSess.RecordUserPrompt("go", nil); err != nil {
 		t.Fatalf("RecordUserPrompt: %v", err)
 	}

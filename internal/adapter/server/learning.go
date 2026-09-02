@@ -14,6 +14,7 @@ import (
 	"github.com/stacklok/mecatl/engine/learning"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
+	"github.com/stacklok/mecatl/internal/adapter/memory"
 )
 
 // ReflectionReceipt is the bounded result of an explicit reflection request.
@@ -75,6 +76,13 @@ func (s *Service) ReflectSession(ctx context.Context, id session.SessionID) (*me
 	}
 	if sess.State != session.StateCompleted {
 		return nil, fmt.Errorf("%w: reflection requires a completed session", ErrFailedPrecondition)
+	}
+	if s.placementBinder != nil {
+		binding, bindErr := s.ReattachPlacement(ctx, sess.EnvironmentRef)
+		if bindErr != nil {
+			return nil, bindErr
+		}
+		ctx = memory.WithWorkspace(ctx, binding.Environment.Workspace().Root())
 	}
 	r, err := s.cfg.ReflectSession(ctx, sess)
 	if err != nil {
@@ -296,7 +304,11 @@ func (s *Service) learningEvidenceStatus(ctx context.Context, ref learning.Evide
 		return false, "source unavailable", ""
 	}
 	stop, _ := sess.StopReason()
-	trajectory := learning.NewTrajectory(sess.ID, sess.Workspace, stop, sess.Usage, sess.Conversation.Messages)
+	workspace, ok := s.learningWorkspace(ctx, sess)
+	if !ok {
+		return false, "source unavailable", ""
+	}
+	trajectory := learning.NewTrajectory(sess.ID, workspace, stop, sess.Usage, sess.Conversation.Messages)
 	var (
 		actual learning.EvidenceRef
 		input  learning.Input
@@ -344,6 +356,17 @@ func (s *Service) learningEvidenceStatus(ctx context.Context, ref learning.Evide
 		return false, "evidence unavailable", ""
 	}
 	return true, "available", preview
+}
+
+func (s *Service) learningWorkspace(ctx context.Context, sess *session.Session) (string, bool) {
+	if s.placementBinder == nil {
+		return "", true
+	}
+	binding, err := s.ReattachPlacement(ctx, sess.EnvironmentRef)
+	if err != nil {
+		return "", false
+	}
+	return binding.Environment.Workspace().Root(), true
 }
 
 func sameEventSequence(a, b *int64) bool {

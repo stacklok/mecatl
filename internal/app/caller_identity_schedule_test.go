@@ -65,7 +65,7 @@ func newScheduleOwnerFixture(t *testing.T) (*memstore.Store, interface {
 // saveOwnedSession persists an idle session owned by owner (nil = ownerless).
 func saveOwnedSession(t *testing.T, store *memstore.Store, id session.SessionID, owner *session.Principal) {
 	t.Helper()
-	sess := session.New(id, session.ModePlan, "/ws", session.Limits{}, time.Now())
+	sess := session.New(id, session.ModePlan, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Now())
 	sess.EnvironmentRef = session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}
 	if err := sess.RestoreLabels(owner, session.Authority{}); err != nil {
 		t.Fatalf("RestoreLabels: %v", err)

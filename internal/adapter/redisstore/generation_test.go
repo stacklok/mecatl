@@ -116,14 +116,14 @@ func TestGenerationSwapRoutesNewOperationsAndScheduleStore(t *testing.T) {
 	store, oldServer := newGenerationTestStore(t)
 	newServer := miniredis.RunT(t)
 	scheduleStore := store.ScheduleStore()
-	if err := store.Save(context.Background(), session.New("old", session.ModeDefault, "", session.Limits{}, time.Now())); err != nil {
+	if err := store.Save(context.Background(), session.New("old", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/workspace", Revision: "in-tree-v1"}, session.Limits{}, time.Now())); err != nil {
 		t.Fatal(err)
 	}
 	candidate := candidateClient(t, newServer)
 	if err := store.clients.swap(candidate); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.Save(context.Background(), session.New("new", session.ModeDefault, "", session.Limits{}, time.Now())); err != nil {
+	if err := store.Save(context.Background(), session.New("new", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/workspace", Revision: "in-tree-v1"}, session.Limits{}, time.Now())); err != nil {
 		t.Fatal(err)
 	}
 	if oldServer.Exists(sessionKey("new")) || !newServer.Exists(sessionKey("new")) {
@@ -397,7 +397,7 @@ func TestEventIteratorPinsGenerationThroughYield(t *testing.T) {
 
 func TestMigrationFamilyAndFinalizeStayOnAcquiredGenerationAfterSwap(t *testing.T) {
 	oldServer := miniredis.RunT(t)
-	legacy := session.New("legacy-swap", session.ModeDefault, "/work", session.Limits{}, time.Now().UTC())
+	legacy := session.New("legacy-swap", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/work", Revision: "in-tree-v1"}, session.Limits{}, time.Now().UTC())
 	blob, err := sessnap.Marshal(legacy)
 	if err != nil {
 		t.Fatal(err)
@@ -455,7 +455,7 @@ func TestSwappedBackendCoversStoreAndSchedulerOperationFamilies(t *testing.T) {
 		t.Fatal(err)
 	}
 	now := time.Now().UTC().Truncate(time.Millisecond)
-	sess := session.New("swapped-read", session.ModeDefault, "", session.Limits{}, now)
+	sess := session.New("swapped-read", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/workspace", Revision: "in-tree-v1"}, session.Limits{}, now)
 	if err := seed.Save(context.Background(), sess); err != nil {
 		t.Fatal(err)
 	}
