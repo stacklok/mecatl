@@ -188,6 +188,7 @@ type Config struct {
 	Shell               string
 	NoBash              bool
 	temporaryStorage    temporaryStorageConfig
+	managedTemp         *managedTemporaryStorage
 	// AuthorityEvaluator selects the authority evaluator adapter: "local" enforces
 	// minted sets, while "noop" deliberately disables enforcement. "cedar" loads
 	// CedarAuthorityPolicy at startup and fails closed when it cannot be loaded.
@@ -1456,6 +1457,16 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	if temporaryStorageErr != nil {
 		return nil, temporaryStorageErr
 	}
+	cfg.managedTemp, temporaryStorageErr = openManagedTemporaryStorage(cfg.temporaryStorage)
+	if temporaryStorageErr != nil {
+		return nil, fmt.Errorf("open managed temporary storage: %w", temporaryStorageErr)
+	}
+	managedTempTransferred := false
+	defer func() {
+		if !managedTempTransferred {
+			cfg.managedTemp.close()
+		}
+	}()
 	var retentionErr error
 	cfg, retentionErr = foldOperatorRetention(cfg)
 	if retentionErr != nil {
@@ -2431,8 +2442,10 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		agentClose()
 		storeClose()
 		commandConnClose()
+		cfg.managedTemp.close()
 	})
 	profilesTransferred = true
+	managedTempTransferred = true
 	return &Built{Service: svc, Close: closeAll}, nil
 }
 
@@ -5910,9 +5923,22 @@ func buildCommandRunnerForRoot(cfg Config, root string) tool.CommandRunner {
 	// (gitenv) — the operator's own hooks/pager are honoured here, only the secrets
 	// are removed.
 	env := envscrub.Scrub(os.Environ())
-	runner, err := osfs.NewCommandRunnerShell(root, cfg.Shell, osfs.WithCommandEnvList(env))
+	return newCommandRunnerForRoot(cfg, root, env, "could not build command runner; Bash tool disabled")
+}
+
+func newCommandRunnerForRoot(cfg Config, root string, env []string, failure string) tool.CommandRunner {
+	opts := []osfs.CommandRunnerOption{osfs.WithCommandEnvList(env)}
+	if cfg.managedTemp != nil {
+		workspace, err := cfg.managedTemp.workspace(root)
+		if err != nil {
+			cfg.diag().Log(context.Background(), port.LevelWarn, failure, "workspace", root, "err", err)
+			return nil
+		}
+		opts = append(opts, osfs.WithManagedTemporaryWorkspace(workspace))
+	}
+	runner, err := osfs.NewCommandRunnerShell(root, cfg.Shell, opts...)
 	if err != nil {
-		cfg.diag().Log(context.Background(), port.LevelWarn, "could not build command runner; Bash tool disabled", "workspace", root, "err", err)
+		cfg.diag().Log(context.Background(), port.LevelWarn, failure, "workspace", root, "err", err)
 		return nil
 	}
 	return runner
@@ -6059,12 +6085,7 @@ func newHardenedRunnerForRoot(cfg Config, root string) tool.CommandRunner {
 	// then layer the git-neutralising env on the secret-free base so a sandboxed
 	// child sees neither the operator's secrets nor an untrusted repo's git hooks.
 	env := gitenv.Scrub(envscrub.Scrub(os.Environ()))
-	runner, err := osfs.NewCommandRunnerShell(root, cfg.Shell, osfs.WithCommandEnvList(env))
-	if err != nil {
-		cfg.diag().Log(context.Background(), port.LevelWarn, "could not build sandboxed member command runner; team-member Bash disabled", "workspace", root, "err", err)
-		return nil
-	}
-	return runner
+	return newCommandRunnerForRoot(cfg, root, env, "could not build sandboxed member command runner; team-member Bash disabled")
 }
 
 // subagentShellUntrustedReason returns the model/operator-facing reason the

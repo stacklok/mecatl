@@ -5,8 +5,10 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sync"
 	"time"
 
+	"github.com/stacklok/mecatl/internal/adapter/managedtemp"
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
 )
 
@@ -27,6 +29,57 @@ type temporaryStorageConfig struct {
 	ReapInterval        time.Duration
 	ReapTimeout         time.Duration
 	ShutdownReapTimeout time.Duration
+}
+
+type managedTemporaryStorage struct {
+	namespace  *managedtemp.Namespace
+	mu         sync.Mutex
+	workspaces map[string]*managedtemp.Workspace
+}
+
+func openManagedTemporaryStorage(cfg temporaryStorageConfig) (*managedTemporaryStorage, error) {
+	if cfg.Mode != temporaryStorageManaged {
+		return nil, nil
+	}
+	namespace, err := managedtemp.Open(cfg.ManagedRoot)
+	if err != nil {
+		return nil, err
+	}
+	return &managedTemporaryStorage{namespace: namespace, workspaces: map[string]*managedtemp.Workspace{}}, nil
+}
+
+func (s *managedTemporaryStorage) workspace(root string) (*managedtemp.Workspace, error) {
+	if s == nil {
+		return nil, nil
+	}
+	identity, currentPath, err := managedWorkspaceIdentity(root)
+	if err != nil {
+		return nil, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if workspace := s.workspaces[identity]; workspace != nil {
+		return workspace, nil
+	}
+	workspace, err := s.namespace.OpenWorkspace("osfs", identity, currentPath)
+	if err != nil {
+		return nil, err
+	}
+	s.workspaces[identity] = workspace
+	return workspace, nil
+}
+
+func (s *managedTemporaryStorage) close() {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	for _, workspace := range s.workspaces {
+		_ = workspace.Close()
+	}
+	s.workspaces = nil
+	s.mu.Unlock()
+	_ = s.namespace.Close()
 }
 
 func foldOperatorTemporaryStorage(cfg Config) (Config, error) {

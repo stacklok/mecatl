@@ -15,6 +15,7 @@ package procgroup
 import (
 	"os/exec"
 	"syscall"
+	"time"
 )
 
 // Supported reports whether this platform can contain a whole command tree.
@@ -30,9 +31,32 @@ func Configure(c *exec.Cmd) {
 		if c.Process == nil {
 			return nil
 		}
-		// Negative PID → the whole process group created via Setpgid. ESRCH
-		// (group already gone) is benign; exec only consults this on the
-		// cancellation path.
-		return syscall.Kill(-c.Process.Pid, syscall.SIGKILL)
+		return Kill(c.Process.Pid)
 	}
+}
+
+// Kill terminates the managed process group. A vanished group is already done.
+func Kill(pid int) error {
+	err := syscall.Kill(-pid, syscall.SIGKILL)
+	if err == syscall.ESRCH {
+		return nil
+	}
+	return err
+}
+
+// GroupAlive reports whether the managed process group remains alive. It does
+// not inspect escaped descendants, which are outside the managed contract.
+func GroupAlive(pid int) bool {
+	err := syscall.Kill(-pid, 0)
+	return err == nil || err == syscall.EPERM
+}
+
+// WaitGone gives a cancellation kill a bounded chance to finish reaping the
+// complete managed group before its lease is considered for immediate deletion.
+func WaitGone(pid int, limit time.Duration) bool {
+	deadline := time.Now().Add(limit)
+	for GroupAlive(pid) && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	return !GroupAlive(pid)
 }

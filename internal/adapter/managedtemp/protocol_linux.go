@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -40,11 +41,16 @@ type workspaceManifest struct {
 }
 
 type allocationManifest struct {
-	Version   int       `json:"version"`
-	ID        string    `json:"id"`
-	Kind      string    `json:"kind"`
-	CreatedAt time.Time `json:"created_at"`
-	State     string    `json:"state"`
+	Version      int       `json:"version"`
+	ID           string    `json:"id"`
+	Kind         string    `json:"kind"`
+	CreatedAt    time.Time `json:"created_at"`
+	StartedAt    time.Time `json:"started_at,omitempty"`
+	TerminalAt   time.Time `json:"terminal_at,omitempty"`
+	UID          int       `json:"uid"`
+	OwnerPID     int       `json:"owner_pid,omitempty"`
+	ProcessGroup int       `json:"process_group,omitempty"`
+	State        string    `json:"state"`
 }
 
 type sweepCompletion struct {
@@ -68,6 +74,79 @@ func (l *Lease) ID() string { return l.id }
 
 // Path returns the adapter-local allocation path.
 func (l *Lease) Path() string { return l.path }
+
+// TempDir returns the private temporary directory supplied to the command.
+func (l *Lease) TempDir() string { return filepath.Join(l.path, "tmp") }
+
+// Started records the process identity after the runner successfully starts its
+// dedicated process group.
+func (l *Lease) Started(pid int) error { return l.transition("active", pid) }
+
+// Terminal records that the runner has joined its direct command process. A
+// still-live process group is retained for the reaper; a gone group may be
+// removed immediately by the runner.
+func (l *Lease) Terminal() error { return l.transition("terminal", 0) }
+
+func (l *Lease) transition(state string, pid int) error {
+	if err := validateLease(l); err != nil {
+		return err
+	}
+	data, err := readPrivateFile(l.root, "manifest.json")
+	if err != nil {
+		return err
+	}
+	var manifest allocationManifest
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		return fmt.Errorf("managedtemp: malformed allocation manifest: %w", err)
+	}
+	now := time.Now().UTC()
+	manifest.State = state
+	if pid != 0 {
+		manifest.OwnerPID = pid
+		manifest.ProcessGroup = pid
+		manifest.StartedAt = now
+	} else {
+		manifest.TerminalAt = now
+	}
+	updated, err := json.Marshal(manifest)
+	if err != nil {
+		return err
+	}
+	return replacePrivateFile(l.root, "manifest.json", updated)
+}
+
+// ValidTestHomeMarker reports whether marker names a private command lease
+// created by this protocol. It rejects ordinary paths and malformed metadata;
+// test-home uses it before placing process-wide HOME state under the lease.
+func ValidTestHomeMarker(marker string) bool {
+	if marker == "" || !filepath.IsAbs(marker) || filepath.Base(marker) == "." {
+		return false
+	}
+	info, err := os.Lstat(marker)
+	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm() != privateDirMode || !ownedByCurrentUser(info) {
+		return false
+	}
+	name := filepath.Base(marker)
+	id, ok := strings.CutPrefix(name, "cmd-")
+	if !ok || len(id) != 32 {
+		return false
+	}
+	data, err := os.ReadFile(filepath.Join(marker, "manifest.json"))
+	if err != nil {
+		return false
+	}
+	var manifest allocationManifest
+	if json.Unmarshal(data, &manifest) != nil || manifest.Version != manifestVersion || manifest.Kind != "cmd" || manifest.ID != id {
+		return false
+	}
+	for _, child := range []string{"lease.lock", "tmp"} {
+		childInfo, err := os.Lstat(filepath.Join(marker, child))
+		if err != nil || childInfo.Mode()&os.ModeSymlink != 0 || !ownedByCurrentUser(childInfo) {
+			return false
+		}
+	}
+	return true
+}
 
 // Close releases the active lease lock without removing the allocation.
 func (l *Lease) Close() error {
@@ -130,7 +209,7 @@ func (w *Workspace) Allocate(kind string) (*Lease, error) {
 		_ = root.Close()
 		return nil, err
 	}
-	manifest, err := json.Marshal(allocationManifest{Version: manifestVersion, ID: id, Kind: kind, CreatedAt: time.Now().UTC(), State: "active"})
+	manifest, err := json.Marshal(allocationManifest{Version: manifestVersion, ID: id, Kind: kind, CreatedAt: time.Now().UTC(), UID: os.Geteuid(), State: "active"})
 	if err == nil {
 		err = writePrivateFile(root, "manifest.json", manifest)
 	}

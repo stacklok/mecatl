@@ -5,6 +5,7 @@ package app
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"syscall"
 )
 
@@ -25,4 +26,20 @@ func validateControlledRoot(path string) error {
 		return fmt.Errorf("temporary storage managed_root: absolute root must be a current-user-owned private non-symlink directory")
 	}
 	return nil
+}
+
+func managedWorkspaceIdentity(root string) (identity, currentPath string, err error) {
+	currentPath, err = filepath.EvalSymlinks(root)
+	if err != nil {
+		return "", "", err
+	}
+	info, err := os.Stat(currentPath)
+	if err != nil {
+		return "", "", err
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return "", "", fmt.Errorf("managed temporary storage: workspace identity unavailable")
+	}
+	return fmt.Sprintf("dev:%d/inode:%d", stat.Dev, stat.Ino), currentPath, nil
 }
