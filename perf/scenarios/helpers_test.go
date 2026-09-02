@@ -21,6 +21,10 @@ var scenarioEpoch = time.Unix(0, 0)
 // scenarioWorkspaceRoot is the in-memory workspace root the scenarios mount.
 const scenarioWorkspaceRoot = "/ws"
 
+// scenarioWorkspaceRevision identifies the immutable in-memory placement used by
+// every scenario session and Environment.
+const scenarioWorkspaceRevision = "perf-v1"
+
 // scenarioModel is the opaque model id stamped into requests (the offline mock
 // ignores it; a model id is still required by the engine).
 const scenarioModel = "perf-mock-model"
@@ -53,14 +57,14 @@ func scenarioCatalog(tools ...tool.Tool) *tool.Catalog {
 // scenarioSession builds a fresh default-mode session at the fixed epoch. A
 // session is a one-shot state machine, so the caller builds one per iteration.
 func scenarioSession(id string, limits session.Limits) *session.Session {
-	return session.New(session.SessionID(id), session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: scenarioWorkspaceRoot, Revision: "in-tree-v1"}, limits, scenarioEpoch)
+	return session.New(session.SessionID(id), session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindMem, ID: scenarioWorkspaceRoot, Revision: scenarioWorkspaceRevision}, limits, scenarioEpoch)
 }
 
 // scenarioWorkspace returns a fresh shell-less in-memory Environment mounted at
 // the scenario root.
 func scenarioWorkspace() tool.Environment {
 	ws := memfs.NewWorkspace(scenarioWorkspaceRoot)
-	return tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: scenarioWorkspaceRoot}, ws, nil)
+	return tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: scenarioWorkspaceRoot, Revision: scenarioWorkspaceRevision}, ws, nil)
 }
 
 // readTool is a deterministic read-only tool returning fixed content — the

@@ -17,8 +17,8 @@ describe("raw transport parity", () => {
     expect(httpCompatibility.features).toEqual(grpcCompatibility.features);
 
     const [grpcCreated, httpCreated] = await Promise.all([
-      grpc.unary(HarnessService.method.createSession, { workspace: scriptedState.workspace }),
-      http.unary(HarnessService.method.createSession, { workspace: scriptedState.workspace }),
+      grpc.unary(HarnessService.method.createSession, {}),
+      http.unary(HarnessService.method.createSession, {}),
     ]);
     expect(httpCreated.sessionId).toBe(grpcCreated.sessionId);
 
@@ -26,16 +26,17 @@ describe("raw transport parity", () => {
       grpc.unary(HarnessService.method.getSession, { sessionId: grpcCreated.sessionId }),
       http.unary(HarnessService.method.getSession, { sessionId: httpCreated.sessionId }),
     ]);
+    expect(grpcSession.session?.placement).toMatchObject(scriptedState.placement);
     expect({
       mode: httpSession.session?.mode,
+      placement: httpSession.session?.placement,
       sessionId: httpSession.session?.sessionId,
       state: httpSession.session?.state,
-      workspace: httpSession.session?.workspace,
     }).toEqual({
       mode: grpcSession.session?.mode,
+      placement: grpcSession.session?.placement,
       sessionId: grpcSession.session?.sessionId,
       state: grpcSession.session?.state,
-      workspace: grpcSession.session?.workspace,
     });
   });
 

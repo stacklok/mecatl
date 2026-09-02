@@ -14,11 +14,6 @@ import type { MessageShape } from '@bufbuild/protobuf';
 import { Transport } from '@connectrpc/connect';
 
 // @public
-export class ActivityGapError extends MecatlError {
-    constructor(message?: string, options?: Omit<MecatlErrorOptions, "code">);
-}
-
-// @public
 export type AgentEvent = Exclude<KnownEvent, {
     readonly kind: `team.${string}`;
 }>;
@@ -55,28 +50,6 @@ export interface ArchivedConversationMessage {
     readonly toolCalls: readonly ToolCallEventPayload[];
     // (undocumented)
     readonly toolResult?: ToolResultEventPayload | undefined;
-}
-
-// @public
-export interface AttachedRun extends SessionActivity {
-    // (undocumented)
-    approve(askId: string, allow: boolean): Promise<never>;
-    // (undocumented)
-    cancel(): Promise<void>;
-    readonly live: boolean;
-    // (undocumented)
-    resolveAsk(askId: string, verdict: PermissionVerdict): Promise<never>;
-    // (undocumented)
-    readonly runId: string;
-    // (undocumented)
-    steer(text: string): Promise<never>;
-}
-
-// @public
-export interface AttachOptions {
-    from?: "now" | "start" | SdkCursor;
-    includeLogOnly?: boolean;
-    signal?: AbortSignal;
 }
 
 // @public
@@ -167,8 +140,6 @@ export interface CreateSessionOptions {
     reasoningEffort?: string;
     // (undocumented)
     sourceSessionId?: string;
-    // (undocumented)
-    workspace?: string;
 }
 
 // @public (undocumented)
@@ -179,21 +150,6 @@ export interface CredentialOptions {
 
 // @public (undocumented)
 export type CredentialProvider = () => HeadersInit | Promise<HeadersInit>;
-
-// @public
-export class CursorExpiredError extends MecatlError {
-    constructor(message: string, options: Omit<MecatlErrorOptions, "code">);
-}
-
-// @public
-export class CursorMalformedError extends MecatlError {
-    constructor(message?: string, options?: Omit<MecatlErrorOptions, "code">);
-}
-
-// @public
-export class CursorScopeError extends MecatlError {
-    constructor(message?: string);
-}
 
 // @public
 export type ErrorOrigin = TransportKind | "local";
@@ -441,16 +397,10 @@ export const MAX_PROMPT_MEDIA_BYTES: number;
 export const MAX_PROMPT_MEDIA_PARTS = 16;
 
 // @public
-export const MECATL_ATTACH_FILTERED_KINDS: readonly ["approval", "compaction.archive", "network.attempt", "request.manifest", "user_prompt"];
-
-// @public
-export const MECATL_ERROR_CODES: readonly ["activity_gap", "child_not_found", "cleanup_backend", "cleanup_plan_stale", "cleanup_unsupported", "client_mcp_unreachable", "client_mcp_unsupported", "conflict", "cursor_expired", "cursor_malformed", "draining", "dream_apply_failed", "dream_capacity", "dream_conflict", "dream_deadline", "dream_generate_failed", "dream_in_progress", "dream_not_found", "dream_request_failed", "dream_terminal_conflict", "dream_unavailable", "failed_precondition", "failed_step_retry_ineligible", "fire_now_overlap", "internal", "invalid_argument", "learning_unavailable", "management_unauthorized", "migration_backend", "migration_conflict", "migration_unsupported", "no_active_run", "no_event_log", "no_mcp_provider", "no_schedule_store", "not_awaiting_plan", "not_found", "proposal_conflict", "request_too_large", "resource_exhausted", "schedule_disabled", "schedule_exhausted", "schedule_not_found", "schedule_not_leader", "schedule_unsupported", "scheduler_not_running", "session_delete_unsupported", "session_leased_elsewhere", "session_metadata_cursor_restart", "session_metadata_paging_unsupported", "session_not_found", "stale_run_control", "storage_health_backend", "team_not_found", "team_not_running", "team_running", "teams_disabled", "too_many_session_engines", "too_many_teams", "unimplemented", "watch_lagging", "watch_unsupported"];
+export const MECATL_ERROR_CODES: readonly ["activity_gap", "child_not_found", "cleanup_backend", "cleanup_plan_stale", "cleanup_unsupported", "client_mcp_unreachable", "client_mcp_unsupported", "conflict", "cursor_expired", "cursor_malformed", "draining", "dream_apply_failed", "dream_capacity", "dream_conflict", "dream_deadline", "dream_generate_failed", "dream_in_progress", "dream_not_found", "dream_request_failed", "dream_terminal_conflict", "dream_unavailable", "failed_precondition", "failed_step_retry_ineligible", "fire_now_overlap", "internal", "invalid_argument", "learning_unavailable", "management_unauthorized", "migration_backend", "migration_conflict", "migration_unsupported", "no_active_run", "no_event_log", "no_mcp_provider", "no_schedule_store", "not_awaiting_plan", "not_found", "placement_binding_invalid", "placement_changed", "placement_selector_invalid", "placement_selector_not_found", "placement_selector_stale", "placement_unavailable", "proposal_conflict", "request_too_large", "resource_exhausted", "schedule_disabled", "schedule_exhausted", "schedule_not_found", "schedule_not_leader", "schedule_unsupported", "scheduler_not_running", "session_delete_unsupported", "session_leased_elsewhere", "session_metadata_cursor_restart", "session_metadata_paging_unsupported", "session_not_found", "stale_run_control", "storage_health_backend", "team_not_found", "team_not_running", "team_running", "teams_disabled", "too_many_session_engines", "too_many_teams", "unimplemented", "watch_lagging", "watch_unsupported"];
 
 // @public
 export const MECATL_EVENT_KINDS: readonly ["approval", "compaction", "compaction.archive", "hook", "message.delta", "model.retry", "network.attempt", "no_progress", "parallel.branch", "parallel.end", "parallel.start", "permission.ask", "permission.retract", "provider.route", "reasoning.delta", "recover_notice", "request.manifest", "result", "schedule.failed", "schedule.fired", "schedule.skipped", "session.init", "steer", "steer.outcome", "subagent.end", "subagent.start", "subagent.tool", "team.end", "team.findings", "team.member", "team.start", "team.tasks", "tool.call", "tool.progress", "tool.result", "turn.end", "turn.start", "user_prompt"];
-
-// @public
-export const MECATL_WATCH_PHASES: readonly ["gap", "live", "replay"];
 
 // @public
 export class MecatlError extends Error {
@@ -504,11 +454,6 @@ export interface ModelRetryEventPayload {
     readonly retryDisposition: RetryDisposition;
     // (undocumented)
     readonly streamProgress: StreamProgress;
-}
-
-// @public
-export class NoRunsError extends MecatlError {
-    constructor();
 }
 
 // @public
@@ -613,7 +558,6 @@ export class ProtocolError extends MecatlError {
 
 // @public
 export interface RawClient {
-    features(options?: CallOptions): Promise<ReadonlySet<string>>;
     // (undocumented)
     stream<I extends DescMessage, O extends DescMessage>(method: DescMethodStreaming<I, O>, input: AsyncIterable<MessageInitShape<I>>, options?: CallOptions): AsyncIterable<MessageShape<O>>;
     // (undocumented)
@@ -698,11 +642,8 @@ export interface ScheduleEventPayload {
     readonly stop: string;
 }
 
-// @public
-export type SdkCursor = string;
-
 // @public (undocumented)
-export type SDKErrorCode = "authentication" | "cursor_scope" | "incompatible_server" | "invalid_prompt" | "invalid_state" | "no_runs" | "protocol" | "transport" | "unsupported_feature";
+export type SDKErrorCode = "authentication" | "incompatible_server" | "invalid_prompt" | "invalid_state" | "protocol" | "transport" | "unsupported_feature";
 
 // @public (undocumented)
 export class ServerError extends MecatlError {
@@ -718,20 +659,11 @@ export type ServerErrorCode = (typeof MECATL_ERROR_CODES)[number] | "unknown";
 
 // @public
 export interface Session {
-    activity(options?: AttachOptions): Promise<SessionActivity>;
-    attach(runId?: string, options?: AttachOptions): Promise<AttachedRun>;
     close(): Promise<void>;
     delete(): Promise<void>;
     // (undocumented)
     readonly id: string;
     run(prompt: PromptInput, options?: RunOptions): Promise<Run>;
-}
-
-// @public
-export interface SessionActivity extends AsyncIterable<WatchEnvelope>, AsyncDisposable {
-    close(): Promise<void>;
-    // (undocumented)
-    readonly cursor: SdkCursor;
 }
 
 // @public
@@ -1019,18 +951,6 @@ export interface UnknownHttpEvent extends EventCommon {
     readonly wireKind: string;
 }
 
-// @public
-export interface UnknownWatchEnvelope {
-    // (undocumented)
-    readonly cursor: SdkCursor;
-    // (undocumented)
-    readonly event?: Event_2;
-    // (undocumented)
-    readonly kind: "unknown";
-    // (undocumented)
-    readonly phase: string;
-}
-
 // @public (undocumented)
 export class UnsupportedFeatureError extends MecatlError {
     constructor(feature: string, options: Omit<MecatlErrorOptions, "code">);
@@ -1044,39 +964,6 @@ export interface UserPromptEventPayload {
     readonly parts: readonly EventContent[];
     // (undocumented)
     readonly text: string;
-}
-
-// @public
-export interface WatchBoundaryEnvelope {
-    // (undocumented)
-    readonly cursor: SdkCursor;
-    // (undocumented)
-    readonly kind: "boundary";
-    // (undocumented)
-    readonly phase: "live";
-}
-
-// @public
-export type WatchEnvelope = WatchEventEnvelope | WatchBoundaryEnvelope | WatchGapEnvelope | UnknownWatchEnvelope;
-
-// @public
-export interface WatchEventEnvelope {
-    // (undocumented)
-    readonly cursor: SdkCursor;
-    // (undocumented)
-    readonly event: Event_2;
-    // (undocumented)
-    readonly kind: "event";
-    // (undocumented)
-    readonly phase: "live" | "replay";
-}
-
-// @public
-export interface WatchGapEnvelope {
-    // (undocumented)
-    readonly kind: "gap";
-    // (undocumented)
-    readonly phase: "gap";
 }
 
 ```

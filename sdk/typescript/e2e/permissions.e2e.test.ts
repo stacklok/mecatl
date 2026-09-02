@@ -5,10 +5,10 @@ import { collectRun, fixture, withDaemon } from "./harness.js";
 
 describe("offline permission wire", () => {
   it("asks resolve through the responder end to end", async () => {
-    await withDaemon({ script: fixture("permissions.json") }, async ({ ready, workspace }) => {
+    await withDaemon({ script: fixture("permissions.json") }, async ({ ready }) => {
       const client = connect({ baseUrl: `http://${ready.grpc_address}` });
       try {
-        const approvedSession = await client.sessions.create({ workspace });
+        const approvedSession = await client.sessions.create({});
         const approved = await collectRun(
           await approvedSession.run("approve the scripted write", {
             onPermissionAsk: () => "allow_once",
@@ -23,7 +23,7 @@ describe("offline permission wire", () => {
         expect(approved.terminal.payload).toMatchObject({ stop: "end_turn" });
         await approvedSession.delete();
 
-        const deniedSession = await client.sessions.create({ workspace });
+        const deniedSession = await client.sessions.create({});
         const denied = await collectRun(
           await deniedSession.run("deny the scripted write", {
             onPermissionAsk: () => "deny",

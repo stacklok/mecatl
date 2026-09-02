@@ -57,9 +57,7 @@ describe("connection status", () => {
     await reachedOnline;
 
     dropRequests = true;
-    await expect(client.sessions.create({ workspace: "/workspace" })).rejects.toBeInstanceOf(
-      TransportError,
-    );
+    await expect(client.sessions.create({})).rejects.toBeInstanceOf(TransportError);
     expect(statuses).toEqual(["connecting", "online", "reconnecting", "offline"]);
 
     const unauthorized = connect({
@@ -116,7 +114,7 @@ describe("connection status", () => {
       });
     });
     const client = connect({ transport });
-    await client.sessions.create({ workspace: "/workspace" });
+    await client.sessions.create({});
     expect(compatibilityCalls).toBe(1);
 
     await vi.advanceTimersByTimeAsync(HEARTBEAT_INTERVAL_MS * 2);
@@ -142,7 +140,7 @@ describe("connection status", () => {
     expect(statuses.slice(-2)).toEqual(["reconnecting", "offline"]);
 
     dropHeartbeat = false;
-    await client.sessions.create({ workspace: "/workspace" });
+    await client.sessions.create({});
     expect(client.status.getSnapshot()).toBe("online");
     stop();
     await client.close();
@@ -167,7 +165,7 @@ describe("connection status", () => {
       });
     });
     const client = connect({ transport });
-    await client.sessions.create({ workspace: "/workspace" });
+    await client.sessions.create({});
     const unsubscribe = client.status.subscribe(() => undefined);
 
     visibility.visibilityState = "hidden";
@@ -196,7 +194,7 @@ describe("connection status", () => {
         });
       }),
     });
-    await node.sessions.create({ workspace: "/workspace" });
+    await node.sessions.create({});
     const unsubscribeNode = node.status.subscribe(() => undefined);
     await vi.advanceTimersByTimeAsync(HEARTBEAT_INTERVAL_MS);
     expect(nodeCompatibilityCalls).toBe(2);

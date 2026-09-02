@@ -101,7 +101,6 @@ export interface CreateSessionOptions {
   providerId?: string;
   reasoningEffort?: string;
   sourceSessionId?: string;
-  workspace?: string;
 }
 
 /** Optional overrides accepted when forking a session. @public */

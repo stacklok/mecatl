@@ -60,7 +60,7 @@ describe("session lifecycle", () => {
     });
     const client = connect({ transport });
 
-    const created = await client.sessions.create({ workspace: "/workspace" });
+    const created = await client.sessions.create({});
     expect(created.id).toBe("created");
     expect((await client.sessions.get(created.id)).id).toBe("created");
 
@@ -100,12 +100,10 @@ describe("session lifecycle", () => {
     const client = connect({ transport });
     const statuses: string[] = [];
     client.status.subscribe((status) => statuses.push(status));
-    await client.sessions.create({ workspace: "/workspace" });
+    await client.sessions.create({});
 
     await client[Symbol.asyncDispose]();
-    await expect(client.sessions.create({ workspace: "/workspace" })).rejects.toBeInstanceOf(
-      InvalidStateError,
-    );
+    await expect(client.sessions.create({})).rejects.toBeInstanceOf(InvalidStateError);
     expect(() => client.status.subscribe(() => undefined)).toThrow(InvalidStateError);
     expect(compatibilityCalls).toBe(1);
     expect(statuses.at(-1)).toBe("online");
@@ -124,7 +122,7 @@ describe("session lifecycle", () => {
       transportKind: "grpc",
       visibility: false,
     });
-    await owned.sessions.create({ workspace: "/workspace" });
+    await owned.sessions.create({});
     await owned.close();
     expect(dispose).toHaveBeenCalledOnce();
   });

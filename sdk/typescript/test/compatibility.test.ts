@@ -27,14 +27,10 @@ describe("compatibility floor", () => {
     });
 
     await expect(
-      createRawClient({ transport: missing }).unary(HarnessService.method.createSession, {
-        workspace: "/workspace",
-      }),
+      createRawClient({ transport: missing }).unary(HarnessService.method.createSession, {}),
     ).rejects.toBeInstanceOf(IncompatibleServerError);
     await expect(
-      createRawClient({ transport: incompatible }).unary(HarnessService.method.createSession, {
-        workspace: "/workspace",
-      }),
+      createRawClient({ transport: incompatible }).unary(HarnessService.method.createSession, {}),
     ).rejects.toBeInstanceOf(IncompatibleServerError);
     expect({ incompatibleCreated, missingCreated }).toEqual({
       incompatibleCreated: 0,

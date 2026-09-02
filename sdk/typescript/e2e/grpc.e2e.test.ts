@@ -6,7 +6,7 @@ import { cannedMockReply, collectRun, withDaemon } from "./harness.js";
 describe("offline gRPC wire", () => {
   it("full run lifecycle over gRPC", async () => {
     for (const transport of ["tcp", "uds"] as const) {
-      await withDaemon({ uds: transport === "uds" }, async ({ ready, workspace }) => {
+      await withDaemon({ uds: transport === "uds" }, async ({ ready }) => {
         if (transport === "uds" && ready.socket_path === undefined) {
           throw new Error("mecated UDS readiness omitted socket_path");
         }
@@ -15,7 +15,7 @@ describe("offline gRPC wire", () => {
             ? connect({ socketPath: ready.socket_path as string })
             : connect({ baseUrl: `http://${ready.grpc_address}` });
         try {
-          const session = await client.sessions.create({ workspace });
+          const session = await client.sessions.create({});
           expect(client.status.getSnapshot()).toBe("online");
           const { events, terminal } = await collectRun(
             await session.run(`hello over ${transport}`),

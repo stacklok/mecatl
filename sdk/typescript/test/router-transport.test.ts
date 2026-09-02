@@ -6,10 +6,9 @@ import { routerFor, scriptedState } from "./scripted-state.js";
 describe("injected router transport", () => {
   it("router transport drives unary and streaming operations offline", async () => {
     const client = createRawClient({ transport: routerFor() });
-    const created = await client.unary(HarnessService.method.createSession, {
-      workspace: scriptedState.workspace,
-    });
+    const created = await client.unary(HarnessService.method.createSession, {});
     expect(created.sessionId).toBe(scriptedState.sessionId);
+    expect(created.placement).toMatchObject(scriptedState.placement);
 
     const events = [];
     async function* eventRequests() {

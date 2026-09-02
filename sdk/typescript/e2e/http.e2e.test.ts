@@ -5,11 +5,11 @@ import { cannedMockReply, collectRun, withDaemon } from "./harness.js";
 
 describe("offline HTTP wire", () => {
   it("full run lifecycle over HTTP/SSE", async () => {
-    await withDaemon({ http: true }, async ({ ready, workspace }) => {
+    await withDaemon({ http: true }, async ({ ready }) => {
       if (ready.http_address === undefined) throw new Error("mecated omitted HTTP readiness");
       const client = connect({ baseUrl: `http://${ready.http_address}` });
       try {
-        const session = await client.sessions.create({ workspace });
+        const session = await client.sessions.create({});
         expect(client.status.getSnapshot()).toBe("online");
         const { events, terminal } = await collectRun(await session.run("hello over HTTP/SSE"));
         expect(events.find((event) => event.kind === "message.delta")).toMatchObject({
