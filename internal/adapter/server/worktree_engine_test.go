@@ -5,7 +5,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
@@ -34,11 +33,11 @@ func worktreeEngineService(t *testing.T, defaultWorkspace string, factoryCalled 
 		Model:   "test-model",
 	})
 	cfg := server.Config{
-		Engine:           engine,
-		Store:            memstore.New(),
-		Workspaces:       func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+		Engine: engine,
+		Store:  memstore.New(),
+
 		Now:              func() time.Time { return time.Unix(0, 0) },
-		DefaultWorkspace: defaultWorkspace,
+		SharedEngineRoot: defaultWorkspace,
 	}
 	if factoryCalled != nil {
 		cfg.SessionEngine = fakeSessionEngineFactory(factoryCalled)
@@ -89,7 +88,7 @@ func TestInvariant_alternate_placement_rehydrates_root_scoped_engine(t *testing.
 	}
 	svc, err := newPlacementTestService(server.Config{
 		Engine: agent.NewEngine(agent.Deps{LLM: mockllm.New(mockllm.TextTurn("shared-default-must-not-run")), Catalog: tool.NewCatalog()}),
-		Store:  store, DefaultWorkspace: base, SessionEngine: factory,
+		Store:  store, SharedEngineRoot: base, SessionEngine: factory,
 	})
 	if err != nil {
 		t.Fatal(err)

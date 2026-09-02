@@ -8,6 +8,7 @@ import (
 	"github.com/stacklok/mecatl/engine/adapter/nofs"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
+	"github.com/stacklok/mecatl/internal/adapter/mcp"
 	"github.com/stacklok/mecatl/internal/adapter/osfs"
 	"github.com/stacklok/mecatl/internal/adapter/server"
 )
@@ -34,6 +35,10 @@ func (p appTestPlacementProvider) Bind(_ context.Context, req server.PlacementBi
 	ref := session.EnvironmentRef{Kind: session.EnvKindMem, ID: root, Revision: "test-v1"}
 	return server.PlacementBinding{Ref: ref, Environment: tool.MustEnvironment(ref, memfs.NewWorkspace(root), nil)}, nil
 }
+func (appTestPlacementProvider) ListWorktrees(context.Context, server.PlacementDiscoveryRequest) ([]server.ScopedWorktree, error) {
+	return nil, nil
+}
+
 func (p appTestPlacementProvider) Reattach(_ context.Context, req server.PlacementReattachRequest) (server.PlacementBinding, error) {
 	if p.failReattach {
 		return server.PlacementBinding{}, server.ErrPlacementUnavailable
@@ -46,11 +51,17 @@ func (p appTestPlacementProvider) Reattach(_ context.Context, req server.Placeme
 }
 
 func newTestServerService(cfg server.Config) (*server.Service, error) {
+	if cfg.SessionEngine == nil {
+		cfg.SessionEngine = func(context.Context, server.ProviderSelector, []mcp.ServerConfig, server.SessionProfile, string, session.PermissionMode) (server.SessionEngineResult, error) {
+			return server.SessionEngineResult{Engine: cfg.Engine}, nil
+		}
+	}
 	if cfg.PlacementProvider == nil {
-		root := cfg.DefaultWorkspace
+		root := cfg.SharedEngineRoot
 		if root == "" {
 			root = "/ws"
 		}
+		cfg.SharedEngineRoot = root
 		cfg.PlacementProvider = appTestPlacementProvider{root: root}
 		cfg.PlacementScope = "legacy-local"
 	}

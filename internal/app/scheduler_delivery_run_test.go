@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
 	"github.com/stacklok/mecatl/engine/agent"
@@ -80,9 +79,9 @@ func TestScheduleDeliveryAuthorizesOriginBeforeEnqueue(t *testing.T) {
 						Store:   store,
 					})
 					svc, err := newTestServerService(server.Config{
-						Engine:              engine,
-						Store:               store,
-						Workspaces:          func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+						Engine: engine,
+						Store:  store,
+
 						Now:                 time.Now,
 						DefaultCapabilities: mockllm.New().Capabilities(),
 						EventLog:            store,
@@ -179,7 +178,7 @@ func TestScheduleDeliveryMissingOriginPreservesNoVerifierCompatibility(t *testin
 			diag := &captureDiag{}
 			svc, err := newTestServerService(server.Config{
 				Engine: engine, Store: store,
-				Workspaces:          func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+
 				Now:                 time.Now,
 				DefaultCapabilities: provider.Capabilities(),
 				Diagnostics:         diag,
@@ -225,7 +224,7 @@ func TestScheduleDeliveryRejectsOwnerlessScheduleUnderSystemContext(t *testing.T
 			diag := &captureDiag{}
 			svc, err := newTestServerService(server.Config{
 				Engine: engine, Store: store,
-				Workspaces:          func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+
 				Now:                 time.Now,
 				DefaultCapabilities: provider.Capabilities(),
 				Diagnostics:         diag,
@@ -318,7 +317,7 @@ func TestScheduleDeliveryReauthorizesImmediatelyBeforeEnqueue(t *testing.T) {
 			diag := &captureDiag{}
 			svc, err := newTestServerService(server.Config{
 				Engine: engine, Store: store,
-				Workspaces:          func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+
 				Now:                 time.Now,
 				DefaultCapabilities: provider.Capabilities(),
 				Diagnostics:         diag,
@@ -399,9 +398,9 @@ func newDeliveryTestEnv(t *testing.T, originTurns ...mockllm.Turn) *deliveryTest
 		DeliveryQueue: queue,
 	})
 	svc, err := newTestServerService(server.Config{
-		Engine:              engine,
-		Store:               store,
-		Workspaces:          func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+		Engine: engine,
+		Store:  store,
+
 		Now:                 time.Now,
 		DefaultCapabilities: originLLM.Capabilities(),
 		EventLog:            store,
@@ -621,7 +620,7 @@ func TestFireDelivery_Scenario3_DeliveryFailureNeverFailsFire(t *testing.T) {
 	})
 	svc, err := newTestServerService(server.Config{
 		Engine: engine, Store: store,
-		Workspaces:          func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+
 		Now:                 time.Now,
 		DefaultCapabilities: originLLM.Capabilities(),
 		EventLog:            store, Diagnostics: diag,
@@ -845,8 +844,8 @@ func TestFireDelivery_Scenario4_BusyOriginQueuesNotCollides(t *testing.T) {
 	diag := &captureDiag{}
 	svc, err := newTestServerService(server.Config{
 		Engine: engine, Store: env.store,
-		Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
-		Now:        time.Now, DefaultCapabilities: env.originLLM.Capabilities(),
+
+		Now: time.Now, DefaultCapabilities: env.originLLM.Capabilities(),
 		EventLog: env.store, Diagnostics: diag,
 	})
 	if err != nil {
@@ -1039,8 +1038,8 @@ func TestFireDelivery_Scenario4_NonDeliverableChildOriginDropsWithWarn(t *testin
 			})
 			svc, err := newTestServerService(server.Config{
 				Engine: engine, Store: store,
-				Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
-				Now:        time.Now, DefaultCapabilities: mockllm.New().Capabilities(),
+
+				Now: time.Now, DefaultCapabilities: mockllm.New().Capabilities(),
 				EventLog: store, Diagnostics: diag,
 			})
 			if err != nil {
@@ -1159,7 +1158,7 @@ func TestFireStarted_BusyOriginEnqueueOnly(t *testing.T) {
 	})
 	svc, err := newTestServerService(server.Config{
 		Engine: engine, Store: store,
-		Workspaces:          func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+
 		Now:                 time.Now,
 		DefaultCapabilities: mockllm.New().Capabilities(),
 		EventLog:            store, Diagnostics: diag,

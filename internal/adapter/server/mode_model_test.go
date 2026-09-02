@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
@@ -64,8 +63,8 @@ func modeServiceOverStore(t *testing.T, store *memstore.Store, factory server.Se
 			Policy:  permpolicy.NewPolicy(nil, nil),
 			Model:   "shared-model",
 		}),
-		Store:           store,
-		Workspaces:      func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+		Store: store,
+
 		DefaultLimits:   session.Limits{MaxTurns: 5},
 		Now:             func() time.Time { return time.Unix(0, 0) },
 		SessionEngine:   factory,
@@ -468,8 +467,8 @@ func TestModePromotionUnderFullCap(t *testing.T) {
 			LLM:     mockllm.New(mockllm.TextTurn("SHARED"), mockllm.TextTurn("SHARED")),
 			Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil), Model: "shared-model",
 		}),
-		Store:             store,
-		Workspaces:        func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+		Store: store,
+
 		DefaultLimits:     session.Limits{MaxTurns: 5},
 		Now:               func() time.Time { return time.Unix(0, 0) },
 		SessionEngine:     modeRecordingFactory(sessionModel, planModel, &modes, &calls),
@@ -977,8 +976,8 @@ func TestEngineAndWorkspaceForResolutionMatrix(t *testing.T) {
 						LLM:     mockllm.New(mockllm.TextTurn("SHARED"), mockllm.TextTurn("SHARED")),
 						Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil), Model: "shared-model",
 					}),
-					Store:             store,
-					Workspaces:        func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+					Store: store,
+
 					DefaultLimits:     session.Limits{MaxTurns: 5},
 					Now:               func() time.Time { return time.Unix(0, 0) },
 					SessionEngine:     modeRecordingFactory("gpt-5", "opus-plan", &modes, &calls),

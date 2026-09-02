@@ -12,12 +12,16 @@ import (
 )
 
 func newPlacementTestService(cfg server.Config) (*server.Service, error) {
+	if cfg.SharedEngineRoot == "" {
+		cfg.SharedEngineRoot = "/ws"
+	}
 	if cfg.PlacementProvider == nil {
-		root := cfg.DefaultWorkspace
+		root := cfg.SharedEngineRoot
 		if root == "" {
 			root = "/ws"
 		}
-		cfg.PlacementProvider = testPlacementProvider{root: root, workspaces: cfg.Workspaces, firstBind: &atomic.Bool{}}
+		cfg.SharedEngineRoot = root
+		cfg.PlacementProvider = testPlacementProvider{root: root, firstBind: &atomic.Bool{}}
 		cfg.PlacementScope = "test"
 	}
 	return server.NewService(cfg)
@@ -32,6 +36,11 @@ func newPlacementTeamTestService(cfg server.Config) (*server.Service, error) {
 		return nil, err
 	}
 	return svc, nil
+}
+
+//nolint:revive // Test helper keeps the service receiver before its context.
+func forkSession(svc *server.Service, ctx context.Context, source session.SessionID, title, effort string) (session.SessionID, error) {
+	return svc.ForkSessionSuccessor(ctx, server.ForkSuccessorRequest{Source: source, Title: title, ReasoningEffort: effort})
 }
 
 func createPlacementTestSource(svc *server.Service) error {
@@ -72,6 +81,10 @@ func (p testPlacementProvider) Bind(_ context.Context, req server.PlacementBindR
 		return server.PlacementBinding{}, server.ErrPlacementUnavailable
 	}
 	return server.PlacementBinding{Ref: ref, Environment: tool.MustEnvironment(ref, ws, nil)}, nil
+}
+
+func (testPlacementProvider) ListWorktrees(context.Context, server.PlacementDiscoveryRequest) ([]server.ScopedWorktree, error) {
+	return nil, nil
 }
 
 func (p testPlacementProvider) Reattach(_ context.Context, req server.PlacementReattachRequest) (server.PlacementBinding, error) {

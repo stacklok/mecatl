@@ -19,7 +19,6 @@ import (
 	"google.golang.org/grpc/status"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
@@ -46,9 +45,9 @@ func watchService(t *testing.T, log port.EventLog, ownership bool) *server.Servi
 		Engine: agent.NewEngine(agent.Deps{
 			LLM: llm, Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil), Model: "test-model",
 		}),
-		Store:               memstore.New(),
-		EventLog:            log,
-		Workspaces:          func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+		Store:    memstore.New(),
+		EventLog: log,
+
 		Now:                 func() time.Time { return time.Unix(0, 0) },
 		DefaultCapabilities: llm.Capabilities(),
 		OwnershipEnforced:   ownership,

@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
@@ -665,9 +664,9 @@ func TestCarryoverBothDefaultProvider(t *testing.T) {
 	})
 	store := memstore.New()
 	svc, err := newPlacementTestService(server.Config{
-		Engine:        shared,
-		Store:         store,
-		Workspaces:    func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+		Engine: shared,
+		Store:  store,
+
 		DefaultLimits: session.Limits{MaxTurns: 10, MaxToolCalls: 20},
 		Now:           func() time.Time { return time.Unix(0, 0) },
 	})

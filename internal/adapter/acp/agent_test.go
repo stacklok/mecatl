@@ -17,7 +17,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
@@ -119,10 +118,10 @@ func newServiceCfg(t *testing.T, llm *mockllm.Provider, rules []governance.Rule,
 	root := testCWD(t)
 	ref := session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "acp-test-placement", Revision: "v1"}
 	cfg := server.Config{
-		Engine:            engine,
-		Store:             memstore.New(),
-		Workspaces:        func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
-		DefaultWorkspace:  root,
+		Engine: engine,
+		Store:  memstore.New(),
+
+		SharedEngineRoot:  root,
 		PlacementProvider: acpPlacementProvider{root: root, ref: ref},
 		PlacementScope:    "acp-test",
 		DefaultLimits:     session.Limits{MaxTurns: 10, MaxToolCalls: 20},
@@ -566,7 +565,7 @@ func TestEndToEndFSDelegation(t *testing.T) {
 		)
 		root = t.TempDir()
 		svc := newServiceCfg(t, llm, allowRules(), func(cfg *server.Config) {
-			cfg.DefaultWorkspace = root
+			cfg.SharedEngineRoot = root
 			cfg.PlacementProvider = acpPlacementProvider{root: root, ref: session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "fs-test-placement", Revision: "v1"}}
 		}, toolsadapter.ReadTool{}, toolsadapter.EditTool{})
 		// Seed the file on DISK so that, in the caps-absent (osfs) scenario, Read+Edit
@@ -880,7 +879,7 @@ func TestADR_0280_ACPBindAndLoadAssertConfiguredPlacement(t *testing.T) {
 	var binds, reattaches atomic.Int32
 	llm := mockllm.New(mockllm.TextTurn("unused"))
 	svc := newServiceCfg(t, llm, allowRules(), func(cfg *server.Config) {
-		cfg.DefaultWorkspace = root
+		cfg.SharedEngineRoot = root
 		cfg.PlacementProvider = acpPlacementProvider{root: root, ref: ref, bindCalls: &binds, reattachCalls: &reattaches}
 	})
 	a := acp.NewAgent(svc, acp.WithResume(true))
@@ -927,7 +926,7 @@ func TestServerOwnedSessionPlacement_Scenario7_ACPProjectsNoPhysicalPaths(t *tes
 	root := t.TempDir()
 	ref := session.EnvironmentRef{Kind: "remote", ID: "private-ref-id", Revision: "private-ref-revision"}
 	svc := newServiceCfg(t, mockllm.New(), nil, func(cfg *server.Config) {
-		cfg.DefaultWorkspace = root
+		cfg.SharedEngineRoot = root
 		cfg.PlacementProvider = acpPlacementProvider{root: root, ref: ref}
 	})
 	a := acp.NewAgent(svc, acp.WithResume(true))

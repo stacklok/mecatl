@@ -9,7 +9,6 @@ import (
 	"google.golang.org/protobuf/reflect/protoreflect"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
@@ -46,7 +45,7 @@ func TestSessionContinuityUX_Scenario1_PeerRebindsRemainMain(t *testing.T) {
 		t.Fatalf("CreateSession source: %v", err)
 	}
 
-	peerID, err := svc.ForkSession(ctx, source.ID, "peer", "")
+	peerID, err := forkSession(svc, ctx, source.ID, "peer", "")
 	if err != nil {
 		t.Fatalf("ForkSession peer: %v", err)
 	}
@@ -56,7 +55,7 @@ func TestSessionContinuityUX_Scenario1_PeerRebindsRemainMain(t *testing.T) {
 	}
 	assertMainWithoutLineage(t, peer)
 
-	forkID, err := svc.ForkSession(ctx, source.ID, "effort", "high")
+	forkID, err := forkSession(svc, ctx, source.ID, "effort", "high")
 	if err != nil {
 		t.Fatalf("ForkSession effort: %v", err)
 	}
@@ -264,10 +263,10 @@ func runPurposeService(t *testing.T, ownership bool) (*server.Service, *memstore
 		Store:   store,
 	})
 	svc, err := newPlacementTestService(server.Config{
-		Engine:            eng,
-		Store:             store,
-		EventLog:          memstore.NewEventLog(),
-		Workspaces:        func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+		Engine:   eng,
+		Store:    store,
+		EventLog: memstore.NewEventLog(),
+
 		Now:               func() time.Time { return time.Unix(0, 0) },
 		OwnershipEnforced: ownership,
 	})

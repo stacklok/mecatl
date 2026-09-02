@@ -44,8 +44,8 @@ func callerSeparationLiveService(t *testing.T) (*server.Service, context.Context
 			Policy:  permpolicy.NewPolicy([]governance.Rule{{Effect: governance.Ask}}, nil),
 			Model:   "test-model",
 		}),
-		Store:             memstore.New(),
-		Workspaces:        func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+		Store: memstore.New(),
+
 		Now:               func() time.Time { return time.Unix(0, 0) },
 		OwnershipEnforced: true,
 	})

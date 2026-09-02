@@ -8,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
@@ -32,10 +31,10 @@ func newServiceWithStore(t *testing.T, store port.SessionStore) *server.Service 
 		Store:   store,
 	})
 	svc, err := newPlacementTestService(server.Config{
-		Engine:     engine,
-		Store:      store,
-		Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
-		Now:        func() time.Time { return time.Unix(0, 0) },
+		Engine: engine,
+		Store:  store,
+
+		Now: func() time.Time { return time.Unix(0, 0) },
 	})
 	if err != nil {
 		t.Fatalf("new service: %v", err)
@@ -216,10 +215,10 @@ func newServiceWithEngine(t *testing.T, llm port.LLMProvider, cat *tool.Catalog)
 		Store:   store,
 	})
 	svc, err := newPlacementTestService(server.Config{
-		Engine:     engine,
-		Store:      store,
-		Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
-		Now:        func() time.Time { return time.Unix(0, 0) },
+		Engine: engine,
+		Store:  store,
+
+		Now: func() time.Time { return time.Unix(0, 0) },
 	})
 	if err != nil {
 		t.Fatalf("new service: %v", err)

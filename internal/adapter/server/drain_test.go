@@ -8,7 +8,6 @@ import (
 
 	"github.com/alicebob/miniredis/v2"
 
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
@@ -35,9 +34,8 @@ func newDrainTestService(t *testing.T) *server.Service {
 		Model:   "test-model",
 	})
 	svc, err := newPlacementTestService(server.Config{
-		Engine:     engine,
-		Store:      store,
-		Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+		Engine: engine,
+		Store:  store,
 	})
 	if err != nil {
 		t.Fatalf("new service: %v", err)
@@ -66,9 +64,8 @@ func newRedisTestService(t *testing.T, st *redisstore.Store) *server.Service {
 		Model:   "test-model",
 	})
 	svc, err := newPlacementTestService(server.Config{
-		Engine:     engine,
-		Store:      st,
-		Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+		Engine: engine,
+		Store:  st,
 	})
 	if err != nil {
 		t.Fatalf("new service: %v", err)

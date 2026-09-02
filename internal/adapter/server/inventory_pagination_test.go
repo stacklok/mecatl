@@ -12,7 +12,6 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
@@ -31,8 +30,8 @@ func inventoryService(t *testing.T, store port.SessionStore, ownership bool) *se
 	})
 	svc, err := newPlacementTestService(server.Config{
 		Engine: eng, Store: store, OwnershipEnforced: ownership,
-		Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
-		Now:        time.Now,
+
+		Now: time.Now,
 	})
 	if err != nil {
 		t.Fatalf("NewService: %v", err)

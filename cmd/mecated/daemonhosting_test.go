@@ -30,7 +30,6 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
@@ -1363,13 +1362,14 @@ func offlineServiceWithDeployment(t *testing.T, deploymentID string) *server.Ser
 			Policy:  permpolicy.NewPolicy(permpolicy.AllowAllFloorRules(), nil),
 			Model:   "test-model",
 		}),
-		Store:               memstore.New(),
-		Workspaces:          func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+		Store: memstore.New(),
+
 		Now:                 func() time.Time { return time.Unix(0, 0) },
 		DefaultCapabilities: llm.Capabilities(),
 		DeploymentID:        deploymentID,
 		PlacementProvider:   offlinePlacementProvider{},
 		PlacementScope:      "test",
+		SharedEngineRoot:    "/ws",
 	})
 	if err != nil {
 		t.Fatalf("new offline service: %v", err)

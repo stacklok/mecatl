@@ -6,7 +6,6 @@ import (
 	"time"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
@@ -30,9 +29,9 @@ func newResolvedModelService(t *testing.T, dflt server.ResolvedModel, factory se
 		Model:   "test-model",
 	})
 	svc, err := newPlacementTestService(server.Config{
-		Engine:               shared,
-		Store:                memstore.New(),
-		Workspaces:           func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+		Engine: shared,
+		Store:  memstore.New(),
+
 		DefaultLimits:        session.Limits{MaxTurns: 10, MaxToolCalls: 20},
 		Now:                  func() time.Time { return time.Unix(0, 0) },
 		SessionEngine:        factory,
@@ -55,9 +54,9 @@ func newResolvedModelServiceWithResolver(t *testing.T, dflt server.ResolvedModel
 		Model:   "test-model",
 	})
 	svc, err := newPlacementTestService(server.Config{
-		Engine:               shared,
-		Store:                memstore.New(),
-		Workspaces:           func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+		Engine: shared,
+		Store:  memstore.New(),
+
 		DefaultLimits:        session.Limits{MaxTurns: 10, MaxToolCalls: 20},
 		Now:                  func() time.Time { return time.Unix(0, 0) },
 		SessionEngine:        factory,

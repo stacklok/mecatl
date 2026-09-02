@@ -9,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
@@ -186,10 +185,10 @@ func TestStartRunContentLeavesLiveRunningSessionAlone(t *testing.T) {
 		Store:   cs,
 	})
 	svc, err := newPlacementTestService(server.Config{
-		Engine:     engine,
-		Store:      cs,
-		Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
-		Now:        func() time.Time { return time.Unix(0, 0) },
+		Engine: engine,
+		Store:  cs,
+
+		Now: func() time.Time { return time.Unix(0, 0) },
 	})
 	if err != nil {
 		t.Fatalf("new service: %v", err)
@@ -274,10 +273,10 @@ func TestStartRunContentRejectsDelegationChildSessionID(t *testing.T) {
 				Store:   cs,
 			})
 			svc, err := newPlacementTestService(server.Config{
-				Engine:     engine,
-				Store:      cs,
-				Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
-				Now:        func() time.Time { return time.Unix(0, 0) },
+				Engine: engine,
+				Store:  cs,
+
+				Now: func() time.Time { return time.Unix(0, 0) },
 			})
 			if err != nil {
 				t.Fatalf("new service: %v", err)

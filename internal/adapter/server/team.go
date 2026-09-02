@@ -98,9 +98,9 @@ type teamState struct {
 	run sync.Mutex
 }
 
-// CreateTeam allocates a new agent team over the given base workspace, enrols the
-// optional initial roster, and returns its server-assigned id together with the
-// enrolled roster. It builds the supervisor (binding the member-engine factory to
+// CreateTeamOnDefaultPlacement allocates a new agent team over the trusted default
+// placement, enrols an optional initial roster, and returns its server-assigned
+// id together with the enrolled roster. It builds the supervisor (binding the member-engine factory to
 // the shared team), then adds each member before the team is registered.
 //
 // Enrolment is ATOMIC: if any member fails to enrol the whole team is abandoned —
@@ -117,8 +117,9 @@ type teamState struct {
 // server budget; a positive value applies only when it is lower.
 //
 // It returns ErrTeamsDisabled when teams are not enabled.
-// CreateTeam is the trusted default-placement entry used by in-process callers.
-func (s *Service) CreateTeam(ctx context.Context, name, goal string, maxTeamTokens int, members []agent.MemberSpec) (string, []team.Member, error) {
+// CreateTeamOnDefaultPlacement is the explicit trusted-composition entry for a
+// team that is not derived from an existing session.
+func (s *Service) CreateTeamOnDefaultPlacement(ctx context.Context, name, goal string, maxTeamTokens int, members []agent.MemberSpec) (string, []team.Member, error) {
 	if s.cfg.MemberEngine == nil {
 		return "", nil, ErrTeamsDisabled
 	}

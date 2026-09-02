@@ -9,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memschedulestore"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
@@ -89,9 +88,9 @@ func newManagerBackedBy(t *testing.T, store port.ScheduleStore, now time.Time) *
 		Engine:           engine,
 		Store:            sessions,
 		ScheduleManager:  server.NewScheduleManager(server.ScheduleManagerConfig{Store: sessions, ScheduleStore: store, Now: func() time.Time { return now }}),
-		DefaultWorkspace: "/tmp",
-		Workspaces:       func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
-		Now:              func() time.Time { return now },
+		SharedEngineRoot: "/tmp",
+
+		Now: func() time.Time { return now },
 	})
 	if err != nil {
 		t.Fatalf("new service: %v", err)

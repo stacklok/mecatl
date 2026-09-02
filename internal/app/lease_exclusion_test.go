@@ -337,7 +337,7 @@ func TestBuildChildLeaseBlocksRemoteRetention(t *testing.T) {
 	}
 	defer built2.Close()
 
-	teamID, _, err := built1.Service.CreateTeam(ctx, "lease-test", "hold", 0,
+	teamID, _, err := built1.Service.CreateTeamOnDefaultPlacement(ctx, "lease-test", "hold", 0,
 		[]agent.MemberSpec{{Name: "lead", Lead: true, InitialPrompt: "wait"}})
 	if err != nil {
 		t.Fatalf("CreateTeam: %v", err)

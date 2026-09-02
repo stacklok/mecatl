@@ -4,7 +4,6 @@ import (
 	"context"
 	"testing"
 
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
@@ -33,16 +32,16 @@ func TestCreateTeamStampsComposedRootAuthority(t *testing.T) {
 		})}
 	}
 	svc, err := newPlacementTeamTestService(server.Config{
-		Engine:        agent.NewEngine(agent.Deps{Catalog: tool.NewCatalog()}),
-		Store:         store,
-		Workspaces:    func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+		Engine: agent.NewEngine(agent.Deps{Catalog: tool.NewCatalog()}),
+		Store:  store,
+
 		MemberEngine:  memberEngine,
 		RootAuthority: func(session.SessionKind) session.Authority { return root },
 	})
 	if err != nil {
 		t.Fatalf("NewService: %v", err)
 	}
-	teamID, _, err := svc.CreateTeam(context.Background(), "test", "complete work", 0, []agent.MemberSpec{{Name: "lead", Lead: true, InitialPrompt: "work"}})
+	teamID, _, err := svc.CreateTeamOnDefaultPlacement(context.Background(), "test", "complete work", 0, []agent.MemberSpec{{Name: "lead", Lead: true, InitialPrompt: "work"}})
 	if err != nil {
 		t.Fatalf("CreateTeam: %v", err)
 	}

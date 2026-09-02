@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
@@ -39,9 +38,9 @@ func newScheduleService(t *testing.T, now time.Time) (*server.Service, port.Sche
 	svc, err := newPlacementTestService(server.Config{
 		Engine:           engine,
 		Store:            store,
-		DefaultWorkspace: "/tmp",
-		Workspaces:       func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
-		Now:              func() time.Time { return now },
+		SharedEngineRoot: "/tmp",
+
+		Now: func() time.Time { return now },
 	})
 	if err != nil {
 		t.Fatalf("new service: %v", err)
@@ -255,10 +254,10 @@ func TestScheduleAccessorsNoStore(t *testing.T) {
 		Store:   memstore.New(),
 	})
 	svc, err := newPlacementTestService(server.Config{
-		Engine:     engine,
-		Store:      memstore.New(),
-		Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
-		Now:        func() time.Time { return time.Unix(0, 0) },
+		Engine: engine,
+		Store:  memstore.New(),
+
+		Now: func() time.Time { return time.Unix(0, 0) },
 	})
 	if err != nil {
 		t.Fatalf("new service: %v", err)

@@ -19,7 +19,6 @@ import (
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 	"github.com/stacklok/mecatl/engine/adapter/eventsource"
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
@@ -58,8 +57,8 @@ func TestGRPCRelayStreamsOriginalChunksAndDurablyCoalesces(t *testing.T) {
 	})
 	svc, err := newPlacementTestService(server.Config{
 		Engine: engine, Store: memstore.New(), EventLog: log,
-		Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
-		Now:        func() time.Time { return time.Unix(0, 0) }, DefaultCapabilities: llm.Capabilities(),
+
+		Now: func() time.Time { return time.Unix(0, 0) }, DefaultCapabilities: llm.Capabilities(),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -138,8 +137,8 @@ func TestLiveRelaysPersistButOmitObservedNetworkAttempt(t *testing.T) {
 			engine := agent.NewEngine(agent.Deps{LLM: llm, Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil), Model: "test-model", EnableDurableEvidence: true})
 			svc, err := newPlacementTestService(server.Config{
 				Engine: engine, Store: memstore.New(), EventLog: log,
-				Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
-				Now:        func() time.Time { return time.Unix(0, 0) }, DefaultCapabilities: llm.Capabilities(),
+
+				Now: func() time.Time { return time.Unix(0, 0) }, DefaultCapabilities: llm.Capabilities(),
 			})
 			if err != nil {
 				t.Fatal(err)
@@ -273,8 +272,8 @@ func observedAttemptTeamService(t *testing.T, log port.EventLog, logID session.S
 	})
 	svc, err := newPlacementTeamTestService(server.Config{
 		Engine: engine, Store: memstore.New(), EventLog: log,
-		Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
-		Now:        func() time.Time { return time.Unix(0, 0) }, MemberEngine: memberEngine,
+
+		Now: func() time.Time { return time.Unix(0, 0) }, MemberEngine: memberEngine,
 	})
 	if err != nil {
 		t.Fatalf("new service: %v", err)
@@ -375,9 +374,9 @@ func askingEventLogService(t *testing.T, log port.EventLog) (*server.Service, *m
 		Model:   "test-model",
 	})
 	svc, err := newPlacementTestService(server.Config{
-		Engine:              engine,
-		Store:               memstore.New(),
-		Workspaces:          func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+		Engine: engine,
+		Store:  memstore.New(),
+
 		Now:                 func() time.Time { return time.Unix(0, 0) },
 		DefaultCapabilities: llm.Capabilities(),
 		EventLog:            log,
@@ -594,9 +593,9 @@ func TestEventLogInheritsStreamRedaction(t *testing.T) {
 		Model:   "test-model",
 	})
 	svc, err := newPlacementTestService(server.Config{
-		Engine:              engine,
-		Store:               memstore.New(),
-		Workspaces:          func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+		Engine: engine,
+		Store:  memstore.New(),
+
 		Now:                 func() time.Time { return time.Unix(0, 0) },
 		DefaultCapabilities: parentLLM.Capabilities(),
 		EventLog:            log,
@@ -689,11 +688,11 @@ func askingEventLogServiceOverStore(t *testing.T, store port.SessionStore, log p
 		Store:   engineStore,
 	})
 	svc, err := newPlacementTestService(server.Config{
-		Engine:     engine,
-		Store:      store,
-		Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
-		Now:        func() time.Time { return time.Unix(0, 0) },
-		EventLog:   log,
+		Engine: engine,
+		Store:  store,
+
+		Now:      func() time.Time { return time.Unix(0, 0) },
+		EventLog: log,
 	})
 	if err != nil {
 		t.Fatalf("new service: %v", err)
@@ -829,9 +828,9 @@ func TestEventLogSurvivesClientDisconnect(t *testing.T) {
 		Model:   "test-model",
 	})
 	svc, err := newPlacementTestService(server.Config{
-		Engine:              engine,
-		Store:               memstore.New(),
-		Workspaces:          func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+		Engine: engine,
+		Store:  memstore.New(),
+
 		Now:                 func() time.Time { return time.Unix(0, 0) },
 		DefaultCapabilities: llm.Capabilities(),
 		EventLog:            log,
@@ -1188,9 +1187,9 @@ func nilEventLogService(t *testing.T) *server.Service {
 		Model:   "test-model",
 	})
 	svc, err := newPlacementTestService(server.Config{
-		Engine:              engine,
-		Store:               memstore.New(),
-		Workspaces:          func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+		Engine: engine,
+		Store:  memstore.New(),
+
 		Now:                 func() time.Time { return time.Unix(0, 0) },
 		DefaultCapabilities: llm.Capabilities(),
 		// EventLog intentionally nil.

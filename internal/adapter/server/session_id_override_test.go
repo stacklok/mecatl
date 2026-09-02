@@ -9,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
@@ -62,10 +61,10 @@ func TestCreateSessionWithSessionIDNoOverrideIsByteIdentical(t *testing.T) {
 		Model:   "test-model",
 	})
 	svc, err := newPlacementTestService(server.Config{
-		Engine:     shared,
-		Store:      memstore.New(),
-		Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
-		Now:        func() time.Time { return time.Unix(0, 0) },
+		Engine: shared,
+		Store:  memstore.New(),
+
+		Now: func() time.Time { return time.Unix(0, 0) },
 		NewID: func() session.SessionID {
 			newIDCalls.Add(1)
 			return "generated-abc"
@@ -111,8 +110,8 @@ func TestGeneratedSessionIDCollisionDoesNotOverwriteForeignSnapshot(t *testing.T
 	})
 	svc, err := newPlacementTestService(server.Config{
 		Engine: shared, Store: store, OwnershipEnforced: true,
-		Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
-		Now:        func() time.Time { return time.Unix(2, 0) }, NewID: func() session.SessionID { return "forced-collision" },
+
+		Now: func() time.Time { return time.Unix(2, 0) }, NewID: func() session.SessionID { return "forced-collision" },
 	})
 	if err != nil {
 		t.Fatalf("NewService: %v", err)
@@ -139,8 +138,8 @@ func TestOwnershipServiceCannotCreateWithoutAtomicStoreCapability(t *testing.T) 
 	})
 	svc, err := newPlacementTestService(server.Config{
 		Engine: shared, Store: legacy, OwnershipEnforced: true,
-		Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
-		NewID:      func() session.SessionID { return "must-not-upsert" },
+
+		NewID: func() session.SessionID { return "must-not-upsert" },
 	})
 	if err != nil {
 		t.Fatalf("NewService: %v", err)
@@ -182,14 +181,14 @@ func TestForkDestinationCollisionDoesNotOverwriteForeignSnapshot(t *testing.T) {
 		Policy: permpolicy.NewPolicy(nil, nil), Model: "test-model",
 	})
 	svc, err := newPlacementTestService(server.Config{
-		Engine: shared, Store: store, OwnershipEnforced: true,
-		Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
-		Now:        func() time.Time { return time.Unix(2, 0) }, NewID: func() session.SessionID { return destination.ID },
+		Engine: shared, Store: store, OwnershipEnforced: true, SharedEngineRoot: "/alice",
+
+		Now: func() time.Time { return time.Unix(2, 0) }, NewID: func() session.SessionID { return destination.ID },
 	})
 	if err != nil {
 		t.Fatalf("NewService: %v", err)
 	}
-	if _, err := svc.ForkSession(session.WithPrincipal(context.Background(), &alice), source.ID, "", ""); !errors.Is(err, port.ErrSessionAlreadyExists) {
+	if _, err := forkSession(svc, session.WithPrincipal(context.Background(), &alice), source.ID, "", ""); !errors.Is(err, port.ErrSessionAlreadyExists) {
 		t.Fatalf("ForkSession(collision) = %v, want ErrSessionAlreadyExists", err)
 	}
 	got, err := store.Load(context.Background(), destination.ID)
@@ -222,7 +221,6 @@ func TestExplicitCreateRetryRejectsDifferentSessionTaxonomy(t *testing.T) {
 	})
 	svc, err := newPlacementTestService(server.Config{
 		Engine: shared, Store: store, OwnershipEnforced: true,
-		Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
 	})
 	if err != nil {
 		t.Fatalf("NewService: %v", err)
@@ -380,7 +378,6 @@ func TestCreateSessionWithSessionIDCrossServiceRetryIsIdempotent(t *testing.T) {
 	newSvc := func() *server.Service {
 		svc, err := newPlacementTestService(server.Config{
 			Engine: shared, Store: store, OwnershipEnforced: true,
-			Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
 		})
 		if err != nil {
 			t.Fatalf("NewService: %v", err)

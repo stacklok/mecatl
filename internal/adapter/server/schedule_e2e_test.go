@@ -15,7 +15,6 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
 	"github.com/stacklok/mecatl/engine/adapter/wallclock"
@@ -411,10 +410,10 @@ func buildScheduleService(t *testing.T, storeDir string, llm *mockllm.Provider) 
 		Store: store,
 	})
 	svc, err := newPlacementTestService(server.Config{
-		Engine:              engine,
-		Store:               store,
-		DefaultWorkspace:    "/workspace",
-		Workspaces:          func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+		Engine:           engine,
+		Store:            store,
+		SharedEngineRoot: "/workspace",
+
 		Now:                 time.Now,
 		DefaultCapabilities: llm.Capabilities(),
 		EventLog:            store, // jsonlstore implements EventLog

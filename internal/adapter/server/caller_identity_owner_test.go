@@ -6,7 +6,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
@@ -246,7 +245,7 @@ func TestCallerIdentity_Scenario3_ForkInheritsSourceOwner(t *testing.T) {
 
 	// The explicit ForkSession seam is the other fork path — same rule: Bob
 	// forking Alice's session produces one owned by ALICE.
-	forkID, err := svc.ForkSession(session.WithPrincipal(context.Background(), bob), src.ID, "", "")
+	forkID, err := forkSession(svc, session.WithPrincipal(context.Background(), bob), src.ID, "", "")
 	if err != nil {
 		t.Fatalf("ForkSession: %v", err)
 	}
@@ -537,10 +536,10 @@ func newServiceWithEngineOverStore(t *testing.T, store port.SessionStore, llm *m
 		Store:   store,
 	})
 	svc, err := newPlacementTestService(server.Config{
-		Engine:     eng,
-		Store:      store,
-		Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
-		Now:        func() time.Time { return time.Unix(0, 0) },
+		Engine: eng,
+		Store:  store,
+
+		Now: func() time.Time { return time.Unix(0, 0) },
 	})
 	if err != nil {
 		t.Fatalf("NewService: %v", err)

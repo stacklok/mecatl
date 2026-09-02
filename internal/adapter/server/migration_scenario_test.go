@@ -16,7 +16,6 @@ import (
 	"time"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memlease"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
@@ -42,8 +41,8 @@ func migrationService(t *testing.T, store port.SessionStore, authorize func(cont
 func migrationServiceWithUpdate(t *testing.T, store port.SessionStore, authorize func(context.Context) bool, lease port.SessionLease, update func(server.StorageMaintenanceEvent)) *server.Service {
 	t.Helper()
 	svc, err := newPlacementTestService(server.Config{
-		Engine: agent.NewEngine(agent.Deps{LLM: mockllm.New(), Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil)}),
-		Store:  store, Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+		Engine:                              agent.NewEngine(agent.Deps{LLM: mockllm.New(), Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil)}),
+		Store:                               store,
 		StorageManagementAuthorized:         authorize,
 		LocalStorageMaintenanceSingleWriter: lease == nil,
 		StorageMaintenanceUpdate:            update,

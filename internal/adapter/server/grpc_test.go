@@ -17,7 +17,6 @@ import (
 	"google.golang.org/grpc/test/bufconn"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
@@ -82,8 +81,8 @@ func newServiceWithImplementation(t *testing.T, llm *mockllm.Provider, rules []g
 			}
 			return "https://user:secret@provider.example:8443/api/../v1?token=secret#fragment"
 		},
-		Store:             memstore.New(),
-		Workspaces:        func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+		Store: memstore.New(),
+
 		PlacementProvider: testPlacementProvider{},
 		PlacementScope:    "test",
 		Now:               func() time.Time { return time.Unix(0, 0) },
@@ -437,9 +436,9 @@ func newLearningService(t *testing.T, llm *mockllm.Provider, rules []governance.
 		Store:   store,
 	})
 	svc, err := newPlacementTeamTestService(server.Config{
-		Engine:              engine,
-		Store:               store,
-		Workspaces:          func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+		Engine: engine,
+		Store:  store,
+
 		Now:                 func() time.Time { return time.Unix(0, 0) },
 		DefaultCapabilities: llm.Capabilities(),
 	})
@@ -744,9 +743,9 @@ func TestGRPCCreateSessionCrossProviderCarryover(t *testing.T) {
 	})
 	store := memstore.New()
 	svc, err := newPlacementTeamTestService(server.Config{
-		Engine:        shared,
-		Store:         store,
-		Workspaces:    func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+		Engine: shared,
+		Store:  store,
+
 		DefaultLimits: session.Limits{MaxTurns: 10, MaxToolCalls: 20},
 		Now:           func() time.Time { return time.Unix(0, 0) },
 		SessionEngine: carryoverFactory(newReply, &seen),

@@ -66,13 +66,14 @@ func newOfflineService(t *testing.T) *server.Service {
 		Model:  "test-model",
 	})
 	svc, err := server.NewService(server.Config{
-		Engine:              engine,
-		Store:               memstore.New(),
-		Workspaces:          func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+		Engine: engine,
+		Store:  memstore.New(),
+
 		Now:                 func() time.Time { return time.Unix(0, 0) },
 		DefaultCapabilities: llm.Capabilities(),
 		PlacementProvider:   offlinePlacementProvider{},
 		PlacementScope:      "test",
+		SharedEngineRoot:    "/ws",
 	})
 	if err != nil {
 		t.Fatalf("new offline service: %v", err)

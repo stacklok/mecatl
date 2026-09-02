@@ -16,6 +16,7 @@ import (
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
+	"github.com/stacklok/mecatl/internal/adapter/mcp"
 )
 
 type placementStoreSpy struct {
@@ -151,7 +152,7 @@ func (*placementLeaseSpy) Renew(context.Context, port.Lease) (port.Lease, error)
 }
 func (*placementLeaseSpy) Release(context.Context, port.Lease) error { return nil }
 
-func newPlacementProofService(t *testing.T, store *placementStoreSpy, provider *placementProviderSpy, worktrees WorktreeLister, commands CommandLister, lease port.SessionLease, workspaceCalls *int, ids ...session.SessionID) *Service {
+func newPlacementProofService(t *testing.T, store *placementStoreSpy, provider *placementProviderSpy, worktrees WorktreeLister, commands CommandLister, lease port.SessionLease, _ *int, ids ...session.SessionID) *Service {
 	t.Helper()
 	eng := agent.NewEngine(agent.Deps{LLM: mockllm.New(), Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil), Model: "test"})
 	var key [worktreeSelectorKeySize]byte
@@ -165,17 +166,12 @@ func newPlacementProofService(t *testing.T, store *placementStoreSpy, provider *
 	provider.worktrees, provider.selectors = worktrees, issuer
 	next := 0
 	svc, err := NewService(Config{
-		Engine: eng, Store: store, PlacementProvider: provider, PlacementScope: "tenant",
-		Workspaces: func(root string) tool.Workspace {
-			if workspaceCalls != nil {
-				*workspaceCalls++
-			}
-			if root == "/unavailable" {
-				return nil
-			}
-			return memfs.NewWorkspace(root)
+		Engine: eng, Store: store, PlacementProvider: provider, PlacementScope: "tenant", SharedEngineRoot: "/repo",
+		SessionEngine: func(context.Context, ProviderSelector, []mcp.ServerConfig, SessionProfile, string, session.PermissionMode) (SessionEngineResult, error) {
+			return SessionEngineResult{Engine: eng}, nil
 		},
-		Worktrees: worktrees, Commands: commands, SessionLease: lease, LeaseOwner: "proof", LeaseTTL: time.Hour, LeaseRenewInterval: time.Hour,
+
+		Commands: commands, SessionLease: lease, LeaseOwner: "proof", LeaseTTL: time.Hour, LeaseRenewInterval: time.Hour,
 		Now: func() time.Time { return time.Unix(1, 0) }, NewID: func() session.SessionID {
 			if next >= len(ids) {
 				return session.SessionID("generated-extra")

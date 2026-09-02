@@ -16,14 +16,14 @@ func TestValidateEnvironmentOverrideRequiresExactPlacementIdentity(t *testing.T)
 	svc := &Service{}
 
 	matching := tool.MustEnvironment(ref, memfs.NewWorkspace("/private/root"), nil)
-	if err := svc.validateEnvironmentOverride(sess, matching); err != nil {
+	if err := svc.validateEnvironmentOverride(sess, matching, matching); err != nil {
 		t.Fatalf("matching ref: %v", err)
 	}
 
 	changed := ref
 	changed.Revision = "r2"
 	mismatch := tool.MustEnvironment(changed, memfs.NewWorkspace("/private/root"), nil)
-	if err := svc.validateEnvironmentOverride(sess, mismatch); !errors.Is(err, ErrFailedPrecondition) {
+	if err := svc.validateEnvironmentOverride(sess, mismatch, matching); !errors.Is(err, ErrFailedPrecondition) {
 		t.Fatalf("mismatched revision = %v, want ErrFailedPrecondition", err)
 	}
 }

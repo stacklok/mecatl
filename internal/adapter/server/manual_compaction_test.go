@@ -21,7 +21,6 @@ import (
 	"google.golang.org/grpc/test/bufconn"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
@@ -112,8 +111,8 @@ func newCompactService(t *testing.T, store *compactTrackingStore, compactor agen
 	})
 	svc, err := newPlacementTestService(server.Config{
 		Engine: eng, Store: store, EventLog: store,
-		Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
-		Now:        time.Now, OwnershipEnforced: ownership, SessionLease: lease,
+
+		Now: time.Now, OwnershipEnforced: ownership, SessionLease: lease,
 		LeaseOwner: "compact", LeaseTTL: time.Hour, LeaseRenewInterval: time.Hour,
 		SessionEngine: factory,
 	})
@@ -500,7 +499,7 @@ func TestCompactSessionLeaseLossCancelsCompactorAndPreventsSave(t *testing.T) {
 	compactor := &countingServiceCompactor{wait: true}
 	eng := agent.NewEngine(agent.Deps{Compactor: compactor, TokenCounter: serviceCompactCounter{}})
 	svc, err := newPlacementTestService(server.Config{
-		Engine: eng, Store: store, EventLog: store, Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+		Engine: eng, Store: store, EventLog: store,
 		OwnershipEnforced: true, SessionLease: lease, LeaseOwner: "compact-loss", LeaseTTL: time.Hour, LeaseRenewInterval: 5 * time.Millisecond,
 	})
 	if err != nil {

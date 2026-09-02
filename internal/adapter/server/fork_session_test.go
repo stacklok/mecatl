@@ -16,7 +16,6 @@ import (
 	"google.golang.org/grpc/status"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
@@ -90,7 +89,7 @@ func TestForkSessionInheritsHistoryAndLabels(t *testing.T) {
 	// Reset the factory recorder so the NEXT call is unambiguously the fork's.
 	calls.Store(0)
 	gotSel.Store(server.ProviderSelector{})
-	newID, err := svc.ForkSession(ctx, src.ID, "", "")
+	newID, err := forkSession(svc, ctx, src.ID, "", "")
 	if err != nil {
 		t.Fatalf("ForkSession: %v", err)
 	}
@@ -198,7 +197,7 @@ func TestForkSessionEffortOverride(t *testing.T) {
 	// Reset the factory recorder so the NEXT call is unambiguously the fork's.
 	calls.Store(0)
 	gotSel.Store(server.ProviderSelector{})
-	newID, err := svc.ForkSession(ctx, src.ID, "", "high")
+	newID, err := forkSession(svc, ctx, src.ID, "", "high")
 	if err != nil {
 		t.Fatalf("ForkSession: %v", err)
 	}
@@ -264,7 +263,7 @@ func TestForkSessionEmptyEffortInherits(t *testing.T) {
 	}
 	driveCompletedTurn(t, svc, src.ID, "hi")
 
-	newID, err := svc.ForkSession(ctx, src.ID, "", "")
+	newID, err := forkSession(svc, ctx, src.ID, "", "")
 	if err != nil {
 		t.Fatalf("ForkSession empty effort: %v", err)
 	}
@@ -297,7 +296,7 @@ func TestForkSessionTitleOverride(t *testing.T) {
 	}
 
 	// Empty title → inherits source's.
-	inherited, err := svc.ForkSession(ctx, src.ID, "", "")
+	inherited, err := forkSession(svc, ctx, src.ID, "", "")
 	if err != nil {
 		t.Fatalf("ForkSession empty title: %v", err)
 	}
@@ -308,7 +307,7 @@ func TestForkSessionTitleOverride(t *testing.T) {
 
 	// Non-empty title → overrides.
 	override := "fix the bug first"
-	overridden, err := svc.ForkSession(ctx, src.ID, override, "")
+	overridden, err := forkSession(svc, ctx, src.ID, override, "")
 	if err != nil {
 		t.Fatalf("ForkSession override title: %v", err)
 	}
@@ -334,9 +333,9 @@ func TestForkSessionDefaultFSRidesSharedEngine(t *testing.T) {
 	})
 	store := memstore.New()
 	svc, err := newPlacementTestService(server.Config{
-		Engine:        shared,
-		Store:         store,
-		Workspaces:    func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+		Engine: shared,
+		Store:  store,
+
 		DefaultLimits: session.Limits{MaxTurns: 10, MaxToolCalls: 20},
 		Now:           func() time.Time { return time.Unix(0, 0) },
 	})
@@ -350,7 +349,7 @@ func TestForkSessionDefaultFSRidesSharedEngine(t *testing.T) {
 	}
 	driveCompletedTurn(t, svc, src.ID, "hello")
 
-	newID, err := svc.ForkSession(ctx, src.ID, "", "")
+	newID, err := forkSession(svc, ctx, src.ID, "", "")
 	if err != nil {
 		t.Fatalf("ForkSession: %v", err)
 	}
@@ -392,34 +391,33 @@ func TestForkSessionRejectsRunningSource(t *testing.T) {
 		t.Fatalf("Save running: %v", err)
 	}
 
-	_, ferr := svc.ForkSession(ctx, sess.ID, "", "")
+	_, ferr := forkSession(svc, ctx, sess.ID, "", "")
 	if !errors.Is(ferr, server.ErrFailedPrecondition) {
 		t.Fatalf("ForkSession on a running source: err = %v, want ErrFailedPrecondition", ferr)
 	}
 }
 
-// TestForkSessionCompletedSourceRecoversToIdle verifies loadAndReopen runs on the
-// source: a pre-persisted COMPLETED session is forkable, and the source's store
-// snapshot is recovered to idle (Reopen) by the fork's loadAndReopen.
-func TestForkSessionCompletedSourceRecoversToIdle(t *testing.T) {
+// TestForkSessionCompletedSourceStaysCompleted verifies canonical successor
+// creation is non-destructive: a completed source is forkable without recovery.
+func TestForkSessionCompletedSourceStaysCompleted(t *testing.T) {
 	ctx := context.Background()
 	svc, store := newMCPServiceStore(t, "shared", nil)
 	id := persistCompleted(t, store)
 
-	newID, err := svc.ForkSession(ctx, id, "", "")
+	newID, err := forkSession(svc, ctx, id, "", "")
 	if err != nil {
 		t.Fatalf("ForkSession on a completed source: %v", err)
 	}
 	if newID == "" || newID == id {
 		t.Fatalf("fork id = %q, want a new distinct id", newID)
 	}
-	// The source was recovered to idle by loadAndReopen and re-persisted.
+	// Canonical successor creation does not mutate the source.
 	src, err := store.Load(ctx, id)
 	if err != nil {
 		t.Fatalf("Load src: %v", err)
 	}
-	if src.State != session.StateIdle {
-		t.Fatalf("source state after fork = %q, want idle (recovered by loadAndReopen)", src.State)
+	if src.State != session.StateCompleted {
+		t.Fatalf("source state after fork = %q, want completed (non-destructive successor)", src.State)
 	}
 }
 
@@ -677,7 +675,7 @@ func TestHTTPForkSessionEffortOverride(t *testing.T) {
 func TestForkSessionUnknownSourceNotFound(t *testing.T) {
 	t.Run("service", func(t *testing.T) {
 		svc := newMCPService(t, "shared", nil)
-		_, err := svc.ForkSession(context.Background(), "never-created", "", "")
+		_, err := forkSession(svc, context.Background(), "never-created", "", "")
 		if !errors.Is(err, server.ErrNotFound) {
 			t.Fatalf("ForkSession unknown id: err = %v, want ErrNotFound", err)
 		}
@@ -721,7 +719,7 @@ func TestForkSessionRespectsEngineCap(t *testing.T) {
 	}
 	driveCompletedTurn(t, svc, src.ID, "hi")
 
-	_, ferr := svc.ForkSession(ctx, src.ID, "", "")
+	_, ferr := forkSession(svc, ctx, src.ID, "", "")
 	if !errors.Is(ferr, server.ErrTooManySessionEngines) {
 		t.Fatalf("ForkSession past cap: err = %v, want ErrTooManySessionEngines", ferr)
 	}

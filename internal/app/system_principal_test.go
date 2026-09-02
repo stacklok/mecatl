@@ -81,8 +81,8 @@ func TestCallerIdentity_Scenario2_InternalGoroutinesRunAsSystem(t *testing.T) {
 				Engine: agent.NewEngine(agent.Deps{
 					LLM: mockllm.New(), Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil),
 				}),
-				Store:             store,
-				Workspaces:        func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+				Store: store,
+
 				PlacementProvider: systemTestPlacementProvider{}, PlacementScope: "test",
 			})
 			if err != nil {

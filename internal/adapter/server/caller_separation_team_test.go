@@ -6,7 +6,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
@@ -33,9 +32,9 @@ func TestCallerSeparation_Scenario5_LiveTeamOperationsAreOwnerChecked(t *testing
 		})}
 	}
 	svc, err := newPlacementTeamTestService(server.Config{
-		Engine:            agent.NewEngine(agent.Deps{LLM: mockllm.New(), Catalog: tool.NewCatalog(), Policy: allow, Model: "mock"}),
-		Store:             memstore.New(),
-		Workspaces:        func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+		Engine: agent.NewEngine(agent.Deps{LLM: mockllm.New(), Catalog: tool.NewCatalog(), Policy: allow, Model: "mock"}),
+		Store:  memstore.New(),
+
 		Now:               func() time.Time { return time.Unix(0, 0) },
 		MemberEngine:      memberEngine,
 		OwnershipEnforced: true,
@@ -46,7 +45,7 @@ func TestCallerSeparation_Scenario5_LiveTeamOperationsAreOwnerChecked(t *testing
 	alice := callerCtx("alice")
 	bob := callerCtx("bob")
 
-	teamID, _, err := svc.CreateTeam(alice, "alice-team", "goal", 0, nil)
+	teamID, _, err := svc.CreateTeamOnDefaultPlacement(alice, "alice-team", "goal", 0, nil)
 	if err != nil {
 		t.Fatalf("CreateTeam: %v", err)
 	}
@@ -100,8 +99,8 @@ func ownedTeamServiceWithCap(t *testing.T, llm *mockllm.Provider, maxTeams int) 
 		Engine: agent.NewEngine(agent.Deps{
 			LLM: mockllm.New(mockllm.TextTurn("x")), Catalog: tool.NewCatalog(), Policy: allow, Model: "mock",
 		}),
-		Store:             store,
-		Workspaces:        func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+		Store: store,
+
 		Now:               func() time.Time { return time.Unix(0, 0) },
 		MemberEngine:      memberEngine,
 		OwnershipEnforced: true,
@@ -130,7 +129,7 @@ func TestCallerSeparation_GRPCTeamMembersAreOwnerStamped(t *testing.T) {
 	alice := &session.Principal{Issuer: "https://idp.example", Subject: "alice", GrantType: session.GrantTypeUser}
 	ctx := session.WithPrincipal(context.Background(), alice)
 
-	teamID, _, err := svc.CreateTeam(ctx, "t", "goal", 0,
+	teamID, _, err := svc.CreateTeamOnDefaultPlacement(ctx, "t", "goal", 0,
 		[]agent.MemberSpec{{Name: "lead", Lead: true, InitialPrompt: "work"}})
 	if err != nil {
 		t.Fatalf("CreateTeam: %v", err)
@@ -170,13 +169,13 @@ func TestCreateTeamRefusedAtCapacityLeavesNothingBehind(t *testing.T) {
 	roster := []agent.MemberSpec{{Name: "lead", Lead: true, InitialPrompt: "work"}}
 
 	// Fill the single slot.
-	if _, _, err := svc.CreateTeam(ctx, "first", "goal", 0, roster); err != nil {
+	if _, _, err := svc.CreateTeamOnDefaultPlacement(ctx, "first", "goal", 0, roster); err != nil {
 		t.Fatalf("first CreateTeam: %v", err)
 	}
 
 	// The second must be refused, and must not have written anything.
 	before := storedSessionIDs(t, store)
-	id, _, err := svc.CreateTeam(ctx, "second", "goal", 0, roster)
+	id, _, err := svc.CreateTeamOnDefaultPlacement(ctx, "second", "goal", 0, roster)
 	if !errors.Is(err, server.ErrTooManyTeams) {
 		t.Fatalf("second CreateTeam = (%q, %v), want ErrTooManyTeams", id, err)
 	}

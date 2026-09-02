@@ -5,7 +5,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
 	"github.com/stacklok/mecatl/engine/adapter/permstore"
@@ -33,9 +32,8 @@ func TestCloseCancelsInFlightRun(t *testing.T) {
 		Model:   "test-model",
 	})
 	svc, err := newPlacementTestService(server.Config{
-		Engine:     engine,
-		Store:      store,
-		Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+		Engine: engine,
+		Store:  store,
 	})
 	if err != nil {
 		t.Fatalf("NewService: %v", err)
@@ -111,10 +109,10 @@ func TestCloseEngineTimeoutBound(t *testing.T) {
 
 	// A SessionEngine factory that returns an engine whose Close blocks until release.
 	svc, err := newPlacementTestService(server.Config{
-		Engine:           sharedEngine,
-		Store:            store,
-		Workspaces:       func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
-		DefaultWorkspace: "/default-ws",
+		Engine: sharedEngine,
+		Store:  store,
+
+		SharedEngineRoot: "/default-ws",
 		SessionEngine: func(_ context.Context, _ server.ProviderSelector, _ []mcp.ServerConfig, _ server.SessionProfile, _ string, _ session.PermissionMode) (server.SessionEngineResult, error) {
 			return server.SessionEngineResult{
 				Engine: agent.NewEngine(agent.Deps{

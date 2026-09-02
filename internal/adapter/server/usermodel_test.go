@@ -10,7 +10,6 @@ import (
 	"unicode/utf8"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
@@ -47,11 +46,11 @@ func userModelService(t *testing.T, lister server.UserModelLister) *server.Servi
 		Model:   "test-model",
 	})
 	svc, err := newPlacementTestService(server.Config{
-		Engine:     engine,
-		Store:      memstore.New(),
-		Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
-		Now:        func() time.Time { return time.Unix(0, 0) },
-		UserModel:  lister,
+		Engine: engine,
+		Store:  memstore.New(),
+
+		Now:       func() time.Time { return time.Unix(0, 0) },
+		UserModel: lister,
 	})
 	if err != nil {
 		t.Fatalf("new service: %v", err)

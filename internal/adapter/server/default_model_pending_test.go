@@ -5,7 +5,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
@@ -34,11 +33,11 @@ func pendingDefaultService(t *testing.T, pending bool, factoryCalled *bool) (*se
 		Model:   "test-model",
 	})
 	cfg := server.Config{
-		Engine:              engine,
-		Store:               memstore.New(),
-		Workspaces:          func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+		Engine: engine,
+		Store:  memstore.New(),
+
 		Now:                 func() time.Time { return time.Unix(0, 0) },
-		DefaultWorkspace:    workspace,
+		SharedEngineRoot:    workspace,
 		DefaultModelPending: pending,
 	}
 	if factoryCalled != nil {

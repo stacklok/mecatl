@@ -13,8 +13,6 @@ import (
 	"github.com/stacklok/mecatl/engine/tool"
 )
 
-const inTreeEnvironmentRevision = "in-tree-v1"
-
 var (
 	// ErrInvalidPlacementSelection reports a malformed selector or binding request.
 	ErrInvalidPlacementSelection = errors.New("server: invalid placement selection")
@@ -114,10 +112,6 @@ type PlacementMetadata struct {
 	Label    string
 	Branch   string
 	Revision string
-	// Name and Description are retained only for source compatibility with
-	// private providers; canonical projection uses Label/Branch/Revision.
-	Name        string
-	Description string
 }
 
 // PlacementBinding is the indivisible successful result of Bind.
@@ -130,8 +124,8 @@ type PlacementBinding struct {
 	Close func() error
 }
 
-// PlacementProvider owns placement inventory, authorization, and atomic new
-// binding resolution.
+// PlacementProvider owns placement authorization, atomic binding resolution,
+// and private environment construction.
 type PlacementProvider interface {
 	Bind(context.Context, PlacementBindRequest) (PlacementBinding, error)
 }
@@ -145,8 +139,9 @@ type PlacementDiscoveryRequest struct {
 	Scope     PlacementScope
 }
 
-// PlacementDiscoverer is the optional provider-owned discovery half. The same
-// provider that issues a selector must atomically consume it in Bind.
+// PlacementDiscoverer is the provider-owned discovery capability. Worktree
+// availability is derived only from the mandatory PlacementProvider implementing
+// this interface; there is no independent Config discovery seam.
 type PlacementDiscoverer interface {
 	ListWorktrees(context.Context, PlacementDiscoveryRequest) ([]ScopedWorktree, error)
 }
@@ -284,7 +279,6 @@ func (s *Service) bindPlacementForCreate(ctx context.Context, profile SessionPro
 
 func (s *Service) persistPlacedCreatedSession(ctx context.Context, sess *session.Session, owner *session.Principal, request *createRequest, placement *PlacementBinding) (*session.Session, error) {
 	if placement != nil {
-		sess.EnvironmentRef = placement.Ref
 		sess.Placement = canonicalPlacementMetadata(*placement)
 	}
 	if !sess.EnvironmentRef.Valid() {
@@ -433,13 +427,9 @@ func safePlacementText(value string, maxRunes int) bool {
 }
 
 func canonicalPlacementMetadata(binding PlacementBinding) session.PlacementMetadata {
-	label := binding.Metadata.Label
-	if label == "" {
-		label = binding.Metadata.Name
-	}
 	return session.PlacementMetadata{
 		Kind:     sanitizePlacementDisplay(string(binding.Ref.Kind), maxPlacementKindRunes),
-		Label:    sanitizePlacementDisplay(label, maxPlacementNameRunes),
+		Label:    sanitizePlacementDisplay(binding.Metadata.Label, maxPlacementNameRunes),
 		Branch:   sanitizePlacementDisplay(binding.Metadata.Branch, maxPlacementNameRunes),
 		Revision: sanitizePlacementDisplay(binding.Metadata.Revision, maxPlacementIdentityRunes),
 	}
@@ -458,8 +448,8 @@ func sanitizePlacementDisplay(value string, maxRunes int) string {
 	if len(runes) > maxRunes {
 		value = string(runes[:maxRunes])
 	}
-	if strings.HasPrefix(value, "/") || strings.HasPrefix(value, `\\`) ||
-		(len(value) > 2 && value[1] == ':' && (value[2] == '/' || value[2] == '\\')) {
+	if strings.ContainsAny(value, `/\\`) || strings.HasPrefix(value, "..") ||
+		(len(value) >= 2 && value[1] == ':') {
 		return ""
 	}
 	return value

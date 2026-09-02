@@ -6,7 +6,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
@@ -92,7 +91,6 @@ func TestServiceIsLiveIncludesEngineChildren(t *testing.T) {
 	})
 	svc, err := newPlacementTestService(server.Config{
 		Engine: engine, Store: memstore.New(), SessionLiveness: tracker,
-		Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
 	})
 	if err != nil {
 		t.Fatal(err)

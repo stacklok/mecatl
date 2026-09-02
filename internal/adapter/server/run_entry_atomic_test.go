@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/agent"
@@ -70,8 +69,7 @@ func TestADR_0108_RunEntryLocksLoadAuthorizePurposeAndReopen(t *testing.T) {
 		Catalog: tool.NewCatalog(), Model: "test",
 	})
 	svc, err := newPlacementTestService(server.Config{
-		Engine: eng, Store: store,
-		Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+		Engine: eng, Store: store, SharedEngineRoot: "/workspace",
 	})
 	if err != nil {
 		t.Fatalf("NewService: %v", err)
@@ -204,8 +202,8 @@ func TestCallerSeparation_ForeignPromptDoesNotContendOnOwnerRunEntry(t *testing.
 		Model:   "test",
 	})
 	svc, err := newPlacementTestService(server.Config{
-		Engine: eng, Store: store,
-		Workspaces:         func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+		Engine: eng, Store: store, SharedEngineRoot: "/workspace",
+
 		OwnershipEnforced:  true,
 		SessionLease:       lease,
 		LeaseOwner:         "test-server",
@@ -326,9 +324,10 @@ func TestCallerSeparation_RunEntryReloadReauthorizesAfterPreflight(t *testing.T)
 			}
 			lease := &fakeLease{}
 			svc, err := newPlacementTestService(server.Config{
-				Engine:             agent.NewEngine(agent.Deps{LLM: mockllm.New(mockllm.TextTurn("unexpected")), Catalog: tool.NewCatalog(), Model: "test"}),
-				Store:              store,
-				Workspaces:         func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+				Engine:           agent.NewEngine(agent.Deps{LLM: mockllm.New(mockllm.TextTurn("unexpected")), Catalog: tool.NewCatalog(), Model: "test"}),
+				Store:            store,
+				SharedEngineRoot: "/workspace",
+
 				OwnershipEnforced:  true,
 				SessionLease:       lease,
 				LeaseOwner:         "test-server",

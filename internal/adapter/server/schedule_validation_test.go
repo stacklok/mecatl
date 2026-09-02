@@ -8,7 +8,6 @@ import (
 	"time"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
 	"github.com/stacklok/mecatl/engine/agent"
@@ -48,10 +47,10 @@ func newValidatedScheduleService(t *testing.T, now time.Time, minInterval time.D
 	svc, err := newPlacementTestService(server.Config{
 		Engine:           engine,
 		Store:            store,
-		DefaultWorkspace: "/ws",
-		Workspaces:       func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
-		Now:              func() time.Time { return now },
-		Models:           models,
+		SharedEngineRoot: "/ws",
+
+		Now:    func() time.Time { return now },
+		Models: models,
 	})
 	if err != nil {
 		t.Fatalf("new service: %v", err)

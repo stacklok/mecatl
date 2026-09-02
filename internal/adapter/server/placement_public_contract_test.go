@@ -31,7 +31,7 @@ type adrPlacementProvider struct{ selectors *WorktreeSelectorIssuer }
 func (p adrPlacementProvider) Bind(_ context.Context, req PlacementBindRequest) (PlacementBinding, error) {
 	if req.Selector.Kind == PlacementSelectorNoFS {
 		ref := session.EnvironmentRef{Kind: session.EnvKindNoFS, ID: "none", Revision: "v1"}
-		return PlacementBinding{Ref: ref, Environment: tool.MustEnvironment(ref, nofs.New(), nil), Metadata: PlacementMetadata{Name: "No filesystem"}}, nil
+		return PlacementBinding{Ref: ref, Environment: tool.MustEnvironment(ref, nofs.New(), nil), Metadata: PlacementMetadata{Label: "No filesystem"}}, nil
 	}
 	if req.Selector.IsWorktree() {
 		current, _ := (adrWorktrees{}).List(context.Background(), req.Selector.SourceRef.ID)
@@ -91,9 +91,9 @@ func newADR0280Service(t *testing.T) *Service {
 	}
 	provider := adrPlacementProvider{selectors: issuer}
 	svc, err := NewService(Config{
-		Engine: eng, Store: memstore.New(), Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+		Engine: eng, Store: memstore.New(),
 		Now: func() time.Time { return time.Unix(1, 0) }, PlacementProvider: provider, PlacementScope: "test",
-		Worktrees: adrWorktrees{},
+
 		SessionEngine: func(context.Context, ProviderSelector, []mcp.ServerConfig, SessionProfile, string, session.PermissionMode) (SessionEngineResult, error) {
 			return SessionEngineResult{Engine: eng, Close: func() error { return nil }}, nil
 		},

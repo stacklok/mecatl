@@ -6,7 +6,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
@@ -126,9 +125,9 @@ func newReconcileFixtureWithLease(t *testing.T, lease port.SessionLease) *reconc
 		Model:   "test-model",
 	})
 	svc, err := newTestServerService(server.Config{
-		Engine:       engine,
-		Store:        f.lists,
-		Workspaces:   func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+		Engine: engine,
+		Store:  f.lists,
+
 		Now:          func() time.Time { return f.now },
 		SessionLease: lease,
 	})

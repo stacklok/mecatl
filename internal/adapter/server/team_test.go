@@ -13,7 +13,6 @@ import (
 	"google.golang.org/grpc/status"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
@@ -80,9 +79,9 @@ func teamService(t *testing.T, llm *mockllm.Provider) *server.Service {
 		Model:   "mock",
 	})
 	svc, err := newPlacementTeamTestService(server.Config{
-		Engine:       engine,
-		Store:        memstore.New(),
-		Workspaces:   func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+		Engine: engine,
+		Store:  memstore.New(),
+
 		Now:          func() time.Time { return time.Unix(0, 0) },
 		MemberEngine: memberEngine,
 	})
@@ -111,9 +110,9 @@ func teamServiceWithStore(t *testing.T, llm *mockllm.Provider) (*server.Service,
 		LLM: mockllm.New(mockllm.TextTurn("x")), Catalog: tool.NewCatalog(), Policy: allow, Model: "mock",
 	})
 	svc, err := newPlacementTeamTestService(server.Config{
-		Engine:       engine,
-		Store:        store,
-		Workspaces:   func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+		Engine: engine,
+		Store:  store,
+
 		Now:          func() time.Time { return time.Unix(0, 0) },
 		MemberEngine: memberEngine,
 	})
@@ -198,9 +197,9 @@ func teamServicePerMember(t *testing.T, providers map[string]*mockllm.Provider, 
 		LLM: mockllm.New(mockllm.TextTurn("x")), Catalog: tool.NewCatalog(), Policy: allow, Model: "mock",
 	})
 	svc, err := newPlacementTeamTestService(server.Config{
-		Engine:          engine,
-		Store:           memstore.New(),
-		Workspaces:      func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+		Engine: engine,
+		Store:  memstore.New(),
+
 		Now:             func() time.Time { return time.Unix(0, 0) },
 		MemberEngine:    memberEngine,
 		TeamTokenBudget: budget,
@@ -258,9 +257,9 @@ func teamServiceWithBudget(t *testing.T, llm *mockllm.Provider, budget int) *ser
 		LLM: mockllm.New(mockllm.TextTurn("x")), Catalog: tool.NewCatalog(), Policy: allow, Model: "mock",
 	})
 	svc, err := newPlacementTeamTestService(server.Config{
-		Engine:          engine,
-		Store:           memstore.New(),
-		Workspaces:      func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+		Engine: engine,
+		Store:  memstore.New(),
+
 		Now:             func() time.Time { return time.Unix(0, 0) },
 		MemberEngine:    memberEngine,
 		TeamTokenBudget: budget,
@@ -289,7 +288,7 @@ func TestRunTeamBudgetExhaustedOutcome(t *testing.T) {
 	svc := teamServiceWithBudget(t, llm, budget)
 	ctx := context.Background()
 
-	id, _, err := svc.CreateTeam(ctx, "test", "do one round of work", 0, []agent.MemberSpec{
+	id, _, err := svc.CreateTeamOnDefaultPlacement(ctx, "test", "do one round of work", 0, []agent.MemberSpec{
 		{Name: "lead", Lead: true, InitialPrompt: "do the work then stop"},
 	})
 	if err != nil {
@@ -329,7 +328,7 @@ func TestCreateTeamTightensTeamTokenBudget(t *testing.T) {
 		)
 		svc := teamServiceWithBudget(t, llm, serverBudget)
 		ctx := context.Background()
-		id, _, err := svc.CreateTeam(ctx, "test", "do one round of work", request, []agent.MemberSpec{
+		id, _, err := svc.CreateTeamOnDefaultPlacement(ctx, "test", "do one round of work", request, []agent.MemberSpec{
 			{Name: "lead", Lead: true, InitialPrompt: "do the work then stop"},
 		})
 		if err != nil {
@@ -382,9 +381,9 @@ func teamServiceWithGoalTrust(t *testing.T, llm *mockllm.Provider, goalUntrusted
 		LLM: mockllm.New(mockllm.TextTurn("x")), Catalog: tool.NewCatalog(), Policy: allow, Model: "mock",
 	})
 	svc, err := newPlacementTeamTestService(server.Config{
-		Engine:            engine,
-		Store:             store,
-		Workspaces:        func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+		Engine: engine,
+		Store:  store,
+
 		Now:               func() time.Time { return time.Unix(0, 0) },
 		MemberEngine:      memberEngine,
 		TeamGoalUntrusted: goalUntrusted,
@@ -673,9 +672,9 @@ func teamServiceMaxTeams(t *testing.T, llm *mockllm.Provider, maxTeams int) *ser
 		LLM: mockllm.New(mockllm.TextTurn("x")), Catalog: tool.NewCatalog(), Policy: allow, Model: "mock",
 	})
 	svc, err := newPlacementTeamTestService(server.Config{
-		Engine:       engine,
-		Store:        memstore.New(),
-		Workspaces:   func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+		Engine: engine,
+		Store:  memstore.New(),
+
 		Now:          func() time.Time { return time.Unix(0, 0) },
 		MemberEngine: memberEngine,
 		MaxTeams:     maxTeams,
@@ -711,7 +710,7 @@ func TestCreateTeamMaxTeams(t *testing.T) {
 		t.Fatalf("CreateTeam past MaxTeams: code = %v, want ResourceExhausted (err=%v)", status.Code(err), err)
 	}
 	// And the Service returns the mapped sentinel.
-	if _, _, serr := svc.CreateTeam(ctx, "x", "", 0, nil); !errors.Is(serr, server.ErrTooManyTeams) {
+	if _, _, serr := svc.CreateTeamOnDefaultPlacement(ctx, "x", "", 0, nil); !errors.Is(serr, server.ErrTooManyTeams) {
 		t.Fatalf("Service.CreateTeam past cap: err = %v, want ErrTooManyTeams", serr)
 	}
 
@@ -813,14 +812,14 @@ func TestDirectRunTeamProtectsMembersWithIndependentLiveness(t *testing.T) {
 	}
 	engine := agent.NewEngine(agent.Deps{LLM: mockllm.New(mockllm.TextTurn("x")), Catalog: tool.NewCatalog(), Policy: allow, Model: "mock"})
 	svc, err := newPlacementTeamTestService(server.Config{
-		Engine: engine, Store: memstore.New(), Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+		Engine: engine, Store: memstore.New(),
 		Now: func() time.Time { return time.Unix(0, 0) }, MemberEngine: memberEngine, SessionLiveness: tracker,
 	})
 	if err != nil {
 		t.Fatalf("new service: %v", err)
 	}
 	ctx := context.Background()
-	teamID, _, err := svc.CreateTeam(ctx, "test", "goal", 0, []agent.MemberSpec{{Name: "lead", Lead: true, InitialPrompt: "go"}})
+	teamID, _, err := svc.CreateTeamOnDefaultPlacement(ctx, "test", "goal", 0, []agent.MemberSpec{{Name: "lead", Lead: true, InitialPrompt: "go"}})
 	if err != nil {
 		t.Fatalf("CreateTeamWithRoster: %v", err)
 	}
@@ -988,7 +987,7 @@ func TestSpawnTeammateRaceWithRunTeam(t *testing.T) {
 	ctx := context.Background()
 
 	for i := 0; i < teams; i++ {
-		teamID, _, err := svc.CreateTeam(ctx, "race", "", 0, nil)
+		teamID, _, err := svc.CreateTeamOnDefaultPlacement(ctx, "race", "", 0, nil)
 		if err != nil {
 			t.Fatalf("CreateTeam #%d: %v", i, err)
 		}
@@ -1069,9 +1068,13 @@ func TestCreateTeamNilWorkspaceFactoryReturnsErrorNotPanic(t *testing.T) {
 		Model:   "mock",
 	})
 	_, err := newPlacementTeamTestService(server.Config{
-		Engine:       engine,
-		Store:        memstore.New(),
-		Workspaces:   func(_ string) tool.Workspace { return nil }, // nil factory return
+		Engine: engine,
+		Store:  memstore.New(),
+		PlacementProvider: testPlacementProvider{
+			root: "/ws", workspaces: func(string) tool.Workspace { return nil },
+		},
+		PlacementScope: "test",
+		// provider-private environment construction failure
 		Now:          func() time.Time { return time.Unix(0, 0) },
 		MemberEngine: memberEngine,
 	})

@@ -263,11 +263,12 @@ func scriptedServiceAtRoot(t *testing.T, root string, extraTools []tool.Tool, wo
 		workspaces = func(root string) tool.Workspace { return memfs.NewWorkspace(root) }
 	}
 	svc, err := server.NewService(server.Config{
-		Engine:              engine,
-		Store:               memstore.New(),
-		Workspaces:          workspaces,
+		Engine: engine,
+		Store:  memstore.New(),
+
 		PlacementProvider:   scriptedPlacementProvider{root: root, workspaces: workspaces},
 		PlacementScope:      "test",
+		SharedEngineRoot:    root,
 		Now:                 func() time.Time { return time.Unix(0, 0) },
 		DefaultCapabilities: llm.Capabilities(),
 	})
@@ -424,11 +425,12 @@ func TestRunCancelOnMainAskBoundsAndExits(t *testing.T) {
 	})
 	ws := func(root string) tool.Workspace { return memfs.NewWorkspace(root) }
 	svc, err := server.NewService(server.Config{
-		Engine:              engine,
-		Store:               memstore.New(),
-		Workspaces:          ws,
+		Engine: engine,
+		Store:  memstore.New(),
+
 		PlacementProvider:   scriptedPlacementProvider{root: "/ws", workspaces: ws},
 		PlacementScope:      "test",
+		SharedEngineRoot:    "/ws",
 		Now:                 func() time.Time { return time.Unix(0, 0) },
 		DefaultCapabilities: llm.Capabilities(),
 	})

@@ -6,7 +6,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
@@ -50,17 +49,18 @@ func selectorServiceOverStore(t *testing.T, store *memstore.Store, factory serve
 			Model:   "test-model",
 		}),
 		Store: store,
-		Workspaces: func(root string) tool.Workspace {
-			if factoryRoots != nil {
-				*factoryRoots = append(*factoryRoots, root)
-			}
-			// A selector session uses a real workspace; an in-memory stand-in is
-			// enough for the seam under test (engine selection, not FS behaviour).
-			return memfs.NewWorkspace(root)
-		},
+
+		// A selector session uses a real workspace; an in-memory stand-in is
+		// enough for the seam under test (engine selection, not FS behaviour).
+
 		DefaultLimits: session.Limits{MaxTurns: 5},
 		Now:           func() time.Time { return time.Unix(0, 0) },
-		SessionEngine: factory,
+		SessionEngine: func(ctx context.Context, sel server.ProviderSelector, specs []mcp.ServerConfig, profile server.SessionProfile, workspace string, mode session.PermissionMode) (server.SessionEngineResult, error) {
+			if factoryRoots != nil {
+				*factoryRoots = append(*factoryRoots, workspace)
+			}
+			return factory(ctx, sel, specs, profile, workspace, mode)
+		},
 	})
 	if err != nil {
 		t.Fatalf("NewService: %v", err)

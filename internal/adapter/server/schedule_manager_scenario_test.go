@@ -6,7 +6,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
@@ -321,10 +320,10 @@ func newDelegatingScheduleService(t *testing.T, store port.SessionStore, now tim
 		Store:   store,
 	})
 	cfg := server.Config{
-		Engine:              engine,
-		Store:               store,
-		DefaultWorkspace:    "/ws",
-		Workspaces:          func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+		Engine:           engine,
+		Store:            store,
+		SharedEngineRoot: "/ws",
+
 		Now:                 func() time.Time { return now },
 		DefaultCapabilities: llm.Capabilities(),
 		Diagnostics:         port.NopDiagnostics{},

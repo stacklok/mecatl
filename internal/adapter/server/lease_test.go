@@ -9,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
@@ -119,9 +118,9 @@ func newLeasedService(t *testing.T, lease port.SessionLease, llm port.LLMProvide
 		Model:   "test-model",
 	})
 	cfg := server.Config{
-		Engine:             engine,
-		Store:              store,
-		Workspaces:         func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+		Engine: engine,
+		Store:  store,
+
 		SessionLease:       lease,
 		LeaseOwner:         "owner-test",
 		LeaseTTL:           90 * time.Millisecond,

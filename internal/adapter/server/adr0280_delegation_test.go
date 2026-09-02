@@ -42,7 +42,6 @@ func TestInvariant_delegation_cannot_escalate_placement(t *testing.T) {
 	svc, err := server.NewService(server.Config{
 		Engine: agent.NewEngine(agent.Deps{Catalog: tool.NewCatalog()}), Store: store,
 		PlacementProvider: provider, PlacementScope: "test-scope", MemberEngine: memberEngine,
-		Workspaces: func(root string) tool.Workspace { workspaceCalls++; return memfs.NewWorkspace(root) },
 	})
 	if err != nil {
 		t.Fatal(err)

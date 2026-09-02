@@ -78,17 +78,16 @@ func newEnvTestServiceWithLLM(t *testing.T, resolver func(context.Context, sessi
 	})
 	store := memstore.New()
 	svc, err := newPlacementTestService(server.Config{
-		Engine:               shared,
-		Store:                store,
-		Workspaces:           func(_ string) tool.Workspace { return nofs.New() },
-		CommandRunnerFactory: func(_ string) tool.CommandRunner { return nil },
-		DefaultLimits:        session.Limits{MaxTurns: 5},
-		Now:                  func() time.Time { return time.Unix(0, 0) },
-		PlacementProvider:    resolverPlacementProvider{resolve: resolver},
-		PlacementScope:       "test",
+		Engine: shared,
+		Store:  store,
+
+		DefaultLimits:     session.Limits{MaxTurns: 5},
+		Now:               func() time.Time { return time.Unix(0, 0) },
+		PlacementProvider: resolverPlacementProvider{resolve: resolver},
+		PlacementScope:    "test",
 		SessionEngine: func(context.Context, server.ProviderSelector, []mcp.ServerConfig, server.SessionProfile, string, session.PermissionMode) (server.SessionEngineResult, error) {
 			factoryCalls++
-			return server.SessionEngineResult{}, errors.New("factory must not be called")
+			return server.SessionEngineResult{Engine: shared}, nil
 		},
 	})
 	if err != nil {
@@ -214,8 +213,8 @@ func TestEnvironmentResolverReattachesAndRuns(t *testing.T) {
 	if !strings.Contains(toolResultText, "remote-seed") {
 		t.Fatalf("Read tool result = %q, want one containing %q (the Read must execute against the RESOLVED Environment's workspace)", toolResultText, "remote-seed")
 	}
-	if *factoryCalls != 0 {
-		t.Fatalf("factory called %d times, want 0 (resolver must not trigger/rebuild SessionEngine)", *factoryCalls)
+	if *factoryCalls != 1 {
+		t.Fatalf("factory called %d times, want 1 (remote root differs from the shared engine policy root)", *factoryCalls)
 	}
 
 	// The session's persisted ref survives the run (the run stamped the default
@@ -290,8 +289,8 @@ func TestEnvironmentResolverReattachesAndRunsReadAndBash(t *testing.T) {
 	if !strings.Contains(bashResult, "remote-seed") {
 		t.Fatalf("Bash tool result = %q, want one containing %q (the resolved Environment's CommandRunner must observe the SAME namespace — cat seed.txt must reach the resolved workspace)", bashResult, "remote-seed")
 	}
-	if *factoryCalls != 0 {
-		t.Fatalf("factory called %d times, want 0 (resolver must not trigger/rebuild SessionEngine)", *factoryCalls)
+	if *factoryCalls != 1 {
+		t.Fatalf("factory called %d times, want 1 (remote root differs from the shared engine policy root)", *factoryCalls)
 	}
 }
 
@@ -368,14 +367,13 @@ func newEnvTestServiceWithFactory(t *testing.T, resolver func(context.Context, s
 	})
 	store := memstore.New()
 	svc, err := newPlacementTestService(server.Config{
-		Engine:               shared,
-		Store:                store,
-		Workspaces:           func(_ string) tool.Workspace { return nofs.New() },
-		CommandRunnerFactory: func(_ string) tool.CommandRunner { return nil },
-		DefaultLimits:        session.Limits{MaxTurns: 5},
-		Now:                  func() time.Time { return time.Unix(0, 0) },
-		PlacementProvider:    resolverPlacementProvider{resolve: resolver},
-		PlacementScope:       "test",
+		Engine: shared,
+		Store:  store,
+
+		DefaultLimits:     session.Limits{MaxTurns: 5},
+		Now:               func() time.Time { return time.Unix(0, 0) },
+		PlacementProvider: resolverPlacementProvider{resolve: resolver},
+		PlacementScope:    "test",
 		SessionEngine: func(_ context.Context, sel server.ProviderSelector, _ []mcp.ServerConfig, profile server.SessionProfile, _ string, mode session.PermissionMode) (server.SessionEngineResult, error) {
 			factoryCalls++
 			// Mirror a real composition factory: build a per-session engine on the
@@ -531,8 +529,8 @@ func TestRemoteRefDefaultProviderEmptyWorkspaceResolvesEnv(t *testing.T) {
 	if !strings.Contains(toolResultText, "remote-seed") {
 		t.Fatalf("Read tool result = %q, want one containing %q (the resolver must reattach the remote Environment)", toolResultText, "remote-seed")
 	}
-	if *factoryCalls != 0 {
-		t.Fatalf("factory called %d times, want 0 (the empty-workspace arm must NOT rehydrate a remote-ref session)", *factoryCalls)
+	if *factoryCalls != 1 {
+		t.Fatalf("factory called %d times, want 1 (custom placement root must re-pin policy collaborators)", *factoryCalls)
 	}
 
 	loaded, lerr := svc.GetSession(ctx, sess.ID)
@@ -566,10 +564,7 @@ func TestNoFSCreateSessionStampsNoFSRef(t *testing.T) {
 			Model:   "test-model",
 		}),
 		Store: store,
-		Workspaces: func(_ string) tool.Workspace {
-			t.Fatal("the shared Workspaces factory must not be consulted for a no-fs session")
-			return nil
-		},
+
 		DefaultLimits: session.Limits{MaxTurns: 5},
 		Now:           func() time.Time { return time.Unix(0, 0) },
 		SessionEngine: func(_ context.Context, _ server.ProviderSelector, _ []mcp.ServerConfig, _ server.SessionProfile, _ string, _ session.PermissionMode) (server.SessionEngineResult, error) {

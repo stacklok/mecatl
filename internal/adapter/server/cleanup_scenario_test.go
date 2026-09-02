@@ -9,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memlease"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
@@ -38,7 +37,7 @@ func newCleanupServiceWithUpdate(t *testing.T, store port.SessionStore, now func
 	t.Helper()
 	eng := agent.NewEngine(agent.Deps{LLM: mockllm.New(), Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil), Model: "test"})
 	svc, err := NewService(Config{
-		Engine: eng, Store: store, Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+		Engine: eng, Store: store,
 		PlacementProvider: &placementProviderSpy{}, PlacementScope: "test",
 		Now: now, OwnershipEnforced: true, StorageManagementAuthorized: authorize, RetentionPolicy: policy,
 		LocalStorageMaintenanceSingleWriter: true,
@@ -63,8 +62,8 @@ func (maintenanceErrorLease) Release(context.Context, port.Lease) error { return
 func maintenanceSafetyService(t *testing.T, store port.SessionStore, local bool, lease port.SessionLease, now time.Time) *Service {
 	t.Helper()
 	svc, err := NewService(Config{
-		Engine: agent.NewEngine(agent.Deps{LLM: mockllm.New(), Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil)}),
-		Store:  store, Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+		Engine:            agent.NewEngine(agent.Deps{LLM: mockllm.New(), Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil)}),
+		Store:             store,
 		PlacementProvider: &placementProviderSpy{}, PlacementScope: "test",
 		Now: func() time.Time { return now }, OwnershipEnforced: true,
 		StorageManagementAuthorized:         func(context.Context) bool { return true },

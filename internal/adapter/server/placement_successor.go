@@ -2,8 +2,10 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 )
 
@@ -136,6 +138,9 @@ func (s *Service) createPlacedSuccessor(ctx context.Context, req ForkSuccessorRe
 	}
 	if err := s.persistNewSession(mutationCtx, created); err != nil {
 		cleanupEngine()
+		if errors.Is(err, port.ErrSessionAlreadyExists) {
+			return "", err
+		}
 		s.logDiscoveryError(ctx, "persist successor placement", err)
 		return "", fmt.Errorf("%w: placement storage failed", ErrInternal)
 	}

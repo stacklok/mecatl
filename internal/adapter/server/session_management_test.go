@@ -12,7 +12,6 @@ import (
 	"time"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
@@ -31,8 +30,8 @@ func newSessionManagementService(t *testing.T, ownership bool, lease port.Sessio
 	store := memstore.New()
 	svc, err := newPlacementTestService(server.Config{
 		Engine: agent.NewEngine(agent.Deps{LLM: llm, Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil), Model: "test"}),
-		Store:  store, Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
-		Now: func() time.Time { return time.Unix(1, 0) }, OwnershipEnforced: ownership,
+		Store:  store,
+		Now:    func() time.Time { return time.Unix(1, 0) }, OwnershipEnforced: ownership,
 		SessionLease: lease, LeaseOwner: "manager", LeaseTTL: time.Hour, LeaseRenewInterval: time.Hour,
 	})
 	if err != nil {
@@ -201,8 +200,8 @@ func newManagementBarrierService(t *testing.T, store port.SessionStore, lease po
 	t.Helper()
 	svc, err := newPlacementTestService(server.Config{
 		Engine: agent.NewEngine(agent.Deps{LLM: mockllm.New(), Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil), Model: "test"}),
-		Store:  store, Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
-		Now: time.Now, OwnershipEnforced: true,
+		Store:  store,
+		Now:    time.Now, OwnershipEnforced: true,
 		SessionLease: lease, LeaseOwner: "manager", LeaseTTL: time.Hour, LeaseRenewInterval: time.Hour,
 	})
 	if err != nil {
@@ -239,8 +238,8 @@ func newSessionManagementServiceWithStore(t *testing.T, store port.SessionStore,
 	t.Helper()
 	svc, err := newPlacementTestService(server.Config{
 		Engine: agent.NewEngine(agent.Deps{LLM: mockllm.New(), Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil), Model: "test"}),
-		Store:  store, Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
-		Now: time.Now, SessionLease: lease, LeaseOwner: "manager", LeaseTTL: time.Hour, LeaseRenewInterval: time.Hour,
+		Store:  store,
+		Now:    time.Now, SessionLease: lease, LeaseOwner: "manager", LeaseTTL: time.Hour, LeaseRenewInterval: time.Hour,
 	})
 	if err != nil {
 		t.Fatalf("NewService: %v", err)
@@ -361,7 +360,7 @@ func TestCallerSeparation_ForeignForkDoesNotContendOnOwnerCoordination(t *testin
 	}
 	ownerResult := make(chan result, 1)
 	go func() {
-		id, err := svc.ForkSession(aliceCtx, sess.ID, "", "")
+		id, err := forkSession(svc, aliceCtx, sess.ID, "", "")
 		ownerResult <- result{id: id, err: err}
 	}()
 	select {
@@ -372,7 +371,7 @@ func TestCallerSeparation_ForeignForkDoesNotContendOnOwnerCoordination(t *testin
 
 	foreignResult := make(chan error, 1)
 	go func() {
-		_, err := svc.ForkSession(bobCtx, sess.ID, "", "")
+		_, err := forkSession(svc, bobCtx, sess.ID, "", "")
 		foreignResult <- err
 	}()
 	select {
@@ -383,7 +382,7 @@ func TestCallerSeparation_ForeignForkDoesNotContendOnOwnerCoordination(t *testin
 	case <-time.After(time.Second):
 		t.Fatal("foreign fork contended on the owner's coordination lock")
 	}
-	if _, err := svc.ForkSession(bobCtx, "missing", "", ""); !errors.Is(err, server.ErrNotFound) {
+	if _, err := forkSession(svc, bobCtx, "missing", "", ""); !errors.Is(err, server.ErrNotFound) {
 		t.Fatalf("missing ForkSession = %v, want ErrNotFound", err)
 	}
 	if saves, deletes := store.counts(); saves != 0 || deletes != 0 {
@@ -416,7 +415,7 @@ func TestCallerSeparation_ManagementReloadReauthorizesAfterPreflight(t *testing.
 			return svc.DeleteSession(ctx, id)
 		}},
 		{name: "fork", run: func(svc *server.Service, ctx context.Context, id session.SessionID) error {
-			_, err := svc.ForkSession(ctx, id, "", "")
+			_, err := forkSession(svc, ctx, id, "", "")
 			return err
 		}},
 	}
@@ -470,7 +469,7 @@ func TestCallerSeparation_ManagementReauthorizesAfterLeaseAcquisition(t *testing
 			return svc.DeleteSession(ctx, id)
 		}},
 		{name: "fork", run: func(svc *server.Service, ctx context.Context, id session.SessionID) error {
-			_, err := svc.ForkSession(ctx, id, "", "")
+			_, err := forkSession(svc, ctx, id, "", "")
 			return err
 		}},
 	}
@@ -524,7 +523,7 @@ func TestSessionManagementRevalidatesAfterLeaseWithoutOwnership(t *testing.T) {
 			return svc.DeleteSession(ctx, id)
 		}},
 		{name: "fork", run: func(svc *server.Service, ctx context.Context, id session.SessionID) error {
-			_, err := svc.ForkSession(ctx, id, "", "")
+			_, err := forkSession(svc, ctx, id, "", "")
 			return err
 		}},
 	}
@@ -618,7 +617,7 @@ func TestSessionManagementRejectsKindAwaitingAndLive(t *testing.T) {
 	if err := store.Save(ctx, child); err != nil {
 		t.Fatalf("Save child: %v", err)
 	}
-	if _, err := svc.ForkSession(ctx, child.ID, "", ""); !errors.Is(err, server.ErrFailedPrecondition) {
+	if _, err := forkSession(svc, ctx, child.ID, "", ""); !errors.Is(err, server.ErrFailedPrecondition) {
 		t.Fatalf("ForkSession(child) = %v, want ErrFailedPrecondition", err)
 	}
 	if _, err := svc.RenameSession(ctx, child.ID, "no"); !errors.Is(err, server.ErrFailedPrecondition) {
@@ -648,7 +647,7 @@ func TestSessionManagementRejectsKindAwaitingAndLive(t *testing.T) {
 	if err := store.Save(ctx, awaiting); err != nil {
 		t.Fatalf("Save awaiting: %v", err)
 	}
-	if _, err := svc.ForkSession(ctx, awaiting.ID, "", ""); !errors.Is(err, server.ErrFailedPrecondition) {
+	if _, err := forkSession(svc, ctx, awaiting.ID, "", ""); !errors.Is(err, server.ErrFailedPrecondition) {
 		t.Fatalf("ForkSession(awaiting) = %v, want ErrFailedPrecondition", err)
 	}
 	if _, err := svc.RenameSession(ctx, awaiting.ID, "no"); !errors.Is(err, server.ErrFailedPrecondition) {
@@ -666,7 +665,7 @@ func TestSessionManagementRejectsKindAwaitingAndLive(t *testing.T) {
 	if err != nil {
 		t.Fatalf("StartRun: %v", err)
 	}
-	if _, err := svc.ForkSession(ctx, live.ID, "", ""); !errors.Is(err, server.ErrFailedPrecondition) {
+	if _, err := forkSession(svc, ctx, live.ID, "", ""); !errors.Is(err, server.ErrFailedPrecondition) {
 		t.Fatalf("ForkSession(live) = %v, want ErrFailedPrecondition", err)
 	}
 	if _, err := svc.RenameSession(ctx, live.ID, "no"); !errors.Is(err, server.ErrFailedPrecondition) {
@@ -914,7 +913,7 @@ func TestForkSessionUsesManagementGateAndScopedLease(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
-	if _, err := svc.ForkSession(bob, src.ID, "", ""); !errors.Is(err, server.ErrNotFound) {
+	if _, err := forkSession(svc, bob, src.ID, "", ""); !errors.Is(err, server.ErrNotFound) {
 		t.Fatalf("foreign ForkSession = %v, want ErrNotFound", err)
 	}
 	if lease.acquires != 0 {
@@ -929,11 +928,11 @@ func TestForkSessionUsesManagementGateAndScopedLease(t *testing.T) {
 	if err := store.Save(alice, child); err != nil {
 		t.Fatalf("Save child: %v", err)
 	}
-	if _, err := svc.ForkSession(alice, child.ID, "", ""); !errors.Is(err, server.ErrFailedPrecondition) {
+	if _, err := forkSession(svc, alice, child.ID, "", ""); !errors.Is(err, server.ErrFailedPrecondition) {
 		t.Fatalf("legacy-prefix ForkSession = %v, want ErrFailedPrecondition", err)
 	}
 
-	forkID, err := svc.ForkSession(alice, src.ID, "", "")
+	forkID, err := forkSession(svc, alice, src.ID, "", "")
 	if err != nil {
 		t.Fatalf("ForkSession: %v", err)
 	}

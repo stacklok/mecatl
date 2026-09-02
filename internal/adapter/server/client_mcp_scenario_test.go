@@ -24,7 +24,6 @@ import (
 	"google.golang.org/grpc/status"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
@@ -139,10 +138,10 @@ func clientMCPServiceUnreachable(t *testing.T, permit bool, rec *mcpSpecRecorder
 		Model:   "test-model",
 	})
 	cfg := server.Config{
-		Engine:           shared,
-		Store:            memstore.New(),
-		Workspaces:       func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
-		DefaultWorkspace: "/ws",
+		Engine: shared,
+		Store:  memstore.New(),
+
+		SharedEngineRoot: "/ws",
 		Now:              func() time.Time { return time.Unix(0, 0) },
 		Diagnostics:      diag,
 		// The deployment policy under test. Derived by mecated from listener
@@ -1115,10 +1114,10 @@ func TestSDKServerEnablers_Scenario9_PartialMountToleratedOnACPPath(t *testing.T
 // exists to prevent, and it would pass its tests while doing so.
 func TestSDKServerEnablers_Scenario9_UnreportedMountFailsClosed(t *testing.T) {
 	svc := mustService(t, server.Config{
-		Engine:            sharedTestEngine(),
-		Store:             memstore.New(),
-		Workspaces:        func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
-		DefaultWorkspace:  "/ws",
+		Engine: sharedTestEngine(),
+		Store:  memstore.New(),
+
+		SharedEngineRoot:  "/ws",
 		Now:               func() time.Time { return time.Unix(0, 0) },
 		ClientMCPOnCreate: true,
 		// A factory that mounts specs but never populates MountedClientMCP.

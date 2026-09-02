@@ -20,7 +20,6 @@ import (
 	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/agents"
 	"github.com/stacklok/mecatl/internal/adapter/hookexec"
-	"github.com/stacklok/mecatl/internal/adapter/osfs"
 	"github.com/stacklok/mecatl/internal/adapter/server"
 	"github.com/stacklok/mecatl/internal/adapter/slogdiag"
 	"github.com/stacklok/mecatl/internal/adapter/tokenizer"
@@ -615,17 +614,10 @@ func TestHalfBSelectedSessionCapBounded(t *testing.T) {
 	store := memstore.New()
 	policy := permpolicy.NewPolicy([]governance.Rule{{Effect: governance.Allow}}, nil)
 	factory := sessionEngineFactory(Config{Model: "gpt-5"}, reg, oa, store, policy, hookexec.New(nil), nil, nil, catalogAssets{agentReg: defs}, nil)
-	wsFactory := func(root string) tool.Workspace {
-		ws, werr := osfs.NewWorkspace(root)
-		if werr != nil {
-			t.Fatalf("osfs workspace %q: %v", root, werr)
-		}
-		return ws
-	}
 	svc, err := newTestServerService(server.Config{
-		Engine:            noopEngine(),
-		Store:             store,
-		Workspaces:        wsFactory,
+		Engine: noopEngine(),
+		Store:  store,
+
 		Now:               func() time.Time { return time.Unix(0, 0) },
 		SessionEngine:     factory,
 		MaxSessionEngines: 1,

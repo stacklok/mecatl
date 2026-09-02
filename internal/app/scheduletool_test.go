@@ -154,10 +154,10 @@ func newScheduleTestService(t *testing.T, store port.SessionStore, llm *mockllm.
 		Store:   store,
 	})
 	svc, err := newTestServerService(server.Config{
-		Engine:              engine,
-		Store:               store,
-		DefaultWorkspace:    workspace,
-		Workspaces:          func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+		Engine:           engine,
+		Store:            store,
+		SharedEngineRoot: workspace,
+
 		Now:                 time.Now,
 		DefaultCapabilities: llm.Capabilities(),
 		Diagnostics:         port.NopDiagnostics{},

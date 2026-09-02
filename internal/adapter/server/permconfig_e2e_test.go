@@ -2,6 +2,7 @@ package server_test
 
 import (
 	"context"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -65,9 +66,12 @@ func newConfigService(t *testing.T, llm *mockllm.Provider, opts permconfig.Optio
 	svc, err := newPlacementTestService(server.Config{
 		Engine:           engine,
 		Store:            memstore.New(),
-		DefaultWorkspace: root,
-		Workspaces:       seededWorkspaces(files),
-		Now:              func() time.Time { return time.Unix(0, 0) },
+		SharedEngineRoot: root,
+		PlacementProvider: testPlacementProvider{
+			root: root, workspaces: seededWorkspaces(files), firstBind: &atomic.Bool{},
+		},
+		PlacementScope: "test",
+		Now:            func() time.Time { return time.Unix(0, 0) },
 	})
 	if err != nil {
 		t.Fatalf("new service: %v", err)

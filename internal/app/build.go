@@ -1831,32 +1831,20 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		},
 		StorageMaintenanceStatus: cfg.storageMaintenance.snapshot,
 		StorageMaintenanceUpdate: cfg.storageMaintenance.update,
-		Workspaces:               workspaceFactory,
-		PlacementProvider:        placementProvider,
-		PlacementScope:           placementScope,
+
+		PlacementProvider: placementProvider,
+		PlacementScope:    placementScope,
 		RootAuthority: func(kind session.SessionKind) session.Authority {
 			return mintRootAuthority(assets.rootCatalog, mcpResourceCapabilities(assets.globalMgr), kind)
 		},
-		DefaultWorkspace: cfg.Workspace, // the launch root; a session on a DIFFERENT root routes through the per-session factory (issue #102, docs/adr/0032)
+		SharedEngineRoot: cfg.Workspace, // the launch root; a session on a DIFFERENT root routes through the per-session factory (issue #102, docs/adr/0032)
 		// ADR 0237 applied to outbound MCP: the same deployment-policy discipline —
 		// decided by the cmd/ main from its listener topology, passed through here,
 		// never inferred from the server package's socket state.
 		ClientMCPOnCreate: cfg.ClientMCPOnCreate,
-		// CommandRunner (issue #462): the MAIN session's bound runner — the
-		// Environment seam hands it to Tool.Execute so Bash observes the session
-		// namespace. nil when Bash is disabled (the catalog omits Bash and the
-		// Environment's Bash surfaces ErrNoShell). CommandRunnerFactory builds a
-		// runner bound to a DIFFERENT session root (a worktree binding) with the
-		// SAME env-scrub the main runner gets, so a worktree session's Bash
-		// observes its own root, not the launch root.
-		CommandRunner: buildCommandRunner(cfg),
-		CommandRunnerFactory: func(root string) tool.CommandRunner {
-			return buildCommandRunnerForRoot(cfg, root)
-		},
-		Worktrees:     worktreeLister,
-		DefaultLimits: defaultLimits(),
-		MCPProvider:   mcpProvider,
-		MCPSources:    mcpInventory,
+		DefaultLimits:     defaultLimits(),
+		MCPProvider:       mcpProvider,
+		MCPSources:        mcpInventory,
 		// Schedule manager (ADR 0076): the pre-Service store-shaped schedule
 		// seam, constructed by buildEngine from the store (the eager bind —
 		// the SAME manager the shared catalog's Schedule tool factory
@@ -5727,10 +5715,9 @@ func buildCommandRunner(cfg Config) tool.CommandRunner {
 
 // buildCommandRunnerForRoot is the ONE implementation of the no-bash/shell
 // gate + envscrub.Scrub(os.Environ()) + osfs constructor, parameterised by the
-// root the runner is bound to. buildCommandRunner (the main-session runner,
-// bound to cfg.Workspace) and Config.CommandRunnerFactory (a worktree-bound
-// session runner) both route through here, so the secret-scrubbing cannot
-// drift between the default-root and alternate-root paths (security review
+// root the runner is bound to. The main runner and the placement provider's
+// private environment construction both route through here, so secret scrubbing
+// cannot drift between default-root and alternate-root paths (security review
 // "Finding B"). It returns nil when command execution is disabled
 // (NoBash or an empty Shell); on a construction error it WARNs and returns nil.
 func buildCommandRunnerForRoot(cfg Config, root string) tool.CommandRunner {

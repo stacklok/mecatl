@@ -6,7 +6,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
 	"github.com/stacklok/mecatl/engine/adapter/permstore"
 	"github.com/stacklok/mecatl/engine/adapter/wallclock"
@@ -139,9 +138,9 @@ func runFireCancelTest(t *testing.T, shareStore bool) {
 		Store:   engineStore,
 	})
 	svc, err := newTestServerService(server.Config{
-		Engine:              engine,
-		Store:               store, // the Service store is ALWAYS the real one (create + Persist use it)
-		Workspaces:          func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+		Engine: engine,
+		Store:  store, // the Service store is ALWAYS the real one (create + Persist use it)
+
 		Now:                 time.Now,
 		DefaultCapabilities: llm.Capabilities(),
 		EventLog:            store,

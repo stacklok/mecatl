@@ -447,9 +447,8 @@ func nofsRejectionService(t *testing.T) *server.Service {
 		Hooks:   hookexec.New(nil),
 	})
 	svc, err := newTestServerService(server.Config{
-		Engine:     eng,
-		Store:      memstore.New(),
-		Workspaces: func(string) tool.Workspace { return nofs.New() },
+		Engine: eng,
+		Store:  memstore.New(),
 	})
 	if err != nil {
 		t.Fatalf("NewService: %v", err)

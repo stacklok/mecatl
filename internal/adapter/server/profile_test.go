@@ -187,10 +187,9 @@ func TestNoFSSessionUsesWorkspaceOverride(t *testing.T) {
 			Model:   "test-model",
 		}),
 		Store: memstore.New(),
-		Workspaces: func(root string) tool.Workspace {
-			factoryRoots = append(factoryRoots, root)
-			return nil // a no-fs run must never reach here; nil would break it loudly
-		},
+
+		// a no-fs run must never reach here; nil would break it loudly
+
 		DefaultLimits: session.Limits{MaxTurns: 5},
 		Now:           func() time.Time { return time.Unix(0, 0) },
 		SessionEngine: func(_ context.Context, _ server.ProviderSelector, _ []mcp.ServerConfig, _ server.SessionProfile, _ string, _ session.PermissionMode) (server.SessionEngineResult, error) {
@@ -225,7 +224,7 @@ func TestNoFSSessionUsesWorkspaceOverride(t *testing.T) {
 // The Workspaces factory records every root it is consulted with so a test can
 // assert the no-fs path NEVER reaches it (the TestNoFSSessionUsesWorkspaceOverride
 // seam); factoryRoots may be nil for tests that don't care.
-func noFSServiceOverStore(t *testing.T, store *memstore.Store, factory server.SessionEngineFactory, factoryRoots *[]string) *server.Service {
+func noFSServiceOverStore(t *testing.T, store *memstore.Store, factory server.SessionEngineFactory, _ *[]string) *server.Service {
 	t.Helper()
 	svc, err := newPlacementTestService(server.Config{
 		Engine: agent.NewEngine(agent.Deps{
@@ -235,12 +234,9 @@ func noFSServiceOverStore(t *testing.T, store *memstore.Store, factory server.Se
 			Model:   "test-model",
 		}),
 		Store: store,
-		Workspaces: func(root string) tool.Workspace {
-			if factoryRoots != nil {
-				*factoryRoots = append(*factoryRoots, root)
-			}
-			return nil // a no-fs run must never reach here; nil breaks it loudly
-		},
+
+		// a no-fs run must never reach here; nil breaks it loudly
+
 		DefaultLimits: session.Limits{MaxTurns: 5},
 		Now:           func() time.Time { return time.Unix(0, 0) },
 		SessionEngine: factory,

@@ -183,7 +183,7 @@ func TestADR_0280_CompositionConfiguresProviderOwnedPlacements(t *testing.T) {
 					ref,
 					memfs.NewWorkspace("/private-provider-root"), nil,
 				),
-				Metadata: server.PlacementMetadata{Name: "Provider placement"},
+				Metadata: server.PlacementMetadata{Label: "Provider placement"},
 			}}
 			built, err := Build(context.Background(), Config{
 				Workspace: rootForPlacementTest(t), UseMock: true,

@@ -5,7 +5,6 @@ import (
 	"os"
 	"testing"
 
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/governance"
@@ -68,9 +67,9 @@ func TestADR_0233_AuthorityEvaluator_Scenario6_MintedRootCanDescend(t *testing.T
 func TestADR_0233_AuthorityEvaluator_Scenario6_NonSpawnDerivationPointsAreExplicit(t *testing.T) {
 	root := mintRootAuthority(rootAuthorityCatalog(t), nil, session.SessionKindMain)
 	svc, err := newTestServerService(server.Config{
-		Engine:        agent.NewEngine(agent.Deps{Catalog: tool.NewCatalog()}),
-		Store:         memstore.New(),
-		Workspaces:    func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+		Engine: agent.NewEngine(agent.Deps{Catalog: tool.NewCatalog()}),
+		Store:  memstore.New(),
+
 		RootAuthority: func(session.SessionKind) session.Authority { return root },
 	})
 	if err != nil {
@@ -84,7 +83,7 @@ func TestADR_0233_AuthorityEvaluator_Scenario6_NonSpawnDerivationPointsAreExplic
 	if !bound {
 		t.Fatal("ordinary root has no authority")
 	}
-	forkID, err := svc.ForkSession(context.Background(), main.ID, "", "")
+	forkID, err := svc.ForkSessionSuccessor(context.Background(), server.ForkSuccessorRequest{Source: main.ID})
 	if err != nil {
 		t.Fatalf("ForkSession: %v", err)
 	}

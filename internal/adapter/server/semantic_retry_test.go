@@ -17,7 +17,6 @@ import (
 	"google.golang.org/grpc/status"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
@@ -129,7 +128,7 @@ func TestRetryFailedRunEligibility(t *testing.T) {
 	blocking := &blockingRetryLLM{started: make(chan struct{}), release: make(chan struct{})}
 	activeStore := memstore.New()
 	activeEngine := agent.NewEngine(agent.Deps{LLM: blocking, Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil), Model: "active-model", MaxNoProgressNudges: -1})
-	activeSvc, err := newPlacementTestService(server.Config{Engine: activeEngine, Store: activeStore, Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) }})
+	activeSvc, err := newPlacementTestService(server.Config{Engine: activeEngine, Store: activeStore})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -185,7 +184,7 @@ func TestRetryFailedRunRehydratesPersistedSelector(t *testing.T) {
 		return agent.NewEngine(agent.Deps{LLM: mockllm.New(mockllm.TextTurn("wrong shared model")), Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil), Model: "shared"})
 	}
 	var firstSeen atomic.Value
-	svc1, err := newPlacementTestService(server.Config{Engine: shared(), Store: store, Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) }, SessionEngine: factory(mockllm.ErrorTurn(&retryFailure{session.RetryDispositionRetryable, session.StreamProgressPrecommit}), &firstSeen)})
+	svc1, err := newPlacementTestService(server.Config{Engine: shared(), Store: store, SessionEngine: factory(mockllm.ErrorTurn(&retryFailure{session.RetryDispositionRetryable, session.StreamProgressPrecommit}), &firstSeen)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -207,7 +206,7 @@ func TestRetryFailedRunRehydratesPersistedSelector(t *testing.T) {
 	failingFactory := func(context.Context, server.ProviderSelector, []mcp.ServerConfig, server.SessionProfile, string, session.PermissionMode) (server.SessionEngineResult, error) {
 		return server.SessionEngineResult{}, errors.New("factory unavailable")
 	}
-	failedSetupSvc, err := newPlacementTestService(server.Config{Engine: shared(), Store: store, Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) }, SessionEngine: failingFactory})
+	failedSetupSvc, err := newPlacementTestService(server.Config{Engine: shared(), Store: store, SessionEngine: failingFactory})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -235,7 +234,7 @@ func TestRetryFailedRunRehydratesPersistedSelector(t *testing.T) {
 		})}, mockllm.TextTurn("same selector retried"))
 		return server.SessionEngineResult{Engine: agent.NewEngine(agent.Deps{LLM: llm, Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil), Model: got.ModelID})}, nil
 	}
-	svc2, err := newPlacementTestService(server.Config{Engine: shared(), Store: store, Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) }, SessionEngine: retryFactory})
+	svc2, err := newPlacementTestService(server.Config{Engine: shared(), Store: store, SessionEngine: retryFactory})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -309,7 +308,7 @@ func TestRetryPendingRestartBlocksPromptAndRetryIsIdempotent(t *testing.T) {
 	}
 	llm := mockllm.New(mockllm.TextTurn("retried after crash"))
 	eng := agent.NewEngine(agent.Deps{LLM: llm, Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil), Model: "retry"})
-	svc, err := newPlacementTestService(server.Config{Engine: eng, Store: store, Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) }})
+	svc, err := newPlacementTestService(server.Config{Engine: eng, Store: store})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -335,7 +334,7 @@ func TestGRPCRetryEmitsAndPersistsModelRetry(t *testing.T) {
 		mockllm.TextTurn("replacement"),
 	)
 	eng := agent.NewEngine(agent.Deps{LLM: llm, Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil), Model: "retry"})
-	svc, err := newPlacementTestService(server.Config{Engine: eng, Store: store, EventLog: log, Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) }})
+	svc, err := newPlacementTestService(server.Config{Engine: eng, Store: store, EventLog: log})
 	if err != nil {
 		t.Fatal(err)
 	}

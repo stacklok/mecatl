@@ -8,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
 	"github.com/stacklok/mecatl/engine/adapter/wallclock"
@@ -47,9 +46,9 @@ func newReconcileTestService(t *testing.T) (store *jsonlstore.Store, schedStore 
 		Store:   s,
 	})
 	sv, err := newTestServerService(server.Config{
-		Engine:              engine,
-		Store:               s,
-		Workspaces:          func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+		Engine: engine,
+		Store:  s,
+
 		Now:                 time.Now,
 		DefaultCapabilities: llm.Capabilities(),
 		EventLog:            s,

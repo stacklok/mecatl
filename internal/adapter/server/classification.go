@@ -272,7 +272,6 @@ var serviceAccessTable = map[string]ClassificationEntry{
 	"RenameSession":             {KindCallerOwned, "authorizes via GetSession, then revalidates ownership, kind, state, liveness, and lease under runEntryMu before persisting"},
 	"CompactSession":            {KindCallerOwned, "binds the verified caller, then revalidates ownership, chat purpose, state, liveness, and lease under runEntryMu before saving and appending events"},
 	"DeleteSession":             {KindCallerOwned, "authorizes via GetSession, then revalidates ownership, kind, state, liveness, and lease under runEntryMu before physical deletion"},
-	"ForkSession":               {KindCallerOwned, "authorizes the SOURCE session (authorizeSession) before copying its history to a new owned session"},
 	"EndSession":                {KindCallerOwned, "authorizes via GetSession before CloseSession"},
 	"ListSessions":              {KindCallerOwned, "filters to the caller's own rows before any pagination/count is computed"},
 	"ListSessionPage":           {KindCallerOwned, "passes caller ownership into the store query before keyset page formation and counting"},
@@ -317,14 +316,14 @@ var serviceAccessTable = map[string]ClassificationEntry{
 	"FireNow":        {KindCallerOwned, "authorizes via GetSchedule before manually firing"},
 
 	// --- caller-owned: teams ---
-	"CreateTeam":           {KindCallerOwned, "binds the verified context principal as the team's owner at registration"},
-	"CreateTeamForSession": {KindCallerOwned, "owner-authorizes and exactly reattaches the source session before deriving the team's complete environment"},
-	"SpawnTeammate":        {KindCallerOwned, "authorizes via the shared lookupTeam (ownsResource) before enrolling a member"},
-	"SendTeammateMessage":  {KindCallerOwned, "authorizes via the shared lookupTeam before posting to a member's inbox"},
-	"CancelTeammate":       {KindCallerOwned, "authorizes via the shared lookupTeam before cancelling a member mid-round"},
-	"RunTeam":              {KindCallerOwned, "authorizes via the shared lookupTeam before claiming and driving the team"},
-	"ListTeam":             {KindCallerOwned, "authorizes via the shared lookupTeam before reading the roster/tasks"},
-	"CleanupTeam":          {KindCallerOwned, "authorizes via ownsResource before dropping the registry entry (issue #368 task 06 fix — CleanupTeam previously ignored its ctx)"},
+	"CreateTeamOnDefaultPlacement": {KindCallerOwned, "explicit trusted-composition default placement binds the verified caller as team owner"},
+	"CreateTeamForSession":         {KindCallerOwned, "owner-authorizes and exactly reattaches the source session before deriving the team's complete environment"},
+	"SpawnTeammate":                {KindCallerOwned, "authorizes via the shared lookupTeam (ownsResource) before enrolling a member"},
+	"SendTeammateMessage":          {KindCallerOwned, "authorizes via the shared lookupTeam before posting to a member's inbox"},
+	"CancelTeammate":               {KindCallerOwned, "authorizes via the shared lookupTeam before cancelling a member mid-round"},
+	"RunTeam":                      {KindCallerOwned, "authorizes via the shared lookupTeam before claiming and driving the team"},
+	"ListTeam":                     {KindCallerOwned, "authorizes via the shared lookupTeam before reading the roster/tasks"},
+	"CleanupTeam":                  {KindCallerOwned, "authorizes via ownsResource before dropping the registry entry (issue #368 task 06 fix — CleanupTeam previously ignored its ctx)"},
 
 	// --- derived: resolve ownership through an already-classified caller-owned call ---
 	"SessionCapabilities":          {KindDerived, "reads the per-session engine registry keyed on an id the caller only holds from an authorized CreateSession*/GetSession* echo; carries no ctx to re-check"},
@@ -375,10 +374,6 @@ var serviceAccessTable = map[string]ClassificationEntry{
 	"ArchiveLearnedSkill":      {KindCallerOwned, "archives an agent-owned caller-partitioned version with revision CAS"},
 	"RollbackLearnedSkill":     {KindCallerOwned, "rolls back an agent-owned caller-partitioned skill with revision CAS"},
 	"ListSkillChanges":         {KindCallerOwned, "lists bounded receipts only from the verified caller's learned-skill partition"},
-
-	// --- exempt: workspace-path-scoped (project trust), not caller-identity-scoped ---
-	"ListCommands":  {KindExempt, "scoped by filesystem workspace path under the pre-existing project-trust gate, not caller identity — out of ADR 0212's per-caller kind table"},
-	"ListWorktrees": {KindExempt, "scoped by filesystem workspace path under the pre-existing project-trust gate, not caller identity"},
 
 	// --- exempt: composition-time wiring / process lifecycle, structurally caller-free ---
 	"SetModels":              {KindExempt, "composition-time model-catalog setter; no per-caller identity exists at this call site"},

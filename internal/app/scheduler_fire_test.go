@@ -176,9 +176,9 @@ func TestMakeFireFuncUsesScheduleOwnerForRunEntry(t *testing.T) {
 		Store:   store,
 	})
 	svc, err := newTestServerService(server.Config{
-		Engine:              engine,
-		Store:               store,
-		Workspaces:          func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+		Engine: engine,
+		Store:  store,
+
 		Now:                 time.Now,
 		DefaultCapabilities: llm.Capabilities(),
 		EventLog:            store,
@@ -279,9 +279,9 @@ func TestFireFailedUsesPresentedScheduleNameOnCreateFailure(t *testing.T) {
 		Store:   store,
 	})
 	svc, err := newTestServerService(server.Config{
-		Engine:            engine,
-		Store:             store,
-		Workspaces:        func(string) tool.Workspace { return nil },
+		Engine: engine,
+		Store:  store,
+
 		Now:               time.Now,
 		EventLog:          store,
 		Diagnostics:       port.NopDiagnostics{},
@@ -376,9 +376,9 @@ func TestMakeFireFuncReleasesSessionLease(t *testing.T) {
 	})
 	lease := memlease.New(wallclock.Clock{}, 30*time.Second)
 	svc, err := newTestServerService(server.Config{
-		Engine:              engine,
-		Store:               store,
-		Workspaces:          func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+		Engine: engine,
+		Store:  store,
+
 		Now:                 time.Now,
 		DefaultCapabilities: llm.Capabilities(),
 		EventLog:            store,

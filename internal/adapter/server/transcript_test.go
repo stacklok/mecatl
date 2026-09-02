@@ -19,7 +19,6 @@ import (
 	"google.golang.org/grpc/status"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memlease"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
@@ -119,10 +118,7 @@ func newTranscriptService(t *testing.T, store port.SessionStore, eventLog port.E
 		Store:             store,
 		EventLog:          eventLog,
 		OwnershipEnforced: ownership,
-		Workspaces: func(root string) tool.Workspace {
-			effects.Add(1)
-			return memfs.NewWorkspace(root)
-		},
+
 		SessionEngine: func(context.Context, server.ProviderSelector, []mcp.ServerConfig, server.SessionProfile, string, session.PermissionMode) (server.SessionEngineResult, error) {
 			effects.Add(1)
 			return server.SessionEngineResult{}, errors.New("must not rebuild")
@@ -170,9 +166,9 @@ func TestADR_0108_TranscriptBackendErrorsAreRedacted(t *testing.T) {
 	const raw = "snapshot decode failed at /secret/backend/session.jsonl"
 	diag := &recordingDiagnostics{}
 	svc, err := newPlacementTestService(server.Config{
-		Engine:      agent.NewEngine(agent.Deps{LLM: mockllm.New(), Catalog: tool.NewCatalog(), Model: "test"}),
-		Store:       &transcriptStore{inner: memstore.New(), loadErr: errors.New(raw)},
-		Workspaces:  func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+		Engine: agent.NewEngine(agent.Deps{LLM: mockllm.New(), Catalog: tool.NewCatalog(), Model: "test"}),
+		Store:  &transcriptStore{inner: memstore.New(), loadErr: errors.New(raw)},
+
 		Diagnostics: diag,
 	})
 	if err != nil {
@@ -263,8 +259,8 @@ func TestStoreFailureIsVisibleToTheOperatorButNotCorrelated(t *testing.T) {
 		Engine:            agent.NewEngine(agent.Deps{LLM: mockllm.New(), Catalog: tool.NewCatalog(), Model: "test"}),
 		Store:             store,
 		OwnershipEnforced: true,
-		Workspaces:        func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
-		Diagnostics:       diag,
+
+		Diagnostics: diag,
 	})
 	if err != nil {
 		t.Fatalf("NewService: %v", err)
@@ -312,8 +308,8 @@ func TestTranscriptOwnershipModeConcealsLoadFailure(t *testing.T) {
 		Engine:            agent.NewEngine(agent.Deps{LLM: mockllm.New(), Catalog: tool.NewCatalog(), Model: "test"}),
 		Store:             store,
 		OwnershipEnforced: true,
-		Workspaces:        func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
-		Diagnostics:       diag,
+
+		Diagnostics: diag,
 	})
 	if err != nil {
 		t.Fatalf("NewService: %v", err)

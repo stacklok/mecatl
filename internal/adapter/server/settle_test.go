@@ -5,7 +5,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
@@ -23,7 +22,7 @@ import (
 // engine/session.TestAbandonFromRunningClosesOutOrphansAndIdles).
 func crashOrphanedSession(t *testing.T, id session.SessionID) *session.Session {
 	t.Helper()
-	sess := session.New(id, session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/tmp/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
+	sess := session.New(id, session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
 	if err := sess.RecordUserPrompt("do two things", nil); err != nil {
 		t.Fatalf("RecordUserPrompt: %v", err)
 	}
@@ -152,9 +151,8 @@ func newSettleService(t *testing.T, store *memstore.Store) *server.Service {
 		Model:   "test-model",
 	})
 	svc, err := newPlacementTestService(server.Config{
-		Engine:     engine,
-		Store:      store,
-		Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+		Engine: engine,
+		Store:  store,
 	})
 	if err != nil {
 		t.Fatalf("new service: %v", err)

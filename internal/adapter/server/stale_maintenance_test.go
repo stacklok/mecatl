@@ -5,7 +5,6 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
@@ -37,8 +36,8 @@ func TestStaleMaintenanceBoundaryEnumeratesOwnedCandidatesOnly(t *testing.T) {
 		}
 	}
 	svc, err := newPlacementTestService(server.Config{
-		Engine: agent.NewEngine(agent.Deps{LLM: mockllm.New(), Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil)}),
-		Store:  store, Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+		Engine:            agent.NewEngine(agent.Deps{LLM: mockllm.New(), Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil)}),
+		Store:             store,
 		OwnershipEnforced: true,
 	})
 	if err != nil {

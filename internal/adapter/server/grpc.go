@@ -13,6 +13,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/encoding/protowire"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 	"github.com/stacklok/mecatl/engine/agent"
@@ -39,6 +40,9 @@ var _ mecatlv1.HarnessServiceServer = (*HarnessServer)(nil)
 
 // CreateSession allocates a new session and returns its id.
 func (h *HarnessServer) CreateSession(ctx context.Context, req *mecatlv1.CreateSessionRequest) (*mecatlv1.CreateSessionResponse, error) {
+	if hasLegacyCreateSessionField(req.ProtoReflect().GetUnknown()) {
+		return nil, status.Error(codes.InvalidArgument, "legacy workspace placement fields are unsupported")
+	}
 	// Session profile (issue #55): "" = default (full filesystem), "no-fs" = the
 	// no-filesystem profile; anything else is a loud InvalidArgument. The
 	// workspace requirement is PROFILE-AWARE and enforced in the service
@@ -95,6 +99,25 @@ func (h *HarnessServer) CreateSession(ctx context.Context, req *mecatlv1.CreateS
 		ResolvedModel: resolvedModelToProto(h.svc.ResolvedModel(sess.ID)),
 		Placement:     placementMetadataToProto(sess.Placement),
 	}, nil
+}
+
+func hasLegacyCreateSessionField(raw []byte) bool {
+	for len(raw) > 0 {
+		number, wireType, n := protowire.ConsumeTag(raw)
+		if n < 0 {
+			return false
+		}
+		raw = raw[n:]
+		if number == 1 || number == 8 {
+			return true
+		}
+		n = protowire.ConsumeFieldValue(number, wireType, raw)
+		if n < 0 {
+			return false
+		}
+		raw = raw[n:]
+	}
+	return false
 }
 
 // clientMCPFromProto maps the wire McpServerSpec list onto the transport-neutral

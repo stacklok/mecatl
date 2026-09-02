@@ -10,7 +10,6 @@ import (
 	"time"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
@@ -32,7 +31,7 @@ func debugTestService(t *testing.T, store port.SessionStore, ownerEnforced bool,
 	t.Helper()
 	svc, err := newPlacementTestService(server.Config{
 		Engine: debugTestEngine("shared"), Store: store,
-		Workspaces:        func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+
 		Now:               func() time.Time { return time.Unix(1700000000, 0).UTC() },
 		OwnershipEnforced: ownerEnforced, DebugSessionEngine: factory, DebugMCP: true,
 	})
@@ -271,7 +270,7 @@ func TestDebuggerLifecycleNeverMutatesOrLeasesTarget(t *testing.T) {
 		calls := 0
 		svc, err := newPlacementTestService(server.Config{
 			Engine: debugTestEngine("shared"), Store: store,
-			Workspaces:         func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+
 			Now:                func() time.Time { return time.Unix(1700000000, 0).UTC() },
 			DebugSessionEngine: debugFactory(&calls), SessionLease: leases,
 			LeaseOwner: "debug-test", LeaseTTL: time.Hour, LeaseRenewInterval: time.Hour,
