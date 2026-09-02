@@ -19,9 +19,9 @@ separate listeners or an ingress translates between them.
 RFC 9728 standardizes protected-resource metadata, including the resource URL
 and authorization-server issuer, but does not standardize an OAuth client ID or
 the resource server's configured audience. ToolHive v0.40.0 contains the
-closest server and client implementations (`pkg/auth/token.go`,
-`pkg/auth/well_known.go`, `pkg/auth/discovery/discovery.go`, and
-`pkg/oauthproto/constants.go`). ToolHive-Core v0.0.41 contains reusable
+closest server and client implementations (`pkg/auth/token.go` <!-- lint:not-a-citation: path inside the pinned ToolHive dependency, not repo file -->,
+`pkg/auth/well_known.go` <!-- lint:not-a-citation: path inside the pinned ToolHive dependency, not repo file -->, `pkg/auth/discovery/discovery.go` <!-- lint:not-a-citation: path inside the pinned ToolHive dependency, not repo file -->, and
+`pkg/oauthproto/constants.go` <!-- lint:not-a-citation: path inside the pinned ToolHive dependency, not repo file -->). ToolHive-Core v0.0.41 contains reusable
 networking and robust challenge parsing primitives. Their behavior is useful,
 but the fixed metadata type cannot carry mecatl extensions and several helpers
 need stricter routing, validation, and disclosure behavior for this boundary.
@@ -125,7 +125,7 @@ configured-audience behavior.
 - [ADR 0204 — Caller identity threading](0204-caller-identity-threading.md)
 - [Architecture guide](../architecture.md)
 - [OAuth protected-resource acceptance plan](../acceptance/oauth-protected-resource-discovery.md)
-- ToolHive v0.40.0 `pkg/auth/token.go`, `pkg/auth/well_known.go`, `pkg/auth/discovery/discovery.go`
-- ToolHive-Core v0.0.41 `networking/http_client.go`, `networking/fetch.go`
+- ToolHive v0.40.0 `pkg/auth/token.go`, `pkg/auth/well_known.go`, `pkg/auth/discovery/discovery.go` <!-- lint:not-a-citation: paths inside the pinned ToolHive dependency, not repo files -->
+- ToolHive-Core v0.0.41 `networking/http_client.go`, `networking/fetch.go` <!-- lint:not-a-citation: paths inside the pinned ToolHive-Core dependency, not repo files -->
 
 ---

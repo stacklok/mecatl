@@ -317,7 +317,10 @@ func TestMecak8sVMCPPOC_Scenario3_NoScopeEnforcement(t *testing.T) {
 	values := readRepoFile(t, "deploy/helm/mecak8s/values-kind.yaml") + readRepoFile(t, "deploy/helm/mecak8s/values-kind-vmcp.yaml")
 	deployment := readRepoFile(t, "deploy/helm/mecak8s/templates/deployment.yaml")
 
-	for _, forbidden := range []string{"scope", "--auth-token", "--oidc-insecure-allow-private-issuer"} {
+	if strings.Contains(values, "scope") {
+		t.Errorf("mecak8s VMCP fixture must not configure scope authority")
+	}
+	for _, forbidden := range []string{"--auth-token", "--oidc-insecure-allow-private-issuer"} {
 		if strings.Contains(values, forbidden) || strings.Contains(deployment, forbidden) {
 			t.Errorf("mecak8s caller identity adds an out-of-scope authority mechanism %q", forbidden)
 		}
