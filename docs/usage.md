@@ -81,6 +81,16 @@ step when it is still retry-pending. Mecatui automatically retries
 preserves the textarea and queued prompts, and reports a harmless status when no
 eligible failure exists. Historical transcript replay never triggers automatic retry.
 
+## mecatui remote TLS
+
+`mecatui connect ADDRESS` resolves TLS after it has the target: omitted `--tls`
+uses verified TLS for non-loopback or unparseable targets and plaintext for
+loopback. `--tls`/`--tls=true`, `--tls-ca`, and `--insecure` select TLS;
+`--tls=false` is the explicit plaintext downgrade. It conflicts with
+`--tls-ca` and `--insecure`, which also conflict with each other. A saved OIDC
+connection always verifies the gRPC server TLS, and its issuer CA is never used
+as server trust; `connect --tls-ca` is the sole custom server-CA input.
+
 ## mecatui session identity
 
 The TUI header shows a compact short handle for the active session rather than a long

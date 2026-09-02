@@ -100,8 +100,13 @@ instead.
 To use a specific **external** server instead, use the `connect` subcommand:
 
 ```sh
+# External loopback server: omitted --tls is plaintext only for loopback.
 bin/mecated serve &                                    # listens on 127.0.0.1:8080
 bin/mecatui connect 127.0.0.1:8080 --workspace "$PWD"
+
+# Remote targets use verified TLS automatically; --tls=false is the explicit
+# plaintext downgrade and is appropriate only for controlled non-bearer testing.
+bin/mecatui connect mecated.example.internal:443
 ```
 
 `--workspace` defaults to the current directory for an embedded server and for a
@@ -233,8 +238,10 @@ export MECATL_AUTH_TOKEN="$(your-oidc-cli print-access-token)"
 bin/mecatui connect 127.0.0.1:8080 --auth-token "$MECATL_AUTH_TOKEN"
 ```
 
-For a non-loopback endpoint, `mecatui` refuses to send a bearer without `--tls`.
-Use `connect --tls-ca` when the server uses a private CA. The remote server chooses
+For a non-loopback endpoint, omitted `--tls` verifies TLS automatically; `--tls`
+and `--tls-ca` also select verified TLS. `--tls=false` is the explicit plaintext
+downgrade, and a bearer is refused on that remote plaintext transport. Use
+`connect --tls-ca` when the server uses a private CA. The remote server chooses
 its own workspace authority: mecatui sends no local cwd, and an explicit
 `--workspace` is rejected locally rather than being treated as a path inside an
 agent pod. See [Security & transport](usage/mecated.md#security--transport-auth-tls-rate-limiting) for the attribution model and its non-tenancy limits.
@@ -427,9 +434,9 @@ a short directive with a longer brief. The seed fires ONCE: a `/models` restart 
 | `--theme` | `aztec` | theme name (also `MECATUI_THEME`); giving either pins the theme and disables the light/dark auto-detect below |
 | `--theme-dir` | – | extra directory of `*.json` themes to load |
 | `--auth-token` | – | bearer token for an **external** server (or `MECATL_AUTH_TOKEN`) |
-| `--tls` | off | use TLS transport for an **external** server |
-| `--tls-ca` | – | path to a PEM CA bundle for external-server verification |
-| `--insecure` | off | skip TLS verification (testing only) |
+| `--tls` | target-aware | verified TLS for an external server when given; omitted selects verified TLS for non-loopback/unparseable targets and plaintext for loopback; `--tls=false` explicitly permits remote plaintext |
+| `--tls-ca` | – | path to a PEM CA bundle for verified external-server TLS (also implies TLS) |
+| `--insecure` | off | encrypted TLS without certificate verification (controlled testing only; implies TLS) |
 | `--list-themes` | – | print available themes and exit |
 | `--version` | – | print the build identity and exit before normal startup |
 | `--inline` / `--no-alt-screen` | off | render inline in the terminal's normal buffer instead of the alternate screen, preserving native scrollback/search (no mouse capture; see `--no-mouse` below) |

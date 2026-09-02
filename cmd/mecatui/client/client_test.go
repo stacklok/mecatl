@@ -24,8 +24,8 @@ func TestDialBearerCleartextGuard(t *testing.T) {
 		wantErr bool
 	}{
 		{
-			name:    "non-loopback plaintext with token is refused",
-			cfg:     DialConfig{Server: "10.0.0.5:8080", AuthToken: "x", UseTLS: false},
+			name:    "non-loopback plaintext with token is refused even when explicitly allowed",
+			cfg:     DialConfig{Server: "10.0.0.5:8080", AuthToken: "x", UseTLS: false, RemotePlaintextAllowed: true},
 			wantErr: true,
 		},
 		{
@@ -39,8 +39,13 @@ func TestDialBearerCleartextGuard(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name:    "non-loopback plaintext WITHOUT a token is allowed",
+			name:    "non-loopback plaintext without authorization is refused",
 			cfg:     DialConfig{Server: "10.0.0.5:8080", UseTLS: false},
+			wantErr: true,
+		},
+		{
+			name:    "non-loopback plaintext without token is explicitly allowed",
+			cfg:     DialConfig{Server: "10.0.0.5:8080", UseTLS: false, RemotePlaintextAllowed: true},
 			wantErr: false,
 		},
 		{
@@ -102,17 +107,19 @@ func TestDialDynamicBearerCleartextGuard(t *testing.T) {
 // TestIsLoopbackHost covers the host classification used to gate the token and remote workspace authority.
 func TestIsLoopbackHost(t *testing.T) {
 	cases := map[string]bool{
-		"127.0.0.1:8080": true,
-		"127.0.0.1":      true,
-		"127.5.6.7:80":   true, // 127.0.0.0/8
-		"[::1]:8080":     true,
-		"::1":            true,
-		"localhost:8080": true,
-		"LocalHost":      true,
-		"10.0.0.5:8080":  false,
-		"example.com:80": false,
-		"0.0.0.0:8080":   false,
-		"":               false,
+		"127.0.0.1:8080":     true,
+		"127.0.0.1":          true,
+		"127.5.6.7:80":       true, // 127.0.0.0/8
+		"[::1]:8080":         true,
+		"::1":                true,
+		"localhost:8080":     true,
+		"LocalHost":          true,
+		"localhost:not-port": false,
+		"localhost:":         false,
+		"10.0.0.5:8080":      false,
+		"example.com:80":     false,
+		"0.0.0.0:8080":       false,
+		"":                   false,
 	}
 	for host, want := range cases {
 		if got := IsLoopbackHost(host); got != want {

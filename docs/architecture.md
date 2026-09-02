@@ -382,7 +382,10 @@ a second failure. Visible failures require an explicit retry. The server it talk
 either one it **hosts in-process** over a UNIX socket (`cmd/mecatui/embed` →
 `app.Build`, the default — bare `mecatui` always embeds, never probes) or an
 external `mecated` it dials via `mecatui connect ADDRESS` — so a single binary
-works with no daemon. The `sessions` launch intent is orthogonal to that transport:
+works with no daemon. Remote transport is target-aware: an omitted `--tls` uses
+verified TLS for a non-loopback or unparseable target and plaintext only for
+loopback; `--tls=false` is the explicit remote plaintext downgrade. A saved OIDC
+connection always uses verified TLS. The `sessions` launch intent is orthogonal to that transport:
 `mecatui sessions` and `mecatui connect ADDRESS sessions` enter the same stored-session
 inventory without first creating a session, then continue/inspect through the existing
 authoritative transcript path or create only when the operator requests a new chat.
@@ -522,7 +525,9 @@ saved policy and an explicit CA reference, never CA contents, are used for later
 and logout. The login `--tls-ca` path is distinct from the
 optional server CA supplied to `connect`. It validates discovery, PKCE, and
 the resulting token before saving. `mecatui connect ADDRESS` never opens a browser or
-guesses missing settings. An enrolled target uses a root-scoped OS-keyring key and a
+guesses missing settings. A saved credential forces verified TLS for the gRPC server,
+even on loopback; its saved issuer CA remains issuer-only, while `connect --tls-ca`
+is the only custom server-CA input. An enrolled target uses a root-scoped OS-keyring key and a
 keyring-wrapped encrypted credential store; under the root lock, the legacy unsuffixed
 keyring key is copied only when that encrypted namespace contains an actual credential
 record—opening an empty namespace is not migration evidence. Credentials are bound to
@@ -575,7 +580,7 @@ The shared private-HTTPS path reuses a finite, owner-closed scoped keep-alive po
 every new dial re-resolves DNS and intersects the approved addresses while retaining
 HTTPS, origin, CA, hostname, and redirect safeguards. Kind remote login is available after fixture setup with host aliases and
 the public CA, but is a live qualification path, not ordinary offline-test coverage.
-See [ADR 0275](adr/0275-bounded-scoped-https-keepalive-oidc.md), [ADR 0277](adr/0277-remote-mecatui-oidc.md) and [ADR 0274](adr/0274-remote-mecatui-logout-budget.md).
+See [ADR 0275](adr/0275-bounded-scoped-https-keepalive-oidc.md), [ADR 0277](adr/0277-remote-mecatui-oidc.md), [ADR 0281](adr/0281-target-aware-mecatui-tls.md), and [ADR 0274](adr/0274-remote-mecatui-logout-budget.md).
 
 **mecatequi — the single-shot headless runner (`cmd/mecatequi`).** A fourth composition
 root and a *peer of `mecademo`* over the same `app.Build`: it runs **one** prompt against

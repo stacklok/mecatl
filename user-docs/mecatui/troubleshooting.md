@@ -23,9 +23,14 @@ These are distinct failures:
 
 - **Connection failure:** confirm the address, network path, and that the operator started the server.
 - **Authentication failure:** obtain the right bearer token or identity credential from the operator; changing a local client setting cannot change server auth.
-- **TLS verification failure:** use `--tls`; when the server uses a private CA, obtain its CA bundle and pass `--tls-ca`. Do not bypass verification except in controlled testing.
+- **TLS verification failure:** remote targets use verified TLS automatically; use
+  `--tls-ca` when the server uses a private CA. `--tls=false` is an explicit
+  plaintext downgrade for controlled testing, not a verification fix. Do not use
+  `--insecure` except in controlled testing.
 
-A bearer is allowed over plaintext loopback, but mecatui refuses to send it to a non-loopback server without TLS. See [Connect to a server](./remote-servers.md) and the operator [server flag reference](/building/deployment/mecated.md#flag-reference).
+A bearer is allowed over plaintext loopback, but mecatui refuses it over explicit
+non-loopback plaintext. Saved OIDC authentication always uses verified TLS, even
+for loopback. See [Connect to a server](./remote-servers.md) and the operator [server flag reference](/building/deployment/mecated.md#flag-reference).
 
 ## The workspace is missing or unexpected
 

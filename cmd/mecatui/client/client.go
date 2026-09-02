@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	pathpkg "path"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -29,12 +30,13 @@ import (
 // unauthenticated plaintext by default; non-loopback may need a token and/or
 // TLS/mTLS.
 type DialConfig struct {
-	Server      string      // host:port, e.g. 127.0.0.1:8080
-	AuthToken   string      // optional static bearer; sent as "authorization: Bearer <tok>"
-	TokenSource TokenSource // optional dynamic bearer source, evaluated once per RPC
-	UseTLS      bool        // enable transport TLS
-	TLSCAFile   string      // optional custom CA bundle for server verification
-	Insecure    bool        // skip TLS verification (testing only; with UseTLS)
+	Server                 string      // host:port, e.g. 127.0.0.1:8080
+	AuthToken              string      // optional static bearer; sent as "authorization: Bearer <tok>"
+	TokenSource            TokenSource // optional dynamic bearer source, evaluated once per RPC
+	UseTLS                 bool        // enable transport TLS
+	TLSCAFile              string      // optional custom CA bundle for server verification
+	Insecure               bool        // skip TLS verification (testing only; with UseTLS)
+	RemotePlaintextAllowed bool        // explicit authorization for non-loopback plaintext
 }
 
 // TokenSource supplies a current bearer token for an RPC. Dial must not invoke it.
@@ -63,12 +65,17 @@ func Dial(cfg DialConfig) (*Client, error) {
 	var opts []grpc.DialOption
 
 	loopback := IsLoopbackHost(cfg.Server)
+	unix := strings.HasPrefix(cfg.Server, "unix://")
+
+	if !cfg.UseTLS && !loopback && !unix && !cfg.RemotePlaintextAllowed {
+		return nil, fmt.Errorf("refusing plaintext to non-loopback %q without explicit authorization", cfg.Server)
+	}
 
 	// Refuse to leak a bearer token in cleartext to a non-loopback server. The
 	// per-RPC credential's RequireTransportSecurity() also blocks this at send
 	// time, but a hard pre-dial guard gives the operator a clear, actionable
 	// error instead of an opaque RPC failure later.
-	if (cfg.AuthToken != "" || cfg.TokenSource != nil) && !cfg.UseTLS && !loopback {
+	if (cfg.AuthToken != "" || cfg.TokenSource != nil) && !cfg.UseTLS && !loopback && !unix {
 		return nil, fmt.Errorf(
 			"refusing to send auth token in cleartext to non-loopback %q: use --tls", cfg.Server)
 	}
@@ -681,13 +688,24 @@ func (b bearerCreds) RequireTransportSecurity() bool { return !b.allowInsecure }
 // A target with no resolvable/parseable host is treated as NON-loopback (fail
 // safe — we'd rather demand TLS than leak a token).
 func IsLoopbackHost(server string) bool {
-	host := server
-	if h, _, err := net.SplitHostPort(server); err == nil {
-		host = h
-	}
-	host = strings.TrimSpace(host)
+	host := strings.TrimSpace(server)
 	if host == "" {
 		return false
+	}
+	if strings.Contains(host, ":") {
+		h, port, err := net.SplitHostPort(host)
+		if err != nil {
+			// A bare IPv6 literal is a valid host form; malformed host:port
+			// spellings (including localhost: and localhost:not-a-port) fail closed.
+			if ip := net.ParseIP(host); ip != nil {
+				return ip.IsLoopback()
+			}
+			return false
+		}
+		if _, err := strconv.ParseUint(port, 10, 16); err != nil {
+			return false
+		}
+		host = h
 	}
 	if strings.EqualFold(host, "localhost") {
 		return true

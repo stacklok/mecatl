@@ -407,6 +407,9 @@ func parseRunConfig(res invocationResolution) (config, error) {
 	}
 	cfg.connectAddress = res.address
 	cfg.debugTarget = res.debugTarget
+	if err := resolveRemoteTLSPolicy(&cfg); err != nil {
+		return config{}, err
+	}
 	if err := configureWorkspaceForTransport(&cfg); err != nil {
 		return config{}, err
 	}
@@ -799,7 +802,7 @@ func resolveTransport(ctx context.Context, cfg config) (target string, dial clie
 	// ADDRESS and NEVER probes/embeds; the bare invocation ALWAYS embeds and
 	// NEVER probes loopback.
 	if cfg.transportMode == modeConnect {
-		dial := client.DialConfig{Server: cfg.connectAddress, AuthToken: cfg.authToken, UseTLS: cfg.useTLS, TLSCAFile: cfg.tlsCA, Insecure: cfg.insecure}
+		dial := client.DialConfig{Server: cfg.connectAddress, AuthToken: cfg.authToken, UseTLS: cfg.useTLS, TLSCAFile: cfg.tlsCA, Insecure: cfg.insecure, RemotePlaintextAllowed: cfg.tlsExplicit && !cfg.useTLS}
 		if cfg.authToken == "" && !cfg.noSavedAuth {
 			root := filepath.Join(xdg.ConfigHome, "mecatl")
 			registry, regErr := clientauth.OpenExistingRegistry(root)
@@ -810,8 +813,8 @@ func resolveTransport(ctx context.Context, cfg config) (target string, dial clie
 			if findErr == nil {
 				target = conn.Identity.Target
 				dial.Server = target
-				if !cfg.useTLS || cfg.insecure {
-					return target, client.DialConfig{}, noop, errors.New("saved remote authentication requires TLS; remove --insecure and use --tls")
+				if err := applySavedRemoteTLSPolicy(cfg, &dial); err != nil {
+					return target, client.DialConfig{}, noop, err
 				}
 				var ca []byte
 				var readErr error

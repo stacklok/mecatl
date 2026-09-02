@@ -132,7 +132,10 @@ client, and TLS requirements.
 
 For an interactive remote client after setup, add the fixture host aliases, run
 `mecatui login ADDRESS … --tls-ca ISSUER_CA --private-issuer --scopes openid,profile,mecak8s:access,offline_access`,
-then run `mecatui connect ADDRESS --tls --tls-ca SERVER_CA`. The fixture may publish
+then run `mecatui connect ADDRESS --tls --tls-ca SERVER_CA`. Supply `--tls` in
+these mecak8s connection commands even though a non-loopback target would select
+verified TLS automatically: the explicit flag documents the required secure
+fixture transport. The fixture may publish
 the same public CA bundle for both roles, but they remain separate trust inputs. The
 client uses the `mecatui-kind` public OIDC client; there is no implicit browser flow in
 `connect`. This host-alias flow is available for live qualification, but is not part of

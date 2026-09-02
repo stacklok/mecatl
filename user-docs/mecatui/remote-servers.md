@@ -38,11 +38,15 @@ bin/mecatui connect 127.0.0.1:8080 \
   --auth-token "$MECATL_AUTH_TOKEN" --workspace "$PWD"
 ```
 
-For a non-loopback endpoint, use TLS when sending a bearer. Add a CA bundle only when the server uses a private CA:
+For a non-loopback endpoint, verified TLS is automatic; `--tls`, `--tls=true`,
+and `--tls-ca` also select verified TLS. `--insecure` instead uses encrypted TLS
+without certificate verification and is only for controlled testing. `--tls=false`
+is the explicit plaintext downgrade; use it only for controlled, non-bearer testing.
+Add a CA bundle with `--tls-ca` only when the server uses a private CA.
 
 ```sh
 bin/mecatui connect mecated.example.internal:443 \
-  --tls --tls-ca /path/to/company-ca.pem \
+  --tls-ca /path/to/company-ca.pem \
   --auth-token "$MECATL_AUTH_TOKEN"
 ```
 
@@ -69,8 +73,9 @@ verified against the system roots; the example above is a PRIVATE issuer, so it 
 `--private-issuer`, which requires `--tls-ca`. The login `--tls-ca` verifies the issuer's discovery,
 token, JWKS, refresh, and revocation endpoints; it does not configure server transport
 trust. An explicit issuer CA bundle path/reference, not its contents, is saved as public
-target metadata; the later
-`connect --tls-ca` independently verifies the gRPC server. Login saves
+target metadata. A later `connect` with saved credentials always uses verified TLS,
+including for loopback; only `connect --tls-ca` independently verifies a private-CA
+gRPC server. Login saves
 public target metadata in the connection registry and stores the credential in a
 canonical-root-scoped, keyring-wrapped encrypted store. The credential is bound to the
 canonical target and OIDC identity. An old unsuffixed keyring key is copied without

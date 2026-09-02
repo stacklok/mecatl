@@ -49,6 +49,7 @@ type config struct {
 	themeDir          string
 	authToken         string
 	useTLS            bool
+	tlsExplicit       bool
 	tlsCA             string
 	insecure          bool
 	noSavedAuth       bool
@@ -368,7 +369,7 @@ func parseTransportFlags(mode transportMode, out io.Writer, args []string, brows
 	fs.StringVar(&cfg.theme, "theme", "", "theme name (default: aztec)")
 	fs.StringVar(&cfg.themeDir, "theme-dir", "", "extra directory of *.json themes to load")
 	fs.StringVar(&cfg.authToken, "auth-token", "", "bearer token for an external server (or MECATL_AUTH_TOKEN)")
-	fs.BoolVar(&cfg.useTLS, "tls", false, "use TLS transport when dialling an external server")
+	fs.BoolVar(&cfg.useTLS, "tls", false, "use verified TLS for an external server (default for non-loopback targets; --tls=false explicitly permits plaintext)")
 	fs.StringVar(&cfg.tlsCA, "tls-ca", "", "path to a PEM CA bundle for external-server verification")
 	fs.BoolVar(&cfg.insecure, "insecure", false, "skip TLS verification (testing only)")
 	fs.BoolVar(&cfg.noSavedAuth, "no-saved-auth", false, "ignore saved remote login credentials")
@@ -521,6 +522,44 @@ func parseTransportFlags(mode transportMode, out io.Writer, args []string, brows
 	return fs, cfg, nil
 }
 
+// resolveRemoteTLSPolicy applies the connect transport policy only after the
+// command grammar has supplied its target. tlsExplicit preserves the distinction
+// between an omitted --tls and an explicit --tls=false.
+func resolveRemoteTLSPolicy(cfg *config) error {
+	if cfg.transportMode != modeConnect {
+		return nil
+	}
+	if cfg.tlsCA != "" && cfg.insecure {
+		return errors.New("--tls-ca and --insecure are mutually exclusive")
+	}
+	if cfg.tlsExplicit && !cfg.useTLS {
+		if cfg.tlsCA != "" || cfg.insecure {
+			return errors.New("--tls=false conflicts with --tls-ca or --insecure")
+		}
+		if cfg.authToken != "" && !client.IsLoopbackHost(cfg.connectAddress) {
+			return errors.New("refusing static bearer over explicit plaintext to non-loopback target; remove --tls=false")
+		}
+		return nil
+	}
+	if cfg.tlsExplicit || cfg.tlsCA != "" || cfg.insecure || !client.IsLoopbackHost(cfg.connectAddress) {
+		cfg.useTLS = true
+	}
+	return nil
+}
+
+// applySavedRemoteTLSPolicy gives managed OIDC credentials their stronger
+// transport guarantee. TLSCAFile deliberately remains untouched: an issuer CA
+// is not gRPC server trust.
+func applySavedRemoteTLSPolicy(cfg config, dial *client.DialConfig) error {
+	if (cfg.tlsExplicit && !cfg.useTLS) || cfg.insecure {
+		return errors.New("saved remote authentication requires verified TLS; remove --tls=false and --insecure")
+	}
+	dial.UseTLS = true
+	dial.Insecure = false
+	dial.RemotePlaintextAllowed = false
+	return nil
+}
+
 // validateResumeSelectors enforces that at most ONE startup resume intent is chosen:
 // --resume and --resume-latest are mutually exclusive. It is shared by the
 // parse-time check and the client-side validate() so both surfaces agree.
@@ -578,6 +617,8 @@ func validateSessionsLaunch(cfg config) error {
 // that function under the cyclomatic-complexity bound.
 func recordExplicitFlag(f *flag.Flag, cfg *config) {
 	switch f.Name {
+	case "tls":
+		cfg.tlsExplicit = true
 	case "posture":
 		cfg.postureFlagSet = true
 	case "subagent-model-router":

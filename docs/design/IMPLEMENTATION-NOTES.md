@@ -3501,7 +3501,14 @@ them. `--private-issuer` requires that CA and selects scoped private admission. 
 saves the issuer policy and CA path/reference, never CA contents, for
 discovery/token/JWKS/refresh/revocation; the optional
 `connect --tls-ca` is separately the gRPC server trust root. `mecatui connect ADDRESS`
-only dials; it never implicitly opens a browser.
+only dials; it never implicitly opens a browser. `cmd/mecatui/config.go`
+(`resolveRemoteTLSPolicy`) resolves omitted `--tls` after target parsing: non-loopback
+and unparseable targets verify TLS, loopback defaults plaintext, and `--tls=false` is
+the explicit downgrade. `cmd/mecatui/client/client.go` (`Dial`) independently refuses
+remote plaintext without that explicit authorization and never permits a bearer there.
+A registry hit overrides the loopback default to verified gRPC TLS and rejects explicit
+plaintext or `--insecure`; the saved issuer CA is passed only to the issuer client, never
+to `DialConfig.TLSCAFile`.
 A missing target enrollment returns the CLI-login instruction. The UI `/connect`
 overlay lists public saved-target metadata, confirms a selection, and requests a
 restart; a new-target selection exits to the same CLI login flow before reconnecting.
