@@ -2,8 +2,8 @@
 id: 01-profile-adr
 title: Shared OIDC profile and ADR
 blocked_by: []
-status: pending
-branch: ""
+status: done
+branch: plan-oauth-protected-resource-discovery/01-profile-adr
 worktree: ""
 issue: "1033"
 retries: 0
