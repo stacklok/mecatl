@@ -393,24 +393,6 @@ It is not yet clear whether this is the desired long-term boundary:
 Changing this behavior is out of scope. This proposal preserves the current
 boundary and records the question rather than silently claiming Bash participates.
 
-### What identifies an observed file?
-
-The current `LedgerKey(root, path)` lexical rule is sufficient for one stable,
-rooted Workspace. Session persistence, environment reattachment, composite
-mounts, and scoped grants make the identity question more explicit. A relative
-path alone must not authorize mutation after the session is attached to a
-different content resource that happens to contain the same path and an equal-
-looking token.
-
-The final design must bind evidence to a stable content-resource identity as well
-as a normalized path. For today's Workspaces that may be derived from the
-persisted environment/workspace identity. Under scoped grants it may instead be
-a grant-visible mount/resource identifier returned with the content token. It
-must not be a process-local Go pointer, and session reattachment must fail closed
-if the identity cannot be reproduced. Choosing that identity belongs in the
-filesystem/grant contract; the generic session-state store merely retains the
-opaque key and value.
-
 ## Sequencing
 
 1. Implement and validate the initial principal-scoped Redis filesystem from
