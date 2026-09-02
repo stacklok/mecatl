@@ -184,6 +184,30 @@ func titleGenerationEligible(cfg Config, reg *providerRegistry) func(server.Prov
 	}
 }
 
+// titleGeneratorForSession resolves each call against the session's fixed provider.
+// It returns nil when the provider disappeared or the explicit slot is unavailable.
+func titleGeneratorForSession(cfg Config, reg *providerRegistry) func(server.ProviderSelector) server.SessionTitleGenerator {
+	model, configured := resolveSlotModel(cfg, slotTitle, cfg.Model)
+	if !configured || model == "" {
+		return nil
+	}
+	return func(sel server.ProviderSelector) server.SessionTitleGenerator {
+		providerID := sel.ProviderID
+		if providerID == "" {
+			providerID = reg.Default()
+		}
+		entry, ok := reg.Lookup(providerID)
+		if !ok {
+			return nil
+		}
+		generator, err := server.NewSessionTitleGenerator(entry.provider, model)
+		if err != nil {
+			return nil
+		}
+		return generator
+	}
+}
+
 // selectorForSlot returns the trimmed selector a slot resolves through: the explicit
 // cfg.ModelSlots[slotName] binding, else the slot's default tier binding, else "".
 // It is the shared lookup behind resolveSlotModel and the build-once misconfig narration.

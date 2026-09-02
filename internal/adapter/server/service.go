@@ -574,6 +574,12 @@ type Config struct {
 	// lifecycle disabled; true persists pending at session creation. It receives
 	// only the neutral fixed session selector, never registry or credential access.
 	TitleGenerationEligible func(ProviderSelector) bool
+	// TitleGenerator is the optional Build-owned, server-private title call. When
+	// absent automatic work is unavailable; it never receives session authority.
+	TitleGenerator SessionTitleGenerator
+	// TitleGeneratorForSession resolves a title generator for the session's fixed
+	// provider selector. It takes precedence over TitleGenerator when present.
+	TitleGeneratorForSession func(ProviderSelector) SessionTitleGenerator
 
 	// SessionEngine builds a PER-SESSION engine over a non-default provider/model
 	// selector AND/OR client-provided streaming-HTTP MCP servers (the ACP
@@ -1054,6 +1060,10 @@ type Service struct {
 	// explicitly via run.Cancel below). Kept as a one-time idempotent signal.
 	shutdownCancel context.CancelFunc
 
+	// titleCoordinator owns bounded asynchronous title work outside chat runs.
+	// It is nil when title generation is unavailable.
+	titleCoordinator *titleCoordinator
+
 	// schedMgr is the embedded store-shaped schedule manager (ADR 0076): the
 	// single truth the Service's nine port.ScheduleManager methods +
 	// EmitScheduleEvent + GetFire delegate to. Constructed in NewService from
@@ -1347,6 +1357,7 @@ func NewService(cfg Config) (*Service, error) {
 		cleanupJobs:         make(map[string]cleanupJobRecord),
 		subscriptions:       make(map[session.SessionID]map[int64]chan session.Event),
 	}
+	svc.titleCoordinator = buildTitleCoordinator(svc, cfg)
 	// Narrow the durable log to the cursor seam once (ADR 0250). A backend that
 	// does not implement it leaves this nil, and the watch surface reports the
 	// feature unsupported rather than degrading to a full replay.
@@ -1946,6 +1957,9 @@ func (s *Service) persistCreatedSession(ctx context.Context, sess *session.Sessi
 			return existing, collisionErr
 		}
 		return nil, fmt.Errorf("server: persist session: %w", err)
+	}
+	if sess.TitleGeneration != session.TitleGenerationDisabled {
+		s.publishTitle(context.WithoutCancel(ctx), sess)
 	}
 	return sess, nil
 }
@@ -2627,6 +2641,11 @@ func (s *Service) EndSession(ctx context.Context, id session.SessionID) error {
 // shutdown hook so a process exit does not leak any per-session MCP connection.
 // It is safe to call multiple times.
 func (s *Service) Close() {
+	// Stop and join auxiliary title workers before tearing down their session
+	// dependencies. A cancelled in-flight provider call records interruption.
+	if s.titleCoordinator != nil {
+		s.titleCoordinator.Close()
+	}
 	// Signal shutdown so in-flight runs (scheduled fires and foreground turns)
 	// observe the cancellation and unwind. This fires BEFORE the scheduler stop
 	// and before engine-close so runs unblock promptly rather than waiting on
@@ -3007,6 +3026,7 @@ func (s *Service) RenameSession(ctx context.Context, id session.SessionID, title
 	if err := s.cfg.Store.Save(ctx, sess); err != nil {
 		return nil, fmt.Errorf("%w: rename session: %v", ErrInternal, err)
 	}
+	s.publishTitle(context.WithoutCancel(ctx), sess)
 	return sess, nil
 }
 
@@ -5478,6 +5498,11 @@ func (s *Service) Persist(ctx context.Context, id session.SessionID) {
 	}
 	if st.sess.State == session.StateAwaiting {
 		st.awaiting.Store(true)
+	}
+	// Title work is submitted only after the completed chat snapshot (including
+	// the ingress-captured source) is durable. Submission is non-blocking.
+	if st.sess.State == session.StateCompleted && st.sess.TitleGeneration == session.TitleGenerationPending && len(st.sess.TitleSourcePrompts()) > 0 {
+		s.submitTitleGeneration(id)
 	}
 }
 
