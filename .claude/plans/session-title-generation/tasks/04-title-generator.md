@@ -2,8 +2,8 @@
 id: 04-title-generator
 title: Private bounded title generator
 blocked_by: [01-session-title-domain, 03-title-slot-resolution]
-status: in-progress
-branch: ""
+status: done
+branch: "plan-session-title-generation/04-title-generator"
 worktree: ""
 issue: "621"
 retries: 0
