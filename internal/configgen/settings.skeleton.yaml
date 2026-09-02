@@ -212,6 +212,19 @@
 #   # AcknowledgeMainDeletion explicitly consents to destructive main-session cleanup.
 #   acknowledge_main_deletion: false
 
+#| === temporary_storage === (tier: operator)
+#| Managed command temporary-storage policy. Read only from user-global settings.yaml;
+#| project and explicit CLI config values are ignored. Managed mode is Linux-only;
+#| system preserves inherited temporary-directory behavior.
+# temporary_storage:
+#   mode: managed
+#   managed_root: mecatl
+#   system_temp_dir: ""
+#   command_reap_after: 1h
+#   reap_interval: 1h
+#   reap_timeout: 5m
+#   shutdown_reap_timeout: 1m
+
 #| === storage_management === (tier: operator)
 #| Exact verified OIDC issuer/subject pairs authorized for process-wide storage health,
 #| migration, and cleanup. Empty grants nobody; project values are ignored.

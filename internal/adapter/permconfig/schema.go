@@ -162,6 +162,74 @@ type Config struct {
 	// StorageManagement names the verified OIDC identities allowed to operate on
 	// process-wide storage. It is strict and operator-tier only.
 	StorageManagement *StorageManagementSection `yaml:"storage_management"`
+	// TemporaryStorage controls managed command temporary storage. It is strict and
+	// read exclusively from the user-global settings.yaml; project-tier and explicit
+	// CLI configuration values are ignored by the Resolver.
+	TemporaryStorage *TemporaryStorageSection `yaml:"temporary_storage"`
+}
+
+// TemporaryStorageSection is the strict operator policy for command temporary
+// storage. Durations are parsed during decoding so invalid settings fail before
+// composition can enable a runner.
+type TemporaryStorageSection struct {
+	Mode                string        `yaml:"mode"`
+	ManagedRoot         string        `yaml:"managed_root"`
+	SystemTempDir       string        `yaml:"system_temp_dir"`
+	CommandReapAfter    time.Duration `yaml:"command_reap_after"`
+	ReapInterval        time.Duration `yaml:"reap_interval"`
+	ReapTimeout         time.Duration `yaml:"reap_timeout"`
+	ShutdownReapTimeout time.Duration `yaml:"shutdown_reap_timeout"`
+}
+
+// UnmarshalYAML strictly decodes the temporary-storage policy and applies its
+// defaults. Paths are lexically validated here; host ownership checks happen in
+// composition where filesystem access belongs.
+func (s *TemporaryStorageSection) UnmarshalYAML(node ast.Node) error {
+	s.Mode, s.ManagedRoot = "managed", "mecatl"
+	s.CommandReapAfter, s.ReapInterval = time.Hour, time.Hour
+	s.ReapTimeout, s.ShutdownReapTimeout = 5*time.Minute, time.Minute
+	var commandReapAfter, reapInterval, reapTimeout, shutdownReapTimeout permconfigNodeValue
+	if err := decodeStrictMapping(node, "temporary_storage", map[string]any{
+		"mode": &s.Mode, "managed_root": &s.ManagedRoot, "system_temp_dir": &s.SystemTempDir,
+		"command_reap_after": &commandReapAfter, "reap_interval": &reapInterval,
+		"reap_timeout": &reapTimeout, "shutdown_reap_timeout": &shutdownReapTimeout,
+	}); err != nil {
+		return err
+	}
+	s.Mode, s.ManagedRoot, s.SystemTempDir = strings.TrimSpace(s.Mode), strings.TrimSpace(s.ManagedRoot), strings.TrimSpace(s.SystemTempDir)
+	if s.Mode != "managed" && s.Mode != "system" {
+		return fmt.Errorf("temporary_storage.mode: must be managed or system")
+	}
+	for name, path := range map[string]string{"managed_root": s.ManagedRoot, "system_temp_dir": s.SystemTempDir} {
+		if path != "" && !filepath.IsAbs(path) && (filepath.Clean(path) == ".." || strings.HasPrefix(filepath.Clean(path), ".."+string(filepath.Separator))) {
+			return fmt.Errorf("temporary_storage.%s: relative path escapes system temporary directory", name)
+		}
+	}
+	for _, value := range []struct {
+		name string
+		node permconfigNodeValue
+		dst  *time.Duration
+		min  time.Duration
+		max  time.Duration
+	}{
+		{"command_reap_after", commandReapAfter, &s.CommandReapAfter, time.Minute, 30 * 24 * time.Hour},
+		{"reap_interval", reapInterval, &s.ReapInterval, time.Minute, 24 * time.Hour},
+		{"reap_timeout", reapTimeout, &s.ReapTimeout, time.Second, time.Hour},
+		{"shutdown_reap_timeout", shutdownReapTimeout, &s.ShutdownReapTimeout, time.Second, 5 * time.Minute},
+	} {
+		if value.node.Node == nil {
+			continue
+		}
+		d, err := durationScalar(value.node.Node, "temporary_storage."+value.name)
+		if err != nil {
+			return err
+		}
+		if d < value.min || d > value.max {
+			return fmt.Errorf("temporary_storage.%s: must be between %s and %s", value.name, value.min, value.max)
+		}
+		*value.dst = d
+	}
+	return nil
 }
 
 // StorageManagementSection is the explicit operator authority for process-wide

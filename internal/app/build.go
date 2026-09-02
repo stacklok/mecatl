@@ -187,6 +187,7 @@ type Config struct {
 	RedisAllowPlaintext bool
 	Shell               string
 	NoBash              bool
+	temporaryStorage    temporaryStorageConfig
 	// AuthorityEvaluator selects the authority evaluator adapter: "local" enforces
 	// minted sets, while "noop" deliberately disables enforcement. "cedar" loads
 	// CedarAuthorityPolicy at startup and fails closed when it cannot be loaded.
@@ -1450,6 +1451,11 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	// SAME instance — one discovery pass, one cache, no per-consumer drift.
 	cfg.permResolver = buildPermResolver(cfg)
 	cfg.childPermResolver = buildChildPermResolver(cfg)
+	var temporaryStorageErr error
+	cfg, temporaryStorageErr = foldOperatorTemporaryStorage(cfg)
+	if temporaryStorageErr != nil {
+		return nil, temporaryStorageErr
+	}
 	var retentionErr error
 	cfg, retentionErr = foldOperatorRetention(cfg)
 	if retentionErr != nil {
