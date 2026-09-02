@@ -2,7 +2,7 @@
 
 **Phase:** capability — local TUI presentation extension
 **Status:** in-progress, 2026-08-27. Updated after the template, shared-markup, and mecatui-settings decisions.
-**ADR:** [ADR-0247](../adr/0247-mecatui-status-line.md) — user-global status-line source with a UI-agnostic boundary.
+**ADR:** [ADR-0284](../adr/0284-hardened-status-command-boundary.md) — hardened command output and explicit environment extension; it supersedes [ADR-0247](../adr/0247-mecatui-status-line.md).
 **Accumulator branch:** `acc/mecatui-status-line` (off `main`).
 
 The smallest useful capability makes both the current mecatui header and status/usage row shipped default templates. Operators may replace either surface through the user-global mecatui settings document with responsive templates or one local command. Both paths consume the same status input and produce the same safe, theme-aware `StatusML` document. The keyboard-help row remains mecatui chrome, and the renderer preserves mandatory header safety/navigation indicators outside template control.
@@ -109,19 +109,20 @@ status_customization:
   command:
     executable: /usr/local/bin/mecatui-status
     args: [--format, statusml]
+    passthrough_env: [TMUX] # optional explicit user-global environment allowlist
   interval: 10s # optional; omitted means event-driven
 ```
 
 The executable must be an absolute path and receives only literal arguments; shell and source forms are rejected. One command invocation emits one StatusML document and may populate both surfaces; an omitted surface retains its shipped default. Commands receive raw `Input` JSON on stdin, including the actual `Terminal.HeaderAvailCols` and `Terminal.FooterAvailCols` after renderer reservations, then choose their own compact representation. Their CWD is the local session workspace when the client knows it is local, otherwise the local launch directory; a remote session path is never used as CWD.
 
-The environment is an exact allowlist: `HOME`, `PATH`, `TERM`, `LANG`, `LC_ALL`, `COLUMNS`, and `LINES`; unset values are omitted and no other parent environment entry is inherited. Stdout/stderr are bounded streaming readers with a combined 4 KiB limit. The process tree is contained and cancelled on timeout, replacement, or shutdown. These constraints follow [ADR-0247](../adr/0247-mecatui-status-line.md) and the secret-scrubbing invariant in [`AGENTS.md`](../../AGENTS.md).
+The environment has a fixed safe baseline: `HOME`, `PATH`, `TERM`, `LANG`, `LC_ALL`, `COLUMNS`, and `LINES`; unset baseline values are omitted. `passthrough_env` may add only explicit user-global names matching `[A-Za-z_][A-Za-z0-9_]*`, such as `TMUX`. Names are deduplicated, unset passthrough values are omitted, set-empty passthrough values are preserved, and they cannot replace baseline or source-owned `COLUMNS`/`LINES`; no other parent environment entry, especially secrets, is inherited. Stdout/stderr are bounded streaming readers with a combined 4 KiB limit. Immediately before StatusML parsing, only boundary ASCII space, tab, LF, CR, vertical tab, and form feed are trimmed, so an ordinary Python `print` newline is accepted while interior text is unchanged. The process tree is contained and cancelled on timeout, replacement, or shutdown. These constraints follow [ADR-0284](../adr/0284-hardened-status-command-boundary.md) and the secret-scrubbing invariant in [`AGENTS.md`](../../AGENTS.md).
 
 **Acceptance:**
 - AC3.1: A user-global command invokes only an absolute executable with literal arguments, receives raw JSON `Input` on stdin, and can use the local checkout and terminal dimensions to emit StatusML.
   - verify: `TestStatusLine_Scenario3_DirectExecutableReceivesSharedInput`
 - AC3.2: One command StatusML document can populate both surfaces; each supplied surface has the same themed spans/layout semantics as its template equivalent, and an omitted surface retains its default.
   - verify: `TestStatusLine_Scenario3_CommandAndTemplateShareSurfaces`
-- AC3.3: The runner passes only the exact environment allowlist, passes raw input only on stdin, and cannot be enabled or modified by project/server content.
+- AC3.3: The runner passes only its fixed baseline plus the explicit user-global, grammar-validated `passthrough_env` entries; it passes raw input only on stdin and cannot be enabled or modified by project/server content.
   - verify: `TestStatusLine_Scenario3_CommandBoundaryIsLocalAndSecretFree`
 - AC3.4: Stdout/stderr are bounded while read; overflow, malformed StatusML, and terminal controls fail safely without an unbounded allocation or rendered escape sequence.
   - verify: `TestStatusLine_Scenario3_BoundsAndSanitizesCommandOutput`
@@ -173,7 +174,7 @@ This is a user-visible configuration surface, so [`AGENTS.md`](../../AGENTS.md) 
 
 ## Cross-cutting deliverables
 
-- [ADR-0247](../adr/0247-mecatui-status-line.md) is accepted with implementation.
+- [ADR-0284](../adr/0284-hardened-status-command-boundary.md) is accepted with implementation.
 - Update [`docs/tui.md`](../tui.md), [`docs/architecture.md`](../architecture.md), and the relevant `user-docs/` page. Run `task docs` and `task site:build`; do not hand-edit generated `llms.txt`.
 - Add the command runner/timer to the cloud-native resource inventory if it outlives one invocation, as required by [`AGENTS.md`](../../AGENTS.md).
 

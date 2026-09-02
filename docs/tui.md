@@ -31,9 +31,13 @@ as JSON on stdin. Input protocol v2 exposes the ordinary fixed handle as `Sessio
 it replaces v1's `Session.Digest`, and no digest compatibility alias is emitted. It is run
 directly (there is no shell or source configuration
 form); `/bin/sh` is available only when explicitly selected as the executable with
-literal arguments. It uses a constrained environment, local-only CWD selection, a
-one-second deadline, and a combined 4 KiB stdout/stderr limit. StatusML accepts semantic theme tokens and validated
-HTTP(S) link metadata, never raw ANSI or OSC.
+literal arguments. It uses a fixed safe baseline environment; the optional
+`passthrough_env` list may add explicitly named user-global variables but never
+ambient environment values, and cannot override source-owned terminal dimensions. It uses local-only CWD selection, a one-second deadline, and a combined
+4 KiB stdout/stderr limit. StatusML accepts semantic theme tokens and validated
+HTTP(S) link metadata, never raw ANSI or OSC. Before parsing, only leading and
+trailing ASCII whitespace is trimmed, allowing ordinary `print` output while
+preserving internal text.
 
 See [Status line customization](https://github.com/stacklok/mecatl/blob/main/user-docs/mecatui/status-line.md)
 for the complete settings schema, input reference, StatusML grammar, safety limits,

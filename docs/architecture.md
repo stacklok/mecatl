@@ -507,7 +507,11 @@ cancellation; the UI owns theme resolution, renderer chrome, clipping, and
 alignment. Settings live only in `$XDG_CONFIG_HOME/mecatui/settings.yaml`; a
 remote server or project never selects a local executable. Templates get a
 StatusML-escaped projection, commands get raw JSON on stdin, and StatusML carries
-semantic tokens rather than ANSI/OSC. This preserves `ui` as a pure render layer
+semantic tokens rather than ANSI/OSC. Its command environment retains a fixed
+safe baseline; `passthrough_env` may add only explicitly named user-global values,
+never ambient environment values, and cannot replace source-owned terminal dimensions. Before StatusML parsing, command output trims only boundary
+ASCII whitespace, so a normal `print` newline is accepted without changing internal
+text. This preserves `ui` as a pure render layer
 while allowing autonomous source updates. Its `/clear` command uses the existing
 create-session RPC to create a new empty session first (preserving the current
 workspace, effective model/reasoning effort, and permission mode), then rebinds

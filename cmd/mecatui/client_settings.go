@@ -63,11 +63,13 @@ type statusSurfaceTemplates struct {
 	Minimal string `yaml:"minimal"`
 }
 
-// statusCommand is a trusted user-global direct executable selection. It has no
-// environment or working-directory fields: the status source owns both.
+// statusCommand is a trusted user-global direct executable selection. Its
+// PassthroughEnv list is an explicit allowlist; the status source owns the
+// remaining environment and working-directory policy.
 type statusCommand struct {
-	Path string   `yaml:"executable"`
-	Args []string `yaml:"args"`
+	Path           string   `yaml:"executable"`
+	Args           []string `yaml:"args"`
+	PassthroughEnv []string `yaml:"passthrough_env"`
 }
 
 // legacySettings mirrors the keymap: key out of the SERVER-owned operator-tier
@@ -185,7 +187,7 @@ func newSource(customization statusCustomization) statusline.Source {
 	if customization.Command != nil {
 		launchDir, _ := os.Getwd()
 		return statusline.NewCommandSource(statusline.Command{
-			Path: customization.Command.Path, Args: customization.Command.Args, LaunchDir: launchDir, RefreshInterval: customization.Interval,
+			Path: customization.Command.Path, Args: customization.Command.Args, PassthroughEnv: customization.Command.PassthroughEnv, LaunchDir: launchDir, RefreshInterval: customization.Interval,
 		})
 	}
 	if customization.Templates == nil {
@@ -228,7 +230,7 @@ func decodeStatusCustomization(raw *statusCustomizationYAML) (*statusCustomizati
 		return nil, errors.New("template source has no surface")
 	}
 	if raw.Command != nil && !(statusline.Command{
-		Path: raw.Command.Path, Args: raw.Command.Args,
+		Path: raw.Command.Path, Args: raw.Command.Args, PassthroughEnv: raw.Command.PassthroughEnv,
 	}).Valid() {
 		return nil, errors.New("invalid command")
 	}

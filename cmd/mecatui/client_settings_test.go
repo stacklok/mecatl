@@ -374,6 +374,9 @@ func TestReadStatusCustomizationRejectsInvalidConfigurationWithoutEchoingValues(
 		{"both sources", "status_customization:\n  templates:\n    wide: status\n  command:\n    executable: /usr/local/bin/status\n"},
 		{"interval too short", "status_customization:\n  templates:\n    wide: status\n  interval: 500ms\n"},
 		{"unsafe command path", "status_customization:\n  command:\n    executable: ' bad-command '\n"},
+		{"invalid passthrough environment name", "status_customization:\n  command:\n    executable: /usr/local/bin/status\n    passthrough_env: [INVALID-PASSTHROUGH]\n"},
+		{"passthrough name starts with digit", "status_customization:\n  command:\n    executable: /usr/local/bin/status\n    passthrough_env: [1LEADING]\n"},
+		{"non-ASCII passthrough name", "status_customization:\n  command:\n    executable: /usr/local/bin/status\n    passthrough_env: [NÁME]\n"},
 		{"removed shell fields", "status_customization:\n  command:\n    shell: /bin/sh\n    source: 'printf status'\n"},
 		{"unknown nested key", "status_customization:\n  templates:\n    tablet: status\n"},
 	} {
@@ -384,8 +387,10 @@ func TestReadStatusCustomizationRejectsInvalidConfigurationWithoutEchoingValues(
 			if err == nil {
 				t.Fatal("invalid status customization must fail")
 			}
-			if strings.Contains(err.Error(), "bad-command") {
-				t.Errorf("error must not echo configuration values: %v", err)
+			for _, forbidden := range []string{"bad-command", "INVALID-PASSTHROUGH", "1LEADING", "NÁME"} {
+				if strings.Contains(err.Error(), forbidden) {
+					t.Errorf("error must not echo configuration value %q: %v", forbidden, err)
+				}
 			}
 		})
 	}
@@ -393,13 +398,34 @@ func TestReadStatusCustomizationRejectsInvalidConfigurationWithoutEchoingValues(
 
 func TestReadStatusCustomizationAcceptsValidatedDirectExecutable(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-	writeSettings(t, "mecatui", "status_customization:\n  command:\n    executable: /usr/local/bin/status\n    args: [--format, statusml]\n")
+	writeSettings(t, "mecatui", "status_customization:\n  command:\n    executable: /usr/local/bin/status\n    args: [--format, statusml]\n    passthrough_env: [TMUX, STATUS_EMPTY, _NAME1, STATUS_SECRET]\n")
 	got, err := readStatusCustomization()
 	if err != nil {
 		t.Fatalf("read command customization: %v", err)
 	}
-	if got.Command == nil || got.Command.Path != "/usr/local/bin/status" || !reflect.DeepEqual(got.Command.Args, []string{"--format", "statusml"}) {
-		t.Fatalf("command = %#v, want direct executable with literal args", got.Command)
+	if got.Command == nil || got.Command.Path != "/usr/local/bin/status" || !reflect.DeepEqual(got.Command.Args, []string{"--format", "statusml"}) || !reflect.DeepEqual(got.Command.PassthroughEnv, []string{"TMUX", "STATUS_EMPTY", "_NAME1", "STATUS_SECRET"}) {
+		t.Fatalf("command = %#v, want direct executable with literal args and validated passthrough environment", got.Command)
+	}
+}
+
+func TestStatusCustomizationCommandPassthroughEnvReachesExecution(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("TMUX", "configured-tmux")
+	writeSettings(t, "mecatui", "status_customization:\n  command:\n    executable: /bin/sh\n    args: [-c, 'read input; test \"$TMUX\" = \"$1\" && printf \"<footer><text>tmux available</text></footer>\"', --, configured-tmux]\n    passthrough_env: [TMUX]\n")
+	customization, err := readStatusCustomization()
+	if err != nil {
+		t.Fatalf("read status customization: %v", err)
+	}
+	source := newSource(customization)
+	t.Cleanup(func() { _ = source.Close(context.Background()) })
+	source.Submit(statusline.Input{Terminal: statusline.Terminal{FooterAvailCols: 80}})
+	select {
+	case <-source.Changed():
+	case <-time.After(time.Second):
+		t.Fatal("configured command did not publish")
+	}
+	if got, want := source.Latest().Footer.Spans[0].Text, "tmux available"; got != want {
+		t.Fatalf("configured command footer = %q, want %q", got, want)
 	}
 }
 

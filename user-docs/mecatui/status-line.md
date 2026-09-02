@@ -220,8 +220,9 @@ status_customization:
 ## Direct executable command
 
 Use `command` when local information needs a program. `executable` must be an
-absolute path and `args` are literal arguments. There are no shell, `source`,
-command-string, environment, or CWD fields in the schema. `/bin/sh` is permitted
+absolute path and `args` are literal arguments. The optional `passthrough_env` list
+is the only environment extension: each name must match `[A-Za-z_][A-Za-z0-9_]*`.
+There are no shell, `source`, command-string, or CWD fields in the schema. `/bin/sh` is permitted
 only by explicitly selecting it as `executable` and supplying its literal arguments;
 it is not a shell mode or a default.
 
@@ -231,6 +232,7 @@ status_customization:
   command:
     executable: /home/alice/.local/bin/mecatui-status
     args: [--format, statusml]
+    passthrough_env: [TMUX] # optional: selected parent variables only
 ```
 
 An inline shell command is therefore an explicit direct-executable opt-in, not a
@@ -265,15 +267,25 @@ chmod 0755 ~/.local/bin/mecatui-status
 
 A command that interpolates string data into StatusML must escape that data itself;
 commands do **not** receive the template escaping projection. They should emit only
-one bounded StatusML document. A supplied header or footer replaces that surface;
+one bounded StatusML document. Before StatusML parsing, mecatui trims only leading
+and trailing ASCII space, tab, LF, CR, vertical tab, and form feed. This accepts the
+trailing newline from the Python `print` example above while preserving whitespace
+inside markup text. A supplied header or footer replaces that surface;
 an omitted surface continues to use its shipped default.
 
 Mecatui runs the executable in the known local session workspace. If that workspace
 is remote or unknown, it uses the local directory from which mecatui was launched;
-a remote path is never used as a local CWD. The process receives only `HOME`,
-`PATH`, `TERM`, `LANG`, `LC_ALL`, `COLUMNS`, and `LINES` when those values are
-available. No other parent environment value is inherited. `COLUMNS` and `LINES`
-come from the submitted terminal dimensions.
+a remote path is never used as a local CWD. The process receives a fixed safe
+baseline: `HOME`, `PATH`, `TERM`, `LANG`, `LC_ALL`, `COLUMNS`, and `LINES` when
+available. `COLUMNS` and `LINES` come from the submitted terminal dimensions.
+
+`passthrough_env` may add only explicitly named parent variables. Each name must
+match `[A-Za-z_][A-Za-z0-9_]*`; names are deduplicated, unset variables are omitted,
+and a set-empty variable is retained. It cannot override baseline or source-owned
+values such as `COLUMNS` and `LINES`. Do not list secrets: no other parent
+environment value is inherited, and mecatui never uses `os.Environ` for this command
+boundary. For example, `[TMUX]` makes an existing `TMUX` value available for a local
+tmux-aware integration.
 
 Input changes are debounced for 250 ms. At most one contained command process tree
 runs at a time; replacement, timeout, and shutdown cancel it. Each invocation has
