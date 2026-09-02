@@ -1228,10 +1228,13 @@ ADR-0249 `RunID`, binds the verified current principal prompt and canonical dige
 content-free immutable provenance, and idempotently creates the deterministic caller/session/run
 attempt. One Build-owned, cancellation-aware worker continuously performs bounded repository
 `DiscoverWork` reads across opaque partitions, so it sees attempts admitted after startup as well as
-running attempts whose claims expired. It acquires through CAS, renews the fenced claim throughout
-evidence, model, and publication work, cancels that work if renewal is lost, and is cancelled and
-joined before borrowed Build resources close. The same contract is available through the remote
-AttemptRepository driver. Every repository partition retains at most 256 records; creation at
+running attempts whose claims expired. Every durable hard or weighted attempt executes through this
+repository discovery path; admission retains no `learning.Input` and no coordinator callback can
+execute it. The worker requests only a bounded claim duration: the repository backend mints and
+compares all acquisition, renewal, transition, retention, and discovery times. It renews the fenced
+claim throughout evidence, model, and publication work, cancels that work if renewal is lost, and is
+cancelled and joined before borrowed Build resources close. The same contract is available through
+the remote AttemptRepository driver. Every repository partition retains at most 256 records; creation at
 that boundary evicts the oldest terminal record only, and returns a content-free quota error when
 queued/running work fills the partition. Capacity checks and terminal cleanup happen inside the same
 partition-authoritative lock/CAS boundary, so one caller cannot consume another caller's quota or
@@ -1279,8 +1282,12 @@ Weighted work then enters the same durable attempt worker as explicit work: clai
 source evidence validation/reconstruction, reflection, proposal/skill convergence, terminal state,
 and restart recovery all remain repository-authoritative. No process-local queue or receipt controls
 admitted work. Because attempt admission precedes relay persistence of the terminal `EvResult`, an
-otherwise valid source run with no terminal event yet releases its claim and remains queued for a
-later retry policy to bound; malformed, gapped, unauthorized, or mismatched evidence still fails closed. Local composition uses the
+otherwise valid source run whose terminal event has not arrived yet is not misclassified as corrupt:
+the worker keeps its running claim as a backend-timed persisted exponential-backoff marker. A
+replacement process rediscovers it after expiry; the third failed setup/evidence-not-ready claim
+terminally records only `retry_exhausted`, so an undeliverable source cannot cycle on the one-second
+discovery interval forever. Malformed, gapped, unauthorized, or mismatched evidence still fails
+closed immediately. Local composition uses the
 flock-backed automatic ledger beside the attempt store; a configured learning driver must
 positively advertise and serve the automatic ledger whenever automatic learning is enabled, with
 no local fallback.

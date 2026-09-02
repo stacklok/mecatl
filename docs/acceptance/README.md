@@ -123,6 +123,9 @@ when the code that satisfies the plan has landed.
   errors, exact-origin CORS, a durable host-minted `run_id` with stale-control guards,
   `port.CursorEventLog` + the Redis LIST→Stream migration, `WatchSessionEvents`, the
   spawned-daemon UDS/ready-file surface, and listener-scoped `mcp_servers`. Status: draft.
+- [Cloud-native learning v2](cloud-native-learning.md) — durable authoritative learning
+  attempts, exact source reconstruction, distributed proposal/skill authority, and
+  replica-safe learned-skill hydration; explicit procedure learning lands first. Status: landed.
 - [TypeScript SDK core (M1)](sdk-typescript-core.md) — `@stacklok/mecatl-sdk` M1: the
   `sdk/typescript/` scaffold (pnpm 11, TS 6, biome, vitest, API Extractor), pinned
   protobuf-es generation for `mecatl.v1` with a freshness gate, Connect-ES + HTTP/SSE
