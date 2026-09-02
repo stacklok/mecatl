@@ -539,16 +539,11 @@ func freeLocalPort() int {
 // --- HTTP API helpers --------------------------------------------------------
 
 // createSessionOverHTTP creates a session via POST /v1/sessions and returns the
-// session id. It mirrors the createSessionBody shape (workspace + mode) the
-// server's HTTP handler decodes. The deployment is server-assigned (mounted
-// workspace at /tmp), so the request sends an EMPTY workspace and the server
-// assigns its configured root (ADR 0237).
+// session id. The request is path-free: mecak8s composition binds the configured
+// deployment workspace.
 func createSessionOverHTTP(ctx context.Context, addr string) string {
 	ginkgo.GinkgoHelper()
-	body, _ := json.Marshal(map[string]any{
-		"workspace": "",
-		"mode":      "default",
-	})
+	body := defaultSessionCreateBody()
 	url := fmt.Sprintf("http://%s/v1/sessions", addr)
 	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")

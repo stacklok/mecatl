@@ -37,9 +37,14 @@ import (
 // the unauthenticated base. Caller identity is inherently MULTI-caller, so these
 // take the bearer per call rather than reading one shared credential.
 
+func defaultSessionCreateBody() []byte {
+	body, _ := json.Marshal(map[string]any{"mode": "default"})
+	return body
+}
+
 func createSessionAs(ctx context.Context, addr, bearer string) (int, string) {
 	ginkgo.GinkgoHelper()
-	body, _ := json.Marshal(map[string]any{"workspace": "", "mode": "default"})
+	body := defaultSessionCreateBody()
 	req, _ := http.NewRequestWithContext(ctx, http.MethodPost,
 		fmt.Sprintf("http://%s/v1/sessions", addr), bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")

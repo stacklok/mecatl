@@ -14,8 +14,8 @@
 // Session-level isolation (list scoping, foreign-prompt refusal, actor-vs-owner
 // on the still-allowed path) is pinned by the FLIPPED Story 3/4 specs in
 // caller_identity_test.go, not duplicated here — this file covers the surfaces
-// those stories don't: schedules (the owner-key fix) and session fork/carryover
-// (AC1.6).
+// those stories don't: schedules (the owner-key fix) and history-carrying
+// session successors (AC1.6).
 package k8s_e2e_test
 
 import (
@@ -33,17 +33,14 @@ import (
 // --- schedule request bodies + handlers --------------------------------------
 
 // scheduleBody is the minimal valid create/update body this suite needs: a
-// mutating cron schedule. Under this deployment's server-assigned workspace
-// authority (ADR 0237) the request carries an EMPTY workspace — the server
-// assigns its configured root at fire time; a non-mutating schedule still
-// requires plan mode.
+// mutating cron schedule. Placement is path-free and resolved by mecak8s
+// composition before the schedule is persisted.
 func scheduleBody(name string) []byte {
 	body, _ := json.Marshal(map[string]any{
-		"name":      name,
-		"prompt":    "noop",
-		"trigger":   map[string]any{"cron": "0 0 * * *"},
-		"mutating":  true,
-		"workspace": "",
+		"name":     name,
+		"prompt":   "noop",
+		"trigger":  map[string]any{"cron": "0 0 * * *"},
+		"mutating": true,
 	})
 	return body
 }
@@ -116,11 +113,10 @@ func schedulePrompt(raw []byte) string {
 // same-named schedules from different owners can be told apart by content.
 func scheduleBodyWithPrompt(name, prompt string) []byte {
 	body, _ := json.Marshal(map[string]any{
-		"name":      name,
-		"prompt":    prompt,
-		"trigger":   map[string]any{"cron": "0 0 * * *"},
-		"mutating":  true,
-		"workspace": "",
+		"name":     name,
+		"prompt":   prompt,
+		"trigger":  map[string]any{"cron": "0 0 * * *"},
+		"mutating": true,
 	})
 	return body
 }
@@ -140,17 +136,20 @@ func createScheduleWithPromptAs(ctx context.Context, addr, bearer, name, prompt 
 	return resp.StatusCode, raw
 }
 
-// forkSessionAs attempts to create a session carrying source_session_id, as a
-// real fork/carryover request would.
+// forkSessionAs forks the source through the dedicated successor endpoint. The
+// source identity is path-scoped by the URL and the optional JSON body carries
+// no placement authority.
+func forkSessionBody() []byte { return []byte("{}") }
+
+func forkSessionPath(sourceID string) string {
+	return fmt.Sprintf("/v1/sessions/%s/fork", sourceID)
+}
+
 func forkSessionAs(ctx context.Context, addr, bearer, sourceID string) (int, []byte) {
 	ginkgo.GinkgoHelper()
-	body, _ := json.Marshal(map[string]any{
-		"workspace":         "",
-		"mode":              "default",
-		"source_session_id": sourceID,
-	})
+	body := forkSessionBody()
 	req, _ := http.NewRequestWithContext(ctx, http.MethodPost,
-		fmt.Sprintf("http://%s/v1/sessions", addr), bytes.NewReader(body))
+		"http://"+addr+forkSessionPath(sourceID), bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	if bearer != "" {
 		req.Header.Set("Authorization", "Bearer "+bearer)
@@ -294,7 +293,7 @@ var _ = ginkgo.Describe("caller separation (issue #368)", ginkgo.Serial, ginkgo.
 
 		// AC1.6 — Bob cannot fork Alice's session; the source reference is
 		// absence-shaped, creates no destination, and leaves Alice's session
-		// unchanged. Alice's own fork/carryover remains available.
+		// unchanged. Alice's own history-carrying fork remains available.
 		ginkgo.It("refuses a foreign fork source and leaves the source untouched", func() {
 			ctx := ginkgoSuiteCtx()
 			addr, stop := portForward(agentPods[0])
@@ -315,10 +314,10 @@ var _ = ginkgo.Describe("caller separation (issue #368)", ginkgo.Serial, ginkgo.
 			gomega.Expect(afterName).To(gomega.Equal(beforeName))
 			gomega.Expect(afterSub).To(gomega.Equal(beforeSub))
 
-			// Alice's own carryover from her own session succeeds.
+			// Alice's own history-carrying successor succeeds.
 			st, raw = forkSessionAs(ctx, addr, alice, aliceSess)
 			gomega.Expect(st).To(gomega.Equal(http.StatusCreated),
-				"alice's own fork/carryover from her own session was refused: %s", raw)
+				"alice's own history-carrying fork was refused: %s", raw)
 		})
 	})
 })
