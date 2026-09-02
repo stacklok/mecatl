@@ -2,8 +2,8 @@
 id: 07-background-job-leases
 title: Background Bash job lease lifecycle
 blocked_by: [05-foreground-managed-leases]
-status: in-progress
-branch: ""
+status: done
+branch: "plan-managed-temporary-command-leases/07-background-job-leases"
 worktree: ""
 issue: ""
 retries: 0
