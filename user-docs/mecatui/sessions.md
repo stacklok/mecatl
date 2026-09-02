@@ -59,8 +59,8 @@ mecatui debug 01JOPAQUESESSIONID \
    unique projected match resolves. If projections are ambiguous, open `/session`, copy the full
    exact ID, and pass it as `TARGET` through the same command. If inventory fails or no handle
    matches, mecatui sends `TARGET` unchanged and reports the ordinary server exact-ID result.
-2. Run `mecatui debug` against the same embedded store, or use
-   `mecatui connect ADDRESS debug` against the server that owns the target.
+2. Run `mecatui debug TARGET` against the same embedded store, or use
+   `mecatui connect ADDRESS debug TARGET` against the server that owns the target.
 3. mecatui prints a privacy disclosure before entering the alternate screen.
    Running the command is consent to send bounded target evidence—which may
    include prompts, model output, tool arguments/results, paths, and secrets—to
