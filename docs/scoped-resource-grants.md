@@ -2,8 +2,9 @@
 
 *Status: strawman / working draft. Speculative scoping, not a design record under
 [ADR 0002](adr/0002-documentation-lifecycle.md) (no frozen decision here). Same
-tier as [`docs/cloud-native-harness-kit.md`](cloud-native-harness-kit.md). It
-picks up the shared-handle problem (§1) from the companion
+tier as [`docs/cloud-native-harness-kit.md`](cloud-native-harness-kit.md) and the
+[session-state/read-ledger boundary proposal](session-state-and-read-ledger.md).
+It picks up the shared-handle problem (§1) from the companion
 ["Cloud-Native Harness Systems"](cloud-native-harness-systems.md) scoping doc.
 If this direction is ever committed, it becomes one or more ADRs and this doc
 gets superseded.*
