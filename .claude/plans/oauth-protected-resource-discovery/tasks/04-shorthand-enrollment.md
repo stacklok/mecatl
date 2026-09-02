@@ -2,8 +2,8 @@
 id: 04-shorthand-enrollment
 title: Shorthand enrollment and confirmed tuple
 blocked_by: [03-client-discovery]
-status: pending
-branch: ""
+status: done
+branch: plan-oauth-protected-resource-discovery/04-shorthand-enrollment
 worktree: ""
 issue: "1033"
 retries: 0
