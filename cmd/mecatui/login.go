@@ -97,42 +97,7 @@ func runRemoteLogin(address string, args []string) error {
 		if tlsCA != "" || privateIssuer {
 			return errors.New("login: --tls-ca and --private-issuer require explicit --issuer, --client-id, and --audience")
 		}
-		resource, err := parseProtectedResource(address)
-		if err != nil {
-			return errors.New("login: --issuer, --client-id, and --audience are required for a non-resource address")
-		}
-		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-		defer stop()
-		ctx, cancel := context.WithTimeout(ctx, timeout)
-		defer cancel()
-		discovered, err := discoverRemoteResource(ctx, resource)
-		if err != nil {
-			return errors.New("login: protected-resource discovery failed")
-		}
-		scopes, err := discoveredScopes(discovered, scopes, flagWasSet(fs, "scopes"))
-		if err != nil {
-			return errors.New("login: invalid --scopes")
-		}
-		enrollment, err := discoveredEnrollmentFrom(discovered, grpcTarget, strings.Join(scopes, ","))
-		if err != nil {
-			return errors.New("login: protected-resource discovery returned an invalid enrollment profile")
-		}
-		confirmed, err := confirmDiscoveredEnrollment(os.Stdin, os.Stderr, enrollment)
-		if err != nil {
-			return fmt.Errorf("login: confirmation failed: %w", err)
-		}
-		if !confirmed {
-			return errors.New("login: discovered enrollment was not confirmed")
-		}
-		if err := executeRemoteLogin(ctx, enrollment.Connection, noBrowser); err != nil {
-			if errors.Is(err, context.Canceled) {
-				fmt.Fprintln(os.Stderr, "login cancelled")
-				return nil
-			}
-			return fmt.Errorf("login: %w", err)
-		}
-		fmt.Fprintln(os.Stderr, "login successful")
-		return nil
+		return runDiscoveredRemoteLogin(address, grpcTarget, scopes, flagWasSet(fs, "scopes"), noBrowser, timeout)
 	}
 	if issuer == "" || clientID == "" || audience == "" {
 		return errors.New("login: --issuer, --client-id, and --audience are required together")
@@ -162,6 +127,45 @@ func runRemoteLogin(address string, args []string) error {
 	}
 	conn := clientauth.Connection{Identity: clientauth.Identity{Target: address, Issuer: issuer, ClientID: clientID, Audience: audience, RedirectURI: oauthlogin.ExactRedirectURL, Scopes: splitScopes(scopes)}, IssuerCAFile: issuerCAFile, IssuerAddressPolicy: policy}
 	if err := executeRemoteLogin(ctx, conn, noBrowser); err != nil {
+		if errors.Is(err, context.Canceled) {
+			fmt.Fprintln(os.Stderr, "login cancelled")
+			return nil
+		}
+		return fmt.Errorf("login: %w", err)
+	}
+	fmt.Fprintln(os.Stderr, "login successful")
+	return nil
+}
+
+func runDiscoveredRemoteLogin(address, grpcTarget, scopes string, scopesExplicit, noBrowser bool, timeout time.Duration) error {
+	resource, err := parseProtectedResource(address)
+	if err != nil {
+		return errors.New("login: --issuer, --client-id, and --audience are required for a non-resource address")
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	discovered, err := discoverRemoteResource(ctx, resource)
+	if err != nil {
+		return errors.New("login: protected-resource discovery failed")
+	}
+	selectedScopes, err := discoveredScopes(discovered, scopes, scopesExplicit)
+	if err != nil {
+		return errors.New("login: invalid --scopes")
+	}
+	enrollment, err := discoveredEnrollmentFrom(discovered, grpcTarget, strings.Join(selectedScopes, ","))
+	if err != nil {
+		return errors.New("login: protected-resource discovery returned an invalid enrollment profile")
+	}
+	confirmed, err := confirmDiscoveredEnrollment(os.Stdin, os.Stderr, enrollment)
+	if err != nil {
+		return fmt.Errorf("login: confirmation failed: %w", err)
+	}
+	if !confirmed {
+		return errors.New("login: discovered enrollment was not confirmed")
+	}
+	if err := executeRemoteLogin(ctx, enrollment.Connection, noBrowser); err != nil {
 		if errors.Is(err, context.Canceled) {
 			fmt.Fprintln(os.Stderr, "login cancelled")
 			return nil
@@ -219,7 +223,9 @@ func discoveredEnrollmentFrom(discovered discoveredResource, grpcTarget, scopes 
 }
 
 func confirmDiscoveredLogin(in io.Reader, out io.Writer, enrollment discoveredEnrollment) (bool, error) {
-	fmt.Fprintf(out, "Discovered protected resource:\n  resource: %s\n  metadata: %s\n  issuer: %s\n  audience: %s\n  client ID: %s\n  scopes: %s\n  gRPC target: %s\nContinue with browser login? [y/N]: ", enrollment.Resource, enrollment.MetadataURL, enrollment.Connection.Identity.Issuer, enrollment.Connection.Identity.Audience, enrollment.Connection.Identity.ClientID, strings.Join(enrollment.Connection.Identity.Scopes, ","), enrollment.Connection.Identity.Target)
+	if _, err := fmt.Fprintf(out, "Discovered protected resource:\n  resource: %s\n  metadata: %s\n  issuer: %s\n  audience: %s\n  client ID: %s\n  scopes: %s\n  gRPC target: %s\nContinue with browser login? [y/N]: ", enrollment.Resource, enrollment.MetadataURL, enrollment.Connection.Identity.Issuer, enrollment.Connection.Identity.Audience, enrollment.Connection.Identity.ClientID, strings.Join(enrollment.Connection.Identity.Scopes, ","), enrollment.Connection.Identity.Target); err != nil {
+		return false, err
+	}
 	var answer string
 	if _, err := fmt.Fscanln(in, &answer); err != nil {
 		if errors.Is(err, io.EOF) {
