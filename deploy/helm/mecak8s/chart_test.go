@@ -15,6 +15,7 @@ import (
 	"testing"
 
 	"github.com/google/jsonschema-go/jsonschema"
+	mcpadapter "github.com/stacklok/mecatl/internal/adapter/mcp"
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
 	"github.com/stacklok/mecatl/internal/cliconfig"
 	appsv1 "k8s.io/api/apps/v1"
@@ -1358,25 +1359,43 @@ mcp:
 }
 
 func TestMecak8sHelmChart_MCPStaticBearerLoopbackNeedsNoInsecureAcknowledgement(t *testing.T) {
-	rendered, err := renderMCPValues(t, `
+	for _, rawURL := range []string{
+		"http://127.0.0.1:9090/mcp",
+		"http://LOCALHOST:9090/mcp",
+		"http://[::1]:9090/mcp",
+		"http://[0:0:0:0:0:0:0:1]:9090/mcp",
+		"http://[0::1]:9090/mcp",
+	} {
+		t.Run(rawURL, func(t *testing.T) {
+			if err := mcpadapter.ValidateClientURL(rawURL); err != nil {
+				t.Fatalf("runtime does not recognize fixture as loopback: %v", err)
+			}
+			values := fmt.Sprintf(`
 mcp:
   servers:
     - name: local
-      url: http://127.0.0.1:9090/mcp
+      url: %s
       auth:
         mode: staticBearer
         staticBearer:
           secretKeyRef: {name: local-mcp, key: token}
-`)
-	if err != nil {
-		t.Fatalf("render loopback MCP values: %v", err)
-	}
-	args := deploymentFromRender(t, rendered).Spec.Template.Spec.Containers[0].Args
-	if !slices.Contains(args, "--mcp-server=local=http://127.0.0.1:9090/mcp") {
-		t.Fatalf("loopback MCP server arg missing: %#v", args)
-	}
-	if slices.Contains(args, "--mcp-server-insecure-http=local") {
-		t.Fatalf("loopback MCP server rendered a stale insecure acknowledgement: %#v", args)
+`, rawURL)
+			rendered, err := renderMCPValues(t, values)
+			if err != nil {
+				t.Fatalf("render loopback MCP values: %v", err)
+			}
+			args := deploymentFromRender(t, rendered).Spec.Template.Spec.Containers[0].Args
+			if !slices.Contains(args, "--mcp-server=local="+rawURL) {
+				t.Fatalf("loopback MCP server arg missing: %#v", args)
+			}
+			if slices.Contains(args, "--mcp-server-insecure-http=local") {
+				t.Fatalf("loopback MCP server rendered a stale insecure acknowledgement: %#v", args)
+			}
+
+			if _, err := renderMCPValues(t, strings.Replace(values, "url: "+rawURL, "url: "+rawURL+"\n      insecureHTTP: true", 1)); err == nil {
+				t.Fatal("render accepted stale insecure acknowledgement for runtime-recognized loopback")
+			}
+		})
 	}
 }
 
@@ -1608,6 +1627,13 @@ mcp:
 		"static HTTP without acknowledgement": strings.Replace(validStatic, "https://mcp.example/mcp", "http://mcp.example/mcp", 1),
 		"oauth HTTP":                          strings.Replace(validOAuth, "https://mcp.example/mcp", "http://mcp.example/mcp", 1),
 		"noncanonical OAuth issuer":           strings.Replace(validOAuth, "https://issuer.example", "https://ISSUER.example:443", 1),
+		"OAuth resource underscore hostname":  strings.Replace(validOAuth, "https://mcp.example/mcp", "https://mcp_bad.example/mcp", 1),
+		"OAuth origin underscore hostname":    strings.Replace(validOAuth, "additionalOrigins: [https://client.example]", "additionalOrigins: [https://client_bad.example]", 1),
+		"OAuth issuer nonnumeric port":        strings.Replace(validOAuth, "https://issuer.example", "https://issuer.example:notaport", 1),
+		"OAuth issuer zero port":              strings.Replace(validOAuth, "https://issuer.example", "https://issuer.example:0", 1),
+		"OAuth issuer port out of range":      strings.Replace(validOAuth, "https://issuer.example", "https://issuer.example:65536", 1),
+		"OAuth expanded IPv6 origin":          strings.Replace(validOAuth, "https://issuer.example", "https://[0:0:0:0:0:0:0:1]", 1),
+		"OAuth padded IPv6 origin":            strings.Replace(validOAuth, "https://issuer.example", "https://[2001:0db8::1]", 1),
 		"OAuth principal control character":   strings.Replace(validOAuth, "principal: service-account:mecak8s", `principal: "service-account:\u0007mecak8s"`, 1),
 		"CIMD origin not allowed":             strings.Replace(validOAuth, "additionalOrigins: [https://client.example]", "additionalOrigins: []", 1),
 		"private origin not allowed":          strings.Replace(validOAuth, "privateOrigins: []", "privateOrigins: [https://private.example]", 1),
