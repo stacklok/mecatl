@@ -6711,6 +6711,8 @@ type SessionSummary struct {
 	// TitleProvenance reports whether the title is prompt-derived, operator-authored,
 	// or legacy/unknown.
 	TitleProvenance session.TitleProvenance
+	// TitleMetadata is the bounded source-free title lifecycle projection.
+	TitleMetadata session.TitlePayload
 	// Workspace is the stored session root used for search and display.
 	Workspace string
 	// Owner is the verified caller the session is attributed to.
@@ -7130,6 +7132,7 @@ func (s *Service) ListSessions(ctx context.Context) ([]SessionSummary, error) {
 			}
 			summary.Title = DeriveTitle(sess)
 			summary.TitleProvenance = sess.TitleProvenance
+			summary.TitleMetadata = titlePayload(sess)
 			summary.Workspace = sess.Workspace
 			// Clone: the row must not carry a live pointer into the loaded
 			// session, or a consumer of the row can rewrite the recorded owner.

@@ -17,6 +17,33 @@ import (
 // msgs that don't originate from the stream. These are plain data — no proto,
 // no grpc — so ui can switch over them freely.
 
+// SessionTitleMsg carries the authoritative, source-free title lifecycle update.
+type SessionTitleMsg struct {
+	Title           string
+	Provenance      string
+	GenerationState string
+	LatestAttempt   TitleAttemptSummary
+	LatestUsage     AuxiliaryUsageSummary
+}
+
+// TitleAttemptSummary is the latest durable title attempt projection.
+type TitleAttemptSummary struct {
+	ID            string
+	Outcome       string
+	CreatedAtUnix int64
+}
+
+// AuxiliaryUsageSummary is the latest title-only auxiliary usage projection.
+type AuxiliaryUsageSummary struct {
+	Operation      string
+	ProviderID     string
+	ModelID        string
+	InputTokens    int64
+	OutputTokens   int64
+	RecordedAtUnix int64
+	Outcome        string
+}
+
 // SessionInitMsg marks the run stream as live (proto type "session.init").
 type SessionInitMsg struct{ Seq int64 }
 
@@ -1070,6 +1097,8 @@ func EventToMsg(ev *mecatlv1.Event) tea.Msg {
 	switch ev.GetType() {
 	case "session.init":
 		return SessionInitMsg{Seq: ev.GetSeq()}
+	case "session.title":
+		return sessionTitleMsg(ev.GetTitle())
 	case "turn.start":
 		return TurnStartMsg{Turn: ev.GetTurn()}
 	case "turn.end":
@@ -1139,6 +1168,22 @@ func EventToMsg(ev *mecatlv1.Event) tea.Msg {
 			return msg
 		}
 		return delegationEventToMsg(ev)
+	}
+}
+
+func sessionTitleMsg(title *mecatlv1.SessionTitle) SessionTitleMsg {
+	if title == nil {
+		return SessionTitleMsg{}
+	}
+	attempt := title.GetLatestAttempt()
+	usage := title.GetLatestUsage()
+	return SessionTitleMsg{
+		Title: title.GetTitle(), Provenance: title.GetProvenance(), GenerationState: title.GetGenerationState(),
+		LatestAttempt: TitleAttemptSummary{ID: attempt.GetId(), Outcome: attempt.GetOutcome(), CreatedAtUnix: attempt.GetCreatedAtUnix()},
+		LatestUsage: AuxiliaryUsageSummary{
+			Operation: usage.GetOperation(), ProviderID: usage.GetProviderId(), ModelID: usage.GetModelId(),
+			InputTokens: usage.GetInputTokens(), OutputTokens: usage.GetOutputTokens(), RecordedAtUnix: usage.GetRecordedAtUnix(), Outcome: usage.GetOutcome(),
+		},
 	}
 }
 

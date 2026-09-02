@@ -13,9 +13,10 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 ### Added
 
-- **Session title-generation domain metadata** — adds generated title provenance,
-  durable title-generation lifecycle/source/attempt records, and a bounded
-  `session_title` auxiliary-usage ledger. The ledger is intentionally separate
+- **Session title-generation domain metadata and lifecycle event** — adds generated title provenance,
+  durable title-generation lifecycle/source/attempt records, a bounded
+  `session_title` auxiliary-usage ledger, and the source-free `EvSessionTitle` /
+  `TitlePayload` event projection. The ledger is intentionally separate
   from `Session.Usage`, normal run budgets, result usage, and conversation.
   Snapshot and event-source metadata round-trip the title-specific state. Added
   (minor).

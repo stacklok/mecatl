@@ -134,6 +134,9 @@ func toProto(ev session.Event) *mecatlv1.Event {
 		Turn:  ClampInt32(ev.Turn),
 		Text:  valid(ev.Text),
 	}
+	if ev.Title != nil {
+		out.Title = toProtoSessionTitle(*ev.Title)
+	}
 	if ev.ToolCall != nil {
 		out.ToolCall = toProtoToolCall(*ev.ToolCall)
 	}
@@ -803,7 +806,8 @@ func toProtoSession(s *session.Session, rm ResolvedModel, caps *mecatlv1.ServerC
 		CreatedAtUnix:           s.CreatedAt.Unix(),
 		ResolvedModel:           resolvedModelToProto(rm),
 		Title:                   valid(s.Title),
-		TitleProvenance:         string(s.TitleProvenance),
+		TitleProvenance:         valid(string(s.TitleProvenance)),
+		TitleMetadata:           toProtoSessionTitle(titlePayload(s)),
 		Capabilities:            caps,
 		AdoptionSourceSessionId: valid(string(adoptionSourceID(s))),
 		Kind:                    string(s.Kind),
@@ -811,6 +815,46 @@ func toProtoSession(s *session.Session, rm ResolvedModel, caps *mecatlv1.ServerC
 		DebugMcpServers:         validStrings(s.DebugMCPServers),
 		DebugMcpTools:           validStrings(s.DebugMCPTools),
 	}
+}
+
+func titlePayload(s *session.Session) session.TitlePayload {
+	payload := session.TitlePayload{
+		Title:           s.Title,
+		Provenance:      s.TitleProvenance,
+		GenerationState: s.TitleGeneration,
+	}
+	if attempts := s.TitleAttempts(); len(attempts) > 0 {
+		payload.LatestAttempt = &attempts[len(attempts)-1]
+	}
+	if usage := s.AuxiliaryUsage(); len(usage) > 0 {
+		payload.LatestUsage = &usage[len(usage)-1]
+	}
+	return payload
+}
+
+// toProtoSessionTitle maps only the bounded, source-free title lifecycle
+// projection. Title source prompts and provider errors have no wire fields.
+func toProtoSessionTitle(p session.TitlePayload) *mecatlv1.SessionTitle {
+	out := &mecatlv1.SessionTitle{
+		Title:           valid(p.Title),
+		Provenance:      valid(string(p.Provenance)),
+		GenerationState: valid(string(p.GenerationState)),
+	}
+	if p.LatestAttempt != nil {
+		out.LatestAttempt = &mecatlv1.TitleAttemptSummary{
+			Id: valid(p.LatestAttempt.ID), Outcome: valid(string(p.LatestAttempt.Outcome)),
+			CreatedAtUnix: p.LatestAttempt.CreatedAt.Unix(),
+		}
+	}
+	if p.LatestUsage != nil {
+		out.LatestUsage = &mecatlv1.AuxiliaryUsageSummary{
+			Operation: valid(string(p.LatestUsage.Operation)), ProviderId: valid(p.LatestUsage.ProviderID),
+			ModelId: valid(p.LatestUsage.ModelID), InputTokens: int64(p.LatestUsage.Usage.InputTokens),
+			OutputTokens: int64(p.LatestUsage.Usage.OutputTokens), RecordedAtUnix: p.LatestUsage.RecordedAt.Unix(),
+			Outcome: valid(string(p.LatestUsage.Outcome)),
+		}
+	}
+	return out
 }
 
 // resolvedModelToProto maps the server-side ResolvedModel value to its proto form.
@@ -1006,7 +1050,8 @@ func toProtoSessionSummary(s SessionSummary) *mecatlv1.SessionSummary {
 		ModelId:         s.ModelID,
 		CreatedAtUnix:   s.CreatedAtUnix,
 		Title:           valid(s.Title),
-		TitleProvenance: string(s.TitleProvenance),
+		TitleProvenance: valid(string(s.TitleProvenance)),
+		TitleMetadata:   toProtoSessionTitle(s.TitleMetadata),
 		Workspace:       valid(s.Workspace),
 		Owner:           toProtoPrincipal(s.Owner),
 		Kind:            string(s.Kind),

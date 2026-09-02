@@ -13,6 +13,10 @@ type EventType string
 const (
 	// EvSessionInit is emitted once when a run starts.
 	EvSessionInit EventType = "session.init"
+	// EvSessionTitle is emitted after a durable title lifecycle change. It carries
+	// only the source-free authoritative TitlePayload; title-source prompts and
+	// provider errors never cross the event boundary.
+	EvSessionTitle EventType = "session.title"
 	// EvModelRetry is emitted immediately after session.init when a failed-step retry
 	// starts. ModelRetry carries authoritative typed reconstruction data; Text is bounded,
 	// harness-authored lifecycle guidance and is never recorded in model history.
@@ -1383,6 +1387,9 @@ type Event struct {
 	Turn int
 	// Text carries streamed or final text where applicable.
 	Text string
+	// Title is set on EvSessionTitle and carries the authoritative, source-free
+	// title lifecycle projection after a persisted change.
+	Title *TitlePayload
 	// ToolCall is set on EvToolCall.
 	ToolCall *ToolCall
 	// ToolResult is set on EvToolResult.

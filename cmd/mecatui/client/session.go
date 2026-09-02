@@ -23,6 +23,7 @@ type SessionSnapshot struct {
 	ResolvedModel   ResolvedModel
 	Title           string
 	TitleProvenance string
+	TitleMetadata   SessionTitleMsg
 	// Capabilities is the server's feature-advertisement snapshot from the Session
 	// proto (the SAME value CreateSessionResponse carries). A client that re-hydrates
 	// a persisted session on adopt (continue, /effort fork) reads this to re-derive
@@ -43,6 +44,7 @@ func snapshotFrom(s *mecatlv1.Session) SessionSnapshot {
 		ResolvedModel:   resolvedModelFrom(s.GetResolvedModel()),
 		Title:           s.GetTitle(),
 		TitleProvenance: s.GetTitleProvenance(),
+		TitleMetadata:   sessionTitleMsg(s.GetTitleMetadata()),
 		Capabilities:    capabilitiesFrom(s.GetCapabilities()),
 	}
 }
