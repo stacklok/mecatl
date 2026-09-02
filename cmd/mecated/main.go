@@ -1454,6 +1454,14 @@ func buildAPIHandler(corsPolicy *server.CORSPolicy, auth *server.Authenticator, 
 	return corsPolicy.Middleware(auth.Middleware(server.NewHTTPHandler(svc)))
 }
 
+func protectedResourceProfile(c cliconfig.OIDCConfig) server.ProtectedResourceProfile {
+	projection, err := c.ProfileProjection()
+	if err != nil || !c.ProtectedResourceEnabled() {
+		return server.ProtectedResourceProfile{}
+	}
+	return projection.ProtectedResourceProfile()
+}
+
 func validateEffectiveConfig(cfg config) error {
 	if err := validateDeploymentID(cfg.deploymentID); err != nil {
 		return err
@@ -1973,7 +1981,7 @@ func serve(ctx context.Context, cfg config, svc *server.Service, reg *prometheus
 	if cfg.httpAddr != "" {
 		httpMux := http.NewServeMux()
 		server.NewHealthHandler(func() bool { return true }).RegisterHealth(httpMux)
-		httpMux.Handle("/", buildAPIHandler(corsPolicy, auth, svc))
+		httpMux.Handle("/", server.WithProtectedResourceMetadata(protectedResourceProfile(cfg.oidc), buildAPIHandler(corsPolicy, auth, svc)))
 		httpSrv = &http.Server{
 			Addr:              cfg.httpAddr,
 			Handler:           httpMux,
@@ -2296,11 +2304,16 @@ func buildEdge(ctx context.Context, cfg config) (*tls.Config, *server.Authentica
 	if err != nil {
 		return nil, nil, nil, err
 	}
+	metadataURL := ""
+	if cfg.oidc.ProtectedResourceEnabled() {
+		metadataURL = server.WellKnownProtectedResourceURL(cfg.oidc.Resource)
+	}
 	return tlsCfg, server.NewAuthenticator(server.SecurityConfig{
-		AuthToken: cfg.authToken,
-		RateLimit: cfg.rateLimit,
-		RateBurst: cfg.rateBurst,
-		Validator: validator,
+		AuthToken:           cfg.authToken,
+		RateLimit:           cfg.rateLimit,
+		RateBurst:           cfg.rateBurst,
+		Validator:           validator,
+		ResourceMetadataURL: metadataURL,
 	}), corsPolicy, nil
 }
 

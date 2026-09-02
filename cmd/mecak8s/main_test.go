@@ -534,7 +534,7 @@ func TestDrainHTTPRouting(t *testing.T) {
 
 	auth := server.NewAuthenticator(server.SecurityConfig{AuthToken: "test-token"})
 	defer auth.Close()
-	normal := httptest.NewServer(normalHTTPMux(built.Service, auth))
+	normal := httptest.NewServer(normalHTTPMux(built.Service, auth, server.ProtectedResourceProfile{}))
 	defer normal.Close()
 	drain := httptest.NewServer(drainHTTPMux(built.Service, func(time.Duration) {}))
 	defer drain.Close()

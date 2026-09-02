@@ -99,6 +99,10 @@ type SecurityConfig struct {
 	// leaves the path byte-identical to a mecatl without identity: no
 	// validation, no principal, no new failure mode.
 	Validator PrincipalValidator
+	// ResourceMetadataURL is the validated, operator-configured RFC 9728
+	// metadata endpoint advertised on unauthorized HTTP requests. Empty retains
+	// the legacy bare Bearer challenge.
+	ResourceMetadataURL string
 	// Diagnostics receives sanitized authentication-rejection records. Nil leaves
 	// diagnostics disabled; records never include credentials or validator errors.
 	Diagnostics port.Diagnostics
@@ -623,7 +627,7 @@ func (a *Authenticator) Middleware(next http.Handler) http.Handler {
 					category = authCategoryMissingBearer
 				}
 				a.logRejection(r.Context(), category, "http", "401")
-				w.Header().Set("WWW-Authenticate", "Bearer")
+				w.Header().Set("WWW-Authenticate", protectedResourceChallenge(a.cfg.ResourceMetadataURL))
 				writeError(w, http.StatusUnauthorized, "missing or invalid bearer token")
 				return
 			}
@@ -661,7 +665,7 @@ func (a *Authenticator) Middleware(next http.Handler) http.Handler {
 				category = authCategoryMissingBearer
 			}
 			a.logRejection(r.Context(), category, "http", "401")
-			w.Header().Set("WWW-Authenticate", "Bearer")
+			w.Header().Set("WWW-Authenticate", protectedResourceChallenge(a.cfg.ResourceMetadataURL))
 			writeError(w, http.StatusUnauthorized, "missing or invalid bearer token")
 			return
 		}

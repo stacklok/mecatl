@@ -154,6 +154,18 @@ type OIDCProfileProjection struct {
 	Scopes   []string
 }
 
+// ProtectedResourceProfile converts this validated projection to the public
+// metadata shape. It deliberately exposes only fields RFC 9728 permits here.
+func (p OIDCProfileProjection) ProtectedResourceProfile() server.ProtectedResourceProfile {
+	return server.ProtectedResourceProfile{
+		Resource: p.Resource,
+		Issuer:   p.Issuer,
+		Audience: p.Audience,
+		ClientID: p.ClientID,
+		Scopes:   append([]string(nil), p.Scopes...),
+	}
+}
+
 // ProtectedResourceEnabled reports whether both profile identity fields are
 // present. ValidateOIDCProfile must still be called before serving.
 func (c OIDCConfig) ProtectedResourceEnabled() bool {
