@@ -3129,11 +3129,25 @@ func (s *Service) SetMode(ctx context.Context, id session.SessionID, mode sessio
 	if mode == "" {
 		return nil, fmt.Errorf("%w: mode is required", ErrInvalidArgument)
 	}
+	// Ownership is established before caller-selected coordination, then
+	// revalidated under runEntryMu before and after lease acquisition.
 	if _, err := s.GetSession(ctx, id); err != nil {
 		return nil, err
 	}
+	unlock := s.runEntryMu.lock(id)
+	defer unlock()
+	if _, err := s.GetSession(ctx, id); err != nil {
+		return nil, err
+	}
+	release, err := s.acquireMutationLease(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+
 	// Prefer the live session the engine drives (if registered) so the change is
-	// observed by the same object; otherwise operate on the stored snapshot.
+	// observed by the same object; otherwise reload the authoritative snapshot
+	// after acquiring the lease.
 	s.mu.Lock()
 	st, live := s.runs[id]
 	s.mu.Unlock()
@@ -3141,10 +3155,13 @@ func (s *Service) SetMode(ctx context.Context, id session.SessionID, mode sessio
 	var sess *session.Session
 	if live {
 		sess = st.sess
-	} else {
-		loaded, err := s.GetSession(ctx, id)
-		if err != nil {
+		if err := s.authorizeSession(ctx, sess); err != nil {
 			return nil, err
+		}
+	} else {
+		loaded, loadErr := s.GetSession(ctx, id)
+		if loadErr != nil {
+			return nil, loadErr
 		}
 		sess = loaded
 	}
@@ -3334,13 +3351,26 @@ func (s *Service) maybeReplayApprovals(ctx context.Context, sess *session.Sessio
 // recovers it via Recover (both repair the history), then re-persists. ErrNotFound
 // propagates from GetSession.
 func (s *Service) loadAndReopen(ctx context.Context, id session.SessionID) (*session.Session, error) {
+	// Ownership is checked before caller-selected coordination, then revalidated
+	// under runEntryMu before and after acquiring the mutation lease.
+	if _, err := s.GetSession(ctx, id); err != nil {
+		return nil, err
+	}
+	unlock := s.runEntryMu.lock(id)
+	defer unlock()
+	if _, err := s.GetSession(ctx, id); err != nil {
+		return nil, err
+	}
+	release, err := s.acquireMutationLease(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	sess, err := s.GetSession(ctx, id)
 	if err != nil {
 		return nil, err
 	}
-	// Persisted workspace authority is enforced at the top of reopenLoadedSession
-	// (the shared recovery choke point); nothing runs between the load and the
-	// reopen here, so a separate check would be pure redundancy.
+	// Persisted workspace authority is enforced at the top of reopenLoadedSession.
 	return s.reopenLoadedSession(ctx, sess)
 }
 
@@ -3752,8 +3782,14 @@ func (s *Service) startRunContent(ctx context.Context, id session.SessionID, tex
 	// human AllowAlways verdict, never from a parsed directive in `text`. This replaces
 	// the removed ADR-0061 /guardrail-allow prompt directive (no scan, no strip, no
 	// near-miss WARN). The `text` param flows straight through.
+	// Cross-process single-writer gate: take the session lease after runEntryMu and
+	// before terminal recovery can mutate or persist the aggregate.
+	if err := s.acquireLease(ctx, id); err != nil {
+		return nil, err
+	}
 	// Apply the unchanged reopen/interrupt/recover funnel only after the trusted
-	// purpose gate. Rejected kinds are never mutated as a side effect of probing.
+	// purpose and ownership gates and lease acquisition. Rejected kinds are never
+	// mutated as a side effect of probing.
 	sess, err = s.reopenLoadedSession(ctx, sess)
 	if err != nil {
 		return nil, err
@@ -3762,13 +3798,6 @@ func (s *Service) startRunContent(ctx context.Context, id session.SessionID, tex
 	// per-session engine for a mode→model change, ADR 0030 Layer 3) + run launch +
 	// register. The lock was acquired before loading so the entire run-entry
 	// transaction observes one authoritative snapshot.
-	// Cross-process single-writer gate (cloud-native Phase 4): take the session
-	// lease AFTER the in-process runEntryMu so same-process exclusion stays cheap.
-	// A competing live owner refuses the run with ErrSessionLeasedElsewhere; nil
-	// SessionLease is the byte-identical no-lease default.
-	if err := s.acquireLease(ctx, id); err != nil {
-		return nil, err
-	}
 	// Crash-orphan repair (issue #475): loadAndReopen's switch deliberately does
 	// NOT handle StateRunning (see its no-op comment) because repairing it there
 	// would run before this process holds the real lease/lock, racing a
@@ -4999,6 +5028,9 @@ func (s *Service) Persist(ctx context.Context, id session.SessionID) {
 	if !ok {
 		return
 	}
+	if !s.mutationLeaseHeld(id) {
+		return
+	}
 	// Save FIRST, then mark awaiting on success (H1 ordering): the flag must be
 	// set only after the durable StateAwaiting snapshot has actually landed, so
 	// Close (which skips cancelling awaiting runs) never skips a run whose
@@ -5033,6 +5065,9 @@ func (s *Service) Persist(ctx context.Context, id session.SessionID) {
 func (s *Service) appendEvent(ctx context.Context, id session.SessionID, ev session.Event) error {
 	if s.cfg.EventLog == nil {
 		return nil
+	}
+	if !s.mutationLeaseHeld(id) {
+		return fmt.Errorf("%w: %q", ErrSessionLeasedElsewhere, id)
 	}
 	// The actor is the verified caller who ACTED, NOT the session's owner. The two
 	// are different questions and routinely different values: this phase ships no
@@ -5320,6 +5355,16 @@ func (s *Service) acquireMutationLease(ctx context.Context, id session.SessionID
 		return func() {}, nil
 	}
 	return func() { s.releaseLease(id) }, nil
+}
+
+func (s *Service) mutationLeaseHeld(id session.SessionID) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.cfg.SessionLease == nil || s.leaseDisabled {
+		return true
+	}
+	h := s.heldLeases[id]
+	return h != nil && h.ctx.Err() == nil
 }
 
 func (s *Service) mutationLeaseContext(parent context.Context, id session.SessionID) (context.Context, func(), func() bool) {
@@ -5714,6 +5759,9 @@ func (s *Service) SettleIfStale(ctx context.Context, id session.SessionID) (bool
 	if !staleReconcileAuthorized(ctx) {
 		return false, ErrManagementUnauthorized
 	}
+	// Authorization precedes caller-selected coordination. Revalidation after
+	// runEntryMu and the maintenance mutation lease prevents an advisory stale
+	// scan from becoming a durable grant.
 	sess, err := s.cfg.Store.Load(ctx, id)
 	if err != nil {
 		return false, fmt.Errorf("server: load session for stale settle: %w", err)
@@ -5724,11 +5772,21 @@ func (s *Service) SettleIfStale(ctx context.Context, id session.SessionID) (bool
 	if !staleMaintenanceSessionCandidate(sess) {
 		return false, nil
 	}
-	// ponytail: narrows, doesn't close, the TOCTOU window between the sweep's
-	// staleness decision and this write — a real run could still register
-	// between this check and the Save below. Store.Save has no CAS; closing
-	// it fully needs one. See ADR write-up (Step 5).
+	unlock := s.runEntryMu.lock(id)
+	defer unlock()
 	if s.IsLive(id) {
+		return false, nil
+	}
+	release, err := s.acquireMutationLease(ctx, id)
+	if err != nil {
+		return false, err
+	}
+	defer release()
+	sess, err = s.cfg.Store.Load(ctx, id)
+	if err != nil {
+		return false, fmt.Errorf("server: reload session for stale settle: %w", err)
+	}
+	if s.cfg.OwnershipEnforced && sess.Owner == nil || !staleMaintenanceSessionCandidate(sess) || s.IsLive(id) {
 		return false, nil
 	}
 	if err := sess.Abandon(); err != nil {
