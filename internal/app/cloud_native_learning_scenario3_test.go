@@ -112,6 +112,76 @@ func TestCloudNativeLearning_Scenario3_ExplicitProcedureAttemptSurvivesRestart(t
 	}
 }
 
+func TestADR_0259_WorkerSourceAuthorityFailsClosedWhenSourceDeletedAcrossBuild(t *testing.T) {
+	ctx := context.Background()
+	workspace := t.TempDir()
+	storeDir := t.TempDir()
+	userModelDir := t.TempDir()
+	owner := &session.Principal{Issuer: "test", Subject: "owner", GrantType: session.GrantTypeUser}
+	ownerCtx := session.WithPrincipal(ctx, owner)
+
+	lifecycle, stopFirstProcess := context.WithCancel(ctx)
+	first, err := Build(lifecycle, learningRestartConfig(workspace, storeDir, userModelDir, mockllm.New(mockllm.TextTurn("workflow completed"))))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess, err := first.Service.CreateSession(ownerCtx, workspace, session.ModeDefault, defaultLimits())
+	if err != nil {
+		first.Close()
+		t.Fatal(err)
+	}
+	stopFirstProcess()
+	run, err := first.Service.StartRun(ownerCtx, sess.ID, "Turn this workflow into a skill")
+	if err != nil {
+		first.Close()
+		t.Fatal(err)
+	}
+	_ = drainLearningRun(run)
+	first.Close()
+
+	attempts, err := attemptstore.New(filepath.Join(userModelDir, "learning-attempts"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	partition, err := learning.DeriveAttemptPartition(reflectionPrincipal(owner))
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, err := attempts.List(ctx, partition, learning.AttemptList{})
+	if err != nil || len(page.Records) != 1 || page.Records[0].State != learning.AttemptQueued {
+		t.Fatalf("queued attempt before source deletion = %+v, err=%v", page.Records, err)
+	}
+
+	sources, err := jsonlstore.New(storeDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sources.Delete(ctx, sess.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	second, err := Build(ctx, learningRestartConfig(workspace, storeDir, userModelDir, mockllm.New()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer second.Close()
+	deadline := time.Now().Add(5 * time.Second)
+	var terminal learning.AttemptRecord
+	for time.Now().Before(deadline) {
+		terminal, _, err = attempts.Get(ctx, partition, page.Records[0].ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if terminal.State.Terminal() {
+			break
+		}
+		runtime.Gosched()
+	}
+	if terminal.State != learning.AttemptFailed || terminal.FailureCode != learning.FailureEvidenceUnavailable || terminal.ProposalID != "" || terminal.SkillID != "" {
+		t.Fatalf("deleted-source recovery terminal = %+v, want safe evidence_unavailable without mutation", terminal)
+	}
+}
+
 func TestCloudNativeLearning_Scenario3_UnwiredLearningIsByteIdentical(t *testing.T) {
 	ctx := context.Background()
 	workspace := t.TempDir()

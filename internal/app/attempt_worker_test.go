@@ -346,8 +346,53 @@ func TestADR_0254_IncompleteTerminalEvidenceRemainsRetryable(t *testing.T) {
 	if !errors.Is(err, errLearningEvidenceNotReady) {
 		t.Fatalf("Run error = %v, want retryable evidence-not-ready", err)
 	}
-	if got.State != learning.AttemptQueued || got.State.Terminal() || got.FailureCode != learning.FailureNone {
-		t.Fatalf("incomplete event sequence became terminal: %+v", got)
+	if got.State != learning.AttemptRunning || got.State.Terminal() || got.FailureCode != learning.FailureNone || got.ClaimExpiresAt.IsZero() {
+		t.Fatalf("incomplete event sequence did not enter persisted retry backoff: %+v", got)
+	}
+}
+
+func TestAttemptRecoveryTransientSetupRetriesAreBoundedAcrossRestart(t *testing.T) {
+	t.Parallel()
+	clock := &attemptWorkerClock{now: time.Unix(46, 0)}
+	repository, partition, created := newAttemptWorkerRecord(t, clock)
+	setupErr := errors.New("provider setup leaked secret-token")
+	claimedSetups := 0
+
+	for attempt := 1; attempt <= defaultAttemptSetupMaxAttempts; attempt++ {
+		worker := attemptWorker{
+			repository: repository, partition: partition, id: created.ID, claimTTL: time.Second, setupRetryBase: time.Second,
+			prepare: func(_ context.Context, record learning.AttemptRecord) (learning.AttemptFailureCode, error) {
+				if record.State != learning.AttemptRunning || record.ClaimGeneration == 0 {
+					t.Fatalf("setup ran before claim: %+v", record)
+				}
+				claimedSetups++
+				return learning.FailureNone, errors.Join(errAttemptSetupTransient, setupErr)
+			},
+		}
+		got, err := worker.Run(context.Background())
+		if !errors.Is(err, errAttemptSetupTransient) {
+			t.Fatalf("attempt %d error = %v, want transient setup classification", attempt, err)
+		}
+		if attempt < defaultAttemptSetupMaxAttempts {
+			if got.State != learning.AttemptRunning || got.State.Terminal() || got.FailureCode != learning.FailureNone {
+				t.Fatalf("attempt %d prematurely terminal = %+v", attempt, got)
+			}
+			delay := attemptSetupRetryBackoff(time.Second, got.ClaimGeneration)
+			if !got.ClaimExpiresAt.Equal(clock.now.Add(delay)) {
+				t.Fatalf("attempt %d persisted backoff expiry = %v, want %v", attempt, got.ClaimExpiresAt, clock.now.Add(delay))
+			}
+			clock.now = clock.now.Add(delay)
+			continue
+		}
+		if got.State != learning.AttemptFailed || got.FailureCode != learning.FailureRetryExhausted {
+			t.Fatalf("bounded terminal = %+v, want failed/retry_exhausted", got)
+		}
+		if strings.Contains(string(got.FailureCode), "secret-token") {
+			t.Fatalf("raw setup error persisted in terminal: %+v", got)
+		}
+	}
+	if claimedSetups != defaultAttemptSetupMaxAttempts {
+		t.Fatalf("claimed setup attempts = %d, want %d", claimedSetups, defaultAttemptSetupMaxAttempts)
 	}
 }
 

@@ -9,7 +9,14 @@ import (
 	"github.com/stacklok/mecatl/engine/learning"
 )
 
-const defaultAttemptClaimTTL = 2 * time.Minute
+const (
+	defaultAttemptClaimTTL         = 2 * time.Minute
+	defaultAttemptSetupMaxAttempts = 3
+	defaultAttemptSetupRetryBase   = 5 * time.Second
+	maxAttemptSetupRetryBackoff    = time.Minute
+)
+
+var errAttemptSetupTransient = errors.New("learning attempt setup is transiently unavailable")
 
 // attemptWorker owns the durable attempt state machine. Callbacks may perform
 // expensive or downstream work, but only repository checkpoints authorize the
@@ -20,7 +27,10 @@ type attemptWorker struct {
 	id                 learning.AttemptID
 	claimTTL           time.Duration
 	claimRenewInterval time.Duration
+	setupRetryBase     time.Duration
+	setupMaxAttempts   int
 
+	prepare  func(context.Context, learning.AttemptRecord) (learning.AttemptFailureCode, error)
 	evidence func(context.Context, learning.AttemptRecord) (learning.AttemptFailureCode, error)
 	reflect  func(context.Context) (learning.Outcome, error)
 	publish  func(context.Context, learning.Outcome) (learning.AttemptCheckpoint, learning.AttemptFailureCode, error)
@@ -63,16 +73,6 @@ func (l *attemptClaimLease) checkpoint(ctx context.Context, value learning.Attem
 		l.record = record
 	}
 	return err
-}
-
-func (l *attemptClaimLease) release(ctx context.Context) (learning.AttemptRecord, error) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	record, err := l.repository.ReleaseClaim(ctx, l.partition, l.id, l.record.Version, l.claim)
-	if err == nil {
-		l.record = record
-	}
-	return record, err
 }
 
 func (l *attemptClaimLease) finalize(ctx context.Context, value learning.AttemptFinalization) (learning.AttemptRecord, error) {
@@ -127,6 +127,20 @@ func (r *attemptClaimRenewer) stop() error {
 	r.cancel()
 	<-r.done
 	return r.failure()
+}
+
+func attemptSetupRetryBackoff(base time.Duration, generation learning.ClaimGeneration) time.Duration {
+	if base <= 0 {
+		base = defaultAttemptSetupRetryBase
+	}
+	delay := base
+	for step := learning.ClaimGeneration(1); step < generation && delay < maxAttemptSetupRetryBackoff; step++ {
+		delay *= 2
+		if delay > maxAttemptSetupRetryBackoff {
+			return maxAttemptSetupRetryBackoff
+		}
+	}
+	return delay
 }
 
 // Run advances one claimed attempt through the closed checkpoint/finalization
@@ -218,6 +232,45 @@ func (w *attemptWorker) Run(ctx context.Context) (learning.AttemptRecord, error)
 		}
 		return finalize(learning.AttemptFinalization{State: learning.AttemptFailed, Outcome: learning.AttemptOutcomeFailed, FailureCode: code})
 	}
+	handleBoundaryFailure := func(failure learning.AttemptFailureCode, boundaryErr error) (learning.AttemptRecord, bool, error) {
+		if errors.Is(boundaryErr, errAttemptSetupTransient) || errors.Is(boundaryErr, errLearningEvidenceNotReady) {
+			maxAttempts := w.setupMaxAttempts
+			if maxAttempts <= 0 {
+				maxAttempts = defaultAttemptSetupMaxAttempts
+			}
+			if lease.snapshot().ClaimGeneration >= learning.ClaimGeneration(maxAttempts) {
+				terminal, finalErr := finalizeFailure(learning.FailureRetryExhausted)
+				return terminal, true, errors.Join(boundaryErr, finalErr)
+			}
+			if stopErr := stopRenewal(); stopErr != nil {
+				return lease.snapshot(), true, errors.Join(boundaryErr, stopErr)
+			}
+			delay := attemptSetupRetryBackoff(w.setupRetryBase, lease.snapshot().ClaimGeneration)
+			if renewErr := lease.renew(ctx, delay); renewErr != nil {
+				return lease.snapshot(), true, errors.Join(boundaryErr, renewErr)
+			}
+			return lease.snapshot(), true, boundaryErr
+		}
+		if boundaryErr != nil {
+			if failure == learning.FailureNone {
+				failure = learning.FailureEvidenceUnavailable
+			}
+			terminal, finalErr := finalizeFailure(failure)
+			return terminal, true, errors.Join(boundaryErr, finalErr)
+		}
+		if failure != learning.FailureNone {
+			terminal, finalErr := finalizeFailure(failure)
+			return terminal, true, finalErr
+		}
+		return learning.AttemptRecord{}, false, nil
+	}
+
+	if w.prepare != nil {
+		failure, prepareErr := w.prepare(workCtx, lease.snapshot())
+		if prepared, handled, prepareResultErr := handleBoundaryFailure(failure, prepareErr); handled {
+			return prepared, prepareResultErr
+		}
+	}
 
 	if record.CheckpointStage == learning.AttemptCheckpointNone {
 		if w.evidence == nil {
@@ -227,19 +280,8 @@ func (w *attemptWorker) Run(ctx context.Context) (learning.AttemptRecord, error)
 		if claimErr := claimFailure(); claimErr != nil {
 			return learning.AttemptRecord{}, errors.Join(evidenceErr, claimErr)
 		}
-		if evidenceErr != nil {
-			if errors.Is(evidenceErr, errLearningEvidenceNotReady) {
-				if stopErr := stopRenewal(); stopErr != nil {
-					return learning.AttemptRecord{}, errors.Join(evidenceErr, stopErr)
-				}
-				released, releaseErr := lease.release(ctx)
-				return released, errors.Join(evidenceErr, releaseErr)
-			}
-			terminal, finalErr := finalizeFailure(learning.FailureEvidenceUnavailable)
-			return terminal, errors.Join(evidenceErr, finalErr)
-		}
-		if failure != learning.FailureNone {
-			return finalizeFailure(failure)
+		if resolved, handled, resolveErr := handleBoundaryFailure(failure, evidenceErr); handled {
+			return resolved, resolveErr
 		}
 		if err := checkpoint(learning.AttemptCheckpoint{Stage: learning.AttemptCheckpointEvidenceVerified}); err != nil {
 			return learning.AttemptRecord{}, err

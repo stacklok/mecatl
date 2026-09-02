@@ -9,6 +9,7 @@ import (
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/learning"
 	"github.com/stacklok/mecatl/engine/port"
+	"github.com/stacklok/mecatl/engine/session"
 	memoryadapter "github.com/stacklok/mecatl/internal/adapter/memory"
 )
 
@@ -91,65 +92,68 @@ func (r *attemptRecovery) Close() {
 	r.done.Wait()
 }
 
-func finalizeUnavailableAttemptEvidence(ctx context.Context, repository learning.AttemptRepository, item learning.AttemptWork) error {
-	worker := attemptWorker{
-		repository: repository,
-		partition:  item.Partition,
-		id:         item.Record.ID,
-		evidence: func(context.Context, learning.AttemptRecord) (learning.AttemptFailureCode, error) {
-			return learning.FailureEvidenceUnavailable, nil
-		},
-	}
-	_, err := worker.Run(ctx)
-	return err
-}
-
 //nolint:gocyclo // exact-source reconstruction and claim-fenced publication stay visibly ordered
 func recoverAttempt(ctx context.Context, cfg Config, reg *providerRegistry, sessions port.SessionStore, events port.EventLog, repository learning.AttemptRepository, proposals learning.ProposalRepository, assets catalogAssets, item learning.AttemptWork) error {
-	source, err := sessions.Load(ctx, item.Record.Provenance.Source.SessionID)
-	if err != nil || source == nil {
-		return finalizeUnavailableAttemptEvidence(ctx, repository, item)
-	}
-	providerID := source.ProviderID
-	if providerID == "" {
-		providerID = reg.Default()
-	}
-	entry, ok := reg.Lookup(providerID)
-	if !ok || entry.provider == nil {
-		return errors.New("learning source provider is unavailable")
-	}
-	model := source.ModelID
-	if model == "" {
-		model = reg.DefaultModelFor(providerID)
-		if model == "" && providerID == reg.Default() {
-			model = cfg.Model
-		}
-	}
-	workerCfg := cfg
-	workerCfg.Workspace = source.Workspace
-	workerCfg.Model = model
-	workerCfg.LearningMode, workerCfg.LearningSensitivity, workerCfg.SkillActivationPolicy = learningPolicyForWorkspace(cfg, source.Workspace)
-	reflector, err := agent.NewEvidenceReflector(entry.provider, model, buildTokenCounter(workerCfg), agent.ReflectionLimits{})
-	if err != nil {
-		return err
-	}
 	loader := newLearningEvidenceLoader(sessions, events)
+	var source *session.Session
+	var reflector *agent.EvidenceReflector
+	var workerCfg Config
 	var input learning.Input
 	var projection learning.Projection
 	var loadErr error
-	load := func(record learning.AttemptRecord) learning.AttemptFailureCode {
+	load := func(loadCtx context.Context, record learning.AttemptRecord) learning.AttemptFailureCode {
 		var failure learning.AttemptFailureCode
-		input, projection, failure, loadErr = loader.loadForExecution(ctx, item.Partition, record)
+		input, projection, failure, loadErr = loader.loadForExecution(loadCtx, item.Partition, record)
 		return failure
 	}
-	procedure := buildProcedureProcessor(workerCfg, assets)
+	setupProvider := func() error {
+		providerID := source.ProviderID
+		if providerID == "" {
+			providerID = reg.Default()
+		}
+		entry, ok := reg.Lookup(providerID)
+		if !ok || entry.provider == nil {
+			return errAttemptSetupTransient
+		}
+		model := source.ModelID
+		if model == "" {
+			model = reg.DefaultModelFor(providerID)
+			if model == "" && providerID == reg.Default() {
+				model = cfg.Model
+			}
+		}
+		workerCfg = cfg
+		workerCfg.Workspace = source.Workspace
+		workerCfg.Model = model
+		workerCfg.LearningMode, workerCfg.LearningSensitivity, workerCfg.SkillActivationPolicy = learningPolicyForWorkspace(cfg, source.Workspace)
+		var err error
+		reflector, err = agent.NewEvidenceReflector(entry.provider, model, buildTokenCounter(workerCfg), agent.ReflectionLimits{})
+		if err != nil {
+			return errors.Join(errAttemptSetupTransient, err)
+		}
+		return nil
+	}
 	worker := attemptWorker{
 		repository: repository,
 		partition:  item.Partition,
 		id:         item.Record.ID,
-		evidence: func(_ context.Context, record learning.AttemptRecord) (learning.AttemptFailureCode, error) {
-			failure := load(record)
-			return failure, loadErr
+		prepare: func(prepareCtx context.Context, record learning.AttemptRecord) (learning.AttemptFailureCode, error) {
+			loaded, err := sessions.Load(prepareCtx, record.Provenance.Source.SessionID)
+			if err != nil || loaded == nil {
+				return learning.FailureEvidenceUnavailable, nil
+			}
+			source = loaded
+			if record.CheckpointStage == learning.AttemptCheckpointNone {
+				return learning.FailureNone, nil
+			}
+			return learning.FailureNone, setupProvider()
+		},
+		evidence: func(evidenceCtx context.Context, record learning.AttemptRecord) (learning.AttemptFailureCode, error) {
+			failure := load(evidenceCtx, record)
+			if failure != learning.FailureNone || loadErr != nil {
+				return failure, loadErr
+			}
+			return learning.FailureNone, setupProvider()
 		},
 		reflect: func(reflectCtx context.Context) (learning.Outcome, error) {
 			if len(projection.Messages) == 0 {
@@ -157,7 +161,7 @@ func recoverAttempt(ctx context.Context, cfg Config, reg *providerRegistry, sess
 				if getErr != nil {
 					return learning.Outcome{}, getErr
 				}
-				if !found || load(current) != learning.FailureNone {
+				if !found || load(reflectCtx, current) != learning.FailureNone {
 					return learning.Outcome{}, learning.ErrInvalidEvidence
 				}
 			}
@@ -169,6 +173,7 @@ func recoverAttempt(ctx context.Context, cfg Config, reg *providerRegistry, sess
 			}
 			digest := string(item.Record.Provenance.Source.CanonicalDigest)
 			principal := reflectionPrincipal(source.Owner)
+			procedure := buildProcedureProcessor(workerCfg, assets)
 			processed, processErr := processReflectionOutcome(memoryadapter.WithWorkspace(publishCtx, source.Workspace), proposals,
 				assets.userModelStore, assets.memStore, principal, input, digest, outcome, input.Signals,
 				workerCfg.LearningMode, projectIngestionAdmitted(workerCfg), workerCfg.Workspace, procedure)
@@ -182,6 +187,6 @@ func recoverAttempt(ctx context.Context, cfg Config, reg *providerRegistry, sess
 			return checkpointFromReflectionReceipt(processed)
 		},
 	}
-	_, err = worker.Run(ctx)
+	_, err := worker.Run(ctx)
 	return err
 }
