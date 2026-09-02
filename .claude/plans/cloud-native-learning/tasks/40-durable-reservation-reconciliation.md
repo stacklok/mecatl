@@ -2,9 +2,9 @@
 id: 40-durable-reservation-reconciliation
 title: Reconcile expired durable automatic reservations
 blocked_by: [37-partitioned-attempt-quota-retention, 39-backend-authoritative-attempt-time]
-status: in-progress
-branch: plan-cloud-native-learning/40-durable-reservation-reconciliation
-worktree: .scratch/worktrees/40-durable-reservation-reconciliation
+status: done
+branch: plan-cloud-native-learning/40-automatic-reservation-discovery
+worktree: .scratch/worktrees/40-automatic-reservation-discovery
 issue: ""
 retries: 0
 last_error: ""

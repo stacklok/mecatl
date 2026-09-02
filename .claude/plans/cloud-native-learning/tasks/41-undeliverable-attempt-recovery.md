@@ -2,7 +2,7 @@
 id: 41-undeliverable-attempt-recovery
 title: Bound recovery of undeliverable durable attempts
 blocked_by: [37-partitioned-attempt-quota-retention, 38-durable-evidence-execution-unification]
-status: in-progress
+status: done
 branch: plan-cloud-native-learning/41-undeliverable-attempt-recovery
 worktree: .scratch/worktrees/41-undeliverable-attempt-recovery
 issue: ""
