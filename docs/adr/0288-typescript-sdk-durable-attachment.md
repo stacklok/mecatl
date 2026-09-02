@@ -517,9 +517,18 @@ resource leak would be worse than not shipping it, so `approve()` and
 `resolveAsk()` raise a typed unsupported-feature error on both transports —
 each naming its **own** dependency, because they are two independent server
 changes: `approve_ack_only` over HTTP, `prompt_free_controls` over gRPC. One
-identifier could not describe both, and gating per-transport on the feature
-string lets each side clear the moment its server half lands, with no SDK
-change — the mechanism M1 already uses for `http_steer`.
+identifier could not describe both, and naming them separately tells an operator
+which change they are waiting on.
+
+Unlike M1's `http_steer`, these identifiers do **not** latently unblock
+anything. `http_steer` gates an implemented route, so the feature appearing is
+enough. Here the methods are typed `Promise<never>` with no code path behind
+them, and the gRPC half additionally needs a new proto descriptor and a
+regenerated client — so each side requires an SDK release once its server half
+lands. We chose that over shipping a speculative, server-untestable HTTP
+implementation behind a dark gate: dead code written against a route that does
+not exist yet is how a gate ships broken and nobody notices until the day it
+opens.
 
 Cancellation is unaffected and ships, so an observer can still stop a run it is
 watching. The cost is real and is #821's, not ours to wave away: "an attached

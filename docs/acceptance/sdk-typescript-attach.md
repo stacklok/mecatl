@@ -230,12 +230,14 @@ gauntlet-#7 guard).
 - AC2.4: `attach()` racing a just-started run — the id minted and stamped on
   the aggregate before the engine goroutine emits its first event — reports
   `NoRunsError` rather than hanging. The window is proven with a scripted
-  transport whose session is running while its log is still empty, because it is
-  **unreachable through the public API**: `session.run()` resolves only after
-  the first run-ID-bearing event, and the relay appends every event to the
-  durable log before sending it, so any caller holding a run id necessarily
-  holds it after the record that closes the window. Only a third party attaching
-  blind can observe it.
+  transport whose session is running while its log is still empty, because **the
+  initiating caller cannot deterministically orchestrate it**: `session.run()`
+  resolves only after the first run-ID-bearing event, and the relay appends every
+  event to the durable log before sending it, so a caller holding a run id
+  necessarily holds it after the record that closes the window. A concurrent
+  third party calling `attach()` blind can still land in the window — it is
+  reachable through the public API, just not schedulable by the caller who
+  started the run, which is why the proof is scripted rather than raced.
   - verify: vitest:sdk/typescript/test/attach.test.ts#YSBydW5uaW5nIHNlc3Npb24gd2l0aCBhbiBlbXB0eSBsb2cgcmVwb3J0cyBOb1J1bnNFcnJvcg — `sdk/typescript/test/attach.test.ts :: "a running session with an empty log reports NoRunsError"`
 - AC2.5: `attach()` on an unknown or foreign session id under an
   ownership-enforcing deployment surfaces the server's typed
@@ -598,8 +600,11 @@ safe to attach.
   approve response (`approve_ack_only`), over gRPC the absent prompt-free
   control RPC (`prompt_free_controls`). They are different server changes that
   will land independently, so one identifier could not describe either honestly,
-  and gating on the feature string means each side clears without an SDK change
-  once its server half exists — the mechanism M1 already uses for `http_steer`.
+  and an operator reading the error learns which change they are waiting on.
+  **Neither clears without an SDK release**: the methods are typed
+  `Promise<never>`, and the gRPC half additionally needs a new proto descriptor
+  and regenerated client, so there is no latent code path for a feature string
+  to switch on — unlike M1's `http_steer`, which gates an implemented route.
   Neither ever posts to the SSE-relaying approve route, whose body cannot be
   closed (that cancels the run), left unread (that stalls the relay), or drained
   to EOF (unbounded, because the resumed run can park on another ask).
@@ -827,9 +832,14 @@ suites under `sdk/typescript/`, cited per AC.
   may not be the run the caller meant.
   [ADR-0288](../adr/0288-typescript-sdk-durable-attachment.md) Decision 2 records
   this as a residual rather than an impossibility.
-- **Attached controls are transport-asymmetric.** HTTP works, gRPC raises a
-  typed error. This will be the first thing a Node user files, and the honest
-  answer is the deferred server RPC.
+- **The attached-control surface is one method wide.** Only `cancel()` ships,
+  and only over HTTP; `approve`, `resolveAsk`, and `steer` all raise typed
+  unsupported errors, and gRPC has no attached control at all. This will be the
+  first thing a user files. Three independent server changes unblock the rest —
+  an ack-only approve response, a prompt-free control RPC, and
+  [#873](https://github.com/stacklok/mecatl/issues/873)'s HTTP steer route —
+  and each needs an SDK release on top, since none of the three has a latent
+  client path to switch on.
 - **The at-least-once contract makes duplicates a documented feature.**
   Consumers with side effects need their own idempotency. If implementation
   finds the duplicate window wider than one envelope, the AC4.4 wording is what
