@@ -167,3 +167,33 @@ func TestDebugConfigHasNoWorkspaceAndUsesDefaultPrompt(t *testing.T) {
 		t.Fatalf("explicit prompt = %q", got)
 	}
 }
+
+func TestDebugHelpRoutesRenderDedicatedContract(t *testing.T) {
+	tests := []struct {
+		name  string
+		argv  []string
+		usage string
+	}{
+		{"direct", []string{"mecatui", "debug", "--help"}, "Usage: mecatui debug (SESSION_ID | --exact SESSION_ID) [flags]"},
+		{"alias", []string{"mecatui", "help", "debug"}, "Usage: mecatui debug (SESSION_ID | --exact SESSION_ID) [flags]"},
+		{"connect", []string{"mecatui", "connect", "example.test:9443", "debug", "--help"}, "Usage: mecatui connect ADDRESS debug (SESSION_ID | --exact SESSION_ID) [flags]"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			out := runHelpCase(t, tc.argv, tc.usage)
+			for _, want := range []string{
+				"exact ID or the displayed 12-column short handle",
+				"collision or inventory failure",
+				"--exact SESSION_ID bypasses inventory",
+				"Leading-hyphen exact IDs require --exact SESSION_ID",
+			} {
+				if !strings.Contains(out, want) {
+					t.Errorf("debug help missing %q:\n%s", want, out)
+				}
+			}
+			if strings.Contains(out, "Transport:") {
+				t.Errorf("debug help fell through to transport flags:\n%s", out)
+			}
+		})
+	}
+}

@@ -101,6 +101,10 @@ func prepareRun(argv []string) (invocationResolution, error) {
 		writeTopLevelHelp(os.Stderr)
 		return invocationResolution{}, flag.ErrHelp
 	}
+	if res.debugHelp {
+		writeDebugHelp(os.Stderr, res.mode == modeConnect)
+		return invocationResolution{}, flag.ErrHelp
+	}
 	return res, nil
 }
 

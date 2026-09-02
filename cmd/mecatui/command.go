@@ -107,6 +107,7 @@ type invocationResolution struct {
 	browseSessions bool   // launch directly into the shared stored-session inventory
 	debugTarget    string // immutable target for a dedicated no-filesystem debug session
 	debugExact     bool   // bypass local short-handle inventory resolution
+	debugHelp      bool   // render dedicated debug help instead of transport flag help
 	helpIndex      bool   // render the top-level command index
 	remaining      []string
 	err            error
@@ -277,7 +278,7 @@ func resolveConnectCommand(args []string) invocationResolution {
 
 func resolveDebugCommand(mode transportMode, address string, args []string) invocationResolution {
 	if len(args) == 1 && isHelpMetaFlag(args[0]) {
-		return invocationResolution{mode: mode, address: address, remaining: args}
+		return invocationResolution{mode: mode, address: address, debugHelp: true}
 	}
 	if len(args) == 0 {
 		return invocationResolution{err: helpUsageError("debug requires SESSION_ID or --exact SESSION_ID")}
@@ -366,6 +367,20 @@ func writeTopLevelHelp(out io.Writer) {
 	_, _ = fmt.Fprintln(out, "      mecatui help <command> aliases mecatui <command> --help")
 	_, _ = fmt.Fprintln(out, "      mecatui --version prints the build version and exits")
 	_, _ = fmt.Fprintln(out, "\nRun 'mecatui --help-flags' for common embedded-mode flags or '--help-all' for the exhaustive bare reference.")
+}
+
+// writeDebugHelp renders the debug command contract without falling through to
+// the generic transport flag reference.
+func writeDebugHelp(out io.Writer, connect bool) {
+	usage := "mecatui debug (SESSION_ID | --exact SESSION_ID) [flags]"
+	if connect {
+		usage = "mecatui connect ADDRESS debug (SESSION_ID | --exact SESSION_ID) [flags]"
+	}
+	_, _ = fmt.Fprintf(out, "Usage: %s\n\n", usage)
+	_, _ = fmt.Fprintln(out, "SESSION_ID may be an exact ID or the displayed 12-column short handle.")
+	_, _ = fmt.Fprintln(out, "Handle resolution gathers every projected match; on a collision or inventory failure, use /session then retry with --exact SESSION_ID.")
+	_, _ = fmt.Fprintln(out, "--exact SESSION_ID bypasses inventory and is mutually exclusive with a positional ID.")
+	_, _ = fmt.Fprintln(out, "Leading-hyphen exact IDs require --exact SESSION_ID.")
 }
 
 // unknownCommandError builds the error message for an unknown leading bare word.
