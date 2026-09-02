@@ -276,7 +276,11 @@ func TestBashToolSpec(t *testing.T) {
 	if strings.Contains(s, `"required": ["command", "background"]`) {
 		t.Fatal("background must stay optional")
 	}
-	for _, phrase := range []string{"BashStatus", "background", "job id", "cancelled if it is still running when this run", "REAL workspace root"} {
+	for _, phrase := range []string{
+		"BashStatus", "background", "job id", "cancelled if it is still running when this run",
+		"REAL workspace root", "does not necessarily run Bash", "shell reported by \"shell:\"",
+		"shell is non-interactive", "git rebase -i",
+	} {
 		if !strings.Contains(spec.Description, phrase) {
 			t.Fatalf("description lacks %q", phrase)
 		}

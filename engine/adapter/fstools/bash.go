@@ -33,6 +33,11 @@ When NOT to use:
 
 Behavior:
 - The command runs with the workspace root as its working directory.
+- Despite its name, Bash does not necessarily run Bash: it invokes "shell -c command"
+  with the shell reported by "shell:" in the system prompt's <env> block (for
+  example, "/bin/sh").
+- The shell is non-interactive: it has no terminal or user input. Do not run
+  interactive commands such as "git rebase -i", editors, pagers, or REPLs.
 - Under a subagent (a forked branch or an isolated team member) the working
   directory is a throwaway, isolated workspace (a git worktree or a copy), not the
   shared base — so commands you run there do not affect the parent's tree.
