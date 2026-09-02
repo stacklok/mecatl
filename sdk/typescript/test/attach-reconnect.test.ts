@@ -179,6 +179,7 @@ describe("attachment reconnect authority", () => {
     let watches = 0;
     const clientAbort = new AbortController();
     const operations = {
+      cancelRun: async () => undefined,
       clientSignal: clientAbort.signal,
       features: async () => new Set([watchFeature]),
       invalidateCompatibility: () => undefined,
@@ -344,6 +345,7 @@ describe("attachment reconnect authority", () => {
       let watches = 0;
       const clientAbort = new AbortController();
       const operations = {
+        cancelRun: async () => undefined,
         clientSignal: clientAbort.signal,
         features: async () => new Set([watchFeature]),
         invalidateCompatibility: () => undefined,
@@ -586,6 +588,7 @@ describe("attachment reconnect authority", () => {
     let breakReleases = 0;
     const breakClientAbort = new AbortController();
     const breakAttached = await createAttachedRun(sessionId, runId, {
+      cancelRun: async () => undefined,
       clientSignal: breakClientAbort.signal,
       features: async () => new Set([watchFeature]),
       invalidateCompatibility: () => undefined,

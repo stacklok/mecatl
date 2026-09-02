@@ -107,6 +107,7 @@ export interface AttachedRun extends SessionActivity {
 }
 
 interface AttachmentOperations {
+  cancelRun(sessionId: string, runId: string): Promise<void>;
   readonly clientSignal: AbortSignal;
   features(): Promise<ReadonlySet<string>>;
   invalidateCompatibility(): void;
@@ -547,13 +548,16 @@ class SessionActivityImpl implements SessionActivity {
 
 class AttachedRunImpl extends SessionActivityImpl implements AttachedRun {
   readonly runId: string;
+  readonly #operations: AttachmentOperations;
+  readonly #sessionId: string;
   readonly #transport: TransportKind;
   readonly #liveState: { value: boolean };
 
   constructor(
+    sessionId: string,
     runId: string,
     connection: WatchConnection,
-    transport: TransportKind,
+    operations: AttachmentOperations,
     serverFilter: string,
     initialToken: string,
     includeLogOnly: boolean,
@@ -563,7 +567,7 @@ class AttachedRunImpl extends SessionActivityImpl implements AttachedRun {
     const liveState = { value: true, pendingAsks: new Set<string>() };
     super(
       connection,
-      transport,
+      operations.transportKind,
       runId,
       serverFilter,
       initialToken,
@@ -584,7 +588,9 @@ class AttachedRunImpl extends SessionActivityImpl implements AttachedRun {
       discardReplay,
     );
     this.runId = runId;
-    this.#transport = transport;
+    this.#operations = operations;
+    this.#sessionId = sessionId;
+    this.#transport = operations.transportKind;
     this.#liveState = liveState;
   }
 
@@ -593,10 +599,7 @@ class AttachedRunImpl extends SessionActivityImpl implements AttachedRun {
   }
 
   async cancel(): Promise<void> {
-    throw new UnsupportedFeatureError(
-      this.#transport === "grpc" ? "prompt_free_controls" : "attached_cancel",
-      { transport: this.#transport },
-    );
+    await this.#operations.cancelRun(this.#sessionId, this.runId);
   }
 
   async approve(_askId: string, _allow: boolean): Promise<never> {
@@ -678,9 +681,10 @@ export async function createAttachedRun(
       internal,
     );
     return new AttachedRunImpl(
+      sessionId,
       restoredRun,
       connection,
-      operations.transportKind,
+      operations,
       serverFilter,
       resume.token,
       options.includeLogOnly ?? false,
@@ -699,9 +703,10 @@ export async function createAttachedRun(
   );
   if (runId !== undefined) {
     return new AttachedRunImpl(
+      sessionId,
       runId,
       connection,
-      operations.transportKind,
+      operations,
       serverFilter,
       token,
       options.includeLogOnly ?? false,
@@ -736,9 +741,10 @@ export async function createAttachedRun(
   }
 
   return new AttachedRunImpl(
+    sessionId,
     newestRunId,
     connection,
-    operations.transportKind,
+    operations,
     serverFilter,
     token,
     options.includeLogOnly ?? false,

@@ -17,6 +17,7 @@ import {
   SessionBusyError,
   TransportError,
   type TransportKind,
+  UnsupportedFeatureError,
 } from "./errors.js";
 import {
   ContentSchema,
@@ -27,7 +28,12 @@ import {
 } from "./gen/mecatl/v1/harness_pb.js";
 import { createHttpTransport, type HttpTransportOptions } from "./http.js";
 import { encodePrompt, type PromptCapabilities, type PromptInput } from "./media.js";
-import { createRawClient, invalidateRawCompatibility, type RawClient } from "./raw.js";
+import {
+  createRawClient,
+  invalidateRawCompatibility,
+  type RawClient,
+  registeredTransportOperations,
+} from "./raw.js";
 import { type ConverseFrame, type Run, RunImpl, type RunOptions } from "./run.js";
 import {
   type AttachedRun,
@@ -143,6 +149,7 @@ interface ClientCoreOptions {
 
 interface SessionOperations {
   assertOpen(): void;
+  cancelRun(sessionId: string, runId: string): Promise<void>;
   readonly clientSignal: AbortSignal;
   features(): Promise<ReadonlySet<string>>;
   invalidateCompatibility(): void;
@@ -315,6 +322,7 @@ class ClientImpl implements Client {
     });
     this.#operations = {
       assertOpen: () => this.#assertOpen(),
+      cancelRun: (sessionId, runId) => this.#cancelRun(sessionId, runId),
       clientSignal: this.#abort.signal,
       features: () => this.#features(),
       invalidateCompatibility: () => invalidateRawCompatibility(this.#raw),
@@ -421,6 +429,25 @@ class ClientImpl implements Client {
       const response = await this.#raw.unary(method, input, { signal: this.#abort.signal });
       this.#publish("online");
       return response;
+    } catch (error) {
+      this.#observeError(error);
+      throw error;
+    }
+  }
+
+  async #cancelRun(sessionId: string, runId: string): Promise<void> {
+    this.#assertOpen();
+    if (this.#transportKind === "grpc") {
+      throw new UnsupportedFeatureError("prompt_free_controls", { transport: "grpc" });
+    }
+    const cancel = registeredTransportOperations(this.#transport)?.cancelRun;
+    if (cancel === undefined) {
+      throw new UnsupportedFeatureError("attached_cancel", { transport: "http" });
+    }
+    if (this.#snapshot === "offline") this.#publish("reconnecting");
+    try {
+      await cancel(sessionId, runId, this.#abort.signal);
+      this.#publish("online");
     } catch (error) {
       this.#observeError(error);
       throw error;

@@ -320,9 +320,8 @@ class HttpTransport implements Transport {
         };
         break;
       case "cancel":
-        route = { body: true, method: "POST", path: `${path}/cancel` };
-        body = { expected_run_id: kind.value.expectedRunId };
-        break;
+        await this.cancelRun(sessionId, kind.value.expectedRunId, signal);
+        return;
       case "cancelChild":
         route = { body: true, method: "POST", path: `${path}/cancel-child` };
         body = { child_id: kind.value.childId };
@@ -360,6 +359,23 @@ class HttpTransport implements Transport {
         });
     }
     const response = await this.#request(route, body, signal);
+    if (!response.ok) await this.#problem(response);
+  }
+
+  async cancelRun(
+    sessionId: string,
+    runId: string,
+    signal: AbortSignal | undefined,
+  ): Promise<void> {
+    const response = await this.#request(
+      {
+        body: true,
+        method: "POST",
+        path: `/v1/sessions/${encodeURIComponent(sessionId)}/cancel`,
+      },
+      { expected_run_id: runId },
+      signal,
+    );
     if (!response.ok) await this.#problem(response);
   }
 
@@ -575,5 +591,8 @@ async function* parseSSE(
 
 /** Creates the browser-safe mecated HTTP/JSON/SSE implementation of Connect Transport. @public */
 export function createHttpTransport(options: HttpTransportOptions): Transport {
-  return registerTransport(new HttpTransport(options), "http");
+  const transport = new HttpTransport(options);
+  return registerTransport(transport, "http", {
+    cancelRun: (sessionId, runId, signal) => transport.cancelRun(sessionId, runId, signal),
+  });
 }

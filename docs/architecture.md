@@ -281,6 +281,16 @@ reconnect point. Reconnected watches do not re-announce the replay-to-live bound
 `AttachOptions.signal`, iterator release, explicit disposal, or `Client.close()` aborts backoff and
 releases the current watch without cancelling the run.
 
+Attached controls deliberately use a different path from an owned `Run`'s Converse frames.
+`AttachedRun.cancel()` is an asynchronous out-of-band operation: over HTTP it posts the attached
+run id as `expected_run_id` to `/v1/sessions/{id}/cancel` and resolves only after the server's
+bodyless `204` acknowledgement, so transport and stale-run failures reject the returned promise.
+gRPC has no prompt-free control RPC and therefore returns a typed `prompt_free_controls`
+unsupported-feature error without opening Converse. Attached approval is likewise an explicit
+typed deferral (`approve_ack_only` over HTTP, `prompt_free_controls` over gRPC), while attached
+steer remains unsupported on both transports. None of these deferrals changes detach semantics:
+aborting, disposing, or leaving iteration releases only the watch.
+
 Around that core, every capability beyond the minimal loop is a **seam with a
 default and a swap-in adapter**, so the production build stays static and
 network-free unless you wire something in. The current adapters cover, grouped:

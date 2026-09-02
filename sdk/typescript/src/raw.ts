@@ -22,8 +22,13 @@ import { HarnessService } from "./gen/mecatl/v1/harness_pb.js";
 export const SUPPORTED_API_MAJOR = 1;
 
 const transportKinds = new WeakMap<Transport, TransportKind>();
+const transportOperations = new WeakMap<Transport, TransportOperations>();
 const rawJsonValues = new WeakMap<object, JsonValue>();
 const compatibilityInvalidators = new WeakMap<RawClient, () => void>();
+
+interface TransportOperations {
+  cancelRun(sessionId: string, runId: string, signal: AbortSignal): Promise<void>;
+}
 
 interface CompatibilityResult {
   header: Headers;
@@ -31,9 +36,20 @@ interface CompatibilityResult {
   trailer: Headers;
 }
 
-export function registerTransport(transport: Transport, kind: TransportKind): Transport {
+export function registerTransport(
+  transport: Transport,
+  kind: TransportKind,
+  operations?: TransportOperations,
+): Transport {
   transportKinds.set(transport, kind);
+  if (operations !== undefined) transportOperations.set(transport, operations);
   return transport;
+}
+
+export function registeredTransportOperations(
+  transport: Transport,
+): TransportOperations | undefined {
+  return transportOperations.get(transport);
 }
 
 export function registerRawJson(message: object, value: JsonValue): void {

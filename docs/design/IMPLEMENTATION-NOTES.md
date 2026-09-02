@@ -8186,6 +8186,24 @@ combined attachment/client/caller abort signal owns both the current watch and t
 therefore converge on one release path that clears the timer and returns the watch without sending
 a run control.
 
+Attached cancellation does not reuse `RunOperations.send`: that method is the synchronous push
+onto an owned Converse stream, while an attachment has no such stream and must await an HTTP
+response. `sdk/typescript/src/watch.ts` (`AttachmentOperations.cancelRun`) is the asynchronous
+`cancelRun(sessionId, runId): Promise<void>` seam. `sdk/typescript/src/client.ts` binds it to the
+transport capabilities registered in `sdk/typescript/src/raw.ts`; `sdk/typescript/src/http.ts`
+registers the prompt-free implementation, posts `{expected_run_id: runId}` to the session cancel
+route, and resolves only after the bodyless acknowledgement. The HTTP transport's owned-Converse
+cancel arm calls that same implementation, preserving the ADR-0249 stale guard and shared problem
+mapping without pretending the delivery mechanisms are interchangeable. The gRPC binding rejects
+locally with `UnsupportedFeatureError("prompt_free_controls")`, before any Converse stream exists.
+
+The other `AttachedRun` controls remain deliberate typed dead ends in M2. `approve()` and
+`resolveAsk()` return `Promise<never>` and name `approve_ack_only` on HTTP versus
+`prompt_free_controls` on gRPC; neither posts to the approve route whose restart path relays an
+unbounded SSE body. `steer()` also returns `Promise<never>`, naming `http_steer` on HTTP and
+`prompt_free_controls` on gRPC, and cannot promote into a new run. These methods have no latent
+feature-enabled branch: each deferred server capability needs a later SDK release.
+
 ## Live e2e — `e2e/` (see `e2e/README.md`)
 
 A LIVE, ginkgo-driven BDD suite proving the harness's features against a REAL model: it
