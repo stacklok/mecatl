@@ -206,6 +206,7 @@ func validOIDCScope(scope string) bool {
 }
 
 // ValidateOIDCProfile validates the optional profile before listeners start.
+//nolint:gocyclo // validation keeps the mutually-exclusive configuration matrix explicit.
 func (c *OIDCConfig) ValidateOIDCProfile() error {
 	if c.Resource == "" && c.ClientID == "" && c.ScopesCSV == "" && !c.scopesSet {
 		c.Scopes = nil
