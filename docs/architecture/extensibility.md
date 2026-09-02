@@ -11,6 +11,17 @@
 The `tool.Catalog` is the single registration seam, so every tool — core, remote,
 or generated — is one uniform `tool.Tool`.
 
+**Managed Bash temporary storage (Linux).** The default operator-managed Bash scope
+allocates one private command/job lease and supplies only its `tmp/` child as
+`TMPDIR`/`GOTMPDIR`. Ordinary completion removes the exact lease; a Build-owned,
+interval-gated worker later reclaims only validated, unlocked abandoned leases after
+the configured TTL. The worker's root coordination lock never delays command
+allocation or execution, and each startup/periodic sweep and shutdown join has its
+own configured deadline. Operators can select `temporary_storage.mode: system` to
+restore inherited/configured system temporary storage; this disables managed
+allocation and reaping and leaves existing managed data for explicit inspection or
+removal. Managed mode is Linux-only. See [ADR 0281](../adr/0281-managed-temporary-command-leases.md).
+
 **Portable memory capabilities.** `tool.MemoryStore` remains the six-method base
 contract. `tool.MemoryLifecycleStore` is an optional additive capability for opaque
 versions, inspection, tombstones, and compensating undo. Consumers register the

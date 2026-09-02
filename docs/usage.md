@@ -45,6 +45,35 @@ gRPC transport. ToolHive is implementation provenance for the remote client
 adapter, not a runtime engine dependency. Without the profile, explicit OIDC
 login and existing issuer/audience behavior are unchanged.
 
+## Managed temporary storage (Linux)
+
+By default Bash commands use a private managed temporary lease. The harness removes
+that lease after normal command completion and a bounded Build-owned maintenance
+worker recovers validated abandoned command/job leases after the configured TTL.
+The worker never scans arbitrary system temporary directories and does not delay a
+command allocation. This lifecycle is available only on Linux.
+
+To use the inherited or configured system temporary directory instead, an operator
+sets the user-global (not project) `settings.yaml` value below. System mode is the
+rollback switch: it stops new managed leases and reaping, and it leaves existing
+managed data untouched for manual inspection or removal.
+
+```yaml
+# ~/.config/mecatl/settings.yaml
+temporary_storage:
+  mode: system # managed is the Linux default
+```
+
+Managed mode accepts `managed_root`, `system_temp_dir`, `command_reap_after`,
+`reap_interval`, `reap_timeout` (default five minutes), and
+`shutdown_reap_timeout` (default one minute). These are operator controls; project
+settings cannot redirect or weaken cleanup. A Bash call may request `temp_scope:
+system` only when ordinary Bash permission and the separate `BashSystemTemp`
+capability are both allowed. See [ADR 0281](adr/0281-managed-temporary-command-leases.md).
+
+---
+
+## Build identity and safe diagnostics
 
 Every shipped executable accepts exact top-level `--version` and prints its build id without starting normal configuration or services. Ordinary `task build`, `task install`, and Taskfile-driven ko builds resolve their source identity at build time with `git describe --tags --match 'v[0-9]*' --always --dirty`: the most recent root release tag, commits since it, abbreviated SHA, and an optional dirty suffix (for example, `v0.0.22-28-g40a6b3fc6-dirty`). `BUILD_ID=<value>` preserves that explicit linker stamp verbatim, including `dev`. Direct Go or ko builds without a stamp do not invoke git at runtime; they fall back to embedded VCS metadata as `dev+<12-char-vcs-revision>[.dirty]`, or `dev` if metadata is unavailable or invalid. Authenticated clients can read the server build identity and sanitized diagnostic display endpoint projections through gRPC `GetServerInfo` or HTTP `GET /v1/info`; these are not connection configuration or instructions. The detailed transport contracts are in [the gRPC API](usage/grpc-api.md) and [the HTTP/SSE API](usage/http-sse-api.md). Mecatui's `/diagnostics` behavior is documented in [the TUI guide](tui.md).
 

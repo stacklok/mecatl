@@ -2411,6 +2411,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	// Service's process-wide truth. No worker is started when exclusion is
 	// permanently unavailable; runtime loss stickily settles health unavailable.
 	cfg.maintenanceMutationAvailable = svc.MaintenanceMutationAvailable
+	managedTempWorkerClose := startManagedTempWorker(ctx, cfg)
 	childGCClose := startChildGC(ctx, cfg, store, svc.IsLive, svc.DeleteSessionForRetentionCandidate)
 
 	// Crash-orphaned running-session sweep (issue #475 Step 4): repairs a
@@ -2430,6 +2431,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		}
 		staleSessionReconcileClose()
 		childGCClose()
+		managedTempWorkerClose()
 		schedClose()
 		refreshClose()
 		svc.Close()
