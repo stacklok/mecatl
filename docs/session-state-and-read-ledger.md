@@ -173,21 +173,6 @@ Those questions have different owners and may have different storage backends.
 
 ## Extensible session state
 
-The read ledger exposes a gap between the fixed session aggregate and a separate
-feature-specific store. It is durable state scoped to one session, so it should
-survive create, restore, and delete with that session. But making it a fixed
-`Session` field would teach the core aggregate about one filesystem protocol,
-while giving it a dedicated persistence port requires every backend and remote
-driver to implement and wire another ledger-specific adapter.
-
-A generic extensible facility provides the middle ground. The engine feature owns
-its namespace and value contract; session persistence stores those values without
-understanding them. Persistence adapters implement session-scoped key-value state
-once, and additional engine features can use the same create/load/delete
-lifecycle without widening the core aggregate or introducing another family of
-storage adapters. The read ledger is the concrete first consumer, not a reason to
-turn `Session` into a filesystem-aware type.
-
 ### A generic session-scoped state facility
 
 A restored `Session` should carry generic, session-scoped key-value state.
