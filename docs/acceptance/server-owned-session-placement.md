@@ -1,8 +1,8 @@
 # Server-owned session placement — acceptance plan
 
-**Phase:** public placement capability redesign  
-**Status:** in-progress, 2026-09-01  
-**ADR:** [ADR 0280](../adr/0280-server-owned-session-placement.md)  
+**Phase:** public placement capability redesign
+**Status:** landed, 2026-09-01
+**ADR:** [ADR 0280](../adr/0280-server-owned-session-placement.md)
 **Accumulator branch:** `acc/server-owned-session-placement` (off `main`)
 
 This clean break removes client filesystem-path authority from every session lifecycle.
