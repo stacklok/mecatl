@@ -124,7 +124,7 @@ func Login(ctx context.Context, cfg LoginConfig) (Token, error) {
 	if err != nil {
 		return Token{}, ErrAuthorization
 	}
-	oc := oauth2.Config{ClientID: id.ClientID, RedirectURL: id.RedirectURI, Endpoint: oauth2.Endpoint{AuthURL: doc.AuthorizationEndpoint, TokenURL: doc.TokenEndpoint}, Scopes: id.Scopes}
+	oc := oauth2.Config{ClientID: id.ClientID, RedirectURL: id.RedirectURI, Endpoint: oauth2.Endpoint{AuthURL: doc.AuthorizationEndpoint, TokenURL: doc.TokenEndpoint, AuthStyle: oauth2.AuthStyleInParams}, Scopes: id.Scopes}
 	authURL := oc.AuthCodeURL(state, oauth2.AccessTypeOffline, oauth2.S256ChallengeOption(verifier))
 	result, err := cfg.Presenter.Present(ctx, authURL)
 	if err != nil {
@@ -224,7 +224,7 @@ func NewRefreshSource(ctx context.Context, creds *Credentials, cfg LoginConfig) 
 
 func newRefreshSource(id Identity, creds *Credentials, registry *Registry, client *http.Client, tokenURL string, validator *authoidc.Validator, poll time.Duration) *RefreshSource {
 	ctx, cancel := context.WithCancel(context.Background())
-	s := &RefreshSource{identity: id, creds: creds, registry: registry, client: client, endpoint: oauth2.Endpoint{TokenURL: tokenURL}, validator: validator, ctx: ctx, cancel: cancel, done: make(chan struct{})}
+	s := &RefreshSource{identity: id, creds: creds, registry: registry, client: client, endpoint: oauth2.Endpoint{TokenURL: tokenURL, AuthStyle: oauth2.AuthStyleInParams}, validator: validator, ctx: ctx, cancel: cancel, done: make(chan struct{})}
 	go s.refreshLoop(poll)
 	return s
 }

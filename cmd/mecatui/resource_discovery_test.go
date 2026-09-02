@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestADR_0290_ResourceInputGrammar(t *testing.T) {
@@ -25,7 +26,7 @@ func TestADR_0290_ResourceInputGrammar(t *testing.T) {
 	if explicit.Resource != "https://api.example.com/rpc/v1" || explicit.GRPCTarget != "api.example.com:443" {
 		t.Fatalf("explicit identity = %#v", explicit)
 	}
-	for _, raw := range []string{"http://api.example.com", "https://user@api.example.com", "https://api.example.com?a=b", "https://api.example.com#x", "https://api.example.com/%zz", "api.example.com:443", "https://a@b@api.example.com"} {
+	for _, raw := range []string{"http://api.example.com", "https://user@api.example.com", "https://api.example.com?a=b", "https://api.example.com#x", "https://api.example.com/%zz", "https://api.example.com/\u202e", "api.example.com:443", "https://a@b@api.example.com"} {
 		if _, err := parseProtectedResource(raw); err == nil {
 			t.Errorf("parseProtectedResource(%q) unexpectedly succeeded", raw)
 		}
@@ -40,6 +41,10 @@ func TestADR_0290_ExactResourceBinding(t *testing.T) {
 	}
 	if got, want := resource.MetadataURL, "https://api.example.com/.well-known/oauth-protected-resource/service/v1"; got != want {
 		t.Fatalf("metadata URL = %q, want %q", got, want)
+	}
+	root, err := parseProtectedResource("https://api.example.com/")
+	if err != nil || root.MetadataURL != "https://api.example.com/.well-known/oauth-protected-resource" {
+		t.Fatalf("root metadata URL = %#v, %v", root, err)
 	}
 	for _, got := range []string{"https://api.example.com", "https://api.example.com/service", "https://api.example.com/service/v1/", "https://api.example.com:443/service/v1", "https://api.example.com/service%2Fv1"} {
 		if resourceMatches(resource, got) {
@@ -110,6 +115,8 @@ func TestADR_0290_ProfileDocumentValidation(t *testing.T) {
 		`{"resource":"https://api.example.com","authorization_servers":["https://a.example","https://b.example"]}`,
 		`{"resource":"https://api.example.com","authorization_servers":["http://issuer.example"],"com.stacklok.mecatl.audience":"api","com.stacklok.mecatl.client_id":"client"}`,
 		`{"resource":"https://api.example.com","authorization_servers":["https://issuer.example"],"com.stacklok.mecatl.audience":"","com.stacklok.mecatl.client_id":"client"}`,
+		`{"resource":"https://api.example.com","authorization_servers":["https://issuer.example"],"com.stacklok.mecatl.audience":"api\u202e","com.stacklok.mecatl.client_id":"client"}`,
+		`{"resource":"https://api.example.com","authorization_servers":["https://issuer.example"],"com.stacklok.mecatl.audience":"api","com.stacklok.mecatl.client_id":"client\nforged"}`,
 		`{"resource":"https://api.example.com","authorization_servers":["https://issuer.example"],"com.stacklok.mecatl.audience":"api","com.stacklok.mecatl.client_id":"client","scopes_supported":["openid","openid"]}`,
 	} {
 		if _, err := parseProfileDocument(resource, []byte(body)); err == nil {
@@ -167,6 +174,27 @@ func TestADR_0290_MetadataDuplicateFields(t *testing.T) {
 	}
 }
 
+func TestADR_0290_DiscoveryUsesClientTimeout(t *testing.T) {
+	resource, err := parseProtectedResource("https://api.example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sawDeadline bool
+	_, err = discoverProtectedResource(t.Context(), resource, roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+		deadline, ok := req.Context().Deadline()
+		if !ok || time.Until(deadline) > bootstrapTimeout || time.Until(deadline) <= 0 {
+			t.Fatalf("discovery request did not inherit client timeout: deadline=%v ok=%v", deadline, ok)
+		}
+		sawDeadline = true
+		if strings.Contains(req.URL.Path, "openid-configuration") {
+			return jsonResponse(`{"issuer":"https://issuer.example.com"}`), nil
+		}
+		return jsonResponse(`{"resource":"https://api.example.com","authorization_servers":["https://issuer.example.com"],"com.stacklok.mecatl.audience":"api","com.stacklok.mecatl.client_id":"client"}`), nil
+	}))
+	if err != nil || !sawDeadline {
+		t.Fatalf("discovery = %v, timeout deadline observed=%v", err, sawDeadline)
+	}
+}
 func TestInvariant_resource_discovery_is_anonymous(t *testing.T) {
 	t.Parallel()
 	resource, err := parseProtectedResource("https://api.example.com")

@@ -13,8 +13,10 @@ import (
 	"net/url"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/stacklok/mecatl/engine/session"
+	"github.com/stacklok/mecatl/internal/adapter/server"
 )
 
 // This is a narrow adaptation of ToolHive's RFC 9728 discovery flow
@@ -43,7 +45,7 @@ type discoveredResource struct {
 }
 
 func parseProtectedResource(raw string) (protectedResource, error) {
-	if raw == "" || strings.TrimSpace(raw) != raw {
+	if raw == "" || strings.TrimSpace(raw) != raw || !safeDisplayValue(raw) {
 		return protectedResource{}, errDiscoveryRejected
 	}
 	if !strings.Contains(raw, "://") {
@@ -65,14 +67,7 @@ func parseProtectedResource(raw string) (protectedResource, error) {
 
 func newProtectedResource(u *url.URL) protectedResource {
 	resource := u.String()
-	metadata := *u
-	if u.Path == "" {
-		metadata.Path = "/.well-known/oauth-protected-resource"
-	} else {
-		metadata.Path = "/.well-known/oauth-protected-resource" + u.Path
-		metadata.RawPath = "/.well-known/oauth-protected-resource" + u.EscapedPath()
-	}
-	return protectedResource{Resource: resource, GRPCTarget: net.JoinHostPort(u.Hostname(), portOr443(u)), MetadataURL: metadata.String()}
+	return protectedResource{Resource: resource, GRPCTarget: net.JoinHostPort(u.Hostname(), portOr443(u)), MetadataURL: server.WellKnownProtectedResourceURL(resource)}
 }
 
 func resourceMatches(expected protectedResource, actual string) bool {
@@ -80,6 +75,9 @@ func resourceMatches(expected protectedResource, actual string) bool {
 }
 
 func parseIssuer(raw string) (string, error) {
+	if !safeDisplayValue(raw) {
+		return "", errDiscoveryRejected
+	}
 	u, err := url.Parse(raw)
 	if err != nil || u.Scheme != "https" || u.User != nil || u.Host == "" || u.Opaque != "" || u.RawQuery != "" || u.Fragment != "" || u.ForceQuery || !validAuthority(u) {
 		return "", errDiscoveryRejected
@@ -207,13 +205,14 @@ func validateAnonymousRequest(req *http.Request) error {
 }
 
 func discoverProtectedResource(ctx context.Context, resource protectedResource, transport http.RoundTripper) (discoveredResource, error) {
+	var client *http.Client
 	if transport == nil {
-		client := newPublicBootstrapClient()
+		client = newPublicBootstrapClient()
 		defer client.CloseIdleConnections()
-		transport = client.Transport
+	} else {
+		client = &http.Client{Transport: anonymousTransport{next: transport}, Timeout: bootstrapTimeout, CheckRedirect: func(*http.Request, []*http.Request) error { return errDiscoveryRejected }}
 	}
-	transport = anonymousTransport{next: transport}
-	body, err := fetchDiscoveryJSON(ctx, transport, resource.MetadataURL)
+	body, err := fetchDiscoveryJSON(ctx, client, resource.MetadataURL)
 	if err != nil {
 		return discoveredResource{}, errDiscoveryRejected
 	}
@@ -221,19 +220,22 @@ func discoverProtectedResource(ctx context.Context, resource protectedResource, 
 	if err != nil {
 		return discoveredResource{}, errDiscoveryRejected
 	}
-	issuerBody, err := fetchDiscoveryJSON(ctx, transport, profile.Issuer+"/.well-known/openid-configuration")
+	issuerBody, err := fetchDiscoveryJSON(ctx, client, profile.Issuer+"/.well-known/openid-configuration")
 	if err != nil || validateIssuerDocument(profile.Issuer, issuerBody) != nil {
 		return discoveredResource{}, errDiscoveryRejected
 	}
 	return discoveredResource{protectedResource: resource, Issuer: profile.Issuer, Audience: profile.Audience, ClientID: profile.ClientID, Scopes: profile.Scopes}, nil
 }
 
-func fetchDiscoveryJSON(ctx context.Context, transport http.RoundTripper, endpoint string) ([]byte, error) {
+func fetchDiscoveryJSON(ctx context.Context, client *http.Client, endpoint string) ([]byte, error) {
+	if client == nil {
+		return nil, errDiscoveryRejected
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return nil, errDiscoveryRejected
 	}
-	res, err := transport.RoundTrip(req)
+	res, err := client.Do(req)
 	if err != nil || res == nil || res.Body == nil {
 		return nil, errDiscoveryRejected
 	}
@@ -350,7 +352,19 @@ func hasDuplicateSecurityFields(body []byte, fields map[string]bool) bool {
 }
 
 func safeProfileValue(value string) bool {
-	return value != "" && len(value) <= 1024 && !strings.ContainsAny(value, "\x00\r\n")
+	return safeDisplayValue(value)
+}
+
+func safeDisplayValue(value string) bool {
+	if value == "" || len(value) > 1024 {
+		return false
+	}
+	for _, r := range value {
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
+			return false
+		}
+	}
+	return true
 }
 
 func validScope(scope string) bool {

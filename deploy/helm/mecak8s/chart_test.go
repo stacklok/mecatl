@@ -270,6 +270,21 @@ func TestADR_0290_HelmProtectedResourceProfile(t *testing.T) {
 			}
 		})
 	}
+	for name, values := range map[string][]string{
+		"userinfo":       {"oidc.resource=https://user@api.example.com/mcp"},
+		"comma-resource": {"oidc.resource=https://api.example.com/mcp,other"},
+		"comma-scope":    {"oidc.scopes[0]=openid,profile"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			args := []string{"template", name, ".", "--set", "mockProvider=true", "--set", "redis.local.enabled=true", "--set", "oidc.enabled=true", "--set", "oidc.issuer=https://idp.example.com", "--set", "oidc.audience=mecatl", "--set", "oidc.clientID=mecatui"}
+			for _, value := range values {
+				args = append(args, "--set-string", value)
+			}
+			if output, err := helm(t, args...); err == nil {
+				t.Fatalf("unsafe profile rendered successfully:\n%s", output)
+			}
+		})
+	}
 }
 
 func TestMecak8sHelmChart_EdgeTerminatedTLS(t *testing.T) {

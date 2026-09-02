@@ -1,6 +1,6 @@
 # ADR 0290 — OAuth protected-resource discovery for remote mecatui
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-09-02
 - Scope: RFC 9728 metadata served by mecated/mecak8s and remote mecatui enrollment
 - Supersedes: The explicit-configuration portion of ADR 0277 only
@@ -116,7 +116,10 @@ A new optional registry field is additive and does not invalidate existing
 credential keys. Exact lookup must reject ambiguous resource/target matches.
 The mecatl extensions are not interoperable with generic RFC 9728 clients, and
 providers that do not support RFC 8707 are supported through the existing
-configured-audience behavior.
+configured-audience behavior. The V1 public-client flow deliberately does not add
+a `resource` parameter to OAuth authorization, exchange, or refresh requests: that
+keeps compatibility with the existing provider profile; the confirmed resource URL
+is bootstrap and registry metadata, not a token-request compatibility promise.
 
 ## See also
 

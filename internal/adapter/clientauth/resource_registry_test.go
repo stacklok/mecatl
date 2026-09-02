@@ -2,6 +2,7 @@ package clientauth
 
 import (
 	"errors"
+	"sync"
 	"testing"
 
 	"github.com/stacklok/mecatl/internal/adapter/credentialstore"
@@ -37,19 +38,34 @@ func TestADR_0290_AdditiveResourceRegistryIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	conn := resourceConnection("https://api.example.com/v1", "grpc.example.com:7443", "https://issuer.example.com")
+	conn := resourceConnection("https://api.example.com", "grpc.example.com:7443", "https://issuer.example.com")
 	if _, err := registry.Upsert(conn); err != nil {
 		t.Fatal(err)
 	}
-	got, err := registry.Find("https://api.example.com/v1")
+	got, err := registry.Find("https://api.example.com")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.ResourceURL != "https://api.example.com/v1" || got.Identity.Target != "grpc.example.com:7443" {
+	if got.ResourceURL != "https://api.example.com" || got.Identity.Target != "grpc.example.com:7443" {
 		t.Fatalf("saved connection conflated resource and target: %#v", got)
 	}
 	if !got.Identity.Equal(conn.Identity) {
 		t.Fatalf("credential identity changed: got %#v want %#v", got.Identity, conn.Identity)
+	}
+	byHostname, err := registry.Find("api.example.com")
+	if err != nil || !byHostname.Identity.Equal(conn.Identity) {
+		t.Fatalf("bare resource alias = %#v, %v", byHostname, err)
+	}
+	moved := resourceConnection("https://api.example.com", "other.example.com:7443", "https://issuer-two.example.com")
+	if _, err := registry.Upsert(moved); err != nil {
+		t.Fatal(err)
+	}
+	got, err = registry.Find("https://api.example.com")
+	if err != nil || !got.Identity.Equal(moved.Identity) {
+		t.Fatalf("resource alias did not move atomically: %#v, %v", got, err)
+	}
+	if _, err := registry.Find("grpc.example.com:7443"); !errors.Is(err, credentialstore.ErrNotFound) {
+		t.Fatalf("superseded target remains reachable: %v", err)
 	}
 }
 
@@ -178,6 +194,34 @@ func TestADR_0290_AliasConcurrency(t *testing.T) {
 	resource, err := registry.Find("https://api.example.com")
 	if err != nil {
 		t.Fatal(err)
+	}
+	const readers = 16
+	start := make(chan struct{})
+	errs := make(chan error, readers)
+	var wg sync.WaitGroup
+	for n := 0; n < readers; n++ {
+		wg.Add(1)
+		go func(alias string) {
+			defer wg.Done()
+			<-start
+			for range 50 {
+				got, findErr := registry.Find(alias)
+				if findErr != nil {
+					errs <- findErr
+					return
+				}
+				if !got.Identity.Equal(conn.Identity) {
+					errs <- errors.New("alias resolved to another identity")
+					return
+				}
+			}
+		}(map[bool]string{true: "https://api.example.com", false: "grpc.example.com:7443"}[n%2 == 0])
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Fatalf("concurrent alias lookup failed: %v", err)
 	}
 	target, err := registry.Find("grpc.example.com:7443")
 	if err != nil || !resource.Identity.Equal(target.Identity) {

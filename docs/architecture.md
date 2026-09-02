@@ -771,10 +771,10 @@ is the only custom server-CA input. An enrolled target uses a root-scoped OS-key
 keyring-wrapped encrypted credential store; under the root lock, the legacy unsuffixed
 keyring key is copied only when that encrypted namespace contains an actual credential
 record—opening an empty namespace is not migration evidence. Credentials are bound to
-the canonical target and
-complete OIDC identity; legacy records whose target used a zero-padded port need a
-one-time login because canonical decimal-port spelling changes their key. A
-target-bound dynamic bearer source validates, refreshes, and CAS-saves credentials on
+the canonical target and a confirmed RFC 9728 resource URL when enrolled through discovery; resource
+aliases and legacy `host:port` targets resolve exactly and ambiguities fail closed.
+Legacy records remain target-only; records whose target used a zero-padded port need a
+one-time login because canonical decimal-port spelling changes their key. A target-bound dynamic bearer source validates, refreshes, and CAS-saves credentials on
 application token demand. Proactive refresh is activity-gated: an application-facing
 `Token` demand that obtains a bearer is activity, including one served from a valid
 access token; RPC success is not the signal, and background work cannot arm another

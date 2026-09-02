@@ -114,6 +114,16 @@ func Logout(ctx context.Context, target string, cfg LogoutConfig) (LogoutResult,
 			unlock()
 		}
 	}()
+	// Alias resolution happens before the per-target transaction so we can select
+	// its lock. Resolve it again while that lock is held: a re-enrolment may have
+	// repointed a resource alias between those steps.
+	resolved, err := cfg.Registry.targetForAlias(target)
+	if err != nil {
+		return result, err
+	}
+	if resolved != canonical {
+		return result, credentialstore.ErrConflict
+	}
 	all, err := cfg.Registry.List()
 	if err != nil {
 		return result, err

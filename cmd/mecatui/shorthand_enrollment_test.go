@@ -133,7 +133,7 @@ func TestADR_0290_DiscoveredScopeSelection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, want := strings.Join(scopes, ","), "api.write,offline_access,openid,profile"; got != want {
+	if got, want := strings.Join(scopes, ","), "api.write"; got != want {
 		t.Fatalf("explicit scopes = %q, want %q", got, want)
 	}
 	scopes, err = discoveredScopes(profile, "", false)

@@ -110,7 +110,16 @@ The optional profile is shared by `mecated` and `mecak8s`: `--oidc-resource`,
 `internal/cliconfig` and projected by the HTTP metadata handler. RFC fields are
 kept distinct from mecatl extensions for audience and client ID. Discovery is
 anonymous HTTPS bootstrap and transport-separated from authenticated gRPC; it
-never adopts private issuer trust settings. ToolHive/ToolHive-Core are recorded
+never adopts private issuer trust settings. The discovery client uses its configured
+15-second `http.Client` timeout (rather than calling its transport directly), and
+root resources with or without a trailing slash derive the same metadata URL. A
+saved root-resource hostname and its full resource URL are aliases; legacy
+`host:port` targets remain supported and ambiguity fails closed. Explicit
+`mecatui login --scopes` is authoritative (including an intentional omission of
+`offline_access`); otherwise the default request includes it. Public-client token
+exchange and refresh use `client_id` parameters, never HTTP Basic. The V1 profile
+deliberately does not send RFC 8707 `resource` parameters because its provider
+compatibility contract does not require them. ToolHive/ToolHive-Core are recorded
 as implementation provenance for the client path, not imported by the engine.
 
 

@@ -19,6 +19,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/gofrs/flock"
 	"github.com/zalando/go-keyring"
@@ -85,9 +86,19 @@ func (i Identity) Canonical() (Identity, error) {
 	i.Scopes = slices.Compact(i.Scopes)
 	return i, nil
 }
-func safe(v string) bool { return v != "" && len(v) <= 1024 && !strings.ContainsAny(v, "\x00\r\n") }
+func safe(v string) bool {
+	if v == "" || len(v) > 1024 {
+		return false
+	}
+	for _, r := range v {
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
+			return false
+		}
+	}
+	return true
+}
 func canonicalTarget(raw string) (string, error) {
-	if strings.Contains(raw, "://") || strings.ContainsAny(raw, "/?#@") {
+	if !safe(raw) || strings.Contains(raw, "://") || strings.ContainsAny(raw, "/?#@") {
 		return "", errors.New("invalid target")
 	}
 	host, port, err := net.SplitHostPort(raw)
@@ -108,6 +119,9 @@ func canonicalResourceURL(raw string) (string, error) {
 	if raw == "" {
 		return "", nil
 	}
+	if !safe(raw) {
+		return "", errors.New("invalid resource URL")
+	}
 	u, err := url.Parse(raw)
 	if err != nil || u.Scheme != httpsScheme || u.Hostname() == "" || u.User != nil || u.Fragment != "" || u.RawQuery != "" || u.ForceQuery {
 		return "", errors.New("invalid resource URL")
@@ -125,6 +139,9 @@ func canonicalResourceURL(raw string) (string, error) {
 }
 
 func canonicalIssuerURL(raw string) (string, error) {
+	if !safe(raw) {
+		return "", errors.New("invalid issuer URL")
+	}
 	u, err := url.Parse(raw)
 	if err != nil || u.Scheme != httpsScheme || u.Hostname() == "" || u.User != nil || u.Fragment != "" || u.RawQuery != "" {
 		return "", errors.New("invalid issuer URL")
@@ -135,6 +152,9 @@ func canonicalIssuerURL(raw string) (string, error) {
 }
 
 func canonicalRedirectURI(raw string) (string, error) {
+	if !safe(raw) {
+		return "", errors.New("invalid redirect URI")
+	}
 	u, err := url.Parse(raw)
 	if err != nil || (u.Scheme != httpsScheme && u.Scheme != "http") || u.Hostname() == "" || u.User != nil || u.Fragment != "" {
 		return "", errors.New("invalid redirect URI")
@@ -849,12 +869,17 @@ func (r *Registry) Find(alias string) (Connection, error) {
 			return Connection{}, ErrInvalidIdentity
 		}
 		match = func(conn Connection) bool { return conn.ResourceURL != "" && conn.ResourceURL == resource }
+	} else if target, targetErr := canonicalTarget(alias); targetErr == nil {
+		match = func(conn Connection) bool { return conn.Identity.Target == target }
 	} else {
-		target, targetErr := canonicalTarget(alias)
-		if targetErr != nil {
+		if strings.ContainsAny(alias, "/?#@") {
 			return Connection{}, ErrInvalidIdentity
 		}
-		match = func(conn Connection) bool { return conn.Identity.Target == target }
+		resource, resourceErr := canonicalResourceURL("https://" + alias)
+		if resourceErr != nil {
+			return Connection{}, ErrInvalidIdentity
+		}
+		match = func(conn Connection) bool { return conn.ResourceURL != "" && conn.ResourceURL == resource }
 	}
 	all, err := r.List()
 	if err != nil {
@@ -876,8 +901,8 @@ func (r *Registry) Find(alias string) (Connection, error) {
 }
 
 func (r *Registry) targetForAlias(alias string) (string, error) {
-	if !strings.Contains(alias, "://") {
-		return canonicalTarget(alias)
+	if target, err := canonicalTarget(alias); err == nil {
+		return target, nil
 	}
 	conn, err := r.Find(alias)
 	if err != nil {
@@ -979,7 +1004,7 @@ func (r *Registry) Upsert(conn Connection) ([]Identity, error) {
 			continue
 		}
 		existing := row.connection
-		if existing.Identity.Target != id.Target {
+		if existing.Identity.Target != id.Target && (conn.ResourceURL == "" || existing.ResourceURL != conn.ResourceURL) {
 			kept = append(kept, registryRow{connection: existing, valid: true})
 			continue
 		}

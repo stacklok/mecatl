@@ -192,11 +192,19 @@ func discoveredScopes(discovered discoveredResource, explicit string, explicitSe
 		raw = splitScopes(explicit)
 	}
 	scopes := make(map[string]bool, len(raw)+3)
-	for _, scope := range append(splitScopes(defaultOIDCScopes), raw...) {
+	if !explicitSet {
+		for _, scope := range splitScopes(defaultOIDCScopes) {
+			scopes[scope] = true
+		}
+	}
+	for _, scope := range raw {
 		if !validScope(scope) {
 			return nil, errDiscoveryRejected
 		}
 		scopes[scope] = true
+	}
+	if len(scopes) == 0 {
+		return nil, errDiscoveryRejected
 	}
 	result := make([]string, 0, len(scopes))
 	for scope := range scopes {

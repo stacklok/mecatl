@@ -61,10 +61,10 @@ mounted
 {{- if not .Values.oidc.enabled -}}{{ fail "oidc protected-resource profile requires oidc.enabled=true" }}{{- end -}}
 {{- if not .Values.oidc.resource -}}{{ fail "oidc.resource is required when protected-resource profile is set" }}{{- end -}}
 {{- if not .Values.oidc.clientID -}}{{ fail "oidc.clientID is required when protected-resource profile is set" }}{{- end -}}
-{{- if not (regexMatch "^https://[^/?#[:space:]]+(/[^?#[:space:]]*)?$" .Values.oidc.resource) -}}{{ fail "oidc.resource must be an absolute HTTPS URL without credentials, query, or fragment" }}{{- end -}}
+{{- if or (not (regexMatch "^https://[^/?#[:space:]]+(/[^?#[:space:]]*)?$" .Values.oidc.resource)) (contains "@" .Values.oidc.resource) (contains "," .Values.oidc.resource) -}}{{ fail "oidc.resource must be an absolute HTTPS URL without credentials, query, fragment, or commas" }}{{- end -}}
 {{- if regexMatch "[\\x00-\\x1f\\x7f]" .Values.oidc.clientID -}}{{ fail "oidc.clientID must not contain control characters" }}{{- end -}}
 {{- range $scope := .Values.oidc.scopes -}}
-{{- if or (eq (trim $scope) "") (not (regexMatch "^[!-~]+$" $scope)) (contains $scope ",") (contains $scope "\\\"") (contains $scope "\\\\") -}}{{ fail (printf "oidc.scopes entry %q is invalid" $scope) }}{{- end -}}
+{{- if or (eq (trim $scope) "") (not (regexMatch "^[!-~]+$" $scope)) (contains "," $scope) (contains "\\\"" $scope) (contains "\\\\" $scope) -}}{{ fail (printf "oidc.scopes entry %q is invalid" $scope) }}{{- end -}}
 {{- end -}}
 {{- end -}}
 {{- if .Values.oidc.enabled -}}
