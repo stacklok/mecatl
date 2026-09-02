@@ -6,9 +6,11 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -26,11 +28,21 @@ import (
 const savedLoginCallbackTimeout = 5 * time.Minute
 
 var (
-	executeRemoteLogin        = runSavedRemoteLogin
-	newRemoteLoginRuntime     = oauthlogin.New
-	prepareSavedLogin         = prepareSavedRemoteLogin
-	prepareExistingSavedLogin = prepareExistingSavedRemoteLogin
+	executeRemoteLogin          = runSavedRemoteLogin
+	newRemoteLoginRuntime       = oauthlogin.New
+	prepareSavedLogin           = prepareSavedRemoteLogin
+	prepareExistingSavedLogin   = prepareExistingSavedRemoteLogin
+	discoverRemoteResource      = discoverWithPublicBootstrap
+	confirmDiscoveredEnrollment = confirmDiscoveredLogin
 )
+
+const defaultOIDCScopes = "openid,profile,offline_access"
+
+type discoveredEnrollment struct {
+	Resource    string
+	MetadataURL string
+	Connection  clientauth.Connection
+}
 
 type notifyContextFunc func(context.Context, ...os.Signal) (context.Context, context.CancelFunc)
 
@@ -52,7 +64,7 @@ func newSavedLoginContextWithNotifier(timeout time.Duration, notify notifyContex
 func runRemoteLogin(address string, args []string) error {
 	fs := flag.NewFlagSet("mecatui login", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
-	var issuer, clientID, audience, tlsCA string
+	var issuer, clientID, audience, tlsCA, grpcTarget string
 	var privateIssuer bool
 	var noBrowser bool
 	var scopes string
@@ -61,12 +73,13 @@ func runRemoteLogin(address string, args []string) error {
 	fs.StringVar(&clientID, "client-id", "", "public OIDC client ID")
 	fs.StringVar(&audience, "audience", "", "OIDC token audience")
 	fs.StringVar(&tlsCA, "tls-ca", "", "path to a PEM CA bundle for issuer verification (replaces system roots in public mode)")
+	fs.StringVar(&grpcTarget, "grpc-target", "", "gRPC transport target for protected-resource discovery")
 	fs.BoolVar(&privateIssuer, "private-issuer", false, "allow only private issuer addresses; requires --tls-ca")
-	fs.StringVar(&scopes, "scopes", "openid,profile,offline_access", "comma-separated OIDC scopes to request; offline_access is what earns a refresh token, but a provider that has not granted it to this client will refuse the whole request")
+	fs.StringVar(&scopes, "scopes", defaultOIDCScopes, "comma-separated OIDC scopes to request; overrides advertised profile scopes")
 	fs.BoolVar(&noBrowser, "no-browser", false, "print the OIDC authorization URL instead of opening a browser, then wait for the loopback callback (headless/SSH use)")
 	fs.DurationVar(&timeout, "callback-timeout", 5*time.Minute, "maximum time to wait for the loopback OAuth callback")
 	fs.Usage = func() {
-		fmt.Fprintln(os.Stderr, "Usage: mecatui login ADDRESS --issuer HTTPS_URL --client-id ID --audience AUDIENCE [--tls-ca PATH] [--private-issuer]")
+		fmt.Fprintln(os.Stderr, "Usage: mecatui login ADDRESS [--issuer HTTPS_URL --client-id ID --audience AUDIENCE] [--grpc-target HOST:PORT]")
 		cliconfig.PrintDefaults(fs.Output(), fs)
 	}
 	if err := fs.Parse(args); err != nil {
@@ -75,8 +88,57 @@ func runRemoteLogin(address string, args []string) error {
 	if fs.NArg() != 0 {
 		return fmt.Errorf("login: unexpected arguments after ADDRESS; usage: mecatui login ADDRESS")
 	}
-	if issuer == "" || clientID == "" || audience == "" || timeout <= 0 {
-		return errors.New("login: --issuer, --client-id, --audience, and a positive --callback-timeout are required")
+	if timeout <= 0 {
+		return errors.New("login: a positive --callback-timeout is required")
+	}
+
+	explicitIdentity := issuer != "" || clientID != "" || audience != ""
+	if !explicitIdentity {
+		if tlsCA != "" || privateIssuer {
+			return errors.New("login: --tls-ca and --private-issuer require explicit --issuer, --client-id, and --audience")
+		}
+		resource, err := parseProtectedResource(address)
+		if err != nil {
+			return errors.New("login: --issuer, --client-id, and --audience are required for a non-resource address")
+		}
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer stop()
+		ctx, cancel := context.WithTimeout(ctx, timeout)
+		defer cancel()
+		discovered, err := discoverRemoteResource(ctx, resource)
+		if err != nil {
+			return errors.New("login: protected-resource discovery failed")
+		}
+		scopes, err := discoveredScopes(discovered, scopes, flagWasSet(fs, "scopes"))
+		if err != nil {
+			return errors.New("login: invalid --scopes")
+		}
+		enrollment, err := discoveredEnrollmentFrom(discovered, grpcTarget, strings.Join(scopes, ","))
+		if err != nil {
+			return errors.New("login: protected-resource discovery returned an invalid enrollment profile")
+		}
+		confirmed, err := confirmDiscoveredEnrollment(os.Stdin, os.Stderr, enrollment)
+		if err != nil {
+			return fmt.Errorf("login: confirmation failed: %w", err)
+		}
+		if !confirmed {
+			return errors.New("login: discovered enrollment was not confirmed")
+		}
+		if err := executeRemoteLogin(ctx, enrollment.Connection, noBrowser); err != nil {
+			if errors.Is(err, context.Canceled) {
+				fmt.Fprintln(os.Stderr, "login cancelled")
+				return nil
+			}
+			return fmt.Errorf("login: %w", err)
+		}
+		fmt.Fprintln(os.Stderr, "login successful")
+		return nil
+	}
+	if issuer == "" || clientID == "" || audience == "" {
+		return errors.New("login: --issuer, --client-id, and --audience are required together")
+	}
+	if grpcTarget != "" {
+		return errors.New("login: --grpc-target is only valid with protected-resource discovery")
 	}
 	if privateIssuer && tlsCA == "" {
 		return errors.New("login: --private-issuer requires --tls-ca")
@@ -108,6 +170,64 @@ func runRemoteLogin(address string, args []string) error {
 	}
 	fmt.Fprintln(os.Stderr, "login successful")
 	return nil
+}
+
+func discoverWithPublicBootstrap(ctx context.Context, resource protectedResource) (discoveredResource, error) {
+	return discoverProtectedResource(ctx, resource, nil)
+}
+
+func flagWasSet(fs *flag.FlagSet, name string) bool {
+	set := false
+	fs.Visit(func(f *flag.Flag) { set = set || f.Name == name })
+	return set
+}
+
+func discoveredScopes(discovered discoveredResource, explicit string, explicitSet bool) ([]string, error) {
+	raw := discovered.Scopes
+	if explicitSet {
+		raw = splitScopes(explicit)
+	}
+	scopes := make(map[string]bool, len(raw)+3)
+	for _, scope := range append(splitScopes(defaultOIDCScopes), raw...) {
+		if !validScope(scope) {
+			return nil, errDiscoveryRejected
+		}
+		scopes[scope] = true
+	}
+	result := make([]string, 0, len(scopes))
+	for scope := range scopes {
+		result = append(result, scope)
+	}
+	slices.Sort(result)
+	return result, nil
+}
+
+func discoveredEnrollmentFrom(discovered discoveredResource, grpcTarget, scopes string) (discoveredEnrollment, error) {
+	target := discovered.GRPCTarget
+	if grpcTarget != "" {
+		target = grpcTarget
+	}
+	if scopes == "" {
+		scopes = defaultOIDCScopes
+	}
+	identity := clientauth.Identity{Target: target, Issuer: discovered.Issuer, ClientID: discovered.ClientID, Audience: discovered.Audience, RedirectURI: oauthlogin.ExactRedirectURL, Scopes: splitScopes(scopes)}
+	identity, err := identity.Canonical()
+	if err != nil {
+		return discoveredEnrollment{}, err
+	}
+	return discoveredEnrollment{Resource: discovered.Resource, MetadataURL: discovered.MetadataURL, Connection: clientauth.Connection{Identity: identity, IssuerAddressPolicy: clientauth.IssuerAddressPolicyPublic}}, nil
+}
+
+func confirmDiscoveredLogin(in io.Reader, out io.Writer, enrollment discoveredEnrollment) (bool, error) {
+	fmt.Fprintf(out, "Discovered protected resource:\n  resource: %s\n  metadata: %s\n  issuer: %s\n  audience: %s\n  client ID: %s\n  scopes: %s\n  gRPC target: %s\nContinue with browser login? [y/N]: ", enrollment.Resource, enrollment.MetadataURL, enrollment.Connection.Identity.Issuer, enrollment.Connection.Identity.Audience, enrollment.Connection.Identity.ClientID, strings.Join(enrollment.Connection.Identity.Scopes, ","), enrollment.Connection.Identity.Target)
+	var answer string
+	if _, err := fmt.Fscanln(in, &answer); err != nil {
+		if errors.Is(err, io.EOF) {
+			return false, nil
+		}
+		return false, err
+	}
+	return strings.EqualFold(answer, "y") || strings.EqualFold(answer, "yes"), nil
 }
 
 // preparedSavedLogin owns the local handles proven usable before interactive OIDC.
