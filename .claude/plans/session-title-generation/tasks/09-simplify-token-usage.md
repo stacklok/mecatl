@@ -2,8 +2,8 @@
 id: 09-simplify-token-usage
 title: Simplify canonical token usage and HTTP contract
 blocked_by: [08-consolidate-title-accounting]
-status: in-progress
-branch: ""
+status: done
+branch: "plan-session-title-generation/09-simplify-token-usage"
 worktree: ""
 issue: "621"
 retries: 0
