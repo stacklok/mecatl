@@ -15,6 +15,11 @@ import type { MessageShape } from '@bufbuild/protobuf';
 import { Transport } from '@connectrpc/connect';
 
 // @public
+export class ActivityGapError extends MecatlError {
+    constructor(message?: string, options?: Omit<MecatlErrorOptions, "code">);
+}
+
+// @public
 export type AgentEvent = Exclude<KnownEvent, {
     readonly kind: `team.${string}`;
 }>;
@@ -179,6 +184,11 @@ export interface CredentialOptions {
 
 // @public (undocumented)
 export type CredentialProvider = () => HeadersInit | Promise<HeadersInit>;
+
+// @public
+export class CursorExpiredError extends MecatlError {
+    constructor(message: string, options: Omit<MecatlErrorOptions, "code">);
+}
 
 // @public
 export class CursorMalformedError extends MecatlError {

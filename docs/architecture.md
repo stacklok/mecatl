@@ -253,6 +253,13 @@ records dropped by the ergonomic filter advance immediately, and a filtered `app
 retires its permission ask. The SDK exposes the string for application-owned persistence but
 does not write browser storage or files itself.
 
+A decoded `gap` remains visible on the raw watch, but the ergonomic iterator turns it into a
+local `ActivityGapError` before yielding or checkpointing it, leaving the exposed cursor at
+the last preceding envelope. Cursor faults use the same typed error classes on both transports:
+gRPC carries the registry code in its terminal status, while HTTP has already committed 200 and
+therefore carries it in a terminal `event: error` SSE frame. An expired cursor never triggers an
+implicit restart from the beginning; that recovery remains an explicit application decision.
+
 Around that core, every capability beyond the minimal loop is a **seam with a
 default and a swap-in adapter**, so the production build stays static and
 network-free unless you wire something in. The current adapters cover, grouped:

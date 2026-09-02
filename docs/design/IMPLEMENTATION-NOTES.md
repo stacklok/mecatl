@@ -8143,6 +8143,16 @@ even though the default view never yields the approval record. The cursor stays 
 owned and serializable across a fresh `Client`; no SDK storage backend or filesystem path is
 introduced.
 
+Gap and cursor-fault handling stays split at the raw/ergonomic boundary. The shared
+`sdk/typescript/src/errors.ts` normalizer maps `cursor_expired`, `cursor_malformed`, and
+server-originated `activity_gap` into their dedicated classes from either a gRPC status or an
+HTTP terminal SSE error frame; the latter necessarily retains HTTP status 200 because cursor
+decoding occurs after the watch response is committed. `sdk/typescript/src/watch.ts` leaves
+`decodeWatchEnvelope` lossless for raw consumers, but its ergonomic iterator raises a local
+`ActivityGapError` before yielding the gap and never moves its checkpoint past the last preceding
+envelope. Cursor expiry is terminal here: restart-from-beginning remains caller-authored rather
+than an SDK fallback.
+
 ## Live e2e — `e2e/` (see `e2e/README.md`)
 
 A LIVE, ginkgo-driven BDD suite proving the harness's features against a REAL model: it

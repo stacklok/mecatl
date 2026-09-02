@@ -1,4 +1,5 @@
 import {
+  ActivityGapError,
   CursorMalformedError,
   CursorScopeError,
   InvalidStateError,
@@ -295,6 +296,7 @@ class SessionActivityImpl implements SessionActivity {
       for (;;) {
         const envelope = await this.#nextEnvelope();
         if (envelope === undefined) return;
+        if (envelope.kind === "gap") throw new ActivityGapError();
         this.#observe(envelope);
 
         const event = envelopeEvent(envelope);
@@ -528,6 +530,7 @@ export async function createAttachedRun(
       const next = await opened.source.next();
       if (next.done) break;
       const envelope = decodeWatchEnvelope(next.value, operations.transportKind);
+      if (envelope.kind === "gap") throw new ActivityGapError();
       replay.push(envelope);
       const event = envelopeEvent(envelope);
       if (event?.runId !== undefined && event.runId !== "") newestRunId = event.runId;

@@ -31,7 +31,9 @@ export type {
   TransportKind,
 } from "./errors.js";
 export {
+  ActivityGapError,
   AuthenticationError,
+  CursorExpiredError,
   CursorMalformedError,
   CursorScopeError,
   IncompatibleServerError,

@@ -175,6 +175,23 @@ export class InvalidStateError extends MecatlError {
   }
 }
 
+/** Durable activity is known to contain a delivery gap. @public */
+export class ActivityGapError extends MecatlError {
+  constructor(
+    message = "The durable activity stream contains a known delivery gap",
+    options: Omit<MecatlErrorOptions, "code"> = { transport: "local" },
+  ) {
+    super(message, { ...options, code: "activity_gap" });
+  }
+}
+
+/** The server cursor belongs to a superseded event-log generation. @public */
+export class CursorExpiredError extends MecatlError {
+  constructor(message: string, options: Omit<MecatlErrorOptions, "code">) {
+    super(message, { ...options, code: "cursor_expired" });
+  }
+}
+
 /** An SDK cursor is not a structurally valid `sdkcur/1` envelope. @public */
 export class CursorMalformedError extends MecatlError {
   constructor(
@@ -242,6 +259,22 @@ export class ServerError extends MecatlError {
   }
 }
 
+function errorFromServer(
+  message: string,
+  options: Omit<MecatlErrorOptions, "code"> & { code: ServerErrorCode },
+): MecatlError {
+  switch (options.code) {
+    case "activity_gap":
+      return new ActivityGapError(message, options);
+    case "cursor_expired":
+      return new CursorExpiredError(message, options);
+    case "cursor_malformed":
+      return new CursorMalformedError(message, options);
+    default:
+      return new ServerError(message, options);
+  }
+}
+
 export interface ProblemDetails {
   code?: unknown;
   detail?: unknown;
@@ -283,7 +316,7 @@ export function errorFromProblem(
       transport: "http",
     });
   }
-  return new ServerError(message, {
+  return errorFromServer(message, {
     cause: problem,
     code,
     requestId: safeRequestId,
@@ -396,7 +429,7 @@ export function normalizeError(reason: unknown, transport: TransportKind): Mecat
     });
   }
   if (info?.domain === "mecatl.stacklok.com") {
-    return new ServerError(reason.rawMessage, {
+    return errorFromServer(reason.rawMessage, {
       cause: reason,
       code: serverCode(info.reason),
       requestId,
