@@ -102,14 +102,16 @@ mounted
 {{/* Report whether a URL is plain HTTP to a runtime-recognized loopback host. */}}
 {{- define "mecak8s.mcpLoopbackHTTP" -}}
 {{- $url := lower . -}}
-{{- if regexMatch "^http://(localhost|127([.][0-9]+){3}|[[][0:]*1[]])(:[0-9]+)?(/|$)" $url -}}loopback{{- end -}}
+{{- if regexMatch "^http://(localhost|127([.][0-9]+){3}|[[][0:]*1[]]|[[]::ffff:127([.][0-9]+){3}[]])(:[0-9]+)?(/|$)" $url -}}loopback{{- end -}}
 {{- end -}}
 
-{{/* Reject obvious URL shapes that the runtime's net/url validation refuses. */}}
+{{/* Reject URL shapes that the runtime's net/url validation refuses. */}}
 {{- define "mecak8s.validateMCPURLShape" -}}
 {{- $raw := .url -}}
 {{- $field := .field -}}
 {{- $origin := default false .origin -}}
+{{- /* urlParse delegates parsing to net/url, including malformed percent escapes. */ -}}
+{{- $_ := urlParse $raw -}}
 {{- $authority := regexReplaceAll "^https?://([^/?#]+).*$" $raw "${1}" -}}
 {{- if contains "_" $authority -}}{{ fail (printf "%s must not contain underscores in its hostname" $field) }}{{- end -}}
 {{- $port := "" -}}
@@ -122,9 +124,13 @@ mounted
 {{- end -}}
 {{- if and $port (or (lt (int $port) 1) (gt (int $port) 65535)) -}}{{ fail (printf "%s port must be between 1 and 65535" $field) }}{{- end -}}
 {{- $bracketedHost := regexFind "[[][^]]+[]]" $authority -}}
-{{- if and $origin $bracketedHost -}}
+{{- if and $bracketedHost (or $origin (default false .canonical)) -}}
 {{- $host := trimAll "[]" $bracketedHost -}}
 {{- if or (contains "." $host) (regexMatch "(^|:)0[0-9a-fA-F]+(:|$)" $host) (regexMatch "(^|:)0(:0)+(:|$)" $host) -}}{{ fail (printf "%s must use canonical IP form" $field) }}{{- end -}}
+{{- end -}}
+{{- if default false .canonical -}}
+{{- $parsed := urlParse $raw -}}
+{{- if or (ne $authority (lower $authority)) (eq (index $parsed "path") "") (regexMatch "(^|/)[.][.]?(/|$)" $raw) (regexMatch "^https://[^/]+:443(/|$)|^http://[^/]+:80(/|$)" $raw) -}}{{ fail (printf "%s must use the runtime canonical resource form: %q" $field $raw) }}{{- end -}}
 {{- end -}}
 {{- end -}}
 
@@ -148,7 +154,7 @@ mounted
 {{- $_ := set $ownedEnv (printf "MCP_%s_TOKEN" $envBase) true -}}
 {{- end -}}
 {{- if eq $server.auth.mode "oauth" -}}
-{{- include "mecak8s.validateMCPURLShape" (dict "field" (printf "mcp.servers[%s].url" $server.name) "url" $server.url) -}}
+{{- include "mecak8s.validateMCPURLShape" (dict "field" (printf "mcp.servers[%s].url" $server.name) "url" $server.url "canonical" true) -}}
 {{- include "mecak8s.validateMCPURLShape" (dict "field" (printf "mcp.servers[%s].auth.oauth.issuer" $server.name) "url" $server.auth.oauth.issuer "origin" true) -}}
 {{- range $field, $value := dict "profile" $server.auth.oauth.profile "principal" $server.auth.oauth.principal -}}
 {{- if or (eq (trim $value) "") (regexMatch "[\x00-\x1f\x7f]" $value) -}}{{ fail (printf "mcp.servers[%s].auth.oauth.%s must be non-blank and contain no control characters" $server.name $field) }}{{- end -}}

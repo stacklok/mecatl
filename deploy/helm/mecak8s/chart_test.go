@@ -1365,6 +1365,7 @@ func TestMecak8sHelmChart_MCPStaticBearerLoopbackNeedsNoInsecureAcknowledgement(
 		"http://[::1]:9090/mcp",
 		"http://[0:0:0:0:0:0:0:1]:9090/mcp",
 		"http://[0::1]:9090/mcp",
+		"http://[::ffff:127.0.0.1]:9090/mcp",
 	} {
 		t.Run(rawURL, func(t *testing.T) {
 			if err := mcpadapter.ValidateClientURL(rawURL); err != nil {
@@ -1598,6 +1599,10 @@ mcp:
             privateOrigins: []
             maxRedirects: 0
 `
+	if _, err := renderMCPValues(t, strings.Replace(validOAuth, "https://mcp.example/mcp", "https://mcp.example/MCP%2Fv1", 1)); err != nil {
+		t.Fatalf("render rejected a canonical escaped OAuth resource URL: %v", err)
+	}
+
 	cases := map[string]string{
 		"bad name":           strings.Replace(validStatic, "name: github", "name: bad-name", 1),
 		"double underscore":  strings.Replace(validStatic, "name: github", "name: bad__name", 1),
@@ -1627,6 +1632,8 @@ mcp:
 		"static HTTP without acknowledgement": strings.Replace(validStatic, "https://mcp.example/mcp", "http://mcp.example/mcp", 1),
 		"oauth HTTP":                          strings.Replace(validOAuth, "https://mcp.example/mcp", "http://mcp.example/mcp", 1),
 		"noncanonical OAuth issuer":           strings.Replace(validOAuth, "https://issuer.example", "https://ISSUER.example:443", 1),
+		"OAuth resource malformed escape":     strings.Replace(validOAuth, "https://mcp.example/mcp", "https://mcp.example/%zz", 1),
+		"noncanonical OAuth resource":         strings.Replace(validOAuth, "https://mcp.example/mcp", "https://MCP.example:443/a/../mcp", 1),
 		"OAuth resource underscore hostname":  strings.Replace(validOAuth, "https://mcp.example/mcp", "https://mcp_bad.example/mcp", 1),
 		"OAuth origin underscore hostname":    strings.Replace(validOAuth, "additionalOrigins: [https://client.example]", "additionalOrigins: [https://client_bad.example]", 1),
 		"OAuth issuer nonnumeric port":        strings.Replace(validOAuth, "https://issuer.example", "https://issuer.example:notaport", 1),
