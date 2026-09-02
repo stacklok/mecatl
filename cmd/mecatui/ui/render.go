@@ -956,7 +956,12 @@ func (r *renderer) renderBlock(idx int, b *block, expand bool) string {
 	if e, ok := r.blockCache[idx]; ok && e.rev == b.rev && e.width == r.width && e.expand == expand {
 		return e.out
 	}
-	out := r.indentLines(r.renderBlockFresh(idx, b, expand))
+	out := r.renderBlockFresh(idx, b, expand)
+	// contentWidth preserves a positive width for a tiny renderer. A tool card uses
+	// that cell for its frameless fallback, so it cannot also carry the usual indent.
+	if b.kind != blockTool || r.width > r.indent {
+		out = r.indentLines(out)
+	}
 	if r.blockCache == nil {
 		// Zero-value safety: a bare &renderer{th: th} never calls newRenderer. Two
 		// production sites construct one — the width-0 team focus renderer
@@ -1459,11 +1464,15 @@ func (r *renderer) renderTool(b *block, expand bool) string {
 	}
 
 	card := r.th.Style("toolCard")
-	if cw := r.contentWidth(); cw > 4 {
-		// Lay the card out within the CONTENT width (viewport minus the left indent)
-		// minus its own 2-cell border, capped at toolCardMaxWidth, so card + indent
-		// never exceeds the viewport.
+	if cw := r.contentWidth(); cw > card.GetHorizontalFrameSize()+2 {
+		// Width includes the card's border and padding. Keep the 2-cell right inset
+		// without letting the indented card exceed the viewport.
 		card = card.Width(min(cw-2, toolCardMaxWidth))
+	} else if cw > 0 {
+		// A bordered, padded card has no content column at this width. Drop its frame
+		// rather than leaving Width unset, which lets an unbreakable tool command grow
+		// the card past the viewport.
+		card = card.Border(lipgloss.Border{}).Padding(0).Width(cw)
 	}
 	return card.Render(head)
 }

@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"strings"
 	"testing"
 
 	"charm.land/lipgloss/v2"
@@ -39,6 +40,77 @@ func TestToolCardWidthCap(t *testing.T) {
 			// the cap is load-bearing, not vacuously satisfied by a short body.
 			if tc.wantWide && got != toolCardMaxWidth {
 				t.Errorf("width %d: capped card should render exactly %d cols, got %d", tc.width, toolCardMaxWidth, got)
+			}
+		})
+	}
+}
+
+// TestResolvedBashToolCardFitsViewport renders the normal transcript path, including
+// the conversation indent, for a resolved Bash call whose command and result have no
+// natural break points. Both views must remain within a narrow terminal.
+func TestResolvedBashToolCardFitsViewport(t *testing.T) {
+	const viewportWidth = 6
+	command := strings.Repeat("x", 200)
+	result := strings.Repeat("y", 200)
+
+	for _, expand := range []bool{false, true} {
+		t.Run(map[bool]string{false: "collapsed", true: "expanded"}[expand], func(t *testing.T) {
+			r := newTestRenderer()
+			r.setWidth(viewportWidth)
+			c := &conversation{}
+			c.addTool("bash-1", "Bash", mustJSON(t, map[string]string{"command": command}))
+			if !c.resolveTool("bash-1", result, false) {
+				t.Fatal("resolve Bash tool")
+			}
+
+			out := r.renderConversation(c, expand)
+			for i, line := range strings.Split(out, "\n") {
+				if got := maxLineWidth(line); got > viewportWidth {
+					t.Errorf("line %d exceeds viewport width %d (got %d): %q", i, viewportWidth, got, stripANSIstr(line))
+				}
+			}
+		})
+	}
+}
+
+// TestResolvedBashToolCardFitsOneColumnViewport ensures the transcript indent is
+// suppressed when it would otherwise make a frameless, one-column card overflow.
+func TestResolvedBashToolCardFitsOneColumnViewport(t *testing.T) {
+	r := newTestRenderer()
+	r.setWidth(1)
+	c := &conversation{}
+	c.addTool("bash-1", "Bash", mustJSON(t, map[string]string{"command": strings.Repeat("x", 200)}))
+	if !c.resolveTool("bash-1", strings.Repeat("y", 200), false) {
+		t.Fatal("resolve Bash tool")
+	}
+
+	for i, line := range strings.Split(r.renderConversation(c, false), "\n") {
+		if got := maxLineWidth(line); got > r.width {
+			t.Errorf("line %d exceeds viewport width %d (got %d): %q", i, r.width, got, stripANSIstr(line))
+		}
+	}
+}
+
+// TestResolvedBashToolCardFitsFrameTransition verifies the first width that can
+// render the normal card frame while retaining the existing 2-cell right inset.
+func TestResolvedBashToolCardFitsFrameTransition(t *testing.T) {
+	command := strings.Repeat("x", 200)
+	result := strings.Repeat("y", 200)
+
+	for _, expand := range []bool{false, true} {
+		t.Run(map[bool]string{false: "collapsed", true: "expanded"}[expand], func(t *testing.T) {
+			r := newTestRenderer()
+			r.setWidth(defaultBlockIndent + r.th.Style("toolCard").GetHorizontalFrameSize() + 2)
+			c := &conversation{}
+			c.addTool("bash-1", "Bash", mustJSON(t, map[string]string{"command": command}))
+			if !c.resolveTool("bash-1", result, false) {
+				t.Fatal("resolve Bash tool")
+			}
+
+			for i, line := range strings.Split(r.renderConversation(c, expand), "\n") {
+				if got := maxLineWidth(line); got > r.width {
+					t.Errorf("line %d exceeds viewport width %d (got %d): %q", i, r.width, got, stripANSIstr(line))
+				}
 			}
 		})
 	}
