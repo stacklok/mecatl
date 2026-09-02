@@ -501,6 +501,12 @@ type Config struct {
 	LearnedSkillNameAvailable func(string) bool
 	LiveSkills                func(context.Context) []*mecatlv1.SkillInfo
 
+	// TitleGenerationEligible is the composition-resolved eligibility check for
+	// server-owned automatic title generation. Nil and false keep the durable
+	// lifecycle disabled; true persists pending at session creation. It receives
+	// only the neutral fixed session selector, never registry or credential access.
+	TitleGenerationEligible func(ProviderSelector) bool
+
 	// SessionEngine builds a PER-SESSION engine over a non-default provider/model
 	// selector AND/OR client-provided streaming-HTTP MCP servers (the ACP
 	// session/new mcpServers). It is the seam that lets a session bind its OWN
@@ -1821,6 +1827,12 @@ func setSessionLabels(sess *session.Session, sel ProviderSelector, profile Sessi
 	return sess.RestoreLabels(owner, authority)
 }
 
+func (s *Service) setTitleGenerationEligibility(sess *session.Session, sel ProviderSelector) {
+	if s.cfg.TitleGenerationEligible != nil && s.cfg.TitleGenerationEligible(sel) {
+		sess.SetTitleGeneration(session.TitleGenerationPending)
+	}
+}
+
 func (s *Service) setPerSessionLabels(sess *session.Session, sel ProviderSelector, profile SessionProfile, owner *session.Principal, opts createSessionOpts, res SessionEngineResult, carried session.Authority, carriedBound bool) error {
 	authority := s.rootAuthority(sess.Kind, carried, carriedBound)
 	if sess.Kind == session.SessionKindDebug {
@@ -2166,6 +2178,8 @@ func (s *Service) createSession(ctx context.Context, mode session.PermissionMode
 		if err := setSessionLabels(sess, sel, profile, owner, s.rootAuthority(sess.Kind, carriedAuthority, carriedAuthorityBound)); err != nil {
 			return nil, err
 		}
+		s.setTitleGenerationEligibility(sess, sel)
+		stampDefaultEnvironmentRef(sess)
 		if err := seedCarryover(sess, carrySnap); err != nil {
 			return nil, err
 		}
@@ -2262,6 +2276,8 @@ func (s *Service) createPerSessionEngine(ctx context.Context, mintID func() sess
 	if placement != nil {
 		sess.Placement = canonicalPlacementMetadata(*placement)
 	}
+	s.setTitleGenerationEligibility(sess, sel)
+	stampDefaultEnvironmentRef(sess)
 	if err := seedCarryover(sess, carrySnap); err != nil {
 		if closeFn != nil {
 			_ = closeFn()
