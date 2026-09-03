@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -16,7 +17,7 @@ func TestWorkspaceEnrollmentIsNonBlocking(t *testing.T) {
 		ID: "bundle-1", Status: client.WorkspaceEnrollmentPending, RequiredServices: 2,
 		PresentationURL: "https://provider-private.example/callback?token=token-canary",
 	}}
-	m := New(Deps{Ctx: context.Background(), WorkspaceEnrollment: control})
+	m := New(Deps{Ctx: context.Background(), WorkspaceEnrollment: control, OpenURL: func(context.Context, string) error { return nil }})
 	m = applyAll(m, tea.WindowSizeMsg{Width: 100, Height: 30}, client.SessionReadyMsg{
 		SessionID: "session-1", Capabilities: client.Capabilities{WorkspaceEnrollment: true},
 	})
@@ -36,7 +37,12 @@ func TestWorkspaceEnrollmentIsNonBlocking(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("/tools-connect returned no command")
 	}
-	m = applyAll(m, cmd())
+	mm, presentationCmd := m.Update(cmd())
+	m = mm.(Model)
+	if presentationCmd == nil {
+		t.Fatal("pending enrollment did not request browser presentation")
+	}
+	m = applyAll(m, presentationCmd())
 	if control.connectCalls != 1 || m.enrollment.ID != "bundle-1" {
 		t.Fatalf("connect calls/state = %d/%+v", control.connectCalls, m.enrollment)
 	}
@@ -46,24 +52,31 @@ func TestWorkspaceEnrollmentIsNonBlocking(t *testing.T) {
 	if got := stripANSIstr(m.idleFooterLeft()); strings.Contains(got, "https://") || strings.Contains(got, "token-canary") {
 		t.Fatalf("footer rendered private presentation data: %s", got)
 	}
+	if got := fmt.Sprintf("%+v", m.enrollment); strings.Contains(got, "https://") || strings.Contains(got, "token-canary") {
+		t.Fatalf("enrollment state retained private presentation data: %s", got)
+	}
 }
 
 func TestWorkspaceEnrollmentConnectedRechecksAndResubmitsOnce(t *testing.T) {
 	control := &workspaceEnrollmentControlFake{connect: client.WorkspaceEnrollment{
-		ID: "bundle-1", Status: client.WorkspaceEnrollmentPending,
+		ID: "bundle-1", Status: client.WorkspaceEnrollmentPending, PresentationURL: "https://authorization.example/",
 	}}
 	m, send := builtinDispatchModel(t, client.Capabilities{WorkspaceEnrollment: true}, false)
 	m.deps.WorkspaceEnrollment = control
+	m.deps.OpenURL = func(context.Context, string) error { return nil }
 	m.pendingInitialPrompt = "list my open pull requests"
 
 	mm, cmd := m.runToolsConnect()
 	m = mm.(Model)
-	m = applyAll(m, cmd())
+	mm, presentationCmd := m.Update(cmd())
+	m = mm.(Model)
+	mm, _ = m.Update(presentationCmd())
+	m = mm.(Model)
 	control.connect = client.WorkspaceEnrollment{ID: "bundle-1", Status: client.WorkspaceEnrollmentConnected}
 
-	mm, cmd = m.runToolsConnect()
+	mm, finalizeCmd := m.applyWorkspaceEnrollmentPollTick(workspaceEnrollmentPollTickMsg{sessionID: m.sessionID, enrollmentID: m.enrollment.ID, gen: m.enrollment.controlGen})
 	m = mm.(Model)
-	mm, finalizeCmd := m.Update(cmd())
+	mm, finalizeCmd = m.Update(finalizeCmd())
 	m = mm.(Model)
 	if control.connectCalls != 2 || m.enrollment.ID != "" || m.workspaceEnrollmentNotice != "" {
 		t.Fatalf("connected recheck did not finalize: calls=%d enrollment=%+v notice=%q", control.connectCalls, m.enrollment, m.workspaceEnrollmentNotice)
@@ -136,7 +149,7 @@ func TestWorkspaceEnrollmentPollCompletesWithoutManualRecheck(t *testing.T) {
 	control := &workspaceEnrollmentControlFake{connect: client.WorkspaceEnrollment{ID: "bundle-1", Status: client.WorkspaceEnrollmentPending}}
 	m := New(Deps{Ctx: context.Background(), WorkspaceEnrollment: control})
 	m.sessionID = "session-1"
-	m.enrollment = workspaceEnrollmentState{ID: "bundle-1", Status: client.WorkspaceEnrollmentPending}
+	m.enrollment = workspaceEnrollmentState{ID: "bundle-1", Status: client.WorkspaceEnrollmentPending, presentationDelivered: true}
 
 	mm, cmd := m.applyWorkspaceEnrollmentPollTick(workspaceEnrollmentPollTickMsg{sessionID: "session-1", enrollmentID: "bundle-1"})
 	m = mm.(Model)
@@ -157,18 +170,97 @@ func TestWorkspaceEnrollmentPollIgnoresStaleSessionOrEnrollment(t *testing.T) {
 	control := &workspaceEnrollmentControlFake{}
 	m := New(Deps{Ctx: context.Background(), WorkspaceEnrollment: control})
 	m.sessionID = "session-current"
-	m.enrollment = workspaceEnrollmentState{ID: "bundle-current", Status: client.WorkspaceEnrollmentPending}
+	m.enrollment = workspaceEnrollmentState{ID: "bundle-current", Status: client.WorkspaceEnrollmentPending, controlGen: 9}
 	for _, tick := range []workspaceEnrollmentPollTickMsg{
-		{sessionID: "session-old", enrollmentID: "bundle-current"},
-		{sessionID: "session-current", enrollmentID: "bundle-old"},
+		{sessionID: "session-old", enrollmentID: "bundle-current", gen: 9},
+		{sessionID: "session-current", enrollmentID: "bundle-old", gen: 9},
+		{sessionID: "session-current", enrollmentID: "bundle-current", gen: 8},
 	} {
 		if _, cmd := m.applyWorkspaceEnrollmentPollTick(tick); cmd != nil {
 			t.Fatalf("stale tick %#v started a poll", tick)
 		}
 	}
 	m.enrollment.Status = client.WorkspaceEnrollmentCancelled
-	if _, cmd := m.applyWorkspaceEnrollmentPollTick(workspaceEnrollmentPollTickMsg{sessionID: "session-current", enrollmentID: "bundle-current"}); cmd != nil {
+	if _, cmd := m.applyWorkspaceEnrollmentPollTick(workspaceEnrollmentPollTickMsg{sessionID: "session-current", enrollmentID: "bundle-current", gen: 9}); cmd != nil {
 		t.Fatal("cancelled enrollment continued polling")
+	}
+}
+
+func TestWorkspaceEnrollmentStaleResultAndBrowserFailureAreCorrelated(t *testing.T) {
+	m := New(Deps{Ctx: context.Background(), WorkspaceEnrollment: &workspaceEnrollmentControlFake{}})
+	m.sessionID = "session-current"
+	m.enrollment = workspaceEnrollmentState{ID: "bundle-current", Status: client.WorkspaceEnrollmentPending, controlGen: 4}
+	m.statusMsg = "unchanged"
+
+	for _, msg := range []workspaceEnrollmentMsg{
+		{action: "check", sessionID: "session-old", targetEnrollmentID: "bundle-current", gen: 4, result: client.WorkspaceEnrollment{ID: "bundle-current", Status: client.WorkspaceEnrollmentConnected}},
+		{action: "check", sessionID: "session-current", targetEnrollmentID: "bundle-old", gen: 4, result: client.WorkspaceEnrollment{ID: "bundle-old", Status: client.WorkspaceEnrollmentConnected}},
+		{action: "check", sessionID: "session-current", targetEnrollmentID: "bundle-current", gen: 3, result: client.WorkspaceEnrollment{ID: "bundle-current", Status: client.WorkspaceEnrollmentConnected}},
+		{action: "check", sessionID: "session-current", targetEnrollmentID: "bundle-current", gen: 4, result: client.WorkspaceEnrollment{ID: "bundle-other", Status: client.WorkspaceEnrollmentConnected}},
+	} {
+		m = applyAll(m, msg)
+	}
+	if m.enrollment.ID != "bundle-current" || m.statusMsg != "unchanged" {
+		t.Fatalf("stale result changed enrollment: %+v status=%q", m.enrollment, m.statusMsg)
+	}
+
+	m = applyAll(m, workspaceEnrollmentPresentationMsg{sessionID: "session-current", enrollmentID: "bundle-current", gen: 4, err: errors.New("browser failed\nsecret")})
+	if !strings.Contains(m.statusMsg, "browser failed") || strings.Contains(m.statusMsg, "\n") {
+		t.Fatalf("browser failure was not visible and sanitized: %q", m.statusMsg)
+	}
+}
+
+func TestWorkspaceEnrollmentFailedDoesNotPollOrRetry(t *testing.T) {
+	control := &workspaceEnrollmentControlFake{}
+	m := New(Deps{Ctx: context.Background(), WorkspaceEnrollment: control})
+	m.sessionID = "session-1"
+	m.enrollment = workspaceEnrollmentState{ID: "bundle-1", Status: client.WorkspaceEnrollmentFailed, controlGen: 3}
+
+	if _, cmd := m.applyWorkspaceEnrollmentPollTick(workspaceEnrollmentPollTickMsg{sessionID: "session-1", enrollmentID: "bundle-1", gen: 3}); cmd != nil {
+		t.Fatal("failed enrollment restarted background polling")
+	}
+	if control.connectCalls != 0 {
+		t.Fatalf("failed enrollment rechecked %d times", control.connectCalls)
+	}
+}
+
+func TestWorkspaceEnrollmentPresentationGatesAndSurvivesTransientObservationError(t *testing.T) {
+	control := &workspaceEnrollmentControlFake{}
+	m := New(Deps{Ctx: t.Context(), WorkspaceEnrollment: control})
+	m.sessionID = "session-1"
+	m.enrollment = workspaceEnrollmentState{ID: "bundle-1", Status: client.WorkspaceEnrollmentPending, controlGen: 4}
+	if _, cmd := m.applyWorkspaceEnrollmentPollTick(workspaceEnrollmentPollTickMsg{sessionID: "session-1", enrollmentID: "bundle-1", gen: 4}); cmd != nil {
+		t.Fatal("poll began before browser presentation")
+	}
+
+	m.enrollment.presentationDelivered = true
+	mm, cmd := m.applyWorkspaceEnrollment(workspaceEnrollmentMsg{action: "check", sessionID: "session-1", targetEnrollmentID: "bundle-1", gen: 4, err: errors.New("temporary outage\nsecret")})
+	m = mm.(Model)
+	if cmd == nil || !strings.Contains(m.statusMsg, "temporary outage") || strings.Contains(m.statusMsg, "\n") {
+		t.Fatalf("transient observation did not retain sanitized error and re-arm: status=%q cmd=%v", m.statusMsg, cmd != nil)
+	}
+}
+
+func TestWorkspaceEnrollmentQueuedPresentationIsCancelledBeforeOpen(t *testing.T) {
+	for _, supersede := range []bool{false, true} {
+		t.Run(fmt.Sprintf("supersede=%t", supersede), func(t *testing.T) {
+			opened := 0
+			m := New(Deps{Ctx: t.Context(), OpenURL: func(context.Context, string) error { opened++; return nil }})
+			m.sessionID = "session-1"
+			m.enrollment = workspaceEnrollmentState{ID: "bundle-1", Status: client.WorkspaceEnrollmentPending, controlGen: 4}
+			mm, presentationCmd := m.startWorkspaceEnrollmentPresentation("https://private.example/token")
+			m = mm.(Model)
+			if supersede {
+				mm, _ = m.startWorkspaceEnrollmentControl("check")
+				m = mm.(Model)
+			} else {
+				m = m.resetSessionDerived()
+			}
+			_ = presentationCmd()
+			if opened != 0 {
+				t.Fatalf("stale presentation opened browser %d times", opened)
+			}
+		})
 	}
 }
 

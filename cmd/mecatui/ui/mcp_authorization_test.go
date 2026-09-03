@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -31,6 +32,9 @@ func TestInvariant_mecatui_mcp_authorization_is_not_permission_approval(t *testi
 	}
 	if strings.Contains(view, "Recheck") {
 		t.Fatalf("authorization view retained manual recheck: %s", view)
+	}
+	if strings.Contains(view, "Refresh") {
+		t.Fatalf("authorization view retained manual refresh: %s", view)
 	}
 }
 
@@ -126,6 +130,87 @@ func TestMCPAuthorizationPollIgnoresStaleAndCancelledControls(t *testing.T) {
 	m.authorization.polling = false // explicit cancel invalidates all scheduled ticks.
 	if _, cmd := m.applyMCPAuthorizationPollTick(mcpAuthorizationPollTickMsg{sessionID: "session-current", authorizationID: "auth-current", gen: 9}); cmd != nil {
 		t.Fatal("cancelled authorization continued polling")
+	}
+}
+
+func TestMCPAuthorizationOpeningOrCopyingStartsPolling(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		key  tea.KeyPressMsg
+	}{
+		{name: "open", key: tea.KeyPressMsg{Code: tea.KeyEnter}},
+		{name: "copy", key: tea.KeyPressMsg{Code: 'y', Mod: tea.ModCtrl}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			control := &mcpAuthorizationControllerFake{}
+			m := New(Deps{
+				Ctx:              t.Context(),
+				MCPAuthorization: control,
+				OpenURL:          func(context.Context, string) error { return nil },
+				Clipboard:        &fakeClipboard{},
+			})
+			m.sessionID = "session-1"
+			m = applyAll(m, client.MCPAuthorizationMsg{AuthorizationID: "auth-1", Status: mcpAuthorizationStatusPending})
+			_, actionCmd := m.onMCPAuthorizationKey(tc.key)
+			m = applyAll(m, actionCmd())
+			gen := m.authorization.controlGen
+			if !m.authorization.polling {
+				t.Fatal("successful presentation did not arm polling")
+			}
+			mm, pollCmd := m.applyMCPAuthorizationPollTick(mcpAuthorizationPollTickMsg{sessionID: "session-1", authorizationID: "auth-1", gen: gen})
+			m = mm.(Model)
+			if pollCmd == nil {
+				t.Fatal("presentation did not start an authorization observation")
+			}
+			runBatchLeaves(pollCmd)
+			if control.recheck != 1 {
+				t.Fatalf("rechecks = %d, want 1", control.recheck)
+			}
+		})
+	}
+}
+
+func TestMCPAuthorizationCancelInvalidatesScheduledPoll(t *testing.T) {
+	m := New(Deps{Ctx: t.Context(), MCPAuthorization: &mcpAuthorizationControllerFake{}})
+	m.sessionID = "session-1"
+	m.authorization = mcpAuthorizationState{authorizationID: "auth-1", controlGen: 4, polling: true}
+	m.phase = phaseAuthorizing
+
+	mm, cancelCmd := m.onMCPAuthorizationKey(tea.KeyPressMsg{Code: 'x', Text: "x"})
+	m = mm.(Model)
+	if cancelCmd == nil || m.authorization.polling || m.authorization.controlGen != 5 {
+		t.Fatalf("cancel did not supersede polling control: %+v", m.authorization)
+	}
+	if _, cmd := m.applyMCPAuthorizationPollTick(mcpAuthorizationPollTickMsg{sessionID: "session-1", authorizationID: "auth-1", gen: 4}); cmd != nil {
+		t.Fatal("stale poll survived explicit cancellation")
+	}
+}
+
+func TestMCPAuthorizationQueuedPresentationIsCancelledBeforeOpen(t *testing.T) {
+	for _, supersede := range []bool{false, true} {
+		t.Run(fmt.Sprintf("supersede=%t", supersede), func(t *testing.T) {
+			control := &mcpAuthorizationControllerFake{}
+			opened := 0
+			m := New(Deps{
+				Ctx:              t.Context(),
+				MCPAuthorization: control,
+				OpenURL:          func(context.Context, string) error { opened++; return nil },
+			})
+			m.sessionID = "session-1"
+			m.authorization = mcpAuthorizationState{authorizationID: "auth-1", controlGen: 4}
+			mm, presentationCmd := m.startMCPAuthorizationPresentation(false)
+			m = mm.(Model)
+			if supersede {
+				mm, _ = m.startMCPAuthorizationControl(true)
+				m = mm.(Model)
+			} else {
+				m = m.resetSessionDerived()
+			}
+			_ = presentationCmd()
+			if opened != 0 {
+				t.Fatalf("stale presentation opened browser %d times", opened)
+			}
+		})
 	}
 }
 
@@ -503,6 +588,9 @@ func TestSessionMCPAuthorization_Scenario9_MecatuiCommandsAndNoReplayOpen(t *tes
 	}
 	if opened != 1 {
 		t.Fatalf("browser opens = %d, want explicit Open Browser only", opened)
+	}
+	if _, refreshCmd := m.onMCPAuthorizationKey(tea.KeyPressMsg{Code: 'r', Text: "r"}); refreshCmd != nil {
+		t.Fatal("manual authorization refresh remained available")
 	}
 	_, copyCmd := m.onMCPAuthorizationKey(tea.KeyPressMsg{Code: 'y', Mod: tea.ModCtrl})
 	if copyCmd == nil || copyCmd() == nil {

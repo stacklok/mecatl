@@ -1116,8 +1116,20 @@ func (m Model) resetSessionDerived() Model {
 	m.contextTokens = 0
 	m.activeTool = ""
 	m.toolProgress = ""
+	if m.authorization.controlCancel != nil {
+		m.authorization.controlCancel()
+	}
+	if m.authorization.presentationCancel != nil {
+		m.authorization.presentationCancel()
+	}
 	m.authorization = mcpAuthorizationState{}
 	m.authorizationEvents = nil
+	if m.enrollment.controlCancel != nil {
+		m.enrollment.controlCancel()
+	}
+	if m.enrollment.presentationCancel != nil {
+		m.enrollment.presentationCancel()
+	}
 	m.enrollment = workspaceEnrollmentState{}
 	m.workspaceEnrollmentNotice = ""
 	m.lastSubmittedPromptText = ""

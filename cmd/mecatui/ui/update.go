@@ -639,6 +639,9 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 	case workspaceEnrollmentMsg:
 		mm, cmd := m.applyWorkspaceEnrollment(msg)
 		return mm, cmd, true
+	case workspaceEnrollmentPresentationMsg:
+		mm, cmd := m.applyWorkspaceEnrollmentPresentation(msg)
+		return mm, cmd, true
 	case workspaceEnrollmentPollTickMsg:
 		mm, cmd := m.applyWorkspaceEnrollmentPollTick(msg)
 		return mm, cmd, true
