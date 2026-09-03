@@ -201,8 +201,13 @@ func defaultKeys() keyMap {
 			key.WithHelp("ctrl+g", "select all"),
 		),
 		CopySelection: key.NewBinding(
-			key.WithKeys("ctrl+shift+c"),
-			key.WithHelp("ctrl+shift+c", "copy selection"),
+			// ctrl+shift+c is unreachable in most terminals: classic Ctrl+<letter>
+			// control-code encoding has no separate bit for Shift, so many
+			// terminals (and tmux) cannot distinguish it from plain ctrl+c
+			// (Quit). ctrl+y (yank, the classic terminal/vim copy mnemonic) is
+			// a plain single-modifier chord every terminal can send.
+			key.WithKeys("ctrl+y"),
+			key.WithHelp("ctrl+y", "copy selection"),
 		),
 		Quit: key.NewBinding(
 			key.WithKeys("ctrl+c"),

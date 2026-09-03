@@ -52,7 +52,7 @@ func TestPromptSelectionMouseEditAndCopy(t *testing.T) {
 	if !m.prompt.HasSelection() || m.prompt.SelectedText() != "X\n world" {
 		t.Fatalf("ctrl+g did not select prompt: %q", m.prompt.SelectedText())
 	}
-	mm, cmd = m.Update(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl | tea.ModShift})
+	mm, cmd = m.Update(tea.KeyPressMsg{Code: 'y', Mod: tea.ModCtrl})
 	m = mm.(Model)
 	leaves := collectLeaves(cmd)
 	payload, ok := osc52Payload(leaves)

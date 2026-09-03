@@ -218,7 +218,7 @@ func TestFooterReflectsKeyOverride(t *testing.T) {
 		if !strings.Contains(got, "ctrl+f32 copy") {
 			t.Errorf("footer help line should carry the overridden CopySelection chord ctrl+f32: %q", got)
 		}
-		if strings.Contains(got, "ctrl+g select all") || strings.Contains(got, "ctrl+shift+c copy") {
+		if strings.Contains(got, "ctrl+g select all") || strings.Contains(got, "ctrl+y copy") {
 			t.Errorf("footer help line still shows a default selection chord: %q", got)
 		}
 		if !strings.Contains(got, "ctrl+f12 help") {
@@ -541,7 +541,7 @@ func TestDefaultFooterHelp(t *testing.T) {
 	)
 	m.phase = phaseIdle
 	got := stripANSIstr(m.renderFooter())
-	if !strings.Contains(got, "? help · / commands · ctrl+g select all · ctrl+shift+c copy · ctrl+u clear · ctrl+c quit") {
+	if !strings.Contains(got, "? help · / commands · ctrl+g select all · ctrl+y copy · ctrl+u clear · ctrl+c quit") {
 		t.Errorf("default footer help line = %q", got)
 	}
 

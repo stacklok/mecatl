@@ -405,7 +405,7 @@ func TestMCPAuthorizationOperationErrorsUseDedicatedState(t *testing.T) {
 	}
 
 	m.deps.Clipboard = &fakeClipboard{writeErr: errors.New("clipboard failed")}
-	_, copyCmd := m.onMCPAuthorizationKey(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl | tea.ModShift})
+	_, copyCmd := m.onMCPAuthorizationKey(tea.KeyPressMsg{Code: 'y', Mod: tea.ModCtrl})
 	msg = copyCmd()
 	if _, generic := msg.(client.StreamErrMsg); generic {
 		t.Fatal("clipboard error used generic stream error")
@@ -455,7 +455,7 @@ func TestSessionMCPAuthorization_Scenario9_MecatuiCommandsAndNoReplayOpen(t *tes
 	if opened != 1 {
 		t.Fatalf("browser opens = %d, want explicit Open Browser only", opened)
 	}
-	_, copyCmd := m.onMCPAuthorizationKey(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl | tea.ModShift})
+	_, copyCmd := m.onMCPAuthorizationKey(tea.KeyPressMsg{Code: 'y', Mod: tea.ModCtrl})
 	if copyCmd == nil || copyCmd() == nil {
 		t.Fatal("copy-link command was not installed")
 	}
