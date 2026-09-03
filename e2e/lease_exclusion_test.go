@@ -80,7 +80,9 @@ func leaseExclusionSpecs() {
 
 				// Drive to the Write ask: the run parks AWAITING, so replica A holds the
 				// session lease for the duration. DO NOT approve.
-				askID, _ := driveToWriteAsk(ctx, streamA, 90*time.Second)
+				askID, _, driveErr := driveToWriteAsk(ctx, streamA, 90*time.Second)
+				gomega.Expect(driveErr).NotTo(gomega.HaveOccurred(),
+					"drive replica A to the Write permission ask\n--- mecated log tail ---\n"+localA.LogTail(4096))
 				expectNonEmpty(askID, "a Write permission ask on replica A", localA.LogTail(4096))
 
 				// --- Replica B: a SECOND live mecated sharing A's store + lease dir. ---

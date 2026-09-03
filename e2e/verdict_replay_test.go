@@ -4,6 +4,8 @@ package e2e_test
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -99,7 +101,9 @@ func verdictReplaySpecs() {
 				// Drive to the first Write ask (shared drain helper), then resolve it
 				// allow-ALWAYS in-stream: this runs the Write AND learns the path-keyed
 				// rule, logged as a durable EvApproval(allow_always).
-				askID, writeCallID := driveToWriteAsk(ctx, stream1, 90*time.Second)
+				askID, writeCallID, driveErr := driveToWriteAsk(ctx, stream1, 90*time.Second)
+				gomega.Expect(driveErr).NotTo(gomega.HaveOccurred(),
+					"drive local #1 to the Write permission ask\n--- mecated log tail ---\n"+local1.LogTail(4096))
 				expectNonEmpty(askID, "a Write permission ask on local #1", local1.LogTail(4096))
 				expectNonEmpty(writeCallID, "a Write tool.call on local #1 (card-before-the-gate)", local1.LogTail(4096))
 				gomega.Expect(stream1.SendApproval(askID, client.VerdictAllowAlways)).
@@ -183,13 +187,16 @@ func verdictReplaySpecs() {
 				var writeAsks []client.PermissionAskMsg
 				sawWriteCall := false // a Write tool.call surfaced in the resumed run
 				var terminal *client.ResultMsg
+				var drainErr error
 			drain:
 				for {
 					select {
 					case <-ctx2.Done():
+						drainErr = fmt.Errorf("draining resumed run: %w", ctx2.Err())
 						break drain
 					case m, ok := <-msgs:
 						if !ok {
+							drainErr = errors.New("draining resumed run: stream closed prematurely")
 							break drain
 						}
 						switch v := m.(type) {
@@ -199,7 +206,10 @@ func verdictReplaySpecs() {
 								// Resolve it so the run does not wedge the drain — but the
 								// assertion below fails the spec regardless: a replayed
 								// allow-always must mean NO Write ask fired at all.
-								_ = stream2.SendApproval(v.AskID, client.VerdictAllowOnce)
+								if err := stream2.SendApproval(v.AskID, client.VerdictAllowOnce); err != nil {
+									drainErr = fmt.Errorf("resolve unexpected Write ask while draining: %w", err)
+									break drain
+								}
 							}
 						case client.ToolCallMsg:
 							if v.Name == "Write" {
@@ -209,11 +219,18 @@ func verdictReplaySpecs() {
 							r := v
 							terminal = &r
 							break drain
+						case client.StreamErrMsg:
+							drainErr = fmt.Errorf("draining resumed run: stream error: %w", v.Err)
+							break drain
+						case client.StreamClosedMsg:
+							drainErr = errors.New("draining resumed run: stream closed prematurely")
+							break drain
 						}
 					}
 				}
 
 				logTail := "\n--- mecated log tail ---\n" + local2.LogTail(4096)
+				gomega.Expect(drainErr).NotTo(gomega.HaveOccurred(), "resumed run stream failed"+logTail)
 
 				// THE ORACLE: NO Write permission ask fired during the resumed run. This
 				// holds ONLY if ReplayApprovals rebuilt the learned rule into #2's fresh

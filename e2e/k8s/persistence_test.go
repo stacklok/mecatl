@@ -44,9 +44,10 @@ func persistenceSpecs() {
 				sessionID := createSessionOverHTTP(cCtx, addrA)
 				cCancel()
 				rCtx, rCancel := shortCtx(60 * time.Second)
-				gomega.Expect(drainRun(rCtx, addrA, sessionID, "persist me across restart")).
-					To(gomega.Equal(http.StatusOK), "pod-A run-start (persistence case)")
+				status, drainErr := drainRun(rCtx, addrA, sessionID, "persist me across restart")
 				rCancel()
+				gomega.Expect(drainErr).NotTo(gomega.HaveOccurred(), "drain pod-A run (persistence case)")
+				gomega.Expect(status).To(gomega.Equal(http.StatusOK), "pod-A run-start (persistence case)")
 
 				// Sanity: the session is now terminal on pod-A (completed). The snapshot
 				// is in Redis.
@@ -113,8 +114,9 @@ func persistenceSpecs() {
 				// pod-B reopens the completed session (Reopen → idle) and drives a new
 				// run. pod-A released the lease on shutdown, so pod-B acquires it.
 				resumeCtx, resumeCancel := shortCtx(60 * time.Second)
-				resumeStatus := drainRun(resumeCtx, addrB, sessionID, "resume after restart")
+				resumeStatus, drainErr := drainRun(resumeCtx, addrB, sessionID, "resume after restart")
 				resumeCancel()
+				gomega.Expect(drainErr).NotTo(gomega.HaveOccurred(), "drain pod-B resumed run")
 				gomega.Expect(resumeStatus).To(gomega.Equal(http.StatusOK),
 					"pod-B follow-up prompt after pod-A restart = HTTP %d, want 200 (Reopen + lease acquire)",
 					resumeStatus)

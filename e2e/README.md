@@ -154,8 +154,8 @@ package would need its own suite bootstrap and its own server):
 
 All assertions are event-stream / side-effect assertions — never model prose.
 `FlakeAttempts(2)` is on the cheap specs — provider smoke, skills, memory, and
-approve-after-kill — never on the expensive delegation scenarios
-(subagents/parallel/teams).
+approve-after-kill — plus the live team spec, whose full assertions are rerun once
+to absorb provider variance. Other expensive delegation scenarios are not retried.
 
 ### Harness primitives for the restart scenario
 

@@ -7,13 +7,12 @@
 // ONE document, whereas a per-session lease needs ONE lock file PER session id,
 // so the two do not share a sentinel.
 //
-// flock gives single-host exclusion AND free crash recovery: when a holder
-// process dies, the OS releases its flock, so a survivor can take over without
-// waiting for the TTL. flock has no TTL of its own, so the lease's
-// owner/token/expiry semantics live in a JSON record file written under the held
-// lock; the TTL covers the cross-HOST case the flock cannot (two machines over a
-// shared NFS/EFS mount, where flock semantics are unreliable). Single-host is the
-// honest guarantee; the multi-host story is the k8s/driver backends.
+// flock gives single-host exclusion AND free crash recovery: a successful
+// Acquire retains the flock fd for that held lease's lifetime, and when its
+// process dies the OS releases the flock so a survivor can take over immediately.
+// The JSON record preserves owner/token/expiry metadata and durable fencing-token
+// monotonicity; its TTL never overrides a live local kernel hold. Single-host is
+// the honest guarantee; the multi-host story is the k8s/driver backends.
 //
 // Layout per session id <safeID> under the lease dir:
 //   - <safeID>.lock        — the STABLE flock sentinel, never renamed.
@@ -25,8 +24,9 @@
 //
 // INVARIANT — at most ONE *Lease per dir per process (the composition
 // discipline), mirroring the memory store. Per-id sentinels mean distinct
-// sessions never cross-contend; the per-id flock fd is created per operation and
-// closed before return, so there is no long-lived handle to self-deadlock.
+// sessions never cross-contend. A successful Acquire retains its flock fd until
+// the exact owner/token is released; that kernel hold, not the JSON expiry, is
+// the single-host liveness authority.
 package flocklease
 
 import (
@@ -38,6 +38,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gofrs/flock"
@@ -46,31 +47,30 @@ import (
 	"github.com/stacklok/mecatl/engine/session"
 )
 
-const (
-	// lockRetryDelay is how often a contended flock acquire re-probes while
-	// waiting (mirrors the memory store).
-	lockRetryDelay = 5 * time.Millisecond
-	// lockTimeout bounds any single acquire so a stuck/crashed holder cannot
-	// deadlock a run indefinitely.
-	lockTimeout = 5 * time.Second
-)
-
 // Lease is a single-host port.SessionLease over a lease directory. Each session
-// id gets its own flock sentinel and record file; the per-id flock is acquired
-// and released within a single Acquire/Renew/Release call.
+// id gets its own flock sentinel and record file. Successful acquisitions retain
+// the flock handle until an exact-token Release.
 type Lease struct {
 	dir   string
 	ttl   time.Duration
 	clock port.Clock
+
+	mu   sync.Mutex
+	held map[session.SessionID]*heldLease
+}
+
+type heldLease struct {
+	fl    *flock.Flock
+	lease port.Lease
 }
 
 // compile-time assertion that *Lease satisfies the port.
 var _ port.SessionLease = (*Lease)(nil)
 
 // New constructs a single-host lease rooted at dir, creating dir (and parents)
-// if absent. ttl is the lease lifetime (the cross-host fallback bound; flock
-// covers the single-host crash case for free). clock is the wall clock the
-// expiry is computed against. A non-positive ttl defaults to 30s.
+// if absent. ttl controls the expiry metadata and renew schedule; the retained
+// kernel flock remains the local liveness authority. clock computes record
+// expiry. A non-positive ttl defaults to 30s.
 func New(dir string, ttl time.Duration, clock port.Clock) (*Lease, error) {
 	if strings.TrimSpace(dir) == "" {
 		return nil, fmt.Errorf("flocklease: New requires a non-empty dir")
@@ -83,7 +83,7 @@ func New(dir string, ttl time.Duration, clock port.Clock) (*Lease, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, fmt.Errorf("flocklease: create dir %q: %w", dir, err)
 	}
-	return &Lease{dir: dir, ttl: ttl, clock: clock}, nil
+	return &Lease{dir: dir, ttl: ttl, clock: clock, held: make(map[session.SessionID]*heldLease)}, nil
 }
 
 // record is the on-disk lease state for one session id. A RELEASED lease keeps
@@ -97,99 +97,110 @@ type record struct {
 	Expiry time.Time `json:"expiry"`
 }
 
-// held reports whether the record represents a current hold (a non-empty owner).
-func (r record) held() bool { return r.Owner != "" }
-
-// Acquire grants the lease when free/expired/same-owner, writing a fresh record
-// under the exclusive flock; otherwise it returns ErrLeaseHeld. A takeover bumps
-// the token strictly past the prior record's; a same-owner re-acquire keeps it.
+// Acquire grants the lease when its kernel flock is free. A successful acquire
+// retains the flock handle until exact-token Release. The record expiry remains
+// useful metadata, but cannot let a live local contender bypass the kernel hold.
 func (l *Lease) Acquire(ctx context.Context, id session.SessionID, owner string) (port.Lease, error) {
-	now := l.clock.Now()
-	var out port.Lease
-	err := l.withLock(ctx, id, func() error {
-		cur, present, err := l.readRecord(id)
-		if err != nil {
-			return err
-		}
-		switch {
-		case !present, !cur.held(), !now.Before(cur.Expiry):
-			// free (no record), released (tombstone), or expired → takeover,
-			// strictly-greater token (cur.Token is 0 when absent).
-			out, err = l.writeRecord(id, owner, cur.Token+1, now)
-			return err
-		case cur.Owner == owner:
-			out, err = l.writeRecord(id, owner, cur.Token, now)
-			return err
-		default:
-			return port.ErrLeaseHeld
-		}
-	})
-	if err != nil {
+	if err := ctx.Err(); err != nil {
 		return port.Lease{}, err
 	}
-	return out, nil
-}
 
-// Renew extends a held lease (owner + token match, unexpired) under the lock,
-// keeping the token and refreshing the expiry; else ErrLeaseHeld (loss signal).
-func (l *Lease) Renew(ctx context.Context, in port.Lease) (port.Lease, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
 	now := l.clock.Now()
-	var out port.Lease
-	err := l.withLock(ctx, in.SessionID, func() error {
-		cur, present, err := l.readRecord(in.SessionID)
+	if held := l.held[id]; held != nil {
+		if held.lease.Owner != owner && now.Before(held.lease.Expiry) {
+			return port.Lease{}, port.ErrLeaseHeld
+		}
+		token := held.lease.Token
+		if held.lease.Owner != owner {
+			// SessionLease conformance permits an expired in-adapter handoff. The
+			// same retained kernel handle remains authoritative against other
+			// processes throughout the record update.
+			token++
+		}
+		out, err := l.writeRecord(id, owner, token, now)
 		if err != nil {
-			return err
+			return port.Lease{}, err
 		}
-		if !present || cur.Owner != in.Owner || cur.Token != in.Token || !now.Before(cur.Expiry) {
-			return port.ErrLeaseHeld
-		}
-		out, err = l.writeRecord(in.SessionID, in.Owner, in.Token, now)
-		return err
-	})
-	if err != nil {
-		return port.Lease{}, err
+		held.lease = out
+		return out, nil
 	}
-	return out, nil
-}
-
-// Release drops the caller's own hold (owner + token match) by writing a
-// tombstone record under the lock; idempotent (a mismatch or absent record is a
-// no-op success). The tombstone keeps the fencing token monotone across release.
-func (l *Lease) Release(ctx context.Context, in port.Lease) error {
-	now := l.clock.Now()
-	return l.withLock(ctx, in.SessionID, func() error {
-		cur, present, err := l.readRecord(in.SessionID)
-		if err != nil {
-			return err
-		}
-		if !present || cur.Owner != in.Owner || cur.Token != in.Token {
-			return nil // not our hold; idempotent no-op.
-		}
-		// Write a TOMBSTONE (empty owner, retained token, already-past expiry)
-		// rather than deleting the file, so the per-id token stays monotone across
-		// release. The token survives so a future takeover bumps strictly past it.
-		_, err = l.writeRecord(in.SessionID, "", in.Token, now.Add(-l.ttl))
-		return err
-	})
-}
-
-// withLock acquires the per-id EXCLUSIVE flock (bounded by lockTimeout / ctx),
-// runs fn, and releases the lock and closes the fd before return on every path.
-// A fresh *flock.Flock per call means there is no shared fd to race in-process.
-func (l *Lease) withLock(ctx context.Context, id session.SessionID, fn func() error) error {
-	lockCtx, cancel := context.WithTimeout(ctx, lockTimeout)
-	defer cancel()
 
 	fl := flock.New(l.lockPath(id))
-	locked, err := fl.TryLockContext(lockCtx, lockRetryDelay)
+	locked, err := fl.TryLock()
 	if err != nil {
-		return fmt.Errorf("flocklease: acquire lock %q: %w", fl.Path(), err)
+		_ = fl.Close()
+		return port.Lease{}, fmt.Errorf("flocklease: acquire lock %q: %w", fl.Path(), err)
 	}
 	if !locked {
-		return fmt.Errorf("flocklease: could not acquire lock %q within %s (held by another process?)", fl.Path(), lockTimeout)
+		_ = fl.Close()
+		return port.Lease{}, port.ErrLeaseHeld
 	}
-	defer func() { _ = fl.Close() }() // Close releases the flock and the fd.
-	return fn()
+
+	cur, _, err := l.readRecord(id)
+	if err != nil {
+		_ = fl.Close()
+		return port.Lease{}, err
+	}
+	out, err := l.writeRecord(id, owner, cur.Token+1, now)
+	if err != nil {
+		_ = fl.Close()
+		return port.Lease{}, err
+	}
+	l.held[id] = &heldLease{fl: fl, lease: out}
+	return out, nil
+}
+
+// Renew extends the exact locally-held lease, retaining its kernel flock and
+// token. JSON expiry does not constitute local lease loss while that flock lives.
+func (l *Lease) Renew(ctx context.Context, in port.Lease) (port.Lease, error) {
+	if err := ctx.Err(); err != nil {
+		return port.Lease{}, err
+	}
+
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	held := l.held[in.SessionID]
+	if held == nil || held.lease.Owner != in.Owner || held.lease.Token != in.Token {
+		return port.Lease{}, port.ErrLeaseHeld
+	}
+	out, err := l.writeRecord(in.SessionID, in.Owner, in.Token, l.clock.Now())
+	if err != nil {
+		return port.Lease{}, err
+	}
+	held.lease = out
+	return out, nil
+}
+
+// Release tombstones and unlocks only an exact lease held by this adapter.
+// Mismatched, absent, and stale releases are idempotent no-ops and cannot touch a
+// successor's handle. On a tombstone error the handle is still closed so failures
+// cannot leak descriptors; the next acquirer advances from the durable record.
+func (l *Lease) Release(ctx context.Context, in port.Lease) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	held := l.held[in.SessionID]
+	if held == nil || held.lease.Owner != in.Owner || held.lease.Token != in.Token {
+		return nil
+	}
+	_, writeErr := l.writeRecord(in.SessionID, "", in.Token, l.clock.Now().Add(-l.ttl))
+	closeErr := held.fl.Close()
+	delete(l.held, in.SessionID)
+	if writeErr != nil {
+		return writeErr
+	}
+	if closeErr != nil {
+		return fmt.Errorf("flocklease: release lock %q: %w", held.fl.Path(), closeErr)
+	}
+	return nil
 }
 
 // readRecord loads the session's lease record. A missing file is (zero, false,

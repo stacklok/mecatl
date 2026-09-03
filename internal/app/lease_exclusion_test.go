@@ -23,7 +23,7 @@ import (
 // (each Build gets a DISTINCT lease owner via the per-Build nonce, so neither can
 // renew/release the other's hold). The TTL is generous so an actively-renewing
 // holder keeps its lease for the whole test (the release-takeover leg); the
-// TTL-EXPIRY takeover leg has its own config (see TestCrossProcessLeaseExpiryTakeover).
+// retained-flock-past-expiry leg has its own short-TTL config below.
 func leaseBaseCfg(t *testing.T, storeDir, leaseDir, workspace, memoryDir string) Config {
 	t.Helper()
 	return Config{
@@ -143,19 +143,10 @@ func TestCrossProcessLeaseExclusion(t *testing.T) {
 	built2.Service.FinishRun(sess.ID, run2)
 }
 
-// TestCrossProcessLeaseExpiryTakeover is the TTL-EXPIRY takeover leg (the honest
-// closure for the S5 finding): a holder whose lease LAPSES (it stopped renewing —
-// a stalled/slow holder, the in-process analogue of a crash the flock could not
-// observe) is taken over by a second replica once the TTL passes, WITHOUT an
-// explicit release.
-//
-// Build #1 is wired with a short TTL (1s) and a renew interval LONGER than the TTL
-// (10s), so its renewer never refreshes before the lease lapses — modelling a
-// holder that stopped renewing. Build #2 is refused immediately, then succeeds
-// after the lease expires (a bounded real-clock poll; the conformance suite covers
-// the fake-clock expiry contract, so this only needs to confirm the composition
-// wiring honours expiry).
-func TestCrossProcessLeaseExpiryTakeover(t *testing.T) {
+// TestCrossProcessLeaseRetainsKernelHoldPastExpiry verifies that the local flock
+// remains authoritative after the JSON TTL lapses. A second Build cannot take
+// over a still-live holder; clean release is the handoff point.
+func TestCrossProcessLeaseRetainsKernelHoldPastExpiry(t *testing.T) {
 	ctx := context.Background()
 	storeDir := t.TempDir()
 	leaseDir := t.TempDir()
@@ -163,8 +154,8 @@ func TestCrossProcessLeaseExpiryTakeover(t *testing.T) {
 	memoryDir := t.TempDir()
 
 	cfg1 := leaseBaseCfg(t, storeDir, leaseDir, workspace, memoryDir)
-	cfg1.SessionLeaseTTL = 1 * time.Second            // lease lapses 1s after acquire...
-	cfg1.SessionLeaseRenewInterval = 10 * time.Second // ...and the renewer never fires first.
+	cfg1.SessionLeaseTTL = 1 * time.Second
+	cfg1.SessionLeaseRenewInterval = 10 * time.Second
 	cfg1.providerConstructor = func(_ Config, _, _, _ string) port.LLMProvider {
 		return mockllm.New(mockllm.ToolCallTurn(
 			session.NewToolCall("w1", "Write", json.RawMessage(`{"path":"note.txt","content":"replica one"}`)),
@@ -199,7 +190,7 @@ func TestCrossProcessLeaseExpiryTakeover(t *testing.T) {
 	cfg2 := leaseBaseCfg(t, storeDir, leaseDir, workspace, memoryDir)
 	cfg2.SessionLeaseTTL = 1 * time.Second
 	cfg2.providerConstructor = func(_ Config, _, _, _ string) port.LLMProvider {
-		return mockllm.New(mockllm.TextTurn("took over after ttl"))
+		return mockllm.New(mockllm.TextTurn("took over after release"))
 	}
 	built2, err := Build(ctx, cfg2)
 	if err != nil {
@@ -207,27 +198,16 @@ func TestCrossProcessLeaseExpiryTakeover(t *testing.T) {
 	}
 	defer built2.Close()
 
-	// Immediately, built2 is refused — #1's lease is still live (just acquired).
-	if _, err := built2.Service.StartRun(ctx, sess.ID, "too soon"); !errors.Is(err, server.ErrSessionLeasedElsewhere) {
-		t.Fatalf("StartRun #2 before TTL = %v, want ErrSessionLeasedElsewhere", err)
+	time.Sleep(1500 * time.Millisecond)
+	if _, err := built2.Service.StartRun(ctx, sess.ID, "past ttl"); !errors.Is(err, server.ErrSessionLeasedElsewhere) {
+		t.Fatalf("StartRun #2 after TTL while #1 is live = %v, want ErrSessionLeasedElsewhere", err)
 	}
-
-	// After the TTL lapses (and #1 never renewed), built2 takes over. Bounded poll.
-	var run2 *agent.Run
-	deadline := time.After(10 * time.Second)
-	for {
-		run2, err = built2.Service.StartRun(ctx, sess.ID, "take over after ttl")
-		if err == nil {
-			break
-		}
-		if !errors.Is(err, server.ErrSessionLeasedElsewhere) {
-			t.Fatalf("StartRun #2 during TTL poll = %v, want ErrSessionLeasedElsewhere or success", err)
-		}
-		select {
-		case <-deadline:
-			t.Fatal("built2 never took over after the lease TTL lapsed (expiry not honoured)")
-		case <-time.After(100 * time.Millisecond):
-		}
+	if err := built1.Service.EndSession(ctx, sess.ID); err != nil {
+		t.Fatalf("EndSession #1: %v", err)
+	}
+	run2, err := built2.Service.StartRun(ctx, sess.ID, "take over after release")
+	if err != nil {
+		t.Fatalf("StartRun #2 after release: %v", err)
 	}
 	drain(run2)
 	built2.Service.FinishRun(sess.ID, run2)

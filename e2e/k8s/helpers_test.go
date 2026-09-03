@@ -586,7 +586,7 @@ func httpPrompt(ctx context.Context, addr, sessionID, text string) (status int, 
 // provider completes a run quickly, and draining ensures the run has fully ended
 // (the session reaches a terminal state) before subsequent assertions. A 409
 // (lease held elsewhere) returns immediately — there is no stream to drain.
-func drainRun(ctx context.Context, addr, sessionID, text string) int {
+func drainRun(ctx context.Context, addr, sessionID, text string) (int, error) {
 	ginkgo.GinkgoHelper()
 	reqBody, _ := json.Marshal(map[string]any{"text": text})
 	url := fmt.Sprintf("http://%s/v1/sessions/%s/prompt", addr, sessionID)
@@ -594,13 +594,17 @@ func drainRun(ctx context.Context, addr, sessionID, text string) int {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "text/event-stream")
 	resp, err := http.DefaultClient.Do(req)
-	gomega.ExpectWithOffset(1, err).NotTo(gomega.HaveOccurred(), "POST %s", url)
+	if err != nil {
+		return 0, fmt.Errorf("POST %s: %w", url, err)
+	}
 	defer func() { _ = resp.Body.Close() }()
 	// Drain the SSE stream fully so the run reaches terminal server-side. A 409
 	// has a tiny body (the error JSON) and closes immediately. A 2xx streams
 	// events until the run ends; read to EOF.
-	_, _ = io.Copy(io.Discard, resp.Body)
-	return resp.StatusCode
+	if _, err := io.Copy(io.Discard, resp.Body); err != nil {
+		return resp.StatusCode, fmt.Errorf("drain POST %s response: %w", url, err)
+	}
+	return resp.StatusCode, nil
 }
 
 // httpGetSession GETs /v1/sessions/{id} and returns (status, body). Used to
@@ -654,6 +658,149 @@ func drainRunSoft(ctx context.Context, addr, sessionID, text string) (status int
 
 // --- live-provider patching (the live LLM e2e path) ------------------------
 
+// liveProviderPatch returns a JSON Patch that preserves the chart-rendered
+// container configuration while switching only the provider selectors and key
+// reference. Pointer fields distinguish absent args/env (JSON Patch add) from
+// present fields (replace).
+func liveProviderPatch(deploymentJSON []byte) ([]byte, error) {
+	var deployment struct {
+		Spec struct {
+			Template struct {
+				Spec struct {
+					Containers []struct {
+						Name string            `json:"name"`
+						Args *[]string         `json:"args"`
+						Env  *[]map[string]any `json:"env"`
+					} `json:"containers"`
+				} `json:"spec"`
+			} `json:"template"`
+		} `json:"spec"`
+	}
+	if err := json.Unmarshal(deploymentJSON, &deployment); err != nil {
+		return nil, fmt.Errorf("decode agent Deployment: %w", err)
+	}
+
+	containerIndex := -1
+	for i, container := range deployment.Spec.Template.Spec.Containers {
+		if container.Name == agentComponent {
+			containerIndex = i
+			break
+		}
+	}
+	if containerIndex < 0 {
+		return nil, fmt.Errorf("agent Deployment has no %q container", agentComponent)
+	}
+	container := deployment.Spec.Template.Spec.Containers[containerIndex]
+
+	var currentArgs []string
+	if container.Args != nil {
+		currentArgs = *container.Args
+	}
+	args := liveProviderArgs(currentArgs)
+
+	keyRef := map[string]any{
+		"name": "OPENROUTER_API_KEY",
+		"valueFrom": map[string]any{"secretKeyRef": map[string]any{
+			"name": liveProviderSecret,
+			"key":  "OPENROUTER_API_KEY",
+		}},
+	}
+
+	type patchOp struct {
+		Op    string `json:"op"`
+		Path  string `json:"path"`
+		Value any    `json:"value"`
+	}
+	fieldOp := func(present bool) string {
+		if present {
+			return "replace"
+		}
+		return "add"
+	}
+	base := fmt.Sprintf("/spec/template/spec/containers/%d", containerIndex)
+	patch := []patchOp{{Op: fieldOp(container.Args != nil), Path: base + "/args", Value: args}}
+	if container.Env == nil {
+		patch = append(patch, patchOp{Op: "add", Path: base + "/env", Value: []map[string]any{keyRef}})
+	} else {
+		envPath := base + "/env/-"
+		envOp := "add"
+		for i, item := range *container.Env {
+			if item["name"] == "OPENROUTER_API_KEY" {
+				envPath = fmt.Sprintf("%s/env/%d", base, i)
+				envOp = "replace"
+				break
+			}
+		}
+		patch = append(patch, patchOp{Op: envOp, Path: envPath, Value: keyRef})
+	}
+	return json.Marshal(patch)
+}
+
+func liveProviderArgs(current []string) []string {
+	args := make([]string, 0, len(current)+2)
+	for i := 0; i < len(current); i++ {
+		arg := current[i]
+		name := arg
+		if before, _, ok := strings.Cut(arg, "="); ok {
+			name = before
+		}
+		switch name {
+		case "--mock", "--default-provider", "--default-model":
+			if arg == name && i+1 < len(current) && !strings.HasPrefix(current[i+1], "-") {
+				i++
+			}
+			continue
+		default:
+			args = append(args, arg)
+		}
+	}
+	return append(args,
+		"--default-provider="+liveProviderID,
+		"--default-model="+liveProviderModel,
+	)
+}
+
+func liveRolloutDiagnostics(parent context.Context, key string) string {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), 30*time.Second)
+	defer cancel()
+
+	var report strings.Builder
+	run := func(title string, args ...string) {
+		out, err := exec.CommandContext(ctx, "kubectl", args...).CombinedOutput()
+		fmt.Fprintf(&report, "\n--- %s ---\n", title)
+		if err != nil {
+			fmt.Fprintf(&report, "command failed: %v\n", err)
+		}
+		report.WriteString(boundedRedacted(string(out), key, 16*1024))
+	}
+	run("deployment replicas", "get", "deployment/mecak8s-agent", "-n", k8sNamespace,
+		"-o", "custom-columns=NAME:.metadata.name,DESIRED:.spec.replicas,CURRENT:.status.replicas,UPDATED:.status.updatedReplicas,READY:.status.readyReplicas,AVAILABLE:.status.availableReplicas,UNAVAILABLE:.status.unavailableReplicas")
+	run("agent pod status", "get", "pods", "-n", k8sNamespace,
+		"-l", "app.kubernetes.io/component="+agentComponent,
+		"-o", `custom-columns=NAME:.metadata.name,PHASE:.status.phase,READY:.status.containerStatuses[*].ready,RESTARTS:.status.containerStatuses[*].restartCount,WAITING:.status.containerStatuses[*].state.waiting.reason`)
+
+	podOut, _ := exec.CommandContext(ctx, "kubectl", "get", "pods", "-n", k8sNamespace,
+		"-l", "app.kubernetes.io/component="+agentComponent, "-o", "name").Output()
+	for _, pod := range strings.Fields(string(podOut)) {
+		run(pod+" agent logs (current)", "logs", "-n", k8sNamespace, pod,
+			"-c", agentComponent, "--tail=80", "--limit-bytes=16384")
+		run(pod+" agent logs (previous)", "logs", "-n", k8sNamespace, pod,
+			"-c", agentComponent, "--previous", "--tail=80", "--limit-bytes=16384")
+	}
+	run("recent warning events", "events", "-n", k8sNamespace, "--types=Warning")
+	return boundedRedacted(report.String(), key, 64*1024)
+}
+
+func boundedRedacted(value, secret string, limit int) string {
+	if secret != "" {
+		value = strings.ReplaceAll(value, secret, "[REDACTED]")
+	}
+	if len(value) <= limit {
+		return value
+	}
+	return value[:limit] + "\n...[diagnostics truncated]...\n"
+}
+
 // enableLiveProvider swaps the agent Deployment from --mock to the real
 // OpenRouter provider + the default-lane model, staged via a k8s Secret so the
 // OPENROUTER_API_KEY never reaches a pod arg, a manifest, or a log. It is called
@@ -691,30 +838,20 @@ func enableLiveProvider() {
 	gomega.ExpectWithOffset(1, err).NotTo(gomega.HaveOccurred(),
 		"kubectl apply secret %s failed\n--- output ---\n%s", liveProviderSecret, out)
 
-	// 2. Patch the Deployment: drop --mock, set --default-provider=openrouter +
-	//    --default-model=<haiku>, and consume the key from the Secret via an
-	//    envFrom-secretKeyRef. The args REPLACE the whole container args list, so
-	//    they must carry every flag the pod needs (the storage-free defaults).
+	// 2. Patch the Deployment: preserve every chart-rendered flag and env entry,
+	//    dropping only --mock and conflicting provider/model selectors before
+	//    appending one OpenRouter selector pair and upserting the Secret key ref.
 	ginkgo.By("patching mecak8s-agent to the real OpenRouter provider + model")
-	newArgs := []string{
-		"--grpc-addr=0.0.0.0:8080",
-		"--http-addr=0.0.0.0:8081",
-		"--redis-url=redis:6379",
-		"--session-lease-k8s-namespace=mecatl",
-		"--headless=true",
-		"--posture=auto",
-		"--workspace=/tmp",
-		"--default-provider=" + liveProviderID,
-		"--default-model=" + liveProviderModel,
-	}
-	argsJSON, _ := json.Marshal(newArgs)
-	patch := fmt.Sprintf(
-		`[{"op":"replace","path":"/spec/template/spec/containers/0/args","value":%s},`+
-			`{"op":"replace","path":"/spec/template/spec/containers/0/env","value":[{"name":"OPENROUTER_API_KEY","valueFrom":{"secretKeyRef":{"name":%q,"key":"OPENROUTER_API_KEY"}}}]}]`,
-		argsJSON, liveProviderSecret)
+	deploymentJSON, err := exec.CommandContext(ctx, "kubectl", "get",
+		"deployment/mecak8s-agent", "-n", k8sNamespace, "-o", "json").Output()
+	gomega.ExpectWithOffset(1, err).NotTo(gomega.HaveOccurred(),
+		"kubectl get deployment before live-provider patch failed")
+	patch, err := liveProviderPatch(deploymentJSON)
+	gomega.ExpectWithOffset(1, err).NotTo(gomega.HaveOccurred(),
+		"build live-provider Deployment patch")
 	patchOut, err := exec.CommandContext(ctx, "kubectl", "patch",
 		"deployment/mecak8s-agent", "-n", k8sNamespace,
-		"--type=json", "-p", patch).CombinedOutput()
+		"--type=json", "-p", string(patch)).CombinedOutput()
 	gomega.ExpectWithOffset(1, err).NotTo(gomega.HaveOccurred(),
 		"kubectl patch deployment to live provider failed\n--- output ---\n%s", patchOut)
 
@@ -728,8 +865,12 @@ func enableLiveProvider() {
 	rolloutOut, err := exec.CommandContext(rolloutCtx, "kubectl", "rollout", "status",
 		"deployment/mecak8s-agent", "-n", k8sNamespace,
 		"--timeout=290s").CombinedOutput()
-	gomega.ExpectWithOffset(1, err).NotTo(gomega.HaveOccurred(),
-		"kubectl rollout status (live provider) failed\n--- output ---\n%s", rolloutOut)
+	if err != nil {
+		diagnostics := liveRolloutDiagnostics(ctx, key)
+		ginkgo.Fail(fmt.Sprintf(
+			"kubectl rollout status (live provider) failed: %v\n--- output ---\n%s%s",
+			err, boundedRedacted(string(rolloutOut), key, 16*1024), diagnostics), 1)
+	}
 
 	ginkgo.By("waiting for all mecak8s pods to be Ready (after the live-provider patch)")
 	waitPodsReady()

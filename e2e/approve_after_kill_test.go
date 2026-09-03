@@ -99,7 +99,9 @@ func approveAfterKillSpecs() {
 				// it does not depend on the resumed SSE replaying the pre-restart call.
 				// DO NOT approve — the run stays parked awaiting; the live gRPC relay
 				// persists a durable awaiting snapshot on the ask (Persist-on-ask).
-				askID, writeCallID := driveToWriteAsk(ctx, stream1, 90*time.Second)
+				askID, writeCallID, driveErr := driveToWriteAsk(ctx, stream1, 90*time.Second)
+				gomega.Expect(driveErr).NotTo(gomega.HaveOccurred(),
+					"drive local #1 to the Write permission ask\n--- mecated log tail ---\n"+local1.LogTail(4096))
 				expectNonEmpty(askID, "a Write permission ask on local #1", local1.LogTail(4096))
 				expectNonEmpty(writeCallID, "a Write tool.call on local #1 (card-before-the-gate)", local1.LogTail(4096))
 

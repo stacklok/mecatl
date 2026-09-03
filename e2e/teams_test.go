@@ -21,7 +21,7 @@ import (
 // InspectMember).
 func teamSpecs() {
 	ginkgo.Describe("teams", func() {
-		ginkgo.It("runs a two-worker team that records findings and reports the team id", ginkgo.SpecTimeout(510*time.Second), func(ctx ginkgo.SpecContext) {
+		ginkgo.It("runs a two-worker team that records findings and reports the team id", ginkgo.FlakeAttempts(2), ginkgo.SpecTimeout(510*time.Second), func(ctx ginkgo.SpecContext) {
 			res := runScenario(ctx, harness.RunOpts{
 				Scenario:     "teams",
 				ApproveTools: []string{"Team"}, // the built-in floor ASKs for Team; the CLI config allows it, this is the backup

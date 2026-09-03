@@ -3,6 +3,8 @@
 package e2e_test
 
 import (
+	"errors"
+	"fmt"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -46,24 +48,28 @@ const haikuLane = "anthropic/claude-haiku-4.5"
 // arrives BEFORE the ask (card-before-the-gate: the EvToolCall is emitted before
 // authorize), so a single drain captures both. It does NOT answer the ask — the
 // caller decides the verdict (approve-after-kill leaves it parked; verdict-replay
-// approves allow-always). On the deadline it returns whatever it captured (the
-// caller asserts non-empty with a log tail).
+// approves allow-always). Stream errors, premature closure, cancellation, and the
+// local deadline are returned explicitly so admission failures cannot degrade
+// into misleading missing-event assertions.
 //
 // Shared by approve-after-kill (Phase 2) and verdict-replay (Phase 3): both must
 // drive a real model to a real Write ask before they diverge on the verdict.
-func driveToWriteAsk(ctx ginkgo.SpecContext, stream *client.Stream, deadline time.Duration) (askID, writeCallID string) {
+func driveToWriteAsk(ctx ginkgo.SpecContext, stream *client.Stream, deadline time.Duration) (askID, writeCallID string, err error) {
 	ginkgo.GinkgoHelper()
 	msgs := make(chan tea.Msg, 256)
 	go stream.ReadLoop(ctx, msgs)
 
-	timeout := time.After(deadline)
+	timer := time.NewTimer(deadline)
+	defer timer.Stop()
 	for {
 		select {
-		case <-timeout:
-			return askID, writeCallID
+		case <-ctx.Done():
+			return askID, writeCallID, fmt.Errorf("waiting for Write permission ask: %w", ctx.Err())
+		case <-timer.C:
+			return askID, writeCallID, fmt.Errorf("waiting for Write permission ask: deadline exceeded after %s", deadline)
 		case m, ok := <-msgs:
 			if !ok {
-				return askID, writeCallID
+				return askID, writeCallID, errors.New("waiting for Write permission ask: stream closed prematurely")
 			}
 			switch v := m.(type) {
 			case client.ToolCallMsg:
@@ -72,37 +78,50 @@ func driveToWriteAsk(ctx ginkgo.SpecContext, stream *client.Stream, deadline tim
 				}
 			case client.PermissionAskMsg:
 				if v.Tool == "Write" {
-					return v.AskID, writeCallID
+					return v.AskID, writeCallID, nil
 				}
+			case client.StreamErrMsg:
+				return askID, writeCallID, fmt.Errorf("waiting for Write permission ask: stream error: %w", v.Err)
+			case client.StreamClosedMsg:
+				return askID, writeCallID, errors.New("waiting for Write permission ask: stream closed prematurely")
 			}
 		}
 	}
 }
 
-// driveToResult drains the stream msgs channel until the terminal ResultMsg,
-// returning it (and false on a deadline / clean close with no result). The
-// ResultMsg carries the run's stop reason and per-run usage — the event-layer
-// oracle the snapshot-fidelity spec asserts the budget terminal on.
+// driveToResult drains the stream msgs channel until the terminal ResultMsg.
+// Stream errors, premature closure, cancellation, and the local deadline are
+// returned explicitly. The ResultMsg carries the run's stop reason and per-run
+// usage — the event-layer oracle the snapshot-fidelity spec asserts the budget
+// terminal on.
 //
 // Shared by both turns of the snapshot-fidelity spec (a budget-PASSING turn on
 // #1 and a budget-TRIPPING turn on #2); kept here next to driveToWriteAsk so the
 // two stream-drain idioms live together.
-func driveToResult(ctx ginkgo.SpecContext, stream *client.Stream, deadline time.Duration) (client.ResultMsg, bool) {
+func driveToResult(ctx ginkgo.SpecContext, stream *client.Stream, deadline time.Duration) (client.ResultMsg, error) {
 	ginkgo.GinkgoHelper()
 	msgs := make(chan tea.Msg, 256)
 	go stream.ReadLoop(ctx, msgs)
 
-	timeout := time.After(deadline)
+	timer := time.NewTimer(deadline)
+	defer timer.Stop()
 	for {
 		select {
-		case <-timeout:
-			return client.ResultMsg{}, false
+		case <-ctx.Done():
+			return client.ResultMsg{}, fmt.Errorf("waiting for terminal result: %w", ctx.Err())
+		case <-timer.C:
+			return client.ResultMsg{}, fmt.Errorf("waiting for terminal result: deadline exceeded after %s", deadline)
 		case m, ok := <-msgs:
 			if !ok {
-				return client.ResultMsg{}, false
+				return client.ResultMsg{}, errors.New("waiting for terminal result: stream closed prematurely")
 			}
-			if r, isResult := m.(client.ResultMsg); isResult {
-				return r, true
+			switch v := m.(type) {
+			case client.ResultMsg:
+				return v, nil
+			case client.StreamErrMsg:
+				return client.ResultMsg{}, fmt.Errorf("waiting for terminal result: stream error: %w", v.Err)
+			case client.StreamClosedMsg:
+				return client.ResultMsg{}, errors.New("waiting for terminal result: stream closed prematurely")
 			}
 		}
 	}

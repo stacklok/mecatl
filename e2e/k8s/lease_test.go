@@ -49,8 +49,10 @@ func leaseExclusionSpecs() {
 
 				ginkgo.By("starting a run on pod-A and driving it to terminal (lease held for the session's life)")
 				runCtx, runCancel := shortCtx(60 * time.Second)
-				status := drainRun(runCtx, addrA, sessionID, "hello from the lease holder")
+				status, drainErr := drainRun(runCtx, addrA, sessionID, "hello from the lease holder")
 				runCancel()
+				gomega.Expect(drainErr).NotTo(gomega.HaveOccurred(),
+					"pod-A holder run stream must reach EOF cleanly")
 				gomega.Expect(status).To(gomega.Equal(http.StatusOK),
 					"pod-A run-start should succeed (it holds the lease), got status %d", status)
 
