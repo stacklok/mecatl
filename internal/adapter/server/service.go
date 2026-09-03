@@ -2513,14 +2513,25 @@ func (s *Service) CloseSession(id session.SessionID) {
 // EndSession is the precondition-checked sibling of CloseSession: the
 // surface-facing session-end entry for the gRPC/HTTP transports (the ACP adapter
 // calls the void CloseSession directly on disconnect). It verifies the session
-// exists, then runs the same teardown as CloseSession (OnCloseSession ->
-// learned-rule Forget, per-session engine + workspace eviction). It returns
-// ErrNotFound for a never-created id; teardown is idempotent, so closing an
-// already-released (but still persisted) session succeeds. It does NOT delete the
-// persisted snapshot and does NOT cancel an in-flight run (orthogonal to Cancel).
+// exists and serializes against run admission. A locally registered run owns the
+// session until its relay calls FinishRun, so close fails with
+// ErrFailedPrecondition without releasing the lease or tearing down any local
+// engine, policy, or environment. A persisted awaiting snapshot with no local run
+// is not active ownership: teardown releases local resources while leaving the
+// durable PendingAsk untouched. Closing an already-released (but still persisted)
+// session remains idempotent. EndSession never deletes the persisted snapshot and
+// never cancels a run; cancellation is an orthogonal operation.
 func (s *Service) EndSession(ctx context.Context, id session.SessionID) error {
+	unlock := s.runEntryMu.lock(id)
+	defer unlock()
 	if _, err := s.GetSession(ctx, id); err != nil {
 		return err
+	}
+	s.mu.Lock()
+	_, live := s.runs[id]
+	s.mu.Unlock()
+	if live {
+		return fmt.Errorf("%w: session has a local active run", ErrFailedPrecondition)
 	}
 	s.CloseSession(id)
 	return nil

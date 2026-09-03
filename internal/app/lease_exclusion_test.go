@@ -65,8 +65,8 @@ func (*firstThenBlockingProvider) Capabilities() port.ProviderCapabilities {
 
 // TestCrossProcessLeaseExclusion is the cloud-native Phase 4 falsifiable gate: a
 // session leased by one Build (replica) cannot be run by a second Build over the
-// SAME store + lease dir, until the first releases (EndSession) or its lease
-// lapses (TTL).
+// SAME store + lease dir, until the first settles its local run and releases
+// ownership (EndSession) or its lease lapses (TTL).
 //
 // Mutation-verified: remove the acquireLease call in StartRunContent → Build #2's
 // StartRun succeeds while #1 holds → the exclusion assertion fails.
@@ -130,7 +130,14 @@ func TestCrossProcessLeaseExclusion(t *testing.T) {
 		t.Fatalf("StartRun #2 while #1 holds the lease = %v, want ErrSessionLeasedElsewhere", err)
 	}
 
-	// Release on built1 (EndSession) frees the lease; built2 may now take over.
+	// Close is not cancel: settle and join built1's local awaiting run before
+	// EndSession releases ownership. A close while the run is parked must retain
+	// the lease and resources (ADR 0290).
+	if err := built1.Service.Approve(ctx, sess.ID, askID, session.VerdictDeny); err != nil {
+		t.Fatalf("deny run #1: %v", err)
+	}
+	drain(run1)
+	built1.Service.FinishRun(sess.ID, run1)
 	if err := built1.Service.EndSession(ctx, sess.ID); err != nil {
 		t.Fatalf("EndSession #1: %v", err)
 	}
