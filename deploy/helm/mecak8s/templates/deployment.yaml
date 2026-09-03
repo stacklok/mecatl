@@ -172,7 +172,7 @@ spec:
             - --skills-conventional=true
             {{- end }}
             {{- range $server := .Values.mcp.servers }}
-            {{- if ne $server.auth.mode "oauth" }}
+            {{- if and (ne $server.auth.mode "oauth") (not (and $mcpOAuth (eq $server.auth.mode "none"))) }}
             - {{ printf "--mcp-server=%s=%s" $server.name $server.url | quote }}
             {{- end }}
             {{- if $server.insecureHTTP }}
@@ -207,9 +207,6 @@ spec:
               valueFrom:
                 secretKeyRef: {{- toYaml $server.auth.oauth.client.preregistered.secretKeyRef | nindent 18 }}
             {{- end }}
-            - name: {{ printf "MECATL_MCP_%s_CREDENTIAL" (upper $server.name) }}
-              valueFrom:
-                secretKeyRef: {{- toYaml $server.auth.oauth.credentials.secretKeyRef | nindent 18 }}
             {{- end }}
             {{- end }}
             {{- with .Values.extraEnv }}

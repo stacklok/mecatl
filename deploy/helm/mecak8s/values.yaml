@@ -31,9 +31,14 @@ extraEnv: []
 extraArgs: []
 
 # First-class remote Streamable HTTP MCP connections. Authentication is an
-# explicit union: none, staticBearer, or oauth. Secret values are always read
-# from same-namespace Kubernetes Secrets; they are never Helm values.
+# explicit union: none, staticBearer, or oauth. OAuth selects the session MCP
+# broker and requires its public callback URL below. Secret values are always
+# read from same-namespace Kubernetes Secrets; they are never Helm values.
 mcp:
+  broker:
+    # Public HTTPS URL where the browser returns after OAuth. This exact URL
+    # must route to this service's HTTP listener through your ingress/gateway.
+    callbackURL: ""
   servers: []
 
 # Optional remote learning driver. A bearer token is optional; when both tokenSecret

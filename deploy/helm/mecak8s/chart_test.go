@@ -2,7 +2,6 @@ package mecak8s_test
 
 import (
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -22,6 +21,7 @@ import (
 	"sigs.k8s.io/yaml"
 
 	mcpadapter "github.com/stacklok/mecatl/internal/adapter/mcp"
+	"github.com/stacklok/mecatl/internal/adapter/mcpauthority"
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
 	"github.com/stacklok/mecatl/internal/cliconfig"
 )
@@ -1691,12 +1691,20 @@ func TestMecak8sHelmChart_NewValuesAreSchemaValidated(t *testing.T) {
 }
 
 func renderMCPValues(t *testing.T, values string) (string, error) {
+	return renderMCPValuesWithArgs(t, productionArgs(), values)
+}
+
+func renderOAuthMCPValues(t *testing.T, values string) (string, error) {
+	return renderMCPValuesWithArgs(t, secureProductionArgs(), values)
+}
+
+func renderMCPValuesWithArgs(t *testing.T, args []string, values string) (string, error) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "mcp-values.yaml")
 	if err := os.WriteFile(path, []byte(values), 0o600); err != nil {
 		t.Fatalf("write MCP values: %v", err)
 	}
-	return helm(t, append(productionArgs(), "-f", path)...)
+	return helm(t, append(args, "-f", path)...)
 }
 
 func configMapFromRender(t *testing.T, rendered, name string) *corev1.ConfigMap {
@@ -1728,6 +1736,11 @@ func TestMecak8sHelmChart_MCPDefaultsAreEmpty(t *testing.T) {
 		if !strings.Contains(rendered, required) {
 			t.Fatalf("default render missing global-mode opt-out %q", required)
 		}
+	}
+	profile := configMapFromRender(t, rendered, "production-mecak8s-mcp").Data["settings.yaml"]
+	authority := runtimeMCPAuthorityFromConfigMap(t, profile)
+	if authority.Mode() != mcpauthority.Global {
+		t.Fatalf("zero-server runtime authority mode = %q, want global", authority.Mode())
 	}
 }
 
@@ -1905,7 +1918,7 @@ mcp:
 	}
 }
 
-func runtimeMCPProfileValidationError(t *testing.T, profile string) error {
+func runtimeMCPAuthorityValidationError(t *testing.T, profile string) error {
 	t.Helper()
 	if err := permconfig.ValidateYAML([]byte(profile)); err != nil {
 		return err
@@ -1915,25 +1928,13 @@ func runtimeMCPProfileValidationError(t *testing.T, profile string) error {
 		t.Fatalf("write generated MCP profile: %v", err)
 	}
 	operator := permconfig.New(permconfig.Options{ExplicitFiles: []string{path}}).OperatorMCP()
-	credential := base64.StdEncoding.EncodeToString([]byte("opaque-credential-record"))
-	profiles, err := cliconfig.LoadMCPProfiles(cliconfig.MCPProfileLoadOptions{
-		Operator: operator,
-		LookupEnv: func(name string) (string, bool) {
-			values := map[string]string{
-				"MECATL_MCP_OAUTH_CLIENT_SECRET": "client-secret",
-				"MECATL_MCP_OAUTH_CREDENTIAL":    credential,
-			}
-			value, ok := values[name]
-			return value, ok
-		},
+	_, err := cliconfig.ResolveMCPAuthority(cliconfig.MCPAuthorityOptions{
+		Operator: operator, DefaultMode: mcpauthority.Broker, BrokerSupported: true,
 	})
-	if profiles != nil {
-		t.Cleanup(func() { _ = profiles.Close() })
-	}
 	return err
 }
 
-func runtimeMCPProfilesFromConfigMap(t *testing.T, profile string) *cliconfig.MCPProfiles {
+func runtimeMCPAuthorityFromConfigMap(t *testing.T, profile string) *mcpauthority.Result {
 	t.Helper()
 	if err := permconfig.ValidateYAML([]byte(profile)); err != nil {
 		t.Fatalf("generated MCP profile fails the runtime settings parser: %v\n%s", err, profile)
@@ -1942,46 +1943,30 @@ func runtimeMCPProfilesFromConfigMap(t *testing.T, profile string) *cliconfig.MC
 	if err := os.WriteFile(path, []byte(profile), 0o600); err != nil {
 		t.Fatalf("write generated MCP profile: %v", err)
 	}
-	resolver := permconfig.New(permconfig.Options{ExplicitFiles: []string{path}})
-	operator := resolver.OperatorMCP()
-	if operator == nil {
-		t.Fatal("runtime settings resolver did not retain generated MCP profile")
-	}
-	credential := base64.StdEncoding.EncodeToString([]byte("opaque-credential-record"))
-	values := map[string]string{
-		"MECATL_MCP_OAUTH_REGISTERED_CLIENT_SECRET": "client-secret",
-		"MECATL_MCP_OAUTH_REGISTERED_CREDENTIAL":    credential,
-		"MECATL_MCP_OAUTH_CIMD_CREDENTIAL":          credential,
-	}
-	profiles, err := cliconfig.LoadMCPProfiles(cliconfig.MCPProfileLoadOptions{
-		Operator: operator,
-		LookupEnv: func(name string) (string, bool) {
-			value, ok := values[name]
-			return value, ok
-		},
+	operator := permconfig.New(permconfig.Options{ExplicitFiles: []string{path}}).OperatorMCP()
+	result, err := cliconfig.ResolveMCPAuthority(cliconfig.MCPAuthorityOptions{
+		Operator: operator, DefaultMode: mcpauthority.Broker, BrokerSupported: true,
 	})
 	if err != nil {
-		t.Fatalf("load generated MCP profile through runtime loader: %v", err)
+		t.Fatalf("resolve generated MCP profile through runtime authority resolver: %v", err)
 	}
-	t.Cleanup(func() {
-		if err := profiles.Close(); err != nil {
-			t.Errorf("close runtime MCP profiles: %v", err)
-		}
-	})
-	return profiles
+	return result
 }
 
-func TestMecak8sHelmChart_MCPOAuthProfileModes(t *testing.T) {
-	rendered, err := renderMCPValues(t, `
+func TestMecak8sHelmChart_MCPOAuthProfileUsesBrokerAuthority(t *testing.T) {
+	rendered, err := renderOAuthMCPValues(t, `
 mcp:
+  broker:
+    callbackURL: https://agent.example/mcp/authorization/callback
   servers:
+    - name: public
+      url: https://public.example/mcp
+      auth: {mode: none}
     - name: oauth_registered
       url: https://mcp.example/mcp
       auth:
         mode: oauth
         oauth:
-          profile: cluster
-          principal: service-account:mecak8s
           issuer: https://issuer.example
           client:
             mode: preregistered
@@ -1990,28 +1975,7 @@ mcp:
               secretKeyRef: {name: oauth-registered, key: client-secret}
           scopes: [mcp.read, mcp.write]
           requestRefreshToken: true
-          credentials:
-            secretKeyRef: {name: oauth-registered, key: credential-record}
-            allowProcessLocalRefresh: true
-          network: {additionalOrigins: [], privateOrigins: [], maxRedirects: 2}
-    - name: oauth_cimd
-      url: https://other.example/mcp
-      auth:
-        mode: oauth
-        oauth:
-          profile: workload
-          principal: workload:mecak8s
-          issuer: https://login.example
-          client:
-            mode: cimd
-            cimd: {documentURL: https://client.example/mecatl.json}
-          scopes: [mcp.read]
-          credentials:
-            secretKeyRef: {name: oauth-cimd, key: credential-record}
-          network:
-            additionalOrigins: [https://client.example]
-            privateOrigins: []
-            maxRedirects: 0
+          network: {additionalOrigins: [], privateOrigins: [], maxRedirects: 0}
 `)
 	if err != nil {
 		t.Fatalf("render OAuth MCP values: %v", err)
@@ -2022,80 +1986,100 @@ mcp:
 		t.Fatal("OAuth render missing chart-managed --permission-config")
 	}
 	if slices.ContainsFunc(container.Args, func(arg string) bool { return strings.HasPrefix(arg, "--mcp-server=") }) {
-		t.Fatal("OAuth entries must come only from the strict profile, not legacy flags")
+		t.Fatal("broker routes must not be duplicated as legacy global flags")
 	}
-	wantEnv := map[string]string{
-		"MECATL_MCP_OAUTH_REGISTERED_CLIENT_SECRET": "oauth-registered/client-secret",
-		"MECATL_MCP_OAUTH_REGISTERED_CREDENTIAL":    "oauth-registered/credential-record",
-		"MECATL_MCP_OAUTH_CIMD_CREDENTIAL":          "oauth-cimd/credential-record",
-	}
-	for _, env := range container.Env {
-		if env.Value != "" || env.ValueFrom == nil || env.ValueFrom.SecretKeyRef == nil {
-			t.Fatalf("OAuth env is not SecretKeyRef-only: %#v", env)
-		}
-		got := env.ValueFrom.SecretKeyRef.Name + "/" + env.ValueFrom.SecretKeyRef.Key
-		if wantEnv[env.Name] != got {
-			t.Fatalf("OAuth env %s = %q, want %q", env.Name, got, wantEnv[env.Name])
-		}
-		delete(wantEnv, env.Name)
-	}
-	if len(wantEnv) != 0 {
-		t.Fatalf("missing OAuth environment variables: %#v", wantEnv)
+	if len(container.Env) != 1 || container.Env[0].Name != "MECATL_MCP_OAUTH_REGISTERED_CLIENT_SECRET" || container.Env[0].ValueFrom == nil || container.Env[0].ValueFrom.SecretKeyRef == nil || container.Env[0].ValueFrom.SecretKeyRef.Name != "oauth-registered" || container.Env[0].ValueFrom.SecretKeyRef.Key != "client-secret" {
+		t.Fatalf("OAuth environment is not SecretKeyRef-only: %#v", container.Env)
 	}
 	cm := configMapFromRender(t, rendered, "production-mecak8s-mcp")
 	profile := cm.Data["settings.yaml"]
-	profiles := runtimeMCPProfilesFromConfigMap(t, profile)
-	if len(profiles.Servers) != 2 {
-		t.Fatalf("runtime MCP servers = %#v, want two", profiles.Servers)
+	authority := runtimeMCPAuthorityFromConfigMap(t, profile)
+	broker, ok := authority.Broker()
+	if authority.Mode() != mcpauthority.Broker || !ok || broker.CallbackURL != "https://agent.example/mcp/authorization/callback" || len(broker.Routes) != 2 || broker.Routes[0].Name != "public" || broker.Routes[1].Name != "oauth_registered" {
+		t.Fatalf("runtime broker authority = %#v, want callback and both broker routes", authority)
 	}
-	registered, cimd := profiles.Servers[0], profiles.Servers[1]
-	if registered.Name != "oauth_registered" || registered.URL != "https://mcp.example/mcp" || registered.OAuth == nil ||
-		registered.OAuth.Subject.Profile != "cluster" || registered.OAuth.Subject.Principal != "service-account:mecak8s" ||
-		registered.OAuth.Issuer != "https://issuer.example" || registered.OAuth.Client.Preregistered == nil ||
-		registered.OAuth.Client.Preregistered.ClientID != "mecak8s" || !slices.Equal(registered.OAuth.AllowedScopes, []string{"mcp.read", "mcp.write"}) ||
-		!registered.OAuth.RequestRefreshToken || !registered.OAuth.AllowInMemoryRefresh || registered.OAuth.Network.MaxRedirects != 2 ||
-		registered.OAuth.CredentialReader == nil {
-		t.Fatalf("runtime preregistered OAuth profile lost fields: %#v", registered)
-	}
-	if cimd.Name != "oauth_cimd" || cimd.URL != "https://other.example/mcp" || cimd.OAuth == nil ||
-		cimd.OAuth.Subject.Profile != "workload" || cimd.OAuth.Subject.Principal != "workload:mecak8s" ||
-		cimd.OAuth.Issuer != "https://login.example" || cimd.OAuth.Client.ClientIDMetadataDocumentURL != "https://client.example/mecatl.json" ||
-		!slices.Equal(cimd.OAuth.AllowedScopes, []string{"mcp.read"}) || cimd.OAuth.RequestRefreshToken || cimd.OAuth.AllowInMemoryRefresh ||
-		!slices.Equal(cimd.OAuth.Network.AdditionalOrigins, []string{"https://client.example"}) || len(cimd.OAuth.Network.PrivateOrigins) != 0 ||
-		cimd.OAuth.Network.MaxRedirects != 0 || cimd.OAuth.CredentialReader == nil {
-		t.Fatalf("runtime CIMD OAuth profile lost fields: %#v", cimd)
-	}
-	for _, want := range []string{
-		"mode: oauth", "mode: preregistered", "mode: cimd", "mode: environment",
-		"secret_env: MECATL_MCP_OAUTH_REGISTERED_CLIENT_SECRET",
-		"credential_env: MECATL_MCP_OAUTH_CIMD_CREDENTIAL",
-		"allow_process_local_refresh: true", `document_url: "https://client.example/mecatl.json"`,
-	} {
-		if !strings.Contains(profile, want) {
-			t.Fatalf("OAuth profile missing %q:\n%s", want, profile)
-		}
-	}
-	for _, forbidden := range []string{"oauth-registered", "oauth-cimd", "client-secret", "credential-record", "static_bearer", "mode: local", "root:"} {
+	for _, forbidden := range []string{"client-secret", "credential-record", "credentials:", "profile:", "principal:"} {
 		if strings.Contains(profile, forbidden) {
-			t.Fatalf("OAuth profile leaks or enables forbidden field %q:\n%s", forbidden, profile)
+			t.Fatalf("broker profile leaks or enables forbidden field %q:\n%s", forbidden, profile)
 		}
-	}
-	if len(container.VolumeMounts) == 0 || !slices.ContainsFunc(container.VolumeMounts, func(m corev1.VolumeMount) bool {
-		return m.Name == "mcp-profile" && m.MountPath == "/etc/mecatl-mcp" && m.ReadOnly
-	}) {
-		t.Fatal("OAuth profile is not mounted read-only")
-	}
-	if !slices.ContainsFunc(deployment.Spec.Template.Spec.Volumes, func(volume corev1.Volume) bool {
-		return volume.Name == "mcp-profile" && volume.ConfigMap != nil && volume.ConfigMap.Name == cm.Name &&
-			slices.ContainsFunc(volume.ConfigMap.Items, func(item corev1.KeyToPath) bool {
-				return item.Key == "settings.yaml" && item.Path == "settings.yaml"
-			})
-	}) {
-		t.Fatal("OAuth profile volume is not coupled to the rendered ConfigMap settings.yaml")
 	}
 	wantChecksum := fmt.Sprintf("%x", sha256.Sum256([]byte(profile)))
 	if got := deployment.Spec.Template.Annotations["checksum/mcp-profile"]; got != wantChecksum {
 		t.Fatalf("OAuth profile checksum = %q, want ConfigMap content checksum %q", got, wantChecksum)
+	}
+}
+
+func TestMecak8sHelmChart_MCPOAuthBrokerCallbackValidation(t *testing.T) {
+	missing := `
+mcp:
+  broker: {callbackURL: ""}
+  servers:
+    - name: oauth
+      url: https://mcp.example/mcp
+      auth:
+        mode: oauth
+        oauth:
+          issuer: https://issuer.example
+          client: {mode: cimd, cimd: {documentURL: https://issuer.example/client.json}}
+          scopes: [mcp.read]
+          network: {additionalOrigins: [], privateOrigins: [], maxRedirects: 0}
+`
+	if _, err := renderMCPValues(t, missing); err == nil {
+		t.Fatal("render accepted OAuth MCP values without mcp.broker.callbackURL")
+	}
+	invalid := strings.Replace(missing, "callbackURL: \"\"", "callbackURL: https://agent.example/%zz", 1)
+	rendered, err := renderOAuthMCPValues(t, invalid)
+	if err != nil {
+		t.Fatalf("chart rejected structurally valid callback before runtime validation: %v", err)
+	}
+	profile := configMapFromRender(t, rendered, "production-mecak8s-mcp").Data["settings.yaml"]
+	if err := runtimeMCPAuthorityValidationError(t, profile); err == nil {
+		t.Fatalf("runtime authority resolver accepted invalid callback URL:\n%s", profile)
+	}
+}
+
+func TestMecak8sHelmChart_MCPOAuthBrokerDeploymentPrerequisites(t *testing.T) {
+	oauth := `
+mcp:
+  broker: {callbackURL: https://agent.example/callback}
+  servers:
+    - name: oauth
+      url: https://mcp.example/mcp
+      auth:
+        mode: oauth
+        oauth:
+          issuer: https://issuer.example
+          client: {mode: cimd, cimd: {documentURL: https://issuer.example/client.json}}
+          scopes: [mcp.read]
+          network: {additionalOrigins: [], privateOrigins: [], maxRedirects: 0}
+`
+	if _, err := renderMCPValues(t, oauth+"oidc: {enabled: false}\n"); err == nil {
+		t.Fatal("render accepted OAuth broker without OIDC caller identity")
+	}
+	for name, values := range map[string]string{
+		"no OAuth route": `mcp:
+  broker: {callbackURL: https://agent.example/callback}
+  servers:
+    - name: public
+      url: https://public.example/mcp
+      auth: {mode: none}
+`,
+		"two OAuth routes": oauth + `    - name: second
+      url: https://second.example/mcp
+      auth:
+        mode: oauth
+        oauth:
+          issuer: https://issuer.example
+          client: {mode: cimd, cimd: {documentURL: https://issuer.example/client.json}}
+          scopes: [mcp.read]
+          network: {additionalOrigins: [], privateOrigins: [], maxRedirects: 0}
+`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := renderMCPValues(t, values); err == nil {
+				t.Fatalf("render accepted callback without exactly one OAuth route")
+			}
+		})
 	}
 }
 
@@ -2112,27 +2096,25 @@ mcp:
 `
 	validOAuth := `
 mcp:
+  broker:
+    callbackURL: https://agent.example/callback
   servers:
     - name: oauth
       url: https://mcp.example/mcp
       auth:
         mode: oauth
         oauth:
-          profile: cluster
-          principal: service-account:mecak8s
           issuer: https://issuer.example
           client:
             mode: cimd
             cimd: {documentURL: https://client.example/mecatl.json}
           scopes: [mcp.read]
-          credentials:
-            secretKeyRef: {name: oauth, key: credential}
           network:
             additionalOrigins: [https://client.example]
             privateOrigins: []
             maxRedirects: 0
 `
-	if _, err := renderMCPValues(t, strings.Replace(validOAuth, "https://mcp.example/mcp", "https://mcp.example/MCP%2Fv1", 1)); err != nil {
+	if _, err := renderOAuthMCPValues(t, strings.Replace(validOAuth, "https://mcp.example/mcp", "https://mcp.example/MCP%2Fv1", 1)); err != nil {
 		t.Fatalf("render rejected a canonical escaped OAuth resource URL: %v", err)
 	}
 
@@ -2160,7 +2142,7 @@ mcp:
         mode: oauth
         oauth: {}
 `,
-		"OAuth principal control character": strings.Replace(validOAuth, "principal: service-account:mecak8s", `principal: "service-account:\u0007mecak8s"`, 1),
+		"missing broker callback": strings.Replace(validOAuth, "    callbackURL: https://agent.example/callback\n", "", 1),
 	}
 	for name, values := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -2174,21 +2156,19 @@ mcp:
 func TestMecak8sHelmChart_MCPOAuthURLSemanticsAreRuntimeValidated(t *testing.T) {
 	valid := `
 mcp:
+  broker:
+    callbackURL: https://agent.example/callback
   servers:
     - name: oauth
       url: https://mcp.example/mcp
       auth:
         mode: oauth
         oauth:
-          profile: cluster
-          principal: service-account:mecak8s
           issuer: https://issuer.example
           client:
             mode: cimd
             cimd: {documentURL: https://client.example/mecatl.json}
           scopes: [mcp.read]
-          credentials:
-            secretKeyRef: {name: oauth, key: credential}
           network:
             additionalOrigins: [https://client.example]
             privateOrigins: []
@@ -2207,12 +2187,12 @@ mcp:
 	}
 	for name, values := range cases {
 		t.Run(name, func(t *testing.T) {
-			rendered, err := renderMCPValues(t, values)
+			rendered, err := renderOAuthMCPValues(t, values)
 			if err != nil {
 				t.Fatalf("chart rejected structurally valid OAuth values before runtime validation: %v", err)
 			}
 			profile := configMapFromRender(t, rendered, "production-mecak8s-mcp").Data["settings.yaml"]
-			if err := runtimeMCPProfileValidationError(t, profile); err == nil {
+			if err := runtimeMCPAuthorityValidationError(t, profile); err == nil {
 				t.Fatalf("runtime settings parser accepted semantically invalid OAuth profile:\n%s", profile)
 			}
 		})
@@ -2222,28 +2202,26 @@ mcp:
 func TestMecak8sHelmChart_MCPOAuthProfileChecksumDrivesRollout(t *testing.T) {
 	values := `
 mcp:
+  broker:
+    callbackURL: https://agent.example/callback
   servers:
     - name: oauth
       url: https://mcp.example/mcp
       auth:
         mode: oauth
         oauth:
-          profile: cluster
-          principal: service-account:mecak8s
           issuer: https://issuer.example
           client:
             mode: cimd
             cimd: {documentURL: https://issuer.example/client.json}
           scopes: [mcp.read]
-          credentials:
-            secretKeyRef: {name: oauth, key: credential}
           network: {additionalOrigins: [], privateOrigins: [], maxRedirects: 0}
 `
-	first, err := renderMCPValues(t, values)
+	first, err := renderOAuthMCPValues(t, values)
 	if err != nil {
 		t.Fatalf("render first OAuth profile: %v", err)
 	}
-	second, err := renderMCPValues(t, strings.Replace(values, "scopes: [mcp.read]", "scopes: [mcp.read, mcp.write]", 1))
+	second, err := renderOAuthMCPValues(t, strings.Replace(values, "scopes: [mcp.read]", "scopes: [mcp.read, mcp.write]", 1))
 	if err != nil {
 		t.Fatalf("render changed OAuth profile: %v", err)
 	}
