@@ -90,6 +90,41 @@ func TestModelsSwitchDisclosureIsOneWarningLine(t *testing.T) {
 	}
 }
 
+func TestModelsProviderStatusesUseErrorStyleAndSeparateModelRows(t *testing.T) {
+	th := theme.New("aztec", theme.AztecPalette())
+	model := client.ModelInfo{ProviderID: "openai", ID: "gpt-5", DisplayName: "GPT-5"}
+	status := client.ProviderStatus{ProviderID: "toolhive", State: "unreachable"}
+	picker := modelsState{
+		catalog:  modelCatalog{models: []client.ModelInfo{model}, statuses: []client.ProviderStatus{status}},
+		filtered: []client.ModelInfo{model},
+		filter:   textinput.New(),
+	}
+	statusLine := providerStatusLine(status)
+	got := renderModelsPanel(th, picker.catalog, picker, client.Capabilities{}, "", defaultHelpKeys(), modelsMinRows)
+
+	if !strings.Contains(got, th.Style("errorText").Render(statusLine)) {
+		t.Fatalf("provider status must use the error style:\n%s", got)
+	}
+	if strings.Contains(got, th.Style("muted").Render(statusLine)) {
+		t.Fatalf("provider status must not use the muted style:\n%s", got)
+	}
+	plain := stripANSIstr(got)
+	if !strings.Contains(plain, "openai · GPT-5") || !strings.Contains(plain, "\n\n"+statusLine+"\n") {
+		t.Fatalf("provider status must be separated from model rows:\n%s", plain)
+	}
+
+	withoutStatus := picker
+	withoutStatus.catalog.statuses = nil
+	if got, want := modelsPanelFixedRows(picker, "", defaultHelpKeys()), modelsPanelFixedRows(withoutStatus, "", defaultHelpKeys())+2; got != want {
+		t.Fatalf("fixed rows with a separated status = %d, want %d", got, want)
+	}
+	picker.deps = surfaceDeps{keys: defaultKeys(), theme: th}
+	_, _ = picker.Render(100, modelsPanelFixedRows(picker, "", defaultHelpKeys())+4)
+	if picker.rowBudget != 4 {
+		t.Fatalf("page budget = %d, want 4 after status separation", picker.rowBudget)
+	}
+}
+
 func TestModelsSurfaceRenderOwnsCurrentPageBudget(t *testing.T) {
 	models := make([]client.ModelInfo, 10)
 	for i := range models {
