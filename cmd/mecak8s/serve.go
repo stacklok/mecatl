@@ -367,7 +367,7 @@ func warnIfNonLoopback(flagName, addr string, authed bool) {
 
 // warnDrainExposure logs the drain-listener trust assumption. Unlike
 // warnIfNonLoopback's other two callers, --drain-addr has NO authentication
-// option at all (ADR 0288: kubelet's preStop httpGet calls it directly with
+// option at all (ADR 0290: kubelet's preStop httpGet calls it directly with
 // no credentials) — so the warning wording never suggests --auth-token/
 // --tls-cert, and a non-loopback bind is ALWAYS worth a WARNING, not merely
 // an info line, regardless of the deployment's auth posture elsewhere.

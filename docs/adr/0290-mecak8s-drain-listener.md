@@ -1,4 +1,4 @@
-# ADR 0288 — Separate the mecak8s drain listener from API traffic
+# ADR 0290 — Separate the mecak8s drain listener from API traffic
 
 - Status: Accepted
 - Date: 2026-09-02

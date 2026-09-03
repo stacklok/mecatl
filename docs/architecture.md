@@ -798,7 +798,7 @@ multi-minute LLM turn cannot survive a rolling update within
 Its Helm chart offers three secure real-provider transport postures — in-pod TLS, an
 operator-attested edge-terminated TLS boundary, and the explicit unsafe bypass —
 detailed in [deployment and hardening](architecture/deployment-and-hardening.md).
-See `docs/adr/0048-mecak8s.md` and [ADR 0288](adr/0288-mecak8s-drain-listener.md); direct
+See `docs/adr/0048-mecak8s.md` and [ADR 0290](adr/0290-mecak8s-drain-listener.md); direct
 Pod-IP access to the drain port remains an operator-enforced network-isolation residual.
 
 Two deliberate cycle-breaks worth noting, documented in code:

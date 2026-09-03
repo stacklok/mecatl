@@ -40,7 +40,7 @@ and `cmd/mecated` wires the knobs:
   defaults to `0.0.0.0:8082` and serves only kubelet's `GET /drain`; the normal
   HTTP/SSE API listener has no drain route. The chart omits this port from the
   Service, protecting normal Service/gateway traffic, but direct Pod-IP access
-  remains an operator-enforced NetworkPolicy or mesh-isolation residual ([ADR 0288](../adr/0288-mecak8s-drain-listener.md)).
+  remains an operator-enforced NetworkPolicy or mesh-isolation residual ([ADR 0290](../adr/0290-mecak8s-drain-listener.md)).
 - **mecak8s secure real-provider transport** — three postures: in-pod TLS + OIDC,
   edge-terminated TLS + OIDC (`security.tlsTerminatedUpstream=true`, ClusterIP-only h2c),
   and the explicit unsafe bypass. The upstream value is an operator attestation the chart
