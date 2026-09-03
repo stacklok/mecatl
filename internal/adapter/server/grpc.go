@@ -1755,7 +1755,15 @@ func toProtoWatchEnvelope(env WatchEnvelope) *mecatlv1.WatchSessionEventsRespons
 // EvUserPrompt stay skipped (they are persistence-only; the client holds its
 // own verdict/compaction/prompt view).
 func isPublicEvent(ev session.Event) bool {
-	return ev.Type != session.EvNetworkAttempt && ev.Type != session.EvRequestManifest
+	switch ev.Type {
+	case session.EvNetworkAttempt,
+		session.EvRequestManifest,
+		session.EvAuthorizationRequired,
+		session.EvAuthorizationResolved:
+		return false
+	default:
+		return true
+	}
 }
 
 func relayLiveEvent(ev session.Event) bool {

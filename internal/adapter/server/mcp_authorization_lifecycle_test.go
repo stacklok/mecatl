@@ -709,6 +709,18 @@ func TestMCPAuthorizationPreparedRegistrationFailureNeverExecutes(t *testing.T) 
 	}
 }
 
+func TestMCPAuthorizationLifecycleEventsAreNotPublic(t *testing.T) {
+	for _, eventType := range []session.EventType{session.EvAuthorizationRequired, session.EvAuthorizationResolved} {
+		ev := session.Event{Type: eventType}
+		if isPublicEvent(ev) {
+			t.Errorf("isPublicEvent(%q) = true", eventType)
+		}
+		if relayLiveEvent(ev) {
+			t.Errorf("relayLiveEvent(%q) = true", eventType)
+		}
+	}
+}
+
 func TestMCPAuthorizationForeignOwnerDoesNotWaitForControlLock(t *testing.T) {
 	f := newLifecycleFixture(t, session.AuthorizationPending, nil, time.Now, nil)
 	owner := &session.Principal{Issuer: "https://issuer", Subject: "alice", GrantType: session.GrantTypeUser}
