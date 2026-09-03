@@ -6,6 +6,7 @@ import (
 	"errors"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -191,6 +192,42 @@ func TestNewWorkspaceCatalogueRejectsInvalidTools(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestNewWorkspaceCatalogueShortCircuitsEnrollmentBounds(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		tools         []tool.Tool
+		specCallsWant int
+	}{
+		{"tool count", numberedCatalogueTools(258, 4), 257},
+		{"aggregate name bytes", numberedCatalogueTools(130, 256), 129},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			catalogue, err := mcpbroker.NewWorkspaceCatalogue(enrollmentRef(), tc.tools)
+			if !errors.Is(err, mcpbroker.ErrInvalidWorkspaceCatalogue) || catalogue != nil {
+				t.Fatalf("NewWorkspaceCatalogue = (%v, %v), want nil invalid-catalogue error", catalogue, err)
+			}
+			for i, candidate := range tc.tools {
+				calls := candidate.(*enrollmentTool).specCalls
+				if i < tc.specCallsWant && calls != 1 {
+					t.Fatalf("tool %d Spec calls = %d, want 1 before rejection", i, calls)
+				}
+				if i >= tc.specCallsWant && calls != 0 {
+					t.Fatalf("tool %d Spec calls = %d, want 0 after rejection", i, calls)
+				}
+			}
+		})
+	}
+}
+
+func numberedCatalogueTools(count, width int) []tool.Tool {
+	tools := make([]tool.Tool, count)
+	for i := range tools {
+		suffix := strconv.Itoa(i)
+		tools[i] = &enrollmentTool{spec: tool.ToolSpec{Name: strings.Repeat("x", width-len(suffix)) + suffix}}
+	}
+	return tools
 }
 
 func TestWorkspaceEnrollmentPresentationURLValidationAndIsolation(t *testing.T) {

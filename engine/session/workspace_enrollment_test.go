@@ -3,6 +3,7 @@ package session
 import (
 	"errors"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -384,6 +385,54 @@ func TestWorkspaceEnrollmentToolNamesPreserveLegacyGrammar(t *testing.T) {
 		Provenance:    "legacy",
 	}); err != nil {
 		t.Fatalf("global Authority validation was tightened: %v", err)
+	}
+}
+
+func TestWorkspaceEnrollmentToolNamesBoundaries(t *testing.T) {
+	exactAggregate := numberedWorkspaceEnrollmentTools(maxWorkspaceEnrollmentToolNamesBytes/128, 128)
+	oneOverAggregate := append([]string(nil), exactAggregate...)
+	oneOverAggregate[len(oneOverAggregate)-1] += "x"
+	for _, tc := range []struct {
+		name  string
+		names []string
+		valid bool
+	}{
+		{"exact tool count", numberedWorkspaceEnrollmentTools(maxWorkspaceEnrollmentTools, 4), true},
+		{"one over tool count", numberedWorkspaceEnrollmentTools(maxWorkspaceEnrollmentTools+1, 4), false},
+		{"exact aggregate bytes", exactAggregate, true},
+		{"one over aggregate bytes", oneOverAggregate, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := ValidWorkspaceEnrollmentToolNames(tc.names); got != tc.valid {
+				t.Fatalf("ValidWorkspaceEnrollmentToolNames() = %v, want %v", got, tc.valid)
+			}
+		})
+	}
+}
+
+func numberedWorkspaceEnrollmentTools(count, width int) []string {
+	names := make([]string, count)
+	for i := range names {
+		suffix := strconv.Itoa(i)
+		names[i] = strings.Repeat("x", width-len(suffix)) + suffix
+	}
+	return names
+}
+
+func TestCompleteWorkspaceEnrollmentRejectsAggregateBoundsAtomically(t *testing.T) {
+	s, pending := sessionWithEnrollmentAuthority(t)
+	before, _ := s.BoundAuthority()
+	tools := numberedWorkspaceEnrollmentTools(maxWorkspaceEnrollmentToolNamesBytes/128, 128)
+	tools[len(tools)-1] += "x"
+	if err := s.CompleteWorkspaceEnrollment(pending, tools); err == nil {
+		t.Fatal("CompleteWorkspaceEnrollment accepted one-over aggregate tool names")
+	}
+	after, _ := s.BoundAuthority()
+	if !reflect.DeepEqual(after, before) {
+		t.Fatalf("rejected completion changed authority: got %+v, want %+v", after, before)
+	}
+	if got, ok := s.PendingWorkspaceEnrollment(); !ok || got != pending {
+		t.Fatalf("rejected completion changed pending: %+v, %v", got, ok)
 	}
 }
 

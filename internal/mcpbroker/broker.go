@@ -151,22 +151,22 @@ func NewWorkspaceCatalogue(ref WorkspaceEnrollmentRef, tools []tool.Tool) (Works
 	if !ref.Valid() {
 		return nil, ErrInvalidWorkspaceCatalogue
 	}
-	frozen := make([]tool.Tool, len(tools))
-	names := make([]string, len(tools))
-	for i, candidate := range tools {
+	frozen := make([]tool.Tool, 0)
+	names := make([]string, 0)
+	for _, candidate := range tools {
 		if nilTool(candidate) {
 			return nil, ErrInvalidWorkspaceCatalogue
 		}
 		spec := cloneToolSpec(candidate.Spec())
-		names[i] = spec.Name
-		if requester, ok := candidate.(tool.AuthorizationRequester); ok {
-			frozen[i] = &frozenAuthorizationTool{AuthorizationRequester: requester, spec: spec}
-		} else {
-			frozen[i] = &frozenTool{Tool: candidate, spec: spec}
+		if !session.ValidWorkspaceEnrollmentToolNames(append(names, spec.Name)) {
+			return nil, ErrInvalidWorkspaceCatalogue
 		}
-	}
-	if !session.ValidWorkspaceEnrollmentToolNames(names) {
-		return nil, ErrInvalidWorkspaceCatalogue
+		names = append(names, spec.Name)
+		if requester, ok := candidate.(tool.AuthorizationRequester); ok {
+			frozen = append(frozen, &frozenAuthorizationTool{AuthorizationRequester: requester, spec: spec})
+		} else {
+			frozen = append(frozen, &frozenTool{Tool: candidate, spec: spec})
+		}
 	}
 	return &workspaceCatalogue{ref: ref, tools: frozen, toolNames: names}, nil
 }

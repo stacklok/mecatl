@@ -8,8 +8,10 @@ import (
 )
 
 const (
-	maxWorkspaceEnrollmentIDBytes       = 256
-	maxWorkspaceEnrollmentToolNameBytes = 256
+	maxWorkspaceEnrollmentIDBytes        = 256
+	maxWorkspaceEnrollmentTools          = 256
+	maxWorkspaceEnrollmentToolNameBytes  = 256
+	maxWorkspaceEnrollmentToolNamesBytes = 32 * 1024
 )
 
 // WorkspaceEnrollmentID is an opaque correlation identifier for one
@@ -82,7 +84,11 @@ func (s *Session) PendingWorkspaceEnrollment() (PendingWorkspaceEnrollment, bool
 // the boundary imposes only framing and size safety, not a provider-specific
 // function-name grammar.
 func ValidWorkspaceEnrollmentToolNames(names []string) bool {
+	if len(names) > maxWorkspaceEnrollmentTools {
+		return false
+	}
 	seen := make(map[string]struct{}, len(names))
+	totalBytes := 0
 	for _, name := range names {
 		if name == "" || len(name) > maxWorkspaceEnrollmentToolNameBytes || !utf8.ValidString(name) {
 			return false
@@ -93,6 +99,10 @@ func ValidWorkspaceEnrollmentToolNames(names []string) bool {
 			}
 		}
 		if _, duplicate := seen[name]; duplicate {
+			return false
+		}
+		totalBytes += len(name)
+		if totalBytes > maxWorkspaceEnrollmentToolNamesBytes {
 			return false
 		}
 		seen[name] = struct{}{}
