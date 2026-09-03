@@ -63,6 +63,7 @@ var sessionMutationInventory = map[string]SessionMutationEntry{
 	"prepareFailedStepRetry":             {SessionMutationLeaseProven, "retry entry already holds the durable session lease before preparation save"},
 	"startRunContent":                    {SessionMutationLeaseOwned, "run-entry owns runEntryMu then acquires the durable session lease before repair and drive"},
 	"RetryFailedRun":                     {SessionMutationLeaseOwned, "retry entry owns runEntryMu then acquires the same durable session lease"},
+	"GracefulDrain":                      {SessionMutationLeaseProven, "shutdown persists only joined runs while their previously acquired session lease remains valid"},
 	"Persist":                            {SessionMutationLeaseProven, "relay persistence is admitted only while the registered run's held lease remains valid"},
 	"appendEvent":                        {SessionMutationLeaseProven, "relay event append is admitted only while the registered run or management mutation holds the lease"},
 	"engine/agent/dispatch.go:ToolCall":  {SessionMutationLeaseProven, "tool-call recording occurs only inside a Service-admitted run that already owns the session lease; engine remains lease-unaware"},

@@ -1100,6 +1100,11 @@ type runState struct {
 	run      *agent.Run
 	sess     *session.Session
 	awaiting atomic.Bool
+	// preserveDurable prevents a shutdown-cancelled local awaiting run from
+	// overwriting the already-durable PendingAsk handoff point.
+	preserveDurable atomic.Bool
+	settled         chan struct{}
+	settledOnce     sync.Once
 }
 
 // keyedMutex is a map of per-key mutexes with reference counting, so a caller can
@@ -2663,6 +2668,8 @@ func (s *Service) Close() {
 // binary; Drain only gates new entries. The gate is one-way: there is no
 // un-drain (a draining replica is retiring).
 func (s *Service) Drain() {
+	// Admission closes before any scheduler or ownership transition begins.
+	s.draining.Store(true)
 	// Arm the scheduler's drain gate too so no NEW fires start mid-tick during
 	// shutdown (in-flight fires complete or are cancelled by Close's Stop).
 	// The scheduler lives on the embedded scheduleManager (ADR 0076) as an
@@ -2672,7 +2679,83 @@ func (s *Service) Drain() {
 			sch.Drain()
 		}
 	}
-	s.draining.Store(true)
+}
+
+// GracefulDrain settles locally-owned runs after closing admission. Executing
+// runs are cancelled and must be joined by their relay (FinishRun) before their
+// terminal aggregate is persisted and their lease is explicitly released.
+// Awaiting runs are cancelled only in memory: preserveDurable prevents the relay
+// from replacing the already-persisted PendingAsk handoff point. A context
+// timeout invalidates local mutation capability and stops renewal, but never
+// explicitly releases an unjoined run's lease; TTL then governs takeover.
+func (s *Service) GracefulDrain(ctx context.Context) error {
+	s.Drain()
+
+	s.mu.Lock()
+	runs := make(map[session.SessionID]*runState, len(s.runs))
+	for id, st := range s.runs {
+		runs[id] = st
+		if st.awaiting.Load() {
+			st.preserveDurable.Store(true)
+		}
+	}
+	leaseOnly := make([]session.SessionID, 0, len(s.heldLeases))
+	for id := range s.heldLeases {
+		if _, live := runs[id]; !live {
+			leaseOnly = append(leaseOnly, id)
+		}
+	}
+	s.mu.Unlock()
+
+	// Ownership with no local run is already settled (including an unattended
+	// durable awaiting snapshot), so it can hand off immediately.
+	for _, id := range leaseOnly {
+		s.releaseLease(id)
+	}
+	for _, st := range runs {
+		st.run.Cancel()
+	}
+
+	pending := make(map[session.SessionID]*runState, len(runs))
+	for id, st := range runs {
+		pending[id] = st
+	}
+	for id, st := range runs {
+		select {
+		case <-st.settled:
+			delete(pending, id)
+			if !st.awaiting.Load() {
+				saveCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), leaseAcquireTimeout)
+				if err := s.cfg.Store.Save(saveCtx, st.sess); err != nil {
+					s.cfg.Diagnostics.Log(saveCtx, port.LevelWarn, "drain persistence failed; prior durable state remains authoritative",
+						"session", string(id), "err", err.Error())
+				}
+				cancel()
+			}
+			s.releaseLease(id)
+		case <-ctx.Done():
+			for pendingID := range pending {
+				s.retainLeaseForTTL(pendingID)
+			}
+			return ctx.Err()
+		}
+	}
+	return nil
+}
+
+// retainLeaseForTTL stops renewal and invalidates local mutation authority while
+// leaving ownership unreleased for process-death/TTL takeover.
+func (s *Service) retainLeaseForTTL(id session.SessionID) {
+	s.mu.Lock()
+	h := s.heldLeases[id]
+	if h != nil && h.valid {
+		h.valid = false
+		s.cfg.MutationCapability.invalidate(id)
+	}
+	s.mu.Unlock()
+	if h != nil {
+		h.cancel()
+	}
 }
 
 // SetScheduler, SetScheduleMinInterval, HasScheduler, and ScheduleManager are
@@ -3147,6 +3230,9 @@ func (s *Service) managementTarget(ctx context.Context, id session.SessionID, co
 // change while a turn is in flight, so the caller must defer it to the next
 // prompt. A change to the mode the session already has is a no-op success.
 func (s *Service) SetMode(ctx context.Context, id session.SessionID, mode session.PermissionMode) (*session.Session, error) {
+	if s.draining.Load() {
+		return nil, fmt.Errorf("%w: %q", ErrUnavailable, id)
+	}
 	if mode == "" {
 		return nil, fmt.Errorf("%w: mode is required", ErrInvalidArgument)
 	}
@@ -3656,6 +3742,9 @@ func (s *Service) StartScheduledRunContent(ctx context.Context, id session.Sessi
 // persisted typed terminal metadata and is consumed only after every fallible setup step
 // has succeeded and the recovered idle snapshot has been saved.
 func (s *Service) RetryFailedRun(ctx context.Context, id session.SessionID) (*agent.Run, error) {
+	if s.draining.Load() {
+		return nil, fmt.Errorf("%w: %q", ErrUnavailable, id)
+	}
 	if s.cfg.OwnershipEnforced {
 		if _, err := s.GetSession(ctx, id); err != nil {
 			return nil, err
@@ -3745,6 +3834,9 @@ const (
 )
 
 func (s *Service) startRunContent(ctx context.Context, id session.SessionID, text string, parts []session.Content, purpose runPurpose) (*agent.Run, error) {
+	if s.draining.Load() {
+		return nil, fmt.Errorf("%w: %q", ErrUnavailable, id)
+	}
 	if text == "" && len(parts) == 0 {
 		return nil, fmt.Errorf("%w: prompt text or parts is required", ErrInvalidArgument)
 	}
@@ -4731,6 +4823,9 @@ func (s *Service) ApproveRun(ctx context.Context, id session.SessionID, askID st
 // engineAndEnvironmentFor; the resumed run is registered into s.runs like any other so
 // a concurrent Cancel/Approve reaches it and FinishRun cleans it up.
 func (s *Service) resumeFromAwaiting(ctx context.Context, id session.SessionID, askID string, verdict session.ApprovalVerdict, expectedRunID string) (*agent.Run, error) {
+	if s.draining.Load() {
+		return nil, fmt.Errorf("%w: %q", ErrUnavailable, id)
+	}
 	unlock := s.resumeMu.lock(id)
 	defer unlock()
 
@@ -5075,7 +5170,7 @@ func (s *Service) Persist(ctx context.Context, id session.SessionID) {
 	s.mu.Lock()
 	st, ok := s.runs[id]
 	s.mu.Unlock()
-	if !ok {
+	if !ok || st.preserveDurable.Load() {
 		return
 	}
 	if !s.mutationLeaseHeld(id) {
@@ -5884,7 +5979,7 @@ func (s *Service) SettleIfStale(ctx context.Context, id session.SessionID) (bool
 // its register) from ever matching a dead run's text.
 func (s *Service) register(id session.SessionID, run *agent.Run, sess *session.Session) {
 	s.mu.Lock()
-	s.runs[id] = &runState{run: run, sess: sess}
+	s.runs[id] = &runState{run: run, sess: sess, settled: make(chan struct{})}
 	delete(s.steerMsgIDs, id)
 	s.mu.Unlock()
 }
@@ -5895,6 +5990,7 @@ func (s *Service) deregister(id session.SessionID, run *agent.Run) {
 	s.mu.Lock()
 	if st, ok := s.runs[id]; ok && st.run == run {
 		delete(s.runs, id)
+		st.settledOnce.Do(func() { close(st.settled) })
 	}
 	s.mu.Unlock()
 }

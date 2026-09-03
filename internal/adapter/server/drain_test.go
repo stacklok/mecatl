@@ -2,7 +2,10 @@ package server_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -13,6 +16,7 @@ import (
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
 	"github.com/stacklok/mecatl/engine/adapter/permstore"
 	"github.com/stacklok/mecatl/engine/agent"
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/redisstore"
@@ -181,17 +185,10 @@ func TestDrainDoesNotBlockExistingRun(t *testing.T) {
 	}
 }
 
-// TestDrainAwaitingResumePathGated: the awaiting-resume path
-// (resumeFromAwaiting) reaches acquireLease (and thus the drain gate) ONLY for
-// a genuinely-awaiting session. For an idle session the state check fires
-// first and returns ErrNoActiveRun — that is correct (there is nothing to
-// resume), and the drain gate does not override it. The drain gate's job on
-// the resume path is to prevent a NEW resumed run from starting on an
-// awaiting session held by a draining replica; that path is structurally
-// covered because acquireLease sits on resumeFromAwaiting after the
-// StateAwaiting check. Here we assert the idle-session case returns the
-// honest ErrNoActiveRun, not a drain error (the gate is not a blanket veto on
-// Approve — an in-flight same-process Approve on a LIVE run stays allowed).
+// TestDrainAwaitingResumePathGated asserts that even an idle-session resume
+// attempt is refused at admission once drain begins. The drain gate is a
+// replica-wide retirement boundary, not a state oracle: no retry/resume path may
+// proceed toward ownership acquisition after it is armed.
 func TestDrainAwaitingResumePathGated(t *testing.T) {
 	svc := newDrainTestService(t)
 	sess, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
@@ -199,12 +196,9 @@ func TestDrainAwaitingResumePathGated(t *testing.T) {
 		t.Fatalf("CreateSession: %v", err)
 	}
 	svc.Drain()
-	// ApproveRun on an idle (non-awaiting) session with no live run: the state
-	// check returns ErrNoActiveRun BEFORE the drain gate (acquireLease) is
-	// reached — correct, there is nothing to resume.
 	_, err = svc.ApproveRun(context.Background(), sess.ID, "ask-x", session.VerdictAllowOnce, "")
-	if !errors.Is(err, server.ErrNoActiveRun) {
-		t.Fatalf("ApproveRun after Drain on an idle session = %v, want ErrNoActiveRun (state check fires before the drain gate)", err)
+	if !errors.Is(err, server.ErrUnavailable) {
+		t.Fatalf("ApproveRun after Drain = %v, want ErrUnavailable", err)
 	}
 }
 
@@ -282,4 +276,264 @@ func TestStorageReadyRedis(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 	}
 	t.Error("StorageReady on a closed miniredis stayed true, want false (Redis outage → /readyz not-ready)")
+}
+
+type drainFailStore struct {
+	*memstore.Store
+	mu      sync.Mutex
+	fail    bool
+	attempt bool
+}
+
+func (s *drainFailStore) Save(ctx context.Context, sess *session.Session) error {
+	s.mu.Lock()
+	fail := s.fail
+	if fail {
+		s.attempt = true
+	}
+	s.mu.Unlock()
+	if fail {
+		return errors.New("scripted drain persistence failure")
+	}
+	return s.Store.Save(ctx, sess)
+}
+
+func (s *drainFailStore) failSaves() {
+	s.mu.Lock()
+	s.fail = true
+	s.mu.Unlock()
+}
+
+func (s *drainFailStore) attempted() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.attempt
+}
+
+type drainDiagnostics struct {
+	mu       sync.Mutex
+	messages []string
+}
+
+func (d *drainDiagnostics) Log(_ context.Context, _ port.Level, msg string, _ ...any) {
+	d.mu.Lock()
+	d.messages = append(d.messages, msg)
+	d.mu.Unlock()
+}
+
+func (d *drainDiagnostics) With(...any) port.Diagnostics { return d }
+
+func (d *drainDiagnostics) contains(want string) bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	for _, msg := range d.messages {
+		if strings.Contains(msg, want) {
+			return true
+		}
+	}
+	return false
+}
+
+func newGracefulDrainService(t *testing.T, store port.SessionStore, lease port.SessionLease, llm port.LLMProvider, diag port.Diagnostics) *server.Service {
+	t.Helper()
+	eng := agent.NewEngine(agent.Deps{
+		LLM:         llm,
+		Catalog:     tool.NewCatalog(),
+		Policy:      permpolicy.NewPolicy(nil, permstore.New()),
+		Model:       "test-model",
+		Diagnostics: diag,
+	})
+	svc, err := server.NewService(server.Config{
+		Engine:             eng,
+		Store:              store,
+		Workspaces:         func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+		SessionLease:       lease,
+		LeaseOwner:         "drain-owner",
+		LeaseTTL:           time.Hour,
+		LeaseRenewInterval: 30 * time.Minute,
+		Diagnostics:        diag,
+	})
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+	return svc
+}
+
+func makeAwaitingSession(t *testing.T, id session.SessionID) (*session.Session, session.PendingAsk) {
+	t.Helper()
+	sess := session.New(id, session.ModeDefault, "/ws", session.Limits{MaxTurns: 3}, time.Unix(0, 0))
+	if err := sess.RecordUserPrompt("durable request", nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := sess.BeginTurn(); err != nil {
+		t.Fatal(err)
+	}
+	call := session.NewToolCall("durable-call", "Write", json.RawMessage(`{"path":"f.go"}`))
+	if err := sess.RecordAssistant(session.NewAssistantMessage("", "", []session.ToolCall{call})); err != nil {
+		t.Fatal(err)
+	}
+	ask := session.PendingAsk{AskID: "durable-ask", Tool: "Write", Call: call.ID}
+	if err := sess.PauseForApproval(ask); err != nil {
+		t.Fatal(err)
+	}
+	return sess, ask
+}
+
+func TestADR_0290_DrainStopsAdmissionBeforeOwnershipChange(t *testing.T) {
+	lease := &fakeLease{}
+	store := memstore.New()
+	svc := newGracefulDrainService(t, store, lease, mockllm.New(mockllm.TextTurn("unused")), port.NopDiagnostics{})
+	defer svc.Close()
+
+	idle, err := svc.CreateSession(context.Background(), "/ws", session.ModeDefault, session.Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	awaiting, _ := makeAwaitingSession(t, "awaiting-drain-admission")
+	if err := store.Save(context.Background(), awaiting); err != nil {
+		t.Fatal(err)
+	}
+
+	svc.Drain()
+	checks := []struct {
+		name string
+		call func() error
+	}{
+		{"prompt", func() error { _, err := svc.StartRun(context.Background(), idle.ID, "blocked"); return err }},
+		{"retry", func() error { _, err := svc.RetryFailedRun(context.Background(), idle.ID); return err }},
+		{"resume", func() error {
+			_, err := svc.ApproveRun(context.Background(), awaiting.ID, "durable-ask", session.VerdictAllowOnce, "")
+			return err
+		}},
+		{"mutation", func() error { _, err := svc.SetMode(context.Background(), idle.ID, session.ModePlan); return err }},
+	}
+	for _, check := range checks {
+		if err := check.call(); !errors.Is(err, server.ErrUnavailable) {
+			t.Errorf("%s admission after drain = %v, want ErrUnavailable", check.name, err)
+		}
+	}
+	lease.mu.Lock()
+	acquires := lease.acquires
+	lease.mu.Unlock()
+	if acquires != 0 {
+		t.Fatalf("drained admissions acquired ownership %d times, want 0", acquires)
+	}
+}
+
+func TestADR_0290_DrainPreservesAwaitingResumePoint(t *testing.T) {
+	lease := &fakeLease{}
+	store := memstore.New()
+	svc := newGracefulDrainService(t, store, lease, mockllm.New(mockllm.TextTurn("done")), port.NopDiagnostics{})
+	defer svc.Close()
+
+	sess, err := svc.CreateSession(context.Background(), "/ws", session.ModeDefault, session.Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := svc.StartRun(context.Background(), sess.ID, "acquire ownership")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range run.Events() {
+	}
+	svc.FinishRun(sess.ID, run)
+	awaiting, wantAsk := makeAwaitingSession(t, sess.ID)
+	if err := store.Save(context.Background(), awaiting); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := svc.GracefulDrain(ctx); err != nil {
+		t.Fatalf("GracefulDrain: %v", err)
+	}
+	got, err := store.Load(context.Background(), sess.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotAsk, ok := got.PendingAsk()
+	if got.State != session.StateAwaiting || !ok || gotAsk.AskID != wantAsk.AskID || gotAsk.Call != wantAsk.Call {
+		t.Fatalf("durable resume point changed: state=%q ask=%+v ok=%t", got.State, gotAsk, ok)
+	}
+	if lease.releaseCount() != 1 {
+		t.Fatalf("lease releases = %d, want 1", lease.releaseCount())
+	}
+}
+
+func TestSessionAffinityAndHandoff_Scenario6_DrainCancelsJoinsAndDiagnosesPersistFailure(t *testing.T) {
+	lease := &fakeLease{}
+	store := &drainFailStore{Store: memstore.New()}
+	diag := &drainDiagnostics{}
+	svc := newGracefulDrainService(t, store, lease, blockingProvider{}, diag)
+	defer svc.Close()
+
+	sess, err := svc.CreateSession(context.Background(), "/ws", session.ModeDefault, session.Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := svc.StartRun(context.Background(), sess.ID, "execute")
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.failSaves()
+	drained := make(chan struct{})
+	go func() {
+		for range run.Events() {
+		}
+		svc.FinishRun(sess.ID, run)
+		close(drained)
+	}()
+	lease.releaseHook = func(port.Lease) error {
+		if !store.attempted() {
+			t.Error("lease released before terminal persistence attempt")
+		}
+		select {
+		case <-drained:
+		default:
+			t.Error("lease released before run joined")
+		}
+		return nil
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := svc.GracefulDrain(ctx); err != nil {
+		t.Fatalf("GracefulDrain: %v", err)
+	}
+	if lease.releaseCount() != 1 {
+		t.Fatalf("lease releases = %d, want 1", lease.releaseCount())
+	}
+	if !diag.contains("drain persistence failed") {
+		t.Fatalf("diagnostics = %v, want drain persistence failure", diag.messages)
+	}
+	prior, err := store.Load(context.Background(), sess.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if prior.State != session.StateIdle {
+		t.Fatalf("prior durable state = %q, want idle", prior.State)
+	}
+}
+
+func TestADR_0290_DrainTimeoutRetainsLeaseForTTLTakeover(t *testing.T) {
+	lease := &fakeLease{}
+	store := memstore.New()
+	svc := newGracefulDrainService(t, store, lease, blockingProvider{}, port.NopDiagnostics{})
+
+	sess, err := svc.CreateSession(context.Background(), "/ws", session.ModeDefault, session.Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.StartRun(context.Background(), sess.ID, "execute"); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := svc.GracefulDrain(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("GracefulDrain = %v, want context.Canceled", err)
+	}
+	svc.Close()
+	if lease.releaseCount() != 0 {
+		t.Fatalf("timed-out drain explicitly released lease %d times, want 0", lease.releaseCount())
+	}
 }

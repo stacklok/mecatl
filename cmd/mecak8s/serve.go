@@ -255,23 +255,28 @@ func newAuthenticator(ctx context.Context, cfg config) (*server.Authenticator, e
 	}), nil
 }
 
-// boundedShutdown is the ADR-0048-§4d shutdown sequence:
-//  1. arm the drain gate (new runs → 503); /readyz flips not-ready.
-//  2. log "draining: N active runs" (Service.ActiveRuns()).
+// boundedShutdown is the ADR-0048/ADR-0290 shutdown sequence:
+//  1. arm admission drain and cancel/join Service runs within the shutdown bound;
+//     joined runs get a terminal persistence attempt before lease release.
+//  2. on Service-drain timeout, retain unsettled leases for process-death/TTL takeover.
 //  3. grpcSrv.GracefulStop() in a goroutine + select on gracefulStopTimeout.
 //  4. on timeout: grpcSrv.Stop() (hard) — in-flight runs cancelled,
 //     Recover-able on the successor (issue #51).
 //  5. httpSrv + drainSrv Shutdown(10s ctx).
 //
-// built.Close() (→ Service.Close()) is the CALLER's deferred responsibility
-// (run() defers it); it stops the held-lease renewers and releases every held
-// coordination.k8s.io Lease with a cancel-detached short ctx so a survivor
-// takes over immediately without the 30s TTL. The ctx that reached serve is
-// already cancelled by the signal handler, so boundedShutdown uses a fresh
-// background ctx for the HTTP shutdown.
+// built.Close() (→ Service.Close()) is the CALLER's deferred responsibility.
+// GracefulDrain has already released settled ownership; retained invalid lease
+// handles are removed without an explicit backend Release, leaving TTL takeover.
+// The ctx that reached serve is already cancelled by the signal handler, so
+// boundedShutdown uses fresh background contexts.
 func boundedShutdown(grpcSrv *grpc.Server, httpSrv *http.Server, drainSrv *http.Server, metricsSrv *http.Server, svc *server.Service) {
-	svc.Drain()
+	drainCtx, drainCancel := context.WithTimeout(context.Background(), gracefulStopTimeout)
+	drainErr := svc.GracefulDrain(drainCtx)
+	drainCancel()
 	slog.Info("draining: active runs", "count", svc.ActiveRuns())
+	if drainErr != nil {
+		slog.Warn("service drain timed out; retaining unsettled leases for TTL takeover", "timeout", gracefulStopTimeout, "err", drainErr)
+	}
 
 	stopped := make(chan struct{})
 	go func() {
