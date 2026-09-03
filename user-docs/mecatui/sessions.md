@@ -106,7 +106,24 @@ per-instance `admin.sock`. That raw metrics/pprof surface is for the human
 operator and is **not** placed in model context; the debugger's performance view
 is the bounded event-derived projection.
 
-## Start fresh with `/clear`
+## Name the active chat
+
+Use `/title <text>` while an ordinary chat is open to set its title. Mecatui
+updates the label immediately, then the server's existing rename operation validates
+and persists it; if the request is rejected, the stored title is restored or
+refetched. A manual title has `operator` provenance and stops automatic title
+generation permanently. Use bare `/title` to display the active title and whether it
+was generated or set by an operator; it does not change the session.
+
+Automatic titles are optional. An operator enables them with an explicit compatible
+`models.slots.title` binding; without that slot no extra model call occurs. The
+server—not the client—collects up to three early genuine prompts and may generate a
+concise title after a successful chat exchange. It does not delay or rewrite the
+chat, and its separately recorded `session_title` token usage does not consume the
+chat's run budget. Generated-title updates normally appear live in an open mecatui;
+a reconnect or reopened session refetches the authoritative snapshot, so a missed
+live update is corrected.
+
 
 Use `/clear` when you want empty context without changing placement. You can issue it
 while idle, while a response is streaming, or while an approval is open; you do not need to

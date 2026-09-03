@@ -290,8 +290,9 @@ coverage for allocations, RSS, tokens, cache-hit rate, and goroutine hygiene. Se
   (so a session saved mid-`awaiting` reloads with its pending ask intact). It
   captures the terminal reason via `RecordedStopReason()` for exact round-trips,
   and (cloud-native Phase 1) the per-session profile, the opaque provider/model
-  selector pair, and the cumulative token `usage` — additive fields so a
-  restarted process rebuilds the SAME engine and the `MaxRunTokens` budget
+  selector pair, the title/provenance and title-generation metadata, the canonical
+  auxiliary `token_usage` ledger, and the cumulative token `usage` — additive fields
+  so a restarted process rebuilds the SAME engine and the `MaxRunTokens` budget
   continues across restart (see `docs/adr/0027-cloud-native.md`).
   A store may additionally implement the optional **`port.PrunableStore`**
   (`List`/`Delete`; `ErrPruneUnsupported` otherwise) — the retention MECHANISM.
@@ -329,9 +330,13 @@ coverage for allocations, RSS, tokens, cache-hit rate, and goroutine hygiene. Se
   `SessionStore`+`ToolCallRecorder`+`EventLog` (a `.events.jsonl` sidecar);
   memstore has an in-memory sibling; `grpcdriver` carries the remote
   `EventLogService` (`--event-log-url`, independent of the session store). The
-  log also records the new **log-only `EvUserPrompt`** — every user-role turn
-  (the genuine prompt plus the harness's synthetic continuations), skipped on the
-  client wire — so that a fold can reconstruct what the user asked. **Three**
+  log also records the log-only **`EvUserPrompt`** and out-of-band
+  **`EvSessionTitle`** events. A title event follows a successful snapshot save and
+  carries only title lifecycle metadata; it contains no title-source prompts or
+  provider errors. It is also offered best-effort to gRPC live-session subscribers,
+  while HTTP clients reconcile it through the authoritative snapshot or durable
+  event stream. The `EvUserPrompt` records every user-role turn (the genuine prompt
+  plus the harness's synthetic continuations), skipped on the client wire — so that a fold can reconstruct what the user asked. **Three**
   consumers, all in **composition** (never the loop): the non-destructive
   **compaction archive**; the **permstore verdict-replay**
   (`internal/app/approvalreplay.go`) that re-derives learned allow-always rules
