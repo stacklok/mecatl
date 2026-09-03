@@ -142,6 +142,9 @@ only; same-UID attacks, authenticated rollback, crash-left encrypted temporary f
 and non-local flock/rename behavior remain outside it. See [ADR 0218](adr/0218-credential-store.md).
 
 The session-scoped MCP broker is a process-wide in-process runtime owned by `app.Built`.
+Broker authority is exclusive of programmatic global `MCPServers`; `app.Build` rejects a
+mixed configuration after resolving the effective authority, including a loader result,
+before constructing MCP, broker-process, or Redis resources.
 `mecated` and `mecak8s` mount its fixed callback handler bundle on their existing primary
 HTTP mux before the API catch-all; no second listener or context-value catalogue channel
 exists. `server.Service` holds only local attachments, and each per-session catalogue is

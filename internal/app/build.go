@@ -1391,6 +1391,15 @@ func applyMCPAuthority(cfg *Config, authority *mcpauthority.Result, profileLifec
 	return nil
 }
 
+// validateMCPAuthority rejects mutually exclusive MCP construction paths after
+// the effective authority, including any loader result, has been resolved.
+func validateMCPAuthority(cfg Config) error {
+	if cfg.MCPAuthority != nil && cfg.MCPAuthority.Mode() == mcpauthority.Broker && len(cfg.MCPServers) != 0 {
+		return fmt.Errorf("broker MCP authority cannot be combined with programmatic MCPServers")
+	}
+	return nil
+}
+
 //nolint:gocyclo // composition root: long sequential wiring with reverse-order teardown; inherent.
 func Build(ctx context.Context, cfg Config) (*Built, error) {
 	mcpProfileLifecycle := cfg.MCPProfileLifecycle
@@ -1586,6 +1595,9 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		cfg.MCPServers = profiles
 		cfg.MCPProfileLifecycle = lifecycle
 		mcpProfileLifecycle = lifecycle
+	}
+	if err := validateMCPAuthority(cfg); err != nil {
+		return nil, err
 	}
 
 	definitions := cfg.ProviderDefinitions

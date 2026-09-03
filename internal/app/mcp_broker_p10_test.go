@@ -13,6 +13,7 @@ import (
 	"github.com/stacklok/mecatl/engine/prompt"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/internal/adapter/hookexec"
+	"github.com/stacklok/mecatl/internal/adapter/mcp"
 	"github.com/stacklok/mecatl/internal/adapter/mcpauthority"
 	"github.com/stacklok/mecatl/internal/adapter/mcpbroker"
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
@@ -105,4 +106,42 @@ func TestBuiltOwnsBrokerRuntimeShutdown(t *testing.T) {
 		t.Fatal("broker accepted attachment after Built.Close")
 	}
 	built.Close()
+}
+
+type staticBrokerAuthorityLoader struct {
+	authority *mcpauthority.Result
+}
+
+func (l staticBrokerAuthorityLoader) LoadAuthority(*permconfig.MCPSection, mcpauthority.Mode, bool) (*mcpauthority.Result, error) {
+	return l.authority, nil
+}
+
+func TestBuildRejectsProgrammaticMCPServersWithBrokerAuthority(t *testing.T) {
+	tests := []struct {
+		name string
+		cfg  Config
+	}{
+		{
+			name: "direct authority",
+			cfg:  Config{MCPAuthority: mcpauthority.NewBroker(mcpauthority.BrokerConfig{})},
+		},
+		{
+			name: "loader-resolved authority",
+			cfg:  Config{MCPAuthorityLoader: staticBrokerAuthorityLoader{authority: mcpauthority.NewBroker(mcpauthority.BrokerConfig{})}},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := test.cfg
+			cfg.Workspace = t.TempDir()
+			cfg.UseMock = true
+			cfg.NoSoul = true
+			cfg.MCPServers = []mcp.ServerConfig{{Name: "global", URL: "http://127.0.0.1:1/mcp"}}
+
+			_, err := Build(t.Context(), cfg)
+			if err == nil || err.Error() != "broker MCP authority cannot be combined with programmatic MCPServers" {
+				t.Fatalf("Build error = %v, want mixed broker authority and MCPServers rejection", err)
+			}
+		})
+	}
 }
