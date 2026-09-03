@@ -122,6 +122,23 @@ func TestMecak8sKindFixture_Scenario2_MockDefault(t *testing.T) {
 	}
 }
 
+// TestMecak8sKindFixture_Scenario2_KeycloakRetainsProviderOverlay pins that
+// Keycloak's Helm layer cannot reset a real-provider setup to the mock overlay.
+func TestMecak8sKindFixture_Scenario2_KeycloakRetainsProviderOverlay(t *testing.T) {
+	text := fixtureTaskClosure(t, "chart-keycloak-apply")
+	for _, want := range []string{
+		`if [ -n "${OPENROUTER_API_KEY:-}" ]; then`,
+		"provider_values=deploy/mecak8s-kind/kind-provider-real.yaml",
+		"provider_values=deploy/mecak8s-kind/kind-provider-mock.yaml",
+		"--values=deploy/helm/mecak8s/values-kind-keycloak.yaml",
+		`--values="$provider_values"`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("Keycloak chart layer missing provider overlay control %q", want)
+		}
+	}
+}
+
 // TestInvariant_credential_not_process_argument pins that the fixture's
 // operator credential crosses only kubectl's standard input as a file payload.
 func TestInvariant_credential_not_process_argument(t *testing.T) {
