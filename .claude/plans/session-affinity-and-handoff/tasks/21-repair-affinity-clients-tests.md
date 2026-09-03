@@ -2,12 +2,12 @@
 id: 21-repair-affinity-clients-tests
 title: Repair transport contract, client compatibility, Helm regression, and test oracles
 blocked_by: [02-grpc-affinity-validation, 03-http-affinity-validation, 04-mecatui-affinity, 05-typescript-raw-affinity, 06-typescript-high-level-affinity, 17-helm-affinity-neutrality]
-status: in-progress
-branch: ""
+status: done
+branch: "plan-session-affinity-and-handoff/21-repair-affinity-clients-tests"
 worktree: ".scratch/task-session-affinity-21"
 issue: ""
 retries: 0
-last_error: "panel ship-blockers: cross-transport legal values, derived CreateSession gaps, mecatui interface break, pod affinity removal, weak route/control/retry tests"
+last_error: ""
 accumulator: acc/session-affinity-and-handoff
 ---
 

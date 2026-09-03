@@ -2,12 +2,12 @@
 id: 20-repair-lease-lifecycle
 title: Repair lease admission, child ownership, and drain races
 blocked_by: [09-lease-loss-capability, 10-awaiting-lease-loss-handoff, 11-close-session-semantics, 12-graceful-drain-ownership]
-status: in-progress
-branch: ""
+status: done
+branch: "plan-session-affinity-and-handoff/20-repair-lease-lifecycle"
 worktree: ".scratch/task-session-affinity-20"
 issue: ""
 retries: 0
-last_error: "panel ship-blockers: provisional admission race, child lease invalidation gap, stale mutation admission, run lifecycle settlement, sequential drain, capability tombstones"
+last_error: ""
 accumulator: acc/session-affinity-and-handoff
 ---
 
