@@ -135,6 +135,13 @@ when the code that satisfies the plan has landed.
   set, an HTTP-only attached `cancel` carrying `expected_run_id` (attached
   approval deferred to an ack-only server route), and the offline
   daemon-restart and awaiting-resume e2e. Status: draft.
+- [TypeScript SDK local daemon and callback tools (M3)](sdk-typescript-local.md) —
+  `@stacklok/mecatl-sdk` M3: `spawn()`'s binary resolution, SDK-owned argv and
+  ready-file barrier, the UDS-only tool-capable topology with its lifetime pipe,
+  redacted startup-failure reporting, the spawned-versus-connected disposal
+  ownership matrix, `query()`'s one-shot lifecycle, callback `tool()` with local
+  schema validation and two-layer collision refusal, the hand-written loopback
+  streaming-HTTP MCP host, and the offline Node/Bun e2e. Status: draft.
 
 ## See also
 
