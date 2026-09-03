@@ -278,6 +278,116 @@ func TestStorageReadyRedis(t *testing.T) {
 	t.Error("StorageReady on a closed miniredis stayed true, want false (Redis outage → /readyz not-ready)")
 }
 
+type drainPersistBarrierStore struct {
+	*memstore.Store
+	mu      sync.Mutex
+	entered chan struct{}
+	release chan struct{}
+	fail    bool
+}
+
+func (s *drainPersistBarrierStore) Save(ctx context.Context, sess *session.Session) error {
+	s.mu.Lock()
+	entered, release, fail := s.entered, s.release, s.fail
+	s.entered = nil
+	s.mu.Unlock()
+	if entered != nil {
+		close(entered)
+		select {
+		case <-release:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+		if fail {
+			return errors.New("scripted awaiting persistence failure")
+		}
+	}
+	return s.Store.Save(ctx, sess)
+}
+
+func (s *drainPersistBarrierStore) arm(fail bool) (<-chan struct{}, chan struct{}) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.entered = make(chan struct{})
+	s.release = make(chan struct{})
+	s.fail = fail
+	return s.entered, s.release
+}
+
+func TestADR_0290_AwaitingPersistAndDrainLifecycleIsAtomic(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		fail      bool
+		wantState session.State
+	}{
+		{name: "successful awaiting save is preserved", wantState: session.StateAwaiting},
+		{name: "failed awaiting save is cancelled and settled", fail: true, wantState: session.StateCancelled},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			base := memstore.New()
+			store := &drainPersistBarrierStore{Store: base}
+			lease := &fakeLease{}
+			cat := tool.NewCatalog()
+			cat.MustRegister(&writeAskTool{})
+			eng := agent.NewEngine(agent.Deps{
+				LLM:     mockllm.New(mockllm.ToolCallTurn(session.NewToolCall("atomic-call", "Write", json.RawMessage(`{}`)))),
+				Catalog: cat, Policy: permpolicy.NewPolicy(nil, permstore.New()), Model: "test-model",
+			})
+			svc, err := server.NewService(server.Config{
+				Engine: eng, Store: store, SessionLease: lease, LeaseOwner: "atomic-drain",
+				LeaseTTL: time.Hour, LeaseRenewInterval: time.Hour,
+				Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer svc.Close()
+			sess, err := svc.CreateSession(context.Background(), "/ws", session.ModeDefault, session.Limits{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			run, err := svc.StartRun(context.Background(), sess.ID, "park")
+			if err != nil {
+				t.Fatal(err)
+			}
+			for ev := range run.Events() {
+				if ev.Type == session.EvPermissionAsk {
+					break
+				}
+			}
+			entered, release := store.arm(tc.fail)
+			persisted := make(chan struct{})
+			go func() {
+				svc.Persist(context.Background(), sess.ID)
+				close(persisted)
+			}()
+			<-entered
+			joined := make(chan struct{})
+			go func() {
+				for range run.Events() {
+				}
+				svc.FinishRun(sess.ID, run)
+				close(joined)
+			}()
+			drained := make(chan error, 1)
+			go func() { drained <- svc.GracefulDrain(context.Background()) }()
+			close(release)
+			<-persisted
+			if err := <-drained; err != nil {
+				t.Fatalf("GracefulDrain: %v", err)
+			}
+			<-joined
+			got, err := base.Load(context.Background(), sess.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.State != tc.wantState {
+				t.Fatalf("durable state = %s, want %s", got.State, tc.wantState)
+			}
+		})
+	}
+}
+
 type drainFailStore struct {
 	*memstore.Store
 	mu      sync.Mutex

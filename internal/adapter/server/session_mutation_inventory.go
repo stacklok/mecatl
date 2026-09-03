@@ -66,6 +66,8 @@ var sessionMutationInventory = map[string]SessionMutationEntry{
 	"GracefulDrain":                      {SessionMutationLeaseProven, "shutdown persists only joined runs while their previously acquired session lease remains valid"},
 	"Persist":                            {SessionMutationLeaseProven, "relay persistence is admitted only while the registered run's held lease remains valid"},
 	"saveSession":                        {SessionMutationLeaseProven, "single pre-backend snapshot-save gate revalidates the current process-local mutation capability"},
+	"repairRunningSession":               {SessionMutationLeaseProven, "run-entry crash repair executes only after acquisition and persists through saveSession"},
+	"deleteSessionFamily":                {SessionMutationLeaseProven, "single pre-backend family-delete gate revalidates the exact held session lease"},
 	"appendEvent":                        {SessionMutationLeaseProven, "relay event append is admitted only while the registered run or management mutation holds the lease"},
 	"engine/agent/dispatch.go:ToolCall":  {SessionMutationLeaseProven, "tool-call recording occurs only inside a Service-admitted run that already owns the session lease; engine remains lease-unaware"},
 	"adapter:family-derivatives":         {SessionMutationLeaseProven, "snapshot save, delete, event append, and tool-call record adapters update metadata indexes and sidecars inside the same backend call"},

@@ -87,6 +87,69 @@ func TestADR_0290_LeaseLossDuringProvisionalAdmissionPreventsProviderStart(t *te
 	}
 }
 
+func TestADR_0290_DrainCancelsProvisionalAdmissionBeforeProviderStart(t *testing.T) {
+	lease := &fakeLease{}
+	capability := server.NewSessionMutationCapability(true)
+	store := memstore.New()
+	provider := &admissionCountingProvider{}
+	eng := agent.NewEngine(agent.Deps{
+		LLM: provider, Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, permstore.New()), Model: "test-model",
+		Store: capability.GuardStore(store),
+	})
+	resolverEntered := make(chan struct{})
+	svc, err := server.NewService(server.Config{
+		Engine: eng, Store: store, SessionLease: lease, LeaseOwner: "drain-provisional-owner",
+		LeaseTTL: time.Hour, LeaseRenewInterval: time.Hour, MutationCapability: capability,
+		Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+		EnvironmentResolver: func(ctx context.Context, _ session.EnvironmentRef) (tool.Environment, error) {
+			close(resolverEntered)
+			<-ctx.Done()
+			return tool.Environment{}, ctx.Err()
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+	defer svc.Close()
+	id := session.SessionID("drain-provisional-admission")
+	sess := session.New(id, session.ModeDefault, "/ws", session.Limits{}, time.Now())
+	sess.EnvironmentRef = session.EnvironmentRef{Kind: "remote-test", ID: "ns"}
+	if err := store.Save(context.Background(), sess); err != nil {
+		t.Fatal(err)
+	}
+	result := make(chan error, 1)
+	go func() {
+		_, err := svc.StartRun(context.Background(), id, "must not start")
+		result <- err
+	}()
+	select {
+	case <-resolverEntered:
+	case <-time.After(time.Second):
+		t.Fatal("environment admission did not start")
+	}
+	svc.Drain()
+	select {
+	case err := <-result:
+		if err == nil {
+			t.Fatal("StartRun succeeded after drain cancelled provisional admission")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("drain did not cancel provisional admission")
+	}
+	if got := provider.calls.Load(); got != 0 {
+		t.Fatalf("provider starts after provisional drain = %d, want 0", got)
+	}
+}
+
+func TestADR_0290_ConfiguredCapabilityRequiresExactHold(t *testing.T) {
+	capability := server.NewSessionMutationCapability(true)
+	guarded := capability.GuardStore(memstore.New())
+	sess := session.New("never-acquired", session.ModeDefault, "/ws", session.Limits{}, time.Now())
+	if err := guarded.Save(context.Background(), sess); !errors.Is(err, server.ErrSessionLeasedElsewhere) {
+		t.Fatalf("untracked configured capability save = %v, want ErrSessionLeasedElsewhere", err)
+	}
+}
+
 type leaseLossRecorder struct {
 	calls atomic.Int64
 }
@@ -169,6 +232,67 @@ func newCapabilityService(t *testing.T, lease port.SessionLease, capability *ser
 	}
 	t.Cleanup(svc.Close)
 	return svc, store, guardedStore, guardedRecorder
+}
+
+type countingLeaseLossEventLog struct{ appends atomic.Int64 }
+
+func (l *countingLeaseLossEventLog) Append(context.Context, session.SessionID, session.Event) error {
+	l.appends.Add(1)
+	return nil
+}
+func (*countingLeaseLossEventLog) Read(context.Context, session.SessionID) iter.Seq2[session.Event, error] {
+	return func(func(session.Event, error) bool) {}
+}
+
+func TestADR_0290_PostLossEventAppendIsRejectedAndDiagnosed(t *testing.T) {
+	lease := &fakeLease{}
+	lost := make(chan struct{})
+	lease.renewHook = func(port.Lease) (port.Lease, error) {
+		<-lost
+		return port.Lease{}, port.ErrLeaseHeld
+	}
+	capability := server.NewSessionMutationCapability(true)
+	store := memstore.New()
+	log := &countingLeaseLossEventLog{}
+	diag := &leaseLossDiagnostics{}
+	eng := agent.NewEngine(agent.Deps{
+		LLM: blockingProvider{}, Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, permstore.New()),
+		Model: "test-model", Store: capability.GuardStore(store),
+	})
+	svc, err := server.NewService(server.Config{
+		Engine: eng, Store: store, EventLog: log, SessionLease: lease, LeaseOwner: "event-loss",
+		LeaseTTL: time.Hour, LeaseRenewInterval: time.Millisecond, MutationCapability: capability,
+		Diagnostics: diag, Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer svc.Close()
+	sess, err := svc.CreateSession(context.Background(), "/ws", session.ModeDefault, session.Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := svc.StartRun(context.Background(), sess.ID, "run")
+	if err != nil {
+		t.Fatal(err)
+	}
+	recorder := server.NewRunEventRecorder(context.Background(), svc, sess.ID)
+	recorder.Observe(session.Event{Type: session.EvTurnStart})
+	if got := log.appends.Load(); got != 1 {
+		t.Fatalf("pre-loss appends = %d, want 1", got)
+	}
+	close(lost)
+	for range run.Events() {
+	}
+	recorder.Observe(session.Event{Type: session.EvResult, Result: &session.ResultPayload{Stop: session.StopCancelled}})
+	recorder.Close()
+	if got := log.appends.Load(); got != 1 {
+		t.Fatalf("post-loss event reached durable log: appends=%d, want 1", got)
+	}
+	if got := diag.count("event log append failed"); got != 1 {
+		t.Fatalf("post-loss append diagnostics = %d, want one sticky warning", got)
+	}
+	svc.FinishRun(sess.ID, run)
 }
 
 func TestSessionAffinityAndHandoff_Scenario5_LeaseLossCancelsAndPreventsNewMutations(t *testing.T) {
@@ -273,8 +397,11 @@ func TestADR_0290_NormalReleaseRemovesMutationCapabilityTombstone(t *testing.T) 
 	if err := svc.EndSession(context.Background(), sess.ID); err != nil {
 		t.Fatalf("EndSession: %v", err)
 	}
-	if err := guardedStore.Save(context.Background(), sess); err != nil {
-		t.Fatalf("guard retained a normal-release tombstone: %v", err)
+	if _, err := svc.SetMode(context.Background(), sess.ID, session.ModePlan); err != nil {
+		t.Fatalf("fresh mutation did not reacquire after normal release: %v", err)
+	}
+	if err := guardedStore.Save(context.Background(), sess); !errors.Is(err, server.ErrSessionLeasedElsewhere) {
+		t.Fatalf("configured guard without an exact current hold = %v, want ErrSessionLeasedElsewhere", err)
 	}
 }
 

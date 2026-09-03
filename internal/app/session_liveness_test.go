@@ -146,3 +146,37 @@ func TestADR_0290_ChildLeaseLossInvalidatesMutationBeforeCancellation(t *testing
 		t.Fatalf("stale child ownership released %d times, want 0", got)
 	}
 }
+
+func TestADR_0290_ChildLostHoldRejectsNewReferenceUntilFreshAcquire(t *testing.T) {
+	lease := &losingChildLease{lost: make(chan struct{})}
+	capability := server.NewSessionMutationCapability(true)
+	registry := newSessionLiveness(lease, "replica", time.Hour, time.Millisecond, nil, capability)
+	defer registry.Close()
+	id := session.SessionID("subagent-lost-reference")
+	cancelled := make(chan struct{})
+	release, err := registry.Register(context.Background(), id, func() { close(cancelled) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	close(lease.lost)
+	select {
+	case <-cancelled:
+	case <-time.After(time.Second):
+		t.Fatal("loss callback did not run")
+	}
+	if _, err := registry.Register(context.Background(), id, func() {}); !errors.Is(err, port.ErrLeaseHeld) {
+		t.Fatalf("Register on lost hold = %v, want ErrLeaseHeld", err)
+	}
+	release()
+	// The stale reference settled without Release. A new lifecycle must perform a
+	// fresh Acquire and may therefore become live again.
+	lease.lost = make(chan struct{})
+	fresh, err := registry.Register(context.Background(), id, func() {})
+	if err != nil {
+		t.Fatalf("fresh Register after stale settle: %v", err)
+	}
+	fresh()
+	if got := lease.releases.Load(); got != 1 {
+		t.Fatalf("release calls = %d, want only the fresh hold released", got)
+	}
+}

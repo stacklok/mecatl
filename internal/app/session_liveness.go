@@ -84,7 +84,7 @@ func (r *sessionLiveness) Register(ctx context.Context, id session.SessionID, ca
 				return nil, ctx.Err()
 			}
 			r.mu.Lock()
-			if current := r.active[id]; current == h && h.err == nil {
+			if current := r.active[id]; current == h && h.err == nil && !h.lost {
 				h.refs++
 				h.next++
 				key := h.next
@@ -93,7 +93,11 @@ func (r *sessionLiveness) Register(ctx context.Context, id session.SessionID, ca
 				return sync.OnceFunc(func() { r.release(id, h, key) }), nil
 			}
 			err := h.err
+			lost := h.lost
 			r.mu.Unlock()
+			if lost {
+				return nil, fmt.Errorf("app: child session lease %q was lost: %w", id, port.ErrLeaseHeld)
+			}
 			if err != nil {
 				return nil, err
 			}
@@ -200,8 +204,6 @@ func (r *sessionLiveness) renewLoop(ctx context.Context, id session.SessionID, h
 }
 
 func (r *sessionLiveness) lose(id session.SessionID, h *childLeaseHold, cause error) {
-	r.diag.Log(context.Background(), port.LevelWarn, "lost child session lease; cancelling child",
-		"session", string(id), "owner", r.owner, "err", cause.Error())
 	r.mu.Lock()
 	if r.active[id] != h || h.lost {
 		r.mu.Unlock()
@@ -219,6 +221,8 @@ func (r *sessionLiveness) lose(id session.SessionID, h *childLeaseHold, cause er
 	for _, cancel := range cancels {
 		cancel()
 	}
+	r.diag.Log(context.Background(), port.LevelWarn, "lost child session lease; cancelling child",
+		"session", string(id), "owner", r.owner, "err", cause.Error())
 }
 
 func (r *sessionLiveness) release(id session.SessionID, h *childLeaseHold, key uint64) {
@@ -235,7 +239,9 @@ func (r *sessionLiveness) release(id session.SessionID, h *childLeaseHold, key u
 	}
 	delete(r.active, id)
 	stop, done, lease, lost := h.stop, h.done, h.lease, h.lost
-	if r.capability != nil && !lost {
+	if r.capability != nil {
+		// Final reference settlement ends both live authority and a lost-hold
+		// tombstone. A later Register must acquire a fresh lease before Grant.
 		r.capability.Remove(id)
 	}
 	r.mu.Unlock()
@@ -289,7 +295,7 @@ func (r *sessionLiveness) Close() {
 			cancel()
 		}
 		r.stopAndRelease(h.stop, h.done, h.lease, h.lost)
-		if r.capability != nil && !h.lost {
+		if r.capability != nil {
 			r.capability.Remove(hold.id)
 		}
 	}

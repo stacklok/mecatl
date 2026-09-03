@@ -7,6 +7,7 @@ import (
 	"iter"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -61,6 +62,30 @@ func (p *firstThenBlockingProvider) Stream(ctx context.Context, _ port.LLMReques
 
 func (*firstThenBlockingProvider) Capabilities() port.ProviderCapabilities {
 	return port.ProviderCapabilities{}
+}
+
+func TestADR_0290_AppAndMecak8sLeaseCompositionSharesMutationCapability(t *testing.T) {
+	buildSource, err := os.ReadFile("build.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"engineStore := mutationCapability.GuardStore(store)",
+		"cfg.ToolCallRecorder = mutationCapability.GuardToolCallRecorder(cfg.ToolCallRecorder)",
+		"SessionLease:       sessionLease",
+		"MutationCapability: mutationCapability",
+	} {
+		if !strings.Contains(string(buildSource), want) {
+			t.Errorf("app.Build no longer shares lease mutation capability: missing %q", want)
+		}
+	}
+	mecak8sSource, err := os.ReadFile("../../cmd/mecak8s/flags.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(mecak8sSource), "SessionLeaseK8sNamespace:      cfg.sessionLeaseK8sNamespace") {
+		t.Fatal("mecak8s appConfig no longer enables the app lease/capability composition")
+	}
 }
 
 // TestCrossProcessLeaseExclusion is the cloud-native Phase 4 falsifiable gate: a

@@ -760,12 +760,18 @@ and behavior unchanged; `ErrLeaseUnsupported` disables it with the existing stic
 fallback.
 
 `internal/adapter/server/service.go` (`onLeaseLost`) invalidates the session capability
-before removing/cancelling the local run. Thus later save/delete/event/tool/metadata and
-sidecar operations fail locally; local invalidation is not backend fencing: a call
-admitted before loss may still complete, and stores carry no lease token or epoch. For
-an awaiting run, the Service retracts local ask delivery and prevents relay persistence,
-but leaves the durable `PendingAsk` unresolved and byte-identical for TTL takeover.
-The invalid tombstone also stops the stale Service from immediately reacquiring.
+before removing/cancelling the local run. Run, retry, and awaiting-resume install a
+cancellable provisional `runState` before acquisition or engine construction, then
+atomically promote it only while the drain gate and exact held lease remain valid.
+Thus later save/delete/event/tool/metadata and sidecar operations fail locally; local
+invalidation is not backend fencing: a call admitted before loss may still complete,
+and stores carry no lease token or epoch. For an awaiting run, `persistMu` makes the
+save result and local awaiting marker one drain-visible lifecycle transaction. The
+Service retracts local ask delivery and prevents later relay persistence, but leaves the
+durable `PendingAsk` unresolved and byte-identical for TTL takeover. Settled stale run
+references remove heavyweight held-lease/capability tombstones; the lightweight
+`lostOwnership` denial remains until explicit local session teardown so that stale
+Service cannot reacquire.
 
 `CloseSession` rejects a live running or awaiting owner before teardown or lease
 release. A runless persisted awaiting session may close resources without modifying its

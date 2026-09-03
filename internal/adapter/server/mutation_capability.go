@@ -65,11 +65,10 @@ func (c *SessionMutationCapability) allows(id session.SessionID) bool {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	valid, tracked := c.states[id]
-	// Untracked identities retain their existing path. Service tracks a main
-	// session when its lease is acquired, while independently leased delegation
-	// children continue through their own liveness owner. A declared loss leaves
-	// an explicit false tombstone, which is the state this gate denies.
-	return c.disabled || !tracked || valid
+	// With leasing configured, only an exact live Grant is authority. Creation
+	// uses the unwrapped store before an owner can exist; every later write must
+	// carry a tracked hold. Explicit false entries retain denial during unwind.
+	return c.disabled || tracked && valid
 }
 
 // GuardStore gates engine-owned snapshot saves at operation admission. Loads are

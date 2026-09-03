@@ -199,6 +199,82 @@ func serviceMethod(fn *ast.FuncDecl) bool {
 	return ok && ident.Name == "Service"
 }
 
+func TestADR_0290_DurableSessionWritesUseSanctionedWrappers(t *testing.T) {
+	files, err := filepath.Glob("*.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	allowed := map[string]bool{
+		"persistNewSession":   true,
+		"saveSession":         true,
+		"deleteSessionFamily": true,
+		"appendEvent":         true,
+	}
+	var violations []string
+	fset := token.NewFileSet()
+	for _, path := range files {
+		if strings.HasSuffix(path, "_test.go") || path == "schedule_manager.go" || path == "mutation_capability.go" {
+			continue
+		}
+		file, parseErr := parser.ParseFile(fset, path, nil, 0)
+		if parseErr != nil {
+			t.Fatal(parseErr)
+		}
+		for _, decl := range file.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if !ok || fn.Body == nil || allowed[fn.Name.Name] {
+				continue
+			}
+			ast.Inspect(fn.Body, func(node ast.Node) bool {
+				call, ok := node.(*ast.CallExpr)
+				if !ok {
+					return true
+				}
+				sel, ok := call.Fun.(*ast.SelectorExpr)
+				if !ok {
+					return true
+				}
+				switch sel.Sel.Name {
+				case "Save", "Create", "Append", "AppendEvent", "ToolCall":
+					violations = append(violations, path+":"+fn.Name.Name+"."+sel.Sel.Name)
+				case "Delete":
+					// sync.Map deletion is process-local, not a durable family write.
+					if x, ok := sel.X.(*ast.SelectorExpr); !ok || x.Sel.Name != "recoverNotices" {
+						violations = append(violations, path+":"+fn.Name.Name+".Delete")
+					}
+				}
+				return true
+			})
+		}
+	}
+	if len(violations) != 0 {
+		t.Fatalf("durable session writes bypass sanctioned wrappers: %v", violations)
+	}
+
+	// Prove the oracle catches a free helper; limiting discovery to Service methods
+	// was the bypass this guard replaces.
+	fixture, err := parser.ParseFile(token.NewFileSet(), "fixture.go", `package server
+func freeHelper(store interface{ Save() }) { store.Save() }`, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	caught := false
+	ast.Inspect(fixture, func(node ast.Node) bool {
+		call, ok := node.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		sel, ok := call.Fun.(*ast.SelectorExpr)
+		if ok && sel.Sel.Name == "Save" {
+			caught = true
+		}
+		return true
+	})
+	if !caught {
+		t.Fatal("architecture guard did not discover a free helper mutation")
+	}
+}
+
 func TestADR_0290_AllSessionMutatorsClassified(t *testing.T) {
 	if errs := validateSessionMutationNames(sessionMutationInventory, discoveredSessionMutationBoundaries(t)); len(errs) != 0 {
 		for _, err := range errs {

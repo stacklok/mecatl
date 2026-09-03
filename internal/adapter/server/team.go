@@ -322,7 +322,7 @@ func (s *Service) deleteAbandonedMembers(ctx context.Context, ids []session.Sess
 		if !s.mutationLeaseHeld(id) {
 			continue
 		}
-		if err := prunable.Delete(ctx, id); err != nil && !errors.Is(err, port.ErrSessionNotFound) {
+		if err := s.deleteSessionFamily(ctx, id, prunable); err != nil && !errors.Is(err, port.ErrSessionNotFound) {
 			s.cfg.Diagnostics.Log(ctx, port.LevelWarn,
 				"abandoned team member snapshot could not be deleted; left for retention",
 				"session", string(id), "err", err.Error())
