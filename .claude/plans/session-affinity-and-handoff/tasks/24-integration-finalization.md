@@ -2,12 +2,12 @@
 id: 24-integration-finalization
 title: Final integration fixes for provisional admission and optional child leasing
 blocked_by: [22-repair-lease-races-final, 23-repair-transport-oracles-final]
-status: in-progress
-branch: ""
+status: done
+branch: "plan-session-affinity-and-handoff/24-integration-finalization"
 worktree: ".scratch/task-session-affinity-24"
 issue: ""
 retries: 0
-last_error: "final review: run launch used uncancelled context, provisional approval nil dereference, child ErrLeaseUnsupported compatibility"
+last_error: ""
 accumulator: acc/session-affinity-and-handoff
 ---
 
