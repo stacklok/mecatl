@@ -2,6 +2,7 @@ package clientauth
 
 import (
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 
@@ -179,6 +180,63 @@ func TestADR_0290_LegacyResourceAliasPolicy(t *testing.T) {
 	got, err := registry.Find("legacy.example.com:443")
 	if err != nil || got.ResourceURL != "" {
 		t.Fatalf("legacy target lookup = %#v, %v", got, err)
+	}
+}
+
+func TestADR_0290_EnrollResourceAliasDisplacesAcrossTargets(t *testing.T) {
+	registry, err := OpenRegistry(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	creds := credentials(t)
+	first := resourceConnection("https://api.example.com", "one.example.com:7443", "https://issuer.example.com")
+	second := resourceConnection("https://api.example.com/", "two.example.com:7443", "https://issuer.example.com")
+	if err := Enroll(t.Context(), first, Token{AccessToken: "one", TokenType: "Bearer"}, EnrollmentConfig{Registry: registry, Credentials: creds}); err != nil {
+		t.Fatal(err)
+	}
+	if err := Enroll(t.Context(), second, Token{AccessToken: "two", TokenType: "Bearer"}, EnrollmentConfig{Registry: registry, Credentials: creds}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := registry.Find("https://API.example.com")
+	if err != nil || got.Identity.Target != second.Identity.Target {
+		t.Fatalf("resource alias winner = %#v, %v", got, err)
+	}
+	if _, err := creds.Load(t.Context(), first.Identity); !errors.Is(err, credentialstore.ErrNotFound) {
+		t.Fatalf("displaced credential remains: %v", err)
+	}
+}
+
+func TestADR_0290_ConcurrentCrossTargetResourceEnrollmentSerializes(t *testing.T) {
+	registry, err := OpenRegistry(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	creds := credentials(t)
+	start := make(chan struct{})
+	errs := make(chan error, 2)
+	for n, target := range []string{"one.example.com:7443", "two.example.com:7443"} {
+		n, target := n, target
+		go func() {
+			<-start
+			conn := resourceConnection("https://api.example.com/", target, "https://issuer.example.com")
+			errs <- Enroll(t.Context(), conn, Token{AccessToken: fmt.Sprintf("token-%d", n), TokenType: "Bearer"}, EnrollmentConfig{Registry: registry, Credentials: creds})
+		}()
+	}
+	close(start)
+	for range 2 {
+		if err := <-errs; err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := registry.Find("https://api.example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Identity.Target != "one.example.com:7443" && got.Identity.Target != "two.example.com:7443" {
+		t.Fatalf("unexpected concurrent winner: %#v", got)
+	}
+	if rows, err := registry.List(); err != nil || len(rows) != 1 {
+		t.Fatalf("resource enrollment rows = %#v, %v", rows, err)
 	}
 }
 

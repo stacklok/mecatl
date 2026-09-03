@@ -8,13 +8,13 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+
+	"github.com/stacklok/mecatl/internal/adapter/resourceurl"
 )
 
 // This is a minimal adaptation of Apache-2.0 ToolHive v0.40.0
 // pkg/auth/well_known.go. It deliberately keeps the profile type open to carry
 // mecatl's namespaced fields and routes only the configured resource path.
-const wellKnownProtectedResourcePath = "/.well-known/oauth-protected-resource"
-
 // ProtectedResourceProfile is the validated, public subset of the server's
 // OIDC configuration that RFC 9728 makes discoverable.
 type ProtectedResourceProfile struct {
@@ -29,24 +29,17 @@ type ProtectedResourceProfile struct {
 // The same helper is used for public routing and bearer challenges so path
 // resources cannot advertise one endpoint and serve another.
 func WellKnownProtectedResourceURL(resource string) string {
-	u, err := url.Parse(resource)
-	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || u.Opaque != "" || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" {
-		return ""
-	}
-	path := u.EscapedPath()
-	if path == "" || path == "/" {
-		u.Path = wellKnownProtectedResourcePath
-		u.RawPath = ""
-		return u.String()
-	}
-	u.Path = wellKnownProtectedResourcePath + u.Path
-	u.RawPath = wellKnownProtectedResourcePath + path
-	return u.String()
+	return resourceurl.MetadataURL(resource)
 }
 
 // NewProtectedResourceHandler returns the anonymous RFC 9728 endpoint for a
 // complete profile. A nil result means discovery is disabled.
 func NewProtectedResourceHandler(profile ProtectedResourceProfile) http.Handler {
+	canonicalResource, err := resourceurl.Canonical(profile.Resource)
+	if err != nil || canonicalResource == "" {
+		return nil
+	}
+	profile.Resource = canonicalResource
 	metadataURL := WellKnownProtectedResourceURL(profile.Resource)
 	if metadataURL == "" || profile.Issuer == "" || profile.Audience == "" || profile.ClientID == "" {
 		return nil

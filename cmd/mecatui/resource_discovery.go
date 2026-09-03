@@ -18,6 +18,7 @@ import (
 	"github.com/stacklok/toolhive/pkg/oauthproto"
 
 	"github.com/stacklok/mecatl/engine/session"
+	"github.com/stacklok/mecatl/internal/adapter/resourceurl"
 	"github.com/stacklok/mecatl/internal/adapter/server"
 )
 
@@ -56,14 +57,14 @@ func parseProtectedResource(raw string) (protectedResource, error) {
 		}
 		return newProtectedResource(&url.URL{Scheme: "https", Host: strings.ToLower(raw)}), nil
 	}
-	u, err := url.Parse(raw)
-	if err != nil || u.Scheme != "https" || u.User != nil || u.Host == "" || u.Opaque != "" || u.RawQuery != "" || u.Fragment != "" || u.ForceQuery {
+	canonical, err := resourceurl.Canonical(raw)
+	if err != nil {
 		return protectedResource{}, errDiscoveryRejected
 	}
-	if !validAuthority(u) {
+	u, err := url.Parse(canonical)
+	if err != nil {
 		return protectedResource{}, errDiscoveryRejected
 	}
-	u.Host = canonicalAuthority(u)
 	return newProtectedResource(u), nil
 }
 
@@ -90,19 +91,7 @@ func parseIssuer(raw string) (string, error) {
 }
 
 func oidcMetadataURL(issuer string) string {
-	u, err := url.Parse(issuer)
-	if err != nil {
-		return ""
-	}
-	path := strings.TrimSuffix(u.EscapedPath(), "/")
-	if path == "" {
-		u.Path = oauthproto.WellKnownOIDCPath
-		u.RawPath = ""
-		return u.String()
-	}
-	u.Path = oauthproto.WellKnownOIDCPath + strings.TrimSuffix(u.Path, "/")
-	u.RawPath = oauthproto.WellKnownOIDCPath + path
-	return u.String()
+	return strings.TrimSuffix(issuer, "/") + oauthproto.WellKnownOIDCPath
 }
 
 func validAuthority(u *url.URL) bool {
@@ -156,6 +145,10 @@ func isDNSLabelRune(r rune) bool {
 	return r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-'
 }
 
+// ToolHive-Core's networking package is intentionally not used for this client:
+// its generic host-scoped client permits policies (notably redirects) that are
+// too broad for anonymous issuer/resource bootstrap. This transport validates
+// every DNS answer, pins the selected address, and refuses every redirect.
 func newPublicBootstrapClient() *http.Client {
 	transport := &http.Transport{
 		Proxy:                  nil,

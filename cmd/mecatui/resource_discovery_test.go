@@ -138,8 +138,8 @@ func TestADR_0290_IssuerBinding(t *testing.T) {
 		issuer, want string
 	}{
 		{"https://issuer.example.com", "https://issuer.example.com/.well-known/openid-configuration"},
-		{"https://issuer.example.com/tenant", "https://issuer.example.com/.well-known/openid-configuration/tenant"},
-		{"https://issuer.example.com/tenant/", "https://issuer.example.com/.well-known/openid-configuration/tenant"},
+		{"https://issuer.example.com/tenant", "https://issuer.example.com/tenant/.well-known/openid-configuration"},
+		{"https://issuer.example.com/tenant/", "https://issuer.example.com/tenant/.well-known/openid-configuration"},
 	} {
 		if got := oidcMetadataURL(tc.issuer); got != tc.want {
 			t.Errorf("oidcMetadataURL(%q) = %q, want %q", tc.issuer, got, tc.want)

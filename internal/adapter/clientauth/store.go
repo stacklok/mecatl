@@ -25,6 +25,7 @@ import (
 	"github.com/zalando/go-keyring"
 
 	"github.com/stacklok/mecatl/internal/adapter/credentialstore"
+	"github.com/stacklok/mecatl/internal/adapter/resourceurl"
 )
 
 // #nosec G101 -- this is a namespace identifier, not a credential.
@@ -115,28 +116,8 @@ func canonicalTarget(raw string) (string, error) {
 	}
 	return net.JoinHostPort(host, strconv.FormatUint(p, 10)), nil
 }
-func canonicalResourceURL(raw string) (string, error) {
-	if raw == "" {
-		return "", nil
-	}
-	if !safe(raw) {
-		return "", errors.New("invalid resource URL")
-	}
-	u, err := url.Parse(raw)
-	if err != nil || u.Scheme != httpsScheme || u.Hostname() == "" || u.User != nil || u.Fragment != "" || u.RawQuery != "" || u.ForceQuery {
-		return "", errors.New("invalid resource URL")
-	}
-	if u.Port() != "" {
-		port, portErr := strconv.ParseUint(u.Port(), 10, 16)
-		if portErr != nil || port == 0 {
-			return "", errors.New("invalid resource URL port")
-		}
-		u.Host = net.JoinHostPort(strings.ToLower(u.Hostname()), strconv.FormatUint(port, 10))
-	} else {
-		u.Host = strings.ToLower(u.Hostname())
-	}
-	return u.String(), nil
-}
+
+var canonicalResourceURL = resourceurl.Canonical
 
 func canonicalIssuerURL(raw string) (string, error) {
 	if !safe(raw) {
@@ -983,6 +964,14 @@ func (r *Registry) Upsert(conn Connection) ([]Identity, error) {
 		return nil, err
 	}
 	id := conn.Identity
+	var unlockResource func()
+	if conn.ResourceURL != "" {
+		unlockResource, err = r.lockTarget(context.Background(), "resource:"+conn.ResourceURL)
+		if err != nil {
+			return nil, err
+		}
+		defer unlockResource()
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if err := r.lock.Lock(); err != nil {
@@ -1123,6 +1112,46 @@ func (r *Registry) replaceTarget(target string, expected, desired []Connection) 
 		} else {
 			kept = append(kept, registryRow{connection: conn, valid: true})
 		}
+	}
+	if !sameConnections(current, expected) {
+		return credentialstore.ErrConflict
+	}
+	for _, conn := range desired {
+		kept = append(kept, registryRow{connection: conn, valid: true})
+	}
+	return r.writeRows(kept)
+}
+
+// replaceEnrollment conditionally replaces the target and removes any competing
+// row for the same canonical resource. The caller holds the resource lock, so
+// this is the single atomic resource-to-target enrollment transition.
+func (r *Registry) replaceEnrollment(target, resource string, expected, desired []Connection) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if err := r.lock.Lock(); err != nil {
+		return err
+	}
+	defer func() { _ = r.lock.Unlock() }()
+	rows, err := r.readRows()
+	if err != nil {
+		return err
+	}
+	current := make([]Connection, 0, len(expected))
+	kept := make([]registryRow, 0, len(rows)+len(desired))
+	for _, row := range rows {
+		if !row.valid {
+			kept = append(kept, row)
+			continue
+		}
+		conn := row.connection
+		if conn.Identity.Target == target {
+			current = append(current, conn)
+			continue
+		}
+		if resource != "" && conn.ResourceURL == resource {
+			continue
+		}
+		kept = append(kept, registryRow{connection: conn, valid: true})
 	}
 	if !sameConnections(current, expected) {
 		return credentialstore.ErrConflict
