@@ -2,12 +2,12 @@
 id: 26-review-feedback
 title: Address human review blockers and contract drift
 blocked_by: [25-k8s-force-delete-regression]
-status: in-progress
-branch: ""
+status: done
+branch: "plan-session-affinity-and-handoff/26-review-feedback"
 worktree: ".scratch/task-session-affinity-26"
 issue: ""
 retries: 0
-last_error: "human review requested changes: awaiting drain persistence, shutdown budget, stream approval gate, real Build proof, inventory enforcement, SDK compatibility"
+last_error: ""
 accumulator: acc/session-affinity-and-handoff
 ---
 
