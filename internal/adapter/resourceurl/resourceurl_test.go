@@ -9,6 +9,8 @@ func TestCanonicalResourceIdentity(t *testing.T) {
 		{"https://API.example.com:443/", "https://api.example.com"},
 		{"https://api.example.com:8443/", "https://api.example.com:8443"},
 		{"https://api.example.com/path%2Fitem", "https://api.example.com/path%2Fitem"},
+		{"https://[2001:DB8::1]/", "https://[2001:db8::1]"},
+		{"https://[2001:DB8::1]:8443/", "https://[2001:db8::1]:8443"},
 	} {
 		got, err := Canonical(tc.raw)
 		if err != nil || got != tc.want {

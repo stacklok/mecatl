@@ -261,9 +261,10 @@ func newAuthenticator(ctx context.Context, cfg config) (*server.Authenticator, e
 	if err != nil {
 		return nil, err
 	}
+	profile := protectedResourceProfile(cfg.oidc)
 	metadataURL := ""
-	if cfg.oidc.ProtectedResourceEnabled() {
-		metadataURL = server.WellKnownProtectedResourceURL(cfg.oidc.Resource)
+	if profile.Resource != "" {
+		metadataURL = server.WellKnownProtectedResourceURL(profile.Resource)
 	}
 	return server.NewAuthenticator(server.SecurityConfig{
 		AuthToken:           cfg.authToken,

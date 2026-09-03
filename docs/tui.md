@@ -262,8 +262,12 @@ server is authoritative.
 ### OIDC-connected server
 
 `mecatui login ADDRESS` is the enrollment path for a remote `mecated`/`mecak8s`
-caller-identity deployment. The issuer, public client, audience, redirect URI, and
-scopes are bound to the canonical `host:port` target. Login validates discovery,
+caller-identity deployment. A bare DNS hostname or HTTPS resource URL discovers the
+issuer, public client, audience, and scopes from RFC 9728 metadata before confirmation;
+legacy/private deployments without a profile require them explicitly. The gRPC target
+and confirmed canonical resource remain separate identities: credentials stay keyed by
+the canonical `host:port` target, while a discovery enrollment also saves the resource
+as an exact registry alias. Login validates discovery,
 PKCE, and the resulting token. A public issuer uses system trust roots; private HTTPS
 requires an explicit issuer CA bundle path. The registry saves an explicit path/reference
 only—not CA contents—for issuer discovery, token, JWKS, refresh, and revocation;

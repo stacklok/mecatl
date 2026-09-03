@@ -1104,6 +1104,20 @@ func (r *Registry) targetSnapshot(target string) ([]Connection, error) {
 	return entries, nil
 }
 
+func (r *Registry) enrollmentSnapshot(target, resource string) ([]Connection, error) {
+	all, err := r.List()
+	if err != nil {
+		return nil, err
+	}
+	entries := make([]Connection, 0, len(all))
+	for _, conn := range all {
+		if conn.Identity.Target == target || resource != "" && conn.ResourceURL == resource {
+			entries = append(entries, conn)
+		}
+	}
+	return entries, nil
+}
+
 // replaceTarget conditionally replaces one target's entries while preserving
 // unrelated targets changed by other processes.
 func (r *Registry) replaceTarget(target string, expected, desired []Connection) error {

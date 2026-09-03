@@ -124,18 +124,18 @@ func Enroll(ctx context.Context, conn Connection, token Token, cfg EnrollmentCon
 	}
 	defer unlock()
 
-	oldEntries, err := cfg.Registry.targetSnapshot(id.Target)
+	targetEntries, err := cfg.Registry.targetSnapshot(id.Target)
 	if err != nil {
 		return err
 	}
-	allEntries, err := cfg.Registry.List()
+	displacedEntries, err := cfg.Registry.enrollmentSnapshot(id.Target, conn.ResourceURL)
 	if err != nil {
 		return err
 	}
-	if !cfg.checkExpectedTarget(oldEntries) {
+	if !cfg.checkExpectedTarget(targetEntries) {
 		return ErrTargetChanged
 	}
-	snapshots, err := snapshotEnrollmentCredentials(ctx, cfg.Credentials, id, allEntries)
+	snapshots, err := snapshotEnrollmentCredentials(ctx, cfg.Credentials, id, displacedEntries)
 	if err != nil {
 		return err
 	}
@@ -151,7 +151,7 @@ func Enroll(ctx context.Context, conn Connection, token Token, cfg EnrollmentCon
 	// From here onward cancellation must not strand a state we can reconcile.
 	txnCtx := context.WithoutCancel(ctx)
 	desired := []Connection{conn}
-	committed, registryErr := commitEnrollmentRegistry(cfg.Registry, id.Target, conn.ResourceURL, oldEntries, desired)
+	committed, registryErr := commitEnrollmentRegistry(cfg.Registry, id.Target, conn.ResourceURL, targetEntries, desired)
 	if !committed {
 		if newSnapshot.unusable {
 			// The registry already identifies this exact credential. The repaired

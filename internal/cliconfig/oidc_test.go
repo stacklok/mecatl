@@ -137,6 +137,7 @@ func TestADR_0290_ProfileConfigurationMatrix(t *testing.T) {
 	}{
 		{name: "absent", wantEnabled: false},
 		{name: "complete", cfg: OIDCConfig{Issuer: "https://issuer", Audience: "api", Resource: "https://resource", ClientID: "client"}, wantEnabled: true},
+		{name: "canonicalizes resource", cfg: OIDCConfig{Issuer: "https://issuer", Audience: "api", Resource: "https://RESOURCE:443/", ClientID: "client"}, wantEnabled: true},
 		{name: "force query", cfg: OIDCConfig{Issuer: "https://issuer", Audience: "api", Resource: "https://resource?", ClientID: "client"}, wantErr: true},
 		{name: "insecure issuer", cfg: OIDCConfig{Issuer: "http://issuer", Audience: "api", Resource: "https://resource", ClientID: "client", InsecureAllowPrivateIssuer: true}, wantErr: true},
 		{name: "resource only", cfg: OIDCConfig{Issuer: "https://issuer", Audience: "api", Resource: "https://resource"}, wantErr: true},
@@ -153,6 +154,20 @@ func TestADR_0290_ProfileConfigurationMatrix(t *testing.T) {
 				t.Fatalf("ProtectedResourceEnabled = %t, want %t", tc.cfg.ProtectedResourceEnabled(), tc.wantEnabled)
 			}
 		})
+	}
+}
+
+func TestADR_0290_ProfileCanonicalizesResourceForEveryProjection(t *testing.T) {
+	cfg := OIDCConfig{Issuer: "https://issuer", Audience: "api", Resource: "https://RESOURCE:443/", ClientID: "client"}
+	if err := cfg.ValidateOIDCProfile(); err != nil {
+		t.Fatal(err)
+	}
+	projection, err := cfg.ProfileProjection()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Resource != "https://resource" || projection.Resource != cfg.Resource || projection.ProtectedResourceProfile().Resource != cfg.Resource {
+		t.Fatalf("resource identities diverged: config=%q projection=%q profile=%q", cfg.Resource, projection.Resource, projection.ProtectedResourceProfile().Resource)
 	}
 }
 

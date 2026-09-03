@@ -244,6 +244,35 @@ func TestADR_0290_EnrollResourceAliasDisplacesAcrossTargets(t *testing.T) {
 	}
 }
 
+func TestADR_0290_EnrollResourceAliasPreservesUnrelatedConnections(t *testing.T) {
+	registry, err := OpenRegistry(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	creds := credentials(t)
+	first := resourceConnection("https://api.example.com", "one.example.com:7443", "https://issuer.example.com")
+	unrelated := resourceConnection("https://other.example.com", "other.example.com:7443", "https://issuer.example.com")
+	if err := Enroll(t.Context(), first, Token{AccessToken: "one", TokenType: "Bearer"}, EnrollmentConfig{Registry: registry, Credentials: creds}); err != nil {
+		t.Fatal(err)
+	}
+	if err := Enroll(t.Context(), unrelated, Token{AccessToken: "other", TokenType: "Bearer"}, EnrollmentConfig{Registry: registry, Credentials: creds}); err != nil {
+		t.Fatal(err)
+	}
+	replacement := resourceConnection("https://api.example.com/", "two.example.com:7443", "https://issuer.example.com")
+	if err := Enroll(t.Context(), replacement, Token{AccessToken: "two", TokenType: "Bearer"}, EnrollmentConfig{Registry: registry, Credentials: creds}); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := registry.Find(unrelated.ResourceURL); err != nil || !got.Identity.Equal(unrelated.Identity) {
+		t.Fatalf("unrelated registry entry = %#v, %v", got, err)
+	}
+	if got, err := creds.Load(t.Context(), unrelated.Identity); err != nil || got.Token.AccessToken != "other" {
+		t.Fatalf("unrelated credential = %#v, %v", got, err)
+	}
+	if rows, err := registry.List(); err != nil || len(rows) != 2 {
+		t.Fatalf("registry rows = %#v, %v", rows, err)
+	}
+}
+
 func TestADR_0290_ConcurrentCrossTargetResourceEnrollmentSerializes(t *testing.T) {
 	registry, err := OpenRegistry(t.TempDir())
 	if err != nil {

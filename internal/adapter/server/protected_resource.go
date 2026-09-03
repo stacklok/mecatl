@@ -35,6 +35,9 @@ func WellKnownProtectedResourceURL(resource string) string {
 // NewProtectedResourceHandler returns the anonymous RFC 9728 endpoint for a
 // complete profile. A nil result means discovery is disabled.
 func NewProtectedResourceHandler(profile ProtectedResourceProfile) http.Handler {
+	if !validProtectedResourceScopes(profile.Scopes) {
+		return nil
+	}
 	canonicalResource, err := resourceurl.Canonical(profile.Resource)
 	if err != nil || canonicalResource == "" {
 		return nil
@@ -105,6 +108,20 @@ type protectedResourceMetadata struct {
 	ScopesSupported        []string `json:"scopes_supported,omitempty"`
 	Audience               string   `json:"com.stacklok.mecatl.audience"`
 	ClientID               string   `json:"com.stacklok.mecatl.client_id"`
+}
+
+func validProtectedResourceScopes(scopes []string) bool {
+	for _, scope := range scopes {
+		if scope == "" {
+			return false
+		}
+		for _, r := range scope {
+			if r < 0x21 || r > 0x7e || r == ',' || r == '"' || r == '\\' {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func protectedResourceChallenge(metadataURL string) string {

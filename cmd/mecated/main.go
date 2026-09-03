@@ -2304,9 +2304,10 @@ func buildEdge(ctx context.Context, cfg config) (*tls.Config, *server.Authentica
 	if err != nil {
 		return nil, nil, nil, err
 	}
+	profile := protectedResourceProfile(cfg.oidc)
 	metadataURL := ""
-	if cfg.oidc.ProtectedResourceEnabled() {
-		metadataURL = server.WellKnownProtectedResourceURL(cfg.oidc.Resource)
+	if profile.Resource != "" {
+		metadataURL = server.WellKnownProtectedResourceURL(profile.Resource)
 	}
 	return tlsCfg, server.NewAuthenticator(server.SecurityConfig{
 		AuthToken:           cfg.authToken,

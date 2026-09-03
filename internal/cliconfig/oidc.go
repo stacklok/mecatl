@@ -21,6 +21,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/stacklok/mecatl/internal/adapter/resourceurl"
 	"github.com/stacklok/mecatl/internal/adapter/server"
 	"github.com/stacklok/mecatl/internal/syscaller"
 )
@@ -217,10 +218,11 @@ func (c *OIDCConfig) ValidateOIDCProfile() error { //nolint:gocyclo // validatio
 	if c.Resource == "" || c.ClientID == "" {
 		return fmt.Errorf("%w: --oidc-resource and --oidc-client-id must be provided together", ErrOIDCMisconfigured)
 	}
-	u, err := url.Parse(c.Resource)
-	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || u.Opaque != "" || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" {
+	resource, err := resourceurl.Canonical(c.Resource)
+	if err != nil || resource == "" {
 		return fmt.Errorf("%w: --oidc-resource must be an absolute HTTPS URL without credentials, query, or fragment", ErrOIDCMisconfigured)
 	}
+	c.Resource = resource
 	issuer, err := url.Parse(c.Issuer)
 	if err != nil || issuer.Scheme != "https" || issuer.Host == "" {
 		return fmt.Errorf("%w: protected-resource profile requires an HTTPS --oidc-issuer", ErrOIDCMisconfigured)

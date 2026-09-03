@@ -97,6 +97,14 @@ func TestADR_0290_WellKnownPathDerivation(t *testing.T) {
 	}
 }
 
+func TestADR_0290_MetadataRejectsInvalidScopeToken(t *testing.T) {
+	profile := protectedResourceProfile()
+	profile.Scopes = []string{"read,write"}
+	if h := server.NewProtectedResourceHandler(profile); h != nil {
+		t.Fatal("metadata handler accepted a comma-containing scope token")
+	}
+}
+
 func TestADR_0290_MetadataDisabledCompatibility(t *testing.T) {
 	if h := server.NewProtectedResourceHandler(server.ProtectedResourceProfile{}); h != nil {
 		t.Fatal("disabled profile registered a metadata handler")

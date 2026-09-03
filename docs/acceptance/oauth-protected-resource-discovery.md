@@ -120,12 +120,12 @@ Public registry metadata gains optional `ResourceURL`, while the encrypted crede
 
 ### Scenario 6 — Helm, documentation, and offline proof
 
-The mecak8s chart adds `oidc.resource`, `oidc.clientID`, and `oidc.scopes`, rendering the shared flags and joining YAML scope lists to CSV. The schema/helper validates complete and partial combinations. Offline coverage exercises the real metadata handler and discovery parser, first-use confirmation, and handoff to the existing login seam; browser PKCE, authenticated gRPC, and bare-host reconnect remain a required live qualification, not a claimed hermetic proof. User-facing and generated documentation are updated. The chart topology and storage-free deployment constraints remain those of [ADR 0048](../adr/0048-mecak8s.md), while documentation must follow the lifecycle rules in [`AGENTS.md`](../../AGENTS.md).
+The mecak8s chart adds `oidc.resource`, `oidc.clientID`, and `oidc.scopes`, rendering the shared flags and joining YAML scope lists to CSV; an individual YAML scope containing a comma is rejected rather than split. The schema/helper validates complete and partial combinations. Offline coverage exercises the real metadata handler and discovery parser, first-use confirmation, and a test-double handoff to the existing login seam; browser PKCE, authenticated gRPC, and bare-host reconnect remain a required live qualification, not a claimed hermetic proof. User-facing and generated documentation are updated. The chart topology and storage-free deployment constraints remain those of [ADR 0048](../adr/0048-mecak8s.md), while documentation must follow the lifecycle rules in [`AGENTS.md`](../../AGENTS.md).
 
 **Acceptance:**
 - AC6.1: Helm renders `oidc.resource` and `oidc.clientID` as the shared `--oidc-resource` and `--oidc-client-id` flags, joins `oidc.scopes` to the same CSV parser used by the CLI, and rejects partial or malformed values including `oidc.enabled: false` with profile fields set.
   - verify: `TestADR_0290_HelmProtectedResourceProfile`
-- AC6.2: Offline coverage proves the real metadata handler, discovery parsing, confirmation, and unchanged handoff to the existing login seam. Browser PKCE, authenticated gRPC, and bare-host reconnect require live qualification.
+- AC6.2: Offline coverage proves the real metadata handler and discovery parser plus confirmation and the immutable tuple passed to a test-double login seam. It does not prove browser PKCE, authenticated gRPC, or bare-host reconnect; those require live qualification.
   - verify: `TestOAuthProtectedResource_Scenario6_EndToEnd`
 - AC6.3: Both server composition roots receive the shared OIDC flag/profile projection; the metadata-route and configured-resource challenge contract is exercised at the shared server-adapter boundary.
   - verify: `TestADR_0290_ServerCompositionParity`, `TestADR_0290_ChallengeMetadataPairUsesConfiguredResource`
