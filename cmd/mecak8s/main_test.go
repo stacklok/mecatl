@@ -27,7 +27,7 @@ import (
 	"github.com/stacklok/mecatl/internal/testutil/codextest"
 )
 
-func TestADR_0293_TerminationBudgetFitsPodGracePeriod(t *testing.T) {
+func TestADR_0294_TerminationBudgetFitsPodGracePeriod(t *testing.T) {
 	cfg, err := parseFlags(nil)
 	if err != nil {
 		t.Fatal(err)

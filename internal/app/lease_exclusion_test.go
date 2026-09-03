@@ -63,7 +63,7 @@ func (*firstThenBlockingProvider) Capabilities() port.ProviderCapabilities {
 	return port.ProviderCapabilities{}
 }
 
-func TestADR_0293_AppAndMecak8sLeaseCompositionSharesMutationCapability(t *testing.T) {
+func TestADR_0294_AppAndMecak8sLeaseCompositionSharesMutationCapability(t *testing.T) {
 	ctx := context.Background()
 	storeDir, leaseDir, workspace, memoryDir := t.TempDir(), t.TempDir(), t.TempDir(), t.TempDir()
 	cfg1 := leaseBaseCfg(t, storeDir, leaseDir, workspace, memoryDir)

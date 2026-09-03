@@ -93,7 +93,7 @@ func validateSessionMutationNames(table map[string]SessionMutationEntry, boundar
 		seen[name] = struct{}{}
 		entry, ok := table[name]
 		if !ok {
-			errs = append(errs, fmt.Errorf("unclassified session mutator %q (ADR 0293)", name))
+			errs = append(errs, fmt.Errorf("unclassified session mutator %q (ADR 0294)", name))
 			continue
 		}
 		if strings.TrimSpace(entry.Rationale) == "" {

@@ -53,7 +53,7 @@ func requireAPIReportDeclarations(t *testing.T, declarations map[string]struct{}
 
 // The behavior is exercised by the same-named Vitest. This Go pin deliberately
 // reads API Extractor's generated contract rather than mirroring TypeScript source.
-func TestADR_0293_TypeScriptRawHelperCompatibility(t *testing.T) {
+func TestADR_0294_TypeScriptRawHelperCompatibility(t *testing.T) {
 	t.Parallel()
 	for _, declarations := range typescriptAPIReportDeclarations(t) {
 		requireAPIReportDeclarations(t, declarations,

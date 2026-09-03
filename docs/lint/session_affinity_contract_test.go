@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-func TestADR_0293_DocumentationContract(t *testing.T) {
+func TestADR_0294_DocumentationContract(t *testing.T) {
 	t.Parallel()
 
 	root := filepath.Join("..", "..")

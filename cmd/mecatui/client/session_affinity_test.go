@@ -126,7 +126,7 @@ func TestSessionAffinityAndHandoff_Scenario4_MecatuiUnaryAndStreamPropagation(t 
 	}
 }
 
-func TestADR_0293_MecatuiOpenConverseCompatibility(t *testing.T) {
+func TestADR_0294_MecatuiOpenConverseCompatibility(t *testing.T) {
 	const sessionID = "session-bound"
 	conn := &affinityRecordingConn{}
 	client := &Client{svc: mecatlv1.NewHarnessServiceClient(conn)}

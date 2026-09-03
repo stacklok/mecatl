@@ -1,4 +1,4 @@
-# ADR 0293 — End-to-end session correlation and affinity
+# ADR 0294 — End-to-end session correlation and affinity
 
 - Status: Proposed
 - Date: 2026-09-02

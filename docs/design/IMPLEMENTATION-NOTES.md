@@ -727,7 +727,7 @@ config resolves per-session against that root without a mutate-capable handle; `
 `engine/adapter/wallclock`, wired in `engineDepsForProvider`/`newChildEngineWithHooks`
 (issue #53 — previously never injected, leaving all latency observations zero).
 
-**Provider request session correlation and ingress affinity (ADR 0293).**
+**Provider request session correlation and ingress affinity (ADR 0294).**
 The stdlib-only root transport package `contracts/sessionaffinity` owns `HeaderName`,
 `MaxValueBytes`, and `ValidValue`: `X-Mecatl-Session-ID` must be at most 256 bytes of
 non-empty printable ASCII
@@ -751,7 +751,7 @@ deliberately retain ADR 0216's broader outbound-provider rules (including values
 the official browser/gRPC affinity set) because independently versioned provider modules
 stay release-independent and do not import the root transport package.
 
-**Session mutation ownership, lease loss, close, and drain (ADR 0293).**
+**Session mutation ownership, lease loss, close, and drain (ADR 0294).**
 `internal/adapter/server/mutation_capability.go` (`SessionMutationCapability`) is the
 process-local gate shared by the `Service`, guarded SessionStore, EventLog, and
 ToolCallRecorder paths. `acquireMutationLease` extends lease ownership from prompt entry

@@ -793,13 +793,13 @@ func TestSessionAffinityAndHandoff_Scenario7_KilledOwnerDropsStream(t *testing.T
 	f.assertKilledOwnerSnapshot(t)
 }
 
-func TestADR_0293_PreTTLRequestsCannotAcquireOrRun(t *testing.T) {
+func TestADR_0294_PreTTLRequestsCannotAcquireOrRun(t *testing.T) {
 	f := newCrashOwnershipFixture(t)
 	f.startOwnerAndDropStream(t)
 	f.assertPreTTLBlocked(t)
 }
 
-func TestADR_0293_PostTTLSingleSurvivorAcquires(t *testing.T) {
+func TestADR_0294_PostTTLSingleSurvivorAcquires(t *testing.T) {
 	f := newCrashOwnershipFixture(t)
 	f.startOwnerAndDropStream(t)
 	f.advancePastTTL()
@@ -835,7 +835,7 @@ func TestSessionAffinityAndHandoff_Scenario7_RehydrateRepairAndContinue(t *testi
 	}
 }
 
-func TestADR_0293_HandoffEndToEndCorrelation(t *testing.T) {
+func TestADR_0294_HandoffEndToEndCorrelation(t *testing.T) {
 	f := newCrashOwnershipFixture(t)
 	f.startOwnerAndDropStream(t)
 	f.seedCrashOrphanWithRedisSidecars(t)

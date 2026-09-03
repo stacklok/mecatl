@@ -60,7 +60,7 @@ func (c *contextObservingCompactor) sessionIDs() []session.SessionID {
 	return append([]session.SessionID(nil), c.ids...)
 }
 
-func TestADR_0293_ProviderUsesAuthoritativeRunContext(t *testing.T) {
+func TestADR_0294_ProviderUsesAuthoritativeRunContext(t *testing.T) {
 	const id session.SessionID = "persisted/session:exact-543"
 	policy := permpolicy.NewPolicy(nil, permstore.New())
 	sess := session.New(id, session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
