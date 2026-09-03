@@ -4,10 +4,10 @@ title: Modeled awaiting-approval takeover
 blocked_by: [10-awaiting-lease-loss-handoff, 13-modeled-crash-ownership]
 status: in-progress
 branch: ""
-worktree: ".scratch/task-session-affinity-16"
+worktree: ".scratch/task-session-affinity-16-retry1"
 issue: ""
-retries: 0
-last_error: ""
+retries: 1
+last_error: "overlapping additions to crash_ownership_scenario_test.go conflicted with task 14; retrying from updated accumulator"
 accumulator: acc/session-affinity-and-handoff
 ---
 

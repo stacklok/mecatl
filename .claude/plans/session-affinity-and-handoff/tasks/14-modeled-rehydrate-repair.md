@@ -2,8 +2,8 @@
 id: 14-modeled-rehydrate-repair
 title: Modeled Redis rehydration, repair, and correlation
 blocked_by: [01-session-header-contract, 13-modeled-crash-ownership]
-status: in-progress
-branch: ""
+status: done
+branch: "plan-session-affinity-and-handoff/14-modeled-rehydrate-repair"
 worktree: ".scratch/task-session-affinity-14"
 issue: ""
 retries: 0
