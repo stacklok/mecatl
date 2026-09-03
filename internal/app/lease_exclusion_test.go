@@ -63,7 +63,7 @@ func (*firstThenBlockingProvider) Capabilities() port.ProviderCapabilities {
 	return port.ProviderCapabilities{}
 }
 
-func TestADR_0290_AppAndMecak8sLeaseCompositionSharesMutationCapability(t *testing.T) {
+func TestADR_0291_AppAndMecak8sLeaseCompositionSharesMutationCapability(t *testing.T) {
 	ctx := context.Background()
 	storeDir, leaseDir, workspace, memoryDir := t.TempDir(), t.TempDir(), t.TempDir(), t.TempDir()
 	cfg1 := leaseBaseCfg(t, storeDir, leaseDir, workspace, memoryDir)
@@ -176,7 +176,7 @@ func TestCrossProcessLeaseExclusion(t *testing.T) {
 
 	// Close is not cancel: settle and join built1's local awaiting run before
 	// EndSession releases ownership. A close while the run is parked must retain
-	// the lease and resources (ADR 0290).
+	// the lease and resources (ADR 0291).
 	if err := built1.Service.Approve(ctx, sess.ID, askID, session.VerdictDeny); err != nil {
 		t.Fatalf("deny run #1: %v", err)
 	}

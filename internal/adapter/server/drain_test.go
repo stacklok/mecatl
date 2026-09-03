@@ -316,7 +316,7 @@ func (s *drainPersistBarrierStore) arm(fail bool) (<-chan struct{}, chan struct{
 	return s.entered, s.release
 }
 
-func TestADR_0290_AwaitingPersistAndDrainLifecycleIsAtomic(t *testing.T) {
+func TestADR_0291_AwaitingPersistAndDrainLifecycleIsAtomic(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
 		fail      bool
@@ -491,7 +491,7 @@ func makeAwaitingSession(t *testing.T, id session.SessionID) (*session.Session, 
 	return sess, ask
 }
 
-func TestADR_0290_DrainStopsAdmissionBeforeOwnershipChange(t *testing.T) {
+func TestADR_0291_DrainStopsAdmissionBeforeOwnershipChange(t *testing.T) {
 	lease := &fakeLease{}
 	store := memstore.New()
 	svc := newGracefulDrainService(t, store, lease, mockllm.New(mockllm.TextTurn("unused")), port.NopDiagnostics{})
@@ -532,7 +532,7 @@ func TestADR_0290_DrainStopsAdmissionBeforeOwnershipChange(t *testing.T) {
 	}
 }
 
-func TestADR_0290_DrainPreservesAwaitingResumePointThroughGRPCRelay(t *testing.T) {
+func TestADR_0291_DrainPreservesAwaitingResumePointThroughGRPCRelay(t *testing.T) {
 	lease := &fakeLease{}
 	store := memstore.New()
 	cat := tool.NewCatalog()
@@ -595,7 +595,7 @@ func TestADR_0290_DrainPreservesAwaitingResumePointThroughGRPCRelay(t *testing.T
 	}
 }
 
-func TestADR_0290_DrainPreservesAwaitingResumePoint(t *testing.T) {
+func TestADR_0291_DrainPreservesAwaitingResumePoint(t *testing.T) {
 	lease := &fakeLease{}
 	store := memstore.New()
 	svc := newGracefulDrainService(t, store, lease, mockllm.New(mockllm.TextTurn("done")), port.NopDiagnostics{})
@@ -690,7 +690,7 @@ func TestSessionAffinityAndHandoff_Scenario6_DrainCancelsJoinsAndDiagnosesPersis
 	}
 }
 
-func TestADR_0290_DrainSettlesReadyRunsWithoutMapOrderStarvation(t *testing.T) {
+func TestADR_0291_DrainSettlesReadyRunsWithoutMapOrderStarvation(t *testing.T) {
 	lease := &fakeLease{}
 	store := memstore.New()
 	svc := newGracefulDrainService(t, store, lease, blockingProvider{}, port.NopDiagnostics{})
@@ -743,7 +743,7 @@ func TestADR_0290_DrainSettlesReadyRunsWithoutMapOrderStarvation(t *testing.T) {
 	}
 }
 
-func TestADR_0290_DrainTimeoutRetainsLeaseForTTLTakeover(t *testing.T) {
+func TestADR_0291_DrainTimeoutRetainsLeaseForTTLTakeover(t *testing.T) {
 	lease := &fakeLease{}
 	store := memstore.New()
 	svc := newGracefulDrainService(t, store, lease, blockingProvider{}, port.NopDiagnostics{})

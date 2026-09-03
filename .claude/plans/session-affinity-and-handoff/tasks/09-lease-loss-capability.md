@@ -32,9 +32,9 @@ Harden a held session lease into an explicit local mutation capability whose inv
   awaiting-approval behavior remain byte-identical to the current non-leased path: no
   lease acquisition or lease-loss invalidation is introduced. `ErrLeaseUnsupported`
   retains its existing sticky-disable diagnostic and fallback semantics.
-  - verify: `TestADR_0290_OptionalLeaseCompatibilityAndUnsupportedFallback`
+  - verify: `TestADR_0291_OptionalLeaseCompatibilityAndUnsupportedFallback`
 
 - AC5.9: Lease identity remains scoped to the durable session across runs, retries,
   awaiting resume, compaction, and controls; no run ID, header value, or gateway route
   becomes a lease or fencing token.
-  - verify: `TestADR_0290_LeaseRemainsSessionScoped`
+  - verify: `TestADR_0291_LeaseRemainsSessionScoped`

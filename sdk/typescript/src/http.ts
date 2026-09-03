@@ -321,7 +321,7 @@ class HttpTransport implements Transport {
         };
         break;
       case "cancel":
-        await this.cancelRun(sessionId, kind.value.expectedRunId, signal);
+        await this.cancelRun(sessionId, kind.value.expectedRunId, signal, requestHeaders);
         return;
       case "cancelChild":
         route = { body: true, method: "POST", path: `${path}/cancel-child` };
@@ -367,6 +367,7 @@ class HttpTransport implements Transport {
     sessionId: string,
     runId: string,
     signal: AbortSignal | undefined,
+    requestHeaders?: HeadersInit,
   ): Promise<void> {
     const response = await this.#request(
       {
@@ -376,6 +377,7 @@ class HttpTransport implements Transport {
       },
       { expected_run_id: runId },
       signal,
+      requestHeaders,
     );
     if (!response.ok) await this.#problem(response);
   }

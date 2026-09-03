@@ -27,7 +27,7 @@ Implement the awaiting-specific lease-loss path: invalidate and stop the stale l
   If local cancellation cannot settle the run, it does not explicitly release merely on
   that cancellation; after ownership loss the stale process cannot approve, deny, or
   otherwise resolve the ask.
-  - verify: `TestADR_0290_AwaitingLeaseLossRetractsLocalAskPreservesSnapshot`
+  - verify: `TestADR_0291_AwaitingLeaseLossRetractsLocalAskPreservesSnapshot`
 
 - AC5.7: After lease expiry and successor takeover, the successor reloads and resumes the
   exact durable `PendingAsk`; no stale local approval can change that ask or start its

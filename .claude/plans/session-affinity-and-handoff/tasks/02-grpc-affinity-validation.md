@@ -29,7 +29,7 @@ Add one server-side gRPC metadata validator using the shared engine-port header 
 - AC2.2: Duplicate metadata values, an illegal value, or a mismatch fail with
   `InvalidArgument` before session lookup or mutation, and the status message contains
   neither the metadata value nor the request value.
-  - verify: `TestADR_0290_GRPCHeaderFailureIsNonDisclosing`
+  - verify: `TestADR_0291_GRPCHeaderFailureIsNonDisclosing`
 
 - AC2.3: `Converse` validates metadata before creating or attaching run state, then
   requires the first prompt or retry frame's session ID to equal it byte-for-byte;
@@ -39,8 +39,8 @@ Add one server-side gRPC metadata validator using the shared engine-port header 
 - AC2.4: After a valid first frame, approval, cancel, child-cancel, steer, and
   steer-cancel frames remain bound to that established session without adding a
   protobuf field or accepting a second session identity.
-  - verify: `TestADR_0290_ConverseControlsStaySessionBound`
+  - verify: `TestADR_0291_ConverseControlsStaySessionBound`
 
 - AC2.5: A missing header keeps existing `Converse` and unary/server-stream behavior
   byte-compatible.
-  - verify: `TestADR_0290_GRPCMissingHeaderCompatibility`
+  - verify: `TestADR_0291_GRPCMissingHeaderCompatibility`

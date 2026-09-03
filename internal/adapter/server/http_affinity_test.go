@@ -19,7 +19,7 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/server"
 )
 
-func TestADR_0290_HTTPCreateSessionDerivedAffinity(t *testing.T) {
+func TestADR_0291_HTTPCreateSessionDerivedAffinity(t *testing.T) {
 	h := server.NewHTTPHandler(newService(t, mockllm.New(), allowRules()))
 	for _, tc := range []struct {
 		name, body string
@@ -117,7 +117,7 @@ func TestSessionAffinityAndHandoff_Scenario3_HTTPRouteInventory(t *testing.T) {
 	}
 }
 
-func TestADR_0290_HTTPHeaderFailureIsNonDisclosing(t *testing.T) {
+func TestADR_0291_HTTPHeaderFailureIsNonDisclosing(t *testing.T) {
 	h := server.NewHTTPHandler(newService(t, mockllm.New(), allowRules()))
 
 	for _, tc := range []struct {
@@ -159,7 +159,7 @@ func TestADR_0290_HTTPHeaderFailureIsNonDisclosing(t *testing.T) {
 	}
 }
 
-func TestADR_0290_HTTPDecodedPathEquality(t *testing.T) {
+func TestADR_0291_HTTPDecodedPathEquality(t *testing.T) {
 	h := server.NewHTTPHandler(newService(t, mockllm.New(), allowRules()))
 
 	for _, tc := range []struct {
@@ -181,7 +181,7 @@ func TestADR_0290_HTTPDecodedPathEquality(t *testing.T) {
 	}
 }
 
-func TestADR_0290_AffinityHeaderGrantsNoAuthority(t *testing.T) {
+func TestADR_0291_AffinityHeaderGrantsNoAuthority(t *testing.T) {
 	engine := agent.NewEngine(agent.Deps{LLM: mockllm.New(), Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(allowRules(), nil), Model: "test-model"})
 	svc, err := server.NewService(server.Config{
 		Engine: engine, Store: memstore.New(), Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) }, OwnershipEnforced: true,

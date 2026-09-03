@@ -24,4 +24,4 @@ Add the minimal public raw-client helper that binds one explicit session ID to a
 - AC4.4: Additive TypeScript raw helpers can bind an explicit session ID on either
   transport without changing generated protobuf code; calls without the helper retain
   their current behavior.
-  - verify: `TestADR_0290_TypeScriptRawHelperCompatibility`
+  - verify: `TestADR_0291_TypeScriptRawHelperCompatibility`

@@ -24,12 +24,12 @@ Replace the current cancel-on-Service-close posture with the accepted mecak8s dr
 - AC6.1: Once drain begins, new prompt, retry, resume, and out-of-band mutation entries
   are refused before lease acquisition while already-owned runs follow the bounded
   shutdown path.
-  - verify: `TestADR_0290_DrainStopsAdmissionBeforeOwnershipChange`
+  - verify: `TestADR_0291_DrainStopsAdmissionBeforeOwnershipChange`
 
 - AC6.2: Drain preserves a persisted awaiting session's durable `PendingAsk`; when no
   local run is live, it may close local resources and release the lease without
   destroying the durable resume point.
-  - verify: `TestADR_0290_DrainPreservesAwaitingResumePoint`
+  - verify: `TestADR_0291_DrainPreservesAwaitingResumePoint`
 
 - AC6.3: Drain cancels and joins an executing run before explicitly releasing its lease.
   A terminal or cancelled recoverable snapshot is persisted when storage is available;
@@ -38,4 +38,4 @@ Replace the current cancel-on-Service-close posture with the accepted mecak8s dr
 
 - AC6.4: If an executing run cannot join before the shutdown bound, mecak8s does not
   explicitly release its lease; process death and lease TTL govern later takeover.
-  - verify: `TestADR_0290_DrainTimeoutRetainsLeaseForTTLTakeover`
+  - verify: `TestADR_0291_DrainTimeoutRetainsLeaseForTTLTakeover`

@@ -100,7 +100,7 @@ func httpCloseSurface(t *testing.T, svc *server.Service, id session.SessionID) (
 	return codes.OK, resp.StatusCode
 }
 
-func TestADR_0290_CloseGRPCAndHTTPRejectLiveOrAwaitingRun(t *testing.T) {
+func TestADR_0291_CloseGRPCAndHTTPRejectLiveOrAwaitingRun(t *testing.T) {
 	for surfaceName, close := range map[string]closeSurface{"grpc": grpcCloseSurface, "http": httpCloseSurface} {
 		t.Run(surfaceName+"/running", func(t *testing.T) {
 			fixture := newCloseSurfaceFixture(t, blockingProvider{}, permpolicy.NewPolicy(allowRules(), nil))
@@ -166,7 +166,7 @@ func TestADR_0290_CloseGRPCAndHTTPRejectLiveOrAwaitingRun(t *testing.T) {
 	}
 }
 
-func TestADR_0290_CloseGRPCAndHTTPPreservePersistedAwaitingResumePoint(t *testing.T) {
+func TestADR_0291_CloseGRPCAndHTTPPreservePersistedAwaitingResumePoint(t *testing.T) {
 	cases := map[string]struct {
 		transport string
 		close     closeSurface

@@ -29,12 +29,12 @@ Introduce a single HTTP session-route affinity gate and apply it structurally to
 - AC3.2: Duplicate values, illegal bytes, and byte-mismatched values are rejected before
   handler dispatch with the ordinary typed invalid-argument response, and no response
   body or diagnostic reflects either value.
-  - verify: `TestADR_0290_HTTPHeaderFailureIsNonDisclosing`
+  - verify: `TestADR_0291_HTTPHeaderFailureIsNonDisclosing`
 
 - AC3.3: Escaped path IDs are compared after the server's normal path decoding; the
   field itself remains byte-exact and is never URL-decoded, trimmed, or normalized.
-  - verify: `TestADR_0290_HTTPDecodedPathEquality`
+  - verify: `TestADR_0291_HTTPDecodedPathEquality`
 
 - AC3.4: Header validation grants no access: authentication, caller ownership, and
   management-root checks still run independently and return their existing outcomes.
-  - verify: `TestADR_0290_AffinityHeaderGrantsNoAuthority`
+  - verify: `TestADR_0291_AffinityHeaderGrantsNoAuthority`

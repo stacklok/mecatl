@@ -94,7 +94,7 @@ func (l *unsupportedChildLease) Release(context.Context, port.Lease) error {
 	return nil
 }
 
-func TestADR_0290_ChildLeaseUnsupportedStickyDisablesToNoLeaseFallback(t *testing.T) {
+func TestADR_0291_ChildLeaseUnsupportedStickyDisablesToNoLeaseFallback(t *testing.T) {
 	lease := &unsupportedChildLease{}
 	capability := server.NewSessionMutationCapability(true)
 	registry := newSessionLiveness(lease, "replica", time.Minute, time.Millisecond, nil, capability)
@@ -185,7 +185,7 @@ func (l *losingChildLease) Release(context.Context, port.Lease) error {
 	return nil
 }
 
-func TestADR_0290_ChildLeaseLossInvalidatesMutationBeforeCancellation(t *testing.T) {
+func TestADR_0291_ChildLeaseLossInvalidatesMutationBeforeCancellation(t *testing.T) {
 	lease := &losingChildLease{lost: make(chan struct{})}
 	capability := server.NewSessionMutationCapability(true)
 	registry := newSessionLiveness(lease, "replica", time.Hour, time.Millisecond, nil, capability)
@@ -214,7 +214,7 @@ func TestADR_0290_ChildLeaseLossInvalidatesMutationBeforeCancellation(t *testing
 	}
 }
 
-func TestADR_0290_ChildLostHoldRejectsNewReferenceUntilFreshAcquire(t *testing.T) {
+func TestADR_0291_ChildLostHoldRejectsNewReferenceUntilFreshAcquire(t *testing.T) {
 	lease := &losingChildLease{lost: make(chan struct{})}
 	capability := server.NewSessionMutationCapability(true)
 	registry := newSessionLiveness(lease, "replica", time.Hour, time.Millisecond, nil, capability)

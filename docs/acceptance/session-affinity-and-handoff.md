@@ -2,7 +2,7 @@
 
 **Phase:** capability — exact session affinity, lease-owned mutation hardening, and crash handoff
 **Status:** landed, 2026-09-02. Synthesised from the settled multi-replica session-owner routing contract.
-**ADR:** [ADR-0290](../adr/0290-session-correlation-and-affinity.md) — the exact end-to-end header contract, compatibility floor, lease-loss behavior, and infrastructure boundary.
+**ADR:** [ADR-0291](../adr/0291-session-correlation-and-affinity.md) — the exact end-to-end header contract, compatibility floor, lease-loss behavior, and infrastructure boundary.
 **Accumulator branch:** `acc/session-affinity-and-handoff` (off `main`).
 
 The smallest set of work that lets a cooperating gateway route every session-bound
@@ -17,7 +17,7 @@ one future accumulator PR; infrastructure policy and rollout do not.
 
 ## Why these scope cuts
 
-- [ADR-0290](../adr/0290-session-correlation-and-affinity.md) supersedes, rather
+- [ADR-0291](../adr/0291-session-correlation-and-affinity.md) supersedes, rather
   than edits, frozen [ADR-0216](../adr/0216-provider-session-correlation-header.md).
   It preserves authoritative run-context provider projection while broadening the
   field into an ingress-to-egress affinity contract.
@@ -66,25 +66,25 @@ therefore retains its private ADR-0216 header constants and validators.
   control-bearing, newline-bearing, non-ASCII, or otherwise illegal values; it never
   trims, encodes, truncates, or normalizes a session ID. The shared vector fixture also
   records the released providers' deliberately broader outbound-only decisions.
-  - verify: `TestADR_0290_SessionHeaderLegalValue` and provider parity vector tests
+  - verify: `TestADR_0291_SessionHeaderLegalValue` and provider parity vector tests
 - AC1.2: OpenAI Responses, OpenAI Chat Completions, and Anthropic retain ADR-0216's
   private header constants and validators in this PR, yet send the exact run-bound
   session ID on the initial request and every retry or provider-specific fallback, using
   per-request options rather than mutating a shared client.
-  - verify: `TestADR_0290_ProviderSessionHeaderExact`
+  - verify: `TestADR_0291_ProviderSessionHeaderExact`
 - AC1.3: When the run context has no session ID or carries an illegal value, each
   provider omits the field and continues inference, preserving ADR-0216's availability
   behavior.
-  - verify: `TestADR_0290_ProviderSessionHeaderOptional`
+  - verify: `TestADR_0291_ProviderSessionHeaderOptional`
 - AC1.4: A child, member, compaction, resumed, or recovered run projects the
   authoritative session ID bound by that run; an ingress value cannot replace it and
   `port.LLMRequest` gains no routing field.
-  - verify: `TestADR_0290_ProviderUsesAuthoritativeRunContext`
+  - verify: `TestADR_0291_ProviderUsesAuthoritativeRunContext`
 - AC1.5: A race-enabled concurrent test shares one provider client between two distinct
   sessions and interleaves their initial requests, retries, and provider-specific
   fallbacks. Every captured outbound request carries only its originating run-bound
   session ID; no per-request state leaks across sessions.
-  - verify: `TestADR_0290_ProviderSessionHeaderConcurrentIsolationRace` (run with `-race`)
+  - verify: `TestADR_0291_ProviderSessionHeaderConcurrentIsolationRace` (run with `-race`)
 
 ---
 
@@ -105,7 +105,7 @@ frame. This is transport validation, separate from caller ownership under
 - AC2.2: Duplicate metadata values, an illegal value, or a mismatch fail with
   `InvalidArgument` before session lookup or mutation, and the status message contains
   neither the metadata value nor the request value.
-  - verify: `TestADR_0290_GRPCHeaderFailureIsNonDisclosing`
+  - verify: `TestADR_0291_GRPCHeaderFailureIsNonDisclosing`
 - AC2.3: `Converse` validates metadata before creating or attaching run state, then
   requires the first prompt or retry frame's session ID to equal it byte-for-byte;
   failure emits no run event and performs no provider call.
@@ -113,10 +113,10 @@ frame. This is transport validation, separate from caller ownership under
 - AC2.4: After a valid first frame, approval, cancel, child-cancel, steer, and
   steer-cancel frames remain bound to that established session without adding a
   protobuf field or accepting a second session identity.
-  - verify: `TestADR_0290_ConverseControlsStaySessionBound`
+  - verify: `TestADR_0291_ConverseControlsStaySessionBound`
 - AC2.5: A missing header keeps existing `Converse` and unary/server-stream behavior
   byte-compatible.
-  - verify: `TestADR_0290_GRPCMissingHeaderCompatibility`
+  - verify: `TestADR_0291_GRPCMissingHeaderCompatibility`
 
 ---
 
@@ -136,13 +136,13 @@ projection continues to follow [ADR-0248](../adr/0248-sdk-compatibility-and-erro
 - AC3.2: Duplicate values, illegal bytes, and byte-mismatched values are rejected before
   handler dispatch with the ordinary typed invalid-argument response, and no response
   body or diagnostic reflects either value.
-  - verify: `TestADR_0290_HTTPHeaderFailureIsNonDisclosing`
+  - verify: `TestADR_0291_HTTPHeaderFailureIsNonDisclosing`
 - AC3.3: Escaped path IDs are compared after the server's normal path decoding; the
   field itself remains byte-exact and is never URL-decoded, trimmed, or normalized.
-  - verify: `TestADR_0290_HTTPDecodedPathEquality`
+  - verify: `TestADR_0291_HTTPDecodedPathEquality`
 - AC3.4: Header validation grants no access: authentication, caller ownership, and
   management-root checks still run independently and return their existing outcomes.
-  - verify: `TestADR_0290_AffinityHeaderGrantsNoAuthority`
+  - verify: `TestADR_0291_AffinityHeaderGrantsNoAuthority`
 
 ---
 
@@ -161,7 +161,7 @@ architecture in [ADR-0279](../adr/0279-typescript-sdk-architecture.md).
 - AC4.2: mecatui opens a session-bound `Converse` before prompt or retry and all later
   controls use that stream binding; the existing `OpenConverse(ctx)` API still compiles
   and behaves as before for external/raw callers.
-  - verify: `TestADR_0290_MecatuiOpenConverseCompatibility`
+  - verify: `TestADR_0291_MecatuiOpenConverseCompatibility`
 - AC4.3: The TypeScript SDK high-level `Session`, owned `Run`, and attached-run APIs
   automatically propagate the exact session ID on every session-bound unary,
   server-stream, HTTP/SSE, prompt, retry, approval, cancel, steer, watch, and replay
@@ -172,7 +172,7 @@ architecture in [ADR-0279](../adr/0279-typescript-sdk-architecture.md).
   synchronously and actionably without altering caller headers. Calls without the helper,
   including high-level use of an unrepresentable server-issued ID where no explicit bind
   was requested, retain their current behavior and omit affinity.
-  - verify: `TestADR_0290_TypeScriptRawHelperCompatibility`
+  - verify: `TestADR_0291_TypeScriptRawHelperCompatibility`
 - AC4.5: Public mecatui/engine and TypeScript API reports change only by the intended
   additive helpers and shared symbols; generated protobuf output is unchanged.
   - verify: inspection — compare engine and TypeScript API reports and `git diff -- contracts/proto contracts/gen sdk/typescript/src/gen`
@@ -199,15 +199,15 @@ its already-durable awaiting snapshot and `PendingAsk` are preserved for the suc
 - AC5.2: The inventory test fails when a new session-bound mutator is added without an
   explicit lease-ownership classification; read-only operations and composition-time
   setters are explicitly distinguished.
-  - verify: `TestADR_0290_AllSessionMutatorsClassified`
+  - verify: `TestADR_0291_AllSessionMutatorsClassified`
 - AC5.3: `CloseSession` returns `FailedPrecondition` while a local run is active or
   awaiting, and does not release the lease or tear down its engine, policy, or
   environment; the caller must cancel or settle that local run first.
-  - verify: `TestADR_0290_CloseGRPCAndHTTPRejectLiveOrAwaitingRun`
+  - verify: `TestADR_0291_CloseGRPCAndHTTPRejectLiveOrAwaitingRun`
 - AC5.4: A persisted awaiting session with no live local run retains its durable
   `PendingAsk`; `CloseSession` may release local resources and its lease without
   destroying that resume point.
-  - verify: `TestADR_0290_CloseGRPCAndHTTPPreservePersistedAwaitingResumePoint`
+  - verify: `TestADR_0291_CloseGRPCAndHTTPPreservePersistedAwaitingResumePoint`
 - AC5.5: Lease-renewal loss cancels the owning run and locally invalidates its mutation
   capability before new application mutations begin. Later local saves, deletes,
   event appends, tool-call records, and metadata/sidecar mutations are prevented; an
@@ -220,7 +220,7 @@ its already-durable awaiting snapshot and `PendingAsk` are preserved for the suc
   If local cancellation cannot settle the run, it does not explicitly release merely on
   that cancellation; after ownership loss the stale process cannot approve, deny, or
   otherwise resolve the ask.
-  - verify: `TestADR_0290_AwaitingLeaseLossRetractsLocalAskPreservesSnapshot`
+  - verify: `TestADR_0291_AwaitingLeaseLossRetractsLocalAskPreservesSnapshot`
 - AC5.7: After lease expiry and successor takeover, the successor reloads and resumes the
   exact durable `PendingAsk`; no stale local approval can change that ask or start its
   tool call.
@@ -229,11 +229,11 @@ its already-durable awaiting snapshot and `PendingAsk` are preserved for the suc
   awaiting-approval behavior remain byte-identical to the current non-leased path: no
   lease acquisition or lease-loss invalidation is introduced. `ErrLeaseUnsupported`
   retains its existing sticky-disable diagnostic and fallback semantics.
-  - verify: `TestADR_0290_OptionalLeaseCompatibilityAndUnsupportedFallback`
+  - verify: `TestADR_0291_OptionalLeaseCompatibilityAndUnsupportedFallback`
 - AC5.9: Lease identity remains scoped to the durable session across runs, retries,
   awaiting resume, compaction, and controls; no run ID, header value, or gateway route
   becomes a lease or fencing token.
-  - verify: `TestADR_0290_LeaseRemainsSessionScoped`
+  - verify: `TestADR_0291_LeaseRemainsSessionScoped`
 
 ---
 
@@ -249,23 +249,23 @@ and the lease may be released. This strengthens the original drain sequence in
 - AC6.1: Once drain begins, new prompt, retry, resume, and out-of-band mutation entries
   are refused before lease acquisition while already-owned runs follow the bounded
   shutdown path.
-  - verify: `TestADR_0290_DrainStopsAdmissionBeforeOwnershipChange`
+  - verify: `TestADR_0291_DrainStopsAdmissionBeforeOwnershipChange`
 - AC6.2: Drain preserves a persisted awaiting session's durable `PendingAsk`; when no
   local run is live, it may close local resources and release the lease without
   destroying the durable resume point.
-  - verify: `TestADR_0290_DrainPreservesAwaitingResumePoint`
+  - verify: `TestADR_0291_DrainPreservesAwaitingResumePoint`
 - AC6.3: Drain cancels and joins an executing run before explicitly releasing its lease.
   A terminal or cancelled recoverable snapshot is persisted when storage is available;
   a persistence failure is diagnosed and the prior durable state remains authoritative.
   - verify: `TestSessionAffinityAndHandoff_Scenario6_DrainCancelsJoinsAndDiagnosesPersistFailure`
 - AC6.4: If an executing run cannot join before the shutdown bound, mecak8s does not
   explicitly release its lease; process death and lease TTL govern later takeover.
-  - verify: `TestADR_0290_DrainTimeoutRetainsLeaseForTTLTakeover`
+  - verify: `TestADR_0291_DrainTimeoutRetainsLeaseForTTLTakeover`
 - AC6.5: Mecak8s exposes separate positive bounds for Service drain, gRPC graceful stop,
   HTTP shutdown, and resource close. Including the 3-second preStop delay and telemetry
   flush, the default 43-second sequential budget is strictly below the Helm chart's
   operator-configurable 60-second `terminationGracePeriodSeconds` default.
-  - verify: `TestADR_0290_TerminationBudgetFitsPodGracePeriod` and `TestADR_0290_TerminationGracePeriodIsConfigurableAndFitsDefaults`
+  - verify: `TestADR_0291_TerminationBudgetFitsPodGracePeriod` and `TestADR_0291_TerminationGracePeriodIsConfigurableAndFitsDefaults`
 
 ---
 
@@ -290,10 +290,10 @@ Redis-plus-session-lease design of [ADR-0048](../adr/0048-mecak8s.md).
 - AC7.2: Before lease TTL expiry, every survivor request for that session cannot acquire
   ownership, mutate durable state through newly admitted application work, or start a
   provider call.
-  - verify: `TestADR_0290_PreTTLRequestsCannotAcquireOrRun`
+  - verify: `TestADR_0291_PreTTLRequestsCannotAcquireOrRun`
 - AC7.3: After TTL expiry, exactly one modeled survivor acquires the Kubernetes lease;
   concurrent survivors cannot both start ownership work or rehydration.
-  - verify: `TestADR_0290_PostTTLSingleSurvivorAcquires`
+  - verify: `TestADR_0291_PostTTLSingleSurvivorAcquires`
 - AC7.4: The new owner rehydrates the latest Redis snapshot and sidecar state, detects
   the crash-orphaned `running` state, repairs unanswered tool-call pairing through
   `Session.Abandon`, persists the repair, and then continues the same durable session.
@@ -301,7 +301,7 @@ Redis-plus-session-lease design of [ADR-0048](../adr/0048-mecak8s.md).
 - AC7.5: The first provider request after continuation carries the exact same durable
   session ID as client ingress, while its run ID may correctly be new. Storage-level
   fencing of a delayed old owner's already-started call is not claimed.
-  - verify: `TestADR_0290_HandoffEndToEndCorrelation`
+  - verify: `TestADR_0291_HandoffEndToEndCorrelation`
 - AC7.6: A modeled transport fixture receives one legal header from an official client,
   forwards it unchanged to mecak8s, and captures the identical bytes at the fake
   provider; omitting the field still completes through compatibility, while duplicate,
@@ -335,13 +335,13 @@ otherwise concentrate traffic on one selected replica.
   - verify: `TestMecak8sHelmChart_EdgeFixtureRendersNoExternalBoundaryResources`
 - AC8.2: Helm tests and schema/lint gates pass without adding a gateway or affinity
   values subtree to this chart.
-  - verify: `TestADR_0290_HelmHasNoAffinityPolicySurface`
+  - verify: `TestADR_0291_HelmHasNoAffinityPolicySurface`
 - AC8.3: architecture, usage, implementation notes, and public user docs describe the
   exact field behavior, missing-header compatibility, non-disclosing failures,
   authoritative provider context, lease-loss limits, close/drain/handoff sequence, and
   the fact that routing grants no authority; they distinguish modeled PR tests from
   infrastructure rollout verification.
-  - verify: `TestADR_0290_DocumentationContract`
+  - verify: `TestADR_0291_DocumentationContract`
 - AC8.4: Generated `llms.txt` contains the new ADR and acceptance-plan contract and is
   fresh after `task docs`.
   - verify: demonstration — `task docs` regenerates and checks the documentation corpus
@@ -359,11 +359,11 @@ otherwise concentrate traffic on one selected replica.
 
 | Item | Defer-to | ADR / decision |
 |---|---|---|
-| Owner-to-owner forwarding of a live session or control | separate future ADR and acceptance plan | [ADR-0290](../adr/0290-session-correlation-and-affinity.md) deliberately chooses client retry plus lease handoff; forwarding needs an authenticated internal protocol |
+| Owner-to-owner forwarding of a live session or control | separate future ADR and acceptance plan | [ADR-0291](../adr/0291-session-correlation-and-affinity.md) deliberately chooses client retry plus lease handoff; forwarding needs an authenticated internal protocol |
 | Storage-level fencing for Redis state, including a lease-token epoch or token-bearing SessionStore/EventLog/ToolCallRecorder protocol | separate future ADR and acceptance plan | This plan only cancels on lease loss and prevents new local application mutations; it does not claim atomic Kubernetes→Redis publication or reject an already-started storage call |
 | Gateway/Envoy/mesh affinity implementation, EndpointSlice behavior, infrastructure repository changes, and production rollout/cutover | separate infrastructure repo and PR/live rollout | [ADR-0278](../adr/0278-mecak8s-edge-terminated-tls.md) keeps external boundary resources operator-owned |
-| Exactly-once provider calls, tool execution, or other external side effects across owner death | external idempotency design, if required | [ADR-0290](../adr/0290-session-correlation-and-affinity.md) promises neither transactional external systems nor storage-level fencing |
-| Using the affinity field for authentication, authorization, caller ownership, tracing, idempotency, cache identity, or a fencing token | permanently excluded from this contract | [ADR-0290](../adr/0290-session-correlation-and-affinity.md) |
+| Exactly-once provider calls, tool execution, or other external side effects across owner death | external idempotency design, if required | [ADR-0291](../adr/0291-session-correlation-and-affinity.md) promises neither transactional external systems nor storage-level fencing |
+| Using the affinity field for authentication, authorization, caller ownership, tracing, idempotency, cache identity, or a fencing token | permanently excluded from this contract | [ADR-0291](../adr/0291-session-correlation-and-affinity.md) |
 
 ## Cross-cutting deliverables
 
@@ -385,7 +385,7 @@ behavioral gates are green. This is sequencing only, not worker decomposition.
 
 ## Named tests landing in this plan
 
-The `TestADR_0290_*` tests pin durable decisions. The
+The `TestADR_0291_*` tests pin durable decisions. The
 `TestSessionAffinityAndHandoff_ScenarioN_*` tests prove cross-layer scenarios. Existing
 provider and Helm tests are extended where they are the stronger regression oracle;
 TypeScript unit/e2e tests may sit behind the named Go parity/e2e gates but remain part

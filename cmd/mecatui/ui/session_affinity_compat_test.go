@@ -13,7 +13,7 @@ func (legacyConverserExtension) OpenConverse(context.Context) (*client.Stream, e
 	return client.NewStream(nil, nil), nil
 }
 
-func TestADR_0290_MecatuiConverserExtensionCompatibility(t *testing.T) {
+func TestADR_0291_MecatuiConverserExtensionCompatibility(t *testing.T) {
 	var extension Converser = legacyConverserExtension{}
 	if _, ok := extension.(SessionBoundConverser); ok {
 		t.Fatal("legacy Converser unexpectedly requires the additive session-bound capability")

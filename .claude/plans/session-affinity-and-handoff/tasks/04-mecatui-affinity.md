@@ -28,4 +28,4 @@ Teach the mecatui client to attach the exact session ID as outgoing gRPC metadat
 - AC4.2: mecatui opens a session-bound `Converse` before prompt or retry and all later
   controls use that stream binding; the existing `OpenConverse(ctx)` API still compiles
   and behaves as before for external/raw callers.
-  - verify: `TestADR_0290_MecatuiOpenConverseCompatibility`
+  - verify: `TestADR_0291_MecatuiOpenConverseCompatibility`

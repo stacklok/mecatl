@@ -29,4 +29,4 @@ Extend the modeled takeover fixture through authoritative Redis reload, sidecar 
 - AC7.5: The first provider request after continuation carries the exact same durable
   session ID as client ingress, while its run ID may correctly be new. Storage-level
   fencing of a delayed old owner's already-started call is not claimed.
-  - verify: `TestADR_0290_HandoffEndToEndCorrelation`
+  - verify: `TestADR_0291_HandoffEndToEndCorrelation`

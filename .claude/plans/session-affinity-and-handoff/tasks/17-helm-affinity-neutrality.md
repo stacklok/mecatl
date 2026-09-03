@@ -28,4 +28,4 @@ Strengthen the Helm chart's existing external-boundary guard so every fixture re
 
 - AC8.2: Helm tests and schema/lint gates pass without adding a gateway or affinity
   values subtree to this chart.
-  - verify: `TestADR_0290_HelmHasNoAffinityPolicySurface`
+  - verify: `TestADR_0291_HelmHasNoAffinityPolicySurface`

@@ -119,7 +119,7 @@ func pdbFromRender(t *testing.T, rendered string) *policyv1.PodDisruptionBudget 
 	return nil
 }
 
-func TestADR_0290_TerminationGracePeriodIsConfigurableAndFitsDefaults(t *testing.T) {
+func TestADR_0291_TerminationGracePeriodIsConfigurableAndFitsDefaults(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		args []string
@@ -323,7 +323,7 @@ func TestMecak8sHelmChart_EdgeFixtureRendersNoExternalBoundaryResources(t *testi
 	}
 }
 
-func TestADR_0290_HelmHasNoAffinityPolicySurface(t *testing.T) {
+func TestADR_0291_HelmHasNoAffinityPolicySurface(t *testing.T) {
 	schemaJSON, err := os.ReadFile("values.schema.json")
 	if err != nil {
 		t.Fatal(err)

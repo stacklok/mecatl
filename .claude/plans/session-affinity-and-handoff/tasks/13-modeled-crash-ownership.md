@@ -28,8 +28,8 @@ Build the reusable two-Service, shared-Redis/miniredis, fake-clock ownership fix
 - AC7.2: Before lease TTL expiry, every survivor request for that session cannot acquire
   ownership, mutate durable state through newly admitted application work, or start a
   provider call.
-  - verify: `TestADR_0290_PreTTLRequestsCannotAcquireOrRun`
+  - verify: `TestADR_0291_PreTTLRequestsCannotAcquireOrRun`
 
 - AC7.3: After TTL expiry, exactly one modeled survivor acquires the Kubernetes lease;
   concurrent survivors cannot both start ownership work or rehydration.
-  - verify: `TestADR_0290_PostTTLSingleSurvivorAcquires`
+  - verify: `TestADR_0291_PostTTLSingleSurvivorAcquires`

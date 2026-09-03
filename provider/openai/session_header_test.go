@@ -51,7 +51,7 @@ func sessionHeaderVectors(t *testing.T) []sessionHeaderVector {
 	return vectors
 }
 
-func TestADR_0290_SessionHeaderLegalValueParity(t *testing.T) {
+func TestADR_0291_SessionHeaderLegalValueParity(t *testing.T) {
 	if sessionIDHeaderName != "X-Mecatl-Session-ID" {
 		t.Fatalf("sessionIDHeaderName = %q", sessionIDHeaderName)
 	}
@@ -87,7 +87,7 @@ func drainSessionHeaderFallbackStream(ctx context.Context, t *testing.T, p *Prov
 	}
 }
 
-func TestADR_0290_ProviderSessionHeaderExact(t *testing.T) {
+func TestADR_0291_ProviderSessionHeaderExact(t *testing.T) {
 	const id = "session/exact:42?node=a&b=c"
 	headers := make(chan string, 4)
 	var requests int
@@ -120,7 +120,7 @@ func TestADR_0290_ProviderSessionHeaderExact(t *testing.T) {
 	}
 }
 
-func TestADR_0290_ProviderSessionHeaderOptional(t *testing.T) {
+func TestADR_0291_ProviderSessionHeaderOptional(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		ctx  context.Context
@@ -173,7 +173,7 @@ func (b *sessionHeaderPairBarrier) wait(ctx context.Context) error {
 	}
 }
 
-func TestADR_0290_ProviderSessionHeaderConcurrentIsolationRace(t *testing.T) {
+func TestADR_0291_ProviderSessionHeaderConcurrentIsolationRace(t *testing.T) {
 	var (
 		mu       sync.Mutex
 		captured = map[string]int{}

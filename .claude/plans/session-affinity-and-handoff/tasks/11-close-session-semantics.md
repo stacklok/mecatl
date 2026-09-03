@@ -24,9 +24,9 @@ Make the surface-facing close operation distinguish a genuinely local live/await
 - AC5.3: `CloseSession` returns `FailedPrecondition` while a local run is active or
   awaiting, and does not release the lease or tear down its engine, policy, or
   environment; the caller must cancel or settle that local run first.
-  - verify: `TestADR_0290_CloseGRPCAndHTTPRejectLiveOrAwaitingRun`
+  - verify: `TestADR_0291_CloseGRPCAndHTTPRejectLiveOrAwaitingRun`
 
 - AC5.4: A persisted awaiting session with no live local run retains its durable
   `PendingAsk`; `CloseSession` may release local resources and its lease without
   destroying that resume point.
-  - verify: `TestADR_0290_CloseGRPCAndHTTPPreservePersistedAwaitingResumePoint`
+  - verify: `TestADR_0291_CloseGRPCAndHTTPPreservePersistedAwaitingResumePoint`

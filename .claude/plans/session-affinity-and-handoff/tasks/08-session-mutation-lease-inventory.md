@@ -29,4 +29,4 @@ Create an explicit, source-level inventory of every application mutation to a du
 - AC5.2: The inventory test fails when a new session-bound mutator is added without an
   explicit lease-ownership classification; read-only operations and composition-time
   setters are explicitly distinguished.
-  - verify: `TestADR_0290_AllSessionMutatorsClassified`
+  - verify: `TestADR_0291_AllSessionMutatorsClassified`

@@ -31,4 +31,4 @@ Shared generated surfaces are serialized: task 07 reconciles engine/TypeScript A
 
 ## External gate
 
-AC8.5 is deliberately assigned to the final documentation task because ADR-0290 places its evidence in a separate infrastructure repository and live rollout. The mecatl accumulator can document and preserve that blocking prerequisite but cannot manufacture the required deployed-policy/load-test evidence; final plan landing must treat the external acceptance record as an explicit gate rather than weakening it to an offline chart test.
+AC8.5 is deliberately assigned to the final documentation task because ADR-0291 places its evidence in a separate infrastructure repository and live rollout. The mecatl accumulator can document and preserve that blocking prerequisite but cannot manufacture the required deployed-policy/load-test evidence; final plan landing must treat the external acceptance record as an explicit gate rather than weakening it to an offline chart test.

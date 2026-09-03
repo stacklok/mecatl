@@ -255,7 +255,7 @@ func newAuthenticator(ctx context.Context, cfg config) (*server.Authenticator, e
 	}), nil
 }
 
-// boundedShutdown is the ADR-0048/ADR-0290 shutdown sequence:
+// boundedShutdown is the ADR-0048/ADR-0291 shutdown sequence:
 //  1. arm admission drain and cancel/join Service runs within the shutdown bound;
 //     joined runs get a terminal persistence attempt before lease release.
 //  2. on Service-drain timeout, retain unsettled leases for process-death/TTL takeover.

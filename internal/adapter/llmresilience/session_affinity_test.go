@@ -14,7 +14,7 @@ import (
 	openai "github.com/stacklok/mecatl/provider/openai"
 )
 
-func TestADR_0290_ProviderSessionHeaderRetryWrapper(t *testing.T) {
+func TestADR_0291_ProviderSessionHeaderRetryWrapper(t *testing.T) {
 	const sessionID = "retry-wrapper-session"
 	var (
 		mu      sync.Mutex

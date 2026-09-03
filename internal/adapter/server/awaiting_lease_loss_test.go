@@ -175,7 +175,7 @@ func (f *awaitingLeaseLossFixture) loseLeaseAndDrain(t *testing.T) {
 	}
 }
 
-func TestADR_0290_AwaitingLeaseLossRetractsLocalAskPreservesSnapshot(t *testing.T) {
+func TestADR_0291_AwaitingLeaseLossRetractsLocalAskPreservesSnapshot(t *testing.T) {
 	f := startAwaitingLeaseLoss(t)
 	before, err := f.store.Load(context.Background(), f.sessionID)
 	if err != nil {

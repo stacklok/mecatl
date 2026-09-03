@@ -26,26 +26,26 @@ Define the canonical `X-Mecatl-Session-ID` name and legal-value contract in the 
   illegal values; it never trims, encodes, truncates, or normalizes a session ID. The
   shared vector fixture proves each provider's retained private validator has the same
   decision.
-  - verify: `TestADR_0290_SessionHeaderLegalValue` and provider parity vector tests
+  - verify: `TestADR_0291_SessionHeaderLegalValue` and provider parity vector tests
 
 - AC1.2: OpenAI Responses, OpenAI Chat Completions, and Anthropic retain ADR-0216's
   private header constants and validators in this PR, yet send the exact run-bound
   session ID on the initial request and every retry or provider-specific fallback, using
   per-request options rather than mutating a shared client.
-  - verify: `TestADR_0290_ProviderSessionHeaderExact`
+  - verify: `TestADR_0291_ProviderSessionHeaderExact`
 
 - AC1.3: When the run context has no session ID or carries an illegal value, each
   provider omits the field and continues inference, preserving ADR-0216's availability
   behavior.
-  - verify: `TestADR_0290_ProviderSessionHeaderOptional`
+  - verify: `TestADR_0291_ProviderSessionHeaderOptional`
 
 - AC1.4: A child, member, compaction, resumed, or recovered run projects the
   authoritative session ID bound by that run; an ingress value cannot replace it and
   `port.LLMRequest` gains no routing field.
-  - verify: `TestADR_0290_ProviderUsesAuthoritativeRunContext`
+  - verify: `TestADR_0291_ProviderUsesAuthoritativeRunContext`
 
 - AC1.5: A race-enabled concurrent test shares one provider client between two distinct
   sessions and interleaves their initial requests, retries, and provider-specific
   fallbacks. Every captured outbound request carries only its originating run-bound
   session ID; no per-request state leaks across sessions.
-  - verify: `TestADR_0290_ProviderSessionHeaderConcurrentIsolationRace` (run with `-race`)
+  - verify: `TestADR_0291_ProviderSessionHeaderConcurrentIsolationRace` (run with `-race`)

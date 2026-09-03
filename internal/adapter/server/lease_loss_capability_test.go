@@ -33,7 +33,7 @@ func (*admissionCountingProvider) Capabilities() port.ProviderCapabilities {
 	return port.ProviderCapabilities{}
 }
 
-func TestADR_0290_LeaseLossDuringProvisionalAdmissionPreventsProviderStart(t *testing.T) {
+func TestADR_0291_LeaseLossDuringProvisionalAdmissionPreventsProviderStart(t *testing.T) {
 	lease := &fakeLease{}
 	lease.renewHook = func(port.Lease) (port.Lease, error) { return port.Lease{}, port.ErrLeaseHeld }
 	capability := server.NewSessionMutationCapability(true)
@@ -87,7 +87,7 @@ func TestADR_0290_LeaseLossDuringProvisionalAdmissionPreventsProviderStart(t *te
 	}
 }
 
-func TestADR_0290_DrainCancelsProvisionalAdmissionBeforeProviderStart(t *testing.T) {
+func TestADR_0291_DrainCancelsProvisionalAdmissionBeforeProviderStart(t *testing.T) {
 	lease := &fakeLease{}
 	capability := server.NewSessionMutationCapability(true)
 	store := memstore.New()
@@ -141,7 +141,7 @@ func TestADR_0290_DrainCancelsProvisionalAdmissionBeforeProviderStart(t *testing
 	}
 }
 
-func TestADR_0290_ApprovalDuringProvisionalAdmissionReturnsNoActiveRun(t *testing.T) {
+func TestADR_0291_ApprovalDuringProvisionalAdmissionReturnsNoActiveRun(t *testing.T) {
 	store := memstore.New()
 	provider := &admissionCountingProvider{}
 	eng := agent.NewEngine(agent.Deps{
@@ -192,7 +192,7 @@ func TestADR_0290_ApprovalDuringProvisionalAdmissionReturnsNoActiveRun(t *testin
 	}
 }
 
-func TestADR_0290_ConfiguredCapabilityRequiresExactHold(t *testing.T) {
+func TestADR_0291_ConfiguredCapabilityRequiresExactHold(t *testing.T) {
 	capability := server.NewSessionMutationCapability(true)
 	guarded := capability.GuardStore(memstore.New())
 	sess := session.New("never-acquired", session.ModeDefault, "/ws", session.Limits{}, time.Now())
@@ -295,7 +295,7 @@ func (*countingLeaseLossEventLog) Read(context.Context, session.SessionID) iter.
 	return func(func(session.Event, error) bool) {}
 }
 
-func TestADR_0290_PostLossEventAppendIsRejectedAndDiagnosed(t *testing.T) {
+func TestADR_0291_PostLossEventAppendIsRejectedAndDiagnosed(t *testing.T) {
 	lease := &fakeLease{}
 	lost := make(chan struct{})
 	lease.renewHook = func(port.Lease) (port.Lease, error) {
@@ -428,7 +428,7 @@ func TestSessionAffinityAndHandoff_Scenario5_LeaseLossCancelsAndPreventsNewMutat
 	}
 }
 
-func TestADR_0290_NormalReleaseRemovesMutationCapabilityTombstone(t *testing.T) {
+func TestADR_0291_NormalReleaseRemovesMutationCapabilityTombstone(t *testing.T) {
 	lease := &fakeLease{}
 	capability := server.NewSessionMutationCapability(true)
 	recorder := &leaseLossRecorder{}
@@ -456,7 +456,7 @@ func TestADR_0290_NormalReleaseRemovesMutationCapabilityTombstone(t *testing.T) 
 	}
 }
 
-func TestADR_0290_OptionalLeaseCompatibilityAndUnsupportedFallback(t *testing.T) {
+func TestADR_0291_OptionalLeaseCompatibilityAndUnsupportedFallback(t *testing.T) {
 	t.Run("no lease", func(t *testing.T) {
 		capability := server.NewSessionMutationCapability(false)
 		recorder := &leaseLossRecorder{}
@@ -515,7 +515,7 @@ func TestADR_0290_OptionalLeaseCompatibilityAndUnsupportedFallback(t *testing.T)
 	})
 }
 
-func TestADR_0290_LeaseRemainsSessionScoped(t *testing.T) {
+func TestADR_0291_LeaseRemainsSessionScoped(t *testing.T) {
 	lease := &fakeLease{}
 	var lostID session.SessionID
 	lease.renewHook = func(l port.Lease) (port.Lease, error) {
