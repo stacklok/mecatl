@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/stacklok/mecatl/engine/adapter/memfs"
+	"github.com/stacklok/mecatl/engine/adapter/memledger"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/governance"
@@ -23,7 +24,7 @@ func authorityParent() session.Authority {
 
 func TestADR_0233_AuthorityEvaluator_Scenario4_ChildGetsIntersectionOnEverySeam(t *testing.T) {
 	parent := authorityParent()
-	env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "parent", Revision: "test-v1"}, memfs.NewWorkspace("/ws"), nil)
+	env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "parent", Revision: "test-v1"}, memfs.NewWorkspace("/ws"), memledger.New(), nil)
 	childEngine := NewEngine(Deps{LLM: mockllm.New(mockllm.TextTurn("done")), Catalog: tool.NewCatalog()})
 	store := memstore.New()
 	subagent := NewSubagentTool(childEngine, WithSubagentStore(store)).(*SubagentTool)
@@ -70,7 +71,7 @@ func TestManagedSpecialistAuthorityCeilingIsModeSpecific(t *testing.T) {
 		}}),
 		WithAgentWritableEngineFactory(func(string) (*Engine, bool) { return writableEngine, true }),
 	).(*SubagentTool)
-	env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "parent", Revision: "test-v1"}, memfs.NewWorkspace("/ws"), nil)
+	env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "parent", Revision: "test-v1"}, memfs.NewWorkspace("/ws"), memledger.New(), nil)
 	caps := parentCaps{authority: authorityParent(), authorityBound: true, parentSessionID: "parent", parentIncarnation: session.NewIncarnationID()}
 
 	for _, tc := range []struct {
@@ -128,7 +129,7 @@ func TestWritableResumeRefusesPersistedReadOnlyAuthorityBeforeDrive(t *testing.T
 		WithSubagentStore(store),
 		WithWritableChildEngine(NewEngine(Deps{LLM: writableLLM, Catalog: tool.NewCatalog()})),
 	).(*SubagentTool)
-	env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "parent", Revision: "test-v1"}, memfs.NewWorkspace("/ws"), nil)
+	env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "parent", Revision: "test-v1"}, memfs.NewWorkspace("/ws"), memledger.New(), nil)
 	result, err := subagent.ExecuteWithParent(context.Background(), session.ToolCall{
 		ID: "resume", Name: subagentToolName,
 		Args: []byte(`{"prompt":"now edit","resume":"subagent-old","mode":"read-write"}`),
@@ -161,7 +162,7 @@ func TestADR_0233_AuthorityEvaluator_Scenario4_RefusalAcquiresNoRuntimeResource(
 	forker := &authorityCountingForker{}
 	childEngine := NewEngine(Deps{Catalog: tool.NewCatalog()})
 	subagent := NewSubagentTool(childEngine, WithChildForker(forker)).(*SubagentTool)
-	env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "parent", Revision: "test-v1"}, memfs.NewWorkspace("/ws"), nil)
+	env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "parent", Revision: "test-v1"}, memfs.NewWorkspace("/ws"), memledger.New(), nil)
 	_, err := subagent.ExecuteWithParent(context.Background(), session.ToolCall{ID: "call", Name: subagentToolName, Args: []byte(`{"prompt":"work"}`)}, env, nil, parentCaps{authorityBound: true})
 	if err != nil {
 		t.Fatalf("ExecuteWithParent: %v", err)

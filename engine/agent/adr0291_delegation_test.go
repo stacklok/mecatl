@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/stacklok/mecatl/engine/adapter/memfs"
+	"github.com/stacklok/mecatl/engine/adapter/memledger"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 )
@@ -16,7 +17,7 @@ func TestADR_0291_DelegationSchemasCannotSelectPlacement(t *testing.T) {
 	t.Parallel()
 	privateRoot := "/private/placement/root"
 	ref := session.EnvironmentRef{Kind: "remote", ID: "placement-7", Revision: "revision-3"}
-	env := tool.MustEnvironment(ref, memfs.NewWorkspace(privateRoot), nil)
+	env := tool.MustEnvironment(ref, memfs.NewWorkspace(privateRoot), memledger.New(), nil)
 	child, err := newSubagentSessionInEnvironment("subagent-1", session.ModeDefault, env, session.Limits{}, time.Unix(1, 0), "parent", session.NewIncarnationID(), "call")
 	if err != nil {
 		t.Fatal(err)

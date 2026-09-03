@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/stacklok/mecatl/engine/adapter/memfs"
+	"github.com/stacklok/mecatl/engine/adapter/memledger"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/session"
@@ -42,7 +43,7 @@ func TestInvariant_session_environment_identity_required(t *testing.T) {
 			eng := agent.NewEngine(agent.Deps{LLM: llm, Catalog: tool.NewCatalog()})
 			ref := session.EnvironmentRef{Kind: session.EnvKindMem, ID: "placement", Revision: "v1"}
 			sess := session.New("environment-entry-all", session.ModeDefault, ref, session.Limits{}, time.Unix(0, 0))
-			env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: "other", Revision: "v1"}, memfs.NewWorkspace("/private/other"), nil)
+			env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: "other", Revision: "v1"}, memfs.NewWorkspace("/private/other"), memledger.New(), nil)
 
 			var cause string
 			for ev := range entry.run(eng, sess, env).Events() {
@@ -83,7 +84,7 @@ func TestInvariant_session_environment_identity_required(t *testing.T) {
 				// Session restoration validates this field, but direct Engine callers can
 				// hold and mutate the aggregate. Run entry must still fail closed.
 				sess.EnvironmentRef = tc.sessionRef
-				env := tool.MustEnvironment(tc.envRef, memfs.NewWorkspace("/private/placement"), nil)
+				env := tool.MustEnvironment(tc.envRef, memfs.NewWorkspace("/private/placement"), memledger.New(), nil)
 
 				run := eng.Run(context.Background(), sess, env, agent.RunRequest{Text: "hello"})
 				var cause string

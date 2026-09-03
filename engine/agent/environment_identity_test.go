@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/stacklok/mecatl/engine/adapter/memfs"
+	"github.com/stacklok/mecatl/engine/adapter/memledger"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 )
@@ -13,7 +14,7 @@ func TestChildSessionsUseEnvironmentIdentity(t *testing.T) {
 	t.Parallel()
 
 	ref := session.EnvironmentRef{Kind: "remote", ID: "opaque-child", Revision: "inventory-v3"}
-	env := tool.MustEnvironment(ref, memfs.NewWorkspace("/private/physical/root"), nil)
+	env := tool.MustEnvironment(ref, memfs.NewWorkspace("/private/physical/root"), memledger.New(), nil)
 	parent := session.SessionID("parent")
 	parentIncarnation := session.NewIncarnationID()
 	createdAt := time.Unix(1, 0)
@@ -49,7 +50,7 @@ func TestRehomeSessionUsesEnvironmentIdentity(t *testing.T) {
 	child.EnvironmentRef = session.EnvironmentRef{Kind: "remote", ID: "opaque", Revision: "v1"}
 	env := tool.MustEnvironment(
 		session.EnvironmentRef{Kind: "remote", ID: "opaque", Revision: "v2"},
-		memfs.NewWorkspace("/new/private/root"), nil,
+		memfs.NewWorkspace("/new/private/root"), memledger.New(), nil,
 	)
 
 	if err := rehomeSessionInEnvironment(child, env); err != nil {
