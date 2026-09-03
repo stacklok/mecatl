@@ -1,7 +1,7 @@
 # Session affinity and handoff — acceptance plan
 
 **Phase:** capability — exact session affinity, lease-owned mutation hardening, and crash handoff
-**Status:** in-progress, 2026-09-02. Synthesised from the settled multi-replica session-owner routing contract.
+**Status:** landed, 2026-09-02. Synthesised from the settled multi-replica session-owner routing contract.
 **ADR:** [ADR-0290](../adr/0290-session-correlation-and-affinity.md) — the exact end-to-end header contract, compatibility floor, lease-loss behavior, and infrastructure boundary.
 **Accumulator branch:** `acc/session-affinity-and-handoff` (off `main`).
 
