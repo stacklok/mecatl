@@ -1,0 +1,17 @@
+[
+  {"name":"simple","value":"session-123","legal":true},
+  {"name":"opaque punctuation","value":"session/exact:42?node=a&b=c","legal":true},
+  {"name":"internal space","value":"session id part","legal":true},
+  {"name":"internal tab","value":"session\tid","legal":false,"provider_legal":true},
+  {"name":"unicode bytes","value":"session-α","legal":false,"provider_legal":true},
+  {"name":"empty","value":"","legal":false},
+  {"name":"leading space","value":" session","legal":false},
+  {"name":"trailing space","value":"session ","legal":false},
+  {"name":"leading tab","value":"\tsession","legal":false},
+  {"name":"trailing tab","value":"session\t","legal":false},
+  {"name":"nul","value":"bad\u0000id","legal":false},
+  {"name":"unit separator","value":"bad\u001fid","legal":false},
+  {"name":"carriage return","value":"bad\rid","legal":false},
+  {"name":"newline","value":"bad\nid","legal":false},
+  {"name":"delete","value":"bad\u007fid","legal":false}
+]

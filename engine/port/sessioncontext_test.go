@@ -16,7 +16,7 @@ func TestADR_0290_SessionHeaderLegalValue(t *testing.T) {
 		t.Fatalf("SessionIDHeaderName = %q, want X-Mecatl-Session-ID", port.SessionIDHeaderName)
 	}
 
-	data, err := os.ReadFile("../../testdata/session_header_values.json")
+	data, err := os.ReadFile("testdata/session_header_values.json")
 	if err != nil {
 		t.Fatal(err)
 	}

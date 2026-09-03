@@ -168,9 +168,11 @@ architecture in [ADR-0279](../adr/0279-typescript-sdk-architecture.md).
   server-stream, HTTP/SSE, prompt, retry, approval, cancel, steer, watch, and replay
   operation supported by that API.
   - verify: `TestSessionAffinityAndHandoff_Scenario4_TypeScriptHighLevelPropagation`
-- AC4.4: Additive TypeScript raw helpers can bind an explicit session ID on either
-  transport without changing generated protobuf code; calls without the helper retain
-  their current behavior.
+- AC4.4: Additive TypeScript raw helpers can bind an explicit legal session ID on either
+  transport without changing generated protobuf code; an illegal explicit ID is rejected
+  synchronously and actionably without altering caller headers. Calls without the helper,
+  including high-level use of an unrepresentable server-issued ID where no explicit bind
+  was requested, retain their current behavior and omit affinity.
   - verify: `TestADR_0290_TypeScriptRawHelperCompatibility`
 - AC4.5: Public mecatui/engine and TypeScript API reports change only by the intended
   additive helpers and shared symbols; generated protobuf output is unchanged.

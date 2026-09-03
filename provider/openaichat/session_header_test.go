@@ -41,7 +41,7 @@ type sessionHeaderVector struct {
 
 func sessionHeaderVectors(t *testing.T) []sessionHeaderVector {
 	t.Helper()
-	data, err := os.ReadFile("../../testdata/session_header_values.json")
+	data, err := os.ReadFile("testdata/session_header_values.json")
 	if err != nil {
 		t.Fatal(err)
 	}

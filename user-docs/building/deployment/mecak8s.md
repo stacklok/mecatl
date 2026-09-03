@@ -269,9 +269,11 @@ The `oidc.*` values add a narrow raw-driver NetworkPolicy when caller identity i
 ### Session affinity is an infrastructure contract
 
 Official clients attach the exact `X-Mecatl-Session-ID` field to session-bound gRPC and
-HTTP requests when the ID is non-empty printable ASCII without boundary spaces. External
-session IDs outside that common browser/gRPC set remain usable, but clients omit affinity.
-Existing clients may omit it. Duplicate, malformed, or byte-mismatched
+HTTP requests when the ID is non-empty printable ASCII without boundary spaces. The
+TypeScript raw affinity helper rejects an illegal explicit ID synchronously without
+altering caller headers. A high-level session ID supplied by the server outside that
+common browser/gRPC set remains usable without affinity when no explicit bind was
+requested. Existing clients may omit it. Duplicate, malformed, or byte-mismatched
 values are rejected before work with one non-disclosing error. The field is a routing
 and provider-correlation hint only: it grants no authentication, authorization, caller
 ownership, lease ownership, fencing, tracing, idempotency, or cache authority. Provider

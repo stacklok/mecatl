@@ -95,10 +95,14 @@ describe("compatibility floor", () => {
     expect(httpRequests[3]?.headers.has(SESSION_ID_HEADER_NAME)).toBe(false);
 
     for (const illegal of ["session\tid", "session-α", " session", "session "]) {
-      const options = withSessionAffinity(illegal, { headers: { authorization: "Bearer kept" } });
-      const headers = new Headers(options.headers);
-      expect(headers.has(SESSION_ID_HEADER_NAME)).toBe(false);
-      expect(headers.get("authorization")).toBe("Bearer kept");
+      const callerHeaders = {
+        authorization: "Bearer kept",
+        [SESSION_ID_HEADER_NAME]: "caller-value",
+      };
+      expect(() => withSessionAffinity(illegal, { headers: callerHeaders })).toThrow(
+        /session affinity.*printable ASCII.*boundary spaces/i,
+      );
+      expect(callerHeaders[SESSION_ID_HEADER_NAME]).toBe("caller-value");
     }
   });
 

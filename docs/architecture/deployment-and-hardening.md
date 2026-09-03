@@ -119,8 +119,12 @@ lease ownership, authorization, and every durable-state check remain independent
 Ingress metadata is never forwarded blindly. `engine/agent` binds the loaded session ID
 to the authoritative run context, and every provider attempt and fallback derives its
 provider ID from that context. If the run binding is absent or illegal, providers omit
-the field and continue inference. Official clients add the field to session-bound calls;
-legacy clients that omit it continue to work without a protobuf change.
+the field and continue inference. Official clients add the field to representable
+session-bound calls. The TypeScript raw `withSessionAffinity` helper rejects an illegal
+explicit ID synchronously instead of silently deleting a caller header; a high-level
+session ID received from the server remains usable without affinity when it cannot be
+represented. Legacy clients that omit the field continue to work without a protobuf
+change.
 
 Affinity improves routing but does not enforce ownership. The in-process run registry
 serializes one process; a configured session lease serializes replicas over shared

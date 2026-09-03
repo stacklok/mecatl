@@ -33,6 +33,7 @@ import {
   invalidateRawCompatibility,
   type RawClient,
   registeredTransportOperations,
+  sessionAffinityIfRepresentable,
   withSessionAffinity,
 } from "./raw.js";
 import { type ConverseFrame, type Run, RunImpl, type RunOptions } from "./run.js";
@@ -196,9 +197,9 @@ function sessionAffinityOperations(
   return {
     ...operations,
     stream: (method, input, options) =>
-      operations.stream(method, input, withSessionAffinity(sessionId, options)),
+      operations.stream(method, input, sessionAffinityIfRepresentable(sessionId, options)),
     unary: (method, input, options) =>
-      operations.unary(method, input, withSessionAffinity(sessionId, options)),
+      operations.unary(method, input, sessionAffinityIfRepresentable(sessionId, options)),
   };
 }
 

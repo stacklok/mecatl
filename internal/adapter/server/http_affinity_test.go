@@ -49,9 +49,23 @@ func TestADR_0290_HTTPCreateSessionDerivedAffinity(t *testing.T) {
 }
 
 func TestSessionAffinityAndHandoff_Scenario3_HTTPRouteInventory(t *testing.T) {
-	svc := newService(t, mockllm.New(), allowRules())
-	h := server.NewHTTPHandler(svc)
+	type outcome struct {
+		body        string
+		contentType string
+		status      int
+	}
+	request := func(h http.Handler, route struct{ name, method, path, body string }, headers ...string) outcome {
+		t.Helper()
+		req := httptest.NewRequest(route.method, route.path, strings.NewReader(route.body))
+		for _, header := range headers {
+			req.Header.Add(port.SessionIDHeaderName, header)
+		}
+		resp := httptest.NewRecorder()
+		h.ServeHTTP(resp, req)
+		return outcome{body: resp.Body.String(), contentType: resp.Header().Get("Content-Type"), status: resp.Code}
+	}
 
+	var commonFailure *outcome
 	for _, route := range []struct {
 		name, method, path, body string
 	}{
@@ -76,28 +90,26 @@ func TestSessionAffinityAndHandoff_Scenario3_HTTPRouteInventory(t *testing.T) {
 		{"watch", http.MethodGet, "/v1/sessions/route-id/watch", ""},
 	} {
 		t.Run(route.name, func(t *testing.T) {
-			for _, affinity := range []struct {
-				name    string
-				headers []string
-				wantBad bool
-			}{
-				{name: "missing"},
-				{name: "exact", headers: []string{"route-id"}},
-				{name: "mismatch", headers: []string{"other-id"}, wantBad: true},
-				{name: "duplicate", headers: []string{"route-id", "route-id"}, wantBad: true},
+			h := server.NewHTTPHandler(newService(t, mockllm.New(), allowRules()))
+			baseline := request(h, route)
+			exact := request(h, route, "route-id")
+			if exact != baseline {
+				t.Fatalf("exact affinity outcome = %#v, want headerless baseline %#v", exact, baseline)
+			}
+			for name, headers := range map[string][]string{
+				"mismatch":  {"other-id"},
+				"duplicate": {"route-id", "route-id"},
 			} {
-				t.Run(affinity.name, func(t *testing.T) {
-					req := httptest.NewRequest(route.method, route.path, strings.NewReader(route.body))
-					for _, header := range affinity.headers {
-						req.Header.Add(port.SessionIDHeaderName, header)
+				t.Run(name, func(t *testing.T) {
+					got := request(h, route, headers...)
+					if got.status != http.StatusBadRequest {
+						t.Fatalf("outcome = %#v, want pre-dispatch 400", got)
 					}
-					resp := httptest.NewRecorder()
-					h.ServeHTTP(resp, req)
-					if affinity.wantBad && resp.Code != http.StatusBadRequest {
-						t.Fatalf("status = %d, want affinity rejection 400", resp.Code)
-					}
-					if !affinity.wantBad && resp.Code == http.StatusBadRequest {
-						t.Fatalf("compatible affinity status = 400: %s", resp.Body.String())
+					if commonFailure == nil {
+						captured := got
+						commonFailure = &captured
+					} else if got != *commonFailure {
+						t.Fatalf("affinity failure = %#v, want common pre-dispatch outcome %#v", got, *commonFailure)
 					}
 				})
 			}

@@ -36,8 +36,12 @@ helpers in `engine/port/sessioncontext.go`. A legal cross-transport affinity val
 non-empty printable ASCII (`0x20`–`0x7e`) with no leading or trailing space, so gRPC
 metadata and browser `Headers` can both carry it byte-for-byte without normalization.
 It is never trimmed, decoded, encoded, case-folded, truncated, or otherwise normalized.
-A durable external session ID outside that set remains usable, but official clients omit
-the affinity field for it. Root server and client consumers use that exported contract.
+A durable external session ID outside that set remains usable by high-level clients
+when it was supplied by the server and no explicit affinity bind was requested; those
+calls omit the field. An explicit TypeScript `withSessionAffinity` bind rejects such a
+value synchronously with an actionable error rather than deleting a caller header and
+returning apparently bound options. Root server and client consumers use that exported
+contract.
 
 The independently versioned provider submodules continue to require the released
 standalone `engine` v0.12.0 under `GOWORK=off`. ADR 0093 forbids local `replace`

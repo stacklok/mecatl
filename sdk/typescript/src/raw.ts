@@ -38,15 +38,27 @@ function validSessionAffinity(value: string): boolean {
 
 /**
  * Returns call options bound to one explicit session without replacing caller headers.
+ * Throws synchronously when sessionId cannot be represented byte-exactly as the affinity header.
  *
  * The binding is a routing hint only; authentication and authorization remain independent.
  * @public
  */
 export function withSessionAffinity(sessionId: string, options: CallOptions = {}): CallOptions {
+  if (!validSessionAffinity(sessionId)) {
+    throw new RangeError(
+      "Invalid session affinity: expected non-empty printable ASCII without boundary spaces",
+    );
+  }
   const headers = new Headers(options.headers);
-  if (validSessionAffinity(sessionId)) headers.set(SESSION_ID_HEADER_NAME, sessionId);
-  else headers.delete(SESSION_ID_HEADER_NAME);
+  headers.set(SESSION_ID_HEADER_NAME, sessionId);
   return { ...options, headers };
+}
+
+export function sessionAffinityIfRepresentable(
+  sessionId: string,
+  options?: CallOptions,
+): CallOptions | undefined {
+  return validSessionAffinity(sessionId) ? withSessionAffinity(sessionId, options) : options;
 }
 
 function withoutSessionAffinity(options?: CallOptions): CallOptions | undefined {

@@ -215,4 +215,35 @@ describe("high-level session affinity", () => {
     expect(httpSeen.every(({ affinity }) => affinity !== httpRun.id)).toBe(true);
     await http.close();
   });
+
+  it("keeps unrepresentable server-issued IDs usable only without explicit affinity", async () => {
+    const externalId = "session-α";
+    const seenCloseHeaders: Array<string | null> = [];
+    let explicitlyBoundCalls = 0;
+    const transport = createRouterTransport((router) => {
+      router.service(HarnessService, {
+        closeSession: (_request, context) => {
+          seenCloseHeaders.push(context.requestHeader.get(SESSION_ID_HEADER_NAME));
+          return {};
+        },
+        createSession: () => ({ sessionId: externalId }),
+        getCompatibilityInfo: () => ({ apiMajor: 1 }),
+        getSession: () => {
+          explicitlyBoundCalls += 1;
+          return { session: { sessionId: externalId } };
+        },
+      });
+    });
+    const client = connect({ transport });
+    const session = await client.sessions.create({});
+    await session.close();
+    expect(seenCloseHeaders).toEqual([null]);
+
+    await expect(client.sessions.get(externalId)).rejects.toThrow(/invalid session affinity/i);
+    await expect(client.sessions.create({ sourceSessionId: externalId })).rejects.toThrow(
+      /invalid session affinity/i,
+    );
+    expect(explicitlyBoundCalls).toBe(0);
+    await client.close();
+  });
 });

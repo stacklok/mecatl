@@ -9,7 +9,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
-	"google.golang.org/protobuf/reflect/protoreflect"
+	"google.golang.org/protobuf/proto"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
@@ -147,29 +147,36 @@ func TestSessionAffinityAndHandoff_Scenario2_GRPCUnaryAndServerStreamMatrix(t *t
 			return err
 		}},
 	}
+	var commonFailure string
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			for _, affinity := range []struct {
-				name string
-				ctx  context.Context
-				want codes.Code
-			}{
-				{name: "missing", ctx: context.Background()},
-				{name: "exact", ctx: affinityContext(requestID)},
-				{name: "mismatch", ctx: affinityContext("other-session"), want: codes.InvalidArgument},
-				{name: "duplicate", ctx: duplicateAffinityContext(requestID, requestID), want: codes.InvalidArgument},
+			call := func(base context.Context) (codes.Code, string) {
+				callCtx, cancel := context.WithTimeout(base, 250*time.Millisecond)
+				defer cancel()
+				ctx = callCtx
+				err := tc.call()
+				return status.Code(err), status.Convert(err).Message()
+			}
+
+			baselineCode, baselineMessage := call(context.Background())
+			exactCode, exactMessage := call(affinityContext(requestID))
+			if exactCode != baselineCode || exactMessage != baselineMessage {
+				t.Fatalf("exact affinity outcome = (%v, %q), want headerless baseline (%v, %q)", exactCode, exactMessage, baselineCode, baselineMessage)
+			}
+
+			for name, invalidCtx := range map[string]context.Context{
+				"mismatch":  affinityContext("other-session"),
+				"duplicate": duplicateAffinityContext(requestID, requestID),
 			} {
-				t.Run(affinity.name, func(t *testing.T) {
-					callCtx, cancel := context.WithTimeout(affinity.ctx, 250*time.Millisecond)
-					defer cancel()
-					ctx = callCtx
-					got := status.Code(tc.call())
-					if affinity.want == codes.InvalidArgument {
-						if got != affinity.want {
-							t.Fatalf("code = %v, want %v", got, affinity.want)
-						}
-					} else if got == codes.InvalidArgument {
-						t.Fatalf("compatible affinity was rejected: %v", got)
+				t.Run(name, func(t *testing.T) {
+					got, message := call(invalidCtx)
+					if got != codes.InvalidArgument {
+						t.Fatalf("code = %v, want InvalidArgument", got)
+					}
+					if commonFailure == "" {
+						commonFailure = message
+					} else if message != commonFailure {
+						t.Fatalf("message = %q, want common pre-dispatch message %q", message, commonFailure)
 					}
 				})
 			}
@@ -268,7 +275,19 @@ func TestSessionAffinityAndHandoff_Scenario2_ConversePreStreamAndFirstFrame(t *t
 }
 
 func TestADR_0290_ConverseControlsStaySessionBound(t *testing.T) {
-	llm := mockllm.New(mockllm.TextTurn("done"))
+	// Reuse the full live wire fixtures so this acceptance pin proves each
+	// control changes runtime state, rather than merely inspecting protobuf shape.
+	for name, fixture := range map[string]func(*testing.T){
+		"approval":     TestGRPCConverseApproveSurfacedChildAsk,
+		"cancel":       TestGRPCConverseCancel,
+		"child cancel": TestGRPCConverseCancelChild,
+		"steer":        TestSteer_ConverseFrameRoundTrip,
+		"steer cancel": TestSteer_ConverseCancelRetracts,
+	} {
+		t.Run(name, fixture)
+	}
+
+	llm := mockllm.New(mockllm.ChunksTurn(blockingChunks()...))
 	svc := newService(t, llm, allowRules())
 	client, cleanup := dialGRPC(t, svc)
 	defer cleanup()
@@ -280,17 +299,9 @@ func TestADR_0290_ConverseControlsStaySessionBound(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-
-	for _, msg := range []protoreflect.Message{
-		(&mecatlv1.ResumeApproval{}).ProtoReflect(),
-		(&mecatlv1.Cancel{}).ProtoReflect(),
-		(&mecatlv1.CancelChild{}).ProtoReflect(),
-		(&mecatlv1.Steer{}).ProtoReflect(),
-		(&mecatlv1.SteerCancel{}).ProtoReflect(),
-	} {
-		if msg.Descriptor().Fields().ByName("session_id") != nil {
-			t.Fatalf("control %s unexpectedly carries session_id", msg.Descriptor().FullName())
-		}
+	secondBaseline, err := client.GetSession(context.Background(), &mecatlv1.GetSessionRequest{SessionId: second.GetSessionId()})
+	if err != nil {
+		t.Fatal(err)
 	}
 
 	ctx, cancel := context.WithTimeout(affinityContext(first.GetSessionId()), 5*time.Second)
@@ -302,12 +313,20 @@ func TestADR_0290_ConverseControlsStaySessionBound(t *testing.T) {
 	if err := stream.Send(&mecatlv1.ConverseRequest{Kind: &mecatlv1.ConverseRequest_Prompt{Prompt: &mecatlv1.Prompt{SessionId: first.GetSessionId(), Text: "go"}}}); err != nil {
 		t.Fatal(err)
 	}
+	for {
+		resp, recvErr := stream.Recv()
+		if recvErr != nil {
+			t.Fatalf("receive established run: %v", recvErr)
+		}
+		if resp.GetEvent().GetType() == "message.delta" {
+			break
+		}
+	}
 	controls := []*mecatlv1.ConverseRequest{
 		{Kind: &mecatlv1.ConverseRequest_ResumeApproval{ResumeApproval: &mecatlv1.ResumeApproval{AskId: "unknown"}}},
 		{Kind: &mecatlv1.ConverseRequest_CancelChild{CancelChild: &mecatlv1.CancelChild{ChildId: "unknown"}}},
 		{Kind: &mecatlv1.ConverseRequest_Steer{Steer: &mecatlv1.Steer{Text: "continue"}}},
 		{Kind: &mecatlv1.ConverseRequest_SteerCancel{SteerCancel: &mecatlv1.SteerCancel{MessageId: "unknown"}}},
-		{Kind: &mecatlv1.ConverseRequest_Cancel{Cancel: &mecatlv1.Cancel{}}},
 	}
 	for _, control := range controls {
 		if err := stream.Send(control); err != nil {
@@ -315,12 +334,19 @@ func TestADR_0290_ConverseControlsStaySessionBound(t *testing.T) {
 		}
 	}
 	// A later prompt cannot replace the identity established by the first frame.
-	_ = stream.Send(&mecatlv1.ConverseRequest{Kind: &mecatlv1.ConverseRequest_Prompt{Prompt: &mecatlv1.Prompt{SessionId: second.GetSessionId(), Text: "wrong session"}}})
+	if err := stream.Send(&mecatlv1.ConverseRequest{Kind: &mecatlv1.ConverseRequest_Prompt{Prompt: &mecatlv1.Prompt{SessionId: second.GetSessionId(), Text: "wrong session"}}}); err != nil {
+		t.Fatalf("send second-session prompt: %v", err)
+	}
 	_ = stream.CloseSend()
+	var recvErr error
 	for {
 		if _, err := stream.Recv(); err != nil {
+			recvErr = err
 			break
 		}
+	}
+	if status.Code(recvErr) != codes.InvalidArgument {
+		t.Fatalf("second-session prompt result = %v, want InvalidArgument", recvErr)
 	}
 	if llm.Calls() != 1 {
 		t.Fatalf("provider calls = %d, want 1", llm.Calls())
@@ -329,8 +355,8 @@ func TestADR_0290_ConverseControlsStaySessionBound(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.GetSession().GetState() != "idle" {
-		t.Fatalf("second session state = %q, want idle", got.GetSession().GetState())
+	if !proto.Equal(got, secondBaseline) {
+		t.Fatalf("second session changed: got %+v, want baseline %+v", got, secondBaseline)
 	}
 }
 

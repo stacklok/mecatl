@@ -437,7 +437,8 @@ func (h *HarnessServer) Converse(stream mecatlv1.HarnessService_ConverseServer) 
 	// frame never hits the terminal original behind the client's back).
 	ct := &controlTarget{run: run}
 
-	rl := &runRelay{ctx: ctx, logCtx: context.WithoutCancel(ctx), id: id, acks: steerAcks, snd: snd}
+	controlErrors := make(chan error, 1)
+	rl := &runRelay{ctx: ctx, logCtx: context.WithoutCancel(ctx), id: id, acks: steerAcks, controlErr: controlErrors, snd: snd}
 	rl.recorder = NewRunEventRecorder(rl.logCtx, h.svc, id)
 
 	// Read subsequent control frames concurrently so an approval/cancel/steer
@@ -613,13 +614,14 @@ func (s *streamSender) Send(m *mecatlv1.ConverseResponse) error {
 // on the SAME goroutine (one relayRun call at a time), so no cross-goroutine
 // access exists by construction.
 type runRelay struct {
-	ctx      context.Context
-	logCtx   context.Context
-	id       session.SessionID
-	acks     chan *mecatlv1.SteerAck
-	snd      *streamSender
-	recorder *RunEventRecorder
-	sendErr  error
+	ctx        context.Context
+	logCtx     context.Context
+	id         session.SessionID
+	acks       chan *mecatlv1.SteerAck
+	controlErr chan error
+	snd        *streamSender
+	recorder   *RunEventRecorder
+	sendErr    error
 }
 
 // sendEvent relays one run event through the streamSender, applying the
@@ -678,8 +680,15 @@ func (h *HarnessServer) sendEvent(rl *runRelay, ev session.Event) {
 func (h *HarnessServer) relayRun(rl *runRelay, run *agent.Run) error {
 	events := run.Events()
 	acks := rl.acks
+	controlErr := rl.controlErr
 	for events != nil {
 		select {
+		case err := <-controlErr:
+			controlErr = nil
+			if rl.sendErr == nil {
+				rl.sendErr = err
+			}
+			run.Cancel()
 		case ev, ok := <-events:
 			if !ok {
 				events = nil // the run ended
@@ -882,8 +891,15 @@ func (h *HarnessServer) readControl(ctx context.Context, id session.SessionID, c
 				h.handleSteerCancelFrame(ctx, id, k.SteerCancel.GetMessageId(), rl)
 			}
 		default:
-			// A second Prompt or an unknown frame is ignored: the run is
-			// already driving and a new prompt cannot start a second run here.
+			// The first frame establishes the only session identity for this
+			// stream. A later Prompt/Retry (or unknown frame) is an invalid second
+			// start, not an ignorable control.
+			select {
+			case rl.controlErr <- status.Error(codes.InvalidArgument, "converse: unexpected frame after start"):
+			default:
+			}
+			ct.active().Cancel()
+			return
 		}
 	}
 }

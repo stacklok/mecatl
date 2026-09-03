@@ -433,7 +433,10 @@ provider state, or grant any other authority.
 
 Provider requests do not trust the ingress copy. The engine places the loaded session
 ID in the authoritative run context, and each provider attempt/fallback reads it there.
-An absent or illegal run binding is omitted without failing inference. This preserves
+An absent or illegal run binding is omitted without failing inference. The TypeScript
+raw `withSessionAffinity` helper rejects an illegal explicit ID synchronously and leaves
+caller headers untouched; high-level use of an unrepresentable server-issued ID remains
+compatible by omitting affinity when no explicit bind was requested. This preserves
 legacy clients and custom providers without a protobuf change.
 
 With leasing configured, every session-family mutation must own the session lease. On
