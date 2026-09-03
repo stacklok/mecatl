@@ -479,10 +479,13 @@ type Model struct {
 	// already set a title this client never saw. Cleared by resetSession (a
 	// /clear wipes the session-derived state, including the label). The render
 	// path clamps + sanitizes it; this field holds the raw adopted title.
-	sessionTitle        string
-	statusMsg           string
-	generatedStatusLine statusline.Result
-	fatalErr            string
+	sessionTitle           string
+	sessionTitleProvenance string
+	titleRenamePrevious    string
+	titleFailedAttempts    map[string]struct{}
+	statusMsg              string
+	generatedStatusLine    statusline.Result
+	fatalErr               string
 
 	compactPending      bool
 	compactRequestToken uint64
@@ -1088,6 +1091,9 @@ func (m Model) resetSessionDerived() Model {
 	// / adopted from the stored session), so a /clear or fresh /models restart
 	// must not leave a stale label on its new session.
 	m.sessionTitle = ""
+	m.sessionTitleProvenance = ""
+	m.titleRenamePrevious = ""
+	m.titleFailedAttempts = nil
 	// Drop any pending permission modal — and the FIFO queue behind it plus the
 	// answered-set dedupe: an ask is session-derived in-flight state (its AskID
 	// correlates to a run on the OLD session), so a reset must not leave a stale

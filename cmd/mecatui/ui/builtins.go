@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"unicode"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -637,11 +638,65 @@ func canonicalBuiltinName(name string) string {
 	return name
 }
 
+// titleCommand recognizes /title without treating arbitrary model-facing slash
+// commands as client commands. bare distinguishes exactly /title from whitespace
+// supplied after it, which is rejected rather than silently treated as a read.
+func titleCommand(text string) (title string, bare, blank, ok bool) {
+	raw := strings.TrimLeftFunc(text, unicode.IsSpace)
+	if !strings.HasPrefix(strings.ToLower(raw), "/title") {
+		return "", false, false, false
+	}
+	if len(raw) > len("/title") && !unicode.IsSpace(rune(raw[len("/title")])) {
+		return "", false, false, false
+	}
+	if len(raw) == len("/title") {
+		return "", true, false, true
+	}
+	title = strings.TrimSpace(raw[len("/title"):])
+	return title, false, title == "", true
+}
+
+// runTitle adds a local, nonpersistent title/provenance notice. It deliberately
+// does not send prompt content or open a stream.
+func (m Model) runTitle() tea.Model {
+	title := m.sessionTitle
+	if title == "" {
+		title = "(untitled)"
+	}
+	provenance := titleProvenanceLabel(m.sessionTitleProvenance)
+	m.conv.addNotice("Session title: " + title + " (" + provenance + ")")
+	m.refreshView()
+	return m
+}
+
+func (m Model) renameTitle(title string) (tea.Model, tea.Cmd) {
+	if m.sessionID == "" || m.deps.SessionManagement == nil {
+		m.statusMsg = m.deps.Theme.Style("warning").Render("title rename is unavailable")
+		return m, nil
+	}
+	m.titleRenamePrevious = m.sessionTitle
+	m.sessionTitle = title
+	m.sessionTitleProvenance = "operator"
+	m.prompt.Reset()
+	return m, client.RenameSessionCmd(m.deps.Ctx, m.deps.SessionManagement, m.sessionID, title)
+}
+
 // dispatchBareBuiltin checks whether raw text is a slash command after trimming
 // surrounding Unicode whitespace. A current bare built-in executes locally. A
 // recognized built-in that does not accept arguments keeps the input and shows a
 // local warning. Unknown slash commands remain model-facing.
 func (m Model) dispatchBareBuiltin(text string) (tea.Model, tea.Cmd, bool) {
+	if title, bare, blank, ok := titleCommand(text); ok {
+		if blank {
+			m.statusMsg = m.deps.Theme.Style("warning").Render("title cannot be blank; use /title <text>")
+			return m, nil, true
+		}
+		if bare {
+			return m.runTitle(), nil, true
+		}
+		mm, cmd := m.renameTitle(title)
+		return mm, cmd, true
+	}
 	trimmed := strings.TrimSpace(text)
 	fields := strings.Fields(trimmed)
 	if len(fields) > 1 {
