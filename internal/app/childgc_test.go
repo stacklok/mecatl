@@ -506,7 +506,7 @@ func TestChildGCCapPassOldestFirst(t *testing.T) {
 // from cap slots, and becomes eligible immediately after its lifecycle releases.
 func TestChildGCSkipsLiveEngineChildren(t *testing.T) {
 	f := newGCFixture(t, childGCPolicy{retention: 24 * time.Hour, maxPerFamily: 2})
-	live := newSessionLiveness(nil, "", 0, 0, nil)
+	live := newSessionLiveness(nil, "", 0, 0, nil, nil)
 	release, err := live.Register(context.Background(), "subagent-live-old", func() {})
 	if err != nil {
 		t.Fatalf("Register() error = %v", err)

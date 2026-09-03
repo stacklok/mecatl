@@ -4,19 +4,22 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/stacklok/mecatl/engine/adapter/memlease"
+	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/wallclock"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
+	"github.com/stacklok/mecatl/internal/adapter/server"
 )
 
 func TestSessionLivenessConcurrentRegistrationsReleaseWithoutLeak(t *testing.T) {
 	const workers = 64
 	const id = session.SessionID("subagent-shared")
-	registry := newSessionLiveness(nil, "", 0, 0, nil)
+	registry := newSessionLiveness(nil, "", 0, 0, nil, nil)
 	registered := make(chan struct{}, workers)
 	releaseAll := make(chan struct{})
 	var wg sync.WaitGroup
@@ -50,8 +53,8 @@ func TestSessionLivenessConcurrentRegistrationsReleaseWithoutLeak(t *testing.T) 
 
 func TestSessionLivenessDistributedExclusionAcrossBuildOwners(t *testing.T) {
 	backend := memlease.New(wallclock.Clock{}, time.Minute)
-	first := newSessionLiveness(backend, "replica-a", time.Minute, time.Millisecond, nil)
-	second := newSessionLiveness(backend, "replica-b", time.Minute, time.Millisecond, nil)
+	first := newSessionLiveness(backend, "replica-a", time.Minute, time.Millisecond, nil, nil)
+	second := newSessionLiveness(backend, "replica-b", time.Minute, time.Millisecond, nil, nil)
 	t.Cleanup(first.Close)
 	t.Cleanup(second.Close)
 
@@ -85,7 +88,7 @@ func (failingChildLease) Release(context.Context, port.Lease) error {
 
 func TestSessionLivenessAcquireFailureDoesNotRegisterOrRenew(t *testing.T) {
 	want := errors.New("lease backend unavailable")
-	registry := newSessionLiveness(failingChildLease{err: want}, "replica", time.Minute, time.Millisecond, nil)
+	registry := newSessionLiveness(failingChildLease{err: want}, "replica", time.Minute, time.Millisecond, nil, nil)
 	defer registry.Close()
 
 	if _, err := registry.Register(context.Background(), "subagent-queued", func() {}); !errors.Is(err, want) {
@@ -93,5 +96,53 @@ func TestSessionLivenessAcquireFailureDoesNotRegisterOrRenew(t *testing.T) {
 	}
 	if registry.IsLive("subagent-queued") {
 		t.Fatal("failed acquisition left child locally live")
+	}
+}
+
+type losingChildLease struct {
+	lost     chan struct{}
+	releases atomic.Int64
+}
+
+func (*losingChildLease) Acquire(_ context.Context, id session.SessionID, owner string) (port.Lease, error) {
+	return port.Lease{SessionID: id, Owner: owner, Token: 1, Expiry: time.Now().Add(time.Hour)}, nil
+}
+
+func (l *losingChildLease) Renew(context.Context, port.Lease) (port.Lease, error) {
+	<-l.lost
+	return port.Lease{}, port.ErrLeaseHeld
+}
+
+func (l *losingChildLease) Release(context.Context, port.Lease) error {
+	l.releases.Add(1)
+	return nil
+}
+
+func TestADR_0290_ChildLeaseLossInvalidatesMutationBeforeCancellation(t *testing.T) {
+	lease := &losingChildLease{lost: make(chan struct{})}
+	capability := server.NewSessionMutationCapability(true)
+	registry := newSessionLiveness(lease, "replica", time.Hour, time.Millisecond, nil, capability)
+	defer registry.Close()
+	store := capability.GuardStore(memstore.New())
+	id := session.SessionID("subagent-loss")
+	cancelled := make(chan struct{})
+	release, err := registry.Register(context.Background(), id, func() {
+		if err := store.Save(context.Background(), session.New(id, session.ModeDefault, "/ws", session.Limits{}, time.Now())); !errors.Is(err, server.ErrSessionLeasedElsewhere) {
+			t.Errorf("save observed by cancellation = %v, want ErrSessionLeasedElsewhere", err)
+		}
+		close(cancelled)
+	})
+	if err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+	close(lease.lost)
+	select {
+	case <-cancelled:
+	case <-time.After(time.Second):
+		t.Fatal("child lease loss did not cancel registration")
+	}
+	release()
+	if got := lease.releases.Load(); got != 0 {
+		t.Fatalf("stale child ownership released %d times, want 0", got)
 	}
 }

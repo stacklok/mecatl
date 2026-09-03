@@ -1747,16 +1747,17 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	if agentClose == nil {
 		agentClose = func() {}
 	}
+	// The local capability is shared by Service lease ownership, delegation-child
+	// liveness, and the engine's persistence/audit adapters.
+	mutationCapability := server.NewSessionMutationCapability(sessionLease != nil)
 	// One process-wide liveness registry bridges engine-owned delegation children
 	// to Service/retention without introducing an engine→server dependency. When
 	// leasing is configured it owns distributed child holds as well.
 	childLiveness := newSessionLiveness(sessionLease, leaseOwner, cfg.SessionLeaseTTL,
-		cfg.SessionLeaseRenewInterval, cfg.diag())
+		cfg.SessionLeaseRenewInterval, cfg.diag(), mutationCapability)
 	cfg.sessionLiveness = childLiveness
-	// The local capability is shared by Service lease ownership and the engine's
-	// persistence/audit adapters. It gates only operation admission; backend calls
-	// already admitted may complete after a declared loss.
-	mutationCapability := server.NewSessionMutationCapability(sessionLease != nil)
+	// The gate covers operation admission; backend calls already admitted may
+	// complete after a declared loss.
 	engineStore := mutationCapability.GuardStore(store)
 	cfg.ToolCallRecorder = mutationCapability.GuardToolCallRecorder(cfg.ToolCallRecorder)
 	engine, mainMgr, mcpProvider, mcpInventory, sessFactory, learned, policy, assets, scheduleMgr, mcpClose, err := buildEngine(ctx, cfg, reg, provider, store, engineStore, agentReg)

@@ -9,6 +9,7 @@ import (
 
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
+	"github.com/stacklok/mecatl/internal/adapter/server"
 )
 
 const (
@@ -21,14 +22,15 @@ const (
 // child sessions. When a SessionLease is configured it also owns each child's
 // distributed hold and renewer for exactly the registered lifecycle.
 type sessionLiveness struct {
-	mu     sync.RWMutex
-	active map[session.SessionID]*childLeaseHold
-	lease  port.SessionLease
-	owner  string
-	renew  time.Duration
-	diag   port.Diagnostics
-	now    func() time.Time
-	closed bool
+	mu         sync.RWMutex
+	active     map[session.SessionID]*childLeaseHold
+	lease      port.SessionLease
+	owner      string
+	renew      time.Duration
+	diag       port.Diagnostics
+	capability *server.SessionMutationCapability
+	now        func() time.Time
+	closed     bool
 }
 
 type childLeaseHold struct {
@@ -41,9 +43,10 @@ type childLeaseHold struct {
 	acquireCancel context.CancelFunc
 	stop          context.CancelFunc
 	done          chan struct{}
+	lost          bool
 }
 
-func newSessionLiveness(lease port.SessionLease, owner string, ttl, renew time.Duration, diag port.Diagnostics) *sessionLiveness {
+func newSessionLiveness(lease port.SessionLease, owner string, ttl, renew time.Duration, diag port.Diagnostics, capability *server.SessionMutationCapability) *sessionLiveness {
 	if ttl <= 0 {
 		ttl = childLeaseDefaultTTL
 	}
@@ -58,7 +61,7 @@ func newSessionLiveness(lease port.SessionLease, owner string, ttl, renew time.D
 	}
 	return &sessionLiveness{
 		active: make(map[session.SessionID]*childLeaseHold),
-		lease:  lease, owner: owner, renew: renew, diag: diag, now: time.Now,
+		lease:  lease, owner: owner, renew: renew, diag: diag, capability: capability, now: time.Now,
 	}
 }
 
@@ -120,11 +123,8 @@ func (r *sessionLiveness) Register(ctx context.Context, id session.SessionID, ca
 			r.mu.Unlock()
 			return nil, h.err
 		}
-		if h.err == nil && r.lease != nil {
-			renewCtx, stop := context.WithCancel(context.Background())
-			h.stop = stop
-			h.done = make(chan struct{})
-			go r.renewLoop(renewCtx, id, h)
+		if h.err == nil {
+			r.activate(id, h)
 		}
 		close(h.ready)
 		if h.err != nil {
@@ -135,6 +135,18 @@ func (r *sessionLiveness) Register(ctx context.Context, id session.SessionID, ca
 			return nil, h.err
 		}
 		return sync.OnceFunc(func() { r.release(id, h, 1) }), nil
+	}
+}
+
+func (r *sessionLiveness) activate(id session.SessionID, h *childLeaseHold) {
+	if r.capability != nil {
+		r.capability.Grant(id)
+	}
+	if r.lease != nil {
+		renewCtx, stop := context.WithCancel(context.Background())
+		h.stop = stop
+		h.done = make(chan struct{})
+		go r.renewLoop(renewCtx, id, h)
 	}
 }
 
@@ -190,16 +202,20 @@ func (r *sessionLiveness) renewLoop(ctx context.Context, id session.SessionID, h
 func (r *sessionLiveness) lose(id session.SessionID, h *childLeaseHold, cause error) {
 	r.diag.Log(context.Background(), port.LevelWarn, "lost child session lease; cancelling child",
 		"session", string(id), "owner", r.owner, "err", cause.Error())
-	r.mu.RLock()
-	if r.active[id] != h {
-		r.mu.RUnlock()
+	r.mu.Lock()
+	if r.active[id] != h || h.lost {
+		r.mu.Unlock()
 		return
+	}
+	h.lost = true
+	if r.capability != nil {
+		r.capability.Invalidate(id)
 	}
 	cancels := make([]context.CancelFunc, 0, len(h.cancels))
 	for _, cancel := range h.cancels {
 		cancels = append(cancels, cancel)
 	}
-	r.mu.RUnlock()
+	r.mu.Unlock()
 	for _, cancel := range cancels {
 		cancel()
 	}
@@ -218,17 +234,20 @@ func (r *sessionLiveness) release(id session.SessionID, h *childLeaseHold, key u
 		return
 	}
 	delete(r.active, id)
-	stop, done, lease := h.stop, h.done, h.lease
+	stop, done, lease, lost := h.stop, h.done, h.lease, h.lost
+	if r.capability != nil && !lost {
+		r.capability.Remove(id)
+	}
 	r.mu.Unlock()
-	r.stopAndRelease(stop, done, lease)
+	r.stopAndRelease(stop, done, lease, lost)
 }
 
-func (r *sessionLiveness) stopAndRelease(stop context.CancelFunc, done <-chan struct{}, lease port.Lease) {
+func (r *sessionLiveness) stopAndRelease(stop context.CancelFunc, done <-chan struct{}, lease port.Lease, lost bool) {
 	if stop != nil {
 		stop()
 		<-done
 	}
-	if r.lease == nil || lease.SessionID == "" {
+	if lost || r.lease == nil || lease.SessionID == "" {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(context.Background()), childLeaseCallTimeout)
@@ -247,20 +266,31 @@ func (r *sessionLiveness) Close() {
 		return
 	}
 	r.closed = true
-	holds := make([]*childLeaseHold, 0, len(r.active))
+	type closingHold struct {
+		id session.SessionID
+		h  *childLeaseHold
+	}
+	holds := make([]closingHold, 0, len(r.active))
 	for id, h := range r.active {
 		delete(r.active, id)
+		if r.capability != nil {
+			r.capability.Invalidate(id)
+		}
 		if h.acquireCancel != nil {
 			h.acquireCancel()
 		}
-		holds = append(holds, h)
+		holds = append(holds, closingHold{id: id, h: h})
 	}
 	r.mu.Unlock()
-	for _, h := range holds {
+	for _, hold := range holds {
+		h := hold.h
 		<-h.ready
 		for _, cancel := range h.cancels {
 			cancel()
 		}
-		r.stopAndRelease(h.stop, h.done, h.lease)
+		r.stopAndRelease(h.stop, h.done, h.lease, h.lost)
+		if r.capability != nil && !h.lost {
+			r.capability.Remove(hold.id)
+		}
 	}
 }

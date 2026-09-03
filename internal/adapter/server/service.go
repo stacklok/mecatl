@@ -1105,6 +1105,9 @@ type runState struct {
 	preserveDurable atomic.Bool
 	settled         chan struct{}
 	settledOnce     sync.Once
+	// removeCapabilityOnSettle retains denial when normal teardown releases a
+	// lease while stale run references are still unwinding.
+	removeCapabilityOnSettle bool
 }
 
 // keyedMutex is a map of per-key mutexes with reference counting, so a caller can
@@ -1882,7 +1885,7 @@ func (s *Service) persistNewSession(ctx context.Context, sess *session.Session) 
 	if s.cfg.OwnershipEnforced {
 		return fmt.Errorf("%w: ownership enforcement requires a session store with atomic create capability", ErrConfig)
 	}
-	return s.cfg.Store.Save(ctx, sess)
+	return s.saveSession(ctx, sess)
 }
 
 func (s *Service) persistCreatedSession(ctx context.Context, sess *session.Session, owner *session.Principal, request *createRequest) (*session.Session, error) {
@@ -2717,23 +2720,49 @@ func (s *Service) GracefulDrain(ctx context.Context) error {
 	}
 
 	pending := make(map[session.SessionID]*runState, len(runs))
+	settled := make(chan session.SessionID, len(runs))
 	for id, st := range runs {
 		pending[id] = st
+		go func(id session.SessionID, done <-chan struct{}) {
+			select {
+			case <-done:
+				settled <- id
+			case <-ctx.Done():
+			}
+		}(id, st.settled)
 	}
-	for id, st := range runs {
-		select {
-		case <-st.settled:
-			delete(pending, id)
-			if !st.awaiting.Load() {
-				saveCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), leaseAcquireTimeout)
-				if err := s.cfg.Store.Save(saveCtx, st.sess); err != nil {
+	settle := func(id session.SessionID) {
+		st, ok := pending[id]
+		if !ok {
+			return
+		}
+		delete(pending, id)
+		if !st.awaiting.Load() {
+			saveCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), leaseAcquireTimeout)
+			if s.mutationLeaseHeld(id) {
+				if err := s.saveSession(saveCtx, st.sess); err != nil {
 					s.cfg.Diagnostics.Log(saveCtx, port.LevelWarn, "drain persistence failed; prior durable state remains authoritative",
 						"session", string(id), "err", err.Error())
 				}
-				cancel()
 			}
-			s.releaseLease(id)
+			cancel()
+		}
+		s.releaseLease(id)
+	}
+	for len(pending) > 0 {
+		select {
+		case id := <-settled:
+			settle(id)
 		case <-ctx.Done():
+			// A settlement may race the timeout. Recheck every pending lifecycle
+			// directly before deciding which genuinely unjoined owners retain TTL.
+			for id, st := range pending {
+				select {
+				case <-st.settled:
+					settle(id)
+				default:
+				}
+			}
 			for pendingID := range pending {
 				s.retainLeaseForTTL(pendingID)
 			}
@@ -2750,7 +2779,7 @@ func (s *Service) retainLeaseForTTL(id session.SessionID) {
 	h := s.heldLeases[id]
 	if h != nil && h.valid {
 		h.valid = false
-		s.cfg.MutationCapability.invalidate(id)
+		s.cfg.MutationCapability.Invalidate(id)
 	}
 	s.mu.Unlock()
 	if h != nil {
@@ -2823,6 +2852,10 @@ func (s *Service) StorageReady(ctx context.Context) bool {
 		return true // a non-Redis store has no ping — always ready
 	}
 	return p.Ping(ctx) == nil
+}
+
+func (s *Service) saveSession(ctx context.Context, sess *session.Session) error {
+	return s.cfg.MutationCapability.GuardStore(s.cfg.Store).Save(ctx, sess)
 }
 
 // GetSession returns the persisted session under id, or ErrNotFound.
@@ -2949,7 +2982,7 @@ func (s *Service) CompactSession(ctx context.Context, id session.SessionID, call
 	if !leaseHeld() {
 		return agent.ManualCompactionResult{}, fmt.Errorf("%w: session lease was lost during compaction", ErrSessionLeasedElsewhere)
 	}
-	if err := s.cfg.Store.Save(compactCtx, sess); err != nil {
+	if err := s.saveSession(compactCtx, sess); err != nil {
 		return agent.ManualCompactionResult{}, fmt.Errorf("%w: persist compacted session: %v", ErrInternal, err)
 	}
 
@@ -3001,7 +3034,7 @@ func (s *Service) RenameSession(ctx context.Context, id session.SessionID, title
 	if err := sess.RenameTitle(title); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrInvalidArgument, err)
 	}
-	if err := s.cfg.Store.Save(ctx, sess); err != nil {
+	if err := s.saveSession(ctx, sess); err != nil {
 		return nil, fmt.Errorf("%w: rename session: %v", ErrInternal, err)
 	}
 	return sess, nil
@@ -3033,6 +3066,9 @@ func (s *Service) DeleteSession(ctx context.Context, id session.SessionID) error
 	sess, absent, err := s.managementTarget(ctx, id, true)
 	if err != nil || absent {
 		return err
+	}
+	if !s.mutationLeaseHeld(id) {
+		return fmt.Errorf("%w: %q", ErrSessionLeasedElsewhere, id)
 	}
 	if err := prunable.Delete(ctx, sess.ID); err != nil {
 		if errors.Is(err, port.ErrSessionNotFound) {
@@ -3083,6 +3119,9 @@ func (s *Service) DeleteSessionForRetentionCandidate(ctx context.Context, candid
 	}
 	if !retentionCandidateMatches(sess, candidate) {
 		return errRetentionCandidateChanged
+	}
+	if !s.mutationLeaseHeld(candidate.ID) {
+		return fmt.Errorf("%w: %q", ErrSessionLeasedElsewhere, candidate.ID)
 	}
 	deleted, err := deleter.DeleteSessionIfUnchanged(ctx, candidate)
 	if err != nil {
@@ -3142,6 +3181,9 @@ func (s *Service) DeleteSessionForRetention(ctx context.Context, id session.Sess
 	}
 	if sess.State == session.StateRunning || sess.State == session.StateAwaiting || s.IsLive(id) {
 		return fmt.Errorf("%w: retention candidate is active or awaiting approval", ErrFailedPrecondition)
+	}
+	if !s.mutationLeaseHeld(id) {
+		return fmt.Errorf("%w: %q", ErrSessionLeasedElsewhere, id)
 	}
 	if err := prunable.Delete(ctx, id); err != nil {
 		if errors.Is(err, port.ErrSessionNotFound) {
@@ -3277,7 +3319,7 @@ func (s *Service) SetMode(ctx context.Context, id session.SessionID, mode sessio
 		// A mid-turn refusal from the aggregate is a client-sequencing error.
 		return nil, fmt.Errorf("%w: %v", ErrInvalidArgument, err)
 	}
-	if err := s.cfg.Store.Save(ctx, sess); err != nil {
+	if err := s.saveSession(ctx, sess); err != nil {
 		return nil, fmt.Errorf("server: persist session: %w", err)
 	}
 	return sess, nil
@@ -3575,21 +3617,21 @@ func (s *Service) repairTerminalState(ctx context.Context, sess *session.Session
 		if rerr := sess.Reopen(); rerr != nil {
 			return fmt.Errorf("server: reopen session: %w", rerr)
 		}
-		if serr := s.cfg.Store.Save(ctx, sess); serr != nil {
+		if serr := s.saveSession(ctx, sess); serr != nil {
 			return fmt.Errorf("server: persist reopened session: %w", serr)
 		}
 	case session.StateCancelled:
 		if rerr := sess.Interrupt(); rerr != nil {
 			return fmt.Errorf("server: interrupt session: %w", rerr)
 		}
-		if serr := s.cfg.Store.Save(ctx, sess); serr != nil {
+		if serr := s.saveSession(ctx, sess); serr != nil {
 			return fmt.Errorf("server: persist interrupted session: %w", serr)
 		}
 	case session.StateFailed:
 		if rerr := sess.Recover(); rerr != nil {
 			return fmt.Errorf("server: recover session: %w", rerr)
 		}
-		if serr := s.cfg.Store.Save(ctx, sess); serr != nil {
+		if serr := s.saveSession(ctx, sess); serr != nil {
 			return fmt.Errorf("server: persist recovered session: %w", serr)
 		}
 	}
@@ -3777,6 +3819,10 @@ func (s *Service) RetryFailedRun(ctx context.Context, id session.SessionID) (*ag
 	if err := s.acquireLease(ctx, id); err != nil {
 		return nil, err
 	}
+	runCtx := ctx
+	admissionCtx, stopAdmission, leaseHeld := s.mutationLeaseContext(ctx, id)
+	defer stopAdmission()
+	ctx = admissionCtx
 	engine, env, err := s.engineAndEnvironmentFor(ctx, sess)
 	if err != nil {
 		return nil, err
@@ -3788,7 +3834,10 @@ func (s *Service) RetryFailedRun(ctx context.Context, id session.SessionID) (*ag
 		return nil, err
 	}
 
-	ctx = memory.WithWorkspace(ctx, env.Workspace().Root())
+	if !leaseHeld() {
+		return nil, fmt.Errorf("%w: %q", ErrSessionLeasedElsewhere, id)
+	}
+	ctx = memory.WithWorkspace(runCtx, env.Workspace().Root())
 	run := engine.RetryFailedStep(ctx, sess, env)
 	s.register(id, run, sess)
 	return run, nil
@@ -3819,7 +3868,7 @@ func (s *Service) prepareFailedStepRetry(ctx context.Context, sess *session.Sess
 			return fmt.Errorf("server: abandon crashed failed-step retry: %w", err)
 		}
 	}
-	if err := s.cfg.Store.Save(ctx, sess); err != nil {
+	if err := s.saveSession(ctx, sess); err != nil {
 		return fmt.Errorf("server: persist failed-step retry preparation: %w", err)
 	}
 	return nil
@@ -3900,6 +3949,12 @@ func (s *Service) startRunContent(ctx context.Context, id session.SessionID, tex
 	if err := s.acquireLease(ctx, id); err != nil {
 		return nil, err
 	}
+	// Bind every fallible admission step to this exact hold. Renewal loss cancels
+	// construction and the final revalidation below prevents provider/tool start.
+	runCtx := ctx
+	admissionCtx, stopAdmission, leaseHeld := s.mutationLeaseContext(ctx, id)
+	defer stopAdmission()
+	ctx = admissionCtx
 	// Apply the unchanged reopen/interrupt/recover funnel only after the trusted
 	// purpose and ownership gates and lease acquisition. Rejected kinds are never
 	// mutated as a side effect of probing.
@@ -3930,7 +3985,7 @@ func (s *Service) startRunContent(ctx context.Context, id session.SessionID, tex
 		if err := sess.Abandon(); err != nil {
 			return nil, fmt.Errorf("server: abandon stale running session: %w", err)
 		}
-		if err := s.cfg.Store.Save(ctx, sess); err != nil {
+		if err := s.saveSession(ctx, sess); err != nil {
 			return nil, fmt.Errorf("server: persist abandoned session: %w", err)
 		}
 	}
@@ -3938,7 +3993,6 @@ func (s *Service) startRunContent(ctx context.Context, id session.SessionID, tex
 	if err != nil {
 		return nil, err
 	}
-	ctx = memory.WithWorkspace(ctx, env.Workspace().Root())
 	// Mint this run's identity and stamp it on the aggregate BEFORE launching, so
 	// the id is on the snapshot the moment the run can park awaiting an approval —
 	// which is what lets a cross-process resume continue THE SAME run rather than
@@ -3947,6 +4001,10 @@ func (s *Service) startRunContent(ctx context.Context, id session.SessionID, tex
 	// one mint site for a new run.
 	runID := newRunID()
 	sess.BeginRun(runID)
+	if !leaseHeld() {
+		return nil, fmt.Errorf("%w: %q", ErrSessionLeasedElsewhere, id)
+	}
+	ctx = memory.WithWorkspace(runCtx, env.Workspace().Root())
 	run := engine.Run(ctx, sess, env, agent.RunRequest{Text: text, Parts: parts, RunID: runID})
 	s.register(id, run, sess)
 	return run, nil
@@ -4887,11 +4945,18 @@ func (s *Service) resumeFromAwaiting(ctx context.Context, id session.SessionID, 
 	if err := s.acquireLease(ctx, id); err != nil {
 		return nil, err
 	}
+	runCtx := ctx
+	admissionCtx, stopAdmission, leaseHeld := s.mutationLeaseContext(ctx, id)
+	defer stopAdmission()
+	ctx = admissionCtx
 	engine, env, err := s.engineAndEnvironmentFor(ctx, sess)
 	if err != nil {
 		return nil, err
 	}
-	ctx = memory.WithWorkspace(ctx, env.Workspace().Root())
+	if !leaseHeld() {
+		return nil, fmt.Errorf("%w: %q", ErrSessionLeasedElsewhere, id)
+	}
+	ctx = memory.WithWorkspace(runCtx, env.Workspace().Root())
 	run := engine.ResumeApproval(ctx, sess, env, askID, verdict)
 	s.register(id, run, sess)
 	return run, nil
@@ -5181,7 +5246,7 @@ func (s *Service) Persist(ctx context.Context, id session.SessionID) {
 	// Close (which skips cancelling awaiting runs) never skips a run whose
 	// resumable snapshot was never persisted. Set-before-save would let Close
 	// skip a run whose Save then fails, losing the resume point.
-	err := s.cfg.Store.Save(ctx, st.sess)
+	err := s.saveSession(ctx, st.sess)
 	if err != nil {
 		// Persistence is best-effort: a Save failure must not break the live
 		// stream. The run continues from in-memory state; only resume-across-
@@ -5619,7 +5684,7 @@ func (s *Service) acquireLease(ctx context.Context, id session.SessionID) error 
 		return nil
 	}
 	h := &heldLease{lease: lease, ctx: renewCtx, cancel: cancel, valid: true}
-	s.cfg.MutationCapability.grant(id)
+	s.cfg.MutationCapability.Grant(id)
 	s.heldLeases[id] = h
 	s.mu.Unlock()
 	go s.renewLoop(renewCtx, id, h)
@@ -5703,10 +5768,10 @@ func (s *Service) renewLoop(renewCtx context.Context, id session.SessionID, expe
 // onLeaseLost handles a declared lease loss only when expected remains the
 // current hold. Local mutation capability is invalidated before the owning run
 // is stopped. For a durably parked awaiting run, its exact local ask is withdrawn
-// before cancellation and the run is removed from the local registry; cancellation
-// can then unwind only in memory and cannot overwrite the durable awaiting handoff
-// point. The invalid tombstone remains session-scoped until local teardown and
-// prevents this stale Service from immediately reacquiring the session.
+// before cancellation; cancellation can then unwind only in memory and cannot
+// overwrite the durable awaiting handoff point. The lifecycle record remains until
+// its relay drains and FinishRun performs identity-safe removal. The invalid lease
+// tombstone prevents this stale Service from immediately reacquiring the session.
 func (s *Service) onLeaseLost(ctx context.Context, id session.SessionID, expected *heldLease, cause error) {
 	var run *agent.Run
 	var askID string
@@ -5716,7 +5781,7 @@ func (s *Service) onLeaseLost(ctx context.Context, id session.SessionID, expecte
 		return
 	}
 	expected.valid = false
-	s.cfg.MutationCapability.invalidate(id)
+	s.cfg.MutationCapability.Invalidate(id)
 	expected.cancel()
 	if st := s.runs[id]; st != nil {
 		run = st.run
@@ -5725,9 +5790,6 @@ func (s *Service) onLeaseLost(ctx context.Context, id session.SessionID, expecte
 				askID = ask.AskID
 			}
 		}
-		// Invalidate the local control/persistence handle immediately. The relay's
-		// eventual FinishRun remains harmless because deregister is identity-safe.
-		delete(s.runs, id)
 	}
 	s.mu.Unlock()
 
@@ -5739,7 +5801,6 @@ func (s *Service) onLeaseLost(ctx context.Context, id session.SessionID, expecte
 		}
 		run.Cancel()
 	}
-
 }
 
 // releaseLease stops the session's renewer and releases its cross-process lease,
@@ -5757,12 +5818,18 @@ func (s *Service) releaseLease(id session.SessionID) {
 	h, ok := s.heldLeases[id]
 	var lease port.Lease
 	valid := false
+	removeOnReturn := false
 	if ok {
 		lease = h.lease // guarded snapshot of the latest token/expiry.
 		valid = h.valid
 		h.valid = false
-		s.cfg.MutationCapability.invalidate(id)
+		s.cfg.MutationCapability.Invalidate(id)
 		delete(s.heldLeases, id)
+		if st := s.runs[id]; st != nil {
+			st.removeCapabilityOnSettle = valid
+		} else {
+			removeOnReturn = valid
+		}
 	}
 	s.mu.Unlock()
 	if !ok {
@@ -5777,6 +5844,11 @@ func (s *Service) releaseLease(id session.SessionID) {
 	if err := s.cfg.SessionLease.Release(ctx, lease); err != nil {
 		s.cfg.Diagnostics.Log(ctx, port.LevelWarn, "session lease release failed",
 			"session", string(id), "owner", s.cfg.LeaseOwner, "err", err.Error())
+	}
+	if removeOnReturn {
+		// No stale run reference remains, so normal teardown can forget the
+		// invalidation rather than accumulating a per-session tombstone.
+		s.cfg.MutationCapability.Remove(id)
 	}
 }
 
@@ -5965,7 +6037,7 @@ func (s *Service) SettleIfStale(ctx context.Context, id session.SessionID) (bool
 	if err := sess.Abandon(); err != nil {
 		return false, fmt.Errorf("server: abandon stale running session: %w", err)
 	}
-	if err := s.cfg.Store.Save(ctx, sess); err != nil {
+	if err := s.saveSession(ctx, sess); err != nil {
 		return false, fmt.Errorf("server: persist abandoned session: %w", err)
 	}
 	return true, nil
@@ -5987,12 +6059,17 @@ func (s *Service) register(id session.SessionID, run *agent.Run, sess *session.S
 // deregister removes the in-flight run for id (only if it is still the one
 // recorded, so a later run for the same session is never clobbered).
 func (s *Service) deregister(id session.SessionID, run *agent.Run) {
+	removeCapability := false
 	s.mu.Lock()
 	if st, ok := s.runs[id]; ok && st.run == run {
 		delete(s.runs, id)
 		st.settledOnce.Do(func() { close(st.settled) })
+		removeCapability = st.removeCapabilityOnSettle
 	}
 	s.mu.Unlock()
+	if removeCapability {
+		s.cfg.MutationCapability.Remove(id)
+	}
 }
 
 // FinishRun removes run from the in-flight registry for id. It is the EXPORTED

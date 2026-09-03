@@ -515,6 +515,59 @@ func TestSessionAffinityAndHandoff_Scenario6_DrainCancelsJoinsAndDiagnosesPersis
 	}
 }
 
+func TestADR_0290_DrainSettlesReadyRunsWithoutMapOrderStarvation(t *testing.T) {
+	lease := &fakeLease{}
+	store := memstore.New()
+	svc := newGracefulDrainService(t, store, lease, blockingProvider{}, port.NopDiagnostics{})
+	defer svc.Close()
+
+	const runCount = 9
+	runs := make([]*agent.Run, 0, runCount)
+	ids := make([]session.SessionID, 0, runCount)
+	for range runCount {
+		sess, err := svc.CreateSession(context.Background(), "/ws", session.ModeDefault, session.Limits{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		run, err := svc.StartRun(context.Background(), sess.ID, "execute")
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, sess.ID)
+		runs = append(runs, run)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	drainDone := make(chan error, 1)
+	go func() { drainDone <- svc.GracefulDrain(ctx) }()
+	for _, run := range runs {
+		for range run.Events() {
+		}
+	}
+	// Only one relay joins. The other eight remain genuinely unjoined and must not
+	// starve this ready lifecycle merely because map iteration sees them first.
+	svc.FinishRun(ids[0], runs[0])
+	deadline := time.After(time.Second)
+	for lease.releaseCount() == 0 {
+		select {
+		case <-deadline:
+			cancel()
+			t.Fatal("settled run was starved behind unjoined map entries")
+		case <-time.After(time.Millisecond):
+		}
+	}
+	if got := lease.lastReleasedLease().SessionID; got != ids[0] {
+		t.Fatalf("released session = %q, want settled %q", got, ids[0])
+	}
+	cancel()
+	if err := <-drainDone; !errors.Is(err, context.Canceled) {
+		t.Fatalf("GracefulDrain = %v, want context.Canceled for remaining unjoined runs", err)
+	}
+	if got := lease.releaseCount(); got != 1 {
+		t.Fatalf("lease releases = %d, want only the one settled run", got)
+	}
+}
+
 func TestADR_0290_DrainTimeoutRetainsLeaseForTTLTakeover(t *testing.T) {
 	lease := &fakeLease{}
 	store := memstore.New()

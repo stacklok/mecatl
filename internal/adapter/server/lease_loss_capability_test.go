@@ -3,6 +3,7 @@ package server_test
 import (
 	"context"
 	"errors"
+	"iter"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -18,6 +19,73 @@ import (
 	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/server"
 )
+
+type admissionCountingProvider struct{ calls atomic.Int64 }
+
+func (p *admissionCountingProvider) Stream(context.Context, port.LLMRequest) (iter.Seq2[port.Chunk, error], error) {
+	p.calls.Add(1)
+	return func(yield func(port.Chunk, error) bool) {
+		yield(port.Chunk{Kind: port.ChunkDone, Stop: session.StopEndTurn}, nil)
+	}, nil
+}
+
+func (*admissionCountingProvider) Capabilities() port.ProviderCapabilities {
+	return port.ProviderCapabilities{}
+}
+
+func TestADR_0290_LeaseLossDuringProvisionalAdmissionPreventsProviderStart(t *testing.T) {
+	lease := &fakeLease{}
+	lease.renewHook = func(port.Lease) (port.Lease, error) { return port.Lease{}, port.ErrLeaseHeld }
+	capability := server.NewSessionMutationCapability(true)
+	store := memstore.New()
+	provider := &admissionCountingProvider{}
+	eng := agent.NewEngine(agent.Deps{
+		LLM: provider, Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, permstore.New()), Model: "test-model",
+		Store: capability.GuardStore(store),
+	})
+	resolverEntered := make(chan struct{})
+	svc, err := server.NewService(server.Config{
+		Engine: eng, Store: store, SessionLease: lease, LeaseOwner: "provisional-owner",
+		LeaseTTL: time.Hour, LeaseRenewInterval: time.Millisecond, MutationCapability: capability,
+		Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+		EnvironmentResolver: func(ctx context.Context, _ session.EnvironmentRef) (tool.Environment, error) {
+			close(resolverEntered)
+			<-ctx.Done()
+			return tool.Environment{}, ctx.Err()
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+	defer svc.Close()
+	id := session.SessionID("provisional-admission")
+	sess := session.New(id, session.ModeDefault, "/ws", session.Limits{}, time.Now())
+	sess.EnvironmentRef = session.EnvironmentRef{Kind: "remote-test", ID: "ns"}
+	if err := store.Save(context.Background(), sess); err != nil {
+		t.Fatal(err)
+	}
+	result := make(chan error, 1)
+	go func() {
+		_, err := svc.StartRun(context.Background(), id, "must not start")
+		result <- err
+	}()
+	select {
+	case <-resolverEntered:
+	case <-time.After(time.Second):
+		t.Fatal("environment admission did not start")
+	}
+	select {
+	case err := <-result:
+		if err == nil {
+			t.Fatal("StartRun succeeded after admission lease loss")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("lease loss did not cancel provisional admission")
+	}
+	if got := provider.calls.Load(); got != 0 {
+		t.Fatalf("provider starts after provisional lease loss = %d, want 0", got)
+	}
+}
 
 type leaseLossRecorder struct {
 	calls atomic.Int64
@@ -143,9 +211,23 @@ func TestSessionAffinityAndHandoff_Scenario5_LeaseLossCancelsAndPreventsNewMutat
 			sawCancelled = true
 		}
 	}
-	svc.FinishRun(sess.ID, run)
 	if !sawCancelled {
 		t.Fatal("lease loss did not cancel the owning run")
+	}
+	if got, ok := svc.LookupRun(sess.ID); !ok || got != run {
+		t.Fatal("lease loss removed the run lifecycle before FinishRun settled it")
+	}
+	beforeFinish := recorder.calls.Load()
+	guardedRecorder.ToolCall(sess.ID, session.ToolCall{ID: "during-unwind"}, session.NewToolResult("during-unwind", "blocked"), 0, 0)
+	if got := recorder.calls.Load(); got != beforeFinish {
+		t.Fatalf("tool recorder admitted during lease-loss unwind: %d -> %d", beforeFinish, got)
+	}
+	if err := svc.EndSession(context.Background(), sess.ID); !errors.Is(err, server.ErrFailedPrecondition) {
+		t.Fatalf("EndSession while lease-lost run unwinds = %v, want ErrFailedPrecondition", err)
+	}
+	svc.FinishRun(sess.ID, run)
+	if _, ok := svc.LookupRun(sess.ID); ok {
+		t.Fatal("FinishRun did not remove the settled lease-lost lifecycle")
 	}
 	close(barrier.release)
 	if err := <-admittedDone; err != nil {
@@ -160,8 +242,39 @@ func TestSessionAffinityAndHandoff_Scenario5_LeaseLossCancelsAndPreventsNewMutat
 	if err := guardedStore.Save(context.Background(), sess); !errors.Is(err, server.ErrSessionLeasedElsewhere) {
 		t.Fatalf("save after declared loss = %v, want ErrSessionLeasedElsewhere", err)
 	}
+	if _, err := svc.RenameSession(context.Background(), sess.ID, "must not land"); !errors.Is(err, server.ErrSessionLeasedElsewhere) {
+		t.Fatalf("metadata mutation after declared loss = %v, want ErrSessionLeasedElsewhere", err)
+	}
+	if err := svc.DeleteSession(context.Background(), sess.ID); !errors.Is(err, server.ErrSessionLeasedElsewhere) {
+		t.Fatalf("family delete after declared loss = %v, want ErrSessionLeasedElsewhere", err)
+	}
 	if _, err := svc.SetMode(context.Background(), sess.ID, session.ModePlan); !errors.Is(err, server.ErrSessionLeasedElsewhere) {
 		t.Fatalf("new mutation after declared loss = %v, want ErrSessionLeasedElsewhere", err)
+	}
+}
+
+func TestADR_0290_NormalReleaseRemovesMutationCapabilityTombstone(t *testing.T) {
+	lease := &fakeLease{}
+	capability := server.NewSessionMutationCapability(true)
+	recorder := &leaseLossRecorder{}
+	svc, _, guardedStore, _ := newCapabilityService(t, lease, capability, recorder, nil)
+	sess, err := svc.CreateSession(context.Background(), "/ws", session.ModeDefault, session.Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := svc.StartRun(context.Background(), sess.ID, "finish")
+	if err != nil {
+		t.Fatal(err)
+	}
+	run.Cancel()
+	for range run.Events() {
+	}
+	svc.FinishRun(sess.ID, run)
+	if err := svc.EndSession(context.Background(), sess.ID); err != nil {
+		t.Fatalf("EndSession: %v", err)
+	}
+	if err := guardedStore.Save(context.Background(), sess); err != nil {
+		t.Fatalf("guard retained a normal-release tombstone: %v", err)
 	}
 }
 

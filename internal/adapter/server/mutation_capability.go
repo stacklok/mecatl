@@ -26,7 +26,8 @@ func NewSessionMutationCapability(enabled bool) *SessionMutationCapability {
 	return &SessionMutationCapability{disabled: !enabled, states: make(map[session.SessionID]bool)}
 }
 
-func (c *SessionMutationCapability) grant(id session.SessionID) {
+// Grant marks id as owned by this process.
+func (c *SessionMutationCapability) Grant(id session.SessionID) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if !c.disabled {
@@ -34,11 +35,22 @@ func (c *SessionMutationCapability) grant(id session.SessionID) {
 	}
 }
 
-func (c *SessionMutationCapability) invalidate(id session.SessionID) {
+// Invalidate denies new mutations for id after ownership loss.
+func (c *SessionMutationCapability) Invalidate(id session.SessionID) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if !c.disabled {
 		c.states[id] = false
+	}
+}
+
+// Remove forgets a normally released capability. It is safe only after every
+// owner using the capability has settled.
+func (c *SessionMutationCapability) Remove(id session.SessionID) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.disabled {
+		delete(c.states, id)
 	}
 }
 
