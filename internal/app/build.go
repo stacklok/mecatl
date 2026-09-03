@@ -1965,8 +1965,18 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 			}
 		}
 		if cfg.MCPBrokerCaller == nil && cfg.MCPBrokerAuthorizedCaller == nil && len(cfg.MCPBrokerDiscovered) == 0 && len(cfg.MCPBrokerOptions) == 0 {
-			brokerProcess, err = mcpbroker.NewToolHiveProcess(ctx, toolHiveBrokerConfig(brokerDeclaration.Routes, brokerDeclaration.CallbackURL, occupied))
+			authRedisClient, authStorageClose, err := buildToolHiveAuthRedisClient(cfg)
 			if err != nil {
+				childLiveness.Close()
+				mcpClose()
+				agentClose()
+				storeClose()
+				commandConnClose()
+				return nil, fmt.Errorf("build bundled MCP broker: %w", err)
+			}
+			brokerProcess, err = mcpbroker.NewToolHiveProcess(ctx, toolHiveBrokerConfig(brokerDeclaration.Routes, brokerDeclaration.CallbackURL, occupied, authRedisClient))
+			if err != nil {
+				authStorageClose()
 				childLiveness.Close()
 				mcpClose()
 				agentClose()

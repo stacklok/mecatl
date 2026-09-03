@@ -146,11 +146,23 @@ func newToolHiveProcess(ctx context.Context, config ToolHiveConfig, options tool
 	var incoming func(http.Handler) http.Handler
 	var authInfo http.Handler
 	if len(construction.upstreams) != 0 {
-		memoryStore := storage.NewMemoryStorage()
+		// A restart between a user starting an OAuth authorization and
+		// completing it in their browser must not lose the pending-state
+		// record. Composition supplies a Redis-backed store whenever the
+		// operator already configured Redis for the session store
+		// (ToolHiveConfig.AuthStorage); otherwise this falls back to the
+		// in-memory default, which does not survive a process restart.
+		authStore := config.AuthStorage
+		if authStore == nil && config.AuthRedisClient != nil {
+			authStore = storage.NewRedisStorageWithClient(config.AuthRedisClient, toolHiveAuthStoragePrefix)
+		}
+		if authStore == nil {
+			authStore = storage.NewMemoryStorage()
+		}
 		if protectedTarget == nil {
 			return rollback(fmt.Errorf("%w: protected ToolHive target is required", ErrInvalidCatalogue))
 		}
-		if err := memoryStore.RegisterClient(processCtx, &fosite.DefaultClient{
+		if err := authStore.RegisterClient(processCtx, &fosite.DefaultClient{
 			ID: protectedTarget.clientID, RedirectURIs: []string{config.CallbackURL},
 			GrantTypes: []string{"authorization_code", "refresh_token"}, ResponseTypes: []string{"code"},
 			Scopes: []string{"openid", "offline_access"}, Audience: []string{issuer}, Public: true,
@@ -159,7 +171,7 @@ func newToolHiveProcess(ctx context.Context, config ToolHiveConfig, options tool
 		}
 		auth, err = runner.NewEmbeddedAuthServerWithStorage(processCtx, &authserver.RunConfig{
 			SchemaVersion: "v1", Issuer: issuer, AllowedAudiences: []string{issuer}, Upstreams: construction.upstreams,
-		}, memoryStore)
+		}, authStore)
 		if err != nil {
 			return rollback(fmt.Errorf("mcpbroker: create embedded auth server: %w", err))
 		}

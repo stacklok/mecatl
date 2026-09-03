@@ -216,6 +216,29 @@ func newWithConfig(cfg Config, deps storeDependencies) (*Store, error) {
 	return st, nil
 }
 
+// NewClient builds a standalone redis.UniversalClient using the SAME
+// connection policy (address, credential files, TLS) as NewWithConfig, minus
+// the session-store scaffolding (metadata index, reload lifecycle, client
+// generations). It is for a caller that needs its OWN Redis connection to the
+// SAME managed instance — e.g. the bundled MCP-broker's embedded OAuth
+// authorization server, which stores under a distinct key prefix — without
+// reaching into this Store's internal, rotation-managed client. The caller
+// owns the returned client's lifecycle (Close it when done).
+func NewClient(cfg Config) (redis.UniversalClient, error) {
+	if err := validateAddr(cfg.Addr); err != nil {
+		return nil, err
+	}
+	conn, err := connectionConfigWithReader(cfg, defaultStoreDependencies().readFile)
+	if err != nil {
+		return nil, err
+	}
+	client, err := tcredis.NewClient(context.Background(), &conn)
+	if err != nil {
+		return nil, fmt.Errorf("redisstore: connect %q: %w", cfg.Addr, err)
+	}
+	return client, nil
+}
+
 // validateAddr enforces host:port on EVERY path, secure and plaintext alike.
 // Its errors never echo addr: an operator who passes a redis:// URL can embed a
 // password in the userinfo, and this error reaches the diagnostics log.

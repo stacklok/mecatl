@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/redis/go-redis/v9"
 	"github.com/stacklok/toolhive/pkg/authserver"
+	"github.com/stacklok/toolhive/pkg/authserver/storage"
 	"github.com/stacklok/toolhive/pkg/vmcp"
 	authtypes "github.com/stacklok/toolhive/pkg/vmcp/auth/types"
 )
@@ -13,6 +15,11 @@ import (
 const (
 	authNone  = "none"
 	authOAuth = "oauth"
+
+	// toolHiveAuthStoragePrefix namespaces the embedded auth server's Redis
+	// keys away from mecatl's own session-store scheme (redisstore's
+	// "mecatl:session:" family) on the SAME managed Redis instance.
+	toolHiveAuthStoragePrefix = "mecatl:authserver:"
 )
 
 // ToolHiveConfig is the immutable adapter-owned input to bundled process
@@ -22,6 +29,25 @@ type ToolHiveConfig struct {
 	CallbackURL string
 	Profiles    []ToolHiveProfile
 	Occupied    []string
+	// AuthStorage backs the embedded auth server's pending-authorization,
+	// token, grant, and DCR storage directly. Tests use this to inject a
+	// fake/spy storage.Storage; composition (which cannot import the
+	// vendored toolhive storage package — see
+	// TestToolHiveImportsStayBehindApprovedAdapterLeaves) uses AuthRedisClient
+	// instead. Precedence: AuthStorage wins if set, else AuthRedisClient
+	// selects a Redis-backed store (under toolHiveAuthStoragePrefix), else
+	// storage.NewMemoryStorage() — which does not survive a process restart,
+	// so a pod bounce between a user starting and completing an OAuth
+	// authorization loses the pending state (a genuine "pending authorization
+	// not found" failure).
+	AuthStorage storage.Storage
+	// AuthRedisClient, when set (and AuthStorage is nil), backs the embedded
+	// auth server with a Redis-backed storage.Storage sharing this managed
+	// Redis instance with mecatl's own session store, under
+	// toolHiveAuthStoragePrefix. The caller (composition) owns the client's
+	// lifecycle — EmbeddedAuthServer.Close calls storage.Close, which closes
+	// the client it was given, so no separate cleanup is needed beyond that.
+	AuthRedisClient redis.UniversalClient
 }
 
 // ToolHiveProfile is one configured Streamable HTTP upstream.
@@ -41,6 +67,7 @@ type ToolHiveOAuth struct {
 	ClientID              string
 	ClientSecretEnv       string
 	Scopes                []string
+	RequestRefreshToken   bool
 }
 
 // StaticTool is one trusted protected tool declaration. Its schema is copied
@@ -142,6 +169,10 @@ func toolHiveUpstream(profile ToolHiveProfile, provider, issuer string) (authser
 		return authserver.UpstreamRunConfig{}, fmt.Errorf("%w: protected upstream %q is missing client identity", ErrInvalidCatalogue, profile.Name)
 	}
 	redirect := issuer + "/oauth/callback"
+	var additionalAuthorizationParams map[string]string
+	if oauth.RequestRefreshToken {
+		additionalAuthorizationParams = map[string]string{"access_type": "offline"}
+	}
 	if oauth.AuthorizationEndpoint != "" || oauth.TokenEndpoint != "" {
 		if oauth.AuthorizationEndpoint == "" || oauth.TokenEndpoint == "" {
 			return authserver.UpstreamRunConfig{}, fmt.Errorf("%w: protected upstream %q has partial OAuth2 endpoints", ErrInvalidCatalogue, profile.Name)
@@ -149,6 +180,7 @@ func toolHiveUpstream(profile ToolHiveProfile, provider, issuer string) (authser
 		return authserver.UpstreamRunConfig{Name: provider, Type: authserver.UpstreamProviderTypeOAuth2, OAuth2Config: &authserver.OAuth2UpstreamRunConfig{
 			AuthorizationEndpoint: oauth.AuthorizationEndpoint, TokenEndpoint: oauth.TokenEndpoint, ClientID: oauth.ClientID,
 			ClientSecretEnvVar: oauth.ClientSecretEnv, RedirectURI: redirect, Scopes: append([]string(nil), oauth.Scopes...),
+			AdditionalAuthorizationParams: additionalAuthorizationParams,
 		}}, nil
 	}
 	if oauth.Issuer == "" {
@@ -157,6 +189,7 @@ func toolHiveUpstream(profile ToolHiveProfile, provider, issuer string) (authser
 	return authserver.UpstreamRunConfig{Name: provider, Type: authserver.UpstreamProviderTypeOIDC, OIDCConfig: &authserver.OIDCUpstreamRunConfig{
 		IssuerURL: oauth.Issuer, ClientID: oauth.ClientID, ClientSecretEnvVar: oauth.ClientSecretEnv,
 		RedirectURI: redirect, Scopes: append([]string(nil), oauth.Scopes...),
+		AdditionalAuthorizationParams: additionalAuthorizationParams,
 	}}, nil
 }
 
