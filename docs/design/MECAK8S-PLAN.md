@@ -453,7 +453,7 @@ e2e/k8s/
 
 **Architecture:**
 ```
-1. kind create cluster --name mecatl-e2e --image kindest/node:v1.34.3
+1. kind create cluster --name mecatl-e2e --image kindest/node:v1.35.8@sha256:07b2536e30b803ed61d1677a79df6115f798ce64c80f9e22f6ed45afd09323c0
 2. ko build --local --bare ./cmd/mecak8s  →  ko.local/mecak8s:sha
 3. kind load docker-image ko.local/mecak8s:<sha> --name mecatl-e2e
 4. ko resolve -f deploy/mecak8s/  |  kubectl apply -f -

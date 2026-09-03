@@ -43,7 +43,7 @@ import (
 // Cluster + manifest constants (ADR 0048 §4h, deploy/helm/mecak8s/).
 const (
 	kindClusterName  = "mecatl-e2e"
-	kindNodeImage    = "kindest/node:v1.34.3"
+	kindNodeImage    = "kindest/node:v1.35.8@sha256:07b2536e30b803ed61d1677a79df6115f798ce64c80f9e22f6ed45afd09323c0"
 	k8sNamespace     = "mecatl"
 	agentComponent   = "agent" // app.kubernetes.io/component label value
 	agentGRPCPort    = 8080    // the gRPC listener (--grpc-addr default in the pod)
