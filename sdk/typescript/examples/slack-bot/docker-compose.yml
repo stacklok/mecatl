@@ -48,10 +48,8 @@ services:
       SLACK_BOT_TOKEN: ${SLACK_BOT_TOKEN:?set SLACK_BOT_TOKEN in .env}
       SLACK_APP_TOKEN: ${SLACK_APP_TOKEN:?set SLACK_APP_TOKEN in .env}
       MECATL_GRPC_ADDRESS: mecated:50051
-      # No MECATL_WORKSPACE here, deliberately: mecated's --grpc-addr=0.0.0.0 above is
-      # a non-loopback bind, which auto-switches it to server-assigned workspace mode —
-      # a client-supplied `workspace` on session create is then REJECTED outright. The
-      # server assigns /workspace (its own --workspace flag) to every session itself.
+      # Session placement is always server-owned. The bot sends no workspace path;
+      # mecated assigns /workspace (its own --workspace flag) to every new session.
       SLACK_ALLOWED_USER_IDS: ${SLACK_ALLOWED_USER_IDS:-}
       SLACK_RATE_LIMIT_MAX: ${SLACK_RATE_LIMIT_MAX:-}
       SLACK_RATE_LIMIT_WINDOW_MS: ${SLACK_RATE_LIMIT_WINDOW_MS:-}

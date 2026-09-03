@@ -5,8 +5,8 @@ import { cannedMockReply, withMockDaemon } from "./harness.js";
 
 describe("MecatlBridge", () => {
   it("answers a prompt with the mock provider's canned reply", async () => {
-    await withMockDaemon(async ({ baseUrl, workspace }) => {
-      const bridge = new MecatlBridge({ baseUrl }, workspace);
+    await withMockDaemon(async ({ baseUrl }) => {
+      const bridge = new MecatlBridge({ baseUrl });
       try {
         const outcome = await bridge.handlePrompt("channel:thread-1", "hello");
         expect(outcome.text).toBe(cannedMockReply);
@@ -18,8 +18,8 @@ describe("MecatlBridge", () => {
   });
 
   it("reuses one mecatl session per thread key across prompts", async () => {
-    await withMockDaemon(async ({ baseUrl, workspace }) => {
-      const bridge = new MecatlBridge({ baseUrl }, workspace);
+    await withMockDaemon(async ({ baseUrl }) => {
+      const bridge = new MecatlBridge({ baseUrl });
       try {
         const first = await bridge.handlePrompt("channel:thread-1", "first");
         const second = await bridge.handlePrompt("channel:thread-1", "second");
@@ -31,8 +31,8 @@ describe("MecatlBridge", () => {
   });
 
   it("creates a separate mecatl session for a different thread key", async () => {
-    await withMockDaemon(async ({ baseUrl, workspace }) => {
-      const bridge = new MecatlBridge({ baseUrl }, workspace);
+    await withMockDaemon(async ({ baseUrl }) => {
+      const bridge = new MecatlBridge({ baseUrl });
       try {
         const first = await bridge.handlePrompt("channel:thread-1", "first");
         const other = await bridge.handlePrompt("channel:thread-2", "second");
@@ -44,8 +44,8 @@ describe("MecatlBridge", () => {
   });
 
   it("queues concurrent prompts on the same thread instead of racing", async () => {
-    await withMockDaemon(async ({ baseUrl, workspace }) => {
-      const bridge = new MecatlBridge({ baseUrl }, workspace);
+    await withMockDaemon(async ({ baseUrl }) => {
+      const bridge = new MecatlBridge({ baseUrl });
       try {
         const [first, second] = await Promise.all([
           bridge.handlePrompt("channel:thread-1", "first"),

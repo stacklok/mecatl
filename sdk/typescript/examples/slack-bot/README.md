@@ -83,7 +83,8 @@ Set a real provider key (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, or
 export SLACK_BOT_TOKEN=xoxb-...
 export SLACK_APP_TOKEN=xapp-...
 export MECATL_GRPC_ADDRESS=127.0.0.1:50051   # or MECATL_SOCKET_PATH=/path/to/mecated.sock
-export MECATL_WORKSPACE=/path/to/a/scratch/directory   # same one mecated was started with
+
+# New sessions use the server-owned placement configured by mecated --workspace.
 
 # Strongly recommended — see "Security" below:
 export SLACK_ALLOWED_USER_IDS=U0123ABCDEF,U0456GHIJKL   # comma-separated Slack user IDs

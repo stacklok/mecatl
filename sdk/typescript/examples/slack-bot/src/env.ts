@@ -12,10 +12,6 @@ export interface BotConfig {
   slackBotToken: string;
   slackAppToken: string;
   mecatlTarget: MecatlTarget;
-  /** Passed as `workspace` on session create. Leave unset when mecated's gRPC listener
-   * is non-loopback (e.g. Docker Compose) — that binding auto-switches mecated to
-   * server-assigned workspace mode, which REJECTS a client-supplied workspace outright. */
-  mecatlWorkspace: string | undefined;
   /** Slack user IDs allowed to trigger a prompt. `undefined` = unrestricted (see README's
    * security note — inviting the bot to a channel then extends this to everyone in it). */
   allowedUserIds: Set<string> | undefined;
@@ -29,8 +25,6 @@ const DEFAULT_RATE_LIMIT_WINDOW_MS = 10 * 60 * 1000;
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): BotConfig {
   const slackBotToken = required(env, "SLACK_BOT_TOKEN");
   const slackAppToken = required(env, "SLACK_APP_TOKEN");
-  const mecatlWorkspace = env.MECATL_WORKSPACE === "" ? undefined : env.MECATL_WORKSPACE;
-
   const grpcAddress = env.MECATL_GRPC_ADDRESS;
   const socketPath = env.MECATL_SOCKET_PATH;
   if (grpcAddress === undefined && socketPath === undefined) {
@@ -54,7 +48,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): BotConfig {
   return {
     allowedUserIds,
     mecatlTarget: socketPath !== undefined ? { socketPath } : { baseUrl: `http://${grpcAddress}` },
-    mecatlWorkspace,
     rateLimit: {
       max: positiveIntOr(env.SLACK_RATE_LIMIT_MAX, DEFAULT_RATE_LIMIT_MAX),
       windowMs: positiveIntOr(env.SLACK_RATE_LIMIT_WINDOW_MS, DEFAULT_RATE_LIMIT_WINDOW_MS),

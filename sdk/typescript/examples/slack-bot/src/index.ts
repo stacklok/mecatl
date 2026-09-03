@@ -14,7 +14,7 @@ async function main(): Promise<void> {
     token: config.slackBotToken,
   });
 
-  const bridge = new MecatlBridge(config.mecatlTarget, config.mecatlWorkspace);
+  const bridge = new MecatlBridge(config.mecatlTarget);
   registerAgentSessions(app, bridge, config);
 
   let shuttingDown = false;
