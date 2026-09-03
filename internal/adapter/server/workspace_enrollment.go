@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/stacklok/mecatl/engine/session"
@@ -22,6 +23,9 @@ func (s *Service) ConnectWorkspaceServices(ctx context.Context, id session.Sessi
 
 	sess, enroller, release, err := s.workspaceEnrollmentTarget(ctx, id)
 	if err != nil {
+		if sess != nil && errors.Is(err, brokercontract.ErrStateUnavailable) {
+			return s.settleUnavailableWorkspaceEnrollment(ctx, sess)
+		}
 		return WorkspaceEnrollmentProjection{}, err
 	}
 	defer func() { release() }()
@@ -89,6 +93,13 @@ func (s *Service) cancelWorkspaceEnrollment(ctx context.Context, id session.Sess
 	defer unlock()
 	sess, enroller, release, err := s.workspaceEnrollmentTarget(ctx, id)
 	if err != nil {
+		if sess != nil && errors.Is(err, brokercontract.ErrStateUnavailable) {
+			pending, ok := sess.PendingWorkspaceEnrollment()
+			if !ok || pending.ID != enrollmentID {
+				return WorkspaceEnrollmentProjection{}, fmt.Errorf("%w: stale workspace enrollment", ErrFailedPrecondition)
+			}
+			return s.settleUnavailableWorkspaceEnrollment(ctx, sess)
+		}
 		return WorkspaceEnrollmentProjection{}, err
 	}
 	defer func() { release() }()
@@ -110,6 +121,20 @@ func (s *Service) cancelWorkspaceEnrollment(ctx context.Context, id session.Sess
 	return WorkspaceEnrollmentProjection{Ref: result.Ref, Status: result.Status}, nil
 }
 
+func (s *Service) settleUnavailableWorkspaceEnrollment(ctx context.Context, sess *session.Session) (WorkspaceEnrollmentProjection, error) {
+	pending, ok := sess.PendingWorkspaceEnrollment()
+	if !ok {
+		return WorkspaceEnrollmentProjection{}, fmt.Errorf("%w: workspace enrollment is not pending", ErrFailedPrecondition)
+	}
+	if err := sess.AbortWorkspaceEnrollment(pending.ID); err != nil {
+		return WorkspaceEnrollmentProjection{}, fmt.Errorf("%w: clear unavailable workspace enrollment", ErrFailedPrecondition)
+	}
+	if err := s.cfg.Store.Save(ctx, sess); err != nil {
+		return WorkspaceEnrollmentProjection{}, fmt.Errorf("%w: persist unavailable workspace enrollment", ErrInternal)
+	}
+	return WorkspaceEnrollmentProjection{Ref: enrollmentRef(pending), Status: brokercontract.WorkspaceEnrollmentFailed}, nil
+}
+
 func (s *Service) workspaceEnrollmentTarget(ctx context.Context, id session.SessionID) (*session.Session, brokercontract.WorkspaceEnrollmentAttachment, func(), error) {
 	sess, err := s.cfg.Store.Load(ctx, id)
 	if err != nil || sess == nil || sess.ID != id || s.authorizeSession(ctx, sess) != nil {
@@ -125,7 +150,7 @@ func (s *Service) workspaceEnrollmentTarget(ctx context.Context, id session.Sess
 	local, err := s.openBrokerAttachment(ctx, id, sess.ExternalBinding, true)
 	if err != nil {
 		brokerUnlock()
-		return nil, nil, nil, err
+		return sess, nil, nil, err
 	}
 	enroller, ok := local.attachment.(brokercontract.WorkspaceEnrollmentAttachment)
 	if !ok {

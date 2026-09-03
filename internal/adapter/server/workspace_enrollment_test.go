@@ -48,9 +48,13 @@ func (a *enrollmentAttachment) Tools() []tool.Tool {
 type enrollmentBroker struct {
 	brokercontract.Service
 	attachment *enrollmentAttachment
+	attachErr  error
 }
 
 func (b *enrollmentBroker) AttachSession(ctx context.Context, id session.SessionID) (brokercontract.Attachment, brokercontract.AttachOutcome, error) {
+	if b.attachErr != nil {
+		return nil, "", b.attachErr
+	}
 	attachment, outcome, err := b.Service.AttachSession(ctx, id)
 	if err != nil {
 		return nil, outcome, err
@@ -83,6 +87,62 @@ func TestWorkspaceEnrollmentCompensationIsBounded(t *testing.T) {
 	cancelWorkspaceEnrollmentDetached(context.Background(), attachment, brokercontract.WorkspaceEnrollmentRef{})
 	if elapsed := time.Since(started); elapsed > time.Second {
 		t.Fatalf("compensation took %s", elapsed)
+	}
+}
+
+func TestWorkspaceEnrollmentStateLossClearsPendingGate(t *testing.T) {
+	runtime := testBrokerRuntime(t)
+	defer runtime.Close()
+	broker := &enrollmentBroker{Service: runtime}
+	store := memstore.New()
+	svc, err := NewService(Config{
+		Engine:     brokerEngineResult().Engine,
+		Store:      store,
+		Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+		NewID:      func() session.SessionID { return "lost-enrollment-session" },
+		MCPBroker:  broker,
+		RootAuthority: func(session.SessionKind) session.Authority {
+			return session.Authority{CapabilitySet: governance.CapabilitySet{Tools: []string{"mcp__calendar__list"}}, Provenance: "test"}
+		},
+		SessionEngineWithTools: func(context.Context, ProviderSelector, []mcp.ServerConfig, SessionProfile, string, session.PermissionMode, []tool.Tool) (SessionEngineResult, error) {
+			return brokerEngineResult(), nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer svc.Close()
+	created, err := svc.CreateSession(t.Context(), "/workspace", session.ModeDefault, session.Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	started, err := svc.ConnectWorkspaceServices(t.Context(), created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	svc.mu.Lock()
+	delete(svc.brokerAttachments, created.ID)
+	svc.mu.Unlock()
+	broker.attachErr = brokercontract.ErrStateUnavailable
+	failed, err := svc.ConnectWorkspaceServices(t.Context(), created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if failed.Status != brokercontract.WorkspaceEnrollmentFailed || !sameWorkspaceEnrollmentRef(failed.Ref, started.Ref) {
+		t.Fatalf("failed projection = %#v, want failed for %#v", failed, started.Ref)
+	}
+	loaded, err := store.Load(t.Context(), created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, pending := loaded.PendingWorkspaceEnrollment(); pending {
+		t.Fatal("unavailable broker left workspace enrollment pending")
+	}
+
+	broker.attachErr = nil
+	if restarted, err := svc.ConnectWorkspaceServices(t.Context(), created.ID); err != nil || restarted.Status != brokercontract.WorkspaceEnrollmentPending {
+		t.Fatalf("restart after state loss = %#v, %v", restarted, err)
 	}
 }
 

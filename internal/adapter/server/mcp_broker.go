@@ -48,7 +48,7 @@ func (s *Service) openBrokerAttachment(ctx context.Context, id session.SessionID
 	s.mu.Unlock()
 	if existing != nil {
 		if expectedBinding != "" && existing.Binding() != expectedBinding {
-			return nil, fmt.Errorf("%w: MCP broker binding mismatch for session %q", ErrFailedPrecondition, id)
+			return nil, fmt.Errorf("%w: %w: MCP broker binding mismatch for session %q", ErrFailedPrecondition, brokercontract.ErrStateUnavailable, id)
 		}
 		return &localBrokerAttachment{attachment: existing}, nil
 	}
@@ -61,7 +61,7 @@ func (s *Service) openBrokerAttachment(ctx context.Context, id session.SessionID
 		return local, nil
 	}
 	s.rollbackBrokerAttachment(context.Background(), local)
-	return nil, fmt.Errorf("%w: MCP broker binding mismatch for session %q", ErrFailedPrecondition, id)
+	return nil, fmt.Errorf("%w: %w: MCP broker binding mismatch for session %q", ErrFailedPrecondition, brokercontract.ErrStateUnavailable, id)
 }
 
 func (s *Service) commitBrokerAttachment(ctx context.Context, id session.SessionID, local *localBrokerAttachment) error {
