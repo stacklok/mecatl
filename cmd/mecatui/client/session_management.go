@@ -43,7 +43,7 @@ type SessionManager interface {
 // RenameSession replaces a stored session title and returns the authoritative
 // server snapshot, including title provenance.
 func (c *Client) RenameSession(ctx context.Context, id, title string) (SessionSnapshot, error) {
-	resp, err := c.svc.RenameSession(ctx, &mecatlv1.RenameSessionRequest{SessionId: id, Title: title})
+	resp, err := c.svc.RenameSession(withSessionAffinity(ctx, id), &mecatlv1.RenameSessionRequest{SessionId: id, Title: title})
 	if err != nil {
 		return SessionSnapshot{}, fmt.Errorf("rename session: %w", err)
 	}
@@ -52,7 +52,7 @@ func (c *Client) RenameSession(ctx context.Context, id, title string) (SessionSn
 
 // DeleteSession permanently removes a stored session.
 func (c *Client) DeleteSession(ctx context.Context, id string) error {
-	_, err := c.svc.DeleteSession(ctx, &mecatlv1.DeleteSessionRequest{SessionId: id})
+	_, err := c.svc.DeleteSession(withSessionAffinity(ctx, id), &mecatlv1.DeleteSessionRequest{SessionId: id})
 	if err != nil {
 		return fmt.Errorf("delete session: %w", err)
 	}

@@ -75,6 +75,7 @@
     },
     "maxRunTokens": {"type": ["integer", "null"], "minimum": 1},
     "maxTeamTokens": {"type": ["integer", "null"], "minimum": 1},
+    "terminationGracePeriodSeconds": {"type": "integer", "minimum": 1},
     "workspace": {"type": "string"},
     "imagePullSecrets": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["name"], "properties": {"name": {"type": "string", "minLength": 1}}}},
     "mcp": {

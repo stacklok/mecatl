@@ -119,6 +119,32 @@ func pdbFromRender(t *testing.T, rendered string) *policyv1.PodDisruptionBudget 
 	return nil
 }
 
+func TestADR_0294_TerminationGracePeriodIsConfigurableAndFitsDefaults(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+		want int64
+	}{
+		{name: "default", args: productionArgs(), want: 60},
+		{name: "override", args: append(productionArgs(), "--set", "terminationGracePeriodSeconds=75"), want: 75},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rendered, err := helm(t, tc.args...)
+			if err != nil {
+				t.Fatal(err, rendered)
+			}
+			got := deploymentFromRender(t, rendered).Spec.Template.Spec.TerminationGracePeriodSeconds
+			if got == nil || *got != tc.want {
+				t.Fatalf("terminationGracePeriodSeconds = %v, want %d", got, tc.want)
+			}
+		})
+	}
+	// preStop 3s + drain 15s + gRPC 10s + HTTP 5s + close 5s + telemetry 5s.
+	if budget := int64(3 + 15 + 10 + 5 + 5 + 5); budget >= 60 {
+		t.Fatalf("documented default shutdown budget = %ds, want < 60s", budget)
+	}
+}
+
 func productionArgs() []string {
 	return []string{"template", "production", ".", "--set", "image.tag=v0.0.0", "--set", "redis.endpoint=redis.example.internal:6380", "--set", "redis.credentialsSecret=redis-credentials", "--set", "security.allowUnsafeRealProvider=true"}
 }
@@ -254,27 +280,95 @@ func TestMecak8sHelmChart_EdgeTerminatedTLS(t *testing.T) {
 }
 
 func TestMecak8sHelmChart_EdgeFixtureRendersNoExternalBoundaryResources(t *testing.T) {
-	rendered, err := helm(t, "template", "production", ".", "-f", "ci/production-edge-tls-values.yaml")
-	if err != nil {
-		t.Fatalf("render edge TLS fixture: %v", err)
+	fixtures := []struct {
+		name string
+		args []string
+	}{
+		{"production edge TLS", []string{"template", "production", ".", "-f", "ci/production-edge-tls-values.yaml"}},
+		{"production", []string{"template", "production", ".", "-f", "ci/production-values.yaml"}},
+		{"production OIDC", []string{"template", "production", ".", "-f", "ci/production-oidc-values.yaml"}},
+		{"production TLS", []string{"template", "production", ".", "-f", "ci/production-tls-values.yaml"}},
+		{"config mount", []string{"template", "config-mount", ".", "-f", "ci/config-mount-values.yaml"}},
+		{"Kind", []string{"template", "kind", ".", "-f", "values-kind.yaml"}},
+		{"Kind NodePort", kindFixtureArgs()},
+		{"Kind Keycloak", kindKeycloakFixtureArgs()},
+		{"Kind vMCP", kindVMCPArgs()},
 	}
-	for _, document := range strings.Split(rendered, "\n---") {
-		var meta struct {
-			Kind     string `yaml:"kind"`
-			Metadata struct {
-				Name string `yaml:"name"`
-			} `yaml:"metadata"`
-		}
-		if err := yaml.Unmarshal([]byte(document), &meta); err != nil {
-			t.Fatal(err)
-		}
-		switch meta.Kind {
-		case "Gateway", "HTTPRoute", "GRPCRoute", "TLSRoute", "Route", "Certificate":
-			t.Fatalf("edge fixture unexpectedly renders platform-owned %s", meta.Kind)
-		case "NetworkPolicy":
-			if !strings.HasSuffix(meta.Metadata.Name, "-raw-driver") {
-				t.Fatalf("edge fixture unexpectedly renders general NetworkPolicy %q", meta.Metadata.Name)
+	for _, fixture := range fixtures {
+		t.Run(fixture.name, func(t *testing.T) {
+			rendered, err := helm(t, fixture.args...)
+			if err != nil {
+				t.Fatalf("render fixture: %v", err)
 			}
+			for _, document := range strings.Split(rendered, "\n---") {
+				var meta struct {
+					Kind     string `yaml:"kind"`
+					Metadata struct {
+						Name string `yaml:"name"`
+					} `yaml:"metadata"`
+				}
+				if err := yaml.Unmarshal([]byte(document), &meta); err != nil {
+					t.Fatal(err)
+				}
+				switch meta.Kind {
+				case "Gateway", "HTTPRoute", "GRPCRoute", "TLSRoute", "Route", "Certificate", "BackendTrafficPolicy":
+					t.Fatalf("fixture unexpectedly renders platform-owned %s", meta.Kind)
+				case "NetworkPolicy":
+					if !strings.HasSuffix(meta.Metadata.Name, "-raw-driver") {
+						t.Fatalf("fixture unexpectedly renders general NetworkPolicy %q", meta.Metadata.Name)
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestADR_0294_HelmHasNoAffinityPolicySurface(t *testing.T) {
+	schemaJSON, err := os.ReadFile("values.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var schema struct {
+		Properties map[string]json.RawMessage `json:"properties"`
+	}
+	if err := json.Unmarshal(schemaJSON, &schema); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := schema.Properties["affinity"]; !ok {
+		t.Fatal("values schema removed the unrelated Kubernetes pod scheduling affinity")
+	}
+	for _, forbidden := range []string{"gateway", "sessionAffinity", "session_affinity"} {
+		if _, ok := schema.Properties[forbidden]; ok {
+			t.Fatalf("values schema exposes forbidden Gateway affinity property %q", forbidden)
+		}
+	}
+
+	valuesYAML, err := os.ReadFile("values.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	valuesJSON, err := yaml.YAMLToJSON(valuesYAML)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var values map[string]json.RawMessage
+	if err := json.Unmarshal(valuesJSON, &values); err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := values["affinity"]; !ok || string(got) != "{}" {
+		t.Fatalf("default pod scheduling affinity = %s, present = %v; want empty object", got, ok)
+	}
+
+	rendered, err := helm(t, append(productionArgs(), "--set", "affinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms[0].matchExpressions[0].key=topology.kubernetes.io/zone", "--set", "affinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms[0].matchExpressions[0].operator=Exists")...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(rendered, "affinity:\n        nodeAffinity:") || !strings.Contains(rendered, "key: topology.kubernetes.io/zone") {
+		t.Fatal("deployment did not render the configured Kubernetes pod scheduling affinity")
+	}
+	for _, forbiddenKind := range []string{"Gateway", "HTTPRoute", "GRPCRoute", "BackendTrafficPolicy"} {
+		if strings.Contains(rendered, "kind: "+forbiddenKind) {
+			t.Fatalf("pod scheduling affinity rendered forbidden platform-owned %s", forbiddenKind)
 		}
 	}
 }
@@ -532,11 +626,14 @@ func TestMecak8sValuesSchemaIndependentlyEnforcesProviderSecurity(t *testing.T) 
 }
 
 func TestMecak8sHelmHelperMatchesProviderSecuritySchema(t *testing.T) {
-	help, err := helm(t, "template", "--help")
-	if err != nil || !strings.Contains(help, "--skip-schema-validation") {
-		t.Fatalf("Helm must support --skip-schema-validation for helper-independence coverage: %v", err)
+	chart := t.TempDir()
+	if err := os.CopyFS(chart, os.DirFS(".")); err != nil {
+		t.Fatalf("copy chart without schema: %v", err)
 	}
-	base := []string{"template", "production", ".", "--skip-schema-validation", "--set", "image.tag=v0.0.0", "--set", "redis.endpoint=redis.example.internal:6380", "--set", "redis.credentialsSecret=redis-credentials"}
+	if err := os.Remove(filepath.Join(chart, "values.schema.json")); err != nil {
+		t.Fatalf("remove chart schema: %v", err)
+	}
+	base := []string{"template", "production", chart, "--set", "image.tag=v0.0.0", "--set", "redis.endpoint=redis.example.internal:6380", "--set", "redis.credentialsSecret=redis-credentials"}
 	for _, tc := range providerSecurityCases() {
 		t.Run(tc.name(), func(t *testing.T) {
 			args := append([]string{}, base...)

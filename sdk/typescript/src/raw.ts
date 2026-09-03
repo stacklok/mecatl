@@ -18,6 +18,60 @@ import {
 import type { GetCompatibilityInfoResponse } from "./gen/mecatl/v1/harness_pb.js";
 import { HarnessService } from "./gen/mecatl/v1/harness_pb.js";
 
+/** Canonical routing hint for session-bound mecatl requests. It grants no authority. @public */
+export const SESSION_ID_HEADER_NAME = "X-Mecatl-Session-ID";
+const MAX_SESSION_AFFINITY_BYTES = 256;
+
+function validSessionAffinity(value: string): boolean {
+  if (
+    value.length === 0 ||
+    value.length > MAX_SESSION_AFFINITY_BYTES ||
+    value.charCodeAt(0) === 0x20 ||
+    value.charCodeAt(value.length - 1) === 0x20
+  ) {
+    return false;
+  }
+  for (let i = 0; i < value.length; i += 1) {
+    const code = value.charCodeAt(i);
+    if (code < 0x20 || code > 0x7e) return false;
+  }
+  return true;
+}
+
+/**
+ * Returns call options bound to one explicit session without replacing caller headers.
+ * Throws synchronously when sessionId cannot be represented byte-exactly as the affinity header.
+ *
+ * The binding is a routing hint only; authentication and authorization remain independent.
+ * @public
+ */
+export function withSessionAffinity(sessionId: string, options: CallOptions = {}): CallOptions {
+  if (!validSessionAffinity(sessionId)) {
+    throw new RangeError(
+      "Invalid session affinity: expected 1-256 bytes of printable ASCII without boundary spaces",
+    );
+  }
+  const headers = new Headers(options.headers);
+  headers.set(SESSION_ID_HEADER_NAME, sessionId);
+  return { ...options, headers };
+}
+
+export function sessionAffinityIfRepresentable(
+  sessionId: string,
+  options?: CallOptions,
+): CallOptions | undefined {
+  return validSessionAffinity(sessionId)
+    ? withSessionAffinity(sessionId, options)
+    : withoutSessionAffinity(options);
+}
+
+function withoutSessionAffinity(options?: CallOptions): CallOptions | undefined {
+  if (options?.headers === undefined) return options;
+  const headers = new Headers(options.headers);
+  headers.delete(SESSION_ID_HEADER_NAME);
+  return { ...options, headers };
+}
+
 /** @public */
 export const SUPPORTED_API_MAJOR = 1;
 
@@ -111,14 +165,15 @@ export function createRawClient(options: RawClientOptions): RawClient {
   let compatibility: Promise<CompatibilityResult> | undefined;
 
   const ensureCompatibility = (callOptions?: CallOptions): Promise<CompatibilityResult> => {
+    const probeOptions = withoutSessionAffinity(callOptions);
     compatibility ??= transport
       .unary(
         HarnessService.method.getCompatibilityInfo,
-        callOptions?.signal,
-        callOptions?.timeoutMs,
-        callOptions?.headers,
+        probeOptions?.signal,
+        probeOptions?.timeoutMs,
+        probeOptions?.headers,
         {},
-        callOptions?.contextValues,
+        probeOptions?.contextValues,
       )
       .then((response) => {
         const info = response.message;

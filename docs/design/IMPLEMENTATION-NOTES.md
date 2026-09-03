@@ -381,13 +381,12 @@ transient provider failure). Regression:
 ## Model-switch context carryover (issue #20)
 
 When the mecatui `/models` picker confirms a model switch, the client calls
-`CreateSessionWithCarryover` (`cmd/mecatui/client/client.go`) which sets
-`source_session_id` on the `CreateSessionRequest`. A model switch ALWAYS keeps the
+`CreateSessionWithCarryover` (`cmd/mecatui/client/client.go`), a wrapper over the
+server-owned `ForkSession` successor operation. A model switch ALWAYS keeps the
 conversation (seamless UX — no confirm overlay, no same-provider gate; `/clear` is the
-fresh-start verb). The server-side `Service.validateCarryover`
-(`internal/adapter/server/service.go`) loads the source session, canonicalises each
-side's provider (empty ⇒ the server default), and snapshots the conversation via
-`session.ForkSnapshot` (the ADR-0065 fork primitive). Carryover is allowed across ANY
+fresh-start verb). `createPlacedSuccessor` (`internal/adapter/server/placement_successor.go`)
+loads and mutation-leases the source, inherits its exact placement, resolves model/provider
+overrides, and snapshots the conversation through `providerCarryoverSnapshot`. Carryover is allowed across ANY
 provider: SAME provider → the snapshot is returned VERBATIM (provider-private replay
 blobs — `Message.Reasoning`/`ProviderPhase`/`ToolCall.ItemID` — replay intact, keeping
 the prompt-cache prefix warm); DIFFERENT provider → the snapshot is STRIPPED to a
@@ -728,20 +727,64 @@ config resolves per-session against that root without a mutate-capable handle; `
 `engine/adapter/wallclock`, wired in `engineDepsForProvider`/`newChildEngineWithHooks`
 (issue #53 — previously never injected, leaving all latency observations zero).
 
-**Provider request session correlation (issue #543).**
-`engine/agent/loop.go` (`startRun`) overwrites the run context with the exact
-loaded `session.SessionID` via `engine/port/sessioncontext.go` (`WithSessionID`),
-shipped in `engine/v0.11.0`, so regular and awaiting-resume runs share one binding seam and nested engines replace a
-parent binding with their own child/member/auxiliary ID. Compaction receives that
-same context and therefore uses the parent run ID. The three real HTTP adapters read
-it at request time and add `X-Mecatl-Session-ID` through SDK per-request options:
-`provider/openai/openai.go` (`Stream`),
-`provider/openaichat/openaichat.go` (`Stream`), and
-`provider/anthropic/anthropic.go` (`Stream`). No provider instance stores
-session identity. Absent or Go-illegal header values are omitted without changing
-the inference request; legal values remain exact. The proprietary field is
-correlation-only, never auth, tracing, idempotency, provider state, user/safety
-identity, or cache identity ([ADR 0216](../adr/0216-provider-session-correlation-header.md)).
+**Provider request session correlation and ingress affinity (ADR 0294).**
+The stdlib-only root transport package `contracts/sessionaffinity` owns `HeaderName`,
+`MaxValueBytes`, and `ValidValue`: `X-Mecatl-Session-ID` must be at most 256 bytes of
+non-empty printable ASCII
+(`0x20`–`0x7e`) without leading or trailing space, and consumers preserve its bytes
+exactly. External session IDs outside that cross-transport set remain usable while
+clients omit affinity and remove a stale caller-supplied affinity header while retaining
+unrelated headers; only an explicit raw `withSessionAffinity` bind throws. Debug-session creates bind the target ID; ordinary creates carry no affinity because server-owned placement removed source-session creation. gRPC and HTTP accept a
+missing value for compatibility but reject duplicates, illegal values, and byte
+mismatches before work with one non-disclosing error. The HTTP side compares against
+the decoded path ID. Routing grants no authority; caller authentication/ownership and
+lease admission run independently.
+
+`engine/agent/loop.go` (`startRun`) overwrites the context with the loaded aggregate ID
+through `engine/port/sessioncontext.go` (`WithSessionID`). Therefore regular,
+awaiting-resume, child/member, compaction, retry, and fallback requests agree: the
+provider ID comes from the run context, never from ingress metadata or provider-instance
+state. `provider/openai/openai.go`, `provider/openaichat/openaichat.go`, and
+`provider/anthropic/anthropic.go` attach it through per-request SDK options. Absent or
+illegal run values are omitted without changing inference. Their private validators
+deliberately retain ADR 0216's broader outbound-provider rules (including values outside
+the official browser/gRPC affinity set) because independently versioned provider modules
+stay release-independent and do not import the root transport package.
+
+**Session mutation ownership, lease loss, close, and drain (ADR 0294).**
+`internal/adapter/server/mutation_capability.go` (`SessionMutationCapability`) is the
+process-local gate shared by the `Service`, guarded SessionStore, EventLog, and
+ToolCallRecorder paths. `acquireMutationLease` extends lease ownership from prompt entry
+to every out-of-band session-family mutation. No-lease mode leaves the gate disabled
+and behavior unchanged; `ErrLeaseUnsupported` disables it with the existing sticky
+fallback.
+
+`internal/adapter/server/service.go` (`onLeaseLost`) invalidates the session capability
+before removing/cancelling the local run. Run, retry, and awaiting-resume install a
+cancellable provisional `runState` before acquisition or engine construction, then
+atomically promote it only while the drain gate and exact held lease remain valid.
+Thus later save/delete/event/tool/metadata and sidecar operations fail locally; local invalidation is not backend fencing:
+a call admitted before loss may still complete,
+and stores carry no lease token or epoch. For an awaiting run, `persistMu` makes the
+save result and local awaiting marker one drain-visible lifecycle transaction. The
+Service retracts local ask delivery and prevents later relay persistence, but leaves the
+durable `PendingAsk` unresolved and byte-identical for TTL takeover. Settled stale run
+references remove heavyweight held-lease/capability tombstones; the lightweight
+`lostOwnership` denial remains until explicit local session teardown so that stale
+Service cannot reacquire.
+
+The gRPC in-stream approval path also enters a Service-owned live-run gate: holding the
+Service mutex orders the verdict against lease invalidation before it reaches the parent
+run's approval router, including surfaced child asks. `CloseSession` rejects a live running or awaiting owner before teardown or lease
+release. A runless persisted awaiting session may close resources without modifying its
+resume point. `GracefulDrain` calls `Drain` first, snapshots local runs, marks awaiting
+ones preserve-durable, releases lease-only sessions, cancels executing runs, waits for
+the relay's settlement, and consults that sticky preserve-durable bit (not the relay's
+mutable awaiting marker) before any terminal save, then releases. Timeout
+uses `retainLeaseForTTL`: stop renewal and invalidate locally, but never explicitly
+release an unjoined owner. The modeled handoff is stream drop plus client retry after
+TTL, successor acquisition, Redis reload, and existing `Abandon` repair; it is not a
+Gateway/EndpointSlice proof or live owner forwarding.
 
 ## Application — `engine/agent/` (subagent workspace policy)
 

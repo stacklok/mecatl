@@ -266,6 +266,50 @@ The chart creates no agent PVC and ships no general NetworkPolicy.
 The cluster must provide network isolation because agent egress depends on operator-selected endpoints.
 The `oidc.*` values add a narrow raw-driver NetworkPolicy when caller identity is enabled.
 
+### Session affinity is an infrastructure contract
+
+Official clients attach the exact `X-Mecatl-Session-ID` field to session-bound gRPC and
+HTTP requests when the ID is non-empty printable ASCII without boundary spaces. The
+TypeScript raw affinity helper rejects an illegal explicit ID synchronously without
+altering caller headers. A high-level session ID supplied by the server outside that
+common browser/gRPC set remains usable without affinity when no explicit bind was
+requested. Existing clients may omit it. Duplicate, malformed, or byte-mismatched
+values are rejected before work with one non-disclosing error. The field is a routing
+and provider-correlation hint only: it grants no authentication, authorization, caller
+ownership, lease ownership, fencing, tracing, idempotency, or cache authority. Provider
+adapters derive the outbound value from the authoritative run context, never by blindly
+forwarding client metadata.
+
+Route a legal value consistently to improve affinity, but keep the Kubernetes session
+lease authoritative. Lease loss invalidates the stale pod's local mutation capability
+before cancellation; it prevents new local saves, deletes, event/tool records, and
+metadata/sidecar changes. This is not Redis fencing: an already-admitted call may finish.
+An awaiting approval loses only its local ask delivery; its durable `PendingAsk` remains
+unresolved for a successor after lease TTL.
+
+Closing a live running or awaiting session fails precondition and does not release its
+lease. During shutdown, mecak8s stops admission first, preserves awaiting resume points,
+cancels and joins executing runs, and releases ownership only after each run settles.
+If the drain deadline expires, it stops local mutation and renewal but leaves the lease
+for process-death/TTL takeover. Hard handoff drops the client stream; the client retries
+after endpoint and TTL convergence. There is no transparent owner-to-owner forwarding,
+and external provider/tool effects are not exactly once.
+
+The Helm chart intentionally creates no `Gateway`, `HTTPRoute`, `GRPCRoute`, `TLSRoute`,
+`Route`, `Certificate`, `BackendTrafficPolicy`, or Gateway/session-affinity configuration
+surface. Its `affinity` value remains the unrelated standard Kubernetes pod-scheduling
+field, alongside topology spread constraints, node selectors, and tolerations. The modeled
+two-Service/fake-clock tests prove application lease and Redis repair ordering; they do
+not prove real Gateway routing, EndpointSlice convergence, or production timings.
+
+The separate infrastructure PR has a **blocking prerequisite** before affinity rollout:
+live validation must show authenticated admission, request and header-size bounds, and
+client, IP, and principal rate limits apply before or independently of affinity routing.
+The recorded authenticated bounded-load test must demonstrate that legal,
+attacker-chosen session IDs cannot become an unbounded targeted-replica sink. Chart
+rendering, Helm lint, Kind, and offline tests do not satisfy this external acceptance
+gate.
+
 ```sh
 helm upgrade --install mecak8s deploy/helm/mecak8s --namespace mecatl --create-namespace \
   --set image.repository=registry.example/mecak8s \
@@ -591,7 +635,7 @@ know.
 Key details from `deployment.yaml`:
 
 - `replicas: 2` by default with `RollingUpdate`, `maxSurge: 1`, `maxUnavailable: 0` — there is always a ready survivor during a multi-replica rolling update. With one replica, a surge replacement can preserve availability only if it schedules and becomes Ready.
-- `terminationGracePeriodSeconds: 60` — the bounded `GracefulStop` window.
+- `terminationGracePeriodSeconds: 60` by default, operator-configurable — larger than the default 43-second full budget (3s preStop + 15s drain + 10s gRPC + 5s HTTP + 5s close + 5s telemetry).
 - No PVC, no `--store-dir`. The only `volumeMount` is `/tmp` for the Go runtime and SSE buffering under `readOnlyRootFilesystem: true`.
 - A `preStop` lifecycle hook calls plaintext `GET /drain` on the named Pod-only drain port (8082). This arms the drain gate and blocks ~3 seconds for endpoint propagation before returning, so the kubelet's SIGTERM arrives after the pod has left the Service endpoints. The Service still exposes only gRPC and HTTP/SSE; NetworkPolicy or mesh policy must restrict direct Pod-IP access to the drain port.
 - PSS `restricted` in full: `runAsNonRoot`, `allowPrivilegeEscalation: false`, `capabilities: drop: ALL`, `seccompProfile: RuntimeDefault`.
@@ -672,13 +716,17 @@ sequenceDiagram
   D-->>K: 200 draining
   K->>K: SIGTERM
   Note over G,GS: svc.Drain() is idempotent — no double-drain
-  GS->>GS: grpcSrv.GracefulStop() (30s timeout)
-  note over GS: in-flight runs cancelled, Recover-able on survivor
+  GS->>GS: cancel/join runs (15s), then gRPC GracefulStop (10s)
+  note over GS: HTTP (5s), resource close (5s), telemetry (5s) remain bounded
   GS->>L: built.Close() → release all held coordination.k8s.io Leases
   note over L: cancel-detached short ctx, survivor acquires immediately
 ```
 
-The `GracefulStop` timeout is 30 seconds, well within the 60-second `terminationGracePeriodSeconds`. If it elapses, the server hard-stops: in-flight runs are cancelled but immediately `Recover`-able on the successor pod from the Redis snapshot (ADR 0027 issue #51 — `Session.Recover` repairs orphaned tool calls and moves the session to idle).
+The default complete termination budget is 43 seconds: the 3-second preStop delay plus
+15 seconds for Service drain, 10 seconds for gRPC, 5 seconds for HTTP, 5 seconds for
+resource close, and 5 seconds for telemetry. That is safely below the configurable
+60-second `terminationGracePeriodSeconds` default. Operators who raise any runtime bound
+must raise the Helm value so the strict inequality still holds. If a bound elapses, the server hard-stops: in-flight runs are cancelled but immediately `Recover`-able on the successor pod from the Redis snapshot (ADR 0027 issue #51 — `Session.Recover` repairs orphaned tool calls and moves the session to idle).
 
 Releasing leases uses a cancel-detached context with a short timeout so the release succeeds even though the signal context is already cancelled. A survivor can acquire the released lease immediately — it does not have to wait for the 30-second TTL (`--session-lease-ttl`, default 30s) to expire.
 

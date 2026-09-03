@@ -75,12 +75,18 @@ func (r *askRegistry) resolveWith(askID string, a approval) {
 	ch <- a
 }
 
-// discard drops a pending ask without resolving it. The loop calls this when an
-// await is abandoned (e.g. ctx cancel) so the registry does not leak entries.
-func (r *askRegistry) discard(askID string) {
+// discard drops a pending ask without resolving it and reports whether it was
+// still pending. The loop calls this when an await is abandoned (e.g. ctx
+// cancel) so the registry does not leak entries; Run.RetractPermissionAsk uses
+// the result as the exactly-once gate for the matching retraction event.
+func (r *askRegistry) discard(askID string) bool {
 	r.mu.Lock()
-	delete(r.pending, askID)
+	_, ok := r.pending[askID]
+	if ok {
+		delete(r.pending, askID)
+	}
 	r.mu.Unlock()
+	return ok
 }
 
 // childAskRouter maps a CHILD run's askID to the child *Run that owns it, so the

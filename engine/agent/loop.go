@@ -866,6 +866,19 @@ func (r *Run) Approve(askID string, v session.ApprovalVerdict) {
 	r.asks.resolve(askID, v)
 }
 
+// RetractPermissionAsk withdraws this run's own pending permission ask without
+// resolving it and emits one permission.retract event. It returns false when the
+// ask is unknown or already resolved. The run remains parked until its host
+// cancels it; this narrow seam lets a lease-owning host retract local delivery
+// while preserving an already-durable awaiting snapshot for a successor.
+func (r *Run) RetractPermissionAsk(askID string) bool {
+	if !r.asks.discard(askID) {
+		return false
+	}
+	r.emit(session.Event{Type: session.EvPermissionRetract, Ask: &session.PendingAsk{AskID: askID}})
+	return true
+}
+
 // registerChildAsk records a surfaced child ask in this run's router so a later
 // Approve(askID) is routed to the owning child. It is a no-op when this run has no
 // router (a non-interactive or child run never surfaces). The router auto-removes the

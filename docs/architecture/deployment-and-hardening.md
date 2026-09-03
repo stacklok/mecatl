@@ -105,28 +105,59 @@ replayed as selectors. Mecak8s binds its storage-free default to no-FS; a future
 placement provider uses the same private Bind/Reattach contract. See
 [ADR 0291](../adr/0291-server-owned-session-placement.md).
 
-### Multi-replica deployment & single-writer enforcement
+### Multi-replica affinity, correlation, and single-writer enforcement
 
-By default mecatl assumes **session affinity** — route each session to exactly
-one process. The in-process run registry enforces single-writer *within* a
-process, but two replicas over one shared store have no cross-process exclusion
-(the v1 posture). For a deployment that cannot guarantee affinity (e.g. a load
-balancer that may reroute a session), wire an optional **session lease**
-(cloud-native Phase 4) so the harness enforces single-writer itself: a
-per-session lease is acquired at the run-entry funnel, held for the session's
-life, renewed by a `Service`-owned goroutine, and released on session end /
-shutdown. A second replica's run-start (or approve-resume) for a held session is
-refused with **HTTP 409 Conflict / gRPC `FAILED_PRECONDITION`**, and a crashed
-holder's lease lapses (after `--session-lease-ttl`, or immediately on process
-death for the flock backend) so a survivor takes over. Backends:
-`--session-lease-dir` (single-host flock), `--session-lease-k8s-namespace`
-(`coordination.k8s.io` Lease, in-cluster — needs a least-privilege `leases`
-Role), or `--session-lease-url` (a gRPC lease driver, independent of the store).
-Empty = no leasing, the **byte-identical** affinity default. The flags + the
-RBAC manifest are in the [usage guide](../usage.md) ("Cross-process session
-leasing"); the seam and adapters are in [observability &
-persistence](observability.md); the rationale and the resource/fidelity
-re-audit are in `docs/adr/0027-cloud-native.md`.
+`X-Mecatl-Session-ID` is one exact, optional byte contract across official clients,
+gRPC/HTTP ingress, mecak8s routing, and outbound provider requests. A legal value is
+non-empty and valid as one HTTP field value; it is compared byte-for-byte and is never
+trimmed, decoded, case-folded, truncated, or otherwise normalized. Missing metadata
+remains compatible. Duplicate, illegal, or mismatched metadata is rejected before work
+with the non-disclosing `invalid session affinity metadata` error; neither candidate ID
+is reflected. The routing hint grants no authority: authentication, caller ownership,
+lease ownership, authorization, and every durable-state check remain independent.
+
+Ingress metadata is never forwarded blindly. `engine/agent` binds the loaded session ID
+to the authoritative run context, and every provider attempt and fallback derives its
+provider ID from that context. If the run binding is absent or illegal, providers omit
+the field and continue inference. Official clients add the field to representable
+session-bound calls. The TypeScript raw `withSessionAffinity` helper rejects an illegal
+explicit ID synchronously instead of silently deleting a caller header; a high-level
+session ID received from the server remains usable without affinity when it cannot be
+represented. Legacy clients that omit the field continue to work without a protobuf
+change.
+
+Affinity improves routing but does not enforce ownership. The in-process run registry
+serializes one process; a configured session lease serializes replicas over shared
+storage. The lease is session-scoped, acquired at mutation/run entry, renewed by a
+`Service`-owned goroutine, and retained between turns. A competing owner receives HTTP
+409 / gRPC `FAILED_PRECONDITION`. Without a lease, the compatibility behavior is
+unchanged; `ErrLeaseUnsupported` sticky-disables leasing and retains the existing
+fallback diagnostic.
+
+Lease loss first invalidates the stale process's local mutation capability, then cancels
+its run. No new save, delete, event append, tool-call record, metadata update, or sidecar
+mutation may begin there. This local invalidation is not backend fencing: an
+already-started storage call may still complete, and no lease token or epoch is carried
+by the stores. If loss occurs while awaiting approval, only the local ask delivery is
+retracted; the durable `PendingAsk` remains unresolved for the post-TTL owner.
+
+`CloseSession` fails precondition while a local run is active or awaiting, without
+releasing its lease or tearing down resources. A persisted awaiting session with no live
+local run may close locally without destroying its resume point. Graceful drain closes
+admission before any ownership change, preserves awaiting state, cancels and joins
+executing runs, and releases each lease only after join. A run that misses the shutdown
+bound is invalidated locally but its lease is not explicitly released; process death and
+TTL govern takeover. Hard handoff is interruptive: the client stream drops and the
+client retries after endpoint and TTL convergence; there is no owner-to-owner live
+forwarding. The successor then acquires, reloads Redis, repairs a crash-orphaned
+`running` snapshot, and continues.
+
+The repository's fake-clock/two-Service tests model that sequence; modeled tests do not prove Gateway
+routing, EndpointSlice removal, or production timing. The Helm chart
+creates no Gateway, Route, `BackendTrafficPolicy`, certificate, or affinity policy. A
+separate infrastructure rollout must supply and live-validate those controls, including
+authenticated admission, request/header bounds, and client/IP/principal rate limits
+before affinity is enabled. See [ADR 0294](../adr/0294-session-correlation-and-affinity.md).
 
 ### Permission & bash governance details (`engine/governance`)
 

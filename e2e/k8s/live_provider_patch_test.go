@@ -137,3 +137,70 @@ func TestLiveProviderPatchReplacesExistingKeyRefWithoutCopyingValue(t *testing.T
 		t.Fatalf("patch copied the existing secret value: %s", patchJSON)
 	}
 }
+
+func TestResolveAgentDeploymentRevisionSelectsCurrentReplicaSet(t *testing.T) {
+	t.Parallel()
+	deployment := []byte(`{"metadata":{"name":"mecak8s-agent","uid":"deployment-uid","annotations":{"deployment.kubernetes.io/revision":"8"}},"spec":{"replicas":2}}`)
+	replicaSets := []byte(`{"items":[
+		{"metadata":{"name":"mecak8s-agent-old","labels":{"pod-template-hash":"old-hash"},"annotations":{"deployment.kubernetes.io/revision":"7"},"ownerReferences":[{"kind":"Deployment","name":"mecak8s-agent","uid":"deployment-uid"}]}},
+		{"metadata":{"name":"mecak8s-agent-current","labels":{"pod-template-hash":"current-hash"},"annotations":{"deployment.kubernetes.io/revision":"8"},"ownerReferences":[{"kind":"Deployment","name":"mecak8s-agent","uid":"deployment-uid"}]}}
+	]}`)
+
+	got, err := resolveAgentDeploymentRevision(deployment, replicaSets)
+	if err != nil {
+		t.Fatalf("resolveAgentDeploymentRevision: %v", err)
+	}
+	want := agentDeploymentRevision{ReplicaSet: "mecak8s-agent-current", PodTemplateHash: "current-hash", Desired: 2}
+	if got != want {
+		t.Fatalf("revision = %#v, want %#v", got, want)
+	}
+}
+
+func TestReadyPodNamesForRevisionExcludesOldRolloutPods(t *testing.T) {
+	t.Parallel()
+	revision := agentDeploymentRevision{
+		ReplicaSet: "mecak8s-agent-current", PodTemplateHash: "current-hash", Desired: 2,
+	}
+	const currentPods = `
+		{"metadata":{"name":"current-b","labels":{"pod-template-hash":"current-hash"},"ownerReferences":[{"kind":"ReplicaSet","name":"mecak8s-agent-current"}]},"status":{"phase":"Running","conditions":[{"type":"Ready","status":"True"}]}},
+		{"metadata":{"name":"current-a","labels":{"pod-template-hash":"current-hash"},"ownerReferences":[{"kind":"ReplicaSet","name":"mecak8s-agent-current"}]},"status":{"phase":"Running","conditions":[{"type":"Ready","status":"True"}]}}`
+	tests := map[string]string{
+		"terminating current-hash pod":        `{"metadata":{"name":"old-terminating","deletionTimestamp":"2026-09-03T12:00:00Z","labels":{"pod-template-hash":"current-hash"},"ownerReferences":[{"kind":"ReplicaSet","name":"mecak8s-agent-current"}]},"status":{"phase":"Running","conditions":[{"type":"Ready","status":"True"}]}}`,
+		"ready old-hash pod":                  `{"metadata":{"name":"old-ready","labels":{"pod-template-hash":"old-hash"},"ownerReferences":[{"kind":"ReplicaSet","name":"mecak8s-agent-old"}]},"status":{"phase":"Running","conditions":[{"type":"Ready","status":"True"}]}}`,
+		"current hash wrong ReplicaSet owner": `{"metadata":{"name":"wrong-owner","labels":{"pod-template-hash":"current-hash"},"ownerReferences":[{"kind":"ReplicaSet","name":"mecak8s-agent-other"}]},"status":{"phase":"Running","conditions":[{"type":"Ready","status":"True"}]}}`,
+		"old hash current ReplicaSet owner":   `{"metadata":{"name":"old-hash","labels":{"pod-template-hash":"old-hash"},"ownerReferences":[{"kind":"ReplicaSet","name":"mecak8s-agent-current"}]},"status":{"phase":"Running","conditions":[{"type":"Ready","status":"True"}]}}`,
+	}
+	for name, oldPod := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			pods := []byte(`{"items":[` + oldPod + `,` + currentPods + `]}`)
+			got, err := readyPodNamesForRevision(pods, revision)
+			if err != nil {
+				t.Fatalf("readyPodNamesForRevision: %v", err)
+			}
+			want := []string{"current-a", "current-b"}
+			if !slices.Equal(got, want) {
+				t.Fatalf("selected pods = %v, want %v", got, want)
+			}
+		})
+	}
+}
+
+func TestValidateReadyPodCount(t *testing.T) {
+	t.Parallel()
+	for name, test := range map[string]struct {
+		names   []string
+		wantErr bool
+	}{
+		"exact": {names: []string{"current-a", "current-b"}},
+		"fewer": {names: []string{"current-a"}, wantErr: true},
+		"more":  {names: []string{"current-a", "current-b", "current-c"}, wantErr: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			if gotErr := validateReadyPodCount(test.names, 2) != nil; gotErr != test.wantErr {
+				t.Fatalf("validateReadyPodCount(%v, 2) error = %t, want %t", test.names, gotErr, test.wantErr)
+			}
+		})
+	}
+}

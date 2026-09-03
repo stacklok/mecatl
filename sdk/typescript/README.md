@@ -46,3 +46,12 @@ task sdk:pack
 ```
 
 The package is licensed under Apache-2.0.
+
+## Explicit session affinity
+
+`withSessionAffinity(sessionId, options)` binds one legal, byte-exact
+`X-Mecatl-Session-ID` routing hint while preserving caller headers. It throws a
+synchronous `RangeError` when the ID is empty, non-ASCII, control-bearing, or has a
+boundary space. High-level sessions returned by a server remain usable without the hint
+when an external ID cannot be represented and the caller did not explicitly request a
+binding.

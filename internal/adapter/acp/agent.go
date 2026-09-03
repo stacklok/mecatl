@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
@@ -579,9 +580,8 @@ func (a *Agent) handleSessionCancel(ctx context.Context, params json.RawMessage)
 //     under a live run) lets the run unwind so its deferred FinishRun
 //     deregisters it before teardown closes the engine — the same documented
 //     concurrency-safe race profile as the disconnect path.
-//  2. untrackSession removes the id from the tracked set so the eventual
-//     closeTrackedSessions on disconnect does NOT double-close this session's
-//     per-session engine (the load-bearing guard — see TestSessionClose_*).
+//  2. wait for the prompt relay's deferred FinishRun to release local ownership;
+//     EndSession deliberately rejects while a local run is still registered.
 //  3. svc.EndSession runs the precondition-checked teardown (the step shared with
 //     the gRPC/HTTP surfaces): ErrNotFound for a never-created id maps to
 //     codeInvalidParams — mirroring this adapter's OWN session/load unknown-id
@@ -589,6 +589,8 @@ func (a *Agent) handleSessionCancel(ctx context.Context, params json.RawMessage)
 //     (which map ErrNotFound to codes.NotFound / HTTP 404). A created session
 //     tears down idempotently (a repeated session/close succeeds because the
 //     persisted snapshot still resolves).
+//  4. untrackSession removes the id only after successful teardown, so a rejected
+//     close retains the disconnect backstop for every still-owned resource.
 func (a *Agent) handleSessionClose(ctx context.Context, params json.RawMessage) (any, error) {
 	var req closeSessionRequest
 	if err := json.Unmarshal(params, &req); err != nil {
@@ -603,14 +605,38 @@ func (a *Agent) handleSessionClose(ctx context.Context, params json.RawMessage) 
 		!errors.Is(err, server.ErrNoActiveRun) && !errors.Is(err, server.ErrNotFound) {
 		a.diag.Log(ctx, port.LevelDebug, "acp: session/close: cancel", "session", req.SessionID, "err", err)
 	}
-	// Untrack BEFORE teardown so a later closeTrackedSessions on disconnect skips
-	// this id (no double-close). delete on an absent key is a no-op, so untracking
-	// a never-tracked (shared-engine) session is harmless.
-	a.untrackSession(req.SessionID)
+	if err := a.waitForRunTeardown(ctx, id); err != nil {
+		return nil, newMethodErr(codeInvalidParams, "acp: session/close: "+err.Error())
+	}
 	if err := a.svc.EndSession(ctx, id); err != nil {
 		return nil, newMethodErr(codeInvalidParams, "acp: session/close: "+err.Error())
 	}
+	// Untrack only after teardown succeeds. A rejected close must retain the
+	// disconnect backstop for the resources it did not release.
+	a.untrackSession(req.SessionID)
 	return closeSessionResponse{}, nil
+}
+
+const closeRunTeardownTimeout = 2 * time.Second
+
+func (a *Agent) waitForRunTeardown(ctx context.Context, id session.SessionID) error {
+	if !a.svc.IsLive(id) {
+		return nil
+	}
+	ticker := time.NewTicker(time.Millisecond)
+	defer ticker.Stop()
+	timer := time.NewTimer(closeRunTeardownTimeout)
+	defer timer.Stop()
+	for a.svc.IsLive(id) {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-timer.C:
+			return fmt.Errorf("timed out waiting for cancelled run to finish")
+		case <-ticker.C:
+		}
+	}
+	return nil
 }
 
 // requestPermission issues the outbound session/request_permission, awaits the

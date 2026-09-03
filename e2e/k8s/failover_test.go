@@ -19,7 +19,8 @@ import (
 //     k8s Lease object is DELETED immediately, so a survivor acquires the
 //     session's lease on its FIRST run-entry — well inside the 30s TTL.
 //
-//   - FORCE (control): `kubectl delete pod --force` → NO graceful shutdown →
+//   - FORCE (control): hard-stop pod-B's application container through the
+//     kind node CRI, then force-delete its Pod object → NO graceful shutdown →
 //     NO releaseLease. The k8s Lease object REMAINS (holder = dead pod's owner)
 //     until its TTL lapses. A survivor's run-entry is REFUSED with 409
 //     immediately after the replacement is Ready, proving the LEASE (not mere

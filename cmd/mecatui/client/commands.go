@@ -36,7 +36,7 @@ type CommandsMsg struct {
 
 // ListCommands lists slash commands for an owned source session.
 func (c *Client) ListCommands(ctx context.Context, sessionID string) ([]Command, error) {
-	resp, err := c.svc.ListCommands(ctx, &mecatlv1.ListCommandsRequest{SessionId: sessionID})
+	resp, err := c.svc.ListCommands(withSessionAffinity(ctx, sessionID), &mecatlv1.ListCommandsRequest{SessionId: sessionID})
 	if err != nil {
 		return nil, err
 	}

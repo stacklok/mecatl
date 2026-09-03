@@ -18,6 +18,9 @@ import (
 // initial roster atomically (any member failure abandons the whole team). The
 // enrolled roster is echoed back so the caller need not follow up with ListTeam.
 func (h *HarnessServer) CreateTeam(ctx context.Context, req *mecatlv1.CreateTeamRequest) (*mecatlv1.CreateTeamResponse, error) {
+	if err := validateGRPCSessionAffinity(ctx, req.GetSessionId()); err != nil {
+		return nil, err
+	}
 	if req.GetSessionId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "session_id is required")
 	}

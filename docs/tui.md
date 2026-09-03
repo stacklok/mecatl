@@ -862,8 +862,8 @@ failure. Codex rows never receive ToolHive's `org` intent label.
 
 `enter` on the cursor row **switches immediately** — the conversation is ALWAYS kept.
 Because the provider is FIXED per session, switching live means a real handoff: a fresh
-session on the picked model is **seeded with the current session's conversation** via
-`source_session_id` on the `CreateSessionRequest` (`CreateSessionWithCarryover`). The
+session on the picked model is **seeded with the current session's conversation** through
+the server-owned `ForkSession` successor path (`CreateSessionWithCarryover`). The
 server snapshots the source conversation and seeds it into the new session, so the model
 sees the full prior context. While the target is being created and hydrated, mecatui
 keeps the source ID, metadata, and visible projection but disarms its old live feed; the

@@ -14,6 +14,7 @@ import (
 	"google.golang.org/protobuf/encoding/protojson"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
+	"github.com/stacklok/mecatl/contracts/sessionaffinity"
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/learning"
 	"github.com/stacklok/mecatl/engine/port"
@@ -52,22 +53,31 @@ func NewHTTPHandler(svc *Service) *HTTPHandler {
 	h.mux.HandleFunc("GET /v1/info", h.getServerInfo)
 	h.mux.HandleFunc("GET /v1/compatibility", h.getCompatibilityInfo)
 	h.mux.HandleFunc("POST /v1/sessions", h.createSession)
-	h.mux.HandleFunc("GET /v1/sessions/{id}", h.getSession)
-	h.mux.HandleFunc("GET /v1/sessions/{id}/transcript", h.getSessionTranscript)
-	h.mux.HandleFunc("POST /v1/sessions/{id}/mode", h.setMode)
-	h.mux.HandleFunc("DELETE /v1/sessions/{id}", h.closeSession)
-	h.mux.HandleFunc("POST /v1/sessions/{id}/rename", h.renameSession)
-	h.mux.HandleFunc("POST /v1/sessions/{id}/delete", h.deleteSession)
-	h.mux.HandleFunc("POST /v1/sessions/{id}/compact", h.compactSession)
-	h.mux.HandleFunc("POST /v1/sessions/{id}/prompt", h.prompt)
-	h.mux.HandleFunc("POST /v1/sessions/{id}/retry", h.retry)
-	h.mux.HandleFunc("POST /v1/sessions/{id}/approve", h.approve)
-	h.mux.HandleFunc("POST /v1/sessions/{id}/plan:approve", h.approvePlan)
-	h.mux.HandleFunc("POST /v1/sessions/{id}/cancel", h.cancel)
-	h.mux.HandleFunc("POST /v1/sessions/{id}/cancel-child", h.cancelChild)
-	h.mux.HandleFunc("POST /v1/sessions/{id}/fork", h.forkSession)
-	h.mux.HandleFunc("POST /v1/sessions/{id}/clear", h.clearSession)
-	h.mux.HandleFunc("POST /v1/sessions/{id}/reflect", h.reflectSession)
+	for _, route := range []struct {
+		pattern string
+		handler http.HandlerFunc
+	}{
+		{"GET /v1/sessions/{id}", h.getSession},
+		{"GET /v1/sessions/{id}/transcript", h.getSessionTranscript},
+		{"POST /v1/sessions/{id}/mode", h.setMode},
+		{"DELETE /v1/sessions/{id}", h.closeSession},
+		{"POST /v1/sessions/{id}/rename", h.renameSession},
+		{"POST /v1/sessions/{id}/delete", h.deleteSession},
+		{"POST /v1/sessions/{id}/compact", h.compactSession},
+		{"POST /v1/sessions/{id}/prompt", h.prompt},
+		{"POST /v1/sessions/{id}/retry", h.retry},
+		{"POST /v1/sessions/{id}/approve", h.approve},
+		{"POST /v1/sessions/{id}/plan:approve", h.approvePlan},
+		{"POST /v1/sessions/{id}/cancel", h.cancel},
+		{"POST /v1/sessions/{id}/cancel-child", h.cancelChild},
+		{"POST /v1/sessions/{id}/fork", h.forkSession},
+		{"POST /v1/sessions/{id}/clear", h.clearSession},
+		{"POST /v1/sessions/{id}/reflect", h.reflectSession},
+		{"GET /v1/sessions/{id}/events", h.streamSessionEvents},
+		{"GET /v1/sessions/{id}/watch", h.watchSessionEvents},
+	} {
+		h.mux.HandleFunc(route.pattern, requireSessionAffinity(route.handler))
+	}
 	h.mux.HandleFunc("POST /v1/dream/plans", h.generateDreamPlan)
 	h.mux.HandleFunc("POST /v1/dream/plans/{plan_id}/decision", h.decideDreamPlan)
 	h.mux.HandleFunc("GET /v1/learning/proposals", h.listLearningProposals)
@@ -106,8 +116,7 @@ func NewHTTPHandler(svc *Service) *HTTPHandler {
 	h.mux.HandleFunc("POST /v1/storage/cleanup:apply", h.applySessionCleanup)
 	h.mux.HandleFunc("POST /v1/storage/cleanup/jobs/{id}/cancel", h.cancelSessionCleanup)
 	h.mux.HandleFunc("GET /v1/storage/cleanup/jobs/{id}", h.getSessionCleanupJob)
-	h.mux.HandleFunc("GET /v1/sessions/{id}/events", h.streamSessionEvents)
-	h.mux.HandleFunc("GET /v1/sessions/{id}/watch", h.watchSessionEvents)
+	// Session event routes are registered with the session route inventory above.
 	h.mux.HandleFunc("POST /v1/teams", h.createTeam)
 	h.mux.HandleFunc("POST /v1/teams/{id}/members", h.spawnTeammate)
 	h.mux.HandleFunc("POST /v1/teams/{id}/messages", h.sendTeammateMessage)
@@ -133,6 +142,43 @@ func NewHTTPHandler(svc *Service) *HTTPHandler {
 // ServeHTTP routes to the registered handlers.
 func (h *HTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.mux.ServeHTTP(w, r)
+}
+
+func requireCreateSessionAffinity(w http.ResponseWriter, r *http.Request, debugTargetID string) bool {
+	values := r.Header.Values(sessionaffinity.HeaderName)
+	if len(values) == 0 {
+		return true
+	}
+	if debugTargetID == "" || len(values) != 1 || !sessionaffinity.ValidValue(values[0]) || values[0] != debugTargetID {
+		writeProblem(w, entryForHTTPStatus(http.StatusBadRequest), "invalid session affinity header")
+		return false
+	}
+	return true
+}
+
+func requireSessionAffinityValue(w http.ResponseWriter, r *http.Request, authoritativeID string) bool {
+	values := r.Header.Values(sessionaffinity.HeaderName)
+	if len(values) == 0 {
+		return true
+	}
+	if len(values) != 1 || !sessionaffinity.ValidValue(values[0]) || values[0] != authoritativeID {
+		writeProblem(w, entryForHTTPStatus(http.StatusBadRequest), "invalid session affinity header")
+		return false
+	}
+	return true
+}
+
+// requireSessionAffinity admits an optional, exact session-affinity header only
+// after the mux has decoded the authoritative path value. It is transport
+// routing metadata, not an authority grant; the wrapped handler still performs
+// its ordinary authentication, ownership, and management checks.
+func requireSessionAffinity(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !requireSessionAffinityValue(w, r, r.PathValue("id")) {
+			return
+		}
+		next(w, r)
+	}
 }
 
 // getServerInfo returns safe build, composition, and the caller-selected provider endpoint projection.
@@ -466,6 +512,9 @@ func (h *HTTPHandler) createSession(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
 		writeError(w, http.StatusBadRequest, "invalid JSON body: multiple JSON values")
+		return
+	}
+	if !requireCreateSessionAffinity(w, r, body.DebugTargetSessionID) {
 		return
 	}
 	// Parse only the public profile attenuation. The service binds either the
@@ -1186,6 +1235,9 @@ func (h *HTTPHandler) createTeam(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
 		writeError(w, http.StatusBadRequest, "invalid JSON body: multiple JSON values")
+		return
+	}
+	if !requireSessionAffinityValue(w, r, body.SessionID) {
 		return
 	}
 	var specs []agent.MemberSpec
@@ -1968,6 +2020,9 @@ func (h *HTTPHandler) undoLearningPromotion(w http.ResponseWriter, r *http.Reque
 // listCommands handles GET /v1/commands?session_id=.
 func (h *HTTPHandler) listCommands(w http.ResponseWriter, r *http.Request) {
 	id := r.URL.Query().Get("session_id")
+	if !requireSessionAffinityValue(w, r, id) {
+		return
+	}
 	if id == "" {
 		writeServiceError(w, fmt.Errorf("%w: session_id is required", ErrInvalidArgument))
 		return
@@ -1983,6 +2038,9 @@ func (h *HTTPHandler) listCommands(w http.ResponseWriter, r *http.Request) {
 // listWorktrees handles GET /v1/worktrees?session_id=.
 func (h *HTTPHandler) listWorktrees(w http.ResponseWriter, r *http.Request) {
 	id := r.URL.Query().Get("session_id")
+	if !requireSessionAffinityValue(w, r, id) {
+		return
+	}
 	if id == "" {
 		writeServiceError(w, fmt.Errorf("%w: session_id is required", ErrInvalidArgument))
 		return

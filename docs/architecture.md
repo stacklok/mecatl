@@ -802,8 +802,11 @@ normal HTTP/SSE listener exposes only health/readiness outside authentication an
 behind authentication; a separate plaintext drain-only listener defaults to `0.0.0.0:8082`.
 The honest shutdown contract: new runs are rejected (503 via the drain gate) the moment
 SIGTERM or the `preStop` `httpGet /drain` fires; **in-flight runs are cancelled, not drained** (a
-multi-minute LLM turn cannot survive a rolling update within
-`terminationGracePeriodSeconds: 60`); the pod is disposable, the session is not — it is
+multi-minute LLM turn cannot survive a rolling update within the configurable Helm
+`terminationGracePeriodSeconds` default of 60s). The default sequential shutdown budget is
+43s: preStop propagation 3s + Service drain 15s + gRPC 10s + HTTP 5s + resource close 5s +
+telemetry 5s. The four runtime server/close bounds have dedicated flags; the pod is disposable,
+the session is not — it is
 `Recover`-able on the successor (issue #51) from the Redis snapshot + durable event log.
 Its Helm chart offers three secure real-provider transport postures — in-pod TLS, an
 operator-attested edge-terminated TLS boundary, and the explicit unsafe bypass —

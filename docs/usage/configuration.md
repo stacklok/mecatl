@@ -418,8 +418,55 @@ unleased.
 
 Without an explicit backend, mecatl can also discover a lease from a session
 store that happens to implement the lease seam (type-assertion, like the
-retention seam); today's jsonlstore does not, so the no-flag default is no
-leasing. See `docs/adr/0027-cloud-native.md` for the full design.
+retention seam). See `docs/adr/0027-cloud-native.md` for the full design.
+
+#### Session affinity and owner handoff
+
+Official clients send `X-Mecatl-Session-ID` on each session-bound gRPC or HTTP
+operation. The value is exact: it is neither trimmed nor normalized, and the HTTP
+comparison uses the decoded path ID. A missing header remains compatible for older
+clients. Duplicate values, an illegal field value, or any byte mismatch return the
+non-disclosing `invalid session affinity metadata` error before work begins; the server
+never echoes either value. The field is only a routing/correlation hint. It does not
+authenticate, authorize, establish caller or lease ownership, fence storage, select
+provider state, or grant any other authority.
+
+Provider requests do not trust the ingress copy. The engine places the loaded session
+ID in the authoritative run context, and each provider attempt/fallback reads it there.
+An absent or illegal run binding is omitted without failing inference. The TypeScript
+raw `withSessionAffinity` helper rejects an illegal explicit ID synchronously and leaves
+caller headers untouched; high-level use of an unrepresentable server-issued ID remains
+compatible by omitting affinity when no explicit bind was requested. This preserves
+legacy clients and custom providers without a protobuf change.
+
+With leasing configured, every session-family mutation must own the session lease. On
+renewal loss, local mutation authority is invalidated before cancellation, so later
+saves, deletes, event/tool records, metadata updates, and sidecar changes cannot start.
+This is not backend fencing: a storage call admitted before invalidation may finish.
+For a local awaiting run, lease loss retracts only the local ask and leaves its durable
+`PendingAsk` unchanged and unresolved for a successor after TTL expiry.
+
+`CloseSession` (and HTTP `DELETE /v1/sessions/{id}`) fails precondition while a local
+run is active or awaiting; it does not release ownership or tear down that live
+session. A persisted awaiting session with no live local run may close its local
+resources while retaining the durable resume point. `GracefulDrain` first rejects all
+new prompt/resume admission, then preserves awaiting snapshots, cancels and joins
+executing runs, persists settled state, and only then releases their leases. If the
+bound expires before a run joins, the stale process stops renewal and local mutation
+but does not release the lease; takeover waits for process death and TTL.
+
+Handoff is intentionally modeled as client retry, not owner forwarding. A killed
+owner's stream drops; pre-TTL requests cannot acquire, then one post-TTL successor
+acquires, reloads Redis, repairs a crash-orphaned `running` snapshot, and continues.
+The offline fake-clock tests establish application sequencing only. They are not proof
+of Gateway/mesh routing, EndpointSlice convergence, production timing, or exactly-once
+external effects.
+
+Before enabling affinity, the separate infrastructure rollout is blocked until live
+acceptance proves authenticated admission, request and header-size bounds, and client,
+IP, and principal rate limits apply before or independently of affinity. Legal,
+attacker-chosen IDs must not create an unbounded targeted-replica sink. Helm and offline
+checks prove only that this chart stays neutral; they do not satisfy that external gate.
 
 ### Remote content-source drivers (skills + soul)
 

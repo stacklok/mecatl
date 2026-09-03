@@ -60,10 +60,40 @@ const defaultK8sLeaseNamespace = "mecatl"
 // GracefulStop) lands after traffic has drained.
 const drainPropagationDelay = 3 * time.Second
 
-// gracefulStopTimeout bounds grpcSrv.GracefulStop(): after it elapses the
-// server is hard-stopped (in-flight runs cancelled). It must stay below
-// terminationGracePeriodSeconds (60) leaving room for HTTP shutdown + Close.
-const gracefulStopTimeout = 30 * time.Second
+const (
+	defaultDrainTimeout        = 15 * time.Second
+	defaultGRPCStopTimeout     = 10 * time.Second
+	defaultHTTPShutdownTimeout = 5 * time.Second
+	defaultCloseTimeout        = 5 * time.Second
+)
+
+type positiveDurationValue struct {
+	target *time.Duration
+}
+
+func (v positiveDurationValue) String() string {
+	if v.target == nil {
+		return ""
+	}
+	return v.target.String()
+}
+
+func (v positiveDurationValue) Set(raw string) error {
+	d, err := time.ParseDuration(raw)
+	if err != nil {
+		return err
+	}
+	if d <= 0 {
+		return errors.New("duration must be positive")
+	}
+	*v.target = d
+	return nil
+}
+
+func positiveDurationFlag(fs *flag.FlagSet, target *time.Duration, name string, value time.Duration, usage string) {
+	*target = value
+	fs.Var(positiveDurationValue{target: target}, name, usage)
+}
 
 // config is the parsed command-line configuration for mecak8s. It is a thin
 // subset of mecated's config: the engine-build knobs (provider, model,
@@ -79,6 +109,10 @@ type config struct {
 	grpcAddr               string
 	httpAddr               string
 	drainAddr              string
+	drainTimeout           time.Duration
+	grpcStopTimeout        time.Duration
+	httpShutdownTimeout    time.Duration
+	closeTimeout           time.Duration
 	workspace              string
 	model                  string
 	defaultProvider        string
@@ -276,6 +310,10 @@ func parseFlags(argv []string) (config, error) {
 		"HTTP/SSE listen address (carries /healthz and /readyz outside auth; the API mux inside auth)")
 	fs.StringVar(&cfg.drainAddr, "drain-addr", defaultDrainAddr,
 		"plaintext drain-only listen address (GET /drain for the kubelet preStop hook)")
+	positiveDurationFlag(fs, &cfg.drainTimeout, "drain-timeout", defaultDrainTimeout, "maximum time to cancel, join, and persist Service runs during shutdown")
+	positiveDurationFlag(fs, &cfg.grpcStopTimeout, "grpc-stop-timeout", defaultGRPCStopTimeout, "maximum time for gRPC GracefulStop before a hard stop")
+	positiveDurationFlag(fs, &cfg.httpShutdownTimeout, "http-shutdown-timeout", defaultHTTPShutdownTimeout, "maximum time for HTTP and metrics graceful shutdown")
+	positiveDurationFlag(fs, &cfg.closeTimeout, "close-timeout", defaultCloseTimeout, "maximum time allowed for final app resource cleanup")
 	fs.StringVar(&cfg.workspace, "workspace", "", "optional shared agent workspace root, e.g. a mounted PVC path. Empty (the default) is a FILE-LESS deployment: every session is no-FS. A non-empty ABSOLUTE path selects a server-assigned filesystem deployment rooted there — the operator vouches for the mount and clients cannot select another root (ADR 0237)")
 	fs.StringVar(&cfg.model, "model", "", "model identifier sent to the provider (empty: provider-appropriate default)")
 	fs.StringVar(&cfg.defaultProvider, "default-provider", "", "server-configured deployment-wide default provider id (e.g. openai, openrouter, anthropic); validated FAIL-FAST at startup")

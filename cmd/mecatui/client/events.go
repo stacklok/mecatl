@@ -68,7 +68,7 @@ func (s *EventStream) ReadLoop(ctx context.Context, out chan<- tea.Msg) {
 // DeliveryNoteMsg. A server with no live subscription bridge returns gRPC
 // UNIMPLEMENTED → StreamErrMsg.
 func (c *Client) StreamSessionLive(ctx context.Context, id string) (*EventStream, error) {
-	stream, err := c.svc.StreamSessionLive(ctx, &mecatlv1.StreamSessionLiveRequest{SessionId: id})
+	stream, err := c.svc.StreamSessionLive(withSessionAffinity(ctx, id), &mecatlv1.StreamSessionLiveRequest{SessionId: id})
 	if err != nil {
 		return nil, fmt.Errorf("stream session live: %w", err)
 	}
@@ -108,7 +108,7 @@ func LiveStreamCmd(ctx context.Context, live LiveStreamer, id string) (ch chan t
 // stream (absence is data) → a single StreamClosedMsg; a server with no durable
 // EventLog returns gRPC UNIMPLEMENTED → a StreamErrMsg.
 func (c *Client) StreamSessionEvents(ctx context.Context, id string) (*EventStream, error) {
-	stream, err := c.svc.StreamSessionEvents(ctx, &mecatlv1.StreamSessionEventsRequest{SessionId: id})
+	stream, err := c.svc.StreamSessionEvents(withSessionAffinity(ctx, id), &mecatlv1.StreamSessionEventsRequest{SessionId: id})
 	if err != nil {
 		return nil, fmt.Errorf("stream session events: %w", err)
 	}

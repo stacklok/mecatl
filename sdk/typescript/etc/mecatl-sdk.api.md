@@ -165,8 +165,6 @@ export interface CreateSessionOptions {
     providerId?: string;
     // (undocumented)
     reasoningEffort?: string;
-    // (undocumented)
-    sourceSessionId?: string;
 }
 
 // @public (undocumented)
@@ -726,6 +724,9 @@ export interface Session {
 }
 
 // @public
+export const SESSION_ID_HEADER_NAME = "X-Mecatl-Session-ID";
+
+// @public
 export interface SessionActivity extends AsyncIterable<WatchEnvelope>, AsyncDisposable {
     close(): Promise<void>;
     // (undocumented)
@@ -1076,5 +1077,8 @@ export interface WatchGapEnvelope {
     // (undocumented)
     readonly phase: "gap";
 }
+
+// @public
+export function withSessionAffinity(sessionId: string, options?: CallOptions): CallOptions;
 
 ```

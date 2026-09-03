@@ -54,7 +54,7 @@ type WorktreesMsg struct {
 
 // ListWorktrees lists server-issued choices scoped to sessionID.
 func (c *Client) ListWorktrees(ctx context.Context, sessionID string) ([]Worktree, error) {
-	resp, err := c.svc.ListWorktrees(ctx, &mecatlv1.ListWorktreesRequest{SessionId: sessionID})
+	resp, err := c.svc.ListWorktrees(withSessionAffinity(ctx, sessionID), &mecatlv1.ListWorktreesRequest{SessionId: sessionID})
 	if err != nil {
 		return nil, err
 	}

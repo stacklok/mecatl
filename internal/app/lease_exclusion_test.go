@@ -63,10 +63,54 @@ func (*firstThenBlockingProvider) Capabilities() port.ProviderCapabilities {
 	return port.ProviderCapabilities{}
 }
 
+func TestADR_0294_AppAndMecak8sLeaseCompositionSharesMutationCapability(t *testing.T) {
+	ctx := context.Background()
+	storeDir, leaseDir, workspace, memoryDir := t.TempDir(), t.TempDir(), t.TempDir(), t.TempDir()
+	cfg1 := leaseBaseCfg(t, storeDir, leaseDir, workspace, memoryDir)
+	cfg1.providerConstructor = func(_ Config, _, _, _ string) port.LLMProvider {
+		return mockllm.New(mockllm.TextTurn("owner"))
+	}
+	owner, err := Build(ctx, cfg1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer owner.Close()
+	sess, err := owner.Service.CreateSession(ctx, session.ModeDefault, session.Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := owner.Service.StartRun(ctx, sess.ID, "hold ownership")
+	if err != nil {
+		t.Fatal(err)
+	}
+	drain(run)
+	owner.Service.FinishRun(sess.ID, run)
+
+	cfg2 := leaseBaseCfg(t, storeDir, leaseDir, workspace, memoryDir)
+	cfg2.providerConstructor = func(_ Config, _, _, _ string) port.LLMProvider {
+		return mockllm.New(mockllm.TextTurn("competitor"))
+	}
+	competitor, err := Build(ctx, cfg2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer competitor.Close()
+	if _, err := competitor.Service.SetMode(ctx, sess.ID, session.ModePlan); !errors.Is(err, server.ErrSessionLeasedElsewhere) {
+		t.Fatalf("competing Build SetMode = %v, want ErrSessionLeasedElsewhere", err)
+	}
+	got, err := competitor.Service.GetSession(ctx, sess.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Mode != session.ModeDefault {
+		t.Fatalf("competing Build mutated mode to %q", got.Mode)
+	}
+}
+
 // TestCrossProcessLeaseExclusion is the cloud-native Phase 4 falsifiable gate: a
 // session leased by one Build (replica) cannot be run by a second Build over the
-// SAME store + lease dir, until the first releases (EndSession) or its lease
-// lapses (TTL).
+// SAME store + lease dir, until the first settles its local run and releases
+// ownership (EndSession) or its lease lapses (TTL).
 //
 // Mutation-verified: remove the acquireLease call in StartRunContent → Build #2's
 // StartRun succeeds while #1 holds → the exclusion assertion fails.
@@ -130,7 +174,14 @@ func TestCrossProcessLeaseExclusion(t *testing.T) {
 		t.Fatalf("StartRun #2 while #1 holds the lease = %v, want ErrSessionLeasedElsewhere", err)
 	}
 
-	// Release on built1 (EndSession) frees the lease; built2 may now take over.
+	// Close is not cancel: settle and join built1's local awaiting run before
+	// EndSession releases ownership. A close while the run is parked must retain
+	// the lease and resources (ADR 0291).
+	if err := built1.Service.Approve(ctx, sess.ID, askID, session.VerdictDeny); err != nil {
+		t.Fatalf("deny run #1: %v", err)
+	}
+	drain(run1)
+	built1.Service.FinishRun(sess.ID, run1)
 	if err := built1.Service.EndSession(ctx, sess.ID); err != nil {
 		t.Fatalf("EndSession #1: %v", err)
 	}

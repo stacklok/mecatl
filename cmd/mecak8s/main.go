@@ -8,12 +8,26 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"time"
 
 	"github.com/stacklok/mecatl/internal/adapter/slogdiag"
 	"github.com/stacklok/mecatl/internal/app"
 	"github.com/stacklok/mecatl/internal/buildinfo"
 	"github.com/stacklok/mecatl/internal/cliconfig"
 )
+
+func boundedClose(closeFn func(), timeout time.Duration) {
+	done := make(chan struct{})
+	go func() {
+		closeFn()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(timeout):
+		slog.Warn("application cleanup timed out; process exit will end remaining cleanup", "timeout", timeout)
+	}
+}
 
 func main() {
 	if buildinfo.IsVersion(os.Args) {
@@ -65,7 +79,7 @@ func run() error {
 		flushTelemetry(os.Stderr, obs, cfg.otlpShutdownTimeout)
 		return err
 	}
-	defer built.Close()
+	defer boundedClose(built.Close, cfg.closeTimeout)
 	defer flushTelemetry(os.Stderr, obs, cfg.otlpShutdownTimeout)
 
 	return serve(ctx, cfg, built.Service, obs)
