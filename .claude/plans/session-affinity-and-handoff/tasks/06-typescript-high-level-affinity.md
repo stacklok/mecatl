@@ -2,11 +2,11 @@
 id: 06-typescript-high-level-affinity
 title: TypeScript Session and Run automatic affinity
 blocked_by: [05-typescript-raw-affinity]
-status: in-progress
-branch: ""
+status: done
+branch: "plan-session-affinity-and-handoff/06-typescript-high-level-affinity"
 worktree: ".scratch/task-session-affinity-06"
 issue: ""
-retries: 0
+retries: 1
 last_error: ""
 accumulator: acc/session-affinity-and-handoff
 ---

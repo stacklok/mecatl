@@ -2,8 +2,8 @@
 id: 10-awaiting-lease-loss-handoff
 title: Awaiting-approval lease-loss settlement
 blocked_by: [09-lease-loss-capability]
-status: in-progress
-branch: ""
+status: done
+branch: "plan-session-affinity-and-handoff/10-awaiting-lease-loss-handoff"
 worktree: ".scratch/task-session-affinity-10"
 issue: ""
 retries: 0
