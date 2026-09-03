@@ -2,9 +2,9 @@
 id: 12-graceful-drain-ownership
 title: Graceful drain ownership ordering
 blocked_by: [09-lease-loss-capability, 10-awaiting-lease-loss-handoff, 11-close-session-semantics]
-status: pending
+status: in-progress
 branch: ""
-worktree: ""
+worktree: ".scratch/task-session-affinity-12"
 issue: ""
 retries: 0
 last_error: ""

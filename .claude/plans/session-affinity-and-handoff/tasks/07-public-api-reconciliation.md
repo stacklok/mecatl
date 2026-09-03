@@ -2,8 +2,8 @@
 id: 07-public-api-reconciliation
 title: Assembled public API and protobuf reconciliation
 blocked_by: [01-session-header-contract, 04-mecatui-affinity, 05-typescript-raw-affinity, 06-typescript-high-level-affinity]
-status: in-progress
-branch: ""
+status: done
+branch: "plan-session-affinity-and-handoff/07-public-api-reconciliation"
 worktree: ".scratch/task-session-affinity-07"
 issue: ""
 retries: 0

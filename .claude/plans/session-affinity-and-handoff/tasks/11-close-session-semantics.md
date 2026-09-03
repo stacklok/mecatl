@@ -2,8 +2,8 @@
 id: 11-close-session-semantics
 title: Lease-aware CloseSession preconditions
 blocked_by: [08-session-mutation-lease-inventory, 10-awaiting-lease-loss-handoff]
-status: in-progress
-branch: ""
+status: done
+branch: "plan-session-affinity-and-handoff/11-close-session-semantics"
 worktree: ".scratch/task-session-affinity-11"
 issue: ""
 retries: 0
