@@ -2,9 +2,9 @@
 id: 18-documentation-reconciliation
 title: Operator contract, inventories, and generated documentation
 blocked_by: [07-public-api-reconciliation, 10-awaiting-lease-loss-handoff, 11-close-session-semantics, 12-graceful-drain-ownership, 14-modeled-rehydrate-repair, 15-modeled-transport-bytes, 16-modeled-awaiting-takeover, 17-helm-affinity-neutrality]
-status: pending
+status: in-progress
 branch: ""
-worktree: ""
+worktree: ".scratch/task-session-affinity-18"
 issue: ""
 retries: 0
 last_error: ""
