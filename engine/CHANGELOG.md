@@ -54,6 +54,13 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   result usage, and conversation. Snapshot and event-source metadata round-trip
   the title-specific state. Added (minor).
 
+- **Prepared external-authorization continuations** — `agent.PreparedRun`,
+  `Engine.PrepareAuthorizationContinuation`, and
+  `Engine.PrepareAfterAuthorization` let a host fully initialize and
+  register an inert continuation, atomically install the effective pending-call
+  result set, and inspect the closed `PreparedRunTransition` outcome through
+  `Start` or `Abort`. Added (minor).
+
 - **Opaque external runtime binding** — `session.Session.ExternalBinding` stores a
   composition-issued logical-session binding without interpreting broker topology;
   `sessnap.Snapshot` persists it for exact reattachment checks. Added (minor).

@@ -91,6 +91,7 @@ type mcpState struct {
 
 	deps surfaceDeps // the shared ambient base (incl. ctx), set once at Open
 	mcp  client.MCP  // the surface-specific RPC client, set once at Open
+
 }
 
 // argField is one required-argument input in the prompt-args sub-state.
@@ -427,6 +428,9 @@ func (*mcpState) Close() {}
 
 // updateMCPMsg handles insertion messages that require Model-owned textarea mutation.
 func (m Model) updateMCPMsg(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
+	if model, cmd, handled := m.updateMCPAuthorizationMsg(msg); handled {
+		return model, cmd, true
+	}
 	switch msg := msg.(type) {
 	case client.MCPPromptGotMsg:
 		mm, cmd := m.insertIntoInput(joinPromptMessages(msg.Messages), "loaded prompt "+msg.Name)

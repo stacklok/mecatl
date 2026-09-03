@@ -150,7 +150,7 @@ func newGenericAuthorizationTool(name string) *genericAuthorizationTool {
 		fakeTool: fakeTool{name: name, readOnly: true, exec: func(_ context.Context, call session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
 			return session.NewToolResult(call.ID, "executed"), nil
 		}},
-		authorization: session.ExternalAuthorization{ID: "auth-1", Binding: "private-binding", ExpiresAt: time.Now().Add(time.Hour)},
+		authorization: session.ExternalAuthorization{ID: "auth-1", DisplayName: "Calendar", Binding: "private-binding", ExpiresAt: time.Now().Add(time.Hour)},
 		required:      true,
 	}
 }
@@ -190,7 +190,7 @@ func TestGenericAuthorizationGateOrderAndEffectiveCall(t *testing.T) {
 		if event.Type == session.EvResult {
 			t.Fatal("authorization park emitted EvResult")
 		}
-		if event.Type == session.EvAuthorizationRequired && (event.Authorization == nil || event.Authorization.AuthorizationID != "auth-1" || event.Authorization.Status != session.AuthorizationPending) {
+		if event.Type == session.EvAuthorizationRequired && (event.Authorization == nil || event.Authorization.AuthorizationID != "auth-1" || event.Authorization.DisplayName != "Calendar" || event.Authorization.Status != session.AuthorizationPending) {
 			t.Fatalf("unsafe or malformed authorization event: %#v", event.Authorization)
 		}
 	}

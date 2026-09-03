@@ -515,6 +515,7 @@ func (a *Agent) handleSessionPrompt(ctx context.Context, params json.RawMessage)
 	defer a.svc.FinishRun(session.SessionID(req.SessionID), run)
 
 	stop := stopEndTurn
+	authorizationIneligible := false
 	for ev := range run.Events() {
 		switch ev.Type {
 		case session.EvPermissionAsk:
@@ -528,6 +529,11 @@ func (a *Agent) handleSessionPrompt(ctx context.Context, params json.RawMessage)
 				// editor's reply (the loop is paused awaiting Approve anyway, but
 				// concurrent tool results from a parallel read still flow).
 				a.requestPermission(ctx, req.SessionID, run, *ev.Ask)
+			}
+		case session.EvAuthorizationRequired:
+			authorizationIneligible = true
+			if update, ok := projectUpdate(ev); ok {
+				a.notifyUpdate(ctx, req.SessionID, update)
 			}
 		case session.EvResult:
 			if ev.Result != nil {
@@ -546,6 +552,9 @@ func (a *Agent) handleSessionPrompt(ctx context.Context, params json.RawMessage)
 	// engine mutates the session in place, and only this Save captures the
 	// completed turn's history durably.
 	a.svc.Persist(ctx, session.SessionID(req.SessionID))
+	if authorizationIneligible {
+		return nil, newMethodErr(codeInvalidParams, "acp: session/prompt: MCP authorization is unavailable for ACP sessions")
+	}
 	return promptResponse{StopReason: stop}, nil
 }
 

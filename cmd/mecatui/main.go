@@ -25,8 +25,10 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 	"time"
@@ -364,6 +366,8 @@ func runWithOptions(argv []string, options runOptions) error {
 	applyDebugConfig(cfg, &deps)
 	deps.ServerImpl = mecatuiServerImplementation
 	wireManualCompaction(&deps, cl)
+	deps.MCPAuthorization = cl
+	deps.OpenURL = openBrowserURL
 
 	// Apply keymap overrides (CLI for now).
 	if err := applyKeyOverridesToDeps(cfg, &deps); err != nil {
@@ -634,6 +638,22 @@ func emitDebugPrivacyWarning(w io.Writer, target string, servers ...string) {
 			_, _ = fmt.Fprintf(w, "mecatui: PRIVACY: selected reporting servers available to this debug session: %s\n", strings.Join(servers, ", "))
 		}
 	}
+}
+
+// openBrowserURL opens only a presentation URL obtained from the authenticated
+// server control surface. The URL is an argument, never a shell fragment.
+func openBrowserURL(_ context.Context, url string) error {
+	var name string
+	switch runtime.GOOS {
+	case "darwin":
+		name = "open"
+	case "windows":
+		name = "rundll32"
+		return exec.Command(name, "url.dll,FileProtocolHandler", url).Start()
+	default:
+		name = "xdg-open"
+	}
+	return exec.Command(name, url).Start()
 }
 
 // emitAuthFileWarning is the command-root's single warning emission seam.

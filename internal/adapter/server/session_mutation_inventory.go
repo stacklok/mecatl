@@ -88,6 +88,12 @@ var sessionMutationInventory = map[string]SessionMutationEntry{
 	"SetSessionEnvironment":              {SessionMutationComposition, "registers only a process-local environment override and touches no durable session family"},
 	"CloseSession":                       {SessionMutationLeaseProven, "tears down process-local session ownership and releases its lease without changing durable session bytes"},
 	"closeSessionLocal":                  {SessionMutationLeaseProven, "shared teardown body for CloseSession and the delete paths, which already hold brokerMu for the id before calling it"},
+	"continueGrantedAuthorizationLocked": {SessionMutationLeaseProven, "called only from RecheckMCPAuthorization/resolveAuthorizationLocked callers that already hold runEntryMu and the acquired session lease"},
+	"interruptRestoredAuthorizationLocked": {SessionMutationLeaseProven, "called only from startRunContent after runEntryMu.lock and the real acquireLease have both succeeded"},
+	"repairAuthorizationRegistration":    {SessionMutationLeaseProven, "recovery path invoked only after the caller's runEntryMu + session lease acquisition, to settle a continuation that failed to register"},
+	"resolveAuthorizationLocked":         {SessionMutationLeaseProven, "called only from RecheckMCPAuthorization/CancelMCPAuthorization callers that already hold runEntryMu and the acquired session lease"},
+	"settleAuthorizationLocked":          {SessionMutationLeaseProven, "called only from closeSessionAuthorized after runEntryMu.lock and the real acquireLease have both succeeded"},
+	"appendAuthorizationResolution":      {SessionMutationLeaseProven, "no-continuation EventLog fallback invoked only from the same lease-proven authorization-resolution callers"},
 }
 
 func validateSessionMutationNames(table map[string]SessionMutationEntry, boundaries []string) []error {

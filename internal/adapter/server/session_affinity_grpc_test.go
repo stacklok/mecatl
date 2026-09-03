@@ -68,6 +68,7 @@ func TestADR_0294_NewSessionBoundRPCsRequireAffinityClassification(t *testing.T)
 		"ClearSession": true, "ListCommands": true, "ListWorktrees": true, "StreamSessionEvents": true,
 		"StreamSessionLive": true, "WatchSessionEvents": true, "ReflectSession": true,
 		"ApprovePlan": true, "CreateTeam": true,
+		"GetMcpAuthorizationPresentation": true, "RecheckMcpAuthorization": true, "CancelMcpAuthorization": true,
 	}
 	service := mecatlv1.File_mecatl_v1_harness_proto.Services().ByName("HarnessService")
 	for i := range service.Methods().Len() {

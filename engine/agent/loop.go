@@ -1100,7 +1100,7 @@ func (e *Engine) RetryFailedStep(ctx context.Context, sess *session.Session, env
 	})
 }
 
-// ResumeApproval is the FOURTH, awaiting-ONLY run-entry seam (cloud-native Phase
+// ResumeApprovalOptions configures ResumeApproval, the FOURTH, awaiting-ONLY run-entry seam (cloud-native Phase
 // 2): it re-enters the loop AT a parked permission ask on a session that is in
 // StateAwaiting (typically loaded fresh from a snapshot after the process that
 // parked the ask died), applies verdict to the pending tool call, closes out any
@@ -1131,6 +1131,7 @@ type ResumeApprovalOptions struct {
 	CanPresentAuthorization bool
 }
 
+// ResumeApproval resumes an awaiting permission decision with default host capabilities.
 func (e *Engine) ResumeApproval(ctx context.Context, sess *session.Session, env tool.Environment, askID string, verdict session.ApprovalVerdict) *Run {
 	return e.ResumeApprovalWith(ctx, sess, env, askID, verdict, ResumeApprovalOptions{})
 }
@@ -1184,6 +1185,139 @@ func askDiscriminatorFor(req RunRequest, serial int64) (value string, colonRejec
 	return fmt.Sprintf("r%d", serial), d != ""
 }
 
+// PreparedRunTransition reports the observed state transition of Start or Abort.
+type PreparedRunTransition string
+
+const (
+	// PreparedRunStarted means Start won and released execution.
+	PreparedRunStarted PreparedRunTransition = "started"
+	// PreparedRunAborted means Abort won and closed the inert run.
+	PreparedRunAborted PreparedRunTransition = "aborted"
+	// PreparedRunDuplicateStart means Start was called again after starting.
+	PreparedRunDuplicateStart PreparedRunTransition = "duplicate_start"
+	// PreparedRunDuplicateAbort means Abort was called again after aborting.
+	PreparedRunDuplicateAbort PreparedRunTransition = "duplicate_abort"
+	// PreparedRunStartAfterAbort means Start lost because Abort already won.
+	PreparedRunStartAfterAbort PreparedRunTransition = "start_after_abort"
+	// PreparedRunAbortAfterStart means Abort lost because Start already won.
+	PreparedRunAbortAfterStart PreparedRunTransition = "abort_after_start"
+)
+
+type preparedRunState uint8
+
+const (
+	preparedRunInert preparedRunState = iota
+	preparedRunStarted
+	preparedRunAborted
+)
+
+// PreparedRun is a fully initialized, inert Run. Start releases its
+// execution goroutine exactly once, allowing a host to register the run before
+// a durably parked protected call can execute.
+type PreparedRun struct {
+	run   *Run
+	start func()
+	abort func()
+	mu    sync.Mutex
+	state preparedRunState
+}
+
+// Run returns the inert run handle for registration before Start.
+func (p *PreparedRun) Run() *Run { return p.run }
+
+// Start releases an inert prepared run and reports whether it started, was a
+// duplicate start, or lost to Abort.
+func (p *PreparedRun) Start() (*Run, PreparedRunTransition) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	switch p.state {
+	case preparedRunInert:
+		p.state = preparedRunStarted
+		p.start()
+		return p.run, PreparedRunStarted
+	case preparedRunStarted:
+		return p.run, PreparedRunDuplicateStart
+	default:
+		return p.run, PreparedRunStartAfterAbort
+	}
+}
+
+// Abort closes an inert prepared run without executing its body and reports
+// whether it aborted, was a duplicate abort, or lost to Start.
+func (p *PreparedRun) Abort() PreparedRunTransition {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	switch p.state {
+	case preparedRunInert:
+		p.state = preparedRunAborted
+		p.abort()
+		return PreparedRunAborted
+	case preparedRunAborted:
+		return PreparedRunDuplicateAbort
+	default:
+		return PreparedRunAbortAfterStart
+	}
+}
+
+// PrepareAuthorizationContinuation prepares an already durably claimed
+// external-authorization continuation without executing it. The caller must
+// register Run before Start.
+func (e *Engine) PrepareAuthorizationContinuation(ctx context.Context, sess *session.Session, env tool.Environment, pending session.PendingAuthorization, status session.AuthorizationStatus) *PreparedRun {
+	return e.prepareRun(ctx, sess, RunRequest{RunID: sess.RunID()}, session.Usage{}, func(ctx context.Context, r *Run) {
+		e.emit(r, session.Event{Type: session.EvSessionInit})
+		toolToRun, ok := e.deps.Catalog.Lookup(pending.Call.Name)
+		if !ok {
+			results := []session.ToolResult{session.NewToolError(pending.Call.ID, "authorization continuation tool is unavailable")}
+			for _, deferred := range pending.Deferred {
+				results = append(results, session.NewToolError(deferred.ID, "authorization deferred sibling was not executed"))
+			}
+			if err := sess.RecordToolResults(results); err != nil {
+				e.terminate(ctx, r, sess, session.StopError, "", session.Usage{}, err, false)
+				return
+			}
+			e.save(ctx, r, sess)
+			e.emitAuthorizationResolution(r, sess.Counters.Turns, pending.Authorization, pending.Call.ID, status, results)
+			e.terminate(ctx, r, sess, session.StopError, "", session.Usage{}, fmt.Errorf("tool %q unavailable", pending.Call.Name), false)
+			return
+		}
+		result := e.execute(ctx, r, sess, env, sess.Counters.Turns, pending.Call, toolToRun, time.Time{})
+		results := []session.ToolResult{result}
+		for _, deferred := range pending.Deferred {
+			deferredResult := session.NewToolError(deferred.ID, "authorization deferred sibling was not executed")
+			e.emit(r, session.Event{Type: session.EvToolResult, Turn: sess.Counters.Turns, ToolResult: ptr(deferredResult)})
+			results = append(results, deferredResult)
+		}
+		if err := sess.RecordToolResults(results); err != nil {
+			e.terminate(ctx, r, sess, session.StopError, "", session.Usage{}, err, false)
+			return
+		}
+		e.save(ctx, r, sess)
+		e.emitAuthorizationResolution(r, sess.Counters.Turns, pending.Authorization, pending.Call.ID, status, nil)
+		e.runLoop(ctx, r, sess, env, session.Usage{}, "", false)
+	})
+}
+
+// PrepareAfterAuthorization prepares the ordinary model loop after a terminal
+// external-authorization outcome has been durably paired. Results must be the
+// exact ordered ToolResults already recorded on sess. The caller must register
+// Run before Start.
+func (e *Engine) PrepareAfterAuthorization(ctx context.Context, sess *session.Session, env tool.Environment, authorization session.ExternalAuthorization, callID session.ToolCallID, results []session.ToolResult, status session.AuthorizationStatus) *PreparedRun {
+	return e.prepareRun(ctx, sess, RunRequest{RunID: sess.RunID()}, session.Usage{}, func(ctx context.Context, r *Run) {
+		e.emit(r, session.Event{Type: session.EvSessionInit})
+		e.emitAuthorizationResolution(r, sess.Counters.Turns, authorization, callID, status, results)
+		e.runLoop(ctx, r, sess, env, session.Usage{}, "", false)
+	})
+}
+
+func (e *Engine) emitAuthorizationResolution(r *Run, turn int, authorization session.ExternalAuthorization, callID session.ToolCallID, status session.AuthorizationStatus, results []session.ToolResult) {
+	for i := range results {
+		e.emit(r, session.Event{Type: session.EvToolResult, Turn: turn, ToolResult: ptr(results[i])})
+	}
+	e.emit(r, session.Event{Type: session.EvAuthorizationResolved, Authorization: &session.AuthorizationPayload{
+		AuthorizationID: authorization.ID, DisplayName: authorization.DisplayName, Call: callID, ExpiresAt: authorization.ExpiresAt, Status: status,
+	}})
+}
+
 // startRun mints a Run with the full concurrency preamble (events buffer, ask
 // registry, run-scoped diagnostics, interactive child-ask router, ask-review
 // breaker, child-run registry) and launches body in the run goroutine under the
@@ -1191,6 +1325,15 @@ func askDiscriminatorFor(req RunRequest, serial int64) (value string, colonRejec
 // Engine.Run (→ drive) and ResumeApproval (→ driveFromAwaiting) so the two
 // entry seams cannot drift in their concurrency setup.
 func (e *Engine) startRun(ctx context.Context, sess *session.Session, req RunRequest, budgetBaseline session.Usage, body func(context.Context, *Run)) *Run {
+	prepared := e.prepareRun(ctx, sess, req, budgetBaseline, body)
+	run, transition := prepared.Start()
+	if transition != PreparedRunStarted {
+		panic("agent: fresh prepared run did not start")
+	}
+	return run
+}
+
+func (e *Engine) prepareRun(ctx context.Context, sess *session.Session, req RunRequest, budgetBaseline session.Usage, body func(context.Context, *Run)) *PreparedRun {
 	ctx, cancel := context.WithCancel(ctx)
 	serial := runSerial.Add(1)
 	ctx = port.WithRunAttemptContext(ctx, sess.ID, serial)
@@ -1288,21 +1431,28 @@ func (e *Engine) startRun(ctx context.Context, sess *session.Session, req RunReq
 	// unregister reports false and no retract is ever emitted — correct:
 	// nothing was ever surfaced.
 	r.children.unregisterAsk = r.unregisterChildAsk
-	go func() {
-		// Defers run LIFO: cancel first (releases the run's ctx tree), then the
-		// belt-and-braces seal — its abort-before-emitMu ordering closes emitAbort,
-		// which is what unwinds any guarded send still parked on a full events
-		// channel (Run.emitOrAbort selects on it; the run ctx is NOT a guarded
-		// send's escape hatch), then sets sealed so every later emit is a safe
-		// no-op — and only THEN close(r.events): seal-before-close is the
-		// send-on-closed-channel panic guard. (drive's terminate paths normally
-		// drain+seal already; this defer covers them idempotently.)
-		defer close(r.events)
-		defer r.children.seal()
-		defer cancel()
-		body(ctx, r)
-	}()
-	return r
+	start := func() {
+		go func() {
+			// Defers run LIFO: cancel first (releases the run's ctx tree), then the
+			// belt-and-braces seal — its abort-before-emitMu ordering closes emitAbort,
+			// which is what unwinds any guarded send still parked on a full events
+			// channel (Run.emitOrAbort selects on it; the run ctx is NOT a guarded
+			// send's escape hatch), then sets sealed so every later emit is a safe
+			// no-op — and only THEN close(r.events): seal-before-close is the
+			// send-on-closed-channel panic guard. (drive's terminate paths normally
+			// drain+seal already; this defer covers them idempotently.)
+			defer close(r.events)
+			defer r.children.seal()
+			defer cancel()
+			body(ctx, r)
+		}()
+	}
+	abort := func() {
+		cancel()
+		r.children.seal()
+		close(r.events)
+	}
+	return &PreparedRun{run: r, start: start, abort: abort}
 }
 
 // drive runs the loop algorithm for one prompt. It always terminates the session
@@ -1656,6 +1806,7 @@ func (e *Engine) parkAuthorization(ctx context.Context, r *Run, sess *session.Se
 	}
 	payload := session.AuthorizationPayload{
 		AuthorizationID: park.authorization.ID,
+		DisplayName:     park.authorization.DisplayName,
 		Call:            park.call.ID,
 		ExpiresAt:       park.authorization.ExpiresAt,
 		Status:          session.AuthorizationPending,

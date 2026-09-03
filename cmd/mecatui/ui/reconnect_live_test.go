@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -229,6 +230,53 @@ func feedReconnect(t *testing.T, m Model) (Model, bool) {
 // fakeLiveStreamer's empty stream EOFs immediately), recovers a delivery note
 // from the durable catch-up, clears the degraded state on LiveReconnectedMsg,
 // and re-arms the live feed. The catch-up delivery renders exactly once.
+func TestReconnectUI_ReplayedAuthorizationRestoresActionableCard(t *testing.T) {
+	defer restoreBackoffClient(t)()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	fl := &reconnectLiveStreamer{succCtx: ctx}
+	fr := &fakeSessionReplayer{stream: client.NewFakeEventStream(&mecatlv1.Event{Type: "authorization.required", Authorization: &mecatlv1.Authorization{AuthorizationId: "authorization:replayed", CallId: "call-1", Status: "pending", DisplayName: "GitHub"}})}
+	m := newReconnectModel(t, ctx, fl, fr)
+	defer joinReconnectForCleanup(&m)()
+	var reconnected bool
+	m, reconnected = feedReconnect(t, m)
+	if !reconnected {
+		t.Fatal("reconnect did not complete")
+	}
+	if m.phase != phaseAuthorizing || m.authorization.authorizationID != "authorization:replayed" {
+		t.Fatalf("reconnect reducer did not restore authorization card: phase=%v state=%+v", m.phase, m.authorization)
+	}
+	view := stripANSIstr(m.View().Content)
+	for _, action := range []string{"Open Browser", "Copy Link", "Recheck", "Cancel"} {
+		if !strings.Contains(view, action) {
+			t.Fatalf("replayed authorization card missing %q: %s", action, view)
+		}
+	}
+}
+
+func TestReconnectUI_CompletedAuthorizationLifecycleStaysIdle(t *testing.T) {
+	defer restoreBackoffClient(t)()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	fl := &reconnectLiveStreamer{succCtx: ctx}
+	fr := &fakeSessionReplayer{stream: client.NewFakeEventStream(
+		&mecatlv1.Event{Type: "authorization.required", Authorization: &mecatlv1.Authorization{AuthorizationId: "authorization:complete", CallId: "call-1", Status: "pending", DisplayName: "GitHub"}},
+		&mecatlv1.Event{Type: "authorization.resolved", Authorization: &mecatlv1.Authorization{AuthorizationId: "authorization:complete", CallId: "call-1", Status: "cancelled", DisplayName: "GitHub"}},
+	)}
+	m := newReconnectModel(t, ctx, fl, fr)
+	defer joinReconnectForCleanup(&m)()
+	m, reconnected := feedReconnect(t, m)
+	if !reconnected {
+		t.Fatal("reconnect did not complete")
+	}
+	if m.phase != phaseIdle || m.authorization.authorizationID != "" {
+		t.Fatalf("completed replay left phantom authorization: phase=%v state=%+v", m.phase, m.authorization)
+	}
+	if strings.Contains(stripANSIstr(m.View().Content), "MCP authorization required") {
+		t.Fatal("completed replay rendered an authorization card")
+	}
+}
+
 func TestReconnectUI_TriggerOnStreamCloseAndError(t *testing.T) {
 	defer restoreBackoffClient(t)()
 	ctx, cancel := context.WithCancel(context.Background())

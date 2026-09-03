@@ -160,6 +160,12 @@ type Deps struct {
 	// tests. nil disables the live bridge (the ui still renders deliveries via the
 	// replay on a session switch/reload, just not live). *Client satisfies it.
 	LiveStream client.LiveStreamer
+	// MCPAuthorization is the distinct browser authorization surface. It never
+	// shares the permission-approval stream or controls.
+	MCPAuthorization client.MCPAuthorizationController
+	// OpenURL opens a presentation URL obtained only through MCPAuthorization.
+	// Composition owns the OS integration; nil leaves the action unavailable.
+	OpenURL func(context.Context, string) error
 	// SelectionStore persists the picked model (last-used). nil disables persistence
 	// (the pick still applies to the next create this run, just isn't remembered).
 	SelectionStore SelectionStore
@@ -426,6 +432,7 @@ const (
 	phaseIdle                          // ready for a prompt
 	phaseRunning                       // a Converse run is streaming
 	phaseAwaitingApproval              // a permission modal is open
+	phaseAuthorizing                   // an MCP browser authorization is pending
 	phaseFatal                         // connect/fatal error; input disabled
 	phaseReplay                        // a stored-session transcript replay is open (read-only; issue #245)
 )
@@ -504,7 +511,12 @@ type Model struct {
 	conv conversation
 	vp   viewport.Model
 
-	// approval state is dynamic: the surface owns it only while an ask is open.
+	// authorization is separate from permission approval: MCP browser authorization
+	// has no allow/always/deny verdict and never carries tool arguments or a URL.
+	authorization mcpAuthorizationState
+	// authorizationEvents is the active recheck/cancel stream. It is distinct
+	// from the converse stream so browser controls cannot consume approval frames.
+	authorizationEvents <-chan tea.Msg
 	// debugAskCycle rotates the /debug-ask built-in (Deps.DebugAsk) through its
 	// canned long-args payloads so repeated invocations exercise the different
 	// wrap shapes (one long line, a compound pipeline, a heredoc).

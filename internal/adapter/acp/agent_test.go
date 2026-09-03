@@ -94,6 +94,32 @@ func testCWD(t *testing.T) string {
 	return cwd
 }
 
+// resolvedTempDir returns a fresh temp dir with symlinks evaluated, matching
+// what osfs.NewWorkspace stores as its Root() (macOS's /tmp is a symlink to
+// /private/tmp, so a raw t.TempDir() would fail assertACPPlacementCWD's exact
+// string comparison against the workspace's already-resolved root).
+func resolvedTempDir(t *testing.T) string {
+	t.Helper()
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatalf("resolve temp dir: %v", err)
+	}
+	return dir
+}
+
+type authorizationScriptTool struct {
+	scriptTool
+	requests int
+}
+
+func (s *authorizationScriptTool) RequestAuthorization(context.Context, session.ToolCall) (session.ExternalAuthorization, bool, error) {
+	s.requests++
+	return session.ExternalAuthorization{ID: "must-not-be-exposed", Binding: "private", ExpiresAt: time.Now().Add(time.Hour)}, true, nil
+}
+func (*authorizationScriptTool) AbortAuthorization(context.Context, session.ExternalAuthorization) error {
+	return nil
+}
+
 // newService wires a real *agent.Engine (mockllm + memfs + permpolicy) into a
 // server.Service, mirroring the gRPC adapter's test harness. Optional configFns
 // mutate the server.Config before construction (e.g. to inject a CommandLister
@@ -484,6 +510,53 @@ func assertHasToolStatus(t *testing.T, updates []map[string]any, kind, status st
 	t.Fatalf("missing %s update with status %q in %v", kind, status, updates)
 }
 
+func TestACPProtectedAuthorizationFailsWithoutParkingAndSessionContinues(t *testing.T) {
+	protected := &authorizationScriptTool{scriptTool: scriptTool{name: "protected", content: "must not execute"}}
+	llm := mockllm.New(
+		mockllm.ToolCallTurn(call("c1", "protected", `{}`)),
+		mockllm.TextTurn("authorization unavailable"),
+		mockllm.TextTurn("second prompt works"),
+	)
+	svc := newService(t, llm, allowRules(), protected)
+	agentStdinR, editorToAgentW := io.Pipe()
+	agentStdoutR, agentStdoutW := io.Pipe()
+	a := acp.NewAgent(svc)
+	conn := acp.NewConn(agentStdinR, agentStdoutW, a.Handle)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	go func() { _ = a.Serve(ctx, conn) }()
+	e := &editor{t: t, toAgent: editorToAgentW, fromAgnt: bufio.NewReader(agentStdoutR), pend: map[int64]chan rpcMsg{}, notes: make(chan rpcMsg, 64), reqs: make(chan rpcMsg, 8)}
+	go e.readLoop()
+
+	res := e.call("session/new", map[string]any{"cwd": testCWD(t), "mcpServers": []any{}})
+	var ns struct {
+		SessionID string `json:"sessionId"`
+	}
+	if err := json.Unmarshal(res, &ns); err != nil {
+		t.Fatal(err)
+	}
+	prompt := func(text string) json.RawMessage {
+		return e.call("session/prompt", map[string]any{"sessionId": ns.SessionID, "prompt": []any{map[string]any{"type": "text", "text": text}}})
+	}
+	first := prompt("use protected")
+	updates := drainUpdates(e.notes)
+	updatesJSON, _ := json.Marshal(updates)
+	if strings.Contains(string(first), "must-not-be-exposed") || strings.Contains(string(updatesJSON), "must-not-be-exposed") || strings.Contains(string(updatesJSON), "https://") || protected.requests != 0 {
+		t.Fatalf("ACP obtained authorization identity/URL or invoked requester: response=%s updates=%s requests=%d", first, updatesJSON, protected.requests)
+	}
+	sess, err := svc.GetSession(t.Context(), session.SessionID(ns.SessionID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sess.State == session.StateAuthorizing {
+		t.Fatal("ACP session parked in authorizing state")
+	}
+	second := prompt("continue")
+	if strings.Contains(string(second), "error") {
+		t.Fatalf("second prompt unusable: %s", second)
+	}
+}
+
 // TestEndToEndEditDiffBlock drives a prompt whose model emits an Edit tool call
 // (auto-allowed), and asserts the streamed tool_call carries an ACP diff content
 // block synthesized from the Edit args (oldText/newText/path) so the editor can
@@ -567,7 +640,7 @@ func TestEndToEndFSDelegation(t *testing.T) {
 			mockllm.ToolCallTurn(call("c2", "Edit", `{"path":"main.go","old_string":"var A = 1","new_string":"var A = 2"}`)),
 			mockllm.TextTurn("done"),
 		)
-		root = t.TempDir()
+		root = resolvedTempDir(t)
 		svc := newServiceCfg(t, llm, allowRules(), func(cfg *server.Config) {
 			cfg.SharedEngineRoot = root
 			cfg.PlacementProvider = acpPlacementProvider{root: root, ref: session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "fs-test-placement", Revision: "v1"}}
@@ -927,7 +1000,7 @@ func TestADR_0291_ACPBindAndLoadAssertConfiguredPlacement(t *testing.T) {
 }
 
 func TestServerOwnedSessionPlacement_Scenario7_ACPProjectsNoPhysicalPaths(t *testing.T) {
-	root := t.TempDir()
+	root := resolvedTempDir(t)
 	ref := session.EnvironmentRef{Kind: "remote", ID: "private-ref-id", Revision: "private-ref-revision"}
 	svc := newServiceCfg(t, mockllm.New(), nil, func(cfg *server.Config) {
 		cfg.SharedEngineRoot = root

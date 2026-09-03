@@ -272,6 +272,19 @@ service HarnessService {
   // from a position and being handed everything is a correctness problem dressed
   // as a performance one. Ownership is enforced exactly as on GetSession.
   rpc WatchSessionEvents(WatchSessionEventsRequest) returns (stream WatchSessionEventsResponse);
+  // GetMcpAuthorizationPresentation returns the live browser URL for one owned,
+  // still-pending authorization. The request carries correlation only; the URL
+  // is returned only by this live control and never enters an Event or snapshot.
+  rpc GetMcpAuthorizationPresentation(GetMcpAuthorizationPresentationRequest) returns (GetMcpAuthorizationPresentationResponse);
+
+  // RecheckMcpAuthorization is a bidirectional authorization-control stream.
+  // Its first frame MUST carry owned session/authorization correlation;
+  // subsequent frames may resolve permission asks or cancel the continuation.
+  rpc RecheckMcpAuthorization(stream RecheckMcpAuthorizationRequest) returns (stream RecheckMcpAuthorizationResponse);
+
+  // CancelMcpAuthorization is the cancellation counterpart with the same
+  // first-frame and continuation-control grammar.
+  rpc CancelMcpAuthorization(stream CancelMcpAuthorizationRequest) returns (stream CancelMcpAuthorizationResponse);
 
   // ListSessions returns the stored-session inventory — the picker metadata a
   // client renders to let an operator open an EXISTING session by id (issue #245
@@ -1716,6 +1729,67 @@ enum SteerOutcome {
   STEER_OUTCOME_TOO_LATE = 5;
 }
 
+// GetMcpAuthorizationPresentationRequest carries only owner-scoped correlation.
+// It has no status, OAuth code, credential, private binding, or tool arguments,
+// so a client cannot assert authorization success.
+message GetMcpAuthorizationPresentationRequest {
+  string session_id = 1 [(buf.validate.field).string.min_len = 1];
+  string authorization_id = 2 [(buf.validate.field).string.min_len = 1];
+}
+
+// GetMcpAuthorizationPresentationResponse exposes a live browser URL only as the
+// response to the owner-authorized presentation control. It is never an event
+// payload and must not be persisted in a session snapshot or event log.
+message GetMcpAuthorizationPresentationResponse {
+  string url = 1;
+}
+
+// RecheckMcpAuthorizationRequest is one client frame. The mandatory first
+// frame carries only owner-scoped correlation in session_id/authorization_id;
+// subsequent frames leave those fields empty and carry one control.
+message RecheckMcpAuthorizationRequest {
+  string session_id = 1;
+  string authorization_id = 2;
+  oneof control {
+    ResumeApproval resume_approval = 10;
+    Cancel cancel = 11;
+  }
+}
+
+// RecheckMcpAuthorizationResponse wraps one authoritative status or continuation event.
+message RecheckMcpAuthorizationResponse {
+  Event event = 1;
+}
+
+// CancelMcpAuthorizationRequest uses the same grammar while keeping the two RPC
+// request envelopes method-specific.
+message CancelMcpAuthorizationRequest {
+  string session_id = 1;
+  string authorization_id = 2;
+  oneof control {
+    ResumeApproval resume_approval = 10;
+    Cancel cancel = 11;
+  }
+}
+
+// CancelMcpAuthorizationResponse wraps one authoritative resolution or continuation event.
+message CancelMcpAuthorizationResponse {
+  Event event = 1;
+}
+
+// Authorization is the safe event projection of an external authorization
+// lifecycle. Status is a closed string passthrough: pending, granted, denied,
+// cancelled, expired, interrupted, failed, or closed. display_name is optional
+// bounded human-facing authority/service text. The payload deliberately has no
+// URL, OAuth code, credential, private binding, topology, or tool arguments.
+message Authorization {
+  string authorization_id = 1;
+  string call_id = 2;
+  google.protobuf.Timestamp expires_at = 3;
+  string status = 4;
+  string display_name = 5;
+}
+
 // Event mirrors the domain session.Event one-for-one. `type` is the string
 // event kind; the structured submessages are populated per kind.
 message Event {
@@ -1824,7 +1898,10 @@ message Event {
   // title is set on session.title events. It is the authoritative, source-free
   // title lifecycle projection after a persisted title state change.
   SessionTitle title = 23;
-
+  // authorization is set on authorization.required and authorization.resolved
+  // events. It is safe durable correlation only; the live presentation URL and
+  // private continuation state never enter this payload.
+  Authorization authorization = 24;
 }
 
 // ModelRetry identifies the failed-step retry intent being driven.

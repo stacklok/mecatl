@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"math"
 
+	"google.golang.org/protobuf/types/known/timestamppb"
+
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/session"
@@ -152,6 +154,9 @@ func toProto(ev session.Event) *mecatlv1.Event {
 			StreamProgress:   streamProgressToProto(ev.ModelRetry.Progress),
 		}
 	}
+	if ev.Authorization != nil {
+		out.Authorization = toProtoAuthorization(*ev.Authorization)
+	}
 	if ev.Result != nil {
 		out.Result = toProtoResult(*ev.Result)
 	}
@@ -189,6 +194,16 @@ func toProto(ev session.Event) *mecatlv1.Event {
 		out.Steer = toProtoSteer(*ev.Steer)
 	}
 	return out
+}
+
+func toProtoAuthorization(p session.AuthorizationPayload) *mecatlv1.Authorization {
+	return &mecatlv1.Authorization{
+		AuthorizationId: valid(p.AuthorizationID),
+		DisplayName:     valid(p.DisplayName),
+		CallId:          valid(string(p.Call)),
+		ExpiresAt:       timestamppb.New(p.ExpiresAt),
+		Status:          string(p.Status),
+	}
 }
 
 // toProtoSteer maps a session.SteerPayload to its proto SteerEcho form: the

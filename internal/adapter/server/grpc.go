@@ -361,7 +361,7 @@ func (h *HarnessServer) startConverse(ctx context.Context, first *mecatlv1.Conve
 		if err := validateGRPCSessionAffinity(ctx, string(id)); err != nil {
 			return "", nil, false, err
 		}
-		run, err := h.svc.StartRunContent(ctx, id, prompt.GetText(), parts)
+		run, err := h.svc.StartInteractiveRunContent(ctx, id, prompt.GetText(), parts)
 		if err != nil {
 			return "", nil, false, toStatus(err)
 		}
@@ -1405,6 +1405,158 @@ func (h *HarnessServer) StreamSessionEvents(req *mecatlv1.StreamSessionEventsReq
 		}
 	}
 	return nil
+}
+
+// GetMcpAuthorizationPresentation returns the live browser URL for one owned,
+// still-pending authorization. The request carries correlation only.
+func (h *HarnessServer) GetMcpAuthorizationPresentation(ctx context.Context, req *mecatlv1.GetMcpAuthorizationPresentationRequest) (*mecatlv1.GetMcpAuthorizationPresentationResponse, error) {
+	if req.GetSessionId() == "" || !session.ValidAuthorizationID(req.GetAuthorizationId()) {
+		return nil, status.Error(codes.InvalidArgument, "invalid session_id or authorization_id")
+	}
+	id := session.SessionID(req.GetSessionId())
+	url, err := h.svc.MCPAuthorizationPresentation(ctx, id, MCPAuthorizationControl{SessionID: id, AuthorizationID: req.GetAuthorizationId()})
+	if err != nil {
+		return nil, toStatus(err)
+	}
+	return &mecatlv1.GetMcpAuthorizationPresentationResponse{Url: valid(url)}, nil
+}
+
+func (h *HarnessServer) RecheckMcpAuthorization(stream grpc.BidiStreamingServer[mecatlv1.RecheckMcpAuthorizationRequest, mecatlv1.RecheckMcpAuthorizationResponse]) error {
+	first, err := stream.Recv()
+	if err != nil {
+		return status.Error(codes.InvalidArgument, "authorization control requires an initial frame")
+	}
+	if first.GetControl() != nil || first.GetSessionId() == "" || !session.ValidAuthorizationID(first.GetAuthorizationId()) {
+		return status.Error(codes.InvalidArgument, "first authorization control frame must contain only valid session_id and authorization_id")
+	}
+	id := session.SessionID(first.GetSessionId())
+	result, err := h.svc.RecheckMCPAuthorization(stream.Context(), id, MCPAuthorizationControl{SessionID: id, AuthorizationID: first.GetAuthorizationId()})
+	if err != nil {
+		return toStatus(err)
+	}
+	return h.relayMCPAuthorizationControl(stream.Context(), id, result,
+		func(ev *mecatlv1.Event) error {
+			return stream.Send(&mecatlv1.RecheckMcpAuthorizationResponse{Event: ev})
+		},
+		func() (authorizationControlFrame, error) {
+			frame, err := stream.Recv()
+			if err != nil {
+				return authorizationControlFrame{}, err
+			}
+			if frame.GetSessionId() != "" || frame.GetAuthorizationId() != "" {
+				return authorizationControlFrame{}, status.Error(codes.InvalidArgument, "authorization control initial frame may not be repeated")
+			}
+			switch k := frame.GetControl().(type) {
+			case *mecatlv1.RecheckMcpAuthorizationRequest_ResumeApproval:
+				return authorizationControlFrame{approval: k.ResumeApproval}, nil
+			case *mecatlv1.RecheckMcpAuthorizationRequest_Cancel:
+				return authorizationControlFrame{cancel: k.Cancel}, nil
+			default:
+				return authorizationControlFrame{}, status.Error(codes.InvalidArgument, "invalid authorization control frame")
+			}
+		})
+}
+
+func (h *HarnessServer) CancelMcpAuthorization(stream grpc.BidiStreamingServer[mecatlv1.CancelMcpAuthorizationRequest, mecatlv1.CancelMcpAuthorizationResponse]) error {
+	first, err := stream.Recv()
+	if err != nil {
+		return status.Error(codes.InvalidArgument, "authorization control requires an initial frame")
+	}
+	if first.GetControl() != nil || first.GetSessionId() == "" || !session.ValidAuthorizationID(first.GetAuthorizationId()) {
+		return status.Error(codes.InvalidArgument, "first authorization control frame must contain only valid session_id and authorization_id")
+	}
+	id := session.SessionID(first.GetSessionId())
+	result, err := h.svc.CancelMCPAuthorization(stream.Context(), id, MCPAuthorizationControl{SessionID: id, AuthorizationID: first.GetAuthorizationId()})
+	if err != nil {
+		return toStatus(err)
+	}
+	return h.relayMCPAuthorizationControl(stream.Context(), id, result,
+		func(ev *mecatlv1.Event) error {
+			return stream.Send(&mecatlv1.CancelMcpAuthorizationResponse{Event: ev})
+		},
+		func() (authorizationControlFrame, error) {
+			frame, err := stream.Recv()
+			if err != nil {
+				return authorizationControlFrame{}, err
+			}
+			if frame.GetSessionId() != "" || frame.GetAuthorizationId() != "" {
+				return authorizationControlFrame{}, status.Error(codes.InvalidArgument, "authorization control initial frame may not be repeated")
+			}
+			switch k := frame.GetControl().(type) {
+			case *mecatlv1.CancelMcpAuthorizationRequest_ResumeApproval:
+				return authorizationControlFrame{approval: k.ResumeApproval}, nil
+			case *mecatlv1.CancelMcpAuthorizationRequest_Cancel:
+				return authorizationControlFrame{cancel: k.Cancel}, nil
+			default:
+				return authorizationControlFrame{}, status.Error(codes.InvalidArgument, "invalid authorization control frame")
+			}
+		})
+}
+
+type authorizationControlFrame struct {
+	approval *mecatlv1.ResumeApproval
+	cancel   *mecatlv1.Cancel
+}
+
+func (h *HarnessServer) relayMCPAuthorizationControl(ctx context.Context, id session.SessionID, result MCPAuthorizationResult, send func(*mecatlv1.Event) error, recv func() (authorizationControlFrame, error)) error {
+	if result.Run == nil {
+		return send(toProto(result.Event))
+	}
+	defer h.svc.FinishRun(id, result.Run)
+	logCtx := context.WithoutCancel(ctx)
+	recorder := NewRunEventRecorder(logCtx, h.svc, id)
+	defer recorder.Close()
+
+	controlDone := make(chan error, 1)
+	go func() {
+		for {
+			frame, err := recv()
+			if err != nil {
+				controlDone <- err
+				return
+			}
+			if frame.approval != nil {
+				ra := frame.approval
+				if !h.staleStreamControl(ctx, id, "resume_approval", ra.GetExpectedRunId(), result.Run) {
+					result.Run.Approve(ra.GetAskId(), verdictFromResumeApproval(ra.GetVerdict(), ra.GetAllow()))
+				}
+			} else if frame.cancel != nil {
+				if !h.staleStreamControl(ctx, id, "cancel", frame.cancel.GetExpectedRunId(), result.Run) {
+					result.Run.Cancel()
+				}
+			}
+		}
+	}()
+
+	var sendErr error
+	events := result.Run.Events()
+	for events != nil {
+		select {
+		case err := <-controlDone:
+			controlDone = nil
+			result.Run.Cancel()
+			if err != nil && !errors.Is(err, io.EOF) {
+				sendErr = err
+			}
+		case ev, ok := <-events:
+			if !ok {
+				events = nil
+				continue
+			}
+			if sendErr != nil {
+				recorder.Observe(ev)
+				continue
+			}
+			if !h.svc.relayEvent(ctx, id, ev, false, recorder) {
+				continue
+			}
+			if err := send(toProto(ev)); err != nil {
+				sendErr = err
+				result.Run.Cancel()
+			}
+		}
+	}
+	return sendErr
 }
 
 // StreamSessionLive is the LIVE per-session event stream (ADR 0075

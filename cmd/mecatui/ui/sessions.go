@@ -89,6 +89,11 @@ func (m Model) bindSessionID(id string) Model {
 		if m.clearPending != nil && m.clearPending.sourceID != id {
 			m.clearPending = nil
 		}
+		if m.authorization.controlCancel != nil {
+			m.authorization.controlCancel()
+		}
+		m.authorization = mcpAuthorizationState{}
+		m.authorizationEvents = nil
 	}
 	m.sessionID = id
 	m.sessionState = ""

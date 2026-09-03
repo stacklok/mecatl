@@ -31,6 +31,9 @@ import (
 //	POST   /v1/sessions/{id}/rename   -> RenameSession (persist an explicit title)
 //	POST   /v1/sessions/{id}/delete   -> DeleteSession (physical snapshot + sidecars)
 //	POST   /v1/sessions/{id}/compact  -> CompactSession (bodyless manual compaction)
+//	GET    /v1/sessions/{id}/mcp-authorizations/{authorization_id}/presentation -> live browser URL
+//	POST   /v1/sessions/{id}/mcp-authorizations/{authorization_id}/recheck -> status/continuation SSE
+//	POST   /v1/sessions/{id}/mcp-authorizations/{authorization_id}/cancel  -> cancellation/continuation SSE
 //	POST   /v1/sessions/{id}/prompt   -> start a run; text/event-stream of Events
 //	POST   /v1/sessions/{id}/approve  -> resolve the paused ask on the run
 //	POST   /v1/sessions/{id}/cancel   -> cancel the in-flight run
@@ -64,6 +67,9 @@ func NewHTTPHandler(svc *Service) *HTTPHandler {
 		{"POST /v1/sessions/{id}/rename", h.renameSession},
 		{"POST /v1/sessions/{id}/delete", h.deleteSession},
 		{"POST /v1/sessions/{id}/compact", h.compactSession},
+		{"GET /v1/sessions/{id}/mcp-authorizations/{authorization_id}/presentation", h.mcpAuthorizationPresentation},
+		{"POST /v1/sessions/{id}/mcp-authorizations/{authorization_id}/recheck", h.recheckMCPAuthorization},
+		{"POST /v1/sessions/{id}/mcp-authorizations/{authorization_id}/cancel", h.cancelMCPAuthorization},
 		{"POST /v1/sessions/{id}/prompt", h.prompt},
 		{"POST /v1/sessions/{id}/retry", h.retry},
 		{"POST /v1/sessions/{id}/approve", h.approve},
@@ -772,6 +778,125 @@ func usageToJSON(usage session.Usage) usageJSON {
 // still bounding the read.
 const maxPromptBodyBytes = 32 << 20 // 32 MiB
 
+func (h *HTTPHandler) mcpAuthorizationPresentation(w http.ResponseWriter, r *http.Request) {
+	if !mcpAuthorizationRequestBodyEmpty(r) {
+		writeError(w, http.StatusBadRequest, "MCP authorization controls do not accept a request body")
+		return
+	}
+	id, authorizationID := session.SessionID(r.PathValue("id")), r.PathValue("authorization_id")
+	if id == "" || !session.ValidAuthorizationID(authorizationID) {
+		writeError(w, http.StatusBadRequest, "invalid session or authorization ID")
+		return
+	}
+	url, err := h.svc.MCPAuthorizationPresentation(r.Context(), id, MCPAuthorizationControl{SessionID: id, AuthorizationID: authorizationID})
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, &mecatlv1.GetMcpAuthorizationPresentationResponse{Url: valid(url)})
+}
+
+func (h *HTTPHandler) recheckMCPAuthorization(w http.ResponseWriter, r *http.Request) {
+	h.relayMCPAuthorizationControlSSE(w, r, false)
+}
+
+func (h *HTTPHandler) cancelMCPAuthorization(w http.ResponseWriter, r *http.Request) {
+	h.relayMCPAuthorizationControlSSE(w, r, true)
+}
+
+// mcpAuthorizationRequestBodyEmpty enforces the correlation-only HTTP shape.
+// Reading at most one byte rejects JSON success/status/code/token assertions
+// without buffering attacker-controlled bodies.
+func mcpAuthorizationRequestBodyEmpty(r *http.Request) bool {
+	if r.Body == nil || r.Body == http.NoBody {
+		return true
+	}
+	body, err := io.ReadAll(io.LimitReader(r.Body, 1))
+	return err == nil && len(body) == 0
+}
+
+func (h *HTTPHandler) relayMCPAuthorizationControlSSE(w http.ResponseWriter, r *http.Request, cancel bool) {
+	if !mcpAuthorizationRequestBodyEmpty(r) {
+		writeError(w, http.StatusBadRequest, "MCP authorization controls do not accept a request body")
+		return
+	}
+	id, authorizationID := session.SessionID(r.PathValue("id")), r.PathValue("authorization_id")
+	if id == "" || !session.ValidAuthorizationID(authorizationID) {
+		writeError(w, http.StatusBadRequest, "invalid session or authorization ID")
+		return
+	}
+	// Recheck and cancel may register a continuation run. Prove this response can
+	// drain that run before invoking either mutating control, so an incapable
+	// ResponseWriter cannot leave a live continuation orphaned.
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		writeError(w, http.StatusInternalServerError, "streaming unsupported")
+		return
+	}
+	control := MCPAuthorizationControl{SessionID: id, AuthorizationID: authorizationID}
+	var result MCPAuthorizationResult
+	var err error
+	if cancel {
+		result, err = h.svc.CancelMCPAuthorization(r.Context(), id, control)
+	} else {
+		result, err = h.svc.RecheckMCPAuthorization(r.Context(), id, control)
+	}
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.WriteHeader(http.StatusOK)
+	flusher.Flush()
+	enc := json.NewEncoder(w)
+	failed := false
+	fail := func() {
+		failed = true
+		if result.Run != nil {
+			result.Run.Cancel()
+		}
+	}
+	if result.Run == nil {
+		if _, err := w.Write([]byte("data: ")); err != nil {
+			return
+		}
+		if err := enc.Encode(toProto(result.Event)); err != nil {
+			return
+		}
+		_, _ = w.Write([]byte("\n"))
+		flusher.Flush()
+		return
+	}
+	defer h.svc.FinishRun(id, result.Run)
+	logCtx := context.WithoutCancel(r.Context())
+	recorder := NewRunEventRecorder(logCtx, h.svc, id)
+	defer recorder.Close()
+	for event := range result.Run.Events() {
+		if failed {
+			recorder.Observe(event)
+			continue
+		}
+		if !h.svc.relayEvent(r.Context(), id, event, false, recorder) {
+			continue
+		}
+		if _, err := w.Write([]byte("data: ")); err != nil {
+			fail()
+			continue
+		}
+		if err := enc.Encode(toProto(event)); err != nil {
+			fail()
+			continue
+		}
+		if _, err := w.Write([]byte("\n")); err != nil {
+			fail()
+			continue
+		}
+		flusher.Flush()
+	}
+}
+
 // prompt handles POST /v1/sessions/{id}/prompt, streaming the run's events as
 // Server-Sent Events. It starts a run on the shared engine and relays each
 // session.Event (mapped to the proto Event, JSON-encoded) as one SSE frame.
@@ -805,7 +930,7 @@ func (h *HTTPHandler) prompt(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	run, err := h.svc.StartRunContent(r.Context(), id, body.Text, parts)
+	run, err := h.svc.StartInteractiveRunContent(r.Context(), id, body.Text, parts)
 	if err != nil {
 		writeServiceError(w, err)
 		return

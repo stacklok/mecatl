@@ -90,6 +90,9 @@ func (m Model) View() tea.View {
 func (m Model) renderBody() string {
 	m.hits.clear()
 	m.metrics.clear()
+	if m.phase == phaseAuthorizing {
+		return m.renderMCPAuthorization()
+	}
 	switch {
 	case m.sessionDetailsOpen:
 		return renderSessionDetails(m.deps.Theme, m.sessionDetails(), m.helpKeyMarkings(), m.width, m.vp.Height())

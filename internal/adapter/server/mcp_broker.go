@@ -54,7 +54,7 @@ func (s *Service) openBrokerAttachment(ctx context.Context, id session.SessionID
 	}
 	attachment, _, err := s.cfg.MCPBroker.AttachSession(ctx, id)
 	if err != nil {
-		return nil, fmt.Errorf("%w: attach MCP broker session %q: %v", ErrFailedPrecondition, id, err)
+		return nil, fmt.Errorf("attach MCP broker session %q: %w", id, err)
 	}
 	local := &localBrokerAttachment{attachment: attachment, owned: true}
 	if expectedBinding == "" || attachment.Binding() == expectedBinding {

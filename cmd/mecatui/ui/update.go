@@ -944,6 +944,18 @@ func (m Model) onRenderTick() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func mcpAuthorizationNotice(msg client.MCPAuthorizationMsg) string {
+	displayName := oneLine(sanitizeTerminal(msg.DisplayName))
+	target := ""
+	if displayName != "" {
+		target = " for " + displayName
+	}
+	if msg.Status == mcpAuthorizationStatusPending {
+		return "MCP authorization required" + target + ". Open Browser, Copy Link, Recheck, or Cancel."
+	}
+	return fmt.Sprintf("MCP authorization%s: %s.", target, oneLine(sanitizeTerminal(msg.Status)))
+}
+
 // updateStreamEvent reduces the per-event stream msgs into the conversation. It
 // is the back half of Update, split out so the cyclomatic complexity of each
 // stays manageable. Unknown msgs are a no-op.
@@ -1095,6 +1107,8 @@ func (m *Model) beginTurnEvent() {
 // only so neither dispatcher grows past the cyclomatic-complexity bound.
 func (m Model) updateStreamSecondary(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case client.MCPAuthorizationMsg:
+		return m.applyMCPAuthorization(msg)
 	case client.PermissionRetractMsg:
 		// An active approval surface consumes retractions through HandleMsg. A
 		// stale retraction after close is transport-only and needs no approval state.
@@ -1996,6 +2010,8 @@ func (m Model) dispatchPhaseKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch m.phase {
 	case phaseAwaitingApproval:
 		return m, nil
+	case phaseAuthorizing:
+		return m.onMCPAuthorizationKey(msg)
 	case phaseRunning:
 		return m.onRunningKey(msg)
 	case phaseIdle:
@@ -2586,9 +2602,15 @@ func (m Model) onRunningKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 // composition state. ClearPrompt is the explicit action for dropping a draft.
 func (m Model) onRunningCancel() (tea.Model, tea.Cmd) {
 	stream := m.stream
+	authorizationStream := m.authorization.controlStream
+	if m.authorization.runningControlGen != m.authorization.controlGen {
+		authorizationStream = nil
+	}
 	m.statusMsg = "cancelling…"
 	return m, func() tea.Msg {
-		if stream != nil {
+		if authorizationStream != nil {
+			_ = authorizationStream.SendCancel()
+		} else if stream != nil {
 			_ = stream.SendCancel()
 		}
 		return nil
@@ -3259,6 +3281,7 @@ func (m Model) startFailedStepRetry() (Model, tea.Cmd) {
 // openRun owns the common one-Converse-run transport setup. firstFrame must send
 // exactly one Prompt or RetryStart before any control frame.
 func (m Model) openRun(retry bool, firstFrame func(*client.Stream) error) (Model, tea.Cmd) {
+	m.authorization.runningControlGen = 0
 	runCtx, cancel := context.WithCancel(m.deps.Ctx)
 	var stream *client.Stream
 	var err error
@@ -3554,8 +3577,12 @@ func (m Model) updateReconnectMsg(rm reconnectMsg) (tea.Model, tea.Cmd) {
 		if _, ok := msg.(client.ResultMsg); ok {
 			return m, m.waitReconnectCmd()
 		}
-		// Delivery notes reduce through the normal event path and are deduped by FireID.
-		if _, isDelivery := msg.(client.DeliveryNoteMsg); !isDelivery {
+		// Delivery notes and pending authorization markers reduce through the normal
+		// event path. The latter restores the actionable card after reconnect; its
+		// durable payload contains correlation only, never a presentation URL.
+		switch msg.(type) {
+		case client.DeliveryNoteMsg, client.MCPAuthorizationMsg:
+		default:
 			return m, m.waitReconnectCmd()
 		}
 		mm, cmd := m.updateStreamEvent(msg)

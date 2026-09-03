@@ -42,73 +42,76 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	HarnessService_GetCompatibilityInfo_FullMethodName     = "/mecatl.v1.HarnessService/GetCompatibilityInfo"
-	HarnessService_CreateSession_FullMethodName            = "/mecatl.v1.HarnessService/CreateSession"
-	HarnessService_GetServerInfo_FullMethodName            = "/mecatl.v1.HarnessService/GetServerInfo"
-	HarnessService_GetSession_FullMethodName               = "/mecatl.v1.HarnessService/GetSession"
-	HarnessService_GetSessionTranscript_FullMethodName     = "/mecatl.v1.HarnessService/GetSessionTranscript"
-	HarnessService_SetMode_FullMethodName                  = "/mecatl.v1.HarnessService/SetMode"
-	HarnessService_CloseSession_FullMethodName             = "/mecatl.v1.HarnessService/CloseSession"
-	HarnessService_RenameSession_FullMethodName            = "/mecatl.v1.HarnessService/RenameSession"
-	HarnessService_DeleteSession_FullMethodName            = "/mecatl.v1.HarnessService/DeleteSession"
-	HarnessService_CompactSession_FullMethodName           = "/mecatl.v1.HarnessService/CompactSession"
-	HarnessService_ClearSession_FullMethodName             = "/mecatl.v1.HarnessService/ClearSession"
-	HarnessService_ForkSession_FullMethodName              = "/mecatl.v1.HarnessService/ForkSession"
-	HarnessService_Converse_FullMethodName                 = "/mecatl.v1.HarnessService/Converse"
-	HarnessService_ListMcpResources_FullMethodName         = "/mecatl.v1.HarnessService/ListMcpResources"
-	HarnessService_ReadMcpResource_FullMethodName          = "/mecatl.v1.HarnessService/ReadMcpResource"
-	HarnessService_ListMcpPrompts_FullMethodName           = "/mecatl.v1.HarnessService/ListMcpPrompts"
-	HarnessService_GetMcpPrompt_FullMethodName             = "/mecatl.v1.HarnessService/GetMcpPrompt"
-	HarnessService_ListMcpSources_FullMethodName           = "/mecatl.v1.HarnessService/ListMcpSources"
-	HarnessService_ListToolHiveGroups_FullMethodName       = "/mecatl.v1.HarnessService/ListToolHiveGroups"
-	HarnessService_ListAgents_FullMethodName               = "/mecatl.v1.HarnessService/ListAgents"
-	HarnessService_ListCommands_FullMethodName             = "/mecatl.v1.HarnessService/ListCommands"
-	HarnessService_ListWorktrees_FullMethodName            = "/mecatl.v1.HarnessService/ListWorktrees"
-	HarnessService_StreamSessionEvents_FullMethodName      = "/mecatl.v1.HarnessService/StreamSessionEvents"
-	HarnessService_StreamSessionLive_FullMethodName        = "/mecatl.v1.HarnessService/StreamSessionLive"
-	HarnessService_WatchSessionEvents_FullMethodName       = "/mecatl.v1.HarnessService/WatchSessionEvents"
-	HarnessService_ListSessions_FullMethodName             = "/mecatl.v1.HarnessService/ListSessions"
-	HarnessService_GetStorageHealth_FullMethodName         = "/mecatl.v1.HarnessService/GetStorageHealth"
-	HarnessService_PlanSessionMigration_FullMethodName     = "/mecatl.v1.HarnessService/PlanSessionMigration"
-	HarnessService_ApplySessionMigration_FullMethodName    = "/mecatl.v1.HarnessService/ApplySessionMigration"
-	HarnessService_ResumeSessionMigration_FullMethodName   = "/mecatl.v1.HarnessService/ResumeSessionMigration"
-	HarnessService_CancelSessionMigration_FullMethodName   = "/mecatl.v1.HarnessService/CancelSessionMigration"
-	HarnessService_GetSessionMigrationJob_FullMethodName   = "/mecatl.v1.HarnessService/GetSessionMigrationJob"
-	HarnessService_PlanSessionCleanup_FullMethodName       = "/mecatl.v1.HarnessService/PlanSessionCleanup"
-	HarnessService_ApplySessionCleanup_FullMethodName      = "/mecatl.v1.HarnessService/ApplySessionCleanup"
-	HarnessService_CancelSessionCleanup_FullMethodName     = "/mecatl.v1.HarnessService/CancelSessionCleanup"
-	HarnessService_GetSessionCleanupJob_FullMethodName     = "/mecatl.v1.HarnessService/GetSessionCleanupJob"
-	HarnessService_ListSkills_FullMethodName               = "/mecatl.v1.HarnessService/ListSkills"
-	HarnessService_GetSoul_FullMethodName                  = "/mecatl.v1.HarnessService/GetSoul"
-	HarnessService_GetUserModel_FullMethodName             = "/mecatl.v1.HarnessService/GetUserModel"
-	HarnessService_ReflectSession_FullMethodName           = "/mecatl.v1.HarnessService/ReflectSession"
-	HarnessService_GetLearningAttempt_FullMethodName       = "/mecatl.v1.HarnessService/GetLearningAttempt"
-	HarnessService_ListLearningAttempts_FullMethodName     = "/mecatl.v1.HarnessService/ListLearningAttempts"
-	HarnessService_RetryLearningAttempt_FullMethodName     = "/mecatl.v1.HarnessService/RetryLearningAttempt"
-	HarnessService_AbandonLearningAttempt_FullMethodName   = "/mecatl.v1.HarnessService/AbandonLearningAttempt"
-	HarnessService_GenerateDreamPlan_FullMethodName        = "/mecatl.v1.HarnessService/GenerateDreamPlan"
-	HarnessService_DecideDreamPlan_FullMethodName          = "/mecatl.v1.HarnessService/DecideDreamPlan"
-	HarnessService_ListLearningProposals_FullMethodName    = "/mecatl.v1.HarnessService/ListLearningProposals"
-	HarnessService_GetLearningProposal_FullMethodName      = "/mecatl.v1.HarnessService/GetLearningProposal"
-	HarnessService_DecideLearningProposal_FullMethodName   = "/mecatl.v1.HarnessService/DecideLearningProposal"
-	HarnessService_UndoLearningPromotion_FullMethodName    = "/mecatl.v1.HarnessService/UndoLearningPromotion"
-	HarnessService_ListLearnedSkills_FullMethodName        = "/mecatl.v1.HarnessService/ListLearnedSkills"
-	HarnessService_GetLearnedSkill_FullMethodName          = "/mecatl.v1.HarnessService/GetLearnedSkill"
-	HarnessService_DiffLearnedSkillVersions_FullMethodName = "/mecatl.v1.HarnessService/DiffLearnedSkillVersions"
-	HarnessService_ActivateLearnedSkill_FullMethodName     = "/mecatl.v1.HarnessService/ActivateLearnedSkill"
-	HarnessService_RejectLearnedSkill_FullMethodName       = "/mecatl.v1.HarnessService/RejectLearnedSkill"
-	HarnessService_ArchiveLearnedSkill_FullMethodName      = "/mecatl.v1.HarnessService/ArchiveLearnedSkill"
-	HarnessService_RollbackLearnedSkill_FullMethodName     = "/mecatl.v1.HarnessService/RollbackLearnedSkill"
-	HarnessService_ListSkillChanges_FullMethodName         = "/mecatl.v1.HarnessService/ListSkillChanges"
-	HarnessService_ListModels_FullMethodName               = "/mecatl.v1.HarnessService/ListModels"
-	HarnessService_CreateTeam_FullMethodName               = "/mecatl.v1.HarnessService/CreateTeam"
-	HarnessService_SpawnTeammate_FullMethodName            = "/mecatl.v1.HarnessService/SpawnTeammate"
-	HarnessService_SendTeammateMessage_FullMethodName      = "/mecatl.v1.HarnessService/SendTeammateMessage"
-	HarnessService_CancelTeammate_FullMethodName           = "/mecatl.v1.HarnessService/CancelTeammate"
-	HarnessService_RunTeam_FullMethodName                  = "/mecatl.v1.HarnessService/RunTeam"
-	HarnessService_ListTeam_FullMethodName                 = "/mecatl.v1.HarnessService/ListTeam"
-	HarnessService_CleanupTeam_FullMethodName              = "/mecatl.v1.HarnessService/CleanupTeam"
-	HarnessService_ApprovePlan_FullMethodName              = "/mecatl.v1.HarnessService/ApprovePlan"
+	HarnessService_GetCompatibilityInfo_FullMethodName            = "/mecatl.v1.HarnessService/GetCompatibilityInfo"
+	HarnessService_CreateSession_FullMethodName                   = "/mecatl.v1.HarnessService/CreateSession"
+	HarnessService_GetServerInfo_FullMethodName                   = "/mecatl.v1.HarnessService/GetServerInfo"
+	HarnessService_GetSession_FullMethodName                      = "/mecatl.v1.HarnessService/GetSession"
+	HarnessService_GetSessionTranscript_FullMethodName            = "/mecatl.v1.HarnessService/GetSessionTranscript"
+	HarnessService_SetMode_FullMethodName                         = "/mecatl.v1.HarnessService/SetMode"
+	HarnessService_CloseSession_FullMethodName                    = "/mecatl.v1.HarnessService/CloseSession"
+	HarnessService_RenameSession_FullMethodName                   = "/mecatl.v1.HarnessService/RenameSession"
+	HarnessService_DeleteSession_FullMethodName                   = "/mecatl.v1.HarnessService/DeleteSession"
+	HarnessService_CompactSession_FullMethodName                  = "/mecatl.v1.HarnessService/CompactSession"
+	HarnessService_ClearSession_FullMethodName                    = "/mecatl.v1.HarnessService/ClearSession"
+	HarnessService_ForkSession_FullMethodName                     = "/mecatl.v1.HarnessService/ForkSession"
+	HarnessService_Converse_FullMethodName                        = "/mecatl.v1.HarnessService/Converse"
+	HarnessService_ListMcpResources_FullMethodName                = "/mecatl.v1.HarnessService/ListMcpResources"
+	HarnessService_ReadMcpResource_FullMethodName                 = "/mecatl.v1.HarnessService/ReadMcpResource"
+	HarnessService_ListMcpPrompts_FullMethodName                  = "/mecatl.v1.HarnessService/ListMcpPrompts"
+	HarnessService_GetMcpPrompt_FullMethodName                    = "/mecatl.v1.HarnessService/GetMcpPrompt"
+	HarnessService_ListMcpSources_FullMethodName                  = "/mecatl.v1.HarnessService/ListMcpSources"
+	HarnessService_ListToolHiveGroups_FullMethodName              = "/mecatl.v1.HarnessService/ListToolHiveGroups"
+	HarnessService_ListAgents_FullMethodName                      = "/mecatl.v1.HarnessService/ListAgents"
+	HarnessService_ListCommands_FullMethodName                    = "/mecatl.v1.HarnessService/ListCommands"
+	HarnessService_ListWorktrees_FullMethodName                   = "/mecatl.v1.HarnessService/ListWorktrees"
+	HarnessService_StreamSessionEvents_FullMethodName             = "/mecatl.v1.HarnessService/StreamSessionEvents"
+	HarnessService_StreamSessionLive_FullMethodName               = "/mecatl.v1.HarnessService/StreamSessionLive"
+	HarnessService_WatchSessionEvents_FullMethodName              = "/mecatl.v1.HarnessService/WatchSessionEvents"
+	HarnessService_GetMcpAuthorizationPresentation_FullMethodName = "/mecatl.v1.HarnessService/GetMcpAuthorizationPresentation"
+	HarnessService_RecheckMcpAuthorization_FullMethodName         = "/mecatl.v1.HarnessService/RecheckMcpAuthorization"
+	HarnessService_CancelMcpAuthorization_FullMethodName          = "/mecatl.v1.HarnessService/CancelMcpAuthorization"
+	HarnessService_ListSessions_FullMethodName                    = "/mecatl.v1.HarnessService/ListSessions"
+	HarnessService_GetStorageHealth_FullMethodName                = "/mecatl.v1.HarnessService/GetStorageHealth"
+	HarnessService_PlanSessionMigration_FullMethodName            = "/mecatl.v1.HarnessService/PlanSessionMigration"
+	HarnessService_ApplySessionMigration_FullMethodName           = "/mecatl.v1.HarnessService/ApplySessionMigration"
+	HarnessService_ResumeSessionMigration_FullMethodName          = "/mecatl.v1.HarnessService/ResumeSessionMigration"
+	HarnessService_CancelSessionMigration_FullMethodName          = "/mecatl.v1.HarnessService/CancelSessionMigration"
+	HarnessService_GetSessionMigrationJob_FullMethodName          = "/mecatl.v1.HarnessService/GetSessionMigrationJob"
+	HarnessService_PlanSessionCleanup_FullMethodName              = "/mecatl.v1.HarnessService/PlanSessionCleanup"
+	HarnessService_ApplySessionCleanup_FullMethodName             = "/mecatl.v1.HarnessService/ApplySessionCleanup"
+	HarnessService_CancelSessionCleanup_FullMethodName            = "/mecatl.v1.HarnessService/CancelSessionCleanup"
+	HarnessService_GetSessionCleanupJob_FullMethodName            = "/mecatl.v1.HarnessService/GetSessionCleanupJob"
+	HarnessService_ListSkills_FullMethodName                      = "/mecatl.v1.HarnessService/ListSkills"
+	HarnessService_GetSoul_FullMethodName                         = "/mecatl.v1.HarnessService/GetSoul"
+	HarnessService_GetUserModel_FullMethodName                    = "/mecatl.v1.HarnessService/GetUserModel"
+	HarnessService_ReflectSession_FullMethodName                  = "/mecatl.v1.HarnessService/ReflectSession"
+	HarnessService_GetLearningAttempt_FullMethodName              = "/mecatl.v1.HarnessService/GetLearningAttempt"
+	HarnessService_ListLearningAttempts_FullMethodName            = "/mecatl.v1.HarnessService/ListLearningAttempts"
+	HarnessService_RetryLearningAttempt_FullMethodName            = "/mecatl.v1.HarnessService/RetryLearningAttempt"
+	HarnessService_AbandonLearningAttempt_FullMethodName          = "/mecatl.v1.HarnessService/AbandonLearningAttempt"
+	HarnessService_GenerateDreamPlan_FullMethodName               = "/mecatl.v1.HarnessService/GenerateDreamPlan"
+	HarnessService_DecideDreamPlan_FullMethodName                 = "/mecatl.v1.HarnessService/DecideDreamPlan"
+	HarnessService_ListLearningProposals_FullMethodName           = "/mecatl.v1.HarnessService/ListLearningProposals"
+	HarnessService_GetLearningProposal_FullMethodName             = "/mecatl.v1.HarnessService/GetLearningProposal"
+	HarnessService_DecideLearningProposal_FullMethodName          = "/mecatl.v1.HarnessService/DecideLearningProposal"
+	HarnessService_UndoLearningPromotion_FullMethodName           = "/mecatl.v1.HarnessService/UndoLearningPromotion"
+	HarnessService_ListLearnedSkills_FullMethodName               = "/mecatl.v1.HarnessService/ListLearnedSkills"
+	HarnessService_GetLearnedSkill_FullMethodName                 = "/mecatl.v1.HarnessService/GetLearnedSkill"
+	HarnessService_DiffLearnedSkillVersions_FullMethodName        = "/mecatl.v1.HarnessService/DiffLearnedSkillVersions"
+	HarnessService_ActivateLearnedSkill_FullMethodName            = "/mecatl.v1.HarnessService/ActivateLearnedSkill"
+	HarnessService_RejectLearnedSkill_FullMethodName              = "/mecatl.v1.HarnessService/RejectLearnedSkill"
+	HarnessService_ArchiveLearnedSkill_FullMethodName             = "/mecatl.v1.HarnessService/ArchiveLearnedSkill"
+	HarnessService_RollbackLearnedSkill_FullMethodName            = "/mecatl.v1.HarnessService/RollbackLearnedSkill"
+	HarnessService_ListSkillChanges_FullMethodName                = "/mecatl.v1.HarnessService/ListSkillChanges"
+	HarnessService_ListModels_FullMethodName                      = "/mecatl.v1.HarnessService/ListModels"
+	HarnessService_CreateTeam_FullMethodName                      = "/mecatl.v1.HarnessService/CreateTeam"
+	HarnessService_SpawnTeammate_FullMethodName                   = "/mecatl.v1.HarnessService/SpawnTeammate"
+	HarnessService_SendTeammateMessage_FullMethodName             = "/mecatl.v1.HarnessService/SendTeammateMessage"
+	HarnessService_CancelTeammate_FullMethodName                  = "/mecatl.v1.HarnessService/CancelTeammate"
+	HarnessService_RunTeam_FullMethodName                         = "/mecatl.v1.HarnessService/RunTeam"
+	HarnessService_ListTeam_FullMethodName                        = "/mecatl.v1.HarnessService/ListTeam"
+	HarnessService_CleanupTeam_FullMethodName                     = "/mecatl.v1.HarnessService/CleanupTeam"
+	HarnessService_ApprovePlan_FullMethodName                     = "/mecatl.v1.HarnessService/ApprovePlan"
 )
 
 // HarnessServiceClient is the client API for HarnessService service.
@@ -335,6 +338,17 @@ type HarnessServiceClient interface {
 	// from a position and being handed everything is a correctness problem dressed
 	// as a performance one. Ownership is enforced exactly as on GetSession.
 	WatchSessionEvents(ctx context.Context, in *WatchSessionEventsRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[WatchSessionEventsResponse], error)
+	// GetMcpAuthorizationPresentation returns the live browser URL for one owned,
+	// still-pending authorization. The request carries correlation only; the URL
+	// is returned only by this live control and never enters an Event or snapshot.
+	GetMcpAuthorizationPresentation(ctx context.Context, in *GetMcpAuthorizationPresentationRequest, opts ...grpc.CallOption) (*GetMcpAuthorizationPresentationResponse, error)
+	// RecheckMcpAuthorization is a bidirectional authorization-control stream.
+	// Its first frame MUST carry owned session/authorization correlation;
+	// subsequent frames may resolve permission asks or cancel the continuation.
+	RecheckMcpAuthorization(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[RecheckMcpAuthorizationRequest, RecheckMcpAuthorizationResponse], error)
+	// CancelMcpAuthorization is the cancellation counterpart with the same
+	// first-frame and continuation-control grammar.
+	CancelMcpAuthorization(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[CancelMcpAuthorizationRequest, CancelMcpAuthorizationResponse], error)
 	// ListSessions returns the stored-session inventory — the picker metadata a
 	// client renders to let an operator open an EXISTING session by id (issue #245
 	// Phase 1). It is backed by `port.PrunableStore.List` (type-asserted on the
@@ -773,6 +787,42 @@ func (c *harnessServiceClient) WatchSessionEvents(ctx context.Context, in *Watch
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type HarnessService_WatchSessionEventsClient = grpc.ServerStreamingClient[WatchSessionEventsResponse]
 
+func (c *harnessServiceClient) GetMcpAuthorizationPresentation(ctx context.Context, in *GetMcpAuthorizationPresentationRequest, opts ...grpc.CallOption) (*GetMcpAuthorizationPresentationResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetMcpAuthorizationPresentationResponse)
+	err := c.cc.Invoke(ctx, HarnessService_GetMcpAuthorizationPresentation_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *harnessServiceClient) RecheckMcpAuthorization(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[RecheckMcpAuthorizationRequest, RecheckMcpAuthorizationResponse], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &HarnessService_ServiceDesc.Streams[4], HarnessService_RecheckMcpAuthorization_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[RecheckMcpAuthorizationRequest, RecheckMcpAuthorizationResponse]{ClientStream: stream}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type HarnessService_RecheckMcpAuthorizationClient = grpc.BidiStreamingClient[RecheckMcpAuthorizationRequest, RecheckMcpAuthorizationResponse]
+
+func (c *harnessServiceClient) CancelMcpAuthorization(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[CancelMcpAuthorizationRequest, CancelMcpAuthorizationResponse], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &HarnessService_ServiceDesc.Streams[5], HarnessService_CancelMcpAuthorization_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[CancelMcpAuthorizationRequest, CancelMcpAuthorizationResponse]{ClientStream: stream}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type HarnessService_CancelMcpAuthorizationClient = grpc.BidiStreamingClient[CancelMcpAuthorizationRequest, CancelMcpAuthorizationResponse]
+
 func (c *harnessServiceClient) ListSessions(ctx context.Context, in *ListSessionsRequest, opts ...grpc.CallOption) (*ListSessionsResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ListSessionsResponse)
@@ -1155,7 +1205,7 @@ func (c *harnessServiceClient) CancelTeammate(ctx context.Context, in *CancelTea
 
 func (c *harnessServiceClient) RunTeam(ctx context.Context, in *RunTeamRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[TeamEvent], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &HarnessService_ServiceDesc.Streams[4], HarnessService_RunTeam_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &HarnessService_ServiceDesc.Streams[6], HarnessService_RunTeam_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1194,7 +1244,7 @@ func (c *harnessServiceClient) CleanupTeam(ctx context.Context, in *CleanupTeamR
 
 func (c *harnessServiceClient) ApprovePlan(ctx context.Context, in *ApprovePlanRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[Event], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &HarnessService_ServiceDesc.Streams[5], HarnessService_ApprovePlan_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &HarnessService_ServiceDesc.Streams[7], HarnessService_ApprovePlan_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1435,6 +1485,17 @@ type HarnessServiceServer interface {
 	// from a position and being handed everything is a correctness problem dressed
 	// as a performance one. Ownership is enforced exactly as on GetSession.
 	WatchSessionEvents(*WatchSessionEventsRequest, grpc.ServerStreamingServer[WatchSessionEventsResponse]) error
+	// GetMcpAuthorizationPresentation returns the live browser URL for one owned,
+	// still-pending authorization. The request carries correlation only; the URL
+	// is returned only by this live control and never enters an Event or snapshot.
+	GetMcpAuthorizationPresentation(context.Context, *GetMcpAuthorizationPresentationRequest) (*GetMcpAuthorizationPresentationResponse, error)
+	// RecheckMcpAuthorization is a bidirectional authorization-control stream.
+	// Its first frame MUST carry owned session/authorization correlation;
+	// subsequent frames may resolve permission asks or cancel the continuation.
+	RecheckMcpAuthorization(grpc.BidiStreamingServer[RecheckMcpAuthorizationRequest, RecheckMcpAuthorizationResponse]) error
+	// CancelMcpAuthorization is the cancellation counterpart with the same
+	// first-frame and continuation-control grammar.
+	CancelMcpAuthorization(grpc.BidiStreamingServer[CancelMcpAuthorizationRequest, CancelMcpAuthorizationResponse]) error
 	// ListSessions returns the stored-session inventory — the picker metadata a
 	// client renders to let an operator open an EXISTING session by id (issue #245
 	// Phase 1). It is backed by `port.PrunableStore.List` (type-asserted on the
@@ -1667,6 +1728,15 @@ func (UnimplementedHarnessServiceServer) StreamSessionLive(*StreamSessionLiveReq
 }
 func (UnimplementedHarnessServiceServer) WatchSessionEvents(*WatchSessionEventsRequest, grpc.ServerStreamingServer[WatchSessionEventsResponse]) error {
 	return status.Errorf(codes.Unimplemented, "method WatchSessionEvents not implemented")
+}
+func (UnimplementedHarnessServiceServer) GetMcpAuthorizationPresentation(context.Context, *GetMcpAuthorizationPresentationRequest) (*GetMcpAuthorizationPresentationResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetMcpAuthorizationPresentation not implemented")
+}
+func (UnimplementedHarnessServiceServer) RecheckMcpAuthorization(grpc.BidiStreamingServer[RecheckMcpAuthorizationRequest, RecheckMcpAuthorizationResponse]) error {
+	return status.Errorf(codes.Unimplemented, "method RecheckMcpAuthorization not implemented")
+}
+func (UnimplementedHarnessServiceServer) CancelMcpAuthorization(grpc.BidiStreamingServer[CancelMcpAuthorizationRequest, CancelMcpAuthorizationResponse]) error {
+	return status.Errorf(codes.Unimplemented, "method CancelMcpAuthorization not implemented")
 }
 func (UnimplementedHarnessServiceServer) ListSessions(context.Context, *ListSessionsRequest) (*ListSessionsResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ListSessions not implemented")
@@ -2232,6 +2302,38 @@ func _HarnessService_WatchSessionEvents_Handler(srv interface{}, stream grpc.Ser
 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type HarnessService_WatchSessionEventsServer = grpc.ServerStreamingServer[WatchSessionEventsResponse]
+
+func _HarnessService_GetMcpAuthorizationPresentation_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetMcpAuthorizationPresentationRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HarnessServiceServer).GetMcpAuthorizationPresentation(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: HarnessService_GetMcpAuthorizationPresentation_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HarnessServiceServer).GetMcpAuthorizationPresentation(ctx, req.(*GetMcpAuthorizationPresentationRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _HarnessService_RecheckMcpAuthorization_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(HarnessServiceServer).RecheckMcpAuthorization(&grpc.GenericServerStream[RecheckMcpAuthorizationRequest, RecheckMcpAuthorizationResponse]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type HarnessService_RecheckMcpAuthorizationServer = grpc.BidiStreamingServer[RecheckMcpAuthorizationRequest, RecheckMcpAuthorizationResponse]
+
+func _HarnessService_CancelMcpAuthorization_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(HarnessServiceServer).CancelMcpAuthorization(&grpc.GenericServerStream[CancelMcpAuthorizationRequest, CancelMcpAuthorizationResponse]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type HarnessService_CancelMcpAuthorizationServer = grpc.BidiStreamingServer[CancelMcpAuthorizationRequest, CancelMcpAuthorizationResponse]
 
 func _HarnessService_ListSessions_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(ListSessionsRequest)
@@ -3067,6 +3169,10 @@ var HarnessService_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _HarnessService_ListWorktrees_Handler,
 		},
 		{
+			MethodName: "GetMcpAuthorizationPresentation",
+			Handler:    _HarnessService_GetMcpAuthorizationPresentation_Handler,
+		},
+		{
 			MethodName: "ListSessions",
 			Handler:    _HarnessService_ListSessions_Handler,
 		},
@@ -3248,6 +3354,18 @@ var HarnessService_ServiceDesc = grpc.ServiceDesc{
 			StreamName:    "WatchSessionEvents",
 			Handler:       _HarnessService_WatchSessionEvents_Handler,
 			ServerStreams: true,
+		},
+		{
+			StreamName:    "RecheckMcpAuthorization",
+			Handler:       _HarnessService_RecheckMcpAuthorization_Handler,
+			ServerStreams: true,
+			ClientStreams: true,
+		},
+		{
+			StreamName:    "CancelMcpAuthorization",
+			Handler:       _HarnessService_CancelMcpAuthorization_Handler,
+			ServerStreams: true,
+			ClientStreams: true,
 		},
 		{
 			StreamName:    "RunTeam",

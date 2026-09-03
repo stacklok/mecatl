@@ -13,6 +13,8 @@
     method func (*Engine).ContextWindow() int
     method func (*Engine).HasTool(name string) bool
     method func (*Engine).Model() string
+    method func (*Engine).PrepareAfterAuthorization(ctx context.Context, sess *session.Session, env tool.Environment, authorization session.ExternalAuthorization, callID session.ToolCallID, results []session.ToolResult, status session.AuthorizationStatus) *PreparedRun
+    method func (*Engine).PrepareAuthorizationContinuation(ctx context.Context, sess *session.Session, env tool.Environment, pending session.PendingAuthorization, status session.AuthorizationStatus) *PreparedRun
     method func (*Engine).ResumeApproval(ctx context.Context, sess *session.Session, env tool.Environment, askID string, verdict session.ApprovalVerdict) *Run
     method func (*Engine).ResumeApprovalWith(ctx context.Context, sess *session.Session, env tool.Environment, askID string, verdict session.ApprovalVerdict, opts ResumeApprovalOptions) *Run
     method func (*Engine).RetryFailedStep(ctx context.Context, sess *session.Session, env tool.Environment) *Run
@@ -35,6 +37,9 @@
     method func (*ParallelTool).MutatesParent(call session.ToolCall) bool
     method func (*ParallelTool).ReadOnly() bool
     method func (*ParallelTool).Spec() tool.ToolSpec
+    method func (*PreparedRun).Abort() PreparedRunTransition
+    method func (*PreparedRun).Run() *Run
+    method func (*PreparedRun).Start() (*Run, PreparedRunTransition)
     method func (*Run).Approve(askID string, v session.ApprovalVerdict)
     method func (*Run).Cancel()
     method func (*Run).CancelChild(childID string) bool
@@ -88,6 +93,12 @@ const DispositionStopped MemberDisposition = "stopped"
 const MinSubagentRunTokens untyped int = 25000
 const ParallelSessionPrefix untyped string = "parallel-"
 const PlanApprovedProceedText untyped string = "Plan approved by operator. Proceed with execution."
+const PreparedRunAbortAfterStart PreparedRunTransition = "abort_after_start"
+const PreparedRunAborted PreparedRunTransition = "aborted"
+const PreparedRunDuplicateAbort PreparedRunTransition = "duplicate_abort"
+const PreparedRunDuplicateStart PreparedRunTransition = "duplicate_start"
+const PreparedRunStartAfterAbort PreparedRunTransition = "start_after_abort"
+const PreparedRunStarted PreparedRunTransition = "started"
 const RouterMissBadVerdict untyped string = "bad-verdict"
 const RouterMissCancelled untyped string = "cancelled"
 const RouterMissClassifierError untyped string = "classifier-error"
@@ -234,6 +245,8 @@ type ModelRouteCategory struct{Name string; Description string}
 type ModelRouteRequest struct{TaskPrompt string; Categories []ModelRouteCategory; Default string}
 type ParallelOption func(*ParallelTool)
 type ParallelTool struct{}
+type PreparedRun struct{}
+type PreparedRunTransition string
 type PreservedForkStore interface{Preserve(handle ArtifactHandle, cleanup func() error)}
 type ReflectionLimits struct{InputBytes int; Events int; Existing int; Candidates int; EvidencePerCandidate int; OutputBytes int; Tokens int; Timeout time.Duration}
 type ResumeApprovalOptions struct{CanPresentAuthorization bool}

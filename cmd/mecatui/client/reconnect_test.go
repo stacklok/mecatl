@@ -134,6 +134,18 @@ func deliveryEvent(schedule, fire string) *mecatlv1.Event {
 	}
 }
 
+func authorizationEvent(typ, id, status string) *mecatlv1.Event {
+	return &mecatlv1.Event{
+		Type: typ,
+		Authorization: &mecatlv1.Authorization{
+			AuthorizationId: id,
+			DisplayName:     "GitHub",
+			CallId:          "call-1",
+			Status:          status,
+		},
+	}
+}
+
 // restoreBackoff saves the current backoff knobs and returns a restore func;
 // tests shrink the knobs (and set jitter to 0 for deterministic timing) and
 // defer the restore so the package-level vars are reset for the next test.
@@ -381,6 +393,64 @@ func TestReconnectLiveCmd_StopsOnCtxCancel(t *testing.T) {
 		case <-time.After(2 * time.Second):
 			t.Fatal("channel did not close after ctx cancel")
 		}
+	}
+}
+
+func TestCatchUpReplayFoldsAuthorizationLifecycle(t *testing.T) {
+	tests := []struct {
+		name   string
+		events []*mecatlv1.Event
+		wantID string
+	}{
+		{
+			name: "latest unmatched pending is restored",
+			events: []*mecatlv1.Event{
+				authorizationEvent("authorization.required", "auth-old", "pending"),
+				authorizationEvent("authorization.resolved", "auth-old", "granted"),
+				authorizationEvent("authorization.required", "auth-current", "pending"),
+			},
+			wantID: "auth-current",
+		},
+		{
+			name: "matching terminal retains earlier unmatched pending",
+			events: []*mecatlv1.Event{
+				authorizationEvent("authorization.required", "auth-earlier", "pending"),
+				authorizationEvent("authorization.required", "auth-later", "pending"),
+				authorizationEvent("authorization.resolved", "auth-later", "cancelled"),
+			},
+			wantID: "auth-earlier",
+		},
+		{
+			name: "completed lifecycle stays cleared",
+			events: []*mecatlv1.Event{
+				authorizationEvent("authorization.required", "auth-complete", "pending"),
+				authorizationEvent("authorization.resolved", "auth-complete", "failed"),
+			},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			out := make(chan tea.Msg, 4)
+			err := catchUpReplay(t.Context(), &fakeLiveReplayer{script: tc.events}, "session-1", out)
+			if err != nil {
+				t.Fatalf("catchUpReplay: %v", err)
+			}
+			var got []MCPAuthorizationMsg
+			for len(out) > 0 {
+				if msg, ok := (<-out).(MCPAuthorizationMsg); ok {
+					got = append(got, msg)
+				}
+			}
+			if tc.wantID == "" {
+				if len(got) != 0 {
+					t.Fatalf("completed lifecycle emitted authorization markers: %+v", got)
+				}
+				return
+			}
+			if len(got) != 1 || got[0].AuthorizationID != tc.wantID || got[0].Status != "pending" {
+				t.Fatalf("restored authorization = %+v, want one pending %q", got, tc.wantID)
+			}
+		})
 	}
 }
 

@@ -149,6 +149,15 @@ export interface ApprovalEventPayload {
   readonly verdict: string;
 }
 
+/** The safe correlation payload of an external-authorization lifecycle event. @public */
+export interface AuthorizationEventPayload {
+  readonly authorizationId: string;
+  readonly callId: string;
+  readonly displayName: string;
+  readonly expiresAt?: { readonly nanos: number; readonly seconds: bigint } | undefined;
+  readonly status: string;
+}
+
 /** One media part as represented on the protobuf event payloads. @public */
 export interface EventContent {
   readonly data: Uint8Array;
@@ -341,8 +350,8 @@ export interface EventCommon {
 /** Maps every known wire kind to its hand-crafted payload contract. @public */
 export interface EventPayloads {
   readonly approval: ApprovalEventPayload;
-  readonly "authorization.required": undefined;
-  readonly "authorization.resolved": undefined;
+  readonly "authorization.required": AuthorizationEventPayload;
+  readonly "authorization.resolved": AuthorizationEventPayload;
   readonly compaction: undefined;
   readonly "compaction.archive": CompactionArchiveEventPayload;
   readonly hook: HookEventPayload;
@@ -465,6 +474,9 @@ function payload(
   switch (kind) {
     case "approval":
       return required(event.approval, kind, transport);
+    case "authorization.required":
+    case "authorization.resolved":
+      return required(event.authorization, kind, transport);
     case "compaction.archive":
       return required(event.compactionArchive, kind, transport);
     case "hook":
@@ -508,8 +520,6 @@ function payload(
       return required(event.turnEnd, kind, transport);
     case "user_prompt":
       return required(event.userPrompt, kind, transport);
-    case "authorization.required":
-    case "authorization.resolved":
     case "compaction":
     case "message.delta":
     case "network.attempt":
