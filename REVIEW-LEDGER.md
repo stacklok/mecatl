@@ -17,7 +17,7 @@ Status vocabulary: `open`, `in_progress`, `fixed`, `accepted`, `superseded`.
 | ID | Knowledge | Status | Finding | Primary locations |
 |---|---|---|---|---|
 | C-K1 | known | fixed | Server-only TLS is incorrectly accepted as verified caller identity for broker controls. Require token/OIDC or verified mTLS client identity. | `cmd/mecak8s/serve.go` (`validateBrokerControlOwnership`) |
-| C-K2 | known | open | `mecated` cannot construct or mount the broker although the architecture says it can. Wire canonical authority loading and complete-mux handler mounting. | `cmd/mecated/main.go`; `internal/app/build.go` |
+| C-K2 | known | fixed | `mecated` resolves explicit broker authority canonically and atomically mounts the complete broker handler bundle on its fully populated HTTP mux after all-route, standard-method collision preflight. | `cmd/mecated/main.go`; `internal/adapter/mcpbroker/handlers.go`; `cmd/mecated/mcp_broker_command_root_test.go` |
 | C-D1 | decision | open | Production workspace enrollment is not wired behind `WorkspaceEnrollmentAttachment`. Decide whether Runtime, Process, or another service owns begin/observe/cancel and catalogue freeze. | `internal/mcpbroker/broker.go`; `internal/adapter/server/workspace_enrollment.go` |
 
 ## High

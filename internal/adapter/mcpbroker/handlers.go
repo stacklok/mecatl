@@ -134,11 +134,20 @@ func uniqueHandlerRoutes(routes []handlerRoute) error {
 }
 
 func registeredHandlerRouteConflict(mux *http.ServeMux, routes []handlerRoute) error {
+	methods := [...]string{
+		http.MethodConnect, http.MethodDelete, http.MethodGet, http.MethodHead,
+		http.MethodOptions, http.MethodPatch, http.MethodPost, http.MethodPut, http.MethodTrace,
+	}
 	for _, route := range routes {
-		request := &http.Request{Method: http.MethodGet, URL: &url.URL{Path: route.path}}
-		_, pattern := mux.Handler(request)
-		if pattern == route.path {
-			return fmt.Errorf("mcpbroker: handler route conflict %q", route.path)
+		for _, method := range methods {
+			request := &http.Request{Method: method, URL: &url.URL{Path: route.path}}
+			_, pattern := mux.Handler(request)
+			// The command root's plain "/" API fallback is intentionally
+			// superseded by exact broker routes. Any other matching route would
+			// shadow or be shadowed by one method of the broker endpoint.
+			if pattern != "" && pattern != "/" {
+				return fmt.Errorf("mcpbroker: handler route conflict %q", route.path)
+			}
 		}
 	}
 	return nil

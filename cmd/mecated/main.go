@@ -47,6 +47,8 @@ import (
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/internal/adapter/agents"
 	"github.com/stacklok/mecatl/internal/adapter/daemonconfig"
+	"github.com/stacklok/mecatl/internal/adapter/mcpauthority"
+	"github.com/stacklok/mecatl/internal/adapter/mcpbroker"
 	"github.com/stacklok/mecatl/internal/adapter/mcpperf"
 	"github.com/stacklok/mecatl/internal/adapter/server"
 	"github.com/stacklok/mecatl/internal/adapter/skills"
@@ -950,6 +952,9 @@ func run(mode commandMode, remaining []string) error {
 		return err
 	}
 	defer built.Close()
+	if err := validateBrokerHosting(cfg, built.MCPBroker != nil); err != nil {
+		return err
+	}
 
 	// ACP mode: serve the Agent Client Protocol over stdio instead of the network
 	// daemon. The same engine/service assembly (app.Build) backs it; only the wire
@@ -963,7 +968,7 @@ func run(mode commandMode, remaining []string) error {
 		return serveACP(ctx, built.Service, cfg.storeDir != "" || cfg.sessionStoreURL != "", diag)
 	}
 
-	return serve(ctx, cfg, built.Service, obs.providers.Registry, obs.recorder, slowTurns)
+	return serveBuilt(ctx, cfg, built, obs.providers.Registry, obs.recorder, slowTurns)
 }
 
 // observability holds the handles setupObservability returns and run() threads
@@ -1152,25 +1157,31 @@ func appConfig(cfg config, sink port.EventSink, recorder port.ToolCallRecorder, 
 		// and cost knobs are operator-tier YAML only (the `guardrails:` subtree of the
 		// user-global settings.yaml), folded onto Config by foldOperatorGuardrails — a
 		// flag cannot express a rule list.
-		GuardrailsModel:          cfg.guardrailsModel,
-		GuardrailsDisabled:       cfg.guardrailsOff,
-		ModelAliases:             cfg.modelAliases.AsMap(),
-		ModelSlots:               cfg.modelSlots.AsMap(),
-		CommandsDir:              cfg.commandsDir,
-		EnableCommands:           cfg.enableCommands,
-		EnableParallel:           cfg.enableParallel,
-		WebSearchURL:             cfg.websearchURL,
-		WebSearchAPIKey:          cfg.websearchAPIKey,
-		WebSearchAuthHeader:      cfg.websearchAuthHeader,
-		WebSearchQueryParam:      cfg.websearchQueryParam,
-		SearXNGURL:               cfg.searxngURL,
-		BraveAPIKey:              cfg.braveAPIKey,
-		ExaAPIKey:                cfg.exaAPIKey,
-		WebSearchOff:             cfg.websearchOff,
-		ForkPreservedCap:         cfg.forkPreservedCap,
-		EnableTeams:              cfg.enableTeams,
-		MCPServers:               cfg.mcpServers.Servers(),
-		MCPProfileLoader:         cliconfig.NewMCPProfileResolver(cfg.mcpServers, os.LookupEnv),
+		GuardrailsModel:     cfg.guardrailsModel,
+		GuardrailsDisabled:  cfg.guardrailsOff,
+		ModelAliases:        cfg.modelAliases.AsMap(),
+		ModelSlots:          cfg.modelSlots.AsMap(),
+		CommandsDir:         cfg.commandsDir,
+		EnableCommands:      cfg.enableCommands,
+		EnableParallel:      cfg.enableParallel,
+		WebSearchURL:        cfg.websearchURL,
+		WebSearchAPIKey:     cfg.websearchAPIKey,
+		WebSearchAuthHeader: cfg.websearchAuthHeader,
+		WebSearchQueryParam: cfg.websearchQueryParam,
+		SearXNGURL:          cfg.searxngURL,
+		BraveAPIKey:         cfg.braveAPIKey,
+		ExaAPIKey:           cfg.exaAPIKey,
+		WebSearchOff:        cfg.websearchOff,
+		ForkPreservedCap:    cfg.forkPreservedCap,
+		EnableTeams:         cfg.enableTeams,
+		MCPServers:          cfg.mcpServers.Servers(),
+		MCPProfileLoader:    cliconfig.NewMCPProfileResolver(cfg.mcpServers, os.LookupEnv),
+		// Route mcp.mode through the canonical authority resolver. Broker stays
+		// opt-in so an omitted mode and an empty MCP configuration retain the
+		// existing global/no-broker behavior.
+		MCPAuthorityLoader:       cliconfig.NewMCPProfileResolver(cfg.mcpServers, os.LookupEnv),
+		MCPAuthorityDefault:      mcpauthority.Global,
+		MCPBrokerSupported:       true,
 		ProviderCredentialLoader: cliconfig.NewProviderCredentialResolver(cfg.providerFlags, cfg.providerCredentials),
 		ProviderOverrides:        cfg.providerFlags.EndpointOverrides(),
 		MCPResourceTools:         cfg.mcpResourceTools,
@@ -1933,6 +1944,50 @@ func readAskReviewerPolicy(path string) (string, error) {
 	return string(b), nil
 }
 
+// brokerControlAPIAuthenticated reports whether the normal session-scoped
+// authorization-control API verifies callers. Bearer and OIDC middleware do
+// not wrap the separately mounted OAuth protocol routes; those routes remain
+// public by protocol (discovery, authorize, token, callbacks, and token-secured
+// vMCP). Verified mTLS is transport-wide and therefore covers both surfaces.
+func brokerControlAPIAuthenticated(cfg config, tlsCfg *tls.Config) bool {
+	return cfg.authToken != "" || cfg.oidc.Enabled() ||
+		tlsCfg != nil && tlsCfg.ClientAuth == tls.RequireAndVerifyClientCert
+}
+
+// mountBrokerHandlers adds the broker's public OAuth protocol surface only
+// after the complete mecated mux exists. On non-loopback listeners the separate
+// session-scoped control API must be authenticated; this does not claim its
+// bearer/OIDC middleware authenticates browser or provider callbacks.
+func mountBrokerHandlers(mux *http.ServeMux, addr string, controlAPIAuthenticated bool, handlers mcpbroker.HandlerBundle, callbackPath string) error {
+	if handlers.Empty() {
+		return nil
+	}
+	if !controlAPIAuthenticated && !cliconfig.IsLoopbackAddr(addr) {
+		return errors.New("non-loopback MCP broker requires an authenticated authorization-control API; OAuth protocol routes remain public")
+	}
+	slog.Warn("vMCP broker mode is single-process/single-replica; a live session lease rejects non-holders without routing")
+	return handlers.Mount(mux, callbackPath)
+}
+
+// serve retains the established test and non-broker seam.
+func serve(ctx context.Context, cfg config, svc *server.Service, reg *prometheus.Registry, recorder *telemetry.FlightRecorder, slowTurns *telemetry.SlowTurnBuffer) error {
+	return serveWithBroker(ctx, cfg, svc, reg, recorder, slowTurns, false, mcpbroker.HandlerBundle{}, "")
+}
+
+// serveBuilt is the command-root handoff from app.Build to the network server.
+// Keeping the broker-selected bit separate from the HTTP bundle lets startup
+// reject an unreachable broker even when a custom broker has no handlers.
+func serveBuilt(ctx context.Context, cfg config, built *app.Built, reg *prometheus.Registry, recorder *telemetry.FlightRecorder, slowTurns *telemetry.SlowTurnBuffer) error {
+	return serveWithBroker(ctx, cfg, built.Service, reg, recorder, slowTurns, built.MCPBroker != nil, built.MCPBrokerHandlers, built.MCPBrokerCallbackPath)
+}
+
+func validateBrokerHosting(cfg config, brokerSelected bool) error {
+	if brokerSelected && (cfg.acp || cfg.httpAddr == "") {
+		return errors.New("MCP broker mode requires network serve mode with an enabled HTTP listener")
+	}
+	return nil
+}
+
 // serve starts the gRPC and HTTP servers (and, when --metrics-addr is set, the
 // loopback admin endpoint — /metrics plus the pprof/expvar/FlightRecorder
 // runtime-introspection surface — on its own listener) concurrently and blocks
@@ -1945,7 +2000,10 @@ func readAskReviewerPolicy(path string) (string, error) {
 // liveness/readiness probes are mounted OUTSIDE the auth/rate-limit layer so
 // orchestrators can probe without credentials. The gRPC health service shares
 // the server-wide interceptors and therefore requires credentials when auth is on.
-func serve(ctx context.Context, cfg config, svc *server.Service, reg *prometheus.Registry, recorder *telemetry.FlightRecorder, slowTurns *telemetry.SlowTurnBuffer) error {
+func serveWithBroker(ctx context.Context, cfg config, svc *server.Service, reg *prometheus.Registry, recorder *telemetry.FlightRecorder, slowTurns *telemetry.SlowTurnBuffer, brokerSelected bool, brokerHandlers mcpbroker.HandlerBundle, brokerCallbackPath string) error {
+	if err := validateBrokerHosting(cfg, brokerSelected); err != nil {
+		return err
+	}
 	tlsCfg, auth, corsPolicy, err := buildEdge(ctx, cfg)
 	if err != nil {
 		return err
@@ -1987,6 +2045,12 @@ func serve(ctx context.Context, cfg config, svc *server.Service, reg *prometheus
 		httpMux := http.NewServeMux()
 		server.NewHealthHandler(func() bool { return true }).RegisterHealth(httpMux)
 		httpMux.Handle("/", buildAPIHandler(corsPolicy, auth, svc, protectedResourceProfile(cfg.oidc)))
+		// Mount last on the actual, fully-populated mux. HandlerBundle.Mount
+		// preflights every route before registration, so a callback or fixed-route
+		// collision fails startup without a partial broker surface.
+		if err := mountBrokerHandlers(httpMux, cfg.httpAddr, brokerControlAPIAuthenticated(cfg, tlsCfg), brokerHandlers, brokerCallbackPath); err != nil {
+			return fmt.Errorf("mount MCP broker handlers: %w", err)
+		}
 		httpSrv = &http.Server{
 			Addr:              cfg.httpAddr,
 			Handler:           httpMux,
