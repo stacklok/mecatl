@@ -6,14 +6,16 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"sync"
-	"syscall"
 	"testing"
 	"time"
+
+	"github.com/gofrs/flock"
 
 	"github.com/stacklok/mecatl/engine/adapter/wallclock"
 	"github.com/stacklok/mecatl/engine/port"
@@ -53,8 +55,17 @@ func TestFlockleaseHelperProcess(_ *testing.T) {
 }
 
 type leaseHelper struct {
-	cmd  *exec.Cmd
-	held port.Lease
+	cmd      *exec.Cmd
+	held     port.Lease
+	killOnce sync.Once
+	waitOnce sync.Once
+	killErr  error
+	waitErr  error
+}
+
+func (h *leaseHelper) stop() {
+	h.killOnce.Do(func() { h.killErr = h.cmd.Process.Kill() })
+	h.waitOnce.Do(func() { h.waitErr = h.cmd.Wait() })
 }
 
 func startLeaseHelper(t *testing.T, dir string, id session.SessionID, owner string, ttl time.Duration) *leaseHelper {
@@ -70,10 +81,7 @@ func startLeaseHelper(t *testing.T, dir string, id session.SessionID, owner stri
 		t.Fatalf("start helper: %v", err)
 	}
 	h := &leaseHelper{cmd: cmd}
-	t.Cleanup(func() {
-		_ = syscall.Kill(cmd.Process.Pid, syscall.SIGKILL)
-		_ = cmd.Wait()
-	})
+	t.Cleanup(h.stop)
 	if err := json.NewDecoder(stdout).Decode(&h.held); err != nil {
 		t.Fatalf("decode helper lease: %v", err)
 	}
@@ -82,11 +90,87 @@ func startLeaseHelper(t *testing.T, dir string, id session.SessionID, owner stri
 
 func (h *leaseHelper) kill(t *testing.T) {
 	t.Helper()
-	if err := syscall.Kill(h.cmd.Process.Pid, syscall.SIGKILL); err != nil {
-		t.Fatalf("SIGKILL helper: %v", err)
+	h.stop()
+	if h.killErr != nil {
+		t.Fatalf("SIGKILL helper: %v", h.killErr)
 	}
-	if err := h.cmd.Wait(); err == nil {
+	if h.waitErr == nil {
 		t.Fatal("SIGKILLed helper exited successfully")
+	}
+}
+
+func TestDifferentSessionsDoNotShareInProcessSerialization(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	adapter, err := flocklease.New(dir, time.Minute, wallclock.Clock{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	a, err := adapter.Acquire(ctx, "blocked-a", "owner-a")
+	if err != nil {
+		t.Fatalf("Acquire A: %v", err)
+	}
+	locks, err := filepath.Glob(filepath.Join(dir, "*.lock"))
+	if err != nil || len(locks) != 1 {
+		t.Fatalf("find A stable lock: paths=%v err=%v", locks, err)
+	}
+	blocker := flock.New(locks[0])
+	if err := blocker.Lock(); err != nil {
+		t.Fatalf("lock A transition: %v", err)
+	}
+	defer blocker.Close()
+
+	renewDone := make(chan error, 1)
+	renewCtx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
+	defer cancel()
+	go func() {
+		_, renewErr := adapter.Renew(renewCtx, a)
+		renewDone <- renewErr
+	}()
+	time.Sleep(30 * time.Millisecond)
+
+	started := time.Now()
+	b, err := adapter.Acquire(ctx, "unblocked-b", "owner-b")
+	if err != nil {
+		t.Fatalf("Acquire B while A is blocked: %v", err)
+	}
+	if elapsed := time.Since(started); elapsed > 200*time.Millisecond {
+		t.Fatalf("Acquire B took %s while A was blocked; sessions are globally serialized", elapsed)
+	}
+	if err := adapter.Release(ctx, b); err != nil {
+		t.Fatalf("Release B: %v", err)
+	}
+	if err := blocker.Unlock(); err != nil {
+		t.Fatalf("unlock A transition: %v", err)
+	}
+	if err := <-renewDone; err != nil {
+		t.Fatalf("Renew A after unblock: %v", err)
+	}
+}
+
+func TestRepeatedTakeoverReleaseDoesNotGrowLiveDirectoryEntries(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	adapter, err := flocklease.New(dir, time.Minute, wallclock.Clock{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	const cycles = 40
+	for i := range cycles {
+		held, acquireErr := adapter.Acquire(ctx, "bounded-live-files", "owner-"+strconv.Itoa(i))
+		if acquireErr != nil {
+			t.Fatalf("Acquire cycle %d: %v", i, acquireErr)
+		}
+		if releaseErr := adapter.Release(ctx, held); releaseErr != nil {
+			t.Fatalf("Release cycle %d: %v", i, releaseErr)
+		}
+		paths, globErr := filepath.Glob(filepath.Join(dir, "*.live"))
+		if globErr != nil {
+			t.Fatalf("glob live entries: %v", globErr)
+		}
+		if len(paths) != 0 {
+			t.Fatalf("cycle %d left obsolete live entries: %v", i, paths)
+		}
 	}
 }
 
@@ -119,7 +203,7 @@ func TestSIGKILLImmediatelyReleasesRetainedFlock(t *testing.T) {
 	}
 }
 
-func TestLiveRetainedFlockOutlivesRecordExpiry(t *testing.T) {
+func TestExpiryAllowsTakeoverWhileOldProcessLives(t *testing.T) {
 	const (
 		id  session.SessionID = "live-past-expiry"
 		ttl                   = 100 * time.Millisecond
@@ -132,13 +216,9 @@ func TestLiveRetainedFlockOutlivesRecordExpiry(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New contender: %v", err)
 	}
-	if _, err := contender.Acquire(context.Background(), id, "owner-b"); !errors.Is(err, port.ErrLeaseHeld) {
-		t.Fatalf("Acquire after JSON expiry while holder is live = %v, want ErrLeaseHeld", err)
-	}
-	help.kill(t)
 	taken, err := contender.Acquire(context.Background(), id, "owner-b")
 	if err != nil {
-		t.Fatalf("Acquire after holder death: %v", err)
+		t.Fatalf("Acquire after expiry while old holder lives: %v", err)
 	}
 	if taken.Token <= help.held.Token {
 		t.Fatalf("takeover token = %d, want > expired holder token %d", taken.Token, help.held.Token)
@@ -226,6 +306,38 @@ func TestAcquireErrorDoesNotLeakFlockHandle(t *testing.T) {
 	}
 	if _, err := contender.Acquire(ctx, held.SessionID, "contender"); err != nil {
 		t.Fatalf("Acquire after prior read error leaked its flock handle: %v", err)
+	}
+}
+
+func TestMaxFencingTokenFailsClosedWithoutWrap(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	adapter, err := flocklease.New(dir, time.Minute, wallclock.Clock{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	seed, err := adapter.Acquire(ctx, "token-exhausted", "seed")
+	if err != nil {
+		t.Fatalf("seed Acquire: %v", err)
+	}
+	if err := adapter.Release(ctx, seed); err != nil {
+		t.Fatalf("seed Release: %v", err)
+	}
+	records, err := filepath.Glob(filepath.Join(dir, "*.lease.json"))
+	if err != nil || len(records) != 1 {
+		t.Fatalf("find record: paths=%v err=%v", records, err)
+	}
+	exhausted, err := json.Marshal(map[string]any{
+		"owner": "", "token": uint64(math.MaxUint64), "expiry": time.Time{},
+	})
+	if err != nil {
+		t.Fatalf("marshal exhausted record: %v", err)
+	}
+	if err := os.WriteFile(records[0], exhausted, 0o600); err != nil {
+		t.Fatalf("write exhausted record: %v", err)
+	}
+	if _, err := adapter.Acquire(ctx, seed.SessionID, "next"); err == nil {
+		t.Fatal("Acquire at MaxUint64 succeeded and could wrap the fencing token")
 	}
 }
 

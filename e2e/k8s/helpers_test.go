@@ -215,13 +215,13 @@ func helmInstallMecak8sChart() {
 		"pod-security.kubernetes.io/warn=restricted",
 		"--overwrite")
 
-	installOut, err := exec.CommandContext(ctx, "helm", "upgrade", "--install", "mecak8s", chartDir,
+	installOut, err := boundedCommandOutput(ctx, 1<<20, "helm", "upgrade", "--install", "mecak8s", chartDir,
 		"--namespace", k8sNamespace,
 		"--values", filepath.Join(chartDir, "values-kind.yaml"),
 		"--set", "image.repository=ko.local/mecak8s",
 		"--set", "image.tag=e2e",
 		"--set", "fullnameOverride=mecak8s-agent",
-		"--wait", "--timeout=4m").CombinedOutput()
+		"--wait", "--timeout=4m")
 	gomega.ExpectWithOffset(1, err).NotTo(gomega.HaveOccurred(),
 		"helm upgrade --install mecak8s failed\n--- output ---\n%s", installOut)
 
@@ -642,18 +642,8 @@ func httpDeleteSession(ctx context.Context, addr, sessionID string) int {
 // survivor mid-acquire) should RETRY, not abort the attempt.
 func drainRunSoft(ctx context.Context, addr, sessionID, text string) (status int, ok bool) {
 	ginkgo.GinkgoHelper()
-	reqBody, _ := json.Marshal(map[string]any{"text": text})
-	url := fmt.Sprintf("http://%s/v1/sessions/%s/prompt", addr, sessionID)
-	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(reqBody))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "text/event-stream")
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return 0, false
-	}
-	defer func() { _ = resp.Body.Close() }()
-	_, _ = io.Copy(io.Discard, resp.Body)
-	return resp.StatusCode, true
+	status, err := drainRun(ctx, addr, sessionID, text)
+	return status, err == nil
 }
 
 // --- live-provider patching (the live LLM e2e path) ------------------------
@@ -745,7 +735,7 @@ func liveProviderArgs(current []string) []string {
 			name = before
 		}
 		switch name {
-		case "--mock", "--default-provider", "--default-model":
+		case "--mock", "--model", "--default-provider", "--default-model":
 			if arg == name && i+1 < len(current) && !strings.HasPrefix(current[i+1], "-") {
 				i++
 			}
@@ -760,18 +750,47 @@ func liveProviderArgs(current []string) []string {
 	)
 }
 
+type boundedDrainWriter struct {
+	mu    sync.Mutex
+	buf   bytes.Buffer
+	limit int
+}
+
+func (w *boundedDrainWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	remaining := w.limit - w.buf.Len()
+	if remaining > len(p) {
+		remaining = len(p)
+	}
+	if remaining > 0 {
+		_, _ = w.buf.Write(p[:remaining])
+	}
+	return len(p), nil // keep draining the child even after the capture fills.
+}
+
+func (w *boundedDrainWriter) String() string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.buf.String()
+}
+
 func liveRolloutDiagnostics(parent context.Context, key string) string {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), 30*time.Second)
 	defer cancel()
 
 	var report strings.Builder
 	run := func(title string, args ...string) {
-		out, err := exec.CommandContext(ctx, "kubectl", args...).CombinedOutput()
+		captured := &boundedDrainWriter{limit: 16 * 1024}
+		cmd := exec.CommandContext(ctx, "kubectl", args...)
+		cmd.Stdout = captured
+		cmd.Stderr = captured
+		err := cmd.Run()
 		fmt.Fprintf(&report, "\n--- %s ---\n", title)
 		if err != nil {
 			fmt.Fprintf(&report, "command failed: %v\n", err)
 		}
-		report.WriteString(boundedRedacted(string(out), key, 16*1024))
+		report.WriteString(boundedRedacted(captured.String(), key, 16*1024))
 	}
 	run("deployment replicas", "get", "deployment/mecak8s-agent", "-n", k8sNamespace,
 		"-o", "custom-columns=NAME:.metadata.name,DESIRED:.spec.replicas,CURRENT:.status.replicas,UPDATED:.status.updatedReplicas,READY:.status.readyReplicas,AVAILABLE:.status.availableReplicas,UNAVAILABLE:.status.unavailableReplicas")
@@ -787,7 +806,9 @@ func liveRolloutDiagnostics(parent context.Context, key string) string {
 		run(pod+" agent logs (previous)", "logs", "-n", k8sNamespace, pod,
 			"-c", agentComponent, "--previous", "--tail=80", "--limit-bytes=16384")
 	}
-	run("recent warning events", "events", "-n", k8sNamespace, "--types=Warning")
+	run("recent warning events", "get", "events", "-n", k8sNamespace,
+		"--field-selector=type=Warning", "--sort-by=.lastTimestamp",
+		"-o", "custom-columns=LAST:.lastTimestamp,REASON:.reason,OBJECT:.involvedObject.name,MESSAGE:.message")
 	return boundedRedacted(report.String(), key, 64*1024)
 }
 
@@ -834,9 +855,13 @@ func enableLiveProvider() {
 		liveProviderSecret, k8sNamespace, key)
 	applySecret := exec.CommandContext(ctx, "kubectl", "apply", "-f", "-")
 	applySecret.Stdin = strings.NewReader(envSecretApply)
-	out, err := applySecret.CombinedOutput()
+	secretOutput := &boundedDrainWriter{limit: 16 * 1024}
+	applySecret.Stdout = secretOutput
+	applySecret.Stderr = secretOutput
+	err := applySecret.Run()
 	gomega.ExpectWithOffset(1, err).NotTo(gomega.HaveOccurred(),
-		"kubectl apply secret %s failed\n--- output ---\n%s", liveProviderSecret, out)
+		"kubectl apply secret %s failed\n--- output ---\n%s", liveProviderSecret,
+		boundedRedacted(secretOutput.String(), key, 16*1024))
 
 	// 2. Patch the Deployment: preserve every chart-rendered flag and env entry,
 	//    dropping only --mock and conflicting provider/model selectors before
@@ -862,9 +887,9 @@ func enableLiveProvider() {
 	ginkgo.By("waiting for the live-provider rollout to complete")
 	rolloutCtx, rolloutCancel := context.WithTimeout(ctx, 300*time.Second)
 	defer rolloutCancel()
-	rolloutOut, err := exec.CommandContext(rolloutCtx, "kubectl", "rollout", "status",
+	rolloutOut, err := boundedCommandOutput(rolloutCtx, 16*1024, "kubectl", "rollout", "status",
 		"deployment/mecak8s-agent", "-n", k8sNamespace,
-		"--timeout=290s").CombinedOutput()
+		"--timeout=290s")
 	if err != nil {
 		diagnostics := liveRolloutDiagnostics(ctx, key)
 		ginkgo.Fail(fmt.Sprintf(
@@ -980,12 +1005,21 @@ const promptLiveProviderSm = "Reply with exactly the single word: ok. Do not cal
 // the parent for all kubectl/kind/ko commands so a suite abort tears them down.
 func ginkgoSuiteCtx() context.Context { return suiteCtx }
 
+func boundedCommandOutput(ctx context.Context, limit int, name string, args ...string) ([]byte, error) {
+	captured := &boundedDrainWriter{limit: limit}
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Stdout = captured
+	cmd.Stderr = captured
+	err := cmd.Run()
+	return []byte(captured.String()), err
+}
+
 // runCmd runs a command under the suite context and fails the spec on a non-zero
 // exit, attaching combined output. It is the loud variant for commands whose
 // failure is fatal to the spec.
 func runCmd(ctx context.Context, name string, args ...string) string {
 	ginkgo.GinkgoHelper()
-	out, err := exec.CommandContext(ctx, name, args...).CombinedOutput()
+	out, err := boundedCommandOutput(ctx, 1<<20, name, args...)
 	gomega.ExpectWithOffset(1, err).NotTo(gomega.HaveOccurred(),
 		"%s %s failed\n--- output ---\n%s", name, strings.Join(args, " "), out)
 	return string(out)
@@ -995,7 +1029,7 @@ func runCmd(ctx context.Context, name string, args ...string) string {
 // a non-zero exit. It is the probe variant — used in Eventually loops where a
 // transient failure (pod not yet ready) is expected and retried.
 func runCmdQuiet(name string, args ...string) string {
-	out, _ := exec.CommandContext(ginkgoSuiteCtx(), name, args...).CombinedOutput()
+	out, _ := boundedCommandOutput(ginkgoSuiteCtx(), 1<<20, name, args...)
 	return string(out)
 }
 

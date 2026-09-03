@@ -30,10 +30,11 @@ type fakeLease struct {
 	acquires      int
 	acquireExpiry time.Time // expiry the next Acquire grants (zero = time.Now()+1h)
 
-	renewHook    func(port.Lease) (port.Lease, error)
-	releaseHook  func(port.Lease) error
-	releases     int
-	lastReleased port.Lease // the lease value handed to the last Release call
+	renewHook         func(port.Lease) (port.Lease, error)
+	releaseHook       func(port.Lease) error
+	releases          int
+	lastReleased      port.Lease // the lease value handed to the last Release call
+	lastReleaseCtxErr error
 }
 
 func (f *fakeLease) Acquire(_ context.Context, id session.SessionID, owner string) (port.Lease, error) {
@@ -60,10 +61,11 @@ func (f *fakeLease) Renew(_ context.Context, l port.Lease) (port.Lease, error) {
 	return l, nil
 }
 
-func (f *fakeLease) Release(_ context.Context, l port.Lease) error {
+func (f *fakeLease) Release(ctx context.Context, l port.Lease) error {
 	f.mu.Lock()
 	f.releases++
 	f.lastReleased = l
+	f.lastReleaseCtxErr = ctx.Err()
 	hook := f.releaseHook
 	f.mu.Unlock()
 	if hook != nil {
@@ -82,6 +84,12 @@ func (f *fakeLease) lastReleasedLease() port.Lease {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.lastReleased
+}
+
+func (f *fakeLease) lastReleaseContextError() error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.lastReleaseCtxErr
 }
 
 var _ port.SessionLease = (*fakeLease)(nil)
@@ -172,6 +180,12 @@ func TestLeaseRenewLossCancelsRun(t *testing.T) {
 	}
 	if !sawCancel {
 		t.Fatal("the run was not cancelled after the lease loss (renewer→LookupRun→Cancel did not fire)")
+	}
+	if got := lease.releaseCount(); got != 1 {
+		t.Fatalf("lease Release calls after definitive renewal loss = %d, want 1", got)
+	}
+	if err := lease.lastReleaseContextError(); err != nil {
+		t.Fatalf("lease-loss Release context = %v, want cancel-detached live context", err)
 	}
 }
 
@@ -340,6 +354,62 @@ func TestRenewerRaceWithClose(t *testing.T) {
 	for range run.Events() {
 	}
 	svc.FinishRun(sess.ID, run)
+}
+
+func TestStaleRenewCompletionCannotAffectReacquiredLease(t *testing.T) {
+	lease := &fakeLease{}
+	renewStarted := make(chan struct{})
+	finishRenew := make(chan struct{})
+	var renewCalls atomic.Int64
+	lease.renewHook = func(l port.Lease) (port.Lease, error) {
+		if renewCalls.Add(1) == 1 {
+			close(renewStarted)
+			<-finishRenew // deliberately ignore the cancelled renew context.
+			return port.Lease{}, port.ErrLeaseHeld
+		}
+		return l, nil
+	}
+	svc := newLeasedService(t, lease, blockingProvider{})
+	sess, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	first, err := svc.StartRun(context.Background(), sess.ID, "first")
+	if err != nil {
+		t.Fatalf("StartRun first: %v", err)
+	}
+	select {
+	case <-renewStarted:
+	case <-time.After(3 * time.Second):
+		t.Fatal("renew did not start")
+	}
+
+	// Remove the captured hold while its backend Renew is blocked, then finish the
+	// old run and reacquire a successor generation for the same session id.
+	svc.CloseSession(sess.ID)
+	first.Cancel()
+	for range first.Events() {
+	}
+	svc.FinishRun(sess.ID, first)
+	second, err := svc.StartRun(context.Background(), sess.ID, "second")
+	if err != nil {
+		t.Fatalf("StartRun successor: %v", err)
+	}
+	before := lease.releaseCount()
+	close(finishRenew)
+	time.Sleep(50 * time.Millisecond)
+	if got := lease.releaseCount(); got != before {
+		t.Fatalf("stale renew completion released successor: releases %d -> %d", before, got)
+	}
+	if _, ok := svc.LookupRun(sess.ID); !ok {
+		t.Fatal("stale renew completion cancelled the current run")
+	}
+
+	second.Cancel()
+	for range second.Events() {
+	}
+	svc.FinishRun(sess.ID, second)
+	svc.CloseSession(sess.ID)
 }
 
 // TestLeaseTransientRenewBlipKeepsRun: a SINGLE transient Renew failure (NOT

@@ -5423,9 +5423,10 @@ func (s *Service) acquireLease(ctx context.Context, id session.SessionID) error 
 		cancel()
 		return nil
 	}
-	s.heldLeases[id] = &heldLease{lease: lease, ctx: renewCtx, cancel: cancel}
+	h := &heldLease{lease: lease, ctx: renewCtx, cancel: cancel}
+	s.heldLeases[id] = h
 	s.mu.Unlock()
-	go s.renewLoop(renewCtx, id)
+	go s.renewLoop(renewCtx, id, h)
 	return nil
 }
 
@@ -5433,10 +5434,10 @@ func (s *Service) acquireLease(ctx context.Context, id session.SessionID) error 
 // cancelled (CloseSession / shutdown). The renewer is OWNED BY Service -- the
 // loop never imports port.SessionLease (the storage-agnostic discipline).
 //
-// SINGLE SOURCE OF TRUTH: each tick reads the CURRENT lease from
-// heldLeases[id].lease UNDER s.mu (not a goroutine-local copy), refreshes it, and
-// writes the refreshed value back under s.mu — so releaseLease/onLeaseLost always
-// see the latest token/expiry and there is no unguarded read of the lease value.
+// GENERATION IDENTITY: the heldLease pointer captured at startup identifies this
+// renewer generation. Every completion rechecks that heldLeases[id] is still that
+// exact pointer before updating state or declaring loss, so a delayed backend call
+// can never affect a CloseSession/reacquire successor.
 //
 // LOSS HANDLING is graceful for TRANSIENT faults, definitive for ErrLeaseHeld:
 //   - Renew -> ErrLeaseHeld is DEFINITIVE loss (someone else took the lease): cancel
@@ -5447,7 +5448,7 @@ func (s *Service) acquireLease(ctx context.Context, id session.SessionID) error 
 //     clock.Now() is within one renew-interval of the lease's Expiry (i.e. the next
 //     tick would land past expiry). Until then we keep the run and retry next tick.
 //   - A ctx-cancelled error is just shutdown/close racing a tick -> exit quietly.
-func (s *Service) renewLoop(renewCtx context.Context, id session.SessionID) {
+func (s *Service) renewLoop(renewCtx context.Context, id session.SessionID, expected *heldLease) {
 	ticker := time.NewTicker(s.cfg.LeaseRenewInterval)
 	defer ticker.Stop()
 	renewTimeout := s.cfg.LeaseRenewInterval / leaseRenewFraction
@@ -5459,26 +5460,36 @@ func (s *Service) renewLoop(renewCtx context.Context, id session.SessionID) {
 		case <-renewCtx.Done():
 			return
 		case <-ticker.C:
-			// Read the current lease under the lock (single source of truth). If the
-			// hold is gone (released concurrently) there is nothing to renew.
 			s.mu.Lock()
-			h, ok := s.heldLeases[id]
-			if !ok {
+			if s.heldLeases[id] != expected {
 				s.mu.Unlock()
 				return
 			}
-			lease := h.lease
+			lease := expected.lease
 			s.mu.Unlock()
 
 			rCtx, rCancel := context.WithTimeout(renewCtx, renewTimeout)
 			refreshed, err := s.cfg.SessionLease.Renew(rCtx, lease)
 			rCancel()
+
+			// Renew implementations may complete after cancellation. In all cases the
+			// captured pointer, not merely the session id, is the generation fence.
+			s.mu.Lock()
+			current := s.heldLeases[id] == expected
+			if current && err == nil {
+				expected.lease = refreshed
+			}
+			s.mu.Unlock()
+			if !current {
+				return
+			}
+
 			switch {
 			case errors.Is(err, context.Canceled):
 				return // shutdown / close raced the tick.
 			case errors.Is(err, port.ErrLeaseHeld):
 				// Definitive loss: a competitor holds it now.
-				s.onLeaseLost(renewCtx, id, err)
+				s.onLeaseLost(renewCtx, id, expected, err)
 				return
 			case err != nil:
 				// Transient/infra fault: keep the run unless we are within one renew
@@ -5486,34 +5497,38 @@ func (s *Service) renewLoop(renewCtx context.Context, id session.SessionID) {
 				if s.cfg.Now().Add(s.cfg.LeaseRenewInterval).Before(lease.Expiry) {
 					continue // still have headroom; retry next tick.
 				}
-				s.onLeaseLost(renewCtx, id, err)
+				s.onLeaseLost(renewCtx, id, expected, err)
 				return
 			}
-			s.mu.Lock()
-			if h, ok := s.heldLeases[id]; ok {
-				h.lease = refreshed // keep the latest token/expiry for Release.
-			}
-			s.mu.Unlock()
 		}
 	}
 }
 
-// onLeaseLost handles a declared lease loss: WARN, cancel the renewer's own ctx
-// (so the goroutine's WithCancel child is not leaked), cancel the session's live
-// run so a competitor can take over, and drop the hold. The cancelled run
-// terminates cleanly (StopCancelled is recoverable), so this is fail-safe.
-func (s *Service) onLeaseLost(ctx context.Context, id session.SessionID, cause error) {
+// onLeaseLost handles a declared lease loss only when expected remains the
+// current hold. Removal and cancellation are atomic with that identity check;
+// diagnostics, run cancellation, and backend Release happen only after it wins.
+func (s *Service) onLeaseLost(ctx context.Context, id session.SessionID, expected *heldLease, cause error) {
+	s.mu.Lock()
+	if s.heldLeases[id] != expected {
+		s.mu.Unlock()
+		return
+	}
+	expected.cancel()
+	delete(s.heldLeases, id)
+	lease := expected.lease
+	s.mu.Unlock()
+
 	s.cfg.Diagnostics.Log(ctx, port.LevelWarn, "lost session lease; cancelling run",
 		"session", string(id), "owner", s.cfg.LeaseOwner, "err", cause.Error())
 	if run, ok := s.LookupRun(id); ok {
 		run.Cancel()
 	}
-	s.mu.Lock()
-	if h, ok := s.heldLeases[id]; ok {
-		h.cancel() // release the renewer's WithCancel child (self-cancel is harmless).
-		delete(s.heldLeases, id)
+	releaseCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), leaseAcquireTimeout)
+	defer cancel()
+	if err := s.cfg.SessionLease.Release(releaseCtx, lease); err != nil {
+		s.cfg.Diagnostics.Log(releaseCtx, port.LevelWarn, "session lease release failed after loss",
+			"session", string(id), "owner", s.cfg.LeaseOwner, "err", err.Error())
 	}
-	s.mu.Unlock()
 }
 
 // releaseLease stops the session's renewer and releases its cross-process lease,

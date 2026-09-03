@@ -11,7 +11,7 @@ import (
 
 func TestLiveProviderPatchPreservesRenderedArgsAndLocatesAgent(t *testing.T) {
 	t.Parallel()
-	deployment := []byte(`{"spec":{"template":{"spec":{"containers":[{"name":"sidecar","args":["keep-sidecar"]},{"name":"agent","args":["--grpc-addr=0.0.0.0:8080","--redis-allow-plaintext","--mock","--default-provider=mock","--future-flag=value","--default-model","old-model"],"env":[{"name":"KEEP_ME","value":"yes"}]}]}}}}`)
+	deployment := []byte(`{"spec":{"template":{"spec":{"containers":[{"name":"sidecar","args":["keep-sidecar"]},{"name":"agent","args":["--grpc-addr=0.0.0.0:8080","--redis-allow-plaintext","--mock","--model","chart-model","--model=stale-model","--default-provider=mock","--future-flag=value","--default-model","old-model"],"env":[{"name":"KEEP_ME","value":"yes"}]}]}}}}`)
 
 	patchJSON, err := liveProviderPatch(deployment)
 	if err != nil {
@@ -78,14 +78,39 @@ func TestLiveProviderPatchAddsMissingEnvField(t *testing.T) {
 	}
 }
 
-func TestBoundedRedactedRemovesExactSecretAndCapsOutput(t *testing.T) {
+func TestBoundedRedactedRemovesEveryExactSecretAndCapsOutput(t *testing.T) {
 	t.Parallel()
-	got := boundedRedacted("prefix-exact-key-suffix", "exact-key", 12)
-	if strings.Contains(got, "exact-key") {
+	const (
+		secret = "exact-key"
+		limit  = 64
+	)
+	got := boundedRedacted(strings.Repeat("prefix-"+secret+"-suffix;", 20), secret, limit)
+	if strings.Contains(got, secret) {
 		t.Fatalf("diagnostics retained exact secret: %q", got)
 	}
-	if !strings.Contains(got, "diagnostics truncated") {
-		t.Fatalf("diagnostics were not bounded: %q", got)
+	if occurrences := strings.Count(got, "[REDACTED]"); occurrences < 2 {
+		t.Fatalf("redacted occurrences = %d, want multiple before the cap: %q", occurrences, got)
+	}
+	const marker = "\n...[diagnostics truncated]...\n"
+	if !strings.HasSuffix(got, marker) {
+		t.Fatalf("diagnostics were not marked truncated: %q", got)
+	}
+	if len(got) != limit+len(marker) {
+		t.Fatalf("bounded diagnostics length = %d, want %d", len(got), limit+len(marker))
+	}
+}
+
+func TestBoundedDrainWriterKeepsDrainingAfterCaptureLimit(t *testing.T) {
+	t.Parallel()
+	writer := &boundedDrainWriter{limit: 8}
+	for _, chunk := range []string{"abcd", "efgh", "secret-tail"} {
+		n, err := writer.Write([]byte(chunk))
+		if err != nil || n != len(chunk) {
+			t.Fatalf("Write(%q) = (%d, %v), want (%d, nil)", chunk, n, err, len(chunk))
+		}
+	}
+	if got := writer.String(); got != "abcdefgh" {
+		t.Fatalf("captured output = %q (len %d), want exact 8-byte prefix", got, len(got))
 	}
 }
 
