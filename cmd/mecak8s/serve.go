@@ -169,9 +169,9 @@ func serveWithDrainWait(ctx context.Context, cfg config, svc *server.Service, ob
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
-	// Caller identity counts as authentication: an OIDC deployment may carry no
-	// static token at all.
-	authed := cfg.authToken != "" || cfg.oidc.Enabled() || tlsCfg != nil
+	// A bearer token, OIDC, or verified mTLS authenticates callers. Ordinary
+	// server TLS only authenticates the server.
+	authed := callerAuthenticationConfigured(cfg, tlsCfg)
 	warnIfNonLoopback("grpc-addr", cfg.grpcAddr, authed)
 	warnIfNonLoopback("http-addr", cfg.httpAddr, authed)
 	warnDrainExposure(cfg.drainAddr)
@@ -346,23 +346,27 @@ func buildTLSConfig(cfg config) (*tls.Config, *tlsreload.Reloader, error) {
 	return tlsCfg, reloader, nil
 }
 
+func callerAuthenticationConfigured(cfg config, tlsCfg *tls.Config) bool {
+	return cfg.authToken != "" || cfg.oidc.Enabled() || (tlsCfg != nil && tlsCfg.ClientAuth == tls.RequireAndVerifyClientCert)
+}
+
 // warnIfNonLoopback logs the API trust assumption for the given bind address.
 // A k8s pod intentionally binds 0.0.0.0 (the endpoint controller probes it); a
-// non-loopback bind WITH authentication (bearer token and/or TLS) is logged at
-// info, and a non-loopback bind with NO authentication is logged as a prominent
-// WARNING (it exposes UNAUTHENTICATED command/file execution to the network —
-// rely on the NetworkPolicy/mesh, not a bare public port). It never hard-fails.
-// Mirrors cmd/mecated's warnIfNonLoopback.
-func warnIfNonLoopback(flagName, addr string, authed bool) {
+// non-loopback bind WITH caller authentication (bearer, OIDC, or mTLS) is logged
+// at info, and a non-loopback bind without it is logged as a prominent WARNING:
+// ordinary TLS authenticates the server, not the caller. It never hard-fails:
+// a trusted NetworkPolicy or mesh may deliberately be the shared authority
+// boundary. Mirrors cmd/mecated's warnIfNonLoopback.
+func warnIfNonLoopback(flagName, addr string, callerAuthenticated bool) {
 	if cliconfig.IsLoopbackAddr(addr) {
-		slog.Info("API bound to loopback", "flag", flagName, "addr", addr, "authenticated", authed)
+		slog.Info("API bound to loopback", "flag", flagName, "addr", addr, "caller_authenticated", callerAuthenticated)
 		return
 	}
-	if authed {
-		slog.Info("API bound to a non-loopback address WITH authentication (bearer token and/or TLS)", "flag", flagName, "addr", addr)
+	if callerAuthenticated {
+		slog.Info("API bound to a non-loopback address WITH caller authentication (bearer, OIDC, or mTLS)", "flag", flagName, "addr", addr)
 		return
 	}
-	slog.Warn("API bound to a NON-loopback address with NO authentication: it exposes UNAUTHENTICATED command/file execution to the network — set --auth-token / --tls-cert (or front it with a trusted mesh/NetworkPolicy) before doing this", "flag", flagName, "addr", addr)
+	slog.Warn("API bound to a NON-loopback address with NO caller authentication: it exposes UNAUTHENTICATED command/file execution to every network caller — configure --auth-token, OIDC, or --client-ca, or deliberately enforce shared authority at a trusted private-network/mesh boundary; TLS alone is not caller authentication", "flag", flagName, "addr", addr)
 }
 
 // warnDrainExposure logs the drain-listener trust assumption. Unlike

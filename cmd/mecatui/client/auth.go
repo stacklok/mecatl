@@ -12,12 +12,13 @@ import (
 type AuthReason string
 
 const (
-	// AuthNeverEnrolled means the saved-login registry has no entry for the
-	// requested remote target. Remote credential-free dialing must be explicitly
-	// selected with --anonymous; implicit anonymous fallback is local-only.
-	AuthNeverEnrolled AuthReason = "never_enrolled"
-	// AuthNotEnrolled means no saved credential was supplied for a known target.
+	// AuthNotEnrolled means a credential-free RPC reached a server that requires
+	// caller authentication. The server, not target classification, owns this
+	// decision.
 	AuthNotEnrolled AuthReason = "not_enrolled"
+	// AuthAnonymousRejected means the server required caller authentication after
+	// --anonymous deliberately bypassed both static and saved OIDC credentials.
+	AuthAnonymousRejected AuthReason = "anonymous_rejected"
 	// AuthSessionExpired means a stored session can no longer refresh.
 	AuthSessionExpired AuthReason = "session_expired"
 	// AuthCredentialUnusable means the saved encrypted record itself is unusable
@@ -49,8 +50,8 @@ func (e *AuthError) Error() string { return "authentication unavailable: " + str
 
 // AuthFailure returns a safe recovery reason. Composition-mapped local credential
 // failures retain their closed AuthError reason. A server Unauthenticated is
-// rejected when a bearer was supplied, and means not_enrolled for an anonymous
-// dial; all other failures deliberately remain unclassified.
+// rejected when a bearer was supplied, and means not_enrolled for a
+// credential-free dial; all other failures deliberately remain unclassified.
 func AuthFailure(err error, bearerBacked bool) (AuthReason, bool) {
 	if reason, ok := localAuthFailure(err); ok {
 		return reason, true
@@ -65,13 +66,21 @@ func AuthFailure(err error, bearerBacked bool) (AuthReason, bool) {
 }
 
 func localAuthFailure(err error) (AuthReason, bool) {
+	var reasoned interface{ AuthReason() AuthReason }
+	if errors.As(err, &reasoned) {
+		return knownAuthReason(reasoned.AuthReason())
+	}
 	var local *AuthError
 	if !errors.As(err, &local) {
 		return "", false
 	}
-	switch local.Reason {
-	case AuthNeverEnrolled, AuthNotEnrolled, AuthSessionExpired, AuthCredentialUnusable, AuthStorageUnavailable, AuthCredentialCleanup, AuthTargetChanged, AuthRejected:
-		return local.Reason, true
+	return knownAuthReason(local.Reason)
+}
+
+func knownAuthReason(reason AuthReason) (AuthReason, bool) {
+	switch reason {
+	case AuthNotEnrolled, AuthAnonymousRejected, AuthSessionExpired, AuthCredentialUnusable, AuthStorageUnavailable, AuthCredentialCleanup, AuthTargetChanged, AuthRejected:
+		return reason, true
 	default:
 		return "", false
 	}

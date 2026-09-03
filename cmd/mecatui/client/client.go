@@ -33,6 +33,7 @@ type DialConfig struct {
 	Server                 string      // host:port, e.g. 127.0.0.1:8080
 	AuthToken              string      // optional static bearer; sent as "authorization: Bearer <tok>"
 	TokenSource            TokenSource // optional dynamic bearer source, evaluated once per RPC
+	ExplicitAnonymous      bool        // bypass saved OIDC state and send no bearer credential
 	UseTLS                 bool        // enable transport TLS
 	TLSCAFile              string      // optional custom CA bundle for server verification
 	Insecure               bool        // skip TLS verification (testing only; with UseTLS)
@@ -106,13 +107,13 @@ func Dial(cfg DialConfig) (*Client, error) {
 			grpc.WithChainStreamInterceptor(tokenSourceStream(cfg.TokenSource)),
 		)
 	} else {
-		// Dialling with no credential at all is legitimate: a mecated with no OIDC
-		// configured needs none, so a missing saved credential cannot be an error
-		// here. It becomes actionable only when the server actually demands one,
-		// which is where these interceptors add the enrolment hint.
+		// Dialling with no credential at all is legitimate: the server is
+		// authoritative about whether caller authentication is required. Annotate
+		// only an actual server rejection; network and TLS failures stay transport
+		// errors.
 		opts = append(opts,
-			grpc.WithChainUnaryInterceptor(anonymousUnaryHint(cfg.Server)),
-			grpc.WithChainStreamInterceptor(anonymousStreamHint(cfg.Server)),
+			grpc.WithChainUnaryInterceptor(credentialFreeUnaryHint(cfg.Server, cfg.ExplicitAnonymous)),
+			grpc.WithChainStreamInterceptor(credentialFreeStreamHint(cfg.Server, cfg.ExplicitAnonymous)),
 		)
 	}
 
@@ -129,44 +130,64 @@ func Dial(cfg DialConfig) (*Client, error) {
 	}, nil
 }
 
-// anonymousDialHint annotates a server Unauthenticated rejection received by a
-// client that carried no bearer credential. Without it the operator sees only the
-// far side's "missing or invalid bearer token" and no indication that the local
-// cause is an unenrolled target. Wrapping preserves the gRPC status, so
-// status.Code classification elsewhere is unaffected.
-func anonymousDialHint(server string, err error) error {
-	if status.Code(err) != codes.Unauthenticated {
+// credentialFreeAuthError preserves the server's gRPC status while carrying a
+// closed, server-authoritative recovery reason to the UI.
+type credentialFreeAuthError struct {
+	cause  error
+	reason AuthReason
+	msg    string
+}
+
+func (e *credentialFreeAuthError) Error() string              { return e.msg }
+func (e *credentialFreeAuthError) Unwrap() error              { return e.cause }
+func (e *credentialFreeAuthError) GRPCStatus() *status.Status { return status.Convert(e.cause) }
+func (e *credentialFreeAuthError) AuthReason() AuthReason     { return e.reason }
+
+func credentialFreeDialHint(server string, explicitAnonymous bool, err error) error {
+	switch status.Code(err) {
+	case codes.Unauthenticated:
+		reason := AuthNotEnrolled
+		prefix := "server requires caller authentication"
+		if explicitAnonymous {
+			reason = AuthAnonymousRejected
+			prefix = "server rejected the explicit --anonymous connection because it requires caller authentication"
+		}
+		return &credentialFreeAuthError{
+			cause:  err,
+			reason: reason,
+			msg:    fmt.Sprintf("%s; use --auth-token, or, if this server supports OIDC enrollment, run 'mecatui login %s': %v", prefix, server, err),
+		}
+	case codes.PermissionDenied:
+		return fmt.Errorf("%w (server authorization denied this caller)", err)
+	default:
 		return err
 	}
-	return fmt.Errorf("%w (no saved credential for %s; run 'mecatui login %s')", err, server, server)
 }
 
-func anonymousUnaryHint(server string) grpc.UnaryClientInterceptor {
+func credentialFreeUnaryHint(server string, explicitAnonymous bool) grpc.UnaryClientInterceptor {
 	return func(ctx context.Context, method string, req, reply any, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
-		return anonymousDialHint(server, invoker(ctx, method, req, reply, cc, opts...))
+		return credentialFreeDialHint(server, explicitAnonymous, invoker(ctx, method, req, reply, cc, opts...))
 	}
 }
 
-func anonymousStreamHint(server string) grpc.StreamClientInterceptor {
+func credentialFreeStreamHint(server string, explicitAnonymous bool) grpc.StreamClientInterceptor {
 	return func(ctx context.Context, desc *grpc.StreamDesc, cc *grpc.ClientConn, method string, streamer grpc.Streamer, opts ...grpc.CallOption) (grpc.ClientStream, error) {
 		stream, err := streamer(ctx, desc, cc, method, opts...)
 		if err != nil {
-			return nil, anonymousDialHint(server, err)
+			return nil, credentialFreeDialHint(server, explicitAnonymous, err)
 		}
-		// Server-side auth rejects before the handler runs, and gRPC surfaces that
-		// on the first Recv rather than at stream creation, so the hint has to
-		// cover RecvMsg too.
-		return hintingStream{ClientStream: stream, server: server}, nil
+		return hintingStream{ClientStream: stream, server: server, explicitAnonymous: explicitAnonymous}, nil
 	}
 }
 
 type hintingStream struct {
 	grpc.ClientStream
-	server string
+	server            string
+	explicitAnonymous bool
 }
 
 func (s hintingStream) RecvMsg(m any) error {
-	return anonymousDialHint(s.server, s.ClientStream.RecvMsg(m))
+	return credentialFreeDialHint(s.server, s.explicitAnonymous, s.ClientStream.RecvMsg(m))
 }
 
 type tokenContextKey struct{}

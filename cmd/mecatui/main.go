@@ -802,7 +802,7 @@ func resolveTransport(ctx context.Context, cfg config) (target string, dial clie
 	// ADDRESS and NEVER probes/embeds; the bare invocation ALWAYS embeds and
 	// NEVER probes loopback.
 	if cfg.transportMode == modeConnect {
-		dial := client.DialConfig{Server: cfg.connectAddress, AuthToken: cfg.authToken, UseTLS: cfg.useTLS, TLSCAFile: cfg.tlsCA, Insecure: cfg.insecure, RemotePlaintextAllowed: cfg.tlsExplicit && !cfg.useTLS}
+		dial := client.DialConfig{Server: cfg.connectAddress, AuthToken: cfg.authToken, ExplicitAnonymous: cfg.anonymous, UseTLS: cfg.useTLS, TLSCAFile: cfg.tlsCA, Insecure: cfg.insecure, RemotePlaintextAllowed: cfg.tlsExplicit && !cfg.useTLS}
 		if cfg.authToken == "" && !cfg.anonymous {
 			root := filepath.Join(xdg.ConfigHome, "mecatl")
 			registry, regErr := clientauth.OpenExistingRegistry(root)
@@ -871,10 +871,11 @@ func resolveTransport(ctx context.Context, cfg config) (target string, dial clie
 				return target, dial, func() { _ = source.Close(); _ = store.Close() }, nil
 			}
 			if errors.Is(findErr, credentialstore.ErrNotFound) {
-				if client.IsLocalTarget(cfg.connectAddress) {
-					return cfg.connectAddress, dial, noop, nil
-				}
-				return cfg.connectAddress, client.DialConfig{}, noop, &client.AuthError{Reason: client.AuthNeverEnrolled}
+				// A clean registry miss is not an authentication decision. The server
+				// remains authoritative: dial without a bearer and recover only if it
+				// actually returns Unauthenticated. Registry/storage errors still fail
+				// closed.
+				return cfg.connectAddress, dial, noop, nil
 			}
 			return target, client.DialConfig{}, noop, &client.AuthError{Reason: client.AuthStorageUnavailable}
 		}

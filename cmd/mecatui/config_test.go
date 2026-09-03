@@ -885,13 +885,7 @@ func TestParseFlagsAuthEnv(t *testing.T) {
 	}
 }
 
-func TestConnectAnonymousFlagAndTokenConflicts(t *testing.T) {
-	t.Setenv("MECATL_AUTH_TOKEN", "")
-	_, cfg, err := parseTransportFlags(modeConnect, &bytes.Buffer{}, []string{"--anonymous"})
-	if err != nil || !cfg.anonymous {
-		t.Fatalf("parse --anonymous = (%+v, %v), want anonymous config", cfg, err)
-	}
-
+func TestConnectStaticTokenOutranksAnonymous(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		args []string
@@ -902,11 +896,20 @@ func TestConnectAnonymousFlagAndTokenConflicts(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("MECATL_AUTH_TOKEN", tc.env)
-			_, _, parseErr := parseTransportFlags(modeConnect, &bytes.Buffer{}, tc.args)
-			if parseErr == nil || !strings.Contains(parseErr.Error(), "--anonymous conflicts") {
-				t.Fatalf("parse error = %v, want anonymous/token conflict", parseErr)
+			_, cfg, err := parseTransportFlags(modeConnect, &bytes.Buffer{}, tc.args)
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			if cfg.authToken != "token" || cfg.anonymous {
+				t.Fatalf("config = authToken %q anonymous %v, want static token precedence", cfg.authToken, cfg.anonymous)
 			}
 		})
+	}
+
+	t.Setenv("MECATL_AUTH_TOKEN", "")
+	_, cfg, err := parseTransportFlags(modeConnect, &bytes.Buffer{}, []string{"--anonymous"})
+	if err != nil || !cfg.anonymous || cfg.authToken != "" {
+		t.Fatalf("parse --anonymous = (%+v, %v), want credential-free override", cfg, err)
 	}
 }
 

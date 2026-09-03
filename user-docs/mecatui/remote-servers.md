@@ -58,17 +58,19 @@ bin/mecatui connect mecated.example.internal:443 \
 
 Authentication proves the caller's credential; TLS protects the connection and verifies the server. They are separate settings. Do not use `--insecure` except for controlled testing.
 
-Use connect-only `--anonymous` when you intentionally want no bearer. It bypasses saved
-credentials, has no environment equivalent, and conflicts with `--auth-token` and
-`MECATL_AUTH_TOKEN`. Remote anonymous is never inferred from a private address or hostname:
-it must be explicit and still defaults to verified TLS. Plaintext additionally requires
+Use connect-only `--anonymous` when you intentionally want no bearer even when saved OIDC
+enrollment exists. It bypasses saved credentials and has no environment equivalent. A static
+token from `--auth-token` or `MECATL_AUTH_TOKEN` wins if both are present. On a clean enrollment miss, mecatui
+already attempts a credential-free connection and lets the server decide whether caller
+authentication is required. Remote credential-free transport is never weakened by a private
+address or hostname: verified TLS remains the default, and plaintext additionally requires
 `--tls=false`.
 
 For example, a Tailscale deployment may deliberately make tailnet membership and ACLs the
 shared authority and transport boundary:
 
 ```sh
-mecatui connect ozzllama:9080 --anonymous --tls=false
+mecatui connect ozzllama:9080 --tls=false
 ```
 
 Bind the server to one concrete Tailscale address, never a wildcard, and do not enable
@@ -109,12 +111,13 @@ canonical target and OIDC identity. An old unsuffixed keyring key is copied with
 deletion only when that root already contains an actual encrypted credential record; an
 empty opened namespace does not trigger migration. A credential enrolled under a legacy zero-padded port spelling
 needs one login after upgrade. `mecatui connect ADDRESS` never opens a browser. Credential
-selection is explicit token, explicit `--anonymous`, saved enrollment, then local-only
-anonymous for a clean missing enrollment. Without explicit `--anonymous`, an unenrolled
-remote target is rejected before dial and tells you to run `mecatui login ADDRESS` first.
-With explicit `--anonymous`, mecatui performs a credential-free dial without pre-dial login
-guidance; recovery is offered only if the server actually responds `Unauthenticated`.
-Corrupt or unreadable registry state never falls back anonymously.
+selection is explicit token, explicit `--anonymous`, saved enrollment, then a
+credential-free attempt for any clean missing enrollment. The server is authoritative: only
+an actual `Unauthenticated` RPC opens recovery and recommends `--auth-token` or
+`mecatui login ADDRESS`, which is OIDC enrollment. Explicit `--anonymous` deliberately
+bypasses saved state and gets rejection wording that says so. `PermissionDenied` remains an
+authorization failure, and network/TLS errors never offer authentication recovery. Corrupt
+or unreadable registry, keyring, or credential state never falls back anonymously.
 Add `--no-browser` to print the authorization URL for you to open yourself, which is
 what you want over SSH or on a headless host. Remote login listens at the registered
 `http://127.0.0.1:18473/oauth/callback`. Open the printed URL in a browser on your

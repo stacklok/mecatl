@@ -369,7 +369,7 @@ func parseTransportFlags(mode transportMode, out io.Writer, args []string, brows
 	fs.StringVar(&cfg.theme, "theme", "", "theme name (default: aztec)")
 	fs.StringVar(&cfg.themeDir, "theme-dir", "", "extra directory of *.json themes to load")
 	fs.StringVar(&cfg.authToken, "auth-token", "", "bearer token for an external server (or MECATL_AUTH_TOKEN)")
-	fs.BoolVar(&cfg.anonymous, "anonymous", false, "connect without bearer or saved OIDC credentials (required for credential-free remote connections)")
+	fs.BoolVar(&cfg.anonymous, "anonymous", false, "bypass saved OIDC enrollment and send no bearer unless --auth-token or MECATL_AUTH_TOKEN supplies one")
 	fs.BoolVar(&cfg.useTLS, "tls", false, "use verified TLS for an external server (default for non-loopback targets; --tls=false explicitly permits plaintext)")
 	fs.StringVar(&cfg.tlsCA, "tls-ca", "", "path to a PEM CA bundle for external-server verification")
 	fs.BoolVar(&cfg.insecure, "insecure", false, "skip TLS verification (testing only)")
@@ -533,9 +533,6 @@ func resolveRemoteTLSPolicy(cfg *config) error {
 	if cfg.transportMode != modeConnect {
 		return nil
 	}
-	if cfg.anonymous && cfg.authToken != "" {
-		return errors.New("--anonymous conflicts with --auth-token and MECATL_AUTH_TOKEN")
-	}
 	if cfg.tlsCA != "" && cfg.insecure {
 		return errors.New("--tls-ca and --insecure are mutually exclusive")
 	}
@@ -657,8 +654,11 @@ func finalizeParsedConfig(fs *flag.FlagSet, cfg *config) error {
 	if cfg.authToken == "" {
 		cfg.authToken = os.Getenv("MECATL_AUTH_TOKEN")
 	}
-	if cfg.anonymous && cfg.authToken != "" {
-		return errors.New("--anonymous conflicts with --auth-token and MECATL_AUTH_TOKEN")
+	if cfg.authToken != "" {
+		// Static bearer credentials are the highest-priority credential source.
+		// --anonymous only overrides saved OIDC state when no static token was
+		// supplied explicitly or through MECATL_AUTH_TOKEN.
+		cfg.anonymous = false
 	}
 	if cfg.theme == "" {
 		cfg.theme = os.Getenv("MECATUI_THEME")

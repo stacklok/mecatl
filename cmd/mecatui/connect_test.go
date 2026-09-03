@@ -250,12 +250,53 @@ func TestUnenrolledLocalTargetConnectsAnonymouslyWithoutCreatingAuthState(t *tes
 	}
 }
 
-func TestUnenrolledLocalAnonymousServerRejectionRetainsLoginRecovery(t *testing.T) {
+func TestUnenrolledRemoteTargetReachesCredentialFreeServer(t *testing.T) {
 	oldConfigHome := xdg.ConfigHome
 	xdg.ConfigHome = t.TempDir()
 	t.Cleanup(func() { xdg.ConfigHome = oldConfigHome })
 
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	listener, err := net.Listen("tcp", "0.0.0.0:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	grpcServer := grpc.NewServer()
+	mecatlv1.RegisterHarnessServiceServer(grpcServer, anonymousConnectServer{})
+	go func() { _ = grpcServer.Serve(listener) }()
+	t.Cleanup(func() {
+		grpcServer.Stop()
+		_ = listener.Close()
+	})
+
+	if client.IsLocalTarget(listener.Addr().String()) {
+		t.Fatalf("test target %q unexpectedly classified local", listener.Addr())
+	}
+	invocation := resolveInvocation([]string{"mecatui", "connect", listener.Addr().String(), "--tls=false"})
+	cfg, err := parseRunConfig(invocation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	target, dial, cleanup, err := resolveTransport(t.Context(), cfg)
+	defer cleanup()
+	if err != nil || target != listener.Addr().String() || !dial.RemotePlaintextAllowed || dial.AuthToken != "" || dial.TokenSource != nil {
+		t.Fatalf("resolve = target %q dial %#v err %v, want credential-free remote dial", target, dial, err)
+	}
+	cl, err := client.Dial(dial)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cl.Close()
+	id, _, _, err := cl.CreateSession(t.Context(), "", mecatlv1.PermissionMode_PERMISSION_MODE_DEFAULT, client.ModelSelection{})
+	if err != nil || id != "anonymous-local" {
+		t.Fatalf("credential-free CreateSession = %q, %v", id, err)
+	}
+}
+
+func TestUnenrolledRemoteUnauthenticatedOffersServerAuthoritativeRecovery(t *testing.T) {
+	oldConfigHome := xdg.ConfigHome
+	xdg.ConfigHome = t.TempDir()
+	t.Cleanup(func() { xdg.ConfigHome = oldConfigHome })
+
+	listener, err := net.Listen("tcp", "0.0.0.0:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -269,7 +310,11 @@ func TestUnenrolledLocalAnonymousServerRejectionRetainsLoginRecovery(t *testing.
 		_ = listener.Close()
 	})
 
-	_, dial, cleanup, err := resolveTransport(t.Context(), config{transportMode: modeConnect, connectAddress: listener.Addr().String()})
+	_, dial, cleanup, err := resolveTransport(t.Context(), config{
+		transportMode:  modeConnect,
+		connectAddress: listener.Addr().String(),
+		tlsExplicit:    true,
+	})
 	defer cleanup()
 	if err != nil {
 		t.Fatal(err)
@@ -281,8 +326,13 @@ func TestUnenrolledLocalAnonymousServerRejectionRetainsLoginRecovery(t *testing.
 	defer cl.Close()
 	_, _, _, err = cl.CreateSession(t.Context(), "", mecatlv1.PermissionMode_PERMISSION_MODE_DEFAULT, client.ModelSelection{})
 	reason, ok := client.AuthFailure(err, false)
-	if !ok || reason != client.AuthNotEnrolled || !strings.Contains(err.Error(), "mecatui login "+listener.Addr().String()) {
-		t.Fatalf("CreateSession error=%v reason=%q ok=%v, want login recovery", err, reason, ok)
+	for _, want := range []string{"server requires caller authentication", "--auth-token", "if this server supports OIDC enrollment", "mecatui login " + listener.Addr().String()} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("CreateSession error missing %q: %v", want, err)
+		}
+	}
+	if !ok || reason != client.AuthNotEnrolled || strings.Contains(err.Error(), "no saved credential") {
+		t.Fatalf("CreateSession error=%v reason=%q ok=%v, want server-authoritative auth recovery", err, reason, ok)
 	}
 }
 
@@ -346,14 +396,14 @@ func TestRemoteAnonymousProductionPathResolvesTLSAndPlaintext(t *testing.T) {
 			}
 			target, dial, cleanup, err := resolveTransport(t.Context(), cfg)
 			defer cleanup()
-			if err != nil || target != cfg.connectAddress || dial.UseTLS != tc.wantTLS || dial.RemotePlaintextAllowed != tc.wantPlaintextAuthorized || dial.AuthToken != "" || dial.TokenSource != nil {
+			if err != nil || target != cfg.connectAddress || dial.UseTLS != tc.wantTLS || dial.RemotePlaintextAllowed != tc.wantPlaintextAuthorized || dial.AuthToken != "" || dial.TokenSource != nil || !dial.ExplicitAnonymous {
 				t.Fatalf("target=%q dial=%#v err=%v", target, dial, err)
 			}
 		})
 	}
 }
 
-func TestLocalRegistryFailureDoesNotFallBackToAnonymous(t *testing.T) {
+func TestExplicitStaticTokenBypassesSavedEnrollmentLookup(t *testing.T) {
 	oldConfigHome := xdg.ConfigHome
 	xdg.ConfigHome = t.TempDir()
 	t.Cleanup(func() { xdg.ConfigHome = oldConfigHome })
@@ -365,11 +415,53 @@ func TestLocalRegistryFailureDoesNotFallBackToAnonymous(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, dial, cleanup, err := resolveTransport(t.Context(), config{transportMode: modeConnect, connectAddress: "127.0.0.1:8080"})
+	target, dial, cleanup, err := resolveTransport(t.Context(), config{
+		transportMode:  modeConnect,
+		connectAddress: "remote.example:443",
+		authToken:      "explicit-token",
+		useTLS:         true,
+	})
 	defer cleanup()
-	reason, ok := client.AuthFailure(err, false)
-	if dial.Server != "" || !ok || reason != client.AuthStorageUnavailable {
-		t.Fatalf("dial=%#v err=%v reason=%q ok=%v, want fail-closed storage error", dial, err, reason, ok)
+	if err != nil || target != "remote.example:443" || dial.AuthToken != "explicit-token" || dial.TokenSource != nil || dial.ExplicitAnonymous {
+		t.Fatalf("target=%q dial=%#v err=%v, want explicit token without registry access", target, dial, err)
+	}
+}
+
+func TestMalformedOrUnreadableRegistryFailsClosedForAllTargets(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		setup func(*testing.T, string)
+	}{
+		{name: "malformed", setup: func(t *testing.T, path string) {
+			if err := os.WriteFile(path, []byte("corrupt"), 0600); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "unreadable shape", setup: func(t *testing.T, path string) {
+			if err := os.Mkdir(path, 0700); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			oldConfigHome := xdg.ConfigHome
+			xdg.ConfigHome = t.TempDir()
+			t.Cleanup(func() { xdg.ConfigHome = oldConfigHome })
+			root := filepath.Join(xdg.ConfigHome, "mecatl")
+			if err := os.MkdirAll(root, 0700); err != nil {
+				t.Fatal(err)
+			}
+			tc.setup(t, filepath.Join(root, "clientauth-connections.json"))
+
+			for _, target := range []string{"127.0.0.1:8080", "remote.example:443"} {
+				_, dial, cleanup, err := resolveTransport(t.Context(), config{transportMode: modeConnect, connectAddress: target, useTLS: true})
+				cleanup()
+				reason, ok := client.AuthFailure(err, false)
+				if dial.Server != "" || !ok || reason != client.AuthStorageUnavailable {
+					t.Fatalf("target=%q dial=%#v err=%v reason=%q ok=%v, want fail-closed storage error", target, dial, err, reason, ok)
+				}
+			}
+		})
 	}
 }
 
@@ -397,26 +489,23 @@ func TestSavedLocalEnrollmentIsNotIgnored(t *testing.T) {
 	}
 }
 
-func TestNeverEnrolledTargetFailsBeforeDial(t *testing.T) {
+func TestUnenrolledRemoteTargetResolvesCredentialFreeWithVerifiedTLS(t *testing.T) {
 	oldConfigHome := xdg.ConfigHome
 	xdg.ConfigHome = t.TempDir()
 	t.Cleanup(func() { xdg.ConfigHome = oldConfigHome })
 
-	target, dial, cleanup, err := resolveTransport(t.Context(), config{
-		transportMode:  modeConnect,
-		connectAddress: "new.example:443",
-		useTLS:         true,
-	})
+	invocation := resolveInvocation([]string{"mecatui", "connect", "new.example:443"})
+	if invocation.err != nil {
+		t.Fatal(invocation.err)
+	}
+	cfg, err := parseRunConfig(invocation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	target, dial, cleanup, err := resolveTransport(t.Context(), cfg)
 	defer cleanup()
-	if target != "new.example:443" {
-		t.Fatalf("target = %q, want requested target", target)
-	}
-	if dial.Server != "" || dial.TokenSource != nil {
-		t.Fatalf("dial config = %#v, want no dial target or token source", dial)
-	}
-	reason, ok := client.AuthFailure(err, false)
-	if !ok || reason != client.AuthNeverEnrolled {
-		t.Fatalf("resolve error = %v, reason=%q ok=%v", err, reason, ok)
+	if err != nil || target != "new.example:443" || dial.Server != target || !dial.UseTLS || dial.Insecure || dial.RemotePlaintextAllowed || dial.AuthToken != "" || dial.TokenSource != nil {
+		t.Fatalf("target=%q dial=%#v err=%v, want credential-free verified-TLS dial", target, dial, err)
 	}
 }
 

@@ -17,11 +17,12 @@ Caller identity is an opt-in server feature for `mecated` and `mecak8s`. It
 protects both wire surfaces with the same validator and ownership rules. `mecatui`
 can either send an operator-supplied static bearer with `--auth-token`, or enroll a
 remote target with `mecatui login` and obtain, validate, and refresh its own OIDC
-credential. With no explicit credential, an existing saved enrollment is preserved; an
-unenrolled local target connects credential-free. Use connect-only `--anonymous` to
-intentionally bypass saved credentials. It conflicts with a static token, has no environment
-equivalent, and is required for an unenrolled remote target. Remote targets use verified
-TLS automatically; a static bearer is never
+credential. With no explicit credential, an existing saved enrollment is preserved; any
+clean enrollment miss is attempted credential-free and the server decides whether caller
+authentication is required. Use connect-only `--anonymous` to intentionally bypass saved
+credentials when no static token is selected. A token supplied through `--auth-token` or
+`MECATL_AUTH_TOKEN` wins if both are present; `--anonymous` has no environment equivalent. Remote
+targets use verified TLS automatically; a static bearer is never
 sent over explicit non-loopback plaintext, and saved OIDC authentication always
 requires verified TLS. Those are distinct client modes; the server still only validates the
 bearer presented on each request.
@@ -141,13 +142,16 @@ producing a model response.
 
 ### Credential-free private-network connection
 
-`--anonymous` means “send no bearer”; it is not a login mode and creates no saved state.
-For remote use, verified TLS remains the default. If a Tailscale deployment deliberately
-uses the tailnet as shared authority and transport, make both decisions explicit:
+`--anonymous` means “bypass saved OIDC enrollment and send no bearer”; it is not a login
+mode and creates no saved state. A clean enrollment miss already gets a credential-free
+attempt. For remote use, verified TLS remains the default. If a Tailscale deployment
+deliberately uses the tailnet as shared authority and transport, explicitly select plaintext:
 
 ```console
-mecatui connect ozzllama:9080 --anonymous --tls=false
+mecatui connect ozzllama:9080 --tls=false
 ```
+
+Add `--anonymous` only to override an existing saved enrollment.
 
 Bind `mecated` to one concrete Tailscale address rather than a wildcard, do not enable
 Funnel, and make tailnet ACLs the load-bearing reachability boundary. Use a dedicated

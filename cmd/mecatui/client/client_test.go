@@ -174,35 +174,54 @@ func TestBearerRequireTransportSecurity(t *testing.T) {
 	}
 }
 
-// TestAnonymousDialHintOnlyAnnotatesUnauthenticated pins the hint a client adds
-// when it dialled with no bearer credential. A registry miss is not an error at
-// dial time (an unauthenticated mecated needs no credential), so the server's
-// rejection is the first actionable moment — and it must not read as a server
-// fault. The gRPC status has to survive, since callers classify on it.
-func TestAnonymousDialHintOnlyAnnotatesUnauthenticated(t *testing.T) {
+// TestCredentialFreeDialHintClassifiesOnlyServerAuthDecisions pins the hint a
+// credential-free client adds only after the server is authoritative.
+func TestCredentialFreeDialHintClassifiesOnlyServerAuthDecisions(t *testing.T) {
 	const server = "mecak8s.example:18081"
 
-	if got := anonymousDialHint(server, nil); got != nil {
+	if got := credentialFreeDialHint(server, false, nil); got != nil {
 		t.Fatalf("nil error became %v", got)
 	}
 
 	unauth := status.Error(codes.Unauthenticated, "missing or invalid bearer token")
-	got := anonymousDialHint(server, unauth)
-	if !strings.Contains(got.Error(), "run 'mecatui login "+server+"'") {
-		t.Fatalf("hint missing: %v", got)
+	got := credentialFreeDialHint(server, false, unauth)
+	for _, want := range []string{"server requires caller authentication", "use --auth-token", "if this server supports OIDC enrollment", "mecatui login " + server} {
+		if !strings.Contains(got.Error(), want) {
+			t.Fatalf("hint missing %q: %v", want, got)
+		}
 	}
-	if !strings.Contains(got.Error(), "missing or invalid bearer token") {
-		t.Fatalf("server message lost: %v", got)
+	if strings.Contains(got.Error(), "no saved credential") {
+		t.Fatalf("server rejection was misreported as a registry fact: %v", got)
+	}
+	if reason, ok := AuthFailure(got, false); !ok || reason != AuthNotEnrolled {
+		t.Fatalf("reason=%q ok=%v, want server auth required", reason, ok)
 	}
 	if status.Code(got) != codes.Unauthenticated {
 		t.Fatalf("status code = %v, want Unauthenticated", status.Code(got))
 	}
 
-	// Any other failure is not an enrolment problem and must be left alone.
+	explicit := credentialFreeDialHint(server, true, unauth)
+	if reason, ok := AuthFailure(explicit, false); !ok || reason != AuthAnonymousRejected || !strings.Contains(explicit.Error(), "rejected the explicit --anonymous connection") {
+		t.Fatalf("explicit anonymous rejection = %v, reason=%q ok=%v", explicit, reason, ok)
+	}
+
+	denied := credentialFreeDialHint(server, false, status.Error(codes.PermissionDenied, "policy"))
+	if reason, ok := AuthFailure(denied, false); ok || reason != "" {
+		t.Fatalf("PermissionDenied became auth recovery: reason=%q ok=%v", reason, ok)
+	}
+	if status.Code(denied) != codes.PermissionDenied || !strings.Contains(denied.Error(), "authorization denied") {
+		t.Fatalf("PermissionDenied presentation = %v", denied)
+	}
+
+	// Network/TLS and other RPC failures must not acquire authentication recovery.
 	for _, code := range []codes.Code{codes.Internal, codes.Unavailable, codes.InvalidArgument} {
 		in := status.Error(code, "boom")
-		if out := anonymousDialHint(server, in); out.Error() != in.Error() {
+		out := credentialFreeDialHint(server, false, in)
+		if out.Error() != in.Error() {
 			t.Fatalf("%v was annotated: %v", code, out)
+		}
+		if reason, ok := AuthFailure(out, false); ok || reason != "" {
+			t.Fatalf("%v became auth recovery: reason=%q ok=%v", code, reason, ok)
 		}
 	}
 }

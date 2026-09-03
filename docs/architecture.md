@@ -629,12 +629,17 @@ saved policy and an explicit CA reference, never CA contents, are used for later
 and logout. The login `--tls-ca` path is distinct from the
 optional server CA supplied to `connect`. It validates discovery, PKCE, and
 the resulting token before saving. `mecatui connect ADDRESS` never opens a browser or
-guesses missing settings. Credential selection is explicit-token first, then explicit
-`--anonymous`, then a saved enrollment. If no registry file or target enrollment exists,
-a local target (loopback, localhost, IPv6 loopback, or UNIX socket) dials without a
-credential; an unenrolled remote target keeps the login-required failure. Explicit
-anonymous bypasses the registry, including for remote targets, while corrupt or unreadable
-registry state never silently degrades ([ADR 0290](adr/0290-mecatui-anonymous-connect.md)). A saved credential forces verified TLS for the gRPC server,
+guesses missing settings. Credential selection is explicit-token first (and therefore wins
+if `--anonymous` is also present), then explicit
+`--anonymous`, then a saved enrollment. A clean registry/target miss dials without a
+credential for both local and remote targets; only an actual server `Unauthenticated`
+response establishes that caller authentication is required. Explicit anonymous bypasses
+the registry even when enrollment exists, while corrupt or unreadable registry, keyring,
+or credential state never silently degrades ([ADR 0290](adr/0290-mecatui-anonymous-connect.md)).
+Remote credential-free targets still default to verified TLS, and plaintext requires an
+explicit `--tls=false`; no private IP, DNS name, or Tailscale-like target weakens that policy.
+In a credential-free Tailscale deployment, tailnet membership and ACLs are the shared
+authority and all admitted peers share the server's unauthenticated caller posture. A saved credential forces verified TLS for the gRPC server,
 even on loopback; its saved issuer CA remains issuer-only, while `connect --tls-ca`
 is the only custom server-CA input. An enrolled target uses a root-scoped OS-keyring key and a
 keyring-wrapped encrypted credential store; under the root lock, the legacy unsuffixed
