@@ -2,8 +2,8 @@
 id: 06-mecatui-title-ux
 title: Mecatui title command and live reconciliation
 blocked_by: [02-title-wire-projection, 05-title-coordinator]
-status: in-progress
-branch: ""
+status: done
+branch: "plan-session-title-generation/06-mecatui-title-ux"
 worktree: ""
 issue: "621"
 retries: 0
