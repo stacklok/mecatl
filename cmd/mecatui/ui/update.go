@@ -3897,6 +3897,10 @@ func snapshotSelection(m *Model) {
 	if !m.sel.active {
 		return
 	}
+	// A dirty gesture refreshes content before the coalesced render tick. Preserve the
+	// pre-gesture tail-follow state across that growth; SetContent otherwise retains
+	// the former YOffset and briefly shows an earlier part of the transcript.
+	followTail := m.viewDirty && m.stuck
 	// snapshotSelection calls vp.SetContent (re-splicing the highlight), so the
 	// vpView cache must be invalidated so the next View() reflects the new content.
 	m.rend.invalidateVPView()
@@ -3923,6 +3927,9 @@ func snapshotSelection(m *Model) {
 	}
 	m.sel.snapshot = selectedText(base, m.sel)
 	m.vp.SetContent(styleSelection(base, m.sel, m.deps.Theme.Style("selection")))
+	if followTail {
+		m.vp.GotoBottom()
+	}
 }
 
 // clearSelection drops any active text selection (including a pending edge-
