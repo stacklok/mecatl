@@ -2,8 +2,8 @@
 id: 09-lease-loss-capability
 title: Lease-loss mutation invalidation and optional compatibility
 blocked_by: [08-session-mutation-lease-inventory]
-status: in-progress
-branch: ""
+status: done
+branch: "plan-session-affinity-and-handoff/09-lease-loss-capability"
 worktree: ".scratch/task-session-affinity-09"
 issue: ""
 retries: 0

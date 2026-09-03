@@ -2,8 +2,8 @@
 id: 04-mecatui-affinity
 title: mecatui session-bound metadata propagation
 blocked_by: [02-grpc-affinity-validation]
-status: in-progress
-branch: ""
+status: done
+branch: "plan-session-affinity-and-handoff/04-mecatui-affinity"
 worktree: ".scratch/task-session-affinity-04"
 issue: ""
 retries: 0

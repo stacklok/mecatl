@@ -2,8 +2,8 @@
 id: 05-typescript-raw-affinity
 title: TypeScript raw session-binding helpers
 blocked_by: [02-grpc-affinity-validation, 03-http-affinity-validation]
-status: in-progress
-branch: ""
+status: done
+branch: "plan-session-affinity-and-handoff/05-typescript-raw-affinity"
 worktree: ".scratch/task-session-affinity-05"
 issue: ""
 retries: 0

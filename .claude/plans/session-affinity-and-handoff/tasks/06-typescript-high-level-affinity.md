@@ -2,9 +2,9 @@
 id: 06-typescript-high-level-affinity
 title: TypeScript Session and Run automatic affinity
 blocked_by: [05-typescript-raw-affinity]
-status: pending
+status: in-progress
 branch: ""
-worktree: ""
+worktree: ".scratch/task-session-affinity-06"
 issue: ""
 retries: 0
 last_error: ""
