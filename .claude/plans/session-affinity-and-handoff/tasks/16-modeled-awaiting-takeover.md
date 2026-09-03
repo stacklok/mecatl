@@ -2,9 +2,9 @@
 id: 16-modeled-awaiting-takeover
 title: Modeled awaiting-approval takeover
 blocked_by: [10-awaiting-lease-loss-handoff, 13-modeled-crash-ownership]
-status: pending
+status: in-progress
 branch: ""
-worktree: ""
+worktree: ".scratch/task-session-affinity-16"
 issue: ""
 retries: 0
 last_error: ""
