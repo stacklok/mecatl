@@ -327,10 +327,8 @@ func waitPodsReady() {
 // podNames returns the names of the agent pods (component=agent) that are
 // Running and Ready, in stable sorted order so pod-A / pod-B are addressable
 // across the suite. There are exactly two (the Deployment replicas:2); the
-// suite asserts that. Filtering to Ready pods excludes terminating pods during
-// a rolling update (the old pods leave the Ready set when /readyz flips to 503
-// via the drain gate, but they remain in the pod list during the
-// terminationGracePeriodSeconds window).
+// suite asserts that. This general helper deliberately does not pin a Deployment
+// revision: failover specs use it while replacements overlap.
 //
 // This is an Eventually because a RollingUpdate with maxSurge:1 has a transient
 // 3-pod window: the new pods surge Ready before the old pod's preStop /drain
@@ -354,6 +352,178 @@ func podNames() []string {
 	}, 120*time.Second, 2*time.Second).Should(gomega.Succeed(),
 		"did not converge on exactly two Ready agent pods")
 	return names
+}
+
+type agentDeploymentRevision struct {
+	ReplicaSet      string
+	PodTemplateHash string
+	Desired         int
+}
+
+// currentAgentDeploymentRevision resolves the ReplicaSet selected by the
+// Deployment's current revision annotation. Unlike readiness alone, this stays
+// unambiguous while Ready old pods remain during graceful termination.
+func currentAgentDeploymentRevision() agentDeploymentRevision {
+	ginkgo.GinkgoHelper()
+	deploymentCtx, deploymentCancel := shortCtx(15 * time.Second)
+	defer deploymentCancel()
+	deployment := runCmd(deploymentCtx, "kubectl", "get", "deployment/mecak8s-agent",
+		"-n", k8sNamespace, "--request-timeout=10s", "-o", "json")
+	replicaSetsCtx, replicaSetsCancel := shortCtx(15 * time.Second)
+	defer replicaSetsCancel()
+	replicaSets := runCmd(replicaSetsCtx, "kubectl", "get", "replicasets",
+		"-n", k8sNamespace,
+		"-l", "app.kubernetes.io/component="+agentComponent,
+		"--request-timeout=10s", "-o", "json")
+	revision, err := resolveAgentDeploymentRevision([]byte(deployment), []byte(replicaSets))
+	gomega.ExpectWithOffset(1, err).NotTo(gomega.HaveOccurred(), "resolve current agent Deployment revision")
+	return revision
+}
+
+func resolveAgentDeploymentRevision(deploymentJSON, replicaSetsJSON []byte) (agentDeploymentRevision, error) {
+	type metadata struct {
+		Name        string            `json:"name"`
+		UID         string            `json:"uid"`
+		Labels      map[string]string `json:"labels"`
+		Annotations map[string]string `json:"annotations"`
+		OwnerRefs   []struct {
+			Kind string `json:"kind"`
+			Name string `json:"name"`
+			UID  string `json:"uid"`
+		} `json:"ownerReferences"`
+	}
+	var deployment struct {
+		Metadata metadata `json:"metadata"`
+		Spec     struct {
+			Replicas int `json:"replicas"`
+		} `json:"spec"`
+	}
+	if err := json.Unmarshal(deploymentJSON, &deployment); err != nil {
+		return agentDeploymentRevision{}, fmt.Errorf("decode agent Deployment revision: %w", err)
+	}
+	currentRevision := deployment.Metadata.Annotations["deployment.kubernetes.io/revision"]
+	if deployment.Metadata.Name == "" || currentRevision == "" || deployment.Spec.Replicas < 1 {
+		return agentDeploymentRevision{}, fmt.Errorf("agent Deployment is missing name, current revision, or desired replicas")
+	}
+
+	var replicaSets struct {
+		Items []struct {
+			Metadata metadata `json:"metadata"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(replicaSetsJSON, &replicaSets); err != nil {
+		return agentDeploymentRevision{}, fmt.Errorf("decode agent ReplicaSets: %w", err)
+	}
+	var matches []agentDeploymentRevision
+	for _, replicaSet := range replicaSets.Items {
+		owned := false
+		for _, owner := range replicaSet.Metadata.OwnerRefs {
+			if owner.Kind == "Deployment" && owner.Name == deployment.Metadata.Name &&
+				(deployment.Metadata.UID == "" || owner.UID == deployment.Metadata.UID) {
+				owned = true
+				break
+			}
+		}
+		if !owned || replicaSet.Metadata.Annotations["deployment.kubernetes.io/revision"] != currentRevision {
+			continue
+		}
+		hash := replicaSet.Metadata.Labels["pod-template-hash"]
+		if hash != "" {
+			matches = append(matches, agentDeploymentRevision{
+				ReplicaSet: replicaSet.Metadata.Name, PodTemplateHash: hash, Desired: deployment.Spec.Replicas,
+			})
+		}
+	}
+	if len(matches) != 1 {
+		return agentDeploymentRevision{}, fmt.Errorf("current Deployment revision %q matched %d ReplicaSets", currentRevision, len(matches))
+	}
+	return matches[0], nil
+}
+
+func podNamesForRevision(revision agentDeploymentRevision) []string {
+	ginkgo.GinkgoHelper()
+	var names []string
+	gomega.Eventually(func(g gomega.Gomega) {
+		pollCtx, pollCancel := shortCtx(15 * time.Second)
+		defer pollCancel()
+		pods, err := boundedCommandOutput(pollCtx, 1<<20, "kubectl", "get", "pods",
+			"-n", k8sNamespace,
+			"-l", "app.kubernetes.io/component="+agentComponent,
+			"--request-timeout=10s", "-o", "json")
+		g.Expect(err).NotTo(gomega.HaveOccurred(), "poll current-revision agent pods")
+		if err != nil {
+			return
+		}
+		names, err = readyPodNamesForRevision(pods, revision)
+		g.Expect(err).NotTo(gomega.HaveOccurred())
+		if err != nil {
+			return
+		}
+		g.Expect(validateReadyPodCount(names, revision.Desired)).To(gomega.Succeed(),
+			"expected exactly %d Ready, non-terminating agent pods from ReplicaSet %s, got %d: %v",
+			revision.Desired, revision.ReplicaSet, len(names), names)
+	}, 120*time.Second, 2*time.Second).Should(gomega.Succeed(),
+		"did not converge on Ready agent pods from the current Deployment revision")
+	return names
+}
+
+func validateReadyPodCount(names []string, desired int) error {
+	if len(names) != desired {
+		return fmt.Errorf("got %d Ready pods, want %d", len(names), desired)
+	}
+	return nil
+}
+
+func readyPodNamesForRevision(podsJSON []byte, revision agentDeploymentRevision) ([]string, error) {
+	var pods struct {
+		Items []struct {
+			Metadata struct {
+				Name              string            `json:"name"`
+				DeletionTimestamp *string           `json:"deletionTimestamp"`
+				Labels            map[string]string `json:"labels"`
+				OwnerRefs         []struct {
+					Kind string `json:"kind"`
+					Name string `json:"name"`
+				} `json:"ownerReferences"`
+			} `json:"metadata"`
+			Status struct {
+				Phase      string `json:"phase"`
+				Conditions []struct {
+					Type   string `json:"type"`
+					Status string `json:"status"`
+				} `json:"conditions"`
+			} `json:"status"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(podsJSON, &pods); err != nil {
+		return nil, fmt.Errorf("decode agent pods: %w", err)
+	}
+	var names []string
+	for _, pod := range pods.Items {
+		if pod.Metadata.DeletionTimestamp != nil || pod.Status.Phase != "Running" ||
+			pod.Metadata.Labels["pod-template-hash"] != revision.PodTemplateHash {
+			continue
+		}
+		owned := false
+		for _, owner := range pod.Metadata.OwnerRefs {
+			if owner.Kind == "ReplicaSet" && owner.Name == revision.ReplicaSet {
+				owned = true
+				break
+			}
+		}
+		ready := false
+		for _, condition := range pod.Status.Conditions {
+			if condition.Type == "Ready" && condition.Status == "True" {
+				ready = true
+				break
+			}
+		}
+		if owned && ready {
+			names = append(names, pod.Metadata.Name)
+		}
+	}
+	slices.Sort(names)
+	return names, nil
 }
 
 func serviceReadyEndpointCount() int {
@@ -1018,10 +1188,11 @@ func enableLiveProvider(key string) {
 	ginkgo.By("waiting for all mecak8s pods to be Ready (after the live-provider patch)")
 	waitPodsReady()
 
-	// Refresh the captured pod names: the rollout replaced both pods. podNames()
-	// filters to Ready pods only, so the terminating old pods (still in the pod
-	// list during terminationGracePeriodSeconds) are excluded automatically.
-	agentPods = podNames()
+	// Refresh only from the Deployment's current revision. A terminating old pod
+	// can remain Running and Ready throughout its longer graceful-shutdown window,
+	// so readiness alone cannot prove that it has the live-provider configuration.
+	revision := currentAgentDeploymentRevision()
+	agentPods = podNamesForRevision(revision)
 	ginkgo.GinkgoWriter.Printf("live provider enabled; agent pods after rollout: pod-A=%s pod-B=%s\n",
 		agentPods[0], agentPods[1])
 }
