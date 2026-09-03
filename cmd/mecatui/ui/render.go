@@ -1461,17 +1461,14 @@ func (r *renderer) renderTool(b *block, expand bool) string {
 		head += "\n" + r.th.Style("muted").Render(sanitizeTerminal(b.toolName))
 	}
 
-	if args := r.renderToolArgs(b, expand); args != "" {
+	// Every independently styled card region is wrapped to the same body budget
+	// before it reaches the card frame. Keeping the regions separate prevents the
+	// frame from re-wrapping an already styled multi-region card.
+	head = wrapToolCardRegion(head, bodyWidth)
+	if args := r.renderToolArgs(b, expand, bodyWidth); args != "" {
 		head += "\n" + args
 	}
 
-	// Arguments and headers retain their existing layout until their own row
-	// renderers migrate. Result rows are deliberately appended afterwards: their
-	// raw source is wrapped before styling, so no assembled styled result is ever
-	// re-wrapped below.
-	if !expand && bodyWidth > 0 {
-		head = ansi.Hardwrap(head, bodyWidth, true)
-	}
 	if b.resolved {
 		if res := r.renderToolResult(b, expand, bodyWidth); res != "" {
 			head += "\n" + res
@@ -1504,46 +1501,55 @@ func (r *renderer) toolCardLayout() (card lipgloss.Style, outerWidth, bodyWidth 
 	return card, outerWidth, bodyWidth
 }
 
+// wrapToolCardRegion constrains one independently styled tool-card region before it
+// joins the card. It deliberately operates per region, never on the assembled card:
+// card.Render must only frame already fitting rows.
+func wrapToolCardRegion(region string, bodyWidth int) string {
+	if region == "" || bodyWidth <= 0 {
+		return region
+	}
+	return ansi.Wrap(region, bodyWidth, "")
+}
+
 // renderToolArgs renders the ARGS region of a tool card (everything below the
 // head, before the result): the redacted Team/Subagent lanes, the Edit/Write
 // diff, or — for an ordinary tool — the compact key:value summary when collapsed
 // and the full pretty JSON when expanded. Returns "" when there is nothing to
 // show. See renderTool for the per-branch rationale.
-func (r *renderer) renderToolArgs(b *block, expand bool) string {
+func (r *renderer) renderToolArgs(b *block, expand bool, bodyWidth int) string {
+	var args string
 	switch {
 	case b.team:
 		// A Team card renders its BOUNDED per-member lanes in place of raw JSON args:
 		// a team header plus a live/expanded/resolved region. Member content is
 		// server-bounded and never enters the parent conversation.
-		return r.renderTeam(b, expand)
+		args = r.renderTeam(b, expand)
 	case b.subagent:
 		// A Subagent card renders its REDACTED child activity in place of raw JSON
 		// args. The child's interior (args/results/message text) is isolated by design
 		// and never shown — only metadata.
-		return r.renderSubagent(b, expand)
-	}
-	if diff, ok := r.renderToolDiff(b.toolName, b.toolArgs, expand); ok {
-		// Edit/Write render their change as a diff in place of the raw JSON args.
-		return diff
-	}
-	if expand {
-		// Expanded: always the FULL pretty-printed JSON (the inspect path; the summary
-		// is collapsed-only, so ctrl+t reveals everything).
-		if args := prettyJSON(b.toolArgs); args != "" {
-			return r.th.Style("toolArgs").Render(args)
+		args = r.renderSubagent(b, expand)
+	default:
+		if diff, ok := r.renderToolDiffAtWidth(b.toolName, b.toolArgs, expand, bodyWidth); ok {
+			// Edit/Write render their change as a diff in place of the raw JSON args.
+			return diff
 		}
-		return ""
+		if expand {
+			// Expanded: always the FULL pretty-printed JSON (the inspect path; the summary
+			// is collapsed-only, so ctrl+t reveals everything).
+			if jsonArgs := prettyJSON(b.toolArgs); jsonArgs != "" {
+				args = r.th.Style("toolArgs").Render(jsonArgs)
+			}
+		} else if summary, ok := r.summarizeArgs(b.toolArgs); ok {
+			// Collapsed: the compact key:value summary in place of raw JSON (issue #24).
+			args = summary
+		} else if jsonArgs := prettyJSON(b.toolArgs); jsonArgs != "" {
+			// Collapsed but the args aren't a JSON object (bare array/scalar/odd shape):
+			// fall back to the existing pretty-JSON behaviour.
+			args = r.th.Style("toolArgs").Render(jsonArgs)
+		}
 	}
-	if summary, ok := r.summarizeArgs(b.toolArgs); ok {
-		// Collapsed: the compact key:value summary in place of raw JSON (issue #24).
-		return summary
-	}
-	// Collapsed but the args aren't a JSON object (bare array/scalar/odd shape):
-	// fall back to the existing pretty-JSON behaviour.
-	if args := prettyJSON(b.toolArgs); args != "" {
-		return r.th.Style("toolArgs").Render(args)
-	}
-	return ""
+	return wrapToolCardRegion(args, bodyWidth)
 }
 
 // renderToolResult renders the RESULT region of a resolved tool card. Collapsed,
@@ -2387,11 +2393,18 @@ func mutatedPath(name, rawArgs string) (string, bool) {
 // the existing pretty-JSON rendering. All server-derived text is sanitized
 // before it reaches lipgloss.
 func (r *renderer) renderToolDiff(name, rawArgs string, expand bool) (string, bool) {
+	_, _, bodyWidth := r.toolCardLayout()
+	return r.renderToolDiffAtWidth(name, rawArgs, expand, bodyWidth)
+}
+
+// renderToolDiffAtWidth prepares a diff for one tool card's body budget before
+// applying its independently styled rows.
+func (r *renderer) renderToolDiffAtWidth(name, rawArgs string, expand bool, bodyWidth int) (string, bool) {
 	switch name {
 	case "Edit":
-		return r.renderEditDiff(rawArgs, expand)
+		return r.renderEditDiff(rawArgs, expand, bodyWidth)
 	case "Write":
-		return r.renderWriteDiff(rawArgs, expand)
+		return r.renderWriteDiff(rawArgs, expand, bodyWidth)
 	default:
 		return "", false
 	}
@@ -2409,7 +2422,7 @@ type editDiffArgs struct {
 // removed (old_string) lines prefixed "-", added (new_string) lines prefixed
 // "+", under a muted path header (with a "(replace all)" tag when set). Returns
 // false on malformed/empty args so the caller falls back to JSON.
-func (r *renderer) renderEditDiff(rawArgs string, expand bool) (string, bool) {
+func (r *renderer) renderEditDiff(rawArgs string, expand bool, bodyWidth int) (string, bool) {
 	var args editDiffArgs
 	if err := json.Unmarshal([]byte(strings.TrimSpace(rawArgs)), &args); err != nil {
 		return "", false
@@ -2426,10 +2439,10 @@ func (r *renderer) renderEditDiff(rawArgs string, expand bool) (string, bool) {
 		header += " (replace all)"
 	}
 	var b strings.Builder
-	b.WriteString(r.th.Style("diffMeta").Render(sanitizeTerminal(header)))
+	b.WriteString(r.th.Style("diffMeta").Render(wrapToolCardRegion(sanitizeTerminal(header), bodyWidth)))
 	b.WriteString("\n")
-	b.WriteString(r.diffSide(args.OldString, "-", "diffRemove", expand))
-	b.WriteString(r.diffSide(args.NewString, "+", "diffAdd", expand))
+	b.WriteString(r.diffSide(args.OldString, "-", "diffRemove", expand, bodyWidth))
+	b.WriteString(r.diffSide(args.NewString, "+", "diffAdd", expand, bodyWidth))
 	return strings.TrimRight(b.String(), "\n"), true
 }
 
@@ -2446,7 +2459,7 @@ type writeDiffArgs struct {
 // whether the path already exists, and a silent overwrite is MORE dangerous than
 // a create — asserting "new file" would understate the risk at the approval gate.
 // So it says "(overwrites if it exists)" instead, which holds in both cases.
-func (r *renderer) renderWriteDiff(rawArgs string, expand bool) (string, bool) {
+func (r *renderer) renderWriteDiff(rawArgs string, expand bool, bodyWidth int) (string, bool) {
 	var args writeDiffArgs
 	if err := json.Unmarshal([]byte(strings.TrimSpace(rawArgs)), &args); err != nil {
 		return "", false
@@ -2456,10 +2469,10 @@ func (r *renderer) renderWriteDiff(rawArgs string, expand bool) (string, bool) {
 	}
 	header := fmt.Sprintf("%s · %s (overwrites if it exists)", args.Path, plural(lineCount(args.Content), "line"))
 	var b strings.Builder
-	b.WriteString(r.th.Style("diffMeta").Render(sanitizeTerminal(header)))
+	b.WriteString(r.th.Style("diffMeta").Render(wrapToolCardRegion(sanitizeTerminal(header), bodyWidth)))
 	if args.Content != "" {
 		b.WriteString("\n")
-		b.WriteString(r.diffSide(args.Content, "+", "diffAdd", expand))
+		b.WriteString(r.diffSide(args.Content, "+", "diffAdd", expand, bodyWidth))
 	}
 	return strings.TrimRight(b.String(), "\n"), true
 }
@@ -2467,7 +2480,7 @@ func (r *renderer) renderWriteDiff(rawArgs string, expand bool) (string, bool) {
 // diffSide renders one side of a diff (all-removed or all-added): every line of
 // text gets the prefix and the themed style, line-capped unless expanded. An
 // empty side renders nothing. The text is sanitized (these go through lipgloss).
-func (r *renderer) diffSide(text, prefix, slot string, expand bool) string {
+func (r *renderer) diffSide(text, prefix, slot string, expand bool, bodyWidth int) string {
 	text = sanitizeTerminal(strings.TrimRight(text, "\n"))
 	if text == "" {
 		return ""
@@ -2482,12 +2495,15 @@ func (r *renderer) diffSide(text, prefix, slot string, expand bool) string {
 	style := r.th.Style(slot)
 	var b strings.Builder
 	for _, ln := range lines {
-		b.WriteString(style.Render(prefix + " " + ln))
+		// Prefix before wrapping so the source's diff marker and leading whitespace
+		// remain attached to this source line, rather than being reconstructed after
+		// a styled-card wrap.
+		b.WriteString(style.Render(wrapToolCardRegion(prefix+" "+ln, bodyWidth)))
 		b.WriteString("\n")
 	}
 	if marker != "" {
 		// The collapse marker is muted, not coloured as a diff line.
-		b.WriteString(lipgloss.NewStyle().Render(marker))
+		b.WriteString(lipgloss.NewStyle().Render(wrapToolCardRegion(marker, bodyWidth)))
 		b.WriteString("\n")
 	}
 	return b.String()
