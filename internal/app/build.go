@@ -133,7 +133,7 @@ type Config struct {
 	ServerImplementation string
 	Workspace            string
 	// PlacementProvider optionally replaces the trusted local default with one
-	// deployment-owned provider implementing ADR 0290's Bind/Reattach and scoped
+	// deployment-owned provider implementing ADR 0291's Bind/Reattach and scoped
 	// worktree-discovery protocol. The provider owns private placement identity and
 	// inventory; Build creates no public registry, cache, or path-derived identifier.
 	PlacementProvider server.PlacementProvider

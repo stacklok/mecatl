@@ -19,7 +19,7 @@ import (
 	"github.com/stacklok/mecatl/engine/session"
 )
 
-func TestADR_0290_PathSurfaceInventoryEnforcesPublicBoundary(t *testing.T) {
+func TestADR_0291_PathSurfaceInventoryEnforcesPublicBoundary(t *testing.T) {
 	forbidden := map[protoreflect.Name]bool{
 		"path": true, "workspace": true, "cwd": true, "root": true, "mount": true,
 		"environment_ref": true, "environment_id": true, "winner_workspace": true,
@@ -51,7 +51,7 @@ func TestADR_0290_PathSurfaceInventoryEnforcesPublicBoundary(t *testing.T) {
 		}
 	}
 
-	svc := newADR0289Service(t)
+	svc := newADR0291Service(t)
 	for name, body := range map[string]string{
 		"create workspace": `{"workspace":"/attacker"}`,
 		"create cwd":       `{"cwd":"/attacker"}`,

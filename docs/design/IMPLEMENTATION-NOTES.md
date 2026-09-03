@@ -5898,7 +5898,7 @@ because the shared engine has FS tools baked in.
 
 A coding agent ultimately needs one execution environment whose filesystem and command namespace are
 affined: the bytes Read/Edit see and the tree Bash builds must be the same place. ADR 0208 fixes the
-version protocol; ADR 0211 implements the runtime seam; ADR 0290 makes
+version protocol; ADR 0211 implements the runtime seam; ADR 0291 makes
 `session.EnvironmentRef{Kind, ID, Revision}` the sole durable identity. The minimal immutable
 `tool.Environment` carries that ref plus a non-null `Workspace` and an optional bound
 `CommandRunner`. `Tool.Execute`, the loop, and delegation take `tool.Environment`; narrow
@@ -5908,7 +5908,7 @@ Environment and `tool.EnvironmentMerger` receives complete child/parent Environm
 direct-write Subagent uses the parent Environment; isolated Subagent, Parallel, and Team paths
 receive server-created children.
 
-**Persistence/reattachment (ADR 0290, preserving ADR 0214 exactness).**
+**Persistence/reattachment (ADR 0291, preserving ADR 0214 exactness).**
 `session.Session.EnvironmentRef` and `sessnap.Snapshot.EnvironmentRef` contain the exact private
 `Kind`, `ID`, and `Revision`; there is no `Session.Workspace` or snapshot Workspace. Trusted driver
 storage transports the same exact ref. Public Harness/HTTP/client mappers expose only bounded
@@ -6090,7 +6090,7 @@ deny-dominant (the inner fold runs first — a configured Deny or configured Ask
 reaches the checker). Default `false` is the byte-identical un-routed posture table. See
 `docs/adr/0080-guardrail-routed-escape-checking.md`.
 
-### Server-owned session placement and worktree successors (ADR 0290)
+### Server-owned session placement and worktree successors (ADR 0291)
 
 Placement is server-owned across embedded, loopback, remote, and cloud-native composition.
 `internal/app/placement.go` installs the local immutable provider over the operator's private
@@ -6139,7 +6139,7 @@ round-trips the exact private EnvironmentRef. ACP binds/reattaches first and tre
 as an assertion against trusted configured local placement.
 
 The Build-owned selector key is inventoried in ADR 0027 List 1; List 2 records reset-by-design,
-unpersisted selectors, and relist-after-restart. `TestADR_0290_PlacementReauditInventoriesEphemeralSelectorKey`
+unpersisted selectors, and relist-after-restart. `TestADR_0291_PlacementReauditInventoriesEphemeralSelectorKey`
 pins that lifecycle text.
 
 ### Snapshot fidelity — persisted per-session facts (cloud-native Phase 1)

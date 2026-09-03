@@ -96,7 +96,7 @@ The exact private `EnvironmentRef{kind,id,revision}` is persisted in snapshots a
 driver storage and reattached at run entry. It is never exposed by public session/event
 projections. Schedules resolve and persist exact placement before firing, delegation
 derives it from the parent, and ACP cwd is only a local consistency assertion. See
-[ADR 0290](https://github.com/stacklok/mecatl/blob/main/docs/adr/0290-server-owned-session-placement.md).
+[ADR 0291](https://github.com/stacklok/mecatl/blob/main/docs/adr/0291-server-owned-session-placement.md).
 
 ## Operator-defined providers
 

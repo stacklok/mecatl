@@ -816,7 +816,7 @@ Two deliberate cycle-breaks worth noting, documented in code:
   and Edit/existing-file Write conditionally replace. The read ledger belongs to the
   live Environment and resets when that Environment is rebuilt.
 
-  [ADR 0290](adr/0290-server-owned-session-placement.md) makes `EnvironmentRef` the
+  [ADR 0291](adr/0291-server-owned-session-placement.md) makes `EnvironmentRef` the
   sole durable runtime identity. Every session is bound to a valid exact ref before
   persistence; snapshots and trusted driver storage retain it, while public Harness,
   HTTP, event, and client projections expose only bounded display metadata. There is

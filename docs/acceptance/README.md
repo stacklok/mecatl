@@ -86,7 +86,7 @@ when the code that satisfies the plan has landed.
   application sessions, schedules, teams, memory, event streams, live runs, and
   model-facing object access; remote-driver enforcement is deferred to #452. Status:
   draft.
-- [Session storage continuity](session-storage-continuity.md) — historical storage plan: bounded current snapshots, indexed metadata, and maintenance jobs landed; its writable legacy-adoption criteria were superseded by ADR 0290. Status: draft historical record.
+- [Session storage continuity](session-storage-continuity.md) — historical storage plan: bounded current snapshots, indexed metadata, and maintenance jobs landed; its writable legacy-adoption criteria were superseded by ADR 0291. Status: draft historical record.
 - [Session continuity UX](session-continuity-ux.md) — authoritative session-family
   metadata, honest replay/inspection, an active-session copy surface, startup resume,
   and a final session-ID handoff for mecatui. Status: landed.
@@ -114,7 +114,7 @@ when the code that satisfies the plan has landed.
   alternate worktrees use fresh source-scoped opaque selectors only on clear/fork.
   Status: landed.
 - [Listener-scoped workspace authority](listener-scoped-workspace-authority.md) — historical
-  draft superseded by ADR 0290's path-free contract; retained for context and excluded from
+  draft superseded by ADR 0291's path-free contract; retained for context and excluded from
   strict traceability. Status: draft.
 - [SDK server enablers](sdk-server-enablers.md) — the Go-side contracts the TypeScript
   SDK is built on: `GetServerInfo` + an open-string feature vocabulary, RFC 9457 typed

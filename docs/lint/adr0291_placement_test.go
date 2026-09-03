@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-func TestADR_0290_PlacementReauditInventoriesEphemeralSelectorKey(t *testing.T) {
+func TestADR_0291_PlacementReauditInventoriesEphemeralSelectorKey(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join(repoRoot(t), "docs", "adr", "0027-cloud-native.md"))
 	if err != nil {
 		t.Fatalf("read ADR 0027: %v", err)

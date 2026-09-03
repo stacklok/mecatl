@@ -1568,7 +1568,7 @@ those launch forms establish no session until the operator continues a chat or
 presses `n` for a new one. At startup, `esc` quits; after opening an inspection,
 `esc` returns to this inventory.
 The Other tab keeps unknown legacy/custom rows inspect-only and visibly labels each
-one **`Legacy session — inspect only`**. ADR 0290 removed writable legacy adoption:
+one **`Legacy session — inspect only`**. ADR 0291 removed writable legacy adoption:
 there is no preflight/adopt action and no way to supply a replacement workspace or
 placement authority.
 `tab` switches tabs; the
