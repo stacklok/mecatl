@@ -1103,6 +1103,11 @@ type sessionEngine struct {
 type runState struct {
 	run  *agent.Run
 	sess *session.Session
+	// resumeAdmission distinguishes the provisional lifecycle installed by
+	// resumeFromAwaiting from ordinary prompt/retry admission. A concurrent approval
+	// must wait for the former under resumeMu instead of treating its nil run as a
+	// terminal registry entry.
+	resumeAdmission bool
 	// admissionCancel is non-nil until the provisional run-entry has atomically
 	// promoted to a real agent.Run. Drain and lease loss cancel it before any
 	// provider/tool work can start.
@@ -3884,7 +3889,7 @@ func (s *Service) RetryFailedRun(ctx context.Context, id session.SessionID) (*ag
 		return nil, fmt.Errorf("%w: session %q: %v", ErrFailedStepRetryIneligible, id, err)
 	}
 
-	st, admissionParent, err := s.beginRunAdmission(ctx, id, sess)
+	st, admissionParent, err := s.beginRunAdmission(ctx, id, sess, false)
 	if err != nil {
 		return nil, err
 	}
@@ -4029,7 +4034,7 @@ func (s *Service) startRunContent(ctx context.Context, id session.SessionID, tex
 	// Register a cancellable provisional lifecycle before lease acquisition and
 	// engine construction. Drain can now cancel admission even in the gap between
 	// acquiring ownership and constructing the run.
-	st, admissionParent, err := s.beginRunAdmission(ctx, id, sess)
+	st, admissionParent, err := s.beginRunAdmission(ctx, id, sess, false)
 	if err != nil {
 		return nil, err
 	}
@@ -4983,7 +4988,11 @@ func (s *Service) ApproveRun(ctx context.Context, id session.SessionID, askID st
 	st, ok := s.runs[id]
 	if ok {
 		if st.run == nil {
+			resumeAdmission := st.resumeAdmission
 			s.mu.Unlock()
+			if resumeAdmission {
+				return s.resumeFromAwaiting(ctx, id, askID, verdict, expectedRunID)
+			}
 			return nil, ErrNoActiveRun
 		}
 		if s.cfg.SessionLease != nil && !s.leaseDisabled {
@@ -5055,6 +5064,10 @@ func (s *Service) resumeFromAwaiting(ctx context.Context, id session.SessionID, 
 				return nil, fmt.Errorf("%w: %q", ErrSessionLeasedElsewhere, id)
 			}
 		}
+		if err := checkExpectedRun(expectedRunID, st.run.RunID()); err != nil {
+			s.mu.Unlock()
+			return nil, err
+		}
 		st.run.Approve(askID, verdict)
 		s.mu.Unlock()
 		return nil, nil
@@ -5094,7 +5107,7 @@ func (s *Service) resumeFromAwaiting(ctx context.Context, id session.SessionID, 
 	// though it cannot fire on this path.
 	entryUnlock := s.runEntryMu.lock(id)
 	defer entryUnlock()
-	st, admissionParent, err := s.beginRunAdmission(ctx, id, sess)
+	st, admissionParent, err := s.beginRunAdmission(ctx, id, sess, true)
 	if err != nil {
 		return nil, err
 	}
@@ -6280,10 +6293,12 @@ func (s *Service) cleanupRunAdmission(id session.SessionID, st *runState, promot
 }
 
 // beginRunAdmission installs a cancellable provisional lifecycle before lease
-// acquisition or engine construction. The caller holds runEntryMu for id.
-func (s *Service) beginRunAdmission(parent context.Context, id session.SessionID, sess *session.Session) (*runState, context.Context, error) {
+// acquisition or engine construction. resumeAdmission marks the awaiting-resume
+// path so concurrent approvals wait for its resumeMu transaction to promote.
+// The caller holds runEntryMu for id.
+func (s *Service) beginRunAdmission(parent context.Context, id session.SessionID, sess *session.Session, resumeAdmission bool) (*runState, context.Context, error) {
 	ctx, cancel := context.WithCancel(parent)
-	st := &runState{sess: sess, admissionCancel: cancel, settled: make(chan struct{})}
+	st := &runState{sess: sess, admissionCancel: cancel, settled: make(chan struct{}), resumeAdmission: resumeAdmission}
 	s.mu.Lock()
 	if s.draining.Load() {
 		s.mu.Unlock()
