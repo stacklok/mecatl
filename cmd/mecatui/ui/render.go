@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"unicode"
 
 	"charm.land/bubbles/v2/viewport"
 	"charm.land/glamour/v2"
@@ -18,9 +19,9 @@ import (
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
 )
 
-// maxToolResultLines caps how many lines of a tool result are shown inline; the
-// rest collapse into a "+N more lines" affordance so a giant Read result doesn't
-// drown the scrollback.
+// maxToolResultLines caps how many visible display rows of a tool result are
+// shown inline; the rest collapse into a "+N more lines" affordance so a giant
+// Read result doesn't drown the scrollback.
 const maxToolResultLines = 12
 
 // maxDiffLines caps how many lines of each diff side (Edit old/new, Write
@@ -1434,6 +1435,8 @@ func deliveryBodyForDisplay(raw string) string {
 // the args don't parse as the expected shape). expand removes the line cap on
 // the result body and the diff.
 func (r *renderer) renderTool(b *block, expand bool) string {
+	card, _, bodyWidth := r.toolCardLayout()
+
 	var glyph string
 	switch {
 	case !b.resolved:
@@ -1462,13 +1465,26 @@ func (r *renderer) renderTool(b *block, expand bool) string {
 		head += "\n" + args
 	}
 	if b.resolved {
-		if res := r.renderToolResult(b, expand); res != "" {
+		if res := r.renderToolResult(b, expand, bodyWidth); res != "" {
 			head += "\n" + res
 		}
 	}
 
-	card := r.th.Style("toolCard")
-	var outerWidth int
+	// Lipgloss Width sets the card's outer width (including its horizontal frame),
+	// but does not split an unbreakable body token. The collapsed result was already
+	// hard-wrapped and display-row-capped at bodyWidth; wrap the rest of the card
+	// here too so args and headers obey the same width guarantee.
+	if !expand && bodyWidth > 0 {
+		head = ansi.Hardwrap(head, bodyWidth, true)
+	}
+	return card.Render(head)
+}
+
+// toolCardLayout returns the styled card, its outer width, and its usable body
+// width. renderTool uses the same body width to wrap and cap collapsed results,
+// keeping result-row accounting aligned with the final card layout.
+func (r *renderer) toolCardLayout() (card lipgloss.Style, outerWidth, bodyWidth int) {
+	card = r.th.Style("toolCard")
 	if cw := r.contentWidth(); cw > card.GetHorizontalFrameSize()+2 {
 		// Width includes the card's border and padding. Keep the 2-cell right inset
 		// without letting the indented card exceed the viewport.
@@ -1481,14 +1497,10 @@ func (r *renderer) renderTool(b *block, expand bool) string {
 		outerWidth = cw
 		card = card.Border(lipgloss.Border{}).Padding(0).Width(outerWidth)
 	}
-	// lipgloss Width sets the card's outer width (including its horizontal frame),
-	// but does not split an unbreakable body token. Hard-wrap collapsed content to
-	// the actual remaining content width when terminal geometry is known; expanded
-	// content retains Lipgloss's prior rendering behavior.
-	if !expand && outerWidth > 0 {
-		head = ansi.Hardwrap(head, outerWidth-card.GetHorizontalFrameSize(), true)
+	if outerWidth > 0 {
+		bodyWidth = outerWidth - card.GetHorizontalFrameSize()
 	}
-	return card.Render(head)
+	return card, outerWidth, bodyWidth
 }
 
 // renderToolArgs renders the ARGS region of a tool card (everything below the
@@ -1536,7 +1548,7 @@ func (r *renderer) renderToolArgs(b *block, expand bool) string {
 // renderToolResult renders the RESULT region of a resolved tool card. Collapsed,
 // a LARGE JSON result is summarized to prominent fields + a size line (issue #24,
 // self-styled). An error result, a non-JSON/line-shaped result, or the expanded
-// view fall through to the existing styled, line-capped (or full) body — Read
+// view fall through to the existing styled, display-row-capped (or full) body — Read
 // results are unchanged. Returns "" when there is no body.
 //
 // Typed content blocks (b.resultBlocks) are rendered distinctly IN ADDITION to the
@@ -1546,60 +1558,82 @@ func (r *renderer) renderToolArgs(b *block, expand bool) string {
 // represented in the model-facing resultBody, so they are not double-rendered. A nil
 // resultBlocks (the common text-only case) leaves the existing render path
 // byte-unchanged.
-func (r *renderer) renderToolResult(b *block, expand bool) string {
-	body := r.renderToolResultBody(b, expand)
-	artifacts := r.renderResultBlocks(b.resultBlocks)
-	if artifacts == "" {
-		return body
+func (r *renderer) renderToolResult(b *block, expand bool, bodyWidth int) string {
+	lines, hiddenSummaryFields := r.renderToolResultLines(b, expand)
+	for _, blk := range b.resultBlocks {
+		if line, ok := renderResultBlockLine(blk); ok {
+			lines = append(lines, toolResultLine{text: line, style: resultLineArtifact})
+		}
 	}
-	if body == "" {
-		return artifacts
+	if !expand {
+		lines = r.truncateResultDisplayLines(lines, bodyWidth, hiddenSummaryFields)
 	}
-	return body + "\n" + artifacts
-}
-
-// renderToolResultBody renders the model-facing text result body (the legacy path),
-// unchanged: summarizeResolvedResult for a collapsed large JSON result, else the
-// styled, line-capped/full body. Returns "" when there is no body.
-func (r *renderer) renderToolResultBody(b *block, expand bool) string {
-	if summary, ok := r.summarizeResolvedResult(b, expand); ok {
-		return summary
-	}
-	body := r.resultBody(b.resultBody, expand)
-	if body == "" {
-		return ""
-	}
-	style := r.th.Style("toolArgs")
-	if b.resultError {
-		style = r.th.Style("errorText")
-	}
-	return style.Render(body)
-}
-
-// renderResultBlocks surfaces user-audience typed content blocks distinctly from the
-// model-facing text body. Only resource-link and image blocks render here: text,
-// embedded-resource, and structured-content blocks are already represented in the
-// model-facing resultBody, so rendering them again would double up. Returns "" when
-// there is nothing distinct to surface (no blocks, or only text-bearing blocks).
-// All server-derived strings are terminal-sanitized before they reach lipgloss
-// (CWE-150), the same guard the rest of the card uses.
-func (r *renderer) renderResultBlocks(blocks []client.ContentBlock) string {
-	if len(blocks) == 0 {
-		return ""
-	}
-	muted := r.th.Style("muted")
 	var out strings.Builder
-	for _, blk := range blocks {
-		line, ok := renderResultBlockLine(blk)
-		if !ok {
-			continue
+	for i, line := range lines {
+		if i > 0 {
+			out.WriteByte('\n')
 		}
-		if out.Len() > 0 {
-			out.WriteString("\n")
-		}
-		out.WriteString(muted.Render(line))
+		out.WriteString(r.renderToolResultLine(line))
 	}
 	return out.String()
+}
+
+type resultLineStyle uint8
+
+const (
+	resultLineBody resultLineStyle = iota
+	resultLineError
+	resultLineArtifact
+	resultLineSummary
+	resultLineMarker
+)
+
+type toolResultLine struct {
+	text  string
+	style resultLineStyle
+}
+
+// renderToolResultLines returns unwrapped, terminal-safe result rows. The enclosing
+// renderToolResult combines these with typed artifact rows before applying the shared
+// collapsed display-row budget.
+func (r *renderer) renderToolResultLines(b *block, expand bool) ([]toolResultLine, int) {
+	if summary, hiddenFields, ok := r.summarizeResolvedResultDetail(b, expand); ok {
+		return resultLines(summary, resultLineSummary), hiddenFields
+	}
+	body := sanitizeTerminal(strings.TrimRight(b.resultBody, "\n"))
+	if body == "" {
+		return nil, 0
+	}
+	style := resultLineBody
+	if b.resultError {
+		style = resultLineError
+	}
+	return resultLines(body, style), 0
+}
+
+func resultLines(text string, style resultLineStyle) []toolResultLine {
+	lines := strings.Split(text, "\n")
+	out := make([]toolResultLine, len(lines))
+	for i, line := range lines {
+		out[i] = toolResultLine{text: line, style: style}
+	}
+	return out
+}
+
+func (r *renderer) renderToolResultLine(line toolResultLine) string {
+	switch line.style {
+	case resultLineError:
+		return r.th.Style("errorText").Render(line.text)
+	case resultLineArtifact, resultLineMarker:
+		return r.th.Style("muted").Render(line.text)
+	case resultLineSummary:
+		if key, value, ok := strings.Cut(line.text, ": "); ok {
+			return r.th.Style("muted").Render(key+":") + " " + r.th.Style("toolArgs").Render(value)
+		}
+		return r.th.Style("muted").Render(line.text)
+	default:
+		return r.th.Style("toolArgs").Render(line.text)
+	}
 }
 
 // renderResultBlockLine renders ONE typed content block as a single distinct line,
@@ -2229,12 +2263,65 @@ func humanizeDuration(ms int64) string {
 	return strconv.FormatInt(m, 10) + "m " + strconv.FormatInt(s, 10) + "s"
 }
 
-// resultBody renders a tool result body: full when expanded, else line-capped.
+// resultBody renders a tool result body with the legacy logical-line cap for
+// callers without card geometry.
 func (r *renderer) resultBody(body string, expand bool) string {
-	if expand {
-		return sanitizeTerminal(strings.TrimRight(body, "\n"))
+	return r.resultBodyAtWidth(body, expand, 0)
+}
+
+// resultBodyAtWidth renders a tool result body: full when expanded; otherwise it
+// hard-wraps to the card body width before capping visible display rows. This keeps
+// the overflow count honest and prevents the final card wrap from growing the
+// collapsed body after its cap.
+func (r *renderer) resultBodyAtWidth(body string, expand bool, bodyWidth int) string {
+	body = sanitizeTerminal(strings.TrimRight(body, "\n"))
+	if expand || body == "" {
+		return body
 	}
-	return r.truncateLines(body, maxToolResultLines)
+	if bodyWidth > 0 {
+		body = ansi.Hardwrap(body, bodyWidth, true)
+	}
+	return truncateLinesTailMark(body, maxToolResultLines, "", r.marks.expandTools)
+}
+
+func (r *renderer) truncateResultDisplayLines(lines []toolResultLine, bodyWidth, hiddenSummaryFields int) []toolResultLine {
+	wrapped := make([]toolResultLine, 0, len(lines))
+	for _, line := range lines {
+		if strings.TrimSpace(line.text) == "" {
+			// Preserve an intentional blank source line as one display row, without
+			// retaining width-exceeding padding that could wrap into more rows.
+			wrapped = append(wrapped, toolResultLine{style: line.style})
+			continue
+		}
+		// Trailing whitespace is display padding, not result content: discard it
+		// before wrapping so it cannot become a blank continuation row. Leading
+		// indentation remains part of every meaningful source line.
+		text := strings.TrimRightFunc(line.text, unicode.IsSpace)
+		if bodyWidth > 0 {
+			text = ansi.Hardwrap(text, bodyWidth, true)
+		}
+		for _, fragment := range resultLines(text, line.style) {
+			// A leading indent wider than the card can make Hardwrap produce an
+			// empty-looking fragment before the text. It is wrapper-created, not a
+			// source row, so it neither renders nor consumes the collapsed budget.
+			if strings.TrimSpace(fragment.text) != "" {
+				wrapped = append(wrapped, fragment)
+			}
+		}
+	}
+	if len(wrapped) > maxToolResultLines {
+		return append(wrapped[:maxToolResultLines], toolResultLine{
+			text:  r.collapseMarker(len(wrapped) - maxToolResultLines),
+			style: resultLineMarker,
+		})
+	}
+	if hiddenSummaryFields > 0 {
+		return append(wrapped, toolResultLine{text: r.argRollupMarker(hiddenSummaryFields), style: resultLineMarker})
+	}
+	if hiddenSummaryFields < 0 {
+		return append(wrapped, toolResultLine{text: r.argRollupMarker(0), style: resultLineMarker})
+	}
+	return wrapped
 }
 
 // renderChangedFiles renders the session's changed-files summary as a muted,
@@ -2764,50 +2851,64 @@ func titleWord(s string) string {
 // resultSummaryByteThreshold bytes); otherwise it returns ("", false) and the
 // caller falls back to the existing line-capped truncateLines (so a Read result
 // or a small/odd result is unchanged). All values are sanitized (plain lipgloss).
-func (r *renderer) summarizeResult(body string) (string, bool) {
+// summarizeResultDetail returns the summary plus the number of omitted object
+// fields (or -1 for an abbreviated array) so its caller can advertise expansion
+// when visual row truncation does not already do so.
+func summarizeResultDetail(body string) (string, int, bool) {
 	trimmed := strings.TrimSpace(body)
 	if trimmed == "" {
-		return "", false
+		return "", 0, false
 	}
 	large := lineCount(body) > maxToolResultLines || len(body) > resultSummaryByteThreshold
 	if !large {
-		return "", false
+		return "", 0, false
 	}
-	muted := r.th.Style("muted")
-	valStyle := r.th.Style("toolArgs")
 	switch trimmed[0] {
 	case '{':
 		var obj map[string]json.RawMessage
 		if err := json.Unmarshal([]byte(trimmed), &obj); err != nil {
-			return "", false
+			return "", 0, false
 		}
+		shown := 0
 		var b strings.Builder
 		for _, k := range resultProminentKeys {
 			raw, ok := obj[k]
 			if !ok {
 				continue
 			}
+			shown++
 			if b.Len() > 0 {
 				b.WriteString("\n")
 			}
-			b.WriteString(muted.Render(sanitizeTerminal(k) + ":"))
+			b.WriteString(sanitizeTerminal(k) + ":")
 			b.WriteString(" ")
-			b.WriteString(valStyle.Render(summarizeValue(raw)))
+			b.WriteString(summarizeValue(raw))
 		}
 		if b.Len() > 0 {
 			b.WriteString("\n")
 		}
-		b.WriteString(muted.Render("· " + plural(len(obj), "key")))
-		return b.String(), true
+		b.WriteString("· " + plural(len(obj), "key"))
+		return b.String(), len(obj) - shown, true
 	case '[':
 		var elems []json.RawMessage
 		if err := json.Unmarshal([]byte(trimmed), &elems); err != nil {
-			return "", false
+			return "", 0, false
 		}
-		return muted.Render("· " + plural(len(elems), "item")), true
+		hidden := 0
+		if len(elems) > 0 {
+			hidden = -1
+		}
+		return "· " + plural(len(elems), "item"), hidden, true
 	default:
-		return "", false
+		return "", 0, false
 	}
+}
+
+// summarizeResult preserves the summary-only API for callers that do not need
+// the omitted-field expansion signal.
+func (*renderer) summarizeResult(body string) (string, bool) {
+	summary, _, ok := summarizeResultDetail(body)
+	return summary, ok
 }
 
 // summarizeResolvedResult is the renderTool gate around summarizeResult: it
@@ -2817,28 +2918,15 @@ func (r *renderer) summarizeResult(body string) (string, bool) {
 // result all return ok=false so renderTool falls through to the existing styled,
 // line-capped/full body path (Read and prose results unchanged).
 func (r *renderer) summarizeResolvedResult(b *block, expand bool) (string, bool) {
+	summary, _, ok := r.summarizeResolvedResultDetail(b, expand)
+	return summary, ok
+}
+
+func (*renderer) summarizeResolvedResultDetail(b *block, expand bool) (string, int, bool) {
 	if expand || b.resultError {
-		return "", false
+		return "", 0, false
 	}
-	return r.summarizeResult(b.resultBody)
-}
-
-// truncateLines clamps s to max lines, appending a "+N more lines · <expand> expand"
-// affordance when it overflows. Used for tool results and diff sides, where the
-// expand-tools chord is the way to see the rest. The chord reads the LIVE
-// ExpandTools marking (r.marks.expandTools) so an override propagates (issue #457).
-func (r *renderer) truncateLines(s string, maxLines int) string {
-	return r.truncateLinesTail(s, maxLines, "")
-}
-
-// truncateLinesTail clamps s to maxLines lines, appending an overflow tail when
-// it overflows. An empty tail uses the default "+N more lines · <expand> expand"
-// collapse marker (the expand-tools-referencing form for collapsible content); a
-// non-empty tail is used verbatim instead — e.g. a neutral "…(truncated)" for
-// already-expanded reasoning, which must NOT reference the toggle that revealed
-// it. The (server-derived) body is terminal-sanitized.
-func (r *renderer) truncateLinesTail(s string, maxLines int, tail string) string {
-	return truncateLinesTailMark(s, maxLines, tail, r.marks.expandTools)
+	return summarizeResultDetail(b.resultBody)
 }
 
 // collapseMarker formats the "+N more line(s) · <expand> expand" affordance shown

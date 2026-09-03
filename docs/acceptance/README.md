@@ -50,9 +50,10 @@ when the code that satisfies the plan has landed.
 
 ## Plans
 
-- [Persistent read-before-write ledgers](persistent-read-before-write-ledgers.md) —
-  storage-independent, session-scoped read evidence with an in-memory default,
-  a durable Redis contract proof, and fail-closed file-tool behavior. Status: draft.
+- [Mecatui card layout](mecatui-card-layout.md) — width-bounded card rendering
+  that wraps raw dynamic rows before styling, preventing Lipgloss alignment
+  padding from becoming vertical whitespace while retaining intentional
+  Markdown and input-rail exceptions. Status: draft.
 - [Local mecak8s Kind fixture](mecak8s-kind-fixture.md) — cleanly separates an
   operator-run mock/real-provider mecak8s fixture, optional Keycloak caller
   identity, and the deferred ToolHive/vMCP delegation extension. Status: draft.
@@ -118,10 +119,6 @@ when the code that satisfies the plan has landed.
   filesystem-path authority: composition binds default/no-FS/remote environments;
   alternate worktrees use fresh source-scoped opaque selectors only on clear/fork.
   Status: landed.
-- [Session debugger root inspection avoids lineage traversal](session-debug-lineage-lock.md) —
-  unscoped `InspectSession` root views, especially status, avoid global JSONL lineage traversal
-  while related/delegation and scope-handle reads retain bounded lineage scanning and revalidation.
-  Status: draft.
 - [Listener-scoped workspace authority](listener-scoped-workspace-authority.md) — historical
   draft superseded by ADR 0291's path-free contract; retained for context and excluded from
   strict traceability. Status: draft.
@@ -130,9 +127,6 @@ when the code that satisfies the plan has landed.
   errors, exact-origin CORS, a durable host-minted `run_id` with stale-control guards,
   `port.CursorEventLog` + the Redis LIST→Stream migration, `WatchSessionEvents`, the
   spawned-daemon UDS/ready-file surface, and listener-scoped `mcp_servers`. Status: draft.
-- [Cloud-native learning v2](cloud-native-learning.md) — durable authoritative learning
-  attempts, exact source reconstruction, distributed proposal/skill authority, and
-  replica-safe learned-skill hydration; explicit procedure learning lands first. Status: landed.
 - [TypeScript SDK core (M1)](sdk-typescript-core.md) — `@stacklok/mecatl-sdk` M1: the
   `sdk/typescript/` scaffold (pnpm 11, TS 6, biome, vitest, API Extractor), pinned
   protobuf-es generation for `mecatl.v1` with a freshness gate, Connect-ES + HTTP/SSE
@@ -158,9 +152,6 @@ when the code that satisfies the plan has landed.
   ownership matrix, `query()`'s one-shot lifecycle, callback `tool()` with local
   schema validation and two-layer collision refusal, the hand-written loopback
   streaming-HTTP MCP host, and the offline Node/Bun e2e. Status: draft.
-- [Cloud-native learning v2](cloud-native-learning.md) — durable authoritative learning
-  attempts, exact source reconstruction, distributed proposal/skill authority, and
-  replica-safe learned-skill hydration; explicit procedure learning lands first. Status: draft.
 
 ## See also
 

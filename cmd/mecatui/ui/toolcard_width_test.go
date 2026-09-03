@@ -1,11 +1,13 @@
 package ui
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 )
@@ -69,7 +71,7 @@ func TestToolCardWidthHardWrapsKnownRenderer(t *testing.T) {
 
 	out := r.renderTool(b, false)
 	plain := stripANSIstr(out)
-	if !strings.Contains(plain, "+27 more lines · ctrl+t expand") {
+	if !strings.Contains(plain, "+29 more lines · ctrl+t expand") {
 		t.Fatalf("collapsed Bash card lost its expansion marker:\n%s", plain)
 	}
 	if got := strings.Count(plain, "-"); got != 220 {
@@ -87,6 +89,364 @@ func TestToolCardWidthHardWrapsKnownRenderer(t *testing.T) {
 	}
 	if maxWidth != toolCardMaxWidth {
 		t.Errorf("card should be bounded at width %d, got %d", toolCardMaxWidth, maxWidth)
+	}
+}
+
+// TestCollapsedBashResultCapsVisualRows wraps multiline, indented Bash output
+// before applying the inline cap. Capping logical source lines instead would let
+// the final card wrap turn the retained rows into a taller collapsed card.
+func TestCollapsedBashResultCapsVisualRows(t *testing.T) {
+	r := newTestRenderer()
+	r.setWidth(toolCardMaxWidth + 2 + defaultBlockIndent)
+
+	resultLines := make([]string, 7)
+	for i := range resultLines {
+		resultLines[i] = "    output-" + strconv.Itoa(i) + " " + strings.Repeat("near-width ", 12)
+	}
+	b := &block{
+		kind:       blockTool,
+		toolID:     "bash-visual-rows",
+		toolName:   "Bash",
+		toolArgs:   `{"command":"printf output"}`,
+		resolved:   true,
+		resultBody: strings.Join(resultLines, "\n"),
+	}
+
+	_, _, bodyWidth := r.toolCardLayout()
+	expectedOverflow := len(strings.Split(ansi.Hardwrap(strings.Join(resultLines, "\n"), bodyWidth, true), "\n")) - maxToolResultLines
+	if expectedOverflow <= 0 {
+		t.Fatalf("precondition: Bash result must overflow the visual-row cap, got %d rows", expectedOverflow+maxToolResultLines)
+	}
+	collapsed := r.renderTool(b, false)
+	plain := stripANSIstr(collapsed)
+	marker := "+" + strconv.Itoa(expectedOverflow) + " more lines · ctrl+t expand"
+	markerRow := -1
+	firstResultRow := -1
+	for i, line := range strings.Split(plain, "\n") {
+		if strings.Contains(line, "output-0") && firstResultRow < 0 {
+			firstResultRow = i
+		}
+		if strings.Contains(line, marker) {
+			markerRow = i
+		}
+	}
+	if firstResultRow < 0 || markerRow < 0 {
+		t.Fatalf("collapsed Bash card must retain result output and an expansion affordance:\n%s", plain)
+	}
+	if rows := markerRow - firstResultRow; rows != maxToolResultLines {
+		t.Errorf("collapsed result has %d visual rows before its affordance, want %d:\n%s", rows, maxToolResultLines, plain)
+	}
+	for i, line := range strings.Split(collapsed, "\n") {
+		if got := maxLineWidth(line); got > toolCardMaxWidth {
+			t.Errorf("collapsed line %d exceeds card width %d (got %d): %q", i, toolCardMaxWidth, got, stripANSIstr(line))
+		}
+	}
+
+	expanded := stripANSIstr(r.renderTool(b, true))
+	if strings.Contains(expanded, marker) {
+		t.Errorf("expanded card retained collapsed expansion affordance:\n%s", expanded)
+	}
+	for _, line := range resultLines {
+		if !strings.Contains(expanded, "output-"+strings.TrimPrefix(strings.Fields(line)[0], "output-")) {
+			t.Errorf("expanded card omitted result line %q:\n%s", line, expanded)
+		}
+	}
+	for i, line := range strings.Split(expanded, "\n") {
+		if got := maxLineWidth(line); got > toolCardMaxWidth {
+			t.Errorf("expanded line %d exceeds card width %d (got %d): %q", i, toolCardMaxWidth, got, line)
+		}
+	}
+}
+
+// TestCollapsedBashResultSkipsIndentOnlyWrapRows verifies oversized indentation
+// cannot consume the collapsed result budget or appear as blank vertical gaps.
+func TestCollapsedBashResultSkipsIndentOnlyWrapRows(t *testing.T) {
+	r := newTestRenderer()
+	r.setWidth(toolCardMaxWidth + 2 + defaultBlockIndent)
+	_, _, bodyWidth := r.toolCardLayout()
+	resultLines := make([]string, maxToolResultLines+1)
+	for i := range resultLines {
+		resultLines[i] = strings.Repeat(" ", bodyWidth+1) + "result-" + strconv.Itoa(i)
+	}
+	b := &block{
+		kind:       blockTool,
+		toolID:     "bash-indent-rows",
+		toolName:   "Bash",
+		toolArgs:   `{"command":"printf output"}`,
+		resolved:   true,
+		resultBody: strings.Join(resultLines, "\n"),
+	}
+
+	collapsed := stripANSIstr(r.renderTool(b, false))
+	const marker = "+1 more line · ctrl+t expand"
+	firstResultRow, markerRow := -1, -1
+	rows := strings.Split(collapsed, "\n")
+	for i, line := range rows {
+		if strings.Contains(line, "result-0") {
+			firstResultRow = i
+		}
+		if strings.Contains(line, marker) {
+			markerRow = i
+		}
+	}
+	if firstResultRow < 0 || markerRow < 0 {
+		t.Fatalf("collapsed result must retain result-0 and the one-row overflow marker:\n%s", collapsed)
+	}
+	if got := markerRow - firstResultRow; got != maxToolResultLines {
+		t.Errorf("collapsed result has %d rows before its affordance, want %d:\n%s", got, maxToolResultLines, collapsed)
+	}
+	for i := 0; i < maxToolResultLines; i++ {
+		if !strings.Contains(collapsed, "result-"+strconv.Itoa(i)) {
+			t.Errorf("collapsed result omitted retained result-%d:\n%s", i, collapsed)
+		}
+	}
+	if strings.Contains(collapsed, "result-12") {
+		t.Errorf("collapsed result retained overflow result-12:\n%s", collapsed)
+	}
+	for _, line := range rows[firstResultRow:markerRow] {
+		if !strings.Contains(line, "result-") {
+			t.Errorf("collapsed result has whitespace-only interior row %q:\n%s", line, collapsed)
+		}
+	}
+
+	expanded := stripANSIstr(r.renderTool(b, true))
+	if strings.Contains(expanded, "ctrl+t expand") {
+		t.Errorf("expanded result retained collapsed expansion affordance:\n%s", expanded)
+	}
+	for i := range resultLines {
+		if !strings.Contains(expanded, "result-"+strconv.Itoa(i)) {
+			t.Errorf("expanded result omitted result-%d:\n%s", i, expanded)
+		}
+	}
+}
+
+// TestCollapsedLargeJSONResultCapsVisualRows verifies that the summarized-result
+// path shares the text-result display-row cap at narrow card widths.
+func TestCollapsedLargeJSONResultCapsVisualRows(t *testing.T) {
+	r := newTestRenderer()
+	r.setWidth(defaultBlockIndent + 20)
+
+	result := mustJSON(t, map[string]string{
+		"html_url": strings.Repeat("https://example.test/path/", 8),
+		"url":      strings.Repeat("https://example.test/url/", 8),
+		"id":       strings.Repeat("identifier-", 12),
+		"number":   strings.Repeat("number-", 16),
+		"sha":      strings.Repeat("sha-", 30),
+		"status":   strings.Repeat("status-", 20),
+		"state":    strings.Repeat("state-", 20),
+		"unlisted": "hidden",
+	})
+	b := &block{
+		kind:       blockTool,
+		toolID:     "json-visual-rows",
+		toolName:   "WebFetch",
+		toolArgs:   `{"url":"https://example.test"}`,
+		resolved:   true,
+		resultBody: result,
+	}
+
+	_, cardWidth, bodyWidth := r.toolCardLayout()
+	summary, hiddenFields, ok := r.summarizeResolvedResultDetail(b, false)
+	if !ok || hiddenFields != 1 {
+		t.Fatalf("precondition: expected one omitted non-prominent JSON field, got ok=%v hiddenFields=%d", ok, hiddenFields)
+	}
+	expectedOverflow := len(strings.Split(ansi.Hardwrap(summary, bodyWidth, true), "\n")) - maxToolResultLines
+	if expectedOverflow <= 0 {
+		t.Fatalf("precondition: JSON summary must overflow the visual-row cap, got %d rows", expectedOverflow+maxToolResultLines)
+	}
+	collapsed := r.renderTool(b, false)
+	plain := stripANSIstr(collapsed)
+	markerPrefix := "  … +" + strconv.Itoa(expectedOverflow) + " more "
+	firstSummaryRow, markerRow := -1, -1
+	for i, line := range strings.Split(plain, "\n") {
+		if strings.Contains(line, "html_url:") && firstSummaryRow < 0 {
+			firstSummaryRow = i
+		}
+		if strings.Contains(line, markerPrefix) {
+			markerRow = i
+		}
+	}
+	if firstSummaryRow < 0 || markerRow < 0 || !strings.Contains(plain, "ctrl+t") {
+		t.Fatalf("collapsed JSON summary must retain its first row and expansion affordance %q:\n%s", markerPrefix, plain)
+	}
+	if rows := markerRow - firstSummaryRow; rows != maxToolResultLines {
+		t.Errorf("collapsed JSON summary has %d visual rows before its affordance, want %d:\n%s", rows, maxToolResultLines, plain)
+	}
+	if strings.Contains(plain, "unlisted") || strings.Contains(plain, "hidden") {
+		t.Errorf("collapsed JSON summary exposed a non-prominent field:\n%s", plain)
+	}
+	for i, line := range strings.Split(collapsed, "\n") {
+		if got := maxLineWidth(line); got > cardWidth {
+			t.Errorf("collapsed line %d exceeds card width %d (got %d): %q", i, cardWidth, got, stripANSIstr(line))
+		}
+	}
+
+	expanded := stripANSIstr(r.renderTool(b, true))
+	if strings.Contains(expanded, "ctrl+t expand") {
+		t.Errorf("expanded JSON result retained collapsed expansion affordance:\n%s", expanded)
+	}
+	if !strings.Contains(expanded, "unlisted") || !strings.Contains(expanded, "hidden") {
+		t.Errorf("expanded JSON result omitted non-prominent field/value:\n%s", expanded)
+	}
+	for _, key := range []string{"html_url", "url", "id", "number", "sha", "status", "state"} {
+		if !strings.Contains(expanded, key) {
+			t.Errorf("expanded JSON result omitted key %q:\n%s", key, expanded)
+		}
+	}
+}
+
+// TestCollapsedLargeJSONSummaryAdvertisesOmittedFields verifies a summary that fits
+// the display-row cap still advertises fields hidden by the summary itself.
+func TestCollapsedLargeJSONSummaryAdvertisesOmittedFields(t *testing.T) {
+	r := newTestRenderer()
+	r.setWidth(toolCardMaxWidth + 2 + defaultBlockIndent)
+	result := mustJSON(t, map[string]string{
+		"html_url": "https://example.test/item",
+		"url":      "https://example.test/api/item",
+		"id":       "42",
+		"number":   "24",
+		"sha":      "deadbeef",
+		"status":   "open",
+		"state":    "active",
+		"omitted":  strings.Repeat("x", resultSummaryByteThreshold),
+	})
+	b := &block{kind: blockTool, toolID: "json-omitted", toolName: "WebFetch", resolved: true, resultBody: result}
+	summary, hiddenFields, ok := r.summarizeResolvedResultDetail(b, false)
+	if !ok || hiddenFields != 1 {
+		t.Fatalf("precondition: expected one hidden summary field, got ok=%v hiddenFields=%d", ok, hiddenFields)
+	}
+	_, _, bodyWidth := r.toolCardLayout()
+	if rows := len(strings.Split(ansi.Hardwrap(summary, bodyWidth, true), "\n")); rows > maxToolResultLines {
+		t.Fatalf("precondition: summary has %d display rows, want ≤ %d", rows, maxToolResultLines)
+	}
+
+	collapsed := stripANSIstr(r.renderTool(b, false))
+	const marker = "  … +1 more key · ctrl+t expand"
+	if !strings.Contains(collapsed, marker) {
+		t.Fatalf("collapsed JSON summary must advertise its omitted field:\n%s", collapsed)
+	}
+	if got := strings.Count(collapsed, "ctrl+t expand"); got != 1 {
+		t.Errorf("collapsed JSON summary has %d expansion affordances, want 1:\n%s", got, collapsed)
+	}
+
+	expanded := stripANSIstr(r.renderTool(b, true))
+	if strings.Contains(expanded, "ctrl+t expand") {
+		t.Errorf("expanded JSON result retained collapsed expansion affordance:\n%s", expanded)
+	}
+	if !strings.Contains(expanded, "omitted") {
+		t.Errorf("expanded JSON result omitted the hidden field:\n%s", expanded)
+	}
+}
+
+// TestCollapsedArraySummaryAdvertisesExpansion verifies abbreviated array summaries
+// advertise expansion without inventing an object-field count.
+func TestCollapsedArraySummaryAdvertisesExpansion(t *testing.T) {
+	r := newTestRenderer()
+	r.setWidth(toolCardMaxWidth + 2 + defaultBlockIndent)
+	elems := make([]string, 20)
+	for i := range elems {
+		elems[i] = "entry-" + strconv.Itoa(i) + "-" + strings.Repeat("x", 40)
+	}
+	result := mustJSON(t, elems)
+	b := &block{kind: blockTool, toolID: "array-omitted", toolName: "WebFetch", resolved: true, resultBody: result}
+
+	collapsed := stripANSIstr(r.renderTool(b, false))
+	const marker = "  … ctrl+t expand"
+	if !strings.Contains(collapsed, marker) {
+		t.Fatalf("collapsed array summary must advertise expansion:\n%s", collapsed)
+	}
+	if strings.Contains(collapsed, "more key") || strings.Contains(collapsed, "entry-19") {
+		t.Errorf("collapsed array summary must not claim hidden fields or expose items:\n%s", collapsed)
+	}
+	if got := strings.Count(collapsed, "ctrl+t expand"); got != 1 {
+		t.Errorf("collapsed array summary has %d expansion affordances, want 1:\n%s", got, collapsed)
+	}
+
+	expanded := stripANSIstr(r.renderTool(b, true))
+	if strings.Contains(expanded, "ctrl+t expand") {
+		t.Errorf("expanded array result retained collapsed expansion affordance:\n%s", expanded)
+	}
+	for _, item := range []string{"entry-0", "entry-19"} {
+		if !strings.Contains(expanded, item) {
+			t.Errorf("expanded array result omitted %q:\n%s", item, expanded)
+		}
+	}
+}
+
+// TestCollapsedToolResultCapsArtifacts verifies that typed artifacts share the
+// collapsed text-result budget instead of extending the card below its affordance.
+func TestCollapsedToolResultCapsArtifacts(t *testing.T) {
+	r := newTestRenderer()
+	r.setWidth(toolCardMaxWidth + 2 + defaultBlockIndent)
+	blocks := make([]client.ContentBlock, 13)
+	for i := range blocks {
+		if i == len(blocks)-1 {
+			blocks[i] = client.ContentBlock{Kind: client.ContentBlockImage, MimeType: "image/png"}
+			continue
+		}
+		blocks[i] = client.ContentBlock{
+			Kind: client.ContentBlockResourceLink,
+			Name: "artifact-" + strconv.Itoa(i),
+			URL:  "https://example.test/r/" + strconv.Itoa(i),
+		}
+	}
+	b := &block{
+		kind:         blockTool,
+		toolID:       "artifact-rows",
+		toolName:     "WebFetch",
+		resolved:     true,
+		resultBody:   "body-0\nbody-1",
+		resultBlocks: blocks,
+	}
+
+	collapsed := r.renderTool(b, false)
+	plain := stripANSIstr(collapsed)
+	const marker = "  … +3 more lines · ctrl+t expand"
+	firstResultRow, markerRow := -1, -1
+	for i, line := range strings.Split(plain, "\n") {
+		if strings.Contains(line, "body-0") && firstResultRow < 0 {
+			firstResultRow = i
+		}
+		if strings.Contains(line, marker) {
+			markerRow = i
+		}
+	}
+	if firstResultRow < 0 || markerRow < 0 {
+		t.Fatalf("collapsed result must retain text and one truthful artifact overflow marker:\n%s", plain)
+	}
+	if rows := markerRow - firstResultRow; rows != maxToolResultLines {
+		t.Errorf("collapsed result has %d visual rows before its affordance, want %d:\n%s", rows, maxToolResultLines, plain)
+	}
+	if got := strings.Count(plain, "ctrl+t expand"); got != 1 {
+		t.Errorf("collapsed result has %d expansion affordances, want 1:\n%s", got, plain)
+	}
+	for i := range 10 {
+		if !strings.Contains(plain, "artifact-"+strconv.Itoa(i)) {
+			t.Errorf("collapsed result omitted retained artifact-%d:\n%s", i, plain)
+		}
+	}
+	for _, name := range []string{"artifact-10", "artifact-11", "[image: image/png]"} {
+		if strings.Contains(plain, name) {
+			t.Errorf("collapsed result retained overflow artifact %q:\n%s", name, plain)
+		}
+	}
+	for i, line := range strings.Split(collapsed, "\n") {
+		if got := maxLineWidth(line); got > toolCardMaxWidth {
+			t.Errorf("collapsed line %d exceeds card width %d (got %d): %q", i, toolCardMaxWidth, got, stripANSIstr(line))
+		}
+	}
+
+	expanded := stripANSIstr(r.renderTool(b, true))
+	if strings.Contains(expanded, "ctrl+t expand") {
+		t.Errorf("expanded result retained collapsed expansion affordance:\n%s", expanded)
+	}
+	for i := range blocks[:len(blocks)-1] {
+		if !strings.Contains(expanded, "artifact-"+strconv.Itoa(i)) {
+			t.Errorf("expanded result omitted artifact-%d:\n%s", i, expanded)
+		}
+	}
+	if !strings.Contains(expanded, "[image: image/png]") {
+		t.Errorf("expanded result omitted image artifact:\n%s", expanded)
 	}
 }
 
