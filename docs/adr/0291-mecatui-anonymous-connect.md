@@ -1,4 +1,4 @@
-# ADR 0290 — Server-authoritative credential-free mecatui connections
+# ADR 0291 — Server-authoritative credential-free mecatui connections
 
 - Status: Accepted
 - Date: 2026-09-03
