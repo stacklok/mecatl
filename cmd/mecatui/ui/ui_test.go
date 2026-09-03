@@ -173,6 +173,29 @@ func waitClosed(t *testing.T, what string, ch <-chan struct{}, d time.Duration) 
 	}
 }
 
+// waitForClosedSession waits for the asynchronous handoff close recorded by fakeConv.
+// It is deliberately predicate-based: create completion precedes the best-effort
+// close, so the recreate signal alone is not a close-completion signal.
+func waitForClosedSession(t *testing.T, what string, conv *fakeConv, id string, d time.Duration) {
+	t.Helper()
+	deadline := time.NewTimer(scaleWait(d))
+	defer deadline.Stop()
+	tick := time.NewTicker(10 * time.Millisecond)
+	defer tick.Stop()
+
+	for {
+		closed := conv.closed()
+		if len(closed) == 1 && closed[0] == id {
+			return
+		}
+		select {
+		case <-deadline.C:
+			t.Fatalf("timed out after %s waiting for %s; CloseSession calls = %v, want [%s]", scaleWait(d), what, closed, id)
+		case <-tick.C:
+		}
+	}
+}
+
 // updateGolden reports whether goldens should be refreshed. It reuses the
 // -update flag that teatest already registers (defining our own would collide),
 // resolved lazily at test time.
