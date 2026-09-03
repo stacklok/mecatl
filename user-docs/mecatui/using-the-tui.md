@@ -23,6 +23,14 @@ Mecatui automatically repeats the exact failed model step once only when the ser
 
 When a tool needs permission, a modal shows what it wants to do. Read the request, then allow it once, allow the exact action for this session when offered, or deny it. Long arguments can be scrolled; `ctrl+t` opens a full-screen view when needed. Mouse buttons activate the same choices as their displayed keys.
 
+## Complete browser authorization
+
+When workspace-service enrollment or an MCP tool opens a browser authorization,
+complete consent there and return to the TUI. Mecatui observes the pending
+request automatically; do not press a refresh/recheck key. You can still cancel
+a pending MCP authorization from its card. Presentation links are opened or
+copied only for that interaction and are not retained in the conversation.
+
 ## Change the conversation settings
 
 - `/models` starts a new session on the selected model and keeps the conversation. **Switching models is expensive as it clears caches.**

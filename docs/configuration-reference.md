@@ -288,7 +288,7 @@ Strict OPERATOR-TIER Streamable HTTP MCP authority configuration. Mode selects o
 | `mcp.servers[].auth.oauth.network.additional_origins` | `[]string` | `(absent)` | AdditionalOrigins lists canonical exact origins additionally allowed for OAuth traffic. |
 | `mcp.servers[].auth.oauth.network.private_origins` | `[]string` | `(absent)` | PrivateOrigins lists allowed origins that may resolve only to RFC1918 IPv4 or ULA IPv6 addresses. Loopback, link-local, metadata, unspecified, multicast, mapped, public, and other special addresses remain denied. |
 | `mcp.servers[].auth.oauth.network.max_redirects` | `int` | `0` | MaxRedirects is the redirect bound, from zero through five. |
-| `mcp.servers[].auth.oauth.tools` | `[]mcpstatictoolprofile` | `(absent)` | Tools optionally declares this protected backend's tool catalogue statically. Declared tools are admitted without authenticated startup discovery and request authorization lazily on their first ungranted call. Omitted, the backend remains on the workspace-enrollment path and uses authenticated discovery; a completed enrolled catalogue is limited to 256 tools and 32 KiB of UTF-8 tool-name bytes. |
+| `mcp.servers[].auth.oauth.tools` | `[]mcpstatictoolprofile` | `(absent)` | Tools optionally declares this protected backend's tool catalogue statically. Declared tools are admitted without authenticated startup discovery and request authorization lazily on their first ungranted call. Omitted, the backend remains on the workspace-enrollment path and uses authenticated discovery. |
 | `mcp.servers[].auth.oauth.tools[].name` | `string` | `(empty)` |  |
 | `mcp.servers[].auth.oauth.tools[].description` | `string` | `(empty)` |  |
 | `mcp.servers[].auth.oauth.tools[].input_schema` | `[]uint8` | `(absent)` |  |

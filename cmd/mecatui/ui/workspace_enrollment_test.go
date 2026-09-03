@@ -40,8 +40,8 @@ func TestWorkspaceEnrollmentIsNonBlocking(t *testing.T) {
 	if control.connectCalls != 1 || m.enrollment.ID != "bundle-1" {
 		t.Fatalf("connect calls/state = %d/%+v", control.connectCalls, m.enrollment)
 	}
-	if got := stripANSIstr(m.idleFooterLeft()); !strings.Contains(got, "run /tools-connect to recheck") {
-		t.Fatalf("footer-left after a pending connect = %q, want manual recheck notice", got)
+	if got := stripANSIstr(m.idleFooterLeft()); !strings.Contains(got, "notified when connected") {
+		t.Fatalf("footer-left after a pending connect = %q, want automatic completion notice", got)
 	}
 	if got := stripANSIstr(m.idleFooterLeft()); strings.Contains(got, "https://") || strings.Contains(got, "token-canary") {
 		t.Fatalf("footer rendered private presentation data: %s", got)
@@ -129,6 +129,46 @@ func TestWorkspaceEnrollmentRejectionRewriteAppliesAtAllRunEntryPaths(t *testing
 	m = mm.(Model)
 	if got := m.conv.blocks[len(m.conv.blocks)-1].raw; !strings.Contains(got, "/tools-connect") {
 		t.Fatalf("result error block = %q", got)
+	}
+}
+
+func TestWorkspaceEnrollmentPollCompletesWithoutManualRecheck(t *testing.T) {
+	control := &workspaceEnrollmentControlFake{connect: client.WorkspaceEnrollment{ID: "bundle-1", Status: client.WorkspaceEnrollmentPending}}
+	m := New(Deps{Ctx: context.Background(), WorkspaceEnrollment: control})
+	m.sessionID = "session-1"
+	m.enrollment = workspaceEnrollmentState{ID: "bundle-1", Status: client.WorkspaceEnrollmentPending}
+
+	mm, cmd := m.applyWorkspaceEnrollmentPollTick(workspaceEnrollmentPollTickMsg{sessionID: "session-1", enrollmentID: "bundle-1"})
+	m = mm.(Model)
+	if cmd == nil || !m.enrollment.busy {
+		t.Fatal("pending enrollment poll did not start an observation")
+	}
+	if _, duplicate := m.applyWorkspaceEnrollmentPollTick(workspaceEnrollmentPollTickMsg{sessionID: "session-1", enrollmentID: "bundle-1"}); duplicate != nil {
+		t.Fatal("duplicate enrollment poll overlapped the in-flight observation")
+	}
+	control.connect = client.WorkspaceEnrollment{ID: "bundle-1", Status: client.WorkspaceEnrollmentConnected}
+	m = applyAll(m, cmd())
+	if control.connectCalls != 1 || m.enrollment.ID != "" || m.statusMsg != "workspace services connected" {
+		t.Fatalf("automatic completion = calls %d, enrollment %+v, status %q", control.connectCalls, m.enrollment, m.statusMsg)
+	}
+}
+
+func TestWorkspaceEnrollmentPollIgnoresStaleSessionOrEnrollment(t *testing.T) {
+	control := &workspaceEnrollmentControlFake{}
+	m := New(Deps{Ctx: context.Background(), WorkspaceEnrollment: control})
+	m.sessionID = "session-current"
+	m.enrollment = workspaceEnrollmentState{ID: "bundle-current", Status: client.WorkspaceEnrollmentPending}
+	for _, tick := range []workspaceEnrollmentPollTickMsg{
+		{sessionID: "session-old", enrollmentID: "bundle-current"},
+		{sessionID: "session-current", enrollmentID: "bundle-old"},
+	} {
+		if _, cmd := m.applyWorkspaceEnrollmentPollTick(tick); cmd != nil {
+			t.Fatalf("stale tick %#v started a poll", tick)
+		}
+	}
+	m.enrollment.Status = client.WorkspaceEnrollmentCancelled
+	if _, cmd := m.applyWorkspaceEnrollmentPollTick(workspaceEnrollmentPollTickMsg{sessionID: "session-current", enrollmentID: "bundle-current"}); cmd != nil {
+		t.Fatal("cancelled enrollment continued polling")
 	}
 }
 

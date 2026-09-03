@@ -24,10 +24,13 @@ func TestInvariant_mecatui_mcp_authorization_is_not_permission_approval(t *testi
 			t.Fatalf("authorization view exposed permission action %q: %s", forbidden, view)
 		}
 	}
-	for _, required := range []string{"Open Browser", "Copy Link", "Recheck", "Cancel"} {
+	for _, required := range []string{"Open Browser", "Copy Link", "checked automatically", "Cancel"} {
 		if !strings.Contains(view, required) {
 			t.Fatalf("authorization view missing %q: %s", required, view)
 		}
+	}
+	if strings.Contains(view, "Recheck") {
+		t.Fatalf("authorization view retained manual recheck: %s", view)
 	}
 }
 
@@ -78,6 +81,51 @@ func TestSessionMCPAuthorization_Scenario9_MecatuiControlStreamCleanup(t *testin
 	updated := mm.(Model)
 	if updated.authorizationEvents != nil {
 		t.Fatal("authorization event channel was not cleared")
+	}
+}
+
+func TestMCPAuthorizationPollCompletesWithoutManualRecheck(t *testing.T) {
+	control := &mcpAuthorizationControllerFake{}
+	m := New(Deps{Ctx: context.Background(), MCPAuthorization: control})
+	m.sessionID = "session-1"
+	m = applyAll(m, client.MCPAuthorizationMsg{AuthorizationID: "auth-1", Status: mcpAuthorizationStatusPending})
+	gen := m.authorization.controlGen
+	m = applyAll(m, mcpAuthorizationActionMsg{sessionID: "session-1", authorizationID: "auth-1", gen: gen, text: "authorization page opened"})
+
+	mm, cmd := m.applyMCPAuthorizationPollTick(mcpAuthorizationPollTickMsg{sessionID: "session-1", authorizationID: "auth-1", gen: gen})
+	m = mm.(Model)
+	if cmd == nil || !m.authorization.pollBusy || m.authorization.controlGen == gen {
+		t.Fatal("automatic authorization poll did not start versioned control")
+	}
+	if _, duplicate := m.applyMCPAuthorizationPollTick(mcpAuthorizationPollTickMsg{sessionID: "session-1", authorizationID: "auth-1", gen: m.authorization.controlGen}); duplicate != nil {
+		t.Fatal("duplicate authorization tick overlapped the in-flight control")
+	}
+	if m.authorization.controlGen == gen {
+		t.Fatal("automatic authorization poll did not advance control generation")
+	}
+	m = applyAll(m, client.MCPAuthorizationMsg{AuthorizationID: "auth-1", Status: "granted"})
+	if m.phase != phaseRunning || m.authorization.polling {
+		t.Fatalf("automatic grant did not continue the current flow: phase=%v polling=%t", m.phase, m.authorization.polling)
+	}
+}
+
+func TestMCPAuthorizationPollIgnoresStaleAndCancelledControls(t *testing.T) {
+	m := New(Deps{Ctx: context.Background(), MCPAuthorization: &mcpAuthorizationControllerFake{}})
+	m.sessionID = "session-current"
+	m.authorization = mcpAuthorizationState{authorizationID: "auth-current", controlGen: 9, polling: true}
+	m.phase = phaseAuthorizing
+	for _, tick := range []mcpAuthorizationPollTickMsg{
+		{sessionID: "session-old", authorizationID: "auth-current", gen: 9},
+		{sessionID: "session-current", authorizationID: "auth-old", gen: 9},
+		{sessionID: "session-current", authorizationID: "auth-current", gen: 8},
+	} {
+		if _, cmd := m.applyMCPAuthorizationPollTick(tick); cmd != nil {
+			t.Fatalf("stale poll tick %#v started control", tick)
+		}
+	}
+	m.authorization.polling = false // explicit cancel invalidates all scheduled ticks.
+	if _, cmd := m.applyMCPAuthorizationPollTick(mcpAuthorizationPollTickMsg{sessionID: "session-current", authorizationID: "auth-current", gen: 9}); cmd != nil {
+		t.Fatal("cancelled authorization continued polling")
 	}
 }
 
@@ -439,8 +487,9 @@ func TestSessionMCPAuthorization_Scenario9_MecatuiCommandsAndNoReplayOpen(t *tes
 		key  tea.KeyPressMsg
 		want func() int
 	}{
-		{"open", tea.KeyPressMsg{Code: tea.KeyEnter}, func() int { return controller.presentation }},
-		{"recheck", tea.KeyPressMsg{Code: 'r', Text: "r"}, func() int { return controller.recheck }},
+		{
+			"open", tea.KeyPressMsg{Code: tea.KeyEnter}, func() int { return controller.presentation },
+		},
 		{"cancel", tea.KeyPressMsg{Code: 'x', Text: "x"}, func() int { return controller.cancel }},
 	} {
 		_, cmd := m.onMCPAuthorizationKey(tc.key)

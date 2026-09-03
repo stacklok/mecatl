@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
@@ -12,6 +13,32 @@ import (
 )
 
 const mcpAuthorizationStatusPending = "pending"
+
+const mcpAuthorizationPollInterval = 3 * time.Second
+
+// mcpAuthorizationPollTickMsg is bound to the authorization control generation.
+// It cannot recheck a replacement authorization or resurrect a cancelled control.
+type mcpAuthorizationPollTickMsg struct {
+	sessionID, authorizationID string
+	gen                        uint64
+}
+
+func mcpAuthorizationPollTickCmd(sessionID, authorizationID string, gen uint64) tea.Cmd {
+	return tea.Tick(mcpAuthorizationPollInterval, func(time.Time) tea.Msg {
+		return mcpAuthorizationPollTickMsg{sessionID: sessionID, authorizationID: authorizationID, gen: gen}
+	})
+}
+
+func (m Model) applyMCPAuthorizationPollTick(msg mcpAuthorizationPollTickMsg) (tea.Model, tea.Cmd) {
+	if !m.currentAuthorizationMessage(msg.sessionID, msg.authorizationID, msg.gen) || !m.authorization.polling ||
+		m.authorization.pollBusy || m.phase != phaseAuthorizing {
+		return m, nil
+	}
+	m.authorization.pollBusy = true
+	mm, cmd := m.startMCPAuthorizationControl(false)
+	updated := mm.(Model)
+	return updated, tea.Batch(cmd, mcpAuthorizationPollTickCmd(updated.sessionID, updated.authorization.authorizationID, updated.authorization.controlGen))
+}
 
 // mcpAuthorizationState is intentionally distinct from permission approval.
 // It holds safe correlation only; presentation URLs are fetched on demand and
@@ -25,6 +52,8 @@ type mcpAuthorizationState struct {
 	controlCancel     context.CancelFunc
 	controlStream     *client.EventStream
 	runningControlGen uint64
+	polling           bool // browser presentation succeeded; background observations are active
+	pollBusy          bool // a poll control request is in flight
 }
 
 func (m Model) applyMCPAuthorization(msg client.MCPAuthorizationMsg) (tea.Model, tea.Cmd) {
@@ -32,6 +61,8 @@ func (m Model) applyMCPAuthorization(msg client.MCPAuthorizationMsg) (tea.Model,
 		reenteredRunning := false
 		if m.authorization.authorizationID == msg.AuthorizationID {
 			m.authorization.errorText = ""
+			m.authorization.polling = false
+			m.authorization.pollBusy = false
 			if m.phase == phaseAuthorizing {
 				m.phase = phaseRunning
 				reenteredRunning = true
@@ -47,17 +78,23 @@ func (m Model) applyMCPAuthorization(msg client.MCPAuthorizationMsg) (tea.Model,
 	if m.authorization.controlCancel != nil {
 		m.authorization.controlCancel()
 	}
+	polling := m.authorization.authorizationID == msg.AuthorizationID && m.authorization.polling
 	m.authorization = mcpAuthorizationState{
 		authorizationID: msg.AuthorizationID,
 		displayName:     oneLine(sanitizeTerminal(msg.DisplayName)),
 		callID:          msg.CallID,
 		controlGen:      m.authorization.controlGen + 1,
+		polling:         polling,
 	}
 	m.authorizationEvents = nil
 	m.phase = phaseAuthorizing
 	m.activeTool = ""
 	m.toolProgress = ""
-	return m.afterEvent()
+	mm, cmd := m.afterEvent()
+	if polling {
+		cmd = tea.Batch(cmd, mcpAuthorizationPollTickCmd(m.sessionID, msg.AuthorizationID, m.authorization.controlGen))
+	}
+	return mm, cmd
 }
 
 func (m Model) onMCPAuthorizationKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
@@ -95,9 +132,9 @@ func (m Model) onMCPAuthorizationKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			}
 			return mcpAuthorizationCopyMsg{sessionID: sessionID, authorizationID: id, gen: gen, url: url}
 		}
-	case key.Matches(msg, m.keys.Refresh):
-		return m.startMCPAuthorizationControl(false)
 	case key.Matches(msg, m.keys.CancelChild):
+		m.authorization.polling = false
+		m.authorization.pollBusy = false
 		return m.startMCPAuthorizationControl(true)
 	default:
 		return m, nil
@@ -179,6 +216,7 @@ func (m Model) updateMCPAuthorizationMsg(message tea.Msg) (tea.Model, tea.Cmd, b
 			}
 			m.authorization.controlCancel = nil
 			m.authorization.controlStream = nil
+			m.authorization.pollBusy = false
 			if m.phase == phaseRunning && m.authorization.runningControlGen == msg.gen {
 				m.phase = phaseIdle
 				m.authorization.runningControlGen = 0
@@ -193,13 +231,16 @@ func (m Model) updateMCPAuthorizationMsg(message tea.Msg) (tea.Model, tea.Cmd, b
 			}
 			m.authorization.controlCancel = nil
 			m.authorization.controlStream = nil
+			m.authorization.pollBusy = false
 			m.authorization.errorText = oneLine(sanitizeTerminal(msg.err.Error()))
 		}
 		return m, nil, true
 	case mcpAuthorizationActionMsg:
 		if m.currentAuthorizationMessage(msg.sessionID, msg.authorizationID, msg.gen) {
 			m.authorization.errorText = ""
+			m.authorization.polling = true
 			m.statusMsg = sanitizeTerminal(msg.text)
+			return m, mcpAuthorizationPollTickCmd(msg.sessionID, msg.authorizationID, msg.gen), true
 		}
 		return m, nil, true
 	case mcpAuthorizationCopyMsg:
@@ -207,8 +248,9 @@ func (m Model) updateMCPAuthorizationMsg(message tea.Msg) (tea.Model, tea.Cmd, b
 			return m, nil, true
 		}
 		m.authorization.errorText = ""
+		m.authorization.polling = true
 		m.statusMsg = "authorization URL copied"
-		return m, tea.SetClipboard(msg.url), true
+		return m, tea.Batch(tea.SetClipboard(msg.url), mcpAuthorizationPollTickCmd(msg.sessionID, msg.authorizationID, msg.gen)), true
 	case mcpAuthorizationStreamMsg:
 		mm, cmd := m.updateMCPAuthorizationStream(msg)
 		return mm, cmd, true
@@ -229,6 +271,7 @@ func (m Model) updateMCPAuthorizationEvent(msg mcpAuthorizationEventMsg) (tea.Mo
 		}
 		m.authorization.controlCancel = nil
 		m.authorization.controlStream = nil
+		m.authorization.pollBusy = false
 		m.authorization.errorText = errText
 		ownsRun := m.authorization.runningControlGen == msg.gen
 		if ownsRun {
@@ -288,12 +331,12 @@ func (m Model) waitMCPAuthorizationEvent(sessionID, authorizationID string, gen 
 
 func (m Model) renderMCPAuthorization() string {
 	open, copyLink := m.keys.Choose.Help().Key, m.keys.CopySelection.Help().Key
-	recheck, cancel := m.keys.Refresh.Help().Key, m.keys.CancelChild.Help().Key
+	cancel := m.keys.CancelChild.Help().Key
 	body := "MCP authorization required"
 	if m.authorization.displayName != "" {
 		body += " for " + m.authorization.displayName
 	}
-	body += "\n\n[" + open + "] Open Browser   [" + copyLink + "] Copy Link   [" + recheck + "] Recheck   [" + cancel + "] Cancel"
+	body += "\n\nOpen or copy the link, then browser consent is checked automatically.\n\n[" + open + "] Open Browser   [" + copyLink + "] Copy Link   [" + cancel + "] Cancel"
 	if errText := strings.TrimSpace(m.authorization.errorText); errText != "" {
 		body += "\n\nError: " + sanitizeTerminal(errText)
 	}

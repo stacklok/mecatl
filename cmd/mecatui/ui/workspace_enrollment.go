@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -12,6 +13,29 @@ import (
 
 // connectAction is the workspace-enrollment action used by /tools-connect.
 const connectAction = "connect"
+
+const workspaceEnrollmentPollInterval = 3 * time.Second
+
+// workspaceEnrollmentPollTickMsg is bound to the session and pending enrollment
+// it observes, so stale timer deliveries cannot affect a replacement session.
+type workspaceEnrollmentPollTickMsg struct {
+	sessionID, enrollmentID string
+}
+
+func workspaceEnrollmentPollTickCmd(sessionID, enrollmentID string) tea.Cmd {
+	return tea.Tick(workspaceEnrollmentPollInterval, func(time.Time) tea.Msg {
+		return workspaceEnrollmentPollTickMsg{sessionID: sessionID, enrollmentID: enrollmentID}
+	})
+}
+
+func (m Model) applyWorkspaceEnrollmentPollTick(msg workspaceEnrollmentPollTickMsg) (tea.Model, tea.Cmd) {
+	if msg.sessionID != m.sessionID || msg.enrollmentID == "" || msg.enrollmentID != m.enrollment.ID ||
+		m.enrollment.Status != client.WorkspaceEnrollmentPending || m.enrollment.busy || m.deps.WorkspaceEnrollment == nil {
+		return m, nil
+	}
+	m.enrollment.busy = true
+	return m, workspaceEnrollmentCmd(m.deps.Ctx, m.deps.WorkspaceEnrollment, m.sessionID, m.enrollment.ID, "check")
+}
 
 // workspaceEnrollmentState is distinct from permission approval and per-tool MCP
 // authorization. It retains only safe whole-bundle correlation and counts.
@@ -95,8 +119,8 @@ func (m Model) runToolsCancel() (tea.Model, tea.Cmd) {
 }
 
 // applyWorkspaceEnrollment reduces the direct RPC response from /tools-connect
-// or /tools-cancel. A successful manual recheck completes the pending bundle;
-// this task deliberately does not add background polling.
+// or /tools-cancel. Pending enrollments are observed periodically; failures remain
+// explicit /tools-connect retries.
 func (m Model) applyWorkspaceEnrollment(msg workspaceEnrollmentMsg) (tea.Model, tea.Cmd) {
 	if msg.sessionID != m.sessionID || msg.action == connectAction && m.enrollment.ID != "" || msg.action != connectAction && msg.targetEnrollmentID != m.enrollment.ID {
 		return m, nil
@@ -124,17 +148,22 @@ func (m Model) applyWorkspaceEnrollment(msg workspaceEnrollmentMsg) (tea.Model, 
 	}
 	if msg.result.Status == client.WorkspaceEnrollmentFailed {
 		m.enrollment.err = "workspace enrollment failed"
+		m.workspaceEnrollmentNotice = "workspace services connection failed — run /tools-connect to retry"
+		return m, nil
 	}
-	m.workspaceEnrollmentNotice = "waiting for browser consent — run /tools-connect to recheck"
-	if presentationURL != "" && m.deps.OpenURL != nil {
-		return m, func() tea.Msg {
+	m.workspaceEnrollmentNotice = "waiting for browser consent — you'll be notified when connected"
+	pollCmd := workspaceEnrollmentPollTickCmd(m.sessionID, m.enrollment.ID)
+	// Presentation data is available only for an interactive connect/retry, never
+	// a background observation; it is opened and immediately discarded.
+	if presentationURL != "" && msg.action != "check" && m.deps.OpenURL != nil {
+		return m, tea.Batch(pollCmd, func() tea.Msg {
 			if err := m.deps.OpenURL(m.deps.Ctx, presentationURL); err != nil {
 				return workspaceEnrollmentMsg{action: "open", err: err}
 			}
 			return nil
-		}
+		})
 	}
-	return m, nil
+	return m, pollCmd
 }
 
 // finalizeWorkspaceEnrollmentConnected is the shared completion path. Clearing
