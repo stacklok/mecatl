@@ -104,13 +104,20 @@ func TestSessionTitleGeneration_Scenario4_InterruptionAndRetryPolicy(t *testing.
 func TestSessionTitleGeneration_Scenario4_CoordinatorShutdownAndInventory(t *testing.T) {
 	store := memstore.New()
 	stopped := make(chan struct{})
+	started := make(chan struct{})
 	svc := titleCoordinatorService(t, store, titleGeneratorFunc(func(ctx context.Context, _ []string) TitleGenerationResult {
+		close(started)
 		<-ctx.Done()
 		close(stopped)
 		return TitleGenerationResult{Outcome: session.TitleAttemptInterrupted, Err: ctx.Err()}
 	}))
 	sess := pendingTitleSession(t, store, "shutdown")
 	svc.submitTitleGeneration(sess.ID)
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("generator did not start")
+	}
 	svc.Close()
 	select {
 	case <-stopped:

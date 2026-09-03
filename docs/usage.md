@@ -85,8 +85,10 @@ Inside the TUI, `/title <text>` renames the active session through the existing
 server rename operation; bare `/title` displays its title and provenance without a
 mutation. A manual title ends automatic generation for that session. Automatic titles
 are opt-in: configure a compatible explicit `models.slots.title` binding (see
-[model routing](usage/model-routing.md)); the server then schedules bounded work after
-a successful exchange without delaying or changing the chat. Its durable
+[model routing](usage/model-routing.md)); the server then schedules bounded work after a completed exchange is durably persisted,
+without delaying or changing the chat. On startup it also recovers the bounded
+pre-submission gap for completed pending sessions that have source prompts but no
+attempt; a crash-unknown claimed attempt is never retried. Its durable
 `session_title` token usage is separate from normal session/run usage. Live title
 updates are best-effort, so reconnect and session reopen re-fetch the authoritative
 stored title.

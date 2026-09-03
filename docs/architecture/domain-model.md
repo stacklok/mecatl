@@ -147,14 +147,17 @@ calls are opt-in.
 
 At prompt ingress the aggregate retains only the first three genuine, non-empty
 principal text prompts (bounded before storage); harness continuations and generic
-user-role history are not title inputs. After a successful exchange that added one,
-the Service-owned coordinator may submit a bounded asynchronous job. The job claims
-and persists its attempt while holding the session lock/lease, releases that
-exclusion for the one bounded, tool-less provider stream, then reloads and
-conditionally commits. This prevents duplicate calls and lets an operator rename
-win a late completion. `defer` can wait for later source prompts; a valid title,
-malformed output, unavailable configuration, interruption, or exhaustion ends the
-lifecycle with the fallback retained as appropriate.
+user-role history are not title inputs. Every terminal relay persists a completed
+exchange before submitting a bounded asynchronous job. On startup, the coordinator
+also scans one bounded metadata page for completed `pending` sessions with sources
+and no attempt, recovering only that pre-submission gap; an incomplete durable claim
+is deliberately never retried. The job claims and persists its attempt while holding
+the session lock/lease, releases that exclusion for the one bounded, tool-less
+provider stream, then reloads and conditionally commits. This prevents duplicate
+calls and lets an operator rename win a late completion. `defer` can wait for later
+source prompts; a valid title, malformed output, unavailable configuration,
+interruption, or exhaustion ends the lifecycle with the fallback retained as
+appropriate.
 
 Generated input is fenced untrusted data and output is strict, valid UTF-8,
 whitespace-normalized to one line, and capped at 80 runes. A physical call records

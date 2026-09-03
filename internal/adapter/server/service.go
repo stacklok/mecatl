@@ -1407,6 +1407,7 @@ func NewService(cfg Config) (*Service, error) {
 		})
 	}
 	svc.wireScheduleManager(cfg)
+	svc.reconcilePendingTitles()
 	return svc, nil
 }
 
@@ -5482,6 +5483,10 @@ func (s *Service) Persist(ctx context.Context, id session.SessionID) {
 	if !ok {
 		return
 	}
+	s.persistRun(ctx, id, st)
+}
+
+func (s *Service) persistRun(ctx context.Context, id session.SessionID, st *runState) {
 	// Save FIRST, then mark awaiting on success (H1 ordering): the flag must be
 	// set only after the durable StateAwaiting snapshot has actually landed, so
 	// Close (which skips cancelling awaiting runs) never skips a run whose
@@ -5504,6 +5509,26 @@ func (s *Service) Persist(ctx context.Context, id session.SessionID) {
 	if st.sess.State == session.StateCompleted && st.sess.TitleGeneration == session.TitleGenerationPending && len(st.sess.TitleSourcePrompts()) > 0 {
 		s.submitTitleGeneration(id)
 	}
+}
+
+// completeRelay persists a terminal run before the relay removes its registry
+// entry. It is deliberately internal: authorization occurred at run entry, while
+// this late completion must retain dead-client persistence without a request
+// principal.
+func (s *Service) completeRelay(ctx context.Context, id session.SessionID, run *agent.Run) {
+	s.mu.Lock()
+	st, ok := s.runs[id]
+	s.mu.Unlock()
+	if ok && st.run == run && (st.sess.State == session.StateCompleted || st.sess.State == session.StateCancelled || st.sess.State == session.StateFailed) {
+		s.persistRun(ctx, id, st)
+	}
+}
+
+// finishRelayRun is the one terminal path for wire relays: persist first so a
+// disconnected client cannot lose the terminal snapshot, then release the run.
+func (s *Service) finishRelayRun(ctx context.Context, id session.SessionID, run *agent.Run) {
+	s.completeRelay(ctx, id, run)
+	s.deregister(id, run)
 }
 
 // appendEvent durably records one projected relay event to the configured

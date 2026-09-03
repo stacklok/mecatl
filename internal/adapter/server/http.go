@@ -781,7 +781,7 @@ func (h *HTTPHandler) prompt(w http.ResponseWriter, r *http.Request) {
 		writeServiceError(w, err)
 		return
 	}
-	h.relayRunSSE(w, r, id, run, flusher, h.svc.RecoverNotice(id), false)
+	h.relayRunSSE(w, r, id, run, flusher, h.svc.RecoverNotice(id))
 }
 
 // retry handles POST /v1/sessions/{id}/retry. It has no request body and streams
@@ -798,7 +798,7 @@ func (h *HTTPHandler) retry(w http.ResponseWriter, r *http.Request) {
 		writeServiceError(w, err)
 		return
 	}
-	h.relayRunSSE(w, r, id, run, flusher, "", true)
+	h.relayRunSSE(w, r, id, run, flusher, "")
 }
 
 // relayRunSSE streams run's Events to w as Server-Sent Events until the channel
@@ -812,12 +812,9 @@ func (h *HTTPHandler) retry(w http.ResponseWriter, r *http.Request) {
 // notice, when non-empty, is a pre-flight EvRecoverNotice message emitted BEFORE
 // the main event loop — the prompt run-entry path passes it; the approve handler
 // path passes "".
-func (h *HTTPHandler) relayRunSSE(w http.ResponseWriter, r *http.Request, id session.SessionID, run *agent.Run, flusher http.Flusher, notice string, persistAtEnd bool) {
+func (h *HTTPHandler) relayRunSSE(w http.ResponseWriter, r *http.Request, id session.SessionID, run *agent.Run, flusher http.Flusher, notice string) {
 	defer func() {
-		if persistAtEnd {
-			h.svc.Persist(context.WithoutCancel(r.Context()), id)
-		}
-		h.svc.deregister(id, run)
+		h.svc.finishRelayRun(context.WithoutCancel(r.Context()), id, run)
 	}()
 
 	w.Header().Set("Content-Type", "text/event-stream")
@@ -947,12 +944,12 @@ func (h *HTTPHandler) approve(w http.ResponseWriter, r *http.Request) {
 			for ev := range run.Events() {
 				recorder.Observe(ev)
 			}
-			h.svc.deregister(id, run)
+			h.svc.finishRelayRun(context.WithoutCancel(r.Context()), id, run)
 		}()
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
-	h.relayRunSSE(w, r, id, run, flusher, "", false)
+	h.relayRunSSE(w, r, id, run, flusher, "")
 }
 
 // verdictFromHTTP maps the HTTP approve body's string verdict to the domain

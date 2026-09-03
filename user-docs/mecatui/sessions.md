@@ -116,7 +116,10 @@ was generated or set by an operator; it does not change the session.
 Automatic titles are optional. An operator enables them with an explicit compatible
 `models.slots.title` binding; without that slot no extra model call occurs. The
 server—not the client—collects up to three early genuine prompts and may generate a
-concise title after a successful chat exchange. It does not delay or rewrite the
+concise title after a completed exchange is durably persisted. On startup it also
+recovers the bounded pre-submission gap for completed pending sessions with source
+prompts but no attempt; a crash-unknown claimed attempt is never retried. It does
+not delay or rewrite the
 chat, and its separately recorded `session_title` token usage does not consume the
 chat's run budget. Generated-title updates normally appear live in an open mecatui;
 a reconnect or reopened session refetches the authoritative snapshot, so a missed

@@ -104,6 +104,14 @@ func builtinCommands(caps client.Capabilities, w wiredCollaborators) []builtin {
 			run:  Model.runHelp,
 		},
 		{
+			name:        "title",
+			desc:        "show or rename the active session title",
+			acceptsArgs: true,
+			run: func(m Model) (tea.Model, tea.Cmd) {
+				return m.runTitle(), nil
+			},
+		},
+		{
 			name: "session",
 			desc: "show active session details and copy its exact ID",
 			run:  Model.runSessionDetails,
@@ -583,7 +591,7 @@ type builtinName struct {
 // builtinNameRegistry is the static registry identity and argument policy used
 // before a capability-gated builtin can be dispatched.
 var builtinNameRegistry = []builtinName{
-	{name: "clear", acceptsArgs: false}, {name: "help", acceptsArgs: false}, {name: "session", acceptsArgs: false},
+	{name: "clear", acceptsArgs: false}, {name: "help", acceptsArgs: false}, {name: "title", acceptsArgs: true}, {name: "session", acceptsArgs: false},
 	{name: "retry", acceptsArgs: false}, {name: "diagnostics", acceptsArgs: false}, {name: "compact", acceptsArgs: false},
 	{name: "mcp", acceptsArgs: false}, {name: "agents", acceptsArgs: false}, {name: "team", acceptsArgs: false},
 	{name: "skills", acceptsArgs: false}, {name: "soul", acceptsArgs: false}, {name: "usermodel", acceptsArgs: false},

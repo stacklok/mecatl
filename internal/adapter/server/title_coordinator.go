@@ -14,6 +14,7 @@ import (
 const (
 	titleCoordinatorWorkers = 2
 	titleCoordinatorQueue   = 64
+	titleReconcileLimit     = 64
 	titleRetryBackoff       = 5 * time.Second
 )
 
@@ -80,6 +81,37 @@ func (c *titleCoordinator) Close() {
 func (s *Service) submitTitleGeneration(id session.SessionID) {
 	if s.titleCoordinator != nil {
 		s.titleCoordinator.Submit(id)
+	}
+}
+
+// reconcilePendingTitles admits a bounded set of completed snapshots stranded
+// before terminal relay persistence was wired. It deliberately skips any attempt
+// record: an empty outcome may have crossed the durable claim before a crash, so
+// retrying it could bill a second provider call.
+func (s *Service) reconcilePendingTitles() {
+	if s.titleCoordinator == nil {
+		return
+	}
+	pager, ok := s.cfg.Store.(port.SessionMetadataPager)
+	if !ok {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	page, err := pager.PageSessionMetadata(ctx, port.SessionMetadataPageRequest{Limit: titleReconcileLimit})
+	if err != nil {
+		s.cfg.Diagnostics.Log(ctx, port.LevelWarn, "session title reconciliation failed", "error", err)
+		return
+	}
+	for _, meta := range page.Sessions {
+		if meta.State != session.StateCompleted {
+			continue
+		}
+		sess, err := s.cfg.Store.Load(ctx, meta.ID)
+		if err != nil || sess == nil || sess.TitleGeneration != session.TitleGenerationPending || sess.TitleProvenance == session.TitleProvenanceOperator || len(sess.TitleSourcePrompts()) == 0 || len(sess.TitleAttempts()) != 0 {
+			continue
+		}
+		s.submitTitleGeneration(sess.ID)
 	}
 }
 
