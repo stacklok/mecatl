@@ -75,10 +75,12 @@ mecatui connect ozzllama:9080 --tls=false
 
 Bind the server to one concrete Tailscale address, never a wildcard, and do not enable
 Funnel. Treat ACLs as load-bearing, use a dedicated server workspace with least OS
-authority, and configure a restrictive rate limit. The server's prominent non-loopback
-no-caller-authentication warning is expected; ordinary TLS would not suppress it because
-TLS is not caller authentication. A non-loopback client does not select or upload its
-local workspace—the server remains the workspace authority.
+authority, and configure a restrictive rate limit. Run it at `--posture strict` (or
+`trusted` only when its project inputs are trusted): `auto` and `yolo` weaken the remaining
+approval boundary. The server's prominent non-loopback no-caller-authentication warning is
+expected; ordinary TLS would not suppress it because TLS is not caller authentication. A
+non-loopback client does not select or upload its local workspace—the server remains the
+workspace authority.
 
 Caller identity is attribution, not tenant isolation: authenticated callers can still list and act on other callers' sessions. Do not treat a token-authenticated shared server as a tenancy boundary.
 
