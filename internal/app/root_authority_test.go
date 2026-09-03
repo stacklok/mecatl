@@ -3,8 +3,10 @@ package app
 import (
 	"context"
 	"os"
+	"sort"
 	"testing"
 
+	"github.com/stacklok/mecatl/engine/adapter/localauthority"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/governance"
@@ -38,6 +40,47 @@ func TestADR_0233_AuthorityEvaluator_Scenario6_MintPopulatesEveryFieldExplicitly
 	}
 	if !managedDefinitionAuthority(tool.AgentDef{Origin: tool.AgentOriginExplicit}) {
 		t.Fatal("explicit origin must be the sole ceiling-eligible tier")
+	}
+}
+
+func TestMintRootAuthorityAddsLatentTeamMemberCapabilities(t *testing.T) {
+	catalog := rootAuthorityCatalog(t)
+	catalog.MustRegister(rootAuthorityTestTool{name: "Team"})
+
+	root := mintRootAuthority(catalog, nil, session.SessionKindMain)
+	latent := root.CapabilitySet.Tools[len(catalog.Tools()):]
+	if !sort.StringsAreSorted(latent) {
+		t.Fatalf("latent member tools = %v, want sorted", latent)
+	}
+	child, err := governance.ConsumeDelegationHop(root.CapabilitySet)
+	if err != nil {
+		t.Fatalf("ConsumeDelegationHop(root): %v", err)
+	}
+	for name := range agent.MemberToolNames() {
+		if _, registered := catalog.Lookup(name); registered {
+			t.Fatalf("parent catalog unexpectedly contains latent member tool %q", name)
+		}
+		if !root.CapabilitySet.AllowsTool(name) || !child.AllowsTool(name) {
+			t.Fatalf("member tool %q was not carried through child derivation: root=%v child=%v", name, root.CapabilitySet.Tools, child.Tools)
+		}
+		decision, err := localauthority.New().AuthorizeTool(context.Background(), port.AuthorityRequest{
+			CapabilitySet: child,
+			ToolName:      name,
+			Action:        name,
+			Principal:     port.AuthorityPrincipal{Definition: root.DefinitionIdentity, Instance: "child"},
+		})
+		if err != nil || !decision.Allowed {
+			t.Fatalf("AuthorizeTool(%q) = (%+v, %v), want allowed", name, decision, err)
+		}
+	}
+}
+
+func TestMintRootAuthorityWithoutTeamExcludesMemberCapabilities(t *testing.T) {
+	root := mintRootAuthority(rootAuthorityCatalog(t), nil, session.SessionKindMain)
+	for name := range agent.MemberToolNames() {
+		if root.CapabilitySet.AllowsTool(name) {
+			t.Fatalf("member tool %q was minted without Team: %v", name, root.CapabilitySet.Tools)
+		}
 	}
 }
 

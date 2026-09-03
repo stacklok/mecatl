@@ -3,10 +3,12 @@ package app
 import (
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 
 	"github.com/stacklok/mecatl/engine/adapter/localauthority"
 	"github.com/stacklok/mecatl/engine/adapter/noopauthority"
+	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/governance"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
@@ -99,8 +101,10 @@ func mcpResourceCapabilities(manager *mcp.Manager) []string {
 }
 
 // mintRootAuthority establishes a complete root capability set from the catalog
-// assembled for the session. Child derivation consumes this carried value later;
-// it is not performed at the composition root.
+// assembled for the session. A Team-capable root also carries the latent member
+// coordination names that can be installed only in its derived member catalogs.
+// Child derivation consumes this carried value later; it is not performed at the
+// composition root.
 func mintRootAuthority(catalog *tool.Catalog, resources []string, kind session.SessionKind) session.Authority {
 	if kind == session.SessionKindDebug {
 		return session.Authority{
@@ -113,6 +117,21 @@ func mintRootAuthority(catalog *tool.Catalog, resources []string, kind session.S
 	names := make([]string, 0, len(tools)+len(resources))
 	for _, registered := range tools {
 		names = append(names, registered.Spec().Name)
+	}
+	if _, hasTeam := catalog.Lookup("Team"); hasTeam {
+		memberTools := agent.MemberToolNames()
+		latent := make([]string, 0, len(memberTools))
+		registered := make(map[string]struct{}, len(names))
+		for _, name := range names {
+			registered[name] = struct{}{}
+		}
+		for name := range memberTools {
+			if _, exists := registered[name]; !exists {
+				latent = append(latent, name)
+			}
+		}
+		sort.Strings(latent)
+		names = append(names, latent...)
 	}
 	names = append(names, resources...)
 	_, fileSystem := catalog.Lookup("Read")

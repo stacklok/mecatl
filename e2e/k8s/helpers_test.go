@@ -542,6 +542,47 @@ func freeLocalPort() int {
 
 // --- HTTP API helpers --------------------------------------------------------
 
+// createLiveSessionOverHTTP creates a session on the explicit OpenRouter/Haiku
+// selector path. The live lane intentionally does not rely on deployment defaults:
+// it verifies the CreateSession resolved-model echo before starting the real stream.
+func createLiveSessionOverHTTP(ctx context.Context, addr string) string {
+	ginkgo.GinkgoHelper()
+	body, err := json.Marshal(map[string]any{
+		"mode":        "default",
+		"provider_id": liveProviderID,
+		"model_id":    liveProviderModel,
+	})
+	gomega.ExpectWithOffset(1, err).NotTo(gomega.HaveOccurred(), "marshal live session create body")
+	url := fmt.Sprintf("http://%s/v1/sessions", addr)
+	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	gomega.ExpectWithOffset(1, err).NotTo(gomega.HaveOccurred(), "POST %s", url)
+	defer func() { _ = resp.Body.Close() }()
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 8192))
+	gomega.ExpectWithOffset(1, resp.StatusCode).To(gomega.Equal(http.StatusCreated),
+		"create live session: status %d, body %s", resp.StatusCode, string(raw))
+	var respBody struct {
+		SessionID     string `json:"session_id"`
+		ResolvedModel *struct {
+			ProviderID string `json:"provider_id"`
+			ModelID    string `json:"model_id"`
+		} `json:"resolved_model"`
+	}
+	gomega.ExpectWithOffset(1, json.Unmarshal(raw, &respBody)).To(gomega.Succeed(),
+		"create live session: unmarshal %s", string(raw))
+	gomega.ExpectWithOffset(1, respBody.SessionID).NotTo(gomega.BeEmpty(), "empty live session_id")
+	gomega.ExpectWithOffset(1, respBody.ResolvedModel).NotTo(gomega.BeNil(),
+		"live session response omitted resolved_model: %s", string(raw))
+	gomega.ExpectWithOffset(1, respBody.ResolvedModel.ProviderID).To(gomega.Equal(liveProviderID),
+		"live session resolved provider_id = %q, want explicit selector %q (response: %s)",
+		respBody.ResolvedModel.ProviderID, liveProviderID, string(raw))
+	gomega.ExpectWithOffset(1, respBody.ResolvedModel.ModelID).To(gomega.Equal(liveProviderModel),
+		"live session resolved model_id = %q, want explicit selector %q (response: %s)",
+		respBody.ResolvedModel.ModelID, liveProviderModel, string(raw))
+	return respBody.SessionID
+}
+
 // createSessionOverHTTP creates a session via POST /v1/sessions and returns the
 // session id. The request is path-free: mecak8s composition binds the configured
 // deployment workspace.
@@ -923,11 +964,30 @@ func enableLiveProvider(key string) {
 // usage" helper for the live specs — distinct from drainRun (which discards the
 // body, fine for the mock's instant completion but blind to a real run's stop).
 type sseResult struct {
-	Stop   string `json:"stop"`
-	Text   string `json:"text"`
-	Input  int64  `json:"input_tokens"`
-	Output int64  `json:"output_tokens"`
+	Stop            string   `json:"stop"`
+	Text            string   `json:"text"`
+	Input           int64    `json:"input_tokens"`
+	Output          int64    `json:"output_tokens"`
+	EventTypes      []string `json:"-"`
+	NoProgressTexts []string `json:"-"`
 }
+
+func (r *sseResult) diagnostic() string {
+	return fmt.Sprintf("events=%v result_text=%q no_progress=%q", r.EventTypes, r.Text, r.NoProgressTexts)
+}
+
+// sseDiagnosticText bounds model- or server-produced text included in a failed
+// live assertion. The live lane never sends credentials in prompts, but diagnostics
+// must not turn an unexpected verbose event into unbounded test output.
+func sseDiagnosticText(text string) string {
+	const limit = 512
+	if len(text) <= limit {
+		return text
+	}
+	return text[:limit] + "...[truncated]"
+}
+
+const maxSSEDiagnosticEvents = 12
 
 // drainRunSSE starts a prompt run, drains the SSE stream to terminal, and parses
 // the terminal `result` event (stop + usage). It is the live-spec counterpart of
@@ -961,6 +1021,7 @@ func drainRunSSE(ctx context.Context, addr, sessionID, text string) (status int,
 	// A single event JSON is small, but a reasoning turn's text can be long; raise
 	// the per-line budget so a large result text is not truncated.
 	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
+	var eventTypes, noProgressTexts []string
 	for scanner.Scan() {
 		line := scanner.Text()
 		if !strings.HasPrefix(line, "data: ") {
@@ -972,6 +1033,7 @@ func drainRunSSE(ctx context.Context, addr, sessionID, text string) (status int,
 		}
 		var ev struct {
 			Type   string `json:"type"`
+			Text   string `json:"text"`
 			Result *struct {
 				Stop  string `json:"stop"`
 				Text  string `json:"text"`
@@ -984,8 +1046,19 @@ func drainRunSSE(ctx context.Context, addr, sessionID, text string) (status int,
 		if jerr := json.Unmarshal([]byte(payload), &ev); jerr != nil {
 			continue // not a JSON event frame (e.g. a keep-alive comment); skip
 		}
+		if len(eventTypes) < maxSSEDiagnosticEvents {
+			eventTypes = append(eventTypes, ev.Type)
+		}
+		if ev.Type == "no_progress" && len(noProgressTexts) < maxSSEDiagnosticEvents {
+			noProgressTexts = append(noProgressTexts, sseDiagnosticText(ev.Text))
+		}
 		if ev.Type == "result" && ev.Result != nil {
-			res = &sseResult{Stop: ev.Result.Stop, Text: ev.Result.Text}
+			res = &sseResult{
+				Stop:            ev.Result.Stop,
+				Text:            sseDiagnosticText(ev.Result.Text),
+				EventTypes:      eventTypes,
+				NoProgressTexts: noProgressTexts,
+			}
 			if ev.Result.Usage != nil {
 				res.Input = ev.Result.Usage.InputTokens
 				res.Output = ev.Result.Usage.OutputTokens
