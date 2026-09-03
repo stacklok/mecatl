@@ -158,6 +158,45 @@ func TestReadClientKeymapRejectsUnknownTopLevelKey(t *testing.T) {
 	}
 }
 
+func TestReadClientSettingsDecodeErrorIsSafeAndExplainsSettingsOwnership(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	const secret = "SUPER-SECRET-TITLE-MODEL"
+	path := writeSettings(t, "mecatui", "models:\n  slots:\n    title: "+secret+"\n")
+
+	_, err := readClientSettings()
+	if err == nil {
+		t.Fatal("server models in the strict client file must be rejected")
+	}
+	if strings.Contains(err.Error(), secret) {
+		t.Fatalf("client settings error leaked YAML value %q: %v", secret, err)
+	}
+	for _, want := range []string{
+		path,
+		"client-owned settings file",
+		"models:",
+		"~/.config/mecatl/settings.yaml",
+		"line ",
+		"column ",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error = %q, want %q", err, want)
+		}
+	}
+}
+
+func TestReadClientSettingsIgnoresServerModelsWithoutTitleSlot(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	writeSettings(t, "mecatl", "models:\n  slots:\n    cheap: cheap-model\n")
+
+	got, err := readClientSettings()
+	if err != nil {
+		t.Fatalf("server settings without models.slots.title must not affect client settings: %v", err)
+	}
+	if !reflect.DeepEqual(got, clientSettings{}) {
+		t.Fatalf("client settings = %#v, want zero settings when the client file is absent", got)
+	}
+}
+
 func TestReadClientKeymapRejectsMultiDocument(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	writeSettings(t, "mecatui", "keymap:\n  Agents: ctrl+f12\n---\nkeymap:\n  Effort: ctrl+f5\n")
