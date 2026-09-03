@@ -16,6 +16,14 @@ export interface PromptOutcome {
  * this bridge (panel-review, #883) — this class only knows about threads,
  * not who's behind them.
  *
+ * `workspace` is OPTIONAL (unset it for a Docker/network-exposed `mecated`):
+ * a `--grpc-addr` bound to a non-loopback address auto-switches mecated to
+ * server-assigned workspace mode, which REJECTS a client-supplied `workspace`
+ * outright (`invalid_argument: deployment assigns the workspace`) — found by
+ * running this in Docker Compose, where 0.0.0.0 binding is required for
+ * cross-container reachability but silently changed the server's contract.
+ *
+
  * TODO(#883 follow-up, panel-review): no per-run token/spend budget.
  * The SDK's `RunOptions` (M1) doesn't yet expose a per-call token limit —
  * mecatl core supports tighten-only budgets (`Deps.MaxRunTokens`), but the
@@ -33,11 +41,11 @@ export interface PromptOutcome {
  */
 export class MecatlBridge {
   readonly #client: Client;
-  readonly #workspace: string;
+  readonly #workspace: string | undefined;
   readonly #sessions = new Map<string, Session>();
   readonly #queues = new Map<string, Promise<unknown>>();
 
-  constructor(target: NodeConnectOptions, workspace: string) {
+  constructor(target: NodeConnectOptions, workspace: string | undefined) {
     this.#client = connect(target);
     this.#workspace = workspace;
   }
@@ -68,7 +76,9 @@ export class MecatlBridge {
   async #sessionFor(threadKey: string): Promise<Session> {
     const existing = this.#sessions.get(threadKey);
     if (existing !== undefined) return existing;
-    const session = await this.#client.sessions.create({ workspace: this.#workspace });
+    const session = await this.#client.sessions.create(
+      this.#workspace === undefined ? {} : { workspace: this.#workspace },
+    );
     this.#sessions.set(threadKey, session);
     return session;
   }

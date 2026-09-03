@@ -21,9 +21,16 @@ const MENTION_PREFIX = /^<@[^>]+>\s*/;
  * `app.event`/`app.message` + the raw `agents.sessions.setStatus` API (not
  * yet wrapped by bolt-js).
  *
+ * `agents.sessions.setStatus` requires `thread_ts` on EVERY call, DMs
+ * included (easy to misread the API docs otherwise — a DM message has no
+ * `thread_ts` field of its own, so this bridge anchors one: the first
+ * message's own `ts` in a given DM channel, remembered and reused for every
+ * later status call in that channel. That anchor is a status-API-only
+ * concept — DM replies still post un-threaded, unlike channel replies.
+ *
  * Two surfaces, two session-keying strategies:
- * - DM: `app_home_opened` (tab "messages") greets once; every message in
- *   the channel is one session (no `thread_ts` exists on this surface).
+ * - DM: every message in the channel is one mecatl session (no real
+ *   `thread_ts` exists on this surface to key a narrower one on).
  * - Channel (public or private): `app_mention` starts/continues a session
  *   keyed by `channel:thread_ts` (a top-level mention's own `ts` becomes the
  *   thread root); a later reply in that SAME thread without re-mentioning
@@ -42,6 +49,7 @@ const MENTION_PREFIX = /^<@[^>]+>\s*/;
  */
 export function registerAgentSessions(app: App, bridge: MecatlBridge, config: BotConfig): void {
   const greetedDm = new Set<string>();
+  const dmStatusAnchor = new Map<string, string>();
   const activeChannelThreads = new Set<string>();
   const rateLimiter = new SlidingWindowRateLimiter(config.rateLimit.max, config.rateLimit.windowMs);
 
@@ -57,7 +65,6 @@ export function registerAgentSessions(app: App, bridge: MecatlBridge, config: Bo
     if (event.tab !== "messages") return;
     if (greetedDm.has(event.channel)) return;
     greetedDm.add(event.channel);
-    await setSessionStatus(app, event.channel, undefined, "active");
     await say(GREETING);
   });
 
@@ -69,7 +76,7 @@ export function registerAgentSessions(app: App, bridge: MecatlBridge, config: Bo
     const threadKey = `${event.channel}:${threadTs}`;
     activeChannelThreads.add(threadKey);
     const text = event.text.replace(MENTION_PREFIX, "");
-    await runPrompt(app, bridge, event.channel, threadTs, threadKey, text, say);
+    await runPrompt(app, bridge, event.channel, threadTs, threadTs, threadKey, text, say);
   });
 
   app.message(async ({ message, context, say }) => {
@@ -84,7 +91,9 @@ export function registerAgentSessions(app: App, bridge: MecatlBridge, config: Bo
     if (message.channel_type === "im") {
       if (!isAllowed(config, userId)) return void say(NOT_AUTHORIZED_MESSAGE);
       if (!rateLimiter.allow(userId ?? channelId)) return void say(RATE_LIMITED_MESSAGE);
-      await runPrompt(app, bridge, channelId, undefined, channelId, text, say);
+      const anchor = dmStatusAnchor.get(channelId) ?? message.ts;
+      if (!dmStatusAnchor.has(channelId)) dmStatusAnchor.set(channelId, anchor);
+      await runPrompt(app, bridge, channelId, anchor, undefined, channelId, text, say);
       return;
     }
 
@@ -95,7 +104,7 @@ export function registerAgentSessions(app: App, bridge: MecatlBridge, config: Bo
     if (context.botUserId !== undefined && text.includes(`<@${context.botUserId}>`)) return;
     if (!isAllowed(config, userId)) return void say(NOT_AUTHORIZED_MESSAGE);
     if (!rateLimiter.allow(userId ?? channelId)) return void say(RATE_LIMITED_MESSAGE);
-    await runPrompt(app, bridge, channelId, threadTs, threadKey, text, say);
+    await runPrompt(app, bridge, channelId, threadTs, threadTs, threadKey, text, say);
   });
 }
 
@@ -108,23 +117,26 @@ async function runPrompt(
   app: App,
   bridge: MecatlBridge,
   channelId: string,
-  threadTs: string | undefined,
+  statusThreadTs: string,
+  replyThreadTs: string | undefined,
   threadKey: string,
   text: string,
   say: SayFn,
 ): Promise<void> {
-  await setSessionStatus(app, channelId, threadTs, "processing");
+  await setSessionStatus(app, channelId, statusThreadTs, "processing");
   try {
     const outcome = await bridge.handlePrompt(threadKey, text);
     const reply = outcome.text.length > 0 ? outcome.text : `(${outcome.stopReason}: no text)`;
-    await say(threadTs === undefined ? reply : { text: reply, thread_ts: threadTs });
+    await say(replyThreadTs === undefined ? reply : { text: reply, thread_ts: replyThreadTs });
   } catch (error) {
     app.logger.error("mecatl prompt failed", error);
     await say(
-      threadTs === undefined ? FAILURE_MESSAGE : { text: FAILURE_MESSAGE, thread_ts: threadTs },
+      replyThreadTs === undefined
+        ? FAILURE_MESSAGE
+        : { text: FAILURE_MESSAGE, thread_ts: replyThreadTs },
     );
   } finally {
-    await setSessionStatus(app, channelId, threadTs, "active");
+    await setSessionStatus(app, channelId, statusThreadTs, "active");
   }
 }
 
@@ -132,14 +144,14 @@ async function runPrompt(
 async function setSessionStatus(
   app: App,
   channelId: string,
-  threadTs: string | undefined,
+  threadTs: string,
   status: "active" | "processing" | "suspended" | "closed",
 ): Promise<void> {
   try {
     await app.client.apiCall("agents.sessions.setStatus", {
       channel_id: channelId,
       status,
-      ...(threadTs === undefined ? {} : { thread_ts: threadTs }),
+      thread_ts: threadTs,
     });
   } catch (error) {
     app.logger.warn("agents.sessions.setStatus failed", error);
