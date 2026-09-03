@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"encoding/json"
@@ -9,15 +10,14 @@ import (
 	"mime"
 	"net"
 	"net/http"
-	"net/netip"
 	"net/url"
 	"strings"
 	"time"
 	"unicode"
 
+	"github.com/stacklok/toolhive-core/networking"
 	"github.com/stacklok/toolhive/pkg/oauthproto"
 
-	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/internal/adapter/resourceurl"
 )
 
@@ -157,53 +157,23 @@ func isDNSLabelRune(r rune) bool {
 	return r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-'
 }
 
-// ToolHive-Core's networking package is intentionally not used for this client:
-// its generic host-scoped client permits policies (notably redirects) that are
-// too broad for anonymous issuer/resource bootstrap. This transport validates
-// every DNS answer, pins the selected address, and refuses every redirect.
+// ToolHive-Core's networking package supplies the private-IP/DNS-rebinding
+// dial guard (NewPrivateIPBlockingDialContext) so this transport doesn't
+// duplicate that CIDR list. Its higher-level host-scoped client is still not
+// used here: it follows same-host redirects, and this bootstrap must refuse
+// every redirect — an RFC 9728/8414 well-known URI has no legitimate reason
+// to redirect at all, so any redirect here is itself a signal to reject.
 func newPublicBootstrapClient() *http.Client {
 	transport := &http.Transport{
 		Proxy:                  nil,
-		DialContext:            publicBootstrapDial,
+		DialContext:            networking.NewPrivateIPBlockingDialContext(),
 		TLSClientConfig:        &tls.Config{MinVersion: tls.VersionTLS12},
 		TLSHandshakeTimeout:    10 * time.Second,
 		ResponseHeaderTimeout:  10 * time.Second,
 		MaxResponseHeaderBytes: 32 << 10,
-		MaxIdleConns:           2,
-		MaxIdleConnsPerHost:    1,
-		IdleConnTimeout:        15 * time.Second,
+		DisableKeepAlives:      true,
 	}
 	return &http.Client{Transport: anonymousTransport{next: transport}, Timeout: bootstrapTimeout, CheckRedirect: func(*http.Request, []*http.Request) error { return errDiscoveryRejected }}
-}
-
-func publicBootstrapDial(ctx context.Context, network, address string) (net.Conn, error) {
-	host, port, err := net.SplitHostPort(address)
-	if err != nil {
-		return nil, errDiscoveryRejected
-	}
-	answers, err := net.DefaultResolver.LookupNetIP(ctx, "ip", host)
-	if err != nil || len(answers) == 0 {
-		return nil, errDiscoveryRejected
-	}
-	for _, answer := range answers {
-		if err := validatePublicAddress(answer.String()); err != nil {
-			return nil, errDiscoveryRejected
-		}
-	}
-	// Dial the validated answer rather than the hostname, pinning this connection
-	// to the DNS result that passed admission. TLS still verifies the hostname.
-	return (&net.Dialer{}).DialContext(ctx, network, net.JoinHostPort(answers[0].String(), port))
-}
-
-func validatePublicAddress(raw string) error {
-	addr, err := netip.ParseAddr(raw)
-	if err != nil || !addr.IsValid() || addr.IsLoopback() || addr.IsPrivate() || addr.IsLinkLocalUnicast() || addr.IsLinkLocalMulticast() || addr.IsMulticast() || addr.IsUnspecified() {
-		return errDiscoveryRejected
-	}
-	if err := session.ValidateResolvedIP(net.IP(addr.AsSlice())); err != nil {
-		return errDiscoveryRejected
-	}
-	return nil
 }
 
 type anonymousTransport struct{ next http.RoundTripper }
@@ -283,7 +253,7 @@ func readJSONBody(body io.Reader) ([]byte, error) {
 	if err != nil || len(data) > maxDiscoveryBodyBytes || !json.Valid(data) {
 		return nil, errDiscoveryRejected
 	}
-	dec := json.NewDecoder(strings.NewReader(string(data)))
+	dec := json.NewDecoder(bytes.NewReader(data))
 	var value any
 	if dec.Decode(&value) != nil || dec.Decode(&struct{}{}) != io.EOF {
 		return nil, errDiscoveryRejected
@@ -344,7 +314,7 @@ func validateIssuerDocument(expected string, body []byte) error {
 }
 
 func hasDuplicateSecurityFields(body []byte, fields map[string]bool) bool {
-	dec := json.NewDecoder(strings.NewReader(string(body)))
+	dec := json.NewDecoder(bytes.NewReader(body))
 	token, err := dec.Token()
 	if err != nil {
 		return true
@@ -392,13 +362,5 @@ func safeDisplayValue(value string) bool {
 }
 
 func validScope(scope string) bool {
-	if scope == "" {
-		return false
-	}
-	for _, r := range scope {
-		if r < 0x21 || r == '"' || r == '\\' || r > 0x7e {
-			return false
-		}
-	}
-	return true
+	return resourceurl.ValidScopeToken(scope)
 }

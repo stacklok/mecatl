@@ -2,6 +2,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"flag"
@@ -92,7 +93,10 @@ func runRemoteLogin(address string, args []string) error {
 		return errors.New("login: a positive --callback-timeout is required")
 	}
 
-	explicitIdentity := issuer != "" || clientID != "" || audience != ""
+	explicitIssuer := flagWasSet(fs, "issuer")
+	explicitClientID := flagWasSet(fs, "client-id")
+	explicitAudience := flagWasSet(fs, "audience")
+	explicitIdentity := explicitIssuer || explicitClientID || explicitAudience
 	if !explicitIdentity {
 		if tlsCA != "" || privateIssuer {
 			return errors.New("login: --tls-ca and --private-issuer require explicit --issuer, --client-id, and --audience")
@@ -144,9 +148,9 @@ func runDiscoveredRemoteLogin(address, grpcTarget, scopes string, scopesExplicit
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	ctx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-	discovered, err := discoverRemoteResource(ctx, resource)
+	discoverCtx, cancelDiscover := context.WithTimeout(ctx, timeout)
+	discovered, err := discoverRemoteResource(discoverCtx, resource)
+	cancelDiscover()
 	if err != nil {
 		return errors.New("login: protected-resource discovery failed")
 	}
@@ -165,7 +169,9 @@ func runDiscoveredRemoteLogin(address, grpcTarget, scopes string, scopesExplicit
 	if !confirmed {
 		return errors.New("login: discovered enrollment was not confirmed")
 	}
-	if err := executeRemoteLogin(ctx, enrollment.Connection, noBrowser); err != nil {
+	loginCtx, cancelLogin := context.WithTimeout(ctx, timeout)
+	defer cancelLogin()
+	if err := executeRemoteLogin(loginCtx, enrollment.Connection, noBrowser); err != nil {
 		if errors.Is(err, context.Canceled) {
 			fmt.Fprintln(os.Stderr, "login cancelled")
 			return nil
@@ -200,12 +206,10 @@ func discoveredScopes(discovered discoveredResource, explicit string, explicitSe
 		if len(requested) == 0 {
 			return nil, errDiscoveryRejected
 		}
-	} else if len(requested) == 0 {
-		requested = splitScopes(defaultOIDCScopes)
 	}
 	selected := make(map[string]bool, len(requested))
 	for _, scope := range requested {
-		if len(confirmed) > 0 && !confirmed[scope] {
+		if !confirmed[scope] {
 			return nil, errDiscoveryRejected
 		}
 		if !validScope(scope) {
@@ -244,13 +248,11 @@ func confirmDiscoveredLogin(in io.Reader, out io.Writer, enrollment discoveredEn
 	if _, err := fmt.Fprintf(out, "Discovered protected resource:\n  resource: %s\n  metadata: %s\n  issuer: %s\n  audience: %s\n  client ID: %s\n  scopes: %s\n  gRPC target: %s\nContinue with browser login? [y/N]: ", enrollment.Resource, enrollment.MetadataURL, enrollment.Connection.Identity.Issuer, enrollment.Connection.Identity.Audience, enrollment.Connection.Identity.ClientID, strings.Join(enrollment.Connection.Identity.Scopes, ","), enrollment.Connection.Identity.Target); err != nil {
 		return false, err
 	}
-	var answer string
-	if _, err := fmt.Fscanln(in, &answer); err != nil {
-		if errors.Is(err, io.EOF) {
-			return false, nil
-		}
+	answer, err := bufio.NewReader(in).ReadString('\n')
+	if err != nil && !errors.Is(err, io.EOF) {
 		return false, err
 	}
+	answer = strings.TrimSpace(answer)
 	return strings.EqualFold(answer, "y") || strings.EqualFold(answer, "yes"), nil
 }
 

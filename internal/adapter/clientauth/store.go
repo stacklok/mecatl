@@ -19,7 +19,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"unicode"
 
 	"github.com/gofrs/flock"
 	"github.com/zalando/go-keyring"
@@ -74,12 +73,12 @@ func (i Identity) Canonical() (Identity, error) {
 	if err != nil {
 		return Identity{}, fmt.Errorf("%w: redirect URI", ErrInvalidIdentity)
 	}
-	if !safe(i.ClientID) || !safe(i.Audience) || len(i.Scopes) == 0 {
+	if !safe(i.ClientID) || !safe(i.Audience) {
 		return Identity{}, ErrInvalidIdentity
 	}
 	i.Scopes = slices.Clone(i.Scopes)
 	for n, scope := range i.Scopes {
-		if !safe(scope) {
+		if !resourceurl.ValidScopeToken(scope) {
 			return Identity{}, fmt.Errorf("%w: scope %d", ErrInvalidIdentity, n)
 		}
 	}
@@ -88,15 +87,7 @@ func (i Identity) Canonical() (Identity, error) {
 	return i, nil
 }
 func safe(v string) bool {
-	if v == "" || len(v) > 1024 {
-		return false
-	}
-	for _, r := range v {
-		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
-			return false
-		}
-	}
-	return true
+	return resourceurl.Safe(v)
 }
 func canonicalTarget(raw string) (string, error) {
 	if !safe(raw) || strings.Contains(raw, "://") || strings.ContainsAny(raw, "/?#@") {
@@ -838,7 +829,13 @@ func (r *Registry) readRows() ([]registryRow, error) {
 
 // Find returns the one saved connection addressed by an exact canonical resource
 // URL or target. Resource and target aliases are intentionally resolved through
-// the same ambiguity check; a legacy row without ResourceURL is target-only.
+// the same ambiguity check; a legacy row without ResourceURL is target-only. An
+// alias outside every recognized grammar (including a legacy `scheme://host:port`
+// gRPC target such as `unix://...`, which predates canonicalTarget's own stricter
+// grammar) cannot name a saved row and reports credentialstore.ErrNotFound rather
+// than ErrInvalidIdentity, mirroring FindTarget's leniency: both real callers
+// (cmd/mecatui's connect and resolveTransport) treat "not enrolled" as the
+// ordinary, idempotent miss and anything else as a hard local-storage failure.
 func (r *Registry) Find(alias string) (Connection, error) {
 	var (
 		match func(Connection) bool
@@ -847,18 +844,18 @@ func (r *Registry) Find(alias string) (Connection, error) {
 	if strings.Contains(alias, "://") {
 		resource, resourceErr := canonicalResourceURL(alias)
 		if resourceErr != nil {
-			return Connection{}, ErrInvalidIdentity
+			return Connection{}, credentialstore.ErrNotFound
 		}
 		match = func(conn Connection) bool { return conn.ResourceURL != "" && conn.ResourceURL == resource }
 	} else if target, targetErr := canonicalTarget(alias); targetErr == nil {
 		match = func(conn Connection) bool { return conn.Identity.Target == target }
 	} else {
 		if strings.ContainsAny(alias, "/?#@") {
-			return Connection{}, ErrInvalidIdentity
+			return Connection{}, credentialstore.ErrNotFound
 		}
 		resource, resourceErr := canonicalResourceURL("https://" + alias)
 		if resourceErr != nil {
-			return Connection{}, ErrInvalidIdentity
+			return Connection{}, credentialstore.ErrNotFound
 		}
 		match = func(conn Connection) bool { return conn.ResourceURL != "" && conn.ResourceURL == resource }
 	}
@@ -1179,11 +1176,8 @@ func (r *Registry) replaceEnrollment(target, resource string, expected, desired 
 			continue
 		}
 		conn := row.connection
-		if conn.Identity.Target == target {
+		if conn.Identity.Target == target || (resource != "" && conn.ResourceURL == resource) {
 			current = append(current, conn)
-			continue
-		}
-		if resource != "" && conn.ResourceURL == resource {
 			continue
 		}
 		kept = append(kept, registryRow{connection: conn, valid: true})

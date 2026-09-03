@@ -21,7 +21,7 @@ func Canonical(raw string) (string, error) {
 	if raw == "" {
 		return "", nil
 	}
-	if !safe(raw) {
+	if !Safe(raw) {
 		return "", errors.New("invalid resource URL")
 	}
 	u, err := url.Parse(raw)
@@ -41,6 +41,9 @@ func Canonical(raw string) (string, error) {
 		}
 	} else {
 		u.Host = urlHost(canonicalHostname(u.Hostname()))
+	}
+	if hasDotSegment(u.Path) {
+		return "", errors.New("invalid resource URL path")
 	}
 	if u.Path == "/" {
 		u.Path, u.RawPath = "", ""
@@ -68,6 +71,15 @@ func MetadataURL(raw string) string {
 	return u.String()
 }
 
+func hasDotSegment(path string) bool {
+	for _, segment := range strings.Split(path, "/") {
+		if segment == "." || segment == ".." {
+			return true
+		}
+	}
+	return false
+}
+
 func canonicalHostname(host string) string {
 	host = strings.ToLower(host)
 	if ip := net.ParseIP(host); ip != nil {
@@ -83,12 +95,34 @@ func urlHost(host string) string {
 	return host
 }
 
-func safe(value string) bool {
+// Safe reports whether value is a non-empty, bounded string free of control
+// and Unicode format characters. Shared by the server, enrollment registry,
+// and discovery client so an identity-safety tightening cannot drift between
+// them.
+func Safe(value string) bool {
 	if value == "" || len(value) > 1024 {
 		return false
 	}
 	for _, r := range value {
 		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
+			return false
+		}
+	}
+	return true
+}
+
+// ValidScopeToken reports whether scope is a single RFC 6749 §3.3 scope-token
+// (VSCHAR minus DQUOTE/backslash, no comma — a comma is the CSV separator
+// wherever scopes are joined for display or storage). Shared by the server's
+// protected-resource profile, the OIDC CLI/Helm flag parser, and the
+// discovery client so an untrusted metadata response cannot smuggle a
+// separator character into a scope value.
+func ValidScopeToken(scope string) bool {
+	if scope == "" {
+		return false
+	}
+	for _, r := range scope {
+		if r < 0x21 || r > 0x7e || r == '"' || r == '\\' || r == ',' {
 			return false
 		}
 	}

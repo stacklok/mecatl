@@ -66,6 +66,22 @@ func TestRemoteLoginStoresAbsoluteIssuerCAReferenceAcrossCWDChanges(t *testing.T
 	}
 }
 
+func TestRemoteLoginExplicitEmptyIdentityDoesNotFallBackToDiscovery(t *testing.T) {
+	original := discoverRemoteResource
+	t.Cleanup(func() { discoverRemoteResource = original })
+	discoverRemoteResource = func(context.Context, protectedResource) (discoveredResource, error) {
+		t.Fatal("protected-resource discovery was attempted for an explicit identity flag")
+		return discoveredResource{}, nil
+	}
+	for _, flag := range []string{"issuer", "client-id", "audience"} {
+		t.Run(flag, func(t *testing.T) {
+			if err := runRemoteLogin("https://resource.example", []string{"--" + flag + "="}); err == nil || !strings.Contains(err.Error(), "required together") {
+				t.Fatalf("runRemoteLogin with --%s= error = %v, want incomplete explicit identity error", flag, err)
+			}
+		})
+	}
+}
+
 func TestRemoteLoginAllowsSystemIssuerRoots(t *testing.T) {
 	original := executeRemoteLogin
 	t.Cleanup(func() { executeRemoteLogin = original })
@@ -254,5 +270,34 @@ func TestConfirmDiscoveredLoginRejectsTerminalControls(t *testing.T) {
 		if _, err := confirmDiscoveredLogin(strings.NewReader("y\n"), io.Discard, candidate); !errors.Is(err, errDiscoveryRejected) {
 			t.Errorf("confirmation accepted unsafe metadata value %q: %v", value, err)
 		}
+	}
+}
+
+func TestConfirmDiscoveredLoginAnswers(t *testing.T) {
+	enrollment := discoveredEnrollment{Resource: "https://api.example", MetadataURL: "https://api.example/.well-known/oauth-protected-resource", Connection: clientauth.Connection{Identity: clientauth.Identity{Issuer: "https://issuer.example", ClientID: "client", Audience: "audience", Target: "api.example:443", Scopes: []string{"openid"}}}}
+	cases := []struct {
+		name  string
+		input string
+		want  bool
+	}{
+		{"bare enter declines", "\n", false},
+		{"EOF with no input declines", "", false},
+		{"y accepts", "y\n", true},
+		{"yes accepts", "yes\n", true},
+		{"YES case-insensitive", "YES\n", true},
+		{"no declines", "no\n", false},
+		{"garbage declines", "maybe\n", false},
+		{"y with no trailing newline accepts", "y", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := confirmDiscoveredLogin(strings.NewReader(tc.input), io.Discard, enrollment)
+			if err != nil {
+				t.Fatalf("confirmDiscoveredLogin(%q) error = %v", tc.input, err)
+			}
+			if got != tc.want {
+				t.Fatalf("confirmDiscoveredLogin(%q) = %v, want %v", tc.input, got, tc.want)
+			}
+		})
 	}
 }

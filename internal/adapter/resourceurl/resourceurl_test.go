@@ -8,6 +8,8 @@ func TestCanonicalResourceIdentity(t *testing.T) {
 		{"https://api.example.com:443", "https://api.example.com"},
 		{"https://API.example.com:443/", "https://api.example.com"},
 		{"https://api.example.com:8443/", "https://api.example.com:8443"},
+		{"https://api.example.com/v1.0/resource", "https://api.example.com/v1.0/resource"},
+		{"https://api.example.com/..well-known/resource", "https://api.example.com/..well-known/resource"},
 		{"https://api.example.com/path%2Fitem", "https://api.example.com/path%2Fitem"},
 		{"https://[2001:DB8::1]/", "https://[2001:db8::1]"},
 		{"https://[2001:0DB8:0:0:0:0:0:1]/", "https://[2001:db8::1]"},
@@ -18,7 +20,7 @@ func TestCanonicalResourceIdentity(t *testing.T) {
 			t.Errorf("Canonical(%q) = %q, %v; want %q", tc.raw, got, err, tc.want)
 		}
 	}
-	for _, raw := range []string{"https://api.example.com?", "https://api.example.com/?", "https://api.example.com/%zz", "http://api.example.com", "https://user@api.example.com"} {
+	for _, raw := range []string{"https://api.example.com?", "https://api.example.com/?", "https://api.example.com/%zz", "https://api.example.com/a/../b", "https://api.example.com/a/./b", "https://api.example.com/a/%2e%2e/b", "https://api.example.com/a/%2E%2E/b", "http://api.example.com", "https://user@api.example.com"} {
 		if _, err := Canonical(raw); err == nil {
 			t.Errorf("Canonical(%q) accepted invalid resource", raw)
 		}

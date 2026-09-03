@@ -6,6 +6,7 @@ import (
 	"flag"
 	"io"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -42,7 +43,7 @@ func TestOIDCMaxJWKSStalenessFlag(t *testing.T) {
 	}
 }
 
-func TestADR_0290_ServerCompositionParity(t *testing.T) {
+func TestADR_0304_ServerCompositionParity(t *testing.T) {
 	for _, name := range []string{"oidc-issuer", "oidc-audience", "oidc-resource", "oidc-client-id", "oidc-scopes"} {
 		fs := flag.NewFlagSet(name, flag.ContinueOnError)
 		fs.SetOutput(io.Discard)
@@ -106,7 +107,7 @@ func TestOIDCPrivateHTTPSIssuerFlagsAndValidation(t *testing.T) {
 	}
 }
 
-func TestADR_0290_ProfileProjection(t *testing.T) {
+func TestADR_0304_ProfileProjection(t *testing.T) {
 	var got OIDCConfig
 	cfg := OIDCConfig{Issuer: "https://issuer.example", Audience: "api://mecatl", Resource: "https://api.example.com", ClientID: "mecatui"}
 	cfg.NewValidator = func(_ context.Context, c OIDCConfig) (server.PrincipalValidator, error) {
@@ -128,7 +129,7 @@ func TestADR_0290_ProfileProjection(t *testing.T) {
 	}
 }
 
-func TestADR_0290_ProfileConfigurationMatrix(t *testing.T) {
+func TestADR_0304_ProfileConfigurationMatrix(t *testing.T) {
 	for _, tc := range []struct {
 		name        string
 		cfg         OIDCConfig
@@ -144,6 +145,7 @@ func TestADR_0290_ProfileConfigurationMatrix(t *testing.T) {
 		{name: "client only", cfg: OIDCConfig{Issuer: "https://issuer", Audience: "api", ClientID: "client"}, wantErr: true},
 		{name: "without OIDC", cfg: OIDCConfig{Resource: "https://resource", ClientID: "client"}, wantErr: true},
 		{name: "scopes only", cfg: OIDCConfig{Issuer: "https://issuer", Audience: "api", ScopesCSV: "read"}, wantErr: true},
+		{name: "client ID too long", cfg: OIDCConfig{Issuer: "https://issuer", Audience: "api", Resource: "https://resource", ClientID: strings.Repeat("a", 1025)}, wantErr: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			err := tc.cfg.ValidateOIDCProfile()
@@ -157,7 +159,7 @@ func TestADR_0290_ProfileConfigurationMatrix(t *testing.T) {
 	}
 }
 
-func TestADR_0290_ProfileCanonicalizesResourceForEveryProjection(t *testing.T) {
+func TestADR_0304_ProfileCanonicalizesResourceForEveryProjection(t *testing.T) {
 	cfg := OIDCConfig{Issuer: "https://issuer", Audience: "api", Resource: "https://RESOURCE:443/", ClientID: "client"}
 	if err := cfg.ValidateOIDCProfile(); err != nil {
 		t.Fatal(err)
@@ -171,7 +173,7 @@ func TestADR_0290_ProfileCanonicalizesResourceForEveryProjection(t *testing.T) {
 	}
 }
 
-func TestADR_0290_ScopeCSV(t *testing.T) {
+func TestADR_0304_ScopeCSV(t *testing.T) {
 	for _, tc := range []struct {
 		csv     string
 		want    []string
@@ -223,9 +225,21 @@ func TestADR_0290_ScopeCSV(t *testing.T) {
 	if err := emptyCfg.ValidateOIDCProfile(); err == nil {
 		t.Fatal("supplied empty --oidc-scopes unexpectedly accepted")
 	}
+	for _, name := range []string{"--oidc-resource=", "--oidc-client-id="} {
+		fs := flag.NewFlagSet("oidc-empty-profile", flag.ContinueOnError)
+		fs.SetOutput(io.Discard)
+		cfg := OIDCConfig{}
+		RegisterOIDCFlags(fs, &cfg)
+		if err := fs.Parse([]string{name}); err != nil {
+			t.Fatalf("Parse %s: %v", name, err)
+		}
+		if err := cfg.ValidateOIDCProfile(); err == nil {
+			t.Fatalf("supplied empty %s unexpectedly accepted", name)
+		}
+	}
 }
 
-func TestADR_0290_ProfileValidation(t *testing.T) {
+func TestADR_0304_ProfileValidation(t *testing.T) {
 	cases := []OIDCConfig{
 		{Issuer: "https://issuer", Audience: "api", Resource: "http://resource", ClientID: "client"},
 		{Issuer: "https://issuer", Audience: "api", Resource: "https://resource", ClientID: "client", ScopesCSV: "read,,write"},

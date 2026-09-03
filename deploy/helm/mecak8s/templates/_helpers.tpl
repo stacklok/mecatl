@@ -59,10 +59,21 @@ mounted
 {{- $profileSet := or .Values.oidc.resource .Values.oidc.clientID (gt (len .Values.oidc.scopes) 0) -}}
 {{- if $profileSet -}}
 {{- if not .Values.oidc.enabled -}}{{ fail "oidc protected-resource profile requires oidc.enabled=true" }}{{- end -}}
+{{- if not (regexMatch "^https://[^/?#[:space:]]+" .Values.oidc.issuer) -}}{{ fail "oidc protected-resource profile requires an https:// oidc.issuer with a non-empty host" }}{{- end -}}
 {{- if not .Values.oidc.resource -}}{{ fail "oidc.resource is required when protected-resource profile is set" }}{{- end -}}
 {{- if not .Values.oidc.clientID -}}{{ fail "oidc.clientID is required when protected-resource profile is set" }}{{- end -}}
-{{- if or (not (regexMatch "^https://[^/?#[:space:]]+(/[^?#[:space:]]*)?$" .Values.oidc.resource)) (contains "@" .Values.oidc.resource) (contains "," .Values.oidc.resource) (contains "\"" .Values.oidc.resource) (contains "\\" .Values.oidc.resource) (regexMatch "%[^0-9A-Fa-f]|%[0-9A-Fa-f][^0-9A-Fa-f]|%[0-9A-Fa-f]$" .Values.oidc.resource) -}}{{ fail "oidc.resource must be an absolute HTTPS URL without credentials, query, fragment, commas, quotes, backslashes, or malformed escapes" }}{{- end -}}
-{{- if regexMatch "[\\x00-\\x1f\\x7f]" .Values.oidc.clientID -}}{{ fail "oidc.clientID must not contain control characters" }}{{- end -}}
+{{- if or (not (regexMatch "^https://[^/?#[:space:]]+(/[^?#[:space:]]*)?$" .Values.oidc.resource)) (contains "@" .Values.oidc.resource) (contains "," .Values.oidc.resource) (contains "\"" .Values.oidc.resource) (contains "\\" .Values.oidc.resource) (regexMatch "%[^0-9A-Fa-f]|%[0-9A-Fa-f][^0-9A-Fa-f]|%[0-9A-Fa-f]$" .Values.oidc.resource) (regexMatch "(^|/|%2[fF])(\\.|\\.\\.|%2[eE]|%2[eE]%2[eE]|\\.%2[eE]|%2[eE]\\.)(/|%2[fF]|$)" .Values.oidc.resource) (regexMatch "[\\p{Cf}]" .Values.oidc.resource) (regexMatch "^https://:" .Values.oidc.resource) (regexMatch "^https://[^/?#:\\[]+:([^0-9/]|$)" .Values.oidc.resource) (regexMatch "^https://[^/?#:\\[]+:[0-9]+[^0-9/]" .Values.oidc.resource) (regexMatch "^https://\\[[^\\]/?#]+\\]:([^0-9/]|$)" .Values.oidc.resource) (regexMatch "^https://\\[[^\\]/?#]+\\]:[0-9]+[^0-9/]" .Values.oidc.resource) -}}{{ fail "oidc.resource must be an absolute HTTPS URL without credentials, query, fragment, commas, quotes, backslashes, malformed escapes, dot segments, invalid authority, or Unicode format characters" }}{{- end -}}
+{{- $resourcePort := regexFind "^https://[^/?#:\\[]+:[0-9]+" .Values.oidc.resource -}}
+{{- if $resourcePort -}}
+{{- $port := regexFind ":[0-9]+" $resourcePort | trimPrefix ":" | int -}}
+{{- if or (lt $port 1) (gt $port 65535) -}}{{ fail "oidc.resource port must be between 1 and 65535" }}{{- end -}}
+{{- end -}}
+{{- $resourceIPv6Port := regexFind "^https://\\[[^\\]/?#]+\\]:[0-9]+" .Values.oidc.resource -}}
+{{- if $resourceIPv6Port -}}
+{{- $port6 := regexFind "\\]:[0-9]+$" $resourceIPv6Port | trimPrefix "]:" | int -}}
+{{- if or (lt $port6 1) (gt $port6 65535) -}}{{ fail "oidc.resource port must be between 1 and 65535" }}{{- end -}}
+{{- end -}}
+{{- if or (gt (len .Values.oidc.clientID) 1024) (regexMatch "[\\x00-\\x1f\\x7f]" .Values.oidc.clientID) (regexMatch "[\\p{Cf}]" .Values.oidc.clientID) -}}{{ fail "oidc.clientID must be non-empty, at most 1024 bytes, and contain no control or Unicode format characters" }}{{- end -}}
 {{- range $scope := .Values.oidc.scopes -}}
 {{- if or (eq (trim $scope) "") (not (regexMatch "^[!-~]+$" $scope)) (contains "," $scope) (contains "\"" $scope) (contains "\\" $scope) -}}{{ fail (printf "oidc.scopes entry %q is invalid" $scope) }}{{- end -}}
 {{- end -}}
@@ -73,7 +84,7 @@ mounted
 {{- end -}}
 {{- if .Values.oidc.allowPrivateHTTPSIssuer -}}
 {{- if not .Values.oidc.enabled -}}{{ fail "oidc.allowPrivateHTTPSIssuer requires oidc.enabled" }}{{- end -}}
-{{- if not (hasPrefix "https://" .Values.oidc.issuer) -}}{{ fail "oidc.allowPrivateHTTPSIssuer requires an https:// oidc.issuer" }}{{- end -}}
+{{- if not (regexMatch "^https://[^/?#[:space:]]+" .Values.oidc.issuer) -}}{{ fail "oidc.allowPrivateHTTPSIssuer requires an https:// oidc.issuer with a non-empty host" }}{{- end -}}
 {{- $_ := required "oidc.caSecret is required when oidc.allowPrivateHTTPSIssuer is true" .Values.oidc.caSecret -}}
 {{- $_ := required "oidc.caKey is required when oidc.allowPrivateHTTPSIssuer is true" .Values.oidc.caKey -}}
 {{- end -}}

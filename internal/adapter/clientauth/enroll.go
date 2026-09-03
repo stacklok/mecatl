@@ -151,7 +151,7 @@ func Enroll(ctx context.Context, conn Connection, token Token, cfg EnrollmentCon
 	// From here onward cancellation must not strand a state we can reconcile.
 	txnCtx := context.WithoutCancel(ctx)
 	desired := []Connection{conn}
-	committed, registryErr := commitEnrollmentRegistry(cfg.Registry, id.Target, conn.ResourceURL, targetEntries, desired)
+	committed, registryErr := commitEnrollmentRegistry(cfg.Registry, id.Target, conn.ResourceURL, displacedEntries, desired)
 	if !committed {
 		if newSnapshot.unusable {
 			// The registry already identifies this exact credential. The repaired
@@ -237,7 +237,7 @@ func commitEnrollmentRegistry(registry *Registry, target, resource string, expec
 	if err == nil {
 		return true, nil
 	}
-	current, readErr := registry.targetSnapshot(target)
+	current, readErr := registry.enrollmentSnapshot(target, resource)
 	if readErr != nil {
 		return false, fmt.Errorf("%w: registry commit could not be determined", ErrIncompleteEnrollment)
 	}

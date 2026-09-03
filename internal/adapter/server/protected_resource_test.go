@@ -20,7 +20,7 @@ func protectedResourceProfile() server.ProtectedResourceProfile {
 	}
 }
 
-func TestADR_0290_ProtectedResourceMetadata(t *testing.T) {
+func TestADR_0304_ProtectedResourceMetadata(t *testing.T) {
 	h := server.NewProtectedResourceHandler(protectedResourceProfile())
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/.well-known/oauth-protected-resource/mecatl/v1", nil))
@@ -32,7 +32,7 @@ func TestADR_0290_ProtectedResourceMetadata(t *testing.T) {
 	}
 }
 
-func TestADR_0290_MetadataFields(t *testing.T) {
+func TestADR_0304_MetadataFields(t *testing.T) {
 	h := server.NewProtectedResourceHandler(protectedResourceProfile())
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/.well-known/oauth-protected-resource/mecatl/v1", nil))
@@ -62,7 +62,7 @@ func TestADR_0290_MetadataFields(t *testing.T) {
 	}
 }
 
-func TestADR_0290_WellKnownRouting(t *testing.T) {
+func TestADR_0304_WellKnownRouting(t *testing.T) {
 	h := server.NewProtectedResourceHandler(protectedResourceProfile())
 	for _, tc := range []struct {
 		method, path string
@@ -84,7 +84,7 @@ func TestADR_0290_WellKnownRouting(t *testing.T) {
 	}
 }
 
-func TestADR_0290_WellKnownPathDerivation(t *testing.T) {
+func TestADR_0304_WellKnownPathDerivation(t *testing.T) {
 	for _, tc := range []struct{ resource, want string }{
 		{"https://api.example.com", "https://api.example.com/.well-known/oauth-protected-resource"},
 		{"https://api.example.com/", "https://api.example.com/.well-known/oauth-protected-resource"},
@@ -97,7 +97,7 @@ func TestADR_0290_WellKnownPathDerivation(t *testing.T) {
 	}
 }
 
-func TestADR_0290_MetadataRejectsInvalidScopeToken(t *testing.T) {
+func TestADR_0304_MetadataRejectsInvalidScopeToken(t *testing.T) {
 	profile := protectedResourceProfile()
 	profile.Scopes = []string{"read,write"}
 	if h := server.NewProtectedResourceHandler(profile); h != nil {
@@ -105,7 +105,7 @@ func TestADR_0290_MetadataRejectsInvalidScopeToken(t *testing.T) {
 	}
 }
 
-func TestADR_0290_MetadataDisabledCompatibility(t *testing.T) {
+func TestADR_0304_MetadataDisabledCompatibility(t *testing.T) {
 	if h := server.NewProtectedResourceHandler(server.ProtectedResourceProfile{}); h != nil {
 		t.Fatal("disabled profile registered a metadata handler")
 	}
@@ -118,7 +118,7 @@ func TestADR_0290_MetadataDisabledCompatibility(t *testing.T) {
 	}
 }
 
-func TestADR_0290_ChallengeMatrix(t *testing.T) {
+func TestADR_0304_ChallengeMatrix(t *testing.T) {
 	auth := server.NewAuthenticator(server.SecurityConfig{AuthToken: "static-token"})
 	defer auth.Close()
 	for _, path := range []string{"/v1/sessions", "/unrelated"} {
@@ -132,7 +132,7 @@ func TestADR_0290_ChallengeMatrix(t *testing.T) {
 	}
 }
 
-func TestADR_0290_MetadataEndpointAndSubordinateChallenge(t *testing.T) {
+func TestADR_0304_MetadataEndpointAndSubordinateChallenge(t *testing.T) {
 	profile := protectedResourceProfile()
 	auth := server.NewAuthenticator(server.SecurityConfig{AuthToken: "static-token"})
 	defer auth.Close()
@@ -168,7 +168,7 @@ type protectedResourceMetadataDocument struct {
 	AuthorizationServers []string `json:"authorization_servers"`
 }
 
-func TestADR_0290_ChallengeIsAlwaysGeneric(t *testing.T) {
+func TestADR_0304_ChallengeIsAlwaysGeneric(t *testing.T) {
 	auth := server.NewAuthenticator(server.SecurityConfig{AuthToken: "static-token"})
 	defer auth.Close()
 	rec := httptest.NewRecorder()
@@ -178,7 +178,7 @@ func TestADR_0290_ChallengeIsAlwaysGeneric(t *testing.T) {
 	}
 }
 
-func TestADR_0290_MetadataStandardFields(t *testing.T) {
+func TestADR_0304_MetadataStandardFields(t *testing.T) {
 	h := server.NewProtectedResourceHandler(server.ProtectedResourceProfile{
 		Resource: "https://api.example.com",
 		Issuer:   "https://issuer.example.com",

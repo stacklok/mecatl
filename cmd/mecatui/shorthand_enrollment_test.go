@@ -49,7 +49,7 @@ func TestOAuthProtectedResource_Scenario4_ShorthandEnrollment(t *testing.T) {
 	}
 }
 
-func TestADR_0290_ResourceTargetSeparation(t *testing.T) {
+func TestADR_0304_ResourceTargetSeparation(t *testing.T) {
 	enrollment, err := discoveredEnrollmentFrom(discoveredResource{protectedResource: protectedResource{Resource: "https://api.example.com/service/v1", MetadataURL: "https://api.example.com/.well-known/oauth-protected-resource/service/v1", GRPCTarget: "api.example.com:443"}, Issuer: "https://issuer.example.com", Audience: "api", ClientID: "client", Scopes: []string{"api.read"}}, "grpc.example.com:7443", "")
 	if err != nil {
 		t.Fatal(err)
@@ -76,7 +76,7 @@ func TestInvariant_oauth_three_transport_trust_split(t *testing.T) {
 	}
 }
 
-func TestADR_0290_DiscoveredIdentityConfirmation(t *testing.T) {
+func TestADR_0304_DiscoveredIdentityConfirmation(t *testing.T) {
 	originalDiscover := discoverRemoteResource
 	originalConfirm := confirmDiscoveredEnrollment
 	originalLogin := executeRemoteLogin
@@ -135,7 +135,7 @@ func TestADR_0290_DiscoveredIdentityConfirmation(t *testing.T) {
 	}
 }
 
-func TestADR_0290_DiscoveredScopeSelection(t *testing.T) {
+func TestADR_0304_DiscoveredScopeSelection(t *testing.T) {
 	profile := discoveredResource{Scopes: []string{"api.read", "profile"}}
 	if _, err := discoveredScopes(profile, "api.write", true); err == nil {
 		t.Fatal("unadvertised explicit scope accepted")
@@ -153,6 +153,51 @@ func TestADR_0290_DiscoveredScopeSelection(t *testing.T) {
 	}
 	if got, want := strings.Join(scopes, ","), "api.read,profile"; got != want {
 		t.Fatalf("profile scopes = %q, want %q", got, want)
+	}
+	scopes, err = discoveredScopes(discoveredResource{}, "", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(scopes) != 0 {
+		t.Fatalf("empty confirmed scopes = %q, want empty", scopes)
+	}
+	if _, err := discoveredScopes(discoveredResource{}, "api.read", true); err == nil {
+		t.Fatal("explicit scope accepted without a confirmed scope set")
+	}
+}
+
+func TestADR_0304_DiscoveredEmptyScopeSelectionRemainsEnrollable(t *testing.T) {
+	originalDiscover := discoverRemoteResource
+	originalConfirm := confirmDiscoveredEnrollment
+	originalLogin := executeRemoteLogin
+	t.Cleanup(func() {
+		discoverRemoteResource = originalDiscover
+		confirmDiscoveredEnrollment = originalConfirm
+		executeRemoteLogin = originalLogin
+	})
+	discoverRemoteResource = func(context.Context, protectedResource) (discoveredResource, error) {
+		return discoveredResource{protectedResource: protectedResource{Resource: "https://api.example.com", MetadataURL: "https://api.example.com/.well-known/oauth-protected-resource", GRPCTarget: "api.example.com:443"}, Issuer: "https://issuer.example.com", Audience: "api", ClientID: "client"}, nil
+	}
+	confirmDiscoveredEnrollment = func(io.Reader, io.Writer, discoveredEnrollment) (bool, error) { return true, nil }
+	var got clientauth.Connection
+	executeRemoteLogin = func(_ context.Context, conn clientauth.Connection, _ bool) error { got = conn; return nil }
+
+	if err := runRemoteLogin("api.example.com", nil); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Identity.Scopes) != 0 {
+		t.Fatalf("empty discovered scopes = %#v, want empty", got.Identity.Scopes)
+	}
+}
+
+// TestADR_0304_DiscoveredScopeRejectsCommaSmuggling pins the fix for a
+// discovered scope value containing a literal comma: it must be rejected, not
+// silently split into two bogus scopes when later CSV-joined and re-split by
+// discoveredEnrollmentFrom.
+func TestADR_0304_DiscoveredScopeRejectsCommaSmuggling(t *testing.T) {
+	profile := discoveredResource{Scopes: []string{"api.read", "smuggled,scope"}}
+	if _, err := discoveredScopes(profile, "", false); err == nil {
+		t.Fatal("discovered scope containing a comma was accepted")
 	}
 }
 
@@ -210,7 +255,7 @@ func TestOAuthProtectedResource_Scenario6_EndToEnd(t *testing.T) {
 	}
 }
 
-func TestADR_0290_ProviderCompatibility(t *testing.T) {
+func TestADR_0304_ProviderCompatibility(t *testing.T) {
 	identity := reflect.TypeOf(clientauth.Identity{})
 	for _, name := range []string{"Resource", "TokenFormat", "OpaqueToken"} {
 		if _, found := identity.FieldByName(name); found {

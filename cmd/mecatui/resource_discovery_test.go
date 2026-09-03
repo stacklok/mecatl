@@ -1,8 +1,10 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -10,7 +12,7 @@ import (
 	"time"
 )
 
-func TestADR_0290_ResourceInputGrammar(t *testing.T) {
+func TestADR_0304_ResourceInputGrammar(t *testing.T) {
 	t.Parallel()
 	bare, err := parseProtectedResource("api.example.com")
 	if err != nil {
@@ -40,7 +42,7 @@ func TestADR_0290_ResourceInputGrammar(t *testing.T) {
 	}
 }
 
-func TestADR_0290_ExactResourceBinding(t *testing.T) {
+func TestADR_0304_ExactResourceBinding(t *testing.T) {
 	t.Parallel()
 	resource, err := parseProtectedResource("https://api.example.com/service/v1")
 	if err != nil {
@@ -70,7 +72,7 @@ func TestADR_0290_ExactResourceBinding(t *testing.T) {
 	}
 }
 
-func TestADR_0290_MetadataFetchSecurity(t *testing.T) {
+func TestADR_0304_MetadataFetchSecurity(t *testing.T) {
 	t.Parallel()
 	client := newPublicBootstrapClient()
 	defer client.CloseIdleConnections()
@@ -89,13 +91,13 @@ func TestADR_0290_MetadataFetchSecurity(t *testing.T) {
 		t.Fatal("authenticated bootstrap request accepted")
 	}
 	for _, host := range []string{"127.0.0.1", "::1", "10.0.0.1", "169.254.1.1", "224.0.0.1"} {
-		if err := validatePublicAddress(host); err == nil {
+		if _, err := transport.DialContext(context.Background(), "tcp", net.JoinHostPort(host, "443")); err == nil {
 			t.Errorf("non-public address %s accepted", host)
 		}
 	}
 }
 
-func TestADR_0290_MetadataBodyBounds(t *testing.T) {
+func TestADR_0304_MetadataBodyBounds(t *testing.T) {
 	t.Parallel()
 	if err := validateJSONMediaType("application/json; charset=utf-8"); err != nil {
 		t.Fatal(err)
@@ -114,7 +116,7 @@ func TestADR_0290_MetadataBodyBounds(t *testing.T) {
 	}
 }
 
-func TestADR_0290_ProfileDocumentValidation(t *testing.T) {
+func TestADR_0304_ProfileDocumentValidation(t *testing.T) {
 	t.Parallel()
 	resource, err := parseProtectedResource("https://api.example.com")
 	if err != nil {
@@ -139,7 +141,7 @@ func TestADR_0290_ProfileDocumentValidation(t *testing.T) {
 	}
 }
 
-func TestADR_0290_IssuerBinding(t *testing.T) {
+func TestADR_0304_IssuerBinding(t *testing.T) {
 	t.Parallel()
 	issuer, err := parseIssuer("https://issuer.example.com/tenant")
 	if err != nil {
@@ -172,7 +174,7 @@ func TestADR_0290_IssuerBinding(t *testing.T) {
 	}
 }
 
-func TestADR_0290_OIDCDiscoveryPreservesIssuerPath(t *testing.T) {
+func TestADR_0304_OIDCDiscoveryPreservesIssuerPath(t *testing.T) {
 	resource, err := parseProtectedResource("https://api.example.com")
 	if err != nil {
 		t.Fatal(err)
@@ -201,7 +203,7 @@ func TestADR_0290_OIDCDiscoveryPreservesIssuerPath(t *testing.T) {
 	}
 }
 
-func TestADR_0290_DiscoveryFailureLeavesNoState(t *testing.T) {
+func TestADR_0304_DiscoveryFailureLeavesNoState(t *testing.T) {
 	t.Parallel()
 	resource, err := parseProtectedResource("https://api.example.com")
 	if err != nil {
@@ -220,7 +222,7 @@ func TestADR_0290_DiscoveryFailureLeavesNoState(t *testing.T) {
 	}
 }
 
-func TestADR_0290_MetadataDuplicateFields(t *testing.T) {
+func TestADR_0304_MetadataDuplicateFields(t *testing.T) {
 	t.Parallel()
 	resource, err := parseProtectedResource("https://api.example.com")
 	if err != nil {
@@ -236,7 +238,7 @@ func TestADR_0290_MetadataDuplicateFields(t *testing.T) {
 	}
 }
 
-func TestADR_0290_DiscoveryUsesClientTimeout(t *testing.T) {
+func TestADR_0304_DiscoveryUsesClientTimeout(t *testing.T) {
 	resource, err := parseProtectedResource("https://api.example.com")
 	if err != nil {
 		t.Fatal(err)

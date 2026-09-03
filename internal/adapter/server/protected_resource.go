@@ -111,13 +111,8 @@ type protectedResourceMetadata struct {
 
 func validProtectedResourceScopes(scopes []string) bool {
 	for _, scope := range scopes {
-		if scope == "" {
+		if !resourceurl.ValidScopeToken(scope) {
 			return false
-		}
-		for _, r := range scope {
-			if r < 0x21 || r > 0x7e || r == ',' || r == '"' || r == '\\' {
-				return false
-			}
 		}
 	}
 	return true

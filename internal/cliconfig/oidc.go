@@ -19,7 +19,6 @@ import (
 	"sort"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/stacklok/mecatl/internal/adapter/resourceurl"
 	"github.com/stacklok/mecatl/internal/adapter/server"
@@ -41,8 +40,10 @@ type OIDCConfig struct {
 
 	// Resource and ClientID form the optional RFC 9728 protected-resource
 	// profile. Issuer and Audience remain the sole authoritative identity values.
-	Resource string
-	ClientID string
+	Resource    string
+	ClientID    string
+	resourceSet bool
+	clientIDSet bool
 	// ScopesCSV is the operator-facing CSV spelling. Scopes is the validated,
 	// deterministic metadata representation populated by ValidateOIDCProfile.
 	ScopesCSV string
@@ -125,14 +126,26 @@ func RegisterOIDCFlags(fs *flag.FlagSet, c *OIDCConfig) {
 		"PEM CA bundle for --oidc-allow-private-https-issuer; required when private HTTPS issuer admission is enabled")
 	fs.StringVar(&c.Audience, "oidc-audience", "",
 		"audience (`aud`) this deployment accepts, REQUIRED with --oidc-issuer: an audience-less verifier would accept tokens minted for a different service")
-	fs.StringVar(&c.Resource, "oidc-resource", "",
+	fs.Var(oidcStringValue{value: &c.Resource, set: &c.resourceSet}, "oidc-resource",
 		"canonical external HTTPS URL of the OAuth protected resource")
-	fs.StringVar(&c.ClientID, "oidc-client-id", "",
+	fs.Var(oidcStringValue{value: &c.ClientID, set: &c.clientIDSet}, "oidc-client-id",
 		"public mecatui OAuth client-registration identifier")
 	fs.Var(oidcScopesValue{config: c}, "oidc-scopes",
 		"optional comma-separated OAuth scopes to advertise in protected-resource metadata")
 	fs.DurationVar(&c.MaxJWKSStaleness, "oidc-max-jwks-staleness", DefaultMaxJWKSStaleness,
 		"maximum age of cached JWKS signing keys when refresh cannot reach the IdP; stale, unrefreshable keys yield 503 instead of validating tokens. 0 disables the upper bound; negative values are rejected")
+}
+
+type oidcStringValue struct {
+	value *string
+	set   *bool
+}
+
+func (v oidcStringValue) String() string { return *v.value }
+func (v oidcStringValue) Set(raw string) error {
+	*v.value = raw
+	*v.set = true
+	return nil
 }
 
 type oidcScopesValue struct{ config *OIDCConfig }
@@ -195,20 +208,12 @@ func ParseOIDCScopes(raw string) ([]string, error) {
 }
 
 func validOIDCScope(scope string) bool {
-	if !utf8.ValidString(scope) {
-		return false
-	}
-	for _, r := range scope {
-		if r < 0x21 || r == '"' || r == '\\' || r == ',' || r > 0x7e {
-			return false
-		}
-	}
-	return true
+	return resourceurl.ValidScopeToken(scope)
 }
 
 // ValidateOIDCProfile validates the optional profile before listeners start.
 func (c *OIDCConfig) ValidateOIDCProfile() error { //nolint:gocyclo // validation keeps the mutually-exclusive configuration matrix explicit.
-	if c.Resource == "" && c.ClientID == "" && c.ScopesCSV == "" && !c.scopesSet {
+	if c.Resource == "" && c.ClientID == "" && !c.resourceSet && !c.clientIDSet && c.ScopesCSV == "" && !c.scopesSet {
 		c.Scopes = nil
 		return nil
 	}
@@ -217,6 +222,9 @@ func (c *OIDCConfig) ValidateOIDCProfile() error { //nolint:gocyclo // validatio
 	}
 	if c.Resource == "" || c.ClientID == "" {
 		return fmt.Errorf("%w: --oidc-resource and --oidc-client-id must be provided together", ErrOIDCMisconfigured)
+	}
+	if !resourceurl.Safe(c.ClientID) {
+		return fmt.Errorf("%w: --oidc-client-id must be non-empty, at most 1024 bytes, and contain no control or Unicode format characters", ErrOIDCMisconfigured)
 	}
 	resource, err := resourceurl.Canonical(c.Resource)
 	if err != nil || resource == "" {
