@@ -1556,35 +1556,47 @@ func (h *HarnessServer) relayMCPAuthorizationControl(ctx context.Context, id ses
 	recorder := NewRunEventRecorder(logCtx, h.svc, id)
 	defer recorder.Close()
 
-	controlDone := make(chan error, 1)
-	go func() {
-		for {
-			frame, err := recv()
-			if err != nil {
-				controlDone <- err
-				return
-			}
-			if frame.approval != nil {
-				ra := frame.approval
-				if !h.staleStreamControl(ctx, id, "resume_approval", ra.GetExpectedRunId(), result.Run) {
-					result.Run.Approve(ra.GetAskId(), verdictFromResumeApproval(ra.GetVerdict(), ra.GetAllow()))
-				}
-			} else if frame.cancel != nil {
-				if !h.staleStreamControl(ctx, id, "cancel", frame.cancel.GetExpectedRunId(), result.Run) {
-					result.Run.Cancel()
-				}
-			}
-		}
-	}()
+	// The authoritative authorization status precedes its continuation. Once it
+	// cannot be delivered, keep that first transport failure caller-visible while
+	// cancelling and draining the already-registered continuation.
+	sendErr := send(toProto(result.Event))
+	if sendErr != nil {
+		result.Run.Cancel()
+	}
 
-	var sendErr error
+	var controlDone chan error
+	if sendErr == nil {
+		controlDone = make(chan error, 1)
+		go func() {
+			for {
+				frame, err := recv()
+				if err != nil {
+					controlDone <- err
+					return
+				}
+				if frame.approval != nil {
+					ra := frame.approval
+					if !h.staleStreamControl(ctx, id, "resume_approval", ra.GetExpectedRunId(), result.Run) {
+						result.Run.Approve(ra.GetAskId(), verdictFromResumeApproval(ra.GetVerdict(), ra.GetAllow()))
+					}
+				} else if frame.cancel != nil {
+					if !h.staleStreamControl(ctx, id, "cancel", frame.cancel.GetExpectedRunId(), result.Run) {
+						result.Run.Cancel()
+					}
+				}
+			}
+		}()
+	}
+
 	events := result.Run.Events()
 	for events != nil {
 		select {
 		case err := <-controlDone:
 			controlDone = nil
 			if err != nil && !errors.Is(err, io.EOF) {
-				sendErr = err
+				if sendErr == nil {
+					sendErr = err
+				}
 				result.Run.Cancel()
 			}
 		case ev, ok := <-events:

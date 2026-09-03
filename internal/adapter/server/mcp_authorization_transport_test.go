@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -26,6 +27,7 @@ type recheckAuthorizationStream struct {
 	requestCh    chan *mecatlv1.RecheckMcpAuthorizationRequest
 	approveOnAsk bool
 	afterInitial func()
+	sendErr      error
 	responses    []*mecatlv1.RecheckMcpAuthorizationResponse
 }
 
@@ -52,6 +54,9 @@ func (s *recheckAuthorizationStream) Recv() (*mecatlv1.RecheckMcpAuthorizationRe
 }
 func (s *recheckAuthorizationStream) Send(response *mecatlv1.RecheckMcpAuthorizationResponse) error {
 	s.responses = append(s.responses, response)
+	if s.sendErr != nil {
+		return s.sendErr
+	}
 	if s.approveOnAsk && response.GetEvent().GetType() == "permission.ask" {
 		s.requestCh <- &mecatlv1.RecheckMcpAuthorizationRequest{Control: &mecatlv1.RecheckMcpAuthorizationRequest_ResumeApproval{ResumeApproval: &mecatlv1.ResumeApproval{AskId: response.GetEvent().GetAsk().GetAskId(), Verdict: mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_ALLOW_ONCE}}}
 	}
@@ -63,6 +68,7 @@ type cancelAuthorizationStream struct {
 	ctx          context.Context
 	requests     []*mecatlv1.CancelMcpAuthorizationRequest
 	afterInitial func()
+	sendErr      error
 	responses    []*mecatlv1.CancelMcpAuthorizationResponse
 }
 
@@ -90,7 +96,7 @@ func (s *cancelAuthorizationStream) Recv() (*mecatlv1.CancelMcpAuthorizationRequ
 }
 func (s *cancelAuthorizationStream) Send(response *mecatlv1.CancelMcpAuthorizationResponse) error {
 	s.responses = append(s.responses, response)
-	return nil
+	return s.sendErr
 }
 
 func ownedAuthorizationFixture(t *testing.T, authorizationStatus session.AuthorizationStatus) (lifecycleFixture, context.Context, context.Context) {
@@ -170,6 +176,72 @@ func TestMCPAuthorizationGRPCContinuationPermissionApproval(t *testing.T) {
 	}
 	if !asked || !toolResult || !terminal {
 		t.Fatalf("continuation events missing ask/approved result/terminal: asked=%t toolResult=%t terminal=%t", asked, toolResult, terminal)
+	}
+}
+
+func TestMCPAuthorizationGRPCInitialStatusSendFailureCancelsAndFinishesContinuation(t *testing.T) {
+	f := newLifecycleFixtureWithTurns(t, session.AuthorizationGranted, nil, time.Now, nil, mockllm.TextTurn("continued"))
+	sentinel := errors.New("initial authorization status send failed")
+	stream := &recheckAuthorizationStream{
+		ctx:     t.Context(),
+		sendErr: sentinel,
+		requests: []*mecatlv1.RecheckMcpAuthorizationRequest{{
+			SessionId: "authorization-session", AuthorizationId: f.pending.Authorization.ID,
+		}},
+	}
+
+	err := NewHarnessServer(f.svc).RecheckMcpAuthorization(stream)
+	if !errors.Is(err, sentinel) {
+		t.Fatalf("RecheckMcpAuthorization error = %v, want sentinel", err)
+	}
+	if len(stream.responses) != 1 || stream.responses[0].GetEvent().GetAuthorization().GetStatus() != "granted" {
+		t.Fatalf("initial response = %+v, want granted authorization status", stream.responses)
+	}
+	if _, live := f.svc.LookupRun("authorization-session"); live {
+		t.Fatal("initial status send failure left continuation registered")
+	}
+}
+
+func TestMCPAuthorizationGRPCCancelInitialStatusSendFailureCancelsAndFinishesContinuation(t *testing.T) {
+	f, ownerCtx, _ := ownedAuthorizationFixture(t, session.AuthorizationPending)
+	sentinel := errors.New("initial cancellation status send failed")
+	stream := &cancelAuthorizationStream{
+		ctx:     ownerCtx,
+		sendErr: sentinel,
+		requests: []*mecatlv1.CancelMcpAuthorizationRequest{{
+			SessionId: "authorization-session", AuthorizationId: f.pending.Authorization.ID,
+		}},
+	}
+
+	err := NewHarnessServer(f.svc).CancelMcpAuthorization(stream)
+	if !errors.Is(err, sentinel) {
+		t.Fatalf("CancelMcpAuthorization error = %v, want sentinel", err)
+	}
+	if len(stream.responses) != 1 || stream.responses[0].GetEvent().GetAuthorization().GetStatus() != "cancelled" {
+		t.Fatalf("initial response = %+v, want cancelled authorization status", stream.responses)
+	}
+	if _, live := f.svc.LookupRun("authorization-session"); live {
+		t.Fatal("initial status send failure left cancellation continuation registered")
+	}
+}
+
+func TestMCPAuthorizationGRPCStatusOnlySendFailureIsReturned(t *testing.T) {
+	f, ownerCtx, _ := ownedAuthorizationFixture(t, session.AuthorizationPending)
+	sentinel := errors.New("status-only authorization send failed")
+	stream := &recheckAuthorizationStream{
+		ctx:     ownerCtx,
+		sendErr: sentinel,
+		requests: []*mecatlv1.RecheckMcpAuthorizationRequest{{
+			SessionId: "authorization-session", AuthorizationId: f.pending.Authorization.ID,
+		}},
+	}
+
+	err := NewHarnessServer(f.svc).RecheckMcpAuthorization(stream)
+	if !errors.Is(err, sentinel) {
+		t.Fatalf("RecheckMcpAuthorization error = %v, want sentinel", err)
+	}
+	if _, live := f.svc.LookupRun("authorization-session"); live {
+		t.Fatal("status-only control registered a continuation")
 	}
 }
 
