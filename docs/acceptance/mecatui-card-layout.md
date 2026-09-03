@@ -1,7 +1,7 @@
 # Mecatui card layout — acceptance plan
 
 **Phase:** mecatui rendering correctness
-**Status:** draft, 2026-09-03. Derived from the card-width audit and the observed padding-before-wrap regression.
+**Status:** in-progress, 2026-09-03. Derived from the card-width audit and the observed padding-before-wrap regression.
 **Accumulator branch:** `acc/mecatui-card-layout` (off `main`).
 
 The smallest set of work that makes every dynamically sized mecatui card render
