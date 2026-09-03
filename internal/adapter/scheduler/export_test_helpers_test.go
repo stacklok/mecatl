@@ -22,3 +22,23 @@ func SetStaleFireWindowForTest(d time.Duration) func() {
 	staleFireWindow = d
 	return func() { staleFireWindow = prev }
 }
+
+// SetLeaderStandbyBackoffForTest overrides the package-level
+// leaderStandbyBackoff wait so an external-package test can drive the real
+// leadership loop through repeated standby acquire attempts without sleeping
+// through the production interval. Returns a restore func the caller defers.
+func SetLeaderStandbyBackoffForTest(d time.Duration) func() {
+	prev := leaderStandbyBackoff
+	leaderStandbyBackoff = d
+	return func() { leaderStandbyBackoff = prev }
+}
+
+// SetStandbyLogIntervalForTest overrides the package-level standbyLogInterval
+// heartbeat bound so an external-package test can assert the standby log's
+// rate limit without depending on the production default. Returns a restore
+// func the caller defers.
+func SetStandbyLogIntervalForTest(d time.Duration) func() {
+	prev := standbyLogInterval
+	standbyLogInterval = d
+	return func() { standbyLogInterval = prev }
+}

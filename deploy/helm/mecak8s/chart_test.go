@@ -368,6 +368,7 @@ func TestMecak8sHelmChart_DeployCheckProductionFixtureRuntimeAndSpread(t *testin
 	wantArgs := []string{
 		"--grpc-addr=0.0.0.0:8080",
 		"--http-addr=0.0.0.0:8081",
+		"--drain-addr=0.0.0.0:8082",
 		"--redis-url=redis.example.internal:6379",
 		"--session-lease-k8s-namespace=default",
 		"--headless=true",
@@ -1037,10 +1038,37 @@ func TestMecak8sHelmChart_ServerTLS(t *testing.T) {
 		"startupProbe:\n            httpGet:\n              scheme: HTTP\n              path: /readyz\n              port: http",
 		"readinessProbe:\n            httpGet:\n              scheme: HTTP\n              path: /readyz\n              port: http",
 		"livenessProbe:\n            httpGet:\n              scheme: HTTP\n              path: /healthz\n              port: http",
-		"preStop:\n              httpGet:\n                scheme: HTTP\n                path: /drain\n                port: http",
+		"preStop:\n              httpGet:\n                scheme: HTTP\n                path: /drain\n                port: drain",
 	} {
 		if !strings.Contains(defaultRender, want) {
 			t.Fatalf("default production render missing HTTP endpoint block %q", want)
+		}
+	}
+	deployment := deploymentFromRender(t, defaultRender)
+	container := deployment.Spec.Template.Spec.Containers[0]
+	if !slices.Contains(container.Args, "--drain-addr=0.0.0.0:8082") {
+		t.Fatalf("drain listener arg missing: %q", container.Args)
+	}
+	if !slices.ContainsFunc(container.Ports, func(port corev1.ContainerPort) bool {
+		return port.Name == "drain" && port.ContainerPort == 8082
+	}) {
+		t.Fatalf("drain container port missing: %#v", container.Ports)
+	}
+	defaultService := serviceFromRender(t, defaultRender)
+	wantServicePorts := map[string]struct {
+		port       int32
+		targetPort string
+	}{
+		"grpc": {port: 8080, targetPort: "grpc"},
+		"http": {port: 8081, targetPort: "http"},
+	}
+	if len(defaultService.Spec.Ports) != len(wantServicePorts) {
+		t.Fatalf("Service ports = %#v, want exactly grpc and http", defaultService.Spec.Ports)
+	}
+	for _, port := range defaultService.Spec.Ports {
+		want, ok := wantServicePorts[port.Name]
+		if !ok || port.Port != want.port || port.TargetPort.String() != want.targetPort {
+			t.Fatalf("Service port = %#v, want mappings %#v", port, wantServicePorts)
 		}
 	}
 
@@ -1057,7 +1085,7 @@ func TestMecak8sHelmChart_ServerTLS(t *testing.T) {
 		"startupProbe:\n            httpGet:\n              scheme: HTTPS\n              path: /readyz\n              port: http",
 		"readinessProbe:\n            httpGet:\n              scheme: HTTPS\n              path: /readyz\n              port: http",
 		"livenessProbe:\n            httpGet:\n              scheme: HTTPS\n              path: /healthz\n              port: http",
-		"preStop:\n              httpGet:\n                scheme: HTTPS\n                path: /drain\n                port: http",
+		"preStop:\n              httpGet:\n                scheme: HTTP\n                path: /drain\n                port: drain",
 	} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("TLS production fixture missing %q", want)

@@ -22,6 +22,15 @@ flowchart TD
 
 Kill any pod. The survivor acquires the lease and resumes interrupted sessions from the Redis snapshot. The pod is disposable; the session is not.
 
+## Drain endpoint isolation
+
+The chart runs a plaintext, Pod-only drain listener on port 8082. Kubernetes calls
+`GET /drain` there during preStop; normal HTTP/SSE API traffic, including TLS traffic,
+has no drain route. The Service intentionally exposes only gRPC and HTTP, not port
+8082. This protects Service and gateway traffic, but it is not a Pod-IP firewall:
+operators must restrict direct access to port 8082 with NetworkPolicy, mesh policy, or
+equivalent controls.
+
 ## Try mecak8s locally with Kind
 
 Mecatl includes a disposable Kind fixture for local exploration of mecak8s. It is
@@ -466,8 +475,7 @@ They default to the standard `tls.crt` and `tls.key` data keys; set the values
 when your Secret uses different PEM key names. The container receives the
 fixed mounted paths `/var/run/secrets/tls/<certKey>` and
 `/var/run/secrets/tls/<keyKey>` as `--tls-cert` and `--tls-key`, enabling TLS
-for both gRPC and HTTP/SSE. The chart also changes health, readiness, and drain
-requests to HTTPS. This is the in-pod TLS + OIDC secure real-provider posture;
+for both gRPC and HTTP/SSE. The chart also changes health and readiness requests to HTTPS; the Pod-only drain listener remains plaintext HTTP on port 8082. This is the in-pod TLS + OIDC secure real-provider posture;
 include the OIDC values shown above for a real provider. For an operator-owned edge
 TLS boundary instead, set `security.tlsTerminatedUpstream=true` with OIDC. Keeping
 `tls.enabled=true` is valid re-encryption and preserves that upstream attestation;
@@ -578,7 +586,7 @@ Key details from `deployment.yaml`:
 - `replicas: 2` by default with `RollingUpdate`, `maxSurge: 1`, `maxUnavailable: 0` — there is always a ready survivor during a multi-replica rolling update. With one replica, a surge replacement can preserve availability only if it schedules and becomes Ready.
 - `terminationGracePeriodSeconds: 60` — the bounded `GracefulStop` window.
 - No PVC, no `--store-dir`. The only `volumeMount` is `/tmp` for the Go runtime and SSE buffering under `readOnlyRootFilesystem: true`.
-- A `preStop` lifecycle hook calls `GET /drain` on the HTTP port. This arms the drain gate and blocks ~3 seconds for endpoint propagation before returning, so the kubelet's SIGTERM arrives after the pod has left the Service endpoints.
+- A `preStop` lifecycle hook calls plaintext `GET /drain` on the named Pod-only drain port (8082). This arms the drain gate and blocks ~3 seconds for endpoint propagation before returning, so the kubelet's SIGTERM arrives after the pod has left the Service endpoints. The Service still exposes only gRPC and HTTP/SSE; NetworkPolicy or mesh policy must restrict direct Pod-IP access to the drain port.
 - PSS `restricted` in full: `runAsNonRoot`, `allowPrivilegeEscalation: false`, `capabilities: drop: ALL`, `seccompProfile: RuntimeDefault`.
 
 For `replicaCount: 1`, the chart omits the PDB so a voluntary disruption may evict the only pod instead of blocking the node drain. This mode is not HA: node failures, evictions, or an unschedulable replacement cause downtime, although Redis preserves successfully persisted session state. For two or more replicas, the PDB keeps at least one pod available during voluntary disruptions.
@@ -627,15 +635,15 @@ fullnameOverride=<name>` at install time to pin a different one.
 
 ## Readiness and health
 
-mecak8s exposes three endpoints on the HTTP port (default `0.0.0.0:8081`), all mounted **outside** the auth boundary:
+mecak8s exposes two unauthenticated probe endpoints on the HTTP port (default `0.0.0.0:8081`). A separate plaintext, Pod-only drain listener defaults to `0.0.0.0:8082` and serves only `GET /drain`:
 
 | Endpoint | Purpose |
 |---|---|
 | `GET /healthz` | Liveness — returns 200 unless the process is hung |
 | `GET /readyz` | Readiness — returns 200 only when `!draining && redisOK`; flips to 503 on drain or Redis failure |
-| `GET /drain` | preStop hook target — arms the drain gate, blocks ~3s for endpoint propagation, returns 200 |
+| `GET /drain` on port 8082 | preStop hook target — arms the drain gate, blocks ~3s for endpoint propagation, returns 200 |
 
-The `readyz` probe is dynamic: it calls `svc.StorageReady`, which pings the Redis store with a 2-second timeout. A Redis failure shows up as not-ready and removes the pod from Service endpoints without a restart.
+The Service exposes only ports 8080 and 8081, so normal Service/gateway API traffic cannot invoke `/drain`. Direct Pod-IP access to 8082 remains an operator network-isolation responsibility. The `readyz` probe is dynamic: it calls `svc.StorageReady`, which pings the Redis store with a 2-second timeout. A Redis failure shows up as not-ready and removes the pod from Service endpoints without a restart.
 
 ---
 

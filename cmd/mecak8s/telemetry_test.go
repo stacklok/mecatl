@@ -185,6 +185,7 @@ func TestTelemetryMetricsAddrServesPrometheus(t *testing.T) {
 		"--metrics-addr", free,
 		"--grpc-addr", "127.0.0.1:0",
 		"--http-addr", "127.0.0.1:0",
+		"--drain-addr", "127.0.0.1:0",
 		"--session-lease-k8s-namespace", "", // no k8s apiserver in a test
 	})
 	if err != nil {
@@ -292,6 +293,7 @@ func TestTelemetryPushesRunMetricsOnExit(t *testing.T) {
 		"--redis-allow-plaintext", // disposable miniredis fixture
 		"--grpc-addr", "127.0.0.1:0",
 		"--http-addr", "127.0.0.1:0",
+		"--drain-addr", "127.0.0.1:0",
 		"--session-lease-k8s-namespace", "", // no k8s apiserver in a test
 		"--otlp-metrics-endpoint", coll.addr(),
 		"--otlp-metrics-protocol", "http",

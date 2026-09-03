@@ -22,6 +22,9 @@ includes:
   sdk:
     taskfile: sdk/typescript/Taskfile.yml
     dir: sdk/typescript
+  slack-bot:
+    taskfile: sdk/typescript/examples/slack-bot/Taskfile.yml
+    dir: sdk/typescript/examples/slack-bot
   mecak8s:
     taskfile: deploy/mecak8s-kind/Taskfile.yml
     dir: .

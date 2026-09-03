@@ -203,6 +203,55 @@ jobs:
       - name: Run offline SDK e2e against same-checkout mecated
         run: task sdk:e2e
 
+  slack-bot-example:
+    name: Slack bot example
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Install the packageManager pin explicitly. Do not rely on corepack being
+      # present or enabled on the runner.
+      - uses: pnpm/action-setup@7088e561eb65bb68695d245aa206f005ef30921d # v4.1.0
+        with:
+          version: 11.25.0
+          run_install: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+          cache: pnpm
+          cache-dependency-path: sdk/typescript/examples/slack-bot/pnpm-lock.yaml
+
+      # Builds the SDK's dist/ (this example's own dependency) and, for the
+      # offline bridge test, bin/mecated — both are plain Go/tsc builds, same
+      # toolchain the `sdk` job above already provisions.
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: |
+            go.sum
+            engine/go.sum
+
+      - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
+
+      - name: Install Slack bot example dependencies (frozen)
+        run: task slack-bot:install
+
+      - name: Lint and format-check Slack bot example
+        run: task slack-bot:lint
+
+      - name: Type-check Slack bot example
+        run: task slack-bot:typecheck
+
+      - name: Test Slack bot example (offline, spawns mecated --mock)
+        run: task slack-bot:test
+
   build:
     name: Build
     needs: changes

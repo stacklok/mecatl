@@ -1,0 +1,61 @@
+# Runs the whole Slack bot demo: a real `mecated` plus the bot, wired
+# together on an internal-only Docker network (neither port is published to
+# the host — the bot reaches Slack outbound over Socket Mode; nothing needs
+# to reach in). Both Dockerfiles under docker/ are local dev/demo images,
+# not the project's official release artifact — see their header comments.
+#
+# Usage: copy .env.example to .env, fill it in, then `docker compose up --build`.
+services:
+  mecated:
+    build:
+      context: ../../../..
+      dockerfile: sdk/typescript/examples/slack-bot/docker/mecated.Dockerfile
+    command:
+      - serve
+      - --grpc-addr=0.0.0.0:50051
+      - --http-addr=
+      - --workspace=/workspace
+      - --ready-file=/tmp/mecated-ready.json
+      # Stacklok gateway via a plain OpenAI-compatible key (OPENAI_API_KEY),
+      # NOT the `toolhive` provider's OIDC path — that one needs the host's OS
+      # keyring, which a container can't reach. See DESIGN.md/README.md.
+      - --openai-base-url=https://sprout.stacklok.dev/v1
+    # List form, no `:-` default: an unset var is genuinely OMITTED from the
+    # container's environment. `KEY: ${VAR:-}` (map form) instead sets an EMPTY
+    # STRING when unset — which mecated still treats as "this provider is
+    # configured" and tries it (failing with a real 401), rather than skipping
+    # it and falling through to whichever provider actually has a real key.
+    environment:
+      - ANTHROPIC_API_KEY
+      - OPENAI_API_KEY
+      - OPENROUTER_API_KEY
+    volumes:
+      - mecatl-workspace:/workspace
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /tmp/mecated-ready.json"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
+  slack-bot:
+    build:
+      context: ../..
+      dockerfile: examples/slack-bot/docker/bot.Dockerfile
+    depends_on:
+      mecated:
+        condition: service_healthy
+    environment:
+      SLACK_BOT_TOKEN: ${SLACK_BOT_TOKEN:?set SLACK_BOT_TOKEN in .env}
+      SLACK_APP_TOKEN: ${SLACK_APP_TOKEN:?set SLACK_APP_TOKEN in .env}
+      MECATL_GRPC_ADDRESS: mecated:50051
+      # No MECATL_WORKSPACE here, deliberately: mecated's --grpc-addr=0.0.0.0 above is
+      # a non-loopback bind, which auto-switches it to server-assigned workspace mode —
+      # a client-supplied `workspace` on session create is then REJECTED outright. The
+      # server assigns /workspace (its own --workspace flag) to every session itself.
+      SLACK_ALLOWED_USER_IDS: ${SLACK_ALLOWED_USER_IDS:-}
+      SLACK_RATE_LIMIT_MAX: ${SLACK_RATE_LIMIT_MAX:-}
+      SLACK_RATE_LIMIT_WINDOW_MS: ${SLACK_RATE_LIMIT_WINDOW_MS:-}
+      SLACK_LOG_LEVEL: ${SLACK_LOG_LEVEL:-}
+
+volumes:
+  mecatl-workspace:

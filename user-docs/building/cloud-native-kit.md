@@ -174,6 +174,9 @@ mecak8s (`cmd/mecak8s`) is the **reference cloud-native deployment**. It is a th
 - Kubernetes `coordination.k8s.io/v1` lease per session (`internal/adapter/k8slease`).
 - `--headless` on, `--posture auto` by default.
 - SIGTERM triggers `Service.Drain()` (an `atomic.Bool draining` flag checked at `acquireLease`, returning `ErrUnavailable` / HTTP 503), then a bounded `GracefulStop` (30s, then `grpcSrv.Stop()` fallback). In-flight runs are cancelled, not drained, and `Recover`-able on the successor.
+- A plaintext Pod-only drain listener on port 8082 serves `GET /drain`; normal API
+  traffic cannot reach it through the Service or gateway. Direct Pod-IP access remains
+  an operator network-isolation responsibility.
 
 The `deploy/helm/mecak8s/` Helm chart provides the production deployment contract: namespace-scoped RBAC for `leases`, a storage-free agent Deployment (two replicas by default; one is supported when lower availability is acceptable), Service, and a PodDisruptionBudget for multi-replica operation. The production profile does not create Redis and does not ship a general workload NetworkPolicy; the Kind/local profile can create a disposable Redis fixture, and enabling OIDC can render a narrow raw-driver NetworkPolicy. General network isolation remains the cluster policy layer.
 

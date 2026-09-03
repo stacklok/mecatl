@@ -787,16 +787,19 @@ concurrent Save/Delete cannot invalidate the proof and no O(total) key or member
 Lua ([ADR 0231](adr/0231-redis-owner-index-exact-coverage.md)). It defaults
 `--headless=true` and `--posture=auto` (an unattended daemon, inverted from `mecated`'s
 interactive defaults), drops `mecated`'s subcommands + Prometheus/OTel admin surface, and
-exposes `--redis-url` (mutually exclusive with `--store-dir`/`--session-store-url`). The
-honest shutdown contract: new runs are rejected (503 via the drain gate) the moment SIGTERM
-or the `preStop` `httpGet /drain` fires; **in-flight runs are cancelled, not drained** (a
+exposes `--redis-url` (mutually exclusive with `--store-dir`/`--session-store-url`). Its
+normal HTTP/SSE listener exposes only health/readiness outside authentication and the API
+behind authentication; a separate plaintext drain-only listener defaults to `0.0.0.0:8082`.
+The honest shutdown contract: new runs are rejected (503 via the drain gate) the moment
+SIGTERM or the `preStop` `httpGet /drain` fires; **in-flight runs are cancelled, not drained** (a
 multi-minute LLM turn cannot survive a rolling update within
 `terminationGracePeriodSeconds: 60`); the pod is disposable, the session is not — it is
 `Recover`-able on the successor (issue #51) from the Redis snapshot + durable event log.
 Its Helm chart offers three secure real-provider transport postures — in-pod TLS, an
 operator-attested edge-terminated TLS boundary, and the explicit unsafe bypass —
 detailed in [deployment and hardening](architecture/deployment-and-hardening.md).
-See `docs/adr/0048-mecak8s.md`.
+See `docs/adr/0048-mecak8s.md` and [ADR 0290](adr/0290-mecak8s-drain-listener.md); direct
+Pod-IP access to the drain port remains an operator-enforced network-isolation residual.
 
 Two deliberate cycle-breaks worth noting, documented in code:
 - `port` imports `tool` and `prompt` (because `LLMRequest` carries
@@ -928,7 +931,10 @@ the existing run-entry funnel. The pieces:
   non-leader serves RPCs and retries the acquire on a jittered backoff,
   promoting when the leader's lease lapses; a definitive Renew loss demotes the
   leader back to standby (failover), and a sticky
-  store-unsupported flag stops the loop re-acquiring forever. `FireNow` is
+  store-unsupported flag stops the loop re-acquiring forever. Standby logging is
+  rate-limited: state transitions and periodic heartbeats remain
+  operator-visible, while repeated acquire attempts are logged at debug level to
+  avoid replica-scale log noise. `FireNow` is
   gated on leadership (`ErrNotLeader` → FailedPrecondition/412). On each tick:
   `Due` → misfire policy → `Claim` (at-most-once) → `FireFunc` → `RecordFire`.
   The `FireFunc` seam is how composition injects the run-entry funnel.
