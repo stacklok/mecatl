@@ -24,7 +24,7 @@ func TestMetadataURLUsesCanonicalResource(t *testing.T) {
 	if got, want := MetadataURL("https://API.example.com/"), "https://api.example.com/.well-known/oauth-protected-resource"; got != want {
 		t.Fatalf("MetadataURL root = %q, want %q", got, want)
 	}
-	if got, want := MetadataURL("https://api.example.com/base"), "https://api.example.com/.well-known/oauth-protected-resource/base"; got != want {
-		t.Fatalf("MetadataURL path = %q, want %q", got, want)
+	if got, want := MetadataURL("https://API.example.com:443/base%2Fitem"), "https://api.example.com/.well-known/oauth-protected-resource/base%2Fitem"; got != want {
+		t.Fatalf("MetadataURL escaped path = %q, want %q", got, want)
 	}
 }

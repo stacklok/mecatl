@@ -46,13 +46,15 @@ func TestADR_0290_ExactResourceBinding(t *testing.T) {
 	if err != nil || root.MetadataURL != "https://api.example.com/.well-known/oauth-protected-resource" {
 		t.Fatalf("root metadata URL = %#v, %v", root, err)
 	}
-	for _, got := range []string{"https://api.example.com", "https://api.example.com/service", "https://api.example.com/service/v1/", "https://api.example.com:443/service/v1", "https://api.example.com/service%2Fv1"} {
+	for _, got := range []string{"https://api.example.com", "https://api.example.com/service", "https://api.example.com/service/v1/", "https://api.example.com/service%2Fv1"} {
 		if resourceMatches(resource, got) {
 			t.Errorf("near-match %q accepted", got)
 		}
 	}
-	if !resourceMatches(resource, "https://api.example.com/service/v1") {
-		t.Fatal("exact resource was rejected")
+	for _, equivalent := range []string{"https://api.example.com/service/v1", "https://API.example.com:443/service/v1"} {
+		if !resourceMatches(resource, equivalent) {
+			t.Errorf("canonical equivalent %q rejected", equivalent)
+		}
 	}
 }
 
@@ -140,6 +142,7 @@ func TestADR_0290_IssuerBinding(t *testing.T) {
 		{"https://issuer.example.com", "https://issuer.example.com/.well-known/openid-configuration"},
 		{"https://issuer.example.com/tenant", "https://issuer.example.com/tenant/.well-known/openid-configuration"},
 		{"https://issuer.example.com/tenant/", "https://issuer.example.com/tenant/.well-known/openid-configuration"},
+		{"https://issuer.example.com/tenant%2Fone", "https://issuer.example.com/tenant%2Fone/.well-known/openid-configuration"},
 	} {
 		if got := oidcMetadataURL(tc.issuer); got != tc.want {
 			t.Errorf("oidcMetadataURL(%q) = %q, want %q", tc.issuer, got, tc.want)

@@ -4,15 +4,15 @@ import (
 	"context"
 	"errors"
 	"io"
-	"path/filepath"
+	"net/http"
+	"net/http/httptest"
 	"reflect"
 	"strings"
 	"testing"
 
-	"github.com/adrg/xdg"
-
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/internal/adapter/clientauth"
+	"github.com/stacklok/mecatl/internal/adapter/server"
 )
 
 func TestOAuthProtectedResource_Scenario4_ShorthandEnrollment(t *testing.T) {
@@ -86,7 +86,11 @@ func TestADR_0290_DiscoveredIdentityConfirmation(t *testing.T) {
 		executeRemoteLogin = originalLogin
 	})
 	discovered := discoveredResource{protectedResource: protectedResource{Resource: "https://api.example.com", MetadataURL: "https://api.example.com/.well-known/oauth-protected-resource", GRPCTarget: "api.example.com:443"}, Issuer: "https://issuer.example.com", Audience: "api", ClientID: "client", Scopes: []string{"api.read"}}
-	discoverRemoteResource = func(context.Context, protectedResource) (discoveredResource, error) { return discovered, nil }
+	discoveryCalls := 0
+	discoverRemoteResource = func(context.Context, protectedResource) (discoveredResource, error) {
+		discoveryCalls++
+		return discovered, nil
+	}
 	confirmDiscoveredEnrollment = func(_ io.Reader, _ io.Writer, enrollment discoveredEnrollment) (bool, error) {
 		if enrollment.Resource != discovered.Resource || enrollment.MetadataURL != discovered.MetadataURL {
 			t.Fatalf("confirmation did not display discovered tuple: %#v", enrollment)
@@ -115,8 +119,12 @@ func TestADR_0290_DiscoveredIdentityConfirmation(t *testing.T) {
 	}
 
 	confirmed := enrollment
+	discoveryCalls = 0
 	confirmDiscoveredEnrollment = func(io.Reader, io.Writer, discoveredEnrollment) (bool, error) { return true, nil }
 	executeRemoteLogin = func(_ context.Context, conn clientauth.Connection, _ bool) error {
+		if discoveryCalls != 1 {
+			t.Fatalf("discovery calls before authorization = %d, want one", discoveryCalls)
+		}
 		if !reflect.DeepEqual(conn, confirmed.Connection) {
 			t.Fatalf("authorization/enrollment input changed after confirmation: got %#v want %#v", conn, confirmed.Connection)
 		}
@@ -162,40 +170,40 @@ func TestADR_0277_ExplicitEnrollmentCompatibility(t *testing.T) {
 }
 
 func TestOAuthProtectedResource_Scenario6_EndToEnd(t *testing.T) {
-	oldConfigHome := xdg.ConfigHome
-	xdg.ConfigHome = t.TempDir()
-	t.Cleanup(func() { xdg.ConfigHome = oldConfigHome })
 	originalDiscover, originalConfirm, originalLogin := discoverRemoteResource, confirmDiscoveredEnrollment, executeRemoteLogin
 	t.Cleanup(func() {
 		discoverRemoteResource, confirmDiscoveredEnrollment, executeRemoteLogin = originalDiscover, originalConfirm, originalLogin
 	})
-	profile := discoveredResource{protectedResource: protectedResource{Resource: "https://api.example.com/mcp", MetadataURL: "https://api.example.com/.well-known/oauth-protected-resource/mcp", GRPCTarget: "api.example.com:443"}, Issuer: "https://issuer.example.com", Audience: "api://mecatl", ClientID: "mecatui", Scopes: []string{"openid", "api.read"}}
-	discoverRemoteResource = func(context.Context, protectedResource) (discoveredResource, error) { return profile, nil }
+	profile := server.ProtectedResourceProfile{Resource: "https://api.example.com/mcp", Issuer: "https://issuer.example.com", Audience: "api://mecatl", ClientID: "mecatui", Scopes: []string{"openid", "api.read"}}
+	metadata := server.NewProtectedResourceHandler(profile)
+	discoverRemoteResource = func(ctx context.Context, resource protectedResource) (discoveredResource, error) {
+		return discoverProtectedResource(ctx, resource, roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+			if strings.Contains(req.URL.Path, "openid-configuration") {
+				return jsonResponse(`{"issuer":"https://issuer.example.com"}`), nil
+			}
+			rec := httptest.NewRecorder()
+			metadata.ServeHTTP(rec, req)
+			return rec.Result(), nil
+		}))
+	}
 	confirmed := false
 	confirmDiscoveredEnrollment = func(io.Reader, io.Writer, discoveredEnrollment) (bool, error) { confirmed = true; return true, nil }
+	var received clientauth.Connection
 	executeRemoteLogin = func(_ context.Context, conn clientauth.Connection, _ bool) error {
-		registry, err := clientauth.OpenRegistry(filepath.Join(xdg.ConfigHome, "mecatl"))
-		if err != nil {
-			return err
-		}
-		_, err = registry.Upsert(conn)
-		return err
+		received = conn
+		return nil
 	}
-	if err := runRemoteLogin("api.example.com", nil); err != nil {
+	if err := runRemoteLogin("https://api.example.com/mcp", nil); err != nil {
 		t.Fatal(err)
 	}
 	if !confirmed {
 		t.Fatal("metadata confirmation was not required")
 	}
-	conn, err := savedConnection("https://api.example.com/mcp")
-	if err != nil {
-		t.Fatal(err)
+	if received.ResourceURL != profile.Resource || received.Identity.Target != "api.example.com:443" || received.Identity.Issuer != profile.Issuer || received.Identity.ClientID != profile.ClientID {
+		t.Fatalf("login handoff did not preserve discovered tuple: %#v", received)
 	}
-	if conn.ResourceURL != profile.Resource || conn.Identity.Target != "api.example.com:443" || conn.Identity.Issuer != profile.Issuer || conn.Identity.ClientID != profile.ClientID {
-		t.Fatalf("persisted confirmed connection = %#v", conn)
-	}
-	if conn.IssuerAddressPolicy != clientauth.IssuerAddressPolicyPublic {
-		t.Fatalf("issuer policy = %q", conn.IssuerAddressPolicy)
+	if received.IssuerAddressPolicy != clientauth.IssuerAddressPolicyPublic {
+		t.Fatalf("issuer policy = %q", received.IssuerAddressPolicy)
 	}
 }
 

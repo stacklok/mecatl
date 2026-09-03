@@ -100,8 +100,10 @@ type SecurityConfig struct {
 	// validation, no principal, no new failure mode.
 	Validator PrincipalValidator
 	// ResourceMetadataURL is the validated, operator-configured RFC 9728
-	// metadata endpoint advertised on unauthorized HTTP requests. Empty retains
-	// the legacy bare Bearer challenge.
+	// metadata endpoint for this service's configured protected-resource base.
+	// Middleware deliberately advertises that one base for every protected API
+	// route; it never derives a resource from the untrusted Host or request path.
+	// Empty retains the legacy bare Bearer challenge.
 	ResourceMetadataURL string
 	// Diagnostics receives sanitized authentication-rejection records. Nil leaves
 	// diagnostics disabled; records never include credentials or validator errors.

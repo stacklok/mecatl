@@ -91,7 +91,10 @@ When the server publishes the optional RFC 9728 profile, `mecatui login` can
 accept a bare host or canonical HTTPS resource URL and discover the issuer,
 audience, public client hint, and scopes before confirmation. Metadata and issuer
 lookup use anonymous verified HTTPS bootstrap; the resulting authenticated gRPC
-connection is a separate transport decision. The RFC fields remain distinct from
+connection is a separate transport decision. The configured resource is the
+service-wide protected-resource base, so every protected API route advertises
+its same metadata URL; the server never derives that URL from a request Host or
+path. The RFC fields remain distinct from
 mecatl extension fields, and ToolHive/ToolHive-Core are implementation
 provenance rather than an engine dependency. Existing explicit issuer/client/
 audience login remains supported.

@@ -114,10 +114,15 @@ func TestADR_0290_ChallengeMatrix(t *testing.T) {
 	metadataURL := server.WellKnownProtectedResourceURL("https://api.example.com/mecatl/v1")
 	auth := server.NewAuthenticator(server.SecurityConfig{AuthToken: "static-token", ResourceMetadataURL: metadataURL})
 	defer auth.Close()
-	rec := httptest.NewRecorder()
-	auth.Middleware(http.NotFoundHandler()).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/sessions", nil))
-	if got, want := rec.Header().Get("WWW-Authenticate"), `Bearer resource_metadata="https://api.example.com/.well-known/oauth-protected-resource/mecatl/v1"`; got != want {
-		t.Fatalf("challenge = %q, want %q", got, want)
+	want := `Bearer resource_metadata="https://api.example.com/.well-known/oauth-protected-resource/mecatl/v1"`
+	for _, path := range []string{"/v1/sessions", "/unrelated"} {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.Host = "attacker.example"
+		auth.Middleware(http.NotFoundHandler()).ServeHTTP(rec, req)
+		if got := rec.Header().Get("WWW-Authenticate"); got != want {
+			t.Fatalf("challenge for %s = %q, want configured service base %q", path, got, want)
+		}
 	}
 }
 

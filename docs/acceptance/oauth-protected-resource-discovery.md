@@ -34,7 +34,7 @@ Both composition roots extend the shared OIDC configuration with `--oidc-resourc
 
 ### Scenario 2 — ToolHive-derived metadata and challenge
 
-The public HTTP listener exposes `GET /.well-known/oauth-protected-resource` outside bearer middleware. Root and path-bearing resources use one helper based on ToolHive’s `buildWellKnownURI` and `WellKnownOAuthResourcePath`. The response contains standard RFC 9728 fields plus `com.stacklok.mecatl.audience` and `com.stacklok.mecatl.client_id`. The protected API challenge includes `resource_metadata` when enabled. The adapted code records ToolHive source paths/tags and corrects its prefix routing, method, CORS, default-scope, validation, and header-safety issues. See [ADR 0290](../adr/0290-oauth-protected-resource-discovery.md) and the public listener shape in [`internal/adapter/server/authn.go`](../../internal/adapter/server/authn.go).
+The public HTTP listener exposes `GET /.well-known/oauth-protected-resource` outside bearer middleware. Root and path-bearing resources use one helper based on ToolHive’s `buildWellKnownURI` and `WellKnownOAuthResourcePath`. The configured resource is the service-wide protected-resource base: every protected API route advertises its one configured metadata URL, never a request-derived host or path. The response contains standard RFC 9728 fields plus `com.stacklok.mecatl.audience` and `com.stacklok.mecatl.client_id`. The adapted code records ToolHive source paths/tags and corrects its prefix routing, method, CORS, default-scope, validation, and header-safety issues. See [ADR 0290](../adr/0290-oauth-protected-resource-discovery.md) and the public listener shape in [`internal/adapter/server/authn.go`](../../internal/adapter/server/authn.go).
 
 **Acceptance:**
 - AC2.1: Both binaries return the configured metadata with `200` and `application/json` outside authentication and metrics/admin listeners.
@@ -47,7 +47,7 @@ The public HTTP listener exposes `GET /.well-known/oauth-protected-resource` out
   - verify: `TestADR_0290_WellKnownPathDerivation`
 - AC2.5: Disabled profiles return 404 and static-token-only deployments do not advertise OAuth.
   - verify: `TestADR_0290_MetadataDisabledCompatibility`
-- AC2.6: 401 responses carry one safe `resource_metadata` challenge derived only from operator configuration; unrelated routes retain existing behavior.
+- AC2.6: 401 responses carry one safe `resource_metadata` challenge derived only from the configured service resource base; every protected route advertises that same base and never derives it from Host or request path.
   - verify: `TestADR_0290_ChallengeMatrix`
 - AC2.7: Metadata includes the standard resource and authorization-server fields; ToolHive fixture parity remains unproven by this local serialization test.
   - verify: `TestADR_0290_MetadataStandardFields`
@@ -120,12 +120,12 @@ Public registry metadata gains optional `ResourceURL`, while the encrypted crede
 
 ### Scenario 6 — Helm, documentation, and offline proof
 
-The mecak8s chart adds `oidc.resource`, `oidc.clientID`, and `oidc.scopes`, rendering the shared flags and joining YAML scope lists to CSV. The schema/helper validates complete and partial combinations. A hermetic TLS/OIDC fixture proves both composition roots, discovery, confirmation, PKCE, persistence, authenticated gRPC, and browser-free reconnect. User-facing and generated documentation are updated. The chart topology and storage-free deployment constraints remain those of [ADR 0048](../adr/0048-mecak8s.md), while documentation must follow the lifecycle rules in [`AGENTS.md`](../../AGENTS.md).
+The mecak8s chart adds `oidc.resource`, `oidc.clientID`, and `oidc.scopes`, rendering the shared flags and joining YAML scope lists to CSV. The schema/helper validates complete and partial combinations. Offline coverage exercises the real metadata handler and discovery parser, first-use confirmation, and handoff to the existing login seam; browser PKCE, authenticated gRPC, and bare-host reconnect remain a required live qualification, not a claimed hermetic proof. User-facing and generated documentation are updated. The chart topology and storage-free deployment constraints remain those of [ADR 0048](../adr/0048-mecak8s.md), while documentation must follow the lifecycle rules in [`AGENTS.md`](../../AGENTS.md).
 
 **Acceptance:**
 - AC6.1: Helm renders `oidc.resource` and `oidc.clientID` as the shared `--oidc-resource` and `--oidc-client-id` flags, joins `oidc.scopes` to the same CSV parser used by the CLI, and rejects partial or malformed values including `oidc.enabled: false` with profile fields set.
   - verify: `TestADR_0290_HelmProtectedResourceProfile`
-- AC6.2: The hermetic flow proves metadata, confirmation, PKCE, persistence, authenticated gRPC, and bare-host reconnect.
+- AC6.2: Offline coverage proves the real metadata handler, discovery parsing, confirmation, and unchanged handoff to the existing login seam. Browser PKCE, authenticated gRPC, and bare-host reconnect require live qualification.
   - verify: `TestOAuthProtectedResource_Scenario6_EndToEnd`
 - AC6.3: Both server composition roots exercise the shared contract.
   - verify: `TestADR_0290_ServerCompositionParity`

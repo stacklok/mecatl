@@ -104,6 +104,17 @@ func Logout(ctx context.Context, target string, cfg LogoutConfig) (LogoutResult,
 	if _, statErr := os.Stat(cfg.Registry.root); errors.Is(statErr, os.ErrNotExist) {
 		return result, nil
 	}
+	resource, isResource, err := resourceForAlias(target)
+	if err != nil {
+		return result, err
+	}
+	if isResource {
+		unlockResource, lockErr := cfg.Registry.lockTarget(ctx, "resource:"+resource)
+		if lockErr != nil {
+			return result, lockErr
+		}
+		defer unlockResource()
+	}
 	unlock, err := cfg.Registry.lockTarget(ctx, canonical)
 	if err != nil {
 		return result, err

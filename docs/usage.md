@@ -37,7 +37,9 @@ an editor that spawned it.
 an operator-supplied absolute HTTPS URL; Helm exposes the equivalent
 `oidc.resource`, `oidc.clientID`, and `oidc.scopes` values. Metadata advertises
 standard `resource`, `authorization_servers`, and `bearer_methods_supported: ["header"]`
-fields separately from mecatl's audience/client-id extensions. Anonymous metadata
+fields separately from mecatl's audience/client-id extensions. Every protected API
+route advertises the configured resource's metadata URL as its service-wide base;
+the server never derives it from a request Host or path. Anonymous metadata
 and OIDC discovery are bootstrap-only and remain separate from authenticated
 gRPC transport. ToolHive is implementation provenance for the remote client
 adapter, not a runtime engine dependency. Without the profile, explicit OIDC

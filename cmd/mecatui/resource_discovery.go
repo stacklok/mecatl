@@ -19,7 +19,6 @@ import (
 
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/internal/adapter/resourceurl"
-	"github.com/stacklok/mecatl/internal/adapter/server"
 )
 
 // This is a narrow adaptation of ToolHive's RFC 9728 discovery flow
@@ -55,7 +54,15 @@ func parseProtectedResource(raw string) (protectedResource, error) {
 		if !validDNSName(raw) {
 			return protectedResource{}, errDiscoveryRejected
 		}
-		return newProtectedResource(&url.URL{Scheme: "https", Host: strings.ToLower(raw)}), nil
+		canonical, err := resourceurl.Canonical("https://" + strings.ToLower(raw))
+		if err != nil {
+			return protectedResource{}, errDiscoveryRejected
+		}
+		u, err := url.Parse(canonical)
+		if err != nil {
+			return protectedResource{}, errDiscoveryRejected
+		}
+		return newProtectedResource(u), nil
 	}
 	canonical, err := resourceurl.Canonical(raw)
 	if err != nil {
@@ -70,11 +77,12 @@ func parseProtectedResource(raw string) (protectedResource, error) {
 
 func newProtectedResource(u *url.URL) protectedResource {
 	resource := u.String()
-	return protectedResource{Resource: resource, GRPCTarget: net.JoinHostPort(u.Hostname(), portOr443(u)), MetadataURL: server.WellKnownProtectedResourceURL(resource)}
+	return protectedResource{Resource: resource, GRPCTarget: net.JoinHostPort(u.Hostname(), portOr443(u)), MetadataURL: resourceurl.MetadataURL(resource)}
 }
 
 func resourceMatches(expected protectedResource, actual string) bool {
-	return actual == expected.Resource
+	canonical, err := resourceurl.Canonical(actual)
+	return err == nil && canonical == expected.Resource
 }
 
 func parseIssuer(raw string) (string, error) {
@@ -91,7 +99,17 @@ func parseIssuer(raw string) (string, error) {
 }
 
 func oidcMetadataURL(issuer string) string {
-	return strings.TrimSuffix(issuer, "/") + oauthproto.WellKnownOIDCPath
+	u, err := url.Parse(issuer)
+	if err != nil {
+		return ""
+	}
+	path := strings.TrimSuffix(u.EscapedPath(), "/") + oauthproto.WellKnownOIDCPath
+	decoded, err := url.PathUnescape(path)
+	if err != nil {
+		return ""
+	}
+	u.Path, u.RawPath = decoded, path
+	return u.String()
 }
 
 func validAuthority(u *url.URL) bool {

@@ -892,6 +892,24 @@ func (r *Registry) targetForAlias(alias string) (string, error) {
 	return conn.Identity.Target, nil
 }
 
+// resourceForAlias identifies a resource alias without consulting registry
+// state. It lets logout take the same resource-before-target lock order as
+// enrollment, so a resource cannot move targets between resolution and delete.
+func resourceForAlias(alias string) (string, bool, error) {
+	if strings.Contains(alias, "://") {
+		resource, err := canonicalResourceURL(alias)
+		return resource, true, err
+	}
+	if _, err := canonicalTarget(alias); err == nil {
+		return "", false, nil
+	}
+	if strings.ContainsAny(alias, "/?#@") {
+		return "", false, ErrInvalidIdentity
+	}
+	resource, err := canonicalResourceURL("https://" + alias)
+	return resource, true, err
+}
+
 // FindTarget returns the saved connection for target. Registry read failures take
 // precedence; a target outside the enrollment grammar cannot name a saved row and
 // returns credentialstore.ErrNotFound after a clean read.
