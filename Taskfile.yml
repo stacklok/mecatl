@@ -357,8 +357,10 @@ tasks:
       session persistence, and OIDC caller identity against an in-cluster Dex.
       Export OPENROUTER_API_KEY to ALSO run the LIVE variant (real LLM turns
       through the pods proving the plumbing under load; the live specs Skip
-      without the key). Needs Docker + kind + ko + helm + kubectl. NOT part of
-      `task test` (slow ~5-8 min mock-only, ~10-15 min with live).
+      without the key). Uses Docker by default, or rootless Podman with
+      `CONTAINER_ENGINE=podman` (Kind's `k8s-file` Podman log driver is required;
+      see https://kind.sigs.k8s.io/docs/user/rootless/). NOT part of `task test`
+      (slow ~5-8 min mock-only, ~10-15 min with live).
     deps: [build]
     preconditions:
       - sh: command -v kind >/dev/null 2>&1
@@ -369,6 +371,18 @@ tasks:
         msg: "helm is not installed (https://helm.sh/docs/intro/install/)"
       - sh: command -v kubectl >/dev/null 2>&1
         msg: "kubectl is not installed"
+      - sh: |
+          runtime="${CONTAINER_ENGINE:-${KIND_EXPERIMENTAL_PROVIDER:-docker}}"
+          case "$runtime" in docker|podman) command -v "$runtime" >/dev/null 2>&1 ;; *) exit 1 ;; esac
+        msg: "CONTAINER_ENGINE must be docker (default) or podman, and the selected runtime must be on PATH"
+      - sh: |
+          runtime="${CONTAINER_ENGINE:-${KIND_EXPERIMENTAL_PROVIDER:-docker}}"
+          test "$runtime" != podman || podman info --format json | grep -Eq '"rootless"[[:space:]]*:[[:space:]]*true'
+        msg: "e2e:k8s:podman supports rootless Podman only"
+      - sh: |
+          runtime="${CONTAINER_ENGINE:-${KIND_EXPERIMENTAL_PROVIDER:-docker}}"
+          test "$runtime" != podman || podman info --format json | grep -Eq '"logDriver"[[:space:]]*:[[:space:]]*"k8s-file"'
+        msg: "rootless Podman requires log_driver = \"k8s-file\"; see https://kind.sigs.k8s.io/docs/user/rootless/"
     cmds:
       # 30m accommodates the LIVE specs when OPENROUTER_API_KEY is exported: a
       # real haiku turn takes 10-30s, the live lease/persistence specs each drive
@@ -376,7 +390,19 @@ tasks:
       # ~1-2 min. Without the key the live specs Skip and the suite fits in 15m;
       # the outer bound only matters when the live variant runs. GOWORK=off proves
       # the image uses tagged external dependencies rather than workspace overlays.
-      - GOWORK=off go test -tags kind_e2e -count=1 -timeout 30m ./e2e/k8s/...
+      - cmd: |
+          runtime="${CONTAINER_ENGINE:-${KIND_EXPERIMENTAL_PROVIDER:-docker}}"
+          case "$runtime:${KIND_EXPERIMENTAL_PROVIDER:-}" in
+            docker:|podman:podman) ;;
+            podman:) export KIND_EXPERIMENTAL_PROVIDER=podman ;;
+            *) echo "CONTAINER_ENGINE and KIND_EXPERIMENTAL_PROVIDER disagree" >&2; exit 2 ;;
+          esac
+          GOWORK=off go test -tags kind_e2e -count=1 -timeout 30m ./e2e/k8s/...
+
+  e2e:k8s:podman:
+    desc: Run e2e:k8s with rootless Podman (requires the k8s-file Podman log driver)
+    cmds:
+      - CONTAINER_ENGINE=podman task e2e:k8s
 
   deploy:check:
     desc: |
