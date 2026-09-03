@@ -61,11 +61,15 @@ const (
 	liveProviderID = "openrouter"
 )
 
-// liveProviderEnabled reports whether OPENROUTER_API_KEY is set in the test
-// process's environment — the gate for the live LLM specs. The mock specs run
-// unconditionally; the live specs Skip when this is false.
+// liveProviderConfigured records that BeforeSuite received and scrubbed an
+// OpenRouter key before any live-provider command ran.
+var liveProviderConfigured bool
+
+// liveProviderEnabled reports whether BeforeSuite enabled the live-provider
+// variant. The key itself is removed from the process environment before the
+// fixture invokes kubectl or any credential plugin.
 func liveProviderEnabled() bool {
-	return os.Getenv("OPENROUTER_API_KEY") != ""
+	return liveProviderConfigured
 }
 
 // --- tool availability / cluster lifecycle -----------------------------------
@@ -830,17 +834,17 @@ func boundedRedacted(value, secret string, limit int) string {
 // provider pods (their assertions are provider-agnostic), and the live specs run
 // after. No un-patching — kind delete cluster (AfterSuite) destroys everything.
 //
-// SECURITY: the key is read from os.Getenv ONCE and written to a Secret via a
-// `kubectl apply -f -` of a `stringData` JSON manifest (kubectl carries the value
-// to the API server over its stdin; it is never echoed to stdout/stderr, never a
-// bare argv token, never in a file). The Secret NAME is the only identifier
-// surfaced in logs — the value never is. The patch then consumes it via an
-// envFrom secretKeyRef, so the key reaches the pod ONLY through the Secret, never
-// a pod arg or a Deployment spec field.
-func enableLiveProvider() {
+// SECURITY: key is supplied by BeforeSuite after it reads and removes
+// OPENROUTER_API_KEY from the Go test process environment. It is written to a
+// Secret via a `kubectl apply -f -` of a `stringData` JSON manifest (kubectl
+// carries the value to the API server over its stdin; it is never echoed to
+// stdout/stderr, never a bare argv token, never in a file). The Secret NAME is
+// the only identifier surfaced in logs — the value never is. The patch then
+// consumes it via an envFrom secretKeyRef, so the key reaches the pod ONLY
+// through the Secret, never a pod arg or a Deployment spec field.
+func enableLiveProvider(key string) {
 	ginkgo.GinkgoHelper()
 	ctx := ginkgoSuiteCtx()
-	key := os.Getenv("OPENROUTER_API_KEY")
 	gomega.ExpectWithOffset(1, key).NotTo(gomega.BeEmpty(),
 		"enableLiveProvider called without OPENROUTER_API_KEY")
 

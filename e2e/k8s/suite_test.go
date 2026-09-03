@@ -4,6 +4,7 @@ package k8s_e2e_test
 
 import (
 	"context"
+	"os"
 	"testing"
 	"time"
 
@@ -64,16 +65,19 @@ var _ = ginkgo.BeforeSuite(func() {
 	agentPods = podNames()
 	ginkgo.GinkgoWriter.Printf("agent pods: pod-A=%s pod-B=%s\n", agentPods[0], agentPods[1])
 
-	// LIVE PROVIDER: if OPENROUTER_API_KEY is set in the test process's
-	// environment, patch the Deployment from --mock to the real OpenRouter
-	// provider + the default-lane model (staged via a k8s Secret — the key is
-	// never logged). The mock specs run on the real-provider pods (their
-	// assertions are provider-agnostic); the live specs (live_test.go) then run
-	// real multi-second model turns proving the plumbing holds under load. The
-	// live specs Skip when the key is absent, so the mock-only run is unchanged.
-	if liveProviderEnabled() {
+	// LIVE PROVIDER: capture the key once, then remove it from this process before
+	// any kubectl invocation can inherit it through a credential plugin. The local
+	// variable is needed only to stage the Secret below; liveProviderConfigured
+	// retains the non-secret state used by the later live-spec gate.
+	key := os.Getenv("OPENROUTER_API_KEY")
+	if key != "" {
+		if err := os.Unsetenv("OPENROUTER_API_KEY"); err != nil {
+			ginkgo.Fail("remove OPENROUTER_API_KEY from the Kind test process: "+err.Error(), 1)
+			return
+		}
+		liveProviderConfigured = true
 		ginkgo.By("OPENROUTER_API_KEY is set — enabling the live provider")
-		enableLiveProvider()
+		enableLiveProvider(key)
 	} else {
 		ginkgo.By("OPENROUTER_API_KEY is not set — running the mock suite only (live specs will skip)")
 	}
