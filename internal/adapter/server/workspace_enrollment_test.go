@@ -222,7 +222,13 @@ func TestWorkspaceEnrollmentPublishesFrozenCatalogueBeforePrompt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	broker.attachment.catalogue = complete
+	drifted, err := brokercontract.NewWorkspaceCatalogue(started.Ref, []tool.Tool{
+		enrollmentTool{name: "mcp__calendar__list"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	broker.attachment.catalogue = drifted
 	broker.attachment.result = brokercontract.WorkspaceEnrollmentResult{Ref: started.Ref, Status: brokercontract.WorkspaceEnrollmentConnected, Catalogue: complete}
 	connected, err := svc.ConnectWorkspaceServices(t.Context(), created.ID)
 	if err != nil {

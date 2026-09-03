@@ -57,16 +57,21 @@ func (s *Service) ConnectWorkspaceServices(ctx context.Context, id session.Sessi
 		return WorkspaceEnrollmentProjection{Ref: result.Ref, Status: result.Status}, nil
 	}
 
-	// The attachment has already replaced its catalogue atomically. Rebuild the
-	// engine while the aggregate still blocks prompts, then publish the exact tool
-	// authority and clear the pending gate in one aggregate transition.
+	// The authenticated result is the single snapshot for both executable wrappers
+	// and durable authority. Never re-read Attachment.Tools during this rebuild: a
+	// remote attachment may advance between observation and engine construction.
+	exactTools := result.Catalogue.Tools()
+	toolNames := make([]string, len(exactTools))
+	for i, candidate := range exactTools {
+		toolNames[i] = candidate.Spec().Name
+	}
 	release()
 	release = func() {}
 	sel := ProviderSelector{ProviderID: sess.ProviderID, ModelID: sess.ModelID, ReasoningEffort: sess.ReasoningEffort}
-	if _, err := s.buildAndRegisterSessionEngine(ctx, sess, sel, profileForSession(sess), sess.Mode, true); err != nil {
+	if _, err := s.buildAndRegisterSessionEngineWithBrokerTools(ctx, sess, sel, profileForSession(sess), sess.Mode, true, exactTools, true); err != nil {
 		return WorkspaceEnrollmentProjection{}, err
 	}
-	if err := sess.CompleteWorkspaceEnrollment(pending, result.Catalogue.ToolNames()); err != nil {
+	if err := sess.CompleteWorkspaceEnrollment(pending, toolNames); err != nil {
 		return WorkspaceEnrollmentProjection{}, fmt.Errorf("%w: complete workspace enrollment", ErrFailedPrecondition)
 	}
 	if err := s.saveSession(ctx, sess); err != nil {
