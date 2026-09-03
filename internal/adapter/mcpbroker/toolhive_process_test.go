@@ -13,6 +13,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"reflect"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -20,12 +21,62 @@ import (
 
 	jwt "github.com/golang-jwt/jwt/v5"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/ory/fosite"
+	"github.com/stacklok/toolhive/pkg/authserver/storage"
 	"golang.org/x/oauth2"
 
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 	contract "github.com/stacklok/mecatl/internal/mcpbroker"
 )
+
+// registerClientSpy wraps storage.NewMemoryStorage(), recording whether
+// RegisterClient was called on IT, so a test can prove newToolHiveProcess used
+// the config.AuthStorage it was given rather than silently falling back to a
+// fresh storage.NewMemoryStorage().
+type registerClientSpy struct {
+	*storage.MemoryStorage
+	registered atomic.Bool
+}
+
+func newRegisterClientSpy() *registerClientSpy {
+	return &registerClientSpy{MemoryStorage: storage.NewMemoryStorage()}
+}
+
+func (s *registerClientSpy) RegisterClient(ctx context.Context, client fosite.Client) error {
+	s.registered.Store(true)
+	return s.MemoryStorage.RegisterClient(ctx, client)
+}
+
+func TestNewToolHiveProcessUsesConfiguredAuthStorage(t *testing.T) {
+	t.Setenv("MECATL_TEST_CLIENT_SECRET", "construction-only-secret")
+	profile := protectedToolHiveProfile("private")
+	profile.Static = []StaticTool{{Name: "echo", Description: "echo", Schema: json.RawMessage(`{"type":"object"}`)}}
+	spy := newRegisterClientSpy()
+	process, err := NewToolHiveProcess(t.Context(), ToolHiveConfig{
+		CallbackURL: "https://broker.example/callback", Profiles: []ToolHiveProfile{profile}, AuthStorage: spy,
+	})
+	if err != nil {
+		t.Fatalf("NewToolHiveProcess: %v", err)
+	}
+	t.Cleanup(func() { _ = process.Close() })
+	if !spy.registered.Load() {
+		t.Fatal("NewToolHiveProcess did not register the client on the configured AuthStorage")
+	}
+}
+
+func TestNewToolHiveProcessFallsBackToMemoryStorageWhenUnconfigured(t *testing.T) {
+	t.Setenv("MECATL_TEST_CLIENT_SECRET", "construction-only-secret")
+	profile := protectedToolHiveProfile("private")
+	profile.Static = []StaticTool{{Name: "echo", Description: "echo", Schema: json.RawMessage(`{"type":"object"}`)}}
+	process, err := NewToolHiveProcess(t.Context(), ToolHiveConfig{
+		CallbackURL: "https://broker.example/callback", Profiles: []ToolHiveProfile{profile},
+	})
+	if err != nil {
+		t.Fatalf("NewToolHiveProcess: %v", err)
+	}
+	t.Cleanup(func() { _ = process.Close() })
+}
 
 func TestToolHiveConstructionPreservesProtectedMapping(t *testing.T) {
 	profiles := []ToolHiveProfile{
@@ -48,6 +99,46 @@ func TestToolHiveConstructionPreservesProtectedMapping(t *testing.T) {
 	}
 	if construction.backends[0].AuthConfig.UpstreamInject.ProviderName != "github-cloud" {
 		t.Fatalf("backend provider mapping = %#v", construction.backends)
+	}
+}
+
+func TestToolHiveConstructionMapsRefreshTokenRequest(t *testing.T) {
+	for _, upstreamType := range []string{"oidc", "oauth2"} {
+		for _, requestRefreshToken := range []bool{true, false} {
+			t.Run(upstreamType+"/request_refresh_token="+strconv.FormatBool(requestRefreshToken), func(t *testing.T) {
+				profile := protectedToolHiveProfile("private")
+				profile.OAuth.RequestRefreshToken = requestRefreshToken
+				if upstreamType == "oidc" {
+					profile.OAuth.Issuer = "https://issuer.example"
+					profile.OAuth.AuthorizationEndpoint = ""
+					profile.OAuth.TokenEndpoint = ""
+				}
+
+				construction, err := compileToolHiveConstruction([]ToolHiveProfile{profile}, "https://broker.example")
+				if err != nil {
+					t.Fatalf("compileToolHiveConstruction: %v", err)
+				}
+				var scopes []string
+				var params map[string]string
+				if upstreamType == "oidc" {
+					scopes = construction.upstreams[0].OIDCConfig.Scopes
+					params = construction.upstreams[0].OIDCConfig.AdditionalAuthorizationParams
+				} else {
+					scopes = construction.upstreams[0].OAuth2Config.Scopes
+					params = construction.upstreams[0].OAuth2Config.AdditionalAuthorizationParams
+				}
+				if !reflect.DeepEqual(scopes, []string{"openid"}) {
+					t.Fatalf("scopes = %v", scopes)
+				}
+				var want map[string]string
+				if requestRefreshToken {
+					want = map[string]string{"access_type": "offline"}
+				}
+				if !reflect.DeepEqual(params, want) {
+					t.Fatalf("AdditionalAuthorizationParams = %#v, want %#v", params, want)
+				}
+			})
+		}
 	}
 }
 
@@ -453,7 +544,7 @@ func TestStaticProtectedProcessRealAuthorizationFlows(t *testing.T) {
 				t.Fatalf("complete authorization: %v", err)
 			}
 			_ = response.Body.Close()
-			if response.StatusCode != http.StatusNoContent {
+			if response.StatusCode != http.StatusOK {
 				t.Fatalf("callback status = %d", response.StatusCode)
 			}
 			result, err := wrapped.Execute(t.Context(), call, tool.Environment{})
@@ -567,7 +658,7 @@ func TestStaticOAuth2ProcessAuthorizationCallbackAndExactExecution(t *testing.T)
 	}
 	body, _ := io.ReadAll(response.Body)
 	_ = response.Body.Close()
-	if response.StatusCode != http.StatusNoContent {
+	if response.StatusCode != http.StatusOK {
 		t.Fatalf("callback status = %d url=%s body=%q", response.StatusCode, response.Request.URL, body)
 	}
 	if _, err := attached.PresentAuthorization(t.Context(), authorization); !errors.Is(err, contract.ErrAuthorizationNotFound) {
@@ -718,7 +809,7 @@ func TestStaticProtectedRouteCallbackResumesExactCall(t *testing.T) {
 		t.Fatalf("parse presentation URL: %v", err)
 	}
 	state := presentationURL.Query().Get("state")
-	if got := callback(t, runtime, "authorization-code", state).Code; got != http.StatusNoContent {
+	if got := callback(t, runtime, "authorization-code", state).Code; got != http.StatusOK {
 		t.Fatalf("callback status = %d", got)
 	}
 	if got, required, err := requester.RequestAuthorization(t.Context(), call); err != nil || required || got != (session.ExternalAuthorization{}) {

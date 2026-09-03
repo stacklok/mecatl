@@ -491,9 +491,25 @@ func (r *Runtime) CallbackHandler() http.Handler {
 			http.Error(w, "invalid OAuth callback", http.StatusBadRequest)
 			return
 		}
-		w.WriteHeader(http.StatusNoContent)
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(authorizationCompletePage))
 	})
 }
+
+// authorizationCompletePage is the terminal page shown in the user's browser on
+// a successful callback. It exists so completion is VISIBLE — an HTTP 204 here
+// left the tab blank with no navigation the user could distinguish from "stuck",
+// which is what actually happened during live debugging: the OAuth round trip
+// completed correctly (confirmed via server logs) but the blank page read as a
+// frozen browser, leading to a closed window and a confusing retry against an
+// already-consumed one-shot authorization.
+const authorizationCompletePage = `<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>Authorization complete</title></head>
+<body style="font-family:system-ui,sans-serif;text-align:center;padding:4rem">
+<h1>Authorization complete</h1>
+<p>You can close this window now.</p>
+</body></html>`
 
 func exactCallbackValues(values url.Values) bool {
 	if len(values) < 2 || len(values) > 3 || len(values["state"]) != 1 {

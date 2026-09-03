@@ -147,7 +147,7 @@ func TestProtectedCallCallbackSingleUseAndRefreshCustody(t *testing.T) {
 	attachment, _ := attach(t, harness.runtime, "protected-session")
 	call := session.NewToolCall("call-protected", "mcp__github__create", json.RawMessage(`{"title":"one"}`))
 	authorization, state := requestProtected(t, attachment, call)
-	if got := callback(t, harness.runtime, "authorization-code", state).Code; got != http.StatusNoContent {
+	if got := callback(t, harness.runtime, "authorization-code", state).Code; got != http.StatusOK {
 		t.Fatalf("callback status = %d", got)
 	}
 	if got := callback(t, harness.runtime, "authorization-code", state).Code; got != http.StatusBadRequest {
@@ -208,7 +208,7 @@ func TestRefreshFailureOnlyRevokesTerminalGrant(t *testing.T) {
 			attachment, _ := attach(t, harness.runtime, "refresh-failure-session")
 			call := session.NewToolCall("initial-call", "mcp__github__create", json.RawMessage(`{}`))
 			_, state := requestProtected(t, attachment, call)
-			if got := callback(t, harness.runtime, "authorization-code", state).Code; got != http.StatusNoContent {
+			if got := callback(t, harness.runtime, "authorization-code", state).Code; got != http.StatusOK {
 				t.Fatalf("callback status = %d", got)
 			}
 
@@ -334,7 +334,7 @@ func TestConfidentialTokenExchangeUsesBasicAuthenticationOnce(t *testing.T) {
 	attachment, _ := attach(t, harness.runtime, "basic-session")
 	call := session.NewToolCall("basic-call", "mcp__github__create", json.RawMessage(`{}`))
 	_, state := requestProtected(t, attachment, call)
-	if got := callback(t, harness.runtime, "authorization-code", state).Code; got != http.StatusNoContent {
+	if got := callback(t, harness.runtime, "authorization-code", state).Code; got != http.StatusOK {
 		t.Fatalf("callback status = %d", got)
 	}
 	if requests != 1 {
@@ -408,7 +408,7 @@ func TestTokenExtraMetadataSurvivesScopedTokenSource(t *testing.T) {
 	attachment, _ := attach(t, harness.runtime, "extra-session")
 	call := session.NewToolCall("extra-call", "mcp__github__create", json.RawMessage(`{}`))
 	_, state := requestProtected(t, attachment, call)
-	if got := callback(t, harness.runtime, "authorization-code", state).Code; got != http.StatusNoContent {
+	if got := callback(t, harness.runtime, "authorization-code", state).Code; got != http.StatusOK {
 		t.Fatalf("callback status = %d", got)
 	}
 	if _, err := toolByName(t, attachment, call.Name).Execute(t.Context(), call, tool.Environment{}); err != nil {

@@ -280,7 +280,7 @@ func completeBrowserAuthorization(ctx context.Context, t *testing.T, svc *server
 		t.Fatalf("browser authorization: %v", err)
 	}
 	defer response.Body.Close()
-	if response.StatusCode != http.StatusNoContent {
+	if response.StatusCode != http.StatusOK {
 		t.Fatalf("callback status = %d", response.StatusCode)
 	}
 }
