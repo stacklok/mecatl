@@ -22,15 +22,17 @@ const (
 // child sessions. When a SessionLease is configured it also owns each child's
 // distributed hold and renewer for exactly the registered lifecycle.
 type sessionLiveness struct {
-	mu         sync.RWMutex
-	active     map[session.SessionID]*childLeaseHold
-	lease      port.SessionLease
-	owner      string
-	renew      time.Duration
-	diag       port.Diagnostics
-	capability *server.SessionMutationCapability
-	now        func() time.Time
-	closed     bool
+	mu            sync.RWMutex
+	leaseMu       sync.Mutex
+	active        map[session.SessionID]*childLeaseHold
+	lease         port.SessionLease
+	leaseDisabled bool
+	owner         string
+	renew         time.Duration
+	diag          port.Diagnostics
+	capability    *server.SessionMutationCapability
+	now           func() time.Time
+	closed        bool
 }
 
 type childLeaseHold struct {
@@ -104,19 +106,16 @@ func (r *sessionLiveness) Register(ctx context.Context, id session.SessionID, ca
 			continue
 		}
 		h := &childLeaseHold{ready: make(chan struct{}), refs: 1, next: 1, cancels: map[uint64]context.CancelFunc{1: cancel}}
+		leasing := r.lease != nil && !r.leaseDisabled
 		var acqCtx context.Context
-		if r.lease != nil {
+		if leasing {
 			acqCtx, h.acquireCancel = context.WithTimeout(ctx, childLeaseCallTimeout)
 		}
 		r.active[id] = h
 		r.mu.Unlock()
 
-		if r.lease != nil {
-			h.lease, h.err = r.lease.Acquire(acqCtx, id, r.owner)
-			h.acquireCancel()
-			if h.err != nil {
-				h.err = fmt.Errorf("app: acquire child session lease %q: %w", id, h.err)
-			}
+		if leasing {
+			r.acquireChildLease(ctx, acqCtx, id, h)
 		}
 
 		r.mu.Lock()
@@ -142,11 +141,53 @@ func (r *sessionLiveness) Register(ctx context.Context, id session.SessionID, ca
 	}
 }
 
+func (r *sessionLiveness) acquireChildLease(ctx, acqCtx context.Context, id session.SessionID, h *childLeaseHold) {
+	r.leaseMu.Lock()
+	r.mu.RLock()
+	disabled := r.leaseDisabled
+	r.mu.RUnlock()
+	if !disabled {
+		h.lease, h.err = r.lease.Acquire(acqCtx, id, r.owner)
+	}
+	r.leaseMu.Unlock()
+	h.acquireCancel()
+	if errors.Is(h.err, port.ErrLeaseUnsupported) {
+		r.disableLeasing(ctx)
+		h.err = nil
+		h.lease = port.Lease{}
+	} else if h.err != nil {
+		h.err = fmt.Errorf("app: acquire child session lease %q: %w", id, h.err)
+	}
+}
+
+func (r *sessionLiveness) disableLeasing(ctx context.Context) {
+	r.mu.Lock()
+	first := !r.leaseDisabled
+	r.leaseDisabled = true
+	stops := make([]context.CancelFunc, 0, len(r.active))
+	for _, h := range r.active {
+		if h.stop != nil {
+			stops = append(stops, h.stop)
+		}
+	}
+	r.mu.Unlock()
+	if r.capability != nil {
+		r.capability.Disable()
+	}
+	for _, stop := range stops {
+		stop()
+	}
+	if first {
+		r.diag.Log(ctx, port.LevelInfo, "child session leasing unsupported by backend; disabling (running without cross-process exclusion)",
+			"owner", r.owner)
+	}
+}
+
 func (r *sessionLiveness) activate(id session.SessionID, h *childLeaseHold) {
 	if r.capability != nil {
 		r.capability.Grant(id)
 	}
-	if r.lease != nil {
+	if r.lease != nil && !r.leaseDisabled {
 		renewCtx, stop := context.WithCancel(context.Background())
 		h.stop = stop
 		h.done = make(chan struct{})
@@ -248,12 +289,18 @@ func (r *sessionLiveness) release(id session.SessionID, h *childLeaseHold, key u
 	r.stopAndRelease(stop, done, lease, lost)
 }
 
+func (r *sessionLiveness) leasingDisabled() bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.leaseDisabled
+}
+
 func (r *sessionLiveness) stopAndRelease(stop context.CancelFunc, done <-chan struct{}, lease port.Lease, lost bool) {
 	if stop != nil {
 		stop()
 		<-done
 	}
-	if lost || r.lease == nil || lease.SessionID == "" {
+	if lost || r.leasingDisabled() || r.lease == nil || lease.SessionID == "" {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(context.Background()), childLeaseCallTimeout)

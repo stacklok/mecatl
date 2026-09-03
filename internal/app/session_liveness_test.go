@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -72,6 +73,72 @@ func TestSessionLivenessDistributedExclusionAcrossBuildOwners(t *testing.T) {
 		t.Fatalf("second Register() after release error = %v", err)
 	}
 	secondRelease()
+}
+
+type unsupportedChildLease struct {
+	acquires atomic.Int64
+	renews   atomic.Int64
+	releases atomic.Int64
+}
+
+func (l *unsupportedChildLease) Acquire(context.Context, session.SessionID, string) (port.Lease, error) {
+	l.acquires.Add(1)
+	return port.Lease{}, port.ErrLeaseUnsupported
+}
+func (l *unsupportedChildLease) Renew(context.Context, port.Lease) (port.Lease, error) {
+	l.renews.Add(1)
+	return port.Lease{}, nil
+}
+func (l *unsupportedChildLease) Release(context.Context, port.Lease) error {
+	l.releases.Add(1)
+	return nil
+}
+
+func TestADR_0290_ChildLeaseUnsupportedStickyDisablesToNoLeaseFallback(t *testing.T) {
+	lease := &unsupportedChildLease{}
+	capability := server.NewSessionMutationCapability(true)
+	registry := newSessionLiveness(lease, "replica", time.Minute, time.Millisecond, nil, capability)
+	defer registry.Close()
+
+	firstID := session.SessionID("subagent-unsupported-first")
+	firstRelease, err := registry.Register(context.Background(), firstID, func() {})
+	if err != nil {
+		t.Fatalf("first Register() error = %v, want no-lease fallback", err)
+	}
+	if !registry.IsLive(firstID) {
+		t.Fatal("unsupported fallback did not register child locally")
+	}
+	guarded := capability.GuardStore(memstore.New())
+	if err := guarded.Save(context.Background(), session.New(firstID, session.ModeDefault, "/ws", session.Limits{}, time.Now())); err != nil {
+		t.Fatalf("unsupported fallback remained capability-gated: %v", err)
+	}
+	firstRelease()
+
+	const workers = 32
+	var wg sync.WaitGroup
+	wg.Add(workers)
+	for i := range workers {
+		go func(i int) {
+			defer wg.Done()
+			id := session.SessionID(fmt.Sprintf("subagent-unsupported-%d", i))
+			release, err := registry.Register(context.Background(), id, func() {})
+			if err != nil {
+				t.Errorf("Register(%q) error = %v", id, err)
+				return
+			}
+			release()
+		}(i)
+	}
+	wg.Wait()
+	if got := lease.acquires.Load(); got != 1 {
+		t.Fatalf("Acquire calls after sticky disable = %d, want 1", got)
+	}
+	if got := lease.renews.Load(); got != 0 {
+		t.Fatalf("Renew calls after unsupported = %d, want 0", got)
+	}
+	if got := lease.releases.Load(); got != 0 {
+		t.Fatalf("Release calls after unsupported = %d, want 0", got)
+	}
 }
 
 type failingChildLease struct{ err error }

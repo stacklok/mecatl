@@ -54,7 +54,9 @@ func (c *SessionMutationCapability) Remove(id session.SessionID) {
 	}
 }
 
-func (c *SessionMutationCapability) disable() {
+// Disable permanently turns the capability into the no-lease pass-through mode.
+// It is used when an optional lease backend reports ErrLeaseUnsupported.
+func (c *SessionMutationCapability) Disable() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.disabled = true

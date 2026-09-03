@@ -1107,7 +1107,10 @@ type runState struct {
 	// promoted to a real agent.Run. Drain and lease loss cancel it before any
 	// provider/tool work can start.
 	admissionCancel context.CancelFunc
-	awaiting        atomic.Bool
+	// runContextStop releases the lease-linked launch context after the promoted
+	// run has settled. It must outlive the run-entry call itself.
+	runContextStop context.CancelFunc
+	awaiting       atomic.Bool
 	// persistMu makes admission of the durable awaiting save and drain's
 	// awaiting/non-awaiting decision one lifecycle transaction. Backend calls
 	// admitted before invalidation may still complete.
@@ -3885,9 +3888,12 @@ func (s *Service) RetryFailedRun(ctx context.Context, id session.SessionID) (*ag
 	if err := s.acquireLease(admissionParent, id); err != nil {
 		return nil, err
 	}
-	runCtx := admissionParent
 	admissionCtx, stopAdmission, leaseHeld := s.mutationLeaseContext(admissionParent, id)
-	defer stopAdmission()
+	defer func() {
+		if !promoted {
+			stopAdmission()
+		}
+	}()
 	ctx = admissionCtx
 	engine, env, err := s.engineAndEnvironmentFor(ctx, sess)
 	if err != nil {
@@ -3903,8 +3909,8 @@ func (s *Service) RetryFailedRun(ctx context.Context, id session.SessionID) (*ag
 	if !leaseHeld() {
 		return nil, fmt.Errorf("%w: %q", ErrSessionLeasedElsewhere, id)
 	}
-	ctx = memory.WithWorkspace(runCtx, env.Workspace().Root())
-	run, err := s.promoteRunAdmission(id, st, func() *agent.Run {
+	ctx = memory.WithWorkspace(ctx, env.Workspace().Root())
+	run, err := s.promoteRunAdmission(id, st, stopAdmission, func() *agent.Run {
 		return engine.RetryFailedStep(ctx, sess, env)
 	})
 	if err != nil {
@@ -4031,9 +4037,12 @@ func (s *Service) startRunContent(ctx context.Context, id session.SessionID, tex
 	}
 	// Bind every fallible admission step to this exact hold. Renewal loss cancels
 	// construction and the final revalidation below prevents provider/tool start.
-	runCtx := admissionParent
 	admissionCtx, stopAdmission, leaseHeld := s.mutationLeaseContext(admissionParent, id)
-	defer stopAdmission()
+	defer func() {
+		if !promoted {
+			stopAdmission()
+		}
+	}()
 	ctx = admissionCtx
 	// Apply the unchanged reopen/interrupt/recover funnel only after the trusted
 	// purpose and ownership gates and lease acquisition. Rejected kinds are never
@@ -4079,8 +4088,8 @@ func (s *Service) startRunContent(ctx context.Context, id session.SessionID, tex
 	if !leaseHeld() {
 		return nil, fmt.Errorf("%w: %q", ErrSessionLeasedElsewhere, id)
 	}
-	ctx = memory.WithWorkspace(runCtx, env.Workspace().Root())
-	run, err := s.promoteRunAdmission(id, st, func() *agent.Run {
+	ctx = memory.WithWorkspace(ctx, env.Workspace().Root())
+	run, err := s.promoteRunAdmission(id, st, stopAdmission, func() *agent.Run {
 		return engine.Run(ctx, sess, env, agent.RunRequest{Text: text, Parts: parts, RunID: runID})
 	})
 	if err != nil {
@@ -4942,6 +4951,10 @@ func (s *Service) ApproveRun(ctx context.Context, id session.SessionID, askID st
 	s.mu.Lock()
 	st, ok := s.runs[id]
 	if ok {
+		if st.run == nil {
+			s.mu.Unlock()
+			return nil, ErrNoActiveRun
+		}
 		if s.cfg.SessionLease != nil && !s.leaseDisabled {
 			h := s.heldLeases[id]
 			if h == nil || !h.valid || h.ctx.Err() != nil {
@@ -5000,6 +5013,10 @@ func (s *Service) resumeFromAwaiting(ctx context.Context, id session.SessionID, 
 	s.mu.Lock()
 	st, ok := s.runs[id]
 	if ok {
+		if st.run == nil {
+			s.mu.Unlock()
+			return nil, ErrNoActiveRun
+		}
 		if s.cfg.SessionLease != nil && !s.leaseDisabled {
 			h := s.heldLeases[id]
 			if h == nil || !h.valid || h.ctx.Err() != nil {
@@ -5058,9 +5075,12 @@ func (s *Service) resumeFromAwaiting(ctx context.Context, id session.SessionID, 
 	if err := s.acquireLease(admissionParent, id); err != nil {
 		return nil, err
 	}
-	runCtx := admissionParent
 	admissionCtx, stopAdmission, leaseHeld := s.mutationLeaseContext(admissionParent, id)
-	defer stopAdmission()
+	defer func() {
+		if !promoted {
+			stopAdmission()
+		}
+	}()
 	ctx = admissionCtx
 	engine, env, err := s.engineAndEnvironmentFor(ctx, sess)
 	if err != nil {
@@ -5069,8 +5089,8 @@ func (s *Service) resumeFromAwaiting(ctx context.Context, id session.SessionID, 
 	if !leaseHeld() {
 		return nil, fmt.Errorf("%w: %q", ErrSessionLeasedElsewhere, id)
 	}
-	ctx = memory.WithWorkspace(runCtx, env.Workspace().Root())
-	run, err := s.promoteRunAdmission(id, st, func() *agent.Run {
+	ctx = memory.WithWorkspace(ctx, env.Workspace().Root())
+	run, err := s.promoteRunAdmission(id, st, stopAdmission, func() *agent.Run {
 		return engine.ResumeApproval(ctx, sess, env, askID, verdict)
 	})
 	if err != nil {
@@ -5814,7 +5834,7 @@ func (s *Service) acquireLease(ctx context.Context, id session.SessionID) error 
 		firstTime := !s.leaseDisabled
 		s.leaseDisabled = true
 		s.mu.Unlock()
-		s.cfg.MutationCapability.disable()
+		s.cfg.MutationCapability.Disable()
 		if firstTime {
 			s.cfg.Diagnostics.Log(ctx, port.LevelInfo, "session leasing unsupported by backend; disabling (running without cross-process exclusion)",
 				"owner", s.cfg.LeaseOwner)
@@ -6233,9 +6253,12 @@ func (s *Service) beginRunAdmission(parent context.Context, id session.SessionID
 
 func (s *Service) removeRunState(id session.SessionID, st *runState) {
 	removeCapability := false
+	var stopRunContext context.CancelFunc
 	s.mu.Lock()
 	if s.runs[id] == st {
 		delete(s.runs, id)
+		stopRunContext = st.runContextStop
+		st.runContextStop = nil
 		st.settledOnce.Do(func() { close(st.settled) })
 		removeCapability = st.removeCapabilityOnSettle
 		if h := s.heldLeases[id]; h != nil && !h.valid {
@@ -6244,6 +6267,9 @@ func (s *Service) removeRunState(id session.SessionID, st *runState) {
 		}
 	}
 	s.mu.Unlock()
+	if stopRunContext != nil {
+		stopRunContext()
+	}
 	if removeCapability {
 		s.cfg.MutationCapability.Remove(id)
 	}
@@ -6251,7 +6277,7 @@ func (s *Service) removeRunState(id session.SessionID, st *runState) {
 
 // promoteRunAdmission atomically validates the exact hold and drain gate while
 // launching the engine. Holding s.mu orders launch against loss and drain.
-func (s *Service) promoteRunAdmission(id session.SessionID, st *runState, launch func() *agent.Run) (*agent.Run, error) {
+func (s *Service) promoteRunAdmission(id session.SessionID, st *runState, stop context.CancelFunc, launch func() *agent.Run) (*agent.Run, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.runs[id] != st || s.draining.Load() {
@@ -6265,6 +6291,7 @@ func (s *Service) promoteRunAdmission(id session.SessionID, st *runState, launch
 	}
 	run := launch()
 	st.run = run
+	st.runContextStop = stop
 	st.admissionCancel = nil
 	return run, nil
 }

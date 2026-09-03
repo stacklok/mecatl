@@ -141,6 +141,57 @@ func TestADR_0290_DrainCancelsProvisionalAdmissionBeforeProviderStart(t *testing
 	}
 }
 
+func TestADR_0290_ApprovalDuringProvisionalAdmissionReturnsNoActiveRun(t *testing.T) {
+	store := memstore.New()
+	provider := &admissionCountingProvider{}
+	eng := agent.NewEngine(agent.Deps{
+		LLM: provider, Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, permstore.New()), Model: "test-model",
+	})
+	resolverEntered := make(chan struct{})
+	releaseResolver := make(chan struct{})
+	svc, err := server.NewService(server.Config{
+		Engine: eng, Store: store,
+		Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+		EnvironmentResolver: func(context.Context, session.EnvironmentRef) (tool.Environment, error) {
+			close(resolverEntered)
+			<-releaseResolver
+			return tool.Environment{}, errors.New("resolver stopped")
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+	defer svc.Close()
+
+	id := session.SessionID("approval-provisional-admission")
+	sess := session.New(id, session.ModeDefault, "/ws", session.Limits{}, time.Now())
+	sess.EnvironmentRef = session.EnvironmentRef{Kind: "remote-test", ID: "ns"}
+	if err := store.Save(context.Background(), sess); err != nil {
+		t.Fatal(err)
+	}
+	startResult := make(chan error, 1)
+	go func() {
+		_, err := svc.StartRun(context.Background(), id, "block in admission")
+		startResult <- err
+	}()
+	select {
+	case <-resolverEntered:
+	case <-time.After(time.Second):
+		t.Fatal("environment admission did not start")
+	}
+
+	if _, err := svc.ApproveRun(context.Background(), id, "ask", session.VerdictAllowOnce, ""); !errors.Is(err, server.ErrNoActiveRun) {
+		t.Fatalf("ApproveRun during provisional admission = %v, want ErrNoActiveRun", err)
+	}
+	close(releaseResolver)
+	if err := <-startResult; err == nil {
+		t.Fatal("StartRun unexpectedly succeeded")
+	}
+	if got := provider.calls.Load(); got != 0 {
+		t.Fatalf("provider calls = %d, want 0", got)
+	}
+}
+
 func TestADR_0290_ConfiguredCapabilityRequiresExactHold(t *testing.T) {
 	capability := server.NewSessionMutationCapability(true)
 	guarded := capability.GuardStore(memstore.New())
