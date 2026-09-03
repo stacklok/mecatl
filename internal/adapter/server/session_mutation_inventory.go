@@ -49,9 +49,8 @@ var sessionMutationInventory = map[string]SessionMutationEntry{
 	"persistCreatedSession":              {SessionMutationNewFamily, "delegates creation-only atomic publication to persistNewSession"},
 	"createSession":                      {SessionMutationNewFamily, "binds ownership and reserves the fresh id before atomic publication"},
 	"createPerSessionEngine":             {SessionMutationNewFamily, "builds process-local state then atomically publishes the fresh caller-owned family"},
-	"publishAdoption":                    {SessionMutationNewFamily, "publishes a deterministic fresh target while the caller-owned source is mutation-leased"},
-	"AdoptSession":                       {SessionMutationLeaseOwned, "holds source run-entry and mutation lease while deriving a new adopted family"},
-	"ForkSession":                        {SessionMutationLeaseOwned, "holds source run-entry and mutation lease before recovery and fresh fork publication"},
+	"persistPlacedCreatedSession":        {SessionMutationNewFamily, "validates exact server-owned placement before delegating atomic fresh-family publication"},
+	"createPlacedSuccessor":              {SessionMutationLeaseOwned, "holds source run-entry and mutation lease while binding placement and publishing a fresh successor family"},
 	"CompactSession":                     {SessionMutationLeaseOwned, "holds run-entry and the session mutation lease across snapshot save and archive appends"},
 	"RenameSession":                      {SessionMutationLeaseOwned, "holds run-entry and the session mutation lease through title snapshot save"},
 	"DeleteSession":                      {SessionMutationLeaseOwned, "holds run-entry and the session mutation lease through family deletion"},
@@ -94,7 +93,7 @@ func validateSessionMutationNames(table map[string]SessionMutationEntry, boundar
 		seen[name] = struct{}{}
 		entry, ok := table[name]
 		if !ok {
-			errs = append(errs, fmt.Errorf("unclassified session mutator %q (ADR 0291)", name))
+			errs = append(errs, fmt.Errorf("unclassified session mutator %q (ADR 0293)", name))
 			continue
 		}
 		if strings.TrimSpace(entry.Rationale) == "" {

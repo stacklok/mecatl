@@ -101,7 +101,6 @@ export interface CreateSessionOptions {
   profile?: string;
   providerId?: string;
   reasoningEffort?: string;
-  sourceSessionId?: string;
 }
 
 /** Optional overrides accepted when forking a session. @public */
@@ -181,12 +180,10 @@ interface SessionOperations {
 }
 
 function createSessionAffinity(options: CreateSessionOptions): CallOptions | undefined {
-  const references = [options.sourceSessionId, options.debugTargetSessionId].filter(
-    (value): value is string => value !== undefined && value !== "",
-  );
-  if (references.length !== 1) return undefined;
-  const reference = references[0];
-  return reference === undefined ? undefined : sessionAffinityIfRepresentable(reference);
+  const reference = options.debugTargetSessionId;
+  return reference === undefined || reference === ""
+    ? undefined
+    : sessionAffinityIfRepresentable(reference);
 }
 
 function sessionAffinityOperations(

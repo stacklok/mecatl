@@ -94,7 +94,7 @@ func (l *unsupportedChildLease) Release(context.Context, port.Lease) error {
 	return nil
 }
 
-func TestADR_0291_ChildLeaseUnsupportedStickyDisablesToNoLeaseFallback(t *testing.T) {
+func TestADR_0293_ChildLeaseUnsupportedStickyDisablesToNoLeaseFallback(t *testing.T) {
 	lease := &unsupportedChildLease{}
 	capability := server.NewSessionMutationCapability(true)
 	registry := newSessionLiveness(lease, "replica", time.Minute, time.Millisecond, nil, capability)
@@ -109,7 +109,7 @@ func TestADR_0291_ChildLeaseUnsupportedStickyDisablesToNoLeaseFallback(t *testin
 		t.Fatal("unsupported fallback did not register child locally")
 	}
 	guarded := capability.GuardStore(memstore.New())
-	if err := guarded.Save(context.Background(), session.New(firstID, session.ModeDefault, "/ws", session.Limits{}, time.Now())); err != nil {
+	if err := guarded.Save(context.Background(), session.New(firstID, session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Now())); err != nil {
 		t.Fatalf("unsupported fallback remained capability-gated: %v", err)
 	}
 	firstRelease()
@@ -185,7 +185,7 @@ func (l *losingChildLease) Release(context.Context, port.Lease) error {
 	return nil
 }
 
-func TestADR_0291_ChildLeaseLossInvalidatesMutationBeforeCancellation(t *testing.T) {
+func TestADR_0293_ChildLeaseLossInvalidatesMutationBeforeCancellation(t *testing.T) {
 	lease := &losingChildLease{lost: make(chan struct{})}
 	capability := server.NewSessionMutationCapability(true)
 	registry := newSessionLiveness(lease, "replica", time.Hour, time.Millisecond, nil, capability)
@@ -194,7 +194,7 @@ func TestADR_0291_ChildLeaseLossInvalidatesMutationBeforeCancellation(t *testing
 	id := session.SessionID("subagent-loss")
 	cancelled := make(chan struct{})
 	release, err := registry.Register(context.Background(), id, func() {
-		if err := store.Save(context.Background(), session.New(id, session.ModeDefault, "/ws", session.Limits{}, time.Now())); !errors.Is(err, server.ErrSessionLeasedElsewhere) {
+		if err := store.Save(context.Background(), session.New(id, session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Now())); !errors.Is(err, server.ErrSessionLeasedElsewhere) {
 			t.Errorf("save observed by cancellation = %v, want ErrSessionLeasedElsewhere", err)
 		}
 		close(cancelled)
@@ -214,7 +214,7 @@ func TestADR_0291_ChildLeaseLossInvalidatesMutationBeforeCancellation(t *testing
 	}
 }
 
-func TestADR_0291_ChildLostHoldRejectsNewReferenceUntilFreshAcquire(t *testing.T) {
+func TestADR_0293_ChildLostHoldRejectsNewReferenceUntilFreshAcquire(t *testing.T) {
 	lease := &losingChildLease{lost: make(chan struct{})}
 	capability := server.NewSessionMutationCapability(true)
 	registry := newSessionLiveness(lease, "replica", time.Hour, time.Millisecond, nil, capability)

@@ -12,7 +12,6 @@ import (
 	"github.com/alicebob/miniredis/v2"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
@@ -316,7 +315,7 @@ func (s *drainPersistBarrierStore) arm(fail bool) (<-chan struct{}, chan struct{
 	return s.entered, s.release
 }
 
-func TestADR_0291_AwaitingPersistAndDrainLifecycleIsAtomic(t *testing.T) {
+func TestADR_0293_AwaitingPersistAndDrainLifecycleIsAtomic(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
 		fail      bool
@@ -338,13 +337,15 @@ func TestADR_0291_AwaitingPersistAndDrainLifecycleIsAtomic(t *testing.T) {
 			svc, err := server.NewService(server.Config{
 				Engine: eng, Store: store, SessionLease: lease, LeaseOwner: "atomic-drain",
 				LeaseTTL: time.Hour, LeaseRenewInterval: time.Hour,
-				Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+				PlacementProvider: testPlacementProvider{root: "/ws"},
+				PlacementScope:    "test",
+				SharedEngineRoot:  "/ws",
 			})
 			if err != nil {
 				t.Fatal(err)
 			}
 			defer svc.Close()
-			sess, err := svc.CreateSession(context.Background(), "/ws", session.ModeDefault, session.Limits{})
+			sess, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -458,7 +459,9 @@ func newGracefulDrainService(t *testing.T, store port.SessionStore, lease port.S
 	svc, err := server.NewService(server.Config{
 		Engine:             eng,
 		Store:              store,
-		Workspaces:         func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+		PlacementProvider:  testPlacementProvider{root: "/ws"},
+		PlacementScope:     "test",
+		SharedEngineRoot:   "/ws",
 		SessionLease:       lease,
 		LeaseOwner:         "drain-owner",
 		LeaseTTL:           time.Hour,
@@ -473,7 +476,7 @@ func newGracefulDrainService(t *testing.T, store port.SessionStore, lease port.S
 
 func makeAwaitingSession(t *testing.T, id session.SessionID) (*session.Session, session.PendingAsk) {
 	t.Helper()
-	sess := session.New(id, session.ModeDefault, "/ws", session.Limits{MaxTurns: 3}, time.Unix(0, 0))
+	sess := session.New(id, session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{MaxTurns: 3}, time.Unix(0, 0))
 	if err := sess.RecordUserPrompt("durable request", nil); err != nil {
 		t.Fatal(err)
 	}
@@ -491,13 +494,13 @@ func makeAwaitingSession(t *testing.T, id session.SessionID) (*session.Session, 
 	return sess, ask
 }
 
-func TestADR_0291_DrainStopsAdmissionBeforeOwnershipChange(t *testing.T) {
+func TestADR_0293_DrainStopsAdmissionBeforeOwnershipChange(t *testing.T) {
 	lease := &fakeLease{}
 	store := memstore.New()
 	svc := newGracefulDrainService(t, store, lease, mockllm.New(mockllm.TextTurn("unused")), port.NopDiagnostics{})
 	defer svc.Close()
 
-	idle, err := svc.CreateSession(context.Background(), "/ws", session.ModeDefault, session.Limits{})
+	idle, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -532,7 +535,7 @@ func TestADR_0291_DrainStopsAdmissionBeforeOwnershipChange(t *testing.T) {
 	}
 }
 
-func TestADR_0291_DrainPreservesAwaitingResumePointThroughGRPCRelay(t *testing.T) {
+func TestADR_0293_DrainPreservesAwaitingResumePointThroughGRPCRelay(t *testing.T) {
 	lease := &fakeLease{}
 	store := memstore.New()
 	cat := tool.NewCatalog()
@@ -544,7 +547,9 @@ func TestADR_0291_DrainPreservesAwaitingResumePointThroughGRPCRelay(t *testing.T
 	svc, err := server.NewService(server.Config{
 		Engine: eng, Store: store, SessionLease: lease, LeaseOwner: "relay-drain",
 		LeaseTTL: time.Hour, LeaseRenewInterval: time.Hour,
-		Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+		PlacementProvider: testPlacementProvider{root: "/ws"},
+		PlacementScope:    "test",
+		SharedEngineRoot:  "/ws",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -552,7 +557,7 @@ func TestADR_0291_DrainPreservesAwaitingResumePointThroughGRPCRelay(t *testing.T
 	defer svc.Close()
 	client, cleanup := dialGRPC(t, svc)
 	defer cleanup()
-	created, err := client.CreateSession(context.Background(), &mecatlv1.CreateSessionRequest{Workspace: "/ws"})
+	created, err := client.CreateSession(context.Background(), &mecatlv1.CreateSessionRequest{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -595,13 +600,13 @@ func TestADR_0291_DrainPreservesAwaitingResumePointThroughGRPCRelay(t *testing.T
 	}
 }
 
-func TestADR_0291_DrainPreservesAwaitingResumePoint(t *testing.T) {
+func TestADR_0293_DrainPreservesAwaitingResumePoint(t *testing.T) {
 	lease := &fakeLease{}
 	store := memstore.New()
 	svc := newGracefulDrainService(t, store, lease, mockllm.New(mockllm.TextTurn("done")), port.NopDiagnostics{})
 	defer svc.Close()
 
-	sess, err := svc.CreateSession(context.Background(), "/ws", session.ModeDefault, session.Limits{})
+	sess, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -642,7 +647,7 @@ func TestSessionAffinityAndHandoff_Scenario6_DrainCancelsJoinsAndDiagnosesPersis
 	svc := newGracefulDrainService(t, store, lease, blockingProvider{}, diag)
 	defer svc.Close()
 
-	sess, err := svc.CreateSession(context.Background(), "/ws", session.ModeDefault, session.Limits{})
+	sess, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -690,7 +695,7 @@ func TestSessionAffinityAndHandoff_Scenario6_DrainCancelsJoinsAndDiagnosesPersis
 	}
 }
 
-func TestADR_0291_DrainSettlesReadyRunsWithoutMapOrderStarvation(t *testing.T) {
+func TestADR_0293_DrainSettlesReadyRunsWithoutMapOrderStarvation(t *testing.T) {
 	lease := &fakeLease{}
 	store := memstore.New()
 	svc := newGracefulDrainService(t, store, lease, blockingProvider{}, port.NopDiagnostics{})
@@ -700,7 +705,7 @@ func TestADR_0291_DrainSettlesReadyRunsWithoutMapOrderStarvation(t *testing.T) {
 	runs := make([]*agent.Run, 0, runCount)
 	ids := make([]session.SessionID, 0, runCount)
 	for range runCount {
-		sess, err := svc.CreateSession(context.Background(), "/ws", session.ModeDefault, session.Limits{})
+		sess, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -743,12 +748,12 @@ func TestADR_0291_DrainSettlesReadyRunsWithoutMapOrderStarvation(t *testing.T) {
 	}
 }
 
-func TestADR_0291_DrainTimeoutRetainsLeaseForTTLTakeover(t *testing.T) {
+func TestADR_0293_DrainTimeoutRetainsLeaseForTTLTakeover(t *testing.T) {
 	lease := &fakeLease{}
 	store := memstore.New()
 	svc := newGracefulDrainService(t, store, lease, blockingProvider{}, port.NopDiagnostics{})
 
-	sess, err := svc.CreateSession(context.Background(), "/ws", session.ModeDefault, session.Limits{})
+	sess, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatal(err)
 	}

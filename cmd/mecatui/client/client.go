@@ -459,9 +459,7 @@ func (c *Client) CreateSessionWithCarryover(ctx context.Context, sel ModelSelect
 	return resp.GetSessionId(), snapshot.Capabilities, snapshot.ResolvedModel, nil
 }
 
-// createSession is the shared proto-build→call→unwrap body for both CreateSession
-// and CreateSessionWithCarryover, so the carryover variant stays byte-identical to
-// the plain create apart from the source_session_id field.
+// createSession is the shared CreateSession proto call and response unwrap body.
 func (c *Client) createSession(ctx context.Context, req *mecatlv1.CreateSessionRequest) (string, Capabilities, ResolvedModel, error) {
 	resp, err := c.svc.CreateSession(ctx, req)
 	if err != nil {
@@ -482,7 +480,7 @@ func (c *Client) ClearSession(ctx context.Context, sourceID string, selector *Wo
 		}
 		token = &selector.token
 	}
-	resp, err := c.svc.ClearSession(ctx, &mecatlv1.ClearSessionRequest{SourceSessionId: sourceID, WorktreeSelector: token})
+	resp, err := c.svc.ClearSession(withSessionAffinity(ctx, sourceID), &mecatlv1.ClearSessionRequest{SourceSessionId: sourceID, WorktreeSelector: token})
 	if err != nil {
 		return "", SessionSnapshot{}, fmt.Errorf("clear session: %w", err)
 	}

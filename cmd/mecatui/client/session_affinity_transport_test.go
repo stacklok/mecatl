@@ -80,6 +80,17 @@ func (r *affinityIngressRecorder) captured() [][]string {
 	return out
 }
 
+type modeledPlacementProvider struct{}
+
+func (modeledPlacementProvider) Bind(context.Context, server.PlacementBindRequest) (server.PlacementBinding, error) {
+	ref := session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/modeled", Revision: "in-tree-v1"}
+	return server.PlacementBinding{Ref: ref, Environment: tool.MustEnvironment(ref, memfs.NewWorkspace("/modeled"), nil)}, nil
+}
+
+func (modeledPlacementProvider) Reattach(_ context.Context, req server.PlacementReattachRequest) (server.PlacementBinding, error) {
+	return server.PlacementBinding{Ref: req.Ref, Environment: tool.MustEnvironment(req.Ref, memfs.NewWorkspace("/modeled"), nil)}, nil
+}
+
 type modeledAffinityFixture struct {
 	official *Client
 	raw      mecatlv1.HarnessServiceClient
@@ -102,10 +113,12 @@ func newModeledAffinityFixture(t *testing.T) *modeledAffinityFixture {
 	})
 	store := memstore.New()
 	svc, err := server.NewService(server.Config{
-		Engine:     eng,
-		Store:      store,
-		Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
-		Now:        func() time.Time { return time.Unix(0, 0) },
+		Engine:            eng,
+		Store:             store,
+		PlacementProvider: modeledPlacementProvider{},
+		PlacementScope:    "test",
+		SharedEngineRoot:  "/modeled",
+		Now:               func() time.Time { return time.Unix(0, 0) },
 	})
 	if err != nil {
 		t.Fatalf("new modeled mecak8s service: %v", err)
@@ -140,7 +153,7 @@ func newModeledAffinityFixture(t *testing.T) *modeledAffinityFixture {
 
 func createModeledSession(t *testing.T, c *Client) string {
 	t.Helper()
-	id, _, _, err := c.CreateSession(context.Background(), "/modeled", mecatlv1.PermissionMode_PERMISSION_MODE_DEFAULT, ModelSelection{})
+	id, _, _, err := c.CreateSession(context.Background(), mecatlv1.PermissionMode_PERMISSION_MODE_DEFAULT, ModelSelection{})
 	if err != nil {
 		t.Fatalf("create session: %v", err)
 	}

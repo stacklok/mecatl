@@ -60,7 +60,7 @@ func (c *contextObservingCompactor) sessionIDs() []session.SessionID {
 	return append([]session.SessionID(nil), c.ids...)
 }
 
-func TestADR_0291_ProviderUsesAuthoritativeRunContext(t *testing.T) {
+func TestADR_0293_ProviderUsesAuthoritativeRunContext(t *testing.T) {
 	const id session.SessionID = "persisted/session:exact-543"
 	policy := permpolicy.NewPolicy(nil, permstore.New())
 	sess := session.New(id, session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
@@ -109,7 +109,7 @@ func TestADR_0291_ProviderUsesAuthoritativeRunContext(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			provider := &contextObservingProvider{inner: mockllm.New(mockllm.TextTurn("done"))}
 			eng := newEngine(agent.Deps{LLM: provider, Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil)})
-			runSession := session.New(tc.id, session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
+			runSession := session.New(tc.id, session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
 			if tc.recovered {
 				if err := runSession.BeginTurn(); err != nil {
 					t.Fatal(err)
@@ -138,7 +138,7 @@ func TestADR_0291_ProviderUsesAuthoritativeRunContext(t *testing.T) {
 		ContextWindow: func() int { return 2 }, CompactionRatio: 0.5,
 	})
 	const compactionID session.SessionID = "compaction-authoritative"
-	compactionSession := session.New(compactionID, session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
+	compactionSession := session.New(compactionID, session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
 	ctx := port.WithSessionID(context.Background(), "ingress-forged")
 	for range compactionEngine.Run(ctx, compactionSession, agent.MemEnv("/ws"), agent.RunRequest{Text: "go"}).Events() {
 	}

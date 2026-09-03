@@ -91,10 +91,6 @@ func TestSessionAffinityAndHandoff_Scenario4_MecatuiUnaryAndStreamPropagation(t 
 			_, _, _, _, err := client.CreateDebugSession(ctx, sessionID, mecatlv1.PermissionMode_PERMISSION_MODE_DEFAULT, ModelSelection{})
 			return err
 		}},
-		{"carryover", func() error {
-			_, _, _, err := client.CreateSessionWithCarryover(ctx, "/workspace", mecatlv1.PermissionMode_PERMISSION_MODE_DEFAULT, ModelSelection{}, sessionID)
-			return err
-		}},
 		{"fork", func() error { _, err := client.ForkSession(ctx, sessionID, "", ""); return err }},
 		{"close", func() error { return client.CloseSession(ctx, sessionID) }},
 		{"get", func() error { _, err := client.GetSession(ctx, sessionID); return err }},
@@ -104,11 +100,8 @@ func TestSessionAffinityAndHandoff_Scenario4_MecatuiUnaryAndStreamPropagation(t 
 		{"delete", func() error { return client.DeleteSession(ctx, sessionID) }},
 		{"compact", func() error { _, err := client.CompactSession(ctx, sessionID); return err }},
 		{"reflect", func() error { _, err := client.ReflectSession(ctx, sessionID); return err }},
-		{"adoption preflight", func() error {
-			_, err := client.PreflightSessionAdoption(ctx, sessionID, AdoptionBindings{})
-			return err
-		}},
-		{"adopt", func() error { _, err := client.AdoptSession(ctx, sessionID, "key", AdoptionBindings{}); return err }},
+		{"commands", func() error { _, err := client.ListCommands(ctx, sessionID); return err }},
+		{"worktrees", func() error { _, err := client.ListWorktrees(ctx, sessionID); return err }},
 		{"event replay", func() error { _, err := client.StreamSessionEvents(ctx, sessionID); return err }},
 		{"live events", func() error { _, err := client.StreamSessionLive(ctx, sessionID); return err }},
 	}
@@ -133,7 +126,7 @@ func TestSessionAffinityAndHandoff_Scenario4_MecatuiUnaryAndStreamPropagation(t 
 	}
 }
 
-func TestADR_0291_MecatuiOpenConverseCompatibility(t *testing.T) {
+func TestADR_0293_MecatuiOpenConverseCompatibility(t *testing.T) {
 	const sessionID = "session-bound"
 	conn := &affinityRecordingConn{}
 	client := &Client{svc: mecatlv1.NewHarnessServiceClient(conn)}

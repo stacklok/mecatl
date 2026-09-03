@@ -14,7 +14,6 @@ import (
 	"google.golang.org/grpc/status"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
@@ -58,15 +57,17 @@ func newCloseSurfaceFixtureWithLease(t *testing.T, withLease bool, provider port
 	}
 	svc, err := server.NewService(server.Config{
 		Engine: shared, Store: store,
-		Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
-		Now:        func() time.Time { return time.Unix(0, 0) }, SessionEngine: factory,
+		PlacementProvider: testPlacementProvider{root: "/ws", firstBind: &atomic.Bool{}},
+		PlacementScope:    "test",
+		SharedEngineRoot:  "/ws",
+		Now:               func() time.Time { return time.Unix(0, 0) }, SessionEngine: factory,
 		SessionLease: sessionLease, LeaseOwner: "close-test", LeaseTTL: time.Hour, LeaseRenewInterval: time.Hour,
 	})
 	if err != nil {
 		t.Fatalf("NewService: %v", err)
 	}
 	fixture.svc = svc
-	sess, err := svc.CreateSessionWithProfile(context.Background(), "/ws", session.ModeDefault, session.Limits{MaxTurns: 3}, server.ProviderSelector{ProviderID: "fixture"}, server.ProfileDefault)
+	sess, err := svc.CreateSessionWithProfile(context.Background(), session.ModeDefault, session.Limits{MaxTurns: 3}, server.ProviderSelector{ProviderID: "fixture"}, server.ProfileDefault)
 	if err != nil {
 		t.Fatalf("CreateSessionWithProfile: %v", err)
 	}
@@ -100,7 +101,7 @@ func httpCloseSurface(t *testing.T, svc *server.Service, id session.SessionID) (
 	return codes.OK, resp.StatusCode
 }
 
-func TestADR_0291_CloseGRPCAndHTTPRejectLiveOrAwaitingRun(t *testing.T) {
+func TestADR_0293_CloseGRPCAndHTTPRejectLiveOrAwaitingRun(t *testing.T) {
 	for surfaceName, close := range map[string]closeSurface{"grpc": grpcCloseSurface, "http": httpCloseSurface} {
 		t.Run(surfaceName+"/running", func(t *testing.T) {
 			fixture := newCloseSurfaceFixture(t, blockingProvider{}, permpolicy.NewPolicy(allowRules(), nil))
@@ -166,7 +167,7 @@ func TestADR_0291_CloseGRPCAndHTTPRejectLiveOrAwaitingRun(t *testing.T) {
 	}
 }
 
-func TestADR_0291_CloseGRPCAndHTTPPreservePersistedAwaitingResumePoint(t *testing.T) {
+func TestADR_0293_CloseGRPCAndHTTPPreservePersistedAwaitingResumePoint(t *testing.T) {
 	cases := map[string]struct {
 		transport string
 		close     closeSurface
@@ -188,7 +189,7 @@ func TestADR_0291_CloseGRPCAndHTTPPreservePersistedAwaitingResumePoint(t *testin
 			}
 			fixture.svc.FinishRun(fixture.sessionID, run)
 
-			persisted := session.New(fixture.sessionID, session.ModeDefault, "/ws", session.Limits{MaxTurns: 3}, time.Unix(0, 0))
+			persisted := session.New(fixture.sessionID, session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{MaxTurns: 3}, time.Unix(0, 0))
 			if err := persisted.RecordUserPrompt("durable request", nil); err != nil {
 				t.Fatal(err)
 			}

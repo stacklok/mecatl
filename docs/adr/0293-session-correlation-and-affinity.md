@@ -1,4 +1,4 @@
-# ADR 0291 — End-to-end session correlation and affinity
+# ADR 0293 — End-to-end session correlation and affinity
 
 - Status: Proposed
 - Date: 2026-09-02
@@ -64,12 +64,13 @@ ingress metadata.
 
 At every session-bound gRPC unary and server-streaming entry, accept an absent header
 for compatibility. Reject duplicate values, an illegal value, or a value that differs
-byte-for-byte from the request's authoritative session ID. `CreateSession` derives that
-authoritative ID only when exactly one of `source_session_id` or
-`debug_target_session_id` is present and rejects the ambiguous dual-reference shape. `Converse` validates
+byte-for-byte from the request's authoritative session ID. `CreateSession` derives an
+authoritative ID only for `debug_target_session_id`; ordinary creation carries no source
+or placement identity under ADR 0291. `Converse` validates
 metadata before stream work begins and validates equality with the first prompt or
 retry frame's session ID; later control frames remain bound to that established
-session. HTTP session routes apply the same rules against the decoded path ID. Failure
+session. HTTP session routes apply the same rules against the decoded path ID or the
+session ID in a query/body on the server-owned command, worktree, and team surfaces. Failure
 uses the transport's ordinary invalid-argument response and never reflects either
 value. No protobuf field is added.
 

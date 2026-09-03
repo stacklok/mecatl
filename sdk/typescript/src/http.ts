@@ -135,7 +135,7 @@ function unaryRoute(name: string, input: JsonRecord): Route | undefined {
 function requestBody(name: string, input: JsonRecord): JsonRecord {
   const body = { ...input };
   delete body.session_id;
-  if (name !== "CreateSession") delete body.source_session_id;
+  delete body.source_session_id;
   if (name === "SetMode") body.mode = permissionMode(input.mode);
   return body;
 }

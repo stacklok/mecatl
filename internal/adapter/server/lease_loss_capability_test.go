@@ -33,7 +33,24 @@ func (*admissionCountingProvider) Capabilities() port.ProviderCapabilities {
 	return port.ProviderCapabilities{}
 }
 
-func TestADR_0291_LeaseLossDuringProvisionalAdmissionPreventsProviderStart(t *testing.T) {
+type admissionPlacementProvider struct {
+	resolve func(context.Context, session.EnvironmentRef) (tool.Environment, error)
+}
+
+func (admissionPlacementProvider) Bind(context.Context, server.PlacementBindRequest) (server.PlacementBinding, error) {
+	ref := session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}
+	return server.PlacementBinding{Ref: ref, Environment: tool.MustEnvironment(ref, memfs.NewWorkspace("/ws"), nil)}, nil
+}
+
+func (p admissionPlacementProvider) Reattach(ctx context.Context, req server.PlacementReattachRequest) (server.PlacementBinding, error) {
+	env, err := p.resolve(ctx, req.Ref)
+	if err != nil {
+		return server.PlacementBinding{}, err
+	}
+	return server.PlacementBinding{Ref: req.Ref, Environment: env}, nil
+}
+
+func TestADR_0293_LeaseLossDuringProvisionalAdmissionPreventsProviderStart(t *testing.T) {
 	lease := &fakeLease{}
 	lease.renewHook = func(port.Lease) (port.Lease, error) { return port.Lease{}, port.ErrLeaseHeld }
 	capability := server.NewSessionMutationCapability(true)
@@ -47,20 +64,19 @@ func TestADR_0291_LeaseLossDuringProvisionalAdmissionPreventsProviderStart(t *te
 	svc, err := server.NewService(server.Config{
 		Engine: eng, Store: store, SessionLease: lease, LeaseOwner: "provisional-owner",
 		LeaseTTL: time.Hour, LeaseRenewInterval: time.Millisecond, MutationCapability: capability,
-		Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
-		EnvironmentResolver: func(ctx context.Context, _ session.EnvironmentRef) (tool.Environment, error) {
+		PlacementProvider: admissionPlacementProvider{resolve: func(ctx context.Context, _ session.EnvironmentRef) (tool.Environment, error) {
 			close(resolverEntered)
 			<-ctx.Done()
 			return tool.Environment{}, ctx.Err()
-		},
+		}},
+		PlacementScope: "test", SharedEngineRoot: "/ws",
 	})
 	if err != nil {
 		t.Fatalf("NewService: %v", err)
 	}
 	defer svc.Close()
 	id := session.SessionID("provisional-admission")
-	sess := session.New(id, session.ModeDefault, "/ws", session.Limits{}, time.Now())
-	sess.EnvironmentRef = session.EnvironmentRef{Kind: "remote-test", ID: "ns"}
+	sess := session.New(id, session.ModeDefault, session.EnvironmentRef{Kind: "remote-test", ID: "ns", Revision: "r1"}, session.Limits{}, time.Now())
 	if err := store.Save(context.Background(), sess); err != nil {
 		t.Fatal(err)
 	}
@@ -87,7 +103,7 @@ func TestADR_0291_LeaseLossDuringProvisionalAdmissionPreventsProviderStart(t *te
 	}
 }
 
-func TestADR_0291_DrainCancelsProvisionalAdmissionBeforeProviderStart(t *testing.T) {
+func TestADR_0293_DrainCancelsProvisionalAdmissionBeforeProviderStart(t *testing.T) {
 	lease := &fakeLease{}
 	capability := server.NewSessionMutationCapability(true)
 	store := memstore.New()
@@ -100,20 +116,19 @@ func TestADR_0291_DrainCancelsProvisionalAdmissionBeforeProviderStart(t *testing
 	svc, err := server.NewService(server.Config{
 		Engine: eng, Store: store, SessionLease: lease, LeaseOwner: "drain-provisional-owner",
 		LeaseTTL: time.Hour, LeaseRenewInterval: time.Hour, MutationCapability: capability,
-		Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
-		EnvironmentResolver: func(ctx context.Context, _ session.EnvironmentRef) (tool.Environment, error) {
+		PlacementProvider: admissionPlacementProvider{resolve: func(ctx context.Context, _ session.EnvironmentRef) (tool.Environment, error) {
 			close(resolverEntered)
 			<-ctx.Done()
 			return tool.Environment{}, ctx.Err()
-		},
+		}},
+		PlacementScope: "test", SharedEngineRoot: "/ws",
 	})
 	if err != nil {
 		t.Fatalf("NewService: %v", err)
 	}
 	defer svc.Close()
 	id := session.SessionID("drain-provisional-admission")
-	sess := session.New(id, session.ModeDefault, "/ws", session.Limits{}, time.Now())
-	sess.EnvironmentRef = session.EnvironmentRef{Kind: "remote-test", ID: "ns"}
+	sess := session.New(id, session.ModeDefault, session.EnvironmentRef{Kind: "remote-test", ID: "ns", Revision: "r1"}, session.Limits{}, time.Now())
 	if err := store.Save(context.Background(), sess); err != nil {
 		t.Fatal(err)
 	}
@@ -141,7 +156,7 @@ func TestADR_0291_DrainCancelsProvisionalAdmissionBeforeProviderStart(t *testing
 	}
 }
 
-func TestADR_0291_ApprovalDuringProvisionalAdmissionReturnsNoActiveRun(t *testing.T) {
+func TestADR_0293_ApprovalDuringProvisionalAdmissionReturnsNoActiveRun(t *testing.T) {
 	store := memstore.New()
 	provider := &admissionCountingProvider{}
 	eng := agent.NewEngine(agent.Deps{
@@ -151,12 +166,12 @@ func TestADR_0291_ApprovalDuringProvisionalAdmissionReturnsNoActiveRun(t *testin
 	releaseResolver := make(chan struct{})
 	svc, err := server.NewService(server.Config{
 		Engine: eng, Store: store,
-		Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
-		EnvironmentResolver: func(context.Context, session.EnvironmentRef) (tool.Environment, error) {
+		PlacementProvider: admissionPlacementProvider{resolve: func(context.Context, session.EnvironmentRef) (tool.Environment, error) {
 			close(resolverEntered)
 			<-releaseResolver
 			return tool.Environment{}, errors.New("resolver stopped")
-		},
+		}},
+		PlacementScope: "test", SharedEngineRoot: "/ws",
 	})
 	if err != nil {
 		t.Fatalf("NewService: %v", err)
@@ -164,8 +179,7 @@ func TestADR_0291_ApprovalDuringProvisionalAdmissionReturnsNoActiveRun(t *testin
 	defer svc.Close()
 
 	id := session.SessionID("approval-provisional-admission")
-	sess := session.New(id, session.ModeDefault, "/ws", session.Limits{}, time.Now())
-	sess.EnvironmentRef = session.EnvironmentRef{Kind: "remote-test", ID: "ns"}
+	sess := session.New(id, session.ModeDefault, session.EnvironmentRef{Kind: "remote-test", ID: "ns", Revision: "r1"}, session.Limits{}, time.Now())
 	if err := store.Save(context.Background(), sess); err != nil {
 		t.Fatal(err)
 	}
@@ -192,10 +206,10 @@ func TestADR_0291_ApprovalDuringProvisionalAdmissionReturnsNoActiveRun(t *testin
 	}
 }
 
-func TestADR_0291_ConfiguredCapabilityRequiresExactHold(t *testing.T) {
+func TestADR_0293_ConfiguredCapabilityRequiresExactHold(t *testing.T) {
 	capability := server.NewSessionMutationCapability(true)
 	guarded := capability.GuardStore(memstore.New())
-	sess := session.New("never-acquired", session.ModeDefault, "/ws", session.Limits{}, time.Now())
+	sess := session.New("never-acquired", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Now())
 	if err := guarded.Save(context.Background(), sess); !errors.Is(err, server.ErrSessionLeasedElsewhere) {
 		t.Fatalf("untracked configured capability save = %v, want ErrSessionLeasedElsewhere", err)
 	}
@@ -270,7 +284,9 @@ func newCapabilityService(t *testing.T, lease port.SessionLease, capability *ser
 	svc, err := server.NewService(server.Config{
 		Engine:             eng,
 		Store:              store,
-		Workspaces:         func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+		PlacementProvider:  testPlacementProvider{root: "/ws"},
+		PlacementScope:     "test",
+		SharedEngineRoot:   "/ws",
 		SessionLease:       lease,
 		LeaseOwner:         "lease-loss-owner",
 		LeaseTTL:           time.Hour,
@@ -295,7 +311,7 @@ func (*countingLeaseLossEventLog) Read(context.Context, session.SessionID) iter.
 	return func(func(session.Event, error) bool) {}
 }
 
-func TestADR_0291_PostLossEventAppendIsRejectedAndDiagnosed(t *testing.T) {
+func TestADR_0293_PostLossEventAppendIsRejectedAndDiagnosed(t *testing.T) {
 	lease := &fakeLease{}
 	lost := make(chan struct{})
 	lease.renewHook = func(port.Lease) (port.Lease, error) {
@@ -313,13 +329,13 @@ func TestADR_0291_PostLossEventAppendIsRejectedAndDiagnosed(t *testing.T) {
 	svc, err := server.NewService(server.Config{
 		Engine: eng, Store: store, EventLog: log, SessionLease: lease, LeaseOwner: "event-loss",
 		LeaseTTL: time.Hour, LeaseRenewInterval: time.Millisecond, MutationCapability: capability,
-		Diagnostics: diag, Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+		Diagnostics: diag, PlacementProvider: testPlacementProvider{root: "/ws"}, PlacementScope: "test", SharedEngineRoot: "/ws",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer svc.Close()
-	sess, err := svc.CreateSession(context.Background(), "/ws", session.ModeDefault, session.Limits{})
+	sess, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -362,7 +378,7 @@ func TestSessionAffinityAndHandoff_Scenario5_LeaseLossCancelsAndPreventsNewMutat
 	capability := server.NewSessionMutationCapability(true)
 	recorder := &leaseLossRecorder{}
 	svc, baseStore, guardedStore, guardedRecorder := newCapabilityService(t, lease, capability, recorder, nil)
-	sess, err := svc.CreateSession(context.Background(), "/ws", session.ModeDefault, session.Limits{})
+	sess, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("create session: %v", err)
 	}
@@ -428,12 +444,12 @@ func TestSessionAffinityAndHandoff_Scenario5_LeaseLossCancelsAndPreventsNewMutat
 	}
 }
 
-func TestADR_0291_NormalReleaseRemovesMutationCapabilityTombstone(t *testing.T) {
+func TestADR_0293_NormalReleaseRemovesMutationCapabilityTombstone(t *testing.T) {
 	lease := &fakeLease{}
 	capability := server.NewSessionMutationCapability(true)
 	recorder := &leaseLossRecorder{}
 	svc, _, guardedStore, _ := newCapabilityService(t, lease, capability, recorder, nil)
-	sess, err := svc.CreateSession(context.Background(), "/ws", session.ModeDefault, session.Limits{})
+	sess, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -456,12 +472,12 @@ func TestADR_0291_NormalReleaseRemovesMutationCapabilityTombstone(t *testing.T) 
 	}
 }
 
-func TestADR_0291_OptionalLeaseCompatibilityAndUnsupportedFallback(t *testing.T) {
+func TestADR_0293_OptionalLeaseCompatibilityAndUnsupportedFallback(t *testing.T) {
 	t.Run("no lease", func(t *testing.T) {
 		capability := server.NewSessionMutationCapability(false)
 		recorder := &leaseLossRecorder{}
 		svc, _, guardedStore, guardedRecorder := newCapabilityService(t, nil, capability, recorder, nil)
-		sess, err := svc.CreateSession(context.Background(), "/ws", session.ModeDefault, session.Limits{})
+		sess, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 		if err != nil {
 			t.Fatalf("create session: %v", err)
 		}
@@ -480,7 +496,7 @@ func TestADR_0291_OptionalLeaseCompatibilityAndUnsupportedFallback(t *testing.T)
 		diag := &leaseLossDiagnostics{}
 		recorder := &leaseLossRecorder{}
 		svc, _, guardedStore, guardedRecorder := newCapabilityService(t, lease, capability, recorder, diag)
-		sess, err := svc.CreateSession(context.Background(), "/ws", session.ModeDefault, session.Limits{})
+		sess, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 		if err != nil {
 			t.Fatalf("create session: %v", err)
 		}
@@ -515,7 +531,7 @@ func TestADR_0291_OptionalLeaseCompatibilityAndUnsupportedFallback(t *testing.T)
 	})
 }
 
-func TestADR_0291_LeaseRemainsSessionScoped(t *testing.T) {
+func TestADR_0293_LeaseRemainsSessionScoped(t *testing.T) {
 	lease := &fakeLease{}
 	var lostID session.SessionID
 	lease.renewHook = func(l port.Lease) (port.Lease, error) {
@@ -527,12 +543,12 @@ func TestADR_0291_LeaseRemainsSessionScoped(t *testing.T) {
 	capability := server.NewSessionMutationCapability(true)
 	recorder := &leaseLossRecorder{}
 	svc, _, guardedStore, guardedRecorder := newCapabilityService(t, lease, capability, recorder, nil)
-	a, err := svc.CreateSession(context.Background(), "/a", session.ModeDefault, session.Limits{})
+	a, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("create a: %v", err)
 	}
 	lostID = a.ID
-	b, err := svc.CreateSession(context.Background(), "/b", session.ModeDefault, session.Limits{})
+	b, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("create b: %v", err)
 	}

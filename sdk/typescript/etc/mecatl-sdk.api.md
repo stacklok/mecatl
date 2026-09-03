@@ -165,8 +165,6 @@ export interface CreateSessionOptions {
     providerId?: string;
     // (undocumented)
     reasoningEffort?: string;
-    // (undocumented)
-    sourceSessionId?: string;
 }
 
 // @public (undocumented)

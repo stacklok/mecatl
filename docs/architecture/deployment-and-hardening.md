@@ -157,7 +157,7 @@ routing, EndpointSlice removal, or production timing. The Helm chart
 creates no Gateway, Route, `BackendTrafficPolicy`, certificate, or affinity policy. A
 separate infrastructure rollout must supply and live-validate those controls, including
 authenticated admission, request/header bounds, and client/IP/principal rate limits
-before affinity is enabled. See [ADR 0291](../adr/0291-session-correlation-and-affinity.md).
+before affinity is enabled. See [ADR 0293](../adr/0293-session-correlation-and-affinity.md).
 
 ### Permission & bash governance details (`engine/governance`)
 

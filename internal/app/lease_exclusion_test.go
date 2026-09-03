@@ -63,7 +63,7 @@ func (*firstThenBlockingProvider) Capabilities() port.ProviderCapabilities {
 	return port.ProviderCapabilities{}
 }
 
-func TestADR_0291_AppAndMecak8sLeaseCompositionSharesMutationCapability(t *testing.T) {
+func TestADR_0293_AppAndMecak8sLeaseCompositionSharesMutationCapability(t *testing.T) {
 	ctx := context.Background()
 	storeDir, leaseDir, workspace, memoryDir := t.TempDir(), t.TempDir(), t.TempDir(), t.TempDir()
 	cfg1 := leaseBaseCfg(t, storeDir, leaseDir, workspace, memoryDir)
@@ -75,7 +75,7 @@ func TestADR_0291_AppAndMecak8sLeaseCompositionSharesMutationCapability(t *testi
 		t.Fatal(err)
 	}
 	defer owner.Close()
-	sess, err := owner.Service.CreateSession(ctx, workspace, session.ModeDefault, session.Limits{})
+	sess, err := owner.Service.CreateSession(ctx, session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatal(err)
 	}

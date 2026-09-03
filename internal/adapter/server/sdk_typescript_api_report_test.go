@@ -26,7 +26,7 @@ func typescriptAPIReportDeclarations(t *testing.T) []map[string]struct{} {
 		scanner := bufio.NewScanner(file)
 		for scanner.Scan() {
 			line := strings.TrimSpace(scanner.Text())
-			if strings.HasPrefix(line, "export ") || strings.HasPrefix(line, "create(") || strings.HasPrefix(line, "run(") || strings.HasPrefix(line, "debugTargetSessionId?") || strings.HasPrefix(line, "sourceSessionId?") {
+			if strings.HasPrefix(line, "export ") || strings.HasPrefix(line, "create(") || strings.HasPrefix(line, "fork(") || strings.HasPrefix(line, "run(") || strings.HasPrefix(line, "debugTargetSessionId?") {
 				declarations[line] = struct{}{}
 			}
 		}
@@ -53,7 +53,7 @@ func requireAPIReportDeclarations(t *testing.T, declarations map[string]struct{}
 
 // The behavior is exercised by the same-named Vitest. This Go pin deliberately
 // reads API Extractor's generated contract rather than mirroring TypeScript source.
-func TestADR_0291_TypeScriptRawHelperCompatibility(t *testing.T) {
+func TestADR_0293_TypeScriptRawHelperCompatibility(t *testing.T) {
 	t.Parallel()
 	for _, declarations := range typescriptAPIReportDeclarations(t) {
 		requireAPIReportDeclarations(t, declarations,
@@ -70,8 +70,8 @@ func TestSessionAffinityAndHandoff_Scenario4_TypeScriptHighLevelPropagation(t *t
 	for _, declarations := range typescriptAPIReportDeclarations(t) {
 		requireAPIReportDeclarations(t, declarations,
 			"debugTargetSessionId?: string;",
-			"sourceSessionId?: string;",
 			"create(options: CreateSessionOptions): Promise<Session>;",
+			"fork(sourceSessionId: string, options?: ForkSessionOptions): Promise<Session>;",
 			"run(prompt: PromptInput, options?: RunOptions): Promise<Run>;",
 		)
 	}

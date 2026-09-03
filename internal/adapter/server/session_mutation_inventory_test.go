@@ -95,7 +95,8 @@ func (*mutationInventoryStore) Read(context.Context, session.SessionID) iter.Seq
 
 func TestSessionAffinityAndHandoff_Scenario5_MutationLeaseInventory(t *testing.T) {
 	base := memstore.New()
-	sess := session.New("mutation-inventory", session.ModeDefault, "/ws", session.Limits{}, time.Unix(1, 0))
+	ref := session.EnvironmentRef{Kind: session.EnvKindMem, ID: "/ws", Revision: "in-tree-v1"}
+	sess := session.New("mutation-inventory", session.ModeDefault, ref, session.Limits{}, time.Unix(1, 0))
 	if err := base.Save(context.Background(), sess); err != nil {
 		t.Fatalf("seed session: %v", err)
 	}
@@ -107,7 +108,10 @@ func TestSessionAffinityAndHandoff_Scenario5_MutationLeaseInventory(t *testing.T
 	})
 	svc, err := NewService(Config{
 		Engine: eng, Store: store, EventLog: store,
-		Workspaces:   func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+		PlacementProvider: &repairPlacementProvider{binding: PlacementBinding{
+			Ref: ref, Environment: tool.MustEnvironment(ref, memfs.NewWorkspace("/ws"), nil),
+		}},
+		PlacementScope: "test", SharedEngineRoot: "/ws",
 		SessionLease: lease, LeaseOwner: "inventory", LeaseTTL: time.Hour, LeaseRenewInterval: time.Hour,
 	})
 	if err != nil {
@@ -130,7 +134,7 @@ func TestSessionAffinityAndHandoff_Scenario5_MutationLeaseInventory(t *testing.T
 		"DeleteSessionForRetentionCandidate", "DeleteSessionForRetention", "SetMode",
 		"repairTerminalState", "prepareFailedStepRetry", "startRunContent", "Persist",
 		"appendEvent", "engine/agent/dispatch.go:ToolCall", "adapter:family-derivatives",
-		"SettleIfStale", "migrateOneFamily", "AdoptSession", "ForkSession",
+		"SettleIfStale", "migrateOneFamily", "createPlacedSuccessor", "persistPlacedCreatedSession",
 	} {
 		entry, ok := sessionMutationInventory[name]
 		if !ok || !entry.mutatesDurableFamily() {
@@ -234,7 +238,7 @@ func scanUnsanctionedWrites(files map[string]*ast.File, allowed map[string]bool)
 	return violations
 }
 
-func TestADR_0291_DurableSessionWritesUseSanctionedWrappers(t *testing.T) {
+func TestADR_0293_DurableSessionWritesUseSanctionedWrappers(t *testing.T) {
 	paths, err := filepath.Glob("*.go")
 	if err != nil {
 		t.Fatal(err)
@@ -272,7 +276,7 @@ func freeHelper(store interface{ Save() }) { store.Save() }`, 0)
 	}
 }
 
-func TestADR_0291_AllSessionMutatorsClassified(t *testing.T) {
+func TestADR_0293_AllSessionMutatorsClassified(t *testing.T) {
 	if errs := validateSessionMutationNames(sessionMutationInventory, discoveredSessionMutationBoundaries(t)); len(errs) != 0 {
 		for _, err := range errs {
 			t.Error(err)

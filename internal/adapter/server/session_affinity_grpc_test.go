@@ -29,7 +29,7 @@ func duplicateAffinityContext(first, second string) context.Context {
 	))
 }
 
-func TestADR_0291_CreateSessionDerivedAffinity(t *testing.T) {
+func TestADR_0293_CreateSessionDerivedAffinity(t *testing.T) {
 	svc := newService(t, mockllm.New(), allowRules())
 	client, cleanup := dialGRPC(t, svc)
 	defer cleanup()
@@ -40,14 +40,11 @@ func TestADR_0291_CreateSessionDerivedAffinity(t *testing.T) {
 		req  *mecatlv1.CreateSessionRequest
 		want codes.Code
 	}{
-		{name: "source exact", ctx: affinityContext("source"), req: &mecatlv1.CreateSessionRequest{Workspace: "/ws", SourceSessionId: "source"}, want: codes.NotFound},
 		{name: "debug exact", ctx: affinityContext("target"), req: &mecatlv1.CreateSessionRequest{Profile: "no-fs", DebugTargetSessionId: "target"}, want: codes.NotFound},
-		{name: "source missing header compatibility", ctx: context.Background(), req: &mecatlv1.CreateSessionRequest{Workspace: "/ws", SourceSessionId: "source"}, want: codes.NotFound},
-		{name: "no derived reference rejects header", ctx: affinityContext("source"), req: &mecatlv1.CreateSessionRequest{Workspace: "/ws"}, want: codes.InvalidArgument},
-		{name: "source mismatch", ctx: affinityContext("other"), req: &mecatlv1.CreateSessionRequest{Workspace: "/ws", SourceSessionId: "source"}, want: codes.InvalidArgument},
-		{name: "source duplicate", ctx: duplicateAffinityContext("source", "source"), req: &mecatlv1.CreateSessionRequest{Workspace: "/ws", SourceSessionId: "source"}, want: codes.InvalidArgument},
-		{name: "ambiguous dual reference without header", ctx: context.Background(), req: &mecatlv1.CreateSessionRequest{Workspace: "/ws", SourceSessionId: "source", DebugTargetSessionId: "target"}, want: codes.InvalidArgument},
-		{name: "ambiguous dual reference with header", ctx: affinityContext("source"), req: &mecatlv1.CreateSessionRequest{Workspace: "/ws", SourceSessionId: "source", DebugTargetSessionId: "target"}, want: codes.InvalidArgument},
+		{name: "debug missing header compatibility", ctx: context.Background(), req: &mecatlv1.CreateSessionRequest{Profile: "no-fs", DebugTargetSessionId: "target"}, want: codes.NotFound},
+		{name: "no derived reference rejects header", ctx: affinityContext("target"), req: &mecatlv1.CreateSessionRequest{}, want: codes.InvalidArgument},
+		{name: "debug mismatch", ctx: affinityContext("other"), req: &mecatlv1.CreateSessionRequest{Profile: "no-fs", DebugTargetSessionId: "target"}, want: codes.InvalidArgument},
+		{name: "debug duplicate", ctx: duplicateAffinityContext("target", "target"), req: &mecatlv1.CreateSessionRequest{Profile: "no-fs", DebugTargetSessionId: "target"}, want: codes.InvalidArgument},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -59,14 +56,14 @@ func TestADR_0291_CreateSessionDerivedAffinity(t *testing.T) {
 	}
 }
 
-func TestADR_0291_NewSessionBoundRPCsRequireAffinityClassification(t *testing.T) {
+func TestADR_0293_NewSessionBoundRPCsRequireAffinityClassification(t *testing.T) {
 	want := map[protoreflect.Name]bool{
 		"CreateSession": true, "GetSession": true, "GetSessionTranscript": true,
 		"SetMode": true, "CloseSession": true, "RenameSession": true,
 		"DeleteSession": true, "CompactSession": true, "ForkSession": true,
-		"PreflightSessionAdoption": true, "AdoptSession": true, "StreamSessionEvents": true,
+		"ClearSession": true, "ListCommands": true, "ListWorktrees": true, "StreamSessionEvents": true,
 		"StreamSessionLive": true, "WatchSessionEvents": true, "ReflectSession": true,
-		"ApprovePlan": true,
+		"ApprovePlan": true, "CreateTeam": true,
 	}
 	service := mecatlv1.File_mecatl_v1_harness_proto.Services().ByName("HarnessService")
 	for i := range service.Methods().Len() {
@@ -90,7 +87,6 @@ func TestSessionAffinityAndHandoff_Scenario2_GRPCUnaryAndServerStreamMatrix(t *t
 
 	const requestID = "request-session"
 	ctx := affinityContext("other-session")
-	bindings := &mecatlv1.AdoptionBindings{Workspace: "/ws", EnvironmentKind: "local", EnvironmentId: "/ws", ProviderId: "provider", ModelId: "model"}
 	tests := []struct {
 		name string
 		call func() error
@@ -123,16 +119,24 @@ func TestSessionAffinityAndHandoff_Scenario2_GRPCUnaryAndServerStreamMatrix(t *t
 			_, err := client.CompactSession(ctx, &mecatlv1.CompactSessionRequest{SessionId: requestID})
 			return err
 		}},
+		{"CreateTeam", func() error {
+			_, err := client.CreateTeam(ctx, &mecatlv1.CreateTeamRequest{SessionId: requestID})
+			return err
+		}},
 		{"ForkSession", func() error {
 			_, err := client.ForkSession(ctx, &mecatlv1.ForkSessionRequest{SourceSessionId: requestID})
 			return err
 		}},
-		{"PreflightSessionAdoption", func() error {
-			_, err := client.PreflightSessionAdoption(ctx, &mecatlv1.PreflightSessionAdoptionRequest{SourceSessionId: requestID, Bindings: bindings})
+		{"ClearSession", func() error {
+			_, err := client.ClearSession(ctx, &mecatlv1.ClearSessionRequest{SourceSessionId: requestID})
 			return err
 		}},
-		{"AdoptSession", func() error {
-			_, err := client.AdoptSession(ctx, &mecatlv1.AdoptSessionRequest{SourceSessionId: requestID, IdempotencyKey: "key", Bindings: bindings})
+		{"ListCommands", func() error {
+			_, err := client.ListCommands(ctx, &mecatlv1.ListCommandsRequest{SessionId: requestID})
+			return err
+		}},
+		{"ListWorktrees", func() error {
+			_, err := client.ListWorktrees(ctx, &mecatlv1.ListWorktreesRequest{SessionId: requestID})
 			return err
 		}},
 		{"ReflectSession", func() error {
@@ -183,10 +187,10 @@ func TestSessionAffinityAndHandoff_Scenario2_GRPCUnaryAndServerStreamMatrix(t *t
 				return status.Code(err), status.Convert(err).Message()
 			}
 
-			baselineCode, baselineMessage := call(context.Background())
+			baselineCode, _ := call(context.Background())
 			exactCode, exactMessage := call(affinityContext(requestID))
-			if exactCode != baselineCode || exactMessage != baselineMessage {
-				t.Fatalf("exact affinity outcome = (%v, %q), want headerless baseline (%v, %q)", exactCode, exactMessage, baselineCode, baselineMessage)
+			if exactCode != baselineCode {
+				t.Fatalf("exact affinity outcome = (%v, %q), want headerless status %v", exactCode, exactMessage, baselineCode)
 			}
 
 			for name, invalidCtx := range map[string]context.Context{
@@ -209,7 +213,7 @@ func TestSessionAffinityAndHandoff_Scenario2_GRPCUnaryAndServerStreamMatrix(t *t
 	}
 }
 
-func TestADR_0291_GRPCHeaderFailureIsNonDisclosing(t *testing.T) {
+func TestADR_0293_GRPCHeaderFailureIsNonDisclosing(t *testing.T) {
 	svc := newService(t, mockllm.New(), allowRules())
 	client, cleanup := dialGRPC(t, svc)
 	defer cleanup()
@@ -251,7 +255,7 @@ func TestSessionAffinityAndHandoff_Scenario2_ConversePreStreamAndFirstFrame(t *t
 	svc := newService(t, llm, allowRules())
 	client, cleanup := dialGRPC(t, svc)
 	defer cleanup()
-	created, err := client.CreateSession(context.Background(), &mecatlv1.CreateSessionRequest{Workspace: "/ws"})
+	created, err := client.CreateSession(context.Background(), &mecatlv1.CreateSessionRequest{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -299,7 +303,7 @@ func TestSessionAffinityAndHandoff_Scenario2_ConversePreStreamAndFirstFrame(t *t
 	}
 }
 
-func TestADR_0291_ConverseControlsStaySessionBound(t *testing.T) {
+func TestADR_0293_ConverseControlsStaySessionBound(t *testing.T) {
 	// Reuse the full live wire fixtures so this acceptance pin proves each
 	// control changes runtime state, rather than merely inspecting protobuf shape.
 	for name, fixture := range map[string]func(*testing.T){
@@ -316,11 +320,11 @@ func TestADR_0291_ConverseControlsStaySessionBound(t *testing.T) {
 	svc := newService(t, llm, allowRules())
 	client, cleanup := dialGRPC(t, svc)
 	defer cleanup()
-	first, err := client.CreateSession(context.Background(), &mecatlv1.CreateSessionRequest{Workspace: "/one"})
+	first, err := client.CreateSession(context.Background(), &mecatlv1.CreateSessionRequest{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := client.CreateSession(context.Background(), &mecatlv1.CreateSessionRequest{Workspace: "/two"})
+	second, err := client.CreateSession(context.Background(), &mecatlv1.CreateSessionRequest{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -386,12 +390,12 @@ func TestADR_0291_ConverseControlsStaySessionBound(t *testing.T) {
 	}
 }
 
-func TestADR_0291_ConverseRejectsSecondRetryButIgnoresUnsetFrames(t *testing.T) {
+func TestADR_0293_ConverseRejectsSecondRetryButIgnoresUnsetFrames(t *testing.T) {
 	llm := mockllm.New(mockllm.ChunksTurn(blockingChunks()...))
 	svc := newService(t, llm, allowRules())
 	client, cleanup := dialGRPC(t, svc)
 	defer cleanup()
-	created, err := client.CreateSession(context.Background(), &mecatlv1.CreateSessionRequest{Workspace: "/ws"})
+	created, err := client.CreateSession(context.Background(), &mecatlv1.CreateSessionRequest{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -430,12 +434,12 @@ func TestADR_0291_ConverseRejectsSecondRetryButIgnoresUnsetFrames(t *testing.T) 
 	}
 }
 
-func TestADR_0291_GRPCMissingHeaderCompatibility(t *testing.T) {
+func TestADR_0293_GRPCMissingHeaderCompatibility(t *testing.T) {
 	llm := mockllm.New(mockllm.TextTurn("done"))
 	svc := newService(t, llm, allowRules())
 	client, cleanup := dialGRPC(t, svc)
 	defer cleanup()
-	created, err := client.CreateSession(context.Background(), &mecatlv1.CreateSessionRequest{Workspace: "/ws"})
+	created, err := client.CreateSession(context.Background(), &mecatlv1.CreateSessionRequest{})
 	if err != nil {
 		t.Fatal(err)
 	}

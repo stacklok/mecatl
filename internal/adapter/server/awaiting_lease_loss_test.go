@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memlease"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
@@ -72,7 +71,9 @@ func newAwaitingLeaseService(
 	svc, err := server.NewService(server.Config{
 		Engine:             eng,
 		Store:              store,
-		Workspaces:         func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+		PlacementProvider:  testPlacementProvider{root: "/ws", firstBind: &atomic.Bool{}},
+		PlacementScope:     "test",
+		SharedEngineRoot:   "/ws",
 		SessionLease:       lease,
 		LeaseOwner:         owner,
 		LeaseTTL:           time.Minute,
@@ -111,7 +112,7 @@ func startAwaitingLeaseLoss(t *testing.T) *awaitingLeaseLossFixture {
 			mockllm.TextTurn("stale owner must not continue"),
 		), &f.staleRan)
 
-	sess, err := f.stale.CreateSession(context.Background(), "/ws", session.ModeDefault, session.Limits{})
+	sess, err := f.stale.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("create session: %v", err)
 	}
@@ -175,7 +176,7 @@ func (f *awaitingLeaseLossFixture) loseLeaseAndDrain(t *testing.T) {
 	}
 }
 
-func TestADR_0291_AwaitingLeaseLossRetractsLocalAskPreservesSnapshot(t *testing.T) {
+func TestADR_0293_AwaitingLeaseLossRetractsLocalAskPreservesSnapshot(t *testing.T) {
 	f := startAwaitingLeaseLoss(t)
 	before, err := f.store.Load(context.Background(), f.sessionID)
 	if err != nil {

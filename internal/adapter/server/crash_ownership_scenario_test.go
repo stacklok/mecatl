@@ -17,7 +17,6 @@ import (
 	"github.com/alicebob/miniredis/v2"
 
 	"github.com/stacklok/mecatl/contracts/sessionaffinity"
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memlease"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
@@ -222,7 +221,9 @@ func (f *crashOwnershipFixture) newService(
 	cfg := server.Config{
 		Engine:             newEngine(provider),
 		Store:              store,
-		Workspaces:         func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+		PlacementProvider:  testPlacementProvider{root: "/workspace", firstBind: &atomic.Bool{}},
+		PlacementScope:     "test",
+		SharedEngineRoot:   "/workspace",
 		SessionEngine:      factory,
 		SessionLease:       f.lease,
 		LeaseOwner:         owner,
@@ -241,7 +242,7 @@ func (f *crashOwnershipFixture) newService(
 
 func (f *crashOwnershipFixture) startOwnerAndDropStream(t *testing.T) {
 	t.Helper()
-	sess, err := f.owner.CreateSessionWithProvider(context.Background(), "/workspace", session.ModeDefault, session.Limits{}, server.ProviderSelector{ProviderID: "modeled", ModelID: "blocked"})
+	sess, err := f.owner.CreateSessionWithProvider(context.Background(), session.ModeDefault, session.Limits{}, server.ProviderSelector{ProviderID: "modeled", ModelID: "blocked"})
 	if err != nil {
 		t.Fatalf("create owner session: %v", err)
 	}
@@ -595,7 +596,9 @@ func newCrashAwaitingService(
 	svc, err := server.NewService(server.Config{
 		Engine:             eng,
 		Store:              store,
-		Workspaces:         func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+		PlacementProvider:  testPlacementProvider{root: "/workspace", firstBind: &atomic.Bool{}},
+		PlacementScope:     "test",
+		SharedEngineRoot:   "/workspace",
 		SessionLease:       lease,
 		LeaseOwner:         owner,
 		LeaseTTL:           crashOwnershipTTL,
@@ -623,7 +626,7 @@ func TestSessionAffinityAndHandoff_Scenario7_AwaitingLeaseLossHandoff(t *testing
 	})
 	successor := newCrashAwaitingService(t, f.survivorStore, f.lease, "awaiting-successor", successorLLM, &successorRan, nil)
 
-	sess, err := owner.CreateSession(context.Background(), "/workspace", session.ModeDefault, session.Limits{})
+	sess, err := owner.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("create awaiting owner session: %v", err)
 	}
@@ -790,13 +793,13 @@ func TestSessionAffinityAndHandoff_Scenario7_KilledOwnerDropsStream(t *testing.T
 	f.assertKilledOwnerSnapshot(t)
 }
 
-func TestADR_0291_PreTTLRequestsCannotAcquireOrRun(t *testing.T) {
+func TestADR_0293_PreTTLRequestsCannotAcquireOrRun(t *testing.T) {
 	f := newCrashOwnershipFixture(t)
 	f.startOwnerAndDropStream(t)
 	f.assertPreTTLBlocked(t)
 }
 
-func TestADR_0291_PostTTLSingleSurvivorAcquires(t *testing.T) {
+func TestADR_0293_PostTTLSingleSurvivorAcquires(t *testing.T) {
 	f := newCrashOwnershipFixture(t)
 	f.startOwnerAndDropStream(t)
 	f.advancePastTTL()
@@ -832,7 +835,7 @@ func TestSessionAffinityAndHandoff_Scenario7_RehydrateRepairAndContinue(t *testi
 	}
 }
 
-func TestADR_0291_HandoffEndToEndCorrelation(t *testing.T) {
+func TestADR_0293_HandoffEndToEndCorrelation(t *testing.T) {
 	f := newCrashOwnershipFixture(t)
 	f.startOwnerAndDropStream(t)
 	f.seedCrashOrphanWithRedisSidecars(t)

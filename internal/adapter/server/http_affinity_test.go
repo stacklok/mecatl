@@ -9,7 +9,6 @@ import (
 	"testing"
 
 	"github.com/stacklok/mecatl/contracts/sessionaffinity"
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
@@ -19,20 +18,18 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/server"
 )
 
-func TestADR_0291_HTTPCreateSessionDerivedAffinity(t *testing.T) {
+func TestADR_0293_HTTPCreateSessionDerivedAffinity(t *testing.T) {
 	h := server.NewHTTPHandler(newService(t, mockllm.New(), allowRules()))
 	for _, tc := range []struct {
 		name, body string
 		headers    []string
 		want       int
 	}{
-		{name: "source exact", body: `{"workspace":"/ws","source_session_id":"source"}`, headers: []string{"source"}, want: http.StatusNotFound},
 		{name: "debug exact", body: `{"profile":"no-fs","debug_target_session_id":"target"}`, headers: []string{"target"}, want: http.StatusNotFound},
-		{name: "source headerless compatibility", body: `{"workspace":"/ws","source_session_id":"source"}`, want: http.StatusNotFound},
-		{name: "no derived reference rejects header", body: `{"workspace":"/ws"}`, headers: []string{"source"}, want: http.StatusBadRequest},
-		{name: "mismatch", body: `{"workspace":"/ws","source_session_id":"source"}`, headers: []string{"other"}, want: http.StatusBadRequest},
-		{name: "duplicate", body: `{"workspace":"/ws","source_session_id":"source"}`, headers: []string{"source", "source"}, want: http.StatusBadRequest},
-		{name: "ambiguous dual reference", body: `{"workspace":"/ws","source_session_id":"source","debug_target_session_id":"target"}`, want: http.StatusBadRequest},
+		{name: "debug headerless compatibility", body: `{"profile":"no-fs","debug_target_session_id":"target"}`, want: http.StatusNotFound},
+		{name: "no derived reference rejects header", body: `{}`, headers: []string{"target"}, want: http.StatusBadRequest},
+		{name: "mismatch", body: `{"profile":"no-fs","debug_target_session_id":"target"}`, headers: []string{"other"}, want: http.StatusBadRequest},
+		{name: "duplicate", body: `{"profile":"no-fs","debug_target_session_id":"target"}`, headers: []string{"target", "target"}, want: http.StatusBadRequest},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			req := httptest.NewRequest(http.MethodPost, "/v1/sessions", strings.NewReader(tc.body))
@@ -83,8 +80,10 @@ func TestSessionAffinityAndHandoff_Scenario3_HTTPRouteInventory(t *testing.T) {
 		{"cancel", http.MethodPost, "/v1/sessions/route-id/cancel", ""},
 		{"cancel child", http.MethodPost, "/v1/sessions/route-id/cancel-child", `{"child_id":"child"}`},
 		{"fork", http.MethodPost, "/v1/sessions/route-id/fork", ""},
-		{"adoption preflight", http.MethodPost, "/v1/sessions/route-id/adoption:preflight", `{"workspace":"/adopted","environment_kind":"local","environment_id":"/adopted","provider_id":"provider","model_id":"model","profile":""}`},
-		{"adopt", http.MethodPost, "/v1/sessions/route-id/adopt", `{"workspace":"/adopted","environment_kind":"local","environment_id":"/adopted","provider_id":"provider","model_id":"model","profile":"","idempotency_key":"key"}`},
+		{"clear", http.MethodPost, "/v1/sessions/route-id/clear", ""},
+		{"commands", http.MethodGet, "/v1/commands?session_id=route-id", ""},
+		{"worktrees", http.MethodGet, "/v1/worktrees?session_id=route-id", ""},
+		{"create team", http.MethodPost, "/v1/teams", `{"session_id":"route-id"}`},
 		{"reflect", http.MethodPost, "/v1/sessions/route-id/reflect", ""},
 		{"events", http.MethodGet, "/v1/sessions/route-id/events", ""},
 		{"watch", http.MethodGet, "/v1/sessions/route-id/watch", ""},
@@ -117,7 +116,7 @@ func TestSessionAffinityAndHandoff_Scenario3_HTTPRouteInventory(t *testing.T) {
 	}
 }
 
-func TestADR_0291_HTTPHeaderFailureIsNonDisclosing(t *testing.T) {
+func TestADR_0293_HTTPHeaderFailureIsNonDisclosing(t *testing.T) {
 	h := server.NewHTTPHandler(newService(t, mockllm.New(), allowRules()))
 
 	for _, tc := range []struct {
@@ -159,7 +158,7 @@ func TestADR_0291_HTTPHeaderFailureIsNonDisclosing(t *testing.T) {
 	}
 }
 
-func TestADR_0291_HTTPDecodedPathEquality(t *testing.T) {
+func TestADR_0293_HTTPDecodedPathEquality(t *testing.T) {
 	h := server.NewHTTPHandler(newService(t, mockllm.New(), allowRules()))
 
 	for _, tc := range []struct {
@@ -181,16 +180,16 @@ func TestADR_0291_HTTPDecodedPathEquality(t *testing.T) {
 	}
 }
 
-func TestADR_0291_AffinityHeaderGrantsNoAuthority(t *testing.T) {
+func TestADR_0293_AffinityHeaderGrantsNoAuthority(t *testing.T) {
 	engine := agent.NewEngine(agent.Deps{LLM: mockllm.New(), Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(allowRules(), nil), Model: "test-model"})
 	svc, err := server.NewService(server.Config{
-		Engine: engine, Store: memstore.New(), Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) }, OwnershipEnforced: true,
+		Engine: engine, Store: memstore.New(), PlacementProvider: testPlacementProvider{root: "/ws"}, PlacementScope: "test", SharedEngineRoot: "/ws", OwnershipEnforced: true,
 	})
 	if err != nil {
 		t.Fatalf("NewService: %v", err)
 	}
 	owner := &session.Principal{Issuer: "https://issuer.example", Subject: "owner", GrantType: session.GrantTypeUser}
-	sess, err := svc.CreateSession(session.WithPrincipal(context.Background(), owner), "/ws", session.ModeDefault, session.Limits{})
+	sess, err := svc.CreateSession(session.WithPrincipal(context.Background(), owner), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}

@@ -381,13 +381,12 @@ transient provider failure). Regression:
 ## Model-switch context carryover (issue #20)
 
 When the mecatui `/models` picker confirms a model switch, the client calls
-`CreateSessionWithCarryover` (`cmd/mecatui/client/client.go`) which sets
-`source_session_id` on the `CreateSessionRequest`. A model switch ALWAYS keeps the
+`CreateSessionWithCarryover` (`cmd/mecatui/client/client.go`), a wrapper over the
+server-owned `ForkSession` successor operation. A model switch ALWAYS keeps the
 conversation (seamless UX — no confirm overlay, no same-provider gate; `/clear` is the
-fresh-start verb). The server-side `Service.validateCarryover`
-(`internal/adapter/server/service.go`) loads the source session, canonicalises each
-side's provider (empty ⇒ the server default), and snapshots the conversation via
-`session.ForkSnapshot` (the ADR-0065 fork primitive). Carryover is allowed across ANY
+fresh-start verb). `createPlacedSuccessor` (`internal/adapter/server/placement_successor.go`)
+loads and mutation-leases the source, inherits its exact placement, resolves model/provider
+overrides, and snapshots the conversation through `providerCarryoverSnapshot`. Carryover is allowed across ANY
 provider: SAME provider → the snapshot is returned VERBATIM (provider-private replay
 blobs — `Message.Reasoning`/`ProviderPhase`/`ToolCall.ItemID` — replay intact, keeping
 the prompt-cache prefix warm); DIFFERENT provider → the snapshot is STRIPPED to a
@@ -728,15 +727,14 @@ config resolves per-session against that root without a mutate-capable handle; `
 `engine/adapter/wallclock`, wired in `engineDepsForProvider`/`newChildEngineWithHooks`
 (issue #53 — previously never injected, leaving all latency observations zero).
 
-**Provider request session correlation and ingress affinity (ADR 0291).**
+**Provider request session correlation and ingress affinity (ADR 0293).**
 The stdlib-only root transport package `contracts/sessionaffinity` owns `HeaderName`,
 `MaxValueBytes`, and `ValidValue`: `X-Mecatl-Session-ID` must be at most 256 bytes of
 non-empty printable ASCII
 (`0x20`–`0x7e`) without leading or trailing space, and consumers preserve its bytes
 exactly. External session IDs outside that cross-transport set remain usable while
 clients omit affinity and remove a stale caller-supplied affinity header while retaining
-unrelated headers; only an explicit raw `withSessionAffinity` bind throws. Derived creates bind exactly one source or debug target and reject
-the ambiguous dual-reference shape. gRPC and HTTP accept a
+unrelated headers; only an explicit raw `withSessionAffinity` bind throws. Debug-session creates bind the target ID; ordinary creates carry no affinity because server-owned placement removed source-session creation. gRPC and HTTP accept a
 missing value for compatibility but reject duplicates, illegal values, and byte
 mismatches before work with one non-disclosing error. The HTTP side compares against
 the decoded path ID. Routing grants no authority; caller authentication/ownership and
@@ -753,7 +751,7 @@ deliberately retain ADR 0216's broader outbound-provider rules (including values
 the official browser/gRPC affinity set) because independently versioned provider modules
 stay release-independent and do not import the root transport package.
 
-**Session mutation ownership, lease loss, close, and drain (ADR 0291).**
+**Session mutation ownership, lease loss, close, and drain (ADR 0293).**
 `internal/adapter/server/mutation_capability.go` (`SessionMutationCapability`) is the
 process-local gate shared by the `Service`, guarded SessionStore, EventLog, and
 ToolCallRecorder paths. `acquireMutationLease` extends lease ownership from prompt entry

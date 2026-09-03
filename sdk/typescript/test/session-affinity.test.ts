@@ -24,7 +24,7 @@ describe("high-level session affinity", () => {
           return {};
         },
         createSession: (request, context) => {
-          const derived = request.sourceSessionId || request.debugTargetSessionId;
+          const derived = request.debugTargetSessionId;
           if (derived !== "") {
             seen.push({
               affinity: context.requestHeader.get(SESSION_ID_HEADER_NAME),
@@ -79,7 +79,6 @@ describe("high-level session affinity", () => {
     });
     const client = connect({ transport });
     const session = await client.sessions.create({});
-    await client.sessions.create({ sourceSessionId: sessionId });
     await client.sessions.create({ debugTargetSessionId: sessionId });
 
     await client.sessions.get(session.id);
@@ -93,7 +92,6 @@ describe("high-level session affinity", () => {
     await session.delete();
 
     expect(seen.map(({ operation }) => operation)).toEqual([
-      "create-derived",
       "create-derived",
       "get",
       "fork",
@@ -146,9 +144,8 @@ describe("high-level session affinity", () => {
         if (operation === "create") {
           const body = JSON.parse(await new Response(init?.body).text()) as {
             debug_target_session_id?: string;
-            source_session_id?: string;
           };
-          if (body.source_session_id !== undefined || body.debug_target_session_id !== undefined) {
+          if (body.debug_target_session_id !== undefined) {
             httpSeen.push({
               affinity: headers.get(SESSION_ID_HEADER_NAME),
               operation: "create-derived",
@@ -189,7 +186,7 @@ describe("high-level session affinity", () => {
       },
     });
     const httpSession = await http.sessions.create({});
-    await http.sessions.create({ sourceSessionId: sessionId });
+    await http.sessions.create({ debugTargetSessionId: sessionId });
 
     await http.sessions.get(httpSession.id);
     await http.sessions.fork(httpSession.id);
@@ -242,7 +239,7 @@ describe("high-level session affinity", () => {
       });
     });
     const client = connect({ transport });
-    const session = await client.sessions.create({ sourceSessionId: externalId });
+    const session = await client.sessions.create({});
     await client.sessions.create({ debugTargetSessionId: externalId });
     await client.sessions.get(externalId);
     await client.sessions.fork(externalId);

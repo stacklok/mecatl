@@ -1306,6 +1306,9 @@ func (h *HarnessServer) ListSkillChanges(ctx context.Context, req *mecatlv1.List
 
 // ListCommands returns commands for an owned session placement.
 func (h *HarnessServer) ListCommands(ctx context.Context, req *mecatlv1.ListCommandsRequest) (*mecatlv1.ListCommandsResponse, error) {
+	if err := validateGRPCSessionAffinity(ctx, req.GetSessionId()); err != nil {
+		return nil, err
+	}
 	if req.GetSessionId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "session_id is required")
 	}
@@ -1318,6 +1321,9 @@ func (h *HarnessServer) ListCommands(ctx context.Context, req *mecatlv1.ListComm
 
 // ListWorktrees returns scoped placement choices for an owned session.
 func (h *HarnessServer) ListWorktrees(ctx context.Context, req *mecatlv1.ListWorktreesRequest) (*mecatlv1.ListWorktreesResponse, error) {
+	if err := validateGRPCSessionAffinity(ctx, req.GetSessionId()); err != nil {
+		return nil, err
+	}
 	if req.GetSessionId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "session_id is required")
 	}

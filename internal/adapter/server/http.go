@@ -156,19 +156,25 @@ func requireCreateSessionAffinity(w http.ResponseWriter, r *http.Request, debugT
 	return true
 }
 
+func requireSessionAffinityValue(w http.ResponseWriter, r *http.Request, authoritativeID string) bool {
+	values := r.Header.Values(sessionaffinity.HeaderName)
+	if len(values) == 0 {
+		return true
+	}
+	if len(values) != 1 || !sessionaffinity.ValidValue(values[0]) || values[0] != authoritativeID {
+		writeProblem(w, entryForHTTPStatus(http.StatusBadRequest), "invalid session affinity header")
+		return false
+	}
+	return true
+}
+
 // requireSessionAffinity admits an optional, exact session-affinity header only
 // after the mux has decoded the authoritative path value. It is transport
 // routing metadata, not an authority grant; the wrapped handler still performs
 // its ordinary authentication, ownership, and management checks.
 func requireSessionAffinity(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		values := r.Header.Values(sessionaffinity.HeaderName)
-		if len(values) == 0 {
-			next(w, r)
-			return
-		}
-		if len(values) != 1 || !sessionaffinity.ValidValue(values[0]) || values[0] != r.PathValue("id") {
-			writeProblem(w, entryForHTTPStatus(http.StatusBadRequest), "invalid session affinity header")
+		if !requireSessionAffinityValue(w, r, r.PathValue("id")) {
 			return
 		}
 		next(w, r)
@@ -1231,6 +1237,9 @@ func (h *HTTPHandler) createTeam(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid JSON body: multiple JSON values")
 		return
 	}
+	if !requireSessionAffinityValue(w, r, body.SessionID) {
+		return
+	}
 	var specs []agent.MemberSpec
 	if len(body.Members) > 0 {
 		specs = make([]agent.MemberSpec, 0, len(body.Members))
@@ -2011,6 +2020,9 @@ func (h *HTTPHandler) undoLearningPromotion(w http.ResponseWriter, r *http.Reque
 // listCommands handles GET /v1/commands?session_id=.
 func (h *HTTPHandler) listCommands(w http.ResponseWriter, r *http.Request) {
 	id := r.URL.Query().Get("session_id")
+	if !requireSessionAffinityValue(w, r, id) {
+		return
+	}
 	if id == "" {
 		writeServiceError(w, fmt.Errorf("%w: session_id is required", ErrInvalidArgument))
 		return
@@ -2026,6 +2038,9 @@ func (h *HTTPHandler) listCommands(w http.ResponseWriter, r *http.Request) {
 // listWorktrees handles GET /v1/worktrees?session_id=.
 func (h *HTTPHandler) listWorktrees(w http.ResponseWriter, r *http.Request) {
 	id := r.URL.Query().Get("session_id")
+	if !requireSessionAffinityValue(w, r, id) {
+		return
+	}
 	if id == "" {
 		writeServiceError(w, fmt.Errorf("%w: session_id is required", ErrInvalidArgument))
 		return
