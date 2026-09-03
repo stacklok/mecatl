@@ -118,6 +118,7 @@ func helpBody(th theme.Theme, caps client.Capabilities, hk helpKeys) string {
 		{key: "drag", action: "select conversation text · drag to an edge auto-scrolls · copies on release · double-click word · triple-click line · right-click copies · " + hk.cancel + " clears"},
 		{key: "middle-click", action: "paste the primary selection into the prompt (X11/Wayland; shift+middle-click pastes via the terminal instead)"},
 		{key: hk.help, action: "this help (on an empty prompt)"},
+		{key: "/quit", action: "quit immediately (alias: /exit; cancels an active run)"},
 		{key: hk.suspend, action: "suspend to the shell — the engine keeps running; fg resumes"},
 		{key: hk.quit, action: "quit (press twice; first press clears the prompt or arms, again within 3s exits)"},
 		{key: hk.quitD, action: "quit (EOF habit; press twice on an empty prompt)"},

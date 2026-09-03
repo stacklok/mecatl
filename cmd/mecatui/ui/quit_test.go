@@ -33,6 +33,84 @@ func pressKey(m Model, msg tea.Msg) (Model, tea.Cmd) {
 	return mm.(Model), cmd
 }
 
+func requireQuitMsg(t *testing.T, cmd tea.Cmd) {
+	t.Helper()
+	if cmd == nil {
+		t.Fatal("quit command is nil")
+	}
+	msg := cmd()
+	if _, ok := msg.(tea.QuitMsg); !ok {
+		t.Fatalf("quit command result = %T, want tea.QuitMsg", msg)
+	}
+}
+
+// gatedQuitStream starts a real prompt stream and holds it at its first delta,
+// giving slash-command tests a deterministic running model and cancellation signal.
+func gatedQuitStream(t *testing.T) (Model, *fakeConv) {
+	t.Helper()
+	recv := &fakeRecver{script: simpleRunScript("only"), gateType: "message.delta", gate: make(chan struct{}), reachedGate: make(chan struct{})}
+	conv := &fakeConv{
+		recv:         recv,
+		send:         &fakeSender{},
+		recvers:      []*fakeRecver{recv},
+		runCancelled: make(chan struct{}),
+	}
+	m := newTestModelFromDeps(Deps{
+		Session:     conv,
+		Conv:        conv,
+		Theme:       theme.New("aztec", theme.AztecPalette()),
+		Ctx:         context.Background(),
+		NoAltScreen: true,
+	})
+	m = applyAll(m,
+		tea.WindowSizeMsg{Width: 100, Height: 30},
+		client.SessionReadyMsg{SessionID: "sess-test-0001"},
+	)
+	m = typeText(t, m, "run something")
+	mm, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = mm.(Model)
+	_ = firstBatchLeaf(t, cmd) // SendPrompt only; the reader remains gate-blocked.
+	if m.phase != phaseRunning {
+		t.Fatalf("phase after initial prompt = %v, want running", m.phase)
+	}
+	waitClosed(t, "run reached gated delta", recv.reachedGate, 5*time.Second)
+	return m, conv
+}
+
+// TestQuitSlashCommandsEnterDuringGatedStream exercises the public textarea and
+// Enter route while a real run is still streaming. Neither alias may send a second
+// Prompt or a Cancel frame; quitting cancels the stream context directly.
+func TestQuitSlashCommandsEnterDuringGatedStream(t *testing.T) {
+	for _, input := range []string{"/quit", "/exit", "/QUIT", "/EXIT", " \u2003/quit\u00a0", " \u2003/exit\u00a0"} {
+		t.Run(strings.ReplaceAll(input, " ", "space"), func(t *testing.T) {
+			m, conv := gatedQuitStream(t)
+			m = typeText(t, m, input)
+			_, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+			requireQuitMsg(t, cmd)
+			waitClosed(t, "run context cancelled by slash quit", conv.runCancelled, 5*time.Second)
+			if frames := conv.send.frames(); len(frames) != 1 || frames[0].GetPrompt() == nil {
+				t.Fatalf("frames after %q = %v, want only the initial Prompt", input, frames)
+			}
+		})
+	}
+}
+
+// TestQuitSlashCommandsEnterIdle verifies public Enter ingress dispatches the
+// aliases locally even before a run starts.
+func TestQuitSlashCommandsEnterIdle(t *testing.T) {
+	for _, input := range []string{"/quit", "/exit", "/QUIT", "/EXIT", " \u2003/quit\u00a0", " \u2003/exit\u00a0"} {
+		t.Run(strings.ReplaceAll(input, " ", "space"), func(t *testing.T) {
+			m, send := builtinDispatchModel(t, client.Capabilities{}, false)
+			m = typeText(t, m, input)
+			_, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+			requireQuitMsg(t, cmd)
+			if frames := send.frames(); len(frames) != 0 {
+				t.Fatalf("idle %q sent %d frames, want none", input, len(frames))
+			}
+		})
+	}
+}
+
 // TestQuitGuardFirstCtrlCEmptyArms asserts a first ctrl+c on an empty prompt does
 // NOT quit: it arms the guard, shows the hint in the footer, and schedules a disarm
 // tick (a non-nil command). isQuitCmd would be true only on a real quit, so we

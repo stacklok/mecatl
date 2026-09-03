@@ -69,7 +69,7 @@ func builtinNames(caps client.Capabilities, w wiredCollaborators) []string {
 }
 
 // TestBuiltinCommandsCapsFilter pins the caps gate AND the fixed order: /clear,
-// /help, and /session are always present (and lead, in that order); /mcp needs
+// /help, /quit, and /session are always present (and lead, in that order); /mcp needs
 // caps.MCP && the MCP collaborator wired; /agents (the def inventory) needs caps.Agents &&
 // the agents collaborator wired; /team (the live overlay) needs caps.Teams;
 // /skills needs caps.Skills && the skills collaborator wired; /soul needs
@@ -77,7 +77,7 @@ func builtinNames(caps client.Capabilities, w wiredCollaborators) []string {
 // the user-model collaborator wired; /models needs caps.ModelSelection && the model
 // lister wired; /worktrees needs caps.Worktrees && the worktree lister wired
 // (issue #102); /effort is gated identically to /models and follows it (ADR 0055).
-// The fixed order is clear, help, session, mcp, agents, team, skills, soul, usermodel,
+// The fixed order is clear, help, quit, session, mcp, agents, team, skills, soul, usermodel,
 // models, effort, worktrees.
 func TestBuiltinCommandsCapsFilter(t *testing.T) {
 	all := client.Capabilities{MCP: true, Agents: true, Teams: true, Skills: true, Soul: true, UserModel: true, ModelSelection: true, Worktrees: true, Scheduling: true, ManualCompaction: true, Posture: "auto"}
@@ -131,7 +131,7 @@ func TestBuiltinCommandsCapsFilter(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			got := builtinNames(tc.caps, tc.w)
-			want := append([]string{"clear", "help", "session", "retry", "diagnostics"}, tc.want[2:]...)
+			want := append([]string{"clear", "help", "quit", "session", "retry", "diagnostics"}, tc.want[2:]...)
 			if strings.Join(got, ",") != strings.Join(want, ",") {
 				t.Fatalf("builtinCommands order/filter = %v, want %v", got, want)
 			}
@@ -267,9 +267,14 @@ func TestMergeCommands(t *testing.T) {
 	builtins := []client.Command{
 		{Name: "clear", Description: "clear it", Builtin: true},
 		{Name: "help", Description: "help", Builtin: true},
+		{Name: "quit", Description: "quit", Builtin: true},
 	}
 	discovered := []client.Command{
 		{Name: "clear", Description: "WORKSPACE clear — should be shadowed"}, // collides → dropped
+		{Name: "quit", Description: "WORKSPACE quit — should be shadowed"},   // collides → dropped
+		{Name: "QUIT", Description: "WORKSPACE upper quit — should be shadowed"},
+		{Name: "exit", Description: "WORKSPACE exit — alias is reserved"},
+		{Name: "EXIT", Description: "WORKSPACE upper exit — alias is reserved"},
 		{Name: "deploy", Description: "deploy"},
 		{Name: "deploy", Description: "dup deploy"}, // duplicate discovered → dropped
 		{Name: "review", Description: "review"},
@@ -277,7 +282,7 @@ func TestMergeCommands(t *testing.T) {
 
 	got := mergeCommands(builtins, discovered)
 
-	wantNames := []string{"clear", "help", "deploy", "review"}
+	wantNames := []string{"clear", "help", "quit", "deploy", "review"}
 	if len(got) != len(wantNames) {
 		t.Fatalf("merged len = %d (%v), want %d %v", len(got), got, len(wantNames), wantNames)
 	}
@@ -287,9 +292,14 @@ func TestMergeCommands(t *testing.T) {
 		}
 	}
 	// The "clear" that survived must be the BUILT-IN one (precedence), not the
-	// workspace row.
+	// workspace row. The dispatch-only /exit alias must have no palette row.
 	if !got[0].Builtin || got[0].Description != "clear it" {
 		t.Fatalf("collision: want built-in clear to win, got %+v", got[0])
+	}
+	for _, command := range got {
+		if !command.Builtin && (strings.EqualFold(command.Name, "quit") || strings.EqualFold(command.Name, "exit")) {
+			t.Fatalf("workspace quit/exit variants must not appear in the palette, got %+v", command)
+		}
 	}
 }
 
@@ -623,6 +633,67 @@ func TestBuiltinSubmitNeverSends(t *testing.T) {
 	}
 }
 
+// TestQuitAliasesDispatchLocally pins /quit's always-on local dispatch and the
+// dispatch-only /exit alias, including case and Unicode-whitespace normalization.
+func TestQuitAliasesDispatchLocally(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		input string
+		phase phase
+	}{
+		{name: "quit idle", input: "/quit", phase: phaseIdle},
+		{name: "exit idle", input: "/exit", phase: phaseIdle},
+		{name: "quit case-insensitive", input: "/QUIT", phase: phaseRunning},
+		{name: "exit case-insensitive", input: "/EXIT", phase: phaseRunning},
+		{name: "quit Unicode whitespace", input: " \u2003/quit\u00a0", phase: phaseIdle},
+		{name: "exit Unicode whitespace", input: " \u2003/exit\u00a0", phase: phaseRunning},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m, send := builtinDispatchModel(t, client.Capabilities{}, false)
+			m.phase = tc.phase
+			cancelled := false
+			m.cancelRun = func() { cancelled = true }
+			m.prompt.Rewrite(tc.input)
+
+			mm, cmd, handled := m.dispatchBareBuiltin(m.prompt.Value())
+			m = mm.(Model)
+			if !handled || !isQuitCmd(cmd) {
+				t.Fatalf("%q must dispatch locally to tea.Quit: handled=%t cmd=%v", tc.input, handled, cmd)
+			}
+			if !cancelled {
+				t.Error("local quit must cancel the active run closure")
+			}
+			if m.prompt.Value() != "" {
+				t.Errorf("local quit must consume its input, got %q", m.prompt.Value())
+			}
+			if len(send.frames()) != 0 {
+				t.Errorf("local quit must not send prompt frames, got %d", len(send.frames()))
+			}
+		})
+	}
+}
+
+// TestQuitAliasesWithArgsStayLocal verifies that both names retain argument-bearing
+// input and use the canonical no-arguments warning without sending a prompt.
+func TestQuitAliasesWithArgsStayLocal(t *testing.T) {
+	for _, input := range []string{"/quit now", "/EXIT\nnow"} {
+		t.Run(strings.ReplaceAll(input, "\n", "\\n"), func(t *testing.T) {
+			m, send := builtinDispatchModel(t, client.Capabilities{}, false)
+			m = typeText(t, m, input)
+			m, cmd := pressEnter(t, m)
+			if cmd != nil || len(send.frames()) != 0 {
+				t.Fatalf("%q must stay local: cmd=%v frames=%d", input, cmd, len(send.frames()))
+			}
+			if m.prompt.Value() != input {
+				t.Errorf("input = %q, want retained %q", m.prompt.Value(), input)
+			}
+			if got := stripANSIstr(m.statusMsg); !strings.Contains(got, "/quit does not take arguments; use bare /quit") {
+				t.Errorf("status = %q, want canonical /quit argument warning", got)
+			}
+		})
+	}
+}
+
 // TestBuiltinNameWithArgsStaysLocal verifies a recognized no-argument builtin
 // keeps its input, warns locally, and never reaches the model.
 func TestBuiltinNameWithArgsStaysLocal(t *testing.T) {
@@ -717,7 +788,7 @@ func TestDispatchBareBuiltinUnicodeWhitespaceThroughTextarea(t *testing.T) {
 // from the builtinCommands table AND that an unknown name is false.
 func TestIsKnownBuiltinName(t *testing.T) {
 	known := []string{
-		"clear", "help", "session", "retry", "diagnostics", "compact", "mcp", "agents", "team", "skills", "soul", "usermodel",
+		"clear", "help", "quit", "session", "retry", "diagnostics", "compact", "mcp", "agents", "team", "skills", "soul", "usermodel",
 		"models", "effort", "worktrees", "schedule", "sessions", "learning", "learning-sensitivity", "posture",
 		"debug-ask",
 	}

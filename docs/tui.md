@@ -680,6 +680,8 @@ server's `ClearSession` successor RPC: it creates a distinct empty-history sessi
 that inherits the source's exact placement, effective model, reasoning effort, mode,
 limits, and owner. The source remains intact, and conversation/scrollback switch only
 after the successor and transcript load succeed. `/help` opens the keys-&-features overlay.
+`/quit` exits immediately, cancelling an active run first. `/exit` is a
+case-insensitive dispatch-only alias for `/quit`: it is not shown in the palette.
 `/diagnostics` is an exception to the local-only commands: the exact
 whitespace-trimmed lower-case bare command follows ordinary built-in dispatch,
 generates a concise sanitized report, and submits that report through the normal
@@ -708,7 +710,7 @@ tasks) appear
 only when the connected server advertises those capabilities (and, for
 `/compact`/`/mcp`/`/agents`/`/skills`/`/soul`/`/usermodel`/`/reflections`/`/reflect`/`/dream`/`/models`/`/worktrees`/`/schedule`, the matching client
 collaborator is wired). The fixed palette order starts
-`clear, help, session, retry, diagnostics, compact`, then the available inventory, model,
+`clear, help, quit, session, retry, diagnostics, compact`, then the available inventory, model,
 workspace, schedule, and operator-setting commands (locked by a test).
 `/learning` is local embedded-server operator-settings UX: each invocation selects the
 next Off→Review→Auto value in `$XDG_CONFIG_HOME/mecatl/settings.yaml`, preserving
@@ -1176,7 +1178,7 @@ show the plain prompt-hint card.
 | middle-click | **paste the primary selection** (X11/Wayland select-to-copy buffer) into the prompt — read via the shell backend (`wl-paste --primary` / `xclip -selection primary -o`), falling back to an OSC52 primary read; routed through the same pipeline as a bracketed paste, so a large selection stages as `[Pasted text #N]`. `shift+middle-click` always performs the terminal-native paste instead. |
 | `esc` (with an active selection) | **clear the selection** first — before any other `esc` meaning |
 | `?` | help overlay (on an empty prompt) |
-| `/` | slash-command palette (built-in `/clear`, `/help`, `/session`, `/retry`; capability-gated `/compact`, `/mcp`, `/agents`, `/team`, `/skills`, `/soul`, `/usermodel`, `/reflections`, `/reflect`, `/dream`, `/models`, `/effort`, `/worktrees`, `/schedule`; operator-setting `/learning`; plus workspace commands) |
+| `/` | slash-command palette (built-in `/clear`, `/help`, `/quit`, `/session`, `/retry`; capability-gated `/compact`, `/mcp`, `/agents`, `/team`, `/skills`, `/soul`, `/usermodel`, `/reflections`, `/reflect`, `/dream`, `/models`, `/effort`, `/worktrees`, `/schedule`; operator-setting `/learning`; plus workspace commands) |
 | `alt+m` | cycle the current session permission mode: **default → plan → accept-edits → default**. The server/session is authoritative; if the aggregate rejects the switch because a turn is running or awaiting approval, mecatui shows a notice and retries the selected mode at the next prompt boundary. |
 | `ctrl+a` | open the **unified agents overlay** — ONE surface with three tabs: **Subagents** (the flat Subagent-child fleet), **Parallel** (the fork-join GROUP roster — join mode, branches, winner, fork paths), and **Teams** (the full roster + per-member focus of the most-recent team). `tab` cycles tabs, `enter` focuses a row/group, `esc` steps back / closes. The default tab is **context-sensitive** (team live → parallel live → subagents → parallel → team). Works **while idle and mid-run**; inert under a permission modal. `/team` opens it pinned to the Teams tab. |
 | `ctrl+g` | select all prompt text (rebindable as `SelectAll`; inside the `/models` picker, the existing `SetGlobalDefault` binding is used instead) |

@@ -2036,15 +2036,21 @@ func (m Model) retryPendingModeCmd() tea.Cmd {
 // while armed quits; the fatal screen quits on the first press; a first press with
 // staged input clears it (no arm); a first press on an empty prompt arms the guard,
 // shows the hint, and schedules the timed disarm. See onKey's doc for the rationale.
+func (m Model) quitNow() (tea.Model, tea.Cmd) {
+	if m.cancelRun != nil {
+		m.cancelRun()
+	}
+	return m, tea.Quit
+}
+
+// onQuitKey implements the guarded ctrl+c exit behavior. The immediate exit is
+// shared with /quit so both paths cancel an active run before Bubble Tea exits.
 func (m Model) onQuitKey() (tea.Model, tea.Cmd) {
 	// Already armed → a second ctrl+c within the window: quit now. The fatal
 	// (dead-connection) screen also exits on a single press — there is no input to
 	// clear and no run to protect, so the guard would only add friction.
 	if m.quitArmed || m.phase == phaseFatal {
-		if m.cancelRun != nil {
-			m.cancelRun()
-		}
-		return m, tea.Quit
+		return m.quitNow()
 	}
 	// First ctrl+c with staged input: clear the input (mirrors esc's clear-the-line)
 	// and do NOT arm — a single press to wipe a draft is expected.
@@ -2129,10 +2135,7 @@ func (m Model) resumeNotice() string {
 // deliberately separate chords + separate state so neither confirms the other.
 func (m Model) onQuitDKey() (tea.Model, tea.Cmd) {
 	if m.quitDArmed || m.phase == phaseFatal {
-		if m.cancelRun != nil {
-			m.cancelRun()
-		}
-		return m, tea.Quit
+		return m.quitNow()
 	}
 	// The caller's gate keeps the prompt empty here (a populated prompt keeps the
 	// chord in the textarea).

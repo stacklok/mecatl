@@ -89,6 +89,11 @@ func TestHelpOverlayAllOnGolden(t *testing.T) {
 // pinning exact layout: under embedded defaults the MCP/commands/skills features
 // are tagged not-enabled and memory/teams are not.
 func TestHelpAnnotationsTrackCaps(t *testing.T) {
+	for _, body := range []string{stripANSIstr(m_helpBody(embeddedCaps())), stripANSIstr(m_helpBody(allOnCaps()))} {
+		if !strings.Contains(body, "/quit") || !strings.Contains(body, "alias: /exit") {
+			t.Errorf("help must document /quit and /exit alias:\n%s", body)
+		}
+	}
 	embedded := stripANSIstr(m_helpBody(embeddedCaps()))
 	allOn := stripANSIstr(m_helpBody(allOnCaps()))
 

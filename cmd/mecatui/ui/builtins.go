@@ -69,7 +69,7 @@ func (m Model) wiredCollaborators() wiredCollaborators {
 }
 
 // builtinCommands returns the caps-filtered built-in set for the connected
-// server. /clear and /help are ALWAYS present — they act purely on the Model and
+// server. /clear, /help, and /quit are ALWAYS present — they act purely on the Model and
 // need no server feature. /mcp is present only when the server advertises MCP
 // AND a Commander-independent MCP collaborator is wired (w.MCP); /agents (the
 // definition inventory) only when the server advertises Agents AND an agents
@@ -85,7 +85,7 @@ func (m Model) wiredCollaborators() wiredCollaborators {
 // scheduled-tasks overlay, issue #234) only when the server advertises
 // scheduling AND a schedule lister is wired (w.Scheduling). /effort (the
 // reasoning-effort picker, ADR 0055) is gated identically to /models and sits
-// directly after it. The order is fixed (clear, help, mcp, agents, team, skills,
+// directly after it. The order is fixed (clear, help, quit, mcp, agents, team, skills,
 // soul, usermodel, models, effort, worktrees, schedule) and locked by a test so
 // the palette ordering is stable.
 //
@@ -101,6 +101,11 @@ func builtinCommands(caps client.Capabilities, w wiredCollaborators) []builtin {
 			name: "help",
 			desc: "show keys & features",
 			run:  Model.runHelp,
+		},
+		{
+			name: "quit",
+			desc: "quit mecatui",
+			run:  Model.runQuit,
 		},
 		{
 			name: "session",
@@ -371,6 +376,10 @@ func (m Model) runHelp() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m Model) runQuit() (tea.Model, tea.Cmd) {
+	return m.quitNow()
+}
+
 func (m Model) runSessionDetails() (tea.Model, tea.Cmd) {
 	return m.openSessionDetails()
 }
@@ -560,7 +569,8 @@ type builtinName struct {
 // builtinNameRegistry is the static registry identity and argument policy used
 // before a capability-gated builtin can be dispatched.
 var builtinNameRegistry = []builtinName{
-	{name: "clear", acceptsArgs: false}, {name: "help", acceptsArgs: false}, {name: "session", acceptsArgs: false},
+	{name: "clear", acceptsArgs: false}, {name: "help", acceptsArgs: false}, {name: "quit", acceptsArgs: false},
+	{name: "session", acceptsArgs: false},
 	{name: "retry", acceptsArgs: false}, {name: "diagnostics", acceptsArgs: false}, {name: "compact", acceptsArgs: false},
 	{name: "mcp", acceptsArgs: false}, {name: "agents", acceptsArgs: false}, {name: "team", acceptsArgs: false},
 	{name: "skills", acceptsArgs: false}, {name: "soul", acceptsArgs: false}, {name: "usermodel", acceptsArgs: false},
@@ -587,6 +597,13 @@ func isKnownBuiltinName(name string) bool {
 	return ok
 }
 
+func canonicalBuiltinName(name string) string {
+	if name == "exit" {
+		return "quit"
+	}
+	return name
+}
+
 // dispatchBareBuiltin checks whether raw text is a slash command after trimming
 // surrounding Unicode whitespace. A current bare built-in executes locally. A
 // recognized built-in that does not accept arguments keeps the input and shows a
@@ -597,7 +614,7 @@ func (m Model) dispatchBareBuiltin(text string) (tea.Model, tea.Cmd, bool) {
 	if len(fields) > 1 {
 		name, ok := commandPrefix(fields[0])
 		if ok {
-			name = strings.ToLower(name)
+			name = canonicalBuiltinName(strings.ToLower(name))
 			acceptsArgs, known := knownBuiltinNames[name]
 			if b, found := builtinByName(m.caps, m.wiredCollaborators(), name); found {
 				acceptsArgs, known = b.acceptsArgs, true
@@ -616,7 +633,7 @@ func (m Model) dispatchBareBuiltin(text string) (tea.Model, tea.Cmd, bool) {
 	// against all-lowercase names, so "/MODELS" would miss both the dispatch
 	// path and the isKnownBuiltinName guard. Lowercasing here aligns the two
 	// without changing the downstream palette/completion paths.
-	name = strings.ToLower(name)
+	name = canonicalBuiltinName(strings.ToLower(name))
 	if b, found := builtinByName(m.caps, m.wiredCollaborators(), name); found {
 		// A successful bare-command dispatch consumes the command line, so close its
 		// derived palette state too. This path serves both idle and running input.

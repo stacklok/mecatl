@@ -23,6 +23,7 @@ Press `?` on an empty prompt to open the live help overlay. It shows the active 
 | `home` / `end` | Jump to the top or bottom; `end` resumes auto-follow. |
 | `/` | Open the slash-command palette. |
 | `ctrl+c` twice on an empty prompt | Quit safely. |
+| `/quit` (or `/exit`) | Quit immediately and cancel an active run. `/quit` appears in the slash palette; `/exit` is a dispatch-only alias. |
 | `ctrl+z` | Suspend to the shell; use `fg` to return. |
 
 Suspending does not stop an embedded server or an active run. Cancel first if you want the work to stop.
