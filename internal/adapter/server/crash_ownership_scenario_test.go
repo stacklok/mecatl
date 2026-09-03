@@ -18,7 +18,10 @@ import (
 
 	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memlease"
+	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
+	"github.com/stacklok/mecatl/engine/adapter/permstore"
+	"github.com/stacklok/mecatl/engine/adapter/sessnap"
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
@@ -49,7 +52,17 @@ func (c *crashOwnershipClock) advance(d time.Duration) {
 
 type crashOwnershipLease struct {
 	port.SessionLease
-	releases atomic.Int64
+	releases      atomic.Int64
+	rejectRenew   atomic.Bool
+	renewAttempts atomic.Int64
+}
+
+func (l *crashOwnershipLease) Renew(ctx context.Context, held port.Lease) (port.Lease, error) {
+	l.renewAttempts.Add(1)
+	if l.rejectRenew.Load() {
+		return port.Lease{}, port.ErrLeaseHeld
+	}
+	return l.SessionLease.Renew(ctx, held)
 }
 
 func (l *crashOwnershipLease) Release(ctx context.Context, held port.Lease) error {
@@ -555,6 +568,218 @@ func (f *crashOwnershipFixture) assertRedisSidecarsSurvivedReload(t *testing.T) 
 	}
 	if record.CallID != crashOrphanCallID {
 		t.Fatalf("successor Redis tool sidecar call ID = %q, want %q", record.CallID, crashOrphanCallID)
+	}
+}
+
+func newCrashAwaitingService(
+	t *testing.T,
+	store port.SessionStore,
+	lease port.SessionLease,
+	owner string,
+	llm port.LLMProvider,
+	ran *atomic.Int64,
+	newID func() session.SessionID,
+) *server.Service {
+	t.Helper()
+	capability := server.NewSessionMutationCapability(true)
+	catalog := tool.NewCatalog()
+	catalog.MustRegister(&writeAskTool{ran: ran})
+	eng := agent.NewEngine(agent.Deps{
+		LLM:     llm,
+		Catalog: catalog,
+		Policy:  permpolicy.NewPolicy(nil, permstore.New()),
+		Model:   "test-model",
+		Store:   capability.GuardStore(store),
+	})
+	svc, err := server.NewService(server.Config{
+		Engine:             eng,
+		Store:              store,
+		Workspaces:         func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+		SessionLease:       lease,
+		LeaseOwner:         owner,
+		LeaseTTL:           crashOwnershipTTL,
+		LeaseRenewInterval: time.Millisecond,
+		MutationCapability: capability,
+		NewID:              newID,
+	})
+	if err != nil {
+		t.Fatalf("new %s awaiting service: %v", owner, err)
+	}
+	t.Cleanup(svc.Close)
+	return svc
+}
+
+func TestSessionAffinityAndHandoff_Scenario7_AwaitingLeaseLossHandoff(t *testing.T) {
+	f := newCrashOwnershipFixture(t)
+	var staleRan, successorRan atomic.Int64
+	ownerLLM := mockllm.New(
+		mockllm.ToolCallTurn(session.NewToolCall("write-handoff", "Write", json.RawMessage(`{"path":"handoff.go"}`))),
+		mockllm.TextTurn("stale owner must not continue"),
+	)
+	successorLLM := mockllm.New(mockllm.TextTurn("continued by successor"))
+	owner := newCrashAwaitingService(t, f.ownerStore, f.lease, "awaiting-owner", ownerLLM, &staleRan, func() session.SessionID {
+		return "awaiting-handoff-session"
+	})
+	successor := newCrashAwaitingService(t, f.survivorStore, f.lease, "awaiting-successor", successorLLM, &successorRan, nil)
+
+	sess, err := owner.CreateSession(context.Background(), "/workspace", session.ModeDefault, session.Limits{})
+	if err != nil {
+		t.Fatalf("create awaiting owner session: %v", err)
+	}
+	f.sessionID = sess.ID
+	run, err := owner.StartRun(context.Background(), sess.ID, "write after approval")
+	if err != nil {
+		t.Fatalf("start awaiting owner run: %v", err)
+	}
+
+	var pending session.PendingAsk
+	deadline := time.After(3 * time.Second)
+	for pending.AskID == "" {
+		select {
+		case ev := <-run.Events():
+			if ev.Type != session.EvPermissionAsk || ev.Ask == nil {
+				continue
+			}
+			owner.Persist(context.Background(), sess.ID)
+			parked, loadErr := f.survivorStore.Load(context.Background(), sess.ID)
+			if loadErr != nil {
+				t.Fatalf("load durable awaiting snapshot: %v", loadErr)
+			}
+			var ok bool
+			pending, ok = parked.PendingAsk()
+			if parked.State != session.StateAwaiting || !ok {
+				t.Fatalf("durable snapshot = state %q pending=%t, want awaiting PendingAsk", parked.State, ok)
+			}
+		case <-deadline:
+			t.Fatal("timed out waiting for durable permission ask")
+		}
+	}
+	parked, err := f.survivorStore.Load(context.Background(), sess.ID)
+	if err != nil {
+		t.Fatalf("reload durable awaiting snapshot: %v", err)
+	}
+	before, err := sessnap.Marshal(parked)
+	if err != nil {
+		t.Fatalf("marshal durable awaiting snapshot: %v", err)
+	}
+
+	if _, err := successor.ApproveRun(context.Background(), sess.ID, pending.AskID, session.VerdictAllowOnce, ""); !errors.Is(err, server.ErrSessionLeasedElsewhere) {
+		t.Fatalf("pre-TTL successor resolved ask: %v", err)
+	}
+	f.lease.rejectRenew.Store(true)
+	var retracts int
+	var staleStop session.StopReason
+	deadline = time.After(3 * time.Second)
+	for {
+		select {
+		case ev, ok := <-run.Events():
+			if !ok {
+				owner.FinishRun(sess.ID, run)
+				goto staleStopped
+			}
+			if ev.Type == session.EvPermissionRetract && ev.Ask != nil && ev.Ask.AskID == pending.AskID {
+				retracts++
+			}
+			if ev.Type == session.EvResult && ev.Result != nil {
+				staleStop = ev.Result.Stop
+			}
+		case <-deadline:
+			t.Fatal("timed out waiting for renewal-loss invalidation")
+		}
+	}
+
+staleStopped:
+	if f.lease.renewAttempts.Load() == 0 {
+		t.Fatal("owner stopped without a lease renewal attempt")
+	}
+	if retracts != 1 {
+		t.Fatalf("local permission retracts = %d, want exactly 1", retracts)
+	}
+	if staleStop != session.StopCancelled {
+		t.Fatalf("stale local run stop = %q, want %q", staleStop, session.StopCancelled)
+	}
+	if staleRan.Load() != 0 {
+		t.Fatalf("stale owner executed pending tool %d times, want 0", staleRan.Load())
+	}
+	if got := f.lease.releases.Load(); got != 0 {
+		t.Fatalf("renewal-lost owner released lease %d times, want 0", got)
+	}
+	if _, err := owner.ApproveRun(context.Background(), sess.ID, pending.AskID, session.VerdictAllowOnce, ""); !errors.Is(err, server.ErrSessionLeasedElsewhere) {
+		t.Fatalf("stale owner resolved ask after lease loss: %v", err)
+	}
+	if _, err := successor.ApproveRun(context.Background(), sess.ID, pending.AskID, session.VerdictAllowOnce, ""); !errors.Is(err, server.ErrSessionLeasedElsewhere) {
+		t.Fatalf("pre-TTL successor resolved ask after owner loss: %v", err)
+	}
+	afterLoss, err := f.survivorStore.Load(context.Background(), sess.ID)
+	if err != nil {
+		t.Fatalf("load snapshot after renewal loss: %v", err)
+	}
+	afterLossBytes, err := sessnap.Marshal(afterLoss)
+	if err != nil {
+		t.Fatalf("marshal snapshot after renewal loss: %v", err)
+	}
+	if !reflect.DeepEqual(afterLossBytes, before) {
+		t.Fatalf("renewal loss changed durable awaiting snapshot\n before: %s\n after:  %s", before, afterLossBytes)
+	}
+	gotPending, ok := afterLoss.PendingAsk()
+	if !ok || !reflect.DeepEqual(gotPending, pending) {
+		t.Fatalf("renewal loss replaced PendingAsk: got %#v present=%t, want %#v", gotPending, ok, pending)
+	}
+
+	f.advancePastTTL()
+	f.lease.rejectRenew.Store(false)
+	type resumeResult struct {
+		run *agent.Run
+		err error
+	}
+	start := make(chan struct{})
+	results := make(chan resumeResult, 2)
+	for range 2 {
+		go func() {
+			<-start
+			resumed, resumeErr := successor.ApproveRun(context.Background(), sess.ID, pending.AskID, session.VerdictAllowOnce, "")
+			results <- resumeResult{run: resumed, err: resumeErr}
+		}()
+	}
+	close(start)
+	var resumed *agent.Run
+	for range 2 {
+		result := <-results
+		if result.err != nil {
+			t.Fatalf("post-TTL successor resume: %v", result.err)
+		}
+		if result.run != nil {
+			if resumed != nil {
+				t.Fatal("more than one successor resumed the durable ask")
+			}
+			resumed = result.run
+		}
+	}
+	if resumed == nil {
+		t.Fatal("no successor resumed the durable ask")
+	}
+	var successorStop session.StopReason
+	for ev := range resumed.Events() {
+		if ev.Type == session.EvResult && ev.Result != nil {
+			successorStop = ev.Result.Stop
+		}
+	}
+	successor.FinishRun(sess.ID, resumed)
+	if successorRan.Load() != 1 {
+		t.Fatalf("successor executed pending tool %d times, want exactly 1", successorRan.Load())
+	}
+	if successorLLM.Calls() != 1 {
+		t.Fatalf("successor provider calls = %d, want exactly 1", successorLLM.Calls())
+	}
+	if staleRan.Load() != 0 {
+		t.Fatalf("stale owner executed pending tool %d times after takeover, want 0", staleRan.Load())
+	}
+	if successorStop != session.StopEndTurn {
+		t.Fatalf("successor stop = %q, want %q", successorStop, session.StopEndTurn)
+	}
+	final := f.waitRedisState(t, session.StateCompleted)
+	if _, ok := final.PendingAsk(); ok {
+		t.Fatal("successor retained the PendingAsk instead of resolving it")
 	}
 }
 
