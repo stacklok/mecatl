@@ -335,6 +335,34 @@ func (w nonFlushingResponseWriter) Header() http.Header         { return w.rec.H
 func (w nonFlushingResponseWriter) Write(p []byte) (int, error) { return w.rec.Write(p) }
 func (w nonFlushingResponseWriter) WriteHeader(code int)        { w.rec.WriteHeader(code) }
 
+type failingSSEWriter struct {
+	*httptest.ResponseRecorder
+	failAt        int
+	writes        int
+	err           error
+	onWriteHeader func()
+	onWrite       func(int)
+}
+
+func (w *failingSSEWriter) Write(p []byte) (int, error) {
+	w.writes++
+	if w.writes == w.failAt {
+		return 0, w.err
+	}
+	n, err := w.ResponseRecorder.Write(p)
+	if w.onWrite != nil {
+		w.onWrite(w.writes)
+	}
+	return n, err
+}
+
+func (w *failingSSEWriter) WriteHeader(code int) {
+	w.ResponseRecorder.WriteHeader(code)
+	if w.onWriteHeader != nil {
+		w.onWriteHeader()
+	}
+}
+
 func TestMCPAuthorizationHTTPControlRejectsNonFlusherBeforeContinuation(t *testing.T) {
 	f, ownerCtx, _ := ownedAuthorizationFixture(t, session.AuthorizationGranted)
 	h := NewHTTPHandler(f.svc)
@@ -379,6 +407,84 @@ func TestMCPAuthorizationHTTPControlCancellationStopsConstruction(t *testing.T) 
 	}
 	if sess.State != session.StateAuthorizing {
 		t.Fatalf("state = %q, want authorizing", sess.State)
+	}
+}
+
+func TestMCPAuthorizationHTTPControlRequestLossAfterRegistrationCancelsDrainsAndFinishes(t *testing.T) {
+	f, ownerCtx, _ := ownedAuthorizationFixture(t, session.AuthorizationGranted)
+	ctx, cancel := context.WithCancel(ownerCtx)
+	defer cancel()
+	writer := &failingSSEWriter{
+		ResponseRecorder: httptest.NewRecorder(),
+		onWrite: func(writes int) {
+			// The status frame is complete. Wait for the registered continuation to
+			// finish producing its buffered events, then lose the request before the
+			// relay can select its next event.
+			if writes != 3 {
+				return
+			}
+			deadline := time.Now().Add(time.Second)
+			for time.Now().Before(deadline) {
+				sess, err := f.svc.GetSession(ownerCtx, "authorization-session")
+				if err == nil && sess.State == session.StateCompleted {
+					cancel()
+					return
+				}
+				time.Sleep(time.Millisecond)
+			}
+			t.Fatal("continuation did not become ready before request loss")
+		},
+	}
+	path := "/v1/sessions/authorization-session/mcp-authorizations/" + f.pending.Authorization.ID + "/recheck"
+
+	NewHTTPHandler(f.svc).ServeHTTP(writer, httptest.NewRequest(http.MethodPost, path, nil).WithContext(ctx))
+
+	// The three status-frame writes precede loss. No ready continuation event may
+	// be written after it.
+	if writer.writes != 3 {
+		t.Fatalf("SSE writes = %d, want only the three status-frame writes", writer.writes)
+	}
+	if _, live := f.svc.LookupRun("authorization-session"); live {
+		t.Fatal("request loss left continuation registered")
+	}
+}
+
+func TestMCPAuthorizationHTTPControlInitialStatusWriteFailureCancelsDrainsAndFinishes(t *testing.T) {
+	f, ownerCtx, _ := ownedAuthorizationFixture(t, session.AuthorizationGranted)
+	writer := &failingSSEWriter{
+		ResponseRecorder: httptest.NewRecorder(),
+		failAt:           1,
+		err:              errors.New("initial status write failed"),
+	}
+	path := "/v1/sessions/authorization-session/mcp-authorizations/" + f.pending.Authorization.ID + "/recheck"
+
+	NewHTTPHandler(f.svc).ServeHTTP(writer, httptest.NewRequest(http.MethodPost, path, nil).WithContext(ownerCtx))
+
+	if writer.writes != 1 {
+		t.Fatalf("writes after initial status failure = %d, want 1", writer.writes)
+	}
+	if _, live := f.svc.LookupRun("authorization-session"); live {
+		t.Fatal("initial status write failure left continuation registered")
+	}
+}
+
+func TestMCPAuthorizationHTTPControlContinuationWriteFailureCancelsDrainsAndFinishes(t *testing.T) {
+	f, ownerCtx, _ := ownedAuthorizationFixture(t, session.AuthorizationGranted)
+	writer := &failingSSEWriter{
+		ResponseRecorder: httptest.NewRecorder(),
+		// The status frame writes data, JSON, and its terminating newline first.
+		failAt: 4,
+		err:    errors.New("continuation event write failed"),
+	}
+	path := "/v1/sessions/authorization-session/mcp-authorizations/" + f.pending.Authorization.ID + "/recheck"
+
+	NewHTTPHandler(f.svc).ServeHTTP(writer, httptest.NewRequest(http.MethodPost, path, nil).WithContext(ownerCtx))
+
+	if writer.writes != 4 {
+		t.Fatalf("writes after continuation failure = %d, want 4", writer.writes)
+	}
+	if _, live := f.svc.LookupRun("authorization-session"); live {
+		t.Fatal("continuation write failure left run registered")
 	}
 }
 

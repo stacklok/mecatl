@@ -851,13 +851,6 @@ func (h *HTTPHandler) relayMCPAuthorizationControlSSE(w http.ResponseWriter, r *
 	w.WriteHeader(http.StatusOK)
 	flusher.Flush()
 	enc := json.NewEncoder(w)
-	failed := false
-	fail := func() {
-		failed = true
-		if result.Run != nil {
-			result.Run.Cancel()
-		}
-	}
 	if result.Run == nil {
 		if _, err := w.Write([]byte("data: ")); err != nil {
 			return
@@ -873,27 +866,73 @@ func (h *HTTPHandler) relayMCPAuthorizationControlSSE(w http.ResponseWriter, r *
 	logCtx := context.WithoutCancel(r.Context())
 	recorder := NewRunEventRecorder(logCtx, h.svc, id)
 	defer recorder.Close()
-	for event := range result.Run.Events() {
+	failed := false
+	fail := func() {
 		if failed {
-			recorder.Observe(event)
-			continue
+			return
 		}
-		if !h.svc.relayEvent(r.Context(), id, event, false, recorder) {
-			continue
-		}
+		failed = true
+		result.Run.Cancel()
+	}
+	writeEvent := func(event session.Event) bool {
 		if _, err := w.Write([]byte("data: ")); err != nil {
-			fail()
-			continue
+			return false
 		}
 		if err := enc.Encode(toProto(event)); err != nil {
-			fail()
-			continue
+			return false
 		}
 		if _, err := w.Write([]byte("\n")); err != nil {
-			fail()
-			continue
+			return false
 		}
 		flusher.Flush()
+		return true
+	}
+
+	// The status precedes the continuation. If it cannot be delivered, retain
+	// ownership of the registered run: cancel it, drain its events into the log,
+	// then finish it below.
+	if r.Context().Err() != nil || !writeEvent(result.Event) {
+		fail()
+	}
+	requestDone := r.Context().Done()
+	for events := result.Run.Events(); events != nil; {
+		if !failed && r.Context().Err() != nil {
+			fail()
+			requestDone = nil
+		}
+		select {
+		case <-requestDone:
+			// A lost HTTP request has no control channel to recover through. Cancel
+			// the continuation but keep draining so it can emit its terminal event.
+			fail()
+			requestDone = nil
+		case event, ok := <-events:
+			if !ok {
+				events = nil
+				continue
+			}
+			if failed {
+				recorder.Observe(event)
+				continue
+			}
+			if r.Context().Err() != nil {
+				fail()
+				requestDone = nil
+				recorder.Observe(event)
+				continue
+			}
+			if !h.svc.relayEvent(r.Context(), id, event, false, recorder) {
+				continue
+			}
+			if r.Context().Err() != nil {
+				fail()
+				requestDone = nil
+				continue
+			}
+			if !writeEvent(event) {
+				fail()
+			}
+		}
 	}
 }
 
