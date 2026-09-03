@@ -2,12 +2,12 @@
 id: 19-repair-raw-helper-trace
 title: Repair TypeScript raw-helper acceptance trace
 blocked_by: [05-typescript-raw-affinity]
-status: in-progress
-branch: ""
+status: done
+branch: "plan-session-affinity-and-handoff/19-repair-raw-helper-trace"
 worktree: ".scratch/task-session-affinity-19"
 issue: ""
 retries: 0
-last_error: "ac-trace strict could not resolve TestADR_0290_TypeScriptRawHelperCompatibility"
+last_error: ""
 accumulator: acc/session-affinity-and-handoff
 ---
 
