@@ -244,7 +244,7 @@ func TestUnenrolledLocalTargetConnectsAnonymouslyWithoutCreatingAuthState(t *tes
 		t.Fatal(err)
 	}
 	defer cl.Close()
-	id, _, _, err := cl.CreateSession(t.Context(), "", mecatlv1.PermissionMode_PERMISSION_MODE_DEFAULT, client.ModelSelection{})
+	id, _, _, err := cl.CreateSession(t.Context(), mecatlv1.PermissionMode_PERMISSION_MODE_DEFAULT, client.ModelSelection{})
 	if err != nil || id != "anonymous-local" {
 		t.Fatalf("anonymous CreateSession = %q, %v", id, err)
 	}
@@ -285,7 +285,7 @@ func TestUnenrolledRemoteTargetReachesCredentialFreeServer(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer cl.Close()
-	id, _, _, err := cl.CreateSession(t.Context(), "", mecatlv1.PermissionMode_PERMISSION_MODE_DEFAULT, client.ModelSelection{})
+	id, _, _, err := cl.CreateSession(t.Context(), mecatlv1.PermissionMode_PERMISSION_MODE_DEFAULT, client.ModelSelection{})
 	if err != nil || id != "anonymous-local" {
 		t.Fatalf("credential-free CreateSession = %q, %v", id, err)
 	}
@@ -324,7 +324,7 @@ func TestUnenrolledRemoteUnauthenticatedOffersServerAuthoritativeRecovery(t *tes
 		t.Fatal(err)
 	}
 	defer cl.Close()
-	_, _, _, err = cl.CreateSession(t.Context(), "", mecatlv1.PermissionMode_PERMISSION_MODE_DEFAULT, client.ModelSelection{})
+	_, _, _, err = cl.CreateSession(t.Context(), mecatlv1.PermissionMode_PERMISSION_MODE_DEFAULT, client.ModelSelection{})
 	reason, ok := client.AuthFailure(err, false)
 	for _, want := range []string{"server requires caller authentication", "--auth-token", "if this server supports OIDC enrollment", "mecatui login " + listener.Addr().String()} {
 		if !strings.Contains(err.Error(), want) {
