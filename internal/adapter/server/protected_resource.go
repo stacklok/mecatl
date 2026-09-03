@@ -12,11 +12,11 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/resourceurl"
 )
 
-// This is a minimal adaptation of Apache-2.0 ToolHive v0.40.0
-// pkg/auth/well_known.go. It deliberately keeps the profile type open to carry
-// mecatl's namespaced fields and routes only the configured resource path.
 // ProtectedResourceProfile is the validated, public subset of the server's
-// OIDC configuration that RFC 9728 makes discoverable.
+// OIDC configuration that RFC 9728 makes discoverable. This is a minimal
+// adaptation of Apache-2.0 ToolHive v0.40.0 pkg/auth/well_known.go; it keeps
+// the profile type open for mecatl's namespaced fields and routes only the
+// configured resource path.
 type ProtectedResourceProfile struct {
 	Resource string
 	Issuer   string

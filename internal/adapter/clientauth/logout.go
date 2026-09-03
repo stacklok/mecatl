@@ -82,7 +82,7 @@ type pendingRevocation struct {
 // unreadable credentials retain the registry entry so another process's token
 // rotation never becomes an unreachable orphan. Provider revocation is bounded
 // best effort and never blocks local deletion.
-func Logout(ctx context.Context, target string, cfg LogoutConfig) (LogoutResult, error) {
+func Logout(ctx context.Context, target string, cfg LogoutConfig) (LogoutResult, error) { //nolint:gocyclo // local credential/registry CAS outcomes are intentionally explicit.
 	result := LogoutResult{Target: target}
 	if cfg.Registry == nil {
 		return result, errors.New("clientauth: registry is required")

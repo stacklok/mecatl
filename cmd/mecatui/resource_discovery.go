@@ -127,14 +127,6 @@ func validAuthority(u *url.URL) bool {
 	return validDNSName(host)
 }
 
-func canonicalAuthority(u *url.URL) string {
-	host := strings.ToLower(u.Hostname())
-	if port := u.Port(); port != "" {
-		return net.JoinHostPort(host, port)
-	}
-	return host
-}
-
 func portOr443(u *url.URL) string {
 	if port := u.Port(); port != "" {
 		return port
