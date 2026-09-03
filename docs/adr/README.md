@@ -222,6 +222,9 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0289 — Hardened status-command output and environment extension](./0289-hardened-status-command-boundary.md)
 - [0280 — Automatic light theme selection in mecatui](./0280-mecatui-light-theme-autodetect.md)
 - [0291 — Server-owned session placement](./0291-server-owned-session-placement.md)
+- [0294 — End-to-end session correlation and affinity](./0294-session-correlation-and-affinity.md) *(proposed)*
+- [0295 — One scaled acceptance-plan spine for substantive work](./0295-unified-development-spine.md)
+- [0296 — Opt-in local session context service](./0296-opt-in-local-session-context.md) *(proposed)*
 
 ### Retired
 - [0029 — Repo-map tree-sitter](./0029-repomap-tree-sitter.md) *(retired)*
