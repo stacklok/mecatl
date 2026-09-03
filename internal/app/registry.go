@@ -1597,10 +1597,11 @@ var openAICodexStatusHints = map[string]string{
 	statusEmpty:        "the ChatGPT account lists no selectable Codex models; replace the manual token or check the subscription",
 }
 
-// statusHintFor returns provider-specific remediation only for providers whose
-// listing outcome is operator-actionable on provider_status. Ordinary provider
-// outages (for example OpenRouter) get "". Keep each vendor's copy in its own
-// table so gateway and manual-token remedies cannot cross-contaminate.
+// statusHintFor returns provider-specific remediation for ToolHive and Codex.
+// Custom-provider listing failures are also projected through provider_status,
+// but deliberately receive no endpoint-specific hint. Ordinary provider outages
+// (for example OpenRouter) get "". Keep each vendor's copy in its own table so
+// gateway and manual-token remedies cannot cross-contaminate.
 func statusHintFor(pid, state string) string {
 	switch pid {
 	case providerToolhive:

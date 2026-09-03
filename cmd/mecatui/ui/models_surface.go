@@ -226,12 +226,20 @@ func promotedStatus(statuses []client.ProviderStatus) (client.ProviderStatus, bo
 	return client.ProviderStatus{}, false
 }
 
+var customProviderStatusCopy = map[string]string{
+	"unreachable":  "model service not reachable — check provider configuration",
+	"unauthorized": "model service rejected access — check provider access configuration",
+	"empty":        "no selectable models",
+}
 var toolhiveStatusCopy = map[string]string{"unreachable": "proxy not reachable", "unauthorized": "gateway rejected the credential", "empty": "credential lists no models"}
 var openAICodexStatusCopy = map[string]string{"unreachable": "ChatGPT Codex service not reachable", "unauthorized": "manual token rejected", "empty": "account lists no selectable models"}
 
 func providerStatusLine(s client.ProviderStatus) string {
-	copyByState := toolhiveStatusCopy
-	if s.ProviderID == "openai-codex" {
+	copyByState := customProviderStatusCopy
+	switch s.ProviderID {
+	case "toolhive":
+		copyByState = toolhiveStatusCopy
+	case "openai-codex":
 		copyByState = openAICodexStatusCopy
 	}
 	clause := copyByState[s.State]

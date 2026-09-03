@@ -2,6 +2,7 @@ package anthropic
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"os"
@@ -102,6 +103,28 @@ func TestListerRejectsOversizedResponse(t *testing.T) {
 	_, err := NewLister("sk-test-key", "", client).ListModels(context.Background())
 	if err == nil {
 		t.Fatal("ListModels accepted an oversized response")
+	}
+}
+
+func TestListerPreservesHTTPStatus(t *testing.T) {
+	for _, statusCode := range []int{http.StatusUnauthorized, http.StatusBadGateway} {
+		t.Run(http.StatusText(statusCode), func(t *testing.T) {
+			client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+				return &http.Response{
+					StatusCode: statusCode,
+					Body:       io.NopCloser(strings.NewReader(`{"error":{"message":"not for callers"}}`)),
+					Header:     http.Header{"Content-Type": []string{"application/json"}},
+				}, nil
+			})}
+			_, err := NewLister("sk-test-key", "", client).ListModels(context.Background())
+			if err == nil {
+				t.Fatal("ListModels succeeded, want HTTP error")
+			}
+			var statusErr interface{ StatusCode() int }
+			if !errors.As(err, &statusErr) || statusErr.StatusCode() != statusCode {
+				t.Fatalf("ListModels error = %v, want StatusCode() == %d", err, statusCode)
+			}
+		})
 	}
 }
 

@@ -260,10 +260,13 @@ reachability (register-on-intent; a session persisting `provider_id: "toolhive"`
 survive a restart with the proxy down, never rejected as "unknown or unavailable
 provider"). Each `providerEntry` carries an `intentDriven` bit that
 `preferredDefaultProvider` reads to place intent-driven providers at an explicit
-LOWEST-preference tier (any key-driven provider always wins the default) and that the
-`ListModels` `provider_status` projection also carries operator-actionable Codex
-entitlement outcomes, while `intentDriven` alone controls the TUI's `org` tier and
-gateway availability notices. A BOUNDED (≤1.5s) Build-time probe runs immediately after
+LOWEST-preference tier (any key-driven provider always wins the default).
+`ListModels` `provider_status` projects operator-actionable live-listing outcomes
+for intent-driven gateways, Codex entitlements, and operator-defined custom
+providers (identified by their configured custom default model); it exposes only
+safe provider ID/state/hint metadata, never an endpoint, credential, or raw
+listing error/body. `intentDriven` alone controls the TUI's `org` tier and gateway
+availability notices. A BOUNDED (≤1.5s) Build-time probe runs immediately after
 registration and drives ONLY the startup diagnostic, the initial live-model snapshot,
 and default-model eligibility for a SOLE intent-driven provider — never registration
 itself. See `docs/adr/0064-toolhive-llm-gateway-provider.md` for the full design

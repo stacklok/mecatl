@@ -97,7 +97,10 @@ An operator can declare a named HTTPS gateway in the user-global `settings.yaml`
 gateways use the matching provider ID in the operator-local `auth.yaml`; credentials are
 never read from a project file or supplied by `mecatui connect`. The server snapshots these
 settings and credentials once while it starts, so changing either file requires a restart.
-Built-in `--*-base-url` flags still take precedence over eligible built-in endpoint overrides.
+When a custom provider's live model listing is unreachable, unauthorized, or empty,
+`/models` keeps its configured default model selectable and displays only a safe
+provider status; endpoints, credentials, and raw listing errors or response bodies
+are never published to clients. Built-in `--*-base-url` flags still take precedence over eligible built-in endpoint overrides.
 See the [provider configuration reference](https://github.com/stacklok/mecatl/blob/main/docs/configuration-reference.md#providers) for the accepted flavors and fields.
 
 ### Configure aliases, slots, and task routing

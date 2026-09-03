@@ -751,10 +751,11 @@ func (s *liveOutcomeStore) getStatus(pid string) (providerStatus, bool) {
 }
 
 // providerStatusProto projects operator-actionable live-inventory outcomes into
-// the v1 wire message. That includes intent-driven gateways and openai-codex,
-// whose live list is the account entitlement boundary; ordinary OpenRouter and
-// Anthropic listing blips remain unprojected. Sorted by provider id for a
-// deterministic wire shape.
+// the v1 wire message. That includes intent-driven gateways, openai-codex, and
+// operator-defined custom providers (identified by their custom-only configured
+// default model), whose live list is the account entitlement boundary; ordinary
+// OpenRouter and Anthropic listing blips remain unprojected. Sorted by provider
+// id for a deterministic wire shape.
 func providerStatusProto(reg *providerRegistry) []*mecatlv1.ProviderStatus {
 	if reg == nil {
 		return nil
@@ -762,7 +763,7 @@ func providerStatusProto(reg *providerRegistry) []*mecatlv1.ProviderStatus {
 	var out []*mecatlv1.ProviderStatus
 	for _, pid := range reg.Available() {
 		entry, ok := reg.Lookup(pid)
-		if !ok || (!entry.intentDriven && pid != providerOpenAICodex) {
+		if !ok || (!entry.intentDriven && pid != providerOpenAICodex && entry.defaultModel == "") {
 			continue
 		}
 		status, ok := reg.outcomes.getStatus(pid)
