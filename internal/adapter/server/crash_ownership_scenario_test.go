@@ -2,8 +2,11 @@ package server_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"iter"
+	"net/http"
+	"net/http/httptest"
 	"reflect"
 	"runtime"
 	"sync"
@@ -54,13 +57,29 @@ func (l *crashOwnershipLease) Release(ctx context.Context, held port.Lease) erro
 	return l.SessionLease.Release(ctx, held)
 }
 
+type saveObservation struct {
+	state        session.State
+	messages     []session.Message
+	pairingError error
+}
+
 type countingRedisStore struct {
 	store     *redisstore.Store
 	mutations atomic.Int64
+	mu        sync.Mutex
+	saves     []saveObservation
 }
 
 func (s *countingRedisStore) Save(ctx context.Context, sess *session.Session) error {
 	s.mutations.Add(1)
+	messages := session.CloneMessages(sess.Conversation.Messages)
+	s.mu.Lock()
+	s.saves = append(s.saves, saveObservation{
+		state:        sess.State,
+		messages:     messages,
+		pairingError: session.ValidateToolPairing(messages),
+	})
+	s.mu.Unlock()
 	return s.store.Save(ctx, sess)
 }
 
@@ -73,19 +92,35 @@ func (s *countingRedisStore) Load(ctx context.Context, id session.SessionID) (*s
 	return s.store.Load(ctx, id)
 }
 
+func (s *countingRedisStore) resetSaveObservations() {
+	s.mu.Lock()
+	s.saves = nil
+	s.mu.Unlock()
+}
+
+func (s *countingRedisStore) saveObservations() []saveObservation {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]saveObservation(nil), s.saves...)
+}
+
 type crashBlockingProvider struct {
-	calls   atomic.Int64
-	entered chan struct{}
-	once    sync.Once
+	calls    atomic.Int64
+	entered  chan struct{}
+	once     sync.Once
+	delegate port.LLMProvider
 }
 
 func newCrashBlockingProvider() *crashBlockingProvider {
 	return &crashBlockingProvider{entered: make(chan struct{})}
 }
 
-func (p *crashBlockingProvider) Stream(ctx context.Context, _ port.LLMRequest) (iter.Seq2[port.Chunk, error], error) {
+func (p *crashBlockingProvider) Stream(ctx context.Context, req port.LLMRequest) (iter.Seq2[port.Chunk, error], error) {
 	p.calls.Add(1)
 	p.once.Do(func() { close(p.entered) })
+	if p.delegate != nil {
+		return p.delegate.Stream(ctx, req)
+	}
 	return func(yield func(port.Chunk, error) bool) {
 		<-ctx.Done()
 		yield(port.Chunk{Kind: port.ChunkDone, Stop: session.StopCancelled}, nil)
@@ -97,6 +132,7 @@ func (*crashBlockingProvider) Capabilities() port.ProviderCapabilities {
 }
 
 type crashOwnershipFixture struct {
+	redis            *miniredis.Miniredis
 	clock            *crashOwnershipClock
 	lease            *crashOwnershipLease
 	ownerStore       *countingRedisStore
@@ -125,6 +161,7 @@ func newCrashOwnershipFixture(t *testing.T) *crashOwnershipFixture {
 	clock := &crashOwnershipClock{now: time.Unix(1_700_000_000, 0)}
 	lease := &crashOwnershipLease{SessionLease: memlease.New(clock, crashOwnershipTTL)}
 	f := &crashOwnershipFixture{
+		redis:            mr,
 		clock:            clock,
 		lease:            lease,
 		ownerStore:       &countingRedisStore{store: ownerRedis},
@@ -354,6 +391,173 @@ func (f *crashOwnershipFixture) assertOneConcurrentSurvivor(t *testing.T) {
 	f.survivor.FinishRun(f.sessionID, winner)
 }
 
+const (
+	crashOrphanCallID = "crash-side-effect-call"
+	crashSidecarText  = "owner-sidecar-before-crash"
+)
+
+type handoffProviderCapture struct {
+	header            string
+	contextSessionID  session.SessionID
+	persistedState    session.State
+	persistedMessages []session.Message
+}
+
+type handoffHTTPProvider struct {
+	client    *http.Client
+	endpoint  string
+	mu        sync.Mutex
+	contextID session.SessionID
+}
+
+func (p *handoffHTTPProvider) Stream(ctx context.Context, _ port.LLMRequest) (iter.Seq2[port.Chunk, error], error) {
+	id, _ := port.SessionIDFromContext(ctx)
+	p.mu.Lock()
+	p.contextID = id
+	p.mu.Unlock()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, p.endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+	if value := string(id); port.ValidSessionIDHeaderValue(value) {
+		req.Header.Set(port.SessionIDHeaderName, value)
+	}
+	resp, err := p.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	_ = resp.Body.Close()
+	return func(yield func(port.Chunk, error) bool) {
+		if !yield(port.Chunk{Kind: port.ChunkText, Text: "continued after takeover"}, nil) {
+			return
+		}
+		yield(port.Chunk{Kind: port.ChunkDone, Stop: session.StopEndTurn}, nil)
+	}, nil
+}
+
+func (*handoffHTTPProvider) Capabilities() port.ProviderCapabilities {
+	return port.ProviderCapabilities{}
+}
+
+func (p *handoffHTTPProvider) sessionID() session.SessionID {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.contextID
+}
+
+func (f *crashOwnershipFixture) seedCrashOrphanWithRedisSidecars(t *testing.T) {
+	t.Helper()
+	persisted := f.waitRedisState(t, session.StateRunning)
+	call := session.NewToolCall(crashOrphanCallID, "ExternalWrite", nil)
+	if err := persisted.RecordAssistant(session.NewAssistantMessage("", "", []session.ToolCall{call})); err != nil {
+		t.Fatalf("record crash-orphaned tool call: %v", err)
+	}
+	if err := f.ownerStore.Save(context.Background(), persisted); err != nil {
+		t.Fatalf("persist crash-orphaned snapshot: %v", err)
+	}
+	if err := f.ownerStore.store.Append(context.Background(), f.sessionID, session.Event{Type: session.EvMessageDelta, Text: crashSidecarText}); err != nil {
+		t.Fatalf("append pre-crash event sidecar: %v", err)
+	}
+	f.ownerStore.store.ToolCall(f.sessionID, call, session.NewToolResult(call.ID, "external side effect observed"), 0, time.Millisecond)
+	f.survivorStore.resetSaveObservations()
+}
+
+func (f *crashOwnershipFixture) continueThroughHTTPProvider(t *testing.T, prompt string) (*agent.Run, handoffProviderCapture) {
+	t.Helper()
+	captures := make(chan handoffProviderCapture, 1)
+	providerServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		persisted, err := f.survivorStore.Load(r.Context(), f.sessionID)
+		if err != nil {
+			captures <- handoffProviderCapture{header: r.Header.Get(port.SessionIDHeaderName)}
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		captures <- handoffProviderCapture{
+			header:            r.Header.Get(port.SessionIDHeaderName),
+			persistedState:    persisted.State,
+			persistedMessages: session.CloneMessages(persisted.Conversation.Messages),
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(providerServer.Close)
+	provider := &handoffHTTPProvider{client: providerServer.Client(), endpoint: providerServer.URL}
+	f.survivorProvider.delegate = provider
+
+	run, err := f.survivor.StartRunContent(context.Background(), f.sessionID, prompt, nil)
+	if err != nil {
+		t.Fatalf("successor StartRunContent: %v", err)
+	}
+	var capture handoffProviderCapture
+	select {
+	case capture = <-captures:
+	case <-time.After(3 * time.Second):
+		t.Fatal("successor provider request was not captured")
+	}
+	capture.contextSessionID = provider.sessionID()
+	for range run.Events() {
+	}
+	f.survivor.FinishRun(f.sessionID, run)
+	return run, capture
+}
+
+func (f *crashOwnershipFixture) assertRepairWasFirstSuccessorSave(t *testing.T) {
+	t.Helper()
+	saves := f.survivorStore.saveObservations()
+	if len(saves) == 0 {
+		t.Fatal("successor persisted no snapshots")
+	}
+	first := saves[0]
+	if first.state != session.StateIdle {
+		t.Fatalf("first successor save state = %q, want repaired idle before continuation", first.state)
+	}
+	if first.pairingError != nil {
+		t.Fatalf("first successor save did not persist tool-pair closure: %v", first.pairingError)
+	}
+	const abandonResult = "tool call aborted: the process driving this run exited before this call's result was recorded"
+	for _, message := range first.messages {
+		if message.ToolResult != nil && message.ToolResult.CallID == crashOrphanCallID {
+			if !message.ToolResult.IsError || message.ToolResult.Content != abandonResult {
+				t.Fatalf("orphaned call repair = error %t content %q, want Session.Abandon result %q", message.ToolResult.IsError, message.ToolResult.Content, abandonResult)
+			}
+			return
+		}
+	}
+	t.Fatalf("first successor save has no synthetic result for orphaned call %q", crashOrphanCallID)
+}
+
+func (f *crashOwnershipFixture) assertRedisSidecarsSurvivedReload(t *testing.T) {
+	t.Helper()
+	var foundEvent bool
+	for event, err := range f.survivorStore.store.Read(context.Background(), f.sessionID) {
+		if err != nil {
+			t.Fatalf("read Redis event sidecar through successor: %v", err)
+		}
+		if event.Text == crashSidecarText {
+			foundEvent = true
+		}
+	}
+	if !foundEvent {
+		t.Fatalf("successor Redis reload did not see event sidecar %q", crashSidecarText)
+	}
+	tools, err := f.redis.List("mecatl:tools:" + string(f.sessionID))
+	if err != nil {
+		t.Fatalf("read Redis tool sidecar: %v", err)
+	}
+	if len(tools) != 1 {
+		t.Fatalf("successor Redis reload saw %d tool sidecar records, want 1", len(tools))
+	}
+	var record struct {
+		CallID string `json:"call_id"`
+	}
+	if err := json.Unmarshal([]byte(tools[0]), &record); err != nil {
+		t.Fatalf("decode Redis tool sidecar: %v", err)
+	}
+	if record.CallID != crashOrphanCallID {
+		t.Fatalf("successor Redis tool sidecar call ID = %q, want %q", record.CallID, crashOrphanCallID)
+	}
+}
+
 func TestSessionAffinityAndHandoff_Scenario7_KilledOwnerDropsStream(t *testing.T) {
 	f := newCrashOwnershipFixture(t)
 	f.startOwnerAndDropStream(t)
@@ -371,4 +575,52 @@ func TestADR_0290_PostTTLSingleSurvivorAcquires(t *testing.T) {
 	f.startOwnerAndDropStream(t)
 	f.advancePastTTL()
 	f.assertOneConcurrentSurvivor(t)
+}
+
+func TestSessionAffinityAndHandoff_Scenario7_RehydrateRepairAndContinue(t *testing.T) {
+	f := newCrashOwnershipFixture(t)
+	f.startOwnerAndDropStream(t)
+	f.seedCrashOrphanWithRedisSidecars(t)
+	f.assertPreTTLBlocked(t)
+	f.advancePastTTL()
+
+	run, capture := f.continueThroughHTTPProvider(t, "continue durable work")
+	if run.RunID() == "" || run.RunID() == f.ownerRun.RunID() {
+		t.Fatalf("successor run ID = %q, owner run ID = %q; want a new non-empty run ID", run.RunID(), f.ownerRun.RunID())
+	}
+	if capture.persistedState != session.StateIdle {
+		t.Fatalf("snapshot visible at first successor provider request = %q, want persisted idle repair before continuation", capture.persistedState)
+	}
+	if err := session.ValidateToolPairing(capture.persistedMessages); err != nil {
+		t.Fatalf("snapshot visible at first successor provider request has unpaired tools: %v", err)
+	}
+	f.assertRepairWasFirstSuccessorSave(t)
+	f.assertRedisSidecarsSurvivedReload(t)
+
+	reloaded, err := f.survivorStore.Load(context.Background(), f.sessionID)
+	if err != nil {
+		t.Fatalf("reload continued session: %v", err)
+	}
+	if reloaded.ID != f.sessionID || reloaded.State != session.StateCompleted {
+		t.Fatalf("continued snapshot = id %q state %q, want id %q state %q", reloaded.ID, reloaded.State, f.sessionID, session.StateCompleted)
+	}
+}
+
+func TestADR_0290_HandoffEndToEndCorrelation(t *testing.T) {
+	f := newCrashOwnershipFixture(t)
+	f.startOwnerAndDropStream(t)
+	f.seedCrashOrphanWithRedisSidecars(t)
+	f.assertPreTTLBlocked(t)
+	f.advancePastTTL()
+
+	run, capture := f.continueThroughHTTPProvider(t, "continue correlated work")
+	if capture.header != string(f.sessionID) {
+		t.Fatalf("first successor provider %s = %q, want exact ingress/durable session ID %q", port.SessionIDHeaderName, capture.header, f.sessionID)
+	}
+	if capture.contextSessionID != f.sessionID {
+		t.Fatalf("provider context session ID = %q, want authoritative durable ID %q", capture.contextSessionID, f.sessionID)
+	}
+	if run.RunID() == "" || run.RunID() == f.ownerRun.RunID() {
+		t.Fatalf("successor run ID = %q, owner run ID = %q; want a distinct run on the same durable session", run.RunID(), f.ownerRun.RunID())
+	}
 }
