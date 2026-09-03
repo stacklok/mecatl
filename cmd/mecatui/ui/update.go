@@ -861,6 +861,14 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 			mm, drainCmd := m.drainQueue("closed")
 			return mm, tea.Batch(m.refreshCmd(), modeCmd, drainCmd, liveCmd), true
 		}
+		if m.phase == phaseAuthorizing {
+			// A parked run's Converse stream closes before its authorization
+			// continuation is reattached. Invalidate that source so afterEvent cannot
+			// re-arm its closed channel into the resumed run.
+			m.stream = nil
+			m.streamCh = nil
+			m.streamGen++
+		}
 		return m, nil, true
 	case client.SessionRenamedMsg:
 		mm, cmd := m.onTitleRenamed(msg)

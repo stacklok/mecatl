@@ -1477,7 +1477,8 @@ func (h *HarnessServer) RecheckMcpAuthorization(stream grpc.BidiStreamingServer[
 		return status.Error(codes.InvalidArgument, "first authorization control frame must contain only valid session_id and authorization_id")
 	}
 	id := session.SessionID(first.GetSessionId())
-	result, err := h.svc.RecheckMCPAuthorization(stream.Context(), id, MCPAuthorizationControl{SessionID: id, AuthorizationID: first.GetAuthorizationId()})
+	runCtx := context.WithoutCancel(stream.Context())
+	result, err := h.svc.RecheckMCPAuthorization(runCtx, id, MCPAuthorizationControl{SessionID: id, AuthorizationID: first.GetAuthorizationId()})
 	if err != nil {
 		return toStatus(err)
 	}
@@ -1513,7 +1514,8 @@ func (h *HarnessServer) CancelMcpAuthorization(stream grpc.BidiStreamingServer[m
 		return status.Error(codes.InvalidArgument, "first authorization control frame must contain only valid session_id and authorization_id")
 	}
 	id := session.SessionID(first.GetSessionId())
-	result, err := h.svc.CancelMCPAuthorization(stream.Context(), id, MCPAuthorizationControl{SessionID: id, AuthorizationID: first.GetAuthorizationId()})
+	runCtx := context.WithoutCancel(stream.Context())
+	result, err := h.svc.CancelMCPAuthorization(runCtx, id, MCPAuthorizationControl{SessionID: id, AuthorizationID: first.GetAuthorizationId()})
 	if err != nil {
 		return toStatus(err)
 	}
@@ -1581,9 +1583,9 @@ func (h *HarnessServer) relayMCPAuthorizationControl(ctx context.Context, id ses
 		select {
 		case err := <-controlDone:
 			controlDone = nil
-			result.Run.Cancel()
 			if err != nil && !errors.Is(err, io.EOF) {
 				sendErr = err
+				result.Run.Cancel()
 			}
 		case ev, ok := <-events:
 			if !ok {

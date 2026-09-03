@@ -29,14 +29,20 @@ type mcpAuthorizationState struct {
 
 func (m Model) applyMCPAuthorization(msg client.MCPAuthorizationMsg) (tea.Model, tea.Cmd) {
 	if msg.Status != mcpAuthorizationStatusPending {
+		reenteredRunning := false
 		if m.authorization.authorizationID == msg.AuthorizationID {
 			m.authorization.errorText = ""
 			if m.phase == phaseAuthorizing {
 				m.phase = phaseRunning
+				reenteredRunning = true
 			}
 		}
 		m.conv.addNotice(mcpAuthorizationNotice(msg))
-		return m.afterEvent()
+		mm, cmd := m.afterEvent()
+		if reenteredRunning {
+			cmd = tea.Batch(cmd, m.sp.Tick)
+		}
+		return mm, cmd
 	}
 	if m.authorization.controlCancel != nil {
 		m.authorization.controlCancel()
@@ -237,13 +243,18 @@ func (m Model) updateMCPAuthorizationEvent(msg mcpAuthorizationEventMsg) (tea.Mo
 	}
 	mm, eventCmd := m.updateStreamEvent(msg.msg)
 	m = mm.(Model)
+	var sideEffect tea.Cmd
 	if auth, ok := msg.msg.(client.MCPAuthorizationMsg); ok && auth.Status != mcpAuthorizationStatusPending && m.phase == phaseRunning {
 		m.authorization.runningControlGen = msg.gen
+		// updateStreamEvent deliberately does not re-arm its ordinary Converse
+		// reader here: that stream closed when the authorization parked. Preserve
+		// the spinner tick that applyMCPAuthorization re-arms on the transition
+		// back into its visible running phase.
+		sideEffect = tea.Batch(sideEffect, m.sp.Tick)
 	}
 	// Only the control stream is re-armed. updateStreamEvent's ordinary
 	// afterEvent command owns the original Converse source, which is already
 	// closed once authorization parked.
-	var sideEffect tea.Cmd
 	if _, terminal := msg.msg.(client.ResultMsg); terminal {
 		sideEffect = eventCmd
 	}

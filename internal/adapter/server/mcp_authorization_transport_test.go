@@ -2,9 +2,7 @@ package server
 
 import (
 	"context"
-	"errors"
 	"io"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -13,9 +11,7 @@ import (
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
-	"google.golang.org/grpc/test/bufconn"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
@@ -29,6 +25,7 @@ type recheckAuthorizationStream struct {
 	requests     []*mecatlv1.RecheckMcpAuthorizationRequest
 	requestCh    chan *mecatlv1.RecheckMcpAuthorizationRequest
 	approveOnAsk bool
+	afterInitial func()
 	responses    []*mecatlv1.RecheckMcpAuthorizationResponse
 }
 
@@ -37,6 +34,10 @@ func (s *recheckAuthorizationStream) Recv() (*mecatlv1.RecheckMcpAuthorizationRe
 	if len(s.requests) != 0 {
 		req := s.requests[0]
 		s.requests = s.requests[1:]
+		if s.afterInitial != nil {
+			s.afterInitial()
+			s.afterInitial = nil
+		}
 		return req, nil
 	}
 	if s.requestCh != nil {
@@ -59,9 +60,10 @@ func (s *recheckAuthorizationStream) Send(response *mecatlv1.RecheckMcpAuthoriza
 
 type cancelAuthorizationStream struct {
 	grpc.BidiStreamingServer[mecatlv1.CancelMcpAuthorizationRequest, mecatlv1.CancelMcpAuthorizationResponse]
-	ctx       context.Context
-	requests  []*mecatlv1.CancelMcpAuthorizationRequest
-	responses []*mecatlv1.CancelMcpAuthorizationResponse
+	ctx          context.Context
+	requests     []*mecatlv1.CancelMcpAuthorizationRequest
+	afterInitial func()
+	responses    []*mecatlv1.CancelMcpAuthorizationResponse
 }
 
 type rejectCancelledSaveStore struct{ port.SessionStore }
@@ -80,6 +82,10 @@ func (s *cancelAuthorizationStream) Recv() (*mecatlv1.CancelMcpAuthorizationRequ
 	}
 	req := s.requests[0]
 	s.requests = s.requests[1:]
+	if s.afterInitial != nil {
+		s.afterInitial()
+		s.afterInitial = nil
+	}
 	return req, nil
 }
 func (s *cancelAuthorizationStream) Send(response *mecatlv1.CancelMcpAuthorizationResponse) error {
@@ -167,70 +173,27 @@ func TestMCPAuthorizationGRPCContinuationPermissionApproval(t *testing.T) {
 	}
 }
 
-func TestMCPAuthorizationGRPCControlEOFCancelsAndDrainsContinuation(t *testing.T) {
-	followup := session.NewToolCall("followup-call", "protected", nil)
-	f := newLifecycleFixtureWithTurns(t, session.AuthorizationGranted, nil, time.Now, nil,
-		mockllm.ToolCallTurn(followup), mockllm.TextTurn("must not continue"))
+func TestMCPAuthorizationGRPCControlEOFDrainsContinuationWithoutCancellingIt(t *testing.T) {
+	f := newLifecycleFixtureWithTurns(t, session.AuthorizationGranted, nil, time.Now, nil, mockllm.TextTurn("continued"))
 	f.svc.cfg.Store = rejectCancelledSaveStore{SessionStore: f.store}
-	listener := bufconn.Listen(1 << 20)
-	grpcServer := grpc.NewServer()
-	mecatlv1.RegisterHarnessServiceServer(grpcServer, NewHarnessServer(f.svc))
-	go func() { _ = grpcServer.Serve(listener) }()
-	t.Cleanup(func() {
-		grpcServer.Stop()
-		_ = listener.Close()
-	})
-	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
-	defer cancel()
-	conn, err := grpc.NewClient("passthrough:///bufnet",
-		grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) { return listener.DialContext(ctx) }),
-		grpc.WithTransportCredentials(insecure.NewCredentials()))
-	if err != nil {
+	ctx, cancel := context.WithCancel(t.Context())
+	stream := &recheckAuthorizationStream{
+		ctx:          ctx,
+		afterInitial: cancel,
+		requests:     []*mecatlv1.RecheckMcpAuthorizationRequest{{SessionId: "authorization-session", AuthorizationId: f.pending.Authorization.ID}},
+	}
+	if err := NewHarnessServer(f.svc).RecheckMcpAuthorization(stream); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = conn.Close() })
-	stream, err := mecatlv1.NewHarnessServiceClient(conn).RecheckMcpAuthorization(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := stream.Send(&mecatlv1.RecheckMcpAuthorizationRequest{SessionId: "authorization-session", AuthorizationId: f.pending.Authorization.ID}); err != nil {
-		t.Fatal(err)
-	}
-
-	var asked, terminal bool
-	for {
-		response, recvErr := stream.Recv()
-		if errors.Is(recvErr, io.EOF) {
-			break
-		}
-		if recvErr != nil {
-			t.Fatalf("control EOF outcome = %v, want clean completion", recvErr)
-		}
-		switch response.GetEvent().GetType() {
-		case "permission.ask":
-			asked = true
-			if err := stream.CloseSend(); err != nil {
-				t.Fatal(err)
-			}
-		case "result":
-			terminal = true
-			if got := response.GetEvent().GetResult().GetStop(); got != "cancelled" {
-				t.Fatalf("terminal stop = %q, want cancelled", got)
-			}
-		}
-	}
-	if !asked || !terminal {
-		t.Fatalf("EOF relay did not drain ask and terminal events: asked=%t terminal=%t", asked, terminal)
-	}
-	if _, live := f.svc.LookupRun("authorization-session"); live {
-		t.Fatal("EOF left authorization continuation live")
+	if got := stream.responses[len(stream.responses)-1].GetEvent().GetResult().GetStop(); got != "end_turn" {
+		t.Fatalf("terminal stop = %q, want end_turn", got)
 	}
 	persisted, err := f.store.Load(t.Context(), "authorization-session")
 	if err != nil {
-		t.Fatalf("load EOF-cancelled continuation: %v", err)
+		t.Fatalf("load EOF continuation: %v", err)
 	}
-	if persisted.State != session.StateCancelled {
-		t.Fatalf("persisted EOF-cancelled continuation state = %q, want %q", persisted.State, session.StateCancelled)
+	if persisted.State != session.StateCompleted {
+		t.Fatalf("persisted EOF continuation state = %q, want %q", persisted.State, session.StateCompleted)
 	}
 }
 
@@ -263,7 +226,12 @@ func TestMCPAuthorizationGRPCRejectsMalformedIDBeforeLookup(t *testing.T) {
 
 func TestMCPAuthorizationGRPCCancelStreamsResolutionAndContinuation(t *testing.T) {
 	f, ownerCtx, _ := ownedAuthorizationFixture(t, session.AuthorizationPending)
-	stream := &cancelAuthorizationStream{ctx: ownerCtx, requests: []*mecatlv1.CancelMcpAuthorizationRequest{{SessionId: "authorization-session", AuthorizationId: f.pending.Authorization.ID}}}
+	ctx, cancel := context.WithCancel(ownerCtx)
+	stream := &cancelAuthorizationStream{
+		ctx:          ctx,
+		afterInitial: cancel,
+		requests:     []*mecatlv1.CancelMcpAuthorizationRequest{{SessionId: "authorization-session", AuthorizationId: f.pending.Authorization.ID}},
+	}
 	err := NewHarnessServer(f.svc).CancelMcpAuthorization(stream)
 	if err != nil {
 		t.Fatal(err)
@@ -279,6 +247,13 @@ func TestMCPAuthorizationGRPCCancelStreamsResolutionAndContinuation(t *testing.T
 	}
 	if got := stream.responses[len(stream.responses)-1].GetEvent().GetType(); got != "result" {
 		t.Fatalf("last event = %q, want result", got)
+	}
+	persisted, err := f.store.Load(ownerCtx, "authorization-session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if persisted.State != session.StateCompleted {
+		t.Fatalf("persisted cancel continuation state = %q, want %q", persisted.State, session.StateCompleted)
 	}
 }
 

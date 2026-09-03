@@ -225,6 +225,32 @@ func TestMCPAuthorizationControlErrorWhileRunningEndsOwnedRun(t *testing.T) {
 	}
 }
 
+func TestMCPAuthorizationResolutionRearmsSpinner(t *testing.T) {
+	m := New(Deps{Theme: theme.New("aztec", theme.AztecPalette())})
+	m.phase = phaseAuthorizing
+	m.authorization.authorizationID = "auth-1"
+
+	mm, cmd := m.applyMCPAuthorization(client.MCPAuthorizationMsg{AuthorizationID: "auth-1", Status: "granted"})
+	m = mm.(Model)
+	if m.phase != phaseRunning || cmd == nil {
+		t.Fatalf("resolution = phase %v, spinner command %v", m.phase, cmd)
+	}
+}
+
+func TestMCPAuthorizationParkedConverseCloseInvalidatesSource(t *testing.T) {
+	m := New(Deps{Theme: theme.New("aztec", theme.AztecPalette())})
+	m.sessionID = "session-1"
+	m.phase = phaseAuthorizing
+	m.stream = client.NewStream(&fakeRecver{}, &fakeSender{})
+	m.streamCh = make(chan tea.Msg)
+	m.streamGen = 4
+
+	m = applyAll(m, streamMsg{gen: 4, msg: client.StreamClosedMsg{}})
+	if m.stream != nil || m.streamCh != nil || m.streamGen != 5 {
+		t.Fatalf("parked close retained stale Converse source: stream=%v channel=%v generation=%d", m.stream, m.streamCh, m.streamGen)
+	}
+}
+
 func TestMCPAuthorizationControlOwnsContinuationStream(t *testing.T) {
 	m := New(Deps{Theme: theme.New("aztec", theme.AztecPalette())})
 	m.sessionID = "session-1"
@@ -249,8 +275,8 @@ func TestMCPAuthorizationControlOwnsContinuationStream(t *testing.T) {
 	}
 	control <- client.ToolResultMsg{CallID: "call-1", Content: "continued"}
 	next := cmd()
-	if _, ok := next.(mcpAuthorizationEventMsg); !ok {
-		t.Fatalf("next reader source = %T, want authorization control", next)
+	if _, ok := next.(tea.BatchMsg); !ok {
+		t.Fatalf("resolution command = %T, want batched spinner and control reader", next)
 	}
 	m = applyAll(m, correlated(client.ToolResultMsg{CallID: "call-1", Content: "continued"}))
 	m = applyAll(m, correlated(client.ResultMsg{Stop: "end_turn"}))
