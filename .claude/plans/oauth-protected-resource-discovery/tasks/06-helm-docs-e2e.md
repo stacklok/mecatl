@@ -23,4 +23,4 @@ Wire the mecak8s Helm values/schema/template and shared flags, add hermetic end-
 - AC6.4: Documentation distinguishes RFC fields, mecatl extensions, existing OIDC projections, transport separation, and ToolHive provenance.
   - verify: inspection — documentation includes protocol, extension, provenance, and compatibility sections
 - AC6.5: Generated documentation and site build are current.
-  - verify: `task docs && task site:build`
+  - verify: demonstration — run `task docs` and `task site:build`
