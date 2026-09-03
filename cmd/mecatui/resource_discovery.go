@@ -99,6 +99,9 @@ func parseIssuer(raw string) (string, error) {
 }
 
 func oidcMetadataURL(issuer string) string {
+	if _, err := parseIssuer(issuer); err != nil {
+		return ""
+	}
 	u, err := url.Parse(issuer)
 	if err != nil {
 		return ""

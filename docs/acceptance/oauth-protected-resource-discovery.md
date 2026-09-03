@@ -34,7 +34,7 @@ Both composition roots extend the shared OIDC configuration with `--oidc-resourc
 
 ### Scenario 2 — ToolHive-derived metadata and challenge
 
-The public HTTP listener exposes `GET /.well-known/oauth-protected-resource` outside bearer middleware. Root and path-bearing resources use one helper based on ToolHive’s `buildWellKnownURI` and `WellKnownOAuthResourcePath`. The configured resource is the service-wide protected-resource base: every protected API route advertises its one configured metadata URL, never a request-derived host or path. The response contains standard RFC 9728 fields plus `com.stacklok.mecatl.audience` and `com.stacklok.mecatl.client_id`. The adapted code records ToolHive source paths/tags and corrects its prefix routing, method, CORS, default-scope, validation, and header-safety issues. See [ADR 0290](../adr/0290-oauth-protected-resource-discovery.md) and the public listener shape in [`internal/adapter/server/authn.go`](../../internal/adapter/server/authn.go).
+The public HTTP listener exposes `GET /.well-known/oauth-protected-resource` outside bearer middleware. Root and path-bearing resources use one helper built on ToolHive’s exported `oauthproto.WellKnownOAuthResourcePath`. The configured resource is the service-wide protected-resource base: every protected API route advertises its one configured metadata URL, never a request-derived host or path. The response contains standard RFC 9728 fields plus `com.stacklok.mecatl.audience` and `com.stacklok.mecatl.client_id`. The adapted code records ToolHive source paths/tags and corrects its prefix routing, method, CORS, default-scope, validation, and header-safety issues. See [ADR 0290](../adr/0290-oauth-protected-resource-discovery.md) and the public listener shape in [`internal/adapter/server/authn.go`](../../internal/adapter/server/authn.go).
 
 **Acceptance:**
 - AC2.1: Both binaries return the configured metadata with `200` and `application/json` outside authentication and metrics/admin listeners.
@@ -127,8 +127,8 @@ The mecak8s chart adds `oidc.resource`, `oidc.clientID`, and `oidc.scopes`, rend
   - verify: `TestADR_0290_HelmProtectedResourceProfile`
 - AC6.2: Offline coverage proves the real metadata handler, discovery parsing, confirmation, and unchanged handoff to the existing login seam. Browser PKCE, authenticated gRPC, and bare-host reconnect require live qualification.
   - verify: `TestOAuthProtectedResource_Scenario6_EndToEnd`
-- AC6.3: Both server composition roots exercise the shared contract.
-  - verify: `TestADR_0290_ServerCompositionParity`
+- AC6.3: Both server composition roots receive the shared OIDC flag/profile projection; the metadata-route and configured-resource challenge contract is exercised at the shared server-adapter boundary.
+  - verify: `TestADR_0290_ServerCompositionParity`, `TestADR_0290_ChallengeMetadataPairUsesConfiguredResource`
 - AC6.4: Documentation distinguishes RFC fields, mecatl extensions, existing OIDC projections, transport separation, and ToolHive provenance.
   - verify: inspection — documentation includes protocol, extension, provenance, and compatibility sections
 - AC6.5: Generated documentation and site build are current.

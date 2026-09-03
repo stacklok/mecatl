@@ -9,12 +9,11 @@ import (
 	"strconv"
 	"strings"
 	"unicode"
+
+	"github.com/stacklok/toolhive/pkg/oauthproto"
 )
 
-const (
-	httpsScheme           = "https"
-	protectedResourcePath = "/.well-known/oauth-protected-resource"
-)
+const httpsScheme = "https"
 
 // Canonical validates and canonicalizes an RFC 9728 HTTPS resource. Root slash,
 // host case, and the default HTTPS port have one stable representation.
@@ -60,11 +59,11 @@ func MetadataURL(raw string) string {
 	}
 	path := u.EscapedPath()
 	if path == "" || path == "/" {
-		u.Path, u.RawPath = protectedResourcePath, ""
+		u.Path, u.RawPath = oauthproto.WellKnownOAuthResourcePath, ""
 		return u.String()
 	}
-	u.Path = protectedResourcePath + u.Path
-	u.RawPath = protectedResourcePath + path
+	u.Path = oauthproto.WellKnownOAuthResourcePath + u.Path
+	u.RawPath = oauthproto.WellKnownOAuthResourcePath + path
 	return u.String()
 }
 

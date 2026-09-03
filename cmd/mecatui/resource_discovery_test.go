@@ -148,10 +148,44 @@ func TestADR_0290_IssuerBinding(t *testing.T) {
 			t.Errorf("oidcMetadataURL(%q) = %q, want %q", tc.issuer, got, tc.want)
 		}
 	}
+	for _, raw := range []string{"https://issuer.example.com?query", "http://issuer.example.com", "https://user@issuer.example.com"} {
+		if got := oidcMetadataURL(raw); got != "" {
+			t.Errorf("oidcMetadataURL(%q) = %q, want rejection", raw, got)
+		}
+	}
 	if _, err := parseIssuer("https://ISSUER.example.com/tenant"); err != nil {
 		t.Fatal(err)
 	} else if err := validateIssuerDocument("https://ISSUER.example.com/tenant", []byte(`{"issuer":"https://issuer.example.com/tenant"}`)); err == nil {
 		t.Fatal("case-variant issuer identifier accepted")
+	}
+}
+
+func TestADR_0290_OIDCDiscoveryPreservesIssuerPath(t *testing.T) {
+	resource, err := parseProtectedResource("https://api.example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	requests := 0
+	_, err = discoverProtectedResource(t.Context(), resource, roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+		requests++
+		switch requests {
+		case 1:
+			if got, want := req.URL.String(), "https://api.example.com/.well-known/oauth-protected-resource"; got != want {
+				t.Fatalf("resource metadata URL = %q, want %q", got, want)
+			}
+			return jsonResponse(`{"resource":"https://api.example.com","authorization_servers":["https://issuer.example.com/tenant%2Fone"],"com.stacklok.mecatl.audience":"api","com.stacklok.mecatl.client_id":"client"}`), nil
+		case 2:
+			if got, want := req.URL.String(), "https://issuer.example.com/tenant%2Fone/.well-known/openid-configuration"; got != want {
+				t.Fatalf("OIDC discovery URL = %q, want %q", got, want)
+			}
+			return jsonResponse(`{"issuer":"https://issuer.example.com/tenant%2Fone"}`), nil
+		default:
+			t.Fatalf("unexpected discovery request %d: %s", requests, req.URL)
+			return nil, nil
+		}
+	}))
+	if err != nil {
+		t.Fatal(err)
 	}
 }
 

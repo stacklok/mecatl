@@ -165,6 +165,44 @@ func TestADR_0290_ResourceAliasLifecycle(t *testing.T) {
 	}
 }
 
+func TestADR_0290_LogoutRevalidatesMovedResourceAlias(t *testing.T) {
+	registry, err := OpenRegistry(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	creds := credentials(t)
+	first := resourceConnection("https://api.example.com", "one.example.com:7443", "https://issuer.example.com")
+	second := resourceConnection("https://api.example.com", "two.example.com:7443", "https://issuer.example.com")
+	if _, err := registry.Upsert(first); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := creds.Upsert(t.Context(), first.Identity, Token{AccessToken: "one", TokenType: "Bearer"}); err != nil {
+		t.Fatal(err)
+	}
+	// Move the resource after Logout resolves its initial target but before it
+	// acquires the resource transaction lock. This is the cross-target mutation
+	// a second process can make in that gap.
+	moved := false
+	registry.targetLockAttempt = func() {
+		if moved {
+			return
+		}
+		moved = true
+		registry.targetLockAttempt = nil
+		if _, upsertErr := registry.Upsert(second); upsertErr != nil {
+			t.Fatalf("concurrent resource move: %v", upsertErr)
+		}
+	}
+	_, err = Logout(t.Context(), first.ResourceURL, LogoutConfig{Registry: registry, Credentials: creds})
+	if !errors.Is(err, credentialstore.ErrConflict) {
+		t.Fatalf("Logout after alias move = %v, want conflict", err)
+	}
+	got, err := registry.Find(first.ResourceURL)
+	if err != nil || !got.Identity.Equal(second.Identity) {
+		t.Fatalf("moved resource was not retained: %#v, %v", got, err)
+	}
+}
+
 func TestADR_0290_LegacyResourceAliasPolicy(t *testing.T) {
 	registry, err := OpenRegistry(t.TempDir())
 	if err != nil {
