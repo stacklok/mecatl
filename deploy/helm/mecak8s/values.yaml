@@ -73,6 +73,10 @@ security:
   # gateway/mesh-only plaintext backend reachability.
   tlsTerminatedUpstream: false
 
+# Full pod shutdown budget. This must exceed preStop (3s) plus the configured
+# mecak8s drain, gRPC, HTTP, resource-close, and telemetry bounds.
+terminationGracePeriodSeconds: 60
+
 # Optional Kubernetes scheduling controls. Empty values render no pod fields.
 topologySpreadConstraints: []
 affinity: {}

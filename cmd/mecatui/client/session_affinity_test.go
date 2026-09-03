@@ -12,7 +12,7 @@ import (
 	"google.golang.org/grpc/metadata"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
-	"github.com/stacklok/mecatl/engine/port"
+	"github.com/stacklok/mecatl/contracts/sessionaffinity"
 )
 
 type affinityCall struct {
@@ -69,7 +69,7 @@ func (*affinityClientStream) RecvMsg(any) error { return io.EOF }
 func TestMecatuiIllegalExternalSessionIDOmitAffinity(t *testing.T) {
 	ctx := withSessionAffinity(context.Background(), "session-α")
 	md, _ := metadata.FromOutgoingContext(ctx)
-	if got := md.Get(port.SessionIDHeaderName); len(got) != 0 {
+	if got := md.Get(sessionaffinity.HeaderName); len(got) != 0 {
 		t.Fatalf("illegal external session affinity = %#v, want omitted", got)
 	}
 }
@@ -80,7 +80,7 @@ func TestSessionAffinityAndHandoff_Scenario4_MecatuiUnaryAndStreamPropagation(t 
 	client := &Client{svc: mecatlv1.NewHarnessServiceClient(conn)}
 	ctx := metadata.NewOutgoingContext(context.Background(), metadata.Pairs(
 		"authorization", "Bearer existing",
-		port.SessionIDHeaderName, "stale-binding",
+		sessionaffinity.HeaderName, "stale-binding",
 	))
 
 	calls := []struct {
@@ -124,7 +124,7 @@ func TestSessionAffinityAndHandoff_Scenario4_MecatuiUnaryAndStreamPropagation(t 
 		t.Fatalf("recorded calls = %d, want %d", len(conn.calls), len(calls))
 	}
 	for _, call := range conn.calls {
-		if got := call.md.Get(port.SessionIDHeaderName); !reflect.DeepEqual(got, []string{sessionID}) {
+		if got := call.md.Get(sessionaffinity.HeaderName); !reflect.DeepEqual(got, []string{sessionID}) {
 			t.Errorf("%s session metadata = %#v, want exact %q", call.method, got, sessionID)
 		}
 		if got := call.md.Get("authorization"); !reflect.DeepEqual(got, []string{"Bearer existing"}) {
@@ -165,10 +165,10 @@ func TestADR_0290_MecatuiOpenConverseCompatibility(t *testing.T) {
 		t.Fatalf("bound SendCancel: %v", err)
 	}
 
-	if got := conn.calls[0].md.Get(port.SessionIDHeaderName); len(got) != 0 {
+	if got := conn.calls[0].md.Get(sessionaffinity.HeaderName); len(got) != 0 {
 		t.Fatalf("legacy OpenConverse metadata = %#v, want absent", got)
 	}
-	if got := conn.calls[1].md.Get(port.SessionIDHeaderName); !reflect.DeepEqual(got, []string{sessionID}) {
+	if got := conn.calls[1].md.Get(sessionaffinity.HeaderName); !reflect.DeepEqual(got, []string{sessionID}) {
 		t.Fatalf("bound OpenConverse metadata = %#v, want exact %q", got, sessionID)
 	}
 	if got := conn.calls[1].md.Get("authorization"); !reflect.DeepEqual(got, []string{"Bearer existing"}) {

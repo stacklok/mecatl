@@ -7,7 +7,6 @@ import (
 	"iter"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -65,26 +64,46 @@ func (*firstThenBlockingProvider) Capabilities() port.ProviderCapabilities {
 }
 
 func TestADR_0290_AppAndMecak8sLeaseCompositionSharesMutationCapability(t *testing.T) {
-	buildSource, err := os.ReadFile("build.go")
+	ctx := context.Background()
+	storeDir, leaseDir, workspace, memoryDir := t.TempDir(), t.TempDir(), t.TempDir(), t.TempDir()
+	cfg1 := leaseBaseCfg(t, storeDir, leaseDir, workspace, memoryDir)
+	cfg1.providerConstructor = func(_ Config, _, _, _ string) port.LLMProvider {
+		return mockllm.New(mockllm.TextTurn("owner"))
+	}
+	owner, err := Build(ctx, cfg1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{
-		"engineStore := mutationCapability.GuardStore(store)",
-		"cfg.ToolCallRecorder = mutationCapability.GuardToolCallRecorder(cfg.ToolCallRecorder)",
-		"SessionLease:       sessionLease",
-		"MutationCapability: mutationCapability",
-	} {
-		if !strings.Contains(string(buildSource), want) {
-			t.Errorf("app.Build no longer shares lease mutation capability: missing %q", want)
-		}
-	}
-	mecak8sSource, err := os.ReadFile("../../cmd/mecak8s/flags.go")
+	defer owner.Close()
+	sess, err := owner.Service.CreateSession(ctx, workspace, session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(mecak8sSource), "SessionLeaseK8sNamespace:      cfg.sessionLeaseK8sNamespace") {
-		t.Fatal("mecak8s appConfig no longer enables the app lease/capability composition")
+	run, err := owner.Service.StartRun(ctx, sess.ID, "hold ownership")
+	if err != nil {
+		t.Fatal(err)
+	}
+	drain(run)
+	owner.Service.FinishRun(sess.ID, run)
+
+	cfg2 := leaseBaseCfg(t, storeDir, leaseDir, workspace, memoryDir)
+	cfg2.providerConstructor = func(_ Config, _, _, _ string) port.LLMProvider {
+		return mockllm.New(mockllm.TextTurn("competitor"))
+	}
+	competitor, err := Build(ctx, cfg2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer competitor.Close()
+	if _, err := competitor.Service.SetMode(ctx, sess.ID, session.ModePlan); !errors.Is(err, server.ErrSessionLeasedElsewhere) {
+		t.Fatalf("competing Build SetMode = %v, want ErrSessionLeasedElsewhere", err)
+	}
+	got, err := competitor.Service.GetSession(ctx, sess.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Mode != session.ModeDefault {
+		t.Fatalf("competing Build mutated mode to %q", got.Mode)
 	}
 }
 

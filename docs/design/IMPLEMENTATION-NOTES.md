@@ -729,11 +729,13 @@ config resolves per-session against that root without a mutate-capable handle; `
 (issue #53 — previously never injected, leaving all latency observations zero).
 
 **Provider request session correlation and ingress affinity (ADR 0290).**
-`engine/port/sessioncontext.go` owns `SessionIDHeaderName` and
-`ValidSessionIDHeaderValue`: `X-Mecatl-Session-ID` must be non-empty printable ASCII
+The stdlib-only root transport package `contracts/sessionaffinity` owns `HeaderName`,
+`MaxValueBytes`, and `ValidValue`: `X-Mecatl-Session-ID` must be at most 256 bytes of
+non-empty printable ASCII
 (`0x20`–`0x7e`) without leading or trailing space, and consumers preserve its bytes
 exactly. External session IDs outside that cross-transport set remain usable while
-clients omit affinity. Derived creates bind exactly one source or debug target and reject
+clients omit affinity and remove a stale caller-supplied affinity header while retaining
+unrelated headers; only an explicit raw `withSessionAffinity` bind throws. Derived creates bind exactly one source or debug target and reject
 the ambiguous dual-reference shape. gRPC and HTTP accept a
 missing value for compatibility but reject duplicates, illegal values, and byte
 mismatches before work with one non-disclosing error. The HTTP side compares against
@@ -746,10 +748,10 @@ awaiting-resume, child/member, compaction, retry, and fallback requests agree: t
 provider ID comes from the run context, never from ingress metadata or provider-instance
 state. `provider/openai/openai.go`, `provider/openaichat/openaichat.go`, and
 `provider/anthropic/anthropic.go` attach it through per-request SDK options. Absent or
-illegal run values are omitted without changing inference. Their private validators deliberately retain ADR 0216's broader outbound-provider rules (including
-values outside the official browser/gRPC affinity set) because independently
-versioned provider modules cannot consume the unreleased engine symbol under
-`GOWORK=off`; see ADR 0290's module boundary.
+illegal run values are omitted without changing inference. Their private validators
+deliberately retain ADR 0216's broader outbound-provider rules (including values outside
+the official browser/gRPC affinity set) because independently versioned provider modules
+stay release-independent and do not import the root transport package.
 
 **Session mutation ownership, lease loss, close, and drain (ADR 0290).**
 `internal/adapter/server/mutation_capability.go` (`SessionMutationCapability`) is the
@@ -773,11 +775,14 @@ references remove heavyweight held-lease/capability tombstones; the lightweight
 `lostOwnership` denial remains until explicit local session teardown so that stale
 Service cannot reacquire.
 
-`CloseSession` rejects a live running or awaiting owner before teardown or lease
+The gRPC in-stream approval path also enters a Service-owned live-run gate: holding the
+Service mutex orders the verdict against lease invalidation before it reaches the parent
+run's approval router, including surfaced child asks. `CloseSession` rejects a live running or awaiting owner before teardown or lease
 release. A runless persisted awaiting session may close resources without modifying its
 resume point. `GracefulDrain` calls `Drain` first, snapshots local runs, marks awaiting
 ones preserve-durable, releases lease-only sessions, cancels executing runs, waits for
-the relay's settlement, saves only joined non-awaiting state, then releases. Timeout
+the relay's settlement, and consults that sticky preserve-durable bit (not the relay's
+mutable awaiting marker) before any terminal save, then releases. Timeout
 uses `retainLeaseForTTL`: stop renewal and invalidate locally, but never explicitly
 release an unjoined owner. The modeled handoff is stream drop plus client retry after
 TTL, successor acquisition, Redis reload, and existing `Abandon` repair; it is not a

@@ -635,7 +635,7 @@ know.
 Key details from `deployment.yaml`:
 
 - `replicas: 2` by default with `RollingUpdate`, `maxSurge: 1`, `maxUnavailable: 0` — there is always a ready survivor during a multi-replica rolling update. With one replica, a surge replacement can preserve availability only if it schedules and becomes Ready.
-- `terminationGracePeriodSeconds: 60` — the bounded `GracefulStop` window.
+- `terminationGracePeriodSeconds: 60` by default, operator-configurable — larger than the default 43-second full budget (3s preStop + 15s drain + 10s gRPC + 5s HTTP + 5s close + 5s telemetry).
 - No PVC, no `--store-dir`. The only `volumeMount` is `/tmp` for the Go runtime and SSE buffering under `readOnlyRootFilesystem: true`.
 - A `preStop` lifecycle hook calls plaintext `GET /drain` on the named Pod-only drain port (8082). This arms the drain gate and blocks ~3 seconds for endpoint propagation before returning, so the kubelet's SIGTERM arrives after the pod has left the Service endpoints. The Service still exposes only gRPC and HTTP/SSE; NetworkPolicy or mesh policy must restrict direct Pod-IP access to the drain port.
 - PSS `restricted` in full: `runAsNonRoot`, `allowPrivilegeEscalation: false`, `capabilities: drop: ALL`, `seccompProfile: RuntimeDefault`.
@@ -716,13 +716,17 @@ sequenceDiagram
   D-->>K: 200 draining
   K->>K: SIGTERM
   Note over G,GS: svc.Drain() is idempotent — no double-drain
-  GS->>GS: grpcSrv.GracefulStop() (30s timeout)
-  note over GS: in-flight runs cancelled, Recover-able on survivor
+  GS->>GS: cancel/join runs (15s), then gRPC GracefulStop (10s)
+  note over GS: HTTP (5s), resource close (5s), telemetry (5s) remain bounded
   GS->>L: built.Close() → release all held coordination.k8s.io Leases
   note over L: cancel-detached short ctx, survivor acquires immediately
 ```
 
-The `GracefulStop` timeout is 30 seconds, well within the 60-second `terminationGracePeriodSeconds`. If it elapses, the server hard-stops: in-flight runs are cancelled but immediately `Recover`-able on the successor pod from the Redis snapshot (ADR 0027 issue #51 — `Session.Recover` repairs orphaned tool calls and moves the session to idle).
+The default complete termination budget is 43 seconds: the 3-second preStop delay plus
+15 seconds for Service drain, 10 seconds for gRPC, 5 seconds for HTTP, 5 seconds for
+resource close, and 5 seconds for telemetry. That is safely below the configurable
+60-second `terminationGracePeriodSeconds` default. Operators who raise any runtime bound
+must raise the Helm value so the strict inequality still holds. If a bound elapses, the server hard-stops: in-flight runs are cancelled but immediately `Recover`-able on the successor pod from the Redis snapshot (ADR 0027 issue #51 — `Session.Recover` repairs orphaned tool calls and moves the session to idle).
 
 Releasing leases uses a cancel-detached context with a short timeout so the release succeeds even though the signal context is already cancelled. A survivor can acquire the released lease immediately — it does not have to wait for the 30-second TTL (`--session-lease-ttl`, default 30s) to expire.
 

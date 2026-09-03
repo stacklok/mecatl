@@ -119,6 +119,32 @@ func pdbFromRender(t *testing.T, rendered string) *policyv1.PodDisruptionBudget 
 	return nil
 }
 
+func TestADR_0290_TerminationGracePeriodIsConfigurableAndFitsDefaults(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+		want int64
+	}{
+		{name: "default", args: productionArgs(), want: 60},
+		{name: "override", args: append(productionArgs(), "--set", "terminationGracePeriodSeconds=75"), want: 75},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rendered, err := helm(t, tc.args...)
+			if err != nil {
+				t.Fatal(err, rendered)
+			}
+			got := deploymentFromRender(t, rendered).Spec.Template.Spec.TerminationGracePeriodSeconds
+			if got == nil || *got != tc.want {
+				t.Fatalf("terminationGracePeriodSeconds = %v, want %d", got, tc.want)
+			}
+		})
+	}
+	// preStop 3s + drain 15s + gRPC 10s + HTTP 5s + close 5s + telemetry 5s.
+	if budget := int64(3 + 15 + 10 + 5 + 5 + 5); budget >= 60 {
+		t.Fatalf("documented default shutdown budget = %ds, want < 60s", budget)
+	}
+}
+
 func productionArgs() []string {
 	return []string{"template", "production", ".", "--set", "image.tag=v0.0.0", "--set", "redis.endpoint=redis.example.internal:6380", "--set", "redis.credentialsSecret=redis-credentials", "--set", "security.allowUnsafeRealProvider=true"}
 }

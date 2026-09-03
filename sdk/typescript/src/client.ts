@@ -34,7 +34,6 @@ import {
   type RawClient,
   registeredTransportOperations,
   sessionAffinityIfRepresentable,
-  withSessionAffinity,
 } from "./raw.js";
 import { type ConverseFrame, type Run, RunImpl, type RunOptions } from "./run.js";
 import {
@@ -187,7 +186,7 @@ function createSessionAffinity(options: CreateSessionOptions): CallOptions | und
   );
   if (references.length !== 1) return undefined;
   const reference = references[0];
-  return reference === undefined ? undefined : withSessionAffinity(reference);
+  return reference === undefined ? undefined : sessionAffinityIfRepresentable(reference);
 }
 
 function sessionAffinityOperations(
@@ -396,7 +395,7 @@ class ClientImpl implements Client {
             ...input,
             sourceSessionId,
           },
-          withSessionAffinity(sourceSessionId),
+          sessionAffinityIfRepresentable(sourceSessionId),
         );
         return this.#session(response.sessionId, "ForkSession", undefined);
       },
@@ -404,7 +403,7 @@ class ClientImpl implements Client {
         const response = await this.#unary(
           HarnessService.method.getSession,
           { sessionId },
-          withSessionAffinity(sessionId),
+          sessionAffinityIfRepresentable(sessionId),
         );
         if (response.session === undefined || response.session.sessionId === "") {
           throw new ProtocolError("GetSession returned no session", {

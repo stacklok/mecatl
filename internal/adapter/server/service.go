@@ -2791,9 +2791,9 @@ func (s *Service) GracefulDrain(ctx context.Context) error {
 		}
 		delete(pending, id)
 		st.persistMu.Lock()
-		awaiting := st.awaiting.Load()
+		preserveDurable := st.preserveDurable.Load()
 		st.persistMu.Unlock()
-		if !awaiting {
+		if !preserveDurable {
 			saveCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), leaseAcquireTimeout)
 			if s.mutationLeaseHeld(id) {
 				if err := s.saveSession(saveCtx, st.sess); err != nil {
@@ -4888,6 +4888,32 @@ func (s *Service) awaitRunDeregister(ctx context.Context, id session.SessionID, 
 			return false
 		}
 	}
+}
+
+// approveLiveRun routes an in-stream verdict through the Service-owned lease gate.
+// The service mutex orders the approval with renewal-loss invalidation; a surfaced
+// child ask is still addressed through its parent run's approval router.
+func (s *Service) approveLiveRun(id session.SessionID, target *agent.Run, askID string, verdict session.ApprovalVerdict, expectedRunID string) error {
+	if s.draining.Load() {
+		return fmt.Errorf("%w: %q", ErrUnavailable, id)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	st := s.runs[id]
+	if st == nil || st.run == nil || st.run != target {
+		return ErrNoActiveRun
+	}
+	if s.cfg.SessionLease != nil && !s.leaseDisabled {
+		h := s.heldLeases[id]
+		if h == nil || !h.valid || h.ctx.Err() != nil {
+			return fmt.Errorf("%w: %q", ErrSessionLeasedElsewhere, id)
+		}
+	}
+	if err := checkExpectedRun(expectedRunID, target.RunID()); err != nil {
+		return err
+	}
+	target.Approve(askID, verdict)
+	return nil
 }
 
 // Approve resolves the paused permission ask on the session's in-flight run with

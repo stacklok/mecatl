@@ -24,7 +24,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
-	engineport "github.com/stacklok/mecatl/engine/port"
+	"github.com/stacklok/mecatl/contracts/sessionaffinity"
 )
 
 // DialConfig is the connection-time configuration: address, optional bearer
@@ -62,7 +62,7 @@ type Client struct {
 // withSessionAffinity adds the exact session identity to outgoing metadata while
 // preserving credentials and any other metadata already carried by ctx.
 func withSessionAffinity(ctx context.Context, id string) context.Context {
-	if !engineport.ValidSessionIDHeaderValue(id) {
+	if !sessionaffinity.ValidValue(id) {
 		return ctx
 	}
 	md, _ := metadata.FromOutgoingContext(ctx)
@@ -70,7 +70,7 @@ func withSessionAffinity(ctx context.Context, id string) context.Context {
 	if md == nil {
 		md = metadata.MD{}
 	}
-	md.Set(engineport.SessionIDHeaderName, id)
+	md.Set(sessionaffinity.HeaderName, id)
 	return metadata.NewOutgoingContext(ctx, md)
 }
 
@@ -640,8 +640,8 @@ func (c *Client) OpenConverse(ctx context.Context) (*Stream, error) {
 // OpenConverseForSession opens a Converse stream carrying the exact session
 // affinity metadata before the first prompt or retry frame is sent.
 func (c *Client) OpenConverseForSession(ctx context.Context, sessionID string) (*Stream, error) {
-	if !engineport.ValidSessionIDHeaderValue(sessionID) {
-		return nil, fmt.Errorf("open converse: session affinity requires non-empty printable ASCII without boundary spaces")
+	if !sessionaffinity.ValidValue(sessionID) {
+		return nil, fmt.Errorf("open converse: session affinity requires 1-256 bytes of printable ASCII without boundary spaces")
 	}
 	return c.openConverse(withSessionAffinity(ctx, sessionID))
 }

@@ -8,12 +8,12 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stacklok/mecatl/contracts/sessionaffinity"
 	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
 	"github.com/stacklok/mecatl/engine/agent"
-	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/server"
@@ -37,7 +37,7 @@ func TestADR_0290_HTTPCreateSessionDerivedAffinity(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			req := httptest.NewRequest(http.MethodPost, "/v1/sessions", strings.NewReader(tc.body))
 			for _, affinity := range tc.headers {
-				req.Header.Add(port.SessionIDHeaderName, affinity)
+				req.Header.Add(sessionaffinity.HeaderName, affinity)
 			}
 			resp := httptest.NewRecorder()
 			h.ServeHTTP(resp, req)
@@ -58,7 +58,7 @@ func TestSessionAffinityAndHandoff_Scenario3_HTTPRouteInventory(t *testing.T) {
 		t.Helper()
 		req := httptest.NewRequest(route.method, route.path, strings.NewReader(route.body))
 		for _, header := range headers {
-			req.Header.Add(port.SessionIDHeaderName, header)
+			req.Header.Add(sessionaffinity.HeaderName, header)
 		}
 		resp := httptest.NewRecorder()
 		h.ServeHTTP(resp, req)
@@ -131,7 +131,7 @@ func TestADR_0290_HTTPHeaderFailureIsNonDisclosing(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			req := httptest.NewRequest(http.MethodGet, "/v1/sessions/route-id", nil)
 			for _, value := range tc.headers {
-				req.Header.Add(port.SessionIDHeaderName, value)
+				req.Header.Add(sessionaffinity.HeaderName, value)
 			}
 			resp := httptest.NewRecorder()
 			h.ServeHTTP(resp, req)
@@ -171,7 +171,7 @@ func TestADR_0290_HTTPDecodedPathEquality(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			req := httptest.NewRequest(http.MethodGet, "/v1/sessions/decoded%20id", nil)
-			req.Header.Set(port.SessionIDHeaderName, tc.header)
+			req.Header.Set(sessionaffinity.HeaderName, tc.header)
 			resp := httptest.NewRecorder()
 			h.ServeHTTP(resp, req)
 			if resp.Code != tc.want {
@@ -196,7 +196,7 @@ func TestADR_0290_AffinityHeaderGrantsNoAuthority(t *testing.T) {
 	}
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/sessions/"+string(sess.ID), nil)
-	req.Header.Set(port.SessionIDHeaderName, string(sess.ID))
+	req.Header.Set(sessionaffinity.HeaderName, string(sess.ID))
 	intruder := &session.Principal{Issuer: "https://issuer.example", Subject: "intruder", GrantType: session.GrantTypeUser}
 	req = req.WithContext(session.WithPrincipal(req.Context(), intruder))
 	resp := httptest.NewRecorder()

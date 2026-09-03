@@ -17,6 +17,7 @@ import (
 	"google.golang.org/grpc/test/bufconn"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
+	"github.com/stacklok/mecatl/contracts/sessionaffinity"
 	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
@@ -63,7 +64,7 @@ func (r *affinityIngressRecorder) intercept(srv any, stream grpc.ServerStream, i
 	if info.FullMethod == mecatlv1.HarnessService_Converse_FullMethodName {
 		md, _ := metadata.FromIncomingContext(stream.Context())
 		r.mu.Lock()
-		r.values = append(r.values, append([]string(nil), md.Get(port.SessionIDHeaderName)...))
+		r.values = append(r.values, append([]string(nil), md.Get(sessionaffinity.HeaderName)...))
 		r.mu.Unlock()
 	}
 	return handler(srv, stream)
@@ -219,21 +220,21 @@ func TestSessionAffinityAndHandoff_Scenario7_ClientTransportProviderBytes(t *tes
 			name: "duplicate",
 			ctx: func(id string) context.Context {
 				return metadata.NewOutgoingContext(context.Background(), metadata.Pairs(
-					port.SessionIDHeaderName, id,
-					port.SessionIDHeaderName, id,
+					sessionaffinity.HeaderName, id,
+					sessionaffinity.HeaderName, id,
 				))
 			},
 		},
 		{
 			name: "illegal",
 			ctx: func(id string) context.Context {
-				return metadata.NewOutgoingContext(context.Background(), metadata.Pairs(port.SessionIDHeaderName, " "+id))
+				return metadata.NewOutgoingContext(context.Background(), metadata.Pairs(sessionaffinity.HeaderName, " "+id))
 			},
 		},
 		{
 			name: "mismatch",
 			ctx: func(string) context.Context {
-				return metadata.NewOutgoingContext(context.Background(), metadata.Pairs(port.SessionIDHeaderName, "different-session"))
+				return metadata.NewOutgoingContext(context.Background(), metadata.Pairs(sessionaffinity.HeaderName, "different-session"))
 			},
 		},
 	}

@@ -1052,7 +1052,12 @@ persisted terminal (`cancelled`, Interrupt-recoverable) via
 `settleFireTerminalSnapshot` calling the existing `Service.Persist` (row 8's
 jsonlstore) — no new artifact. The `cmd/mecatui` signal-handler goroutine
 (`setupSignalHandler`) is process-scoped, retired on the normal quit path via
-`forceExit`, and never outlives the process; decision = derive.
+`forceExit`, and never outlives the process; decision = derive. Mecak8s's separate
+shutdown bounds (`--drain-timeout`, `--grpc-stop-timeout`, `--http-shutdown-timeout`,
+`--close-timeout`, plus the existing telemetry bound) likewise configure cleanup of
+already-inventoried resources and add no resource or rehydration state; their default
+sequential sum including the 3s preStop delay is 43s, below the chart's configurable 60s
+termination grace.
 
 **Issue #386 re-audit (in-flight scheduled-fire state).** #386 added NO new List-1
 row. The in-flight fire state is a PERSISTED lifecycle stage in the durable

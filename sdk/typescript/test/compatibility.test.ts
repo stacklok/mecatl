@@ -94,7 +94,7 @@ describe("compatibility floor", () => {
     }
     expect(httpRequests[3]?.headers.has(SESSION_ID_HEADER_NAME)).toBe(false);
 
-    for (const illegal of ["session\tid", "session-α", " session", "session "]) {
+    for (const illegal of ["session\tid", "session-α", " session", "session ", "x".repeat(257)]) {
       const callerHeaders = {
         authorization: "Bearer kept",
         [SESSION_ID_HEADER_NAME]: "caller-value",

@@ -31,22 +31,23 @@ implementation.
 Use the proprietary `X-Mecatl-Session-ID` field as one exact byte-for-byte
 client→gateway→mecak8s→provider correlation and affinity contract.
 
-Define the header name and its legal-value predicate once beside the session context
-helpers in `engine/port/sessioncontext.go`. A legal cross-transport affinity value is
+Define the header name, a 256-byte maximum, and its legal-value predicate once in the
+stdlib-only root transport package `contracts/sessionaffinity`. A legal cross-transport affinity value is
 non-empty printable ASCII (`0x20`–`0x7e`) with no leading or trailing space, so gRPC
 metadata and browser `Headers` can both carry it byte-for-byte without normalization.
 It is never trimmed, decoded, encoded, case-folded, truncated, or otherwise normalized.
-A durable external session ID outside that set remains usable by high-level clients
+A durable external session ID outside that set or longer than 256 bytes remains usable by high-level clients
 when it was supplied by the server and no explicit affinity bind was requested; those
 calls omit the field. An explicit TypeScript `withSessionAffinity` bind rejects such a
-value synchronously with an actionable error rather than deleting a caller header and
-returning apparently bound options. Root server and client consumers use that exported
+value synchronously with an actionable error without changing caller headers. Automatic
+high-level propagation instead omits affinity and removes any stale affinity header while
+preserving unrelated caller headers. Root server and client consumers use that exported
 contract.
 
 The independently versioned provider submodules continue to require the released
 standalone `engine` v0.12.0 under `GOWORK=off`. ADR 0093 forbids local `replace`
-directives, so this PR cannot import newly exported `engine/port` symbols there without
-requiring an unavailable engine release. The OpenAI Responses, OpenAI Chat Completions,
+directives, so provider production code remains private and release-independent rather
+than importing the root transport package. The OpenAI Responses, OpenAI Chat Completions,
 and Anthropic production adapters therefore retain their existing private header
 constants and legal-value validators in this PR, preserving ADR 0216 byte behavior.
 One repository-owned vector fixture records both the exact cross-transport decisions and
@@ -119,7 +120,12 @@ persistence fails, injected diagnostics report it and the previous durable state
 authoritative; the design does not promise a save while Redis is blocked. If a run cannot
 join before the shutdown bound, mecak8s does not explicitly release its lease: process
 death and TTL govern takeover. Leases remain session-scoped; no run-scoped lease or
-routing-derived ownership is introduced.
+routing-derived ownership is introduced. Mecak8s gives Service drain, gRPC graceful stop,
+HTTP shutdown, and final resource close separate positive operator flags. With defaults,
+the complete sequential Kubernetes budget is 3s preStop propagation + 15s drain + 10s
+gRPC + 5s HTTP + 5s close + 5s telemetry = 43s, strictly below the chart's configurable
+`terminationGracePeriodSeconds` default of 60s. Operators who increase a component must
+preserve that strict inequality.
 
 On an ungracefully killed owner, the modeled test fixture drops its stream. Until lease
 TTL expiry, a survivor cannot acquire ownership or start new application work. After
@@ -180,12 +186,10 @@ only the successor that acquires after expiry may resume that exact ask. A faile
 persistence attempt is diagnosed but does not replace the previously authoritative
 durable state.
 
-Provider production code intentionally does not consume the new exported port symbols
-in this PR. After an engine release exposes the contract to provider modules, a future
-provider release may raise its engine dependency and replace the private ADR 0216
-constants and validators; that migration is deferred, not a prerequisite for this
-one-PR capability. Until then, the shared vector fixture, parity tests, and concurrent
-isolation tests are the compatibility guard.
+Provider production code intentionally retains its private ADR-0216 validator so each
+provider module remains independently releasable. The shared vector fixtures and parity
+and concurrent-isolation tests guard compatibility without coupling providers to the root
+transport package.
 
 Owner-to-owner live forwarding is deliberately deferred. If later required, it needs a
 separate ADR and acceptance plan because it adds a new authenticated internal protocol,

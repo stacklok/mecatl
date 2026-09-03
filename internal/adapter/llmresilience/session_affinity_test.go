@@ -8,6 +8,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/stacklok/mecatl/contracts/sessionaffinity"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	openai "github.com/stacklok/mecatl/provider/openai"
@@ -21,7 +22,7 @@ func TestADR_0290_ProviderSessionHeaderRetryWrapper(t *testing.T) {
 	)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
-		headers = append(headers, r.Header.Get(port.SessionIDHeaderName))
+		headers = append(headers, r.Header.Get(sessionaffinity.HeaderName))
 		attempt := len(headers)
 		mu.Unlock()
 		if attempt == 1 {

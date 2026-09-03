@@ -8,6 +8,7 @@ import (
 	"go/token"
 	"iter"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -199,27 +200,9 @@ func serviceMethod(fn *ast.FuncDecl) bool {
 	return ok && ident.Name == "Service"
 }
 
-func TestADR_0290_DurableSessionWritesUseSanctionedWrappers(t *testing.T) {
-	files, err := filepath.Glob("*.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	allowed := map[string]bool{
-		"persistNewSession":   true,
-		"saveSession":         true,
-		"deleteSessionFamily": true,
-		"appendEvent":         true,
-	}
+func scanUnsanctionedWrites(files map[string]*ast.File, allowed map[string]bool) []string {
 	var violations []string
-	fset := token.NewFileSet()
-	for _, path := range files {
-		if strings.HasSuffix(path, "_test.go") || path == "schedule_manager.go" || path == "mutation_capability.go" {
-			continue
-		}
-		file, parseErr := parser.ParseFile(fset, path, nil, 0)
-		if parseErr != nil {
-			t.Fatal(parseErr)
-		}
+	for path, file := range files {
 		for _, decl := range file.Decls {
 			fn, ok := decl.(*ast.FuncDecl)
 			if !ok || fn.Body == nil || allowed[fn.Name.Name] {
@@ -247,31 +230,45 @@ func TestADR_0290_DurableSessionWritesUseSanctionedWrappers(t *testing.T) {
 			})
 		}
 	}
-	if len(violations) != 0 {
+	sort.Strings(violations)
+	return violations
+}
+
+func TestADR_0290_DurableSessionWritesUseSanctionedWrappers(t *testing.T) {
+	paths, err := filepath.Glob("*.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	allowed := map[string]bool{
+		"persistNewSession": true, "saveSession": true, "deleteSessionFamily": true, "appendEvent": true,
+		// Schedule records are a distinct caller-owned family, not a session family;
+		// naming the sanctioned seams keeps schedule_manager.go inside this scan.
+		"CreateSchedule": true, "UpdateSchedule": true, "DeleteSchedule": true,
+	}
+	files := make(map[string]*ast.File)
+	fset := token.NewFileSet()
+	for _, path := range paths {
+		if strings.HasSuffix(path, "_test.go") || path == "mutation_capability.go" {
+			continue
+		}
+		file, parseErr := parser.ParseFile(fset, path, nil, 0)
+		if parseErr != nil {
+			t.Fatal(parseErr)
+		}
+		files[path] = file
+	}
+	if violations := scanUnsanctionedWrites(files, allowed); len(violations) != 0 {
 		t.Fatalf("durable session writes bypass sanctioned wrappers: %v", violations)
 	}
 
-	// Prove the oracle catches a free helper; limiting discovery to Service methods
-	// was the bypass this guard replaces.
 	fixture, err := parser.ParseFile(token.NewFileSet(), "fixture.go", `package server
 func freeHelper(store interface{ Save() }) { store.Save() }`, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	caught := false
-	ast.Inspect(fixture, func(node ast.Node) bool {
-		call, ok := node.(*ast.CallExpr)
-		if !ok {
-			return true
-		}
-		sel, ok := call.Fun.(*ast.SelectorExpr)
-		if ok && sel.Sel.Name == "Save" {
-			caught = true
-		}
-		return true
-	})
-	if !caught {
-		t.Fatal("architecture guard did not discover a free helper mutation")
+	violations := scanUnsanctionedWrites(map[string]*ast.File{"fixture.go": fixture}, allowed)
+	if len(violations) != 1 || !strings.Contains(violations[0], "freeHelper.Save") {
+		t.Fatalf("real architecture scanner violations = %v, want freeHelper.Save", violations)
 	}
 }
 
@@ -286,7 +283,7 @@ func TestADR_0290_AllSessionMutatorsClassified(t *testing.T) {
 		"GetSession": {Class: SessionMutationReadOnly, Rationale: "loads an authoritative snapshot without changing the durable family"},
 		"SetModels":  {Class: SessionMutationComposition, Rationale: "changes only process-wide composition state and touches no session family"},
 	}
-	err := validateSessionMutationNames(fixture, []string{"GetSession", "SetModels", "NewSessionMutator"})
+	err := validateSessionMutationNames(fixture, []string{"NewSessionMutator"})
 	if len(err) != 1 || !strings.Contains(err[0].Error(), "NewSessionMutator") {
 		t.Fatalf("unclassified mutator errors = %v, want one error naming NewSessionMutator", err)
 	}

@@ -10,21 +10,22 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/reflect/protoreflect"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
+	"github.com/stacklok/mecatl/contracts/sessionaffinity"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
-	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/internal/adapter/server"
 )
 
 func affinityContext(id string) context.Context {
-	return metadata.NewOutgoingContext(context.Background(), metadata.Pairs(port.SessionIDHeaderName, id))
+	return metadata.NewOutgoingContext(context.Background(), metadata.Pairs(sessionaffinity.HeaderName, id))
 }
 
 func duplicateAffinityContext(first, second string) context.Context {
 	return metadata.NewOutgoingContext(context.Background(), metadata.Pairs(
-		port.SessionIDHeaderName, first,
-		port.SessionIDHeaderName, second,
+		sessionaffinity.HeaderName, first,
+		sessionaffinity.HeaderName, second,
 	))
 }
 
@@ -55,6 +56,30 @@ func TestADR_0290_CreateSessionDerivedAffinity(t *testing.T) {
 				t.Fatalf("code = %v, want %v: %v", got, tc.want, err)
 			}
 		})
+	}
+}
+
+func TestADR_0290_NewSessionBoundRPCsRequireAffinityClassification(t *testing.T) {
+	want := map[protoreflect.Name]bool{
+		"CreateSession": true, "GetSession": true, "GetSessionTranscript": true,
+		"SetMode": true, "CloseSession": true, "RenameSession": true,
+		"DeleteSession": true, "CompactSession": true, "ForkSession": true,
+		"PreflightSessionAdoption": true, "AdoptSession": true, "StreamSessionEvents": true,
+		"StreamSessionLive": true, "WatchSessionEvents": true, "ReflectSession": true,
+		"ApprovePlan": true,
+	}
+	service := mecatlv1.File_mecatl_v1_harness_proto.Services().ByName("HarnessService")
+	for i := range service.Methods().Len() {
+		method := service.Methods().Get(i)
+		fields := method.Input().Fields()
+		sessionBound := fields.ByName("session_id") != nil || fields.ByName("source_session_id") != nil || fields.ByName("debug_target_session_id") != nil
+		if sessionBound != want[method.Name()] {
+			t.Errorf("RPC %s direct session binding = %t, classified = %t; update affinity validation and matrix", method.Name(), sessionBound, want[method.Name()])
+		}
+		delete(want, method.Name())
+	}
+	for name := range want {
+		t.Errorf("stale affinity RPC classification %s", name)
 	}
 }
 
@@ -202,7 +227,7 @@ func TestADR_0290_GRPCHeaderFailureIsNonDisclosing(t *testing.T) {
 
 	t.Run("illegal", func(t *testing.T) {
 		const illegal = "metadata-secret\x7f"
-		ctx := metadata.NewIncomingContext(context.Background(), metadata.Pairs(port.SessionIDHeaderName, illegal))
+		ctx := metadata.NewIncomingContext(context.Background(), metadata.Pairs(sessionaffinity.HeaderName, illegal))
 		_, err := server.NewHarnessServer(svc).GetSession(ctx, &mecatlv1.GetSessionRequest{SessionId: requestID})
 		assertAffinityFailureIsNonDisclosing(t, err, requestID, illegal)
 	})
@@ -323,6 +348,7 @@ func TestADR_0290_ConverseControlsStaySessionBound(t *testing.T) {
 		}
 	}
 	controls := []*mecatlv1.ConverseRequest{
+		{}, // unset/future oneof frames remain ignorable for forward compatibility
 		{Kind: &mecatlv1.ConverseRequest_ResumeApproval{ResumeApproval: &mecatlv1.ResumeApproval{AskId: "unknown"}}},
 		{Kind: &mecatlv1.ConverseRequest_CancelChild{CancelChild: &mecatlv1.CancelChild{ChildId: "unknown"}}},
 		{Kind: &mecatlv1.ConverseRequest_Steer{Steer: &mecatlv1.Steer{Text: "continue"}}},
@@ -357,6 +383,50 @@ func TestADR_0290_ConverseControlsStaySessionBound(t *testing.T) {
 	}
 	if !proto.Equal(got, secondBaseline) {
 		t.Fatalf("second session changed: got %+v, want baseline %+v", got, secondBaseline)
+	}
+}
+
+func TestADR_0290_ConverseRejectsSecondRetryButIgnoresUnsetFrames(t *testing.T) {
+	llm := mockllm.New(mockllm.ChunksTurn(blockingChunks()...))
+	svc := newService(t, llm, allowRules())
+	client, cleanup := dialGRPC(t, svc)
+	defer cleanup()
+	created, err := client.CreateSession(context.Background(), &mecatlv1.CreateSessionRequest{Workspace: "/ws"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stream, err := client.Converse(affinityContext(created.GetSessionId()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := stream.Send(&mecatlv1.ConverseRequest{Kind: &mecatlv1.ConverseRequest_Prompt{Prompt: &mecatlv1.Prompt{SessionId: created.GetSessionId(), Text: "go"}}}); err != nil {
+		t.Fatal(err)
+	}
+	for {
+		resp, recvErr := stream.Recv()
+		if recvErr != nil {
+			t.Fatal(recvErr)
+		}
+		if resp.GetEvent().GetType() == "message.delta" {
+			break
+		}
+	}
+	if err := stream.Send(&mecatlv1.ConverseRequest{}); err != nil {
+		t.Fatalf("send unset compatibility frame: %v", err)
+	}
+	if err := stream.Send(&mecatlv1.ConverseRequest{Kind: &mecatlv1.ConverseRequest_Retry{Retry: &mecatlv1.RetryStart{SessionId: created.GetSessionId()}}}); err != nil {
+		t.Fatalf("send second retry: %v", err)
+	}
+	for {
+		if _, recvErr := stream.Recv(); recvErr != nil {
+			if status.Code(recvErr) != codes.InvalidArgument {
+				t.Fatalf("second retry result = %v, want InvalidArgument", recvErr)
+			}
+			break
+		}
+	}
+	if llm.Calls() != 1 {
+		t.Fatalf("provider calls = %d, want 1", llm.Calls())
 	}
 }
 

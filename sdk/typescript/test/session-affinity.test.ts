@@ -2,7 +2,8 @@ import { createRouterTransport } from "@connectrpc/connect";
 import { describe, expect, it } from "vitest";
 
 import { HarnessService } from "../src/gen/mecatl/v1/harness_pb.js";
-import { connect, SESSION_ID_HEADER_NAME } from "../src/index.js";
+import { connect, SESSION_ID_HEADER_NAME, withSessionAffinity } from "../src/index.js";
+import { sessionAffinityIfRepresentable } from "../src/raw.js";
 
 const sessionId = "session-affinity";
 
@@ -216,34 +217,50 @@ describe("high-level session affinity", () => {
     await http.close();
   });
 
-  it("keeps unrepresentable server-issued IDs usable only without explicit affinity", async () => {
+  it("omits affinity for unrepresentable high-level IDs and rejects only explicit binding", async () => {
     const externalId = "session-α";
-    const seenCloseHeaders: Array<string | null> = [];
-    let explicitlyBoundCalls = 0;
+    const seenHeaders: Array<string | null> = [];
     const transport = createRouterTransport((router) => {
       router.service(HarnessService, {
         closeSession: (_request, context) => {
-          seenCloseHeaders.push(context.requestHeader.get(SESSION_ID_HEADER_NAME));
+          seenHeaders.push(context.requestHeader.get(SESSION_ID_HEADER_NAME));
           return {};
         },
-        createSession: () => ({ sessionId: externalId }),
+        createSession: (_request, context) => {
+          seenHeaders.push(context.requestHeader.get(SESSION_ID_HEADER_NAME));
+          return { sessionId: externalId };
+        },
+        forkSession: (_request, context) => {
+          seenHeaders.push(context.requestHeader.get(SESSION_ID_HEADER_NAME));
+          return { sessionId: externalId };
+        },
         getCompatibilityInfo: () => ({ apiMajor: 1 }),
-        getSession: () => {
-          explicitlyBoundCalls += 1;
+        getSession: (_request, context) => {
+          seenHeaders.push(context.requestHeader.get(SESSION_ID_HEADER_NAME));
           return { session: { sessionId: externalId } };
         },
       });
     });
     const client = connect({ transport });
-    const session = await client.sessions.create({});
+    const session = await client.sessions.create({ sourceSessionId: externalId });
+    await client.sessions.create({ debugTargetSessionId: externalId });
+    await client.sessions.get(externalId);
+    await client.sessions.fork(externalId);
     await session.close();
-    expect(seenCloseHeaders).toEqual([null]);
+    expect(seenHeaders).toEqual([null, null, null, null, null]);
 
-    await expect(client.sessions.get(externalId)).rejects.toThrow(/invalid session affinity/i);
-    await expect(client.sessions.create({ sourceSessionId: externalId })).rejects.toThrow(
-      /invalid session affinity/i,
-    );
-    expect(explicitlyBoundCalls).toBe(0);
+    expect(() =>
+      withSessionAffinity(externalId, {
+        headers: { [SESSION_ID_HEADER_NAME]: "stale-affinity", "x-caller": "kept" },
+      }),
+    ).toThrow(/invalid session affinity/i);
+
+    const degraded = sessionAffinityIfRepresentable(externalId, {
+      headers: { [SESSION_ID_HEADER_NAME]: "stale-affinity", "x-caller": "kept" },
+    });
+    const degradedHeaders = new Headers(degraded?.headers);
+    expect(degradedHeaders.get(SESSION_ID_HEADER_NAME)).toBeNull();
+    expect(degradedHeaders.get("x-caller")).toBe("kept");
     await client.close();
   });
 });

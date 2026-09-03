@@ -32,7 +32,7 @@ one future accumulator PR; infrastructure policy and rollout do not.
   affinity policy belongs to its infrastructure repository, where deployment topology
   and rollout are known.
 
-## In scope — 8 scenarios / 44 ACs, in implementation order
+## In scope — 8 scenarios / 45 ACs, in implementation order
 
 Scenarios are listed in implementation order. Each is independently demonstrable;
 later scenarios assume earlier ones but do not weaken their acceptance criteria.
@@ -41,8 +41,8 @@ later scenarios assume earlier ones but do not weaken their acceptance criteria.
 
 ### Scenario 1 — One exact header contract governs every provider attempt
 
-An engine embedder has one canonical header name and byte-level legal-value decision
-near [`engine/port/sessioncontext.go`](../../engine/port/sessioncontext.go). The real
+A root transport consumer has one canonical header name and byte-level legal-value decision
+in [`contracts/sessionaffinity`](../../contracts/sessionaffinity). The real
 provider adapters continue to read the actual run's context, never transport ingress,
 preserving [ADR-0216](../adr/0216-provider-session-correlation-header.md) and the
 provider-neutral request invariant in [`AGENTS.md`](../../AGENTS.md). Their separately
@@ -51,18 +51,17 @@ symbol in this PR, and ADR 0093 forbids a local replacement; provider production
 therefore retains its private ADR-0216 header constants and validators.
 
 **Work:**
-- engine port: add the canonical exported `X-Mecatl-Session-ID` constant and legal-value
-  predicate beside the existing session-context helpers, with one repository-owned exact
-  legal/illegal vector fixture consumed by the engine and provider test suites;
+- root transport contract: add the canonical `X-Mecatl-Session-ID` constant and legal-value
+  predicate to the stdlib-only `contracts/sessionaffinity` package, with a 256-byte maximum
+  and one repository-owned exact legal/illegal vector fixture;
 - provider modules: retain their existing private production constants and validators,
   and consume that exact vector fixture in parity tests while proving per-request projection,
   retries, fallbacks, and concurrent isolation;
-- engine compatibility: API snapshots and `engine/CHANGELOG.md` are updated if either
-  shared symbol is exported. A future provider release may raise its engine dependency
-  and migrate production code after the engine release is available.
+- engine compatibility: the transport-only contract does not alter the engine API snapshots
+  or `engine/CHANGELOG.md`.
 
 **Acceptance:**
-- AC1.1: The canonical port contract accepts a non-empty printable-ASCII HTTP field
+- AC1.1: The canonical transport contract accepts a non-empty printable-ASCII HTTP field
   value (`0x20`–`0x7e`, without boundary spaces) byte-for-byte and rejects empty,
   control-bearing, newline-bearing, non-ASCII, or otherwise illegal values; it never
   trims, encodes, truncates, or normalizes a session ID. The shared vector fixture also
@@ -262,6 +261,11 @@ and the lease may be released. This strengthens the original drain sequence in
 - AC6.4: If an executing run cannot join before the shutdown bound, mecak8s does not
   explicitly release its lease; process death and lease TTL govern later takeover.
   - verify: `TestADR_0290_DrainTimeoutRetainsLeaseForTTLTakeover`
+- AC6.5: Mecak8s exposes separate positive bounds for Service drain, gRPC graceful stop,
+  HTTP shutdown, and resource close. Including the 3-second preStop delay and telemetry
+  flush, the default 43-second sequential budget is strictly below the Helm chart's
+  operator-configurable 60-second `terminationGracePeriodSeconds` default.
+  - verify: `TestADR_0290_TerminationBudgetFitsPodGracePeriod` and `TestADR_0290_TerminationGracePeriodIsConfigurableAndFitsDefaults`
 
 ---
 

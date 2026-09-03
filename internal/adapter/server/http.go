@@ -14,6 +14,7 @@ import (
 	"google.golang.org/protobuf/encoding/protojson"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
+	"github.com/stacklok/mecatl/contracts/sessionaffinity"
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/learning"
 	"github.com/stacklok/mecatl/engine/port"
@@ -144,11 +145,11 @@ func (h *HTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func requireCreateSessionAffinity(w http.ResponseWriter, r *http.Request, debugTargetID string) bool {
-	values := r.Header.Values(port.SessionIDHeaderName)
+	values := r.Header.Values(sessionaffinity.HeaderName)
 	if len(values) == 0 {
 		return true
 	}
-	if debugTargetID == "" || len(values) != 1 || !port.ValidSessionIDHeaderValue(values[0]) || values[0] != debugTargetID {
+	if debugTargetID == "" || len(values) != 1 || !sessionaffinity.ValidValue(values[0]) || values[0] != debugTargetID {
 		writeProblem(w, entryForHTTPStatus(http.StatusBadRequest), "invalid session affinity header")
 		return false
 	}
@@ -161,12 +162,12 @@ func requireCreateSessionAffinity(w http.ResponseWriter, r *http.Request, debugT
 // its ordinary authentication, ownership, and management checks.
 func requireSessionAffinity(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		values := r.Header.Values(port.SessionIDHeaderName)
+		values := r.Header.Values(sessionaffinity.HeaderName)
 		if len(values) == 0 {
 			next(w, r)
 			return
 		}
-		if len(values) != 1 || !port.ValidSessionIDHeaderValue(values[0]) || values[0] != r.PathValue("id") {
+		if len(values) != 1 || !sessionaffinity.ValidValue(values[0]) || values[0] != r.PathValue("id") {
 			writeProblem(w, entryForHTTPStatus(http.StatusBadRequest), "invalid session affinity header")
 			return
 		}

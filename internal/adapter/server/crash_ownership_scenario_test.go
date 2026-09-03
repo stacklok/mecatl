@@ -16,6 +16,7 @@ import (
 
 	"github.com/alicebob/miniredis/v2"
 
+	"github.com/stacklok/mecatl/contracts/sessionaffinity"
 	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memlease"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
@@ -433,8 +434,8 @@ func (p *handoffHTTPProvider) Stream(ctx context.Context, _ port.LLMRequest) (it
 	if err != nil {
 		return nil, err
 	}
-	if value := string(id); port.ValidSessionIDHeaderValue(value) {
-		req.Header.Set(port.SessionIDHeaderName, value)
+	if value := string(id); sessionaffinity.ValidValue(value) {
+		req.Header.Set(sessionaffinity.HeaderName, value)
 	}
 	resp, err := p.client.Do(req)
 	if err != nil {
@@ -482,12 +483,12 @@ func (f *crashOwnershipFixture) continueThroughHTTPProvider(t *testing.T, prompt
 	providerServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		persisted, err := f.survivorStore.Load(r.Context(), f.sessionID)
 		if err != nil {
-			captures <- handoffProviderCapture{header: r.Header.Get(port.SessionIDHeaderName)}
+			captures <- handoffProviderCapture{header: r.Header.Get(sessionaffinity.HeaderName)}
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 		captures <- handoffProviderCapture{
-			header:            r.Header.Get(port.SessionIDHeaderName),
+			header:            r.Header.Get(sessionaffinity.HeaderName),
 			persistedState:    persisted.State,
 			persistedMessages: session.CloneMessages(persisted.Conversation.Messages),
 		}
@@ -840,7 +841,7 @@ func TestADR_0290_HandoffEndToEndCorrelation(t *testing.T) {
 
 	run, capture := f.continueThroughHTTPProvider(t, "continue correlated work")
 	if capture.header != string(f.sessionID) {
-		t.Fatalf("first successor provider %s = %q, want exact ingress/durable session ID %q", port.SessionIDHeaderName, capture.header, f.sessionID)
+		t.Fatalf("first successor provider %s = %q, want exact ingress/durable session ID %q", sessionaffinity.HeaderName, capture.header, f.sessionID)
 	}
 	if capture.contextSessionID != f.sessionID {
 		t.Fatalf("provider context session ID = %q, want authoritative durable ID %q", capture.contextSessionID, f.sessionID)

@@ -11,6 +11,8 @@ import (
 
 	"github.com/alicebob/miniredis/v2"
 
+	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
+	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
@@ -527,6 +529,69 @@ func TestADR_0290_DrainStopsAdmissionBeforeOwnershipChange(t *testing.T) {
 	lease.mu.Unlock()
 	if acquires != 0 {
 		t.Fatalf("drained admissions acquired ownership %d times, want 0", acquires)
+	}
+}
+
+func TestADR_0290_DrainPreservesAwaitingResumePointThroughGRPCRelay(t *testing.T) {
+	lease := &fakeLease{}
+	store := memstore.New()
+	cat := tool.NewCatalog()
+	cat.MustRegister(&writeAskTool{})
+	eng := agent.NewEngine(agent.Deps{
+		LLM:     mockllm.New(mockllm.ToolCallTurn(session.NewToolCall("relay-call", "Write", json.RawMessage(`{}`)))),
+		Catalog: cat, Policy: permpolicy.NewPolicy(nil, permstore.New()), Model: "test-model",
+	})
+	svc, err := server.NewService(server.Config{
+		Engine: eng, Store: store, SessionLease: lease, LeaseOwner: "relay-drain",
+		LeaseTTL: time.Hour, LeaseRenewInterval: time.Hour,
+		Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer svc.Close()
+	client, cleanup := dialGRPC(t, svc)
+	defer cleanup()
+	created, err := client.CreateSession(context.Background(), &mecatlv1.CreateSessionRequest{Workspace: "/ws"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := session.SessionID(created.GetSessionId())
+	stream, err := client.Converse(affinityContext(string(id)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := stream.Send(&mecatlv1.ConverseRequest{Kind: &mecatlv1.ConverseRequest_Prompt{Prompt: &mecatlv1.Prompt{SessionId: string(id), Text: "park"}}}); err != nil {
+		t.Fatal(err)
+	}
+	var askID string
+	for askID == "" {
+		resp, recvErr := stream.Recv()
+		if recvErr != nil {
+			t.Fatalf("receive ask: %v", recvErr)
+		}
+		if ask := resp.GetEvent().GetAsk(); ask != nil {
+			askID = ask.GetAskId()
+		}
+	}
+
+	drained := make(chan error, 1)
+	go func() { drained <- svc.GracefulDrain(context.Background()) }()
+	for {
+		if _, recvErr := stream.Recv(); recvErr != nil {
+			break
+		}
+	}
+	if err := <-drained; err != nil {
+		t.Fatalf("GracefulDrain: %v", err)
+	}
+	got, err := store.Load(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pending, ok := got.PendingAsk()
+	if got.State != session.StateAwaiting || !ok || pending.AskID != askID {
+		t.Fatalf("relay-backed durable resume point changed: state=%q ask=%+v ok=%t", got.State, pending, ok)
 	}
 }
 

@@ -20,10 +20,12 @@ import { HarnessService } from "./gen/mecatl/v1/harness_pb.js";
 
 /** Canonical routing hint for session-bound mecatl requests. It grants no authority. @public */
 export const SESSION_ID_HEADER_NAME = "X-Mecatl-Session-ID";
+const MAX_SESSION_AFFINITY_BYTES = 256;
 
 function validSessionAffinity(value: string): boolean {
   if (
     value.length === 0 ||
+    value.length > MAX_SESSION_AFFINITY_BYTES ||
     value.charCodeAt(0) === 0x20 ||
     value.charCodeAt(value.length - 1) === 0x20
   ) {
@@ -46,7 +48,7 @@ function validSessionAffinity(value: string): boolean {
 export function withSessionAffinity(sessionId: string, options: CallOptions = {}): CallOptions {
   if (!validSessionAffinity(sessionId)) {
     throw new RangeError(
-      "Invalid session affinity: expected non-empty printable ASCII without boundary spaces",
+      "Invalid session affinity: expected 1-256 bytes of printable ASCII without boundary spaces",
     );
   }
   const headers = new Headers(options.headers);
@@ -58,7 +60,9 @@ export function sessionAffinityIfRepresentable(
   sessionId: string,
   options?: CallOptions,
 ): CallOptions | undefined {
-  return validSessionAffinity(sessionId) ? withSessionAffinity(sessionId, options) : options;
+  return validSessionAffinity(sessionId)
+    ? withSessionAffinity(sessionId, options)
+    : withoutSessionAffinity(options);
 }
 
 function withoutSessionAffinity(options?: CallOptions): CallOptions | undefined {

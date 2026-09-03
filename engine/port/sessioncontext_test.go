@@ -2,47 +2,12 @@ package port_test
 
 import (
 	"context"
-	"encoding/json"
-	"os"
 	"sync"
 	"testing"
 
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 )
-
-func TestADR_0290_SessionHeaderLegalValue(t *testing.T) {
-	if port.SessionIDHeaderName != "X-Mecatl-Session-ID" {
-		t.Fatalf("SessionIDHeaderName = %q, want X-Mecatl-Session-ID", port.SessionIDHeaderName)
-	}
-
-	data, err := os.ReadFile("testdata/session_header_values.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var vectors []struct {
-		Name  string `json:"name"`
-		Value string `json:"value"`
-		Legal bool   `json:"legal"`
-	}
-	if err := json.Unmarshal(data, &vectors); err != nil {
-		t.Fatal(err)
-	}
-	for _, vector := range vectors {
-		t.Run(vector.Name, func(t *testing.T) {
-			if got := port.ValidSessionIDHeaderValue(vector.Value); got != vector.Legal {
-				t.Errorf("ValidSessionIDHeaderValue(%q) = %v, want %v", vector.Value, got, vector.Legal)
-			}
-			if vector.Legal {
-				ctx := port.WithSessionID(context.Background(), session.SessionID(vector.Value))
-				got, ok := port.SessionIDFromContext(ctx)
-				if !ok || string(got) != vector.Value {
-					t.Errorf("legal value changed through context: (%q, %v), want (%q, true)", got, ok, vector.Value)
-				}
-			}
-		})
-	}
-}
 
 func TestSessionIDContext(t *testing.T) {
 	if id, ok := port.SessionIDFromContext(context.Background()); ok || id != "" {

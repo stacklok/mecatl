@@ -14,7 +14,6 @@ func TestSessionHeaderVectorCopiesMatchCanonical(t *testing.T) {
 		t.Fatalf("read canonical session-header vectors: %v", err)
 	}
 	for _, path := range []string{
-		filepath.Join("..", "..", "..", "engine", "port", "testdata", "session_header_values.json"),
 		filepath.Join("..", "..", "..", "provider", "anthropic", "testdata", "session_header_values.json"),
 		filepath.Join("..", "..", "..", "provider", "openai", "testdata", "session_header_values.json"),
 		filepath.Join("..", "..", "..", "provider", "openaichat", "testdata", "session_header_values.json"),

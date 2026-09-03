@@ -84,7 +84,7 @@ var sessionMutationInventory = map[string]SessionMutationEntry{
 	"SetModels":                          {SessionMutationComposition, "changes only process-wide composition state and touches no durable session family"},
 	"SetModelsRefresher":                 {SessionMutationComposition, "installs a process-wide callback and touches no durable session family"},
 	"SetSessionEnvironment":              {SessionMutationComposition, "registers only a process-local environment override and touches no durable session family"},
-	"CloseSession":                       {SessionMutationComposition, "tears down process-local registries and releases ownership without mutating durable session bytes"},
+	"CloseSession":                       {SessionMutationLeaseProven, "tears down process-local session ownership and releases its lease without changing durable session bytes"},
 }
 
 func validateSessionMutationNames(table map[string]SessionMutationEntry, boundaries []string) []error {
@@ -99,6 +99,9 @@ func validateSessionMutationNames(table map[string]SessionMutationEntry, boundar
 		}
 		if strings.TrimSpace(entry.Rationale) == "" {
 			errs = append(errs, fmt.Errorf("session mutation %q has no rationale", name))
+		}
+		if !entry.mutatesDurableFamily() {
+			errs = append(errs, fmt.Errorf("discovered session mutator %q uses non-mutating class %d", name, entry.Class))
 		}
 	}
 	// Only mutation rows are source-discovered. Explicit read-only/composition

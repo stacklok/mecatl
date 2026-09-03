@@ -27,6 +27,31 @@ import (
 	"github.com/stacklok/mecatl/internal/testutil/codextest"
 )
 
+func TestADR_0290_TerminationBudgetFitsPodGracePeriod(t *testing.T) {
+	cfg, err := parseFlags(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const preStop = drainPropagationDelay
+	used := preStop + cfg.drainTimeout + cfg.grpcStopTimeout + cfg.httpShutdownTimeout + cfg.closeTimeout + cfg.otlpShutdownTimeout
+	if used >= 60*time.Second {
+		t.Fatalf("default termination budget = %s, want < 60s (preStop=%s drain=%s grpc=%s http=%s close=%s telemetry=%s)", used, preStop, cfg.drainTimeout, cfg.grpcStopTimeout, cfg.httpShutdownTimeout, cfg.closeTimeout, cfg.otlpShutdownTimeout)
+	}
+
+	custom, err := parseFlags([]string{"--drain-timeout=1s", "--grpc-stop-timeout=2s", "--http-shutdown-timeout=3s", "--close-timeout=4s"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if custom.drainTimeout != time.Second || custom.grpcStopTimeout != 2*time.Second || custom.httpShutdownTimeout != 3*time.Second || custom.closeTimeout != 4*time.Second {
+		t.Fatalf("custom shutdown bounds = (%s, %s, %s, %s), want (1s, 2s, 3s, 4s)", custom.drainTimeout, custom.grpcStopTimeout, custom.httpShutdownTimeout, custom.closeTimeout)
+	}
+	for _, flag := range []string{"drain-timeout", "grpc-stop-timeout", "http-shutdown-timeout", "close-timeout"} {
+		if _, err := parseFlags([]string{"--" + flag + "=0s"}); err == nil {
+			t.Errorf("--%s accepted a non-positive duration", flag)
+		}
+	}
+}
+
 func TestVersionInvocationIsExact(t *testing.T) {
 	if !buildinfo.IsVersion([]string{"mecak8s", "--version"}) {
 		t.Fatal("exact --version was not recognized")

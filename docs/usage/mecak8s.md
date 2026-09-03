@@ -67,6 +67,7 @@ $ go run ./cmd/mecak8s --redis-url redis:6379 --redis-allow-plaintext --session-
 | `--grpc-addr` | `0.0.0.0:8080` | gRPC listen address (a pod binds `0.0.0.0`, unlike `mecated`'s loopback). |
 | `--http-addr` | `0.0.0.0:8081` | HTTP/SSE listen address (carries `/healthz` and `/readyz` outside auth; the API mux inside auth). |
 | `--drain-addr` | `0.0.0.0:8082` | Plaintext drain-only listener serving only `GET /drain` for the kubelet preStop hook; it remains outside the Service and requires operator NetworkPolicy/mesh isolation against direct Pod-IP access ([ADR 0290](../adr/0290-mecak8s-drain-listener.md)). |
+| `--drain-timeout` / `--grpc-stop-timeout` / `--http-shutdown-timeout` / `--close-timeout` | `15s` / `10s` / `5s` / `5s` | Separate sequential shutdown bounds. Together with the 3s preStop propagation delay and 5s telemetry flush, defaults consume 43s and must remain below Helm `terminationGracePeriodSeconds` (60s by default). |
 | `--auth-token` / `--tls-cert` / `--tls-key` / `--client-ca` | `""` | bearer / TLS / mTLS — enable before binding a non-mesh address (a pod is otherwise fronted by the Service/mesh). |
 | `--max-run-tokens` / `--max-team-tokens` | `0` | loop-level / team-wide cumulative token ceilings (`0` = unlimited). |
 | `--mcp-server` | — | remote MCP server as `name=URL` (repeatable); a per-server bearer token is read from `MCP_<NAME>_TOKEN` (name upper-cased, token optional). Names must match `[A-Za-z0-9_]+` and be case-insensitively unique; a token-bearing URL must be `https` (or `http` to loopback). The same flag + env convention as `mecated`/`mecatequi` ([ADR 0082](../adr/0082-factory-mcp-wiring.md)). NOTE: the token is read **once at startup** and shared across all sessions for the pod's lifetime — per-run identity is a `mecatequi` property; a per-session credential source is future work (mecatl#342). |
@@ -506,10 +507,12 @@ completion). The live specs `Skip` without the key; the mock suite is unaffected
 On SIGTERM (or the `preStop` `httpGet /drain`) the drain gate arms (`/readyz` → false, the
 endpoint controller removes the pod) and new runs are rejected with **HTTP 503**. In-flight
 runs are **cancelled, not drained to completion** — a multi-minute LLM turn cannot survive a
-rolling update within `terminationGracePeriodSeconds: 60`. The pod is disposable; the
+rolling update within the chart's configurable `terminationGracePeriodSeconds` (60s by
+default). The pod is disposable; the
 session is not — it is **`Recover`-able on the successor** from the Redis
-snapshot + durable event log. The bounded `GracefulStop` (30s) hard-stops (`grpcSrv.Stop()`)
-on timeout, and `Service.Close` releases every held `coordination.k8s.io` Lease
+snapshot + durable event log. The default sequential bound is 43s including preStop:
+3s propagation + 15s Service drain + 10s gRPC + 5s HTTP + 5s resource close + 5s
+telemetry, safely below the chart's 60s default. `Service.Close` releases every settled held `coordination.k8s.io` Lease
 (cancel-detached) so a survivor can take over immediately, without the 30s TTL. See
 `docs/adr/0048-mecak8s.md` for the design rationale and the deliberately-deferred items
 (CRD/operator, HPA, managed Redis, Redis auth, fixing `mecated`'s unbounded `GracefulStop`).

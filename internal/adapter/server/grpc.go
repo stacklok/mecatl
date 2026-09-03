@@ -17,6 +17,7 @@ import (
 	"google.golang.org/protobuf/encoding/protowire"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
+	"github.com/stacklok/mecatl/contracts/sessionaffinity"
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
@@ -40,11 +41,11 @@ const invalidSessionAffinityMessage = "invalid session affinity metadata"
 
 func validateGRPCCreateSessionAffinity(ctx context.Context, debugTargetID string) error {
 	md, _ := metadata.FromIncomingContext(ctx)
-	values := md.Get(port.SessionIDHeaderName)
+	values := md.Get(sessionaffinity.HeaderName)
 	if len(values) == 0 {
 		return nil
 	}
-	if debugTargetID == "" || len(values) != 1 || !port.ValidSessionIDHeaderValue(values[0]) || values[0] != debugTargetID {
+	if debugTargetID == "" || len(values) != 1 || !sessionaffinity.ValidValue(values[0]) || values[0] != debugTargetID {
 		return status.Error(codes.InvalidArgument, invalidSessionAffinityMessage)
 	}
 	return nil
@@ -58,11 +59,11 @@ func validateGRPCSessionAffinity(ctx context.Context, authoritativeID string) er
 	if !ok {
 		return nil
 	}
-	values := md.Get(port.SessionIDHeaderName)
+	values := md.Get(sessionaffinity.HeaderName)
 	if len(values) == 0 {
 		return nil
 	}
-	if len(values) != 1 || !port.ValidSessionIDHeaderValue(values[0]) || (authoritativeID != "" && values[0] != authoritativeID) {
+	if len(values) != 1 || !sessionaffinity.ValidValue(values[0]) || (authoritativeID != "" && values[0] != authoritativeID) {
 		return status.Error(codes.InvalidArgument, invalidSessionAffinityMessage)
 	}
 	return nil
@@ -866,7 +867,9 @@ func (h *HarnessServer) readControl(ctx context.Context, id session.SessionID, c
 				if h.staleStreamControl(ctx, id, "resume_approval", ra.GetExpectedRunId(), ct.active()) {
 					break
 				}
-				ct.active().Approve(ra.GetAskId(), verdictFromResumeApproval(ra.GetVerdict(), ra.GetAllow()))
+				if err := h.svc.approveLiveRun(id, ct.active(), ra.GetAskId(), verdictFromResumeApproval(ra.GetVerdict(), ra.GetAllow()), ra.GetExpectedRunId()); err != nil {
+					h.svc.Diagnostics().Log(ctx, port.LevelWarn, "live approval frame refused", "session", string(id), "err", err.Error())
+				}
 			}
 		case *mecatlv1.ConverseRequest_Cancel:
 			if k.Cancel != nil && h.staleStreamControl(ctx, id, "cancel", k.Cancel.GetExpectedRunId(), ct.active()) {
@@ -890,16 +893,19 @@ func (h *HarnessServer) readControl(ctx context.Context, id session.SessionID, c
 			if k.SteerCancel != nil {
 				h.handleSteerCancelFrame(ctx, id, k.SteerCancel.GetMessageId(), rl)
 			}
-		default:
-			// The first frame establishes the only session identity for this
-			// stream. A later Prompt/Retry (or unknown frame) is an invalid second
-			// start, not an ignorable control.
+		case *mecatlv1.ConverseRequest_Prompt, *mecatlv1.ConverseRequest_Retry:
+			// A second start frame is always ambiguous and must not replace the
+			// identity established by the first frame.
 			select {
-			case rl.controlErr <- status.Error(codes.InvalidArgument, "converse: unexpected frame after start"):
+			case rl.controlErr <- status.Error(codes.InvalidArgument, "converse: unexpected start frame after start"):
 			default:
 			}
 			ct.active().Cancel()
 			return
+		default:
+			// Preserve protobuf forward compatibility: an unset or future unknown
+			// oneof arm carries no understood control and is ignored.
+			continue
 		}
 	}
 }
