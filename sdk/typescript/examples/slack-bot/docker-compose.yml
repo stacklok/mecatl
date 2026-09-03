@@ -16,6 +16,10 @@ services:
       - --http-addr=
       - --workspace=/workspace
       - --ready-file=/tmp/mecated-ready.json
+      # Stacklok gateway via a plain OpenAI-compatible key (OPENAI_API_KEY),
+      # NOT the `toolhive` provider's OIDC path — that one needs the host's OS
+      # keyring, which a container can't reach. See DESIGN.md/README.md.
+      - --openai-base-url=https://sprout.stacklok.dev/v1
     # List form, no `:-` default: an unset var is genuinely OMITTED from the
     # container's environment. `KEY: ${VAR:-}` (map form) instead sets an EMPTY
     # STRING when unset — which mecated still treats as "this provider is
