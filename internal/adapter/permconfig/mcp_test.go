@@ -93,7 +93,7 @@ func TestMCPValidTaggedUnionVariants(t *testing.T) {
 	}
 }
 
-func TestMCPStaticProtectedToolsAreStrictComparisonData(t *testing.T) {
+func TestMCPStaticProtectedToolsAreStrictTrustedDeclarations(t *testing.T) {
 	const config = `mcp:
   servers:
     - name: protected
@@ -112,7 +112,7 @@ func TestMCPStaticProtectedToolsAreStrictComparisonData(t *testing.T) {
           network: {additional_origins: [], private_origins: [], max_redirects: 0}
           tools:
             - name: reviewed
-              description: comparison only
+              description: statically admitted
               input_schema: {type: object}
               read_only: true
 `
@@ -122,7 +122,7 @@ func TestMCPStaticProtectedToolsAreStrictComparisonData(t *testing.T) {
 	}
 	tool := cfg.MCP.Servers[0].Auth.OAuth.Tools[0]
 	if tool.Name != "reviewed" || string(tool.InputSchema) != `{"type":"object"}` || !tool.ReadOnly {
-		t.Fatalf("comparison-only tool = %#v", tool)
+		t.Fatalf("static tool declaration = %#v", tool)
 	}
 	if _, err := parseYAML([]byte(strings.Replace(config, "read_only: true", "unexpected: value", 1))); err == nil {
 		t.Fatal("unknown static-tool field parsed successfully")

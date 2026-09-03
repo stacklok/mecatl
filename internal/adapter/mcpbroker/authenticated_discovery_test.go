@@ -22,7 +22,6 @@ import (
 	"github.com/stacklok/toolhive/pkg/vmcp/auth/strategies"
 	"github.com/stacklok/toolhive/pkg/vmcp/auth/types"
 	vmcpclient "github.com/stacklok/toolhive/pkg/vmcp/client"
-	vmcpconfig "github.com/stacklok/toolhive/pkg/vmcp/config"
 )
 
 func TestQueryAuthenticatedCapabilitiesUsesOneScopedCredentialAndQuery(t *testing.T) {
@@ -85,13 +84,14 @@ func TestQueryAuthenticatedCapabilitiesUsesToolHiveScopedQuery(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewHTTPBackendClient: %v", err)
 	}
-	resolver, err := aggregator.NewConflictResolver(&vmcpconfig.AggregationConfig{ConflictResolution: vmcp.ConflictStrategyPrefix})
+	aggregationConfig := toolHiveAggregationConfig()
+	resolver, err := aggregator.NewConflictResolver(aggregationConfig)
 	if err != nil {
 		t.Fatalf("NewConflictResolver: %v", err)
 	}
 	backend := vmcp.Backend{ID: "private", Name: "private", BaseURL: server.URL, TransportType: "streamable-http", AuthConfig: &types.BackendAuthStrategy{Type: "upstream_inject", UpstreamInject: &types.UpstreamInjectConfig{ProviderName: "provider-private"}}}
 	process := &Process{discovery: &authenticatedDiscovery{
-		capabilities: aggregator.NewDefaultAggregator(client, resolver, nil, nil),
+		capabilities: aggregator.NewDefaultAggregator(client, resolver, aggregationConfig, nil),
 		backends:     vmcp.NewImmutableRegistry([]vmcp.Backend{backend}),
 		tokens:       &discoveryCredentials{credential: &upstreamtoken.UpstreamCredential{AccessToken: "credential-secret"}},
 		providers:    map[string]string{"private": "provider-private"},

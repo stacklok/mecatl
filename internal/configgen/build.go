@@ -469,6 +469,16 @@ func mcpSubtree(docs Docs) *Subtree {
 			"          scopes: [repo]",
 			"          request_refresh_token: true",
 			"          network: {}",
+			"          tools:",
+			"            - name: get_issue",
+			"              description: Read GitHub issue details",
+			"              input_schema:",
+			"                type: object",
+			"                properties:",
+			"                  number:",
+			"                    type: integer",
+			"                required: [number]",
+			"              read_only: true",
 			"  # Global mode additionally supports static_bearer and OIDC identity profiles:",
 			"  # static_bearer:",
 			"  #   token_env: MECATL_MCP_STATIC_TOKEN",
@@ -527,6 +537,8 @@ func mcpOAuthFields(docs Docs) []*Field {
 			}
 		case "network":
 			field.Nested = fieldsOf("MCPOAuthNetworkProfile", permconfig.MCPOAuthNetworkProfile{}, docs)
+		case "tools":
+			field.Nested = fieldsOf("MCPStaticToolProfile", permconfig.MCPStaticToolProfile{}, docs)
 		}
 	}
 	return fields

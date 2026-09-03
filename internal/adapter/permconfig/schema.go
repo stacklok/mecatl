@@ -436,13 +436,15 @@ type MCPOAuthProfile struct {
 	Credentials MCPOAuthCredentialProfile `yaml:"credentials"`
 	// Network is required and declares immutable exact-origin egress policy.
 	Network *MCPOAuthNetworkProfile `yaml:"network"`
-	// Tools are comparison-only declarations for protected backends. They are
-	// retained privately during startup and never become executable routes.
+	// Tools optionally declares this protected backend's tool catalogue
+	// statically. Declared tools are admitted without authenticated startup
+	// discovery and request authorization lazily on their first ungranted call.
+	// Omitted, the backend remains on the workspace-enrollment path and uses
+	// authenticated discovery.
 	Tools []MCPStaticToolProfile `yaml:"tools"`
 }
 
-// MCPStaticToolProfile is a reviewed protected-backend tool shape retained for
-// comparison with future authenticated discovery.
+// MCPStaticToolProfile is one trusted protected-backend tool declaration.
 type MCPStaticToolProfile struct {
 	Name        string          `yaml:"name"`
 	Description string          `yaml:"description"`
@@ -450,7 +452,7 @@ type MCPStaticToolProfile struct {
 	ReadOnly    bool            `yaml:"read_only"`
 }
 
-// UnmarshalYAML strictly decodes one comparison-only protected tool declaration.
+// UnmarshalYAML strictly decodes one protected tool declaration.
 func (t *MCPStaticToolProfile) UnmarshalYAML(node ast.Node) error {
 	var schema any
 	if err := decodeStrictMapping(node, "mcp.servers[].auth.oauth.tools[]", map[string]any{

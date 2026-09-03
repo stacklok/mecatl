@@ -157,8 +157,8 @@ func stageAuthenticatedRoutes(ctx context.Context, process *Process, authSession
 	return staged, nil
 }
 
-// validateAuthenticatedRoute is the single admission boundary for live
-// protected metadata. Static declarations are intentionally not consulted.
+// validateAuthenticatedRoute is the single admission boundary for protected
+// metadata, whether obtained by authenticated discovery or trusted static declaration.
 func validateAuthenticatedRoute(backend string, definition ToolDefinition, seen map[string]struct{}) (route, error) {
 	prefix := "mcp__" + backend + "__"
 	if backend == "" || definition.Backend != backend || !strings.HasPrefix(definition.Name, prefix) {

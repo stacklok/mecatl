@@ -43,8 +43,8 @@ type ToolHiveOAuth struct {
 	Scopes                []string
 }
 
-// StaticTool is a comparison-only protected tool declaration. Construction
-// never admits it to the executable startup catalogue.
+// StaticTool is one trusted protected tool declaration. Its schema is copied
+// into the frozen model-facing catalogue; backend routing remains private.
 type StaticTool struct {
 	Name, Description string
 	Schema            json.RawMessage
@@ -68,10 +68,14 @@ func compileToolHiveConstruction(profiles []ToolHiveProfile, issuer string) (too
 	}
 	seenBackends := make(map[string]struct{}, len(profiles))
 	seenProviders := make(map[string]string)
+	protectedRoutes := 0
 	for _, profile := range profiles {
 		key := strings.ToLower(profile.Name)
 		if key == "" || profile.URL == "" {
 			return toolHiveConstruction{}, fmt.Errorf("%w: upstream name and URL are required", ErrInvalidCatalogue)
+		}
+		if strings.Contains(profile.Name, ".") {
+			return toolHiveConstruction{}, fmt.Errorf("%w: upstream %q contains reserved ToolHive routing separator %q", ErrInvalidCatalogue, profile.Name, ".")
 		}
 		if _, exists := seenBackends[key]; exists {
 			return toolHiveConstruction{}, fmt.Errorf("%w: duplicate upstream %q", ErrInvalidCatalogue, profile.Name)
@@ -85,6 +89,10 @@ func compileToolHiveConstruction(profiles []ToolHiveProfile, issuer string) (too
 			}
 			out.anonymous = append(out.anonymous, cloneToolHiveProfile(profile))
 		case authOAuth:
+			protectedRoutes++
+			if protectedRoutes > 1 {
+				return toolHiveConstruction{}, fmt.Errorf("%w: at most one OAuth upstream is supported by the shared callback", ErrProtectedRouteUnsupported)
+			}
 			if profile.OAuth == nil {
 				return toolHiveConstruction{}, fmt.Errorf("%w: protected upstream %q is missing OAuth configuration", ErrInvalidCatalogue, profile.Name)
 			}
@@ -101,7 +109,9 @@ func compileToolHiveConstruction(profiles []ToolHiveProfile, issuer string) (too
 				return toolHiveConstruction{}, err
 			}
 			out.upstreams = append(out.upstreams, upstream)
-			out.protectedBackends = append(out.protectedBackends, profile.Name)
+			if len(profile.Static) == 0 {
+				out.protectedBackends = append(out.protectedBackends, profile.Name)
+			}
 			out.providerByBackend[profile.Name] = provider
 			out.staticByBackend[profile.Name] = cloneStaticTools(profile.Static)
 			backend.AuthConfig = &authtypes.BackendAuthStrategy{Type: "upstream_inject", UpstreamInject: &authtypes.UpstreamInjectConfig{ProviderName: provider}}

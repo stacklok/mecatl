@@ -66,6 +66,7 @@ func authoritativeKeys() []string {
 	collect("mcp.servers.auth.oauth.credentials.local", permconfig.MCPLocalCredentialProfile{})
 	collect("mcp.servers.auth.oauth.credentials.environment", permconfig.MCPEnvironmentCredentialProfile{})
 	collect("mcp.servers.auth.oauth.network", permconfig.MCPOAuthNetworkProfile{})
+	collect("mcp.servers.auth.oauth.tools", permconfig.MCPStaticToolProfile{})
 	// posture is a bare scalar Config field, not a *Section.
 	keys = append(keys, "posture")
 	// output-economy is absent: the setting was REMOVED (ADR 0041, superseded;
@@ -167,6 +168,7 @@ func TestMCPArtifactsShowStrictUnionWithoutSecretValues(t *testing.T) {
 		"token_endpoint: https://github.com/login/oauth/access_token",
 		"secret_env: MECATL_GITHUB_MCP_CLIENT_SECRET", "token_env: MECATL_MCP_STATIC_TOKEN",
 		"key_env: MECATL_MCP_CREDENTIAL_KEY",
+		"- name: get_issue", "input_schema:", "read_only: true",
 	} {
 		if !strings.Contains(skeleton, want) {
 			t.Errorf("skeleton missing MCP example %q", want)
@@ -183,6 +185,10 @@ func TestMCPArtifactsShowStrictUnionWithoutSecretValues(t *testing.T) {
 		"`mcp.servers[].auth.oauth.client.cimd.document_url`",
 		"`mcp.servers[].auth.oauth.credentials.environment.credential_env`",
 		"`mcp.servers[].auth.oauth.network.private_origins`",
+		"`mcp.servers[].auth.oauth.tools[].name`",
+		"`mcp.servers[].auth.oauth.tools[].description`",
+		"`mcp.servers[].auth.oauth.tools[].input_schema`",
+		"`mcp.servers[].auth.oauth.tools[].read_only`",
 	} {
 		if !strings.Contains(reference, want) {
 			t.Errorf("reference missing MCP path %s", want)

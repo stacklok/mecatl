@@ -2,6 +2,7 @@ package mcpbroker
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"net/http"
@@ -10,6 +11,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/ory/fosite"
 	"github.com/stacklok/toolhive/pkg/auth/upstreamtoken"
 	"github.com/stacklok/toolhive/pkg/authserver"
 	"github.com/stacklok/toolhive/pkg/authserver/runner"
@@ -54,16 +56,26 @@ type Process struct {
 	closed             bool
 	construction       toolHiveConstruction
 	discovery          *authenticatedDiscovery
+	protectedTarget    *oauthRoute
 	queryAuthenticated func(context.Context, ToolHiveAuthSessionID, string) (AuthenticatedCapabilities, error)
 	resources          []ownedResource
 	closeOnce          sync.Once
 	closeErr           error
 }
 
+type toolHiveProcessOptions struct {
+	runtimeOptions   []Option
+	brokerHTTPClient *http.Client
+}
+
 // NewToolHiveProcess discovers anonymous upstreams, constructs one ordered
 // ToolHive process, and returns only after the Runtime and every owned resource
 // are valid. Any partial construction is rolled back in reverse dependency order.
 func NewToolHiveProcess(ctx context.Context, config ToolHiveConfig) (*Process, error) {
+	return newToolHiveProcess(ctx, config, toolHiveProcessOptions{})
+}
+
+func newToolHiveProcess(ctx context.Context, config ToolHiveConfig, options toolHiveProcessOptions) (*Process, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -79,15 +91,27 @@ func NewToolHiveProcess(ctx context.Context, config ToolHiveConfig) (*Process, e
 	if err != nil {
 		return nil, err
 	}
+	protectedTarget, err := newToolHiveProtectedTarget(issuer, config.CallbackURL, len(construction.upstreams) != 0)
+	if err != nil {
+		return nil, err
+	}
+	staticRoutes, err := compileStaticProtectedRoutes(construction, protectedTarget, routes, config.Occupied)
+	if err != nil {
+		return nil, err
+	}
+	routes = append(routes, staticRoutes...)
+	sortRoutes(routes)
 	catalogue := &Catalogue{routes: routes}
 	caller := anonymousCaller(construction.anonymous)
-	runtime, err := New(catalogue, caller, WithAuthorizedCaller(toolHiveProtectedCaller(config.Profiles)))
+	runtimeOptions := append([]Option(nil), options.runtimeOptions...)
+	runtimeOptions = append(runtimeOptions, WithAuthorizedCaller(toolHiveProtectedCaller(issuer+"/mcp", options.brokerHTTPClient)))
+	runtime, err := New(catalogue, caller, runtimeOptions...)
 	if err != nil {
 		return nil, err
 	}
 
 	processCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
-	process := &Process{Runtime: runtime, ctx: processCtx, cancel: cancel, construction: construction}
+	process := &Process{Runtime: runtime, ctx: processCtx, cancel: cancel, construction: construction, protectedTarget: protectedTarget}
 	process.resources = append(process.resources, ownedResource{name: "process-context", close: func() error { cancel(); return nil }})
 	rollback := func(cause error) (*Process, error) {
 		process.rollback()
@@ -98,7 +122,7 @@ func NewToolHiveProcess(ctx context.Context, config ToolHiveConfig) (*Process, e
 	if err := outgoing.RegisterStrategy(authtypes.StrategyTypeUnauthenticated, strategies.NewUnauthenticatedStrategy()); err != nil {
 		return rollback(fmt.Errorf("mcpbroker: register anonymous strategy: %w", err))
 	}
-	if len(construction.protectedBackends) != 0 {
+	if len(construction.upstreams) != 0 {
 		if err := outgoing.RegisterStrategy("upstream_inject", strategies.NewUpstreamInjectStrategy()); err != nil {
 			return rollback(fmt.Errorf("mcpbroker: register protected strategy: %w", err))
 		}
@@ -108,8 +132,18 @@ func NewToolHiveProcess(ctx context.Context, config ToolHiveConfig) (*Process, e
 	var tokens upstreamCredentialReader
 	var incoming func(http.Handler) http.Handler
 	var authInfo http.Handler
-	if len(construction.protectedBackends) != 0 {
+	if len(construction.upstreams) != 0 {
 		memoryStore := storage.NewMemoryStorage()
+		if protectedTarget == nil {
+			return rollback(fmt.Errorf("%w: protected ToolHive target is required", ErrInvalidCatalogue))
+		}
+		if err := memoryStore.RegisterClient(processCtx, &fosite.DefaultClient{
+			ID: protectedTarget.clientID, RedirectURIs: []string{config.CallbackURL},
+			GrantTypes: []string{"authorization_code", "refresh_token"}, ResponseTypes: []string{"code"},
+			Scopes: []string{"openid", "offline_access"}, Audience: []string{issuer}, Public: true,
+		}); err != nil {
+			return rollback(fmt.Errorf("mcpbroker: register embedded authorization client: %w", err))
+		}
 		auth, err = runner.NewEmbeddedAuthServerWithStorage(processCtx, &authserver.RunConfig{
 			SchemaVersion: "v1", Issuer: issuer, AllowedAudiences: []string{issuer}, Upstreams: construction.upstreams,
 		}, memoryStore)
@@ -131,11 +165,12 @@ func NewToolHiveProcess(ctx context.Context, config ToolHiveConfig) (*Process, e
 	if err != nil {
 		return rollback(fmt.Errorf("mcpbroker: create backend client: %w", err))
 	}
-	resolver, err := aggregator.NewConflictResolver(&vmcpconfig.AggregationConfig{ConflictResolution: vmcp.ConflictStrategyPrefix})
+	aggregationConfig := toolHiveAggregationConfig()
+	resolver, err := aggregator.NewConflictResolver(aggregationConfig)
 	if err != nil {
 		return rollback(fmt.Errorf("mcpbroker: create conflict resolver: %w", err))
 	}
-	capabilityAggregator := aggregator.NewDefaultAggregator(backendClient, resolver, nil, nil)
+	capabilityAggregator := aggregator.NewDefaultAggregator(backendClient, resolver, aggregationConfig, nil)
 	serverConfig := &vmcpserver.Config{Name: "mecatl-broker", Version: "v1", EndpointPath: toolHiveMCPPath,
 		AuthMiddleware: incoming, AuthInfoHandler: authInfo, AuthServer: auth,
 		Aggregator: capabilityAggregator, SessionFactory: vmcpsession.NewSessionFactory(outgoing),
@@ -229,33 +264,107 @@ func discoverAnonymous(ctx context.Context, profiles []ToolHiveProfile, occupied
 	return routes, nil
 }
 
-func toolHiveProtectedCaller(profiles []ToolHiveProfile) AuthorizedCaller {
-	servers := make(map[string]mcpadapter.ServerConfig, len(profiles))
-	for _, profile := range profiles {
-		if profile.Auth == authOAuth {
-			servers[profile.Name] = mcpadapter.ServerConfig{Name: profile.Name, URL: profile.URL}
+func compileStaticProtectedRoutes(construction toolHiveConstruction, protectedTarget *oauthRoute, base []route, occupied []string) ([]route, error) {
+	seen := make(map[string]struct{}, len(occupied)+len(base))
+	for _, name := range occupied {
+		if name == "" {
+			return nil, fmt.Errorf("%w: occupied tool name is empty", ErrInvalidCatalogue)
+		}
+		seen[name] = struct{}{}
+	}
+	for _, route := range base {
+		seen[route.spec.Name] = struct{}{}
+	}
+
+	routes := make([]route, 0)
+	for _, backend := range construction.backends {
+		declaredTools := construction.staticByBackend[backend.ID]
+		if len(declaredTools) == 0 {
+			continue
+		}
+		if protectedTarget == nil {
+			return nil, fmt.Errorf("%w: static protected tools require the ToolHive authorization target", ErrInvalidCatalogue)
+		}
+		for _, declared := range declaredTools {
+			name := "mcp__" + backend.ID + "__" + declared.Name
+			candidate, err := validateAuthenticatedRoute(backend.ID, ToolDefinition{
+				Backend: backend.ID, Name: name, Description: declared.Description,
+				Schema: append([]byte(nil), declared.Schema...), ReadOnly: declared.ReadOnly,
+			}, seen)
+			if err != nil {
+				return nil, fmt.Errorf("%w: static tool declaration %q", err, name)
+			}
+			candidate.oauth = protectedTarget
+			seen[name] = struct{}{}
+			routes = append(routes, candidate)
 		}
 	}
+	return routes, nil
+}
+
+func toolHiveAggregationConfig() *vmcpconfig.AggregationConfig {
+	return &vmcpconfig.AggregationConfig{
+		ConflictResolution: vmcp.ConflictStrategyPrefix,
+		ConflictResolutionConfig: &vmcpconfig.ConflictResolutionConfig{
+			PrefixFormat: "{workload}.",
+		},
+	}
+}
+
+func toolHiveAdvertisedToolName(backend, modelVisibleName string) (string, error) {
+	toolName, ok := strings.CutPrefix(modelVisibleName, "mcp__"+backend+"__")
+	if backend == "" || !ok || toolName == "" {
+		return "", fmt.Errorf("%w: tool %q does not belong to backend %q", ErrInvalidCatalogue, modelVisibleName, backend)
+	}
+	return backend + "." + toolName, nil
+}
+
+func newToolHiveProtectedTarget(issuer, callbackURL string, required bool) (*oauthRoute, error) {
+	if !required {
+		return nil, nil
+	}
+	clientID, err := opaque(rand.Read)
+	if err != nil {
+		return nil, fmt.Errorf("%w: create ToolHive authorization client: %v", ErrInvalidCatalogue, err)
+	}
+	return &oauthRoute{
+		authorizationEndpoint: issuer + "/oauth/authorize",
+		tokenEndpoint:         issuer + "/oauth/token",
+		callbackURL:           callbackURL,
+		clientID:              clientID,
+		scopes:                []string{"openid", "offline_access"},
+		requestRefresh:        true,
+	}, nil
+}
+
+func toolHiveProtectedCaller(endpoint string, client *http.Client) AuthorizedCaller {
 	return func(ctx context.Context, _ SessionRef, backend string, call session.ToolCall, tokens oauth2.TokenSource) (session.ToolResult, error) {
-		config, ok := servers[backend]
-		if !ok {
-			return session.ToolResult{}, fmt.Errorf("%w: protected upstream is not configured", ErrInvalidCatalogue)
+		if endpoint == "" || backend == "" {
+			return session.ToolResult{}, fmt.Errorf("%w: protected ToolHive target is not configured", ErrInvalidCatalogue)
 		}
 		if tokens == nil {
 			return session.ToolResult{}, fmt.Errorf("%w: protected upstream token source is required", ErrInvalidCatalogue)
 		}
-		config.TokenSource = tokens
+		advertisedName, err := toolHiveAdvertisedToolName(backend, call.Name)
+		if err != nil {
+			return session.ToolResult{}, err
+		}
+		wrappedName := "mcp__broker__" + advertisedName
+		config := mcpadapter.ServerConfig{Name: "broker", URL: endpoint, TokenSource: tokens, HTTPClient: client}
 		upstream, err := mcpadapter.Connect(ctx, config, nil)
 		if err != nil {
-			return session.ToolResult{}, fmt.Errorf("mcpbroker: connect protected upstream: %w", err)
+			return session.ToolResult{}, fmt.Errorf("mcpbroker: connect protected ToolHive target: %w", err)
 		}
 		defer func() { _ = upstream.Close() }()
 		for _, wrapped := range upstream.Tools() {
-			if wrapped.Spec().Name == call.Name {
-				return wrapped.Execute(ctx, call, tool.Environment{})
+			if wrapped.Spec().Name != wrappedName {
+				continue
 			}
+			forwarded := call
+			forwarded.Name = wrapped.Spec().Name
+			return wrapped.Execute(ctx, forwarded, tool.Environment{})
 		}
-		return session.ToolResult{}, fmt.Errorf("mcpbroker: protected upstream omitted tool %q", call.Name)
+		return session.ToolResult{}, fmt.Errorf("mcpbroker: protected ToolHive target omitted tool %q", call.Name)
 	}
 }
 

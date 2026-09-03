@@ -275,9 +275,13 @@ func (t *protectedSessionTool) RequestAuthorization(ctx context.Context, call se
 	if len(logical.authorizations) >= maxAuthorizationRecords {
 		return session.ExternalAuthorization{}, false, errors.New("broker authorization record capacity reached")
 	}
-	secret, err := t.attachment.runtime.oauth.resolveSecret(ctx, t.route.oauth.secretEnv)
-	if err != nil {
-		return session.ExternalAuthorization{}, false, err
+	var secret string
+	var err error
+	if t.route.oauth.secretEnv != "" {
+		secret, err = t.attachment.runtime.oauth.resolveSecret(ctx, t.route.oauth.secretEnv)
+		if err != nil {
+			return session.ExternalAuthorization{}, false, err
+		}
 	}
 	id, err := opaque(t.attachment.runtime.oauth.random)
 	if err != nil {
@@ -317,9 +321,13 @@ func (t *authorizationTransaction) external() session.ExternalAuthorization {
 }
 
 func (t *authorizationTransaction) oauthConfig(secret string) *oauth2.Config {
+	authStyle := oauth2.AuthStyleInHeader
+	if t.route.secretEnv == "" {
+		authStyle = oauth2.AuthStyleAutoDetect
+	}
 	return &oauth2.Config{ClientID: t.route.clientID, ClientSecret: secret, RedirectURL: t.route.callbackURL,
 		Scopes: append([]string(nil), t.route.scopes...), Endpoint: oauth2.Endpoint{
-			AuthURL: t.route.authorizationEndpoint, TokenURL: t.route.tokenEndpoint, AuthStyle: oauth2.AuthStyleInHeader,
+			AuthURL: t.route.authorizationEndpoint, TokenURL: t.route.tokenEndpoint, AuthStyle: authStyle,
 		}}
 }
 

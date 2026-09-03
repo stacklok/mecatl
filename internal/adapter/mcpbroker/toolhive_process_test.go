@@ -2,47 +2,51 @@ package mcpbroker
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"reflect"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	jwt "github.com/golang-jwt/jwt/v5"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 	"golang.org/x/oauth2"
 
 	"github.com/stacklok/mecatl/engine/session"
+	"github.com/stacklok/mecatl/engine/tool"
 	contract "github.com/stacklok/mecatl/internal/mcpbroker"
 )
 
-func TestToolHiveConstructionPreservesProtectedOrderAndPrivateMapping(t *testing.T) {
+func TestToolHiveConstructionPreservesProtectedMapping(t *testing.T) {
 	profiles := []ToolHiveProfile{
 		protectedToolHiveProfile("GitHub_Cloud"),
 		{Name: "public", URL: "https://public.example/mcp", Auth: authNone},
-		protectedToolHiveProfile("Calendar_API"),
 	}
 
 	construction, err := compileToolHiveConstruction(profiles, "https://broker.example/v1/mcp/broker")
 	if err != nil {
 		t.Fatalf("compileToolHiveConstruction: %v", err)
 	}
-	if got := []string{construction.upstreams[0].Name, construction.upstreams[1].Name}; !reflect.DeepEqual(got, []string{"github-cloud", "calendar-api"}) {
-		t.Fatalf("protected upstream order = %v", got)
+	if got := construction.upstreams[0].Name; got != "github-cloud" {
+		t.Fatalf("protected upstream = %q", got)
 	}
-	if got := construction.protectedBackends; !reflect.DeepEqual(got, []string{"GitHub_Cloud", "Calendar_API"}) {
-		t.Fatalf("protected backend order = %v", got)
+	if got := construction.protectedBackends; !reflect.DeepEqual(got, []string{"GitHub_Cloud"}) {
+		t.Fatalf("protected backends = %v", got)
 	}
 	if got := construction.providerByBackend["GitHub_Cloud"]; got != "github-cloud" {
 		t.Fatalf("GitHub provider = %q", got)
 	}
-	if got := construction.providerByBackend["Calendar_API"]; got != "calendar-api" {
-		t.Fatalf("Calendar provider = %q", got)
-	}
-	if construction.backends[0].AuthConfig.UpstreamInject.ProviderName != "github-cloud" || construction.backends[2].AuthConfig.UpstreamInject.ProviderName != "calendar-api" {
+	if construction.backends[0].AuthConfig.UpstreamInject.ProviderName != "github-cloud" {
 		t.Fatalf("backend provider mapping = %#v", construction.backends)
 	}
 }
@@ -53,7 +57,7 @@ func TestToolHiveConstructionRejectsInvalidProfiles(t *testing.T) {
 		profiles []ToolHiveProfile
 	}{
 		{"duplicate backend", []ToolHiveProfile{{Name: "same", URL: "https://one.example/mcp", Auth: authNone}, {Name: "SAME", URL: "https://two.example/mcp", Auth: authNone}}},
-		{"duplicate provider", []ToolHiveProfile{protectedToolHiveProfile("name"), protectedToolHiveProfile("name_")}},
+		{"dotted backend", []ToolHiveProfile{{Name: "git.hub", URL: "https://git.example/mcp", Auth: authNone}}},
 		{"missing oauth", []ToolHiveProfile{{Name: "private", URL: "https://private.example/mcp", Auth: authOAuth}}},
 		{"missing client", []ToolHiveProfile{{Name: "private", URL: "https://private.example/mcp", Auth: authOAuth, OAuth: &ToolHiveOAuth{Issuer: "https://issuer.example"}}}},
 		{"partial endpoints", []ToolHiveProfile{{Name: "private", URL: "https://private.example/mcp", Auth: authOAuth, OAuth: &ToolHiveOAuth{ClientID: "client", AuthorizationEndpoint: "https://issuer.example/authorize"}}}},
@@ -67,7 +71,133 @@ func TestToolHiveConstructionRejectsInvalidProfiles(t *testing.T) {
 	}
 }
 
-func TestToolHiveProcessAnonymousDiscoveryOmitsProtectedAndStaticTools(t *testing.T) {
+func TestToolHiveConstructionRejectsMultipleProtectedRoutes(t *testing.T) {
+	_, err := compileToolHiveConstruction([]ToolHiveProfile{protectedToolHiveProfile("first"), protectedToolHiveProfile("second")}, "https://broker.example/v1/mcp/broker")
+	if !errors.Is(err, ErrProtectedRouteUnsupported) {
+		t.Fatalf("compileToolHiveConstruction error = %v, want ErrProtectedRouteUnsupported", err)
+	}
+}
+
+func TestStaticProtectedRoutesRejectInvalidDeclarationsAndCollisions(t *testing.T) {
+	valid := StaticTool{Name: "read", Schema: json.RawMessage(`{"type":"object"}`)}
+	for _, test := range []struct {
+		name     string
+		tools    []StaticTool
+		occupied []string
+	}{
+		{name: "invalid schema", tools: []StaticTool{{Name: "read", Schema: json.RawMessage(`[]`)}}},
+		{name: "duplicate declaration", tools: []StaticTool{valid, valid}},
+		{name: "occupied name", tools: []StaticTool{valid}, occupied: []string{"mcp__private__read"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			profile := protectedToolHiveProfile("private")
+			profile.Static = test.tools
+			construction, err := compileToolHiveConstruction([]ToolHiveProfile{profile}, "https://broker.example/v1/mcp/broker")
+			if err != nil {
+				t.Fatalf("compileToolHiveConstruction: %v", err)
+			}
+			if _, err := compileStaticProtectedRoutes(construction, &oauthRoute{}, nil, test.occupied); !errors.Is(err, ErrInvalidCatalogue) {
+				t.Fatalf("compileStaticProtectedRoutes error = %v, want ErrInvalidCatalogue", err)
+			}
+		})
+	}
+}
+
+func TestToolHiveProcessAllowsUnambiguousUnderscoreRoutingKeys(t *testing.T) {
+	t.Setenv("MECATL_TEST_CLIENT_SECRET", "construction-only-secret")
+	var anonymousRequests atomic.Int32
+	anonymous := toolHiveDiscoveryServer(t, "enterprise_create_issue", &anonymousRequests)
+	protected := protectedToolHiveProfile("github_enterprise")
+	protected.Static = []StaticTool{{Name: "create_issue", Schema: json.RawMessage(`{"type":"object"}`)}}
+
+	process, err := NewToolHiveProcess(t.Context(), ToolHiveConfig{
+		CallbackURL: "https://broker.example/callback",
+		Profiles: []ToolHiveProfile{
+			{Name: "github", URL: anonymous.URL, Auth: authNone},
+			protected,
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewToolHiveProcess: %v", err)
+	}
+	t.Cleanup(func() { _ = process.Close() })
+	if anonymousRequests.Load() == 0 {
+		t.Fatal("anonymous route was not discovered")
+	}
+	anonymousName, err := toolHiveAdvertisedToolName("github", "mcp__github__enterprise_create_issue")
+	if err != nil {
+		t.Fatalf("anonymous advertised name: %v", err)
+	}
+	protectedName, err := toolHiveAdvertisedToolName("github_enterprise", "mcp__github_enterprise__create_issue")
+	if err != nil {
+		t.Fatalf("protected advertised name: %v", err)
+	}
+	if anonymousName != "github.enterprise_create_issue" || protectedName != "github_enterprise.create_issue" || anonymousName == protectedName {
+		t.Fatalf("advertised names = %q and %q", anonymousName, protectedName)
+	}
+}
+
+func TestStaticProtectedOIDCAndCIMDUseToolHiveTarget(t *testing.T) {
+	t.Setenv("MECATL_TEST_CLIENT_SECRET", "construction-only-secret")
+	issuer := toolHiveOIDCIssuer(t)
+	for _, test := range []struct {
+		name     string
+		clientID string
+		secret   string
+	}{
+		{name: "OIDC", clientID: "registered-client", secret: "MECATL_TEST_CLIENT_SECRET"},
+		{name: "CIMD", clientID: "https://client.example/oauth-client.json"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			profile := protectedToolHiveProfile("private")
+			profile.OAuth.Issuer = issuer.URL
+			profile.OAuth.AuthorizationEndpoint = ""
+			profile.OAuth.TokenEndpoint = ""
+			profile.OAuth.ClientID = test.clientID
+			profile.OAuth.ClientSecretEnv = test.secret
+			profile.Static = []StaticTool{{Name: "read", Description: "read", Schema: json.RawMessage(`{"type":"object"}`), ReadOnly: true}}
+
+			process, err := NewToolHiveProcess(t.Context(), ToolHiveConfig{
+				CallbackURL: "https://broker.example/callback", Profiles: []ToolHiveProfile{profile},
+			})
+			if err != nil {
+				t.Fatalf("NewToolHiveProcess: %v", err)
+			}
+			t.Cleanup(func() { _ = process.Close() })
+			if len(process.Runtime.catalogue.routes) != 1 {
+				t.Fatalf("routes = %#v", process.Runtime.catalogue.routes)
+			}
+			route := process.Runtime.catalogue.routes[0]
+			if route.oauth == nil || route.oauth != process.protectedTarget {
+				t.Fatal("static route did not retain the shared ToolHive protected target")
+			}
+			if route.oauth.authorizationEndpoint != "https://broker.example"+toolHiveBasePath+"/oauth/authorize" ||
+				route.oauth.tokenEndpoint != "https://broker.example"+toolHiveBasePath+"/oauth/token" {
+				t.Fatalf("protected target = %#v", route.oauth)
+			}
+			if len(process.construction.protectedBackends) != 0 || len(process.construction.upstreams) != 1 {
+				t.Fatalf("construction = %#v", process.construction)
+			}
+			attached, _, err := process.Runtime.AttachSession(t.Context(), session.SessionID("static-"+strings.ToLower(test.name)))
+			if err != nil {
+				t.Fatalf("AttachSession: %v", err)
+			}
+			t.Cleanup(func() { _, _ = attached.Close(context.Background()) })
+			wrapped := toolByName(t, attached.(*Attachment), "mcp__private__read")
+			authorization, required, err := wrapped.(tool.AuthorizationRequester).RequestAuthorization(t.Context(), session.NewToolCall("call-1", wrapped.Spec().Name, json.RawMessage(`{}`)))
+			if err != nil || !required {
+				t.Fatalf("RequestAuthorization = (%+v, %v, %v)", authorization, required, err)
+			}
+			presentation, err := attached.PresentAuthorization(t.Context(), authorization)
+			if err != nil || !strings.HasPrefix(presentation, route.oauth.authorizationEndpoint+"?") {
+				t.Fatalf("embedded target presentation = %q, %v", presentation, err)
+			}
+		})
+	}
+}
+
+func TestToolHiveProcessAdmitsStaticProtectedToolsWithoutDiscovery(t *testing.T) {
+	t.Setenv("MECATL_TEST_CLIENT_SECRET", "construction-only-secret")
 	var anonymousRequests, protectedRequests atomic.Int32
 	anonymous := toolHiveDiscoveryServer(t, "status", &anonymousRequests)
 	protected := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -95,17 +225,538 @@ func TestToolHiveProcessAnonymousDiscoveryOmitsProtectedAndStaticTools(t *testin
 	if got := protectedRequests.Load(); got != 0 {
 		t.Fatalf("protected startup requests = %d, want 0", got)
 	}
-	if got := process.Runtime.catalogue.Specs(); len(got) != 1 || got[0].Name != "mcp__public__status" {
-		t.Fatalf("startup catalogue = %#v, want anonymous tool only", got)
+	if got := process.Runtime.catalogue.Specs(); len(got) != 2 || got[0].Name != "mcp__GitHub_API__reviewed" || got[1].Name != "mcp__public__status" {
+		t.Fatalf("startup catalogue = %#v, want static protected and anonymous tools", got)
+	}
+	if got := process.construction.protectedBackends; len(got) != 0 {
+		t.Fatalf("workspace-enrollment backends = %v, want none", got)
+	}
+	attachment, _, err := process.Runtime.AttachSession(t.Context(), "static-session")
+	if err != nil {
+		t.Fatalf("AttachSession: %v", err)
+	}
+	t.Cleanup(func() { _, _ = attachment.Close(context.Background()) })
+	wrapped := toolByName(t, attachment.(*Attachment), "mcp__GitHub_API__reviewed")
+	if _, ok := wrapped.(tool.AuthorizationRequester); !ok {
+		t.Fatal("static protected tool is not authorization-requesting")
+	}
+	spec := wrapped.Spec()
+	spec.Schema[0] = '['
+	if got := wrapped.Spec(); string(got.Schema) != `{"type":"object"}` || got.Description != "comparison only" || !wrapped.ReadOnly() {
+		t.Fatalf("frozen static spec = %#v, readOnly=%v", got, wrapped.ReadOnly())
+	}
+	requester := wrapped.(tool.AuthorizationRequester)
+	call := session.NewToolCall("static-call", wrapped.Spec().Name, json.RawMessage(`{}`))
+	authorization, required, err := requester.RequestAuthorization(t.Context(), call)
+	if err != nil || !required || authorization.ID == "" || authorization.Binding == "" {
+		t.Fatalf("RequestAuthorization = (%+v, %v, %v)", authorization, required, err)
+	}
+	presentation, err := attachment.(*Attachment).PresentAuthorization(t.Context(), authorization)
+	if err != nil {
+		t.Fatalf("PresentAuthorization: %v", err)
+	}
+	if parsed, parseErr := url.Parse(presentation); parseErr != nil || parsed.Scheme+"://"+parsed.Host+parsed.Path != "https://broker.example"+toolHiveBasePath+"/oauth/authorize" {
+		t.Fatalf("presentation does not use embedded ToolHive target: %q (%v)", presentation, parseErr)
+	}
+	if route, ok := attachment.(*Attachment).lookupRoute(wrapped.Spec().Name); !ok || route.oauth != process.protectedTarget {
+		t.Fatal("static wrapper does not share the process ToolHive protected target")
+	}
+	mismatched := authorization
+	mismatched.ID = "stale-authorization-id"
+	if _, err := attachment.(*Attachment).PresentAuthorization(t.Context(), mismatched); !errors.Is(err, contract.ErrAuthorizationNotFound) {
+		t.Fatalf("mismatched presentation error = %v", err)
+	}
+	if err := requester.AbortAuthorization(t.Context(), authorization); err != nil {
+		t.Fatalf("AbortAuthorization: %v", err)
+	}
+	if status, err := attachment.(*Attachment).AuthorizationStatus(t.Context(), authorization); err != nil || status != session.AuthorizationCancelled {
+		t.Fatalf("cancelled authorization status = (%q, %v)", status, err)
 	}
 	if got := process.construction.staticByBackend["GitHub_API"]; len(got) != 1 || got[0].Name != "reviewed" {
 		t.Fatalf("protected static declarations = %#v", got)
 	}
 }
 
+func TestStaticProtectedProcessRealAuthorizationFlows(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		mode string
+	}{
+		{name: "OIDC discovery", mode: "oidc"},
+		{name: "CIMD document", mode: "cimd"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Setenv("MECATL_TEST_CLIENT_SECRET", "client-secret")
+			mux := http.NewServeMux()
+			gateway := httptest.NewUnstartedServer(mux)
+			gateway.StartTLS()
+			t.Cleanup(gateway.Close)
+			roots := x509.NewCertPool()
+			roots.AddCert(gateway.Certificate())
+
+			var discoveryRequests, metadataRequests atomic.Int32
+			var oidcNonce atomic.Value
+			oidcKey, err := rsa.GenerateKey(rand.Reader, 2048)
+			if err != nil {
+				t.Fatalf("generate OIDC key: %v", err)
+			}
+			var upstreamOAuth *httptest.Server
+			upstreamOAuth = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+				switch request.URL.Path {
+				case "/.well-known/openid-configuration":
+					discoveryRequests.Add(1)
+					w.Header().Set("Content-Type", "application/json")
+					_ = json.NewEncoder(w).Encode(map[string]any{
+						"issuer": upstreamOAuth.URL, "authorization_endpoint": upstreamOAuth.URL + "/authorize",
+						"token_endpoint": upstreamOAuth.URL + "/token", "jwks_uri": upstreamOAuth.URL + "/jwks",
+						"response_types_supported": []string{"code"}, "subject_types_supported": []string{"public"},
+						"id_token_signing_alg_values_supported": []string{"RS256"},
+					})
+				case "/client-metadata.json":
+					metadataRequests.Add(1)
+					w.Header().Set("Content-Type", "application/json")
+					_ = json.NewEncoder(w).Encode(map[string]any{
+						"client_id": upstreamOAuth.URL + "/client-metadata.json", "client_name": "mecatl test client",
+						"redirect_uris": []string{gateway.URL + toolHiveBasePath + "/oauth/callback"},
+						"grant_types":   []string{"authorization_code"}, "response_types": []string{"code"},
+						"token_endpoint_auth_method": "none",
+					})
+				case "/authorize":
+					if test.mode == "oidc" {
+						oidcNonce.Store(request.URL.Query().Get("nonce"))
+					}
+					if test.mode == "cimd" {
+						metadataURL := upstreamOAuth.URL + "/client-metadata.json"
+						if request.URL.Query().Get("client_id") != metadataURL {
+							http.Error(w, "unexpected CIMD client", http.StatusBadRequest)
+							return
+						}
+						metadataClient := &http.Client{Timeout: 2 * time.Second}
+						metadataRequest, err := http.NewRequestWithContext(request.Context(), http.MethodGet, metadataURL, nil)
+						if err != nil {
+							http.Error(w, "invalid metadata request", http.StatusInternalServerError)
+							return
+						}
+						metadataResponse, err := metadataClient.Do(metadataRequest)
+						if err != nil {
+							http.Error(w, "metadata unavailable", http.StatusBadGateway)
+							return
+						}
+						var document struct {
+							ClientID     string   `json:"client_id"`
+							RedirectURIs []string `json:"redirect_uris"`
+						}
+						decodeErr := json.NewDecoder(metadataResponse.Body).Decode(&document)
+						_ = metadataResponse.Body.Close()
+						if decodeErr != nil || document.ClientID != metadataURL || len(document.RedirectURIs) != 1 || document.RedirectURIs[0] != request.URL.Query().Get("redirect_uri") {
+							http.Error(w, "invalid client metadata", http.StatusBadRequest)
+							return
+						}
+					}
+					redirect := request.URL.Query().Get("redirect_uri")
+					state := request.URL.Query().Get("state")
+					http.Redirect(w, request, redirect+"?"+url.Values{"code": {"upstream-code"}, "state": {state}}.Encode(), http.StatusFound)
+				case "/token":
+					response := map[string]any{"access_token": "upstream-token", "token_type": "Bearer", "expires_in": 3600}
+					if test.mode == "oidc" {
+						now := time.Now()
+						nonce, _ := oidcNonce.Load().(string)
+						idToken := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{
+							"iss": upstreamOAuth.URL, "sub": "test-user", "aud": "registered-client", "nonce": nonce,
+							"iat": now.Unix(), "exp": now.Add(time.Hour).Unix(),
+						})
+						idToken.Header["kid"] = "test-key"
+						signed, err := idToken.SignedString(oidcKey)
+						if err != nil {
+							http.Error(w, "sign ID token", http.StatusInternalServerError)
+							return
+						}
+						response["id_token"] = signed
+					}
+					w.Header().Set("Content-Type", "application/json")
+					_ = json.NewEncoder(w).Encode(response)
+				case "/jwks":
+					w.Header().Set("Content-Type", "application/json")
+					_ = json.NewEncoder(w).Encode(map[string]any{"keys": []map[string]any{{
+						"kty": "RSA", "use": "sig", "kid": "test-key", "alg": "RS256",
+						"n": base64.RawURLEncoding.EncodeToString(oidcKey.PublicKey.N.Bytes()),
+						"e": base64.RawURLEncoding.EncodeToString([]byte{1, 0, 1}),
+					}}})
+				default:
+					http.NotFound(w, request)
+				}
+			}))
+			t.Cleanup(upstreamOAuth.Close)
+
+			var calls atomic.Int32
+			upstreamMCP := mcpsdk.NewServer(&mcpsdk.Implementation{Name: "protected", Version: "v1"}, nil)
+			mcpsdk.AddTool(upstreamMCP, &mcpsdk.Tool{Name: "create"}, func(_ context.Context, _ *mcpsdk.CallToolRequest, input struct {
+				Title string `json:"title"`
+			}) (*mcpsdk.CallToolResult, any, error) {
+				calls.Add(1)
+				return &mcpsdk.CallToolResult{Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: "created:" + input.Title}}}, nil, nil
+			})
+			upstreamHandler := mcpsdk.NewStreamableHTTPHandler(func(*http.Request) *mcpsdk.Server { return upstreamMCP }, &mcpsdk.StreamableHTTPOptions{Stateless: true, JSONResponse: true})
+			protectedMCP := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+				if request.Header.Get("Authorization") != "Bearer upstream-token" {
+					http.Error(w, "unauthorized", http.StatusUnauthorized)
+					return
+				}
+				upstreamHandler.ServeHTTP(w, request)
+			}))
+			t.Cleanup(protectedMCP.Close)
+
+			oauth := &ToolHiveOAuth{Scopes: []string{"openid"}}
+			if test.mode == "oidc" {
+				oauth.Issuer, oauth.ClientID, oauth.ClientSecretEnv = upstreamOAuth.URL, "registered-client", "MECATL_TEST_CLIENT_SECRET"
+			} else {
+				oauth.AuthorizationEndpoint, oauth.TokenEndpoint = upstreamOAuth.URL+"/authorize", upstreamOAuth.URL+"/token"
+				oauth.ClientID = upstreamOAuth.URL + "/client-metadata.json"
+			}
+			profile := ToolHiveProfile{Name: "private", URL: protectedMCP.URL, Auth: authOAuth, OAuth: oauth,
+				Static: []StaticTool{{Name: "create", Schema: json.RawMessage(`{"type":"object"}`)}}}
+			process, err := newToolHiveProcess(t.Context(), ToolHiveConfig{CallbackURL: gateway.URL + "/callback", Profiles: []ToolHiveProfile{profile}}, toolHiveProcessOptions{
+				runtimeOptions: []Option{WithOAuthLoopbackForTest(t, roots)}, brokerHTTPClient: gateway.Client(),
+			})
+			if err != nil {
+				t.Fatalf("newToolHiveProcess: %v", err)
+			}
+			t.Cleanup(func() { _ = process.Close() })
+			if err := process.Handlers.Mount(mux, "/callback"); err != nil {
+				t.Fatalf("mount handlers: %v", err)
+			}
+			attached, _, err := process.Runtime.AttachSession(t.Context(), session.SessionID("real-flow-"+test.mode))
+			if err != nil {
+				t.Fatalf("AttachSession: %v", err)
+			}
+			t.Cleanup(func() { _, _ = attached.Close(context.Background()) })
+			wrapped := toolByName(t, attached.(*Attachment), "mcp__private__create")
+			call := session.NewToolCall("call-1", wrapped.Spec().Name, json.RawMessage(`{"title":"one"}`))
+			authorization, required, err := wrapped.(tool.AuthorizationRequester).RequestAuthorization(t.Context(), call)
+			if err != nil || !required {
+				t.Fatalf("RequestAuthorization = (%+v, %v, %v)", authorization, required, err)
+			}
+			presentation, err := attached.PresentAuthorization(t.Context(), authorization)
+			if err != nil {
+				t.Fatalf("PresentAuthorization: %v", err)
+			}
+			flowCtx, cancelFlow := context.WithTimeout(t.Context(), 5*time.Second)
+			defer cancelFlow()
+			request, err := http.NewRequestWithContext(flowCtx, http.MethodGet, presentation, nil)
+			if err != nil {
+				t.Fatalf("build authorization request: %v", err)
+			}
+			client := gateway.Client()
+			client.Timeout = 5 * time.Second
+			response, err := client.Do(request)
+			if err != nil {
+				t.Fatalf("complete authorization: %v", err)
+			}
+			_ = response.Body.Close()
+			if response.StatusCode != http.StatusNoContent {
+				t.Fatalf("callback status = %d", response.StatusCode)
+			}
+			result, err := wrapped.Execute(t.Context(), call, tool.Environment{})
+			if err != nil || result.IsError || !strings.HasPrefix(result.Content, "created:one") || calls.Load() != 1 {
+				t.Fatalf("protected result = (%+v, %v), calls=%d", result, err, calls.Load())
+			}
+			if test.mode == "oidc" && discoveryRequests.Load() == 0 {
+				t.Fatal("OIDC discovery was not requested")
+			}
+			if test.mode == "cimd" && metadataRequests.Load() == 0 {
+				t.Fatal("CIMD metadata document was not requested")
+			}
+		})
+	}
+}
+
+func TestStaticOAuth2ProcessAuthorizationCallbackAndExactExecution(t *testing.T) {
+	const upstreamToken = "upstream-token"
+	upstreamOAuth := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/authorize":
+			redirect := request.URL.Query().Get("redirect_uri")
+			state := request.URL.Query().Get("state")
+			http.Redirect(w, request, redirect+"?"+url.Values{"code": {"upstream-code"}, "state": {state}}.Encode(), http.StatusFound)
+		case "/token":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"access_token":"` + upstreamToken + `","token_type":"Bearer","expires_in":3600}`))
+		default:
+			http.NotFound(w, request)
+		}
+	}))
+	t.Cleanup(upstreamOAuth.Close)
+
+	var calls atomic.Int32
+	upstreamMCP := mcpsdk.NewServer(&mcpsdk.Implementation{Name: "protected", Version: "v1"}, nil)
+	mcpsdk.AddTool(upstreamMCP, &mcpsdk.Tool{Name: "create", Description: "create"}, func(_ context.Context, _ *mcpsdk.CallToolRequest, input struct {
+		Title string `json:"title"`
+	}) (*mcpsdk.CallToolResult, any, error) {
+		calls.Add(1)
+		return &mcpsdk.CallToolResult{Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: "created:" + input.Title}}}, nil, nil
+	})
+	upstreamHandler := mcpsdk.NewStreamableHTTPHandler(func(*http.Request) *mcpsdk.Server { return upstreamMCP }, &mcpsdk.StreamableHTTPOptions{Stateless: true, JSONResponse: true})
+	protectedMCP := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		if request.Header.Get("Authorization") != "Bearer "+upstreamToken {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		upstreamHandler.ServeHTTP(w, request)
+	}))
+	t.Cleanup(protectedMCP.Close)
+
+	mux := http.NewServeMux()
+	gateway := httptest.NewUnstartedServer(mux)
+	gateway.StartTLS()
+	t.Cleanup(gateway.Close)
+	roots := x509.NewCertPool()
+	roots.AddCert(gateway.Certificate())
+
+	profile := ToolHiveProfile{Name: "private", URL: protectedMCP.URL, Auth: authOAuth, OAuth: &ToolHiveOAuth{
+		AuthorizationEndpoint: upstreamOAuth.URL + "/authorize", TokenEndpoint: upstreamOAuth.URL + "/token",
+		ClientID: "public-client", Scopes: []string{"read"},
+	}, Static: []StaticTool{{Name: "create", Description: "create", Schema: json.RawMessage(`{"type":"object","properties":{"title":{"type":"string"}}}`)}}}
+	process, err := newToolHiveProcess(t.Context(), ToolHiveConfig{
+		CallbackURL: gateway.URL + "/callback", Profiles: []ToolHiveProfile{profile},
+	}, toolHiveProcessOptions{
+		runtimeOptions: []Option{WithOAuthLoopbackForTest(t, roots)}, brokerHTTPClient: gateway.Client(),
+	})
+	if err != nil {
+		t.Fatalf("newToolHiveProcess: %v", err)
+	}
+	t.Cleanup(func() { _ = process.Close() })
+	if err := process.Handlers.Mount(mux, "/callback"); err != nil {
+		t.Fatalf("mount handlers: %v", err)
+	}
+
+	attached, _, err := process.Runtime.AttachSession(t.Context(), "process-static-cimd")
+	if err != nil {
+		t.Fatalf("AttachSession: %v", err)
+	}
+	t.Cleanup(func() { _, _ = attached.Close(context.Background()) })
+	wrapped := toolByName(t, attached.(*Attachment), "mcp__private__create")
+	requester := wrapped.(tool.AuthorizationRequester)
+	call := session.NewToolCall("call-1", wrapped.Spec().Name, json.RawMessage(`{"title":"one"}`))
+	if _, err := wrapped.Execute(t.Context(), call, tool.Environment{}); !errors.Is(err, contract.ErrAuthorizationNotFound) || calls.Load() != 0 {
+		t.Fatalf("pre-authorization execution = %v, calls=%d", err, calls.Load())
+	}
+	authorization, required, err := requester.RequestAuthorization(t.Context(), call)
+	if err != nil || !required {
+		t.Fatalf("RequestAuthorization = (%+v, %v, %v)", authorization, required, err)
+	}
+	wrongBinding := authorization
+	wrongBinding.Binding = session.AuthorizationBinding("wrong-binding")
+	if _, err := attached.PresentAuthorization(t.Context(), wrongBinding); !errors.Is(err, contract.ErrAuthorizationNotFound) {
+		t.Fatalf("mismatched authorization binding error = %v", err)
+	}
+	presentation, err := attached.PresentAuthorization(t.Context(), authorization)
+	if err != nil {
+		t.Fatalf("PresentAuthorization: %v", err)
+	}
+	redirectCtx, cancelRedirect := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancelRedirect()
+	request, err := http.NewRequestWithContext(redirectCtx, http.MethodGet, presentation, nil)
+	if err != nil {
+		t.Fatalf("build authorization request: %v", err)
+	}
+	redirectClient := gateway.Client()
+	redirectClient.Timeout = 5 * time.Second
+	response, err := redirectClient.Do(request)
+	if err != nil {
+		t.Fatalf("complete embedded authorization: %v", err)
+	}
+	body, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusNoContent {
+		t.Fatalf("callback status = %d url=%s body=%q", response.StatusCode, response.Request.URL, body)
+	}
+	if _, err := attached.PresentAuthorization(t.Context(), authorization); !errors.Is(err, contract.ErrAuthorizationNotFound) {
+		t.Fatalf("consumed authorization presentation error = %v", err)
+	}
+	if got, stillRequired, err := requester.RequestAuthorization(t.Context(), call); err != nil || stillRequired || got != (session.ExternalAuthorization{}) {
+		t.Fatalf("post-callback RequestAuthorization = (%+v, %v, %v)", got, stillRequired, err)
+	}
+	mismatch := session.NewToolCall("call-2", wrapped.Spec().Name, json.RawMessage(`{"title":"two"}`))
+	if _, err := wrapped.Execute(t.Context(), mismatch, tool.Environment{}); err == nil || calls.Load() != 0 {
+		t.Fatalf("post-grant mismatched execution = %v, calls=%d", err, calls.Load())
+	}
+	result, err := wrapped.Execute(t.Context(), call, tool.Environment{})
+	if err != nil || result.IsError || !strings.HasPrefix(result.Content, "created:one") || calls.Load() != 1 {
+		t.Fatalf("protected result = (%+v, %v), calls=%d", result, err, calls.Load())
+	}
+	if _, err := wrapped.Execute(t.Context(), call, tool.Environment{}); err == nil || calls.Load() != 1 {
+		t.Fatalf("consumed call replay = %v, calls=%d", err, calls.Load())
+	}
+}
+
+func TestNewToolHiveProcessWiresDefaultProtectedTransport(t *testing.T) {
+	t.Setenv("MECATL_TEST_CLIENT_SECRET", "construction-only-secret")
+	server := mcpsdk.NewServer(&mcpsdk.Implementation{Name: "protected", Version: "v1"}, nil)
+	mcpsdk.AddTool(server, &mcpsdk.Tool{Name: "private.echo", Description: "echoes input"}, func(_ context.Context, _ *mcpsdk.CallToolRequest, input struct {
+		Text string `json:"text"`
+	}) (*mcpsdk.CallToolResult, any, error) {
+		return &mcpsdk.CallToolResult{Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: "protected:" + input.Text}}}, nil, nil
+	})
+	var requests atomic.Int32
+	var requestedPath atomic.Value
+	handler := mcpsdk.NewStreamableHTTPHandler(func(*http.Request) *mcpsdk.Server { return server }, nil)
+	local := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		requests.Add(1)
+		requestedPath.Store(request.URL.Path)
+		if request.URL.Path != toolHiveMCPPath {
+			http.Error(w, "unexpected broker path", http.StatusNotFound)
+			return
+		}
+		if request.Header.Get("Authorization") != "Bearer broker-token" {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		handler.ServeHTTP(w, request)
+	}))
+	t.Cleanup(local.Close)
+	localURL, err := url.Parse(local.URL)
+	if err != nil {
+		t.Fatalf("parse local URL: %v", err)
+	}
+	originalTransport := http.DefaultTransport
+	http.DefaultTransport = roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		if request.URL.Host != "broker.example" {
+			return originalTransport.RoundTrip(request)
+		}
+		clone := request.Clone(request.Context())
+		clonedURL := *request.URL
+		clonedURL.Scheme, clonedURL.Host = localURL.Scheme, localURL.Host
+		clone.URL = &clonedURL
+		clone.Host = localURL.Host
+		return originalTransport.RoundTrip(clone)
+	})
+	defer func() { http.DefaultTransport = originalTransport }()
+
+	profile := protectedToolHiveProfile("private")
+	profile.Static = []StaticTool{{Name: "echo", Description: "echo", Schema: json.RawMessage(`{"type":"object"}`)}}
+	process, err := NewToolHiveProcess(t.Context(), ToolHiveConfig{
+		CallbackURL: "https://broker.example/callback", Profiles: []ToolHiveProfile{profile},
+	})
+	if err != nil {
+		t.Fatalf("NewToolHiveProcess: %v", err)
+	}
+	t.Cleanup(func() { _ = process.Close() })
+	result, err := process.Runtime.authorizedCaller(t.Context(), SessionRef{}, "private",
+		session.NewToolCall("call-1", "mcp__private__echo", json.RawMessage(`{"text":"hello"}`)),
+		oauth2.StaticTokenSource(&oauth2.Token{AccessToken: "broker-token", TokenType: "Bearer"}))
+	if err != nil {
+		t.Fatalf("exported-constructor protected call: %v", err)
+	}
+	path, _ := requestedPath.Load().(string)
+	if requests.Load() == 0 || path != toolHiveMCPPath || result.CallID != "call-1" || !strings.HasPrefix(result.Content, "protected:hello") || result.IsError {
+		t.Fatalf("requests=%d path=%q result=%#v", requests.Load(), path, result)
+	}
+}
+
+func TestStaticProtectedRouteCallbackResumesExactCall(t *testing.T) {
+	tokenServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"access_token":"static-token","token_type":"Bearer","expires_in":3600}`))
+	}))
+	t.Cleanup(tokenServer.Close)
+
+	profile := protectedToolHiveProfile("private")
+	profile.OAuth.TokenEndpoint = tokenServer.URL
+	profile.Static = []StaticTool{{Name: "create", Description: "create item", Schema: json.RawMessage(`{"type":"object"}`)}}
+	target := &oauthRoute{
+		authorizationEndpoint: "https://accounts.example/authorize", tokenEndpoint: tokenServer.URL,
+		callbackURL: "https://client.example/oauth/callback", clientID: "client-id", secretEnv: "MECATL_TEST_CLIENT_SECRET", scopes: []string{"openid"},
+	}
+	construction, err := compileToolHiveConstruction([]ToolHiveProfile{profile}, "https://broker.example"+toolHiveBasePath)
+	if err != nil {
+		t.Fatalf("compileToolHiveConstruction: %v", err)
+	}
+	routes, err := compileStaticProtectedRoutes(construction, target, nil, nil)
+	if err != nil {
+		t.Fatalf("compileStaticProtectedRoutes: %v", err)
+	}
+	roots := x509.NewCertPool()
+	roots.AddCert(tokenServer.Certificate())
+	calls := 0
+	runtime, err := New(&Catalogue{routes: routes}, func(context.Context, SessionRef, string, session.ToolCall) (session.ToolResult, error) {
+		return session.ToolResult{}, errors.New("anonymous caller used for protected route")
+	}, WithAuthorizedCaller(func(_ context.Context, _ SessionRef, backend string, call session.ToolCall, source oauth2.TokenSource) (session.ToolResult, error) {
+		token, tokenErr := source.Token()
+		if tokenErr != nil {
+			return session.ToolResult{}, tokenErr
+		}
+		if backend != "private" || token.AccessToken != "static-token" {
+			return session.ToolResult{}, errors.New("wrong protected execution custody")
+		}
+		calls++
+		return session.NewToolResult(call.ID, "created"), nil
+	}), WithOAuthLoopbackForTest(t, roots), WithOAuthSecretResolver(func(context.Context, string) (string, error) {
+		return "client-secret", nil
+	}))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(func() { _ = runtime.Close() })
+	attachment, _ := attach(t, runtime, "static-callback")
+	wrapped := toolByName(t, attachment, "mcp__private__create")
+	requester := wrapped.(tool.AuthorizationRequester)
+	call := session.NewToolCall("call-1", wrapped.Spec().Name, json.RawMessage(`{"title":"one"}`))
+	authorization, required, err := requester.RequestAuthorization(t.Context(), call)
+	if err != nil || !required {
+		t.Fatalf("RequestAuthorization = (%+v, %v, %v)", authorization, required, err)
+	}
+	mismatch := session.NewToolCall("call-2", wrapped.Spec().Name, json.RawMessage(`{"title":"two"}`))
+	if _, _, err := requester.RequestAuthorization(t.Context(), mismatch); err == nil || !strings.Contains(err.Error(), "different pending authorization") {
+		t.Fatalf("mismatched call authorization error = %v", err)
+	}
+	presentation, err := attachment.PresentAuthorization(t.Context(), authorization)
+	if err != nil {
+		t.Fatalf("PresentAuthorization: %v", err)
+	}
+	presentationURL, err := url.Parse(presentation)
+	if err != nil {
+		t.Fatalf("parse presentation URL: %v", err)
+	}
+	state := presentationURL.Query().Get("state")
+	if got := callback(t, runtime, "authorization-code", state).Code; got != http.StatusNoContent {
+		t.Fatalf("callback status = %d", got)
+	}
+	if got, required, err := requester.RequestAuthorization(t.Context(), call); err != nil || required || got != (session.ExternalAuthorization{}) {
+		t.Fatalf("post-callback authorization = (%+v, %v, %v)", got, required, err)
+	}
+	result, err := wrapped.Execute(t.Context(), call, tool.Environment{})
+	if err != nil || result.Content != "created" || calls != 1 {
+		t.Fatalf("resumed call = (%+v, %v), calls=%d", result, err, calls)
+	}
+}
+
+func TestToolHiveProtectedCallerRejectsCrossBackendCapabilityDrift(t *testing.T) {
+	server := mcpsdk.NewServer(&mcpsdk.Implementation{Name: "broker", Version: "v1"}, nil)
+	var calls atomic.Int32
+	mcpsdk.AddTool(server, &mcpsdk.Tool{Name: "github.enterprise_create_issue"}, func(context.Context, *mcpsdk.CallToolRequest, struct{}) (*mcpsdk.CallToolResult, any, error) {
+		calls.Add(1)
+		return &mcpsdk.CallToolResult{}, nil, nil
+	})
+	handler := mcpsdk.NewStreamableHTTPHandler(func(*http.Request) *mcpsdk.Server { return server }, nil)
+	httpServer := httptest.NewServer(handler)
+	t.Cleanup(httpServer.Close)
+
+	wanted, err := toolHiveAdvertisedToolName("github_enterprise", "mcp__github_enterprise__create_issue")
+	if err != nil || wanted != "github_enterprise.create_issue" {
+		t.Fatalf("protected advertised name = %q, %v", wanted, err)
+	}
+	caller := toolHiveProtectedCaller(httpServer.URL, nil)
+	_, err = caller(t.Context(), SessionRef{}, "github_enterprise",
+		session.NewToolCall("call-1", "mcp__github_enterprise__create_issue", json.RawMessage(`{}`)),
+		oauth2.StaticTokenSource(&oauth2.Token{AccessToken: "session-bearer", TokenType: "Bearer"}))
+	if err == nil || calls.Load() != 0 {
+		t.Fatalf("cross-backend capability drift = %v, calls=%d", err, calls.Load())
+	}
+}
+
 func TestToolHiveProtectedCallerInjectsSessionBearer(t *testing.T) {
 	server := mcpsdk.NewServer(&mcpsdk.Implementation{Name: "protected", Version: "v1"}, nil)
-	mcpsdk.AddTool(server, &mcpsdk.Tool{Name: "echo", Description: "echoes input"}, func(_ context.Context, _ *mcpsdk.CallToolRequest, input struct {
+	mcpsdk.AddTool(server, &mcpsdk.Tool{Name: "private.echo", Description: "echoes input"}, func(_ context.Context, _ *mcpsdk.CallToolRequest, input struct {
 		Text string `json:"text"`
 	}) (*mcpsdk.CallToolResult, any, error) {
 		return &mcpsdk.CallToolResult{Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: "protected:" + input.Text}}}, nil, nil
@@ -123,7 +774,7 @@ func TestToolHiveProtectedCallerInjectsSessionBearer(t *testing.T) {
 	}))
 	t.Cleanup(httpServer.Close)
 
-	caller := toolHiveProtectedCaller([]ToolHiveProfile{{Name: "private", URL: httpServer.URL, Auth: authOAuth}})
+	caller := toolHiveProtectedCaller(httpServer.URL, nil)
 	result, err := caller(t.Context(), SessionRef{}, "private", session.NewToolCall("call-1", "mcp__private__echo", json.RawMessage(`{"text":"hello"}`)), oauth2.StaticTokenSource(&oauth2.Token{AccessToken: "session-bearer", TokenType: "Bearer"}))
 	if err != nil {
 		t.Fatalf("protected caller: %v", err)
@@ -203,11 +854,42 @@ func TestProcessCloseDrainsRuntimeThenResourcesCancelsContextAndIsIdempotent(t *
 	}
 }
 
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
+	return f(request)
+}
+
+func toolHiveOIDCIssuer(t *testing.T) *httptest.Server {
+	t.Helper()
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/.well-known/openid-configuration":
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"issuer": server.URL, "authorization_endpoint": server.URL + "/authorize",
+				"token_endpoint": server.URL + "/token", "jwks_uri": server.URL + "/jwks",
+				"response_types_supported": []string{"code"}, "subject_types_supported": []string{"public"},
+				"id_token_signing_alg_values_supported": []string{"RS256"},
+			})
+		case "/jwks":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"keys":[]}`))
+		default:
+			http.NotFound(w, request)
+		}
+	}))
+	t.Cleanup(server.Close)
+	return server
+}
+
 func protectedToolHiveProfile(name string) ToolHiveProfile {
 	return ToolHiveProfile{Name: name, URL: "https://" + strings.ToLower(strings.Trim(name, "_")) + ".example/mcp", Auth: authOAuth, OAuth: &ToolHiveOAuth{
 		AuthorizationEndpoint: "https://issuer.example/authorize",
 		TokenEndpoint:         "https://issuer.example/token",
 		ClientID:              name + "-client",
+		ClientSecretEnv:       "MECATL_TEST_CLIENT_SECRET",
 		Scopes:                []string{"openid"},
 	}}
 }
