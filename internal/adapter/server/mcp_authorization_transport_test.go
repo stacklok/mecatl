@@ -19,6 +19,7 @@ import (
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 )
 
@@ -61,6 +62,15 @@ type cancelAuthorizationStream struct {
 	ctx       context.Context
 	requests  []*mecatlv1.CancelMcpAuthorizationRequest
 	responses []*mecatlv1.CancelMcpAuthorizationResponse
+}
+
+type rejectCancelledSaveStore struct{ port.SessionStore }
+
+func (s rejectCancelledSaveStore) Save(ctx context.Context, sess *session.Session) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return s.SessionStore.Save(ctx, sess)
 }
 
 func (s *cancelAuthorizationStream) Context() context.Context { return s.ctx }
@@ -161,6 +171,7 @@ func TestMCPAuthorizationGRPCControlEOFCancelsAndDrainsContinuation(t *testing.T
 	followup := session.NewToolCall("followup-call", "protected", nil)
 	f := newLifecycleFixtureWithTurns(t, session.AuthorizationGranted, nil, time.Now, nil,
 		mockllm.ToolCallTurn(followup), mockllm.TextTurn("must not continue"))
+	f.svc.cfg.Store = rejectCancelledSaveStore{SessionStore: f.store}
 	listener := bufconn.Listen(1 << 20)
 	grpcServer := grpc.NewServer()
 	mecatlv1.RegisterHarnessServiceServer(grpcServer, NewHarnessServer(f.svc))
@@ -213,6 +224,13 @@ func TestMCPAuthorizationGRPCControlEOFCancelsAndDrainsContinuation(t *testing.T
 	}
 	if _, live := f.svc.LookupRun("authorization-session"); live {
 		t.Fatal("EOF left authorization continuation live")
+	}
+	persisted, err := f.store.Load(t.Context(), "authorization-session")
+	if err != nil {
+		t.Fatalf("load EOF-cancelled continuation: %v", err)
+	}
+	if persisted.State != session.StateCancelled {
+		t.Fatalf("persisted EOF-cancelled continuation state = %q, want %q", persisted.State, session.StateCancelled)
 	}
 }
 

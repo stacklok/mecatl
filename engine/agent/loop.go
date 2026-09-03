@@ -3210,6 +3210,8 @@ func (e *Engine) emitResult(r *Run, _ *session.Session, reason session.StopReaso
 	})
 }
 
+const sessionPersistenceTimeout = 5 * time.Second
+
 // save best-effort persists the session if a Store is configured.
 //
 // A failure is WARNed once per run, never propagated: a persist failure must not
@@ -3221,11 +3223,25 @@ func (e *Engine) emitResult(r *Run, _ *session.Session, reason session.StopReaso
 // its event log all silently stopped working with no line anywhere. r.diag
 // carries the session id and, for a child engine, the agent role — exactly the
 // correlation that absence made impossible to debug.
+//
+// A live run uses its original context directly. Once that context is cancelled,
+// the terminal save gets a short cancel-detached window so context-aware stores
+// can durably record the terminal state without letting a wedged store block run
+// teardown indefinitely. Diagnostics retain the original run context and its
+// bound session/role correlation.
 func (e *Engine) save(ctx context.Context, r *Run, sess *session.Session) {
 	if e.deps.Store == nil {
 		return
 	}
-	if err := e.deps.Store.Save(ctx, sess); err != nil && !r.saveWarned {
+	var err error
+	if ctx.Err() == nil {
+		err = e.deps.Store.Save(ctx, sess)
+	} else {
+		saveCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), sessionPersistenceTimeout)
+		err = e.deps.Store.Save(saveCtx, sess)
+		cancel()
+	}
+	if err != nil && !r.saveWarned {
 		r.saveWarned = true
 		r.diag.Log(ctx, port.LevelWarn,
 			"session persistence failed; this session may not be resumable after a restart",
