@@ -26,6 +26,13 @@ func TestADR_0290_ResourceInputGrammar(t *testing.T) {
 	if explicit.Resource != "https://api.example.com/rpc/v1" || explicit.GRPCTarget != "api.example.com:443" {
 		t.Fatalf("explicit identity = %#v", explicit)
 	}
+	ipv6, err := parseProtectedResource("https://[2001:0DB8:0:0:0:0:0:1]:8443")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ipv6.Resource != "https://[2001:db8::1]:8443" || ipv6.GRPCTarget != "[2001:db8::1]:8443" {
+		t.Fatalf("IPv6 identity = %#v", ipv6)
+	}
 	for _, raw := range []string{"http://api.example.com", "https://user@api.example.com", "https://api.example.com?a=b", "https://api.example.com?", "https://api.example.com#x", "https://api.example.com/%zz", "https://api.example.com/\u202e", "api.example.com:443", "https://a@b@api.example.com"} {
 		if _, err := parseProtectedResource(raw); err == nil {
 			t.Errorf("parseProtectedResource(%q) unexpectedly succeeded", raw)

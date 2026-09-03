@@ -187,27 +187,29 @@ func flagWasSet(fs *flag.FlagSet, name string) bool {
 }
 
 func discoveredScopes(discovered discoveredResource, explicit string, explicitSet bool) ([]string, error) {
-	raw := discovered.Scopes
-	if explicitSet {
-		raw = splitScopes(explicit)
-	}
-	scopes := make(map[string]bool, len(raw)+3)
-	if !explicitSet {
-		for _, scope := range splitScopes(defaultOIDCScopes) {
-			scopes[scope] = true
-		}
-	}
-	for _, scope := range raw {
-		if !validScope(scope) {
+	confirmed := make(map[string]bool, len(discovered.Scopes))
+	for _, scope := range discovered.Scopes {
+		if !validScope(scope) || confirmed[scope] {
 			return nil, errDiscoveryRejected
 		}
-		scopes[scope] = true
+		confirmed[scope] = true
 	}
-	if len(scopes) == 0 {
+	requested := discovered.Scopes
+	if explicitSet {
+		requested = splitScopes(explicit)
+	}
+	if len(requested) == 0 {
 		return nil, errDiscoveryRejected
 	}
-	result := make([]string, 0, len(scopes))
-	for scope := range scopes {
+	selected := make(map[string]bool, len(requested))
+	for _, scope := range requested {
+		if !confirmed[scope] {
+			return nil, errDiscoveryRejected
+		}
+		selected[scope] = true
+	}
+	result := make([]string, 0, len(selected))
+	for scope := range selected {
 		result = append(result, scope)
 	}
 	slices.Sort(result)
@@ -220,7 +222,7 @@ func discoveredEnrollmentFrom(discovered discoveredResource, grpcTarget, scopes 
 		target = grpcTarget
 	}
 	if scopes == "" {
-		scopes = defaultOIDCScopes
+		scopes = strings.Join(discovered.Scopes, ",")
 	}
 	identity := clientauth.Identity{Target: target, Issuer: discovered.Issuer, ClientID: discovered.ClientID, Audience: discovered.Audience, RedirectURI: oauthlogin.ExactRedirectURL, Scopes: splitScopes(scopes)}
 	identity, err := identity.Canonical()

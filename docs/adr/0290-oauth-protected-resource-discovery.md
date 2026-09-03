@@ -42,10 +42,11 @@ Add only these new server settings:
 
 The profile is disabled when the new fields are absent. Supplying one of the
 required profile values without the others, or without OIDC, is a startup
-configuration error. An absent scope list is valid and omits
-`scopes_supported`. `--oidc-scopes` is a CSV convenience syntax; one shared
-parser trims, validates RFC 6749 scope tokens, rejects empty/unsafe entries,
-and produces deterministic deduplicated scope metadata for CLI and Helm.
+configuration error. An absent scope list is valid and omits `scopes_supported`.
+The configured scope list is a narrow operator allowlist for this public-client
+profile, not server authorization policy. `mecatui` requests exactly the confirmed
+configured set (or an explicitly selected subset); it never adds baseline scopes
+or expands a saved enrollment from later metadata.
 
 When enabled, mecated and mecak8s serve `GET
 /.well-known/oauth-protected-resource` on the public HTTP API listener outside
@@ -65,9 +66,12 @@ fields. The client ID is public and never a secret. V1 requires exactly one
 authorization server; multi-issuer metadata is rejected rather than selected
 by array order.
 
-Unauthenticated HTTP API bearer challenges include the RFC 9728
-`resource_metadata` parameter when the profile is enabled. It is constructed
-only from validated operator configuration, never from request host headers.
+Unauthenticated HTTP API bearer challenges remain generic `Bearer`. The configured
+resource is a service-wide base identity, while API requests are subordinate paths
+and the request `Host` is untrusted, so the middleware cannot prove that a 401
+request is for the exact RFC 9728 resource. The configured metadata URL is served
+only at its direct well-known endpoint; it is never inferred from request headers
+or paths.
 
 Remote mecatui accepts either a bare DNS hostname or an explicit HTTPS resource
 URL for discovery. A bare hostname means HTTPS and port 443. The derived gRPC
@@ -91,10 +95,8 @@ changed metadata. Discovery, issuer lookup, timeout, mismatch, cancellation,
 and confirmation failures leave no keyring, credential, or registry state.
 
 The implementation must reuse or minimally adapt the pinned ToolHive/ToolHive-
-Core Apache-2.0 code with attribution. It must not add ToolHive imports to the
-engine or copy the whole heavy `pkg/auth` dependency closure. RFC 8707 resource
-parameters, dynamic client registration, private-resource discovery, and
-opaque-token support remain outside this profile.
+Core Apache-2.0 code with attribution. Dynamic client registration,
+private-resource discovery, and opaque-token support remain outside this profile.
 
 ## Consequences
 
@@ -115,12 +117,9 @@ issuer CA or address exceptions; private deployments retain explicit login.
 
 A new optional registry field is additive and does not invalidate existing
 credential keys. Exact lookup must reject ambiguous resource/target matches.
-The mecatl extensions are not interoperable with generic RFC 9728 clients, and
-providers that do not support RFC 8707 are supported through the existing
-configured-audience behavior. The V1 public-client flow deliberately does not add
-a `resource` parameter to OAuth authorization, exchange, or refresh requests: that
-keeps compatibility with the existing provider profile; the confirmed resource URL
-is bootstrap and registry metadata, not a token-request compatibility promise.
+The mecatl extensions are not interoperable with generic RFC 9728 clients. The
+confirmed resource URL is bootstrap and registry metadata, not a token-request
+compatibility promise.
 
 ## See also
 

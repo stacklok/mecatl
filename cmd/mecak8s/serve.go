@@ -261,16 +261,10 @@ func newAuthenticator(ctx context.Context, cfg config) (*server.Authenticator, e
 	if err != nil {
 		return nil, err
 	}
-	profile := protectedResourceProfile(cfg.oidc)
-	metadataURL := ""
-	if profile.Resource != "" {
-		metadataURL = server.WellKnownProtectedResourceURL(profile.Resource)
-	}
 	return server.NewAuthenticator(server.SecurityConfig{
-		AuthToken:           cfg.authToken,
-		Validator:           validator,
-		Diagnostics:         cfg.diagnostics,
-		ResourceMetadataURL: metadataURL,
+		AuthToken:   cfg.authToken,
+		Validator:   validator,
+		Diagnostics: cfg.diagnostics,
 		// No rate limiting on a pod: it is fronted by the Service/mesh, not a
 		// raw public port. RateBurst 0 leaves the authenticator's rate limiter
 		// disabled.

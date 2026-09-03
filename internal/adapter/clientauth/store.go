@@ -124,12 +124,12 @@ func canonicalIssuerURL(raw string) (string, error) {
 		return "", errors.New("invalid issuer URL")
 	}
 	u, err := url.Parse(raw)
-	if err != nil || u.Scheme != httpsScheme || u.Hostname() == "" || u.User != nil || u.Fragment != "" || u.RawQuery != "" {
+	if err != nil || u.Scheme != httpsScheme || u.Hostname() == "" || u.User != nil || u.Opaque != "" || u.Fragment != "" || u.RawQuery != "" || u.ForceQuery {
 		return "", errors.New("invalid issuer URL")
 	}
-	u.Scheme, u.Host, u.User, u.Fragment = httpsScheme, strings.ToLower(u.Host), nil, ""
-	u.RawPath = ""
-	return u.String(), nil
+	// RFC 8414 issuer identifiers compare as exact strings. Do not rewrite their
+	// host, port, path, or escaping while making a credential identity.
+	return raw, nil
 }
 
 func canonicalRedirectURI(raw string) (string, error) {
@@ -1104,6 +1104,9 @@ func (r *Registry) targetSnapshot(target string) ([]Connection, error) {
 	return entries, nil
 }
 
+// enrollmentSnapshot returns only entries displaced by replaceEnrollment: entries
+// for the target, plus competing entries for the same canonical resource. In
+// particular, unrelated registry credentials must never be snapshotted or deleted.
 func (r *Registry) enrollmentSnapshot(target, resource string) ([]Connection, error) {
 	all, err := r.List()
 	if err != nil {
@@ -1111,7 +1114,7 @@ func (r *Registry) enrollmentSnapshot(target, resource string) ([]Connection, er
 	}
 	entries := make([]Connection, 0, len(all))
 	for _, conn := range all {
-		if conn.Identity.Target == target || resource != "" && conn.ResourceURL == resource {
+		if conn.Identity.Target == target || (resource != "" && conn.ResourceURL == resource) {
 			entries = append(entries, conn)
 		}
 	}

@@ -119,25 +119,22 @@ func TestADR_0290_MetadataDisabledCompatibility(t *testing.T) {
 }
 
 func TestADR_0290_ChallengeMatrix(t *testing.T) {
-	metadataURL := server.WellKnownProtectedResourceURL("https://api.example.com/mecatl/v1")
-	auth := server.NewAuthenticator(server.SecurityConfig{AuthToken: "static-token", ResourceMetadataURL: metadataURL})
+	auth := server.NewAuthenticator(server.SecurityConfig{AuthToken: "static-token"})
 	defer auth.Close()
-	want := `Bearer resource_metadata="https://api.example.com/.well-known/oauth-protected-resource/mecatl/v1"`
 	for _, path := range []string{"/v1/sessions", "/unrelated"} {
 		rec := httptest.NewRecorder()
 		req := httptest.NewRequest(http.MethodGet, path, nil)
 		req.Host = "attacker.example"
 		auth.Middleware(http.NotFoundHandler()).ServeHTTP(rec, req)
-		if got := rec.Header().Get("WWW-Authenticate"); got != want {
-			t.Fatalf("challenge for %s = %q, want configured service base %q", path, got, want)
+		if got := rec.Header().Get("WWW-Authenticate"); got != "Bearer" {
+			t.Fatalf("challenge for %s = %q, want generic Bearer", path, got)
 		}
 	}
 }
 
-func TestADR_0290_ChallengeMetadataPairUsesConfiguredResource(t *testing.T) {
+func TestADR_0290_MetadataEndpointAndSubordinateChallenge(t *testing.T) {
 	profile := protectedResourceProfile()
-	metadataURL := server.WellKnownProtectedResourceURL(profile.Resource)
-	auth := server.NewAuthenticator(server.SecurityConfig{AuthToken: "static-token", ResourceMetadataURL: metadataURL})
+	auth := server.NewAuthenticator(server.SecurityConfig{AuthToken: "static-token"})
 	defer auth.Close()
 	h := server.WithProtectedResourceMetadata(profile, auth.Middleware(http.NotFoundHandler()))
 
@@ -148,22 +145,21 @@ func TestADR_0290_ChallengeMetadataPairUsesConfiguredResource(t *testing.T) {
 	if challenge.Code != http.StatusUnauthorized {
 		t.Fatalf("protected request status = %d, want 401", challenge.Code)
 	}
-	wantChallenge := `Bearer resource_metadata="` + metadataURL + `"`
-	if got := challenge.Header().Get("WWW-Authenticate"); got != wantChallenge {
-		t.Fatalf("challenge = %q, want %q", got, wantChallenge)
+	if got := challenge.Header().Get("WWW-Authenticate"); got != "Bearer" {
+		t.Fatalf("subordinate challenge = %q, want generic Bearer", got)
 	}
 
 	metadata := httptest.NewRecorder()
 	h.ServeHTTP(metadata, httptest.NewRequest(http.MethodGet, "/.well-known/oauth-protected-resource/mecatl/v1", nil))
 	if metadata.Code != http.StatusOK {
-		t.Fatalf("challenge metadata status = %d, want 200", metadata.Code)
+		t.Fatalf("metadata status = %d, want 200", metadata.Code)
 	}
 	var document protectedResourceMetadataDocument
 	if err := json.NewDecoder(metadata.Body).Decode(&document); err != nil {
 		t.Fatal(err)
 	}
 	if document.Resource != profile.Resource || len(document.AuthorizationServers) != 1 || document.AuthorizationServers[0] != profile.Issuer {
-		t.Fatalf("challenge metadata document = %#v, want configured profile %#v", document, profile)
+		t.Fatalf("metadata document = %#v, want configured profile %#v", document, profile)
 	}
 }
 
@@ -172,13 +168,13 @@ type protectedResourceMetadataDocument struct {
 	AuthorizationServers []string `json:"authorization_servers"`
 }
 
-func TestADR_0290_ChallengeRejectsUnsafeQuotedValue(t *testing.T) {
-	auth := server.NewAuthenticator(server.SecurityConfig{AuthToken: "static-token", ResourceMetadataURL: "https://api.example/.well-known/oauth-protected-resource\\"})
+func TestADR_0290_ChallengeIsAlwaysGeneric(t *testing.T) {
+	auth := server.NewAuthenticator(server.SecurityConfig{AuthToken: "static-token"})
 	defer auth.Close()
 	rec := httptest.NewRecorder()
 	auth.Middleware(http.NotFoundHandler()).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/sessions", nil))
 	if got := rec.Header().Get("WWW-Authenticate"); got != "Bearer" {
-		t.Fatalf("unsafe challenge = %q, want bare Bearer", got)
+		t.Fatalf("challenge = %q, want bare Bearer", got)
 	}
 }
 

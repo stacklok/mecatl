@@ -25,7 +25,7 @@ func TestOAuthProtectedResource_Scenario4_ShorthandEnrollment(t *testing.T) {
 		executeRemoteLogin = originalLogin
 	})
 	discoverRemoteResource = func(context.Context, protectedResource) (discoveredResource, error) {
-		return discoveredResource{protectedResource: protectedResource{Resource: "https://api.example.com", MetadataURL: "https://api.example.com/.well-known/oauth-protected-resource", GRPCTarget: "api.example.com:443"}, Issuer: "https://issuer.example.com", Audience: "api", ClientID: "client", Scopes: []string{"api.read"}}, nil
+		return discoveredResource{protectedResource: protectedResource{Resource: "https://api.example.com", MetadataURL: "https://api.example.com/.well-known/oauth-protected-resource", GRPCTarget: "api.example.com:443"}, Issuer: "https://ISSUER.example.com", Audience: "api", ClientID: "client", Scopes: []string{"api.read"}}, nil
 	}
 	confirmed := false
 	confirmDiscoveredEnrollment = func(io.Reader, io.Writer, discoveredEnrollment) (bool, error) {
@@ -38,19 +38,19 @@ func TestOAuthProtectedResource_Scenario4_ShorthandEnrollment(t *testing.T) {
 	if err := runRemoteLogin("api.example.com", nil); err != nil {
 		t.Fatal(err)
 	}
-	if !confirmed || got.Identity.Target != "api.example.com:443" || got.Identity.Issuer != "https://issuer.example.com" || got.Identity.Audience != "api" || got.Identity.ClientID != "client" {
+	if !confirmed || got.Identity.Target != "api.example.com:443" || got.Identity.Issuer != "https://ISSUER.example.com" || got.Identity.Audience != "api" || got.Identity.ClientID != "client" {
 		t.Fatalf("shorthand enrollment = confirmed:%v connection:%#v", confirmed, got)
 	}
 	if got.IssuerAddressPolicy != clientauth.IssuerAddressPolicyPublic {
 		t.Fatalf("shorthand issuer policy = %q, want public", got.IssuerAddressPolicy)
 	}
-	if gotScopes := strings.Join(got.Identity.Scopes, ","); gotScopes != "api.read,offline_access,openid,profile" {
+	if gotScopes := strings.Join(got.Identity.Scopes, ","); gotScopes != "api.read" {
 		t.Fatalf("shorthand scopes = %q", gotScopes)
 	}
 }
 
 func TestADR_0290_ResourceTargetSeparation(t *testing.T) {
-	enrollment, err := discoveredEnrollmentFrom(discoveredResource{protectedResource: protectedResource{Resource: "https://api.example.com/service/v1", MetadataURL: "https://api.example.com/.well-known/oauth-protected-resource/service/v1", GRPCTarget: "api.example.com:443"}, Issuer: "https://issuer.example.com", Audience: "api", ClientID: "client"}, "grpc.example.com:7443", "")
+	enrollment, err := discoveredEnrollmentFrom(discoveredResource{protectedResource: protectedResource{Resource: "https://api.example.com/service/v1", MetadataURL: "https://api.example.com/.well-known/oauth-protected-resource/service/v1", GRPCTarget: "api.example.com:443"}, Issuer: "https://issuer.example.com", Audience: "api", ClientID: "client", Scopes: []string{"api.read"}}, "grpc.example.com:7443", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,7 +60,7 @@ func TestADR_0290_ResourceTargetSeparation(t *testing.T) {
 }
 
 func TestInvariant_oauth_three_transport_trust_split(t *testing.T) {
-	enrollment, err := discoveredEnrollmentFrom(discoveredResource{protectedResource: protectedResource{Resource: "https://api.example.com", MetadataURL: "https://api.example.com/.well-known/oauth-protected-resource", GRPCTarget: "api.example.com:443"}, Issuer: "https://issuer.example.com", Audience: "api", ClientID: "client"}, "", "")
+	enrollment, err := discoveredEnrollmentFrom(discoveredResource{protectedResource: protectedResource{Resource: "https://api.example.com", MetadataURL: "https://api.example.com/.well-known/oauth-protected-resource", GRPCTarget: "api.example.com:443"}, Issuer: "https://issuer.example.com", Audience: "api", ClientID: "client", Scopes: []string{"api.read"}}, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,7 +103,7 @@ func TestADR_0290_DiscoveredIdentityConfirmation(t *testing.T) {
 		t.Fatalf("rejected confirmation = err %v, login called %v", err, called)
 	}
 
-	enrollment, err := discoveredEnrollmentFrom(discovered, "", "openid,profile,offline_access,api.read")
+	enrollment, err := discoveredEnrollmentFrom(discovered, "", "api.read")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -137,18 +137,21 @@ func TestADR_0290_DiscoveredIdentityConfirmation(t *testing.T) {
 
 func TestADR_0290_DiscoveredScopeSelection(t *testing.T) {
 	profile := discoveredResource{Scopes: []string{"api.read", "profile"}}
-	scopes, err := discoveredScopes(profile, "api.write", true)
+	if _, err := discoveredScopes(profile, "api.write", true); err == nil {
+		t.Fatal("unadvertised explicit scope accepted")
+	}
+	scopes, err := discoveredScopes(profile, "profile", true)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, want := strings.Join(scopes, ","), "api.write"; got != want {
-		t.Fatalf("explicit scopes = %q, want %q", got, want)
+	if got, want := strings.Join(scopes, ","), "profile"; got != want {
+		t.Fatalf("explicit configured scope = %q, want %q", got, want)
 	}
 	scopes, err = discoveredScopes(profile, "", false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, want := strings.Join(scopes, ","), "api.read,offline_access,openid,profile"; got != want {
+	if got, want := strings.Join(scopes, ","), "api.read,profile"; got != want {
 		t.Fatalf("profile scopes = %q, want %q", got, want)
 	}
 }

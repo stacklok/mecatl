@@ -74,10 +74,15 @@ This page is the overview and router; the big picture and the layering rule are 
 Both `mecated` and `mecak8s` use the shared OIDC profile flags. When configured,
 `--oidc-resource` publishes the RFC 9728 canonical resource and
 `--oidc-client-id` publishes mecatl's public client hint; `--oidc-scopes` is the
-shared CSV syntax (a comma is a separator, never part of one scope token). These
-values are not inferred from listeners or request headers: the canonical configured
-resource is the explicit service-wide protected-resource identity, and every
-protected API route advertises that identity's metadata URL. Discovery is an anonymous HTTPS bootstrap path distinct from authenticated gRPC. The
+shared CSV syntax and a narrow operator-configured request allowlist (a comma is a
+separator, never part of one scope token). mecatui requests exactly the confirmed
+configured scopes, or an explicitly selected subset; the list is neither server
+authorization policy nor expanded from later metadata. These values are not inferred
+from listeners or request headers: the canonical configured resource is the explicit
+service-wide protected-resource identity. Its direct well-known endpoint serves
+metadata; protected subordinate API routes return a generic `Bearer` challenge because
+their path and untrusted Host cannot prove that exact identity. Discovery is an
+anonymous HTTPS bootstrap path distinct from authenticated gRPC. The
 client-side flow is a narrow Apache-2.0-attributed adaptation of ToolHive and
 ToolHive-Core behavior; neither is an engine dependency. Existing issuer/audience
 projection and explicit OIDC login remain compatible.
@@ -751,8 +756,9 @@ back. Usage and configuration are documented in
 login: `mecatui llm login` remains the ToolHive gateway flow, while `mecatui login
 ADDRESS` performs public-client OIDC enrollment for one remote target. A bare DNS
 hostname or HTTPS resource URL discovers the issuer, public client ID, audience, and
-scopes from the configured resource metadata; legacy/private deployments without that
-profile require those values explicitly. Login defaults to public, globally routable issuer
+operator-configured requested scopes from the resource metadata; mecatui requests exactly
+that confirmed set (or an explicit subset), never adds baseline scopes, and never expands a
+saved enrollment from later metadata. Legacy/private deployments without that profile require those values explicitly. Login defaults to public, globally routable issuer
 addresses verified against the system trust store; optional `--tls-ca` replaces those
 roots. `--private-issuer` requires `--tls-ca` and selects private-address admission. The
 saved policy and an explicit CA reference, never CA contents, are used for later refresh

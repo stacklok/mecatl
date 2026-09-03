@@ -33,14 +33,14 @@ func Canonical(raw string) (string, error) {
 		if portErr != nil || port == 0 || port > 65535 {
 			return "", errors.New("invalid resource URL port")
 		}
-		host := strings.ToLower(u.Hostname())
+		host := canonicalHostname(u.Hostname())
 		if port == 443 {
-			u.Host = canonicalHost(host)
+			u.Host = urlHost(host)
 		} else {
 			u.Host = net.JoinHostPort(host, strconv.FormatUint(port, 10))
 		}
 	} else {
-		u.Host = canonicalHost(strings.ToLower(u.Hostname()))
+		u.Host = urlHost(canonicalHostname(u.Hostname()))
 	}
 	if u.Path == "/" {
 		u.Path, u.RawPath = "", ""
@@ -68,7 +68,15 @@ func MetadataURL(raw string) string {
 	return u.String()
 }
 
-func canonicalHost(host string) string {
+func canonicalHostname(host string) string {
+	host = strings.ToLower(host)
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.String()
+	}
+	return host
+}
+
+func urlHost(host string) string {
 	if strings.Contains(host, ":") {
 		return "[" + host + "]"
 	}

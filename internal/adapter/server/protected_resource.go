@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/url"
-	"strings"
 
 	"github.com/stacklok/mecatl/internal/adapter/resourceurl"
 )
@@ -124,9 +123,6 @@ func validProtectedResourceScopes(scopes []string) bool {
 	return true
 }
 
-func protectedResourceChallenge(metadataURL string) string {
-	if metadataURL == "" || strings.ContainsAny(metadataURL, "\r\n\"\\") {
-		return "Bearer"
-	}
-	return `Bearer resource_metadata="` + metadataURL + `"`
+func protectedResourceChallenge() string {
+	return "Bearer"
 }

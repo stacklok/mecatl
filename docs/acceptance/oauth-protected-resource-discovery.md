@@ -34,7 +34,7 @@ Both composition roots extend the shared OIDC configuration with `--oidc-resourc
 
 ### Scenario 2 — ToolHive-derived metadata and challenge
 
-The public HTTP listener exposes `GET /.well-known/oauth-protected-resource` outside bearer middleware. Root and path-bearing resources use one helper built on ToolHive’s exported `oauthproto.WellKnownOAuthResourcePath`. The configured resource is the service-wide protected-resource base: every protected API route advertises its one configured metadata URL, never a request-derived host or path. The response contains standard RFC 9728 fields plus `com.stacklok.mecatl.audience` and `com.stacklok.mecatl.client_id`. The adapted code records ToolHive source paths/tags and corrects its prefix routing, method, CORS, default-scope, validation, and header-safety issues. See [ADR 0290](../adr/0290-oauth-protected-resource-discovery.md) and the public listener shape in [`internal/adapter/server/authn.go`](../../internal/adapter/server/authn.go).
+The public HTTP listener exposes `GET /.well-known/oauth-protected-resource` outside bearer middleware. Root and path-bearing resources use one helper built on ToolHive’s exported `oauthproto.WellKnownOAuthResourcePath`. The configured resource is a service-wide protected-resource base, not a request-derived identity: API 401s on subordinate routes return generic `Bearer`, because neither their path nor the untrusted `Host` can prove the exact configured resource. The direct well-known endpoint serves the configured metadata. The response contains standard RFC 9728 fields plus `com.stacklok.mecatl.audience` and `com.stacklok.mecatl.client_id`. The adapted code records ToolHive source paths/tags and corrects its prefix routing, method, CORS, default-scope, validation, and header-safety issues. See [ADR 0290](../adr/0290-oauth-protected-resource-discovery.md) and the public listener shape in [`internal/adapter/server/authn.go`](../../internal/adapter/server/authn.go).
 
 **Acceptance:**
 - AC2.1: Both binaries return the configured metadata with `200` and `application/json` outside authentication and metrics/admin listeners.
@@ -47,8 +47,8 @@ The public HTTP listener exposes `GET /.well-known/oauth-protected-resource` out
   - verify: `TestADR_0290_WellKnownPathDerivation`
 - AC2.5: Disabled profiles return 404 and static-token-only deployments do not advertise OAuth.
   - verify: `TestADR_0290_MetadataDisabledCompatibility`
-- AC2.6: 401 responses carry one safe `resource_metadata` challenge derived only from the configured service resource base; every protected route advertises that same base and never derives it from Host or request path.
-  - verify: `TestADR_0290_ChallengeMatrix`
+- AC2.6: Subordinate API 401 responses carry generic `Bearer`; the metadata URL is served only at its direct, configured well-known route, never derived from Host or request path.
+  - verify: `TestADR_0290_ChallengeMatrix`, `TestADR_0290_MetadataEndpointAndSubordinateChallenge`
 - AC2.7: Metadata includes the standard resource and authorization-server fields; ToolHive fixture parity remains unproven by this local serialization test.
   - verify: `TestADR_0290_MetadataStandardFields`
 
@@ -89,7 +89,7 @@ The public HTTP listener exposes `GET /.well-known/oauth-protected-resource` out
   - verify: `TestInvariant_oauth_three_transport_trust_split`
 - AC4.4: Browser launch and persistence occur only after explicit first-use confirmation; the same immutable confirmed tuple is passed unchanged to authorization and enrollment, and rejection/cancellation/EOF leaves no state.
   - verify: `TestADR_0290_DiscoveredIdentityConfirmation`
-- AC4.5: The final requested scope set is the confirmed, validated union of the OIDC baseline and profile scopes, with explicit CLI `--scopes` precedence defined and displayed before confirmation.
+- AC4.5: The final requested scope set is exactly the confirmed configured `scopes_supported` set, or an explicit subset of it; no baseline scope is added and later metadata cannot expand a saved enrollment.
   - verify: `TestADR_0290_DiscoveredScopeSelection`
 - AC4.6: Legacy explicit enrollment, private issuer mode, explicit scopes, callback, and saved connect remain compatible.
   - verify: `TestADR_0277_ExplicitEnrollmentCompatibility`
@@ -120,15 +120,15 @@ Public registry metadata gains optional `ResourceURL`, while the encrypted crede
 
 ### Scenario 6 — Helm, documentation, and offline proof
 
-The mecak8s chart adds `oidc.resource`, `oidc.clientID`, and `oidc.scopes`, rendering the shared flags and joining YAML scope lists to CSV; an individual YAML scope containing a comma is rejected rather than split. The schema/helper validates complete and partial combinations. Offline coverage exercises the real metadata handler and discovery parser, first-use confirmation, and a test-double handoff to the existing login seam; browser PKCE, authenticated gRPC, and bare-host reconnect remain a required live qualification, not a claimed hermetic proof. User-facing and generated documentation are updated. The chart topology and storage-free deployment constraints remain those of [ADR 0048](../adr/0048-mecak8s.md), while documentation must follow the lifecycle rules in [`AGENTS.md`](../../AGENTS.md).
+The mecak8s chart adds `oidc.resource`, `oidc.clientID`, and `oidc.scopes`, rendering the shared flags and joining YAML scope lists to CSV; an individual YAML scope containing a comma is rejected rather than split. The schema/helper validates complete and partial combinations. Offline coverage exercises the real metadata handler and discovery parser, first-use confirmation, and a test-double handoff to the existing login seam. Live browser PKCE, authenticated gRPC, and bare-host reconnect qualification is explicitly deferred and is not an issue ship criterion. User-facing and generated documentation are updated. The chart topology and storage-free deployment constraints remain those of [ADR 0048](../adr/0048-mecak8s.md), while documentation must follow the lifecycle rules in [`AGENTS.md`](../../AGENTS.md).
 
 **Acceptance:**
 - AC6.1: Helm renders `oidc.resource` and `oidc.clientID` as the shared `--oidc-resource` and `--oidc-client-id` flags, joins `oidc.scopes` to the same CSV parser used by the CLI, and rejects partial or malformed values including `oidc.enabled: false` with profile fields set.
   - verify: `TestADR_0290_HelmProtectedResourceProfile`
-- AC6.2: Offline coverage proves the real metadata handler and discovery parser plus confirmation and the immutable tuple passed to a test-double login seam. It does not prove browser PKCE, authenticated gRPC, or bare-host reconnect; those require live qualification.
+- AC6.2: Offline coverage proves the real metadata handler and discovery parser plus confirmation and the immutable tuple passed to a test-double login seam. Live browser PKCE, authenticated gRPC, and bare-host reconnect qualification is deferred and outside issue ship criteria.
   - verify: `TestOAuthProtectedResource_Scenario6_EndToEnd`
-- AC6.3: Both server composition roots receive the shared OIDC flag/profile projection; the metadata-route and configured-resource challenge contract is exercised at the shared server-adapter boundary.
-  - verify: `TestADR_0290_ServerCompositionParity`, `TestADR_0290_ChallengeMetadataPairUsesConfiguredResource`
+- AC6.3: Both server composition roots receive the shared OIDC flag/profile projection; the direct metadata route and subordinate generic-Bearer challenge contract is exercised at the shared server-adapter boundary.
+  - verify: `TestADR_0290_ServerCompositionParity`, `TestADR_0290_MetadataEndpointAndSubordinateChallenge`
 - AC6.4: Documentation distinguishes RFC fields, mecatl extensions, existing OIDC projections, transport separation, and ToolHive provenance.
   - verify: inspection — documentation includes protocol, extension, provenance, and compatibility sections
 - AC6.5: Generated documentation and site build are current.
@@ -156,7 +156,7 @@ Land ADR/profile validation first; adapt the ToolHive handler/path/challenge pri
 1. ADR 0290 and this plan are present and indexed.
 2. The acceptance-plan checker and `task ac-trace-strict` pass once landed.
 3. `task lint`, `task test`, `task api:check`, `task docs`, and `task site:build` pass.
-4. Helm tests and the hermetic OAuth end-to-end test pass.
+4. Helm tests and the hermetic metadata/discovery/confirmation handoff test pass. Live browser PKCE, authenticated gRPC, and bare-host reconnect qualification are deferred and outside this issue's Definition of Done.
 5. `go run ./cmd/mecademo` remains green.
 6. Adapted upstream code retains Apache-2.0 attribution.
 7. Panel review has no ship blockers.
