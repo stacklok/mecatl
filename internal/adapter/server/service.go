@@ -33,6 +33,7 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/scheduler"
 	"github.com/stacklok/mecatl/internal/adapter/skills"
 	"github.com/stacklok/mecatl/internal/adapter/tools"
+	brokercontract "github.com/stacklok/mecatl/internal/mcpbroker"
 )
 
 // WorkspaceFactory builds the session-scoped tool.Workspace for a session root.
@@ -222,6 +223,11 @@ func seedModelInventory(cfg Config) []*mecatlv1.ModelInfo {
 	}
 	return cfg.ModelInventory.CurrentModels()
 }
+
+// SessionEngineWithToolsFactory is the explicit per-session catalogue seam used
+// for host-owned wrapper tools. Tools are ordinary arguments: catalogue assembly
+// must not recover them from context values or a process-global fallback.
+type SessionEngineWithToolsFactory func(ctx context.Context, sel ProviderSelector, specs []mcp.ServerConfig, profile SessionProfile, workspace string, mode session.PermissionMode, sessionTools []tool.Tool) (SessionEngineResult, error)
 
 // Config wires the Service's collaborators and resolved composition values.
 type Config struct {
@@ -523,6 +529,11 @@ type Config struct {
 	// uses the shared Engine (zero overhead). The composition root (internal/app)
 	// supplies it.
 	SessionEngine SessionEngineFactory
+	// SessionEngineWithTools is required when MCPBroker is wired. It receives the
+	// exact wrappers owned by the local broker attachment.
+	SessionEngineWithTools SessionEngineWithToolsFactory
+	// MCPBroker owns logical broker state; Service owns only local attachments.
+	MCPBroker brokercontract.Service
 
 	// ModeNeedsEngine reports whether a given session PermissionMode resolves a model
 	// that DIFFERS from the shared engine's model (ADR 0030 Layer 3) — i.e. whether a
@@ -879,6 +890,13 @@ type Service struct {
 	// Config.MaxSessionEngines (mirroring MaxTeams): createSession returns
 	// ErrTooManySessionEngines once the cap is reached, and CloseSession frees a slot.
 	sessionEngines map[session.SessionID]*sessionEngine
+	// brokerAttachments are process-local handles. Closing one never deletes the
+	// broker's logical session state. brokerMu serializes attach/build/commit,
+	// local detach, and permanent logical deletion for one canonical session ID;
+	// it is separate from runEntryMu because engine rebuilds may already hold that
+	// run-entry lock.
+	brokerAttachments map[session.SessionID]brokercontract.Attachment
+	brokerMu          keyedMutex
 	// sessionEnvironments holds per-session Environment OVERRIDES. When an entry
 	// is present for a session id, StartRun uses it as the COMPLETE execution
 	// environment (Workspace + optional bound CommandRunner + accurate ref) instead
@@ -1328,6 +1346,7 @@ func NewServiceContext(ctx context.Context, cfg Config) (*Service, error) {
 		runs:                make(map[session.SessionID]*runState),
 		teams:               make(map[string]*teamState),
 		sessionEngines:      make(map[session.SessionID]*sessionEngine),
+		brokerAttachments:   make(map[session.SessionID]brokercontract.Attachment),
 		sessionEnvironments: make(map[session.SessionID]tool.Environment),
 		reservedIDs:         make(map[session.SessionID]struct{}),
 		runEntryGenerations: make(map[session.SessionID]uint64),
@@ -2153,6 +2172,22 @@ func (s *Service) createSession(ctx context.Context, mode session.PermissionMode
 		defer release()
 		mintID = func() session.SessionID { return opts.id }
 	}
+	// A broker attachment is keyed by the canonical persisted identity. Mint and
+	// reserve generated IDs before any attachment or catalogue construction.
+	if s.cfg.MCPBroker != nil && !opts.idSet {
+		id := mintID()
+		request := newCreateRequest(placement.Ref, mode, limits, sel, profile, opts.sourceSessionID, opts)
+		existing, release, reserveErr := s.reserveSessionID(ctx, id, owner, request)
+		if reserveErr != nil {
+			return nil, reserveErr
+		}
+		if existing != nil {
+			release()
+			return nil, fmt.Errorf("%w: generated session id %q already exists", ErrInvalidArgument, id)
+		}
+		defer release()
+		mintID = func() session.SessionID { return id }
+	}
 
 	// Issue #20 (model-switch context carryover): when a source session is
 	// named, validate it (turn-boundary) and snapshot its conversation ONCE
@@ -2183,7 +2218,7 @@ func (s *Service) createSession(ctx context.Context, mode session.PermissionMode
 		owner = srcOwner
 	}
 
-	needPerSession := s.sessionNeedsPerFactory(sel, specs, profile, workspace) || s.cfg.LearnedSkills != nil
+	needPerSession := s.cfg.MCPBroker != nil || s.sessionNeedsPerFactory(sel, specs, profile, workspace) || s.cfg.LearnedSkills != nil
 	if !needPerSession {
 		// Shared-engine fast path (today's behaviour, byte-identical). The labels are
 		// the empty pair + default profile here (the empty-selector default profile is
@@ -2217,13 +2252,11 @@ func (s *Service) createSession(ctx context.Context, mode session.PermissionMode
 //
 //nolint:gocyclo // Creation keeps factory, authorization, registration, and teardown in one transaction.
 func (s *Service) createPerSessionEngine(ctx context.Context, mintID func() session.SessionID, mode session.PermissionMode, workspace string, limits session.Limits, sel ProviderSelector, specs []mcp.ServerConfig, profile SessionProfile, carrySnap []session.Message, owner *session.Principal, opts createSessionOpts, carriedAuthority session.Authority, carriedAuthorityBound bool, retryRequest *createRequest, placement *PlacementBinding) (*session.Session, error) {
-	factory := s.cfg.SessionEngine
 	if opts.debugTargetID != "" {
 		if s.cfg.DebugSessionEngine == nil {
 			return nil, fmt.Errorf("%w: session debugging is not supported", ErrInvalidArgument)
 		}
-		factory = nil
-	} else if factory == nil {
+	} else if s.cfg.SessionEngine == nil && s.cfg.SessionEngineWithTools == nil {
 		return nil, fmt.Errorf("%w: per-session engine not supported (no session-engine factory configured)", ErrInvalidArgument)
 	}
 	// Cheap cap pre-check (CWE-770): reject BEFORE the factory connects MCP /
@@ -2241,6 +2274,9 @@ func (s *Service) createPerSessionEngine(ctx context.Context, mintID func() sess
 	var res SessionEngineResult
 	var err error
 	var debugTarget *session.Session
+	var broker *localBrokerAttachment
+	var committed bool
+	var id session.SessionID
 	if opts.debugTargetID != "" {
 		debugTarget, err = s.cfg.Store.Load(ctx, opts.debugTargetID)
 		if err != nil || debugTarget == nil || s.authorizeSession(ctx, debugTarget) != nil {
@@ -2251,7 +2287,17 @@ func (s *Service) createPerSessionEngine(ctx context.Context, mintID func() sess
 		}
 		res, err = s.cfg.DebugSessionEngine(ctx, sel, profile, mode, opts.debugTargetID, session.DebugTargetFingerprint(debugTarget), debugTarget.Owner, opts.debugMCPServers, nil)
 	} else {
-		res, err = factory(ctx, sel, specs, profile, workspace, mode)
+		if s.cfg.MCPBroker != nil {
+			id = mintID()
+			unlockBroker := s.brokerMu.lock(id)
+			defer unlockBroker()
+			broker, err = s.openBrokerAttachment(ctx, id, "", false)
+			if err != nil {
+				return nil, err
+			}
+			defer s.finalizeBrokerAttachment(broker, &committed)
+		}
+		res, err = s.callSessionEngine(ctx, sel, specs, profile, workspace, mode, brokerTools(broker))
 	}
 	if err != nil {
 		// Factory maps an unknown/unavailable provider to ErrInvalidArgument; any
@@ -2259,8 +2305,8 @@ func (s *Service) createPerSessionEngine(ctx context.Context, mintID func() sess
 		return nil, err
 	}
 	eng, closeFn := res.Engine, res.Close
-	// All-or-nothing client MCP on the WIRE path, BEFORE an id is minted or
-	// anything is persisted: a caller that asked for tools must not be handed a
+	// All-or-nothing client MCP on the wire path, before a non-broker id is minted
+	// or anything is persisted: a caller that asked for tools must not be handed a
 	// session quietly missing them. Teardown uses the same closeFn idiom as every
 	// other rejection below, so a refused create leaks neither a connection nor a
 	// registry slot.
@@ -2270,12 +2316,18 @@ func (s *Service) createPerSessionEngine(ctx context.Context, mintID func() sess
 		}
 		return nil, err
 	}
-	sess, err := newCreatedSession(mintID(), mode, placement.Ref, limits, s.cfg.Now(), opts)
+	if id == "" {
+		id = mintID()
+	}
+	sess, err := newCreatedSession(id, mode, placement.Ref, limits, s.cfg.Now(), opts)
 	if err != nil {
 		if closeFn != nil {
 			_ = closeFn()
 		}
 		return nil, fmt.Errorf("server: create session metadata: %w", err)
+	}
+	if broker != nil {
+		sess.ExternalBinding = broker.attachment.Binding()
 	}
 	// Persist the neutral provider+model selector and the profile as write-once
 	// creation labels on the aggregate, so a restarted process re-derives the SAME
@@ -2340,6 +2392,15 @@ func (s *Service) createPerSessionEngine(ctx context.Context, mintID func() sess
 			_ = closeFn()
 		}
 		return persisted, perr
+	}
+	if broker != nil {
+		commitCtx, cancelCommit := context.WithTimeout(context.WithoutCancel(ctx), engineCloseTimeout)
+		commitErr := s.commitBrokerAttachment(commitCtx, id, broker)
+		cancelCommit()
+		if commitErr != nil {
+			return nil, fmt.Errorf("%w: %v", ErrInternal, commitErr)
+		}
+		committed = true
 	}
 	return sess, nil
 }
@@ -2589,6 +2650,15 @@ func (s *Service) SetSessionEnvironment(id session.SessionID, env tool.Environme
 // editor disconnect already implies the run is being abandoned, so blocking briefly
 // for the in-flight call to unwind is the correct, leak-free behaviour.
 func (s *Service) CloseSession(id session.SessionID) {
+	unlock := s.brokerMu.lock(id)
+	defer unlock()
+	s.closeSessionLocal(id)
+}
+
+// closeSessionLocal releases only process-local ownership. The caller must hold
+// brokerMu for id so no engine can borrow and install the attachment while it is
+// being closed.
+func (s *Service) closeSessionLocal(id session.SessionID) {
 	// Release composition-owned session-scoped state first (e.g. the per-session
 	// learned permission rules) so it never outlives the session, even if the
 	// per-session engine teardown below is a no-op for this id.
@@ -2600,6 +2670,8 @@ func (s *Service) CloseSession(id session.SessionID) {
 	if ok {
 		delete(s.sessionEngines, id)
 	}
+	brokerAttachment := s.brokerAttachments[id]
+	delete(s.brokerAttachments, id)
 	// Drop any per-session environment override too: it closes over the (now
 	// disconnecting) connection, so it must not outlive the session.
 	delete(s.sessionEnvironments, id)
@@ -2623,7 +2695,17 @@ func (s *Service) CloseSession(id session.SessionID) {
 	delete(s.lostOwnership, id)
 	s.mu.Unlock()
 	if ok && se.close != nil {
-		_ = se.close()
+		if err := se.close(); err != nil {
+			s.cfg.Diagnostics.Log(context.Background(), port.LevelWarn, "per-session engine close failed")
+		}
+	}
+	if brokerAttachment != nil {
+		closeCtx, cancel := context.WithTimeout(context.Background(), engineCloseTimeout)
+		_, err := brokerAttachment.Close(closeCtx)
+		cancel()
+		if err != nil {
+			s.cfg.Diagnostics.Log(context.Background(), port.LevelWarn, "MCP broker attachment close failed")
+		}
 	}
 	// Stop the session's renewer and release its cross-process lease (cloud-native
 	// Phase 4): the session is ending, so a competitor may now take it over. No-op
@@ -2735,6 +2817,8 @@ func (s *Service) Close() {
 	s.mu.Lock()
 	engines := s.sessionEngines
 	s.sessionEngines = make(map[session.SessionID]*sessionEngine)
+	brokerAttachments := s.brokerAttachments
+	s.brokerAttachments = make(map[session.SessionID]brokercontract.Attachment)
 	// Drop all per-session environment overrides on shutdown; they hold no resources
 	// of their own (the underlying connection is closed separately) but must not
 	// linger past the Service.
@@ -2767,7 +2851,9 @@ func (s *Service) Close() {
 	go func() {
 		for _, se := range engines {
 			if se.close != nil {
-				_ = se.close()
+				if err := se.close(); err != nil {
+					s.cfg.Diagnostics.Log(context.Background(), port.LevelWarn, "per-session engine close failed during shutdown")
+				}
 			}
 		}
 		close(done)
@@ -2778,6 +2864,19 @@ func (s *Service) Close() {
 		s.cfg.Diagnostics.Log(context.Background(), port.LevelWarn, "timed out waiting for per-session engine close; abandoning",
 			"timeout", engineCloseTimeout.String())
 	}
+	attachmentCtx, cancelAttachments := context.WithTimeout(context.Background(), engineCloseTimeout)
+	var attachmentWG sync.WaitGroup
+	for _, attachment := range brokerAttachments {
+		attachmentWG.Add(1)
+		go func() {
+			defer attachmentWG.Done()
+			if _, err := attachment.Close(attachmentCtx); err != nil {
+				s.cfg.Diagnostics.Log(context.Background(), port.LevelWarn, "MCP broker attachment close failed during shutdown")
+			}
+		}()
+	}
+	attachmentWG.Wait()
+	cancelAttachments()
 
 	// Stop every renewer and release every held cross-process lease on shutdown
 	// (cloud-native Phase 4), so a restarted process can take the sessions over
@@ -3242,11 +3341,14 @@ func (s *Service) DeleteSession(ctx context.Context, id session.SessionID) error
 	if err != nil || absent {
 		return err
 	}
-	if !s.mutationLeaseHeld(id) {
-		return fmt.Errorf("%w: %q", ErrSessionLeasedElsewhere, id)
+	unlockBroker := s.brokerMu.lock(id)
+	defer unlockBroker()
+	if err := s.deleteBrokerSessionLocked(ctx, id); err != nil {
+		return err
 	}
 	if err := s.deleteSessionFamily(ctx, sess.ID, prunable); err != nil {
 		if errors.Is(err, port.ErrSessionNotFound) {
+			s.closeSessionLocal(id)
 			return nil
 		}
 		if errors.Is(err, port.ErrPruneUnsupported) {
@@ -3254,7 +3356,7 @@ func (s *Service) DeleteSession(ctx context.Context, id session.SessionID) error
 		}
 		return fmt.Errorf("%w: delete session: %v", ErrInternal, err)
 	}
-	s.CloseSession(id)
+	s.closeSessionLocal(id)
 	return nil
 }
 
@@ -3295,6 +3397,11 @@ func (s *Service) DeleteSessionForRetentionCandidate(ctx context.Context, candid
 	if !retentionCandidateMatches(sess, candidate) {
 		return errRetentionCandidateChanged
 	}
+	unlockBroker := s.brokerMu.lock(candidate.ID)
+	defer unlockBroker()
+	if err := s.deleteBrokerSessionLocked(ctx, candidate.ID); err != nil {
+		return err
+	}
 	if !s.mutationLeaseHeld(candidate.ID) {
 		return fmt.Errorf("%w: %q", ErrSessionLeasedElsewhere, candidate.ID)
 	}
@@ -3308,7 +3415,7 @@ func (s *Service) DeleteSessionForRetentionCandidate(ctx context.Context, candid
 	if !deleted {
 		return errRetentionCandidateChanged
 	}
-	s.CloseSession(candidate.ID)
+	s.closeSessionLocal(candidate.ID)
 	return nil
 }
 
@@ -3357,11 +3464,14 @@ func (s *Service) DeleteSessionForRetention(ctx context.Context, id session.Sess
 	if sess.State == session.StateRunning || sess.State == session.StateAwaiting || s.IsLive(id) {
 		return fmt.Errorf("%w: retention candidate is active or awaiting approval", ErrFailedPrecondition)
 	}
-	if !s.mutationLeaseHeld(id) {
-		return fmt.Errorf("%w: %q", ErrSessionLeasedElsewhere, id)
+	unlockBroker := s.brokerMu.lock(id)
+	defer unlockBroker()
+	if err := s.deleteBrokerSessionLocked(ctx, id); err != nil {
+		return err
 	}
 	if err := s.deleteSessionFamily(ctx, id, prunable); err != nil {
 		if errors.Is(err, port.ErrSessionNotFound) {
+			s.closeSessionLocal(id)
 			return nil
 		}
 		if errors.Is(err, port.ErrPruneUnsupported) {
@@ -3369,7 +3479,7 @@ func (s *Service) DeleteSessionForRetention(ctx context.Context, id session.Sess
 		}
 		return fmt.Errorf("%w: delete retention candidate: %v", ErrInternal, err)
 	}
-	s.CloseSession(id)
+	s.closeSessionLocal(id)
 	return nil
 }
 
@@ -4718,7 +4828,7 @@ func (s *Service) sessionNeedsPerFactory(sel ProviderSelector, specs []mcp.Serve
 // then separately compares the verified live root with SharedEngineRoot to decide whether
 // placement affinity needs a per-session engine.
 func (s *Service) needsRehydration(sess *session.Session) bool {
-	return s.cfg.LearnedSkills != nil ||
+	return s.cfg.MCPBroker != nil || s.cfg.LearnedSkills != nil ||
 		sess.Kind == session.SessionKindDebug ||
 		sess.Profile == string(ProfileNoFS) ||
 		sess.ProviderID != "" || sess.ModelID != "" ||
@@ -4811,6 +4921,8 @@ func (s *Service) rehydrateSession(ctx context.Context, sess *session.Session) (
 //nolint:gocyclo // Rehydration keeps validation, factory, and atomic registration together.
 func (s *Service) buildAndRegisterSessionEngine(ctx context.Context, sess *session.Session, sel ProviderSelector, profile SessionProfile, mode session.PermissionMode, replace bool) (*sessionEngine, error) {
 	id := sess.ID
+	unlockBroker := s.brokerMu.lock(id)
+	defer unlockBroker()
 	// On replace we are swapping an existing registration, so the cap is not exceeded
 	// (the slot is already counted); on a first build the pre-check rejects when full.
 	if !replace {
@@ -4823,6 +4935,8 @@ func (s *Service) buildAndRegisterSessionEngine(ctx context.Context, sess *sessi
 	}
 	var res SessionEngineResult
 	var err error
+	var broker *localBrokerAttachment
+	var brokerCommitted bool
 	if sess.Kind == session.SessionKindDebug {
 		target, loadErr := s.cfg.Store.Load(ctx, sess.Relationship.DebugTargetID)
 		if loadErr != nil || target == nil || sess.DebugTargetFingerprint == "" || !sess.Relationship.DebugTargetIncarnation.Valid() ||
@@ -4834,11 +4948,16 @@ func (s *Service) buildAndRegisterSessionEngine(ctx context.Context, sess *sessi
 		}
 		res, err = s.cfg.DebugSessionEngine(ctx, sel, profile, mode, sess.Relationship.DebugTargetID, sess.DebugTargetFingerprint, target.Owner, sess.DebugMCPServers, sess.DebugMCPTools)
 	} else {
+		broker, err = s.openBrokerAttachment(ctx, id, sess.ExternalBinding, true)
+		if err != nil {
+			return nil, err
+		}
+		defer s.finalizeBrokerAttachment(broker, &brokerCommitted)
 		workspace, workspaceErr := s.privateWorkspace(ctx, sess)
 		if workspaceErr != nil {
 			return nil, workspaceErr
 		}
-		res, err = s.cfg.SessionEngine(ctx, sel, nil, profile, workspace, mode)
+		res, err = s.callSessionEngine(ctx, sel, nil, profile, workspace, mode, brokerTools(broker))
 	}
 	if err != nil {
 		return nil, fmt.Errorf("server: build session engine %q: %w", id, err)
@@ -4896,6 +5015,28 @@ func (s *Service) buildAndRegisterSessionEngine(ctx context.Context, sess *sessi
 		s.sessionEnvironments[id] = tool.MustEnvironment(sess.EnvironmentRef, nofs.New(), memledger.New(), nil)
 	}
 	s.mu.Unlock()
+	if broker != nil {
+		commitCtx, cancelCommit := context.WithTimeout(context.WithoutCancel(ctx), engineCloseTimeout)
+		commitErr := s.commitBrokerAttachment(commitCtx, id, broker)
+		cancelCommit()
+		if commitErr != nil {
+			s.mu.Lock()
+			if s.sessionEngines[id] == se {
+				if replace && hadPrior {
+					s.sessionEngines[id] = prior
+				} else {
+					delete(s.sessionEngines, id)
+				}
+				delete(s.sessionEnvironments, id)
+			}
+			s.mu.Unlock()
+			if se.close != nil {
+				_ = se.close()
+			}
+			return nil, fmt.Errorf("%w: %v", ErrInternal, commitErr)
+		}
+		brokerCommitted = true
+	}
 	// On a clean replace, free the displaced prior engine's MCP manager OUTSIDE the lock
 	// (no I/O under the mutex). The under-lock check above proved no run was live AND the
 	// new engine is now registered, so no goroutine can still read prior after this point.

@@ -87,6 +87,7 @@ var sessionMutationInventory = map[string]SessionMutationEntry{
 	"SetModelsRefresher":                 {SessionMutationComposition, "installs a process-wide callback and touches no durable session family"},
 	"SetSessionEnvironment":              {SessionMutationComposition, "registers only a process-local environment override and touches no durable session family"},
 	"CloseSession":                       {SessionMutationLeaseProven, "tears down process-local session ownership and releases its lease without changing durable session bytes"},
+	"closeSessionLocal":                  {SessionMutationLeaseProven, "shared teardown body for CloseSession and the delete paths, which already hold brokerMu for the id before calling it"},
 }
 
 func validateSessionMutationNames(table map[string]SessionMutationEntry, boundaries []string) []error {

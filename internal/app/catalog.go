@@ -140,6 +140,7 @@ type catalogAssets struct {
 	automaticAdmissionLedger learning.AutomaticAdmissionLedger
 	rootCatalog              *tool.Catalog
 	modelInventory           *resolvedModelInventory
+	sessionFactoryWithTools  server.SessionEngineWithToolsFactory
 }
 
 // catalogSession is the PER-CATALOG variation: the resolved provider/model the
@@ -179,6 +180,9 @@ type catalogSession struct {
 	// per-session engine is assembled. The Skill tool's Spec and Execute therefore
 	// share one principal-scoped catalog selection.
 	skillPartitions []learning.SkillPartition
+	// sessionTools are explicit wrappers owned by one host attachment. They are
+	// never recovered from context values or a global MCP manager.
+	sessionTools []tool.Tool
 }
 
 // assembleCatalog registers every tool family into a fresh catalog, in the
@@ -208,6 +212,11 @@ func assembleCatalog(ctx context.Context, cfg Config, reg *providerRegistry, sto
 	classified.captureEach(coreToolClassification, func() {
 		registerCoreTools(cfg, cat, s.narrate, s.noFS, a.searchProvider)
 	})
+	for _, sessionTool := range s.sessionTools {
+		classified.mustRegister(sessionTool, classification(server.KindDerived,
+			"session-bound wrapper supplied explicitly by the host attachment"))
+	}
+
 	for _, extra := range cfg.extraCoreTools {
 		entry, ok := cfg.extraCoreToolClassifications[extra.Spec().Name]
 		if !ok {

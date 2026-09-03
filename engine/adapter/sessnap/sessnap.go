@@ -35,15 +35,16 @@ import (
 // struct with JSON tags so it serializes deterministically regardless of the
 // (untagged) layout of the domain types.
 type Snapshot struct {
-	ID          session.SessionID      `json:"id"`
-	State       session.State          `json:"state"`
-	Mode        session.PermissionMode `json:"mode"`
-	Limits      session.Limits         `json:"limits"`
-	Counters    session.Counters       `json:"counters"`
-	CreatedAt   time.Time              `json:"created_at"`
-	Incarnation session.IncarnationID  `json:"incarnation,omitempty"`
-	Messages    []messageDTO           `json:"messages"`
-	Pending     *session.PendingAsk    `json:"pending,omitempty"`
+	ID              session.SessionID      `json:"id"`
+	State           session.State          `json:"state"`
+	Mode            session.PermissionMode `json:"mode"`
+	Limits          session.Limits         `json:"limits"`
+	Counters        session.Counters       `json:"counters"`
+	ExternalBinding string                 `json:"external_binding,omitempty"`
+	CreatedAt       time.Time              `json:"created_at"`
+	Incarnation     session.IncarnationID  `json:"incarnation,omitempty"`
+	Messages        []messageDTO           `json:"messages"`
+	Pending         *session.PendingAsk    `json:"pending,omitempty"`
 	// PendingAuthorization is present exactly while StateAuthorizing. Its private
 	// DTO base64-encodes tool arguments so JSON normalization cannot change bytes.
 	PendingAuthorization *pendingAuthorizationDTO `json:"pending_authorization,omitempty"`
@@ -290,6 +291,7 @@ func Of(s *session.Session) (Snapshot, error) {
 		Mode:                   s.Mode,
 		Limits:                 s.Limits,
 		Counters:               s.Counters,
+		ExternalBinding:        s.ExternalBinding,
 		EnvironmentRef:         s.EnvironmentRef,
 		Placement:              s.Placement,
 		Profile:                s.Profile,
@@ -379,6 +381,7 @@ func (snap Snapshot) Restore() (*session.Session, error) {
 	s.DebugMCPServers = append([]string(nil), snap.DebugMCPServers...)
 	s.DebugMCPTools = append([]string(nil), snap.DebugMCPTools...)
 	s.DebugTargetFingerprint = snap.DebugTargetFingerprint
+	s.ExternalBinding = snap.ExternalBinding
 	// RunID restores by direct assignment, like Profile/Title above: it is an
 	// inert stored label, not lifecycle state, so it does not belong in
 	// RestoreState's state-machine parameter list.

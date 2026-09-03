@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
@@ -157,6 +158,130 @@ func TestWrappersBindCanonicalSessionAndPrivateRoute(t *testing.T) {
 	defer recorder.mu.Unlock()
 	if len(recorder.calls) != 2 || recorder.calls[0].session != "session-one" || recorder.calls[0].backend != "calendar" || recorder.calls[1].session != "session-two" || recorder.calls[1].backend != "search" {
 		t.Fatalf("private routed calls = %+v", recorder.calls)
+	}
+}
+
+func TestAttachmentCloseWaitIsContextAwareWithoutEarlyStateCleanup(t *testing.T) {
+	catalogue, err := Compile(anonymousConfig(), discoveredTools(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	runtime, err := New(catalogue, func(context.Context, SessionRef, string, session.ToolCall) (session.ToolResult, error) {
+		close(entered)
+		<-release
+		return session.NewToolResult("call", "done"), nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	attachment, _ := attach(t, runtime, "context-close")
+	callDone := make(chan error, 1)
+	go func() {
+		_, callErr := toolByName(t, attachment, "mcp__search__query").Execute(context.Background(), session.NewToolCall("call", "mcp__search__query", json.RawMessage(`{}`)), tool.Environment{})
+		callDone <- callErr
+	}()
+	<-entered
+
+	closeCtx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	if outcome, closeErr := attachment.Close(closeCtx); outcome != contract.CloseClosed || !errors.Is(closeErr, context.DeadlineExceeded) {
+		t.Fatalf("Close = (%q, %v), want closed + deadline", outcome, closeErr)
+	}
+	if _, execErr := toolByName(t, attachment, "mcp__search__query").Execute(context.Background(), session.NewToolCall("late", "mcp__search__query", json.RawMessage(`{}`)), tool.Environment{}); !errors.Is(execErr, contract.ErrAttachmentClosed) {
+		t.Fatalf("new operation after timed close = %v", execErr)
+	}
+	close(release)
+	if callErr := <-callDone; callErr != nil {
+		t.Fatalf("registered operation was cleared early: %v", callErr)
+	}
+	if err := runtime.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRuntimeCloseIsBoundedAndOperationReleaseOwnsCleanup(t *testing.T) {
+	catalogue, err := Compile(anonymousConfig(), discoveredTools(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	runtime, err := New(catalogue, func(context.Context, SessionRef, string, session.ToolCall) (session.ToolResult, error) {
+		close(entered)
+		<-release
+		return session.NewToolResult("call", "done"), nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	attachment, _ := attach(t, runtime, "runtime-close")
+	if err := attachment.Commit(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	wrapped := toolByName(t, attachment, "mcp__search__query")
+	callDone := make(chan error, 1)
+	go func() {
+		_, callErr := wrapped.Execute(context.Background(), session.NewToolCall("call", wrapped.Spec().Name, json.RawMessage(`{}`)), tool.Environment{})
+		callDone <- callErr
+	}()
+	<-entered
+
+	closeDone := make(chan error, 1)
+	go func() { closeDone <- runtime.Close() }()
+	select {
+	case closeErr := <-closeDone:
+		if closeErr != nil {
+			t.Fatal(closeErr)
+		}
+	case <-time.After(250 * time.Millisecond):
+		close(release)
+		<-callDone
+		t.Fatal("Runtime.Close waited for stuck operation")
+	}
+	attachment.logical.mu.RLock()
+	deleted, cleaned := attachment.logical.deleted, attachment.logical.cleaned
+	attachment.logical.mu.RUnlock()
+	if !deleted || cleaned {
+		t.Fatalf("close state before release = deleted %v cleaned %v", deleted, cleaned)
+	}
+
+	close(release)
+	if callErr := <-callDone; callErr != nil {
+		t.Fatal(callErr)
+	}
+	attachment.logical.mu.RLock()
+	cleaned = attachment.logical.cleaned
+	active := attachment.logical.activeOps
+	attachment.logical.mu.RUnlock()
+	if !cleaned || active != 0 {
+		t.Fatalf("release cleanup = cleaned %v active %d", cleaned, active)
+	}
+}
+
+func TestCreatorAbortPreservesReattachedPeer(t *testing.T) {
+	runtime, _ := newTestRuntime(t)
+	defer runtime.Close()
+	creator, outcome := attach(t, runtime, "shared-provisional")
+	if outcome != contract.AttachCreated {
+		t.Fatalf("creator outcome = %q", outcome)
+	}
+	peer, outcome := attach(t, runtime, "shared-provisional")
+	if outcome != contract.AttachReattached {
+		t.Fatalf("peer outcome = %q", outcome)
+	}
+	binding := peer.Binding()
+	if err := creator.Abort(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	wrapped := toolByName(t, peer, "mcp__search__query")
+	if _, err := wrapped.Execute(context.Background(), session.NewToolCall("peer", wrapped.Spec().Name, json.RawMessage(`{}`)), tool.Environment{}); err != nil {
+		t.Fatalf("peer invalidated by creator abort: %v", err)
+	}
+	third, outcome := attach(t, runtime, "shared-provisional")
+	if outcome != contract.AttachReattached || third.Binding() != binding {
+		t.Fatalf("post-abort attach = %q binding %q, want reattached %q", outcome, third.Binding(), binding)
 	}
 }
 

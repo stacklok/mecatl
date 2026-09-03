@@ -373,6 +373,10 @@ type Session struct {
 	// It is persisted for public inventory projection but never used to bind or
 	// reattach an environment.
 	Placement PlacementMetadata
+	// ExternalBinding is an opaque composition-issued binding to process-external
+	// session state. The aggregate stores and persists it without interpretation.
+	// An empty value means no external runtime is bound.
+	ExternalBinding string
 	// Profile is an opaque tool-surface profile label (e.g. "" for the default
 	// filesystem profile, "no-fs" for the no-filesystem one). The aggregate STORES
 	// it but never interprets it: the meaning lives entirely in composition, like

@@ -5,6 +5,8 @@ package mcpbroker
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -164,6 +166,9 @@ type logicalSession struct {
 	cancelOps      context.CancelFunc
 	activeOps      int
 	operationsDone chan struct{}
+	provisional    bool
+	cleaned        bool
+	cleanupStatus  session.AuthorizationStatus
 	authorizations map[authorizationIdentity]*authorizationTransaction
 	grants         map[string]*oauthGrant
 }
@@ -188,6 +193,7 @@ type Runtime struct {
 	sessions         map[session.SessionID]*logicalSession
 	states           map[string]callbackState
 	nextGeneration   uint64
+	bindingPrefix    string
 	closed           bool
 }
 
@@ -202,12 +208,17 @@ func New(catalogue *Catalogue, caller Caller, options ...Option) (*Runtime, erro
 	if caller == nil {
 		return nil, fmt.Errorf("%w: caller is required", ErrInvalidCatalogue)
 	}
+	bindingSeed := make([]byte, 18)
+	if _, err := rand.Read(bindingSeed); err != nil {
+		return nil, fmt.Errorf("%w: create runtime binding: %v", ErrInvalidCatalogue, err)
+	}
 	runtime := &Runtime{
-		catalogue: catalogue,
-		caller:    caller,
-		oauth:     defaultOAuthRuntimeOptions(),
-		sessions:  make(map[session.SessionID]*logicalSession),
-		states:    make(map[string]callbackState),
+		catalogue:     catalogue,
+		caller:        caller,
+		oauth:         defaultOAuthRuntimeOptions(),
+		sessions:      make(map[session.SessionID]*logicalSession),
+		states:        make(map[string]callbackState),
+		bindingPrefix: base64.RawURLEncoding.EncodeToString(bindingSeed),
 	}
 	for _, option := range options {
 		if option == nil {
@@ -262,15 +273,23 @@ func (r *Runtime) AttachSession(ctx context.Context, id session.SessionID) (cont
 			ref:            SessionRef{id: id, generation: r.nextGeneration},
 			operationCtx:   operationCtx,
 			cancelOps:      cancelOps,
+			provisional:    true,
 			authorizations: make(map[authorizationIdentity]*authorizationTransaction),
 			grants:         make(map[string]*oauthGrant),
 		}
 		r.sessions[id] = logical
 		outcome = contract.AttachCreated
+	} else {
+		// Observation by an independent attachment publishes a provisional
+		// creation. Its creator may still Abort its own handle, but can no longer
+		// invalidate state another client has acquired.
+		logical.mu.Lock()
+		logical.provisional = false
+		logical.mu.Unlock()
 	}
 	r.mu.Unlock()
 
-	attachment := &Attachment{runtime: r, logical: logical}
+	attachment := &Attachment{runtime: r, logical: logical, creator: outcome == contract.AttachCreated}
 	attachment.tools = make([]tool.Tool, len(r.catalogue.routes))
 	for i, route := range r.catalogue.routes {
 		base := &sessionTool{attachment: attachment, route: route}
@@ -300,16 +319,20 @@ func (r *Runtime) DeleteSession(ctx context.Context, id session.SessionID) (cont
 		return contract.DeleteNotFound, nil
 	}
 	logical.mu.Lock()
-	logical.deleted = true
-	logical.cancelOps()
+	logical.markDeletedLocked(session.AuthorizationClosed)
 	delete(r.sessions, id)
-	logical.mu.Unlock()
 	r.mu.Unlock()
-
-	logical.waitOperations()
-	logical.mu.Lock()
-	logical.clearSecretsLocked(r, session.AuthorizationClosed)
+	logical.maybeCleanupLocked(r)
+	done := logical.operationsDone
 	logical.mu.Unlock()
+
+	if done != nil {
+		select {
+		case <-done:
+		case <-ctx.Done():
+			return contract.DeleteDeleted, ctx.Err()
+		}
+	}
 	return contract.DeleteDeleted, nil
 }
 
@@ -321,12 +344,103 @@ type Attachment struct {
 	runtime        *Runtime
 	logical        *logicalSession
 	closed         bool
+	creator        bool
+	settled        bool
 	activeOps      int
 	operationsDone chan struct{}
 	tools          []tool.Tool
 }
 
 var _ contract.Attachment = (*Attachment)(nil)
+
+// Commit publishes this attachment's private creation. Reattached attachments
+// have already published the logical session by observing it, so Commit is a
+// harmless idempotent settlement for them.
+func (a *Attachment) Commit(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.settled {
+		return nil
+	}
+	if a.closed {
+		return contract.ErrAttachmentClosed
+	}
+	if a.creator {
+		a.runtime.mu.Lock()
+		a.logical.mu.Lock()
+		current := a.runtime.sessions[a.logical.ref.id]
+		if a.runtime.closed || current != a.logical || a.logical.deleted {
+			a.logical.mu.Unlock()
+			a.runtime.mu.Unlock()
+			return contract.ErrStateUnavailable
+		}
+		a.logical.provisional = false
+		a.logical.mu.Unlock()
+		a.runtime.mu.Unlock()
+	} else {
+		a.runtime.mu.RLock()
+		available := !a.runtime.closed && a.runtime.sessions[a.logical.ref.id] == a.logical
+		a.runtime.mu.RUnlock()
+		a.logical.mu.RLock()
+		available = available && !a.logical.deleted
+		a.logical.mu.RUnlock()
+		if !available {
+			return contract.ErrStateUnavailable
+		}
+	}
+	a.settled = true
+	return nil
+}
+
+// Abort closes this attachment and conditionally rolls back only a still-private
+// creation. A peer attachment publishes the logical session at reattachment, so
+// aborting the creator can never invalidate an observed peer.
+func (a *Attachment) Abort(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	a.mu.Lock()
+	if a.closed {
+		a.mu.Unlock()
+		return nil
+	}
+	rollback := a.creator && !a.settled
+	a.closed = true
+	a.settled = true
+	done := a.operationsDone
+	if rollback {
+		a.runtime.mu.Lock()
+		a.logical.mu.Lock()
+		deleted := false
+		if a.runtime.sessions[a.logical.ref.id] == a.logical && a.logical.provisional {
+			delete(a.runtime.sessions, a.logical.ref.id)
+			a.logical.markDeletedLocked(session.AuthorizationClosed)
+			deleted = true
+		}
+		a.runtime.mu.Unlock()
+		if deleted {
+			a.logical.maybeCleanupLocked(a.runtime)
+		}
+		a.logical.mu.Unlock()
+	}
+	a.mu.Unlock()
+	if done != nil {
+		select {
+		case <-done:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	return nil
+}
+
+// Binding returns the opaque identity of this logical-session incarnation.
+func (a *Attachment) Binding() string {
+	return a.runtime.bindingPrefix + "." + fmt.Sprint(a.logical.ref.generation)
+}
 
 // Tools returns a copy of this attachment's stable session-bound wrappers.
 func (a *Attachment) Tools() []tool.Tool {
@@ -366,7 +480,11 @@ func (a *Attachment) Close(ctx context.Context) (contract.CloseOutcome, error) {
 	done := a.operationsDone
 	a.mu.Unlock()
 	if done != nil {
-		<-done
+		select {
+		case <-done:
+		case <-ctx.Done():
+			return contract.CloseClosed, ctx.Err()
+		}
 	}
 	return contract.CloseClosed, nil
 }
@@ -410,6 +528,7 @@ func (a *Attachment) beginOperation(parent context.Context) (context.Context, fu
 				close(logical.operationsDone)
 				logical.operationsDone = nil
 			}
+			logical.maybeCleanupLocked(a.runtime)
 			logical.mu.Unlock()
 			a.mu.Lock()
 			a.finishAttachmentOperation()
@@ -423,15 +542,6 @@ func (a *Attachment) finishAttachmentOperation() {
 	if a.activeOps == 0 {
 		close(a.operationsDone)
 		a.operationsDone = nil
-	}
-}
-
-func (l *logicalSession) waitOperations() {
-	l.mu.RLock()
-	done := l.operationsDone
-	l.mu.RUnlock()
-	if done != nil {
-		<-done
 	}
 }
 

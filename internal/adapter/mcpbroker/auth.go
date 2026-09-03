@@ -653,6 +653,10 @@ func (t *sessionTool) executeProtected(ctx context.Context, call session.ToolCal
 		}
 		return session.ToolResult{}, errors.New("protected call ID was reused with different arguments")
 	}
+	if len(grant.executed) >= maxExecutedCallsPerGrant {
+		logical.mu.Unlock()
+		return session.ToolResult{}, errors.New("protected-call replay ledger is full")
+	}
 	grant.executed[call.ID] = hash // claim before transport: an unknown outcome is never replayed.
 	logical.mu.Unlock()
 	result, err := t.attachment.runtime.authorizedCaller(ctx, logical.ref, t.route.backend, call, &scopedTokenSource{runtime: t.attachment.runtime, logical: logical, backend: t.route.backend})
@@ -660,7 +664,29 @@ func (t *sessionTool) executeProtected(ctx context.Context, call session.ToolCal
 	return result, err
 }
 
+func (l *logicalSession) markDeletedLocked(status session.AuthorizationStatus) {
+	l.deleted = true
+	l.provisional = false
+	l.cleanupStatus = status
+	l.cancelOps()
+}
+
+func (l *logicalSession) maybeCleanupLocked(runtime *Runtime) {
+	if !l.deleted || l.activeOps != 0 || l.cleaned {
+		return
+	}
+	status := l.cleanupStatus
+	if status == "" {
+		status = session.AuthorizationClosed
+	}
+	l.clearSecretsLocked(runtime, status)
+}
+
 func (l *logicalSession) clearSecretsLocked(runtime *Runtime, status session.AuthorizationStatus) {
+	if l.cleaned {
+		return
+	}
+	l.cleaned = true
 	for _, transaction := range l.authorizations {
 		runtime.removeCallbackState(transaction.state, transaction)
 		if transaction.status == session.AuthorizationPending {
@@ -696,14 +722,8 @@ func (r *Runtime) Close() error {
 	r.mu.Unlock()
 	for _, logical := range sessions {
 		logical.mu.Lock()
-		logical.deleted = true
-		logical.cancelOps()
-		logical.mu.Unlock()
-	}
-	for _, logical := range sessions {
-		logical.waitOperations()
-		logical.mu.Lock()
-		logical.clearSecretsLocked(r, session.AuthorizationClosed)
+		logical.markDeletedLocked(session.AuthorizationClosed)
+		logical.maybeCleanupLocked(r)
 		logical.mu.Unlock()
 	}
 	if r.oauth.httpClient != nil {

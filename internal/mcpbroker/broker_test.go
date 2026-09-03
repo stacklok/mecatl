@@ -4,11 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/stacklok/mecatl/engine/session"
+	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/mcpbroker"
 )
 
@@ -25,6 +27,7 @@ type authorizationKey struct {
 
 type fakeLogicalSession struct {
 	generation     uint64
+	provisional    bool
 	authorizations map[authorizationKey]session.AuthorizationStatus
 }
 
@@ -33,6 +36,7 @@ type fakeAttachment struct {
 	id         session.SessionID
 	generation uint64
 	closed     bool
+	creator    bool
 }
 
 var _ mcpbroker.Service = (*fakeService)(nil)
@@ -54,11 +58,14 @@ func (s *fakeService) AttachSession(_ context.Context, id session.SessionID) (mc
 		s.nextGeneration++
 		s.sessions[id] = &fakeLogicalSession{
 			generation:     s.nextGeneration,
+			provisional:    true,
 			authorizations: make(map[authorizationKey]session.AuthorizationStatus),
 		}
 		outcome = mcpbroker.AttachCreated
+	} else {
+		s.sessions[id].provisional = false
 	}
-	return &fakeAttachment{service: s, id: id, generation: s.sessions[id].generation}, outcome, nil
+	return &fakeAttachment{service: s, id: id, generation: s.sessions[id].generation, creator: outcome == mcpbroker.AttachCreated}, outcome, nil
 }
 
 func (s *fakeService) DeleteSession(_ context.Context, id session.SessionID) (mcpbroker.DeleteOutcome, error) {
@@ -76,6 +83,37 @@ func (s *fakeService) addAuthorization(id session.SessionID, authorization sessi
 	defer s.mu.Unlock()
 	s.sessions[id].authorizations[authorizationIdentity(authorization)] = session.AuthorizationPending
 }
+
+func (a *fakeAttachment) Commit(_ context.Context) error {
+	a.service.mu.Lock()
+	defer a.service.mu.Unlock()
+	logical := a.service.sessions[a.id]
+	if a.closed {
+		return mcpbroker.ErrAttachmentClosed
+	}
+	if logical == nil || logical.generation != a.generation {
+		return mcpbroker.ErrStateUnavailable
+	}
+	logical.provisional = false
+	return nil
+}
+
+func (a *fakeAttachment) Abort(_ context.Context) error {
+	a.service.mu.Lock()
+	defer a.service.mu.Unlock()
+	if a.closed {
+		return nil
+	}
+	a.closed = true
+	logical := a.service.sessions[a.id]
+	if a.creator && logical != nil && logical.generation == a.generation && logical.provisional {
+		delete(a.service.sessions, a.id)
+	}
+	return nil
+}
+
+func (a *fakeAttachment) Binding() string  { return fmt.Sprintf("%s/%d", a.id, a.generation) }
+func (*fakeAttachment) Tools() []tool.Tool { return nil }
 
 func (a *fakeAttachment) PresentAuthorization(_ context.Context, authorization session.ExternalAuthorization) (string, error) {
 	status, err := a.AuthorizationStatus(context.Background(), authorization)
@@ -138,6 +176,28 @@ func (a *fakeAttachment) Close(_ context.Context) (mcpbroker.CloseOutcome, error
 	}
 	a.closed = true
 	return mcpbroker.CloseClosed, nil
+}
+
+func TestCreatorAbortDoesNotInvalidateReattachedPeer(t *testing.T) {
+	broker := newFakeService()
+	creator, outcome, err := broker.AttachSession(context.Background(), "shared")
+	if err != nil || outcome != mcpbroker.AttachCreated {
+		t.Fatalf("creator attach = %q, %v", outcome, err)
+	}
+	peer, outcome, err := broker.AttachSession(context.Background(), "shared")
+	if err != nil || outcome != mcpbroker.AttachReattached {
+		t.Fatalf("peer attach = %q, %v", outcome, err)
+	}
+	if err := creator.Abort(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := peer.Commit(context.Background()); err != nil {
+		t.Fatalf("peer state was invalidated: %v", err)
+	}
+	third, outcome, err := broker.AttachSession(context.Background(), "shared")
+	if err != nil || outcome != mcpbroker.AttachReattached || third.Binding() != peer.Binding() {
+		t.Fatalf("third attach = %q, %v, binding %q; want peer binding %q", outcome, err, third.Binding(), peer.Binding())
+	}
 }
 
 func TestAttachmentReattachesToLogicalAuthorizationState(t *testing.T) {

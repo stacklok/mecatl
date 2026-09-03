@@ -17,7 +17,7 @@ var (
 
 func authorizingSnapshotSession(t *testing.T) *session.Session {
 	t.Helper()
-	s := session.New("authorizing", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "rev"}, session.Limits{}, time.Unix(1_700_000_000, 0))
+	s := session.New("authorizing", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1_700_000_000, 0))
 	if err := s.BeginTurn(); err != nil {
 		t.Fatal(err)
 	}
@@ -88,7 +88,7 @@ func TestAuthorizingSnapshotFailsClosed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Of: %v", err)
 	}
-	if err := sessnap.RestoreState(session.New("old", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "rev"}, session.Limits{}, time.Time{}), snap.State, snap.StopReason, snap.Pending, snap.Counters, session.Usage{}, false, ""); err == nil {
+	if err := sessnap.RestoreState(session.New("old", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Time{}), snap.State, snap.StopReason, snap.Pending, snap.Counters, session.Usage{}, false, ""); err == nil {
 		t.Fatal("public RestoreState accepted authorizing state")
 	}
 	snap.PendingAuthorization = nil
@@ -96,7 +96,7 @@ func TestAuthorizingSnapshotFailsClosed(t *testing.T) {
 		t.Fatal("Restore accepted authorizing snapshot without pending state")
 	}
 
-	malformed := session.New("malformed", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "rev"}, session.Limits{}, time.Time{})
+	malformed := session.New("malformed", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Time{})
 	malformed.State = session.StateAuthorizing
 	if _, err := sessnap.Of(malformed); err == nil {
 		t.Fatal("Of accepted authorizing session without pending state")

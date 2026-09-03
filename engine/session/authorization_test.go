@@ -167,7 +167,7 @@ func TestAuthorizingRejectsConflictingMutations(t *testing.T) {
 		"replace":     func() error { return s.ReplaceHistory(nil) },
 		"boundary":    func() error { return s.ReplaceHistoryAtBoundary(nil) },
 		"seed":        func() error { return s.SeedHistory(nil) },
-		"rehome":      func() error { return s.Rehome(EnvironmentRef{Kind: EnvKindLocal, ID: "other", Revision: "rev"}) },
+		"rehome":      func() error { return s.Rehome(EnvironmentRef{Kind: EnvKindLocal, ID: "/other", Revision: "in-tree-v1"}) },
 		"mode":        func() error { return s.SetMode(ModePlan) },
 		"complete":    s.Complete,
 		"stop":        func() error { return s.Stop(StopEndTurn) },

@@ -5786,6 +5786,25 @@ bare `port.LLMProvider`. **DEFERRED:** the standalone gRPC `CreateTeam` RPC stay
 provider (no per-CreateTeam selector); `ListAgents`/`AgentInfo` provider surfacing (no proto
 change).
 
+**Session-scoped MCP broker composition (P10):** `internal/app/build.go` owns one
+process-wide `internal/adapter/mcpbroker.Runtime`, returns its fixed callback
+`HandlerBundle` for mounting by `mecated` and `mecak8s` on their primary HTTP muxes,
+and closes it only after `server.Service` has bounded local attachment shutdown. The root-internal `internal/mcpbroker` contract carries only neutral tool wrappers,
+an opaque binding, and attachment lifecycle operations; the generic engine knows nothing
+about broker state. `server.Service` attaches only after `SessionStore.Create` returns the
+canonical ID, persists `session.Session.ExternalBinding`, and passes `Attachment.Tools()`
+explicitly through `SessionEngineRequest.BrokerTools` into `assembleCatalog`. There is no
+context-value channel and no fallback to server-global MCP when broker wrappers are absent.
+Reload reattaches through the same contract and accepts only an exact persisted binding.
+`CloseSession` drops a local attachment without deleting logical authorization state;
+owner deletion calls `DeleteSession`. A creator rollback calls attachment-scoped `Abort`,
+which deletes only a still-private provisional logical session and preserves it once another
+attachment has reattached. The runtime close path fences new work and returns without
+waiting for stuck operations; the final operation release owns deferred secret/callback
+cleanup. Guards include `internal/app/mcp_broker_p10_test.go`,
+`internal/adapter/server/mcp_broker_test.go`, and
+`internal/adapter/mcpbroker/runtime_test.go`.
+
 **Server-global MCP on every session (bug #3 fix, `sessionEngineFactory`):** the
 per-session catalog mounts the SERVER-GLOBAL MCP tools (`cfg.MCPServers` + ToolHive — the
 same tools the build-time `buildCatalog`→`connectMCP`+`assembleCatalog` path mounts on the main engine), NOT just core + client

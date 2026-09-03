@@ -8,6 +8,7 @@ import (
 	"errors"
 
 	"github.com/stacklok/mecatl/engine/session"
+	"github.com/stacklok/mecatl/engine/tool"
 )
 
 var (
@@ -87,6 +88,21 @@ type Service interface {
 // metadata and must not participate in lookup equality. Implementations must not
 // infer a transaction from only the session or authorization ID.
 type Attachment interface {
+	// Commit publishes a newly created logical session after its host session is
+	// durable. It is idempotent. On a reattached handle it is a no-op. The
+	// implementation keeps any creation token private so remote brokers can provide
+	// the same transaction without exposing storage generations or CAS values.
+	Commit(context.Context) error
+	// Abort abandons this attachment's uncommitted creation and closes the local
+	// handle. It may delete logical state only while that creation is still private;
+	// once another attachment has observed the session, Abort must preserve that
+	// peer and degrade to local close. It is idempotent.
+	Abort(context.Context) error
+	// Binding is the opaque identity of this exact logical-session incarnation.
+	// It is persisted by the host and must match exactly on reattachment.
+	Binding() string
+	// Tools returns independently owned wrappers bound to this attachment.
+	Tools() []tool.Tool
 	// PresentAuthorization returns the live presentation URL for the exact
 	// authorization. The URL is deliberately an ephemeral return value: it is not
 	// part of ExternalAuthorization or any broker reference intended for storage.
