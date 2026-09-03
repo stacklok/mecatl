@@ -2,9 +2,9 @@
 id: 13-modeled-crash-ownership
 title: Modeled crash stream drop and TTL takeover
 blocked_by: [09-lease-loss-capability, 12-graceful-drain-ownership]
-status: pending
+status: in-progress
 branch: ""
-worktree: ""
+worktree: ".scratch/task-session-affinity-13"
 issue: ""
 retries: 0
 last_error: ""
