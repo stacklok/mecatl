@@ -110,9 +110,8 @@ export MECAK8S_OIDC_CLIENT_SECRET=...
 # M2M app on the target's auth server); override only if that differs.
 ```
 
-Leave `MECATL_WORKSPACE` unset in this mode — the target's gRPC listener is
-non-loopback, so it assigns the workspace itself (see the note on
-`mecatlWorkspace` in `src/env.ts`).
+Session placement is server-owned regardless of target (see above) — nothing
+extra to set here for that.
 
 Wait for `mecatl Slack bot is running (Socket Mode)` in the log before
 testing — that's the bot's own readiness signal. If `SLACK_ALLOWED_USER_IDS`
