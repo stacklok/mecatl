@@ -57,6 +57,10 @@ type Process struct {
 	construction       toolHiveConstruction
 	discovery          *authenticatedDiscovery
 	protectedTarget    *oauthRoute
+	// occupied is the immutable model-visible name set outside this Process's
+	// broker catalogue (core/global tools), captured once at construction so a
+	// later workspace-enrollment freeze can reuse it without re-deriving it.
+	occupied []string
 	queryAuthenticated func(context.Context, ToolHiveAuthSessionID, string) (AuthenticatedCapabilities, error)
 	resources          []ownedResource
 	closeOnce          sync.Once
@@ -106,13 +110,21 @@ func newToolHiveProcess(ctx context.Context, config ToolHiveConfig, options tool
 	caller := anonymousCaller(construction.anonymous)
 	runtimeOptions := append([]Option(nil), options.runtimeOptions...)
 	runtimeOptions = append(runtimeOptions, WithAuthorizedCaller(toolHiveProtectedCaller(issuer+"/mcp", options.brokerHTTPClient)))
+	if protectedTarget != nil {
+		// Every configured protected upstream may lack a static tool
+		// declaration (workspace enrollment only), in which case the compiled
+		// catalogue has no oauth route at all: force the hardened token client
+		// into existence for the Process-owned target regardless.
+		runtimeOptions = append(runtimeOptions, withHardenedTokenEndpoint(protectedTarget.tokenEndpoint))
+	}
 	runtime, err := New(catalogue, caller, runtimeOptions...)
 	if err != nil {
 		return nil, err
 	}
 
 	processCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
-	process := &Process{Runtime: runtime, ctx: processCtx, cancel: cancel, construction: construction, protectedTarget: protectedTarget}
+	process := &Process{Runtime: runtime, ctx: processCtx, cancel: cancel, construction: construction, protectedTarget: protectedTarget, occupied: append([]string(nil), config.Occupied...)}
+	runtime.process = process
 	process.resources = append(process.resources, ownedResource{name: "process-context", close: func() error { cancel(); return nil }})
 	rollback := func(cause error) (*Process, error) {
 		process.rollback()
@@ -430,6 +442,15 @@ func (p *Process) closeResources() error {
 		result = errors.Join(result, p.resources[i].close())
 	}
 	return result
+}
+
+// WorkspaceEnrollmentRequired reports whether at least one configured
+// protected upstream has no trusted static tool declaration, so its complete
+// tool catalogue can only be learned by authenticating first and then running
+// live authenticated discovery (workspace enrollment). Composition uses this
+// to decide whether to advertise the enrollment capability.
+func (p *Process) WorkspaceEnrollmentRequired() bool {
+	return p != nil && len(p.construction.protectedBackends) > 0
 }
 
 // Close first cancels process-owned work, then drains the neutral Runtime,

@@ -195,6 +195,12 @@ type Runtime struct {
 	nextGeneration   uint64
 	bindingPrefix    string
 	closed           bool
+	// process is set only when this Runtime is owned by a bundled ToolHive
+	// Process (NewToolHiveProcess). It lets an Attachment reach the pre-prompt
+	// authenticated-discovery primitives without widening the neutral contract.
+	// nil for a plain Compile-based Runtime, which never supports workspace
+	// enrollment.
+	process *Process
 }
 
 var _ contract.Service = (*Runtime)(nil)
@@ -226,15 +232,21 @@ func New(catalogue *Catalogue, caller Caller, options ...Option) (*Runtime, erro
 		}
 		option(runtime)
 	}
-	if catalogue.protected() && runtime.authorizedCaller == nil {
+	if (catalogue.protected() || runtime.oauth.forcedTokenEndpoint != "") && runtime.authorizedCaller == nil {
 		return nil, fmt.Errorf("%w: protected routes require an authorized caller", ErrInvalidCatalogue)
 	}
-	if catalogue.protected() {
-		var tokenEndpoint string
-		for _, route := range catalogue.routes {
-			if route.oauth != nil {
-				tokenEndpoint = route.oauth.tokenEndpoint
-				break
+	// A bundled ToolHive Process may have a protected authorization target used
+	// only by pre-prompt workspace enrollment: every protected backend requires
+	// live discovery, so the compiled catalogue has no static oauth route and
+	// catalogue.protected() alone would miss it.
+	if protected := catalogue.protected() || runtime.oauth.forcedTokenEndpoint != ""; protected {
+		tokenEndpoint := runtime.oauth.forcedTokenEndpoint
+		if tokenEndpoint == "" {
+			for _, route := range catalogue.routes {
+				if route.oauth != nil {
+					tokenEndpoint = route.oauth.tokenEndpoint
+					break
+				}
 			}
 		}
 		clientOptions := mcpadapter.HardenedOAuthTokenClientOptions{TokenEndpoint: tokenEndpoint, Timeout: runtime.oauth.timeout}

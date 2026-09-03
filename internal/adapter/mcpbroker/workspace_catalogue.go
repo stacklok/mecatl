@@ -147,6 +147,15 @@ func stageAuthenticatedRoutes(ctx context.Context, process *Process, authSession
 			if err != nil {
 				return nil, err
 			}
+			if process.protectedTarget == nil {
+				return nil, ErrAuthenticatedDiscovery
+			}
+			// A live-discovered tool executes through the SAME protected
+			// authorization target as a static protected declaration
+			// (compileStaticProtectedRoutes): without this, sessionTool.Execute
+			// would route it through the anonymous caller instead of
+			// executeProtected, since validateAuthenticatedRoute never sets oauth.
+			route.oauth = process.protectedTarget
 			seen[route.spec.Name] = struct{}{}
 			staged = append(staged, route)
 		}

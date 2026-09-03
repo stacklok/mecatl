@@ -2509,6 +2509,10 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	if brokerRuntime != nil {
 		svcCfg.MCPBroker = brokerRuntime
 	}
+	// Workspace enrollment (pre-prompt authenticate-then-discover) applies only
+	// to the bundled ToolHive Process path: a plain Compile-based Runtime has no
+	// live discovery primitive and never satisfies the enrollment boundary.
+	svcCfg.WorkspaceEnrollment = brokerProcess.WorkspaceEnrollmentRequired()
 	if assets.reflectionRepository == nil || provider == nil {
 		svcCfg.ReflectSession = nil
 	}

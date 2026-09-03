@@ -92,6 +92,12 @@ type oauthRuntimeOptions struct {
 	allowLoopback bool
 	testRootCAs   *x509.CertPool
 	testHelper    interface{ Helper() }
+	// forcedTokenEndpoint forces the hardened OAuth token client to be built
+	// for this endpoint even when the compiled catalogue has no static oauth
+	// route: a bundled ToolHive Process may have a protected authorization
+	// target used only by pre-prompt workspace enrollment (every protected
+	// backend requires live discovery, none has a static tool declaration).
+	forcedTokenEndpoint string
 }
 
 func defaultOAuthRuntimeOptions() oauthRuntimeOptions {
@@ -147,6 +153,13 @@ func WithOAuthLimits(transactionTTL, exchangeTimeout time.Duration) Option {
 	}
 }
 
+// withHardenedTokenEndpoint is unexported: only newToolHiveProcess may force
+// the hardened OAuth token client to exist for a Process-owned protected
+// target that has no static oauth route in the compiled catalogue.
+func withHardenedTokenEndpoint(endpoint string) Option {
+	return func(runtime *Runtime) { runtime.oauth.forcedTokenEndpoint = endpoint }
+}
+
 const (
 	// Resolved authorization records are retained for idempotent status/cancel.
 	// At the cap, new authorizations fail closed rather than evicting replay state.
@@ -179,6 +192,11 @@ type authorizationTransaction struct {
 	status       session.AuthorizationStatus
 	claimed      bool
 	cancel       context.CancelFunc
+	// bundleBackends is nil for an ordinary tool-call-bound authorization. A
+	// non-nil value marks this transaction as a pre-prompt workspace-enrollment
+	// bundle: backend is bundleBackends[0], and the resulting grant is not bound
+	// to any specific effective tool call (see workspace_enrollment.go).
+	bundleBackends []string
 }
 
 type oauthGrant struct {
@@ -321,13 +339,14 @@ func (t *authorizationTransaction) external() session.ExternalAuthorization {
 }
 
 func (t *authorizationTransaction) oauthConfig(secret string) *oauth2.Config {
-	authStyle := oauth2.AuthStyleInHeader
-	if t.route.secretEnv == "" {
-		authStyle = oauth2.AuthStyleAutoDetect
-	}
+	// The hardened OAuth token client (internal/adapter/mcp.NewHardenedOAuthTokenClient)
+	// unconditionally requires an HTTP Basic Authorization header on every token
+	// request, including the protectedTarget public client (no secretEnv): Basic
+	// with an empty password is a valid encoding of that public client's identity.
+	// AuthStyleAutoDetect never satisfies that requirement, so it is never used.
 	return &oauth2.Config{ClientID: t.route.clientID, ClientSecret: secret, RedirectURL: t.route.callbackURL,
 		Scopes: append([]string(nil), t.route.scopes...), Endpoint: oauth2.Endpoint{
-			AuthURL: t.route.authorizationEndpoint, TokenURL: t.route.tokenEndpoint, AuthStyle: authStyle,
+			AuthURL: t.route.authorizationEndpoint, TokenURL: t.route.tokenEndpoint, AuthStyle: oauth2.AuthStyleInHeader,
 		}}
 }
 

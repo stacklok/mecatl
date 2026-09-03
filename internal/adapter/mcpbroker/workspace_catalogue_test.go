@@ -159,7 +159,11 @@ func (q *orderedCapabilityQueries) query(_ context.Context, _ ToolHiveAuthSessio
 }
 
 func testCatalogueProcess(runtime *Runtime, queries *orderedCapabilityQueries, backends ...string) *Process {
-	return &Process{Runtime: runtime, construction: toolHiveConstruction{protectedBackends: backends}, queryAuthenticated: queries.query, ctx: context.Background(), cancel: func() {}}
+	return &Process{
+		Runtime: runtime, construction: toolHiveConstruction{protectedBackends: backends},
+		protectedTarget:    &oauthRoute{authorizationEndpoint: "https://issuer.example/authorize", tokenEndpoint: "https://issuer.example/token", callbackURL: "https://issuer.example/callback", clientID: "broker"},
+		queryAuthenticated: queries.query, ctx: context.Background(), cancel: func() {},
+	}
 }
 
 func testAnonymousRuntime(t *testing.T) *Runtime {
