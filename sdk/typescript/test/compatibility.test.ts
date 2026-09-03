@@ -93,6 +93,13 @@ describe("compatibility floor", () => {
       expect(request.headers.get("authorization")).toBe("Bearer http-credential");
     }
     expect(httpRequests[3]?.headers.has(SESSION_ID_HEADER_NAME)).toBe(false);
+
+    for (const illegal of ["session\tid", "session-α", " session", "session "]) {
+      const options = withSessionAffinity(illegal, { headers: { authorization: "Bearer kept" } });
+      const headers = new Headers(options.headers);
+      expect(headers.has(SESSION_ID_HEADER_NAME)).toBe(false);
+      expect(headers.get("authorization")).toBe("Bearer kept");
+    }
   });
 
   it("missing or incompatible server info fails the floor", async () => {

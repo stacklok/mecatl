@@ -21,6 +21,21 @@ import { HarnessService } from "./gen/mecatl/v1/harness_pb.js";
 /** Canonical routing hint for session-bound mecatl requests. It grants no authority. @public */
 export const SESSION_ID_HEADER_NAME = "X-Mecatl-Session-ID";
 
+function validSessionAffinity(value: string): boolean {
+  if (
+    value.length === 0 ||
+    value.charCodeAt(0) === 0x20 ||
+    value.charCodeAt(value.length - 1) === 0x20
+  ) {
+    return false;
+  }
+  for (let i = 0; i < value.length; i += 1) {
+    const code = value.charCodeAt(i);
+    if (code < 0x20 || code > 0x7e) return false;
+  }
+  return true;
+}
+
 /**
  * Returns call options bound to one explicit session without replacing caller headers.
  *
@@ -29,7 +44,8 @@ export const SESSION_ID_HEADER_NAME = "X-Mecatl-Session-ID";
  */
 export function withSessionAffinity(sessionId: string, options: CallOptions = {}): CallOptions {
   const headers = new Headers(options.headers);
-  headers.set(SESSION_ID_HEADER_NAME, sessionId);
+  if (validSessionAffinity(sessionId)) headers.set(SESSION_ID_HEADER_NAME, sessionId);
+  else headers.delete(SESSION_ID_HEADER_NAME);
   return { ...options, headers };
 }
 

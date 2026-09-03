@@ -230,6 +230,7 @@
         "additionalProperties": true
       }
     },
+    "affinity": {"type": "object"},
     "nodeSelector": {"type": "object", "additionalProperties": {"type": "string"}},
     "tolerations": {
       "type": "array",

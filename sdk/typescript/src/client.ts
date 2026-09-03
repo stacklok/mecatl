@@ -180,6 +180,15 @@ interface SessionOperations {
   ): AsyncIterable<WatchSessionEventsResponse>;
 }
 
+function createSessionAffinity(options: CreateSessionOptions): CallOptions | undefined {
+  const references = [options.sourceSessionId, options.debugTargetSessionId].filter(
+    (value): value is string => value !== undefined && value !== "",
+  );
+  if (references.length !== 1) return undefined;
+  const reference = references[0];
+  return reference === undefined ? undefined : withSessionAffinity(reference);
+}
+
 function sessionAffinityOperations(
   sessionId: string,
   operations: SessionOperations,
@@ -372,7 +381,11 @@ class ClientImpl implements Client {
     };
     this.sessions = {
       create: async (input) => {
-        const response = await this.#unary(HarnessService.method.createSession, input);
+        const response = await this.#unary(
+          HarnessService.method.createSession,
+          input,
+          createSessionAffinity(input),
+        );
         return this.#session(response.sessionId, "CreateSession", response.sessionCapabilities);
       },
       fork: async (sourceSessionId, input = {}) => {

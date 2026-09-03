@@ -28,6 +28,36 @@ func duplicateAffinityContext(first, second string) context.Context {
 	))
 }
 
+func TestADR_0290_CreateSessionDerivedAffinity(t *testing.T) {
+	svc := newService(t, mockllm.New(), allowRules())
+	client, cleanup := dialGRPC(t, svc)
+	defer cleanup()
+
+	tests := []struct {
+		name string
+		ctx  context.Context
+		req  *mecatlv1.CreateSessionRequest
+		want codes.Code
+	}{
+		{name: "source exact", ctx: affinityContext("source"), req: &mecatlv1.CreateSessionRequest{Workspace: "/ws", SourceSessionId: "source"}, want: codes.NotFound},
+		{name: "debug exact", ctx: affinityContext("target"), req: &mecatlv1.CreateSessionRequest{Profile: "no-fs", DebugTargetSessionId: "target"}, want: codes.NotFound},
+		{name: "source missing header compatibility", ctx: context.Background(), req: &mecatlv1.CreateSessionRequest{Workspace: "/ws", SourceSessionId: "source"}, want: codes.NotFound},
+		{name: "no derived reference rejects header", ctx: affinityContext("source"), req: &mecatlv1.CreateSessionRequest{Workspace: "/ws"}, want: codes.InvalidArgument},
+		{name: "source mismatch", ctx: affinityContext("other"), req: &mecatlv1.CreateSessionRequest{Workspace: "/ws", SourceSessionId: "source"}, want: codes.InvalidArgument},
+		{name: "source duplicate", ctx: duplicateAffinityContext("source", "source"), req: &mecatlv1.CreateSessionRequest{Workspace: "/ws", SourceSessionId: "source"}, want: codes.InvalidArgument},
+		{name: "ambiguous dual reference without header", ctx: context.Background(), req: &mecatlv1.CreateSessionRequest{Workspace: "/ws", SourceSessionId: "source", DebugTargetSessionId: "target"}, want: codes.InvalidArgument},
+		{name: "ambiguous dual reference with header", ctx: affinityContext("source"), req: &mecatlv1.CreateSessionRequest{Workspace: "/ws", SourceSessionId: "source", DebugTargetSessionId: "target"}, want: codes.InvalidArgument},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := client.CreateSession(tc.ctx, tc.req)
+			if got := status.Code(err); got != tc.want {
+				t.Fatalf("code = %v, want %v: %v", got, tc.want, err)
+			}
+		})
+	}
+}
+
 func TestSessionAffinityAndHandoff_Scenario2_GRPCUnaryAndServerStreamMatrix(t *testing.T) {
 	svc := newService(t, mockllm.New(), allowRules())
 	client, cleanup := dialGRPC(t, svc)
@@ -35,7 +65,7 @@ func TestSessionAffinityAndHandoff_Scenario2_GRPCUnaryAndServerStreamMatrix(t *t
 
 	const requestID = "request-session"
 	ctx := affinityContext("other-session")
-	bindings := &mecatlv1.AdoptionBindings{Workspace: "/ws", Profile: "default"}
+	bindings := &mecatlv1.AdoptionBindings{Workspace: "/ws", EnvironmentKind: "local", EnvironmentId: "/ws", ProviderId: "provider", ModelId: "model"}
 	tests := []struct {
 		name string
 		call func() error
@@ -119,8 +149,29 @@ func TestSessionAffinityAndHandoff_Scenario2_GRPCUnaryAndServerStreamMatrix(t *t
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := status.Code(tc.call()); got != codes.InvalidArgument {
-				t.Fatalf("code = %v, want InvalidArgument", got)
+			for _, affinity := range []struct {
+				name string
+				ctx  context.Context
+				want codes.Code
+			}{
+				{name: "missing", ctx: context.Background()},
+				{name: "exact", ctx: affinityContext(requestID)},
+				{name: "mismatch", ctx: affinityContext("other-session"), want: codes.InvalidArgument},
+				{name: "duplicate", ctx: duplicateAffinityContext(requestID, requestID), want: codes.InvalidArgument},
+			} {
+				t.Run(affinity.name, func(t *testing.T) {
+					callCtx, cancel := context.WithTimeout(affinity.ctx, 250*time.Millisecond)
+					defer cancel()
+					ctx = callCtx
+					got := status.Code(tc.call())
+					if affinity.want == codes.InvalidArgument {
+						if got != affinity.want {
+							t.Fatalf("code = %v, want %v", got, affinity.want)
+						}
+					} else if got == codes.InvalidArgument {
+						t.Fatalf("compatible affinity was rejected: %v", got)
+					}
+				})
 			}
 		})
 	}
@@ -250,6 +301,18 @@ func TestADR_0290_ConverseControlsStaySessionBound(t *testing.T) {
 	}
 	if err := stream.Send(&mecatlv1.ConverseRequest{Kind: &mecatlv1.ConverseRequest_Prompt{Prompt: &mecatlv1.Prompt{SessionId: first.GetSessionId(), Text: "go"}}}); err != nil {
 		t.Fatal(err)
+	}
+	controls := []*mecatlv1.ConverseRequest{
+		{Kind: &mecatlv1.ConverseRequest_ResumeApproval{ResumeApproval: &mecatlv1.ResumeApproval{AskId: "unknown"}}},
+		{Kind: &mecatlv1.ConverseRequest_CancelChild{CancelChild: &mecatlv1.CancelChild{ChildId: "unknown"}}},
+		{Kind: &mecatlv1.ConverseRequest_Steer{Steer: &mecatlv1.Steer{Text: "continue"}}},
+		{Kind: &mecatlv1.ConverseRequest_SteerCancel{SteerCancel: &mecatlv1.SteerCancel{MessageId: "unknown"}}},
+		{Kind: &mecatlv1.ConverseRequest_Cancel{Cancel: &mecatlv1.Cancel{}}},
+	}
+	for _, control := range controls {
+		if err := stream.Send(control); err != nil {
+			t.Fatalf("send bound control %T: %v", control.GetKind(), err)
+		}
 	}
 	// A later prompt cannot replace the identity established by the first frame.
 	_ = stream.Send(&mecatlv1.ConverseRequest{Kind: &mecatlv1.ConverseRequest_Prompt{Prompt: &mecatlv1.Prompt{SessionId: second.GetSessionId(), Text: "wrong session"}}})

@@ -730,8 +730,11 @@ config resolves per-session against that root without a mutate-capable handle; `
 
 **Provider request session correlation and ingress affinity (ADR 0290).**
 `engine/port/sessioncontext.go` owns `SessionIDHeaderName` and
-`ValidSessionIDHeaderValue`: `X-Mecatl-Session-ID` must be non-empty and legal as one
-HTTP field value, and consumers preserve its bytes exactly. gRPC and HTTP accept a
+`ValidSessionIDHeaderValue`: `X-Mecatl-Session-ID` must be non-empty printable ASCII
+(`0x20`–`0x7e`) without leading or trailing space, and consumers preserve its bytes
+exactly. External session IDs outside that cross-transport set remain usable while
+clients omit affinity. Derived creates bind exactly one source or debug target and reject
+the ambiguous dual-reference shape. gRPC and HTTP accept a
 missing value for compatibility but reject duplicates, illegal values, and byte
 mismatches before work with one non-disclosing error. The HTTP side compares against
 the decoded path ID. Routing grants no authority; caller authentication/ownership and
@@ -743,8 +746,8 @@ awaiting-resume, child/member, compaction, retry, and fallback requests agree: t
 provider ID comes from the run context, never from ingress metadata or provider-instance
 state. `provider/openai/openai.go`, `provider/openaichat/openaichat.go`, and
 `provider/anthropic/anthropic.go` attach it through per-request SDK options. Absent or
-illegal run values are omitted without changing inference. Their private constants
-remain temporarily pinned to the canonical engine vectors because independently
+illegal run values are omitted without changing inference. Their private validators deliberately retain ADR 0216's broader outbound-provider rules (including
+values outside the official browser/gRPC affinity set) because independently
 versioned provider modules cannot consume the unreleased engine symbol under
 `GOWORK=off`; see ADR 0290's module boundary.
 

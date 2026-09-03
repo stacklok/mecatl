@@ -308,8 +308,13 @@ func TestADR_0290_HelmHasNoAffinityPolicySurface(t *testing.T) {
 	if err := json.Unmarshal(schemaJSON, &schema); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := schema.Properties["affinity"]; ok {
-		t.Fatal("values schema exposes an affinity subtree")
+	if _, ok := schema.Properties["affinity"]; !ok {
+		t.Fatal("values schema removed the unrelated Kubernetes pod scheduling affinity")
+	}
+	for _, forbidden := range []string{"gateway", "sessionAffinity", "session_affinity"} {
+		if _, ok := schema.Properties[forbidden]; ok {
+			t.Fatalf("values schema exposes forbidden Gateway affinity property %q", forbidden)
+		}
 	}
 
 	valuesYAML, err := os.ReadFile("values.yaml")
@@ -324,16 +329,21 @@ func TestADR_0290_HelmHasNoAffinityPolicySurface(t *testing.T) {
 	if err := json.Unmarshal(valuesJSON, &values); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := values["affinity"]; ok {
-		t.Fatal("default values expose an affinity subtree")
+	if got, ok := values["affinity"]; !ok || string(got) != "{}" {
+		t.Fatalf("default pod scheduling affinity = %s, present = %v; want empty object", got, ok)
 	}
 
-	deployment, err := os.ReadFile("templates/deployment.yaml")
+	rendered, err := helm(t, append(productionArgs(), "--set", "affinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms[0].matchExpressions[0].key=topology.kubernetes.io/zone", "--set", "affinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms[0].matchExpressions[0].operator=Exists")...)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(deployment), ".Values.affinity") {
-		t.Fatal("deployment template consumes an affinity values subtree")
+	if !strings.Contains(rendered, "affinity:\n        nodeAffinity:") || !strings.Contains(rendered, "key: topology.kubernetes.io/zone") {
+		t.Fatal("deployment did not render the configured Kubernetes pod scheduling affinity")
+	}
+	for _, forbiddenKind := range []string{"Gateway", "HTTPRoute", "GRPCRoute", "BackendTrafficPolicy"} {
+		if strings.Contains(rendered, "kind: "+forbiddenKind) {
+			t.Fatalf("pod scheduling affinity rendered forbidden platform-owned %s", forbiddenKind)
+		}
 	}
 }
 

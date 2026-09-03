@@ -19,6 +19,35 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/server"
 )
 
+func TestADR_0290_HTTPCreateSessionDerivedAffinity(t *testing.T) {
+	h := server.NewHTTPHandler(newService(t, mockllm.New(), allowRules()))
+	for _, tc := range []struct {
+		name, body string
+		headers    []string
+		want       int
+	}{
+		{name: "source exact", body: `{"workspace":"/ws","source_session_id":"source"}`, headers: []string{"source"}, want: http.StatusNotFound},
+		{name: "debug exact", body: `{"profile":"no-fs","debug_target_session_id":"target"}`, headers: []string{"target"}, want: http.StatusNotFound},
+		{name: "source headerless compatibility", body: `{"workspace":"/ws","source_session_id":"source"}`, want: http.StatusNotFound},
+		{name: "no derived reference rejects header", body: `{"workspace":"/ws"}`, headers: []string{"source"}, want: http.StatusBadRequest},
+		{name: "mismatch", body: `{"workspace":"/ws","source_session_id":"source"}`, headers: []string{"other"}, want: http.StatusBadRequest},
+		{name: "duplicate", body: `{"workspace":"/ws","source_session_id":"source"}`, headers: []string{"source", "source"}, want: http.StatusBadRequest},
+		{name: "ambiguous dual reference", body: `{"workspace":"/ws","source_session_id":"source","debug_target_session_id":"target"}`, want: http.StatusBadRequest},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/v1/sessions", strings.NewReader(tc.body))
+			for _, affinity := range tc.headers {
+				req.Header.Add(port.SessionIDHeaderName, affinity)
+			}
+			resp := httptest.NewRecorder()
+			h.ServeHTTP(resp, req)
+			if resp.Code != tc.want {
+				t.Fatalf("status = %d, want %d: %s", resp.Code, tc.want, resp.Body.String())
+			}
+		})
+	}
+}
+
 func TestSessionAffinityAndHandoff_Scenario3_HTTPRouteInventory(t *testing.T) {
 	svc := newService(t, mockllm.New(), allowRules())
 	h := server.NewHTTPHandler(svc)
@@ -47,16 +76,30 @@ func TestSessionAffinityAndHandoff_Scenario3_HTTPRouteInventory(t *testing.T) {
 		{"watch", http.MethodGet, "/v1/sessions/route-id/watch", ""},
 	} {
 		t.Run(route.name, func(t *testing.T) {
-			for _, header := range []string{"", "route-id"} {
-				req := httptest.NewRequest(route.method, route.path, strings.NewReader(route.body))
-				if header != "" {
-					req.Header.Set(port.SessionIDHeaderName, header)
-				}
-				resp := httptest.NewRecorder()
-				h.ServeHTTP(resp, req)
-				if resp.Code == http.StatusBadRequest {
-					t.Fatalf("%s with affinity header %q status = 400, want handler dispatch: %s", route.name, header, resp.Body.String())
-				}
+			for _, affinity := range []struct {
+				name    string
+				headers []string
+				wantBad bool
+			}{
+				{name: "missing"},
+				{name: "exact", headers: []string{"route-id"}},
+				{name: "mismatch", headers: []string{"other-id"}, wantBad: true},
+				{name: "duplicate", headers: []string{"route-id", "route-id"}, wantBad: true},
+			} {
+				t.Run(affinity.name, func(t *testing.T) {
+					req := httptest.NewRequest(route.method, route.path, strings.NewReader(route.body))
+					for _, header := range affinity.headers {
+						req.Header.Add(port.SessionIDHeaderName, header)
+					}
+					resp := httptest.NewRecorder()
+					h.ServeHTTP(resp, req)
+					if affinity.wantBad && resp.Code != http.StatusBadRequest {
+						t.Fatalf("status = %d, want affinity rejection 400", resp.Code)
+					}
+					if !affinity.wantBad && resp.Code == http.StatusBadRequest {
+						t.Fatalf("compatible affinity status = 400: %s", resp.Body.String())
+					}
+				})
 			}
 		})
 	}

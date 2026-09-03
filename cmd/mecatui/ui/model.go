@@ -81,10 +81,14 @@ type SelectionStore interface {
 	SaveGlobalDefault(sel client.ModelSelection) error
 }
 
-// Converser opens one session-bound Converse run as a *client.Stream. The
-// concrete client binds affinity metadata before the first frame; tests supply a
-// proto-free fake over a scripted Recver.
+// Converser preserves the original extension seam for raw and test clients.
 type Converser interface {
+	OpenConverse(ctx context.Context) (*client.Stream, error)
+}
+
+// SessionBoundConverser is an optional additive capability implemented by the
+// official client to bind affinity metadata before the first frame.
+type SessionBoundConverser interface {
 	OpenConverseForSession(ctx context.Context, sessionID string) (*client.Stream, error)
 }
 

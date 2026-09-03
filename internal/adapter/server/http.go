@@ -143,6 +143,18 @@ func (h *HTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.mux.ServeHTTP(w, r)
 }
 
+func requireCreateSessionAffinity(w http.ResponseWriter, r *http.Request, debugTargetID string) bool {
+	values := r.Header.Values(port.SessionIDHeaderName)
+	if len(values) == 0 {
+		return true
+	}
+	if debugTargetID == "" || len(values) != 1 || !port.ValidSessionIDHeaderValue(values[0]) || values[0] != debugTargetID {
+		writeProblem(w, entryForHTTPStatus(http.StatusBadRequest), "invalid session affinity header")
+		return false
+	}
+	return true
+}
+
 // requireSessionAffinity admits an optional, exact session-affinity header only
 // after the mux has decoded the authoritative path value. It is transport
 // routing metadata, not an authority grant; the wrapped handler still performs
@@ -493,6 +505,9 @@ func (h *HTTPHandler) createSession(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
 		writeError(w, http.StatusBadRequest, "invalid JSON body: multiple JSON values")
+		return
+	}
+	if !requireCreateSessionAffinity(w, r, body.DebugTargetSessionID) {
 		return
 	}
 	// Parse only the public profile attenuation. The service binds either the

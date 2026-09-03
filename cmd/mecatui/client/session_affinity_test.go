@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 
@@ -64,6 +65,14 @@ func (s *affinityClientStream) SendMsg(m any) error {
 	return nil
 }
 func (*affinityClientStream) RecvMsg(any) error { return io.EOF }
+
+func TestMecatuiIllegalExternalSessionIDOmitAffinity(t *testing.T) {
+	ctx := withSessionAffinity(context.Background(), "session-α")
+	md, _ := metadata.FromOutgoingContext(ctx)
+	if got := md.Get(port.SessionIDHeaderName); len(got) != 0 {
+		t.Fatalf("illegal external session affinity = %#v, want omitted", got)
+	}
+}
 
 func TestSessionAffinityAndHandoff_Scenario4_MecatuiUnaryAndStreamPropagation(t *testing.T) {
 	const sessionID = "session-%2Fexact"
@@ -142,6 +151,12 @@ func TestADR_0290_MecatuiOpenConverseCompatibility(t *testing.T) {
 	bound, err := client.OpenConverseForSession(ctx, sessionID)
 	if err != nil {
 		t.Fatalf("OpenConverseForSession: %v", err)
+	}
+	if _, err := client.OpenConverseForSession(ctx, "session-α"); err == nil || !strings.Contains(err.Error(), "session affinity") {
+		t.Fatalf("illegal bound affinity error = %v, want useful session affinity error", err)
+	}
+	if got := len(conn.calls); got != 2 {
+		t.Fatalf("illegal bound affinity opened a stream: calls = %d, want 2", got)
 	}
 	if err := bound.SendRetryStart(sessionID); err != nil {
 		t.Fatalf("bound SendRetryStart: %v", err)

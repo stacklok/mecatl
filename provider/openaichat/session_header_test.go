@@ -9,6 +9,7 @@ import (
 	"os"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
@@ -32,9 +33,10 @@ func drainSessionHeaderStream(ctx context.Context, t *testing.T, p *Provider, mo
 }
 
 type sessionHeaderVector struct {
-	Name  string `json:"name"`
-	Value string `json:"value"`
-	Legal bool   `json:"legal"`
+	Name          string `json:"name"`
+	Value         string `json:"value"`
+	Legal         bool   `json:"legal"`
+	ProviderLegal *bool  `json:"provider_legal"`
 }
 
 func sessionHeaderVectors(t *testing.T) []sessionHeaderVector {
@@ -56,8 +58,12 @@ func TestADR_0290_SessionHeaderLegalValueParity(t *testing.T) {
 	}
 	for _, vector := range sessionHeaderVectors(t) {
 		t.Run(vector.Name, func(t *testing.T) {
-			if got := validHTTPHeaderValue(vector.Value); got != vector.Legal {
-				t.Errorf("validHTTPHeaderValue(%q) = %v, want %v", vector.Value, got, vector.Legal)
+			expected := vector.Legal
+			if vector.ProviderLegal != nil {
+				expected = *vector.ProviderLegal
+			}
+			if got := validHTTPHeaderValue(vector.Value); got != expected {
+				t.Errorf("validHTTPHeaderValue(%q) = %v, want retained provider decision %v", vector.Value, got, expected)
 			}
 		})
 	}
@@ -111,33 +117,31 @@ func TestADR_0290_ProviderSessionHeaderOptional(t *testing.T) {
 }
 
 type sessionHeaderPairBarrier struct {
-	mu         sync.Mutex
-	cond       *sync.Cond
-	waiting    int
-	generation int
+	mu      sync.Mutex
+	waiting int
+	gate    chan struct{}
 }
 
 func newSessionHeaderPairBarrier() *sessionHeaderPairBarrier {
-	barrier := &sessionHeaderPairBarrier{}
-	barrier.cond = sync.NewCond(&barrier.mu)
-	return barrier
+	return &sessionHeaderPairBarrier{gate: make(chan struct{})}
 }
 
-func (b *sessionHeaderPairBarrier) wait() {
+func (b *sessionHeaderPairBarrier) wait(ctx context.Context) error {
 	b.mu.Lock()
-	generation := b.generation
+	gate := b.gate
 	b.waiting++
 	if b.waiting == 2 {
 		b.waiting = 0
-		b.generation++
-		b.cond.Broadcast()
-		b.mu.Unlock()
-		return
-	}
-	for generation == b.generation {
-		b.cond.Wait()
+		b.gate = make(chan struct{})
+		close(gate)
 	}
 	b.mu.Unlock()
+	select {
+	case <-gate:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 func TestADR_0290_ProviderSessionHeaderConcurrentIsolationRace(t *testing.T) {
@@ -147,7 +151,9 @@ func TestADR_0290_ProviderSessionHeaderConcurrentIsolationRace(t *testing.T) {
 		barrier  = newSessionHeaderPairBarrier()
 	)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		barrier.wait()
+		if err := barrier.wait(r.Context()); err != nil {
+			return
+		}
 		mu.Lock()
 		captured[r.Header.Get(sessionIDHeaderName)]++
 		mu.Unlock()
@@ -156,13 +162,15 @@ func TestADR_0290_ProviderSessionHeaderConcurrentIsolationRace(t *testing.T) {
 	}))
 	defer srv.Close()
 	p := New(WithAPIKey("k"), WithBaseURL(srv.URL+"/v1"))
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
 	var wg sync.WaitGroup
 	for _, id := range []session.SessionID{"session-one", "session-two"} {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			for range 2 {
-				drainSessionHeaderStream(port.WithSessionID(context.Background(), id), t, p, string(id))
+				drainSessionHeaderStream(port.WithSessionID(ctx, id), t, p, string(id))
 			}
 		}()
 	}

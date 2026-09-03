@@ -62,11 +62,11 @@ therefore retains its private ADR-0216 header constants and validators.
   and migrate production code after the engine release is available.
 
 **Acceptance:**
-- AC1.1: The canonical port contract accepts a non-empty legal HTTP field value
-  byte-for-byte and rejects empty, control-bearing, newline-bearing, or otherwise
-  illegal values; it never trims, encodes, truncates, or normalizes a session ID. The
-  shared vector fixture proves each provider's retained private validator has the same
-  decision.
+- AC1.1: The canonical port contract accepts a non-empty printable-ASCII HTTP field
+  value (`0x20`–`0x7e`, without boundary spaces) byte-for-byte and rejects empty,
+  control-bearing, newline-bearing, non-ASCII, or otherwise illegal values; it never
+  trims, encodes, truncates, or normalizes a session ID. The shared vector fixture also
+  records the released providers' deliberately broader outbound-only decisions.
   - verify: `TestADR_0290_SessionHeaderLegalValue` and provider parity vector tests
 - AC1.2: OpenAI Responses, OpenAI Chat Completions, and Anthropic retain ADR-0216's
   private header constants and validators in this PR, yet send the exact run-bound
@@ -100,7 +100,8 @@ frame. This is transport validation, separate from caller ownership under
 **Acceptance:**
 - AC2.1: Every session-bound unary and server-streaming RPC accepts one legal
   `X-Mecatl-Session-ID` value only when it equals the authoritative request session ID
-  byte-for-byte; missing metadata remains compatible.
+  byte-for-byte; missing metadata remains compatible. A derived `CreateSession` binds
+  exactly one `source_session_id` or `debug_target_session_id` and rejects both together.
   - verify: `TestSessionAffinityAndHandoff_Scenario2_GRPCUnaryAndServerStreamMatrix`
 - AC2.2: Duplicate metadata values, an illegal value, or a mismatch fail with
   `InvalidArgument` before session lookup or mutation, and the status message contains

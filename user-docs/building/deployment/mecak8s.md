@@ -269,7 +269,9 @@ The `oidc.*` values add a narrow raw-driver NetworkPolicy when caller identity i
 ### Session affinity is an infrastructure contract
 
 Official clients attach the exact `X-Mecatl-Session-ID` field to session-bound gRPC and
-HTTP requests. Existing clients may omit it. Duplicate, malformed, or byte-mismatched
+HTTP requests when the ID is non-empty printable ASCII without boundary spaces. External
+session IDs outside that common browser/gRPC set remain usable, but clients omit affinity.
+Existing clients may omit it. Duplicate, malformed, or byte-mismatched
 values are rejected before work with one non-disclosing error. The field is a routing
 and provider-correlation hint only: it grants no authentication, authorization, caller
 ownership, lease ownership, fencing, tracing, idempotency, or cache authority. Provider
@@ -292,7 +294,9 @@ after endpoint and TTL convergence. There is no transparent owner-to-owner forwa
 and external provider/tool effects are not exactly once.
 
 The Helm chart intentionally creates no `Gateway`, `HTTPRoute`, `GRPCRoute`, `TLSRoute`,
-`Route`, `Certificate`, `BackendTrafficPolicy`, or affinity values surface. The modeled
+`Route`, `Certificate`, `BackendTrafficPolicy`, or Gateway/session-affinity configuration
+surface. Its `affinity` value remains the unrelated standard Kubernetes pod-scheduling
+field, alongside topology spread constraints, node selectors, and tolerations. The modeled
 two-Service/fake-clock tests prove application lease and Redis repair ordering; they do
 not prove real Gateway routing, EndpointSlice convergence, or production timings.
 

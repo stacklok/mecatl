@@ -640,6 +640,9 @@ func (c *Client) OpenConverse(ctx context.Context) (*Stream, error) {
 // OpenConverseForSession opens a Converse stream carrying the exact session
 // affinity metadata before the first prompt or retry frame is sent.
 func (c *Client) OpenConverseForSession(ctx context.Context, sessionID string) (*Stream, error) {
+	if !engineport.ValidSessionIDHeaderValue(sessionID) {
+		return nil, fmt.Errorf("open converse: session affinity requires non-empty printable ASCII without boundary spaces")
+	}
 	return c.openConverse(withSessionAffinity(ctx, sessionID))
 }
 

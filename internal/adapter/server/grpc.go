@@ -38,6 +38,18 @@ func NewHarnessServer(svc *Service) *HarnessServer {
 
 const invalidSessionAffinityMessage = "invalid session affinity metadata"
 
+func validateGRPCCreateSessionAffinity(ctx context.Context, debugTargetID string) error {
+	md, _ := metadata.FromIncomingContext(ctx)
+	values := md.Get(port.SessionIDHeaderName)
+	if len(values) == 0 {
+		return nil
+	}
+	if debugTargetID == "" || len(values) != 1 || !port.ValidSessionIDHeaderValue(values[0]) || values[0] != debugTargetID {
+		return status.Error(codes.InvalidArgument, invalidSessionAffinityMessage)
+	}
+	return nil
+}
+
 // validateGRPCSessionAffinity validates the optional routing hint without
 // granting it authority. An empty authoritativeID validates metadata shape only,
 // which lets Converse reject ambiguous metadata before its first Recv.
@@ -63,6 +75,9 @@ var _ mecatlv1.HarnessServiceServer = (*HarnessServer)(nil)
 func (h *HarnessServer) CreateSession(ctx context.Context, req *mecatlv1.CreateSessionRequest) (*mecatlv1.CreateSessionResponse, error) {
 	if hasLegacyCreateSessionField(req.ProtoReflect().GetUnknown()) {
 		return nil, status.Error(codes.InvalidArgument, "legacy workspace placement fields are unsupported")
+	}
+	if err := validateGRPCCreateSessionAffinity(ctx, req.GetDebugTargetSessionId()); err != nil {
+		return nil, err
 	}
 	// Session profile: "" binds the server-owned default placement and "no-fs"
 	// requests explicit filesystem attenuation; anything else is a loud

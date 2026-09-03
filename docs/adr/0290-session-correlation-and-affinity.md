@@ -32,10 +32,12 @@ Use the proprietary `X-Mecatl-Session-ID` field as one exact byte-for-byte
 client→gateway→mecak8s→provider correlation and affinity contract.
 
 Define the header name and its legal-value predicate once beside the session context
-helpers in `engine/port/sessioncontext.go`. A legal value is a non-empty session ID
-whose bytes are valid as one HTTP header field value. It is never trimmed, decoded,
-encoded, case-folded, truncated, or otherwise normalized. Root server and client
-consumers use that exported contract.
+helpers in `engine/port/sessioncontext.go`. A legal cross-transport affinity value is
+non-empty printable ASCII (`0x20`–`0x7e`) with no leading or trailing space, so gRPC
+metadata and browser `Headers` can both carry it byte-for-byte without normalization.
+It is never trimmed, decoded, encoded, case-folded, truncated, or otherwise normalized.
+A durable external session ID outside that set remains usable, but official clients omit
+the affinity field for it. Root server and client consumers use that exported contract.
 
 The independently versioned provider submodules continue to require the released
 standalone `engine` v0.12.0 under `GOWORK=off`. ADR 0093 forbids local `replace`
@@ -43,9 +45,10 @@ directives, so this PR cannot import newly exported `engine/port` symbols there 
 requiring an unavailable engine release. The OpenAI Responses, OpenAI Chat Completions,
 and Anthropic production adapters therefore retain their existing private header
 constants and legal-value validators in this PR, preserving ADR 0216 byte behavior.
-One repository-owned exact legal/illegal vector fixture, consumed by the engine and
-provider test suites, and provider-specific parity tests guard those private validators
-against the canonical port contract; they are a contract proof, not an import. Preserve ADR 0216's outbound behavior: providers derive the value from the
+One repository-owned vector fixture records both the exact cross-transport decisions and
+explicit outbound-provider compatibility exceptions. Engine and provider suites consume
+those respective expectations, so the broader private rules cannot silently become the
+official ingress/client contract. Preserve ADR 0216's outbound behavior: providers derive the value from the
 authoritative run-bound context, attach it as a per-request option on every attempt and
 fallback, and omit it without failing inference when that context is absent or illegal.
 Per-request options must not mutate a shared provider client: a race-enabled concurrent
@@ -56,7 +59,9 @@ ingress metadata.
 
 At every session-bound gRPC unary and server-streaming entry, accept an absent header
 for compatibility. Reject duplicate values, an illegal value, or a value that differs
-byte-for-byte from the request's authoritative session ID. `Converse` validates
+byte-for-byte from the request's authoritative session ID. `CreateSession` derives that
+authoritative ID only when exactly one of `source_session_id` or
+`debug_target_session_id` is present and rejects the ambiguous dual-reference shape. `Converse` validates
 metadata before stream work begins and validates equality with the first prompt or
 retry frame's session ID; later control frames remain bound to that established
 session. HTTP session routes apply the same rules against the decoded path ID. Failure
@@ -124,7 +129,9 @@ tool or provider side effects are not claimed.
 
 The mecak8s chart creates no `Gateway`, Route, `BackendTrafficPolicy`, certificate, or
 general network-policy resource. Its guard test explicitly includes
-`BackendTrafficPolicy`. The gateway affinity policy and its production rollout belong
+`BackendTrafficPolicy`. The ordinary Kubernetes pod-spec `affinity` scheduling value
+remains supported alongside topology spread, node selectors, and tolerations; it is not
+a Gateway or session-affinity policy surface. The gateway affinity policy and its production rollout belong
 to a separate infrastructure repository and PR. That rollout is blocked on a live
 infrastructure acceptance item: authenticated admission plus request/header-size bounds
 and client, IP, and principal rate limiting must apply before or independently of

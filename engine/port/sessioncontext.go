@@ -20,12 +20,11 @@ const SessionIDHeaderName = "X-Mecatl-Session-ID"
 // ValidSessionIDHeaderValue reports whether value can be sent unchanged as one
 // session ID HTTP field value. It deliberately performs no normalization.
 func ValidSessionIDHeaderValue(value string) bool {
-	if value == "" || value[0] == ' ' || value[0] == '\t' || value[len(value)-1] == ' ' || value[len(value)-1] == '\t' {
+	if value == "" || value[0] == ' ' || value[len(value)-1] == ' ' {
 		return false
 	}
 	for i := range len(value) {
-		c := value[i]
-		if (c < ' ' && c != '\t') || c == 0x7f {
+		if value[i] < ' ' || value[i] > '~' {
 			return false
 		}
 	}

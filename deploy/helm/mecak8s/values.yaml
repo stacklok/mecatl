@@ -75,6 +75,7 @@ security:
 
 # Optional Kubernetes scheduling controls. Empty values render no pod fields.
 topologySpreadConstraints: []
+affinity: {}
 nodeSelector: {}
 tolerations: []
 
