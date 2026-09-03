@@ -188,10 +188,24 @@ func TestCrossProcessLeaseExpiryTakeover(t *testing.T) {
 	}
 	defer built2.Close()
 
-	time.Sleep(1500 * time.Millisecond)
-	run2, err := built2.Service.StartRun(ctx, sess.ID, "take over after expiry")
-	if err != nil {
-		t.Fatalf("StartRun #2 after expiry: %v", err)
+	if _, err := built2.Service.StartRun(ctx, sess.ID, "take over before expiry"); !errors.Is(err, server.ErrSessionLeasedElsewhere) {
+		t.Fatalf("StartRun #2 before expiry = %v, want ErrSessionLeasedElsewhere", err)
+	}
+
+	var run2 *agent.Run
+	deadline := time.After(5 * time.Second)
+	ticker := time.NewTicker(25 * time.Millisecond)
+	defer ticker.Stop()
+	for run2 == nil {
+		select {
+		case <-deadline:
+			t.Fatal("StartRun #2 never took over after lease expiry")
+		case <-ticker.C:
+			run2, err = built2.Service.StartRun(ctx, sess.ID, "take over after expiry")
+			if err != nil && !errors.Is(err, server.ErrSessionLeasedElsewhere) {
+				t.Fatalf("StartRun #2 while waiting for expiry: %v", err)
+			}
+		}
 	}
 	drain(run2)
 	built2.Service.FinishRun(sess.ID, run2)
