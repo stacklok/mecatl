@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # check-acceptance-plan.sh — validate a docs/acceptance/<plan>.md against the
-# acceptance-plan contract: numbered acceptance criteria, >=1 ADR / architecture
-# / AGENTS.md citation per scenario, and an out-of-scope section.
+# acceptance-plan contract: at least one scenario, numbered acceptance criteria,
+# >=1 ADR / architecture / AGENTS.md citation per scenario, and an out-of-scope
+# section.
 #
 # This is the authoring-time check for /to-acceptance-plan. The runtime gate on
 # a landed plan's verify: contract is `task ac-trace-strict` (the ac-trace tool;
@@ -14,7 +15,8 @@
 #
 # Exit codes:
 #   0  hard checks pass (advisory warnings may still print)
-#   1  hard absence: no numbered ACs, no citations, or no out-of-scope section
+#   1  hard absence: no scenarios, no numbered ACs, missing verify: coverage,
+#      no citations, or no out-of-scope section
 #   2  usage / file-not-found
 
 set -euo pipefail
@@ -42,25 +44,45 @@ CITE_LINK='\]\((\.\./(adr/|architecture|design/)|\.\./\.\./AGENTS\.md)'
 
 # --- (a) numbered acceptance criteria ----------------------------------
 ac_labeled=$(grep -cE '(\*\*)?AC[0-9]+\.[0-9]+(\*\*)?:' "$plan" || true)
-has_ac_heading=$(grep -cE '^\*\*Acceptance:?\*\*|^##+ +Acceptance( criteria)?' "$plan" || true)
-ac_ordered=$(grep -cE '^[[:space:]]*[0-9]+\. ' "$plan" || true)
 
 if [[ "$ac_labeled" -gt 0 ]]; then
   printf 'ok: %s numbered AC<n>.<m> criteria\n' "$ac_labeled"
-elif [[ "$has_ac_heading" -gt 0 && "$ac_ordered" -gt 0 ]]; then
-  printf 'ok: ordered acceptance-criteria list under an Acceptance heading\n'
-  note_warn 'no AC<scenario>.<n> labels — downstream task briefs, ac-trace, and panel-review prefer stable AC2.3-style identifiers. Consider numbering.'
 else
-  note_fail 'no numbered acceptance criteria (expected AC<scenario>.<n>: labels, or an ordered "1." list under an "Acceptance" heading).'
+  note_fail 'no numbered acceptance criteria (expected stable AC<scenario>.<n>: labels).'
 fi
 
-# --- (b) verify: sub-line coverage (advisory here; ac-trace --strict gates) --
+# --- (b) verify: sub-line coverage (hard authoring contract) -----------
 ac_count=$(grep -cE '(\*\*)?AC[0-9]+\.[0-9]+(\*\*)?:' "$plan" || true)
-verify_count=$(grep -cE '^[[:space:]]*-?[[:space:]]*verify:' "$plan" || true)
-if [[ "$ac_count" -gt 0 && "$verify_count" -lt "$ac_count" ]]; then
-  note_warn "found $ac_count ACs but only $verify_count verify: lines — every AC needs a verify: sub-line (test names, or none/inspection/demonstration + reason). ac-trace --strict fails a landed plan otherwise (see docs/acceptance/README.md)."
-elif [[ "$verify_count" -gt 0 ]]; then
-  printf 'ok: %s verify: line(s)\n' "$verify_count"
+missing_verify=$(awk '
+  function flush() { if (ac != "" && !verified) print ac }
+  function start_ac(line) {
+    ac = line
+    sub(/^.*AC/, "AC", ac)
+    sub(/:.*/, "", ac)
+    gsub(/\*\*/, "", ac)
+    verified = 0
+  }
+  /(\*\*)?AC[0-9]+\.[0-9]+(\*\*)?:/ {
+    flush()
+    start_ac($0)
+    next
+  }
+  ac != "" && /^#{1,6}[[:space:]]/ {
+    flush()
+    ac = ""
+    verified = 0
+    next
+  }
+  ac != "" && /^[[:space:]]*-?[[:space:]]*verify:[[:space:]]*[^[:space:]]/ {
+    verified = 1
+  }
+  END { flush() }
+' "$plan")
+if [[ -n "$missing_verify" ]]; then
+  missing_csv=$(printf '%s\n' "$missing_verify" | paste -sd, -)
+  note_fail "missing or empty verify: sub-line in AC block for: $missing_csv"
+elif [[ "$ac_count" -gt 0 ]]; then
+  printf 'ok: %s ACs each have non-empty verify: coverage\n' "$ac_count"
 fi
 
 # --- (c) >=1 citation per scenario -------------------------------------
@@ -91,7 +113,7 @@ if [[ -n "$scenario_lines" ]]; then
     fi
   done
 else
-  note_warn 'no "### Scenario N" headings — per-scenario citation check skipped (single-feature plans may use a flat "## Acceptance criteria" list).'
+  note_fail 'no "### Scenario N" headings — scenario-first plans require at least one scenario. Focused plans should use one compact scenario, a small AC set, and may map to one orchestration task.'
 fi
 
 # --- (d) out-of-scope section ------------------------------------------

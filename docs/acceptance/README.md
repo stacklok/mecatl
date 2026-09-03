@@ -1,10 +1,11 @@
 # Acceptance plans
 
 Each document here is an acceptance plan or completed acceptance record: the
-smallest set of work that makes one capability demonstrable on the running
-harness. They are organized scenario-first — acceptance is about what the
-harness can show, not which packages exist on disk. Each document names its
-capability and cites the ADRs / [architecture](../architecture.md) /
+smallest set of work that makes one substantive issue or capability demonstrable
+on the running harness. They are organized scenario-first — acceptance is about what the
+harness can show, not which packages exist on disk. A focused issue may use one
+scenario and one orchestration task; plans must not manufacture complexity. Each
+document names its scope and cites the ADRs / [architecture](../architecture.md) /
 [AGENTS.md](../../AGENTS.md) invariants that pin its decisions.
 
 Plans are authored by the `/to-acceptance-plan` skill and driven to completion
@@ -13,8 +14,9 @@ gate (`task docs`) fails on an unreachable doc.
 
 ## The verification contract
 
-Every numbered acceptance criterion carries a `verify:` sub-line naming its
-proof — one or more Go test names, or a non-test method with a reason:
+Every numbered acceptance criterion carries a `verify:` sub-line inside that AC's
+block, before the next AC or section. Its value must be non-empty and name one or
+more Go test names, or a non-test method with a reason:
 
 ```markdown
 - AC1.1: a second owner acquiring the session lease gets FAILED_PRECONDITION.

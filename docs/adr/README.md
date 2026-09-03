@@ -2,9 +2,8 @@
 
 This folder holds mecatl's **decision and design records** as numbered ADRs. Each
 records *why* a thing is shaped the way it is, captured at a point in time and then
-**frozen** — to change a decision you write a new ADR that supersedes the old one (add
-a `Superseded by:` line to the old, a `Supersedes:` line to the new); you don't rewrite
-a landed record. Copy [`template.md`](./template.md) to start one. Number monotonically.
+**frozen** — to change a decision, write a new ADR with a `Supersedes:` line and
+record the supersession in this living index; never edit the landed record. Copy [`template.md`](./template.md) to start one. Number monotonically.
 
 Current behaviour lives in [`docs/architecture.md`](../architecture.md) (the living
 reference); shipped/deferred status lives in
@@ -19,7 +18,8 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 ### Process & conventions
 - [0002 — Documentation lifecycle](./0002-documentation-lifecycle.md)
 - [0003 — Consolidate design records as ADRs](./0003-consolidate-design-records-as-adrs.md)
-- [0072 — The acceptance-plan spine](./0072-acceptance-plan-spine.md)
+- [0072 — The acceptance-plan spine](./0072-acceptance-plan-spine.md) *(superseded by 0295)*
+- [0295 — One scaled acceptance-plan spine for substantive work](./0295-unified-development-spine.md)
 
 ### Architecture & implementation
 - [0001 — Agent Client Protocol (ACP) adapter](./0001-acp-adapter.md)

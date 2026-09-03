@@ -109,26 +109,12 @@ adapters implement them.
 
 ### Step 4: Emit the test stub
 
-Engine app-layer shape (a loop test over the reference adapters — the
-canonical shape most orchestration tests use):
-
-```go
-func TestInvariant_no_progress_nudge_bounded(t *testing.T) {
-    t.Parallel()
-    llm := mockllm.New(
-        mockllm.Turn(mockllm.Text("")), // empty turn → nudge
-        mockllm.Turn(mockllm.Text("")), // empty again → StopNoProgress
-    )
-    eng := agent.NewEngine(agent.Deps{
-        LLM:   llm,
-        Tools: catalog.Empty(),
-        Diag:  diag.Nop(),
-    })
-    sess := session.New("s1")
-    // ... run; assert the run ends StopNoProgress after MaxNoProgressNudges,
-    // never loops forever.
-}
-```
+Do not copy a constructor from this document: test helpers and `agent.Deps`
+change as the engine evolves. Locate the nearest current test that exercises the
+same layer and seam, then adapt its fixture and constructor shape. Confirm every
+field and helper against the current package before writing the failing test.
+Prefer an existing `newTest*` helper or reference-adapter fixture over creating a
+new harness.
 
 ### Step 4.5: Make sure the test can actually fail
 

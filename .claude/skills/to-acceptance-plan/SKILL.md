@@ -1,31 +1,28 @@
 ---
 name: to-acceptance-plan
 description: >-
-  Synthesise a design discussion into a self-contained acceptance plan at
-  docs/acceptance/<plan>.md — scenario-first, NUMBERED acceptance criteria
-  that double as the verification contract (each with a verify: line
-  ac-trace gates), every scenario cited to an ADR / architecture section /
-  documented invariant. Runs an advisory devils-advocate pass and a light
-  specialist spot-check, then hands the draft to /plan-orchestrate. Use when
-  a design is settled and you need the contract before orchestration. NOT
-  for decomposing into tasks (that is /plan-orchestrate).
+  Turn settled design for substantive implementation, a bug fix, picked-up issue,
+  or feature work into a scenario-first acceptance plan at
+  docs/acceptance/<plan>.md. Numbered ACs each carry a non-empty verify: proof and
+  cite an ADR, architecture section, or invariant. Runs advisory adversarial and
+  specialist checks, commits the plan and generated docs on a clean accumulator,
+  then hands it to /plan-orchestrate. Use for implement/fix/pick up issue/feature
+  work once design is settled. NOT for task decomposition or implementation.
 ---
 
 # to-acceptance-plan
 
 The **design** step: synthesise a settled design into `docs/acceptance/<plan>.md`
-— the capability's design document **and** its verification contract — then
+— the substantive issue or capability's design document **and** its verification contract — then
 hand it to `/plan-orchestrate`.
 
 **Do NOT interview the user** — the design discussion already happened.
 Synthesise what is known into the plan shape.
 
-**No separate PR.** Unlike a two-PR spine, the plan does not get its own
-human-merged PR. It is written as a `draft` and handed to
-`/plan-orchestrate`, which creates the accumulator, decomposes, carries the
-plan doc on that branch, flips it to `landed` at the end, and opens **one**
-PR (plan + code together) for the human to merge. This is the single human
-gate.
+**No separate PR.** The plan is committed directly to the accumulator, never to
+`main`, then handed to `/plan-orchestrate`. Orchestration carries it from `draft`
+to `landed` and opens **one** PR (plan + code) for the human to merge. This is the
+single human gate.
 
 ## Inputs
 
@@ -68,6 +65,9 @@ gate.
      `../../AGENTS.md`.
    - In/out of scope, deferred decisions, **Definition of done** anchored on
      the Taskfile gates (incl. `task ac-trace-strict`).
+   - A focused issue is allowed to stay compact: one scenario, a small AC set,
+     and one eventual orchestration task. Do not add scenarios or split tasks
+     solely to make the artifact look capability-sized.
    - **New decisions land as new ADRs.** If the plan makes a
      costly-to-reverse decision not yet captured, add the ADR stub
      (copy `docs/adr/template.md`) in the same change — ADRs are frozen,
@@ -82,8 +82,8 @@ gate.
    ```bash
    bash .claude/skills/to-acceptance-plan/scripts/check-acceptance-plan.sh docs/acceptance/<plan>.md
    ```
-   Then add the plan to `docs/acceptance/README.md` (the matlatl gate fails
-   on an unreachable doc) and run `task docs` (`llms.txt` regen + link gate).
+   Add the plan to `docs/acceptance/README.md` (the matlatl gate fails on an
+   unreachable doc), then run `task docs` (`llms.txt` regen + link gate).
 
 6. **Devils-advocate pass (advisory, non-blocking).** Dispatch the
    `devils-advocate` subagent against the draft plus the ADRs /
@@ -105,10 +105,21 @@ gate.
    for your domain?" — not a re-design. Fold clear corrections into the ACs;
    batch any real open question with Step 6's. Skip for a trivial plan.
 
-8. **STOP — hand off.** The draft plan is the deliverable. Report the plan
-   path and any batched open decisions, then invoke (or tell the user to
-   invoke) `/plan-orchestrate <plan>`. **Do not decompose into tasks here**,
-   and **do not open a PR** — orchestrate owns both.
+8. **Commit and hand off.** Re-run the bundled check and `task docs` after the
+   reviews. Create and check out `acc/<plan>` from the current `main` commit. If
+   the current checkout is the repository's primary/current checkout, classify it
+   as `primary-current`. If the harness supplied a writable isolated worktree,
+   validate its repository root and classify it as `harness-owned-native`. Only
+   when neither checkout is usable may this skill explicitly create a disposable
+   integration worktree under `.scratch/`; classify that as
+   `orchestrator-created-disposable`. Never create a redundant nested worktree. Stage only
+   the plan, its README/index or new ADRs, and generated documentation paths
+   explicitly; commit them on `acc/<plan>`, never on `main`. Require
+   `git status --short` to be empty. This checkout is the integration worktree
+   transferred to `/plan-orchestrate`. Record and report the checkout path **and
+   ownership classification** plus the plan path, then invoke (or tell the user to
+   invoke) `/plan-orchestrate <plan>`. **Do not decompose into tasks here**, and
+   **do not open a PR** — orchestrate owns both.
 
 ## What this skill does NOT do
 

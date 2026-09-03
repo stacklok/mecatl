@@ -1,33 +1,22 @@
 ---
 name: panel-review
 description: >-
-  Multi-agent review panel — three orthogonal axes: Spec (matches the
-  issue/PRD?), Standards (matches repo conventions?), Domain (what
-  installed specialist reviewer agents say — security, K8s, DevOps,
-  duplication, library-reuse, project architects). Fans all three out
-  in parallel; three-tier report.
-
-  Use PROACTIVELY after the user finishes implementing, modifying,
-  refactoring, fixing, porting, or shipping code — before they ask.
-  Implementation should be followed by review.
-
-  Auto-trigger on: "review", "code review", "panel review", "audit",
-  "check this", "scrutinise", "look at my changes", "review the diff",
-  "review since X", "review against the spec", "did this implement the
-  issue", "check against the PRD", "done", "finished", "implemented",
-  "wrote", "added", "refactored", "fixed", "shipped", "ready for
-  review", "PR ready", "/panel-review".
-
-  NOT for: trivial edits (use /code-review), cloud review (use
-  /code-review ultra), drafting code, posting GitHub comments (use
-  /pr-review-post), pure-config diffs.
+  Review completed non-trivial code across four independent axes: Spec,
+  Standards, Test adequacy, and installed Domain specialists. Use proactively
+  after implementation, modification, refactoring, bug fixes, feature work, or
+  when asked to review/audit/check a diff, issue, PRD, finished change, or PR.
+  Fans reviewers out in parallel, preserves each axis, and ends with the stable
+  PANEL machine summary. NOT for drafting code, trivial edits (use
+  /code-review), cloud review (/code-review ultra), pure config, or posting
+  GitHub comments (/pr-review-post).
 ---
 
 # Panel review
 
 A workflow skill. The user has just changed code (or explicitly asked
-for a review), and the change needs to be reviewed across three
-**orthogonal axes** — spec adherence, project standards, and specialist
+for a review), and the change needs to be reviewed across four
+**orthogonal axes** — spec adherence, project standards, independent test
+adequacy, and specialist
 domain expertise — with each axis able to disagree with the others
 without being silenced.
 
@@ -46,6 +35,9 @@ Each axis catches a different failure mode:
   Domain both pass; the diff just doesn't do what the issue asked.
 - **Standards** catches *"implements the right thing the wrong way for
   this repo"*. Spec passes; the conventions are broken.
+- **Test adequacy** catches *"the implementation and tests agree on a weaker
+  contract"*. It checks observable AC coverage, negative-test mutation value,
+  boundary cases, and whether the tests exercise the real seam.
 - **Domain** catches *"implements the right thing with a hidden
   landmine"*. Spec and Standards pass; a security, K8s, library, or
   duplication issue lurks.
@@ -54,6 +46,18 @@ Reporting them separately is deliberate. Synthesised together, one
 axis masks another. Inspired by Matt Pocock's two-axis `/review`
 skill (Standards + Spec), generalised with a Domain axis powered by
 the project's installed specialist reviewer agents.
+
+## Operating modes
+
+**Interactive mode (default):** keep the confirmation behavior below: ask when
+no fixed point/spec is available, the diff is large, or the Domain panel has 5+
+agents.
+
+**Orchestrator mode:** `/plan-orchestrate` supplies the fixed point and spec. Do
+not pause for confirmation because the diff or panel is large; announce the
+scope and proceed. Keep the same bounded briefs and selected panel, record any
+missing source or reviewer failure, and always finish with the stable `PANEL:`
+line. All other interactive behavior is unchanged outside this mode.
 
 ## Prerequisites
 
@@ -99,23 +103,16 @@ Print to the user:
 If the diff is **empty**, ask for explicit file paths or a PR
 number.
 
-If the diff is **> 50 files or > 3000 lines**, ask the user whether
-to split into smaller reviews or proceed (large panels generate
-noisier output).
+If the diff is **> 50 files or > 3000 lines**, interactive mode asks whether
+to split into smaller reviews or proceed. Orchestrator mode proceeds without
+confirmation and keeps every reviewer brief bounded.
 
 ## Step 2 — Read project context
 
-In one parallel batch, read what later steps need:
-
-- `CLAUDE.md` (and any parent CLAUDE.md up to the git root)
-- `.claude/rules/*.md` if present
-- `docs/design/principles.md`, `docs/design/architecture.md` if
-  present
-- The first ~5 ADR filenames under `docs/adr/` (titles only)
-- `SECURITY.md` if present
-- `CONTRIBUTING.md` if present
-- `CONTEXT.md` / `CONTEXT-MAP.md` if present (Matt-Pocock-style
-  domain dictionaries — also useful as standards sources)
+In one parallel batch, read the repository's instruction and standards sources:
+`CLAUDE.md`/`AGENTS.md` (including parents), `.claude/rules/*.md`, relevant
+architecture/design/ADR indexes, `SECURITY.md`, `CONTRIBUTING.md`, and any
+`CONTEXT.md`/`CONTEXT-MAP.md` files that exist.
 
 ## Step 3 — Detect the spec source
 
@@ -156,21 +153,11 @@ them):
 - `.claude/rules/*.md`
 - `docs/design/principles.md` if present
 
-**Explicit skip rule** (inherited from Matt's design): do **not**
-have the Standards subagent re-check anything *tooling* already
-enforces. Note the presence of:
-
-- `.editorconfig`
-- `eslint.config.*` / `.eslintrc.*`
-- `biome.json` / `biome.jsonc`
-- `prettier.config.*` / `.prettierrc.*`
-- `tsconfig.json`
-- `.golangci.yml` / `.golangci.yaml`
-- `pyproject.toml` `[tool.ruff]` / `[tool.black]` / `[tool.mypy]`
-- `rustfmt.toml`, `clippy.toml`
-
-Tell the subagent these run on every commit and to skip anything
-they cover. Re-flagging tool-enforced rules wastes tokens.
+**Explicit skip rule** (inherited from Matt's design): tell the Standards
+subagent not to re-check anything enforced by detected formatter, linter,
+type-checker, compiler, or project tooling configs (for example
+`.editorconfig`, ESLint/Biome/Prettier/TypeScript, `.golangci.yml`, pyproject
+Ruff/Black/mypy, rustfmt/clippy). Re-flagging tool-enforced rules wastes tokens.
 
 If no standards docs are found, note "Standards axis: no project
 standards docs found — axis returned an empty report" in output;
@@ -209,6 +196,11 @@ take precedence over generic ones** when their scope matches.
 | **Reinvention / over-build** | Any non-trivial code diff (default-on, NOT signal-gated — see below) | `library-reuse-reviewer` + `code-duplication-reviewer` |
 | **Project-specific surfaces** | (varies — read each available agent's `description` frontmatter to learn its scope) | Any project-level agent in `.claude/agents/` that names a domain not covered above — typically architects for a specific framework, protocol, API surface, or UI workspace |
 
+If no Domain agent is available (including a pure-docs diff), mark
+`Domain axis: unavailable — no applicable installed specialist` and still fan
+out Spec, Standards, and Test adequacy. Domain unavailability is not a reviewer
+failure.
+
 Classification rules:
 
 - **Always include `secure-code-reviewer`** for diffs touching
@@ -241,7 +233,7 @@ Classification rules:
   (project's test-review agent if present, else language
   architect).
 
-## Step 7 — Announce the three-axis plan
+## Step 7 — Announce the four-axis plan
 
 ```
 Reviewing against <fp>: N files, M insertions, L deletions, K commits.
@@ -249,6 +241,7 @@ Reviewing against <fp>: N files, M insertions, L deletions, K commits.
 Spec axis:       checking against #123 ("Add /preview endpoint")
 Standards axis:  reading CLAUDE.md, .claude/rules/, docs/adr/
                  skipping tooling: golangci-lint, biome, prettier
+Test adequacy:   independently tracing requirements to assertions and seams
 Domain axis (running in parallel):
   - secure-code-reviewer        — auth/HTTP/SSRF surface in api/handlers/
   - kubernetes-deployment-expert — deploy/staging/ manifests
@@ -263,8 +256,9 @@ Gaps (dimension detected, no matching agent installed):
   - (none)
 ```
 
-Wait for user pushback only if the panel is large (5+ agents
-across the Domain axis) or they asked for a dry-run.
+Wait for user pushback only in interactive mode when the panel is large (5+
+agents across the Domain axis) or they asked for a dry-run. Orchestrator mode
+proceeds immediately.
 
 ## Step 8 — Fan out (PARALLEL)
 
@@ -274,6 +268,8 @@ In a **single assistant turn**, issue all of:
   with brief).
 - 1 × `Agent` call for the **Standards** axis (general-purpose
   subagent with brief).
+- 1 × `Agent` call for the **Test adequacy** axis (general-purpose subagent
+  with brief).
 - N × `Agent` calls for the **Domain** panel (named specialist
   agents).
 
@@ -298,9 +294,11 @@ They run concurrently, separate contexts, no order dependencies.
   > 3. **Wrong** — requirements that look implemented but where
   >    the implementation appears incorrect against the spec.
   >
-  > Quote the specific spec line / requirement for each finding.
-  > Under 400 words. Default to silence when uncertain — only flag
-  > concrete mismatches.
+  > Quote the specific spec line / requirement for each finding. Classify
+  > **every** finding explicitly as `blocker`, `important`, or `advisory`:
+  > blocker = must fix before merge; important = concrete non-blocking fix;
+  > advisory = judgement/polish. Under 400 words. Default to silence when
+  > uncertain — only flag concrete mismatches.
   >
   > Root-cause discipline: when a finding names a symptom, note
   > whether the diff fixes the root cause or only the path the
@@ -323,8 +321,31 @@ in final output.
   > Read the standards docs, then the diff. Report — per file /
   > hunk where relevant — every place the diff violates a
   > documented standard. Cite the standard (file + the rule).
-  > Distinguish hard violations from judgement calls. Under 400
-  > words. Default to silence when uncertain.
+  > Classify **every** finding explicitly as `blocker`, `important`, or
+  > `advisory`: blocker = must fix before merge; important = concrete
+  > non-blocking fix; advisory = judgement/polish. Under 400 words. Default to
+  > silence when uncertain.
+
+### Test-adequacy subagent
+
+- `subagent_type`: `general-purpose`
+- `description`: "Independent test-adequacy check for <scope>"
+- `prompt`:
+
+  > Diff to review: `git diff <fp>...HEAD`
+  > Spec source: <path or inline contents; state unavailable if skipped>
+  > Acceptance plan / verify contract: <path if present>
+  >
+  > Review tests independently of the implementation. Trace each requirement or
+  > AC to an assertion at the lowest adequate layer. Flag missing or weaker
+  > coverage, tests that cannot fail on regression, negative assertions without
+  > a planted violation, fake-only tests that bypass the real seam, and missing
+  > boundary/failure cases. Do not re-report style or implementation findings.
+  > Classify findings as blocker, important, or advisory and cite test paths and
+  > requirement/AC ids. Under 400 words; default to silence when adequate.
+
+For a pure-docs or pure-config diff with no executable behavior contract, mark
+this axis not applicable; that is a deliberate skip, not a reviewer failure.
 
 ### Domain agents
 
@@ -338,8 +359,10 @@ For each specialist in the panel:
     derived from its own description.
   - The project-context items the agent's body needs.
   - Reminder: "Respect your calibration discipline — flag only
-    findings that affect correctness, security, or stated
-    requirements. Default action when uncertain is silence."
+    findings that affect correctness, security, or stated requirements. Classify
+    every finding as blocker, important, or advisory. Map your native severity
+    deterministically: Critical/High = blocker, Medium = important, Low/Info =
+    advisory. Default action when uncertain is silence."
 
 **Reuse pair — extra brief (library-reuse-reviewer +
 code-duplication-reviewer).** When fanning out the default-on reuse
@@ -360,22 +383,26 @@ completion.
 If the environment or the user has expressed a model preference,
 honour it on each Agent call.
 
-## Step 9 — Three-tier output
+## Step 9 — Four-axis output + machine result
 
 Do **NOT** merge findings across axes. They are deliberately
 orthogonal — one passing while another fails is exactly the
 information you want to preserve. Cross-axis merging is the
 failure mode Matt's design exists to prevent.
 
-For the **Spec** and **Standards** axes, present the subagent's
-findings verbatim or lightly cleaned. Don't rerank.
+For the **Spec**, **Standards**, and **Test adequacy** axes, present each
+subagent's explicitly classified findings verbatim or lightly cleaned. Don't
+rerank or infer a classification from prose. An unclassified finding is a
+reviewer failure to retry, not a countable finding.
 
 For the **Domain** axis only, synthesise across the panel:
 
 ### Synthesis (Domain axis only)
 
-1. **Combined table** — every finding from every domain agent,
-   preserving its source's severity label.
+1. **Combined table** — every finding from every domain agent, preserving its
+   source severity and its required panel classification. Domain mapping is
+   exhaustive: Critical/High → `blocker`, Medium → `important`, Low/Info →
+   `advisory`; missing or unknown severity/classification is a reviewer failure.
 2. **Dedup** — two findings are duplicates when they share location
    AND underlying issue. Merge with `Sources: [A, B]` and tag as
    **cross-confirmed** (highest-confidence — multiple specialists
@@ -383,24 +410,37 @@ For the **Domain** axis only, synthesise across the panel:
 3. **Prioritise** — Critical → High → Medium → Low → Info;
    within severity, cross-confirmed before single-source; within
    that, by file path.
-4. **Tag for action class:**
-   - **Ship-blockers** — Critical/High affecting correctness,
-     security, compliance. Must address before merge.
-   - **Mechanical fixes** — clear path, no judgement. Candidate
-     for /simplify.
-   - **Judgement calls** — architectural trade-offs. Discuss.
-   - **Polish** — Low/Info; optional.
+4. **Tag for action class** without changing the explicit panel class:
+   - **Ship-blockers** — Domain `blocker` findings; must address before merge.
+   - **Mechanical fixes** — clear path, no judgement.
+   - **Judgement calls** — architectural trade-offs.
+   - **Polish** — optional.
 
 ### Final output structure
 
 Render the report following the template in
 [references/output-template.md](references/output-template.md).
-The prose rules above (don't merge across axes; synthesis within
-Domain only) govern; the template is the shape.
+The prose rules above (don't merge across axes; synthesis within Domain only)
+govern; the template is the shape.
+
+End every report with exactly one machine-readable line, with no prose after it:
+
+`PANEL: ship_blockers=<n> important=<n> advisory=<n> reviewer_failures=<n>`
+
+Count only explicit classifications. Each Spec, Standards, and Test-adequacy
+finding counts once in its declared class. Domain duplicates are deduplicated
+as above and each resulting Domain finding counts once by the exhaustive native
+severity mapping; cross-axis findings remain distinct because the axes are
+orthogonal. Never infer severity from category names or prose.
+`reviewer_failures` counts agents that errored, timed out, or returned findings
+without the required classification; a documented unavailable/not-applicable/
+skipped axis is not a failure. Values are non-negative base-10 integers. This
+line is the stable automation contract; prose is not.
 
 ## Step 10 — Offer follow-up
 
-Ask one short question:
+Offer one short follow-up immediately before emitting the final `PANEL:` line
+(the machine line remains the last line):
 
 - "Apply mechanical fixes now?" → suggest /simplify
 - "Drill into a specific finding?" → user names one
@@ -414,7 +454,7 @@ Don't loop on synthesis. The panel ran once; the report stands.
 ## What this skill does NOT do
 
 - Doesn't modify code. Synthesis is a report.
-- **Doesn't merge findings across axes** — Spec, Standards, and
+- **Doesn't merge findings across axes** — Spec, Standards, Test adequacy, and
   Domain are orthogonal by design; one masking another is the
   failure mode this skill exists to prevent.
 - Doesn't fan out to every available Domain agent regardless of
@@ -445,7 +485,8 @@ Don't loop on synthesis. The panel ran once; the report stands.
 | No fixed point provided | Ask before proceeding; don't auto-detect. |
 | No spec source found | Skip Spec axis; note in output. |
 | No standards docs found | Standards subagent returns empty; note in output. |
-| No domain agents installed | Run Spec + Standards axes only; note in output. |
+| No executable behavior or tests in scope | Mark Test adequacy not applicable; do not count a reviewer failure. |
+| No domain agents installed | Run Spec + Standards + Test adequacy; mark Domain unavailable, not failed. |
 | `git diff` returns nothing | Ask for explicit scope (files / PR / branch). |
 | `gh pr diff N` / `gh issue view N` fails | Tell the user `gh` isn't authenticated or the resource doesn't exist. |
 | An agent times out / errors | Note the gap in synthesis; don't fail the whole panel. |
@@ -453,39 +494,11 @@ Don't loop on synthesis. The panel ran once; the report stands.
 | Spec and Domain disagree | Present both; neither is wrong — they're asking different questions. |
 | Diff exceeds practical size (>50 files / >3000 lines) | Ask the user whether to split or proceed. |
 
-## Design notes
-
-The three-axis structure builds on Matt Pocock's two-axis
-`/review` skill (Standards + Spec, parallel subagents,
-side-by-side reporting, no cross-axis merging). The Domain axis
-generalises the idea by replacing one of the general-purpose
-subagents with a panel of named specialist reviewer agents
-selected from the project's installed `.claude/agents/`. The
-**don't merge across axes** principle is preserved verbatim —
-synthesis happens within the Domain axis only.
-
-The reuse pair (`library-reuse-reviewer` +
-`code-duplication-reviewer`) is DEFAULT-ON for non-trivial code
-diffs: over-engineering review runs on every diff and *finds* the
-reinvention rather than gating on an already-visible signal. The
-`net: -<N> lines possible.` score gives the reuse axis a concrete
-countable metric instead of generic prose.
-
 ## See also
 
-- [references/reuse-ladder.md](references/reuse-ladder.md) — the
-  7-rung reuse-ladder brief and `delete:`/`stdlib:`/`native:`/
-  `yagni:`/`shrink:` tag vocabulary, appended to the reuse-pair
-  agent prompts in Step 8.
-- [references/output-template.md](references/output-template.md) —
-  the rendered shape of the Step 9 three-tier report.
-- Matt Pocock's two-axis `/review` skill —
-  https://github.com/mattpocock/skills/blob/main/skills/in-progress/review/SKILL.md
-- Claude Code best practices, "Add an adversarial review step" —
-  https://code.claude.com/docs/en/best-practices
-- Sub-agents reference, "Run parallel research" pattern —
-  https://code.claude.com/docs/en/sub-agents
-- The bundled `/code-review` skill — single-pass review without
-  fan-out
-- The bundled `/code-review ultra` — cloud-side multi-agent
-  review (Anthropic's hosted panel)
+- [Reuse-ladder brief](references/reuse-ladder.md)
+- [Output template](references/output-template.md)
+- [Matt Pocock's `/review`](https://github.com/mattpocock/skills/blob/main/skills/in-progress/review/SKILL.md)
+- [Claude Code best practices](https://code.claude.com/docs/en/best-practices)
+- [Sub-agents reference](https://code.claude.com/docs/en/sub-agents)
+- Bundled `/code-review` (single pass) and `/code-review ultra` (cloud panel)

@@ -1,18 +1,19 @@
 # Development process
 
-mecatl's larger work is built by a mostly-autonomous spine encoded as agent
+mecatl's substantive work is built by a mostly-autonomous spine encoded as agent
 skills under `.claude/`. The human settles the design; agents write the
-contract, decompose it, implement it test-first in parallel, gate it, review
-it, and open one PR. The single human checkpoint is merging that PR.
+contract, decompose it only as far as needed, implement it test-first in isolated
+workers, gate it, review it, and open one PR. The single human checkpoint is
+merging that PR.
 
 ```
-design → /to-acceptance-plan → /plan-orchestrate → (waves of tdd-workers) → aggregate gate → ac-trace → panel-review → PR ─▶ human merge
+design → /to-acceptance-plan → /plan-orchestrate → (capability-dependent tdd-worker ready sets) → aggregate gate → ac-trace → panel-review → PR ─▶ human merge
 ```
 
-For issue-scale work (a bug, a focused feature with an issue as the spec),
-the lightweight [`/dev-pipeline`](../.claude/skills/dev-pipeline/SKILL.md)
-loop is the right track — the spine earns its keep on capability-scale work
-that wants a design contract.
+Substantive issue and capability work use this one spine. Scale the artifacts
+to the work: a focused bug or feature may have one compact scenario, a small AC
+set, and one task. Do not split work merely to create a graph or worker swarm.
+Only trivial or mechanical edits may bypass the spine and land directly.
 
 ## The steps
 
@@ -24,23 +25,33 @@ that wants a design contract.
    PR — the plan rides the accumulator.
 
 2. **Orchestrate — `/plan-orchestrate`.**
-   Decomposes the plan into tasks under `.claude/plans/<plan>/tasks/`, then
-   dispatches **waves** of parallel `tdd-worker` agents — one task per worker,
-   each in an isolated worktree, each doing strict red-green TDD (via the
+   Decomposes the plan into the smallest coherent task set under
+   `.claude/plans/<plan>/tasks/`, then dispatches isolated `tdd-worker` agents —
+   one task per worker, each doing strict red-green TDD (via the
    `/test-writer` skill) against the hexagonal ports and the AGENTS.md
-   invariants. Successful branches funnel into one **accumulator** branch.
+   invariants. A focused plan should remain one task. For independent tasks,
+   execution is parallel when the harness supports concurrent writable workers
+   and serial by ready set otherwise. Successful branches funnel into one
+   **accumulator** branch.
 
 3. **Gate + review (automatic).** On the assembled accumulator the orchestrator
-   runs the aggregate gate (`task lint && task test && task docs`), flips the
-   plan to `landed`, runs `ac-trace --strict` (every `verify:` proof must
-   resolve), then runs `/panel-review` as the final gate. Panel ship-blockers
-   spawn an automatic repair wave (budget 2). When the assembled branch is
-   clean it opens **one PR** (plan + code, panel report inline, `Closes` the
-   epic + task issues).
+   runs the aggregate gate (`task lint`, `task test`, `task docs`, and the terminal
+   `go run ./cmd/mecademo` offline smoke) in the integration worktree. Workers do
+   not repeat the demo; terminal orchestration owns that integration proof. It
+   retains and commits generated surfaces, flips the plan to `landed`, regenerates
+   docs, then runs `ac-trace --strict` from that same checkout (so it sees landed
+   status and generated files). It then runs `/panel-review` in non-pausing
+   orchestrator mode as the final Spec / Standards / Test adequacy / Domain gate.
+   The panel's final `PANEL:` record is the machine-readable decision input;
+   ship-blockers spawn an automatic repair wave (budget 2), while reviewer
+   failures must be retried or explicitly waived by a human. When the assembled
+   branch is clean it opens **one PR** (plan + code, panel report inline, `Closes`
+   the epic + task issues).
 
 4. **Merge (the one human gate).** A human reviews and merges the PR. The
-   orchestrator never merges to `main` and never runs beyond the PR. (mecatl
-   convention is **PR-only** — never commit to `main` directly.)
+   orchestrator never merges to `main` and never runs beyond the PR. Substantive
+   work is PR-only; only the trivial/mechanical exception above may land
+   directly.
 
 ## Verification, tracked
 
@@ -61,7 +72,7 @@ or a descriptive test name). `task ac-trace` reports coverage;
 | `task api:check` | the engine's exported surface vs `engine/api/*.txt` |
 | `task docs` | `llms.txt` regen + the matlatl strict link gate |
 | `task ac-trace-strict` | every landed AC's `verify:` proof resolves |
-| `/panel-review` | Spec / Standards / Domain (incl. the default-on duplication + library-reuse pair) |
+| `/panel-review` | independent Spec / Standards / Test adequacy / Domain review; final `PANEL:` result drives the gate |
 
 ## See also
 
