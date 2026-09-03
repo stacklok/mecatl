@@ -44,8 +44,9 @@ func (s *Service) ConnectWorkspaceServices(ctx context.Context, id session.Sessi
 		return WorkspaceEnrollmentProjection{Ref: presentation.Ref, Status: brokercontract.WorkspaceEnrollmentPending, URL: presentation.URL}, nil
 	}
 
-	result, err := enroller.ObserveWorkspaceEnrollment(ctx, enrollmentRef(pending))
-	if err != nil || !result.Valid() {
+	expectedRef := enrollmentRef(pending)
+	result, err := enroller.ObserveWorkspaceEnrollment(ctx, expectedRef)
+	if err != nil || !result.Valid() || !sameWorkspaceEnrollmentRef(result.Ref, expectedRef) {
 		return WorkspaceEnrollmentProjection{}, fmt.Errorf("%w: observe workspace enrollment", ErrFailedPrecondition)
 	}
 	if result.Status != brokercontract.WorkspaceEnrollmentConnected {
@@ -95,8 +96,9 @@ func (s *Service) cancelWorkspaceEnrollment(ctx context.Context, id session.Sess
 	if !ok || pending.ID != enrollmentID {
 		return WorkspaceEnrollmentProjection{}, fmt.Errorf("%w: stale workspace enrollment", ErrFailedPrecondition)
 	}
-	result, err := enroller.CancelWorkspaceEnrollment(ctx, enrollmentRef(pending))
-	if err != nil || !result.Valid() {
+	expectedRef := enrollmentRef(pending)
+	result, err := enroller.CancelWorkspaceEnrollment(ctx, expectedRef)
+	if err != nil || !result.Valid() || !sameWorkspaceEnrollmentRef(result.Ref, expectedRef) {
 		return WorkspaceEnrollmentProjection{}, fmt.Errorf("%w: cancel workspace enrollment", ErrFailedPrecondition)
 	}
 	if err := sess.AbortWorkspaceEnrollment(enrollmentID); err != nil {
@@ -131,6 +133,12 @@ func (s *Service) workspaceEnrollmentTarget(ctx context.Context, id session.Sess
 		return nil, nil, nil, fmt.Errorf("%w: workspace services are not configured", ErrFailedPrecondition)
 	}
 	return sess, enroller, brokerUnlock, nil
+}
+
+func sameWorkspaceEnrollmentRef(left, right brokercontract.WorkspaceEnrollmentRef) bool {
+	return left.ID == right.ID &&
+		left.RequiredServices == right.RequiredServices &&
+		left.ExpiresAt.Equal(right.ExpiresAt)
 }
 
 func pendingEnrollment(ref brokercontract.WorkspaceEnrollmentRef) session.PendingWorkspaceEnrollment {

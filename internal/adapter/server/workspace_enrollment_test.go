@@ -111,6 +111,33 @@ func TestWorkspaceEnrollmentPublishesFrozenCatalogueBeforePrompt(t *testing.T) {
 		t.Fatalf("pending = %#v, %v", pending, ok)
 	}
 
+	mismatchedRef := started.Ref
+	mismatchedRef.ID = "enrollment-other"
+	broker.attachment.ref = mismatchedRef
+	if _, err := svc.CancelWorkspaceEnrollment(t.Context(), created.ID, started.Ref.ID); err == nil {
+		t.Fatal("mismatched enrollment cancellation succeeded")
+	}
+	broker.attachment.ref = started.Ref
+	loaded, _ = store.Load(t.Context(), created.ID)
+	if pending, ok := loaded.PendingWorkspaceEnrollment(); !ok || pending.ID != started.Ref.ID {
+		t.Fatalf("pending after mismatched cancellation = %#v, %v", pending, ok)
+	}
+
+	mismatchedCatalogue, err := brokercontract.NewWorkspaceCatalogue(mismatchedRef, []tool.Tool{enrollmentTool{name: "mcp__calendar__list"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	broker.attachment.result = brokercontract.WorkspaceEnrollmentResult{
+		Ref: mismatchedRef, Status: brokercontract.WorkspaceEnrollmentConnected, Catalogue: mismatchedCatalogue,
+	}
+	if _, err := svc.ConnectWorkspaceServices(t.Context(), created.ID); err == nil {
+		t.Fatal("mismatched enrollment observation succeeded")
+	}
+	loaded, _ = store.Load(t.Context(), created.ID)
+	if pending, ok := loaded.PendingWorkspaceEnrollment(); !ok || pending.ID != started.Ref.ID {
+		t.Fatalf("pending after mismatched observation = %#v, %v", pending, ok)
+	}
+
 	complete, err := brokercontract.NewWorkspaceCatalogue(started.Ref, []tool.Tool{
 		enrollmentTool{name: "mcp__calendar__list"}, enrollmentTool{name: "mcp__github__review"},
 	})

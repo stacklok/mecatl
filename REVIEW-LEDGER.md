@@ -32,7 +32,7 @@ Status vocabulary: `open`, `in_progress`, `fixed`, `accepted`, `superseded`.
 | H-K5 | known | open | Non-EOF control closure/send failure still owns and cancels the resumed run. | `internal/adapter/server/grpc.go`; `internal/adapter/server/http.go` |
 | H-K6 | known | open | Broker ToolHive construction drops the configured OAuth network policy. | `internal/app/mcp_broker_toolhive.go`; `internal/adapter/mcpbroker/toolhive_construction.go` |
 | H-K7 | known | fixed | `HandlerBundle.Mount` now preflights every fixed/callback route across standard methods before any registration; command-root tests prove method-qualified collisions leave no partial mount. | `internal/adapter/mcpbroker/handlers.go`; `cmd/mecated/mcp_broker_command_root_test.go` |
-| H-K8 | known | open | Enrollment observation does not require the returned ref to equal the requested pending ref. | `internal/adapter/server/workspace_enrollment.go` |
+| H-K8 | known | fixed | Enrollment observation and cancellation require the returned broker ref to equal the exact pending ref (ID, required-service count, and instant); a valid result for another enrollment cannot mutate the aggregate. | `internal/adapter/server/workspace_enrollment.go` |
 | H-K9 | known | open | Executable tools and persisted authority are derived from different catalogue values. | `internal/adapter/server/workspace_enrollment.go` |
 | H-K10 | known | open | Restart can leave pending enrollment permanently wedged. | `internal/adapter/server/workspace_enrollment.go`; `internal/adapter/server/mcp_broker.go` |
 | H-K11 | known | open | Enrollment compensation removes cancellation without adding a bounded cleanup timeout. | `internal/adapter/server/workspace_enrollment.go` |
