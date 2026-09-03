@@ -19,9 +19,9 @@ a `coordination.k8s.io` Lease per session
 **storage-free**: no PVC, no `--store-dir`, no local state — every piece of state is a
 managed service the pod talks to over the network (Redis + the k8s API server). Global
 MCP profiles use the same operator settings loader as mecated/mecatequi. The intended
-OAuth posture is a read-only environment credential injected from a Kubernetes Secret;
-rotation requires an external provisioner and pod restart. `mecak8s` never launches a
-browser and cannot run `mecated mcp login`. A mutable local credential root is accepted
+OAuth posture is a browser/session authorization through the process-local broker;
+a preregistered client secret is injected from a Kubernetes Secret when required.
+`mecak8s` never launches a browser and cannot run `mecated mcp login`. A mutable local credential root is accepted
 only when explicitly mounted/configured, but contradicts the normal storage-free posture
 and is not recommended. It drops
 `mecated`'s `skills promote` / `config` / `perf-mcp` subcommands, ACP, and the
@@ -169,10 +169,11 @@ endpoint is runtime-valid. The authentication `mode` is a closed union:
 - `none` renders only `--mcp-server=<name>=<url>`;
 - `staticBearer` renders the same flag and projects its `secretKeyRef` into the
   runtime's `MCP_<UPPERCASE_NAME>_TOKEN` convention; and
-- `oauth` renders the existing strict operator MCP profile into a read-only,
-  chart-managed ConfigMap, projects only referenced Secret keys into generated
-  `MECATL_MCP_<UPPERCASE_NAME>_*` variables, and passes
-  `--permission-config=/etc/mecatl-mcp/settings.yaml`.
+- `oauth` selects the session-scoped broker authority, renders its strict operator
+  profile into a read-only chart-managed ConfigMap, projects only a preregistered
+  client secret `secretKeyRef` when needed, and passes
+  `--permission-config=/etc/mecatl-mcp/settings.yaml`. It requires
+  `mcp.broker.callbackURL`, the public HTTPS browser callback URL.
 
 For example, an unauthenticated public server and a static bearer server are:
 
@@ -200,21 +201,23 @@ enforce egress with NetworkPolicy or a mesh—the chart intentionally ships no
 general NetworkPolicy. OAuth always requires HTTPS and cannot use this escape
 hatch.
 
-OAuth supports either a preregistered confidential client or a CIMD client and
-only the runtime's read-only `environment` credential mode. The Secret's
-credential record must be the canonical padded-base64 export accepted by the
-runtime. A preregistered client additionally references its client-secret key:
+OAuth supports either a preregistered confidential client or a CIMD client. This
+Helm surface does **not** accept the global-mode `profile`, `principal`, or
+`credentials.environment` fields and does not project an OAuth credential record.
+The browser authorizes the broker for the session; a preregistered client alone
+references its client-secret key:
 
 ```yaml
 mcp:
+  broker:
+    # Publicly reachable HTTPS callback routed by your ingress/gateway to mecak8s.
+    callbackURL: https://agent.example/mcp/authorization/callback
   servers:
     - name: corporate
       url: https://mcp.example/mcp
       auth:
         mode: oauth
         oauth:
-          profile: cluster
-          principal: service-account:mecak8s
           issuer: https://issuer.example
           client:
             mode: preregistered
@@ -223,9 +226,6 @@ mcp:
               secretKeyRef: {name: mecak8s-mcp-oauth, key: client-secret}
           scopes: [mcp.read]
           requestRefreshToken: true
-          credentials:
-            secretKeyRef: {name: mecak8s-mcp-oauth, key: credential-record}
-            allowProcessLocalRefresh: false
           network:
             additionalOrigins: []
             privateOrigins: []
@@ -233,19 +233,30 @@ mcp:
 ```
 
 For CIMD, set `client.mode: cimd` and replace `preregistered` with
-`cimd: {documentURL: https://client.example/mecatl.json}`; include that exact
-origin in `network.additionalOrigins` when it differs from the issuer and MCP
-resource origins. The chart exposes no literal-secret field, arbitrary headers,
-stdio/SSE transport, local writable credential store, or browser-login flow.
-Create/export OAuth credentials outside the pod and store the resulting record
-in the referenced Secret.
+`cimd: {documentURL: https://client.example/mecatl.json}`. The callback URL must
+be an absolute public HTTPS URL with no query or fragment, and your ingress or
+gateway must route that exact path to the mecak8s HTTP listener. OAuth broker
+mode also requires `oidc.enabled: true` with its issuer and audience: OIDC is the
+chart-supported verified caller identity for broker authorization controls. The
+chart exposes no literal-secret field, arbitrary headers, stdio/SSE transport,
+local writable credential store, or browser credential. A client secret, when
+required, stays in the referenced Kubernetes Secret and is projected only as a
+`SecretKeyRef`. Never put it in values or the generated ConfigMap. With no
+`mcp.servers`, the chart deliberately renders `mcp.mode: global`; no broker is
+constructed. A no-auth or static-bearer-only list likewise keeps the established
+global routing.
+
+> **Broker replica limitation:** broker sessions, grants, and authorization state
+> are process-local. OAuth broker mode is not safely deployable behind the chart's
+> default multi-replica Service until an affinity or durable-broker design is
+> selected. The chart intentionally does not change replica behavior yet.
 
 Changing OAuth profile metadata changes the pod-template
 `checksum/mcp-profile` annotation, causing a Deployment rollout. Kubernetes
 environment variables do not update in a running process when a Secret changes,
-and static bearer/OAuth credentials are loaded at startup: after rotating any
-referenced Secret, explicitly restart or roll out the Deployment (or use a
-Secret controller configured to do so). Keep overlapping credentials valid
+and static bearer tokens and OAuth client secrets are loaded at startup: after
+rotating a referenced Secret, explicitly restart or roll out the Deployment (or
+use a Secret controller configured to do so). Keep overlapping credentials valid
 until all replicas are ready. `extraArgs` and `extraEnv` remain available, but
 `extraEnv` cannot reuse an authentication variable generated by `mcp.servers`.
 
