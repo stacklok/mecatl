@@ -16,10 +16,15 @@ services:
       - --http-addr=
       - --workspace=/workspace
       - --ready-file=/tmp/mecated-ready.json
+    # List form, no `:-` default: an unset var is genuinely OMITTED from the
+    # container's environment. `KEY: ${VAR:-}` (map form) instead sets an EMPTY
+    # STRING when unset — which mecated still treats as "this provider is
+    # configured" and tries it (failing with a real 401), rather than skipping
+    # it and falling through to whichever provider actually has a real key.
     environment:
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      - ANTHROPIC_API_KEY
+      - OPENAI_API_KEY
+      - OPENROUTER_API_KEY
     volumes:
       - mecatl-workspace:/workspace
     healthcheck:
