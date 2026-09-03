@@ -538,15 +538,18 @@ func TestADR_0293_DrainStopsAdmissionBeforeOwnershipChange(t *testing.T) {
 func TestADR_0293_DrainPreservesAwaitingResumePointThroughGRPCRelay(t *testing.T) {
 	lease := &fakeLease{}
 	store := memstore.New()
+	capability := server.NewSessionMutationCapability(true)
 	cat := tool.NewCatalog()
 	cat.MustRegister(&writeAskTool{})
 	eng := agent.NewEngine(agent.Deps{
 		LLM:     mockllm.New(mockllm.ToolCallTurn(session.NewToolCall("relay-call", "Write", json.RawMessage(`{}`)))),
 		Catalog: cat, Policy: permpolicy.NewPolicy(nil, permstore.New()), Model: "test-model",
+		Store: capability.GuardStore(store),
 	})
 	svc, err := server.NewService(server.Config{
 		Engine: eng, Store: store, SessionLease: lease, LeaseOwner: "relay-drain",
-		LeaseTTL: time.Hour, LeaseRenewInterval: time.Hour,
+		MutationCapability: capability,
+		LeaseTTL:           time.Hour, LeaseRenewInterval: time.Hour,
 		PlacementProvider: testPlacementProvider{root: "/ws"},
 		PlacementScope:    "test",
 		SharedEngineRoot:  "/ws",

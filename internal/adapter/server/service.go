@@ -2764,8 +2764,13 @@ func (s *Service) GracefulDrain(ctx context.Context) error {
 	for _, id := range leaseOnly {
 		s.releaseLease(id)
 	}
-	for _, st := range runs {
+	for id, st := range runs {
 		if st.run != nil {
+			// The already-persisted awaiting snapshot is the handoff point. Deny
+			// the engine's terminal cancellation save before cancelling it.
+			if st.preserveDurable.Load() {
+				s.cfg.MutationCapability.Invalidate(id)
+			}
 			st.run.Cancel()
 		} else if st.admissionCancel != nil {
 			st.admissionCancel()

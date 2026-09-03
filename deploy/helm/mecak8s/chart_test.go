@@ -626,11 +626,14 @@ func TestMecak8sValuesSchemaIndependentlyEnforcesProviderSecurity(t *testing.T) 
 }
 
 func TestMecak8sHelmHelperMatchesProviderSecuritySchema(t *testing.T) {
-	help, err := helm(t, "template", "--help")
-	if err != nil || !strings.Contains(help, "--skip-schema-validation") {
-		t.Fatalf("Helm must support --skip-schema-validation for helper-independence coverage: %v", err)
+	chart := t.TempDir()
+	if err := os.CopyFS(chart, os.DirFS(".")); err != nil {
+		t.Fatalf("copy chart without schema: %v", err)
 	}
-	base := []string{"template", "production", ".", "--skip-schema-validation", "--set", "image.tag=v0.0.0", "--set", "redis.endpoint=redis.example.internal:6380", "--set", "redis.credentialsSecret=redis-credentials"}
+	if err := os.Remove(filepath.Join(chart, "values.schema.json")); err != nil {
+		t.Fatalf("remove chart schema: %v", err)
+	}
+	base := []string{"template", "production", chart, "--set", "image.tag=v0.0.0", "--set", "redis.endpoint=redis.example.internal:6380", "--set", "redis.credentialsSecret=redis-credentials"}
 	for _, tc := range providerSecurityCases() {
 		t.Run(tc.name(), func(t *testing.T) {
 			args := append([]string{}, base...)

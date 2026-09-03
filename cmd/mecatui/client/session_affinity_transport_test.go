@@ -256,7 +256,13 @@ func TestSessionAffinityAndHandoff_Scenario7_ClientTransportProviderBytes(t *tes
 			id := createModeledSession(t, fixture.official)
 			before := len(fixture.provider.captured())
 			err := rejectedRawPrompt(tc.ctx(id), t, fixture.raw, id)
-			if status.Code(err) != codes.InvalidArgument {
+			if err == nil {
+				t.Fatal("illegal affinity was accepted")
+			}
+			// gRPC may reject leading whitespace while encoding metadata, before the
+			// server can return its ordinary InvalidArgument response. The other
+			// cases prove server-side validation; this one only requires rejection.
+			if tc.name != "illegal" && status.Code(err) != codes.InvalidArgument {
 				t.Fatalf("status = %v (%v), want InvalidArgument", status.Code(err), err)
 			}
 			if after := len(fixture.provider.captured()); after != before {
