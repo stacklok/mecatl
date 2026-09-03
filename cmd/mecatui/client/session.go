@@ -130,6 +130,8 @@ type ResolvedModelMsg struct {
 	// Title is the session's stored title from the snapshot (self-heal channel for
 	// the window title). See the struct doc.
 	Title string
+	// TitleMetadata carries title lifecycle state for authoritative title reconciliation.
+	TitleMetadata SessionTitleMsg
 	// Capabilities is the server's feature-advertisement snapshot. See the struct doc.
 	Capabilities Capabilities
 	Err          error
@@ -185,7 +187,7 @@ func RefreshResolvedModelCmd(ctx context.Context, g SessionGetter, id string) te
 		return ResolvedModelMsg{
 			SessionID: id, Resolved: snap.ResolvedModel, Mode: snap.Mode,
 			State: snap.State, Workspace: snap.Workspace, CreatedAt: snap.CreatedAt,
-			Title: snap.Title, Capabilities: snap.Capabilities, Err: err,
+			Title: snap.Title, TitleMetadata: snap.TitleMetadata, Capabilities: snap.Capabilities, Err: err,
 		}
 	}
 }
