@@ -32,6 +32,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -42,13 +43,14 @@ import (
 
 // Cluster + manifest constants (ADR 0048 §4h, deploy/helm/mecak8s/).
 const (
-	kindClusterName  = "mecatl-e2e"
-	kindNodeImage    = "kindest/node:v1.35.8@sha256:07b2536e30b803ed61d1677a79df6115f798ce64c80f9e22f6ed45afd09323c0"
-	k8sNamespace     = "mecatl"
-	agentComponent   = "agent" // app.kubernetes.io/component label value
-	agentGRPCPort    = 8080    // the gRPC listener (--grpc-addr default in the pod)
-	agentPodPort     = 8081    // the HTTP/SSE listener (--http-addr default in the pod)
-	agentServiceName = "mecak8s-agent"
+	kindClusterName    = "mecatl-e2e"
+	kindNodeImage      = "kindest/node:v1.35.8@sha256:07b2536e30b803ed61d1677a79df6115f798ce64c80f9e22f6ed45afd09323c0"
+	k8sNamespace       = "mecatl"
+	agentComponent     = "agent" // app.kubernetes.io/component label value
+	agentContainerName = "agent" // deployment.yaml application container
+	agentGRPCPort      = 8080    // the gRPC listener (--grpc-addr default in the pod)
+	agentPodPort       = 8081    // the HTTP/SSE listener (--http-addr default in the pod)
+	agentServiceName   = "mecak8s-agent"
 
 	// liveProviderSecret is the k8s Secret holding OPENROUTER_API_KEY for the live
 	// specs. The key is staged from the test process's environment into a Secret —
@@ -382,16 +384,87 @@ func agentServicePorts() []servicePort {
 
 // kubectlDeletePod deletes a pod. Graceful (the default) lets the preStop /drain
 // hook + SIGTERM fire, so the pod's Service.Close releases its held leases
-// before the TTL. force=true passes --force --grace-period=0, which skips the
-// graceful shutdown — NO releaseLease, so the k8s Lease object remains until its
-// TTL lapses. The contrast is the failover control case.
+// before the TTL. force=true first stops the application container directly
+// through the kind node's CRI with a zero timeout, then force-removes the Pod
+// object. Kubernetes force deletion alone only removes the API object immediately;
+// it does not guarantee the process dies before handling SIGTERM. Stopping the CRI
+// container first bypasses kubelet's preStop/SIGTERM path and makes the
+// no-shutdown/no-release control deterministic, so the k8s Lease remains until
+// its TTL lapses.
 func kubectlDeletePod(podName string, force bool) {
 	ginkgo.GinkgoHelper()
 	args := []string{"delete", "pod", podName, "-n", k8sNamespace}
 	if force {
+		err := hardStopPodContainerWith(containerRuntime(), podName, runCmdQuiet, func(name string, args ...string) {
+			runCmd(ginkgoSuiteCtx(), name, args...)
+		})
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), "hard-stop pod container before force deletion")
 		args = append(args, "--force", "--grace-period=0")
 	}
 	runCmd(ginkgoSuiteCtx(), "kubectl", args...)
+}
+
+type podRuntimeTarget struct {
+	Spec struct {
+		NodeName   string `json:"nodeName"`
+		Containers []struct {
+			Name string `json:"name"`
+		} `json:"containers"`
+	} `json:"spec"`
+	Status struct {
+		ContainerStatuses []struct {
+			Name        string `json:"name"`
+			ContainerID string `json:"containerID"`
+		} `json:"containerStatuses"`
+	} `json:"status"`
+}
+
+func hardStopPodContainerWith(runtimeName, podName string, quiet func(string, ...string) string, run func(string, ...string)) error {
+	var pod podRuntimeTarget
+	podJSON := quiet("kubectl", "get", "pod", podName, "-n", k8sNamespace, "-o", "json")
+	if err := json.Unmarshal([]byte(podJSON), &pod); err != nil {
+		return fmt.Errorf("decode pod runtime target: %w", err)
+	}
+	if pod.Spec.NodeName == "" {
+		return fmt.Errorf("resolve pod runtime target: pod has no node")
+	}
+
+	isApplicationContainer := false
+	for _, container := range pod.Spec.Containers {
+		if container.Name == agentContainerName {
+			isApplicationContainer = true
+			break
+		}
+	}
+	if !isApplicationContainer {
+		return fmt.Errorf("resolve pod runtime target: application container %q not found", agentContainerName)
+	}
+
+	var runtimeID string
+	for _, status := range pod.Status.ContainerStatuses {
+		if status.Name != agentContainerName {
+			continue
+		}
+		var ok bool
+		runtimeID, ok = strings.CutPrefix(status.ContainerID, "containerd://")
+		if !ok || runtimeID == "" {
+			return fmt.Errorf("resolve pod container id: got %q", status.ContainerID)
+		}
+		break
+	}
+	if runtimeID == "" {
+		return fmt.Errorf("resolve pod runtime target: application container %q has no status", agentContainerName)
+	}
+
+	nodes := strings.Fields(quiet("kind", "get", "nodes", "--name", kindClusterName))
+	if !slices.Contains(nodes, pod.Spec.NodeName) {
+		return fmt.Errorf("resolve pod runtime target: node %q is not in kind cluster %q", pod.Spec.NodeName, kindClusterName)
+	}
+
+	// Address the CRI container by its immutable runtime ID rather than looking up
+	// and signalling a host PID, which could be reused between inspection and kill.
+	run(runtimeName, "exec", pod.Spec.NodeName, "crictl", "stop", "--timeout", "0", runtimeID)
+	return nil
 }
 
 // waitReplacementReady waits for a NEW Ready agent pod — one whose name is NOT in
