@@ -13,7 +13,8 @@ type AuthReason string
 
 const (
 	// AuthNeverEnrolled means the saved-login registry has no entry for the
-	// requested target, so connecting anonymously cannot succeed.
+	// requested remote target. Remote credential-free dialing must be explicitly
+	// selected with --anonymous; implicit anonymous fallback is local-only.
 	AuthNeverEnrolled AuthReason = "never_enrolled"
 	// AuthNotEnrolled means no saved credential was supplied for a known target.
 	AuthNotEnrolled AuthReason = "not_enrolled"

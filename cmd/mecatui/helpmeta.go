@@ -60,11 +60,11 @@ const (
 // mode and vice versa.
 var flagApplicabilityByFlag = map[string]flagApplicability{
 	// ── Transport (remote-only) ───────────────────────────────────────────
-	"auth-token":    {group: groupTransport, common: true, local: false, connect: true},
-	"tls":           {group: groupTransport, common: true, local: false, connect: true},
-	"tls-ca":        {group: groupTransport, common: false, local: false, connect: true},
-	"insecure":      {group: groupTransport, common: false, local: false, connect: true},
-	"no-saved-auth": {group: groupTransport, common: false, local: false, connect: true},
+	"auth-token": {group: groupTransport, common: true, local: false, connect: true},
+	"anonymous":  {group: groupTransport, common: true, local: false, connect: true},
+	"tls":        {group: groupTransport, common: true, local: false, connect: true},
+	"tls-ca":     {group: groupTransport, common: false, local: false, connect: true},
+	"insecure":   {group: groupTransport, common: false, local: false, connect: true},
 
 	// ── Session (shared) ──────────────────────────────────────────────────
 	"workspace":     {group: groupSession, common: true, local: true, connect: true},

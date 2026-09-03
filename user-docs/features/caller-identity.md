@@ -17,7 +17,11 @@ Caller identity is an opt-in server feature for `mecated` and `mecak8s`. It
 protects both wire surfaces with the same validator and ownership rules. `mecatui`
 can either send an operator-supplied static bearer with `--auth-token`, or enroll a
 remote target with `mecatui login` and obtain, validate, and refresh its own OIDC
-credential. Remote targets use verified TLS automatically; a static bearer is never
+credential. With no explicit credential, an existing saved enrollment is preserved; an
+unenrolled local target connects credential-free. Use connect-only `--anonymous` to
+intentionally bypass saved credentials. It conflicts with a static token, has no environment
+equivalent, and is required for an unenrolled remote target. Remote targets use verified
+TLS automatically; a static bearer is never
 sent over explicit non-loopback plaintext, and saved OIDC authentication always
 requires verified TLS. Those are distinct client modes; the server still only validates the
 bearer presented on each request.
@@ -134,6 +138,24 @@ For non-loopback connections, mecatui refuses to send a bearer over cleartext. U
 (and `connect --tls-ca` for a private server CA). A gRPC dial can succeed before the first request
 is authenticated; verify that an unauthenticated first request fails before
 producing a model response.
+
+### Credential-free private-network connection
+
+`--anonymous` means “send no bearer”; it is not a login mode and creates no saved state.
+For remote use, verified TLS remains the default. If a Tailscale deployment deliberately
+uses the tailnet as shared authority and transport, make both decisions explicit:
+
+```console
+mecatui connect ozzllama:9080 --anonymous --tls=false
+```
+
+Bind `mecated` to one concrete Tailscale address rather than a wildcard, do not enable
+Funnel, and make tailnet ACLs the load-bearing reachability boundary. Use a dedicated
+server workspace, run with the least OS authority that can access it, and configure a
+restrictive rate limit. The server's non-loopback no-caller-authentication warning is
+expected: ordinary TLS does not authenticate callers. Never infer this posture from a
+private IP, hostname, or Tailscale-like name. A non-loopback client's current directory
+is not the workspace; the server selects and governs its workspace.
 
 For a non-loopback target, the server's listener policy selects the workspace or no-FS
 profile: mecatui sends no local cwd and rejects `--workspace`. A loopback connection may

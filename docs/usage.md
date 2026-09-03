@@ -93,6 +93,29 @@ and `--insecure`, whose unverified TLS hides an MITM rather than a listener. A s
 connection always verifies the gRPC server TLS, and its issuer CA is never used
 as server trust; `connect --tls-ca` is the sole custom server-CA input.
 
+Authentication resolution is: explicit static token, explicit `--anonymous`, saved OIDC
+enrollment, then a credential-free attempt for any clean missing enrollment. A static token
+wins even when `--anonymous` is present; otherwise `--anonymous` bypasses saved credentials
+and has no environment equivalent. Only an actual `Unauthenticated` RPC offers OIDC/token
+recovery; corrupt or unreadable registry, keyring, or credential state fails closed. Login
+is persistent OIDC enrollment, not anonymous login.
+
+### Tailscale shared-authority deployment
+
+A credential-free Tailscale deployment makes tailnet ACLs the shared authority boundary; TLS
+is not caller authentication. Bind `mecated` to one concrete Tailscale address, never a
+wildcard or Funnel, use a dedicated low-privilege server workspace, and configure a
+restrictive rate limit. Use `--posture strict` (or `trusted` only for trusted project inputs):
+`auto` and `yolo` weaken the remaining approval boundary.
+
+```sh
+mecatui connect ozzllama:9080 --tls=false
+```
+
+Remote credential-free connections retain verified TLS by default; the separate plaintext
+flag explicitly relies on Tailscale transport. Do not infer anonymous safety from an address
+or hostname. For non-loopback connections the server owns the workspace.
+
 ## Server-owned session placement
 
 Clients never send a filesystem path, cwd, exact environment reference, or general

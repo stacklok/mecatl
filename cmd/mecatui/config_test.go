@@ -885,6 +885,31 @@ func TestParseFlagsAuthEnv(t *testing.T) {
 	}
 }
 
+func TestConnectAnonymousFlagAndTokenConflicts(t *testing.T) {
+	t.Setenv("MECATL_AUTH_TOKEN", "")
+	_, cfg, err := parseTransportFlags(modeConnect, &bytes.Buffer{}, []string{"--anonymous"})
+	if err != nil || !cfg.anonymous {
+		t.Fatalf("parse --anonymous = (%+v, %v), want anonymous config", cfg, err)
+	}
+
+	for _, tc := range []struct {
+		name string
+		args []string
+		env  string
+	}{
+		{name: "flag token", args: []string{"--anonymous", "--auth-token", "token"}},
+		{name: "environment token", args: []string{"--anonymous"}, env: "token"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("MECATL_AUTH_TOKEN", tc.env)
+			_, _, parseErr := parseTransportFlags(modeConnect, &bytes.Buffer{}, tc.args)
+			if parseErr == nil || !strings.Contains(parseErr.Error(), "--anonymous conflicts") {
+				t.Fatalf("parse error = %v, want anonymous/token conflict", parseErr)
+			}
+		})
+	}
+}
+
 // TestValidateMode rejects unknown modes and accepts the three valid ones. The
 // configs set mock so the embedded-provider check (validated last) passes and the
 // test stays focused on mode handling.

@@ -629,7 +629,12 @@ saved policy and an explicit CA reference, never CA contents, are used for later
 and logout. The login `--tls-ca` path is distinct from the
 optional server CA supplied to `connect`. It validates discovery, PKCE, and
 the resulting token before saving. `mecatui connect ADDRESS` never opens a browser or
-guesses missing settings. A saved credential forces verified TLS for the gRPC server,
+guesses missing settings. Credential selection is explicit-token first, then explicit
+`--anonymous`, then a saved enrollment. If no registry file or target enrollment exists,
+a local target (loopback, localhost, IPv6 loopback, or UNIX socket) dials without a
+credential; an unenrolled remote target keeps the login-required failure. Explicit
+anonymous bypasses the registry, including for remote targets, while corrupt or unreadable
+registry state never silently degrades ([ADR 0290](adr/0290-mecatui-anonymous-connect.md)). A saved credential forces verified TLS for the gRPC server,
 even on loopback; its saved issuer CA remains issuer-only, while `connect --tls-ca`
 is the only custom server-CA input. An enrolled target uses a root-scoped OS-keyring key and a
 keyring-wrapped encrypted credential store; under the root lock, the legacy unsuffixed

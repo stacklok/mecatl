@@ -807,15 +807,17 @@ func (r *Registry) readRows() ([]registryRow, error) {
 	return rows, nil
 }
 
-// FindTarget returns the saved connection for target.
+// FindTarget returns the saved connection for target. Registry read failures take
+// precedence; a target outside the enrollment grammar cannot name a saved row and
+// returns credentialstore.ErrNotFound after a clean read.
 func (r *Registry) FindTarget(target string) (Connection, error) {
-	id, err := (Identity{Target: target, Issuer: "https://invalid.example", ClientID: "x", Audience: "x", RedirectURI: "http://127.0.0.1/", Scopes: []string{"x"}}).Canonical()
-	if err != nil {
-		return Connection{}, err
-	}
 	all, err := r.List()
 	if err != nil {
 		return Connection{}, err
+	}
+	id, err := (Identity{Target: target, Issuer: "https://invalid.example", ClientID: "x", Audience: "x", RedirectURI: "http://127.0.0.1/", Scopes: []string{"x"}}).Canonical()
+	if err != nil {
+		return Connection{}, credentialstore.ErrNotFound
 	}
 	var found []Connection
 	for _, conn := range all {

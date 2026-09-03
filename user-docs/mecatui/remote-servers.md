@@ -31,7 +31,10 @@ client relists and keeps the current session if relist/switch fails.
 
 ## Connect securely
 
-A loopback server can use its local single-user trust model. If the server requires a bearer token, pass the token supplied by its operator:
+A loopback server can use its local single-user trust model. With no explicit credential,
+mecatui preserves an existing saved enrollment; if the local target has never been enrolled,
+it connects credential-free without creating login state. If the server requires a bearer
+token, pass the token supplied by its operator:
 
 ```sh
 export MECATL_AUTH_TOKEN="$(cat ~/.mecatl/token)"
@@ -55,6 +58,26 @@ bin/mecatui connect mecated.example.internal:443 \
 
 Authentication proves the caller's credential; TLS protects the connection and verifies the server. They are separate settings. Do not use `--insecure` except for controlled testing.
 
+Use connect-only `--anonymous` when you intentionally want no bearer. It bypasses saved
+credentials, has no environment equivalent, and conflicts with `--auth-token` and
+`MECATL_AUTH_TOKEN`. Remote anonymous is never inferred from a private address or hostname:
+it must be explicit and still defaults to verified TLS. Plaintext additionally requires
+`--tls=false`.
+
+For example, a Tailscale deployment may deliberately make tailnet membership and ACLs the
+shared authority and transport boundary:
+
+```sh
+mecatui connect ozzllama:9080 --anonymous --tls=false
+```
+
+Bind the server to one concrete Tailscale address, never a wildcard, and do not enable
+Funnel. Treat ACLs as load-bearing, use a dedicated server workspace with least OS
+authority, and configure a restrictive rate limit. The server's prominent non-loopback
+no-caller-authentication warning is expected; ordinary TLS would not suppress it because
+TLS is not caller authentication. A non-loopback client does not select or upload its
+local workspace—the server remains the workspace authority.
+
 Caller identity is attribution, not tenant isolation: authenticated callers can still list and act on other callers' sessions. Do not treat a token-authenticated shared server as a tenancy boundary.
 
 ## Remote OIDC login
@@ -70,7 +93,8 @@ bin/mecatui connect mecated.example.internal:443 \
   --tls --tls-ca /path/to/server-ca.pem
 ```
 
-`mecatui login ADDRESS` runs the public OIDC Authorization Code + PKCE flow. It
+`mecatui login ADDRESS` runs the public OIDC Authorization Code + PKCE flow; it is
+persistent enrollment, never an anonymous-login command. It
 requires `--issuer`, `--client-id`, and `--audience`. It defaults to a public issuer
 verified against the system roots; the example above is a PRIVATE issuer, so it passes
 `--private-issuer`, which requires `--tls-ca`. The login `--tls-ca` verifies the issuer's discovery,
@@ -84,9 +108,13 @@ canonical-root-scoped, keyring-wrapped encrypted store. The credential is bound 
 canonical target and OIDC identity. An old unsuffixed keyring key is copied without
 deletion only when that root already contains an actual encrypted credential record; an
 empty opened namespace does not trigger migration. A credential enrolled under a legacy zero-padded port spelling
-needs one login after upgrade. `mecatui connect ADDRESS` never opens a browser; an
-unenrolled target is rejected before it dials and tells you to run `mecatui login
-ADDRESS` first.
+needs one login after upgrade. `mecatui connect ADDRESS` never opens a browser. Credential
+selection is explicit token, explicit `--anonymous`, saved enrollment, then local-only
+anonymous for a clean missing enrollment. Without explicit `--anonymous`, an unenrolled
+remote target is rejected before dial and tells you to run `mecatui login ADDRESS` first.
+With explicit `--anonymous`, mecatui performs a credential-free dial without pre-dial login
+guidance; recovery is offered only if the server actually responds `Unauthenticated`.
+Corrupt or unreadable registry state never falls back anonymously.
 Add `--no-browser` to print the authorization URL for you to open yourself, which is
 what you want over SSH or on a headless host. Remote login listens at the registered
 `http://127.0.0.1:18473/oauth/callback`. Open the printed URL in a browser on your

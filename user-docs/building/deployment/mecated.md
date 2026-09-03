@@ -456,20 +456,22 @@ mecatl exposes command and file execution. The security model has three layers:
 1. **Network binding.** Both listeners default to `127.0.0.1` — the loopback
    interface. No traffic crosses the machine.
 2. **Authentication.** Off by default for the loopback case. Enable a bearer token
-   (`--auth-token` / `MECATL_AUTH_TOKEN`) before binding a non-loopback address.
+   (`--auth-token` / `MECATL_AUTH_TOKEN`), OIDC, or mTLS before binding a non-loopback
+   address unless a deliberately controlled private network is the shared authority.
    [Caller identity](#caller-identity-oidc) is a separate, additive axis: a shared
    token is one credential with no subject behind it, while `--oidc-issuer` gives
    each caller a distinct identity. Identity records **who** acted; it does not
    yet decide **what** they may act on.
 3. **Transport.** Plaintext by default. Add `--tls-cert` + `--tls-key` for TLS;
-   add `--client-ca` to require and verify client certificates (mTLS).
+   add `--client-ca` to require and verify client certificates (mTLS). Ordinary TLS
+   encrypts traffic and authenticates the server, but does not authenticate callers.
 
 A non-loopback bind with no auth is **permitted** (a service mesh may legitimately
 front mecatl) but generates a prominent startup warning:
 
 ```
-WARN  API bound to a NON-loopback address with NO authentication: it exposes
-      UNAUTHENTICATED command/file execution to the network
+WARN  API bound to a NON-loopback address with NO caller authentication: it exposes
+      UNAUTHENTICATED command/file execution to every network caller
 ```
 
 This is not a hard failure — if you see it intentionally, your mesh owns the auth

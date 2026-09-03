@@ -664,7 +664,7 @@ func flagValueForTest(name string) string {
 	switch name {
 	case "mock", "no-bash", "trust-project", "yolo", "no-memory", "no-store",
 		"no-soul", "approve-soul", "soul-strict", "no-user-model", "user-model-review",
-		"no-commands", "no-skills", "perf", "perf-mcp", "tls", "insecure",
+		"no-commands", "no-skills", "perf", "perf-mcp", "tls", "insecure", "anonymous",
 		"no-alt-screen", "inline", "no-mouse", "no-banner", "list-themes",
 		"subagent-model-router", "help-all", "quiet", "no-prompt-cache":
 		return "" // bool: no value consumed
@@ -745,6 +745,13 @@ func TestAskReviewerFlagsAreUnknownFlagErrors(t *testing.T) {
 				t.Errorf("removed flag --%s should surface as a stdlib unknown-flag error, got: %v", name, err)
 			}
 		})
+	}
+}
+
+func TestNoSavedAuthFlagIsUnknownFlagError(t *testing.T) {
+	_, _, err := parseTransportFlagsTest(t, modeConnect, []string{"--no-saved-auth"})
+	if err == nil || !strings.Contains(err.Error(), "not defined") {
+		t.Fatalf("removed --no-saved-auth error = %v, want unknown flag", err)
 	}
 }
 
@@ -940,8 +947,10 @@ func TestConnectHelpRealRendererShowsCommonFlags(t *testing.T) {
 	}
 	// Remote flags appear in connect common help (--server is NOT applicable in
 	// connect — connect takes ADDRESS — so it must NOT appear; --auth-token IS).
-	if !hasFlagHeader(out, "auth-token") {
-		t.Errorf("connect help missing remote --auth-token flag header:\n%s", out)
+	for _, name := range []string{"auth-token", "anonymous"} {
+		if !hasFlagHeader(out, name) {
+			t.Errorf("connect help missing remote --%s flag header:\n%s", name, out)
+		}
 	}
 	if hasFlagHeader(out, "mock") {
 		t.Errorf("connect help leaked embedded-only --mock as a flag header:\n%s", out)

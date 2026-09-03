@@ -803,7 +803,7 @@ func resolveTransport(ctx context.Context, cfg config) (target string, dial clie
 	// NEVER probes loopback.
 	if cfg.transportMode == modeConnect {
 		dial := client.DialConfig{Server: cfg.connectAddress, AuthToken: cfg.authToken, UseTLS: cfg.useTLS, TLSCAFile: cfg.tlsCA, Insecure: cfg.insecure, RemotePlaintextAllowed: cfg.tlsExplicit && !cfg.useTLS}
-		if cfg.authToken == "" && !cfg.noSavedAuth {
+		if cfg.authToken == "" && !cfg.anonymous {
 			root := filepath.Join(xdg.ConfigHome, "mecatl")
 			registry, regErr := clientauth.OpenExistingRegistry(root)
 			if regErr != nil {
@@ -871,6 +871,9 @@ func resolveTransport(ctx context.Context, cfg config) (target string, dial clie
 				return target, dial, func() { _ = source.Close(); _ = store.Close() }, nil
 			}
 			if errors.Is(findErr, credentialstore.ErrNotFound) {
+				if client.IsLocalTarget(cfg.connectAddress) {
+					return cfg.connectAddress, dial, noop, nil
+				}
 				return cfg.connectAddress, client.DialConfig{}, noop, &client.AuthError{Reason: client.AuthNeverEnrolled}
 			}
 			return target, client.DialConfig{}, noop, &client.AuthError{Reason: client.AuthStorageUnavailable}

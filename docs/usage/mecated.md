@@ -1097,21 +1097,23 @@ the rejected model, never a silent downgrade; the state file is not rewritten.
 ### The loopback / unauthenticated trust note
 
 On startup `mecated` logs the trust posture for each listen address (the
-`authenticated` field reflects whether a bearer token and/or TLS is configured):
+`caller_authenticated` field reflects only a static bearer, OIDC, or verified mTLS
+client certificate; ordinary server TLS encrypts transport but does not authenticate the
+caller):
 
 ```
-level=INFO msg="API bound to loopback (single-user localhost trust model)" flag=grpc-addr addr=127.0.0.1:8080 authenticated=false
-level=INFO msg="API bound to loopback (single-user localhost trust model)" flag=http-addr addr=127.0.0.1:8081 authenticated=false
+level=INFO msg="API bound to loopback (single-user localhost trust model)" flag=grpc-addr addr=127.0.0.1:8080 caller_authenticated=false
+level=INFO msg="API bound to loopback (single-user localhost trust model)" flag=http-addr addr=127.0.0.1:8081 caller_authenticated=false
 ```
 
-A **non-loopback** address bound **with** authentication (`--auth-token` and/or
-TLS) logs at INFO (`API bound to a non-loopback address WITH authentication
-(bearer token and/or TLS)`). Binding one with **no** authentication gets a
-prominent warning instead — it never hard-fails, since an operator may
-legitimately front the server with a service mesh:
+A **non-loopback** address bound **with caller authentication** (`--auth-token`,
+OIDC, or mTLS) logs at INFO. Binding one without caller authentication gets a
+prominent warning even when ordinary TLS is enabled — TLS authenticates the server, not
+the caller. It never hard-fails, since an operator may deliberately make a private network
+or service mesh the shared authority boundary:
 
 ```
-level=WARN msg="API bound to a NON-loopback address with NO authentication: it exposes UNAUTHENTICATED command/file execution to the network — set --auth-token / --tls-cert (or front it with a trusted mesh) before doing this" flag=http-addr addr=0.0.0.0:8081
+level=WARN msg="API bound to a NON-loopback address with NO caller authentication: it exposes UNAUTHENTICATED command/file execution to every network caller — configure --auth-token, OIDC, or --client-ca, or deliberately enforce shared authority at a trusted private-network/mesh boundary; TLS alone is not caller authentication" flag=http-addr addr=0.0.0.0:8081
 ```
 
 ### The skills directory trust note

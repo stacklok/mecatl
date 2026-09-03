@@ -1979,10 +1979,10 @@ func serve(ctx context.Context, cfg config, svc *server.Service, reg *prometheus
 
 	metricsSrv, adminPaths := buildAdminServer(cfg, reg, recorder, slowTurns)
 
-	// Caller identity counts as authentication: an OIDC deployment may carry no
-	// static token at all, and warning "NO authentication" there would be false.
-	authed := auth != nil && (cfg.authToken != "" || cfg.oidc.Enabled() || tlsCfg != nil)
-	logListenerPosture(cfg, authed)
+	// TLS encrypts the transport and authenticates the server; it does not
+	// authenticate callers unless mutual TLS requires a verified client cert.
+	callerAuthenticated := callerAuthenticationConfigured(cfg, tlsCfg)
+	logListenerPosture(cfg, callerAuthenticated)
 
 	// Every listener is bound BEFORE anything serves, so the ready file (written
 	// below) can honestly mean "reachable" — a bind failure is still a startup
@@ -2207,18 +2207,18 @@ func buildAdminServer(cfg config, reg *prometheus.Registry, recorder *telemetry.
 // and neither case is either. Calling it with an empty address would emit the
 // prominent unauthenticated-network WARNING for a listener that does not exist —
 // the kind of false alarm that teaches operators to ignore the real one.
-func logListenerPosture(cfg config, authed bool) {
+func logListenerPosture(cfg config, callerAuthenticated bool) {
 	if cfg.grpcUnixSocket != "" {
 		slog.Info("gRPC bound to a UNIX-domain socket (no TCP port); reachability is filesystem permission on the socket path",
-			"flag", "grpc-unix-socket", "socket", cfg.grpcUnixSocket, "authenticated", authed)
+			"flag", "grpc-unix-socket", "socket", cfg.grpcUnixSocket, "caller_authenticated", callerAuthenticated)
 	} else {
-		warnIfNonLoopback("grpc-addr", cfg.grpcAddr, authed)
+		warnIfNonLoopback("grpc-addr", cfg.grpcAddr, callerAuthenticated)
 	}
 	if cfg.httpAddr == "" {
 		slog.Info("HTTP/SSE listener not configured (--http-addr empty); no HTTP surface is exposed", "flag", "http-addr")
 		return
 	}
-	warnIfNonLoopback("http-addr", cfg.httpAddr, authed)
+	warnIfNonLoopback("http-addr", cfg.httpAddr, callerAuthenticated)
 }
 
 // publishReadyFile writes the readiness document when --ready-file is set
@@ -2299,24 +2299,29 @@ func buildEdge(ctx context.Context, cfg config) (*tls.Config, *server.Authentica
 	}), corsPolicy, nil
 }
 
+func callerAuthenticationConfigured(cfg config, tlsCfg *tls.Config) bool {
+	return cfg.authToken != "" || cfg.oidc.Enabled() || (tlsCfg != nil && tlsCfg.ClientAuth == tls.RequireAndVerifyClientCert)
+}
+
 // warnIfNonLoopback logs the API trust assumption for the given bind address.
-// Loopback binds are logged at info. A non-loopback bind WITH authentication
-// (bearer token and/or TLS, indicated by authed) is logged at info; a
-// non-loopback bind with NO authentication is logged as a prominent WARNING,
-// since it exposes command/file execution to the network. It never hard-fails:
-// an operator may legitimately front the server with a service mesh.
-func warnIfNonLoopback(flagName, addr string, authed bool) {
+// Loopback binds are logged at info. A non-loopback bind WITH caller
+// authentication (bearer, OIDC, or mTLS) is logged at info; a non-loopback bind
+// without it is logged as a prominent WARNING, since TLS alone does not identify
+// callers and the endpoint exposes command/file execution to anyone who can reach
+// it. It never hard-fails: an operator may deliberately make a private network or
+// service mesh the shared authority boundary.
+func warnIfNonLoopback(flagName, addr string, callerAuthenticated bool) {
 	if cliconfig.IsLoopbackAddr(addr) {
 		slog.Info("API bound to loopback (single-user localhost trust model)",
-			"flag", flagName, "addr", addr, "authenticated", authed)
+			"flag", flagName, "addr", addr, "caller_authenticated", callerAuthenticated)
 		return
 	}
-	if authed {
-		slog.Info("API bound to a non-loopback address WITH authentication (bearer token and/or TLS)",
+	if callerAuthenticated {
+		slog.Info("API bound to a non-loopback address WITH caller authentication (bearer, OIDC, or mTLS)",
 			"flag", flagName, "addr", addr)
 		return
 	}
-	slog.Warn("API bound to a NON-loopback address with NO authentication: it exposes UNAUTHENTICATED command/file execution to the network — set --auth-token / --tls-cert (or front it with a trusted mesh) before doing this",
+	slog.Warn("API bound to a NON-loopback address with NO caller authentication: it exposes UNAUTHENTICATED command/file execution to every network caller — configure --auth-token, OIDC, or --client-ca, or deliberately enforce shared authority at a trusted private-network/mesh boundary; TLS alone is not caller authentication",
 		"flag", flagName, "addr", addr)
 }
 

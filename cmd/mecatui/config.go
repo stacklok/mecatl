@@ -48,11 +48,11 @@ type config struct {
 	theme             string
 	themeDir          string
 	authToken         string
+	anonymous         bool
 	useTLS            bool
 	tlsExplicit       bool
 	tlsCA             string
 	insecure          bool
-	noSavedAuth       bool
 	listThemes        bool
 
 	// noAltScreen renders mecatui INLINE in the terminal's normal buffer instead
@@ -369,10 +369,10 @@ func parseTransportFlags(mode transportMode, out io.Writer, args []string, brows
 	fs.StringVar(&cfg.theme, "theme", "", "theme name (default: aztec)")
 	fs.StringVar(&cfg.themeDir, "theme-dir", "", "extra directory of *.json themes to load")
 	fs.StringVar(&cfg.authToken, "auth-token", "", "bearer token for an external server (or MECATL_AUTH_TOKEN)")
+	fs.BoolVar(&cfg.anonymous, "anonymous", false, "connect without bearer or saved OIDC credentials (required for credential-free remote connections)")
 	fs.BoolVar(&cfg.useTLS, "tls", false, "use verified TLS for an external server (default for non-loopback targets; --tls=false explicitly permits plaintext)")
 	fs.StringVar(&cfg.tlsCA, "tls-ca", "", "path to a PEM CA bundle for external-server verification")
 	fs.BoolVar(&cfg.insecure, "insecure", false, "skip TLS verification (testing only)")
-	fs.BoolVar(&cfg.noSavedAuth, "no-saved-auth", false, "ignore saved remote login credentials")
 	fs.BoolVar(&cfg.listThemes, "list-themes", false, "list available themes and exit")
 	fs.BoolVar(&cfg.noAltScreen, "no-alt-screen", false, "render inline in the terminal's normal buffer instead of the alternate screen, preserving native scrollback/search")
 	fs.BoolVar(&cfg.noAltScreen, "inline", false, "alias for --no-alt-screen: render inline in the normal buffer, preserving native scrollback/search")
@@ -533,6 +533,9 @@ func resolveRemoteTLSPolicy(cfg *config) error {
 	if cfg.transportMode != modeConnect {
 		return nil
 	}
+	if cfg.anonymous && cfg.authToken != "" {
+		return errors.New("--anonymous conflicts with --auth-token and MECATL_AUTH_TOKEN")
+	}
 	if cfg.tlsCA != "" && cfg.insecure {
 		return errors.New("--tls-ca and --insecure are mutually exclusive")
 	}
@@ -653,6 +656,9 @@ func finalizeParsedConfig(fs *flag.FlagSet, cfg *config) error {
 
 	if cfg.authToken == "" {
 		cfg.authToken = os.Getenv("MECATL_AUTH_TOKEN")
+	}
+	if cfg.anonymous && cfg.authToken != "" {
+		return errors.New("--anonymous conflicts with --auth-token and MECATL_AUTH_TOKEN")
 	}
 	if cfg.theme == "" {
 		cfg.theme = os.Getenv("MECATUI_THEME")

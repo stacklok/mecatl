@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -23,8 +24,41 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/skills"
 	"github.com/stacklok/mecatl/internal/adapter/telemetry"
 	"github.com/stacklok/mecatl/internal/app"
+	"github.com/stacklok/mecatl/internal/cliconfig"
 	"github.com/stacklok/mecatl/internal/testutil/codextest"
 )
+
+func TestLogListenerPostureClassifiesCallerAuthentication(t *testing.T) {
+	ordinaryTLS := &tls.Config{MinVersion: tls.VersionTLS12}
+	for _, tc := range []struct {
+		name     string
+		cfg      config
+		tls      *tls.Config
+		wantWarn bool
+	}{
+		{name: "TLS only warns", tls: ordinaryTLS, wantWarn: true},
+		{name: "static bearer authenticates", cfg: config{authToken: "token"}, tls: ordinaryTLS},
+		{name: "OIDC authenticates", cfg: config{oidc: cliconfig.OIDCConfig{Issuer: "https://issuer.example"}}, tls: ordinaryTLS},
+		{name: "verified mTLS authenticates", tls: &tls.Config{ClientAuth: tls.RequireAndVerifyClientCert, MinVersion: tls.VersionTLS12}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			logs := captureLogs(t)
+			tc.cfg.grpcAddr = "100.64.0.10:9080"
+			logListenerPosture(tc.cfg, callerAuthenticationConfigured(tc.cfg, tc.tls))
+			got := logs()
+			warned := strings.Contains(got, "NO caller authentication")
+			if warned != tc.wantWarn {
+				t.Fatalf("warning=%v, want %v; logs: %s", warned, tc.wantWarn, got)
+			}
+			if tc.wantWarn && !strings.Contains(got, "TLS alone is not caller authentication") {
+				t.Fatalf("TLS-only posture omitted warning rationale: %s", got)
+			}
+			if !tc.wantWarn && !strings.Contains(got, "WITH caller authentication") {
+				t.Fatalf("authenticated posture not reported: %s", got)
+			}
+		})
+	}
+}
 
 func TestOpenAICodexCommandRootReusesResolvedSnapshot(t *testing.T) {
 	for _, envName := range []string{"OPENAI_API_KEY", "OPENROUTER_API_KEY", "ANTHROPIC_API_KEY", "OPENCODE_API_KEY"} {

@@ -164,7 +164,13 @@ or fallback:
   `ADDRESS` (host:port); **never probe** loopback and **never embed** — the
   target must already be serving. Embedded-server flags (`--mock`,
   `--trust-project`, provider keys, …) are **rejected** here — only shared
-  session/UI flags and remote flags (`--auth-token`, `--tls`, …) apply.
+  session/UI flags and remote flags (`--auth-token`, `--anonymous`, `--tls`, …) apply.
+  An explicit static token wins; `--anonymous` bypasses saved OIDC credentials; otherwise
+  a saved enrollment is used. A clean missing enrollment attempts a credential-free dial
+  and lets the server decide whether caller authentication is required. Registry corruption
+  never falls back to anonymous. Remote credential-free connections retain verified TLS by
+  default; `--tls=false` remains a separate explicit plaintext choice. Login remains
+  persistent OIDC enrollment, never anonymous login.
 
   ```sh
   bin/mecated serve &                                 # server owns its configured root
