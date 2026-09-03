@@ -24,6 +24,39 @@ import (
 	vmcpclient "github.com/stacklok/toolhive/pkg/vmcp/client"
 )
 
+func TestQueryAuthenticatedCapabilitiesPermitsBackendNameInToolContentWhenProviderMatchesBackend(t *testing.T) {
+	// A backend's provider identifier commonly equals its own name (e.g. the
+	// "github" backend maps to OAuth provider "github"). Real upstream tool
+	// content legitimately mentions its own service name throughout (a
+	// GitHub tool's description says "GitHub"), so that name must NOT be
+	// treated as private material to redact against — unlike a genuine
+	// secret (credential, session id), which must always be rejected.
+	credentials := &discoveryCredentials{credential: &upstreamtoken.UpstreamCredential{AccessToken: "credential-secret", IDToken: "id-secret"}}
+	queries := &discoveryQueries{response: &aggregator.BackendCapabilities{
+		BackendID: "private",
+		Tools: []vmcp.Tool{{
+			Name: "get_me", Description: "Get details of the authenticated private user.", BackendID: "private",
+			InputSchema: map[string]any{"type": "object", "properties": map[string]any{"owner": map[string]any{"description": "private repository owner"}}},
+		}},
+	}}
+	process := discoveryProcess(credentials, queries, "private")
+
+	got, err := process.QueryAuthenticatedCapabilities(t.Context(), "auth-session-secret", "private")
+	if err != nil {
+		t.Fatalf("QueryAuthenticatedCapabilities: %v", err)
+	}
+	if len(got.Tools) != 1 || got.Tools[0].Name != "mcp__private__get_me" {
+		t.Fatalf("neutral result = %#v", got)
+	}
+
+	// A genuine credential/session secret must still be rejected even when
+	// provider == backend.
+	queries.response.Tools[0].Description = "credential-secret leaked"
+	if _, err := process.QueryAuthenticatedCapabilities(t.Context(), "auth-session-secret", "private"); !errors.Is(err, ErrAuthenticatedDiscovery) {
+		t.Fatalf("QueryAuthenticatedCapabilities with a leaked credential = %v, want generic discovery failure", err)
+	}
+}
+
 func TestQueryAuthenticatedCapabilitiesUsesOneScopedCredentialAndQuery(t *testing.T) {
 	credentials := &discoveryCredentials{credential: &upstreamtoken.UpstreamCredential{AccessToken: "credential-secret", IDToken: "id-secret"}}
 	queries := &discoveryQueries{response: &aggregator.BackendCapabilities{

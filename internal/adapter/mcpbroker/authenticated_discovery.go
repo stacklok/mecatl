@@ -85,7 +85,20 @@ func (p *Process) QueryAuthenticatedCapabilities(ctx context.Context, authSessio
 	if err != nil || capabilities == nil || capabilities.BackendID != backend || queryCtx.Err() != nil {
 		return AuthenticatedCapabilities{}, ErrAuthenticatedDiscovery
 	}
-	return neutralCapabilities(backend, capabilities, []string{provider, string(authSession), credential.AccessToken, credential.IDToken})
+	return neutralCapabilities(backend, capabilities, privateDiscoveryValues(provider, backend, authSession, credential))
+}
+
+// privateDiscoveryValues is the set of values a discovered tool's name,
+// description, or schema must never contain. provider is EXCLUDED when it
+// equals backend (the common case, e.g. "github" == "github"): scanning for
+// the bare service name would false-positive-reject a backend's own ordinary
+// tool content, which legitimately mentions its own name throughout.
+func privateDiscoveryValues(provider, backend string, authSession ToolHiveAuthSessionID, credential *upstreamtoken.UpstreamCredential) []string {
+	values := []string{string(authSession), credential.AccessToken, credential.IDToken}
+	if provider != backend {
+		values = append(values, provider)
+	}
+	return values
 }
 
 // discoveryContext admits a discovery request only while the process is live.
