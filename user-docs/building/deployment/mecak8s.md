@@ -266,6 +266,44 @@ The chart creates no agent PVC and ships no general NetworkPolicy.
 The cluster must provide network isolation because agent egress depends on operator-selected endpoints.
 The `oidc.*` values add a narrow raw-driver NetworkPolicy when caller identity is enabled.
 
+### Session affinity is an infrastructure contract
+
+Official clients attach the exact `X-Mecatl-Session-ID` field to session-bound gRPC and
+HTTP requests. Existing clients may omit it. Duplicate, malformed, or byte-mismatched
+values are rejected before work with one non-disclosing error. The field is a routing
+and provider-correlation hint only: it grants no authentication, authorization, caller
+ownership, lease ownership, fencing, tracing, idempotency, or cache authority. Provider
+adapters derive the outbound value from the authoritative run context, never by blindly
+forwarding client metadata.
+
+Route a legal value consistently to improve affinity, but keep the Kubernetes session
+lease authoritative. Lease loss invalidates the stale pod's local mutation capability
+before cancellation; it prevents new local saves, deletes, event/tool records, and
+metadata/sidecar changes. This is not Redis fencing: an already-admitted call may finish.
+An awaiting approval loses only its local ask delivery; its durable `PendingAsk` remains
+unresolved for a successor after lease TTL.
+
+Closing a live running or awaiting session fails precondition and does not release its
+lease. During shutdown, mecak8s stops admission first, preserves awaiting resume points,
+cancels and joins executing runs, and releases ownership only after each run settles.
+If the drain deadline expires, it stops local mutation and renewal but leaves the lease
+for process-death/TTL takeover. Hard handoff drops the client stream; the client retries
+after endpoint and TTL convergence. There is no transparent owner-to-owner forwarding,
+and external provider/tool effects are not exactly once.
+
+The Helm chart intentionally creates no `Gateway`, `HTTPRoute`, `GRPCRoute`, `TLSRoute`,
+`Route`, `Certificate`, `BackendTrafficPolicy`, or affinity values surface. The modeled
+two-Service/fake-clock tests prove application lease and Redis repair ordering; they do
+not prove real Gateway routing, EndpointSlice convergence, or production timings.
+
+The separate infrastructure PR has a **blocking prerequisite** before affinity rollout:
+live validation must show authenticated admission, request and header-size bounds, and
+client, IP, and principal rate limits apply before or independently of affinity routing.
+The recorded authenticated bounded-load test must demonstrate that legal,
+attacker-chosen session IDs cannot become an unbounded targeted-replica sink. Chart
+rendering, Helm lint, Kind, and offline tests do not satisfy this external acceptance
+gate.
+
 ```sh
 helm upgrade --install mecak8s deploy/helm/mecak8s --namespace mecatl --create-namespace \
   --set image.repository=registry.example/mecak8s \
