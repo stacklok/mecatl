@@ -31,7 +31,9 @@ func (h HandlerBundle) Empty() bool {
 
 type handlerRoute struct {
 	path    string
+	pattern string
 	handler http.Handler
+	methods []string
 }
 
 // Mount registers the complete fixed route set and the callback path selected
@@ -54,20 +56,20 @@ func (h HandlerBundle) Mount(mux *http.ServeMux, callbackPath string) (err error
 		}
 	}()
 	for _, route := range routes {
-		mux.Handle(route.path, route.handler)
+		mux.Handle(route.pattern, route.handler)
 	}
 	return nil
 }
 
 func (h HandlerBundle) routes(callbackPath string) ([]handlerRoute, error) {
 	fixed := []handlerRoute{
-		{toolHiveBasePath + "/oauth/authorize", h.Authorization},
-		{toolHiveBasePath + "/oauth/token", h.Token},
-		{toolHiveBasePath + "/oauth/callback", h.UpstreamCallback},
-		{toolHiveBasePath + "/.well-known/openid-configuration", h.Discovery},
-		{toolHiveBasePath + "/.well-known/jwks.json", h.JWKS},
-		{toolHiveBasePath + "/.well-known/oauth-protected-resource", h.ProtectedResource},
-		{toolHiveMCPPath, h.VMCP},
+		{path: toolHiveBasePath + "/oauth/authorize", pattern: toolHiveBasePath + "/oauth/authorize", handler: h.Authorization},
+		{path: toolHiveBasePath + "/oauth/token", pattern: toolHiveBasePath + "/oauth/token", handler: h.Token},
+		{path: toolHiveBasePath + "/oauth/callback", pattern: toolHiveBasePath + "/oauth/callback", handler: h.UpstreamCallback},
+		{path: toolHiveBasePath + "/.well-known/openid-configuration", pattern: toolHiveBasePath + "/.well-known/openid-configuration", handler: h.Discovery},
+		{path: toolHiveBasePath + "/.well-known/jwks.json", pattern: toolHiveBasePath + "/.well-known/jwks.json", handler: h.JWKS},
+		{path: toolHiveBasePath + "/.well-known/oauth-protected-resource", pattern: toolHiveBasePath + "/.well-known/oauth-protected-resource", handler: h.ProtectedResource},
+		{path: toolHiveMCPPath, pattern: toolHiveMCPPath, handler: h.VMCP},
 	}
 	if err := protectedHandlersComplete(fixed[:6]); err != nil {
 		return nil, err
@@ -77,7 +79,12 @@ func (h HandlerBundle) routes(callbackPath string) ([]handlerRoute, error) {
 		if err := validCallbackHandler(callbackPath, h.Callback); err != nil {
 			return nil, err
 		}
-		routes = append(routes, handlerRoute{callbackPath, h.Callback})
+		route := handlerRoute{path: callbackPath, pattern: callbackPath, handler: h.Callback}
+		if callbackPath == "/" {
+			route.pattern = "GET /{$}"
+			route.methods = []string{http.MethodGet}
+		}
+		routes = append(routes, route)
 	}
 	if len(routes) == 0 {
 		return nil, errors.New("mcpbroker: incomplete handler bundle")
@@ -115,7 +122,7 @@ func nonNilRoutes(in []handlerRoute) []handlerRoute {
 }
 
 func validCallbackHandler(callbackPath string, handler http.Handler) error {
-	if handler == nil || callbackPath == "" || callbackPath == "/" ||
+	if handler == nil || callbackPath == "" ||
 		!strings.HasPrefix(callbackPath, "/") || path.Clean(callbackPath) != callbackPath {
 		return fmt.Errorf("mcpbroker: invalid callback path %q", callbackPath)
 	}
@@ -125,20 +132,24 @@ func validCallbackHandler(callbackPath string, handler http.Handler) error {
 func uniqueHandlerRoutes(routes []handlerRoute) error {
 	seen := make(map[string]struct{}, len(routes))
 	for _, route := range routes {
-		if _, exists := seen[route.path]; exists {
+		if _, exists := seen[route.pattern]; exists {
 			return fmt.Errorf("mcpbroker: handler route conflict %q", route.path)
 		}
-		seen[route.path] = struct{}{}
+		seen[route.pattern] = struct{}{}
 	}
 	return nil
 }
 
 func registeredHandlerRouteConflict(mux *http.ServeMux, routes []handlerRoute) error {
-	methods := [...]string{
+	allMethods := [...]string{
 		http.MethodConnect, http.MethodDelete, http.MethodGet, http.MethodHead,
 		http.MethodOptions, http.MethodPatch, http.MethodPost, http.MethodPut, http.MethodTrace,
 	}
 	for _, route := range routes {
+		methods := route.methods
+		if len(methods) == 0 {
+			methods = allMethods[:]
+		}
 		for _, method := range methods {
 			request := &http.Request{Method: method, URL: &url.URL{Path: route.path}}
 			_, pattern := mux.Handler(request)
@@ -155,9 +166,12 @@ func registeredHandlerRouteConflict(mux *http.ServeMux, routes []handlerRoute) e
 
 func callbackPath(raw string) (string, error) {
 	parsed, err := url.Parse(raw)
-	if err != nil || parsed.Path == "" || parsed.Path == "/" || parsed.RawQuery != "" || parsed.Fragment != "" ||
-		parsed.EscapedPath() != parsed.Path || path.Clean(parsed.Path) != parsed.Path {
+	if err != nil || parsed.RawQuery != "" || parsed.Fragment != "" ||
+		parsed.EscapedPath() != parsed.Path || (parsed.Path != "" && path.Clean(parsed.Path) != parsed.Path) {
 		return "", fmt.Errorf("mcpbroker: invalid callback URL")
+	}
+	if parsed.Path == "" {
+		return "/", nil
 	}
 	return parsed.Path, nil
 }

@@ -370,7 +370,9 @@
 #   mode: ""
 #   # Broker contains options meaningful only in broker mode.
 #   broker:
-#     # CallbackURL is required exactly when broker mode contains an OAuth route.
+#     # CallbackURL is required exactly when broker mode contains an OAuth route. It must
+#     # be an absolute HTTPS URL without userinfo, query, or fragment; an omitted path or
+#     # / is normalized to /.
 #     callback_url: ""
 #   # Servers is the ordered list of neutral Streamable HTTP route declarations.
 #   servers: []

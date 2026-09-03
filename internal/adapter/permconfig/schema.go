@@ -383,7 +383,7 @@ type MCPSection struct {
 
 // MCPBrokerProfile contains broker-only trusted configuration.
 type MCPBrokerProfile struct {
-	// CallbackURL is required exactly when broker mode contains an OAuth route.
+	// CallbackURL is required exactly when broker mode contains an OAuth route. It must be an absolute HTTPS URL without userinfo, query, or fragment; an omitted path or / is normalized to /.
 	CallbackURL string `yaml:"callback_url"`
 }
 

@@ -99,7 +99,9 @@ func resolveBrokerAuthority(section *permconfig.MCPSection) (*mcpauthority.Resul
 	}
 	callback := section.Broker.CallbackURL
 	if oauthCount == 1 {
-		if err := validateBrokerCallbackURL(callback); err != nil {
+		var err error
+		callback, err = normalizeBrokerCallbackURL(callback)
+		if err != nil {
 			return nil, err
 		}
 	} else if callback != "" {
@@ -138,13 +140,16 @@ func validateBrokerOAuthUpstream(routeName string, oauth *permconfig.MCPOAuthPro
 	return nil
 }
 
-func validateBrokerCallbackURL(raw string) error {
+func normalizeBrokerCallbackURL(raw string) (string, error) {
 	u, err := url.Parse(raw)
-	if err != nil || !u.IsAbs() || u.Scheme != "https" || u.Host == "" || u.Path == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
-		return fmt.Errorf("%w: mcp.broker.callback_url must be an absolute HTTPS URL with a path and without userinfo, query, or fragment", ErrMCPProfileInvalid)
+	if err != nil || !u.IsAbs() || u.Scheme != "https" || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+		return "", fmt.Errorf("%w: mcp.broker.callback_url must be an absolute HTTPS URL without userinfo, query, or fragment", ErrMCPProfileInvalid)
 	}
 	if strings.TrimSpace(raw) != raw {
-		return fmt.Errorf("%w: mcp.broker.callback_url must not contain surrounding whitespace", ErrMCPProfileInvalid)
+		return "", fmt.Errorf("%w: mcp.broker.callback_url must not contain surrounding whitespace", ErrMCPProfileInvalid)
 	}
-	return nil
+	if u.Path == "" {
+		u.Path = "/"
+	}
+	return u.String(), nil
 }

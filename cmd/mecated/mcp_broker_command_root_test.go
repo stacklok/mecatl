@@ -165,6 +165,52 @@ func TestMecatedCallbackCollisionCoversEveryHTTPMethodAtomically(t *testing.T) {
 	}
 }
 
+func TestMecatedRootCallbackPreflightIsExactAndMethodAware(t *testing.T) {
+	broker := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
+
+	t.Run("ordinary fallback retains subpaths", func(t *testing.T) {
+		mux := http.NewServeMux()
+		mux.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusTeapot) }))
+		if err := mountBrokerHandlers(mux, "127.0.0.1:8081", false, mcpbroker.HandlerBundle{Callback: broker}, "/"); err != nil {
+			t.Fatal(err)
+		}
+		for _, tc := range []struct {
+			method, path string
+			want         int
+		}{
+			{method: http.MethodGet, path: "/", want: http.StatusNoContent},
+			{method: http.MethodPost, path: "/", want: http.StatusTeapot},
+			{method: http.MethodGet, path: "/api/child", want: http.StatusTeapot},
+		} {
+			w := httptest.NewRecorder()
+			mux.ServeHTTP(w, httptest.NewRequest(tc.method, tc.path, nil))
+			if w.Code != tc.want {
+				t.Errorf("%s %s status = %d, want %d", tc.method, tc.path, w.Code, tc.want)
+			}
+		}
+	})
+
+	t.Run("only GET root conflicts", func(t *testing.T) {
+		for _, tc := range []struct {
+			method  string
+			wantErr bool
+		}{
+			{method: http.MethodGet, wantErr: true},
+			{method: http.MethodPost, wantErr: false},
+		} {
+			t.Run(tc.method, func(t *testing.T) {
+				mux := http.NewServeMux()
+				mux.Handle("/", http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+				mux.HandleFunc(tc.method+" /{$}", func(http.ResponseWriter, *http.Request) {})
+				err := mountBrokerHandlers(mux, "127.0.0.1:8081", false, mcpbroker.HandlerBundle{Callback: broker}, "/")
+				if (err != nil) != tc.wantErr {
+					t.Fatalf("root callback mount error = %v, want error %t", err, tc.wantErr)
+				}
+			})
+		}
+	})
+}
+
 func TestMecatedFixedBrokerCollisionCoversEveryHTTPMethodAtomically(t *testing.T) {
 	methods := []string{
 		http.MethodConnect, http.MethodDelete, http.MethodGet, http.MethodHead,

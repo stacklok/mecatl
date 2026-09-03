@@ -74,12 +74,13 @@ func TestMCPAuthorityBrokerIsExclusiveAndRejectsLegacy(t *testing.T) {
 func TestMCPAuthorityBrokerCallbackRules(t *testing.T) {
 	base := brokerOAuthRoute()
 	for _, tc := range []struct {
-		name, callback string
-		ok             bool
+		name, callback, wantCallback string
+		ok                           bool
 	}{
 		{name: "required", ok: false},
-		{name: "https", callback: "https://agent.example/callback", ok: true},
-		{name: "pathless", callback: "https://agent.example", ok: false},
+		{name: "https", callback: "https://agent.example/callback", wantCallback: "https://agent.example/callback", ok: true},
+		{name: "pathless root", callback: "https://agent.example", wantCallback: "https://agent.example/", ok: true},
+		{name: "slash root", callback: "https://agent.example/", wantCallback: "https://agent.example/", ok: true},
 		{name: "http", callback: "http://agent.example/callback", ok: false},
 		{name: "userinfo", callback: "https://user@agent.example/callback", ok: false},
 		{name: "query", callback: "https://agent.example/callback?code=x", ok: false},
@@ -87,9 +88,15 @@ func TestMCPAuthorityBrokerCallbackRules(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			section := &permconfig.MCPSection{Mode: "broker", Broker: permconfig.MCPBrokerProfile{CallbackURL: tc.callback}, Servers: []permconfig.MCPServerProfile{base}}
-			_, err := ResolveMCPAuthority(MCPAuthorityOptions{Operator: section, DefaultMode: mcpauthority.Global, BrokerSupported: true})
+			got, err := ResolveMCPAuthority(MCPAuthorityOptions{Operator: section, DefaultMode: mcpauthority.Global, BrokerSupported: true})
 			if (err == nil) != tc.ok {
 				t.Fatalf("error = %v, want success %t", err, tc.ok)
+			}
+			if tc.ok {
+				broker, ok := got.Broker()
+				if !ok || broker.CallbackURL != tc.wantCallback {
+					t.Fatalf("broker callback = %#v, selected %t; want %q", broker, ok, tc.wantCallback)
+				}
 			}
 		})
 	}
