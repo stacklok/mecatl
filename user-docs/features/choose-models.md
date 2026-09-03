@@ -121,6 +121,7 @@ models:
     guardrail: coder
     plan: planner
     router: coder
+    title: quick
   router:
     default-category: medium
     categories:
@@ -145,6 +146,12 @@ These mechanisms are independent:
   `guardrail`, `plan`, and `router` do not replace the session model. The `plan`
   slot can use a stronger model while a plan is being written; compaction and
   checker slots can use cheaper models.
+- **`title` is an explicit opt-in slot** for automatic session-title generation.
+  It has no default-tier or session-model fallback: without a compatible `title`
+  binding on the session's fixed provider, no title-model call is made. The server
+  generates a title asynchronously from up to three early genuine prompts; it
+  never delays or changes the chat. Its token usage is stored separately as
+  `session_title`, not charged to the chat's displayed usage or run budget.
 - **Router categories** select a model for a plain delegated Subagent, an unpinned
   named specialist (including `mode: "read-write"`), a Parallel branch, or an undefined
   team member from the task description. A taxonomy enables the router; with no taxonomy,

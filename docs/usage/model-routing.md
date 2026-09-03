@@ -7,6 +7,7 @@ Model selection is a stack of independent mechanisms. Pick the one(s) you need:
 | You want… | Use |
 |---|---|
 | Short names for models you reference often | `models.aliases:` |
+| A concise automatic session title | explicit `models.slots.title` (no fallback; see [session titles](#session-title-generation)) |
 | Cheaper compaction / guardrail / ask-reviewer calls | `models.slots:` (`compaction`/`guardrail`/`ask-reviewer`) |
 | A cheaper default for every delegated subagent | `models.subagent:` (the settings.yaml twin of `--subagent-model`) |
 | Plan on a strong model, execute on a cheaper one | `models.slots: plan:` (the opusplan pattern) |
@@ -34,6 +35,7 @@ models:
     ask-reviewer: quick
     plan: heavy            # plan-mode turns swap to the heavy model
     router: quick          # the classifier itself
+    title: quick           # opt-in asynchronous session-title generator
   context_windows:         # exact final provider/model IDs → total context tokens
     openrouter:
       z-ai/glm-5.2: 200000
@@ -103,6 +105,20 @@ models:
   (`cheap`/`fast`/`reasoning`) is the default a slot with no explicit binding falls
   through to — the internal-call slots default to `cheap`, while **`plan` defaults
   to `reasoning`** (a plan model is a strong-reasoning model, not a cheap one).
+
+#### Session title generation
+
+- **The `title` slot.** This is the explicit opt-in for automatic session-title
+  generation ([ADR 0290](../adr/0290-session-title-generation-and-auxiliary-usage.md)).
+  It has **no tier or session-model fallback**: omit it and generation is disabled,
+  so no title-model call occurs. On a compatible fixed session provider, the server
+  captures up to three early genuine prompts and asynchronously makes a bounded
+  tool-less call after a successful exchange. Its usage is durable
+  `session_title` auxiliary accounting, not the session/run budget or normal result
+  usage. The title model never changes the session model.
+
+#### Other slots
+
 - **The `plan` slot (the opusplan workflow).** Bind `plan` to a strong-reasoning model
   and a session **automatically swaps to it while in plan mode** and back to the session
   model when executing — re-resolved **between turns** at the run-entry seam (never

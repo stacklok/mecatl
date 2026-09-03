@@ -1,6 +1,6 @@
 # ADR 0290 — Asynchronous session-title generation and durable token usage
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-08-30
 - Scope: session-title lifecycle and provenance, mecatui title UX, title-specific server operation, composition model-slot selection, and durable token accounting
 - Supersedes: none
@@ -14,7 +14,7 @@ A title generator needs a model call after a normal exchange without delaying or
 
 ## Decision
 
-Add a mecatui-only `/title` command. `/title <text>` optimistically updates the active session display and sends the existing `RenameSession` gRPC operation to the server; the server response remains authoritative and a rejected request restores/refetches the authoritative title. `/title` with no text reports the current title and usage. An explicit rename records operator provenance and permanently prevents automatic title generation for that session.
+Add a mecatui-only `/title` command. `/title <text>` optimistically updates the active session display and sends the existing `RenameSession` gRPC operation to the server; the server response remains authoritative and a rejected request restores/refetches the authoritative title. `/title` with no text reports the current title and whether it was generated or operator-set. An explicit rename records operator provenance and permanently prevents automatic title generation for that session.
 
 Automatic title generation is a server-owned session feature, not a client-requested RPC. At creation, composition determines whether the explicit `models.slots.title` binding resolves for the session's fixed provider. The aggregate persists `TitleGeneration=pending` only in that case; otherwise it persists `disabled`. This is durable session intent and lifecycle state, not persisted model configuration: every attempt still checks current composition policy. The loop records only the first three genuine, non-empty principal text prompts as bounded title-source prompts at the original prompt-recording seam; it never reconstructs them from generic user-role history, which can include harness continuations and be compacted.
 
@@ -42,4 +42,5 @@ The feature creates optional extra model spend, a bounded asynchronous coordinat
 - [ADR 0016 — Multi-provider composition](./0016-multi-provider.md)
 - [ADR 0020 — Diagnostics](./0020-diagnostics.md)
 - [ADR 0027 — Cloud-native arc](./0027-cloud-native.md)
+- [Session title generation acceptance plan](../acceptance/session-title-generation.md) — scenario proofs, including coordinator shutdown and inventory coverage
 - [Issue #621](https://github.com/stacklok/mecatl/issues/621)

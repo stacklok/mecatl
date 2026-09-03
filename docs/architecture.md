@@ -67,6 +67,7 @@ This page is the overview and router; the big picture and the layering rule are 
 - **[Memory — cross-session recall & consolidation](architecture/memory.md)**
 - **[Parallelism — fork-join](architecture/parallelism.md)**
 - **[Extensibility — MCP, tools & progressive disclosure](architecture/extensibility.md)**
+- **[Session titles & durable auxiliary usage](architecture/domain-model.md#session-titles-and-auxiliary-usage)** — operator renaming, opt-in asynchronous generation, and its separate token ledger.
 - **[Deployment & server hardening](architecture/deployment-and-hardening.md)**
 
 ### Internal credential store

@@ -42,8 +42,8 @@ semantic-version protocol.
 | RPC | Kind | Purpose |
 | --- | --- | --- |
 | `CreateSession(CreateSessionRequest) → CreateSessionResponse` | unary | allocate a server-side session, return its id |
-| `GetSession(GetSessionRequest) → GetSessionResponse` | unary | snapshot of an existing session |
-| `RenameSession(RenameSessionRequest) → RenameSessionResponse` | unary | replace an owned idle main session's title and mark its provenance operator-authored; ownership, kind, state, liveness, and lease are revalidated at execution |
+| `GetSession(GetSessionRequest) → GetSessionResponse` | unary | snapshot of an existing session, including authoritative title/provenance, title-generation lifecycle, and canonical auxiliary token usage when present |
+| `RenameSession(RenameSessionRequest) → RenameSessionResponse` | unary | replace an owned idle main session's title and mark its provenance operator-authored; this permanently disables automatic title generation; ownership, kind, state, liveness, and lease are revalidated at execution |
 | `DeleteSession(DeleteSessionRequest) → DeleteSessionResponse` | unary | permanently remove an owned idle main session snapshot and store-managed sidecars; the same execution-time gates apply |
 | `CompactSession(CompactSessionRequest) → CompactSessionResponse` | unary | force one configured compaction pass on an owned main chat at an idle or terminal boundary; creates no conversation turn and returns `compacted` to distinguish a rewrite from a successful no-op |
 | `CloseSession(CloseSessionRequest) → CloseSessionResponse` | unary | end a session and release its server-side resources (learned rules, per-session engine/workspace); idempotent |
@@ -56,9 +56,12 @@ semantic-version protocol.
 | `WatchSessionEvents(WatchSessionEventsRequest) → stream WatchSessionEventsResponse` | server-stream | **durable replay-then-follow** ([ADR 0250](../adr/0250-durable-cursors-and-watch.md)): replay from an opaque `cursor` (empty = the beginning), then keep following as the run appends. Each frame is `{event, cursor, phase}`; `phase` is an OPEN STRING (`replay`/`live`/`gap`) — tolerate an unknown value. Exactly one PHASE-ONLY `live` frame (no `event`) marks the replay→live boundary, so a client renders the transcript and shows a live view WITHOUT waiting for the next event, which on an idle session may never arrive. A `gap` frame (also event-less) marks a position whose durable append is known to have failed. Optional `run_id` narrows delivery to one run; gap frames are delivered either way. Relays the FULL timeline like `StreamSessionEvents`, log-only kinds included. Errors: `watch_unsupported` (`UNIMPLEMENTED`) when the log has no cursor seam, `no_event_log` (`UNIMPLEMENTED`), `cursor_malformed` (`INVALID_ARGUMENT`), `cursor_expired` (`FAILED_PRECONDITION` — restart from the beginning), `watch_lagging` (`RESOURCE_EXHAUSTED` — **resumable**, reconnect with your last cursor), `activity_gap` (`DATA_LOSS`) |
 | `ListSessions(ListSessionsRequest) → ListSessionsResponse` | unary | the stored-session inventory — picker metadata (id, timestamps, state, turns, model id; no conversation content), sorted most-recently-active first; an empty list when the store does not implement `PrunableStore` |
 
-**Watching a session durably.** `StreamSessionEvents` replays and ENDS;
-`StreamSessionLive` is live but process-local and DROPS for a slow client;
-`WatchSessionEvents` is the one call that does both durably. Treat the `cursor` as
+**Watching a session durably.** `StreamSessionEvents` replays and ENDS; `StreamSessionLive` is live but
+process-local and DROPS for a slow client; `WatchSessionEvents` is the one call
+that does both durably. A `session.title` event is offered on the best-effort live
+stream after its snapshot save. Clients must apply it promptly but re-fetch
+`GetSession` after reconnect or reopen; the snapshot (and, when configured, the
+durable event log) is authoritative. Treat the `cursor` as
 bytes to hand back — never parse, build, or edit one. Persist it once per frame you
 have PROCESSED, and on any reconnect (including after a `watch_lagging`
 termination) pass that value back: the watch continues from exactly the next

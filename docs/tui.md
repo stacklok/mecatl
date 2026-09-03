@@ -574,6 +574,12 @@ reflects the TUI phase:
 | no title yet (session known) | `<handle> — mecatui` |
 | no session yet | `mecatui` |
 
+A session starts with its first genuine prompt as a fallback title; a generated or
+operator title can later replace it. Automatic title generation is opt-in through an
+explicit compatible `models.slots.title` binding, is server-owned and asynchronous,
+and never changes the conversation or main-run budget. Its token usage is durable
+separate `session_title` accounting. See [ADR 0290](adr/0290-session-title-generation-and-auxiliary-usage.md).
+
 The title leads because tab bars **truncate from the right**; the status is a
 **static word, never an animated spinner** (per-frame title churn trips OS
 attention heuristics — the dock bounces / the taskbar flashes on every change).
@@ -585,7 +591,10 @@ padded header carries the same identity through every lifecycle and fatal state.
 
 The title is terminal-escape-sanitized (C0/ESC/DEL stripped — a malicious prompt
 can't embed an OSC title-injection), and newlines/tabs collapse to single spaces
-(a window title is one line).
+(a window title is one line). `/title <text>` updates the active session title;
+when the operator configured an explicit compatible `models.slots.title`, the server
+may later replace the fallback first-prompt title with a generated one. Both updates
+are applied live when available and reconciled from the stored session on reconnect.
 
 Pass `--terminal-title=off` (or `MECATUI_NO_TERMINAL_TITLE=1`) to suppress it and
 leave the title at the bare `mecatui` — the escape hatch for

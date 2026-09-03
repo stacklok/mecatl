@@ -128,6 +128,40 @@ verbatim on the assistant message item, never displayed or interpreted (issue
   an error result is still fed back to the model so it can recover.
 - `Usage{InputTokens, OutputTokens, CacheReadTokens, CacheWriteTokens}`
   (`usage.go`) with `CacheHitRate()` and an immutable `Add(other) Usage`.
+- `TokenUsage` is the canonical durable aggregate for auxiliary model work. It
+  groups totals by an operation kind and opaque server-selected provider/model
+  entries; each total is the sum of its entries. It is distinct from
+  `Session.Usage`, which remains the normal agent-run accounting and budget
+  input.
+
+### Session titles and auxiliary usage
+
+A session starts with its first genuine prompt as a fallback title. An operator can
+replace an idle main-session title through `RenameSession`; that records
+`operator` provenance and permanently stops automatic generation. When composition
+can resolve an explicit `models.slots.title` binding on the session's fixed
+provider, creation instead records durable `pending` generation intent; no title
+slot, or a slot that cannot resolve on that provider, records `disabled`. The
+`title` slot deliberately has no tier/default/session-model fallback, so title
+calls are opt-in.
+
+At prompt ingress the aggregate retains only the first three genuine, non-empty
+principal text prompts (bounded before storage); harness continuations and generic
+user-role history are not title inputs. After a successful exchange that added one,
+the Service-owned coordinator may submit a bounded asynchronous job. The job claims
+and persists its attempt while holding the session lock/lease, releases that
+exclusion for the one bounded, tool-less provider stream, then reloads and
+conditionally commits. This prevents duplicate calls and lets an operator rename
+win a late completion. `defer` can wait for later source prompts; a valid title,
+malformed output, unavailable configuration, interruption, or exhaustion ends the
+lifecycle with the fallback retained as appropriate.
+
+Generated input is fenced untrusted data and output is strict, valid UTF-8,
+whitespace-normalized to one line, and capped at 80 runes. A physical call records
+its input/output tokens only in `TokenUsage[session_title]`, attributed to the
+composition-selected opaque provider/model. It never changes `Session.Usage`, a
+main-run budget, `EvResult` usage, or the conversation. See
+[ADR 0290](../adr/0290-session-title-generation-and-auxiliary-usage.md).
 
 ### Event taxonomy (`engine/session/event.go`)
 
@@ -153,6 +187,7 @@ API. The real constants:
 | `no_progress` | `EvNoProgress` | a completed turn produced no tool call and no meaningful text; the loop is nudging (gentle, then a final best-effort extraction) or giving up |
 | `result` | `EvResult` | terminal: carries `ResultPayload{Stop, Text, Usage}` |
 | `user_prompt` | `EvUserPrompt` | a user-role message was recorded (the genuine client prompt AND the harness-authored synthetic continuations — the no-progress / background nudges & completion notice), carrying `UserPromptPayload`; **log-only**, persisted to the durable event log and skipped on the client wire — it lets an event-sourced fold reconstruct user-role turns |
+| `session.title` | `EvSessionTitle` | a persisted title or title-generation lifecycle change; carries only authoritative title, provenance, lifecycle, and bounded latest-attempt metadata — never source prompts or provider-error text |
 | `subagent.start/tool/end` | `EvSubagent*` | a `Subagent` child run's REDACTED, bounded-preview projection (flat fleet) |
 | `team.start/member/tasks/findings/end` | `EvTeam*` | an in-process `Team` run's BOUNDED projection (coordinating roster) |
 | `parallel.start/branch/end` | `EvParallel*` | a `Parallel` fork-join run's REDACTED, bounded-preview GROUP projection (join + winner + fork paths) |
@@ -161,8 +196,8 @@ API. The real constants:
 `ToolResult`, `Ask *PendingAsk`, `Result *ResultPayload`, `TurnEnd *TurnEndPayload`,
 `Hook *HookPayload`, `Approval *ApprovalPayload`,
 `CompactionArchive *CompactionArchivePayload`, `UserPrompt *UserPromptPayload`,
-`Usage *Usage`, `Subagent`, `Team`, `Parallel` (each set only on its own event
-kind).
+`Title *TitlePayload`, `Usage *Usage`, `Subagent`, `Team`, `Parallel` (each set
+only on its own event kind).
 
 The three DELEGATION families (`subagent.*` / `team.*` / `parallel.*`) project child-loop
 lifecycle events and differ in AGGREGATION shape — flat fleet vs coordinating roster vs

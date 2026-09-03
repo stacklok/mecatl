@@ -133,7 +133,7 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0250 — Durable cursors and the session watch transport](./0250-durable-cursors-and-watch.md)
 
 ### Providers & APIs
-- [0290 — Asynchronous session-title generation and durable token usage](./0290-session-title-generation-and-auxiliary-usage.md) *(proposed)*
+- [0290 — Asynchronous session-title generation and durable token usage](./0290-session-title-generation-and-auxiliary-usage.md)
 - [0016 — Multi-provider](./0016-multi-provider.md)
 - [0017 — OpenAI Responses API](./0017-openai-responses-api.md) *(research)*
 - [0030 — Layered model-selection heuristics](./0030-model-selection-heuristics.md)
