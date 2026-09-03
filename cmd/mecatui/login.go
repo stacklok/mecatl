@@ -197,13 +197,18 @@ func discoveredScopes(discovered discoveredResource, explicit string, explicitSe
 	requested := discovered.Scopes
 	if explicitSet {
 		requested = splitScopes(explicit)
-	}
-	if len(requested) == 0 {
-		return nil, errDiscoveryRejected
+		if len(requested) == 0 {
+			return nil, errDiscoveryRejected
+		}
+	} else if len(requested) == 0 {
+		requested = splitScopes(defaultOIDCScopes)
 	}
 	selected := make(map[string]bool, len(requested))
 	for _, scope := range requested {
-		if !confirmed[scope] {
+		if len(confirmed) > 0 && !confirmed[scope] {
+			return nil, errDiscoveryRejected
+		}
+		if !validScope(scope) {
 			return nil, errDiscoveryRejected
 		}
 		selected[scope] = true

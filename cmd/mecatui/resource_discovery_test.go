@@ -58,9 +58,14 @@ func TestADR_0290_ExactResourceBinding(t *testing.T) {
 			t.Errorf("near-match %q accepted", got)
 		}
 	}
-	for _, equivalent := range []string{"https://api.example.com/service/v1", "https://API.example.com:443/service/v1"} {
+	for _, equivalent := range []string{"https://api.example.com/service/v1"} {
 		if !resourceMatches(resource, equivalent) {
-			t.Errorf("canonical equivalent %q rejected", equivalent)
+			t.Errorf("exact resource %q rejected", equivalent)
+		}
+	}
+	for _, nonExact := range []string{"https://API.example.com:443/service/v1"} {
+		if resourceMatches(resource, nonExact) {
+			t.Errorf("non-identical resource %q accepted", nonExact)
 		}
 	}
 }

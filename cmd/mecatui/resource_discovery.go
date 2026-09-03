@@ -81,8 +81,7 @@ func newProtectedResource(u *url.URL) protectedResource {
 }
 
 func resourceMatches(expected protectedResource, actual string) bool {
-	canonical, err := resourceurl.Canonical(actual)
-	return err == nil && canonical == expected.Resource
+	return actual == expected.Resource
 }
 
 func parseIssuer(raw string) (string, error) {
