@@ -2,9 +2,9 @@
 id: 15-modeled-transport-bytes
 title: Official-client transport-to-provider byte proof
 blocked_by: [03-http-affinity-validation, 04-mecatui-affinity, 06-typescript-high-level-affinity, 14-modeled-rehydrate-repair]
-status: pending
+status: in-progress
 branch: ""
-worktree: ""
+worktree: ".scratch/task-session-affinity-15"
 issue: ""
 retries: 0
 last_error: ""
