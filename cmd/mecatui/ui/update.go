@@ -3022,6 +3022,12 @@ func (m Model) dispatchSelectedBuiltin() (tea.Model, tea.Cmd, bool) {
 	if !row.Builtin {
 		return m, nil, false
 	}
+	// Argument-taking built-ins complete into the editor so the operator can
+	// supply their required input; dispatching /title here would incorrectly run
+	// its bare read action.
+	if b, ok := builtinByName(m.caps, m.wiredCollaborators(), row.Name); ok && b.acceptsArgs {
+		return m, nil, false
+	}
 	return m.dispatchBareBuiltin("/" + row.Name)
 }
 
