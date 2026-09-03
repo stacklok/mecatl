@@ -179,11 +179,11 @@ spec:
             - {{ printf "--mcp-server-insecure-http=%s" $server.name | quote }}
             {{- end }}
             {{- end }}
-            {{- if $mcpSettings }}
-            - --permission-config=/etc/mecatl-mcp/settings.yaml
-            {{- end }}
             {{- with .Values.extraArgs }}
             {{- toYaml . | nindent 12 }}
+            {{- end }}
+            {{- if $mcpSettings }}
+            - --permission-config=/etc/mecatl-mcp/settings.yaml
             {{- end }}
           {{- $mcpEnvServers := false }}
           {{- range .Values.mcp.servers }}{{- if ne .auth.mode "none" }}{{- $mcpEnvServers = true }}{{- end }}{{- end }}

@@ -1731,6 +1731,26 @@ func TestMecak8sHelmChart_MCPDefaultsAreEmpty(t *testing.T) {
 	}
 }
 
+// TestMecak8sHelmChart_MCPPermissionConfigExtraArgPrecedesChartProfile pins
+// first-file-wins config folding: the operator config must remain first.
+func TestMecak8sHelmChart_MCPPermissionConfigExtraArgPrecedesChartProfile(t *testing.T) {
+	rendered, err := renderMCPValues(t, `
+extraArgs:
+  - --permission-config=/etc/operator/settings.yaml
+mcp:
+  servers: []
+`)
+	if err != nil {
+		t.Fatalf("render MCP permission-config override: %v", err)
+	}
+	args := deploymentFromRender(t, rendered).Spec.Template.Spec.Containers[0].Args
+	operator := slices.Index(args, "--permission-config=/etc/operator/settings.yaml")
+	chart := slices.Index(args, "--permission-config=/etc/mecatl-mcp/settings.yaml")
+	if operator < 0 || chart < 0 || operator >= chart {
+		t.Fatalf("permission-config args = %#v, want operator config before chart MCP profile", args)
+	}
+}
+
 func TestMecak8sHelmChart_MCPStaticBearerNoneAndInsecureHTTP(t *testing.T) {
 	rendered, err := renderMCPValues(t, `
 mcp:
