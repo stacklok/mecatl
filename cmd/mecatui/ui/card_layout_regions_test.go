@@ -1,8 +1,13 @@
 package ui
 
 import (
+	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/stacklok/mecatl/cmd/mecatui/client"
 )
 
 // TestMecatuiCardLayout_Scenario1_ToolCardRegionsFitBodyWidth verifies AC1.3:
@@ -79,5 +84,111 @@ func TestMecatuiCardLayout_Scenario1_ToolCardRegionsFitBodyWidth(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestMecatuiCardLayout_Scenario1_ExpandedToolCardWidthInvariant verifies AC1.4:
+// expanded main-conversation cards preserve every source region while every rendered
+// row fits the card at the tiny, narrow, normal, and capped geometries.
+func TestMecatuiCardLayout_Scenario1_ExpandedToolCardWidthInvariant(t *testing.T) {
+	const sourceRun = 160
+	cases := []struct {
+		name  string
+		width int
+	}{
+		{name: "tiny", width: defaultBlockIndent + 6},
+		{name: "narrow", width: defaultBlockIndent + 20},
+		{name: "normal", width: 100},
+		{name: "capped", width: 200},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newTestRenderer()
+			r.setWidth(tc.width)
+			_, cardWidth, _ := r.toolCardLayout()
+			if cardWidth < 1 {
+				t.Fatalf("card width = %d, want positive", cardWidth)
+			}
+
+			blocks := []*block{
+				{
+					kind:       blockTool,
+					toolID:     "ordinary",
+					toolName:   "tool-" + strings.Repeat("H", sourceRun),
+					toolArgs:   `{"argument":"` + strings.Repeat("A", sourceRun) + `"}`,
+					resolved:   true,
+					resultBody: strings.Repeat("D", sourceRun),
+					resultBlocks: []client.ContentBlock{
+						{Kind: client.ContentBlockResourceLink, Name: strings.Repeat("E", sourceRun), URL: strings.Repeat("F", sourceRun)},
+					},
+				},
+				{
+					kind:     blockTool,
+					toolID:   "edit",
+					toolName: "Edit",
+					toolArgs: `{"path":"` + strings.Repeat("P", sourceRun) + `","old_string":"` + strings.Repeat("B", sourceRun) + `","new_string":"` + strings.Repeat("C", sourceRun) + `"}`,
+				},
+			}
+			for _, b := range blocks {
+				out := stripANSIstr(r.renderTool(b, true))
+				for i, row := range strings.Split(out, "\n") {
+					if got := maxLineWidth(row); got > cardWidth {
+						t.Errorf("%s row %d width = %d, want ≤ %d: %q", b.toolID, i, got, cardWidth, row)
+					}
+				}
+				wantSource := map[string][]string{
+					"ordinary": {"H", "A", "D", "E", "F"},
+					"edit":     {"P", "B", "C"},
+				}[b.toolID]
+				for _, token := range wantSource {
+					if got := strings.Count(out, token); got != sourceRun {
+						t.Errorf("%s lost expanded %q source content: got %d occurrences, want %d", b.toolID, token, got, sourceRun)
+					}
+				}
+			}
+		})
+	}
+}
+
+// TestMecatuiCardLayout_Scenario1_NoStyledBodyWrap verifies AC1.5: renderTool
+// frames the already-width-bounded regions directly, rather than wrapping a
+// styled assembled card body (which can turn style alignment padding into rows).
+func TestMecatuiCardLayout_Scenario1_NoStyledBodyWrap(t *testing.T) {
+	_, testFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("locate test source")
+	}
+	source, err := os.ReadFile(filepath.Join(filepath.Dir(testFile), "render.go"))
+	if err != nil {
+		t.Fatalf("read render.go: %v", err)
+	}
+	start := strings.Index(string(source), "func (r *renderer) renderTool(")
+	end := strings.Index(string(source), "\nfunc (r *renderer) toolCardLayout")
+	if start < 0 || end < 0 || end <= start {
+		t.Fatal("locate renderTool")
+	}
+	body := string(source)[start:end]
+	for _, forbidden := range []string{
+		"ansi.Wrap(head",
+		"ansi.Hardwrap(head",
+		"card.Render(ansi.Wrap",
+		"card.Render(ansi.Hardwrap",
+		"card.Render(wrapToolCardRegion",
+	} {
+		if strings.Contains(body, forbidden) {
+			t.Errorf("renderTool applies a width-affecting wrap to its assembled styled body: %s", forbidden)
+		}
+	}
+	for _, required := range []string{
+		"head := renderToolHeader(glyph, glyphText, headLabel, r.th.Style(\"toolName\"), bodyWidth)",
+		"renderToolCardText(r.th.Style(\"muted\"), sanitizeTerminal(b.toolName), bodyWidth)",
+		"r.renderToolArgs(b, expand, bodyWidth)",
+		"r.renderToolResult(b, expand, bodyWidth)",
+		"return card.Render(head)",
+	} {
+		if !strings.Contains(body, required) {
+			t.Errorf("renderTool no longer prepares a card region before final framing: missing %s", required)
+		}
 	}
 }

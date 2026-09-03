@@ -1437,14 +1437,17 @@ func deliveryBodyForDisplay(raw string) string {
 func (r *renderer) renderTool(b *block, expand bool) string {
 	card, _, bodyWidth := r.toolCardLayout()
 
-	var glyph string
+	var glyph, glyphText string
 	switch {
 	case !b.resolved:
-		glyph = r.th.Style("toolName").Render("…")
+		glyphText = "…"
+		glyph = r.th.Style("toolName").Render(glyphText)
 	case b.resultError:
-		glyph = r.th.Style("toolErr").Render("✗")
+		glyphText = "✗"
+		glyph = r.th.Style("toolErr").Render(glyphText)
 	default:
-		glyph = r.th.Style("toolOk").Render("✓")
+		glyphText = "✓"
+		glyph = r.th.Style("toolOk").Render(glyphText)
 	}
 
 	// An MCP tool name (mcp__<server>__<tool>) renders a friendly "<Server> · <Tool>"
@@ -1456,15 +1459,14 @@ func (r *renderer) renderTool(b *block, expand bool) string {
 	if isMCP {
 		headLabel = mcpName
 	}
-	head := glyph + " " + r.th.Style("toolName").Render(headLabel)
+	head := renderToolHeader(glyph, glyphText, headLabel, r.th.Style("toolName"), bodyWidth)
 	if isMCP && expand {
-		head += "\n" + r.th.Style("muted").Render(sanitizeTerminal(b.toolName))
+		head += "\n" + renderToolCardText(r.th.Style("muted"), sanitizeTerminal(b.toolName), bodyWidth)
 	}
 
 	// Every independently styled card region is wrapped to the same body budget
 	// before it reaches the card frame. Keeping the regions separate prevents the
 	// frame from re-wrapping an already styled multi-region card.
-	head = wrapToolCardRegion(head, bodyWidth)
 	if args := r.renderToolArgs(b, expand, bodyWidth); args != "" {
 		head += "\n" + args
 	}
@@ -1489,16 +1491,49 @@ func (r *renderer) toolCardLayout() (card lipgloss.Style, outerWidth, bodyWidth 
 		outerWidth = min(cw-2, toolCardMaxWidth)
 		card = card.Width(outerWidth)
 	} else if cw > 0 {
-		// A bordered, padded card has no content column at this width. Drop its frame
-		// rather than leaving Width unset, which lets an unbreakable tool command grow
-		// the card past the viewport.
+		// A bordered, padded card has no content column at this width. Start from an
+		// unframed style so inherited border and padding settings cannot widen it past
+		// the viewport.
 		outerWidth = cw
-		card = card.Border(lipgloss.Border{}).Padding(0).Width(outerWidth)
+		card = lipgloss.NewStyle().Width(outerWidth)
 	}
 	if outerWidth > 0 {
 		bodyWidth = outerWidth - card.GetHorizontalFrameSize()
 	}
 	return card, outerWidth, bodyWidth
+}
+
+// renderToolHeader applies the status and tool-name styles only after the raw
+// header has been wrapped to the card body. The status glyph keeps its local
+// style on the first row; wrapped name rows retain the tool-name style.
+func renderToolHeader(glyph, glyphText, label string, nameStyle lipgloss.Style, bodyWidth int) string {
+	rows := strings.Split(wrapToolCardText(glyphText+" "+label, bodyWidth), "\n")
+	for i, row := range rows {
+		if i == 0 {
+			rows[i] = glyph + nameStyle.Render(strings.TrimPrefix(row, glyphText))
+			continue
+		}
+		rows[i] = nameStyle.Render(row)
+	}
+	return strings.Join(rows, "\n")
+}
+
+// renderToolCardText wraps plain card content before applying one region's
+// existing style, so ANSI styling cannot affect width accounting.
+func renderToolCardText(style lipgloss.Style, text string, bodyWidth int) string {
+	rows := strings.Split(wrapToolCardText(text, bodyWidth), "\n")
+	for i, row := range rows {
+		rows[i] = style.Render(row)
+	}
+	return strings.Join(rows, "\n")
+}
+
+// wrapToolCardText constrains raw card text before it is styled or framed.
+func wrapToolCardText(text string, bodyWidth int) string {
+	if text == "" || bodyWidth <= 0 {
+		return text
+	}
+	return ansi.Hardwrap(text, bodyWidth, true)
 }
 
 // wrapToolCardRegion constrains one independently styled tool-card region before it
@@ -1536,9 +1571,10 @@ func (r *renderer) renderToolArgs(b *block, expand bool, bodyWidth int) string {
 		}
 		if expand {
 			// Expanded: always the FULL pretty-printed JSON (the inspect path; the summary
-			// is collapsed-only, so ctrl+t reveals everything).
+			// is collapsed-only, so ctrl+t reveals everything). Wrap raw JSON before its
+			// style so the card row budget is ANSI-independent.
 			if jsonArgs := prettyJSON(b.toolArgs); jsonArgs != "" {
-				args = r.th.Style("toolArgs").Render(jsonArgs)
+				return renderToolCardText(r.th.Style("toolArgs"), jsonArgs, bodyWidth)
 			}
 		} else if summary, ok := r.summarizeArgs(b.toolArgs); ok {
 			// Collapsed: the compact key:value summary in place of raw JSON (issue #24).
