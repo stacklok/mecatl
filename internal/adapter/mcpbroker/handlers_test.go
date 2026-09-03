@@ -7,8 +7,9 @@ import (
 )
 
 func TestHandlerBundleMountsExactCallbackAndRejectsCollision(t *testing.T) {
-	bundle := HandlerBundle{Callback: http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})}
+	bundle := HandlerBundle{Callback: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })}
 	mux := http.NewServeMux()
+	mux.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusTeapot) }))
 	if err := bundle.Mount(mux, "/oauth/callback"); err != nil {
 		t.Fatal(err)
 	}
@@ -18,15 +19,40 @@ func TestHandlerBundleMountsExactCallbackAndRejectsCollision(t *testing.T) {
 	if err := bundle.Mount(http.NewServeMux(), "/oauth/../callback"); err == nil {
 		t.Fatal("non-canonical callback path succeeded")
 	}
-	if err := bundle.Mount(http.NewServeMux(), "/"); err == nil {
-		t.Fatal("catch-all callback path succeeded")
+}
+
+func TestHandlerBundleMountsRootCallbackOnlyAtExactGETRoot(t *testing.T) {
+	bundle := HandlerBundle{Callback: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })}
+	mux := http.NewServeMux()
+	mux.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusTeapot) }))
+	if err := bundle.Mount(mux, "/"); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		method, path string
+		want         int
+	}{
+		{method: http.MethodGet, path: "/", want: http.StatusNoContent},
+		{method: http.MethodPost, path: "/", want: http.StatusTeapot},
+		{method: http.MethodGet, path: "/subpath", want: http.StatusTeapot},
+	} {
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, httptest.NewRequest(tc.method, "http://broker.example"+tc.path, nil))
+		if w.Code != tc.want {
+			t.Errorf("%s %s status = %d, want %d", tc.method, tc.path, w.Code, tc.want)
+		}
 	}
 }
 
 func TestCallbackPathRejectsEscapedOrDecoratedURL(t *testing.T) {
-	for _, raw := range []string{"https://agent.example/", "https://agent.example/oauth/%63allback", "https://agent.example/oauth/callback?x=1", "https://agent.example/oauth/../callback"} {
+	for _, raw := range []string{"https://agent.example/oauth/%63allback", "https://agent.example/oauth/callback?x=1", "https://agent.example/oauth/../callback"} {
 		if _, err := callbackPath(raw); err == nil {
 			t.Errorf("callbackPath(%q) succeeded", raw)
+		}
+	}
+	for _, raw := range []string{"https://agent.example", "https://agent.example/"} {
+		if got, err := callbackPath(raw); err != nil || got != "/" {
+			t.Errorf("callbackPath(%q) = %q, %v; want /", raw, got, err)
 		}
 	}
 	if got, err := callbackPath("https://agent.example/oauth/callback"); err != nil || got != "/oauth/callback" {
