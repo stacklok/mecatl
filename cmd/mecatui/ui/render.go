@@ -1464,19 +1464,20 @@ func (r *renderer) renderTool(b *block, expand bool) string {
 	if args := r.renderToolArgs(b, expand); args != "" {
 		head += "\n" + args
 	}
+
+	// Arguments and headers retain their existing layout until their own row
+	// renderers migrate. Result rows are deliberately appended afterwards: their
+	// raw source is wrapped before styling, so no assembled styled result is ever
+	// re-wrapped below.
+	if !expand && bodyWidth > 0 {
+		head = ansi.Hardwrap(head, bodyWidth, true)
+	}
 	if b.resolved {
 		if res := r.renderToolResult(b, expand, bodyWidth); res != "" {
 			head += "\n" + res
 		}
 	}
 
-	// Lipgloss Width sets the card's outer width (including its horizontal frame),
-	// but does not split an unbreakable body token. The collapsed result was already
-	// hard-wrapped and display-row-capped at bodyWidth; wrap the rest of the card
-	// here too so args and headers obey the same width guarantee.
-	if !expand && bodyWidth > 0 {
-		head = ansi.Hardwrap(head, bodyWidth, true)
-	}
 	return card.Render(head)
 }
 
@@ -1567,6 +1568,8 @@ func (r *renderer) renderToolResult(b *block, expand bool, bodyWidth int) string
 	}
 	if !expand {
 		lines = r.truncateResultDisplayLines(lines, bodyWidth, hiddenSummaryFields)
+	} else {
+		lines = wrapResultDisplayLines(lines, bodyWidth)
 	}
 	var out strings.Builder
 	for i, line := range lines {
@@ -2285,6 +2288,26 @@ func (r *renderer) resultBodyAtWidth(body string, expand bool, bodyWidth int) st
 }
 
 func (r *renderer) truncateResultDisplayLines(lines []toolResultLine, bodyWidth, hiddenSummaryFields int) []toolResultLine {
+	wrapped := wrapResultDisplayLines(lines, bodyWidth)
+	if len(wrapped) > maxToolResultLines {
+		return append(wrapped[:maxToolResultLines], toolResultLine{
+			text:  r.collapseMarker(len(wrapped) - maxToolResultLines),
+			style: resultLineMarker,
+		})
+	}
+	if hiddenSummaryFields > 0 {
+		return append(wrapped, toolResultLine{text: r.argRollupMarker(hiddenSummaryFields), style: resultLineMarker})
+	}
+	if hiddenSummaryFields < 0 {
+		return append(wrapped, toolResultLine{text: r.argRollupMarker(0), style: resultLineMarker})
+	}
+	return wrapped
+}
+
+// wrapResultDisplayLines normalizes each raw source row before it is styled or
+// framed. Whitespace-only source rows remain one intentional blank paragraph;
+// right padding and wrapper-created blank fragments never become display rows.
+func wrapResultDisplayLines(lines []toolResultLine, bodyWidth int) []toolResultLine {
 	wrapped := make([]toolResultLine, 0, len(lines))
 	for _, line := range lines {
 		if strings.TrimSpace(line.text) == "" {
@@ -2308,18 +2331,6 @@ func (r *renderer) truncateResultDisplayLines(lines []toolResultLine, bodyWidth,
 				wrapped = append(wrapped, fragment)
 			}
 		}
-	}
-	if len(wrapped) > maxToolResultLines {
-		return append(wrapped[:maxToolResultLines], toolResultLine{
-			text:  r.collapseMarker(len(wrapped) - maxToolResultLines),
-			style: resultLineMarker,
-		})
-	}
-	if hiddenSummaryFields > 0 {
-		return append(wrapped, toolResultLine{text: r.argRollupMarker(hiddenSummaryFields), style: resultLineMarker})
-	}
-	if hiddenSummaryFields < 0 {
-		return append(wrapped, toolResultLine{text: r.argRollupMarker(0), style: resultLineMarker})
 	}
 	return wrapped
 }

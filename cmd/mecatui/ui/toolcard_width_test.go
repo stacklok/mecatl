@@ -12,7 +12,137 @@ import (
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 )
 
-// TestToolCardWidthCap pins decision 7: a tool card never grows past
+func TestMecatuiCardLayout_Scenario1_ResultRowsWrapBeforeStyle(t *testing.T) {
+	r := newTestRenderer()
+	r.setWidth(toolCardMaxWidth + 2 + defaultBlockIndent)
+	_, cardWidth, bodyWidth := r.toolCardLayout()
+
+	long := "long-row-" + strings.Repeat("x", bodyWidth+9)
+	b := &block{
+		kind:       blockTool,
+		toolID:     "result-row-order",
+		toolName:   "Bash",
+		toolArgs:   `{"command":"printf output"}`,
+		resolved:   true,
+		resultBody: long + "\nshort\x1b[2J-row\n   \nfinal-row",
+	}
+
+	prepared := stripANSIstr(r.renderToolResult(b, true, bodyWidth))
+	for i, row := range strings.Split(prepared, "\n") {
+		if got := maxLineWidth(row); got > bodyWidth {
+			t.Errorf("result source row %d must be wrapped before styling/frame application (got %d, want ≤ %d): %q", i, got, bodyWidth, row)
+		}
+	}
+
+	raw := r.renderTool(b, false)
+	if strings.Contains(raw, "\x1b[2J") {
+		t.Fatal("tool result leaked a dynamic terminal clear-screen escape")
+	}
+	plain := stripANSIstr(raw)
+	rows := strings.Split(plain, "\n")
+	longAt, shortAt, finalAt := -1, -1, -1
+	for i, row := range rows {
+		switch {
+		case strings.Contains(row, "long-row-") && longAt < 0:
+			longAt = i
+		case strings.Contains(row, "short[2J-row"):
+			shortAt = i
+		case strings.Contains(row, "final-row"):
+			finalAt = i
+		}
+		if got := maxLineWidth(row); got > cardWidth {
+			t.Errorf("card row %d exceeds body frame width %d (got %d): %q", i, cardWidth, got, row)
+		}
+	}
+	if longAt < 0 || shortAt < 0 || finalAt < 0 {
+		t.Fatalf("collapsed result omitted source content:\n%s", plain)
+	}
+	if got, want := finalAt-shortAt, 2; got != want {
+		t.Errorf("source blank paragraph must occupy exactly one row between short and final rows; got %d rows:\n%s", got, plain)
+	}
+	for _, row := range rows[longAt:shortAt] {
+		if strings.TrimSpace(strings.Trim(row, "│╭╮╰╯─ ")) == "" {
+			t.Errorf("long source row produced a padding-only display row before short source row: %q\n%s", row, plain)
+		}
+	}
+}
+
+func TestMecatuiCardLayout_Scenario1_CollapsedResultRows(t *testing.T) {
+	r := newTestRenderer()
+	r.setWidth(toolCardMaxWidth + 2 + defaultBlockIndent)
+
+	rows := make([]string, maxToolResultLines+1)
+	for i := range rows {
+		rows[i] = "result-row-" + strconv.Itoa(i)
+	}
+	for _, name := range []string{"Bash", "Grep", "Subagent"} {
+		t.Run(name, func(t *testing.T) {
+			b := &block{kind: blockTool, toolID: name, toolName: name, resolved: true, resultBody: strings.Join(rows, "\n")}
+			collapsed := stripANSIstr(r.renderTool(b, false))
+			if !strings.Contains(collapsed, "+1 more line · ctrl+t expand") {
+				t.Fatalf("collapsed %s result must reserve its shared row budget for source rows:\n%s", name, collapsed)
+			}
+			for i := range maxToolResultLines {
+				if !strings.Contains(collapsed, "result-row-"+strconv.Itoa(i)) {
+					t.Errorf("collapsed %s result omitted retained row %d:\n%s", name, i, collapsed)
+				}
+			}
+			expanded := stripANSIstr(r.renderTool(b, true))
+			if strings.Contains(expanded, "ctrl+t expand") || !strings.Contains(expanded, "result-row-12") {
+				t.Errorf("expanded %s result must retain complete source rows without a collapse marker:\n%s", name, expanded)
+			}
+		})
+	}
+
+	t.Run("large JSON", func(t *testing.T) {
+		result := mustJSON(t, map[string]string{
+			"html_url": strings.Repeat("https://example.test/item/", 8),
+			"url":      strings.Repeat("https://example.test/api/", 8),
+			"id":       strings.Repeat("identifier-", 12),
+			"number":   strings.Repeat("number-", 16),
+			"sha":      strings.Repeat("sha-", 30),
+			"status":   strings.Repeat("status-", 20),
+			"state":    strings.Repeat("state-", 20),
+			"omitted":  "hidden",
+		})
+		b := &block{kind: blockTool, toolID: "json", toolName: "WebFetch", resolved: true, resultBody: result}
+		collapsed := stripANSIstr(r.renderTool(b, false))
+		if !strings.Contains(collapsed, "ctrl+t expand") || strings.Contains(collapsed, "omitted") {
+			t.Errorf("collapsed JSON must budget summary rows and hide omitted source fields:\n%s", collapsed)
+		}
+		expanded := stripANSIstr(r.renderTool(b, true))
+		if strings.Contains(expanded, "ctrl+t expand") || !strings.Contains(expanded, "omitted") || !strings.Contains(expanded, "hidden") {
+			t.Errorf("expanded JSON must retain complete source content:\n%s", expanded)
+		}
+	})
+
+	t.Run("typed artifacts", func(t *testing.T) {
+		blocks := make([]client.ContentBlock, maxToolResultLines+1)
+		for i := range blocks {
+			blocks[i] = client.ContentBlock{Kind: client.ContentBlockResourceLink, Name: "artifact-" + strconv.Itoa(i), URL: "https://example.test/artifact/" + strconv.Itoa(i)}
+		}
+		b := &block{kind: blockTool, toolID: "artifacts", toolName: "WebFetch", resolved: true, resultBody: "source\n\nparagraph", resultBlocks: blocks}
+		collapsed := stripANSIstr(r.renderTool(b, false))
+		if !strings.Contains(collapsed, "ctrl+t expand") || strings.Contains(collapsed, "artifact-12") {
+			t.Errorf("collapsed artifact result must share the source row budget:\n%s", collapsed)
+		}
+		expanded := stripANSIstr(r.renderTool(b, true))
+		sourceAt, paragraphAt := -1, -1
+		expandedRows := strings.Split(expanded, "\n")
+		for i, row := range expandedRows {
+			if strings.Contains(row, "source") {
+				sourceAt = i
+			}
+			if strings.Contains(row, "paragraph") {
+				paragraphAt = i
+			}
+		}
+		if strings.Contains(expanded, "ctrl+t expand") || !strings.Contains(expanded, "artifact-12") || sourceAt < 0 || paragraphAt != sourceAt+2 || strings.TrimSpace(strings.Trim(expandedRows[sourceAt+1], "│")) != "" {
+			t.Errorf("expanded artifact result must retain all artifacts and intentional blank paragraph:\n%s", expanded)
+		}
+	})
+}
+
 // toolCardMaxWidth columns on a wide terminal, but on a narrow terminal the
 // contentWidth-2 inset wins (the card never exceeds the viewport content). The card is
 // laid out against contentWidth() = r.width - the left-margin indent, so the cap binds at
