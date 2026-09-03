@@ -5977,7 +5977,10 @@ func (s *Service) renewLoop(renewCtx context.Context, id session.SessionID, expe
 func (s *Service) onLeaseLost(ctx context.Context, id session.SessionID, expected *heldLease, cause error) {
 	var run *agent.Run
 	var admissionCancel context.CancelFunc
+	var leaseCancel context.CancelFunc
+	var lease port.Lease
 	var askID string
+	var preserveAwaiting bool
 	s.mu.Lock()
 	if s.heldLeases[id] != expected || !expected.valid {
 		s.mu.Unlock()
@@ -5986,25 +5989,41 @@ func (s *Service) onLeaseLost(ctx context.Context, id session.SessionID, expecte
 	expected.valid = false
 	s.lostOwnership[id] = struct{}{}
 	s.cfg.MutationCapability.Invalidate(id)
-	expected.cancel()
+	leaseCancel = expected.cancel
+	lease = expected.lease
 	if st := s.runs[id]; st != nil {
 		run = st.run
 		admissionCancel = st.admissionCancel
-		if st.awaiting.Load() {
+		preserveAwaiting = st.awaiting.Load()
+		if preserveAwaiting {
 			if ask, pending := st.sess.PendingAsk(); pending {
 				askID = ask.AskID
 			}
 		}
 	}
+	if !preserveAwaiting {
+		delete(s.heldLeases, id)
+	}
 	s.mu.Unlock()
+	if run != nil && askID != "" {
+		run.RetractPermissionAsk(askID)
+	}
+	if leaseCancel != nil {
+		leaseCancel()
+	}
 	if admissionCancel != nil {
 		admissionCancel()
 	}
 	if run != nil {
-		if askID != "" {
-			run.RetractPermissionAsk(askID)
-		}
 		run.Cancel()
+	}
+	if !preserveAwaiting {
+		releaseCtx, releaseCancel := context.WithTimeout(context.WithoutCancel(ctx), leaseAcquireTimeout)
+		defer releaseCancel()
+		if err := s.cfg.SessionLease.Release(releaseCtx, lease); err != nil {
+			s.cfg.Diagnostics.Log(releaseCtx, port.LevelWarn, "session lease release failed after loss",
+				"session", string(id), "owner", s.cfg.LeaseOwner, "err", err.Error())
+		}
 	}
 	// Emit diagnostics only after cancellation has been signalled, so observers
 	// never see a loss report while the stale lifecycle is still admissible.
