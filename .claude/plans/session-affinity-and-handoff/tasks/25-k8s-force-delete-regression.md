@@ -2,12 +2,12 @@
 id: 25-k8s-force-delete-regression
 title: Restore force-delete lease TTL exclusion
 blocked_by: [24-integration-finalization]
-status: in-progress
-branch: ""
+status: done
+branch: "plan-session-affinity-and-handoff/25-k8s-force-delete-regression"
 worktree: ".scratch/task-session-affinity-25"
 issue: ""
 retries: 0
-last_error: "CI kind e2e force-deleted owner allowed immediate 200 instead of pre-TTL 409 on two attempts"
+last_error: ""
 accumulator: acc/session-affinity-and-handoff
 ---
 
