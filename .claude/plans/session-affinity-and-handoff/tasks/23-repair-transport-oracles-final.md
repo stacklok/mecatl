@@ -2,12 +2,12 @@
 id: 23-repair-transport-oracles-final
 title: Final repair of affinity SDK semantics and behavioral tests
 blocked_by: [21-repair-affinity-clients-tests]
-status: in-progress
-branch: ""
+status: done
+branch: "plan-session-affinity-and-handoff/23-repair-transport-oracles-final"
 worktree: ".scratch/task-session-affinity-23"
 issue: ""
 retries: 0
-last_error: "second panel: raw invalid-ID ambiguity, module-external fixtures, weak HTTP/gRPC baseline and Converse-control oracles"
+last_error: ""
 accumulator: acc/session-affinity-and-handoff
 ---
 

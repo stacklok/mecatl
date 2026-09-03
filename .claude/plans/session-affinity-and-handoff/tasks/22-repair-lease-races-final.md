@@ -2,12 +2,12 @@
 id: 22-repair-lease-races-final
 title: Final repair of lease admission, drain, and mutation boundaries
 blocked_by: [20-repair-lease-lifecycle]
-status: in-progress
-branch: ""
+status: done
+branch: "plan-session-affinity-and-handoff/22-repair-lease-races-final"
 worktree: ".scratch/task-session-affinity-22"
 issue: ""
 retries: 0
-last_error: "second panel: provisional run launch, drain approval/awaiting persist races, child lost registration, steer admission, inventory boundary"
+last_error: ""
 accumulator: acc/session-affinity-and-handoff
 ---
 
