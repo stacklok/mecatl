@@ -6,7 +6,7 @@ import type {
   MessageShape,
 } from "@bufbuild/protobuf";
 import { create } from "@bufbuild/protobuf";
-import type { Transport } from "@connectrpc/connect";
+import type { CallOptions, Transport } from "@connectrpc/connect";
 
 import {
   AuthenticationError,
@@ -33,6 +33,7 @@ import {
   invalidateRawCompatibility,
   type RawClient,
   registeredTransportOperations,
+  withSessionAffinity,
 } from "./raw.js";
 import { type ConverseFrame, type Run, RunImpl, type RunOptions } from "./run.js";
 import {
@@ -164,10 +165,12 @@ interface SessionOperations {
   stream<I extends DescMessage, O extends DescMessage>(
     method: DescMethodStreaming<I, O>,
     input: AsyncIterable<MessageInitShape<I>>,
+    options?: CallOptions,
   ): AsyncIterable<MessageShape<O>>;
   unary<I extends DescMessage, O extends DescMessage>(
     method: DescMethodUnary<I, O>,
     input: MessageInitShape<I>,
+    options?: CallOptions,
   ): Promise<MessageShape<O>>;
   watch(
     sessionId: string,
@@ -175,6 +178,19 @@ interface SessionOperations {
     cursor: string,
     signal: AbortSignal,
   ): AsyncIterable<WatchSessionEventsResponse>;
+}
+
+function sessionAffinityOperations(
+  sessionId: string,
+  operations: SessionOperations,
+): SessionOperations {
+  return {
+    ...operations,
+    stream: (method, input, options) =>
+      operations.stream(method, input, withSessionAffinity(sessionId, options)),
+    unary: (method, input, options) =>
+      operations.unary(method, input, withSessionAffinity(sessionId, options)),
+  };
 }
 
 type DisposableTransport = Transport & {
@@ -205,7 +221,7 @@ class SessionImpl implements Session {
     promptCapabilities: PromptCapabilities | undefined,
   ) {
     this.id = id;
-    this.#operations = operations;
+    this.#operations = sessionAffinityOperations(this.id, operations);
     this.#promptCapabilities = promptCapabilities;
   }
 
@@ -344,9 +360,9 @@ class ClientImpl implements Client {
       clientSignal: this.#abort.signal,
       features: () => this.#features(),
       invalidateCompatibility: () => invalidateRawCompatibility(this.#raw),
-      stream: (method, input) => this.#stream(method, input),
+      stream: (method, input, options) => this.#stream(method, input, options),
       transportKind: this.#transportKind,
-      unary: (method, input) => this.#unary(method, input),
+      unary: (method, input, options) => this.#unary(method, input, options),
       watch: (sessionId, runId, cursor, signal) =>
         this.#watch(
           HarnessService.method.watchSessionEvents,
@@ -360,14 +376,22 @@ class ClientImpl implements Client {
         return this.#session(response.sessionId, "CreateSession", response.sessionCapabilities);
       },
       fork: async (sourceSessionId, input = {}) => {
-        const response = await this.#unary(HarnessService.method.forkSession, {
-          ...input,
-          sourceSessionId,
-        });
+        const response = await this.#unary(
+          HarnessService.method.forkSession,
+          {
+            ...input,
+            sourceSessionId,
+          },
+          withSessionAffinity(sourceSessionId),
+        );
         return this.#session(response.sessionId, "ForkSession", undefined);
       },
       get: async (sessionId) => {
-        const response = await this.#unary(HarnessService.method.getSession, { sessionId });
+        const response = await this.#unary(
+          HarnessService.method.getSession,
+          { sessionId },
+          withSessionAffinity(sessionId),
+        );
         if (response.session === undefined || response.session.sessionId === "") {
           throw new ProtocolError("GetSession returned no session", {
             transport: this.#transportKind,
@@ -441,11 +465,18 @@ class ClientImpl implements Client {
   async #unary<I extends DescMessage, O extends DescMessage>(
     method: DescMethodUnary<I, O>,
     input: MessageInitShape<I>,
+    options?: CallOptions,
   ): Promise<MessageShape<O>> {
     this.#assertOpen();
     if (this.#requestStatus === "offline") this.#setRequestStatus("reconnecting");
     try {
-      const response = await this.#raw.unary(method, input, { signal: this.#abort.signal });
+      const response = await this.#raw.unary(method, input, {
+        ...options,
+        signal:
+          options?.signal === undefined
+            ? this.#abort.signal
+            : AbortSignal.any([this.#abort.signal, options.signal]),
+      });
       this.#setRequestStatus("online");
       return response;
     } catch (error) {
@@ -489,12 +520,15 @@ class ClientImpl implements Client {
   #stream<I extends DescMessage, O extends DescMessage>(
     method: DescMethodStreaming<I, O>,
     input: AsyncIterable<MessageInitShape<I>>,
-    signal?: AbortSignal,
+    options?: CallOptions,
   ): AsyncIterable<MessageShape<O>> {
     this.#assertOpen();
     const raw = this.#raw.stream(method, input, {
+      ...options,
       signal:
-        signal === undefined ? this.#abort.signal : AbortSignal.any([this.#abort.signal, signal]),
+        options?.signal === undefined
+          ? this.#abort.signal
+          : AbortSignal.any([this.#abort.signal, options.signal]),
     });
     const observeError = (error: unknown) => this.#observeError(error);
     const publishOnline = () => this.#setRequestStatus("online");

@@ -304,6 +304,7 @@ class HttpTransport implements Transport {
     sessionId: string,
     frame: ConverseRequest,
     signal: AbortSignal | undefined,
+    requestHeaders?: HeadersInit,
   ): Promise<void> {
     const path = `/v1/sessions/${encodeURIComponent(sessionId)}`;
     const kind = frame.kind;
@@ -358,7 +359,7 @@ class HttpTransport implements Transport {
           transport: "http",
         });
     }
-    const response = await this.#request(route, body, signal);
+    const response = await this.#request(route, body, signal, requestHeaders);
     if (!response.ok) await this.#problem(response);
   }
 
@@ -456,6 +457,7 @@ class HttpTransport implements Transport {
             sessionId,
             create(method.input, next.value) as unknown as ConverseRequest,
             effectiveSignal,
+            header,
           );
         }
       };
