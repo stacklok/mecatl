@@ -12,7 +12,7 @@ import {
 import { fetchFor, type RecordedRequest, scriptedState } from "./scripted-state.js";
 
 describe("compatibility floor", () => {
-  it("TestADR_0291_TypeScriptRawHelperCompatibility", async () => {
+  it("TestADR_0294_TypeScriptRawHelperCompatibility", async () => {
     const sessionId = "Session-Affinity_opaque.01";
     const grpcHeaders: Headers[] = [];
     const grpcTransport = createRouterTransport(

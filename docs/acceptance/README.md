@@ -130,7 +130,7 @@ when the code that satisfies the plan has landed.
 - [Session affinity and handoff](session-affinity-and-handoff.md) — exact
   `X-Mecatl-Session-ID` client→gateway→mecak8s→provider correlation, automatic
   official-client propagation, session-scoped lease fencing, graceful drain, and
-  killed-owner Redis handoff without chart-owned Gateway policy. Status: draft.
+  killed-owner Redis handoff without chart-owned Gateway policy. Status: landed.
 - [TypeScript SDK durable attachment (M2)](sdk-typescript-attach.md) — the client
   half of the durable watch: the `WatchSessionEvents` envelope union with tolerated
   unknown phases, `session.attach()` / `session.activity()`, a serializable
