@@ -75,6 +75,7 @@ func NewToolHiveProcess(ctx context.Context, config ToolHiveConfig) (*Process, e
 	return newToolHiveProcess(ctx, config, toolHiveProcessOptions{})
 }
 
+//nolint:gocyclo // Broker construction is one ordered admission transaction with reverse-order rollback.
 func newToolHiveProcess(ctx context.Context, config ToolHiveConfig, options toolHiveProcessOptions) (*Process, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err

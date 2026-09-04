@@ -162,7 +162,7 @@ func (m Model) statusLineInput(now time.Time) statusline.Input {
 	workspace := statusline.Workspace{Location: unknownLabel}
 	if m.activePlacement.Kind != "" || m.activePlacement.Label != "" {
 		workspace.Location = "local"
-		if m.deps.ConnectionMode == "connect" {
+		if m.deps.ConnectionMode == connectCommand {
 			workspace.Location = "remote"
 		}
 		workspace.Name = m.activePlacement.Label

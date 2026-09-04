@@ -123,7 +123,7 @@ func TestSessionMCPAuthorization_GrantRegressionParksAndResumes(t *testing.T) {
 	}
 	t.Cleanup(func() { built.Service.CloseSession(sess.ID) })
 
-	firstEvents, firstRun := runAndDrain(t, ownerCtx, built.Service, sess.ID, "read protected data")
+	firstEvents, firstRun := runAndDrain(ownerCtx, t, built.Service, sess.ID, "read protected data")
 	if firstRun.Outcome() != agent.RunOutcomeAuthorizationPending {
 		t.Fatalf("first run outcome = %v, want authorization pending", firstRun.Outcome())
 	}
@@ -131,18 +131,18 @@ func TestSessionMCPAuthorization_GrantRegressionParksAndResumes(t *testing.T) {
 		t.Fatalf("backend calls before authorization = %d, want 0", got)
 	}
 	firstPending := requiredAuthorization(t, firstEvents, call1)
-	assertDurablePending(t, built.Service, ownerCtx, sess.ID, call1, firstPending.AuthorizationID)
+	assertDurablePending(ownerCtx, t, built.Service, sess.ID, call1, firstPending.AuthorizationID)
 	firstControl := server.MCPAuthorizationControl{SessionID: sess.ID, AuthorizationID: firstPending.AuthorizationID}
 	if _, err := built.Service.MCPAuthorizationPresentation(intruderCtx, sess.ID, firstControl); err == nil {
 		t.Fatal("non-owner obtained authorization presentation")
 	}
-	completeBrowserAuthorization(t, built.Service, ownerCtx, sess.ID, firstControl, fixture.browserClient(roots))
+	completeBrowserAuthorization(ownerCtx, t, built.Service, sess.ID, firstControl, fixture.browserClient(roots))
 	firstContinuation, err := built.Service.RecheckMCPAuthorization(ownerCtx, sess.ID, firstControl)
 	if err != nil || firstContinuation.Status != session.AuthorizationGranted || firstContinuation.Run == nil {
 		t.Fatalf("first recheck = %+v, %v", firstContinuation, err)
 	}
-	drainAndFinish(t, ownerCtx, built.Service, sess.ID, firstContinuation.Run)
-	assertToolResult(t, built.Service, ownerCtx, sess.ID, call1, false, "protected result")
+	drainAndFinish(ownerCtx, t, built.Service, sess.ID, firstContinuation.Run)
+	assertToolResult(ownerCtx, t, built.Service, sess.ID, call1, false, "protected result")
 	assertAuthorizedCalls(t, fixture, sess.ID, []observedProtectedCall{{backend: "github", call: session.NewToolCall(call1, toolName, json.RawMessage(`{"request":"first"}`))}})
 	if got := fixture.backendCalls.Load(); got != 1 {
 		t.Fatalf("backend calls after exact first continuation = %d, want 1", got)
@@ -152,7 +152,7 @@ func TestSessionMCPAuthorization_GrantRegressionParksAndResumes(t *testing.T) {
 	// the current request, while the next request refreshes again deterministically.
 	// Switching the fixture to invalid_grant therefore needs no wall-clock sleep.
 	fixture.rejectRefresh.Store(true)
-	secondEvents, secondRun := runAndDrain(t, ownerCtx, built.Service, sess.ID, "read after credential regression")
+	secondEvents, secondRun := runAndDrain(ownerCtx, t, built.Service, sess.ID, "read after credential regression")
 	if secondRun.Outcome() != agent.RunOutcomeAuthorizationPending {
 		t.Fatalf("regression run outcome = %v, want authorization pending", secondRun.Outcome())
 	}
@@ -163,22 +163,22 @@ func TestSessionMCPAuthorization_GrantRegressionParksAndResumes(t *testing.T) {
 	if got := fixture.backendCalls.Load(); got != 1 {
 		t.Fatalf("backend calls after invalid_grant and re-park = %d, want 1", got)
 	}
-	assertExactToolResult(t, built.Service, ownerCtx, sess.ID, call2, true, `tool "mcp__github__protected" failed: OAuth token refresh failed`)
+	assertExactToolResult(ownerCtx, t, built.Service, sess.ID, call2, true, `tool "mcp__github__protected" failed: OAuth token refresh failed`)
 	assertAuthorizedCalls(t, fixture, sess.ID, []observedProtectedCall{
 		{backend: "github", call: session.NewToolCall(call1, toolName, json.RawMessage(`{"request":"first"}`))},
 		{backend: "github", call: session.NewToolCall(call2, toolName, json.RawMessage(`{"request":"regressed"}`))},
 	})
 	secondPending := requiredAuthorization(t, secondEvents, call3)
-	assertDurablePending(t, built.Service, ownerCtx, sess.ID, call3, secondPending.AuthorizationID)
+	assertDurablePending(ownerCtx, t, built.Service, sess.ID, call3, secondPending.AuthorizationID)
 
 	fixture.rejectRefresh.Store(false)
 	secondControl := server.MCPAuthorizationControl{SessionID: sess.ID, AuthorizationID: secondPending.AuthorizationID}
-	completeBrowserAuthorization(t, built.Service, ownerCtx, sess.ID, secondControl, fixture.browserClient(roots))
+	completeBrowserAuthorization(ownerCtx, t, built.Service, sess.ID, secondControl, fixture.browserClient(roots))
 	secondContinuation, err := built.Service.RecheckMCPAuthorization(ownerCtx, sess.ID, secondControl)
 	if err != nil || secondContinuation.Status != session.AuthorizationGranted || secondContinuation.Run == nil {
 		t.Fatalf("second recheck = %+v, %v", secondContinuation, err)
 	}
-	drainAndFinish(t, ownerCtx, built.Service, sess.ID, secondContinuation.Run)
+	drainAndFinish(ownerCtx, t, built.Service, sess.ID, secondContinuation.Run)
 	assertTokenSequence(t, fixture, []string{
 		"exchange", "refresh:refresh-initial-1:ok", "refresh:refresh-1:invalid_grant",
 		"exchange", "refresh:refresh-initial-2:ok",
@@ -191,7 +191,7 @@ func TestSessionMCPAuthorization_GrantRegressionParksAndResumes(t *testing.T) {
 	if got := fixture.backendCalls.Load(); got != 2 {
 		t.Fatalf("backend calls after exact second continuation = %d, want 2", got)
 	}
-	assertToolResult(t, built.Service, ownerCtx, sess.ID, call3, false, "protected result")
+	assertToolResult(ownerCtx, t, built.Service, sess.ID, call3, false, "protected result")
 
 	finished, err := built.Service.GetSession(ownerCtx, sess.ID)
 	if err != nil {
@@ -205,24 +205,24 @@ func TestSessionMCPAuthorization_GrantRegressionParksAndResumes(t *testing.T) {
 	}
 }
 
-func runAndDrain(t *testing.T, ctx context.Context, svc *server.Service, id session.SessionID, prompt string) ([]session.Event, *agent.Run) {
+func runAndDrain(ctx context.Context, t *testing.T, svc *server.Service, id session.SessionID, prompt string) ([]session.Event, *agent.Run) {
 	t.Helper()
 	run, err := svc.StartInteractiveRunContent(ctx, id, prompt, nil)
 	if err != nil {
 		t.Fatalf("StartInteractiveRunContent: %v", err)
 	}
-	events := drainEvents(t, ctx, run)
+	events := drainEvents(ctx, t, run)
 	svc.FinishRun(id, run)
 	return events, run
 }
 
-func drainAndFinish(t *testing.T, ctx context.Context, svc *server.Service, id session.SessionID, run *agent.Run) {
+func drainAndFinish(ctx context.Context, t *testing.T, svc *server.Service, id session.SessionID, run *agent.Run) {
 	t.Helper()
-	_ = drainEvents(t, ctx, run)
+	_ = drainEvents(ctx, t, run)
 	svc.FinishRun(id, run)
 }
 
-func drainEvents(t *testing.T, ctx context.Context, run *agent.Run) []session.Event {
+func drainEvents(ctx context.Context, t *testing.T, run *agent.Run) []session.Event {
 	t.Helper()
 	var events []session.Event
 	for {
@@ -253,7 +253,7 @@ func requiredAuthorization(t *testing.T, events []session.Event, call session.To
 	return session.AuthorizationPayload{}
 }
 
-func assertDurablePending(t *testing.T, svc *server.Service, ctx context.Context, id session.SessionID, call session.ToolCallID, authorizationID string) {
+func assertDurablePending(ctx context.Context, t *testing.T, svc *server.Service, id session.SessionID, call session.ToolCallID, authorizationID string) {
 	t.Helper()
 	parked, err := svc.GetSession(ctx, id)
 	if err != nil {
@@ -265,7 +265,7 @@ func assertDurablePending(t *testing.T, svc *server.Service, ctx context.Context
 	}
 }
 
-func completeBrowserAuthorization(t *testing.T, svc *server.Service, ctx context.Context, id session.SessionID, control server.MCPAuthorizationControl, client *http.Client) {
+func completeBrowserAuthorization(ctx context.Context, t *testing.T, svc *server.Service, id session.SessionID, control server.MCPAuthorizationControl, client *http.Client) {
 	t.Helper()
 	presentation, err := svc.MCPAuthorizationPresentation(ctx, id, control)
 	if err != nil || presentation == "" {
@@ -285,7 +285,7 @@ func completeBrowserAuthorization(t *testing.T, svc *server.Service, ctx context
 	}
 }
 
-func assertToolResult(t *testing.T, svc *server.Service, ctx context.Context, id session.SessionID, call session.ToolCallID, wantError bool, contains string) {
+func assertToolResult(ctx context.Context, t *testing.T, svc *server.Service, id session.SessionID, call session.ToolCallID, wantError bool, contains string) {
 	t.Helper()
 	loaded, err := svc.GetSession(ctx, id)
 	if err != nil {
@@ -302,7 +302,7 @@ func assertToolResult(t *testing.T, svc *server.Service, ctx context.Context, id
 	t.Fatalf("no tool result for %q", call)
 }
 
-func assertExactToolResult(t *testing.T, svc *server.Service, ctx context.Context, id session.SessionID, call session.ToolCallID, wantError bool, content string) {
+func assertExactToolResult(ctx context.Context, t *testing.T, svc *server.Service, id session.SessionID, call session.ToolCallID, wantError bool, content string) {
 	t.Helper()
 	loaded, err := svc.GetSession(ctx, id)
 	if err != nil {

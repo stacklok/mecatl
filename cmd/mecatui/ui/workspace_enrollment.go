@@ -34,7 +34,7 @@ func workspaceEnrollmentCmd(ctx context.Context, control client.WorkspaceEnrollm
 		var result client.WorkspaceEnrollment
 		var err error
 		switch action {
-		case "connect", "check":
+		case connectCommand, "check":
 			result, err = control.ConnectWorkspaceServices(ctx, sessionID)
 		case "retry":
 			result, err = control.RetryWorkspaceEnrollment(ctx, sessionID, enrollmentID)
@@ -57,7 +57,7 @@ func (m Model) onWorkspaceEnrollmentKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd
 	case msg.String() == "c" && m.enrollment.ID == "":
 		m.enrollment.busy = true
 		m.enrollment.err = ""
-		return m, workspaceEnrollmentCmd(m.deps.Ctx, m.deps.WorkspaceEnrollment, m.sessionID, "", "connect")
+		return m, workspaceEnrollmentCmd(m.deps.Ctx, m.deps.WorkspaceEnrollment, m.sessionID, "", connectCommand)
 	case msg.String() == "r" && m.enrollment.ID != "":
 		m.enrollment.busy = true
 		action := "check"
@@ -76,7 +76,7 @@ func (m Model) onWorkspaceEnrollmentKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd
 }
 
 func (m Model) applyWorkspaceEnrollment(msg workspaceEnrollmentMsg) (tea.Model, tea.Cmd) {
-	if msg.sessionID != m.sessionID || msg.action == "connect" && m.enrollment.ID != "" || msg.action != "connect" && msg.targetEnrollmentID != m.enrollment.ID {
+	if msg.sessionID != m.sessionID || msg.action == connectCommand && m.enrollment.ID != "" || msg.action != connectCommand && msg.targetEnrollmentID != m.enrollment.ID {
 		return m, nil
 	}
 	m.enrollment.busy = false

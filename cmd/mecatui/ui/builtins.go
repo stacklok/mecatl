@@ -231,7 +231,7 @@ func builtinCommands(caps client.Capabilities, w wiredCollaborators) []builtin {
 		})
 	}
 	if w.Connect {
-		out = append(out, builtin{name: "connect", desc: "sign in and connect to a saved remote target", run: Model.runConnect})
+		out = append(out, builtin{name: connectCommand, desc: "sign in and connect to a saved remote target", run: Model.runConnect})
 	}
 	out = appendLearningBuiltin(out, w)
 	out = appendDebugBuiltins(out, w)

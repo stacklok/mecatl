@@ -379,7 +379,7 @@ func TestStaticProtectedProcessRealAuthorizationFlows(t *testing.T) {
 					w.Header().Set("Content-Type", "application/json")
 					_ = json.NewEncoder(w).Encode(map[string]any{"keys": []map[string]any{{
 						"kty": "RSA", "use": "sig", "kid": "test-key", "alg": "RS256",
-						"n": base64.RawURLEncoding.EncodeToString(oidcKey.PublicKey.N.Bytes()),
+						"n": base64.RawURLEncoding.EncodeToString(oidcKey.N.Bytes()),
 						"e": base64.RawURLEncoding.EncodeToString([]byte{1, 0, 1}),
 					}}})
 				default:

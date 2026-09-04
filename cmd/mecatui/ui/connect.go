@@ -34,6 +34,8 @@ type ConnectAction uint8
 // ConnectAction values are the closed set of operations main may perform after
 // the TUI exits.
 const (
+	connectCommand = "connect"
+
 	ConnectSaved ConnectAction = iota + 1
 	Reauthenticate
 	RetryAfterCleanup

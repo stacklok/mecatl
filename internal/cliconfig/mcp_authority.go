@@ -113,18 +113,27 @@ func validateBrokerOAuth(route permconfig.MCPServerProfile) error {
 	if oauth == nil || len(oauth.Scopes) == 0 || oauth.Network == nil || oauth.Client.Mode == "" {
 		return fmt.Errorf("%w: MCP server %q: broker OAuth requires client, scopes, and network", ErrMCPProfileInvalid, route.Name)
 	}
-	if oauth.Upstream == nil || oauth.Upstream.Mode == "oidc" {
-		if oauth.Issuer == "" {
-			return fmt.Errorf("%w: MCP server %q: broker OIDC requires issuer", ErrMCPProfileInvalid, route.Name)
-		}
-	} else if oauth.Upstream.Mode != "oauth2" || oauth.Upstream.OAuth2 == nil || oauth.Upstream.OAuth2.AuthorizationEndpoint == "" || oauth.Upstream.OAuth2.TokenEndpoint == "" || oauth.Issuer != "" {
-		return fmt.Errorf("%w: MCP server %q: broker OAuth2 requires explicit endpoints and forbids issuer", ErrMCPProfileInvalid, route.Name)
+	if err := validateBrokerOAuthUpstream(route.Name, oauth); err != nil {
+		return err
 	}
 	if oauth.Upstream != nil && oauth.Upstream.Mode == "oauth2" && (len(oauth.Network.AdditionalOrigins) != 0 || len(oauth.Network.PrivateOrigins) != 0 || oauth.Network.MaxRedirects != 0) {
 		return fmt.Errorf("%w: MCP server %q: broker OAuth2 network controls are unsupported", ErrMCPProfileInvalid, route.Name)
 	}
 	if oauth.Profile != "" || oauth.Principal != "" || oauth.Credentials.Mode != "" || oauth.Credentials.Local != nil || oauth.Credentials.Environment != nil {
 		return fmt.Errorf("%w: MCP server %q: broker OAuth forbids profile, principal, and credentials", ErrMCPProfileInvalid, route.Name)
+	}
+	return nil
+}
+
+func validateBrokerOAuthUpstream(routeName string, oauth *permconfig.MCPOAuthProfile) error {
+	if oauth.Upstream == nil || oauth.Upstream.Mode == "oidc" {
+		if oauth.Issuer == "" {
+			return fmt.Errorf("%w: MCP server %q: broker OIDC requires issuer", ErrMCPProfileInvalid, routeName)
+		}
+		return nil
+	}
+	if oauth.Upstream.Mode != "oauth2" || oauth.Upstream.OAuth2 == nil || oauth.Upstream.OAuth2.AuthorizationEndpoint == "" || oauth.Upstream.OAuth2.TokenEndpoint == "" || oauth.Issuer != "" {
+		return fmt.Errorf("%w: MCP server %q: broker OAuth2 requires explicit endpoints and forbids issuer", ErrMCPProfileInvalid, routeName)
 	}
 	return nil
 }
