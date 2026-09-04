@@ -245,8 +245,9 @@ func TestFoldContractDocMatchesSessionFields(t *testing.T) {
 	//   supplied via SessionMeta (not event-carried): ID, Mode, Limits,
 	//     EnvironmentRef, Placement, Profile, ProviderID, ModelID, ReasoningEffort,
 	//     DebugMCPServers, DebugMCPTools, DebugTargetFingerprint, Title,
-	//     TitleProvenance, TitleGeneration, TitleRevision, Kind, Relationship, CreatedAt
-	//   not-event-carried identity labels: Owner, Authority, ExternalBinding
+	//     TitleProvenance, TitleGeneration, TitleRevision, Kind, Relationship, CreatedAt, ExternalBinding
+	//   not-event-carried identity labels (also supplied via SessionMeta, via a
+	//     validating helper rather than direct assignment): Owner, Authority
 	wantSessionFields := map[string]struct{}{
 		"ID": {}, "State": {}, "Mode": {}, "Conversation": {}, "Limits": {},
 		"Counters": {}, "Usage": {}, "Profile": {}, "EnvironmentRef": {}, "Placement": {},

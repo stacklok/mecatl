@@ -129,6 +129,12 @@ type SessionMeta struct {
 	// metadata. Nil is a documented pre-feature legacy record; a present payload
 	// is validated and bound before reconstruction proceeds.
 	Authority *session.Authority
+	// ExternalBinding is the opaque composition-issued process-external
+	// identity (e.g. an MCP broker attachment binding). Not event-carried:
+	// safe to omit for a pure fold UNLESS the host requires exact external-
+	// runtime reattachment, in which case it MUST be supplied here — there is
+	// no other path into Fold's reconstructed Session for it.
+	ExternalBinding session.ExternalBinding
 	// CreatedAt is the creation timestamp.
 	CreatedAt time.Time
 }
@@ -200,6 +206,7 @@ func Fold(meta SessionMeta, events iter.Seq2[session.Event, error]) (*session.Se
 	s.ProviderID = meta.ProviderID
 	s.ModelID = meta.ModelID
 	s.ReasoningEffort = meta.ReasoningEffort
+	s.ExternalBinding = meta.ExternalBinding
 	s.DebugMCPServers = append([]string(nil), meta.DebugMCPServers...)
 	s.DebugMCPTools = append([]string(nil), meta.DebugMCPTools...)
 	s.DebugTargetFingerprint = meta.DebugTargetFingerprint
