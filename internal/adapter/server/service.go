@@ -2215,6 +2215,16 @@ func (s *Service) createSession(ctx context.Context, mode session.PermissionMode
 	if s.cfg.MCPBroker != nil && !opts.idSet {
 		id := mintID()
 		request := newCreateRequest(placement.Ref, mode, limits, sel, profile, opts.sourceSessionID, opts)
+		// Populate the outer retryRequest too (not just the local var used for
+		// reserveSessionID above): persistCreatedSession's collision-retry path
+		// (resolveCreateCollision) needs a non-nil *createRequest to classify an
+		// idempotent-retry winner on this generated-id branch, exactly as the
+		// opts.idSet branch above already does. Before this fix, retryRequest
+		// stayed nil here (the "request" identifier above is a fresh local, not
+		// the outer var), so resolveCreateCollision's request==nil guard always
+		// short-circuited and a genuine ErrSessionAlreadyExists from persistNewSession
+		// always hard-failed instead of resolving to the existing winner.
+		retryRequest = &request
 		existing, release, reserveErr := s.reserveSessionID(ctx, id, owner, request)
 		if reserveErr != nil {
 			return nil, reserveErr
