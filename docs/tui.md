@@ -32,6 +32,11 @@ it replaces v1's `Session.Digest`, and no digest compatibility alias is emitted.
 directly (there is no shell or source configuration
 form); `/bin/sh` is available only when explicitly selected as the executable with
 literal arguments. It uses a fixed safe baseline environment; the optional
+local session-context service is resolved asynchronously for each active session.
+When it returns an eligible root, that root is used only as the direct command's
+process CWD (including after a worktree switch); it is never included in status
+input, JSON, templates, arguments, environment, or UI rendering. A stale reply is
+discarded and unavailable context retains the launch-directory fallback. the optional
 `passthrough_env` list may add explicitly named user-global variables but never
 ambient environment values; reserved baseline and source-owned terminal-dimension names
 are rejected during settings validation. It uses local-only CWD selection, a one-second deadline, and a combined

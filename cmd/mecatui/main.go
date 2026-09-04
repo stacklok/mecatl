@@ -321,6 +321,7 @@ func runWithOptions(argv []string, options runOptions) error {
 		Theme:                  th,
 		ThemeAutoDetect:        themeAutoDetect,
 		StatusSource:           statusSource,
+		LocalSessionContext:    cl,
 		Server:                 target,
 		ConnectionMode:         connectionMode,
 		ClientBuild:            buildinfo.BuildID,

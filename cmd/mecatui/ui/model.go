@@ -212,6 +212,9 @@ type Deps struct {
 	// StatusSource is composed outside ui. The UI only submits display facts and
 	// consumes semantic snapshots through one Bubble Tea listener.
 	StatusSource statusline.Source
+	// LocalSessionContext optionally resolves ADR 0296's privileged local root.
+	// The root is used only as a direct status-command CWD, never UI state.
+	LocalSessionContext client.LocalSessionContextGetter
 
 	// Presentation capability probes are package-private test seams. New replaces
 	// nil values with the production environment detectors.

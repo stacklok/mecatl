@@ -154,7 +154,7 @@ func TestStatusCustomization_Scenario1_StatusInputExcludesRemoteWorkspacePath(t 
 	if !ok {
 		t.Fatal("missing input")
 	}
-	if input.Workspace.Location != "remote" || input.Workspace.Path != "" || input.Workspace.Basename != "safe-label" {
+	if input.Workspace.Location != "remote" || input.Workspace.Basename != "safe-label" {
 		t.Fatalf("remote workspace leaked as local command path: %#v", input.Workspace)
 	}
 }

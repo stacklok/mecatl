@@ -14,6 +14,7 @@ import (
 	"github.com/charmbracelet/colorprofile"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
+	statusline "github.com/stacklok/mecatl/cmd/mecatui/statusline"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
 	"github.com/stacklok/mecatl/cmd/mecatui/ui/welcome"
 )
@@ -457,6 +458,9 @@ func (m Model) applySessionReady(msg client.SessionReadyMsg) (tea.Model, tea.Cmd
 	// sibling return operand leaves the copy order UNSPECIFIED (see markDirty's
 	// doc) — the cmd is taken first so the returned model carries the mutation.
 	cmd := (&m).maybeKittyTransmit()
+	if contextCmd := m.refreshStatusContextCmd(); contextCmd != nil {
+		cmd = tea.Batch(cmd, contextCmd)
+	}
 	// Self-heal the terminal window title on the carryover/fork/adopt paths where
 	// the server already set a title this client never saw: if we have NO local
 	// title yet AND a session is bound, fire a GetSession refetch so
@@ -580,6 +584,11 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 		focusCmd := m.prompt.Focus()
 		m.refreshView()
 		return m, tea.Batch(focusCmd, (&m).armLiveFeed()), true
+	case statusContextMsg:
+		if msg.sessionID == m.sessionID {
+			statusline.SetCommandSessionCWD(m.deps.StatusSource, msg.sessionID, msg.root)
+		}
+		return m, nil, true
 	case client.SessionReadyMsg:
 		return m.applySessionReady(msg)
 	case client.SessionCompactedMsg:

@@ -10,7 +10,7 @@ import "time"
 // Commands receive this exact data as JSON. Template rendering receives a
 // private, StatusML-escaped projection so template interpolation cannot create
 // markup or terminal controls. The raw input remains available to commands for
-// ordinary data use such as querying Git from Workspace.Path.
+// ordinary display-safe status data.
 //
 // Renderer policy—clipping, safety/activity lanes, and context-bar glyph/style
 // selection—does not belong here. Header and footer available widths are facts
@@ -107,12 +107,11 @@ type Context struct {
 	Percent int
 }
 
-// Workspace is the active session workspace only. Location is "local", "remote",
-// or "unknown". Path and Basename are populated only for a local workspace; remote
-// and unknown workspaces must not be presented as usable local command paths.
+// Workspace is the active session workspace's display-safe provenance. Location
+// is "local", "remote", or "unknown". Basename is a server-supplied label, not a
+// usable local path.
 type Workspace struct {
 	Location string
-	Path     string
 	Basename string
 }
 

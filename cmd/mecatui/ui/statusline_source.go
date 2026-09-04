@@ -14,6 +14,31 @@ type statusLineChangedMsg struct {
 	line statusline.Result
 }
 
+type statusContextMsg struct {
+	sessionID string
+	root      string
+}
+
+func (m Model) refreshStatusContextCmd() tea.Cmd {
+	if m.deps.StatusSource == nil || m.sessionID == "" {
+		return nil
+	}
+	id := m.sessionID
+	statusline.SelectCommandSession(m.deps.StatusSource, id)
+	statusline.SetCommandSessionCWD(m.deps.StatusSource, id, "")
+	if m.deps.LocalSessionContext == nil {
+		return nil
+	}
+	getter, ctx := m.deps.LocalSessionContext, m.deps.Ctx
+	return func() tea.Msg {
+		root, err := getter.GetLocalSessionContext(ctx, id)
+		if err != nil {
+			return statusContextMsg{sessionID: id}
+		}
+		return statusContextMsg{sessionID: id, root: root}
+	}
+}
+
 // statusLineWaitCmd is the UI's sole source listener.
 func (m Model) statusLineWaitCmd() tea.Cmd {
 	if m.deps.StatusSource == nil {

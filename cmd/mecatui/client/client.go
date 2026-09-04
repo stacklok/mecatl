@@ -52,6 +52,7 @@ type TokenSource interface {
 type Client struct {
 	conn         *grpc.ClientConn
 	svc          mecatlv1.HarnessServiceClient
+	localContext mecatlv1.LocalSessionContextServiceClient
 	scheduleSvc  mecatlv1.ScheduleServiceClient
 	bearerBacked bool
 	// displayServerEndpoint is a sanitized diagnostic projection of the configured
@@ -141,6 +142,7 @@ func Dial(cfg DialConfig) (*Client, error) {
 	return &Client{
 		conn:                  conn,
 		svc:                   mecatlv1.NewHarnessServiceClient(conn),
+		localContext:          mecatlv1.NewLocalSessionContextServiceClient(conn),
 		scheduleSvc:           mecatlv1.NewScheduleServiceClient(conn),
 		bearerBacked:          cfg.AuthToken != "" || cfg.TokenSource != nil,
 		displayServerEndpoint: displayServerEndpoint(cfg),

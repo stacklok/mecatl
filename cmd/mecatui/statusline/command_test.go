@@ -68,7 +68,7 @@ func TestStatusCustomization_Scenario3_CommandBoundaryIsLocalAndSecretFree(t *te
 	t.Setenv("STATUS_SECRET", "do-not-leak")
 	source := NewCommandSource(commandTest(dir, "boundary", physicalDir))
 	t.Cleanup(func() { _ = source.Close(context.Background()) })
-	source.Submit(Input{Workspace: Workspace{Location: "remote", Path: "/untrusted/remote"}, Terminal: Terminal{HeaderAvailCols: 80, FooterAvailCols: 80}})
+	source.Submit(Input{Workspace: Workspace{Location: "remote"}, Terminal: Terminal{HeaderAvailCols: 80, FooterAvailCols: 80}})
 	waitStatusChange(t, source)
 	if got, want := statusSurfaceText(source.Latest().Header), "command header"; got != want {
 		t.Fatalf("remote command result = %q, want %q", got, want)
@@ -222,14 +222,46 @@ func TestStatusLineCommandDoesNotTrimNonASCIIOutputBoundary(t *testing.T) {
 	}
 }
 
-func TestStatusLineCommandCWDUsesLocalSessionWorkspace(t *testing.T) {
+func TestADR_0296_StatusCommandReceivesRootOnlyAsCWD(t *testing.T) {
 	launch, workspace := t.TempDir(), t.TempDir()
 	physicalWorkspace := physicalPath(t, workspace)
-	result, err := runCommand(context.Background(), commandTest(launch, "boundary", physicalWorkspace), Input{Workspace: Workspace{Location: "local", Path: workspace}})
-	if err != nil || !strings.Contains(string(result), "command header") {
-		t.Fatalf("local workspace CWD was not used: err=%v result=%q", err, result)
+	expected := filepath.Join(launch, "expected-cwd")
+	observedCWD := filepath.Join(launch, "observed-cwd")
+	observedInput := filepath.Join(launch, "observed-input")
+	observedEnv := filepath.Join(launch, "observed-env")
+	if err := os.WriteFile(expected, []byte(physicalWorkspace), 0o600); err != nil {
+		t.Fatal(err)
 	}
-	if filepath.Clean(commandCWD(Command{LaunchDir: launch}, Input{Workspace: Workspace{Location: "remote", Path: workspace}})) != filepath.Clean(launch) {
-		t.Fatal("remote workspace became command CWD")
+	command := Command{
+		Path:      "/bin/sh",
+		Args:      []string{"-c", `read input; pwd -P > "$2"; printf %s "$input" > "$3"; env > "$4"; test "$(pwd -P)" = "$(cat "$1")" && printf '%s' '<status><header><accent>command header</accent></header></status>'`, "--", expected, observedCWD, observedInput, observedEnv},
+		LaunchDir: launch,
+	}
+	source := NewCommandSource(command)
+	t.Cleanup(func() { _ = source.Close(context.Background()) })
+	SetCommandCWD(source, physicalWorkspace)
+	source.Submit(Input{Workspace: Workspace{Location: "local", Basename: "safe-label"}, Terminal: Terminal{HeaderAvailCols: 80, FooterAvailCols: 80}})
+	waitStatusChange(t, source)
+	if got, want := statusSurfaceText(source.Latest().Header), "command header"; got != want {
+		t.Fatalf("status command CWD/projection boundary failed: got %q, want %q", got, want)
+	}
+	for name, path := range map[string]string{"CWD": observedCWD, "Input": observedInput} {
+		value, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read observed %s: %v", name, err)
+		}
+		if name == "CWD" && strings.TrimSpace(string(value)) != physicalWorkspace {
+			t.Fatalf("command CWD = %q, want %q", value, physicalWorkspace)
+		}
+		if name != "CWD" && strings.Contains(string(value), physicalWorkspace) {
+			t.Fatalf("session root leaked into command %s: %q", name, value)
+		}
+	}
+}
+
+func TestStatusLineCommandCWDUsesLaunchDirectoryWithoutContext(t *testing.T) {
+	launch := t.TempDir()
+	if got := commandCWD(Command{LaunchDir: launch}, Input{}); filepath.Clean(got) != filepath.Clean(launch) {
+		t.Fatalf("command CWD = %q, want launch directory %q", got, launch)
 	}
 }

@@ -618,7 +618,12 @@ cancellation; the UI owns theme resolution, renderer chrome, clipping, and
 alignment. Settings live only in `$XDG_CONFIG_HOME/mecatui/settings.yaml`; a
 remote server or project never selects a local executable. Templates get a
 StatusML-escaped projection, commands get raw JSON on stdin, and StatusML carries
-semantic tokens rather than ANSI/OSC. Its command environment retains a fixed
+semantic tokens rather than ANSI/OSC. For an operator-enabled local-context
+service, Mecatui asynchronously reattaches the active owned session and keeps its
+root only in the direct command source's private CWD cache; it refreshes on every
+create, adoption, clear, fork, and worktree switch, ignores stale replies, and
+uses the launch directory when the service is unavailable. The root is never
+projected through status input, templates, environment, arguments, or UI state. Its command environment retains a fixed
 safe baseline; `passthrough_env` may add only explicitly named user-global values,
 never ambient environment values; reserved baseline and source-owned terminal-dimension
 names are rejected during settings validation. Before StatusML parsing, command output trims only boundary

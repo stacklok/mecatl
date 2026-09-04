@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/stacklok/mecatl/internal/adapter/procgroup"
@@ -47,6 +48,81 @@ type Command struct {
 	// RefreshInterval optionally refreshes an otherwise idle command. Values below
 	// one second are disabled; input changes still use the command debounce.
 	RefreshInterval time.Duration
+	cwd             *commandCWDState
+}
+
+type commandCWDState struct {
+	mu        sync.RWMutex
+	cwd       string
+	activeID  string
+	bySession map[string]string
+}
+
+func (s *commandCWDState) get(launchDir string) string {
+	if s == nil {
+		return launchDir
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.cwd != "" {
+		return s.cwd
+	}
+	return launchDir
+}
+
+func (s *commandCWDState) set(cwd string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.cwd = cwd
+}
+
+func (s *commandCWDState) selectSession(id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.activeID = id
+	s.cwd = s.bySession[id]
+}
+
+func (s *commandCWDState) setSession(id, cwd string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.bySession[id] = cwd
+	if s.activeID == id {
+		s.cwd = cwd
+	}
+}
+
+type commandSource struct {
+	Source
+	cwd *commandCWDState
+}
+
+func (s commandSource) setCommandCWD(cwd string)            { s.cwd.set(cwd) }
+func (s commandSource) selectCommandSession(id string)      { s.cwd.selectSession(id) }
+func (s commandSource) setCommandSessionCWD(id, cwd string) { s.cwd.setSession(id, cwd) }
+
+// SetCommandCWD updates the private process working directory for a direct
+// command source. The directory is never part of Input or status rendering.
+func SetCommandCWD(source Source, cwd string) {
+	if setter, ok := source.(interface{ setCommandCWD(string) }); ok {
+		setter.setCommandCWD(cwd)
+	}
+}
+
+// SelectCommandSession restores the cached CWD for session ID, or the launch
+// directory fallback until a local-context lookup supplies one.
+func SelectCommandSession(source Source, id string) {
+	if selector, ok := source.(interface{ selectCommandSession(string) }); ok {
+		selector.selectCommandSession(id)
+	}
+}
+
+// SetCommandSessionCWD caches a local session root for the direct command. It
+// remains private process state and is never projected through Input.
+func SetCommandSessionCWD(source Source, id, cwd string) {
+	if setter, ok := source.(interface{ setCommandSessionCWD(string, string) }); ok {
+		setter.setCommandSessionCWD(id, cwd)
+	}
 }
 
 // Valid reports whether command specifies an absolute executable and literal args.
@@ -109,6 +185,7 @@ func validCommandPart(value string) bool {
 // raw Input JSON on stdin and never exposes command failures or captured output
 // to the generated status line.
 func NewCommandSource(command Command) Source {
+	command.cwd = &commandCWDState{bySession: make(map[string]string)}
 	header := compileVariants(SurfaceTemplates{}, defaultHeaderTemplates())
 	footer := compileVariants(SurfaceTemplates{}, defaultFooterTemplates())
 	var ticks <-chan time.Time
@@ -142,7 +219,7 @@ func NewCommandSource(command Command) Source {
 	if ticker != nil {
 		source.stopTicker = ticker.Stop
 	}
-	return source
+	return commandSource{Source: source, cwd: command.cwd}
 }
 
 func runCommand(ctx context.Context, command Command, input Input) ([]byte, error) {
@@ -171,11 +248,8 @@ func runCommand(ctx context.Context, command Command, input Input) ([]byte, erro
 	return output.bytes(), nil
 }
 
-func commandCWD(command Command, input Input) string {
-	if input.Workspace.Location == "local" && input.Workspace.Path != "" {
-		return input.Workspace.Path
-	}
-	return command.LaunchDir
+func commandCWD(command Command, _ Input) string {
+	return command.cwd.get(command.LaunchDir)
 }
 
 func commandEnv(command Command, input Input) []string {
