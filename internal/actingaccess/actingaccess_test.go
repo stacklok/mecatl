@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 )
@@ -243,10 +244,23 @@ type recordingMechanism struct {
 	inputs []MechanismInput
 }
 
-func (m *recordingMechanism) Exchange(_ context.Context, in MechanismInput, _ SubjectAssertion, _ I2Token) (OutputToken, error) {
+type recordingOutputVerifier struct{}
+
+func (recordingOutputVerifier) Verify(response ExchangeResponse, plan MechanismInput) (VerifiedOutput, error) {
+	if !validExchangeResponse(response, plan, time.Date(2035, 1, 2, 3, 4, 5, 0, time.UTC)) {
+		return VerifiedOutput{}, fmt.Errorf("invalid output")
+	}
+	return VerifiedOutput{}, nil
+}
+
+func (m *recordingMechanism) Exchange(_ context.Context, in MechanismInput, _ SubjectAssertion, _ I2Token) (ExchangeResponse, error) {
 	m.calls++
 	m.inputs = append(m.inputs, in)
-	return NewOutputToken("issued")
+	token, err := NewOutputToken("issued")
+	if err != nil {
+		return ExchangeResponse{}, err
+	}
+	return ExchangeResponse{token: token, issuedTokenType: accessTokenType, tokenType: bearerTokenType, expiresIn: 1, scope: strings.Join(in.Scopes(), " ")}, nil
 }
 
 type scenario3Fixture struct {
@@ -293,7 +307,7 @@ func newScenario3Fixture(t *testing.T) scenario3Fixture {
 	spies := newAuthoritySpies(expected, until)
 	mechanism := &recordingMechanism{}
 	gate, err := NewGate(GateConfig{SubjectVerifier: subject, ActorVerifier: actor, SubjectAuthority: spies, Consent: spies,
-		Association: spies, Registry: spies, TargetPolicy: spies, Mechanism: mechanism, MaximumLifetime: 5 * time.Minute, Now: func() time.Time { return now }})
+		Association: spies, Registry: spies, TargetPolicy: spies, Mechanism: mechanism, OutputVerifier: recordingOutputVerifier{}, MaximumLifetime: 5 * time.Minute, Now: func() time.Time { return now }})
 	if err != nil {
 		t.Fatal(err)
 	}

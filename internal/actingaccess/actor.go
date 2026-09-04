@@ -260,9 +260,14 @@ func (i MechanismInput) Scopes() []string { return append([]string(nil), i.facts
 // NotAfter returns the minimum validated issuance ceiling.
 func (i MechanismInput) NotAfter() time.Time { return i.notAfter }
 
+// OutputVerifier independently verifies the closed issued output before access returns.
+type OutputVerifier interface {
+	Verify(ExchangeResponse, MechanismInput) (VerifiedOutput, error)
+}
+
 // ExchangeMechanism is the only credential-bearing issuance seam.
 type ExchangeMechanism interface {
-	Exchange(context.Context, MechanismInput, SubjectAssertion, I2Token) (OutputToken, error)
+	Exchange(context.Context, MechanismInput, SubjectAssertion, I2Token) (ExchangeResponse, error)
 }
 
 // FailureKind is a stable non-secret refusal category.
@@ -334,14 +339,18 @@ func (t PermitTrace) Gates() []GateKind { return append([]GateKind(nil), t.gates
 // Correlation returns a bounded digest of caller correlation.
 func (t PermitTrace) Correlation() string { return t.correlation }
 
-// ExchangeResult is the successful mechanism output and its non-secret permit trace.
+// ExchangeResult is the successful mechanism response and its non-secret permit trace.
 type ExchangeResult struct {
-	token OutputToken
-	trace PermitTrace
+	response ExchangeResponse
+	trace    PermitTrace
+	plan     MechanismInput
 }
 
 // Token returns the opaque output credential.
-func (r ExchangeResult) Token() OutputToken { return r.token }
+func (r ExchangeResult) Token() OutputToken { return r.response.Token() }
+
+// Response returns the closed RFC 8693 response metadata and opaque token.
+func (r ExchangeResult) Response() ExchangeResponse { return r.response }
 
 // Trace returns the immutable permit trace.
 func (r ExchangeResult) Trace() PermitTrace {
@@ -358,6 +367,7 @@ type GateConfig struct {
 	Registry         RequestRegistry
 	TargetPolicy     TargetPolicy
 	Mechanism        ExchangeMechanism
+	OutputVerifier   OutputVerifier
 	MaximumLifetime  time.Duration
 	Now              func() time.Time
 }
@@ -370,7 +380,7 @@ type Gate struct {
 // NewGate refuses partial conjunction wiring.
 func NewGate(cfg GateConfig) (*Gate, error) {
 	if cfg.SubjectVerifier == nil || cfg.ActorVerifier == nil || cfg.SubjectAuthority == nil || cfg.Consent == nil ||
-		cfg.Association == nil || cfg.Registry == nil || cfg.TargetPolicy == nil || cfg.Mechanism == nil ||
+		cfg.Association == nil || cfg.Registry == nil || cfg.TargetPolicy == nil || cfg.Mechanism == nil || cfg.OutputVerifier == nil ||
 		cfg.MaximumLifetime <= 0 || cfg.MaximumLifetime > time.Hour {
 		return nil, errors.New("acting-access gate configuration is incomplete")
 	}
@@ -382,6 +392,8 @@ func NewGate(cfg GateConfig) (*Gate, error) {
 
 // Exchange verifies fresh credential facts, applies every independent ceiling, and
 // invokes the mechanism only with the resulting immutable minimum-lifetime plan.
+//
+//nolint:gocyclo // The explicit authorization conjunction must remain auditable in one ordered gate.
 func (g *Gate) Exchange(ctx context.Context, request Request, subjectToken SubjectAssertion, actorToken I2Token, correlation string) (ExchangeResult, error) {
 	if g == nil {
 		return ExchangeResult{}, refuse(FailureSubjectVerification, false)
@@ -452,12 +464,15 @@ func (g *Gate) Exchange(ctx context.Context, request Request, subjectToken Subje
 		}
 	}
 	input := MechanismInput{facts: copyDecisionFacts(facts), notAfter: notAfter}
-	token, err := g.cfg.Mechanism.Exchange(ctx, input, subjectToken, actorToken)
-	if err != nil {
+	response, err := g.cfg.Mechanism.Exchange(ctx, input, subjectToken, actorToken)
+	if err != nil || !validExchangeResponse(response, input, now) {
 		return ExchangeResult{}, refuse(FailureMechanism, true)
 	}
+	if _, err := g.cfg.OutputVerifier.Verify(response, input); err != nil {
+		return ExchangeResult{}, refuse(FailureMechanism, false)
+	}
 	digest := sha256.Sum256([]byte(correlation))
-	return ExchangeResult{token: token, trace: PermitTrace{gates: append([]GateKind(nil), trace...), correlation: "sha256:" + hex.EncodeToString(digest[:])}}, nil
+	return ExchangeResult{response: response, plan: input, trace: PermitTrace{gates: append([]GateKind(nil), trace...), correlation: "sha256:" + hex.EncodeToString(digest[:])}}, nil
 }
 
 func validateDecision(decision Decision, now time.Time, kind FailureKind) error {

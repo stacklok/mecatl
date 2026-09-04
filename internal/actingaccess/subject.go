@@ -223,6 +223,7 @@ type subjectClaims struct {
 	issuedAt, notBefore, expiresAt                 int64
 }
 
+//nolint:goconst // Closed JWT claim names intentionally remain explicit in this parser.
 func parseSubjectClaims(raw []byte) (subjectClaims, error) {
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	if token, err := decoder.Token(); err != nil || token != json.Delim('{') {
