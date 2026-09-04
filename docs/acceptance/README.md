@@ -52,7 +52,7 @@ when the code that satisfies the plan has landed.
 
 - [Restore main release gate](restore-main-release-gate.md) — align role-telemetry and
   learning integration fixtures with exact environment refs and canonical workspace
-  roots before the v0.0.25 release. Status: draft.
+  roots before the v0.0.25 release. Status: landed.
 - [Persistent read-before-write ledgers](persistent-read-before-write-ledgers.md) —
   storage-independent, session-scoped read evidence with an in-memory default,
   a durable Redis contract proof, and fail-closed file-tool behavior. Status: draft.

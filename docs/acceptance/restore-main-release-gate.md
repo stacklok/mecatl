@@ -1,7 +1,7 @@
 # Restore main release gate — acceptance plan
 
 **Phase:** v0.0.25 release readiness
-**Status:** draft, 2026-09-03. Reproduced on `origin/main` at `684df4fae`.
+**Status:** landed, 2026-09-03. Reproduced and restored on `origin/main` at `684df4fae`.
 **Accumulator branch:** `acc/restore-main-release-gate` (off `main`).
 
 The smallest set of work restores the required release test gate by making tests use the exact execution-environment identity and canonical workspace root that the running harness uses.
