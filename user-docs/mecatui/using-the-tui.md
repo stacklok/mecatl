@@ -1,6 +1,7 @@
 ---
 sidebar_position: 5
-title: Use the TUI
+title: Work in the TUI
+sidebar_label: Use the TUI
 ---
 
 # Work in the TUI

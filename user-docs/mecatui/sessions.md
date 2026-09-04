@@ -1,6 +1,7 @@
 ---
 sidebar_position: 4
-title: Sessions
+title: Manage sessions
+sidebar_label: Sessions
 ---
 
 # Manage sessions

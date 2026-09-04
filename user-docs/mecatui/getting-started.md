@@ -1,6 +1,7 @@
 ---
 sidebar_position: 2
-title: Get started
+title: Get started with mecatui
+sidebar_label: Get started
 ---
 
 # Get started with mecatui
