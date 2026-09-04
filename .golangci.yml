@@ -715,7 +715,8 @@ linters:
           deny:
             - pkg: os
               desc: 'credentialstore conformance drives the abstract Store contract without host I/O'
-        # learning: reflection domain; reuses tool's canonical memory security helpers.
+        # learning: reflection domain; reuses governance's canonical untrusted
+        # framing and tool's canonical memory security helpers.
         core-learning:
           list-mode: strict
           files:
@@ -723,6 +724,7 @@ linters:
             - '!$test'
           allow:
             - $gostd
+            - github.com/stacklok/mecatl/engine/governance
             - github.com/stacklok/mecatl/engine/session
             - github.com/stacklok/mecatl/engine/tool
           deny:

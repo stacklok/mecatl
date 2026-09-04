@@ -124,15 +124,29 @@ const (
 	EvidenceEvent EvidenceLocator = "event"
 )
 
-// EvidenceRef is a content-addressed handle into the exact Input supplied to a
-// reflector. Ordinal is zero-based in Trajectory.Messages or Input.Events.
+// EvidenceRef is a content-addressed evidence citation. Legacy-v0 keeps Ordinal's
+// historical selected-input meaning. V1 keeps selected-local ManifestIndex separate
+// from durable original coordinates.
 type EvidenceRef struct {
-	SessionID  session.SessionID  `json:"session_id"`
-	Locator    EvidenceLocator    `json:"locator"`
-	Ordinal    int                `json:"ordinal"`
-	EventSeq   *int64             `json:"event_seq,omitempty"`
-	ToolCallID session.ToolCallID `json:"tool_call_id,omitempty"`
-	Digest     string             `json:"digest"`
+	Protocol        EvidenceProtocol   `json:"protocol,omitempty"`
+	SessionID       session.SessionID  `json:"session_id"`
+	Locator         EvidenceLocator    `json:"locator"`
+	Ordinal         int                `json:"ordinal"`
+	ManifestIndex   int                `json:"manifest_index,omitempty"`
+	OriginalMessage *int               `json:"original_message,omitempty"`
+	EventSeq        *int64             `json:"event_seq,omitempty"`
+	ToolCallID      session.ToolCallID `json:"tool_call_id,omitempty"`
+	Digest          string             `json:"digest"`
+	AggregateDigest string             `json:"aggregate_digest,omitempty"`
+}
+
+// ResolvedProtocol applies the sole compatibility rule: an absent protocol is
+// an ADR-0109 legacy record. Field presence never changes that decision.
+func (r EvidenceRef) ResolvedProtocol() EvidenceProtocol {
+	if r.Protocol == "" {
+		return ReflectionEvidenceLegacyV0
+	}
+	return r.Protocol
 }
 
 // Signal is a host-supplied or structurally detected reflection admission hint.
@@ -170,10 +184,11 @@ type ExistingFact struct {
 // with NewInput so transcript, event, signal, and existing-fact storage does not
 // alias caller-owned values.
 type Input struct {
-	Trajectory Trajectory          `json:"trajectory"`
-	Events     []EvidenceEventData `json:"events,omitempty"`
-	Signals    []Signal            `json:"signals,omitempty"`
-	Existing   []ExistingFact      `json:"existing,omitempty"`
+	Trajectory Trajectory               `json:"trajectory"`
+	Events     []EvidenceEventData      `json:"events,omitempty"`
+	Signals    []Signal                 `json:"signals,omitempty"`
+	Existing   []ExistingFact           `json:"existing,omitempty"`
+	Manifest   *MaterializationManifest `json:"manifest,omitempty"`
 }
 
 // NewInput constructs an owned reflection input from existing session data.

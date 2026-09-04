@@ -14,6 +14,7 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 ### Added
 
 - **`port.AppendHTTPErrorDisplay`** ([ADR 0299](../docs/adr/0299-safe-http-rejection-display-evidence.md)) — a stdlib-only helper for independently versioned provider modules to append only a validated HTTP(S) request target and bounded opaque correlation ID to a structured HTTP rejection. Added (minor).
+- **Versioned bounded reflection evidence materialization (ADR 0298)** — adds the storage-neutral `learning.MaterializeEvidence` protocol, immutable aggregate manifests, distinct selected-local and durable source coordinates, and closed no-work outcomes. `learning.Input` and `learning.EvidenceRef` gain manifest/protocol fields so pre-version references remain explicitly `reflection-evidence/legacy-v0`. Added plus Changed (breaking, pre-v1 minor).
 
 - **Session placement authority repair** — removes the orphan exported `session.PlacementSelector` protocol, adds persisted display-only `session.PlacementMetadata`, requires a valid `EnvironmentRef` at aggregate construction, and rejects direct engine runs whose live environment does not match the session identity. Changed (breaking, pre-v1 minor).
 

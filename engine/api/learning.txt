@@ -68,6 +68,8 @@
     method func (AutomaticReservationRequest).Validate() error
     method func (CandidateKind).Valid() bool
     method func (EvaluationVerdict).Valid() bool
+    method func (EvidenceRef).ResolvedProtocol() EvidenceProtocol
+    method func (MaterializationReason).String() string
     method func (MessageSpan).Contains(ordinal int) bool
     method func (MessageSpan).Valid(messageCount int) bool
     method func (Mode).Next() Mode
@@ -152,6 +154,12 @@ const FailureNone AttemptFailureCode = ""
 const FailurePublicationFailed AttemptFailureCode = "publication_failed"
 const FailureRetryExhausted AttemptFailureCode = "retry_exhausted"
 const FailureUnavailable AttemptFailureCode = "unavailable"
+const MaterializationAbstained MaterializationDisposition = "abstained"
+const MaterializationMandatorySpanExceedsBounds MaterializationReason = "mandatory_span_exceeds_bounds"
+const MaterializationNoEligibleEvidence MaterializationReason = "no_eligible_evidence"
+const MaterializationReasonSelected MaterializationReason = "selected"
+const MaterializationSelected MaterializationDisposition = "selected"
+const MaterializationSkipped MaterializationDisposition = "skipped"
 const MaxAttemptCallerBytes untyped int = 1024
 const MaxAttemptClaimDuration time.Duration = 86400000000000
 const MaxAttemptDeleteBatch untyped int = 200
@@ -240,6 +248,9 @@ const ReasonTimeout AdmissionReason = "timeout"
 const ReasonTrivialRun AdmissionReason = "trivial_run"
 const ReasonTrustedHostContradiction AdmissionReason = "trusted_host_contradiction"
 const ReasonWeightedThreshold AdmissionReason = "weighted"
+const ReflectionEvidenceLegacyV0 EvidenceProtocol = "reflection-evidence/legacy-v0"
+const ReflectionEvidenceSourceV1 untyped string = "mecatl/reflection-evidence/source/v1"
+const ReflectionEvidenceV1 EvidenceProtocol = "reflection-evidence/v1"
 const Review Mode = 1
 const SensitivityUnset Sensitivity = 0
 const SignalContradiction SignalKind = "contradiction"
@@ -272,6 +283,7 @@ func DeterministicProposalID(p ProposalPartition, input string, c Candidate) (Pr
 func EventEvidenceRef(in Input, ordinal int, callID session.ToolCallID) (EvidenceRef, error)
 func EvidenceHandle(ref EvidenceRef) string
 func EvidencePreview(in Input, ref EvidenceRef) (string, error)
+func MaterializeEvidence(req MaterializationRequest) (Materialization, error)
 func MessageEvidenceRef(in Input, ordinal int, callID session.ToolCallID) (EvidenceRef, error)
 func NewAdmissionProvenance(class AdmissionClass, source AttemptSource, prompt CurrentPromptBinding) (AdmissionProvenance, error)
 func NewCandidate(in Input, candidate Candidate) (Candidate, error)
@@ -287,6 +299,7 @@ func ResolveEvidenceHandle(in Input, handle string) (EvidenceRef, error)
 func SkillVersionID(bundle SkillBundle) (VersionID, error)
 func ValidAttemptTransition(from AttemptState, to AttemptState) bool
 func ValidLearnedSkillName(name string) bool
+func ValidSHA256(value string) bool
 func ValidateAttemptRecord(record AttemptRecord) error
 func ValidateCandidate(in Input, candidate Candidate) error
 func ValidateDecision(d Decision) error
@@ -353,9 +366,17 @@ type EventProjection struct{Evidence *EvidenceProjection "json:\"evidence,omitem
 type EvidenceEventData struct{Type session.EventType; Seq int64; Turn int; Text string; ToolCall *ToolProjection; ToolResult *ResultProjection; Stop session.StopReason}
 type EvidenceLocator string
 type EvidenceProjection struct{Handle string "json:\"handle\""; Digest string "json:\"digest\""; EventSeq *int64 "json:\"event_seq,omitempty\""; ToolCallID session.ToolCallID "json:\"tool_call_id,omitempty\""}
-type EvidenceRef struct{SessionID session.SessionID "json:\"session_id\""; Locator EvidenceLocator "json:\"locator\""; Ordinal int "json:\"ordinal\""; EventSeq *int64 "json:\"event_seq,omitempty\""; ToolCallID session.ToolCallID "json:\"tool_call_id,omitempty\""; Digest string "json:\"digest\""}
+type EvidenceProtocol string
+type EvidenceRef struct{Protocol EvidenceProtocol "json:\"protocol,omitempty\""; SessionID session.SessionID "json:\"session_id\""; Locator EvidenceLocator "json:\"locator\""; Ordinal int "json:\"ordinal\""; ManifestIndex int "json:\"manifest_index,omitempty\""; OriginalMessage *int "json:\"original_message,omitempty\""; EventSeq *int64 "json:\"event_seq,omitempty\""; ToolCallID session.ToolCallID "json:\"tool_call_id,omitempty\""; Digest string "json:\"digest\""; AggregateDigest string "json:\"aggregate_digest,omitempty\""}
 type ExistingFact struct{Kind CandidateKind "json:\"kind\""; Key string "json:\"key\""; Value string "json:\"value\""; Description string "json:\"description,omitempty\""}
-type Input struct{Trajectory Trajectory "json:\"trajectory\""; Events []EvidenceEventData "json:\"events,omitempty\""; Signals []Signal "json:\"signals,omitempty\""; Existing []ExistingFact "json:\"existing,omitempty\""}
+type Input struct{Trajectory Trajectory "json:\"trajectory\""; Events []EvidenceEventData "json:\"events,omitempty\""; Signals []Signal "json:\"signals,omitempty\""; Existing []ExistingFact "json:\"existing,omitempty\""; Manifest *MaterializationManifest "json:\"manifest,omitempty\""}
+type ManifestEntry struct{Handle string "json:\"handle\""; Locator EvidenceLocator "json:\"locator\""; OriginalMessage *int "json:\"original_message,omitempty\""; EventSequence *int64 "json:\"event_sequence,omitempty\""; Digest string "json:\"digest\""; Component string "json:\"component,omitempty\""; ToolCallIDs []session.ToolCallID "json:\"tool_call_ids,omitempty\""}
+type Materialization struct{Disposition MaterializationDisposition "json:\"disposition\""; Reason MaterializationReason "json:\"reason\""; Input Input "json:\"input\""; Manifest MaterializationManifest "json:\"manifest\""; Canonical []byte "json:\"canonical,omitempty\""}
+type MaterializationDisposition string
+type MaterializationLimits struct{MaxMessages int "json:\"max_messages,omitempty\""; MaxEvents int "json:\"max_events,omitempty\""; MaxBytes int "json:\"max_bytes,omitempty\""}
+type MaterializationManifest struct{Protocol EvidenceProtocol "json:\"protocol\""; Source SourceIdentity "json:\"source\""; Entries []ManifestEntry "json:\"entries\""; Digest string "json:\"digest\""}
+type MaterializationReason string
+type MaterializationRequest struct{Trajectory Trajectory "json:\"trajectory\""; Events []session.Event "json:\"events,omitempty\""; Signals []Signal "json:\"signals,omitempty\""; Mandatory MessageSpan "json:\"mandatory,omitempty\""; Limits MaterializationLimits "json:\"limits,omitempty\""; Explicit bool "json:\"explicit,omitempty\""}
 type MessageProjection struct{Evidence *EvidenceProjection "json:\"evidence,omitempty\""; Role session.Role "json:\"role\""; Text string "json:\"text,omitempty\""; ToolCalls []ToolProjection "json:\"tool_calls,omitempty\""; ToolResult *ResultProjection "json:\"tool_result,omitempty\""; Parts []PartProjection "json:\"parts,omitempty\""}
 type MessageSpan struct{Start int "json:\"start\""; End int "json:\"end\""}
 type Mode uint8
@@ -408,6 +429,7 @@ type SkillValidation struct{Disposition ValidationDisposition; Duplicate *SkillI
 type SkillValidationRequest struct{Partition SkillPartition; OwnerAgent string; Bundle SkillBundle; Provenance SkillProvenance; Assets []string; Inventory []SkillInventoryItem}
 type SkillValidator interface{Validate(context.Context, SkillValidationRequest) (SkillValidation, error)}
 type SkillVersion struct{ID SkillID "json:\"id\""; Version VersionID "json:\"version\""; Revision Revision "json:\"revision\""; State SkillState "json:\"state\""; OwnerAgent string "json:\"owner_agent\""; Partition SkillPartition "json:\"partition\""; Bundle SkillBundle "json:\"bundle\""; Provenance SkillProvenance "json:\"provenance\""; Disposition ValidationDisposition "json:\"validation_disposition,omitempty\""; Evaluations []SkillEvaluation "json:\"evaluations,omitempty\""; Receipts []SkillReceipt "json:\"receipts,omitempty\""; Supersedes VersionID "json:\"supersedes,omitempty\""; CreatedAt time.Time "json:\"created_at\""; UpdatedAt time.Time "json:\"updated_at\""}
+type SourceIdentity struct{Domain string "json:\"domain\""; Value session.SessionID "json:\"value\""}
 type ThresholdPolicy struct{Sensitivity Sensitivity}
 type ToolProjection struct{ID session.ToolCallID "json:\"id\""; Name string "json:\"name\""}
 type Trajectory struct{RunID string; SessionID session.SessionID; Workspace string; Stop session.StopReason; Usage session.Usage; Messages []session.Message; Kind session.SessionKind; Counters session.Counters; Current MessageSpan; Principal *session.Principal}
