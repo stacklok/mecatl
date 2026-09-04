@@ -92,6 +92,9 @@ when the code that satisfies the plan has landed.
   application sessions, schedules, teams, memory, event streams, live runs, and
   model-facing object access; remote-driver enforcement is deferred to #452. Status:
   draft.
+- [Session debugger lineage lock](session-debug-lineage-lock.md) — root debug
+  inspection avoids global lineage traversal while related and descendant-scoped
+  evidence keeps its existing bounded, fail-closed revalidation. Status: draft.
 - [Session storage continuity](session-storage-continuity.md) — historical storage plan: bounded current snapshots, indexed metadata, and maintenance jobs landed; its writable legacy-adoption criteria were superseded by ADR 0291. Status: draft historical record.
 - [Session continuity UX](session-continuity-ux.md) — authoritative session-family
   metadata, honest replay/inspection, an active-session copy surface, startup resume,
