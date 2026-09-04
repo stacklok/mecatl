@@ -2,7 +2,7 @@
 id: 03-output-profile
 title: Deterministic issuance and independent output verification
 blocked_by: [02-authority-conjunction]
-status: pending
+status: in-progress
 branch: ""
 worktree: ""
 issue: "372"
