@@ -118,6 +118,18 @@ func TestExternalAuthorizationTransitionAndDeepCopy(t *testing.T) {
 	if _, err := s.ClaimAuthorization(); !errors.Is(err, ErrNoPendingAuthorization) {
 		t.Fatalf("second claim = %v, want ErrNoPendingAuthorization", err)
 	}
+	mustOK(t, s.RestoreAuthorizationClaim(claimed))
+	if s.State != StateAuthorizing {
+		t.Fatalf("restored state = %q, want %q", s.State, StateAuthorizing)
+	}
+	claimed.Call.Args[2] = 'X'
+	restored, ok := s.PendingAuthorization()
+	if !ok || string(restored.Call.Args) != `{"title":"review"}` {
+		t.Fatalf("restored authorization = %+v, %v", restored, ok)
+	}
+	if err := s.RestoreAuthorizationClaim(claimed); !errors.Is(err, ErrIllegalTransition) {
+		t.Fatalf("duplicate restore = %v, want ErrIllegalTransition", err)
+	}
 }
 
 func TestExternalAuthorizationValidation(t *testing.T) {

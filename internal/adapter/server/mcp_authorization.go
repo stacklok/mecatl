@@ -295,20 +295,27 @@ func (s *Service) continueGrantedAuthorizationLocked(ctx context.Context, sess *
 		return MCPAuthorizationResult{}, ErrNotFound
 	}
 	if err := s.saveSession(ctx, sess); err != nil {
+		_ = sess.RestoreAuthorizationClaim(claimed)
 		return MCPAuthorizationResult{}, fmt.Errorf("%w: persist authorization claim", ErrInternal)
 	}
 	s.stopAuthorizationExpiry(sess.ID)
 	prepared, err := engine.PrepareAuthorizationContinuation(memory.WithWorkspace(ctx, env.Workspace().Root()), sess, env, claimed, resolution)
 	if err != nil {
+		if restoreErr := s.restoreAuthorizationClaim(ctx, sess, claimed); restoreErr != nil {
+			return MCPAuthorizationResult{}, fmt.Errorf("%w: prepare granted authorization continuation: %v; restore claim: %v", ErrInternal, err, restoreErr)
+		}
 		return MCPAuthorizationResult{}, fmt.Errorf("%w: prepare granted authorization continuation", ErrInternal)
 	}
 	if !s.registerPrepared(sess.ID, prepared.Run(), sess) {
 		if transition := prepared.Abort(); transition != agent.PreparedRunAborted {
 			return MCPAuthorizationResult{}, fmt.Errorf("%w: abort unregistered authorization continuation: %s", ErrInternal, transition)
 		}
-		s.repairAuthorizationRegistration(ctx, sess)
+		if err := s.restoreAuthorizationClaim(ctx, sess, claimed); err != nil {
+			return MCPAuthorizationResult{}, fmt.Errorf("%w: restore unregistered authorization claim: %v", ErrInternal, err)
+		}
 		return MCPAuthorizationResult{}, ErrNoActiveRun
 	}
+	s.stopAuthorizationExpiry(sess.ID)
 	run, transition := prepared.Start()
 	if transition != agent.PreparedRunStarted {
 		s.deregister(sess.ID, prepared.Run())
@@ -399,6 +406,16 @@ func (s *Service) appendAuthorizationResolution(ctx context.Context, id session.
 		return err
 	}
 	s.PublishSessionEvent(id, ev)
+	return nil
+}
+
+func (s *Service) restoreAuthorizationClaim(ctx context.Context, sess *session.Session, pending session.PendingAuthorization) error {
+	if err := sess.RestoreAuthorizationClaim(pending); err != nil {
+		return err
+	}
+	if err := s.saveSession(ctx, sess); err != nil {
+		return err
+	}
 	return nil
 }
 

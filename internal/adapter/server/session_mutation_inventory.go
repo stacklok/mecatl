@@ -96,6 +96,7 @@ var sessionMutationInventory = map[string]SessionMutationEntry{
 	"appendAuthorizationResolution":      {SessionMutationLeaseProven, "no-continuation EventLog fallback invoked only from the same lease-proven authorization-resolution callers"},
 	"ConnectWorkspaceServices":           {SessionMutationLeaseOwned, "runs under runEntryMu with the idle-only, no-active-run precondition; upcoming enrollment commits add the explicit session-lease acquisition this pre-prompt gate still needs"},
 	"cancelWorkspaceEnrollment":          {SessionMutationLeaseOwned, "shared cancel body for RetryWorkspaceEnrollment/CancelWorkspaceEnrollment, gated the same as ConnectWorkspaceServices"},
+	"restoreAuthorizationClaim":          {SessionMutationLeaseProven, "compensating restore invoked only from the same lease-proven authorization-continuation callers after a failed claim-persist"},
 }
 
 func validateSessionMutationNames(table map[string]SessionMutationEntry, boundaries []string) []error {

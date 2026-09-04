@@ -700,8 +700,12 @@ func TestMCPAuthorizationPreparedRegistrationFailureNeverExecutes(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if pairErr := session.ValidateToolPairing(repaired.Conversation.Messages); pairErr != nil {
-		t.Fatalf("repair pairing: %v", pairErr)
+	if repaired.State != session.StateAuthorizing {
+		t.Fatalf("repaired state = %q, want %q", repaired.State, session.StateAuthorizing)
+	}
+	restored, ok := repaired.PendingAuthorization()
+	if !ok || restored.Authorization.ID != f.pending.Authorization.ID || restored.Call.ID != f.pending.Call.ID {
+		t.Fatalf("repaired authorization = %+v, %v", restored, ok)
 	}
 }
 

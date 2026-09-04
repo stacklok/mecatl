@@ -42,6 +42,8 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   nested usage is removed. Added (minor); the retained wire title/provenance
   fields are deprecated (pre-v1 breaking compatibility classification).
 
+- **Reversible external-authorization claims** — `session.Session.RestoreAuthorizationClaim` compensates a claimed continuation that could not be registered, returning the aggregate to the exact durable `authorizing` state instead of abandoning unresolved tool calls in `running`. Added (minor).
+
 - **Terminal external-authorization resolution value** — `session.AuthorizationResolution` and `session.NewAuthorizationResolution` make pending and unknown statuses unrepresentable at the continuation boundary while preserving `AuthorizationStatus` as the complete event-lifecycle vocabulary. Added (minor).
 
 - **`tool.TemporaryScope`, `tool.CommandTemporaryScopeRunner`, and `tool.CommandTemporaryScopeStreamer`** ([ADR 0281](../docs/adr/0281-managed-temporary-command-leases.md)) — optional bound-runner capabilities for the closed managed/system temporary-storage scope selection. The capability carries no path or environment value and preserves the existing `CommandRunner` fallback for runners that do not manage temporary storage. Added (minor).

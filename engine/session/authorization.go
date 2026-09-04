@@ -127,6 +127,25 @@ func (s *Session) ClaimAuthorization() (PendingAuthorization, error) {
 	return pending, nil
 }
 
+// RestoreAuthorizationClaim compensates a claimed continuation that could not be
+// handed to a run. It restores the exact durable authorizing state so a later
+// controller may retry the claim.
+func (s *Session) RestoreAuthorizationClaim(pending PendingAuthorization) error {
+	if err := s.ValidateAuthorizationState(); err != nil {
+		return err
+	}
+	if s.State != StateRunning || s.pendingAuthorization != nil || s.pending != nil {
+		return fmt.Errorf("%w: RestoreAuthorizationClaim from %q", ErrIllegalTransition, s.State)
+	}
+	if err := validatePendingAuthorization(s.Conversation.Messages, pending); err != nil {
+		return fmt.Errorf("session: invalid restored authorization claim: %w", err)
+	}
+	pendingCopy := pending.Clone()
+	s.pendingAuthorization = &pendingCopy
+	s.State = StateAuthorizing
+	return nil
+}
+
 // AbortAuthorization leaves authorizing with deterministic, ordered error
 // results for the parked call and every deferred sibling. reason is a closed
 // harness token; unknown values map to the fixed failed message.
