@@ -2,7 +2,7 @@
 
 **Phase:** agentic development spine (process infrastructure)
 **Status:** draft, 2026-07-24. Converges the the internal sibling repos spine into mecatl.
-**Accumulator branch:** `feat/spine-convergence` (off `main`).
+**Accumulator branch:** `acc/spine-convergence` (off `main`).
 
 The smallest set of work that brings the spine (acceptance-plan →
 orchestrate → TDD workers → ac-trace gate → panel-review) into mecatl so
@@ -14,13 +14,14 @@ contributor (human or agent) can do in the repo, not which files exist.
 
 ## Why these scope cuts
 
-- **mecatl's `panel-review` is the converged one.** It already carries the
-  default-on reuse pair (`code-duplication-reviewer` +
-  `library-reuse-reviewer`) and the references; the sibling skills are the
-  older two-axis shape. No change to panel-review beyond keeping it as-is.
-- **`/dev-pipeline` stays** as the issue-scale track; the spine is the
-  capability-scale track. Both are routers onto the same review/test
-  primitives.
+- **mecatl's panel review was the convergence base, not an unchanged artifact.**
+  It already carried the default-on reuse pair (`code-duplication-reviewer` +
+  `library-reuse-reviewer`) and its references. Convergence preserved those
+  strengths and added independent Test adequacy as the fourth axis and stable
+  `PANEL:` automation contract.
+- **One spine serves every substantive change.** Focused issues use a compact
+  one-scenario, one-task plan; larger capabilities decompose only along real
+  dependency boundaries. Trivial or mechanical edits may remain direct.
 - **ac-trace is report-only in CI until this plan lands.** `task
   ac-trace-strict` only bites on a `landed` plan, so wiring it in can't
   fail the build on an empty `docs/acceptance/` tree.
@@ -112,7 +113,7 @@ workflow in [`AGENTS.md`](../../AGENTS.md).
 |---|---|---|
 | Wiring `ac-trace-strict` into a mandatory CI job | a later PR, once ≥1 landed plan exists | the tool only gates `landed` plans |
 | Converging the host-specific specialists (arch-*, kind-*, ui-*) | never — not mecatl's domain | host-specific |
-| Changing `panel-review` | this PR keeps it as-is | mecatl's reuse-pair version is the converged one |
+| Extending `panel-review` beyond the then-current three axes | ADR 0295 convergence | the common final gate now includes independent test adequacy |
 | A first *feature* acceptance plan driven through orchestrate | the next capability | this PR lands the machinery + one dogfood plan |
 
 ## Definition of done

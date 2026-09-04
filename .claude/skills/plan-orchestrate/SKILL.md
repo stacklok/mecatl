@@ -1,18 +1,14 @@
 ---
 name: plan-orchestrate
 description: >-
-  Drives a multi-task mecatl acceptance plan to completion using parallel
-  tdd-worker agents — one task per worker, one local branch per task, all
-  funneled into a single accumulator branch. Per-task state is local files
-  under `.claude/plans/<plan>/` (git ancestry is authoritative). After the
-  merge loop drains, it runs the aggregate gate, flips the plan to `landed`,
-  runs `ac-trace --strict`, then runs `/panel-review` inline as the final
-  gate — spawning an auto repair-wave for any ship-blockers (budget 2). When
-  the assembled branch is clean it pushes the accumulator once and opens ONE
-  PR (plan + code) for the human to merge; it never merges to `main` and
-  never auto-runs beyond the PR. Use when an acceptance plan exists at
-  docs/acceptance/<plan>.md (draft is fine — it rides the accumulator). NOT
-  for drafting the plan — that is /to-acceptance-plan.
+  Drive an existing mecatl acceptance plan through isolated TDD workers, task
+  branches, one accumulator, aggregate gates, strict AC tracing, four-axis panel
+  review, bounded repairs, and one human-merge PR. Compact issue plans may remain
+  one task; independent tasks run concurrently only with real writable isolation,
+  otherwise serially. Uses a harness-native worktree when supplied, else creates
+  explicit .scratch worktrees. Use when docs/acceptance/<plan>.md is committed on
+  a clean accumulator. NOT for drafting plans, direct implementation, merging to
+  main, or running beyond the PR.
 ---
 
 # plan-orchestrate
@@ -20,12 +16,16 @@ description: >-
 ## Purpose
 
 A plan is a tree of tasks under `.claude/plans/<plan>/tasks/`. Each task is a
-markdown file with YAML frontmatter declaring its dependencies, status, and
-(after work lands) the local branch holding its commits.
+markdown file with YAML frontmatter declaring dependencies, status, attempt,
+and the local branch/worktree holding that attempt.
 
 This skill scans the task directory, computes the ready set, and dispatches
-parallel `tdd-worker` agents (one task per worker, each in an isolated git
-worktree). Workers do the work locally, run the mecatl gates, and return the
+`tdd-worker` agents (one task per worker in a validated harness-native writable
+worktree, or an explicit dedicated worktree under `.scratch/` when none is
+supplied). The dependency graph is unchanged by
+harness capability: independent ready tasks run in parallel when concurrent
+writable workers are supported, or serially in deterministic task-id order when
+they are not. Workers do the work locally, run the mecatl gates, and return the
 branch they created. The orchestrator **auto-merges that branch into the
 accumulator** when gates passed. After the merge loop drains it runs the
 **aggregate gate**, flips the plan to `landed`, runs **`ac-trace --strict`**,
@@ -42,9 +42,9 @@ drive. The single human gate is the final PR merge.
 
 - **State is local files + git ancestry.** The authoritative record is the
   file tree under `.claude/plans/<plan>/` and the accumulator's ancestry.
-- **The plan rides the accumulator.** `docs/acceptance/<plan>.md` need not be
-  merged to `main` first. The accumulator is branched off `main`; the plan doc
-  travels on it (draft → landed) and lands in the single PR with the code.
+- **The plan rides the accumulator.** `/to-acceptance-plan` commits
+  `docs/acceptance/<plan>.md` and generated docs on `acc/<plan>`, transfers its
+  clean checkout as the integration worktree, and never touches `main`.
 - **One PR** funnels every successful task branch + the plan doc — not N
   per-task PRs, and not a separate plan PR.
 - **Issues close via `Closes #N`** in that PR body (the epic + each task's
@@ -74,8 +74,9 @@ id: 02-store-adapter
 title: Redis SessionStore adapter + conformance
 blocked_by: [01-domain-core]
 status: pending      # pending | in-progress | done | blocked
-branch: ""           # local branch, set on worker success
-worktree: ""         # worktree path, set at dispatch
+attempt: 0           # increment before dispatch; names branch/worktree
+branch: ""           # local attempt branch, set on dispatch/success
+worktree: ""         # validated attempt worktree path
 issue: ""            # mapped GitHub issue number (for Closes #N; optional)
 retries: 0
 last_error: ""
@@ -94,9 +95,12 @@ docs/acceptance/<plan>.md, WITH their `verify:` sub-lines. The worker's named
 pinning test asserts these; ac-trace gates the verify: names.)
 ```
 
-`blocked_by`, `status`, `branch`, `worktree`, `retries`, `last_error`,
-`accumulator`, `issue` are **orchestrator-managed**. Workers never edit task
-files. `done` is computed from git ancestry: `branch != ""` AND reachable from
+`blocked_by`, `status`, `attempt`, `branch`, `worktree`, `retries`, `last_error`,
+`accumulator`, and `issue` are **orchestrator-managed**. Workers never edit task
+files. The orchestrator explicitly stages and commits these shared-state updates
+on the accumulator before dispatch or rebase, and commits the final `done` state
+after fast-forwarding; the integration worktree stays clean at ownership
+boundaries. `done` is computed from git ancestry: `branch != ""` AND reachable from
 the accumulator (`git merge-base --is-ancestor <branch> <accumulator>`).
 Ancestry is authoritative; the `status` field is the orchestrator's notepad.
 
@@ -106,16 +110,20 @@ Ancestry is authoritative; the `status` field is the orchestrator's notepad.
 pending ─dispatch─▶ in-progress ─worker success─▶ (ff-only merge into accumulator) ─▶ done
                           │                              │
                           │                              └─merge conflict─▶ blocked
-                          └─worker failure─▶ pending (retries<2) | blocked (retries==2)
+                          └─worker failure─▶ pending (retries<3) | blocked (retries==3)
 ```
 
 Plan-level terminal outcomes live in Step 7.
 
 ## Prerequisites
 
-- An acceptance plan at `docs/acceptance/<plan>.md` (draft is fine).
+- An acceptance plan committed on `acc/<plan>` by `/to-acceptance-plan`, with
+  the clean checkout path and its ownership classification transferred as the
+  integration worktree. The classification is exactly one of `primary-current`,
+  `harness-owned-native`, or `orchestrator-created-disposable`.
 - An `origin` remote — the run ends by pushing the accumulator + opening the PR.
-- Working tree clean. The skill creates worktrees + the accumulator off `main`.
+- `git status --short` is empty in that integration worktree. Validate that it
+  owns `acc/<plan>`; never check out that branch in another checkout.
 - `.claude/plans/<plan>/tasks/*.md` exists, or the skill enters **bootstrap
   mode** (Step 0) and decomposes the plan, then proceeds into the loop.
 
@@ -126,15 +134,18 @@ Plan-level terminal outcomes live in Step 7.
 1. Read `docs/acceptance/<plan>.md` end to end, plus every doc it cites
    (`docs/architecture.md`, `AGENTS.md`, the cited ADRs,
    `docs/design/IMPLEMENTATION-NOTES.md` when named).
-2. Decompose: one task per ~200–400 LoC of expected change, `blocked_by` edges
-   encoded, each task tagged with the `AC<n.n>` ids (and their `verify:`
-   lines) it satisfies. Every numbered AC lands in exactly one task; none
-   orphaned. Give each task a plain-language title. You MAY print the
-   decomposition; do not stop for confirmation.
-3. Write the task files — each quoting its ACs **and their `verify:`
-   sub-lines** verbatim. Map each to its GitHub issue number in `issue:` where
-   one exists. Create the accumulator off `main`:
-   `git branch acc/<plan> main`.
+2. Decompose into the **smallest coherent task set**. A focused issue with one
+   implementation unit becomes one task; do not target an arbitrary LoC range
+   or split work to manufacture concurrency. For larger plans, encode real
+   `blocked_by` edges, tag each task with the `AC<n.n>` ids (and their `verify:`
+   lines) it satisfies, and keep each AC in exactly one task. Give each task a
+   plain-language title. You MAY print the decomposition; do not stop for
+   confirmation.
+3. Write task files that quote each assigned AC and `verify:` line verbatim and
+   map any GitHub issue in `issue:`. Explicitly stage the task files in the
+   integration worktree; commit them on the already-checked-out accumulator. Do
+   not create or check out the accumulator here: `/to-acceptance-plan`
+   transferred ownership of its clean checkout.
 4. Proceed straight into Step 1.
 
 ### Step 1: Load and validate
@@ -143,36 +154,54 @@ Plan-level terminal outcomes live in Step 7.
 - Build the dependency graph; refuse if cyclic (`TASKS_BLOCKED: cycle …`).
 - For each task with `branch != ""`, mark `done` if reachable from the
   accumulator.
-- Ensure the accumulator exists (create off `main` if not).
+- Validate that the transferred integration worktree is clean, owns the
+  accumulator, and has the plan commit in its ancestry. Refuse a second checkout
+  of the accumulator; never run `git checkout <accumulator>` elsewhere.
 
 ### Step 2: Compute the ready set
 
 Ready = `status: pending` AND every `blocked_by` entry is `done`. If empty:
 all `done` → run the aggregate gate (Step 6); otherwise → `TASKS_BLOCKED`.
 
-### Step 3: Dispatch a wave of parallel workers
+### Step 3: Dispatch the ready set with mandatory isolation
 
 **On the first dispatch, flip the plan to in-progress** — if
 `docs/acceptance/<plan>.md` reads `**Status:** draft`, edit it to
 `**Status:** in-progress` on the accumulator (never in a worker — shared-file
 rule).
 
-For each ready task, in a single message (parallel):
+Dispatch the ready set in parallel only if the active harness supports
+concurrent writable workers. Otherwise dispatch one task at a time in task-id
+order, collecting and merging each result before dispatching the next ready
+task. This changes scheduling only; never flatten or bypass `blocked_by` edges.
 
-- Edit the task file: `status: in-progress`.
-- Spawn one worker per task — in mecatl the writable-worker verb is a
-  **`Subagent` with `mode: "read-write"`** (direct-write against the real
-  workspace; the orchestrator serialises merges itself), driven by the
-  **`tdd-worker` agent contract** (`.claude/agents/tdd-worker.md`). When the
-  Claude-Code harness is available, `Agent(subagent_type: "tdd-worker",
-  isolation: "worktree")` is the equivalent dispatch. `description`:
-  "Task <id>: <title>"; `prompt`: the brief template below with the task body
-  **and its `## Acceptance criteria` subsection (with `verify:` lines)
-  substituted verbatim inline**.
-- Write the returned worktree path back to the task's `worktree` field.
+For every dispatched task:
 
-**The brief MUST be inlined** — the worker starts from `main`, where the
-task file does not exist. The `tdd-worker` agent carries the full worker
+- Increment `attempt`, set `status: in-progress`, and derive unique names:
+  branch `plan-<plan>/<id>-attempt-<attempt>` and fallback worktree
+  `.scratch/worker-<plan>-<id>-attempt-<attempt>`. Record both before launch.
+  Never reuse an earlier attempt's branch or retained failed worktree.
+- Spawn one worker per task under the **`tdd-worker` agent contract**
+  (`.claude/agents/tdd-worker.md`). If the harness supplies that worker a
+  writable isolated worktree, the worker validates and uses it. Only when no
+  native isolated worktree exists does the worker create the recorded `.scratch`
+  fallback. A nested or redundant worktree is forbidden; failure to establish
+  exactly one isolated checkout blocks the task.
+- In mecatl, dispatch a writable **`Subagent` with `mode: "read-write"`** and
+  pass the fallback worktree path because direct-write supplies no isolation.
+  The child creates and stays in that path. In Claude Code,
+  `Agent(subagent_type: "tdd-worker", isolation: "worktree")` supplies native
+  isolation, so the child uses and reports that path instead of creating another.
+  Because writable Subagent calls are mutate-serial, use serial ready-set
+  execution unless the host exposes genuine concurrent writable workers.
+  `description`: "Task <id> attempt <attempt>: <title>"; `prompt`: the brief
+  template below with the task body and its acceptance criteria inlined.
+- Validate the returned root, branch, and attempt against task state; write the
+  actual worktree path back if the native path differs from the fallback.
+
+**The brief MUST be inlined** so the attempt's scope is immutable and the worker
+never reads or edits orchestrator-managed task state. The `tdd-worker` agent
+carries the full worker
 contract (branch off the accumulator, strict TDD via test-writer, Taskfile
 gates, offline mocks/conformance, verify ACs, paste git log, do NOT push).
 Do not re-lecture it.
@@ -181,13 +210,16 @@ Do not re-lecture it.
 
 ```
 You are implementing task <id> for mecatl, following the `tdd-worker`
-agent contract at .claude/agents/tdd-worker.md (read it first — the task
-file lives at .claude/plans/<plan>/tasks/<id>.md on the orchestrator's
-branch and does NOT exist on yours). The brief is inlined below; that is
+agent contract at .claude/agents/tdd-worker.md (read it first — task state at
+.claude/plans/<plan>/tasks/<id>.md is orchestrator-managed and must not be
+read or edited). The brief is inlined below; that is
 your sole source of truth for scope.
 
 Accumulator branch: <accumulator>
-Task branch to create: plan-<plan>/<id>
+Attempt: <attempt>
+Task branch: plan-<plan>/<id>-attempt-<attempt>
+Fallback worktree (use only if no native isolated worktree was supplied):
+.scratch/worker-<plan>-<id>-attempt-<attempt>
 
 Task title: <title>
 
@@ -198,24 +230,31 @@ Acceptance criteria you must satisfy (your named pinning test must assert
 these; implement the exact test names their `verify:` lines promise):
 <acceptance-criteria-with-verify-lines>
 
-Follow the tdd-worker contract: branch off <accumulator>, strict TDD,
-Taskfile gates, offline tests only, verify ACs, paste git log, do NOT push.
+Follow the tdd-worker contract: validate and use a supplied native isolated
+worktree, otherwise create the fallback .scratch worktree; stay on the named
+attempt branch, use strict TDD and Taskfile gates, run offline tests only,
+verify ACs, report attempt + worktree + branch + git log, and do NOT push.
 ```
 
 ### Step 4: Collect results and merge
 
 For each worker that returns:
 
-- **Success** (branch reported, gates green per the worker's report):
-  1. Write `branch: <name>`, clear `last_error`.
-  2. Merge into the accumulator, tasks sorted by id ascending:
-     `git checkout <accumulator>`; try `git merge --ff-only <task-branch>`; if
-     it fails (accumulator advanced), `git rebase <accumulator> <task-branch>`
-     then `git merge --ff-only`. On rebase conflict: `git rebase --abort`, set
-     `status: blocked`, `last_error: "merge conflict: …"`, surface.
-  3. On success the task is `done` (ancestry).
-- **Worker failure:** increment `retries`; `retries<2` → `pending` + record
-  `last_error`; `retries==2` → `blocked`.
+- **Success** (attempt, branch, worktree, and gates validated):
+  1. Write `branch: <name>`, clear `last_error` in task state.
+  2. Tasks sorted by id ascending, rebase while the task branch remains checked
+     out in its returned worker worktree:
+     `git -C <returned-worktree> rebase <accumulator>`. On conflict run
+     `git -C <returned-worktree> rebase --abort`, set `status: blocked`, record
+     `last_error: "merge conflict: …"`, and surface it.
+  3. From the integration worktree that already owns the accumulator, run
+     `git merge --ff-only <task-branch>`. Never check out the accumulator in a
+     worker or any other checkout. On success the task is `done` by ancestry.
+- **Worker failure:** retain that attempt's worktree, increment `retries` (the
+  count of failed attempts), and record `last_error`; `retries<3` → `pending`
+  for a newly named next attempt, `retries==3` → `blocked`. Thus the initial
+  attempt may be followed by at most two retries (three total attempts). Never
+  clear or reuse failed attempt paths.
 - **Self-reported mis-decomposition:** `status: blocked`, record reason, no
   retry.
 
@@ -226,62 +265,83 @@ Empty with all branches merged → Step 6. The orchestrator never touches `main`
 
 ### Step 6: Aggregate gate + landed + ac-trace + panel
 
-Per-task gates ran in each worker's worktree against that task's branch — they
-never saw the **assembled** accumulator. This terminal gate runs the full
-suite once on the assembled branch, from a **fresh temp worktree** (the main
-checkout shares `.git` with agent worktrees and would scan them):
+Per-task gates ran in worker worktrees and never saw the assembled accumulator.
+Run every terminal mutation and gate in the same integration worktree transferred
+by `/to-acceptance-plan`; it already owns the accumulator and repair waves keep
+using it. If this skill was resumed without that path, adopt the existing clean
+checkout that owns the accumulator and classify it from its provenance. If the
+accumulator is unowned, create `.scratch/acc-gate-<plan>` explicitly and record
+`orchestrator-created-disposable`. If another checkout owns the accumulator but
+cannot be adopted, stop as blocked: never detach or remove a primary/current or
+harness-owned checkout to seize the branch. Never create a nested worktree.
 
 ```bash
-git worktree add .scratch/acc-gate-<plan> <accumulator>
-# in .scratch/acc-gate-<plan>:
+# in the validated integration worktree:
 task lint;  LINT_RC=$?
 task test;  TEST_RC=$?
-task docs;  DOCS_RC=$?      # llms.txt regen + matlatl --strict
+task docs;  DOCS_RC=$?      # regenerates llms.txt + matlatl --strict
+go run ./cmd/mecademo; DEMO_RC=$?  # terminal aggregate smoke; workers do not repeat it
 ```
 
 Use the `; RC=$?` form, never a pipe through `tail` (it swallows the exit code).
+Do not run the terminal gate in the parent checkout or a stale detached checkout.
 
-**If any of those fail:** surface the output, leave the accumulator as-is (do
-NOT open a PR, do NOT auto-fix), keep the temp worktree for post-mortem, go to
-Step 7 and report `blocked-pending-integration-fix`.
+**If any command fails:** surface the output, leave the accumulator as-is (do
+NOT open a PR, do NOT auto-fix), keep the integration worktree for post-mortem,
+go to Step 7 and report `blocked-pending-integration-fix`.
 
 **If they pass:**
-1. **Reconcile generated surfaces (single writer).** On the assembled
-   accumulator: if the engine's exported API changed, `task api:update` +
-   the `engine/CHANGELOG.md` note (or confirm `task api:check` is green);
-   if any markdown changed, `task docs` was already run above. No manual
-   prose reconciliation.
-2. **Flip the plan to `landed`.** Edit `docs/acceptance/<plan>.md` from
-   `**Status:** in-progress` to `**Status:** landed` and commit on the
-   accumulator (never in a worker).
-3. **Run `ac-trace --strict`:** `task ac-trace-strict` from the temp worktree.
-   A landed plan's every `verify:` proof must resolve. **If it fails** (a named
-   test missing, a citation unresolved), treat it like a failed gate: surface,
-   report `blocked-pending-integration-fix`, stop.
-4. **Run `/panel-review` inline (orchestrator mode).** Fixed point =
-   `git merge-base main <accumulator>`. Parse its final line:
-   `PANEL: ship_blockers=<n> …`.
-   - **ship_blockers > 0 and repair budget remains (< 2 rounds):** derive a
-     repair task per ship-blocker (a small task file citing the finding + the
-     AC it protects), add them to `.claude/plans/<plan>/tasks/`, and **loop
-     back to Step 2**. Increment the repair-round counter.
+1. **Retain generated surfaces (single writer).** In the integration worktree,
+   review generated changes and commit them on the accumulator. If the engine's
+   exported API changed, run `task api:update` and include `engine/api/*.txt`
+   plus the `engine/CHANGELOG.md` note. Generated files are deliverables: never
+   discard or leave them uncommitted.
+2. **Land and regenerate in the same checkout.** Edit
+   `docs/acceptance/<plan>.md` from `**Status:** in-progress` to
+   `**Status:** landed`, run `task docs` again so generated docs reflect the
+   landed plan, and commit the status plus generated changes on the accumulator.
+3. **Run strict trace from that checkout:** `task ac-trace-strict`. It now sees
+   both the landed status and every retained generated file. If it fails (a
+   named test missing, a citation unresolved), surface it, report
+   `blocked-pending-integration-fix`, and stop.
+4. **Run `/panel-review` inline (orchestrator mode)** from the integration
+   worktree. Fixed point = `git merge-base main <accumulator>`. Its **last line
+   must exactly match** the stable contract:
+   `PANEL: ship_blockers=<n> important=<n> advisory=<n> reviewer_failures=<n>`.
+   Reject a missing/malformed result as `blocked-pending-review`; do not infer a
+   verdict from prose. Consume `ship_blockers` as follows:
+   - **ship_blockers > 0 and repair budget remains (< 2 rounds):** in the
+     integration worktree derive and explicitly stage/commit one repair task per
+     ship-blocker (citing the finding + protected AC), add it under
+     `.claude/plans/<plan>/tasks/`, increment the repair-round counter, and loop
+     to Step 2. The integration worktree retains accumulator ownership; repair
+     workers use fresh attempt-specific worktrees exactly like all other tasks.
    - **ship_blockers > 0 and budget exhausted:** stop; report
      `blocked-pending-review` with the surviving ship-blockers for a human.
-   - **ship_blockers == 0:** proceed to the PR.
-5. **Push + open the single PR (then STOP).**
+   - **reviewer_failures > 0:** retry the failed reviewers before PR creation. If
+     failures remain, stop as `blocked-pending-review` unless a human explicitly
+     waives the named reviewer failures; record that waiver in the report.
+   - **ship_blockers == 0 and reviewer_failures == 0 (or explicitly waived):**
+     proceed to the PR. `important` and `advisory` remain visible but do not
+     silently become ship-blockers.
+5. **Push + open the single PR (then STOP).** From the integration worktree,
    `git push -u origin <accumulator>`; guard PR creation so a re-run updates
    rather than errors:
    `gh pr view <accumulator> >/dev/null 2>&1 || gh pr create --base main …`.
    The PR body: a summary of the tasks + ACs covered, the **inline panel-review
    report**, and `Closes #<n>` for the epic and **every task's mapped issue**
    (read `issue:` from each task file). Verify the closes survived any body
-   edit (`gh pr view <pr> --json closingIssuesReferences`). Remove the temp
-   worktree. **Do NOT merge to `main`. STOP** — the human merges.
+   edit (`gh pr view <pr> --json closingIssuesReferences`). Remove the
+   integration worktree **only** when its recorded ownership is
+   `orchestrator-created-disposable`. Never remove a `primary-current` or
+   `harness-owned-native` checkout; their owner controls their lifecycle.
+   **Do NOT merge to `main`. STOP** — the human merges.
 
 ### Step 7: Terminal report
 
-- `ALL_TASKS_COMPLETE` — every task merged, aggregate gate + ac-trace + panel
-  (0 ship-blockers) all green; accumulator pushed, PR open. Include the PR URL.
+- `ALL_TASKS_COMPLETE` — every task merged, aggregate gate + ac-trace green,
+  panel has 0 ship-blockers and 0 unwaived reviewer failures; accumulator pushed,
+  PR open. Include the PR URL.
 - `blocked-pending-integration-fix` — tasks merged but the aggregate gate or
   ac-trace failed on the assembled branch. No PR.
 - `blocked-pending-review` — panel ship-blockers survived the repair budget. No
@@ -295,10 +355,16 @@ and the repair-round count.
 
 ## Worktree lifecycle
 
-Agent worktrees are temp. After a task's branch merges, clean up with
-`git worktree remove <path>` (failed worktrees are kept for post-mortem —
-the skill does not auto-remove). Scratch dirs live under `.scratch/`
-(gitignored), never `/tmp` (repo convention).
+Agent worktrees are attempt-scoped temp resources. After a task branch merges,
+remove its successful checkout with `git worktree remove <path>` only when the
+orchestrator explicitly created that attempt's disposable fallback. A
+harness-owned native checkout remains harness-owned and must not be removed by
+this skill. Failed attempt worktrees are retained for post-mortem. Every retry
+increments `attempt` and uses a new branch/path, so retained failures cannot
+collide. Scratch dirs live under `.scratch/` (gitignored), never `/tmp`. The
+integration checkout follows its separately recorded ownership classification:
+only `orchestrator-created-disposable` is removed; `primary-current` and
+`harness-owned-native` are never removed here.
 
 ## Resuming
 
@@ -329,8 +395,9 @@ the single source of truth for what landed.
   conflict signals overlap the decomposition missed.
 - **"Push a per-task branch."** Only the orchestrator pushes, once, the
   assembled accumulator, at the end.
-- **"Commit to `main`."** Never — mecatl convention is PR-only (this
-  overrides the AGENTS.md commit-directly note).
+- **"Commit to `main` from this workflow."** Never — the orchestrator always
+  ends at a PR. The repository's direct trivial/mechanical exception remains
+  valid only outside this substantive acceptance-plan workflow.
 
 ## See also
 

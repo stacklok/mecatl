@@ -3,9 +3,9 @@ name: onboarding
 description: >-
   mecatl's workflow map — the router a contributor (human or agent) hits to
   learn the project's way of turning an idea into a trusted, agent-driven
-  implementation. Headlines the development spine (design → orchestrate →
-  verify) and names the specialist skill that owns each step, plus the
-  lightweight issue-scale track. A router, not an executor — it points at
+  implementation. Headlines the single development spine (design → orchestrate →
+  verify), explains how it scales down to a focused issue, and names the
+  specialist skill that owns each step. A router, not an executor — it points at
   the right skill and stops. Use when someone is new to the repo, says
   "onboard me", asks "how do I do X here", "what's the workflow for Y",
   "let's plan X", "how do we build Y", or otherwise asks for the project's
@@ -49,8 +49,10 @@ before starting the workflow they asked about.
 ## The spine — idea → trusted implementation
 
 Three steps, in order. Each ends at a checkpoint; you type the next command.
-This is the default path for any new **capability** — a feature big enough
-to want a design contract and a verification gate.
+This is the default path for substantive issue and capability work. Scale the
+plan to the change: a focused issue may be one compact scenario, a small AC set,
+and one task; do not manufacture decomposition or parallelism. Trivial,
+mechanical edits may be made directly, but still run the applicable gates.
 
 1. **`/to-acceptance-plan`** — synthesise a settled design into
    `docs/acceptance/<plan>.md`: scenario-first, numbered acceptance
@@ -59,8 +61,9 @@ to want a design contract and a verification gate.
    `devils-advocate` pass + a light specialist spot-check.
    → checkpoint: **draft plan handed off.**
 2. **`/plan-orchestrate <plan>`** (you trigger it) — decompose the plan
-   into tasks and run parallel `tdd-worker` agents onto one accumulator
-   branch; the aggregate gate runs on the assembled branch, the plan flips
+   into the smallest coherent task set and run isolated `tdd-worker` agents onto one accumulator
+   branch; independent workers run concurrently when the harness supports
+   concurrent writable workers, otherwise the same ready set runs serially. The aggregate gate runs on the assembled branch, the plan flips
    to `landed`, `ac-trace --strict` verifies every `verify:` proof
    resolves, `/panel-review` runs inline, and it pushes the accumulator and
    **opens one PR** (plan + code). It spawns a worker swarm, so it never
@@ -68,11 +71,11 @@ to want a design contract and a verification gate.
 3. **Human merge** — the single human gate. Review and merge the PR.
    Gaps found at review → back to step 2 as new/updated tasks.
 
-**Skip rules:** for issue-scale work (a bug, a focused feature with an
-issue as the spec), skip the spine and use **`/dev-pipeline`** — the
-lightweight approach → implement → panel-review → iterate → commit loop.
-Never skip the human gate — merging the PR is what makes the agent-driven
-build trustworthy.
+**Skip rule:** only trivial or purely mechanical edits skip the spine and may
+be made directly. A focused bug or feature still uses the spine, but its
+acceptance plan may deliberately contain one scenario and one task. Never skip
+the human gate — merging the PR is what makes substantive agent-driven work
+trustworthy.
 
 ## Verification, tracked
 
@@ -83,9 +86,8 @@ See `docs/acceptance/README.md`.
 
 ## Specialists — named here, invoked when the work calls for them
 
-- **`/dev-pipeline`** — the issue-scale track: architect plans → implementer
-  builds → review panel → iterate → commit per iteration.
-- **`/panel-review`** — three-axis review (Spec / Standards / Domain with
+- **`/panel-review`** — four-axis review (Spec / Standards / Test adequacy /
+  Domain with
   the default-on reuse pair) of any diff. Standalone or as the spine's
   final gate.
 - **`/test-writer`** — write tests under the invariant-first discipline
@@ -115,7 +117,7 @@ It points; the specialist skills act. Send the user to:
 
 - Write the design contract → `/to-acceptance-plan`
 - Decompose + build → `/plan-orchestrate`
-- Issue-scale work → `/dev-pipeline`
+- Focused issue or capability → compact `/to-acceptance-plan`, then `/plan-orchestrate`
 - Verify a build or any diff → `/panel-review`
 - Write tests → `/test-writer`
 - Ship a release → `/cut-release`

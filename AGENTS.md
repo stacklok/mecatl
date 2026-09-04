@@ -162,7 +162,7 @@ print a full offline session (turn → tool.call → permission.ask + approval �
 
 ## Workflow
 
-- Commit directly to `main`. End commit messages with the `Co-Authored-By` trailer. **Exception:** capability-scale agent work driven by the acceptance-plan spine (`/to-acceptance-plan` → `/plan-orchestrate`, ADR 0072) lands via PR on an accumulator branch — the orchestrator never merges to `main`; the human merge is the gate. Issue-scale work uses `/dev-pipeline`.
+- Substantive issue and capability work uses the single acceptance-plan spine (`/to-acceptance-plan` → `/plan-orchestrate`, ADR 0295). Scale the plan down to one compact scenario and task for focused work; do not manufacture complexity. The orchestrator lands plan + work through one accumulator PR, never merges to `main`, and the human merge is the gate. Only trivial or mechanical edits may commit directly to `main`. End commit messages with the `Co-Authored-By` trailer.
 - Never `git add -A` — stage explicit paths.
 - For smoke tests / scratch files, use the repo-local `.scratch/` dir (gitignored) — **not** `/tmp` or `mktemp`.
 - **Changed a core `engine/` exported API?** The `api-compat` gate will fail until you run `task api:update`, commit the changed `engine/api/*.txt`, and note the change in `engine/CHANGELOG.md` classified per `engine/COMPATIBILITY.md` (Added = minor, Changed/Removed = breaking). See ADR 0037.

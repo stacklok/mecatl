@@ -657,6 +657,98 @@ func TestDragReSplicesAfterDeltaUsesFreshBase(t *testing.T) {
 	assertHighlightOnlyOnRow(t, m, wantRow)
 }
 
+// TestInitialSelectionInDirtyWindowKeepsTailFollowed covers the distinct first-click
+// path: a streaming delta has grown the conversation but its coalesced render tick
+// has not yet run. snapshotSelection must install the fresh content AND preserve
+// tail-following immediately; the tick must keep it there.
+func TestInitialSelectionInDirtyWindowKeepsTailFollowed(t *testing.T) {
+	const tail = "DIRTY SELECTION TAIL"
+
+	m, _ := selModel(t)
+	m.phase = phaseRunning
+	if !m.stuck || !m.vp.AtBottom() {
+		t.Fatalf("precondition: selection model should follow the tail: stuck=%v atBottom=%v", m.stuck, m.vp.AtBottom())
+	}
+
+	// The real delta reducer marks the grown transcript dirty without flushing it.
+	m = applyAll(m, client.AssistantDeltaMsg{Turn: 1, Text: "\n" + tail})
+	if !m.viewDirty {
+		t.Fatal("precondition: streaming delta should leave the view dirty before its render tick")
+	}
+
+	// The initial press starts a selection and takes the dirty snapshot before the
+	// pending render tick. It must not leave the former YOffset visible.
+	m, _ = pressMouse(m, tea.MouseLeft, 0, convTopRow(m))
+	if !m.sel.active {
+		t.Fatal("initial press should activate a selection")
+	}
+	if !m.vp.AtBottom() {
+		t.Fatal("dirty selection snapshot should remain at the fresh tail")
+	}
+	if !m.stuck {
+		t.Fatal("dirty selection snapshot should keep tail-following enabled")
+	}
+	if !strings.Contains(ansi.Strip(m.vp.View()), tail) {
+		t.Fatalf("dirty selection snapshot should show the fresh tail %q", tail)
+	}
+
+	m = applyAll(m, renderTickMsg{})
+	if !m.vp.AtBottom() {
+		t.Fatal("render tick should keep the dirty selection snapshot at the tail")
+	}
+	if !m.stuck {
+		t.Fatal("render tick should keep tail-following enabled")
+	}
+	if !strings.Contains(ansi.Strip(m.vp.View()), tail) {
+		t.Fatalf("render tick should keep the fresh tail %q visible", tail)
+	}
+}
+
+// TestInitialSelectionInDirtyWindowDoesNotRepinManualScroll covers the complementary
+// first-click path: a dirty snapshot must not turn a manually-scrolled viewport back
+// into a tail-following one.
+func TestInitialSelectionInDirtyWindowDoesNotRepinManualScroll(t *testing.T) {
+	m, _ := selModel(t)
+	m, _ = pressKey(m, tea.KeyPressMsg{Code: tea.KeyPgUp})
+	if m.stuck || m.vp.AtBottom() {
+		t.Fatalf("precondition: pgup should leave the selection model manually scrolled: stuck=%v atBottom=%v", m.stuck, m.vp.AtBottom())
+	}
+	before := m.vp.YOffset()
+	m.phase = phaseRunning
+
+	// The real delta reducer creates the dirty window without the coalesced tick.
+	m = applyAll(m, client.AssistantDeltaMsg{Turn: 1, Text: "\nDIRTY MANUAL SCROLL TAIL"})
+	if !m.viewDirty {
+		t.Fatal("precondition: streaming delta should leave the view dirty before its render tick")
+	}
+
+	// This is safely inside the viewport, rather than either edge that arms drag
+	// autoscroll. A press begins the selection without moving it.
+	top := convTopRow(m)
+	y := top + 5
+	if y >= top+m.vp.Height()-1 {
+		t.Fatalf("precondition: selection coordinate y=%d is not inside the viewport", y)
+	}
+	m, _ = pressMouse(m, tea.MouseLeft, 10, y)
+	if !m.sel.active {
+		t.Fatal("initial press should activate a selection")
+	}
+	if m.stuck || m.vp.AtBottom() {
+		t.Fatalf("dirty selection snapshot repinned manual scroll: stuck=%v atBottom=%v", m.stuck, m.vp.AtBottom())
+	}
+	if got := m.vp.YOffset(); got != before {
+		t.Fatalf("dirty selection snapshot changed manual YOffset: got %d, want %d", got, before)
+	}
+
+	m = applyAll(m, renderTickMsg{})
+	if m.stuck || m.vp.AtBottom() {
+		t.Fatalf("render tick repinned manual scroll: stuck=%v atBottom=%v", m.stuck, m.vp.AtBottom())
+	}
+	if got := m.vp.YOffset(); got != before {
+		t.Fatalf("render tick changed manual YOffset: got %d, want %d", got, before)
+	}
+}
+
 // TestGestureInDirtyWindowDoesNotFlashBack covers the gap
 // TestDragReSplicesAfterDeltaUsesFreshBase deliberately leaves: that test always
 // pairs the streaming delta with its renderTickMsg flush, so selBase is already
