@@ -24,6 +24,7 @@ const DARWIN_SUN_PATH_BYTES = 104;
 const DEFAULT_READINESS_TIMEOUT_MS = 30_000;
 const READY_POLL_INTERVAL_MS = 20;
 const STOP_GRACE_MS = 3_000;
+const STOP_KILL_WAIT_MS = 1_000;
 const HTTP_LOOPBACK_ADDRESS = "127.0.0.1:0";
 const STDERR_CAPTURE_BYTES = 64 * 1024;
 const STDERR_REPORT_BYTES = 4 * 1024;
@@ -114,7 +115,17 @@ interface SpawnClock {
   now(): number;
 }
 
+interface SpawnToolHostLifecycle {
+  abort(reason: unknown): void;
+  start(): Promise<void> | void;
+  stop(): Promise<void>;
+}
+
 interface SpawnInternalOptions {
+  client?: {
+    onTeardownStep?: (step: string) => void;
+    toolHost?: SpawnToolHostLifecycle;
+  };
   clock?: Partial<SpawnClock>;
   createTransport?: (socketPath: string) => Transport;
   cwd?: string;
@@ -513,21 +524,66 @@ async function waitForReady(
 }
 
 async function stopProcess(process: LaunchedProcess, scheduler: SpawnScheduler): Promise<void> {
-  try {
-    process.closeLifetime();
-  } catch {
-    // Signalling the child remains mandatory when its lifetime endpoint cannot close cleanly.
-  }
-  if (!process.isRunning()) return;
-  process.kill("SIGTERM");
+  const failures: unknown[] = [];
+  let observedExit = false;
   const exited = process.exit.then(
-    () => true,
-    () => true,
+    () => {
+      observedExit = true;
+      return true;
+    },
+    () => {
+      observedExit = true;
+      return true;
+    },
   );
-  if ((await Promise.race([exited, scheduler.sleep(STOP_GRACE_MS).then(() => false)])) === false) {
-    process.kill("SIGKILL");
-    await exited;
+
+  const closeLifetime = () => {
+    try {
+      process.closeLifetime();
+    } catch (error) {
+      failures.push(error);
+    }
+  };
+
+  if (!process.isRunning()) {
+    closeLifetime();
+    if (failures.length > 0) throw new AggregateError(failures, "daemon shutdown failed");
+    return;
   }
+
+  try {
+    process.kill("SIGTERM");
+  } catch (error) {
+    failures.push(error);
+  }
+  closeLifetime();
+
+  let stopped = observedExit;
+  if (!stopped) {
+    try {
+      stopped = await Promise.race([exited, scheduler.sleep(STOP_GRACE_MS).then(() => false)]);
+    } catch (error) {
+      failures.push(error);
+    }
+  }
+  if (!stopped && !observedExit && process.isRunning()) {
+    try {
+      process.kill("SIGKILL");
+    } catch (error) {
+      failures.push(error);
+    }
+  }
+  if (!stopped) {
+    try {
+      stopped = await Promise.race([exited, scheduler.sleep(STOP_KILL_WAIT_MS).then(() => false)]);
+    } catch (error) {
+      failures.push(error);
+    }
+    if (!stopped) {
+      failures.push(new Error("mecated did not exit after SIGKILL"));
+    }
+  }
+  if (failures.length > 0) throw new AggregateError(failures, "daemon shutdown failed");
 }
 
 async function spawnAttempt(
@@ -569,14 +625,21 @@ async function spawnAttempt(
   const launcher = internal.launcher ?? realLauncher;
   let child: LaunchedProcess | undefined;
   let transport: Transport | undefined;
-  let cleaned = false;
+  let stopPromise: Promise<void> | undefined;
+  let removePromise: Promise<void> | undefined;
+  const stopDaemon = () => {
+    stopPromise ??= child === undefined ? Promise.resolve() : stopProcess(child, scheduler);
+    return stopPromise;
+  };
+  const removeRuntime = () => {
+    removePromise ??= removeRuntimeDirectory(runtime.directory, fileSystem);
+    return removePromise;
+  };
   const cleanup = async () => {
-    if (cleaned) return;
-    cleaned = true;
     try {
-      if (child !== undefined) await stopProcess(child, scheduler);
+      await stopDaemon();
     } finally {
-      await removeRuntimeDirectory(runtime.directory, fileSystem);
+      await removeRuntime();
     }
   };
 
@@ -619,8 +682,15 @@ async function spawnAttempt(
     await createRawClient({ transport, transportKind: "grpc" }).features({ timeoutMs });
     return withDaemonInfo(
       connectTransport({
-        afterClose: cleanup,
         ...(options.diagnostics === undefined ? {} : { diagnostics: options.diagnostics }),
+        internal: {
+          ...internal.client,
+          daemon: {
+            exit: child.exit,
+            removeRuntime,
+            stop: stopDaemon,
+          },
+        },
         owned: true,
         transport,
         transportKind: "grpc",

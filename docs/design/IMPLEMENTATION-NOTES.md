@@ -8241,10 +8241,30 @@ It excludes the ready document's HTTP address, gRPC-address duplicate, deploymen
 every unknown future field. Node's fourth `stdio` pipe is a connected Unix socketpair; the
 server-side validator accepts that exact connected-stream shape as well as a FIFO, and the
 child watches its endpoint only for reads, so closing the never-written parent endpoint
-provides the parent-death EOF contract without `mkfifo(1)`. `ClientImpl`'s private
-`afterClose` hook runs after owned-transport disposal and lets a spawned client close the
-lifetime endpoint, stop its child handle, and remove the directory without giving ordinary
-`connect()` clients process authority.
+provides the parent-death EOF contract without `mkfifo(1)`.
+
+Disposal ownership is split explicitly between `sdk/typescript/src/client.ts` and
+`sdk/typescript/src/spawn.ts`. `ClientImpl` registers accepted and not-yet-accepted owned runs
+separately from `SessionActivity` / `AttachedRun` watches. Its one cached close promise walks the
+fixed order: send cancellation or abort the run stream, close every durable watch, stop the status
+monitor, abort and stop the module-internal tool-host lifecycle, dispose an SDK-owned transport,
+then invoke the spawned-daemon stop and runtime-removal hooks. The internal options bag owns the
+launcher, scheduler, tool-host and teardown-observation seams; none enters either public barrel.
+Each step is isolated by the same disposal wrapper, which emits a
+`client_disposal_failed` diagnostic with only the step and error class, then continues and never
+throws out of `close()`. Watch close unregisters itself; run completion unregisters its cancel
+closure. `Symbol.asyncDispose` delegates to the same promise.
+
+The spawned-daemon hook signals only its captured child handle. `SIGTERM` precedes lifetime-end
+release; a bounded grace precedes `SIGKILL`, and a second bound prevents an unresponsive kill from
+wedging disposal. Both stop and directory removal are individually idempotent, so a stop fault
+cannot skip removal. The ready document's pid stays display-only. The child's exit promise is also
+the post-start death detector: an exit outside close records one frozen `daemon_exited` diagnostic,
+aborts active client-side work, and makes `ClientImpl` retain a local `InvalidStateError` that every
+later client, session, and run entry check returns before touching transport. A later close still
+releases client resources and removes the runtime directory, but `isRunning()` prevents signalling
+the already-observed child. Ordinary `connect()` construction supplies no daemon hooks and therefore
+has no process or runtime-directory authority.
 
 The M2 durable-watch base lives in `sdk/typescript/src/watch.ts`. Its client-authored `kind`
 turns the generated `{event, cursor, phase}` response into `event | boundary | gap | unknown`;

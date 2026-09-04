@@ -235,9 +235,15 @@ structured diagnostics sink receives the same safe report; without one, the SDK 
 to `console`. Every post-launch failure stops the child before removing its private directory. A `SpawnedClient`'s
 `daemon` getter exposes only the frozen pid, Unix transport, socket path, API major and
 feature list; environment overrides are merged over the inherited parent environment but
-are never projected there. Closing that client closes its transport, stops the owned
-child, and removes the runtime directory; clients made by `connect()` acquire no process
-ownership. See
+are never projected there. Client disposal first cancels its owned runs and releases durable
+watch activity, then stops status monitoring and any local tool host before closing its owned
+transport. A spawned client next sends `SIGTERM` to its child handle, escalates to `SIGKILL`
+after a bounded grace only while that handle is still running, and finally removes the runtime
+directory. Connected clients acquire no process or directory ownership. Every teardown fault is
+reported through diagnostics while later steps continue, and `close()` / `Symbol.asyncDispose`
+share one non-throwing idempotent operation. A daemon exit outside disposal puts the client in a
+terminal local `invalid_state`, emits one diagnostic, and prevents a dead socket from surfacing as
+the later-operation error. See
 [ADR 0292](adr/0292-typescript-sdk-local-daemon-and-tools.md).
 
 The durable-watch foundation uses the generated `WatchSessionEvents` descriptor on

@@ -48,7 +48,11 @@ disabled, and the client is returned only after the daemon publishes its ready d
 Its `client.daemon` facts come from that document's non-secret allowlist. Setting
 `http: true` adds an ephemeral loopback HTTP listener but removes callback-tool support;
 setting `lifetimePipe: false` opts out of parent-crash cleanup without changing `close()`.
-Closing the client stops that owned process and removes its private runtime directory.
+Closing the client first cancels its owned runs and detaches its durable watches, then closes its
+owned transport, sends `SIGTERM` to that child, escalates to `SIGKILL` only after a bounded grace,
+and removes its private runtime directory. Cleanup continues after a failing step and reports the
+fault through `diagnostics`; `close()` and `Symbol.asyncDispose` remain idempotent and do not reject
+for teardown faults. If the daemon exits first, later operations fail with typed `invalid_state`.
 Startup errors distinguish an exited child from a live child that missed its readiness deadline.
 Their stderr report is bounded and redacted by whole line; applications can install the
 structured `diagnostics` callback, while the default writes nothing to `console`.

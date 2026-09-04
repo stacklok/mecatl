@@ -56,8 +56,13 @@ the client reports that capability from `client.daemon.features`. The lifetime e
 enabled by default so a vanished parent produces EOF in the daemon; `lifetimePipe: false`
 opts out of crash cleanup, while `close()` still stops the child. `env` values override the
 otherwise inherited process environment and are never exposed through `client.daemon`.
-Closing the client stops only the daemon that client spawned and removes its private runtime
-directory. A child exit before readiness is a typed `spawn_failed`; a live child that misses
+Closing the client cancels its owned runs, detaches durable watches, closes its owned transport,
+then stops only the daemon that client spawned and removes its private runtime directory. Shutdown
+uses `SIGTERM` with a bounded grace before `SIGKILL`; cleanup faults go to `diagnostics`, do not
+skip later steps, and do not make `close()` reject. Connected clients never signal a process.
+`close()` and `Symbol.asyncDispose` are the same idempotent operation. A daemon that exits later
+without disposal makes subsequent client and session calls fail with typed `invalid_state` instead
+of a dead-socket transport error. A child exit before readiness is a typed `spawn_failed`; a live child that misses
 `readinessTimeoutMs` is a typed `readiness_timeout` and is stopped. Both include only the
 bounded, whole-line-redacted end of stderr. The optional `diagnostics` callback receives one
 structured safe record; without it the SDK never writes to `console`.
