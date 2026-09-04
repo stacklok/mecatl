@@ -22,6 +22,7 @@ import (
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
+	"github.com/stacklok/mecatl/internal/adapter/mcp"
 	"github.com/stacklok/mecatl/internal/adapter/osfs"
 	"github.com/stacklok/mecatl/internal/adapter/server"
 	"github.com/stacklok/mecatl/internal/adapter/tools"
@@ -272,6 +273,9 @@ func scriptedServiceAtRoot(t *testing.T, root string, extraTools []tool.Tool, wo
 		SharedEngineRoot:    root,
 		Now:                 func() time.Time { return time.Unix(0, 0) },
 		DefaultCapabilities: llm.Capabilities(),
+		SessionEngine: func(context.Context, server.ProviderSelector, []mcp.ServerConfig, server.SessionProfile, string, session.PermissionMode) (server.SessionEngineResult, error) {
+			return server.SessionEngineResult{Engine: engine, Capabilities: llm.Capabilities(), Close: func() error { return nil }}, nil
+		},
 	})
 	if err != nil {
 		t.Fatalf("new service: %v", err)

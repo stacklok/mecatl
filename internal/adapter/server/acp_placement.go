@@ -88,7 +88,8 @@ func (s *Service) LoadACPSession(ctx context.Context, id session.SessionID, cwd 
 }
 
 func assertACPPlacementCWD(cwd string, env tool.Environment) error {
-	if !filepath.IsAbs(cwd) || filepath.Clean(cwd) != filepath.Clean(env.Workspace().Root()) {
+	resolved, err := filepath.EvalSymlinks(cwd)
+	if err != nil || !filepath.IsAbs(cwd) || filepath.Clean(resolved) != filepath.Clean(env.Workspace().Root()) {
 		return fmt.Errorf("%w: cwd does not match the configured session placement", ErrInvalidArgument)
 	}
 	return nil
