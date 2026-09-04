@@ -297,6 +297,14 @@ sink under that id, while an intentional `isError` result remains model-visible 
 the client aborts running calls, drops queued calls and releases the loopback port before transport
 and daemon teardown.
 
+The offline close-out suite drives this public surface rather than the older hand-written daemon
+harness. Node Vitest starts the same checkout's `mecated --mock-script`, asserts callback results and
+generic handler failures on the real Go MCP wire, and verifies the default gRPC and HTTP TCP ports
+refuse connections while the UDS daemon is live. A built-package helper repeats spawn, callback and
+clean shutdown under Bun; separate Node and Bun parents are killed to prove fd-3 EOF stops the child.
+The SDK CI job pins both Node and Bun, so the hand-written host's discovery/initialize negotiation and
+the two runtime-lifecycle claims fail together when either side drifts.
+
 The durable-watch foundation uses the generated `WatchSessionEvents` descriptor on
 both transports and decodes each wire frame into a four-arm `WatchEnvelope`:
 `event`, the single replay-to-live `boundary`, cursor-free `gap`, or lossless

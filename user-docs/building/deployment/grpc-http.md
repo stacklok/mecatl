@@ -126,6 +126,11 @@ to the model: it receives only a correlation id, while the full cause is sent to
 `diagnostics` callback. Closing the client aborts active callbacks, drops queued work and releases
 the listener before stopping the daemon.
 
+The repository's offline SDK gate runs this public `spawn()` → callback → shutdown path on both
+Node 24 and Bun 1.4.1, including abrupt parent death through the lifetime descriptor. See the
+[full SDK lifecycle and protocol reference](https://github.com/stacklok/mecatl/blob/main/docs/architecture.md#typescript-sdk)
+for binary resolution, readiness, disposal, and the hand-written MCP subset.
+
 See the detailed gRPC and HTTP
 references for their request, response, privacy, and compatibility contracts.
 

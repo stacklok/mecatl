@@ -8362,6 +8362,25 @@ verbatim. `ClientImpl`'s pre-existing tool-host-before-transport disposal order 
 `stop`, which cancel the scheduler, destroy listener connections and join `Server.close` so the port
 is reusable before daemon teardown.
 
+Scenario 10's wire proof lives in `sdk/typescript/e2e/spawn.e2e.test.ts` and
+`sdk/typescript/e2e/tool.e2e.test.ts` and deliberately imports the product `spawn()` surface. Its
+strict mock scripts cover successful, throwing,
+read-only, mutating and schema-invalid callback turns. The event assertions read the real
+`tool.result`, rather than treating handler invocation as proof that the payload crossed back into
+the agent loop. The lifecycle half reads the published ready allowlist, makes real refused connects
+to the suppressed `127.0.0.1:8080` and `:8081` defaults, checks close-before-directory-removal, and
+kills Node and Bun helper parents. `sdk/typescript/e2e/fixtures/runtime-helper.mjs` imports the built
+package, so Bun exercises the published ESM shape rather than Vitest's TypeScript transform. The SDK
+CI job pins Bun 1.4.1 and the local `task sdk:e2e` gate requires a Bun executable (or an explicit
+`BUN_BIN`), keeping the runtime leg out of skip-only test metadata.
+
+The real-wire fixtures currently select the explicit `noop` authority evaluator. Client MCP tools
+are added to a per-session catalog after `internal/app/root_authority.go` (`mintRootAuthority`) has
+projected the process-wide root catalog, so the default local evaluator otherwise rejects the newly
+mounted exact tool name before the permission layer can ask. This keeps the M3 MCP/permission wire
+proof isolated, but the default-authority integration is a separate ship decision rather than a
+property these tests claim to cover.
+
 The M2 durable-watch base lives in `sdk/typescript/src/watch.ts`. Its client-authored `kind`
 turns the generated `{event, cursor, phase}` response into `event | boundary | gap | unknown`;
 known phases narrow, future phases retain their raw string and optional event, and the gap arm
