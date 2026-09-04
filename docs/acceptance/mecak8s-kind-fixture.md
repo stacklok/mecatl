@@ -177,7 +177,7 @@ and the bounded signing-key availability policy
   is a clean break, with no compatibility aliases.
 - Update `docs/usage/mecak8s.md`, `deploy/README.md`, and
   `user-docs/building/deployment/mecak8s.md` with links and scope distinctions;
-  regenerate `llms.txt` through `task docs`.
+  regenerate the configuration reference through `task docs`.
 - Keep all new code/configuration tests offline. A Kind journey is an opt-in
   deployment check, not part of `task test`.
 
@@ -212,7 +212,7 @@ part of this accumulator.
 ## Definition of done
 
 1. `task lint` and `task test` pass (both modules, `-race`).
-2. `task docs` regenerates `llms.txt` and passes the matlatl strict link gate;
+2. `task docs` regenerates the configuration reference and passes the matlatl strict link gate;
    `task site:build` validates the required user-facing deployment documentation.
 3. `task api:check` passes without an API update; this plan changes no engine
    exported surface.

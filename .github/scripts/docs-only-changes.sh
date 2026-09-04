@@ -2,10 +2,10 @@
 # Classify a NUL-delimited list of changed repository-relative paths.
 #
 # The allowlist intentionally accepts only documentation content: Markdown under
-# docs/ and user-docs/, user-docs' Docusaurus category metadata, README.md, and
-# llms.txt. Everything else is full validation, including workflow/configuration
-# and build files. In particular, docs/lint Go code and the modelith YAML are not
-# docs-only changes even though they live below docs/.
+# docs/ and user-docs/, user-docs' Docusaurus category metadata, and README.md.
+# Everything else is full validation, including workflow/configuration and build
+# files. In particular, docs/lint Go code and the modelith YAML are not docs-only
+# changes even though they live below docs/.
 #
 # This script never evaluates a path as shell code. It prints exactly "true" or
 # "false" and treats empty, unterminated, or unknown input as false.
@@ -13,7 +13,7 @@ set -euo pipefail
 
 allowed_path() {
   case "$1" in
-    README.md|llms.txt|docs/*.md|user-docs/*.md|user-docs/*.mdx|user-docs/_category_.json|user-docs/**/_category_.json)
+    README.md|docs/*.md|user-docs/*.md|user-docs/*.mdx|user-docs/_category_.json|user-docs/**/_category_.json)
       return 0
       ;;
     *)

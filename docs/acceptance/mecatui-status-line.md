@@ -175,7 +175,7 @@ This is a user-visible configuration surface, so [`AGENTS.md`](../../AGENTS.md) 
 ## Cross-cutting deliverables
 
 - [ADR-0289](../adr/0289-hardened-status-command-boundary.md) is accepted with implementation.
-- Update [`docs/tui.md`](../tui.md), [`docs/architecture.md`](../architecture.md), and the relevant `user-docs/` page. Run `task docs` and `task site:build`; do not hand-edit generated `llms.txt`.
+- Update [`docs/tui.md`](../tui.md), [`docs/architecture.md`](../architecture.md), and the relevant `user-docs/` page. Run `task docs` and `task site:build`; do not hand-edit generated configuration reference.
 - Add the command runner/timer to the cloud-native resource inventory if it outlives one invocation, as required by [`AGENTS.md`](../../AGENTS.md).
 
 ## Sequencing recommendation
@@ -189,7 +189,7 @@ First define `Input`, shared header/footer StatusML parsing/rendering, and the d
 ## Definition of done
 
 1. `task lint` and `task test` pass (both modules, with `-race`).
-2. `task docs` regenerates `llms.txt` and passes the strict documentation gate.
+2. `task docs` regenerates the configuration reference and passes the strict documentation gate.
 3. `task site:build` passes after public documentation updates.
 4. `task api:check` passes without an engine API change.
 5. `task ac-trace-strict` passes after the plan is marked `landed`.

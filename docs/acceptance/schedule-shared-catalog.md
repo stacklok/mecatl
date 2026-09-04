@@ -227,7 +227,7 @@ session restored onto the shared engine by `needsRehydration` keeps the tool
 - **`AGENTS.md`**: the "per-session catalog" gotcha currently says the shared
   catalog legitimately lacks the Schedule tool — correct it to state both
   catalogs carry it on a schedule-capable store.
-- Regenerate `llms.txt` (`task docs`).
+- Regenerate the configuration reference (`task docs`).
 
 ## Sequencing recommendation
 
@@ -257,7 +257,7 @@ Plus the existing guards that must stay green:
 ## Definition of done
 
 1. `task lint` and `task test` pass (both modules, `-race`).
-2. `task docs` — `llms.txt` regenerated and the matlatl strict link gate green.
+2. `task docs` — configuration reference regenerated and the matlatl strict link gate green.
 3. `task api:check` passes (no engine exported-surface change is anticipated —
    the manager is an `internal/adapter/server` type; if any engine surface
    moves, `task api:update` + an `engine/CHANGELOG.md` note).

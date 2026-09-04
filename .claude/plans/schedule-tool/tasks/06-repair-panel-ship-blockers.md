@@ -43,7 +43,7 @@ should name ONLY the surviving surfaces (the in-chat `Schedule` tool, the gRPC
 `ScheduleService` + REST `/v1/schedules` API, the mecatui `/schedule` overlay).
 Keep the on-by-default / `--no-scheduler` docs that task 03 correctly added.
 Run `task docs` offline (matlatl from the module cache, `GOPROXY=off`; the
-`go run ...@version` fetch fails offline) — llms.txt regen + `matlatl check .
+`go run ...@version` fetch fails offline) — configuration-reference regeneration + `matlatl check .
 --strict` must be green.
 
 **3. Cadence floor default (security default).** `--scheduler-min-interval`

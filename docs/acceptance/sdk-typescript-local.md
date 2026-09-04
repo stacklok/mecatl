@@ -719,7 +719,7 @@ hand-rolled harness; a `--mock-script` fixture whose turn calls
 - `user-docs/`: a short Node/Bun `spawn()` + `tool()` note per
   [`AGENTS.md`](../../AGENTS.md)'s user-docs rule, linking out to the full
   reference. The example set and the browser/BFF pages stay M4.
-- `task docs` regeneration (`llms.txt`) with every Markdown change.
+- `task docs` configuration-reference regeneration with every Markdown change.
 - Any new runtime dependency (the JSON Schema validator) is added to
   `sdk/typescript/package.json` with its licence recorded, and the `.`
   entrypoint's module graph is asserted free of it by the existing package
@@ -764,7 +764,7 @@ suites under `sdk/typescript/`, cited per AC.
 1. `task lint` and `task test` pass (both Go modules, `-race`), plus
    `task sdk:lint`, `task sdk:typecheck`, `task sdk:test`, `task sdk:e2e`, and
    `task sdk:api:check`.
-2. `task docs` — `llms.txt` regenerated and the matlatl strict link gate green;
+2. `task docs` — configuration reference regenerated and the matlatl strict link gate green;
    `task site:build` green for the `user-docs/` addition.
 3. `task generate` reproduces both generated trees byte-identically — this plan
    touches no proto, so it is a no-op.

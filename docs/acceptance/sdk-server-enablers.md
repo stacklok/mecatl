@@ -279,7 +279,7 @@ The server-side half of callback tools. The boundary is enforced by the listener
 - `task lint && task test` green on every PR in the stack, and on the assembled stack head.
 - `task api:check` — Scenarios 4 and 6 change the engine public API; each ships `task api:update` output plus an `engine/CHANGELOG.md` entry classified per [`engine/COMPATIBILITY.md`](../../engine/COMPATIBILITY.md) (both **Added = minor**).
 - `task generate` after every proto change; `contracts/gen/` committed, never hand-edited.
-- `task docs` after every Markdown change — `llms.txt` is generated and the strict link gate must pass.
+- `task docs` after every Markdown change — the configuration reference is generated and the strict link gate must pass.
 - `go run ./cmd/mecademo` still prints a full offline session.
 - Every long-lived resource added here — each watcher, each size-poll ticker, each spawned-daemon lifetime pipe — gets a row in [ADR-0027](../adr/0027-cloud-native.md)'s resource inventory (owner / scope / cleanup / re-attach), and a rehydrate-fidelity row where it holds state a restart would lose.
 - `user-docs/` updated in the same PR for every operator-visible flag: `--deployment-id`, `--cors-origins`, `--grpc-unix-socket`, `--ready-file`.

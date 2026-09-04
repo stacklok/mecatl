@@ -191,14 +191,14 @@ the same PR, per the [`AGENTS.md` user-docs checklist](../../AGENTS.md).
 
 **Work:**
 - docs: `domain-model.md`, `IMPLEMENTATION-NOTES.md`, a short `user-docs/` note.
-- regenerate `llms.txt` and run the strict link gate (`task docs`).
+- regenerate the configuration reference and run the strict link gate (`task docs`).
 
 **Acceptance:**
 - AC4.1: no living doc describes Subagent or Parallel observability as "metadata only";
   the two-tier model is stated with a citation to
   [ADR-0079](../adr/0079-delegation-observability-convergence.md).
   - verify: inspection — `matlatl check . --strict` + a grep for the stale phrasing
-- AC4.2: `task docs` regenerates `llms.txt` and the matlatl strict link gate is green
+- AC4.2: `task docs` regenerates the configuration reference and the matlatl strict link gate is green
   with the new plan + ADR linked.
   - verify: none — covered by the Definition-of-done docs gate (item 2)
 
@@ -243,7 +243,7 @@ projection widening, or the structural guard fails on the new fields.
 ## Definition of done
 
 1. `task lint` and `task test` pass (both modules, `-race`).
-2. `task docs` — `llms.txt` regenerated and the matlatl strict link gate green.
+2. `task docs` — configuration reference regenerated and the matlatl strict link gate green.
 3. `task api:check` passes (`task api:update` was run and the `engine/CHANGELOG.md`
    note is present) — the plan touched the engine's exported surface.
 4. `task ac-trace-strict` — every AC's `verify:` proof resolves (this plan is

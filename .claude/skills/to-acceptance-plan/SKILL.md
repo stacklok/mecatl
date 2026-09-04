@@ -83,7 +83,8 @@ single human gate.
    bash .claude/skills/to-acceptance-plan/scripts/check-acceptance-plan.sh docs/acceptance/<plan>.md
    ```
    Add the plan to `docs/acceptance/README.md` (the matlatl gate fails on an
-   unreachable doc), then run `task docs` (`llms.txt` regen + link gate).
+   unreachable doc), then run `task docs` (configuration-reference regeneration
+   + link gate).
 
 6. **Devils-advocate pass (advisory, non-blocking).** Dispatch the
    `devils-advocate` subagent against the draft plus the ADRs /

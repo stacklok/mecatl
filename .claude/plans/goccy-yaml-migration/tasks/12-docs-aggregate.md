@@ -19,7 +19,7 @@ in `AGENTS.md`, `docs/architecture.md`,
 `docs/architecture/extensibility.md`, and
 `docs/design/IMPLEMENTATION-NOTES.md`; update parser-specific comments and
 allowlists where needed. Do not edit the acceptance plan or ADR. Regenerate
-`llms.txt` through the documented docs/generate task rather than by hand.
+the configuration reference through the documented docs/generate task rather than by hand.
 
 Run the repository-level proof that goccy remains constrained to parser-owning
 adapter/command packages, engine layering and standalone closure remain intact,

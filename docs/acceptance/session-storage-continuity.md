@@ -257,7 +257,7 @@ The scenario test names are the `verify:` identifiers above. `TestInvariant_rete
 ## Definition of done
 
 1. `task lint` and `task test` pass across root, engine, authn, and provider modules with race detection.
-2. `task docs` regenerates `llms.txt`; matlatl strict and the user-docs Docusaurus build are green.
+2. `task docs` regenerates the configuration reference; matlatl strict and the user-docs Docusaurus build are green.
 3. `task api:check` passes, or intentional engine additions update `engine/api/*.txt` and `engine/CHANGELOG.md` per `engine/COMPATIBILITY.md`.
 4. `task ac-trace-strict` resolves every `verify:` proof after this plan is `landed`.
 5. Every scenario test and `TestInvariant_retention_requires_durable_taxonomy` is green and grep-locatable.

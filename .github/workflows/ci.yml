@@ -144,11 +144,6 @@ jobs:
             go.sum
             engine/go.sum
 
-      - name: Remember checkout Go path
-        id: sdk-go-path
-        shell: bash
-        run: echo "bin=$(go env GOROOT)/bin" >> "$GITHUB_OUTPUT"
-
       - uses: bufbuild/buf-setup-action@a47c93e0b1648d5651a065437926377d060baa99 # v1.50.0
         with:
           version: '1.72.0'
@@ -176,26 +171,7 @@ jobs:
       - name: Verify SDK API reports
         run: task sdk:api:check
 
-      # The repository token cannot clone the private matlatl module directly.
-      # The organization-approved action builds it from its own checkout and
-      # exposes the binary for task generate's llms.txt regeneration.
-      - name: Acquire matlatl generator
-        id: sdk-matlatl
-        uses: stacklok/matlatl@de0d613703c3414aea70e13981f9b1b5c067dcb0 # v0.0.8
-        with:
-          annotate: "false"
-          job-summary: "false"
-
-      # The action prepends its own go.mod toolchain. Put the already-installed
-      # checkout toolchain back first without restoring the module cache twice.
-      - name: Restore checkout Go path
-        env:
-          MECATL_GO_BIN: ${{ steps.sdk-go-path.outputs.bin }}
-        run: echo "$MECATL_GO_BIN" >> "$GITHUB_PATH"
-
       - name: Verify generated contracts are fresh
-        env:
-          MATLATL_BIN: ${{ steps.sdk-matlatl.outputs.binary-path }}
         run: |
           task generate
           git diff --exit-code -- contracts/gen sdk/typescript/src/gen
@@ -1021,8 +997,7 @@ jobs:
 
       # Freshness gate for the generated configuration reference + the embedded
       # config-init skeleton: regenerate both to a temp dir and fail if they differ
-      # from what's committed (the same generate->commit->diff discipline as
-      # llms.txt). The error names the exact regen command.
+      # from what's committed. The error names the exact regen command.
       - name: configuration reference is up to date
         shell: bash
         run: |
@@ -1053,21 +1028,6 @@ jobs:
         uses: stacklok/matlatl@de0d613703c3414aea70e13981f9b1b5c067dcb0 # v0.0.8
         with:
           strict: "true"
-
-      # Freshness gate for the committed llms.txt: regenerate it with the binary
-      # the action already built and fail if it differs from what's checked in.
-      # Keep --title in lockstep with `task docs:llms` and the README H1.
-      - name: llms.txt is up to date
-        shell: bash
-        env:
-          BIN: ${{ steps.matlatl.outputs.binary-path }}
-        run: |
-          set -euo pipefail
-          "$BIN" index . --llms --title "mecatl" > "${RUNNER_TEMP}/llms.expected"
-          if ! diff -u llms.txt "${RUNNER_TEMP}/llms.expected"; then
-            echo "::error file=llms.txt::llms.txt is out of date — run 'task docs:llms' and commit the result."
-            exit 1
-          fi
 
   user-docs:
     name: User docs (Docusaurus build)

@@ -507,7 +507,7 @@ implementer:
 ## Definition of done
 
 1. `task lint` and `task test` pass.
-2. `task docs` regenerates `llms.txt` and passes the strict documentation gate.
+2. `task docs` regenerates the configuration reference and passes the strict documentation gate.
 3. `task api:check` passes; any intentional engine public API change has updated
    `engine/api/*.txt` and an `engine/CHANGELOG.md` note classified per
    `engine/COMPATIBILITY.md`.

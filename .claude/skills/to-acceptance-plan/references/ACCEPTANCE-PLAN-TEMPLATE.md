@@ -122,7 +122,7 @@ Test<Plan>_Scenario<N>_*. Listed in landing order. -->
 
 ## Definition of done                                          <!-- [constant] -->
 1. `task lint` and `task test` pass (both modules, `-race`).
-2. `task docs` — `llms.txt` regenerated and the matlatl strict link gate green.
+2. `task docs` — configuration reference regenerated and the matlatl strict link gate green.
 3. `task api:check` passes (or `task api:update` was run and the
    `engine/CHANGELOG.md` note is present) if the plan touched the engine's
    exported surface.
