@@ -470,6 +470,9 @@ type Session struct {
 	pending *PendingAsk
 	// pendingAuthorization is set iff State == StateAuthorizing.
 	pendingAuthorization *PendingAuthorization
+	// pendingWorkspaceEnrollment is safe pre-prompt correlation state. It is
+	// independent of the agent-loop lifecycle and other pending continuations.
+	pendingWorkspaceEnrollment *PendingWorkspaceEnrollment
 	// stop holds the terminal stop reason once the session has stopped.
 	stop StopReason
 	// permanent is the compatibility projection of failureDisposition==Permanent.
@@ -565,6 +568,9 @@ func New(id SessionID, mode PermissionMode, ref EnvironmentRef, limits Limits, c
 // turn limit is already reached it returns ErrIllegalTransition is NOT used;
 // callers should consult StopReason before beginning a turn.
 func (s *Session) BeginTurn() error {
+	if err := s.rejectWhileWorkspaceEnrollmentPending("BeginTurn"); err != nil {
+		return err
+	}
 	if s.State != StateIdle && s.State != StateRunning {
 		return fmt.Errorf("%w: BeginTurn from %q", ErrIllegalTransition, s.State)
 	}
@@ -676,6 +682,9 @@ func (s *Session) RecordUserPrompt(text string, instructions []Message) error {
 // difference is the recorded user message carries Parts. It is legal from any
 // non-terminal state.
 func (s *Session) RecordUserPromptWithParts(text string, parts []Content, instructions []Message) error {
+	if err := s.rejectWhileWorkspaceEnrollmentPending("RecordUserPrompt"); err != nil {
+		return err
+	}
 	if s.State.IsTerminal() || (s.retryPending && s.State == StateIdle) || s.State == StateAuthorizing {
 		return fmt.Errorf("%w: RecordUserPrompt from %q", ErrIllegalTransition, s.State)
 	}
@@ -718,6 +727,9 @@ func (s *Session) ReplaceHistory(messages []Message) error {
 // The replacement must satisfy ValidateToolPairing so the resulting history is
 // provider-replayable in both directions.
 func (s *Session) ReplaceHistoryAtBoundary(messages []Message) error {
+	if err := s.rejectWhileWorkspaceEnrollmentPending("ReplaceHistoryAtBoundary"); err != nil {
+		return err
+	}
 	if s.State == StateRunning || s.State == StateAwaiting || s.State == StateAuthorizing {
 		return fmt.Errorf("%w: ReplaceHistoryAtBoundary from %q", ErrIllegalTransition, s.State)
 	}
@@ -744,6 +756,9 @@ func (s *Session) ReplaceHistoryAtBoundary(messages []Message) error {
 // the conversation is always provider-replayable regardless of what the caller
 // supplies.
 func (s *Session) SeedHistory(messages []Message) error {
+	if err := s.rejectWhileWorkspaceEnrollmentPending("SeedHistory"); err != nil {
+		return err
+	}
 	if s.State != StateIdle {
 		return fmt.Errorf("%w: SeedHistory from %q", ErrIllegalTransition, s.State)
 	}
@@ -796,6 +811,9 @@ func (s *Session) ResumeWith() (PendingAsk, error) {
 // non-terminal state except StateAuthorizing and records StopEndTurn unless a
 // stop reason is already set.
 func (s *Session) Complete() error {
+	if err := s.rejectWhileWorkspaceEnrollmentPending("Complete"); err != nil {
+		return err
+	}
 	if s.State.IsTerminal() || s.State == StateAuthorizing {
 		return fmt.Errorf("%w: Complete from %q", ErrIllegalTransition, s.State)
 	}
@@ -812,6 +830,9 @@ func (s *Session) Complete() error {
 // limit was reached). It is legal from any non-terminal state except
 // StateAuthorizing.
 func (s *Session) Stop(reason StopReason) error {
+	if err := s.rejectWhileWorkspaceEnrollmentPending("Stop"); err != nil {
+		return err
+	}
 	if s.State.IsTerminal() || s.State == StateAuthorizing {
 		return fmt.Errorf("%w: Stop from %q", ErrIllegalTransition, s.State)
 	}
@@ -825,6 +846,9 @@ func (s *Session) Stop(reason StopReason) error {
 // Cancel transitions the session to StateCancelled. It is legal from any
 // non-terminal state except StateAuthorizing.
 func (s *Session) Cancel() error {
+	if err := s.rejectWhileWorkspaceEnrollmentPending("Cancel"); err != nil {
+		return err
+	}
 	if s.State.IsTerminal() || s.State == StateAuthorizing {
 		return fmt.Errorf("%w: Cancel from %q", ErrIllegalTransition, s.State)
 	}
@@ -996,6 +1020,9 @@ func (s *Session) RunID() string {
 // snapping the kept-tail boundary past leading tool results and self-validating
 // via ValidateToolPairing.
 func (s *Session) Fail() error {
+	if err := s.rejectWhileWorkspaceEnrollmentPending("Fail"); err != nil {
+		return err
+	}
 	if s.State.IsTerminal() || s.State == StateAuthorizing {
 		return fmt.Errorf("%w: Fail from %q", ErrIllegalTransition, s.State)
 	}

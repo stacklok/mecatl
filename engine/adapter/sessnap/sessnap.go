@@ -3,9 +3,9 @@
 //
 // The Session aggregate exposes its lifecycle data through exported fields
 // (ID, State, Mode, Conversation, Limits, Counters, EnvironmentRef, CreatedAt) and
-// through the PendingAsk and PendingAuthorization accessors. Three pieces of its
-// state are unexported and not directly addressable from outside the session
-// package:
+// through the PendingAsk, PendingAuthorization, and PendingWorkspaceEnrollment
+// accessors. Four pieces of its state are unexported and not directly
+// addressable from outside the session package:
 //
 //   - pending *PendingAsk — readable via Session.PendingAsk() (only while
 //     StateAwaiting) and restorable via Session.PauseForApproval() (only from
@@ -13,6 +13,8 @@
 //   - pendingAuthorization *PendingAuthorization — readable through a deep-copy
 //     accessor while StateAuthorizing and restored through PauseForAuthorization.
 //     Its private DTO preserves effective tool-argument bytes exactly.
+//   - pendingWorkspaceEnrollment *PendingWorkspaceEnrollment — safe pre-prompt
+//     correlation restored through BeginWorkspaceEnrollment.
 //   - stop StopReason — the recorded terminal stop reason. It is captured
 //     faithfully via Session.RecordedStopReason() (which performs no limit
 //     derivation) and restored via the matching terminal transition
@@ -48,7 +50,10 @@ type Snapshot struct {
 	// PendingAuthorization is present exactly while StateAuthorizing. Its private
 	// DTO base64-encodes tool arguments so JSON normalization cannot change bytes.
 	PendingAuthorization *pendingAuthorizationDTO `json:"pending_authorization,omitempty"`
-	StopReason           session.StopReason       `json:"stop_reason,omitempty"`
+	// PendingWorkspaceEnrollment contains only safe enrollment correlation; no
+	// endpoint, credential, callback, or discovered-service state is persisted.
+	PendingWorkspaceEnrollment *session.PendingWorkspaceEnrollment `json:"pending_workspace_enrollment,omitempty"`
+	StopReason                 session.StopReason                  `json:"stop_reason,omitempty"`
 	// Kind and Relationship are the validated producer taxonomy from ADR 0217.
 	// A missing kind is legacy data and restores as unknown (fail-closed).
 	Kind         session.SessionKind         `json:"kind,omitempty"`
@@ -338,6 +343,10 @@ func Of(s *session.Session) (Snapshot, error) {
 	if pending, ok := s.PendingAuthorization(); ok {
 		snap.PendingAuthorization = toPendingAuthorizationDTO(pending)
 	}
+	if pending, ok := s.PendingWorkspaceEnrollment(); ok {
+		p := pending
+		snap.PendingWorkspaceEnrollment = &p
+	}
 	// Capture the recorded terminal reason faithfully (no limit derivation) so a
 	// terminal session round-trips through the matching transition on restore.
 	if r, ok := s.RecordedStopReason(); ok {
@@ -433,6 +442,11 @@ func (snap Snapshot) Restore() (*session.Session, error) {
 	if snap.RetryPending {
 		if err := s.RestoreFailedStepRetryPending(snap.RetryPendingDisposition, snap.RetryPendingProgress); err != nil {
 			return nil, fmt.Errorf("sessnap: restore failed-step retry intent: %w", err)
+		}
+	}
+	if snap.PendingWorkspaceEnrollment != nil {
+		if err := s.BeginWorkspaceEnrollment(*snap.PendingWorkspaceEnrollment); err != nil {
+			return nil, fmt.Errorf("sessnap: restore workspace enrollment: %w", err)
 		}
 	}
 	return s, nil

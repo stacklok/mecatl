@@ -54,6 +54,13 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   result usage, and conversation. Snapshot and event-source metadata round-trip
   the title-specific state. Added (minor).
 
+- **Pre-prompt workspace-enrollment correlation** —
+  `session.PendingWorkspaceEnrollment` and the `Session` begin/read/abort methods
+  add a bounded, authority-bound aggregate contract that persists only an opaque
+  enrollment id, required-service count, and expiry through `sessnap.Snapshot`.
+  It is an exclusive pre-prompt gate while remaining storage-independent from
+  tool authorization and agent-loop pending state. Added (minor).
+
 - **Prepared external-authorization continuations** — `agent.PreparedRun`,
   `Engine.PrepareAuthorizationContinuation`, and
   `Engine.PrepareAfterAuthorization` let a host fully initialize and
