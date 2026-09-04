@@ -915,6 +915,78 @@ func TestMCPAuthorizationAcquiresLeaseBeforeBrokerObservation(t *testing.T) {
 	f.svc.CloseSession(control.SessionID)
 }
 
+func TestReconcileAuthorizationCancellation(t *testing.T) {
+	statusReadErr := errors.New("authoritative status read failed")
+	for _, tc := range []struct {
+		name        string
+		outcome     brokercontract.CancelOutcome
+		freshStatus session.AuthorizationStatus
+		status      session.AuthorizationStatus
+		statusErr   error
+		want        session.AuthorizationStatus
+		wantErr     error
+		exactErr    bool
+	}{
+		{name: "fresh expiry", outcome: brokercontract.CancelCancelled, freshStatus: session.AuthorizationExpired, want: session.AuthorizationExpired},
+		{name: "fresh explicit cancellation", outcome: brokercontract.CancelCancelled, freshStatus: session.AuthorizationCancelled, want: session.AuthorizationCancelled},
+		{name: "already cancelled", outcome: brokercontract.CancelAlreadyCancelled, freshStatus: session.AuthorizationExpired, want: session.AuthorizationCancelled},
+		{name: "already resolved", outcome: brokercontract.CancelAlreadyResolved, status: session.AuthorizationGranted, want: session.AuthorizationGranted},
+		{name: "already resolved remains pending", outcome: brokercontract.CancelAlreadyResolved, status: session.AuthorizationPending, wantErr: ErrFailedPrecondition},
+		{name: "status read error", outcome: brokercontract.CancelAlreadyResolved, statusErr: statusReadErr, wantErr: statusReadErr, exactErr: true},
+		{name: "unknown outcome", outcome: "unknown", wantErr: ErrFailedPrecondition},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newLifecycleFixture(t, tc.status, nil, time.Now, nil)
+			f.attach.statusErr = tc.statusErr
+			got, err := reconcileAuthorizationCancellation(t.Context(), f.attach, f.pending.Authorization, tc.outcome, tc.freshStatus)
+			if !errors.Is(err, tc.wantErr) {
+				t.Fatalf("error = %v, want %v", err, tc.wantErr)
+			}
+			if tc.exactErr && err != tc.wantErr {
+				t.Fatalf("error = %v, want unchanged %v", err, tc.wantErr)
+			}
+			if err == nil && got != tc.want {
+				t.Fatalf("status = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestCancellationCallersSupplyTheirTerminalStatus(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		call func(*lifecycleFixture, MCPAuthorizationControl) (MCPAuthorizationResult, error)
+		want session.AuthorizationStatus
+	}{
+		{name: "recheck expiry", call: func(f *lifecycleFixture, control MCPAuthorizationControl) (MCPAuthorizationResult, error) {
+			return f.svc.RecheckMCPAuthorization(t.Context(), control.SessionID, control)
+		}, want: session.AuthorizationExpired},
+		{name: "explicit cancellation", call: func(f *lifecycleFixture, control MCPAuthorizationControl) (MCPAuthorizationResult, error) {
+			return f.svc.CancelMCPAuthorization(t.Context(), control.SessionID, control)
+		}, want: session.AuthorizationCancelled},
+		{name: "timer expiry", call: func(f *lifecycleFixture, _ MCPAuthorizationControl) (MCPAuthorizationResult, error) {
+			loaded, err := f.store.Load(t.Context(), "authorization-session")
+			if err != nil {
+				return MCPAuthorizationResult{}, err
+			}
+			return f.svc.recheckExpiredAuthorizationLocked(t.Context(), loaded, f.pending)
+		}, want: session.AuthorizationExpired},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			now := time.Now()
+			f := newLifecycleFixture(t, session.AuthorizationPending, nil, func() time.Time { return now }, nil)
+			now = f.pending.Authorization.ExpiresAt
+			f.attach.cancelOutcome = brokercontract.CancelCancelled
+			control := MCPAuthorizationControl{SessionID: "authorization-session", AuthorizationID: f.pending.Authorization.ID}
+			result, err := tc.call(&f, control)
+			if err != nil || result.Status != tc.want {
+				t.Fatalf("result = %+v, err = %v; want %q", result, err, tc.want)
+			}
+			drainLifecycleRun(t, f.svc, result)
+		})
+	}
+}
+
 func TestCancelMCPAuthorizationReturnsCancelledContinuation(t *testing.T) {
 	f := newLifecycleFixture(t, session.AuthorizationPending, nil, time.Now, nil)
 	control := MCPAuthorizationControl{SessionID: "authorization-session", AuthorizationID: f.pending.Authorization.ID}

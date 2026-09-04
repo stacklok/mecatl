@@ -1549,13 +1549,18 @@ type authorizationControlFrame struct {
 
 //nolint:gocyclo // relays a live continuation while racing control frames and cancellation; inherent.
 func (h *HarnessServer) relayMCPAuthorizationControl(ctx context.Context, id session.SessionID, result MCPAuthorizationResult, send func(*mecatlv1.Event) error, recv func() (authorizationControlFrame, error)) error {
+	logCtx := context.WithoutCancel(ctx)
+	recorder := NewRunEventRecorder(logCtx, h.svc, id)
+	defer recorder.Close()
+	// The authorization status is the authoritative result of this control, not
+	// an event from a continuation. Record it before its first client delivery so
+	// status-only controls and failed-client continuations have the same durable
+	// result, exactly once.
+	recorder.Observe(result.Event)
 	if result.Run == nil {
 		return send(toProto(result.Event))
 	}
 	defer h.svc.FinishRun(id, result.Run)
-	logCtx := context.WithoutCancel(ctx)
-	recorder := NewRunEventRecorder(logCtx, h.svc, id)
-	defer recorder.Close()
 
 	// The authoritative authorization status precedes its continuation. A control
 	// stream is a one-shot RPC, not the continuation's owner: the run is started on
@@ -1616,6 +1621,19 @@ func (h *HarnessServer) relayMCPAuthorizationControl(ctx context.Context, id ses
 				events = nil
 				continue
 			}
+			// PrepareAfterAuthorization repeats this status at the head of the
+			// continuation. The control result above is its durable record, so
+			// forward the repeat without appending it again while draining.
+			if sameMCPAuthorizationControlEvent(result.Event, ev) {
+				parkedOnAsk = false
+				if sendErr == nil {
+					if err := send(toProto(ev)); err != nil {
+						sendErr = err
+						strand()
+					}
+				}
+				continue
+			}
 			// A parked run emits nothing, so an ask being the most recent event is
 			// what "parked awaiting approval" looks like from here.
 			parkedOnAsk = ev.Type == session.EvPermissionAsk
@@ -1634,6 +1652,20 @@ func (h *HarnessServer) relayMCPAuthorizationControl(ctx context.Context, id ses
 		}
 	}
 	return sendErr
+}
+
+func sameMCPAuthorizationControlEvent(first, next session.Event) bool {
+	if first.Type != session.EvAuthorizationRequired && first.Type != session.EvAuthorizationResolved {
+		return false
+	}
+	if next.Type != first.Type || first.Authorization == nil || next.Authorization == nil {
+		return false
+	}
+	return first.Authorization.AuthorizationID == next.Authorization.AuthorizationID &&
+		first.Authorization.DisplayName == next.Authorization.DisplayName &&
+		first.Authorization.Call == next.Authorization.Call &&
+		first.Authorization.ExpiresAt.Equal(next.Authorization.ExpiresAt) &&
+		first.Authorization.Status == next.Authorization.Status
 }
 
 // StreamSessionLive is the LIVE per-session event stream (ADR 0075

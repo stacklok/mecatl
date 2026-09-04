@@ -134,20 +134,7 @@ func (s *Service) RecheckMCPAuthorization(ctx context.Context, id session.Sessio
 			release()
 			return MCPAuthorizationResult{}, cancelErr
 		}
-		switch outcome {
-		case brokercontract.CancelCancelled:
-			status = session.AuthorizationExpired
-		case brokercontract.CancelAlreadyCancelled:
-			status = session.AuthorizationCancelled
-		case brokercontract.CancelAlreadyResolved:
-			status, statusErr = attachment.AuthorizationStatus(ctx, pending.Authorization)
-			if statusErr == nil && status == session.AuthorizationPending {
-				statusErr = fmt.Errorf("%w: resolved authorization remained pending", ErrFailedPrecondition)
-			}
-		default:
-			release()
-			return MCPAuthorizationResult{}, fmt.Errorf("%w: unknown cancellation outcome", ErrFailedPrecondition)
-		}
+		status, statusErr = reconcileAuthorizationCancellation(ctx, attachment, pending.Authorization, outcome, session.AuthorizationExpired)
 	}
 	release()
 	if statusErr != nil {
@@ -185,19 +172,7 @@ func (s *Service) CancelMCPAuthorization(ctx context.Context, id session.Session
 		}
 		return MCPAuthorizationResult{}, cancelErr
 	}
-	var status session.AuthorizationStatus
-	switch outcome {
-	case brokercontract.CancelCancelled, brokercontract.CancelAlreadyCancelled:
-		status = session.AuthorizationCancelled
-	case brokercontract.CancelAlreadyResolved:
-		status, cancelErr = attachment.AuthorizationStatus(ctx, pending.Authorization)
-		if cancelErr == nil && status == session.AuthorizationPending {
-			cancelErr = fmt.Errorf("%w: resolved authorization remained pending", ErrFailedPrecondition)
-		}
-	default:
-		release()
-		return MCPAuthorizationResult{}, fmt.Errorf("%w: unknown cancellation outcome", ErrFailedPrecondition)
-	}
+	status, cancelErr := reconcileAuthorizationCancellation(ctx, attachment, pending.Authorization, outcome, session.AuthorizationCancelled)
 	release()
 	if cancelErr != nil {
 		return MCPAuthorizationResult{}, cancelErr
@@ -266,19 +241,7 @@ func (s *Service) recheckExpiredAuthorizationLocked(ctx context.Context, sess *s
 		outcome, cancelErr := attachment.CancelAuthorization(ctx, pending.Authorization)
 		err = cancelErr
 		if err == nil {
-			switch outcome {
-			case brokercontract.CancelCancelled:
-				status = session.AuthorizationExpired
-			case brokercontract.CancelAlreadyCancelled:
-				status = session.AuthorizationCancelled
-			case brokercontract.CancelAlreadyResolved:
-				status, err = attachment.AuthorizationStatus(ctx, pending.Authorization)
-				if err == nil && status == session.AuthorizationPending {
-					err = fmt.Errorf("%w: resolved authorization remained pending", ErrFailedPrecondition)
-				}
-			default:
-				err = fmt.Errorf("%w: unknown cancellation outcome", ErrFailedPrecondition)
-			}
+			status, err = reconcileAuthorizationCancellation(ctx, attachment, pending.Authorization, outcome, session.AuthorizationExpired)
 		}
 	}
 	release()
@@ -289,6 +252,26 @@ func (s *Service) recheckExpiredAuthorizationLocked(ctx context.Context, sess *s
 		return MCPAuthorizationResult{}, err
 	}
 	return s.applyAuthorizationStatusLocked(ctx, sess, pending, status)
+}
+
+func reconcileAuthorizationCancellation(ctx context.Context, attachment brokercontract.Attachment, authorization session.ExternalAuthorization, outcome brokercontract.CancelOutcome, freshStatus session.AuthorizationStatus) (session.AuthorizationStatus, error) {
+	switch outcome {
+	case brokercontract.CancelCancelled:
+		return freshStatus, nil
+	case brokercontract.CancelAlreadyCancelled:
+		return session.AuthorizationCancelled, nil
+	case brokercontract.CancelAlreadyResolved:
+		status, err := attachment.AuthorizationStatus(ctx, authorization)
+		if err != nil {
+			return "", err
+		}
+		if status == session.AuthorizationPending {
+			return "", fmt.Errorf("%w: resolved authorization remained pending", ErrFailedPrecondition)
+		}
+		return status, nil
+	default:
+		return "", fmt.Errorf("%w: unknown cancellation outcome", ErrFailedPrecondition)
+	}
 }
 
 // authorizationAttachment returns a committed exact-binding attachment while

@@ -16,6 +16,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
+	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
@@ -29,6 +30,8 @@ type recheckAuthorizationStream struct {
 	approveOnAsk bool
 	afterInitial func()
 	sendErr      error
+	failAt       int
+	sendCalls    int
 	recvErr      error
 	recvErred    chan struct{}
 	responses    []*mecatlv1.RecheckMcpAuthorizationResponse
@@ -64,7 +67,8 @@ func (s *recheckAuthorizationStream) Recv() (*mecatlv1.RecheckMcpAuthorizationRe
 }
 func (s *recheckAuthorizationStream) Send(response *mecatlv1.RecheckMcpAuthorizationResponse) error {
 	s.responses = append(s.responses, response)
-	if s.sendErr != nil {
+	s.sendCalls++
+	if s.sendErr != nil && (s.failAt == 0 || s.sendCalls == s.failAt) {
 		return s.sendErr
 	}
 	if s.approveOnAsk && response.GetEvent().GetType() == "permission.ask" {
@@ -151,6 +155,8 @@ func TestMCPAuthorizationGRPCContinuationPermissionApproval(t *testing.T) {
 	followup := session.NewToolCall("followup-call", "protected", nil)
 	f := newLifecycleFixtureWithTurns(t, session.AuthorizationGranted, nil, time.Now, nil,
 		mockllm.ToolCallTurn(followup), mockllm.TextTurn("continued after approval"))
+	log := memstore.NewEventLog()
+	f.svc.cfg.EventLog = log
 	owner := &session.Principal{Issuer: "https://issuer.example", Subject: "alice", GrantType: session.GrantTypeUser}
 	sess, err := f.store.Load(t.Context(), "authorization-session")
 	if err != nil {
@@ -187,10 +193,13 @@ func TestMCPAuthorizationGRPCContinuationPermissionApproval(t *testing.T) {
 	if !asked || !toolResult || !terminal {
 		t.Fatalf("continuation events missing ask/approved result/terminal: asked=%t toolResult=%t terminal=%t", asked, toolResult, terminal)
 	}
+	assertAuthorizationStatusLoggedOnce(t, log, "authorization-session", session.AuthorizationGranted)
 }
 
 func TestMCPAuthorizationGRPCInitialStatusSendFailureDrainsAndFinishesContinuation(t *testing.T) {
 	f := newLifecycleFixtureWithTurns(t, session.AuthorizationGranted, nil, time.Now, nil, mockllm.TextTurn("continued"))
+	log := memstore.NewEventLog()
+	f.svc.cfg.EventLog = log
 	sentinel := errors.New("initial authorization status send failed")
 	stream := &recheckAuthorizationStream{
 		ctx:     t.Context(),
@@ -209,6 +218,27 @@ func TestMCPAuthorizationGRPCInitialStatusSendFailureDrainsAndFinishesContinuati
 	}
 	if _, live := f.svc.LookupRun("authorization-session"); live {
 		t.Fatal("initial status send failure left continuation registered")
+	}
+	assertAuthorizationStatusLoggedOnce(t, log, "authorization-session", session.AuthorizationGranted)
+}
+
+func assertAuthorizationStatusLoggedOnce(t *testing.T, log port.EventLog, id session.SessionID, want session.AuthorizationStatus) {
+	t.Helper()
+	wantType := session.EvAuthorizationResolved
+	if want == session.AuthorizationPending {
+		wantType = session.EvAuthorizationRequired
+	}
+	var matches int
+	for ev, err := range log.Read(t.Context(), id) {
+		if err != nil {
+			t.Fatalf("read event log: %v", err)
+		}
+		if ev.Type == wantType && ev.Authorization != nil && ev.Authorization.Status == want {
+			matches++
+		}
+	}
+	if matches != 1 {
+		t.Fatalf("durable %q authorization statuses = %d, want 1", want, matches)
 	}
 }
 
@@ -235,8 +265,38 @@ func TestMCPAuthorizationGRPCCancelInitialStatusSendFailureDrainsAndFinishesCont
 	}
 }
 
+func TestMCPAuthorizationGRPCLaterEventSendFailureDrainsAndReturnsError(t *testing.T) {
+	f := newLifecycleFixtureWithTurns(t, session.AuthorizationGranted, nil, time.Now, nil, mockllm.TextTurn("continued"))
+	f.svc.cfg.Store = rejectCancelledSaveStore{SessionStore: f.store}
+	sentinel := errors.New("continuation event send failed")
+	stream := &recheckAuthorizationStream{
+		ctx:     t.Context(),
+		sendErr: sentinel,
+		failAt:  2,
+		requests: []*mecatlv1.RecheckMcpAuthorizationRequest{{
+			SessionId: "authorization-session", AuthorizationId: f.pending.Authorization.ID,
+		}},
+	}
+
+	if err := NewHarnessServer(f.svc).RecheckMcpAuthorization(stream); !errors.Is(err, sentinel) {
+		t.Fatalf("RecheckMcpAuthorization error = %v, want sentinel", err)
+	}
+	if len(stream.responses) < 2 {
+		t.Fatalf("sent responses = %d, want initial status and a continuation event", len(stream.responses))
+	}
+	persisted, err := f.store.Load(t.Context(), "authorization-session")
+	if err != nil {
+		t.Fatalf("load continuation: %v", err)
+	}
+	if persisted.State != session.StateCompleted {
+		t.Fatalf("persisted continuation state = %q, want %q", persisted.State, session.StateCompleted)
+	}
+}
+
 func TestMCPAuthorizationGRPCStatusOnlySendFailureIsReturned(t *testing.T) {
 	f, ownerCtx, _ := ownedAuthorizationFixture(t, session.AuthorizationPending)
+	log := memstore.NewEventLog()
+	f.svc.cfg.EventLog = log
 	sentinel := errors.New("status-only authorization send failed")
 	stream := &recheckAuthorizationStream{
 		ctx:     ownerCtx,
@@ -253,6 +313,7 @@ func TestMCPAuthorizationGRPCStatusOnlySendFailureIsReturned(t *testing.T) {
 	if _, live := f.svc.LookupRun("authorization-session"); live {
 		t.Fatal("status-only control registered a continuation")
 	}
+	assertAuthorizationStatusLoggedOnce(t, log, "authorization-session", session.AuthorizationPending)
 }
 
 func TestMCPAuthorizationGRPCControlEOFDrainsContinuationWithoutCancellingIt(t *testing.T) {
