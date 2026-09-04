@@ -2,7 +2,7 @@
 id: 01-learning-materializer
 title: Versioned bounded evidence materializer
 blocked_by: []
-status: in-progress
+status: done
 attempt: 1
 branch: plan-scalable-reflection-evidence/01-learning-materializer-attempt-1
 worktree: .scratch/worker-scalable-reflection-evidence-01-learning-materializer-attempt-1
