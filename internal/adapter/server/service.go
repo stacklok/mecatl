@@ -3436,11 +3436,15 @@ func (s *Service) DeleteSession(ctx context.Context, id session.SessionID) error
 	}
 	unlockBroker := s.brokerMu.lock(id)
 	defer unlockBroker()
-	if err := s.deleteBrokerSessionLocked(ctx, id); err != nil {
-		return err
-	}
 	if err := s.deleteSessionFamily(ctx, sess.ID, prunable); err != nil {
 		if errors.Is(err, port.ErrSessionNotFound) {
+			// The durable record is already gone: still attempt broker cleanup
+			// (best-effort) before reporting success, so a locally-retained
+			// broker handle is never orphaned by an already-completed delete.
+			if brokerErr := s.deleteBrokerSessionLocked(ctx, id); brokerErr != nil {
+				s.cfg.Diagnostics.Log(context.WithoutCancel(ctx), port.LevelWarn, "broker cleanup after already-deleted session failed",
+					"session", string(id), "err", brokerErr.Error())
+			}
 			s.closeSessionLocal(id)
 			return nil
 		}
@@ -3448,6 +3452,16 @@ func (s *Service) DeleteSession(ctx context.Context, id session.SessionID) error
 			return ErrSessionDeleteUnsupported
 		}
 		return fmt.Errorf("%w: delete session: %v", ErrInternal, err)
+	}
+	// The durable record is gone; broker cleanup is now best-effort. Reordered
+	// deliberately (I-8): deleting broker state FIRST left an unrecoverable
+	// partial-deletion window if the durable delete then failed — the snapshot
+	// would survive pointing at broker state that no longer exists. Broker
+	// state is process-local, so an orphaned entry here is a bounded leak, the
+	// strictly safer failure direction.
+	if err := s.deleteBrokerSessionLocked(ctx, id); err != nil {
+		s.cfg.Diagnostics.Log(context.WithoutCancel(ctx), port.LevelWarn, "broker cleanup after session delete failed",
+			"session", string(id), "err", err.Error())
 	}
 	s.closeSessionLocal(id)
 	return nil
@@ -3492,9 +3506,6 @@ func (s *Service) DeleteSessionForRetentionCandidate(ctx context.Context, candid
 	}
 	unlockBroker := s.brokerMu.lock(candidate.ID)
 	defer unlockBroker()
-	if err := s.deleteBrokerSessionLocked(ctx, candidate.ID); err != nil {
-		return err
-	}
 	if !s.mutationLeaseHeld(candidate.ID) {
 		return fmt.Errorf("%w: %q", ErrSessionLeasedElsewhere, candidate.ID)
 	}
@@ -3507,6 +3518,12 @@ func (s *Service) DeleteSessionForRetentionCandidate(ctx context.Context, candid
 	}
 	if !deleted {
 		return errRetentionCandidateChanged
+	}
+	// The durable record is gone; broker cleanup is now best-effort (I-8: see
+	// deleteBrokerSessionLocked's doc comment for the ordering rationale).
+	if err := s.deleteBrokerSessionLocked(ctx, candidate.ID); err != nil {
+		s.cfg.Diagnostics.Log(context.WithoutCancel(ctx), port.LevelWarn, "broker cleanup after retention delete failed",
+			"session", string(candidate.ID), "err", err.Error())
 	}
 	s.closeSessionLocal(candidate.ID)
 	return nil
@@ -3559,11 +3576,12 @@ func (s *Service) DeleteSessionForRetention(ctx context.Context, id session.Sess
 	}
 	unlockBroker := s.brokerMu.lock(id)
 	defer unlockBroker()
-	if err := s.deleteBrokerSessionLocked(ctx, id); err != nil {
-		return err
-	}
 	if err := s.deleteSessionFamily(ctx, id, prunable); err != nil {
 		if errors.Is(err, port.ErrSessionNotFound) {
+			if brokerErr := s.deleteBrokerSessionLocked(ctx, id); brokerErr != nil {
+				s.cfg.Diagnostics.Log(context.WithoutCancel(ctx), port.LevelWarn, "broker cleanup after already-deleted retention candidate failed",
+					"session", string(id), "err", brokerErr.Error())
+			}
 			s.closeSessionLocal(id)
 			return nil
 		}
@@ -3571,6 +3589,12 @@ func (s *Service) DeleteSessionForRetention(ctx context.Context, id session.Sess
 			return ErrSessionDeleteUnsupported
 		}
 		return fmt.Errorf("%w: delete retention candidate: %v", ErrInternal, err)
+	}
+	// The durable record is gone; broker cleanup is now best-effort (I-8: see
+	// deleteBrokerSessionLocked's doc comment for the ordering rationale).
+	if err := s.deleteBrokerSessionLocked(ctx, id); err != nil {
+		s.cfg.Diagnostics.Log(context.WithoutCancel(ctx), port.LevelWarn, "broker cleanup after retention delete failed",
+			"session", string(id), "err", err.Error())
 	}
 	s.closeSessionLocal(id)
 	return nil

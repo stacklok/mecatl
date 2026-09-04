@@ -135,10 +135,12 @@ func (s *Service) rollbackBrokerAttachment(ctx context.Context, local *localBrok
 	local.owned = false
 }
 
-// deleteBrokerSessionLocked permanently destroys logical broker state before
-// releasing its local handle. The caller must hold brokerMu for id. Keeping the
-// local handle until deletion succeeds leaves the host session retryable when a
-// remote broker rejects or times out the mutation.
+// deleteBrokerSessionLocked permanently destroys logical broker state and
+// releases its local handle. The caller must hold brokerMu for id. Called only
+// AFTER the durable session record is already gone (I-8): retryability comes
+// from broker deletion being idempotent (ToolHive's DeleteSession treats an
+// already-deleted/never-existed session as success), not from keeping this
+// handle around pending a durable delete that has already committed.
 func (s *Service) deleteBrokerSessionLocked(ctx context.Context, id session.SessionID) error {
 	if s.cfg.MCPBroker == nil {
 		return nil

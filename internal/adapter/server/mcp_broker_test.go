@@ -257,64 +257,107 @@ func newFlakyDeleteService(t *testing.T, id session.SessionID) (*Service, *adapt
 	return service, runtime, base, operations
 }
 
-func TestMCPBrokerExplicitDeleteFailureKeepsHostRetryable(t *testing.T) {
-	service, runtime, store, operations := newFlakyDeleteService(t, "retry-explicit")
+// TestMCPBrokerExplicitDeleteSucceedsDespiteBrokerCleanupFailure pins I-8: the
+// durable delete runs BEFORE broker cleanup, so a broker failure never blocks
+// (or requires retrying) the host session's deletion — broker cleanup is
+// best-effort once the durable record is already gone.
+func TestMCPBrokerExplicitDeleteSucceedsDespiteBrokerCleanupFailure(t *testing.T) {
+	service, runtime, store, operations := newFlakyDeleteService(t, "delete-explicit")
 	defer runtime.Close()
 	created, err := service.CreateSession(t.Context(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if err := service.DeleteSession(t.Context(), created.ID); !errors.Is(err, ErrInternal) {
-		t.Fatalf("first DeleteSession error = %v, want ErrInternal", err)
-	}
-	if _, err := store.Load(t.Context(), created.ID); err != nil {
-		t.Fatalf("host session removed after broker failure: %v", err)
-	}
-	if got := *operations; len(got) != 1 || got[0] != "broker" {
-		t.Fatalf("first delete operations = %v, want [broker]", got)
-	}
-
 	if err := service.DeleteSession(t.Context(), created.ID); err != nil {
-		t.Fatalf("retry DeleteSession: %v", err)
+		t.Fatalf("DeleteSession despite broker failure: %v", err)
 	}
 	if _, err := store.Load(t.Context(), created.ID); !errors.Is(err, port.ErrSessionNotFound) {
-		t.Fatalf("host session after successful retry = %v, want ErrSessionNotFound", err)
+		t.Fatalf("host session after delete = %v, want ErrSessionNotFound", err)
 	}
-	if got := *operations; len(got) != 3 || got[1] != "broker" || got[2] != "store" {
-		t.Fatalf("retry delete operations = %v, want [broker broker store]", got)
+	if got := *operations; len(got) != 2 || got[0] != "store" || got[1] != "broker" {
+		t.Fatalf("delete operations = %v, want [store broker]", got)
 	}
 	service.Close()
 }
 
-func TestMCPBrokerRetentionDeleteFailureKeepsHostRetryable(t *testing.T) {
-	service, runtime, store, operations := newFlakyDeleteService(t, "retry-retention")
+func TestMCPBrokerRetentionDeleteSucceedsDespiteBrokerCleanupFailure(t *testing.T) {
+	service, runtime, store, operations := newFlakyDeleteService(t, "delete-retention")
 	defer runtime.Close()
 	created, err := service.CreateSession(t.Context(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if err := service.DeleteSessionForRetention(t.Context(), created.ID); !errors.Is(err, ErrInternal) {
-		t.Fatalf("first retention delete error = %v, want ErrInternal", err)
-	}
-	if _, err := store.Load(t.Context(), created.ID); err != nil {
-		t.Fatalf("host session removed after broker failure: %v", err)
-	}
-	if got := *operations; len(got) != 1 || got[0] != "broker" {
-		t.Fatalf("first retention operations = %v, want [broker]", got)
-	}
-
 	if err := service.DeleteSessionForRetention(t.Context(), created.ID); err != nil {
-		t.Fatalf("retry retention delete: %v", err)
+		t.Fatalf("DeleteSessionForRetention despite broker failure: %v", err)
 	}
 	if _, err := store.Load(t.Context(), created.ID); !errors.Is(err, port.ErrSessionNotFound) {
-		t.Fatalf("host session after retention retry = %v, want ErrSessionNotFound", err)
+		t.Fatalf("host session after retention delete = %v, want ErrSessionNotFound", err)
 	}
-	if got := *operations; len(got) != 3 || got[1] != "broker" || got[2] != "store" {
-		t.Fatalf("retry retention operations = %v, want [broker broker store]", got)
+	if got := *operations; len(got) != 2 || got[0] != "store" || got[1] != "broker" {
+		t.Fatalf("retention delete operations = %v, want [store broker]", got)
 	}
 	service.Close()
+}
+
+// alwaysFailDeleteStore fails every Delete with a generic (non-not-found,
+// non-prune-unsupported) error, simulating a genuine infrastructure failure
+// during the durable delete step.
+type alwaysFailDeleteStore struct {
+	port.SessionStore
+	prunable port.PrunableStore
+}
+
+func (s alwaysFailDeleteStore) List(ctx context.Context) ([]port.StoredSession, error) {
+	return s.prunable.List(ctx)
+}
+
+func (alwaysFailDeleteStore) Delete(context.Context, session.SessionID) error {
+	return errors.New("durable store unavailable")
+}
+
+// TestDeleteSessionKeepsBrokerStateWhenDurableDeleteFails pins the other half
+// of I-8's safety property: when the durable delete itself fails, broker
+// cleanup must never run at all, so the session stays a CONSISTENT pair
+// (durable record present, broker state present) rather than the old
+// inverse — a broker-first ordering could delete broker state and then fail
+// the durable delete, stranding a durable record with no broker binding left
+// to reattach to.
+func TestDeleteSessionKeepsBrokerStateWhenDurableDeleteFails(t *testing.T) {
+	runtime := testBrokerRuntime(t)
+	defer runtime.Close()
+	base := memstore.New()
+	store := alwaysFailDeleteStore{SessionStore: base, prunable: base}
+	service, err := NewService(Config{
+		Engine: brokerEngineResult().Engine, Store: store,
+		PlacementProvider: brokerPlacementProvider{}, PlacementScope: "test",
+		NewID: func() session.SessionID { return "keep-broker-state" }, MCPBroker: runtime,
+		SessionEngineWithTools: func(context.Context, ProviderSelector, []mcp.ServerConfig, SessionProfile, string, session.PermissionMode, []tool.Tool) (SessionEngineResult, error) {
+			return brokerEngineResult(), nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer service.Close()
+	created, err := service.CreateSession(t.Context(), session.ModeDefault, session.Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := service.DeleteSession(t.Context(), created.ID); err == nil {
+		t.Fatal("DeleteSession succeeded despite a failing durable store")
+	}
+	if _, err := base.Load(t.Context(), created.ID); err != nil {
+		t.Fatalf("durable session record removed despite a failed delete: %v", err)
+	}
+	service.mu.Lock()
+	_, attached := service.brokerAttachments[created.ID]
+	service.mu.Unlock()
+	if !attached {
+		t.Fatal("broker state was cleaned up even though the durable delete never succeeded")
+	}
 }
 
 type gatedSaveFailure struct {
