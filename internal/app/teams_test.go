@@ -597,7 +597,7 @@ func TestAgencyDeltaReachesTeamMemberAndLead(t *testing.T) {
 		factory := memberFactoryForTest(cfg, prov, hookexec.New(nil), agents.NewRegistry(nil), nil, nil, false, nil)
 
 		tm := team.New("t")
-		sup := agent.NewSupervisor(tm, memEnvironment("/ws"),
+		sup := newTestSupervisor(tm, memEnvironment("/ws"),
 			func(spec agent.MemberSpec, routedModel string) agent.MemberBuild {
 				return factory(tm, spec, routedModel)
 			})

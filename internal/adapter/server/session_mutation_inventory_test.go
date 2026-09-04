@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/stacklok/mecatl/engine/adapter/memfs"
+	"github.com/stacklok/mecatl/engine/adapter/memledger"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
@@ -109,7 +110,7 @@ func TestSessionAffinityAndHandoff_Scenario5_MutationLeaseInventory(t *testing.T
 	svc, err := NewService(Config{
 		Engine: eng, Store: store, EventLog: store,
 		PlacementProvider: &repairPlacementProvider{binding: PlacementBinding{
-			Ref: ref, Environment: tool.MustEnvironment(ref, memfs.NewWorkspace("/ws"), nil),
+			Ref: ref, Environment: tool.MustEnvironment(ref, memfs.NewWorkspace("/ws"), memledger.New(), nil),
 		}},
 		PlacementScope: "test", SharedEngineRoot: "/ws",
 		SessionLease: lease, LeaseOwner: "inventory", LeaseTTL: time.Hour, LeaseRenewInterval: time.Hour,

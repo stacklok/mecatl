@@ -1,4 +1,4 @@
-# ADR 0294 — Persistent read-before-write ledgers are independent storage
+# ADR 0295 — Persistent read-before-write ledgers are independent storage
 
 - Status: Accepted
 - Date: 2026-08-26

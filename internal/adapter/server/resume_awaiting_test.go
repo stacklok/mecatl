@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/stacklok/mecatl/engine/adapter/memfs"
+	"github.com/stacklok/mecatl/engine/adapter/memledger"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
@@ -327,7 +328,7 @@ func TestConcurrentApproveAfterRestartExecutesOnce(t *testing.T) {
 		close(resumeEntered)
 		select {
 		case <-releaseResume:
-			return tool.MustEnvironment(ref, memfs.NewWorkspace(ref.ID), nil), nil
+			return tool.MustEnvironment(ref, memfs.NewWorkspace(ref.ID), memledger.New(), nil), nil
 		case <-ctx.Done():
 			return tool.Environment{}, ctx.Err()
 		}
