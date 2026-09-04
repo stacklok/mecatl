@@ -2,7 +2,7 @@
 id: 05-proposal-manifest-verification
 title: Durable manifest detail and approval verification
 blocked_by: [03-explicit-materialization-lifecycle, 04-selected-evidence-coordinator]
-status: in-progress
+status: done
 attempt: 1
 branch: plan-scalable-reflection-evidence/05-proposal-manifest-verification-attempt-1
 worktree: .scratch/worker-scalable-reflection-evidence-05-proposal-manifest-verification-attempt-1

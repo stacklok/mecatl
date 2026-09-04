@@ -2,10 +2,10 @@
 id: 06-reflection-client-projection
 title: Reflection abstention transport and mecatui status
 blocked_by: [03-explicit-materialization-lifecycle, 05-proposal-manifest-verification]
-status: pending
-attempt: 0
-branch: ""
-worktree: ""
+status: in-progress
+attempt: 1
+branch: plan-scalable-reflection-evidence/06-reflection-client-projection-attempt-1
+worktree: .scratch/worker-scalable-reflection-evidence-06-reflection-client-projection-attempt-1
 issue: ""
 retries: 0
 last_error: ""
