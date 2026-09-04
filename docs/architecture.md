@@ -303,7 +303,13 @@ generic handler failures on the real Go MCP wire, and verifies the default gRPC 
 refuse connections while the UDS daemon is live. A built-package helper repeats spawn, callback and
 clean shutdown under Bun; separate Node and Bun parents are killed to prove fd-3 EOF stops the child.
 The SDK CI job pins both Node and Bun, so the hand-written host's discovery/initialize negotiation and
-the two runtime-lifecycle claims fail together when either side drifts.
+the two runtime-lifecycle claims fail together when either side drifts. Those callback fixtures select
+the `noop` authority evaluator: a client MCP tool joins a per-session catalog after `mintRootAuthority`
+has already projected the process-wide root catalog, so under the default local evaluator the exact
+tool name is absent from the capability set and is denied after the permission ask has been allowed.
+One fixture pins that default-posture denial. Making callback tools usable under the default evaluator
+needs the root authority to carry a session's client MCP tool names, which is server work beyond
+ADR 0292.
 
 The durable-watch foundation uses the generated `WatchSessionEvents` descriptor on
 both transports and decodes each wire frame into a four-arm `WatchEnvelope`:

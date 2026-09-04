@@ -2,7 +2,8 @@ import { spawn as spawnChild } from "node:child_process";
 import { constants } from "node:fs";
 import { access, chmod, lstat, mkdtemp, readFile, rm, stat, unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { delimiter, join, resolve } from "node:path";
+import { delimiter, isAbsolute, join, resolve } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 
 import type { Transport } from "@connectrpc/connect";
 
@@ -120,7 +121,7 @@ interface SpawnFileSystem {
 }
 
 interface SpawnScheduler {
-  sleep(ms: number): Promise<void>;
+  sleep(ms: number, signal?: AbortSignal): Promise<void>;
 }
 
 interface SpawnClock {
@@ -344,12 +345,29 @@ function emitStartupDiagnostic(sink: DiagnosticsSink | undefined, error: Startup
   }
 }
 
-function defaultSleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+function defaultSleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return delay(ms, undefined, signal === undefined ? undefined : { signal });
+}
+
+// Promise.race does not cancel its loser. Without this sentinel the readiness
+// poll keeps its real timers alive after a child-exit failure has already won,
+// holding the event loop open for the whole readiness timeout.
+class ReadyPollAborted extends Error {}
+
+// Read through a call so the loop's earlier guard does not narrow the flag away;
+// the signal really can flip between the two checks.
+function pollAborted(signal: AbortSignal | undefined): boolean {
+  return signal?.aborted === true;
 }
 
 function rejectsOwnedFlag(argument: string): string | undefined {
-  return SDK_OWNED_FLAGS.find((flag) => argument === flag || argument.startsWith(`${flag}=`));
+  // mecated parses with Go's flag package, which treats -flag, --flag, -flag=v
+  // and --flag=v identically and lets the last occurrence win. Matching only the
+  // double-dash spelling would let `-http-addr 0.0.0.0:8080` replace an
+  // SDK-owned listener value.
+  if (!argument.startsWith("-")) return undefined;
+  const bare = argument.replace(/^--?/, "").split("=", 1)[0];
+  return SDK_OWNED_FLAGS.find((flag) => flag.slice(2) === bare);
 }
 
 function validateExtraArguments(args: readonly string[]): void {
@@ -402,7 +420,12 @@ async function resolveBinary(
   const pathValue = env.PATH;
   if (pathValue !== undefined) {
     for (const entry of pathValue.split(delimiter)) {
-      const candidate = resolve(join(entry === "" ? "." : entry, "mecated"));
+      // An empty or relative PATH element resolves against the working
+      // directory, which would let a co-located `mecated` be launched with the
+      // caller's inherited credentials. Go removed the same behaviour from
+      // os/exec in 1.19; absolute elements only.
+      if (entry === "" || !isAbsolute(entry)) continue;
+      const candidate = join(entry, "mecated");
       if (await isExecutableFile(candidate, fileSystem)) return candidate;
     }
   }
@@ -561,12 +584,19 @@ async function waitForReady(
   fileSystem: SpawnFileSystem,
   clock: SpawnClock,
   scheduler: SpawnScheduler,
+  signal?: AbortSignal,
 ): Promise<ReadyDocument> {
   const deadline = clock.now() + timeoutMs;
   while (clock.now() < deadline) {
+    if (pollAborted(signal)) throw new ReadyPollAborted();
     const document = await readReadyDocument(path, fileSystem);
     if (document !== undefined) return document;
-    await scheduler.sleep(READY_POLL_INTERVAL_MS);
+    try {
+      await scheduler.sleep(READY_POLL_INTERVAL_MS, signal);
+    } catch (error) {
+      if (pollAborted(signal)) throw new ReadyPollAborted();
+      throw error;
+    }
   }
   throw localError(
     "readiness_timeout",
@@ -735,17 +765,25 @@ async function spawnAttempt(
       stdio: lifetimePipe ? ["ignore", "ignore", "pipe", "pipe"] : ["ignore", "ignore", "pipe"],
     });
 
-    const ready = await Promise.race([
-      waitForReady(runtime.readyFile, timeoutMs, fileSystem, clock, scheduler),
-      child.exit.then(
-        (status) => {
-          throw new ChildExitedBeforeReady(status);
-        },
-        (error: unknown) => {
-          throw localError("spawn_failed", "mecated could not be launched", error);
-        },
-      ),
-    ]);
+    const readyPoll = new AbortController();
+    let ready: ReadyDocument;
+    try {
+      ready = await Promise.race([
+        waitForReady(runtime.readyFile, timeoutMs, fileSystem, clock, scheduler, readyPoll.signal),
+        child.exit.then(
+          (status) => {
+            throw new ChildExitedBeforeReady(status);
+          },
+          (error: unknown) => {
+            throw localError("spawn_failed", "mecated could not be launched", error);
+          },
+        ),
+      ]);
+    } finally {
+      // Releases the poll's timers whichever branch won, so a rejected spawn()
+      // does not hold the event loop open for the rest of the readiness window.
+      readyPoll.abort();
+    }
     transport = (internal.createTransport ?? ((socketPath) => createNodeTransport({ socketPath })))(
       ready.socket_path,
     );

@@ -287,6 +287,60 @@ describe("spawn", () => {
     expect(harness.requests).toHaveLength(0);
   });
 
+  it("PATH resolution ignores empty and relative entries", async () => {
+    // An empty or relative PATH element would resolve against the working
+    // directory, letting a co-located mecated be launched with the caller's
+    // inherited credentials.
+    const cwdDirectory = join(testRoot, "cwd-path-entry");
+    await mkdir(cwdDirectory);
+    const planted = join(cwdDirectory, "mecated");
+    await writeFile(planted, "must never be launched");
+    await chmod(planted, 0o700);
+
+    for (const pathValue of ["", ".", `:${""}`, "relative/bin"]) {
+      const harness = launchHarness();
+      await expect(
+        spawnInternal({}, { ...harness.internal, cwd: cwdDirectory, env: { PATH: pathValue } }),
+      ).rejects.toMatchObject({
+        code: "spawn_failed",
+        message: expect.stringContaining("PATH does not contain an executable mecated file"),
+      });
+      expect(harness.requests).toHaveLength(0);
+    }
+
+    // An absolute entry still resolves.
+    const harness = launchHarness();
+    const client = await spawnInternal(
+      {},
+      { ...harness.internal, cwd: cwdDirectory, env: { PATH: cwdDirectory } },
+    );
+    expect(harness.requests[0]).toMatchObject({ executable: planted, shell: false });
+    await client.close();
+  });
+
+  it("an SDK-owned flag is refused in every spelling go's flag package accepts", async () => {
+    // mecated parses with Go's flag package: -flag, --flag, -flag=v and
+    // --flag=v are equivalent and the last occurrence wins, so matching only
+    // the double-dash spelling would leave the listener guard bypassable.
+    const owned = [
+      "--grpc-unix-socket",
+      "--grpc-addr",
+      "--http-addr",
+      "--ready-file",
+      "--lifetime-pipe-fd",
+    ];
+    for (const flag of owned) {
+      const bare = flag.slice(2);
+      for (const spelling of [`--${bare}`, `-${bare}`, `--${bare}=x`, `-${bare}=x`]) {
+        const harness = launchHarness();
+        await expect(
+          spawnInternal({ args: [spelling], binaryPath: process.execPath }, harness.internal),
+        ).rejects.toMatchObject({ code: "spawn_failed", message: expect.stringContaining(flag) });
+        expect(harness.requests).toHaveLength(0);
+      }
+    }
+  });
+
   it("spawn resolves on the ready document and dials its socket path", async () => {
     const harness = launchHarness({ autoReady: false });
     const spawning = spawnInternal({ binaryPath: process.execPath }, harness.internal);

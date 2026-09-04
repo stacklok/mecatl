@@ -52,15 +52,61 @@ function terminal(runId: string) {
   };
 }
 
+// Import syntax only: prose in a generated doc comment can contain the word
+// "from" followed by a quoted phrase, which a source-wide regex reads as an
+// import and reports as a bogus violation.
+function relativeSpecifiers(source: string): string[] {
+  return importSpecifiers(source).filter((specifier) => specifier.startsWith("."));
+}
+
+function bareSpecifiers(source: string): string[] {
+  return importSpecifiers(source).filter((specifier) => !specifier.startsWith("."));
+}
+
+function importSpecifiers(source: string): string[] {
+  // A module specifier is only ever the operand of an import/export statement.
+  // Scanning the whole file for `from "..."` also matches ordinary prose and
+  // string literals — src/watch.ts really does contain the message
+  // 'Opening activity from "now" requires an explicit run id'. So: drop
+  // comments, then accumulate only statements that begin with import/export
+  // and read the specifier out of the completed statement.
+  const code = source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+  const found: string[] = [];
+  let statement = "";
+  for (const line of code.split("\n")) {
+    if (statement === "") {
+      // Only the forms that can carry a module specifier: `import …` and the
+      // re-export shapes `export * …` / `export { … } from`. `export interface`
+      // and friends open a block whose body would otherwise be swallowed.
+      if (!/^\s*(?:import\b|export\s+(?:type\s+)?[*{])/.test(line)) {
+        for (const dynamic of line.matchAll(/\bimport\s*\(\s*["']([^"']+)["']/g)) {
+          if (dynamic[1] !== undefined) found.push(dynamic[1]);
+        }
+        continue;
+      }
+      statement = line;
+    } else {
+      statement += ` ${line}`;
+    }
+    if (!/;\s*$/.test(line) && !/\bfrom\s*["'][^"']+["']\s*$/.test(line)) continue;
+    const specifier =
+      /\bfrom\s*["']([^"']+)["']/.exec(statement) ??
+      /^\s*import\s*["']([^"']+)["']/.exec(statement);
+    if (specifier?.[1] !== undefined) found.push(specifier[1]);
+    statement = "";
+  }
+  return found;
+}
+
 async function isomorphicSources(entry: string): Promise<Map<string, string>> {
   const seen = new Map<string, string>();
   const visit = async (file: string): Promise<void> => {
     if (seen.has(file)) return;
     const source = await readFile(file, "utf8");
     seen.set(file, source);
-    for (const match of source.matchAll(/(?:from|import)\s*["'](\.[^"']+)["']/g)) {
-      const specifier = match[1];
-      if (specifier === undefined) continue;
+    // Static and dynamic forms both pull a module into the `.` bundle, so the
+    // walk must see `import("./x.js")` as well as `from "./x.js"`.
+    for (const specifier of relativeSpecifiers(source)) {
       const child = resolve(dirname(file), specifier.replace(/\.js$/, ".ts"));
       await visit(child);
     }
@@ -165,10 +211,19 @@ describe("multimodal prompt helpers", () => {
     const sources = await isomorphicSources(
       fileURLToPath(new URL("../src/index.ts", import.meta.url)),
     );
+    // An allowlist, not a denylist: a denylist silently admits every specifier
+    // nobody thought to name (node:crypto and node:net are already used one
+    // module away in the ./node graph).
+    const allowed = new Set(["@bufbuild/protobuf", "@connectrpc/connect"]);
     for (const [file, source] of sources) {
-      expect(source, `${file} imports a Node-only module`).not.toMatch(
-        /(?:from\s*|import\s*(?:\(\s*)?)["'](?:(?:node:)?(?:child_process|fs|fs\/promises|http|path)|ajv(?:\/[^"']*)?)["']/,
-      );
+      for (const specifier of bareSpecifiers(source)) {
+        const root = specifier.startsWith("@")
+          ? specifier.split("/").slice(0, 2).join("/")
+          : (specifier.split("/")[0] ?? specifier);
+        expect(allowed.has(root), `${file} imports ${specifier}, outside the . allowlist`).toBe(
+          true,
+        );
+      }
     }
   });
 

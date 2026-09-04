@@ -8379,7 +8379,9 @@ are added to a per-session catalog after `internal/app/root_authority.go` (`mint
 projected the process-wide root catalog, so the default local evaluator otherwise rejects the newly
 mounted exact tool name before the permission layer can ask. This keeps the M3 MCP/permission wire
 proof isolated, but the default-authority integration is a separate ship decision rather than a
-property these tests claim to cover.
+property these tests claim to cover. One fixture deliberately restores the default evaluator and
+asserts the denial verbatim, so the limitation is regression-covered and the eventual
+`RootAuthority` widening has a failing test to flip rather than a silent behaviour change.
 
 The M2 durable-watch base lives in `sdk/typescript/src/watch.ts`. Its client-authored `kind`
 turns the generated `{event, cursor, phase}` response into `event | boundary | gap | unknown`;

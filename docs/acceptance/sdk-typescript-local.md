@@ -1,7 +1,7 @@
 # TypeScript SDK local daemon and callback tools (M3) — acceptance plan
 
 **Phase:** capability — `@stacklok/mecatl-sdk` M3: the spawned local daemon, `query()`, and callback tools
-**Status:** landed — 2026-09-04. Delivery PRs: [#1078](https://github.com/stacklok/mecatl/pull/1078), [#1081](https://github.com/stacklok/mecatl/pull/1081), [#1084](https://github.com/stacklok/mecatl/pull/1084), [#1089](https://github.com/stacklok/mecatl/pull/1089), [#1091](https://github.com/stacklok/mecatl/pull/1091), [#1093](https://github.com/stacklok/mecatl/pull/1093), [#1095](https://github.com/stacklok/mecatl/pull/1095), [#1097](https://github.com/stacklok/mecatl/pull/1097), [#1099](https://github.com/stacklok/mecatl/pull/1099), and the Scenario 10 PR (number assigned at submission).
+**Status:** landed, 2026-09-04. Delivery PRs: [#1078](https://github.com/stacklok/mecatl/pull/1078), [#1081](https://github.com/stacklok/mecatl/pull/1081), [#1084](https://github.com/stacklok/mecatl/pull/1084), [#1089](https://github.com/stacklok/mecatl/pull/1089), [#1091](https://github.com/stacklok/mecatl/pull/1091), [#1093](https://github.com/stacklok/mecatl/pull/1093), [#1095](https://github.com/stacklok/mecatl/pull/1095), [#1097](https://github.com/stacklok/mecatl/pull/1097), [#1099](https://github.com/stacklok/mecatl/pull/1099), and the Scenario 10 PR (number assigned at submission).
 **Issue:** [stacklok/mecatl#821](https://github.com/stacklok/mecatl/issues/821) (parent: [#761](https://github.com/stacklok/mecatl/issues/761)).
 **ADR:** [ADR-0292](../adr/0292-typescript-sdk-local-daemon-and-tools.md) — binary resolution, the SDK-owned argv and its one tool-capable topology, the ready-file barrier, the lifetime pipe, disposal ownership, `query()`'s plan refusal, the immutable tool set and its two collision layers, the hand-written loopback MCP host, the bounded execution contract, the diagnostics sink, and the four new local error codes.
 **Delivery shape:** a **linear stack**, one PR per scenario — `sdk/31-spawn` is the stack root off `main`; subsequent layers are `sdk/32-hosting`, `sdk/33-startup-failure`, `sdk/34-disposal`, `sdk/35-query`, `sdk/36-tool`, `sdk/37-tool-host`, `sdk/38-tool-refusal`, `sdk/39-parity`, `sdk/40-e2e`. This is **not** an accumulator: each PR targets its predecessor and is reviewed and merged on its own, exactly as M2's `sdk/21`…`sdk/30` stack was.
@@ -212,13 +212,14 @@ features) to the caller.
   the daemon no longer advertises the feature.
   - verify: vitest:sdk/typescript/test/spawn-hosting.test.ts#ZW5hYmxpbmcgaHR0cCBjb3N0cyB0aGUgbWNwX3NlcnZlcnNfb25fY3JlYXRlIGZlYXR1cmU — `sdk/typescript/test/spawn-hosting.test.ts :: "enabling http costs the mcp_servers_on_create feature"`
 - AC2.4: When the lifetime pipe is enabled, the descriptor the child inherits at
-  fd 3 is a **FIFO** (`S_IFIFO`) — not a socket — because `checkLifetimePipeFD`
-  refuses anything else by name, and Node's `stdio: [..., "pipe"]` fourth entry
-  yields a socketpair. The parent holds the write end, never writes to it, and
+  fd 3 is the **connected local stream socket** that Node's `stdio: [..., "pipe"]`
+  fourth entry yields. The server-enabler pre-PR widened `checkLifetimePipeFD` to
+  admit that shape alongside a FIFO and to reject every other descriptor type, so
+  no `mkfifo(1)` dance is needed. The parent holds its end, never writes to it, and
   `--lifetime-pipe-fd 3` is present in the argv.
   - verify: vitest:sdk/typescript/test/spawn-hosting.test.ts#dGhlIGxpZmV0aW1lIHBpcGUgaXMgaW5oZXJpdGVkIGF0IGZkIDMgYW5kIG5ldmVyIHdyaXR0ZW4 — `sdk/typescript/test/spawn-hosting.test.ts :: "the lifetime pipe is inherited at fd 3 and never written"`
-- AC2.5: The child's inherited descriptor is **read-only**, so the child is not
-  itself a writer holding the FIFO open, and when the parent's write end is
+- AC2.5: The child watches its inherited endpoint only for reads, so it is not
+  itself a writer holding the channel open, and when the parent's end is
   released the child observes EOF — the signal the daemon turns into a graceful
   stop.
   - verify: vitest:sdk/typescript/test/spawn-hosting.test.ts#cmVsZWFzaW5nIHRoZSBwYXJlbnQgZW5kIGRlbGl2ZXJzIEVPRiB0byB0aGUgY2hpbGQ — `sdk/typescript/test/spawn-hosting.test.ts :: "releasing the parent end delivers EOF to the child"`
@@ -681,8 +682,11 @@ hand-rolled harness; a `--mock-script` fixture whose turn calls
 - AC10.8: A handler that throws on the real wire yields a generic model-facing
   error, and the run continues to its terminal rather than failing.
   - verify: vitest:sdk/typescript/e2e/tool.e2e.test.ts#YSB0aHJvd2luZyBoYW5kbGVyIGlzIGdlbmVyaWMgb24gdGhlIHdpcmUgYW5kIHRoZSBydW4gY29udGludWVz — `sdk/typescript/e2e/tool.e2e.test.ts :: "a throwing handler is generic on the wire and the run continues"`
-- AC10.9: A `readOnly: true` tool is dispatched in the concurrent read batch and
-  runs without raising an ask.
+- AC10.9: A `readOnly: true` tool is dispatched in the harness's concurrent read
+  batch — two calls in one turn overlap in flight, where a mutating tool is
+  dispatched alone. `readOnlyHint` steers dispatch, not permissions, so a
+  read-only callback still raises an ask; both halves run the same default
+  posture so the assertion isolates the `readOnly` assertion itself.
   - verify: vitest:sdk/typescript/e2e/tool.e2e.test.ts#cmVhZC1vbmx5IGFuZCBtdXRhdGluZyB0b29scyBib3RoIHJlYWNoIHRoZSBtb2RlbA — `sdk/typescript/e2e/tool.e2e.test.ts :: "read-only and mutating tools both reach the model"`
 - AC10.10: A default (mutating) tool raises a `permission.ask`; an
   `onPermissionAsk` responder allowing it lets the call reach the handler, and a
@@ -693,16 +697,17 @@ hand-rolled harness; a `--mock-script` fixture whose turn calls
   so a protocol revision that changes it fails this suite rather than a user's
   first tool call.
   - verify: vitest:sdk/typescript/e2e/tool.e2e.test.ts#dGhlIHJlYWwgZ28gbWNwIGNsaWVudCBjb21wbGV0ZXMgdGhlIGhhbmRzaGFrZSBhZ2FpbnN0IHRoZSBzZGsgaG9zdA — `sdk/typescript/e2e/tool.e2e.test.ts :: "the real go mcp client completes the handshake against the sdk host"`
+- AC10.12: The `sdk` CI job runs the new unit suites and these e2e suites on
+  Node, and the Bun leg either runs or is explicitly recorded as deferred with
+  its reason.
+  - verify: inspection — a CI job's composition is a workflow fact, not a unit-testable one; review checks the `sdk` job in `.github/workflows/ci.yml`
 - AC10.13: A callback tool reached through the **default**
   `--authority-evaluator local` is denied by the capability-set evaluator, with
   the run still reaching its terminal. This pins the known limitation recorded
   under "Deferred decisions and known risks" so the eventual `RootAuthority`
   widening has a failing test to flip rather than a silent behaviour change.
   - verify: vitest:sdk/typescript/e2e/tool.e2e.test.ts#YSBjYWxsYmFjayB0b29sIGlzIGRlbmllZCBieSB0aGUgZGVmYXVsdCBjYXBhYmlsaXR5LXNldCBldmFsdWF0b3I — `sdk/typescript/e2e/tool.e2e.test.ts :: "a callback tool is denied by the default capability-set evaluator"`
-- AC10.12: The `sdk` CI job runs the new unit suites and these e2e suites on
-  Node, and the Bun leg either runs or is explicitly recorded as deferred with
-  its reason.
-  - verify: inspection — a CI job's composition is a workflow fact, not a unit-testable one; review checks the `sdk` job in `.github/workflows/ci.yml`
+
 
 ---
 

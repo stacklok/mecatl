@@ -110,12 +110,21 @@ it("a throwing handler is generic on the wire and the run continues", async () =
   }
 });
 
+// Both halves run the SAME (default) posture so the only variable is the
+// readOnly assertion. readOnlyHint drives the harness's read-parallel dispatch,
+// NOT the permission layer, so a read-only callback still raises an ask; the
+// observable difference is that two read-only calls overlap in flight while a
+// mutating call is dispatched alone.
 it("read-only and mutating tools both reach the model", async () => {
-  const readOnly = await spawnProductFixture("tool-read-only.json", {
-    args: ["--posture", "auto"],
-  });
+  const readOnly = await spawnProductFixture("tool-read-only.json");
   try {
     const asks: string[] = [];
+    let inFlight = 0;
+    let overlapped = false;
+    let release: (() => void) | undefined;
+    const bothArrived = new Promise<void>((resolve) => {
+      release = resolve;
+    });
     readOnly.client.tool(
       "inspect",
       {
@@ -124,7 +133,19 @@ it("read-only and mutating tools both reach the model", async () => {
         required: ["key"],
         type: "object",
       },
-      ({ key }) => `inspected ${key}`,
+      async ({ key }) => {
+        inFlight += 1;
+        if (inFlight > 1) {
+          overlapped = true;
+          release?.();
+        }
+        // Resolves as soon as the sibling call arrives; the timeout keeps a
+        // serial dispatch from hanging the suite so the assertion, not a
+        // deadlock, reports the regression.
+        await Promise.race([bothArrived, new Promise((resolve) => setTimeout(resolve, 5_000))]);
+        inFlight -= 1;
+        return `inspected ${key}`;
+      },
       { readOnly: true },
     );
     const session = await readOnly.client.sessions.create({});
@@ -136,8 +157,12 @@ it("read-only and mutating tools both reach the model", async () => {
         },
       }),
     );
-    expect(asks).toEqual([]);
+
+    expect(overlapped).toBe(true);
     expect(resultFor(events, "read-1").payload.content).toBe("inspected status");
+    expect(resultFor(events, "read-2").payload.content).toBe("inspected health");
+    // readOnly is a dispatch hint, not a permission exemption.
+    expect(asks).toEqual(["mcp__sdk__inspect", "mcp__sdk__inspect"]);
   } finally {
     await readOnly.close();
   }
