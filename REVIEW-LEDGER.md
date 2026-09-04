@@ -24,13 +24,13 @@ Status vocabulary: `open`, `in_progress`, `fixed`, `accepted`, `superseded`.
 
 | ID | Knowledge | Status | Finding | Primary locations |
 |---|---|---|---|---|
-| H-K1 | known | open | `mecak8s` defaults omitted `mcp.mode` to global rather than broker. | `cmd/mecak8s/flags.go` (`appConfig`) |
+| H-K1 | known | fixed | `mecak8s` defaults configured operator MCP profiles to broker authority, preserves legacy `--mcp-server` as global, and the Helm zero-server render explicitly selects global without constructing broker resources. | `cmd/mecak8s/flags.go`; `internal/app/build.go`; `deploy/helm/mecak8s/templates/` |
 | H-K2 | known | open | Other roots do not consistently use the canonical authority resolver or reject unsupported broker mode. | `cmd/mecatui/main.go`; `cmd/mecatequi/flags.go` |
 | H-K3 | known | open | HTTP authorization continuations remain bound to the control request context. | `internal/adapter/server/http.go` (`relayMCPAuthorizationControlSSE`) |
 | H-K4 | known | open | Initial gRPC control-status send failure does not drain and finish the registered continuation. | `internal/adapter/server/grpc.go` (`relayMCPAuthorizationControl`) |
 | H-K5 | known | open | Non-EOF control closure/send failure still owns and cancels the resumed run. | `internal/adapter/server/grpc.go`; `internal/adapter/server/http.go` |
 | H-K6 | known | open | Broker ToolHive construction drops the configured OAuth network policy. | `internal/app/mcp_broker_toolhive.go`; `internal/adapter/mcpbroker/toolhive_construction.go` |
-| H-K7 | known | open | Callback collision detection misses method-qualified and catch-all command-root routes. | `internal/adapter/mcpbroker/handlers.go`; command-root muxes |
+| H-K7 | known | fixed | `HandlerBundle.Mount` now preflights every fixed/callback route across standard methods before any registration; command-root tests prove method-qualified collisions leave no partial mount. | `internal/adapter/mcpbroker/handlers.go`; `cmd/mecated/mcp_broker_command_root_test.go` |
 | H-K8 | known | open | Enrollment observation does not require the returned ref to equal the requested pending ref. | `internal/adapter/server/workspace_enrollment.go` |
 | H-K9 | known | open | Executable tools and persisted authority are derived from different catalogue values. | `internal/adapter/server/workspace_enrollment.go` |
 | H-K10 | known | open | Restart can leave pending enrollment permanently wedged. | `internal/adapter/server/workspace_enrollment.go`; `internal/adapter/server/mcp_broker.go` |

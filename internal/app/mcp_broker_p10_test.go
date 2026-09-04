@@ -75,6 +75,20 @@ func TestBuiltMountsFixedMCPBrokerHandlerBundle(t *testing.T) {
 	}
 }
 
+func TestEmptyBrokerAuthoritySkipsUnconfiguredRuntime(t *testing.T) {
+	built, err := Build(context.Background(), Config{
+		Workspace: t.TempDir(), UseMock: true, NoSoul: true,
+		MCPAuthority: mcpauthority.NewBroker(mcpauthority.BrokerConfig{}),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(built.Close)
+	if built.MCPBroker != nil || !built.MCPBrokerHandlers.Empty() {
+		t.Fatal("empty broker authority constructed broker resources")
+	}
+}
+
 func TestBuiltOwnsBrokerRuntimeShutdown(t *testing.T) {
 	authority := mcpauthority.NewBroker(mcpauthority.BrokerConfig{})
 	built, err := Build(context.Background(), Config{Workspace: t.TempDir(), UseMock: true, NoSoul: true, MCPAuthority: authority, MCPBrokerCaller: func(context.Context, mcpbroker.SessionRef, string, session.ToolCall) (session.ToolResult, error) {

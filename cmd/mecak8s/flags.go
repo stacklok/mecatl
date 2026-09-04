@@ -598,6 +598,11 @@ const mecak8sServerImplementation = "mecak8s"
 func appConfig(cfg config, diag port.Diagnostics, obs observability) app.Config {
 	// An empty configured root binds the deployment's no-FS placement; a
 	// non-empty root binds the operator-mounted filesystem.
+	mcpAuthorityDefault := mcpauthority.Broker
+	if len(cfg.mcpServers.Servers()) != 0 {
+		// The legacy --mcp-server surface is global-only.
+		mcpAuthorityDefault = mcpauthority.Global
+	}
 	out := app.Config{
 		Workspace:              cfg.workspace,
 		Model:                  cfg.model,
@@ -670,21 +675,16 @@ func appConfig(cfg config, diag port.Diagnostics, obs observability) app.Config 
 		ModelSlots:                    cfg.modelSlots.AsMap(),
 		// Remote MCP servers (issue #341): the static name=URL entries (with any
 		// MCP_<NAME>_TOKEN bearer already resolved into Headers at parse time).
-		MCPServers:               cfg.mcpServers.Servers(),
-		MCPProfileLoader:         cliconfig.NewMCPProfileResolver(cfg.mcpServers, os.LookupEnv),
+		MCPServers:       cfg.mcpServers.Servers(),
+		MCPProfileLoader: cliconfig.NewMCPProfileResolver(cfg.mcpServers, os.LookupEnv),
 		// MCPAuthorityLoader/MCPAuthorityDefault/MCPBrokerSupported route operator
 		// mcp: config through the mode-aware canonical authority resolver (global
-		// vs broker) instead of MCPProfileLoader.Load's global-mode-only path —
-		// required for mcp.mode: broker (an OAuth-protected server with no
-		// credentials config, by design) to validate correctly instead of failing
-		// on a spurious "oauth.credentials.mode" error. Default stays Global
-		// (broker mode is opt-in via an explicit mcp.mode: broker) — defaulting
-		// to Broker unconditionally was tried and reverted: with no mcp.servers
-		// configured at all it still constructs a full ToolHive broker process
-		// for an empty catalogue, a real behavioral change zero-MCP deployments
-		// (and this package's own telemetry tests) never asked for.
+		// vs broker) instead of MCPProfileLoader.Load's global-mode-only path.
+		// mecak8s defaults configured MCP profiles to session-scoped broker
+		// authority; the Helm chart explicitly selects global mode for an empty
+		// server list so zero-MCP deployments do not start broker resources.
 		MCPAuthorityLoader:       cliconfig.NewMCPProfileResolver(cfg.mcpServers, os.LookupEnv),
-		MCPAuthorityDefault:      mcpauthority.Global,
+		MCPAuthorityDefault:      mcpAuthorityDefault,
 		MCPBrokerSupported:       true,
 		ProviderCredentialLoader: cliconfig.NewProviderCredentialResolver(cfg.providerFlags, cfg.providerCredentials),
 		ProviderOverrides:        cfg.providerFlags.EndpointOverrides(),

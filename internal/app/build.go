@@ -1943,7 +1943,9 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	var brokerProcess *mcpbroker.Process
 	var brokerHandlers mcpbroker.HandlerBundle
 	var brokerCallbackPath string
-	if brokerSelected {
+	brokerConfigured := len(brokerDeclaration.Routes) != 0 || cfg.MCPBrokerCaller != nil ||
+		cfg.MCPBrokerAuthorizedCaller != nil || len(cfg.MCPBrokerDiscovered) != 0 || len(cfg.MCPBrokerOptions) != 0
+	if brokerSelected && brokerConfigured {
 		occupied := make([]string, 0)
 		if assets.rootCatalog != nil {
 			for _, registered := range assets.rootCatalog.Tools() {

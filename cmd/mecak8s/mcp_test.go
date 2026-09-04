@@ -9,10 +9,29 @@ import (
 
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/port"
+	"github.com/stacklok/mecatl/internal/adapter/mcpauthority"
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
 	"github.com/stacklok/mecatl/internal/app"
 	"github.com/stacklok/mecatl/internal/cliconfig"
 )
+
+func TestMecak8sMCPAuthorityDefault(t *testing.T) {
+	cfg, err := parseFlags(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := appConfig(cfg, port.NopDiagnostics{}, observability{}).MCPAuthorityDefault; got != mcpauthority.Broker {
+		t.Fatalf("MCPAuthorityDefault = %q, want broker", got)
+	}
+
+	cfg, err = parseFlags([]string{"--mcp-server", "public=https://mcp.example/mcp"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := appConfig(cfg, port.NopDiagnostics{}, observability{}).MCPAuthorityDefault; got != mcpauthority.Global {
+		t.Fatalf("legacy --mcp-server MCPAuthorityDefault = %q, want global", got)
+	}
+}
 
 func TestMecak8sBuildDiscoversOperatorMCPSettings(t *testing.T) {
 	xdg := t.TempDir()
@@ -21,7 +40,7 @@ func TestMecak8sBuildDiscoversOperatorMCPSettings(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(conventional), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(conventional, []byte("mcp:\n  servers:\n    - name: conventional\n      url: https://mcp.example/mcp\n      auth:\n        mode: static_bearer\n        static_bearer: {token_env: MECATL_MISSING_TOKEN}\n"), 0o600); err != nil {
+	if err := os.WriteFile(conventional, []byte("mcp:\n  mode: global\n  servers:\n    - name: conventional\n      url: https://mcp.example/mcp\n      auth:\n        mode: static_bearer\n        static_bearer: {token_env: MECATL_MISSING_TOKEN}\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	cfg, err := parseFlags(nil)
@@ -39,7 +58,7 @@ func TestMecak8sBuildDiscoversOperatorMCPSettings(t *testing.T) {
 	}
 
 	explicit := filepath.Join(t.TempDir(), "settings.yaml")
-	if err := os.WriteFile(explicit, []byte("mcp:\n  servers:\n    - name: explicit\n      url: https://mcp.example/mcp\n      auth: {mode: none}\n"), 0o600); err != nil {
+	if err := os.WriteFile(explicit, []byte("mcp:\n  mode: global\n  servers:\n    - name: explicit\n      url: https://mcp.example/mcp\n      auth: {mode: none}\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	cfg, err = parseFlags([]string{"--permission-config", explicit})
