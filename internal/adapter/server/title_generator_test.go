@@ -44,6 +44,31 @@ func TestADR_0284_TitleGenerationServerOwnsInputAndModel(t *testing.T) {
 	}
 }
 
+func TestSessionTitleGeneratorIgnoresNonTextMetadataChunks(t *testing.T) {
+	t.Parallel()
+
+	generator, err := NewSessionTitleGenerator(mockllm.New(mockllm.ChunksTurn(
+		mockllm.ReasoningChunk("display-only reasoning"),
+		mockllm.ReasoningItemChunkWithID("opaque replay blob", "rs_123"),
+		mockllm.PhaseChunk("final_answer"),
+		port.Chunk{Kind: port.ChunkProviderRoute, Text: "routed provider"},
+		mockllm.TextChunk(`{"title":"Metadata-safe title"}`),
+		mockllm.UsageChunk(session.Usage{InputTokens: 11, OutputTokens: 7}),
+		mockllm.DoneChunk(session.StopEndTurn),
+	)), "title-model")
+	if err != nil {
+		t.Fatalf("NewSessionTitleGenerator: %v", err)
+	}
+
+	result := generator.Generate(context.Background(), []string{"prompt"})
+	if result.Outcome != session.TitleAttemptSucceeded || result.Title != "Metadata-safe title" {
+		t.Fatalf("Generate = %#v, want successful title without metadata", result)
+	}
+	if result.Usage != (session.Usage{InputTokens: 11, OutputTokens: 7}) {
+		t.Fatalf("usage = %#v, want stream usage", result.Usage)
+	}
+}
+
 func TestADR_0284_TitleGenerationInputOutputBoundary(t *testing.T) {
 	t.Parallel()
 

@@ -261,6 +261,14 @@ func TestPaletteCompleteTitleForArguments(t *testing.T) {
 		if len(m.conv.blocks) != 0 {
 			t.Fatalf("selecting /title must not execute the bare read: %#v", m.conv.blocks)
 		}
+		mm, cmd := m.submitPrompt()
+		m = mm.(Model)
+		if cmd != nil || len(m.conv.blocks) != 1 || !strings.Contains(m.conv.blocks[0].raw, "Session title:") {
+			t.Fatalf("enter after palette completion = blocks=%#v cmd=%v, want local title read", m.conv.blocks, cmd != nil)
+		}
+		if got := m.prompt.Value(); got != "" {
+			t.Fatalf("input after title read = %q, want cleared", got)
+		}
 		return
 	}
 	t.Fatal("title is missing from the always-available palette")
