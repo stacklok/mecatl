@@ -153,12 +153,28 @@ interface SpawnInternalOptions {
 interface ReadyDocument {
   schema: typeof READY_SCHEMA;
   api_major: number;
+  deployment?: string;
   features: string[];
+  grpc_address?: string;
   http_address?: string;
   pid: number;
   socket_path: string;
   transport: "unix";
 }
+
+export const SDK_READY_DOCUMENT_FIELDS = [
+  // BEGIN MECATL_READY_DOCUMENT_FIELDS
+  "schema",
+  "pid",
+  "transport",
+  "grpc_address",
+  "socket_path",
+  "http_address",
+  "api_major",
+  "features",
+  "deployment",
+  // END MECATL_READY_DOCUMENT_FIELDS
+] as const satisfies readonly (keyof ReadyDocument)[];
 
 interface RuntimePaths {
   directory: string;
@@ -699,6 +715,7 @@ async function spawnAttempt(
     const lifetimePipe = options.lifetimePipe ?? true;
     const daemonArgs = [
       "serve",
+      // BEGIN MECATL_SPAWN_FLAGS
       "--grpc-unix-socket",
       runtime.socketPath,
       "--http-addr",
@@ -706,6 +723,7 @@ async function spawnAttempt(
       "--ready-file",
       runtime.readyFile,
       ...(lifetimePipe ? ["--lifetime-pipe-fd", "3"] : []),
+      // END MECATL_SPAWN_FLAGS
       ...args,
     ];
     child = launcher({

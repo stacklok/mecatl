@@ -16,7 +16,9 @@ const DEFAULT_CALL_TIMEOUT_MS = 30_000;
 
 // Mirrored deliberately from internal/adapter/toolkit.MaxOutputBytes. Scenario 9
 // adds the Go-side source-parity guard for this client-side refusal boundary.
+// BEGIN MECATL_TOOL_OUTPUT_CAP
 export const TOOLKIT_MAX_OUTPUT_BYTES = 25_000;
+// END MECATL_TOOL_OUTPUT_CAP
 
 export const MCP_PROTOCOL_VERSIONS = [
   "2026-07-28",

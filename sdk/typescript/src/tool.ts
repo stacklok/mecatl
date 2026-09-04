@@ -106,7 +106,22 @@ export class ToolRegistrationError extends MecatlError {
 }
 
 export const DEFAULT_TOOL_SERVER_NAME = "sdk";
+
+// BEGIN MECATL_CLIENT_SERVER_NAME_RULES
+export const CLIENT_SERVER_NAME_PATTERN = /^[A-Za-z0-9._-]+$/;
+export const MAX_CLIENT_SERVERS = 8;
 export const MAX_CLIENT_SERVER_NAME_LEN = 64;
+// END MECATL_CLIENT_SERVER_NAME_RULES
+
+export const SDK_MCP_SERVER_SPEC_FIELDS = [
+  // BEGIN MECATL_MCP_SERVER_SPEC_FIELDS
+  "name",
+  "url",
+  "type",
+  "command",
+  "headers",
+  // END MECATL_MCP_SERVER_SPEC_FIELDS
+] as const satisfies readonly (keyof SessionMcpServer)[];
 
 interface RegisteredTool {
   readonly definition: ToolDefinition;
@@ -141,7 +156,7 @@ function validateServerName(name: string): void {
     name === "" ||
     name.length > MAX_CLIENT_SERVER_NAME_LEN ||
     name.includes("__") ||
-    !/^[A-Za-z0-9._-]+$/.test(name)
+    !CLIENT_SERVER_NAME_PATTERN.test(name)
   ) {
     throw new ToolRegistrationError(
       "invalid_server_name",
