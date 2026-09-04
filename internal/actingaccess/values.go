@@ -62,6 +62,12 @@ type RegisteredOperation struct{ value string }
 // Value returns the canonical registered operation identifier.
 func (o RegisteredOperation) Value() string { return o.value }
 
+// RegisteredDetail is one exact registry-selected authorization detail.
+type RegisteredDetail struct{ value string }
+
+// Value returns the canonical authorization detail.
+func (d RegisteredDetail) Value() string { return d.value }
+
 // Scope is one canonical registry-selected scope.
 type Scope struct{ value string }
 
@@ -72,6 +78,7 @@ func (s Scope) Value() string { return s.value }
 type Registration struct {
 	Resource      string
 	Operation     string
+	Detail        string
 	Scopes        []string
 	RequiredTools []string
 }
@@ -79,6 +86,7 @@ type Registration struct {
 type registeredTarget struct {
 	resource      RegisteredResource
 	operation     RegisteredOperation
+	detail        RegisteredDetail
 	scopes        []Scope
 	requiredTools []string
 }
@@ -94,18 +102,18 @@ func NewRegistry(registrations []Registration) (*Registry, error) {
 	registry := &Registry{targets: make([]registeredTarget, 0, len(registrations))}
 	seen := make(map[string]struct{}, len(registrations))
 	for _, registration := range registrations {
-		if !canonicalToken(registration.Resource) || !canonicalToken(registration.Operation) ||
+		if !canonicalToken(registration.Resource) || !canonicalToken(registration.Operation) || !canonicalToken(registration.Detail) ||
 			!canonicalStrings(registration.Scopes, canonicalToken) || !canonicalStrings(registration.RequiredTools, boundedSafe) {
 			return nil, errors.New("acting-access registration is invalid")
 		}
-		key := registration.Resource + "\x00" + registration.Operation
+		key := registration.Resource + "\x00" + registration.Operation + "\x00" + registration.Detail + "\x00" + strings.Join(registration.Scopes, "\x00")
 		if _, exists := seen[key]; exists {
 			return nil, errors.New("acting-access registration is duplicated")
 		}
 		seen[key] = struct{}{}
 		target := registeredTarget{
 			resource: RegisteredResource{value: registration.Resource}, operation: RegisteredOperation{value: registration.Operation},
-			scopes: make([]Scope, len(registration.Scopes)), requiredTools: append([]string(nil), registration.RequiredTools...),
+			detail: RegisteredDetail{value: registration.Detail}, scopes: make([]Scope, len(registration.Scopes)), requiredTools: append([]string(nil), registration.RequiredTools...),
 		}
 		for i, scope := range registration.Scopes {
 			target.scopes[i] = Scope{value: scope}
@@ -121,17 +129,18 @@ type Request struct {
 	presenter     Presenter
 	resource      RegisteredResource
 	operation     RegisteredOperation
+	detail        RegisteredDetail
 	scopes        []Scope
 	requiredTools []string
 }
 
 // NewRequest resolves only an exact registered tuple and copies its values.
-func (r *Registry) NewRequest(owner Owner, presenter Presenter, resource, operation string, scopes []string) (Request, error) {
+func (r *Registry) NewRequest(owner Owner, presenter Presenter, resource, operation, detail string, scopes []string) (Request, error) {
 	if r == nil || owner == (Owner{}) || presenter == (Presenter{}) || !canonicalStrings(scopes, canonicalToken) {
 		return Request{}, errors.New("acting-access request is invalid")
 	}
 	for _, target := range r.targets {
-		if target.resource.value != resource || target.operation.value != operation || len(target.scopes) != len(scopes) {
+		if target.resource.value != resource || target.operation.value != operation || target.detail.value != detail || len(target.scopes) != len(scopes) {
 			continue
 		}
 		matches := true
@@ -142,7 +151,7 @@ func (r *Registry) NewRequest(owner Owner, presenter Presenter, resource, operat
 			}
 		}
 		if matches {
-			return Request{owner: owner, presenter: presenter, resource: target.resource, operation: target.operation,
+			return Request{owner: owner, presenter: presenter, resource: target.resource, operation: target.operation, detail: target.detail,
 				scopes: append([]Scope(nil), target.scopes...), requiredTools: append([]string(nil), target.requiredTools...)}, nil
 		}
 	}
@@ -160,6 +169,9 @@ func (r Request) Resource() RegisteredResource { return r.resource }
 
 // Operation returns the registered operation.
 func (r Request) Operation() RegisteredOperation { return r.operation }
+
+// Detail returns the exact registered authorization detail.
+func (r Request) Detail() RegisteredDetail { return r.detail }
 
 // Scopes returns a copy of the canonical scopes.
 func (r Request) Scopes() []string {
