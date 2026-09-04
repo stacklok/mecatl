@@ -37,7 +37,7 @@ func (s *Service) ConnectWorkspaceServices(ctx context.Context, id session.Sessi
 			_, _ = enroller.CancelWorkspaceEnrollment(context.WithoutCancel(ctx), presentation.Ref)
 			return WorkspaceEnrollmentProjection{}, fmt.Errorf("%w: record workspace enrollment", ErrFailedPrecondition)
 		}
-		if err := s.cfg.Store.Save(ctx, sess); err != nil {
+		if err := s.saveSession(ctx, sess); err != nil {
 			_, _ = enroller.CancelWorkspaceEnrollment(context.WithoutCancel(ctx), presentation.Ref)
 			return WorkspaceEnrollmentProjection{}, fmt.Errorf("%w: persist workspace enrollment", ErrInternal)
 		}
@@ -64,7 +64,7 @@ func (s *Service) ConnectWorkspaceServices(ctx context.Context, id session.Sessi
 	if err := sess.CompleteWorkspaceEnrollment(pending, result.Catalogue.ToolNames()); err != nil {
 		return WorkspaceEnrollmentProjection{}, fmt.Errorf("%w: complete workspace enrollment", ErrFailedPrecondition)
 	}
-	if err := s.cfg.Store.Save(ctx, sess); err != nil {
+	if err := s.saveSession(ctx, sess); err != nil {
 		return WorkspaceEnrollmentProjection{}, fmt.Errorf("%w: persist workspace enrollment completion", ErrInternal)
 	}
 	return WorkspaceEnrollmentProjection{Ref: result.Ref, Status: result.Status}, nil
@@ -102,7 +102,7 @@ func (s *Service) cancelWorkspaceEnrollment(ctx context.Context, id session.Sess
 	if err := sess.AbortWorkspaceEnrollment(enrollmentID); err != nil {
 		return WorkspaceEnrollmentProjection{}, fmt.Errorf("%w: clear workspace enrollment", ErrFailedPrecondition)
 	}
-	if err := s.cfg.Store.Save(ctx, sess); err != nil {
+	if err := s.saveSession(ctx, sess); err != nil {
 		return WorkspaceEnrollmentProjection{}, fmt.Errorf("%w: persist workspace enrollment cancellation", ErrInternal)
 	}
 	return WorkspaceEnrollmentProjection{Ref: result.Ref, Status: result.Status}, nil

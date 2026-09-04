@@ -6,7 +6,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/governance"
 	"github.com/stacklok/mecatl/engine/session"
@@ -77,7 +76,7 @@ func TestWorkspaceEnrollmentPublishesFrozenCatalogueBeforePrompt(t *testing.T) {
 	var catalogues [][]string
 	svc, err := NewService(Config{
 		Engine: brokerEngineResult().Engine, Store: store,
-		Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+		PlacementProvider: brokerPlacementProvider{}, PlacementScope: "test",
 		NewID:      func() session.SessionID { return "enrollment-session" }, MCPBroker: broker,
 		RootAuthority: func(session.SessionKind) session.Authority {
 			return session.Authority{CapabilitySet: governance.CapabilitySet{Tools: []string{"mcp__calendar__list"}}, Provenance: "test"}
@@ -95,7 +94,7 @@ func TestWorkspaceEnrollmentPublishesFrozenCatalogueBeforePrompt(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer svc.Close()
-	created, err := svc.CreateSession(t.Context(), "/workspace", session.ModeDefault, session.Limits{})
+	created, err := svc.CreateSession(t.Context(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatal(err)
 	}

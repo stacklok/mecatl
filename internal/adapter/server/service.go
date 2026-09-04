@@ -1887,8 +1887,26 @@ func (s *Service) setTitleGenerationEligibility(sess *session.Session, sel Provi
 	}
 }
 
-func (s *Service) setPerSessionLabels(sess *session.Session, sel ProviderSelector, profile SessionProfile, owner *session.Principal, opts createSessionOpts, res SessionEngineResult, carried session.Authority, carriedBound bool) error {
+func (s *Service) setPerSessionLabels(sess *session.Session, sel ProviderSelector, profile SessionProfile, owner *session.Principal, opts createSessionOpts, res SessionEngineResult, broker []tool.Tool, carried session.Authority, carriedBound bool) error {
 	authority := s.rootAuthority(sess.Kind, carried, carriedBound)
+	// Broker wrappers are created only after the process root authority was
+	// minted. Include this session's exact wrappers in a fresh root without
+	// widening authority carried from another session.
+	if !carriedBound && len(broker) != 0 {
+		seen := make(map[string]struct{}, len(authority.CapabilitySet.Tools)+len(broker))
+		for _, name := range authority.CapabilitySet.Tools {
+			seen[name] = struct{}{}
+		}
+		for _, candidate := range broker {
+			name := candidate.Spec().Name
+			if _, ok := seen[name]; ok {
+				continue
+			}
+			seen[name] = struct{}{}
+			authority.CapabilitySet.Tools = append(authority.CapabilitySet.Tools, name)
+		}
+		sort.Strings(authority.CapabilitySet.Tools)
+	}
 	if sess.Kind == session.SessionKindDebug {
 		authority.CapabilitySet.Tools = append(authority.CapabilitySet.Tools, res.DebugMCPTools...)
 		sess.DebugMCPServers = append([]string(nil), opts.debugMCPServers...)
@@ -2353,7 +2371,7 @@ func (s *Service) createPerSessionEngine(ctx context.Context, mintID func() sess
 	// creation labels on the aggregate, so a restarted process re-derives the SAME
 	// per-session engine via the factory (rehydrateSession) instead of falling to the
 	// default-provider floor / inferring the profile from the empty-workspace pun.
-	if err := s.setPerSessionLabels(sess, sel, profile, owner, opts, res, carriedAuthority, carriedAuthorityBound); err != nil {
+	if err := s.setPerSessionLabels(sess, sel, profile, owner, opts, res, brokerTools(broker), carriedAuthority, carriedAuthorityBound); err != nil {
 		if closeFn != nil {
 			_ = closeFn()
 		}
