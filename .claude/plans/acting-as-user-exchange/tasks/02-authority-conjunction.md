@@ -2,8 +2,8 @@
 id: 02-authority-conjunction
 title: Exact authority conjunction and validated mechanism plan
 blocked_by: [01-closed-inputs-and-verification]
-status: in-progress
-branch: ""
+status: done
+branch: "plan-acting-as-user-exchange/02-authority-conjunction"
 worktree: ""
 issue: "372"
 retries: 0
