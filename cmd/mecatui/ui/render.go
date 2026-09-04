@@ -1521,6 +1521,7 @@ func renderToolHeader(glyph, glyphText, label string, nameStyle lipgloss.Style, 
 // renderToolCardText wraps plain card content before applying one region's
 // existing style, so ANSI styling cannot affect width accounting.
 func renderToolCardText(style lipgloss.Style, text string, bodyWidth int) string {
+	text = strings.TrimRightFunc(sanitizeTerminal(text), unicode.IsSpace)
 	rows := strings.Split(wrapToolCardText(text, bodyWidth), "\n")
 	for i, row := range rows {
 		rows[i] = style.Render(row)
