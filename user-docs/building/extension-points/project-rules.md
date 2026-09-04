@@ -1,6 +1,7 @@
 ---
 sidebar_position: 9
 title: Project rules
+description: Implement the rules source that discovers trusted, path-scoped project guidance.
 ---
 
 # Project rules

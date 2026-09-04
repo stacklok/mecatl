@@ -1,6 +1,7 @@
 ---
 sidebar_position: 10
 title: Cloud-native kit properties
+description: Understand the properties that make a Mecatl deployment cloud-native and disposable.
 ---
 
 # Cloud-native kit properties

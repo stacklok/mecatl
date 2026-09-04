@@ -1,6 +1,7 @@
 ---
 sidebar_position: 7
 title: Commands and memory
+description: Use mecatui commands to review learning, reflections, dreams, and stored memory.
 ---
 
 # Use learning and memory commands

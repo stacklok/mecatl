@@ -1,6 +1,7 @@
 ---
 sidebar_position: 1
 title: Use mecatui
+description: Use mecatui to run local or remote sessions, inspect tools, and manage approvals.
 ---
 
 # Use mecatui

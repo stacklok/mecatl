@@ -1,6 +1,7 @@
 ---
 sidebar_position: 7
 title: Tool catalog
+description: Register built-in, custom, MCP, and skill tools in the agent's dispatch catalog.
 ---
 
 # Tool catalog

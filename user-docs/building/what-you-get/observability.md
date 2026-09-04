@@ -1,6 +1,7 @@
 ---
 sidebar_position: 7
 title: Observability & resilience
+description: Monitor Mecatl runs with metrics, traces, diagnostics, and resilient model calls.
 ---
 
 # Observability & resilience

@@ -1,6 +1,7 @@
 ---
 sidebar_position: 1
 title: See it in 60 seconds
+description: Run the offline Mecatl demo to see tools, approvals, teams, and subagents in action.
 ---
 
 `mecademo` drives a real `agent.Engine` against a scripted offline provider — no network, no API key — and shows three scenarios: the core loop (tool call, permission pause, approval, result), a 2-member agent team, and a background subagent with deferred collection. The source is in [`cmd/mecademo/demo.go`](https://github.com/stacklok/mecatl/blob/main/cmd/mecademo/demo.go) if you want to read the engine wiring directly.

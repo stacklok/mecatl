@@ -1,6 +1,7 @@
 ---
 sidebar_position: 3
 title: Connect to a server
+description: Connect mecatui to a remote Mecatl server and understand which settings it controls.
 ---
 
 # Connect to a server

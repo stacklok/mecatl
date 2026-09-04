@@ -1,6 +1,7 @@
 ---
 sidebar_position: 1
 title: Building on mecatl
+description: Embed, extend, and deploy Mecatl using its Go engine, services, and adapter ports.
 ---
 
 # Building on mecatl

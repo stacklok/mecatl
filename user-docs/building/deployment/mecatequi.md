@@ -1,6 +1,7 @@
 ---
 sidebar_position: 5
 title: Single-shot CI with mecatequi
+description: Run one bounded Mecatl prompt in CI and produce a patch, summary, and exit status.
 ---
 
 # Single-shot CI with mecatequi

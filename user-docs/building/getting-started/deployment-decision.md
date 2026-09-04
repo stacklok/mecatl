@@ -1,6 +1,7 @@
 ---
 sidebar_position: 2
 title: Pick your deployment shape
+description: Choose the Mecatl deployment shape that fits your workflow, infrastructure, and state needs.
 ---
 
 # Pick your deployment shape

@@ -1,6 +1,7 @@
 ---
 sidebar_position: 5
 title: Memory & knowledge
+description: Understand Mecatl's memory, soul, and knowledge systems and their extension ports.
 ---
 
 # Memory & knowledge

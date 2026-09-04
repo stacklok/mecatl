@@ -1,6 +1,7 @@
 ---
 sidebar_position: 10
 title: Troubleshoot mecatui
+description: Diagnose mecatui startup, connection, authentication, TLS, and session problems.
 ---
 
 # Troubleshoot mecatui

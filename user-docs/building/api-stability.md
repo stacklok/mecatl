@@ -1,6 +1,7 @@
 ---
 sidebar_position: 11
 title: API stability
+description: Understand the engine API contract, versioning rules, and compatibility checks.
 ---
 
 # API stability

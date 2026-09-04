@@ -1,6 +1,7 @@
 ---
 sidebar_position: 1
 title: Features
+description: Explore Mecatl features for sessions, models, permissions, tools, and project guidance.
 ---
 
 # Features

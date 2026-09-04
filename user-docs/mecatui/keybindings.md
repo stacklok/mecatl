@@ -1,6 +1,7 @@
 ---
 sidebar_position: 6
 title: Keybindings
+description: Use mecatui keyboard shortcuts to send prompts, navigate chats, and inspect activity.
 ---
 
 # Keybindings

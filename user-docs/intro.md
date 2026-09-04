@@ -1,6 +1,7 @@
 ---
 sidebar_position: 1
 title: mecatl documentation
+description: Choose the right Mecatl guide for using, building, or deploying the agent harness.
 ---
 
 # mecatl documentation

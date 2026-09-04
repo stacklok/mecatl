@@ -1,6 +1,7 @@
 ---
 sidebar_position: 1
 title: Deployment overview
+description: Choose how to embed, run, or operate Mecatl across local and cloud environments.
 ---
 
 # Deployment overview

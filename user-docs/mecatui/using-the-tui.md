@@ -1,6 +1,7 @@
 ---
 sidebar_position: 5
 title: Use the TUI
+description: Work in the mecatui terminal interface, steer runs, review tools, and approve actions.
 ---
 
 # Work in the TUI

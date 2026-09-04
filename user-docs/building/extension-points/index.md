@@ -1,6 +1,7 @@
 ---
 sidebar_position: 1
 title: Overview & the port model
+description: Replace providers, storage, and policies through Mecatl's ports and adapters.
 ---
 
 # Overview & the port model

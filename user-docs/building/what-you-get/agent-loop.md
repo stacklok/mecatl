@@ -1,6 +1,7 @@
 ---
 sidebar_position: 1
 title: The agent loop
+description: Understand how the Mecatl engine runs turns, dispatches tools, records events, and finishes sessions.
 ---
 
 # The agent loop

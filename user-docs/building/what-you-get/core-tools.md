@@ -1,6 +1,7 @@
 ---
 sidebar_position: 2
 title: Core tools
+description: Understand Mecatl's built-in tools and the read-parallel, mutate-serial dispatch model.
 ---
 
 # Core tools

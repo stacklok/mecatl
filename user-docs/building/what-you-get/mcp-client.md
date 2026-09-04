@@ -1,6 +1,7 @@
 ---
 sidebar_position: 6
 title: MCP client
+description: Connect Mecatl to streaming-HTTP MCP servers and expose their tools to the agent.
 ---
 
 # MCP client

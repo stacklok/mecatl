@@ -1,6 +1,7 @@
 ---
 sidebar_position: 9
 title: Subagents, teams, and parallel
+description: Delegate work to focused subagents, coordinated teams, and parallel branches.
 ---
 
 # Subagents, teams, and parallel

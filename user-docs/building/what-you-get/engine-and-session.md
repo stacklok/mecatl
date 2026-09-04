@@ -1,6 +1,7 @@
 ---
 sidebar_position: 0
 title: Engine & session model
+description: Understand the engine, session, and run objects that make up a Mecatl agent.
 ---
 
 # Engine & session model

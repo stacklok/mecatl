@@ -1,6 +1,7 @@
 ---
 sidebar_position: 10
 title: Status line customization
+description: Customize mecatui's local header and footer status surfaces with templates or a command.
 ---
 
 # Status line customization

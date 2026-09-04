@@ -1,6 +1,7 @@
 ---
 sidebar_position: 4
 title: Hook system
+description: Understand hook phases and how hooks observe, transform, or block agent actions.
 ---
 
 # Hook system

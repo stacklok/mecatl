@@ -1,6 +1,7 @@
 ---
 sidebar_position: 3
 title: SessionStore & EventLog
+description: Implement session snapshots and append-only event logs through independent storage ports.
 ---
 
 # SessionStore & EventLog

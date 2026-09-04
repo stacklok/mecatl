@@ -1,6 +1,7 @@
 ---
 sidebar_position: 3
 title: Run mecated standalone
+description: Run the standalone Mecatl server with providers, persistence, security, and observability.
 ---
 
 # Run mecated standalone

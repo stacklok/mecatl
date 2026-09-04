@@ -1,6 +1,7 @@
 ---
 sidebar_position: 8
 title: Scheduled tasks
+description: Run saved prompts autonomously on a durable cron or one-shot schedule.
 ---
 
 # Scheduled tasks

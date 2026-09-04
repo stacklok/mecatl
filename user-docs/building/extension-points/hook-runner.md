@@ -1,6 +1,7 @@
 ---
 sidebar_position: 5
 title: HookRunner
+description: Implement lifecycle hooks that observe, transform, approve, or block agent actions.
 ---
 
 # HookRunner

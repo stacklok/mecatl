@@ -1,6 +1,7 @@
 ---
 sidebar_position: 3
 title: Permissions & guardrails
+description: Understand Mecatl permissions, approvals, trust, and guardrails for agent actions.
 ---
 
 # Permissions & guardrails

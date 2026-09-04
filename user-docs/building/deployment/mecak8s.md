@@ -1,6 +1,7 @@
 ---
 sidebar_position: 4
 title: Cloud-native k8s with mecak8s
+description: Deploy Mecatl on Kubernetes with Redis-backed state and lease-based session ownership.
 ---
 
 # Cloud-native k8s with mecak8s

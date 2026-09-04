@@ -1,6 +1,7 @@
 ---
 sidebar_position: 4
 title: Sessions
+description: Resume, browse, inspect, fork, and maintain Mecatl sessions from mecatui.
 ---
 
 # Manage sessions

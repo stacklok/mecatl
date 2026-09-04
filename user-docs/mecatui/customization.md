@@ -1,6 +1,7 @@
 ---
 sidebar_position: 9
 title: Customize mecatui
+description: Customize mecatui's client settings while keeping embedded server settings separate.
 ---
 
 # Customize mecatui

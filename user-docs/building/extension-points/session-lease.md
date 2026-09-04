@@ -1,6 +1,7 @@
 ---
 sidebar_position: 4
 title: SessionLease
+description: Add cross-process session leases to prevent concurrent writers in multi-replica deployments.
 ---
 
 # SessionLease

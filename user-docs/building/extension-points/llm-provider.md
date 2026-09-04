@@ -1,6 +1,7 @@
 ---
 sidebar_position: 2
 title: LLMProvider
+description: Implement an LLMProvider to connect the Mecatl agent loop to a model backend.
 ---
 
 # LLMProvider
