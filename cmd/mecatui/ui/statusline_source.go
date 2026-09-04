@@ -166,7 +166,10 @@ func (m Model) statusLineInput(now time.Time) statusline.Input {
 		if m.deps.ConnectionMode == "connect" {
 			workspace.Location = "remote"
 		}
-		workspace.Basename = m.activePlacement.Label
+		workspace.Name = m.activePlacement.Label
+	}
+	if workspace.Location == "local" && m.deps.ConnectionMode != "connect" && m.statusContextRoot != "" {
+		workspace.Path = m.statusContextRoot
 	}
 	state, activity, approval := "idle", "", "none"
 	mode := m.activeMode

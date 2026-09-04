@@ -2,6 +2,7 @@ package statusline
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -64,9 +65,8 @@ func TestStatusCustomization_Scenario3_CommandAndTemplateShareSurfaces(t *testin
 
 func TestStatusCustomization_Scenario3_CommandBoundaryIsLocalAndSecretFree(t *testing.T) {
 	dir := t.TempDir()
-	physicalDir := physicalPath(t, dir)
-	t.Setenv("STATUS_SECRET", "do-not-leak")
-	source := NewCommandSource(commandTest(dir, "boundary", physicalDir))
+	physicalHelperParent := physicalPath(t, filepath.Dir("/bin/sh"))
+	source := NewCommandSource(commandTest(dir, "boundary", physicalHelperParent))
 	t.Cleanup(func() { _ = source.Close(context.Background()) })
 	source.Submit(Input{Workspace: Workspace{Location: "remote"}, Terminal: Terminal{HeaderAvailCols: 80, FooterAvailCols: 80}})
 	waitStatusChange(t, source)
@@ -222,7 +222,21 @@ func TestStatusLineCommandDoesNotTrimNonASCIIOutputBoundary(t *testing.T) {
 	}
 }
 
-func TestADR_0296_StatusCommandReceivesRootOnlyAsCWD(t *testing.T) {
+func TestADR_0296_StatusInputProtocolV3WorkspacePathAndName(t *testing.T) {
+	input := Input{Version: ProtocolVersion, Workspace: Workspace{Location: "local", Name: "provider label", Path: "/eligible/root"}}
+	wire, err := json.Marshal(input)
+	if err != nil {
+		t.Fatalf("marshal status input: %v", err)
+	}
+	if ProtocolVersion != 3 || !strings.Contains(string(wire), `"Name":"provider label"`) || !strings.Contains(string(wire), `"Path":"/eligible/root"`) || strings.Contains(string(wire), "Basename") {
+		t.Fatalf("status input v3 workspace projection = %s", wire)
+	}
+	if _, exists := reflect.TypeFor[templateWorkspace]().FieldByName("Path"); exists {
+		t.Fatal("template projection exposes the privileged workspace path")
+	}
+}
+
+func TestADR_0296_StatusCommandReceivesRootInInputAndCWD(t *testing.T) {
 	launch, workspace := t.TempDir(), t.TempDir()
 	physicalWorkspace := physicalPath(t, workspace)
 	expected := filepath.Join(launch, "expected-cwd")
@@ -240,7 +254,7 @@ func TestADR_0296_StatusCommandReceivesRootOnlyAsCWD(t *testing.T) {
 	source := NewCommandSource(command)
 	t.Cleanup(func() { _ = source.Close(context.Background()) })
 	SetCommandCWD(source, physicalWorkspace)
-	source.Submit(Input{Workspace: Workspace{Location: "local", Basename: "safe-label"}, Terminal: Terminal{HeaderAvailCols: 80, FooterAvailCols: 80}})
+	source.Submit(Input{Workspace: Workspace{Location: "local", Name: "safe-label", Path: physicalWorkspace}, Terminal: Terminal{HeaderAvailCols: 80, FooterAvailCols: 80}})
 	waitStatusChange(t, source)
 	if got, want := statusSurfaceText(source.Latest().Header), "command header"; got != want {
 		t.Fatalf("status command CWD/projection boundary failed: got %q, want %q", got, want)
@@ -253,13 +267,20 @@ func TestADR_0296_StatusCommandReceivesRootOnlyAsCWD(t *testing.T) {
 		if name == "CWD" && strings.TrimSpace(string(value)) != physicalWorkspace {
 			t.Fatalf("command CWD = %q, want %q", value, physicalWorkspace)
 		}
-		if name != "CWD" && strings.Contains(string(value), physicalWorkspace) {
-			t.Fatalf("session root leaked into command %s: %q", name, value)
+		if name == "Input" && !strings.Contains(string(value), `"Path":"`+physicalWorkspace+`"`) {
+			t.Fatalf("session root absent from command input: %q", value)
 		}
 	}
 }
 
-func TestStatusLineCommandCWDUsesLaunchDirectoryWithoutContext(t *testing.T) {
+func TestADR_0296_StatusCommandUsesHelperParentWhenContextUnavailable(t *testing.T) {
+	command := Command{Path: "/opt/helpers/../bin/mecatui-status", LaunchDir: "/launch/fallback"}
+	if got, want := commandCWD(command, Input{}), "/opt/bin"; got != want {
+		t.Fatalf("command CWD = %q, want helper parent %q", got, want)
+	}
+}
+
+func TestStatusLineCommandCWDUsesLaunchDirectoryWhenHelperParentUnavailable(t *testing.T) {
 	launch := t.TempDir()
 	if got := commandCWD(Command{LaunchDir: launch}, Input{}); filepath.Clean(got) != filepath.Clean(launch) {
 		t.Fatalf("command CWD = %q, want launch directory %q", got, launch)

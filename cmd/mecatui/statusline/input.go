@@ -108,11 +108,14 @@ type Context struct {
 }
 
 // Workspace is the active session workspace's display-safe provenance. Location
-// is "local", "remote", or "unknown". Basename is a server-supplied label, not a
-// usable local path.
+// is "local", "remote", or "unknown". Name is provider-supplied display metadata,
+// not a filesystem basename. Path is supplied only to a direct local status command
+// after the privileged local-context RPC has returned an eligible local root; it is
+// intentionally absent from template projection and ordinary UI state.
 type Workspace struct {
 	Location string
-	Basename string
+	Name     string
+	Path     string
 }
 
 // Terminal provides measured dimensions and independently reserved columns for

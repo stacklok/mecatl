@@ -111,29 +111,36 @@ the path-surface inventory of [ADR-0291](../adr/0291-server-owned-session-placem
 
 ---
 
-### Scenario 4 — Status commands use the matching active local root
+### Scenario 4 — Status commands receive eligible local context
 
 Mecatui's status-line source retrieves the privileged context asynchronously, caches
 it by active session ID, and applies it only if that session remains active. A direct
-status command receives the matched root as its process CWD only; templates and the
-status-command JSON input remain unchanged. This preserves the split between safe
-placement metadata and privileged local observation in [ADR-0296](../adr/0296-opt-in-local-session-context.md)
-and avoids treating labels as path basenames.
+status command receives the matched root as both `Workspace.Path` in its raw JSON
+input and its process CWD. `Workspace.Name` is provider-supplied display metadata,
+not a filesystem basename; protocol v3 removes the `Basename` alias. Templates and
+ordinary UI state remain path-free. Without an eligible root, the command uses the
+configured helper executable's cleaned absolute parent directory, then the launch
+directory only if that parent cannot be determined.
 
 **Acceptance:**
-- AC4.1: After local-context lookup for an active local session succeeds, a direct
-  status command runs with that session root as CWD, including a selected worktree;
-  the root appears in neither command arguments, environment, JSON stdin, templates,
-  nor rendered status state.
-  - verify: `TestADR_0296_StatusCommandReceivesRootOnlyAsCWD`
+- AC4.1: After local-context lookup for an active eligible local session succeeds, a
+  direct status command receives the root as `Workspace.Path` in raw JSON and as
+  CWD, including for a selected worktree. The root appears in neither arguments,
+  environment, templates, nor rendered status state.
+  - verify: `TestADR_0296_StatusCommandReceivesRootInInputAndCWD`
 - AC4.2: Lookup is invalidated and refreshed when Mecatui creates, adopts, clears,
   forks, or switches its active session; a late result for an older session cannot
-  change the current status command CWD.
+  change the current status command CWD or `Workspace.Path`.
   - verify: `TestADR_0296_StatusContextDiscardsStaleSessionResult`
-- AC4.3: When the privileged service is unavailable or yields no eligible root, the
-  status command preserves its existing launch-directory fallback without exposing a
-  root in status templates or JSON input.
-  - verify: `TestADR_0296_StatusContextUnavailableRetainsFallbackAndNoProjection`
+- AC4.3: Remote, untrusted, no-FS, unavailable, and otherwise ineligible context
+  yields no `Workspace.Path`. A direct status command then uses the configured
+  helper executable's cleaned absolute parent directory, falling back to its launch
+  directory only when that parent cannot be determined, never implicitly `HOME`.
+  - verify: `TestADR_0296_StatusContextUnavailableUsesHelperParentAndNoPath`, `TestStatusCustomization_Scenario1_StatusInputExcludesRemoteWorkspacePath`
+- AC4.4: Status input protocol v3 names provider-supplied display metadata
+  `Workspace.Name`, not `Workspace.Basename`, and has no compatibility alias.
+  Templates do not receive the privileged `Workspace.Path` field.
+  - verify: `TestADR_0296_StatusInputProtocolV3WorkspacePathAndName`
 
 ## Out of scope
 
@@ -143,15 +150,15 @@ and avoids treating labels as path basenames.
 | HTTP gateway route or universal Harness operation | never in this capability | [ADR-0296](../adr/0296-opt-in-local-session-context.md) |
 | Creation-time placement request, workspace inventory, or public selector | separate placement-selection ADR | [ADR-0296](../adr/0296-opt-in-local-session-context.md) |
 | Roots for remote, memory, ACP, no-FS, or future environment kinds | separately reviewed provider-locality capability | [ADR-0296](../adr/0296-opt-in-local-session-context.md) |
-| Root in StatusML/templates or status-command JSON | demonstrated future disclosure need | planning decision for this capability |
+| Root in StatusML/templates or ordinary UI state | demonstrated future disclosure need | planning decision for this capability |
 
 ## Sequencing recommendation
 
 Establish the isolated generated contract and server exact-reattachment behavior
 first. Then prove embedded-only registration and absence from ordinary server/HTTP
 assembly. Finally wire the Mecatui client and status refresh state against the
-already-tested RPC. Keep all root-bearing values within the server, embedded/client
-transport, and process-CWD boundary.
+already-tested RPC. Keep root-bearing values within the server, embedded/client
+transport, and the configured direct local status-command boundary.
 
 ## Named tests landing in this plan
 
@@ -168,9 +175,10 @@ transport, and process-CWD boundary.
 - `TestADR_0296_LocalContextRequiresEmbeddedPrivateListener`
 - `TestADR_0296_StandaloneMecatedDoesNotExposeLocalSessionContext`
 - `TestADR_0296_LocalContextClosesProvisionalBinding`
-- `TestADR_0296_StatusCommandReceivesRootOnlyAsCWD`
+- `TestADR_0296_StatusCommandReceivesRootInInputAndCWD`
 - `TestADR_0296_StatusContextDiscardsStaleSessionResult`
-- `TestADR_0296_StatusContextUnavailableRetainsFallbackAndNoProjection`
+- `TestADR_0296_StatusContextUnavailableUsesHelperParentAndNoPath`
+- `TestADR_0296_StatusInputProtocolV3WorkspacePathAndName`
 
 ## Definition of done
 
@@ -190,9 +198,10 @@ transport, and process-CWD boundary.
   single-local-client transport need a dedicated follow-up decision.
 - **Open environment kinds.** V1 recognizes only `session.EnvKindLocal`; a future
   provider must not receive path disclosure by merely returning a rooted workspace.
-- **Status input schema.** The root reaches only the direct command CWD. Adding it to
-  status JSON or templates requires a concrete use case and separate disclosure
-  review.
+- **Status input schema.** The root reaches only a configured local direct status
+  command as `Workspace.Path` in raw JSON and as CWD. Templates and ordinary UI
+  state remain path-free; any further disclosure requires a concrete use case and
+  separate review.
 
 ## Exit criteria
 

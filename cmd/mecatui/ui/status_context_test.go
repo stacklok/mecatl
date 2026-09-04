@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"path/filepath"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
@@ -19,6 +20,7 @@ func TestADR_0296_StatusContextDiscardsStaleSessionResult(t *testing.T) {
 	t.Cleanup(func() { _ = source.Close(context.Background()) })
 	getter := statusContextGetter{roots: map[string]string{"first": first, "second": second}}
 	m := New(Deps{Ctx: context.Background(), Theme: theme.New("aztec", theme.AztecPalette()), StatusSource: source, LocalSessionContext: getter})
+	m.activePlacement = client.Placement{Kind: "local", Label: "active-workspace"}
 
 	updated, firstCmd := m.Update(client.SessionReadyMsg{SessionID: "first"})
 	m = updated.(Model)
@@ -30,13 +32,17 @@ func TestADR_0296_StatusContextDiscardsStaleSessionResult(t *testing.T) {
 	m = updated.(Model)
 
 	source.Submit(m.statusLineSnapshot())
+	input := m.statusLineSnapshot()
+	if got, want := input.Workspace, (statusline.Workspace{Location: "local", Name: "active-workspace", Path: second}); got != want {
+		t.Fatalf("status input = %#v, want only current local context path %#v", got, want)
+	}
 	waitStatusSourceChanged(t, source)
 	if got := statusContextSurfaceText(source.Latest().Footer); got != second {
 		t.Fatalf("status command CWD = %q, want current session root %q", got, second)
 	}
 }
 
-func TestADR_0296_StatusContextUnavailableRetainsFallbackAndNoProjection(t *testing.T) {
+func TestADR_0296_StatusContextUnavailableUsesHelperParentAndNoPath(t *testing.T) {
 	launch := t.TempDir()
 	source := statusline.NewCommandSource(statusline.Command{
 		Path: "/bin/sh", Args: []string{"-c", `read input; printf '<status><footer><text>'; pwd -P; printf '</text></footer></status>'`}, LaunchDir: launch,
@@ -51,10 +57,14 @@ func TestADR_0296_StatusContextUnavailableRetainsFallbackAndNoProjection(t *test
 	input := m.statusLineSnapshot()
 	source.Submit(input)
 	waitStatusSourceChanged(t, source)
-	if got := statusContextSurfaceText(source.Latest().Footer); got != launch {
-		t.Fatalf("status command CWD = %q, want launch fallback %q", got, launch)
+	want, err := filepath.EvalSymlinks(filepath.Dir("/bin/sh"))
+	if err != nil {
+		t.Fatalf("resolve helper parent: %v", err)
 	}
-	if input.Workspace.Basename != "" {
+	if got := statusContextSurfaceText(source.Latest().Footer); got != want {
+		t.Fatalf("status command CWD = %q, want helper parent fallback %q", got, want)
+	}
+	if input.Workspace.Path != "" {
 		t.Fatalf("status input disclosed context root: %#v", input.Workspace)
 	}
 }

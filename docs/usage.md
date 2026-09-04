@@ -141,12 +141,14 @@ history-carrying successor operation. Failed relist and fork operations leave th
 selected session unchanged. Schedules resolve and store an exact
 private placement at creation, while delegation derives placement from its parent; neither
 models nor delegation/artifact handles can select a host path. For a configured
-local Mecatui status command, the optional local session-context service may resolve
-an already-bound eligible local root asynchronously. Mecatui uses that privileged
-value only as the command process CWD, refreshes it whenever the active session is
-replaced or switched, discards stale responses, and otherwise keeps its launch
-working directory; the root is never exposed in status JSON, templates, command
-arguments, or environment.
+local status command, the optional local session-context service may resolve an
+already-bound eligible local root asynchronously. Mecatui supplies that privileged
+value only to its local direct command: as `Workspace.Path` in raw command JSON and
+as the process CWD. It refreshes it whenever the active session is replaced or
+switched, discards stale responses, and otherwise uses the configured helper
+executable's cleaned absolute parent directory (then its launch working directory if
+that cannot be determined); the root is never exposed in templates, command
+arguments, environment, or ordinary UI state.
 
 ## mecatui session identity
 

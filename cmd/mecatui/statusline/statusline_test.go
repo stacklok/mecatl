@@ -55,11 +55,11 @@ func TestStatusCustomization_Scenario1_StatusInputExcludesSensitiveContent(t *te
 	}
 
 	workspace := reflect.TypeFor[Workspace]()
-	if got, want := workspace.NumField(), 2; got != want {
+	if got, want := workspace.NumField(), 3; got != want {
 		t.Fatalf("Workspace field count = %d, want %d", got, want)
 	}
 	for i := range workspace.NumField() {
-		if name := workspace.Field(i).Name; name == "Launch" || name == "Path" {
+		if name := workspace.Field(i).Name; name == "Launch" || name == "Basename" {
 			t.Fatalf("workspace must not expose %q", name)
 		}
 	}

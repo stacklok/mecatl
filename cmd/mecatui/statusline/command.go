@@ -249,7 +249,13 @@ func runCommand(ctx context.Context, command Command, input Input) ([]byte, erro
 }
 
 func commandCWD(command Command, _ Input) string {
-	return command.cwd.get(command.LaunchDir)
+	fallback := command.LaunchDir
+	if filepath.IsAbs(command.Path) {
+		if parent := filepath.Dir(filepath.Clean(command.Path)); parent != "" {
+			fallback = parent
+		}
+	}
+	return command.cwd.get(fallback)
 }
 
 func commandEnv(command Command, input Input) []string {

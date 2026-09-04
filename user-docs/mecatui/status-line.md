@@ -80,7 +80,7 @@ are zero, and `Clock.Now` is the zero time until the source refreshes it.
 
 | JSON path | Type | Meaning |
 | --- | --- | --- |
-| `Version` | integer | Status input protocol version (currently `2`). |
+| `Version` | integer | Status input protocol version (currently `3`). |
 | `Server.DisplayTarget` | string | Credential-free target shown by the client. |
 | `Server.ConnectionMode` | string | `embedded`, `connect`, or empty while unknown. |
 | `Session.Title` | string | Optional display title. |
@@ -94,7 +94,8 @@ are zero, and `Clock.Now` is the zero time until the source refreshes it.
 | `Context.{Used,Window}.{Raw,Human}` | integer, string | Current context use and capacity as exact and display-ready values. |
 | `Context.Percent` | integer | `Used.Raw / Window.Raw` as an integer percentage, or `0` when unknown. |
 | `Workspace.Location` | string | `local`, `remote`, or `unknown`. |
-| `Workspace.Basename` | string | Provider-supplied local-session display label. It is not a directory basename or a usable path. |
+| `Workspace.Name` | string | Provider-supplied workspace display metadata. It is not a directory basename or a usable path. |
+| `Workspace.Path` | string | Exact local root returned by the privileged local-context RPC, supplied only to a configured direct local status command. Empty for remote, untrusted, no-FS, unavailable, and otherwise ineligible sessions; unavailable to templates. |
 | `Terminal.Rows`, `Terminal.Cols` | integers | Measured terminal dimensions. |
 | `Terminal.HeaderAvailCols`, `Terminal.FooterAvailCols` | integers | Columns remaining after mecatui reserves mandatory header and footer lanes. |
 | `MainAgent.State` | string | `connecting`, `idle`, `thinking`, `running_tool`, `awaiting_approval`, `completed`, `failed`, or `cancelled`. |
@@ -106,9 +107,13 @@ are zero, and `Clock.Now` is the zero time until the source refreshes it.
 | `Clock.Now` | RFC 3339 time | Source-owned current time; an interval refreshes it. |
 
 The input deliberately excludes prompts, transcript and tool content, credentials,
-authentication metadata, diagnostics, command output, and physical workspace roots.
-The source privately uses the local launch directory as a command working-directory
-fallback.
+authentication metadata, diagnostics, and command output. `Workspace.Path` is the
+single privileged exception: only a configured local direct executable receives it
+when the embedded local-context RPC successfully resolves the active eligible local
+session. Templates do not receive `Workspace.Path`. Without that root, the command
+uses the configured helper executable's cleaned absolute parent directory, falling
+back to its launch directory only if the parent cannot be determined; it never
+implicitly selects `HOME`.
 
 ## StatusML
 
@@ -156,7 +161,7 @@ For example, a command written in Python can safely include a dynamic label:
 ```python
 from html import escape
 
-label = status["Workspace"]["Basename"]
+label = status["Workspace"]["Name"]
 print(f"<footer><text>{escape(label, quote=False)}</text></footer>")
 ```
 
@@ -279,10 +284,11 @@ Mecatui runs the executable in the eligible local root of the active session whe
 its opt-in local session-context service can resolve one. It refreshes that private
 lookup after a session is created, adopted, cleared, forked, or switched, and
 ignores an older response after a newer session becomes active. The root is used
-only as the process CWD: it is not added to arguments, environment, command JSON,
-template data, or the rendered UI. If context is unavailable or ineligible,
-mecatui uses the local directory from which it was launched; a remote path is never
-used as a local CWD. The process receives a fixed safe
+only as `Workspace.Path` in raw command JSON and as the process CWD. Templates and
+rendered status state remain path-free. If context is unavailable or ineligible,
+mecatui uses the configured helper executable's cleaned absolute parent directory;
+the local launch directory is retained only when that parent cannot be determined.
+A remote path is never used as a local CWD. The process receives a fixed safe
 baseline: `HOME`, `PATH`, `TERM`, `LANG`, `LC_ALL`, `COLUMNS`, and `LINES` when
 available. `COLUMNS` and `LINES` come from the submitted terminal dimensions.
 

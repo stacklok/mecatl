@@ -430,6 +430,7 @@ func (m Model) applySessionReady(msg client.SessionReadyMsg) (tea.Model, tea.Cmd
 	m.failedStepRetryTried = false
 	m.browsingStartupSessions = false
 	m.closeModal()
+	m.statusContextRoot = ""
 	m.caps = msg.Capabilities // stored for Phase B; unrendered this phase
 	// The EFFECTIVE provider+model the server resolved this session to (echoed
 	// verbatim). The header shows it from turn zero. The model is FIXED per session,
@@ -586,7 +587,9 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 		return m, tea.Batch(focusCmd, (&m).armLiveFeed()), true
 	case statusContextMsg:
 		if msg.sessionID == m.sessionID {
+			m.statusContextRoot = msg.root
 			statusline.SetCommandSessionCWD(m.deps.StatusSource, msg.sessionID, msg.root)
+			m.submitStatusLine()
 		}
 		return m, nil, true
 	case client.SessionReadyMsg:

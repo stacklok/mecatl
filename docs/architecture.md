@@ -620,10 +620,12 @@ remote server or project never selects a local executable. Templates get a
 StatusML-escaped projection, commands get raw JSON on stdin, and StatusML carries
 semantic tokens rather than ANSI/OSC. For an operator-enabled local-context
 service, Mecatui asynchronously reattaches the active owned session and keeps its
-root only in the direct command source's private CWD cache; it refreshes on every
-create, adoption, clear, fork, and worktree switch, ignores stale replies, and
-uses the launch directory when the service is unavailable. The root is never
-projected through status input, templates, environment, arguments, or UI state. Its command environment retains a fixed
+root only in the direct status-command boundary: as `Workspace.Path` in raw command
+JSON and as the process CWD. Templates and rendered status state remain path-free.
+It refreshes on every create, adoption, clear, fork, and worktree switch, ignores
+stale replies, and uses the configured helper executable's cleaned absolute parent
+directory when the service is unavailable (the launch directory remains the fallback
+when that parent cannot be determined). Its command environment retains a fixed
 safe baseline; `passthrough_env` may add only explicitly named user-global values,
 never ambient environment values; reserved baseline and source-owned terminal-dimension
 names are rejected during settings validation. Before StatusML parsing, command output trims only boundary

@@ -605,6 +605,9 @@ type Model struct {
 	// strips the metadata), and for any non-routed provider — the header then shows
 	// the bare model segment, never a stale or fabricated suffix.
 	providerRoute string
+	// statusContextRoot is the active session's privileged local-context result.
+	// It is supplied only to a direct command input and never reaches rendered UI state.
+	statusContextRoot string
 	// activePlacement is bounded server-authored display metadata for the current
 	// session. It is never interpreted as a path or sent back as authority.
 	activePlacement client.Placement
@@ -1077,6 +1080,7 @@ func (m Model) resetSessionDerived() Model {
 	m.activeTool = ""
 	m.toolProgress = ""
 	m.providerRoute = ""
+	m.statusContextRoot = ""
 	// Drop the session title: it is session-derived (seeded from the first prompt
 	// / adopted from the stored session), so a /clear or fresh /models restart
 	// must not leave a stale label on its new session.

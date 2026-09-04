@@ -129,7 +129,7 @@ func TestStatusCustomization_Scenario1_StatusInputProjectsLiveUIState(t *testing
 	if input.Context != (statusline.Context{Used: statusline.ContextAtom{Raw: 45_600, Human: "45.6K"}, Window: statusline.ContextAtom{Raw: 200_000, Human: "200K"}, Percent: 22}) {
 		t.Fatalf("context projection = %#v", input.Context)
 	}
-	if input.Workspace != (statusline.Workspace{Location: "local", Basename: "status-work"}) {
+	if input.Workspace != (statusline.Workspace{Location: "local", Name: "status-work"}) {
 		t.Fatalf("workspace projection = %#v", input.Workspace)
 	}
 	if input.MainAgent != (statusline.MainAgent{State: "running_tool", Activity: "Read", Approval: "none"}) || !input.Delegation.Valid() {
@@ -147,6 +147,7 @@ func TestStatusCustomization_Scenario1_StatusInputExcludesRemoteWorkspacePath(t 
 	s := &statusSourceFake{changed: make(chan struct{})}
 	m := New(Deps{Ctx: context.Background(), Theme: theme.New("aztec", theme.AztecPalette()), StatusSource: s, ConnectionMode: "connect"})
 	m.activePlacement = client.Placement{Kind: "remote", Label: "safe-label"}
+	m.statusContextRoot = "/must-not-leak"
 	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	m = updated.(Model)
 
@@ -154,7 +155,7 @@ func TestStatusCustomization_Scenario1_StatusInputExcludesRemoteWorkspacePath(t 
 	if !ok {
 		t.Fatal("missing input")
 	}
-	if input.Workspace.Location != "remote" || input.Workspace.Basename != "safe-label" {
+	if input.Workspace.Location != "remote" || input.Workspace.Name != "safe-label" || input.Workspace.Path != "" {
 		t.Fatalf("remote workspace leaked as local command path: %#v", input.Workspace)
 	}
 }
