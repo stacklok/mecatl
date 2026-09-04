@@ -452,7 +452,7 @@ restart. Serving, ACP, mecatequi, and mecak8s never install a browser presenter.
 local credential degrades safely and prints the login command; an environment-backed
 profile is read-only and must be provisioned externally. Rolling back to `none` or
 `static_bearer` is a whole-profile settings change followed by restart. See
-[configuration](configuration.md#global-mcp-authentication-profiles) and
+[configuration](configuration.md#mcp-authentication-profiles) and
 [ADR 0113](../adr/0113-operator-mcp-auth-profiles.md).
 
 #### Security & transport (auth, TLS, rate limiting)

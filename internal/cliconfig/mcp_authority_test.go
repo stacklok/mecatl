@@ -173,7 +173,7 @@ func TestMCPAuthorityBrokerRejectsUnsupportedNetworkControlsBeforeConstruction(t
 		name  string
 		apply func(*permconfig.MCPOAuthProfile)
 	}{
-		{name: "oidc", apply: func(oauth *permconfig.MCPOAuthProfile) {}},
+		{name: "oidc", apply: func(_ *permconfig.MCPOAuthProfile) {}},
 		{name: "oauth2", apply: func(oauth *permconfig.MCPOAuthProfile) {
 			oauth.Upstream = &permconfig.MCPOAuthUpstreamProfile{Mode: "oauth2", OAuth2: &permconfig.MCPOAuth2UpstreamProfile{AuthorizationEndpoint: "https://auth.example/authorize", TokenEndpoint: "https://auth.example/token"}}
 			oauth.Issuer = ""
