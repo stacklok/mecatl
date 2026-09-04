@@ -5,7 +5,7 @@ title: Use the TUI
 
 # Work in the TUI
 
-Assistant text streams into the conversation as it arrives. Tool calls appear as compact cards rather than raw JSON; focus a card and press `ctrl+t` to expand its arguments and result. Edit and Write cards show their diff.
+Assistant text streams into the conversation as it arrives. Tool calls appear as compact cards rather than raw JSON. When a card is collapsed, its tool arguments and result are shown as a **width-bounded preview**: the preview fits the available terminal width and may show only the first useful rows of a long result. This keeps a large tool response from making the conversation unreadable or pushing other cards off screen. Focus the card and press `ctrl+t` to open the expanded view, which exposes the complete tool output (and complete arguments when available). Press `ctrl+t` again to return to the collapsed preview. Edit and Write cards show their diff.
 
 ## Keep working while a run is active
 
