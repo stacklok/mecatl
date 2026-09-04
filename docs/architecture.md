@@ -345,7 +345,12 @@ deltas stay in the event log for audit but do not enter reconstructed conversati
 history; a clean text-bearing error stop is complete and remains `StateCompleted`.
 See [ADR 0239](adr/0239-semantic-stream-retry.md).
 
-A retryable failed step can be repeated without another prompt through a first-frame
+Structured HTTP/API rejections may additionally append a sanitized actual target
+(scheme, host, optional port, clean escaped path) and one bounded opaque provider request
+ID to the user-visible error. They omit userinfo, query, fragment, raw bodies, headers,
+and invalid IDs; in-band SSE failures do not fabricate HTTP evidence. This display-only
+exception does not change retry or durable attempt metadata. See [ADR 0295](adr/0295-safe-http-rejection-display-evidence.md).
+
 `Converse.RetryStart` or bodyless `POST /v1/sessions/{id}/retry`. The aggregate first
 persists failed-step retry intent and blocks normal prompts until it resolves. Persisted
 conversation, user prompt, and tool state are reused; live turn-0 instructions, operator

@@ -1927,8 +1927,9 @@ live turn-0 instructions, operator profile, and system prompt are re-resolved.
 A **permanent** provider error, such as a non-retryable 4xx rejection or context-window
 overflow, renders a ONE-LINE summary block
 (`✗ <first line, ≤120 runes>: retrying won't help; the request is rejected. Start a
-new session or /clear.`) instead of a raw error block. The raw error payload is
-available on `ctrl+t` expand under a dim `raw payload:` header. A permanent error is
+new session or /clear.`) instead of a raw error block. The collapsed card names the live
+`ExpandTools` chord and says it shows details; expand preserves the full safe terminal
+error under a dim `raw payload:` header. A permanent error is
 never auto-retried. When a session that failed permanently is recovered for a new
 prompt, a transient `recover_notice` warning line appears before the first turn.
 

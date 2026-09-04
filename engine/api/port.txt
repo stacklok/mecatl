@@ -119,6 +119,7 @@ const StreamProgressVisible session.StreamProgress = 2
 const TriggerCron TriggerKind = 1
 const TriggerNone TriggerKind = 0
 const TriggerOneShot TriggerKind = 2
+func AppendHTTPErrorDisplay(message string, request *http.Request, correlationID string) string
 func CompareSessionMetadataOrder(a SessionDiscoveryMeta, b SessionDiscoveryMeta) int
 func DecodeCursor(cur Cursor, id session.SessionID, currentGeneration string) (position string, err error)
 func EncodeCursor(id session.SessionID, generation string, position string) Cursor

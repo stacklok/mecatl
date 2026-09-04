@@ -320,7 +320,6 @@ func openaichatStreamErr(err error, msg, completionID string) *openaichatStreamE
 	status := 0
 	metadata := providerErrorMetadata{}
 	if errors.As(err, &sdkErr) {
-		msg = structuredHTTPErrorText(sdkErr.Code, sdkErr.Type, sdkErr.Message)
 		metadata.providerCode = sdkErr.Code
 		if sdkErr.StatusCode != 0 {
 			status = sdkErr.StatusCode
@@ -329,12 +328,15 @@ func openaichatStreamErr(err error, msg, completionID string) *openaichatStreamE
 			status = openaichatErrorCodeToStatus(sdkErr.Code)
 			metadata.inBandStatus = status
 		}
+		requestID := ""
 		if sdkErr.Response != nil {
-			if requestID := sdkErr.Response.Header.Get("X-Request-ID"); requestID != "" {
+			requestID = sdkErr.Response.Header.Get("X-Request-ID")
+			if requestID != "" {
 				metadata.correlationKind = "request"
 				metadata.correlationID = requestID
 			}
 		}
+		msg = port.AppendHTTPErrorDisplay(structuredHTTPErrorText(sdkErr.Code, sdkErr.Type, sdkErr.Message), sdkErr.Request, requestID)
 	}
 	if metadata.correlationID == "" && completionID != "" {
 		metadata.correlationKind = "completion"

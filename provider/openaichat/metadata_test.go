@@ -55,7 +55,7 @@ func TestProviderErrorMetadataHTTPPreservesSDKError(t *testing.T) {
 
 	provider := New(
 		WithAPIKey("test-key"),
-		WithBaseURL(srv.URL+"/v1"),
+		WithBaseURL(srv.URL+"/private/../v1?token=must-not-leak#fragment"),
 		WithRequestOption(option.WithMaxRetries(0)),
 	)
 	seq, err := provider.Stream(context.Background(), port.LLMRequest{
@@ -79,10 +79,10 @@ func TestProviderErrorMetadataHTTPPreservesSDKError(t *testing.T) {
 	if !errors.As(streamErr, &preserved) {
 		t.Fatal("errors.As did not preserve the original SDK error")
 	}
-	if got, want := streamErr.Error(), "invalid_request_error: invalid input"; got != want {
+	if got, want := streamErr.Error(), "invalid_request_error: invalid input (target: "+srv.URL+"/v1/chat/completions; request ID: req_409)"; got != want {
 		t.Fatalf("Error() = %q, want %q", got, want)
 	}
-	if strings.Contains(streamErr.Error(), "req_409") || strings.Contains(streamErr.Error(), "must-not-leak") {
+	if strings.Contains(streamErr.Error(), "must-not-leak") {
 		t.Fatalf("display error leaked request metadata or raw body: %q", streamErr)
 	}
 	got := metadataOf(t, streamErr)
@@ -95,8 +95,34 @@ func TestProviderErrorMetadataHTTPPreservesSDKError(t *testing.T) {
 	if got != want {
 		t.Fatalf("metadata = %+v, want %+v", got, want)
 	}
-	if strings.Contains(got.correlationID, "must-not-leak") {
-		t.Fatal("metadata leaked an arbitrary response header")
+}
+
+func TestProviderHTTPErrorOmitsInvalidRequestIDFromDisplay(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("X-Request-ID", "invalid request id")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = io.WriteString(w, `{"error":{"code":"invalid_request_error","message":"invalid input"}}`)
+	}))
+	defer srv.Close()
+
+	provider := New(WithAPIKey("test-key"), WithBaseURL(srv.URL+"/v1"), WithRequestOption(option.WithMaxRetries(0)))
+	seq, err := provider.Stream(context.Background(), port.LLMRequest{Model: "test-model", Messages: []session.Message{session.NewUserMessage("hi")}})
+	if err != nil {
+		t.Fatalf("Stream: %v", err)
+	}
+	var streamErr error
+	for _, err := range seq {
+		if err != nil {
+			streamErr = err
+			break
+		}
+	}
+	if streamErr == nil {
+		t.Fatal("expected SDK HTTP error")
+	}
+	if got, want := streamErr.Error(), "invalid_request_error: invalid input (target: "+srv.URL+"/v1/chat/completions)"; got != want {
+		t.Fatalf("Error() = %q, want %q", got, want)
 	}
 }
 

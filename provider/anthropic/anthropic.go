@@ -478,7 +478,7 @@ func anthropicStreamErr(err error, msg string) *anthropicStreamError {
 	status := 0
 	metadata := providerErrorMetadata{}
 	if errors.As(err, &sdkErr) {
-		msg = anthropicHTTPErrorText(sdkErr)
+		msg = port.AppendHTTPErrorDisplay(anthropicHTTPErrorText(sdkErr), sdkErr.Request, sdkErr.RequestID)
 		status = sdkErr.StatusCode
 		metadata.httpStatus = status
 		metadata.providerCode = string(sdkErr.Type())

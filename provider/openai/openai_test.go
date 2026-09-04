@@ -638,7 +638,7 @@ func TestInvalidEncryptedContentFallbackUsesUnwrapDiagnostic(t *testing.T) {
 
 	err := collectStreamError(t, New(WithAPIKey("test-key"), WithBaseURL(srv.URL+"/v1"), WithRequestOption(option.WithMaxRetries(0))),
 		port.LLMRequest{Model: "gpt-test", Messages: []session.Message{session.NewUserMessage("hi")}})
-	if got, want := err.Error(), "provider request failed"; got != want {
+	if got, want := err.Error(), "provider request failed (target: "+srv.URL+"/v1/responses)"; got != want {
 		t.Fatalf("safe display error = %q, want %q", got, want)
 	}
 	if !isInvalidEncryptedContent(err) {
@@ -656,7 +656,7 @@ func TestHTTPErrorMetadataPreservesSDKError(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	err := collectStreamError(t, New(WithAPIKey("test-key"), WithBaseURL(srv.URL+"/v1"), WithRequestOption(option.WithMaxRetries(0))),
+	err := collectStreamError(t, New(WithAPIKey("test-key"), WithBaseURL(srv.URL+"/private/../v1?token=must-not-leak#fragment"), WithRequestOption(option.WithMaxRetries(0))),
 		port.LLMRequest{Model: "gpt-test", Messages: []session.Message{session.NewUserMessage("prompt secret must-not-leak")}})
 	if err == nil {
 		t.Fatal("expected HTTP error")
@@ -665,10 +665,10 @@ func TestHTTPErrorMetadataPreservesSDKError(t *testing.T) {
 	if !errors.As(err, &apiErr) {
 		t.Fatalf("error %T does not preserve the SDK error", err)
 	}
-	if got, want := err.Error(), "invalid_request_error: invalid input"; got != want {
+	if got, want := err.Error(), "invalid_request_error: invalid input (target: "+srv.URL+"/v1/responses; request ID: req_409)"; got != want {
 		t.Errorf("Error() = %q, want %q", got, want)
 	}
-	if strings.Contains(err.Error(), "req_409") || strings.Contains(err.Error(), "must-not-leak") {
+	if strings.Contains(err.Error(), "must-not-leak") {
 		t.Errorf("display error leaked request metadata or raw body: %q", err)
 	}
 	metadata := readProviderMetadata(t, err)
@@ -681,8 +681,24 @@ func TestHTTPErrorMetadataPreservesSDKError(t *testing.T) {
 	if metadata != want {
 		t.Errorf("metadata = %+v, want %+v", metadata, want)
 	}
-	if got := metadata.correlationID; strings.Contains(got, "must-not-leak") {
-		t.Errorf("metadata leaked response data: %+v", metadata)
+}
+
+func TestHTTPErrorDisplayOmitsInvalidRequestID(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("X-Request-ID", "invalid request id")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = io.WriteString(w, `{"error":{"code":"invalid_request_error","message":"invalid input"}}`)
+	}))
+	defer srv.Close()
+
+	err := collectStreamError(t, New(WithAPIKey("test-key"), WithBaseURL(srv.URL+"/v1"), WithRequestOption(option.WithMaxRetries(0))),
+		port.LLMRequest{Model: "gpt-test", Messages: []session.Message{session.NewUserMessage("hi")}})
+	if err == nil {
+		t.Fatal("expected SDK HTTP error")
+	}
+	if got, want := err.Error(), "invalid_request_error: invalid input (target: "+srv.URL+"/v1/responses)"; got != want {
+		t.Fatalf("Error() = %q, want %q", got, want)
 	}
 }
 

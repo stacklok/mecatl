@@ -1074,13 +1074,14 @@ func (r *renderer) renderBlockFresh(idx int, b *block, expand bool) string {
 }
 
 // renderPermanentError renders a PERMANENT error block: a one-line human summary
-// derived from the provider error, with the raw payload available on expand (ctrl+t).
+// derived from the provider error, with the full safe terminal error available on
+// expand.
 func (r *renderer) renderPermanentError(b *block, expand bool) string {
 	summary := permanentErrorSummary(b.raw)
 	errStyle := r.th.Style("errorText")
 	line := r.wrapPrefixed("✗ ", summary, errStyle)
 	if !expand {
-		return line
+		return line + "\n" + r.th.Style("muted").Render("  "+r.marks.expandTools+" shows details")
 	}
 	// Expanded: the summary line + the raw error under a dim header.
 	raw := r.wrapStyled(sanitizeTerminal(b.raw), r.th.Style("muted"))
@@ -1088,23 +1089,18 @@ func (r *renderer) renderPermanentError(b *block, expand bool) string {
 }
 
 // permanentErrorSummary derives a one-line human-readable summary from a provider
-// error string. The anthropic/openaichat adapters format translated EVENT errors as
-// "code: message" — take the first line, truncate sanely, and append the "retrying
-// won't help" advisory. The openai/openaichat SDK transport error (stream.Err, an
-// HTTP-level rejection before any SSE event) comes through as a raw
-// 'POST "<url>": 400 Bad Request {"error":{…json…}}' string; collapseErrorSummary
-// strips the 'POST "…"' prefix and trailing JSON, extracting the embedded message so
-// the summary is not a truncated-JSON wall (matching the "code: message" shape). The
-// summary is TERMINAL-SANITIZED (control/ANSI sequences scrubbed) so a hostile
-// provider/gateway can't inject escapes into the scrollback — the blockError path
-// already sanitizes via sanitizeTerminal, and the permanent path must too. Falls
-// back to a generic message when the error is unparseable or blank.
+// error string. The current adapters project structured HTTP rejections into safe
+// type/code, message, target, and request-ID text before the result reaches this layer.
+// collapseErrorSummary retains compatibility with older servers or custom providers that
+// still forward an SDK transport-shaped error. The summary is TERMINAL-SANITIZED
+// (control/ANSI sequences scrubbed) so a hostile provider/gateway can't inject escapes
+// into the scrollback — the blockError path already sanitizes via sanitizeTerminal, and
+// the permanent path must too. Falls back to a generic message when the error is
+// unparseable or blank.
 //
-// The extraction lives in the TUI (not the adapter Error()) because the adapters'
-// Error() text is a deliberate byte-identical invariant (TestResponseStreamErrorMessageUnchanged);
-// the SDK transport error is forwarded verbatim and has no such invariant, but the
-// render layer is the single chokepoint that covers both the translated-event and the
-// transport-error shapes without touching either adapter's contract.
+// The extraction lives in the TUI as compatibility handling, not as an adapter-error
+// contract. It keeps legacy transport-shaped text from becoming a truncated JSON wall
+// without changing the safe error supplied by current adapters.
 func permanentErrorSummary(raw string) string {
 	// Collapse the SDK transport shape (POST "…" + trailing JSON) into a clean
 	// token on the FULL raw string BEFORE first-line truncation: a single-line
@@ -1121,7 +1117,7 @@ func permanentErrorSummary(raw string) string {
 
 // collapseErrorSummary rewrites a provider/SDK error first-line into a cleaner
 // human-readable token. It strips a leading 'POST "<url>"' SDK-transport prefix and
-// a trailing JSON object ('{"error":{…}}'), so an openai-go error like
+// a trailing JSON object ('{"error":{…}}'), so a legacy SDK transport error like
 // 'POST "https://api.openai.com/v1/responses": 400 Bad Request {"error":{"message":"…"}}'
 // collapses to '400 Bad Request' plus any extracted message. A plain 'code: message'
 // (anthropic / the translated event error) is returned unchanged.

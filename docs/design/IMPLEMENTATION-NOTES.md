@@ -653,6 +653,16 @@ flushes the assistant and reconstructs StateCompleted, exactly matching
 `terminateComplete`; the latter intentionally remains a completed state because the
 provider delivered a clean terminal chunk rather than an interrupted iterator.
 
+**Safe HTTP rejection display.** `engine/port/httpdisplay.go`
+(`AppendHTTPErrorDisplay`) gives independently versioned providers one stdlib-only
+projection for structured HTTP/API rejections: the actual target's scheme, host, optional
+valid port, and clean escaped path plus at most one bounded opaque request/correlation ID.
+It strips userinfo, query, and fragment and omits malformed values. The SDK error remains
+unwrap-only, retry/classification metadata is unchanged, and in-band SSE failures do not
+invent HTTP evidence. Raw bodies, headers, arbitrary URLs, prompts, credentials, and IDs
+remain absent from user-visible display and durable attempt evidence. See
+[ADR 0295](../adr/0295-safe-http-rejection-display-evidence.md).
+
 **Prompt-free failed-step retry.** `engine/session/session.go` (`PrepareFailedStepRetry`) accepts
 only a failed typed Retryable attempt at Precommit or Visible, repairs an interrupted
 tool tail, resets to idle, and records aggregate-owned retry intent. The intent stays

@@ -387,8 +387,8 @@ func streamErrorString(event responses.ResponseStreamEventUnion) string {
 // llmresilience DefaultClassifier (which checks for interface{ StatusCode() int })
 // can classify transient codes (e.g. 429 rate-limit) as retryable.
 //
-// The human-readable Error() string is identical to what a plain fmt.Errorf
-// would have produced, so existing user-facing output is unchanged.
+// The human-readable Error() string retains the in-band event text. Structured
+// HTTP rejections add only the safe target/ID projection in httpMetadataError.
 type providerErrorMetadata struct {
 	httpStatus      int
 	inBandStatus    int
@@ -455,15 +455,17 @@ func withHTTPErrorMetadata(err error) error {
 		httpStatus:   apiErr.StatusCode,
 		providerCode: apiErr.Code,
 	}
+	requestID := ""
 	if apiErr.Response != nil {
-		if requestID := apiErr.Response.Header.Get("X-Request-ID"); requestID != "" {
+		requestID = apiErr.Response.Header.Get("X-Request-ID")
+		if requestID != "" {
 			metadata.correlationKind = "request"
 			metadata.correlationID = requestID
 		}
 	}
 	return &httpMetadataError{
 		err:      err,
-		message:  structuredHTTPErrorText(apiErr.Code, apiErr.Type, apiErr.Message),
+		message:  port.AppendHTTPErrorDisplay(structuredHTTPErrorText(apiErr.Code, apiErr.Type, apiErr.Message), apiErr.Request, requestID),
 		metadata: metadata,
 	}
 }
