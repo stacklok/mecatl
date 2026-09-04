@@ -6,8 +6,8 @@ github.com/openai/openai-go/v3 v3.52.0 h1:VDSjIvI5Sr2/AzGJI6219sM2Il+zBWuopvluMy
 github.com/openai/openai-go/v3 v3.52.0/go.mod h1:Vy3y2/I2H/MbqvJGXEK8VbN5+avZV6zxux4I3eBdvaA=
 github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 h1:Jamvg5psRIccs7FGNTlIRMkT8wgtp5eCXdBlqhYGL6U=
 github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
-github.com/stacklok/mecatl/engine v0.12.0 h1:CfpwVg7vwCUOpcISAShJcGRhELcnxaz3ll5d2ZbCTTg=
-github.com/stacklok/mecatl/engine v0.12.0/go.mod h1:eEW9h6sXmyArEz1mO29NUFpKOqB51BJwfcsc77F8Guc=
+github.com/stacklok/mecatl/engine v0.13.0 h1:jyqqRxzgbbyBu8UikPYhe3GbM9tI1VeHk/I2DNDW0XY=
+github.com/stacklok/mecatl/engine v0.13.0/go.mod h1:eEW9h6sXmyArEz1mO29NUFpKOqB51BJwfcsc77F8Guc=
 github.com/stacklok/mecatl/provider/ssefilter v0.1.0 h1:At26rvktMkZNGL2kyZYJkBh/n6PAXAg7DwlneCt8r94=
 github.com/stacklok/mecatl/provider/ssefilter v0.1.0/go.mod h1:sWfLZ3cpUKkeNHTh2cv18y+w8aCVa4qdwhrvrr2oeaI=
 github.com/stretchr/testify v1.11.1 h1:7s2iGBzp5EwR7/aIZr8ao5+dra3wiQyKjjFuvgVKu7U=
