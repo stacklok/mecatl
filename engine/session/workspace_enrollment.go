@@ -7,7 +7,10 @@ import (
 	"unicode/utf8"
 )
 
-const maxWorkspaceEnrollmentIDBytes = 256
+const (
+	maxWorkspaceEnrollmentIDBytes       = 256
+	maxWorkspaceEnrollmentToolNameBytes = 256
+)
 
 // WorkspaceEnrollmentID is an opaque correlation identifier for one
 // pre-prompt workspace enrollment.
@@ -72,6 +75,53 @@ func (s *Session) PendingWorkspaceEnrollment() (PendingWorkspaceEnrollment, bool
 		return PendingWorkspaceEnrollment{}, false
 	}
 	return *s.pendingWorkspaceEnrollment, true
+}
+
+// ValidWorkspaceEnrollmentToolNames reports whether names is an exact,
+// duplicate-free enrollment tool set. Names are opaque catalogue identifiers:
+// the boundary imposes only framing and size safety, not a provider-specific
+// function-name grammar.
+func ValidWorkspaceEnrollmentToolNames(names []string) bool {
+	seen := make(map[string]struct{}, len(names))
+	for _, name := range names {
+		if name == "" || len(name) > maxWorkspaceEnrollmentToolNameBytes || !utf8.ValidString(name) {
+			return false
+		}
+		for _, r := range name {
+			if unicode.IsControl(r) {
+				return false
+			}
+		}
+		if _, duplicate := seen[name]; duplicate {
+			return false
+		}
+		seen[name] = struct{}{}
+	}
+	return true
+}
+
+// CompleteWorkspaceEnrollment atomically replaces the complete tool set after
+// the exact pending enrollment has produced a verified catalogue. Authority is
+// cloned from the aggregate so callers cannot supply or alter any non-tool axis.
+func (s *Session) CompleteWorkspaceEnrollment(pending PendingWorkspaceEnrollment, exactTools []string) error {
+	if s.pendingWorkspaceEnrollment == nil ||
+		s.pendingWorkspaceEnrollment.ID != pending.ID ||
+		s.pendingWorkspaceEnrollment.RequiredServices != pending.RequiredServices ||
+		!s.pendingWorkspaceEnrollment.ExpiresAt.Equal(pending.ExpiresAt) {
+		return fmt.Errorf("session: workspace enrollment %q is not pending", pending.ID)
+	}
+	if s.State != StateIdle || s.Conversation == nil || len(s.Conversation.Messages) != 0 {
+		return fmt.Errorf("%w: workspace enrollment must complete before the first prompt", ErrIllegalTransition)
+	}
+	if !s.authorityBound || !ValidWorkspaceEnrollmentToolNames(exactTools) {
+		return fmt.Errorf("%w: invalid workspace enrollment tool set", ErrIllegalTransition)
+	}
+
+	exact := s.Authority.Clone()
+	exact.CapabilitySet.Tools = append([]string(nil), exactTools...)
+	s.Authority = exact
+	s.pendingWorkspaceEnrollment = nil
+	return nil
 }
 
 // AbortWorkspaceEnrollment clears only the enrollment whose exact identifier

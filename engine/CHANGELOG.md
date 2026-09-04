@@ -54,6 +54,18 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   result usage, and conversation. Snapshot and event-source metadata round-trip
   the title-specific state. Added (minor).
 
+- **Workspace-enrollment broker proof and atomic authority replacement** —
+  `session.Session.CompleteWorkspaceEnrollment` accepts the complete pending
+  correlation plus only a validated exact tool-name set, then clones the bound
+  authority before replacing its tools so present and future non-tool axes cannot
+  be caller-supplied. `session.ValidWorkspaceEnrollmentToolNames` provides the
+  enrollment-only bounded framing and duplicate check without tightening legacy
+  `Authority.Valid` inputs. The optional neutral
+  `internal/mcpbroker.WorkspaceEnrollmentAttachment` boundary exposes broker-owned
+  begin/observe/cancel operations, closed statuses, ephemeral presentation URLs,
+  and a connected-only immutable frozen catalogue result without adding enrollment
+  methods to anonymous broker attachments. Added (minor).
+
 - **Pre-prompt workspace-enrollment correlation** —
   `session.PendingWorkspaceEnrollment` and the `Session` begin/read/abort methods
   add a bounded, authority-bound aggregate contract that persists only an opaque

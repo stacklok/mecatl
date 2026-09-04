@@ -15,6 +15,7 @@
     method func (*Session).Cancel() error
     method func (*Session).ClaimAuthorization() (PendingAuthorization, error)
     method func (*Session).Complete() error
+    method func (*Session).CompleteWorkspaceEnrollment(pending PendingWorkspaceEnrollment, exactTools []string) error
     method func (*Session).Fail() error
     method func (*Session).FailedStepRetryPending() (RetryDisposition, StreamProgress, bool)
     method func (*Session).FailureMetadata() (RetryDisposition, StreamProgress)
@@ -299,6 +300,7 @@ func StripProviderState(messages []Message) []Message
 func ToValidUTF8(s string) string
 func ToolBlockText(b Content) string
 func ValidAuthorizationID(value string) bool
+func ValidWorkspaceEnrollmentToolNames(names []string) bool
 func ValidateJSON(schema json.RawMessage, payload json.RawMessage) error
 func ValidateMediaParts(parts []Content) error
 func ValidateMediaURL(raw string) error

@@ -2,9 +2,12 @@ package session
 
 import (
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/stacklok/mecatl/engine/governance"
 )
 
 func newEnrollmentSession(t *testing.T) *Session {
@@ -225,5 +228,187 @@ func TestBeginWorkspaceEnrollmentRejectsMalformedAndReplacement(t *testing.T) {
 	got, _ := s.PendingWorkspaceEnrollment()
 	if got != valid {
 		t.Fatalf("replacement attempt changed pending enrollment: %+v", got)
+	}
+}
+
+func enrollmentAuthority(tools ...string) Authority {
+	return Authority{
+		CapabilitySet: governance.CapabilitySet{
+			Tools:                    append([]string(nil), tools...),
+			RemainingDelegationDepth: 2,
+			FileSystem:               true,
+			DirectWrite:              true,
+		},
+		Provenance:         "configured:test",
+		DefinitionIdentity: "agent:test",
+	}
+}
+
+func sessionWithEnrollmentAuthority(t *testing.T) (*Session, PendingWorkspaceEnrollment) {
+	t.Helper()
+	s := New("enrollment-complete", ModeDefault, EnvironmentRef{Kind: EnvKindLocal, ID: ".", Revision: "in-tree-v1"}, Limits{}, time.Unix(1, 0).UTC())
+	s.Owner = &Principal{Issuer: "issuer", Subject: "owner", GrantType: GrantTypeUser}
+	if err := s.BindAuthority(enrollmentAuthority("Read", "stale")); err != nil {
+		t.Fatalf("BindAuthority: %v", err)
+	}
+	pending := testWorkspaceEnrollment()
+	if err := s.BeginWorkspaceEnrollment(pending); err != nil {
+		t.Fatalf("BeginWorkspaceEnrollment: %v", err)
+	}
+	return s, pending
+}
+
+func assertOnlyAuthorityToolsChanged(t *testing.T, before, after Authority, wantTools []string) {
+	t.Helper()
+	beforeValue, afterValue := reflect.ValueOf(before), reflect.ValueOf(after)
+	authorityType := beforeValue.Type()
+	for i := 0; i < authorityType.NumField(); i++ {
+		field := authorityType.Field(i)
+		if field.Name == "CapabilitySet" {
+			beforeCapabilities := beforeValue.Field(i)
+			afterCapabilities := afterValue.Field(i)
+			capabilityType := beforeCapabilities.Type()
+			for j := 0; j < capabilityType.NumField(); j++ {
+				capabilityField := capabilityType.Field(j)
+				if capabilityField.Name == "Tools" {
+					if got := afterCapabilities.Field(j).Interface().([]string); !reflect.DeepEqual(got, wantTools) {
+						t.Fatalf("authority tools = %q, want %q", got, wantTools)
+					}
+					continue
+				}
+				if !reflect.DeepEqual(beforeCapabilities.Field(j).Interface(), afterCapabilities.Field(j).Interface()) {
+					t.Fatalf("non-tool capability axis %s changed: before=%v after=%v", capabilityField.Name, beforeCapabilities.Field(j), afterCapabilities.Field(j))
+				}
+			}
+			continue
+		}
+		if !reflect.DeepEqual(beforeValue.Field(i).Interface(), afterValue.Field(i).Interface()) {
+			t.Fatalf("non-tool authority field %s changed: before=%v after=%v", field.Name, beforeValue.Field(i), afterValue.Field(i))
+		}
+	}
+}
+
+func TestCompleteWorkspaceEnrollmentReplacesExactToolAuthority(t *testing.T) {
+	s, pending := sessionWithEnrollmentAuthority(t)
+	before := s.Authority
+	owner := *s.Owner
+	tools := []string{"Read", "mcp__github__issues"}
+	if err := s.CompleteWorkspaceEnrollment(pending, tools); err != nil {
+		t.Fatalf("CompleteWorkspaceEnrollment: %v", err)
+	}
+	after := s.Authority
+	assertOnlyAuthorityToolsChanged(t, before, after, []string{"Read", "mcp__github__issues"})
+	got, bound := s.BoundAuthority()
+	if !bound || !reflect.DeepEqual(got, after) {
+		t.Fatalf("BoundAuthority = %+v, %v; want direct aggregate authority %+v, true", got, bound, after)
+	}
+	if got.CapabilitySet.AllowsTool("stale") {
+		t.Fatal("exact replacement retained stale tool")
+	}
+	if *s.Owner != owner {
+		t.Fatalf("completion changed principal: %+v", s.Owner)
+	}
+	if _, ok := s.PendingWorkspaceEnrollment(); ok {
+		t.Fatal("successful completion retained pending enrollment")
+	}
+	tools[0] = "mutated"
+	got, _ = s.BoundAuthority()
+	if got.CapabilitySet.Tools[0] != "Read" {
+		t.Fatal("tool-name input aliases bound authority")
+	}
+}
+
+func TestCompleteWorkspaceEnrollmentPreservesNonToolAuthorityByAPIShape(t *testing.T) {
+	method, ok := reflect.TypeOf((*Session)(nil)).MethodByName("CompleteWorkspaceEnrollment")
+	if !ok {
+		t.Fatal("CompleteWorkspaceEnrollment method missing")
+	}
+	want := []reflect.Type{
+		reflect.TypeOf((*Session)(nil)),
+		reflect.TypeOf(PendingWorkspaceEnrollment{}),
+		reflect.TypeOf([]string(nil)),
+	}
+	if method.Type.NumIn() != len(want) {
+		t.Fatalf("method accepts %d inputs, want receiver, pending correlation, and tool names", method.Type.NumIn())
+	}
+	for i, typ := range want {
+		if got := method.Type.In(i); got != typ {
+			t.Fatalf("input %d = %s, want %s", i, got, typ)
+		}
+	}
+}
+
+func TestCompleteWorkspaceEnrollmentRejectsChangesAtomically(t *testing.T) {
+	valid := testWorkspaceEnrollment()
+	tests := []struct {
+		name    string
+		pending PendingWorkspaceEnrollment
+		tools   []string
+	}{
+		{"mismatched ID", func() PendingWorkspaceEnrollment { p := valid; p.ID = "other"; return p }(), []string{"replacement"}},
+		{"mismatched service count", func() PendingWorkspaceEnrollment { p := valid; p.RequiredServices++; return p }(), []string{"replacement"}},
+		{"mismatched expiry", func() PendingWorkspaceEnrollment { p := valid; p.ExpiresAt = p.ExpiresAt.Add(time.Second); return p }(), []string{"replacement"}},
+		{"empty tool", valid, []string{""}},
+		{"control in tool", valid, []string{"bad\nname"}},
+		{"invalid UTF-8 tool", valid, []string{string([]byte{0xff})}},
+		{"oversized tool", valid, []string{strings.Repeat("x", maxWorkspaceEnrollmentToolNameBytes+1)}},
+		{"duplicate tool", valid, []string{"Read", "Read"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			s, pending := sessionWithEnrollmentAuthority(t)
+			before, _ := s.BoundAuthority()
+			if err := s.CompleteWorkspaceEnrollment(tc.pending, tc.tools); err == nil {
+				t.Fatal("CompleteWorkspaceEnrollment accepted invalid replacement")
+			}
+			after, _ := s.BoundAuthority()
+			if !reflect.DeepEqual(after, before) {
+				t.Fatalf("rejected completion changed authority: got %+v, want %+v", after, before)
+			}
+			gotPending, ok := s.PendingWorkspaceEnrollment()
+			if !ok || gotPending != pending {
+				t.Fatalf("rejected completion changed pending: %+v, %v", gotPending, ok)
+			}
+		})
+	}
+}
+
+func TestWorkspaceEnrollmentToolNamesPreserveLegacyGrammar(t *testing.T) {
+	legacy := []string{"provider/tool name", "unicode-工具", "mcp__server__tool.with:punctuation"}
+	if !ValidWorkspaceEnrollmentToolNames(legacy) {
+		t.Fatalf("legacy-compatible names rejected: %q", legacy)
+	}
+	s := New("legacy-authority", ModeDefault, EnvironmentRef{Kind: EnvKindLocal, ID: ".", Revision: "in-tree-v1"}, Limits{}, time.Unix(1, 0).UTC())
+	if err := s.BindAuthority(Authority{
+		CapabilitySet: governance.CapabilitySet{Tools: []string{"duplicate", "duplicate", "legacy/tool name"}},
+		Provenance:    "legacy",
+	}); err != nil {
+		t.Fatalf("global Authority validation was tightened: %v", err)
+	}
+}
+
+func TestCompleteWorkspaceEnrollmentRequiresIdleEmptyConversation(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		mutate func(*Session)
+	}{
+		{"non-idle", func(s *Session) { s.State = StateRunning }},
+		{"non-empty conversation", func(s *Session) { s.Conversation.Append(NewUserMessage("prompt")) }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, pending := sessionWithEnrollmentAuthority(t)
+			before, _ := s.BoundAuthority()
+			tc.mutate(s)
+			if err := s.CompleteWorkspaceEnrollment(pending, []string{"replacement"}); err == nil {
+				t.Fatal("CompleteWorkspaceEnrollment accepted invalid aggregate state")
+			}
+			after, _ := s.BoundAuthority()
+			if !reflect.DeepEqual(after, before) {
+				t.Fatalf("rejected completion changed authority: %+v", after)
+			}
+			if got, ok := s.PendingWorkspaceEnrollment(); !ok || got != pending {
+				t.Fatalf("rejected completion changed pending: %+v, %v", got, ok)
+			}
+		})
 	}
 }
