@@ -106,7 +106,7 @@ child-authority Workspace view; storage is never reconstructed from `Root()`. Re
 durable ledger as one validated hash per session, borrowing the Store lifecycle; both
 canonical session-deletion scripts remove it atomically with the other sidecars, and
 `DeleteReadLedger` remains an idempotent ledger-only reset. It is not wired as the
-production default. See [ADR 0295](../adr/0294-persistent-read-before-write-ledgers.md).
+production default. See [ADR 0295](../adr/0295-persistent-read-before-write-ledgers.md).
 Restarting the process loses in-memory overrides; a restarted session
 re-derives its Environment through the same rehydration path (no-fs profile,
 ACP adapter reconnect). As of ADR 0214, `EnvironmentRef` is a DURABLE snapshot
