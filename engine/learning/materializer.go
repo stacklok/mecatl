@@ -1,6 +1,7 @@
 package learning
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -111,10 +112,14 @@ type materialUnit struct {
 
 // MaterializeEvidence selects whole source components without constructing a full
 // source projection. Each field is projected into its existing bounded canonical
-// form only while its bounded candidate unit is considered.
+// form only while its bounded candidate unit is considered. The scan observes ctx
+// between source records and within each bounded tool component.
 //
 //nolint:gocyclo // selection keeps the closed ranking and all bounds visible in one pass
-func MaterializeEvidence(req MaterializationRequest) (Materialization, error) {
+func MaterializeEvidence(ctx context.Context, req MaterializationRequest) (Materialization, error) {
+	if err := ctx.Err(); err != nil {
+		return Materialization{}, err
+	}
 	if req.Trajectory.SessionID == "" {
 		return Materialization{}, fmt.Errorf("%w: trajectory session id is required", ErrInvalidInput)
 	}
@@ -136,13 +141,19 @@ func MaterializeEvidence(req MaterializationRequest) (Materialization, error) {
 		limits.MaxEvents = MaxInputEvents
 	}
 
-	units, mandatoryUncovered := boundedUnits(req, limits)
+	units, mandatoryUncovered, err := boundedUnits(ctx, req, limits)
+	if err != nil {
+		return Materialization{}, err
+	}
 
 	sort.SliceStable(units, func(i, j int) bool { return unitRanksBefore(units[i], units[j]) })
 	selected := make([]materialUnit, 0, min(len(units), limits.MaxMessages+limits.MaxEvents))
 	messages, events, used := 0, 0, 0
 	mandatoryFailed := mandatoryUncovered
 	for _, unit := range units {
+		if err := ctx.Err(); err != nil {
+			return Materialization{}, err
+		}
 		if unit.tier == 99 {
 			if unit.mandatory {
 				mandatoryFailed = true
@@ -185,14 +196,20 @@ func emptyMaterialization(req MaterializationRequest, reason MaterializationReas
 }
 
 //nolint:gocyclo // one bounded scan keeps source classification before copying explicit
-func boundedUnits(req MaterializationRequest, limits MaterializationLimits) ([]materialUnit, bool) {
+func boundedUnits(ctx context.Context, req MaterializationRequest, limits MaterializationLimits) ([]materialUnit, bool, error) {
 	capUnits := limits.MaxMessages + limits.MaxEvents
 	units := make([]materialUnit, 0, capUnits)
 	mandatoryCovered := 0
 	mandatoryFailed := req.Mandatory.Valid(len(req.Trajectory.Messages)) && req.Mandatory.End-req.Mandatory.Start > limits.MaxMessages
 	messages := req.Trajectory.Messages
 	for i, message := range messages {
-		unit, ok := sourceUnitAt(messages, i)
+		if err := ctx.Err(); err != nil {
+			return nil, false, err
+		}
+		unit, ok, err := sourceUnitAt(ctx, messages, i)
+		if err != nil {
+			return nil, false, err
+		}
 		if !ok {
 			if req.Mandatory.Valid(len(messages)) && req.Mandatory.Contains(i) && message.Role != session.RoleTool {
 				mandatoryFailed = true
@@ -203,6 +220,9 @@ func boundedUnits(req MaterializationRequest, limits MaterializationLimits) ([]m
 		projected := make([]MessageProjection, 0, len(unit.messages))
 		eligible := true
 		for _, index := range unit.messages {
+			if err := ctx.Err(); err != nil {
+				return nil, false, err
+			}
 			if req.Mandatory.Valid(len(messages)) && req.Mandatory.Contains(index) {
 				mandatoryCovered++
 			}
@@ -229,6 +249,9 @@ func boundedUnits(req MaterializationRequest, limits MaterializationLimits) ([]m
 		units = retainRankedUnit(units, unit, capUnits)
 	}
 	for i := range req.Events {
+		if err := ctx.Err(); err != nil {
+			return nil, false, err
+		}
 		if !eligibleEvent(req.Events[i]) {
 			continue
 		}
@@ -242,38 +265,48 @@ func boundedUnits(req MaterializationRequest, limits MaterializationLimits) ([]m
 	if req.Mandatory.Valid(len(messages)) && mandatoryCovered < req.Mandatory.End-req.Mandatory.Start {
 		mandatoryFailed = true
 	}
-	return units, mandatoryFailed
+	return units, mandatoryFailed, nil
 }
 
-func sourceUnitAt(messages []session.Message, i int) (materialUnit, bool) {
+func sourceUnitAt(ctx context.Context, messages []session.Message, i int) (materialUnit, bool, error) {
 	message := messages[i]
 	if message.Role == session.RoleTool {
-		return materialUnit{}, false
+		return materialUnit{}, false, nil
 	}
 	if message.Role != session.RoleAssistant || len(message.ToolCalls) == 0 {
-		return materialUnit{messages: []int{i}, event: -1, tier: 3, order: i, component: fmt.Sprintf("message:%d", i)}, true
+		return materialUnit{messages: []int{i}, event: -1, tier: 3, order: i, component: fmt.Sprintf("message:%d", i)}, true, nil
 	}
 	if len(message.ToolCalls) > MaxCandidateEvidence {
-		return materialUnit{}, false
+		return materialUnit{}, false, nil
 	}
 	indices := []int{i}
 	calls := make([]session.ToolCallID, 0, len(message.ToolCalls))
+	pending := make(map[session.ToolCallID]struct{}, len(message.ToolCalls))
 	for _, call := range message.ToolCalls {
+		if _, duplicate := pending[call.ID]; duplicate {
+			return materialUnit{}, false, nil
+		}
 		calls = append(calls, call.ID)
-		found := -1
-		for j := i + 1; j < len(messages); j++ {
-			if messages[j].Role == session.RoleTool && messages[j].ToolResult != nil && messages[j].ToolResult.CallID == call.ID {
-				found = j
-				break
-			}
-		}
-		if found < 0 {
-			return materialUnit{}, false
-		}
-		indices = append(indices, found)
+		pending[call.ID] = struct{}{}
 	}
-	sort.Ints(indices)
-	return materialUnit{messages: indices, event: -1, tier: 3, order: i, component: fmt.Sprintf("tool:%d", i), calls: calls}, true
+	for j := i + 1; j < len(messages) && len(pending) > 0; j++ {
+		if err := ctx.Err(); err != nil {
+			return materialUnit{}, false, err
+		}
+		candidate := messages[j]
+		if candidate.Role != session.RoleTool || candidate.ToolResult == nil {
+			break
+		}
+		if _, ok := pending[candidate.ToolResult.CallID]; !ok {
+			return materialUnit{}, false, nil
+		}
+		indices = append(indices, j)
+		delete(pending, candidate.ToolResult.CallID)
+	}
+	if len(pending) != 0 {
+		return materialUnit{}, false, nil
+	}
+	return materialUnit{messages: indices, event: -1, tier: 3, order: i, component: fmt.Sprintf("tool:%d", i), calls: calls}, true, nil
 }
 
 func retainRankedUnit(units []materialUnit, unit materialUnit, limit int) []materialUnit {

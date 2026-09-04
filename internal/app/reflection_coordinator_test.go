@@ -62,7 +62,7 @@ func (*testReflector) RequestTokenEstimate(learning.Input) (int, error) {
 
 func selectedTestJob(p, id, text string, r learning.Reflector) reflectionJob {
 	tr := learning.NewTrajectory(session.SessionID(id), "/w", session.StopEndTurn, session.Usage{}, []session.Message{session.NewUserMessage(text)})
-	materialized, err := learning.MaterializeEvidence(learning.MaterializationRequest{Trajectory: tr, Explicit: true})
+	materialized, err := learning.MaterializeEvidence(context.Background(), learning.MaterializationRequest{Trajectory: tr, Explicit: true})
 	if err != nil || materialized.Disposition != learning.MaterializationSelected {
 		panic("test reflection evidence did not materialize")
 	}

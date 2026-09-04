@@ -4189,9 +4189,11 @@ was its creation, and fails without mutation at a truncated predecessor boundary
 **Optional learning and evidence reflection (#507 / #509 Chunk A; ADR 0298 refinement):**
 `engine/learning` owns `Mode`, the owned completed `Trajectory`, and synchronous `Observer`, plus
 the storage-neutral reflection domain. `engine/learning/materializer.go` (`MaterializeEvidence`)
-is the single exported selection choke point: it returns a closed-disposition `Materialization`,
+is the single exported selection choke point: it accepts the caller context, returns a closed-disposition `Materialization`,
 whose selected arm contains the bounded `Input`, canonical bytes, and immutable aggregate manifest;
-its no-work arms contain no source excerpt. Automatic admission streams the full eligible source and
+its no-work arms contain no source excerpt. Component discovery advances linearly through the canonical
+assistant-plus-contiguous-results turn shape and checks cancellation between source records and within each
+bounded component; it never rescans the retained tail once per tool call. Automatic admission streams the full eligible source and
 verified current span with bounded counters/coordinates/digests; it does not build an unbounded
 `learning.Input`. After admission, the shared `reflection-evidence/v1` selector used by explicit
 reflection ranks whole connected tool-turn components (assistant + every call/result), emits selected

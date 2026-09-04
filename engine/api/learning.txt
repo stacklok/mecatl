@@ -283,7 +283,7 @@ func DeterministicProposalID(p ProposalPartition, input string, c Candidate) (Pr
 func EventEvidenceRef(in Input, ordinal int, callID session.ToolCallID) (EvidenceRef, error)
 func EvidenceHandle(ref EvidenceRef) string
 func EvidencePreview(in Input, ref EvidenceRef) (string, error)
-func MaterializeEvidence(req MaterializationRequest) (Materialization, error)
+func MaterializeEvidence(ctx context.Context, req MaterializationRequest) (Materialization, error)
 func MessageEvidenceRef(in Input, ordinal int, callID session.ToolCallID) (EvidenceRef, error)
 func NewAdmissionProvenance(class AdmissionClass, source AttemptSource, prompt CurrentPromptBinding) (AdmissionProvenance, error)
 func NewCandidate(in Input, candidate Candidate) (Candidate, error)

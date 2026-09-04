@@ -387,6 +387,9 @@ func TestScalableReflectionEvidence_Scenario8_EngineAPIAndLayeringGates(t *testi
 	}
 
 	pkg := loadPackages(t)[learningPath]
+	if updateBaselines() {
+		return
+	}
 	baselinePath := filepath.Join(apiDir(t), "learning.txt")
 	baselineBytes, err := os.ReadFile(baselinePath) //nolint:gosec // committed text baseline
 	if err != nil {
@@ -397,7 +400,7 @@ func TestScalableReflectionEvidence_Scenario8_EngineAPIAndLayeringGates(t *testi
 		t.Fatalf("engine/learning API snapshot is stale:\n%s", unifiedish(baseline, got))
 	}
 	for _, declaration := range []string{
-		"func MaterializeEvidence(req MaterializationRequest) (Materialization, error)",
+		"func MaterializeEvidence(ctx context.Context, req MaterializationRequest) (Materialization, error)",
 		"type MaterializationManifest struct",
 		"type EvidenceRef struct",
 		"type Input struct",
@@ -405,9 +408,6 @@ func TestScalableReflectionEvidence_Scenario8_EngineAPIAndLayeringGates(t *testi
 		if !strings.Contains(baseline, declaration) {
 			t.Errorf("engine/learning API snapshot is missing %q", declaration)
 		}
-	}
-	if updateBaselines() {
-		return
 	}
 
 	changelogPath := filepath.Clean(filepath.Join(apiDir(t), "..", "CHANGELOG.md"))

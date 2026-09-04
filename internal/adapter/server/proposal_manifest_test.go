@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -44,7 +45,7 @@ func newProposalManifestFixture(t *testing.T) *proposalManifestFixture {
 	}
 	trajectory := learning.NewTrajectory("manifest-source", "", session.StopEndTurn, session.Usage{}, messages)
 	events := []session.Event{{Type: session.EvResult, Seq: 7, Turn: 1, Result: &session.ResultPayload{Stop: session.StopEndTurn}}}
-	materialized, err := learning.MaterializeEvidence(learning.MaterializationRequest{Trajectory: trajectory, Events: events, Explicit: true})
+	materialized, err := learning.MaterializeEvidence(context.Background(), learning.MaterializationRequest{Trajectory: trajectory, Events: events, Explicit: true})
 	if err != nil || materialized.Disposition != learning.MaterializationSelected {
 		t.Fatalf("materialize = %+v, err=%v", materialized, err)
 	}
@@ -99,6 +100,30 @@ func (f *proposalManifestFixture) service() *Service {
 			return f.repo.Finalize(ctx, part, id, version, learning.ProposalUndone, &learning.PromotionReceipt{MemoryKey: "user/output", ResultVersion: "v2"}, learning.Decision{Kind: learning.DecisionApprove})
 		},
 	}}
+}
+
+func TestADR_0298_ProposalVerificationBuildsSelectedEvidenceOnly(t *testing.T) {
+	original := 0
+	messages := []session.Message{
+		session.NewUserMessage("remember selected evidence"),
+		session.NewUserMessageWithParts("", []session.Content{{Data: make([]byte, 16<<20)}}),
+	}
+	entries := []learning.ManifestEntry{{Locator: learning.EvidenceMessage, OriginalMessage: &original}}
+	runtime.GC()
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	selected, eventSequences, err := selectManifestSource(messages, entries)
+	runtime.ReadMemStats(&after)
+	runtime.KeepAlive(messages)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(selected) != 1 || selected[0].Text != "remember selected evidence" || len(eventSequences) != 0 {
+		t.Fatalf("selected source = %#v, events=%v", selected, eventSequences)
+	}
+	if allocated := after.TotalAlloc - before.TotalAlloc; allocated >= 1<<20 {
+		t.Fatalf("selected-only source traversal allocated %d bytes for 16 MiB of unrelated retained content", allocated)
+	}
 }
 
 func TestScalableReflectionEvidence_Scenario4_ProposalPersistsCompleteAggregateManifest(t *testing.T) {

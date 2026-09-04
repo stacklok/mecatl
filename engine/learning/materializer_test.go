@@ -2,7 +2,10 @@ package learning_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -12,7 +15,7 @@ import (
 
 func materialize(t *testing.T, req learning.MaterializationRequest) learning.Materialization {
 	t.Helper()
-	got, err := learning.MaterializeEvidence(req)
+	got, err := learning.MaterializeEvidence(context.Background(), req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -21,6 +24,81 @@ func materialize(t *testing.T, req learning.MaterializationRequest) learning.Mat
 
 func sourceTrajectory(messages ...session.Message) learning.Trajectory {
 	return learning.NewTrajectory("session-source", "/private/workspace", session.StopEndTurn, session.Usage{}, messages)
+}
+
+type scanBudgetContext struct {
+	context.Context
+	cancel context.CancelFunc
+	checks int
+	budget int
+}
+
+func newScanBudgetContext(budget int) *scanBudgetContext {
+	ctx, cancel := context.WithCancel(context.Background())
+	return &scanBudgetContext{Context: ctx, cancel: cancel, budget: budget}
+}
+
+func (c *scanBudgetContext) Err() error {
+	c.checks++
+	if c.checks > c.budget {
+		c.cancel()
+	}
+	return c.Context.Err()
+}
+
+func TestADR_0298_MaterializerObservesCancellation(t *testing.T) {
+	messages := make([]session.Message, 1000)
+	for i := range messages {
+		messages[i] = session.NewUserMessage("ordinary retained evidence")
+	}
+	ctx := newScanBudgetContext(10)
+	defer ctx.cancel()
+	got, err := learning.MaterializeEvidence(ctx, learning.MaterializationRequest{
+		Trajectory: sourceTrajectory(messages...),
+		Explicit:   true,
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("materialize error = %v, want context cancellation", err)
+	}
+	if ctx.checks <= ctx.budget || len(got.Canonical) != 0 || len(got.Manifest.Entries) != 0 {
+		t.Fatalf("cancelled scan continued or published evidence: checks=%d result=%#v", ctx.checks, got)
+	}
+}
+
+func TestADR_0298_ComponentDiscoveryIsSinglePass(t *testing.T) {
+	const (
+		components        = 200
+		callsPerComponent = 16
+	)
+	messages := make([]session.Message, 0, components*(callsPerComponent+1))
+	for component := range components {
+		calls := make([]session.ToolCall, callsPerComponent)
+		for call := range callsPerComponent {
+			id := session.ToolCallID(fmt.Sprintf("call-%d-%d", component, call))
+			calls[call] = session.NewToolCall(id, "Read", nil)
+		}
+		messages = append(messages, session.NewAssistantMessage("", "", calls))
+		for call := callsPerComponent - 1; call >= 0; call-- {
+			id := session.ToolCallID(fmt.Sprintf("call-%d-%d", component, call))
+			messages = append(messages, session.NewToolMessage(session.NewToolResult(id, "safe")))
+		}
+	}
+	ctx := newScanBudgetContext(len(messages)*4 + 10)
+	defer ctx.cancel()
+	got, err := learning.MaterializeEvidence(ctx, learning.MaterializationRequest{
+		Trajectory: sourceTrajectory(messages...),
+		Limits:     learning.MaterializationLimits{MaxMessages: callsPerComponent + 1, MaxBytes: 1 << 20},
+		Explicit:   true,
+	})
+	if err != nil {
+		t.Fatalf("linear component discovery exhausted cancellation-check budget after %d checks: %v", ctx.checks, err)
+	}
+	if got.Disposition != learning.MaterializationSelected || len(got.Input.Trajectory.Messages) != callsPerComponent+1 {
+		t.Fatalf("materialization = %#v", got)
+	}
+	if err := session.ValidateToolPairing(got.Input.Trajectory.Messages); err != nil {
+		t.Fatalf("selected component is not paired: %v", err)
+	}
 }
 
 func TestADR_0298_MaterializerWorkingStateIsBounded(t *testing.T) {

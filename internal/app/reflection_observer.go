@@ -380,7 +380,7 @@ func (o *reflectionObserver) submit(ctx context.Context, trajectory learning.Tra
 		materialLimit := defaultReflectionJobBytes
 		for {
 			var err error
-			materialized, err = learning.MaterializeEvidence(learning.MaterializationRequest{
+			materialized, err = learning.MaterializeEvidence(ctx, learning.MaterializationRequest{
 				Trajectory: trajectory,
 				Events:     events,
 				Signals:    decision.Signals,
@@ -418,7 +418,7 @@ func (o *reflectionObserver) submit(ctx context.Context, trajectory learning.Tra
 			return reflectionReceipt{}, err
 		}
 	} else {
-		materialized, err := learning.MaterializeEvidence(learning.MaterializationRequest{
+		materialized, err := learning.MaterializeEvidence(ctx, learning.MaterializationRequest{
 			Trajectory: trajectory,
 			Events:     events,
 			Signals:    append(hostSignals, learning.DetectSignals(learning.Input{Trajectory: trajectory})...),

@@ -62,7 +62,7 @@ func TestScalableReflectionEvidence_Scenario5_ExplicitClosedAbstentionReasons(t 
 		{"mandatory span exceeds bounds", automaticTrajectory("mandatory", []session.Message{session.NewUserMessage("required evidence")}, learning.MessageSpan{Start: 0, End: 1}), learning.MaterializationMandatorySpanExceedsBounds, 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			materialized, err := learning.MaterializeEvidence(learning.MaterializationRequest{Trajectory: tc.trajectory, Mandatory: tc.trajectory.Current, Explicit: true, Limits: learning.MaterializationLimits{MaxBytes: tc.maxBytes}})
+			materialized, err := learning.MaterializeEvidence(context.Background(), learning.MaterializationRequest{Trajectory: tc.trajectory, Mandatory: tc.trajectory.Current, Explicit: true, Limits: learning.MaterializationLimits{MaxBytes: tc.maxBytes}})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -87,11 +87,11 @@ func TestScalableReflectionEvidence_Scenario5_ExplicitClosedAbstentionReasons(t 
 }
 
 func TestADR_0298_MaterializationDispositionReasonAndErrorMatrix(t *testing.T) {
-	selected, err := learning.MaterializeEvidence(learning.MaterializationRequest{Trajectory: automaticTrajectory("selected", []session.Message{session.NewUserMessage("remember gofmt")}, learning.MessageSpan{}), Explicit: true})
+	selected, err := learning.MaterializeEvidence(context.Background(), learning.MaterializationRequest{Trajectory: automaticTrajectory("selected", []session.Message{session.NewUserMessage("remember gofmt")}, learning.MessageSpan{}), Explicit: true})
 	if err != nil || selected.Disposition != learning.MaterializationSelected || selected.Reason != learning.MaterializationReasonSelected {
 		t.Fatalf("selected = %+v, err=%v", selected, err)
 	}
-	if _, err := learning.MaterializeEvidence(learning.MaterializationRequest{}); !errors.Is(err, learning.ErrInvalidInput) {
+	if _, err := learning.MaterializeEvidence(context.Background(), learning.MaterializationRequest{}); !errors.Is(err, learning.ErrInvalidInput) {
 		t.Fatalf("invalid request error = %v", err)
 	}
 }
