@@ -1,7 +1,7 @@
 # Opt-in local session context — acceptance plan
 
 **Phase:** privileged local-client workspace-context projection
-**Status:** draft, 2026-09-03. Derived from the proposed ADR 0296 decision and issue #1057.
+**Status:** in-progress, 2026-09-03. Derived from the proposed ADR 0296 decision and issue #1057.
 **Issue:** [stacklok/mecatl#1057](https://github.com/stacklok/mecatl/issues/1057).
 **ADR:** [ADR-0296](../adr/0296-opt-in-local-session-context.md) — a separately registered, opt-in local-only workspace-root observation.
 **Accumulator branch:** `acc/opt-in-local-session-context` (off `main`).
