@@ -5,11 +5,13 @@ import (
 	"fmt"
 	"strings"
 
-	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 )
+
+// connectAction is the workspace-enrollment action used by /tools-connect.
+const connectAction = "connect"
 
 // workspaceEnrollmentState is distinct from permission approval and per-tool MCP
 // authorization. It retains only safe whole-bundle correlation and counts.
@@ -47,69 +49,83 @@ func workspaceEnrollmentCmd(ctx context.Context, control client.WorkspaceEnrollm
 	}
 }
 
-func (m Model) onWorkspaceEnrollmentKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
-	if m.deps.WorkspaceEnrollment == nil || m.enrollment.busy {
+// runToolsConnect drives bundled workspace-services enrollment on demand. A
+// pending bundle is rechecked (or retried after a failed response) rather than
+// starting a second bundle.
+func (m Model) runToolsConnect() (tea.Model, tea.Cmd) {
+	if m.deps.WorkspaceEnrollment == nil {
+		m.statusMsg = m.deps.Theme.Style("warning").Render("/tools-connect is not available on this server")
 		return m, nil
 	}
+	if m.sessionID == "" {
+		m.statusMsg = m.deps.Theme.Style("warning").Render("cannot connect workspace services: no active session")
+		return m, nil
+	}
+	if m.enrollment.busy {
+		m.statusMsg = m.deps.Theme.Style("warning").Render("workspace services connection is already in progress")
+		return m, nil
+	}
+	action := connectAction
 	switch {
-	case key.Matches(msg, m.keys.Close):
-		return m, nil
-	case msg.String() == "c" && m.enrollment.ID == "":
-		m.enrollment.busy = true
-		m.enrollment.err = ""
-		return m, workspaceEnrollmentCmd(m.deps.Ctx, m.deps.WorkspaceEnrollment, m.sessionID, "", connectCommand)
-	case msg.String() == "r" && m.enrollment.ID != "":
-		m.enrollment.busy = true
-		action := "check"
-		if m.enrollment.err != "" {
-			action = "retry"
-		}
-		m.enrollment.err = ""
-		return m, workspaceEnrollmentCmd(m.deps.Ctx, m.deps.WorkspaceEnrollment, m.sessionID, m.enrollment.ID, action)
-	case msg.String() == "x" && m.enrollment.ID != "":
-		m.enrollment.busy = true
-		m.enrollment.err = ""
-		return m, workspaceEnrollmentCmd(m.deps.Ctx, m.deps.WorkspaceEnrollment, m.sessionID, m.enrollment.ID, "cancel")
-	default:
-		return m, nil
+	case m.enrollment.ID != "" && m.enrollment.err != "":
+		action = "retry"
+	case m.enrollment.ID != "":
+		action = "check"
 	}
+	m.enrollment.busy = true
+	m.enrollment.err = ""
+	m.statusMsg = m.deps.Theme.Style("muted").Render("connecting workspace services…")
+	return m, workspaceEnrollmentCmd(m.deps.Ctx, m.deps.WorkspaceEnrollment, m.sessionID, m.enrollment.ID, action)
 }
 
+// runToolsCancel cancels the caller-owned pending bundle.
+func (m Model) runToolsCancel() (tea.Model, tea.Cmd) {
+	if m.deps.WorkspaceEnrollment == nil || m.enrollment.ID == "" {
+		m.statusMsg = m.deps.Theme.Style("warning").Render("no pending workspace-services connection to cancel")
+		return m, nil
+	}
+	if m.enrollment.busy {
+		m.statusMsg = m.deps.Theme.Style("warning").Render("workspace services connection is already in progress")
+		return m, nil
+	}
+	m.enrollment.busy = true
+	m.enrollment.err = ""
+	m.statusMsg = m.deps.Theme.Style("muted").Render("cancelling workspace services connection…")
+	return m, workspaceEnrollmentCmd(m.deps.Ctx, m.deps.WorkspaceEnrollment, m.sessionID, m.enrollment.ID, "cancel")
+}
+
+// applyWorkspaceEnrollment reduces the direct RPC response from /tools-connect
+// or /tools-cancel. A successful manual recheck completes the pending bundle;
+// this task deliberately does not add background polling.
 func (m Model) applyWorkspaceEnrollment(msg workspaceEnrollmentMsg) (tea.Model, tea.Cmd) {
-	if msg.sessionID != m.sessionID || msg.action == connectCommand && m.enrollment.ID != "" || msg.action != connectCommand && msg.targetEnrollmentID != m.enrollment.ID {
+	if msg.sessionID != m.sessionID || msg.action == connectAction && m.enrollment.ID != "" || msg.action != connectAction && msg.targetEnrollmentID != m.enrollment.ID {
 		return m, nil
 	}
 	m.enrollment.busy = false
 	if msg.err != nil {
 		m.enrollment.err = "workspace enrollment failed"
+		m.statusMsg = m.deps.Theme.Style("warning").Render(m.enrollment.err)
 		return m, nil
 	}
-	// Strip presentation data at the reducer boundary. It is never retained in the
-	// model, rendered, logged, or included in an error.
+	// Presentation data is ephemeral: open it but never retain, render, or log it.
 	presentationURL := msg.result.PresentationURL
 	m.enrollment.ID = msg.result.ID
 	m.enrollment.Status = msg.result.Status
 	m.enrollment.RequiredServices = msg.result.RequiredServices
 	m.enrollment.err = ""
-	switch msg.result.Status {
-	case client.WorkspaceEnrollmentConnected:
-		m.enrollment = workspaceEnrollmentState{}
-		m.phase = phaseIdle
-		focusCmd := m.prompt.Focus()
-		m.statusMsg = "workspace services connected"
-		cmd := tea.Batch(focusCmd, (&m).armLiveFeed())
-		if p := strings.TrimSpace(m.pendingInitialPrompt); p != "" {
-			m.pendingInitialPrompt = ""
-			m.prompt.Rewrite(p)
-			mm, submitCmd := m.submitPrompt()
-			return mm, tea.Batch(cmd, submitCmd)
-		}
-		return m, cmd
-	case client.WorkspaceEnrollmentFailed:
-		m.enrollment.err = "workspace enrollment failed"
-	case client.WorkspaceEnrollmentCancelled:
-		m.enrollment.ID = ""
+	if msg.result.Status == client.WorkspaceEnrollmentConnected {
+		return m.finalizeWorkspaceEnrollmentConnected()
 	}
+	if msg.result.Status == client.WorkspaceEnrollmentCancelled {
+		m.enrollment = workspaceEnrollmentState{}
+		m.workspaceEnrollmentNotice = ""
+		m.statusMsg = "workspace services connection cancelled"
+		return m, nil
+	}
+	if msg.result.Status == client.WorkspaceEnrollmentFailed {
+		m.enrollment.err = "workspace enrollment failed"
+	}
+	m.workspaceEnrollmentNotice = "waiting for browser consent — run /tools-connect to recheck"
 	if presentationURL != "" && m.deps.OpenURL != nil {
 		return m, func() tea.Msg {
 			if err := m.deps.OpenURL(m.deps.Ctx, presentationURL); err != nil {
@@ -121,23 +137,33 @@ func (m Model) applyWorkspaceEnrollment(msg workspaceEnrollmentMsg) (tea.Model, 
 	return m, nil
 }
 
-func (m Model) renderWorkspaceEnrollment() string {
-	progress := "All configured services must connect as one bundle."
-	if m.enrollment.RequiredServices > 0 {
-		progress = fmt.Sprintf("%d services must connect as one bundle.", m.enrollment.RequiredServices)
+// finalizeWorkspaceEnrollmentConnected is the shared completion path. Clearing
+// pendingInitialPrompt before submit gives exactly-once initial/rejected prompt
+// resubmission even if a later manual recheck repeats the connected response.
+func (m Model) finalizeWorkspaceEnrollmentConnected() (tea.Model, tea.Cmd) {
+	m.enrollment = workspaceEnrollmentState{}
+	m.workspaceEnrollmentNotice = ""
+	focusCmd := m.prompt.Focus()
+	m.statusMsg = "workspace services connected"
+	cmd := tea.Batch(focusCmd, (&m).armLiveFeed())
+	if p := strings.TrimSpace(m.pendingInitialPrompt); p != "" {
+		m.pendingInitialPrompt = ""
+		m.prompt.Rewrite(p)
+		mm, submitCmd := m.submitPrompt()
+		return mm, tea.Batch(cmd, submitCmd)
 	}
-	body := "Connect workspace services\n\n" + progress + "\nNo service is available until the complete catalogue is admitted.\n\nPrompt input is unavailable until enrollment completes."
-	switch {
-	case m.enrollment.busy:
-		body += "\n\nConnecting workspace services…"
-	case m.enrollment.err != "" && m.enrollment.ID == "":
-		body += "\n\n" + m.enrollment.err + "   [c] Retry connection"
-	case m.enrollment.err != "":
-		body += "\n\n" + m.enrollment.err + "   [r] Retry bundle   [x] Cancel bundle"
-	case m.enrollment.ID == "":
-		body += "\n\n[c] Connect workspace services"
-	default:
-		body += "\n\nWorkspace service connection pending.   [r] Recheck bundle   [x] Cancel bundle"
+	return m, cmd
+}
+
+// friendlyWorkspaceEnrollmentRejection replaces the one pre-prompt server gate
+// rejection with the built-in command that resolves it.
+func friendlyWorkspaceEnrollmentRejection(raw string) string {
+	if isWorkspaceEnrollmentRejection(raw) {
+		return "workspace services aren't connected — run /tools-connect to enable protected tools before prompting"
 	}
-	return centerCard(m.deps.Theme, body, m.width, m.vp.Height())
+	return raw
+}
+
+func isWorkspaceEnrollmentRejection(raw string) bool {
+	return strings.Contains(raw, "workspace services must be connected before prompting")
 }

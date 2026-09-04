@@ -30,7 +30,6 @@ an editor that spawned it.
 
 ---
 
-<<<<<<< HEAD
 ## OAuth protected-resource discovery
 
 `mecated` and `mecak8s` share the optional RFC 9728 profile flags
@@ -144,6 +143,13 @@ only stable classifications (`deadline`, `cancelled`, `provider`, `invalid-outpu
 `protocol`) and a stage; diagnostics never include source prompts, provider error
 text, credentials, or model output. Live title updates are best-effort, so reconnect
 and session reopen re-fetch the authoritative stored title.
+
+When a server advertises bundled protected workspace services, `/tools-connect`
+starts or rechecks their enrollment and `/tools-cancel` cancels the pending bundle.
+The prompt remains available while consent is pending; if the server rejects a
+prompt until enrollment completes, mecatui keeps it and submits it once after a
+connected control response. These commands are absent when the server does not
+advertise enrollment support.
 
 ## mecatui remote TLS
 

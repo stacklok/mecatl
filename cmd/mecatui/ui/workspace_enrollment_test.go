@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -10,7 +11,7 @@ import (
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 )
 
-func TestInvariant_mecatui_workspace_enrollment_is_not_permission_approval(t *testing.T) {
+func TestWorkspaceEnrollmentIsNonBlocking(t *testing.T) {
 	control := &workspaceEnrollmentControlFake{connect: client.WorkspaceEnrollment{
 		ID: "bundle-1", Status: client.WorkspaceEnrollmentPending, RequiredServices: 2,
 		PresentationURL: "https://provider-private.example/callback?token=token-canary",
@@ -20,49 +21,114 @@ func TestInvariant_mecatui_workspace_enrollment_is_not_permission_approval(t *te
 		SessionID: "session-1", Capabilities: client.Capabilities{WorkspaceEnrollment: true},
 	})
 
-	if m.phase != phaseWorkspaceEnrollment || m.prompt.Focused() || m.modal != nil {
-		t.Fatalf("enrollment gate phase/focus/modal = %v/%t/%T, want distinct gate with disabled prompt and no approval modal", m.phase, m.prompt.Focused(), m.modal)
+	if m.phase != phaseIdle || m.modal != nil || !m.prompt.Focused() {
+		t.Fatalf("opening an enrollment session must remain promptable: phase=%v modal=%T focused=%t", m.phase, m.modal, m.prompt.Focused())
 	}
-	view := stripANSIstr(m.View().Content)
-	for _, want := range []string{"Connect workspace services", "Prompt input is unavailable"} {
-		if !strings.Contains(view, want) {
-			t.Fatalf("workspace enrollment view missing %q:\n%s", want, view)
-		}
+	if !strings.Contains(m.workspaceEnrollmentNotice, "/tools-connect") {
+		t.Fatalf("workspaceEnrollmentNotice = %q, want /tools-connect", m.workspaceEnrollmentNotice)
 	}
-	for _, forbidden := range []string{"Allow", "Always", "Deny", "permission"} {
-		if strings.Contains(view, forbidden) {
-			t.Fatalf("workspace enrollment rendered permission control %q:\n%s", forbidden, view)
-		}
+	if got := stripANSIstr(m.idleFooterLeft()); !strings.Contains(got, "/tools-connect") {
+		t.Fatalf("footer-left = %q, want enrollment notice", got)
 	}
 
-	mm, cmd := m.onWorkspaceEnrollmentKey(tea.KeyPressMsg{Code: 'c', Text: "c"})
+	mm, cmd := m.runToolsConnect()
 	m = mm.(Model)
 	if cmd == nil {
-		t.Fatal("Connect workspace services action returned no command")
+		t.Fatal("/tools-connect returned no command")
 	}
-	msg := cmd()
-	m = applyAll(m, msg)
-	if control.connectCalls != 1 || m.enrollment.ID != "bundle-1" || m.phase != phaseWorkspaceEnrollment {
-		t.Fatalf("connect calls/state/phase = %d/%+v/%v", control.connectCalls, m.enrollment, m.phase)
+	m = applyAll(m, cmd())
+	if control.connectCalls != 1 || m.enrollment.ID != "bundle-1" {
+		t.Fatalf("connect calls/state = %d/%+v", control.connectCalls, m.enrollment)
 	}
-	if got := stripANSIstr(m.View().Content); !strings.Contains(got, "2 services") {
-		t.Fatalf("bundle progress missing service count:\n%s", got)
+	if got := stripANSIstr(m.idleFooterLeft()); !strings.Contains(got, "run /tools-connect to recheck") {
+		t.Fatalf("footer-left after a pending connect = %q, want manual recheck notice", got)
 	}
-	if got := stripANSIstr(m.View().Content); strings.Contains(got, "https://") || strings.Contains(got, "provider-private") || strings.Contains(got, "token-canary") {
-		t.Fatalf("enrollment rendered private presentation data:\n%s", got)
+	if got := stripANSIstr(m.idleFooterLeft()); strings.Contains(got, "https://") || strings.Contains(got, "token-canary") {
+		t.Fatalf("footer rendered private presentation data: %s", got)
+	}
+}
+
+func TestWorkspaceEnrollmentConnectedRechecksAndResubmitsOnce(t *testing.T) {
+	control := &workspaceEnrollmentControlFake{connect: client.WorkspaceEnrollment{
+		ID: "bundle-1", Status: client.WorkspaceEnrollmentPending,
+	}}
+	m, send := builtinDispatchModel(t, client.Capabilities{WorkspaceEnrollment: true}, false)
+	m.deps.WorkspaceEnrollment = control
+	m.pendingInitialPrompt = "list my open pull requests"
+
+	mm, cmd := m.runToolsConnect()
+	m = mm.(Model)
+	m = applyAll(m, cmd())
+	control.connect = client.WorkspaceEnrollment{ID: "bundle-1", Status: client.WorkspaceEnrollmentConnected}
+
+	mm, cmd = m.runToolsConnect()
+	m = mm.(Model)
+	mm, finalizeCmd := m.Update(cmd())
+	m = mm.(Model)
+	if control.connectCalls != 2 || m.enrollment.ID != "" || m.workspaceEnrollmentNotice != "" {
+		t.Fatalf("connected recheck did not finalize: calls=%d enrollment=%+v notice=%q", control.connectCalls, m.enrollment, m.workspaceEnrollmentNotice)
+	}
+	if m.pendingInitialPrompt != "" {
+		t.Fatalf("pendingInitialPrompt not consumed: %q", m.pendingInitialPrompt)
+	}
+	runBatchLeaves(finalizeCmd)
+	if got := promptTexts(send); len(got) != 1 || got[0] != "list my open pull requests" {
+		t.Fatalf("resubmitted prompts = %v", got)
 	}
 
-	blocked, blockedCmd := m.submitPrompt()
-	if blockedCmd != nil || blocked.(Model).phase != phaseWorkspaceEnrollment {
-		t.Fatal("prompt submission escaped the frozen-catalogue enrollment gate")
+	mm, cmd = m.runToolsConnect()
+	m = mm.(Model)
+	m = applyAll(m, cmd())
+	if got := promptTexts(send); len(got) != 1 {
+		t.Fatalf("connected recheck resubmitted more than once: %v", got)
 	}
-	stale, _ := m.applyWorkspaceEnrollment(workspaceEnrollmentMsg{
-		action: "check", sessionID: "foreign-session", targetEnrollmentID: "bundle-1",
-		result: client.WorkspaceEnrollment{Status: client.WorkspaceEnrollmentConnected},
+}
+
+func TestWorkspaceEnrollmentRejectionAutoResubmits(t *testing.T) {
+	m, send := builtinDispatchModel(t, client.Capabilities{WorkspaceEnrollment: true}, false)
+	m = typeText(t, m, "list PRs")
+	mm, _ := m.submitPrompt()
+	m = mm.(Model)
+	if m.lastSubmittedPromptText != "list PRs" {
+		t.Fatalf("lastSubmittedPromptText = %q", m.lastSubmittedPromptText)
+	}
+
+	mm, _ = m.Update(client.StreamErrMsg{Err: errors.New("rpc error: code = FailedPrecondition desc = workspace services must be connected before prompting")})
+	m = mm.(Model)
+	if m.pendingInitialPrompt != "list PRs" || m.lastSubmittedPromptText != "" {
+		t.Fatalf("rejection recovery pending/staged = %q/%q", m.pendingInitialPrompt, m.lastSubmittedPromptText)
+	}
+
+	m.enrollment.ID = "bundle-1"
+	mm, cmd := m.applyWorkspaceEnrollment(workspaceEnrollmentMsg{
+		action: "check", sessionID: m.sessionID, targetEnrollmentID: "bundle-1",
+		result: client.WorkspaceEnrollment{ID: "bundle-1", Status: client.WorkspaceEnrollmentConnected},
 	})
-	staleModel := stale.(Model)
-	if staleModel.phase != phaseWorkspaceEnrollment || staleModel.enrollment.ID != "bundle-1" {
-		t.Fatal("foreign/stale enrollment completion escaped correlation gate")
+	m = mm.(Model)
+	if cmd == nil || m.pendingInitialPrompt != "" {
+		t.Fatalf("connected completion did not consume rejected prompt: cmd=%v pending=%q", cmd != nil, m.pendingInitialPrompt)
+	}
+	runBatchLeaves(cmd)
+	if got := promptTexts(send); len(got) != 1 || got[0] != "list PRs" {
+		t.Fatalf("sent prompts = %v, want one resubmission", got)
+	}
+}
+
+func TestWorkspaceEnrollmentRejectionRewriteAppliesAtAllRunEntryPaths(t *testing.T) {
+	raw := "rpc error: code = FailedPrecondition desc = workspace services must be connected before prompting"
+	if got := friendlyWorkspaceEnrollmentRejection(raw); !strings.Contains(got, "/tools-connect") {
+		t.Fatalf("friendlyWorkspaceEnrollmentRejection = %q", got)
+	}
+	m, _ := newQueueModel(t)
+	mm, _ := m.Update(client.StreamErrMsg{Err: errors.New(raw)})
+	m = mm.(Model)
+	if got := m.conv.blocks[len(m.conv.blocks)-1].raw; !strings.Contains(got, "/tools-connect") {
+		t.Fatalf("stream error block = %q", got)
+	}
+	mm, _ = m.applyResult(client.ResultMsg{Stop: stopError, Error: raw})
+	m = mm.(Model)
+	if got := m.conv.blocks[len(m.conv.blocks)-1].raw; !strings.Contains(got, "/tools-connect") {
+		t.Fatalf("result error block = %q", got)
 	}
 }
 

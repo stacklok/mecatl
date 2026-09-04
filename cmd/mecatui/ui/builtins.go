@@ -45,6 +45,7 @@ type wiredCollaborators struct {
 	Debug        bool // all debug-only builtins
 	DebugAsk     bool // /debug-ask narrow compatibility alias
 	Connect      bool // /connect — saved remote target picker
+	Workspace    bool // /tools-connect, /tools-cancel — workspace enrollment
 	DebugSession bool // dedicated target-bound debugger: hide binding-breaking actions
 }
 
@@ -67,6 +68,7 @@ func (m Model) wiredCollaborators() wiredCollaborators {
 		Debug:        m.deps.Debug,
 		DebugAsk:     m.deps.DebugAsk,
 		Connect:      m.deps.Connect != nil,
+		Workspace:    m.deps.WorkspaceEnrollment != nil,
 		DebugSession: m.deps.DebugTarget != "",
 	}
 }
@@ -89,7 +91,7 @@ func (m Model) wiredCollaborators() wiredCollaborators {
 // scheduling AND a schedule lister is wired (w.Scheduling). /effort (the
 // reasoning-effort picker, ADR 0055) is gated identically to /models and sits
 // directly after it. The order is fixed (clear, help, quit, mcp, agents, team, skills,
-// soul, usermodel, models, effort, worktrees, schedule) and locked by a test so
+// soul, usermodel, models, effort, worktrees, schedule, tools-connect, tools-cancel) and locked by a test so
 // the palette ordering is stable.
 //
 //nolint:gocyclo // capability-gated built-ins remain explicit and ordered
@@ -232,6 +234,12 @@ func builtinCommands(caps client.Capabilities, w wiredCollaborators) []builtin {
 	}
 	if w.Connect {
 		out = append(out, builtin{name: connectCommand, desc: "sign in and connect to a saved remote target", run: Model.runConnect})
+	}
+	if caps.WorkspaceEnrollment && w.Workspace {
+		out = append(out,
+			builtin{name: "tools-connect", desc: "connect the bundled protected-tool workspace services", run: Model.runToolsConnect},
+			builtin{name: "tools-cancel", desc: "cancel a pending workspace-services connection", run: Model.runToolsCancel},
+		)
 	}
 	out = appendLearningBuiltin(out, w)
 	out = appendDebugBuiltins(out, w)

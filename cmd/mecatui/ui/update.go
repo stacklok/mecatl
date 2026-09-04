@@ -441,6 +441,11 @@ func (m Model) finishStartupResume() (tea.Model, tea.Cmd) {
 	if liveCmd := (&m).armLiveFeed(); liveCmd != nil {
 		cmd = tea.Batch(cmd, liveCmd)
 	}
+	if m.caps.WorkspaceEnrollment {
+		m.enrollment = workspaceEnrollmentState{}
+		m.workspaceEnrollmentNotice = "workspace services not connected — /tools-connect to enable protected tools"
+		return m, cmd
+	}
 	if mm, submitCmd, ok := m.startInitialPrompt(); ok {
 		return mm, tea.Batch(cmd, submitCmd)
 	}
@@ -479,13 +484,8 @@ func (m Model) applySessionReady(msg client.SessionReadyMsg) (tea.Model, tea.Cmd
 		m.statusMsg = "connected"
 	}
 	if msg.Capabilities.WorkspaceEnrollment {
-		m.phase = phaseWorkspaceEnrollment
 		m.enrollment = workspaceEnrollmentState{}
-		m.prompt.Blur()
-		m.statusMsg = "workspace services require connection"
-		// InitialPrompt remains queued until the complete frozen catalogue is
-		// admitted; never submit it through the server's fail-closed gate.
-		return m, nil, true
+		m.workspaceEnrollmentNotice = "workspace services not connected — /tools-connect to enable protected tools"
 	}
 	// Now that we are idle + (still) empty, the welcome splash shows: transmit the
 	// Kitty mascot if the terminal supports it (no-op otherwise). The WindowSizeMsg
@@ -527,8 +527,11 @@ func (m Model) applySessionReady(msg client.SessionReadyMsg) (tea.Model, tea.Cmd
 	// session via resetSession and never reaches this seam).
 	// A "/"-prefixed seed (e.g. -p /clear) is dispatched by submitPrompt's
 	// builtin dispatcher — documented behavior.
-	if mm, submitCmd, ok := m.startInitialPrompt(); ok {
-		return mm, tea.Batch(cmd, submitCmd), true
+	// InitialPrompt remains queued until the complete frozen catalogue is admitted.
+	if !msg.Capabilities.WorkspaceEnrollment {
+		if mm, submitCmd, ok := m.startInitialPrompt(); ok {
+			return mm, tea.Batch(cmd, submitCmd), true
+		}
 	}
 	if m.deps.ConnectOpen {
 		m.connect.err = m.deps.ConnectError
@@ -818,7 +821,13 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 		}
 		// A transport error has no semantic commit fact. Always pause and preserve
 		// staged follow-ups, regardless of legacy transient-looking status text.
-		m.conv.addError("stream error: " + msg.Err.Error())
+		m.conv.addError("stream error: " + friendlyWorkspaceEnrollmentRejection(msg.Err.Error()))
+		if isWorkspaceEnrollmentRejection(msg.Err.Error()) {
+			if p := strings.TrimSpace(m.lastSubmittedPromptText); p != "" {
+				m.pendingInitialPrompt = p
+			}
+		}
+		m.lastSubmittedPromptText = ""
 		m = m.endRun(stopError)
 		liveCmd := m.armLiveFeed()
 		mm, drainCmd := m.drainQueue(stopError)
@@ -1436,10 +1445,11 @@ func (m Model) applyResult(msg client.ResultMsg) (tea.Model, tea.Cmd) {
 	// would double-count.
 	m.usage = sumUsage(m.usage, msg.Usage)
 	if msg.Stop == stopError && msg.Error != "" {
+		rejection := friendlyWorkspaceEnrollmentRejection(msg.Error)
 		if msg.Permanent {
-			m.conv.addPermanentError(msg.Error)
+			m.conv.addPermanentError(rejection)
 		} else {
-			m.conv.addError(msg.Error)
+			m.conv.addError(rejection)
 		}
 	}
 	if m.clearPending != nil {
@@ -2032,8 +2042,6 @@ func (m Model) dispatchPhaseKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case phaseAuthorizing:
 		return m.onMCPAuthorizationKey(msg)
-	case phaseWorkspaceEnrollment:
-		return m.onWorkspaceEnrollmentKey(msg)
 	case phaseRunning:
 		return m.onRunningKey(msg)
 	case phaseIdle:
@@ -3208,6 +3216,7 @@ func (m Model) submitPrompt() (tea.Model, tea.Cmd) {
 	// This is a genuine new user turn, so it starts a fresh one-retry budget.
 	// Automatic failed-step retry bypasses submitPrompt and therefore cannot re-arm itself.
 	m.failedStepRetryTried = false
+	m.lastSubmittedPromptText = text
 	if len(media.Descriptors) > 0 {
 		m.conv.addUserWithMedia(text, media.Descriptors)
 	} else {
@@ -4548,7 +4557,7 @@ func (m Model) handleOpenError(err error, cancel context.CancelFunc, retry bool)
 		m.failedStepRetryRun = false
 		m.statusMsg = m.deps.Theme.Style("warning").Render("retry transport failed: " + sanitizeTerminal(err.Error()) + " — use /retry to try again")
 	} else {
-		m.conv.addError("open run: " + err.Error())
+		m.conv.addError("open run: " + friendlyWorkspaceEnrollmentRejection(err.Error()))
 	}
 	if len(m.queued) > 0 {
 		m.queuePaused = stopError
