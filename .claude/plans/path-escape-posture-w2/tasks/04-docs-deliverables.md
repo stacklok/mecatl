@@ -34,7 +34,7 @@ Read `.claude/agents/tdd-worker.md` first. Cite code per `docs/design/README.md`
    fits, else a short section. Then run `task site:build` to catch any broken
    link before CI does.
 
-3. Run `task docs` (llms.txt regen + matlatl strict link gate) — both new docs
+3. Run `task docs` (configuration-reference regeneration + matlatl strict link gate) — both new docs
    must be reachable or the gate fails.
 
 ## Acceptance criteria

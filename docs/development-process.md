@@ -70,7 +70,7 @@ or a descriptive test name). `task ac-trace` reports coverage;
 | `task lint` | golangci-lint v2 + go vet, both modules — incl. the depguard allowlist (layering) |
 | `task test` | full offline suite, `-race`, both modules + the engine-standalone proof |
 | `task api:check` | the engine's exported surface vs `engine/api/*.txt` |
-| `task docs` | `llms.txt` regen + the matlatl strict link gate |
+| `task docs` | configuration-reference regeneration + the matlatl strict link gate |
 | `task ac-trace-strict` | every landed AC's `verify:` proof resolves |
 | `/panel-review` | independent Spec / Standards / Test adequacy / Domain review; final `PANEL:` result drives the gate |
 

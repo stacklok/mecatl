@@ -276,5 +276,5 @@ migration path, including credential-shaped fixtures.
 tests.
 - `task lint`, `task test`, `task test:engine-standalone`, `task api:check`,
   `go run ./cmd/mecademo`, `task ac-trace-strict`, and `task docs` pass.
-- The documentation updates above and regenerated `llms.txt` are included in the
+- The documentation updates above and regenerated configuration reference are included in the
 implementation change.

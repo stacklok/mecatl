@@ -822,28 +822,8 @@ tasks:
           fi
         silent: true
       # Regenerate the committed configuration-reference + settings.yaml skeleton
-      # from the permconfig schema (the CI freshness gate enforces this), BEFORE
-      # llms.txt so the new reference page is in the link graph llms.txt indexes.
+      # from the permconfig schema (the CI freshness gate enforces this).
       - task: docs:configref
-      # Regenerate the committed llms.txt navigation surface so it never drifts
-      # from the docs (the CI freshness gate enforces this).
-      - task: docs:llms
-
-  docs:llms:
-    desc: Regenerate the committed llms.txt navigation surface (matlatl)
-    cmds:
-      # matlatl renders an importance-ordered llms.txt from the doc link graph.
-      # Pinned to a matlatl release; --title MUST match the README H1 ("mecatl")
-      # and the freshness gate in .github/workflows/ci.yml. Never hand-edit
-      # llms.txt — regenerate. MATLATL_BIN lets CI reuse the binary built by
-      # the private, organization-approved action without persisting git auth;
-      # the local fallback needs GOPRIVATE set.
-      - |
-        if [ -n "${MATLATL_BIN:-}" ]; then
-          "$MATLATL_BIN" index . --llms --title "mecatl" > llms.txt
-        else
-          go run github.com/stacklok/matlatl/cmd/matlatl@v0.0.8 index . --llms --title "mecatl" > llms.txt
-        fi
 
   docs:configref:
     desc: Regenerate the committed config-init skeleton + configuration-reference.md from the permconfig schema
@@ -853,7 +833,7 @@ tasks:
       # surfaces (config init + the reference page) read. go/ast stays in this
       # build-time program — the shipped mecated binary embeds the skeleton. The CI
       # docs job diffs the regenerated artifacts against these committed files and
-      # fails on drift (the llms.txt pattern). Never hand-edit either output.
+      # fails on drift. Never hand-edit either output.
       - go run ./internal/configgen/cmd/configref --skeleton internal/configgen/settings.skeleton.yaml --reference docs/configuration-reference.md
 
   docs:check:
@@ -874,10 +854,9 @@ tasks:
       - go run github.com/stacklok/modelith/cmd/modelith@73429dd46a22b3c3491c4654edca391fc9bd63f2 lint --completeness error docs/architecture/mecatl.modelith.yaml
 
   docs:
-    desc: Refresh the config reference + llms.txt and gate doc links (matlatl) — run before committing doc changes
+    desc: Refresh the configuration reference and gate doc links (matlatl) — run before committing doc changes
     cmds:
       - task: docs:configref
-      - task: docs:llms
       - task: docs:check
 
   ac-trace:

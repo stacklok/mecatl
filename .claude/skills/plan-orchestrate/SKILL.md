@@ -279,7 +279,7 @@ harness-owned checkout to seize the branch. Never create a nested worktree.
 # in the validated integration worktree:
 task lint;  LINT_RC=$?
 task test;  TEST_RC=$?
-task docs;  DOCS_RC=$?      # regenerates llms.txt + matlatl --strict
+task docs;  DOCS_RC=$?      # configuration reference + matlatl --strict
 go run ./cmd/mecademo; DEMO_RC=$?  # terminal aggregate smoke; workers do not repeat it
 ```
 
@@ -380,9 +380,9 @@ the single source of truth for what landed.
 - **"Run beyond the PR."** The PR is the terminus. Do not merge, tag, or
   deploy.
 - **"Edit the plan doc from a worker."** Forbidden — shared-file merge trap.
-  Generated surfaces (`engine/api/*.txt`, `llms.txt`) + the plan are
-  reconciled once by the orchestrator on the assembled accumulator (Step 6).
-  A worker that finds the design falsified reports a mis-decomposition
+  Generated API surfaces (`engine/api/*.txt`) + the plan are reconciled once by
+  the orchestrator on the assembled accumulator (Step 6). A worker that finds the
+  design falsified reports a mis-decomposition
   (`status: blocked`).
 - **"Skip the failing-test-first step."** TDD is the discipline; the worker is
   not done until its named test pins each AC and can fail when planted.

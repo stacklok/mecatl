@@ -798,7 +798,7 @@ brings a second one up on the same durable store directory.
   subsystem — the checkpoint's consumption-time advancement, the
   consume-but-do-not-yield split, the cursor envelope, the derived filter set,
   and the three-arm reconnect classification.
-- `task docs` regeneration (`llms.txt`) with every Markdown change.
+- `task docs` configuration-reference regeneration with every Markdown change.
 - No `engine/` API change is expected — the cursor port already landed. If one
   appears, `task api:check` / `task api:update` plus the `engine/CHANGELOG.md`
   note per the standing rule.
@@ -834,7 +834,7 @@ suites under `sdk/typescript/`, cited per AC.
 1. `task lint` and `task test` pass (both Go modules, `-race`), plus
    `task sdk:lint`, `task sdk:typecheck`, `task sdk:test`, `task sdk:e2e`, and
    `task sdk:api:check`.
-2. `task docs` — `llms.txt` regenerated and the matlatl strict link gate green.
+2. `task docs` — configuration reference regenerated and the matlatl strict link gate green.
 3. `task generate` reproduces both generated trees byte-identically —
    `WatchSessionEvents` descriptors come from the existing committed output, so
    this should be a no-op.

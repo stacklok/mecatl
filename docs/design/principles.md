@@ -73,11 +73,11 @@ carry a runtime obligation.
    [ADR-0070](../adr/0070-model-visible-affordance-gate.md) and `AGENTS.md`
    "A model-facing gate/affordance…".
 
-10. **Docs are gated artifacts.** `llms.txt` and the configuration reference
-    are generated, never hand-edited; the matlatl strict link gate fails a PR
-    on a broken link, orphan, or unreachable doc. ADRs are frozen; new
-    decisions are new ADRs. See [ADR-0002](../adr/0002-documentation-lifecycle.md)
-    and [ADR-0003](../adr/0003-consolidate-design-records-as-adrs.md).
+10. **Docs are gated artifacts.** The configuration reference is generated,
+    never hand-edited; the matlatl strict link gate fails a PR on a broken link,
+    orphan, or unreachable doc. ADRs are frozen; new decisions are new ADRs. See
+    [ADR-0002](../adr/0002-documentation-lifecycle.md) and
+    [ADR-0003](../adr/0003-consolidate-design-records-as-adrs.md).
 
 ## See also
 

@@ -31,7 +31,7 @@ run_raw() {
 }
 
 # Ordinary documentation content is the only positive case.
-run "documentation content passes" true docs/usage.md user-docs/getting-started/demo.md user-docs/_category_.json user-docs/deployment/_category_.json README.md llms.txt
+run "documentation content passes" true docs/usage.md user-docs/getting-started/demo.md user-docs/_category_.json user-docs/deployment/_category_.json README.md
 
 # Fail closed rather than treating no paths or an unterminated record as harmless.
 run_raw "empty input fails closed" false ''

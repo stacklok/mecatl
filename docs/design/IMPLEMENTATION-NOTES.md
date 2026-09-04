@@ -3493,8 +3493,7 @@ auto-harvested flag dump.
 The go/ast doc-comment harvest lives ONLY in the build-time generator
 (`internal/configgen/cmd/configref`, run by `task docs:configref`); it emits the two
 COMMITTED artifacts, and `config init` ships by `//go:embed`-ing the committed
-skeleton — so the shipped `mecated` binary never imports go/ast (the matlatl
-llms.txt generate→commit→CI-diff-guard pattern; the docs job fails on drift). The
+skeleton — so the shipped `mecated` binary never imports go/ast; the docs job fails on drift. The
 write path (`config init`) and the read path (the resolver's `loadUserRules`) share the
 ONE relative-path const (`permconfig.UserSettingsRelPath`, re-exported as
 `configgen.SettingsRelPath`), so they provably resolve the same file.

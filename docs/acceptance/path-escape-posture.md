@@ -365,7 +365,7 @@ guardrail routing), which may be driven as separate `/plan-orchestrate` runs.
 ## Definition of done
 
 1. `task lint` and `task test` pass (both modules, `-race`).
-2. `task docs` — `llms.txt` regenerated and the matlatl strict link gate green.
+2. `task docs` — configuration reference regenerated and the matlatl strict link gate green.
 3. `task api:check` passes (or `task api:update` + `engine/CHANGELOG.md` note)
    if the engine's exported surface changed.
 4. `task ac-trace-strict` — every AC's `verify:` proof resolves (this plan is

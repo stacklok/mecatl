@@ -138,8 +138,8 @@ Before reporting done, all of these must pass:
   engine→internal import fails here).
 - `task test` — the full offline suite (root module + engine module +
   the GOWORK=off engine-standalone hygiene proof), `-race`.
-- **If you touched any markdown:** `task docs` — `llms.txt` regen +
-  matlatl strict link gate.
+- **If you touched any markdown:** `task docs` — configuration-reference regeneration +
+  the matlatl strict link gate.
 - **If you touched the engine's exported API:** `task api:update` (commit
   the changed `engine/api/*.txt` + a `engine/CHANGELOG.md` note) — the
   `api-compat` gate fails the PR otherwise.

@@ -102,7 +102,7 @@ boundary in [`architecture.md`](../architecture.md).
 - AC4.2: Approval rendering and golden frames are unchanged for all existing approval fixtures.
   - verify: demonstration — `task test:golden` proves the existing approval frames are byte-identical
 - AC4.3: The living surface-migration design records the ephemeral-ID/frame-cache protocol, Model/surface ownership split, and the deliberately deferred multi-window manager, and retires its obsolete approval-surface exclusion.
-  - verify: inspection — `task docs` validates citations and generated `llms.txt`
+  - verify: inspection — `task docs` validates citations and generated configuration reference
 
 ## Out of scope
 
@@ -127,7 +127,7 @@ notes, and run the unchanged golden suite.
 
 1. `task lint` and `task test` pass.
 2. `task test:golden` passes without approval golden changes.
-3. `task docs` regenerates `llms.txt` and passes the strict documentation gate.
+3. `task docs` regenerates the configuration reference and passes the strict documentation gate.
 4. `task ac-trace-strict` resolves every acceptance proof after the plan is marked `landed`.
 5. `go run ./cmd/mecademo` still prints a full offline session.
 6. The resulting work is a new `gh stack` child of PR #731; #731 itself remains unchanged.

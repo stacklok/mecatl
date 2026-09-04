@@ -212,7 +212,7 @@ remain uninspected non-empty rejections under AC1.2.
 - Update the living deployment/API documentation and `user-docs/` to state
   which deployment topologies accept a client workspace, the server-assigned
   request contract, and mecak8s's default no-FS behavior.
-- Regenerate `llms.txt`; do not hand-edit it.
+- Regenerate the configuration reference; do not hand-edit it.
 - Preserve the engine boundary: this is Service/composition/client work and
   must not widen `engine/port` or add a filesystem policy to the agent loop.
 
@@ -248,7 +248,7 @@ no-FS. Finish with HTTP/gRPC and fixture coverage plus documentation.
 ## Definition of done
 
 1. `task lint` and `task test` pass.
-2. `task docs` passes, regenerating `llms.txt` and running the strict link gate.
+2. `task docs` passes, regenerating the configuration reference and running the strict link gate.
 3. `task api:check` passes; no engine exported API change is expected.
 4. `task ac-trace-strict` passes when this plan becomes `landed`.
 5. The named tests resolve and pass, including offline gRPC, HTTP, mecated

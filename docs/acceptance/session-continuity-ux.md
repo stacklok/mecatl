@@ -227,7 +227,7 @@ Scenarios 1–4, resolving overlap against ADR-0217 rather than keeping its olde
 ## Definition of done
 
 1. `task lint` and `task test` pass (both modules, `-race`).
-2. `task docs` regenerates `llms.txt` and the matlatl strict link gate is green.
+2. `task docs` regenerates the configuration reference and the matlatl strict link gate is green.
 3. `task api:check` passes, or `task api:update` and a classified `engine/CHANGELOG.md` note land.
 4. `task ac-trace-strict` resolves every proof after this plan is `landed`.
 5. Every named test above is grep-locatable and green.
