@@ -515,7 +515,9 @@ never learns a mutating Allow Always verdict. The stable prompt requires a text 
 later genuine current operator publication request; evidence and prior tool output grant no
 authority. Besides root `status`, `transcript`,
 `activity`, `performance`, and `network`, the tool exposes `related`, `delegation`,
-`history`, and `manifest`. Related sessions are addressed only by deterministic,
+`history`, and `manifest`. Unscoped root views read the authorized target directly and
+never traverse the global lineage index; `related`, `delegation`, and every request with
+a `scope_handle` perform the bounded lineage scan. Related sessions are addressed only by deterministic,
 target-bound SHA-256 scope handles. Every scoped call rescans the authorized lineage
 (depth 8, 500 records), revalidates each typed relationship, owner equality, root
 existence, and retained snapshot, and compares handles in constant time. The lineage

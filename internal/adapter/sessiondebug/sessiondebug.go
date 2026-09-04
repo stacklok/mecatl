@@ -117,6 +117,7 @@ func (*inspectTool) Spec() tool.ToolSpec {
 
 func (*inspectTool) ReadOnly() bool { return true }
 
+//nolint:gocyclo // The view dispatch preserves the target-bound evidence contract in one place.
 func (t *inspectTool) Execute(ctx context.Context, call session.ToolCall, _ tool.Environment) (session.ToolResult, error) {
 	var args inspectArgs
 	if msg, ok := session.ParseArgs(call, &args); !ok {
@@ -129,7 +130,10 @@ func (t *inspectTool) Execute(ctx context.Context, call session.ToolCall, _ tool
 	if err != nil {
 		return session.NewToolError(call.ID, err.Error()), nil
 	}
-	graph := t.scanLineage(ctx, root)
+	var graph lineageGraph
+	if args.ScopeHandle != "" || args.View == "related" || args.View == "delegation" {
+		graph = t.scanLineage(ctx, root)
+	}
 	target, scope, scopeBinding, err := t.resolveScope(ctx, root, graph, args.ScopeHandle)
 	if err != nil {
 		return session.NewToolError(call.ID, err.Error()), nil

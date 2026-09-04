@@ -115,6 +115,10 @@ when the code that satisfies the plan has landed.
   filesystem-path authority: composition binds default/no-FS/remote environments;
   alternate worktrees use fresh source-scoped opaque selectors only on clear/fork.
   Status: landed.
+- [Session debugger root inspection avoids lineage traversal](session-debug-lineage-lock.md) —
+  unscoped `InspectSession` root views, especially status, avoid global JSONL lineage traversal
+  while related/delegation and scope-handle reads retain bounded lineage scanning and revalidation.
+  Status: draft.
 - [Listener-scoped workspace authority](listener-scoped-workspace-authority.md) — historical
   draft superseded by ADR 0291's path-free contract; retained for context and excluded from
   strict traceability. Status: draft.
