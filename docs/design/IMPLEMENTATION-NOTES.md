@@ -8266,6 +8266,33 @@ releases client resources and removes the runtime directory, but `isRunning()` p
 the already-observed child. Ordinary `connect()` construction supplies no daemon hooks and therefore
 has no process or runtime-directory authority.
 
+The one-shot layer is `sdk/typescript/src/query.ts`. Its public options keep the three ownership
+domains separate: `session` is passed to `Client.sessions.create`, `spawn` is consulted only when
+there is no supplied client, and `onPermissionAsk` configures the existing `Run` responder. The
+module-internal `queryInternal` options bag replaces only the spawn function for tests; no launcher
+or resource seam enters the `./node` barrel. Plan mode is checked from the requested session mode
+before that seam is invoked and raises the existing `UnsupportedFeatureError` for
+`session.resolvePlan()` rather than adding an M4 plan-resolution surface.
+
+`QueryImpl` claims the existing run's event iterator once and exposes the same decoded `Event`
+values plus the created session id. A terminal result cleans up before it is delivered. Iterator
+`return` and the optional abort signal share one cached cleanup promise: they send the run's
+ordinary cancel control, drain through its terminal so `SessionImpl` releases its active-run
+registration, then walk the resource ledger. The session is deleted unless `retainSession` was
+requested; the client is closed only when query created it. Setup has the same ledger in reverse:
+a create failure closes only a newly spawned client, while a run-start failure first deletes its
+already-created session and then closes that client without replacing the original typed error.
+Retention deliberately does not imply durability. With a supplied client the id can be loaded for
+that daemon's remaining lifetime; an SDK-created daemon still stops at query cleanup, and its
+default store is in-memory.
+
+Responder-less ask handling is an injected `PermissionAskResponder`, not a change to
+`sdk/typescript/src/run.ts`. It returns `deny`, emits one frozen
+`query_permission_ask_denied` diagnostic carrying only `askId` and `tool`, and leaves the raw ask
+in the event union. A caller-supplied responder takes the existing M1 path unchanged, including
+its abstention semantics, and a `Run` constructed outside query still leaves an unanswered ask
+pending for `resolveAsk()`.
+
 The M2 durable-watch base lives in `sdk/typescript/src/watch.ts`. Its client-authored `kind`
 turns the generated `{event, cursor, phase}` response into `event | boundary | gap | unknown`;
 known phases narrow, future phases retain their raw string and optional event, and the gap arm

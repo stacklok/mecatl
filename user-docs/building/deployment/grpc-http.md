@@ -60,6 +60,28 @@ structured `diagnostics` callback, while the default writes nothing to `console`
 Use `connect()` instead when another operator or service owns the daemon. A connected client
 never signals a process or removes a server directory.
 
+For a one-shot prompt, `query()` composes the same spawn, session, and run APIs and yields their
+ordinary events:
+
+```ts
+import { query } from "@stacklok/mecatl-sdk/node";
+
+const oneShot = await query("Summarize this repository", {
+  spawn: { binaryPath: "/opt/mecatl/bin/mecated" },
+});
+for await (const event of oneShot) {
+  // Handle the same Event union returned by Session.run().
+}
+```
+
+The default deletes the transient session and stops a daemon it spawned. Pass an existing
+`client` when the daemon must remain available; `retainSession: true` then leaves the session
+loadable by `oneShot.sessionId` for that daemon's lifetime. SDK-spawned daemons use an in-memory
+store unless you configure durable storage, so retention is not a persistence promise. Breaking
+iteration or aborting `signal` still cleans up. Plan mode is refused until the separate plan
+resolution API lands. Without `onPermissionAsk`, an ask is denied and reported through the
+client's structured diagnostics sink while the run continues.
+
 See the detailed gRPC and HTTP
 references for their request, response, privacy, and compatibility contracts.
 

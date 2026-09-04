@@ -246,6 +246,21 @@ terminal local `invalid_state`, emits one diagnostic, and prevents a dead socket
 the later-operation error. See
 [ADR 0292](adr/0292-typescript-sdk-local-daemon-and-tools.md).
 
+The same `./node` entry point exposes `query()` as the one-shot layer over that existing
+`Client`/`Session`/`Run` choreography. `await query(prompt, options)` resolves after session and
+run acceptance to a single-consumption `Query` whose iterator yields the ordinary `Event` union
+and whose `sessionId` identifies the session it created. Reaching the terminal result, returning
+from the iterator early, or aborting its signal drives one cleanup ledger: cancel and drain an
+unfinished run, delete the transient session unless `retainSession` is true, and close a client
+only when the query spawned it. A caller-supplied client therefore stays open while the query's
+default transient session is still deleted. Retention is bounded by the daemon's storage: it is
+useful across calls with a supplied live client, while an SDK-spawned daemon uses an in-memory
+store and is stopped when its owning query finishes. Plan mode is refused before spawning with
+`unsupported_feature` naming `session.resolvePlan()`. With no permission responder, query denies
+an ask, emits one client diagnostic naming the ask and tool, and continues the run; the raw
+`permission.ask` remains in the event stream, and `Run` outside query retains its existing manual
+pending-ask behavior.
+
 The durable-watch foundation uses the generated `WatchSessionEvents` descriptor on
 both transports and decodes each wire frame into a four-arm `WatchEnvelope`:
 `event`, the single replay-to-live `boundary`, cursor-free `gap`, or lossless

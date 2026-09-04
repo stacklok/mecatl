@@ -666,6 +666,24 @@ export class ProtocolError extends MecatlError {
 }
 
 // @public
+export interface Query extends AsyncIterable<Event_2> {
+    readonly sessionId: string;
+}
+
+// @public
+export function query(prompt: PromptInput, options?: QueryOptions): Promise<Query>;
+
+// @public
+export interface QueryOptions {
+    client?: Client;
+    onPermissionAsk?: PermissionAskResponder;
+    retainSession?: boolean;
+    session?: CreateSessionOptions;
+    signal?: AbortSignal;
+    spawn?: SpawnOptions;
+}
+
+// @public
 export interface RawClient {
     features(options?: CallOptions): Promise<ReadonlySet<string>>;
     // (undocumented)

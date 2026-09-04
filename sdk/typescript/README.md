@@ -67,6 +67,31 @@ of a dead-socket transport error. A child exit before readiness is a typed `spaw
 bounded, whole-line-redacted end of stderr. The optional `diagnostics` callback receives one
 structured safe record; without it the SDK never writes to `console`.
 
+## One-shot queries
+
+The Node/Bun entry point also exports `query()`, which composes spawn, session creation, one run,
+and cleanup while yielding the ordinary SDK event union:
+
+```ts
+import { query } from "@stacklok/mecatl-sdk/node";
+
+const oneShot = await query("Summarize this repository", {
+  spawn: { binaryPath: "/opt/mecatl/bin/mecated" },
+});
+for await (const event of oneShot) {
+  console.log(event.kind);
+}
+```
+
+The default deletes the transient session and closes only a client it created. Supplying `client`
+keeps that client and its daemon caller-owned while still deleting the query's session. With a
+supplied client, `retainSession: true` skips deletion and `oneShot.sessionId` can load the session
+for the daemon's remaining lifetime. A daemon created by `query()` is still stopped at cleanup and
+uses an in-memory store by default, so retention does not promise persistence. Signal abort and
+early iterator return follow the same cleanup path. Plan mode is refused with a typed error naming
+`session.resolvePlan()`. Without `onPermissionAsk`, query denies each ask, reports it through the
+client diagnostics sink, and lets the run continue; standalone `Run` behavior is unchanged.
+
 ## Development
 
 Run the SDK gates from the repository root:
