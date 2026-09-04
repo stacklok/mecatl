@@ -11,6 +11,29 @@ inspect the same resolved inventory already exposed through `ListModels`. It let
 choose an exact configured inference target without guessing identifiers or learning from an
 inference failure. It does not change provider identity, selection semantics, or routing.
 
+## Why this first
+
+The repository evidence points to the existing exact pair, not a new model abstraction: `provider_id` +
+`model_id` already form the stable configured inference-target selector. Each configured target has one
+endpoint/API flavor and the adapter/replay behavior that belongs to it, so equal model IDs under
+different targets are intentionally different targets rather than evidence that they can be merged. The
+server and TUI already expose the composition-owned resolved inventory through `ListModels`; the gap
+is that the model-facing agent cannot inspect that same inventory. Anonymous `Subagent.model` is
+intentionally same-target as well: it resolves on the parent's provider, while an explicit named-agent
+provider pin is the separate, existing cross-provider seam ([ADR 0016, provider/model selection and
+per-sub-agent selection](../adr/0016-multi-provider.md#10-per-sub-agent-provider-selection-shipped--both-halves)).
+
+That evidence comes from the repository architecture and ADRs, checked against comparative design
+research without relying on or naming any particular gateway, endpoint, or confidential deployment.
+The plan therefore starts with safe discovery over the shared inventory: it closes the agent-facing
+visibility gap without inventing another selector. Cross-target delegation is deferred because there
+is no demonstrated independent routing lifecycle yet; hiding protocol routes behind a new abstraction
+would require new route-selection, persistence, replay, and migration rules. Grouping, multi-route,
+and composite abstractions are likewise deferred because premature global model grouping could falsely
+imply equivalence. These boundaries follow the fixed-provider/session and two-field selector decisions
+in [ADR 0016](../adr/0016-multi-provider.md) and the live inventory contract in
+[architecture: model inventory](../architecture/providers.md#multi-provider--registry-per-session-routing--model-inventory).
+
 ## Scope cuts
 
 - `provider_id` remains the stable configured inference-target ID. The exact current selection
