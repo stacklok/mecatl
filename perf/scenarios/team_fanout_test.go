@@ -82,7 +82,7 @@ func runTeamFanout(ctx context.Context) agent.TeamOutcome {
 
 	baseEnv := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: scenarioWorkspaceRoot, Revision: scenarioWorkspaceRevision}, base, memledger.New(), nil)
 	sup := agent.NewSupervisor(tm, baseEnv, factory,
-		agent.WithTeamReadLedgerFactory(memledger.New),
+		agent.WithTeamReadLedgerFactory(func() tool.ReadLedger { return memledger.New() }),
 		agent.WithTeamGoal("verify every slice of the codebase reads cleanly"),
 		agent.WithMemberStore(memstore.New()),
 		agent.WithMemberSessionPrefix("perf-team"),
