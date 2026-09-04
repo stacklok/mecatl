@@ -906,10 +906,10 @@ func TestSDKServerEnablers_Scenario8_LifetimePipeRejectsANonPipeDescriptor(t *te
 
 	_, err = openLifetimePipe(int(dup.Fd()))
 	if err == nil {
-		t.Fatal("openLifetimePipe accepted a listening socket, want a startup error: a socket is not a parent-liveness signal")
+		t.Fatal("openLifetimePipe accepted a listening socket, want a startup error: only a connected UNIX-domain stream socketpair endpoint is a parent-liveness signal")
 	}
-	if !strings.Contains(err.Error(), "--lifetime-pipe-fd") || !strings.Contains(err.Error(), "not a pipe") {
-		t.Errorf("error %q must name the flag and say the descriptor is not a pipe", err)
+	if !strings.Contains(err.Error(), "--lifetime-pipe-fd") || !strings.Contains(err.Error(), "connected UNIX-domain stream socketpair endpoint") {
+		t.Errorf("error %q must name the flag and say the listener is not an accepted socketpair endpoint", err)
 	}
 
 	// The descriptor must survive the rejection, and it must survive a GC.

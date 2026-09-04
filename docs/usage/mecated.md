@@ -107,7 +107,7 @@ configuration. See [ADR 0291](../adr/0291-server-owned-session-placement.md).
 | `--http-addr` | `127.0.0.1:8081` | HTTP/SSE listen address (loopback; **unauthenticated unless** the security & transport flags below are set). **EMPTY DISABLES** the HTTP/SSE listener **and the `--metrics-addr` admin listener together** — see the spawned-daemon-hosting note below. |
 | `--grpc-unix-socket` | `""` (off) | absolute path of a UNIX-domain socket to serve gRPC on **instead of a TCP port**; opens **no TCP port**. **Mutually exclusive** with a *configured* `--grpc-addr` (explicit flag or config-file `grpc_addr`) — rejected at startup. The socket is created **owner-only** inside an owner-only (`0700`) directory mecated creates when missing; a **stale** socket from a dead process is removed, one a **live** process is accepting on **refuses the start**. Path length is validated against `sockaddr_un.sun_path` (103 usable bytes on Darwin, 107 on Linux). **See the spawned-daemon-hosting note below.** |
 | `--ready-file` | `""` (off) | absolute path to write a JSON readiness document to, **atomically** (temp file + rename) and only **after** composition and every listener are up — so a spawning parent waits on a path instead of racing a connect loop. Carries pid, transport, bound gRPC/HTTP addresses, and the non-secret compatibility descriptor (`api_major`/`features`/`deployment`) — **never** a credential, TLS detail, or capability set. **See the spawned-daemon-hosting note below.** |
-| `--lifetime-pipe-fd` | `0` (off) | file descriptor of an **inherited** pipe whose read end mecated watches: **EOF means the spawning parent exited or crashed**, and the daemon stops through the ordinary graceful-shutdown path. The parent holds the write end and never writes. `0` disables; `0`/`1`/`2` are the standard streams and are **rejected**. **See the spawned-daemon-hosting note below.** |
+| `--lifetime-pipe-fd` | `0` (off) | file descriptor of an **inherited** pipe read end or connected UNIX-domain stream socketpair endpoint that mecated watches: **EOF means the spawning parent exited or crashed**, and the daemon stops through the ordinary graceful-shutdown path. The parent holds the peer end and never writes. `0` disables; `1`/`2` are standard output/error and are **rejected**. **See the spawned-daemon-hosting note below.** |
 | `--workspace` | current working dir | trusted server-side default local root; embedded/operator configuration only, never accepted from CreateSession clients |
 | `--model` | `""` | model identifier sent to the provider. Empty → the server-configured default (`--default-model`, when set), else the selected provider's built-in default: `gpt-5` (OpenAI), `openai/gpt-5` (OpenRouter), `claude-sonnet-4-6` (Anthropic). |
 | `--default-provider` | `""` | server-configured **deployment-wide default provider** id shared by every client (also on `mecatui`'s embedded server); overrides the built-in provider preference for zero-selector sessions, while a client-side selector still wins. **Fail-fast:** an unknown or unavailable provider refuses startup. |
@@ -610,27 +610,32 @@ There is deliberately **no** `features` identifier for daemon hosting: a client
 cannot query the server before spawning it, and one that has read the ready file
 has already proved the build supports it.
 
-**`--lifetime-pipe-fd`** is the parent-crash path. The parent creates a pipe,
-passes the **read end** to the child as an inherited descriptor, and holds the
-write end **without ever writing to it**. If the parent exits — cleanly, by
-`SIGKILL`, or by crashing — the kernel closes its descriptors, the read end sees
-EOF, and mecated stops through the **same graceful shutdown** a `SIGTERM` takes,
-persisting session state on the way out. The parent has nothing to remember, which
-is what makes it survive a crash rather than only a clean exit.
+**`--lifetime-pipe-fd`** is the parent-crash path. The parent either creates a
+pipe and passes its **read end**, or passes one endpoint of a connected
+UNIX-domain stream socketpair (the shape Node and Bun create for
+`child_process` `stdio: "pipe"`). The child inherits that descriptor while the
+parent holds the other endpoint **without ever writing to it**. If the parent
+exits — cleanly, by `SIGKILL`, or by crashing — the kernel closes its descriptors,
+the child endpoint sees EOF, and mecated stops through the **same graceful
+shutdown** a `SIGTERM` takes, persisting session state on the way out. The parent
+has nothing to remember, which is what makes it survive a crash rather than only
+a clean exit.
 
-Bytes on the pipe are read and **discarded**: this is a liveness signal, never a
-control channel — interpreting bytes on it would hand an unauthenticated local
-writer a way to steer the daemon. A parent that does send a heartbeat is therefore
-tolerated rather than mistaken for a dead one. `0` means "not configured", and
-`0`/`1`/`2` are **rejected**: treating stdin's EOF as "the parent died" would stop
-the daemon the moment it was started from any non-interactive shell.
+Bytes on the descriptor are read and **discarded**: this is a liveness signal,
+never a control channel — interpreting bytes on it would hand an unauthenticated
+local writer a way to steer the daemon. A parent that does send a heartbeat is
+therefore tolerated rather than mistaken for a dead one. `0` means "not
+configured"; `1`/`2` are **rejected** so stdout or stderr cannot be mistaken for
+a parent-liveness descriptor.
 
-The descriptor is also checked to be **open** and to be an actual **pipe**, both as
-startup errors. Either mistake would otherwise read as EOF or `ENOTCONN`, which the
-watcher reports as "the parent exited" — so the daemon would start, publish its
-ready file, and vanish milliseconds later. A refusal naming the flag is much easier
-to diagnose. The check is a bare `fstat` that takes no ownership of the descriptor,
-so a rejected fd is left exactly as the caller passed it.
+The descriptor is also checked to be **open** and either a FIFO or a connected
+UNIX-domain stream socketpair endpoint. Regular files, terminals, listening
+sockets, network sockets, and closed descriptors remain startup errors. Those
+mistakes would otherwise read as EOF or `ENOTCONN`, which the watcher reports as
+"the parent exited" — so the daemon would start, publish its ready file, and
+vanish milliseconds later. A refusal naming the flag is much easier to diagnose.
+The check takes no ownership of the descriptor, so a rejected fd is left exactly
+as the caller passed it.
 
 ### Observability (the loopback admin listener)
 

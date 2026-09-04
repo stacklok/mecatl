@@ -151,7 +151,7 @@ loopback-only server. Flags not covered here are advanced operator tuning; run
 | `--metrics-addr` | `127.0.0.1:9090` | Prometheus + admin listener; empty disables it |
 | `--grpc-unix-socket` | `""` (off) | Serve gRPC on a UNIX-domain socket instead of a TCP port. Mutually exclusive with a configured `--grpc-addr`. See [Hosting a spawned daemon](#hosting-a-spawned-daemon) |
 | `--ready-file` | `""` (off) | Absolute path to write a JSON readiness document to, atomically, once every listener is up |
-| `--lifetime-pipe-fd` | `0` (off) | File descriptor of an inherited pipe; EOF on it stops the daemon gracefully (the parent-crash path) |
+| `--lifetime-pipe-fd` | `0` (off) | File descriptor of an inherited pipe read end or connected UNIX-domain stream socketpair endpoint; EOF on it stops the daemon gracefully (the parent-crash path) |
 | `--auth-token` | `""` (off) | Bearer token required on every request; also `MECATL_AUTH_TOKEN` |
 | `--tls-cert` | `""` | PEM server certificate; enables TLS on both listeners when paired with `--tls-key` |
 | `--tls-key` | `""` | PEM server private key |
@@ -796,15 +796,17 @@ The file is **not removed on shutdown**: removing it on a graceful exit but not 
 a `SIGKILL` would be a guarantee you could not rely on, so treat it as possibly
 stale and check the `pid`. A restart over the same path overwrites it atomically.
 
-**`--lifetime-pipe-fd`** is the parent-crash path. Create a pipe, pass the read end
-to the child as a descriptor, and hold the write end without ever writing to it. If
-the parent exits — cleanly, or by `SIGKILL`, or by crashing — the kernel closes its
-descriptors, the daemon's read end sees EOF, and it shuts down through the same
-graceful path a `SIGTERM` takes, persisting session state on the way out. The parent
-has nothing to remember. Bytes on the pipe are read and discarded: it is a liveness
-signal, never a control channel. `0`, `1`, and `2` are rejected — treating stdin's
-EOF as "the parent died" would stop the daemon the moment you started it from a
-non-interactive shell.
+**`--lifetime-pipe-fd`** is the parent-crash path. Pass either a pipe's read end
+or one endpoint of a connected UNIX-domain stream socketpair to the child, and
+hold the other endpoint without ever writing to it. Node and Bun create this
+socketpair shape for `child_process` `stdio: "pipe"`. If the parent exits —
+cleanly, by `SIGKILL`, or by crashing — the kernel closes its descriptors, the
+daemon's endpoint sees EOF, and it shuts down through the same graceful path a
+`SIGTERM` takes, persisting session state on the way out. The parent has nothing
+to remember. Bytes are read and discarded: this is a liveness signal, never a
+control channel. Regular files, terminals, listening or network sockets, closed
+descriptors, and nonzero descriptors below 3 are rejected; `0` disables the
+watcher.
 
 All four flags are off by default, and a daemon that sets none of them behaves
 exactly as before.
@@ -923,4 +925,3 @@ unchanged.
 > backend-for-frontend in front of `mecated`: it holds the bearer token
 > server-side, enforces its own Origin/CSRF policy, and never ships a credential
 > to the browser. A token that reaches JavaScript is a token an XSS can take.
-

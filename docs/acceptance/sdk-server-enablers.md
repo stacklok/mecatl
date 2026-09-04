@@ -241,8 +241,8 @@ What a spawned local daemon needs. No proto change; `cmd/mecated` only.
   - verify: `TestSDKServerEnablers_Scenario8_ReadyFileAtomicAndLate`
 - AC8.4: The ready file, startup logs, and startup errors contain no credential or secret-shaped value.
   - verify: `TestSDKServerEnablers_Scenario8_ReadinessCarriesNoSecrets`
-- AC8.5: EOF on the inherited lifetime pipe gracefully stops the daemon — the parent-crash path.
-  - verify: `TestSDKServerEnablers_Scenario8_LifetimePipeEOFStops`
+- AC8.5: EOF on either accepted inherited lifetime descriptor — a FIFO read end or a connected UNIX-domain stream socketpair endpoint — gracefully stops the daemon through the parent-crash path. Regular files, terminals, listening sockets, network sockets, nonzero descriptors below 3, and closed descriptors remain refused; `0` remains the disabled value.
+  - verify: `TestSDKServerEnablers_Scenario8_LifetimePipeEOFStops`, `TestSDKServerEnablers_Scenario8_LifetimeSocketpairEOFStops`, `TestSDKServerEnablers_Scenario8_LifetimePipeIsOptionalAndValidated`, `TestSDKServerEnablers_Scenario8_LifetimePipeRejectsANonPipeDescriptor`, `TestSDKServerEnablers_Scenario8_LifetimeFDStillRejectsFilesAndDevices`
 - AC8.6: A stale socket from a dead process is cleaned up on start; a socket held by a live process is not.
   - verify: `TestSDKServerEnablers_Scenario8_StaleSocketCleanup`
 - AC8.7: The socket is created with owner-only permissions.

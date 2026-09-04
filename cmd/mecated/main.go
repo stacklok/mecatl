@@ -99,9 +99,10 @@ type config struct {
 	// readyFile is the path of the atomically-published readiness document, written
 	// only after composition and every listener are up. Empty writes nothing.
 	readyFile string
-	// lifetimePipeFD is an INHERITED read-end descriptor whose EOF means the
-	// spawning parent died; the daemon then stops through the ordinary shutdown
-	// path. 0 disables it (0/1/2 are the standard streams, never a lifetime pipe).
+	// lifetimePipeFD is an INHERITED pipe read end or connected UNIX-domain
+	// stream socketpair endpoint whose EOF means the spawning parent died; the
+	// daemon then stops through the ordinary shutdown path. 0 disables it
+	// (0/1/2 are the standard streams, never a lifetime descriptor).
 	lifetimePipeFD  int
 	workspace       string
 	model           string
@@ -1534,7 +1535,7 @@ func parseFlagsModeOut(mode commandMode, argv []string, out io.Writer) (*flag.Fl
 	fs.StringVar(&cfg.readyFile, "ready-file", "",
 		"absolute path to write a JSON readiness document to, ATOMICALLY (temp file + rename) and only AFTER composition and every listener are up, so a spawning parent can wait on the path instead of racing a connect loop. Carries the pid, the transport, the bound gRPC/HTTP addresses, and the non-secret compatibility descriptor — never a credential. Empty writes nothing")
 	fs.IntVar(&cfg.lifetimePipeFD, "lifetime-pipe-fd", 0,
-		"file descriptor of an INHERITED pipe whose read end this daemon watches: EOF means the spawning parent exited or crashed, and the daemon then stops through the ordinary graceful-shutdown path. The parent holds the write end and never writes to it — it has nothing to remember. 0 (default) disables; 0/1/2 are the standard streams and are rejected")
+		"file descriptor of an INHERITED pipe read end or connected UNIX-domain stream socketpair endpoint this daemon watches: EOF means the spawning parent exited or crashed, and the daemon then stops through the ordinary graceful-shutdown path. The parent holds the peer end and never writes to it — it has nothing to remember. 0 (default) disables; 1/2 are standard output/error and are rejected")
 	fs.StringVar(&cfg.workspace, "workspace", cwd, "default session workspace root")
 	fs.StringVar(&cfg.model, "model", "", "model identifier sent to the provider (empty: use the provider-appropriate default)")
 	fs.StringVar(&cfg.defaultProvider, "default-provider", "", "server-configured deployment-wide default provider id shared by every client (e.g. openai, openrouter, anthropic); overrides the built-in provider preference for zero-selector sessions while a client-side selector still wins. Validated FAIL-FAST at startup: an unknown or unavailable provider refuses to start")

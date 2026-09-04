@@ -57,9 +57,8 @@ const (
 )
 
 // minLifetimePipeFD is the lowest file descriptor accepted for
-// --lifetime-pipe-fd. 0/1/2 are stdin/stdout/stderr: a parent that passed one
-// of those has made a mistake, and treating stdin's EOF as "the parent died"
-// would stop the daemon the moment it was started from a non-interactive shell.
+// --lifetime-pipe-fd. 0 disables the watcher; 1/2 are stdout/stderr, so a
+// parent that passed either has made a mistake.
 const minLifetimePipeFD = 3
 
 // grpcListener is the bound gRPC listener plus the transport facts the ready
@@ -95,7 +94,7 @@ func validateDaemonHosting(cfg config) error {
 		}
 	}
 	if cfg.lifetimePipeFD != 0 && cfg.lifetimePipeFD < minLifetimePipeFD {
-		return fmt.Errorf("--lifetime-pipe-fd %d is not an inherited pipe: %d/%d/%d are stdin/stdout/stderr; pass the descriptor the parent duplicated (>= %d)",
+		return fmt.Errorf("--lifetime-pipe-fd %d is not an inherited lifetime descriptor: %d/%d/%d are stdin/stdout/stderr; pass the pipe or socketpair descriptor the parent duplicated (>= %d)",
 			cfg.lifetimePipeFD, 0, 1, 2, minLifetimePipeFD)
 	}
 	if cfg.readyFile != "" && !filepath.IsAbs(cfg.readyFile) {
@@ -429,7 +428,7 @@ func writeReadyFile(path string, doc readyDoc) error {
 }
 
 // lifetimePipe is the inherited parent-liveness descriptor. A zero value means
-// no pipe was configured and every method is inert.
+// no descriptor was configured and every method is inert.
 type lifetimePipe struct {
 	file *os.File
 	// closed fires (by closing) when the read side sees EOF or an error: the
@@ -441,11 +440,12 @@ type lifetimePipe struct {
 // and starts watching it (AC8.5).
 //
 // The contract with the parent is the simplest one that survives a CRASH rather
-// than only a clean exit: the parent holds the write end and never writes. It
-// does not have to remember to signal anything — if it dies for any reason, the
-// kernel closes its descriptors, the read end sees EOF, and this daemon stops
-// through the ordinary shutdown path. A parent that is merely finished with the
-// daemon closes the write end deliberately and gets the same result.
+// than only a clean exit: the parent holds the pipe's write end or the socketpair
+// peer and never writes. It does not have to remember to signal anything — if it
+// dies for any reason, the kernel closes its descriptors, the watched endpoint
+// sees EOF, and this daemon stops through the ordinary shutdown path. A parent
+// that is merely finished with the daemon closes its endpoint deliberately and
+// gets the same result.
 //
 // fd 0 means "not configured" and returns an inert value with a nil error.
 //
@@ -481,15 +481,15 @@ func openLifetimePipe(fd int) (lifetimePipe, error) {
 	return p, nil
 }
 
-// Closed returns the channel that closes when the parent's write end goes away.
-// A nil channel (no pipe configured) blocks forever in a select, which is
+// Closed returns the channel that closes when the parent's endpoint goes away.
+// A nil channel (no descriptor configured) blocks forever in a select, which is
 // exactly the inert behaviour a select case wants.
 func (p lifetimePipe) Closed() <-chan struct{} { return p.closed }
 
-// Enabled reports whether a lifetime pipe was configured.
+// Enabled reports whether a lifetime descriptor was configured.
 func (p lifetimePipe) Enabled() bool { return p.file != nil }
 
-// watch drains the pipe until EOF or an error.
+// watch drains the pipe or socketpair endpoint until EOF or an error.
 //
 // It READS rather than merely waiting for readability so that a parent which
 // does write something (a heartbeat, a stray byte) is tolerated instead of
