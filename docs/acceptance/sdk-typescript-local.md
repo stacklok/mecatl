@@ -686,7 +686,7 @@ hand-rolled harness; a `--mock-script` fixture whose turn calls
   batch — two calls in one turn overlap in flight, where a mutating tool is
   dispatched alone. `readOnlyHint` steers dispatch, not permissions, so a
   read-only callback still raises an ask; both halves run the same default
-  posture so the assertion isolates the `readOnly` assertion itself.
+  posture, so the only variable between them is the `readOnly` flag.
   - verify: vitest:sdk/typescript/e2e/tool.e2e.test.ts#cmVhZC1vbmx5IGFuZCBtdXRhdGluZyB0b29scyBib3RoIHJlYWNoIHRoZSBtb2RlbA — `sdk/typescript/e2e/tool.e2e.test.ts :: "read-only and mutating tools both reach the model"`
 - AC10.10: A default (mutating) tool raises a `permission.ask`; an
   `onPermissionAsk` responder allowing it lets the call reach the handler, and a
@@ -707,7 +707,6 @@ hand-rolled harness; a `--mock-script` fixture whose turn calls
   under "Deferred decisions and known risks" so the eventual `RootAuthority`
   widening has a failing test to flip rather than a silent behaviour change.
   - verify: vitest:sdk/typescript/e2e/tool.e2e.test.ts#YSBjYWxsYmFjayB0b29sIGlzIGRlbmllZCBieSB0aGUgZGVmYXVsdCBjYXBhYmlsaXR5LXNldCBldmFsdWF0b3I — `sdk/typescript/e2e/tool.e2e.test.ts :: "a callback tool is denied by the default capability-set evaluator"`
-
 
 ---
 

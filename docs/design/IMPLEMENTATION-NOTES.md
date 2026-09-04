@@ -8257,7 +8257,10 @@ closure. `Symbol.asyncDispose` delegates to the same promise.
 
 The spawned-daemon hook signals only its captured child handle. `SIGTERM` precedes lifetime-end
 release; a bounded grace precedes `SIGKILL`, and a second bound prevents an unresponsive kill from
-wedging disposal. Both stop and directory removal are individually idempotent, so a stop fault
+wedging disposal. Both bounds — and the readiness poll — race a timer against the child's exit, so
+each one aborts its scheduler sleep once the race settles: `Promise.race` does not cancel its loser,
+and a non-unref'd timer that outlives it keeps the host's event loop alive after the SDK's own work
+is done. Both stop and directory removal are individually idempotent, so a stop fault
 cannot skip removal. The ready document's pid stays display-only. The child's exit promise is also
 the post-start death detector: an exit outside close records one frozen `daemon_exited` diagnostic,
 aborts active client-side work, and makes `ClientImpl` retain a local `InvalidStateError` that every

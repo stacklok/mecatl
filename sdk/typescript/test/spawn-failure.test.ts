@@ -401,4 +401,38 @@ describe("spawn startup failure", () => {
 
     expect(sleeps).toBe(settled);
   });
+
+  it("a clean close does not leave the stop grace timer armed", async () => {
+    // Same leak on the shutdown path: close() resolved in milliseconds while the
+    // SIGTERM grace timer held the event loop for its full duration, so an
+    // SDK-backed CLI could not exit for three seconds after its work was done.
+    const aborted: boolean[] = [];
+    const harness = launchHarness();
+    harness.internal.scheduler = {
+      // Short waits are the readiness poll and must progress. The 3s SIGTERM
+      // grace stays pending so the child's exit wins the race, which is exactly
+      // the case that used to leave its timer armed.
+      sleep: (ms: number, signal?: AbortSignal) =>
+        new Promise<void>((resolveWait, rejectWait) => {
+          if (ms < 3_000) {
+            setImmediate(resolveWait);
+            return;
+          }
+          signal?.addEventListener(
+            "abort",
+            () => {
+              aborted.push(true);
+              rejectWait(new Error("aborted"));
+            },
+            { once: true },
+          );
+        }),
+    };
+
+    const client = await spawnInternal({ binaryPath: process.execPath }, harness.internal);
+    await client.close();
+
+    expect(harness.killed).toEqual(["SIGTERM"]);
+    expect(aborted).toEqual([true]);
+  });
 });

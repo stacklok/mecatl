@@ -639,10 +639,29 @@ async function stopProcess(process: LaunchedProcess, scheduler: SpawnScheduler):
   }
   closeLifetime();
 
+  // Same discipline as the readiness poll: Promise.race leaves the losing timer
+  // armed, and a non-unref'd timer keeps the event loop alive. Without the abort
+  // an ordinary close() returned in milliseconds but the process could not exit
+  // for the whole STOP_GRACE_MS.
+  const raceExit = async (ms: number): Promise<boolean> => {
+    const settled = new AbortController();
+    try {
+      return await Promise.race([
+        exited,
+        scheduler.sleep(ms, settled.signal).then(
+          () => false,
+          () => false,
+        ),
+      ]);
+    } finally {
+      settled.abort();
+    }
+  };
+
   let stopped = observedExit;
   if (!stopped) {
     try {
-      stopped = await Promise.race([exited, scheduler.sleep(STOP_GRACE_MS).then(() => false)]);
+      stopped = await raceExit(STOP_GRACE_MS);
     } catch (error) {
       failures.push(error);
     }
@@ -656,7 +675,7 @@ async function stopProcess(process: LaunchedProcess, scheduler: SpawnScheduler):
   }
   if (!stopped) {
     try {
-      stopped = await Promise.race([exited, scheduler.sleep(STOP_KILL_WAIT_MS).then(() => false)]);
+      stopped = await raceExit(STOP_KILL_WAIT_MS);
     } catch (error) {
       failures.push(error);
     }
