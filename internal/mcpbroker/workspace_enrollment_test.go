@@ -172,6 +172,83 @@ func TestWorkspaceCataloguePreservesAuthorizationCapability(t *testing.T) {
 	}
 }
 
+// enrollmentSerialTool implements tool.DispatchSerial on top of enrollmentTool.
+type enrollmentSerialTool struct{ enrollmentTool }
+
+func (*enrollmentSerialTool) DispatchSerialTool() {}
+
+// enrollmentAuthorizationSerialTool implements both tool.AuthorizationRequester
+// and tool.DispatchSerial.
+type enrollmentAuthorizationSerialTool struct{ enrollmentAuthorizationTool }
+
+func (*enrollmentAuthorizationSerialTool) DispatchSerialTool() {}
+
+// enrollmentDisclosableTool implements tool.Disclosable with an Advertised()
+// spec distinct from Spec(), so a passthrough vs. fallback is observable.
+type enrollmentDisclosableTool struct {
+	enrollmentTool
+	advertised tool.ToolSpec
+}
+
+func (t *enrollmentDisclosableTool) Advertised() tool.ToolSpec { return t.advertised }
+
+// enrollmentPlanOnlyTool implements tool.PlanOnly.
+type enrollmentPlanOnlyTool struct{ enrollmentTool }
+
+func (*enrollmentPlanOnlyTool) PlanOnlyTool() {}
+
+func TestWorkspaceCataloguePreservesDispatchSerial(t *testing.T) {
+	source := &enrollmentSerialTool{enrollmentTool{spec: tool.ToolSpec{Name: "serial"}}}
+	catalogue := newCatalogue(t, enrollmentRef(), source)
+	if _, ok := catalogue.Tools()[0].(tool.DispatchSerial); !ok {
+		t.Fatal("frozen wrapper dropped DispatchSerial for a non-authorization tool")
+	}
+
+	authSource := &enrollmentAuthorizationSerialTool{enrollmentAuthorizationTool{enrollmentTool: enrollmentTool{spec: tool.ToolSpec{Name: "serial-auth"}}}}
+	authCatalogue := newCatalogue(t, enrollmentRef(), authSource)
+	wrapped := authCatalogue.Tools()[0]
+	if _, ok := wrapped.(tool.DispatchSerial); !ok {
+		t.Fatal("frozen wrapper dropped DispatchSerial for an authorization tool")
+	}
+	if _, ok := wrapped.(tool.AuthorizationRequester); !ok {
+		t.Fatal("the DispatchSerial variant dropped AuthorizationRequester")
+	}
+
+	nonSerial := &enrollmentTool{spec: tool.ToolSpec{Name: "not-serial"}}
+	if _, ok := newCatalogue(t, enrollmentRef(), nonSerial).Tools()[0].(tool.DispatchSerial); ok {
+		t.Fatal("a non-DispatchSerial source came back implementing DispatchSerial")
+	}
+}
+
+func TestWorkspaceCataloguePreservesDisclosable(t *testing.T) {
+	advertised := tool.ToolSpec{Name: "advertised-name", Description: "safe preview"}
+	source := &enrollmentDisclosableTool{enrollmentTool: enrollmentTool{spec: tool.ToolSpec{Name: "real"}}, advertised: advertised}
+	catalogue := newCatalogue(t, enrollmentRef(), source)
+	d, ok := catalogue.Tools()[0].(tool.Disclosable)
+	if !ok {
+		t.Fatal("frozen wrapper dropped Disclosable")
+	}
+	if got := d.Advertised(); got.Name != advertised.Name || got.Description != advertised.Description {
+		t.Fatalf("Advertised() = %+v, want %+v", got, advertised)
+	}
+
+	nonDisclosable := &enrollmentTool{spec: tool.ToolSpec{Name: "plain", Description: "plain-desc"}}
+	plain, ok := newCatalogue(t, enrollmentRef(), nonDisclosable).Tools()[0].(tool.Disclosable)
+	if !ok {
+		t.Fatal("frozen wrapper does not implement Disclosable at all (Catalog.AdvertisedSpecs needs the fallback)")
+	}
+	if got := plain.Advertised(); got.Name != "plain" || got.Description != "plain-desc" {
+		t.Fatalf("Advertised() fallback for a non-Disclosable source = %+v, want the frozen spec", got)
+	}
+}
+
+func TestWorkspaceCatalogueRejectsPlanOnlyTool(t *testing.T) {
+	source := &enrollmentPlanOnlyTool{enrollmentTool{spec: tool.ToolSpec{Name: "plan-only"}}}
+	if _, err := mcpbroker.NewWorkspaceCatalogue(enrollmentRef(), []tool.Tool{source}); !errors.Is(err, mcpbroker.ErrInvalidWorkspaceCatalogue) {
+		t.Fatalf("NewWorkspaceCatalogue(PlanOnly tool) error = %v, want ErrInvalidWorkspaceCatalogue", err)
+	}
+}
+
 func TestNewWorkspaceCatalogueRejectsInvalidTools(t *testing.T) {
 	var typedNil *enrollmentTool
 	for _, tc := range []struct {

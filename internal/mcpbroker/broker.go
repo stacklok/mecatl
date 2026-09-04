@@ -157,15 +157,32 @@ func NewWorkspaceCatalogue(ref WorkspaceEnrollmentRef, tools []tool.Tool) (Works
 		if nilTool(candidate) {
 			return nil, ErrInvalidWorkspaceCatalogue
 		}
+		if _, planOnly := candidate.(tool.PlanOnly); planOnly {
+			// PlanOnly is a composition-registered, model-visibility marker with
+			// no MCP-protocol equivalent; it cannot legitimately arrive via
+			// discovery. Refuse loudly rather than silently drop the marker.
+			return nil, ErrInvalidWorkspaceCatalogue
+		}
 		spec := cloneToolSpec(candidate.Spec())
 		if !session.ValidWorkspaceEnrollmentToolNames(append(names, spec.Name)) {
 			return nil, ErrInvalidWorkspaceCatalogue
 		}
 		names = append(names, spec.Name)
+		_, serial := candidate.(tool.DispatchSerial)
 		if requester, ok := candidate.(tool.AuthorizationRequester); ok {
-			frozen = append(frozen, &frozenAuthorizationTool{AuthorizationRequester: requester, spec: spec})
+			base := frozenAuthorizationTool{AuthorizationRequester: requester, spec: spec}
+			if serial {
+				frozen = append(frozen, &frozenAuthorizationSerialTool{frozenAuthorizationTool: base})
+			} else {
+				frozen = append(frozen, &base)
+			}
 		} else {
-			frozen = append(frozen, &frozenTool{Tool: candidate, spec: spec})
+			base := frozenTool{Tool: candidate, spec: spec}
+			if serial {
+				frozen = append(frozen, &frozenSerialTool{frozenTool: base})
+			} else {
+				frozen = append(frozen, &base)
+			}
 		}
 	}
 	return &workspaceCatalogue{ref: ref, tools: frozen, toolNames: names}, nil
@@ -197,12 +214,42 @@ type frozenTool struct {
 
 func (t *frozenTool) Spec() tool.ToolSpec { return cloneToolSpec(t.spec) }
 
+// Advertised forwards to the wrapped tool's own Disclosable projection when it
+// has one, so the freeze boundary does not silently widen what the model sees
+// (Catalog.AdvertisedSpecs falls back to Spec() for a non-Disclosable tool,
+// which the frozen spec already serves correctly).
+func (t *frozenTool) Advertised() tool.ToolSpec {
+	if d, ok := t.Tool.(tool.Disclosable); ok {
+		return d.Advertised()
+	}
+	return cloneToolSpec(t.spec)
+}
+
 type frozenAuthorizationTool struct {
 	tool.AuthorizationRequester
 	spec tool.ToolSpec
 }
 
 func (t *frozenAuthorizationTool) Spec() tool.ToolSpec { return cloneToolSpec(t.spec) }
+
+func (t *frozenAuthorizationTool) Advertised() tool.ToolSpec {
+	if d, ok := t.AuthorizationRequester.(tool.Disclosable); ok {
+		return d.Advertised()
+	}
+	return cloneToolSpec(t.spec)
+}
+
+// frozenSerialTool/frozenAuthorizationSerialTool preserve the tool.DispatchSerial
+// marker through the freeze boundary for a source that implements it. Wrapping
+// unconditionally would serialize every broker tool; NewWorkspaceCatalogue
+// selects the *Serial variant only when the source implements the marker.
+type frozenSerialTool struct{ frozenTool }
+
+func (*frozenSerialTool) DispatchSerialTool() {}
+
+type frozenAuthorizationSerialTool struct{ frozenAuthorizationTool }
+
+func (*frozenAuthorizationSerialTool) DispatchSerialTool() {}
 
 func cloneToolSpec(spec tool.ToolSpec) tool.ToolSpec {
 	spec.Schema = append([]byte(nil), spec.Schema...)

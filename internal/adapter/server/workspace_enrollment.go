@@ -63,11 +63,10 @@ func (s *Service) ConnectWorkspaceServices(ctx context.Context, id session.Sessi
 	// The authenticated result is the single snapshot for both executable wrappers
 	// and durable authority. Never re-read Attachment.Tools during this rebuild: a
 	// remote attachment may advance between observation and engine construction.
+	// Read the names from the catalogue's own frozen ToolNames(), never by
+	// re-calling Spec() per tool: the catalogue is the one authoritative source.
 	exactTools := result.Catalogue.Tools()
-	toolNames := make([]string, len(exactTools))
-	for i, candidate := range exactTools {
-		toolNames[i] = candidate.Spec().Name
-	}
+	toolNames := result.Catalogue.ToolNames()
 	release()
 	release = func() {}
 	sel := ProviderSelector{ProviderID: sess.ProviderID, ModelID: sess.ModelID, ReasoningEffort: sess.ReasoningEffort}
