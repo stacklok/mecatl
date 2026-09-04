@@ -80,7 +80,7 @@ fi
 exit 0
 ```
 
-Exit 2 causes mecatl to substitute an error `ToolResult` in place of running the command. The model sees a tool failure, not a silent skip.
+Exit 2 causes Mecatl to substitute an error `ToolResult` in place of running the command. The model sees a tool failure, not a silent skip.
 
 ## Mutation examples
 
@@ -124,7 +124,7 @@ For `PreToolUse`, the permission policy runs on the **original, pre-mutation** a
 
 ## Guardrails: a built-in model-backed hook
 
-Everything above is a **shell** hook you write yourself. mecatl also ships a built-in `PreToolUse`/`PostToolUse` pair that inspects tool content with a dedicated checker **model** instead of a script — a separate "guardrails" layer, off until you point it at a checker model, then on by default with a sensible ruleset (blocking `WebSearch`/`WebFetch`/all MCP tools/`Bash`) rather than empty. It exists for the case a shell hook can't handle well: judging whether a fetched web page looks like a prompt-injection attempt, or whether a tool call is about to exfiltrate a secret. See [Permissions & guardrails](permissions.md#layer-2--model-backed-guardrails) for the full picture, including the approve-once recovery flow when a guardrail blocks something you actually wanted.
+Everything above is a **shell** hook you write yourself. Mecatl also ships a built-in `PreToolUse`/`PostToolUse` pair that inspects tool content with a dedicated checker **model** instead of a script — a separate "guardrails" layer, off until you point it at a checker model, then on by default with a sensible ruleset (blocking `WebSearch`/`WebFetch`/all MCP tools/`Bash`) rather than empty. It exists for the case a shell hook can't handle well: judging whether a fetched web page looks like a prompt-injection attempt, or whether a tool call is about to exfiltrate a secret. See [Permissions & guardrails](permissions.md#layer-2--model-backed-guardrails) for the full picture, including the approve-once recovery flow when a guardrail blocks something you actually wanted.
 
 ## What's next
 

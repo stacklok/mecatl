@@ -1,7 +1,7 @@
 ---
 sidebar_position: 6
 title: Caller identity and OIDC
-description: Configure authenticated caller identity and ownership boundaries for mecatl sessions.
+description: Configure authenticated caller identity and ownership boundaries for Mecatl sessions.
 ---
 
 # Caller identity and OIDC
@@ -98,7 +98,7 @@ JWKS endpoints resolving to private, loopback, link-local, or metadata
 addresses. Initial configuration or key-fetch failure fails closed rather than
 starting an unauthenticated service.
 
-The production validator is a delegated, maintained OIDC/JWT library; mecatl
+The production validator is a delegated, maintained OIDC/JWT library; Mecatl
 does not hand-roll signature verification. A successful JWKS fetch is cached in
 process. During a short IdP outage, the last-good keys may continue to work
 until the staleness limit; after that the service returns `503` until it can
@@ -204,7 +204,7 @@ This distinction is intentional:
 - `mecatequi` and scheduled/headless jobs do not open a browser. Pre-provision a
   short-lived identity or use the deployment's non-interactive credential path.
 - Raw remote store and memory drivers are trusted infrastructure; caller
-  ownership is enforced at the mecatl service edge, not by an unauthenticated
+  ownership is enforced at the Mecatl service edge, not by an unauthenticated
   driver endpoint.
 - A workspace path is not an ownership boundary. Use separate namespaces,
   containers, or operating-system permissions when tenants must not share files.

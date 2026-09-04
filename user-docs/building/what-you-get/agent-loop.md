@@ -138,7 +138,7 @@ On the wire: the gRPC `Converse` stream carries the verdict in a `ResumeApproval
 
 ## Context limits & compaction
 
-mecatl manages the model's context window automatically. Before each turn, it estimates
+Mecatl manages the model's context window automatically. Before each turn, it estimates
 the complete model-visible request: system instructions, ephemeral fragments, persisted
 messages, typed tool results, and advertised tool schemas. If that estimate reaches 80%
 of the model's context window by default, the loop compresses persisted history before
@@ -163,7 +163,7 @@ may still spend tokens on its summarization model. See [Context windows](/featur
 
 ### Where "the model's context window" comes from
 
-The 80%-of-window trigger above needs an actual number to be 80% of, and that number isn't always known up front. mecatl resolves it in this order: an explicit override, then a live provider-reported window, then the embedded model catalog, then a 128k floor for a model it's never heard of. It resolves this **live, at the point of use** — not once at session start — so a background catalog refresh that lands mid-session takes effect on the very next check without restarting anything.
+The 80%-of-window trigger above needs an actual number to be 80% of, and that number isn't always known up front. Mecatl resolves it in this order: an explicit override, then a live provider-reported window, then the embedded model catalog, then a 128k floor for a model it's never heard of. It resolves this **live, at the point of use** — not once at session start — so a background catalog refresh that lands mid-session takes effect on the very next check without restarting anything.
 
 The operator escape hatch is `--context-window-override` (`mecated`/`mecatui`, default off): pin a specific token count when a provider under-reports its own window or sits behind a proxy that does. It moves both the compaction trigger and (in `mecatui`) the context-meter denominator together — a small override value makes the agent compact on nearly every turn, which is useful for stress-testing compaction but not much else.
 

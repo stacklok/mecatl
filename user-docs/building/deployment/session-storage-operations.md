@@ -6,7 +6,7 @@ title: Operate local session storage
 # Operate local session storage
 
 This guide is for a single-user `mecated` daemon with the embedded JSONL store. It keeps the
-executable, operator policy, and plaintext session state at stable paths, and uses mecatl's
+executable, operator policy, and plaintext session state at stable paths, and uses Mecatl's
 management API rather than editing store files. For the storage-management API,
 see the [gRPC reference](https://github.com/stacklok/mecatl/blob/main/docs/usage/grpc-api.md); for the interactive workflow,
 see [mecatui session maintenance](/mecatui/sessions.md#privacy-and-maintenance).
@@ -189,7 +189,7 @@ service stopped.
    configured store path and every ancestor must be physical non-symlink directories; on macOS,
    use the physical `/private/...` spelling instead of `/var/...`.
    A filesystem copy while the daemon is writing is not a supported backup. The stable
-   family flock coordinates cooperating mecatl processes only; it cannot make an
+   family flock coordinates cooperating Mecatl processes only; it cannot make an
    external copy or arbitrary writer consistent. V2 snapshots and sidecars sync where
    supported, but `SnapshotDurability` can report a weaker filesystem, so a successful
    snapshot operation must not be advertised as host-crash safe there. Even when all

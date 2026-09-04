@@ -5,7 +5,7 @@ title: Run mecated standalone
 
 # Run mecated standalone
 
-`mecated` is the standalone composition root for mecatl: parse flags, delegate
+`mecated` is the standalone composition root for Mecatl: parse flags, delegate
 assembly to `internal/app.Build`, and serve the resulting `HarnessService` over
 gRPC and HTTP/SSE concurrently. Auth, TLS/mTLS, rate limiting, observability
 (Prometheus, pprof, OTel traces, the FlightRecorder), and graceful shutdown are
@@ -181,7 +181,7 @@ session — per-caller access control is a separate, later piece of work. Do not
 deploy these flags as a tenancy boundary.
 
 The production OIDC/JWT validator is a delegated, actively-maintained library —
-mecatl never hand-rolls token verification. A bad OIDC
+Mecatl never hand-rolls token verification. A bad OIDC
 configuration, including an unreachable initial key fetch, fails closed at startup
 rather than falling back to unauthenticated traffic. After a successful fetch, the
 last good JWKS can cover a brief IdP outage. `--oidc-max-jwks-staleness=1h` bounds
@@ -328,10 +328,10 @@ ToolHive config detected by one operator's process shouldn't surprise another.
 There are two routing modes for how the `toolhive` provider reaches the gateway,
 selected by `--toolhive-llm-mode` (default `auto`):
 
-- **Proxy mode** (the original path): mecatl talks to a local reverse proxy
+- **Proxy mode** (the original path): Mecatl talks to a local reverse proxy
   (`thv llm proxy`, loopback `127.0.0.1:<port>/v1`) that holds the credential and
   forwards to the real `gateway_url`. The proxy must be running.
-- **Direct mode** (`auto` when configured, or `--toolhive-llm-mode direct`): mecatl
+- **Direct mode** (`auto` when configured, or `--toolhive-llm-mode direct`): Mecatl
   imports ToolHive as a library and talks DIRECTLY to the real `gateway_url` — no local
   proxy hop, no subprocess. The OIDC bearer token is minted and refreshed in-process
   by a per-request HTTP RoundTripper. Get the credential once with
@@ -408,7 +408,7 @@ a checked-in file weakening a security checker would be a downgrade.
 | `--toolhive` | `true` | Discover MCP servers from running ToolHive workloads (fails soft when no container runtime is reachable) |
 | `--toolhive-group` | `""` (default group) | ToolHive group to discover from |
 
-`--mcp-server` uses streaming-HTTP transport only. mecatl never speaks stdio MCP
+`--mcp-server` uses streaming-HTTP transport only. Mecatl never speaks stdio MCP
 directly; ToolHive stdio backends are HTTP-proxied and fine. A `mecatui connect … debug
 SESSION_ID --debug-mcp NAME` session can borrow only the named server's direct tools. The
 selection and exact direct tool set persist across restart; any addition, removal, or rename
@@ -452,7 +452,7 @@ paths, and goroutine stacks — never expose this listener off-loopback.
 
 ## The trust model
 
-mecatl exposes command and file execution. The security model has three layers:
+Mecatl exposes command and file execution. The security model has three layers:
 
 1. **Network binding.** Both listeners default to `127.0.0.1` — the loopback
    interface. No traffic crosses the machine.
@@ -468,7 +468,7 @@ mecatl exposes command and file execution. The security model has three layers:
    encrypts traffic and authenticates the server, but does not authenticate callers.
 
 A non-loopback bind with no auth is **permitted** (a service mesh may legitimately
-front mecatl) but generates a prominent startup warning:
+front Mecatl) but generates a prominent startup warning:
 
 ```
 WARN  API bound to a NON-loopback address with NO caller authentication: it exposes
@@ -893,7 +893,7 @@ to a host that was never vetted. Servers you configure yourself are unaffected.
 
 One rule holds regardless of topology: transport is streaming-HTTP only. A `stdio`
 entry — or an untyped one carrying a `command` — and an `sse` entry are rejected as
-malformed requests everywhere, because mecatl never spawns an MCP server process.
+malformed requests everywhere, because Mecatl never spawns an MCP server process.
 Header values are never written to logs, never carried in an event, and never
 echoed in an error.
 

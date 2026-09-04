@@ -5,7 +5,7 @@ title: SessionStore & EventLog
 
 # SessionStore & EventLog
 
-mecatl's persistence layer exposes two ports: `port.SessionStore` and `port.EventLog`. Both live in `engine/port/` and have no dependency on adapters or infrastructure — they are pure Go interfaces the engine consumes through injection.
+Mecatl's persistence layer exposes two ports: `port.SessionStore` and `port.EventLog`. Both live in `engine/port/` and have no dependency on adapters or infrastructure — they are pure Go interfaces the engine consumes through injection.
 
 The two are distinct by design. The store is snapshot-based: each `Save` captures the full current state; `Load` restores a live `*session.Session` from the most recent snapshot. The event log is append-only: the relay records every event the loop emits in chronological order, and `Read` streams them back. Neither depends on the other; they are wired independently in composition.
 
@@ -250,7 +250,7 @@ The backend for `mecak8s` (the storage-free, Kubernetes-native composition root)
 
 ## Event-sourced Load
 
-mecatl's own adapters use the snapshot model: `Save` writes a full snapshot; `Load` deserializes it. But a host whose system of record is an append-only event log can implement `port.SessionStore.Load` by **folding** the event stream into a `*session.Session` instead.
+Mecatl's own adapters use the snapshot model: `Save` writes a full snapshot; `Load` deserializes it. But a host whose system of record is an append-only event log can implement `port.SessionStore.Load` by **folding** the event stream into a `*session.Session` instead.
 
 The reference implementation is `engine/adapter/eventsource.Fold`:
 
@@ -287,7 +287,7 @@ A fold reconstructs the structural conversation faithfully and is byte-identical
 
 `EvReasoningDelta` carries a human-readable reasoning *summary*, which the loop deliberately never places on `Message.Reasoning` — a fold must not do so either.
 
-For plain-chat providers (including `mockllm`) those fields are empty and the fold is byte-identical. For reasoning providers (OpenAI, Anthropic) the fold produces a structurally correct but not byte-identical conversation. This is why mecatl's own resume uses the snapshot; the fold is for event-log-SoR hosts that accept this boundary or carry those fields in their own richer event schema.
+For plain-chat providers (including `mockllm`) those fields are empty and the fold is byte-identical. For reasoning providers (OpenAI, Anthropic) the fold produces a structurally correct but not byte-identical conversation. This is why Mecatl's own resume uses the snapshot; the fold is for event-log-SoR hosts that accept this boundary or carry those fields in their own richer event schema.
 
 This is a documented contract limitation, not a bug. See `engine/COMPATIBILITY.md` and ADR 0038.
 

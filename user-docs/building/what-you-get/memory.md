@@ -5,12 +5,12 @@ title: Memory & knowledge
 
 # Memory & knowledge
 
-This is the builder-facing map of mecatl's memory-adjacent systems and their
+This is the builder-facing map of Mecatl's memory-adjacent systems and their
 ports. For user-facing configuration and workflows, see [Skills, commands, and
 soul](/features/skills-commands-and-soul.md), [Learning](/features/learning.md),
 and [Dreaming and memory consolidation](/features/dreaming.md).
 
-mecatl ships three distinct memory-adjacent systems out of the box. Each solves a different problem and they don't overlap:
+Mecatl ships three distinct memory-adjacent systems out of the box. Each solves a different problem and they don't overlap:
 
 | System | Problem it solves |
 |--------|------------------|
@@ -100,7 +100,7 @@ The first scope operates on the project store and the `*UserMemory` scope operat
 
 ### Semantic recall
 
-mecatl ships **BM25 lexical search** (`SearchMemory`) as the recall backstop. Full semantic/embedding recall (vector search) is explicitly deferred — there is no embedding backend required and no vectors are stored. BM25 is the only search mode available today.
+Mecatl ships **BM25 lexical search** (`SearchMemory`) as the recall backstop. Full semantic/embedding recall (vector search) is explicitly deferred — there is no embedding backend required and no vectors are stored. BM25 is the only search mode available today.
 
 ---
 
@@ -127,7 +127,7 @@ The soul file is free-form Markdown. A missing, empty, oversized (> 20 KiB), or 
 
 **Project-sourced soul.** A project can provide a soul at `<workspace>/.mecatl/soul.md`. This file is untrusted by default and contributes nothing unless `--trust-project` is set. If both a user-scoped soul and a project soul are present, the user-scoped soul always wins and the project soul is ignored.
 
-**Drift detection.** mecatl keeps a hash baseline of the soul body in a sidecar file (`<soul-path>.sha256`). On first load the baseline is written (trust-on-first-use). On subsequent loads, a hash mismatch logs a warning and still loads the soul. Use `--approve-soul` after an intentional edit to silence the warning, or `--soul-strict` to refuse a drifted soul.
+**Drift detection.** Mecatl keeps a hash baseline of the soul body in a sidecar file (`<soul-path>.sha256`). On first load the baseline is written (trust-on-first-use). On subsequent loads, a hash mismatch logs a warning and still loads the soul. Use `--approve-soul` after an intentional edit to silence the warning, or `--soul-strict` to refuse a drifted soul.
 
 ---
 
@@ -173,7 +173,7 @@ learning:
     max_tokens_per_principal: 50000
 ```
 
-After an eligible main-session completion, mecatl scores only evidence in the verified current
+After an eligible main-session completion, Mecatl scores only evidence in the verified current
 run. Balanced requires 4 points (conservative 6, eager 3); modifiers cannot admit by
 themselves. A genuine current principal-authored prompt that affirmatively asks to remember or
 learn/create a procedure is a hard trigger on the exact clean terminal set, but negation,

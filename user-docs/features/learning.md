@@ -68,7 +68,7 @@ learning, raise autonomy, or weaken assurance. The legacy
 
 ## What can be learned
 
-After an eligible main-session completion, mecatl evaluates evidence from the
+After an eligible main-session completion, Mecatl evaluates evidence from the
 verified current run. Explicit procedure authority was the first durable slice: only a
 genuine current principal-authored imperative to create, make, build, learn, save, or turn
 a workflow into a skill is a hard admission signal, and only on the documented clean
@@ -195,7 +195,7 @@ permissions or tools.
   lifecycle-capable project memory store. Candidates from other roots can remain
   staged but cannot approve, undo, or write launch-root project memory.
 - Remote stores must advertise the lifecycle operations required by the action;
-  mecatl does not silently replace a missing lifecycle operation with an
+  Mecatl does not silently replace a missing lifecycle operation with an
   unconditional legacy write.
 - Automatic learning is not semantic or embedding search. No vector database or
   external embedding service is required or supported by this path.

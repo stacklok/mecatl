@@ -5,9 +5,9 @@ title: Scheduled tasks
 
 # Scheduled tasks
 
-Scheduled tasks let an operator register a saved prompt to run on a cron cadence or once at a future time, and have mecatl drive that run **autonomously, durably, and with at-most-once slot claiming** across a multi-replica deployment — with no human present at fire time.
+Scheduled tasks let an operator register a saved prompt to run on a cron cadence or once at a future time, and have Mecatl drive that run **autonomously, durably, and with at-most-once slot claiming** across a multi-replica deployment — with no human present at fire time.
 
-This exists because every other run in mecatl starts with a human (or a client) sending a prompt. Unattended deployments — a nightly digest, an hourly heartbeat, a one-shot reminder — need a way to fire a prompt on a schedule without a human to approve a tool call, re-issue a prompt, or recover a stalled turn. So a fire is bounded (subagent-grade limits), posture-pinned (an explicit mutating opt-in, never "the schedule runs in yolo"), and recoverable through the same run-entry seams a human-driven run uses.
+This exists because every other run in Mecatl starts with a human (or a client) sending a prompt. Unattended deployments — a nightly digest, an hourly heartbeat, a one-shot reminder — need a way to fire a prompt on a schedule without a human to approve a tool call, re-issue a prompt, or recover a stalled turn. So a fire is bounded (subagent-grade limits), posture-pinned (an explicit mutating opt-in, never "the schedule runs in yolo"), and recoverable through the same run-entry seams a human-driven run uses.
 
 Scheduled tasks are a **composition-layer** subsystem — no change to `engine/agent`. Each fire mints a fresh, bounded session and drives it through the ordinary run-entry funnel; the tick loop, cron parsing, and leader-lease acquisition all live in composition, not the loop.
 

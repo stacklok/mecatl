@@ -10,7 +10,7 @@ Session snapshots and the durable event log live in Redis, while Kubernetes
 Leases coordinate session ownership. That makes the pod disposable without
 making the session disposable.
 
-A mecatl deployment is "cloud-native" when it satisfies three properties: the process holds no irreplaceable state, all durable state lives outside the process, and the record of what happened survives process death. This page defines those three properties, maps each deployment shape against them, walks the four delivery phases that shipped them, and explains what the properties mean for operators.
+A Mecatl deployment is "cloud-native" when it satisfies three properties: the process holds no irreplaceable state, all durable state lives outside the process, and the record of what happened survives process death. This page defines those three properties, maps each deployment shape against them, walks the four delivery phases that shipped them, and explains what the properties mean for operators.
 
 ---
 
@@ -170,7 +170,7 @@ The loop never imports `port.SessionLease`. Acquire, renew, and release are enti
 
 mecak8s (`cmd/mecak8s`) is the **reference cloud-native deployment**. It is a thin peer of `cmd/mecated` that composes `app.Build` with Kubernetes-native defaults:
 
-- Redis as both session store and event log (`internal/adapter/redisstore`) — no PVC on anything mecatl owns.
+- Redis as both session store and event log (`internal/adapter/redisstore`) — no PVC on anything Mecatl owns.
 - Kubernetes `coordination.k8s.io/v1` lease per session (`internal/adapter/k8slease`).
 - `--headless` on, `--posture auto` by default.
 - SIGTERM triggers `Service.Drain()` (an `atomic.Bool draining` flag checked at `acquireLease`, returning `ErrUnavailable` / HTTP 503), then a bounded `GracefulStop` (30s, then `grpcSrv.Stop()` fallback). In-flight runs are cancelled, not drained, and `Recover`-able on the successor.

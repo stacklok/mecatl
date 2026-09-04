@@ -1,7 +1,7 @@
 ---
 sidebar_position: 12
 title: Project instructions and rules
-description: Control how trusted project instructions and .claude/rules guide mecatl runs.
+description: Control how trusted project instructions and .claude/rules guide Mecatl runs.
 ---
 
 # Project instructions and rules
@@ -48,7 +48,7 @@ operator configuration, a hook, or a permission policy.
 
 ## Project rules
 
-Rules are individual Markdown files under `.claude/rules/` or the mecatl-native
+Rules are individual Markdown files under `.claude/rules/` or the Mecatl-native
 `.mecatl/rules/` directory. A rule name comes from its filename; it does not
 need a `name:` field:
 

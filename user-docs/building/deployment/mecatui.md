@@ -35,7 +35,7 @@ The manifest (`cmd/mecatui/kodata/agent.yaml`) declares:
 
 - `command: ["mecatui"]` — the in-image entrypoint.
 - `env_forward` of `OPENROUTER_API_KEY`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`,
-  and `OPENCODE_API_KEY` — mecatl auto-detects the provider from whichever key
+  and `OPENCODE_API_KEY` — Mecatl auto-detects the provider from whichever key
   is set.
 - `mcp.mode: env` and `egress_profile: standard` with egress allowed to
   `api.anthropic.com`, `openrouter.ai`, `api.openai.com`, and `opencode.ai` on

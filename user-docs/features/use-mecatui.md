@@ -1,12 +1,12 @@
 ---
 sidebar_position: 5
 title: Use mecatui
-description: Use the mecatl terminal UI to work with sessions, models, tools, and approvals.
+description: Use the Mecatl terminal UI to work with sessions, models, tools, and approvals.
 ---
 
 # Use mecatui
 
-`mecatui` is mecatl's interactive terminal client. It is a skin over the shared
+`mecatui` is Mecatl's interactive terminal client. It is a skin over the shared
 agent/server core: bare `mecatui` hosts an embedded `mecated` server in the same
 process, while `mecatui connect ADDRESS` displays and controls a server that is
 already running.

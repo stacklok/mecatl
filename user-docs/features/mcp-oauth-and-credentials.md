@@ -106,7 +106,7 @@ or resource — run login again. To roll back, replace the whole profile with
 ## Environment-backed credentials
 
 For Kubernetes and other managed deployments, use an environment-backed OAuth
-record. Provision the opaque record and its secret outside mecatl, inject it
+record. Provision the opaque record and its secret outside Mecatl, inject it
 into the process, and restart after rotation. The environment reader is
 read-only; `mecated mcp login` cannot populate or update it.
 
@@ -150,7 +150,7 @@ environment-variable name.
 - A connection drop can trigger one bounded reconnect and retry. A server-declared
   tool failure is not replayed automatically because the call may have mutated
   remote state. The startup tool catalog is retained across reconnects; changed
-  remote tool lists take effect after the next mecatl process start.
+  remote tool lists take effect after the next Mecatl process start.
 - Treat the local credential store and configuration backups as sensitive. Keep
   roots owner-only and use your deployment's secret manager for rotation.
 

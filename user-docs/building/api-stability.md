@@ -5,7 +5,7 @@ title: API stability
 
 # API stability
 
-`github.com/stacklok/mecatl/engine` is the importable core of mecatl (ADR 0036). It ships as its own Go module with a small dependency closure (`doublestar`, `robfig/cron/v3`, `github.com/goccy/go-yaml`, `x/net`, and `x/sync`; test-only `goleak`) so external consumers do not pull mecatl's full require cone — no LLM SDKs, no gRPC, no TUI stack. This page describes what the public surface covers, what is explicitly excluded, how changes are versioned, and how the three enforcement gates catch accidental breaks before they reach a consumer.
+`github.com/stacklok/mecatl/engine` is the importable core of Mecatl (ADR 0036). It ships as its own Go module with a small dependency closure (`doublestar`, `robfig/cron/v3`, `github.com/goccy/go-yaml`, `x/net`, and `x/sync`; test-only `goleak`) so external consumers do not pull Mecatl's full require cone — no LLM SDKs, no gRPC, no TUI stack. This page describes what the public surface covers, what is explicitly excluded, how changes are versioned, and how the three enforcement gates catch accidental breaks before they reach a consumer.
 
 ---
 
@@ -45,7 +45,7 @@ Exported methods and interface methods are enumerated in full.
 | `engine/arch` | Test-support only: the layering proofs and the `arch.CorePackages` list. |
 | Root module (`internal/`, `cmd/`, `contracts/`, `perf/`) | Outside the engine module boundary (ADR 0036). No external compatibility promise applies. |
 
-The `engine/adapter/*` exclusion matters in practice: if you embed mecatl, you may use `engine/adapter/mockllm` and `engine/adapter/memfs` in your own tests, but you should treat them as a convenience, not a stable dependency. Their signatures can change in any minor release. The port interfaces those adapters implement — in `engine/port` and `engine/tool` — are what the contract actually guarantees.
+The `engine/adapter/*` exclusion matters in practice: if you embed Mecatl, you may use `engine/adapter/mockllm` and `engine/adapter/memfs` in your own tests, but you should treat them as a convenience, not a stable dependency. Their signatures can change in any minor release. The port interfaces those adapters implement — in `engine/port` and `engine/tool` — are what the contract actually guarantees.
 
 ---
 
@@ -129,7 +129,7 @@ The `go/types` object strings the gate renders are stable across Go **patch** ve
 
 ## Event-sourced `Load` contract
 
-mecatl persists a session as a snapshot (`engine/adapter/sessnap`). A host whose system of record is an append-only event log may instead implement `port.SessionStore.Load` by folding its event stream into a `*session.Session`. The reference implementation is `engine/adapter/eventsource.Fold`; ADR 0038 records the design decision.
+Mecatl persists a session as a snapshot (`engine/adapter/sessnap`). A host whose system of record is an append-only event log may instead implement `port.SessionStore.Load` by folding its event stream into a `*session.Session`. The reference implementation is `engine/adapter/eventsource.Fold`; ADR 0038 records the design decision.
 
 ### What a fold MUST populate vs. what is safe to lose
 
@@ -158,7 +158,7 @@ The conversation a fold rebuilds is complete **except for provider-private opaqu
 
 The `EvReasoningDelta` event carries a human-readable reasoning summary; the loop deliberately never places that on `Message.Reasoning`, and a fold must not either.
 
-A session reconstructed by folding mecatl's own event stream is therefore **byte-identical-replay faithful only for providers that do not use those fields**. It replays cleanly for plain-chat providers (e.g. the mock provider) but not for a reasoning provider whose `Reasoning`/`ProviderPhase`/`ItemID` would be empty where the snapshot carries them. This is why mecatl's own resume uses the snapshot, which carries those fields. A fold is the right implementation for event-log-SoR hosts that accept this boundary or carry those fields in their own richer event schema. It is a documented contract limitation, not a bug.
+A session reconstructed by folding Mecatl's own event stream is therefore **byte-identical-replay faithful only for providers that do not use those fields**. It replays cleanly for plain-chat providers (e.g. the mock provider) but not for a reasoning provider whose `Reasoning`/`ProviderPhase`/`ItemID` would be empty where the snapshot carries them. This is why Mecatl's own resume uses the snapshot, which carries those fields. A fold is the right implementation for event-log-SoR hosts that accept this boundary or carry those fields in their own richer event schema. It is a documented contract limitation, not a bug.
 
 ---
 
