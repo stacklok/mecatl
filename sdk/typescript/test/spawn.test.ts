@@ -26,6 +26,7 @@ interface CapturedLaunch {
   env: NodeJS.ProcessEnv;
   executable: string;
   shell: false;
+  stdio: readonly ["ignore", "ignore", "pipe"] | readonly ["ignore", "ignore", "pipe", "pipe"];
 }
 
 interface FakeProcessRecord {
@@ -65,6 +66,19 @@ function routerTransport(): Transport {
       getCompatibilityInfo: () => ({ apiMajor: 1 }),
     });
   });
+}
+
+function readyDocument(socketPath: string, overrides: Record<string, unknown> = {}): object {
+  return {
+    schema: "mecated-ready/1",
+    pid: 4242,
+    transport: "unix",
+    grpc_address: socketPath,
+    socket_path: socketPath,
+    api_major: 1,
+    features: ["mcp_servers_on_create"],
+    ...overrides,
+  };
 }
 
 function launchHarness(options: { autoReady?: boolean; document?: object } = {}): LaunchHarness & {
@@ -115,9 +129,7 @@ function launchHarness(options: { autoReady?: boolean; document?: object } = {})
           setImmediate(() => {
             void writeFile(
               readyFile,
-              JSON.stringify(
-                options.document ?? { schema: "mecated-ready/1", socket_path: socketPath },
-              ),
+              JSON.stringify(options.document ?? readyDocument(socketPath)),
             );
           });
         }
@@ -285,10 +297,7 @@ describe("spawn", () => {
     expect(harness.dials).toEqual([]);
 
     const publishedSocket = join(testRoot, "published-by-daemon.sock");
-    await writeFile(
-      readyFile,
-      JSON.stringify({ schema: "mecated-ready/1", socket_path: publishedSocket }),
-    );
+    await writeFile(readyFile, JSON.stringify(readyDocument(publishedSocket)));
     const client = await spawning;
     expect(harness.dials).toEqual([publishedSocket]);
     await client.close();

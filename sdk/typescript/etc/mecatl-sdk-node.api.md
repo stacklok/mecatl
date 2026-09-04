@@ -199,6 +199,15 @@ export class CursorScopeError extends MecatlError {
 }
 
 // @public
+export interface DaemonInfo {
+    readonly apiMajor: number;
+    readonly features: readonly string[];
+    readonly pid: number;
+    readonly socketPath: string;
+    readonly transport: "unix";
+}
+
+// @public
 export type ErrorOrigin = TransportKind | "local";
 
 // @public
@@ -799,12 +808,20 @@ export interface Sessions {
 }
 
 // @public
-export function spawn(options?: SpawnOptions): Promise<Client>;
+export function spawn(options?: SpawnOptions): Promise<SpawnedClient>;
+
+// @public
+export interface SpawnedClient extends Client {
+    readonly daemon: DaemonInfo;
+}
 
 // @public
 export interface SpawnOptions {
     args?: readonly string[];
     binaryPath?: string;
+    env?: Readonly<NodeJS.ProcessEnv>;
+    http?: boolean;
+    lifetimePipe?: boolean;
     readinessTimeoutMs?: number;
 }
 

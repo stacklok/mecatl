@@ -17,6 +17,7 @@ const DARWIN_SUN_PATH_BYTES = 104;
 const DEFAULT_READINESS_TIMEOUT_MS = 30_000;
 const READY_POLL_INTERVAL_MS = 20;
 const STOP_GRACE_MS = 3_000;
+const HTTP_LOOPBACK_ADDRESS = "127.0.0.1:0";
 
 const SDK_OWNED_FLAGS = [
   "--grpc-unix-socket",
@@ -32,8 +33,34 @@ export interface SpawnOptions {
   args?: readonly string[];
   /** Explicit mecated executable. Resolution otherwise uses MECATED_BIN, then PATH. */
   binaryPath?: string;
+  /** Environment overrides merged over the parent process environment. */
+  env?: Readonly<NodeJS.ProcessEnv>;
+  /** Also expose the daemon's HTTP/SSE listener on an ephemeral loopback port. */
+  http?: boolean;
+  /** Disable the inherited parent-liveness descriptor. Enabled by default. */
+  lifetimePipe?: boolean;
   /** Deadline for publication of a complete supported ready document. */
   readinessTimeoutMs?: number;
+}
+
+/** Non-secret facts published by an SDK-owned daemon. @public */
+export interface DaemonInfo {
+  /** The ready document's wire API major. */
+  readonly apiMajor: number;
+  /** Deployment-scoped feature identifiers reported by the daemon. */
+  readonly features: readonly string[];
+  /** The spawned daemon's process identifier. */
+  readonly pid: number;
+  /** The private Unix-domain gRPC socket path. */
+  readonly socketPath: string;
+  /** Spawned clients always use the Unix-domain gRPC transport. */
+  readonly transport: "unix";
+}
+
+/** A Client that owns one locally spawned daemon. @public */
+export interface SpawnedClient extends Client {
+  /** The ready document's non-secret daemon facts. */
+  readonly daemon: DaemonInfo;
 }
 
 interface ProcessExit {
@@ -47,6 +74,7 @@ interface LaunchRequest {
   env: NodeJS.ProcessEnv;
   executable: string;
   shell: false;
+  stdio: readonly ["ignore", "ignore", "pipe"] | readonly ["ignore", "ignore", "pipe", "pipe"];
 }
 
 interface LaunchedProcess {
@@ -89,7 +117,12 @@ interface SpawnInternalOptions {
 
 interface ReadyDocument {
   schema: typeof READY_SCHEMA;
+  api_major: number;
+  features: string[];
+  http_address?: string;
+  pid: number;
   socket_path: string;
+  transport: "unix";
 }
 
 interface RuntimePaths {
@@ -132,7 +165,7 @@ function realLauncher(request: LaunchRequest): LaunchedProcess {
     cwd: request.cwd,
     env: request.env,
     shell: request.shell,
-    stdio: ["ignore", "ignore", "pipe", "pipe"],
+    stdio: [...request.stdio],
   });
   child.stderr?.resume();
 
@@ -296,7 +329,49 @@ async function readReadyDocument(
   if (typeof socketPath !== "string" || socketPath === "") {
     throw localError("spawn_failed", "The ready document does not contain a Unix socket path");
   }
-  return { schema: READY_SCHEMA, socket_path: socketPath };
+  if (document.transport !== "unix") {
+    throw localError("spawn_failed", "The ready document does not describe a Unix transport");
+  }
+  if (!Number.isSafeInteger(document.pid) || Number(document.pid) <= 0) {
+    throw localError("spawn_failed", "The ready document does not contain a valid daemon pid");
+  }
+  if (!Number.isSafeInteger(document.api_major) || Number(document.api_major) <= 0) {
+    throw localError("spawn_failed", "The ready document does not contain a valid API major");
+  }
+  if (
+    !Array.isArray(document.features) ||
+    !document.features.every((feature) => typeof feature === "string")
+  ) {
+    throw localError("spawn_failed", "The ready document does not contain a valid feature list");
+  }
+  if (document.http_address !== undefined && typeof document.http_address !== "string") {
+    throw localError("spawn_failed", "The ready document contains an invalid HTTP address");
+  }
+  return {
+    schema: READY_SCHEMA,
+    api_major: Number(document.api_major),
+    features: [...document.features],
+    ...(document.http_address === undefined ? {} : { http_address: document.http_address }),
+    pid: Number(document.pid),
+    socket_path: socketPath,
+    transport: "unix",
+  };
+}
+
+function withDaemonInfo(client: Client, ready: ReadyDocument): SpawnedClient {
+  const daemon: DaemonInfo = Object.freeze({
+    apiMajor: ready.api_major,
+    features: Object.freeze([...ready.features]),
+    pid: ready.pid,
+    socketPath: ready.socket_path,
+    transport: ready.transport,
+  });
+  Object.defineProperty(client, "daemon", {
+    configurable: false,
+    enumerable: true,
+    get: () => daemon,
+  });
+  return client as SpawnedClient;
 }
 
 async function waitForReady(
@@ -336,7 +411,7 @@ async function stopProcess(process: LaunchedProcess, scheduler: SpawnScheduler):
 export async function spawnInternal(
   options: SpawnOptions = {},
   internal: SpawnInternalOptions = {},
-): Promise<Client> {
+): Promise<SpawnedClient> {
   const platform = internal.platform ?? process.platform;
   if (platform === "win32") {
     throw localError(
@@ -348,7 +423,7 @@ export async function spawnInternal(
   const args = options.args ?? [];
   validateExtraArguments(args);
   const fileSystem: SpawnFileSystem = { ...defaultFileSystem, ...internal.fileSystem };
-  const env = internal.env ?? process.env;
+  const env = { ...(internal.env ?? process.env), ...options.env };
   const executable = await resolveBinary(options, env, fileSystem);
   const timeoutMs = options.readinessTimeoutMs ?? DEFAULT_READINESS_TIMEOUT_MS;
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
@@ -383,16 +458,16 @@ export async function spawnInternal(
   };
 
   try {
+    const lifetimePipe = options.lifetimePipe ?? true;
     const daemonArgs = [
       "serve",
       "--grpc-unix-socket",
       runtime.socketPath,
       "--http-addr",
-      "",
+      options.http === true ? HTTP_LOOPBACK_ADDRESS : "",
       "--ready-file",
       runtime.readyFile,
-      "--lifetime-pipe-fd",
-      "3",
+      ...(lifetimePipe ? ["--lifetime-pipe-fd", "3"] : []),
       ...args,
     ];
     child = launcher({
@@ -401,6 +476,7 @@ export async function spawnInternal(
       env,
       executable,
       shell: false,
+      stdio: lifetimePipe ? ["ignore", "ignore", "pipe", "pipe"] : ["ignore", "ignore", "pipe"],
     });
 
     const ready = await Promise.race([
@@ -420,13 +496,16 @@ export async function spawnInternal(
     const transport = (
       internal.createTransport ?? ((socketPath) => createNodeTransport({ socketPath }))
     )(ready.socket_path);
-    return connectTransport({
-      afterClose: cleanup,
-      owned: true,
-      transport,
-      transportKind: "grpc",
-      visibility: false,
-    });
+    return withDaemonInfo(
+      connectTransport({
+        afterClose: cleanup,
+        owned: true,
+        transport,
+        transportKind: "grpc",
+        visibility: false,
+      }),
+      ready,
+    );
   } catch (error) {
     await cleanup();
     if (error instanceof MecatlError) throw error;
@@ -435,6 +514,6 @@ export async function spawnInternal(
 }
 
 /** Starts one local mecated daemon and resolves after its ready-file barrier. @public */
-export function spawn(options: SpawnOptions = {}): Promise<Client> {
+export function spawn(options: SpawnOptions = {}): Promise<SpawnedClient> {
   return spawnInternal(options);
 }

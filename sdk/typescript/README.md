@@ -41,13 +41,20 @@ daemon, and resolves after the daemon publishes its supported ready document:
 import { spawn } from "@stacklok/mecatl-sdk/node";
 
 await using client = await spawn({ binaryPath: "/opt/mecatl/bin/mecated" });
+console.log(client.daemon.features);
 const session = await client.sessions.create({});
 ```
 
 The SDK does not download a binary or invoke a shell. Its listener, ready-file, and lifetime
 arguments are reserved; `args` can add other `mecated serve` flags but cannot replace those
-owned values. Closing the client stops only the daemon that client spawned and removes its
-private runtime directory.
+owned values. The default daemon exposes only its private Unix socket. `http: true` adds an
+ephemeral loopback HTTP listener, which makes callback-tool session creation unavailable;
+the client reports that capability from `client.daemon.features`. The lifetime endpoint is
+enabled by default so a vanished parent produces EOF in the daemon; `lifetimePipe: false`
+opts out of crash cleanup, while `close()` still stops the child. `env` values override the
+otherwise inherited process environment and are never exposed through `client.daemon`.
+Closing the client stops only the daemon that client spawned and removes its private runtime
+directory.
 
 ## Development
 

@@ -45,6 +45,9 @@ The in-repository TypeScript SDK's `@stacklok/mecatl-sdk/node` entry point provi
 already-installed binary from an explicit `binaryPath`, `MECATED_BIN`, or `PATH`; it never
 downloads one or invokes a shell. The spawned daemon uses a private Unix socket with HTTP
 disabled, and the client is returned only after the daemon publishes its ready document.
+Its `client.daemon` facts come from that document's non-secret allowlist. Setting
+`http: true` adds an ephemeral loopback HTTP listener but removes callback-tool support;
+setting `lifetimePipe: false` opts out of parent-crash cleanup without changing `close()`.
 Closing the client stops that owned process and removes its private runtime directory.
 
 Use `connect()` instead when another operator or service owns the daemon. A connected client

@@ -8196,9 +8196,14 @@ M3's local-daemon root is `sdk/typescript/src/spawn.ts`. `spawn()` is reachable 
 launcher module. Binary resolution is total and ordered: explicit `binaryPath`, then
 `MECATED_BIN`, then an SDK-owned `PATH` walk for `mecated`, with `stat` plus execute-access
 validation before launch and no shell. Caller arguments cannot name the SDK-owned listener,
-ready-file, or lifetime flags. The invariant argv is `serve --grpc-unix-socket <socket>
+ready-file, or lifetime flags. The default argv is `serve --grpc-unix-socket <socket>
 --http-addr "" --ready-file <ready> --lifetime-pipe-fd 3`; it deliberately carries no posture,
-trust, or permission flag.
+trust, or permission flag. `http: true` changes only the SDK-owned HTTP value to
+`127.0.0.1:0`; because the daemon then omits `mcp_servers_on_create`, later tool support
+is derived from the ready document's `features`, never from that option.
+`lifetimePipe: false` omits both the lifetime flag and the fourth stdio entry. Caller
+`env` values are merged over the inherited process environment before binary resolution
+and launch, and that environment is never used to build an outward-facing fact or message.
 
 Each spawn creates a `0700` directory with `mkdtemp`, never adopts a caller-predictable path,
 and holds `ready.json` plus `mecated.sock` there. Socket paths are checked against Darwin's
@@ -8210,13 +8215,18 @@ enter the public API.
 
 Readiness is the atomically published document, not stdout or a speculative dial loop. A
 partial JSON read remains behind the polling barrier; only schema `mecated-ready/1` with a
-non-empty `socket_path` succeeds, and the document path — not the requested path — builds the
-UDS transport. Node's fourth `stdio` pipe is a connected Unix socketpair; the server-side
-validator accepts that exact connected-stream shape as well as a FIFO, so fd 3 now provides the
-parent-death EOF contract without `mkfifo(1)`. `ClientImpl`'s private `afterClose` hook runs
-after owned-transport disposal and lets a spawned client close the lifetime endpoint, stop its
-child handle, and remove the directory without giving ordinary `connect()` clients process
-authority.
+valid pid, Unix transport, non-empty `socket_path`, positive API major and string feature
+list succeeds, and the document path — not the requested path — builds the UDS transport.
+The `./node`-only `SpawnedClient` subtype adds a `daemon` getter whose frozen `DaemonInfo`
+is an explicit five-field projection: pid, transport, socket path, API major and features.
+It excludes the ready document's HTTP address, gRPC-address duplicate, deployment label and
+every unknown future field. Node's fourth `stdio` pipe is a connected Unix socketpair; the
+server-side validator accepts that exact connected-stream shape as well as a FIFO, and the
+child watches its endpoint only for reads, so closing the never-written parent endpoint
+provides the parent-death EOF contract without `mkfifo(1)`. `ClientImpl`'s private
+`afterClose` hook runs after owned-transport disposal and lets a spawned client close the
+lifetime endpoint, stop its child handle, and remove the directory without giving ordinary
+`connect()` clients process authority.
 
 The M2 durable-watch base lives in `sdk/typescript/src/watch.ts`. Its client-authored `kind`
 turns the generated `{event, cursor, phase}` response into `event | boundary | gap | unknown`;

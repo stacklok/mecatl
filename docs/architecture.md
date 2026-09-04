@@ -221,11 +221,18 @@ prove TCP, UDS, HTTP/SSE, asks, cancellation, and stale controls on real wire. S
 The `./node` entry point can also own a local daemon through `spawn()`. It resolves an
 already-installed `mecated` from `binaryPath`, `MECATED_BIN`, then `PATH` without a
 shell; creates a private per-client runtime directory; and launches the fixed UDS-only,
-HTTP-disabled topology. The child inherits fd 3 as a lifetime socketpair, so the daemon
-observes EOF if its Node parent disappears. The client is returned only after a complete
-`mecated-ready/1` file is read, and its transport dials the document's `socket_path`.
-Closing that client closes its transport, stops the owned child, and removes the runtime
-directory; clients made by `connect()` acquire no process ownership. See
+HTTP-disabled topology by default. The child inherits fd 3 as a lifetime socketpair, so
+the daemon observes EOF if its Node parent disappears; `lifetimePipe: false` removes both
+the fd and its flag without changing explicit shutdown. `http: true` opens only an
+ephemeral loopback HTTP listener and honestly costs the deployment-scoped
+`mcp_servers_on_create` feature. The SDK reads that feature truth from the ready document,
+never from its own argv. The client is returned only after a complete `mecated-ready/1`
+file is read, and its transport dials the document's `socket_path`. A `SpawnedClient`'s
+`daemon` getter exposes only the frozen pid, Unix transport, socket path, API major and
+feature list; environment overrides are merged over the inherited parent environment but
+are never projected there. Closing that client closes its transport, stops the owned
+child, and removes the runtime directory; clients made by `connect()` acquire no process
+ownership. See
 [ADR 0292](adr/0292-typescript-sdk-local-daemon-and-tools.md).
 
 The durable-watch foundation uses the generated `WatchSessionEvents` descriptor on
