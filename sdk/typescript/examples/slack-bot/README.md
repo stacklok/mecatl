@@ -92,6 +92,27 @@ export SLACK_ALLOWED_USER_IDS=U0123ABCDEF,U0456GHIJKL   # comma-separated Slack 
 task slack-bot:dev
 ```
 
+### Connecting to a remote, OIDC-gated deployment instead
+
+Point the bot at a real deployed backend (for example the shared staging
+`mecak8s`, `mecak8s.stacklok.dev:443`) instead of a local `mecated` by
+setting `MECATL_GRPC_TLS=true`. This switches the target to `https://` and
+requires an OAuth2 client_credentials M2M credential, which the bot uses to
+mint and refresh a bearer token per call (`src/m2mToken.ts`):
+
+```sh
+export MECATL_GRPC_ADDRESS=mecak8s.stacklok.dev:443
+export MECATL_GRPC_TLS=true
+export MECAK8S_OIDC_TOKEN_URL=https://<okta-org>/oauth2/<auth-server-id>/v1/token
+export MECAK8S_OIDC_CLIENT_ID=...
+export MECAK8S_OIDC_CLIENT_SECRET=...
+# MECAK8S_OIDC_SCOPE defaults to "agent.invoke" (the scope minted for this
+# M2M app on the target's auth server); override only if that differs.
+```
+
+Session placement is server-owned regardless of target (see above) — nothing
+extra to set here for that.
+
 Wait for `mecatl Slack bot is running (Socket Mode)` in the log before
 testing — that's the bot's own readiness signal. If `SLACK_ALLOWED_USER_IDS`
 is unset, the log will warn once that every reachable workspace member has

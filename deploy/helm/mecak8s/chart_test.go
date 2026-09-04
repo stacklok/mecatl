@@ -420,6 +420,131 @@ func TestMecak8sHelmChart_RuntimeArgsAreOptIn(t *testing.T) {
 	}
 }
 
+func TestMecak8sHelmChart_LearningStore(t *testing.T) {
+	base := productionArgs()
+	rendered, err := helm(t, base...)
+	if err != nil {
+		t.Fatalf("render defaults: %v", err)
+	}
+	deployment := deploymentFromRender(t, rendered)
+	container := deployment.Spec.Template.Spec.Containers[0]
+	for _, forbidden := range []string{"--learning-store-url=", "--driver-tls", "MECATL_DRIVER_AUTH_TOKEN", "learning-store-ca", "learning-store-mtls"} {
+		if strings.Contains(rendered, forbidden) {
+			t.Fatalf("default render unexpectedly contains %q", forbidden)
+		}
+	}
+	if len(container.Env) != 0 {
+		t.Fatalf("default learning store environment = %#v, want none", container.Env)
+	}
+
+	for _, tc := range []struct {
+		name    string
+		set     string
+		wantTLS bool
+	}{
+		{
+			name:    "secure in-cluster anonymous",
+			set:     "learning.store.endpoint=learning-driver.default.svc.cluster.local:8443,learning.store.tls.enabled=true",
+			wantTLS: true,
+		},
+		{
+			name: "plaintext anonymous",
+			set:  "learning.store.endpoint=learning-driver.default.svc.cluster.local:8443",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			args := append(append([]string{}, base...), "--set", tc.set)
+			rendered, err := helm(t, args...)
+			if err != nil {
+				t.Fatalf("render anonymous learning store: %v", err)
+			}
+			container := deploymentFromRender(t, rendered).Spec.Template.Spec.Containers[0]
+			if !slices.Contains(container.Args, "--learning-store-url=learning-driver.default.svc.cluster.local:8443") {
+				t.Fatalf("anonymous learning store URL missing from args: %q", container.Args)
+			}
+			if got := slices.Contains(container.Args, "--driver-tls"); got != tc.wantTLS {
+				t.Fatalf("anonymous learning store --driver-tls = %t, want %t: %q", got, tc.wantTLS, container.Args)
+			}
+			if len(container.Env) != 0 || strings.Contains(rendered, "MECATL_DRIVER_AUTH_TOKEN") {
+				t.Fatalf("anonymous learning store environment = %#v, want no driver token", container.Env)
+			}
+		})
+	}
+
+	secure := append([]string{}, base...)
+	secure = append(secure, "--set", strings.Join([]string{
+		"learning.store.endpoint=driver.example.internal:8443",
+		"learning.store.tokenSecret=learning-driver-credentials",
+		"learning.store.tokenKey=bearer-token",
+		"learning.store.tls.enabled=true",
+		"learning.store.tls.caSecret=learning-driver-ca",
+		"learning.store.tls.caKey=ca.pem",
+		"learning.store.tls.mtlsSecret=learning-driver-client",
+		"learning.store.tls.certKey=client.crt",
+		"learning.store.tls.keyKey=client.key",
+	}, ","))
+	rendered, err = helm(t, secure...)
+	if err != nil {
+		t.Fatalf("render secure learning store: %v", err)
+	}
+	deployment = deploymentFromRender(t, rendered)
+	container = deployment.Spec.Template.Spec.Containers[0]
+	for _, want := range []string{
+		"--learning-store-url=driver.example.internal:8443",
+		"--driver-tls",
+		"--driver-tls-ca=/var/run/secrets/learning-store-ca/ca.pem",
+		"--driver-tls-cert=/var/run/secrets/learning-store-mtls/client.crt",
+		"--driver-tls-key=/var/run/secrets/learning-store-mtls/client.key",
+	} {
+		if !slices.Contains(container.Args, want) {
+			t.Fatalf("secure learning store args missing %q: %q", want, container.Args)
+		}
+	}
+	if slices.ContainsFunc(container.Args, func(arg string) bool { return strings.HasPrefix(arg, "--driver-auth-token") }) {
+		t.Fatalf("driver token was rendered as an argument: %q", container.Args)
+	}
+	if len(container.Env) != 1 || container.Env[0].Name != "MECATL_DRIVER_AUTH_TOKEN" || container.Env[0].Value != "" || container.Env[0].ValueFrom == nil || container.Env[0].ValueFrom.SecretKeyRef == nil || container.Env[0].ValueFrom.SecretKeyRef.Name != "learning-driver-credentials" || container.Env[0].ValueFrom.SecretKeyRef.Key != "bearer-token" {
+		t.Fatalf("learning driver environment = %#v", container.Env)
+	}
+	for _, name := range []string{"learning-store-ca", "learning-store-mtls"} {
+		if !slices.ContainsFunc(container.VolumeMounts, func(mount corev1.VolumeMount) bool { return mount.Name == name && mount.ReadOnly }) {
+			t.Fatalf("learning TLS volume %q is not mounted read-only: %#v", name, container.VolumeMounts)
+		}
+	}
+	for _, forbidden := range []string{"unrenderable-token-value", "value: bearer-token", "--driver-auth-token="} {
+		if strings.Contains(rendered, forbidden) {
+			t.Fatalf("render disclosed a driver token value via %q", forbidden)
+		}
+	}
+
+	invalid := [][]string{
+		{"learning.store.endpoint=driver.example.internal:8443", "learning.store.tokenSecret=learning-driver-credentials"},
+		{"learning.store.endpoint=driver.example.internal:8443", "learning.store.tokenKey=bearer-token"},
+		{"learning.store.endpoint=driver.example.internal:8443", "learning.store.tokenSecret=learning-driver-credentials", "learning.store.tokenKey=bearer-token", "learning.store.tls.enabled=true", "learning.store.tls.caSecret=learning-driver-ca"},
+		{"learning.store.endpoint=driver.example.internal:8443", "learning.store.tokenSecret=learning-driver-credentials", "learning.store.tokenKey=bearer-token", "learning.store.tls.caSecret=learning-driver-ca", "learning.store.tls.caKey=ca.pem"},
+		{"learning.store.endpoint=driver.example.internal:8443", "learning.store.tokenSecret=learning-driver-credentials", "learning.store.tokenKey=bearer-token", "learning.store.tls.enabled=true", "learning.store.tls.mtlsSecret=learning-driver-client", "learning.store.tls.certKey=client.crt"},
+		{"learning.store.endpoint=driver.example.internal:8443", "learning.store.tokenSecret=learning-driver-credentials", "learning.store.tokenKey=bearer-token"},
+	}
+	for _, set := range invalid {
+		args := append(append([]string{}, base...), "--set", strings.Join(set, ","))
+		if _, err := helm(t, args...); err == nil {
+			t.Fatalf("schema accepted invalid learning store values %q", set)
+		}
+		args = append(append([]string{}, base...), "--skip-schema-validation", "--set", strings.Join(set, ","))
+		if _, err := helm(t, args...); err == nil {
+			t.Fatalf("helper accepted invalid learning store values %q", set)
+		}
+	}
+	oidc := append(secureProductionArgs(), "--set", "learning.store.endpoint=driver.example.internal:8443,learning.store.tokenSecret=learning-driver-credentials,learning.store.tokenKey=bearer-token,learning.store.tls.enabled=true")
+	if _, err := helm(t, oidc...); err == nil {
+		t.Fatal("schema accepted OIDC with a learning store")
+	}
+	oidc = append(secureProductionArgs(), "--skip-schema-validation", "--set", "learning.store.endpoint=driver.example.internal:8443,learning.store.tokenSecret=learning-driver-credentials,learning.store.tokenKey=bearer-token,learning.store.tls.enabled=true")
+	if _, err := helm(t, oidc...); err == nil {
+		t.Fatal("helper accepted OIDC with a learning store")
+	}
+}
+
 func TestMecak8sHelmChart_OpaqueModelArgumentIsYAMLSafe(t *testing.T) {
 	model := "vendor/model: tier #stable"
 	args := append(secureProductionArgs(), "--set", "defaultProvider=openrouter", "--set-string", "model="+model)

@@ -51,6 +51,7 @@ var sessionMutationInventory = map[string]SessionMutationEntry{
 	"createPerSessionEngine":             {SessionMutationNewFamily, "builds process-local state then atomically publishes the fresh caller-owned family"},
 	"persistPlacedCreatedSession":        {SessionMutationNewFamily, "validates exact server-owned placement before delegating atomic fresh-family publication"},
 	"createPlacedSuccessor":              {SessionMutationLeaseOwned, "holds source run-entry and mutation lease while binding placement and publishing a fresh successor family"},
+	"createPlacedSuccessorLocked":        {SessionMutationLeaseProven, "called only while source run-entry is held and acquires the source mutation lease before cancellation save or successor publication"},
 	"CompactSession":                     {SessionMutationLeaseOwned, "holds run-entry and the session mutation lease across snapshot save and archive appends"},
 	"RenameSession":                      {SessionMutationLeaseOwned, "holds run-entry and the session mutation lease through title snapshot save"},
 	"DeleteSession":                      {SessionMutationLeaseOwned, "holds run-entry and the session mutation lease through family deletion"},

@@ -1193,6 +1193,42 @@ func (h *HarnessServer) ReflectSession(ctx context.Context, req *mecatlv1.Reflec
 	return &mecatlv1.ReflectSessionResponse{Receipt: receipt}, nil
 }
 
+// GetLearningAttempt returns one content-free attempt projection from the caller partition.
+func (h *HarnessServer) GetLearningAttempt(ctx context.Context, req *mecatlv1.GetLearningAttemptRequest) (*mecatlv1.GetLearningAttemptResponse, error) {
+	attempt, err := h.svc.GetLearningAttempt(ctx, req.GetId())
+	if err != nil {
+		return nil, toStatus(err)
+	}
+	return &mecatlv1.GetLearningAttemptResponse{Attempt: attempt}, nil
+}
+
+// ListLearningAttempts returns one bounded attempt page from the caller partition.
+func (h *HarnessServer) ListLearningAttempts(ctx context.Context, req *mecatlv1.ListLearningAttemptsRequest) (*mecatlv1.ListLearningAttemptsResponse, error) {
+	response, err := h.svc.ListLearningAttempts(ctx, req.GetState(), req.GetCursor(), int(req.GetLimit()))
+	if err != nil {
+		return nil, toStatus(err)
+	}
+	return response, nil
+}
+
+// RetryLearningAttempt retries one failed attempt under opaque-version CAS.
+func (h *HarnessServer) RetryLearningAttempt(ctx context.Context, req *mecatlv1.MutateLearningAttemptRequest) (*mecatlv1.MutateLearningAttemptResponse, error) {
+	attempt, err := h.svc.RetryLearningAttempt(ctx, req.GetId(), req.GetExpectedVersion())
+	if err != nil {
+		return nil, toStatus(err)
+	}
+	return &mecatlv1.MutateLearningAttemptResponse{Attempt: attempt}, nil
+}
+
+// AbandonLearningAttempt abandons only the attempt; it performs no compensation.
+func (h *HarnessServer) AbandonLearningAttempt(ctx context.Context, req *mecatlv1.MutateLearningAttemptRequest) (*mecatlv1.MutateLearningAttemptResponse, error) {
+	attempt, err := h.svc.AbandonLearningAttempt(ctx, req.GetId(), req.GetExpectedVersion())
+	if err != nil {
+		return nil, toStatus(err)
+	}
+	return &mecatlv1.MutateLearningAttemptResponse{Attempt: attempt}, nil
+}
+
 // GenerateDreamPlan creates a retained manual consolidation review.
 func (h *HarnessServer) GenerateDreamPlan(ctx context.Context, req *mecatlv1.GenerateDreamPlanRequest) (*mecatlv1.GenerateDreamPlanResponse, error) {
 	review, err := h.svc.GenerateDream(ctx, DreamTarget(req.GetTarget()))

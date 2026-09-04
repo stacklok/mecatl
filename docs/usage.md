@@ -127,10 +127,18 @@ it is not a field sent by `mecatui connect`.
 Alternate worktrees are discovered from an owned source session. `ListWorktrees(session_id)`
 returns bounded display metadata and an opaque caller/source-scoped selector. The selector
 is accepted only by `ClearSession` or `ForkSession`, is never a path, and expires on server
-restart; relist before retrying. `/clear` asks the server for a distinct empty-history
-successor that inherits the source's exact placement. `/worktrees`, `/effort`, and inventory
-fork use the history-carrying successor operation. Any failed relist or successor creation
-leaves the currently selected session unchanged. Schedules resolve and store an exact
+restart; relist before retrying. `/clear` is accepted while idle, running, or awaiting
+approval. It cancels the source run or durable approval, waits for that exact lifecycle to
+deregister, then creates a distinct empty-history successor that inherits the source's exact
+placement. Cancellation is irreversible: if placement, engine setup, or successor persistence
+then fails, no successor is published and Mecatui does not rebind, but the source may already
+be terminal-cancelled. Retry `/clear` after the local stream settles. Failures rejected during
+preflight, including an invalid explicit worktree selector, leave an awaiting source unchanged.
+Existing workspace/tool mutations are never rolled back. Mecatui keeps the source binding and
+transcript visible but blocks source input and approvals during the handoff; only a correlated
+successful response binds the successor. `/worktrees`, `/effort`, and inventory fork use the
+history-carrying successor operation. Failed relist and fork operations leave the currently
+selected session unchanged. Schedules resolve and store an exact
 private placement at creation, while delegation derives placement from its parent; neither
 models nor delegation/artifact handles can select a host path.
 

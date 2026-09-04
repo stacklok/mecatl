@@ -107,7 +107,7 @@ configuration. See [ADR 0291](../adr/0291-server-owned-session-placement.md).
 | `--http-addr` | `127.0.0.1:8081` | HTTP/SSE listen address (loopback; **unauthenticated unless** the security & transport flags below are set). **EMPTY DISABLES** the HTTP/SSE listener **and the `--metrics-addr` admin listener together** — see the spawned-daemon-hosting note below. |
 | `--grpc-unix-socket` | `""` (off) | absolute path of a UNIX-domain socket to serve gRPC on **instead of a TCP port**; opens **no TCP port**. **Mutually exclusive** with a *configured* `--grpc-addr` (explicit flag or config-file `grpc_addr`) — rejected at startup. The socket is created **owner-only** inside an owner-only (`0700`) directory mecated creates when missing; a **stale** socket from a dead process is removed, one a **live** process is accepting on **refuses the start**. Path length is validated against `sockaddr_un.sun_path` (103 usable bytes on Darwin, 107 on Linux). **See the spawned-daemon-hosting note below.** |
 | `--ready-file` | `""` (off) | absolute path to write a JSON readiness document to, **atomically** (temp file + rename) and only **after** composition and every listener are up — so a spawning parent waits on a path instead of racing a connect loop. Carries pid, transport, bound gRPC/HTTP addresses, and the non-secret compatibility descriptor (`api_major`/`features`/`deployment`) — **never** a credential, TLS detail, or capability set. **See the spawned-daemon-hosting note below.** |
-| `--lifetime-pipe-fd` | `0` (off) | file descriptor of an **inherited** pipe whose read end mecated watches: **EOF means the spawning parent exited or crashed**, and the daemon stops through the ordinary graceful-shutdown path. The parent holds the write end and never writes. `0` disables; `0`/`1`/`2` are the standard streams and are **rejected**. **See the spawned-daemon-hosting note below.** |
+| `--lifetime-pipe-fd` | `0` (off) | file descriptor of an **inherited** pipe read end or connected UNIX-domain stream socketpair endpoint that mecated watches: **EOF means the spawning parent exited or crashed**, and the daemon stops through the ordinary graceful-shutdown path. The parent holds the peer end and never writes. `0` disables; `1`/`2` are standard output/error and are **rejected**. **See the spawned-daemon-hosting note below.** |
 | `--workspace` | current working dir | trusted server-side default local root; embedded/operator configuration only, never accepted from CreateSession clients |
 | `--model` | `""` | model identifier sent to the provider. Empty → the server-configured default (`--default-model`, when set), else the selected provider's built-in default: `gpt-5` (OpenAI), `openai/gpt-5` (OpenRouter), `claude-sonnet-4-6` (Anthropic). |
 | `--default-provider` | `""` | server-configured **deployment-wide default provider** id shared by every client (also on `mecatui`'s embedded server); overrides the built-in provider preference for zero-selector sessions, while a client-side selector still wins. **Fail-fast:** an unknown or unavailable provider refuses startup. |
@@ -131,6 +131,7 @@ configuration. See [ADR 0291](../adr/0291-server-owned-session-placement.md).
 | `--memory-store-url` | `""` | `host:port` of a remote **memory-store gRPC driver** (`mecatl.driver.v1.MemoryStoreService`); replaces the local flock store — mutually exclusive with `--memory-dir`, enables the memory tools like `--memory-dir` does. |
 | `--event-log-url` | `""` | `host:port` of a remote **event-log gRPC driver** (`mecatl.driver.v1.EventLogService`) for the durable per-session event timeline (reasoning, ask/verdict pairs, delegation lifecycle); **INDEPENDENT of the session store** (not mutually exclusive with `--store-dir`). Empty keeps the local default (the `--store-dir` JSONL log, or in-memory). Append happens at the relay (a fault WARNs, never aborts the run); Read is server-streaming. Same auth/TLS posture as `--session-store-url` (equal URLs share one connection). **See the store-driver note below.** |
 | `--schedule-store-url` | `""` | `host:port` of a remote **schedule-store gRPC driver** (`mecatl.driver.v1.ScheduleStoreService` + `ScheduleOneShotReArmerService`) for the durable schedule registry (scheduled tasks); **INDEPENDENT of the session store** — when set, replaces the `ScheduleStore()` discovery from the configured store. Empty keeps the byte-identical default (the configured store's own `ScheduleStore()` accessor, or no scheduling). The driver's `Claim`/`ClaimNow`/`ReArmOneShot` run the atomic advance server-side. Current remote drivers do not expose atomic create-only publication, so this option is rejected when OIDC caller ownership is enabled; use the local JSONL/Redis schedule store in that posture. |
+| `--learning-store-url` | `""` | `host:port` of one distributed-learning gRPC driver. Startup capability negotiation requires the complete `AttemptRepositoryService` + `ProposalRepositoryService` + `SkillRepositoryService` set and, for non-off automatic learning, `AutomaticAdmissionLedgerService`; a partial or legacy driver fails startup instead of silently mixing remote and local repositories or accounting. The explicit flag dials/probes/composes the repository set even when learning is off, for explicit reflection, learned-skill inspection, and recovery of already-admitted attempts; it does not enable automatic admission. Principal/project repository partitions are opaque hashes on this transport. Current raw repository RPCs are trusted single-tenant infrastructure only and are permitted only when `OwnershipEnforced=false`; ownership-enforced/multi-tenant startup fails closed until ADR-0213 workload-authenticated claims, private owner registry, and separate maintenance RPCs land. |
 | `--child-retention` | `168h` | how long persisted **child** session snapshots (`subagent-*`/`parallel-*`/`team-*` ids — the `InspectSubagent`/`resume:` handles) are retained before the GC sweep deletes them. **Main sessions are governed by `--main-retention` instead** (default off). Durable-store-only in effect (`--store-dir` or a prunable `--session-store-url` driver; the in-memory default never accumulates across restarts). `0` disables the age pass. |
 | `--child-retention-max-per-family` | `500` | max persisted child snapshots kept **per delegation family** (subagent/parallel/team); the oldest beyond the cap are deleted, skipping in-flight runs. `0` disables the cap. |
 | `--main-retention` | `0` | how long persisted **main** (top-level operator/service) session snapshots are retained before the GC sweep deletes them; child sessions use `--child-retention` instead. `0` disables it. Enabling requires explicit acknowledgement. |
@@ -171,7 +172,7 @@ configuration. See [ADR 0291](../adr/0291-server-owned-session-placement.md).
 | `--user-model-dir` | `""` | directory for the user-scoped, **cross-project** user-model store of durable FACTS about the operator (empty → the conventional `$XDG_CONFIG_HOME/mecatl/usermodel`, fallback `~/.config/mecatl/usermodel`). Exposes the user memory tools and the live bounded operator profile in the volatile system suffix. **See the user-model note below.** |
 | `--no-user-model` | `false` | disable the user model entirely (explicit tools and live operator profile). |
 | `--user-model-review` | `false` | deprecated compatibility alias for operator `learning.mode: auto`; runs the synchronous completed-trajectory user-model reviewer after eligible clean completions and never reopens the user session. |
-| `--user-model-review-interval` | `1` | deprecated post-threshold downsampler for weighted automatic admission. `0`/`1` are inert; hard genuine-current-prompt triggers bypass it. Use `learning.automatic` for process-local budgets. |
+| `--user-model-review-interval` | `1` | deprecated post-threshold downsampler for weighted automatic admission. `0`/`1` are inert; hard genuine-current-prompt triggers bypass it. Use `learning.automatic` for durable global/principal budgets in standard non-off composition. |
 | `--user-model-consolidate-interval` | `0` | independently authorize automatic consolidation of the cross-project user-model store's `user/` namespace; `0` disables. It is exact-duplicate-only and separate from manual `/dream`; a project `learning.mode: off` cannot suppress a positive operator schedule. |
 | `--permissions-conventional` | `true` | auto-discover the per-project permission config (`<workspace>/.mecatl/settings.yaml`, and with `--import-claude-permissions` also `<workspace>/.claude/settings.json`) plus the user-global file. **Re-resolved per session** against each session's workspace root. ON and inert until such a file exists. **See the permission-config note below.** |
 | `--import-claude-permissions` | `false` | also import Claude-Code `settings.json` permissions (project + user). **Lossy** (fail-safe): see the table below. |
@@ -610,27 +611,32 @@ There is deliberately **no** `features` identifier for daemon hosting: a client
 cannot query the server before spawning it, and one that has read the ready file
 has already proved the build supports it.
 
-**`--lifetime-pipe-fd`** is the parent-crash path. The parent creates a pipe,
-passes the **read end** to the child as an inherited descriptor, and holds the
-write end **without ever writing to it**. If the parent exits — cleanly, by
-`SIGKILL`, or by crashing — the kernel closes its descriptors, the read end sees
-EOF, and mecated stops through the **same graceful shutdown** a `SIGTERM` takes,
-persisting session state on the way out. The parent has nothing to remember, which
-is what makes it survive a crash rather than only a clean exit.
+**`--lifetime-pipe-fd`** is the parent-crash path. The parent either creates a
+pipe and passes its **read end**, or passes one endpoint of a connected
+UNIX-domain stream socketpair (the shape Node and Bun create for
+`child_process` `stdio: "pipe"`). The child inherits that descriptor while the
+parent holds the other endpoint **without ever writing to it**. If the parent
+exits — cleanly, by `SIGKILL`, or by crashing — the kernel closes its descriptors,
+the child endpoint sees EOF, and mecated stops through the **same graceful
+shutdown** a `SIGTERM` takes, persisting session state on the way out. The parent
+has nothing to remember, which is what makes it survive a crash rather than only
+a clean exit.
 
-Bytes on the pipe are read and **discarded**: this is a liveness signal, never a
-control channel — interpreting bytes on it would hand an unauthenticated local
-writer a way to steer the daemon. A parent that does send a heartbeat is therefore
-tolerated rather than mistaken for a dead one. `0` means "not configured", and
-`0`/`1`/`2` are **rejected**: treating stdin's EOF as "the parent died" would stop
-the daemon the moment it was started from any non-interactive shell.
+Bytes on the descriptor are read and **discarded**: this is a liveness signal,
+never a control channel — interpreting bytes on it would hand an unauthenticated
+local writer a way to steer the daemon. A parent that does send a heartbeat is
+therefore tolerated rather than mistaken for a dead one. `0` means "not
+configured"; `1`/`2` are **rejected** so stdout or stderr cannot be mistaken for
+a parent-liveness descriptor.
 
-The descriptor is also checked to be **open** and to be an actual **pipe**, both as
-startup errors. Either mistake would otherwise read as EOF or `ENOTCONN`, which the
-watcher reports as "the parent exited" — so the daemon would start, publish its
-ready file, and vanish milliseconds later. A refusal naming the flag is much easier
-to diagnose. The check is a bare `fstat` that takes no ownership of the descriptor,
-so a rejected fd is left exactly as the caller passed it.
+The descriptor is also checked to be **open** and either a FIFO or a connected
+UNIX-domain stream socketpair endpoint. Regular files, terminals, listening
+sockets, network sockets, and closed descriptors remain startup errors. Those
+mistakes would otherwise read as EOF or `ENOTCONN`, which the watcher reports as
+"the parent exited" — so the daemon would start, publish its ready file, and
+vanish milliseconds later. A refusal naming the flag is much easier to diagnose.
+The check takes no ownership of the descriptor, so a rejected fd is left exactly
+as the caller passed it.
 
 ### Observability (the loopback admin listener)
 

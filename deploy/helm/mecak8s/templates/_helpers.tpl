@@ -82,6 +82,37 @@ mounted
 {{- $_ := required "tls.keyKey is required when tls.enabled is true" .Values.tls.keyKey -}}
 {{- end -}}
 {{- end -}}
+{{- define "mecak8s.validateLearningStore" -}}
+{{- $store := .Values.learning.store -}}
+{{- $tls := $store.tls -}}
+{{- if or $store.tokenSecret $store.tokenKey -}}
+{{- $_ := required "learning.store.tokenSecret is required when learning.store.tokenKey is set" $store.tokenSecret -}}
+{{- $_ := required "learning.store.tokenKey is required when learning.store.tokenSecret is set" $store.tokenKey -}}
+{{- end -}}
+{{- $hasCA := or $tls.caSecret $tls.caKey -}}
+{{- $hasMTLS := or $tls.mtlsSecret $tls.certKey $tls.keyKey -}}
+{{- if or $hasCA $hasMTLS -}}
+{{- if not $tls.enabled -}}{{ fail "learning.store TLS material requires learning.store.tls.enabled=true" }}{{- end -}}
+{{- end -}}
+{{- if $hasCA -}}
+{{- $_ := required "learning.store.tls.caSecret is required when learning.store.tls.caKey is set" $tls.caSecret -}}
+{{- $_ := required "learning.store.tls.caKey is required when learning.store.tls.caSecret is set" $tls.caKey -}}
+{{- end -}}
+{{- if $hasMTLS -}}
+{{- $_ := required "learning.store.tls.mtlsSecret is required when mTLS material is set" $tls.mtlsSecret -}}
+{{- $_ := required "learning.store.tls.certKey is required when mTLS material is set" $tls.certKey -}}
+{{- $_ := required "learning.store.tls.keyKey is required when mTLS material is set" $tls.keyKey -}}
+{{- end -}}
+{{- if and $store.endpoint $store.tokenSecret $store.tokenKey (not $tls.enabled) (not (regexMatch "^(localhost|127(\\.[0-9]{1,3}){3}|\\[::1\\]):[0-9]+$" (lower $store.endpoint))) -}}
+{{- fail "learning.store bearer token requires learning.store.tls.enabled=true for a non-loopback endpoint" -}}
+{{- end -}}
+{{- if and .Values.oidc.enabled $store.endpoint -}}
+{{- fail "oidc.enabled cannot be combined with learning.store: ownership-enforced remote learning is unsupported" -}}
+{{- end -}}
+{{- range $env := .Values.extraEnv -}}
+{{- if and (hasKey $env "name") (eq $env.name "MECATL_DRIVER_AUTH_TOKEN") -}}{{ fail "extraEnv name \"MECATL_DRIVER_AUTH_TOKEN\" collides with the learning store token environment variable owned by the chart" }}{{- end -}}
+{{- end -}}
+{{- end -}}
 {{- define "mecak8s.validateProviderSecurity" -}}
 {{- if and .Values.mockProvider .Values.security.tlsTerminatedUpstream -}}
 {{- fail "security.tlsTerminatedUpstream applies only to a real provider; it is ignored when mockProvider=true, so setting both is a mistake" -}}

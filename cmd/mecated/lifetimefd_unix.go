@@ -19,20 +19,46 @@ import (
 // component's connection dying much later, for no visible reason. fstat asks the
 // kernel the same question and owns nothing.
 //
-// The two conditions are the ones the flag's contract needs. An fd that is not
-// open is a startup error rather than an immediate EOF, because watch() would
-// read a bad descriptor as "the parent died" and the daemon would publish its
-// ready file and vanish milliseconds later. An fd that IS open but is not a pipe
-// is the same failure through a different door: this runs after bindListeners,
-// so a stale or mistyped number can name a listener the daemon already owns,
-// whose ENOTCONN also reads as parent exit.
+// The conditions are the ones the flag's contract needs. An fd that is not open
+// is a startup error rather than an immediate EOF, because watch() would read a
+// bad descriptor as "the parent died" and the daemon would publish its ready
+// file and vanish milliseconds later. The descriptor must also be either a FIFO
+// read end or a connected UNIX-domain stream socketpair endpoint: both report
+// EOF when the parent-held peer closes. This runs after bindListeners, so a stale
+// or mistyped number can name a listener the daemon already owns; accepting that
+// listener would turn ENOTCONN into a false parent-exit signal.
 func checkLifetimePipeFD(fd int) error {
 	var st syscall.Stat_t
 	if err := syscall.Fstat(fd, &st); err != nil {
-		return fmt.Errorf("--lifetime-pipe-fd %d is not an open descriptor in this process (%w): the parent must pass the pipe's READ end as an inherited fd", fd, err)
+		return fmt.Errorf("--lifetime-pipe-fd %d is not an open descriptor in this process (%w): the parent must pass a pipe's READ end or a connected UNIX-domain stream socketpair endpoint as an inherited fd", fd, err)
 	}
-	if st.Mode&syscall.S_IFMT != syscall.S_IFIFO {
-		return fmt.Errorf("--lifetime-pipe-fd %d is open but is a %s, not a pipe: pass the READ end of an inherited pipe — a socket, a regular file, or a descriptor this process already owns is a mistake, not a parent-liveness signal", fd, fdTypeName(st))
+	switch st.Mode & syscall.S_IFMT {
+	case syscall.S_IFIFO:
+		return nil
+	case syscall.S_IFSOCK:
+		return checkLifetimeSocketpairFD(fd)
+	default:
+		return fmt.Errorf("--lifetime-pipe-fd %d is open but is a %s, not a pipe or connected UNIX-domain stream socketpair endpoint: a regular file, terminal, or descriptor this process already owns is a mistake, not a parent-liveness signal", fd, fdTypeName(st))
+	}
+}
+
+// checkLifetimeSocketpairFD distinguishes the connected AF_UNIX stream endpoint
+// Node and Bun create for child_process stdio:"pipe" from listening, network,
+// and datagram sockets, none of which implement the EOF-on-parent-death contract.
+func checkLifetimeSocketpairFD(fd int) error {
+	socketType, err := syscall.GetsockoptInt(fd, syscall.SOL_SOCKET, syscall.SO_TYPE)
+	if err != nil {
+		return fmt.Errorf("--lifetime-pipe-fd %d is a socket whose type cannot be inspected (%w)", fd, err)
+	}
+	if socketType != syscall.SOCK_STREAM {
+		return fmt.Errorf("--lifetime-pipe-fd %d is a socket of type %d, not a connected UNIX-domain stream socketpair endpoint", fd, socketType)
+	}
+	peer, err := syscall.Getpeername(fd)
+	if err != nil {
+		return fmt.Errorf("--lifetime-pipe-fd %d is a socket without a connected peer (%w), not a connected UNIX-domain stream socketpair endpoint", fd, err)
+	}
+	if _, ok := peer.(*syscall.SockaddrUnix); !ok {
+		return fmt.Errorf("--lifetime-pipe-fd %d is a connected non-UNIX socket, not a connected UNIX-domain stream socketpair endpoint", fd)
 	}
 	return nil
 }

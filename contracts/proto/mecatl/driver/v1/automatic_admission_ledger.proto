@@ -1,0 +1,108 @@
+// SPDX-FileCopyrightText: Copyright 2026 Stacklok, Inc.
+// SPDX-License-Identifier: LicenseRef-Stacklok-Proprietary
+
+// Infrastructure driver seam for the bounded, content-free automatic learning
+// admission ledger. The service carries opaque IDs, digests and principal
+// partitions plus closed accounting values; it never carries prompts,
+// transcript/tool content, paths, credentials, headers, or backend error text.
+syntax = "proto3";
+
+package mecatl.driver.v1;
+
+import "buf/validate/validate.proto";
+import "google/protobuf/duration.proto";
+import "google/protobuf/timestamp.proto";
+
+service AutomaticAdmissionLedgerService {
+  rpc ReserveAutomaticAdmission(AutomaticReservationRequest) returns (AutomaticReservationResponse);
+  rpc GetAutomaticReservation(GetAutomaticReservationRequest) returns (GetAutomaticReservationResponse);
+  rpc DiscoverExpiredAutomaticReservations(DiscoverExpiredAutomaticReservationsRequest) returns (DiscoverExpiredAutomaticReservationsResponse);
+  rpc ReassignAutomaticReservation(ReassignAutomaticReservationRequest) returns (AutomaticReservationResponse);
+  rpc RetainAutomaticReservation(ResolveAutomaticReservationRequest) returns (AutomaticReservationResponse);
+  rpc ReclaimAutomaticReservation(ResolveAutomaticReservationRequest) returns (AutomaticReservationResponse);
+}
+
+enum AutomaticLedgerErrorCode {
+  AUTOMATIC_LEDGER_ERROR_CODE_UNSPECIFIED = 0;
+  AUTOMATIC_LEDGER_ERROR_CODE_INVALID = 1;
+  AUTOMATIC_LEDGER_ERROR_CODE_DUPLICATE = 2;
+  AUTOMATIC_LEDGER_ERROR_CODE_COOLDOWN = 3;
+  AUTOMATIC_LEDGER_ERROR_CODE_LIMIT = 4;
+  AUTOMATIC_LEDGER_ERROR_CODE_IDENTITY_CONFLICT = 5;
+  AUTOMATIC_LEDGER_ERROR_CODE_NOT_FOUND = 6;
+  AUTOMATIC_LEDGER_ERROR_CODE_VERSION_CONFLICT = 7;
+  AUTOMATIC_LEDGER_ERROR_CODE_FENCE_LOST = 8;
+  AUTOMATIC_LEDGER_ERROR_CODE_STATE = 9;
+}
+
+message AutomaticLedgerErrorDetail {
+  AutomaticLedgerErrorCode code = 1;
+}
+
+message AutomaticReservationFence {
+  uint64 generation = 1;
+  google.protobuf.Timestamp expires_at = 2;
+}
+
+message AutomaticReservationRequest {
+  string id = 1 [(buf.validate.field).string.max_len = 96];
+  string attempt_id = 2 [(buf.validate.field).string.max_len = 96];
+  string principal = 3 [(buf.validate.field).string.max_len = 128];
+  string digest = 4 [(buf.validate.field).string.max_len = 128];
+  string admission_class = 5 [(buf.validate.field).string.max_len = 32];
+  uint64 tokens = 6;
+  reserved 7, 8;
+  string expected_policy_revision = 9 [(buf.validate.field).string.max_len = 128];
+}
+
+message AutomaticReservation {
+  string id = 1 [(buf.validate.field).string.max_len = 96];
+  string attempt_id = 2 [(buf.validate.field).string.max_len = 96];
+  string version = 3 [(buf.validate.field).string.max_len = 128];
+  string principal = 4 [(buf.validate.field).string.max_len = 128];
+  string digest = 5 [(buf.validate.field).string.max_len = 128];
+  string admission_class = 6 [(buf.validate.field).string.max_len = 32];
+  uint64 tokens = 7;
+  string charge = 8 [(buf.validate.field).string.max_len = 32];
+  bool attempt_created = 9;
+  google.protobuf.Timestamp reserved_at = 10 [(buf.validate.field).required = true];
+  google.protobuf.Timestamp charge_expires_at = 11 [(buf.validate.field).required = true];
+  google.protobuf.Timestamp dedupe_expires_at = 12 [(buf.validate.field).required = true];
+  google.protobuf.Duration claim_duration = 13 [(buf.validate.field).required = true];
+  AutomaticReservationFence fence = 14;
+  string policy_revision = 15 [(buf.validate.field).string.max_len = 128];
+}
+
+message AutomaticReservationResponse {
+  AutomaticReservation reservation = 1 [(buf.validate.field).required = true];
+}
+
+message GetAutomaticReservationRequest {
+  string id = 1 [(buf.validate.field).string.max_len = 96];
+}
+
+message GetAutomaticReservationResponse {
+  bool found = 1;
+  AutomaticReservation reservation = 2;
+}
+
+message DiscoverExpiredAutomaticReservationsRequest {
+  uint32 limit = 1 [(buf.validate.field).uint32 = {gte: 1, lte: 128}];
+}
+
+message DiscoverExpiredAutomaticReservationsResponse {
+  repeated AutomaticReservation reservations = 1 [(buf.validate.field).repeated.max_items = 128];
+}
+
+message ReassignAutomaticReservationRequest {
+  string id = 1 [(buf.validate.field).string.max_len = 96];
+  string expected_version = 2 [(buf.validate.field).string.max_len = 128];
+  reserved 3, 4;
+}
+
+message ResolveAutomaticReservationRequest {
+  string id = 1 [(buf.validate.field).string.max_len = 96];
+  string expected_version = 2 [(buf.validate.field).string.max_len = 128];
+  AutomaticReservationFence fence = 3 [(buf.validate.field).required = true];
+  reserved 4;
+}

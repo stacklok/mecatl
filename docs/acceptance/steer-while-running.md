@@ -188,7 +188,7 @@ Scenario 1 (engine inbox + boundary injection) is the foundation and lands first
 ## Definition of done
 
 1. `task lint` and `task test` pass (both modules, `-race`).
-2. `task docs` — `llms.txt` regenerated and the matlatl strict link gate green.
+2. `task docs` — configuration reference regenerated and the matlatl strict link gate green.
 3. `task generate` — `contracts/gen` regenerated from the proto change and committed.
 4. `task api:update` was run for the breaking `Run.EnqueueSteer(text, parts)` signature and `EvSteer` media payload; the regenerated `engine/api/*.txt` and Changed note are present.
 5. `task ac-trace-strict` — every AC's `verify:` proof resolves (this plan is `landed`).

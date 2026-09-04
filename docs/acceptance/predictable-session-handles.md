@@ -231,7 +231,7 @@ server-side handle parser, or alter debugger evidence handles.
 ## Definition of done
 
 1. `task lint` and `task test` pass (both modules, `-race`).
-2. `task docs` regenerates `llms.txt` and the matlatl strict link gate is green.
+2. `task docs` regenerates the configuration reference and the matlatl strict link gate is green.
 3. `task site:build` passes after the user-facing documentation changes.
 4. `task ac-trace-strict` resolves every named proof when this plan is `landed`.
 5. The composition-level real-header-to-real-`CreateDebugSession` test proves that an unchanged

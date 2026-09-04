@@ -9,7 +9,7 @@ Assistant text streams into the conversation as it arrives. Tool calls appear as
 
 ## Keep working while a run is active
 
-You can type while the agent is running. Press `enter` to steer the current run; the message is applied at the next safe turn boundary. Images and other supported staged media travel with the steer, including media-only input. If the server does not support steering, it becomes a queued follow-up instead. Several queued lines become one next prompt. Bare recognized TUI commands are intercepted by the client; `/help` is local UI, while `/clear` invokes the server's non-destructive successor operation when legal. Unknown slash commands, workspace commands, and built-ins with arguments remain model-facing input.
+You can type while the agent is running. Press `enter` to steer the current run; the message is applied at the next safe turn boundary. Images and other supported staged media travel with the steer, including media-only input. If the server does not support steering, it becomes a queued follow-up instead. Several queued lines become one next prompt. Bare recognized TUI commands are intercepted by the client; `/help` is local UI, while `/clear` can cancel and replace the current session at any point, including during an approval. Unknown slash commands, workspace commands, and built-ins with arguments remain model-facing input.
 
 With an empty input, press `↑` to bring a pending steer or queued follow-up back for editing together with its staged media. `ctrl+u` clears the unsent draft and its staged attachments/placeholders. `esc` first clears an active selection; otherwise, while a run is active it cancels directly and preserves the draft, queued follow-ups, and pending steer. When idle with a paused queue, `esc` clears that queue while preserving the draft.
 
@@ -26,7 +26,7 @@ When a tool needs permission, a modal shows what it wants to do. Read the reques
 - `/models` starts a new session on the selected model and keeps the conversation. **Switching models is expensive as it clears caches.**
 - `/compact` asks a capable server to compact the current session's model history once. Use the bare command with no arguments while idle. It sends no prompt, keeps visible scrollback, and reports changed or already compact; a cascade summary may still cost model tokens.
 - `/effort` forks the conversation onto the chosen reasoning-effort tier. Unsupported tiers are reported rather than silently applied.
-- `/clear` asks the server for a distinct empty-history successor that inherits exact placement; the source remains stored and failure leaves it selected. `/session` shows path-free active-session details.
+- `/clear` asks the server for a distinct empty-history successor that inherits exact placement. If replacement fails after an active run or approval is cancelled, no successor is created and the source stays selected but may now be cancelled; retry `/clear` after it settles. Workspace changes are not rolled back. `/session` shows path-free active-session details.
 
 ## A short key reference
 

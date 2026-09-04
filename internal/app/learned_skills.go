@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"time"
 
@@ -26,33 +27,106 @@ func learnedSkillPartitions(ctx context.Context, workspace string, cfg Config) [
 
 func hydrateLearnedSkillPartitions(ctx context.Context, cfg Config, assets catalogAssets, workspace string) []learning.SkillPartition {
 	partitions := learnedSkillPartitions(ctx, workspace, cfg)
+	hydrateLearnedSkills(ctx, cfg, assets, partitions)
+	return partitions
+}
+
+func hydrateLearnedSkills(ctx context.Context, cfg Config, assets catalogAssets, partitions []learning.SkillPartition) {
 	if assets.liveSkills == nil || assets.learnedSkills == nil || len(partitions) == 0 {
-		return partitions
+		return
 	}
 	publisher := learnedSkillPublisher{repository: assets.learnedSkills, partitions: partitions, catalog: assets.liveSkills, serial: assets.skillPublication}
 	if err := publisher.Publish(ctx); err != nil {
 		cfg.diag().Log(ctx, port.LevelWarn, "learned-skill hydration failed; caller partition quarantined", "err", err)
 	}
-	return partitions
 }
 
-func listActiveLearnedSkills(ctx context.Context, repository learning.SkillRepository, partition learning.SkillPartition, owner string) ([]learning.SkillVersion, error) {
+type hydratingSkillTool struct {
+	live        skillfs.LiveTool
+	hydrate     func(context.Context)
+	specContext context.Context
+}
+
+func newHydratingSkillTool(ctx context.Context, cfg Config, assets catalogAssets, live skillfs.LiveTool, partitions []learning.SkillPartition) tool.Tool {
+	return hydratingSkillTool{
+		live: live,
+		hydrate: func(callCtx context.Context) {
+			hydrateLearnedSkills(callCtx, cfg, assets, partitions)
+		},
+		specContext: session.WithPrincipal(context.Background(), session.PrincipalFromContext(ctx)),
+	}
+}
+
+func (t hydratingSkillTool) Spec() tool.ToolSpec {
+	t.hydrate(t.specContext)
+	return t.live.Spec()
+}
+
+func (hydratingSkillTool) ReadOnly() bool { return true }
+
+func (t hydratingSkillTool) Execute(ctx context.Context, call session.ToolCall, env tool.Environment) (session.ToolResult, error) {
+	t.hydrate(ctx)
+	return t.live.Execute(ctx, call, env)
+}
+
+var errLearnedSkillGenerationChanged = errors.New("learned skill partition generation changed during hydration")
+
+func listActiveLearnedSkillsAtGeneration(ctx context.Context, repository learning.SkillRepository, partition learning.SkillPartition, owner string) ([]learning.SkillVersion, learning.SkillGeneration, error) {
 	var out []learning.SkillVersion
 	var after learning.SkillID
+	var generation learning.SkillGeneration
+	first := true
 	for {
 		page, err := repository.List(ctx, partition, learning.SkillList{After: after, Limit: learning.MaxSkillPageSize, State: learning.SkillActive, OwnerAgent: owner})
 		if err != nil {
-			return nil, err
+			return nil, 0, err
+		}
+		if first {
+			generation, first = page.Generation, false
+		} else if page.Generation != generation {
+			return nil, page.Generation, errLearnedSkillGenerationChanged
 		}
 		out = append(out, page.Versions...)
 		if page.Next == "" {
-			return out, nil
+			current, generationErr := repository.Generation(ctx, partition)
+			if generationErr != nil {
+				return nil, generation, generationErr
+			}
+			if current != generation {
+				return nil, current, errLearnedSkillGenerationChanged
+			}
+			return out, generation, nil
 		}
 		after = page.Next
 	}
 }
 
-type learnedSkillPublication struct{ mu sync.Mutex }
+type learnedSkillPublication struct {
+	mu     sync.Mutex
+	active map[learning.SkillPartition]chan struct{}
+}
+
+func (p *learnedSkillPublication) lock(partition learning.SkillPartition) func() {
+	p.mu.Lock()
+	if p.active == nil {
+		p.active = make(map[learning.SkillPartition]chan struct{})
+	}
+	wait, busy := p.active[partition]
+	if !busy {
+		wait = make(chan struct{})
+		p.active[partition] = wait
+		p.mu.Unlock()
+		return func() {
+			p.mu.Lock()
+			delete(p.active, partition)
+			close(wait)
+			p.mu.Unlock()
+		}
+	}
+	p.mu.Unlock()
+	<-wait
+	return p.lock(partition)
+}
 
 type learnedSkillPublisher struct {
 	repository learning.SkillRepository
@@ -62,27 +136,42 @@ type learnedSkillPublisher struct {
 	serial     *learnedSkillPublication
 }
 
-func (p learnedSkillPublisher) Quarantine(name string) {
-	if p.catalog != nil && len(p.partitions) > 0 {
-		p.catalog.RevokePartition(p.partitions[len(p.partitions)-1], name)
-	}
+func (learnedSkillPublisher) Quarantine(string) {
+	// Publish invalidates the exact uncertain partition at its observed durable
+	// generation before returning an error. A second name-based revocation here
+	// could race and revoke a newer replacement.
 }
 
 func (p learnedSkillPublisher) Publish(ctx context.Context) error {
-	if p.serial != nil {
-		p.serial.mu.Lock()
-		defer p.serial.mu.Unlock()
-	}
-	var active []learning.SkillVersion
+	var firstErr error
 	for _, partition := range p.partitions {
-		versions, err := listActiveLearnedSkills(ctx, p.repository, partition, p.owner)
-		if err != nil {
-			p.catalog.ClearPartitions(p.partitions...)
-			return err
+		if err := p.publishPartition(ctx, partition); err != nil && firstErr == nil {
+			firstErr = err
 		}
-		active = append(active, versions...)
 	}
-	p.catalog.RefreshPartitions(p.partitions, active)
+	return firstErr
+}
+
+func (p learnedSkillPublisher) publishPartition(ctx context.Context, partition learning.SkillPartition) error {
+	if p.serial != nil {
+		unlock := p.serial.lock(partition)
+		defer unlock()
+	}
+	generation, err := p.repository.Generation(ctx, partition)
+	if err != nil {
+		generation = learning.SkillGeneration(p.catalog.View(partition).Generation)
+		p.catalog.ClearPartitionsAtGeneration(map[learning.SkillPartition]learning.SkillGeneration{partition: generation})
+		return err
+	}
+	versions, observed, err := listActiveLearnedSkillsAtGeneration(ctx, p.repository, partition, p.owner)
+	if err != nil {
+		current, generationErr := p.repository.Generation(ctx, partition)
+		if generationErr != nil || current == generation {
+			p.catalog.ClearPartitionsAtGeneration(map[learning.SkillPartition]learning.SkillGeneration{partition: generation})
+		}
+		return err
+	}
+	p.catalog.RefreshPartitionsAtGeneration(map[learning.SkillPartition]learning.SkillGeneration{partition: observed}, versions)
 	return nil
 }
 
@@ -126,15 +215,10 @@ func buildProcedureProcessor(cfg Config, assets catalogAssets) func(context.Cont
 		var publisher skilllifecycle.Publisher
 		publishable := partition.Project == "" || (partition.Project == cfg.Workspace && projectIngestionAdmitted(cfg))
 		if publishable && assets.liveSkills != nil {
-			global := learning.SkillPartition{Principal: partition.Principal}
-			partitions := []learning.SkillPartition{global}
-			if partition != global {
-				partitions = append(partitions, partition)
-			}
-			publisher = learnedSkillPublisher{repository: assets.learnedSkills, partitions: partitions, owner: assets.skillOwner, catalog: assets.liveSkills}
+			publisher = learnedSkillPublisher{repository: assets.learnedSkills, partitions: []learning.SkillPartition{partition}, owner: assets.skillOwner, catalog: assets.liveSkills}
 			if assets.skillPublication != nil {
-				assets.skillPublication.mu.Lock()
-				defer assets.skillPublication.mu.Unlock()
+				unlock := assets.skillPublication.lock(partition)
+				defer unlock()
 			}
 		} else if mode == learning.Auto {
 			// A shared process catalog cannot safely expose another caller/project

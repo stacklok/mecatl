@@ -342,8 +342,8 @@ otherwise concentrate traffic on one selected replica.
   the fact that routing grants no authority; they distinguish modeled PR tests from
   infrastructure rollout verification.
   - verify: `TestADR_0294_DocumentationContract`
-- AC8.4: Generated `llms.txt` contains the new ADR and acceptance-plan contract and is
-  fresh after `task docs`.
+- AC8.4: The generated configuration reference contains the new ADR and acceptance-plan
+  contract and is fresh after `task docs`.
   - verify: demonstration — `task docs` regenerates and checks the documentation corpus
 - AC8.5: Before enabling affinity in the separate infrastructure rollout, its Gateway,
   mesh, or equivalent ingress policy is live-validated to apply authenticated admission,
@@ -371,7 +371,7 @@ otherwise concentrate traffic on one selected replica.
   lease-loss, and handoff invariants; user docs cover client and mecak8s operator use.
 - `docs/adr/0027-cloud-native.md` resource and rehydration inventories are re-audited
   for any new owner-transition state, goroutine, registry, or durable field.
-- `docs/usage.md`, relevant `user-docs/` pages, and generated `llms.txt` land with the
+- `docs/usage.md`, relevant `user-docs/` pages, and generated configuration reference land with the
   behavior; frozen ADR 0216 remains byte-unchanged.
 - No production code is implemented by this design step; `/plan-orchestrate` owns
   decomposition and one accumulator PR.
@@ -404,7 +404,7 @@ of the SDK gate below.
    API report refreshed through `task sdk:api:update`.
 5. Helm unit tests plus `task deploy:check` pass, including the
    `BackendTrafficPolicy` no-resource guard.
-6. `task docs` passes, regenerating `llms.txt` and satisfying the strict matlatl link
+6. `task docs` passes, regenerating the configuration reference and satisfying the strict matlatl link
    gate; frozen ADR 0216 has no diff.
 7. `task site:build` passes for the updated public `user-docs/` content.
 8. `task ac-trace-strict` passes after this plan becomes `landed`; every named proof is

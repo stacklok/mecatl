@@ -412,20 +412,39 @@ func (e *responseStreamError) ProviderErrorCorrelationKind() string {
 }
 func (e *responseStreamError) ProviderErrorCorrelationID() string { return e.metadata.correlationID }
 
-// httpMetadataError keeps the SDK error unwrap-visible while exposing only its
-// typed code, status, and the documented request correlation header.
+// httpMetadataError keeps the SDK error unwrap-visible while exposing a safe
+// display projection plus typed metadata for diagnostics.
 type httpMetadataError struct {
 	err      error
+	message  string
 	metadata providerErrorMetadata
 }
 
-func (e *httpMetadataError) Error() string                        { return e.err.Error() }
+func (e *httpMetadataError) Error() string                        { return e.message }
 func (e *httpMetadataError) Unwrap() error                        { return e.err }
 func (e *httpMetadataError) ProviderHTTPStatus() int              { return e.metadata.httpStatus }
 func (e *httpMetadataError) ProviderInBandStatus() int            { return e.metadata.inBandStatus }
 func (e *httpMetadataError) ProviderErrorCode() string            { return e.metadata.providerCode }
 func (e *httpMetadataError) ProviderErrorCorrelationKind() string { return e.metadata.correlationKind }
 func (e *httpMetadataError) ProviderErrorCorrelationID() string   { return e.metadata.correlationID }
+
+func structuredHTTPErrorText(code, kind, message string) string {
+	label := strings.TrimSpace(code)
+	if label == "" {
+		label = strings.TrimSpace(kind)
+	}
+	message = strings.TrimSpace(message)
+	switch {
+	case label != "" && message != "":
+		return label + ": " + message
+	case label != "":
+		return label
+	case message != "":
+		return message
+	default:
+		return "provider request failed"
+	}
+}
 
 func withHTTPErrorMetadata(err error) error {
 	var apiErr *oai.Error
@@ -442,7 +461,11 @@ func withHTTPErrorMetadata(err error) error {
 			metadata.correlationID = requestID
 		}
 	}
-	return &httpMetadataError{err: err, metadata: metadata}
+	return &httpMetadataError{
+		err:      err,
+		message:  structuredHTTPErrorText(apiErr.Code, apiErr.Type, apiErr.Message),
+		metadata: metadata,
+	}
 }
 
 // StatusCode returns the HTTP-status equivalent of the provider error code. The

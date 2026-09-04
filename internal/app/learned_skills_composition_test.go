@@ -8,10 +8,41 @@ import (
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
+	"github.com/stacklok/mecatl/engine/adapter/skillfs"
 	"github.com/stacklok/mecatl/engine/learning"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/internal/adapter/skillstore"
 )
+
+func TestBuildOwnerlessSessionHydratesLearnedSkillIntoTool(t *testing.T) {
+	workspace := t.TempDir()
+	userModelDir := t.TempDir()
+	repository, err := skillstore.New(filepath.Join(userModelDir, "learned-skills"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	activateCompositionSkill(t, repository, learning.SkillPartition{Principal: reflectionPrincipal(nil)}, "ownerless-recovery", "ownerless durable procedure")
+
+	built, err := Build(context.Background(), Config{
+		Workspace: workspace, Model: "mock", StoreDir: t.TempDir(), UserModelDir: userModelDir,
+		NoSoul: true, AllowAllTools: true, MockProvider: mockllm.New(
+			mockllm.ToolCallTurn(session.NewToolCall("skill-ownerless", "Skill", []byte(`{"name":"ownerless-recovery"}`))),
+			mockllm.TextTurn("done"),
+		),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer built.Close()
+
+	sess, err := built.Service.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result := runCompositionSkill(context.Background(), t, built, sess.ID); !strings.Contains(result, "ownerless durable procedure") {
+		t.Fatalf("ownerless Skill result=%q, want hydrated learned skill", result)
+	}
+}
 
 func TestBuildRestartHydratesCallerBoundLearnedSkillIntoListAndTool(t *testing.T) {
 	workspace := t.TempDir()
@@ -74,6 +105,109 @@ func TestBuildRestartHydratesCallerBoundLearnedSkillIntoListAndTool(t *testing.T
 	if !strings.Contains(result, "durable caller-bound procedure") || strings.Contains(result, "unknown tool") {
 		t.Fatalf("rehydrated Skill result=%q", result)
 	}
+}
+
+func TestADR_0259_ReplicaHydrationConvergesAcrossReplacementAndRollback(t *testing.T) {
+	workspace := t.TempDir()
+	storeDir := t.TempDir()
+	userModelDir := t.TempDir()
+	alice := &session.Principal{Issuer: "https://issuer.example", Subject: "alice", GrantType: session.GrantTypeUser}
+	bob := &session.Principal{Issuer: alice.Issuer, Subject: "bob", GrantType: session.GrantTypeUser}
+	aliceCtx := session.WithPrincipal(context.Background(), alice)
+	bobCtx := session.WithPrincipal(context.Background(), bob)
+	partition := learning.SkillPartition{Principal: reflectionPrincipal(alice)}
+
+	replicaA, err := skillstore.New(filepath.Join(userModelDir, "learned-skills"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider := mockllm.New(
+		mockllm.ToolCallTurn(session.NewToolCall("skill-v1", "Skill", []byte(`{"name":"replica-skill"}`))), mockllm.TextTurn("v1 done"),
+		mockllm.ToolCallTurn(session.NewToolCall("skill-bob", "Skill", []byte(`{"name":"replica-skill"}`))), mockllm.TextTurn("bob done"),
+		mockllm.ToolCallTurn(session.NewToolCall("skill-project", "Skill", []byte(`{"name":"project-secret"}`))), mockllm.TextTurn("project done"),
+		mockllm.ToolCallTurn(session.NewToolCall("skill-v2", "Skill", []byte(`{"name":"replica-skill"}`))), mockllm.TextTurn("v2 done"),
+		mockllm.ToolCallTurn(session.NewToolCall("skill-archived", "Skill", []byte(`{"name":"replica-skill"}`))), mockllm.TextTurn("archive done"),
+		mockllm.ToolCallTurn(session.NewToolCall("skill-rollback", "Skill", []byte(`{"name":"replica-skill"}`))), mockllm.TextTurn("rollback done"),
+	)
+	replicaB, err := Build(context.Background(), Config{
+		Workspace: workspace, Model: "mock", StoreDir: storeDir, UserModelDir: userModelDir,
+		NoSoul: true, Headless: true, OwnershipEnforced: true, AllowAllTools: true, MockProvider: provider,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer replicaB.Close()
+	aliceSession, err := replicaB.Service.CreateSession(aliceCtx, session.ModeDefault, session.Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bobSession, err := replicaB.Service.CreateSession(bobCtx, session.ModeDefault, session.Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	v1 := activateCompositionSkill(t, replicaA, partition, "replica-skill", "replica body v1")
+	if got := runCompositionSkill(aliceCtx, t, replicaB, aliceSession.ID); !strings.Contains(got, "replica body v1") {
+		t.Fatalf("cold replica result=%q, want active v1", got)
+	}
+	if got := runCompositionSkill(bobCtx, t, replicaB, bobSession.ID); !strings.Contains(got, "unknown skill") || strings.Contains(got, "replica body") {
+		t.Fatalf("foreign partition result=%q, want absence without Alice content", got)
+	}
+	activateCompositionSkill(t, replicaA, learning.SkillPartition{Principal: partition.Principal, Project: workspace}, "project-secret", "non-admitted project body")
+	if got := runCompositionSkill(aliceCtx, t, replicaB, aliceSession.ID); !strings.Contains(got, "unknown skill") || strings.Contains(got, "project body") {
+		t.Fatalf("non-admitted project result=%q, want no project partition content", got)
+	}
+
+	v2 := activateCompositionSkill(t, replicaA, partition, "replica-skill", "replica body v2")
+	if got := runCompositionSkill(aliceCtx, t, replicaB, aliceSession.ID); !strings.Contains(got, "replica body v2") || strings.Contains(got, "replica body v1") {
+		t.Fatalf("replacement result=%q, want wholly v2", got)
+	}
+	_, err = replicaA.Archive(context.Background(), partition, "reflection", v2.ID, v2.Version, v2.Revision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := runCompositionSkill(aliceCtx, t, replicaB, aliceSession.ID); !strings.Contains(got, "unknown skill") || strings.Contains(got, "replica body") {
+		t.Fatalf("archive result=%q, want invalidated partition entry", got)
+	}
+	v3 := activateCompositionSkill(t, replicaA, partition, "replica-skill", "replica body v3")
+	if _, err := replicaA.Rollback(context.Background(), partition, "reflection", v3.ID, v3.Revision, v1.Version); err != nil {
+		t.Fatal(err)
+	}
+	if got := runCompositionSkill(aliceCtx, t, replicaB, aliceSession.ID); !strings.Contains(got, "replica body v1") || strings.Contains(got, "replica body v2") {
+		t.Fatalf("rollback result=%q, want wholly restored v1", got)
+	}
+
+	catalog := skillfs.NewAtomicCatalog(nil, nil, nil)
+	newer := map[learning.SkillPartition]learning.SkillGeneration{partition: 100}
+	stale := map[learning.SkillPartition]learning.SkillGeneration{partition: 99}
+	if !catalog.RefreshPartitionsAtGeneration(newer, []learning.SkillVersion{v1}) {
+		t.Fatal("newer authoritative publication was rejected")
+	}
+	if catalog.RefreshPartitionsAtGeneration(stale, []learning.SkillVersion{v2}) {
+		t.Fatal("delayed old publication unexpectedly replaced a newer generation")
+	}
+	if catalog.ClearPartitionsAtGeneration(stale) {
+		t.Fatal("delayed old invalidation unexpectedly revoked a newer generation")
+	}
+	view := catalog.View(partition)
+	if len(view.Metas) != 1 || view.Generation != 100 || view.Metas[0].Metadata["mecatl.active_version"] != string(v1.Version) {
+		t.Fatalf("delayed operation changed newer snapshot: generation=%d metas=%+v", view.Generation, view.Metas)
+	}
+}
+
+func runCompositionSkill(ctx context.Context, t *testing.T, built *Built, id session.SessionID) string {
+	t.Helper()
+	run, err := built.Service.StartRunContent(ctx, id, "use the replica skill", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result string
+	for event := range run.Events() {
+		if event.Type == session.EvToolResult && event.ToolResult != nil {
+			result = event.ToolResult.Content
+		}
+	}
+	return result
 }
 
 func activateCompositionSkill(t *testing.T, repository learning.SkillRepository, partition learning.SkillPartition, name, body string) learning.SkillVersion {

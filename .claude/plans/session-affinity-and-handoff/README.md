@@ -6,7 +6,7 @@ Epic: none mapped
 
 The DAG keeps the shared header contract ahead of transports, official clients ahead of the end-to-end byte proof, and lease mutation admission ahead of lease-loss, close, drain, and crash-handoff scenarios. Each worker follows strict failing-test-first TDD and uses only offline fakes (`mockllm`, `memfs`, deterministic lease clocks, miniredis, bufconn/httptest).
 
-Shared generated surfaces are serialized: task 07 reconciles engine/TypeScript API reports after their producers, and task 18 is the sole final documentation/`llms.txt` writer. The orchestrator alone changes acceptance-plan status. Protobuf source/generated trees must remain unchanged.
+Shared generated surfaces are serialized: task 07 reconciles engine/TypeScript API reports after their producers, and task 18 is the sole final documentation/configuration-reference writer. The orchestrator alone changes acceptance-plan status. Protobuf source/generated trees must remain unchanged.
 
 | Task | Title | Blocked by | Acceptance criteria |
 |---|---|---|---|

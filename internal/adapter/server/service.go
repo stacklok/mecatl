@@ -448,9 +448,13 @@ type Config struct {
 	UserModel UserModelLister
 
 	// ReflectSession enables explicit completed-session reflection independently of
-	// automatic learning mode. Proposals and the mutation callbacks expose the
-	// bounded, caller-partitioned staged-learning review surface.
+	// automatic learning mode. Attempts expose only content-free lifecycle
+	// projections from the verified caller's private partition. Proposals and the
+	// mutation callbacks expose the bounded, caller-partitioned staged-learning
+	// review surface.
 	ReflectSession          ExplicitReflector
+	Attempts                learning.AttemptRepository
+	AttemptPrincipal        func(*session.Principal) string
 	Proposals               learning.ProposalRepository
 	ProposalPrincipal       func(*session.Principal) string
 	PromoteProposal         ProposalPromoter
@@ -469,8 +473,7 @@ type Config struct {
 	// publisher atomically refreshes the shared live Skill catalog after mutations.
 	LearnedSkills             learning.SkillRepository
 	PublishLearnedSkills      func(context.Context, learning.SkillPartition) error
-	BeginSkillPublication     func() func()
-	RevokeLearnedSkill        func(learning.SkillPartition, string)
+	BeginSkillPublication     func(learning.SkillPartition) func()
 	LiveSkillGeneration       func(learning.SkillPartition) uint64
 	SkillActionAvailable      func(learning.SkillPartition, string) (bool, string)
 	LearnedSkillNameAvailable func(string) bool
@@ -875,6 +878,15 @@ type Service struct {
 	// common NOT-present read path in RecoverNotice — called at every run-entry).
 	recoverNotices sync.Map
 
+	// runEntryGenerations fences requests that were admitted before a Clear crossed
+	// its cancellation boundary. Callers snapshot the generation before waiting on
+	// per-session coordination and validate it after acquiring runEntryMu; Clear
+	// advances it while holding runEntryMu and s.mu. Entries intentionally survive
+	// source settlement so a later request for the same id can snapshot the new
+	// generation and proceed while already-queued requests remain retired.
+	// Guarded by s.mu.
+	runEntryGenerations map[session.SessionID]uint64
+
 	// resumeMu serializes the awaiting-approval resume DECISION per session id
 	// (cloud-native Phase 2): ApproveRun holds the per-session lock across the whole
 	// (LookupRun-miss check → ResumeApproval → register) sequence, so two concurrent
@@ -1104,6 +1116,10 @@ type sessionEngine struct {
 type runState struct {
 	run  *agent.Run
 	sess *session.Session
+	// cancelling is guarded by Service.mu. Clear marks the exact registered
+	// lifecycle before signalling cancellation so no approval, steer, or admission
+	// promotion can restart work across the irreversible clear boundary.
+	cancelling bool
 	// resumeAdmission distinguishes the provisional lifecycle installed by
 	// resumeFromAwaiting from ordinary prompt/retry admission. A concurrent approval
 	// must wait for the former under resumeMu instead of treating its nil run as a
@@ -1129,6 +1145,13 @@ type runState struct {
 	// removeCapabilityOnSettle retains denial when normal teardown releases a
 	// lease while stale run references are still unwinding.
 	removeCapabilityOnSettle bool
+}
+
+func (st *runState) approvalRun() *agent.Run {
+	if st.cancelling {
+		return nil
+	}
+	return st.run
 }
 
 // keyedMutex is a map of per-key mutexes with reference counting, so a caller can
@@ -1259,6 +1282,7 @@ func NewServiceContext(ctx context.Context, cfg Config) (*Service, error) {
 		sessionEngines:      make(map[session.SessionID]*sessionEngine),
 		sessionEnvironments: make(map[session.SessionID]tool.Environment),
 		reservedIDs:         make(map[session.SessionID]struct{}),
+		runEntryGenerations: make(map[session.SessionID]uint64),
 		replayedApprovals:   make(map[session.SessionID]struct{}),
 		steerMsgIDs:         make(map[session.SessionID][]steerMsgID),
 		heldLeases:          make(map[session.SessionID]*heldLease),
@@ -2094,8 +2118,7 @@ func (s *Service) createSession(ctx context.Context, mode session.PermissionMode
 		owner = srcOwner
 	}
 
-	needPerSession := s.sessionNeedsPerFactory(sel, specs, profile, workspace) ||
-		s.cfg.LearnedSkills != nil && session.PrincipalFromContext(ctx) != nil
+	needPerSession := s.sessionNeedsPerFactory(sel, specs, profile, workspace) || s.cfg.LearnedSkills != nil
 	if !needPerSession {
 		// Shared-engine fast path (today's behaviour, byte-identical). The labels are
 		// the empty pair + default profile here (the empty-selector default profile is
@@ -3300,10 +3323,10 @@ func (s *Service) managementOwnershipPreflight(ctx context.Context, id session.S
 	return false, nil
 }
 
-// managementTarget performs the common management authorization and eligibility
-// gate. The caller must hold runEntryMu for id. concealAbsence makes missing and
-// foreign sessions indistinguishable idempotent success for DeleteSession.
-func (s *Service) managementTarget(ctx context.Context, id session.SessionID, concealAbsence bool) (*session.Session, bool, error) {
+// managementSession performs the common management authorization and taxonomy
+// validation without applying the generic idle-only management gate. The caller
+// must hold runEntryMu for id.
+func (s *Service) managementSession(ctx context.Context, id session.SessionID, concealAbsence bool) (*session.Session, bool, error) {
 	sess, err := s.cfg.Store.Load(ctx, id)
 	if err != nil {
 		if errors.Is(err, port.ErrSessionNotFound) {
@@ -3327,6 +3350,17 @@ func (s *Service) managementTarget(ctx context.Context, id session.SessionID, co
 	}
 	if sess.Kind != session.SessionKindMain || hasLegacyNonChatPrefix(id) {
 		return nil, false, fmt.Errorf("%w: session is not a main session", ErrFailedPrecondition)
+	}
+	return sess, false, nil
+}
+
+// managementTarget adds the generic idle-only eligibility gate used by
+// management operations other than ClearSession. The caller must hold
+// runEntryMu for id.
+func (s *Service) managementTarget(ctx context.Context, id session.SessionID, concealAbsence bool) (*session.Session, bool, error) {
+	sess, absent, err := s.managementSession(ctx, id, concealAbsence)
+	if err != nil || absent {
+		return nil, absent, err
 	}
 	if sess.State == session.StateRunning || sess.State == session.StateAwaiting || s.IsLive(id) {
 		return nil, false, fmt.Errorf("%w: session is active or awaiting approval", ErrFailedPrecondition)
@@ -3840,7 +3874,8 @@ func (s *Service) StartRun(ctx context.Context, id session.SessionID, text strin
 // scheduled sessions, unknown metadata, and every historical child/fire prefix
 // fail closed. The trusted scheduler uses StartScheduledRunContent instead.
 func (s *Service) StartRunContent(ctx context.Context, id session.SessionID, text string, parts []session.Content) (*agent.Run, error) {
-	return s.startRunContent(ctx, id, text, parts, runPurposeChat)
+	generation := s.captureRunEntryGeneration(id)
+	return s.startRunContent(ctx, id, text, parts, runPurposeChat, generation)
 }
 
 // StartScheduledRunContent is the trusted scheduler-purpose entry. It admits
@@ -3848,7 +3883,8 @@ func (s *Service) StartRunContent(ctx context.Context, id session.SessionID, tex
 // legacy unknown snapshots. It is intentionally absent from public transports;
 // scheduler composition calls it directly.
 func (s *Service) StartScheduledRunContent(ctx context.Context, id session.SessionID, text string, parts []session.Content) (*agent.Run, error) {
-	return s.startRunContent(ctx, id, text, parts, runPurposeScheduler)
+	generation := s.captureRunEntryGeneration(id)
+	return s.startRunContent(ctx, id, text, parts, runPurposeScheduler, generation)
 }
 
 // RetryFailedRun resumes the failed model step from the persisted conversation state
@@ -3858,6 +3894,7 @@ func (s *Service) StartScheduledRunContent(ctx context.Context, id session.Sessi
 // persisted typed terminal metadata and is consumed only after every fallible setup step
 // has succeeded and the recovered idle snapshot has been saved.
 func (s *Service) RetryFailedRun(ctx context.Context, id session.SessionID) (*agent.Run, error) {
+	generation := s.captureRunEntryGeneration(id)
 	if s.draining.Load() {
 		return nil, fmt.Errorf("%w: %q", ErrUnavailable, id)
 	}
@@ -3868,6 +3905,9 @@ func (s *Service) RetryFailedRun(ctx context.Context, id session.SessionID) (*ag
 	}
 	unlock := s.runEntryMu.lock(id)
 	defer unlock()
+	if err := s.validateRunEntryGeneration(id, generation); err != nil {
+		return nil, err
+	}
 
 	sess, err := s.GetSession(ctx, id)
 	if err != nil {
@@ -3962,6 +4002,28 @@ func (s *Service) prepareFailedStepRetry(ctx context.Context, sess *session.Sess
 	return nil
 }
 
+type runEntryGeneration uint64
+
+func (s *Service) captureRunEntryGeneration(id session.SessionID) runEntryGeneration {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return runEntryGeneration(s.runEntryGenerations[id])
+}
+
+// validateRunEntryGeneration must be called while runEntryMu for id is held.
+func (s *Service) validateRunEntryGeneration(id session.SessionID, generation runEntryGeneration) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.validateRunEntryGenerationLocked(id, generation)
+}
+
+func (s *Service) validateRunEntryGenerationLocked(id session.SessionID, generation runEntryGeneration) error {
+	if runEntryGeneration(s.runEntryGenerations[id]) != generation {
+		return fmt.Errorf("%w: session %q was cleared while the request waited for admission", ErrFailedPrecondition, id)
+	}
+	return nil
+}
+
 type runPurpose uint8
 
 const (
@@ -3970,7 +4032,8 @@ const (
 	scheduleFireSessionPrefix = "sched--"
 )
 
-func (s *Service) startRunContent(ctx context.Context, id session.SessionID, text string, parts []session.Content, purpose runPurpose) (*agent.Run, error) {
+//nolint:gocyclo // Run admission keeps generation, ownership, lease, recovery, and launch in one transaction.
+func (s *Service) startRunContent(ctx context.Context, id session.SessionID, text string, parts []session.Content, purpose runPurpose, generation runEntryGeneration) (*agent.Run, error) {
 	if s.draining.Load() {
 		return nil, fmt.Errorf("%w: %q", ErrUnavailable, id)
 	}
@@ -3993,6 +4056,9 @@ func (s *Service) startRunContent(ctx context.Context, id session.SessionID, tex
 	// reload prevents the preflight from becoming a durable grant.
 	unlock := s.runEntryMu.lock(id)
 	defer unlock()
+	if err := s.validateRunEntryGeneration(id, generation); err != nil {
+		return nil, err
+	}
 	// Authorize the exact id before revealing whether its metadata or legacy prefix
 	// is runnable. Foreign, ownerless-under-enforcement, pruned, and absent ids all
 	// remain the same ErrNotFound class.
@@ -4149,6 +4215,7 @@ func (s *Service) repairRunningSession(ctx context.Context, sess *session.Sessio
 // the EvSteer drain echo can echo it (LookupSteerMessageID); the ACK-side echo
 // is the caller's own frame field (it never crosses the Service).
 func (s *Service) Steer(ctx context.Context, id session.SessionID, text string, parts []session.Content, messageID, expectedRunID string) (agent.SteerOutcome, bool, *agent.Run, error) {
+	generation := s.captureRunEntryGeneration(id)
 	// Authorize before touching the in-memory registry or the run-entry funnel:
 	// a steer injects caller input into a run / drives a follow-up, so a foreign
 	// request must be absence-equivalent (ErrNotFound), mirroring Cancel/Approve.
@@ -4158,8 +4225,16 @@ func (s *Service) Steer(ctx context.Context, id session.SessionID, text string, 
 	// Live-run fast path: validate the exact lease hold and enqueue while holding
 	// the service lock, ordering admission atomically against lease invalidation.
 	s.mu.Lock()
+	if err := s.validateRunEntryGenerationLocked(id, generation); err != nil {
+		s.mu.Unlock()
+		return agent.SteerTooLate, false, nil, err
+	}
 	st := s.runs[id]
 	if st != nil && st.run != nil {
+		if st.cancelling {
+			s.mu.Unlock()
+			return agent.SteerTooLate, false, nil, ErrNoActiveRun
+		}
 		if s.cfg.SessionLease != nil && !s.leaseDisabled {
 			h := s.heldLeases[id]
 			if h == nil || !h.valid || h.ctx.Err() != nil {
@@ -4213,7 +4288,7 @@ func (s *Service) Steer(ctx context.Context, id session.SessionID, text string, 
 	if expectedRunID != "" {
 		return agent.SteerTooLate, false, nil, checkExpectedRun(expectedRunID, "")
 	}
-	promotedRun, err := s.promotedSteerRun(ctx, id, text, parts)
+	promotedRun, err := s.promotedSteerRun(ctx, id, text, parts, generation)
 	if err != nil {
 		return agent.SteerTooLate, false, nil, err
 	}
@@ -4229,8 +4304,8 @@ func (s *Service) Steer(ctx context.Context, id session.SessionID, text string, 
 // byte-identical: only the promoted steer waits out a drain, so a prompt on a
 // genuinely-live session is not slowed by the grace. An unknown session id
 // surfaces ErrNotFound from the first funnel call.
-func (s *Service) promotedSteerRun(ctx context.Context, id session.SessionID, text string, parts []session.Content) (*agent.Run, error) {
-	run, err := s.StartRunContent(ctx, id, text, parts)
+func (s *Service) promotedSteerRun(ctx context.Context, id session.SessionID, text string, parts []session.Content, generation runEntryGeneration) (*agent.Run, error) {
+	run, err := s.startRunContent(ctx, id, text, parts, runPurposeChat, generation)
 	if err == nil {
 		return run, nil // no live run blocked the entry — promoted immediately
 	}
@@ -4250,7 +4325,7 @@ func (s *Service) promotedSteerRun(ctx context.Context, id session.SessionID, te
 	// Registry cleared: the original relay finished and the run's final terminal
 	// state is durable. Drive the follow-up through the hardened funnel, which
 	// now sees the terminal state and reopens it.
-	return s.StartRunContent(ctx, id, text, parts)
+	return s.startRunContent(ctx, id, text, parts, runPurposeChat, generation)
 }
 
 // CancelSteer retracts the session's live run's PENDING (un-drained) steer,
@@ -4553,7 +4628,7 @@ func (s *Service) sessionNeedsPerFactory(sel ProviderSelector, specs []mcp.Serve
 // then separately compares the verified live root with SharedEngineRoot to decide whether
 // placement affinity needs a per-session engine.
 func (s *Service) needsRehydration(sess *session.Session) bool {
-	return s.cfg.LearnedSkills != nil && sess.Owner != nil && sess.Owner.Issuer != "" && sess.Owner.Subject != "" ||
+	return s.cfg.LearnedSkills != nil ||
 		sess.Kind == session.SessionKindDebug ||
 		sess.Profile == string(ProfileNoFS) ||
 		sess.ProviderID != "" || sess.ModelID != "" ||
@@ -4911,7 +4986,7 @@ func (s *Service) approveLiveRun(id session.SessionID, target *agent.Run, askID 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	st := s.runs[id]
-	if st == nil || st.run == nil || st.run != target {
+	if st == nil || st.run == nil || st.run != target || st.cancelling {
 		return ErrNoActiveRun
 	}
 	if s.cfg.SessionLease != nil && !s.leaseDisabled {
@@ -4973,6 +5048,7 @@ func (s *Service) Approve(ctx context.Context, id session.SessionID, askID strin
 // follow-up (additive, out of the Phase 2 gate) — see docs/adr/0027-cloud-native.md
 // Phase 2.
 func (s *Service) ApproveRun(ctx context.Context, id session.SessionID, askID string, verdict session.ApprovalVerdict, expectedRunID string) (*agent.Run, error) {
+	generation := s.captureRunEntryGeneration(id)
 	if s.draining.Load() {
 		return nil, fmt.Errorf("%w: %q", ErrUnavailable, id)
 	}
@@ -4986,13 +5062,21 @@ func (s *Service) ApproveRun(ctx context.Context, id session.SessionID, askID st
 	// resolution so lease-loss invalidation and approval are ordered: whichever
 	// wins the lock wins, and a verdict can never enter after declared loss.
 	s.mu.Lock()
+	if err := s.validateRunEntryGenerationLocked(id, generation); err != nil {
+		s.mu.Unlock()
+		return nil, err
+	}
 	st, ok := s.runs[id]
 	if ok {
+		if st.cancelling {
+			s.mu.Unlock()
+			return nil, ErrNoActiveRun
+		}
 		if st.run == nil {
 			resumeAdmission := st.resumeAdmission
 			s.mu.Unlock()
 			if resumeAdmission {
-				return s.resumeFromAwaiting(ctx, id, askID, verdict, expectedRunID)
+				return s.resumeFromAwaiting(ctx, id, askID, verdict, expectedRunID, generation)
 			}
 			return nil, ErrNoActiveRun
 		}
@@ -5016,7 +5100,7 @@ func (s *Service) ApproveRun(ctx context.Context, id session.SessionID, askID st
 		return nil, nil
 	}
 	s.mu.Unlock()
-	return s.resumeFromAwaiting(ctx, id, askID, verdict, expectedRunID)
+	return s.resumeFromAwaiting(ctx, id, askID, verdict, expectedRunID, generation)
 }
 
 // resumeFromAwaiting is the service half of the fourth (awaiting-only) run-entry
@@ -5041,20 +5125,28 @@ func (s *Service) ApproveRun(ctx context.Context, id session.SessionID, askID st
 // mirrors rehydrateSession's loser-teardown/MaxSessionEngines guard via
 // engineAndEnvironmentFor; the resumed run is registered into s.runs like any other so
 // a concurrent Cancel/Approve reaches it and FinishRun cleans it up.
-func (s *Service) resumeFromAwaiting(ctx context.Context, id session.SessionID, askID string, verdict session.ApprovalVerdict, expectedRunID string) (*agent.Run, error) {
+//
+//nolint:gocyclo // Approval resume keeps generation, lock ordering, lease, and exact-once launch in one transaction.
+func (s *Service) resumeFromAwaiting(ctx context.Context, id session.SessionID, askID string, verdict session.ApprovalVerdict, expectedRunID string, generation runEntryGeneration) (*agent.Run, error) {
 	if s.draining.Load() {
 		return nil, fmt.Errorf("%w: %q", ErrUnavailable, id)
 	}
 	unlock := s.resumeMu.lock(id)
 	defer unlock()
+	entryUnlock := s.runEntryMu.lock(id)
+	defer entryUnlock()
+	if err := s.validateRunEntryGeneration(id, generation); err != nil {
+		return nil, err
+	}
 
-	// Re-check under the lock: a concurrent resume that won the race has registered a
+	// Re-check under the locks: a concurrent resume that won the race has registered a
 	// live run. Route this verdict only while its local lease capability remains
 	// valid, using the same service-lock ordering as ApproveRun's fast path.
 	s.mu.Lock()
 	st, ok := s.runs[id]
 	if ok {
-		if st.run == nil {
+		run := st.approvalRun()
+		if run == nil {
 			s.mu.Unlock()
 			return nil, ErrNoActiveRun
 		}
@@ -5065,15 +5157,22 @@ func (s *Service) resumeFromAwaiting(ctx context.Context, id session.SessionID, 
 				return nil, fmt.Errorf("%w: %q", ErrSessionLeasedElsewhere, id)
 			}
 		}
-		if err := checkExpectedRun(expectedRunID, st.run.RunID()); err != nil {
+		if err := checkExpectedRun(expectedRunID, run.RunID()); err != nil {
 			s.mu.Unlock()
 			return nil, err
 		}
-		st.run.Approve(askID, verdict)
+		run.Approve(askID, verdict)
 		s.mu.Unlock()
 		return nil, nil
 	}
 	s.mu.Unlock()
+
+	// ADR 0030 Layer 3 note: engineAndEnvironmentFor's mode→model rebuild (CASE 1) is a
+	// NO-OP here. SetMode is rejected from StateAwaiting by the aggregate, so a parked
+	// session's Mode cannot have changed since its engine was built — se.builtForMode ==
+	// sess.Mode always holds, and the stale-mode branch never fires. (A restart-parked
+	// awaiting session is rehydrated on its persisted Mode first, so the rebuilt engine's
+	// builtForMode matches too.) The model is fixed for the resumed turn.
 
 	// GetSession (read-only snapshot load): ErrNotFound for an unknown session. We do
 	// NOT use loadAndReopen here — its job is to drive completed/cancelled/failed back
@@ -5096,18 +5195,6 @@ func (s *Service) resumeFromAwaiting(ctx context.Context, id session.SessionID, 
 		// stranded-for-Approve as before (last-write-wins / nothing to resume).
 		return nil, ErrNoActiveRun
 	}
-	// ADR 0030 Layer 3 note: engineAndEnvironmentFor's mode→model rebuild (CASE 1) is a
-	// NO-OP here. SetMode is rejected from StateAwaiting by the aggregate, so a parked
-	// session's Mode cannot have changed since its engine was built — se.builtForMode ==
-	// sess.Mode always holds, and the stale-mode branch never fires. (A restart-parked
-	// awaiting session is rehydrated on its persisted Mode first, so the rebuilt engine's
-	// builtForMode matches too.) The model is fixed for the resumed turn. We still take
-	// runEntryMu (nested inside resumeMu, the resumeMu→runEntryMu order) around the
-	// engine-resolve+register so the run-entry critical section is uniform with
-	// StartRunContent — the rebuild's under-lock liveness check stays authoritative even
-	// though it cannot fire on this path.
-	entryUnlock := s.runEntryMu.lock(id)
-	defer entryUnlock()
 	st, admissionParent, err := s.beginRunAdmission(ctx, id, sess, true)
 	if err != nil {
 		return nil, err
@@ -5184,12 +5271,18 @@ func (s *Service) resumeFromAwaiting(ctx context.Context, id session.SessionID, 
 // cancel the passed ctx once it stops draining, or the run can wedge behind a
 // dead relay (mirrors the run.Cancel() the live relays call on disconnect).
 func (s *Service) ApprovePlan(ctx context.Context, id session.SessionID, targetMode session.PermissionMode, note string) (<-chan session.Event, error) {
+	generation := s.captureRunEntryGeneration(id)
+	return s.approvePlan(ctx, id, targetMode, note, generation)
+}
+
+func (s *Service) approvePlan(ctx context.Context, id session.SessionID, targetMode session.PermissionMode, note string, generation runEntryGeneration) (<-chan session.Event, error) {
 	if s.draining.Load() {
 		return nil, fmt.Errorf("%w: %q", ErrUnavailable, id)
 	}
-	// Authorize before reading the in-memory registry. A foreign caller must not
-	// learn that a run exists or trigger any live-run side effect.
-	if _, err := s.GetSession(ctx, id); err != nil {
+	// Authorize and load before reading the in-memory registry. A foreign caller
+	// must not learn that a run exists or trigger any live-run side effect.
+	sess, err := s.GetSession(ctx, id)
+	if err != nil {
 		return nil, err
 	}
 	// (1) A live run means an approve-mid-run: reject. The operator must use the
@@ -5197,14 +5290,9 @@ func (s *Service) ApprovePlan(ctx context.Context, id session.SessionID, targetM
 	if _, ok := s.LookupRun(id); ok {
 		return nil, fmt.Errorf("%w: session %q has a live run (use the Converse resume_approval frame for an in-flight run)", ErrNotAwaitingPlan, id)
 	}
-	// (2) Load the session to validate the plan-originated precondition and read
-	// the askID. This is a read-only GetSession (NOT loadAndReopen — the session
-	// is awaiting, not completed/cancelled/failed, so there is nothing to drive
-	// idle). ErrNotFound propagates for an unknown session.
-	sess, err := s.GetSession(ctx, id)
-	if err != nil {
-		return nil, err
-	}
+	// (2) Validate the plan-originated precondition and read the askID from the
+	// authorized snapshot. resumeFromAwaiting reloads and revalidates under the
+	// admission locks before any work can start.
 	if sess.State != session.StateAwaiting {
 		return nil, fmt.Errorf("%w: session %q is in state %q, not awaiting", ErrNotAwaitingPlan, id, sess.State)
 	}
@@ -5227,7 +5315,7 @@ func (s *Service) ApprovePlan(ctx context.Context, id session.SessionID, targetM
 	// caller approves THE PLAN this session is parked on, and the askID is read
 	// off the snapshot rather than supplied. There is no caller expectation to
 	// enforce, so it passes no expected run id.
-	resumed, rerr := s.resumeFromAwaiting(ctx, id, ask.AskID, verdict, "")
+	resumed, rerr := s.resumeFromAwaiting(ctx, id, ask.AskID, verdict, "", generation)
 	if rerr != nil {
 		return nil, rerr
 	}
@@ -5258,7 +5346,7 @@ func (s *Service) ApprovePlan(ctx context.Context, id session.SessionID, targetM
 		// (loadAndReopen → engineAndEnvironmentFor CASE 1 rebuild on the flipped
 		// mode → execute model). The StopPlanApproved-completed session is
 		// reopened to idle by loadAndReopen.
-		cont, cerr := s.StartRunContent(ctx, id, proceed, nil)
+		cont, cerr := s.startRunContent(ctx, id, proceed, nil, runPurposeChat, generation)
 		if cerr != nil {
 			// Surface the continuation-launch failure honestly on the stream as a
 			// synthetic terminal result so the relay's client sees a terminal
@@ -5608,6 +5696,7 @@ func (s *Service) MaybeAutoApprovePlan(ctx context.Context, id session.SessionID
 	if ev.Ask.Origin() != session.AskOriginPlan {
 		return
 	}
+	generation := s.captureRunEntryGeneration(id)
 	// Emit the LOUD diagnostic BEFORE the verdict: the operator must see that no
 	// human reviewed this plan. The note is also the operator-visible reason on
 	// the session.
@@ -5627,9 +5716,16 @@ func (s *Service) MaybeAutoApprovePlan(ctx context.Context, id session.SessionID
 	// Case 1 is the common headless path (the run is parked in-process); case 2
 	// covers a restart where the process that parked the ask died.
 	if run, ok := s.LookupRun(id); ok {
-		// Live run: deliver the verdict directly (ModeDefault → allow-once, the
-		// planApprovedTarget flip). The run terminates StopPlanApproved and the
-		// mode flips. A continuation run MUST then proceed — a headless auto-approve
+		// Live run: deliver the verdict through the Service-owned lifecycle gate.
+		// Clear may have marked this exact run cancelling after LookupRun; in that
+		// case refuse both the verdict and its continuation.
+		if err := s.approveLiveRun(id, run, ev.Ask.AskID, session.VerdictAllowOnce, ""); err != nil {
+			s.cfg.Diagnostics.Log(ctx, port.LevelWarn,
+				"plan_mode_auto_approve: auto-approve failed (ask stays parked)",
+				"session", string(id), "err", err.Error())
+			return
+		}
+		// The mode flips at the terminal boundary. A continuation run MUST then proceed — a headless auto-approve
 		// has no operator to re-prompt, so leaving the session idle (completed at
 		// StopPlanApproved) is useless. This mirrors the cross-process path
 		// (ApprovePlan's atomic continuation) so BOTH live and cross-process
@@ -5638,7 +5734,6 @@ func (s *Service) MaybeAutoApprovePlan(ctx context.Context, id session.SessionID
 		// flips the mode; THIS goroutine drives the continuation via the SAME
 		// StartRunContent path ApprovePlan uses (loadAndReopen → execute model)
 		// carrying agent.PlanApprovedProceedText.
-		run.Approve(ev.Ask.AskID, session.VerdictAllowOnce)
 		// Drive the continuation run in the background. The relay that owns the
 		// ORIGINAL run's client stream drains the StopPlanApproved terminal; this
 		// goroutine waits for the session to reach a terminal state (the verdict
@@ -5646,12 +5741,12 @@ func (s *Service) MaybeAutoApprovePlan(ctx context.Context, id session.SessionID
 		// events to the durable log (appendEvent) so it never wedges. The
 		// continuation's events are NOT relayed to the original client stream
 		// (same discipline as the cross-process path's drain goroutine).
-		go s.autoApproveContinuation(ctx, id)
+		go s.autoApproveContinuation(ctx, id, generation)
 		return
 	}
 	// Cross-process: the run is dead, the session is parked in the store. Drive
 	// the EXISTING ApprovePlan path (resumeFromAwaiting → continuation run).
-	events, err := s.ApprovePlan(ctx, id, session.ModeDefault, "auto-approved: no human reviewed this plan")
+	events, err := s.approvePlan(ctx, id, session.ModeDefault, "auto-approved: no human reviewed this plan", generation)
 	if err != nil {
 		// Fail-safe: log and return. The ask stays parked; the run continues in
 		// plan mode (the model iterates). An error here means the session state
@@ -5698,7 +5793,7 @@ func (s *Service) MaybeAutoApprovePlan(ctx context.Context, id session.SessionID
 // than StopPlanApproved (cancel/error) is NOT continued (the plan was not
 // approved); only a StopPlanApproved terminal proceeds, matching
 // ApprovePlan's `resumedStop == StopPlanApproved` gate.
-func (s *Service) autoApproveContinuation(ctx context.Context, id session.SessionID) {
+func (s *Service) autoApproveContinuation(ctx context.Context, id session.SessionID, generation runEntryGeneration) {
 	logCtx := context.WithoutCancel(ctx)
 	deadline := time.Now().Add(autoApproveWaitTimeout)
 	for {
@@ -5730,7 +5825,7 @@ func (s *Service) autoApproveContinuation(ctx context.Context, id session.Sessio
 	// mode → execute model). The StopPlanApproved-completed session is reopened
 	// to idle by loadAndReopen.
 	proceed := agent.PlanApprovedProceedText + "\n\nOperator note: auto-approved: no human reviewed this plan"
-	cont, cerr := s.StartRunContent(logCtx, id, proceed, nil)
+	cont, cerr := s.startRunContent(logCtx, id, proceed, nil, runPurposeChat, generation)
 	if cerr != nil {
 		s.cfg.Diagnostics.Log(logCtx, port.LevelWarn,
 			"plan_mode_auto_approve: continuation run failed to start",
@@ -6346,7 +6441,7 @@ func (s *Service) removeRunState(id session.SessionID, st *runState) {
 func (s *Service) promoteRunAdmission(id session.SessionID, st *runState, stop context.CancelFunc, launch func() *agent.Run) (*agent.Run, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.runs[id] != st || s.draining.Load() {
+	if s.runs[id] != st || st.cancelling || s.draining.Load() {
 		return nil, fmt.Errorf("%w: %q", ErrUnavailable, id)
 	}
 	if s.cfg.SessionLease != nil && !s.leaseDisabled {
@@ -6601,16 +6696,15 @@ func (s *Service) ListAgents(_ context.Context) []*mecatlv1.AgentInfo {
 
 // ListSkills returns the current skills inventory (possibly empty).
 func (s *Service) ListSkills(ctx context.Context) []*mecatlv1.SkillInfo {
-	if s.cfg.BeginSkillPublication != nil {
-		unlock := s.cfg.BeginSkillPublication()
+	partition, partitionErr := s.skillPartition(ctx, "")
+	if s.cfg.BeginSkillPublication != nil && partitionErr == nil {
+		unlock := s.cfg.BeginSkillPublication(partition)
 		defer unlock()
 	}
-	if s.cfg.PublishLearnedSkills != nil {
-		if partition, err := s.skillPartition(ctx, ""); err == nil {
-			publishCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), skillPublicationTimeout)
-			_ = s.cfg.PublishLearnedSkills(publishCtx, partition)
-			cancel()
-		}
+	if s.cfg.PublishLearnedSkills != nil && partitionErr == nil {
+		publishCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), skillPublicationTimeout)
+		_ = s.cfg.PublishLearnedSkills(publishCtx, partition)
+		cancel()
 	}
 	if s.cfg.LiveSkills != nil {
 		return s.cfg.LiveSkills(ctx)

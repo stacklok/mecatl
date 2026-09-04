@@ -295,6 +295,24 @@ func retryableStatus(code int) bool {
 	return code == 408 || code == 429 || code >= 500
 }
 
+func structuredHTTPErrorText(code, kind, message string) string {
+	label := strings.TrimSpace(code)
+	if label == "" {
+		label = strings.TrimSpace(kind)
+	}
+	message = strings.TrimSpace(message)
+	switch {
+	case label != "" && message != "":
+		return label + ": " + message
+	case label != "":
+		return label
+	case message != "":
+		return message
+	default:
+		return "provider request failed"
+	}
+}
+
 // openaichatStreamErr wraps the given error as an openaichatStreamError while
 // retaining the SDK error in the chain and projecting only typed provider fields.
 func openaichatStreamErr(err error, msg, completionID string) *openaichatStreamError {
@@ -302,6 +320,7 @@ func openaichatStreamErr(err error, msg, completionID string) *openaichatStreamE
 	status := 0
 	metadata := providerErrorMetadata{}
 	if errors.As(err, &sdkErr) {
+		msg = structuredHTTPErrorText(sdkErr.Code, sdkErr.Type, sdkErr.Message)
 		metadata.providerCode = sdkErr.Code
 		if sdkErr.StatusCode != 0 {
 			status = sdkErr.StatusCode

@@ -2720,6 +2720,7 @@ func (e *Engine) observeCompletion(ctx context.Context, r *Run, sess *session.Se
 		return
 	}
 	tr := learning.NewTrajectory(sess.ID, r.workspace, reason, usage, sess.Conversation.Messages)
+	tr.RunID = sess.RunID()
 	tr.Principal = sess.Owner.Clone()
 	tr.Kind = sess.Kind
 	tr.Counters = sess.Counters

@@ -167,9 +167,12 @@ type SkillList struct {
 	OwnerAgent string
 }
 
+type SkillGeneration uint64
+
 type SkillPage struct {
-	Versions []SkillVersion
-	Next     SkillID
+	Versions   []SkillVersion
+	Next       SkillID
+	Generation SkillGeneration
 }
 
 type SkillEvaluationRequest struct {
@@ -205,6 +208,9 @@ type ValidatedSkillActivator interface {
 }
 
 type SkillRepository interface {
+	// Generation returns the durable monotonic generation for one caller/project
+	// partition. Successful mutations advance only that partition.
+	Generation(context.Context, SkillPartition) (SkillGeneration, error)
 	CreateDraft(context.Context, SkillPartition, string, SkillBundle, SkillProvenance) (SkillVersion, error)
 	Get(context.Context, SkillPartition, string, SkillID, VersionID) (SkillVersion, bool, error)
 	List(context.Context, SkillPartition, SkillList) (SkillPage, error)

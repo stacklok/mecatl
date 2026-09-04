@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/stacklok/mecatl/engine/adapter/memorypromotion"
 	"github.com/stacklok/mecatl/engine/agent"
@@ -20,6 +21,8 @@ type reflectionObserver struct {
 	coordinator      *reflectionCoordinator
 	reflector        learning.Reflector
 	repository       learning.ProposalRepository
+	attempts         learning.AttemptRepository
+	sourceStore      port.SessionStore
 	operatorMemory   tool.MemoryStore
 	projectMemory    tool.MemoryStore
 	mode             learning.Mode
@@ -27,7 +30,8 @@ type reflectionObserver struct {
 	projectWorkspace string
 	admission        *learningAdmission
 	policy           learning.AdmissionPolicy
-	controller       *automaticAdmissionController
+	ledger           learning.AutomaticAdmissionLedger
+	automatic        LearningAutomaticConfig
 	tokenCounter     agent.TokenCounter
 	sensitivity      learning.Sensitivity
 	metrics          func(learning.Activity)
@@ -76,7 +80,7 @@ func memoryExisting(ctx context.Context, stores ...tool.MemoryStore) []learning.
 }
 
 func (o *reflectionObserver) Observe(ctx context.Context, trajectory learning.Trajectory) error {
-	if o == nil || o.mode == learning.Off || o.coordinator == nil {
+	if o == nil || o.mode == learning.Off {
 		return nil
 	}
 	_, err := o.submit(ctx, trajectory, nil, true, true)
@@ -136,8 +140,160 @@ func reflectionEventsBytes(events []session.Event, limit int) int {
 	return total
 }
 
+func currentPromptBinding(input learning.Input, class learning.AdmissionClass) (learning.CurrentPromptBinding, error) {
+	index := -1
+	if input.Trajectory.Current.Valid(len(input.Trajectory.Messages)) {
+		for i := input.Trajectory.Current.Start; i < input.Trajectory.Current.End; i++ {
+			if session.IsGenuineUserPrompt(input.Trajectory.Messages[i]) {
+				index = i
+				break
+			}
+		}
+	} else if class == learning.AdmissionHostRequested {
+		for i := len(input.Trajectory.Messages) - 1; i >= 0; i-- {
+			if session.IsGenuineUserPrompt(input.Trajectory.Messages[i]) {
+				index = i
+				break
+			}
+		}
+	}
+	if index < 0 {
+		return learning.CurrentPromptBinding{}, learning.ErrInvalidAttempt
+	}
+	ref, err := learning.MessageEvidenceRef(input, index, "")
+	if err != nil {
+		return learning.CurrentPromptBinding{}, err
+	}
+	return learning.CurrentPromptBinding{
+		Ordinal: index,
+		Digest:  learning.CanonicalDigest(ref.Digest),
+		Origin:  learning.PromptOriginCurrentPrincipal,
+	}, nil
+}
+
+func (o *reflectionObserver) durableAttemptMaterial(ctx context.Context, input learning.Input, owner *session.Principal, class learning.AdmissionClass) (learning.AttemptPartition, learning.AttemptCreate, error) {
+	if o.attempts == nil {
+		return "", learning.AttemptCreate{}, errors.New("durable learning attempt repository is not configured")
+	}
+	if o.sourceStore == nil || input.Trajectory.RunID == "" {
+		return "", learning.AttemptCreate{}, errors.New("durable learning admission requires a persisted ADR-0249 run ID")
+	}
+	persisted, err := o.sourceStore.Load(ctx, input.Trajectory.SessionID)
+	if err != nil || persisted.RunID() != input.Trajectory.RunID {
+		return "", learning.AttemptCreate{}, errors.New("durable learning admission requires an exact persisted ADR-0249 run ID")
+	}
+	digest, err := automaticTrajectoryDigest(input)
+	if err != nil {
+		return "", learning.AttemptCreate{}, err
+	}
+	source := learning.AttemptSource{
+		SessionID:       input.Trajectory.SessionID,
+		RunID:           learning.DurableRunID(input.Trajectory.RunID),
+		CanonicalDigest: learning.CanonicalDigest(digest),
+	}
+	prompt, err := currentPromptBinding(input, class)
+	if err != nil {
+		return "", learning.AttemptCreate{}, err
+	}
+	provenance, err := learning.NewAdmissionProvenance(class, source, prompt)
+	if err != nil {
+		return "", learning.AttemptCreate{}, err
+	}
+	caller := reflectionPrincipal(owner)
+	partition, err := learning.DeriveAttemptPartition(caller)
+	if err != nil {
+		return "", learning.AttemptCreate{}, err
+	}
+	id, err := learning.DeterministicAttemptID(caller, source)
+	if err != nil {
+		return "", learning.AttemptCreate{}, err
+	}
+	return partition, learning.AttemptCreate{ID: id, Provenance: provenance}, nil
+}
+
+func (o *reflectionObserver) createDurableAttempt(ctx context.Context, input learning.Input, owner *session.Principal, class learning.AdmissionClass) (learning.AttemptRecord, bool, error) {
+	partition, create, err := o.durableAttemptMaterial(ctx, input, owner, class)
+	if err != nil {
+		return learning.AttemptRecord{}, false, err
+	}
+	if existing, found, getErr := o.attempts.Get(ctx, partition, create.ID); getErr != nil {
+		return learning.AttemptRecord{}, false, getErr
+	} else if found {
+		return existing, true, nil
+	}
+	record, err := o.attempts.Create(ctx, partition, create)
+	return record, false, err
+}
+
+func positiveAutomaticValue(value int) (uint64, error) {
+	if value <= 0 {
+		return 0, learning.ErrAutomaticAdmissionLimit
+	}
+	return uint64(value), nil //nolint:gosec // positivity excludes signed wraparound
+}
+
+func automaticAdmissionPolicy(cfg LearningAutomaticConfig) (learning.AutomaticAdmissionPolicy, error) {
+	maxCount, err := positiveAutomaticValue(cfg.MaxReflections)
+	if err != nil {
+		return learning.AutomaticAdmissionPolicy{}, err
+	}
+	maxTokens, err := positiveAutomaticValue(cfg.MaxTokens)
+	if err != nil {
+		return learning.AutomaticAdmissionPolicy{}, err
+	}
+	maxPrincipalCount, err := positiveAutomaticValue(cfg.MaxReflectionsPerPrincipal)
+	if err != nil {
+		return learning.AutomaticAdmissionPolicy{}, err
+	}
+	maxPrincipalTokens, err := positiveAutomaticValue(cfg.MaxTokensPerPrincipal)
+	if err != nil {
+		return learning.AutomaticAdmissionPolicy{}, err
+	}
+	return learning.AutomaticAdmissionPolicy{
+		Window: cfg.Window, Cooldown: cfg.Cooldown, DedupeWindow: learningDedupeTTL,
+		MaxCount: maxCount, MaxTokens: maxTokens, MaxCountPerPrincipal: maxPrincipalCount, MaxTokensPerPrincipal: maxPrincipalTokens,
+		ReservationClaimDuration: time.Minute,
+	}, nil
+}
+
+func (o *reflectionObserver) createOrReserveAttempt(ctx context.Context, partition learning.AttemptPartition, create learning.AttemptCreate, tokens int) (learning.AttemptRecord, bool, error) {
+	if o.ledger == nil {
+		return learning.AttemptRecord{}, false, errors.New("durable automatic admission ledger is not configured")
+	}
+	existing, found, err := o.attempts.Get(ctx, partition, create.ID)
+	if err != nil {
+		return learning.AttemptRecord{}, false, err
+	}
+	reservationID, err := learning.AutomaticReservationIDForAttempt(create.ID)
+	if err != nil {
+		return learning.AttemptRecord{}, false, err
+	}
+	policy, err := automaticAdmissionPolicy(o.automatic)
+	if err != nil {
+		return learning.AttemptRecord{}, false, err
+	}
+	reservedTokens, err := positiveAutomaticValue(tokens)
+	if err != nil {
+		return learning.AttemptRecord{}, false, err
+	}
+	revision, err := learning.AutomaticAdmissionPolicyRevisionFor(policy)
+	if err != nil {
+		return learning.AttemptRecord{}, false, err
+	}
+	req := learning.AutomaticReservationRequest{
+		ID: reservationID, AttemptID: create.ID, Principal: partition,
+		Digest: create.Provenance.Source.CanonicalDigest, Class: create.Provenance.Class,
+		Tokens: reservedTokens, ExpectedPolicyRevision: revision,
+	}
+	record, err := (automaticReservationReconciler{ledger: o.ledger, attempts: o.attempts}).reserveAndCreate(ctx, req, create)
+	if err != nil {
+		return learning.AttemptRecord{}, false, err
+	}
+	return record, found && existing.ID == record.ID, nil
+}
+
 //nolint:gocyclo // explicit/direct and automatic/queued paths share one bounded input and disposition funnel
-func (o *reflectionObserver) submit(ctx context.Context, trajectory learning.Trajectory, events []session.Event, async, automatic bool) (reflectionReceipt, error) {
+func (o *reflectionObserver) submit(ctx context.Context, trajectory learning.Trajectory, events []session.Event, _ bool, automatic bool) (reflectionReceipt, error) {
 	if o == nil || o.reflector == nil || o.repository == nil {
 		return reflectionReceipt{}, errors.New("reflection is not configured")
 	}
@@ -171,10 +327,6 @@ func (o *reflectionObserver) submit(ctx context.Context, trajectory learning.Tra
 		}
 		signals = decision.Signals
 	}
-	automaticDigest, digestErr := automaticTrajectoryDigest(reflectionPrincipal(owner), input)
-	if digestErr != nil {
-		return reflectionReceipt{}, digestErr
-	}
 	reservationTokens := 0
 	if automatic {
 		estimator, ok := o.reflector.(interface {
@@ -183,12 +335,13 @@ func (o *reflectionObserver) submit(ctx context.Context, trajectory learning.Tra
 		if !ok {
 			return reflectionReceipt{}, errors.New("automatic reflection requires an exact request token estimator")
 		}
-		reservationTokens, digestErr = estimator.RequestTokenEstimate(input)
-		if digestErr != nil {
-			return reflectionReceipt{}, digestErr
+		estimated, estimateErr := estimator.RequestTokenEstimate(input)
+		if estimateErr != nil {
+			return reflectionReceipt{}, estimateErr
 		}
+		reservationTokens = estimated
 	}
-	if o.coordinator == nil {
+	if o.attempts == nil || o.mode == learning.Off {
 		jobCtx, cancel := context.WithTimeout(ctx, defaultReflectionJobTimeout)
 		defer cancel()
 		outcome, err := o.reflector.Reflect(jobCtx, input)
@@ -204,7 +357,7 @@ func (o *reflectionObserver) submit(ctx context.Context, trajectory learning.Tra
 			receipt.Abstained = true
 			return receipt, nil
 		}
-		processed, err := o.job(input, signals, owner, "", nil, nil).process(jobCtx, digest, outcome)
+		processed, err := o.job(input, signals, owner).process(jobCtx, digest, outcome)
 		processed.ID, processed.Disposition = receipt.ID, reflectionCompleted
 		return processed, err
 	}
@@ -213,41 +366,77 @@ func (o *reflectionObserver) submit(ctx context.Context, trajectory learning.Tra
 	if automatic && decision.Class == learning.AdmissionWeighted && o.admission != nil && !o.admission.admit() {
 		return reflectionReceipt{}, nil
 	}
-	var reserve func() bool
-	var complete func(reflectionReceipt)
-	if automatic && o.controller != nil {
-		reserve = func() bool {
-			return o.controller.reserve(reflectionPrincipal(owner), automaticDigest, reservationTokens, decision.Class, o.sensitivity)
+	partition, create, err := o.durableAttemptMaterial(ctx, input, owner, decision.Class)
+	if err != nil {
+		return reflectionReceipt{Disposition: reflectionFailed}, err
+	}
+	var attempt learning.AttemptRecord
+	var existingAttempt bool
+	if automatic {
+		attempt, existingAttempt, err = o.createOrReserveAttempt(ctx, partition, create, reservationTokens)
+	} else {
+		attempt, existingAttempt, err = o.createDurableAttempt(ctx, input, owner, decision.Class)
+	}
+	if err != nil {
+		if automatic && (errors.Is(err, learning.ErrAutomaticAdmissionLimit) || errors.Is(err, learning.ErrAutomaticAdmissionCooldown) || errors.Is(err, learning.ErrAutomaticAdmissionDuplicate)) {
+			o.emitAutomaticRefusal(err)
+			return reflectionReceipt{ID: string(create.ID), Disposition: reflectionRateLimited}, nil
 		}
-		complete = func(receipt reflectionReceipt) {
-			o.controller.complete(automaticDigest)
-			o.emitReflection(receipt)
+		return reflectionReceipt{ID: string(create.ID), Disposition: reflectionFailed}, err
+	}
+	if automatic && !existingAttempt && o.metrics != nil {
+		reason := learning.ReasonWeightedThreshold
+		if decision.Class == learning.AdmissionHard {
+			reason = learning.ReasonHardTrigger
+		}
+		o.metrics(learning.Activity{Kind: learning.ActivityReservedTokens, Reason: reason, Sensitivity: o.sensitivity, Count: int64(reservationTokens)})
+	}
+	if existingAttempt && attempt.State.Terminal() {
+		return o.receiptForAttempt(ctx, attempt, input, reflectionPrincipal(owner)), nil
+	}
+	disposition := reflectionQueued
+	if existingAttempt {
+		disposition = reflectionDuplicate
+		if automatic && o.metrics != nil {
+			o.metrics(learning.Activity{Kind: learning.ActivityDuplicate, Reason: learning.ReasonDuplicate, Sensitivity: o.sensitivity, Count: 1})
 		}
 	}
-	receipt, err := o.coordinator.Enqueue(o.job(input, signals, owner, automaticDigest, reserve, complete))
-	if automatic && o.metrics != nil {
-		kind := learning.ActivityKind("")
-		reason := learning.AdmissionReason("")
-		switch receipt.Disposition {
-		case reflectionDuplicate:
-			kind, reason = learning.ActivityDuplicate, learning.ReasonDuplicate
-		case reflectionQueueFull:
-			kind, reason = learning.ActivityQueueFull, learning.ReasonQueueFull
-		case reflectionClosed:
-			kind, reason = learning.ActivityClosed, learning.ReasonCoordinatorClosed
+	return reflectionReceipt{ID: string(create.ID), Disposition: disposition}, nil
+}
+
+func (o *reflectionObserver) receiptForAttempt(ctx context.Context, attempt learning.AttemptRecord, input learning.Input, principal string) reflectionReceipt {
+	receipt := reflectionReceipt{ID: string(attempt.ID), Disposition: reflectionDuplicate, Abstained: attempt.Outcome == learning.AttemptOutcomeAbstained}
+	if attempt.Outcome == learning.AttemptOutcomeFailed {
+		receipt.Err = string(attempt.FailureCode)
+	}
+	if attempt.Outcome == learning.AttemptOutcomeSucceeded {
+		// A successful proposed attempt reaches terminal only after the downstream
+		// proposal checkpoint; preserve that durable fact even if the proposal was
+		// subsequently retired by its independent retention lifecycle.
+		receipt.Staged = 1
+	}
+	if attempt.ProposalID == "" || o.repository == nil {
+		return receipt
+	}
+	partitions := []learning.ProposalPartition{{Principal: principal}}
+	if input.Trajectory.Workspace != "" {
+		partitions = append(partitions, learning.ProposalPartition{Principal: principal, Project: input.Trajectory.Workspace})
+	}
+	for _, partition := range partitions {
+		proposal, found, err := o.repository.Get(ctx, partition, attempt.ProposalID)
+		if err != nil || !found {
+			continue
 		}
-		if kind.Valid() {
-			o.metrics(learning.Activity{Kind: kind, Reason: reason, Sensitivity: o.sensitivity, Count: 1})
+		receipt.Staged = 1
+		switch proposal.Status {
+		case learning.ProposalPromoted:
+			receipt.Promoted = 1
+		case learning.ProposalConflicted:
+			receipt.Conflicted = 1
 		}
+		return receipt
 	}
-	if err != nil || async || receipt.Disposition != reflectionQueued && receipt.Disposition != reflectionDuplicate {
-		return receipt, err
-	}
-	done, waitErr := o.coordinator.Wait(ctx, receipt.ID)
-	if waitErr != nil {
-		return receipt, waitErr
-	}
-	return done, nil
+	return receipt
 }
 
 func (o *reflectionObserver) emitAdmission(decision learning.AdmissionDecision) {
@@ -271,40 +460,23 @@ func (o *reflectionObserver) emitAdmission(decision learning.AdmissionDecision) 
 	o.metrics(learning.Activity{Kind: kind, Reason: reason, Sensitivity: o.sensitivity, Count: 1})
 }
 
-func (o *reflectionObserver) emitReflection(receipt reflectionReceipt) {
+func (o *reflectionObserver) emitAutomaticRefusal(err error) {
 	if o == nil || o.metrics == nil {
 		return
 	}
-	emit := func(kind learning.ActivityKind, reason learning.AdmissionReason, count int) {
-		if count > 0 {
-			o.metrics(learning.Activity{Kind: kind, Reason: reason, Sensitivity: o.sensitivity, Count: int64(count)})
-		}
+	activity := learning.Activity{Kind: learning.ActivityRateLimited, Reason: learning.ReasonRateLimit, Sensitivity: o.sensitivity, Count: 1}
+	if errors.Is(err, learning.ErrAutomaticAdmissionDuplicate) {
+		activity.Kind, activity.Reason = learning.ActivityDuplicate, learning.ReasonDuplicate
 	}
-	if receipt.Disposition == reflectionTimedOut {
-		emit(learning.ActivityTimedOut, learning.ReasonTimeout, 1)
-		return
-	}
-	if receipt.Disposition == reflectionFailed {
-		emit(learning.ActivityFailed, learning.ReasonReflectionFailed, 1)
-		return
-	}
-	if receipt.Abstained {
-		emit(learning.ActivityAbstained, learning.ReasonAbstained, 1)
-	}
-	emit(learning.ActivityStaged, learning.ReasonStaged, receipt.Staged)
-	emit(learning.ActivityPromoted, learning.ReasonPromoted, receipt.Promoted)
-	emit(learning.ActivityConflicted, learning.ReasonConflicted, receipt.Conflicted)
+	o.metrics(activity)
 }
 
-func (o *reflectionObserver) job(input learning.Input, signals []learning.Signal, owner *session.Principal, dedupeKey string, reserve func() bool, complete func(reflectionReceipt)) reflectionJob {
+func (o *reflectionObserver) job(input learning.Input, signals []learning.Signal, owner *session.Principal) reflectionJob {
 	principal := reflectionPrincipal(owner)
 	return reflectionJob{
 		principal: principal,
 		input:     input,
 		reflector: o.reflector,
-		dedupeKey: dedupeKey,
-		reserve:   reserve,
-		complete:  complete,
 		process: func(ctx context.Context, digest string, outcome learning.Outcome) (reflectionReceipt, error) {
 			return processReflectionOutcome(memoryadapter.WithWorkspace(reflectionContext(ctx, owner), input.Trajectory.Workspace), o.repository,
 				o.operatorMemory, o.projectMemory, principal, input,
@@ -314,9 +486,23 @@ func (o *reflectionObserver) job(input learning.Input, signals []learning.Signal
 }
 
 type stagedGroup struct {
-	partition learning.ProposalPartition
-	store     tool.MemoryStore
-	items     []learning.Candidate
+	partition    learning.ProposalPartition
+	store        tool.MemoryStore
+	items        []learning.Candidate
+	primary      bool
+	primaryIndex int
+}
+
+func checkpointFromReflectionReceipt(receipt reflectionReceipt) (learning.AttemptCheckpoint, learning.AttemptFailureCode, error) {
+	if receipt.ProposalID == "" {
+		return learning.AttemptCheckpoint{}, learning.FailureEvaluationRejected, learning.ErrInvalidProposal
+	}
+	checkpoint := learning.AttemptCheckpoint{Stage: learning.AttemptCheckpointProposalLinked, ProposalID: receipt.ProposalID}
+	if receipt.SkillID != "" {
+		checkpoint.Stage = learning.AttemptCheckpointSkillLinked
+		checkpoint.SkillID = receipt.SkillID
+	}
+	return checkpoint, learning.FailureNone, nil
 }
 
 func evidenceRefEqual(a, b learning.EvidenceRef) bool {
@@ -390,7 +576,7 @@ func processReflectionOutcome(
 	workspace := input.Trajectory.Workspace
 	operator := stagedGroup{partition: learning.ProposalPartition{Principal: principal}, store: operatorMemory}
 	project := stagedGroup{partition: learning.ProposalPartition{Principal: principal, Project: workspace}, store: projectMemory}
-	for _, candidate := range outcome.Candidates {
+	for candidateIndex, candidate := range outcome.Candidates {
 		group := &operator
 		if candidate.Kind == learning.CandidateProjectFact || candidate.Kind == learning.CandidateProcedure {
 			// Project candidates remain reviewable in their source partition. The
@@ -402,6 +588,10 @@ func processReflectionOutcome(
 		}
 		if err := learning.ValidateProposalMaterial(group.partition, digest, candidate, signals); err != nil {
 			return receipt, err
+		}
+		if candidateIndex == 0 {
+			group.primary = true
+			group.primaryIndex = len(group.items)
 		}
 		group.items = append(group.items, candidate)
 	}
@@ -415,7 +605,12 @@ func processReflectionOutcome(
 			return receipt, err
 		}
 		receipt.Staged += len(records)
-		for _, record := range records {
+		for recordIndex, record := range records {
+			isPrimary := group.primary && recordIndex == group.primaryIndex
+			if isPrimary {
+				receipt.ProposalID = record.ID
+				receipt.SkillID = record.SkillID
+			}
 			switch record.Status {
 			case learning.ProposalPromoted:
 				receipt.Promoted++
@@ -449,6 +644,17 @@ func processReflectionOutcome(
 				if procedure != nil && mode != learning.Off {
 					if err := procedure(ctx, claimed, mode); err != nil {
 						return receipt, err
+					}
+					if isPrimary {
+						authoritative, found, err := repository.Get(ctx, group.partition, record.ID)
+						if err != nil {
+							return receipt, err
+						}
+						if !found || authoritative.ID != record.ID {
+							return receipt, learning.ErrProposalNotFound
+						}
+						receipt.ProposalID = authoritative.ID
+						receipt.SkillID = authoritative.SkillID
 					}
 				}
 				continue
@@ -538,15 +744,11 @@ func buildConfiguredReflectionObserver(
 	}
 	return &reflectionObserver{
 		coordinator: coordinator, reflector: reflector, repository: repository,
+		attempts: cfg.attemptRepository, ledger: cfg.automaticAdmissionLedger, sourceStore: cfg.learningSourceStore,
+		automatic:      cfg.LearningAutomatic,
 		operatorMemory: operatorMemory, projectMemory: projectMemory,
 		mode: cfg.LearningMode, trusted: projectIngestionAdmitted(cfg), projectWorkspace: cfg.Workspace,
 		admission: admission, policy: learning.ThresholdPolicy{Sensitivity: cfg.LearningSensitivity},
-		controller: func() *automaticAdmissionController {
-			if admission != nil {
-				return admission.controller
-			}
-			return nil
-		}(),
 		tokenCounter: buildTokenCounter(modelCfg), sensitivity: cfg.LearningSensitivity,
 		metrics: cfg.LearningMetricsEmitter, procedure: processProcedure,
 	}

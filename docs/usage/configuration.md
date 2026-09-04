@@ -113,14 +113,33 @@ reserved-token budgets and coordinator capacity. Historical, tool, web, MCP, ass
 and repository text cannot hard-trigger. An unverifiable post-compaction current span
 fails closed.
 
-The automatic limits are sliding, process-local reservations. Zero for any maximum
+The automatic limits are sliding durable reservations once a non-off standard
+application has successfully selected its `AutomaticAdmissionLedger`. Zero for any maximum
 disables automatic reflection under that bound; cooldown zero disables only cooldown.
 The window must be 1m–24h. A reservation estimates the selected reflection model's
 bounded canonical input plus a 4096-token output cap and remains consumed after failure,
-timeout, or abstention. Queue-full does not consume it. Restart resets windows,
-cooldowns, and the 24-hour/1024-entry duplicate cache by design. There is no startup or
-shutdown catch-up. In a multi-replica deployment each replica owns a separate budget,
-so aggregate spend may be the configured limit multiplied by replica count.
+timeout, or abstention. Queue-full does not consume it. The deterministic attempt ID binds
+reservation to durable attempt create; after its backend-minted fence expires, a Build-owned
+joined reconciler discovers it through either local or remote storage without replaying the original
+admission. A crash before create is reclaimed, while an observable attempt retains its charge.
+Local composition stores the ledger
+beside the attempt store, caps durable reservation records at 512 globally and 128 per opaque
+principal partition, and prunes resolved records after deduplication retention; unresolved
+saturation fails closed instead of growing the bounded document indefinitely. Cooperating processes
+share global/principal count and token
+windows, cooldown, and 24-hour digest deduplication. A configured learning driver must
+advertise and serve the ledger whenever automatic learning is enabled; startup fails rather
+than falling back to per-process accounting. An embedding that does not wire the durable
+ledger retains ADR-0114's process-local limitation and must not advertise global bounds.
+
+Automatic admission reports `queued` only after an exact non-empty persisted `RunID` and
+idempotent durable `AttemptRepository.Create`. That caller/session/run/digest record—not the
+coordinator, receipt cache, or EventLog—is workflow authority across restart. It stores bounded
+content-free provenance and source references, never transcript/tool/provider content. Recovery
+reconstructs only the bounded canonical projection, verifies owner/run/order/digest, fences it at
+every model boundary, and fails closed when exact evidence is unavailable. The attempt APIs expose
+get/list and opaque-version retry/abandon only; no attempt-watch feed exists, and ADR-0250 session
+EventLog watch is not a substitute.
 
 `review` signal-gates eligible clean completions into the process-wide reflection
 coordinator and durably stages valid proposals without changing memory. `auto` uses the same
@@ -325,6 +344,22 @@ tag); it sits at the same trust tier as the on-disk store directory. A
 conforming driver must accept snapshot payloads up to **64 MiB** (mount the
 gRPC server with a matching receive limit; the harness client is already
 configured for it).
+
+`--learning-store-url` selects one driver target for the distributed learning
+repository set. The target must implement the capability-negotiation service and
+positively advertise `AttemptRepositoryService`, `ProposalRepositoryService`, and
+`SkillRepositoryService` together. Startup fails if any member is absent; mecatl
+never combines a partial remote set with local fallback repositories. The same
+Build-owned connection cache and shutdown path used by the other driver seams owns
+this connection. Principal and project repository partitions cross this transport
+only as opaque SHA-256 values, never as authenticated identity claims or raw
+workspace paths. This negotiation does not by itself make the raw driver a tenant
+boundary. The shipped RPCs are permitted only as explicitly trusted single-tenant
+infrastructure when `OwnershipEnforced=false`; ownership-enforced startup fails closed
+until ADR-0213 workload-authenticated middleware, a private owner registry, and separated
+maintenance RPCs land. The explicit flag is still dialed, probed, and composed in Off mode
+for explicit reflection, learned-skill inspection, and recovery of already-admitted work;
+it does not enable automatic observation or admission.
 
 Transport posture: **only LOCAL targets may ride plaintext** — loopback hosts
 and unix sockets (the single-user default). Any other driver target

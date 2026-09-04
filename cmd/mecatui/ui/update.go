@@ -235,9 +235,35 @@ func (m Model) onStreamMsg(sm streamMsg) (tea.Model, tea.Cmd) {
 	return m.update(sm.msg)
 }
 
+func (m Model) blockClearPendingInput(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
+	if m.clearPending == nil {
+		return m, nil, false
+	}
+	switch msg := msg.(type) {
+	case tea.KeyPressMsg:
+		// Clear blocks source-affecting input, but process-wide lifecycle
+		// controls must remain available during a slow handoff.
+		if key.Matches(msg, m.keys.Quit) || key.Matches(msg, m.keys.QuitD) || key.Matches(msg, m.keys.Suspend) {
+			mm, cmd := m.onKey(msg)
+			return mm, cmd, true
+		}
+		return m, nil, true
+	case tea.PasteMsg, primaryReadMsg, tea.ClipboardMsg, tea.MouseClickMsg, tea.MouseReleaseMsg:
+		// Clear owns the source handoff until its correlated response. Keep
+		// rendering/draining old-stream events, but admit no prompt, approval,
+		// duplicate command, paste, or click against the old source.
+		return m, nil, true
+	default:
+		return m, nil, false
+	}
+}
+
 // update is the body of the Elm reducer (see Update, which wraps it with the
 // test-only onPhase observer).
 func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if mm, cmd, handled := m.blockClearPendingInput(msg); handled {
+		return mm, cmd
+	}
 	switch msg := msg.(type) {
 	case streamMsg:
 		return m.onStreamMsg(msg)
@@ -593,10 +619,15 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 		focusCmd := m.prompt.Focus()
 		return m, focusCmd, true
 	case clearSessionReadyMsg:
-		// The replacement exists, so it is now safe to discard the old transcript
-		// and bind through the ordinary SessionReady machinery. Do this before
-		// scheduling the best-effort close: a close failure cannot disturb the
-		// already-active replacement.
+		if m.clearPending == nil || m.clearPending.sourceID != msg.oldID || m.clearPending.token != msg.token || m.sessionID != msg.oldID {
+			return m, nil, true
+		}
+		// The server returned only after the exact source lifecycle settled. Invalidate
+		// any locally queued old-stream messages before binding the successor.
+		m.clearPending = nil
+		if m.stream != nil || m.streamCh != nil || m.cancelRun != nil {
+			m = m.endRun("")
+		}
 		m = m.resetSession()
 		m.activePlacement = msg.placement
 		mm, bindCmd, handled := m.applySessionReady(msg.ready)
@@ -609,11 +640,25 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 		m.refreshView()
 		return m, tea.Batch(bindCmd, m.closeSessionCmd(msg.oldID)), handled
 	case clearSessionFailedMsg:
-		// The old session and all of its derived UI state remain intact; only the
-		// temporary input-blocking phase and status are rolled back.
+		if m.clearPending == nil || m.clearPending.sourceID != msg.sourceID || m.clearPending.token != msg.token || m.sessionID != msg.sourceID {
+			return m, nil, true
+		}
+		failure := "could not clear: " + sanitizeTerminal(msg.err.Error())
+		m.clearPending.failure = failure
+		activeSource := m.clearPending.sourcePhase == phaseRunning || m.clearPending.sourcePhase == phaseAwaitingApproval
+		if activeSource && !m.clearPending.sourceSettled {
+			// Cancellation is irreversible once the server crosses the active-source
+			// boundary. Keep this stream generation blocked until its delayed terminal
+			// event settles it; restoring running/awaiting would admit prompts or verdicts
+			// against a lifecycle the server is already cancelling.
+			m.phase = phaseConnecting
+			m.statusMsg = m.deps.Theme.Style("errorText").Render(failure + "; waiting for the source to settle before retry")
+			return m, nil, true
+		}
+		m.clearPending = nil
 		m.phase = phaseIdle
-		m.statusMsg = m.deps.Theme.Style("errorText").Render("could not clear: " + sanitizeTerminal(msg.err.Error()))
-		return m, nil, true
+		m.statusMsg = m.deps.Theme.Style("errorText").Render(failure + "; retry /clear")
+		return m, m.prompt.Focus(), true
 	case connectFallbackMsg:
 		// The connect-time create REJECTED the saved selection; the zero-selection
 		// retry succeeded (createSessionCmd's fallback leg, issue #41). The session is
@@ -683,6 +728,24 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 		m.refreshView()
 		return m, nil, true
 	case client.StreamErrMsg:
+		if m.clearPending != nil {
+			// The old stream failed while Clear owns the handoff. Preserve the fact,
+			// settle the reader, and suppress every recovery path that could reopen or
+			// continue the source.
+			if msg.Err != nil {
+				m.conv.addError("stream error: " + msg.Err.Error())
+			}
+			m = m.endRun(stopError)
+			m.failedStepRetryRun = false
+			m.failedStepRetryAuthoritative = false
+			m.clearPending.sourceSettled = true
+			m.phase = phaseConnecting
+			if settled, focusCmd, failed := m.settleFailedClearSource(); failed {
+				settled.refreshView()
+				return settled, tea.Batch(settled.refreshCmd(), focusCmd), true
+			}
+			return m, m.refreshCmd(), true
+		}
 		if msg.AuthReason != "" {
 			mm, cmd := m.reduceLiveAuthRecovery(msg.AuthReason)
 			return mm, cmd, true
@@ -725,6 +788,19 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 	case client.ModeChangedMsg:
 		return m.onModeChanged(msg), nil, true
 	case client.StreamClosedMsg:
+		// Clear still owns the handoff, but the source stream can settle before the
+		// RPC response arrives. Tear it down without draining queues, retrying steps,
+		// reopening live delivery, or otherwise continuing the source.
+		if m.clearPending != nil {
+			m = m.endRun("closed")
+			m.clearPending.sourceSettled = true
+			m.phase = phaseConnecting
+			if settled, focusCmd, failed := m.settleFailedClearSource(); failed {
+				settled.refreshView()
+				return settled, tea.Batch(settled.refreshCmd(), focusCmd), true
+			}
+			return m, m.refreshCmd(), true
+		}
 		// Clean close. If a run was still active (no terminal result seen),
 		// finalise it; otherwise it's the expected post-result close (no-op).
 		if m.phase == phaseRunning || m.phase == phaseAwaitingApproval {
@@ -1265,6 +1341,17 @@ func (m Model) applySteerEcho(msg client.SteerEchoMsg) (tea.Model, tea.Cmd) {
 	return m.afterEvent()
 }
 
+func (m Model) settleFailedClearSource() (Model, tea.Cmd, bool) {
+	if m.clearPending == nil || m.clearPending.failure == "" {
+		return m, nil, false
+	}
+	failure := m.clearPending.failure
+	m.clearPending = nil
+	m.phase = phaseIdle
+	m.statusMsg = m.deps.Theme.Style("errorText").Render(failure + "; retry /clear")
+	return m, m.prompt.Focus(), true
+}
+
 // applyResult handles a terminal ResultMsg: it folds the run's usage into the running
 // totals, surfaces a terminal error, ends the run, and drains any queued prompts.
 // Extracted from updateStreamEvent's switch to keep that dispatcher flat.
@@ -1280,6 +1367,21 @@ func (m Model) applyResult(msg client.ResultMsg) (tea.Model, tea.Cmd) {
 		} else {
 			m.conv.addError(msg.Error)
 		}
+	}
+	if m.clearPending != nil {
+		// The terminal facts still belong in the source projection, but Clear owns
+		// what happens next. Settle only: no queued prompt, failed-step retry,
+		// pending-mode retry, plan continuation, live-feed rearm, or other source run.
+		m = m.endRun(msg.Stop)
+		m.failedStepRetryRun = false
+		m.failedStepRetryAuthoritative = false
+		m.clearPending.sourceSettled = true
+		m.phase = phaseConnecting
+		if settled, focusCmd, failed := m.settleFailedClearSource(); failed {
+			settled.refreshView()
+			return settled, tea.Batch(settled.refreshCmd(), focusCmd)
+		}
+		return m, m.refreshCmd()
 	}
 	retryDeferred := m.failedStepRetryRun && !m.failedStepRetryAuthoritative
 	m = m.endRun(msg.Stop)
@@ -1825,6 +1927,12 @@ func (m Model) dispatchSurfaceKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool
 	if m.modal == nil {
 		return m, nil, false
 	}
+	// A clear command composed while running stays actionable if a permission ask
+	// opens before Enter is pressed. Route it ahead of the approval surface:
+	// ClearSession cancels the ask and must never become Allow/Deny/Learn.
+	if clearCommandSubmitted(msg, m.keys.Submit, m.prompt.Value()) {
+		return m.dispatchBareBuiltin(m.prompt.Value())
+	}
 	cmd, handled, closed := m.modal.HandleKey(msg)
 	if !handled {
 		return m, nil, false
@@ -1842,6 +1950,10 @@ func (m Model) dispatchSurfaceKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool
 		return m, tea.Batch(cmd, m.prompt.Focus()), true
 	}
 	return m, cmd, true
+}
+
+func clearCommandSubmitted(msg tea.KeyPressMsg, submit key.Binding, prompt string) bool {
+	return key.Matches(msg, submit) && strings.EqualFold(strings.TrimSpace(prompt), "/clear")
 }
 
 // dispatchSurfaceMsg routes a NON-input Msg through the open modal surface

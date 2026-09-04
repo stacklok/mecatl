@@ -99,9 +99,10 @@ type config struct {
 	// readyFile is the path of the atomically-published readiness document, written
 	// only after composition and every listener are up. Empty writes nothing.
 	readyFile string
-	// lifetimePipeFD is an INHERITED read-end descriptor whose EOF means the
-	// spawning parent died; the daemon then stops through the ordinary shutdown
-	// path. 0 disables it (0/1/2 are the standard streams, never a lifetime pipe).
+	// lifetimePipeFD is an INHERITED pipe read end or connected UNIX-domain
+	// stream socketpair endpoint whose EOF means the spawning parent died; the
+	// daemon then stops through the ordinary shutdown path. 0 disables it
+	// (0/1/2 are the standard streams, never a lifetime descriptor).
 	lifetimePipeFD  int
 	workspace       string
 	model           string
@@ -218,6 +219,7 @@ type config struct {
 	commandSourceURL string
 	eventLogURL      string
 	scheduleStoreURL string
+	learningStoreURL string
 	driverAuthToken  string
 	driverTLS        bool
 	driverTLSCA      string
@@ -1101,6 +1103,7 @@ func appConfig(cfg config, sink port.EventSink, recorder port.ToolCallRecorder, 
 		MemoryStoreURL:                cfg.memoryStoreURL,
 		EventLogURL:                   cfg.eventLogURL,
 		ScheduleStoreURL:              cfg.scheduleStoreURL,
+		LearningStoreURL:              cfg.learningStoreURL,
 		SessionLeaseURL:               cfg.sessionLeaseURL,
 		SessionLeaseDir:               cfg.sessionLeaseDir,
 		SessionLeaseK8sNamespace:      cfg.sessionLeaseK8sNamespace,
@@ -1534,7 +1537,7 @@ func parseFlagsModeOut(mode commandMode, argv []string, out io.Writer) (*flag.Fl
 	fs.StringVar(&cfg.readyFile, "ready-file", "",
 		"absolute path to write a JSON readiness document to, ATOMICALLY (temp file + rename) and only AFTER composition and every listener are up, so a spawning parent can wait on the path instead of racing a connect loop. Carries the pid, the transport, the bound gRPC/HTTP addresses, and the non-secret compatibility descriptor — never a credential. Empty writes nothing")
 	fs.IntVar(&cfg.lifetimePipeFD, "lifetime-pipe-fd", 0,
-		"file descriptor of an INHERITED pipe whose read end this daemon watches: EOF means the spawning parent exited or crashed, and the daemon then stops through the ordinary graceful-shutdown path. The parent holds the write end and never writes to it — it has nothing to remember. 0 (default) disables; 0/1/2 are the standard streams and are rejected")
+		"file descriptor of an INHERITED pipe read end or connected UNIX-domain stream socketpair endpoint this daemon watches: EOF means the spawning parent exited or crashed, and the daemon then stops through the ordinary graceful-shutdown path. The parent holds the peer end and never writes to it — it has nothing to remember. 0 (default) disables; 1/2 are standard output/error and are rejected")
 	fs.StringVar(&cfg.workspace, "workspace", cwd, "default session workspace root")
 	fs.StringVar(&cfg.model, "model", "", "model identifier sent to the provider (empty: use the provider-appropriate default)")
 	fs.StringVar(&cfg.defaultProvider, "default-provider", "", "server-configured deployment-wide default provider id shared by every client (e.g. openai, openrouter, anthropic); overrides the built-in provider preference for zero-selector sessions while a client-side selector still wins. Validated FAIL-FAST at startup: an unknown or unavailable provider refuses to start")
@@ -1605,6 +1608,7 @@ func parseFlagsModeOut(mode commandMode, argv []string, out io.Writer) (*flag.Fl
 	fs.StringVar(&cfg.memoryStoreURL, "memory-store-url", "", "host:port of a remote memory-store gRPC driver (mecatl.driver.v1.MemoryStoreService); replaces the local flock store, so it is mutually exclusive with --memory-dir. Enables the Remember/Recall tools like --memory-dir does. Same auth/TLS posture as --session-store-url (equal URLs share one connection)")
 	fs.StringVar(&cfg.eventLogURL, "event-log-url", "", "host:port of a remote event-log gRPC driver (mecatl.driver.v1.EventLogService) for the durable per-session event timeline (reasoning, ask/verdict pairs, delegation lifecycle); INDEPENDENT of the session store. Empty keeps the local default (the --store-dir jsonl log, or in-memory). Append happens at the relay (a fault WARNs, never aborts the run); Read is server-streaming. Same auth/TLS posture as --session-store-url (equal URLs share one connection)")
 	fs.StringVar(&cfg.scheduleStoreURL, "schedule-store-url", "", "host:port of a remote schedule-store gRPC driver (mecatl.driver.v1.ScheduleStoreService + ScheduleOneShotReArmerService) for the durable schedule registry (scheduled tasks); INDEPENDENT of the session store — when set, replaces the ScheduleStore() discovery from the configured store. Empty keeps the byte-identical default (the configured store's own ScheduleStore() accessor, or no scheduling). The driver's Claim/ClaimNow/ReArmOneShot run the atomic advance server-side. Same auth/TLS posture as --session-store-url (equal URLs share one connection)")
+	fs.StringVar(&cfg.learningStoreURL, "learning-store-url", "", "host:port of one distributed learning gRPC driver providing AttemptRepositoryService, ProposalRepositoryService, and SkillRepositoryService. The complete set must be explicitly advertised at startup; a partial or legacy driver fails closed with no local-repository fallback. Repository partitions are opaque on this transport. Same auth/TLS posture as --session-store-url (equal URLs share one connection)")
 	fs.StringVar(&cfg.sessionLeaseURL, "session-lease-url", "", "host:port of a remote session-lease gRPC driver (mecatl.driver.v1.SessionLeaseService) for cross-process single-writer enforcement (cloud-native Phase 4, multi-replica). Empty = NO leasing (the byte-identical single-writer-by-affinity default: route every session to one replica). Mutually exclusive with --session-lease-dir / --session-lease-k8s-namespace. Same auth/TLS posture as --session-store-url (equal URLs share one connection)")
 	fs.StringVar(&cfg.sessionLeaseDir, "session-lease-dir", "", "directory for a SINGLE-HOST flock session lease (cross-process single-writer enforcement among processes on ONE machine; flock auto-releases on crash). NOT safe across hosts — use --session-lease-k8s-namespace or --session-lease-url for multi-host/multi-replica. Empty = no leasing")
 	fs.StringVar(&cfg.sessionLeaseK8sNamespace, "session-lease-k8s-namespace", "", "Kubernetes namespace for coordination.k8s.io Lease-backed session leasing (the in-cluster multi-replica path). Uses in-cluster config (or the default kubeconfig out-of-cluster); the ServiceAccount needs get,create,update,delete on leases in coordination.k8s.io for this namespace (never list/watch — see docs/usage.md). Empty = no leasing")

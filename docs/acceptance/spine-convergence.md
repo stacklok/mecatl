@@ -119,7 +119,7 @@ workflow in [`AGENTS.md`](../../AGENTS.md).
 ## Definition of done
 
 1. `task lint` and `task test` pass (both modules, `-race`).
-2. `task docs` — `llms.txt` regenerated and the matlatl strict link gate green.
+2. `task docs` — configuration reference regenerated and the matlatl strict link gate green.
 3. `task ac-trace` runs and reports this plan.
 4. The bundled `check-acceptance-plan.sh` passes on this file.
 5. `go run ./cmd/mecademo` still prints a full offline session.

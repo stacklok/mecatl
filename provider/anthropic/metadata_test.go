@@ -115,7 +115,7 @@ func TestProviderErrorMetadataHTTPPreservesSDKError(t *testing.T) {
 		w.Header().Set("Request-ID", "req_http_409")
 		w.Header().Set("X-Secret", "must-not-leak")
 		w.WriteHeader(http.StatusUnauthorized)
-		_, _ = io.WriteString(w, `{"type":"error","error":{"type":"authentication_error","message":"body must-not-leak"}}`)
+		_, _ = io.WriteString(w, `{"type":"error","error":{"type":"authentication_error","message":"credentials are invalid"},"raw_secret":"must-not-leak"}`)
 	}))
 	defer srv.Close()
 
@@ -145,8 +145,11 @@ func TestProviderErrorMetadataHTTPPreservesSDKError(t *testing.T) {
 	if !errors.As(streamErr, &preserved) {
 		t.Fatal("errors.As did not preserve the original SDK error")
 	}
-	if streamErr.Error() != preserved.Error() {
-		t.Fatalf("Error() = %q, want unchanged SDK text %q", streamErr, preserved)
+	if got, want := streamErr.Error(), "authentication_error: credentials are invalid"; got != want {
+		t.Fatalf("Error() = %q, want %q", got, want)
+	}
+	if strings.Contains(streamErr.Error(), "req_http_409") || strings.Contains(streamErr.Error(), "must-not-leak") {
+		t.Fatalf("display error leaked request metadata or raw body: %q", streamErr)
 	}
 	got := metadataOf(t, streamErr)
 	want := providerMetadata{

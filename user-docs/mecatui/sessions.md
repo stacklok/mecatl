@@ -106,11 +106,22 @@ is the bounded event-derived projection.
 
 ## Start fresh with `/clear`
 
-Use `/clear` when you want empty context without changing placement. It calls the
-server's `ClearSession` operation, which creates a distinct empty-history successor that
-inherits the source's exact server-owned placement, owner, mode, model/effort, and limits.
-The source conversation remains stored and discoverable through `/sessions`. Mecatui
-switches only after successor creation succeeds; failure leaves the current chat selected.
+Use `/clear` when you want empty context without changing placement. You can issue it
+while idle, while a response is streaming, or while an approval is open; you do not need to
+press Esc first. It calls the server's `ClearSession` operation, which cancels the active run
+or durable approval, waits for that exact lifecycle to settle, then creates a distinct
+empty-history successor that inherits the source's exact server-owned placement, owner, mode,
+model/effort, and limits. Previously completed workspace and tool mutations remain in place;
+clear resets conversation history, not the workspace.
+
+The source conversation remains stored and discoverable through `/sessions`. Mecatui keeps
+that source and transcript selected while the handoff is pending and blocks prompts,
+approvals, and duplicate clears against it. It switches only after the correlated successor
+creation succeeds. Cancelling an active run or approval is irreversible: if replacement
+creation then fails, no successor is created and the source stays selected, but it may already
+be shown as cancelled. Retry `/clear` once its local stream has settled. A failure detected
+before cancellation, such as an invalid worktree selection, leaves an awaiting source and its
+approval unchanged. Clear never rolls back workspace mutations.
 
 ## Reduce model history with `/compact`
 

@@ -53,6 +53,7 @@ func DetectSignalsScoped(in Input, scope DetectionScope) []Signal {
 	trajectory.Current = MessageSpan{Start: 0, End: len(current)}
 	currentInput := NewInput(trajectory, nil, nil, in.Existing)
 	detected := DetectSignals(currentInput)
+	detected = append(nonExplicitSignals(detected), explicitCurrentPromptSignals(currentInput)...)
 	for i := range detected {
 		for j := range detected[i].Evidence {
 			detected[i].Evidence[j].Ordinal += scope.Current.Start
@@ -216,38 +217,109 @@ func repeatedSequence(in Input) []EvidenceRef {
 
 func explicitRemember(in Input) []EvidenceRef {
 	for i, message := range in.Trajectory.Messages {
-		if message.Role != session.RoleUser {
+		if !session.IsGenuineUserPrompt(message) || !explicitRememberText(message.Text) {
 			continue
 		}
-		line := strings.ToLower(strings.TrimSpace(message.Text))
-		for _, prefix := range []string{"remember that ", "please remember that ", "please remember ", "learn that "} {
-			if strings.HasPrefix(line, prefix) && len(strings.TrimSpace(line[len(prefix):])) >= 4 {
-				ref, err := MessageEvidenceRef(in, i, "")
-				if err == nil {
-					return []EvidenceRef{ref}
-				}
-			}
+		ref, err := MessageEvidenceRef(in, i, "")
+		if err == nil {
+			return []EvidenceRef{ref}
 		}
 	}
 	return nil
 }
 
+func explicitRememberText(text string) bool {
+	line := strings.ToLower(strings.TrimSpace(text))
+	for _, prefix := range []string{"remember that ", "please remember that ", "please remember ", "learn that "} {
+		if strings.HasPrefix(line, prefix) && len(strings.TrimSpace(line[len(prefix):])) >= 4 {
+			return true
+		}
+	}
+	return false
+}
+
 func explicitLearnProcedure(in Input) []EvidenceRef {
 	for i, message := range in.Trajectory.Messages {
-		if message.Role != session.RoleUser {
+		if !session.IsGenuineUserPrompt(message) || !explicitLearnProcedureText(message.Text) {
 			continue
 		}
-		line := strings.ToLower(strings.TrimSpace(message.Text))
-		for _, prefix := range []string{"learn this procedure", "learn this workflow", "save this as a skill", "remember this procedure"} {
-			if strings.HasPrefix(line, prefix) {
-				ref, err := MessageEvidenceRef(in, i, "")
-				if err == nil {
-					return []EvidenceRef{ref}
-				}
-			}
+		ref, err := MessageEvidenceRef(in, i, "")
+		if err == nil {
+			return []EvidenceRef{ref}
 		}
 	}
 	return nil
+}
+
+func explicitCurrentPromptSignals(in Input) []Signal {
+	if len(in.Trajectory.Messages) == 0 {
+		return nil
+	}
+	message := in.Trajectory.Messages[0]
+	if !session.IsGenuineUserPrompt(message) {
+		return nil
+	}
+	ref, err := MessageEvidenceRef(in, 0, "")
+	if err != nil {
+		return nil
+	}
+	if explicitRememberText(message.Text) {
+		return []Signal{{Kind: SignalExplicitRemember, Evidence: []EvidenceRef{ref}}}
+	}
+	if explicitLearnProcedureText(message.Text) {
+		return []Signal{{Kind: SignalExplicitLearnProcedure, Evidence: []EvidenceRef{ref}}}
+	}
+	return nil
+}
+
+func nonExplicitSignals(signals []Signal) []Signal {
+	out := make([]Signal, 0, len(signals))
+	for _, signal := range signals {
+		if signal.Kind != SignalExplicitRemember && signal.Kind != SignalExplicitLearnProcedure {
+			out = append(out, signal)
+		}
+	}
+	return out
+}
+
+func explicitLearnProcedureText(text string) bool {
+	line := strings.ToLower(strings.TrimSpace(text))
+	if !affirmativeIntent(line) {
+		return false
+	}
+	for _, prefix := range []string{
+		"learn this procedure", "learn this workflow", "save this as a skill", "remember this procedure",
+		"create a skill", "make a skill", "build a skill",
+		"turn this workflow into a skill", "turn this procedure into a skill",
+	} {
+		if imperativePrefix(line, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func affirmativeIntent(line string) bool {
+	if strings.Contains(line, "?") {
+		return false
+	}
+	for _, word := range []string{"not", "never", "no", "don't", "don’t", "cannot", "can't", "can’t"} {
+		if strings.Contains(" "+line+" ", " "+word+" ") {
+			return false
+		}
+	}
+	return true
+}
+
+func imperativePrefix(line, prefix string) bool {
+	if !strings.HasPrefix(line, prefix) {
+		return false
+	}
+	if len(line) == len(prefix) {
+		return true
+	}
+	next := line[len(prefix)]
+	return next == ' ' || next == ',' || next == ':' || next == ';' || next == '!'
 }
 
 func repeatedCorrections(in Input) []EvidenceRef {

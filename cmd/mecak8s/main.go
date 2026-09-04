@@ -10,6 +10,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/stacklok/mecatl/internal/adapter/mockscript"
 	"github.com/stacklok/mecatl/internal/adapter/slogdiag"
 	"github.com/stacklok/mecatl/internal/app"
 	"github.com/stacklok/mecatl/internal/buildinfo"
@@ -49,6 +50,13 @@ func run() error {
 	cfg, err := parseFlags(os.Args[1:])
 	if err != nil {
 		return err
+	}
+
+	if cfg.mockScript != "" {
+		cfg.mockProvider, err = mockscript.Load(cfg.mockScript)
+		if err != nil {
+			return err
+		}
 	}
 
 	logger := cliconfig.NewTextLogger(os.Stderr, cfg.logLevel, cfg.logLevelWarning)

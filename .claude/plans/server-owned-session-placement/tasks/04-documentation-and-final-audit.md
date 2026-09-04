@@ -15,14 +15,14 @@ accumulator: acc/server-owned-session-placement
 
 Perform the documentation-only final audit after the atomic cutover. Update the living
 architecture and usage documentation, implementation notes, ADR 0027 List 1/List 2, and
-user documentation; regenerate `llms.txt` and validate the site. Inventory the random
+user documentation; regenerate the configuration reference and validate the site. Inventory the random
 selector HMAC key as Build-owned process-lifetime state and record that restart resets it
 by design, invalidating selectors until clients relist. Do not change implementation;
 report any implementation discrepancy for follow-up rather than repairing it in this task.
 
 Expected focus: `docs/architecture.md`, `docs/usage.md`,
 `docs/design/IMPLEMENTATION-NOTES.md`, `docs/adr/0027-cloud-native.md`, `AGENTS.md`,
-`user-docs/`, generated `llms.txt`, and `task site:build`.
+`user-docs/`, generated configuration reference, and `task site:build`.
 
 ## Acceptance criteria
 

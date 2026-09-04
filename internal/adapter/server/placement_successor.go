@@ -27,11 +27,80 @@ type ForkSuccessorRequest struct {
 	ReasoningEffort string
 }
 
-// ClearSessionSuccessor creates a distinct empty-history peer while preserving
+// ClearSessionSuccessor cancels any exact source lifecycle, waits for its relay
+// to deregister, then creates a distinct empty-history peer while preserving
 // source ownership, labels, limits, mode, and exact placement unless a current
 // source-scoped selector is supplied.
 func (s *Service) ClearSessionSuccessor(ctx context.Context, source session.SessionID, placement SuccessorPlacement) (session.SessionID, error) {
-	return s.createPlacedSuccessor(ctx, ForkSuccessorRequest{Source: source, Placement: placement}, false)
+	req := ForkSuccessorRequest{Source: source, Placement: placement}
+	if err := validateSuccessorRequest(req); err != nil {
+		return "", err
+	}
+	absent, err := s.managementOwnershipPreflight(ctx, source, false)
+	if err != nil {
+		return "", err
+	}
+	if absent {
+		return "", fmt.Errorf("%w: %q", ErrNotFound, source)
+	}
+
+	unlock := s.runEntryMu.lock(source)
+	defer unlock()
+	lockedSource, absent, err := s.managementSession(ctx, source, false)
+	if err != nil || absent {
+		return "", err
+	}
+	// Validate an explicit worktree placement while the source is still untouched.
+	// In particular, a stale, foreign, or unavailable selector must not cancel an
+	// active run or durable approval. Successor creation revalidates after
+	// settlement under its mutation lease; this preflight is only the
+	// non-destructive gate. Exact inherited placement stays on the lease-protected
+	// path below because reattachment may itself wait for lease loss/cancellation.
+	if placement.Selector != "" {
+		preflight, placementErr := s.successorPlacement(ctx, lockedSource, placement)
+		if placementErr != nil {
+			return "", placementErr
+		}
+		if preflight.Close != nil {
+			_ = preflight.Close()
+		}
+	}
+	if err := s.cancelAndAwaitClearSource(ctx, source); err != nil {
+		return "", err
+	}
+	return s.createPlacedSuccessorLocked(ctx, req, false, true)
+}
+
+// cancelAndAwaitClearSource captures and cancels the exact lifecycle registered
+// while runEntryMu excludes replacement admission. Settlement is awaited without
+// s.mu so the relay can call FinishRun and close the captured signal.
+func (s *Service) cancelAndAwaitClearSource(ctx context.Context, id session.SessionID) error {
+	s.mu.Lock()
+	// This is Clear's irreversible cancellation boundary. Retire every request
+	// that captured the source generation before this point, including callers
+	// already queued on runEntryMu. A request received later snapshots the new
+	// generation and may deliberately address the old id again.
+	s.runEntryGenerations[id]++
+	st := s.runs[id]
+	if st == nil {
+		s.mu.Unlock()
+		return nil
+	}
+	run, admissionCancel, settled := st.run, st.admissionCancel, st.settled
+	st.cancelling = true
+	s.mu.Unlock()
+
+	if run != nil {
+		run.Cancel()
+	} else if admissionCancel != nil {
+		admissionCancel()
+	}
+	select {
+	case <-settled:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 // ForkSessionSuccessor creates a history-carrying peer on inherited exact
@@ -40,10 +109,17 @@ func (s *Service) ForkSessionSuccessor(ctx context.Context, req ForkSuccessorReq
 	return s.createPlacedSuccessor(ctx, req, true)
 }
 
+func validateSuccessorRequest(req ForkSuccessorRequest) error {
+	if req.Placement.SelectorPresent && req.Placement.Selector == "" {
+		return fmt.Errorf("%w: worktree_selector must not be empty when present", ErrInvalidArgument)
+	}
+	return nil
+}
+
 //nolint:gocyclo // Successor creation keeps validation, exact placement, engine setup, and publication atomic.
 func (s *Service) createPlacedSuccessor(ctx context.Context, req ForkSuccessorRequest, copyHistory bool) (session.SessionID, error) {
-	if req.Placement.SelectorPresent && req.Placement.Selector == "" {
-		return "", fmt.Errorf("%w: worktree_selector must not be empty when present", ErrInvalidArgument)
+	if err := validateSuccessorRequest(req); err != nil {
+		return "", err
 	}
 	absent, err := s.managementOwnershipPreflight(ctx, req.Source, false)
 	if err != nil {
@@ -57,6 +133,11 @@ func (s *Service) createPlacedSuccessor(ctx context.Context, req ForkSuccessorRe
 	if _, absent, err = s.managementTarget(ctx, req.Source, false); err != nil || absent {
 		return "", err
 	}
+	return s.createPlacedSuccessorLocked(ctx, req, copyHistory, false)
+}
+
+//nolint:gocyclo // Successor creation keeps validation, exact placement, engine setup, and publication atomic.
+func (s *Service) createPlacedSuccessorLocked(ctx context.Context, req ForkSuccessorRequest, copyHistory, clearSource bool) (session.SessionID, error) {
 	release, err := s.acquireMutationLease(ctx, req.Source)
 	if err != nil {
 		return "", err
@@ -64,7 +145,15 @@ func (s *Service) createPlacedSuccessor(ctx context.Context, req ForkSuccessorRe
 	defer release()
 	mutationCtx, stopMutation, stillHeld := s.mutationLeaseContext(ctx, req.Source)
 	defer stopMutation()
-	source, absent, err := s.managementTarget(mutationCtx, req.Source, false)
+	var (
+		source *session.Session
+		absent bool
+	)
+	if clearSource {
+		source, absent, err = s.managementSession(mutationCtx, req.Source, false)
+	} else {
+		source, absent, err = s.managementTarget(mutationCtx, req.Source, false)
+	}
 	if err != nil || absent {
 		return "", err
 	}
@@ -78,6 +167,17 @@ func (s *Service) createPlacedSuccessor(ctx context.Context, req ForkSuccessorRe
 	}
 	if binding.Close != nil {
 		defer func() { _ = binding.Close() }()
+	}
+	// Durable awaiting sessions have no registered relay for the preflight to
+	// settle. Cancel them only after placement has been revalidated under the
+	// mutation lease, so a failed successor cannot consume the pending ask.
+	if clearSource && (source.State == session.StateRunning || source.State == session.StateAwaiting) {
+		if err := source.Cancel(); err != nil {
+			return "", fmt.Errorf("server: cancel clear source: %w", err)
+		}
+		if err := s.saveSession(mutationCtx, source); err != nil {
+			return "", fmt.Errorf("server: persist cancelled clear source: %w", err)
+		}
 	}
 
 	created := session.New(s.cfg.NewID(), source.Mode, binding.Ref, source.Limits, s.cfg.Now())

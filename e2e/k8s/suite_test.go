@@ -49,11 +49,13 @@ var _ = ginkgo.BeforeSuite(func() {
 	ginkgo.By("creating the kind cluster")
 	kindCreateCluster()
 
-	ginkgo.By("building the mecak8s image with ko")
+	ginkgo.By("building the mecak8s and fixture learning-driver images with ko")
 	koBuildMecak8sImage()
+	koBuildLearningDriverImage()
 
-	ginkgo.By("saving the image to a tarball + loading it into the kind node")
+	ginkgo.By("saving the images to tarballs + loading them into the kind node")
 	saveAndLoadImage(e2eImageRef)
+	saveAndLoadImage(learningDriverImage)
 
 	ginkgo.By("installing the deploy/helm/mecak8s chart (values-kind.yaml)")
 	helmInstallMecak8sChart()
@@ -103,6 +105,7 @@ var _ = ginkgo.Describe("mecak8s cloud-native properties (ADR 0048)", ginkgo.Ser
 	failoverSpecs()
 	persistenceSpecs()
 	liveSpecs()
+	learningFailoverSpecs()
 })
 
 // refreshPods re-reads the two agent pod names. Called by specs that delete a

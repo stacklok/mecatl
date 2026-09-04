@@ -237,6 +237,18 @@ linters:
           deny:
             - pkg: os
               desc: 'memmemory is process-local reference memory; it must not touch the real OS'
+        engine-adapter-memattempt:
+          list-mode: strict
+          files:
+            - '**/engine/adapter/memattempt/**.go'
+            - '!$test'
+          allow:
+            - $gostd
+            - github.com/stacklok/mecatl/engine/learning
+            - github.com/stacklok/mecatl/engine/port
+          deny:
+            - pkg: os
+              desc: 'memattempt is the process-local attempt reference store; it must not touch the real OS'
         engine-adapter-memproposal:
           list-mode: strict
           files:

@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"errors"
 	"fmt"
 	"reflect"
 	"strings"
@@ -395,8 +396,8 @@ func TestClearBuiltinCreatesThenBindsThenCloses(t *testing.T) {
 	m.pendingMode = "plan"
 	mm, clearCmd := m.runClear()
 	m = mm.(Model)
-	if m.phase != phaseConnecting || m.sessionID != oldID || m.conv.isEmpty() {
-		t.Fatalf("pending /clear must retain the old UI/session while blocking input: phase=%v id=%q empty=%v", m.phase, m.sessionID, m.conv.isEmpty())
+	if m.phase != phaseConnecting || m.sessionID != oldID || m.conv.isEmpty() || m.clearPending == nil {
+		t.Fatalf("pending /clear must retain the old UI/session while blocking input: phase=%v id=%q empty=%v pending=%v", m.phase, m.sessionID, m.conv.isEmpty(), m.clearPending)
 	}
 	if got := conv.closed(); len(got) != 0 {
 		t.Fatalf("old session closed before replacement creation: %v", got)
@@ -497,9 +498,9 @@ func TestClearBuiltinCreateFailureKeepsOldSession(t *testing.T) {
 	}
 }
 
-// TestClearBuiltinNoOpWhileRunning asserts /clear is rejected with a status while
-// a run streams, leaving the conversation intact.
-func TestClearBuiltinNoOpWhileRunning(t *testing.T) {
+// TestClearBuiltinWhileRunning starts one immediate clear request, preserves the
+// source transcript, and rejects a duplicate while the correlated handoff waits.
+func TestClearBuiltinWhileRunning(t *testing.T) {
 	m, _ := builtinDispatchModel(t, client.Capabilities{}, false)
 	m.conv.addUser("a prompt")
 	m.phase = phaseRunning
@@ -507,14 +508,143 @@ func TestClearBuiltinNoOpWhileRunning(t *testing.T) {
 	mm, cmd := m.runClear()
 	m = mm.(Model)
 
-	if m.conv.isEmpty() {
-		t.Error("/clear must NOT clear the conversation while running")
+	if m.conv.isEmpty() || m.phase != phaseConnecting || m.clearPending == nil {
+		t.Fatalf("/clear must preserve the running source while pending: empty=%v phase=%v pending=%v", m.conv.isEmpty(), m.phase, m.clearPending)
 	}
-	if cmd != nil {
-		t.Error("/clear no-op should issue no command")
+	if cmd == nil {
+		t.Fatal("/clear while running must issue ClearSession immediately")
 	}
-	if !strings.Contains(stripANSIstr(m.statusMsg), "cannot clear while running") {
-		t.Errorf("want 'cannot clear while running' status, got %q", stripANSIstr(m.statusMsg))
+	mm, duplicate := m.runClear()
+	m = mm.(Model)
+	if duplicate != nil || !strings.Contains(stripANSIstr(m.statusMsg), "already in progress") {
+		t.Fatalf("duplicate /clear = cmd %v status %q", duplicate, stripANSIstr(m.statusMsg))
+	}
+}
+
+func TestClearPendingBlocksSourceContinuationOnTerminal(t *testing.T) {
+	m, send := builtinDispatchModel(t, client.Capabilities{}, false)
+	m.phase = phaseRunning
+	m.queued = []string{"must stay queued"}
+	m.failedStepRetryRun = true
+	mm, _ := m.runClear()
+	m = mm.(Model)
+
+	beforeFrames := len(send.frames())
+	mm, cmd := m.Update(client.ResultMsg{Stop: "plan_approved"})
+	m = mm.(Model)
+	if m.clearPending == nil || !m.clearPending.sourceSettled || m.phase != phaseConnecting {
+		t.Fatalf("terminal source did not settle under pending clear: phase=%v pending=%+v", m.phase, m.clearPending)
+	}
+	if got := m.queued; !reflect.DeepEqual(got, []string{"must stay queued"}) {
+		t.Fatalf("pending clear drained source queue: %v", got)
+	}
+	if len(send.frames()) != beforeFrames {
+		t.Fatalf("pending clear started a source continuation: frames=%d want %d", len(send.frames()), beforeFrames)
+	}
+	if m.failedStepRetryRun || m.failedStepRetryAuthoritative {
+		t.Fatal("pending clear retained failed-step retry state after source settlement")
+	}
+	if cmd == nil {
+		t.Fatal("terminal source facts should still request a safe repaint")
+	}
+}
+
+func TestClearFailureAfterSourceStreamClosedReturnsIdle(t *testing.T) {
+	m, _ := builtinDispatchModel(t, client.Capabilities{}, false)
+	m.phase = phaseAwaitingApproval
+	mm, _ := m.runClear()
+	m = mm.(Model)
+	pending := *m.clearPending
+
+	mm, _ = m.Update(client.StreamClosedMsg{})
+	m = mm.(Model)
+	if m.clearPending == nil || !m.clearPending.sourceSettled || m.phase != phaseConnecting {
+		t.Fatalf("closed source was not tracked during clear: phase=%v pending=%+v", m.phase, m.clearPending)
+	}
+	mm, _ = m.Update(clearSessionFailedMsg{sourceID: pending.sourceID, token: pending.token, err: errors.New("temporary")})
+	m = mm.(Model)
+	if m.clearPending != nil || m.phase != phaseIdle {
+		t.Fatalf("failed clear restored a dead source stream: phase=%v pending=%+v", m.phase, m.clearPending)
+	}
+}
+
+func TestClearPendingPreservesGlobalSuspendAndQuit(t *testing.T) {
+	m, _ := builtinDispatchModel(t, client.Capabilities{}, false)
+	mm, _ := m.runClear()
+	m = mm.(Model)
+
+	mm, suspendCmd := m.Update(tea.KeyPressMsg{Code: 'z', Mod: tea.ModCtrl})
+	m = mm.(Model)
+	if !isSuspendCmd(suspendCmd) {
+		t.Fatal("pending clear swallowed global suspend")
+	}
+	mm, _ = m.Update(ctrlC())
+	m = mm.(Model)
+	if !m.quitArmed {
+		t.Fatal("pending clear swallowed global quit guard")
+	}
+	_, quitCmd := m.Update(ctrlC())
+	if !isQuitCmd(quitCmd) {
+		t.Fatal("pending clear swallowed confirmed global quit")
+	}
+}
+
+func TestClearFailureKeepsActiveSourceBlockedUntilDelayedTerminal(t *testing.T) {
+	m, send := builtinDispatchModel(t, client.Capabilities{}, false)
+	m.deps.DebugAsk = true
+	mm, _ := m.runDebugAsk()
+	m = mm.(Model)
+	askID := approvalSurfaceOf(t, m).ask.AskID
+	oldID := m.sessionID
+	m.queued = []string{"must not continue"}
+
+	m.prompt.Rewrite("/clear")
+	mm, clearCmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = mm.(Model)
+	if clearCmd == nil {
+		t.Fatal("/clear entered during approval did not issue ClearSession")
+	}
+	pending := *m.clearPending
+	mm, _ = m.Update(clearSessionFailedMsg{sourceID: oldID, token: pending.token, err: errors.New("temporary")})
+	m = mm.(Model)
+	if m.clearPending == nil || m.phase != phaseConnecting {
+		t.Fatalf("active clear failure re-enabled source: pending=%+v phase=%v", m.clearPending, m.phase)
+	}
+	if got := stripANSIstr(m.statusMsg); !strings.Contains(got, "waiting for the source to settle") || !strings.Contains(got, "retry") {
+		t.Fatalf("failure status = %q, want settle/retry guidance", got)
+	}
+
+	beforeFrames := len(send.frames())
+	m.prompt.Rewrite("must not send")
+	mm, promptCmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = mm.(Model)
+	if promptCmd != nil || len(send.frames()) != beforeFrames {
+		t.Fatal("clear failure admitted a prompt before source settlement")
+	}
+	mm, approvalCmd := m.Update(tea.KeyPressMsg{Code: 'a', Text: "a"})
+	m = mm.(Model)
+	if approvalCmd != nil || approvalSurfaceOf(t, m).ask.AskID != askID {
+		t.Fatal("clear failure admitted source approval before settlement")
+	}
+
+	mm, _ = m.Update(client.ResultMsg{Stop: "plan_approved"})
+	m = mm.(Model)
+	if m.clearPending != nil || m.phase != phaseIdle || m.sessionID != oldID {
+		t.Fatalf("delayed result did not settle failed clear: pending=%+v phase=%v id=%q", m.clearPending, m.phase, m.sessionID)
+	}
+	if len(send.frames()) != beforeFrames {
+		t.Fatal("delayed terminal started a plan or queue continuation")
+	}
+	if got := m.queued; !reflect.DeepEqual(got, []string{"must not continue"}) {
+		t.Fatalf("failed clear drained source queue: %v", got)
+	}
+	mm, _ = m.Update(client.StreamClosedMsg{})
+	m = mm.(Model)
+	if m.phase != phaseIdle || m.sessionID != oldID {
+		t.Fatalf("post-result stream close destabilized source: phase=%v id=%q", m.phase, m.sessionID)
+	}
+	if got := stripANSIstr(m.statusMsg); !strings.Contains(got, "retry /clear") {
+		t.Fatalf("settled failure status = %q, want retry guidance", got)
 	}
 }
 
@@ -561,8 +691,8 @@ func TestPaletteEnterRunsBuiltinDirectly(t *testing.T) {
 	mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = mm.(Model)
 
-	if m.phase != phaseConnecting || m.conv.isEmpty() {
-		t.Error("enter on built-in /clear row should start a create-first handoff, not text-complete")
+	if m.phase != phaseConnecting || m.conv.isEmpty() || m.clearPending == nil {
+		t.Error("enter on built-in /clear row should start a source-preserving handoff, not text-complete")
 	}
 	// Text-completion would have left "/clear " in the input; running clears it.
 	if strings.HasPrefix(m.prompt.Value(), "/clear") {
@@ -764,8 +894,8 @@ func TestDispatchBareBuiltinUnicodeWhitespaceThroughTextarea(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("Unicode-whitespace /clear must start its local replacement-session handoff")
 	}
-	if m.phase != phaseConnecting || m.conv.isEmpty() {
-		t.Fatalf("pending Unicode-whitespace /clear must retain the old UI while connecting: phase=%v empty=%v", m.phase, m.conv.isEmpty())
+	if m.phase != phaseConnecting || m.conv.isEmpty() || m.clearPending == nil {
+		t.Fatalf("pending Unicode-whitespace /clear must retain the old UI while awaiting handoff: phase=%v empty=%v pending=%v", m.phase, m.conv.isEmpty(), m.clearPending)
 	}
 	ready := firstBatchLeaf(t, cmd)
 	mm, _ := m.Update(ready)

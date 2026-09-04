@@ -9,6 +9,31 @@ import (
 	"testing"
 )
 
+func TestOIDCPatchArgsPreserveLiveProviderAndRedisPlaintextOptIn(t *testing.T) {
+	t.Parallel()
+	current := []string{
+		"--grpc-addr=0.0.0.0:8080",
+		"--redis-url=redis:6379",
+		"--redis-allow-plaintext",
+		"--default-provider=openrouter",
+		"--default-model=anthropic/claude-haiku-4.5",
+		"--oidc-issuer", "stale-issuer",
+		"--oidc-audience=stale-audience",
+		"--oidc-insecure-allow-private-issuer",
+	}
+	got := withoutOIDCArgs(current)
+	want := []string{
+		"--grpc-addr=0.0.0.0:8080",
+		"--redis-url=redis:6379",
+		"--redis-allow-plaintext",
+		"--default-provider=openrouter",
+		"--default-model=anthropic/claude-haiku-4.5",
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("withoutOIDCArgs() = %#v, want %#v", got, want)
+	}
+}
+
 func TestLiveProviderPatchPreservesRenderedArgsAndLocatesAgent(t *testing.T) {
 	t.Parallel()
 	deployment := []byte(`{"spec":{"template":{"spec":{"containers":[{"name":"sidecar","args":["keep-sidecar"]},{"name":"agent","args":["--grpc-addr=0.0.0.0:8080","--redis-allow-plaintext","--mock","--model","chart-model","--model=stale-model","--default-provider=mock","--future-flag=value","--default-model","old-model"],"env":[{"name":"KEEP_ME","value":"yes"}]}]}}}}`)

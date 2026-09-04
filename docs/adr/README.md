@@ -107,6 +107,8 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0228 — Manual dream review](./0228-manual-dream-review.md)
 - [0110 — Evaluated, versioned agent-owned skills](./0110-evaluated-agent-owned-skills.md) *(superseded by 0111)*
 - [0111 — Hardened publication and recovery for agent-owned skills](./0111-hardened-agent-owned-skill-publication.md)
+- [0114 — Configurable learning-trigger policy](./0114-configurable-learning-trigger-policy.md) *(process-local coordinator/accounting decisions superseded where ADR 0259 is wired)*
+- [0259 — Cloud-native learning uses durable, authoritative attempts](./0259-cloud-native-learning.md) *(Accepted)*
 
 ### Core tools & shell
 - [0281 — Managed temporary command leases and deterministic reaping](./0281-managed-temporary-command-leases.md) *(proposed)*
@@ -222,6 +224,9 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0289 — Hardened status-command output and environment extension](./0289-hardened-status-command-boundary.md)
 - [0280 — Automatic light theme selection in mecatui](./0280-mecatui-light-theme-autodetect.md)
 - [0291 — Server-owned session placement](./0291-server-owned-session-placement.md)
+- [0294 — End-to-end session correlation and affinity](./0294-session-correlation-and-affinity.md) *(proposed)*
+- [0295 — One scaled acceptance-plan spine for substantive work](./0295-unified-development-spine.md)
+- [0296 — Opt-in local session context service](./0296-opt-in-local-session-context.md) *(proposed)*
 
 ### Retired
 - [0029 — Repo-map tree-sitter](./0029-repomap-tree-sitter.md) *(retired)*

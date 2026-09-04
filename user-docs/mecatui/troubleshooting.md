@@ -38,7 +38,7 @@ For an embedded session, `--workspace` is the local checkout. For a connected se
 
 ## A provider error says retrying will not help
 
-A permanent provider rejection or context-window overflow can be recovered technically, but retrying the same request is unlikely to succeed. Start a new session or change the request/model as the message directs. For transient connection or service failures, retrying can be appropriate. The session lifecycle and recovery behavior are documented in [agent-loop recovery behavior](/building/what-you-get/agent-loop.md#restarting-a-session).
+A permanent provider rejection or context-window overflow can be recovered technically, but retrying the same request is unlikely to succeed. HTTP API rejections display only their structured type or code and message (for example, `invalid_request_error: invalid input`), never a raw response body, request URL, or request/correlation ID. In-band streaming provider errors retain their provider-supplied detail. Start a new session or change the request/model as the message directs. For transient connection or service failures, retrying can be appropriate. The session lifecycle and recovery behavior are documented in [agent-loop recovery behavior](/building/what-you-get/agent-loop.md#restarting-a-session).
 
 ## A session will not resume
 

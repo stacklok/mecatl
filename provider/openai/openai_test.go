@@ -613,13 +613,46 @@ func TestTopLevelErrorDoesNotUseResponseIDFromUnknownEvent(t *testing.T) {
 	}
 }
 
+func TestStructuredHTTPErrorTextFallback(t *testing.T) {
+	for _, tc := range []struct {
+		name, code, kind, message, want string
+	}{
+		{"type fallback", "", "invalid_request_error", "invalid input", "invalid_request_error: invalid input"},
+		{"no envelope", "", "", "", "provider request failed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := structuredHTTPErrorText(tc.code, tc.kind, tc.message); got != tc.want {
+				t.Errorf("structuredHTTPErrorText() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestInvalidEncryptedContentFallbackUsesUnwrapDiagnostic(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = io.WriteString(w, `{"error":{"detail":"encrypted content could not be verified"}}`)
+	}))
+	defer srv.Close()
+
+	err := collectStreamError(t, New(WithAPIKey("test-key"), WithBaseURL(srv.URL+"/v1"), WithRequestOption(option.WithMaxRetries(0))),
+		port.LLMRequest{Model: "gpt-test", Messages: []session.Message{session.NewUserMessage("hi")}})
+	if got, want := err.Error(), "provider request failed"; got != want {
+		t.Fatalf("safe display error = %q, want %q", got, want)
+	}
+	if !isInvalidEncryptedContent(err) {
+		t.Fatal("raw SDK diagnostic did not retain the encrypted-content fallback")
+	}
+}
+
 func TestHTTPErrorMetadataPreservesSDKError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("X-Request-ID", "req_409")
 		w.Header().Set("X-Unrelated-Header", "must-not-leak")
 		w.WriteHeader(http.StatusBadRequest)
-		_, _ = io.WriteString(w, `{"error":{"code":"invalid_request_error","message":"prompt secret must-not-leak"}}`)
+		_, _ = io.WriteString(w, `{"error":{"code":"invalid_request_error","message":"invalid input","raw_secret":"must-not-leak"}}`)
 	}))
 	defer srv.Close()
 
@@ -631,6 +664,12 @@ func TestHTTPErrorMetadataPreservesSDKError(t *testing.T) {
 	var apiErr *oai.Error
 	if !errors.As(err, &apiErr) {
 		t.Fatalf("error %T does not preserve the SDK error", err)
+	}
+	if got, want := err.Error(), "invalid_request_error: invalid input"; got != want {
+		t.Errorf("Error() = %q, want %q", got, want)
+	}
+	if strings.Contains(err.Error(), "req_409") || strings.Contains(err.Error(), "must-not-leak") {
+		t.Errorf("display error leaked request metadata or raw body: %q", err)
 	}
 	metadata := readProviderMetadata(t, err)
 	want := providerMetadataSnapshot{
@@ -1489,7 +1528,10 @@ func TestStreamContextCancel(t *testing.T) {
 
 // TestStreamRecoversInvalidEncryptedContent pins the one-shot stateless replay
 // recovery: a pre-commit 400 naming an invalid encrypted reasoning item causes one
-// retry with only reasoning blobs removed. Visible/tool history and provider-assigned
+// retry with only reasoning blobs removed. Its first response deliberately uses a
+// non-standard envelope, so the safe display projection is generic while the
+// unwrap-visible SDK diagnostic still activates the narrow compatibility fallback.
+// Visible/tool history and provider-assigned
 // function-call item IDs remain intact so recovery does not create a second replay bug.
 func TestStreamRecoversInvalidEncryptedContent(t *testing.T) {
 	var (
@@ -1507,7 +1549,7 @@ func TestStreamRecoversInvalidEncryptedContent(t *testing.T) {
 		if len(bodies) == 1 {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusBadRequest)
-			_, _ = w.Write([]byte(`{"error":{"message":"The encrypted content for item rs_bad could not be verified. Reason: Encrypted content could not be decrypted or parsed"}}`))
+			_, _ = w.Write([]byte(`{"error":{"detail":"The encrypted content for item rs_bad could not be verified. Reason: Encrypted content could not be decrypted or parsed"}}`))
 			return
 		}
 		w.Header().Set("Content-Type", "text/event-stream")

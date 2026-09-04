@@ -151,7 +151,7 @@ loopback-only server. Flags not covered here are advanced operator tuning; run
 | `--metrics-addr` | `127.0.0.1:9090` | Prometheus + admin listener; empty disables it |
 | `--grpc-unix-socket` | `""` (off) | Serve gRPC on a UNIX-domain socket instead of a TCP port. Mutually exclusive with a configured `--grpc-addr`. See [Hosting a spawned daemon](#hosting-a-spawned-daemon) |
 | `--ready-file` | `""` (off) | Absolute path to write a JSON readiness document to, atomically, once every listener is up |
-| `--lifetime-pipe-fd` | `0` (off) | File descriptor of an inherited pipe; EOF on it stops the daemon gracefully (the parent-crash path) |
+| `--lifetime-pipe-fd` | `0` (off) | File descriptor of an inherited pipe read end or connected UNIX-domain stream socketpair endpoint; EOF on it stops the daemon gracefully (the parent-crash path) |
 | `--auth-token` | `""` (off) | Bearer token required on every request; also `MECATL_AUTH_TOKEN` |
 | `--tls-cert` | `""` | PEM server certificate; enables TLS on both listeners when paired with `--tls-key` |
 | `--tls-key` | `""` | PEM server private key |
@@ -253,6 +253,7 @@ secrets or raw file content. See [ADR 0088](https://github.com/stacklok/mecatl/b
 | `--scheduler-min-interval` | `1m` | Frequency floor enforced at schedule-create time (fail-closed, by both the in-chat `Schedule` tool and the REST/gRPC create). Defaults to `1m`; `0` disables the floor |
 | `--scheduler-max-concurrent-fires` | `4` | Max schedules fired in parallel per tick |
 | `--schedule-store-url` | `""` | gRPC driver endpoint (`ScheduleStoreService` + `ScheduleOneShotReArmerService`) for the durable schedule registry, **independent of the session store** — when set, replaces the `ScheduleStore()` discovery from the configured store. Empty keeps the default (the configured store's own `ScheduleStore()`, or no scheduling). The driver runs atomic fire advancement server-side, but current remote drivers do not expose atomic create-only publication; this option is therefore rejected when OIDC caller ownership is enabled |
+| `--learning-store-url` | `""` | One distributed-learning driver endpoint. Startup requires explicit capability advertisement of the complete Attempt/Proposal/Skill repository set and, when automatic learning is non-off, the automatic admission ledger; partial drivers fail instead of mixing remote and local persistence or accounting. The explicit flag still dials/probes/composes repositories in off mode for explicit reflection, learned-skill inspection, and recovery of already-admitted work; it does not enable automatic admission. Repository partitions are opaque on the wire. Current raw RPCs are permitted only as trusted single-tenant infrastructure with `OwnershipEnforced=false`; ownership-enforced/multi-tenant startup fails closed pending ADR-0213 workload-authenticated ownership |
 
 See [Scheduled tasks](/building/what-you-get/scheduled-tasks.md) for the in-chat `Schedule` tool and the gRPC/REST management surface.
 
@@ -552,6 +553,26 @@ an OIDC/ownership-enforced server rejects `--session-store-url`; use the local J
 backend (or mecak8s's directly wired Redis store) for multi-user deployments until
 the driver adds `port.SessionCreator` parity.
 
+For distributed learning persistence, `--learning-store-url` selects one driver
+for attempts, staged proposals, learned skills, and—when automatic learning is
+non-off—the automatic admission ledger. The target must implement
+`LearningRepositoryCapabilitiesService` and advertise all required repositories;
+startup rejects an old or partial driver rather than silently keeping any local
+repository or accounting authority. The automatic-ledger service includes bounded,
+backend-authoritative discovery of expired held reservations; replacement Builds use it to retain
+charges linked to an existing deterministic attempt or reclaim absent attempts without replaying
+admission. Equal driver targets reuse one Build-owned connection and shutdown
+path. Proposal and skill partition keys are opaque hashes on this wire, not raw
+workspace paths or identity claims. The current raw repository RPCs are trusted,
+single-tenant infrastructure only, and may be composed only with `OwnershipEnforced=false`.
+An ownership-enforced or multi-tenant deployment
+fails startup even if the driver self-advertises `enforced`; ADR-0213 workload-authenticated
+claims, a private durable owner registry, and separately authenticated maintenance RPCs
+must land before that posture is available. Selecting the flag remains an explicit
+repository opt-in in off mode: startup still dials, probes, composes, and inspects the
+remote set for explicit reflection, learned-skill publication, and recovery of work
+admitted by another process, but ordinary off-mode runs do not automatically admit attempts.
+
 ### Import from Codex or Claude Code
 
 `mecated import` is an offline migration command for local Codex and Claude Code
@@ -796,15 +817,17 @@ The file is **not removed on shutdown**: removing it on a graceful exit but not 
 a `SIGKILL` would be a guarantee you could not rely on, so treat it as possibly
 stale and check the `pid`. A restart over the same path overwrites it atomically.
 
-**`--lifetime-pipe-fd`** is the parent-crash path. Create a pipe, pass the read end
-to the child as a descriptor, and hold the write end without ever writing to it. If
-the parent exits — cleanly, or by `SIGKILL`, or by crashing — the kernel closes its
-descriptors, the daemon's read end sees EOF, and it shuts down through the same
-graceful path a `SIGTERM` takes, persisting session state on the way out. The parent
-has nothing to remember. Bytes on the pipe are read and discarded: it is a liveness
-signal, never a control channel. `0`, `1`, and `2` are rejected — treating stdin's
-EOF as "the parent died" would stop the daemon the moment you started it from a
-non-interactive shell.
+**`--lifetime-pipe-fd`** is the parent-crash path. Pass either a pipe's read end
+or one endpoint of a connected UNIX-domain stream socketpair to the child, and
+hold the other endpoint without ever writing to it. Node and Bun create this
+socketpair shape for `child_process` `stdio: "pipe"`. If the parent exits —
+cleanly, by `SIGKILL`, or by crashing — the kernel closes its descriptors, the
+daemon's endpoint sees EOF, and it shuts down through the same graceful path a
+`SIGTERM` takes, persisting session state on the way out. The parent has nothing
+to remember. Bytes are read and discarded: this is a liveness signal, never a
+control channel. Regular files, terminals, listening or network sockets, closed
+descriptors, and nonzero descriptors below 3 are rejected; `0` disables the
+watcher.
 
 All four flags are off by default, and a daemon that sets none of them behaves
 exactly as before.
@@ -923,4 +946,3 @@ unchanged.
 > backend-for-frontend in front of `mecated`: it holds the bearer token
 > server-side, enforces its own Origin/CSRF policy, and never ships a credential
 > to the browser. A token that reaches JavaScript is a token an XSS can take.
-

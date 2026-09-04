@@ -703,7 +703,11 @@ URLs, headers, and credentials never enter emitted fields.
 
 The three provider modules attach only safe facts exposed by their wire protocols:
 `provider/openai/stream.go`, `provider/openaichat/openaichat.go`, and
-`provider/anthropic/anthropic.go`. ToolHive is composed over the same OpenAI Responses
+`provider/anthropic/anthropic.go`. For an HTTP API rejection, each keeps the typed
+SDK error unwrap-visible for classification but projects only its structured type or
+code plus message to terminal `Result.error` (`type-or-code: message`); raw response
+bodies, request URLs, and request/correlation IDs remain undisplayed. In-band SSE
+errors retain their existing rich presentation. ToolHive is composed over the same OpenAI Responses
 adapter in `internal/app/registry.go` (`newGatewayEntry`), so it can report only what
 the gateway and adapter expose. Missing metadata stays missing; no text parsing or
 fabrication fills it in.
@@ -3493,8 +3497,7 @@ auto-harvested flag dump.
 The go/ast doc-comment harvest lives ONLY in the build-time generator
 (`internal/configgen/cmd/configref`, run by `task docs:configref`); it emits the two
 COMMITTED artifacts, and `config init` ships by `//go:embed`-ing the committed
-skeleton — so the shipped `mecated` binary never imports go/ast (the matlatl
-llms.txt generate→commit→CI-diff-guard pattern; the docs job fails on drift). The
+skeleton — so the shipped `mecated` binary never imports go/ast; the docs job fails on drift. The
 write path (`config init`) and the read path (the resolver's `loadUserRules`) share the
 ONE relative-path const (`permconfig.UserSettingsRelPath`, re-exported as
 `configgen.SettingsRelPath`), so they provably resolve the same file.
@@ -4222,15 +4225,32 @@ retrieval because the request may already have applied.
 and both reviewed atomic store capabilities exist, and ownership enforcement disables the entire
 manual surface in v1. No provider/model identity is projected.
 
-**Standard coordinator and staged wiring (#509 Chunk C):** `internal/app/reflection_coordinator.go`
-owns one dormant Build-lifetime coordinator in every mode, never one goroutine per completion. Workers start only after first admission, so Off starts none until explicit reflection. Its global and per-principal
-queues are count- and byte-bounded, preserve principal FIFO, and rotate principals fairly; default concurrency is one.
-The effective receipt cap is at least queue capacity plus workers and admission reserves a live receipt first, so completion publication cannot be dropped. Oversized raw trajectory/event input is rejected before projection/marshal and queue allocation.
-Principal+session+input-digest singleflight collapses pending duplicates. Every job has a timeout and
-runs only under the Build lifecycle context, so automatic work detaches from request cancellation only
-after the observer has copied the verified session principal and bounded trajectory. `Built.Close`
-stops admission, publishes closed receipts for queued waiters, clears pending state, cancels active work, and joins workers. Queue-full, duplicate, completion, and failure diagnostics carry only bounded
-job IDs and counts. Queue/singleflight/receipt state resets by design; proposal state is durable.
+**Standard coordinator and staged wiring (#509 Chunk C; ADR 0259 durable admission):** `internal/app/reflection_coordinator.go`
+retains the bounded legacy synchronous/off scheduling implementation, but admitted durable attempts do not enter it. Hard and weighted admission create or converge the authoritative `AttemptRepository` record directly; `DiscoverWork` is the sole execution queue, so no process-local retained `learning.Input` can drive an admitted attempt. Off without `LearningStoreURL` constructs no coordinator worker or attempt repository, and explicit reflection stays on its synchronous lazy proposal path. A configured remote store is an explicit repository opt-in even while automatic mode is Off: composition dials/probes the repository set and may start attempt recovery for already-admitted work, but ordinary completions do not automatically admit new attempts. Oversized raw trajectory/event input is rejected before projection or durable admission.
+`internal/app/reflection_observer.go` (`createDurableAttempt`) now verifies the trajectory's exact non-empty ADR-0249 RunID by reloading the source session from the authoritative `SessionStore`, derives the caller/session/run/canonical-digest attempt ID and current-principal-prompt binding, and idempotently creates the `AttemptRepository` record BEFORE returning `queued`. A create error or absent/mismatched persisted RunID refuses admission without queuing. A duplicate converges to the existing durable attempt. `internal/app/attempt_recovery.go` (`startAttemptRecovery`) owns one Build-lifetime, cancellation-aware worker that continuously calls the storage-neutral `AttemptRepository.DiscoverWork`; it therefore discovers queued attempts created after startup and running attempts whose claims expired through local or remote repositories. Every admitted durable attempt executes through this path: admission retains no `learning.Input`, and the legacy coordinator has no callback that can execute an attempt. The repository remains authoritative when the process-local coordinator rejects capacity: no second queue or receipt controls whether durable work runs. The worker reloads the persisted source provider/model and exact RunID event sequence through `learningEvidenceLoader`, sends only the canonical projection through `EvidenceReflector.ReflectProjection` (which applies the governance fence), and advances the same claim-fenced proposal/skill and terminal checkpoints.
+Every attempt callback has a timeout and runs only under the Build lifecycle context. `attemptWorker` acquires its claim before loading source evidence or constructing the source provider, requests only a bounded duration, and never supplies an absolute expiry or authority time. `AttemptRepository` backends mint and compare acquisition, renewal, transition, retention, and `DiscoverWork` times against their own clock; local, memory, and remote implementations share that conformance contract. The worker then renews that claim while evidence reconstruction, model reflection, and publication are active; renewal loss cancels that work before another attempt transition. Missing, deleted, unauthorized, invalid, duplicate, decreasing, gap-marked, or mismatched source evidence crosses the worker evidence boundary and terminally records only `evidence_unavailable`. Exact-run validation requires the first target event's `Seq` to be one and later target events to increase strictly; it deliberately permits numeric gaps because `RunEventRecorder` coalesces deltas under the first delta's sequence while preserving append order. Because admission can commit before the relay appends the terminal `EvResult`, an exact source run whose event sequence is merely incomplete joins the same persisted exponential-backoff path as a transient provider/setup failure. The live claim is retained as the backoff marker; claim generation bounds retries across restart, and the third failed recovery terminally records only `retry_exhausted`. No raw setup error is persisted, and the discovery interval cannot turn these failures into a one-second hot loop. `Built.Close` cancels and joins the discovery worker before borrowed resources close. Diagnostics carry only bounded
+attempt IDs and counts. `internal/adapter/attemptstore` persists authoritative queued/running/terminal workflow state and immutable content-free provenance across processes. Its fixed safe bound is 256 records per opaque caller partition. `Create` enforces that bound under the same repository lock as insertion: it first preserves idempotent duplicate semantics, then evicts only the oldest terminal record (updated time, opaque ID tie-break), or returns the closed content-free quota error when queued/running records saturate that partition. It never deletes nonterminal or claimed work to make room, and saturation in one partition does not block create/claim/finalize in another. The memory reference adapter and remote driver run the same conformance scenario, so transport does not weaken this repository authority. Skipped/non-admitted decisions emit their immediate content-free activity and never touch the attempt repository.
+
+`internal/adapter/server/attempts.go` derives the verified caller's private one-way attempt partition before every repository read or control. `GetLearningAttempt` maps foreign and missing IDs to the same content-free absence and `ListLearningAttempts` uses the repository's bounded state filter/page limit and opaque next-ID cursor. `RetryLearningAttempt` and `AbandonLearningAttempt` require a non-system verified caller plus the opaque expected version before invoking only `AttemptRepository.Retry` or `AttemptRepository.Abandon`; they take no coordinator lock, send no worker signal, and trigger no downstream write or rollback. Version, terminal-transition, and live-claim conflicts map to separate closed transport errors and leave the record unchanged. Abandon is explicitly non-compensating. `toProtoLearningAttempt` is the sole gRPC/HTTP projection: closed state/outcome/failure/checkpoint tokens, generations, timestamps, opaque ID/version, and same-partition proposal/skill links only. Source session/run/digests, immutable prompt provenance, principal values, content, errors, diagnostics, metrics, EventLog records, and watch envelopes never enter the public message. `internal/adapter/server/grpc.go` and `internal/adapter/server/http.go` are thin projections over those Service methods; attempt watch remains absent.
+
+**Distributed learning repository composition:** `internal/app/learningdriver.go`
+(`resolveLearningRepositories`) selects one `--learning-store-url` target only after
+`internal/adapter/grpcdriver/learningrepositories.go`
+(`ProbeLearningRepositoryCapabilities`) positively negotiates the complete Attempt/Proposal/Skill
+repository set. Missing or partial capability is fatal; no member falls back to local persistence.
+All three clients borrow the existing Build-scoped `driverConns` entry and once-guarded close.
+Composition hashes both components of Proposal/Skill partitions before transport and restores only
+the in-process view, so raw workspace paths and identity strings never cross these repository RPCs.
+Validated skill activation is exposed only when separately advertised. The current raw repository
+RPC servers remain trusted infrastructure: they accept caller-selected partitions and do not yet
+have ADR-0213 workload-authentication middleware, a private durable owner registry, or a separately
+authenticated maintenance surface. Therefore a configured remote learning store fails closed whenever
+application `OwnershipEnforced` is true, even if the driver self-advertises `enforced` ownership and
+RPC separation. With ownership enforcement disabled, an explicitly `trusted` driver may be composed;
+the reserved `enforced` value is treated no stronger than trusted until cryptographically bound
+ADR-0213 enforcement exists. Unspecified ownership and missing or partial repository capabilities
+remain fatal before any repository client is composed. Local in-process repositories retain their
+existing application ownership enforcement.
 
 The observer performs the structural signal gate before the process-wide legacy interval admission, so
 trivial completions spend no provider call and do not consume the debounce cadence. Standard composition
@@ -4238,7 +4258,7 @@ constructs `agent.EvidenceReflector` on the selected session provider/model (or 
 `reflection` slot), stages through the durable proposal repository under principal/project partitions,
 and applies `memorypromotion.StandardPolicy`. `review` stages without memory writes. `auto` promotes operator facts only from explicit principal-authored remember evidence. Trusted project facts require principal-authored evidence and an exact configured-workspace match; tool/assistant/repository-only evidence remains staged. Project candidates from admitted alternate roots remain staged/reviewable but cannot approve, undo, or read/write launch-root project memory until a safe exact-root lifecycle store exists; untrusted project material is not ingested. Existing project partitions stay listable/rejectable. Conflicts and ambiguous facts remain non-promoted, project material
 requires `projectIngestionAdmitted`. Procedures first become `deferred_unsupported` as the durable crash-recovery checkpoint, then enter the installed learned-skill pipeline in review/auto. `off` installs no
-automatic observer, started coordinator worker, or eager proposal repository. Explicit reflection synchronously uses the persisted session provider/model, performs a bounded EventLog read, and lazily opens persistence and starts coordinator workers in Off. Approval re-verifies owner-authorized message/event digest, sequence, and tool-call evidence before promotion. The deprecated `--user-model-review` alias maps to this same `auto` path;
+automatic observer or started coordinator worker. Without a configured remote store it also installs no eager proposal or attempt repository; explicit reflection synchronously uses the persisted session provider/model, performs a bounded EventLog read, and lazily opens local persistence. With `LearningStoreURL` explicitly configured, Off still connects to and inspects the remote repository set, publishes learned skills, and may recover previously admitted attempts; it does not create automatic attempts from ordinary completions. Approval re-verifies owner-authorized message/event digest, sequence, and tool-call evidence before promotion. The deprecated `--user-model-review` alias maps to this same `auto` path;
 the old exported `UserModelReviewer`, `NewUserModelObserver`, and `Review` remain compatibility APIs but
 standard Build no longer uses their direct-writing child engine. Dream and explicit memory tools remain
 independent CAS writers. The shipped gRPC/HTTP surface provides synchronous explicit reflection plus caller-partitioned proposal list/detail/decision/undo, and mecatui provides windowed review with exact canonical value/scope/description and stale-CAS refresh.
@@ -4249,15 +4269,50 @@ session kind, stop, verified current `MessageSpan`, standard weighted signals, c
 usage. `engine/agent/loop.go` (`observeCompletion`) snapshots Kind/Counters and locates the accepted
 genuine prompt in final history; compaction that makes the span unverifiable therefore fails closed.
 Hard explicit intent is genuine-current-user-only and bypasses score/cooldown/legacy interval, never
-budgets or coordinator capacity. `internal/app/learning_controller.go`
-(`automaticAdmissionController`) owns the process-local sliding reservations, per-principal weighted
-cooldown, completed-digest LRU, and canonical digest excluding `ExistingFact`; coordinator admission
-runs its reservation callback after duplicate/capacity checks and before provider work, so queue-full
-cannot spend a reservation. Terminal failures still call completion and retain the reservation.
-Authenticated explicit reflection carries `SignalHostRequested`, bypasses this controller, and joins
-an identical in-flight digest. Off constructs no automatic controller/coordinator worker; explicit Off
-runs synchronously against lazy proposal persistence. `Close` cancels and joins; no startup/shutdown
-sweep exists. Every process gets an independent budget and restart resets all controller state.
+budgets or durable repository quota. `internal/app/reflection_observer.go` derives the deterministic
+attempt/provenance before admission and reserves weighted work through `AutomaticAdmissionLedger`
+before creating the attempt. Weighted and hard automatic work then execute only when
+`AttemptRepository.DiscoverWork` returns them; authenticated explicit reflection remains
+outside automatic accounting. The attempt runs through the claim-fenced evidence,
+reflection, proposal/skill convergence, and terminal lifecycle. There is no second process-local queue.
+
+Off without a configured remote learning store constructs no attempt repository, automatic ledger, coordinator worker, or recovery worker;
+explicit Off runs synchronously against lazy local proposal persistence and creates no durable attempt. With `LearningStoreURL` configured, Off intentionally dials/probes the remote repository set and may run recovery for existing attempts, while automatic observation and new automatic admission remain disabled.
+`Built.Close` cancels and joins coordinator and recovery workers.
+
+The storage-neutral accounting contract lives in `engine/learning/automatic_ledger.go`
+(`AutomaticAdmissionLedger`), with shared adapter coverage in
+`engine/adapter/automaticconformance/automaticconformance.go` (`Run`). Its reservation ID is derived
+only from the deterministic attempt ID. Policy and time are backend authority: construction binds one
+immutable policy to its derived revision and an injected clock; requests carry only identity/charge
+demand plus the expected revision, and every timestamp/expiry decision is minted by that clock. The
+durable local document persists the policy revision and refuses a differently configured replica,
+while the driver protocol exposes neither client policy nor client time. One atomic admission applies
+global and opaque-principal count/token windows, global digest deduplication, and weighted cooldown; hard admission bypasses only
+cooldown and explicit host-requested reflection does not enter this automatic seam. Expired ownership
+is reassigned with a newer opaque fence without adding a charge. Bounded `DiscoverExpired` is also
+backend-authoritative: local and remote implementations atomically select only held records whose
+fences have expired by backend time and return them under fresh fences. `internal/app/automatic_reservation_reconciliation.go`
+(`automaticReservationReconciler`, `automaticReservationReconciliationLoop`) closes the non-transactional boundary: it reserves, then atomically retains under the current backend fence before durable attempt create. If an expired-reservation reconciler reclaims first, the stale creator's retain fails and it never reaches `AttemptRepository.Create`; if retain wins, create failure or response loss stays conservatively charged until backend window/retention expiry and a same-identity retry can converge it. One Build-owned cancellation-aware joined loop continuously discovers crash
+orphans, reads the linked `AttemptRepository`, and retains after the attempt is observable or reclaims
+only when no create authority has already been consumed. `Built.Close` cancels and joins that loop before borrowed repository
+resources close. Retained charges are not refunded by later failure, timeout, or abandonment. The
+local durable document prunes resolved records after dedupe retention and admits at most 512 records
+globally and 128 per opaque principal partition; unresolved saturation fails closed rather than
+allowing held orphans to grow the 16 MiB document indefinitely.
+
+`internal/adapter/automaticstore/store.go` is the local cooperating-process backend: every operation
+reloads one bounded, content-free document under a stable flock and crash-safe atomic replace, so
+separate backend instances share one count/token window, opaque-principal limit, cooldown, and digest
+dedupe authority. `internal/adapter/grpcdriver/automaticledger.go` and
+`internal/adapter/grpcdriver/automaticledger_server.go` expose the same contract to independent driver
+clients with only bounded opaque metadata and closed safe error details. Both run the shared conformance
+suite. `internal/app/learningdriver.go` requires positive automatic-ledger capability whenever automatic
+learning is enabled and never falls back to local accounting; local composition places the ledger beside
+the durable attempt store. Capability/posture reporting distinguishes the durable explicit-attempt
+lifecycle from automatic bounds: it advertises global count/token/cooldown/deduplication only after a
+durable ledger is successfully selected. An unwired or unhealthy ledger retains ADR-0114's
+process-local limitation and is never presented as globally bounded.
 
 **Evaluated and validated agent-owned skills (#510; ADR 0111, superseded in part by ADR 0224):**
 `engine/adapter/skilllifecycle.Pipeline` is a state-aware, idempotent resume over
@@ -4275,17 +4330,21 @@ and explicit limits; mecatl ships no production judge. Candidate inventory drain
 metadata plus every learned version in the exact partition.
 
 `skillfs.AtomicCatalog` composes the existing path-free `tool.SkillSource` with body-only learned versions behind
-one immutable generation pointer. External filesystem/driver assets retain the ordinary `{name, asset}` schema,
-validation, and bounds; learned asset requests fail explicitly, and no path/read-root/materialization seam exists.
-External names win. Shared, selector, and no-fs catalogs register `LiveTool` over the same pointer. A
-verified caller's global partition and exact trusted launch-root project can bind publication; the
-caller-bound LiveTool selects only that principal/project generation, while Service mutation authorization is skill-specific and independent
-of memory convergence.
+independent immutable caller/project partition snapshots. `learning.SkillRepository.Generation` is the durable
+monotonic authority for each partition; every successful repository mutation advances only that partition, and
+paginated hydration verifies one unchanged generation before atomically publishing it. Generation-aware publish and
+invalidation reject delayed older operations, while uncertainty clears only the affected partition. This is lazy
+list/run hydration and convergence, not an instant invalidation or attempt-claim fence. External filesystem/driver
+assets retain the ordinary `{name, asset}` schema, validation, and bounds; learned asset requests fail explicitly,
+and no path/read-root/materialization seam exists. External names win. Shared, selector, and no-fs catalogs register
+`LiveTool` over the same catalog. A verified caller's global partition and exact trusted launch-root project can bind
+publication; the caller-bound LiveTool selects only that principal/project snapshot, while Service mutation
+authorization is skill-specific and independent of memory convergence.
 
 Archive accepts only Active. Rollback additionally requires durable proof that the target was previously
 active through `activate`, `activate_validated`, or `rollback_to`; arbitrary ABSTAIN and draft versions remain
 ineligible. Post-commit publication uses a bounded cancel-detached context and reports `published` versus
-`pending_reconciliation` alongside committed state; failure revokes the learned entry fail-safe, while startup and
+`pending_reconciliation` alongside committed state; failure generation-invalidates the uncertain partition, while startup and
 live-list refresh reconstruct from durable active state. Lifecycle `SkillDraft` derives verified caller identity,
 exact live workspace root, and main-agent ownership at execution, refusing identity-free calls. API/TUI requests
 preserve project and correlate generation plus skill/version; list and receipt consumers drain every page, with
@@ -6177,7 +6236,12 @@ the source placement. Clear creates a fresh empty-history successor; Fork copies
 may apply authorized provider/model/reasoning overrides in the same atomic publication. Both lock
 and lease the owned source, derive a cancellation context from the held mutation lease, build any
 per-session engine, re-check the held lease immediately before persistence, and tear down provisional
-bindings/engines if ownership is lost. The current `SessionStore` seam has no lease-token
+bindings/engines if ownership is lost. For a running or awaiting Clear, selector preflight
+runs while the source is untouched, then cancellation is the irreversible abandon-and-replace
+boundary. Any later lease, placement, engine, or persistence failure publishes no successor
+and causes no client rebind, but the source may already be terminal-cancelled; retry remains
+valid and prior workspace mutations are never rolled back. No distributed transaction across
+those systems is claimed. The current `SessionStore` seam has no lease-token
 conditional create, so there is an accepted residual window after the final held-lease check and
 before or during publication: a concurrent renewal loss cancels the context but cannot make every
 supported store's already-started commit atomic. This is not claimed as cancellation atomicity;

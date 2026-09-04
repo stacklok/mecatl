@@ -810,7 +810,9 @@ type LearningSection struct {
 	Sensitivity string `yaml:"sensitivity"`
 	// Skills controls learned-skill lifecycle policy.
 	Skills *LearningSkillsSection `yaml:"skills"`
-	// Automatic is operator-only process-local rate policy.
+	// Automatic is operator-only admission policy. Standard non-off composition
+	// applies it through a durable ledger, making count/token windows, cooldown,
+	// and deduplication deployment-wide across cooperating processes.
 	Automatic *LearningAutomaticSection `yaml:"automatic"`
 }
 
@@ -833,15 +835,16 @@ func (s *LearningSkillsSection) UnmarshalYAML(node ast.Node) error {
 	return nil
 }
 
-// LearningAutomaticSection is the strict process-local automatic-admission budget.
+// LearningAutomaticSection is the strict automatic-admission budget. Standard
+// composition enforces it through the selected durable ledger.
 type LearningAutomaticSection struct {
 	// Cooldown is the per-principal weighted-admission cooldown; zero disables it.
 	Cooldown time.Duration `yaml:"cooldown"`
 	// Window is the sliding count/token window, strictly 1m..24h.
 	Window time.Duration `yaml:"window"`
-	// MaxReflections is the process-wide count cap; zero disables automatic reflection.
+	// MaxReflections is the global count cap; zero disables automatic reflection.
 	MaxReflections int `yaml:"max_reflections"`
-	// MaxTokens is the process-wide reserved-token cap; zero disables automatic reflection.
+	// MaxTokens is the global reserved-token cap; zero disables automatic reflection.
 	MaxTokens int `yaml:"max_tokens"`
 	// MaxReflectionsPerPrincipal is the per-principal count cap; zero disables automatic reflection.
 	MaxReflectionsPerPrincipal int `yaml:"max_reflections_per_principal"`

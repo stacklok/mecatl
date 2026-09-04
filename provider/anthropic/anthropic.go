@@ -2,6 +2,7 @@ package anthropic
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"iter"
 	"strings"
@@ -442,6 +443,34 @@ func retryableStatus(code int) bool {
 	return code == 408 || code == 429 || code >= 500
 }
 
+// anthropicHTTPErrorText projects only the structured API envelope for display.
+// sdk.Error.Error includes the request URL, request ID, and raw response body, so it
+// must remain unwrap-only.
+func anthropicHTTPErrorText(err *sdk.Error) string {
+	var envelope struct {
+		Error struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	_ = json.Unmarshal([]byte(err.RawJSON()), &envelope)
+	return structuredHTTPErrorText(string(err.Type()), envelope.Error.Message)
+}
+
+func structuredHTTPErrorText(kind, message string) string {
+	kind = strings.TrimSpace(kind)
+	message = strings.TrimSpace(message)
+	switch {
+	case kind != "" && message != "":
+		return kind + ": " + message
+	case kind != "":
+		return kind
+	case message != "":
+		return message
+	default:
+		return "provider request failed"
+	}
+}
+
 // anthropicStreamErr wraps the given error while retaining the SDK error in the
 // chain and projecting only typed provider metadata.
 func anthropicStreamErr(err error, msg string) *anthropicStreamError {
@@ -449,6 +478,7 @@ func anthropicStreamErr(err error, msg string) *anthropicStreamError {
 	status := 0
 	metadata := providerErrorMetadata{}
 	if errors.As(err, &sdkErr) {
+		msg = anthropicHTTPErrorText(sdkErr)
 		status = sdkErr.StatusCode
 		metadata.httpStatus = status
 		metadata.providerCode = string(sdkErr.Type())

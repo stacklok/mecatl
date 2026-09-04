@@ -13,7 +13,7 @@ accumulator: acc/mecatui-status-line
 
 # Task brief
 
-Update `docs/tui.md`, `docs/architecture.md`, relevant `user-docs/`, and ADR 0027 resource inventory if applicable. Document the user-global settings location/schema, shared input, StatusML surfaces/tokens/templates, shell/executable modes, CWD provenance, exact environment, process/output limits, refresh/failure behavior, embedded/connect parity, restart-only reload, and copyable template-clock plus inline shell examples. State the v1 mapping is best effort and link #799 for the stable cross-widget contract. Run generated docs; never hand-edit llms.txt.
+Update `docs/tui.md`, `docs/architecture.md`, relevant `user-docs/`, and ADR 0027 resource inventory if applicable. Document the user-global settings location/schema, shared input, StatusML surfaces/tokens/templates, shell/executable modes, CWD provenance, exact environment, process/output limits, refresh/failure behavior, embedded/connect parity, restart-only reload, and copyable template-clock plus inline shell examples. State the v1 mapping is best effort and link #799 for the stable cross-widget contract. Run generated docs; never hand-edit the configuration reference.
 
 ## Acceptance criteria
 

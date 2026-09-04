@@ -627,7 +627,6 @@ MODIFIED:
   docs/usage.md                                     # mecak8s section (Step 8)
   docs/architecture.md                              # mecak8s in the binary list (Step 8)
   docs/design/PRODUCTION-READINESS.md               # mecak8s status row (Step 8)
-  llms.txt                                          # regenerated (task generate)
 
 NOT TOUCHED:
   engine/**              # no port/domain change

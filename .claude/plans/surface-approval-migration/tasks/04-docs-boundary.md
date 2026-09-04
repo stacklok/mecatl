@@ -24,4 +24,4 @@ Do not add unrelated UI product changes.
 - AC4.1: Approval vocabulary, state, rendering, hit-ID cache, and input behavior remain confined to approval and shared hit-dispatch files; Model contains only registration, durable effects, and generic routing.
   - verify: `TestApprovalSurfaceStructuralBoundary`
 - AC4.3: The living surface-migration design records the ephemeral-ID/frame-cache protocol, Model/surface ownership split, and the deliberately deferred multi-window manager, and retires its obsolete approval-surface exclusion.
-  - verify: inspection — `task docs` validates citations and generated `llms.txt`
+  - verify: inspection — `task docs` validates citations and generated configuration reference

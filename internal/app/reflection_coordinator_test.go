@@ -56,6 +56,10 @@ func (r *testReflector) Reflect(ctx context.Context, in learning.Input) (learnin
 	}
 	return learning.Outcome{Kind: learning.OutcomeAbstained}, nil
 }
+func (*testReflector) RequestTokenEstimate(learning.Input) (int, error) {
+	return 1, nil
+}
+
 func testJob(p, id string, r learning.Reflector) reflectionJob {
 	tr := learning.NewTrajectory(session.SessionID(id), "/w", session.StopEndTurn, session.Usage{}, []session.Message{session.NewUserMessage("Remember that preference")})
 	in := learning.NewInput(tr, nil, []learning.Signal{{Kind: learning.SignalExplicitRemember}}, nil)

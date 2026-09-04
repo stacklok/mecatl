@@ -69,8 +69,9 @@ directly from recorded fixtures by `decodeSSE` in tests):
   `Usage.CacheReadTokens`)
 - `response.incomplete` → `ChunkUsage` then `ChunkDone(error)`
 - `response.failed` / `error` → a non-nil stream **error** carrying the
-  provider's message verbatim (so the real reason reaches the terminal
-  `result`, not an opaque "error")
+  provider's in-band message verbatim; HTTP API rejections instead render only
+  their structured `code` (or `type`) and message as `code: message`, never the
+  SDK's raw response body, request URL, or correlation ID.
 
 **Cancellation**: `Stream` (`openai.go`) selects on `ctx.Done()` each iteration
 and abandons the underlying stream; a deliberate `ctx` cancel is **not** reported

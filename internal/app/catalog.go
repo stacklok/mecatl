@@ -132,10 +132,12 @@ type catalogAssets struct {
 	deliveryQueue port.DeliveryQueue
 	// learningAdmission is the ONE process-wide completion counter shared by the
 	// default and every per-session/provider reviewer.
-	learningAdmission     *learningAdmission
-	reflectionCoordinator *reflectionCoordinator
-	reflectionRepository  learning.ProposalRepository
-	rootCatalog           *tool.Catalog
+	learningAdmission        *learningAdmission
+	reflectionCoordinator    *reflectionCoordinator
+	reflectionRepository     learning.ProposalRepository
+	attemptRepository        learning.AttemptRepository
+	automaticAdmissionLedger learning.AutomaticAdmissionLedger
+	rootCatalog              *tool.Catalog
 }
 
 // catalogSession is the PER-CATALOG variation: the resolved provider/model the
@@ -589,10 +591,12 @@ func registerScheduleTool(ctx context.Context, cfg Config, cat *tool.Catalog, a 
 func registerSkillFamily(ctx context.Context, cfg Config, cat *tool.Catalog, a catalogAssets, s catalogSession) {
 	if a.liveSkills != nil {
 		live := coreskillfs.NewLiveTool(a.liveSkills)
+		var skillTool tool.Tool = live
 		if len(s.skillPartitions) > 0 {
 			live = coreskillfs.NewLiveToolForPartitions(a.liveSkills, s.skillPartitions...)
+			skillTool = newHydratingSkillTool(ctx, cfg, a, live, s.skillPartitions)
 		}
-		if err := cat.Register(live); err != nil {
+		if err := cat.Register(skillTool); err != nil {
 			cfg.diag().Log(ctx, port.LevelWarn, "registering live skills failed; Skill tool disabled", "err", err)
 		}
 	} else if len(a.skills) > 0 {

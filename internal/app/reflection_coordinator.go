@@ -50,6 +50,8 @@ type reflectionReceipt struct {
 	Promoted    int
 	Conflicted  int
 	Abstained   bool
+	ProposalID  learning.ProposalID
+	SkillID     learning.SkillID
 	Err         string
 }
 

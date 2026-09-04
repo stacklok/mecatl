@@ -16,7 +16,8 @@ const (
 	defaultLearningWindow   = time.Hour
 )
 
-// LearningAutomaticConfig is the process-local automatic-reflection budget.
+// LearningAutomaticConfig is the automatic-reflection budget applied by the
+// configured durable admission ledger.
 type LearningAutomaticConfig struct {
 	Cooldown                   time.Duration
 	Window                     time.Duration

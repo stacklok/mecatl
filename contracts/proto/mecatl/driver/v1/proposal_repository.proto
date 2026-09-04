@@ -1,0 +1,144 @@
+// SPDX-FileCopyrightText: Copyright 2026 Stacklok, Inc.
+// SPDX-License-Identifier: LicenseRef-Stacklok-Proprietary
+
+// mecatl driver API: the remote staged-learning proposal repository protocol.
+//
+// The protocol mirrors learning.ProposalRepository. Versions are opaque CAS
+// tokens. Candidate provenance, evidence and decision history retain the domain
+// bounds; backend failures cross the boundary only through ProposalErrorDetail.
+syntax = "proto3";
+
+package mecatl.driver.v1;
+
+import "buf/validate/validate.proto";
+import "google/protobuf/timestamp.proto";
+
+service ProposalRepositoryService {
+  rpc StageProposals(StageProposalsRequest) returns (StageProposalsResponse);
+  rpc ListProposals(ListProposalsRequest) returns (ListProposalsResponse);
+  rpc GetProposal(GetProposalRequest) returns (GetProposalResponse);
+  rpc ClaimProposalDecision(ProposalDecisionRequest) returns (ProposalRecordResponse);
+  rpc ClaimProposalPromotion(ProposalMutationRequest) returns (ProposalRecordResponse);
+  rpc FinalizeProposal(FinalizeProposalRequest) returns (ProposalRecordResponse);
+  rpc LinkProposalSkillDraft(LinkProposalSkillDraftRequest) returns (ProposalRecordResponse);
+}
+
+enum ProposalErrorCode {
+  PROPOSAL_ERROR_CODE_UNSPECIFIED = 0;
+  PROPOSAL_ERROR_CODE_INVALID = 1;
+  PROPOSAL_ERROR_CODE_NOT_FOUND = 2;
+  PROPOSAL_ERROR_CODE_VERSION_CONFLICT = 3;
+  PROPOSAL_ERROR_CODE_TRANSITION = 4;
+  PROPOSAL_ERROR_CODE_LIMIT = 5;
+}
+
+message ProposalErrorDetail { ProposalErrorCode code = 1; }
+
+message ProposalPartition {
+  string principal = 1 [(buf.validate.field).string.max_len = 1024];
+  string project = 2 [(buf.validate.field).string.max_len = 4096];
+}
+
+message ProposalEvidence {
+  string session_id = 1 [(buf.validate.field).string.max_len = 128];
+  string locator = 2 [(buf.validate.field).string.max_len = 16];
+  int32 ordinal = 3;
+  optional int64 event_seq = 4;
+  string tool_call_id = 5 [(buf.validate.field).string.max_len = 128];
+  string digest = 6 [(buf.validate.field).string.max_len = 128];
+}
+
+message ProposalSignal {
+  string kind = 1 [(buf.validate.field).string.max_len = 32];
+  repeated ProposalEvidence evidence = 2 [(buf.validate.field).repeated.max_items = 16];
+}
+
+message ProposalCandidate {
+  string kind = 1 [(buf.validate.field).string.max_len = 32];
+  string key = 2 [(buf.validate.field).string.max_len = 256];
+  string value = 3 [(buf.validate.field).string.max_len = 8192];
+  string description = 4 [(buf.validate.field).string.max_len = 2048];
+  string name = 5 [(buf.validate.field).string.max_len = 64];
+  string title = 6 [(buf.validate.field).string.max_len = 256];
+  string body = 7 [(buf.validate.field).string.max_len = 8192];
+  repeated ProposalEvidence evidence = 8 [(buf.validate.field).repeated.max_items = 16];
+}
+
+message ProposalDecision {
+  string kind = 1 [(buf.validate.field).string.max_len = 16];
+  string actor = 2 [(buf.validate.field).string.max_len = 256];
+  string reason = 3 [(buf.validate.field).string.max_len = 1024];
+  google.protobuf.Timestamp at = 4;
+}
+
+message ProposalPromotionReceipt {
+  string memory_key = 1 [(buf.validate.field).string.max_len = 256];
+  bool previous_exists = 2;
+  string previous_version = 3 [(buf.validate.field).string.max_len = 128];
+  string result_version = 4 [(buf.validate.field).string.max_len = 128];
+}
+
+message ProposalRecord {
+  string id = 1 [(buf.validate.field).string.max_len = 128];
+  string version = 2 [(buf.validate.field).string.max_len = 128];
+  string status = 3 [(buf.validate.field).string.max_len = 32];
+  ProposalPartition partition = 4 [(buf.validate.field).required = true];
+  string input_digest = 5 [(buf.validate.field).string.max_len = 128];
+  ProposalCandidate candidate = 6 [(buf.validate.field).required = true];
+  repeated ProposalSignal signals = 7 [(buf.validate.field).repeated.max_items = 64];
+  repeated ProposalDecision decisions = 8 [(buf.validate.field).repeated.max_items = 16];
+  ProposalPromotionReceipt receipt = 9;
+  string skill_id = 10 [(buf.validate.field).string.max_len = 128];
+  google.protobuf.Timestamp created_at = 11 [(buf.validate.field).required = true];
+  google.protobuf.Timestamp updated_at = 12 [(buf.validate.field).required = true];
+}
+
+message StageProposalsRequest {
+  ProposalPartition partition = 1 [(buf.validate.field).required = true];
+  string input_digest = 2 [(buf.validate.field).string.max_len = 128];
+  repeated ProposalCandidate candidates = 3 [(buf.validate.field).repeated = {min_items: 1, max_items: 16}];
+  repeated ProposalSignal signals = 4 [(buf.validate.field).repeated.max_items = 64];
+}
+message StageProposalsResponse { repeated ProposalRecord records = 1 [(buf.validate.field).repeated.max_items = 16]; }
+
+message ListProposalsRequest {
+  ProposalPartition partition = 1 [(buf.validate.field).required = true];
+  string after = 2 [(buf.validate.field).string.max_len = 128];
+  int32 limit = 3;
+  string status = 4 [(buf.validate.field).string.max_len = 32];
+}
+message ListProposalsResponse {
+  repeated ProposalRecord records = 1 [(buf.validate.field).repeated.max_items = 200];
+  string next = 2 [(buf.validate.field).string.max_len = 128];
+}
+
+message GetProposalRequest {
+  ProposalPartition partition = 1 [(buf.validate.field).required = true];
+  string id = 2 [(buf.validate.field).string.max_len = 128];
+}
+message GetProposalResponse {
+  bool found = 1;
+  ProposalRecord record = 2;
+}
+
+message ProposalMutationRequest {
+  ProposalPartition partition = 1 [(buf.validate.field).required = true];
+  string id = 2 [(buf.validate.field).string.max_len = 128];
+  string expected_version = 3 [(buf.validate.field).string.max_len = 128];
+}
+message ProposalDecisionRequest {
+  ProposalMutationRequest mutation = 1 [(buf.validate.field).required = true];
+  ProposalDecision decision = 2 [(buf.validate.field).required = true];
+}
+message FinalizeProposalRequest {
+  ProposalMutationRequest mutation = 1 [(buf.validate.field).required = true];
+  string status = 2 [(buf.validate.field).string.max_len = 32];
+  ProposalPromotionReceipt receipt = 3;
+  ProposalDecision decision = 4;
+}
+message LinkProposalSkillDraftRequest {
+  ProposalMutationRequest mutation = 1 [(buf.validate.field).required = true];
+  string skill_id = 2 [(buf.validate.field).string.max_len = 128];
+  ProposalDecision decision = 3 [(buf.validate.field).required = true];
+}
+message ProposalRecordResponse { ProposalRecord record = 1 [(buf.validate.field).required = true]; }

@@ -285,15 +285,23 @@ func builtinByName(caps client.Capabilities, w wiredCollaborators, name string) 
 	return builtin{}, false
 }
 
-// runClear starts a create-first handoff to a new empty session. It is idle-only:
-// while a run streams it is a no-op with an explanatory status, so a /clear
-// mid-turn can't tear out the live stream's backing state. The old session and
-// its UI stay bound until creation succeeds; this both avoids data loss on a
-// create failure and prevents a prompt from reaching the old session while the
-// handoff is pending.
+// clearHandoff identifies the one source-bound ClearSession request whose
+// response may replace the current binding.
+type clearHandoff struct {
+	sourceID      string
+	token         uint64
+	sourcePhase   phase
+	sourceSettled bool
+	failure       string
+}
+
+// runClear starts a create-first handoff to a new empty session from every
+// interactive phase. The server owns cancellation and settlement of an active
+// run or durable approval; the old binding and transcript remain visible until
+// the correlated successor response succeeds.
 func (m Model) runClear() (tea.Model, tea.Cmd) {
-	if m.phase != phaseIdle {
-		m.statusMsg = m.deps.Theme.Style("warning").Render("cannot clear while running")
+	if m.clearPending != nil {
+		m.statusMsg = m.deps.Theme.Style("warning").Render("clear is already in progress")
 		return m, nil
 	}
 	if m.deps.Session == nil {
@@ -302,25 +310,28 @@ func (m Model) runClear() (tea.Model, tea.Cmd) {
 	}
 
 	oldID := m.sessionID
-	m.phase = phaseConnecting // blocks input while the old session is still displayed
-	m.statusMsg = "clearing — creating a fresh session…"
-	return m, tea.Batch(m.clearSessionCmd(oldID), m.sp.Tick)
+	m.clearRequestToken++
+	m.clearPending = &clearHandoff{sourceID: oldID, token: m.clearRequestToken, sourcePhase: m.phase}
+	m.phase = phaseConnecting
+	m.statusMsg = "clearing — cancelling the current run and creating a fresh session…"
+	return m, tea.Batch(m.clearSessionCmd(oldID, m.clearRequestToken), m.sp.Tick)
 }
 
-// clearSessionCmd asks the server for an empty-history successor before the old
-// session is touched. Server inheritance carries placement, mode, model, effort,
-// limits, and permission posture.
-func (m Model) clearSessionCmd(oldID string) tea.Cmd {
+// clearSessionCmd asks the server to settle the source and create an
+// empty-history successor. Server inheritance carries placement, mode, model,
+// effort, limits, and permission posture.
+func (m Model) clearSessionCmd(oldID string, token uint64) tea.Cmd {
 	deps := m.deps
 	return func() tea.Msg {
 		id, snapshot, err := deps.Session.ClearSession(deps.Ctx, oldID, nil)
 		if err != nil {
-			return clearSessionFailedMsg{err: err}
+			return clearSessionFailedMsg{sourceID: oldID, token: token, err: err}
 		}
 		return clearSessionReadyMsg{
 			ready:     client.SessionReadyMsg{SessionID: id, Capabilities: snapshot.Capabilities, ResolvedModel: snapshot.ResolvedModel, Mode: snapshot.Mode},
 			placement: snapshot.Placement,
 			oldID:     oldID,
+			token:     token,
 		}
 	}
 }
@@ -329,9 +340,14 @@ type clearSessionReadyMsg struct {
 	ready     client.SessionReadyMsg
 	placement client.Placement
 	oldID     string
+	token     uint64
 }
 
-type clearSessionFailedMsg struct{ err error }
+type clearSessionFailedMsg struct {
+	sourceID string
+	token    uint64
+	err      error
+}
 
 // closeSessionCmd is deliberately best-effort: the replacement is already bound,
 // so failure to close the old persisted session must not affect the new one.

@@ -13,9 +13,9 @@ accumulator: acc/session-affinity-and-handoff
 
 # Task brief
 
-Perform the final single-writer documentation reconciliation after behavior is assembled. Update living architecture, usage, implementation notes, cloud-native resource/rehydration inventories, and public user docs with the exact affinity, authority, lease-loss, close/drain, modeled-handoff, and infrastructure-rollout contract. Regenerate `llms.txt` only through `task docs` in this serial task.
+Perform the final single-writer documentation reconciliation after behavior is assembled. Update living architecture, usage, implementation notes, cloud-native resource/rehydration inventories, and public user docs with the exact affinity, authority, lease-loss, close/drain, modeled-handoff, and infrastructure-rollout contract. Regenerate the configuration reference only through `task docs` in this serial task.
 
-**Likely scope:** `docs/architecture.md`, `docs/usage.md` and focused usage chapters, `docs/design/IMPLEMENTATION-NOTES.md`, `docs/adr/0027-cloud-native.md` inventory rows/audit if new state or lifetimes landed, `user-docs/building/deployment/mecak8s.md` and relevant client pages, plus generated `llms.txt`. ADR-0291 and frozen ADR-0216 are not edited; the acceptance plan status is orchestrator-owned.
+**Likely scope:** `docs/architecture.md`, `docs/usage.md` and focused usage chapters, `docs/design/IMPLEMENTATION-NOTES.md`, `docs/adr/0027-cloud-native.md` inventory rows/audit if new state or lifetimes landed, `user-docs/building/deployment/mecak8s.md` and relevant client pages, plus generated configuration reference. ADR-0291 and frozen ADR-0216 are not edited; the acceptance plan status is orchestrator-owned.
 
 **Invariants:** routing grants no authority; provider identity is authoritative run context; errors disclose neither compared value; missing headers remain compatible; local invalidation is not backend fencing; already-started calls may complete; modeled tests do not claim Gateway/EndpointSlice behavior. Document AC8.5 as a blocking external infrastructure prerequisite with authenticated admission, request/header bounds, and client/IP/principal rate-limit validation—not as a chart guarantee or an offline mecatl proof. Run `task docs`, `task site:build`, and the named documentation contract test; do not hand-edit generated output.
 
@@ -28,8 +28,8 @@ Perform the final single-writer documentation reconciliation after behavior is a
   infrastructure rollout verification.
   - verify: `TestADR_0291_DocumentationContract`
 
-- AC8.4: Generated `llms.txt` contains the new ADR and acceptance-plan contract and is
-  fresh after `task docs`.
+- AC8.4: The generated configuration reference contains the new ADR and acceptance-plan
+  contract and is fresh after `task docs`.
   - verify: demonstration — `task docs` regenerates and checks the documentation corpus
 
 - AC8.5: Before enabling affinity in the separate infrastructure rollout, its Gateway,

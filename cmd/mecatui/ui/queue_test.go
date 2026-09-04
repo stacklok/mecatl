@@ -593,8 +593,8 @@ func isQuitCmd(cmd tea.Cmd) bool {
 }
 
 // TestBuiltinRunsLocallyWhileRunning: a bare "/clear" runs locally rather than
-// entering the follow-up queue. Its running guard preserves the live conversation
-// and no prompt frame is sent.
+// entering the follow-up queue. It starts one source-preserving clear handoff and
+// sends no prompt frame.
 func TestBuiltinRunsLocallyWhileRunning(t *testing.T) {
 	m, conv := newQueueModel(t)
 	m = startRunning(t, m, "first")
@@ -607,8 +607,8 @@ func TestBuiltinRunsLocallyWhileRunning(t *testing.T) {
 	if m.conv.isEmpty() {
 		t.Fatal("bare /clear must not clear a live conversation")
 	}
-	if !strings.Contains(stripANSIstr(m.statusMsg), "cannot clear while running") {
-		t.Fatalf("/clear status = %q, want running warning", m.statusMsg)
+	if m.clearPending == nil || m.phase != phaseConnecting {
+		t.Fatalf("/clear did not start a running-source handoff: phase=%v pending=%v", m.phase, m.clearPending)
 	}
 	// Only the initial "first" prompt frame — /clear is a built-in, never a Prompt.
 	got := promptTexts(conv.send)
