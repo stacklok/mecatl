@@ -69,6 +69,32 @@ func saveLocalContextSession(t *testing.T, store *memstore.Store, id string, ref
 	}
 }
 
+func TestADR_0296_LocalContextClosesProvisionalBinding(t *testing.T) {
+	ref := session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "opaque", Revision: "v1"}
+	provider := &localContextPlacementProvider{defaultBinding: localContextBinding(ref, "/daemon")}
+	provider.reattach = func(req server.PlacementReattachRequest) (server.PlacementBinding, error) {
+		binding := localContextBinding(req.Ref, "/private/root")
+		binding.Close = func() error {
+			provider.closed++
+			return nil
+		}
+		return binding, nil
+	}
+	svc, owner, _, store := localContextService(t, provider)
+	saveLocalContextSession(t, store, "owned", ref, session.PrincipalFromContext(owner))
+
+	got, err := server.NewLocalSessionContextServer(svc).GetLocalSessionContext(owner, &mecatlv1.GetLocalSessionContextRequest{SessionId: "owned"})
+	if err != nil {
+		t.Fatalf("GetLocalSessionContext: %v", err)
+	}
+	if got.GetWorkspacePath() != "/private/root" {
+		t.Fatalf("workspace path = %q, want reattached root", got.GetWorkspacePath())
+	}
+	if provider.closed != 1 {
+		t.Fatalf("provisional placement binding closes = %d, want 1", provider.closed)
+	}
+}
+
 func TestADR_0296_LocalContextUsesExactReattachment(t *testing.T) {
 	ref := session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "opaque-default", Revision: "v1"}
 	provider := &localContextPlacementProvider{defaultBinding: localContextBinding(ref, "/daemon-launch")}
