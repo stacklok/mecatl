@@ -18,4 +18,4 @@ Apply ADR-0213's fail-closed staging rule to the shipped raw Attempt/Proposal/Sk
 ## Acceptance criteria
 
 - AC5.4: The shipped raw learning repository RPCs do not claim workload-authenticated ownership enforcement. With `OwnershipEnforced=true`, configuring `--learning-store-url` fails closed until ADR-0213 middleware, a private owner registry, and separated maintenance RPCs exist, regardless of a driver's self-advertised `enforced` value. Only a capability-complete driver explicitly trusted as single-tenant infrastructure may compose when `OwnershipEnforced=false`; proposal and skill project namespaces are opaque rather than raw workspace paths.
-  - verify: `TestADR_0295_LearningDriversEnforceOwnershipOrFailClosed`
+  - verify: `TestADR_0259_LearningDriversEnforceOwnershipOrFailClosed`

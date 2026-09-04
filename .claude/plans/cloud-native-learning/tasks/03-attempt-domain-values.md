@@ -18,6 +18,6 @@ Add closed `engine/learning` attempt identifiers, states, outcomes, safe failure
 ## Acceptance criteria
 
 - AC2.2: The immutable, content-free provenance records admission class plus the exact current-prompt/RunID/canonical-digest binding. Workers never re-derive explicit authority from replayed user-role text; forged provenance fields and synthetic continuations fail closed.
-  - verify: `TestADR_0295_AdmissionProvenanceBindsCurrentPromptAndRejectsForgery`
+  - verify: `TestADR_0259_AdmissionProvenanceBindsCurrentPromptAndRejectsForgery`
 - AC2.4: Attempt projections and stored records contain only bounded safe metadata and closed failure codes; structural tests reject raw content, paths, principal values, credentials, tokens, headers, secret-shaped values, driver-error text, diagnostics, metrics, watch envelopes, and optional EventLog projections.
-  - verify: `TestADR_0295_AttemptSurfacesContainNoContentOrSecrets`
+  - verify: `TestADR_0259_AttemptSurfacesContainNoContentOrSecrets`

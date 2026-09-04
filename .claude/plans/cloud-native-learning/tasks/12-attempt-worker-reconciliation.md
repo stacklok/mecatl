@@ -18,6 +18,6 @@ Implement the composition-owned explicit attempt worker lifecycle: claim, eviden
 ## Acceptance criteria
 
 - AC3.4: `abstained`/`no_candidate` is a valid distinct terminal, separate from evidence failure, evaluation rejection, and publication failure.
-  - verify: `TestADR_0295_AbstentionIsASeparateTerminalOutcome`
+  - verify: `TestADR_0259_AbstentionIsASeparateTerminalOutcome`
 - AC3.5: Crash after claim or after a downstream durable boundary is reconciled idempotently; a retry neither duplicates a proposal/skill nor reports an invented success.
-  - verify: `TestADR_0295_AttemptReconciliationIsIdempotent`
+  - verify: `TestADR_0259_AttemptReconciliationIsIdempotent`

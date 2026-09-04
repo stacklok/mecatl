@@ -30,7 +30,7 @@ Repair proof only; AC ownership remains with the existing Scenario 3 tasks.
 
 > AC3.5: Crash after claim or after a downstream durable boundary is reconciled idempotently; a retry neither duplicates a proposal/skill nor reports an invented success.
 >
-> - verify: `TestADR_0295_AttemptReconciliationIsIdempotent`
+> - verify: `TestADR_0259_AttemptReconciliationIsIdempotent`
 
 Add focused offline regression proofs for remote queued discovery after startup, claim-expiry
 replacement, renewal-loss cancellation, coordinator rejection recovery, and joined shutdown.

@@ -15,7 +15,7 @@ import (
 	"github.com/stacklok/mecatl/engine/session"
 )
 
-func TestADR_0295_EvidenceProjectionIsBoundedFencedAndInjectionSafe(t *testing.T) {
+func TestADR_0259_EvidenceProjectionIsBoundedFencedAndInjectionSafe(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	owner := &session.Principal{Issuer: "issuer", Subject: "alice", GrantType: session.GrantTypeUser}

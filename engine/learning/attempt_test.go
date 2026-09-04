@@ -11,7 +11,7 @@ import (
 	"github.com/stacklok/mecatl/engine/session"
 )
 
-func TestADR_0295_AdmissionProvenanceBindsCurrentPromptAndRejectsForgery(t *testing.T) {
+func TestADR_0259_AdmissionProvenanceBindsCurrentPromptAndRejectsForgery(t *testing.T) {
 	t.Parallel()
 
 	source := learning.AttemptSource{
@@ -91,7 +91,7 @@ func TestADR_0295_AdmissionProvenanceBindsCurrentPromptAndRejectsForgery(t *test
 	}
 }
 
-func TestADR_0295_AttemptSurfacesContainNoContentOrSecrets(t *testing.T) {
+func TestADR_0259_AttemptSurfacesContainNoContentOrSecrets(t *testing.T) {
 	t.Parallel()
 
 	for _, typ := range []reflect.Type{

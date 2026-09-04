@@ -25,7 +25,7 @@ Repair proof only; AC ownership remains with the existing downstream claim-fenci
 
 > AC4.2: Crash and claim-loss races converge through deterministic IDs and CAS: no duplicate artifact, overwrite of a newer target revision, two active versions, invented attempt success, or partition crossing. An independently valid late downstream commit is allowed; authoritative reread adopts only a compatible deterministic artifact, otherwise leaves inactive/unlinked residue or reaches safe non-success.
 >
-> - verify: `TestADR_0295_IndependentDownstreamCommitReconcilesAfterClaimLoss`
+> - verify: `TestADR_0259_IndependentDownstreamCommitReconcilesAfterClaimLoss`
 
 Add an offline restart proof covering opaque remote partition transformation and authoritative-ID
 checkpointing without duplicate or cross-partition artifacts.

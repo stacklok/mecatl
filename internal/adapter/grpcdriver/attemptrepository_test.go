@@ -73,7 +73,7 @@ func validAttemptRecordFixture(t *testing.T, now time.Time) learning.AttemptReco
 	return learning.AttemptRecord{ID: "attempt-discovery", Version: "opaque-v1", State: learning.AttemptQueued, Provenance: provenance, AttemptGeneration: 1, CreatedAt: now, UpdatedAt: now}
 }
 
-func TestADR_0295_RemoteClockSkewCannotTakeOverOrMutateExpiredClaim(t *testing.T) {
+func TestADR_0259_RemoteClockSkewCannotTakeOverOrMutateExpiredClaim(t *testing.T) {
 	t.Parallel()
 	clock := &leaseFakeClock{t: time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)}
 	backend := memattempt.New(clock)

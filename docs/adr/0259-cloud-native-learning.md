@@ -1,4 +1,4 @@
-# ADR 0295 — Cloud-native learning uses durable, authoritative attempts
+# ADR 0259 — Cloud-native learning uses durable, authoritative attempts
 
 - Status: Accepted
 - Date: 2026-08-31

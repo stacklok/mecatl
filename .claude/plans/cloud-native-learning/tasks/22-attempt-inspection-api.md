@@ -18,6 +18,6 @@ Add transport-neutral Service get/list operations and gRPC/HTTP projections for 
 ## Acceptance criteria
 
 - AC5.1: The owner can get and page through attempt projections, while another caller cannot infer existence, metadata, proposal IDs, skill IDs, counts, cursors, timing, or diagnostics. This non-disclosure holds before locks/signals/diagnostics and pagination/count/cursor construction; foreign and missing requests have the same absence-style result.
-  - verify: `TestADR_0295_AttemptControlsAreNonDisclosingBeforeSideEffects`
+  - verify: `TestADR_0259_AttemptControlsAreNonDisclosingBeforeSideEffects`
 - AC5.2: Attempt API projections expose only bounded state, timestamps, safe codes, and authorized identifiers; they never expose transcript, tool output, provider text, paths, principal values, credentials, tokens, headers, secret-shaped values, driver errors, diagnostics, metrics, watch envelopes, or optional EventLog projections.
-  - verify: `TestADR_0295_AttemptAPIIsContentFree`
+  - verify: `TestADR_0259_AttemptAPIIsContentFree`

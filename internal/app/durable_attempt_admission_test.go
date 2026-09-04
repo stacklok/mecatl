@@ -35,7 +35,7 @@ func persistedAdmissionSource(t *testing.T, trajectory learning.Trajectory) *mem
 	return store
 }
 
-func TestADR_0295_QueuedAttemptRequiresDurableRunIDAndIsIdempotent(t *testing.T) {
+func TestADR_0259_QueuedAttemptRequiresDurableRunIDAndIsIdempotent(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
 	attempts, err := attemptstore.New(dir)

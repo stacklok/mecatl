@@ -28,7 +28,7 @@ Repair proof only; AC ownership remains with the existing durable-attempt and at
 
 > AC5.1: The owner can get and page through attempt projections, while another caller cannot infer existence, metadata, proposal IDs, skill IDs, counts, cursors, timing, or diagnostics. This non-disclosure holds before locks/signals/diagnostics and pagination/count/cursor construction; foreign and missing requests have the same absence-style result.
 >
-> - verify: `TestADR_0295_AttemptControlsAreNonDisclosingBeforeSideEffects`
+> - verify: `TestADR_0259_AttemptControlsAreNonDisclosingBeforeSideEffects`
 
 Add offline multi-partition saturation and retention tests proving one partition cannot deny another
 partition admission, cleanup capacity, or non-disclosing controls.

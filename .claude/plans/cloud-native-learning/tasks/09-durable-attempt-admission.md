@@ -18,6 +18,6 @@ Replace queued-receipt authority at the service/composition admission boundary w
 ## Acceptance criteria
 
 - AC2.1: `queued` is returned only after landed ADR-0249 supplies a non-zero durable `RunID` and durable create succeeds; absent, zero, or non-durable RunID refuses admission before queuing and creates no attempt. A reload from a second process finds the same deterministic attempt in `queued`, `running`, or a terminal state; duplicate admission converges to that attempt.
-  - verify: `TestADR_0295_QueuedAttemptRequiresDurableRunIDAndIsIdempotent`
+  - verify: `TestADR_0259_QueuedAttemptRequiresDurableRunIDAndIsIdempotent`
 - AC2.5: A skipped or non-admitted completion produces immediate status plus content-free metrics but creates no attempt record.
   - verify: `TestCloudNativeLearning_Scenario2_NonAdmittedWorkIsNotDurable`

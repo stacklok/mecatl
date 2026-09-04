@@ -7,7 +7,7 @@ import (
 	"github.com/stacklok/mecatl/engine/session"
 )
 
-func TestADR_0295_ExplicitIntentUsesOnlyADRElevenFourHardStops(t *testing.T) {
+func TestADR_0259_ExplicitIntentUsesOnlyADRElevenFourHardStops(t *testing.T) {
 	imperatives := []string{
 		"create a skill",
 		"make a skill",
@@ -72,7 +72,7 @@ func TestCloudNativeLearning_Scenario1_NegatedAndMetaIntentRejected(t *testing.T
 	}
 }
 
-func TestADR_0295_ExplicitIntentRequiresVerifiedCurrentPrincipalPrompt(t *testing.T) {
+func TestADR_0259_ExplicitIntentRequiresVerifiedCurrentPrincipalPrompt(t *testing.T) {
 	tests := map[string]struct {
 		messages []session.Message
 		kind     session.SessionKind

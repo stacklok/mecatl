@@ -19,7 +19,7 @@ func (r *countingCanonicalEvidenceReflector) ReflectProjection(context.Context, 
 	return learning.Outcome{Kind: learning.OutcomeProposed}, nil
 }
 
-func TestADR_0295_WorkerSourceAuthorityFailsClosedWithoutIdentityOracle(t *testing.T) {
+func TestADR_0259_WorkerSourceAuthorityFailsClosedWithoutIdentityOracle(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	owner := &session.Principal{Issuer: "issuer", Subject: "alice", GrantType: session.GrantTypeUser}

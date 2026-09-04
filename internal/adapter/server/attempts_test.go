@@ -63,7 +63,7 @@ func createAttemptFixtureForPrincipal(t *testing.T, repository learning.AttemptR
 	return record
 }
 
-func TestADR_0295_AttemptControlsAreNonDisclosingBeforeSideEffects(t *testing.T) {
+func TestADR_0259_AttemptControlsAreNonDisclosingBeforeSideEffects(t *testing.T) {
 	repository := memattempt.New(wallclock.Clock{})
 	first := createAttemptFixture(t, repository, "alice", "one")
 	_ = createAttemptFixture(t, repository, "alice", "two")
@@ -124,7 +124,7 @@ func TestADR_0295_AttemptControlsAreNonDisclosingBeforeSideEffects(t *testing.T)
 	}
 }
 
-func TestADR_0295_AttemptControlsRequirePrivateOwnerBinding(t *testing.T) {
+func TestADR_0259_AttemptControlsRequirePrivateOwnerBinding(t *testing.T) {
 	repository := memattempt.New(wallclock.Clock{})
 	failed := createAttemptFixture(t, repository, "alice", "failed")
 	now := failed.CreatedAt.Add(time.Second)
@@ -290,7 +290,7 @@ func createFailedAttemptFixture(t *testing.T, repository learning.AttemptReposit
 	return record
 }
 
-func TestADR_0295_AttemptAPIIsContentFree(t *testing.T) {
+func TestADR_0259_AttemptAPIIsContentFree(t *testing.T) {
 	repository := memattempt.New(wallclock.Clock{})
 	record := createAttemptFixture(t, repository, "alice", "secret-path-token")
 	caller := reflectionPrincipal(&session.Principal{Issuer: "https://issuer.example", Subject: "alice"})

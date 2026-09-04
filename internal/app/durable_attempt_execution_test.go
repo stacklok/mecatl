@@ -34,7 +34,7 @@ func (*projectionCapturingReflector) RequestTokenEstimate(learning.Input) (int, 
 	return 1, nil
 }
 
-func TestADR_0295_DurableExecutionReloadsPersistedRunEvidence(t *testing.T) {
+func TestADR_0259_DurableExecutionReloadsPersistedRunEvidence(t *testing.T) {
 	ctx := context.Background()
 	owner := &session.Principal{Issuer: "issuer", Subject: "owner", GrantType: session.GrantTypeUser}
 	const runID = "run_aaaaaaaaaaaaaaaaaaaaaaaaaa"

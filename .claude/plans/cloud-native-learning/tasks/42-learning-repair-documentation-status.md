@@ -13,7 +13,7 @@ accumulator: acc/cloud-native-learning
 
 # Repair brief
 
-Repair finding: document the shipped ADR 0295 capability and its remaining limitations in
+Repair finding: document the shipped ADR 0259 capability and its remaining limitations in
 `docs/design/PRODUCTION-READINESS.md`, reconcile architecture and cloud-native resource inventories
 after the repair wave, and make ADR, index, and plan statuses consistent. This is documentation and
 status work only; do not change behavioral code or take ownership of numbered acceptance criteria.

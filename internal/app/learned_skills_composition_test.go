@@ -107,7 +107,7 @@ func TestBuildRestartHydratesCallerBoundLearnedSkillIntoListAndTool(t *testing.T
 	}
 }
 
-func TestADR_0295_ReplicaHydrationConvergesAcrossReplacementAndRollback(t *testing.T) {
+func TestADR_0259_ReplicaHydrationConvergesAcrossReplacementAndRollback(t *testing.T) {
 	workspace := t.TempDir()
 	storeDir := t.TempDir()
 	userModelDir := t.TempDir()

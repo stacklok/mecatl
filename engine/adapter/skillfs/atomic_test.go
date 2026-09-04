@@ -52,7 +52,7 @@ func activeVersion(name, body string) learning.SkillVersion {
 	return learning.SkillVersion{State: learning.SkillActive, Partition: learning.SkillPartition{Principal: hex.EncodeToString(sum[:])}, Bundle: learning.SkillBundle{Name: name, Description: name + " description", Body: body}}
 }
 
-func TestADR_0295_CatalogGenerationRejectsStaleUpdates(t *testing.T) {
+func TestADR_0259_CatalogGenerationRejectsStaleUpdates(t *testing.T) {
 	partition := activeVersion("new", "").Partition
 	catalog := skillfs.NewAtomicCatalog(nil, nil, nil)
 	newer := activeVersion("new", "new body")

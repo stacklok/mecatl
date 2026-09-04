@@ -27,6 +27,6 @@ unified linearizable learning authority and is out of scope for this task.
 ## Acceptance criteria
 
 - AC2.3: Attempts permit only legal CAS transitions. An expired, released, superseded, retried, or abandoned claim cannot renew, checkpoint, release, or finalize its attempt; cannot finalize a successor; and cannot rewrite an abandoned attempt to success.
-  - verify: `TestADR_0295_StaleClaimCannotTransitionAttempt`
+  - verify: `TestADR_0259_StaleClaimCannotTransitionAttempt`
 - AC4.2: Crash and claim-loss races converge through deterministic IDs and CAS: no duplicate artifact, overwrite of a newer target revision, two active versions, invented attempt success, or partition crossing. An independently valid late downstream commit is allowed; authoritative reread adopts only a compatible deterministic artifact, otherwise leaves inactive/unlinked residue or reaches safe non-success.
-  - verify: `TestADR_0295_IndependentDownstreamCommitReconcilesAfterClaimLoss`
+  - verify: `TestADR_0259_IndependentDownstreamCommitReconcilesAfterClaimLoss`

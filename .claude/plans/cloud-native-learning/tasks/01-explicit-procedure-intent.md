@@ -18,8 +18,8 @@ Extend the pure `engine/learning` signal detector and admission policy for the n
 ## Acceptance criteria
 
 - AC1.1: Each listed genuine, current principal-authored imperative produces hard procedure admission without a weighted signal only when the main-session terminal is one of ADR-0114's exact hard-stop set: `end_turn`, max-turn, max-tool-call, or run-budget. Failed, cancelled, awaiting, no-progress, timeout, and structured-output terminals do not admit.
-  - verify: `TestADR_0295_ExplicitIntentUsesOnlyADRElevenFourHardStops`
+  - verify: `TestADR_0259_ExplicitIntentUsesOnlyADRElevenFourHardStops`
 - AC1.2: Negated imperatives and meta/capability questions do not admit learning.
   - verify: `TestCloudNativeLearning_Scenario1_NegatedAndMetaIntentRejected`
 - AC1.3: Assistant, tool, web, repository, historical, synthetic, non-main, compacted, and unverifiable text cannot manufacture explicit learning authority.
-  - verify: `TestADR_0295_ExplicitIntentRequiresVerifiedCurrentPrincipalPrompt`
+  - verify: `TestADR_0259_ExplicitIntentRequiresVerifiedCurrentPrincipalPrompt`

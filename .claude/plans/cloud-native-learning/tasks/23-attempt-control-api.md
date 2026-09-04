@@ -18,4 +18,4 @@ Add defined retry and abandon Service/gRPC/HTTP controls over opaque expected ve
 ## Acceptance criteria
 
 - AC5.3: Manual retry and abandon perform only defined attempt CAS transitions; abandon is non-compensating and does not promise downstream rollback. Stale versions, terminal conflicts, and a live fenced claim return closed typed errors without changing the attempt. Private owner binding and exact-source delegation are enforced without caller-supplied principal or system-principal bypass.
-  - verify: `TestADR_0295_AttemptControlsRequirePrivateOwnerBinding`
+  - verify: `TestADR_0259_AttemptControlsRequirePrivateOwnerBinding`
