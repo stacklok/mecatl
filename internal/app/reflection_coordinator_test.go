@@ -297,19 +297,27 @@ func TestReflectionCoordinatorStartsWorkersLazily(t *testing.T) {
 	c.Close()
 }
 
-func TestReflectionObserverRejectsMediaHeavyInputWithoutQueueGrowth(t *testing.T) {
+func TestReflectionObserverSelectsMediaHeavyInputWithoutQueueGrowth(t *testing.T) {
 	c := newReflectionCoordinator(context.Background(), reflectionCoordinatorConfig{})
 	t.Cleanup(c.Close)
-	observer := &reflectionObserver{coordinator: c, reflector: &testReflector{}, repository: memproposal.New(), operatorMemory: memmemory.New(), mode: learning.Review}
+	reflector := &testReflector{}
+	observer := &reflectionObserver{coordinator: c, reflector: reflector, repository: memproposal.New(), operatorMemory: memmemory.New(), mode: learning.Review}
 	trajectory := learning.NewTrajectory("media", "/w", session.StopEndTurn, session.Usage{}, []session.Message{
 		session.NewUserMessageWithParts("remember this", []session.Content{{Kind: session.MediaImage, Data: make([]byte, defaultReflectionJobBytes+1)}}),
 	})
-	if _, err := observer.Reflect(context.Background(), trajectory, false); err == nil {
-		t.Fatal("media-heavy trajectory was accepted")
+	receipt, err := observer.Reflect(context.Background(), trajectory, false)
+	if err != nil || receipt.Disposition != reflectionCompleted {
+		t.Fatalf("media-heavy selected reflection = %+v, err=%v", receipt, err)
+	}
+	reflector.mu.Lock()
+	calls := len(reflector.calls)
+	reflector.mu.Unlock()
+	if calls != 1 {
+		t.Fatalf("selected evidence provider calls = %d, want 1", calls)
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.queued != 0 || c.queuedBytes != 0 || len(c.pending) != 0 {
-		t.Fatalf("rejected input grew queue: queued=%d bytes=%d pending=%d", c.queued, c.queuedBytes, len(c.pending))
+		t.Fatalf("completed input retained queue state: queued=%d bytes=%d pending=%d", c.queued, c.queuedBytes, len(c.pending))
 	}
 }

@@ -36,6 +36,7 @@ type reflectionObserver struct {
 	sensitivity      learning.Sensitivity
 	metrics          func(learning.Activity)
 	procedure        func(context.Context, learning.ProposalRecord, learning.Mode) error
+	lifecycle        *materializationLifecycle
 }
 
 func reflectionPrincipal(p *session.Principal) string {
@@ -329,10 +330,16 @@ func (o *reflectionObserver) submit(ctx context.Context, trajectory learning.Tra
 	if o == nil || o.reflector == nil || o.repository == nil {
 		return reflectionReceipt{}, errors.New("reflection is not configured")
 	}
-	if !automatic {
-		if size := reflectionTrajectoryBytes(trajectory) + reflectionEventsBytes(events, defaultReflectionJobBytes); size > defaultReflectionJobBytes {
-			return reflectionReceipt{}, fmt.Errorf("reflection input exceeds %d-byte job limit", defaultReflectionJobBytes)
+	if err := ctx.Err(); err != nil {
+		return reflectionReceipt{}, err
+	}
+	if automatic && o.lifecycle != nil {
+		operation, err := o.lifecycle.enter(ctx)
+		if err != nil {
+			return reflectionReceipt{}, err
 		}
+		defer operation.leave()
+		ctx = operation.Context()
 	}
 	owner := trajectory.Principal.Clone()
 	ctx = reflectionContext(ctx, owner)
@@ -409,10 +416,36 @@ func (o *reflectionObserver) submit(ctx context.Context, trajectory learning.Tra
 			return reflectionReceipt{}, err
 		}
 	} else {
-		input = learning.NewInput(trajectory, events, hostSignals, memoryExisting(ctx, stores...))
+		materialized, err := learning.MaterializeEvidence(learning.MaterializationRequest{
+			Trajectory: trajectory,
+			Events:     events,
+			Signals:    append(hostSignals, learning.DetectSignals(learning.Input{Trajectory: trajectory})...),
+			Limits:     learning.MaterializationLimits{MaxBytes: defaultReflectionJobBytes},
+			Explicit:   true,
+		})
+		if err != nil {
+			return reflectionReceipt{}, err
+		}
+		if materialized.Disposition != learning.MaterializationSelected {
+			return reflectionReceipt{Disposition: reflectionCompleted, Abstained: true, Err: materialized.Reason.String()}, nil
+		}
+		input = materialized.Input
+		input.Trajectory.Workspace = trajectory.Workspace
+		input.Trajectory.Principal = owner
+		input.Trajectory.Kind = trajectory.Kind
+		input.Trajectory.Counters = trajectory.Counters
+		input.Trajectory.Current = selectedCurrentSpan(materialized.Manifest, trajectory.Current)
 		signals = append([]learning.Signal(nil), hostSignals...)
 		signals = append(signals, learning.DetectSignals(input)...)
+		input.Signals = signals
+		input.Existing = boundedExisting(input, memoryExisting(ctx, stores...))
+		if err := learning.ValidateInput(input); err != nil {
+			return reflectionReceipt{}, fmt.Errorf("validate explicit materialization: %w", err)
+		}
 		decision.Signals = signals
+		if err := ctx.Err(); err != nil {
+			return reflectionReceipt{}, err
+		}
 	}
 	reservationTokens := 0
 	if automatic {
@@ -781,6 +814,13 @@ func buildReflectionObserver(
 		return nil
 	}
 	return buildConfiguredReflectionObserver(cfg, provider, model, operatorMemory, projectMemory, repository, coordinator, admission, procedure...)
+}
+
+func bindMaterializationLifecycle(observer learning.Observer, lifecycle *materializationLifecycle) learning.Observer {
+	if reflection, ok := observer.(*reflectionObserver); ok {
+		reflection.lifecycle = lifecycle
+	}
+	return observer
 }
 
 func buildExplicitReflectionObserver(

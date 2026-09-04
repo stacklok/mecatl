@@ -2122,6 +2122,15 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 			return true, ""
 		},
 		ReflectSession: func(ctx context.Context, sess *session.Session) (server.ReflectionReceipt, error) {
+			if assets.reflectionLifecycle == nil {
+				return server.ReflectionReceipt{}, server.ErrLearningUnavailable
+			}
+			materialization, enterErr := assets.reflectionLifecycle.enter(ctx)
+			if enterErr != nil {
+				return server.ReflectionReceipt{}, explicitReflectionServiceError(enterErr)
+			}
+			defer materialization.leave()
+			ctx = materialization.Context()
 			reflectionCfg := cfg
 			reflectionProvider := provider
 			workspace := memory.WorkspaceFromContext(ctx)
@@ -2134,7 +2143,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 			if sess.ProviderID != "" {
 				entry, ok := reg.Lookup(sess.ProviderID)
 				if !ok {
-					return server.ReflectionReceipt{}, fmt.Errorf("reflection session provider %q is unavailable", sess.ProviderID)
+					return server.ReflectionReceipt{}, fmt.Errorf("%w: reflection session provider is unavailable", server.ErrFailedPrecondition)
 				}
 				reflectionProvider = entry.provider
 				if reflectionCfg.Model == "" {
@@ -2160,7 +2169,13 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 			if eventLog != nil {
 				for event, eventErr := range eventLog.Read(ctx, sess.ID) {
 					if eventErr != nil {
+						if lifecycleErr := materialization.Err(); lifecycleErr != nil {
+							return server.ReflectionReceipt{}, explicitReflectionServiceError(lifecycleErr)
+						}
 						return server.ReflectionReceipt{}, fmt.Errorf("read reflection evidence: %w", eventErr)
+					}
+					if lifecycleErr := materialization.Err(); lifecycleErr != nil {
+						return server.ReflectionReceipt{}, explicitReflectionServiceError(lifecycleErr)
 					}
 					if len(events) == learning.MaxInputEvents {
 						break
@@ -2168,8 +2183,14 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 					events = append(events, event)
 				}
 			}
+			if lifecycleErr := materialization.Err(); lifecycleErr != nil {
+				return server.ReflectionReceipt{}, explicitReflectionServiceError(lifecycleErr)
+			}
 			r, err := explicitReflection.reflectWithEvents(ctx, trajectory, events)
-			return server.ReflectionReceipt{ID: r.ID, Disposition: string(r.Disposition), Queued: r.Queued, Abstained: r.Abstained, Staged: r.Staged, Promoted: r.Promoted, Conflicted: r.Conflicted}, err
+			if lifecycleErr := materialization.Err(); lifecycleErr != nil {
+				return server.ReflectionReceipt{}, explicitReflectionServiceError(lifecycleErr)
+			}
+			return server.ReflectionReceipt{ID: r.ID, Disposition: string(r.Disposition), Queued: r.Queued, Abstained: r.Abstained, Staged: r.Staged, Promoted: r.Promoted, Conflicted: r.Conflicted}, explicitReflectionServiceError(err)
 		},
 		PromoteProposal: func(ctx context.Context, part learning.ProposalPartition, id learning.ProposalID, version learning.ProposalVersion, approved bool) (learning.ProposalRecord, error) {
 			if cfg.OwnershipEnforced && session.PrincipalFromContext(ctx) == nil {
@@ -2389,6 +2410,9 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	// connection (LAST — everything before it may still persist; a no-op for the
 	// local stores, and once-guarded if the memory driver shares the conn).
 	closeAll := sync.OnceFunc(func() {
+		if assets.reflectionLifecycle != nil {
+			assets.reflectionLifecycle.close()
+		}
 		staleSessionReconcileClose()
 		childGCClose()
 		schedClose()
@@ -2862,7 +2886,7 @@ func sessionEngineFactory(
 		deps := engineDepsForProvider(cfg, resolvedProvider, resolvedModel, windowFn, store, policy, hooks, mcpProvider, instructions)
 		attachOperatorProfile(&deps, assets.userModelStore)
 		deps.LearningMode = learningCfg.LearningMode
-		deps.LearningObserver = buildReflectionObserver(learningCfg, resolvedProvider, learningCfg.Model, assets.userModelStore, assets.memStore, assets.reflectionRepository, assets.reflectionCoordinator, assets.learningAdmission, buildProcedureProcessor(learningCfg, assets))
+		deps.LearningObserver = bindMaterializationLifecycle(buildReflectionObserver(learningCfg, resolvedProvider, learningCfg.Model, assets.userModelStore, assets.memStore, assets.reflectionRepository, assets.reflectionCoordinator, assets.learningAdmission, buildProcedureProcessor(learningCfg, assets)), assets.reflectionLifecycle)
 		deps.Catalog = cat
 		// Fire-result delivery drain (ADR 0075): the per-session engine's Step 2a
 		// drain reads the SAME durable queue as the main engine. nil (no
@@ -3763,7 +3787,7 @@ func buildEngine(ctx context.Context, cfg Config, reg *providerRegistry, provide
 	deps := baseEngineDeps(cfg, reg, provider, engineStore, sharedPolicy, mainHooks, mcpProvider, instructions)
 	attachOperatorProfile(&deps, userModelStore)
 	deps.LearningMode = cfg.LearningMode
-	deps.LearningObserver = buildReflectionObserver(cfg, provider, reg.ResolvedDefaultModel(), userModelStore, memStore, assets.reflectionRepository, assets.reflectionCoordinator, learningAdmission, buildProcedureProcessor(cfg, assets))
+	deps.LearningObserver = bindMaterializationLifecycle(buildReflectionObserver(cfg, provider, reg.ResolvedDefaultModel(), userModelStore, memStore, assets.reflectionRepository, assets.reflectionCoordinator, learningAdmission, buildProcedureProcessor(cfg, assets)), assets.reflectionLifecycle)
 	deps.Catalog = cat
 	// MODEL-VISIBLE Schedule affordance (ADR 0073, the ADR-0070 gate), on the
 	// SHARED engine too — the SAME wiring the per-session factory applies
@@ -5081,6 +5105,12 @@ func buildCatalog(ctx context.Context, cfg Config, reg *providerRegistry, provid
 	var attemptRepository learning.AttemptRepository
 	var automaticAdmissionLedger learning.AutomaticAdmissionLedger
 	var reflectionCoordinator *reflectionCoordinator
+	var reflectionLifecycle *materializationLifecycle
+	if userModelStore != nil && provider != nil {
+		reflectionLifecycle = newMaterializationLifecycle()
+		previousClose := mcpClose
+		mcpClose = func() { reflectionLifecycle.close(); previousClose() }
+	}
 	if cfg.LearningStoreURL != "" {
 		attemptRepository = cfg.attemptRepository
 		automaticAdmissionLedger = cfg.automaticAdmissionLedger
@@ -5236,6 +5266,7 @@ func buildCatalog(ctx context.Context, cfg Config, reg *providerRegistry, provid
 		// and threaded onto the assets so every per-session catalog reuses the SAME
 		// provider.
 		searchProvider:           buildSearchProvider(ctx, cfg),
+		reflectionLifecycle:      reflectionLifecycle,
 		reflectionCoordinator:    reflectionCoordinator,
 		reflectionRepository:     reflectionRepository,
 		attemptRepository:        attemptRepository,

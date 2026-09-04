@@ -86,7 +86,7 @@ func (s *Service) ReflectSession(ctx context.Context, id session.SessionID) (*me
 	}
 	r, err := s.cfg.ReflectSession(ctx, sess)
 	if err != nil {
-		return nil, fmt.Errorf("%w: explicit reflection failed", ErrInternal)
+		return nil, explicitReflectionError(err)
 	}
 	return &mecatlv1.ReflectionReceipt{ReflectionId: validLearningText(r.ID), Disposition: validLearningText(r.Disposition), Queued: int32(r.Queued), Abstained: r.Abstained, Staged: int32(r.Staged), Promoted: int32(r.Promoted), Conflicted: int32(r.Conflicted)}, nil //nolint:gosec // coordinator counts are bounded far below int32
 }
@@ -235,6 +235,18 @@ func (s *Service) proposalActionAvailable(project string) (bool, string) {
 	return true, ""
 }
 
+func explicitReflectionError(err error) error {
+	switch {
+	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded),
+		errors.Is(err, ErrUnavailable), errors.Is(err, ErrLearningUnavailable),
+		errors.Is(err, ErrFailedPrecondition), errors.Is(err, ErrInvalidArgument),
+		errors.Is(err, ErrProposalConflict), errors.Is(err, ErrNotFound):
+		return err
+	default:
+		return fmt.Errorf("%w: explicit reflection failed", ErrInternal)
+	}
+}
+
 func proposalServiceError(err error) error {
 	switch {
 	case errors.Is(err, learning.ErrProposalNotFound):
@@ -295,6 +307,7 @@ func (s *Service) learningEvidenceAvailable(ctx context.Context, ref learning.Ev
 	return available, availability
 }
 
+//nolint:gocyclo // legacy and manifest-backed message/event evidence share one closed availability projection
 func (s *Service) learningEvidenceStatus(ctx context.Context, ref learning.EvidenceRef) (bool, string, string) {
 	if s.cfg.Store == nil {
 		return false, "source unavailable", ""
@@ -310,16 +323,25 @@ func (s *Service) learningEvidenceStatus(ctx context.Context, ref learning.Evide
 	}
 	trajectory := learning.NewTrajectory(sess.ID, workspace, stop, sess.Usage, sess.Conversation.Messages)
 	var (
-		actual learning.EvidenceRef
-		input  learning.Input
+		actual     learning.EvidenceRef
+		previewRef learning.EvidenceRef
+		input      learning.Input
 	)
 	switch ref.Locator {
 	case learning.EvidenceMessage:
-		if ref.Ordinal < 0 || ref.Ordinal >= len(sess.Conversation.Messages) {
+		ordinal := ref.Ordinal
+		if ref.ResolvedProtocol() == learning.ReflectionEvidenceV1 {
+			if ref.OriginalMessage == nil {
+				return false, "evidence unavailable", ""
+			}
+			ordinal = *ref.OriginalMessage
+		}
+		if ordinal < 0 || ordinal >= len(sess.Conversation.Messages) {
 			return false, "evidence unavailable", ""
 		}
 		input = learning.NewInput(trajectory, nil, nil, nil)
-		actual, err = learning.MessageEvidenceRef(input, ref.Ordinal, ref.ToolCallID)
+		actual, err = learning.MessageEvidenceRef(input, ordinal, ref.ToolCallID)
+		previewRef = actual
 		if err != nil {
 			return false, "evidence changed", ""
 		}
@@ -328,20 +350,26 @@ func (s *Service) learningEvidenceStatus(ctx context.Context, ref learning.Evide
 			return false, "event evidence unavailable", ""
 		}
 		events := make([]session.Event, 0, ref.Ordinal+1)
+		eventOrdinal := ref.Ordinal
 		for event, eventErr := range s.cfg.EventLog.Read(ctx, ref.SessionID) {
 			if eventErr != nil {
 				return false, "event evidence unavailable", ""
 			}
 			events = append(events, event)
-			if len(events) > ref.Ordinal {
+			if ref.ResolvedProtocol() == learning.ReflectionEvidenceV1 && ref.EventSeq != nil && event.Seq == *ref.EventSeq {
+				eventOrdinal = len(events) - 1
+				break
+			}
+			if ref.ResolvedProtocol() != learning.ReflectionEvidenceV1 && len(events) > ref.Ordinal {
 				break
 			}
 		}
-		if len(events) <= ref.Ordinal {
+		if eventOrdinal < 0 || eventOrdinal >= len(events) {
 			return false, "event evidence unavailable", ""
 		}
 		input = learning.NewInput(trajectory, events, nil, nil)
-		actual, err = learning.EventEvidenceRef(input, ref.Ordinal, ref.ToolCallID)
+		actual, err = learning.EventEvidenceRef(input, eventOrdinal, ref.ToolCallID)
+		previewRef = actual
 		if err != nil {
 			return false, "evidence changed", ""
 		}
@@ -351,7 +379,7 @@ func (s *Service) learningEvidenceStatus(ctx context.Context, ref learning.Evide
 	if actual.Digest != ref.Digest || !sameEventSequence(actual.EventSeq, ref.EventSeq) {
 		return false, "evidence changed", ""
 	}
-	preview, err := learning.EvidencePreview(input, ref)
+	preview, err := learning.EvidencePreview(input, previewRef)
 	if err != nil {
 		return false, "evidence unavailable", ""
 	}

@@ -133,6 +133,7 @@ type catalogAssets struct {
 	// learningAdmission is the ONE process-wide completion counter shared by the
 	// default and every per-session/provider reviewer.
 	learningAdmission        *learningAdmission
+	reflectionLifecycle      *materializationLifecycle
 	reflectionCoordinator    *reflectionCoordinator
 	reflectionRepository     learning.ProposalRepository
 	attemptRepository        learning.AttemptRepository
