@@ -1,7 +1,7 @@
 # Agent model discovery — acceptance plan
 
 **Phase:** bounded agent-facing discovery over the resolved model inventory
-**Status:** draft
+**Status:** in-progress
 **Issue:** [#1064](https://github.com/stacklok/mecatl/issues/1064)
 **ADR:** [ADR 0016](../adr/0016-multi-provider.md) — composition-owned registry, provider-neutral engine boundary, live inventory, and provider/model selection. [ADR 0238](../adr/0238-operator-defined-llm-providers.md) — stable operator-defined provider IDs and conservative inventory floors.
 **Accumulator branch:** `acc/agent-model-discovery` (off `main`).

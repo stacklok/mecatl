@@ -2,10 +2,10 @@
 id: 01-model-discovery
 title: Bounded agent-facing model discovery
 blocked_by: []
-status: pending
-attempt: 0
-branch: ""
-worktree: ""
+status: in-progress
+attempt: 1
+branch: plan-agent-model-discovery/01-model-discovery-attempt-1
+worktree: .scratch/worker-agent-model-discovery-01-model-discovery-attempt-1
 issue: "1064"
 retries: 0
 last_error: ""
