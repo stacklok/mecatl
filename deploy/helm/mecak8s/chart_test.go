@@ -174,6 +174,15 @@ func TestMecak8sHelmChart_RedisFilesystemFlagsAndWorkspaceExclusion(t *testing.T
 	}
 }
 
+// brokerOAuthArgs layers replicaCount=1 on top of secureProductionArgs, which
+// schema-validation now requires whenever mcp.broker.callbackURL is set (I-4:
+// broker session/grant/authorization state is process-local, so it cannot be
+// shared across replicas). This is the sole entry point every broker-OAuth
+// test renders through — see renderOAuthMCPValues.
+func brokerOAuthArgs() []string {
+	return append(secureProductionArgs(), "--set", "replicaCount=1")
+}
+
 // kindVMCPArgs renders the Kind profile with the mecak8s-vmcp fixture's own
 // OIDC/TLS overlay layered on top — the shape deploy/mecak8s-vmcp/Taskfile.yml
 // actually installs. Never pass values-kind-vmcp.yaml alone or without
@@ -1695,7 +1704,7 @@ func renderMCPValues(t *testing.T, values string) (string, error) {
 }
 
 func renderOAuthMCPValues(t *testing.T, values string) (string, error) {
-	return renderMCPValuesWithArgs(t, secureProductionArgs(), values)
+	return renderMCPValuesWithArgs(t, brokerOAuthArgs(), values)
 }
 
 func renderMCPValuesWithArgs(t *testing.T, args []string, values string) (string, error) {
@@ -2248,6 +2257,183 @@ mcp:
 	broker, ok := authority.Broker()
 	if !ok || len(broker.Routes) != 2 || broker.Routes[0].Name != "oauth" || broker.Routes[1].Name != "second" {
 		t.Fatalf("runtime broker routes = %#v, selected %t", broker.Routes, ok)
+	}
+}
+
+// TestMecak8sHelmChart_MCPBrokerRequiresSingleReplica pins I-4: broker session,
+// grant, and authorization-transaction state is process-local, so the chart
+// must refuse any replicaCount other than 1 whenever mcp.broker.callbackURL is
+// set — including the chart's own default of 2, which is the actual scenario
+// a caller hits by simply enabling broker mode without also thinking to touch
+// replicaCount.
+func TestMecak8sHelmChart_MCPBrokerRequiresSingleReplica(t *testing.T) {
+	oauth := `
+mcp:
+  broker: {callbackURL: https://agent.example/callback}
+  servers:
+    - name: oauth
+      url: https://mcp.example/mcp
+      auth:
+        mode: oauth
+        oauth:
+          issuer: https://issuer.example
+          client: {mode: cimd, cimd: {documentURL: https://issuer.example/client.json}}
+          scopes: [mcp.read]
+          network: {additionalOrigins: [], privateOrigins: [], maxRedirects: 0}
+`
+	for _, tc := range []struct {
+		name    string
+		args    []string
+		wantErr bool
+	}{
+		{name: "default replicaCount rejected", args: secureProductionArgs(), wantErr: true},
+		{name: "two replicas rejected", args: append(secureProductionArgs(), "--set", "replicaCount=2"), wantErr: true},
+		{name: "three replicas rejected", args: append(secureProductionArgs(), "--set", "replicaCount=3"), wantErr: true},
+		{name: "single replica accepted", args: append(secureProductionArgs(), "--set", "replicaCount=1"), wantErr: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rendered, err := renderMCPValuesWithArgs(t, tc.args, oauth)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatal("render accepted a non-1 replicaCount in broker mode")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("render rejected replicaCount=1 in broker mode: %v", err)
+			}
+			deployment := deploymentFromRender(t, rendered)
+			if deployment.Spec.Replicas == nil || *deployment.Spec.Replicas != 1 {
+				t.Fatalf("Spec.Replicas = %v, want 1", deployment.Spec.Replicas)
+			}
+			if pdb := pdbFromRender(t, rendered); pdb != nil {
+				t.Fatalf("a PDB was rendered at replicaCount=1: %#v", pdb)
+			}
+		})
+	}
+}
+
+// TestMecak8sHelmChart_MCPBrokerUsesRecreateStrategy pins I-5: a surge rollout
+// (the RollingUpdate default) briefly runs a second broker incarnation
+// alongside the old one, which can receive traffic bound to the old pod's
+// process-local session/grant state. Broker mode must render Recreate; every
+// other configuration keeps the default RollingUpdate.
+func TestMecak8sHelmChart_MCPBrokerUsesRecreateStrategy(t *testing.T) {
+	oauth := `
+mcp:
+  broker: {callbackURL: https://agent.example/callback}
+  servers:
+    - name: oauth
+      url: https://mcp.example/mcp
+      auth:
+        mode: oauth
+        oauth:
+          issuer: https://issuer.example
+          client: {mode: cimd, cimd: {documentURL: https://issuer.example/client.json}}
+          scopes: [mcp.read]
+          network: {additionalOrigins: [], privateOrigins: [], maxRedirects: 0}
+`
+	rendered, err := renderOAuthMCPValues(t, oauth)
+	if err != nil {
+		t.Fatalf("render broker OAuth values: %v", err)
+	}
+	deployment := deploymentFromRender(t, rendered)
+	if deployment.Spec.Strategy.Type != appsv1.RecreateDeploymentStrategyType || deployment.Spec.Strategy.RollingUpdate != nil {
+		t.Fatalf("broker mode strategy = %#v, want Recreate with no RollingUpdate", deployment.Spec.Strategy)
+	}
+
+	defaultRendered, err := helm(t, productionArgs()...)
+	if err != nil {
+		t.Fatalf("render default values: %v", err)
+	}
+	defaultDeployment := deploymentFromRender(t, defaultRendered)
+	if defaultDeployment.Spec.Strategy.Type != appsv1.RollingUpdateDeploymentStrategyType ||
+		defaultDeployment.Spec.Strategy.RollingUpdate == nil ||
+		defaultDeployment.Spec.Strategy.RollingUpdate.MaxSurge.IntValue() != 1 ||
+		defaultDeployment.Spec.Strategy.RollingUpdate.MaxUnavailable.IntValue() != 0 {
+		t.Fatalf("default strategy = %#v, want RollingUpdate{maxSurge:1,maxUnavailable:0}", defaultDeployment.Spec.Strategy)
+	}
+
+	nonOAuth := `mcp:
+  servers:
+    - name: public
+      url: https://public.example/mcp
+      auth: {mode: none}
+`
+	nonOAuthRendered, err := renderMCPValues(t, nonOAuth)
+	if err != nil {
+		t.Fatalf("render non-OAuth MCP values: %v", err)
+	}
+	nonOAuthDeployment := deploymentFromRender(t, nonOAuthRendered)
+	if nonOAuthDeployment.Spec.Strategy.Type != appsv1.RollingUpdateDeploymentStrategyType {
+		t.Fatalf("non-OAuth MCP strategy = %#v, want RollingUpdate", nonOAuthDeployment.Spec.Strategy)
+	}
+}
+
+// TestMecak8sHelmChart_MCPMixedAuthRejectedInEitherOrder pins P2-12: the
+// staticBearer/OAuth conflict check must count both modes over the complete
+// server list before validating, not increment and check in the same pass —
+// which made the rejection depend on list order.
+func TestMecak8sHelmChart_MCPMixedAuthRejectedInEitherOrder(t *testing.T) {
+	const wantMessage = "mcp.servers staticBearer is unsupported with broker OAuth"
+	for _, tc := range []struct {
+		name   string
+		values string
+	}{
+		{
+			name: "oauth first",
+			values: `mcp:
+  broker: {callbackURL: https://agent.example/callback}
+  servers:
+    - name: oauth
+      url: https://mcp.example/mcp
+      auth:
+        mode: oauth
+        oauth:
+          issuer: https://issuer.example
+          client: {mode: cimd, cimd: {documentURL: https://issuer.example/client.json}}
+          scopes: [mcp.read]
+          network: {additionalOrigins: [], privateOrigins: [], maxRedirects: 0}
+    - name: legacy
+      url: https://legacy.example/mcp
+      auth:
+        mode: staticBearer
+        staticBearer:
+          secretKeyRef: {name: legacy-mcp, key: bearer-token}
+`,
+		},
+		{
+			name: "staticBearer first",
+			values: `mcp:
+  broker: {callbackURL: https://agent.example/callback}
+  servers:
+    - name: legacy
+      url: https://legacy.example/mcp
+      auth:
+        mode: staticBearer
+        staticBearer:
+          secretKeyRef: {name: legacy-mcp, key: bearer-token}
+    - name: oauth
+      url: https://mcp.example/mcp
+      auth:
+        mode: oauth
+        oauth:
+          issuer: https://issuer.example
+          client: {mode: cimd, cimd: {documentURL: https://issuer.example/client.json}}
+          scopes: [mcp.read]
+          network: {additionalOrigins: [], privateOrigins: [], maxRedirects: 0}
+`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rendered, err := renderOAuthMCPValues(t, tc.values)
+			if err == nil {
+				t.Fatal("render accepted a mixed staticBearer/oauth server list")
+			}
+			if !strings.Contains(rendered, wantMessage) {
+				t.Fatalf("render output = %q, want it to contain %q", rendered, wantMessage)
+			}
+		})
 	}
 }
 

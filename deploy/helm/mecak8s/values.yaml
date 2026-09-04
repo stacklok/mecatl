@@ -84,6 +84,13 @@ skills:
 # Run one pod for lower resource usage and simpler session routing, at the cost of
 # high availability. The PDB is omitted at this value, so voluntary eviction can
 # interrupt service. The default of two keeps the HA-oriented PDB protection.
+# REQUIRED to be 1 (schema-enforced) whenever mcp.broker.callbackURL is set: broker
+# sessions, OAuth grants, and in-flight authorization transactions are process-local
+# and unreplicated, so a second replica cannot serve a request bound to the first —
+# see mcp.broker.callbackURL above. The Deployment also renders strategy.type:
+# Recreate instead of RollingUpdate in that mode, so a rollout fully retires the
+# old incarnation before starting the new one (planned downtime, not zero-downtime
+# — see docs/usage/mecak8s.md).
 replicaCount: 2
 mockProvider: false
 

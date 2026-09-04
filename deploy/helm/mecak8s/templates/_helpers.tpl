@@ -153,12 +153,13 @@ mounted
 {{- $seen := dict -}}
 {{- $ownedEnv := dict -}}
 {{- $oauthCount := 0 -}}
+{{- $staticCount := 0 -}}
 {{- range $server := .Values.mcp.servers -}}
 {{- $folded := lower $server.name -}}
 {{- if hasKey $seen $folded -}}{{ fail (printf "mcp.servers name %q is duplicated case-insensitively" $server.name) }}{{- end -}}
 {{- $_ := set $seen $folded true -}}
 {{- $envBase := upper $server.name -}}
-{{- if eq $server.auth.mode "staticBearer" -}}{{- $_ := set $ownedEnv (printf "MCP_%s_TOKEN" $envBase) true -}}{{- end -}}
+{{- if eq $server.auth.mode "staticBearer" -}}{{- $_ := set $ownedEnv (printf "MCP_%s_TOKEN" $envBase) true -}}{{- $staticCount = add1 $staticCount -}}{{- end -}}
 {{- if eq $server.auth.mode "oauth" -}}
 {{- $oauthCount = add1 $oauthCount -}}
 {{- if $server.insecureHTTP -}}{{ fail (printf "mcp.servers[%s].insecureHTTP is invalid for oauth" $server.name) }}{{- end -}}
@@ -169,8 +170,8 @@ mounted
 {{- $_ := set $ownedEnv (printf "MECATL_MCP_%s_CLIENT_SECRET" $envBase) true -}}
 {{- end -}}
 {{- end -}}
-{{- if and (gt $oauthCount 0) (eq $server.auth.mode "staticBearer") -}}{{ fail "mcp.servers staticBearer is unsupported with broker OAuth" }}{{- end -}}
 {{- end -}}
+{{- if and (gt $oauthCount 0) (gt $staticCount 0) -}}{{ fail "mcp.servers staticBearer is unsupported with broker OAuth" }}{{- end -}}
 {{- $callbackURL := trim .Values.mcp.broker.callbackURL -}}
 {{- if and (gt $oauthCount 0) (not .Values.oidc.enabled) -}}{{ fail "mcp OAuth broker requires oidc.enabled=true for verified broker-control caller identity" }}{{- end -}}
 {{- if and (gt $oauthCount 0) (eq $callbackURL "") -}}{{ fail "mcp.broker.callbackURL is required with an OAuth MCP server" }}{{- end -}}

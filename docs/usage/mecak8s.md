@@ -179,7 +179,13 @@ endpoint is runtime-valid. The authentication `mode` is a closed union:
   OAuth must use the explicit empty policy (`additionalOrigins: []`,
   `privateOrigins: []`, `maxRedirects: 0`); the rendered operator profile is the
   equivalent empty network policy. Non-default controls remain rejected until
-  ToolHive can enforce the policy equivalently.
+  ToolHive can enforce the policy equivalently. Broker session, grant, and
+  authorization-transaction state is process-local and unreplicated: the chart
+  schema requires `replicaCount: 1` whenever `mcp.broker.callbackURL` is set (no
+  high availability until that state is shared), and the Deployment renders
+  `strategy.type: Recreate` instead of the default rolling update, so a config or
+  image change fully retires the old pod before starting the new one — plan a
+  broker rollout as a brief maintenance window, not a zero-downtime deploy.
 
 For example, an unauthenticated public server and a static bearer server are:
 
@@ -238,6 +244,8 @@ mcp:
             additionalOrigins: []
             privateOrigins: []
             maxRedirects: 0
+# Required whenever mcp.broker.callbackURL is set — see the OAuth mode note above.
+replicaCount: 1
 ```
 
 For CIMD, set `client.mode: cimd` and replace `preregistered` with
@@ -300,12 +308,16 @@ mcp:
               description: Get details of the authenticated GitHub user
               inputSchema: {type: object, properties: {}}
               readOnly: true
+# Required whenever mcp.broker.callbackURL is set — see the OAuth mode note above.
+replicaCount: 1
 ```
 
 > **Broker replica limitation:** broker sessions, grants, and authorization state
-> are process-local. OAuth broker mode is not safely deployable behind the chart's
-> default multi-replica Service until an affinity or durable-broker design is
-> selected. The chart intentionally does not change replica behavior yet.
+> are process-local. The chart schema enforces `replicaCount: 1` whenever
+> `mcp.broker.callbackURL` is set, and the Deployment renders `strategy.type:
+> Recreate` so a rollout fully retires the old pod before starting the new one —
+> there is no high availability or zero-downtime rollout for OAuth broker mode
+> until an affinity or durable-broker design is selected.
 
 
 Changing OAuth profile metadata changes the pod-template

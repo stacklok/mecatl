@@ -18,8 +18,18 @@ metadata:
 spec:
   replicas: {{ .Values.replicaCount }}
   strategy:
+    {{- if $mcpOAuth }}
+    # Broker mode: session/grant/authorization state is process-local. A surge
+    # rollout (the RollingUpdate default) would briefly run a second, empty
+    # broker incarnation alongside the old one before it drains, which can
+    # receive traffic bound to the old pod's in-flight state. Recreate retires
+    # the old pod completely before starting the new one — a real downtime
+    # window, but the only correct choice until broker state is shared.
+    type: Recreate
+    {{- else }}
     type: RollingUpdate
     rollingUpdate: {maxSurge: 1, maxUnavailable: 0}
+    {{- end }}
   selector:
     matchLabels: {{- include "mecak8s.selectorLabels" . | nindent 6 }}
   template:

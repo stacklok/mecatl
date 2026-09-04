@@ -410,9 +410,11 @@ writes `mcp.mode: global`; a no-auth or static-bearer-only list keeps the existi
 global route behavior.
 
 :::caution Process-local broker limitation
-Broker sessions and OAuth state are process-local. OAuth broker mode is not safe
-behind the default multi-replica Service until an affinity or durable-broker
-decision lands; the chart intentionally leaves replica behavior unchanged.
+Broker sessions and OAuth state are process-local. The chart schema now enforces
+`replicaCount: 1` whenever `mcp.broker.callbackURL` is set, and renders a
+`Recreate` rollout strategy instead of the default rolling update — there is no
+high availability or zero-downtime rollout for OAuth broker mode until an
+affinity or durable-broker decision lands.
 :::
 See the [operator guide](https://github.com/stacklok/mecatl/blob/main/docs/usage/mecak8s.md#configuring-mcp-servers-with-helm)
 for the complete OAuth values shape.

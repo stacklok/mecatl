@@ -434,6 +434,26 @@
     {
       "if": {"properties": {"oidc": {"properties": {"enabled": {"const": true}}}, "learning": {"properties": {"store": {"properties": {"endpoint": {"minLength": 1}}}}}}},
       "then": false
+    },
+    {
+      "if": {
+        "required": ["mcp"],
+        "properties": {
+          "mcp": {
+            "required": ["broker"],
+            "properties": {
+              "broker": {
+                "required": ["callbackURL"],
+                "properties": {"callbackURL": {"minLength": 1}}
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "required": ["replicaCount"],
+        "properties": {"replicaCount": {"const": 1}}
+      }
     }
   ],
   "definitions": {
