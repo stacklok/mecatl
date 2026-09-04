@@ -352,7 +352,12 @@ The Redis Secret is mounted read-only with `defaultMode: 0440` and projects exac
 
 ### Connect global MCP servers
 
-Use `mcp.servers` for global Streamable HTTP MCP connections. The chart supports
+Use `mcp.servers` for global Streamable HTTP MCP connections. Global OAuth profiles
+support the strict exact-origin `network` policy. For mecak8s broker OAuth, Helm values
+must use the explicit empty policy (`additionalOrigins: []`, `privateOrigins: []`,
+`maxRedirects: 0`); the rendered operator profile is the equivalent empty network
+policy. Non-default controls remain rejected until ToolHive can enforce the policy
+equivalently. The chart supports
 no authentication, a bearer from a Kubernetes Secret, or the runtime's strict
 OAuth profile. Helm checks the values structure and Secret references; `mecak8s`
 is the authority for semantic URL, canonical-origin, and loopback validation and

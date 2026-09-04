@@ -284,7 +284,7 @@ Strict OPERATOR-TIER Streamable HTTP MCP authority configuration. Mode selects o
 | `mcp.servers[].auth.oauth.credentials.environment` | `mcpenvironmentcredentialprofile` | `(absent)` | Environment declares one externally provisioned read-only credential record. |
 | `mcp.servers[].auth.oauth.credentials.environment.credential_env` | `string` | `(empty)` | CredentialEnv is a MECATL_* environment variable containing the opaque credential record. |
 | `mcp.servers[].auth.oauth.credentials.environment.allow_process_local_refresh` | `bool` | `false` | AllowProcessLocalRefresh permits refreshed credentials to live only in this process. |
-| `mcp.servers[].auth.oauth.network` | `mcpoauthnetworkprofile` | `(absent)` | Network is required and declares immutable exact-origin egress policy. |
+| `mcp.servers[].auth.oauth.network` | `mcpoauthnetworkprofile` | `(absent)` | Network is required. Global profiles enforce its exact-origin egress policy; broker OAuth accepts only an explicit empty mapping until ToolHive can enforce it equivalently. |
 | `mcp.servers[].auth.oauth.network.additional_origins` | `[]string` | `(absent)` | AdditionalOrigins lists canonical exact origins additionally allowed for OAuth traffic. |
 | `mcp.servers[].auth.oauth.network.private_origins` | `[]string` | `(absent)` | PrivateOrigins lists allowed origins that may resolve only to RFC1918 IPv4 or ULA IPv6 addresses. Loopback, link-local, metadata, unspecified, multicast, mapped, public, and other special addresses remain denied. |
 | `mcp.servers[].auth.oauth.network.max_redirects` | `int` | `0` | MaxRedirects is the redirect bound, from zero through five. |

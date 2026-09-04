@@ -35,12 +35,15 @@ For the exhaustive, auto-generated key/type/default/tier table, see the
 this guide are illustrative; the reference page is the complete source of truth
 (generated from the schema, so it never drifts).
 
-### Global MCP authentication profiles
+### MCP authentication profiles
 
 All three headless roots read the same operator-tier `mcp.servers` profiles. A project
 `.mecatl/settings.yaml` cannot define them. Each server selects exactly one auth mode:
 `none`, `static_bearer`, or `oauth`; secret-bearing fields name `MECATL_*` environment
-variables rather than containing values. See the [generated reference](../configuration-reference.md)
+variables rather than containing values. Global OAuth profiles support the strict
+exact-origin `network` policy. Broker OAuth requires an explicit empty `network: {}`;
+`additional_origins`, `private_origins`, and non-zero `max_redirects` are rejected until
+ToolHive can enforce the policy equivalently. See the [generated reference](../configuration-reference.md)
 for the complete strict schema.
 
 Local OAuth credentials require an absolute `credentials.local.root` and a canonical

@@ -110,6 +110,8 @@ func TestMCPAuthorityBrokerCallbackRules(t *testing.T) {
 
 func TestMCPAuthorityPreservesGlobalProfileResolution(t *testing.T) {
 	oauth := environmentOAuth()
+	oauth.Network.PrivateOrigins = []string{"https://issuer.example"}
+	oauth.Network.MaxRedirects = 3
 	section := &permconfig.MCPSection{Mode: "global", Servers: []permconfig.MCPServerProfile{
 		{Name: "none", URL: "http://public.example/mcp", Auth: permconfig.MCPAuthProfile{Mode: "none"}},
 		{Name: "static", URL: "https://static.example/mcp", Auth: permconfig.MCPAuthProfile{Mode: "static_bearer", StaticBearer: &permconfig.MCPStaticBearerProfile{TokenEnv: "MECATL_STATIC"}}},
@@ -127,6 +129,9 @@ func TestMCPAuthorityPreservesGlobalProfileResolution(t *testing.T) {
 	servers, lifecycle, ok := got.Global()
 	if !ok || len(servers) != 3 || lifecycle == nil || servers[1].Headers["Authorization"] != "Bearer token" || servers[2].OAuth == nil {
 		t.Fatalf("global result = %#v, lifecycle %T, selected %t", servers, lifecycle, ok)
+	}
+	if network := servers[2].OAuth.Network; len(network.AdditionalOrigins) != 1 || network.AdditionalOrigins[0] != "https://client.example" || len(network.PrivateOrigins) != 1 || network.PrivateOrigins[0] != "https://issuer.example" || network.MaxRedirects != 3 {
+		t.Fatalf("global OAuth network = %#v", network)
 	}
 	if _, ok := got.Broker(); ok {
 		t.Fatal("global authority exposed broker payload")
@@ -160,6 +165,47 @@ func TestMCPAuthorityModeSpecificOAuth(t *testing.T) {
 	global.Servers[0].Auth.OAuth.Upstream = &permconfig.MCPOAuthUpstreamProfile{Mode: "oidc"}
 	if _, err := ResolveMCPAuthority(MCPAuthorityOptions{Operator: global, DefaultMode: mcpauthority.Global}); !errors.Is(err, ErrMCPProfileInvalid) {
 		t.Fatalf("global upstream selector error = %v", err)
+	}
+}
+
+func TestMCPAuthorityBrokerRejectsUnsupportedNetworkControlsBeforeConstruction(t *testing.T) {
+	for _, upstream := range []struct {
+		name  string
+		apply func(*permconfig.MCPOAuthProfile)
+	}{
+		{name: "oidc", apply: func(oauth *permconfig.MCPOAuthProfile) {}},
+		{name: "oauth2", apply: func(oauth *permconfig.MCPOAuthProfile) {
+			oauth.Upstream = &permconfig.MCPOAuthUpstreamProfile{Mode: "oauth2", OAuth2: &permconfig.MCPOAuth2UpstreamProfile{AuthorizationEndpoint: "https://auth.example/authorize", TokenEndpoint: "https://auth.example/token"}}
+			oauth.Issuer = ""
+		}},
+	} {
+		for _, control := range []struct {
+			name  string
+			apply func(*permconfig.MCPOAuthNetworkProfile)
+		}{
+			{name: "additional_origins", apply: func(network *permconfig.MCPOAuthNetworkProfile) {
+				network.AdditionalOrigins = []string{"https://extra.example"}
+			}},
+			{name: "private_origins", apply: func(network *permconfig.MCPOAuthNetworkProfile) {
+				network.PrivateOrigins = []string{"https://issuer.example"}
+			}},
+			{name: "max_redirects", apply: func(network *permconfig.MCPOAuthNetworkProfile) { network.MaxRedirects = 1 }},
+		} {
+			t.Run(upstream.name+"/"+control.name, func(t *testing.T) {
+				route := brokerOAuthRoute()
+				upstream.apply(route.Auth.OAuth)
+				control.apply(route.Auth.OAuth.Network)
+				section := &permconfig.MCPSection{Mode: "broker", Broker: permconfig.MCPBrokerProfile{CallbackURL: "https://agent.example/callback"}, Servers: []permconfig.MCPServerProfile{route}}
+
+				got, err := ResolveMCPAuthority(MCPAuthorityOptions{Operator: section, DefaultMode: mcpauthority.Global, BrokerSupported: true})
+				if !errors.Is(err, ErrMCPProfileInvalid) {
+					t.Fatalf("ResolveMCPAuthority error = %v, want invalid profile", err)
+				}
+				if got != nil {
+					t.Fatalf("ResolveMCPAuthority authority = %#v, want no broker construction input", got)
+				}
+			})
+		}
 	}
 }
 

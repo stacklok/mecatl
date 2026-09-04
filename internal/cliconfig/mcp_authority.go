@@ -118,8 +118,8 @@ func validateBrokerOAuth(route permconfig.MCPServerProfile) error {
 	if err := validateBrokerOAuthUpstream(route.Name, oauth); err != nil {
 		return err
 	}
-	if oauth.Upstream != nil && oauth.Upstream.Mode == "oauth2" && (len(oauth.Network.AdditionalOrigins) != 0 || len(oauth.Network.PrivateOrigins) != 0 || oauth.Network.MaxRedirects != 0) {
-		return fmt.Errorf("%w: MCP server %q: broker OAuth2 network controls are unsupported", ErrMCPProfileInvalid, route.Name)
+	if len(oauth.Network.AdditionalOrigins) != 0 || len(oauth.Network.PrivateOrigins) != 0 || oauth.Network.MaxRedirects != 0 {
+		return fmt.Errorf("%w: MCP server %q: broker OAuth accepts only an empty network policy because ToolHive cannot enforce exact-origin network controls", ErrMCPProfileInvalid, route.Name)
 	}
 	if oauth.Profile != "" || oauth.Principal != "" || oauth.Credentials.Mode != "" || oauth.Credentials.Local != nil || oauth.Credentials.Environment != nil {
 		return fmt.Errorf("%w: MCP server %q: broker OAuth forbids profile, principal, and credentials", ErrMCPProfileInvalid, route.Name)

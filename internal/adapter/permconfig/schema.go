@@ -434,7 +434,8 @@ type MCPOAuthProfile struct {
 	RequestRefreshToken bool `yaml:"request_refresh_token"`
 	// Credentials selects one global-mode local or environment credential source and is forbidden in broker mode.
 	Credentials MCPOAuthCredentialProfile `yaml:"credentials"`
-	// Network is required and declares immutable exact-origin egress policy.
+	// Network is required. Global profiles enforce its exact-origin egress policy;
+	// broker OAuth accepts only an explicit empty mapping until ToolHive can enforce it equivalently.
 	Network *MCPOAuthNetworkProfile `yaml:"network"`
 	// Tools optionally declares this protected backend's tool catalogue
 	// statically. Declared tools are admitted without authenticated startup

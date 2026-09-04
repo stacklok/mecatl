@@ -173,7 +173,12 @@ endpoint is runtime-valid. The authentication `mode` is a closed union:
   profile into a read-only chart-managed ConfigMap, projects only a preregistered
   client secret `secretKeyRef` when needed, and passes
   `--permission-config=/etc/mecatl-mcp/settings.yaml`. It requires
-  `mcp.broker.callbackURL`, the public HTTPS browser callback URL.
+  `mcp.broker.callbackURL`, the public HTTPS browser callback URL. Global OAuth
+  profiles support the strict exact-origin `network` policy. Helm values for broker
+  OAuth must use the explicit empty policy (`additionalOrigins: []`,
+  `privateOrigins: []`, `maxRedirects: 0`); the rendered operator profile is the
+  equivalent empty network policy. Non-default controls remain rejected until
+  ToolHive can enforce the policy equivalently.
 
 For example, an unauthenticated public server and a static bearer server are:
 
