@@ -274,7 +274,7 @@ func installLearningFixture() {
 	out, err := exec.CommandContext(ctx, "helm", "upgrade", "--install", "mecak8s", chart,
 		"--namespace", k8sNamespace, "--values", filepath.Join(chart, "values-kind.yaml"), "--values", valuesPath,
 		"--set", "image.repository=ko.local/mecak8s", "--set", "image.tag=e2e", "--set", "fullnameOverride=mecak8s-agent",
-		"--force-conflicts", "--wait", "--timeout=4m").CombinedOutput()
+		"--wait", "--timeout=4m").CombinedOutput()
 	gomega.Expect(err).NotTo(gomega.HaveOccurred(), "install learning fixture chart: %s", out)
 	_ = singleAgentPod()
 }
