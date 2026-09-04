@@ -3,10 +3,12 @@ package server
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -140,6 +142,74 @@ func TestLearningHTTPRejectsDuplicateKeysRecursivelyOnEveryMutation(t *testing.T
 			handler.ServeHTTP(res, request)
 			if res.Code != http.StatusBadRequest {
 				t.Fatalf("status=%d body=%s", res.Code, res.Body.String())
+			}
+		})
+	}
+}
+
+func TestScalableReflectionEvidence_Scenario9_TransportDispositionAndTypedErrorMatrix(t *testing.T) {
+	completedStore := func(t *testing.T) *memstore.Store {
+		t.Helper()
+		store := memstore.New()
+		sess := session.New("reflect-source", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/workspace", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1, 0))
+		if err := sess.BeginTurn(); err != nil {
+			t.Fatal(err)
+		}
+		if err := sess.Complete(); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.Save(context.Background(), sess); err != nil {
+			t.Fatal(err)
+		}
+		return store
+	}
+
+	t.Run("closed abstention", func(t *testing.T) {
+		svc := &Service{cfg: Config{Store: completedStore(t), ReflectSession: func(context.Context, *session.Session) (ReflectionReceipt, error) {
+			return ReflectionReceipt{Abstained: true, Reason: "no_eligible_evidence"}, nil
+		}}}
+		grpcResp, err := (&HarnessServer{svc: svc}).ReflectSession(context.Background(), &mecatlv1.ReflectSessionRequest{SessionId: "reflect-source"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		receipt := grpcResp.GetReceipt()
+		if !receipt.GetAbstained() || receipt.GetDisposition() != "abstained" || receipt.GetReason() != "no_eligible_evidence" || receipt.GetMessage() != "No eligible evidence was available for reflection." {
+			t.Fatalf("gRPC receipt = %+v", receipt)
+		}
+		res := httptest.NewRecorder()
+		NewHTTPHandler(svc).ServeHTTP(res, httptest.NewRequest(http.MethodPost, "/v1/sessions/reflect-source/reflect", strings.NewReader("{}")))
+		if res.Code != http.StatusOK || strings.Contains(res.Body.String(), "source transcript") || !strings.Contains(res.Body.String(), `"reason":"no_eligible_evidence"`) || !strings.Contains(res.Body.String(), "No eligible evidence was available for reflection.") {
+			t.Fatalf("HTTP status=%d body=%s", res.Code, res.Body.String())
+		}
+	})
+
+	for _, tc := range []struct {
+		name       string
+		err        error
+		grpcCode   codes.Code
+		httpStatus int
+	}{
+		{name: "cancelled", err: context.Canceled, grpcCode: codes.Canceled, httpStatus: 499},
+		{name: "closed", err: ErrUnavailable, grpcCode: codes.Unavailable, httpStatus: http.StatusServiceUnavailable},
+		{name: "source mismatch", err: ErrFailedPrecondition, grpcCode: codes.FailedPrecondition, httpStatus: http.StatusPreconditionFailed},
+		{name: "queue full", err: ErrReflectionQueueFull, grpcCode: codes.ResourceExhausted, httpStatus: http.StatusTooManyRequests},
+		{name: "timeout", err: context.DeadlineExceeded, grpcCode: codes.DeadlineExceeded, httpStatus: http.StatusGatewayTimeout},
+		{name: "validation", err: ErrInvalidArgument, grpcCode: codes.InvalidArgument, httpStatus: http.StatusBadRequest},
+		{name: "persistence", err: ErrReflectionFailed, grpcCode: codes.Unavailable, httpStatus: http.StatusServiceUnavailable},
+		{name: "provider", err: fmt.Errorf("provider secret: %w", ErrReflectionFailed), grpcCode: codes.Unavailable, httpStatus: http.StatusServiceUnavailable},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			svc := &Service{cfg: Config{Store: completedStore(t), ReflectSession: func(context.Context, *session.Session) (ReflectionReceipt, error) {
+				return ReflectionReceipt{}, tc.err
+			}}}
+			_, err := (&HarnessServer{svc: svc}).ReflectSession(context.Background(), &mecatlv1.ReflectSessionRequest{SessionId: "reflect-source"})
+			if status.Code(err) != tc.grpcCode || strings.Contains(err.Error(), "provider secret") {
+				t.Fatalf("gRPC err=%v code=%v", err, status.Code(err))
+			}
+			res := httptest.NewRecorder()
+			NewHTTPHandler(svc).ServeHTTP(res, httptest.NewRequest(http.MethodPost, "/v1/sessions/reflect-source/reflect", strings.NewReader("{}")))
+			if res.Code != tc.httpStatus || strings.Contains(res.Body.String(), "provider secret") || strings.Contains(res.Body.String(), `"code":"internal"`) {
+				t.Fatalf("HTTP status=%d body=%s", res.Code, res.Body.String())
 			}
 		})
 	}

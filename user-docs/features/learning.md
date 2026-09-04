@@ -144,7 +144,10 @@ Authenticated explicit reflection is separate from automatic admission. It runs
 synchronously, lazily initializes persistence, uses the completed session's
 persisted provider/model, and bypasses automatic cooldown and admission budgets.
 Without genuine current-prompt promotion provenance, its output remains staged
-rather than changing active memory.
+rather than changing active memory. If bounded selection finds no safe evidence,
+the call succeeds with a closed, content-free abstention reason instead; cancellation,
+source mismatch, capacity, timeout, provider, and persistence failures remain typed
+errors rather than being reported as abstentions.
 
 When durable learning is enabled, authenticated clients can inspect attempts over
 `GetLearningAttempt` / `ListLearningAttempts` or HTTP

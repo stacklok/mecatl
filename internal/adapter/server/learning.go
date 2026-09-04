@@ -21,6 +21,7 @@ import (
 type ReflectionReceipt struct {
 	ID          string
 	Disposition string
+	Reason      string
 	Queued      int
 	Abstained   bool
 	Staged      int
@@ -91,7 +92,37 @@ func (s *Service) ReflectSession(ctx context.Context, id session.SessionID) (*me
 	if err != nil {
 		return nil, explicitReflectionError(err)
 	}
-	return &mecatlv1.ReflectionReceipt{ReflectionId: validLearningText(r.ID), Disposition: validLearningText(r.Disposition), Queued: int32(r.Queued), Abstained: r.Abstained, Staged: int32(r.Staged), Promoted: int32(r.Promoted), Conflicted: int32(r.Conflicted)}, nil //nolint:gosec // coordinator counts are bounded far below int32
+	switch r.Disposition {
+	case "queue_full":
+		return nil, ErrReflectionQueueFull
+	case "closed":
+		return nil, ErrUnavailable
+	case "timed_out":
+		return nil, ErrReflectionDeadline
+	case "failed":
+		return nil, ErrReflectionFailed
+	}
+	disposition := validLearningText(r.Disposition)
+	reason, message := "", ""
+	if r.Abstained {
+		disposition = string(learning.MaterializationAbstained)
+		reason, message, err = explicitAbstentionProjection(r.Reason)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return &mecatlv1.ReflectionReceipt{ReflectionId: validLearningText(r.ID), Disposition: disposition, Reason: reason, Message: message, Queued: int32(r.Queued), Abstained: r.Abstained, Staged: int32(r.Staged), Promoted: int32(r.Promoted), Conflicted: int32(r.Conflicted)}, nil //nolint:gosec // coordinator counts are bounded far below int32
+}
+
+func explicitAbstentionProjection(reason string) (string, string, error) {
+	switch learning.MaterializationReason(reason) {
+	case learning.MaterializationNoEligibleEvidence:
+		return reason, "No eligible evidence was available for reflection.", nil
+	case learning.MaterializationMandatorySpanExceedsBounds:
+		return reason, "The required evidence span exceeds reflection bounds.", nil
+	default:
+		return "", "", ErrReflectionFailed
+	}
 }
 
 // ListLearningProposals returns one bounded partition page.
@@ -256,13 +287,28 @@ func (s *Service) proposalActionAvailable(project string) (bool, string) {
 
 func explicitReflectionError(err error) error {
 	switch {
-	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded),
-		errors.Is(err, ErrUnavailable), errors.Is(err, ErrLearningUnavailable),
-		errors.Is(err, ErrFailedPrecondition), errors.Is(err, ErrInvalidArgument),
-		errors.Is(err, ErrProposalConflict), errors.Is(err, ErrNotFound):
-		return err
+	case errors.Is(err, context.Canceled):
+		return ErrReflectionCancelled
+	case errors.Is(err, context.DeadlineExceeded):
+		return ErrReflectionDeadline
+	case errors.Is(err, ErrUnavailable):
+		return ErrUnavailable
+	case errors.Is(err, ErrLearningUnavailable):
+		return ErrLearningUnavailable
+	case errors.Is(err, ErrFailedPrecondition):
+		return ErrFailedPrecondition
+	case errors.Is(err, ErrInvalidArgument):
+		return ErrInvalidArgument
+	case errors.Is(err, ErrProposalConflict):
+		return ErrProposalConflict
+	case errors.Is(err, ErrNotFound):
+		return ErrNotFound
+	case errors.Is(err, ErrReflectionQueueFull):
+		return ErrReflectionQueueFull
+	case errors.Is(err, ErrReflectionFailed):
+		return ErrReflectionFailed
 	default:
-		return fmt.Errorf("%w: explicit reflection failed", ErrInternal)
+		return ErrReflectionFailed
 	}
 }
 

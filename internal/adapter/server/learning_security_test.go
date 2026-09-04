@@ -157,7 +157,7 @@ func TestExplicitReflectionEnforcesSessionOwnershipAndWorksHeadless(t *testing.T
 	calls := 0
 	reflector := func(context.Context, *session.Session) (ReflectionReceipt, error) {
 		calls++
-		return ReflectionReceipt{Disposition: "completed", Abstained: true}, nil
+		return ReflectionReceipt{Disposition: "completed", Abstained: true, Reason: "no_eligible_evidence"}, nil
 	}
 	svc := &Service{cfg: Config{Store: store, OwnershipEnforced: true, ReflectSession: reflector}}
 	if _, err := svc.ReflectSession(session.WithPrincipal(context.Background(), bob), "owned"); !errors.Is(err, ErrNotFound) {

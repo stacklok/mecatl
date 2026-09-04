@@ -2911,6 +2911,10 @@ message ReflectionReceipt {
   int32 staged = 5;
   int32 promoted = 6;
   int32 conflicted = 7;
+  // reason is one closed materialization reason when abstained is true.
+  string reason = 8;
+  // message is stable harness-authored display text for that closed reason.
+  string message = 9;
 }
 
 message ReflectSessionResponse { ReflectionReceipt receipt = 1; }

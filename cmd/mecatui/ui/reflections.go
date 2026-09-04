@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
@@ -182,12 +183,21 @@ func (m Model) updateReflectionsMsg(msg tea.Msg) (tea.Model, bool) {
 		if m.reflections.view == reflectionsNone {
 			if x.Receipt != nil && x.Err == nil {
 				if x.Receipt.Abstained {
-					m.statusMsg = m.deps.Theme.Style("muted").Render("reflection " + reflectionDisplayText(x.Receipt.Disposition, 48) + ": abstained")
+					message := x.Receipt.Message
+					if message == "" {
+						message = "reflection abstained"
+					}
+					m.statusMsg = m.deps.Theme.Style("muted").Render(reflectionDisplayText(message, 160))
 				} else {
-					m.statusMsg = m.deps.Theme.Style("success").Render(fmt.Sprintf("reflection %s: %d staged, %d promoted, %d conflicted", reflectionDisplayText(x.Receipt.Disposition, 48), x.Receipt.Staged, x.Receipt.Promoted, x.Receipt.Conflicted))
+					count := x.Receipt.Staged + x.Receipt.Promoted + x.Receipt.Conflicted
+					label := "proposals"
+					if count == 1 {
+						label = "proposal"
+					}
+					m.statusMsg = m.deps.Theme.Style("success").Render(fmt.Sprintf("reflection completed: %d %s", count, label))
 				}
 			} else if x.Err != nil {
-				m.statusMsg = m.deps.Theme.Style("errorText").Render(sanitizeTerminal(x.Err.Error()))
+				m.statusMsg = m.deps.Theme.Style("errorText").Render(client.ReflectionErrorText(x.Err))
 			}
 			return m, true
 		}
@@ -281,7 +291,7 @@ func renderReflectionsOverlay(th theme.Theme, st reflectionsState, caps client.C
 			}
 			lines = append(lines, line, "    digest="+reflectionDisplayText(evidence.Digest, 72))
 			if evidence.Preview != "" {
-				lines = append(lines, wrapReflectionField("    preview: ", evidence.Preview, width-12)...)
+				lines = append(lines, wrapReflectionField("    preview: ", boundedReflectionPreview(evidence.Preview), width-12)...)
 			}
 		}
 		if len(p.Decisions) > 0 {
@@ -386,6 +396,18 @@ func wrapReflectionField(label, value string, width int) []string {
 		}
 	}
 	return out
+}
+
+func boundedReflectionPreview(value string) string {
+	value = sanitizeTerminal(value)
+	if len(value) <= 1024 {
+		return value
+	}
+	value = value[:1024]
+	for !utf8.ValidString(value) {
+		value = value[:len(value)-1]
+	}
+	return value
 }
 
 func reflectionDisplayText(value string, limit int) string {

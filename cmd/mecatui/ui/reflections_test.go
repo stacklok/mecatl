@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
@@ -150,13 +152,76 @@ func TestReflectionsPagingResetsCursorAndGuardsStaleShortPages(t *testing.T) {
 	}
 }
 
+func TestScalableReflectionEvidence_Scenario9_MecatuiReflectStatusMatrix(t *testing.T) {
+	th := theme.New("aztec", theme.AztecPalette())
+	m, _, _ := newTestModel(t, th)
+	m.deps.Reflections = fakeReflections{}
+	m.phase = phaseIdle
+	m.sessionID = "session"
+	m.conv.addUser("completed prompt")
+	started, cmd := m.runReflect()
+	m = started.(Model)
+	if cmd == nil || !strings.Contains(stripANSIstr(m.statusMsg), "reflecting session") {
+		t.Fatalf("in-progress status=%q cmd=%v", stripANSIstr(m.statusMsg), cmd)
+	}
+	generation := m.reflectionsGen
+
+	updated, _ := m.updateReflectionsMsg(client.ReflectionMsg{Generation: generation, Receipt: &client.ReflectionReceipt{Disposition: "abstained", Abstained: true, Reason: "no_eligible_evidence", Message: "No eligible evidence was available for reflection."}})
+	m = updated.(Model)
+	if got := stripANSIstr(m.statusMsg); got != "No eligible evidence was available for reflection." {
+		t.Fatalf("abstention status=%q", got)
+	}
+
+	updated, _ = m.updateReflectionsMsg(client.ReflectionMsg{Generation: generation, Receipt: &client.ReflectionReceipt{Disposition: "completed", Staged: 2, Promoted: 1}})
+	m = updated.(Model)
+	if got := stripANSIstr(m.statusMsg); got != "reflection completed: 3 proposals" {
+		t.Fatalf("success status=%q", got)
+	}
+
+	updated, _ = m.updateReflectionsMsg(client.ReflectionMsg{Generation: generation, Err: status.Error(codes.Unavailable, "provider secret\x1b[31m")})
+	m = updated.(Model)
+	if got := stripANSIstr(m.statusMsg); got != "reflection service is unavailable" {
+		t.Fatalf("typed failure status=%q", got)
+	}
+
+	m.reflectionsGen++
+	m.statusMsg = "newer status"
+	updated, _ = m.updateReflectionsMsg(client.ReflectionMsg{Generation: generation, Receipt: &client.ReflectionReceipt{Abstained: true, Message: "stale status"}})
+	if got := updated.(Model).statusMsg; got != "newer status" {
+		t.Fatalf("stale generation overwrote status: %q", got)
+	}
+}
+
+func TestADR_0298_MecatuiMismatchAndPreviewRemainNonDisclosing(t *testing.T) {
+	th := theme.New("aztec", theme.AztecPalette())
+	preview := strings.Repeat("p", 1024) + "RAW SOURCE TRANSCRIPT"
+	proposal := client.LearningProposal{
+		ID: "proposal", Status: client.ProposalStatusStaged, Kind: "operator_fact", Key: "user/output", Value: "concise", PromotionAvailable: true,
+		Evidence: []client.LearningEvidence{{Available: false, Availability: "source_mismatch\x1b[31m", Preview: preview}},
+	}
+	if reflectionApprovable(proposal) {
+		t.Fatal("manifest/source mismatch remained approvable")
+	}
+	out := stripANSIstr(renderReflectionsOverlay(th, reflectionsState{view: reflectionsDetail, detail: &proposal}, client.Capabilities{LearningProposals: true}, defaultHelpKeys(), 120, 80))
+	if !strings.Contains(out, strings.Repeat("p", 80)) || strings.Contains(out, "RAW SOURCE TRANSCRIPT") || strings.Contains(out, "\x1b") || strings.Contains(strings.ToLower(out), "manifest entr") {
+		t.Fatalf("mismatch detail disclosed source or lost bounded preview:\n%s", out)
+	}
+	m, _, _ := newTestModel(t, th)
+	m.deps.Reflections = fakeReflections{}
+	m.reflections = reflectionsState{view: reflectionsDetail, detail: &proposal}
+	_, cmd, handled := m.onReflectionsKey(tea.KeyPressMsg{Code: 'a', Text: "a"})
+	if !handled || cmd != nil {
+		t.Fatalf("mismatch approval handled=%v cmd=%v", handled, cmd)
+	}
+}
+
 func TestReflectReceiptShowsBoundedOutcome(t *testing.T) {
 	th := theme.New("aztec", theme.AztecPalette())
 	m, _, _ := newTestModel(t, th)
 	m.reflectionsGen = 4
 	mm, _ := m.updateReflectionsMsg(client.ReflectionMsg{Generation: 4, Receipt: &client.ReflectionReceipt{Disposition: "completed", Staged: 2, Promoted: 1, Conflicted: 1}})
 	got := stripANSIstr(mm.(Model).statusMsg)
-	if !strings.Contains(got, "2 staged, 1 promoted, 1 conflicted") {
+	if !strings.Contains(got, "reflection completed: 4 proposals") {
 		t.Fatalf("receipt status = %q", got)
 	}
 	mm, _ = mm.(Model).updateReflectionsMsg(client.ReflectionMsg{Generation: 4, Receipt: &client.ReflectionReceipt{Disposition: "completed", Abstained: true}})
