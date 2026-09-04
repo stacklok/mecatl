@@ -44,7 +44,8 @@ when that is the reader's task; it must not repeat the canonical feature guide.
 
 When adding a page that appears to overlap an existing page, identify its canonical
 page in the pull request description. If the two pages need the same complete
-treatment, extend the canonical page instead.
+treatment, extend the canonical page instead. URL moves are separate changes and
+must follow the published URL policy in [`website/AGENTS.md`](../website/AGENTS.md).
 
 Extend an existing page when it already answers the reader's question. Add a page
 only for a distinct user task or concept that has no suitable home. New section

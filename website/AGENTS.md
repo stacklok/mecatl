@@ -26,7 +26,8 @@ task site:clear     # wipe .docusaurus/ and build/
 ```
 
 `task site:build` is the authoritative broken-link check. The site is configured with
-`onBrokenLinks: 'throw'`, so a build failure means a link is broken — not a warning.
+`onBrokenLinks: 'throw'` and `onBrokenMarkdownLinks: 'throw'`, so a build failure
+means a link is broken, not a warning.
 
 ---
 
@@ -67,6 +68,21 @@ Docusaurus strips the `.md` extension when building URLs.
 Docusaurus v3 resolves `../` traversals from `index.md` files based on the *folder*
 location rather than the *file* location, causing the traversal to land one level too
 high. Using content-root-relative paths (leading `/`) sidesteps this entirely.
+
+---
+
+## Published URL changes
+
+Do not move, rename, or remove a published page as an incidental part of an edit.
+When a URL change is necessary, the pull request must either preserve the old URL
+with a redirect or explain why no redirect is needed, such as when the page was
+never published.
+
+The site does not keep a redirect registry or dependency before it has a real
+redirect to serve. When the first redirect is needed, add the smallest Docusaurus
+or equivalent mechanism with its declarations in `website/`, verify the old URL,
+and document its maintenance rule here. Do not rely on an undocumented hosting or
+CloudFront change.
 
 ---
 
