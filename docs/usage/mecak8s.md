@@ -251,10 +251,56 @@ required, stays in the referenced Kubernetes Secret and is projected only as a
 constructed. A no-auth or static-bearer-only list likewise keeps the established
 global routing.
 
+`issuer` assumes the upstream authorization server supports OIDC discovery.
+Some real-world OAuth Apps — GitHub's is the common case — have no discovery
+endpoint and only plain `authorization_endpoint`/`token_endpoint` URLs. Set
+`upstream: {mode: oauth2, oauth2: {authorizationEndpoint, tokenEndpoint}}` for
+those; `issuer` is then omitted (the two are mutually exclusive — the schema
+rejects either one being set alongside the wrong `upstream.mode`). An oauth
+server may also declare its protected tool catalogue statically via `tools`
+(each entry: `name`, `description`, `inputSchema`, optional `readOnly`) —
+declared tools are admitted into the session's catalogue immediately, and the
+credential itself is deferred to the model's first attempt to call one, e.g.
+for GitHub:
+
+```yaml
+mcp:
+  broker:
+    callbackURL: https://agent.example/mcp/authorization/callback
+  servers:
+    - name: github
+      url: https://api.githubcopilot.com/mcp/
+      auth:
+        mode: oauth
+        oauth:
+          upstream:
+            mode: oauth2
+            oauth2:
+              authorizationEndpoint: https://github.com/login/oauth/authorize
+              tokenEndpoint: https://github.com/login/oauth/access_token
+          client:
+            mode: preregistered
+            preregistered:
+              id: <your-github-oauth-app-client-id>
+              secretKeyRef: {name: mecak8s-github-mcp-oauth, key: client-secret}
+          scopes: [repo, read:org, read:user]
+          requestRefreshToken: true
+          network:
+            additionalOrigins: []
+            privateOrigins: []
+            maxRedirects: 0
+          tools:
+            - name: get_me
+              description: Get details of the authenticated GitHub user
+              inputSchema: {type: object, properties: {}}
+              readOnly: true
+```
+
 > **Broker replica limitation:** broker sessions, grants, and authorization state
 > are process-local. OAuth broker mode is not safely deployable behind the chart's
 > default multi-replica Service until an affinity or durable-broker design is
 > selected. The chart intentionally does not change replica behavior yet.
+
 
 Changing OAuth profile metadata changes the pod-template
 `checksum/mcp-profile` annotation, causing a Deployment rollout. Kubernetes

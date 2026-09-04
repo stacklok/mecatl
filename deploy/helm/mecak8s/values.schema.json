@@ -119,9 +119,27 @@
                   },
                   "oauth": {
                     "type": "object", "additionalProperties": false,
-                    "required": ["issuer", "client", "scopes", "network"],
+                    "required": ["client", "scopes", "network"],
                     "properties": {
                       "issuer": {"type": "string", "pattern": "^https://[^@/?#\\s]+(?::[0-9]+)?$"},
+                      "upstream": {
+                        "type": "object", "additionalProperties": false, "required": ["mode"],
+                        "properties": {
+                          "mode": {"type": "string", "enum": ["oidc", "oauth2"]},
+                          "oauth2": {
+                            "type": "object", "additionalProperties": false,
+                            "required": ["authorizationEndpoint", "tokenEndpoint"],
+                            "properties": {
+                              "authorizationEndpoint": {"type": "string", "pattern": "^https://[^@/?#\\s]+(?:/[^\\s#]*)?$"},
+                              "tokenEndpoint": {"type": "string", "pattern": "^https://[^@/?#\\s]+(?:/[^\\s#]*)?$"}
+                            }
+                          }
+                        },
+                        "oneOf": [
+                          {"properties": {"mode": {"const": "oidc"}}, "not": {"required": ["oauth2"]}},
+                          {"properties": {"mode": {"const": "oauth2"}}, "required": ["oauth2"]}
+                        ]
+                      },
                       "client": {
                         "type": "object", "additionalProperties": false, "required": ["mode"],
                         "properties": {
@@ -150,8 +168,26 @@
                           "privateOrigins": {"type": "array", "items": {"type": "string", "pattern": "^https?://[^@/?#\\s]+(?::[0-9]+)?$"}},
                           "maxRedirects": {"type": "integer", "minimum": 0, "maximum": 5}
                         }
+                      },
+                      "tools": {
+                        "type": "array",
+                        "items": {
+                          "type": "object", "additionalProperties": false,
+                          "required": ["name", "description", "inputSchema"],
+                          "properties": {
+                            "name": {"type": "string", "minLength": 1},
+                            "description": {"type": "string", "minLength": 1},
+                            "inputSchema": {"type": "object"},
+                            "readOnly": {"type": "boolean", "default": false}
+                          }
+                        }
                       }
-                    }
+                    },
+                    "oneOf": [
+                      {"not": {"required": ["upstream"]}, "required": ["issuer"]},
+                      {"required": ["issuer", "upstream"], "properties": {"upstream": {"properties": {"mode": {"const": "oidc"}}}}},
+                      {"required": ["upstream"], "not": {"required": ["issuer"]}, "properties": {"upstream": {"properties": {"mode": {"const": "oauth2"}}}}}
+                    ]
                   }
                 },
                 "oneOf": [

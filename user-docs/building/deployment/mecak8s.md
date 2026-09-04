@@ -380,7 +380,12 @@ mcp:
 ```
 
 The static token is projected as `MCP_GITHUB_TOKEN`; it never appears in Helm
-values, arguments, or a ConfigMap. OAuth selects the session MCP broker instead
+values, arguments, or a ConfigMap. `staticBearer` covers a personal access
+token; for a GitHub OAuth App's real browser consent flow, use `auth.mode:
+oauth` with `upstream: {mode: oauth2, oauth2: {authorizationEndpoint,
+tokenEndpoint}}` instead of `issuer` — GitHub has no OIDC discovery endpoint —
+and optionally a static `tools` catalogue so the model sees the backend's
+tools immediately. OAuth selects the session MCP broker instead
 of global routing. Set `mcp.broker.callbackURL` to the exact public HTTPS callback
 URL that your ingress or gateway routes to the mecak8s HTTP listener; Helm rejects
 an OAuth server without it and the runtime rejects an invalid URL. OAuth broker

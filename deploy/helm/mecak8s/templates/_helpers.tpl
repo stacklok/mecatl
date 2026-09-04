@@ -202,7 +202,18 @@ mcp:
         mode: {{ if eq $server.auth.mode "oauth" }}oauth{{ else }}none{{ end }}
 {{- if eq $server.auth.mode "oauth" }}
         oauth:
+{{- if not (and $server.auth.oauth.upstream (eq $server.auth.oauth.upstream.mode "oauth2")) }}
           issuer: {{ $server.auth.oauth.issuer | quote }}
+{{- end }}
+{{- if $server.auth.oauth.upstream }}
+          upstream:
+            mode: {{ $server.auth.oauth.upstream.mode }}
+{{- if eq $server.auth.oauth.upstream.mode "oauth2" }}
+            oauth2:
+              authorization_endpoint: {{ $server.auth.oauth.upstream.oauth2.authorizationEndpoint | quote }}
+              token_endpoint: {{ $server.auth.oauth.upstream.oauth2.tokenEndpoint | quote }}
+{{- end }}
+{{- end }}
           client:
             mode: {{ $server.auth.oauth.client.mode }}
 {{- if eq $server.auth.oauth.client.mode "preregistered" }}
@@ -219,6 +230,15 @@ mcp:
             additional_origins: {{ toJson $server.auth.oauth.network.additionalOrigins }}
             private_origins: {{ toJson $server.auth.oauth.network.privateOrigins }}
             max_redirects: {{ $server.auth.oauth.network.maxRedirects }}
+{{- if $server.auth.oauth.tools }}
+          tools:
+{{- range $server.auth.oauth.tools }}
+            - name: {{ .name | quote }}
+              description: {{ .description | quote }}
+              input_schema: {{ .inputSchema | toJson }}
+              read_only: {{ default false .readOnly }}
+{{- end }}
+{{- end }}
 {{- end }}
 {{- end }}
 {{- end }}

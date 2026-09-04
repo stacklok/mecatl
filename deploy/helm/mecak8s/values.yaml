@@ -34,6 +34,16 @@ extraArgs: []
 # explicit union: none, staticBearer, or oauth. OAuth selects the session MCP
 # broker and requires its public callback URL below. Secret values are always
 # read from same-namespace Kubernetes Secrets; they are never Helm values.
+#
+# An oauth server's `upstream` is optional and defaults to OIDC discovery
+# against `issuer`. Set `upstream: {mode: oauth2, oauth2: {authorizationEndpoint,
+# tokenEndpoint}}` for a provider with no OIDC discovery endpoint (e.g. GitHub's
+# OAuth Apps) — `issuer` is then omitted. An oauth server's `tools` optionally
+# declares its protected tool catalogue statically (name/description/
+# inputSchema/readOnly per entry): declared tools are admitted into the
+# session's catalogue immediately, with the credential itself deferred to the
+# model's first attempt to call one — see docs/usage/mecak8s.md for a worked
+# GitHub example of both.
 mcp:
   broker:
     # Public HTTPS URL where the browser returns after OAuth. This exact URL

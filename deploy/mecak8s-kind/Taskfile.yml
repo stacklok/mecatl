@@ -228,14 +228,13 @@ tasks:
 
   image-refresh:
     desc: >-
-      Rebuild the mecak8s image from the current source tree and load it straight into
-      the running mecatl-dev Kind cluster's node — for iterating on code without tearing
-      the cluster down. Does NOT restart the deployment; follow with
-      `kubectl rollout restart deployment/mecak8s-mecak8s -n mecatl` (or your own
-      equivalent) to pick up the new image. `image-build-load` (above) is `internal:
-      true` and is only reachable via the destructive `kind-setup` chain
-      (reset-state → cluster-create → ... ), so there was previously no safe way to just
-      refresh the image — this task exists to close that gap.
+      Rebuild the mecak8s image from the current source tree, load it straight into
+      the running mecatl-dev Kind cluster's node, and restart the deployment to pick
+      it up — for iterating on code without tearing the cluster down.
+      `image-build-load` (above) is `internal: true` and is only reachable via the
+      destructive `kind-setup` chain (reset-state → cluster-create → ... ), so there
+      was previously no safe way to just refresh the image — this task exists to
+      close that gap.
     preconditions:
       - sh: command -v ko >/dev/null 2>&1
         msg: ko is required
@@ -243,12 +242,16 @@ tasks:
       - task: cluster-ready
       - cmd: |
           set -eu
-          # KO_DOCKER_REPO=kind.local is ko's own magic value for "build straight into a
-          # Kind node" — no docker save / kind load image-archive round trip needed (see
-          # https://ko.build and ToolHive's own Taskfile.yml `operator-deploy-local`
-          # task, which uses this exact pattern). KIND_CLUSTER_NAME picks the node when
-          # it isn't the ko/kind default of "kind".
-          KIND_CLUSTER_NAME={{.CLUSTER}} KO_DOCKER_REPO=kind.local ko build --local --bare --tags=dev ./cmd/mecak8s
+          runtime=docker
+          [ "${KIND_EXPERIMENTAL_PROVIDER:-}" != podman ] || runtime=podman
+          command -v "$runtime" >/dev/null 2>&1 || { echo "$runtime is required"; exit 1; }
+          KO_DOCKER_REPO=ko.local/mecak8s ko build --local --bare --tags=dev ./cmd/mecak8s >/dev/null
+          archive={{.STATE}}/mecak8s.tar
+          "$runtime" save {{.IMAGE}} -o "$archive"
+          kind load image-archive "$archive" --name={{.CLUSTER}}
+          rm -f "$archive"
+      - kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} --namespace={{.NAMESPACE}} rollout restart deployment/{{.RELEASE}}-mecak8s
+      - kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} --namespace={{.NAMESPACE}} rollout status deployment/{{.RELEASE}}-mecak8s --timeout=240s
 
   cert-manager-install:
     internal: true

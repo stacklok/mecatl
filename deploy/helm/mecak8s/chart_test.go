@@ -2009,6 +2009,168 @@ mcp:
 	}
 }
 
+func TestMecak8sHelmChart_MCPOAuthUpstreamOAuth2OmitsIssuerAndRendersEndpoints(t *testing.T) {
+	rendered, err := renderOAuthMCPValues(t, `
+mcp:
+  broker:
+    callbackURL: https://agent.example/mcp/authorization/callback
+  servers:
+    - name: github
+      url: https://api.githubcopilot.com/mcp/
+      auth:
+        mode: oauth
+        oauth:
+          upstream:
+            mode: oauth2
+            oauth2:
+              authorizationEndpoint: https://github.com/login/oauth/authorize
+              tokenEndpoint: https://github.com/login/oauth/access_token
+          client:
+            mode: preregistered
+            preregistered:
+              id: github-app
+              secretKeyRef: {name: github-oauth, key: client-secret}
+          scopes: [repo, read:org, read:user]
+          requestRefreshToken: true
+          network: {additionalOrigins: [], privateOrigins: [], maxRedirects: 0}
+`)
+	if err != nil {
+		t.Fatalf("render oauth2-upstream MCP values: %v", err)
+	}
+	profile := configMapFromRender(t, rendered, "production-mecak8s-mcp").Data["settings.yaml"]
+	if strings.Contains(profile, "issuer:") {
+		t.Fatalf("oauth2-upstream render must omit issuer:\n%s", profile)
+	}
+	for _, want := range []string{
+		"mode: oauth2",
+		"authorization_endpoint: \"https://github.com/login/oauth/authorize\"",
+		"token_endpoint: \"https://github.com/login/oauth/access_token\"",
+	} {
+		if !strings.Contains(profile, want) {
+			t.Fatalf("oauth2-upstream render missing %q:\n%s", want, profile)
+		}
+	}
+	authority := runtimeMCPAuthorityFromConfigMap(t, profile)
+	broker, ok := authority.Broker()
+	if authority.Mode() != mcpauthority.Broker || !ok || len(broker.Routes) != 1 || broker.Routes[0].Name != "github" {
+		t.Fatalf("runtime broker authority = %#v, want a single github route", authority)
+	}
+}
+
+func TestMecak8sHelmChart_MCPOAuthDefaultUpstreamStillRendersIssuer(t *testing.T) {
+	rendered, err := renderOAuthMCPValues(t, `
+mcp:
+  broker:
+    callbackURL: https://agent.example/mcp/authorization/callback
+  servers:
+    - name: corporate
+      url: https://mcp.example/mcp
+      auth:
+        mode: oauth
+        oauth:
+          issuer: https://issuer.example
+          client:
+            mode: preregistered
+            preregistered:
+              id: mecak8s
+              secretKeyRef: {name: corporate-oauth, key: client-secret}
+          scopes: [mcp.read]
+          network: {additionalOrigins: [], privateOrigins: [], maxRedirects: 0}
+`)
+	if err != nil {
+		t.Fatalf("render default-upstream MCP values: %v", err)
+	}
+	profile := configMapFromRender(t, rendered, "production-mecak8s-mcp").Data["settings.yaml"]
+	if !strings.Contains(profile, "issuer: \"https://issuer.example\"") {
+		t.Fatalf("default (no upstream) render must keep issuer:\n%s", profile)
+	}
+	if strings.Contains(profile, "upstream:") {
+		t.Fatalf("default (no upstream) render must not emit an upstream block:\n%s", profile)
+	}
+	_ = runtimeMCPAuthorityFromConfigMap(t, profile)
+}
+
+func TestMecak8sHelmChart_MCPOAuthUpstreamModeIsSchemaValidated(t *testing.T) {
+	base := `
+mcp:
+  broker:
+    callbackURL: https://agent.example/mcp/authorization/callback
+  servers:
+    - name: github
+      url: https://api.githubcopilot.com/mcp/
+      auth:
+        mode: oauth
+        oauth:
+          client:
+            mode: preregistered
+            preregistered:
+              id: github-app
+              secretKeyRef: {name: github-oauth, key: client-secret}
+          scopes: [repo]
+          network: {additionalOrigins: [], privateOrigins: [], maxRedirects: 0}
+`
+	if _, err := renderOAuthMCPValues(t, base); err == nil {
+		t.Fatal("schema accepted oauth server with neither issuer nor upstream")
+	}
+	oidcWithOAuth2 := base + `          issuer: https://issuer.example
+          upstream: {mode: oidc, oauth2: {authorizationEndpoint: https://issuer.example/authorize, tokenEndpoint: https://issuer.example/token}}
+`
+	if _, err := renderOAuthMCPValues(t, oidcWithOAuth2); err == nil {
+		t.Fatal("schema accepted upstream.mode: oidc carrying an oauth2 payload")
+	}
+	oauth2WithIssuer := base + `          issuer: https://issuer.example
+          upstream: {mode: oauth2, oauth2: {authorizationEndpoint: https://github.com/login/oauth/authorize, tokenEndpoint: https://github.com/login/oauth/access_token}}
+`
+	if _, err := renderOAuthMCPValues(t, oauth2WithIssuer); err == nil {
+		t.Fatal("schema accepted upstream.mode: oauth2 alongside issuer")
+	}
+}
+
+func TestMecak8sHelmChart_MCPOAuthToolsRenderStaticCatalogue(t *testing.T) {
+	rendered, err := renderOAuthMCPValues(t, `
+mcp:
+  broker:
+    callbackURL: https://agent.example/mcp/authorization/callback
+  servers:
+    - name: github
+      url: https://api.githubcopilot.com/mcp/
+      auth:
+        mode: oauth
+        oauth:
+          upstream:
+            mode: oauth2
+            oauth2:
+              authorizationEndpoint: https://github.com/login/oauth/authorize
+              tokenEndpoint: https://github.com/login/oauth/access_token
+          client:
+            mode: preregistered
+            preregistered:
+              id: github-app
+              secretKeyRef: {name: github-oauth, key: client-secret}
+          scopes: [repo]
+          network: {additionalOrigins: [], privateOrigins: [], maxRedirects: 0}
+          tools:
+            - name: get_me
+              description: Get the authenticated user
+              inputSchema: {type: object, properties: {}}
+              readOnly: true
+`)
+	if err != nil {
+		t.Fatalf("render MCP values with static tools: %v", err)
+	}
+	profile := configMapFromRender(t, rendered, "production-mecak8s-mcp").Data["settings.yaml"]
+	for _, want := range []string{"tools:", "name: \"get_me\"", "description: \"Get the authenticated user\"", "read_only: true"} {
+		if !strings.Contains(profile, want) {
+			t.Fatalf("static-tools render missing %q:\n%s", want, profile)
+		}
+	}
+	authority := runtimeMCPAuthorityFromConfigMap(t, profile)
+	broker, ok := authority.Broker()
+	if authority.Mode() != mcpauthority.Broker || !ok || len(broker.Routes) != 1 {
+		t.Fatalf("runtime broker authority = %#v, want the single static-tools route", authority)
+	}
+}
+
 func TestMecak8sHelmChart_MCPOAuthBrokerCallbackValidation(t *testing.T) {
 	missing := `
 mcp:
