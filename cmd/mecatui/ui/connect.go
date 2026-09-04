@@ -175,11 +175,12 @@ func (m Model) updateConnectMsg(msg tea.Msg) (tea.Model, bool) {
 func (m Model) renderConnectOverlay(th theme.Theme) string {
 	var b strings.Builder
 	b.WriteString(th.Style("askTitle").Render("Connect to remote") + "\n\n")
+	budget := cardTextWidth(m.width)
 	if m.connect.err != "" {
-		b.WriteString(th.Style("warning").Render(sanitizeTerminal(m.connect.err)) + "\n\n")
+		b.WriteString(th.Style("warning").Render(wrapCardText(m.connect.err, budget)) + "\n\n")
 	}
 	if hint := connectAuthHint(m.connect.reason, m.connect.failedTarget); hint != "" {
-		b.WriteString(th.Style("muted").Render(hint) + "\n\n")
+		b.WriteString(th.Style("muted").Render(wrapCardText(hint, budget)) + "\n\n")
 	}
 	if m.connect.loading {
 		b.WriteString("Loading saved targets…")
@@ -190,8 +191,8 @@ func (m Model) renderConnectOverlay(th theme.Theme) string {
 		if i == m.connect.cursor {
 			prefix = "> "
 		}
-		b.WriteString(prefix + sanitizeTerminal(target.Target) + "\n")
-		b.WriteString("   " + sanitizeTerminal(target.Issuer) + " · " + sanitizeTerminal(target.ClientID) + " · " + sanitizeTerminal(target.Audience) + "\n")
+		b.WriteString(wrapCardText(prefix+target.Target, budget) + "\n")
+		b.WriteString(wrapCardText("   "+target.Issuer+" · "+target.ClientID+" · "+target.Audience, budget) + "\n")
 	}
 	if !m.connect.targetsUnavailable && m.connect.reason != client.AuthRejected {
 		newRow := len(m.connect.targets)

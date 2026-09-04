@@ -224,6 +224,7 @@ func reflectionApprovable(p client.LearningProposal) bool {
 //nolint:gocyclo // explicit status/detail rendering keeps every bounded state visible
 func renderReflectionsOverlay(th theme.Theme, st reflectionsState, caps client.Capabilities, hk helpKeys, width, height int) string {
 	lines := []string{th.Style("overlayTitle").Render("Reflections")}
+	budget := cardTextWidth(width)
 	if !caps.LearningProposals {
 		lines = append(lines, th.Style("warning").Render("proposal review is not supported by this server"))
 	} else if st.loading {
@@ -235,7 +236,12 @@ func renderReflectionsOverlay(th theme.Theme, st reflectionsState, caps client.C
 		}
 	} else if st.view == reflectionsDetail && st.detail != nil {
 		p := st.detail
-		lines = append(lines, th.Style("toolName").Render(sanitizeTerminal(p.ID)), "status: "+sanitizeTerminal(p.Status), "version: "+sanitizeTerminal(p.Version), "kind: "+sanitizeTerminal(p.Kind))
+		lines = append(lines,
+			renderToolCardText(th.Style("toolName"), sanitizeTerminal(p.ID), budget),
+			wrapCardText("status: "+p.Status, budget),
+			wrapCardText("version: "+p.Version, budget),
+			wrapCardText("kind: "+p.Kind, budget),
+		)
 		if p.ProjectScoped {
 			lines = append(lines, "scope: trusted project")
 		} else {

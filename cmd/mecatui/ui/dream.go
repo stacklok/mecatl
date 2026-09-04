@@ -273,9 +273,13 @@ func renderDreamPlan(plan *client.DreamPlan, width int, canDecide bool, unavaila
 	if plan == nil {
 		return []string{"No plan returned."}
 	}
+	budget := cardTextWidth(width)
 	lines := []string{"target: " + dreamTargetLabel(plan.Target), "expires: " + plan.ExpiresAt.Format("2006-01-02 15:04:05 MST"), fmt.Sprintf("planned operations: %d  planned sources: %d", plan.PlannedOperationCount, plan.SourceCount), "Exact duplicates keep the survivor unchanged.", "Synthesized replacements write the displayed replacement and retire displayed sources atomically per operation."}
+	for i := range lines {
+		lines[i] = wrapCardText(lines[i], budget)
+	}
 	for i, op := range plan.Operations {
-		lines = append(lines, "", fmt.Sprintf("operation %d — kind: %s", i+1, reflectionDisplayText(op.Kind, 48)), fmt.Sprintf("exact-duplicate eligible: %t", op.ExactDuplicateEligible))
+		lines = append(lines, "", wrapCardText(fmt.Sprintf("operation %d — kind: %s", i+1, op.Kind), budget), fmt.Sprintf("exact-duplicate eligible: %t", op.ExactDuplicateEligible))
 		lines = append(lines, renderDreamParticipant("survivor", op.Survivor, width)...)
 		for j, source := range op.Sources {
 			lines = append(lines, renderDreamParticipant(fmt.Sprintf("source %d", j+1), source, width)...)
@@ -303,9 +307,9 @@ func renderDreamParticipant(label string, p client.DreamParticipant, width int) 
 func framedDreamField(label, value string, width int) []string {
 	width = max(12, width)
 	var out []string
-	for _, physical := range strings.Split(value, "\n") {
+	for _, physical := range strings.Split(sanitizeTerminal(value), "\n") {
 		quoted := strconv.QuoteToGraphic(physical)
-		wrapped := wrapReflectionField("", quoted, width)
+		wrapped := strings.Split(wrapCardText(quoted, width), "\n")
 		if len(wrapped) == 0 {
 			wrapped = []string{"\"\""}
 		}

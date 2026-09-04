@@ -196,19 +196,21 @@ func renderSessionDetails(th theme.Theme, details sessionDetailsView, hk helpKey
 		}
 		return sanitizeTerminal(value)
 	}
+	budget := cardTextWidth(width)
+	row := func(label, value string) string { return wrapCardText(label+unknown(value), budget) }
 	var b strings.Builder
 	b.WriteString(th.Style("askTitle").Render("Active session") + "\n\n")
-	b.WriteString("ID: " + indentWrap(safeSessionID(details.ID), cardTextWidth(width)) + "\n")
+	b.WriteString(wrapCardText("ID: "+safeSessionID(details.ID), budget) + "\n")
 	if details.DebugTargetID != "" {
-		b.WriteString("Debug target ID: " + indentWrap(safeSessionID(details.DebugTargetID), cardTextWidth(width)) + "\n")
+		b.WriteString(wrapCardText("Debug target ID: "+safeSessionID(details.DebugTargetID), budget) + "\n")
 	}
-	b.WriteString("Title: " + unknown(details.Title) + "\n")
-	b.WriteString("State: " + unknown(details.State) + "\n")
-	b.WriteString("Placement: " + unknown(details.Placement.Label) + "\n")
+	b.WriteString(row("Title: ", details.Title) + "\n")
+	b.WriteString(row("State: ", details.State) + "\n")
+	b.WriteString(row("Placement: ", details.Placement.Label) + "\n")
 	b.WriteString("Created: " + formatSessionTimestamp(details.CreatedAt) + "\n")
 	b.WriteString("Modified: " + formatSessionTimestamp(details.ModifiedAt) + "\n")
-	b.WriteString("Provider: " + unknown(details.ProviderID) + "\n")
-	b.WriteString("Model: " + unknown(details.ModelID) + "\n\n")
+	b.WriteString(row("Provider: ", details.ProviderID) + "\n")
+	b.WriteString(row("Model: ", details.ModelID) + "\n\n")
 	copyHelp := "c: copy exact ID"
 	if details.DebugTargetID != "" {
 		copyHelp += "  t: copy exact target ID"
