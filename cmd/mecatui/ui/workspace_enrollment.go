@@ -234,18 +234,20 @@ func (m Model) applyWorkspaceEnrollment(msg workspaceEnrollmentMsg) (tea.Model, 
 	if msg.result.Status == client.WorkspaceEnrollmentConnected {
 		return m.finalizeWorkspaceEnrollmentConnected()
 	}
-	if msg.result.Status == client.WorkspaceEnrollmentCancelled {
+	if terminal, notice, statusMsg := terminalWorkspaceEnrollmentNotice(msg.result.Status); terminal {
+		// Every terminal status (cancelled/denied/expired/failed) fully resets
+		// the enrollment state, exactly like the cancelled case always did: the
+		// broker has already torn down its transaction for ANY terminal status,
+		// so retaining the stale ID here would make the next /tools-connect
+		// send a "check" or "retry" against a transaction that no longer
+		// exists. A clean reset makes the next attempt start a genuinely fresh
+		// enrollment, matching what the server now does on its side too.
 		if m.enrollment.presentationCancel != nil {
 			m.enrollment.presentationCancel()
 		}
 		m.enrollment = workspaceEnrollmentState{}
-		m.workspaceEnrollmentNotice = ""
-		m.statusMsg = "workspace services connection cancelled"
-		return m, nil
-	}
-	if msg.result.Status == client.WorkspaceEnrollmentFailed {
-		m.enrollment.err = "workspace enrollment failed"
-		m.workspaceEnrollmentNotice = "workspace services connection failed — run /tools-connect to retry"
+		m.workspaceEnrollmentNotice = notice
+		m.statusMsg = statusMsg
 		return m, nil
 	}
 	if m.enrollment.presentationDelivered {
@@ -262,6 +264,27 @@ func (m Model) applyWorkspaceEnrollment(msg workspaceEnrollmentMsg) (tea.Model, 
 		m.workspaceEnrollmentNotice = m.enrollment.err
 	}
 	return m, nil
+}
+
+// terminalWorkspaceEnrollmentNotice reports whether status is a terminal,
+// non-connected outcome and — if so — the ambient notice and status-line copy
+// to show for it. Every terminal status gets its own accurate wording rather
+// than lumping them under one generic message, so a user who explicitly
+// cancelled sees different copy than one whose GitHub consent was denied or
+// whose enrollment simply timed out.
+func terminalWorkspaceEnrollmentNotice(status client.WorkspaceEnrollmentStatus) (terminal bool, notice, statusMsg string) {
+	switch status {
+	case client.WorkspaceEnrollmentCancelled:
+		return true, "", "workspace services connection cancelled"
+	case client.WorkspaceEnrollmentDenied:
+		return true, "", "workspace services connection was declined — run /tools-connect to try again"
+	case client.WorkspaceEnrollmentExpired:
+		return true, "", "workspace services connection expired — run /tools-connect to try again"
+	case client.WorkspaceEnrollmentFailed:
+		return true, "", "workspace services connection failed — run /tools-connect to retry"
+	default:
+		return false, "", ""
+	}
 }
 
 // finalizeWorkspaceEnrollmentConnected is the shared completion path. It consumes

@@ -27,7 +27,7 @@ func (s *Service) ConnectWorkspaceServices(ctx context.Context, id session.Sessi
 	sess, enroller, release, err := s.workspaceEnrollmentTarget(ctx, id)
 	if err != nil {
 		if sess != nil && errors.Is(err, brokercontract.ErrStateUnavailable) {
-			return s.settleUnavailableWorkspaceEnrollment(ctx, sess)
+			return s.settleTerminalWorkspaceEnrollment(ctx, sess, brokercontract.WorkspaceEnrollmentFailed)
 		}
 		return WorkspaceEnrollmentProjection{}, err
 	}
@@ -120,7 +120,7 @@ func (s *Service) cancelWorkspaceEnrollment(ctx context.Context, id session.Sess
 			if !ok || pending.ID != enrollmentID {
 				return WorkspaceEnrollmentProjection{}, fmt.Errorf("%w: stale workspace enrollment", ErrFailedPrecondition)
 			}
-			return s.settleUnavailableWorkspaceEnrollment(ctx, sess)
+			return s.settleTerminalWorkspaceEnrollment(ctx, sess, brokercontract.WorkspaceEnrollmentFailed)
 		}
 		return WorkspaceEnrollmentProjection{}, err
 	}
@@ -131,7 +131,18 @@ func (s *Service) cancelWorkspaceEnrollment(ctx context.Context, id session.Sess
 	}
 	expectedRef := enrollmentRef(pending)
 	result, err := enroller.CancelWorkspaceEnrollment(ctx, expectedRef)
-	if err != nil || !result.Valid() || !sameWorkspaceEnrollmentRef(result.Ref, expectedRef) {
+	if err != nil {
+		if errors.Is(err, brokercontract.ErrAuthorizationNotFound) {
+			// The broker's transaction is already gone (a prior terminal Observe
+			// already tore it down): there is nothing left to cancel, but the
+			// aggregate's own pending record must still be cleared, or this
+			// session stays wedged behind a cancel that can never succeed on the
+			// broker side again.
+			return s.settleTerminalWorkspaceEnrollment(ctx, sess, brokercontract.WorkspaceEnrollmentCancelled)
+		}
+		return WorkspaceEnrollmentProjection{}, fmt.Errorf("%w: cancel workspace enrollment", ErrFailedPrecondition)
+	}
+	if !result.Valid() || !sameWorkspaceEnrollmentRef(result.Ref, expectedRef) {
 		return WorkspaceEnrollmentProjection{}, fmt.Errorf("%w: cancel workspace enrollment", ErrFailedPrecondition)
 	}
 	if err := sess.AbortWorkspaceEnrollment(enrollmentID); err != nil {
@@ -143,18 +154,22 @@ func (s *Service) cancelWorkspaceEnrollment(ctx context.Context, id session.Sess
 	return WorkspaceEnrollmentProjection{Ref: result.Ref, Status: result.Status}, nil
 }
 
-func (s *Service) settleUnavailableWorkspaceEnrollment(ctx context.Context, sess *session.Session) (WorkspaceEnrollmentProjection, error) {
+// settleTerminalWorkspaceEnrollment clears the aggregate's pending record for
+// any terminal outcome the broker can no longer confirm (its own transaction
+// is already gone) or that the caller has already determined — never leaving
+// PendingWorkspaceEnrollment set with nothing left able to resolve it.
+func (s *Service) settleTerminalWorkspaceEnrollment(ctx context.Context, sess *session.Session, status brokercontract.WorkspaceEnrollmentStatus) (WorkspaceEnrollmentProjection, error) {
 	pending, ok := sess.PendingWorkspaceEnrollment()
 	if !ok {
 		return WorkspaceEnrollmentProjection{}, fmt.Errorf("%w: workspace enrollment is not pending", ErrFailedPrecondition)
 	}
 	if err := sess.AbortWorkspaceEnrollment(pending.ID); err != nil {
-		return WorkspaceEnrollmentProjection{}, fmt.Errorf("%w: clear unavailable workspace enrollment", ErrFailedPrecondition)
+		return WorkspaceEnrollmentProjection{}, fmt.Errorf("%w: clear terminal workspace enrollment", ErrFailedPrecondition)
 	}
 	if err := s.saveSession(ctx, sess); err != nil {
-		return WorkspaceEnrollmentProjection{}, fmt.Errorf("%w: persist unavailable workspace enrollment", ErrInternal)
+		return WorkspaceEnrollmentProjection{}, fmt.Errorf("%w: persist terminal workspace enrollment", ErrInternal)
 	}
-	return WorkspaceEnrollmentProjection{Ref: enrollmentRef(pending), Status: brokercontract.WorkspaceEnrollmentFailed}, nil
+	return WorkspaceEnrollmentProjection{Ref: enrollmentRef(pending), Status: status}, nil
 }
 
 func (s *Service) workspaceEnrollmentTarget(ctx context.Context, id session.SessionID) (*session.Session, brokercontract.WorkspaceEnrollmentAttachment, func(), error) {

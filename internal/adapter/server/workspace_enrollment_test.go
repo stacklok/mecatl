@@ -26,6 +26,7 @@ type enrollmentAttachment struct {
 	result        brokercontract.WorkspaceEnrollmentResult
 	catalogue     brokercontract.WorkspaceCatalogue
 	cancelWait    bool
+	cancelErr     error
 	beginCalls    int
 	observeCalls  int
 	cancelCalls   int
@@ -61,10 +62,14 @@ func (a *enrollmentAttachment) CancelWorkspaceEnrollment(ctx context.Context, re
 	a.cancelCalls++
 	a.lastCancelRef = ref
 	cancelWait := a.cancelWait
+	cancelErr := a.cancelErr
 	a.mu.Unlock()
 	if cancelWait {
 		<-ctx.Done()
 		return brokercontract.WorkspaceEnrollmentResult{}, ctx.Err()
+	}
+	if cancelErr != nil {
+		return brokercontract.WorkspaceEnrollmentResult{}, cancelErr
 	}
 	return brokercontract.WorkspaceEnrollmentResult{Ref: a.ref, Status: brokercontract.WorkspaceEnrollmentCancelled}, nil
 }
@@ -494,6 +499,66 @@ func TestWorkspaceEnrollmentStateLossClearsPendingGate(t *testing.T) {
 	broker.attachErr = nil
 	if restarted, err := svc.ConnectWorkspaceServices(t.Context(), created.ID); err != nil || restarted.Status != brokercontract.WorkspaceEnrollmentPending {
 		t.Fatalf("restart after state loss = %#v, %v", restarted, err)
+	}
+}
+
+// TestWorkspaceEnrollmentCancelHealsAlreadyGoneBrokerTransaction pins the
+// cancel-path half of I-7: a Cancel arriving after the broker's own
+// transaction is already gone (e.g. a prior terminal Observe already tore it
+// down) must still clear the aggregate's pending record — "cancel this stuck
+// enrollment" is exactly the gesture a user reaches for on a wedged session,
+// and it must not itself hard-fail with the record left pending forever.
+func TestWorkspaceEnrollmentCancelHealsAlreadyGoneBrokerTransaction(t *testing.T) {
+	runtime := testBrokerRuntime(t)
+	broker := &enrollmentBroker{Service: runtime}
+	store := memstore.New()
+	svc, err := NewService(Config{
+		Engine:            brokerEngineResult().Engine,
+		Store:             store,
+		PlacementProvider: brokerPlacementProvider{}, PlacementScope: "test",
+		NewID:     func() session.SessionID { return "cancel-heals-session" },
+		MCPBroker: broker,
+		RootAuthority: func(session.SessionKind) session.Authority {
+			return session.Authority{CapabilitySet: governance.CapabilitySet{Tools: []string{"mcp__calendar__list"}}, Provenance: "test"}
+		},
+		SessionEngineWithTools: func(context.Context, ProviderSelector, []mcp.ServerConfig, SessionProfile, string, session.PermissionMode, []tool.Tool) (SessionEngineResult, error) {
+			return brokerEngineResult(), nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer svc.Close()
+	created, err := svc.CreateSession(t.Context(), session.ModeDefault, session.Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	started, err := svc.ConnectWorkspaceServices(t.Context(), created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	broker.attachment.cancelErr = brokercontract.ErrAuthorizationNotFound
+	result, err := svc.CancelWorkspaceEnrollment(t.Context(), created.ID, started.Ref.ID)
+	if err != nil {
+		t.Fatalf("CancelWorkspaceEnrollment = %v, want a healed Cancelled result", err)
+	}
+	if result.Status != brokercontract.WorkspaceEnrollmentCancelled {
+		t.Fatalf("healed cancel status = %q, want cancelled", result.Status)
+	}
+	loaded, err := store.Load(t.Context(), created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, pending := loaded.PendingWorkspaceEnrollment(); pending {
+		t.Fatal("cancel healing left workspace enrollment pending")
+	}
+
+	// A fresh connect must now start a brand-new enrollment, proving the
+	// session is not permanently wedged.
+	broker.attachment.cancelErr = nil
+	if restarted, err := svc.ConnectWorkspaceServices(t.Context(), created.ID); err != nil || restarted.Status != brokercontract.WorkspaceEnrollmentPending {
+		t.Fatalf("reconnect after healed cancel = %#v, %v", restarted, err)
 	}
 }
 

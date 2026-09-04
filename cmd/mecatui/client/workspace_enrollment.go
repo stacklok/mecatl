@@ -17,6 +17,11 @@ const (
 	WorkspaceEnrollmentConnected WorkspaceEnrollmentStatus = "connected"
 	// WorkspaceEnrollmentCancelled indicates that the enrollment was cancelled.
 	WorkspaceEnrollmentCancelled WorkspaceEnrollmentStatus = "cancelled"
+	// WorkspaceEnrollmentDenied indicates that the user declined consent.
+	WorkspaceEnrollmentDenied WorkspaceEnrollmentStatus = "denied"
+	// WorkspaceEnrollmentExpired indicates that the enrollment's TTL elapsed
+	// before it completed.
+	WorkspaceEnrollmentExpired WorkspaceEnrollmentStatus = "expired"
 	// WorkspaceEnrollmentFailed indicates that the enrollment failed.
 	WorkspaceEnrollmentFailed WorkspaceEnrollmentStatus = "failed"
 )

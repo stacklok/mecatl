@@ -198,7 +198,11 @@ func (a *Attachment) ObserveWorkspaceEnrollment(ctx context.Context, ref contrac
 		result := a.terminateWorkspaceTransactionLocked(logical, transaction, contract.WorkspaceEnrollmentExpired)
 		logical.mu.Unlock()
 		return result, nil
-	case session.AuthorizationFailed, session.AuthorizationDenied, session.AuthorizationClosed:
+	case session.AuthorizationDenied:
+		result := a.terminateWorkspaceTransactionLocked(logical, transaction, contract.WorkspaceEnrollmentDenied)
+		logical.mu.Unlock()
+		return result, nil
+	case session.AuthorizationFailed, session.AuthorizationClosed:
 		result := a.terminateWorkspaceTransactionLocked(logical, transaction, contract.WorkspaceEnrollmentFailed)
 		logical.mu.Unlock()
 		return result, nil

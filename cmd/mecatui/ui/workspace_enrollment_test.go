@@ -284,6 +284,64 @@ func TestWorkspaceEnrollmentFailedDoesNotPollOrRetry(t *testing.T) {
 	}
 }
 
+// TestWorkspaceEnrollmentExpiredResetsInsteadOfPollingForever pins the bug
+// found while implementing I-7's server-side fix: Expired had no branch at
+// all in applyWorkspaceEnrollment, so it fell through to the
+// presentationDelivered case and polled an already-dead transaction forever.
+func TestWorkspaceEnrollmentExpiredResetsInsteadOfPollingForever(t *testing.T) {
+	m, _ := builtinDispatchModel(t, client.Capabilities{WorkspaceEnrollment: true}, false)
+	m.enrollment = workspaceEnrollmentState{ID: "bundle-1", Status: client.WorkspaceEnrollmentPending, controlGen: 4, presentationDelivered: true}
+
+	mm, cmd := m.applyWorkspaceEnrollment(workspaceEnrollmentMsg{
+		action: "check", sessionID: m.sessionID, targetEnrollmentID: "bundle-1", gen: 4,
+		result: client.WorkspaceEnrollment{ID: "bundle-1", Status: client.WorkspaceEnrollmentExpired},
+	})
+	m = mm.(Model)
+	if cmd != nil {
+		t.Fatal("expired enrollment kept polling instead of resetting")
+	}
+	if m.enrollment.ID != "" {
+		t.Fatalf("expired enrollment retained stale ID: %+v", m.enrollment)
+	}
+	if !strings.Contains(m.statusMsg, "expired") {
+		t.Fatalf("statusMsg = %q, want an expiry notice", m.statusMsg)
+	}
+}
+
+func TestWorkspaceEnrollmentDeniedResetsAndAllowsFreshConnect(t *testing.T) {
+	m, _ := builtinDispatchModel(t, client.Capabilities{WorkspaceEnrollment: true}, false)
+	m.enrollment = workspaceEnrollmentState{ID: "bundle-1", Status: client.WorkspaceEnrollmentPending, controlGen: 4, presentationDelivered: true}
+
+	mm, cmd := m.applyWorkspaceEnrollment(workspaceEnrollmentMsg{
+		action: "check", sessionID: m.sessionID, targetEnrollmentID: "bundle-1", gen: 4,
+		result: client.WorkspaceEnrollment{ID: "bundle-1", Status: client.WorkspaceEnrollmentDenied},
+	})
+	m = mm.(Model)
+	if cmd != nil {
+		t.Fatal("denied enrollment kept polling instead of resetting")
+	}
+	if m.enrollment.ID != "" {
+		t.Fatalf("denied enrollment retained stale ID: %+v", m.enrollment)
+	}
+	if !strings.Contains(m.statusMsg, "declined") {
+		t.Fatalf("statusMsg = %q, want a declined notice", m.statusMsg)
+	}
+
+	// A fresh /tools-connect after a denial must start a brand-new enrollment
+	// (connectAction), never "check"/"retry" against the now-cleared ID.
+	control := &workspaceEnrollmentControlFake{connect: client.WorkspaceEnrollment{ID: "bundle-2", Status: client.WorkspaceEnrollmentPending}}
+	m.deps.WorkspaceEnrollment = control
+	mm, connectCmd := m.runToolsConnect()
+	m = mm.(Model)
+	if connectCmd == nil {
+		t.Fatal("runToolsConnect returned no command")
+	}
+	m = applyAll(m, connectCmd())
+	if control.connectCalls != 1 {
+		t.Fatalf("connect calls = %d, want 1 (a fresh connectAction)", control.connectCalls)
+	}
+}
+
 func TestWorkspaceEnrollmentPresentationGatesAndSurvivesTransientObservationError(t *testing.T) {
 	control := &workspaceEnrollmentControlFake{}
 	m := New(Deps{Ctx: t.Context(), WorkspaceEnrollment: control})
