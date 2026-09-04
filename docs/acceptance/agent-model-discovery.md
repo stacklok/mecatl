@@ -6,44 +6,47 @@
 **ADR:** [ADR 0016](../adr/0016-multi-provider.md) — composition-owned registry, provider-neutral engine boundary, live inventory, and provider/model selection. [ADR 0238](../adr/0238-operator-defined-llm-providers.md) — stable operator-defined provider IDs and conservative inventory floors.
 **Accumulator branch:** `acc/agent-model-discovery` (off `main`).
 
-The first independently valuable outcome from #1064 is a model-facing, read-only way to
-inspect the same resolved inventory already exposed through `ListModels`. It lets an agent
-choose an exact configured inference target without guessing identifiers or learning from an
-inference failure. It does not change provider identity, selection semantics, or routing.
+**Decision:** add a bounded, read-only tool that lets an agent inspect the resolved model
+inventory already exposed by `ListModels`. The tool helps an agent identify an existing
+configured target; it does not select a target or change routing.
 
 ## Why this first
 
-The repository evidence points to the existing exact pair, not a new model abstraction: `provider_id` +
-`model_id` already form the stable configured inference-target selector. Each configured target has one
-endpoint/API flavor and the adapter/replay behavior that belongs to it, so equal model IDs under
-different targets are intentionally different targets rather than evidence that they can be merged. The
-server and TUI already expose the composition-owned resolved inventory through `ListModels`; the gap
-is that the model-facing agent cannot inspect that same inventory. Anonymous `Subagent.model` is
-intentionally same-target as well: it resolves on the parent's provider, while an explicit named-agent
-provider pin is the separate, existing cross-provider seam ([ADR 0016, provider/model selection and
-per-sub-agent selection](../adr/0016-multi-provider.md#10-per-sub-agent-provider-selection-shipped--both-halves)).
+The first useful step is to let an agent inspect the same resolved model inventory that
+`ListModels` already exposes. Discovery is read-only: it helps the agent find a valid
+configured target instead of guessing a model identifier or learning about availability only
+after an inference failure.
 
-That evidence comes from the repository architecture and ADRs, checked against comparative design
-research without relying on or naming any particular gateway, endpoint, or confidential deployment.
-The plan therefore starts with safe discovery over the shared inventory: it closes the agent-facing
-visibility gap without inventing another selector. Cross-target delegation is deferred because there
-is no demonstrated independent routing lifecycle yet; hiding protocol routes behind a new abstraction
-would require new route-selection, persistence, replay, and migration rules. Grouping, multi-route,
-and composite abstractions are likewise deferred because premature global model grouping could falsely
-imply equivalence. These boundaries follow the fixed-provider/session and two-field selector decisions
-in [ADR 0016](../adr/0016-multi-provider.md) and the live inventory contract in
+The existing identity is sufficient for this work. A configured target continues to be
+identified by the exact pair `(provider_id, model_id)`. The same `model_id` under two provider
+IDs remains two distinct targets; this plan does not merge them or redesign provider/model
+selection. It only makes the existing targets visible to the agent. This preserves the
+[ADR 0016](../adr/0016-multi-provider.md) selection contract and the
 [architecture: model inventory](../architecture/providers.md#multi-provider--registry-per-session-routing--model-inventory).
+
+Cross-target child selection is deferred. A child currently uses the parent’s target unless
+an existing named-agent configuration provides a separate provider selection. Supporting
+general cross-target selection would require new rules for choosing, persisting, replaying,
+and restoring a child’s target, and no demonstrated need currently justifies that work. See
+[ADR 0016, per-sub-agent provider selection](../adr/0016-multi-provider.md#10-per-sub-agent-provider-selection-shipped--both-halves).
+
+Grouping, multi-route, and composite-provider abstractions are also deferred until a concrete
+need is demonstrated. Model identifiers that look similar are not assumed to represent
+interchangeable targets. The first release therefore focuses on bounded discovery over the
+shared inventory, while preserving the existing `(provider_id, model_id)` contract. The plan
+uses repository architecture and ADR evidence without naming a gateway, endpoint, or
+confidential deployment.
 
 ## Scope cuts
 
-- `provider_id` remains the stable configured inference-target ID. The exact current selection
-  handle is `(provider_id, model_id)`, matching the existing two-field selector described in
+- `provider_id` remains the stable configured inference-target ID. The exact selection handle
+  remains `(provider_id, model_id)`, matching the existing two-field selector described in
   [architecture: providers](../architecture/providers.md#multi-provider--registry-per-session-routing--model-inventory).
-- The source of truth is one composition-owned resolved inventory shared with `ListModels`, not
-  a second registry, lister, cache, or discovery path. The engine continues to receive neutral
-  injected capabilities, as required by [ADR 0016](../adr/0016-multi-provider.md).
-- Discovery is informational. It neither selects a session model nor changes a provider/model
-  binding. A discovered handle is only a candidate for the existing selection surface.
+- One composition-owned resolved inventory remains the source of truth for both discovery and
+  `ListModels`. This plan adds no registry, lister, cache, or discovery path. The engine still
+  receives neutral injected capabilities, as required by [ADR 0016](../adr/0016-multi-provider.md).
+- Discovery is informational. It does not select a session model or change a provider/model
+  binding; a discovered handle is only a candidate for the existing selection surface.
 - The inventory is public metadata only. It must not reveal credentials, endpoints, network
   topology, raw upstream failures, or configuration details beyond the safe provider status
   already intended for inventory consumers.
@@ -52,12 +55,12 @@ in [ADR 0016](../adr/0016-multi-provider.md) and the live inventory contract in
 
 ### Scenario 1 — an agent can inspect exact available selection handles
 
-In a session with model selection available, the model can call a bounded, read-only discovery
-tool and receive a compact inventory of selectable entries. Each entry presents the exact
-`provider_id` and `model_id` together, plus only the established safe descriptive/capability
-metadata needed to compare entries. Identical model IDs from different providers remain distinct
-entries rather than being merged or guessed. The tool's inventory agrees with `ListModels` for
-one snapshot, including provider-status metadata where that surface exposes it.
+In a session where model selection is available, the agent can call a bounded, read-only tool
+for a compact inventory of selectable entries. Each entry presents `provider_id` and `model_id`
+together, with only the established safe descriptive and capability metadata needed for
+comparison. Entries with the same model ID from different providers remain separate. For a
+single snapshot, the tool agrees with `ListModels`, including provider-status metadata where
+that surface exposes it.
 
 **Acceptance:**
 
@@ -82,11 +85,11 @@ one snapshot, including provider-status metadata where that surface exposes it.
 
 ### Scenario 2 — narrowing is safe and cannot create a second selection language
 
-Where the full bounded inventory is still too broad, the tool supports only a small safe
-narrowing surface warranted by the resolved metadata, such as provider ID and a caller-supplied
-result limit. Invalid filters, unknown provider IDs, or excessive limits fail safely or yield an
-honest empty result; they never trigger provider probing, configuration reads, or a model
-selection. Filtering and limiting preserve the exact-pair presentation and the response bound.
+When the full bounded inventory is still too broad, the tool may provide a small narrowing
+surface based on resolved metadata, such as provider ID and a caller-supplied result limit.
+Invalid filters, unknown provider IDs, and excessive limits fail safely or return an honest
+empty result. They never probe providers, read configuration, or select a model. Filtering and
+limiting preserve the exact-pair presentation and response bound.
 
 **Acceptance:**
 
@@ -105,12 +108,13 @@ selection. Filtering and limiting preserve the exact-pair presentation and the r
 
 ### Scenario 3 — discovery remains honest across catalogs and inventory states
 
-The tool is registered wherever the existing model-facing capability is valid: the default/shared
-catalog, eligible per-session catalogs, and the no-FS catalog. It follows the existing live
-refresh and fallback semantics rather than promising fresh network state: synchronous floors,
-last-known-good data, unavailable/empty inventory, and conservative unknown metadata remain
-truthful. It neither exposes sensitive provider configuration nor turns a refresh/listing failure
-into raw upstream disclosure.
+The tool is registered wherever the existing model-facing capability is valid: the
+default/shared catalog, eligible per-session catalogs, and the no-FS catalog. It follows the
+existing live-refresh and fallback behavior rather than promising fresh network state.
+
+Configured floors, last-known-good data, unavailable or empty inventory, and conservative
+unknown metadata remain truthful. The tool never exposes sensitive provider configuration or
+turns a refresh or listing failure into raw upstream disclosure.
 
 **Acceptance:**
 
@@ -143,7 +147,7 @@ into raw upstream disclosure.
 
 ## Open decision
 
-Decide during implementation whether a provider-only filter plus a caller-supplied bounded limit
-is sufficient for the first release. Any additional filter must be justified by existing resolved
-safe metadata, preserve the shared-inventory invariant, and remain within this plan's disclosure
-and boundedness criteria; it must not become a route, endpoint, or provider-group selector.
+During implementation, decide whether a provider-only filter and caller-supplied bounded limit
+are sufficient for the first release. Any additional filter must use existing resolved safe
+metadata, preserve the shared-inventory invariant, and meet this plan's disclosure and
+boundedness criteria. It must not become a route, endpoint, or provider-group selector.
