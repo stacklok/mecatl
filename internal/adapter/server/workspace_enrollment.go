@@ -34,11 +34,11 @@ func (s *Service) ConnectWorkspaceServices(ctx context.Context, id session.Sessi
 		}
 		pending = pendingEnrollment(presentation.Ref)
 		if err := sess.BeginWorkspaceEnrollment(pending); err != nil {
-			_, _ = enroller.CancelWorkspaceEnrollment(context.WithoutCancel(ctx), presentation.Ref)
+			cancelWorkspaceEnrollmentDetached(ctx, enroller, presentation.Ref)
 			return WorkspaceEnrollmentProjection{}, fmt.Errorf("%w: record workspace enrollment", ErrFailedPrecondition)
 		}
 		if err := s.saveSession(ctx, sess); err != nil {
-			_, _ = enroller.CancelWorkspaceEnrollment(context.WithoutCancel(ctx), presentation.Ref)
+			cancelWorkspaceEnrollmentDetached(ctx, enroller, presentation.Ref)
 			return WorkspaceEnrollmentProjection{}, fmt.Errorf("%w: persist workspace enrollment", ErrInternal)
 		}
 		return WorkspaceEnrollmentProjection{Ref: presentation.Ref, Status: brokercontract.WorkspaceEnrollmentPending, URL: presentation.URL}, nil
@@ -133,6 +133,12 @@ func (s *Service) workspaceEnrollmentTarget(ctx context.Context, id session.Sess
 		return nil, nil, nil, fmt.Errorf("%w: workspace services are not configured", ErrFailedPrecondition)
 	}
 	return sess, enroller, brokerUnlock, nil
+}
+
+func cancelWorkspaceEnrollmentDetached(ctx context.Context, enroller brokercontract.WorkspaceEnrollmentAttachment, ref brokercontract.WorkspaceEnrollmentRef) {
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), engineCloseTimeout)
+	defer cancel()
+	_, _ = enroller.CancelWorkspaceEnrollment(cleanupCtx, ref)
 }
 
 func sameWorkspaceEnrollmentRef(left, right brokercontract.WorkspaceEnrollmentRef) bool {

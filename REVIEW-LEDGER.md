@@ -35,7 +35,7 @@ Status vocabulary: `open`, `in_progress`, `fixed`, `accepted`, `superseded`.
 | H-K8 | known | fixed | Enrollment observation and cancellation require the returned broker ref to equal the exact pending ref (ID, required-service count, and instant); a valid result for another enrollment cannot mutate the aggregate. | `internal/adapter/server/workspace_enrollment.go` |
 | H-K9 | known | open | Executable tools and persisted authority are derived from different catalogue values. | `internal/adapter/server/workspace_enrollment.go` |
 | H-K10 | known | open | Restart can leave pending enrollment permanently wedged. | `internal/adapter/server/workspace_enrollment.go`; `internal/adapter/server/mcp_broker.go` |
-| H-K11 | known | open | Enrollment compensation removes cancellation without adding a bounded cleanup timeout. | `internal/adapter/server/workspace_enrollment.go` |
+| H-K11 | known | fixed | Enrollment compensation detaches from the failed request but is bounded by the shared broker cleanup deadline, so a stuck cancellation cannot wedge session creation/control indefinitely. | `internal/adapter/server/workspace_enrollment.go` |
 | H-K12 | known | open | TUI workspace enrollment is a forced startup modal rather than the later on-demand `/tools-connect` flow. | `cmd/mecatui/ui/workspace_enrollment.go`; `cmd/mecatui/ui/update.go` |
 | H-K13 | known | open | Browser completion requires manual recheck; ID/generation-pinned background polling is missing. | `cmd/mecatui/ui/mcp_authorization.go`; `cmd/mecatui/ui/workspace_enrollment.go` |
 | H-K14 | known | open | Workspace enrollment has gRPC but no HTTP control parity. | `internal/adapter/server/http.go` |

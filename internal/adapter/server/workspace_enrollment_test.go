@@ -16,9 +16,10 @@ import (
 
 type enrollmentAttachment struct {
 	brokercontract.Attachment
-	ref       brokercontract.WorkspaceEnrollmentRef
-	result    brokercontract.WorkspaceEnrollmentResult
-	catalogue brokercontract.WorkspaceCatalogue
+	ref        brokercontract.WorkspaceEnrollmentRef
+	result     brokercontract.WorkspaceEnrollmentResult
+	catalogue  brokercontract.WorkspaceCatalogue
+	cancelWait bool
 }
 
 func (a *enrollmentAttachment) BeginWorkspaceEnrollment(context.Context) (brokercontract.WorkspaceEnrollmentPresentation, error) {
@@ -29,7 +30,11 @@ func (a *enrollmentAttachment) ObserveWorkspaceEnrollment(context.Context, broke
 	return a.result, nil
 }
 
-func (a *enrollmentAttachment) CancelWorkspaceEnrollment(context.Context, brokercontract.WorkspaceEnrollmentRef) (brokercontract.WorkspaceEnrollmentResult, error) {
+func (a *enrollmentAttachment) CancelWorkspaceEnrollment(ctx context.Context, _ brokercontract.WorkspaceEnrollmentRef) (brokercontract.WorkspaceEnrollmentResult, error) {
+	if a.cancelWait {
+		<-ctx.Done()
+		return brokercontract.WorkspaceEnrollmentResult{}, ctx.Err()
+	}
 	return brokercontract.WorkspaceEnrollmentResult{Ref: a.ref, Status: brokercontract.WorkspaceEnrollmentCancelled}, nil
 }
 
@@ -66,6 +71,19 @@ func (t enrollmentTool) Spec() tool.ToolSpec {
 func (enrollmentTool) ReadOnly() bool { return true }
 func (enrollmentTool) Execute(context.Context, session.ToolCall, tool.Environment) (session.ToolResult, error) {
 	return session.NewToolResult("call", "ok"), nil
+}
+
+func TestWorkspaceEnrollmentCompensationIsBounded(t *testing.T) {
+	oldTimeout := engineCloseTimeout
+	engineCloseTimeout = 20 * time.Millisecond
+	defer func() { engineCloseTimeout = oldTimeout }()
+
+	attachment := &enrollmentAttachment{cancelWait: true}
+	started := time.Now()
+	cancelWorkspaceEnrollmentDetached(context.Background(), attachment, brokercontract.WorkspaceEnrollmentRef{})
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("compensation took %s", elapsed)
+	}
 }
 
 func TestWorkspaceEnrollmentPublishesFrozenCatalogueBeforePrompt(t *testing.T) {
