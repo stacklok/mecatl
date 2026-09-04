@@ -31,6 +31,24 @@ fact, then raises the same error if iteration continues. Both leave the cursor a
 last envelope before the gap. `CursorExpiredError` also ends the attachment and requires
 the caller to choose an explicit restart from the beginning or a transcript reload.
 
+## Local daemon
+
+Node/Bun callers can import `spawn` from `@stacklok/mecatl-sdk/node`. It resolves an existing
+`mecated` executable from `binaryPath`, `MECATED_BIN`, then `PATH`, starts a private UDS-only
+daemon, and resolves after the daemon publishes its supported ready document:
+
+```ts
+import { spawn } from "@stacklok/mecatl-sdk/node";
+
+await using client = await spawn({ binaryPath: "/opt/mecatl/bin/mecated" });
+const session = await client.sessions.create({});
+```
+
+The SDK does not download a binary or invoke a shell. Its listener, ready-file, and lifetime
+arguments are reserved; `args` can add other `mecated serve` flags but cannot replace those
+owned values. Closing the client stops only the daemon that client spawned and removes its
+private runtime directory.
+
 ## Development
 
 Run the SDK gates from the repository root:

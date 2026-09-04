@@ -218,6 +218,16 @@ builds and spawns the same checkout's `mecated` with the offline mock provider t
 prove TCP, UDS, HTTP/SSE, asks, cancellation, and stale controls on real wire. See
 [ADR 0279](adr/0279-typescript-sdk-architecture.md).
 
+The `./node` entry point can also own a local daemon through `spawn()`. It resolves an
+already-installed `mecated` from `binaryPath`, `MECATED_BIN`, then `PATH` without a
+shell; creates a private per-client runtime directory; and launches the fixed UDS-only,
+HTTP-disabled topology. The child inherits fd 3 as a lifetime socketpair, so the daemon
+observes EOF if its Node parent disappears. The client is returned only after a complete
+`mecated-ready/1` file is read, and its transport dials the document's `socket_path`.
+Closing that client closes its transport, stops the owned child, and removes the runtime
+directory; clients made by `connect()` acquire no process ownership. See
+[ADR 0292](adr/0292-typescript-sdk-local-daemon-and-tools.md).
+
 The durable-watch foundation uses the generated `WatchSessionEvents` descriptor on
 both transports and decodes each wire frame into a four-arm `WatchEnvelope`:
 `event`, the single replay-to-live `boundary`, cursor-free `gap`, or lossless

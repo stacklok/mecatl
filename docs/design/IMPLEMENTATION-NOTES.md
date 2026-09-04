@@ -8145,7 +8145,7 @@ failures name only the class, never the value. The elapsed-time expiry leg is bo
 the only clock-dependent part because the official `oauth2.Token.Valid` has no injected
 clock.
 
-## TypeScript SDK — `sdk/typescript/` (M1 core + M2 attachment, ADRs 0279 and 0288)
+## TypeScript SDK — `sdk/typescript/` (M1 core + M2 attachment + M3 local daemon, ADRs 0279, 0288 and 0292)
 
 The ESM-only `@stacklok/mecatl-sdk` has three exports. `.` owns the transport-neutral
 `Client`/`Session`/`Run` API, typed events/errors, prompt-media helpers, and the hand-written
@@ -8190,6 +8190,33 @@ existing `engine/adapter/mockllm` provider via `app.Config.MockProvider`, includ
 tool-call turns and a bounded per-turn delay for deterministic mid-flight cancellation. The
 SDK CI job runs frozen install, Biome, typecheck, unit Vitest, build, pack, API reports, Go+TS
 codegen freshness, and this e2e; each command remains a hard failure.
+
+M3's local-daemon root is `sdk/typescript/src/spawn.ts`. `spawn()` is reachable only from
+`./node`; the transport-neutral entry point imports neither `node:child_process` nor the
+launcher module. Binary resolution is total and ordered: explicit `binaryPath`, then
+`MECATED_BIN`, then an SDK-owned `PATH` walk for `mecated`, with `stat` plus execute-access
+validation before launch and no shell. Caller arguments cannot name the SDK-owned listener,
+ready-file, or lifetime flags. The invariant argv is `serve --grpc-unix-socket <socket>
+--http-addr "" --ready-file <ready> --lifetime-pipe-fd 3`; it deliberately carries no posture,
+trust, or permission flag.
+
+Each spawn creates a `0700` directory with `mkdtemp`, never adopts a caller-predictable path,
+and holds `ready.json` plus `mecated.sock` there. Socket paths are checked against Darwin's
+104-byte `sun_path` ceiling before launch; an over-long OS temp base is discarded and replaced
+through a second short-base `mkdtemp`. Cleanup uses `lstat` so replacing the runtime path with
+a symlink removes the link rather than its target. The launch, filesystem, scheduler, clock,
+and transport factories live in one module-internal options bag used by unit tests and never
+enter the public API.
+
+Readiness is the atomically published document, not stdout or a speculative dial loop. A
+partial JSON read remains behind the polling barrier; only schema `mecated-ready/1` with a
+non-empty `socket_path` succeeds, and the document path — not the requested path — builds the
+UDS transport. Node's fourth `stdio` pipe is a connected Unix socketpair; the server-side
+validator accepts that exact connected-stream shape as well as a FIFO, so fd 3 now provides the
+parent-death EOF contract without `mkfifo(1)`. `ClientImpl`'s private `afterClose` hook runs
+after owned-transport disposal and lets a spawned client close the lifetime endpoint, stop its
+child handle, and remove the directory without giving ordinary `connect()` clients process
+authority.
 
 The M2 durable-watch base lives in `sdk/typescript/src/watch.ts`. Its client-authored `kind`
 turns the generated `{event, cursor, phase}` response into `event | boundary | gap | unknown`;

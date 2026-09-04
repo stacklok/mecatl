@@ -140,6 +140,7 @@ export interface Client {
 }
 
 interface ClientCoreOptions {
+  afterClose?: () => Promise<void>;
   owned: boolean;
   transport: Transport;
   transportKind: TransportKind;
@@ -334,6 +335,7 @@ class ClientImpl implements Client {
   readonly status: ConnectionStatusStore;
 
   readonly #abort = new AbortController();
+  readonly #afterClose: (() => Promise<void>) | undefined;
   readonly #attachmentStatuses = new Map<symbol, AttachmentConnectionStatus>();
   readonly #listeners = new Set<ConnectionStatusListener>();
   readonly #operations: SessionOperations;
@@ -351,6 +353,7 @@ class ClientImpl implements Client {
   #visibilityTarget: Document | undefined;
 
   constructor(options: ClientCoreOptions) {
+    this.#afterClose = options.afterClose;
     this.#owned = options.owned;
     this.#transport = options.transport;
     this.#transportKind = options.transportKind;
@@ -447,15 +450,19 @@ class ClientImpl implements Client {
     this.#listeners.clear();
     if (!this.#owned) return;
 
-    const transport = this.#transport as DisposableTransport;
-    const asyncDispose = transport[Symbol.asyncDispose];
-    const dispose = transport[Symbol.dispose];
-    if (asyncDispose !== undefined) {
-      await asyncDispose.call(transport);
-    } else if (dispose !== undefined) {
-      dispose.call(transport);
-    } else {
-      await transport.close?.();
+    try {
+      const transport = this.#transport as DisposableTransport;
+      const asyncDispose = transport[Symbol.asyncDispose];
+      const dispose = transport[Symbol.dispose];
+      if (asyncDispose !== undefined) {
+        await asyncDispose.call(transport);
+      } else if (dispose !== undefined) {
+        dispose.call(transport);
+      } else {
+        await transport.close?.();
+      }
+    } finally {
+      await this.#afterClose?.();
     }
   }
 

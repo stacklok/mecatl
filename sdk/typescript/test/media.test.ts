@@ -166,8 +166,8 @@ describe("multimodal prompt helpers", () => {
       fileURLToPath(new URL("../src/index.ts", import.meta.url)),
     );
     for (const [file, source] of sources) {
-      expect(source, `${file} imports a Node filesystem module`).not.toMatch(
-        /["'](?:node:)?(?:fs|fs\/promises|path)["']/,
+      expect(source, `${file} imports a Node-only module`).not.toMatch(
+        /(?:from\s*|import\s*(?:\(\s*)?)["'](?:node:)?(?:child_process|fs|fs\/promises|http|path)["']/,
       );
     }
   });

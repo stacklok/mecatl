@@ -38,6 +38,18 @@ latter answers *which build is this?* and is bound by a privacy contract that
 keeps capabilities and configuration out of its response, while this one is
 exactly that negotiation data. A client wanting both makes both calls.
 
+### Start a private daemon from Node or Bun
+
+The in-repository TypeScript SDK's `@stacklok/mecatl-sdk/node` entry point provides
+`spawn()` for applications that want to own one local `mecated` process. It finds an
+already-installed binary from an explicit `binaryPath`, `MECATED_BIN`, or `PATH`; it never
+downloads one or invokes a shell. The spawned daemon uses a private Unix socket with HTTP
+disabled, and the client is returned only after the daemon publishes its ready document.
+Closing the client stops that owned process and removes its private runtime directory.
+
+Use `connect()` instead when another operator or service owns the daemon. A connected client
+never signals a process or removes a server directory.
+
 See the detailed gRPC and HTTP
 references for their request, response, privacy, and compatibility contracts.
 

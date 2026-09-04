@@ -725,7 +725,7 @@ export interface ScheduleEventPayload {
 export type SdkCursor = string;
 
 // @public (undocumented)
-export type SDKErrorCode = "authentication" | "cursor_scope" | "incompatible_server" | "invalid_prompt" | "invalid_state" | "no_runs" | "protocol" | "transport" | "unsupported_feature";
+export type SDKErrorCode = "authentication" | "cursor_scope" | "incompatible_server" | "invalid_prompt" | "invalid_state" | "no_runs" | "protocol" | "readiness_timeout" | "spawn_failed" | "tool_registration" | "transport" | "unsupported_platform" | "unsupported_feature";
 
 // @public (undocumented)
 export class ServerError extends MecatlError {
@@ -796,6 +796,16 @@ export interface Sessions {
     fork(sourceSessionId: string, options?: ForkSessionOptions): Promise<Session>;
     // (undocumented)
     get(sessionId: string): Promise<Session>;
+}
+
+// @public
+export function spawn(options?: SpawnOptions): Promise<Client>;
+
+// @public
+export interface SpawnOptions {
+    args?: readonly string[];
+    binaryPath?: string;
+    readinessTimeoutMs?: number;
 }
 
 // @public
