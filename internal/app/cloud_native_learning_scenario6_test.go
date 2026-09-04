@@ -118,6 +118,7 @@ func TestCloudNativeLearning_Scenario6_WeightedAdmissionUsesAttemptLifecycle(t *
 		Model: "mock", LearningMode: learning.Review, LearningSensitivity: learning.Balanced,
 		LearningAutomatic: defaultLearningAutomaticConfig(), attemptRepository: orderedAttempts,
 		automaticAdmissionLedger: ledger, learningSourceStore: sources,
+		PlacementProvider: appTestPlacementProvider{root: trajectory.Workspace}, PlacementScope: "test",
 	}
 	userMemory := memmemory.New()
 	observer, ok := buildReflectionObserver(cfg, provider, cfg.Model, userMemory, nil, proposals, coordinator, nil).(*reflectionObserver)

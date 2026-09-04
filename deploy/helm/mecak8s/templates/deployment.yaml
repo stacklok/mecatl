@@ -2,7 +2,10 @@
 {{- include "mecak8s.validateRedis" . -}}
 {{- include "mecak8s.validateOIDC" . -}}
 {{- include "mecak8s.validateTLS" . -}}
+{{- include "mecak8s.validateLearningStore" . -}}
 {{- include "mecak8s.validateProviderSecurity" . -}}
+{{- $learningStoreEnabled := ne .Values.learning.store.endpoint "" -}}
+{{- $learningStoreTokenConfigured := and .Values.learning.store.tokenSecret .Values.learning.store.tokenKey -}}
 {{- include "mecak8s.validateMCP" . -}}
 {{- $mcpOAuth := false -}}
 {{- range .Values.mcp.servers -}}{{- if eq .auth.mode "oauth" -}}{{- $mcpOAuth = true -}}{{- end -}}{{- end -}}
@@ -120,6 +123,19 @@ spec:
             - --redis-tls
             {{- end }}
             {{- end }}
+            {{- if $learningStoreEnabled }}
+            - {{ printf "--learning-store-url=%s" .Values.learning.store.endpoint | quote }}
+            {{- if .Values.learning.store.tls.enabled }}
+            - --driver-tls
+            {{- end }}
+            {{- if .Values.learning.store.tls.caSecret }}
+            - {{ printf "--driver-tls-ca=/var/run/secrets/learning-store-ca/%s" .Values.learning.store.tls.caKey | quote }}
+            {{- end }}
+            {{- if .Values.learning.store.tls.mtlsSecret }}
+            - {{ printf "--driver-tls-cert=/var/run/secrets/learning-store-mtls/%s" .Values.learning.store.tls.certKey | quote }}
+            - {{ printf "--driver-tls-key=/var/run/secrets/learning-store-mtls/%s" .Values.learning.store.tls.keyKey | quote }}
+            {{- end }}
+            {{- end }}
             {{- if .Values.oidc.enabled }}
             - {{ printf "--oidc-issuer=%s" .Values.oidc.issuer | quote }}
             - {{ printf "--oidc-audience=%s" .Values.oidc.audience | quote }}
@@ -157,8 +173,15 @@ spec:
             {{- end }}
           {{- $mcpEnvServers := false }}
           {{- range .Values.mcp.servers }}{{- if ne .auth.mode "none" }}{{- $mcpEnvServers = true }}{{- end }}{{- end }}
-          {{- if or .Values.extraEnv $mcpEnvServers }}
+          {{- if or .Values.extraEnv $mcpEnvServers $learningStoreTokenConfigured }}
           env:
+            {{- if $learningStoreTokenConfigured }}
+            - name: MECATL_DRIVER_AUTH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.learning.store.tokenSecret | quote }}
+                  key: {{ .Values.learning.store.tokenKey | quote }}
+            {{- end }}
             {{- range $server := .Values.mcp.servers }}
             {{- if eq $server.auth.mode "staticBearer" }}
             - name: {{ printf "MCP_%s_TOKEN" (upper $server.name) }}
@@ -226,6 +249,12 @@ spec:
             {{- if .Values.oidc.caSecret }}
             - {name: oidc-ca, mountPath: /var/run/secrets/oidc-ca, readOnly: true}
             {{- end }}
+            {{- if .Values.learning.store.tls.caSecret }}
+            - {name: learning-store-ca, mountPath: /var/run/secrets/learning-store-ca, readOnly: true}
+            {{- end }}
+            {{- if .Values.learning.store.tls.mtlsSecret }}
+            - {name: learning-store-mtls, mountPath: /var/run/secrets/learning-store-mtls, readOnly: true}
+            {{- end }}
             {{- if $mcpOAuth }}
             - {name: mcp-profile, mountPath: /etc/mecatl-mcp, readOnly: true}
             {{- end }}
@@ -267,6 +296,23 @@ spec:
             defaultMode: 0440
             items:
               - {key: {{ .Values.oidc.caKey | quote }}, path: {{ .Values.oidc.caKey | quote }}}
+        {{- end }}
+        {{- if .Values.learning.store.tls.caSecret }}
+        - name: learning-store-ca
+          secret:
+            secretName: {{ .Values.learning.store.tls.caSecret }}
+            defaultMode: 0440
+            items:
+              - {key: {{ .Values.learning.store.tls.caKey | quote }}, path: {{ .Values.learning.store.tls.caKey | quote }}}
+        {{- end }}
+        {{- if .Values.learning.store.tls.mtlsSecret }}
+        - name: learning-store-mtls
+          secret:
+            secretName: {{ .Values.learning.store.tls.mtlsSecret }}
+            defaultMode: 0440
+            items:
+              - {key: {{ .Values.learning.store.tls.certKey | quote }}, path: {{ .Values.learning.store.tls.certKey | quote }}}
+              - {key: {{ .Values.learning.store.tls.keyKey | quote }}, path: {{ .Values.learning.store.tls.keyKey | quote }}}
         {{- end }}
         {{- if $mcpOAuth }}
         - name: mcp-profile

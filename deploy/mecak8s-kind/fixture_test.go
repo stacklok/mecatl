@@ -188,6 +188,43 @@ func TestMecak8sKindFixture_Scenario2_LiveSmokeIsExplicit(t *testing.T) {
 	}
 }
 
+func TestMecak8sKindFixture_LearningDriverManifest(t *testing.T) {
+	body, err := os.ReadFile("learning-driver.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	parts := strings.Split(string(body), "\n---\n")
+	if len(parts) != 2 {
+		t.Fatalf("learning driver manifest has %d documents, want Service and Deployment", len(parts))
+	}
+	var service, deployment map[string]any
+	if err = yaml.Unmarshal([]byte(parts[0]), &service); err != nil {
+		t.Fatalf("decode learning driver Service: %v", err)
+	}
+	if err = yaml.Unmarshal([]byte(parts[1]), &deployment); err != nil {
+		t.Fatalf("decode learning driver Deployment: %v", err)
+	}
+	if service["kind"] != "Service" || deployment["kind"] != "Deployment" {
+		t.Fatalf("manifest kinds = %v, %v; want Service, Deployment", service["kind"], deployment["kind"])
+	}
+	text := string(body)
+	for _, want := range []string{
+		"type: ClusterIP", "replicas: 1", "type: Recreate", "automountServiceAccountToken: false",
+		"runAsNonRoot: true", "runAsUser: 65532", "allowPrivilegeEscalation: false",
+		"readOnlyRootFilesystem: true", `capabilities: {drop: ["ALL"]}`, "seccompProfile: {type: RuntimeDefault}",
+		"emptyDir: {}", "secretName: learning-driver-tls", "--data-dir=/data", "--tls-cert=", "--tls-key=",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("learning driver manifest missing %q", want)
+		}
+	}
+	for _, forbidden := range []string{"kind: StatefulSet", "replicas: 2", "type: LoadBalancer", "type: NodePort"} {
+		if strings.Contains(text, forbidden) {
+			t.Errorf("learning driver fixture contains unsupported topology %q", forbidden)
+		}
+	}
+}
+
 var fixtureTaskBlockRe = regexp.MustCompile(`(?m)^  ([a-zA-Z][a-zA-Z0-9_-]*):\s*$`)
 
 func fixtureTaskClosure(t *testing.T, roots ...string) string {

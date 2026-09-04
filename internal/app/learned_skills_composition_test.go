@@ -14,6 +14,36 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/skillstore"
 )
 
+func TestBuildOwnerlessSessionHydratesLearnedSkillIntoTool(t *testing.T) {
+	workspace := t.TempDir()
+	userModelDir := t.TempDir()
+	repository, err := skillstore.New(filepath.Join(userModelDir, "learned-skills"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	activateCompositionSkill(t, repository, learning.SkillPartition{Principal: reflectionPrincipal(nil)}, "ownerless-recovery", "ownerless durable procedure")
+
+	built, err := Build(context.Background(), Config{
+		Workspace: workspace, Model: "mock", StoreDir: t.TempDir(), UserModelDir: userModelDir,
+		NoSoul: true, AllowAllTools: true, MockProvider: mockllm.New(
+			mockllm.ToolCallTurn(session.NewToolCall("skill-ownerless", "Skill", []byte(`{"name":"ownerless-recovery"}`))),
+			mockllm.TextTurn("done"),
+		),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer built.Close()
+
+	sess, err := built.Service.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result := runCompositionSkill(context.Background(), t, built, sess.ID); !strings.Contains(result, "ownerless durable procedure") {
+		t.Fatalf("ownerless Skill result=%q, want hydrated learned skill", result)
+	}
+}
+
 func TestBuildRestartHydratesCallerBoundLearnedSkillIntoListAndTool(t *testing.T) {
 	workspace := t.TempDir()
 	storeDir := t.TempDir()

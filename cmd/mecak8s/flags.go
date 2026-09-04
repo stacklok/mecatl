@@ -136,10 +136,12 @@ type config struct {
 	// mecated/mecatequi: a per-server bearer rides the MCP_<NAME>_TOKEN env (a
 	// scheduler like titlani injects a short-lived per-run identity there), token
 	// optional. Threaded onto app.Config.MCPServers in appConfig.
-	mcpServers *cliconfig.MCPServerList
-	useMock    bool
-	shell      string
-	noBash     bool
+	mcpServers   *cliconfig.MCPServerList
+	useMock      bool
+	mockScript   string
+	mockProvider port.LLMProvider
+	shell        string
+	noBash       bool
 
 	// Storage-free state (ADR 0048): --redis-url points the session store +
 	// durable event log at a Redis managed service. Credentials are read from
@@ -153,6 +155,15 @@ type config struct {
 	redisTLSCAFile      string
 	redisTLS            bool
 	redisAllowPlaintext bool
+
+	// Remote learning driver: the app validates that it advertises the complete
+	// distributed-learning repository capability set before startup proceeds.
+	learningStoreURL string
+	driverAuthToken  string
+	driverTLS        bool
+	driverTLSCA      string
+	driverTLSCert    string
+	driverTLSKey     string
 
 	// Session leasing: a coordination.k8s.io Lease per session in this
 	// namespace (the in-cluster multi-replica path). Defaults to "mecatl".
@@ -335,6 +346,7 @@ func parseFlags(argv []string) (config, error) {
 	// MCP_<NAME>_TOKEN bearer convention, identical to mecated/mecatequi.
 	cfg.mcpServers = cliconfig.RegisterMCPServerFlag(fs, "")
 	fs.BoolVar(&cfg.useMock, "mock", false, "use a canned offline mock provider (no network, no API key; for the e2e / smoke tests)")
+	fs.StringVar(&cfg.mockScript, "mock-script", "", "path to a JSON mockllm script (offline; implies --mock and supports text, tool-call, and delayed turns)")
 	fs.StringVar(&cfg.shell, "shell", "/bin/sh", "shell used to execute Bash-tool commands; empty disables Bash (shell-less mode)")
 	fs.BoolVar(&cfg.noBash, "no-bash", false, "disable the Bash tool entirely (shell-less mode); overrides --shell")
 
@@ -346,6 +358,12 @@ func parseFlags(argv []string) (config, error) {
 	fs.StringVar(&cfg.redisPasswordFile, "redis-password-file", "", "path to optional Redis password in a mounted Secret; never pass the password as an argument; requires verified TLS")
 	fs.BoolVar(&cfg.redisTLS, "redis-tls", false, "verify Redis TLS against the host system trust store; use for a managed Redis whose certificate chains to a public CA. Use --redis-tls-ca instead for a private CA")
 	fs.StringVar(&cfg.redisTLSCAFile, "redis-tls-ca", "", "path to a PEM CA bundle in a mounted Secret used to verify Redis TLS, REPLACING the system trust store. Either this or --redis-tls is required whenever ACL credentials are configured")
+	fs.StringVar(&cfg.learningStoreURL, "learning-store-url", "", "host:port of one distributed learning gRPC driver providing AttemptRepositoryService, ProposalRepositoryService, and SkillRepositoryService. The complete set must be explicitly advertised at startup; a partial or legacy driver fails closed with no local-repository fallback. Repository partitions are opaque on this transport")
+	fs.StringVar(&cfg.driverAuthToken, "driver-auth-token", "", "bearer token sent on every store-driver RPC (or MECATL_DRIVER_AUTH_TOKEN; empty disables driver auth). Refused over cleartext to a non-loopback driver — pair with --driver-tls")
+	fs.BoolVar(&cfg.driverTLS, "driver-tls", false, "enable transport TLS on store-driver connections")
+	fs.StringVar(&cfg.driverTLSCA, "driver-tls-ca", "", "PEM CA bundle to verify the store driver's server certificate (with --driver-tls; empty uses the system roots)")
+	fs.StringVar(&cfg.driverTLSCert, "driver-tls-cert", "", "PEM client certificate for mutual TLS to the store driver (with --driver-tls and --driver-tls-key)")
+	fs.StringVar(&cfg.driverTLSKey, "driver-tls-key", "", "PEM client private key (paired with --driver-tls-cert)")
 
 	// Session leasing: coordination.k8s.io Lease per session. DEFAULT "mecatl".
 	fs.StringVar(&cfg.sessionLeaseK8sNamespace, "session-lease-k8s-namespace", defaultK8sLeaseNamespace,
@@ -505,12 +523,20 @@ func parseFlags(argv []string) (config, error) {
 		cfg.subagentAskReviewerPolicy = string(body)
 	}
 
+	// --mock-script selects the same offline provider path as --mock; run loads
+	// and validates the bounded JSON before app.Build creates any listeners.
+	selectMockScript(&cfg)
+
 	// --guardrails=off is the master kill-switch.
 	cfg.guardrailsOff = cfg.guardrailsMode == "off"
 
 	// --auth-token may ride MECATL_AUTH_TOKEN (mirrors mecated).
 	if cfg.authToken == "" {
 		cfg.authToken = os.Getenv("MECATL_AUTH_TOKEN")
+	}
+	// The store-driver bearer token mirrors the same custody rule.
+	if cfg.driverAuthToken == "" {
+		cfg.driverAuthToken = os.Getenv("MECATL_DRIVER_AUTH_TOKEN")
 	}
 	cfg.providerCredentials = cfg.providerFlags.Resolve()
 	if cfg.providerCredentials.HasOpenAICodex() {
@@ -537,6 +563,12 @@ func parseFlags(argv []string) (config, error) {
 	return cfg, nil
 }
 
+func selectMockScript(cfg *config) {
+	if cfg.mockScript != "" {
+		cfg.useMock = true
+	}
+}
+
 // mecak8sServerImplementation is the stable family reported to authenticated clients.
 const mecak8sServerImplementation = "mecak8s"
 
@@ -558,6 +590,7 @@ func appConfig(cfg config, diag port.Diagnostics, obs observability) app.Config 
 		DefaultProviderFlagSet: cfg.defaultProviderFlagSet,
 		UseOpenAI:              cfg.useOpenAI,
 		UseMock:                cfg.useMock,
+		MockProvider:           cfg.mockProvider,
 		Shell:                  cfg.shell,
 		NoBash:                 cfg.noBash,
 		RedisURL:               cfg.redisURL,
@@ -566,6 +599,12 @@ func appConfig(cfg config, diag port.Diagnostics, obs observability) app.Config 
 		RedisTLSCAFile:         cfg.redisTLSCAFile,
 		RedisTLS:               cfg.redisTLS,
 		RedisAllowPlaintext:    cfg.redisAllowPlaintext,
+		LearningStoreURL:       cfg.learningStoreURL,
+		DriverAuthToken:        cfg.driverAuthToken,
+		DriverTLS:              cfg.driverTLS,
+		DriverTLSCA:            cfg.driverTLSCA,
+		DriverTLSCert:          cfg.driverTLSCert,
+		DriverTLSKey:           cfg.driverTLSKey,
 		// OwnershipEnforced mirrors cmd/mecated's wiring: the OIDC verifier being
 		// enabled IS the caller-isolation on-switch (ADR 0212). Without this line
 		// mecak8s attributes ownership correctly but never enforces it — every

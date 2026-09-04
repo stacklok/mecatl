@@ -36,6 +36,22 @@ extraArgs: []
 mcp:
   servers: []
 
+# Optional remote learning driver. A bearer token is optional; when both tokenSecret
+# and tokenKey are set, the chart projects it only as MECATL_DRIVER_AUTH_TOKEN. TLS
+# verifies the driver with the supplied CA, and mTLS is optional.
+learning:
+  store:
+    endpoint: ""
+    tokenSecret: ""
+    tokenKey: ""
+    tls:
+      enabled: false
+      caSecret: ""
+      caKey: ""
+      mtlsSecret: ""
+      certKey: ""
+      keyKey: ""
+
 # extraVolumes and extraVolumeMounts append restricted Kubernetes Volume and
 # VolumeMount entries. Keep configuration content read-only and immutable; XDG-
 # based skills/agents/rules can be projected from a ConfigMap, or a ToolHive OCI

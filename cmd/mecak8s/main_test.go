@@ -19,6 +19,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
+	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/internal/adapter/server"
@@ -132,6 +133,22 @@ func TestParseFlagsK8sDefaults(t *testing.T) {
 	}
 }
 
+func TestMockScriptFlagSelectsOfflineProvider(t *testing.T) {
+	cfg, err := parseFlags([]string{"--mock-script", "/mounted/script.json"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.useMock || cfg.mockScript != "/mounted/script.json" || cfg.mockProvider != nil {
+		t.Fatalf("mock script config = useMock=%v path=%q provider=%T", cfg.useMock, cfg.mockScript, cfg.mockProvider)
+	}
+
+	provider := mockllm.New(mockllm.TextTurn("scripted"))
+	cfg.mockProvider = provider
+	if got := appConfig(cfg, port.NopDiagnostics{}, observability{}).MockProvider; got != provider {
+		t.Fatalf("appConfig MockProvider = %T, want the loaded script provider", got)
+	}
+}
+
 // TestAppConfigMapsK8sFields asserts appConfig threads the k8s-native fields
 // onto the shared app.Config: RedisURL, SessionLeaseK8sNamespace, the headless
 // inversion (Interactive=!headless), and the posture.
@@ -187,6 +204,44 @@ func TestAppConfigMapsK8sFields(t *testing.T) {
 	}
 	if !cfg.reasoningEffortFlagSet {
 		t.Error("reasoningEffortFlagSet = false after --reasoning-effort, want true")
+	}
+}
+
+func TestAppConfigMapsLearningDriver(t *testing.T) {
+	const driverAuthToken = "driver-token-from-environment"
+	t.Setenv("MECATL_DRIVER_AUTH_TOKEN", driverAuthToken)
+	cfg, err := parseFlags([]string{
+		"--learning-store-url", "learning-driver.example:443",
+		"--driver-tls",
+		"--driver-tls-ca", "/var/run/driver/ca.pem",
+		"--driver-tls-cert", "/var/run/driver/cert.pem",
+		"--driver-tls-key", "/var/run/driver/key.pem",
+	})
+	if err != nil {
+		t.Fatalf("parseFlags: %v", err)
+	}
+	if cfg.driverAuthToken != driverAuthToken {
+		t.Fatal("driver auth token did not use MECATL_DRIVER_AUTH_TOKEN fallback")
+	}
+
+	ac := appConfig(cfg, port.NopDiagnostics{}, observability{})
+	if ac.LearningStoreURL != "learning-driver.example:443" {
+		t.Errorf("app.Config LearningStoreURL = %q, want learning driver URL", ac.LearningStoreURL)
+	}
+	if ac.DriverAuthToken != cfg.driverAuthToken {
+		t.Error("app.Config DriverAuthToken did not preserve the environment fallback")
+	}
+	if !ac.DriverTLS {
+		t.Error("app.Config DriverTLS = false after --driver-tls")
+	}
+	if ac.DriverTLSCA != "/var/run/driver/ca.pem" {
+		t.Errorf("app.Config DriverTLSCA = %q, want configured CA path", ac.DriverTLSCA)
+	}
+	if ac.DriverTLSCert != "/var/run/driver/cert.pem" {
+		t.Errorf("app.Config DriverTLSCert = %q, want configured certificate path", ac.DriverTLSCert)
+	}
+	if ac.DriverTLSKey != "/var/run/driver/key.pem" {
+		t.Errorf("app.Config DriverTLSKey = %q, want configured key path", ac.DriverTLSKey)
 	}
 }
 

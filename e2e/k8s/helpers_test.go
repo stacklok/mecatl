@@ -145,6 +145,17 @@ func koBuildMecak8sImage() {
 		"ko build --local --bare --tags=e2e ./cmd/mecak8s failed\n--- output ---\n%s", out)
 }
 
+func koBuildLearningDriverImage() {
+	ginkgo.GinkgoHelper()
+	ctx := ginkgoSuiteCtx()
+	build := exec.CommandContext(ctx, "ko", "build", "--local", "--bare", "--tags=e2e", "./e2e/k8s/fixture/learningdriver")
+	build.Dir = repoRoot()
+	build.Env = append(build.Environ(), "KO_DOCKER_REPO=ko.local/mecatl-learning-driver", "GOFLAGS=-tags=kind_e2e")
+	out, err := build.CombinedOutput()
+	gomega.ExpectWithOffset(1, err).NotTo(gomega.HaveOccurred(),
+		"ko build learning driver failed\n--- output ---\n%s", out)
+}
+
 // containerRuntime is the local daemon ko loaded the image into: podman when
 // KIND_EXPERIMENTAL_PROVIDER=podman is set (ko routes there in that case),
 // otherwise docker (ko's default). It is the runtime whose store holds the

@@ -193,27 +193,59 @@ func (d *idp) forgedToken(ctx context.Context, sub string) string {
 	return s
 }
 
-// baseAgentArgs is the Deployment's args WITHOUT caller identity — the single
-// source both the OIDC patch and the restore build from, so they cannot drift.
-//
-// The list is replaced wholesale by a JSON6902 `replace`, so it must carry every
-// flag the pod needs; dropping --redis-url would leave the pod with no session
-// store while still looking like a successful patch. --redis-allow-plaintext is
-// REQUIRED here, not optional: redisstore now rejects an address-only Redis URL
-// at startup unless the caller explicitly opts into plaintext (ADR 0233), so
-// omitting it crash-loops every pod this list is applied to (fail-closed).
-func baseAgentArgs() []string {
-	return []string{
-		"--grpc-addr=0.0.0.0:8080",
-		"--http-addr=0.0.0.0:8081",
-		"--redis-url=redis:6379",
-		"--redis-allow-plaintext",
-		"--session-lease-k8s-namespace=" + k8sNamespace,
-		"--headless=true",
-		"--posture=auto",
-		"--workspace=/tmp",
-		"--mock",
+// currentAgentArgs reads the live Deployment args so temporary OIDC rollouts
+// preserve the provider, model, Redis plaintext opt-in, and any future chart flags.
+// The Deployment can already have been switched from mock to OpenRouter by the
+// suite-level live-provider patch; rebuilding args from a static baseline would
+// silently undo that switch.
+func currentAgentArgs(ctx context.Context) []string {
+	ginkgo.GinkgoHelper()
+	deploymentJSON, err := exec.CommandContext(ctx, "kubectl", "get",
+		"deployment/mecak8s-agent", "-n", k8sNamespace, "-o", "json").Output()
+	gomega.ExpectWithOffset(1, err).NotTo(gomega.HaveOccurred(), "read agent Deployment args")
+
+	var deployment struct {
+		Spec struct {
+			Template struct {
+				Spec struct {
+					Containers []struct {
+						Name string   `json:"name"`
+						Args []string `json:"args"`
+					} `json:"containers"`
+				} `json:"spec"`
+			} `json:"template"`
+		} `json:"spec"`
 	}
+	gomega.ExpectWithOffset(1, json.Unmarshal(deploymentJSON, &deployment)).To(gomega.Succeed(),
+		"decode agent Deployment args")
+	for _, container := range deployment.Spec.Template.Spec.Containers {
+		if container.Name == agentComponent {
+			return container.Args
+		}
+	}
+	ginkgo.Fail("agent Deployment has no "+agentComponent+" container", 1)
+	return nil
+}
+
+var oidcArgNames = map[string]struct{}{
+	"--oidc-issuer": {}, "--oidc-audience": {}, "--oidc-jwks-uri": {},
+	"--oidc-insecure-allow-private-issuer": {}, "--oidc-max-jwks-staleness": {},
+}
+
+func withoutOIDCArgs(current []string) []string {
+	args := make([]string, 0, len(current))
+	for i := 0; i < len(current); i++ {
+		arg := current[i]
+		name, _, hasValue := strings.Cut(arg, "=")
+		if _, ok := oidcArgNames[name]; !ok {
+			args = append(args, arg)
+			continue
+		}
+		if !hasValue && i+1 < len(current) && !strings.HasPrefix(current[i+1], "-") {
+			i++
+		}
+	}
+	return args
 }
 
 // patchAgentToOIDC turns caller identity on and waits out the rollout.
@@ -236,7 +268,7 @@ func patchAgentToOIDC(ctx context.Context) {
 func patchAgentToOIDCWithCachePolicy(ctx context.Context, jwksURI string, maxStaleness time.Duration) {
 	ginkgo.GinkgoHelper()
 
-	args := append(baseAgentArgs(),
+	args := append(withoutOIDCArgs(currentAgentArgs(ctx)),
 		"--oidc-issuer="+dexIssuer,
 		"--oidc-audience="+dexClient,
 		"--oidc-insecure-allow-private-issuer",
@@ -284,7 +316,7 @@ func patchAgentToOIDCWithCachePolicy(ctx context.Context, jwksURI string, maxSta
 // is exactly how an earlier run of these specs turned three passing specs red.
 func restoreAgentFromOIDC(ctx context.Context) {
 	ginkgo.GinkgoHelper()
-	argsJSON, err := json.Marshal(baseAgentArgs())
+	argsJSON, err := json.Marshal(withoutOIDCArgs(currentAgentArgs(ctx)))
 	gomega.ExpectWithOffset(1, err).NotTo(gomega.HaveOccurred(), "marshal the base args")
 
 	ginkgo.By("restoring mecak8s-agent to the unauthenticated baseline")
