@@ -35,6 +35,35 @@ func (a *Attachment) bundleBackends() ([]string, *oauthRoute, *Process) {
 	return backends, &copyTarget, process
 }
 
+// existingWorkspaceEnrollmentLocked is the idempotent fast path
+// BeginWorkspaceEnrollment takes both BEFORE and AFTER releasing logical.mu
+// for secret resolution, so a concurrent caller's result during that window
+// is never overwritten. resolved reports whether the caller should return
+// immediately with (result, err); resolved == false means a new transaction
+// must be created.
+func existingWorkspaceEnrollmentLocked(a *Attachment, logical *logicalSession) (result contract.WorkspaceEnrollmentPresentation, resolved bool, err error) {
+	if logical.deleted {
+		return contract.WorkspaceEnrollmentPresentation{}, true, contract.ErrStateUnavailable
+	}
+	if logical.completedEnrollment != nil {
+		return contract.WorkspaceEnrollmentPresentation{}, true, errWorkspaceEnrollmentAlreadyCompleted
+	}
+	for _, transaction := range logical.authorizations {
+		if transaction.bundleBackends == nil {
+			continue
+		}
+		a.expireLocked(transaction)
+		if transaction.status == session.AuthorizationPending {
+			url := presentWorkspaceTransaction(transaction)
+			return contract.WorkspaceEnrollmentPresentation{Ref: workspaceEnrollmentRef(transaction), URL: url}, true, nil
+		}
+	}
+	if len(logical.authorizations) >= maxAuthorizationRecords {
+		return contract.WorkspaceEnrollmentPresentation{}, true, errors.New("mcpbroker: authorization record capacity reached")
+	}
+	return contract.WorkspaceEnrollmentPresentation{}, false, nil
+}
+
 // BeginWorkspaceEnrollment starts, or idempotently re-presents, the one
 // bundle-wide pre-prompt ToolHive authorization transaction for every protected
 // backend.
@@ -42,9 +71,11 @@ func (a *Attachment) BeginWorkspaceEnrollment(ctx context.Context) (contract.Wor
 	if err := ctx.Err(); err != nil {
 		return contract.WorkspaceEnrollmentPresentation{}, err
 	}
-	if err := a.stateError(); err != nil {
+	opCtx, done, err := a.beginOperation(ctx)
+	if err != nil {
 		return contract.WorkspaceEnrollmentPresentation{}, err
 	}
+	defer done()
 	backends, target, _ := a.bundleBackends()
 	if len(backends) == 0 {
 		return contract.WorkspaceEnrollmentPresentation{}, ErrWorkspaceEnrollmentUnsupported
@@ -54,31 +85,17 @@ func (a *Attachment) BeginWorkspaceEnrollment(ctx context.Context) (contract.Wor
 	a.enrollmentMu.Lock()
 	defer a.enrollmentMu.Unlock()
 	logical.mu.Lock()
-	defer logical.mu.Unlock()
-	if logical.deleted {
-		return contract.WorkspaceEnrollmentPresentation{}, contract.ErrStateUnavailable
+	if result, resolved, err := existingWorkspaceEnrollmentLocked(a, logical); resolved {
+		logical.mu.Unlock()
+		return result, err
 	}
-	if logical.completedEnrollment != nil {
-		return contract.WorkspaceEnrollmentPresentation{}, errWorkspaceEnrollmentAlreadyCompleted
-	}
-	for _, transaction := range logical.authorizations {
-		if transaction.bundleBackends == nil {
-			continue
-		}
-		a.expireLocked(transaction)
-		if transaction.status == session.AuthorizationPending {
-			url := presentWorkspaceTransaction(transaction)
-			return contract.WorkspaceEnrollmentPresentation{Ref: workspaceEnrollmentRef(transaction), URL: url}, nil
-		}
-	}
-	if len(logical.authorizations) >= maxAuthorizationRecords {
-		return contract.WorkspaceEnrollmentPresentation{}, errors.New("mcpbroker: authorization record capacity reached")
-	}
+	logical.mu.Unlock()
 
+	// Secret resolution is potentially slow and must NOT run while holding
+	// logical.mu: see the identical rationale on RequestAuthorization.
 	var secret string
-	var err error
 	if target.secretEnv != "" {
-		secret, err = a.runtime.oauth.resolveSecret(ctx, target.secretEnv)
+		secret, err = a.runtime.oauth.resolveSecret(opCtx, target.secretEnv)
 		if err != nil {
 			return contract.WorkspaceEnrollmentPresentation{}, err
 		}
@@ -98,6 +115,14 @@ func (a *Attachment) BeginWorkspaceEnrollment(ctx context.Context) (contract.Wor
 	verifier, err := opaque(a.runtime.oauth.random)
 	if err != nil {
 		return contract.WorkspaceEnrollmentPresentation{}, err
+	}
+
+	logical.mu.Lock()
+	defer logical.mu.Unlock()
+	// Re-verify: a concurrent call (or deletion) may have already resolved
+	// enrollment while the secret was resolving above.
+	if result, resolved, err := existingWorkspaceEnrollmentLocked(a, logical); resolved {
+		return result, err
 	}
 	transaction := &authorizationTransaction{
 		identity:       authorizationIdentity{id: id, binding: session.AuthorizationBinding(binding)},
@@ -125,9 +150,11 @@ func (a *Attachment) ObserveWorkspaceEnrollment(ctx context.Context, ref contrac
 	if err := ctx.Err(); err != nil {
 		return contract.WorkspaceEnrollmentResult{}, err
 	}
-	if err := a.stateError(); err != nil {
+	opCtx, done, err := a.beginOperation(ctx)
+	if err != nil {
 		return contract.WorkspaceEnrollmentResult{}, err
 	}
+	defer done()
 	if !ref.Valid() {
 		return contract.WorkspaceEnrollmentResult{}, errors.New("mcpbroker: invalid workspace enrollment reference")
 	}
@@ -193,7 +220,7 @@ func (a *Attachment) ObserveWorkspaceEnrollment(ctx context.Context, ref contrac
 		return a.failWorkspaceTransaction(logical, transaction), nil
 	}
 	occupied := append([]string(nil), process.occupied...)
-	catalogue, err := a.FreezeAuthenticatedCatalogue(ctx, ref, process, &brokerTokenSource{runtime: a.runtime, logical: logical}, occupied)
+	catalogue, err := a.FreezeAuthenticatedCatalogue(opCtx, ref, process, &brokerTokenSource{runtime: a.runtime, logical: logical}, occupied)
 	if err != nil {
 		return a.failWorkspaceTransaction(logical, transaction), nil
 	}
@@ -227,9 +254,11 @@ func (a *Attachment) CancelWorkspaceEnrollment(ctx context.Context, ref contract
 	if err := ctx.Err(); err != nil {
 		return contract.WorkspaceEnrollmentResult{}, err
 	}
-	if err := a.stateError(); err != nil {
+	_, done, err := a.beginOperation(ctx)
+	if err != nil {
 		return contract.WorkspaceEnrollmentResult{}, err
 	}
+	defer done()
 	if !ref.Valid() {
 		return contract.WorkspaceEnrollmentResult{}, errors.New("mcpbroker: invalid workspace enrollment reference")
 	}

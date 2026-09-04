@@ -456,8 +456,12 @@ func hasProtected(profiles []ToolHiveProfile) bool {
 }
 
 func (p *Process) rollback() {
+	// closeAndDrain blocks (bounded by closeDrainTimeout) until every in-flight
+	// attachment operation has actually returned, so closeResources below can
+	// never tear down the vMCP/authserver resources those operations still
+	// depend on. Runtime.Close alone would not wait for them.
 	if p.Runtime != nil {
-		_ = p.Runtime.Close()
+		_ = p.Runtime.closeAndDrain(closeDrainTimeout)
 	}
 	_ = p.closeResources()
 }
@@ -479,8 +483,9 @@ func (p *Process) WorkspaceEnrollmentRequired() bool {
 	return p != nil && len(p.construction.protectedBackends) > 0
 }
 
-// Close first cancels process-owned work, then drains the neutral Runtime,
-// stops vMCP, and closes authserver. It is idempotent.
+// Close first cancels process-owned work, then drains the neutral Runtime
+// (waiting for in-flight attachment operations to actually return, bounded by
+// closeDrainTimeout), stops vMCP, and closes authserver. It is idempotent.
 func (p *Process) Close() error {
 	if p == nil {
 		return nil
@@ -494,7 +499,7 @@ func (p *Process) Close() error {
 			cancel()
 		}
 		if p.Runtime != nil {
-			p.closeErr = p.Runtime.Close()
+			p.closeErr = p.Runtime.closeAndDrain(closeDrainTimeout)
 		}
 		p.closeErr = errors.Join(p.closeErr, p.closeResources())
 	})

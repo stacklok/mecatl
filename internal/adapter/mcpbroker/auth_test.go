@@ -485,3 +485,191 @@ func TestTokenExtraMetadataSurvivesScopedTokenSource(t *testing.T) {
 		t.Fatalf("Token Extra(id_token) = %v", harness.tokens)
 	}
 }
+
+// TestAttachmentCloseWaitsForRequestAuthorization pins P2-8: Close must not
+// return while a RequestAuthorization call is still mid-flight (blocked
+// resolving its secret), or a caller that tears down owned resources right
+// after Close returns can race a transaction this call is about to create.
+func TestAttachmentCloseWaitsForRequestAuthorization(t *testing.T) {
+	release := make(chan struct{})
+	entered := make(chan struct{})
+	catalogue, err := Compile(protectedConfig("https://token.example/token"),
+		[]ToolDefinition{{Backend: "github", Name: "mcp__github__create", Schema: json.RawMessage(`{"type":"object"}`)}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime, err := New(catalogue,
+		func(context.Context, SessionRef, string, session.ToolCall) (session.ToolResult, error) {
+			return session.ToolResult{}, nil
+		},
+		WithAuthorizedCaller(func(context.Context, SessionRef, string, session.ToolCall, oauth2.TokenSource) (session.ToolResult, error) {
+			return session.ToolResult{}, nil
+		}),
+		WithOAuthSecretResolver(func(ctx context.Context, _ string) (string, error) {
+			close(entered)
+			select {
+			case <-release:
+			case <-ctx.Done():
+				return "", ctx.Err()
+			}
+			return "client-secret", nil
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = runtime.Close() }()
+	attachment, _ := attach(t, runtime, "close-race-session")
+	call := session.NewToolCall("call-1", "mcp__github__create", json.RawMessage(`{}`))
+	requester := toolByName(t, attachment, call.Name).(tool.AuthorizationRequester)
+
+	requestDone := make(chan struct{})
+	go func() {
+		_, _, _ = requester.RequestAuthorization(context.Background(), call)
+		close(requestDone)
+	}()
+	<-entered // RequestAuthorization is now blocked inside secret resolution.
+
+	closeDone := make(chan struct{})
+	go func() {
+		_, _ = attachment.Close(context.Background())
+		close(closeDone)
+	}()
+
+	select {
+	case <-closeDone:
+		t.Fatal("Attachment.Close returned while RequestAuthorization was still resolving its secret")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	close(release)
+	select {
+	case <-requestDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("RequestAuthorization never returned")
+	}
+	select {
+	case <-closeDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Attachment.Close never returned after RequestAuthorization finished")
+	}
+}
+
+// TestRuntimeCloseDrainsActiveOperationsBeforeReturning pins P2-10: Runtime.Close
+// must not return while an attachment operation is still in flight, so a caller
+// that tears down owned dependencies (vMCP/authserver) immediately after Close
+// cannot pull them out from under that operation.
+// TestRuntimeCloseAndDrainWaitsForActiveOperations pins P2-10 at the layer it
+// actually applies: a bare Runtime.Close is fire-and-forget (see
+// TestRuntimeCloseIsBoundedAndOperationReleaseOwnsCleanup in runtime_test.go),
+// but Process.Close/rollback use closeAndDrain specifically because they tear
+// down additional owned resources (vMCP/authserver) right after — that must
+// not race a still-running operation.
+func TestRuntimeCloseAndDrainWaitsForActiveOperations(t *testing.T) {
+	release := make(chan struct{})
+	entered := make(chan struct{})
+	catalogue, err := Compile(protectedConfig("https://token.example/token"),
+		[]ToolDefinition{{Backend: "github", Name: "mcp__github__create", Schema: json.RawMessage(`{"type":"object"}`)}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime, err := New(catalogue,
+		func(context.Context, SessionRef, string, session.ToolCall) (session.ToolResult, error) {
+			return session.ToolResult{}, nil
+		},
+		WithAuthorizedCaller(func(context.Context, SessionRef, string, session.ToolCall, oauth2.TokenSource) (session.ToolResult, error) {
+			return session.ToolResult{}, nil
+		}),
+		WithOAuthSecretResolver(func(ctx context.Context, _ string) (string, error) {
+			close(entered)
+			<-release
+			return "client-secret", nil
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	attachment, _ := attach(t, runtime, "runtime-close-race")
+	call := session.NewToolCall("call-1", "mcp__github__create", json.RawMessage(`{}`))
+	requester := toolByName(t, attachment, call.Name).(tool.AuthorizationRequester)
+
+	requestDone := make(chan struct{})
+	go func() {
+		_, _, _ = requester.RequestAuthorization(context.Background(), call)
+		close(requestDone)
+	}()
+	<-entered
+
+	closeDone := make(chan struct{})
+	go func() {
+		_ = runtime.closeAndDrain(closeDrainTimeout)
+		close(closeDone)
+	}()
+
+	select {
+	case <-closeDone:
+		t.Fatal("closeAndDrain returned while an attachment operation was still in flight")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	close(release)
+	select {
+	case <-requestDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("RequestAuthorization never returned")
+	}
+	select {
+	case <-closeDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("closeAndDrain never returned after the in-flight operation finished")
+	}
+}
+
+// TestRuntimeCloseAndDrainIsBoundedWhenOperationHangs pins that a hung
+// operation cannot wedge shutdown forever: closeAndDrain gives up waiting
+// after closeDrainTimeout.
+func TestRuntimeCloseAndDrainIsBoundedWhenOperationHangs(t *testing.T) {
+	orig := closeDrainTimeout
+	closeDrainTimeout = 50 * time.Millisecond
+	defer func() { closeDrainTimeout = orig }()
+
+	entered := make(chan struct{})
+	hang := make(chan struct{}) // never closed: simulates a hung operation
+	catalogue, err := Compile(protectedConfig("https://token.example/token"),
+		[]ToolDefinition{{Backend: "github", Name: "mcp__github__create", Schema: json.RawMessage(`{"type":"object"}`)}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime, err := New(catalogue,
+		func(context.Context, SessionRef, string, session.ToolCall) (session.ToolResult, error) {
+			return session.ToolResult{}, nil
+		},
+		WithAuthorizedCaller(func(context.Context, SessionRef, string, session.ToolCall, oauth2.TokenSource) (session.ToolResult, error) {
+			return session.ToolResult{}, nil
+		}),
+		WithOAuthSecretResolver(func(ctx context.Context, _ string) (string, error) {
+			close(entered)
+			<-hang // ignores ctx cancellation on purpose: a genuinely wedged op
+			return "client-secret", nil
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	attachment, _ := attach(t, runtime, "runtime-close-bound")
+	call := session.NewToolCall("call-1", "mcp__github__create", json.RawMessage(`{}`))
+	requester := toolByName(t, attachment, call.Name).(tool.AuthorizationRequester)
+	go func() { _, _, _ = requester.RequestAuthorization(context.Background(), call) }()
+	<-entered
+
+	closeDone := make(chan struct{})
+	go func() {
+		_ = runtime.closeAndDrain(closeDrainTimeout)
+		close(closeDone)
+	}()
+	select {
+	case <-closeDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("closeAndDrain did not return within its bounded drain timeout")
+	}
+}

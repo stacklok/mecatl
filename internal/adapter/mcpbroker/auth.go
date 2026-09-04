@@ -28,6 +28,14 @@ const (
 	maxCallbackValueBytes   = 2048
 )
 
+// closeDrainTimeout bounds how long Runtime.Close waits for in-flight
+// attachment operations to unwind (their context is cancelled by
+// markDeletedLocked; this bounds the wait for them to actually return) before
+// giving up and letting the caller tear down owned resources anyway. Matches
+// the server package's engineCloseTimeout — one shutdown budget, not two.
+// A package var (not const) so tests can shrink it to prove the bound fires.
+var closeDrainTimeout = 10 * time.Second
+
 type oauthRoute struct {
 	authorizationEndpoint string
 	tokenEndpoint         string
@@ -274,41 +282,65 @@ type protectedSessionTool struct {
 	*sessionTool
 }
 
+// existingAuthorizationLocked checks whether backend/hash already has a
+// resolved outcome (a granted credential, a pending transaction, or a
+// capacity/mismatch error) — the idempotent fast path RequestAuthorization
+// takes both BEFORE and AFTER releasing logical.mu for secret resolution, so
+// a concurrent caller's result during that window is never overwritten.
+// resolved reports whether the caller should return immediately with
+// (result, found, err); resolved == false means a new transaction must be
+// created.
+func existingAuthorizationLocked(logical *logicalSession, backend string, hash [32]byte) (result session.ExternalAuthorization, found, resolved bool, err error) {
+	if logical.deleted {
+		return session.ExternalAuthorization{}, false, true, contract.ErrStateUnavailable
+	}
+	if grant := logical.grants[backend]; grant != nil {
+		if grant.firstPending && grant.firstCall != hash {
+			return session.ExternalAuthorization{}, false, true, errors.New("broker authorization is bound to another effective tool call")
+		}
+		return session.ExternalAuthorization{}, false, true, nil
+	}
+	for _, transaction := range logical.authorizations {
+		if transaction.backend == backend && transaction.status == session.AuthorizationPending {
+			if transaction.callHash != hash {
+				return session.ExternalAuthorization{}, false, true, errors.New("broker route already has a different pending authorization")
+			}
+			return transaction.external(), true, true, nil
+		}
+	}
+	if len(logical.authorizations) >= maxAuthorizationRecords {
+		return session.ExternalAuthorization{}, false, true, errors.New("broker authorization record capacity reached")
+	}
+	return session.ExternalAuthorization{}, false, false, nil
+}
+
 func (t *protectedSessionTool) RequestAuthorization(ctx context.Context, call session.ToolCall) (session.ExternalAuthorization, bool, error) {
-	if err := t.attachment.stateError(); err != nil {
+	opCtx, done, err := t.attachment.beginOperation(ctx)
+	if err != nil {
 		return session.ExternalAuthorization{}, false, err
 	}
+	defer done()
 	if call.Name != t.route.spec.Name {
 		return session.ExternalAuthorization{}, false, errors.New("broker authorization call does not match wrapper")
 	}
 	logical := t.attachment.logical
 	hash := callHash(call)
+
 	logical.mu.Lock()
-	defer logical.mu.Unlock()
-	if logical.deleted {
-		return session.ExternalAuthorization{}, false, contract.ErrStateUnavailable
+	if result, found, resolved, err := existingAuthorizationLocked(logical, t.route.backend, hash); resolved {
+		logical.mu.Unlock()
+		return result, found, err
 	}
-	if grant := logical.grants[t.route.backend]; grant != nil {
-		if grant.firstPending && grant.firstCall != hash {
-			return session.ExternalAuthorization{}, false, errors.New("broker authorization is bound to another effective tool call")
-		}
-		return session.ExternalAuthorization{}, false, nil
-	}
-	for _, transaction := range logical.authorizations {
-		if transaction.backend == t.route.backend && transaction.status == session.AuthorizationPending {
-			if transaction.callHash != hash {
-				return session.ExternalAuthorization{}, false, errors.New("broker route already has a different pending authorization")
-			}
-			return transaction.external(), true, nil
-		}
-	}
-	if len(logical.authorizations) >= maxAuthorizationRecords {
-		return session.ExternalAuthorization{}, false, errors.New("broker authorization record capacity reached")
-	}
+	logical.mu.Unlock()
+
+	// Secret resolution is potentially slow (a secret-manager round trip) and
+	// must NOT run while holding logical.mu: that mutex also gates session
+	// deletion and Runtime.Close's ability to even reach the point of
+	// cancelling this operation's context, so holding it here would block
+	// unrelated shutdown/deletion for the duration of the round trip.
 	var secret string
-	var err error
 	if t.route.oauth.secretEnv != "" {
-		secret, err = t.attachment.runtime.oauth.resolveSecret(ctx, t.route.oauth.secretEnv)
+		secret, err = t.attachment.runtime.oauth.resolveSecret(opCtx, t.route.oauth.secretEnv)
 		if err != nil {
 			return session.ExternalAuthorization{}, false, err
 		}
@@ -328,6 +360,14 @@ func (t *protectedSessionTool) RequestAuthorization(ctx context.Context, call se
 	verifier, err := opaque(t.attachment.runtime.oauth.random)
 	if err != nil {
 		return session.ExternalAuthorization{}, false, fmt.Errorf("create PKCE verifier: %w", err)
+	}
+
+	logical.mu.Lock()
+	defer logical.mu.Unlock()
+	// Re-verify: a concurrent call (or deletion) may have already resolved this
+	// exact backend/call while the secret was resolving above.
+	if result, found, resolved, err := existingAuthorizationLocked(logical, t.route.backend, hash); resolved {
+		return result, found, err
 	}
 	copyRoute := *t.route.oauth
 	transaction := &authorizationTransaction{
@@ -404,9 +444,11 @@ func (a *Attachment) PresentAuthorization(ctx context.Context, authorization ses
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
-	if err := a.stateError(); err != nil {
+	_, done, err := a.beginOperation(ctx)
+	if err != nil {
 		return "", err
 	}
+	defer done()
 	a.logical.mu.Lock()
 	defer a.logical.mu.Unlock()
 	transaction, err := a.lookupAuthorizationLocked(authorization)
@@ -426,9 +468,11 @@ func (a *Attachment) AuthorizationStatus(ctx context.Context, authorization sess
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
-	if err := a.stateError(); err != nil {
+	_, done, err := a.beginOperation(ctx)
+	if err != nil {
 		return "", err
 	}
+	defer done()
 	a.logical.mu.Lock()
 	defer a.logical.mu.Unlock()
 	transaction, err := a.lookupAuthorizationLocked(authorization)
@@ -457,9 +501,11 @@ func (a *Attachment) CancelAuthorization(ctx context.Context, authorization sess
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
-	if err := a.stateError(); err != nil {
+	_, done, err := a.beginOperation(ctx)
+	if err != nil {
 		return "", err
 	}
+	defer done()
 	a.logical.mu.Lock()
 	defer a.logical.mu.Unlock()
 	transaction, err := a.lookupAuthorizationLocked(authorization)
@@ -832,6 +878,27 @@ func (l *logicalSession) maybeCleanupLocked(runtime *Runtime) {
 	l.clearSecretsLocked(runtime, status)
 }
 
+// waitOperations blocks until every in-flight operation registered through
+// beginOperation has returned, or timeout elapses. It must be called AFTER
+// markDeletedLocked (which cancels their context, so they unwind promptly)
+// and with the caller holding no lock. Returns false on timeout: the caller
+// gives up waiting but the operations are still cancelled and will finish
+// asynchronously.
+func (l *logicalSession) waitOperations(timeout time.Duration) bool {
+	l.mu.Lock()
+	done := l.operationsDone
+	l.mu.Unlock()
+	if done == nil {
+		return true
+	}
+	select {
+	case <-done:
+		return true
+	case <-time.After(timeout):
+		return false
+	}
+}
+
 func (l *logicalSession) clearSecretsLocked(runtime *Runtime, status session.AuthorizationStatus) {
 	if l.cleaned {
 		return
@@ -859,7 +926,13 @@ func (l *logicalSession) clearSecretsLocked(runtime *Runtime, status session.Aut
 	clear(l.grants)
 }
 
-// Close releases all process-owned callbacks, transactions, grants and logical sessions.
+// Close releases all process-owned callbacks, transactions, grants and logical
+// sessions. It cancels every in-flight attachment operation but does NOT wait
+// for them to actually return — a bare Runtime (constructed via New/Compile,
+// with no Process-owned resources beyond its own http.Client) has nothing an
+// in-flight operation could race after Close returns. A Runtime bundled into a
+// Process, which DOES tear down additional owned resources (vMCP/authserver)
+// right after closing its Runtime, must drain first: see closeAndDrain.
 func (r *Runtime) Close() error {
 	r.mu.Lock()
 	if r.closed {
@@ -880,4 +953,31 @@ func (r *Runtime) Close() error {
 		r.oauth.httpClient.CloseIdleConnections()
 	}
 	return nil
+}
+
+// closeAndDrain is Close, plus a bounded wait (closeDrainTimeout) for every
+// operation cancelled by Close to actually return, before the caller tears
+// down any dependency those operations might still be using. Used only by
+// Process.Close/rollback, which owns exactly such dependencies (vMCP server,
+// embedded authserver) — a bare Runtime has none, so it keeps using the
+// non-blocking Close.
+func (r *Runtime) closeAndDrain(timeout time.Duration) error {
+	sessions := r.snapshotSessions()
+	if err := r.Close(); err != nil {
+		return err
+	}
+	for _, logical := range sessions {
+		logical.waitOperations(timeout)
+	}
+	return nil
+}
+
+func (r *Runtime) snapshotSessions() []*logicalSession {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	sessions := make([]*logicalSession, 0, len(r.sessions))
+	for _, logical := range r.sessions {
+		sessions = append(sessions, logical)
+	}
+	return sessions
 }
