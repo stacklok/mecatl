@@ -478,6 +478,15 @@ func (m Model) applySessionReady(msg client.SessionReadyMsg) (tea.Model, tea.Cmd
 	} else {
 		m.statusMsg = "connected"
 	}
+	if msg.Capabilities.WorkspaceEnrollment {
+		m.phase = phaseWorkspaceEnrollment
+		m.enrollment = workspaceEnrollmentState{}
+		m.prompt.Blur()
+		m.statusMsg = "workspace services require connection"
+		// InitialPrompt remains queued until the complete frozen catalogue is
+		// admitted; never submit it through the server's fail-closed gate.
+		return m, nil, true
+	}
 	// Now that we are idle + (still) empty, the welcome splash shows: transmit the
 	// Kitty mascot if the terminal supports it (no-op otherwise). The WindowSizeMsg
 	// path also fires this, but at connect the phase was still phaseConnecting when
@@ -621,6 +630,9 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 		return m, nil, true
 	case client.SessionReadyMsg:
 		return m.applySessionReady(msg)
+	case workspaceEnrollmentMsg:
+		mm, cmd := m.applyWorkspaceEnrollment(msg)
+		return mm, cmd, true
 	case client.SessionCompactedMsg:
 		if msg.RequestToken != m.compactRequestToken || msg.SessionID != m.sessionID || !m.compactPending {
 			return m, nil, true
@@ -2012,6 +2024,8 @@ func (m Model) dispatchPhaseKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case phaseAuthorizing:
 		return m.onMCPAuthorizationKey(msg)
+	case phaseWorkspaceEnrollment:
+		return m.onWorkspaceEnrollmentKey(msg)
 	case phaseRunning:
 		return m.onRunningKey(msg)
 	case phaseIdle:

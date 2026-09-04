@@ -163,6 +163,8 @@ type Deps struct {
 	// MCPAuthorization is the distinct browser authorization surface. It never
 	// shares the permission-approval stream or controls.
 	MCPAuthorization client.MCPAuthorizationController
+	// WorkspaceEnrollment is the distinct pre-prompt whole-bundle control.
+	WorkspaceEnrollment client.WorkspaceEnrollmentController
 	// OpenURL opens a presentation URL obtained only through MCPAuthorization.
 	// Composition owns the OS integration; nil leaves the action unavailable.
 	OpenURL func(context.Context, string) error
@@ -428,13 +430,14 @@ func (s *steerState) watermarkID() string {
 type phase int
 
 const (
-	phaseConnecting       phase = iota // awaiting CreateSession
-	phaseIdle                          // ready for a prompt
-	phaseRunning                       // a Converse run is streaming
-	phaseAwaitingApproval              // a permission modal is open
-	phaseAuthorizing                   // an MCP browser authorization is pending
-	phaseFatal                         // connect/fatal error; input disabled
-	phaseReplay                        // a stored-session transcript replay is open (read-only; issue #245)
+	phaseConnecting          phase = iota // awaiting CreateSession
+	phaseIdle                             // ready for a prompt
+	phaseRunning                          // a Converse run is streaming
+	phaseAwaitingApproval                 // a permission modal is open
+	phaseAuthorizing                      // an MCP browser authorization is pending
+	phaseWorkspaceEnrollment              // pre-prompt workspace bundle admission
+	phaseFatal                            // connect/fatal error; input disabled
+	phaseReplay                           // a stored-session transcript replay is open (read-only; issue #245)
 )
 
 // spinnerVisible reports whether the footer renders the animated spinner in the
@@ -514,6 +517,9 @@ type Model struct {
 	// authorization is separate from permission approval: MCP browser authorization
 	// has no allow/always/deny verdict and never carries tool arguments or a URL.
 	authorization mcpAuthorizationState
+	// enrollment is a separate pre-prompt bundle gate. It never enters the
+	// permission approval queue or per-tool authorization stream.
+	enrollment workspaceEnrollmentState
 	// authorizationEvents is the active recheck/cancel stream. It is distinct
 	// from the converse stream so browser controls cannot consume approval frames.
 	authorizationEvents <-chan tea.Msg
@@ -1102,6 +1108,9 @@ func (m Model) resetSessionDerived() Model {
 	m.contextTokens = 0
 	m.activeTool = ""
 	m.toolProgress = ""
+	m.authorization = mcpAuthorizationState{}
+	m.authorizationEvents = nil
+	m.enrollment = workspaceEnrollmentState{}
 	m.providerRoute = ""
 	m.statusContextRoot = ""
 	// Drop the session title: it is session-derived (seeded from the first prompt

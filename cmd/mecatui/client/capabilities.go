@@ -74,6 +74,8 @@ type Capabilities struct {
 	SessionDebug bool
 	// DebugMCP gates explicit selected global MCP mounts for debug sessions.
 	DebugMCP bool
+	// WorkspaceEnrollment gates the bundled MCP workspace-enrollment flow.
+	WorkspaceEnrollment bool
 }
 
 // capabilitiesFrom maps a proto ServerCapabilities (nil-safe) to the plain
@@ -83,32 +85,33 @@ func capabilitiesFrom(c *mecatlv1.ServerCapabilities) Capabilities {
 		return Capabilities{}
 	}
 	return Capabilities{
-		MCP:               c.GetMcp(),
-		SlashCommands:     c.GetSlashCommands(),
-		Memory:            c.GetMemory(),
-		Skills:            c.GetSkills(),
-		Teams:             c.GetTeams(),
-		Agents:            c.GetAgents(),
-		Bash:              c.GetBash(),
-		Soul:              c.GetSoul(),
-		UserModel:         c.GetUserModel(),
-		ModelSelection:    c.GetModelSelection(),
-		Image:             c.GetImage(),
-		Audio:             c.GetAudio(),
-		Posture:           c.GetPosture(),
-		Worktrees:         c.GetWorktrees(),
-		Scheduling:        c.GetScheduling(),
-		Reflection:        c.GetReflection(),
-		LearningProposals: c.GetLearningProposals(),
-		LearnedSkills:     c.GetLearnedSkills(),
-		StorageHealth:     c.GetStorageHealth(),
-		StorageMigration:  c.GetStorageMigration(),
-		StorageCleanup:    c.GetStorageCleanup(),
-		ManualDream:       manualDreamCapabilitiesFrom(c.GetManualDream()),
-		Steer:             c.GetSteer(),
-		ManualCompaction:  c.GetManualCompaction(),
-		SessionDebug:      c.GetSessionDebug(),
-		DebugMCP:          c.GetDebugMcp(),
+		MCP:                 c.GetMcp(),
+		SlashCommands:       c.GetSlashCommands(),
+		Memory:              c.GetMemory(),
+		Skills:              c.GetSkills(),
+		Teams:               c.GetTeams(),
+		Agents:              c.GetAgents(),
+		Bash:                c.GetBash(),
+		Soul:                c.GetSoul(),
+		UserModel:           c.GetUserModel(),
+		ModelSelection:      c.GetModelSelection(),
+		Image:               c.GetImage(),
+		Audio:               c.GetAudio(),
+		Posture:             c.GetPosture(),
+		Worktrees:           c.GetWorktrees(),
+		Scheduling:          c.GetScheduling(),
+		Reflection:          c.GetReflection(),
+		LearningProposals:   c.GetLearningProposals(),
+		LearnedSkills:       c.GetLearnedSkills(),
+		StorageHealth:       c.GetStorageHealth(),
+		StorageMigration:    c.GetStorageMigration(),
+		StorageCleanup:      c.GetStorageCleanup(),
+		ManualDream:         manualDreamCapabilitiesFrom(c.GetManualDream()),
+		Steer:               c.GetSteer(),
+		ManualCompaction:    c.GetManualCompaction(),
+		SessionDebug:        c.GetSessionDebug(),
+		DebugMCP:            c.GetDebugMcp(),
+		WorkspaceEnrollment: c.GetWorkspaceEnrollment(),
 	}
 }
 

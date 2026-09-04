@@ -112,6 +112,9 @@ const (
 	HarnessService_ListTeam_FullMethodName                        = "/mecatl.v1.HarnessService/ListTeam"
 	HarnessService_CleanupTeam_FullMethodName                     = "/mecatl.v1.HarnessService/CleanupTeam"
 	HarnessService_ApprovePlan_FullMethodName                     = "/mecatl.v1.HarnessService/ApprovePlan"
+	HarnessService_ConnectWorkspaceServices_FullMethodName        = "/mecatl.v1.HarnessService/ConnectWorkspaceServices"
+	HarnessService_RetryWorkspaceEnrollment_FullMethodName        = "/mecatl.v1.HarnessService/RetryWorkspaceEnrollment"
+	HarnessService_CancelWorkspaceEnrollment_FullMethodName       = "/mecatl.v1.HarnessService/CancelWorkspaceEnrollment"
 )
 
 // HarnessServiceClient is the client API for HarnessService service.
@@ -497,6 +500,11 @@ type HarnessServiceClient interface {
 	// event of whichever run ran last (the continuation run on an allow path; the
 	// resumed run on a deny path).
 	ApprovePlan(ctx context.Context, in *ApprovePlanRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[Event], error)
+	// Workspace enrollment is a client-owned pre-prompt bundle. These unary
+	// controls carry only whole-bundle correlation; no backend selector exists.
+	ConnectWorkspaceServices(ctx context.Context, in *WorkspaceEnrollmentConnectRequest, opts ...grpc.CallOption) (*WorkspaceEnrollment, error)
+	RetryWorkspaceEnrollment(ctx context.Context, in *WorkspaceEnrollmentControlRequest, opts ...grpc.CallOption) (*WorkspaceEnrollment, error)
+	CancelWorkspaceEnrollment(ctx context.Context, in *WorkspaceEnrollmentControlRequest, opts ...grpc.CallOption) (*WorkspaceEnrollment, error)
 }
 
 type harnessServiceClient struct {
@@ -1261,6 +1269,36 @@ func (c *harnessServiceClient) ApprovePlan(ctx context.Context, in *ApprovePlanR
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type HarnessService_ApprovePlanClient = grpc.ServerStreamingClient[Event]
 
+func (c *harnessServiceClient) ConnectWorkspaceServices(ctx context.Context, in *WorkspaceEnrollmentConnectRequest, opts ...grpc.CallOption) (*WorkspaceEnrollment, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(WorkspaceEnrollment)
+	err := c.cc.Invoke(ctx, HarnessService_ConnectWorkspaceServices_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *harnessServiceClient) RetryWorkspaceEnrollment(ctx context.Context, in *WorkspaceEnrollmentControlRequest, opts ...grpc.CallOption) (*WorkspaceEnrollment, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(WorkspaceEnrollment)
+	err := c.cc.Invoke(ctx, HarnessService_RetryWorkspaceEnrollment_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *harnessServiceClient) CancelWorkspaceEnrollment(ctx context.Context, in *WorkspaceEnrollmentControlRequest, opts ...grpc.CallOption) (*WorkspaceEnrollment, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(WorkspaceEnrollment)
+	err := c.cc.Invoke(ctx, HarnessService_CancelWorkspaceEnrollment_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // HarnessServiceServer is the server API for HarnessService service.
 // All implementations must embed UnimplementedHarnessServiceServer
 // for forward compatibility.
@@ -1644,6 +1682,11 @@ type HarnessServiceServer interface {
 	// event of whichever run ran last (the continuation run on an allow path; the
 	// resumed run on a deny path).
 	ApprovePlan(*ApprovePlanRequest, grpc.ServerStreamingServer[Event]) error
+	// Workspace enrollment is a client-owned pre-prompt bundle. These unary
+	// controls carry only whole-bundle correlation; no backend selector exists.
+	ConnectWorkspaceServices(context.Context, *WorkspaceEnrollmentConnectRequest) (*WorkspaceEnrollment, error)
+	RetryWorkspaceEnrollment(context.Context, *WorkspaceEnrollmentControlRequest) (*WorkspaceEnrollment, error)
+	CancelWorkspaceEnrollment(context.Context, *WorkspaceEnrollmentControlRequest) (*WorkspaceEnrollment, error)
 	mustEmbedUnimplementedHarnessServiceServer()
 }
 
@@ -1863,6 +1906,15 @@ func (UnimplementedHarnessServiceServer) CleanupTeam(context.Context, *CleanupTe
 }
 func (UnimplementedHarnessServiceServer) ApprovePlan(*ApprovePlanRequest, grpc.ServerStreamingServer[Event]) error {
 	return status.Errorf(codes.Unimplemented, "method ApprovePlan not implemented")
+}
+func (UnimplementedHarnessServiceServer) ConnectWorkspaceServices(context.Context, *WorkspaceEnrollmentConnectRequest) (*WorkspaceEnrollment, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ConnectWorkspaceServices not implemented")
+}
+func (UnimplementedHarnessServiceServer) RetryWorkspaceEnrollment(context.Context, *WorkspaceEnrollmentControlRequest) (*WorkspaceEnrollment, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method RetryWorkspaceEnrollment not implemented")
+}
+func (UnimplementedHarnessServiceServer) CancelWorkspaceEnrollment(context.Context, *WorkspaceEnrollmentControlRequest) (*WorkspaceEnrollment, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method CancelWorkspaceEnrollment not implemented")
 }
 func (UnimplementedHarnessServiceServer) mustEmbedUnimplementedHarnessServiceServer() {}
 func (UnimplementedHarnessServiceServer) testEmbeddedByValue()                        {}
@@ -3077,6 +3129,60 @@ func _HarnessService_ApprovePlan_Handler(srv interface{}, stream grpc.ServerStre
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type HarnessService_ApprovePlanServer = grpc.ServerStreamingServer[Event]
 
+func _HarnessService_ConnectWorkspaceServices_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(WorkspaceEnrollmentConnectRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HarnessServiceServer).ConnectWorkspaceServices(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: HarnessService_ConnectWorkspaceServices_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HarnessServiceServer).ConnectWorkspaceServices(ctx, req.(*WorkspaceEnrollmentConnectRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _HarnessService_RetryWorkspaceEnrollment_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(WorkspaceEnrollmentControlRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HarnessServiceServer).RetryWorkspaceEnrollment(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: HarnessService_RetryWorkspaceEnrollment_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HarnessServiceServer).RetryWorkspaceEnrollment(ctx, req.(*WorkspaceEnrollmentControlRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _HarnessService_CancelWorkspaceEnrollment_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(WorkspaceEnrollmentControlRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HarnessServiceServer).CancelWorkspaceEnrollment(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: HarnessService_CancelWorkspaceEnrollment_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HarnessServiceServer).CancelWorkspaceEnrollment(ctx, req.(*WorkspaceEnrollmentControlRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // HarnessService_ServiceDesc is the grpc.ServiceDesc for HarnessService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -3331,6 +3437,18 @@ var HarnessService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "CleanupTeam",
 			Handler:    _HarnessService_CleanupTeam_Handler,
+		},
+		{
+			MethodName: "ConnectWorkspaceServices",
+			Handler:    _HarnessService_ConnectWorkspaceServices_Handler,
+		},
+		{
+			MethodName: "RetryWorkspaceEnrollment",
+			Handler:    _HarnessService_RetryWorkspaceEnrollment_Handler,
+		},
+		{
+			MethodName: "CancelWorkspaceEnrollment",
+			Handler:    _HarnessService_CancelWorkspaceEnrollment_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

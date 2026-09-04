@@ -93,6 +93,9 @@ func (m Model) renderBody() string {
 	if m.phase == phaseAuthorizing {
 		return m.renderMCPAuthorization()
 	}
+	if m.phase == phaseWorkspaceEnrollment {
+		return m.renderWorkspaceEnrollment()
+	}
 	switch {
 	case m.sessionDetailsOpen:
 		return renderSessionDetails(m.deps.Theme, m.sessionDetails(), m.helpKeyMarkings(), m.width, m.vp.Height())

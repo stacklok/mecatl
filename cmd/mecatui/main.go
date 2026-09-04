@@ -367,6 +367,7 @@ func runWithOptions(argv []string, options runOptions) error {
 	deps.ServerImpl = mecatuiServerImplementation
 	wireManualCompaction(&deps, cl)
 	deps.MCPAuthorization = cl
+	deps.WorkspaceEnrollment = cl
 	deps.OpenURL = openBrowserURL
 
 	// Apply keymap overrides (CLI for now).

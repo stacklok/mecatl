@@ -467,6 +467,12 @@ service HarnessService {
   // event of whichever run ran last (the continuation run on an allow path; the
   // resumed run on a deny path).
   rpc ApprovePlan(ApprovePlanRequest) returns (stream Event);
+
+  // Workspace enrollment is a client-owned pre-prompt bundle. These unary
+  // controls carry only whole-bundle correlation; no backend selector exists.
+  rpc ConnectWorkspaceServices(WorkspaceEnrollmentConnectRequest) returns (WorkspaceEnrollment);
+  rpc RetryWorkspaceEnrollment(WorkspaceEnrollmentControlRequest) returns (WorkspaceEnrollment);
+  rpc CancelWorkspaceEnrollment(WorkspaceEnrollmentControlRequest) returns (WorkspaceEnrollment);
 }
 
 // PermissionMode is the session-wide permission posture, mirroring
@@ -777,6 +783,9 @@ message ServerCapabilities {
   // debug_mcp is true when debug sessions may explicitly borrow selected direct
   // tools from configured server-global streaming-HTTP MCP servers.
   bool debug_mcp = 27;
+  // workspace_enrollment is true when protected workspace services must be
+  // admitted as one complete bundle before the first prompt.
+  bool workspace_enrollment = 28;
 }
 
 // CreateSessionResponse carries the newly-allocated session id.
@@ -3640,4 +3649,25 @@ message CompactSessionRequest {
 // CompactSessionResponse reports whether the compactor reduced model history.
 message CompactSessionResponse {
   bool compacted = 1;
+}
+
+// WorkspaceEnrollmentConnectRequest starts or observes the caller-owned bundle.
+message WorkspaceEnrollmentConnectRequest {
+  string session_id = 1;
+}
+
+// WorkspaceEnrollmentControlRequest targets one exact whole-bundle correlation.
+// There is deliberately no backend/provider field.
+message WorkspaceEnrollmentControlRequest {
+  string session_id = 1;
+  string enrollment_id = 2;
+}
+
+// WorkspaceEnrollment is the safe bundle-level client projection. presentation_url
+// is an ephemeral launch value; clients must not render, persist, or log it.
+message WorkspaceEnrollment {
+  string enrollment_id = 1;
+  string status = 2;
+  uint32 required_services = 3;
+  string presentation_url = 4;
 }
