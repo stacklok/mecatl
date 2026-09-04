@@ -109,6 +109,8 @@ export type DiagnosticFieldValue = boolean | number | string | null;
 
 /** A structured SDK-local observation that is separate from the server event stream. @public */
 export interface DiagnosticRecord {
+  /** The original failure value when the diagnostic observes a thrown cause. */
+  readonly cause?: unknown;
   /** Stable machine-readable identifier for the observation. */
   readonly code: string;
   /** Typed context that is safe to expose to the application. */

@@ -271,7 +271,23 @@ makes that registry immutable. Arguments are validated without coercion or defau
 then copied onto null-prototype objects before the handler sees them. Tools are mutating unless
 `readOnly: true` is asserted; the SDK does not verify that assertion, and the harness uses the MCP
 `readOnlyHint` to choose concurrent read dispatch. The Ajv dependency and callback-tool types stay
-outside the transport-neutral `.` module graph.
+outside the transport-neutral `.` module graph. The concrete host is a stateless, hand-written
+streaming-HTTP MCP subset on a literal ephemeral `127.0.0.1` listener. It handles the Go client's
+`server/discover` fallback, legacy initialize negotiation, initialized notification, tool listing,
+tool calls and ping as JSON while every non-POST method receives `405`. A per-client 256-bit bearer
+travels only in the session's secret-shaped MCP headers over the daemon UDS; foreign `Origin` or
+`Host` requests are refused before authentication, authentication precedes bounded body reads, and
+the host emits no CORS headers.
+
+Callback execution has eight client-wide slots, optional tighten-only per-tool limits, a bounded
+queue and a wall-clock deadline whose `AbortSignal` is also fired by caller cancellation and client
+disposal. Strings become text blocks, other JSON values become structured content plus a text
+mirror, and explicit `CallToolResult` values pass through. Results larger than the harness's
+25,000-byte tool-output cap are refused locally. A thrown handler value produces only a generic
+model-facing error and correlation id; the original cause is available to the client's diagnostics
+sink under that id, while an intentional `isError` result remains model-visible verbatim. Closing
+the client aborts running calls, drops queued calls and releases the loopback port before transport
+and daemon teardown.
 
 The durable-watch foundation uses the generated `WatchSessionEvents` descriptor on
 both transports and decodes each wire frame into a four-arm `WatchEnvelope`:

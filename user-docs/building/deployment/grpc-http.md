@@ -110,6 +110,16 @@ parallel read batch, so set it only when the handler truly has no side effects. 
 require the default private-UDS, HTTP-disabled spawned-daemon topology; use a different
 `toolServerName` if the operator already owns the `sdk` MCP namespace.
 
+The SDK serves those callbacks from a bearer-protected ephemeral `127.0.0.1` listener. It exposes
+no CORS surface, rejects foreign origin or host headers, caps request bodies and queue growth, and
+runs at most eight handlers at once; `concurrency` can tighten that bound for one tool. Each handler
+receives an `AbortSignal` which fires on caller cancellation, deadline or client shutdown. Strings
+become MCP text, JSON values become structured content with a text mirror, and an explicit
+`CallToolResult` can intentionally return `isError: true`. A thrown exception is deliberately opaque
+to the model: it receives only a correlation id, while the full cause is sent to the optional
+`diagnostics` callback. Closing the client aborts active callbacks, drops queued work and releases
+the listener before stopping the daemon.
+
 See the detailed gRPC and HTTP
 references for their request, response, privacy, and compatibility contracts.
 

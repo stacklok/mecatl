@@ -15,6 +15,8 @@ export { query } from "./query.js";
 export type { DaemonInfo, SpawnedClient, SpawnOptions } from "./spawn.js";
 export { spawn } from "./spawn.js";
 export type {
+  CallToolContent,
+  CallToolResult,
   NodeClient,
   ToolDefinition,
   ToolHandler,

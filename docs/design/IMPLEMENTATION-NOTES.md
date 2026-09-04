@@ -8319,6 +8319,36 @@ recursively copied with data properties onto null-prototype records before user 
 members into the handler. `sdk/typescript/test/media.test.ts` walks the `.` entrypoint's source
 graph and rejects both Node built-ins and any Ajv import, keeping the subpath boundary executable.
 
+The concrete binding is `sdk/typescript/src/tool-host.ts` (`LoopbackToolHost`), constructed by
+`sdk/typescript/src/spawn.ts` and never exported from either public barrel. It mints 32 random bytes
+per spawned client and retains the bearer in memory; `mcpServer()` is its only outbound projection,
+placing `Authorization: Bearer …` beside the literal `http://127.0.0.1:<ephemeral>/mcp` URL. The
+listener compares SHA-256 digests of presented and expected authorization values through
+`timingSafeEqual`, so missing, truncated and full-length-wrong inputs take the same fixed-length
+comparison path. POST requests with an `Origin` or a non-exact bound `Host` are rejected before
+authentication, unauthenticated requests are rejected before a body listener is installed, and
+every non-POST request (including `OPTIONS`) is `405` with `Allow: POST` and no CORS surface.
+
+The stateless JSON-RPC switch implements exactly `server/discover`, `initialize`,
+`notifications/initialized`, `tools/list`, `tools/call` and `ping`. Discovery returns method-not-found
+so the pinned Go SDK falls back to initialize; the initialize result selects from the same descending
+supported set and advertises that set, with `2025-11-25` as the latest legacy fallback. Calls enter
+one client-wide eight-slot scheduler. The queue is capped at 64, per-tool `concurrency` is
+tighten-only, request bodies are capped at 1 MiB, and a 30-second timer starts at admission so queued
+and running calls are both bounded. Caller disconnect, deadline and client disposal abort the
+handler signal and retire the logical slot without waiting for handler code that ignores abort.
+
+Result normalization is one choke point: strings become one text block; every other serializable
+JSON value becomes `structuredContent` plus its compact JSON text mirror; and an explicit
+`CallToolResult` passes unchanged. The serialized result is checked against the mirrored
+`internal/adapter/toolkit/toolkit.go` 25,000-byte limit before the HTTP response. A thrown handler or
+non-serializable value receives a random correlation id and a generic `isError` result. The
+`tool_handler_failed` diagnostic carries that id, the local tool name and the original `cause`; sink
+exceptions are ignored. Deliberate `isError` results bypass this failure translation and remain
+verbatim. `ClientImpl`'s pre-existing tool-host-before-transport disposal order calls `abort` and
+`stop`, which cancel the scheduler, destroy listener connections and join `Server.close` so the port
+is reusable before daemon teardown.
+
 The M2 durable-watch base lives in `sdk/typescript/src/watch.ts`. Its client-authored `kind`
 turns the generated `{event, cursor, phase}` response into `event | boundary | gap | unknown`;
 known phases narrow, future phases retain their raw string and optional event, and the gap arm

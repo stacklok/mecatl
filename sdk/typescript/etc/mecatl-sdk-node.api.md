@@ -107,6 +107,21 @@ export class AuthenticationError extends MecatlError {
 }
 
 // @public
+export type CallToolContent = Readonly<Record<string, ToolJsonValue>> & {
+    readonly type: string;
+};
+
+// @public
+export interface CallToolResult {
+    // (undocumented)
+    readonly content: readonly CallToolContent[];
+    // (undocumented)
+    readonly isError?: boolean;
+    // (undocumented)
+    readonly structuredContent?: ToolJsonValue;
+}
+
+// @public
 export interface Client {
     // (undocumented)
     [Symbol.asyncDispose](): Promise<void>;
@@ -220,6 +235,7 @@ export type DiagnosticLevel = "debug" | "error" | "info" | "warn";
 
 // @public
 export interface DiagnosticRecord {
+    readonly cause?: unknown;
     readonly code: string;
     readonly fields: Readonly<Record<string, DiagnosticFieldValue>>;
     readonly level: DiagnosticLevel;

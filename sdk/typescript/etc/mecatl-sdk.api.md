@@ -204,6 +204,7 @@ export type DiagnosticLevel = "debug" | "error" | "info" | "warn";
 
 // @public
 export interface DiagnosticRecord {
+    readonly cause?: unknown;
     readonly code: string;
     readonly fields: Readonly<Record<string, DiagnosticFieldValue>>;
     readonly level: DiagnosticLevel;

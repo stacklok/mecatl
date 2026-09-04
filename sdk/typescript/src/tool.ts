@@ -15,6 +15,18 @@ export type ToolJsonValue =
 /** A plain JSON Schema 2020-12 value; no schema-builder library is required. @public */
 export type ToolSchema = boolean | Readonly<Record<string, ToolJsonValue>>;
 
+/** One JSON-serializable MCP content block returned by a callback tool. @public */
+export type CallToolContent = Readonly<Record<string, ToolJsonValue>> & {
+  readonly type: string;
+};
+
+/** An explicit MCP callback-tool result, including intentional error results. @public */
+export interface CallToolResult {
+  readonly content: readonly CallToolContent[];
+  readonly isError?: boolean;
+  readonly structuredContent?: ToolJsonValue;
+}
+
 /** Context supplied to one callback tool invocation. @public */
 export interface ToolHandlerContext {
   /** Aborted when the host cancels this invocation or shuts down. */
@@ -108,7 +120,7 @@ export interface AdvertisedTool {
   readonly name: string;
 }
 
-export interface ValidationErrorResult {
+export interface ValidationErrorResult extends CallToolResult {
   readonly content: readonly [{ readonly text: string; readonly type: "text" }];
   readonly isError: true;
 }
@@ -248,6 +260,10 @@ export class ToolRegistry {
 
   hasTools(): boolean {
     return this.#tools.size > 0;
+  }
+
+  concurrencyFor(name: string): number | undefined {
+    return this.#tools.get(name)?.definition.concurrency;
   }
 
   async invoke(

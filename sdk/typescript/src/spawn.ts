@@ -24,6 +24,7 @@ import {
   ToolRegistry,
   withToolRegistration,
 } from "./tool.js";
+import { LoopbackToolHost } from "./tool-host.js";
 
 const READY_SCHEMA = "mecated-ready/1";
 const READY_FILE_NAME = "ready.json";
@@ -631,10 +632,22 @@ async function spawnAttempt(
     );
   }
 
+  let registryForHost: ToolRegistry | undefined;
+  const toolHost =
+    internal.client?.toolHost ??
+    new LoopbackToolHost(() => {
+      if (registryForHost === undefined) {
+        throw new InvalidStateError("The callback tool registry is not ready", {
+          transport: "local",
+        });
+      }
+      return registryForHost;
+    }, options.diagnostics);
   const toolRegistry = new ToolRegistry(
     options.toolServerName ?? DEFAULT_TOOL_SERVER_NAME,
-    toolHostBinding(internal.client?.toolHost),
+    toolHostBinding(toolHost),
   );
+  registryForHost = toolRegistry;
 
   const args = options.args ?? [];
   validateExtraArguments(args);
