@@ -247,7 +247,9 @@ func runSkillPrompt(ctx context.Context, addr, sessionID string) (skillRunObserv
 func installLearningFixture() {
 	ginkgo.GinkgoHelper()
 	ctx := ginkgoSuiteCtx()
+	valuesPath := filepath.Join(repoRoot(), ".scratch", "k8s-learning-e2e-values.yaml")
 	ginkgo.DeferCleanup(func() {
+		defer func() { _ = os.Remove(valuesPath) }()
 		ginkgo.By("restoring the baseline chart after the learning fixture")
 		helmInstallMecak8sChart()
 		runCmd(ginkgoSuiteCtx(), "kubectl", "delete", "-n", k8sNamespace,
@@ -266,9 +268,7 @@ func installLearningFixture() {
 	runCmd(ctx, "kubectl", "wait", "-n", k8sNamespace, "--for=condition=Available", "deployment/learning-driver", "--timeout=120s")
 	kubectlApplyStdin(ctx, []byte(learningDriverEgressPolicy))
 
-	valuesPath := filepath.Join(repoRoot(), ".scratch", "k8s-learning-e2e-values.yaml")
 	gomega.Expect(os.WriteFile(valuesPath, []byte(learningValues), 0o600)).To(gomega.Succeed())
-	defer os.Remove(valuesPath)
 	chart := filepath.Join(repoRoot(), "deploy", "helm", "mecak8s")
 	out, err := exec.CommandContext(ctx, "helm", "upgrade", "--install", "mecak8s", chart,
 		"--namespace", k8sNamespace, "--values", filepath.Join(chart, "values-kind.yaml"), "--values", valuesPath,
