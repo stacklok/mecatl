@@ -172,18 +172,27 @@ Those questions have different owners and may have different storage backends.
 
 ### A generic session-scoped state facility
 
-A restored `Session` should carry generic, session-scoped key-value state.
-Stable namespaces isolate component-owned keys so the read ledger and future
-state consumers share one persistence mechanism without sharing schemas.
+A restored `Session` should carry generic, session-scoped state. Its initial
+access pattern is namespaced key-value storage, allowing the read ledger and
+future state consumers to share one persistence mechanism without sharing
+schemas.
 
 Making this facility extensible avoids adding a new persistence interface and
 set of backend adapters for every kind of session-scoped state. It also avoids
 expanding the core session snapshot with fields owned by individual engine
-features. Persistence backends implement the namespaced key-value contract once,
-while engine features remain responsible for the meaning of their own state.
-Its lifetime follows the Session naturally: restoring the Session restores its
-state, and deleting the Session reaps all of it without individual features or
-underlying resource clients managing cleanup.
+features. Its purpose is to give engine features one session-owned way to create
+and modify durable state, so each feature does not have to solve backend storage,
+restoration, and cleanup independently. Features remain responsible for the
+meaning of their own state. Its lifetime follows the Session naturally:
+restoring the Session restores its state, and deleting the Session reaps all of
+it without individual features or underlying resource clients managing cleanup.
+
+Exact-key access is the right initial contract for the read ledger because each
+file observation can be read or updated independently, minimizing read
+amplification and avoiding whole-ledger serialization. It need not be the only
+access contract the session-state facility ever supports. A future feature with
+demonstrably different requirements may add another contract while retaining the
+same session ownership and storage lifecycle.
 
 This proposal deliberately does not settle the exact Go interface, generic type
 shape, namespace-registration API, or serialization format. Those belong in the
@@ -191,9 +200,12 @@ implementation ADR. The architectural contract is:
 
 - The state view is already bound to one `SessionID`; callers never supply a
   second session identity.
-- Components address values by stable, versioned namespace and key.
-- The interface provides exact-key Get, Put, and Delete operations. Whether
-  those operations expose typed values directly is an API-design detail.
+- The initial key-value contract addresses values by stable, versioned namespace
+  and key and provides exact-key Get, Put, and Delete operations. Whether those
+  operations expose typed values directly is an API-design detail.
+- Additional access contracts may be added when another feature demonstrates
+  that key-value operations are insufficient; they remain part of the same
+  session-owned state facility and lifecycle.
 - Components own their value schema, validation, and corruption handling;
   storage adapters remain schema-agnostic.
 - Get distinguishes absence from storage or decode failure.
@@ -276,6 +288,10 @@ every backend, but the following must hold:
 
 - failure to retain a Read observation is reported and does not create evidence;
 - a failed or corrupt lookup is distinct from absence and refuses mutation;
+- restored extensible state is used only when the persistence layer can establish
+  that it corresponds to the restored Session state; when that cannot be
+  established, ledger evidence is treated as absent and the agent must Read
+  again;
 - successful session deletion removes extension state;
 - stale evidence remains harmless because the Workspace's final CAS is
   authoritative; and
