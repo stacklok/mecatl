@@ -45,6 +45,7 @@ import (
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/internal/adapter/clientauth"
 	"github.com/stacklok/mecatl/internal/adapter/credentialstore"
+	"github.com/stacklok/mecatl/internal/adapter/mcpauthority"
 	"github.com/stacklok/mecatl/internal/adapter/slogdiag"
 	"github.com/stacklok/mecatl/internal/adapter/xdgconfig"
 	"github.com/stacklok/mecatl/internal/app"
@@ -1182,11 +1183,14 @@ func embeddedConfig(cfg config, diag port.Diagnostics) app.Config {
 	cfg.providerFlags.ApplyResolved(&out, keys)
 	out.UseOpenAI = keys.OpenAI != ""
 	cfg.toolhiveLLMFlags.Apply(&out)
-	// Operator-tier mcp.servers profiles (settings.yaml): the embedded server
-	// is a composition root like mecated, so it loads the operator MCP profiles
-	// over the same resolver the other binaries use. The legacy --mcp-server
-	// flag stays off (heavier opt-in), but operator settings are honored here.
+	// Operator-tier MCP profiles use the canonical authority resolver (global vs
+	// broker) rather than MCPProfileLoader.Load's global-mode-only path. The
+	// embedded server supports broker construction while retaining the existing
+	// profile loader for compatibility with consumers that use it directly.
 	out.MCPProfileLoader = cliconfig.NewMCPProfileResolver(nil, os.LookupEnv)
+	out.MCPAuthorityLoader = cliconfig.NewMCPProfileResolver(nil, os.LookupEnv)
+	out.MCPAuthorityDefault = mcpauthority.Global
+	out.MCPBrokerSupported = true
 	out.ProviderCredentialLoader = cliconfig.NewProviderCredentialResolver(cfg.providerFlags, keys)
 	out.ProviderOverrides = cfg.providerFlags.EndpointOverrides()
 	return out

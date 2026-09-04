@@ -11,6 +11,7 @@ import (
 
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/port"
+	"github.com/stacklok/mecatl/internal/adapter/mcpauthority"
 	"github.com/stacklok/mecatl/internal/adapter/slogdiag"
 	"github.com/stacklok/mecatl/internal/app"
 	"github.com/stacklok/mecatl/internal/cliconfig"
@@ -405,6 +406,9 @@ func appConfig(f flags, diag port.Diagnostics, obs observability) app.Config {
 		// never registered (a hand-built test config).
 		MCPServers:               f.mcpServers.Servers(),
 		MCPProfileLoader:         cliconfig.NewMCPProfileResolver(f.mcpServers, os.LookupEnv),
+		MCPAuthorityLoader:       cliconfig.NewMCPProfileResolver(f.mcpServers, os.LookupEnv),
+		MCPAuthorityDefault:      mcpauthority.Global,
+		MCPBrokerSupported:       false,
 		ProviderCredentialLoader: cliconfig.NewProviderCredentialResolver(f.providerFlags, f.providerCredentials),
 		ProviderOverrides:        f.providerFlags.EndpointOverrides(),
 		PermissionsConventional:  true,

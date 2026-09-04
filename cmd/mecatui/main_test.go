@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"io"
 	"os"
@@ -13,6 +14,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stacklok/mecatl/engine/adapter/mockllm"
+	"github.com/stacklok/mecatl/internal/adapter/mcpauthority"
+	"github.com/stacklok/mecatl/internal/app"
 	"github.com/stacklok/mecatl/internal/cliconfig"
 	"github.com/stacklok/mecatl/internal/testutil/testhome"
 )
@@ -78,6 +82,37 @@ func TestEmbeddedConfigWiresMCPProfileLoader(t *testing.T) {
 	if _, ok := ac.MCPProfileLoader.(*cliconfig.MCPProfileResolver); !ok {
 		t.Fatalf("MCPProfileLoader = %T, want *cliconfig.MCPProfileResolver", ac.MCPProfileLoader)
 	}
+	if ac.MCPAuthorityLoader == nil {
+		t.Fatal("app.Config.MCPAuthorityLoader is nil; broker mode would not use canonical authority resolution")
+	}
+	if _, ok := ac.MCPAuthorityLoader.(*cliconfig.MCPProfileResolver); !ok {
+		t.Fatalf("MCPAuthorityLoader = %T, want *cliconfig.MCPProfileResolver", ac.MCPAuthorityLoader)
+	}
+	if ac.MCPAuthorityDefault != mcpauthority.Global {
+		t.Errorf("MCPAuthorityDefault = %q, want %q", ac.MCPAuthorityDefault, mcpauthority.Global)
+	}
+	if !ac.MCPBrokerSupported {
+		t.Error("MCPBrokerSupported = false, want true")
+	}
+}
+
+func TestEmbeddedConfigBuildAcceptsBrokerAuthority(t *testing.T) {
+	settings := filepath.Join(t.TempDir(), "settings.yaml")
+	if err := os.WriteFile(settings, []byte("mcp:\n  mode: broker\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ac := embeddedConfig(config{workspace: t.TempDir(), mock: true}, nil)
+	ac.MockProvider = mockllm.New()
+	ac.PermissionConfigs = []string{settings}
+	ac.StoreDir = ""
+	ac.MemoryDir = t.TempDir()
+	ac.UserModelDir = t.TempDir()
+	ac.ToolHiveEnabled = false
+	built, err := app.Build(context.Background(), ac)
+	if err != nil {
+		t.Fatalf("embedded broker authority Build: %v", err)
+	}
+	t.Cleanup(built.Close)
 }
 
 func TestConventionalAuthFileIsIsolated(t *testing.T) {

@@ -1,6 +1,7 @@
 # Session MCP authorization reconstruction review ledger
 
 - Review fixed point: `5ed0e242f9a7c89e8897297b36512e4ece4fd7bd`
+- Post-review reconciliation: `935f74713d351617bf41e0c578443454b153dd49`
 - Comparison base: `e49d183d0`
 - Panel: 13 read-only `gpt-5.6-terra` reviews
 - Scope: 31 commits, 136 files, +23,225/-4,101
@@ -18,14 +19,14 @@ Status vocabulary: `open`, `in_progress`, `fixed`, `accepted`, `superseded`.
 |---|---|---|---|---|
 | C-K1 | known | fixed | Server-only TLS is incorrectly accepted as verified caller identity for broker controls. Require token/OIDC or verified mTLS client identity. | `cmd/mecak8s/serve.go` (`validateBrokerControlOwnership`) |
 | C-K2 | known | fixed | `mecated` resolves explicit broker authority canonically and atomically mounts the complete broker handler bundle on its fully populated HTTP mux after all-route, standard-method collision preflight. | `cmd/mecated/main.go`; `internal/adapter/mcpbroker/handlers.go`; `cmd/mecated/mcp_broker_command_root_test.go` |
-| C-D1 | decision | open | Production workspace enrollment is not wired behind `WorkspaceEnrollmentAttachment`. Decide whether Runtime, Process, or another service owns begin/observe/cancel and catalogue freeze. | `internal/mcpbroker/broker.go`; `internal/adapter/server/workspace_enrollment.go` |
+| C-D1 | decision | fixed | Production workspace enrollment is implemented by the concrete broker `Attachment`, backed by its owning ToolHive `Process`: begin/observe/cancel reuse broker authorization state, authenticated observation freezes the catalogue, and composition advertises the capability only when the process requires it. | `internal/adapter/mcpbroker/workspace_enrollment.go`; `internal/adapter/mcpbroker/toolhive_process.go`; `internal/app/build.go`; `internal/adapter/server/workspace_enrollment.go` |
 
 ## High
 
 | ID | Knowledge | Status | Finding | Primary locations |
 |---|---|---|---|---|
 | H-K1 | known | fixed | `mecak8s` defaults configured operator MCP profiles to broker authority, preserves legacy `--mcp-server` as global, and the Helm zero-server render explicitly selects global without constructing broker resources. | `cmd/mecak8s/flags.go`; `internal/app/build.go`; `deploy/helm/mecak8s/templates/` |
-| H-K2 | known | open | Other roots do not consistently use the canonical authority resolver or reject unsupported broker mode. | `cmd/mecatui/main.go`; `cmd/mecatequi/flags.go` |
+| H-K2 | known | fixed | `mecatui` and `mecatequi` retain legacy MCP profile loading while routing operator MCP configuration through the canonical authority resolver; mecatui supports broker authority and mecatequi rejects broker mode explicitly. | `cmd/mecatui/main.go`; `cmd/mecatui/main_test.go`; `cmd/mecatequi/flags.go`; `cmd/mecatequi/mcp_summary_test.go` |
 | H-K3 | known | open | HTTP authorization continuations remain bound to the control request context. | `internal/adapter/server/http.go` (`relayMCPAuthorizationControlSSE`) |
 | H-K4 | known | open | Initial gRPC control-status send failure does not drain and finish the registered continuation. | `internal/adapter/server/grpc.go` (`relayMCPAuthorizationControl`) |
 | H-K5 | known | open | Non-EOF control closure/send failure still owns and cancels the resumed run. | `internal/adapter/server/grpc.go`; `internal/adapter/server/http.go` |
