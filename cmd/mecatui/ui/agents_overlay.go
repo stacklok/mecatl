@@ -526,13 +526,9 @@ func renderSubagentRoster(th theme.Theme, st subagentState, fleet []subagentLane
 		out.WriteString(muted.Render(fmt.Sprintf("  · +%d below", below)) + "\n")
 	}
 
-	// SHORTER than the team/parallel roster hint: the extra "x cancel" segment would
-	// otherwise push this card past a 100-col terminal (the hint is the card's widest
-	// line, so it directly sets the overlay width — the centred card does not wrap).
-	// home/g·end/G and pgup/pgdn paging still work; the hint names the primary chords.
-	// Every chord reads the LIVE keyMap markings (hk) so an override propagates
-	// (issue #457); with defaults the hint is byte-identical to the historical literal.
-	out.WriteString("\n" + renderDelegationRows(muted, "", hk.navUp+"/"+hk.navDown+" select · "+hk.scroll+" · "+hk.jumpTop+"/"+hk.jumpEnd+" · "+hk.choose+" focus · "+hk.cancelChild+" cancel · "+agentsEmptyHint(hk), bodyWidth))
+	// This dynamic, live-key footer is deliberately a single truncated row: a rebound
+	// key label can otherwise wrap and widen the centred card.
+	out.WriteString("\n" + renderDynamicCardChromeLine(muted, "", hk.navUp+"/"+hk.navDown+" select · "+hk.scroll+" · "+hk.jumpTop+"/"+hk.jumpEnd+" · "+hk.choose+" focus · "+hk.cancelChild+" cancel · "+agentsEmptyHint(hk), bodyWidth))
 	return out.String()
 }
 

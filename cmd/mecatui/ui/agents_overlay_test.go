@@ -690,6 +690,57 @@ func TestSubagentRosterWindowed(t *testing.T) {
 	}
 }
 
+// TestSubagentRosterFooterSentinel stays a single fitting row when a live rebound
+// key label is unusually long. The footer is dynamic card chrome, not a roster row:
+// it must truncate rather than wrap and accidentally widen the centred overlay.
+func TestSubagentRosterFooterSentinel(t *testing.T) {
+	const viewportWidth = 32
+	th, hk := aztec(), defaultHelpKeys()
+	hk.navUp = "rebound-key-label-with-an-unusually-long-live-value\nand-another-line"
+
+	out := stripANSIstr(renderSubagentRoster(th, subagentState{}, []subagentLane{{childID: "child", goal: "inspect"}}, hk, 0, viewportWidth))
+	footer := out[strings.LastIndex(out, "\n")+1:]
+	if strings.ContainsRune(footer, '\n') {
+		t.Fatalf("footer rendered more than one row: %q", footer)
+	}
+	if got := lipgloss.Width(footer); got > focusCardTextWidth(viewportWidth) {
+		t.Fatalf("footer width = %d, want <= %d: %q", got, focusCardTextWidth(viewportWidth), footer)
+	}
+	if !strings.Contains(footer, "...") {
+		t.Fatalf("footer did not use the literal ellipsis sentinel: %q", footer)
+	}
+	if strings.Contains(footer, "\x1b") || strings.Contains(footer, "\nand-another") {
+		t.Fatalf("footer retained unsafe or multi-row key content: %q", footer)
+	}
+}
+
+// TestSubagentRosterFooterSentinelNormalWidth preserves the established default
+// footer when its live key markings fit the available card body.
+func TestSubagentRosterFooterSentinelNormalWidth(t *testing.T) {
+	th, hk := aztec(), defaultHelpKeys()
+	out := stripANSIstr(renderSubagentRoster(th, subagentState{}, []subagentLane{{childID: "child", goal: "inspect"}}, hk, 0, 160))
+	footer := out[strings.LastIndex(out, "\n")+1:]
+	want := "↑/↓ select · pgup/pgdn · home/end · enter focus · x cancel · tab switch · esc close"
+	if footer != want {
+		t.Fatalf("normal-width footer = %q, want existing output %q", footer, want)
+	}
+}
+
+// TestDynamicCardChromeLine reserves its prefix and sanitizes before it truncates
+// the raw dynamic text into exactly one display row.
+func TestDynamicCardChromeLine(t *testing.T) {
+	got := stripANSIstr(renderDynamicCardChromeLine(aztec().Style("muted"), "› ", "first\nsecond\x1b[2J", 12))
+	if strings.ContainsRune(got, '\n') || strings.Contains(got, "\x1b") {
+		t.Fatalf("chrome line retained a row break or terminal escape: %q", got)
+	}
+	if !strings.HasPrefix(got, "› ") || !strings.Contains(got, "...") {
+		t.Fatalf("chrome line did not preserve prefix or ellipsis: %q", got)
+	}
+	if width := lipgloss.Width(got); width > 12 {
+		t.Fatalf("chrome line width = %d, want <= 12: %q", width, got)
+	}
+}
+
 // TestRosterRouteNavigation verifies each top-level roster delegates navigation
 // to navigateRosterCursor, including live key overrides and page-sized movement.
 func TestRosterRouteNavigation(t *testing.T) {

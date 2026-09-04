@@ -1537,6 +1537,29 @@ func wrapToolCardText(text string, bodyWidth int) string {
 	return ansi.Hardwrap(text, bodyWidth, true)
 }
 
+// renderDynamicCardChromeLine renders one bounded chrome row from dynamic text. It
+// sanitizes and flattens both inputs before reserving the prefix cells, then truncates
+// the remaining text at display-cell boundaries before applying the style.
+func renderDynamicCardChromeLine(style lipgloss.Style, prefix, raw string, width int) string {
+	oneLine := func(s string) string {
+		return strings.Map(func(r rune) rune {
+			if unicode.IsSpace(r) {
+				return ' '
+			}
+			return r
+		}, sanitizeTerminal(s))
+	}
+	prefix, raw = oneLine(prefix), oneLine(raw)
+	if width <= 0 {
+		return style.Render(prefix + raw)
+	}
+	prefixWidth := lipgloss.Width(prefix)
+	if prefixWidth >= width {
+		return style.Render(ansi.TruncateWc(prefix, width, "..."))
+	}
+	return style.Render(prefix + ansi.TruncateWc(raw, width-prefixWidth, "..."))
+}
+
 // wrapDelegationRow trims display-only right padding, reserves prefix cells, and
 // wraps raw text before callers style the completed rows. A continuation keeps the
 // prefix's alignment without letting either the prefix or style padding consume a
