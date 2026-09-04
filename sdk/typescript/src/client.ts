@@ -10,6 +10,7 @@ import type { CallOptions, Transport } from "@connectrpc/connect";
 
 import {
   AuthenticationError,
+  type DiagnosticsSink,
   IncompatibleServerError,
   InvalidStateError,
   ProtocolError,
@@ -139,8 +140,16 @@ export interface Client {
   [Symbol.asyncDispose](): Promise<void>;
 }
 
+const diagnosticSinks = new WeakMap<Client, DiagnosticsSink>();
+
+/** Returns the diagnostic sink installed on one client, when present. */
+export function clientDiagnostics(client: Client): DiagnosticsSink | undefined {
+  return diagnosticSinks.get(client);
+}
+
 interface ClientCoreOptions {
   afterClose?: () => Promise<void>;
+  diagnostics?: DiagnosticsSink;
   owned: boolean;
   transport: Transport;
   transportKind: TransportKind;
@@ -205,6 +214,20 @@ type DisposableTransport = Transport & {
   [Symbol.asyncDispose]?: () => Promise<void>;
   [Symbol.dispose]?: () => void;
 };
+
+/** Internal transport-disposal seam shared with local daemon startup. */
+export async function disposeTransport(transport: Transport): Promise<void> {
+  const disposable = transport as DisposableTransport;
+  const asyncDispose = disposable[Symbol.asyncDispose];
+  const dispose = disposable[Symbol.dispose];
+  if (asyncDispose !== undefined) {
+    await asyncDispose.call(disposable);
+  } else if (dispose !== undefined) {
+    dispose.call(disposable);
+  } else {
+    await disposable.close?.();
+  }
+}
 
 const HEARTBEAT_INTERVAL_MS = 30_000;
 const CONNECTION_STATUS_PRECEDENCE: readonly ConnectionStatus[] = [
@@ -353,6 +376,7 @@ class ClientImpl implements Client {
   #visibilityTarget: Document | undefined;
 
   constructor(options: ClientCoreOptions) {
+    if (options.diagnostics !== undefined) diagnosticSinks.set(this, options.diagnostics);
     this.#afterClose = options.afterClose;
     this.#owned = options.owned;
     this.#transport = options.transport;
@@ -451,16 +475,7 @@ class ClientImpl implements Client {
     if (!this.#owned) return;
 
     try {
-      const transport = this.#transport as DisposableTransport;
-      const asyncDispose = transport[Symbol.asyncDispose];
-      const dispose = transport[Symbol.dispose];
-      if (asyncDispose !== undefined) {
-        await asyncDispose.call(transport);
-      } else if (dispose !== undefined) {
-        dispose.call(transport);
-      } else {
-        await transport.close?.();
-      }
+      await disposeTransport(this.#transport);
     } finally {
       await this.#afterClose?.();
     }

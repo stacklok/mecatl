@@ -227,7 +227,12 @@ the fd and its flag without changing explicit shutdown. `http: true` opens only 
 ephemeral loopback HTTP listener and honestly costs the deployment-scoped
 `mcp_servers_on_create` feature. The SDK reads that feature truth from the ready document,
 never from its own argv. The client is returned only after a complete `mecated-ready/1`
-file is read, and its transport dials the document's `socket_path`. A `SpawnedClient`'s
+file is read and the first compatibility dial succeeds; its transport dials the document's
+`socket_path`. Exit before that barrier is `spawn_failed`, while a live child that misses the
+deadline is `readiness_timeout` and is stopped. Startup errors carry the end of a bounded stderr
+tail after line-boundary truncation and whole-line credential-shape redaction. An optional
+structured diagnostics sink receives the same safe report; without one, the SDK writes nothing
+to `console`. Every post-launch failure stops the child before removing its private directory. A `SpawnedClient`'s
 `daemon` getter exposes only the frozen pid, Unix transport, socket path, API major and
 feature list; environment overrides are merged over the inherited parent environment but
 are never projected there. Closing that client closes its transport, stops the owned

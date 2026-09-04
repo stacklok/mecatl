@@ -115,6 +115,11 @@ export interface Client {
 }
 
 // @public
+export interface ClientDiagnosticsOptions {
+    diagnostics?: DiagnosticsSink;
+}
+
+// @public
 export interface CompactionArchiveEventPayload {
     // (undocumented)
     readonly replaced: readonly ArchivedConversationMessage[];
@@ -190,6 +195,23 @@ export class CursorMalformedError extends MecatlError {
 export class CursorScopeError extends MecatlError {
     constructor(message?: string);
 }
+
+// @public
+export type DiagnosticFieldValue = boolean | number | string | null;
+
+// @public
+export type DiagnosticLevel = "debug" | "error" | "info" | "warn";
+
+// @public
+export interface DiagnosticRecord {
+    readonly code: string;
+    readonly fields: Readonly<Record<string, DiagnosticFieldValue>>;
+    readonly level: DiagnosticLevel;
+    readonly message: string;
+}
+
+// @public
+export type DiagnosticsSink = (record: DiagnosticRecord) => void;
 
 // @public
 export type ErrorOrigin = TransportKind | "local";

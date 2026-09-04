@@ -8217,6 +8217,24 @@ Readiness is the atomically published document, not stdout or a speculative dial
 partial JSON read remains behind the polling barrier; only schema `mecated-ready/1` with a
 valid pid, Unix transport, non-empty `socket_path`, positive API major and string feature
 list succeeds, and the document path — not the requested path — builds the UDS transport.
+The SDK performs the first `GetCompatibilityInfo` dial before returning the client. A child
+whose handle closes first produces `spawn_failed` with its code and signal; a live child that
+misses the configured deadline produces `readiness_timeout`. Both paths, plus schema and
+first-dial failures after launch, dispose any created transport, close the lifetime endpoint,
+send `SIGTERM`, bound the grace period and escalate to `SIGKILL`, then remove the runtime
+directory. The process handle is the signalling authority; the ready document's pid is only
+display metadata.
+
+The real launcher retains at most the last 64 KiB of stderr and reports at most the last 4 KiB.
+If the reporting cut lands inside a line, that leading fragment is discarded before decoding.
+Redaction then runs over exactly the reported text and replaces a whole line for environment-
+assignment shapes or the `sk-`, `ghp_`, `xox[abps]-`, and `eyJ` credential prefixes. The safe
+tail is the only stderr material added to the typed error or diagnostics. `ClientDiagnosticsOptions`
+installs one synchronous structured sink on Node/Bun client construction; records contain
+`code`, `level`, `message`, and primitive typed `fields`, remain separate from `session.Event`,
+and sink exceptions cannot replace the failure being observed. With no sink the SDK has no
+`console` fallback.
+
 The `./node`-only `SpawnedClient` subtype adds a `daemon` getter whose frozen `DaemonInfo`
 is an explicit five-field projection: pid, transport, socket path, API major and features.
 It excludes the ready document's HTTP address, gRPC-address duplicate, deployment label and

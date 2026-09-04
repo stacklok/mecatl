@@ -6,9 +6,16 @@ import { delimiter, join, resolve } from "node:path";
 
 import type { Transport } from "@connectrpc/connect";
 
-import { type Client, connectTransport } from "./client.js";
-import { MecatlError } from "./errors.js";
+import { type Client, connectTransport, disposeTransport } from "./client.js";
+import {
+  type ClientDiagnosticsOptions,
+  type DiagnosticFieldValue,
+  type DiagnosticRecord,
+  type DiagnosticsSink,
+  MecatlError,
+} from "./errors.js";
 import { createNodeTransport } from "./node-transport.js";
+import { createRawClient } from "./raw.js";
 
 const READY_SCHEMA = "mecated-ready/1";
 const READY_FILE_NAME = "ready.json";
@@ -18,6 +25,9 @@ const DEFAULT_READINESS_TIMEOUT_MS = 30_000;
 const READY_POLL_INTERVAL_MS = 20;
 const STOP_GRACE_MS = 3_000;
 const HTTP_LOOPBACK_ADDRESS = "127.0.0.1:0";
+const STDERR_CAPTURE_BYTES = 64 * 1024;
+const STDERR_REPORT_BYTES = 4 * 1024;
+const REDACTED_LINE = "[REDACTED]";
 
 const SDK_OWNED_FLAGS = [
   "--grpc-unix-socket",
@@ -28,7 +38,7 @@ const SDK_OWNED_FLAGS = [
 ] as const;
 
 /** Options for starting one SDK-owned local daemon. @public */
-export interface SpawnOptions {
+export interface SpawnOptions extends ClientDiagnosticsOptions {
   /** Additional daemon arguments. SDK-owned listener and lifecycle flags cannot be replaced. */
   args?: readonly string[];
   /** Explicit mecated executable. Resolution otherwise uses MECATED_BIN, then PATH. */
@@ -82,6 +92,7 @@ interface LaunchedProcess {
   readonly exit: Promise<ProcessExit>;
   isRunning(): boolean;
   kill(signal: "SIGKILL" | "SIGTERM"): void;
+  stderrTail?(): Uint8Array;
 }
 
 interface SpawnFileSystem {
@@ -142,6 +153,33 @@ const defaultFileSystem: SpawnFileSystem = {
   unlink,
 };
 
+class BoundedByteTail {
+  #bytes = Buffer.alloc(0);
+
+  append(chunk: Uint8Array): void {
+    const suffix = Buffer.from(chunk).subarray(-STDERR_CAPTURE_BYTES);
+    const joined = Buffer.concat([this.#bytes, suffix]);
+    this.#bytes = joined.subarray(-STDERR_CAPTURE_BYTES);
+  }
+
+  value(): Uint8Array {
+    return this.#bytes;
+  }
+}
+
+class ChildExitedBeforeReady extends Error {
+  constructor(readonly status: ProcessExit) {
+    super("mecated exited before readiness");
+  }
+}
+
+type StartupError = MecatlError & {
+  cleanupFailed?: true;
+  exitCode?: number | null;
+  signal?: NodeJS.Signals | null;
+  stderrTail?: string;
+};
+
 function localError(
   code: "readiness_timeout" | "spawn_failed" | "unsupported_platform",
   message: string,
@@ -167,11 +205,12 @@ function realLauncher(request: LaunchRequest): LaunchedProcess {
     shell: request.shell,
     stdio: [...request.stdio],
   });
-  child.stderr?.resume();
+  const stderr = new BoundedByteTail();
+  child.stderr?.on("data", (chunk: Buffer) => stderr.append(chunk));
 
   const exit = new Promise<ProcessExit>((resolve, reject) => {
     child.once("error", reject);
-    child.once("exit", (code, signal) => resolve({ code, signal }));
+    child.once("close", (code, signal) => resolve({ code, signal }));
   });
   const lifetime = child.stdio[3];
 
@@ -182,7 +221,87 @@ function realLauncher(request: LaunchRequest): LaunchedProcess {
     kill: (signal) => {
       child.kill(signal);
     },
+    stderrTail: () => stderr.value(),
   };
+}
+
+function reportableStderr(bytes: Uint8Array): string {
+  const captured = Buffer.from(bytes);
+  const start = Math.max(0, captured.length - STDERR_REPORT_BYTES);
+  let report = captured.subarray(start);
+  if (start > 0 && captured[start - 1] !== 0x0a) {
+    const firstNewline = report.indexOf(0x0a);
+    report = firstNewline === -1 ? Buffer.alloc(0) : report.subarray(firstNewline + 1);
+  }
+  return redactStderr(report.toString("utf8"));
+}
+
+function secretShapedLine(line: string): boolean {
+  const value = line.endsWith("\r") ? line.slice(0, -1) : line;
+  return (
+    /^[\t ]*(?:export[\t ]+)?[A-Za-z_][A-Za-z0-9_]*[\t ]*=.*$/.test(value) ||
+    /(?:^|[^A-Za-z0-9])(?:sk-|ghp_|xox[abps]-|eyJ)[A-Za-z0-9._-]*/.test(value)
+  );
+}
+
+function redactStderr(stderr: string): string {
+  return stderr
+    .split("\n")
+    .map((line) => {
+      if (!secretShapedLine(line)) return line;
+      return line.endsWith("\r") ? `${REDACTED_LINE}\r` : REDACTED_LINE;
+    })
+    .join("\n");
+}
+
+function startupError(reason: unknown, process: LaunchedProcess | undefined): StartupError {
+  const exited = reason instanceof ChildExitedBeforeReady ? reason.status : undefined;
+  const code = reason instanceof MecatlError ? reason.code : "spawn_failed";
+  const base =
+    reason instanceof ChildExitedBeforeReady
+      ? localError(
+          "spawn_failed",
+          `mecated exited before readiness (code=${String(exited?.code)}, signal=${String(exited?.signal)})`,
+        )
+      : reason instanceof MecatlError && (code === "spawn_failed" || code === "readiness_timeout")
+        ? reason
+        : localError("spawn_failed", "mecated failed during startup", reason);
+  const tail = reportableStderr(process?.stderrTail?.() ?? new Uint8Array());
+  const error = (
+    tail === ""
+      ? base
+      : new MecatlError(`${base.message}\nstderr tail:\n${tail}`, {
+          cause: base,
+          code: base.code,
+          transport: "local",
+        })
+  ) as StartupError;
+  if (exited !== undefined) {
+    error.exitCode = exited.code;
+    error.signal = exited.signal;
+  }
+  if (tail !== "") error.stderrTail = tail;
+  return error;
+}
+
+function emitStartupDiagnostic(sink: DiagnosticsSink | undefined, error: StartupError): void {
+  if (sink === undefined) return;
+  const fields: Record<string, DiagnosticFieldValue> = {};
+  if (error.cleanupFailed === true) fields.cleanupFailed = true;
+  if (error.exitCode !== undefined) fields.exitCode = error.exitCode;
+  if (error.signal !== undefined) fields.signal = error.signal;
+  if (error.stderrTail !== undefined) fields.stderrTail = error.stderrTail;
+  const record: DiagnosticRecord = Object.freeze({
+    code: error.code,
+    fields: Object.freeze(fields),
+    level: "error",
+    message: error.message,
+  });
+  try {
+    sink(record);
+  } catch {
+    // Diagnostics observers never replace the startup failure they are observing.
+  }
 }
 
 function defaultSleep(ms: number): Promise<void> {
@@ -394,7 +513,11 @@ async function waitForReady(
 }
 
 async function stopProcess(process: LaunchedProcess, scheduler: SpawnScheduler): Promise<void> {
-  process.closeLifetime();
+  try {
+    process.closeLifetime();
+  } catch {
+    // Signalling the child remains mandatory when its lifetime endpoint cannot close cleanly.
+  }
   if (!process.isRunning()) return;
   process.kill("SIGTERM");
   const exited = process.exit.then(
@@ -407,8 +530,7 @@ async function stopProcess(process: LaunchedProcess, scheduler: SpawnScheduler):
   }
 }
 
-/** Internal construction seam used by the unit suite; not exported from the package entry point. */
-export async function spawnInternal(
+async function spawnAttempt(
   options: SpawnOptions = {},
   internal: SpawnInternalOptions = {},
 ): Promise<SpawnedClient> {
@@ -446,6 +568,7 @@ export async function spawnInternal(
   };
   const launcher = internal.launcher ?? realLauncher;
   let child: LaunchedProcess | undefined;
+  let transport: Transport | undefined;
   let cleaned = false;
   const cleanup = async () => {
     if (cleaned) return;
@@ -482,23 +605,22 @@ export async function spawnInternal(
     const ready = await Promise.race([
       waitForReady(runtime.readyFile, timeoutMs, fileSystem, clock, scheduler),
       child.exit.then(
-        ({ code, signal }) => {
-          throw localError(
-            "spawn_failed",
-            `mecated exited before readiness (code=${String(code)}, signal=${String(signal)})`,
-          );
+        (status) => {
+          throw new ChildExitedBeforeReady(status);
         },
         (error: unknown) => {
           throw localError("spawn_failed", "mecated could not be launched", error);
         },
       ),
     ]);
-    const transport = (
-      internal.createTransport ?? ((socketPath) => createNodeTransport({ socketPath }))
-    )(ready.socket_path);
+    transport = (internal.createTransport ?? ((socketPath) => createNodeTransport({ socketPath })))(
+      ready.socket_path,
+    );
+    await createRawClient({ transport, transportKind: "grpc" }).features({ timeoutMs });
     return withDaemonInfo(
       connectTransport({
         afterClose: cleanup,
+        ...(options.diagnostics === undefined ? {} : { diagnostics: options.diagnostics }),
         owned: true,
         transport,
         transportKind: "grpc",
@@ -507,9 +629,38 @@ export async function spawnInternal(
       ready,
     );
   } catch (error) {
-    await cleanup();
-    if (error instanceof MecatlError) throw error;
-    throw localError("spawn_failed", "mecated failed before readiness", error);
+    const failure = startupError(error, child);
+    let cleanupFailed = false;
+    if (transport !== undefined) {
+      try {
+        await disposeTransport(transport);
+      } catch {
+        cleanupFailed = true;
+        // The child and its credential-bearing socket still have to be removed.
+      }
+    }
+    try {
+      await cleanup();
+    } catch {
+      cleanupFailed = true;
+    }
+    if (cleanupFailed) failure.cleanupFailed = true;
+    throw failure;
+  }
+}
+
+/** Internal construction seam used by the unit suite; not exported from the package entry point. */
+export async function spawnInternal(
+  options: SpawnOptions = {},
+  internal: SpawnInternalOptions = {},
+): Promise<SpawnedClient> {
+  try {
+    return await spawnAttempt(options, internal);
+  } catch (reason) {
+    const error =
+      reason instanceof MecatlError ? (reason as StartupError) : startupError(reason, undefined);
+    emitStartupDiagnostic(options.diagnostics, error);
+    throw error;
   }
 }
 

@@ -40,7 +40,10 @@ daemon, and resolves after the daemon publishes its supported ready document:
 ```ts
 import { spawn } from "@stacklok/mecatl-sdk/node";
 
-await using client = await spawn({ binaryPath: "/opt/mecatl/bin/mecated" });
+await using client = await spawn({
+  binaryPath: "/opt/mecatl/bin/mecated",
+  diagnostics: (record) => console.error(record),
+});
 console.log(client.daemon.features);
 const session = await client.sessions.create({});
 ```
@@ -54,7 +57,10 @@ enabled by default so a vanished parent produces EOF in the daemon; `lifetimePip
 opts out of crash cleanup, while `close()` still stops the child. `env` values override the
 otherwise inherited process environment and are never exposed through `client.daemon`.
 Closing the client stops only the daemon that client spawned and removes its private runtime
-directory.
+directory. A child exit before readiness is a typed `spawn_failed`; a live child that misses
+`readinessTimeoutMs` is a typed `readiness_timeout` and is stopped. Both include only the
+bounded, whole-line-redacted end of stderr. The optional `diagnostics` callback receives one
+structured safe record; without it the SDK never writes to `console`.
 
 ## Development
 

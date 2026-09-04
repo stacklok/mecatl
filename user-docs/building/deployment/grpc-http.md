@@ -49,6 +49,9 @@ Its `client.daemon` facts come from that document's non-secret allowlist. Settin
 `http: true` adds an ephemeral loopback HTTP listener but removes callback-tool support;
 setting `lifetimePipe: false` opts out of parent-crash cleanup without changing `close()`.
 Closing the client stops that owned process and removes its private runtime directory.
+Startup errors distinguish an exited child from a live child that missed its readiness deadline.
+Their stderr report is bounded and redacted by whole line; applications can install the
+structured `diagnostics` callback, while the default writes nothing to `console`.
 
 Use `connect()` instead when another operator or service owns the daemon. A connected client
 never signals a process or removes a server directory.

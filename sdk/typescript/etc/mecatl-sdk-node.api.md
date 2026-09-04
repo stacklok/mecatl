@@ -119,6 +119,11 @@ export interface Client {
 }
 
 // @public
+export interface ClientDiagnosticsOptions {
+    diagnostics?: DiagnosticsSink;
+}
+
+// @public
 export interface CompactionArchiveEventPayload {
     // (undocumented)
     readonly replaced: readonly ArchivedConversationMessage[];
@@ -206,6 +211,23 @@ export interface DaemonInfo {
     readonly socketPath: string;
     readonly transport: "unix";
 }
+
+// @public
+export type DiagnosticFieldValue = boolean | number | string | null;
+
+// @public
+export type DiagnosticLevel = "debug" | "error" | "info" | "warn";
+
+// @public
+export interface DiagnosticRecord {
+    readonly code: string;
+    readonly fields: Readonly<Record<string, DiagnosticFieldValue>>;
+    readonly level: DiagnosticLevel;
+    readonly message: string;
+}
+
+// @public
+export type DiagnosticsSink = (record: DiagnosticRecord) => void;
 
 // @public
 export type ErrorOrigin = TransportKind | "local";
@@ -522,7 +544,7 @@ export interface ModelRetryEventPayload {
 }
 
 // @public
-export type NodeConnectOptions = NodeTransportOptions | InjectedTransportOptions;
+export type NodeConnectOptions = (NodeTransportOptions | InjectedTransportOptions) & ClientDiagnosticsOptions;
 
 // @public (undocumented)
 export interface NodeTransportCommonOptions extends CredentialOptions {
@@ -816,7 +838,7 @@ export interface SpawnedClient extends Client {
 }
 
 // @public
-export interface SpawnOptions {
+export interface SpawnOptions extends ClientDiagnosticsOptions {
     args?: readonly string[];
     binaryPath?: string;
     env?: Readonly<NodeJS.ProcessEnv>;

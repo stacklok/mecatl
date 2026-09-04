@@ -101,6 +101,33 @@ export type TransportKind = "grpc" | "http";
 /** The request transport, or `local` when validation failed before transport selection. @public */
 export type ErrorOrigin = TransportKind | "local";
 
+/** Severity attached to one SDK-local diagnostic record. @public */
+export type DiagnosticLevel = "debug" | "error" | "info" | "warn";
+
+/** Values carried by the structured fields of an SDK-local diagnostic. @public */
+export type DiagnosticFieldValue = boolean | number | string | null;
+
+/** A structured SDK-local observation that is separate from the server event stream. @public */
+export interface DiagnosticRecord {
+  /** Stable machine-readable identifier for the observation. */
+  readonly code: string;
+  /** Typed context that is safe to expose to the application. */
+  readonly fields: Readonly<Record<string, DiagnosticFieldValue>>;
+  /** Diagnostic severity. */
+  readonly level: DiagnosticLevel;
+  /** Human-readable summary. */
+  readonly message: string;
+}
+
+/** Optional client-level receiver for SDK-local diagnostics. @public */
+export type DiagnosticsSink = (record: DiagnosticRecord) => void;
+
+/** Client-construction option shared by SDK entry points that emit local diagnostics. @public */
+export interface ClientDiagnosticsOptions {
+  /** Receives SDK-local diagnostics. Nothing is written to console by default. */
+  diagnostics?: DiagnosticsSink;
+}
+
 /** Stable reasons reported by PromptValidationError. @public */
 export type PromptValidationReason =
   | "capability"
