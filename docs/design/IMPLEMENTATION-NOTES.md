@@ -8312,6 +8312,19 @@ unverified `readOnly` assertion. The harness consequently serializes the safe de
 mis-annotation can enter read-parallel dispatch and is not covered by plan mode's fixed built-in
 mutation names.
 
+The `withToolRegistration` decorator in `sdk/typescript/src/tool.ts` also owns the typed
+availability refusal. `sdk/typescript/src/node-client.ts` supplies no registry for `connect()`, so
+`tool()` raises local `unsupported_feature` synchronously and cannot issue an RPC or start a host.
+After the first compatibility dial, `sdk/typescript/src/spawn.ts` derives availability only from the
+ready document's `mcp_servers_on_create` feature: an absent feature omits the registry lifecycle from
+`ClientImpl`, leaves the loopback host unstarted, and makes the refusal name that feature. The SDK
+does not infer support from `http: true`. When a capable client's `CreateSession` instead returns
+`client_mcp_unsupported` or `client_mcp_unreachable`, `ClientImpl` releases the create lease as
+unsuccessful and the existing server-error normalizer preserves the code and server origin; no
+`Session` handle is constructed and later registration remains possible. The four M3-only members
+of `SDKErrorCode` are visibly tagged in `sdk/typescript/src/errors.ts`; the Scenario 8 test checks
+that exact set against the server manifest already parity-gated from the Go error registry.
+
 The registry validates model-authored arguments before invoking the handler and turns a schema
 miss into a text `isError` result. Validation never rewrites the input. A valid JSON object is
 recursively copied with data properties onto null-prototype records before user code runs, so

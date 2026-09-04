@@ -35,6 +35,7 @@ const READY_POLL_INTERVAL_MS = 20;
 const STOP_GRACE_MS = 3_000;
 const STOP_KILL_WAIT_MS = 1_000;
 const HTTP_LOOPBACK_ADDRESS = "127.0.0.1:0";
+const CLIENT_MCP_ON_CREATE_FEATURE = "mcp_servers_on_create";
 const STDERR_CAPTURE_BYTES = 64 * 1024;
 const STDERR_REPORT_BYTES = 4 * 1024;
 const REDACTED_LINE = "[REDACTED]";
@@ -731,6 +732,7 @@ async function spawnAttempt(
       ready.socket_path,
     );
     await createRawClient({ transport, transportKind: "grpc" }).features({ timeoutMs });
+    const callbackToolsAvailable = ready.features.includes(CLIENT_MCP_ON_CREATE_FEATURE);
     return withDaemonInfo(
       withToolRegistration(
         connectTransport({
@@ -744,14 +746,15 @@ async function spawnAttempt(
             ...(internal.client?.onTeardownStep === undefined
               ? {}
               : { onTeardownStep: internal.client.onTeardownStep }),
-            toolHost: toolRegistry,
+            ...(callbackToolsAvailable ? { toolHost: toolRegistry } : {}),
           },
           owned: true,
           transport,
           transportKind: "grpc",
           visibility: false,
         }),
-        toolRegistry,
+        callbackToolsAvailable ? toolRegistry : undefined,
+        CLIENT_MCP_ON_CREATE_FEATURE,
       ),
       ready,
     );

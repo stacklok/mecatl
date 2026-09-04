@@ -370,13 +370,17 @@ export class ToolRegistry {
   }
 }
 
-export function withToolRegistration(client: Client, registry?: ToolRegistry): NodeClient {
+export function withToolRegistration(
+  client: Client,
+  registry?: ToolRegistry,
+  missingFeature = "local_callback_tools",
+): NodeClient {
   Object.defineProperty(client, "tool", {
     configurable: false,
     enumerable: true,
     value: (name: string, schema: ToolSchema, handler: ToolHandler, options?: ToolOptions) => {
       if (registry === undefined) {
-        throw new UnsupportedFeatureError("local_callback_tools", { transport: "local" });
+        throw new UnsupportedFeatureError(missingFeature, { transport: "local" });
       }
       return registry.register(name, schema, handler, options);
     },

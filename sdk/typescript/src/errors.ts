@@ -88,11 +88,11 @@ export type SDKErrorCode =
   | "invalid_state"
   | "no_runs"
   | "protocol"
-  | "readiness_timeout"
-  | "spawn_failed"
-  | "tool_registration"
+  | "readiness_timeout" // M3_LOCAL_ERROR_CODE
+  | "spawn_failed" // M3_LOCAL_ERROR_CODE
+  | "tool_registration" // M3_LOCAL_ERROR_CODE
   | "transport"
-  | "unsupported_platform"
+  | "unsupported_platform" // M3_LOCAL_ERROR_CODE
   | "unsupported_feature";
 /** @public */
 export type MecatlErrorCode = ServerErrorCode | SDKErrorCode;

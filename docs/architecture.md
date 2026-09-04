@@ -279,6 +279,14 @@ travels only in the session's secret-shaped MCP headers over the daemon UDS; for
 `Host` requests are refused before authentication, authentication precedes bounded body reads, and
 the host emits no CORS headers.
 
+Callback registration is available only when `spawn()`'s ready document advertises
+`mcp_servers_on_create`; otherwise the loopback host is not started and `tool()` fails locally with
+typed `unsupported_feature` before any RPC. A connected client always takes that local refusal,
+while a feature-missing spawned client names `mcp_servers_on_create` in the error. Once a
+tool-bearing create reaches the daemon, `client_mcp_unsupported` and `client_mcp_unreachable` remain
+server-originated codes, and a refusal returns no `Session` and does not mark the registry as
+successfully created.
+
 Callback execution has eight client-wide slots, optional tighten-only per-tool limits, a bounded
 queue and a wall-clock deadline whose `AbortSignal` is also fired by caller cancellation and client
 disposal. Strings become text blocks, other JSON values become structured content plus a text

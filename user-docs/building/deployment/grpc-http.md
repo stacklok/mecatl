@@ -110,6 +110,12 @@ parallel read batch, so set it only when the handler truly has no side effects. 
 require the default private-UDS, HTTP-disabled spawned-daemon topology; use a different
 `toolServerName` if the operator already owns the `sdk` MCP namespace.
 
+Calling `tool()` on a connected client is refused locally with typed `unsupported_feature` before
+any RPC. The same code is returned by a spawned daemon that does not advertise
+`mcp_servers_on_create` (including `http: true`), with the missing feature named in the message.
+If session creation reaches the daemon, its `client_mcp_unsupported` or
+`client_mcp_unreachable` code is preserved unchanged.
+
 The SDK serves those callbacks from a bearer-protected ephemeral `127.0.0.1` listener. It exposes
 no CORS surface, rejects foreign origin or host headers, caps request bodies and queue growth, and
 runs at most eight handlers at once; `concurrency` can tighten that bound for one tool. Each handler
