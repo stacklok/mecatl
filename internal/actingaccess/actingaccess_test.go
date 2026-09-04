@@ -223,25 +223,51 @@ func (s *authoritySpies) DecideTarget(_ context.Context, in TargetPolicyInput) D
 	return s.decide(FailureTargetPolicy, in)
 }
 
-type fixedSubjectVerifier struct{ verified VerifiedSubject }
+type fixedSubjectVerifier struct {
+	verified   VerifiedSubject
+	err        error
+	calls      int
+	wantRaw    string
+	rawMatches int
+	block      func()
+}
 
-func (v *fixedSubjectVerifier) Verify(SubjectAssertion) (VerifiedSubject, error) {
-	return v.verified, nil
+func (v *fixedSubjectVerifier) Verify(token SubjectAssertion) (VerifiedSubject, error) {
+	v.calls++
+	if v.block != nil {
+		v.block()
+	}
+	if token.secret.value != nil && token.secret.value.raw == v.wantRaw {
+		v.rawMatches++
+	}
+	return v.verified, v.err
 }
 
 type fixedActorVerifier struct {
-	verified VerifiedActor
-	calls    int
+	verified   VerifiedActor
+	err        error
+	calls      int
+	wantRaw    string
+	rawMatches int
 }
 
-func (v *fixedActorVerifier) Verify(I2Token) (VerifiedActor, error) {
+func (v *fixedActorVerifier) Verify(token I2Token) (VerifiedActor, error) {
 	v.calls++
-	return v.verified, nil
+	if token.secret.value != nil && token.secret.value.raw == v.wantRaw {
+		v.rawMatches++
+	}
+	return v.verified, v.err
 }
 
 type recordingMechanism struct {
-	calls  int
-	inputs []MechanismInput
+	calls         int
+	inputs        []MechanismInput
+	err           error
+	invalidOutput bool
+	wantSubject   string
+	wantActor     string
+	outputRaw     string
+	secretMatches int
 }
 
 type recordingOutputVerifier struct{}
@@ -253,14 +279,31 @@ func (recordingOutputVerifier) Verify(response ExchangeResponse, plan MechanismI
 	return VerifiedOutput{}, nil
 }
 
-func (m *recordingMechanism) Exchange(_ context.Context, in MechanismInput, _ SubjectAssertion, _ I2Token) (ExchangeResponse, error) {
+func (m *recordingMechanism) Exchange(_ context.Context, in MechanismInput, subject SubjectAssertion, actor I2Token) (ExchangeResponse, error) {
 	m.calls++
 	m.inputs = append(m.inputs, in)
-	token, err := NewOutputToken("issued")
+	if subject.secret.value != nil && subject.secret.value.raw == m.wantSubject {
+		m.secretMatches++
+	}
+	if actor.secret.value != nil && actor.secret.value.raw == m.wantActor {
+		m.secretMatches++
+	}
+	if m.err != nil {
+		return ExchangeResponse{}, m.err
+	}
+	raw := m.outputRaw
+	if raw == "" {
+		raw = "issued"
+	}
+	token, err := NewOutputToken(raw)
 	if err != nil {
 		return ExchangeResponse{}, err
 	}
-	return ExchangeResponse{token: token, issuedTokenType: accessTokenType, tokenType: bearerTokenType, expiresIn: 1, scope: strings.Join(in.Scopes(), " ")}, nil
+	response := ExchangeResponse{token: token, issuedTokenType: accessTokenType, tokenType: bearerTokenType, expiresIn: 1, scope: strings.Join(in.Scopes(), " ")}
+	if m.invalidOutput {
+		response.scope = "broader"
+	}
+	return response, nil
 }
 
 type scenario3Fixture struct {

@@ -142,7 +142,7 @@ func TestADR_0253_OutputLifetimeCeiling(t *testing.T) {
 	}
 	f := newOutputFixture(t)
 	f.issuer.omitExpiry = true
-	if _, err := f.exchange(t, f.request, "missing-expiry"); !IsFailure(err, FailureMechanism) {
+	if _, err := f.exchange(t, f.request, "missing-expiry"); !IsFailure(err, FailureOutputVerification) {
 		t.Fatalf("missing output bound err = %v", err)
 	}
 }

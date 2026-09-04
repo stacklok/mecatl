@@ -284,7 +284,16 @@ const (
 	FailureActorTools          FailureKind = "actor_tools"
 	FailureRegistry            FailureKind = "registry"
 	FailureTargetPolicy        FailureKind = "target_policy"
+	FailureUnsupportedProfile  FailureKind = "unsupported_profile"
 	FailureMechanism           FailureKind = "mechanism"
+	FailureOutputVerification  FailureKind = "output_verification"
+)
+
+// Dependency errors classify the only failures callers may safely retry or report as
+// an unsupported bilateral profile. All other collaborator errors are permanent.
+var (
+	ErrUnsupportedProfile     = errors.New("acting-access exchange profile is unsupported")
+	ErrTemporarilyUnavailable = errors.New("acting-access exchange is temporarily unavailable")
 )
 
 type exchangeFailure struct {
@@ -400,14 +409,20 @@ func (g *Gate) Exchange(ctx context.Context, request Request, subjectToken Subje
 	}
 	now := g.cfg.Now().UTC()
 	subject, err := g.cfg.SubjectVerifier.Verify(subjectToken)
-	if err != nil || subject.IsZero() || !subject.notAfter.After(now) {
+	if err != nil {
+		return ExchangeResult{}, classifyDependencyFailure(err, FailureSubjectVerification)
+	}
+	if subject.IsZero() || !subject.notAfter.After(now) {
 		return ExchangeResult{}, refuse(FailureSubjectVerification, false)
 	}
 	if request.owner == (Owner{}) || subject.owner != request.owner {
 		return ExchangeResult{}, refuse(FailureOwner, false)
 	}
 	actor, err := g.cfg.ActorVerifier.Verify(actorToken)
-	if err != nil || actor.IsZero() || !actor.notAfter.After(now) {
+	if err != nil {
+		return ExchangeResult{}, classifyDependencyFailure(err, FailureActorVerification)
+	}
+	if actor.IsZero() || !actor.notAfter.After(now) {
 		return ExchangeResult{}, refuse(FailureActorVerification, false)
 	}
 	facts := decisionFacts{
@@ -465,14 +480,28 @@ func (g *Gate) Exchange(ctx context.Context, request Request, subjectToken Subje
 	}
 	input := MechanismInput{facts: copyDecisionFacts(facts), notAfter: notAfter}
 	response, err := g.cfg.Mechanism.Exchange(ctx, input, subjectToken, actorToken)
-	if err != nil || !validExchangeResponse(response, input, now) {
-		return ExchangeResult{}, refuse(FailureMechanism, true)
+	if err != nil {
+		return ExchangeResult{}, classifyDependencyFailure(err, FailureMechanism)
+	}
+	if !validExchangeResponse(response, input, now) {
+		return ExchangeResult{}, refuse(FailureOutputVerification, false)
 	}
 	if _, err := g.cfg.OutputVerifier.Verify(response, input); err != nil {
-		return ExchangeResult{}, refuse(FailureMechanism, false)
+		return ExchangeResult{}, refuse(FailureOutputVerification, false)
 	}
 	digest := sha256.Sum256([]byte(correlation))
 	return ExchangeResult{response: response, plan: input, trace: PermitTrace{gates: append([]GateKind(nil), trace...), correlation: "sha256:" + hex.EncodeToString(digest[:])}}, nil
+}
+
+func classifyDependencyFailure(err error, fallback FailureKind) error {
+	switch {
+	case errors.Is(err, ErrTemporarilyUnavailable):
+		return refuse(fallback, true)
+	case errors.Is(err, ErrUnsupportedProfile):
+		return refuse(FailureUnsupportedProfile, false)
+	default:
+		return refuse(fallback, false)
+	}
 }
 
 func validateDecision(decision Decision, now time.Time, kind FailureKind) error {
