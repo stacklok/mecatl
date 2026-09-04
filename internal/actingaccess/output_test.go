@@ -42,7 +42,7 @@ func newOutputFixture(t *testing.T) outputFixture {
 	}
 	verifier, err := NewJWTOutputVerifier(OutputVerifierConfig{
 		Issuer: "https://as.example", ClientID: "broker-prod", KeyID: "output-1", PublicKey: &key.PublicKey,
-		Now: func() time.Time { return base.now }, ClockSkew: time.Minute,
+		KeyNotAfter: base.now.Add(time.Hour), MaxAge: 2 * time.Minute, Now: func() time.Time { return base.now }, ClockSkew: time.Minute,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -251,5 +251,65 @@ func TestActingAccess_Scenario4_ReviewerReadDeployerWrite(t *testing.T) {
 	f.spies.expected = decisionExpectation{consent: "consent-alice-read", presenter: "broker-prod", resource: "vmcp-deploy", operation: "write", detail: "deployment.write", scopes: []string{"deploy:write"}}
 	if _, verified := f.exchangeOutput(t, deploy); verified.ActorSubject() != f.actor.verified.Subject() {
 		t.Fatal("deployer output not verified")
+	}
+}
+
+func TestADR_0253_OutputBindsAuthenticatedPresenterAndFreshKey(t *testing.T) {
+	f := newOutputFixture(t)
+	result, _ := f.exchangeOutput(t, f.request)
+
+	other, err := NewPresenter("broker-other")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mismatchedPlan := result.plan
+	mismatchedPlan.facts.presenter = other
+	response := result.Response()
+	response.token = mintedOutput(t, f.issuer, mismatchedPlan, nil)
+	if _, err := f.verifier.Verify(response, mismatchedPlan); err == nil {
+		t.Fatal("configured output client accepted a different authenticated presenter")
+	}
+
+	f.verifier.keyNotAfter = f.now.Add(-time.Second)
+	if _, err := f.verifier.Verify(result.Response(), result.plan); err == nil {
+		t.Fatal("retired output verification key accepted newly minted output")
+	}
+}
+
+func TestADR_0253_OutputRejectsStaleIssuanceTimes(t *testing.T) {
+	f := newOutputFixture(t)
+	result, _ := f.exchangeOutput(t, f.request)
+	response := result.Response()
+	stale := f.now.Add(-f.verifier.maxAge - f.verifier.clockSkew - time.Second).Unix()
+	response.token = mintedOutput(t, f.issuer, result.plan, map[string]any{"iat": stale, "nbf": stale})
+	if _, err := f.verifier.Verify(response, result.plan); err == nil {
+		t.Fatal("arbitrarily stale output iat/nbf verified")
+	}
+}
+
+type classifiedOutputVerifier struct{ err error }
+
+func (v classifiedOutputVerifier) Verify(ExchangeResponse, MechanismInput) (VerifiedOutput, error) {
+	return VerifiedOutput{}, v.err
+}
+
+func TestGatePreservesOutputVerifierFailureClassification(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		err       error
+		kind      FailureKind
+		retryable bool
+	}{
+		{"temporarily unavailable", ErrTemporarilyUnavailable, FailureOutputVerification, true},
+		{"unsupported profile", ErrUnsupportedProfile, FailureUnsupportedProfile, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newScenario3Fixture(t)
+			f.gate.cfg.OutputVerifier = classifiedOutputVerifier{err: tc.err}
+			_, err := f.exchange(t, f.request, "classification")
+			if !IsFailure(err, tc.kind) || FailureRetryable(err) != tc.retryable {
+				t.Fatalf("classification = %v retryable=%v", err, FailureRetryable(err))
+			}
+		})
 	}
 }

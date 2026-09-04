@@ -16,7 +16,7 @@ type ActorVerifier interface {
 }
 
 // VerifiedActor is a copied logical-agent identity and exact authority set.
-// Its zero value carries no authority and callers cannot construct non-zero facts.
+// Its zero value carries no authority; only trusted verifier adapters should construct facts.
 type VerifiedActor struct {
 	trustDomain string
 	subject     string
@@ -26,6 +26,35 @@ type VerifiedActor struct {
 	tools       []string
 	jwtID       string
 	notAfter    time.Time
+}
+
+// NewVerifiedActor constructs the closed result returned by a trusted I2 verifier.
+func NewVerifiedActor(trustDomain, subject string, tier identityissuer.DefinitionTier, name, instance string, tools []string, jwtID string, notAfter time.Time) (VerifiedActor, error) {
+	if !boundedSafe(trustDomain) || !boundedSafe(subject) || !validActorTier(tier) || !boundedSafe(name) ||
+		(instance != "" && !boundedSafe(instance)) || !validActorTools(tools) || !boundedSafe(jwtID) || notAfter.IsZero() {
+		return VerifiedActor{}, errors.New("verified actor is invalid")
+	}
+	return VerifiedActor{trustDomain: trustDomain, subject: subject, tier: tier, name: name, instance: instance,
+		tools: append([]string(nil), tools...), jwtID: jwtID, notAfter: notAfter.UTC()}, nil
+}
+
+func validActorTier(tier identityissuer.DefinitionTier) bool {
+	switch tier {
+	case identityissuer.DefinitionTierSystem, identityissuer.DefinitionTierManaged, identityissuer.DefinitionTierDriver,
+		identityissuer.DefinitionTierUser, identityissuer.DefinitionTierProject:
+		return true
+	default:
+		return false
+	}
+}
+
+func validActorTools(tools []string) bool {
+	for index, value := range tools {
+		if !boundedSafe(value) || (index > 0 && tools[index-1] >= value) {
+			return false
+		}
+	}
+	return true
 }
 
 // TrustDomain returns the verified Mecatl trust domain.
@@ -129,7 +158,7 @@ const (
 	DecisionUnavailable DecisionEffect = "unavailable"
 )
 
-// Decision is a bounded source decision. A validity bound is mandatory for every effect.
+// Decision is a bounded source decision. Only a permit carries a validity ceiling.
 type Decision struct {
 	effect   DecisionEffect
 	notAfter time.Time
@@ -137,16 +166,19 @@ type Decision struct {
 
 // NewDecision constructs one closed authority-source decision.
 func NewDecision(effect DecisionEffect, notAfter time.Time) (Decision, error) {
-	if (effect != DecisionPermit && effect != DecisionDeny && effect != DecisionUnavailable) || notAfter.IsZero() {
-		return Decision{}, errors.New("acting-access decision is invalid")
+	if effect == DecisionPermit && !notAfter.IsZero() {
+		return Decision{effect: effect, notAfter: notAfter.UTC()}, nil
 	}
-	return Decision{effect: effect, notAfter: notAfter.UTC()}, nil
+	if (effect == DecisionDeny || effect == DecisionUnavailable) && notAfter.IsZero() {
+		return Decision{effect: effect}, nil
+	}
+	return Decision{}, errors.New("acting-access decision is invalid")
 }
 
 // Effect returns the closed decision result.
 func (d Decision) Effect() DecisionEffect { return d.effect }
 
-// NotAfter returns the source validity ceiling.
+// NotAfter returns the permit validity ceiling; deny and unavailable decisions return zero.
 func (d Decision) NotAfter() time.Time { return d.notAfter }
 
 type decisionFacts struct {
@@ -408,7 +440,7 @@ func (g *Gate) Exchange(ctx context.Context, request Request, subjectToken Subje
 		return ExchangeResult{}, refuse(FailureSubjectVerification, false)
 	}
 	now := g.cfg.Now().UTC()
-	subject, err := g.cfg.SubjectVerifier.Verify(subjectToken)
+	subject, err := g.cfg.SubjectVerifier.Verify(subjectToken, request.presenter)
 	if err != nil {
 		return ExchangeResult{}, classifyDependencyFailure(err, FailureSubjectVerification)
 	}
@@ -487,7 +519,7 @@ func (g *Gate) Exchange(ctx context.Context, request Request, subjectToken Subje
 		return ExchangeResult{}, refuse(FailureOutputVerification, false)
 	}
 	if _, err := g.cfg.OutputVerifier.Verify(response, input); err != nil {
-		return ExchangeResult{}, refuse(FailureOutputVerification, false)
+		return ExchangeResult{}, classifyDependencyFailure(err, FailureOutputVerification)
 	}
 	digest := sha256.Sum256([]byte(correlation))
 	return ExchangeResult{response: response, plan: input, trace: PermitTrace{gates: append([]GateKind(nil), trace...), correlation: "sha256:" + hex.EncodeToString(digest[:])}}, nil

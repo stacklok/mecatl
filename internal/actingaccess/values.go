@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/url"
 	"path"
+	"slices"
 	"sort"
 	"strings"
 	"unicode"
@@ -140,20 +141,12 @@ func (r *Registry) NewRequest(owner Owner, presenter Presenter, resource, operat
 		return Request{}, errors.New("acting-access request is invalid")
 	}
 	for _, target := range r.targets {
-		if target.resource.value != resource || target.operation.value != operation || target.detail.value != detail || len(target.scopes) != len(scopes) {
+		if target.resource.value != resource || target.operation.value != operation || target.detail.value != detail ||
+			!slices.EqualFunc(target.scopes, scopes, func(scope Scope, value string) bool { return scope.value == value }) {
 			continue
 		}
-		matches := true
-		for i := range scopes {
-			if target.scopes[i].value != scopes[i] {
-				matches = false
-				break
-			}
-		}
-		if matches {
-			return Request{owner: owner, presenter: presenter, resource: target.resource, operation: target.operation, detail: target.detail,
-				scopes: append([]Scope(nil), target.scopes...), requiredTools: append([]string(nil), target.requiredTools...)}, nil
-		}
+		return Request{owner: owner, presenter: presenter, resource: target.resource, operation: target.operation, detail: target.detail,
+			scopes: append([]Scope(nil), target.scopes...), requiredTools: append([]string(nil), target.requiredTools...)}, nil
 	}
 	return Request{}, errors.New("acting-access request is not registered")
 }
@@ -251,6 +244,51 @@ type I2Token struct{ secret actorSecret }
 
 // OutputToken is an ephemeral issued acting-access token.
 type OutputToken struct{ secret outputSecret }
+
+// SubjectAssertionConsumer is the explicit trusted boundary for transient subject bytes.
+type SubjectAssertionConsumer interface {
+	ConsumeSubjectAssertion([]byte) error
+}
+
+// I2TokenConsumer is the explicit trusted boundary for transient actor-token bytes.
+type I2TokenConsumer interface {
+	ConsumeI2Token([]byte) error
+}
+
+// OutputTokenConsumer is the explicit trusted boundary for transient output-token bytes.
+type OutputTokenConsumer interface {
+	ConsumeOutputToken([]byte) error
+}
+
+// Consume passes a temporary copy of the assertion to a trusted verifier and clears it on return.
+func (s SubjectAssertion) Consume(consumer SubjectAssertionConsumer) error {
+	if s.secret.value == nil || consumer == nil {
+		return errors.New("subject assertion is unavailable")
+	}
+	return consumeSecret(s.secret.value.raw, consumer.ConsumeSubjectAssertion)
+}
+
+// Consume passes a temporary copy of the I2 token to a trusted verifier and clears it on return.
+func (t I2Token) Consume(consumer I2TokenConsumer) error {
+	if t.secret.value == nil || consumer == nil {
+		return errors.New("I2 token is unavailable")
+	}
+	return consumeSecret(t.secret.value.raw, consumer.ConsumeI2Token)
+}
+
+// Consume passes a temporary copy of the output token to a trusted verifier and clears it on return.
+func (t OutputToken) Consume(consumer OutputTokenConsumer) error {
+	if t.secret.value == nil || consumer == nil {
+		return errors.New("output token is unavailable")
+	}
+	return consumeSecret(t.secret.value.raw, consumer.ConsumeOutputToken)
+}
+
+func consumeSecret(raw string, consume func([]byte) error) error {
+	value := []byte(raw)
+	defer clear(value)
+	return consume(value)
+}
 
 // NewSubjectAssertion wraps subject assertion bytes without formatting or serialization support.
 func NewSubjectAssertion(raw string) (SubjectAssertion, error) {

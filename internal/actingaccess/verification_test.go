@@ -22,10 +22,14 @@ import (
 func TestADR_0253_ClosedSubjectAssertionProfile(t *testing.T) {
 	now := time.Unix(1_900_000_000, 0).UTC()
 	key := newP256Key(t)
+	presenter, err := NewPresenter("broker-prod")
+	if err != nil {
+		t.Fatal(err)
+	}
 	verifier, err := NewJWTSubjectAssertionVerifier(SubjectVerifierConfig{
 		Issuer: "https://issuer.example", Audience: "mecatl-exchange", AuthorizedParty: "broker-prod",
 		MaxAge: 2 * time.Minute, ClockSkew: 5 * time.Second, MaxTokenBytes: 4096,
-		Now: func() time.Time { return now }, Keys: []SubjectKey{{ID: "subject-key", PublicKey: &key.PublicKey}},
+		Now: func() time.Time { return now }, Keys: []SubjectKey{{ID: "subject-key", PublicKey: &key.PublicKey, NotAfter: now.Add(10 * time.Minute)}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -41,12 +45,12 @@ func TestADR_0253_ClosedSubjectAssertionProfile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := VerifySubjectForOwner(verifier, assertion, owner)
+	got, err := VerifySubjectForOwner(verifier, assertion, presenter, owner)
 	if err != nil || got.Owner() != owner || got.ConsentProof() != "consent-v7" || !got.NotAfter().Equal(now.Add(time.Minute)) {
 		t.Fatalf("VerifySubjectForOwner() = %#v, %v", got, err)
 	}
 	for _, mismatch := range []Owner{mustOwner(t, "https://other.example", "alice"), mustOwner(t, "https://issuer.example", "bob")} {
-		if result, err := VerifySubjectForOwner(verifier, assertion, mismatch); err == nil || !result.IsZero() {
+		if result, err := VerifySubjectForOwner(verifier, assertion, presenter, mismatch); err == nil || !result.IsZero() {
 			t.Fatalf("owner mismatch returned %#v, %v", result, err)
 		}
 	}
@@ -82,19 +86,32 @@ func TestADR_0253_ClosedSubjectAssertionProfile(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if result, err := verifier.Verify(credential); err == nil || !result.IsZero() {
+			if result, err := verifier.Verify(credential, presenter); err == nil || !result.IsZero() {
 				t.Fatalf("Verify() = %#v, %v", result, err)
 			}
 		})
 	}
 	duplicate := duplicateJWTClaim(t, key, valid, `,"sub":"alice"`)
 	duplicateAssertion, _ := NewSubjectAssertion(duplicate)
-	if result, err := verifier.Verify(duplicateAssertion); err == nil || !result.IsZero() {
+	if result, err := verifier.Verify(duplicateAssertion, presenter); err == nil || !result.IsZero() {
 		t.Fatalf("duplicate claim = %#v, %v", result, err)
 	}
 	oversized, _ := NewSubjectAssertion(strings.Repeat("x", 4097))
-	if result, err := verifier.Verify(oversized); err == nil || !result.IsZero() {
+	if result, err := verifier.Verify(oversized, presenter); err == nil || !result.IsZero() {
 		t.Fatalf("oversized assertion = %#v, %v", result, err)
+	}
+	otherPresenter, err := NewPresenter("broker-other")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result, err := verifier.Verify(assertion, otherPresenter); err == nil || !result.IsZero() {
+		t.Fatalf("presenter mismatch = %#v, %v", result, err)
+	}
+	keyEntry := verifier.keys["subject-key"]
+	keyEntry.notAfter = now.Add(-time.Second)
+	verifier.keys["subject-key"] = keyEntry
+	if result, err := verifier.Verify(assertion, presenter); err == nil || !result.IsZero() {
+		t.Fatalf("retired subject key = %#v, %v", result, err)
 	}
 }
 

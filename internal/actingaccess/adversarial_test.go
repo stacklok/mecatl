@@ -233,7 +233,7 @@ func TestADR_0253_NoFallbackAuthorityAndStaleFacts(t *testing.T) {
 	subjectVerifier, err := NewJWTSubjectAssertionVerifier(SubjectVerifierConfig{
 		Issuer: "https://issuer.example", Audience: "mecatl-exchange", AuthorizedParty: "broker-prod",
 		MaxAge: time.Minute, MaxTokenBytes: 4096, Now: func() time.Time { return f.now },
-		Keys: []SubjectKey{{ID: "current-subject", PublicKey: &trustedSubjectKey.PublicKey}},
+		Keys: []SubjectKey{{ID: "current-subject", PublicKey: &trustedSubjectKey.PublicKey, NotAfter: f.now.Add(2 * time.Minute)}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -271,7 +271,8 @@ func TestADR_0253_NoFallbackAuthorityAndStaleFacts(t *testing.T) {
 	// Unknown output verification keys are refused by the real independent verifier.
 	out := newOutputFixture(t)
 	other := outputTestKey(t)
-	wrongVerifier, err := NewJWTOutputVerifier(OutputVerifierConfig{Issuer: "https://as.example", ClientID: "broker-prod", KeyID: "retired-output", PublicKey: &other.PublicKey, Now: func() time.Time { return out.now }})
+	wrongVerifier, err := NewJWTOutputVerifier(OutputVerifierConfig{Issuer: "https://as.example", ClientID: "broker-prod", KeyID: "retired-output", PublicKey: &other.PublicKey,
+		KeyNotAfter: out.now.Add(time.Hour), MaxAge: time.Minute, Now: func() time.Time { return out.now }})
 	if err != nil {
 		t.Fatal(err)
 	}

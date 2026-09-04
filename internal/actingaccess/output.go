@@ -10,6 +10,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
 	"time"
 
@@ -37,6 +38,15 @@ type ExchangeResponse struct {
 	expiresIn       int64
 	scope           string
 	refreshToken    string // parser/verifier guard: issuance never sets this.
+}
+
+// NewExchangeResponse constructs the closed successful RFC 8693 response returned by a trusted mechanism.
+func NewExchangeResponse(token OutputToken, expiresIn int64, scopes []string) (ExchangeResponse, error) {
+	if token.secret.value == nil || expiresIn <= 0 || !canonicalStrings(scopes, canonicalToken) {
+		return ExchangeResponse{}, errors.New("acting-access output response is invalid")
+	}
+	return ExchangeResponse{token: token, issuedTokenType: accessTokenType, tokenType: bearerTokenType,
+		expiresIn: expiresIn, scope: strings.Join(scopes, " ")}, nil
 }
 
 // Token returns the issued opaque access token.
@@ -96,7 +106,7 @@ func NewDeterministicOutputIssuer(cfg OutputIssuerConfig) (*DeterministicOutputI
 
 // Exchange issues only the already-authorized exact plan; credentials are deliberately unused.
 func (i *DeterministicOutputIssuer) Exchange(_ context.Context, plan MechanismInput, _ SubjectAssertion, _ I2Token) (ExchangeResponse, error) {
-	if i == nil || plan.NotAfter().IsZero() {
+	if i == nil || plan.NotAfter().IsZero() || plan.Presenter().Value() != i.clientID {
 		return ExchangeResponse{}, errors.New("acting-access output plan is invalid")
 	}
 	i.calls++
@@ -125,7 +135,7 @@ func (i *DeterministicOutputIssuer) mintToken(plan MechanismInput, overrides map
 	claims := map[string]any{
 		claimIssuer: i.issuer, claimSubject: qualifiedOutputSubject(plan.Owner()), claimAudience: plan.Resource().Value(),
 		claimIssuedAt: now.Unix(), claimNotBefore: now.Unix(), claimExpiresAt: plan.NotAfter().Unix(),
-		"act": map[string]any{claimSubject: plan.ActorSubject()}, "client_id": i.clientID,
+		"act": map[string]any{claimSubject: plan.ActorSubject()}, "client_id": plan.Presenter().Value(),
 		"scope": strings.Join(plan.Scopes(), " "), "authorization_details": plan.Detail().Value(),
 	}
 	for key, value := range overrides {
@@ -143,26 +153,30 @@ func (i *DeterministicOutputIssuer) mintToken(plan MechanismInput, overrides map
 
 // OutputVerifierConfig fixes the independent closed output profile verifier.
 type OutputVerifierConfig struct {
-	Issuer    string
-	ClientID  string
-	KeyID     string
-	PublicKey *ecdsa.PublicKey
-	Now       func() time.Time
-	ClockSkew time.Duration
+	Issuer      string
+	ClientID    string
+	KeyID       string
+	PublicKey   *ecdsa.PublicKey
+	KeyNotAfter time.Time
+	MaxAge      time.Duration
+	Now         func() time.Time
+	ClockSkew   time.Duration
 }
 
 // JWTOutputVerifier independently verifies compact issued output with public material.
 type JWTOutputVerifier struct {
 	issuer, clientID, keyID string
 	publicKey               *ecdsa.PublicKey
+	keyNotAfter             time.Time
+	maxAge                  time.Duration
 	now                     func() time.Time
 	clockSkew               time.Duration
 }
 
 // NewJWTOutputVerifier constructs an independent verifier from public output-key material.
 func NewJWTOutputVerifier(cfg OutputVerifierConfig) (*JWTOutputVerifier, error) {
-	if !canonicalIssuer(cfg.Issuer) || !canonicalToken(cfg.ClientID) || !boundedSafe(cfg.KeyID) || cfg.PublicKey == nil ||
-		cfg.PublicKey.Curve != elliptic.P256() || cfg.ClockSkew < 0 || cfg.ClockSkew > 5*time.Minute {
+	if !canonicalIssuer(cfg.Issuer) || !canonicalToken(cfg.ClientID) || !boundedSafe(cfg.KeyID) || cfg.PublicKey == nil || cfg.KeyNotAfter.IsZero() ||
+		cfg.PublicKey.Curve != elliptic.P256() || cfg.MaxAge <= 0 || cfg.MaxAge > time.Hour || cfg.ClockSkew < 0 || cfg.ClockSkew > 5*time.Minute {
 		return nil, errors.New("acting-access output verifier configuration is invalid")
 	}
 	encoded, err := cfg.PublicKey.Bytes()
@@ -177,7 +191,8 @@ func NewJWTOutputVerifier(cfg OutputVerifierConfig) (*JWTOutputVerifier, error) 
 	if now == nil {
 		now = time.Now
 	}
-	return &JWTOutputVerifier{issuer: cfg.Issuer, clientID: cfg.ClientID, keyID: cfg.KeyID, publicKey: key, now: now, clockSkew: cfg.ClockSkew}, nil
+	return &JWTOutputVerifier{issuer: cfg.Issuer, clientID: cfg.ClientID, keyID: cfg.KeyID, publicKey: key,
+		keyNotAfter: cfg.KeyNotAfter.UTC(), maxAge: cfg.MaxAge, now: now, clockSkew: cfg.ClockSkew}, nil
 }
 
 // VerifiedOutput is the complete non-secret, exact verified issued authority.
@@ -185,6 +200,16 @@ type VerifiedOutput struct {
 	subject, actorSubject, clientID, audience, detail string
 	scopes                                            []string
 	expiresAt                                         time.Time
+}
+
+// NewVerifiedOutput constructs the closed result returned by a trusted output verifier.
+func NewVerifiedOutput(subject, actorSubject, clientID, audience, detail string, scopes []string, expiresAt time.Time) (VerifiedOutput, error) {
+	if !boundedSafe(subject) || !boundedSafe(actorSubject) || !canonicalToken(clientID) || !canonicalToken(audience) ||
+		!canonicalToken(detail) || !canonicalStrings(scopes, canonicalToken) || expiresAt.IsZero() {
+		return VerifiedOutput{}, errors.New("verified acting-access output is invalid")
+	}
+	return VerifiedOutput{subject: subject, actorSubject: actorSubject, clientID: clientID, audience: audience, detail: detail,
+		scopes: append([]string(nil), scopes...), expiresAt: expiresAt.UTC()}, nil
 }
 
 // Subject returns the domain-separated owner identifier.
@@ -218,23 +243,43 @@ func (v *JWTOutputVerifier) Verify(response ExchangeResponse, plan MechanismInpu
 		return VerifiedOutput{}, err
 	}
 	now := v.now().UTC()
-	expires := time.Unix(claims.exp, 0).UTC()
-	if claims.issuer != v.issuer || claims.subject != qualifiedOutputSubject(plan.Owner()) || claims.clientID != v.clientID ||
-		claims.actor != plan.ActorSubject() || claims.audience != plan.Resource().Value() || claims.detail != plan.Detail().Value() ||
-		!equalStrings(claims.scopes, plan.Scopes()) || !expires.Equal(plan.NotAfter()) || !expires.After(now.Add(-v.clockSkew)) ||
-		claims.iat > claims.nbf || claims.nbf > claims.exp || now.Before(time.Unix(claims.nbf, 0).Add(-v.clockSkew)) || now.Before(time.Unix(claims.iat, 0).Add(-v.clockSkew)) {
+	if !v.matchesPlan(claims, plan) || !v.validTemporalAndKeyClaims(claims, now) {
 		return VerifiedOutput{}, errors.New("acting-access output claims are invalid")
 	}
+	expires := time.Unix(claims.exp, 0).UTC()
 	return VerifiedOutput{subject: claims.subject, actorSubject: claims.actor, clientID: claims.clientID, audience: claims.audience, detail: claims.detail, scopes: append([]string(nil), claims.scopes...), expiresAt: expires}, nil
+}
+
+func (v *JWTOutputVerifier) matchesPlan(claims outputClaims, plan MechanismInput) bool {
+	return claims.issuer == v.issuer &&
+		claims.subject == qualifiedOutputSubject(plan.Owner()) &&
+		claims.clientID == plan.Presenter().Value() &&
+		claims.clientID == v.clientID &&
+		claims.actor == plan.ActorSubject() &&
+		claims.audience == plan.Resource().Value() &&
+		claims.detail == plan.Detail().Value() &&
+		slices.Equal(claims.scopes, plan.Scopes()) &&
+		time.Unix(claims.exp, 0).UTC().Equal(plan.NotAfter())
+}
+
+func (v *JWTOutputVerifier) validTemporalAndKeyClaims(claims outputClaims, now time.Time) bool {
+	expires := time.Unix(claims.exp, 0).UTC()
+	issuedAt := time.Unix(claims.iat, 0).UTC()
+	notBefore := time.Unix(claims.nbf, 0).UTC()
+	return v.keyNotAfter.After(now) &&
+		!expires.After(v.keyNotAfter) &&
+		expires.After(now.Add(-v.clockSkew)) &&
+		claims.iat <= claims.nbf &&
+		claims.nbf <= claims.exp &&
+		!now.Before(notBefore.Add(-v.clockSkew)) &&
+		!now.Before(issuedAt.Add(-v.clockSkew)) &&
+		now.Sub(issuedAt) <= v.maxAge+v.clockSkew &&
+		now.Sub(notBefore) <= v.maxAge+v.clockSkew
 }
 
 func qualifiedOutputSubject(owner Owner) string {
 	sum := sha256.Sum256([]byte("mecatl:acting-access:owner:v1\x00" + owner.Issuer() + "\x00" + owner.Subject()))
 	return "sha256:" + hex.EncodeToString(sum[:])
-}
-
-func equalStrings(a, b []string) bool {
-	return len(a) == len(b) && strings.Join(a, "\x00") == strings.Join(b, "\x00")
 }
 
 type outputHeader struct{ kid string }

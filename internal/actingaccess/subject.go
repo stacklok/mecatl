@@ -20,7 +20,7 @@ const ExchangeSubjectTokenType = "mecatl-exchange-subject+jwt"
 
 // SubjectAssertionVerifier is the consumer-owned closed subject credential port.
 type SubjectAssertionVerifier interface {
-	Verify(SubjectAssertion) (VerifiedSubject, error)
+	Verify(SubjectAssertion, Presenter) (VerifiedSubject, error)
 }
 
 // VerifiedSubject is the complete non-secret result of subject profile verification.
@@ -28,6 +28,14 @@ type VerifiedSubject struct {
 	owner        Owner
 	consentProof string
 	notAfter     time.Time
+}
+
+// NewVerifiedSubject constructs the closed result returned by a trusted subject verifier.
+func NewVerifiedSubject(owner Owner, consentProof string, notAfter time.Time) (VerifiedSubject, error) {
+	if owner == (Owner{}) || !boundedSafe(consentProof) || notAfter.IsZero() {
+		return VerifiedSubject{}, errors.New("verified subject is invalid")
+	}
+	return VerifiedSubject{owner: owner, consentProof: consentProof, notAfter: notAfter.UTC()}, nil
 }
 
 // Owner returns the verified issuer-qualified identity.
@@ -48,6 +56,7 @@ func (v VerifiedSubject) IsZero() bool {
 type SubjectKey struct {
 	ID        string
 	PublicKey *ecdsa.PublicKey
+	NotAfter  time.Time
 }
 
 // SubjectVerifierConfig fixes one bilateral exchange-subject profile.
@@ -71,7 +80,12 @@ type JWTSubjectAssertionVerifier struct {
 	clockSkew       time.Duration
 	maxTokenBytes   int
 	now             func() time.Time
-	keys            map[string]*ecdsa.PublicKey
+	keys            map[string]subjectVerificationKey
+}
+
+type subjectVerificationKey struct {
+	publicKey *ecdsa.PublicKey
+	notAfter  time.Time
 }
 
 // NewJWTSubjectAssertionVerifier validates and copies one pinned subject profile.
@@ -81,9 +95,9 @@ func NewJWTSubjectAssertionVerifier(cfg SubjectVerifierConfig) (*JWTSubjectAsser
 		cfg.MaxTokenBytes <= 0 || cfg.MaxTokenBytes > maxCredentialBytes || len(cfg.Keys) == 0 || len(cfg.Keys) > 16 {
 		return nil, errors.New("acting-access subject verifier configuration is invalid")
 	}
-	keys := make(map[string]*ecdsa.PublicKey, len(cfg.Keys))
+	keys := make(map[string]subjectVerificationKey, len(cfg.Keys))
 	for _, item := range cfg.Keys {
-		if !boundedSafe(item.ID) || item.PublicKey == nil {
+		if !boundedSafe(item.ID) || item.PublicKey == nil || item.NotAfter.IsZero() {
 			return nil, errors.New("acting-access subject verification key is invalid")
 		}
 		encoded, err := item.PublicKey.Bytes()
@@ -97,7 +111,7 @@ func NewJWTSubjectAssertionVerifier(cfg SubjectVerifierConfig) (*JWTSubjectAsser
 		if _, duplicate := keys[item.ID]; duplicate {
 			return nil, errors.New("acting-access subject verification key is duplicated")
 		}
-		keys[item.ID] = key
+		keys[item.ID] = subjectVerificationKey{publicKey: key, notAfter: item.NotAfter.UTC()}
 	}
 	now := cfg.Now
 	if now == nil {
@@ -108,67 +122,68 @@ func NewJWTSubjectAssertionVerifier(cfg SubjectVerifierConfig) (*JWTSubjectAsser
 }
 
 // Verify validates signature, header, exact claims, intended use, and bounded time.
-func (v *JWTSubjectAssertionVerifier) Verify(assertion SubjectAssertion) (VerifiedSubject, error) {
-	claims, err := v.verifyCompact(assertion)
+func (v *JWTSubjectAssertionVerifier) Verify(assertion SubjectAssertion, presenter Presenter) (VerifiedSubject, error) {
+	claims, keyNotAfter, err := v.verifyCompact(assertion)
 	if err != nil {
 		return VerifiedSubject{}, err
 	}
 	owner, err := NewOwner(claims.issuer, claims.subject)
 	if err != nil || claims.issuer != v.issuer || len(claims.audience) != 1 || claims.audience[0] != v.audience ||
-		claims.authorizedParty != v.authorizedParty || !boundedSafe(claims.consentProof) {
+		presenter == (Presenter{}) || claims.authorizedParty != presenter.Value() || claims.authorizedParty != v.authorizedParty || !boundedSafe(claims.consentProof) {
 		return VerifiedSubject{}, errors.New("subject assertion profile is invalid")
 	}
 	now := v.now().UTC()
 	issuedAt, notBefore, expiresAt := time.Unix(claims.issuedAt, 0).UTC(), time.Unix(claims.notBefore, 0).UTC(), time.Unix(claims.expiresAt, 0).UTC()
-	if !expiresAt.After(issuedAt) || notBefore.After(expiresAt) || now.Before(issuedAt.Add(-v.clockSkew)) ||
+	if !keyNotAfter.After(now) || expiresAt.After(keyNotAfter) || !expiresAt.After(issuedAt) || notBefore.After(expiresAt) || now.Before(issuedAt.Add(-v.clockSkew)) ||
 		now.Before(notBefore.Add(-v.clockSkew)) || now.After(expiresAt.Add(v.clockSkew)) || now.Sub(issuedAt) > v.maxAge+v.clockSkew {
 		return VerifiedSubject{}, errors.New("subject assertion time is invalid")
 	}
 	return VerifiedSubject{owner: owner, consentProof: claims.consentProof, notAfter: expiresAt}, nil
 }
 
-func (v *JWTSubjectAssertionVerifier) verifyCompact(assertion SubjectAssertion) (subjectClaims, error) {
+func (v *JWTSubjectAssertionVerifier) verifyCompact(assertion SubjectAssertion) (subjectClaims, time.Time, error) {
 	if v == nil || assertion.secret.value == nil {
-		return subjectClaims{}, errors.New("subject assertion is unavailable")
+		return subjectClaims{}, time.Time{}, errors.New("subject assertion is unavailable")
 	}
 	raw := assertion.secret.value.raw
 	if len(raw) == 0 || len(raw) > v.maxTokenBytes {
-		return subjectClaims{}, errors.New("subject assertion size is invalid")
+		return subjectClaims{}, time.Time{}, errors.New("subject assertion size is invalid")
 	}
 	parts := strings.Split(raw, ".")
 	if len(parts) != 3 || parts[0] == "" || parts[1] == "" || parts[2] == "" {
-		return subjectClaims{}, errors.New("subject assertion is malformed")
+		return subjectClaims{}, time.Time{}, errors.New("subject assertion is malformed")
 	}
 	headerRaw, err := base64.RawURLEncoding.DecodeString(parts[0])
 	if err != nil {
-		return subjectClaims{}, errors.New("subject assertion header is malformed")
+		return subjectClaims{}, time.Time{}, errors.New("subject assertion header is malformed")
 	}
 	header, err := parseSubjectHeader(headerRaw)
 	if err != nil {
-		return subjectClaims{}, err
+		return subjectClaims{}, time.Time{}, err
 	}
-	key := v.keys[header.kid]
-	if key == nil {
-		return subjectClaims{}, errors.New("subject assertion key is unknown")
+	key, ok := v.keys[header.kid]
+	if !ok {
+		return subjectClaims{}, time.Time{}, errors.New("subject assertion key is unknown")
 	}
 	signature, err := base64.RawURLEncoding.DecodeString(parts[2])
-	if err != nil || jwt.SigningMethodES256.Verify(parts[0]+"."+parts[1], signature, key) != nil {
-		return subjectClaims{}, errors.New("subject assertion signature is invalid")
+	if err != nil || jwt.SigningMethodES256.Verify(parts[0]+"."+parts[1], signature, key.publicKey) != nil {
+		return subjectClaims{}, time.Time{}, errors.New("subject assertion signature is invalid")
 	}
 	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
 	if err != nil || len(payload) == 0 || len(payload) > v.maxTokenBytes {
-		return subjectClaims{}, errors.New("subject assertion claims are malformed")
+		return subjectClaims{}, time.Time{}, errors.New("subject assertion claims are malformed")
 	}
-	return parseSubjectClaims(payload)
+	claims, err := parseSubjectClaims(payload)
+	return claims, key.notAfter, err
 }
 
 // VerifySubjectForOwner refuses recombination unless the freshly verified subject
 // exactly matches the durable issuer-qualified owner.
-func VerifySubjectForOwner(verifier SubjectAssertionVerifier, assertion SubjectAssertion, owner Owner) (VerifiedSubject, error) {
-	if verifier == nil || owner == (Owner{}) {
+func VerifySubjectForOwner(verifier SubjectAssertionVerifier, assertion SubjectAssertion, presenter Presenter, owner Owner) (VerifiedSubject, error) {
+	if verifier == nil || presenter == (Presenter{}) || owner == (Owner{}) {
 		return VerifiedSubject{}, errors.New("subject verification is unavailable")
 	}
-	verified, err := verifier.Verify(assertion)
+	verified, err := verifier.Verify(assertion, presenter)
 	if err != nil {
 		return VerifiedSubject{}, err
 	}

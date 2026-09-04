@@ -156,6 +156,63 @@ func TestActingAccess_Scenario1_SeparatesCredentialProfiles(t *testing.T) {
 	}
 }
 
+type credentialConsumer struct{ values []string }
+
+func (c *credentialConsumer) ConsumeSubjectAssertion(value []byte) error {
+	c.values = append(c.values, string(value))
+	return nil
+}
+func (c *credentialConsumer) ConsumeI2Token(value []byte) error {
+	c.values = append(c.values, string(value))
+	return nil
+}
+func (c *credentialConsumer) ConsumeOutputToken(value []byte) error {
+	c.values = append(c.values, string(value))
+	return nil
+}
+
+func TestActingAccess_TrustedCollaboratorBoundaries(t *testing.T) {
+	subject, _ := NewSubjectAssertion("subject-secret")
+	actor, _ := NewI2Token("actor-secret")
+	output, _ := NewOutputToken("output-secret")
+	consumer := &credentialConsumer{}
+	if err := subject.Consume(consumer); err != nil {
+		t.Fatal(err)
+	}
+	if err := actor.Consume(consumer); err != nil {
+		t.Fatal(err)
+	}
+	if err := output.Consume(consumer); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(consumer.values, []string{"subject-secret", "actor-secret", "output-secret"}) {
+		t.Fatalf("consumed values = %#v", consumer.values)
+	}
+	response, err := NewExchangeResponse(output, 30, []string{"repo:read"})
+	if err != nil || response.Token().secret.value == nil || response.ExpiresIn() != 30 || response.Scope() != "repo:read" {
+		t.Fatalf("NewExchangeResponse() = %#v, %v", response, err)
+	}
+}
+
+func TestDecisionValidityBelongsOnlyToPermit(t *testing.T) {
+	future := time.Now().Add(time.Minute)
+	if _, err := NewDecision(DecisionPermit, future); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewDecision(DecisionPermit, time.Time{}); err == nil {
+		t.Fatal("permit without validity accepted")
+	}
+	for _, effect := range []DecisionEffect{DecisionDeny, DecisionUnavailable} {
+		decision, err := NewDecision(effect, time.Time{})
+		if err != nil || !decision.NotAfter().IsZero() {
+			t.Fatalf("NewDecision(%s) = %#v, %v", effect, decision, err)
+		}
+		if _, err := NewDecision(effect, future); err == nil {
+			t.Fatalf("%s accepted a fake validity deadline", effect)
+		}
+	}
+}
+
 func contains(value, fragment string) bool {
 	for i := 0; i+len(fragment) <= len(value); i++ {
 		if value[i:i+len(fragment)] == fragment {
@@ -177,6 +234,9 @@ type decisionExpectation struct {
 }
 
 func mustDecision(effect DecisionEffect, notAfter time.Time) Decision {
+	if effect != DecisionPermit {
+		notAfter = time.Time{}
+	}
 	decision, err := NewDecision(effect, notAfter)
 	if err != nil {
 		panic(err)
@@ -232,7 +292,7 @@ type fixedSubjectVerifier struct {
 	block      func()
 }
 
-func (v *fixedSubjectVerifier) Verify(token SubjectAssertion) (VerifiedSubject, error) {
+func (v *fixedSubjectVerifier) Verify(token SubjectAssertion, _ Presenter) (VerifiedSubject, error) {
 	v.calls++
 	if v.block != nil {
 		v.block()
