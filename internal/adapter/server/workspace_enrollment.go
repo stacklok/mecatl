@@ -20,6 +20,9 @@ type WorkspaceEnrollmentProjection struct {
 func (s *Service) ConnectWorkspaceServices(ctx context.Context, id session.SessionID) (WorkspaceEnrollmentProjection, error) {
 	unlock := s.runEntryMu.lock(id)
 	defer unlock()
+	if err := s.acquireLease(ctx, id); err != nil {
+		return WorkspaceEnrollmentProjection{}, err
+	}
 
 	sess, enroller, release, err := s.workspaceEnrollmentTarget(ctx, id)
 	if err != nil {
@@ -96,6 +99,9 @@ func (s *Service) CancelWorkspaceEnrollment(ctx context.Context, id session.Sess
 func (s *Service) cancelWorkspaceEnrollment(ctx context.Context, id session.SessionID, enrollmentID session.WorkspaceEnrollmentID) (WorkspaceEnrollmentProjection, error) {
 	unlock := s.runEntryMu.lock(id)
 	defer unlock()
+	if err := s.acquireLease(ctx, id); err != nil {
+		return WorkspaceEnrollmentProjection{}, err
+	}
 	sess, enroller, release, err := s.workspaceEnrollmentTarget(ctx, id)
 	if err != nil {
 		if sess != nil && errors.Is(err, brokercontract.ErrStateUnavailable) {
@@ -154,8 +160,17 @@ func (s *Service) workspaceEnrollmentTarget(ctx context.Context, id session.Sess
 	brokerUnlock := s.brokerMu.lock(id)
 	local, err := s.openBrokerAttachment(ctx, id, sess.ExternalBinding, true)
 	if err != nil {
-		brokerUnlock()
-		return sess, nil, nil, err
+		if !errors.Is(err, ErrBrokerBindingMismatch) {
+			brokerUnlock()
+			return sess, nil, nil, err
+		}
+		// This seam is pre-prompt by construction, so a lost incarnation costs the
+		// session nothing durable: adopt the live one rather than strand it behind
+		// a binding no restarted process can ever match.
+		if local, err = s.rebindBrokerAttachment(ctx, sess); err != nil {
+			brokerUnlock()
+			return sess, nil, nil, err
+		}
 	}
 	enroller, ok := local.attachment.(brokercontract.WorkspaceEnrollmentAttachment)
 	if !ok {

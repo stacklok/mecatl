@@ -72,6 +72,42 @@ func (s *Service) openBrokerAttachment(ctx context.Context, id session.SessionID
 	return nil, fmt.Errorf("%w: %w: %w for session %q", ErrFailedPrecondition, brokercontract.ErrStateUnavailable, ErrBrokerBindingMismatch, id)
 }
 
+// rebindBrokerAttachment adopts the live broker incarnation for a session whose
+// persisted binding names an incarnation that no longer exists. A Runtime's
+// binding prefix is random per process and its generation counter is in memory,
+// so after a restart NO persisted binding can ever match again: without an
+// adoption seam such a session is stranded for the rest of its life. Callers
+// must hold brokerMu for the session and must own a seam where nothing durable
+// was built on the lost incarnation — a stale pre-prompt enrollment correlation
+// is dropped here because its broker-side transaction died with the incarnation
+// that issued it. Live authorization control paths deliberately do NOT rebind:
+// they must hard-fail on a mismatch rather than resolve against fresh state.
+func (s *Service) rebindBrokerAttachment(ctx context.Context, sess *session.Session) (*localBrokerAttachment, error) {
+	local, err := s.openBrokerAttachment(ctx, sess.ID, "", false)
+	if err != nil {
+		return nil, err
+	}
+	committed := false
+	defer s.finalizeBrokerAttachment(local, &committed)
+	commitCtx, cancelCommit := context.WithTimeout(context.WithoutCancel(ctx), engineCloseTimeout)
+	commitErr := s.commitBrokerAttachment(commitCtx, sess.ID, local)
+	cancelCommit()
+	if commitErr != nil {
+		return nil, fmt.Errorf("%w: %v", ErrInternal, commitErr)
+	}
+	committed = true
+	if pending, ok := sess.PendingWorkspaceEnrollment(); ok {
+		if abortErr := sess.AbortWorkspaceEnrollment(pending.ID); abortErr != nil {
+			return nil, fmt.Errorf("%w: clear lost workspace enrollment", ErrFailedPrecondition)
+		}
+	}
+	sess.ExternalBinding = local.attachment.Binding()
+	if err := s.saveSession(ctx, sess); err != nil {
+		return nil, fmt.Errorf("%w: persist rebound MCP broker attachment", ErrInternal)
+	}
+	return local, nil
+}
+
 func (s *Service) commitBrokerAttachment(ctx context.Context, id session.SessionID, local *localBrokerAttachment) error {
 	if local == nil || !local.owned {
 		return nil

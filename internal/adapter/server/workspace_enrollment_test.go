@@ -10,7 +10,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stacklok/mecatl/engine/adapter/memlease"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
+	"github.com/stacklok/mecatl/engine/adapter/wallclock"
 	"github.com/stacklok/mecatl/engine/governance"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
@@ -389,9 +391,59 @@ func TestWorkspaceEnrollmentCompensationIsBounded(t *testing.T) {
 	}
 }
 
-func TestWorkspaceEnrollmentStateLossClearsPendingGate(t *testing.T) {
+func TestWorkspaceEnrollmentAcquiresLeaseBeforePersisting(t *testing.T) {
+	// ConnectWorkspaceServices/cancelWorkspaceEnrollment must acquire the
+	// session mutation lease themselves: a fresh session that never had a run
+	// driven through it (the ordinary case — /tools-connect is a pre-prompt
+	// gate) never gets Grant()-ed any other way, and under a configured
+	// SessionLease the guarded store then rejects every save with
+	// ErrSessionLeasedElsewhere. This regressed silently because no other
+	// workspace-enrollment test configures a SessionLease at all.
 	runtime := testBrokerRuntime(t)
 	defer runtime.Close()
+	broker := &enrollmentBroker{Service: runtime}
+	store := memstore.New()
+	lease := memlease.New(wallclock.Clock{}, time.Minute)
+	svc, err := NewService(Config{
+		Engine:            brokerEngineResult().Engine,
+		Store:             store,
+		PlacementProvider: brokerPlacementProvider{}, PlacementScope: "test",
+		NewID:        func() session.SessionID { return "leased-enrollment-session" },
+		MCPBroker:    broker,
+		SessionLease: lease,
+		LeaseOwner:   "test-owner",
+		RootAuthority: func(session.SessionKind) session.Authority {
+			return session.Authority{CapabilitySet: governance.CapabilitySet{Tools: []string{"mcp__calendar__list"}}, Provenance: "test"}
+		},
+		SessionEngineWithTools: func(context.Context, ProviderSelector, []mcp.ServerConfig, SessionProfile, string, session.PermissionMode, []tool.Tool) (SessionEngineResult, error) {
+			return brokerEngineResult(), nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer svc.Close()
+	created, err := svc.CreateSession(t.Context(), session.ModeDefault, session.Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.ConnectWorkspaceServices(t.Context(), created.ID); err != nil {
+		t.Fatalf("ConnectWorkspaceServices on a never-run session under a configured lease: %v", err)
+	}
+	pending, ok := created.PendingWorkspaceEnrollment()
+	if loaded, loadErr := store.Load(t.Context(), created.ID); loadErr == nil {
+		pending, ok = loaded.PendingWorkspaceEnrollment()
+	}
+	if !ok {
+		t.Fatal("no pending enrollment persisted")
+	}
+	if _, err := svc.CancelWorkspaceEnrollment(t.Context(), created.ID, pending.ID); err != nil {
+		t.Fatalf("CancelWorkspaceEnrollment under a configured lease: %v", err)
+	}
+}
+
+func TestWorkspaceEnrollmentStateLossClearsPendingGate(t *testing.T) {
+	runtime := testBrokerRuntime(t)
 	broker := &enrollmentBroker{Service: runtime}
 	store := memstore.New()
 	svc, err := NewService(Config{
