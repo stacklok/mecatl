@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -28,6 +29,8 @@ type recheckAuthorizationStream struct {
 	approveOnAsk bool
 	afterInitial func()
 	sendErr      error
+	recvErr      error
+	recvErred    chan struct{}
 	responses    []*mecatlv1.RecheckMcpAuthorizationResponse
 }
 
@@ -41,6 +44,13 @@ func (s *recheckAuthorizationStream) Recv() (*mecatlv1.RecheckMcpAuthorizationRe
 			s.afterInitial = nil
 		}
 		return req, nil
+	}
+	if s.recvErr != nil {
+		if s.recvErred != nil {
+			close(s.recvErred)
+			s.recvErred = nil
+		}
+		return nil, s.recvErr
 	}
 	if s.requestCh != nil {
 		select {
@@ -179,7 +189,7 @@ func TestMCPAuthorizationGRPCContinuationPermissionApproval(t *testing.T) {
 	}
 }
 
-func TestMCPAuthorizationGRPCInitialStatusSendFailureCancelsAndFinishesContinuation(t *testing.T) {
+func TestMCPAuthorizationGRPCInitialStatusSendFailureDrainsAndFinishesContinuation(t *testing.T) {
 	f := newLifecycleFixtureWithTurns(t, session.AuthorizationGranted, nil, time.Now, nil, mockllm.TextTurn("continued"))
 	sentinel := errors.New("initial authorization status send failed")
 	stream := &recheckAuthorizationStream{
@@ -202,7 +212,7 @@ func TestMCPAuthorizationGRPCInitialStatusSendFailureCancelsAndFinishesContinuat
 	}
 }
 
-func TestMCPAuthorizationGRPCCancelInitialStatusSendFailureCancelsAndFinishesContinuation(t *testing.T) {
+func TestMCPAuthorizationGRPCCancelInitialStatusSendFailureDrainsAndFinishesContinuation(t *testing.T) {
 	f, ownerCtx, _ := ownedAuthorizationFixture(t, session.AuthorizationPending)
 	sentinel := errors.New("initial cancellation status send failed")
 	stream := &cancelAuthorizationStream{
@@ -266,6 +276,54 @@ func TestMCPAuthorizationGRPCControlEOFDrainsContinuationWithoutCancellingIt(t *
 	}
 	if persisted.State != session.StateCompleted {
 		t.Fatalf("persisted EOF continuation state = %q, want %q", persisted.State, session.StateCompleted)
+	}
+}
+
+// A broken control stream is not a cancellation (H-K5). The stream is a one-shot
+// RPC on a context deliberately detached from the continuation; cancelling the
+// run on a transport fault is what destroyed a follow-up authorization park mid
+// browser round trip and left the session unrecoverably `cancelled` (H-K23).
+// rejectCancelledSaveStore is the oracle: a cancelled run cannot persist, so a
+// completed persisted state proves the run was left alone.
+func TestMCPAuthorizationGRPCNonEOFControlErrorDoesNotCancelContinuation(t *testing.T) {
+	f := newLifecycleFixtureWithTurns(t, session.AuthorizationGranted, nil, time.Now, nil, mockllm.TextTurn("continued"))
+	f.svc.cfg.Store = rejectCancelledSaveStore{SessionStore: f.store}
+	sentinel := errors.New("control stream reset by peer")
+	recvErred := make(chan struct{})
+	var cancelledInFlight atomic.Bool
+	// Hold the resumed protected call open until the control error has been
+	// raised, so the relay observes the dead stream while real work is in flight
+	// — the exact window a follow-up authorization parks in.
+	f.attach.tool.hold = func(ctx context.Context) {
+		<-recvErred
+		select {
+		case <-ctx.Done():
+			cancelledInFlight.Store(true)
+		case <-time.After(250 * time.Millisecond):
+		}
+	}
+	stream := &recheckAuthorizationStream{
+		ctx:       t.Context(),
+		recvErr:   sentinel,
+		recvErred: recvErred,
+		requests:  []*mecatlv1.RecheckMcpAuthorizationRequest{{SessionId: "authorization-session", AuthorizationId: f.pending.Authorization.ID}},
+	}
+
+	if err := NewHarnessServer(f.svc).RecheckMcpAuthorization(stream); !errors.Is(err, sentinel) {
+		t.Fatalf("RecheckMcpAuthorization error = %v, want sentinel", err)
+	}
+	if cancelledInFlight.Load() {
+		t.Fatal("control-stream transport error cancelled the in-flight continuation")
+	}
+	persisted, err := f.store.Load(t.Context(), "authorization-session")
+	if err != nil {
+		t.Fatalf("load continuation: %v", err)
+	}
+	if persisted.State != session.StateCompleted {
+		t.Fatalf("persisted continuation state = %q, want %q", persisted.State, session.StateCompleted)
+	}
+	if _, live := f.svc.LookupRun("authorization-session"); live {
+		t.Fatal("drained continuation left registered")
 	}
 }
 

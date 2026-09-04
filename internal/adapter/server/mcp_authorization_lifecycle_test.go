@@ -26,14 +26,22 @@ import (
 	brokercontract "github.com/stacklok/mecatl/internal/mcpbroker"
 )
 
-type lifecycleTool struct{ calls atomic.Int32 }
+type lifecycleTool struct {
+	calls atomic.Int32
+	// hold, when set, runs inside Execute with the run context, so a test can
+	// hold a continuation in flight and observe whether it gets cancelled.
+	hold func(context.Context)
+}
 
 func (*lifecycleTool) Spec() tool.ToolSpec {
 	return tool.ToolSpec{Name: "protected", Schema: json.RawMessage(`{"type":"object"}`)}
 }
 func (*lifecycleTool) ReadOnly() bool { return false }
-func (t *lifecycleTool) Execute(_ context.Context, call session.ToolCall, _ tool.Environment) (session.ToolResult, error) {
+func (t *lifecycleTool) Execute(ctx context.Context, call session.ToolCall, _ tool.Environment) (session.ToolResult, error) {
 	t.calls.Add(1)
+	if t.hold != nil {
+		t.hold(ctx)
+	}
 	return session.NewToolResult(call.ID, "protected mutation complete"), nil
 }
 

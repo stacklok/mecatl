@@ -34,6 +34,28 @@ const (
 	authorizationExpiryRetryDelay = time.Second
 )
 
+// The MCP authorization controls refuse at four distinct gates that all map to
+// codes.NotFound. They name the actual reason instead of reusing ErrNotFound's
+// bare "session not found", which pointed every prior debugger at session
+// lookup when the real cause was an expired or already-resolved authorization.
+// The session gate deliberately covers absent and foreign sessions with ONE
+// message, so ownership stays undisclosed.
+var (
+	errAuthorizationSessionUnavailable = fmt.Errorf("%w: session is unavailable to this caller", ErrNotFound)
+	errAuthorizationNoPending          = fmt.Errorf("%w: no pending MCP authorization matches this request", ErrNotFound)
+	errAuthorizationExpired            = fmt.Errorf("%w: the pending MCP authorization has expired", ErrNotFound)
+	errAuthorizationNotPending         = fmt.Errorf("%w: the MCP authorization is no longer pending", ErrNotFound)
+	errAuthorizationUnclaimable        = fmt.Errorf("%w: the pending MCP authorization could not be claimed", ErrNotFound)
+)
+
+// brokerStateLost reports a genuinely unavailable broker transaction, which a
+// live control resolves as AuthorizationInterrupted. A binding mismatch is
+// excluded: the broker is present but is a different incarnation, which is a
+// hard precondition failure the caller must see, not a soft interruption.
+func brokerStateLost(err error) bool {
+	return errors.Is(err, brokercontract.ErrStateUnavailable) && !errors.Is(err, ErrBrokerBindingMismatch)
+}
+
 type authorizationExpiry struct {
 	timer   AuthorizationTimer
 	retries int
@@ -43,7 +65,7 @@ type authorizationExpiry struct {
 // authorization and an authoritative lock/lease protected reload.
 func (s *Service) MCPAuthorizationPresentation(ctx context.Context, id session.SessionID, control MCPAuthorizationControl) (string, error) {
 	if _, err := s.GetSession(ctx, id); err != nil { // before caller-selected lock
-		return "", ErrNotFound
+		return "", errAuthorizationSessionUnavailable
 	}
 	unlock := s.runEntryMu.lock(id)
 	defer unlock()
@@ -51,8 +73,11 @@ func (s *Service) MCPAuthorizationPresentation(ctx context.Context, id session.S
 		return "", err
 	}
 	sess, pending, err := s.loadMatchingAuthorization(ctx, id, control)
-	if err != nil || !pending.Authorization.ExpiresAt.After(s.cfg.Now()) {
-		return "", ErrNotFound
+	if err != nil {
+		return "", err
+	}
+	if !pending.Authorization.ExpiresAt.After(s.cfg.Now()) {
+		return "", errAuthorizationExpired
 	}
 	attachment, release, err := s.authorizationAttachment(ctx, sess)
 	if err != nil {
@@ -64,7 +89,7 @@ func (s *Service) MCPAuthorizationPresentation(ctx context.Context, id session.S
 		return "", err
 	}
 	if status != session.AuthorizationPending {
-		return "", ErrNotFound
+		return "", errAuthorizationNotPending
 	}
 	url, err := attachment.PresentAuthorization(ctx, pending.Authorization)
 	if err != nil {
@@ -77,7 +102,7 @@ func (s *Service) MCPAuthorizationPresentation(ctx context.Context, id session.S
 // inert; granted and terminal outcomes have exactly one continuation winner.
 func (s *Service) RecheckMCPAuthorization(ctx context.Context, id session.SessionID, control MCPAuthorizationControl) (MCPAuthorizationResult, error) {
 	if _, err := s.GetSession(ctx, id); err != nil { // owner check before lock
-		return MCPAuthorizationResult{}, ErrNotFound
+		return MCPAuthorizationResult{}, errAuthorizationSessionUnavailable
 	}
 	unlock := s.runEntryMu.lock(id)
 	defer unlock()
@@ -90,7 +115,7 @@ func (s *Service) RecheckMCPAuthorization(ctx context.Context, id session.Sessio
 	}
 	attachment, release, err := s.authorizationAttachment(ctx, sess)
 	if err != nil {
-		if errors.Is(err, brokercontract.ErrStateUnavailable) {
+		if brokerStateLost(err) {
 			return s.resolveAuthorizationLocked(ctx, sess, pending, session.AuthorizationInterrupted)
 		}
 		return MCPAuthorizationResult{}, err
@@ -98,7 +123,7 @@ func (s *Service) RecheckMCPAuthorization(ctx context.Context, id session.Sessio
 	status, statusErr := attachment.AuthorizationStatus(ctx, pending.Authorization)
 	if statusErr != nil {
 		release()
-		if errors.Is(statusErr, brokercontract.ErrStateUnavailable) {
+		if brokerStateLost(statusErr) {
 			return s.resolveAuthorizationLocked(ctx, sess, pending, session.AuthorizationInterrupted)
 		}
 		return MCPAuthorizationResult{}, statusErr
@@ -134,7 +159,7 @@ func (s *Service) RecheckMCPAuthorization(ctx context.Context, id session.Sessio
 // CancelMCPAuthorization precisely cancels and resolves one pending control.
 func (s *Service) CancelMCPAuthorization(ctx context.Context, id session.SessionID, control MCPAuthorizationControl) (MCPAuthorizationResult, error) {
 	if _, err := s.GetSession(ctx, id); err != nil { // owner check before lock
-		return MCPAuthorizationResult{}, ErrNotFound
+		return MCPAuthorizationResult{}, errAuthorizationSessionUnavailable
 	}
 	unlock := s.runEntryMu.lock(id)
 	defer unlock()
@@ -147,7 +172,7 @@ func (s *Service) CancelMCPAuthorization(ctx context.Context, id session.Session
 	}
 	attachment, release, attachErr := s.authorizationAttachment(ctx, sess)
 	if attachErr != nil {
-		if errors.Is(attachErr, brokercontract.ErrStateUnavailable) {
+		if brokerStateLost(attachErr) {
 			return s.resolveAuthorizationLocked(ctx, sess, pending, session.AuthorizationInterrupted)
 		}
 		return MCPAuthorizationResult{}, attachErr
@@ -155,7 +180,7 @@ func (s *Service) CancelMCPAuthorization(ctx context.Context, id session.Session
 	outcome, cancelErr := attachment.CancelAuthorization(ctx, pending.Authorization)
 	if cancelErr != nil {
 		release()
-		if errors.Is(cancelErr, brokercontract.ErrStateUnavailable) {
+		if brokerStateLost(cancelErr) {
 			return s.resolveAuthorizationLocked(ctx, sess, pending, session.AuthorizationInterrupted)
 		}
 		return MCPAuthorizationResult{}, cancelErr
@@ -214,11 +239,11 @@ func (s *Service) applyAuthorizationStatusLocked(ctx context.Context, sess *sess
 func (s *Service) loadMatchingAuthorization(ctx context.Context, id session.SessionID, control MCPAuthorizationControl) (*session.Session, session.PendingAuthorization, error) {
 	sess, err := s.GetSession(ctx, id)
 	if err != nil {
-		return nil, session.PendingAuthorization{}, ErrNotFound
+		return nil, session.PendingAuthorization{}, errAuthorizationSessionUnavailable
 	}
 	pending, ok := sess.PendingAuthorization()
 	if !ok || control.SessionID != id || pending.Authorization.ID != control.AuthorizationID {
-		return nil, session.PendingAuthorization{}, ErrNotFound
+		return nil, session.PendingAuthorization{}, errAuthorizationNoPending
 	}
 	return sess, pending, nil
 }
@@ -231,7 +256,7 @@ func matchingAuthorization(sess *session.Session, control MCPAuthorizationContro
 func (s *Service) recheckExpiredAuthorizationLocked(ctx context.Context, sess *session.Session, pending session.PendingAuthorization) (MCPAuthorizationResult, error) {
 	attachment, release, err := s.authorizationAttachment(ctx, sess)
 	if err != nil {
-		if errors.Is(err, brokercontract.ErrStateUnavailable) {
+		if brokerStateLost(err) {
 			return s.resolveAuthorizationLocked(ctx, sess, pending, session.AuthorizationInterrupted)
 		}
 		return MCPAuthorizationResult{}, err
@@ -258,7 +283,7 @@ func (s *Service) recheckExpiredAuthorizationLocked(ctx context.Context, sess *s
 	}
 	release()
 	if err != nil {
-		if errors.Is(err, brokercontract.ErrStateUnavailable) {
+		if brokerStateLost(err) {
 			return s.resolveAuthorizationLocked(ctx, sess, pending, session.AuthorizationInterrupted)
 		}
 		return MCPAuthorizationResult{}, err
@@ -296,7 +321,7 @@ func (s *Service) continueGrantedAuthorizationLocked(ctx context.Context, sess *
 	}
 	claimed, err := sess.ClaimAuthorization()
 	if err != nil {
-		return MCPAuthorizationResult{}, ErrNotFound
+		return MCPAuthorizationResult{}, errAuthorizationUnclaimable
 	}
 	if err := s.saveSession(ctx, sess); err != nil {
 		_ = sess.RestoreAuthorizationClaim(claimed)

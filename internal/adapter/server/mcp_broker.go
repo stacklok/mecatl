@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/stacklok/mecatl/engine/port"
@@ -10,6 +11,13 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/mcp"
 	brokercontract "github.com/stacklok/mecatl/internal/mcpbroker"
 )
+
+// ErrBrokerBindingMismatch marks a session whose persisted binding does not
+// match the live broker incarnation. The error it decorates also satisfies
+// brokercontract.ErrStateUnavailable, so repair and settlement paths keep
+// treating it as lost state — but live authorization controls must hard-fail on
+// it rather than silently resolving the authorization as interrupted.
+var ErrBrokerBindingMismatch = errors.New("MCP broker binding mismatch")
 
 type localBrokerAttachment struct {
 	attachment brokercontract.Attachment
@@ -48,7 +56,7 @@ func (s *Service) openBrokerAttachment(ctx context.Context, id session.SessionID
 	s.mu.Unlock()
 	if existing != nil {
 		if expectedBinding != "" && existing.Binding() != expectedBinding {
-			return nil, fmt.Errorf("%w: %w: MCP broker binding mismatch for session %q", ErrFailedPrecondition, brokercontract.ErrStateUnavailable, id)
+			return nil, fmt.Errorf("%w: %w: %w for session %q", ErrFailedPrecondition, brokercontract.ErrStateUnavailable, ErrBrokerBindingMismatch, id)
 		}
 		return &localBrokerAttachment{attachment: existing}, nil
 	}
@@ -61,7 +69,7 @@ func (s *Service) openBrokerAttachment(ctx context.Context, id session.SessionID
 		return local, nil
 	}
 	s.rollbackBrokerAttachment(context.Background(), local)
-	return nil, fmt.Errorf("%w: %w: MCP broker binding mismatch for session %q", ErrFailedPrecondition, brokercontract.ErrStateUnavailable, id)
+	return nil, fmt.Errorf("%w: %w: %w for session %q", ErrFailedPrecondition, brokercontract.ErrStateUnavailable, ErrBrokerBindingMismatch, id)
 }
 
 func (s *Service) commitBrokerAttachment(ctx context.Context, id session.SessionID, local *localBrokerAttachment) error {
