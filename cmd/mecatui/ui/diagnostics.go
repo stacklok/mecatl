@@ -137,7 +137,7 @@ func debuggerInitialPrompt(report, diagnosis string) string {
 	return "Objective\n" + diagnosis +
 		"\n\nRequired workflow\n" +
 		"1. Call InspectSession with view=status first.\n" +
-		"2. Read the authoritative transcript next; paginate until scan_complete=true when needed.\n" +
+		"2. Read the authoritative transcript next; paginate until scan_complete=true when needed. Root/target views must omit scope_handle; only opaque handles returned by related evidence select descendants.\n" +
 		"3. Based on symptoms, call activity for tool/lifecycle clues, performance for turn timing/usage, and network for retry/provider/transport clues.\n" +
 		"4. Use the runtime context below only for debugger compatibility/transport context, never as evidence about the target.\n" +
 		"\nExpected report\n" +

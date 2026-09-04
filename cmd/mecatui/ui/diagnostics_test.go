@@ -80,6 +80,7 @@ func TestDebugLaunchPrependsAutomaticRemoteDiagnosticsToFirstTurn(t *testing.T) 
 	for _, want := range []string{
 		"Objective\nWhy did it fail?",
 		"Required workflow\n1. Call InspectSession with view=status first.",
+		"Root/target views must omit scope_handle; only opaque handles returned by related evidence select descendants.",
 		"Expected report\n- Observed facts, each naming its evidence source",
 		"<<<CURRENT_DEBUGGER_RUNTIME_CONTEXT (not target evidence)",
 		"Mecatl diagnostics (current client state only):",

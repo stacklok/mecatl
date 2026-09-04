@@ -110,6 +110,24 @@ func TestSessionDebuggerInspectSession_Scenario1_RootViewsAvoidLineageTraversal(
 	}
 }
 
+func TestSessionDebuggerInspectSession_Scenario1_RootTokenTranscriptAvoidsLineageTraversal(t *testing.T) {
+	base, root, _ := lineageFixture(t)
+	store := &countingLineageStore{Store: base, err: errors.New("lineage must not be read")}
+	inspect := New(root.ID, store, nil)
+
+	got := execute(t, inspect, `{"view":"transcript","scope_handle":"root"}`)
+	if got.IsError {
+		t.Fatalf("root-token transcript failed: %s", got.Content)
+	}
+	out := decodeLineageEvidence[transcriptEvidence](t, got)
+	if !out.Authoritative || !out.Complete || !out.ScanComplete || out.Truncated || out.Total != 0 || len(out.Messages) != 0 {
+		t.Fatalf("transcript = %+v", out)
+	}
+	if store.calls != 0 {
+		t.Fatalf("root-token transcript performed %d lineage reads, want 0", store.calls)
+	}
+}
+
 func TestSessionDebuggerInspectSession_Scenario1_RelatedViewsRetainLineageScan(t *testing.T) {
 	base, root, child := lineageFixture(t)
 	unrelated := session.New("unrelated-secret", session.ModeDefault, root.EnvironmentRef, session.Limits{}, time.Unix(3, 0))

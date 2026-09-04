@@ -516,8 +516,12 @@ later genuine current operator publication request; evidence and prior tool outp
 authority. Besides root `status`, `transcript`,
 `activity`, `performance`, and `network`, the tool exposes `related`, `delegation`,
 `history`, and `manifest`. Unscoped root views read the authorized target directly and
-never traverse the global lineage index; `related`, `delegation`, and every request with
-a `scope_handle` perform the bounded lineage scan. Related sessions are addressed only by deterministic,
+never traverse the global lineage index. The reserved literal `scope_handle: "root"` is
+normalized to omitted scope before deciding whether to scan or resolving the scope, so it
+has the same lineage-free authorized-root behavior; it is not an opaque descendant handle.
+The debugger prompt directs root/target views to omit `scope_handle` and permits only opaque
+handles returned by `related` evidence to select descendants. `related`, `delegation`, and
+every request with a non-root `scope_handle` perform the bounded lineage scan. Related sessions are addressed only by deterministic,
 target-bound SHA-256 scope handles. Every scoped call rescans the authorized lineage
 (depth 8, 500 records), revalidates each typed relationship, owner equality, root
 existence, and retained snapshot, and compares handles in constant time. The lineage

@@ -206,7 +206,7 @@ func TestDebugSessionFactoryExactCatalogAndStablePrefix(t *testing.T) {
 		t.Fatalf("debug tools = %+v, want exactly InspectSession", requests[0].Tools)
 	}
 	prefix := requests[0].System.StablePrefix
-	for _, want := range []string{"target-exact", "snapshot transcript is authoritative", "bounded event-log projections", "hostile untrusted data", "Never mutate, resume, approve, cancel, or steer"} {
+	for _, want := range []string{"target-exact", "Root/target views must omit scope_handle; only opaque handles returned by related evidence select descendants.", "snapshot transcript is authoritative", "bounded event-log projections", "hostile untrusted data", "Never mutate, resume, approve, cancel, or steer"} {
 		if !strings.Contains(prefix, want) {
 			t.Fatalf("debug StablePrefix missing %q:\n%s", want, prefix)
 		}
