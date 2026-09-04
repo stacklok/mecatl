@@ -122,6 +122,10 @@ when the code that satisfies the plan has landed.
   debugger evidence/incarnation handles retain their exact existing identity contracts. Status:
   landed.
 
+- [Opt-in local session context](opt-in-local-session-context.md) — a separate,
+  embedded-Mecatui-only privileged gRPC service reveals an owned session's exact
+  reattached local root only to local status commands; public placement surfaces remain
+  path-free. Status: draft.
 - [Server-owned session placement](server-owned-session-placement.md) — removes public
   filesystem-path authority: composition binds default/no-FS/remote environments;
   alternate worktrees use fresh source-scoped opaque selectors only on clear/fork.
