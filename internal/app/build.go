@@ -1924,7 +1924,8 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		// available (the zero-keys / mock case). Secret-free (modelSnapshot projects no
 		// key/env/base-URL); the projection lives in modelsnapshot.go so the server
 		// adapter never imports providercatalog or the registry.
-		Models: modelSnapshot(reg),
+		Models:         assets.modelInventory.CurrentModels(),
+		ModelInventory: assets.modelInventory,
 		// DefaultCapabilities: the catalog ∩ adapter INTERSECTION for the DEFAULT
 		// provider + cfg.Model, computed ONCE here in composition (the single source).
 		// It backs BOTH the shared-engine session_capabilities echo (when a session
@@ -2846,6 +2847,7 @@ func sessionEngineFactory(
 		// has no tool, so the note is withheld (the model is never told about a
 		// tool it cannot call).
 		deps.PromptConfig = applySchedulePosture(deps.PromptConfig, scheduleManagerPresent(assets))
+		deps.PromptConfig = applyAgentModelDiscoveryPosture(deps.PromptConfig, deps.Catalog)
 		deps.PromptConfig = applyDiagnosticsPosture(deps.PromptConfig)
 		deps.PromptConfig = applyLearningPosture(deps.PromptConfig, learningCfg.LearningMode, learningCfg.SkillActivationPolicy, learningCfg.automaticAdmissionLedger)
 		// MODEL-VISIBLE no-FS posture (ADR 0070, the #40 pattern): tell the model up
@@ -3725,6 +3727,7 @@ func buildEngine(ctx context.Context, cfg Config, reg *providerRegistry, provide
 	// a per-session engine; a store that backs no ScheduleStore withholds the
 	// note (the model is never told about a tool it cannot call).
 	deps.PromptConfig = applySchedulePosture(deps.PromptConfig, scheduleManagerPresent(assets))
+	deps.PromptConfig = applyAgentModelDiscoveryPosture(deps.PromptConfig, deps.Catalog)
 	deps.PromptConfig = applyDiagnosticsPosture(deps.PromptConfig)
 	deps.PromptConfig = applyLearningPosture(deps.PromptConfig, cfg.LearningMode, cfg.SkillActivationPolicy, assets.automaticAdmissionLedger)
 	// The shell-less default-FS posture is NOT baked into the shared engine's
@@ -5179,6 +5182,7 @@ func buildCatalog(ctx context.Context, cfg Config, reg *providerRegistry, provid
 		skillOwner:       skillOwner,
 		forkReaper:       forkReaper,
 		autoMerger:       autoMerger,
+		modelInventory:   newResolvedModelInventory(modelSnapshot(reg)),
 		// WebSearch provider (issue #26): resolved ONCE here via the backend ladder
 		// (kill switch > --websearch-url > SEARXNG_URL > BRAVE_API_KEY > Exa default)
 		// and threaded onto the assets so every per-session catalog reuses the SAME
@@ -7738,6 +7742,22 @@ func applyPlanModePosture(pc prompt.Config, mode session.PermissionMode) prompt.
 		pc.Role = prompt.DefaultRole()
 	}
 	pc.Role += "\n\n" + planModePostureNote
+	return pc
+}
+
+const agentModelDiscoveryPostureNote = "You have a DiscoverModels tool for bounded inspection of the currently resolved model inventory. Use each returned (provider_id, model_id) pair together as the exact selection handle; never infer provider_id from model_id. Discovery is read-only and does not change this session's selected model."
+
+func applyAgentModelDiscoveryPosture(pc prompt.Config, catalog *tool.Catalog) prompt.Config {
+	if catalog == nil {
+		return pc
+	}
+	if _, ok := catalog.Lookup(agentModelDiscoveryToolName); !ok {
+		return pc
+	}
+	if pc.Role == "" {
+		pc.Role = prompt.DefaultRole()
+	}
+	pc.Role += "\n\n" + agentModelDiscoveryPostureNote
 	return pc
 }
 

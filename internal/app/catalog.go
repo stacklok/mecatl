@@ -137,6 +137,7 @@ type catalogAssets struct {
 	attemptRepository        learning.AttemptRepository
 	automaticAdmissionLedger learning.AutomaticAdmissionLedger
 	rootCatalog              *tool.Catalog
+	modelInventory           *resolvedModelInventory
 }
 
 // catalogSession is the PER-CATALOG variation: the resolved provider/model the
@@ -212,6 +213,11 @@ func assembleCatalog(ctx context.Context, cfg Config, reg *providerRegistry, sto
 			continue
 		}
 		classified.mustRegister(extra, &entry)
+	}
+
+	if modelDiscoveryAvailable(reg, a.modelInventory) {
+		classified.mustRegister(newAgentModelDiscoveryTool(a.modelInventory), classification(server.KindSharedInfrastructure,
+			"bounded projection of the composition-owned resolved model inventory"))
 	}
 
 	// PresentPlan (issue #206, Wave 3) — the plan-approval gate's signalling tool.

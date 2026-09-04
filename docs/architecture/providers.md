@@ -345,12 +345,18 @@ the provider id.)
 **Model inventory (`ListModels` / `internal/app/modelsnapshot.go`).** `modelSnapshot`
 joins the registry's AVAILABLE providers to the embedded catalog and projects each
 model into the proto `ModelInfo` (public metadata only — id, provider_id, display_name,
-image/reasoning flags, context_limit — never a key/env/base-URL). The composition root
-injects the snapshot into `server.Config.Models`; the server adapter holds only the
-proto slice (mirroring the `ListAgents` idiom). The `mock` provider advertises no
-selectable models. `ServerCapabilities.model_selection` is true iff the snapshot is
-non-empty, gating the client's model picker the way `agents` gates `/agents`. Provider
-key/base-URL flags landed in `cmd/mecated` earlier; the picker UX is a client concern.
+image/reasoning flags, context_limit — never a key/env/base-URL). Composition stores
+that projection in one atomic resolved inventory shared by `ListModels` and the
+read-only `DiscoverModels` tool. Live refresh swaps that same inventory, so both views
+retain the existing floor/last-known-good/empty semantics without a second lister or
+probe. `DiscoverModels` exact-filters only `provider_id` and `model_id`, returns at most
+50 complete provider/model handles (20 by default), and has a 32 KiB output ceiling.
+The pair is the exact selection handle; a model id never implies its provider. The tool
+is registered through the common catalog assembly, including no-FS sessions, and
+receives no workspace or shell input. The `mock` provider advertises no selectable
+models. `ServerCapabilities.model_selection` is true iff the inventory is non-empty or
+a refresh source is available, gating the client's model picker. Provider key/base-URL
+flags landed in `cmd/mecated` earlier; the picker UX is a client concern.
 
 **Capability single-source (`internal/app/capability.go`).** A model's true input
 capability is the INTERSECTION `catalog-per-model-modalities ∩ adapter-Capabilities()`,

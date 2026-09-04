@@ -378,6 +378,26 @@ transient provider failure). Regression:
 
 ---
 
+## Agent-facing model discovery (issue #1064, phase 1)
+
+`internal/app/agent_model_discovery.go` owns both the atomic resolved inventory and the
+read-only `DiscoverModels` tool. `buildCatalog` seeds that inventory once from
+`modelSnapshot`; `server.Config.ModelInventory` makes `Service.ListModels` read the same
+source, and `Service.SetModels` publishes live refreshes through it. There is no second
+lister, registry, cache, provider probe, or config path. The common `assembleCatalog`
+registration gives shared, selector-session, and no-FS catalogs the tool without a
+filesystem dependency.
+
+The model-facing projection carries only `provider_id`, `model_id`, display name,
+image/reasoning flags, and context limit. Exact provider/model filters plus a limit are
+the complete argument vocabulary; unknown fields are rejected with a fixed error that
+does not echo input. Results default to 20 entries, cap at 50 complete handles and 32
+KiB, and preserve duplicate model IDs under distinct providers. The stable prompt Role
+states that the provider/model pair is the exact selection handle and that discovery
+does not mutate the current session.
+
+---
+
 ## Model-switch context carryover (issue #20)
 
 When the mecatui `/models` picker confirms a model switch, the client calls

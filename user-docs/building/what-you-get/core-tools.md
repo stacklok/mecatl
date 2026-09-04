@@ -29,6 +29,7 @@ These tools are always present in a default session (no extra configuration requ
 | `BashStatus` | Check on the background commands `Bash` started in this run: poll a job's output tail, collect a finished job's result, or cancel a job. Registered wherever `Bash` is. | Yes |
 | `Grep` | Search file contents for a pattern (regex or literal) across the workspace. Returns matching lines with context. Supports `**` recursive globs when scoping the search to a subtree. | Yes |
 | `Glob` | List files matching a glob pattern. Useful for discovering which files exist before reading them. Supports `**` for recursive matching across any number of directory levels. | Yes |
+| `DiscoverModels` | Inspect the server's resolved model inventory through a bounded, safe projection. Each returned `provider_id` + `model_id` pair is an exact selection handle. Present in default and no-filesystem profiles. | Yes |
 | `WebFetch` | Fetch readable text from a public HTTP(S) URL. Present in both default and no-filesystem session profiles. | Yes |
 | `WebSearch` | Run a web search and return results. Present in both default and no-filesystem session profiles. | Yes |
 | `ToolSearch` | Search the catalog for hidden (progressively-disclosed) tools by keyword and hydrate them into the session. Only registered when progressive tool disclosure is enabled. | Yes |

@@ -105,9 +105,10 @@ var requiredFamilyTools = []string{
 	"Parallel",
 	"Team",
 	"InspectMember",
-	"PresentPlan",        // issue #206 Wave 3 — registered everywhere, advertised only in plan mode
-	skills.ToolName,      // "Skill"
-	skills.DraftToolName, // "SkillDraft"
+	"PresentPlan",               // issue #206 Wave 3 — registered everywhere, advertised only in plan mode
+	agentModelDiscoveryToolName, // composition-owned resolved model inventory
+	skills.ToolName,             // "Skill"
+	skills.DraftToolName,        // "SkillDraft"
 	"ListMcpResources",
 	"ReadMcpResource",
 	"CallMcpWithQuery",

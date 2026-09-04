@@ -204,7 +204,25 @@ type SessionEngineFactory func(ctx context.Context, sel ProviderSelector, specs 
 // authorized target incarnation; neither may be projected to the model or wire.
 type DebugSessionEngineFactory func(ctx context.Context, sel ProviderSelector, profile SessionProfile, mode session.PermissionMode, target session.SessionID, targetFingerprint string, targetOwner *session.Principal, selectedServers, toolCeiling []string) (SessionEngineResult, error)
 
-// Config wires the server adapter to the WP8 engine and its collaborators.
+// ModelInventory is the resolved composition-owned inventory shared by
+// ListModels and model-facing discovery. Implementations must provide atomic reads
+// and swaps. Nil retains the Service-owned compatibility path.
+type ModelInventory interface {
+	CurrentModels() []*mecatlv1.ModelInfo
+	SetModels([]*mecatlv1.ModelInfo)
+}
+
+func seedModelInventory(cfg Config) []*mecatlv1.ModelInfo {
+	if cfg.ModelInventory == nil {
+		return cfg.Models
+	}
+	if cfg.Models != nil {
+		cfg.ModelInventory.SetModels(cfg.Models)
+	}
+	return cfg.ModelInventory.CurrentModels()
+}
+
+// Config wires the Service's collaborators and resolved composition values.
 type Config struct {
 	// BuildID is the composed binary build identity exposed by GetServerInfo only.
 	BuildID string
@@ -353,15 +371,14 @@ type Config struct {
 	// agents adapter. May be empty (agent definitions disabled or none found).
 	Agents []*mecatlv1.AgentInfo
 
-	// Models is the resolved selectable-model inventory snapshot taken at startup
-	// (multi-provider Phase 0, S3). It backs ListModels and is a pure read of this
-	// snapshot (no live discovery — the registry's available providers + the
-	// embedded catalog are both fixed for the process lifetime). The composition
-	// root (internal/app) joins the registry's AVAILABLE providers to the catalog
-	// and projects each model into the proto form (modelSnapshot) so the server
-	// adapter never imports providercatalog or the registry. May be empty (zero
-	// providers available). NO secret material (no key, env var name, or base URL).
+	// Models seeds the resolved selectable-model inventory projected by composition.
+	// It carries public ModelInfo metadata only and remains the compatibility path
+	// when ModelInventory is nil.
 	Models []*mecatlv1.ModelInfo
+	// ModelInventory optionally supplies the composition-owned atomic inventory
+	// shared by ListModels and model-facing discovery. When set, SetModels updates
+	// this source and the Service's local scheduling projection in one operation.
+	ModelInventory ModelInventory
 
 	// DefaultCapabilities is the NEUTRAL per-(default provider+default model) input
 	// capability — the catalog ∩ adapter INTERSECTION computed once in composition
@@ -1303,7 +1320,7 @@ func NewServiceContext(ctx context.Context, cfg Config) (*Service, error) {
 	// ModelSelection cap read this atomic so a later live-catalog SetModels swap is
 	// race-free. A nil cfg.Models seeds an empty (non-nil) slice so the pointer is
 	// never nil.
-	seed := cfg.Models
+	seed := seedModelInventory(cfg)
 	svc.models.Store(&seed)
 	// providerStatus starts empty — no intent-driven provider has been probed
 	// yet at construction time; Build's post-construction SetProviderStatus
@@ -1424,6 +1441,10 @@ func (s *Service) SetModels(models []*mecatlv1.ModelInfo) {
 	if models == nil {
 		models = []*mecatlv1.ModelInfo{}
 	}
+	if s.cfg.ModelInventory != nil {
+		s.cfg.ModelInventory.SetModels(models)
+		models = s.cfg.ModelInventory.CurrentModels()
+	}
 	s.models.Store(&models)
 }
 
@@ -1431,6 +1452,9 @@ func (s *Service) SetModels(models []*mecatlv1.ModelInfo) {
 // after NewService). It is the single internal read used by ListModels and the
 // ModelSelection capability so they cannot disagree.
 func (s *Service) currentModels() []*mecatlv1.ModelInfo {
+	if s.cfg.ModelInventory != nil {
+		return s.cfg.ModelInventory.CurrentModels()
+	}
 	if p := s.models.Load(); p != nil {
 		return *p
 	}

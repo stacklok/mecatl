@@ -265,6 +265,14 @@ server-specific and can differ according to the providers and credentials
 configured at startup. A provider's live model catalog may refresh while the
 server is running.
 
+Models whose catalog includes it can call the read-only `DiscoverModels` tool to
+inspect this same resolved inventory. Results contain the exact `provider_id` plus
+`model_id` selection handle and the same safe metadata as `ListModels`; equal model
+IDs under different providers remain separate. Exact provider/model filters are
+supported. Output defaults to 20 entries and is capped at 50 entries and 32 KiB.
+The tool does not probe providers, accept endpoints or credentials, or change the
+current session, and remains available in no-filesystem sessions.
+
 For a known model, the session's effective capabilities combine the model's
 metadata with the selected adapter's transport capabilities. For an uncatalogued
 model ID accepted through an explicit provider, the server can report only what
