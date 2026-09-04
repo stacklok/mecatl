@@ -129,13 +129,21 @@ preserves the textarea and queued prompts, and reports a harmless status when no
 eligible failure exists. Historical transcript replay never triggers automatic retry.
 
 Inside the TUI, `/title <text>` renames the active session through the existing
-server rename operation; `/title` with no non-whitespace text displays its title and
-provenance without a mutation. A manual title ends automatic generation for that
-session. Automatic titles are opt-in: configure a compatible explicit
-`models.slots.title` binding (see [model routing](usage/model-routing.md)); the server
-then schedules bounded work after a completed exchange is durably persisted, without
-delaying or changing the chat. Its durable `session_title` token usage is recorded in
-the canonical durable ledger and is separate from normal session/run usage.
+server rename operation; bare `/title` displays its title and provenance without a
+mutation. A manual title ends automatic generation for that session. Automatic titles
+are opt-in: configure a compatible explicit `models.slots.title` binding (see
+[model routing](usage/model-routing.md)); the server then schedules bounded work after
+a completed exchange is durably persisted, without delaying or changing the chat. On
+startup it recovers the bounded pre-submission gap for completed pending sessions with
+source prompts but no attempt; a crash-unknown claimed attempt is never retried. Its
+durable `session_title` token usage is separate from normal session/run usage.
+Operators can diagnose the server-owned lifecycle through session-correlated
+diagnostics: submission, admission/eligibility, claim, selected provider/model,
+completion outcome, token counts, and conditional-commit loss. Failed calls report
+only stable classifications (`deadline`, `cancelled`, `provider`, `invalid-output`, or
+`protocol`) and a stage; diagnostics never include source prompts, provider error
+text, credentials, or model output. Live title updates are best-effort, so reconnect
+and session reopen re-fetch the authoritative stored title.
 
 ## mecatui remote TLS
 

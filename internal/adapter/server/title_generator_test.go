@@ -109,16 +109,18 @@ func TestSessionTitleGeneration_Scenario3_DeferAndTerminalOutcomes(t *testing.T)
 		turn    mockllm.Turn
 		outcome session.TitleAttemptOutcome
 		title   string
+		class   titleFailureClass
+		stage   titleFailureStage
 	}{
 		{name: "defer", turn: mockllm.TextTurn(`{"defer":true}`), outcome: session.TitleAttemptDeferred},
 		{name: "valid title", turn: mockllm.TextTurn(`{"title":"A title"}`), outcome: session.TitleAttemptSucceeded, title: "A title"},
-		{name: "malformed output", turn: mockllm.TextTurn(`{"title":"A title","defer":true}`), outcome: session.TitleAttemptFailed},
-		{name: "provider terminal", turn: mockllm.EmptyTurnWithStop(session.StopError), outcome: session.TitleAttemptFailed},
+		{name: "malformed output", turn: mockllm.TextTurn(`{"title":"A title","defer":true}`), outcome: session.TitleAttemptFailed, class: titleFailureInvalidOutput, stage: titleStageParsing},
+		{name: "provider terminal", turn: mockllm.EmptyTurnWithStop(session.StopError), outcome: session.TitleAttemptFailed, class: titleFailureProvider, stage: titleStageTerminal},
 		{name: "over output token limit", turn: mockllm.Turn{Chunks: []port.Chunk{
 			{Kind: port.ChunkText, Text: `{"title":"A title"}`},
 			{Kind: port.ChunkUsage, Usage: &session.Usage{OutputTokens: 129}},
 			{Kind: port.ChunkDone, Stop: session.StopEndTurn},
-		}}, outcome: session.TitleAttemptFailed},
+		}}, outcome: session.TitleAttemptFailed, class: titleFailureInvalidOutput, stage: titleStageParsing},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -129,6 +131,9 @@ func TestSessionTitleGeneration_Scenario3_DeferAndTerminalOutcomes(t *testing.T)
 			result := generator.Generate(context.Background(), []string{"prompt two"})
 			if result.Outcome != tc.outcome || result.Title != tc.title {
 				t.Fatalf("Generate = %#v, want outcome %q and title %q", result, tc.outcome, tc.title)
+			}
+			if result.FailureClass != tc.class || result.FailureStage != tc.stage {
+				t.Errorf("failure classification = %q/%q, want %q/%q", result.FailureClass, result.FailureStage, tc.class, tc.stage)
 			}
 		})
 	}

@@ -2,6 +2,9 @@ package server
 
 import (
 	"context"
+	"fmt"
+	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -11,6 +14,7 @@ import (
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
 	"github.com/stacklok/mecatl/engine/agent"
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 )
@@ -127,6 +131,87 @@ func titleCoordinatorService(t *testing.T, store *memstore.Store, generator Sess
 	}
 	t.Cleanup(svc.Close)
 	return svc
+}
+
+func TestSessionTitleGenerationDiagnosticsAreLifecycleSafe(t *testing.T) {
+	store := memstore.New()
+	diagnostics := newTitleDiagnostics()
+	generator := titleGeneratorFunc(func(context.Context, []string) TitleGenerationResult {
+		return TitleGenerationResult{
+			Outcome:    session.TitleAttemptFailed,
+			Err:        context.DeadlineExceeded,
+			Usage:      session.Usage{InputTokens: 7},
+			ProviderID: "provider-a", ModelID: "model-a",
+			FailureClass: titleFailureDeadline, FailureStage: titleStageEstablishment,
+		}
+	})
+	svc, err := NewService(Config{Engine: agent.NewEngine(agent.Deps{LLM: mockllm.New(), Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil)}), Store: store, Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) }, TitleGenerator: generator, Diagnostics: diagnostics, Now: func() time.Time { return time.Unix(1, 0) }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer svc.Close()
+	sess := pendingTitleSession(t, store, "diagnostic-safe")
+	sess.RecordTitleSourcePrompt("source containing SECRET_PROMPT")
+	if err := store.Save(context.Background(), sess); err != nil {
+		t.Fatal(err)
+	}
+	svc.submitTitleGeneration(sess.ID)
+	deadline := time.After(time.Second)
+	for !diagnostics.contains("session title generator completed") {
+		select {
+		case <-deadline:
+			t.Fatal("missing completion diagnostic")
+		default:
+			time.Sleep(time.Millisecond)
+		}
+	}
+	joined := diagnostics.joined()
+	for _, want := range []string{"sessiondiagnostic-safe", "outcomefailed", "failure_classdeadline", "failure_stagestream_establishment", "input_tokens7", "providerprovider-a", "modelmodel-a"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("diagnostics missing %q: %s", want, joined)
+		}
+	}
+	for _, forbidden := range []string{"SECRET_PROMPT", "context deadline exceeded", `"title"`} {
+		if strings.Contains(joined, forbidden) {
+			t.Errorf("diagnostics leaked %q: %s", forbidden, joined)
+		}
+	}
+}
+
+type titleDiagnosticState struct {
+	mu      sync.Mutex
+	records []string
+}
+type titleDiagnostics struct {
+	state *titleDiagnosticState
+	bound []any
+}
+
+func newTitleDiagnostics() *titleDiagnostics {
+	return &titleDiagnostics{state: &titleDiagnosticState{}}
+}
+func (d *titleDiagnostics) Log(_ context.Context, _ port.Level, message string, args ...any) {
+	d.state.mu.Lock()
+	defer d.state.mu.Unlock()
+	d.state.records = append(d.state.records, message+" "+fmt.Sprint(append(d.bound, args...)...))
+}
+func (d *titleDiagnostics) With(args ...any) port.Diagnostics {
+	return &titleDiagnostics{state: d.state, bound: append(append([]any(nil), d.bound...), args...)}
+}
+func (d *titleDiagnostics) contains(message string) bool {
+	d.state.mu.Lock()
+	defer d.state.mu.Unlock()
+	for _, got := range d.state.records {
+		if strings.HasPrefix(got, message+" ") {
+			return true
+		}
+	}
+	return false
+}
+func (d *titleDiagnostics) joined() string {
+	d.state.mu.Lock()
+	defer d.state.mu.Unlock()
+	return strings.Join(d.state.records, "\n")
 }
 
 func pendingTitleSession(t *testing.T, store *memstore.Store, id session.SessionID) *session.Session {
