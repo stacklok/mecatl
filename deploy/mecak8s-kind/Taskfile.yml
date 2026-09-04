@@ -37,8 +37,18 @@ tasks:
       - task: kind-setup
       - task: kind-keycloak-apply
 
-  kind-keycloak-demo:
-    desc: Wait for direct loopback mappings and print the remote OIDC quickstart (requires kind-keycloak-setup and kind-hosts-add)
+  # kind-fixture-ca-refresh waits for the three direct loopback mappings and
+  # (re)writes .scratch/kind/mecatl-dev/fixture-ca.crt from the cluster's
+  # CURRENT fixture-ca Secret. cert-manager mints a fresh self-signed CA on
+  # every kind-destroy + recreate, so this file goes silently stale across a
+  # teardown/recreate cycle unless re-run — a stale CA fails TLS verification
+  # against the new cluster and surfaces as mecatui's generic
+  # "clientauth: OIDC discovery rejected", with no hint that the cause is a
+  # rotated CA rather than a real server-side rejection. kind-login and
+  # kind-connect below always refresh it first, so that whole failure class
+  # can't occur through them.
+  kind-fixture-ca-refresh:
+    internal: true
     preconditions:
       - sh: command -v nc >/dev/null 2>&1
         msg: nc is required to wait for the loopback mappings
@@ -88,8 +98,16 @@ tasks:
             exit 1
           fi
           chmod 0600 "$decoded"
-          mv "$decoded" "$ca"
+          mv -f "$decoded" "$ca"
+          BASHEOF
 
+  kind-keycloak-demo:
+    desc: Wait for direct loopback mappings and print the remote OIDC quickstart (requires kind-keycloak-setup and kind-hosts-add)
+    cmds:
+      - task: kind-fixture-ca-refresh
+      - cmd: |
+          set -eu
+          ca={{.STATE}}/fixture-ca.crt
           printf '\nFixture direct mappings are ready. In another terminal, run:\n\n'
           # NOT localhost:18080 -- mecatui's client treats a "localhost"-named
           # target as co-located and defaults its workspace field to the
@@ -98,8 +116,35 @@ tasks:
           # codes.InvalidArgument. The DNS alias below is not cosmetic.
           printf '%s\n' "mecatui login mecak8s-mecak8s.mecatl.svc.cluster.local:18080 --issuer https://keycloak.mecatl.svc.cluster.local:8443/realms/mecatl --client-id mecatui-kind --audience mecak8s --tls-ca $ca --private-issuer --scopes openid,profile,mecak8s:access,offline_access"
           printf '%s\n' "mecatui connect mecak8s-mecak8s.mecatl.svc.cluster.local:18080 --tls --tls-ca $ca"
+          printf '\nOr just run: task mecak8s:kind-login && task mecak8s:kind-connect\n'
           printf '\nThe CA is at %s. Kind maps container NodePorts directly to loopback host ports; this task exits after readiness checks.\n' "$ca"
-          BASHEOF
+
+  kind-login:
+    desc: >-
+      Shorthand for the Keycloak login journey: add the /etc/hosts aliases
+      (may prompt for sudo once), refresh the fixture CA, and run `mecatui
+      login` with this fixture's fixed issuer/client/audience/scopes.
+      Requires kind-keycloak-setup and ./bin/mecatui (task build).
+    preconditions:
+      - sh: test -x ./bin/mecatui
+        msg: ./bin/mecatui not found — run `task build` first
+    cmds:
+      - task: kind-hosts-add
+      - task: kind-fixture-ca-refresh
+      - ./bin/mecatui login mecak8s-mecak8s.mecatl.svc.cluster.local:18080 --issuer https://keycloak.mecatl.svc.cluster.local:8443/realms/mecatl --client-id mecatui-kind --audience mecak8s --tls-ca {{.STATE}}/fixture-ca.crt --private-issuer --scopes openid,profile,mecak8s:access,offline_access
+
+  kind-connect:
+    desc: >-
+      Shorthand to connect: add the /etc/hosts aliases (may prompt for sudo
+      once), refresh the fixture CA, and run `mecatui connect`. Run
+      kind-login first (or have a still-valid stored token).
+    preconditions:
+      - sh: test -x ./bin/mecatui
+        msg: ./bin/mecatui not found — run `task build` first
+    cmds:
+      - task: kind-hosts-add
+      - task: kind-fixture-ca-refresh
+      - ./bin/mecatui connect mecak8s-mecak8s.mecatl.svc.cluster.local:18080 --tls --tls-ca {{.STATE}}/fixture-ca.crt
 
   kind-status:
     desc: Show the local mecak8s Kind baseline
