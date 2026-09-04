@@ -724,7 +724,17 @@ func processReflectionOutcome(
 		if len(group.items) == 0 {
 			continue
 		}
-		records, err := repository.StageBatch(ctx, group.partition, digest, group.items, signals)
+		var records []learning.ProposalRecord
+		var err error
+		if input.Manifest != nil && input.Manifest.Protocol == learning.ReflectionEvidenceV1 {
+			manifestRepo, ok := repository.(proposalManifestRepository)
+			if !ok {
+				return receipt, learning.ErrInvalidProposal
+			}
+			records, err = manifestRepo.StageBatchManifest(ctx, group.partition, *input.Manifest, group.items, signals)
+		} else {
+			records, err = repository.StageBatch(ctx, group.partition, digest, group.items, signals)
+		}
 		if err != nil {
 			return receipt, err
 		}

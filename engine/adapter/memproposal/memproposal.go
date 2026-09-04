@@ -6,6 +6,8 @@ package memproposal
 import (
 	"context"
 	"fmt"
+	"reflect"
+	"slices"
 	"sort"
 	"strconv"
 	"sync"
@@ -15,13 +17,18 @@ import (
 )
 
 type Store struct {
-	mu      sync.RWMutex
-	records map[string]map[learning.ProposalID]learning.ProposalRecord
-	now     func() time.Time
+	mu        sync.RWMutex
+	records   map[string]map[learning.ProposalID]learning.ProposalRecord
+	manifests map[string]map[learning.ProposalID]learning.MaterializationManifest
+	now       func() time.Time
 }
 
 func New() *Store {
-	return &Store{records: map[string]map[learning.ProposalID]learning.ProposalRecord{}, now: time.Now}
+	return &Store{
+		records:   map[string]map[learning.ProposalID]learning.ProposalRecord{},
+		manifests: map[string]map[learning.ProposalID]learning.MaterializationManifest{},
+		now:       time.Now,
+	}
 }
 
 var _ learning.ProposalRepository = (*Store)(nil)
@@ -44,7 +51,35 @@ func clone(r learning.ProposalRecord) learning.ProposalRecord {
 	}
 	return r
 }
+func cloneManifest(m learning.MaterializationManifest) learning.MaterializationManifest {
+	m.Entries = append([]learning.ManifestEntry(nil), m.Entries...)
+	for i := range m.Entries {
+		if m.Entries[i].OriginalMessage != nil {
+			value := *m.Entries[i].OriginalMessage
+			m.Entries[i].OriginalMessage = &value
+		}
+		if m.Entries[i].EventSequence != nil {
+			value := *m.Entries[i].EventSequence
+			m.Entries[i].EventSequence = &value
+		}
+		m.Entries[i].ToolCallIDs = append(m.Entries[i].ToolCallIDs[:0:0], m.Entries[i].ToolCallIDs...)
+	}
+	return m
+}
+
 func (s *Store) StageBatch(ctx context.Context, p learning.ProposalPartition, input string, cs []learning.Candidate, signals []learning.Signal) ([]learning.ProposalRecord, error) {
+	return s.stageBatch(ctx, p, input, cs, signals, nil)
+}
+
+// StageBatchManifest atomically persists the complete selected-evidence manifest with every new proposal.
+func (s *Store) StageBatchManifest(ctx context.Context, p learning.ProposalPartition, manifest learning.MaterializationManifest, cs []learning.Candidate, signals []learning.Signal) ([]learning.ProposalRecord, error) {
+	if err := validateManifestCitations(manifest, cs); err != nil {
+		return nil, err
+	}
+	return s.stageBatch(ctx, p, manifest.Digest, cs, signals, &manifest)
+}
+
+func (s *Store) stageBatch(ctx context.Context, p learning.ProposalPartition, input string, cs []learning.Candidate, signals []learning.Signal, manifest *learning.MaterializationManifest) ([]learning.ProposalRecord, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -68,6 +103,10 @@ func (s *Store) StageBatch(ctx context.Context, p learning.ProposalPartition, in
 	if b == nil {
 		b = map[learning.ProposalID]learning.ProposalRecord{}
 	}
+	mb := s.manifests[key(p)]
+	if mb == nil {
+		mb = map[learning.ProposalID]learning.MaterializationManifest{}
+	}
 	missing := 0
 	for _, id := range ids {
 		if _, ok := b[id]; !ok {
@@ -84,11 +123,56 @@ func (s *Store) StageBatch(ctx context.Context, p learning.ProposalPartition, in
 		if !ok {
 			r = learning.ProposalRecord{ID: ids[i], Version: ver(1), Status: learning.ProposalStaged, Partition: p, InputDigest: input, Candidate: c, Signals: signals, CreatedAt: now, UpdatedAt: now}
 			b[ids[i]] = clone(r)
+			if manifest != nil {
+				mb[ids[i]] = cloneManifest(*manifest)
+			}
+		} else if manifest != nil {
+			stored, exists := mb[ids[i]]
+			if !exists || !reflect.DeepEqual(stored, *manifest) {
+				return nil, learning.ErrInvalidProposal
+			}
 		}
 		out[i] = clone(r)
 	}
 	s.records[key(p)] = b
+	s.manifests[key(p)] = mb
 	return out, nil
+}
+
+// GetManifest returns an owned copy of the immutable manifest for a staged v1 proposal.
+func (s *Store) GetManifest(ctx context.Context, p learning.ProposalPartition, id learning.ProposalID) (learning.MaterializationManifest, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return learning.MaterializationManifest{}, false, err
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	manifest, ok := s.manifests[key(p)][id]
+	return cloneManifest(manifest), ok, nil
+}
+
+//nolint:gocyclo // complete manifest/citation binding validation stays at the persistence boundary
+func validateManifestCitations(manifest learning.MaterializationManifest, candidates []learning.Candidate) error {
+	if manifest.Protocol != learning.ReflectionEvidenceV1 || manifest.Source.Domain != learning.ReflectionEvidenceSourceV1 || manifest.Source.Value == "" || !learning.ValidSHA256(manifest.Digest) || len(manifest.Entries) == 0 {
+		return learning.ErrInvalidProposal
+	}
+	for _, candidate := range candidates {
+		for _, ref := range candidate.Evidence {
+			if ref.Protocol != manifest.Protocol || ref.SessionID != manifest.Source.Value || ref.AggregateDigest != manifest.Digest || ref.ManifestIndex < 0 || ref.ManifestIndex >= len(manifest.Entries) {
+				return learning.ErrInvalidProposal
+			}
+			entry := manifest.Entries[ref.ManifestIndex]
+			if entry.Locator != ref.Locator || entry.Digest != ref.Digest || (entry.OriginalMessage == nil) != (ref.OriginalMessage == nil) || (entry.EventSequence == nil) != (ref.EventSeq == nil) {
+				return learning.ErrInvalidProposal
+			}
+			if entry.OriginalMessage != nil && *entry.OriginalMessage != *ref.OriginalMessage || entry.EventSequence != nil && *entry.EventSequence != *ref.EventSeq {
+				return learning.ErrInvalidProposal
+			}
+			if ref.ToolCallID != "" && !slices.Contains(entry.ToolCallIDs, ref.ToolCallID) {
+				return learning.ErrInvalidProposal
+			}
+		}
+	}
+	return nil
 }
 func (s *Store) List(ctx context.Context, p learning.ProposalPartition, o learning.ProposalList) (learning.ProposalPage, error) {
 	if err := ctx.Err(); err != nil {

@@ -223,6 +223,9 @@ func ValidateInput(in Input) error {
 	if in.Trajectory.SessionID == "" {
 		return fmt.Errorf("%w: trajectory session id is required", ErrInvalidInput)
 	}
+	if err := validateMaterializationManifest(in); err != nil {
+		return err
+	}
 	if len(in.Trajectory.Messages) > MaxInputMessages || len(in.Events) > MaxInputEvents ||
 		len(in.Signals) > MaxInputSignals || len(in.Existing) > MaxExistingFacts {
 		return fmt.Errorf("%w: collection limit exceeded", ErrInvalidInput)

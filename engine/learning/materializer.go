@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 
@@ -405,6 +406,13 @@ func buildMaterialization(req MaterializationRequest, selected []materialUnit) M
 	}
 	trajectory := NewTrajectory(req.Trajectory.SessionID, "", req.Trajectory.Stop, req.Trajectory.Usage, selectedMessages)
 	input := Input{Trajectory: trajectory, Events: selectedEvents}
+	digest, canonical := materializationDigest(manifest, selectedMessages, selectedEvents)
+	manifest.Digest = digest
+	input.Manifest = &manifest
+	return Materialization{Disposition: MaterializationSelected, Reason: MaterializationReasonSelected, Input: input, Manifest: manifest, Canonical: canonical}
+}
+
+func materializationDigest(manifest MaterializationManifest, messages []session.Message, events []EvidenceEventData) (string, []byte) {
 	identity := struct {
 		Protocol EvidenceProtocol    `json:"protocol"`
 		Source   SourceIdentity      `json:"source"`
@@ -412,18 +420,83 @@ func buildMaterialization(req MaterializationRequest, selected []materialUnit) M
 		Messages []MessageProjection `json:"messages"`
 		Events   []EventProjection   `json:"events,omitempty"`
 	}{Protocol: manifest.Protocol, Source: manifest.Source, Entries: manifest.Entries}
-	for _, message := range selectedMessages {
+	for _, message := range messages {
 		identity.Messages = append(identity.Messages, projectMessage(message))
 	}
-	for _, event := range selectedEvents {
+	for _, event := range events {
 		identity.Events = append(identity.Events, projectEvent(event))
 	}
 	raw, _ := json.Marshal(identity)
 	canonical := []byte(governance.FenceUntrusted(string(raw)))
 	sum := sha256.Sum256(canonical)
-	manifest.Digest = hex.EncodeToString(sum[:])
-	input.Manifest = &manifest
-	return Materialization{Disposition: MaterializationSelected, Reason: MaterializationReasonSelected, Input: input, Manifest: manifest, Canonical: canonical}
+	return hex.EncodeToString(sum[:]), canonical
+}
+
+//nolint:gocyclo // protocol, source, entries, bindings, and aggregate are one validation boundary
+func validateMaterializationManifest(in Input) error {
+	manifest := in.Manifest
+	if manifest == nil {
+		return nil
+	}
+	if manifest.Protocol != ReflectionEvidenceV1 || manifest.Source.Domain != ReflectionEvidenceSourceV1 || manifest.Source.Value != in.Trajectory.SessionID || !ValidSHA256(manifest.Digest) || len(manifest.Entries) != len(in.Trajectory.Messages)+len(in.Events) {
+		return fmt.Errorf("%w: invalid materialization manifest identity", ErrInvalidInput)
+	}
+	if err := session.ValidateToolPairing(in.Trajectory.Messages); err != nil {
+		return fmt.Errorf("%w: materialization tool component is incomplete", ErrInvalidInput)
+	}
+	messageEntries := manifest.Entries[:len(in.Trajectory.Messages)]
+	for i, entry := range messageEntries {
+		if entry.Handle != fmt.Sprintf("m:%d", i) || entry.Locator != EvidenceMessage || entry.OriginalMessage == nil || entry.EventSequence != nil || entry.Digest != digestCanonical(projectMessage(in.Trajectory.Messages[i])) {
+			return fmt.Errorf("%w: materialization message entry %d mismatch", ErrInvalidInput, i)
+		}
+		if i > 0 && *entry.OriginalMessage <= *messageEntries[i-1].OriginalMessage {
+			return fmt.Errorf("%w: materialization message coordinates are not ordered", ErrInvalidInput)
+		}
+		component, calls, ok := selectedMessageBinding(in.Trajectory.Messages, messageEntries, i)
+		if !ok || entry.Component != component || !slices.Equal(entry.ToolCallIDs, calls) {
+			return fmt.Errorf("%w: materialization tool component binding mismatch", ErrInvalidInput)
+		}
+	}
+	lastSequence := int64(-1)
+	for i, event := range in.Events {
+		entry := manifest.Entries[len(in.Trajectory.Messages)+i]
+		if entry.Handle != fmt.Sprintf("e:%d", i) || entry.Locator != EvidenceEvent || entry.OriginalMessage != nil || entry.EventSequence == nil || *entry.EventSequence != event.Seq || entry.EventSequence != nil && *entry.EventSequence <= lastSequence || entry.Component != "" || len(entry.ToolCallIDs) != 0 || entry.Digest != digestCanonical(projectEvent(event)) {
+			return fmt.Errorf("%w: materialization event entry %d mismatch", ErrInvalidInput, i)
+		}
+		lastSequence = *entry.EventSequence
+	}
+	digest, _ := materializationDigest(*manifest, in.Trajectory.Messages, in.Events)
+	if digest != manifest.Digest {
+		return fmt.Errorf("%w: materialization aggregate digest mismatch", ErrInvalidInput)
+	}
+	return nil
+}
+
+func selectedMessageBinding(messages []session.Message, entries []ManifestEntry, index int) (string, []session.ToolCallID, bool) {
+	message := messages[index]
+	original := *entries[index].OriginalMessage
+	if message.Role == session.RoleAssistant && len(message.ToolCalls) > 0 {
+		calls := make([]session.ToolCallID, len(message.ToolCalls))
+		for i, call := range message.ToolCalls {
+			calls[i] = call.ID
+		}
+		return fmt.Sprintf("tool:%d", original), calls, true
+	}
+	if message.Role == session.RoleTool && message.ToolResult != nil {
+		for i, candidate := range messages {
+			if candidate.Role != session.RoleAssistant || len(candidate.ToolCalls) == 0 {
+				continue
+			}
+			for _, call := range candidate.ToolCalls {
+				if call.ID == message.ToolResult.CallID {
+					component, calls, ok := selectedMessageBinding(messages, entries, i)
+					return component, calls, ok
+				}
+			}
+		}
+		return "", nil, false
+	}
+	return fmt.Sprintf("message:%d", original), nil, true
 }
 
 func canonicalMessage(projected MessageProjection) session.Message {

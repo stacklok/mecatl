@@ -477,6 +477,7 @@ type Config struct {
 	Attempts                learning.AttemptRepository
 	AttemptPrincipal        func(*session.Principal) string
 	Proposals               learning.ProposalRepository
+	ProposalManifest        ProposalManifestLoader
 	ProposalPrincipal       func(*session.Principal) string
 	PromoteProposal         ProposalPromoter
 	UndoProposal            ProposalUndoer

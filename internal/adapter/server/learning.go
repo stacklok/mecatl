@@ -31,6 +31,9 @@ type ReflectionReceipt struct {
 // ExplicitReflector submits one caller-owned completed session for reflection.
 type ExplicitReflector func(context.Context, *session.Session) (ReflectionReceipt, error)
 
+// ProposalManifestLoader loads the immutable selected-evidence manifest stored atomically with a proposal.
+type ProposalManifestLoader func(context.Context, learning.ProposalPartition, learning.ProposalID) (learning.MaterializationManifest, bool, error)
+
 // ProposalPromoter applies an approved proposal through the configured memory target.
 type ProposalPromoter func(context.Context, learning.ProposalPartition, learning.ProposalID, learning.ProposalVersion, bool) (learning.ProposalRecord, error)
 
@@ -116,7 +119,7 @@ func (s *Service) ListLearningProposals(ctx context.Context, statusValue, cursor
 	}
 	out := make([]*mecatlv1.LearningProposal, len(page.Records))
 	for i := range page.Records {
-		out[i] = s.toProtoLearningProposal(ctx, page.Records[i])
+		out[i] = s.toProtoLearningProposal(ctx, page.Records[i], nil, false)
 	}
 	return &mecatlv1.ListLearningProposalsResponse{Proposals: out, NextCursor: validLearningText(string(page.Next))}, nil
 }
@@ -140,7 +143,14 @@ func (s *Service) GetLearningProposal(ctx context.Context, id, project string) (
 	if !found {
 		return nil, fmt.Errorf("%w: proposal %q", ErrNotFound, id)
 	}
-	return s.toProtoLearningProposal(ctx, record), nil
+	input, manifestBacked, verifyErr := s.rematerializeProposal(ctx, part, record)
+	if verifyErr != nil {
+		return nil, verifyErr
+	}
+	if manifestBacked {
+		return s.toProtoLearningProposal(ctx, record, &input, true), nil
+	}
+	return s.toProtoLearningProposal(ctx, record, nil, true), nil
 }
 
 // DecideLearningProposal rejects or approves a staged proposal using version CAS.
@@ -158,6 +168,7 @@ func (s *Service) DecideLearningProposal(ctx context.Context, id, expected, deci
 		return nil, err
 	}
 	var record learning.ProposalRecord
+	var verified *learning.Input
 	switch learning.DecisionKind(decision) {
 	case learning.DecisionReject:
 		record, err = s.cfg.Proposals.ClaimDecision(ctx, part, learning.ProposalID(id), learning.ProposalVersion(expected), learning.Decision{Kind: learning.DecisionReject, Actor: "operator", Reason: validLearningText(reason), At: time.Now()})
@@ -185,9 +196,17 @@ func (s *Service) DecideLearningProposal(ctx context.Context, id, expected, deci
 		} else if available, reason := s.proposalActionAvailable(project); !available {
 			return nil, fmt.Errorf("%w: %s", ErrFailedPrecondition, reason)
 		}
-		for _, evidence := range current.Candidate.Evidence {
-			if available, _ := s.learningEvidenceAvailable(ctx, evidence); !available {
-				return nil, fmt.Errorf("%w: proposal evidence is unavailable or changed", ErrFailedPrecondition)
+		input, manifestBacked, verifyErr := s.rematerializeProposal(ctx, part, current)
+		if verifyErr != nil {
+			return nil, verifyErr
+		}
+		if manifestBacked {
+			verified = &input
+		} else {
+			for _, evidence := range current.Candidate.Evidence {
+				if available, _ := s.learningEvidenceAvailable(ctx, evidence); !available {
+					return nil, fmt.Errorf("%w: proposal evidence is unavailable or changed", ErrFailedPrecondition)
+				}
 			}
 		}
 		record, err = s.cfg.PromoteProposal(ctx, part, learning.ProposalID(id), learning.ProposalVersion(expected), true)
@@ -197,7 +216,7 @@ func (s *Service) DecideLearningProposal(ctx context.Context, id, expected, deci
 	if err != nil {
 		return nil, proposalServiceError(err)
 	}
-	return s.toProtoLearningProposal(ctx, record), nil
+	return s.toProtoLearningProposal(ctx, record, verified, true), nil
 }
 
 // UndoLearningPromotion compensates the current linked promotion using version CAS.
@@ -222,7 +241,7 @@ func (s *Service) UndoLearningPromotion(ctx context.Context, id, expected, proje
 	if err != nil {
 		return nil, proposalServiceError(err)
 	}
-	return s.toProtoLearningProposal(ctx, record), nil
+	return s.toProtoLearningProposal(ctx, record, nil, false), nil
 }
 
 func (s *Service) proposalActionAvailable(project string) (bool, string) {
@@ -260,7 +279,101 @@ func proposalServiceError(err error) error {
 	}
 }
 
-func (s *Service) toProtoLearningProposal(ctx context.Context, r learning.ProposalRecord) *mecatlv1.LearningProposal {
+//nolint:gocyclo // exact manifest replay keeps protocol, coordinates, source reads, and citations visibly ordered
+func (s *Service) rematerializeProposal(ctx context.Context, part learning.ProposalPartition, record learning.ProposalRecord) (learning.Input, bool, error) {
+	manifestBacked := false
+	for _, ref := range record.Candidate.Evidence {
+		switch ref.ResolvedProtocol() {
+		case learning.ReflectionEvidenceLegacyV0:
+			if manifestBacked {
+				return learning.Input{}, true, fmt.Errorf("%w: proposal mixes evidence protocols", ErrFailedPrecondition)
+			}
+		case learning.ReflectionEvidenceV1:
+			manifestBacked = true
+		default:
+			return learning.Input{}, true, fmt.Errorf("%w: unsupported proposal evidence protocol", ErrFailedPrecondition)
+		}
+	}
+	if !manifestBacked {
+		return learning.Input{}, false, nil
+	}
+	for _, ref := range record.Candidate.Evidence {
+		if ref.ResolvedProtocol() != learning.ReflectionEvidenceV1 {
+			return learning.Input{}, true, fmt.Errorf("%w: proposal mixes evidence protocols", ErrFailedPrecondition)
+		}
+	}
+	if s.cfg.ProposalManifest == nil {
+		return learning.Input{}, true, fmt.Errorf("%w: proposal manifest is unavailable", ErrFailedPrecondition)
+	}
+	manifest, found, err := s.cfg.ProposalManifest(ctx, part, record.ID)
+	if err != nil {
+		return learning.Input{}, true, proposalServiceError(err)
+	}
+	if !found {
+		return learning.Input{}, true, fmt.Errorf("%w: proposal manifest is unavailable", ErrFailedPrecondition)
+	}
+	if manifest.Protocol != learning.ReflectionEvidenceV1 || manifest.Source.Domain != learning.ReflectionEvidenceSourceV1 {
+		return learning.Input{}, true, fmt.Errorf("%w: invalid proposal manifest protocol or source boundary", ErrFailedPrecondition)
+	}
+	sess, err := s.GetSession(ctx, manifest.Source.Value)
+	if err != nil {
+		return learning.Input{}, true, fmt.Errorf("%w: proposal source is unavailable", ErrFailedPrecondition)
+	}
+	stop, _ := sess.StopReason()
+	fullTrajectory := learning.NewTrajectory(sess.ID, "", stop, sess.Usage, sess.Conversation.Messages)
+	full := learning.NewInput(fullTrajectory, nil, nil, nil)
+	selectedMessages := make([]session.Message, 0, len(manifest.Entries))
+	eventSequences := make(map[int64]struct{})
+	for _, entry := range manifest.Entries {
+		switch entry.Locator {
+		case learning.EvidenceMessage:
+			if entry.OriginalMessage == nil || *entry.OriginalMessage < 0 || *entry.OriginalMessage >= len(full.Trajectory.Messages) {
+				return learning.Input{}, true, fmt.Errorf("%w: proposal message coordinate is unavailable", ErrFailedPrecondition)
+			}
+			selectedMessages = append(selectedMessages, full.Trajectory.Messages[*entry.OriginalMessage])
+		case learning.EvidenceEvent:
+			if entry.EventSequence == nil {
+				return learning.Input{}, true, fmt.Errorf("%w: proposal event sequence is unavailable", ErrFailedPrecondition)
+			}
+			eventSequences[*entry.EventSequence] = struct{}{}
+		default:
+			return learning.Input{}, true, fmt.Errorf("%w: proposal manifest locator is invalid", ErrFailedPrecondition)
+		}
+	}
+	selectedEvents := make([]session.Event, 0, len(eventSequences))
+	if len(eventSequences) > 0 {
+		if s.cfg.EventLog == nil {
+			return learning.Input{}, true, fmt.Errorf("%w: proposal event source is unavailable", ErrFailedPrecondition)
+		}
+		for event, eventErr := range s.cfg.EventLog.Read(ctx, manifest.Source.Value) {
+			if eventErr != nil {
+				return learning.Input{}, true, fmt.Errorf("%w: proposal event source is unavailable", ErrFailedPrecondition)
+			}
+			if _, wanted := eventSequences[event.Seq]; wanted {
+				selectedEvents = append(selectedEvents, event)
+				delete(eventSequences, event.Seq)
+				if len(eventSequences) == 0 {
+					break
+				}
+			}
+		}
+		if len(eventSequences) != 0 {
+			return learning.Input{}, true, fmt.Errorf("%w: proposal event sequence is unavailable", ErrFailedPrecondition)
+		}
+	}
+	selectedTrajectory := learning.NewTrajectory(manifest.Source.Value, "", stop, sess.Usage, selectedMessages)
+	input := learning.NewInput(selectedTrajectory, selectedEvents, record.Signals, nil)
+	input.Manifest = &manifest
+	if err := learning.ValidateInput(input); err != nil {
+		return learning.Input{}, true, fmt.Errorf("%w: proposal manifest mismatch", ErrFailedPrecondition)
+	}
+	if err := learning.ValidateCandidate(input, record.Candidate); err != nil {
+		return learning.Input{}, true, fmt.Errorf("%w: proposal citation mismatch", ErrFailedPrecondition)
+	}
+	return input, true, nil
+}
+
+func (s *Service) toProtoLearningProposal(ctx context.Context, r learning.ProposalRecord, verified *learning.Input, detail bool) *mecatlv1.LearningProposal {
 	candidate := r.Candidate
 	available, unavailableReason := s.proposalActionAvailable(r.Partition.Project)
 	if candidate.Kind == learning.CandidateProcedure {
@@ -283,7 +396,18 @@ func (s *Service) toProtoLearningProposal(ctx context.Context, r learning.Propos
 	}
 	out.Evidence = make([]*mecatlv1.LearningEvidenceRef, len(candidate.Evidence))
 	for i, ref := range candidate.Evidence {
-		available, availability, preview := s.learningEvidenceStatus(ctx, ref)
+		available, availability, preview := false, "", ""
+		if detail && verified != nil {
+			var previewErr error
+			preview, previewErr = learning.EvidencePreview(*verified, ref)
+			if previewErr == nil {
+				available, availability = true, "available"
+			} else {
+				availability = "evidence changed"
+			}
+		} else if detail {
+			available, availability, preview = s.learningEvidenceStatus(ctx, ref)
+		}
 		eventSeq := int64(0)
 		if ref.EventSeq != nil {
 			eventSeq = *ref.EventSeq

@@ -2102,6 +2102,13 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		ProposalPrincipal: reflectionPrincipal,
 		Attempts:          assets.attemptRepository,
 		AttemptPrincipal:  reflectionPrincipal,
+		ProposalManifest: func(ctx context.Context, part learning.ProposalPartition, id learning.ProposalID) (learning.MaterializationManifest, bool, error) {
+			repository, ok := assets.reflectionRepository.(proposalManifestRepository)
+			if !ok {
+				return learning.MaterializationManifest{}, false, nil
+			}
+			return repository.GetManifest(ctx, part, id)
+		},
 		ProjectPromotionAllowed: func(project string) bool {
 			return projectIngestionAdmittedForRoot(cfg, project)
 		},

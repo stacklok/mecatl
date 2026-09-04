@@ -12,6 +12,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -20,6 +22,7 @@ import (
 	"github.com/gofrs/flock"
 
 	"github.com/stacklok/mecatl/engine/learning"
+	"github.com/stacklok/mecatl/engine/session"
 )
 
 const (
@@ -29,7 +32,8 @@ const (
 )
 
 type document struct {
-	Partitions map[string]map[learning.ProposalID]learning.ProposalRecord `json:"partitions"`
+	Partitions map[string]map[learning.ProposalID]learning.ProposalRecord          `json:"partitions"`
+	Manifests  map[string]map[learning.ProposalID]learning.MaterializationManifest `json:"manifests,omitempty"`
 }
 
 // Store is a flocked, crash-safe proposal repository.
@@ -72,6 +76,44 @@ func clone(r learning.ProposalRecord) learning.ProposalRecord {
 	}
 	return r
 }
+func cloneManifest(m learning.MaterializationManifest) learning.MaterializationManifest {
+	m.Entries = append([]learning.ManifestEntry(nil), m.Entries...)
+	for i := range m.Entries {
+		if m.Entries[i].OriginalMessage != nil {
+			value := *m.Entries[i].OriginalMessage
+			m.Entries[i].OriginalMessage = &value
+		}
+		if m.Entries[i].EventSequence != nil {
+			value := *m.Entries[i].EventSequence
+			m.Entries[i].EventSequence = &value
+		}
+		m.Entries[i].ToolCallIDs = append([]session.ToolCallID(nil), m.Entries[i].ToolCallIDs...)
+	}
+	return m
+}
+
+//nolint:gocyclo // complete manifest/citation binding validation stays at the persistence boundary
+func validateManifestCitations(manifest learning.MaterializationManifest, candidates []learning.Candidate) error {
+	if manifest.Protocol != learning.ReflectionEvidenceV1 || manifest.Source.Domain != learning.ReflectionEvidenceSourceV1 || manifest.Source.Value == "" || !learning.ValidSHA256(manifest.Digest) || len(manifest.Entries) == 0 {
+		return learning.ErrInvalidProposal
+	}
+	for _, candidate := range candidates {
+		for _, ref := range candidate.Evidence {
+			if ref.Protocol != manifest.Protocol || ref.SessionID != manifest.Source.Value || ref.AggregateDigest != manifest.Digest || ref.ManifestIndex < 0 || ref.ManifestIndex >= len(manifest.Entries) {
+				return learning.ErrInvalidProposal
+			}
+			entry := manifest.Entries[ref.ManifestIndex]
+			if entry.Locator != ref.Locator || entry.Digest != ref.Digest || (entry.OriginalMessage == nil) != (ref.OriginalMessage == nil) || (entry.EventSequence == nil) != (ref.EventSeq == nil) {
+				return learning.ErrInvalidProposal
+			}
+			if entry.OriginalMessage != nil && *entry.OriginalMessage != *ref.OriginalMessage || entry.EventSequence != nil && *entry.EventSequence != *ref.EventSeq || ref.ToolCallID != "" && !slices.Contains(entry.ToolCallIDs, ref.ToolCallID) {
+				return learning.ErrInvalidProposal
+			}
+		}
+	}
+	return nil
+}
+
 func version() (learning.ProposalVersion, error) {
 	var x [16]byte
 	if _, err := rand.Read(x[:]); err != nil {
@@ -116,7 +158,7 @@ func (s *Store) locked(ctx context.Context, write bool, fn func(*document) error
 func (s *Store) load() (document, error) {
 	raw, err := os.ReadFile(s.path)
 	if os.IsNotExist(err) {
-		return document{Partitions: map[string]map[learning.ProposalID]learning.ProposalRecord{}}, nil
+		return document{Partitions: map[string]map[learning.ProposalID]learning.ProposalRecord{}, Manifests: map[string]map[learning.ProposalID]learning.MaterializationManifest{}}, nil
 	}
 	if err != nil {
 		return document{}, err
@@ -131,12 +173,16 @@ func (s *Store) load() (document, error) {
 	if d.Partitions == nil {
 		d.Partitions = map[string]map[learning.ProposalID]learning.ProposalRecord{}
 	}
+	if d.Manifests == nil {
+		d.Manifests = map[string]map[learning.ProposalID]learning.MaterializationManifest{}
+	}
 	if err := validateDocument(d); err != nil {
 		return document{}, err
 	}
 	return d, nil
 }
 
+//nolint:gocyclo // document validation intentionally checks identity, lifecycle, receipts, and manifests together
 func validateDocument(d document) error {
 	for partitionKey, records := range d.Partitions {
 		if len(records) > learning.MaxProposalsPerPartition {
@@ -169,9 +215,16 @@ func validateDocument(d document) error {
 			}
 		}
 	}
+	for partitionKey, manifests := range d.Manifests {
+		for id, manifest := range manifests {
+			record, ok := d.Partitions[partitionKey][id]
+			if !ok || record.InputDigest != manifest.Digest || validateManifestCitations(manifest, []learning.Candidate{record.Candidate}) != nil {
+				return fmt.Errorf("%w: corrupt proposal manifest", learning.ErrInvalidProposal)
+			}
+		}
+	}
 	return nil
 }
-
 func validateSkillLink(record learning.ProposalRecord) error {
 	if record.Status == learning.ProposalSkillMaterialized && record.SkillID == "" || record.Status != learning.ProposalSkillMaterialized && record.SkillID != "" {
 		return fmt.Errorf("%w: corrupt skill linkage", learning.ErrInvalidProposal)
@@ -237,7 +290,19 @@ func (s *Store) save(d document) error {
 }
 
 // StageBatch atomically and idempotently stages bounded candidates.
-func (s *Store) StageBatch(ctx context.Context, p learning.ProposalPartition, input string, cs []learning.Candidate, signals []learning.Signal) (out []learning.ProposalRecord, err error) {
+func (s *Store) StageBatch(ctx context.Context, p learning.ProposalPartition, input string, cs []learning.Candidate, signals []learning.Signal) ([]learning.ProposalRecord, error) {
+	return s.stageBatch(ctx, p, input, cs, signals, nil)
+}
+
+// StageBatchManifest atomically persists the complete selected-evidence manifest with every new proposal.
+func (s *Store) StageBatchManifest(ctx context.Context, p learning.ProposalPartition, manifest learning.MaterializationManifest, cs []learning.Candidate, signals []learning.Signal) ([]learning.ProposalRecord, error) {
+	if err := validateManifestCitations(manifest, cs); err != nil {
+		return nil, err
+	}
+	return s.stageBatch(ctx, p, manifest.Digest, cs, signals, &manifest)
+}
+
+func (s *Store) stageBatch(ctx context.Context, p learning.ProposalPartition, input string, cs []learning.Candidate, signals []learning.Signal, manifest *learning.MaterializationManifest) (out []learning.ProposalRecord, err error) {
 	if len(cs) == 0 || len(cs) > learning.MaxCandidates {
 		return nil, learning.ErrInvalidProposal
 	}
@@ -252,9 +317,14 @@ func (s *Store) StageBatch(ctx context.Context, p learning.ProposalPartition, in
 		}
 	}
 	err = s.locked(ctx, true, func(d *document) error {
-		b := d.Partitions[pkey(p)]
+		x := pkey(p)
+		b := d.Partitions[x]
 		if b == nil {
 			b = map[learning.ProposalID]learning.ProposalRecord{}
+		}
+		mb := d.Manifests[x]
+		if mb == nil {
+			mb = map[learning.ProposalID]learning.MaterializationManifest{}
 		}
 		missing := 0
 		for _, id := range ids {
@@ -276,10 +346,19 @@ func (s *Store) StageBatch(ctx context.Context, p learning.ProposalPartition, in
 				}
 				r = learning.ProposalRecord{ID: ids[i], Version: v, Status: learning.ProposalStaged, Partition: p, InputDigest: input, Candidate: c, Signals: signals, CreatedAt: now, UpdatedAt: now}
 				b[ids[i]] = clone(r)
+				if manifest != nil {
+					mb[ids[i]] = cloneManifest(*manifest)
+				}
+			} else if manifest != nil {
+				stored, exists := mb[ids[i]]
+				if !exists || !reflect.DeepEqual(stored, *manifest) {
+					return learning.ErrInvalidProposal
+				}
 			}
 			out[i] = clone(r)
 		}
-		d.Partitions[pkey(p)] = b
+		d.Partitions[x] = b
+		d.Manifests[x] = mb
 		return nil
 	})
 	return
@@ -337,6 +416,16 @@ func (s *Store) List(ctx context.Context, p learning.ProposalPartition, o learni
 // Get returns one proposal from its exact partition.
 func (s *Store) Get(ctx context.Context, p learning.ProposalPartition, id learning.ProposalID) (r learning.ProposalRecord, found bool, err error) {
 	err = s.locked(ctx, false, func(d *document) error { r, found = d.Partitions[pkey(p)][id]; r = clone(r); return nil })
+	return
+}
+
+// GetManifest returns an owned copy of the immutable manifest for a staged v1 proposal.
+func (s *Store) GetManifest(ctx context.Context, p learning.ProposalPartition, id learning.ProposalID) (manifest learning.MaterializationManifest, found bool, err error) {
+	err = s.locked(ctx, false, func(d *document) error {
+		manifest, found = d.Manifests[pkey(p)][id]
+		manifest = cloneManifest(manifest)
+		return nil
+	})
 	return
 }
 func bounded(ds []learning.Decision, x learning.Decision) []learning.Decision {

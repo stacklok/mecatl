@@ -310,6 +310,9 @@ func canonicalParts(parts []PartProjection) []session.Content {
 			BlockKind: session.BlockKind(part.Kind), MIMEType: part.MIMEType,
 			Text: part.Text, Name: part.Name, Title: part.Title, Description: part.Description,
 		}
+		if part.Binary {
+			out[i].Data = []byte{0}
+		}
 	}
 	return out
 }
