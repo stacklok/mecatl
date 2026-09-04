@@ -87,6 +87,25 @@ func memEnvironment(root string) tool.Environment {
 	return testEnvironment(memfs.NewWorkspace(root), nil)
 }
 
+func TestChildWorkspaceViewPreservesContentBackend(t *testing.T) {
+	base := memfs.NewWorkspace("/workspace")
+	if got := childWorkspaceView(base); got != base {
+		t.Fatal("a non-relaxed custom Workspace must pass through by identity")
+	}
+
+	relaxed := newEscapeWorkspace(base, &escapeClassifier{})
+	got, ok := childWorkspaceView(relaxed).(*escapeWorkspace)
+	if !ok {
+		t.Fatalf("child view type = %T, want *escapeWorkspace", childWorkspaceView(relaxed))
+	}
+	if got.Workspace != base {
+		t.Fatal("child view replaced the underlying content backend")
+	}
+	if !got.confined {
+		t.Fatal("child view did not remove relaxed path authority")
+	}
+}
+
 // osfsEnvironment builds an osfs Environment rooted at dir with an OPTIONAL
 // bound command runner, failing the test on error. It is the Environment-seam
 // analogue of osfsWSForTest for the app tests that drive an engine or
