@@ -2,7 +2,7 @@
 id: 04-failure-and-adversarial-proofs
 title: Fail-closed taxonomy, secret boundaries, and outage proofs
 blocked_by: [03-output-profile]
-status: pending
+status: in-progress
 branch: ""
 worktree: ""
 issue: "372"
