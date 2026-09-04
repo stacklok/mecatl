@@ -34,6 +34,9 @@ import (
 //	GET    /v1/sessions/{id}/mcp-authorizations/{authorization_id}/presentation -> live browser URL
 //	POST   /v1/sessions/{id}/mcp-authorizations/{authorization_id}/recheck -> status/continuation SSE
 //	POST   /v1/sessions/{id}/mcp-authorizations/{authorization_id}/cancel  -> cancellation/continuation SSE
+//	POST   /v1/sessions/{id}/workspace-enrollment/connect -> begin or observe workspace enrollment
+//	POST   /v1/sessions/{id}/workspace-enrollment/{enrollment_id}/retry -> replace one exact enrollment
+//	POST   /v1/sessions/{id}/workspace-enrollment/{enrollment_id}/cancel -> cancel one exact enrollment
 //	POST   /v1/sessions/{id}/prompt   -> start a run; text/event-stream of Events
 //	POST   /v1/sessions/{id}/approve  -> resolve the paused ask on the run
 //	POST   /v1/sessions/{id}/cancel   -> cancel the in-flight run
@@ -70,6 +73,9 @@ func NewHTTPHandler(svc *Service) *HTTPHandler {
 		{"GET /v1/sessions/{id}/mcp-authorizations/{authorization_id}/presentation", h.mcpAuthorizationPresentation},
 		{"POST /v1/sessions/{id}/mcp-authorizations/{authorization_id}/recheck", h.recheckMCPAuthorization},
 		{"POST /v1/sessions/{id}/mcp-authorizations/{authorization_id}/cancel", h.cancelMCPAuthorization},
+		{"POST /v1/sessions/{id}/workspace-enrollment/connect", h.connectWorkspaceServices},
+		{"POST /v1/sessions/{id}/workspace-enrollment/{enrollment_id}/retry", h.retryWorkspaceEnrollment},
+		{"POST /v1/sessions/{id}/workspace-enrollment/{enrollment_id}/cancel", h.cancelWorkspaceEnrollment},
 		{"POST /v1/sessions/{id}/prompt", h.prompt},
 		{"POST /v1/sessions/{id}/retry", h.retry},
 		{"POST /v1/sessions/{id}/approve", h.approve},
@@ -778,8 +784,60 @@ func usageToJSON(usage session.Usage) usageJSON {
 // still bounding the read.
 const maxPromptBodyBytes = 32 << 20 // 32 MiB
 
+func (h *HTTPHandler) connectWorkspaceServices(w http.ResponseWriter, r *http.Request) {
+	if !controlRequestBodyEmpty(r) {
+		writeError(w, http.StatusBadRequest, "workspace enrollment controls do not accept a request body")
+		return
+	}
+	id := session.SessionID(r.PathValue("id"))
+	if id == "" {
+		writeError(w, http.StatusBadRequest, "session ID is required")
+		return
+	}
+	result, err := h.svc.ConnectWorkspaceServices(r.Context(), id)
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, toProtoWorkspaceEnrollment(result))
+}
+
+func (h *HTTPHandler) retryWorkspaceEnrollment(w http.ResponseWriter, r *http.Request) {
+	h.workspaceEnrollmentControl(w, r, true)
+}
+
+func (h *HTTPHandler) cancelWorkspaceEnrollment(w http.ResponseWriter, r *http.Request) {
+	h.workspaceEnrollmentControl(w, r, false)
+}
+
+func (h *HTTPHandler) workspaceEnrollmentControl(w http.ResponseWriter, r *http.Request, retry bool) {
+	if !controlRequestBodyEmpty(r) {
+		writeError(w, http.StatusBadRequest, "workspace enrollment controls do not accept a request body")
+		return
+	}
+	id, enrollmentID := session.SessionID(r.PathValue("id")), session.WorkspaceEnrollmentID(r.PathValue("enrollment_id"))
+	if id == "" || !enrollmentID.Valid() {
+		writeError(w, http.StatusBadRequest, "valid session and enrollment IDs are required")
+		return
+	}
+	var (
+		result WorkspaceEnrollmentProjection
+		err    error
+	)
+	if retry {
+		result, err = h.svc.RetryWorkspaceEnrollment(r.Context(), id, enrollmentID)
+	} else {
+		result, err = h.svc.CancelWorkspaceEnrollment(r.Context(), id, enrollmentID)
+	}
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, toProtoWorkspaceEnrollment(result))
+}
+
 func (h *HTTPHandler) mcpAuthorizationPresentation(w http.ResponseWriter, r *http.Request) {
-	if !mcpAuthorizationRequestBodyEmpty(r) {
+	if !controlRequestBodyEmpty(r) {
 		writeError(w, http.StatusBadRequest, "MCP authorization controls do not accept a request body")
 		return
 	}
@@ -804,10 +862,10 @@ func (h *HTTPHandler) cancelMCPAuthorization(w http.ResponseWriter, r *http.Requ
 	h.relayMCPAuthorizationControlSSE(w, r, true)
 }
 
-// mcpAuthorizationRequestBodyEmpty enforces the correlation-only HTTP shape.
+// controlRequestBodyEmpty enforces the correlation-only HTTP shape.
 // Reading at most one byte rejects JSON success/status/code/token assertions
 // without buffering attacker-controlled bodies.
-func mcpAuthorizationRequestBodyEmpty(r *http.Request) bool {
+func controlRequestBodyEmpty(r *http.Request) bool {
 	if r.Body == nil || r.Body == http.NoBody {
 		return true
 	}
@@ -817,7 +875,7 @@ func mcpAuthorizationRequestBodyEmpty(r *http.Request) bool {
 
 //nolint:gocyclo // relays a live continuation over SSE while racing client disconnect and cancellation; inherent.
 func (h *HTTPHandler) relayMCPAuthorizationControlSSE(w http.ResponseWriter, r *http.Request, cancel bool) {
-	if !mcpAuthorizationRequestBodyEmpty(r) {
+	if !controlRequestBodyEmpty(r) {
 		writeError(w, http.StatusBadRequest, "MCP authorization controls do not accept a request body")
 		return
 	}

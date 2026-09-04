@@ -147,8 +147,8 @@ mixed configuration after resolving the effective authority, including a loader 
 before constructing MCP, broker-process, or Redis resources.
 `mecated` and `mecak8s` mount its fixed callback handler bundle on their existing primary
 HTTP mux before the API catch-all; no second listener or context-value catalogue channel
-exists. Broker authorization controls are public API/TUI surfaces: callers present,
-recheck, or cancel the pending authorization while the browser completes the configured
+exists. Broker authorization and workspace-enrollment controls are public API/TUI surfaces: callers present,
+recheck, or cancel a pending per-tool authorization, and can begin, observe, retry, or cancel a pre-prompt workspace-service enrollment while the browser completes the configured
 public HTTPS callback. The callback URL is operator configuration, not a client-supplied
 route. In Helm, broker OAuth requires the chart-supported OIDC verified-caller
 configuration; its authorization is a browser/session flow and a preregistered

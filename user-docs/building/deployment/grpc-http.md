@@ -21,7 +21,10 @@ does not duplicate every RPC or HTTP route.
 
 Both transports create and run server-side sessions. Both expose the same core
 live run events, permission approval, cancellation, capability discovery, and
-session lifecycle. They also expose manual history compaction through gRPC
+session lifecycle. Where workspace-service enrollment is enabled, HTTP clients can
+also use the bodyless per-session connect, retry, and cancel controls documented in
+the detailed HTTP reference; responses expose only the enrollment correlation,
+status, service count, and any ephemeral browser presentation URL. They also expose manual history compaction through gRPC
 `CompactSession` and bodyless HTTP `POST /v1/sessions/{id}/compact`; check the
 additive `manual_compaction` capability before offering it. The server decides which
 optional features are available and returns a capability snapshot when it creates a

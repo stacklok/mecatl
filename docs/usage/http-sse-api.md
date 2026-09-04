@@ -52,6 +52,9 @@ compatibility. `build_id` is not a semantic-version API.
 | `POST /v1/sessions/{id}/rename` | `{title}` | `200` updated session snapshot with operator title provenance; `412` when kind/state/liveness gates reject the stale action, `409` when another replica holds the session lease |
 | `POST /v1/sessions/{id}/delete` | — | `204` after permanently removing the snapshot and store-managed sidecars; `412` when the target is active, awaiting, or not a main chat, `409` when another replica holds the session lease, `501` when the configured store cannot physically delete |
 | `POST /v1/sessions/{id}/compact` | no body | `200` `{"compacted":true}` when one forced pass saved shorter model history, or `{"compacted":false}` for a successful no-op; `412` for an active/awaiting/non-main session, `409` when another replica holds its lease |
+| `POST /v1/sessions/{id}/workspace-enrollment/connect` | no body | `200` safe `WorkspaceEnrollment` projection; begins an eligible pre-prompt workspace-service enrollment or observes its exact pending enrollment |
+| `POST /v1/sessions/{id}/workspace-enrollment/{enrollment_id}/retry` | no body | `200` safe `WorkspaceEnrollment` projection; cancels the exact pending enrollment before beginning its replacement; stale IDs return `412` |
+| `POST /v1/sessions/{id}/workspace-enrollment/{enrollment_id}/cancel` | no body | `200` safe `WorkspaceEnrollment` projection; cancels only the exact pending enrollment and clears its prompt gate; stale IDs return `412` |
 | `DELETE /v1/sessions/{id}` | — | `204` — close the session, releasing its per-session resources (not physical stored-session deletion) |
 | `POST /v1/sessions/{id}/prompt` | `{text}` | `200` `text/event-stream` of events; rejected while failed-step retry intent is pending |
 | `POST /v1/sessions/{id}/retry` | no body | `200` `text/event-stream` for a prompt-free failed-step retry; reuses conversation/tool state but re-resolves live instruction sources; `409` unless persisted state is eligible |
@@ -61,6 +64,8 @@ compatibility. `build_id` is not a semantic-version API.
 | `POST /v1/sessions/{id}/cancel-child` | `{child_id}` | `204`; `404` for an unknown / already-finished child |
 | `POST /v1/sessions/{id}/clear` | `{"worktree_selector":"..."}` optional | `201` `{session_id, placement}` — distinct empty-history successor; omitted selector inherits exact source placement |
 | `POST /v1/sessions/{id}/fork` | optional `{title, reasoning_effort, provider_id, model_id, worktree_selector}` | `201` `{session_id, placement}` — history-carrying successor; omitted selector inherits exact placement, supplied selector must be fresh and source-scoped; all overrides resolve atomically |
+
+`WorkspaceEnrollment` contains only `enrollment_id`, `status`, `required_services`, and the ephemeral `presentation_url` when a new enrollment needs browser presentation. These unary controls reject every request body, validate the session and enrollment correlation from the path, retain the request context, and do not expose callbacks, selectors, or broker state.
 
 `mcp_servers` mounts client-provided streaming-HTTP MCP servers for the created
 session's lifetime, via a per-session engine. Each entry is
