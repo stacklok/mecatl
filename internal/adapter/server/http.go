@@ -815,6 +815,7 @@ func mcpAuthorizationRequestBodyEmpty(r *http.Request) bool {
 	return err == nil && len(body) == 0
 }
 
+//nolint:gocyclo // relays a live continuation over SSE while racing client disconnect and cancellation; inherent.
 func (h *HTTPHandler) relayMCPAuthorizationControlSSE(w http.ResponseWriter, r *http.Request, cancel bool) {
 	if !mcpAuthorizationRequestBodyEmpty(r) {
 		writeError(w, http.StatusBadRequest, "MCP authorization controls do not accept a request body")

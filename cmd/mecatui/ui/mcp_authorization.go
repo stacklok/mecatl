@@ -232,6 +232,7 @@ func (m Model) currentAuthorizationMessage(sessionID, authorizationID string, ge
 	return sessionID == m.sessionID && authorizationID == m.authorization.authorizationID && gen == m.authorization.controlGen
 }
 
+//nolint:gocyclo // message-dispatch switch over the authorization control message variants; inherent.
 func (m Model) updateMCPAuthorizationMsg(message tea.Msg) (tea.Model, tea.Cmd, bool) {
 	switch msg := message.(type) {
 	case mcpAuthorizationEventMsg:

@@ -70,10 +70,7 @@ func (a *Attachment) BeginWorkspaceEnrollment(ctx context.Context) (contract.Wor
 		}
 		a.expireLocked(transaction)
 		if transaction.status == session.AuthorizationPending {
-			url, err := presentWorkspaceTransaction(transaction)
-			if err != nil {
-				return contract.WorkspaceEnrollmentPresentation{}, err
-			}
+			url := presentWorkspaceTransaction(transaction)
 			return contract.WorkspaceEnrollmentPresentation{Ref: workspaceEnrollmentRef(transaction), URL: url}, nil
 		}
 	}
@@ -121,12 +118,7 @@ func (a *Attachment) BeginWorkspaceEnrollment(ctx context.Context) (contract.Wor
 		delete(logical.authorizations, transaction.identity)
 		return contract.WorkspaceEnrollmentPresentation{}, errors.New("mcpbroker: create unique callback state")
 	}
-	url, err := presentWorkspaceTransaction(transaction)
-	if err != nil {
-		delete(logical.authorizations, transaction.identity)
-		a.runtime.removeCallbackState(state, transaction)
-		return contract.WorkspaceEnrollmentPresentation{}, err
-	}
+	url := presentWorkspaceTransaction(transaction)
 	return contract.WorkspaceEnrollmentPresentation{Ref: workspaceEnrollmentRef(transaction), URL: url}, nil
 }
 
@@ -296,12 +288,12 @@ func lookupWorkspaceTransactionLocked(logical *logicalSession, id session.Worksp
 func workspaceEnrollmentRef(transaction *authorizationTransaction) contract.WorkspaceEnrollmentRef {
 	return contract.WorkspaceEnrollmentRef{
 		ID:               session.WorkspaceEnrollmentID(transaction.identity.id),
-		RequiredServices: uint32(len(transaction.bundleBackends)),
+		RequiredServices: uint32(len(transaction.bundleBackends)), // #nosec G115 -- bundle backend count is operator-configured, never near uint32 max
 		ExpiresAt:        transaction.expiresAt,
 	}
 }
 
-func presentWorkspaceTransaction(transaction *authorizationTransaction) (string, error) {
+func presentWorkspaceTransaction(transaction *authorizationTransaction) string {
 	cfg := transaction.oauthConfig(transaction.clientSecret)
 	challenge := sha256.Sum256([]byte(transaction.verifier))
 	options := []oauth2.AuthCodeOption{
@@ -311,7 +303,7 @@ func presentWorkspaceTransaction(transaction *authorizationTransaction) (string,
 	if transaction.route.requestRefresh {
 		options = append(options, oauth2.AccessTypeOffline)
 	}
-	return cfg.AuthCodeURL(transaction.state, options...), nil
+	return cfg.AuthCodeURL(transaction.state, options...)
 }
 
 // workspaceAuthSessionFromToken recovers the ToolHive-native upstream-token

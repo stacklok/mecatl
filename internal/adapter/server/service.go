@@ -914,9 +914,9 @@ type Service struct {
 	// It is configured before serving and runs while the continuation handoff lock
 	// is held, immediately before cancellation is disarmed.
 	beforeAuthorizationContinuationStart func()
-	closed              bool
-	shutdownComplete    bool
-	closeMu             sync.Mutex
+	closed                               bool
+	shutdownComplete                     bool
+	closeMu                              sync.Mutex
 	// sessionEnvironments holds per-session Environment OVERRIDES. When an entry
 	// is present for a session id, StartRun uses it as the COMPLETE execution
 	// environment (Workspace + optional bound CommandRunner + accurate ref) instead
@@ -2821,6 +2821,8 @@ func (s *Service) EndSession(ctx context.Context, id session.SessionID) error {
 // Close tears down all per-session engines' MCP managers. It is the Service's
 // shutdown hook so a process exit does not leak any per-session MCP connection.
 // It is safe to call multiple times.
+//
+//nolint:gocyclo // shutdown sequences multiple independent teardown phases in order; inherent.
 func (s *Service) Close() {
 	s.closeMu.Lock()
 	defer s.closeMu.Unlock()
@@ -4321,7 +4323,7 @@ const (
 	scheduleFireSessionPrefix = "sched--"
 )
 
-//nolint:gocyclo // Run admission keeps generation, ownership, lease, recovery, and launch in one transaction.
+//nolint:gocyclo // run-entry funnel keeps repair, lease, engine-resolve, and launch in one ordered transaction; inherent.
 func (s *Service) startRunContent(ctx context.Context, id session.SessionID, text string, parts []session.Content, purpose runPurpose, generation runEntryGeneration, canPresentAuthorization bool) (*agent.Run, error) {
 	if s.draining.Load() {
 		return nil, fmt.Errorf("%w: %q", ErrUnavailable, id)
@@ -5035,6 +5037,7 @@ func (s *Service) buildAndRegisterSessionEngine(ctx context.Context, sess *sessi
 	return s.buildAndRegisterSessionEngineWithBrokerTools(ctx, sess, sel, profile, mode, replace, nil, false)
 }
 
+//nolint:gocyclo // rehydration keeps validation, factory selection, broker, capacity, and rollback gates ordered; inherent.
 func (s *Service) buildAndRegisterSessionEngineWithBrokerTools(ctx context.Context, sess *session.Session, sel ProviderSelector, profile SessionProfile, mode session.PermissionMode, replace bool, exactTools []tool.Tool, useExactTools bool) (*sessionEngine, error) {
 	id := sess.ID
 	unlockBroker := s.brokerMu.lock(id)

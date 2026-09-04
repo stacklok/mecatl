@@ -50,17 +50,17 @@ type Process struct {
 	Runtime  *Runtime
 	Handlers HandlerBundle
 
-	ctx                context.Context
-	cancel             context.CancelFunc
-	lifecycleMu        sync.Mutex
-	closed             bool
-	construction       toolHiveConstruction
-	discovery          *authenticatedDiscovery
-	protectedTarget    *oauthRoute
+	ctx             context.Context
+	cancel          context.CancelFunc
+	lifecycleMu     sync.Mutex
+	closed          bool
+	construction    toolHiveConstruction
+	discovery       *authenticatedDiscovery
+	protectedTarget *oauthRoute
 	// occupied is the immutable model-visible name set outside this Process's
 	// broker catalogue (core/global tools), captured once at construction so a
 	// later workspace-enrollment freeze can reuse it without re-deriving it.
-	occupied []string
+	occupied           []string
 	queryAuthenticated func(context.Context, ToolHiveAuthSessionID, string) (AuthenticatedCapabilities, error)
 	resources          []ownedResource
 	closeOnce          sync.Once

@@ -195,6 +195,8 @@ func (m Model) runToolsCancel() (tea.Model, tea.Cmd) {
 // applyWorkspaceEnrollment reduces the direct RPC response from /tools-connect
 // or /tools-cancel. Pending enrollments are observed periodically; failures remain
 // explicit /tools-connect retries.
+//
+//nolint:gocyclo // status/action dispatch over the enrollment projection states; inherent.
 func (m Model) applyWorkspaceEnrollment(msg workspaceEnrollmentMsg) (tea.Model, tea.Cmd) {
 	current := msg.sessionID == m.sessionID && msg.gen == m.enrollment.controlGen
 	if msg.action == connectAction {

@@ -1400,6 +1400,10 @@ func validateMCPAuthority(cfg Config) error {
 	return nil
 }
 
+// Build assembles the provider registry, catalog, policy, and engine into a
+// server.Service per the given Config. It is the single composition root every
+// cmd/ main calls.
+//
 //nolint:gocyclo // composition root: long sequential wiring with reverse-order teardown; inherent.
 func Build(ctx context.Context, cfg Config) (*Built, error) {
 	mcpProfileLifecycle := cfg.MCPProfileLifecycle

@@ -155,7 +155,7 @@ func TestWorkspaceEnrollmentPublishesFrozenCatalogueBeforePrompt(t *testing.T) {
 	svc, err := NewService(Config{
 		Engine: brokerEngineResult().Engine, Store: store,
 		PlacementProvider: brokerPlacementProvider{}, PlacementScope: "test",
-		NewID:      func() session.SessionID { return "enrollment-session" }, MCPBroker: broker,
+		NewID: func() session.SessionID { return "enrollment-session" }, MCPBroker: broker,
 		RootAuthority: func(session.SessionKind) session.Authority {
 			return session.Authority{CapabilitySet: governance.CapabilitySet{Tools: []string{"mcp__calendar__list"}}, Provenance: "test"}
 		},

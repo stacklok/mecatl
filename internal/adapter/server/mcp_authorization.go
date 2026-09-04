@@ -356,7 +356,7 @@ func (s *Service) registerAndStartGrantedAuthorization(ctx context.Context, sess
 		abortOnCancel()
 		handoff.Unlock()
 		handoff.Lock()
-		handoff.Unlock()
+		handoff.Unlock() //nolint:staticcheck // deliberate empty critical section: wait for the AfterFunc callback's own lock/unlock to complete
 		prepared.Abort()
 	}
 
@@ -383,7 +383,7 @@ func (s *Service) registerAndStartGrantedAuthorization(ctx context.Context, sess
 		// handoff lock and reacquire it to wait for its inert abort before cleanup.
 		handoff.Unlock()
 		handoff.Lock()
-		handoff.Unlock()
+		handoff.Unlock() //nolint:staticcheck // deliberate empty critical section: wait for the AfterFunc callback's own lock/unlock to complete
 		s.deregister(sess.ID, prepared.Run())
 		if restoreErr := s.restoreAuthorizationClaim(context.WithoutCancel(ctx), sess, claimed); restoreErr != nil {
 			return fmt.Errorf("%w: restore cancelled authorization claim: %v", ErrInternal, restoreErr)
@@ -456,7 +456,7 @@ func (s *Service) registerAndStartAuthorizationResolution(ctx context.Context, s
 		abortOnCancel()
 		handoff.Unlock()
 		handoff.Lock()
-		handoff.Unlock()
+		handoff.Unlock() //nolint:staticcheck // deliberate empty critical section: wait for the AfterFunc callback's own lock/unlock to complete
 		prepared.Abort()
 	}
 
@@ -478,7 +478,7 @@ func (s *Service) registerAndStartAuthorizationResolution(ctx context.Context, s
 		// before removing the relay-visible run.
 		handoff.Unlock()
 		handoff.Lock()
-		handoff.Unlock()
+		handoff.Unlock() //nolint:staticcheck // deliberate empty critical section: wait for the AfterFunc callback's own lock/unlock to complete
 		s.deregister(sess.ID, prepared.Run())
 		s.repairAuthorizationRegistration(ctx, sess)
 		return ctx.Err()
@@ -527,10 +527,7 @@ func (s *Service) restoreAuthorizationClaim(ctx context.Context, sess *session.S
 	if err := sess.RestoreAuthorizationClaim(pending); err != nil {
 		return err
 	}
-	if err := s.saveSession(ctx, sess); err != nil {
-		return err
-	}
-	return nil
+	return s.saveSession(ctx, sess)
 }
 
 func (s *Service) repairAuthorizationRegistration(ctx context.Context, sess *session.Session) {

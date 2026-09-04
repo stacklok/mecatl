@@ -1547,6 +1547,7 @@ type authorizationControlFrame struct {
 	cancel   *mecatlv1.Cancel
 }
 
+//nolint:gocyclo // relays a live continuation while racing control frames and cancellation; inherent.
 func (h *HarnessServer) relayMCPAuthorizationControl(ctx context.Context, id session.SessionID, result MCPAuthorizationResult, send func(*mecatlv1.Event) error, recv func() (authorizationControlFrame, error)) error {
 	if result.Run == nil {
 		return send(toProto(result.Event))

@@ -209,11 +209,11 @@ func TestBrokerControlsRequireVerifiedCallerIdentity(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			err := validateBrokerControlOwnership(
-			"0.0.0.0:8081",
-			brokerControlVerifiedIdentity(tc.cfg, tc.tlsCfg),
-			false,
-			handlers,
-		)
+				"0.0.0.0:8081",
+				brokerControlVerifiedIdentity(tc.cfg, tc.tlsCfg),
+				false,
+				handlers,
+			)
 			if (err != nil) != tc.wantErr {
 				t.Fatalf("validateBrokerControlOwnership() error = %v, want error = %t", err, tc.wantErr)
 			}
