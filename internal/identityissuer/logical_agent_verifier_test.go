@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+
 	"github.com/stacklok/mecatl/engine/governance"
 )
 
@@ -294,34 +295,34 @@ func logicalAgentClaims(t *testing.T, token string) map[string]any {
 
 func logicalAgentClaimsWith(t *testing.T, claims map[string]any, name string, value any) map[string]any {
 	t.Helper()
-	copy := mapsClone(t, claims)
-	copy[name] = value
-	return copy
+	cloned := mapsClone(t, claims)
+	cloned[name] = value
+	return cloned
 }
 
 func logicalAgentClaimsWithout(t *testing.T, claims map[string]any, name string) map[string]any {
 	t.Helper()
-	copy := mapsClone(t, claims)
-	delete(copy, name)
-	return copy
+	cloned := mapsClone(t, claims)
+	delete(cloned, name)
+	return cloned
 }
 
 func logicalAgentProfileWith(t *testing.T, claims map[string]any, name string, value any) map[string]any {
 	t.Helper()
-	copy := mapsClone(t, claims)
-	profile := mapsClone(t, copy[LogicalAgentClaimURI].(map[string]any))
+	cloned := mapsClone(t, claims)
+	profile := mapsClone(t, cloned[LogicalAgentClaimURI].(map[string]any))
 	profile[name] = value
-	copy[LogicalAgentClaimURI] = profile
-	return copy
+	cloned[LogicalAgentClaimURI] = profile
+	return cloned
 }
 
 func logicalAgentProfileTools(t *testing.T, claims map[string]any, tools []string) map[string]any {
 	t.Helper()
-	copy := mapsClone(t, claims)
-	profile := mapsClone(t, copy[LogicalAgentClaimURI].(map[string]any))
+	cloned := mapsClone(t, claims)
+	profile := mapsClone(t, cloned[LogicalAgentClaimURI].(map[string]any))
 	profile["tools"] = tools
-	copy[LogicalAgentClaimURI] = profile
-	return copy
+	cloned[LogicalAgentClaimURI] = profile
+	return cloned
 }
 
 func mapsClone(t *testing.T, input map[string]any) map[string]any {

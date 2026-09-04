@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"go/ast"
 	"go/parser"
-	"go/token"
+	gotoken "go/token"
 	"os"
 	"reflect"
 	"strings"
@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+
 	"github.com/stacklok/mecatl/engine/governance"
 )
 
@@ -95,7 +96,7 @@ func TestADR_0252_ContainmentOracleCorpus(t *testing.T) {
 }
 
 func TestADR_0252_IssuerUsesGovernanceContainment(t *testing.T) {
-	parsed, err := parser.ParseFile(token.NewFileSet(), "logical_agent_issue.go", nil, 0)
+	parsed, err := parser.ParseFile(gotoken.NewFileSet(), "logical_agent_issue.go", nil, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -144,7 +145,7 @@ func TestLogicalAgentIdentityProjection_Scenario3_TypedIssue(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	parsed, err := jwt.NewParser(jwt.WithoutClaimsValidation()).Parse(token, func(parsed *jwt.Token) (any, error) { return issuer.PublicKey(), nil })
+	parsed, err := jwt.NewParser(jwt.WithoutClaimsValidation()).Parse(token, func(_ *jwt.Token) (any, error) { return issuer.PublicKey(), nil })
 	if err != nil || !parsed.Valid || parsed.Method.Alg() != "ES256" {
 		t.Fatalf("typed token validation = %v, valid=%t alg=%v", err, parsed != nil && parsed.Valid, parsed.Method)
 	}
@@ -274,7 +275,7 @@ func testLogicalAgentIssuer(t *testing.T) *Issuer {
 
 func logicalAgentTokenClaim(t *testing.T, issuer *Issuer, compact string) LogicalAgentClaim {
 	t.Helper()
-	parsed, err := jwt.NewParser(jwt.WithoutClaimsValidation()).Parse(compact, func(parsed *jwt.Token) (any, error) { return issuer.PublicKey(), nil })
+	parsed, err := jwt.NewParser(jwt.WithoutClaimsValidation()).Parse(compact, func(_ *jwt.Token) (any, error) { return issuer.PublicKey(), nil })
 	if err != nil || !parsed.Valid {
 		t.Fatalf("parse token: %v", err)
 	}
@@ -286,7 +287,7 @@ func logicalAgentTokenClaim(t *testing.T, issuer *Issuer, compact string) Logica
 	if err != nil {
 		t.Fatal(err)
 	}
-	claim, err := ParseLogicalAgentClaim([]byte(data))
+	claim, err := ParseLogicalAgentClaim(data)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -295,7 +296,7 @@ func logicalAgentTokenClaim(t *testing.T, issuer *Issuer, compact string) Logica
 
 func logicalAgentJWTID(t *testing.T, issuer *Issuer, compact string) string {
 	t.Helper()
-	parsed, err := jwt.NewParser(jwt.WithoutClaimsValidation()).Parse(compact, func(parsed *jwt.Token) (any, error) { return issuer.PublicKey(), nil })
+	parsed, err := jwt.NewParser(jwt.WithoutClaimsValidation()).Parse(compact, func(_ *jwt.Token) (any, error) { return issuer.PublicKey(), nil })
 	if err != nil || !parsed.Valid {
 		t.Fatalf("parse token: %v", err)
 	}

@@ -31,10 +31,15 @@ const (
 type DefinitionTier string
 
 const (
-	DefinitionTierSystem  DefinitionTier = "system"
+	// DefinitionTierSystem identifies harness-owned definitions.
+	DefinitionTierSystem DefinitionTier = "system"
+	// DefinitionTierManaged identifies operator-managed definitions.
 	DefinitionTierManaged DefinitionTier = "managed"
-	DefinitionTierDriver  DefinitionTier = "driver"
-	DefinitionTierUser    DefinitionTier = "user"
+	// DefinitionTierDriver identifies definitions supplied by a trusted driver.
+	DefinitionTierDriver DefinitionTier = "driver"
+	// DefinitionTierUser identifies user-tier definitions.
+	DefinitionTierUser DefinitionTier = "user"
+	// DefinitionTierProject identifies project-tier definitions.
 	DefinitionTierProject DefinitionTier = "project"
 )
 
@@ -58,7 +63,7 @@ func NewLogicalAgentIdentity(trustDomain string, tier DefinitionTier, name strin
 	if err := ValidateTrustDomain(trustDomain); err != nil {
 		return LogicalAgentIdentity{}, errors.New("logical agent trust domain is invalid")
 	}
-	if !validDefinitionTier(tier) || !validLogicalAgentText(name, maxLogicalAgentNameBytes, false) {
+	if !validDefinitionTier(tier) || !validLogicalAgentText(name, maxLogicalAgentNameBytes) {
 		return LogicalAgentIdentity{}, errors.New("logical agent definition is invalid")
 	}
 
@@ -70,6 +75,8 @@ func NewLogicalAgentIdentity(trustDomain string, tier DefinitionTier, name strin
 }
 
 // ValidateLogicalAgentSubject validates a complete canonical local logical-agent SPIFFE ID.
+//
+//nolint:gocyclo // The closed URI profile is clearest as one fail-fast validation pass.
 func ValidateLogicalAgentSubject(trustDomain, subject string) error {
 	if err := ValidateTrustDomain(trustDomain); err != nil {
 		return errors.New("logical agent trust domain is invalid")
@@ -119,6 +126,8 @@ func (c LogicalAgentClaim) Validate() error {
 
 // ParseLogicalAgentClaim strictly decodes one closed v1 claim object. Duplicate and
 // unknown object members are rejected before a claim value is returned.
+//
+//nolint:gocyclo // Explicit member-by-member decoding is the duplicate-claim security boundary.
 func ParseLogicalAgentClaim(data []byte) (LogicalAgentClaim, error) {
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	token, err := decoder.Token()
@@ -171,12 +180,12 @@ func ParseLogicalAgentClaim(data []byte) (LogicalAgentClaim, error) {
 }
 
 func validateClaimFields(c LogicalAgentClaim, canonical bool) error {
-	if !validDefinitionTier(c.DefinitionTier) || !validLogicalAgentText(c.DefinitionName, maxLogicalAgentNameBytes, false) || (c.Instance != "" && !validLogicalAgentText(c.Instance, maxLogicalAgentInstance, false)) || len(c.Tools) > maxLogicalAgentTools {
+	if !validDefinitionTier(c.DefinitionTier) || !validLogicalAgentText(c.DefinitionName, maxLogicalAgentNameBytes) || (c.Instance != "" && !validLogicalAgentText(c.Instance, maxLogicalAgentInstance)) || len(c.Tools) > maxLogicalAgentTools {
 		return errors.New("logical agent claim is invalid")
 	}
 	total := 0
 	for i, tool := range c.Tools {
-		if !validLogicalAgentText(tool, maxLogicalAgentToolBytes, false) {
+		if !validLogicalAgentText(tool, maxLogicalAgentToolBytes) {
 			return errors.New("logical agent claim is invalid")
 		}
 		total += len(tool)
@@ -196,8 +205,8 @@ func validDefinitionTier(tier DefinitionTier) bool {
 	}
 }
 
-func validLogicalAgentText(value string, maxBytes int, allowEmpty bool) bool {
-	if (!allowEmpty && len(value) == 0) || len(value) > maxBytes || !utf8.ValidString(value) {
+func validLogicalAgentText(value string, maxBytes int) bool {
+	if len(value) == 0 || len(value) > maxBytes || !utf8.ValidString(value) {
 		return false
 	}
 	return strings.IndexFunc(value, unicode.IsControl) < 0
@@ -235,7 +244,7 @@ func logicalAgentDigest(tier DefinitionTier, name string) string {
 	input.WriteByte(0)
 	for _, value := range []string{string(tier), name} {
 		var length [4]byte
-		binary.BigEndian.PutUint32(length[:], uint32(len(value)))
+		binary.BigEndian.PutUint32(length[:], uint32(len(value))) //nolint:gosec // values are bounded to 128 bytes before digesting.
 		input.Write(length[:])
 		input.WriteString(value)
 	}

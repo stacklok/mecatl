@@ -85,7 +85,7 @@ func (v *LogicalAgentVerifier) Verify(raw string) (VerifiedLogicalAgent, error) 
 		Instance:    claims.LogicalAgent.Instance,
 		Tools:       append([]string(nil), claims.LogicalAgent.Tools...),
 		JWTID:       claims.ID,
-		Expiry:      claims.ExpiresAt.Time.UTC(),
+		Expiry:      claims.ExpiresAt.UTC(),
 	}, nil
 }
 
@@ -163,6 +163,7 @@ func parseLogicalAgentHeader(raw []byte) (logicalAgentJWTHeader, error) {
 	return header, nil
 }
 
+//nolint:gocyclo // Explicit registered/profile claim decoding rejects duplicate security members.
 func parseVerifiedLogicalAgentClaims(raw []byte) (verifiedLogicalAgentClaims, error) {
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	if token, err := decoder.Token(); err != nil || token != json.Delim('{') {
@@ -246,7 +247,7 @@ func (v *LogicalAgentVerifier) validateClaims(claims verifiedLogicalAgentClaims)
 		return errors.New("logical agent token ID is invalid")
 	}
 	now := v.verifier.cfg.Now().UTC()
-	if now.After(claims.ExpiresAt.Time.Add(v.verifier.cfg.ClockSkew)) || now.Before(claims.NotBefore.Time.Add(-v.verifier.cfg.ClockSkew)) || now.Before(claims.IssuedAt.Time.Add(-v.verifier.cfg.ClockSkew)) {
+	if now.After(claims.ExpiresAt.Add(v.verifier.cfg.ClockSkew)) || now.Before(claims.NotBefore.Add(-v.verifier.cfg.ClockSkew)) || now.Before(claims.IssuedAt.Add(-v.verifier.cfg.ClockSkew)) {
 		return errors.New("logical agent token time is invalid")
 	}
 	return nil

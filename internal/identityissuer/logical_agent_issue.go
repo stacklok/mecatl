@@ -6,6 +6,7 @@ import (
 	"io"
 
 	"github.com/golang-jwt/jwt/v5"
+
 	"github.com/stacklok/mecatl/engine/governance"
 )
 
