@@ -204,6 +204,7 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0234 — Derived delegation authority behind an evaluator port](./0234-authority-evaluator-port.md)
 - [0251 — Identity issuer substrate for the combined broker](./0251-identity-issuer-substrate.md)
 - [0252 — Logical-agent JWT-SVID identity projection](./0252-logical-agent-identity-projection.md)
+- [0253 — Acting-as-user exchange boundary](./0253-acting-as-user-exchange.md)
 - [0205 — Bound cached JWKS staleness](./0205-bounded-jwks-staleness.md)
 - [0206 — Ship reusable OIDC caller identity as an opt-in module](./0206-oidc-authn-module.md)
 - [0212 — Enforce caller ownership at every application access path](./0212-caller-ownership-enforcement.md) *(agent-identity Track A; application isolation)*
