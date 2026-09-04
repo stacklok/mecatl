@@ -266,7 +266,7 @@ Strict OPERATOR-TIER Streamable HTTP MCP authority configuration. Mode selects o
 | `mcp.servers[].auth.oauth.upstream.mode` | `string` | `(empty)` |  |
 | `mcp.servers[].auth.oauth.upstream.oauth2` | `mcpoauth2upstreamprofile` | `(absent)` |  |
 | `mcp.servers[].auth.oauth.upstream.oauth2.authorization_endpoint` | `string` | `(empty)` |  |
-| `mcp.servers[].auth.oauth.upstream.oauth2.token_endpoint` | `string` | `(empty)` |  |
+| `mcp.servers[].auth.oauth.upstream.oauth2.token_endpoint` | `string` | `(empty)` | TokenEndpoint is a canonical HTTPS URL with no query string or fragment: the hardened runtime token client pins the exact origin and controls the request query itself. |
 | `mcp.servers[].auth.oauth.client` | `mcpoauthclientprofile` | `(absent)` | Client selects exactly one preregistered or CIMD client declaration. |
 | `mcp.servers[].auth.oauth.client.mode` | `string` | `(empty)` | Mode is exactly preregistered or cimd. |
 | `mcp.servers[].auth.oauth.client.preregistered` | `mcppreregisteredclientprofile` | `(absent)` | Preregistered declares a confidential client registered with the issuer. |

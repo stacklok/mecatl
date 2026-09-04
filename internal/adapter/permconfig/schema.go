@@ -487,7 +487,10 @@ type MCPOAuthUpstreamProfile struct {
 // MCPOAuth2UpstreamProfile contains trusted explicit generic OAuth2 endpoints.
 type MCPOAuth2UpstreamProfile struct {
 	AuthorizationEndpoint string `yaml:"authorization_endpoint"`
-	TokenEndpoint         string `yaml:"token_endpoint"`
+	// TokenEndpoint is a canonical HTTPS URL with no query string or fragment:
+	// the hardened runtime token client pins the exact origin and controls the
+	// request query itself.
+	TokenEndpoint string `yaml:"token_endpoint"`
 }
 
 // MCPOAuthClientProfile is a closed preregistered/CIMD tagged union. DCR is unsupported.
@@ -762,8 +765,17 @@ func (u *MCPOAuth2UpstreamProfile) UnmarshalYAML(node ast.Node) error {
 	if _, err := validateMCPHTTPURL("mcp.servers[].auth.oauth.upstream.oauth2.authorization_endpoint", u.AuthorizationEndpoint, true); err != nil {
 		return err
 	}
-	if _, err := validateMCPHTTPURL("mcp.servers[].auth.oauth.upstream.oauth2.token_endpoint", u.TokenEndpoint, true); err != nil {
+	tokenEndpoint, err := validateMCPHTTPURL("mcp.servers[].auth.oauth.upstream.oauth2.token_endpoint", u.TokenEndpoint, true)
+	if err != nil {
 		return err
+	}
+	// RFC 6749 §3.2 permits a query component on the token endpoint, but the
+	// hardened runtime token client (internal/adapter/mcp.NewHardenedOAuthTokenClient)
+	// pins the exact origin and controls the request query itself, so it
+	// rejects one outright. Reject here too for a clear config-time error
+	// instead of an opaque runtime construction failure.
+	if tokenEndpoint.RawQuery != "" {
+		return errors.New("mcp.servers[].auth.oauth.upstream.oauth2.token_endpoint must not contain a query string")
 	}
 	return nil
 }

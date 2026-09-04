@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -164,6 +165,43 @@ func TestMCPAuthoritySyntaxIsLosslessAndStrict(t *testing.T) {
 		if _, err := parseYAML([]byte(body)); err == nil {
 			t.Fatal("invalid authority syntax parsed successfully")
 		}
+	}
+}
+
+func TestTokenEndpointRejectsQueryString(t *testing.T) {
+	base := `mcp:
+  mode: broker
+  broker:
+    callback_url: https://agent.example/callback
+  servers:
+    - name: protected
+      url: https://mcp.example/mcp
+      auth:
+        mode: oauth
+        oauth:
+          upstream:
+            mode: oauth2
+            oauth2:
+              authorization_endpoint: https://auth.example/authorize
+              token_endpoint: %s
+          client:
+            mode: cimd
+            cimd: {document_url: https://auth.example/client.json}
+          scopes: [read]
+          network: {additional_origins: [], private_origins: [], max_redirects: 0}
+`
+	if _, err := parseYAML([]byte(fmt.Sprintf(base, "https://auth.example/token?tenant=1"))); err == nil {
+		t.Fatal("token_endpoint with a query string parsed successfully")
+	}
+	if _, err := parseYAML([]byte(fmt.Sprintf(base, "https://auth.example/token"))); err != nil {
+		t.Fatalf("token_endpoint without a query string failed to parse: %v", err)
+	}
+	// mcp.servers[].url legitimately carries a query string; this validator
+	// must stay scoped to the token endpoint only.
+	withServerQuery := strings.Replace(fmt.Sprintf(base, "https://auth.example/token"),
+		"url: https://mcp.example/mcp", "url: https://mcp.example/mcp?workspace=1", 1)
+	if _, err := parseYAML([]byte(withServerQuery)); err != nil {
+		t.Fatalf("mcp.servers[].url with a query string failed to parse: %v", err)
 	}
 }
 
