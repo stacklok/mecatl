@@ -12,6 +12,7 @@ import (
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 	"github.com/stacklok/mecatl/engine/adapter/memfs"
+	"github.com/stacklok/mecatl/engine/adapter/memledger"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/nofs"
@@ -57,7 +58,7 @@ func localContextService(t *testing.T, provider *localContextPlacementProvider) 
 }
 
 func localContextBinding(ref session.EnvironmentRef, root string) server.PlacementBinding {
-	return server.PlacementBinding{Ref: ref, Environment: tool.MustEnvironment(ref, memfs.NewWorkspace(root), nil)}
+	return server.PlacementBinding{Ref: ref, Environment: tool.MustEnvironment(ref, memfs.NewWorkspace(root), memledger.New(), nil)}
 }
 
 func saveLocalContextSession(t *testing.T, store *memstore.Store, id string, ref session.EnvironmentRef, owner *session.Principal) {
@@ -212,7 +213,7 @@ func TestADR_0296_LocalContextRejectsInvalidReattachment(t *testing.T) {
 		case "nil-workspace":
 			return server.PlacementBinding{Ref: req.Ref}, nil
 		default:
-			return server.PlacementBinding{Ref: req.Ref, Environment: tool.MustEnvironment(req.Ref, nofs.New(), nil)}, nil
+			return server.PlacementBinding{Ref: req.Ref, Environment: tool.MustEnvironment(req.Ref, nofs.New(), memledger.New(), nil)}, nil
 		}
 	}
 	svc, owner, _, store := localContextService(t, provider)
