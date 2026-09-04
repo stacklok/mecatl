@@ -4186,15 +4186,34 @@ instruction-like prose. Both reference stores retain 64 revisions per key and pe
 origin-known/truncated marker; Undo may remove a value only when retained history proves the target
 was its creation, and fails without mutation at a truncated predecessor boundary.
 
-**Optional learning and evidence reflection (#507 / #509 Chunk A):** `engine/learning`
-owns `Mode`, the owned completed `Trajectory`, and synchronous `Observer`, plus the
-storage-neutral reflection domain: closed candidate/outcome/signal types, bounded input,
-content-addressed canonical message/event evidence projections, structural within-input signal
-detection, and `Reflector`. Evidence projections omit binary and provider reasoning data, actor
-identity, permission arguments, and unbounded delegation content; every proposed handle is
-resolved against the exact input, while existing facts remain comparison-only. Candidate
-validation reuses the canonical memory secret/directive classifiers and rejects transient or
-unsupported durable claims.
+**Optional learning and evidence reflection (#507 / #509 Chunk A; ADR 0298 refinement):**
+`engine/learning` owns `Mode`, the owned completed `Trajectory`, and synchronous `Observer`, plus
+the storage-neutral reflection domain. Automatic admission streams the full eligible source and
+verified current span with bounded counters/coordinates/digests; it does not build an unbounded
+`learning.Input`. After admission, the shared `reflection-evidence/v1` selector used by explicit
+reflection ranks whole connected tool-turn components (assistant + every call/result), emits selected
+content in source order, and prioritizes mandatory current span/closure, explicit remember/learn
+intent, correction/failure-recovery/repeated-tool-sequence context, recent eligible user/assistant
+context, then events, with original coordinates as tie-breakers. Existing canonical per-field
+projection applies first; an individually oversized component is omitted whole and required closure
+that cannot fit skips automatic work or explicitly abstains. Raw retained size is not an independent
+rejection.
+
+Each selection carries an immutable aggregate manifest with protocol, exact source boundary
+`{domain: "mecatl/reflection-evidence/source/v1", session_id}`, all selected original message
+coordinates/event sequences in source order, entry digests/component bindings, and a domain-separated
+aggregate digest. Model handles are selected-local `m:n`/`e:n`; durable original coordinates stay
+distinct. Candidate references carry aggregate digest plus selected manifest entry index and exactly
+match that entry's locator/coordinate/digest/binding rather than replacing the manifest. Pre-version
+ADR-0109 records decode only as `reflection-evidence/legacy-v0`, where `EvidenceRef.Ordinal` remains
+input-local; new records write v1 and readers dispatch by resolved version, never new-field presence.
+Host signal, invocation mode, and existing-memory comparison context are outside selected-evidence
+identity. Projections retain only canonical bounded
+user/assistant and safe tool text, call ID/name, admitted public textual media metadata, and eligible
+content-free event metadata; they omit reasoning/provider IDs, binary media/data, actor, permission/raw
+arguments, credentials/secret-shaped fields, and delegation payloads/previews before copying. Existing
+facts remain comparison-only. Candidate validation reuses canonical memory secret/directive classifiers
+and rejects transient or unsupported durable claims.
 
 `engine/agent/evidencereflector.go` (`EvidenceReflector`) is the optional model-backed
 implementation: one direct provider-neutral turn, no catalog/tools/Engine loop or writes, with
@@ -4282,13 +4301,31 @@ ADR-0213 enforcement exists. Unspecified ownership and missing or partial reposi
 remain fatal before any repository client is composed. Local in-process repositories retain their
 existing application ownership enforcement.
 
+**Bounded selected-evidence refinement (ADR 0298):** automatic admission streams the full
+eligible source and verified current span with bounded counters, coordinates, digests, and ranking
+state; it does not construct an unbounded `learning.Input`. Automatic and explicit reflection then
+use the same deterministic `reflection-evidence/v1` selector before provider or proposal work.
+One Build-owned lifecycle gate/context plus bounded active-operation accounting owns synchronous
+materialization scans; no queue or goroutine is created per materialization, and `Built.Close`
+rejects new scans and cancels and joins active scans before borrowed reflection resources close.
+The durable attempt repository remains the sole execution queue and workflow authority.
+
+The bounded selected unit carries the protocol, identity boundary, selected digest, and immutable
+aggregate manifest. Host signal, invocation mode, and existing-memory comparison context stay
+outside that identity. Attempt discovery, claim fencing, automatic-ledger reservation, repository
+quota, restart recovery, and terminal transitions remain authoritative around materialization.
+No-safe-selection produces only a closed skip/abstention and starts no provider, proposal, skill,
+or promotion work; automatic failures after durable admission retain the existing conservative
+ledger charge. Diagnostics remain content-free.
+
+
 The observer performs the structural signal gate before the process-wide legacy interval admission, so
 trivial completions spend no provider call and do not consume the debounce cadence. Standard composition
 constructs `agent.EvidenceReflector` on the selected session provider/model (or the same-provider
 `reflection` slot), stages through the durable proposal repository under principal/project partitions,
 and applies `memorypromotion.StandardPolicy`. `review` stages without memory writes. `auto` promotes operator facts only from explicit principal-authored remember evidence. Trusted project facts require principal-authored evidence and an exact configured-workspace match; tool/assistant/repository-only evidence remains staged. Project candidates from admitted alternate roots remain staged/reviewable but cannot approve, undo, or read/write launch-root project memory until a safe exact-root lifecycle store exists; untrusted project material is not ingested. Existing project partitions stay listable/rejectable. Conflicts and ambiguous facts remain non-promoted, project material
 requires `projectIngestionAdmitted`. Procedures first become `deferred_unsupported` as the durable crash-recovery checkpoint, then enter the installed learned-skill pipeline in review/auto. `off` installs no
-automatic observer or started coordinator worker. Without a configured remote store it also installs no eager proposal or attempt repository; explicit reflection synchronously uses the persisted session provider/model, performs a bounded EventLog read, and lazily opens local persistence. With `LearningStoreURL` explicitly configured, Off still connects to and inspects the remote repository set, publishes learned skills, and may recover previously admitted attempts; it does not create automatic attempts from ordinary completions. Approval re-verifies owner-authorized message/event digest, sequence, and tool-call evidence before promotion. The deprecated `--user-model-review` alias maps to this same `auto` path;
+automatic observer or started coordinator worker. Without a configured remote store it also installs no eager proposal or attempt repository; explicit reflection synchronously uses the persisted session provider/model, streams the bounded EventLog source through the shared materializer, and lazily opens local persistence only after safe selection. With `LearningStoreURL` explicitly configured, Off still connects to and inspects the remote repository set, publishes learned skills, and may recover previously admitted attempts; it does not create automatic attempts from ordinary completions. Automatic no-safe selection returns closed `skipped`; explicit selection returns successful closed `abstained`, using only `no_eligible_evidence` or `mandatory_span_exceeds_bounds`, with no provider, proposal, skill, or promotion work. Cancellation and Build close remain typed errors. Proposal provenance persists one complete immutable aggregate manifest rather than candidate references alone. List is metadata-only; detail and approval each owner-authorize and re-materialize the exact manifest once without re-ranking, verifying protocol, identity boundary, every original message coordinate or session-wide event ordinal, component binding, entry digest, aggregate digest, and candidate citation. Changed or unavailable source fails precondition without promotion. Existing evidence previews remain their current at-most-1024-byte canonical redacted/digest-verified projection and are not repurposed as manifest or raw transcript output. Provider, persistence, validation, repository, and timeout faults retain typed non-Internal mappings, while closed materialization reasons map to stable harness-authored client text. Approval re-verifies owner-authorized message/event digest, sequence, and tool-call evidence before promotion. The deprecated `--user-model-review` alias maps to this same `auto` path;
 the old exported `UserModelReviewer`, `NewUserModelObserver`, and `Review` remain compatibility APIs but
 standard Build no longer uses their direct-writing child engine. Dream and explicit memory tools remain
 independent CAS writers. The shipped gRPC/HTTP surface provides synchronous explicit reflection plus caller-partitioned proposal list/detail/decision/undo, and mecatui provides windowed review with exact canonical value/scope/description and stale-CAS refresh.

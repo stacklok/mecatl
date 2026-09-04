@@ -1200,15 +1200,39 @@ overlay. What remains here is the metrics surface:
 ## Evidence-backed reflection
 
 `engine/learning` contains the storage-neutral reflection domain and completed-trajectory
-observer seam ([ADR 0109](adr/0109-staged-learning-proposals.md)). Standard composition owns the
-bounded staged-reflection coordinator. A host constructs an owned `learning.Input` from a
-trajectory, optional session events, typed admission signals, and bounded existing facts.
-Canonical evidence projections assign compact message/event handles (`m:<ordinal>` and
-`e:<ordinal>`) with SHA-256 digests while omitting provider reasoning blobs, binary media,
-actor identity, permission arguments, and unbounded delegation data. Structural signal
-detection is deliberately local to that input; cross-session contradiction or repetition
-must be supplied explicitly by the host. Signals admit reflection but never become
-candidates themselves.
+observer seam ([ADR 0109](adr/0109-staged-learning-proposals.md), refined by
+[ADR 0298](adr/0298-bounded-reflection-evidence-materialization.md)). Standard composition owns the
+bounded staged-reflection coordinator. Automatic admission scans the full eligible source/current
+span with bounded counters, coordinates, digests, and ranking state; it never first constructs an
+unbounded `learning.Input`. Only after admission does it invoke the shared `reflection-evidence/v1`
+selector used by explicit reflection. The selector chooses whole connected tool-turn components
+(an assistant message, all its calls, and every result), emits them in source order, and gives
+priority to mandatory verified current span/closure, explicit remember/learn intent,
+correction/failure-recovery/repeated-tool-sequence context, recent eligible user/assistant context,
+then events, with original coordinates as tie-breakers. Individually oversized components are
+omitted after existing canonical per-field projection; an unfit mandatory closure skips automatic
+work or explicitly abstains. Raw retained size is not an independent rejection condition.
+
+Each bounded selected input has an immutable aggregate manifest: protocol, exact source boundary
+`{domain: "mecatl/reflection-evidence/source/v1", session_id}`, every selected original message
+coordinate/event sequence in source order, canonical entry digests and complete component bindings, plus a domain-separated
+selected-evidence SHA-256 digest. Model handles are selected-local `m:<n>`/`e:<n>`; durable
+coordinates remain distinct. Candidate references carry aggregate digest plus selected manifest
+entry index and must match that entry's durable locator/coordinate/digest/binding; they never replace
+the manifest. Pre-version ADR-0109 records decode only as `reflection-evidence/legacy-v0`, where
+`EvidenceRef.Ordinal` keeps its historical input-local meaning; new records write v1 and readers
+dispatch by resolved version rather than new-field presence. Host signal,
+invocation mode, and bounded existing-memory comparison context are outside selected-evidence
+identity. A host constructs the bounded owned `learning.Input` only from the selection.
+
+Canonical projection retains bounded repaired user/assistant text, safe textual tool results,
+tool ID/name, admitted public textual media metadata, and eligible content-free event metadata.
+It omits provider reasoning/item IDs, binary media/data, actor identity, permission/raw tool
+arguments, credentials/secret-shaped fields, and delegation payloads/previews before copying or
+accounting. Existing fixed projection markers and per-field limits remain protocol behavior; there
+is no second truncation to force a component to fit. Structural signal detection over the selected
+input remains local; cross-session contradiction or repetition is host-supplied. Signals admit
+reflection but never become candidates themselves.
 
 `agent.EvidenceReflector` is the optional model-backed implementation. It makes one
 provider-neutral call for an admitted input, with no catalog, tools, child engine, filesystem,
@@ -1323,6 +1347,20 @@ connection cache and its once-guarded close. Composition hashes principal and pr
 components before Proposal/Skill RPCs and restores only the caller's in-process partition view, so
 raw workspace paths and identity strings do not cross this repository transport.
 
+Within that durable attempt lifecycle, bounded evidence materialization is a distinct,
+versioned pre-provider step. Automatic admission scans the full eligible source and verified
+current span incrementally without constructing an unbounded `learning.Input`; automatic and
+explicit reflection then use the same deterministic selector to produce one bounded selected
+unit. Scans run under Build-owned cancellation and active-operation accounting, with no queue or
+goroutine per materialization. The selected-evidence identity, rather than raw retained size,
+binds duplicate convergence, the immutable proposal manifest, and later exact
+re-materialization. Reservation still uses the selected provider/model token counter over the
+bounded canonical selection plus its output cap. A no-safe-selection result spends no automatic
+reservation and starts no provider, proposal, or promotion work; failures after durable automatic
+admission retain the existing ledger charge. Attempt claims, repository discovery, quota,
+restart recovery, and terminal state remain authoritative around this step.
+
+
 Review and auto share admission; only downstream staging/promotion differs. Auto promotes operator
 facts only from explicit principal-authored current-prompt evidence and project facts only at the
 exact trusted configured root. Tool/assistant/repository/history-only evidence stages for review.
@@ -1332,8 +1370,18 @@ stage/promotion controls. With no configured remote learning store, off mode has
 or recovery worker; explicit reflection uses the pre-existing synchronous lazy proposal path and creates no durable attempt. An explicit `--learning-store-url` is different: even in off mode composition dials, probes, and composes the remote repositories, publishes their learned-skill view, and may run recovery for attempts already admitted elsewhere. That opt-in does not make ordinary off-mode completions automatically admit attempts, and `/reflect` remains the explicit synchronous operation. When the durable repository is wired, authenticated gRPC `GetLearningAttempt` / `ListLearningAttempts` / `RetryLearningAttempt` / `AbandonLearningAttempt` and HTTP `GET /v1/learning/attempts[/{id}]` plus `POST /v1/learning/attempts/{id}/{retry,abandon}` expose bounded, caller-partitioned attempt state and opaque-version controls. The Service derives the private one-way owner partition before repository access; foreign and missing IDs return the same absence response, and system principals cannot bypass the owner binding. Retry and non-compensating abandon mutate only the AttemptRepository under CAS; abandon does not promise downstream rollback. Projections contain only closed lifecycle metadata, timestamps, opaque versions/cursors, and proposal/skill IDs already linked inside that partition—never source evidence, transcript/tool/provider text, principal values, paths, diagnostics, metrics, or EventLog/watch data. There is deliberately no attempt-watch endpoint, cursor, envelope, or process-local substitute: ADR-0250 session `EventLog` watch is not an attempt feed. A future attempt-change feed requires a separate decision, and its notifications can only advise clients to re-read `AttemptRepository` under caller authority. The gRPC and HTTP surfaces also expose explicit completed-session
 reflection, bounded caller-partitioned list/detail, CAS approve/reject, and compensating undo;
 capability bits keep older/unconfigured servers honest. Source-session ownership and proposal
-principal are verified, project partitions remain reviewable but project promotion is root/trust-gated, and evidence detail reports only
-digest availability rather than transcript text. `/reflections` provides bounded TUI review and
+principal are verified, project partitions remain reviewable but project promotion is root/trust-gated,
+and proposals persist one complete immutable manifest for the aggregate selection. List remains
+metadata-only. Detail and approval each owner-authorize and re-materialize that exact ordered
+manifest once (never re-ranking), validating protocol, identity boundary, original message/event
+coordinates, component bindings, entry digests, aggregate digest, and candidate citations. Missing,
+changed, or mismatched source fails precondition and never promotes. Existing evidence preview is
+not repurposed: it remains the at-most-1024-byte canonical redacted/digest-verified projection,
+never raw transcript text or a manifest dump. Materialization outcomes use closed
+`selected|abstained|skipped` dispositions and closed content-free reasons; stable harness-authored
+client text maps from them, while cancellation, close, source mismatch, provider, persistence,
+validation, queue, and timeout faults retain typed non-Internal mappings. `/reflections` provides
+bounded TUI review and
 `/reflect` explicitly submits the current completed session even when automatic mode is off
 ([ADR 0109](adr/0109-staged-learning-proposals.md)).
 Procedures initially remain visibly `deferred_unsupported`. The importable learned-skill

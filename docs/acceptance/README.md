@@ -60,6 +60,10 @@ when the code that satisfies the plan has landed.
   model-facing view of the existing resolved inventory, presenting exact
   `(provider_id, model_id)` selection handles without redesigning provider identity.
   Status: draft.
+- [Scalable reflection evidence](scalable-reflection-evidence.md) — one versioned,
+  deterministic bounded-evidence materializer for automatic and explicit reflection,
+  replacing raw retained-size rejection while preserving coordinator and promotion safety.
+  Status: draft.
 - [goccy/go-yaml migration](goccy-yaml-migration.md) — replace direct root and
   engine yaml.v3 parsing with goccy/go-yaml while preserving safe diagnostics,
   strict/lenient contracts, frontmatter parsing, and standalone engine closure.
