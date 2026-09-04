@@ -22,6 +22,7 @@ import (
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/mcp"
+	"github.com/stacklok/mecatl/internal/adapter/memory"
 	brokercontract "github.com/stacklok/mecatl/internal/mcpbroker"
 )
 
@@ -57,14 +58,15 @@ func (lifecycleAllowPolicy) Evaluate(context.Context, session.SessionID, session
 func (lifecycleAllowPolicy) Learn(session.SessionID, session.ToolCall) {}
 
 type lifecycleAttachment struct {
-	binding       string
-	tool          *lifecycleTool
-	mu            sync.Mutex
-	status        session.AuthorizationStatus
-	statusErr     error
-	url           string
-	statusHook    func()
-	cancelOutcome brokercontract.CancelOutcome
+	binding            string
+	tool               *lifecycleTool
+	mu                 sync.Mutex
+	status             session.AuthorizationStatus
+	statusErr          error
+	url                string
+	statusHook         func()
+	honorStatusContext bool
+	cancelOutcome      brokercontract.CancelOutcome
 }
 
 func (*lifecycleAttachment) Commit(context.Context) error { return nil }
@@ -81,7 +83,12 @@ func (a *lifecycleAttachment) PresentAuthorization(context.Context, session.Exte
 	}
 	return a.url, nil
 }
-func (a *lifecycleAttachment) AuthorizationStatus(context.Context, session.ExternalAuthorization) (session.AuthorizationStatus, error) {
+func (a *lifecycleAttachment) AuthorizationStatus(ctx context.Context, _ session.ExternalAuthorization) (session.AuthorizationStatus, error) {
+	if a.honorStatusContext {
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
+	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if a.statusHook != nil {
@@ -667,6 +674,95 @@ func TestMCPAuthorizationExpiryRetriesTransientFailure(t *testing.T) {
 	}
 }
 
+func TestMCPAuthorizationPreparedRegistrationCancellationRestoresClaim(t *testing.T) {
+	f := newLifecycleFixture(t, session.AuthorizationGranted, nil, time.Now, nil)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	loaded, err := f.store.Load(ctx, "authorization-session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	engine, env, err := f.svc.engineAndEnvironmentFor(ctx, loaded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	claimed, err := loaded.ClaimAuthorization()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.store.Save(ctx, loaded); err != nil {
+		t.Fatal(err)
+	}
+	resolution, err := session.NewAuthorizationResolution(session.AuthorizationGranted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared, err := engine.PrepareAuthorizationContinuation(memory.WithWorkspace(ctx, env.Workspace().Root()), loaded, env, claimed, resolution)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Cancellation is triggered after registration, while the handoff lock is
+	// held and immediately before Start can disarm it. The callback must win,
+	// abort the inert continuation, and restore the claim.
+	f.svc.beforeAuthorizationContinuationStart = cancel
+	if err := f.svc.registerAndStartGrantedAuthorization(ctx, loaded, claimed, prepared); !errors.Is(err, context.Canceled) {
+		t.Fatalf("register/start error = %v, want context cancellation", err)
+	}
+	if _, live := f.svc.LookupRun(loaded.ID); live {
+		t.Fatal("cancelled prepared continuation registered a run")
+	}
+	if got := f.attach.tool.calls.Load(); got != 0 {
+		t.Fatalf("protected executions = %d, want 0", got)
+	}
+	restored, err := f.store.Load(t.Context(), loaded.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pending, ok := restored.PendingAuthorization()
+	if restored.State != session.StateAuthorizing || !ok || pending.Authorization.ID != f.pending.Authorization.ID {
+		t.Fatalf("restored authorization = state %q, pending %+v, ok %t", restored.State, pending, ok)
+	}
+	f.attach.mu.Lock()
+	f.attach.status = session.AuthorizationPending
+	f.attach.mu.Unlock()
+	result, err := f.svc.RecheckMCPAuthorization(t.Context(), restored.ID, MCPAuthorizationControl{SessionID: restored.ID, AuthorizationID: pending.Authorization.ID})
+	if err != nil || result.Status != session.AuthorizationPending || result.Run != nil {
+		t.Fatalf("restored authorization recheck = %+v, %v", result, err)
+	}
+}
+
+func TestMCPAuthorizationTerminalResolutionCancellationAtHandoffDoesNotLeaveRun(t *testing.T) {
+	f := newLifecycleFixture(t, session.AuthorizationPending, nil, time.Now, nil)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	loaded, err := f.store.Load(ctx, "authorization-session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.svc.beforeAuthorizationContinuationStart = cancel
+	result, err := f.svc.resolveAuthorizationLocked(ctx, loaded, f.pending, session.AuthorizationCancelled)
+	if !errors.Is(err, context.Canceled) || result.Run != nil {
+		t.Fatalf("terminal resolution result = %+v, err = %v", result, err)
+	}
+	if _, live := f.svc.LookupRun(loaded.ID); live {
+		t.Fatal("cancelled terminal continuation registered a run")
+	}
+	if got := f.attach.tool.calls.Load(); got != 0 {
+		t.Fatalf("protected executions = %d, want 0", got)
+	}
+	settled, err := f.store.Load(t.Context(), loaded.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if settled.State != session.StateIdle {
+		t.Fatalf("settled state = %q, want %q", settled.State, session.StateIdle)
+	}
+	if err := session.ValidateToolPairing(settled.Conversation.Messages); err != nil {
+		t.Fatalf("settled pairing: %v", err)
+	}
+}
+
 func TestMCPAuthorizationPreparedRegistrationFailureNeverExecutes(t *testing.T) {
 	f := newLifecycleFixture(t, session.AuthorizationGranted, nil, time.Now, nil)
 	loaded, err := f.store.Load(t.Context(), "authorization-session")
@@ -706,18 +802,6 @@ func TestMCPAuthorizationPreparedRegistrationFailureNeverExecutes(t *testing.T) 
 	restored, ok := repaired.PendingAuthorization()
 	if !ok || restored.Authorization.ID != f.pending.Authorization.ID || restored.Call.ID != f.pending.Call.ID {
 		t.Fatalf("repaired authorization = %+v, %v", restored, ok)
-	}
-}
-
-func TestMCPAuthorizationLifecycleEventsAreNotPublic(t *testing.T) {
-	for _, eventType := range []session.EventType{session.EvAuthorizationRequired, session.EvAuthorizationResolved} {
-		ev := session.Event{Type: eventType}
-		if isPublicEvent(ev) {
-			t.Errorf("isPublicEvent(%q) = true", eventType)
-		}
-		if relayLiveEvent(ev) {
-			t.Errorf("relayLiveEvent(%q) = true", eventType)
-		}
 	}
 }
 

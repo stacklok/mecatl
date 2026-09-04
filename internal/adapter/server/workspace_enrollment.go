@@ -134,7 +134,7 @@ func (s *Service) settleUnavailableWorkspaceEnrollment(ctx context.Context, sess
 	if err := sess.AbortWorkspaceEnrollment(pending.ID); err != nil {
 		return WorkspaceEnrollmentProjection{}, fmt.Errorf("%w: clear unavailable workspace enrollment", ErrFailedPrecondition)
 	}
-	if err := s.cfg.Store.Save(ctx, sess); err != nil {
+	if err := s.saveSession(ctx, sess); err != nil {
 		return WorkspaceEnrollmentProjection{}, fmt.Errorf("%w: persist unavailable workspace enrollment", ErrInternal)
 	}
 	return WorkspaceEnrollmentProjection{Ref: enrollmentRef(pending), Status: brokercontract.WorkspaceEnrollmentFailed}, nil

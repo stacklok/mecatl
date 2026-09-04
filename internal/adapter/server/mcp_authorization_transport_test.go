@@ -284,6 +284,32 @@ func TestMCPAuthorizationHTTPControlRejectsNonFlusherBeforeContinuation(t *testi
 	}
 }
 
+func TestMCPAuthorizationHTTPControlCancellationStopsConstruction(t *testing.T) {
+	f, ownerCtx, _ := ownedAuthorizationFixture(t, session.AuthorizationGranted)
+	requestCtx, cancel := context.WithCancel(ownerCtx)
+	f.attach.statusHook = cancel
+
+	path := "/v1/sessions/authorization-session/mcp-authorizations/" + f.pending.Authorization.ID + "/recheck"
+	response := httptest.NewRecorder()
+	NewHTTPHandler(f.svc).ServeHTTP(response, httptest.NewRequest(http.MethodPost, path, nil).WithContext(requestCtx))
+	if response.Code == http.StatusOK {
+		t.Fatalf("status = %d, want cancellation failure", response.Code)
+	}
+	if _, live := f.svc.LookupRun("authorization-session"); live {
+		t.Fatal("cancelled control request registered a continuation run")
+	}
+	if got := f.attach.tool.calls.Load(); got != 0 {
+		t.Fatalf("protected executions = %d, want 0", got)
+	}
+	sess, err := f.svc.GetSession(ownerCtx, "authorization-session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sess.State != session.StateAuthorizing {
+		t.Fatalf("state = %q, want authorizing", sess.State)
+	}
+}
+
 func TestMCPAuthorizationHTTPPresentationAndSSERecheck(t *testing.T) {
 	f, ownerCtx, foreignCtx := ownedAuthorizationFixture(t, session.AuthorizationPending)
 	h := NewHTTPHandler(f.svc)

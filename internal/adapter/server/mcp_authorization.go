@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/stacklok/mecatl/engine/agent"
@@ -194,6 +195,9 @@ func mcpAuthorizationResult(pending session.PendingAuthorization, status session
 }
 
 func (s *Service) applyAuthorizationStatusLocked(ctx context.Context, sess *session.Session, pending session.PendingAuthorization, status session.AuthorizationStatus) (MCPAuthorizationResult, error) {
+	if err := ctx.Err(); err != nil {
+		return MCPAuthorizationResult{}, err
+	}
 	switch status {
 	case session.AuthorizationPending:
 		return mcpAuthorizationResult(pending, status, nil), nil
@@ -306,23 +310,70 @@ func (s *Service) continueGrantedAuthorizationLocked(ctx context.Context, sess *
 		}
 		return MCPAuthorizationResult{}, fmt.Errorf("%w: prepare granted authorization continuation", ErrInternal)
 	}
-	if !s.registerPrepared(sess.ID, prepared.Run(), sess) {
-		if transition := prepared.Abort(); transition != agent.PreparedRunAborted {
-			return MCPAuthorizationResult{}, fmt.Errorf("%w: abort unregistered authorization continuation: %s", ErrInternal, transition)
-		}
-		if err := s.restoreAuthorizationClaim(ctx, sess, claimed); err != nil {
-			return MCPAuthorizationResult{}, fmt.Errorf("%w: restore unregistered authorization claim: %v", ErrInternal, err)
-		}
-		return MCPAuthorizationResult{}, ErrNoActiveRun
+	if err := s.registerAndStartGrantedAuthorization(ctx, sess, claimed, prepared); err != nil {
+		return MCPAuthorizationResult{}, err
 	}
-	s.stopAuthorizationExpiry(sess.ID)
-	run, transition := prepared.Start()
+	return mcpAuthorizationResult(claimed, session.AuthorizationGranted, prepared.Run()), nil
+}
+
+// registerAndStartGrantedAuthorization keeps a prepared continuation inert until
+// it is registered. Stopping the cancellation callback is the irreversible
+// handoff: cancellation that reaches that point first aborts and restores the
+// claim; cancellation after it loses to the registered continuation.
+func (s *Service) registerAndStartGrantedAuthorization(ctx context.Context, sess *session.Session, claimed session.PendingAuthorization, prepared *agent.PreparedRun) error {
+	var handoff sync.Mutex
+	abortOnCancel := context.AfterFunc(ctx, func() {
+		handoff.Lock()
+		prepared.Abort()
+		handoff.Unlock()
+	})
+	waitForCancellation := func() {
+		abortOnCancel()
+		handoff.Unlock()
+		handoff.Lock()
+		handoff.Unlock()
+		prepared.Abort()
+	}
+
+	handoff.Lock()
+	if err := ctx.Err(); err != nil {
+		waitForCancellation()
+		if restoreErr := s.restoreAuthorizationClaim(context.WithoutCancel(ctx), sess, claimed); restoreErr != nil {
+			return fmt.Errorf("%w: restore cancelled authorization claim: %v", ErrInternal, restoreErr)
+		}
+		return err
+	}
+	if !s.registerPrepared(sess.ID, prepared.Run(), sess) {
+		waitForCancellation()
+		if err := s.restoreAuthorizationClaim(context.WithoutCancel(ctx), sess, claimed); err != nil {
+			return fmt.Errorf("%w: restore unregistered authorization claim: %v", ErrInternal, err)
+		}
+		return ErrNoActiveRun
+	}
+	if hook := s.beforeAuthorizationContinuationStart; hook != nil {
+		hook()
+	}
+	if !abortOnCancel() {
+		// The cancellation callback is either running or has run. Release the
+		// handoff lock and reacquire it to wait for its inert abort before cleanup.
+		handoff.Unlock()
+		handoff.Lock()
+		handoff.Unlock()
+		s.deregister(sess.ID, prepared.Run())
+		if restoreErr := s.restoreAuthorizationClaim(context.WithoutCancel(ctx), sess, claimed); restoreErr != nil {
+			return fmt.Errorf("%w: restore cancelled authorization claim: %v", ErrInternal, restoreErr)
+		}
+		return ctx.Err()
+	}
+	_, transition := prepared.Start()
+	handoff.Unlock()
 	if transition != agent.PreparedRunStarted {
 		s.deregister(sess.ID, prepared.Run())
 		s.repairAuthorizationRegistration(ctx, sess)
-		return MCPAuthorizationResult{}, fmt.Errorf("%w: start authorization continuation: %s", ErrInternal, transition)
+		return fmt.Errorf("%w: start authorization continuation: %s", ErrInternal, transition)
 	}
-	return mcpAuthorizationResult(claimed, session.AuthorizationGranted, run), nil
+	s.stopAuthorizationExpiry(sess.ID)
+	return nil
 }
 
 func (s *Service) resolveAuthorizationLocked(ctx context.Context, sess *session.Session, pending session.PendingAuthorization, status session.AuthorizationStatus) (MCPAuthorizationResult, error) {
@@ -363,20 +414,58 @@ func (s *Service) resolveAuthorizationLocked(ctx context.Context, sess *session.
 	if err != nil {
 		return MCPAuthorizationResult{}, fmt.Errorf("%w: prepare terminal authorization continuation", ErrInternal)
 	}
-	if !s.registerPrepared(sess.ID, prepared.Run(), sess) {
-		if transition := prepared.Abort(); transition != agent.PreparedRunAborted {
-			return MCPAuthorizationResult{}, fmt.Errorf("%w: abort unregistered authorization resolution: %s", ErrInternal, transition)
-		}
-		s.repairAuthorizationRegistration(ctx, sess)
-		return MCPAuthorizationResult{}, ErrNoActiveRun
+	if err := s.registerAndStartAuthorizationResolution(ctx, sess, prepared); err != nil {
+		return MCPAuthorizationResult{}, err
 	}
-	run, transition := prepared.Start()
+	return mcpAuthorizationResult(pending, status, prepared.Run()), nil
+}
+
+func (s *Service) registerAndStartAuthorizationResolution(ctx context.Context, sess *session.Session, prepared *agent.PreparedRun) error {
+	var handoff sync.Mutex
+	abortOnCancel := context.AfterFunc(ctx, func() {
+		handoff.Lock()
+		prepared.Abort()
+		handoff.Unlock()
+	})
+	waitForCancellation := func() {
+		abortOnCancel()
+		handoff.Unlock()
+		handoff.Lock()
+		handoff.Unlock()
+		prepared.Abort()
+	}
+
+	handoff.Lock()
+	if err := ctx.Err(); err != nil {
+		waitForCancellation()
+		return err
+	}
+	if !s.registerPrepared(sess.ID, prepared.Run(), sess) {
+		waitForCancellation()
+		s.repairAuthorizationRegistration(ctx, sess)
+		return ErrNoActiveRun
+	}
+	if hook := s.beforeAuthorizationContinuationStart; hook != nil {
+		hook()
+	}
+	if !abortOnCancel() {
+		// See the granted path: this waits for the abort that won the handoff
+		// before removing the relay-visible run.
+		handoff.Unlock()
+		handoff.Lock()
+		handoff.Unlock()
+		s.deregister(sess.ID, prepared.Run())
+		s.repairAuthorizationRegistration(ctx, sess)
+		return ctx.Err()
+	}
+	_, transition := prepared.Start()
+	handoff.Unlock()
 	if transition != agent.PreparedRunStarted {
 		s.deregister(sess.ID, prepared.Run())
 		s.repairAuthorizationRegistration(ctx, sess)
-		return MCPAuthorizationResult{}, fmt.Errorf("%w: start authorization resolution: %s", ErrInternal, transition)
+		return fmt.Errorf("%w: start authorization resolution: %s", ErrInternal, transition)
 	}
-	return mcpAuthorizationResult(pending, status, run), nil
+	return nil
 }
 
 // appendAuthorizationResolution is the no-continuation fallback for an already

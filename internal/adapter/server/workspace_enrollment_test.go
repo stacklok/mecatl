@@ -96,11 +96,11 @@ func TestWorkspaceEnrollmentStateLossClearsPendingGate(t *testing.T) {
 	broker := &enrollmentBroker{Service: runtime}
 	store := memstore.New()
 	svc, err := NewService(Config{
-		Engine:     brokerEngineResult().Engine,
-		Store:      store,
-		Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
-		NewID:      func() session.SessionID { return "lost-enrollment-session" },
-		MCPBroker:  broker,
+		Engine:            brokerEngineResult().Engine,
+		Store:             store,
+		PlacementProvider: brokerPlacementProvider{}, PlacementScope: "test",
+		NewID:     func() session.SessionID { return "lost-enrollment-session" },
+		MCPBroker: broker,
 		RootAuthority: func(session.SessionKind) session.Authority {
 			return session.Authority{CapabilitySet: governance.CapabilitySet{Tools: []string{"mcp__calendar__list"}}, Provenance: "test"}
 		},
@@ -112,7 +112,7 @@ func TestWorkspaceEnrollmentStateLossClearsPendingGate(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer svc.Close()
-	created, err := svc.CreateSession(t.Context(), "/workspace", session.ModeDefault, session.Limits{})
+	created, err := svc.CreateSession(t.Context(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -910,6 +910,10 @@ type Service struct {
 	brokerMu          keyedMutex
 	// authorizationExpiry is Service-owned and guarded by mu.
 	authorizationExpiry map[session.SessionID]*authorizationExpiry
+	// beforeAuthorizationContinuationStart is an inert test synchronization seam.
+	// It is configured before serving and runs while the continuation handoff lock
+	// is held, immediately before cancellation is disarmed.
+	beforeAuthorizationContinuationStart func()
 	closed              bool
 	shutdownComplete    bool
 	closeMu             sync.Mutex
@@ -5060,7 +5064,11 @@ func (s *Service) buildAndRegisterSessionEngineWithBrokerTools(ctx context.Conte
 		}
 		res, err = s.cfg.DebugSessionEngine(ctx, sel, profile, mode, sess.Relationship.DebugTargetID, sess.DebugTargetFingerprint, target.Owner, sess.DebugMCPServers, sess.DebugMCPTools)
 	} else if useExactTools {
-		res, err = s.callSessionEngine(ctx, sel, nil, profile, sess.Workspace, mode, append([]tool.Tool(nil), exactTools...))
+		workspace, workspaceErr := s.privateWorkspace(ctx, sess)
+		if workspaceErr != nil {
+			return nil, workspaceErr
+		}
+		res, err = s.callSessionEngine(ctx, sel, nil, profile, workspace, mode, append([]tool.Tool(nil), exactTools...))
 	} else {
 		broker, err = s.openBrokerAttachment(ctx, id, sess.ExternalBinding, true)
 		if err != nil {
