@@ -461,8 +461,9 @@ func agentsTabBar(th theme.Theme, tab agentsTab) string {
 func renderTeamsTab(th theme.Theme, st teamState, b *block, hk helpKeys, width, height int) string {
 	if b == nil {
 		muted := th.Style("muted")
-		return muted.Render("no team has run this session") + "\n\n" +
-			muted.Render(agentsEmptyHint(hk))
+		bodyWidth := focusCardTextWidth(width)
+		return renderDynamicCardChromeLine(muted, "", "no team has run this session", bodyWidth) + "\n\n" +
+			renderDynamicCardChromeLine(muted, "", agentsEmptyHint(hk), bodyWidth)
 	}
 	switch st.view {
 	case teamFocus:
@@ -504,8 +505,8 @@ func renderSubagentRoster(th theme.Theme, st subagentState, fleet []subagentLane
 	out.WriteString("\n\n")
 
 	if len(fleet) == 0 {
-		out.WriteString(muted.Render("(no subagents)"))
-		out.WriteString("\n\n" + muted.Render(agentsEmptyHint(hk)))
+		out.WriteString(renderDynamicCardChromeLine(muted, "", "(no subagents)", bodyWidth))
+		out.WriteString("\n\n" + renderDynamicCardChromeLine(muted, "", agentsEmptyHint(hk), bodyWidth))
 		return out.String()
 	}
 
@@ -688,9 +689,10 @@ func renderSubagentFocus(th theme.Theme, fleet []subagentLane, child string, hk 
 	muted := th.Style("muted")
 	ln := findFleetLane(fleet, child)
 	if ln == nil {
-		return th.Style("askTitle").Render("subagent") + "\n\n" +
-			muted.Render("subagent #"+shortChildID(child)+" is no longer in the fleet") + "\n\n" +
-			muted.Render(focusBackHint(hk))
+		bodyWidth := focusCardTextWidth(width)
+		return renderDynamicCardChromeLine(th.Style("askTitle"), "", "subagent", bodyWidth) + "\n\n" +
+			renderDynamicCardChromeLine(muted, "", "subagent #"+shortChildID(child)+" is no longer in the fleet", bodyWidth) + "\n\n" +
+			renderDynamicCardChromeLine(muted, "", focusBackHint(hk), bodyWidth)
 	}
 
 	var out strings.Builder
@@ -738,7 +740,7 @@ func renderSubagentFocus(th theme.Theme, fleet []subagentLane, child string, hk 
 	if !ln.done {
 		hint = hk.cancelChild + " cancel · " + focusBackHint(hk)
 	}
-	out.WriteString("\n\n" + muted.Render(hint))
+	out.WriteString("\n\n" + renderDynamicCardChromeLine(muted, "", hint, budget))
 	return out.String()
 }
 
@@ -795,8 +797,8 @@ func renderParallelRoster(th theme.Theme, st parallelState, groups []parallelGro
 	out.WriteString("\n\n")
 
 	if len(groups) == 0 {
-		out.WriteString(muted.Render("(no parallel runs)"))
-		out.WriteString("\n\n" + muted.Render(agentsEmptyHint(hk)))
+		out.WriteString(renderDynamicCardChromeLine(muted, "", "(no parallel runs)", bodyWidth))
+		out.WriteString("\n\n" + renderDynamicCardChromeLine(muted, "", agentsEmptyHint(hk), bodyWidth))
 		return out.String()
 	}
 
@@ -821,7 +823,7 @@ func renderParallelRoster(th theme.Theme, st parallelState, groups []parallelGro
 	// (issue #457); with defaults the hint is byte-identical to the historical literal.
 	// The jump pair uses the FULL joined keys ("home/g·end/G") to match the roster
 	// handler's JumpTop/JumpEnd bindings, which bind both home/g and end/G.
-	out.WriteString("\n" + renderDelegationRows(muted, "", hk.navUp+"/"+hk.navDown+" select · "+hk.scroll+" page · "+hk.jumpTopFull+"·"+hk.jumpEndFull+" first/last · "+hk.choose+" focus · "+agentsEmptyHint(hk), bodyWidth))
+	out.WriteString("\n" + renderDynamicCardChromeLine(muted, "", hk.navUp+"/"+hk.navDown+" select · "+hk.scroll+" page · "+hk.jumpTopFull+"·"+hk.jumpEndFull+" first/last · "+hk.choose+" focus · "+agentsEmptyHint(hk), bodyWidth))
 	return out.String()
 }
 
@@ -892,9 +894,10 @@ func renderParallelGroupFocus(th theme.Theme, st parallelState, groups []paralle
 	muted := th.Style("muted")
 	g := findParallelGroup(groups, st.group)
 	if g == nil {
-		return th.Style("askTitle").Render("parallel") + "\n\n" +
-			muted.Render("this parallel run is no longer tracked") + "\n\n" +
-			muted.Render(focusBackHint(hk))
+		bodyWidth := focusCardTextWidth(width)
+		return renderDynamicCardChromeLine(th.Style("askTitle"), "", "parallel", bodyWidth) + "\n\n" +
+			renderDynamicCardChromeLine(muted, "", "this parallel run is no longer tracked", bodyWidth) + "\n\n" +
+			renderDynamicCardChromeLine(muted, "", focusBackHint(hk), bodyWidth)
 	}
 
 	var out strings.Builder
@@ -949,7 +952,7 @@ func renderParallelGroupFocus(th theme.Theme, st parallelState, groups []paralle
 	if len(ordered) == 0 {
 		hint = focusBackHint(hk)
 	}
-	out.WriteString("\n\n" + muted.Render(hint))
+	out.WriteString("\n\n" + renderDynamicCardChromeLine(muted, "", hint, budget))
 	return out.String()
 }
 

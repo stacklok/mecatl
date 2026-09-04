@@ -377,7 +377,7 @@ func renderTeamRoster(th theme.Theme, st teamState, b *block, hk helpKeys, heigh
 	// (centerCard does not wrap). Same discipline as the Subagents-tab hint. Every
 	// chord reads the LIVE keyMap markings (hk) so an override propagates (issue
 	// #457); with defaults the hint is byte-identical to the historical literal.
-	out.WriteString("\n" + renderDelegationRows(muted, "", hk.navUp+"/"+hk.navDown+" select · "+hk.choose+" focus · "+hk.cancelChild+" cancel · "+hk.tasks+" tasks · "+hk.findings+" findings · "+agentsEmptyHint(hk), bodyWidth))
+	out.WriteString("\n" + renderDynamicCardChromeLine(muted, "", hk.navUp+"/"+hk.navDown+" select · "+hk.choose+" focus · "+hk.cancelChild+" cancel · "+hk.tasks+" tasks · "+hk.findings+" findings · "+agentsEmptyHint(hk), bodyWidth))
 	return out.String()
 }
 
@@ -446,9 +446,10 @@ func renderTeamFocus(th theme.Theme, b *block, member string, hk helpKeys, width
 	muted := th.Style("muted")
 	ln := teamFindLane(b, member)
 	if ln == nil {
-		return th.Style("askTitle").Render("agents") + "\n\n" +
-			muted.Render("member "+sanitizeTerminal(member)+" is no longer in the roster") + "\n\n" +
-			muted.Render(focusBackHint(hk))
+		bodyWidth := focusCardTextWidth(width)
+		return renderDynamicCardChromeLine(th.Style("askTitle"), "", "agents", bodyWidth) + "\n\n" +
+			renderDynamicCardChromeLine(muted, "", "member "+sanitizeTerminal(member)+" is no longer in the roster", bodyWidth) + "\n\n" +
+			renderDynamicCardChromeLine(muted, "", focusBackHint(hk), bodyWidth)
 	}
 
 	budget := focusCardTextWidth(width)
@@ -642,8 +643,8 @@ func renderTeamTasks(th theme.Theme, b *block, hk helpKeys, height int, widths .
 	out.WriteString("\n\n")
 
 	if len(b.teamTasks) == 0 {
-		out.WriteString(renderDelegationRows(muted, "", "(no tasks)", bodyWidth))
-		out.WriteString("\n\n" + renderDelegationRows(muted, "", teamSubViewHint(hk, hk.tasks), bodyWidth))
+		out.WriteString(renderDynamicCardChromeLine(muted, "", "(no tasks)", bodyWidth))
+		out.WriteString("\n\n" + renderDynamicCardChromeLine(muted, "", teamSubViewHint(hk, hk.tasks), bodyWidth))
 		return out.String()
 	}
 
@@ -663,7 +664,7 @@ func renderTeamTasks(th theme.Theme, b *block, hk helpKeys, height int, widths .
 		out.WriteString(renderDelegationRows(muted, "  ", fmt.Sprintf("· +%d more", below), bodyWidth) + "\n")
 	}
 
-	out.WriteString("\n" + renderDelegationRows(muted, "", teamSubViewHint(hk, hk.tasks), bodyWidth))
+	out.WriteString("\n" + renderDynamicCardChromeLine(muted, "", teamSubViewHint(hk, hk.tasks), bodyWidth))
 	return out.String()
 }
 
@@ -766,8 +767,8 @@ func renderTeamFindings(th theme.Theme, b *block, hk helpKeys, height int, width
 	out.WriteString("\n\n")
 
 	if len(b.teamFindings) == 0 {
-		out.WriteString(renderDelegationRows(muted, "", "(no findings)", bodyWidth))
-		out.WriteString("\n\n" + renderDelegationRows(muted, "", teamSubViewHint(hk, hk.findings), bodyWidth))
+		out.WriteString(renderDynamicCardChromeLine(muted, "", "(no findings)", bodyWidth))
+		out.WriteString("\n\n" + renderDynamicCardChromeLine(muted, "", teamSubViewHint(hk, hk.findings), bodyWidth))
 		return out.String()
 	}
 
@@ -782,7 +783,7 @@ func renderTeamFindings(th theme.Theme, b *block, hk helpKeys, height int, width
 		out.WriteString(renderDelegationRows(muted, "  ", fmt.Sprintf("· +%d more", below), bodyWidth) + "\n")
 	}
 
-	out.WriteString("\n" + renderDelegationRows(muted, "", teamSubViewHint(hk, hk.findings), bodyWidth))
+	out.WriteString("\n" + renderDynamicCardChromeLine(muted, "", teamSubViewHint(hk, hk.findings), bodyWidth))
 	return out.String()
 }
 
