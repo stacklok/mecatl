@@ -2,7 +2,7 @@
 id: 07-api-and-documentation-reconciliation
 title: Engine API and selected-evidence documentation reconciliation
 blocked_by: [02-automatic-materialization-admission, 03-explicit-materialization-lifecycle, 04-selected-evidence-coordinator, 05-proposal-manifest-verification, 06-reflection-client-projection]
-status: in-progress
+status: done
 attempt: 1
 branch: plan-scalable-reflection-evidence/07-api-and-documentation-reconciliation-attempt-1
 worktree: .scratch/worker-scalable-reflection-evidence-07-api-and-documentation-reconciliation-attempt-1
