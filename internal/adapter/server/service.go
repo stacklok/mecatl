@@ -2843,9 +2843,7 @@ func (s *Service) Close() {
 	// the full shutdown sequence.
 	s.shutdownCancel()
 
-	if !s.prepareAuthorizationClose() {
-		return
-	}
+	s.prepareAuthorizationClose()
 
 	// Cancel every in-flight run so an LLM/MCP call blocked on its context
 	// unwinds. Snapshot under s.mu, then cancel outside to avoid holding the

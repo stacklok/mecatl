@@ -744,7 +744,12 @@ func (s *Service) interruptRestoredAuthorizationLocked(ctx context.Context, sess
 	return sess, true, nil
 }
 
-func (s *Service) prepareAuthorizationClose() bool {
+// prepareAuthorizationClose settles every session's parked external
+// authorization before shutdown proceeds. A per-session settlement failure is
+// reported and skipped: it must never gate the unconditional mandatory
+// cleanup (run cancellation, scheduler stop, engine close, lease release)
+// that the rest of Close performs for every OTHER session.
+func (s *Service) prepareAuthorizationClose() {
 	s.mu.Lock()
 	s.closed = true
 	ids := make(map[session.SessionID]struct{})
@@ -759,20 +764,16 @@ func (s *Service) prepareAuthorizationClose() bool {
 	}
 	s.mu.Unlock()
 
-	settled := true
 	for id := range ids {
 		unlock := s.runEntryMu.lock(id)
 		if err := s.reaffirmLease(context.Background(), id); err != nil {
 			s.cfg.Diagnostics.Log(context.Background(), port.LevelWarn, "service shutdown authorization settlement deferred",
 				"session", string(id), "err", err.Error())
-			settled = false
 		} else if err := s.settleAuthorizationLocked(context.Background(), id); err != nil {
-			settled = false
+			s.cfg.Diagnostics.Log(context.Background(), port.LevelWarn, "service shutdown authorization settlement failed",
+				"session", string(id), "err", err.Error())
 		}
 		unlock()
-	}
-	if !settled {
-		return false
 	}
 	s.mu.Lock()
 	expiries := s.authorizationExpiry
@@ -783,12 +784,13 @@ func (s *Service) prepareAuthorizationClose() bool {
 			entry.timer.Stop()
 		}
 	}
-	return true
 }
 
 // settleAuthorizationLocked pairs a parked call during close/shutdown. The
-// caller holds runEntryMu and has acquired the session lease. Any failure keeps
-// the local attachment and lease available for a later Close retry.
+// caller holds runEntryMu and has acquired the session lease. A failure is
+// reported and abandoned by the caller (prepareAuthorizationClose): shutdown
+// is a one-shot, once-only sequence, so there is no later Close retry to keep
+// the local attachment and lease available for.
 func (s *Service) settleAuthorizationLocked(ctx context.Context, id session.SessionID) error {
 	sess, err := s.cfg.Store.Load(ctx, id)
 	if err != nil {

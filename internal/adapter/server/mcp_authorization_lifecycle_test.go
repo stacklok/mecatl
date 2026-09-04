@@ -1141,7 +1141,15 @@ func TestMCPAuthorizationCloseSessionSaveFailureRetainsAuthorityForRetry(t *test
 	}
 }
 
-func TestMCPAuthorizationServiceCloseSaveFailureIsRetryable(t *testing.T) {
+// TestMCPAuthorizationServiceCloseCompletesDespiteSaveFailure pins the P1-7
+// fix: a session whose settlement save fails is reported and left untouched,
+// but Close() still runs to completion (shutdownComplete set) in that SAME
+// call — unlike the old "retryable" contract, a second Close() is a no-op and
+// does NOT get a second chance to settle the session (shutdown is a one-shot,
+// once-only sequence; a session stuck in StateAuthorizing after shutdown must
+// be repaired through the ordinary run-entry recovery paths, not by calling
+// Close again).
+func TestMCPAuthorizationServiceCloseCompletesDespiteSaveFailure(t *testing.T) {
 	f := newLifecycleFixture(t, session.AuthorizationPending, nil, time.Now, nil)
 	loaded, err := f.store.Load(t.Context(), "authorization-session")
 	if err != nil {
@@ -1165,22 +1173,26 @@ func TestMCPAuthorizationServiceCloseSaveFailureIsRetryable(t *testing.T) {
 	}
 	f.svc.mu.Lock()
 	complete := f.svc.shutdownComplete
-	retained := f.svc.brokerAttachments[loaded.ID] != nil
 	f.svc.mu.Unlock()
-	if persisted.State != session.StateAuthorizing || complete || !retained {
-		t.Fatalf("first close: state=%q complete=%t retained=%t", persisted.State, complete, retained)
+	if persisted.State != session.StateAuthorizing {
+		t.Fatalf("state after failed settlement = %q, want unchanged StateAuthorizing", persisted.State)
+	}
+	if !complete {
+		t.Fatal("one session's settlement failure aborted Close instead of completing it")
+	}
+	if !diagnostics.contains("persist external authorization settlement failed") {
+		t.Fatalf("missing settlement-failure diagnostic: %v", diagnostics.messages)
 	}
 
+	// A second Close() is a no-op (shutdownComplete already true) — it must
+	// NOT get a second chance to settle the session.
 	f.svc.Close()
 	persisted, err = f.store.Load(t.Context(), loaded.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.svc.mu.Lock()
-	complete = f.svc.shutdownComplete
-	f.svc.mu.Unlock()
-	if persisted.State != session.StateRunning || !complete {
-		t.Fatalf("retry close: state=%q complete=%t", persisted.State, complete)
+	if persisted.State != session.StateAuthorizing {
+		t.Fatalf("state after second Close = %q, want unchanged StateAuthorizing (Close is not retryable)", persisted.State)
 	}
 }
 
