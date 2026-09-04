@@ -89,7 +89,7 @@ are opt-in: configure a compatible explicit `models.slots.title` binding (see
 without delaying or changing the chat. On startup it also recovers the bounded
 pre-submission gap for completed pending sessions that have source prompts but no
 attempt; a crash-unknown claimed attempt is never retried. Its durable
-`session_title` token usage is separate from normal session/run usage. Live title
+`session_title` token usage is separate from normal session/run usage. Operators can diagnose the server-owned lifecycle through session-correlated diagnostics: submission, admission/eligibility, claim, selected provider/model, completion outcome, token counts, and conditional-commit loss. Failed calls report only stable classifications (`deadline`, `cancelled`, `provider`, `invalid-output`, or `protocol`) and a stage; diagnostics never include source prompts, provider error text, credentials, or model output. Live title
 updates are best-effort, so reconnect and session reopen re-fetch the authoritative
 stored title.
 

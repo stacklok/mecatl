@@ -163,7 +163,12 @@ Generated input is fenced untrusted data and output is strict, valid UTF-8,
 whitespace-normalized to one line, and capped at 80 runes. A physical call records
 its input/output tokens only in `TokenUsage[session_title]`, attributed to the
 composition-selected opaque provider/model. It never changes `Session.Usage`, a
-main-run budget, `EvResult` usage, or the conversation. See
+main-run budget, `EvResult` usage, or the conversation. The Service emits
+session-correlated, diagnostics-only lifecycle records for submission, admission,
+claim, generator selection/completion, and conditional commit loss. Completion
+records only outcome, provider/model attribution, token counts, and (on failure) a
+stable class plus stage; it never records prompt sources, provider error text,
+credentials, or model output. See
 [ADR 0290](../adr/0290-session-title-generation-and-auxiliary-usage.md).
 
 ### Event taxonomy (`engine/session/event.go`)

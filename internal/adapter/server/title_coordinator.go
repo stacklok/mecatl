@@ -60,17 +60,26 @@ func newTitleCoordinator(svc *Service, generator SessionTitleGenerator) *titleCo
 }
 
 func (c *titleCoordinator) Submit(id session.SessionID) {
+	c.diagnostics(id).Log(context.Background(), port.LevelDebug, "session title generation submitted")
 	if _, loaded := c.queued.LoadOrStore(id, struct{}{}); loaded {
+		c.diagnostics(id).Log(context.Background(), port.LevelDebug, "session title generation submission skipped", "reason", "already_queued")
 		return
 	}
 	select {
 	case <-c.ctx.Done():
 		c.queued.Delete(id)
+		c.diagnostics(id).Log(context.Background(), port.LevelDebug, "session title generation submission skipped", "reason", "coordinator_stopped")
 	case c.queue <- id:
+		c.diagnostics(id).Log(context.Background(), port.LevelDebug, "session title generation admitted")
 	default:
 		// A full queue changes no durable state. The next eligible exchange can retry.
 		c.queued.Delete(id)
+		c.diagnostics(id).Log(context.Background(), port.LevelWarn, "session title generation submission skipped", "reason", "queue_full")
 	}
+}
+
+func (c *titleCoordinator) diagnostics(id session.SessionID) port.Diagnostics {
+	return c.svc.cfg.Diagnostics.With("session", string(id), "operation", "session_title")
 }
 
 func (c *titleCoordinator) Close() {
@@ -79,9 +88,11 @@ func (c *titleCoordinator) Close() {
 }
 
 func (s *Service) submitTitleGeneration(id session.SessionID) {
-	if s.titleCoordinator != nil {
-		s.titleCoordinator.Submit(id)
+	if s.titleCoordinator == nil {
+		s.cfg.Diagnostics.With("session", string(id), "operation", "session_title").Log(context.Background(), port.LevelDebug, "session title generation submission skipped", "reason", "no_coordinator")
+		return
 	}
+	s.titleCoordinator.Submit(id)
 }
 
 // reconcilePendingTitles admits a bounded set of completed snapshots stranded
@@ -100,7 +111,7 @@ func (s *Service) reconcilePendingTitles() {
 	defer cancel()
 	page, err := pager.PageSessionMetadata(ctx, port.SessionMetadataPageRequest{Limit: titleReconcileLimit})
 	if err != nil {
-		s.cfg.Diagnostics.Log(ctx, port.LevelWarn, "session title reconciliation failed", "error", err)
+		s.cfg.Diagnostics.Log(ctx, port.LevelWarn, "session title reconciliation failed", "operation", "session_title", "reason", "metadata_page_failed")
 		return
 	}
 	for _, meta := range page.Sessions {
@@ -116,53 +127,89 @@ func (s *Service) reconcilePendingTitles() {
 }
 
 func (c *titleCoordinator) drive(id session.SessionID) {
-	sources, attemptID, selector, claimed := c.claim(id)
+	c.diagnostics(id).Log(context.Background(), port.LevelDebug, "session title generation claim started")
+	sources, attemptID, selector, claimed, reason := c.claim(id)
 	if !claimed {
+		c.diagnostics(id).Log(context.Background(), port.LevelDebug, "session title generation claim skipped", "reason", reason)
 		return
 	}
+	c.diagnostics(id).Log(context.Background(), port.LevelDebug, "session title generation claimed", "attempt", attemptID)
 	generator := c.generator
 	if c.svc.cfg.TitleGeneratorForSession != nil {
 		generator = c.svc.cfg.TitleGeneratorForSession(selector)
 	}
 	if generator == nil {
-		c.commit(id, attemptID, TitleGenerationResult{Outcome: session.TitleAttemptInterrupted})
+		result := TitleGenerationResult{Outcome: session.TitleAttemptInterrupted, FailureClass: titleFailureProvider, FailureStage: titleStageEstablishment}
+		c.diagnostics(id).Log(context.Background(), port.LevelWarn, "session title generator unavailable", "attempt", attemptID, "provider", selector.ProviderID, "model", selector.ModelID)
+		c.logCompletion(id, attemptID, result)
+		c.commit(id, attemptID, result)
 		return
 	}
+	c.diagnostics(id).Log(context.Background(), port.LevelDebug, "session title generator selected", "attempt", attemptID, "provider", selector.ProviderID, "model", selector.ModelID)
 	result := generator.Generate(c.ctx, sources)
+	c.logCompletion(id, attemptID, result)
 	c.commit(id, attemptID, result)
 }
 
 // claim persists an incomplete attempt before provider I/O. Thus a process death
 // after the save has an explicit unknown outcome rather than risking rebilling it.
-func (c *titleCoordinator) claim(id session.SessionID) ([]string, string, ProviderSelector, bool) {
+func (c *titleCoordinator) claim(id session.SessionID) ([]string, string, ProviderSelector, bool, string) {
 	unlock := c.svc.runEntryMu.lock(id)
 	defer unlock()
 	release, err := c.svc.acquireMutationLease(c.ctx, id)
 	if err != nil {
-		return nil, "", ProviderSelector{}, false
+		return nil, "", ProviderSelector{}, false, "mutation_lease_unavailable"
 	}
 	defer release()
 	sess, err := c.svc.cfg.Store.Load(c.ctx, id)
-	if err != nil || sess == nil || sess.TitleGeneration != session.TitleGenerationPending || sess.TitleProvenance == session.TitleProvenanceOperator {
-		return nil, "", ProviderSelector{}, false
+	if err != nil {
+		return nil, "", ProviderSelector{}, false, "session_load_failed"
+	}
+	if sess == nil || sess.TitleGeneration != session.TitleGenerationPending || sess.TitleProvenance == session.TitleProvenanceOperator {
+		return nil, "", ProviderSelector{}, false, "ineligible"
 	}
 	attempts := sess.TitleAttempts()
 	if len(attempts) > 0 && attempts[len(attempts)-1].Outcome == "" {
 		attempts[len(attempts)-1].Outcome = session.TitleAttemptInterrupted
 		sess.RestoreTitleMetadata(session.TitleGenerationExhausted, sess.TitleSourcePrompts(), attempts)
 		c.persistTitle(c.ctx, sess)
-		return nil, "", ProviderSelector{}, false
+		return nil, "", ProviderSelector{}, false, "incomplete_attempt"
 	}
 	sources := sess.TitleSourcePrompts()
 	if len(sources) == 0 {
-		return nil, "", ProviderSelector{}, false
+		return nil, "", ProviderSelector{}, false, "no_sources"
 	}
 	attemptID := fmt.Sprintf("title-%d", c.attemptID.Add(1))
 	sess.RecordTitleAttempt(session.TitleAttempt{ID: attemptID, CreatedAt: c.svc.cfg.Now()})
 	if !c.persistTitle(c.ctx, sess) {
-		return nil, "", ProviderSelector{}, false
+		return nil, "", ProviderSelector{}, false, "claim_persist_failed"
 	}
-	return sources, attemptID, ProviderSelector{ProviderID: sess.ProviderID, ModelID: sess.ModelID}, true
+	return sources, attemptID, ProviderSelector{ProviderID: sess.ProviderID, ModelID: sess.ModelID}, true, "claimed"
+}
+
+func (c *titleCoordinator) logCompletion(id session.SessionID, attemptID string, result TitleGenerationResult) {
+	level := port.LevelDebug
+	if result.Outcome == session.TitleAttemptFailed || result.Outcome == session.TitleAttemptInterrupted {
+		level = port.LevelWarn
+	}
+	args := []any{
+		"attempt", attemptID,
+		"outcome", string(result.Outcome),
+		"provider", result.ProviderID,
+		"model", result.ModelID,
+		"input_tokens", result.Usage.InputTokens,
+		"output_tokens", result.Usage.OutputTokens,
+		"cache_read_tokens", result.Usage.CacheReadTokens,
+		"cache_write_tokens", result.Usage.CacheWriteTokens,
+	}
+	class, stage := result.FailureClass, result.FailureStage
+	if (result.Outcome == session.TitleAttemptFailed || result.Outcome == session.TitleAttemptInterrupted) && class == "" {
+		class, stage = titleFailureClassFor(result.Err), titleStageUnknown
+	}
+	if class != "" {
+		args = append(args, "failure_class", string(class), "failure_stage", string(stage))
+	}
+	c.diagnostics(id).Log(context.Background(), level, "session title generator completed", args...)
 }
 
 func (c *titleCoordinator) commit(id session.SessionID, attemptID string, result TitleGenerationResult) {
@@ -170,15 +217,22 @@ func (c *titleCoordinator) commit(id session.SessionID, attemptID string, result
 	defer unlock()
 	release, err := c.svc.acquireMutationLease(c.ctx, id)
 	if err != nil {
+		c.diagnostics(id).Log(context.Background(), port.LevelWarn, "session title generation commit lost", "attempt", attemptID, "reason", "mutation_lease_unavailable")
 		return
 	}
 	defer release()
 	sess, err := c.svc.cfg.Store.Load(c.ctx, id)
-	if err != nil || sess == nil || sess.TitleGeneration != session.TitleGenerationPending || sess.TitleProvenance == session.TitleProvenanceOperator {
+	if err != nil {
+		c.diagnostics(id).Log(context.Background(), port.LevelWarn, "session title generation commit lost", "attempt", attemptID, "reason", "session_load_failed")
+		return
+	}
+	if sess == nil || sess.TitleGeneration != session.TitleGenerationPending || sess.TitleProvenance == session.TitleProvenanceOperator {
+		c.diagnostics(id).Log(context.Background(), port.LevelDebug, "session title generation commit lost", "attempt", attemptID, "reason", "conditional_state_changed")
 		return
 	}
 	attempts := sess.TitleAttempts()
 	if len(attempts) == 0 || attempts[len(attempts)-1].ID != attemptID || attempts[len(attempts)-1].Outcome != "" {
+		c.diagnostics(id).Log(context.Background(), port.LevelDebug, "session title generation commit lost", "attempt", attemptID, "reason", "conditional_attempt_changed")
 		return
 	}
 	attempts[len(attempts)-1].Outcome = result.Outcome
@@ -234,7 +288,7 @@ func (s *Service) publishTitle(ctx context.Context, sess *session.Session) {
 	payload := titlePayload(sess)
 	ev := session.Event{Type: session.EvSessionTitle, Title: &payload}
 	if err := s.appendEvent(context.WithoutCancel(ctx), sess.ID, ev); err != nil {
-		s.cfg.Diagnostics.Log(ctx, port.LevelWarn, "session title event append failed", "session", string(sess.ID), "error", err)
+		s.cfg.Diagnostics.Log(ctx, port.LevelWarn, "session title event append failed", "session", string(sess.ID), "operation", "session_title", "reason", "event_append_failed")
 	}
 	s.PublishSessionEvent(sess.ID, ev)
 }
