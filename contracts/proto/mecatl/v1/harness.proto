@@ -1043,7 +1043,9 @@ message SessionSummary {
   PlacementMetadata placement = 15;
   // title_metadata is the canonical bounded, source-free title lifecycle projection.
   SessionTitle title_metadata = 16;
-  // token_usage is canonical durable accounting.
+  // token_usage is the canonical durable session token accounting. Map keys identify
+  // usage types; `main` is ordinary main-session agent usage. Other keys are
+  // server-defined and are not enumerated here.
   map<string, TokenUsage> token_usage = 17;
 }
 
@@ -1365,7 +1367,9 @@ message Session {
   PlacementMetadata placement = 18;
   // title_metadata is the canonical bounded, source-free title lifecycle projection.
   SessionTitle title_metadata = 19;
-  // token_usage is canonical durable accounting.
+  // token_usage is the canonical durable session token accounting. Map keys identify
+  // usage types; `main` is ordinary main-session agent usage. Other keys are
+  // server-defined and are not enumerated here.
   map<string, TokenUsage> token_usage = 20;
 }
 
@@ -1394,7 +1398,8 @@ message TitleAttemptSummary {
 
 // TokenUsage is one canonical usage bucket. models maps opaque server-produced
 // provider/model attribution strings (or "unknown" for legacy data) to Usage;
-// total always equals the element-wise sum of models.
+// total always equals the element-wise sum of models. In token_usage, each bucket
+// is part of the durable session accounting, not a per-run or per-turn report.
 message TokenUsage {
   Usage total = 1;
   map<string, Usage> models = 2;
@@ -2411,7 +2416,8 @@ message Result {
   string stop = 1;
   // text is the final assistant text, if any.
   string text = 2;
-  // usage is the cumulative token accounting for the run.
+  // usage is the token accounting accumulated during THIS run; it is not the
+  // durable session total and is distinct from per-turn TurnEnd.usage.
   Usage usage = 3;
   // error carries the failure detail when stop is "error" (empty otherwise).
   string error = 4;
@@ -2431,7 +2437,8 @@ message Result {
 // own usage semantics and can grow (finish reason, model id, retries) without
 // overloading the shared Event fields.
 message TurnEnd {
-  // usage is THIS turn's model-call token accounting (not the run total).
+  // usage is THIS turn's model-call token accounting (not the run total or the
+  // durable session total).
   Usage usage = 1;
   // duration_ms is the elapsed milliseconds for the turn's model call; 0 when
   // the server had no clock.

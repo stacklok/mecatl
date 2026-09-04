@@ -42,4 +42,5 @@ The feature creates optional extra model spend, a bounded asynchronous coordinat
 - [ADR 0016 — Multi-provider composition](./0016-multi-provider.md)
 - [ADR 0020 — Diagnostics](./0020-diagnostics.md)
 - [ADR 0027 — Cloud-native arc](./0027-cloud-native.md)
+- [Session title generation and token usage acceptance plan](../acceptance/session-title-generation.md) — scenario proofs, including coordinator shutdown and accounting
 - [Issue #621](https://github.com/stacklok/mecatl/issues/621)

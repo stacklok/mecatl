@@ -128,6 +128,15 @@ step when it is still retry-pending. Mecatui automatically retries
 preserves the textarea and queued prompts, and reports a harmless status when no
 eligible failure exists. Historical transcript replay never triggers automatic retry.
 
+Inside the TUI, `/title <text>` renames the active session through the existing
+server rename operation; `/title` with no non-whitespace text displays its title and
+provenance without a mutation. A manual title ends automatic generation for that
+session. Automatic titles are opt-in: configure a compatible explicit
+`models.slots.title` binding (see [model routing](usage/model-routing.md)); the server
+then schedules bounded work after a completed exchange is durably persisted, without
+delaying or changing the chat. Its durable `session_title` token usage is recorded in
+the canonical durable ledger and is separate from normal session/run usage.
+
 ## mecatui remote TLS
 
 `mecatui connect ADDRESS` resolves TLS after it has the target: omitted `--tls`

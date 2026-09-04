@@ -2629,7 +2629,9 @@ type SessionSummary struct {
 	Placement       *PlacementMetadata `protobuf:"bytes,15,opt,name=placement,proto3" json:"placement,omitempty"`
 	// title_metadata is the canonical bounded, source-free title lifecycle projection.
 	TitleMetadata *SessionTitle `protobuf:"bytes,16,opt,name=title_metadata,json=titleMetadata,proto3" json:"title_metadata,omitempty"`
-	// token_usage is canonical durable accounting.
+	// token_usage is the canonical durable session token accounting. Map keys identify
+	// usage types; `main` is ordinary main-session agent usage. Other keys are
+	// server-defined and are not enumerated here.
 	TokenUsage    map[string]*TokenUsage `protobuf:"bytes,17,rep,name=token_usage,json=tokenUsage,proto3" json:"token_usage,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -5379,7 +5381,9 @@ type Session struct {
 	Placement       *PlacementMetadata `protobuf:"bytes,18,opt,name=placement,proto3" json:"placement,omitempty"`
 	// title_metadata is the canonical bounded, source-free title lifecycle projection.
 	TitleMetadata *SessionTitle `protobuf:"bytes,19,opt,name=title_metadata,json=titleMetadata,proto3" json:"title_metadata,omitempty"`
-	// token_usage is canonical durable accounting.
+	// token_usage is the canonical durable session token accounting. Map keys identify
+	// usage types; `main` is ordinary main-session agent usage. Other keys are
+	// server-defined and are not enumerated here.
 	TokenUsage    map[string]*TokenUsage `protobuf:"bytes,20,rep,name=token_usage,json=tokenUsage,proto3" json:"token_usage,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -5683,7 +5687,8 @@ func (x *TitleAttemptSummary) GetCreatedAtUnix() int64 {
 
 // TokenUsage is one canonical usage bucket. models maps opaque server-produced
 // provider/model attribution strings (or "unknown" for legacy data) to Usage;
-// total always equals the element-wise sum of models.
+// total always equals the element-wise sum of models. In token_usage, each bucket
+// is part of the durable session accounting, not a per-run or per-turn report.
 type TokenUsage struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Total         *Usage                 `protobuf:"bytes,1,opt,name=total,proto3" json:"total,omitempty"`
@@ -8871,7 +8876,8 @@ type Result struct {
 	Stop string `protobuf:"bytes,1,opt,name=stop,proto3" json:"stop,omitempty"`
 	// text is the final assistant text, if any.
 	Text string `protobuf:"bytes,2,opt,name=text,proto3" json:"text,omitempty"`
-	// usage is the cumulative token accounting for the run.
+	// usage is the token accounting accumulated during THIS run; it is not the
+	// durable session total and is distinct from per-turn TurnEnd.usage.
 	Usage *Usage `protobuf:"bytes,3,opt,name=usage,proto3" json:"usage,omitempty"`
 	// error carries the failure detail when stop is "error" (empty otherwise).
 	Error string `protobuf:"bytes,4,opt,name=error,proto3" json:"error,omitempty"`
@@ -8973,7 +8979,8 @@ func (x *Result) GetStreamProgress() StreamProgress {
 // overloading the shared Event fields.
 type TurnEnd struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// usage is THIS turn's model-call token accounting (not the run total).
+	// usage is THIS turn's model-call token accounting (not the run total or the
+	// durable session total).
 	Usage *Usage `protobuf:"bytes,1,opt,name=usage,proto3" json:"usage,omitempty"`
 	// duration_ms is the elapsed milliseconds for the turn's model call; 0 when
 	// the server had no clock.

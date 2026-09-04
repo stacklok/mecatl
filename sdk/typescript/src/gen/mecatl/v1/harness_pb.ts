@@ -1356,7 +1356,9 @@ export type SessionSummary = Message<"mecatl.v1.SessionSummary"> & {
   titleMetadata?: SessionTitle | undefined;
 
   /**
-   * token_usage is canonical durable accounting.
+   * token_usage is the canonical durable session token accounting. Map keys identify
+   * usage types; `main` is ordinary main-session agent usage. Other keys are
+   * server-defined and are not enumerated here.
    *
    * @generated from field: map<string, mecatl.v1.TokenUsage> token_usage = 17;
    */
@@ -2750,7 +2752,9 @@ export type Session = Message<"mecatl.v1.Session"> & {
   titleMetadata?: SessionTitle | undefined;
 
   /**
-   * token_usage is canonical durable accounting.
+   * token_usage is the canonical durable session token accounting. Map keys identify
+   * usage types; `main` is ordinary main-session agent usage. Other keys are
+   * server-defined and are not enumerated here.
    *
    * @generated from field: map<string, mecatl.v1.TokenUsage> token_usage = 20;
    */
@@ -2845,7 +2849,8 @@ export const TitleAttemptSummarySchema: GenMessage<TitleAttemptSummary> = /*@__P
 /**
  * TokenUsage is one canonical usage bucket. models maps opaque server-produced
  * provider/model attribution strings (or "unknown" for legacy data) to Usage;
- * total always equals the element-wise sum of models.
+ * total always equals the element-wise sum of models. In token_usage, each bucket
+ * is part of the durable session accounting, not a per-run or per-turn report.
  *
  * @generated from message mecatl.v1.TokenUsage
  */
@@ -5052,7 +5057,8 @@ export type Result = Message<"mecatl.v1.Result"> & {
   text: string;
 
   /**
-   * usage is the cumulative token accounting for the run.
+   * usage is the token accounting accumulated during THIS run; it is not the
+   * durable session total and is distinct from per-turn TurnEnd.usage.
    *
    * @generated from field: mecatl.v1.Usage usage = 3;
    */
@@ -5107,7 +5113,8 @@ export const ResultSchema: GenMessage<Result> = /*@__PURE__*/
  */
 export type TurnEnd = Message<"mecatl.v1.TurnEnd"> & {
   /**
-   * usage is THIS turn's model-call token accounting (not the run total).
+   * usage is THIS turn's model-call token accounting (not the run total or the
+   * durable session total).
    *
    * @generated from field: mecatl.v1.Usage usage = 1;
    */

@@ -42,8 +42,8 @@ semantic-version protocol.
 | RPC | Kind | Purpose |
 | --- | --- | --- |
 | `CreateSession(CreateSessionRequest) → CreateSessionResponse` | unary | allocate a server-side session, return its id |
-| `GetSession(GetSessionRequest) → GetSessionResponse` | unary | snapshot of an existing session |
-| `RenameSession(RenameSessionRequest) → RenameSessionResponse` | unary | replace an owned idle main session's title and mark its provenance operator-authored; ownership, kind, state, liveness, and lease are revalidated at execution |
+| `GetSession(GetSessionRequest) → GetSessionResponse` | unary | snapshot of an existing session, including authoritative title/provenance, title-generation lifecycle, and canonical durable token usage when present |
+| `RenameSession(RenameSessionRequest) → RenameSessionResponse` | unary | replace an owned idle main session's title and mark its provenance operator-authored; this permanently disables automatic title generation; ownership, kind, state, liveness, and lease are revalidated at execution |
 | `DeleteSession(DeleteSessionRequest) → DeleteSessionResponse` | unary | permanently remove an owned idle main session snapshot and store-managed sidecars; the same execution-time gates apply |
 | `CompactSession(CompactSessionRequest) → CompactSessionResponse` | unary | force one configured compaction pass on an owned main chat at an idle or terminal boundary; creates no conversation turn and returns `compacted` to distinguish a rewrite from a successful no-op |
 | `CloseSession(CloseSessionRequest) → CloseSessionResponse` | unary | end a session and release its server-side resources; idempotent |

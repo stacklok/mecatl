@@ -128,6 +128,31 @@ verbatim on the assistant message item, never displayed or interpreted (issue
   an error result is still fed back to the model so it can recover.
 - `Usage{InputTokens, OutputTokens, CacheReadTokens, CacheWriteTokens}`
   (`usage.go`) with `CacheHitRate()` and an immutable `Add(other) Usage`.
+- `TokenUsage` is the canonical durable aggregate for model work. It groups totals by
+  a closed usage kind and opaque server-selected provider/model entries; each total is
+  the sum of its entries. `Session.Usage` remains a deprecated lifetime compatibility
+  mirror of `TokenUsage[main]`; the run budget uses internal per-run state rather than
+  the mirror.
+
+### Session titles and durable token accounting
+
+A session starts with its first genuine prompt as a fallback title. An operator can
+replace an idle main-session title through `RenameSession`; that records `operator`
+provenance and permanently stops automatic generation. An explicit compatible
+`models.slots.title` binding records durable `pending` generation intent; no usable
+binding records `disabled`. The `title` slot deliberately has no fallback, so title
+calls are opt-in.
+
+At prompt ingress the aggregate retains only the first three genuine, non-empty
+principal text prompts. Every terminal relay persists a completed exchange before
+submitting bounded asynchronous title work. Generated input is fenced untrusted data;
+output is strict, valid UTF-8, normalized to one line, and capped at 80 runes.
+
+A physical call records its input/output tokens only in `TokenUsage[session_title]`,
+attributed to the composition-selected opaque provider/model. It never changes
+`Session.Usage`, a main-run budget, `EvResult` usage, or the conversation. See
+[ADR 0290](../adr/0290-session-title-generation-and-auxiliary-usage.md) and
+[ADR 0291](../adr/0291-canonical-durable-token-accounting.md).
 
 ### Event taxonomy (`engine/session/event.go`)
 
