@@ -577,8 +577,9 @@ reflects the TUI phase:
 A session starts with its first genuine prompt as a fallback title; a generated or
 operator title can later replace it. Automatic title generation is opt-in through an
 explicit compatible `models.slots.title` binding, is server-owned and asynchronous,
-and never changes the conversation or main-run budget. Its token usage is durable
-separate `session_title` accounting. See [ADR 0290](adr/0290-session-title-generation-and-auxiliary-usage.md).
+and never changes the conversation or main-run budget. Its durable `session_title`
+accounting is governed by [ADR 0291](adr/0291-canonical-durable-token-accounting.md).
+See [ADR 0290](adr/0290-session-title-generation-and-auxiliary-usage.md).
 
 The title leads because tab bars **truncate from the right**; the status is a
 **static word, never an animated spinner** (per-frame title churn trips OS

@@ -109,13 +109,14 @@ models:
 #### Session title generation
 
 - **The `title` slot.** This is the explicit opt-in for automatic session-title
-  generation ([ADR 0290](../adr/0290-session-title-generation-and-auxiliary-usage.md)).
+  generation ([ADR 0290](../adr/0290-session-title-generation-and-auxiliary-usage.md));
+  accounting follows [ADR 0291](../adr/0291-canonical-durable-token-accounting.md).
   It has **no tier or session-model fallback**: omit it and generation is disabled,
   so no title-model call occurs. On a compatible fixed session provider, the server
   captures up to three early genuine prompts and asynchronously makes a bounded
   tool-less call after a successful exchange. Its usage is durable
-  `session_title` auxiliary accounting, not the session/run budget or normal result
-  usage. The title model never changes the session model.
+  `session_title` token usage in the canonical durable ledger, not the deprecated
+  `Session.Usage` main mirror, session/run budget, or normal result usage. The title model never changes the session model.
 
 #### Other slots
 

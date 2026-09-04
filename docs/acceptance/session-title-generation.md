@@ -1,9 +1,9 @@
 # Session title generation and token usage — acceptance plan
 
 **Phase:** mecatui session-title UX and opt-in title-model accounting  
-**Status:** in-progress, 2026-08-30. Reconciled with ADR 0290.  
+**Status:** in-progress, 2026-08-30. Reconciled with ADRs 0290 and 0291.
 **Issue:** [stacklok/mecatl#621](https://github.com/stacklok/mecatl/issues/621).  
-**ADR:** [ADR 0290](../adr/0290-session-title-generation-and-auxiliary-usage.md) — server-owned asynchronous title lifecycle, opt-in title slot, and token usage boundary.
+**ADR:** [ADR 0290](../adr/0290-session-title-generation-and-auxiliary-usage.md) — server-owned asynchronous title lifecycle and opt-in title slot; [ADR 0291](../adr/0291-canonical-durable-token-accounting.md) — canonical durable token usage and run-scoped budget baseline.
 **Accumulator branch:** `acc/session-title-generation` (off `main`).
 
 The smallest set of work that lets a mecatui operator set an active session title directly and,
@@ -12,8 +12,8 @@ model-generated title after the first real prompt establishes a topic. Generated
 single-line normalized and capped at 80 runes total, including a truncation ellipsis. Every title,
 including existing first-prompt and operator titles, canonicalizes all whitespace to a single space
 so it remains one line. Automatic generation is not an agent turn, cannot delay or alter chat, and
-does not spend the main session's run budget. Canonical token usage is aggregated by usage
-kind and opaque selected-model attribution; title generation contributes only to its title bucket.
+uses only the `session_title` canonical token-usage kind. That usage is attributed by
+selected model and never affects the main run's budget or result usage.
 
 ## Design boundaries
 
@@ -42,11 +42,12 @@ automatic job admission and every client benefits from it.
   EventLog when enabled and published through gRPC `StreamSessionLive`. That live push is
   best-effort. Per-run HTTP SSE has no out-of-band title push; HTTP clients discover title changes
   from the authoritative session snapshot and durable event stream.
-- The engine owns title provenance, sources/lifecycle, event value, and canonical token usage.
-  Title usage never changes `Session.Usage`, run budgets, ordinary result usage, or conversation
-  history.
+- The engine owns title provenance, sources/lifecycle, and the event value. ADR 0291 owns
+  canonical token usage: title usage never changes the deprecated `Session.Usage` main mirror,
+  run budgets, ordinary result usage, or conversation history.
 
 These cuts follow [ADR 0290](../adr/0290-session-title-generation-and-auxiliary-usage.md),
+[ADR 0291](../adr/0291-canonical-durable-token-accounting.md),
 [ADR 0030](../adr/0030-model-selection-heuristics.md),
 [ADR 0016](../adr/0016-multi-provider.md),
 [ADR 0020](../adr/0020-diagnostics.md), and the aggregate, provider-neutrality, durable-event, and
@@ -151,8 +152,8 @@ muted client-only notice directing the operator to `/title <text>`; it contains 
   has explicit ADR-0027 resource-inventory and restart-fidelity decisions.
   - verify: `TestSessionTitleGeneration_Scenario4_CoordinatorShutdownAndInventory`
 - AC4.5: Every persisted title/lifecycle change appends and publishes `session.title` containing
-  authoritative title, provenance, lifecycle, and only bounded attempt/usage summary—never prompt
-  or provider-error text.
+  authoritative title, provenance, lifecycle, and only bounded latest-attempt metadata—never prompt,
+  provider-error text, or token-usage detail.
   - verify: `TestSessionTitleGeneration_Scenario4_TitleEventIsAuthoritativeAndSanitized`
 - AC4.6: Active/open clients apply `session.title` immediately and reconcile via `GetSession` after
   live-stream reconnect or session reopen; no periodic inventory polling is introduced.
@@ -161,43 +162,39 @@ muted client-only notice directing the operator to `/title <text>`; it contains 
   detail that retains the fallback and directs the operator to `/title <text>` for a manual title.
   - verify: `TestSessionTitleGeneration_Scenario4_QuietFailureOffersManualTitle`
 
-### Scenario 5 — Title-model token usage is durable and distinct from run usage
+### Scenario 5 — Canonical token usage is durable, attributed, and budget-safe
 
 Every admitted physical title call aggregates `session_title` token usage by the selected opaque
 provider/model key. The title lifecycle retains only an attempt identity, outcome, and time; it has
-no per-attempt usage ledger.
+no per-attempt usage ledger. `token_usage[main]` is canonical for main work; deprecated
+`Session.Usage` remains its lifetime compatibility mirror.
 
 **Acceptance:**
 - AC5.1: Each physical title-generation call aggregates its input/output tokens in the
   `session_title` usage kind under the selected model attribution.
   - verify: `TestSessionTitleGeneration_Scenario5_RecordsTokenUsage`
 - AC5.2: Token usage is canonical durable accounting: each `TokenUsage.Total` is the sum of its
-  opaque model entries.
+  opaque model entries, and legacy unattributed records use `unknown` rather than a guessed model.
   - verify: `TestSessionTitleGeneration_Scenario5_RecordsTokenUsage`
 - AC5.3: Token usage and title lifecycle round-trip through every in-tree snapshot/store and
   event-sourced reconstruction path, and authorized projections expose the canonical aggregate.
   - verify: `TestSessionTitleGeneration_Scenario5_TokenUsageRoundTripAndProjection`
-- AC5.4: Title-generation tokens do not alter `Session.Usage`, `MaxRunTokens`, normal turn/result
-  usage, or the agent conversation.
-<<<<<<< HEAD
-  - verify: `TestADR_0290_AuxiliaryUsageDoesNotSpendRunBudget`
-- AC5.5: Existing auxiliary callers remain unchanged.
+- AC5.4: Title-generation tokens do not alter the deprecated `Session.Usage` main mirror,
+  `MaxRunTokens`, normal turn/result usage, or the agent conversation.
+  - verify: `TestADR_0291_AuxiliaryUsageDoesNotSpendRunBudget`
+- AC5.5: The budget baseline is internal and non-mutating: ordinary runs start at zero, only team
+  synthesis starts at current cumulative main usage, and no externally callable usage-reset API
+  exists.
+  - verify: `TestADR_0291_RunBudgetBaselineDoesNotResetLifetimeUsage`
+- AC5.6: Other auxiliary callers are not migrated by this plan.
   - verify: `TestSessionTitleGeneration_Scenario5_OnlyTitleIsPlumbed`
-=======
-  - verify: `TestADR_0284_TitleUsageDoesNotSpendRunBudget`
->>>>>>> 088bb7aac (refactor: simplify title token usage)
 
 ## Out of scope
 
 | Item | Decision |
 |---|---|
-<<<<<<< HEAD
-| Currency/price estimates, rate history, and billing reconciliation | Deferred; ADR 0290 records tokens only. |
-| Migrating existing auxiliary calls into the ledger | Deferred; this plan wires `session_title` only. |
-=======
-| Currency/price estimates, rate history, and billing reconciliation | Deferred; ADR 0284 records tokens only. |
+| Currency/price estimates, rate history, and billing reconciliation | Deferred; ADR 0291 records tokens only. |
 | Migrating other model calls into canonical token usage | Deferred; this plan wires `session_title` only. |
->>>>>>> 088bb7aac (refactor: simplify title token usage)
 | Client-triggered generation or arbitrary client model invocation | Rejected; automatic work is Service-owned. |
 | Generic model-invocation RPC/dispatcher | Rejected; later operations require their own authorization, input, lifecycle, accounting, and notification design. |
 | Regenerating an accepted generated title | Deferred to future explicit UX. |

@@ -128,13 +128,13 @@ verbatim on the assistant message item, never displayed or interpreted (issue
   an error result is still fed back to the model so it can recover.
 - `Usage{InputTokens, OutputTokens, CacheReadTokens, CacheWriteTokens}`
   (`usage.go`) with `CacheHitRate()` and an immutable `Add(other) Usage`.
-- `TokenUsage` is the canonical durable aggregate for auxiliary model work. It
-  groups totals by an operation kind and opaque server-selected provider/model
-  entries; each total is the sum of its entries. It is distinct from
-  `Session.Usage`, which remains the normal agent-run accounting and budget
-  input.
+- `TokenUsage` is the canonical durable aggregate for model work. It groups totals by
+  a closed usage kind and opaque server-selected provider/model entries; each total is
+  the sum of its entries. `Session.Usage` remains a deprecated lifetime compatibility
+  mirror of `TokenUsage[main]`; the run budget uses internal per-run state rather than
+  the mirror.
 
-### Session titles and auxiliary usage
+### Session titles and durable token accounting
 
 A session starts with its first genuine prompt as a fallback title. An operator can
 replace an idle main-session title through `RenameSession`; that records
@@ -169,7 +169,8 @@ claim, generator selection/completion, and conditional commit loss. Completion
 records only outcome, provider/model attribution, token counts, and (on failure) a
 stable class plus stage; it never records prompt sources, provider error text,
 credentials, or model output. See
-[ADR 0290](../adr/0290-session-title-generation-and-auxiliary-usage.md).
+[ADR 0290](../adr/0290-session-title-generation-and-auxiliary-usage.md) and
+[ADR 0291](../adr/0291-canonical-durable-token-accounting.md).
 
 ### Event taxonomy (`engine/session/event.go`)
 
