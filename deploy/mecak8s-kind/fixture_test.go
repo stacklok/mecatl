@@ -49,6 +49,7 @@ func TestMecak8sKindFixture_Scenario1_DedicatedKubeconfig(t *testing.T) {
 		"KUBECONFIG: deploy/mecak8s-kind/kconfig.yaml", "CONTEXT: kind-mecatl-dev",
 		"--kubeconfig={{.KUBECONFIG}}", "--context={{.CONTEXT}}", "--kube-context={{.CONTEXT}}",
 		"kind delete cluster --name={{.CLUSTER}}", "rm -rf {{.STATE}}", "rm -f {{.KUBECONFIG}} {{.SETUP_LOCK}}",
+		"umask 077",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("dedicated fixture lifecycle missing %q", want)
