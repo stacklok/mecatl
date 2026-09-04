@@ -1201,8 +1201,11 @@ overlay. What remains here is the metrics surface:
 
 `engine/learning` contains the storage-neutral reflection domain and completed-trajectory
 observer seam ([ADR 0109](adr/0109-staged-learning-proposals.md), refined by
-[ADR 0298](adr/0298-bounded-reflection-evidence-materialization.md)). Standard composition owns the
-bounded staged-reflection coordinator. Automatic admission scans the full eligible source/current
+[ADR 0298](adr/0298-bounded-reflection-evidence-materialization.md)). Its exported
+`MaterializeEvidence(MaterializationRequest)` operation returns one closed-disposition
+`Materialization`: either a bounded `Input` plus immutable `MaterializationManifest`, or a
+content-free no-work outcome. Standard composition owns the bounded staged-reflection
+coordinator. Automatic admission scans the full eligible source/current
 span with bounded counters, coordinates, digests, and ranking state; it never first constructs an
 unbounded `learning.Input`. Only after admission does it invoke the shared `reflection-evidence/v1`
 selector used by explicit reflection. The selector chooses whole connected tool-turn components

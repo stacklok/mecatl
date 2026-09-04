@@ -173,9 +173,17 @@ Optional fields with non-trivial defaults:
 
 ## Optional evidence reflection
 
-Embedders can use `engine/learning` to construct an owned, bounded reflection input and
-run its compatibility structural signal detector or the current-span-scoped detector.
-`learning.ThresholdPolicy` is the pure standard admission policy over closed sensitivity,
+Embedders use `learning.MaterializeEvidence` as the storage-neutral selection boundary.
+A `learning.MaterializationRequest` carries the owned trajectory, eligible events, verified
+mandatory span, signals, and explicit limits. The selected result contains one bounded
+`learning.Input`, canonical bytes, and an immutable aggregate manifest; abstained or skipped
+results carry only a closed, content-free reason. Hosts persist the complete manifest with any
+staged proposal and re-materialize its exact original coordinates for detail or approval instead
+of rerunning ranking. New records use `reflection-evidence/v1`; historical input-local evidence
+ordinals remain explicitly `reflection-evidence/legacy-v0`.
+
+The compatibility structural signal detector and current-span-scoped detector operate on the
+bounded input. `learning.ThresholdPolicy` is the pure standard admission policy over closed sensitivity,
 class, reason, request, and decision contracts; `AlwaysPolicy` and `NeverPolicy` are simple
 host alternatives. `Trajectory` additively carries session kind, run counters, and a verified
 current message span. `learning.Activity` is the closed content-free metrics projection.

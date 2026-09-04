@@ -32,6 +32,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -376,6 +377,56 @@ func TestGuardedSetMatchesCorePackages(t *testing.T) {
 		t.Fatalf("guardedPackages drifted from engine/arch.CorePackages:\n guarded = %v\n core    = %v\n"+
 			"the public-API gate MUST guard exactly the layering core (engine/COMPATIBILITY.md); keep guardedPackages derived from arch.CorePackages",
 			guardedPackages, arch.CorePackages)
+	}
+}
+
+func TestScalableReflectionEvidence_Scenario8_EngineAPIAndLayeringGates(t *testing.T) {
+	const learningPath = "github.com/stacklok/mecatl/engine/learning"
+	if !slices.Contains(arch.CorePackages, learningPath) {
+		t.Fatalf("engine/learning is absent from the shared API/layering core: %v", arch.CorePackages)
+	}
+
+	pkg := loadPackages(t)[learningPath]
+	baselinePath := filepath.Join(apiDir(t), "learning.txt")
+	baselineBytes, err := os.ReadFile(baselinePath) //nolint:gosec // committed text baseline
+	if err != nil {
+		t.Fatalf("read learning API baseline: %v", err)
+	}
+	baseline := string(baselineBytes)
+	if got := dumpPackage(pkg); got != baseline {
+		t.Fatalf("engine/learning API snapshot is stale:\n%s", unifiedish(baseline, got))
+	}
+	for _, declaration := range []string{
+		"func MaterializeEvidence(req MaterializationRequest) (Materialization, error)",
+		"type MaterializationManifest struct",
+		"type EvidenceRef struct",
+		"type Input struct",
+	} {
+		if !strings.Contains(baseline, declaration) {
+			t.Errorf("engine/learning API snapshot is missing %q", declaration)
+		}
+	}
+	if updateBaselines() {
+		return
+	}
+
+	changelogPath := filepath.Clean(filepath.Join(apiDir(t), "..", "CHANGELOG.md"))
+	changelogBytes, err := os.ReadFile(changelogPath) //nolint:gosec // committed documentation
+	if err != nil {
+		t.Fatalf("read engine changelog: %v", err)
+	}
+	changelog := string(changelogBytes)
+	changedStart := strings.Index(changelog, "### Changed\n")
+	if changedStart < 0 {
+		t.Fatal("engine changelog has no Changed section")
+	}
+	changed := changelog[changedStart:]
+	if next := strings.Index(changed[len("### Changed\n"):], "\n### "); next >= 0 {
+		changed = changed[:len("### Changed\n")+next]
+	}
+	if !strings.Contains(changed, "Versioned bounded reflection evidence materialization") ||
+		!strings.Contains(changed, "Input") || !strings.Contains(changed, "EvidenceRef") {
+		t.Error("engine changelog Changed section does not classify the reflection Input/EvidenceRef compatibility changes")
 	}
 }
 
