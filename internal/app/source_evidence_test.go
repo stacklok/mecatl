@@ -71,7 +71,11 @@ func TestADR_0295_WorkerSourceAuthorityFailsClosedWithoutIdentityOracle(t *testi
 		{Type: session.EvUserPrompt, Seq: 1, RunID: runID, UserPrompt: &session.UserPromptPayload{Text: "Create a skill from this workflow"}},
 		{Type: session.EvTurnStart, Seq: 2, RunID: runID},
 		{Type: session.EvMessageDelta, Seq: 3, RunID: runID, Text: "done"},
-		{Type: session.EvResult, Seq: 4, RunID: runID, Result: &session.ResultPayload{Stop: session.StopEndTurn, Usage: usage}},
+		{Type: session.EvReasoningDelta, Seq: 4, RunID: runID, Text: "private reasoning"},
+		{Type: session.EvTurnEnd, Seq: 5, RunID: runID},
+		{Type: session.EvProviderRoute, Seq: 28, RunID: runID, Text: "OpenRouter"},
+		{Type: session.EvHook, Seq: 29, RunID: runID},
+		{Type: session.EvResult, Seq: 30, RunID: runID, Result: &session.ResultPayload{Stop: session.StopEndTurn, Usage: usage}},
 	} {
 		if err := events.Append(ctx, source.ID, event); err != nil {
 			t.Fatal(err)
@@ -108,8 +112,8 @@ func TestADR_0295_WorkerSourceAuthorityFailsClosedWithoutIdentityOracle(t *testi
 	if code != learning.FailureNone {
 		t.Fatalf("valid exact source code = %q", code)
 	}
-	if len(projection.Messages) != 2 || len(projection.Events) != 4 {
-		t.Fatalf("projection shape = %d messages, %d events", len(projection.Messages), len(projection.Events))
+	if len(projection.Messages) != 2 || len(projection.Events) != 8 {
+		t.Fatalf("coalesced projection shape = %d messages, %d events", len(projection.Messages), len(projection.Events))
 	}
 	if projection.Messages[1].Text != "done" || projection.Messages[1].Text == source.Conversation.Messages[3].Reasoning {
 		t.Fatalf("canonical projection leaked or lost fields: %+v", projection.Messages[1])
@@ -172,29 +176,42 @@ func TestADR_0295_WorkerSourceAuthorityFailsClosedWithoutIdentityOracle(t *testi
 	}
 	assertUnavailable("durable gap record", newLearningEvidenceLoader(store, gapMarked), partition, record)
 
-	missingSequence := memstore.NewEventLog()
+	duplicateSequence := memstore.NewEventLog()
 	for _, event := range []session.Event{
 		{Type: session.EvUserPrompt, Seq: 1, RunID: runID, UserPrompt: &session.UserPromptPayload{Text: "Create a skill from this workflow"}},
 		{Type: session.EvTurnStart, Seq: 2, RunID: runID},
-		{Type: session.EvMessageDelta, Seq: 4, RunID: runID, Text: "done"},
-		{Type: session.EvResult, Seq: 5, RunID: runID, Result: &session.ResultPayload{Stop: session.StopEndTurn, Usage: usage}},
+		{Type: session.EvMessageDelta, Seq: 2, RunID: runID, Text: "done"},
+		{Type: session.EvResult, Seq: 3, RunID: runID, Result: &session.ResultPayload{Stop: session.StopEndTurn, Usage: usage}},
 	} {
-		if err := missingSequence.Append(ctx, source.ID, event); err != nil {
+		if err := duplicateSequence.Append(ctx, source.ID, event); err != nil {
 			t.Fatal(err)
 		}
 	}
-	assertUnavailable("missing sequence record 1,2,4", newLearningEvidenceLoader(store, missingSequence), partition, record)
+	assertUnavailable("duplicate sequence", newLearningEvidenceLoader(store, duplicateSequence), partition, record)
 
-	outOfOrder := memstore.NewEventLog()
+	decreasingSequence := memstore.NewEventLog()
+	for _, event := range []session.Event{
+		{Type: session.EvUserPrompt, Seq: 1, RunID: runID, UserPrompt: &session.UserPromptPayload{Text: "Create a skill from this workflow"}},
+		{Type: session.EvTurnStart, Seq: 3, RunID: runID},
+		{Type: session.EvMessageDelta, Seq: 2, RunID: runID, Text: "done"},
+		{Type: session.EvResult, Seq: 4, RunID: runID, Result: &session.ResultPayload{Stop: session.StopEndTurn, Usage: usage}},
+	} {
+		if err := decreasingSequence.Append(ctx, source.ID, event); err != nil {
+			t.Fatal(err)
+		}
+	}
+	assertUnavailable("decreasing sequence", newLearningEvidenceLoader(store, decreasingSequence), partition, record)
+
+	missingInitialSequence := memstore.NewEventLog()
 	for _, event := range []session.Event{
 		{Type: session.EvUserPrompt, Seq: 2, RunID: runID, UserPrompt: &session.UserPromptPayload{Text: "Create a skill from this workflow"}},
-		{Type: session.EvResult, Seq: 1, RunID: runID, Result: &session.ResultPayload{Stop: session.StopEndTurn, Usage: usage}},
+		{Type: session.EvResult, Seq: 3, RunID: runID, Result: &session.ResultPayload{Stop: session.StopEndTurn, Usage: usage}},
 	} {
-		if err := outOfOrder.Append(ctx, source.ID, event); err != nil {
+		if err := missingInitialSequence.Append(ctx, source.ID, event); err != nil {
 			t.Fatal(err)
 		}
 	}
-	assertUnavailable("invalid event ordering", newLearningEvidenceLoader(store, outOfOrder), partition, record)
+	assertUnavailable("missing initial sequence one", newLearningEvidenceLoader(store, missingInitialSequence), partition, record)
 
 	compactedStore := memstore.New()
 	compacted := session.New("compacted", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/workspace", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1, 0))

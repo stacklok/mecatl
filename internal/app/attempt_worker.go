@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/learning"
 )
 
@@ -320,7 +321,11 @@ func (w *attemptWorker) Run(ctx context.Context) (learning.AttemptRecord, error)
 	outcome, reflectErr := w.reflect(workCtx)
 	reflectErr = boundaryError(reflectErr)
 	if reflectErr != nil {
-		terminal, _, handleErr := handleBoundaryFailure(learning.FailureUnavailable, reflectErr)
+		failure := learning.FailureUnavailable
+		if errors.Is(reflectErr, agent.ErrReflectionOutput) {
+			failure = learning.FailureEvaluationRejected
+		}
+		terminal, _, handleErr := handleBoundaryFailure(failure, reflectErr)
 		return terminal, handleErr
 	}
 	if lease.snapshot().CheckpointStage != learning.AttemptCheckpointReflectionComplete {

@@ -178,7 +178,8 @@ func (l *learningEvidenceLoader) readExactRun(ctx context.Context, source learni
 		if read > learning.MaxInputEvents {
 			return false, false
 		}
-		if leftRun || event.Seq <= 0 || !seenRun && event.Seq != 1 || seenRun && event.Seq != previous+1 || seenTerminal {
+		// RunEventRecorder coalesces deltas under their first Seq, so only append order—not contiguous sequence numbers—is durable.
+		if leftRun || event.Seq <= 0 || !seenRun && event.Seq != 1 || seenRun && event.Seq <= previous || seenTerminal {
 			return false, false
 		}
 		seenRun = true

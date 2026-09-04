@@ -12,6 +12,7 @@ import (
 	"github.com/stacklok/mecatl/engine/adapter/memproposal"
 	"github.com/stacklok/mecatl/engine/adapter/memskill"
 	"github.com/stacklok/mecatl/engine/adapter/skillmaterialize"
+	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/learning"
 	"github.com/stacklok/mecatl/engine/session"
 )
@@ -257,6 +258,53 @@ func TestAttemptWorkerDeadlineStopsAndJoinsClaimRenewal(t *testing.T) {
 	wantBackoffExpiry := clock.now.Add(defaultAttemptSetupRetryBase)
 	if got.State != learning.AttemptRunning || got.State.Terminal() || !got.ClaimExpiresAt.Equal(wantBackoffExpiry) {
 		t.Fatalf("deadline did not retain persisted retry/backoff through renewal join: got %+v, want expiry %v", got, wantBackoffExpiry)
+	}
+}
+
+func TestAttemptWorkerReflectionFailureClassification(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		err     error
+		failure learning.AttemptFailureCode
+	}{
+		{
+			name:    "invalid_output_is_evaluation_rejected",
+			err:     errors.Join(errors.New("strict decoder rejected output"), agent.ErrReflectionOutput),
+			failure: learning.FailureEvaluationRejected,
+		},
+		{
+			name:    "provider_error_remains_unavailable",
+			err:     errors.Join(errors.New("provider request failed"), agent.ErrReflectionProvider),
+			failure: learning.FailureUnavailable,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			clock := &attemptWorkerClock{now: time.Unix(10, 0)}
+			repository, partition, record := newAttemptWorkerRecord(t, clock)
+			worker := attemptWorker{
+				repository: repository,
+				partition:  partition,
+				id:         record.ID,
+				evidence: func(context.Context, learning.AttemptRecord) (learning.AttemptFailureCode, error) {
+					return learning.FailureNone, nil
+				},
+				reflect: func(context.Context) (learning.Outcome, error) {
+					return learning.Outcome{}, tc.err
+				},
+			}
+
+			got, err := worker.Run(context.Background())
+			if !errors.Is(err, tc.err) {
+				t.Fatalf("Run error = %v, want wrapping %v", err, tc.err)
+			}
+			if got.State != learning.AttemptFailed || got.Outcome != learning.AttemptOutcomeFailed || got.FailureCode != tc.failure {
+				t.Fatalf("terminal = state %q outcome %q failure %q, want failed/%q", got.State, got.Outcome, got.FailureCode, tc.failure)
+			}
+		})
 	}
 }
 

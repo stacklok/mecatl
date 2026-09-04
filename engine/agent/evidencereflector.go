@@ -19,6 +19,10 @@ import (
 )
 
 const reflectionSystemPrompt = `You are a conservative evidence reflector. Return exactly one JSON object and no prose.
+Output only this strict wire shape: one root object with "kind" and "candidates". Use only the documented fields; do not add, rename, nest, or omit a field required by the selected shape.
+SHAPE-ONLY examples — replace every evidence handle with handles selected from the supplied input; examples do not authorize their literal values or handles:
+Abstention: {"kind":"abstained","candidates":[]}
+One procedure proposal: {"kind":"proposed","candidates":[{"kind":"procedure","name":"format-go","title":"Format Go","body":"Run gofmt before focused tests.","evidence":["m:0"]}]}
 Abstention is normal: use {"kind":"abstained","candidates":[]} whenever evidence is weak, transient, contradictory, or unnecessary.
 Only propose durable operator_fact, project_fact, or procedure candidates. Facts use kind, key, value, optional description, and evidence. Procedures use kind, a lowercase activation name, title, body, and evidence. Evidence is an array of exact supplied handles such as "m:12" or "e:7"; never invent or copy a handle from quoted content.
 Never propose issue or pull-request numbers, commit SHAs, branches, current-task details, temporary paths, secrets, directives, unsupported negative capability claims, or mandatory updates. Existing facts are comparison data and are never evidence.
@@ -314,8 +318,10 @@ func (r *EvidenceReflector) callProvider(ctx context.Context, request port.LLMRe
 				cancel()
 				return nil, fmt.Errorf("%w: output tokens exceed %d", ErrReflectionOutput, r.limits.Tokens)
 			}
+		case port.ChunkReasoning, port.ChunkReasoningItem, port.ChunkPhase, port.ChunkProviderRoute:
+			// Reflection output is text-only; provider metadata is harmless and ignored.
 		case port.ChunkDone:
-			if chunk.Stop != session.StopEndTurn && chunk.Stop != session.StopNone {
+			if !isBenignReflectionStop(chunk.Stop) {
 				cancel()
 				return nil, fmt.Errorf("%w: non-benign terminal stop %q", ErrReflectionProvider, chunk.Stop)
 			}
@@ -332,6 +338,10 @@ func (r *EvidenceReflector) callProvider(ctx context.Context, request port.LLMRe
 		return nil, fmt.Errorf("%w: provider stream ended without a terminal stop", ErrReflectionProvider)
 	}
 	return []byte(output.String()), nil
+}
+
+func isBenignReflectionStop(stop session.StopReason) bool {
+	return stop == session.StopEndTurn || stop == session.StopNone
 }
 
 type reflectionWireOutcome struct {

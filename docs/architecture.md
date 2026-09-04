@@ -1244,10 +1244,11 @@ and `DiscoverWork` is their only execution queue. Skipped or non-admitted comple
 remain immediate content-free activity and create no attempt history.
 
 The attempt references source evidence; it never copies a transcript. A worker rechecks owner,
-`RunID`, event ordering, and canonical digest, reconstructs only the existing bounded secret-safe
+`RunID`, append ordering (first target event `Seq==1`, then strictly increasing; recorder-coalesced
+records may legitimately have numeric gaps), and canonical digest, reconstructs only the existing bounded secret-safe
 projection, and applies the governance untrusted fence at every restarted or remote model boundary.
 Raw prompt, transcript, archive, tool, event, provider-error, path, identity, credential,
-diagnostic, and metric content is absent from attempt storage and APIs. Missing, gapped,
+diagnostic, and metric content is absent from attempt storage and APIs. Missing, gap-marked,
 unauthorized, compacted-without-archive, or mismatched evidence fails with a closed
 `evidence_unavailable`-class outcome before proposal or skill mutation. Abstention is a distinct
 successful terminal outcome.
@@ -1285,7 +1286,7 @@ otherwise valid source run whose terminal event has not arrived yet is not miscl
 the worker keeps its running claim as a backend-timed persisted exponential-backoff marker. A
 replacement process rediscovers it after expiry; the third failed setup/evidence-not-ready claim
 terminally records only `retry_exhausted`, so an undeliverable source cannot cycle on the one-second
-discovery interval forever. Malformed, gapped, unauthorized, or mismatched evidence still fails
+discovery interval forever. Malformed, gap-marked, unauthorized, or mismatched evidence still fails
 closed immediately. Local composition uses the
 flock-backed automatic ledger beside the attempt store; a configured learning driver must
 positively advertise and serve the automatic ledger whenever automatic learning is enabled, with
