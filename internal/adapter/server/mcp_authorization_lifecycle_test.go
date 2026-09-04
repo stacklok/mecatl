@@ -742,11 +742,27 @@ func TestMCPAuthorizationPreparedRegistrationCancellationRestoresClaim(t *testin
 
 func TestMCPAuthorizationTerminalResolutionCancellationAtHandoffDoesNotLeaveRun(t *testing.T) {
 	f := newLifecycleFixture(t, session.AuthorizationPending, nil, time.Now, nil)
+	log := memstore.NewEventLog()
+	f.svc.cfg.EventLog = log
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	loaded, err := f.store.Load(ctx, "authorization-session")
 	if err != nil {
 		t.Fatal(err)
+	}
+	seed := []session.Event{
+		{Type: session.EvTurnStart},
+		{Type: session.EvToolCall, ToolCall: &f.pending.Call},
+		{Type: session.EvToolCall, ToolCall: &f.pending.Deferred[0]},
+		{Type: session.EvAuthorizationRequired, Authorization: &session.AuthorizationPayload{
+			AuthorizationID: f.pending.Authorization.ID, DisplayName: f.pending.Authorization.DisplayName, Call: f.pending.Call.ID,
+			ExpiresAt: f.pending.Authorization.ExpiresAt, Status: session.AuthorizationPending,
+		}},
+	}
+	for _, ev := range seed {
+		if err := log.Append(t.Context(), loaded.ID, ev); err != nil {
+			t.Fatal(err)
+		}
 	}
 	f.svc.beforeAuthorizationContinuationStart = cancel
 	result, err := f.svc.resolveAuthorizationLocked(ctx, loaded, f.pending, session.AuthorizationCancelled)
@@ -768,6 +784,32 @@ func TestMCPAuthorizationTerminalResolutionCancellationAtHandoffDoesNotLeaveRun(
 	}
 	if err := session.ValidateToolPairing(settled.Conversation.Messages); err != nil {
 		t.Fatalf("settled pairing: %v", err)
+	}
+
+	// P1-5: the settled snapshot must not be the only place this resolution is
+	// recorded — a pre-start cancellation at the registration handoff must
+	// still append the terminal EvToolResult/EvAuthorizationResolved events, or
+	// a later event-sourced fold sees the authorization as still pending.
+	if _, err := eventsource.Fold(eventsource.SessionMeta{
+		ID: settled.ID, Mode: settled.Mode, Limits: settled.Limits, EnvironmentRef: settled.EnvironmentRef, CreatedAt: settled.CreatedAt,
+	}, log.Read(t.Context(), settled.ID)); err != nil {
+		t.Fatalf("eventsource remains private-state-required after cancelled handoff: %v", err)
+	}
+	var events []session.Event
+	for ev, readErr := range log.Read(t.Context(), settled.ID) {
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		events = append(events, ev)
+	}
+	if got, want := len(events), len(seed)+3; got != want {
+		t.Fatalf("event count = %d, want %d: %+v", got, want, events)
+	}
+	trailing := events[len(seed):]
+	if trailing[0].Type != session.EvToolResult || trailing[0].ToolResult == nil || trailing[0].ToolResult.CallID != f.pending.Call.ID ||
+		trailing[1].Type != session.EvToolResult || trailing[1].ToolResult == nil || trailing[1].ToolResult.CallID != f.pending.Deferred[0].ID ||
+		trailing[2].Type != session.EvAuthorizationResolved || trailing[2].Authorization == nil || trailing[2].Authorization.Status != session.AuthorizationCancelled {
+		t.Fatalf("ordered terminal events = %+v", trailing)
 	}
 }
 

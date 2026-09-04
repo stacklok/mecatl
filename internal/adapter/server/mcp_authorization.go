@@ -422,13 +422,29 @@ func (s *Service) resolveAuthorizationLocked(ctx context.Context, sess *session.
 	if err != nil {
 		return MCPAuthorizationResult{}, fmt.Errorf("%w: prepare terminal authorization continuation", ErrInternal)
 	}
-	if err := s.registerAndStartAuthorizationResolution(ctx, sess, prepared); err != nil {
+	if err := s.registerAndStartAuthorizationResolution(ctx, sess, prepared, pending, results, status); err != nil {
 		return MCPAuthorizationResult{}, err
 	}
 	return mcpAuthorizationResult(pending, status, prepared.Run()), nil
 }
 
-func (s *Service) registerAndStartAuthorizationResolution(ctx context.Context, sess *session.Session, prepared *agent.PreparedRun) error {
+// registerAndStartAuthorizationResolution registers and starts the prepared
+// continuation run. The caller's snapshot save has already settled the
+// terminal authorization; every pre-start failure path here therefore also
+// appends the same terminal EvToolResult/EvAuthorizationResolved events
+// appendAuthorizationResolution would append on the no-continuation fallback,
+// so a later event-sourced fold never sees the authorization as still
+// pending. Its own append failure is reported but does not change the
+// caller's returned error class — the settlement itself already succeeded.
+func (s *Service) registerAndStartAuthorizationResolution(ctx context.Context, sess *session.Session, prepared *agent.PreparedRun, pending session.PendingAuthorization, results []session.ToolResult, status session.AuthorizationStatus) error {
+	appendTerminal := func(cause error) error {
+		if appendErr := s.appendAuthorizationResolution(ctx, sess.ID, pending, results, status); appendErr != nil {
+			s.cfg.Diagnostics.Log(context.WithoutCancel(ctx), port.LevelWarn, "persist terminal authorization lifecycle after aborted continuation failed",
+				"session", string(sess.ID), "status", string(status), "err", appendErr.Error())
+		}
+		return cause
+	}
+
 	var handoff sync.Mutex
 	abortOnCancel := context.AfterFunc(ctx, func() {
 		handoff.Lock()
@@ -446,12 +462,12 @@ func (s *Service) registerAndStartAuthorizationResolution(ctx context.Context, s
 	handoff.Lock()
 	if err := ctx.Err(); err != nil {
 		waitForCancellation()
-		return err
+		return appendTerminal(err)
 	}
 	if !s.registerPrepared(sess.ID, prepared.Run(), sess) {
 		waitForCancellation()
 		s.repairAuthorizationRegistration(ctx, sess)
-		return ErrNoActiveRun
+		return appendTerminal(ErrNoActiveRun)
 	}
 	if hook := s.beforeAuthorizationContinuationStart; hook != nil {
 		hook()
@@ -464,14 +480,14 @@ func (s *Service) registerAndStartAuthorizationResolution(ctx context.Context, s
 		handoff.Unlock() //nolint:staticcheck // deliberate empty critical section: wait for the AfterFunc callback's own lock/unlock to complete
 		s.deregister(sess.ID, prepared.Run())
 		s.repairAuthorizationRegistration(ctx, sess)
-		return ctx.Err()
+		return appendTerminal(ctx.Err())
 	}
 	_, transition := prepared.Start()
 	handoff.Unlock()
 	if transition != agent.PreparedRunStarted {
 		s.deregister(sess.ID, prepared.Run())
 		s.repairAuthorizationRegistration(ctx, sess)
-		return fmt.Errorf("%w: start authorization resolution: %s", ErrInternal, transition)
+		return appendTerminal(fmt.Errorf("%w: start authorization resolution: %s", ErrInternal, transition))
 	}
 	return nil
 }
