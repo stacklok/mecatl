@@ -50,19 +50,21 @@ func TestSessionTitleGeneration_Scenario1_TitleCommandPersistsOperatorTitle(t *t
 	}
 }
 
-func TestSessionTitleGeneration_Scenario1_TitleCommandReadAndRejectsBlank(t *testing.T) {
-	m := titleModel(t, &titleRenamer{})
-	m.prompt.Rewrite("/title")
-	mm, cmd := m.submitPrompt()
-	m = mm.(Model)
-	if cmd != nil || len(m.conv.blocks) != 1 || !strings.Contains(m.conv.blocks[0].raw, "Fallback") || !strings.Contains(m.conv.blocks[0].raw, "generated") {
-		t.Fatalf("/title notice = %#v, want local provenance notice", m.conv.blocks)
-	}
-	m.prompt.Rewrite("/title   ")
-	mm, cmd = m.submitPrompt()
-	m = mm.(Model)
-	if cmd != nil || !strings.Contains(stripANSIstr(m.statusMsg), "title cannot be blank") {
-		t.Fatalf("blank /title status/cmd = %q/%v", m.statusMsg, cmd != nil)
+func TestSessionTitleGeneration_Scenario1_TitleCommandReadsWhitespaceSuffixAndClearsInput(t *testing.T) {
+	for _, input := range []string{"/title", "/title ", "/title   ", "/title\t\n"} {
+		t.Run(strings.ReplaceAll(input, " ", "space"), func(t *testing.T) {
+			m := titleModel(t, &titleRenamer{})
+			m.prompt.Rewrite(input)
+
+			mm, cmd := m.submitPrompt()
+			m = mm.(Model)
+			if cmd != nil || len(m.conv.blocks) != 1 || !strings.Contains(m.conv.blocks[0].raw, "Fallback") || !strings.Contains(m.conv.blocks[0].raw, "generated") {
+				t.Fatalf("%q notice/cmd = %#v/%v, want local provenance notice", input, m.conv.blocks, cmd != nil)
+			}
+			if got := m.prompt.Value(); got != "" {
+				t.Fatalf("%q left input %q, want cleared input", input, got)
+			}
+		})
 	}
 }
 

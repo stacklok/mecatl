@@ -646,21 +646,18 @@ func canonicalBuiltinName(name string) string {
 }
 
 // titleCommand recognizes /title without treating arbitrary model-facing slash
-// commands as client commands. bare distinguishes exactly /title from whitespace
-// supplied after it, which is rejected rather than silently treated as a read.
-func titleCommand(text string) (title string, bare, blank, ok bool) {
+// commands as client commands. A suffix containing only whitespace is a no-argument
+// title read, matching the palette's completed "/title " input.
+func titleCommand(text string) (title string, bare, ok bool) {
 	raw := strings.TrimLeftFunc(text, unicode.IsSpace)
 	if !strings.HasPrefix(strings.ToLower(raw), "/title") {
-		return "", false, false, false
+		return "", false, false
 	}
 	if len(raw) > len("/title") && !unicode.IsSpace(rune(raw[len("/title")])) {
-		return "", false, false, false
-	}
-	if len(raw) == len("/title") {
-		return "", true, false, true
+		return "", false, false
 	}
 	title = strings.TrimSpace(raw[len("/title"):])
-	return title, false, title == "", true
+	return title, title == "", true
 }
 
 // runTitle adds a local, nonpersistent title/provenance notice. It deliberately
@@ -693,12 +690,9 @@ func (m Model) renameTitle(title string) (tea.Model, tea.Cmd) {
 // recognized built-in that does not accept arguments keeps the input and shows a
 // local warning. Unknown slash commands remain model-facing.
 func (m Model) dispatchBareBuiltin(text string) (tea.Model, tea.Cmd, bool) {
-	if title, bare, blank, ok := titleCommand(text); ok {
-		if blank {
-			m.statusMsg = m.deps.Theme.Style("warning").Render("title cannot be blank; use /title <text>")
-			return m, nil, true
-		}
+	if title, bare, ok := titleCommand(text); ok {
 		if bare {
+			m.prompt.Reset()
 			return m.runTitle(), nil, true
 		}
 		mm, cmd := m.renameTitle(title)

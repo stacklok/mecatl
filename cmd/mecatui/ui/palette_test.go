@@ -141,9 +141,9 @@ func TestPaletteFetchesOnce(t *testing.T) {
 	if fc.gotWS != "sess-test-0001" {
 		t.Fatalf("fetch session = %q, want sess-test-0001", fc.gotWS)
 	}
-	// Merged: 6 built-ins + 3 fetched workspace rows = 9.
-	if !m.palette.open || len(m.palette.filtered) != 9 {
-		t.Fatalf("palette not populated from fetch: open=%v filtered=%d (want 9)", m.palette.open, len(m.palette.filtered))
+	// Merged: 7 built-ins + 3 fetched workspace rows = 10.
+	if !m.palette.open || len(m.palette.filtered) != 10 {
+		t.Fatalf("palette not populated from fetch: open=%v filtered=%d (want 10)", m.palette.open, len(m.palette.filtered))
 	}
 
 	// A second keystroke must NOT re-fetch (the latch holds).
@@ -265,11 +265,11 @@ func TestPaletteNavigateAndComplete(t *testing.T) {
 
 // TestPaletteCompleteWorkspaceWithTab verifies tab text-completes a WORKSPACE
 // row (not a built-in). With built-ins leading, the first workspace row "fix" is
-// at index 6.
+// at index 7.
 func TestPaletteCompleteWorkspaceWithTab(t *testing.T) {
 	m := newPaletteModel(t, sampleCommands())
 	m = typeRune(t, m, '/')
-	for i := 0; i < 6; i++ {
+	for i := 0; i < 7; i++ {
 		mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 		m = mm.(Model)
 	}
@@ -302,6 +302,14 @@ func TestPaletteCompleteTitleForArguments(t *testing.T) {
 		}
 		if len(m.conv.blocks) != 0 {
 			t.Fatalf("selecting /title must not execute the bare read: %#v", m.conv.blocks)
+		}
+		mm, cmd := m.submitPrompt()
+		m = mm.(Model)
+		if cmd != nil || len(m.conv.blocks) != 1 || !strings.Contains(m.conv.blocks[0].raw, "Session title:") {
+			t.Fatalf("enter after palette completion = blocks=%#v cmd=%v, want local title read", m.conv.blocks, cmd != nil)
+		}
+		if got := m.prompt.Value(); got != "" {
+			t.Fatalf("input after title read = %q, want cleared", got)
 		}
 		return
 	}
@@ -349,8 +357,8 @@ func TestPaletteUnknownPrefixShowsNote(t *testing.T) {
 	if !m.palette.open {
 		t.Fatalf("bare '/' should open the palette (built-ins always exist)")
 	}
-	if len(m.palette.filtered) != 6 {
-		t.Fatalf("bare '/' filtered = %d, want 6 built-ins", len(m.palette.filtered))
+	if len(m.palette.filtered) != 7 {
+		t.Fatalf("bare '/' filtered = %d, want 7 built-ins", len(m.palette.filtered))
 	}
 
 	// Typing a prefix that matches no command closes the dropdown and the input
