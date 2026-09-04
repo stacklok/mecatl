@@ -390,8 +390,7 @@ func writeSessionsHelpAll(out io.Writer, fs *flag.FlagSet, mode transportMode) {
 }
 
 // writeBareHelpAll renders the exhaustive flag list for the bare `mecatui
-// --help-all` (the embedded default). It uses the single cliconfig formatter
-// (byte-identical to flag.PrintDefaults).
+// --help-all` (the embedded default). It uses the single cliconfig formatter.
 func writeBareHelpAll(out io.Writer, fs *flag.FlagSet) {
 	_, _ = fmt.Fprintf(out, "Usage: mecatui [flags]\n\n")
 	writeCommandSummary(out)

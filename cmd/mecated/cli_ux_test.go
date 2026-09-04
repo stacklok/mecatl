@@ -299,16 +299,16 @@ func helpRenderOut(t *testing.T, mode commandMode, argv []string) string {
 }
 
 // hasFlagHeader reports whether the rendered help output contains the flag's own
-// header line ("  -<name>" at the start of a line, followed by a space, tab, or
-// newline) — distinguishing the flag's own entry from a bare mention of "-<name>"
-// inside ANOTHER flag's description (e.g. "--headless" appears in the
-// --plan-mode-auto-approve description, and "--session-store-url" appears in the
-// --child-retention description).
+// header line using the conventional -- spelling for long names and - spelling
+// for one-character aliases, distinguishing it from a mention in another flag's
+// description.
 func hasFlagHeader(out, name string) bool {
+	prefix := "  --"
+	if len(name) == 1 {
+		prefix = "  -"
+	}
 	for _, line := range strings.Split(out, "\n") {
-		// flag.PrintDefaults emits the header as "  -<name>" possibly followed by
-		// " <type>" then a tab or newline.
-		rest := strings.TrimPrefix(line, "  -"+name)
+		rest := strings.TrimPrefix(line, prefix+name)
 		if rest == line {
 			continue // not this flag's header line
 		}

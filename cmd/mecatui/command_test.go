@@ -850,12 +850,16 @@ func helpRenderOutForLaunch(t *testing.T, mode transportMode, browseSessions boo
 }
 
 // hasFlagHeader reports whether the rendered help output contains the flag's
-// own header line ("  -<name>" at the start of a line) — distinguishing the
-// flag's own entry from a bare mention of "-<name>" inside prose (e.g. "--mock"
-// appears in the connect help description naming the rejected embedded flags).
+// own header line — distinguishing the flag's own entry from a bare mention in
+// prose. Multi-character names use the conventional -- spelling while aliases
+// retain the single-dash form.
 func hasFlagHeader(out, name string) bool {
+	prefix := "  --"
+	if len(name) == 1 {
+		prefix = "  -"
+	}
 	for _, line := range strings.Split(out, "\n") {
-		rest := strings.TrimPrefix(line, "  -"+name)
+		rest := strings.TrimPrefix(line, prefix+name)
 		if rest == line {
 			continue
 		}

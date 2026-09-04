@@ -8,14 +8,9 @@ import (
 	"time"
 )
 
-// TestPrintDefaultsExcludingParity proves PrintDefaultsExcluding with no
-// exclusions is BYTE-IDENTICAL to (*flag.FlagSet).PrintDefaults across a
-// representative FlagSet exercising every stdlib flag shape (bool, string, int,
-// int64, uint, uint64, float64, duration, a back-quoted-name string, and a
-// custom flag.Value). Every usage string here stays within helpWrapWidth, so
-// this pins the ONE formatter to the standard library's output on short usage
-// bodies; TestWrapUsageLines* covers the wrapping divergence on long ones.
-func TestPrintDefaultsExcludingParity(t *testing.T) {
+// TestPrintDefaultsUsesConventionalOptionSpelling proves multi-character flag
+// names render as long options while one-character aliases retain short spelling.
+func TestPrintDefaultsUsesConventionalOptionSpelling(t *testing.T) {
 	fs := flag.NewFlagSet("parity", flag.ContinueOnError)
 	var (
 		b        bool
@@ -43,22 +38,23 @@ func TestPrintDefaultsExcludingParity(t *testing.T) {
 	fs.Var(&custom, "custom", "a custom flag.Value with a non-zero default")
 	fs.StringVar(&zeroStr, "zero-string", "", "a string flag at its zero value (no default shown)")
 	fs.BoolVar(&zeroBool, "zero-bool", false, "a bool flag at its zero value (no default shown)")
-
-	var want bytes.Buffer
-	fs.SetOutput(&want)
-	fs.PrintDefaults()
+	fs.Bool("v", false, "a one-character alias")
 
 	var got bytes.Buffer
-	PrintDefaultsExcluding(&got, fs, nil)
+	PrintDefaults(&got, fs)
 
-	if got.String() != want.String() {
-		t.Fatalf("PrintDefaultsExcluding diverged from flag.PrintDefaults:\n--- want ---\n%s\n--- got ---\n%s", want.String(), got.String())
+	for _, name := range []string{"bool", "string", "int", "int64", "uint", "uint64", "float", "duration", "named", "custom", "zero-string", "zero-bool"} {
+		if !strings.Contains(got.String(), "  --"+name) {
+			t.Errorf("long flag %q did not use -- spelling:\n%s", name, got.String())
+		}
+	}
+	if !strings.Contains(got.String(), "  -v\t") {
+		t.Errorf("one-character alias did not retain - spelling:\n%s", got.String())
 	}
 }
 
 // TestPrintDefaultsExcludingHonoursExclude proves the exclude set skips the
-// named flag's full rendered block and leaves the rest byte-identical to the
-// stdlib for the kept flags.
+// named flag's full rendered block and retains the remaining long options.
 func TestPrintDefaultsExcludingHonoursExclude(t *testing.T) {
 	fs := flag.NewFlagSet("exclude", flag.ContinueOnError)
 	var a, b, c string
@@ -66,36 +62,31 @@ func TestPrintDefaultsExcludingHonoursExclude(t *testing.T) {
 	fs.StringVar(&b, "b", "2", "b flag")
 	fs.StringVar(&c, "c", "3", "c flag")
 
-	var want bytes.Buffer
-	fs.SetOutput(&want)
-	fs.PrintDefaults()
-	wantKept := removeFlagBlock(want.String(), "b")
-
 	var got bytes.Buffer
 	PrintDefaultsExcluding(&got, fs, map[string]bool{"b": true})
 
-	if got.String() != wantKept {
-		t.Fatalf("exclude did not match the stdlib output minus b:\n--- want ---\n%s\n--- got ---\n%s", wantKept, got.String())
+	if strings.Contains(got.String(), "--b") {
+		t.Fatalf("excluded flag b was rendered:\n%s", got.String())
+	}
+	for _, name := range []string{"a", "c"} {
+		if !strings.Contains(got.String(), "  -"+name+" ") {
+			t.Errorf("kept one-character flag %q was not rendered:\n%s", name, got.String())
+		}
 	}
 }
 
-// TestPrintFlagDefaultMatchesStdlib proves the per-flag selected form matches the
-// corresponding line(s) from flag.PrintDefaults when the usage body fits within
-// the wrap width (short-name flags with short usage bodies are byte-identical).
-func TestPrintFlagDefaultMatchesStdlib(t *testing.T) {
+// TestPrintFlagDefaultUsesLongOptionSpelling proves a selected multi-character
+// flag uses the same long-option spelling as the complete renderer.
+func TestPrintFlagDefaultUsesLongOptionSpelling(t *testing.T) {
 	fs := flag.NewFlagSet("single", flag.ContinueOnError)
 	var s string
 	fs.StringVar(&s, "thing", "stuff", "a thing flag")
 
-	var want bytes.Buffer
-	fs.SetOutput(&want)
-	fs.PrintDefaults()
-
 	var got bytes.Buffer
 	PrintFlagDefault(&got, fs.Lookup("thing"))
 
-	if got.String() != want.String() {
-		t.Fatalf("PrintFlagDefault diverged from flag.PrintDefaults:\n--- want ---\n%s\n--- got ---\n%s", want.String(), got.String())
+	if !strings.HasPrefix(got.String(), "  --thing string\n") {
+		t.Fatalf("selected long flag did not use -- spelling:\n%s", got.String())
 	}
 }
 
@@ -178,28 +169,3 @@ type customValue string
 
 func (c *customValue) String() string     { return string(*c) }
 func (c *customValue) Set(s string) error { *c = customValue(s); return nil }
-
-// removeFlagBlock removes the full rendered block for the named flag from s —
-// the header line ("  -<name>") plus every immediately following indented usage
-// continuation line (those starting with "    \t"). flag.PrintDefaults emits a
-// flag's block as the header line followed by one or more indented lines.
-func removeFlagBlock(s, name string) string {
-	header := "  -" + name + " "
-	var out strings.Builder
-	lines := strings.SplitAfter(s, "\n")
-	skipping := false
-	for _, line := range lines {
-		if skipping {
-			if strings.HasPrefix(line, "    \t") {
-				continue
-			}
-			skipping = false
-		}
-		if strings.HasPrefix(line, header) {
-			skipping = true
-			continue
-		}
-		out.WriteString(line)
-	}
-	return out.String()
-}

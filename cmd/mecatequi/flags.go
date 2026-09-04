@@ -360,7 +360,7 @@ func usageEpilogue(fs *flag.FlagSet) func() {
 		_, _ = fmt.Fprintf(out, "mecatequi — single-shot, headless mecatl runner for CI / batch use.\n\n")
 		_, _ = fmt.Fprintf(out, "Usage: mecatequi --prompt <text> [flags]\n\n")
 		_, _ = fmt.Fprintf(out, "Flags:\n")
-		fs.PrintDefaults()
+		cliconfig.PrintDefaults(out, fs)
 		_, _ = fmt.Fprintln(out, "\nVersion: mecatequi --version prints the build version and exits.")
 		_, _ = fmt.Fprintf(out, `
 Output routing:

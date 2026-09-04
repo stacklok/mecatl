@@ -19,6 +19,7 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/clientauth"
 	"github.com/stacklok/mecatl/internal/adapter/credentialstore"
 	"github.com/stacklok/mecatl/internal/adapter/toolhivellm"
+	"github.com/stacklok/mecatl/internal/cliconfig"
 	"github.com/stacklok/mecatl/mcp/oauthlogin"
 )
 
@@ -66,7 +67,7 @@ func runRemoteLogin(address string, args []string) error {
 	fs.DurationVar(&timeout, "callback-timeout", 5*time.Minute, "maximum time to wait for the loopback OAuth callback")
 	fs.Usage = func() {
 		fmt.Fprintln(os.Stderr, "Usage: mecatui login ADDRESS --issuer HTTPS_URL --client-id ID --audience AUDIENCE [--tls-ca PATH] [--private-issuer]")
-		fs.PrintDefaults()
+		cliconfig.PrintDefaults(fs.Output(), fs)
 	}
 	if err := fs.Parse(args); err != nil {
 		return err

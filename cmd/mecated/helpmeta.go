@@ -421,7 +421,7 @@ func renderGroupedCommon(out io.Writer, fs *flag.FlagSet, common map[string]bool
 }
 
 // writeServeHelpAll renders the exhaustive flag list for `mecated serve --help-all`.
-// It uses the single cliconfig formatter (byte-identical to flag.PrintDefaults).
+// It uses the single cliconfig formatter.
 func writeServeHelpAll(out io.Writer, fs *flag.FlagSet) {
 	_, _ = fmt.Fprintf(out, "Usage: mecated serve [flags]\n\nFlags:\n")
 	cliconfig.PrintDefaultsExcluding(out, fs, nil)
