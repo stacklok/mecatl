@@ -258,7 +258,7 @@ func renderWorktreesOverlay(th theme.Theme, st worktreesState, caps client.Capab
 }
 
 // renderWorktreesPanel renders the worktree list card.
-func renderWorktreesPanel(th theme.Theme, st worktreesState, _ client.Capabilities, hk helpKeys, _, _ int) string {
+func renderWorktreesPanel(th theme.Theme, st worktreesState, _ client.Capabilities, hk helpKeys, width, _ int) string {
 	var b strings.Builder
 	b.WriteString(th.Style("title").Render("worktrees") + "\n")
 	b.WriteString(th.Style("muted").Render("select a worktree to start a new session rooted there") + "\n\n")
@@ -292,7 +292,9 @@ func renderWorktreesPanel(th theme.Theme, st worktreesState, _ client.Capabiliti
 			line += "  (" + sanitizeTerminal(shortSHA(w.Revision)) + ")"
 		}
 		if i == st.cursor {
-			line = th.Style("accent").Render(line)
+			line = renderToolCardText(th.Style("accent"), line, width)
+		} else {
+			line = renderToolCardText(th.Style("toolArgs"), line, width)
 		}
 		b.WriteString(line + "\n")
 	}

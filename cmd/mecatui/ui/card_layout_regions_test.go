@@ -192,3 +192,58 @@ func TestMecatuiCardLayout_Scenario1_NoStyledBodyWrap(t *testing.T) {
 		}
 	}
 }
+
+// TestMecatuiCardLayout_Scenario3_InventoryAndMCPFitWidth verifies AC3.1:
+// inventory and MCP list rows are prepared within the body width their container
+// offers before styling and final card framing.
+func TestMecatuiCardLayout_Scenario3_InventoryAndMCPFitWidth(t *testing.T) {
+	const width = 32
+	long := strings.Repeat("unbreakable-inventory-value-", 4)
+	th, hk := aztec(), defaultHelpKeys()
+	assertFits := func(t *testing.T, name, out string) {
+		t.Helper()
+		for row, line := range strings.Split(stripANSIstr(out), "\n") {
+			if !strings.Contains(line, "unbreakable-inventory-value-") {
+				continue
+			}
+			if got := maxLineWidth(line); got > width {
+				t.Errorf("%s row %d width = %d, want ≤ %d: %q", name, row, got, width, line)
+			}
+		}
+	}
+
+	t.Run("mcp", func(t *testing.T) {
+		state := mcpState{sources: []client.MCPSource{{
+			Name: long, Kind: long, Group: long,
+			Servers:     []client.MCPServerInfo{{Name: long, Transport: long, URL: long}},
+			Diagnostics: []string{long},
+		}}, groups: []string{long}, groupsDone: true}
+		assertFits(t, "panel", renderMCPPanel(th, state, client.Capabilities{MCP: true}, hk, width))
+		assertFits(t, "resources", renderResourceList(th, mcpState{resources: []client.MCPResource{{Name: long, Server: long}}}, client.Capabilities{MCP: true}, hk, width))
+		assertFits(t, "prompts", renderPromptList(th, mcpState{prompts: []client.MCPPrompt{{Name: long, Server: long, Arguments: []client.MCPPromptArgument{{Required: true}}}}}, client.Capabilities{MCP: true}, hk, width))
+	})
+
+	t.Run("models", func(t *testing.T) {
+		catalog := modelCatalog{models: []client.ModelInfo{{ProviderID: long, ID: long, DisplayName: long}}, statuses: []client.ProviderStatus{{ProviderID: long, State: "unreachable", Hint: long}}}
+		picker := modelsState{catalog: catalog, filtered: catalog.models}
+		assertFits(t, "models", renderModelsPanel(th, catalog, picker, client.Capabilities{ModelSelection: true}, long, hk, 3, width))
+	})
+
+	t.Run("sessions and worktrees", func(t *testing.T) {
+		st := sessionsState{filtered: []client.SessionListItem{{ID: "s", Title: long, State: long, ModelID: long, Relationship: client.SessionRelationship{MemberName: long}}}, handles: map[string]string{"s": long}}
+		assertFits(t, "sessions", renderSessionsPanel(th, st, client.Capabilities{}, hk, width, 20))
+		wt := worktreesState{view: worktreesPanel, filtered: []client.Worktree{{Label: long, Branch: long}}}
+		assertFits(t, "worktrees", renderWorktreesPanel(th, wt, client.Capabilities{}, hk, width, 20))
+	})
+
+	t.Run("agents team and parallel", func(t *testing.T) {
+		assertFits(t, "agent definitions", renderAgentsInvPanel(th, agentsInvState{agents: []client.Agent{{Name: long, Description: long, Model: long, PermissionMode: long, Tools: []string{long}}}}, client.Capabilities{Agents: true}, hk, width))
+		lane := teamLane{name: long, current: long, role: long}
+		teamBlock := &block{teamLanes: []teamLane{lane}}
+		assertFits(t, "team", renderAgentsOverlay(th, tabTeams, subagentState{}, parallelState{}, teamState{view: teamRoster}, teamBlock, nil, nil, hk, width, 20))
+		fleet := []subagentLane{{childID: long, goal: long, current: long}}
+		assertFits(t, "subagents", renderAgentsOverlay(th, tabSubagents, subagentState{}, parallelState{}, teamState{}, nil, fleet, nil, hk, width, 20))
+		groups := []parallelGroup{{parentCallID: long, join: long, branches: []parallelBranch{{index: 0, label: long, goal: long, current: long}}}}
+		assertFits(t, "parallel", renderAgentsOverlay(th, tabParallel, subagentState{}, parallelState{}, teamState{}, nil, nil, groups, hk, width, 20))
+	})
+}

@@ -59,9 +59,9 @@ type modelsGlobalDefaultIntent struct {
 
 func (modelsGlobalDefaultIntent) isSurfaceIntent() {}
 
-func (s *modelsState) Render(_ int, height int) (string, []ClickableRegion) {
+func (s *modelsState) Render(width, height int) (string, []ClickableRegion) {
 	s.rowBudget = modelsRowBudgetFor(height, modelsPanelFixedRows(*s, s.provenance, s.deps.marks))
-	return renderModelsPanel(s.deps.theme, s.catalog, *s, s.deps.caps, s.provenance, s.deps.marks, s.rowBudget), nil
+	return renderModelsPanel(s.deps.theme, s.catalog, *s, s.deps.caps, s.provenance, s.deps.marks, s.rowBudget, width), nil
 }
 
 func (s *modelsState) HandleKey(msg tea.KeyPressMsg) (tea.Cmd, bool, bool) {
@@ -272,7 +272,11 @@ func renderProviderStatusLines(statuses []client.ProviderStatus, inventoryEmpty 
 	return lines
 }
 
-func renderModelsPanel(th theme.Theme, catalog modelCatalog, picker modelsState, caps client.Capabilities, prov string, hk helpKeys, rowBudget int) string {
+func renderModelsPanel(th theme.Theme, catalog modelCatalog, picker modelsState, caps client.Capabilities, prov string, hk helpKeys, rowBudget int, widths ...int) string {
+	width := 0
+	if len(widths) > 0 {
+		width = widths[0]
+	}
 	var b strings.Builder
 	title := "Models"
 	if !picker.loading && picker.err == nil && len(picker.filtered) > 0 {
@@ -281,7 +285,7 @@ func renderModelsPanel(th theme.Theme, catalog modelCatalog, picker modelsState,
 	}
 	b.WriteString(th.Style("askTitle").Render(title) + "\n")
 	if prov != "" {
-		b.WriteString(th.Style("muted").Render(prov) + "\n")
+		b.WriteString(renderToolCardText(th.Style("muted"), prov, width) + "\n")
 	}
 	b.WriteString(picker.filter.View() + "\n\n")
 	b.WriteString(th.Style("warning").Render(modelSwitchDisclosure) + "\n\n")
@@ -299,7 +303,7 @@ func renderModelsPanel(th theme.Theme, catalog modelCatalog, picker modelsState,
 		start, end := scrollWindow(picker.cursor, len(picker.filtered), rowBudget)
 		for i := start; i < end; i++ {
 			mi := picker.filtered[i]
-			b.WriteString(renderRow(th, modelRowText(catalog.active, catalog.globalDefault, catalog.configProvenanceProviderIDs, mi), i == picker.cursor) + "\n")
+			b.WriteString(renderRow(th, modelRowText(catalog.active, catalog.globalDefault, catalog.configProvenanceProviderIDs, mi), i == picker.cursor, width) + "\n")
 		}
 	}
 	if picker.err == nil {
@@ -308,7 +312,7 @@ func renderModelsPanel(th theme.Theme, catalog modelCatalog, picker modelsState,
 			b.WriteString("\n")
 		}
 		for _, line := range statuses {
-			b.WriteString(th.Style("errorText").Render(sanitizeTerminal(line)) + "\n")
+			b.WriteString(renderToolCardText(th.Style("errorText"), sanitizeTerminal(line), width) + "\n")
 		}
 	}
 	b.WriteString("\n" + th.Style("muted").Render("type to filter · ↑/↓/"+hk.scrollUp+" move · "+hk.choose+" use · "+hk.setGlobalDefault+" set global default · "+hk.closeOnly+" clear filter / close"))

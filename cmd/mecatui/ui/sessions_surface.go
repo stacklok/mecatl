@@ -1274,7 +1274,7 @@ func sessionsTabBar(th theme.Theme, tab sessionsTab, storageHealth bool) string 
 	return strings.Join(parts, th.Style("muted").Render("  "))
 }
 
-func renderSessionsPanel(th theme.Theme, st sessionsState, caps client.Capabilities, hk helpKeys, _, _ int, currentID ...string) string {
+func renderSessionsPanel(th theme.Theme, st sessionsState, caps client.Capabilities, hk helpKeys, width, _ int, currentID ...string) string {
 	current := ""
 	if len(currentID) > 0 {
 		current = currentID[0]
@@ -1290,7 +1290,7 @@ func renderSessionsPanel(th theme.Theme, st sessionsState, caps client.Capabilit
 		b.WriteString(rendered)
 		return b.String()
 	}
-	renderSessionRows(&b, th, st, current)
+	renderSessionRows(&b, th, st, current, width)
 	if status := sessionsPaginationStatus(st); status != "" {
 		b.WriteString(th.Style("muted").Render(status) + "\n")
 	}
@@ -1509,7 +1509,7 @@ func sessionsPaginationStatus(st sessionsState) string {
 	}
 }
 
-func renderSessionRows(b *strings.Builder, th theme.Theme, st sessionsState, current string) {
+func renderSessionRows(b *strings.Builder, th theme.Theme, st sessionsState, current string, width int) {
 	start, end := scrollWindow(st.cursor, len(st.filtered), sessionsVisibleRows)
 	for i := start; i < end; i++ {
 		s := st.filtered[i]
@@ -1537,10 +1537,11 @@ func renderSessionRows(b *strings.Builder, th theme.Theme, st sessionsState, cur
 		if s.Kind == client.SessionKindTeamMember && s.Relationship.MemberName != "" {
 			line += "  [member " + sanitizeTerminal(s.Relationship.MemberName) + "]"
 		}
+		style := th.Style("muted")
 		if i == st.cursor {
-			line = th.Style("accent").Render(line)
+			style = th.Style("accent")
 		}
-		b.WriteString(line + "\n")
+		b.WriteString(renderToolCardText(style, line, width) + "\n")
 	}
 }
 
