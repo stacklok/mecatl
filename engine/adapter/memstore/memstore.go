@@ -33,11 +33,14 @@ type Store struct {
 	// savedAt records each session's last Save time, read via now (injected
 	// for determinism; the real clock by default). It backs the optional
 	// port.PrunableStore List/Delete retention seam.
-	savedAt        map[session.SessionID]time.Time
-	estimatedBytes map[session.SessionID]int64
-	prunedLineage  []port.SessionLineageRecord
-	deleteFailures map[session.SessionID]error
-	now            func() time.Time
+	savedAt             map[session.SessionID]time.Time
+	estimatedBytes      map[session.SessionID]int64
+	lineageByKey        map[string]port.SessionLineageRecord
+	lineageByID         map[session.SessionID]map[string]port.SessionLineageRecord
+	lineageEdges        map[string]map[string]port.SessionLineageRecord
+	lineageReadObserver func(string)
+	deleteFailures      map[session.SessionID]error
+	now                 func() time.Time
 	// generation is a monotonic counter bumped on every Save/Delete, and
 	// handed to port.PaginateSessionMetadataBound as the cheap O(1)
 	// "has anything changed" signal a bound cursor is checked against. This
@@ -94,6 +97,9 @@ func New(opts ...Option) *Store {
 		sessions:       make(map[session.SessionID]sessnap.Snapshot),
 		savedAt:        make(map[session.SessionID]time.Time),
 		estimatedBytes: make(map[session.SessionID]int64),
+		lineageByKey:   make(map[string]port.SessionLineageRecord),
+		lineageByID:    make(map[session.SessionID]map[string]port.SessionLineageRecord),
+		lineageEdges:   make(map[string]map[string]port.SessionLineageRecord),
 		deleteFailures: make(map[session.SessionID]error),
 		now:            time.Now,
 	}
@@ -116,9 +122,10 @@ func (st *Store) Save(_ context.Context, s *session.Session) error {
 	st.mu.Lock()
 	prior, existed := st.sessions[s.ID]
 	if existed && !sameLineageIncarnation(prior, s) {
-		st.prunedLineage = append(st.prunedLineage, lineageSnapshotRecord(s.ID, prior, port.SessionLineagePruned, st.now()))
+		st.putLineage(lineageSnapshotRecord(s.ID, prior, port.SessionLineagePruned, st.now()))
 	}
 	st.sessions[s.ID] = snap
+	st.putLineage(lineageSnapshotRecord(s.ID, snap, port.SessionLineageRetained, time.Time{}))
 	st.savedAt[s.ID] = st.now()
 	st.estimatedBytes[s.ID] = estimatedBytes
 	st.generation++
@@ -143,6 +150,7 @@ func (st *Store) Create(_ context.Context, s *session.Session) error {
 		return fmt.Errorf("memstore: create %q: %w", s.ID, port.ErrSessionAlreadyExists)
 	}
 	st.sessions[s.ID] = snap
+	st.putLineage(lineageSnapshotRecord(s.ID, snap, port.SessionLineageRetained, time.Time{}))
 	st.savedAt[s.ID] = st.now()
 	st.estimatedBytes[s.ID] = estimatedBytes
 	st.generation++
@@ -284,6 +292,50 @@ func sameLineageIncarnation(snap sessnap.Snapshot, current *session.Session) boo
 	return session.PersistedIncarnationID("", snap.ID, snap.CreatedAt.UnixNano(), snap.Owner) == current.Incarnation()
 }
 
+func lineageRecordKey(id session.SessionID, incarnation string) string {
+	return string(id) + "\x00" + incarnation
+}
+
+func lineageEdgeSubject(row port.SessionLineageRecord) string {
+	rel := row.Relationship
+	switch {
+	case rel.ParentSessionID != "":
+		return lineageRecordKey(rel.ParentSessionID, string(rel.ParentIncarnation))
+	case rel.OriginSessionID != "":
+		return lineageRecordKey(rel.OriginSessionID, string(rel.OriginIncarnation))
+	case rel.DebugTargetID != "":
+		return lineageRecordKey(rel.DebugTargetID, string(rel.DebugTargetIncarnation))
+	default:
+		return ""
+	}
+}
+
+// putLineage updates only the record's ID partition and its old/new direct-edge
+// partitions. st.mu must be held by the caller.
+func (st *Store) putLineage(row port.SessionLineageRecord) {
+	key := lineageRecordKey(row.ID, row.Incarnation)
+	if old, ok := st.lineageByKey[key]; ok {
+		if subject := lineageEdgeSubject(old); subject != "" {
+			delete(st.lineageEdges[subject], key)
+		}
+	}
+	st.lineageByKey[key] = row
+	byID := st.lineageByID[row.ID]
+	if byID == nil {
+		byID = make(map[string]port.SessionLineageRecord)
+		st.lineageByID[row.ID] = byID
+	}
+	byID[key] = row
+	if subject := lineageEdgeSubject(row); subject != "" {
+		edges := st.lineageEdges[subject]
+		if edges == nil {
+			edges = make(map[string]port.SessionLineageRecord)
+			st.lineageEdges[subject] = edges
+		}
+		edges[key] = row
+	}
+}
+
 func lineageLess(a, b port.SessionLineageRecord, root session.SessionID) bool {
 	if (a.ID == root) != (b.ID == root) {
 		return a.ID == root
@@ -311,17 +363,31 @@ func (st *Store) ReadSessionLineage(_ context.Context, query port.SessionLineage
 		return port.SessionLineageResult{}, err
 	}
 	st.mu.RLock()
-	rows := make([]port.SessionLineageRecord, 0, len(st.sessions)+len(st.prunedLineage))
-	for id, snap := range st.sessions {
-		row := lineageSnapshotRecord(id, snap, port.SessionLineageRetained, time.Time{})
-		if lineageMatches(row, query) {
-			rows = append(rows, row)
+	if query.RecordID != "" {
+		key := lineageRecordKey(query.RecordID, string(query.RecordIncarnation))
+		partition := lineageRecordKey(query.RootID, string(query.RootIncarnation))
+		if st.lineageReadObserver != nil {
+			st.lineageReadObserver("point:" + partition + ":" + key)
 		}
+		row, found := st.lineageEdges[partition][key]
+		st.mu.RUnlock()
+		if !found || !lineageMatches(row, query) {
+			return port.SessionLineageResult{}, nil
+		}
+		return port.SessionLineageResult{Records: []port.SessionLineageRecord{row}}, nil
 	}
-	for _, row := range st.prunedLineage {
-		if lineageMatches(row, query) {
-			rows = append(rows, row)
-		}
+	if st.lineageReadObserver != nil {
+		st.lineageReadObserver("records:" + string(query.RootID))
+		st.lineageReadObserver("edges:" + lineageRecordKey(query.RootID, string(query.RootIncarnation)))
+	}
+	byID := st.lineageByID[query.RootID]
+	edges := st.lineageEdges[lineageRecordKey(query.RootID, string(query.RootIncarnation))]
+	rows := make([]port.SessionLineageRecord, 0, len(byID)+len(edges))
+	for _, row := range byID {
+		rows = append(rows, row)
+	}
+	for _, row := range edges {
+		rows = append(rows, row)
 	}
 	st.mu.RUnlock()
 	sort.Slice(rows, func(i, j int) bool { return lineageLess(rows[i], rows[j], query.RootID) })
@@ -357,7 +423,7 @@ func (st *Store) DeleteSessionIfUnchanged(_ context.Context, expected port.Sessi
 		return false, err
 	}
 	row := lineageSnapshotRecord(expected.ID, snap, port.SessionLineagePruned, st.now())
-	st.prunedLineage = append(st.prunedLineage, row)
+	st.putLineage(row)
 	delete(st.sessions, expected.ID)
 	delete(st.savedAt, expected.ID)
 	delete(st.estimatedBytes, expected.ID)
@@ -374,8 +440,7 @@ func (st *Store) Delete(_ context.Context, id session.SessionID) error {
 		return err
 	}
 	if snap, ok := st.sessions[id]; ok {
-		row := lineageSnapshotRecord(id, snap, port.SessionLineagePruned, st.now())
-		st.prunedLineage = append(st.prunedLineage, row)
+		st.putLineage(lineageSnapshotRecord(id, snap, port.SessionLineagePruned, st.now()))
 		st.generation++
 	}
 	delete(st.sessions, id)

@@ -202,7 +202,7 @@ type SessionCreator interface{Create(ctx context.Context, s *session.Session) er
 type SessionDeleteSupport interface{SupportsSessionDelete() bool}
 type SessionDiscoveryMeta struct{ID session.SessionID; ModifiedAt time.Time; State session.State; Turns int; ModelID string; CreatedAt time.Time; Title string; TitleProvenance session.TitleProvenance; Owner *session.Principal; EnvironmentRef session.EnvironmentRef; Kind session.SessionKind; Relationship session.SessionRelationship; EstimatedBytes int64}
 type SessionLease interface{Acquire(ctx context.Context, id session.SessionID, owner string) (Lease, error); Release(ctx context.Context, l Lease) error; Renew(ctx context.Context, l Lease) (Lease, error)}
-type SessionLineageQuery struct{RootID session.SessionID; RootIncarnation session.IncarnationID; Limit int}
+type SessionLineageQuery struct{RootID session.SessionID; RootIncarnation session.IncarnationID; RecordID session.SessionID; RecordIncarnation session.IncarnationID; Limit int}
 type SessionLineageReader interface{ReadSessionLineage(ctx context.Context, query SessionLineageQuery) (SessionLineageResult, error)}
 type SessionLineageRecord struct{ID session.SessionID; Kind session.SessionKind; Relationship session.SessionRelationship; OwnerScope [32]byte; Incarnation string; State SessionLineageState; DeletedAt time.Time}
 type SessionLineageResult struct{Records []SessionLineageRecord; Truncated bool}

@@ -204,6 +204,11 @@ func newWithConfig(cfg Config, deps storeDependencies) (*Store, error) {
 		st.clients.close(deps.closeGrace)
 		return nil, err
 	}
+	if err := initializeLineageIndex(context.Background(), initClient); err != nil {
+		release()
+		st.clients.close(deps.closeGrace)
+		return nil, err
+	}
 	release()
 	if cfg.reloadEnabled() {
 		lifecycle, err := startReloadLifecycle(st, cfg, deps)

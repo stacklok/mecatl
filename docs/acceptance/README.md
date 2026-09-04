@@ -224,6 +224,9 @@ PR after verification. There is no cleanup or status-only PR.
   filesystem-path authority: composition binds default/no-FS/remote environments;
   alternate worktrees use fresh source-scoped opaque selectors only on clear/fork.
   Status: landed.
+- [InspectSession scoped read isolation](inspect-session-read-isolation.md) — proposed
+  bounded direct-edge lineage reads, self-routing opaque handles, and targeted maintenance that
+  keep debugger inspection from blocking unrelated session operations. Status: in-progress.
 - [Listener-scoped workspace authority](listener-scoped-workspace-authority.md) — historical
   draft superseded by ADR 0291's path-free contract; retained for context and excluded from
   strict traceability. Status: draft.

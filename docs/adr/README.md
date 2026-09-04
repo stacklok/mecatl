@@ -42,6 +42,7 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0256 — Target-bound related evidence and approval-gated reporting](./0256-session-debugger-evidence-and-reporting.md) *(partially superseded by 0257)*
 - [0257 — Session debugger incarnation and disclosure hardening](./0257-session-debugger-hardening.md) *(incarnation identity and edges superseded by 0258)*
 - [0258 — Cryptographic session and lineage incarnations](./0258-cryptographic-session-incarnations.md)
+- [0320 — Isolated direct-edge lineage reads for `InspectSession`](./0320-inspect-session-lineage-read-isolation.md) *(proposed; preserves ADRs 0256–0258)*
 - [0229 — Redis migration uses fenced renewable ownership and indexed coverage](./0229-redis-migration-fencing.md) *(superseded by 0230)*
 - [0230 — Redis migration ownership and coverage are proved before mutation](./0230-redis-migration-atomic-ownership-and-coverage.md) *(superseded by 0231)*
 - [0231 — Redis readiness requires exact owner-index coverage](./0231-redis-owner-index-exact-coverage.md)

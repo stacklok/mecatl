@@ -45,10 +45,15 @@ type SessionLineageRecord struct {
 // SessionLineageQuery asks for records in one exact root lifetime. Root records
 // (including tombstones) are returned for audit; a direct child must name both
 // RootID and RootIncarnation in Parent, Origin, or DebugTarget relationship fields.
+// RecordID and RecordIncarnation are an optional pair selecting one exact direct
+// child from that partition. Exact queries return at most one record and never
+// enumerate sibling edges.
 type SessionLineageQuery struct {
-	RootID          session.SessionID
-	RootIncarnation session.IncarnationID
-	Limit           int
+	RootID            session.SessionID
+	RootIncarnation   session.IncarnationID
+	RecordID          session.SessionID
+	RecordIncarnation session.IncarnationID
+	Limit             int
 }
 
 // SessionLineageResult contains the current retained root first when present,
@@ -69,7 +74,9 @@ type SessionLineageReader interface {
 
 // ValidateSessionLineageQuery applies the shared query bounds.
 func ValidateSessionLineageQuery(query SessionLineageQuery) error {
-	if query.RootID == "" || !query.RootIncarnation.Valid() || query.Limit <= 0 || query.Limit > MaxSessionLineageRecords {
+	exact := query.RecordID != "" || query.RecordIncarnation != ""
+	if query.RootID == "" || !query.RootIncarnation.Valid() || query.Limit <= 0 || query.Limit > MaxSessionLineageRecords ||
+		exact && (query.RecordID == "" || query.RecordID == query.RootID || !query.RecordIncarnation.Valid()) {
 		return ErrInvalidSessionLineageQuery
 	}
 	return nil

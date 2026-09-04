@@ -162,7 +162,7 @@ func TestSessionDebuggerInspectSession_Scenario1_RelatedViewsRetainLineageScan(t
 			t.Fatalf("delegation view failed: %s", got.Content)
 		}
 		out := decodeLineageEvidence[delegationEvidence](t, got)
-		if !out.Authoritative || !out.ScanComplete || out.RetentionComplete || !out.ProjectionComplete || out.Error != "" || len(out.Rows) != 1 || out.Rows[0].Type != "subagent" || out.Rows[0].Event != session.EvSubagentStart || out.Rows[0].ScopeHandle == "" || out.Rows[0].Retention != string(port.SessionLineageRetained) || out.Rows[0].Conclusion != "absent" {
+		if !out.Authoritative || !out.ScanComplete || !out.RetentionComplete || !out.ProjectionComplete || out.Error != "" || len(out.Rows) != 1 || out.Rows[0].Type != "subagent" || out.Rows[0].Event != session.EvSubagentStart || out.Rows[0].ScopeHandle == "" || out.Rows[0].Retention != string(port.SessionLineageRetained) || out.Rows[0].Conclusion != "absent" {
 			t.Fatalf("delegation = %+v", out)
 		}
 		if store.calls <= before || strings.Contains(got.Content, string(unrelated.ID)) {
@@ -190,8 +190,8 @@ func TestSessionDebuggerInspectSession_Scenario1_ScopeHandleRevalidatesLineage(t
 	}
 	before := store.calls
 	got = execute(t, inspect, `{"view":"status","scope_handle":"`+handle+`"}`)
-	if !got.IsError || store.calls <= before {
-		t.Fatalf("stale scope did not scan and fail closed: calls=%d result=%s", store.calls-before, got.Content)
+	if !got.IsError || !strings.Contains(got.Content, "stale or inaccessible") {
+		t.Fatalf("stale scope did not fail closed: lineage calls=%d result=%s", store.calls-before, got.Content)
 	}
 }
 
@@ -207,16 +207,16 @@ func TestSessionDebuggerInspectSession_Scenario1_DeterministicLineageTraversalBo
 		t.Fatalf("root status lineage calls = %d, want 0", store.calls)
 	}
 	related := execute(t, inspect, `{"view":"related"}`)
-	if store.calls != 1 {
-		t.Fatalf("related lineage calls = %d, want 1", store.calls)
+	if store.calls != 2 {
+		t.Fatalf("related lineage calls = %d, want 2 (read plus TOCTOU check)", store.calls)
 	}
 	out := decodeLineageEvidence[relatedEvidence](t, related)
 	if out.ScanComplete || out.Error != "lineage index read failed" || out.RetentionComplete {
 		t.Fatalf("related lineage failure = %+v", out)
 	}
 	delegation := execute(t, inspect, `{"view":"delegation"}`)
-	if store.calls != 2 {
-		t.Fatalf("delegation lineage calls = %d, want 2", store.calls)
+	if store.calls != 4 {
+		t.Fatalf("delegation cumulative lineage calls = %d, want 4", store.calls)
 	}
 	delegationOut := decodeLineageEvidence[delegationEvidence](t, delegation)
 	if delegationOut.Authoritative || delegationOut.ScanComplete || delegationOut.RetentionComplete || delegationOut.Error != errLogNotConfigured || len(delegationOut.Rows) != 0 {

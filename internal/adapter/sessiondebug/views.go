@@ -2,6 +2,8 @@ package sessiondebug
 
 import (
 	"context"
+	"crypto/aes"
+	"crypto/cipher"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
@@ -10,6 +12,7 @@ import (
 	"fmt"
 	"iter"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/stacklok/mecatl/engine/adapter/eventsource"
@@ -17,12 +20,24 @@ import (
 	"github.com/stacklok/mecatl/engine/session"
 )
 
-const rootScope = "root"
+const (
+	rootScope         = "root"
+	scopeHandlePrefix = "v2."
+	scopeRefreshError = "scope handle is unsupported, malformed, or stale; refresh related evidence"
+)
+
+type scopeClaim struct {
+	RootFingerprint string            `json:"root"`
+	ID              session.SessionID `json:"id"`
+	Incarnation     string            `json:"incarnation"`
+	EdgeDigest      string            `json:"edge"`
+}
 
 type lineageNode struct {
 	ID           session.SessionID
 	Kind         session.SessionKind
 	Relationship session.SessionRelationship
+	OwnerScope   [32]byte
 	Incarnation  string
 	State        string
 	Edge         string
@@ -40,24 +55,60 @@ type lineageGraph struct {
 	Error        string
 }
 
-func scopeHandle(root session.SessionID, target *session.Session, edge string) string {
-	h := sha256.New()
-	_, _ = h.Write([]byte("mecatl.inspect-session.scope/v2\x00"))
-	_, _ = h.Write([]byte(root))
-	_, _ = h.Write([]byte{0})
-	_, _ = h.Write([]byte(edge))
-	_, _ = h.Write([]byte{0})
-	if target != nil {
-		_, _ = h.Write([]byte(target.ID))
-		_, _ = h.Write([]byte{0})
-		_, _ = h.Write([]byte(target.Kind))
-		_, _ = h.Write([]byte{0})
-		relationship, _ := json.Marshal(target.Relationship)
-		_, _ = h.Write(relationship)
-		_, _ = h.Write([]byte{0})
-		_, _ = h.Write([]byte(session.DebugTargetFingerprint(target)))
+func (t *inspectTool) scopeCipher() (cipher.AEAD, error) {
+	key := sha256.Sum256([]byte("mecatl.inspect-session.scope-key/v2\x00" + t.expectedFingerprint + "\x00" + base64.RawURLEncoding.EncodeToString(t.expectedOwnerScope[:])))
+	block, err := aes.NewCipher(key[:])
+	if err != nil {
+		return nil, err
 	}
-	return base64.RawURLEncoding.EncodeToString(h.Sum(nil)[:18])
+	return cipher.NewGCM(block)
+}
+
+func lineageEdgeDigest(rec port.SessionLineageRecord) string {
+	body, _ := json.Marshal(struct {
+		Kind         session.SessionKind
+		Relationship session.SessionRelationship
+	}{rec.Kind, rec.Relationship})
+	sum := sha256.Sum256(body)
+	return base64.RawURLEncoding.EncodeToString(sum[:18])
+}
+
+func (t *inspectTool) scopeHandle(rec port.SessionLineageRecord) (string, error) {
+	claim, err := json.Marshal(scopeClaim{RootFingerprint: t.expectedFingerprint, ID: rec.ID, Incarnation: rec.Incarnation, EdgeDigest: lineageEdgeDigest(rec)})
+	if err != nil {
+		return "", err
+	}
+	aead, err := t.scopeCipher()
+	if err != nil {
+		return "", err
+	}
+	nonceDigest := sha256.Sum256(append([]byte("mecatl.inspect-session.scope-nonce/v2\x00"), claim...))
+	nonce := nonceDigest[:aead.NonceSize()]
+	sealed := aead.Seal(nil, nonce, claim, []byte(scopeHandlePrefix))
+	return scopeHandlePrefix + base64.RawURLEncoding.EncodeToString(append(append([]byte(nil), nonce...), sealed...)), nil
+}
+
+func (t *inspectTool) openScopeHandle(handle string) (scopeClaim, error) {
+	if !strings.HasPrefix(handle, scopeHandlePrefix) {
+		return scopeClaim{}, errors.New(scopeRefreshError)
+	}
+	sealed, err := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(handle, scopeHandlePrefix))
+	if err != nil {
+		return scopeClaim{}, errors.New(scopeRefreshError)
+	}
+	aead, err := t.scopeCipher()
+	if err != nil || len(sealed) < aead.NonceSize() {
+		return scopeClaim{}, errors.New(scopeRefreshError)
+	}
+	plain, err := aead.Open(nil, sealed[:aead.NonceSize()], sealed[aead.NonceSize():], []byte(scopeHandlePrefix))
+	if err != nil {
+		return scopeClaim{}, errors.New(scopeRefreshError)
+	}
+	var claim scopeClaim
+	if json.Unmarshal(plain, &claim) != nil || claim.RootFingerprint != t.expectedFingerprint || claim.ID == "" || !session.IncarnationID(claim.Incarnation).Valid() || claim.EdgeDigest == "" {
+		return scopeClaim{}, errors.New(scopeRefreshError)
+	}
+	return claim, nil
 }
 
 func historyHandle(root, scope session.SessionID, rootIncarnation, scopeIncarnation, source string, index int) string {
@@ -92,10 +143,6 @@ func (t *inspectTool) ownerAccessible(root, candidate *session.Principal) bool {
 	return !t.ownershipEnforced || sameOwner(root, candidate)
 }
 
-func lineageNodeKey(id session.SessionID, incarnation string) string {
-	return string(id) + "\x00" + incarnation
-}
-
 func relationEdge(parent session.SessionID, parentIncarnation session.IncarnationID, rec port.SessionLineageRecord) (string, bool) {
 	r := rec.Relationship
 	switch rec.Kind {
@@ -112,249 +159,161 @@ func relationEdge(parent session.SessionID, parentIncarnation session.Incarnatio
 	}
 }
 
-//nolint:gocyclo // The bounded BFS keeps validation states together so no edge bypasses authorization.
+// scanLineage reads exactly one direct-edge partition. It never recurses or
+// supplements missing index evidence from snapshots or event logs.
 func (t *inspectTool) scanLineage(ctx context.Context, root *session.Session) lineageGraph {
 	g := lineageGraph{Available: true, ScanComplete: true}
 	reader, ok := t.store.(port.SessionLineageReader)
-	if ok {
-		g.Supported = true
-		queue := []lineageNode{{ID: root.ID, Incarnation: string(root.Incarnation()), Depth: 0, Inspectable: true}}
-		seen := map[string]bool{lineageNodeKey(root.ID, string(root.Incarnation())): true}
-		for len(queue) > 0 && len(g.Nodes) < maxRelatedSessions {
-			parent := queue[0]
-			queue = queue[1:]
-			if parent.Depth >= maxRelatedDepth {
-				g.Truncated = true
+	if !ok {
+		g.Available = false
+		g.Error = "lineage index is not configured"
+		return g
+	}
+	g.Supported = true
+	res, err := reader.ReadSessionLineage(ctx, port.SessionLineageQuery{
+		RootID: root.ID, RootIncarnation: root.Incarnation(), Limit: port.MaxSessionLineageRecords,
+	})
+	if err != nil {
+		if errors.Is(err, port.ErrSessionLineageUnsupported) {
+			g.Supported = false
+			g.Available = false
+			g.Error = "lineage index is not configured"
+		} else {
+			g.Error = "lineage index read failed"
+			g.ScanComplete = false
+		}
+		return g
+	}
+	g.Truncated = res.Truncated
+	g.ScanComplete = !res.Truncated
+	for _, rec := range res.Records {
+		edge, direct := relationEdge(root.ID, root.Incarnation(), rec)
+		if !direct || rec.ID == root.ID {
+			continue
+		}
+		n := lineageNode{ID: rec.ID, Kind: rec.Kind, Relationship: rec.Relationship, OwnerScope: rec.OwnerScope, Incarnation: rec.Incarnation, State: string(rec.State), Edge: edge, Depth: 1}
+		if t.ownershipEnforced && rec.OwnerScope != session.PrincipalScopeHash(root.Owner) {
+			n.State = "inaccessible"
+		} else if rec.State == port.SessionLineageRetained {
+			handle, handleErr := t.scopeHandle(rec)
+			if handleErr != nil {
+				n.State = "unavailable"
 				g.ScanComplete = false
-				continue
-			}
-			res, err := reader.ReadSessionLineage(ctx, port.SessionLineageQuery{RootID: parent.ID, RootIncarnation: session.IncarnationID(parent.Incarnation), Limit: port.MaxSessionLineageRecords})
-			if err != nil {
-				if errors.Is(err, port.ErrSessionLineageUnsupported) {
-					g.Supported = false
-				} else {
-					g.Error = "lineage index read failed"
-					g.ScanComplete = false
-				}
-				break
-			}
-			g.Truncated = g.Truncated || res.Truncated
-			if res.Truncated {
-				g.ScanComplete = false
-			}
-			for _, rec := range res.Records {
-				edge, direct := relationEdge(parent.ID, session.IncarnationID(parent.Incarnation), rec)
-				key := lineageNodeKey(rec.ID, rec.Incarnation)
-				if !direct || seen[key] || rec.ID == root.ID {
-					continue
-				}
-				seen[key] = true
-				n := lineageNode{ID: rec.ID, Kind: rec.Kind, Relationship: rec.Relationship, Incarnation: rec.Incarnation, State: string(rec.State), Edge: edge, Depth: parent.Depth + 1}
-				if t.ownershipEnforced && rec.OwnerScope != session.PrincipalScopeHash(root.Owner) {
-					n.State = "inaccessible"
-				} else if rec.State == port.SessionLineageRetained {
-					candidate, loadErr := t.store.Load(ctx, rec.ID)
-					if loadErr == nil && candidate.Kind == rec.Kind && relationshipEqual(candidate.Relationship, rec.Relationship) && t.ownerAccessible(root.Owner, candidate.Owner) && candidate.Incarnation() == session.IncarnationID(n.Incarnation) {
-						n.Inspectable = true
-						n.Handle = scopeHandle(root.ID, candidate, edge)
-						queue = append(queue, n)
-					} else if loadErr == nil {
-						n.State = "inaccessible"
-					} else if errors.Is(loadErr, port.ErrSessionNotFound) {
-						n.State = "not_retained"
-					} else {
-						n.State = "unavailable"
-						g.ScanComplete = false
-					}
-				}
-				g.Nodes = append(g.Nodes, n)
-				if len(g.Nodes) == maxRelatedSessions {
-					g.Truncated = true
-					g.ScanComplete = false
-					break
-				}
+				g.Error = "scope handle minting failed"
+			} else {
+				n.Inspectable = true
+				n.Handle = handle
 			}
 		}
-	}
-	// Event evidence supplements indexes that are absent, incomplete, or have not yet
-	// observed a just-created child. It never overrides a stronger indexed tombstone.
-	t.supplementEventLineage(ctx, root, &g)
-	if !ok && t.log == nil {
-		g.Available = false
-		g.Error = "lineage index and event log are not configured"
+		g.Nodes = append(g.Nodes, n)
 	}
 	sort.SliceStable(g.Nodes, func(i, j int) bool {
-		if g.Nodes[i].Depth != g.Nodes[j].Depth {
-			return g.Nodes[i].Depth < g.Nodes[j].Depth
+		if g.Nodes[i].ID != g.Nodes[j].ID {
+			return g.Nodes[i].ID < g.Nodes[j].ID
 		}
-		return g.Nodes[i].Handle < g.Nodes[j].Handle
+		return g.Nodes[i].Incarnation < g.Nodes[j].Incarnation
 	})
 	return g
 }
 
-type expectedChild struct {
-	id          session.SessionID
-	incarnation session.IncarnationID
-	kind        session.SessionKind
-	edge        string
-	rel         session.SessionRelationship
+func selfLineageRecord(ctx context.Context, reader port.SessionLineageReader, id session.SessionID, incarnation session.IncarnationID) (port.SessionLineageRecord, error) {
+	result, err := reader.ReadSessionLineage(ctx, port.SessionLineageQuery{RootID: id, RootIncarnation: incarnation, Limit: 1})
+	if err != nil || result.Truncated && len(result.Records) == 0 || len(result.Records) != 1 {
+		return port.SessionLineageRecord{}, errors.New("scope lineage proof is incomplete or unavailable")
+	}
+	rec := result.Records[0]
+	if rec.ID != id || rec.Incarnation != string(incarnation) {
+		return port.SessionLineageRecord{}, errors.New("scope handle is stale or inaccessible")
+	}
+	return rec, nil
 }
 
-func expectedChildren(ev session.Event, parent session.SessionID, parentIncarnation session.IncarnationID) []expectedChild {
-	var out []expectedChild
-	if p := ev.Subagent; p != nil && p.ChildID != "" && p.ChildIncarnation.Valid() {
-		out = append(out, expectedChild{id: session.SessionID(p.ChildID), incarnation: p.ChildIncarnation, kind: session.SessionKindSubagent, edge: "subagent", rel: session.SessionRelationship{ParentSessionID: parent, ParentIncarnation: parentIncarnation, CallID: session.ToolCallID(p.ParentCallID)}})
+func exactLineageRecord(ctx context.Context, reader port.SessionLineageReader, rootID session.SessionID, rootIncarnation session.IncarnationID, recordID session.SessionID, recordIncarnation session.IncarnationID) (port.SessionLineageRecord, error) {
+	result, err := reader.ReadSessionLineage(ctx, port.SessionLineageQuery{
+		RootID: rootID, RootIncarnation: rootIncarnation,
+		RecordID: recordID, RecordIncarnation: recordIncarnation, Limit: 1,
+	})
+	if err != nil || result.Truncated || len(result.Records) != 1 {
+		return port.SessionLineageRecord{}, errors.New("scope lineage proof is incomplete or unavailable")
 	}
-	if p := ev.Parallel; p != nil && p.ChildID != "" && p.ChildIncarnation.Valid() {
-		i := p.BranchIndex
-		out = append(out, expectedChild{id: session.SessionID(p.ChildID), incarnation: p.ChildIncarnation, kind: session.SessionKindParallelBranch, edge: "parallel", rel: session.SessionRelationship{ParentSessionID: parent, ParentIncarnation: parentIncarnation, CallID: session.ToolCallID(p.ParentCallID), BranchIndex: &i}})
+	rec := result.Records[0]
+	if rec.ID != recordID || rec.Incarnation != string(recordIncarnation) {
+		return port.SessionLineageRecord{}, errors.New("scope lineage proof is incomplete or unavailable")
 	}
-	if p := ev.Team; p != nil && p.MemberSessionID != "" && p.MemberIncarnation.Valid() {
-		out = append(out, expectedChild{id: session.SessionID(p.MemberSessionID), incarnation: p.MemberIncarnation, kind: session.SessionKindTeamMember, edge: "team", rel: session.SessionRelationship{TeamID: p.TeamID, MemberName: p.Member, ParentSessionID: parent, ParentIncarnation: parentIncarnation}})
-	}
-	return out
+	return rec, nil
 }
 
-//nolint:gocyclo // Typed fallback events intentionally share one bounded, fail-closed traversal.
-func (t *inspectTool) supplementEventLineage(ctx context.Context, root *session.Session, g *lineageGraph) {
-	if t.log == nil {
-		return
-	}
-	seen := map[string]bool{lineageNodeKey(root.ID, string(root.Incarnation())): true}
-	for _, n := range g.Nodes {
-		seen[lineageNodeKey(n.ID, n.Incarnation)] = true
-	}
-	queue := []lineageNode{{ID: root.ID, Incarnation: string(root.Incarnation())}}
-	for len(queue) > 0 && len(g.Nodes) < maxRelatedSessions {
-		parent := queue[0]
-		queue = queue[1:]
-		if parent.Depth >= maxRelatedDepth {
-			g.Truncated = true
-			g.ScanComplete = false
-			continue
-		}
-		scanned := 0
-		parallelCounts := map[string]int{}
-		parallelSeen := map[string]map[int]bool{}
-		teamRoster := map[string]map[string]bool{}
-		teamSeen := map[string]map[string]bool{}
-		for ev, err := range t.log.Read(ctx, parent.ID) {
-			if err != nil {
-				g.ScanComplete = false
-				if g.Error == "" {
-					g.Error = "event lineage read failed"
-				}
-				break
-			}
-			if scanned == maxLineageEventScan {
-				g.Truncated = true
-				g.ScanComplete = false
-				break
-			}
-			scanned++
-			if p := ev.Schedule; p != nil && p.Kind == "skipped" {
-				g.Nodes = append(g.Nodes, lineageNode{Kind: session.SessionKindScheduled, Edge: "schedule", Depth: parent.Depth + 1, State: "absent"})
-			}
-			if p := ev.Parallel; p != nil {
-				if ev.Type == session.EvParallelStart {
-					parallelCounts[p.ParentCallID] = p.BranchCount
-				}
-				if ev.Type == session.EvParallelBranch && p.ChildID != "" {
-					if parallelSeen[p.ParentCallID] == nil {
-						parallelSeen[p.ParentCallID] = map[int]bool{}
-					}
-					parallelSeen[p.ParentCallID][p.BranchIndex] = true
-				}
-			}
-			if p := ev.Team; p != nil {
-				if ev.Type == session.EvTeamStart {
-					if teamRoster[p.ParentCallID] == nil {
-						teamRoster[p.ParentCallID] = map[string]bool{}
-					}
-					for _, member := range p.Roster {
-						teamRoster[p.ParentCallID][member.Name] = true
-					}
-				}
-				if p.MemberSessionID != "" {
-					if teamSeen[p.ParentCallID] == nil {
-						teamSeen[p.ParentCallID] = map[string]bool{}
-					}
-					teamSeen[p.ParentCallID][p.Member] = true
-				}
-			}
-			for _, expected := range expectedChildren(ev, parent.ID, session.IncarnationID(parent.Incarnation)) {
-				key := lineageNodeKey(expected.id, string(expected.incarnation))
-				if seen[key] {
-					continue
-				}
-				seen[key] = true
-				n := lineageNode{ID: expected.id, Kind: expected.kind, Relationship: expected.rel, Incarnation: string(expected.incarnation), Edge: expected.edge, Depth: parent.Depth + 1, State: "not_retained"}
-				candidate, err := t.store.Load(ctx, expected.id)
-				if err == nil {
-					if candidate.Kind != expected.kind || candidate.Incarnation() != expected.incarnation || !relationshipEqual(candidate.Relationship, expected.rel) || !t.ownerAccessible(root.Owner, candidate.Owner) {
-						n.State = "inaccessible"
-					} else {
-						n.Incarnation = string(candidate.Incarnation())
-						n.State = "retained"
-						n.Inspectable = true
-						n.Handle = scopeHandle(root.ID, candidate, expected.edge)
-						queue = append(queue, n)
-					}
-				} else if !errors.Is(err, port.ErrSessionNotFound) {
-					n.State = "unavailable"
-					g.ScanComplete = false
-				}
-				g.Nodes = append(g.Nodes, n)
-				if len(g.Nodes) == maxRelatedSessions {
-					g.Truncated = true
-					g.ScanComplete = false
-					return
-				}
-			}
-		}
-		for call, count := range parallelCounts {
-			for i := 0; i < count; i++ {
-				if !parallelSeen[call][i] {
-					g.Nodes = append(g.Nodes, lineageNode{Kind: session.SessionKindParallelBranch, Edge: "parallel", Depth: parent.Depth + 1, State: "never_produced"})
-				}
-			}
-		}
-		for call, roster := range teamRoster {
-			for member := range roster {
-				if !teamSeen[call][member] {
-					g.Nodes = append(g.Nodes, lineageNode{Kind: session.SessionKindTeamMember, Edge: "team", Depth: parent.Depth + 1, State: "never_produced"})
-				}
-			}
-		}
-	}
+func sameLineageRecord(a, b port.SessionLineageRecord) bool {
+	return a.ID == b.ID && a.Kind == b.Kind && relationshipEqual(a.Relationship, b.Relationship) &&
+		a.OwnerScope == b.OwnerScope && a.Incarnation == b.Incarnation && a.State == b.State && a.DeletedAt.Equal(b.DeletedAt)
 }
 
-func (t *inspectTool) validScopedSession(root, candidate *session.Session, n lineageNode) bool {
-	if candidate == nil || candidate.ID != n.ID || candidate.Kind != n.Kind ||
-		!relationshipEqual(candidate.Relationship, n.Relationship) ||
-		!t.ownerAccessible(root.Owner, candidate.Owner) ||
-		candidate.Incarnation() != session.IncarnationID(n.Incarnation) {
-		return false
+// proveScope follows only point record reads from the selected descendant back
+// to the authorized root. Every hop is proved twice: by the child's self record
+// and by the exact corresponding record in its parent's direct-edge partition.
+//
+//nolint:gocyclo // The bounded ancestry proof keeps every fail-closed check at the projection gate.
+func (t *inspectTool) proveScope(ctx context.Context, root *session.Session, claim scopeClaim) (*session.Session, lineageNode, error) {
+	reader, ok := t.store.(port.SessionLineageReader)
+	if !ok || claim.RootFingerprint != t.expectedFingerprint || claim.ID == root.ID {
+		return nil, lineageNode{}, errors.New("scope handle is stale or inaccessible")
 	}
-	edge, direct := relationEdge(lineageParent(n), lineageParentIncarnation(n), port.SessionLineageRecord{Kind: candidate.Kind, Relationship: candidate.Relationship})
-	return direct && edge == n.Edge
+	id, incarnation := claim.ID, session.IncarnationID(claim.Incarnation)
+	candidate, loadErr := t.store.Load(ctx, claim.ID)
+	if loadErr != nil {
+		return nil, lineageNode{}, errors.New("scope handle is stale or inaccessible")
+	}
+	var selected port.SessionLineageRecord
+	var selectedEdge string
+	for depth := 1; depth <= maxRelatedDepth; depth++ {
+		rec, err := selfLineageRecord(ctx, reader, id, incarnation)
+		if err != nil {
+			return nil, lineageNode{}, err
+		}
+		if rec.State != port.SessionLineageRetained || t.ownershipEnforced && rec.OwnerScope != session.PrincipalScopeHash(root.Owner) {
+			return nil, lineageNode{}, errors.New("scope handle is stale or inaccessible")
+		}
+		parent, parentIncarnation := lineageParent(lineageNode{Relationship: rec.Relationship}), lineageParentIncarnation(lineageNode{Relationship: rec.Relationship})
+		edge, direct := relationEdge(parent, parentIncarnation, rec)
+		if !direct || parent == "" || !parentIncarnation.Valid() {
+			return nil, lineageNode{}, errors.New("scope handle is stale or inaccessible")
+		}
+		edgeRecord, err := exactLineageRecord(ctx, reader, parent, parentIncarnation, id, incarnation)
+		if err != nil || !sameLineageRecord(rec, edgeRecord) {
+			return nil, lineageNode{}, errors.New("scope lineage proof is incomplete or unavailable")
+		}
+		if depth == 1 {
+			if !handleEqual(claim.EdgeDigest, lineageEdgeDigest(rec)) {
+				return nil, lineageNode{}, errors.New("scope handle is stale or inaccessible")
+			}
+			selected = rec
+			selectedEdge = edge
+		}
+		if parent == root.ID {
+			if parentIncarnation != root.Incarnation() {
+				return nil, lineageNode{}, errors.New("scope handle is stale or inaccessible")
+			}
+			n := lineageNode{ID: selected.ID, Kind: selected.Kind, Relationship: selected.Relationship, Incarnation: selected.Incarnation, State: string(selected.State), Edge: selectedEdge, Depth: depth, Inspectable: true}
+			if candidate.ID != selected.ID || candidate.Kind != selected.Kind || candidate.Incarnation() != session.IncarnationID(selected.Incarnation) || !relationshipEqual(candidate.Relationship, selected.Relationship) || !t.ownerAccessible(root.Owner, candidate.Owner) {
+				return nil, lineageNode{}, errors.New("scope handle is stale or inaccessible")
+			}
+			return candidate, n, nil
+		}
+		id, incarnation = parent, parentIncarnation
+	}
+	return nil, lineageNode{}, errors.New("scope lineage proof exceeds the maximum depth")
 }
 
-func (t *inspectTool) resolveScope(ctx context.Context, root *session.Session, g lineageGraph, handle string) (*session.Session, string, *lineageNode, error) {
-	if handle == "" {
+func (t *inspectTool) resolveScope(ctx context.Context, root *session.Session, claim *scopeClaim, handle string) (*session.Session, string, *lineageNode, error) {
+	if claim == nil {
 		return root, rootScope, nil, nil
 	}
-	for _, n := range g.Nodes {
-		if !n.Inspectable || !handleEqual(handle, n.Handle) {
-			continue
-		}
-		candidate, err := t.store.Load(ctx, n.ID)
-		if err != nil || !t.validScopedSession(root, candidate, n) {
-			return nil, "", nil, errors.New("scope handle is stale or inaccessible")
-		}
-		return candidate, handle, &n, nil
+	candidate, binding, err := t.proveScope(ctx, root, *claim)
+	if err != nil {
+		return nil, "", nil, err
 	}
-	return nil, "", nil, errors.New("invalid, stale, or inaccessible scope handle")
+	binding.Handle = handle
+	return candidate, handle, &binding, nil
 }
 
 type relatedEvidence struct {
@@ -393,34 +352,8 @@ func lineageParentIncarnation(n lineageNode) session.IncarnationID {
 	return n.Relationship.OriginIncarnation
 }
 
-func scopedLineageNodes(g lineageGraph, scope string) []lineageNode {
-	if scope == rootScope {
-		return g.Nodes
-	}
-	var selected session.SessionID
-	for _, n := range g.Nodes {
-		if n.Handle != "" && handleEqual(n.Handle, scope) {
-			selected = n.ID
-			break
-		}
-	}
-	if selected == "" {
-		return nil
-	}
-	parents := make(map[session.SessionID]session.SessionID, len(g.Nodes))
-	for _, n := range g.Nodes {
-		parents[n.ID] = lineageParent(n)
-	}
-	var out []lineageNode
-	for _, n := range g.Nodes {
-		for parent := lineageParent(n); parent != ""; parent = parents[parent] {
-			if parent == selected {
-				out = append(out, n)
-				break
-			}
-		}
-	}
-	return out
+func scopedLineageNodes(g lineageGraph, _ string) []lineageNode {
+	return g.Nodes
 }
 
 func (*inspectTool) relatedView(g lineageGraph, scope string, offset, requested int) relatedEvidence {
