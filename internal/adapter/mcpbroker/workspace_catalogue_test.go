@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"golang.org/x/oauth2"
+
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 	contract "github.com/stacklok/mecatl/internal/mcpbroker"
@@ -22,15 +24,18 @@ func TestFreezeAuthenticatedCataloguePublishesCompleteLiveRoutes(t *testing.T) {
 		"second": {Backend: "second", Tools: []ToolDefinition{{Backend: "second", Name: "mcp__second__two", Description: "two", Schema: json.RawMessage(`{"type":"object"}`)}}},
 	}}
 	process := testCatalogueProcess(runtime, queries, "first", "second")
+	process.construction.staticByBackend = map[string][]StaticTool{
+		"first": {{Name: "declared", Description: "reviewed declaration", Schema: json.RawMessage(`{"type":"object"}`), ReadOnly: true}},
+	}
 
-	frozen, err := attachment.FreezeAuthenticatedCatalogue(t.Context(), testEnrollmentRef(), process, "token", []string{"Read"})
+	frozen, err := attachment.FreezeAuthenticatedCatalogue(t.Context(), testEnrollmentRef(), process, staticTokenSource("opaque-broker-token"), []string{"Read"})
 	if err != nil {
 		t.Fatalf("FreezeAuthenticatedCatalogue: %v", err)
 	}
 	if got, want := queries.order, []string{"first", "second"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("query order = %v, want %v", got, want)
 	}
-	if got, want := toolNames(attachment.Tools()), []string{"mcp__anonymous__status", "mcp__first__one", "mcp__second__two"}; !reflect.DeepEqual(got, want) {
+	if got, want := toolNames(attachment.Tools()), []string{"mcp__anonymous__status", "mcp__first__declared", "mcp__first__one", "mcp__second__two"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("attachment tools = %v, want %v", got, want)
 	}
 	if got, ok := attachment.lookupRoute("mcp__second__two"); !ok || got.backend != "second" {
@@ -54,7 +59,7 @@ func TestFreezeAuthenticatedCatalogueFailureDoesNotPublishPartialRoutes(t *testi
 	}, fail: "second"}
 	process := testCatalogueProcess(runtime, queries, "first", "second")
 
-	if _, err := attachment.FreezeAuthenticatedCatalogue(t.Context(), testEnrollmentRef(), process, "token", nil); !errors.Is(err, ErrAuthenticatedDiscovery) {
+	if _, err := attachment.FreezeAuthenticatedCatalogue(t.Context(), testEnrollmentRef(), process, staticTokenSource("opaque-broker-token"), nil); !errors.Is(err, ErrAuthenticatedDiscovery) {
 		t.Fatalf("FreezeAuthenticatedCatalogue error = %v, want discovery failure", err)
 	}
 	if got, want := toolNames(attachment.Tools()), []string{"mcp__anonymous__status"}; !reflect.DeepEqual(got, want) {
@@ -76,7 +81,7 @@ func TestFreezeAuthenticatedCatalogueRejectsInvalidLiveMetadataWithoutPublish(t 
 			runtime := testAnonymousRuntime(t)
 			attachment := testAttachment(t, runtime)
 			process := testCatalogueProcess(runtime, &orderedCapabilityQueries{responses: map[string]AuthenticatedCapabilities{"first": {Backend: "first", Tools: []ToolDefinition{definition}}}}, "first")
-			if _, err := attachment.FreezeAuthenticatedCatalogue(t.Context(), testEnrollmentRef(), process, "token", nil); !errors.Is(err, ErrInvalidCatalogue) {
+			if _, err := attachment.FreezeAuthenticatedCatalogue(t.Context(), testEnrollmentRef(), process, staticTokenSource("opaque-broker-token"), nil); !errors.Is(err, ErrInvalidCatalogue) {
 				t.Fatalf("FreezeAuthenticatedCatalogue error = %v, want invalid catalogue", err)
 			}
 			if got := toolNames(attachment.Tools()); !reflect.DeepEqual(got, []string{"mcp__anonymous__status"}) {
@@ -86,7 +91,7 @@ func TestFreezeAuthenticatedCatalogueRejectsInvalidLiveMetadataWithoutPublish(t 
 	}
 }
 
-func TestFreezeAuthenticatedCatalogueUsesLiveDefinitionsAndRejectsCollisions(t *testing.T) {
+func TestADR_0298_FreezeAuthenticatedCatalogueStagesStaticAndLiveDefinitions(t *testing.T) {
 	runtime := testAnonymousRuntime(t)
 	attachment := testAttachment(t, runtime)
 	queries := &orderedCapabilityQueries{responses: map[string]AuthenticatedCapabilities{"first": {
@@ -94,15 +99,15 @@ func TestFreezeAuthenticatedCatalogueUsesLiveDefinitionsAndRejectsCollisions(t *
 	}}}
 	process := testCatalogueProcess(runtime, queries, "first")
 	process.construction.staticByBackend = map[string][]StaticTool{"first": {{Name: "static", Description: "must not replace live", Schema: json.RawMessage(`{"type":"object"}`)}}}
-	if _, err := attachment.FreezeAuthenticatedCatalogue(t.Context(), testEnrollmentRef(), process, "token", nil); err != nil {
+	if _, err := attachment.FreezeAuthenticatedCatalogue(t.Context(), testEnrollmentRef(), process, staticTokenSource("opaque-broker-token"), nil); err != nil {
 		t.Fatalf("FreezeAuthenticatedCatalogue: %v", err)
 	}
-	if got := toolNames(attachment.Tools()); !reflect.DeepEqual(got, []string{"mcp__anonymous__status", "mcp__first__live"}) {
-		t.Fatalf("static declaration replaced live definition: %v", got)
+	if got := toolNames(attachment.Tools()); !reflect.DeepEqual(got, []string{"mcp__anonymous__status", "mcp__first__live", "mcp__first__static"}) {
+		t.Fatalf("static and live definitions were not admitted together: %v", got)
 	}
 
 	other := testAttachment(t, runtime)
-	if _, err := other.FreezeAuthenticatedCatalogue(t.Context(), testEnrollmentRef(), process, "token", []string{"mcp__first__live"}); !errors.Is(err, ErrInvalidCatalogue) {
+	if _, err := other.FreezeAuthenticatedCatalogue(t.Context(), testEnrollmentRef(), process, staticTokenSource("opaque-broker-token"), []string{"mcp__first__live"}); !errors.Is(err, ErrInvalidCatalogue) {
 		t.Fatalf("occupied collision error = %v, want invalid catalogue", err)
 	}
 	if got := toolNames(other.Tools()); !reflect.DeepEqual(got, []string{"mcp__anonymous__status"}) {
@@ -123,7 +128,7 @@ func TestFreezeAuthenticatedCatalogueConcurrentFreezeHasOneCatalogue(t *testing.
 		group.Add(1)
 		go func() {
 			defer group.Done()
-			_, err := attachment.FreezeAuthenticatedCatalogue(context.Background(), ref, process, "token", nil)
+			_, err := attachment.FreezeAuthenticatedCatalogue(context.Background(), ref, process, staticTokenSource("opaque-broker-token"), nil)
 			errs <- err
 		}()
 	}
@@ -147,7 +152,7 @@ type orderedCapabilityQueries struct {
 	fail      string
 }
 
-func (q *orderedCapabilityQueries) query(_ context.Context, _ ToolHiveAuthSessionID, backend string) (AuthenticatedCapabilities, error) {
+func (q *orderedCapabilityQueries) query(_ context.Context, _ oauth2.TokenSource, backend string) (AuthenticatedCapabilities, error) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	q.order = append(q.order, backend)

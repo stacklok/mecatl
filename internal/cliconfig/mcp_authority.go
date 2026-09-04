@@ -87,9 +87,6 @@ func resolveBrokerAuthority(section *permconfig.MCPSection) (*mcpauthority.Resul
 			return nil, fmt.Errorf("%w: MCP server %q: static_bearer is unsupported in broker mode", ErrMCPProfileInvalid, route.Name)
 		case "oauth":
 			oauthCount++
-			if oauthCount > 1 {
-				return nil, fmt.Errorf("%w: broker mode supports at most one OAuth MCP server", ErrMCPProfileInvalid)
-			}
 			if err := validateBrokerOAuth(route); err != nil {
 				return nil, err
 			}
@@ -98,7 +95,7 @@ func resolveBrokerAuthority(section *permconfig.MCPSection) (*mcpauthority.Resul
 		}
 	}
 	callback := section.Broker.CallbackURL
-	if oauthCount == 1 {
+	if oauthCount > 0 {
 		var err error
 		callback, err = normalizeBrokerCallbackURL(callback)
 		if err != nil {

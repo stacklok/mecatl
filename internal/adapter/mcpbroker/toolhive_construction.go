@@ -95,7 +95,6 @@ func compileToolHiveConstruction(profiles []ToolHiveProfile, issuer string) (too
 	}
 	seenBackends := make(map[string]struct{}, len(profiles))
 	seenProviders := make(map[string]string)
-	protectedRoutes := 0
 	for _, profile := range profiles {
 		key := strings.ToLower(profile.Name)
 		if key == "" || profile.URL == "" {
@@ -116,10 +115,6 @@ func compileToolHiveConstruction(profiles []ToolHiveProfile, issuer string) (too
 			}
 			out.anonymous = append(out.anonymous, cloneToolHiveProfile(profile))
 		case authOAuth:
-			protectedRoutes++
-			if protectedRoutes > 1 {
-				return toolHiveConstruction{}, fmt.Errorf("%w: at most one OAuth upstream is supported by the shared callback", ErrProtectedRouteUnsupported)
-			}
 			if profile.OAuth == nil {
 				return toolHiveConstruction{}, fmt.Errorf("%w: protected upstream %q is missing OAuth configuration", ErrInvalidCatalogue, profile.Name)
 			}
@@ -136,9 +131,7 @@ func compileToolHiveConstruction(profiles []ToolHiveProfile, issuer string) (too
 				return toolHiveConstruction{}, err
 			}
 			out.upstreams = append(out.upstreams, upstream)
-			if len(profile.Static) == 0 {
-				out.protectedBackends = append(out.protectedBackends, profile.Name)
-			}
+			out.protectedBackends = append(out.protectedBackends, profile.Name)
 			out.providerByBackend[profile.Name] = provider
 			out.staticByBackend[profile.Name] = cloneStaticTools(profile.Static)
 			backend.AuthConfig = &authtypes.BackendAuthStrategy{Type: "upstream_inject", UpstreamInject: &authtypes.UpstreamInjectConfig{ProviderName: provider}}
@@ -208,14 +201,6 @@ func cloneStaticTools(in []StaticTool) []StaticTool {
 	out := append([]StaticTool(nil), in...)
 	for i := range out {
 		out[i].Schema = append(json.RawMessage(nil), in[i].Schema...)
-	}
-	return out
-}
-
-func cloneProviderByBackend(in map[string]string) map[string]string {
-	out := make(map[string]string, len(in))
-	for backend, provider := range in {
-		out[backend] = provider
 	}
 	return out
 }

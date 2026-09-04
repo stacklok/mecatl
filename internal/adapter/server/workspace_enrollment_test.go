@@ -145,7 +145,7 @@ func enrollmentCallCounts(a *enrollmentAttachment) (begin, observe, cancel int) 
 	return a.beginCalls, a.observeCalls, a.cancelCalls
 }
 
-func TestHTTPWorkspaceEnrollmentControls(t *testing.T) {
+func TestADR_0298_ToolHiveEnrollmentControlsRedactUpstreamStateE2E(t *testing.T) {
 	type enrollmentResponse struct {
 		EnrollmentID     string `json:"enrollment_id"`
 		Status           string `json:"status"`

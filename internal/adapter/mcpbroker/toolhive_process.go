@@ -61,7 +61,7 @@ type Process struct {
 	// broker catalogue (core/global tools), captured once at construction so a
 	// later workspace-enrollment freeze can reuse it without re-deriving it.
 	occupied           []string
-	queryAuthenticated func(context.Context, ToolHiveAuthSessionID, string) (AuthenticatedCapabilities, error)
+	queryAuthenticated func(context.Context, oauth2.TokenSource, string) (AuthenticatedCapabilities, error)
 	resources          []ownedResource
 	closeOnce          sync.Once
 	closeErr           error
@@ -75,8 +75,8 @@ type toolHiveProcessOptions struct {
 // NewToolHiveProcess discovers anonymous upstreams, constructs one ordered
 // ToolHive process, and returns only after the Runtime and every owned resource
 // are valid. Any partial construction is rolled back in reverse dependency order.
-func NewToolHiveProcess(ctx context.Context, config ToolHiveConfig) (*Process, error) {
-	return newToolHiveProcess(ctx, config, toolHiveProcessOptions{})
+func NewToolHiveProcess(ctx context.Context, config ToolHiveConfig, options ...Option) (*Process, error) {
+	return newToolHiveProcess(ctx, config, toolHiveProcessOptions{runtimeOptions: append([]Option(nil), options...)})
 }
 
 //nolint:gocyclo // Broker construction is one ordered admission transaction with reverse-order rollback.
@@ -100,11 +100,11 @@ func newToolHiveProcess(ctx context.Context, config ToolHiveConfig, options tool
 	if err != nil {
 		return nil, err
 	}
-	staticRoutes, err := compileStaticProtectedRoutes(construction, protectedTarget, routes, config.Occupied)
-	if err != nil {
+	if _, err := compileStaticProtectedRoutes(construction, protectedTarget, routes, config.Occupied); err != nil {
 		return nil, err
 	}
-	routes = append(routes, staticRoutes...)
+	// Protected declarations remain staged until aggregate ToolHive enrollment
+	// succeeds. The process-wide catalogue contains anonymous routes only.
 	sortRoutes(routes)
 	catalogue := &Catalogue{routes: routes}
 	caller := anonymousCaller(construction.anonymous)
@@ -120,6 +120,16 @@ func newToolHiveProcess(ctx context.Context, config ToolHiveConfig, options tool
 	runtime, err := New(catalogue, caller, runtimeOptions...)
 	if err != nil {
 		return nil, err
+	}
+	if options.brokerHTTPClient == nil && runtime.oauth.allowLoopback {
+		// The loopback-only OAuth option may also supply the trusted client for
+		// the in-process TLS vMCP endpoint. Production callers cannot enable this
+		// path because WithOAuthLoopbackForTest requires a test helper.
+		client := runtime.oauth.testBrokerHTTPClient
+		if client == nil {
+			client = runtime.oauth.httpClient
+		}
+		runtime.authorizedCaller = toolHiveProtectedCaller(issuer+"/mcp", client)
 	}
 
 	processCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
@@ -142,7 +152,6 @@ func newToolHiveProcess(ctx context.Context, config ToolHiveConfig, options tool
 	}
 
 	var auth *runner.EmbeddedAuthServer
-	var tokens upstreamCredentialReader
 	var incoming func(http.Handler) http.Handler
 	var authInfo http.Handler
 	if len(construction.upstreams) != 0 {
@@ -177,7 +186,6 @@ func newToolHiveProcess(ctx context.Context, config ToolHiveConfig, options tool
 		}
 		process.resources = append(process.resources, ownedResource{name: "authserver", close: auth.Close})
 		reader := upstreamtoken.NewInProcessService(auth.IDPTokenStorage(), auth.UpstreamTokenRefresher())
-		tokens = reader
 		incoming, _, authInfo, err = factory.NewIncomingAuthMiddleware(processCtx, &vmcpconfig.IncomingAuthConfig{
 			Type: "oidc", OIDC: &vmcpconfig.OIDCConfig{Issuer: issuer, Audience: issuer, Resource: issuer, JWKSURL: issuer + "/.well-known/jwks.json"},
 		}, "mecatl-broker", nil, reader, auth.KeyProvider())
@@ -209,8 +217,7 @@ func newToolHiveProcess(ctx context.Context, config ToolHiveConfig, options tool
 		process.discovery = &authenticatedDiscovery{
 			capabilities: capabilityAggregator,
 			backends:     backendRegistry,
-			tokens:       tokens,
-			providers:    cloneProviderByBackend(construction.providerByBackend),
+			incoming:     incoming,
 		}
 	}
 	process.resources = append(process.resources, ownedResource{name: "vmcp", close: func() error { return server.Stop(context.Background()) }})

@@ -4,9 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
-	"encoding/json"
 	"errors"
-	"strings"
 
 	"golang.org/x/oauth2"
 
@@ -15,17 +13,15 @@ import (
 )
 
 // ErrWorkspaceEnrollmentUnsupported reports that this attachment's Runtime has
-// no owning Process, or that Process has no protected backend requiring
-// pre-prompt authenticated discovery (every protected backend is either
-// anonymous or has a trusted static tool declaration).
+// no owning Process or no configured protected ToolHive backend.
 var ErrWorkspaceEnrollmentUnsupported = errors.New("mcpbroker: workspace enrollment is not required")
+
+var errWorkspaceEnrollmentAlreadyCompleted = errors.New("mcpbroker: workspace enrollment is already completed")
 
 var _ contract.WorkspaceEnrollmentAttachment = (*Attachment)(nil)
 
-// bundleBackends returns the deterministic, configured protected backends that
-// require live authenticated discovery, the shared bundle-wide authorization
-// target, and the owning Process. It returns a nil slice when workspace
-// enrollment does not apply to this attachment.
+// bundleBackends returns the deterministic configured protected backends, the
+// shared bundle-wide authorization target, and the owning Process.
 func (a *Attachment) bundleBackends() ([]string, *oauthRoute, *Process) {
 	process := a.runtime.process
 	if process == nil {
@@ -44,8 +40,8 @@ func (a *Attachment) bundleBackends() ([]string, *oauthRoute, *Process) {
 }
 
 // BeginWorkspaceEnrollment starts, or idempotently re-presents, the one
-// bundle-wide pre-prompt authorization transaction for every protected
-// backend that requires live discovery.
+// bundle-wide pre-prompt ToolHive authorization transaction for every protected
+// backend.
 func (a *Attachment) BeginWorkspaceEnrollment(ctx context.Context) (contract.WorkspaceEnrollmentPresentation, error) {
 	if err := ctx.Err(); err != nil {
 		return contract.WorkspaceEnrollmentPresentation{}, err
@@ -59,10 +55,15 @@ func (a *Attachment) BeginWorkspaceEnrollment(ctx context.Context) (contract.Wor
 	}
 
 	logical := a.logical
+	a.enrollmentMu.Lock()
+	defer a.enrollmentMu.Unlock()
 	logical.mu.Lock()
 	defer logical.mu.Unlock()
 	if logical.deleted {
 		return contract.WorkspaceEnrollmentPresentation{}, contract.ErrStateUnavailable
+	}
+	if logical.completedEnrollment != nil {
+		return contract.WorkspaceEnrollmentPresentation{}, errWorkspaceEnrollmentAlreadyCompleted
 	}
 	for _, transaction := range logical.authorizations {
 		if transaction.bundleBackends == nil {
@@ -105,7 +106,6 @@ func (a *Attachment) BeginWorkspaceEnrollment(ctx context.Context) (contract.Wor
 	transaction := &authorizationTransaction{
 		identity:       authorizationIdentity{id: id, binding: session.AuthorizationBinding(binding)},
 		route:          target,
-		backend:        backends[0],
 		bundleBackends: backends,
 		state:          state,
 		verifier:       verifier,
@@ -137,17 +137,32 @@ func (a *Attachment) ObserveWorkspaceEnrollment(ctx context.Context, ref contrac
 	}
 
 	logical := a.logical
+	a.enrollmentMu.Lock()
+	defer a.enrollmentMu.Unlock()
 	logical.mu.Lock()
+	if completed := logical.completedEnrollment; completed != nil {
+		if completed.ref != ref {
+			logical.mu.Unlock()
+			return contract.WorkspaceEnrollmentResult{}, contract.ErrAuthorizationNotFound
+		}
+		logical.mu.Unlock()
+		catalogue, err := a.installCompletedEnrollment(completed)
+		if err != nil {
+			return contract.WorkspaceEnrollmentResult{}, err
+		}
+		return contract.WorkspaceEnrollmentResult{Ref: ref, Status: contract.WorkspaceEnrollmentConnected, Catalogue: catalogue}, nil
+	}
 	transaction := lookupWorkspaceTransactionLocked(logical, ref.ID)
 	if transaction == nil {
 		logical.mu.Unlock()
 		return contract.WorkspaceEnrollmentResult{}, contract.ErrStateUnavailable
 	}
+	if !sameWorkspaceTransactionRef(transaction, ref) {
+		logical.mu.Unlock()
+		return contract.WorkspaceEnrollmentResult{}, contract.ErrAuthorizationNotFound
+	}
 	a.expireLocked(transaction)
 	status := transaction.status
-	backends := append([]string(nil), transaction.bundleBackends...)
-	backend := transaction.backend
-
 	switch status {
 	case session.AuthorizationPending:
 		logical.mu.Unlock()
@@ -171,16 +186,7 @@ func (a *Attachment) ObserveWorkspaceEnrollment(ctx context.Context, ref contrac
 		logical.mu.Unlock()
 		return result, nil
 	}
-	grant := logical.grants[backend]
-	var grantConfig *oauth2.Config
-	var grantToken *oauth2.Token
-	if grant != nil {
-		// Captured while logical.mu is still held: grant.token may be
-		// concurrently reassigned (never mutated in place) by a sibling
-		// scopedTokenSource refresh, so reading the field again after
-		// unlocking would race with that write.
-		grantConfig, grantToken = grant.config, grant.token
-	}
+	grant := logical.brokerCredential
 	logical.mu.Unlock()
 	if grant == nil {
 		return contract.WorkspaceEnrollmentResult{}, contract.ErrStateUnavailable
@@ -188,37 +194,39 @@ func (a *Attachment) ObserveWorkspaceEnrollment(ctx context.Context, ref contrac
 
 	process := a.runtime.process
 	if process == nil {
-		return a.failWorkspaceTransaction(logical, transaction, backends), nil
-	}
-	authSession, err := workspaceAuthSessionFromToken(grantToken)
-	if err != nil {
-		return a.failWorkspaceTransaction(logical, transaction, backends), nil
+		return a.failWorkspaceTransaction(logical, transaction), nil
 	}
 	occupied := append([]string(nil), process.occupied...)
-	catalogue, err := a.FreezeAuthenticatedCatalogue(ctx, ref, process, authSession, occupied)
+	catalogue, err := a.FreezeAuthenticatedCatalogue(ctx, ref, process, &brokerTokenSource{runtime: a.runtime, logical: logical}, occupied)
 	if err != nil {
-		return a.failWorkspaceTransaction(logical, transaction, backends), nil
+		return a.failWorkspaceTransaction(logical, transaction), nil
 	}
 
 	logical.mu.Lock()
-	if !logical.deleted {
-		for _, member := range backends {
-			if existing, ok := logical.grants[member]; ok {
-				existing.firstPending = false
-			} else {
-				logical.grants[member] = &oauthGrant{config: grantConfig, token: cloneToken(grantToken), executed: make(map[session.ToolCallID][32]byte)}
-			}
-		}
-		delete(logical.authorizations, transaction.identity)
+	if logical.deleted || logical.authorizations[transaction.identity] != transaction || transaction.status != session.AuthorizationGranted || logical.brokerCredential != grant {
+		logical.mu.Unlock()
+		return contract.WorkspaceEnrollmentResult{}, contract.ErrStateUnavailable
 	}
+	a.mu.RLock()
+	routes := make([]route, 0, len(a.catalogue.routes))
+	for _, route := range a.catalogue.routes {
+		routes = append(routes, route)
+	}
+	a.mu.RUnlock()
+	sortRoutes(routes)
+	routes = cloneRoutes(routes)
+	logical.completedEnrollment = &completedWorkspaceEnrollment{ref: ref, routes: routes}
+	delete(logical.authorizations, transaction.identity)
+	state := transaction.state
+	transaction.clientSecret, transaction.verifier, transaction.state = "", "", ""
 	logical.mu.Unlock()
-	a.runtime.removeCallbackState(transaction.state, transaction)
+	a.runtime.removeCallbackState(state, transaction)
 
 	return contract.WorkspaceEnrollmentResult{Ref: ref, Status: contract.WorkspaceEnrollmentConnected, Catalogue: catalogue}, nil
 }
 
-// CancelWorkspaceEnrollment cancels the exact pending bundle and clears every
-// backend's transaction/grant state. No terminal outcome leaves a partial grant.
+// CancelWorkspaceEnrollment cancels the exact pending bundle and clears its
+// aggregate broker credential. No terminal outcome leaves partial authority.
 func (a *Attachment) CancelWorkspaceEnrollment(ctx context.Context, ref contract.WorkspaceEnrollmentRef) (contract.WorkspaceEnrollmentResult, error) {
 	if err := ctx.Err(); err != nil {
 		return contract.WorkspaceEnrollmentResult{}, err
@@ -230,50 +238,45 @@ func (a *Attachment) CancelWorkspaceEnrollment(ctx context.Context, ref contract
 		return contract.WorkspaceEnrollmentResult{}, errors.New("mcpbroker: invalid workspace enrollment reference")
 	}
 	logical := a.logical
+	a.enrollmentMu.Lock()
+	defer a.enrollmentMu.Unlock()
 	logical.mu.Lock()
 	defer logical.mu.Unlock()
 	transaction := lookupWorkspaceTransactionLocked(logical, ref.ID)
-	if transaction == nil {
+	if transaction == nil || !sameWorkspaceTransactionRef(transaction, ref) {
 		return contract.WorkspaceEnrollmentResult{}, contract.ErrAuthorizationNotFound
 	}
 	result := a.terminateWorkspaceTransactionLocked(logical, transaction, contract.WorkspaceEnrollmentCancelled)
 	return result, nil
 }
 
-func (a *Attachment) failWorkspaceTransaction(logical *logicalSession, transaction *authorizationTransaction, backends []string) contract.WorkspaceEnrollmentResult {
+func (a *Attachment) failWorkspaceTransaction(logical *logicalSession, transaction *authorizationTransaction) contract.WorkspaceEnrollmentResult {
 	logical.mu.Lock()
 	defer logical.mu.Unlock()
 	if lookupWorkspaceTransactionLocked(logical, session.WorkspaceEnrollmentID(transaction.identity.id)) == nil {
 		// Already cleared by a concurrent Cancel/expiry; report the same terminal.
-		clearWorkspaceGrantsLocked(logical, backends)
+		clearWorkspaceCredentialLocked(logical)
 		return contract.WorkspaceEnrollmentResult{Ref: workspaceEnrollmentRef(transaction), Status: contract.WorkspaceEnrollmentFailed}
 	}
 	return a.terminateWorkspaceTransactionLocked(logical, transaction, contract.WorkspaceEnrollmentFailed)
 }
 
-// terminateWorkspaceTransactionLocked clears every bundle backend's grant and
-// the transaction record, and must be called with logical.mu held.
+// terminateWorkspaceTransactionLocked clears the aggregate broker credential and
+// transaction record, and must be called with logical.mu held.
 func (a *Attachment) terminateWorkspaceTransactionLocked(logical *logicalSession, transaction *authorizationTransaction, status contract.WorkspaceEnrollmentStatus) contract.WorkspaceEnrollmentResult {
 	a.runtime.removeCallbackState(transaction.state, transaction)
 	if transaction.cancel != nil {
 		transaction.cancel()
 	}
 	transaction.clientSecret, transaction.verifier, transaction.state = "", "", ""
-	clearWorkspaceGrantsLocked(logical, transaction.bundleBackends)
+	clearWorkspaceCredentialLocked(logical)
 	delete(logical.authorizations, transaction.identity)
 	return contract.WorkspaceEnrollmentResult{Ref: workspaceEnrollmentRef(transaction), Status: status}
 }
 
-func clearWorkspaceGrantsLocked(logical *logicalSession, backends []string) {
-	for _, backend := range backends {
-		if grant, ok := logical.grants[backend]; ok {
-			if grant.token != nil {
-				grant.token.AccessToken = ""
-				grant.token.RefreshToken = ""
-			}
-			delete(logical.grants, backend)
-		}
-	}
+func clearWorkspaceCredentialLocked(logical *logicalSession) {
+	clearGrantToken(logical.brokerCredential)
+	logical.brokerCredential = nil
 }
 
 func lookupWorkspaceTransactionLocked(logical *logicalSession, id session.WorkspaceEnrollmentID) *authorizationTransaction {
@@ -283,6 +286,11 @@ func lookupWorkspaceTransactionLocked(logical *logicalSession, id session.Worksp
 		}
 	}
 	return nil
+}
+
+func sameWorkspaceTransactionRef(transaction *authorizationTransaction, ref contract.WorkspaceEnrollmentRef) bool {
+	expected := workspaceEnrollmentRef(transaction)
+	return expected.ID == ref.ID && expected.RequiredServices == ref.RequiredServices && expected.ExpiresAt.Equal(ref.ExpiresAt)
 }
 
 func workspaceEnrollmentRef(transaction *authorizationTransaction) contract.WorkspaceEnrollmentRef {
@@ -304,32 +312,4 @@ func presentWorkspaceTransaction(transaction *authorizationTransaction) string {
 		options = append(options, oauth2.AccessTypeOffline)
 	}
 	return cfg.AuthCodeURL(transaction.state, options...)
-}
-
-// workspaceAuthSessionFromToken recovers the ToolHive-native upstream-token
-// storage key from mecatl's own JWT access token. This is safe without
-// signature verification: the token is our own recent output from the PKCE
-// exchange this same process just ran against its own embedded ToolHive
-// authorization server (auth.go's handleCallback) — no attacker-controlled
-// token ever reaches this function. The "tsid" claim name is defined by
-// ToolHive (pkg/authserver/server/session.TokenSessionIDClaimKey).
-func workspaceAuthSessionFromToken(token *oauth2.Token) (ToolHiveAuthSessionID, error) {
-	if token == nil || token.AccessToken == "" {
-		return "", ErrAuthenticatedDiscovery
-	}
-	parts := strings.Split(token.AccessToken, ".")
-	if len(parts) != 3 {
-		return "", ErrAuthenticatedDiscovery
-	}
-	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
-	if err != nil {
-		return "", ErrAuthenticatedDiscovery
-	}
-	var claims struct {
-		TSID string `json:"tsid"`
-	}
-	if err := json.Unmarshal(payload, &claims); err != nil || claims.TSID == "" {
-		return "", ErrAuthenticatedDiscovery
-	}
-	return ToolHiveAuthSessionID(claims.TSID), nil
 }

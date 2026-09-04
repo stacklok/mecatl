@@ -7,11 +7,67 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"golang.org/x/oauth2"
+
 	"github.com/stacklok/mecatl/engine/tool"
 	contract "github.com/stacklok/mecatl/internal/mcpbroker"
 )
 
-// attachmentCatalogue is the one authoritative route identity source for an
+type completedWorkspaceEnrollment struct {
+	ref    contract.WorkspaceEnrollmentRef
+	routes []route
+}
+
+func cloneRoutes(routes []route) []route {
+	out := make([]route, len(routes))
+	for i, route := range routes {
+		out[i] = route
+		out[i].spec = copySpec(route.spec)
+		if route.oauth != nil {
+			copyRoute := *route.oauth
+			copyRoute.scopes = append([]string(nil), route.oauth.scopes...)
+			out[i].oauth = &copyRoute
+		}
+	}
+	return out
+}
+
+func (a *Attachment) installCompletedEnrollment(completed *completedWorkspaceEnrollment) (contract.WorkspaceCatalogue, error) {
+	if completed == nil {
+		return nil, ErrAuthenticatedDiscovery
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.closed {
+		return nil, contract.ErrAttachmentClosed
+	}
+	if err := a.stateErrorLocked(); err != nil {
+		return nil, err
+	}
+	if a.catalogue != nil && a.catalogue.frozen != nil {
+		if a.catalogue.frozen.Ref() != completed.ref {
+			return nil, ErrAuthenticatedDiscovery
+		}
+		return a.catalogue.frozen, nil
+	}
+	routes := cloneRoutes(completed.routes)
+	tools := make([]tool.Tool, 0, len(routes))
+	for _, route := range routes {
+		base := &sessionTool{attachment: a, route: route}
+		if route.oauth != nil {
+			tools = append(tools, &protectedSessionTool{sessionTool: base})
+		} else {
+			tools = append(tools, base)
+		}
+	}
+	frozen, err := contract.NewWorkspaceCatalogue(completed.ref, tools)
+	if err != nil {
+		return nil, fmt.Errorf("%w: materialize completed catalogue", ErrInvalidCatalogue)
+	}
+	a.catalogue = newAttachmentCatalogue(routes, frozen.Tools(), frozen)
+	return frozen, nil
+}
+
 // attachment. It is replaced, never amended: callers can therefore observe
 // either the anonymous catalogue or the complete enrolled catalogue.
 type attachmentCatalogue struct {
@@ -47,12 +103,13 @@ func (c *attachmentCatalogue) Tools() []tool.Tool {
 // their configured order and publishes one immutable attachment catalogue only
 // after every backend has supplied valid live metadata. occupied is the complete
 // model-visible name set outside this attachment catalogue (core/global tools).
-// authSession is opaque and is passed only to the concrete ToolHive process.
-func (a *Attachment) FreezeAuthenticatedCatalogue(ctx context.Context, ref contract.WorkspaceEnrollmentRef, process *Process, authSession ToolHiveAuthSessionID, occupied []string) (contract.WorkspaceCatalogue, error) {
+// brokerCredential is opaque and is passed only through ToolHive's incoming
+// identity middleware.
+func (a *Attachment) FreezeAuthenticatedCatalogue(ctx context.Context, ref contract.WorkspaceEnrollmentRef, process *Process, brokerCredential oauth2.TokenSource, occupied []string) (contract.WorkspaceCatalogue, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if a == nil || process == nil || authSession == "" || !ref.Valid() {
+	if a == nil || process == nil || brokerCredential == nil || !ref.Valid() {
 		return nil, ErrAuthenticatedDiscovery
 	}
 
@@ -80,7 +137,7 @@ func (a *Attachment) FreezeAuthenticatedCatalogue(ctx context.Context, ref contr
 		return nil, ErrAuthenticatedDiscovery
 	}
 
-	stagedRoutes, err := stageAuthenticatedRoutes(ctx, process, authSession, backends, base, occupied)
+	stagedRoutes, err := stageAuthenticatedRoutes(ctx, process, brokerCredential, backends, base, occupied)
 	if err != nil {
 		return nil, err
 	}
@@ -122,7 +179,7 @@ func (a *Attachment) stateErrorLocked() error {
 	return nil
 }
 
-func stageAuthenticatedRoutes(ctx context.Context, process *Process, authSession ToolHiveAuthSessionID, backends []string, base *attachmentCatalogue, occupied []string) ([]route, error) {
+func stageAuthenticatedRoutes(ctx context.Context, process *Process, brokerCredential oauth2.TokenSource, backends []string, base *attachmentCatalogue, occupied []string) ([]route, error) {
 	// The attachment lock remains held by FreezeAuthenticatedCatalogue throughout
 	// this work. Cancel/close races have one winner, and Tools cannot expose a
 	// partly staged catalogue.
@@ -138,24 +195,36 @@ func stageAuthenticatedRoutes(ctx context.Context, process *Process, authSession
 	}
 	staged := make([]route, 0)
 	for _, backend := range backends {
-		capabilities, err := process.QueryAuthenticatedCapabilities(ctx, authSession, backend)
+		capabilities, err := process.QueryAuthenticatedCapabilities(ctx, brokerCredential, backend)
 		if err != nil || capabilities.Backend != backend {
 			return nil, ErrAuthenticatedDiscovery
 		}
-		for _, definition := range capabilities.Tools {
+		declaredTools := process.construction.staticByBackend[backend]
+		declaredNames := make(map[string]struct{}, len(declaredTools))
+		for _, declared := range declaredTools {
+			declaredNames["mcp__"+backend+"__"+declared.Name] = struct{}{}
+		}
+		definitions := make([]ToolDefinition, 0, len(capabilities.Tools)+len(declaredTools))
+		for _, discovered := range capabilities.Tools {
+			if _, staticallyDeclared := declaredNames[discovered.Name]; !staticallyDeclared {
+				definitions = append(definitions, discovered)
+			}
+		}
+		for _, declared := range declaredTools {
+			definitions = append(definitions, ToolDefinition{
+				Backend: backend, Name: "mcp__" + backend + "__" + declared.Name,
+				Description: declared.Description, Schema: append(json.RawMessage(nil), declared.Schema...), ReadOnly: declared.ReadOnly,
+			})
+		}
+		for _, definition := range definitions {
 			route, err := validateAuthenticatedRoute(backend, definition, seen)
 			if err != nil {
 				return nil, err
 			}
-			if process.protectedTarget == nil {
-				return nil, ErrAuthenticatedDiscovery
-			}
-			// A live-discovered tool executes through the SAME protected
-			// authorization target as a static protected declaration
-			// (compileStaticProtectedRoutes): without this, sessionTool.Execute
-			// would route it through the anonymous caller instead of
-			// executeProtected, since validateAuthenticatedRoute never sets oauth.
-			route.oauth = process.protectedTarget
+			// Execution reuses the one outer ToolHive broker credential. The
+			// wrapper intentionally has no oauth route, so the agent loop cannot
+			// open a second mecatl authorization flow for this backend.
+			route.broker = true
 			seen[route.spec.Name] = struct{}{}
 			staged = append(staged, route)
 		}

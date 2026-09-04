@@ -174,7 +174,7 @@ mounted
 {{- $callbackURL := trim .Values.mcp.broker.callbackURL -}}
 {{- if and (gt $oauthCount 0) (not .Values.oidc.enabled) -}}{{ fail "mcp OAuth broker requires oidc.enabled=true for verified broker-control caller identity" }}{{- end -}}
 {{- if and (gt $oauthCount 0) (eq $callbackURL "") -}}{{ fail "mcp.broker.callbackURL is required with an OAuth MCP server" }}{{- end -}}
-{{- if and (ne $callbackURL "") (ne $oauthCount 1) -}}{{ fail "mcp.broker.callbackURL requires exactly one OAuth MCP server" }}{{- end -}}
+{{- if and (ne $callbackURL "") (eq $oauthCount 0) -}}{{ fail "mcp.broker.callbackURL requires at least one OAuth MCP server" }}{{- end -}}
 {{- range $env := .Values.extraEnv -}}
 {{- if and (hasKey $env "name") (hasKey $ownedEnv $env.name) -}}{{ fail (printf "extraEnv name %q collides with an MCP authentication environment variable owned by the chart" $env.name) }}{{- end -}}
 {{- end -}}

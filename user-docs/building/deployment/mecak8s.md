@@ -384,17 +384,24 @@ values, arguments, or a ConfigMap. `staticBearer` covers a personal access
 token; for a GitHub OAuth App's real browser consent flow, use `auth.mode:
 oauth` with `upstream: {mode: oauth2, oauth2: {authorizationEndpoint,
 tokenEndpoint}}` instead of `issuer` — GitHub has no OIDC discovery endpoint —
-and optionally a static `tools` catalogue so the model sees the backend's
-tools immediately. OAuth selects the session MCP broker instead
-of global routing. Set `mcp.broker.callbackURL` to the exact public HTTPS callback
-URL that your ingress or gateway routes to the mecak8s HTTP listener; Helm rejects
-an OAuth server without it and the runtime rejects an invalid URL. OAuth broker
-mode also requires the chart's OIDC caller identity (`oidc.enabled: true`, issuer,
-and audience), so broker authorization controls have verified callers. The broker
-profile and server metadata are non-secret ConfigMap data. A preregistered client
-secret remains a `SecretKeyRef` projection only—never a values field or ConfigMap
-entry; the browser authorizes the broker for that session rather than Helm
-accepting a credential-record value. With `mcp.servers: []`, Helm explicitly
+and optionally a static `tools` catalogue. OAuth selects the session MCP broker instead
+of global routing. One session enrollment can cover multiple configured protected upstreams:
+ToolHive drives their sequential browser flow, owns callback state and refresh, and injects
+each upstream token only into its configured backend. Mecatl exposes one opaque enrollment,
+not per-backend controls or OAuth material.
+
+Set `mcp.broker.callbackURL` to ToolHive's final public HTTPS redirect to mecatl. Your ingress
+or gateway must also route the complete fixed `/v1/mcp/broker/` prefix, including ToolHive's
+upstream callback, to the mecak8s HTTP listener. Helm rejects an OAuth server without the final
+callback URL and the runtime rejects an invalid URL. Protected static declarations and live
+discovery stay hidden until enrollment succeeds; mecatl then strictly discovers every protected
+backend, collision-checks, and freezes the complete catalogue. A failed enrollment admits no
+partial protected tools. OAuth broker mode also requires the chart's OIDC caller identity
+(`oidc.enabled: true`, issuer, and audience), so broker authorization controls have verified
+callers. The broker profile and server metadata are non-secret ConfigMap data. A preregistered
+client secret remains a `SecretKeyRef` projection only—never a values field or ConfigMap entry;
+the browser authorizes the broker for that session rather than Helm accepting a credential-record
+value. With `mcp.servers: []`, Helm explicitly
 writes `mcp.mode: global`; a no-auth or static-bearer-only list keeps the existing
 global route behavior.
 

@@ -83,15 +83,16 @@ func (c *Catalogue) protected() bool {
 }
 
 type oauthRuntimeOptions struct {
-	httpClient    *http.Client
-	resolveSecret func(context.Context, string) (string, error)
-	now           func() time.Time
-	random        func([]byte) (int, error)
-	ttl           time.Duration
-	timeout       time.Duration
-	allowLoopback bool
-	testRootCAs   *x509.CertPool
-	testHelper    interface{ Helper() }
+	httpClient           *http.Client
+	resolveSecret        func(context.Context, string) (string, error)
+	now                  func() time.Time
+	random               func([]byte) (int, error)
+	ttl                  time.Duration
+	timeout              time.Duration
+	allowLoopback        bool
+	testRootCAs          *x509.CertPool
+	testHelper           interface{ Helper() }
+	testBrokerHTTPClient *http.Client
 	// forcedTokenEndpoint forces the hardened OAuth token client to be built
 	// for this endpoint even when the compiled catalogue has no static oauth
 	// route: a bundled ToolHive Process may have a protected authorization
@@ -130,6 +131,13 @@ func WithOAuthLoopbackForTest(t interface{ Helper() }, roots *x509.CertPool) Opt
 		runtime.oauth.testRootCAs = roots
 		runtime.oauth.testHelper = t
 	}
+}
+
+// WithBrokerHTTPClientForTest supplies a client that trusts the in-process TLS
+// vMCP handler. It is honored only together with WithOAuthLoopbackForTest.
+func WithBrokerHTTPClientForTest(t interface{ Helper() }, client *http.Client) Option {
+	t.Helper()
+	return func(runtime *Runtime) { runtime.oauth.testBrokerHTTPClient = client }
 }
 
 // WithOAuthSecretResolver resolves trusted secret references from P07 declarations.
@@ -193,9 +201,8 @@ type authorizationTransaction struct {
 	claimed      bool
 	cancel       context.CancelFunc
 	// bundleBackends is nil for an ordinary tool-call-bound authorization. A
-	// non-nil value marks this transaction as a pre-prompt workspace-enrollment
-	// bundle: backend is bundleBackends[0], and the resulting grant is not bound
-	// to any specific effective tool call (see workspace_enrollment.go).
+	// non-nil value marks the aggregate pre-prompt ToolHive enrollment. Its
+	// resulting credential is broker-scoped and never copied into backend grants.
 	bundleBackends []string
 }
 
@@ -604,7 +611,16 @@ func (r *Runtime) handleCallback(ctx context.Context, code, state string) error 
 		transaction.status = session.AuthorizationFailed
 		return errors.New("OAuth token exchange failed")
 	}
-	logical.grants[transaction.backend] = &oauthGrant{config: cfg, token: token, firstCall: transaction.callHash, firstPending: true, executed: make(map[session.ToolCallID][32]byte)}
+	grant := &oauthGrant{config: cfg, token: token, firstCall: transaction.callHash, firstPending: true, executed: make(map[session.ToolCallID][32]byte)}
+	if transaction.bundleBackends != nil {
+		// This is the one opaque credential for the ToolHive broker operation.
+		// Its claims and ToolHive-owned upstream credentials are never decoded or
+		// copied into mecatl's per-backend grant map.
+		grant.firstPending = false
+		logical.brokerCredential = grant
+	} else {
+		logical.grants[transaction.backend] = grant
+	}
 	transaction.status = session.AuthorizationGranted
 	return nil
 }
@@ -658,11 +674,57 @@ func (l *logicalSession) revokeGrantLocked(backend string, expected *oauthGrant)
 	if l.grants[backend] != expected {
 		return
 	}
-	if expected.token != nil {
-		expected.token.AccessToken = ""
-		expected.token.RefreshToken = ""
-	}
+	clearGrantToken(expected)
 	delete(l.grants, backend)
+}
+
+type brokerTokenSource struct {
+	runtime *Runtime
+	logical *logicalSession
+}
+
+func (s *brokerTokenSource) Token() (*oauth2.Token, error) {
+	s.logical.mu.Lock()
+	defer s.logical.mu.Unlock()
+	if s.logical.deleted {
+		return nil, contract.ErrStateUnavailable
+	}
+	grant := s.logical.brokerCredential
+	if grant == nil {
+		return nil, contract.ErrAuthorizationNotFound
+	}
+	if grant.token.Valid() {
+		return cloneToken(grant.token), nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), s.runtime.oauth.timeout)
+	defer cancel()
+	ctx = context.WithValue(ctx, oauth2.HTTPClient, s.runtime.oauth.httpClient)
+	fresh, err := grant.config.TokenSource(ctx, grant.token).Token()
+	if err != nil {
+		var retrieveErr *oauth2.RetrieveError
+		if errors.As(err, &retrieveErr) && retrieveErr.ErrorCode == "invalid_grant" {
+			clearGrantToken(grant)
+			s.logical.brokerCredential = nil
+		}
+		return nil, errors.New("OAuth broker credential refresh failed")
+	}
+	if !validBearerToken(fresh) {
+		clearGrantToken(grant)
+		s.logical.brokerCredential = nil
+		return nil, errors.New("OAuth broker credential refresh failed")
+	}
+	if fresh.RefreshToken == "" {
+		fresh.RefreshToken = grant.token.RefreshToken
+	}
+	grant.token = fresh
+	return cloneToken(fresh), nil
+}
+
+func clearGrantToken(grant *oauthGrant) {
+	if grant != nil && grant.token != nil {
+		grant.token.AccessToken = ""
+		grant.token.RefreshToken = ""
+	}
 }
 
 func cloneToken(token *oauth2.Token) *oauth2.Token {
@@ -689,22 +751,47 @@ func (t *sessionTool) executeProtected(ctx context.Context, call session.ToolCal
 		}
 		grant.firstPending = false
 	}
-	if prior, exists := grant.executed[call.ID]; exists {
+	if err := claimGrantCallLocked(grant, call, hash); err != nil {
 		logical.mu.Unlock()
-		if prior == hash {
-			return session.ToolResult{}, errors.New("protected call outcome is ambiguous; automatic replay refused")
-		}
-		return session.ToolResult{}, errors.New("protected call ID was reused with different arguments")
+		return session.ToolResult{}, err
 	}
-	if len(grant.executed) >= maxExecutedCallsPerGrant {
-		logical.mu.Unlock()
-		return session.ToolResult{}, errors.New("protected-call replay ledger is full")
-	}
-	grant.executed[call.ID] = hash // claim before transport: an unknown outcome is never replayed.
 	logical.mu.Unlock()
 	result, err := t.attachment.runtime.authorizedCaller(ctx, logical.ref, t.route.backend, call, &scopedTokenSource{runtime: t.attachment.runtime, logical: logical, backend: t.route.backend})
 	result.CallID = call.ID
 	return result, err
+}
+
+func (t *sessionTool) executeBroker(ctx context.Context, call session.ToolCall) (session.ToolResult, error) {
+	logical := t.attachment.logical
+	hash := callHash(call)
+	logical.mu.Lock()
+	grant := logical.brokerCredential
+	if grant == nil {
+		logical.mu.Unlock()
+		return session.ToolResult{}, contract.ErrAuthorizationNotFound
+	}
+	if err := claimGrantCallLocked(grant, call, hash); err != nil {
+		logical.mu.Unlock()
+		return session.ToolResult{}, err
+	}
+	logical.mu.Unlock()
+	result, err := t.attachment.runtime.authorizedCaller(ctx, logical.ref, t.route.backend, call, &brokerTokenSource{runtime: t.attachment.runtime, logical: logical})
+	result.CallID = call.ID
+	return result, err
+}
+
+func claimGrantCallLocked(grant *oauthGrant, call session.ToolCall, hash [32]byte) error {
+	if prior, exists := grant.executed[call.ID]; exists {
+		if prior == hash {
+			return errors.New("protected call outcome is ambiguous; automatic replay refused")
+		}
+		return errors.New("protected call ID was reused with different arguments")
+	}
+	if len(grant.executed) >= maxExecutedCallsPerGrant {
+		return errors.New("protected-call replay ledger is full")
+	}
+	grant.executed[call.ID] = hash // claim before transport: an unknown outcome is never replayed.
+	return nil
 }
 
 func (l *logicalSession) markDeletedLocked(status session.AuthorizationStatus) {
@@ -743,11 +830,11 @@ func (l *logicalSession) clearSecretsLocked(runtime *Runtime, status session.Aut
 		transaction.state = ""
 	}
 	for _, grant := range l.grants {
-		if grant.token != nil {
-			grant.token.AccessToken = ""
-			grant.token.RefreshToken = ""
-		}
+		clearGrantToken(grant)
 	}
+	clearGrantToken(l.brokerCredential)
+	l.brokerCredential = nil
+	l.completedEnrollment = nil
 	clear(l.authorizations)
 	clear(l.grants)
 }

@@ -5786,24 +5786,43 @@ bare `port.LLMProvider`. **DEFERRED:** the standalone gRPC `CreateTeam` RPC stay
 provider (no per-CreateTeam selector); `ListAgents`/`AgentInfo` provider surfacing (no proto
 change).
 
-**Session-scoped MCP broker composition (P10):** `internal/app/build.go` owns one
-process-wide `internal/adapter/mcpbroker.Runtime`, returns its fixed callback
-`HandlerBundle` for mounting by `mecated` and `mecak8s` on their primary HTTP muxes,
-and closes it only after `server.Service` has bounded local attachment shutdown. The root-internal `internal/mcpbroker` contract carries only neutral tool wrappers,
-an opaque binding, and attachment lifecycle operations; the generic engine knows nothing
-about broker state. `server.Service` attaches only after `SessionStore.Create` returns the
-canonical ID, persists `session.Session.ExternalBinding`, and passes `Attachment.Tools()`
-explicitly through `SessionEngineRequest.BrokerTools` into `assembleCatalog`. There is no
-context-value channel and no fallback to server-global MCP when broker wrappers are absent.
-Reload reattaches through the same contract and accepts only an exact persisted binding.
-`CloseSession` drops a local attachment without deleting logical authorization state;
-owner deletion calls `DeleteSession`. A creator rollback calls attachment-scoped `Abort`,
-which deletes only a still-private provisional logical session and preserves it once another
-attachment has reattached. The runtime close path fences new work and returns without
-waiting for stuck operations; the final operation release owns deferred secret/callback
-cleanup. Guards include `internal/app/mcp_broker_p10_test.go`,
-`internal/adapter/server/mcp_broker_test.go`, and
-`internal/adapter/mcpbroker/runtime_test.go`.
+**Session-scoped MCP broker composition (P10, ADR 0308):** `internal/app/build.go` owns one
+process-wide `internal/adapter/mcpbroker.Process`, returns its complete fixed ToolHive
+`HandlerBundle` for mounting by `mecated` and `mecak8s` on their primary HTTP muxes, and
+closes it only after `server.Service` has bounded local attachment shutdown. The root-internal
+`internal/mcpbroker` contract carries only neutral tool wrappers, an opaque binding, and
+attachment lifecycle operations; the generic engine knows nothing about broker or upstream
+OAuth state. Broker authority stays exclusive of global `MCPServers`.
+
+Multiple configured protected profiles become one ordered ToolHive upstream configuration in
+`internal/adapter/mcpbroker/toolhive_construction.go` (`compileToolHiveConstruction`): ToolHive
+owns the sequential upstream callback/state, authorization-code exchange, refresh, and
+provider-to-backend injection. Mecatl starts, observes, or cancels only one opaque workspace
+enrollment. Its public control projection contains no backend/provider selector, callback
+state, endpoint, authorization code, access token, or refresh token. The fixed upstream callback
+is `/v1/mcp/broker/oauth/callback`; the separately configured callback URL is ToolHive's final
+redirect to mecatl, so ingress needs the complete fixed broker prefix plus the final callback
+path.
+
+Protected static declarations are not model-visible at construction. On successful enrollment,
+`internal/adapter/mcpbroker/workspace_catalogue.go` (`FreezeAuthenticatedCatalogue`) performs
+strict authenticated discovery for every configured protected backend, collision-checks the
+complete result, and atomically replaces the attachment catalogue. It either publishes the full
+frozen catalogue and rebuilds the session engine or exposes no protected tools; no per-backend
+mecatl authorization continuation exists. `server.Service` attaches only after
+`SessionStore.Create` returns the canonical ID, persists `session.Session.ExternalBinding`, and
+passes `Attachment.Tools()` explicitly through `SessionEngineRequest.BrokerTools` into
+`assembleCatalog`. Reload reattaches through the same contract and accepts only an exact
+persisted binding. `CloseSession` drops a local attachment without deleting logical
+authorization state; owner deletion calls `DeleteSession`.
+
+The mecatl attachment/session boundary remains process-local: a prior-process binding cannot
+reattach and fails closed. ToolHive backing storage can retain its own authorization state, but
+there is no durable broker ownership or multi-replica routing; broker OAuth remains unsafe behind
+the chart's default multi-replica Service without affinity or a durable-broker decision. Guards
+include `internal/adapter/server/mcp_broker_multi_upstream_e2e_test.go`,
+`internal/adapter/mcpbroker/workspace_catalogue_test.go`, and
+`internal/adapter/mcpbroker/toolhive_process_test.go`.
 
 **Server-global MCP on every session (bug #3 fix, `sessionEngineFactory`):** the
 per-session catalog mounts the SERVER-GLOBAL MCP tools (`cfg.MCPServers` + ToolHive — the

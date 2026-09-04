@@ -20,6 +20,10 @@ func TestToolHiveImportsStayBehindApprovedAdapterLeaves(t *testing.T) {
 		"internal/adapter/mcpbroker/toolhive_construction.go":   true,
 		"internal/adapter/mcpbroker/toolhive_process.go":        true,
 		"internal/adapter/toolhivellm/tokensource.go":           true,
+		// RFC 9728 protected-resource discovery (#1055), a separate ToolHive
+		// import leaf unrelated to the MCP broker's own construction/discovery.
+		"cmd/mecatui/resource_discovery.go":           true,
+		"internal/adapter/resourceurl/resourceurl.go": true,
 	}
 	const toolHiveModule = "github.com/stacklok/toolhive"
 	if err := filepath.WalkDir(root, func(sourcePath string, entry fs.DirEntry, walkErr error) error {

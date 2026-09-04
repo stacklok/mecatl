@@ -49,6 +49,11 @@ type route struct {
 	spec     tool.ToolSpec
 	readOnly bool
 	oauth    *oauthRoute
+	// broker marks a ToolHive-routed capability admitted only after the
+	// session's aggregate workspace enrollment completed. It deliberately does
+	// not implement tool.AuthorizationRequester: the outer broker credential is
+	// reused without creating a backend-specific mecatl OAuth flow.
+	broker bool
 }
 
 // Catalogue is an immutable compiled broker catalogue. Specs deliberately
@@ -62,7 +67,6 @@ type Catalogue struct {
 // before any session attachment is created.
 func Compile(config mcpauthority.BrokerConfig, discovered []ToolDefinition, occupied []string) (*Catalogue, error) {
 	backends := make(map[string]permconfig.MCPServerProfile, len(config.Routes))
-	protectedRoutes := 0
 	for _, declaration := range config.Routes {
 		key := strings.ToLower(declaration.Name)
 		if key == "" {
@@ -75,10 +79,6 @@ func Compile(config mcpauthority.BrokerConfig, discovered []ToolDefinition, occu
 			return nil, fmt.Errorf("%w: route %q uses auth mode %q", ErrProtectedRouteUnsupported, declaration.Name, declaration.Auth.Mode)
 		}
 		if declaration.Auth.Mode == "oauth" {
-			protectedRoutes++
-			if protectedRoutes > 1 {
-				return nil, fmt.Errorf("%w: at most one OAuth route is supported by the shared callback", ErrProtectedRouteUnsupported)
-			}
 			if declaration.Auth.OAuth == nil {
 				return nil, fmt.Errorf("%w: route %q has no OAuth declaration", ErrProtectedRouteUnsupported, declaration.Name)
 			}
@@ -159,18 +159,20 @@ type SessionRef struct {
 func (r SessionRef) SessionID() session.SessionID { return r.id }
 
 type logicalSession struct {
-	mu             sync.RWMutex
-	ref            SessionRef
-	deleted        bool
-	operationCtx   context.Context
-	cancelOps      context.CancelFunc
-	activeOps      int
-	operationsDone chan struct{}
-	provisional    bool
-	cleaned        bool
-	cleanupStatus  session.AuthorizationStatus
-	authorizations map[authorizationIdentity]*authorizationTransaction
-	grants         map[string]*oauthGrant
+	mu                  sync.RWMutex
+	ref                 SessionRef
+	deleted             bool
+	operationCtx        context.Context
+	cancelOps           context.CancelFunc
+	activeOps           int
+	operationsDone      chan struct{}
+	provisional         bool
+	cleaned             bool
+	cleanupStatus       session.AuthorizationStatus
+	authorizations      map[authorizationIdentity]*authorizationTransaction
+	grants              map[string]*oauthGrant
+	brokerCredential    *oauthGrant
+	completedEnrollment *completedWorkspaceEnrollment
 }
 
 // Caller is the private execution seam used by the in-process transport. The
@@ -312,6 +314,14 @@ func (r *Runtime) AttachSession(ctx context.Context, id session.SessionID) (cont
 		}
 	}
 	attachment.catalogue = newAttachmentCatalogue(r.catalogue.routes, tools, nil)
+	logical.mu.RLock()
+	completed := logical.completedEnrollment
+	logical.mu.RUnlock()
+	if completed != nil {
+		if _, err := attachment.installCompletedEnrollment(completed); err != nil {
+			return nil, "", err
+		}
+	}
 	return attachment, outcome, nil
 }
 
@@ -354,6 +364,7 @@ func (r *Runtime) DeleteSession(ctx context.Context, id session.SessionID) (cont
 // satisfy the neutral contract.
 type Attachment struct {
 	mu             sync.RWMutex
+	enrollmentMu   sync.Mutex
 	runtime        *Runtime
 	logical        *logicalSession
 	closed         bool
@@ -587,6 +598,9 @@ func (t *sessionTool) Execute(ctx context.Context, call session.ToolCall, _ tool
 	call.Args = append(json.RawMessage(nil), call.Args...)
 	if t.route.oauth != nil {
 		return t.executeProtected(opCtx, call)
+	}
+	if t.route.broker {
+		return t.executeBroker(opCtx, call)
 	}
 	result, err := t.attachment.runtime.caller(opCtx, t.attachment.logical.ref, t.route.backend, call)
 	result.CallID = call.ID

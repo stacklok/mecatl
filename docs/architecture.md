@@ -144,29 +144,41 @@ and non-local flock/rename behavior remain outside it. See [ADR 0218](adr/0218-c
 The session-scoped MCP broker is a process-wide in-process runtime owned by `app.Built`.
 Broker authority is exclusive of programmatic global `MCPServers`; `app.Build` rejects a
 mixed configuration after resolving the effective authority, including a loader result,
-before constructing MCP, broker-process, or Redis resources.
-`mecated` and `mecak8s` mount its fixed callback handler bundle on their existing primary
-HTTP mux before the API catch-all; no second listener or context-value catalogue channel
-exists. Broker authorization and workspace-enrollment controls are public API/TUI surfaces: callers present,
-recheck, or cancel a pending per-tool authorization, and can begin, observe, retry, or cancel a pre-prompt workspace-service enrollment while the browser completes the configured
-public HTTPS callback. The callback URL is operator configuration, not a client-supplied
-route. In Helm, broker OAuth requires the chart-supported OIDC verified-caller
-configuration; its authorization is a browser/session flow and a preregistered
-client secret remains a Kubernetes Secret reference, never broker profile data.
-`server.Service` holds only local attachments, and each per-session catalogue is
-assembled from an explicit wrapper-tool slice after the canonical session ID is reserved.
-The session snapshot persists an opaque broker-incarnation binding and reload requires an
-exact match. Ordinary `CloseSession` detaches locally, while permanent owner deletion and
-retention also delete broker transactions, grants, and replay state.
+before constructing MCP, broker-process, or Redis resources. It accepts multiple configured
+OAuth upstreams. ToolHive owns their ordered browser flow, callback state, PKCE/code exchange,
+refresh, and provider-specific backend token injection; mecatl exposes only one opaque
+pre-prompt enrollment per session. Public enrollment controls carry aggregate status, a
+service count, an opaque reference, and a presentation URL—not upstream names, endpoints,
+callback state, codes, or tokens.
 
-This P10 runtime is intentionally single-process: logical broker sessions, OAuth grants,
-transactions, and replay ledgers are in memory and are lost on process restart. A persisted
-binding from the prior process therefore cannot reattach to the new runtime and fails closed
-instead of silently creating replacement authority. Durable/remote broker state remains a
-later-stage concern; the current callback and authorization-control lifecycle is public.
-Because the broker is process-local, OAuth broker mode is not safe behind mecak8s's
-default multi-replica Service until an affinity or durable-broker decision is made;
-the chart does not silently change its replica behavior.
+`mecated` and `mecak8s` mount ToolHive's fixed broker handler bundle on their existing
+primary HTTP mux before the API catch-all; no second listener or context-value catalogue
+channel exists. The same broker origin has two callback roles: every upstream provider returns
+to ToolHive's fixed `/v1/mcp/broker/oauth/callback` prefix, while ToolHive's completed chain
+returns to the operator-configured final mecatl callback URL. Ingress must route the complete
+fixed broker prefix as well as that final callback path to the listener. The final callback URL
+is operator configuration, not a client-supplied route. In Helm, broker OAuth requires the
+chart-supported OIDC verified-caller configuration; its authorization is a browser/session
+flow and a preregistered client secret remains a Kubernetes Secret reference, never broker
+profile data.
+
+Protected static declarations and authenticated discovery results are staged until the opaque
+enrollment succeeds. Mecatl then performs strict authenticated discovery for every protected
+backend, collision-checks it, freezes the complete model-visible catalogue, and rebuilds the
+session engine; a failure admits no partial catalogue. Normal mecatl permissions govern the
+frozen tools. `server.Service` holds only local attachments, and each per-session catalogue is
+assembled from an explicit wrapper-tool slice after the canonical session ID is reserved. The
+session snapshot persists an opaque broker-incarnation binding and reload requires an exact
+match. Ordinary `CloseSession` detaches locally, while permanent owner deletion and retention
+also delete broker transactions, grants, and replay state.
+
+This P10 runtime retains a process-local mecatl session/attachment boundary. A persisted
+binding from a prior process cannot reattach to a new runtime and fails closed instead of
+silently creating replacement authority. ToolHive may use configured backing storage for its
+own authorization state, but durable/remote broker ownership and multi-replica routing remain
+later-stage concerns. OAuth broker mode is therefore not safe behind mecak8s's default
+multi-replica Service until an affinity or durable-broker decision is made; the chart does not
+silently change its replica behavior.
 
 The [formal domain model](architecture/mecatl.modelith.md) (generated by modelith) is a supporting reference — start with the prose [domain model](architecture/domain-model.md) for the human walkthrough.
 

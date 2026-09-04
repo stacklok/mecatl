@@ -19,8 +19,9 @@ a `coordination.k8s.io` Lease per session
 **storage-free**: no PVC, no `--store-dir`, no local state — every piece of state is a
 managed service the pod talks to over the network (Redis + the k8s API server). Global
 MCP profiles use the same operator settings loader as mecated/mecatequi. The intended
-OAuth posture is a browser/session authorization through the process-local broker;
-a preregistered client secret is injected from a Kubernetes Secret when required.
+OAuth posture is one browser/session enrollment through the process-local ToolHive broker;
+it can drive multiple configured protected upstreams sequentially, and a preregistered client
+secret is injected from a Kubernetes Secret when required.
 `mecak8s` never launches a browser and cannot run `mecated mcp login`. A mutable local credential root is accepted
 only when explicitly mounted/configured, but contradicts the normal storage-free posture
 and is not recommended. It drops
@@ -169,11 +170,11 @@ endpoint is runtime-valid. The authentication `mode` is a closed union:
 - `none` renders only `--mcp-server=<name>=<url>`;
 - `staticBearer` renders the same flag and projects its `secretKeyRef` into the
   runtime's `MCP_<UPPERCASE_NAME>_TOKEN` convention; and
-- `oauth` selects the session-scoped broker authority, renders its strict operator
-  profile into a read-only chart-managed ConfigMap, projects only a preregistered
-  client secret `secretKeyRef` when needed, and passes
+- `oauth` selects the session-scoped ToolHive broker authority, renders all configured
+  protected upstream profiles into a read-only chart-managed ConfigMap, projects only
+  preregistered client-secret `secretKeyRef` values when needed, and passes
   `--permission-config=/etc/mecatl-mcp/settings.yaml`. It requires
-  `mcp.broker.callbackURL`, the public HTTPS browser callback URL. Global OAuth
+  `mcp.broker.callbackURL`, ToolHive's final public HTTPS redirect to mecatl. Global OAuth
   profiles support the strict exact-origin `network` policy. Helm values for broker
   OAuth must use the explicit empty policy (`additionalOrigins: []`,
   `privateOrigins: []`, `maxRedirects: 0`); the rendered operator profile is the
@@ -209,8 +210,10 @@ hatch.
 OAuth supports either a preregistered confidential client or a CIMD client. This
 Helm surface does **not** accept the global-mode `profile`, `principal`, or
 `credentials.environment` fields and does not project an OAuth credential record.
-The browser authorizes the broker for the session; a preregistered client alone
-references its client-secret key:
+The browser starts one opaque broker enrollment for the session. ToolHive drives every
+configured protected upstream in order, owns upstream callback state and refresh, and injects
+each provider token only into its configured backend; a preregistered client alone references
+its client-secret key:
 
 ```yaml
 mcp:
@@ -239,9 +242,11 @@ mcp:
 
 For CIMD, set `client.mode: cimd` and replace `preregistered` with
 `cimd: {documentURL: https://client.example/mecatl.json}`. The callback URL must
-be an absolute public HTTPS URL with no query or fragment, and your ingress or
-gateway must route that exact path to the mecak8s HTTP listener. OAuth broker
-mode also requires `oidc.enabled: true` with its issuer and audience: OIDC is the
+be an absolute public HTTPS URL with no query or fragment. It is ToolHive's final redirect
+to mecatl; separately, upstream providers return through ToolHive's fixed
+`/v1/mcp/broker/oauth/callback` route. Your ingress or gateway must route the complete
+`/v1/mcp/broker/` prefix and the configured final callback path to the mecak8s HTTP listener.
+OAuth broker mode also requires `oidc.enabled: true` with its issuer and audience: OIDC is the
 chart-supported verified caller identity for broker authorization controls. The
 chart exposes no literal-secret field, arbitrary headers, stdio/SSE transport,
 local writable credential store, or browser credential. A client secret, when
@@ -258,10 +263,11 @@ endpoint and only plain `authorization_endpoint`/`token_endpoint` URLs. Set
 those; `issuer` is then omitted (the two are mutually exclusive — the schema
 rejects either one being set alongside the wrong `upstream.mode`). An oauth
 server may also declare its protected tool catalogue statically via `tools`
-(each entry: `name`, `description`, `inputSchema`, optional `readOnly`) —
-declared tools are admitted into the session's catalogue immediately, and the
-credential itself is deferred to the model's first attempt to call one, e.g.
-for GitHub:
+(each entry: `name`, `description`, `inputSchema`, optional `readOnly`). Those declarations,
+like live protected discovery, stay staged until the one enrollment completes. Mecatl then
+strictly discovers every configured protected backend, collision-checks the complete result,
+and freezes it as one catalogue; failure admits no partial protected tools. The model never
+receives backend OAuth material or a per-backend authorization control. For GitHub:
 
 ```yaml
 mcp:

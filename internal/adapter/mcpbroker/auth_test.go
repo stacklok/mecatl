@@ -179,6 +179,43 @@ func TestProtectedCallCallbackSingleUseAndRefreshCustody(t *testing.T) {
 	}
 }
 
+func TestBrokerCredentialRefreshRetainsCredentialAfterTransientFailure(t *testing.T) {
+	var requests int
+	tokenServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests++
+		w.Header().Set("Content-Type", "application/json")
+		if requests == 1 {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte(`{"error":"temporarily_unavailable"}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"access_token":"recovered","token_type":"Bearer","expires_in":3600}`))
+	}))
+	defer tokenServer.Close()
+	harness := newProtectedHarness(t, tokenServer)
+	attached, _ := attach(t, harness.runtime, "broker-refresh")
+	config := (&authorizationTransaction{route: harness.runtime.catalogue.routes[0].oauth}).oauthConfig("client-secret")
+	grant := &oauthGrant{config: config, token: &oauth2.Token{AccessToken: "stale", RefreshToken: "refresh", TokenType: "Bearer", Expiry: time.Now().Add(-time.Minute)}}
+	attached.logical.mu.Lock()
+	attached.logical.brokerCredential = grant
+	attached.logical.mu.Unlock()
+	source := &brokerTokenSource{runtime: harness.runtime, logical: attached.logical}
+	if _, err := source.Token(); err == nil {
+		t.Fatal("transient refresh unexpectedly succeeded")
+	}
+	attached.logical.mu.RLock()
+	retained := attached.logical.brokerCredential
+	access, refresh := retained.token.AccessToken, retained.token.RefreshToken
+	attached.logical.mu.RUnlock()
+	if retained != grant || access != "stale" || refresh != "refresh" {
+		t.Fatalf("transient refresh discarded broker credential: %#v", retained)
+	}
+	token, err := source.Token()
+	if err != nil || token.AccessToken != "recovered" {
+		t.Fatalf("retry refresh = (%+v, %v)", token, err)
+	}
+}
+
 func TestRefreshFailureOnlyRevokesTerminalGrant(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -418,19 +455,5 @@ func TestTokenExtraMetadataSurvivesScopedTokenSource(t *testing.T) {
 	defer harness.mu.Unlock()
 	if len(harness.tokens) != 1 || harness.tokens[0].Extra("id_token") != "identity-token" {
 		t.Fatalf("Token Extra(id_token) = %v", harness.tokens)
-	}
-}
-
-func TestCompileRejectsMultipleProtectedRoutesForSharedCallback(t *testing.T) {
-	config := protectedConfig("https://tokens.example/token")
-	second := protectedConfig("https://tokens.example/token").Routes[0]
-	second.Name = "gitlab"
-	second.URL = "https://gitlab.example/mcp"
-	second.Auth.OAuth.Upstream.OAuth2.AuthorizationEndpoint = "https://gitlab.example/oauth/authorize"
-	config.Routes = append(config.Routes, second)
-
-	_, err := Compile(config, nil, nil)
-	if !errors.Is(err, ErrProtectedRouteUnsupported) {
-		t.Fatalf("Compile error = %v, want %v", err, ErrProtectedRouteUnsupported)
 	}
 }

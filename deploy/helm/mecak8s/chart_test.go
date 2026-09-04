@@ -2218,30 +2218,36 @@ mcp:
 	if _, err := renderMCPValues(t, oauth+"oidc: {enabled: false}\n"); err == nil {
 		t.Fatal("render accepted OAuth broker without OIDC caller identity")
 	}
-	for name, values := range map[string]string{
-		"no OAuth route": `mcp:
+	noOAuth := `mcp:
   broker: {callbackURL: https://agent.example/callback}
   servers:
     - name: public
       url: https://public.example/mcp
       auth: {mode: none}
-`,
-		"two OAuth routes": oauth + `    - name: second
+`
+	if _, err := renderMCPValues(t, noOAuth); err == nil {
+		t.Fatal("render accepted callback without an OAuth route")
+	}
+
+	twoOAuth := oauth + `    - name: second
       url: https://second.example/mcp
       auth:
         mode: oauth
         oauth:
-          issuer: https://issuer.example
-          client: {mode: cimd, cimd: {documentURL: https://issuer.example/client.json}}
-          scopes: [mcp.read]
+          issuer: https://second-issuer.example
+          client: {mode: cimd, cimd: {documentURL: https://second-issuer.example/client.json}}
+          scopes: [calendar.read]
           network: {additionalOrigins: [], privateOrigins: [], maxRedirects: 0}
-`,
-	} {
-		t.Run(name, func(t *testing.T) {
-			if _, err := renderMCPValues(t, values); err == nil {
-				t.Fatalf("render accepted callback without exactly one OAuth route")
-			}
-		})
+`
+	rendered, err := renderOAuthMCPValues(t, twoOAuth)
+	if err != nil {
+		t.Fatalf("render two OAuth broker routes: %v", err)
+	}
+	profile := configMapFromRender(t, rendered, "production-mecak8s-mcp").Data["settings.yaml"]
+	authority := runtimeMCPAuthorityFromConfigMap(t, profile)
+	broker, ok := authority.Broker()
+	if !ok || len(broker.Routes) != 2 || broker.Routes[0].Name != "oauth" || broker.Routes[1].Name != "second" {
+		t.Fatalf("runtime broker routes = %#v, selected %t", broker.Routes, ok)
 	}
 }
 

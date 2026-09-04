@@ -58,16 +58,29 @@ func TestMCPAuthorityBrokerIsExclusiveAndRejectsLegacy(t *testing.T) {
 		t.Fatalf("legacy conflict error = %v", err)
 	}
 	static := permconfig.MCPServerProfile{Name: "static", URL: "https://static.example/mcp", Auth: permconfig.MCPAuthProfile{Mode: "static_bearer", StaticBearer: &permconfig.MCPStaticBearerProfile{TokenEnv: "MECATL_TOKEN"}}}
-	for name, routes := range map[string][]permconfig.MCPServerProfile{
-		"static bearer":    {static},
-		"two OAuth routes": {brokerOAuthRoute(), brokerOAuthRoute()},
-	} {
-		t.Run(name, func(t *testing.T) {
-			_, err := ResolveMCPAuthority(MCPAuthorityOptions{Operator: &permconfig.MCPSection{Mode: "broker", Broker: permconfig.MCPBrokerProfile{CallbackURL: "https://agent.example/callback"}, Servers: routes}, DefaultMode: mcpauthority.Global, BrokerSupported: true})
-			if !errors.Is(err, ErrMCPProfileInvalid) {
-				t.Fatalf("error = %v, want invalid profile", err)
-			}
-		})
+	if _, err := ResolveMCPAuthority(MCPAuthorityOptions{Operator: &permconfig.MCPSection{Mode: "broker", Servers: []permconfig.MCPServerProfile{static}}, DefaultMode: mcpauthority.Global, BrokerSupported: true}); !errors.Is(err, ErrMCPProfileInvalid) {
+		t.Fatalf("static bearer error = %v, want invalid profile", err)
+	}
+}
+
+func TestADR_0298_BrokerAuthorityAdmitsMultipleOAuthProfilesInOrder(t *testing.T) {
+	first := brokerOAuthRoute()
+	first.Name = "github"
+	second := brokerOAuthRoute()
+	second.Name = "calendar"
+	section := &permconfig.MCPSection{
+		Mode:    "broker",
+		Broker:  permconfig.MCPBrokerProfile{CallbackURL: "https://agent.example/callback"},
+		Servers: []permconfig.MCPServerProfile{first, second},
+	}
+
+	got, err := ResolveMCPAuthority(MCPAuthorityOptions{Operator: section, DefaultMode: mcpauthority.Global, BrokerSupported: true})
+	if err != nil {
+		t.Fatalf("ResolveMCPAuthority: %v", err)
+	}
+	broker, ok := got.Broker()
+	if !ok || len(broker.Routes) != 2 || broker.Routes[0].Name != "github" || broker.Routes[1].Name != "calendar" {
+		t.Fatalf("broker routes = %#v, selected %t", broker.Routes, ok)
 	}
 }
 

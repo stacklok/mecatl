@@ -71,11 +71,11 @@ func TestToolHiveBrokerConfigProjectsRefreshTokenRequest(t *testing.T) {
 	}
 }
 
-func TestToolHiveBrokerConfigBuildsProtectedProviderMapping(t *testing.T) {
-	routes := []permconfig.MCPServerProfile{protectedToolHiveRoute("GitHub_Cloud")}
+func TestADR_0298_ToolHiveBrokerConfigBuildsEveryProtectedProviderMapping(t *testing.T) {
+	routes := []permconfig.MCPServerProfile{protectedToolHiveRoute("GitHub_Cloud"), protectedToolHiveRoute("Calendar")}
 	config := toolHiveBrokerConfig(routes, "https://broker.example/oauth/callback", nil, nil)
-	if got := config.Profiles[0].Name; got != "GitHub_Cloud" {
-		t.Fatalf("configured profile = %q", got)
+	if got := config.Profiles; len(got) != 2 || got[0].Name != "GitHub_Cloud" || got[1].Name != "Calendar" {
+		t.Fatalf("configured profiles = %#v", got)
 	}
 
 	process, err := mcpbroker.NewToolHiveProcess(t.Context(), config)
@@ -86,13 +86,15 @@ func TestToolHiveBrokerConfigBuildsProtectedProviderMapping(t *testing.T) {
 
 	construction := reflect.ValueOf(process).Elem().FieldByName("construction")
 	upstreams := construction.FieldByName("upstreams")
-	if got := upstreams.Index(0).FieldByName("Name").String(); got != "github-cloud" {
-		t.Fatalf("constructed upstream = %q", got)
-	}
-	backend := construction.FieldByName("backends").Index(0)
-	provider := backend.FieldByName("AuthConfig").Elem().FieldByName("UpstreamInject").Elem().FieldByName("ProviderName").String()
-	if provider != "github-cloud" {
-		t.Fatalf("backend provider = %q", provider)
+	backends := construction.FieldByName("backends")
+	for i, want := range []string{"github-cloud", "calendar"} {
+		if got := upstreams.Index(i).FieldByName("Name").String(); got != want {
+			t.Fatalf("constructed upstream %d = %q, want %q", i, got, want)
+		}
+		provider := backends.Index(i).FieldByName("AuthConfig").Elem().FieldByName("UpstreamInject").Elem().FieldByName("ProviderName").String()
+		if provider != want {
+			t.Fatalf("backend %d provider = %q, want %q", i, provider, want)
+		}
 	}
 }
 

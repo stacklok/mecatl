@@ -52,6 +52,26 @@ func TestCompileProducesStableNeutralCatalogue(t *testing.T) {
 	}
 }
 
+func TestADR_0298_CompileAdmitsMultipleOAuthRoutes(t *testing.T) {
+	config := protectedConfig("https://accounts.example/token")
+	second := config.Routes[0]
+	second.Name = "calendar"
+	second.URL = "https://calendar.example/mcp"
+	config.Routes = append(config.Routes, second)
+	discovered := []ToolDefinition{
+		{Backend: "github", Name: "mcp__github__create", Schema: json.RawMessage(`{"type":"object"}`)},
+		{Backend: "calendar", Name: "mcp__calendar__list", Schema: json.RawMessage(`{"type":"object"}`)},
+	}
+
+	catalogue, err := Compile(config, discovered, nil)
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	if got := catalogue.Specs(); len(got) != 2 || got[0].Name != "mcp__calendar__list" || got[1].Name != "mcp__github__create" {
+		t.Fatalf("compiled specs = %#v", got)
+	}
+}
+
 func TestCompileRejectsCollisionsAndNonAnonymousDeclarations(t *testing.T) {
 	tests := []struct {
 		name       string

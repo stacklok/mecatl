@@ -4,23 +4,19 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"strings"
 	"unicode/utf8"
 
 	toolhiveauth "github.com/stacklok/toolhive/pkg/auth"
-	"github.com/stacklok/toolhive/pkg/auth/upstreamtoken"
 	"github.com/stacklok/toolhive/pkg/vmcp"
 	"github.com/stacklok/toolhive/pkg/vmcp/aggregator"
+	"golang.org/x/oauth2"
 )
 
 // ErrAuthenticatedDiscovery reports a provider-scoped capability discovery
-// failure without exposing a provider key, auth-session identifier, or credential.
+// failure without exposing a provider key, broker credential, or upstream state.
 var ErrAuthenticatedDiscovery = errors.New("mcpbroker: authenticated capability discovery failed")
-
-// ToolHiveAuthSessionID is the process-local ToolHive token-session handle.
-// It is only accepted by this concrete adapter and is never projected into a
-// catalogue, tool specification, error, or log record.
-type ToolHiveAuthSessionID string
 
 // AuthenticatedCapabilities is the neutral, copied result of discovering one
 // protected backend. It deliberately contains no ToolHive capability value or
@@ -30,11 +26,9 @@ type AuthenticatedCapabilities struct {
 	Tools   []ToolDefinition
 }
 
-type upstreamCredentialReader interface {
-	GetValidTokens(context.Context, string, string) (*upstreamtoken.UpstreamCredential, error)
-}
-
-// capabilityQuerier intentionally exposes no aggregate query operation.
+// capabilityQuerier intentionally exposes no aggregate query operation. The
+// ToolHive aggregate operation is fail-soft, so catalogue admission proves each
+// configured protected backend independently.
 type capabilityQuerier interface {
 	QueryCapabilities(context.Context, vmcp.Backend) (*aggregator.BackendCapabilities, error)
 }
@@ -46,19 +40,38 @@ type backendLookup interface {
 type authenticatedDiscovery struct {
 	capabilities capabilityQuerier
 	backends     backendLookup
-	tokens       upstreamCredentialReader
-	providers    map[string]string
+	incoming     func(http.Handler) http.Handler
 }
 
-// QueryAuthenticatedCapabilities obtains one credential for one configured
-// protected backend, then makes one provider-scoped ToolHive query. Discovery
-// is intentionally separate from catalogue construction: no discovered result
-// is admitted, frozen, or retained by the Process.
-func (p *Process) QueryAuthenticatedCapabilities(ctx context.Context, authSession ToolHiveAuthSessionID, backend string) (AuthenticatedCapabilities, error) {
-	if p != nil && p.queryAuthenticated != nil {
-		return p.queryAuthenticated(ctx, authSession, backend)
+type privateResponseWriter struct {
+	header http.Header
+	status int
+}
+
+func (w *privateResponseWriter) Header() http.Header { return w.header }
+
+func (w *privateResponseWriter) Write(body []byte) (int, error) {
+	if w.status == 0 {
+		w.status = http.StatusOK
 	}
-	if p == nil || p.discovery == nil || authSession == "" || backend == "" {
+	return len(body), nil
+}
+
+func (w *privateResponseWriter) WriteHeader(status int) {
+	if w.status == 0 {
+		w.status = status
+	}
+}
+
+// QueryAuthenticatedCapabilities sends the opaque outer broker credential
+// through ToolHive's incoming identity middleware before making one
+// backend-scoped capability query. Mecatl never reads ToolHive's token-session
+// claim or retrieves an upstream provider credential.
+func (p *Process) QueryAuthenticatedCapabilities(ctx context.Context, credential oauth2.TokenSource, backend string) (AuthenticatedCapabilities, error) {
+	if p != nil && p.queryAuthenticated != nil {
+		return p.queryAuthenticated(ctx, credential, backend)
+	}
+	if p == nil || p.discovery == nil || credential == nil || backend == "" {
 		return AuthenticatedCapabilities{}, ErrAuthenticatedDiscovery
 	}
 	queryCtx, release, ok := p.discoveryContext(ctx)
@@ -66,39 +79,45 @@ func (p *Process) QueryAuthenticatedCapabilities(ctx context.Context, authSessio
 		return AuthenticatedCapabilities{}, ErrAuthenticatedDiscovery
 	}
 	defer release()
-	discovery := p.discovery
-	provider, configured, ok := discovery.protectedBackend(queryCtx, backend)
-	if !ok || queryCtx.Err() != nil {
+
+	configured, ok := p.discovery.protectedBackend(queryCtx, backend)
+	if !ok {
+		return AuthenticatedCapabilities{}, ErrAuthenticatedDiscovery
+	}
+	brokerToken, err := credential.Token()
+	if err != nil || !validBearerToken(brokerToken) || queryCtx.Err() != nil {
 		return AuthenticatedCapabilities{}, ErrAuthenticatedDiscovery
 	}
 
-	credential, err := discovery.tokens.GetValidTokens(queryCtx, string(authSession), provider)
-	if err != nil || credential == nil || credential.AccessToken == "" || queryCtx.Err() != nil {
-		return AuthenticatedCapabilities{}, ErrAuthenticatedDiscovery
-	}
-	queryCtx = toolhiveauth.WithIdentity(queryCtx, &toolhiveauth.Identity{
-		PrincipalInfo:  toolhiveauth.PrincipalInfo{Subject: "mecatl-authenticated-discovery"},
-		TokenType:      "Bearer",
-		UpstreamTokens: map[string]string{provider: credential.AccessToken},
-	})
-	capabilities, err := discovery.capabilities.QueryCapabilities(queryCtx, *configured)
-	if err != nil || capabilities == nil || capabilities.BackendID != backend || queryCtx.Err() != nil {
-		return AuthenticatedCapabilities{}, ErrAuthenticatedDiscovery
-	}
-	return neutralCapabilities(backend, capabilities, privateDiscoveryValues(provider, backend, authSession, credential))
+	return p.discovery.query(queryCtx, brokerToken.AccessToken, backend, configured)
 }
 
-// privateDiscoveryValues is the set of values a discovered tool's name,
-// description, or schema must never contain. provider is EXCLUDED when it
-// equals backend (the common case, e.g. "github" == "github"): scanning for
-// the bare service name would false-positive-reject a backend's own ordinary
-// tool content, which legitimately mentions its own name throughout.
-func privateDiscoveryValues(provider, backend string, authSession ToolHiveAuthSessionID, credential *upstreamtoken.UpstreamCredential) []string {
-	values := []string{string(authSession), credential.AccessToken, credential.IDToken}
-	if provider != backend {
-		values = append(values, provider)
+func (d *authenticatedDiscovery) query(ctx context.Context, brokerToken, backend string, configured *vmcp.Backend) (AuthenticatedCapabilities, error) {
+	var result AuthenticatedCapabilities
+	var queryErr error
+	terminal := http.HandlerFunc(func(_ http.ResponseWriter, request *http.Request) {
+		if _, authenticated := toolhiveauth.IdentityFromContext(request.Context()); !authenticated {
+			queryErr = ErrAuthenticatedDiscovery
+			return
+		}
+		capabilities, err := d.capabilities.QueryCapabilities(request.Context(), *configured)
+		if err != nil || capabilities == nil || capabilities.BackendID != backend || request.Context().Err() != nil {
+			queryErr = ErrAuthenticatedDiscovery
+			return
+		}
+		result, queryErr = neutralCapabilities(backend, capabilities, []string{brokerToken})
+	})
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://mecatl.invalid/private/toolhive-discovery", nil)
+	if err != nil {
+		return AuthenticatedCapabilities{}, ErrAuthenticatedDiscovery
 	}
-	return values
+	request.Header.Set("Authorization", "Bearer "+brokerToken)
+	response := &privateResponseWriter{header: make(http.Header)}
+	d.incoming(terminal).ServeHTTP(response, request)
+	if queryErr != nil || response.status >= http.StatusBadRequest || result.Backend != backend {
+		return AuthenticatedCapabilities{}, ErrAuthenticatedDiscovery
+	}
+	return result, nil
 }
 
 // discoveryContext admits a discovery request only while the process is live.
@@ -137,16 +156,15 @@ func (p *Process) discoveryContext(ctx context.Context) (context.Context, func()
 	}, true
 }
 
-func (d *authenticatedDiscovery) protectedBackend(ctx context.Context, backend string) (string, *vmcp.Backend, bool) {
-	if d == nil || d.capabilities == nil || d.backends == nil || d.tokens == nil {
-		return "", nil, false
+func (d *authenticatedDiscovery) protectedBackend(ctx context.Context, backend string) (*vmcp.Backend, bool) {
+	if d == nil || d.capabilities == nil || d.backends == nil || d.incoming == nil {
+		return nil, false
 	}
-	provider, protected := d.providers[backend]
 	configured := d.backends.Get(ctx, backend)
-	if !protected || provider == "" || configured == nil || configured.AuthConfig == nil || configured.AuthConfig.UpstreamInject == nil || configured.AuthConfig.UpstreamInject.ProviderName != provider {
-		return "", nil, false
+	if configured == nil || configured.AuthConfig == nil || configured.AuthConfig.UpstreamInject == nil || configured.AuthConfig.UpstreamInject.ProviderName == "" {
+		return nil, false
 	}
-	return provider, configured, true
+	return configured, true
 }
 
 func neutralCapabilities(backend string, capabilities *aggregator.BackendCapabilities, private []string) (AuthenticatedCapabilities, error) {

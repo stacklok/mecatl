@@ -57,7 +57,7 @@ func (s *Service) ConnectWorkspaceServices(ctx context.Context, id session.Sessi
 		return WorkspaceEnrollmentProjection{}, fmt.Errorf("%w: observe workspace enrollment", ErrFailedPrecondition)
 	}
 	if result.Status != brokercontract.WorkspaceEnrollmentConnected {
-		return WorkspaceEnrollmentProjection{Ref: result.Ref, Status: result.Status}, nil
+		return s.recordObservedWorkspaceEnrollment(ctx, sess, pending, result)
 	}
 
 	// The authenticated result is the single snapshot for both executable wrappers
@@ -79,6 +79,18 @@ func (s *Service) ConnectWorkspaceServices(ctx context.Context, id session.Sessi
 	}
 	if err := s.saveSession(ctx, sess); err != nil {
 		return WorkspaceEnrollmentProjection{}, fmt.Errorf("%w: persist workspace enrollment completion", ErrInternal)
+	}
+	return WorkspaceEnrollmentProjection{Ref: result.Ref, Status: result.Status}, nil
+}
+
+func (s *Service) recordObservedWorkspaceEnrollment(ctx context.Context, sess *session.Session, pending session.PendingWorkspaceEnrollment, result brokercontract.WorkspaceEnrollmentResult) (WorkspaceEnrollmentProjection, error) {
+	if result.Status != brokercontract.WorkspaceEnrollmentPending {
+		if err := sess.AbortWorkspaceEnrollment(pending.ID); err != nil {
+			return WorkspaceEnrollmentProjection{}, fmt.Errorf("%w: clear terminal workspace enrollment", ErrFailedPrecondition)
+		}
+		if err := s.saveSession(ctx, sess); err != nil {
+			return WorkspaceEnrollmentProjection{}, fmt.Errorf("%w: persist terminal workspace enrollment", ErrInternal)
+		}
 	}
 	return WorkspaceEnrollmentProjection{Ref: result.Ref, Status: result.Status}, nil
 }

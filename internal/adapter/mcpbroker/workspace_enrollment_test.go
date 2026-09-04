@@ -3,12 +3,12 @@ package mcpbroker
 import (
 	"context"
 	"crypto/x509"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"reflect"
 	"testing"
 
 	"golang.org/x/oauth2"
@@ -17,15 +17,6 @@ import (
 	"github.com/stacklok/mecatl/engine/tool"
 	contract "github.com/stacklok/mecatl/internal/mcpbroker"
 )
-
-// fakeUpstreamAccessToken builds a JWT-shaped (but unsigned) access token whose
-// payload carries the ToolHive "tsid" claim, mirroring what the real embedded
-// ToolHive authorization server issues to mecatl on a successful exchange.
-func fakeUpstreamAccessToken(tsid string) string {
-	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"none"}`))
-	payload := base64.RawURLEncoding.EncodeToString([]byte(`{"tsid":"` + tsid + `"}`))
-	return header + "." + payload + ".sig"
-}
 
 // newWorkspaceEnrollmentRuntime wires a Runtime + Process pair the way
 // newToolHiveProcess does for the OAuth-transaction/discovery pieces this test
@@ -69,11 +60,10 @@ func newWorkspaceEnrollmentRuntime(t *testing.T, tokenServer *httptest.Server, q
 	return runtime
 }
 
-func TestWorkspaceEnrollmentBeginObserveConnectsAndFreezesCatalogue(t *testing.T) {
-	tsid := "session-1"
+func TestADR_0298_OpaqueBrokerCredentialIsNotDecodedOrCopied(t *testing.T) {
 	tokenServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"access_token":"` + fakeUpstreamAccessToken(tsid) + `","token_type":"Bearer","expires_in":3600}`))
+		_, _ = w.Write([]byte(`{"access_token":"opaque-broker-credential","token_type":"Bearer","expires_in":3600}`))
 	}))
 	defer tokenServer.Close()
 
@@ -130,12 +120,77 @@ func TestWorkspaceEnrollmentBeginObserveConnectsAndFreezesCatalogue(t *testing.T
 	if got := toolNames(attachment.Tools()); len(got) != 2 {
 		t.Fatalf("attachment tools after freeze = %v, want anonymous + discovered", got)
 	}
+	attachment.logical.mu.RLock()
+	backendGrants := len(attachment.logical.grants)
+	attachment.logical.mu.RUnlock()
+	if backendGrants != 0 {
+		t.Fatalf("ToolHive enrollment copied opaque broker credential into %d backend grants", backendGrants)
+	}
 
-	// The grant is usable by a real protected call without any confused-deputy
-	// binding, since no tool call originated this authorization.
+	// The admitted route uses the already-connected ToolHive broker credential;
+	// it does not create a second backend-specific mecatl authorization.
 	route, ok := attachment.lookupRoute("mcp__github__list_issues")
-	if !ok || route.backend != "github" || route.oauth == nil {
+	if !ok || route.backend != "github" || !route.broker || route.oauth != nil {
 		t.Fatalf("discovered route = %+v, %v", route, ok)
+	}
+	wrapped := toolByName(t, attachment, route.spec.Name)
+	if _, asksAgain := wrapped.(tool.AuthorizationRequester); asksAgain {
+		t.Fatal("connected ToolHive wrapper requests a second mecatl authorization")
+	}
+
+	// The server may need to retry its own engine replacement or session save after
+	// observing this exact result. Reattachment must materialize fresh wrappers from
+	// token-free logical state without repeating authenticated discovery.
+	if _, err := attachment.Close(t.Context()); err != nil {
+		t.Fatalf("close enrolled attachment: %v", err)
+	}
+	reopened, outcome, err := runtime.AttachSession(t.Context(), "session")
+	if err != nil || outcome != contract.AttachReattached {
+		t.Fatalf("reattach = (%v, %q, %v)", reopened, outcome, err)
+	}
+	reobserved, err := reopened.(contract.WorkspaceEnrollmentAttachment).ObserveWorkspaceEnrollment(t.Context(), presentation.Ref)
+	if err != nil || reobserved.Status != contract.WorkspaceEnrollmentConnected || !reflect.DeepEqual(reobserved.Catalogue.ToolNames(), connected.Catalogue.ToolNames()) {
+		t.Fatalf("reobserve completed enrollment = (%+v, %v)", reobserved, err)
+	}
+	queries.mu.Lock()
+	calls := queries.calls
+	queries.mu.Unlock()
+	if calls != 1 {
+		t.Fatalf("authenticated discovery calls = %d, want 1", calls)
+	}
+	route, ok = reopened.(*Attachment).lookupRoute("mcp__github__list_issues")
+	if !ok || !route.broker || route.oauth != nil {
+		t.Fatalf("reattached broker route = %+v, %v", route, ok)
+	}
+	if _, err := reopened.(contract.WorkspaceEnrollmentAttachment).BeginWorkspaceEnrollment(t.Context()); !errors.Is(err, errWorkspaceEnrollmentAlreadyCompleted) {
+		t.Fatalf("BeginWorkspaceEnrollment after completion error = %v, want completed enrollment rejection", err)
+	}
+}
+
+func TestWorkspaceEnrollmentControlsRequireExactAggregateReference(t *testing.T) {
+	tokenServer := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	defer tokenServer.Close()
+	runtime := newWorkspaceEnrollmentRuntime(t, tokenServer, &orderedCapabilityQueries{}, "github", "calendar")
+	attached, _, err := runtime.AttachSession(t.Context(), "session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	enroller := attached.(contract.WorkspaceEnrollmentAttachment)
+	presentation, err := enroller.BeginWorkspaceEnrollment(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	mismatched := presentation.Ref
+	mismatched.RequiredServices--
+	if _, err := enroller.ObserveWorkspaceEnrollment(t.Context(), mismatched); !errors.Is(err, contract.ErrAuthorizationNotFound) {
+		t.Fatalf("ObserveWorkspaceEnrollment mismatch = %v", err)
+	}
+	if _, err := enroller.CancelWorkspaceEnrollment(t.Context(), mismatched); !errors.Is(err, contract.ErrAuthorizationNotFound) {
+		t.Fatalf("CancelWorkspaceEnrollment mismatch = %v", err)
+	}
+	pending, err := enroller.ObserveWorkspaceEnrollment(t.Context(), presentation.Ref)
+	if err != nil || pending.Status != contract.WorkspaceEnrollmentPending {
+		t.Fatalf("exact enrollment was disturbed = (%+v, %v)", pending, err)
 	}
 }
 
