@@ -594,7 +594,7 @@ func TestMCPAuthorizationExpiryAndCancelRaceHasOneResolution(t *testing.T) {
 		return timer
 	}
 	f := newLifecycleFixture(t, session.AuthorizationPending, nil, clock, factory)
-	f.svc.scheduleAuthorizationExpiry("authorization-session")
+	f.svc.scheduleAuthorizationExpiry("authorization-session", f.pending, true)
 	timer := <-created
 	clockMu.Lock()
 	now = f.pending.Authorization.ExpiresAt
@@ -649,7 +649,7 @@ func TestMCPAuthorizationExpiryRetriesTransientFailure(t *testing.T) {
 	}
 	transient := errors.New("broker retry")
 	f := newLifecycleFixture(t, session.AuthorizationPending, transient, clock, factory)
-	f.svc.scheduleAuthorizationExpiry("authorization-session")
+	f.svc.scheduleAuthorizationExpiry("authorization-session", f.pending, true)
 	first := <-created
 	clockMu.Lock()
 	now = f.pending.Authorization.ExpiresAt
@@ -679,6 +679,52 @@ func TestMCPAuthorizationExpiryRetriesTransientFailure(t *testing.T) {
 	}
 	if got := f.attach.tool.calls.Load(); got != 0 {
 		t.Fatalf("protected executions = %d", got)
+	}
+}
+
+// alwaysFailStore fails every Load, proving scheduleAuthorizationExpiry never
+// consults the store at all when the caller already has the pending
+// authorization in memory (P1-6).
+type alwaysFailStore struct{ port.SessionStore }
+
+func (alwaysFailStore) Load(context.Context, session.SessionID) (*session.Session, error) {
+	return nil, errors.New("store unavailable")
+}
+
+func TestScheduleAuthorizationExpiryUsesInMemoryPendingDespiteFailingStore(t *testing.T) {
+	created := make(chan *manualAuthorizationTimer, 1)
+	factory := func(_ time.Duration, fn func()) AuthorizationTimer {
+		timer := &manualAuthorizationTimer{fn: fn}
+		created <- timer
+		return timer
+	}
+	f := newLifecycleFixture(t, session.AuthorizationPending, nil, time.Now, factory)
+	f.svc.cfg.Store = alwaysFailStore{f.store}
+
+	f.svc.scheduleAuthorizationExpiry("authorization-session", f.pending, true)
+
+	select {
+	case <-created:
+	case <-time.After(time.Second):
+		t.Fatal("no expiry timer was armed despite a valid in-memory pending authorization")
+	}
+}
+
+func TestScheduleAuthorizationExpiryWarnsWhenNoInMemoryPending(t *testing.T) {
+	diag := &lifecycleDiagnostics{}
+	f := newLifecycleFixture(t, session.AuthorizationPending, nil, time.Now, nil)
+	f.svc.cfg.Diagnostics = diag
+
+	f.svc.scheduleAuthorizationExpiry("authorization-session", session.PendingAuthorization{}, false)
+
+	if !diag.contains("authorization expiry scheduling skipped: no pending authorization in the finished run's session") {
+		t.Fatalf("missing skipped-scheduling diagnostic: %v", diag.messages)
+	}
+	f.svc.mu.Lock()
+	_, armed := f.svc.authorizationExpiry["authorization-session"]
+	f.svc.mu.Unlock()
+	if armed {
+		t.Fatal("an expiry entry was armed despite no in-memory pending authorization")
 	}
 }
 

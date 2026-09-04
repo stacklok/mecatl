@@ -550,7 +550,14 @@ func (s *Service) registerPrepared(id session.SessionID, run *agent.Run, sess *s
 	return true
 }
 
-func (s *Service) scheduleAuthorizationExpiry(id session.SessionID) {
+// scheduleAuthorizationExpiry arms this session's TTL timer from pending — the
+// caller's own in-memory session state (FinishRun already holds it on
+// runState.sess), never a fresh Store.Load. A one-shot load here previously
+// meant a single transient store error permanently disabled the session's
+// expiry sweep, since nothing else ever re-scheduled it; reading pending from
+// state the caller already has removes that failure mode outright rather than
+// retrying around it.
+func (s *Service) scheduleAuthorizationExpiry(id session.SessionID, pending session.PendingAuthorization, ok bool) {
 	unlock := s.runEntryMu.lock(id)
 	defer unlock()
 	s.mu.Lock()
@@ -559,12 +566,9 @@ func (s *Service) scheduleAuthorizationExpiry(id session.SessionID) {
 		return
 	}
 	s.mu.Unlock()
-	sess, err := s.cfg.Store.Load(context.Background(), id)
-	if err != nil {
-		return
-	}
-	pending, ok := sess.PendingAuthorization()
 	if !ok {
+		s.cfg.Diagnostics.Log(context.Background(), port.LevelWarn, "authorization expiry scheduling skipped: no pending authorization in the finished run's session",
+			"session", string(id))
 		return
 	}
 	delay := pending.Authorization.ExpiresAt.Sub(s.cfg.Now())

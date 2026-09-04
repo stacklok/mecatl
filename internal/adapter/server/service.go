@@ -6892,9 +6892,14 @@ func (s *Service) FinishRun(id session.SessionID, run *agent.Run) {
 		return
 	}
 	parked := run.Outcome() == agent.RunOutcomeAuthorizationPending
+	var pending session.PendingAuthorization
+	var pendingOK bool
+	if parked && st.sess != nil {
+		pending, pendingOK = st.sess.PendingAuthorization()
+	}
 	s.removeRunState(id, st)
 	if parked {
-		s.scheduleAuthorizationExpiry(id)
+		s.scheduleAuthorizationExpiry(id, pending, pendingOK)
 	}
 }
 
