@@ -335,14 +335,18 @@ func teamWindow(cursor, total, rows int) (start, end, above, below int) {
 // uncapped overlay the same height-safety the inline card has (cap + roll-up):
 // at 20–32 members the card never grows taller than the terminal and clips its
 // footer or the selected row. height<=0 (size unknown) shows all rows.
-func renderTeamRoster(th theme.Theme, st teamState, b *block, hk helpKeys, height int) string {
+func renderTeamRoster(th theme.Theme, st teamState, b *block, hk helpKeys, height int, widths ...int) string {
 	muted := th.Style("muted")
+	bodyWidth := 0
+	if len(widths) > 0 {
+		bodyWidth = focusCardTextWidth(widths[0])
+	}
 	var out strings.Builder
 
-	out.WriteString(th.Style("askTitle").Render(teamRosterHeader(b)))
+	out.WriteString(renderDelegationRows(th.Style("askTitle"), "", teamRosterHeader(b), bodyWidth))
 	out.WriteString("\n")
 	if sub := teamRosterSubhead(b); sub != "" {
-		out.WriteString(muted.Render(sub) + "\n")
+		out.WriteString(renderDelegationRows(muted, "", sub, bodyWidth) + "\n")
 	}
 	out.WriteString("\n")
 
@@ -352,19 +356,19 @@ func renderTeamRoster(th theme.Theme, st teamState, b *block, hk helpKeys, heigh
 	start, end, above, below := teamWindow(cursor, len(order), teamRosterRows(height))
 
 	if above > 0 {
-		out.WriteString(muted.Render(fmt.Sprintf("  · +%d above", above)) + "\n")
+		out.WriteString(renderDelegationRows(muted, "  ", fmt.Sprintf("· +%d above", above), bodyWidth) + "\n")
 	}
 	for row := start; row < end; row++ {
 		ln := &b.teamLanes[order[row]]
 		line := teamRosterLine(th, ln, nameW, b.teamDone)
 		if row == cursor {
-			out.WriteString(th.Style("askButtonActive").Render("› "+line) + "\n")
+			out.WriteString(renderDelegationRows(th.Style("askButtonActive"), "› ", line, bodyWidth) + "\n")
 		} else {
-			out.WriteString(muted.Render("  "+line) + "\n")
+			out.WriteString(renderDelegationRows(muted, "  ", line, bodyWidth) + "\n")
 		}
 	}
 	if below > 0 {
-		out.WriteString(muted.Render(fmt.Sprintf("  · +%d below", below)) + "\n")
+		out.WriteString(renderDelegationRows(muted, "  ", fmt.Sprintf("· +%d below", below), bodyWidth) + "\n")
 	}
 
 	// SHORTER than the old roster hint (the paging chords still work, unnamed): the
@@ -373,7 +377,7 @@ func renderTeamRoster(th theme.Theme, st teamState, b *block, hk helpKeys, heigh
 	// (centerCard does not wrap). Same discipline as the Subagents-tab hint. Every
 	// chord reads the LIVE keyMap markings (hk) so an override propagates (issue
 	// #457); with defaults the hint is byte-identical to the historical literal.
-	out.WriteString("\n" + muted.Render(hk.navUp+"/"+hk.navDown+" select · "+hk.choose+" focus · "+hk.cancelChild+" cancel · "+hk.tasks+" tasks · "+hk.findings+" findings · "+agentsEmptyHint(hk)))
+	out.WriteString("\n" + renderDelegationRows(muted, "", hk.navUp+"/"+hk.navDown+" select · "+hk.choose+" focus · "+hk.cancelChild+" cancel · "+hk.tasks+" tasks · "+hk.findings+" findings · "+agentsEmptyHint(hk), bodyWidth))
 	return out.String()
 }
 
@@ -624,18 +628,22 @@ func teamSubViewHint(hk helpKeys, flip string) string {
 // task (glyph · id · state · assignee · deps). An empty list reads as a muted
 // "(no tasks)". All task-derived strings are terminal-sanitized. It mirrors the
 // roster's height-window math so a long task list never clips the footer.
-func renderTeamTasks(th theme.Theme, b *block, hk helpKeys, height int) string {
+func renderTeamTasks(th theme.Theme, b *block, hk helpKeys, height int, widths ...int) string {
 	muted := th.Style("muted")
+	bodyWidth := 0
+	if len(widths) > 0 {
+		bodyWidth = focusCardTextWidth(widths[0])
+	}
 	var out strings.Builder
 
-	out.WriteString(th.Style("askTitle").Render("tasks"))
+	out.WriteString(renderDelegationRows(th.Style("askTitle"), "", "tasks", bodyWidth))
 	out.WriteString("\n")
-	out.WriteString(muted.Render(teamTasksSummary(b.teamTasks)))
+	out.WriteString(renderDelegationRows(muted, "", teamTasksSummary(b.teamTasks), bodyWidth))
 	out.WriteString("\n\n")
 
 	if len(b.teamTasks) == 0 {
-		out.WriteString(muted.Render("(no tasks)"))
-		out.WriteString("\n\n" + muted.Render(teamSubViewHint(hk, hk.tasks)))
+		out.WriteString(renderDelegationRows(muted, "", "(no tasks)", bodyWidth))
+		out.WriteString("\n\n" + renderDelegationRows(muted, "", teamSubViewHint(hk, hk.tasks), bodyWidth))
 		return out.String()
 	}
 
@@ -649,13 +657,13 @@ func renderTeamTasks(th theme.Theme, b *block, hk helpKeys, height int) string {
 	rows := teamTasksRows(height)
 	start, end, _, below := teamWindow(0, len(b.teamTasks), rows)
 	for i := start; i < end; i++ {
-		out.WriteString("  " + muted.Render(taskRow(b.teamTasks[i], byID)) + "\n")
+		out.WriteString(renderDelegationRows(muted, "  ", taskRow(b.teamTasks[i], byID), bodyWidth) + "\n")
 	}
 	if below > 0 {
-		out.WriteString(muted.Render(fmt.Sprintf("  · +%d more", below)) + "\n")
+		out.WriteString(renderDelegationRows(muted, "  ", fmt.Sprintf("· +%d more", below), bodyWidth) + "\n")
 	}
 
-	out.WriteString("\n" + muted.Render(teamSubViewHint(hk, hk.tasks)))
+	out.WriteString("\n" + renderDelegationRows(muted, "", teamSubViewHint(hk, hk.tasks), bodyWidth))
 	return out.String()
 }
 
@@ -744,18 +752,22 @@ func teamFindingsRows(height int) int {
 // (member · body). An empty ledger reads as a muted "(no findings)". All
 // finding-derived strings are terminal-sanitized. It mirrors renderTeamTasks's
 // chrome and height-window math so a long ledger never clips the footer.
-func renderTeamFindings(th theme.Theme, b *block, hk helpKeys, height int) string {
+func renderTeamFindings(th theme.Theme, b *block, hk helpKeys, height int, widths ...int) string {
 	muted := th.Style("muted")
+	bodyWidth := 0
+	if len(widths) > 0 {
+		bodyWidth = focusCardTextWidth(widths[0])
+	}
 	var out strings.Builder
 
-	out.WriteString(th.Style("askTitle").Render("findings"))
+	out.WriteString(renderDelegationRows(th.Style("askTitle"), "", "findings", bodyWidth))
 	out.WriteString("\n")
-	out.WriteString(muted.Render(teamFindingsSummary(b.teamFindings)))
+	out.WriteString(renderDelegationRows(muted, "", teamFindingsSummary(b.teamFindings), bodyWidth))
 	out.WriteString("\n\n")
 
 	if len(b.teamFindings) == 0 {
-		out.WriteString(muted.Render("(no findings)"))
-		out.WriteString("\n\n" + muted.Render(teamSubViewHint(hk, hk.findings)))
+		out.WriteString(renderDelegationRows(muted, "", "(no findings)", bodyWidth))
+		out.WriteString("\n\n" + renderDelegationRows(muted, "", teamSubViewHint(hk, hk.findings), bodyWidth))
 		return out.String()
 	}
 
@@ -764,13 +776,13 @@ func renderTeamFindings(th theme.Theme, b *block, hk helpKeys, height int) strin
 	rows := teamFindingsRows(height)
 	start, end, _, below := teamWindow(0, len(b.teamFindings), rows)
 	for i := start; i < end; i++ {
-		out.WriteString("  " + muted.Render(findingRow(b.teamFindings[i])) + "\n")
+		out.WriteString(renderDelegationRows(muted, "  ", findingRow(b.teamFindings[i]), bodyWidth) + "\n")
 	}
 	if below > 0 {
-		out.WriteString(muted.Render(fmt.Sprintf("  · +%d more", below)) + "\n")
+		out.WriteString(renderDelegationRows(muted, "  ", fmt.Sprintf("· +%d more", below), bodyWidth) + "\n")
 	}
 
-	out.WriteString("\n" + muted.Render(teamSubViewHint(hk, hk.findings)))
+	out.WriteString("\n" + renderDelegationRows(muted, "", teamSubViewHint(hk, hk.findings), bodyWidth))
 	return out.String()
 }
 

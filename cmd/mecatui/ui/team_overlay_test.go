@@ -1479,7 +1479,7 @@ func TestTeamRosterRoutedMetadata(t *testing.T) {
 	mm, _ := m.Update(ctrlKey('a'))
 	m = mm.(Model)
 	out := stripANSIstr(m.View().Content)
-	if !strings.Contains(out, "routed: large → anthropic/claude-opus-4") {
+	if !strings.Contains(out, "routed: large → anthropic/claude-opus-") || !strings.Contains(out, "┃  4") {
 		t.Errorf("routed member roster row should carry the routed cue:\n%s", out)
 	}
 	// The plain (non-routed) lead member shows its inherited model as a "model:" cue

@@ -7,6 +7,7 @@ import (
 
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
@@ -383,7 +384,22 @@ func renderAgentsOverlay(th theme.Theme, tab agentsTab, sub subagentState, par p
 	default:
 		body = renderTeamsTab(th, team, b, hk, width, bodyHeight)
 	}
-	return centerCard(th, bar+"\n\n"+body, width, height)
+	return centerAgentsCard(th, bar+"\n\n"+body, width, height)
+}
+
+// centerAgentsCard fixes the delegation overlay's body to the supplied layout
+// budget before framing. Unlike a natural-width Lipgloss card, a long roster row
+// cannot silently widen the final card beyond the offered viewport.
+func centerAgentsCard(th theme.Theme, body string, width, height int) string {
+	card := th.Style("askCard")
+	if bodyWidth := focusCardTextWidth(width); bodyWidth > 0 {
+		card = card.Width(bodyWidth)
+	}
+	out := card.Render(body)
+	if width <= 0 || height <= 0 {
+		return out
+	}
+	return lipgloss.Place(width, height, lipgloss.Center, lipgloss.Center, out)
 }
 
 // agentsTabBarLines is how many vertical lines the unified overlay's tab strip costs
@@ -452,11 +468,11 @@ func renderTeamsTab(th theme.Theme, st teamState, b *block, hk helpKeys, width, 
 	case teamFocus:
 		return renderTeamFocus(th, b, st.member, hk, width, height)
 	case teamTasks:
-		return renderTeamTasks(th, b, hk, height)
+		return renderTeamTasks(th, b, hk, height, width)
 	case teamFindings:
-		return renderTeamFindings(th, b, hk, height)
+		return renderTeamFindings(th, b, hk, height, width)
 	default:
-		return renderTeamRoster(th, st, b, hk, height)
+		return renderTeamRoster(th, st, b, hk, height, width)
 	}
 }
 
@@ -468,19 +484,23 @@ func renderSubagentTab(th theme.Theme, st subagentState, fleet []subagentLane, h
 	if st.view == subagentFocus {
 		return renderSubagentFocus(th, fleet, st.child, hk, width, height)
 	}
-	return renderSubagentRoster(th, st, fleet, hk, height)
+	return renderSubagentRoster(th, st, fleet, hk, height, width)
 }
 
 // renderSubagentRoster renders the flat fleet roster WINDOWED to the available height,
 // mirroring renderTeamRoster: a header (running/done counts), the slice of rows that
 // fits with the selected row highlighted, "+K above/below" tails, and an always-visible
 // footer hint. An empty fleet reads as a muted "(no subagents)". height<=0 shows all.
-func renderSubagentRoster(th theme.Theme, st subagentState, fleet []subagentLane, hk helpKeys, height int) string {
+func renderSubagentRoster(th theme.Theme, st subagentState, fleet []subagentLane, hk helpKeys, height int, widths ...int) string {
 	muted := th.Style("muted")
+	bodyWidth := 0
+	if len(widths) > 0 {
+		bodyWidth = focusCardTextWidth(widths[0])
+	}
 	var out strings.Builder
 
 	running, done := fleetCounts(fleet)
-	out.WriteString(th.Style("askTitle").Render(subagentRosterHeader(running, done)))
+	out.WriteString(renderDelegationRows(th.Style("askTitle"), "", subagentRosterHeader(running, done), bodyWidth))
 	out.WriteString("\n\n")
 
 	if len(fleet) == 0 {
@@ -497,9 +517,9 @@ func renderSubagentRoster(th theme.Theme, st subagentState, fleet []subagentLane
 	for row := start; row < end; row++ {
 		line := subagentRosterLine(&fleet[row])
 		if row == cursor {
-			out.WriteString(th.Style("askButtonActive").Render("› "+line) + "\n")
+			out.WriteString(renderDelegationRows(th.Style("askButtonActive"), "› ", line, bodyWidth) + "\n")
 		} else {
-			out.WriteString(muted.Render("  "+line) + "\n")
+			out.WriteString(renderDelegationRows(muted, "  ", line, bodyWidth) + "\n")
 		}
 	}
 	if below > 0 {
@@ -512,7 +532,7 @@ func renderSubagentRoster(th theme.Theme, st subagentState, fleet []subagentLane
 	// home/g·end/G and pgup/pgdn paging still work; the hint names the primary chords.
 	// Every chord reads the LIVE keyMap markings (hk) so an override propagates
 	// (issue #457); with defaults the hint is byte-identical to the historical literal.
-	out.WriteString("\n" + muted.Render(hk.navUp+"/"+hk.navDown+" select · "+hk.scroll+" · "+hk.jumpTop+"/"+hk.jumpEnd+" · "+hk.choose+" focus · "+hk.cancelChild+" cancel · "+agentsEmptyHint(hk)))
+	out.WriteString("\n" + renderDelegationRows(muted, "", hk.navUp+"/"+hk.navDown+" select · "+hk.scroll+" · "+hk.jumpTop+"/"+hk.jumpEnd+" · "+hk.choose+" focus · "+hk.cancelChild+" cancel · "+agentsEmptyHint(hk), bodyWidth))
 	return out.String()
 }
 
@@ -759,19 +779,23 @@ func renderParallelTab(th theme.Theme, st parallelState, groups []parallelGroup,
 	if st.view == parallelGroupView {
 		return renderParallelGroupFocus(th, st, groups, hk, width, height)
 	}
-	return renderParallelRoster(th, st, groups, hk, height)
+	return renderParallelRoster(th, st, groups, hk, height, width)
 }
 
 // renderParallelRoster renders the Parallel group roster WINDOWED to the available height,
 // mirroring renderSubagentRoster: a header (running/done group counts), the slice of rows
 // that fits with the selected row highlighted, "+K above/below" tails, and a footer hint.
 // An empty group list reads as a muted "(no parallel runs)". height<=0 shows all.
-func renderParallelRoster(th theme.Theme, st parallelState, groups []parallelGroup, hk helpKeys, height int) string {
+func renderParallelRoster(th theme.Theme, st parallelState, groups []parallelGroup, hk helpKeys, height int, widths ...int) string {
 	muted := th.Style("muted")
+	bodyWidth := 0
+	if len(widths) > 0 {
+		bodyWidth = focusCardTextWidth(widths[0])
+	}
 	var out strings.Builder
 
 	running, done := parallelCounts(groups)
-	out.WriteString(th.Style("askTitle").Render(fmt.Sprintf("parallel · %d running · %d done", running, done)))
+	out.WriteString(renderDelegationRows(th.Style("askTitle"), "", fmt.Sprintf("parallel · %d running · %d done", running, done), bodyWidth))
 	out.WriteString("\n\n")
 
 	if len(groups) == 0 {
@@ -788,9 +812,9 @@ func renderParallelRoster(th theme.Theme, st parallelState, groups []parallelGro
 	for row := start; row < end; row++ {
 		line := parallelRosterLine(&groups[row])
 		if row == cursor {
-			out.WriteString(th.Style("askButtonActive").Render("› "+line) + "\n")
+			out.WriteString(renderDelegationRows(th.Style("askButtonActive"), "› ", line, bodyWidth) + "\n")
 		} else {
-			out.WriteString(muted.Render("  "+line) + "\n")
+			out.WriteString(renderDelegationRows(muted, "  ", line, bodyWidth) + "\n")
 		}
 	}
 	if below > 0 {
@@ -801,7 +825,7 @@ func renderParallelRoster(th theme.Theme, st parallelState, groups []parallelGro
 	// (issue #457); with defaults the hint is byte-identical to the historical literal.
 	// The jump pair uses the FULL joined keys ("home/g·end/G") to match the roster
 	// handler's JumpTop/JumpEnd bindings, which bind both home/g and end/G.
-	out.WriteString("\n" + muted.Render(hk.navUp+"/"+hk.navDown+" select · "+hk.scroll+" page · "+hk.jumpTopFull+"·"+hk.jumpEndFull+" first/last · "+hk.choose+" focus · "+agentsEmptyHint(hk)))
+	out.WriteString("\n" + renderDelegationRows(muted, "", hk.navUp+"/"+hk.navDown+" select · "+hk.scroll+" page · "+hk.jumpTopFull+"·"+hk.jumpEndFull+" first/last · "+hk.choose+" focus · "+agentsEmptyHint(hk), bodyWidth))
 	return out.String()
 }
 

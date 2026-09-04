@@ -3,19 +3,19 @@
 
 
 
-                         ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-                         ┃                                               ┃
-                         ┃    Subagents    Parallel  ▸ Teams             ┃
-                         ┃                                               ┃
-                         ┃  findings                                     ┃
-                         ┃  2 finding(s) from 2 member(s)                ┃
-                         ┃                                               ┃
-                         ┃    scout · the cache key omits the tenant id  ┃
-                         ┃    lead · fix applied; tests green            ┃
-                         ┃                                               ┃
-                         ┃  f roster · esc close                         ┃
-                         ┃                                               ┃
-                         ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+     ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+     ┃                                                                                        ┃
+     ┃    Subagents    Parallel  ▸ Teams                                                      ┃
+     ┃                                                                                        ┃
+     ┃  findings                                                                              ┃
+     ┃  2 finding(s) from 2 member(s)                                                         ┃
+     ┃                                                                                        ┃
+     ┃    scout · the cache key omits the tenant id                                           ┃
+     ┃    lead · fix applied; tests green                                                     ┃
+     ┃                                                                                        ┃
+     ┃  f roster · esc close                                                                  ┃
+     ┃                                                                                        ┃
+     ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
 
 
 

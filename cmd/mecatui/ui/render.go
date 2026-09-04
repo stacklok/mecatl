@@ -1536,6 +1536,41 @@ func wrapToolCardText(text string, bodyWidth int) string {
 	return ansi.Hardwrap(text, bodyWidth, true)
 }
 
+// wrapDelegationRow trims display-only right padding, reserves prefix cells, and
+// wraps raw text before callers style the completed rows. A continuation keeps the
+// prefix's alignment without letting either the prefix or style padding consume a
+// second layout pass.
+func wrapDelegationRow(prefix, text string, bodyWidth int) []string {
+	text = strings.TrimRightFunc(sanitizeTerminal(text), unicode.IsSpace)
+	if bodyWidth <= 0 {
+		return []string{prefix + text}
+	}
+	prefixWidth := lipgloss.Width(prefix)
+	if prefixWidth >= bodyWidth {
+		return strings.Split(ansi.Hardwrap(prefix+text, bodyWidth, true), "\n")
+	}
+	available := bodyWidth - prefixWidth
+	wrapped := ansi.Hardwrap(text, available, true)
+	rows := strings.Split(wrapped, "\n")
+	continuation := strings.Repeat(" ", prefixWidth)
+	for i, row := range rows {
+		if i == 0 {
+			rows[i] = prefix + row
+		} else {
+			rows[i] = continuation + row
+		}
+	}
+	return rows
+}
+
+func renderDelegationRows(style lipgloss.Style, prefix, text string, bodyWidth int) string {
+	rows := wrapDelegationRow(prefix, text, bodyWidth)
+	for i, row := range rows {
+		rows[i] = style.Render(row)
+	}
+	return strings.Join(rows, "\n")
+}
+
 // wrapToolCardRegion constrains one independently styled tool-card region before it
 // joins the card. It deliberately operates per region, never on the assembled card:
 // card.Render must only frame already fitting rows.
@@ -1837,42 +1872,6 @@ func subagentResolvedLine(b *block) string {
 // chipSep is the two-space gap between adjacent child-tool chips in the expanded
 // trace row.
 const chipSep = "  "
-
-// chipContentWidth is the visible width available for the chip row inside the tool
-// card, accounting for the card's border (2) and horizontal padding (2). It floors
-// at a small positive value so a single chip per line is always attempted rather
-// than degenerating when the width is unknown/tiny (r.width 0 → no wrap).
-func (r *renderer) chipContentWidth() int {
-	cw := r.contentWidth()
-	if cw <= 4 {
-		return 0 // width unknown/tiny: no wrapping (single row, as before)
-	}
-	w := cw - 2 - 4 // card.Width(contentWidth-2) minus border(2)+padding(2)
-	if w < 1 {
-		w = 1
-	}
-	return w
-}
-
-// traceChipWidth returns the width available after a trace line's two-cell
-// indent. Inspector renderers set traceWidth from their bounded card body;
-// ordinary transcript rendering retains chipContentWidth's existing behavior.
-func (r *renderer) traceChipWidth() int {
-	if r.traceWidth > 2 {
-		return r.traceWidth - 2
-	}
-	return r.chipContentWidth()
-}
-
-// wrapTraceLine wraps a complete inspector trace line at its card-body width.
-// traceWidth == 0 deliberately retains the unbounded layout used outside a
-// bounded overlay.
-func (r *renderer) wrapTraceLine(s string) string {
-	if r.traceWidth <= 0 {
-		return s
-	}
-	return ansi.Wrap(s, r.traceWidth, "")
-}
 
 // wrapChips packs already-rendered chips into rows separated by chipSep, breaking
 // to a new line BETWEEN chips when the next chip would overflow width (measured by
@@ -2184,34 +2183,41 @@ func (r *renderer) renderTrace(trace []teamTrace) string {
 		if b.Len() > 0 {
 			b.WriteString("\n")
 		}
-		b.WriteString(r.wrapTraceLine("  " + wrapChips(chips, r.traceChipWidth())))
+		for i, row := range wrapDelegationRow("  ", strings.Join(chips, chipSep), r.traceWidth) {
+			if i > 0 {
+				b.WriteString("\n")
+			}
+			b.WriteString(nameStyle.Render(row))
+		}
 		chips = nil
 	}
-	writeLine := func(s string) {
-		s = r.wrapTraceLine(s)
+	writeLine := func(prefix, text string, style lipgloss.Style) {
 		flush()
-		if b.Len() > 0 {
-			b.WriteString("\n")
+		for _, row := range wrapDelegationRow(prefix, text, r.traceWidth) {
+			if b.Len() > 0 {
+				b.WriteString("\n")
+			}
+			b.WriteString(style.Render(row))
 		}
-		b.WriteString(s)
 	}
 	for i := range trace {
 		t := &trace[i]
 		switch t.kind {
 		case teamTraceTool:
-			glyph := okStyle.Render("✓")
+			glyph := "✓"
+			style := okStyle
 			if t.isError {
-				glyph = errStyle.Render("✗")
+				glyph = "✗"
+				style = errStyle
 			}
-			chip := glyph + " " + nameStyle.Render(truncate(sanitizeTerminal(t.name), maxTraceToolNameLen))
+			name := truncate(sanitizeTerminal(t.name), maxTraceToolNameLen)
 			if detail := sanitizeTerminal(oneLine(t.detail)); detail != "" {
-				// A chip with a preview gets a dedicated line so its detail is readable.
-				writeLine("  " + chip + muted.Render(" — "+truncate(detail, maxTraceDetailLen)))
+				writeLine("  ", glyph+" "+name+" — "+truncate(detail, maxTraceDetailLen), style)
 			} else {
-				chips = append(chips, chip)
+				chips = append(chips, glyph+" "+name)
 			}
 		case teamTraceMessage:
-			writeLine("  " + muted.Render(truncate(sanitizeTerminal(oneLine(t.text)), maxTraceMessageLen)))
+			writeLine("  ", truncate(sanitizeTerminal(oneLine(t.text)), maxTraceMessageLen), muted)
 		}
 	}
 	flush()
