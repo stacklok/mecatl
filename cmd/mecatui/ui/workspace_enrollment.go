@@ -152,15 +152,15 @@ func (m Model) startWorkspaceEnrollmentControl(action string) (tea.Model, tea.Cm
 // starting a second bundle.
 func (m Model) runToolsConnect() (tea.Model, tea.Cmd) {
 	if m.deps.WorkspaceEnrollment == nil {
-		m.statusMsg = m.deps.Theme.Style("warning").Render("/tools-connect is not available on this server")
+		m.workspaceEnrollmentNotice = "/tools-connect is not available on this server"
 		return m, nil
 	}
 	if m.sessionID == "" {
-		m.statusMsg = m.deps.Theme.Style("warning").Render("cannot connect workspace services: no active session")
+		m.workspaceEnrollmentNotice = "cannot connect workspace services: no active session"
 		return m, nil
 	}
 	if m.enrollment.busy {
-		m.statusMsg = m.deps.Theme.Style("warning").Render("workspace services connection is already in progress")
+		m.workspaceEnrollmentNotice = "workspace services connection is already in progress"
 		return m, nil
 	}
 	action := connectAction
@@ -172,23 +172,28 @@ func (m Model) runToolsConnect() (tea.Model, tea.Cmd) {
 	}
 	m.enrollment.busy = true
 	m.enrollment.err = ""
-	m.statusMsg = m.deps.Theme.Style("muted").Render("connecting workspace services…")
+	// workspaceEnrollmentNotice, not statusMsg: idleFooterLeft gives the notice
+	// priority over statusMsg (issue: a /tools-connect outcome written to
+	// statusMsg renders invisibly whenever the ambient "not connected" notice
+	// is also set — which it always is, right up until this call clears it).
+	m.workspaceEnrollmentNotice = "connecting workspace services…"
 	return m.startWorkspaceEnrollmentControl(action)
 }
 
 // runToolsCancel cancels the caller-owned pending bundle.
 func (m Model) runToolsCancel() (tea.Model, tea.Cmd) {
 	if m.deps.WorkspaceEnrollment == nil || m.enrollment.ID == "" {
-		m.statusMsg = m.deps.Theme.Style("warning").Render("no pending workspace-services connection to cancel")
+		m.workspaceEnrollmentNotice = "no pending workspace-services connection to cancel"
 		return m, nil
 	}
 	if m.enrollment.busy {
-		m.statusMsg = m.deps.Theme.Style("warning").Render("workspace services connection is already in progress")
+		m.workspaceEnrollmentNotice = "workspace services connection is already in progress"
 		return m, nil
 	}
 	m.enrollment.busy = true
 	m.enrollment.err = ""
-	m.statusMsg = m.deps.Theme.Style("muted").Render("cancelling workspace services connection…")
+	// workspaceEnrollmentNotice, not statusMsg — see runToolsConnect.
+	m.workspaceEnrollmentNotice = "cancelling workspace services connection…"
 	return m.startWorkspaceEnrollmentControl("cancel")
 }
 
@@ -214,7 +219,7 @@ func (m Model) applyWorkspaceEnrollment(msg workspaceEnrollmentMsg) (tea.Model, 
 	}
 	if msg.err != nil {
 		m.enrollment.err = oneLine(sanitizeTerminal(msg.err.Error()))
-		m.statusMsg = m.deps.Theme.Style("warning").Render(m.enrollment.err)
+		m.workspaceEnrollmentNotice = m.enrollment.err
 		if msg.action == "check" && m.enrollment.Status == client.WorkspaceEnrollmentPending && m.enrollment.presentationDelivered {
 			return m, workspaceEnrollmentPollTickCmd(m.sessionID, m.enrollment.ID, m.enrollment.controlGen)
 		}
@@ -254,7 +259,7 @@ func (m Model) applyWorkspaceEnrollment(msg workspaceEnrollmentMsg) (tea.Model, 
 	}
 	if m.deps.OpenURL == nil {
 		m.enrollment.err = "browser opening is unavailable"
-		m.statusMsg = m.deps.Theme.Style("warning").Render(m.enrollment.err)
+		m.workspaceEnrollmentNotice = m.enrollment.err
 	}
 	return m, nil
 }

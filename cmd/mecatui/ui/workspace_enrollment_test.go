@@ -296,8 +296,8 @@ func TestWorkspaceEnrollmentPresentationGatesAndSurvivesTransientObservationErro
 	m.enrollment.presentationDelivered = true
 	mm, cmd := m.applyWorkspaceEnrollment(workspaceEnrollmentMsg{action: "check", sessionID: "session-1", targetEnrollmentID: "bundle-1", gen: 4, err: errors.New("temporary outage\nsecret")})
 	m = mm.(Model)
-	if cmd == nil || !strings.Contains(m.statusMsg, "temporary outage") || strings.Contains(m.statusMsg, "\n") {
-		t.Fatalf("transient observation did not retain sanitized error and re-arm: status=%q cmd=%v", m.statusMsg, cmd != nil)
+	if cmd == nil || !strings.Contains(m.workspaceEnrollmentNotice, "temporary outage") || strings.Contains(m.workspaceEnrollmentNotice, "\n") {
+		t.Fatalf("transient observation did not retain sanitized error and re-arm: notice=%q cmd=%v", m.workspaceEnrollmentNotice, cmd != nil)
 	}
 }
 
