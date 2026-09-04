@@ -2,10 +2,10 @@
 id: 03-explicit-materialization-lifecycle
 title: Explicit materialization outcomes and Build lifecycle
 blocked_by: [01-learning-materializer]
-status: pending
-attempt: 0
-branch: ""
-worktree: ""
+status: in-progress
+attempt: 1
+branch: plan-scalable-reflection-evidence/03-explicit-materialization-lifecycle-attempt-1
+worktree: .scratch/worker-scalable-reflection-evidence-03-explicit-materialization-lifecycle-attempt-1
 issue: ""
 retries: 0
 last_error: ""

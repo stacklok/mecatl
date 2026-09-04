@@ -2,7 +2,7 @@
 id: 02-automatic-materialization-admission
 title: Streaming automatic admission over selected evidence
 blocked_by: [01-learning-materializer]
-status: in-progress
+status: done
 attempt: 1
 branch: plan-scalable-reflection-evidence/02-automatic-materialization-admission-attempt-1
 worktree: .scratch/worker-scalable-reflection-evidence-02-automatic-materialization-admission-attempt-1
