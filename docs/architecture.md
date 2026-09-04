@@ -261,6 +261,18 @@ an ask, emits one client diagnostic naming the ask and tool, and continues the r
 `permission.ask` remains in the event stream, and `Run` outside query retains its existing manual
 pending-ask behavior.
 
+Spawned Node/Bun clients also expose `client.tool(name, schema, handler, options)` for a
+client-wide callback-tool registry. Schemas are plain JSON Schema 2020-12 values compiled by the
+`./node`-only validator; invalid schemas, duplicate names, namespace-forging names, and invalid
+server names fail locally with `tool_registration`. On the first session create, the client
+pre-flights `ListMcpSources`, refuses a resolved server-global namespace collision, and sends the
+entire registry as one loopback HTTP `McpServerSpec` named `sdk` by default. A successful create
+makes that registry immutable. Arguments are validated without coercion or default insertion and
+then copied onto null-prototype objects before the handler sees them. Tools are mutating unless
+`readOnly: true` is asserted; the SDK does not verify that assertion, and the harness uses the MCP
+`readOnlyHint` to choose concurrent read dispatch. The Ajv dependency and callback-tool types stay
+outside the transport-neutral `.` module graph.
+
 The durable-watch foundation uses the generated `WatchSessionEvents` descriptor on
 both transports and decodes each wire frame into a four-arm `WatchEnvelope`:
 `event`, the single replay-to-live `boundary`, cursor-free `gap`, or lossless

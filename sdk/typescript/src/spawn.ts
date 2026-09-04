@@ -6,16 +6,24 @@ import { delimiter, join, resolve } from "node:path";
 
 import type { Transport } from "@connectrpc/connect";
 
-import { type Client, connectTransport, disposeTransport } from "./client.js";
+import { connectTransport, disposeTransport } from "./client.js";
 import {
   type ClientDiagnosticsOptions,
   type DiagnosticFieldValue,
   type DiagnosticRecord,
   type DiagnosticsSink,
+  InvalidStateError,
   MecatlError,
 } from "./errors.js";
 import { createNodeTransport } from "./node-transport.js";
 import { createRawClient } from "./raw.js";
+import {
+  DEFAULT_TOOL_SERVER_NAME,
+  type NodeClient,
+  type ToolHostBinding,
+  ToolRegistry,
+  withToolRegistration,
+} from "./tool.js";
 
 const READY_SCHEMA = "mecated-ready/1";
 const READY_FILE_NAME = "ready.json";
@@ -52,6 +60,8 @@ export interface SpawnOptions extends ClientDiagnosticsOptions {
   lifetimePipe?: boolean;
   /** Deadline for publication of a complete supported ready document. */
   readinessTimeoutMs?: number;
+  /** Stable MCP namespace for callback tools. Defaults to `sdk`. */
+  toolServerName?: string;
 }
 
 /** Non-secret facts published by an SDK-owned daemon. @public */
@@ -69,7 +79,7 @@ export interface DaemonInfo {
 }
 
 /** A Client that owns one locally spawned daemon. @public */
-export interface SpawnedClient extends Client {
+export interface SpawnedClient extends NodeClient {
   /** The ready document's non-secret daemon facts. */
   readonly daemon: DaemonInfo;
 }
@@ -117,6 +127,7 @@ interface SpawnClock {
 
 interface SpawnToolHostLifecycle {
   abort(reason: unknown): void;
+  mcpServer?(): import("./client.js").SessionMcpServer;
   start(): Promise<void> | void;
   stop(): Promise<void>;
 }
@@ -488,7 +499,7 @@ async function readReadyDocument(
   };
 }
 
-function withDaemonInfo(client: Client, ready: ReadyDocument): SpawnedClient {
+function withDaemonInfo(client: NodeClient, ready: ReadyDocument): SpawnedClient {
   const daemon: DaemonInfo = Object.freeze({
     apiMajor: ready.api_major,
     features: Object.freeze([...ready.features]),
@@ -502,6 +513,28 @@ function withDaemonInfo(client: Client, ready: ReadyDocument): SpawnedClient {
     get: () => daemon,
   });
   return client as SpawnedClient;
+}
+
+function toolHostBinding(host: SpawnToolHostLifecycle | undefined): ToolHostBinding {
+  return {
+    abort: (reason) => host?.abort(reason),
+    mcpServer: () => {
+      const server = host?.mcpServer?.();
+      if (server === undefined) {
+        throw new InvalidStateError(
+          "The callback tool host has not published its loopback address",
+          {
+            transport: "local",
+          },
+        );
+      }
+      return server;
+    },
+    start: () => host?.start(),
+    stop: async () => {
+      await host?.stop();
+    },
+  };
 }
 
 async function waitForReady(
@@ -598,6 +631,11 @@ async function spawnAttempt(
     );
   }
 
+  const toolRegistry = new ToolRegistry(
+    options.toolServerName ?? DEFAULT_TOOL_SERVER_NAME,
+    toolHostBinding(internal.client?.toolHost),
+  );
+
   const args = options.args ?? [];
   validateExtraArguments(args);
   const fileSystem: SpawnFileSystem = { ...defaultFileSystem, ...internal.fileSystem };
@@ -681,21 +719,27 @@ async function spawnAttempt(
     );
     await createRawClient({ transport, transportKind: "grpc" }).features({ timeoutMs });
     return withDaemonInfo(
-      connectTransport({
-        ...(options.diagnostics === undefined ? {} : { diagnostics: options.diagnostics }),
-        internal: {
-          ...internal.client,
-          daemon: {
-            exit: child.exit,
-            removeRuntime,
-            stop: stopDaemon,
+      withToolRegistration(
+        connectTransport({
+          ...(options.diagnostics === undefined ? {} : { diagnostics: options.diagnostics }),
+          internal: {
+            daemon: {
+              exit: child.exit,
+              removeRuntime,
+              stop: stopDaemon,
+            },
+            ...(internal.client?.onTeardownStep === undefined
+              ? {}
+              : { onTeardownStep: internal.client.onTeardownStep }),
+            toolHost: toolRegistry,
           },
-        },
-        owned: true,
-        transport,
-        transportKind: "grpc",
-        visibility: false,
-      }),
+          owned: true,
+          transport,
+          transportKind: "grpc",
+          visibility: false,
+        }),
+        toolRegistry,
+      ),
       ready,
     );
   } catch (error) {

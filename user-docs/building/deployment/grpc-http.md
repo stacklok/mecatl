@@ -82,6 +82,34 @@ iteration or aborting `signal` still cleans up. Plan mode is refused until the s
 resolution API lands. Without `onPermissionAsk`, an ask is denied and reported through the
 client's structured diagnostics sink while the run continues.
 
+A spawned client can register local callback tools before it creates a session:
+
+```ts
+import { spawn } from "@stacklok/mecatl-sdk/node";
+
+const client = await spawn();
+client.tool(
+  "lookup",
+  {
+    type: "object",
+    properties: { query: { type: "string" } },
+    required: ["query"],
+    additionalProperties: false,
+  },
+  async ({ query }) => `Result for ${query}`,
+  { readOnly: true },
+);
+const session = await client.sessions.create({});
+```
+
+The SDK accepts plain JSON Schema 2020-12 objects, validates arguments before the handler, and
+mounts the client-wide tool set under `mcp__sdk__*`. Registration closes after a session is
+created. Tools are treated as mutating unless `readOnly: true` is set. That flag is an unverified
+caller assertion with a dispatch consequence: mecatl may run asserted-read-only callbacks in its
+parallel read batch, so set it only when the handler truly has no side effects. Callback tools
+require the default private-UDS, HTTP-disabled spawned-daemon topology; use a different
+`toolServerName` if the operator already owns the `sdk` MCP namespace.
+
 See the detailed gRPC and HTTP
 references for their request, response, privacy, and compatibility contracts.
 

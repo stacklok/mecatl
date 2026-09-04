@@ -13,6 +13,7 @@ import {
   type DiagnosticsSink,
   IncompatibleServerError,
   InvalidStateError,
+  MecatlError,
   ProtocolError,
   ServerError,
   SessionBusyError,
@@ -169,6 +170,10 @@ interface ClientDaemonLifecycle {
 
 interface ClientToolHostLifecycle {
   abort(reason: unknown): void;
+  beginSessionCreate?(): { finish(created: boolean): void };
+  hasTools?(): boolean;
+  mcpServer?(): SessionMcpServer;
+  readonly serverName?: string;
   start(): Promise<void> | void;
   stop(): Promise<void>;
 }
@@ -473,12 +478,45 @@ class ClientImpl implements Client {
     };
     this.sessions = {
       create: async (input) => {
-        const response = await this.#unary(
-          HarnessService.method.createSession,
-          input,
-          createSessionAffinity(input),
-        );
-        return this.#session(response.sessionId, "CreateSession", response.sessionCapabilities);
+        const lease = this.#toolHost?.beginSessionCreate?.();
+        try {
+          let request = input;
+          if (this.#toolHost?.hasTools?.() === true) {
+            await this.#toolHostStarted;
+            const serverName = this.#toolHost.serverName;
+            const mcpServer = this.#toolHost.mcpServer?.();
+            if (serverName === undefined || mcpServer === undefined) {
+              throw new InvalidStateError("The callback tool host is not ready", {
+                transport: "local",
+              });
+            }
+            const inventory = await this.#unary(HarnessService.method.listMcpSources, {});
+            if (
+              inventory.sources.some((source) =>
+                source.servers.some((server) => server.name === serverName),
+              )
+            ) {
+              throw new MecatlError(
+                `Callback tool server name ${JSON.stringify(serverName)} collides with a resolved server-global MCP server`,
+                { code: "tool_registration", transport: "local" },
+              );
+            }
+            request = {
+              ...input,
+              mcpServers: [...(input.mcpServers ?? []), mcpServer],
+            };
+          }
+          const response = await this.#unary(
+            HarnessService.method.createSession,
+            request,
+            createSessionAffinity(input),
+          );
+          lease?.finish(true);
+          return this.#session(response.sessionId, "CreateSession", response.sessionCapabilities);
+        } catch (error) {
+          lease?.finish(false);
+          throw error;
+        }
       },
       fork: async (sourceSessionId, input = {}) => {
         const response = await this.#unary(

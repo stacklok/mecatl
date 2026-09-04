@@ -8293,6 +8293,32 @@ in the event union. A caller-supplied responder takes the existing M1 path uncha
 its abstention semantics, and a `Run` constructed outside query still leaves an unanswered ask
 pending for `resolveAsk()`.
 
+Callback-tool registration lives in `sdk/typescript/src/tool.ts` and is decorated onto the
+Node/Bun client type without widening the transport-neutral `Client`. The one registry owns a
+validated server name (`sdk` by default, maximum 64 ASCII characters from `[A-Za-z0-9._-]`, no
+`__`) and rejects empty or namespace-forging tool names plus local duplicates. Registration copies
+the plain JSON Schema value and compiles it with Ajv's 2020-12 dialect under explicit
+`coerceTypes: false`, `useDefaults: false`, and `removeAdditional: false`; Ajv is a direct MIT
+dependency recorded in `sdk/typescript/package.json` and reachable only from `./node`.
+
+`sdk/typescript/src/client.ts` treats a client tool host as an injected lifecycle plus registry
+view. Every session-create attempt leases the registry against concurrent registration. A
+tool-bearing create waits for the host binding, calls `ListMcpSources`, and rejects a resolved
+server whose name equals the registry namespace before issuing `CreateSession`. It then appends
+exactly one `McpServerSpec` for the whole set, preserving any explicit raw `mcpServers`; a
+successful create commits immutability, while a failed create releases the lease. The advertised
+tool annotation always contains `readOnlyHint`: false by default, true only for the caller's
+unverified `readOnly` assertion. The harness consequently serializes the safe default, while a
+mis-annotation can enter read-parallel dispatch and is not covered by plan mode's fixed built-in
+mutation names.
+
+The registry validates model-authored arguments before invoking the handler and turns a schema
+miss into a text `isError` result. Validation never rewrites the input. A valid JSON object is
+recursively copied with data properties onto null-prototype records before user code runs, so
+`__proto__`, `constructor`, and `prototype` cannot activate inherited setters or leak inherited
+members into the handler. `sdk/typescript/test/media.test.ts` walks the `.` entrypoint's source
+graph and rejects both Node built-ins and any Ajv import, keeping the subpath boundary executable.
+
 The M2 durable-watch base lives in `sdk/typescript/src/watch.ts`. Its client-authored `kind`
 turns the generated `{event, cursor, phase}` response into `event | boundary | gap | unknown`;
 known phases narrow, future phases retain their raw string and optional event, and the gap arm

@@ -130,7 +130,7 @@ export interface CompactionArchiveEventPayload {
 }
 
 // @public
-export function connect(options: NodeConnectOptions): Client;
+export function connect(options: NodeConnectOptions): NodeClient;
 
 // @public
 export type ConnectionStatus = "connecting" | "online" | "reconnecting" | "offline" | "unauthorized" | "incompatible";
@@ -544,6 +544,11 @@ export interface ModelRetryEventPayload {
 }
 
 // @public
+export interface NodeClient extends Client {
+    tool(name: string, schema: ToolSchema, handler: ToolHandler, options?: ToolOptions): ToolDefinition;
+}
+
+// @public
 export type NodeConnectOptions = (NodeTransportOptions | InjectedTransportOptions) & ClientDiagnosticsOptions;
 
 // @public (undocumented)
@@ -851,7 +856,7 @@ export interface Sessions {
 export function spawn(options?: SpawnOptions): Promise<SpawnedClient>;
 
 // @public
-export interface SpawnedClient extends Client {
+export interface SpawnedClient extends NodeClient {
     readonly daemon: DaemonInfo;
 }
 
@@ -863,6 +868,7 @@ export interface SpawnOptions extends ClientDiagnosticsOptions {
     http?: boolean;
     lifetimePipe?: boolean;
     readinessTimeoutMs?: number;
+    toolServerName?: string;
 }
 
 // @public
@@ -1056,6 +1062,43 @@ export interface ToolCallEventPayload {
 }
 
 // @public
+export interface ToolDefinition {
+    readonly concurrency: number | undefined;
+    readonly modelName: string;
+    readonly name: string;
+    readonly readOnly: boolean;
+    readonly schema: ToolSchema;
+}
+
+// @public
+export type ToolHandler = (arguments_: Readonly<Record<string, ToolJsonValue>>, context: ToolHandlerContext) => unknown | Promise<unknown>;
+
+// @public
+export interface ToolHandlerContext {
+    readonly signal: AbortSignal;
+}
+
+// @public
+export type ToolJsonValue = boolean | number | string | null | readonly ToolJsonValue[] | {
+    readonly [key: string]: ToolJsonValue;
+};
+
+// @public
+export interface ToolOptions {
+    concurrency?: number;
+    readOnly?: boolean;
+}
+
+// @public
+export class ToolRegistrationError extends MecatlError {
+    constructor(reason: ToolRegistrationReason, message: string, cause?: unknown);
+    readonly reason: ToolRegistrationReason;
+}
+
+// @public
+export type ToolRegistrationReason = "duplicate_name" | "invalid_options" | "invalid_schema" | "invalid_server_name" | "invalid_tool_name";
+
+// @public
 export interface ToolResultEventPayload {
     // (undocumented)
     readonly blocks: readonly EventContentBlock[];
@@ -1068,6 +1111,9 @@ export interface ToolResultEventPayload {
     // (undocumented)
     readonly structuredContent: string;
 }
+
+// @public
+export type ToolSchema = boolean | Readonly<Record<string, ToolJsonValue>>;
 
 export { Transport }
 

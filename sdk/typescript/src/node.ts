@@ -14,3 +14,14 @@ export type { Query, QueryOptions } from "./query.js";
 export { query } from "./query.js";
 export type { DaemonInfo, SpawnedClient, SpawnOptions } from "./spawn.js";
 export { spawn } from "./spawn.js";
+export type {
+  NodeClient,
+  ToolDefinition,
+  ToolHandler,
+  ToolHandlerContext,
+  ToolJsonValue,
+  ToolOptions,
+  ToolRegistrationReason,
+  ToolSchema,
+} from "./tool.js";
+export { ToolRegistrationError } from "./tool.js";

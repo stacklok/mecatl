@@ -16,6 +16,7 @@ import { afterAll, beforeAll, expect, test } from "vitest";
 
 type PackageJson = {
   dependencies: Record<string, string>;
+  dependencyLicenses: Record<string, string>;
   exports: Record<"." | "./gen" | "./node", { import: string; types: string }>;
   license: string;
   name: string;
@@ -221,6 +222,10 @@ test("packed tarball carries dist and license only", () => {
     "package/dist/spawn.d.ts.map",
     "package/dist/spawn.js",
     "package/dist/spawn.js.map",
+    "package/dist/tool.d.ts",
+    "package/dist/tool.d.ts.map",
+    "package/dist/tool.js",
+    "package/dist/tool.js.map",
     "package/dist/watch.d.ts",
     "package/dist/watch.d.ts.map",
     "package/dist/watch.js",
@@ -238,7 +243,9 @@ test("packed tarball carries dist and license only", () => {
     "@bufbuild/protobuf": "2.14.0",
     "@connectrpc/connect": "2.1.2",
     "@connectrpc/connect-node": "2.1.2",
+    ajv: "8.20.0",
   });
+  expect(packedPackageJson.dependencyLicenses).toEqual({ ajv: "MIT" });
   expect(packedFiles.get("package/LICENSE")?.toString("utf8")).toContain(
     "Apache License\n                           Version 2.0",
   );
