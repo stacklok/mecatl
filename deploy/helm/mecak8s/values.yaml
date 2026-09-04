@@ -119,6 +119,12 @@ redis:
   # unless an ACL key is also set. Verification is never disabled either way.
   caKey: ca.pem
   usernameKey: ""
+  filesystem:
+    # Principal-scoped persistent virtual files. Shell and filesystem forks stay disabled.
+    enabled: false
+  readLedger:
+    # Persist each session's read-before-write evidence independently of file storage.
+    enabled: false
   local:
     enabled: false
 

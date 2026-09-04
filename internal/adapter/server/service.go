@@ -292,6 +292,10 @@ type Config struct {
 	// PlacementScope is the trusted deployment scope supplied to every provider
 	// Bind. It must be non-empty when PlacementProvider is configured.
 	PlacementScope PlacementScope
+	// SessionReadLedger optionally selects a durable read-before-write ledger for
+	// each session independently of its placement's content backend. The returned
+	// handle must be non-nil; nil fails the run closed.
+	SessionReadLedger func(session.SessionID) tool.ReadLedger
 	// RootAuthority mints a complete authority set for a newly composed root.
 	// A nil callback preserves host-managed legacy sessions; app.Build always wires
 	// this callback with its assembled catalog. Carryover forks copy their source
@@ -4518,6 +4522,16 @@ func (s *Service) engineAndEnvironmentFor(ctx context.Context, sess *session.Ses
 	verified, err := s.ReattachPlacement(ctx, sess.EnvironmentRef)
 	if err != nil {
 		return nil, tool.Environment{}, err
+	}
+	if s.cfg.SessionReadLedger != nil {
+		ledger := s.cfg.SessionReadLedger(id)
+		if ledger == nil {
+			return nil, tool.Environment{}, fmt.Errorf("%w: session read-ledger factory returned nil", ErrConfig)
+		}
+		verified.Environment, err = tool.NewEnvironment(verified.Ref, verified.Environment.Workspace(), ledger, verified.Environment.CommandRunner())
+		if err != nil {
+			return nil, tool.Environment{}, fmt.Errorf("%w: bind session read ledger: %v", ErrConfig, err)
+		}
 	}
 	verifiedPlacement := &verified
 	if hasEnvOverride {

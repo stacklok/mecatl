@@ -31,12 +31,14 @@ other shipped executables, exact top-level `mecak8s --version` prints its build 
 and exits before loading normal configuration or starting listeners.
 
 `mecak8s` uses the same server-owned, path-free placement contract as every other
-composition root. Its normal storage-free pod configures the deployment default as no-FS,
-so omitted profile and explicit `"no-fs"` both bind the filesystem-free Environment;
-other profiles are rejected. Clients cannot send a workspace path, cwd, placement ID, or
-exact ref. A future remote filesystem provider can implement the same private Bind/Reattach
-contract without changing public clients. Exact private refs remain in snapshots/driver
-storage and each run or schedule fire reattaches them; delegation cannot upgrade no-FS.
+composition root. Its normal storage-free pod configures the deployment default as no-FS.
+Operators may instead select `--redis-filesystem`, which binds a persistent virtual
+workspace shared by sessions with the same exact OIDC issuer/subject identity; ownerless
+sessions share a reserved anonymous namespace. The mode exposes Read/Edit/Write/Grep/Glob
+but no shell, executable-file semantics, worktrees, or filesystem fork/merge workflow.
+`--workspace` remains the mutually-exclusive mounted-filesystem alternative. Clients
+cannot send a workspace path, cwd, placement ID, or exact ref. Exact private refs remain
+in snapshots and every run revalidates them against the caller before reattachment.
 
 ```console
 $ go run ./cmd/mecak8s --redis-url redis:6379 --redis-allow-plaintext --session-lease-k8s-namespace mecatl --openai
@@ -51,6 +53,8 @@ $ go run ./cmd/mecak8s --redis-url redis:6379 --redis-allow-plaintext --session-
 | --- | --- | --- |
 | `--log-level` | `info` | minimum severity for stderr logging; exact values are `debug`, `info`, `warn`, and `error`. Invalid values (including empty) use `info` and emit one warning. |
 | `--redis-url` | `""` | Redis address (`host:port`) for the session store + durable event log (ADRs 0048 and [0233](../adr/0233-secure-external-redis.md), storage-free). The `redisstore` `Store` doubles as its own `EventLog` (like `jsonlstore`). **Mutually exclusive with `--store-dir` / `--session-store-url`** (rejected at `Build`). Takes a bare `host:port`: a `redis://` or `rediss://` URL is rejected. An address alone is not a plaintext opt-in — see `--redis-allow-plaintext`. |
+| `--redis-filesystem` | `false` | Use a principal-scoped Redis virtual workspace. Same-owner sessions share files; different issuer/subject pairs are isolated; ownerless sessions share the anonymous namespace. Mutually exclusive with `--workspace`; shell and filesystem fork/merge remain disabled. |
+| `--redis-read-ledger` | `false` | Persist each session's read-before-write evidence in Redis independently of whether file contents use Redis or a mounted workspace. Session deletion removes this ledger, not principal-shared Redis files. |
 | `--redis-allow-plaintext` | `false` | Explicitly allow unauthenticated plaintext Redis; disposable local/Kind use only. Without it an address-only `--redis-url` is **rejected at `Build`**. Never set it for a production external Redis. |
 | `--redis-username-file` / `--redis-password-file` | `""` | Paths to optional Redis ACL credentials in a mounted Kubernetes Secret. A password without a username authenticates as Redis's default ACL user; a username requires a password. Credential values are never accepted as command arguments. Any credential requires verified TLS — `--redis-tls` or `--redis-tls-ca`. When either file is configured, mecak8s watches its lexical parent and transactionally hot-reloads the complete configured Redis file set after a bounded successful probe. |
 | `--redis-tls` | `false` | Verify Redis TLS against the host system trust store. Use for a managed Redis whose certificate chains to a public CA (Azure Cache for Redis, ElastiCache in-transit encryption). |

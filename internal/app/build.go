@@ -175,6 +175,10 @@ type Config struct {
 	RedisURL          string
 	RedisUsernameFile string
 	RedisPasswordFile string
+	// RedisFilesystem selects a principal-scoped shell-less virtual workspace.
+	// RedisReadLedger independently persists session read-before-write evidence.
+	RedisFilesystem bool
+	RedisReadLedger bool
 	// RedisTLSCAFile is a PEM CA bundle path that REPLACES the system trust
 	// store; RedisTLS verifies against the system trust store instead. Either
 	// one satisfies the credentials-imply-verified-TLS policy (ADR 0233).
@@ -1345,6 +1349,22 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	if err := validateDriverConfig(cfg); err != nil {
 		return nil, err
 	}
+	if (cfg.RedisFilesystem || cfg.RedisReadLedger) && cfg.RedisURL == "" {
+		return nil, errors.New("redis filesystem/read-ledger requires RedisURL")
+	}
+	if cfg.RedisFilesystem && cfg.Workspace != "" {
+		return nil, errors.New("redis filesystem and mounted Workspace are mutually exclusive")
+	}
+	if cfg.RedisFilesystem && cfg.SkillsDraftDir != "" {
+		return nil, errors.New("redis filesystem does not support filesystem-backed skill drafts")
+	}
+	if cfg.RedisFilesystem && (cfg.EnableParallel || cfg.EnableTeams) {
+		return nil, errors.New("redis filesystem does not support Parallel or Team filesystem fork/merge workflows")
+	}
+	if cfg.RedisFilesystem {
+		cfg.NoBash = true
+		cfg.EnableParallel = false
+	}
 	// Build-scoped driver connection cache: set once so the session-store and
 	// memory-store dials below share one ClientConn per distinct target.
 	if cfg.driverConns == nil {
@@ -1838,6 +1858,21 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		return nil, fmt.Errorf("initialize placement selector signer: %w", err)
 	}
 	placementProvider := cfg.PlacementProvider
+	if cfg.RedisFilesystem {
+		redisBackend, ok := store.(*redisstore.Store)
+		if !ok {
+			return nil, errors.New("redis filesystem requires the local Redis session store")
+		}
+		placementProvider = &redisPlacementProvider{store: redisBackend}
+	}
+	var sessionReadLedger func(session.SessionID) tool.ReadLedger
+	if cfg.RedisReadLedger {
+		redisBackend, ok := store.(*redisstore.Store)
+		if !ok {
+			return nil, errors.New("redis read-ledger requires the local Redis session store")
+		}
+		sessionReadLedger = redisBackend.ReadLedger
+	}
 	worktreeLister := buildWorktreeLister(cfg)
 	if placementProvider == nil {
 		selectorIssuer, err := server.NewWorktreeSelectorIssuer(placementSelectorKey[:])
@@ -1888,6 +1923,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 
 		PlacementProvider: placementProvider,
 		PlacementScope:    placementScope,
+		SessionReadLedger: sessionReadLedger,
 		RootAuthority: func(kind session.SessionKind) session.Authority {
 			return mintRootAuthority(assets.rootCatalog, mcpResourceCapabilities(assets.globalMgr), kind)
 		},
@@ -2861,6 +2897,7 @@ func sessionEngineFactory(
 		if noFS {
 			deps.PromptConfig = applyNoFSPosture(deps.PromptConfig, noFSPostureNote)
 		}
+		deps.PromptConfig = applyRedisWorkspacePosture(deps.PromptConfig, redisWorkspacePostureEnabled(cfg, noFS))
 		// Guardrails (issue #27), RE-DERIVED per session so a FRESH per-session checker
 		// budget is built: decorate THIS session's main hooks with the LLM-backed
 		// content checker, over the session's resolved provider/model. OFF-by-default
@@ -3488,6 +3525,17 @@ func chainClose(first, second func()) func() {
 	}
 }
 
+func escapePolicyForConfig(cfg Config, reg *providerRegistry, provider port.LLMProvider, inner port.PermissionPolicy) port.PermissionPolicy {
+	if cfg.RedisFilesystem {
+		// Redis paths are virtual hash fields, not pod filesystem paths. Applying
+		// osfs escape canonicalization to Workspace.Root would classify unrelated
+		// host paths and could relax the inner decision on that false basis.
+		return inner
+	}
+	return newEscapePolicy(inner, cfg.Posture,
+		withEscapeGuardrailRoute(buildGuardrailsEscapeChecker(cfg, reg, provider)))
+}
+
 // buildEngine assembles the parent agent.Engine: the core tool catalog (plus an
 // optional Bash tool and a read-only Subagent tool), the permission policy, hooks,
 // prompt config, and the shared provider/store. It also connects any configured
@@ -3701,8 +3749,7 @@ func buildEngine(ctx context.Context, cfg Config, reg *providerRegistry, provide
 	// recursion guard and operator-tier-only config carry over); the option is a
 	// no-op at any non-auto posture or with no checker, so yolo/strict/trusted
 	// and the un-knobbed auto stay byte-identical.
-	sharedPolicy := newEscapePolicy(policy, cfg.Posture,
-		withEscapeGuardrailRoute(buildGuardrailsEscapeChecker(cfg, reg, provider)))
+	sharedPolicy := escapePolicyForConfig(cfg, reg, provider, policy)
 	var learningAdmission *learningAdmission
 	if cfg.operatorLearningMode != learning.Off {
 		learningAdmission = newLearningAdmission(cfg.UserModelReviewInterval)
@@ -7648,6 +7695,26 @@ func applyNoFSPosture(pc prompt.Config, note string) prompt.Config {
 	pc.Role += "\n\n" + note
 	return pc
 }
+
+const redisWorkspacePostureNote = "This session uses a persistent principal-scoped Redis workspace. Use Read/Edit/Write/Grep/Glob for files. It has no shell, executable-file semantics, git worktrees, or filesystem fork/merge workflow."
+
+func redisWorkspacePostureEnabled(cfg Config, noFS bool) bool {
+	return cfg.RedisFilesystem && !noFS
+}
+
+func applyRedisWorkspacePosture(pc prompt.Config, enabled bool) prompt.Config {
+	if !enabled {
+		return pc
+	}
+	pc.Env.Cwd, pc.Env.Shell, pc.Env.GitStatus = workspaceRootForPrompt, "", ""
+	if pc.Role == "" {
+		pc.Role = prompt.DefaultRole()
+	}
+	pc.Role += "\n\n" + redisWorkspacePostureNote
+	return pc
+}
+
+const workspaceRootForPrompt = "/workspace"
 
 func applyDebugSessionPosture(pc prompt.Config, target session.SessionID, selectedServers []string) prompt.Config {
 	if pc.Role == "" {

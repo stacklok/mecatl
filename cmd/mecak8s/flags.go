@@ -155,6 +155,8 @@ type config struct {
 	redisTLSCAFile      string
 	redisTLS            bool
 	redisAllowPlaintext bool
+	redisFilesystem     bool
+	redisReadLedger     bool
 
 	// Remote learning driver: the app validates that it advertises the complete
 	// distributed-learning repository capability set before startup proceeds.
@@ -309,6 +311,8 @@ func (l *stringList) Set(v string) error {
 // secrets, an fs.Visit pass for the posture-set bit) but for mecak8s's k8s-
 // native surface: --redis-url, --session-lease-k8s-namespace default "mecatl",
 // --headless default true, --posture default "auto".
+//
+//nolint:gocyclo // one parser owns validation for the complete mecak8s flag surface.
 func parseFlags(argv []string) (config, error) {
 	fs := flag.NewFlagSet("mecak8s", flag.ContinueOnError)
 	var cfg config
@@ -353,6 +357,8 @@ func parseFlags(argv []string) (config, error) {
 	// Storage-free state (ADR 0048): --redis-url is the session store + durable
 	// event log. NO --store-dir (mutually exclusive, rejected at Build).
 	fs.StringVar(&cfg.redisURL, "redis-url", "", "Redis address (host:port) for the session store + durable event log (ADR 0048, storage-free). Secure Redis uses mounted file paths")
+	fs.BoolVar(&cfg.redisFilesystem, "redis-filesystem", false, "use a principal-scoped, persistent, shell-less Redis workspace; mutually exclusive with --workspace")
+	fs.BoolVar(&cfg.redisReadLedger, "redis-read-ledger", false, "persist each session's read-before-write ledger in Redis independently of workspace storage")
 	fs.BoolVar(&cfg.redisAllowPlaintext, "redis-allow-plaintext", false, "EXPLICITLY allow unauthenticated plaintext Redis for a disposable local/Kind fixture; production Redis must use CA-verified TLS")
 	fs.StringVar(&cfg.redisUsernameFile, "redis-username-file", "", "path to optional Redis ACL username in a mounted Secret; requires a password and verified TLS")
 	fs.StringVar(&cfg.redisPasswordFile, "redis-password-file", "", "path to optional Redis password in a mounted Secret; never pass the password as an argument; requires verified TLS")
@@ -559,6 +565,15 @@ func parseFlags(argv []string) (config, error) {
 	if cfg.workspace != "" && (!filepath.IsAbs(cfg.workspace) || filepath.Clean(cfg.workspace) != cfg.workspace) {
 		return config{}, fmt.Errorf("--workspace %q must be a clean absolute path (a mounted filesystem root); leave it empty for a file-less deployment", cfg.workspace)
 	}
+	if cfg.redisFilesystem && cfg.workspace != "" {
+		return config{}, errors.New("--redis-filesystem and --workspace are mutually exclusive")
+	}
+	if cfg.redisFilesystem && (cfg.enableParallel || cfg.enableTeams) {
+		return config{}, errors.New("--redis-filesystem does not support --enable-parallel or --enable-teams filesystem fork/merge workflows")
+	}
+	if (cfg.redisFilesystem || cfg.redisReadLedger) && cfg.redisURL == "" {
+		return config{}, errors.New("--redis-filesystem and --redis-read-ledger require --redis-url")
+	}
 
 	return cfg, nil
 }
@@ -592,8 +607,10 @@ func appConfig(cfg config, diag port.Diagnostics, obs observability) app.Config 
 		UseMock:                cfg.useMock,
 		MockProvider:           cfg.mockProvider,
 		Shell:                  cfg.shell,
-		NoBash:                 cfg.noBash,
+		NoBash:                 cfg.noBash || cfg.redisFilesystem,
 		RedisURL:               cfg.redisURL,
+		RedisFilesystem:        cfg.redisFilesystem,
+		RedisReadLedger:        cfg.redisReadLedger,
 		RedisUsernameFile:      cfg.redisUsernameFile,
 		RedisPasswordFile:      cfg.redisPasswordFile,
 		RedisTLSCAFile:         cfg.redisTLSCAFile,

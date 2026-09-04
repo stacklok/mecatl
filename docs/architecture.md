@@ -771,7 +771,14 @@ shared assembly with **k8s-native defaults** — a **Redis** session store + dur
 (`internal/adapter/k8slease`, the in-cluster multi-replica single-writer path), a dynamic
 `/readyz` (drain-gated + Redis-pinged), and a bounded `GracefulStop`. The agent pods are
 **storage-free**: no PVC, no `--store-dir`, no local state — every piece of state is a
-managed service the pod talks to over the network (Redis + the k8s API server). The focused
+managed service the pod talks to over the network (Redis + the k8s API server). An
+optional principal-scoped Redis virtual workspace provides shell-less
+Read/Edit/Write/Grep/Glob persistence without a volume: exact issuer/subject pairs select
+opaque namespaces, ownerless sessions share an anonymous namespace, and private placement
+refs are revalidated on reattach. It is mutually exclusive with the mounted-workspace mode.
+A separately selectable Redis read ledger keeps each session's read-before-write evidence
+across pods and restarts; session deletion removes that ledger but not principal-shared
+files. The focused
 `internal/adapter/tlsreload` lifecycle validates and atomically publishes the last-valid
 server chain for both listeners, watches projected-Secret swaps, and warns once per current
 certificate generation when its leaf is expiring or expired. Its fixed expiry ticker and

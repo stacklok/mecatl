@@ -87,6 +87,12 @@ spec:
             - --http-addr=0.0.0.0:8081
             - --drain-addr=0.0.0.0:8082
             - {{ printf "--redis-url=%s" .Values.redis.endpoint | quote }}
+            {{- if .Values.redis.filesystem.enabled }}
+            - --redis-filesystem
+            {{- end }}
+            {{- if .Values.redis.readLedger.enabled }}
+            - --redis-read-ledger
+            {{- end }}
             - {{ printf "--session-lease-k8s-namespace=%s" .Release.Namespace | quote }}
             - --headless=true
             - --posture=auto

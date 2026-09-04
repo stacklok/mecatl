@@ -153,6 +153,27 @@ func secureProductionArgs() []string {
 	return []string{"template", "production", ".", "--set", "image.tag=v0.0.0", "--set", "redis.endpoint=redis.example.internal:6380", "--set", "redis.credentialsSecret=redis-credentials", "--set", "tls.enabled=true,tls.secretName=mecak8s-tls", "--set", "oidc.enabled=true,oidc.issuer=https://idp.example.com,oidc.audience=mecatl"}
 }
 
+func TestMecak8sHelmChart_RedisFilesystemFlagsAndWorkspaceExclusion(t *testing.T) {
+	args := append(productionArgs(), "--set", "redis.filesystem.enabled=true,redis.readLedger.enabled=true")
+	rendered, err := helm(t, args...)
+	if err != nil {
+		t.Fatal(err, rendered)
+	}
+	for _, want := range []string{"--redis-filesystem", "--redis-read-ledger"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("Redis filesystem render missing %q", want)
+		}
+	}
+	if strings.Contains(rendered, "--workspace=") {
+		t.Fatal("Redis filesystem render unexpectedly contains --workspace")
+	}
+
+	args = append(args, "--set", "workspace=/workspace")
+	if rendered, err = helm(t, args...); err == nil {
+		t.Fatalf("Redis filesystem with mounted workspace rendered successfully:\n%s", rendered)
+	}
+}
+
 // kindVMCPArgs renders the Kind profile with the mecak8s-vmcp fixture's own
 // OIDC/TLS overlay layered on top — the shape deploy/mecak8s-vmcp/Taskfile.yml
 // actually installs. Never pass values-kind-vmcp.yaml alone or without

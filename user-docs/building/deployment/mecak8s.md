@@ -206,6 +206,23 @@ to one replica or use a per-pod volume if your storage class cannot do RWX. The
 operator vouches for the mount, so scope it deliberately — see the pod-filesystem
 note below.
 
+### Redis virtual workspace
+
+Set `redis.filesystem.enabled=true` (or pass `--redis-filesystem`) to provide
+persistent Read/Edit/Write/Grep/Glob files without mounting a volume. Files are
+partitioned by the session owner's exact OIDC issuer/subject pair; same-owner
+sessions share a namespace, while ownerless sessions share a reserved anonymous
+namespace. The persisted placement is revalidated on every run. Redis failures,
+missing namespace markers, and corrupt records fail closed rather than appearing
+as an empty filesystem.
+
+This mode is deliberately file-lite: it has no Bash, executable-file semantics,
+git worktrees, or filesystem branch/merge workflow. It is mutually exclusive with
+`workspace`. Set `redis.readLedger.enabled=true` independently to persist each
+session's read-before-write evidence; deleting a session deletes that ledger but
+not the principal's shared files. mecak8s sets no TTL on either representation.
+Redis durability, backups, capacity and eviction policy remain operator concerns.
+
 :::note[MCP OAuth credentials from Kubernetes Secrets]
 
 `mecak8s` wires the operator profile's explicit read-only credential Reader from one
