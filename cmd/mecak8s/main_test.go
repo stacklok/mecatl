@@ -534,7 +534,11 @@ func TestDrainHTTPRouting(t *testing.T) {
 
 	auth := server.NewAuthenticator(server.SecurityConfig{AuthToken: "test-token"})
 	defer auth.Close()
-	normal := httptest.NewServer(normalHTTPMux(built.Service, auth, server.ProtectedResourceProfile{}))
+	normalMux, err := normalHTTPMux(built.Service, auth, server.ProtectedResourceProfile{}, "", true, built.MCPBrokerHandlers, built.MCPBrokerCallbackPath)
+	if err != nil {
+		t.Fatalf("normalHTTPMux: %v", err)
+	}
+	normal := httptest.NewServer(normalMux)
 	defer normal.Close()
 	drain := httptest.NewServer(drainHTTPMux(built.Service, func(time.Duration) {}))
 	defer drain.Close()
@@ -626,7 +630,7 @@ func TestServeWiresSeparateDrainListener(t *testing.T) {
 	defer cancel()
 	serveErr := make(chan error, 1)
 	go func() {
-		serveErr <- serveWithDrainWait(ctx, cfg, built.Service, observability{}, func(time.Duration) {})
+		serveErr <- serveWithDrainWait(ctx, cfg, built.Service, observability{}, func(time.Duration) {}, built.MCPBrokerHandlers, built.MCPBrokerCallbackPath)
 	}()
 
 	waitForHTTPStatus(t, "http://"+cfg.httpAddr+"/drain", http.StatusNotFound)

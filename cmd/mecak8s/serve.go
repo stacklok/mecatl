@@ -19,11 +19,48 @@ import (
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
+	"github.com/stacklok/mecatl/internal/adapter/mcpbroker"
 	"github.com/stacklok/mecatl/internal/adapter/server"
 	"github.com/stacklok/mecatl/internal/adapter/telemetry"
 	"github.com/stacklok/mecatl/internal/adapter/tlsreload"
 	"github.com/stacklok/mecatl/internal/cliconfig"
 )
+
+// validateBrokerControlOwnership refuses to serve the broker's OAuth control
+// surface (authorize/token/callback — necessarily unauthenticated by the OAuth
+// dance itself) unless the deployment either verifies caller identity on its
+// OWN API surface (so at least the rest of the process is not wide open) or is
+// explicitly loopback-only. Mirrors the equivalent guard on the working
+// acc/session-vmcp-authorization branch; this branch's HandlerBundle has no
+// caller-identity concept of its own.
+func validateBrokerControlOwnership(addr string, verifiedIdentity, ownerlessLoopback bool, handlers mcpbroker.HandlerBundle) error {
+	if handlers.Empty() {
+		return nil
+	}
+	if verifiedIdentity || ownerlessLoopback && cliconfig.IsLoopbackAddr(addr) {
+		return nil
+	}
+	return errors.New("broker controls require verified caller identity unless explicitly single-user loopback")
+}
+
+// mountBrokerHandlers registers the broker's fixed HTTP surface on mux. It
+// MUST be called AFTER every other route (health/drain/API) is already
+// registered: HandlerBundle.Mount's own registeredHandlerRouteConflict check
+// rejects a broker route that would shadow an already-registered one, which is
+// this branch's answer to the reserved-path collision review-P16-FOLLOWUPS.md
+// flagged as still needing a real-mux integration proof — calling Mount last
+// on the SAME mux the rest of serve() just built IS that proof, not a second
+// hand-maintained reserved-path list.
+func mountBrokerHandlers(mux *http.ServeMux, addr string, verifiedIdentity, ownerlessLoopback bool, handlers mcpbroker.HandlerBundle, callbackPath string) error {
+	if handlers.Empty() {
+		return nil
+	}
+	if err := validateBrokerControlOwnership(addr, verifiedIdentity, ownerlessLoopback, handlers); err != nil {
+		return err
+	}
+	slog.Warn("vMCP broker mode is single-process/single-replica; a live session lease rejects non-holders without routing")
+	return handlers.Mount(mux, callbackPath)
+}
 
 // serve wires the built Service over gRPC + HTTP/SSE with k8s-native
 // operability: a DYNAMIC /readyz (drain-gated + storage-pinged via the SAME
@@ -49,7 +86,7 @@ import (
 // non-empty) is mounted in front of the authenticated API, same as mecated —
 // it must stay reachable without credentials, and outside the drain listener
 // since it is discovery metadata, not a lifecycle operation.
-func normalHTTPMux(svc *server.Service, auth *server.Authenticator, profile server.ProtectedResourceProfile) http.Handler {
+func normalHTTPMux(svc *server.Service, auth *server.Authenticator, profile server.ProtectedResourceProfile, addr string, authed bool, brokerHandlers mcpbroker.HandlerBundle, brokerCallbackPath string) (http.Handler, error) {
 	ready := server.ReadyFunc(func() bool {
 		if svc.IsDraining() {
 			return false
@@ -62,7 +99,13 @@ func normalHTTPMux(svc *server.Service, auth *server.Authenticator, profile serv
 	mux := http.NewServeMux()
 	server.NewHealthHandler(ready).RegisterHealth(mux)
 	mux.Handle("/", server.WithProtectedResourceMetadata(profile, auth.Middleware(server.NewHTTPHandler(svc))))
-	return mux
+	// Broker routes are mounted LAST, after every other route above, so
+	// HandlerBundle.Mount's own route-conflict check is checked against the
+	// real, fully-populated mux — see mountBrokerHandlers' doc comment.
+	if err := mountBrokerHandlers(mux, addr, authed, false, brokerHandlers, brokerCallbackPath); err != nil {
+		return nil, fmt.Errorf("mount MCP broker handlers: %w", err)
+	}
+	return mux, nil
 }
 
 func drainHTTPMux(svc *server.Service, wait func(time.Duration)) http.Handler {
@@ -127,11 +170,11 @@ func startMetricsServer(addr string, obs observability, errCh chan<- error) (*ht
 	return metricsSrv, nil
 }
 
-func serve(ctx context.Context, cfg config, svc *server.Service, obs observability) error {
-	return serveWithDrainWait(ctx, cfg, svc, obs, time.Sleep)
+func serve(ctx context.Context, cfg config, svc *server.Service, obs observability, brokerHandlers mcpbroker.HandlerBundle, brokerCallbackPath string) error {
+	return serveWithDrainWait(ctx, cfg, svc, obs, time.Sleep, brokerHandlers, brokerCallbackPath)
 }
 
-func serveWithDrainWait(ctx context.Context, cfg config, svc *server.Service, obs observability, drainWait func(time.Duration)) error {
+func serveWithDrainWait(ctx context.Context, cfg config, svc *server.Service, obs observability, drainWait func(time.Duration), brokerHandlers mcpbroker.HandlerBundle, brokerCallbackPath string) error {
 	tlsCfg, tlsLifecycle, err := buildTLSConfig(cfg)
 	if err != nil {
 		return err
@@ -162,9 +205,16 @@ func serveWithDrainWait(ctx context.Context, cfg config, svc *server.Service, ob
 	healthSrv.SetServingStatus("mecatl.v1.ScheduleService", healthpb.HealthCheckResponse_SERVING)
 
 	// HTTP/SSE carries health endpoints outside auth and the API inside auth.
+	// A bearer token, OIDC, or verified mTLS authenticates callers. Ordinary
+	// server TLS only authenticates the server.
+	authed := callerAuthenticationConfigured(cfg, tlsCfg)
+	normalMux, err := normalHTTPMux(svc, auth, protectedResourceProfile(cfg.oidc), cfg.httpAddr, authed, brokerHandlers, brokerCallbackPath)
+	if err != nil {
+		return err
+	}
 	httpSrv := &http.Server{
 		Addr:              cfg.httpAddr,
-		Handler:           normalHTTPMux(svc, auth, protectedResourceProfile(cfg.oidc)),
+		Handler:           normalMux,
 		ReadHeaderTimeout: 10 * time.Second,
 		TLSConfig:         tlsCfg,
 	}
@@ -174,9 +224,6 @@ func serveWithDrainWait(ctx context.Context, cfg config, svc *server.Service, ob
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
-	// A bearer token, OIDC, or verified mTLS authenticates callers. Ordinary
-	// server TLS only authenticates the server.
-	authed := callerAuthenticationConfigured(cfg, tlsCfg)
 	warnIfNonLoopback("grpc-addr", cfg.grpcAddr, authed)
 	warnIfNonLoopback("http-addr", cfg.httpAddr, authed)
 	warnDrainExposure(cfg.drainAddr)

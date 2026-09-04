@@ -863,6 +863,21 @@ type Config struct {
 	MCPProfileLoader interface {
 		Load(*permconfig.MCPSection) ([]mcp.ServerConfig, interface{ Close() error }, error)
 	}
+	// MCPAuthorityLoader resolves the operator mcp: section into exactly one
+	// mode-specific authority (global XOR broker) via the canonical authority
+	// resolver (internal/cliconfig.ResolveMCPAuthority), instead of
+	// MCPProfileLoader.Load's global-mode-only path — Load unconditionally
+	// requires OAuth credential configuration even when mcp.mode: broker
+	// deliberately carries none. A command root that supports broker mode
+	// installs THIS in addition to MCPProfileLoader; Build prefers it whenever
+	// both are set. MCPAuthorityDefault is the mode assumed when the operator
+	// config omits mcp.mode; MCPBrokerSupported gates whether broker mode is
+	// even offered by this root's transport.
+	MCPAuthorityLoader interface {
+		LoadAuthority(*permconfig.MCPSection, mcpauthority.Mode, bool) (*mcpauthority.Result, error)
+	}
+	MCPAuthorityDefault mcpauthority.Mode
+	MCPBrokerSupported  bool
 	// MCPProfileLifecycle owns credential stores/readers used by MCPServers.
 	// Build closes it after the global MCP manager/controllers and before other
 	// source lifecycles. It is nil for programmatic and legacy static configs.
@@ -1352,6 +1367,30 @@ func (b *Built) MountMCPBrokerHandlers(mux *http.ServeMux) error {
 // manager on shutdown. Build itself starts no listeners — serving is the caller's
 // responsibility (see cmd/mecated/serve and cmd/mecatui/embed).
 //
+// applyMCPAuthority folds a resolved *mcpauthority.Result onto cfg: broker mode
+// leaves cfg.MCPServers untouched (the broker vertical, wired further down in
+// Build, owns the OAuth-protected route set instead), global mode populates
+// cfg.MCPServers/MCPProfileLifecycle exactly as MCPProfileLoader.Load would
+// have. Centralised here so both the operator-config and no-config branches of
+// Build's authority resolution apply it identically.
+func applyMCPAuthority(cfg *Config, authority *mcpauthority.Result, profileLifecycle *interface{ Close() error }) error {
+	if authority == nil {
+		return fmt.Errorf("MCP authority loader returned nil authority")
+	}
+	cfg.MCPAuthority = authority
+	if authority.Mode() == mcpauthority.Broker {
+		return nil
+	}
+	servers, lifecycle, ok := authority.Global()
+	if !ok {
+		return fmt.Errorf("global MCP authority is incomplete")
+	}
+	cfg.MCPServers = servers
+	cfg.MCPProfileLifecycle = lifecycle
+	*profileLifecycle = lifecycle
+	return nil
+}
+
 //nolint:gocyclo // composition root: long sequential wiring with reverse-order teardown; inherent.
 func Build(ctx context.Context, cfg Config) (*Built, error) {
 	mcpProfileLifecycle := cfg.MCPProfileLifecycle
@@ -1505,14 +1544,21 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		return nil, learningErr
 	}
 	if resolver, ok := cfg.permResolver.(*permconfig.Resolver); ok {
-		if cfg.MCPProfileLoader == nil {
+		if cfg.MCPAuthorityLoader != nil {
+			authority, err := cfg.MCPAuthorityLoader.LoadAuthority(resolver.OperatorMCP(), cfg.MCPAuthorityDefault, cfg.MCPBrokerSupported)
+			if err != nil {
+				return nil, err
+			}
+			if err := applyMCPAuthority(&cfg, authority, &mcpProfileLifecycle); err != nil {
+				return nil, err
+			}
+		} else if cfg.MCPProfileLoader == nil {
 			if mcpCfg := resolver.OperatorMCP(); mcpCfg != nil && len(mcpCfg.Servers) > 0 {
 				cfg.diag().Log(ctx, port.LevelWarn,
 					"operator-tier mcp.servers configured but no MCP profile loader is wired; servers ignored",
 					"count", len(mcpCfg.Servers))
 			}
-		}
-		if cfg.MCPProfileLoader != nil {
+		} else {
 			profiles, lifecycle, err := cfg.MCPProfileLoader.Load(resolver.OperatorMCP())
 			if err != nil {
 				return nil, err
@@ -1523,6 +1569,14 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		}
 		if models := resolver.OperatorModelPolicy(); models != nil {
 			cfg.contextWindows = map[string]map[string]int(models.ContextWindows)
+		}
+	} else if cfg.MCPAuthorityLoader != nil {
+		authority, err := cfg.MCPAuthorityLoader.LoadAuthority(nil, cfg.MCPAuthorityDefault, cfg.MCPBrokerSupported)
+		if err != nil {
+			return nil, err
+		}
+		if err := applyMCPAuthority(&cfg, authority, &mcpProfileLifecycle); err != nil {
+			return nil, err
 		}
 	} else if cfg.MCPProfileLoader != nil {
 		profiles, lifecycle, err := cfg.MCPProfileLoader.Load(nil)

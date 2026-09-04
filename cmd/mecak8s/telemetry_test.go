@@ -223,7 +223,7 @@ func TestTelemetryMetricsAddrServesPrometheus(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	serveErr := make(chan error, 1)
-	go func() { serveErr <- serve(ctx, cfg, built.Service, obs) }()
+	go func() { serveErr <- serve(ctx, cfg, built.Service, obs, built.MCPBrokerHandlers, built.MCPBrokerCallbackPath) }()
 
 	// Wait for /metrics to respond, then assert it carries a mecatl series.
 	var body string
@@ -340,7 +340,7 @@ func TestTelemetryPushesRunMetricsOnExit(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	serveErr := make(chan error, 1)
-	go func() { serveErr <- serve(ctx, cfg, built.Service, obs) }()
+	go func() { serveErr <- serve(ctx, cfg, built.Service, obs, built.MCPBrokerHandlers, built.MCPBrokerCallbackPath) }()
 	cancel()
 	select {
 	case <-serveErr:
