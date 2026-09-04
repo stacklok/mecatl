@@ -2,8 +2,8 @@
 id: 01-closed-inputs-and-verification
 title: Closed exchange values and subject/I2 verification
 blocked_by: []
-status: in-progress
-branch: ""
+status: done
+branch: "plan-acting-as-user-exchange/01-closed-inputs-and-verification"
 worktree: ""
 issue: "372"
 retries: 0
