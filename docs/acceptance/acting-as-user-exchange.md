@@ -1,7 +1,7 @@
 # Acting-as-user exchange — acceptance plan
 
 **Phase:** I3-C adapter-neutral acting-as-user exchange contract
-**Status:** draft, 2026-09-03. Derived from the approved I3-D design.
+**Status:** in-progress, 2026-09-03. Derived from the approved I3-D design.
 **Issue:** [stacklok/mecatl#372](https://github.com/stacklok/mecatl/issues/372).
 **ADR:** [ADR-0253](../adr/0253-acting-as-user-exchange.md) — live exchange contract and I3-C boundary.
 **Accumulator branch:** `acc/acting-as-user-exchange` (off `acc/logical-agent-identity-projection`, the accepted I2 base).

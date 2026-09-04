@@ -2,7 +2,7 @@
 id: 01-closed-inputs-and-verification
 title: Closed exchange values and subject/I2 verification
 blocked_by: []
-status: pending
+status: in-progress
 branch: ""
 worktree: ""
 issue: "372"
