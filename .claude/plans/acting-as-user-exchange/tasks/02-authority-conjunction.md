@@ -2,7 +2,7 @@
 id: 02-authority-conjunction
 title: Exact authority conjunction and validated mechanism plan
 blocked_by: [01-closed-inputs-and-verification]
-status: pending
+status: in-progress
 branch: ""
 worktree: ""
 issue: "372"
