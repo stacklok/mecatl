@@ -1,7 +1,7 @@
 ---
 sidebar_position: 6
 title: Permissions and posture
-description: Control approvals, project trust, guardrails, and autonomous mecatl operation.
+description: Control approvals, project trust, guardrails, and autonomous Mecatl operation.
 ---
 
 # Permissions and posture

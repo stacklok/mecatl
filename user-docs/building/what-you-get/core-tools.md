@@ -6,7 +6,7 @@ description: Understand Mecatl's built-in tools and the read-parallel, mutate-se
 
 # Core tools
 
-The **tool catalog** is the set of tools the model can invoke during a session. mecatl assembles it at startup from the core built-ins, any configured MCP servers, and opt-in features (skills, memory). Every tool — built-in or remote — is the same `tool.Tool` interface, so the model and the dispatch layer see one uniform surface.
+The **tool catalog** is the set of tools the model can invoke during a session. Mecatl assembles it at startup from the core built-ins, any configured MCP servers, and opt-in features (skills, memory). Every tool — built-in or remote — is the same `tool.Tool` interface, so the model and the dispatch layer see one uniform surface.
 
 Two dispatch rules govern execution:
 
@@ -40,7 +40,7 @@ These tools are always present in a default session (no extra configuration requ
 
 The fetcher does not use browser cookies, proxy settings, custom headers, or credentials. It rejects private, loopback, link-local, metadata, and reserved destinations, pins the DNS result used for the connection, and repeats those checks on every redirect. URLs are capped at 8 KiB, redirects at five hops, downloads and decompressed bodies at 5 MiB, and model-visible output at 25,000 bytes. Binary files and unsupported content types are rejected.
 
-Fetched text is external input. mecatl strips active HTML elements, converts the remaining page to text, repairs invalid UTF-8, and wraps the result in the same untrusted-content fence used by WebSearch. If you enable model-backed guardrails, their default rules inspect `WebFetch` results before the model sees them.
+Fetched text is external input. Mecatl strips active HTML elements, converts the remaining page to text, repairs invalid UTF-8, and wraps the result in the same untrusted-content fence used by WebSearch. If you enable model-backed guardrails, their default rules inspect `WebFetch` results before the model sees them.
 
 :::note[Bash is mutating]
 

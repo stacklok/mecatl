@@ -62,7 +62,7 @@ or use provider credentials.
 
 ### Basic local fixture
 
-From a clone of the mecatl repository:
+From a clone of the Mecatl repository:
 
 ```sh
 task mecak8s:kind-setup
@@ -858,7 +858,7 @@ owner, replay skipped work, or adopt a record for the first caller.
 ### Validator and bounded signing-key cache
 
 The production OIDC/JWT validator is a delegated, actively-maintained library —
-mecatl never hand-rolls token verification. A bad OIDC
+Mecatl never hand-rolls token verification. A bad OIDC
 configuration, including an unreachable initial key fetch, fails closed at startup
 rather than serving unauthenticated traffic. After a successful fetch, the last
 good JWKS can cover a short IdP outage. The chart's default `oidc.maxJWKSStaleness`

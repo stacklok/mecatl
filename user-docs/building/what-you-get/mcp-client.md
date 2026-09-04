@@ -6,13 +6,13 @@ description: Connect Mecatl to streaming-HTTP MCP servers and expose their tools
 
 # MCP client
 
-mecatl includes a built-in [Model Context Protocol](https://modelcontextprotocol.io) client. Point it at one or more MCP servers; every tool those servers expose lands in the agent's tool catalog automatically, namespaced as `mcp__<server>__<tool>`. From the model's perspective those tools are identical to the built-ins — same dispatch rules, same permission system, same audit trail.
+Mecatl includes a built-in [Model Context Protocol](https://modelcontextprotocol.io) client. Point it at one or more MCP servers; every tool those servers expose lands in the agent's tool catalog automatically, namespaced as `mcp__<server>__<tool>`. From the model's perspective those tools are identical to the built-ins — same dispatch rules, same permission system, same audit trail.
 
 ---
 
 ## Streaming-HTTP only
 
-mecatl speaks the **streaming-HTTP (streamable-HTTP JSON-RPC) MCP transport only**. The stdio/subprocess transport is never used — the harness does not spawn external processes for MCP servers. This is a deliberate security constraint: running an MCP server as a child process would put arbitrary subprocess execution on the agent's critical path. If your MCP server currently speaks stdio, front it with an HTTP proxy (e.g. ToolHive's HTTP proxying layer, which mecatl already integrates with).
+Mecatl speaks the **streaming-HTTP (streamable-HTTP JSON-RPC) MCP transport only**. The stdio/subprocess transport is never used — the harness does not spawn external processes for MCP servers. This is a deliberate security constraint: running an MCP server as a child process would put arbitrary subprocess execution on the agent's critical path. If your MCP server currently speaks stdio, front it with an HTTP proxy (e.g. ToolHive's HTTP proxying layer, which Mecatl already integrates with).
 
 ---
 
@@ -29,7 +29,7 @@ mecated serve \
 
 The flag value is `<name>=<URL>` where `name` is the identifier that becomes the namespace prefix and `URL` is the streaming-HTTP endpoint. The same flag (and the token convention below) is accepted by all three headless binaries — `mecated`, `mecatequi`, and `mecak8s` — so a CI or scheduler-launched one-shot run can reach the same MCP endpoints as the daemon. The optional `mecatui` TUI has no `--mcp-server` flag; instead its embedded server reads operator-tier `mcp.servers` profiles from `~/.config/mecatl/settings.yaml` directly, with no flag required (a configured block with no loader wired surfaces a WARN).
 
-**Auth token.** If the server requires a bearer token, set the environment variable `MCP_<NAME>_TOKEN` (uppercased name). mecatl sends it in the `Authorization: Bearer …` header and never logs it. Server names must match `[A-Za-z0-9_]+` and be case-insensitively unique (the name derives the env var), and a token-bearing URL must be `https` — or `http` to a loopback host — so the token is never sent in cleartext off-host:
+**Auth token.** If the server requires a bearer token, set the environment variable `MCP_<NAME>_TOKEN` (uppercased name). Mecatl sends it in the `Authorization: Bearer …` header and never logs it. Server names must match `[A-Za-z0-9_]+` and be case-insensitively unique (the name derives the env var), and a token-bearing URL must be `https` — or `http` to a loopback host — so the token is never sent in cleartext off-host:
 
 ```sh
 export MCP_GITHUB_TOKEN=ghp_…
@@ -49,7 +49,7 @@ external Secret update plus process restart. Keep `static_bearer` as a rollback 
 the server supports it. See the
 [operator configuration guide](https://github.com/stacklok/mecatl/blob/main/docs/usage/configuration.md#global-mcp-authentication-profiles).
 
-**ToolHive discovery.** If you run MCP servers via [ToolHive](https://toolhive.io), mecatl discovers them automatically from the running workloads — no `--mcp-server` flag needed. ToolHive proxy URLs are HTTP, so the streaming-HTTP constraint is met transparently. Discovery is controlled by `--toolhive` (default `true`; pass `--toolhive=false` to disable) and `--toolhive-group` (default group when empty).
+**ToolHive discovery.** If you run MCP servers via [ToolHive](https://toolhive.io), Mecatl discovers them automatically from the running workloads — no `--mcp-server` flag needed. ToolHive proxy URLs are HTTP, so the streaming-HTTP constraint is met transparently. Discovery is controlled by `--toolhive` (default `true`; pass `--toolhive=false` to disable) and `--toolhive-group` (default group when empty).
 
 ---
 
@@ -105,7 +105,7 @@ The reconnect logic sits on the server object (not on individual tool wrappers),
 
 Concurrent calls that hit the same drop coalesce: the first one dials (holding a mutex), the rest wait and then receive the fresh session without dialing again. The dial is bounded by the server's configured timeout (default 30 s), so the mutex is never held indefinitely.
 
-**Tool list is not re-fetched on reconnect.** The catalog snapshot taken at startup is preserved across a reconnect. If the server re-advertises a different tool set after restarting, the agent keeps the original specs until the next mecatl process start. This is the expected v1 behavior.
+**Tool list is not re-fetched on reconnect.** The catalog snapshot taken at startup is preserved across a reconnect. If the server re-advertises a different tool set after restarting, the agent keeps the original specs until the next Mecatl process start. This is the expected v1 behavior.
 
 Reconnect activity is logged through the standard diagnostics channel:
 
@@ -119,7 +119,7 @@ Reconnect activity is logged through the standard diagnostics channel:
 
 Two optional behaviors are on by default:
 
-**Resource meta-tools** (`--mcp-resource-tools`, default `true`). When a connected MCP server exposes resources, mecatl registers `ListMcpResources` and `ReadMcpResource` meta-tools so the model can browse and read them. Disable with `--mcp-resource-tools=false`.
+**Resource meta-tools** (`--mcp-resource-tools`, default `true`). When a connected MCP server exposes resources, Mecatl registers `ListMcpResources` and `ReadMcpResource` meta-tools so the model can browse and read them. Disable with `--mcp-resource-tools=false`.
 
 **Prompt expansion** (`--mcp-prompts`, default `true`). An MCP server's named prompts become expandable slash commands: `/mcp__<server>__<prompt> key=value`. The prompt spec is a static snapshot taken at connect time. An MCP prompt steers the model the same way a local slash command does — enable only for servers you trust.
 
@@ -129,7 +129,7 @@ Two optional behaviors are on by default:
 
 An MCP tool result isn't always just text. The spec lets a server return a typed
 content array — text, images, audio, embedded resources, `resource_link`
-references — plus an optional structured JSON payload. mecatl carries all of
+references — plus an optional structured JSON payload. Mecatl carries all of
 that through instead of flattening it to a string.
 
 The typed blocks ride on `ToolResult.Parts`, a `[]session.Content` field
@@ -146,7 +146,7 @@ through; only image and audio are gated on modality support.
 
 **`Audience` is advisory display routing, never a suppression control.** A
 content block can carry an `Audience` hint (e.g. `["user"]`) suggesting it's
-meant for a human viewer rather than the model. mecatl treats this as
+meant for a human viewer rather than the model. Mecatl treats this as
 advisory only — an MCP server is an untrusted supply-chain surface, and
 trusting a server's own audience tag to *hide* content from the model would
 let a malicious server smuggle a payload past the model's view (CWE-345). A
@@ -154,9 +154,9 @@ let a malicious server smuggle a payload past the model's view (CWE-345). A
 the model always still gets its copy.
 
 **`resource_link` URIs are never auto-dereferenced.** If a tool result points
-at a resource by URI instead of embedding it, mecatl does not fetch it
+at a resource by URI instead of embedding it, Mecatl does not fetch it
 automatically — a server pointing at an internal or cloud-metadata host would
-otherwise make mecatl an SSRF proxy (CWE-918). The model can fetch it back
+otherwise make Mecatl an SSRF proxy (CWE-918). The model can fetch it back
 itself: an `https://` URI can be retrieved with the `FetchMcpResource` tool,
 which validates the target through the same `ValidateMediaURL` check used
 elsewhere (absolute HTTPS only, private/metadata IP ranges denied, redirects
@@ -173,12 +173,12 @@ degrade — the model still gets a usable, if partial, string.
 
 Truncation is not safe for **structured (JSON) results**: cutting a JSON blob
 mid-token leaves an unparseable fragment the model can't do anything useful
-with. mecatl detects this case and fails closed instead of returning garbage.
+with. Mecatl detects this case and fails closed instead of returning garbage.
 
 A result counts as structured if any of these hold: the remote tool
 advertised an `outputSchema`, the result carried `structuredContent`, or a
 content block is JSON by MIME type or by parsing as JSON. When an oversized
-result is structured, mecatl returns an actionable tool error naming two ways
+result is structured, Mecatl returns an actionable tool error naming two ways
 forward — narrow or paginate the call using the remote tool's own
 filter/pagination parameters, or call it through **`CallMcpWithQuery`** with a
 jq filter — rather than handing the model a truncated blob it can't parse.
@@ -203,20 +203,20 @@ read-only tool.
 
 ## Server-initiated notifications
 
-mecatl keeps a persistent connection open to each MCP server so the server
+Mecatl keeps a persistent connection open to each MCP server so the server
 can push notifications — most importantly `tools/list_changed`,
 `prompts/list_changed`, and `resources/list_changed`, the server's signal
 that its catalog has changed and should be re-fetched.
 
 Receiving one of these doesn't trigger an immediate re-fetch. It marks the
 corresponding list as stale; the next time that server's tools, prompts, or
-resources are actually read, mecatl re-fetches fresh and clears the staleness
+resources are actually read, Mecatl re-fetches fresh and clears the staleness
 flag. This keeps the notification handler itself cheap — it never blocks on a
 network call — while still ensuring nothing is served stale forever.
 
 One practical consequence: a new session created after a server announces a
 change picks up the fresh tool set, but a tool catalog already assembled for
-an in-flight session is not modified — mecatl's tool catalog is append-only
+an in-flight session is not modified — Mecatl's tool catalog is append-only
 within a session, so live catalog mutation for a running session isn't
 supported yet. If a server drops a tool an existing session still has
 registered, calling it surfaces an error the model can react to, rather than

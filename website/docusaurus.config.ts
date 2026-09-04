@@ -3,7 +3,7 @@ import type {Config} from '@docusaurus/types';
 import type * as Preset from '@docusaurus/preset-classic';
 
 const config: Config = {
-  title: 'mecatl',
+  title: 'Mecatl',
   tagline: 'A cloud-native harness for agentic systems',
   favicon: 'img/favicon.svg',
 
@@ -18,7 +18,7 @@ const config: Config = {
   markdown: {
     mermaid: true,
     hooks: {
-      onBrokenMarkdownLinks: 'warn',
+      onBrokenMarkdownLinks: 'throw',
     },
   },
   themes: [
@@ -68,9 +68,9 @@ const config: Config = {
       respectPrefersColorScheme: false,
     },
     navbar: {
-      title: 'mecatl',
+      title: 'Mecatl',
       logo: {
-        alt: 'mecatl — stylized rope knot mark',
+        alt: 'Mecatl — stylized rope knot mark',
         src: 'img/logo.svg',
       },
       style: 'dark',
@@ -104,7 +104,7 @@ const config: Config = {
           title: 'Guides',
           items: [
             {label: 'Use mecatui', to: '/docs/mecatui'},
-            {label: 'Build on mecatl', to: '/docs/building'},
+            {label: 'Build on Mecatl', to: '/docs/building'},
             {label: 'Getting Started', to: '/docs/building/getting-started/demo'},
             {label: 'Extension Points', to: '/docs/building/extension-points'},
             {label: 'Deployment', to: '/docs/building/deployment'},

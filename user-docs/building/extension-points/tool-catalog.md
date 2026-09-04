@@ -185,7 +185,7 @@ Each `name=URL` pair connects to a streaming-HTTP MCP server at startup. An auth
 
 For a deliberately plain-http endpoint on a trusted network segment (e.g. an in-cluster Service behind a NetworkPolicy), `--mcp-server-insecure-http <name>` (repeatable) opts that one server out of the https rule. It is an explicit acknowledgment that the token travels **cleartext on the network path** — you are relying on network-layer controls plus a short-lived token. The relaxation covers only the named server and only the `http` scheme; naming a server that is not registered, or whose URL is already `https`/loopback, is a startup error.
 
-mecatl also integrates with ToolHive: `--toolhive` (default on) discovers already-running ToolHive workloads by their HTTP proxy URLs. mecatl never starts or spawns ToolHive workloads — it only reads URLs from an already-running instance.
+Mecatl also integrates with ToolHive: `--toolhive` (default on) discovers already-running ToolHive workloads by their HTTP proxy URLs. Mecatl never starts or spawns ToolHive workloads — it only reads URLs from an already-running instance.
 
 ### The `--mcp-resource-tools` flag
 
@@ -200,7 +200,7 @@ These tools use plain names (not the `mcp__` namespace) because they are harness
 
 ### The `--mcp-prompts` flag
 
-When `--mcp-prompts` is enabled (default on), the harness registers an expander for slash-command inputs of the form `/mcp__<server>__<prompt> key=value`. At `app.Build` time, mecatl takes a static snapshot of each server's advertised prompts. At run time, `/mcp__github__summarize_pr number=42` renders into the server's prompt template and injects it as the turn's instruction.
+When `--mcp-prompts` is enabled (default on), the harness registers an expander for slash-command inputs of the form `/mcp__<server>__<prompt> key=value`. At `app.Build` time, Mecatl takes a static snapshot of each server's advertised prompts. At run time, `/mcp__github__summarize_pr number=42` renders into the server's prompt template and injects it as the turn's instruction.
 
 :::warning[Trust boundary]
 

@@ -6,7 +6,7 @@ description: Run one bounded Mecatl prompt in CI and produce a patch, summary, a
 
 # Single-shot CI with mecatequi
 
-`mecatequi` (`cmd/mecatequi/`) is the headless, single-shot mecatl runner. One prompt in, three artifacts out, then exit. It is stateless by design: there is no session state between runs, no listeners, no TLS, no auth layer. It shares the same engine and service assembly as `mecated` (assembled through `internal/app.Build`) so its behaviour matches the daemon's — the same tool catalog, the same permission model, the same compaction. What it does not have is any forge awareness. It knows nothing about GitHub. The split-privilege job graph, issue extraction, and PR creation live entirely in `.github/` workflows and shell scripts.
+`mecatequi` (`cmd/mecatequi/`) is the headless, single-shot Mecatl runner. One prompt in, three artifacts out, then exit. It is stateless by design: there is no session state between runs, no listeners, no TLS, no auth layer. It shares the same engine and service assembly as `mecated` (assembled through `internal/app.Build`) so its behaviour matches the daemon's — the same tool catalog, the same permission model, the same compaction. What it does not have is any forge awareness. It knows nothing about GitHub. The split-privilege job graph, issue extraction, and PR creation live entirely in `.github/` workflows and shell scripts.
 
 It reads the same operator global MCP profiles as `mecated`, but never launches an OAuth
 browser. Authorize local credentials before the job or inject a preprovisioned environment
@@ -125,7 +125,7 @@ jobs:
       default-provider: openrouter
 ```
 
-Replace `v0.0.3` with the latest released tag. The reusable workflow is the same three jobs with the same per-job permissions, so the token boundary is preserved exactly. No vendored scripts, no mecatl checkout in the consumer — the composite action builds the binary from its own tagged source tree.
+Replace `v0.0.3` with the latest released tag. The reusable workflow is the same three jobs with the same per-job permissions, so the token boundary is preserved exactly. No vendored scripts, no Mecatl checkout in the consumer — the composite action builds the binary from its own tagged source tree.
 
 The alternative is the escape-hatch template (`.github/workflows/mecatequi-example.yml`), which is a hand-rolled copy of the full job graph. Use it when you need to customise the job graph: a custom author-gate job, an extra approval stage, a different trigger.
 

@@ -6,7 +6,7 @@ description: Use mecatui to run local or remote sessions, inspect tools, and man
 
 # Use mecatui
 
-`mecatui` is mecatl's interactive terminal client. It streams the agent's work, shows tool activity and permission requests, and keeps chats available for later continuation.
+`mecatui` is Mecatl's interactive terminal client. It streams the agent's work, shows tool activity and permission requests, and keeps chats available for later continuation.
 
 ## Choose how to connect
 

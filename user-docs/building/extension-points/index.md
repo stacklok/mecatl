@@ -6,7 +6,7 @@ description: Replace providers, storage, and policies through Mecatl's ports and
 
 # Overview & the port model
 
-mecatl is structured as a **hexagonal architecture** (ports & adapters). The agent loop in `engine/agent` targets only the interface definitions in `engine/port` — it never imports a concrete adapter, a provider SDK, or an OS package. Adapters implement those interfaces and are wired together at composition time in `internal/app` and the `cmd/` mains.
+Mecatl is structured as a **hexagonal architecture** (ports & adapters). The agent loop in `engine/agent` targets only the interface definitions in `engine/port` — it never imports a concrete adapter, a provider SDK, or an OS package. Adapters implement those interfaces and are wired together at composition time in `internal/app` and the `cmd/` mains.
 
 This means you can replace any single capability — swap in a different LLM provider, plug in Redis-backed session storage, or wire a custom permission policy — without touching the loop, the domain model, or any other adapter.
 
@@ -97,7 +97,7 @@ You do **not** need to implement a port to:
 
 ## How adapters are wired: the composition pattern
 
-mecatl uses **explicit constructors with no DI framework**. All wiring happens in `internal/app/build.go` (`app.Build`), which is the single shared composition root. The `cmd/` mains call it; they do not wire anything themselves.
+Mecatl uses **explicit constructors with no DI framework**. All wiring happens in `internal/app/build.go` (`app.Build`), which is the single shared composition root. The `cmd/` mains call it; they do not wire anything themselves.
 
 The schematic below shows how ports are satisfied for a typical deployment. Actual field names are illustrative; see `internal/app/build.go` for the live signatures.
 
@@ -165,7 +165,7 @@ To validate your implementation against the conformance suite:
 storeconformance.Run(t, func(t *testing.T) port.SessionStore { return yourstore.New() })
 ```
 
-Conformance suites ship in `engine/adapter/storeconformance`, `leaseconformance`, `fsconformance`, `sourceconformance`, `memconformance`, `eventlogconformance`, and `scheduleconformance`. An adapter that passes its suite is compatible with mecatl's expectations.
+Conformance suites ship in `engine/adapter/storeconformance`, `leaseconformance`, `fsconformance`, `sourceconformance`, `memconformance`, `eventlogconformance`, and `scheduleconformance`. An adapter that passes its suite is compatible with Mecatl's expectations.
 
 ---
 

@@ -6,7 +6,7 @@ description: Understand the engine, session, and run objects that make up a Meca
 
 # Engine & session model
 
-mecatl has no `Agent` type. The word *agent* describes the **behaviour** that emerges when an `Engine` runs a `Session` — not a single Go object. Understanding the three objects you hold and the three objects you pass in is the fastest way to orient yourself before reading anything else.
+Mecatl has no `Agent` type. The word *agent* describes the **behaviour** that emerges when an `Engine` runs a `Session` — not a single Go object. Understanding the three objects you hold and the three objects you pass in is the fastest way to orient yourself before reading anything else.
 
 ---
 

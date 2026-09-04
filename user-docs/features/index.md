@@ -6,7 +6,7 @@ description: Explore Mecatl features for sessions, models, permissions, tools, a
 
 # Features
 
-This section documents mecatl capabilities by the task they help you complete.
+This section documents Mecatl capabilities by the task they help you complete.
 Most features belong to the shared agent/server core; deployment pages explain
 how `mecated`, `mecak8s`, and mecatui expose that core in different operating
 environments.

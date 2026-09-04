@@ -10,7 +10,7 @@ Start with [Build your first agent](/building/getting-started/first-agent.md) fo
 the shortest copyable path. This page is the detailed reference for embedders:
 You own the binary. The agent loop runs in-process, wired alongside your existing service code. No gRPC server, no separate process, no TLS handshake — just a Go `import` and a constructor call.
 
-This is the right choice when mecatl needs to live inside a larger service you already operate, when you want fine-grained control over every dependency in your build graph, or when the overhead of standing up a `mecated` process is more than you want to carry.
+This is the right choice when Mecatl needs to live inside a larger service you already operate, when you want fine-grained control over every dependency in your build graph, or when the overhead of standing up a `mecated` process is more than you want to carry.
 
 ---
 
@@ -40,7 +40,7 @@ The engine is a separate Go module: `github.com/stacklok/mecatl/engine`. Its run
 | `github.com/robfig/cron/v3` | Cron expression parsing in `engine/adapter/cronparse` |
 | `go.uber.org/goleak` | Test-only leaked-goroutine detection; never enters a production build |
 
-Nothing from mecatl's heavy require cone — no OpenAI/Anthropic SDKs, no gRPC, no Bubble Tea TUI, no `k8s.io/client-go` — enters your build graph. A `go get github.com/stacklok/mecatl/engine` does not transitively pull the root module.
+Nothing from Mecatl's heavy require cone — no OpenAI/Anthropic SDKs, no gRPC, no Bubble Tea TUI, no `k8s.io/client-go` — enters your build graph. A `go get github.com/stacklok/mecatl/engine` does not transitively pull the root module.
 
 ---
 
@@ -202,7 +202,7 @@ Evaluator FAIL remains deny-dominant. Evaluator infrastructure errors durably re
 ERROR verdict before the original error is returned; raw error detail is neither persisted nor logged.
 `engine/adapter/skillfs.AtomicCatalog`
 supplies a complete-generation live Skill tool while preserving existing snapshot sources. Standard
-mecatl composition wires these into its caller-partitioned gRPC/HTTP review surface; an embedder may
+Mecatl composition wires these into its caller-partitioned gRPC/HTTP review surface; an embedder may
 replace every seam.
 
 The engine library seam itself does not choose persistence, schedule jobs, or expose a transport. Hosts
@@ -233,7 +233,7 @@ If you need several of those capabilities, `mecated` (or the `internal/app` comp
 
 ## go.work for monorepo development
 
-The engine is a separate Go module inside the mecatl monorepo, connected via `go.work`. If you develop against a local checkout of mecatl rather than the published module, set up a `go.work` in your own repo's parent:
+The engine is a separate Go module inside the Mecatl monorepo, connected via `go.work`. If you develop against a local checkout of Mecatl rather than the published module, set up a `go.work` in your own repo's parent:
 
 ```sh
 # In your project root (where your go.mod lives):

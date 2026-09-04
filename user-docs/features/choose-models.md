@@ -1,16 +1,16 @@
 ---
 sidebar_position: 3
 title: Choose models and providers
-description: Select the provider, model, and reasoning effort for a mecatl session.
+description: Select the provider, model, and reasoning effort for a Mecatl session.
 ---
 
 # Choose models and providers
 
-A mecatl session runs with a provider and a base model selected by the server
+A Mecatl session runs with a provider and a base model selected by the server
 and, optionally, by the client. The server returns the effective selection and
 input capabilities when the session is created.
 
-The choice depends on how you use mecatl, so this page separates three
+The choice depends on how you use Mecatl, so this page separates three
 journeys:
 
 - the **mecatui journey** for interactive selection;

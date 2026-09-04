@@ -1,14 +1,14 @@
 ---
 sidebar_position: 1
-title: Building on mecatl
+title: Building on Mecatl
 description: Embed, extend, and deploy Mecatl using its Go engine, services, and adapter ports.
 ---
 
-# Building on mecatl
+# Building on Mecatl
 
-mecatl is a cloud-native harness for building agentic systems. It ships as a runnable service (`mecated`, `mecak8s`) and as an importable Go engine (`github.com/stacklok/mecatl/engine`) with a deliberate port model: you wire in the adapters your stack needs and the loop, tools, permissions, hooks, and resilience are already there.
+Mecatl is a cloud-native harness for building agentic systems. It ships as a runnable service (`mecated`, `mecak8s`) and as an importable Go engine (`github.com/stacklok/mecatl/engine`) with a deliberate port model: you wire in the adapters your stack needs and the loop, tools, permissions, hooks, and resilience are already there.
 
-This guide is for teams building **on** mecatl — embedding the engine, writing adapters, deploying to k8s, or wiring mecatl into their own product.
+This guide is for teams building **on** Mecatl — embedding the engine, writing adapters, deploying to k8s, or wiring Mecatl into their own product.
 
 ---
 

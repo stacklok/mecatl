@@ -6,7 +6,7 @@ description: Monitor Mecatl runs with metrics, traces, diagnostics, and resilien
 
 # Observability & resilience
 
-mecatl ships three distinct observability channels and a resilience decorator that wraps every LLM provider call. This doc describes what each one emits, what guarantees the LLM layer makes on failure, and which flags control the behavior.
+Mecatl ships three distinct observability channels and a resilience decorator that wraps every LLM provider call. This doc describes what each one emits, what guarantees the LLM layer makes on failure, and which flags control the behavior.
 
 ---
 
@@ -91,7 +91,7 @@ Tracing is enabled when `--otlp-endpoint` is non-empty. With an empty endpoint, 
 | `--otlp-protocol` | `grpc` | Transport: `grpc` or `http`. |
 | `--otlp-insecure` | `false` | Skip TLS — useful for a local collector. |
 
-When tracing is active, mecatl models a run/turn/tool span hierarchy. The `EventSink.Emit` call carries the run's context so telemetry can parent a run span to an inbound request span.
+When tracing is active, Mecatl models a run/turn/tool span hierarchy. The `EventSink.Emit` call carries the run's context so telemetry can parent a run span to an inbound request span.
 
 :::note[Concurrent-run span correlation]
 The current span model has a single root per sink. Concurrent runs in the same process do not produce independently correlated spans — all runs on the same sink share the same root. This is a documented limitation; per-run correlation is the planned direction.
@@ -213,4 +213,4 @@ The `jsonlstore` backend (selected with `--store-dir`) implements `ToolCallRecor
 
 ## What's next
 
-To configure mecatl for production, see the deployment guide for how to wire an OTLP collector, configure the admin listener, and set up session persistence with `jsonlstore`.
+To configure Mecatl for production, see the deployment guide for how to wire an OTLP collector, configure the admin listener, and set up session persistence with `jsonlstore`.

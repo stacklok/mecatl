@@ -6,7 +6,7 @@ description: Delegate work to focused subagents, coordinated teams, and parallel
 
 # Subagents, teams, and parallel
 
-mecatl gives the model three ways to delegate work to a child agent instead of doing everything itself in one long conversation: **Subagent** for focused work, **Parallel** for isolated writable or competing branches with built-in join/winner semantics, and **Team** only for specialists that must coordinate. All three are ordinary tools in the catalog. The model decides when to reach for one, based on its own tool descriptions.
+Mecatl gives the model three ways to delegate work to a child agent instead of doing everything itself in one long conversation: **Subagent** for focused work, **Parallel** for isolated writable or competing branches with built-in join/winner semantics, and **Team** only for specialists that must coordinate. All three are ordinary tools in the catalog. The model decides when to reach for one, based on its own tool descriptions.
 
 This page covers them from the caller's side: what each one does, the knobs you'll see on the wire (per-call arguments, flags, permission rules), and how to inspect or manage a child once it's running. For how delegation is actually implemented — workspace isolation, permission resolution, the redaction boundary between a child and its parent — see [`docs/architecture/subagents-and-teams.md`](https://github.com/stacklok/mecatl/blob/main/docs/architecture/subagents-and-teams.md) and [`docs/architecture/parallelism.md`](https://github.com/stacklok/mecatl/blob/main/docs/architecture/parallelism.md) in the architecture guide.
 
@@ -58,7 +58,7 @@ A background subagent still running when your run ends is cancelled; its transcr
 
 ### Cancelling one child mid-run
 
-If a subagent (or a Parallel branch, or a team member) is taking the wrong approach, you don't have to cancel your whole run to stop it. mecatl exposes a per-child cancel — the gRPC `ConverseRequest.cancel_child` field, `POST /v1/sessions/{id}/cancel-child` over HTTP, or the `x` key in `mecatui` — that stops just that one delegation without touching anything else in flight.
+If a subagent (or a Parallel branch, or a team member) is taking the wrong approach, you don't have to cancel your whole run to stop it. Mecatl exposes a per-child cancel — the gRPC `ConverseRequest.cancel_child` field, `POST /v1/sessions/{id}/cancel-child` over HTTP, or the `x` key in `mecatui` — that stops just that one delegation without touching anything else in flight.
 
 ## Parallel — isolated writable or competing branches
 

@@ -1,12 +1,12 @@
 ---
 sidebar_position: 9
 title: Session continuity
-description: Persist, resume, maintain, and recover mecatl sessions across deployment shapes.
+description: Persist, resume, maintain, and recover Mecatl sessions across deployment shapes.
 ---
 
 # Session continuity
 
-A mecatl session can survive a process restart when it is backed by a durable
+A Mecatl session can survive a process restart when it is backed by a durable
 session store. The stored session contains the provider-neutral conversation,
 state, usage, limits, environment identity, and enough metadata to rebuild the
 same session profile. A later process loads that snapshot and resumes through the

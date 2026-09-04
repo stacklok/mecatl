@@ -20,7 +20,7 @@ Use this page to choose the operational boundary that fits your environment.
 flowchart TD
     A([Start]) --> B{Single-shot CI job?\nOne prompt → patch → exit}
     B -- yes --> EQUI[mecatequi]
-    B -- no --> C{Embedding mecatl\ninside your own Go binary?}
+    B -- no --> C{Embedding Mecatl\ninside your own Go binary?}
     C -- yes --> EMBED[Embed the engine]
     C -- no --> D{Kubernetes deployment\nwith no persistent volumes?}
     D -- yes --> K8S[mecak8s]
@@ -40,11 +40,11 @@ If you landed on **mecated** but want multi-replica support without affinity rou
 
 ## Embed the engine
 
-Import `github.com/stacklok/mecatl/engine` and wire the ports yourself. The engine module's runtime dependency closure is `doublestar`, `robfig/cron/v3`, `github.com/goccy/go-yaml`, `golang.org/x/net`, and `golang.org/x/sync`; `goleak` is test-only. Nothing from mecatl's heavy require cone (OpenAI/Anthropic SDKs, gRPC, the TUI, client-go) enters your build graph.
+Import `github.com/stacklok/mecatl/engine` and wire the ports yourself. The engine module's runtime dependency closure is `doublestar`, `robfig/cron/v3`, `github.com/goccy/go-yaml`, `golang.org/x/net`, and `golang.org/x/sync`; `goleak` is test-only. Nothing from Mecatl's heavy require cone (OpenAI/Anthropic SDKs, gRPC, the TUI, client-go) enters your build graph.
 
 You implement `port.LLMProvider`, `port.SessionStore`, and the rest using the reference adapters under `engine/adapter/` as a starting point, or bring your own. You get the agent loop, the full tool catalog, the permission model, hooks, subagent delegation, and compaction with no binary dependency.
 
-The cost: you own the composition. There is no out-of-the-box server, no auth layer, no gRPC surface, and no Kubernetes manifests. This is the right choice when mecatl needs to run inside an existing service and you want fine-grained control over every dependency — not when you want something running quickly.
+The cost: you own the composition. There is no out-of-the-box server, no auth layer, no gRPC surface, and no Kubernetes manifests. This is the right choice when Mecatl needs to run inside an existing service and you want fine-grained control over every dependency — not when you want something running quickly.
 
 ## mecated
 

@@ -61,7 +61,7 @@ Provider-private knobs that differ by adapter — OpenAI's `store`/`include` fla
 
 ### The stateless contract
 
-mecatl sends the **full conversation history on every turn** (`store: false`). There is no server-side conversation state. This has two consequences:
+Mecatl sends the **full conversation history on every turn** (`store: false`). There is no server-side conversation state. This has two consequences:
 
 1. **The system prompt is a `prompt.Layered` struct**, not a raw string. It has a stable prefix (the agent persona, tool schemas, and instructions — the part that does not change turn-to-turn) and a volatile suffix (per-turn context that does change). The byte-stable prefix is what provider-side prompt caching originally keyed on; it now also caches the growing **conversation itself** — Anthropic places breakpoints on the conversation history (not just the system prefix), and OpenAI/OpenRouter carry a routing/observability hint (`prompt_cache_key`) alongside the API's own implicit caching. Changing anything in the stable prefix still busts the cache. See [ADR 0100](https://github.com/stacklok/mecatl/blob/main/docs/adr/0100-provider-prompt-caching.md).
 2. **`Messages` carries every message the session has recorded**, including tool calls and results. The adapters re-serialise this into the provider's wire format on each request. Compaction trims the history when it approaches the context limit, but it never enables server-side state as a workaround.
