@@ -3,7 +3,7 @@ module github.com/stacklok/mecatl/provider/anthropic
 go 1.26.6
 
 require (
-	github.com/anthropics/anthropic-sdk-go v1.66.0
+	github.com/anthropics/anthropic-sdk-go v1.69.0
 	github.com/stacklok/mecatl/engine v0.13.0
 	go.uber.org/goleak v1.3.0
 )
@@ -14,6 +14,7 @@ require (
 	github.com/invopop/jsonschema v0.14.0 // indirect
 	github.com/pb33f/ordered-map/v2 v2.3.1 // indirect
 	github.com/standard-webhooks/standard-webhooks/libraries v0.0.1 // indirect
+	github.com/stretchr/testify v1.12.1 // indirect
 	github.com/tidwall/gjson v1.19.0 // indirect
 	github.com/tidwall/match v1.1.1 // indirect
 	github.com/tidwall/pretty v1.2.1 // indirect

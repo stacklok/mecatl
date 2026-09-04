@@ -4,7 +4,7 @@ go 1.26.6
 
 require (
 	github.com/stacklok/mecatl/engine v0.11.0
-	github.com/stacklok/toolhive-core v0.0.41
+	github.com/stacklok/toolhive-core v0.0.42
 )
 
 require (
