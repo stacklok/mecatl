@@ -3,6 +3,7 @@ package server_test
 import (
 	"context"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 	"github.com/stacklok/mecatl/contracts/sessionaffinity"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
+	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/internal/adapter/server"
 )
 
@@ -151,14 +153,6 @@ func TestSessionAffinityAndHandoff_Scenario2_GRPCUnaryAndServerStreamMatrix(t *t
 			_, err = stream.Recv()
 			return err
 		}},
-		{"StreamSessionLive", func() error {
-			stream, err := client.StreamSessionLive(ctx, &mecatlv1.StreamSessionLiveRequest{SessionId: requestID})
-			if err != nil {
-				return err
-			}
-			_, err = stream.Recv()
-			return err
-		}},
 		{"WatchSessionEvents", func() error {
 			stream, err := client.WatchSessionEvents(ctx, &mecatlv1.WatchSessionEventsRequest{SessionId: requestID})
 			if err != nil {
@@ -209,6 +203,92 @@ func TestSessionAffinityAndHandoff_Scenario2_GRPCUnaryAndServerStreamMatrix(t *t
 					}
 				})
 			}
+		})
+	}
+}
+
+func TestSessionAffinityAndHandoff_Scenario2_StreamSessionLiveHeaderlessAndExactAffinity(t *testing.T) {
+	svc := newLiveSubscriptionService(t)
+	origin, err := svc.CreateSessionWithProfile(context.Background(), session.ModeDefault, session.Limits{}, server.ProviderSelector{}, server.ProfileDefault)
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	client, cleanup := dialLiveSubscriptionGRPC(t, svc)
+	defer cleanup()
+	warmupLiveConn(t, client, origin.ID)
+
+	for _, tc := range []struct {
+		name string
+		ctx  context.Context
+	}{
+		{name: "headerless", ctx: context.Background()},
+		{name: "exact affinity", ctx: affinityContext(string(origin.ID))},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(tc.ctx)
+			stream, err := client.StreamSessionLive(ctx, &mecatlv1.StreamSessionLiveRequest{SessionId: string(origin.ID)})
+			if err != nil {
+				cancel()
+				t.Fatalf("StreamSessionLive: %v", err)
+			}
+
+			var (
+				mu  sync.Mutex
+				evs []*mecatlv1.Event
+				wg  sync.WaitGroup
+			)
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for {
+					ev, recvErr := stream.Recv()
+					if recvErr != nil {
+						return
+					}
+					mu.Lock()
+					evs = append(evs, ev)
+					mu.Unlock()
+				}
+			}()
+			t.Cleanup(func() {
+				cancel()
+				wg.Wait()
+			})
+
+			if !probeLiveSubscription(svc, origin.ID, &mu, &evs, 3*time.Second) {
+				count, types := liveEventSummary(&mu, &evs)
+				t.Fatalf("StreamSessionLive did not relay the public probe event within 3s; got %d events: %v", count, types)
+			}
+		})
+	}
+}
+
+func TestSessionAffinityAndHandoff_Scenario2_StreamSessionLiveRejectsInvalidAffinity(t *testing.T) {
+	svc := newLiveSubscriptionService(t)
+	origin, err := svc.CreateSessionWithProfile(context.Background(), session.ModeDefault, session.Limits{}, server.ProviderSelector{}, server.ProfileDefault)
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	client, cleanup := dialLiveSubscriptionGRPC(t, svc)
+	defer cleanup()
+	warmupLiveConn(t, client, origin.ID)
+
+	for name, baseCtx := range map[string]context.Context{
+		"mismatch":  affinityContext("other-session"),
+		"duplicate": duplicateAffinityContext(string(origin.ID), string(origin.ID)),
+	} {
+		t.Run(name, func(t *testing.T) {
+			// The deadline is a test-hang guard only: affinity validation must return
+			// InvalidArgument before StreamSessionLive subscribes and can become idle.
+			ctx, cancel := context.WithTimeout(baseCtx, 3*time.Second)
+			defer cancel()
+			stream, err := client.StreamSessionLive(ctx, &mecatlv1.StreamSessionLiveRequest{SessionId: string(origin.ID)})
+			if err != nil {
+				assertAffinityFailureIsNonDisclosing(t, err, string(origin.ID), "other-session")
+				return
+			}
+			_, err = stream.Recv()
+			assertAffinityFailureIsNonDisclosing(t, err, string(origin.ID), "other-session")
 		})
 	}
 }
