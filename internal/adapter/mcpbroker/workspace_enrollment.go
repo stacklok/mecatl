@@ -220,7 +220,7 @@ func (a *Attachment) ObserveWorkspaceEnrollment(ctx context.Context, ref contrac
 		return a.failWorkspaceTransaction(logical, transaction), nil
 	}
 	occupied := append([]string(nil), process.occupied...)
-	catalogue, err := a.FreezeAuthenticatedCatalogue(opCtx, ref, process, &brokerTokenSource{runtime: a.runtime, logical: logical}, occupied)
+	catalogue, err := a.FreezeAuthenticatedCatalogue(opCtx, ref, process, &brokerTokenSource{runtime: a.runtime, logical: logical, ctx: opCtx}, occupied)
 	if err != nil {
 		return a.failWorkspaceTransaction(logical, transaction), nil
 	}

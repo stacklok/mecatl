@@ -202,7 +202,7 @@ func TestBrokerCredentialRefreshRetainsCredentialAfterTransientFailure(t *testin
 	attached.logical.mu.Lock()
 	attached.logical.brokerCredential = grant
 	attached.logical.mu.Unlock()
-	source := &brokerTokenSource{runtime: harness.runtime, logical: attached.logical}
+	source := &brokerTokenSource{runtime: harness.runtime, logical: attached.logical, ctx: context.Background()}
 	if _, err := source.Token(); err == nil {
 		t.Fatal("transient refresh unexpectedly succeeded")
 	}
@@ -671,5 +671,93 @@ func TestRuntimeCloseAndDrainIsBoundedWhenOperationHangs(t *testing.T) {
 	case <-closeDone:
 	case <-time.After(2 * time.Second):
 		t.Fatal("closeAndDrain did not return within its bounded drain timeout")
+	}
+}
+
+// TestTokenRefreshDoesNotHoldSessionLock pins P2-9: a token-refresh network
+// round trip must not run under logical.mu, or a slow/hung upstream token
+// endpoint blocks unrelated session deletion for the duration.
+func TestTokenRefreshDoesNotHoldSessionLock(t *testing.T) {
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	tokenServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		close(entered)
+		<-release
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"access_token":"fresh","token_type":"Bearer","expires_in":3600}`))
+	}))
+	defer tokenServer.Close()
+	harness := newProtectedHarness(t, tokenServer)
+	attached, _ := attach(t, harness.runtime, "refresh-lock-race")
+	config := (&authorizationTransaction{route: harness.runtime.catalogue.routes[0].oauth}).oauthConfig("client-secret")
+	grant := &oauthGrant{config: config, token: &oauth2.Token{AccessToken: "stale", RefreshToken: "refresh", TokenType: "Bearer", Expiry: time.Now().Add(-time.Minute)}}
+	attached.logical.mu.Lock()
+	attached.logical.grants["github"] = grant
+	attached.logical.mu.Unlock()
+
+	source := &scopedTokenSource{runtime: harness.runtime, logical: attached.logical, backend: "github", ctx: context.Background()}
+	tokenDone := make(chan struct{})
+	go func() {
+		_, _ = source.Token()
+		close(tokenDone)
+	}()
+	<-entered // the refresh is now blocked in the token endpoint
+
+	deleteDone := make(chan struct{})
+	go func() {
+		_, _ = harness.runtime.DeleteSession(context.Background(), "refresh-lock-race")
+		close(deleteDone)
+	}()
+	select {
+	case <-deleteDone:
+	case <-time.After(2 * time.Second):
+		close(release)
+		<-tokenDone
+		t.Fatal("DeleteSession blocked behind the in-flight token refresh's lock")
+	}
+	close(release)
+	<-tokenDone
+}
+
+// TestTokenRefreshHonoursOperationCancellation pins that a refresh aborts when
+// the calling operation's own context is cancelled, instead of ignoring it via
+// context.Background() and running until runtime.oauth.timeout regardless.
+func TestTokenRefreshHonoursOperationCancellation(t *testing.T) {
+	entered := make(chan struct{})
+	block := make(chan struct{})
+	tokenServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		close(entered)
+		select {
+		case <-block:
+		case <-request.Context().Done():
+		}
+	}))
+	defer tokenServer.Close()
+	defer close(block) // unblocks the handler goroutine, so the Close above (registered first, runs last) doesn't hang
+	harness := newProtectedHarness(t, tokenServer)
+	attached, _ := attach(t, harness.runtime, "refresh-cancel")
+	config := (&authorizationTransaction{route: harness.runtime.catalogue.routes[0].oauth}).oauthConfig("client-secret")
+	grant := &oauthGrant{config: config, token: &oauth2.Token{AccessToken: "stale", RefreshToken: "refresh", TokenType: "Bearer", Expiry: time.Now().Add(-time.Minute)}}
+	attached.logical.mu.Lock()
+	attached.logical.grants["github"] = grant
+	attached.logical.mu.Unlock()
+
+	opCtx, cancelOp := context.WithCancel(context.Background())
+	source := &scopedTokenSource{runtime: harness.runtime, logical: attached.logical, backend: "github", ctx: opCtx}
+	tokenDone := make(chan error, 1)
+	go func() {
+		_, err := source.Token()
+		tokenDone <- err
+	}()
+	<-entered
+	cancelOp()
+
+	select {
+	case err := <-tokenDone:
+		if err == nil {
+			t.Fatal("Token succeeded despite the operation context being cancelled")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Token did not honour operation cancellation (waited for runtime.oauth.timeout instead)")
 	}
 }

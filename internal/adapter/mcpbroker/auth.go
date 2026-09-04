@@ -699,25 +699,48 @@ type scopedTokenSource struct {
 	runtime *Runtime
 	logical *logicalSession
 	backend string
+	// ctx is the operation's own context (from beginOperation), so a refresh
+	// round trip is cancelled with the operation instead of running until
+	// s.runtime.oauth.timeout regardless of the caller giving up.
+	ctx context.Context
 }
 
 func (s *scopedTokenSource) Token() (*oauth2.Token, error) {
 	s.logical.mu.Lock()
-	defer s.logical.mu.Unlock()
 	if s.logical.deleted {
+		s.logical.mu.Unlock()
 		return nil, contract.ErrStateUnavailable
 	}
 	grant := s.logical.grants[s.backend]
 	if grant == nil {
+		s.logical.mu.Unlock()
 		return nil, contract.ErrAuthorizationNotFound
 	}
 	if grant.token.Valid() {
-		return cloneToken(grant.token), nil
+		token := cloneToken(grant.token)
+		s.logical.mu.Unlock()
+		return token, nil
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), s.runtime.oauth.timeout)
+	config, current := grant.config, grant.token
+	s.logical.mu.Unlock()
+
+	// The network round trip must NOT run under logical.mu: that mutex also
+	// gates session deletion, and context.Background() here would ignore the
+	// operation's own cancellation, letting a refresh outlive a caller that
+	// gave up (and outlive the session it belongs to).
+	ctx, cancel := context.WithTimeout(s.ctx, s.runtime.oauth.timeout)
 	defer cancel()
 	ctx = context.WithValue(ctx, oauth2.HTTPClient, s.runtime.oauth.httpClient)
-	fresh, err := grant.config.TokenSource(ctx, grant.token).Token()
+	fresh, err := config.TokenSource(ctx, current).Token()
+
+	s.logical.mu.Lock()
+	defer s.logical.mu.Unlock()
+	if s.logical.deleted || s.logical.grants[s.backend] != grant {
+		// The grant was deleted or replaced while the refresh was in flight
+		// (session deletion, revocation, or a concurrent refresh): the fresh
+		// token belongs to a grant that is no longer current, so discard it.
+		return nil, contract.ErrStateUnavailable
+	}
 	if err != nil {
 		var retrieveErr *oauth2.RetrieveError
 		if errors.As(err, &retrieveErr) && retrieveErr.ErrorCode == "invalid_grant" {
@@ -747,25 +770,40 @@ func (l *logicalSession) revokeGrantLocked(backend string, expected *oauthGrant)
 type brokerTokenSource struct {
 	runtime *Runtime
 	logical *logicalSession
+	// ctx is the operation's own context (from beginOperation); see the
+	// identical rationale on scopedTokenSource.
+	ctx context.Context
 }
 
 func (s *brokerTokenSource) Token() (*oauth2.Token, error) {
 	s.logical.mu.Lock()
-	defer s.logical.mu.Unlock()
 	if s.logical.deleted {
+		s.logical.mu.Unlock()
 		return nil, contract.ErrStateUnavailable
 	}
 	grant := s.logical.brokerCredential
 	if grant == nil {
+		s.logical.mu.Unlock()
 		return nil, contract.ErrAuthorizationNotFound
 	}
 	if grant.token.Valid() {
-		return cloneToken(grant.token), nil
+		token := cloneToken(grant.token)
+		s.logical.mu.Unlock()
+		return token, nil
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), s.runtime.oauth.timeout)
+	config, current := grant.config, grant.token
+	s.logical.mu.Unlock()
+
+	ctx, cancel := context.WithTimeout(s.ctx, s.runtime.oauth.timeout)
 	defer cancel()
 	ctx = context.WithValue(ctx, oauth2.HTTPClient, s.runtime.oauth.httpClient)
-	fresh, err := grant.config.TokenSource(ctx, grant.token).Token()
+	fresh, err := config.TokenSource(ctx, current).Token()
+
+	s.logical.mu.Lock()
+	defer s.logical.mu.Unlock()
+	if s.logical.deleted || s.logical.brokerCredential != grant {
+		return nil, contract.ErrStateUnavailable
+	}
 	if err != nil {
 		var retrieveErr *oauth2.RetrieveError
 		if errors.As(err, &retrieveErr) && retrieveErr.ErrorCode == "invalid_grant" {
@@ -822,7 +860,7 @@ func (t *sessionTool) executeProtected(ctx context.Context, call session.ToolCal
 		return session.ToolResult{}, err
 	}
 	logical.mu.Unlock()
-	result, err := t.attachment.runtime.authorizedCaller(ctx, logical.ref, t.route.backend, call, &scopedTokenSource{runtime: t.attachment.runtime, logical: logical, backend: t.route.backend})
+	result, err := t.attachment.runtime.authorizedCaller(ctx, logical.ref, t.route.backend, call, &scopedTokenSource{runtime: t.attachment.runtime, logical: logical, backend: t.route.backend, ctx: ctx})
 	result.CallID = call.ID
 	return result, err
 }
@@ -841,7 +879,7 @@ func (t *sessionTool) executeBroker(ctx context.Context, call session.ToolCall) 
 		return session.ToolResult{}, err
 	}
 	logical.mu.Unlock()
-	result, err := t.attachment.runtime.authorizedCaller(ctx, logical.ref, t.route.backend, call, &brokerTokenSource{runtime: t.attachment.runtime, logical: logical})
+	result, err := t.attachment.runtime.authorizedCaller(ctx, logical.ref, t.route.backend, call, &brokerTokenSource{runtime: t.attachment.runtime, logical: logical, ctx: ctx})
 	result.CallID = call.ID
 	return result, err
 }
