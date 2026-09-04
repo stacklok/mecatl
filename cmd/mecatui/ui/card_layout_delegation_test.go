@@ -162,3 +162,53 @@ func TestMecatuiCardLayout_Scenario2_ApprovalRowsWrapBeforeStyle(t *testing.T) {
 		}
 	}
 }
+
+// TestMecatuiCardLayout_Scenario2_ApprovalDiffsPreserveSourceWhitespace verifies AC2.3:
+// Edit and Write diffs use the approval modal's body budget while retaining the
+// diff marker and source indentation on every visible source row.
+func TestMecatuiCardLayout_Scenario2_ApprovalDiffsPreserveSourceWhitespace(t *testing.T) {
+	const width = 52
+	r := newTestRenderer()
+	long := strings.Repeat("source-token-", 8)
+	cases := []struct {
+		name string
+		ask  pendingAsk
+		want []string
+	}{
+		{
+			name: "edit",
+			ask: pendingAsk{
+				Tool: "Edit",
+				Args: `{"path":"nested/file.go","old_string":"    ` + long + `","new_string":"\t` + long + `"}`,
+			},
+			want: []string{
+				"-     source-token-",
+				"+     source-token-",
+			},
+		},
+		{
+			name: "write",
+			ask: pendingAsk{
+				Tool: "Write",
+				Args: `{"path":"nested/file.go","content":"    ` + long + `"}`,
+			},
+			want: []string{"+     source-token-"},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			out := stripANSIstr(renderApprovalModalWithRenderer(r, tc.ask, true, width, 30))
+			for _, want := range tc.want {
+				if !strings.Contains(out, want) {
+					t.Errorf("approval diff lost its marker or source indentation %q:\n%s", want, out)
+				}
+			}
+			for row, line := range strings.Split(out, "\n") {
+				if got := maxLineWidth(line); got > width {
+					t.Errorf("approval diff row %d width = %d, want ≤ %d: %q", row, got, width, line)
+				}
+			}
+		})
+	}
+}

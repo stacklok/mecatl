@@ -20,7 +20,7 @@ import (
 // closures reuse renderer's diff implementation and width-keyed Glamour cache;
 // the surface cannot otherwise reach or mutate the broad renderer.
 type approvalRender struct {
-	diff     func(name, rawArgs string, expand bool) (string, bool)
+	diff     func(name, rawArgs string, expand bool, bodyWidth int) (string, bool)
 	markdown func(src string, width int) string
 }
 
@@ -28,7 +28,7 @@ func newApprovalRender(r *renderer) approvalRender {
 	if r == nil {
 		return approvalRender{}
 	}
-	return approvalRender{diff: r.renderToolDiff, markdown: r.markdownWidth}
+	return approvalRender{diff: r.renderToolDiffAtWidth, markdown: r.markdownWidth}
 }
 
 // approvalSurface is constructed only when the first ask arrives. Its state,
@@ -832,7 +832,7 @@ func (s *approvalSurface) permissionModalBodyParts(width, height int) (body stri
 	// a huge Write can't grow the modal off-screen); ctrl+t (expand) reveals the
 	// full diff right here at the gate. Fall back to pretty JSON for any other
 	// tool, or when the Edit/Write args don't parse into the expected shape.
-	if diff, ok := s.render.diff(ask.Tool, ask.Args, expand); ok {
+	if diff, ok := s.render.diff(ask.Tool, ask.Args, expand, askArgsCardContentWidth(th, width)); ok {
 		if diff != "" {
 			b.WriteString(th.Style("muted").Render("changes:") + "\n")
 			b.WriteString(diff + "\n")
