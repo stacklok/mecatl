@@ -69,7 +69,7 @@ Status vocabulary: `open`, `in_progress`, `fixed`, `accepted`, `superseded`.
 | M-K12 | known | open | Helm values/schema cannot express broker authority. | `deploy/helm/mecak8s/values.schema.json` |
 | M-K13 | known | open | Public `user-docs/` do not cover the new operator/API/TUI surface. | `user-docs/` |
 | M-K14 | known | open | Three server paths independently reconcile `CancelOutcome`; extract one private helper. | `internal/adapter/server/mcp_authorization.go` |
-| M-K15 | known | open | Broker bindings are bare strings rather than a named opaque type. | `internal/mcpbroker/broker.go`; `engine/session/session.go` |
+| M-K15 | known | fixed | Process-external session bindings use the named opaque `session.ExternalBinding` type end-to-end across the aggregate, snapshot, broker attachment contract, implementation, and server reattachment checks; the distinct per-authorization `AuthorizationBinding` remains non-interchangeable. | `engine/session/session.go`; `engine/adapter/sessnap/sessnap.go`; `internal/mcpbroker/broker.go`; `internal/adapter/mcpbroker/runtime.go`; `internal/adapter/server/mcp_broker.go` |
 | M-D1 | decision | open | Decide whether `mcpauthority` is intentionally a concrete composition DTO or a neutral boundary. | `internal/adapter/mcpauthority/authority.go` |
 | M-D2 | decision | open | Process-local broker state cannot reattach after restart. Keep deterministic settlement unless durable/remote scope is selected. | `internal/adapter/mcpbroker/runtime.go` |
 | M-D3 | decision | open | Public enrollment proto/client controls precede authoritative server behavior in the patch series. Reorder or accept the reviewability trade-off. | commits `09af052b5`, `02dfeb853` |

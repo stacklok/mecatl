@@ -36,7 +36,7 @@ func (s *Service) callSessionEngine(ctx context.Context, sel ProviderSelector, s
 	return s.cfg.SessionEngine(ctx, sel, specs, profile, workspace, mode)
 }
 
-func (s *Service) openBrokerAttachment(ctx context.Context, id session.SessionID, expectedBinding string, bindingRequired bool) (*localBrokerAttachment, error) {
+func (s *Service) openBrokerAttachment(ctx context.Context, id session.SessionID, expectedBinding session.ExternalBinding, bindingRequired bool) (*localBrokerAttachment, error) {
 	if s.cfg.MCPBroker == nil {
 		return nil, nil
 	}

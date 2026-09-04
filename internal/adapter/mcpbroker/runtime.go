@@ -451,8 +451,8 @@ func (a *Attachment) Abort(ctx context.Context) error {
 }
 
 // Binding returns the opaque identity of this logical-session incarnation.
-func (a *Attachment) Binding() string {
-	return a.runtime.bindingPrefix + "." + fmt.Sprint(a.logical.ref.generation)
+func (a *Attachment) Binding() session.ExternalBinding {
+	return session.ExternalBinding(a.runtime.bindingPrefix + "." + fmt.Sprint(a.logical.ref.generation))
 }
 
 // Tools returns a copy of the attachment's current whole catalogue. Publication

@@ -283,7 +283,7 @@ type Attachment interface {
 	Abort(context.Context) error
 	// Binding is the opaque identity of this exact logical-session incarnation.
 	// It is persisted by the host and must match exactly on reattachment.
-	Binding() string
+	Binding() session.ExternalBinding
 	// Tools returns independently owned wrappers bound to this attachment.
 	Tools() []tool.Tool
 	// PresentAuthorization returns the live presentation URL for the exact

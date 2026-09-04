@@ -37,16 +37,16 @@ import (
 // struct with JSON tags so it serializes deterministically regardless of the
 // (untagged) layout of the domain types.
 type Snapshot struct {
-	ID              session.SessionID      `json:"id"`
-	State           session.State          `json:"state"`
-	Mode            session.PermissionMode `json:"mode"`
-	Limits          session.Limits         `json:"limits"`
-	Counters        session.Counters       `json:"counters"`
-	ExternalBinding string                 `json:"external_binding,omitempty"`
-	CreatedAt       time.Time              `json:"created_at"`
-	Incarnation     session.IncarnationID  `json:"incarnation,omitempty"`
-	Messages        []messageDTO           `json:"messages"`
-	Pending         *session.PendingAsk    `json:"pending,omitempty"`
+	ID              session.SessionID       `json:"id"`
+	State           session.State           `json:"state"`
+	Mode            session.PermissionMode  `json:"mode"`
+	Limits          session.Limits          `json:"limits"`
+	Counters        session.Counters        `json:"counters"`
+	ExternalBinding session.ExternalBinding `json:"external_binding,omitempty"`
+	CreatedAt       time.Time               `json:"created_at"`
+	Incarnation     session.IncarnationID   `json:"incarnation,omitempty"`
+	Messages        []messageDTO            `json:"messages"`
+	Pending         *session.PendingAsk     `json:"pending,omitempty"`
 	// PendingAuthorization is present exactly while StateAuthorizing. Its private
 	// DTO base64-encodes tool arguments so JSON normalization cannot change bytes.
 	PendingAuthorization *pendingAuthorizationDTO `json:"pending_authorization,omitempty"`

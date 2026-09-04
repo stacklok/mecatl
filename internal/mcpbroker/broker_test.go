@@ -112,7 +112,9 @@ func (a *fakeAttachment) Abort(_ context.Context) error {
 	return nil
 }
 
-func (a *fakeAttachment) Binding() string  { return fmt.Sprintf("%s/%d", a.id, a.generation) }
+func (a *fakeAttachment) Binding() session.ExternalBinding {
+	return session.ExternalBinding(fmt.Sprintf("%s/%d", a.id, a.generation))
+}
 func (*fakeAttachment) Tools() []tool.Tool { return nil }
 
 func (a *fakeAttachment) PresentAuthorization(_ context.Context, authorization session.ExternalAuthorization) (string, error) {

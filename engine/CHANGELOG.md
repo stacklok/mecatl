@@ -228,6 +228,8 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 - **Versioned bounded reflection evidence materialization (ADR 0300)** — `learning.Input` now carries its aggregate `MaterializationManifest`; `learning.EvidenceRef` now carries the explicit protocol, manifest index, durable original coordinate, and aggregate digest needed to distinguish `reflection-evidence/v1` references from historical input-local `reflection-evidence/legacy-v0` ordinals; and `learning.MaterializeEvidence` now accepts a `context.Context` plus an optional streaming event source so full message/event scans are cancellable and selected-event limits apply after source ranking. `learning.AdmissionPolicy.Decide` now accepts a context and borrowed `Trajectory` request rather than a full `Input`, allowing cancellation without constructing an unbounded admission input. Adding fields to these exported structs and changing the function and interface signatures break external callers and unkeyed literals, so this is Changed/breaking (pre-v1 a minor bump).
 
+- **`session.Session.ExternalBinding` is now the named `session.ExternalBinding` type** — the opaque process-external session identity can no longer be accidentally interchanged with an arbitrary runtime string or the distinct per-authorization `AuthorizationBinding`. Its JSON representation remains an unchanged string. Changed/breaking (pre-v1 a minor bump).
+
 - **`agent.Deps.EnableDurableEvidence`** — adds the explicit opt-in gate for
   debugger-only request-manifest construction/emission and sanitized network-attempt capture. The zero value preserves the allocation-sensitive
   default loop; composition enables it only alongside durable EventLog retention. Adding a field

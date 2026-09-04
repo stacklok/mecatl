@@ -12,6 +12,11 @@ import (
 // reaches inner entities only through the Session aggregate root.
 type SessionID string
 
+// ExternalBinding is an opaque composition-issued identity for process-external
+// session state. The session aggregate persists it without interpretation; the
+// empty value means no external runtime is bound.
+type ExternalBinding string
+
 // State is the session lifecycle state. The state machine is:
 //
 //	idle → running → completed
@@ -376,7 +381,7 @@ type Session struct {
 	// ExternalBinding is an opaque composition-issued binding to process-external
 	// session state. The aggregate stores and persists it without interpretation.
 	// An empty value means no external runtime is bound.
-	ExternalBinding string
+	ExternalBinding ExternalBinding
 	// Profile is an opaque tool-surface profile label (e.g. "" for the default
 	// filesystem profile, "no-fs" for the no-filesystem one). The aggregate STORES
 	// it but never interprets it: the meaning lives entirely in composition, like

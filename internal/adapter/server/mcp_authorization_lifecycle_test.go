@@ -69,8 +69,10 @@ type lifecycleAttachment struct {
 
 func (*lifecycleAttachment) Commit(context.Context) error { return nil }
 func (*lifecycleAttachment) Abort(context.Context) error  { return nil }
-func (a *lifecycleAttachment) Binding() string            { return a.binding }
-func (a *lifecycleAttachment) Tools() []tool.Tool         { return []tool.Tool{a.tool} }
+func (a *lifecycleAttachment) Binding() session.ExternalBinding {
+	return session.ExternalBinding(a.binding)
+}
+func (a *lifecycleAttachment) Tools() []tool.Tool { return []tool.Tool{a.tool} }
 func (a *lifecycleAttachment) PresentAuthorization(context.Context, session.ExternalAuthorization) (string, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -221,7 +223,7 @@ func newLifecycleFixtureWithTurns(t *testing.T, status session.AuthorizationStat
 	deferred := session.NewToolCall("deferred-call", "later", json.RawMessage(`{}`))
 	pending := session.PendingAuthorization{Authorization: session.ExternalAuthorization{ID: "authorization:1", DisplayName: "Calendar", Binding: "opaque-binding", ExpiresAt: now().Add(time.Hour)}, Call: call, Deferred: []session.ToolCall{deferred}}
 	sess := session.New("authorization-session", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/repo", Revision: "in-tree-v1"}, session.Limits{}, now())
-	sess.ExternalBinding = attachment.binding
+	sess.ExternalBinding = session.ExternalBinding(attachment.binding)
 	if err := sess.BeginTurn(); err != nil {
 		t.Fatal(err)
 	}

@@ -25,7 +25,7 @@ func (saveProbeStore) Load(_ context.Context, id session.SessionID) (*session.Se
 
 func cancelledSession(t *testing.T, id session.SessionID) *session.Session {
 	t.Helper()
-	sess := session.New(id, session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
+	sess := session.New(id, session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
 	if err := sess.BeginTurn(); err != nil {
 		t.Fatalf("BeginTurn: %v", err)
 	}
@@ -92,7 +92,7 @@ func TestSaveLiveContextFastPath(t *testing.T) {
 		return nil
 	}}
 	e := NewEngine(Deps{Store: store})
-	sess := session.New("sess-live-save", session.ModeDefault, "/ws", session.Limits{}, time.Unix(0, 0))
+	sess := session.New("sess-live-save", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
 	e.save(ctx, &Run{diag: e.bindRunDiag(sess.ID)}, sess)
 }
 
