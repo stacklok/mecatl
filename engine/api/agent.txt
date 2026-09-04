@@ -13,8 +13,8 @@
     method func (*Engine).ContextWindow() int
     method func (*Engine).HasTool(name string) bool
     method func (*Engine).Model() string
-    method func (*Engine).PrepareAfterAuthorization(ctx context.Context, sess *session.Session, env tool.Environment, authorization session.ExternalAuthorization, callID session.ToolCallID, results []session.ToolResult, status session.AuthorizationStatus) *PreparedRun
-    method func (*Engine).PrepareAuthorizationContinuation(ctx context.Context, sess *session.Session, env tool.Environment, pending session.PendingAuthorization, status session.AuthorizationStatus) *PreparedRun
+    method func (*Engine).PrepareAfterAuthorization(ctx context.Context, sess *session.Session, env tool.Environment, authorization session.ExternalAuthorization, callID session.ToolCallID, results []session.ToolResult, resolution session.AuthorizationResolution) (*PreparedRun, error)
+    method func (*Engine).PrepareAuthorizationContinuation(ctx context.Context, sess *session.Session, env tool.Environment, pending session.PendingAuthorization, resolution session.AuthorizationResolution) (*PreparedRun, error)
     method func (*Engine).ResumeApproval(ctx context.Context, sess *session.Session, env tool.Environment, askID string, verdict session.ApprovalVerdict) *Run
     method func (*Engine).ResumeApprovalWith(ctx context.Context, sess *session.Session, env tool.Environment, askID string, verdict session.ApprovalVerdict, opts ResumeApprovalOptions) *Run
     method func (*Engine).RetryFailedStep(ctx context.Context, sess *session.Session, env tool.Environment) *Run

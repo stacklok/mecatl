@@ -13,6 +13,42 @@ import (
 	"github.com/stacklok/mecatl/engine/tool"
 )
 
+func mustPrepareAuthorizationContinuation(t *testing.T, engine *agent.Engine, sess *session.Session, env tool.Environment, pending session.PendingAuthorization, status session.AuthorizationStatus) *agent.PreparedRun {
+	t.Helper()
+	resolution, err := session.NewAuthorizationResolution(status)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared, err := engine.PrepareAuthorizationContinuation(context.Background(), sess, env, pending, resolution)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return prepared
+}
+
+func mustPrepareAfterAuthorization(t *testing.T, engine *agent.Engine, sess *session.Session, env tool.Environment, authorization session.ExternalAuthorization, callID session.ToolCallID, results []session.ToolResult, status session.AuthorizationStatus) *agent.PreparedRun {
+	t.Helper()
+	resolution, err := session.NewAuthorizationResolution(status)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared, err := engine.PrepareAfterAuthorization(context.Background(), sess, env, authorization, callID, results, resolution)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return prepared
+}
+
+func TestPreparedAuthorizationContinuationsRejectInvalidResolution(t *testing.T) {
+	engine := &agent.Engine{}
+	if prepared, err := engine.PrepareAuthorizationContinuation(context.Background(), nil, tool.Environment{}, session.PendingAuthorization{}, session.AuthorizationResolution{}); err == nil || prepared != nil {
+		t.Fatalf("PrepareAuthorizationContinuation invalid resolution = (%v, %v)", prepared, err)
+	}
+	if prepared, err := engine.PrepareAfterAuthorization(context.Background(), nil, tool.Environment{}, session.ExternalAuthorization{}, "", nil, session.AuthorizationResolution{}); err == nil || prepared != nil {
+		t.Fatalf("PrepareAfterAuthorization invalid resolution = (%v, %v)", prepared, err)
+	}
+}
+
 func TestPreparedAuthorizationContinuationGatesExecutionAndStartsOnce(t *testing.T) {
 	var executed atomic.Int32
 	protected := &fakeTool{name: "protected", exec: func(_ context.Context, call session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
@@ -37,7 +73,7 @@ func TestPreparedAuthorizationContinuationGatesExecutionAndStartsOnce(t *testing
 		t.Fatal(err)
 	}
 
-	prepared := engine.PrepareAuthorizationContinuation(context.Background(), sess, agent.MemEnv("/ws"), pending, session.AuthorizationGranted)
+	prepared := mustPrepareAuthorizationContinuation(t, engine, sess, agent.MemEnv("/ws"), pending, session.AuthorizationGranted)
 	if got := executed.Load(); got != 0 {
 		t.Fatalf("execution before Start = %d", got)
 	}
@@ -98,7 +134,7 @@ func TestPreparedAuthorizationContinuationAbortWinsWithoutExecution(t *testing.T
 		t.Fatal(err)
 	}
 
-	prepared := engine.PrepareAuthorizationContinuation(context.Background(), sess, agent.MemEnv("/ws"), pending, session.AuthorizationGranted)
+	prepared := mustPrepareAuthorizationContinuation(t, engine, sess, agent.MemEnv("/ws"), pending, session.AuthorizationGranted)
 	if transition := prepared.Abort(); transition != agent.PreparedRunAborted {
 		t.Fatalf("first Abort = %q", transition)
 	}
@@ -135,7 +171,7 @@ func TestPreparedAfterAuthorizationGatesLoop(t *testing.T) {
 	if err := sess.RecordToolResults(results); err != nil {
 		t.Fatal(err)
 	}
-	prepared := engine.PrepareAfterAuthorization(context.Background(), sess, agent.MemEnv("/ws"), authorization, call.ID, results, session.AuthorizationCancelled)
+	prepared := mustPrepareAfterAuthorization(t, engine, sess, agent.MemEnv("/ws"), authorization, call.ID, results, session.AuthorizationCancelled)
 	select {
 	case <-prepared.Run().Events():
 		t.Fatal("continuation emitted before Start")
@@ -193,7 +229,7 @@ func TestPreparedAfterAuthorizationCanParkLaterProtectedCall(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	run, transition := engine.PrepareAfterAuthorization(context.Background(), sess, agent.MemEnv("/ws"), authorization, first.ID, results, session.AuthorizationCancelled).Start()
+	run, transition := mustPrepareAfterAuthorization(t, engine, sess, agent.MemEnv("/ws"), authorization, first.ID, results, session.AuthorizationCancelled).Start()
 	if transition != agent.PreparedRunStarted {
 		t.Fatalf("Start = %q", transition)
 	}
@@ -239,7 +275,7 @@ func TestPreparedAuthorizationContinuationCanParkSecondProtectedCall(t *testing.
 		t.Fatal(err)
 	}
 
-	prepared := engine.PrepareAuthorizationContinuation(context.Background(), sess, agent.MemEnv("/ws"), pending, session.AuthorizationGranted)
+	prepared := mustPrepareAuthorizationContinuation(t, engine, sess, agent.MemEnv("/ws"), pending, session.AuthorizationGranted)
 	run, transition := prepared.Start()
 	if transition != agent.PreparedRunStarted {
 		t.Fatalf("Start = %q", transition)

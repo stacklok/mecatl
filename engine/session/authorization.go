@@ -25,6 +25,30 @@ func ValidAuthorizationID(value string) bool {
 // within it. Callers must not present or log it.
 type AuthorizationBinding string
 
+// AuthorizationResolution is a terminal external-authorization outcome. Its
+// private representation prevents callers from constructing pending or unknown
+// resolution states without going through NewAuthorizationResolution.
+type AuthorizationResolution struct {
+	status AuthorizationStatus
+}
+
+// NewAuthorizationResolution validates a terminal authorization outcome.
+func NewAuthorizationResolution(status AuthorizationStatus) (AuthorizationResolution, error) {
+	if !status.valid() || status == AuthorizationPending {
+		return AuthorizationResolution{}, fmt.Errorf("session: authorization resolution status %q is not terminal", status)
+	}
+	return AuthorizationResolution{status: status}, nil
+}
+
+// Valid reports whether r contains a terminal authorization outcome.
+func (r AuthorizationResolution) Valid() bool {
+	return r.status.valid() && r.status != AuthorizationPending
+}
+
+// Status returns the terminal lifecycle status carried by r. The zero value is
+// invalid and must be rejected with Valid before use.
+func (r AuthorizationResolution) Status() AuthorizationStatus { return r.status }
+
 // ExternalAuthorization identifies one out-of-band authorization transaction.
 // DisplayName is an optional bounded human-facing authority or service label.
 type ExternalAuthorization struct {

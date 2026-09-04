@@ -57,7 +57,7 @@ Status vocabulary: `open`, `in_progress`, `fixed`, `accepted`, `superseded`.
 |---|---|---|---|---|
 | M-K1 | known | open | Permit a valid root-path callback while retaining the remaining URL restrictions. | `internal/cliconfig/mcp_authority.go` |
 | M-K2 | known | open | Reject mixed programmatic `MCPServers` and broker authority. | `internal/app/build.go` |
-| M-K3 | known | open | Resolution APIs accept pending/unknown statuses; validate terminality or introduce a terminal-only type. | `engine/agent/loop.go` |
+| M-K3 | known | fixed | Continuation preparation accepts only constructor-validated `session.AuthorizationResolution` values and returns an error for zero, pending, or unknown outcomes before constructing a run or mutating the session. | `engine/session/authorization.go`; `engine/agent/loop.go`; `internal/adapter/server/mcp_authorization.go` |
 | M-K4 | known | open | Enrolled tool sets lack count and aggregate-byte bounds. | `engine/session/workspace_enrollment.go` |
 | M-K5 | known | open | Restored parked authorizations do not regain deterministic expiry settlement. | `internal/adapter/server/service.go` |
 | M-K6 | known | open | gRPC control send errors are drained but returned as nil. | `internal/adapter/server/grpc.go` |

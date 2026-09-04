@@ -286,6 +286,10 @@ func (s *Service) continueGrantedAuthorizationLocked(ctx context.Context, sess *
 	if err != nil {
 		return MCPAuthorizationResult{}, fmt.Errorf("%w: continuation engine: %v", ErrFailedPrecondition, err)
 	}
+	resolution, err := session.NewAuthorizationResolution(session.AuthorizationGranted)
+	if err != nil {
+		return MCPAuthorizationResult{}, fmt.Errorf("%w: construct granted authorization resolution", ErrInternal)
+	}
 	claimed, err := sess.ClaimAuthorization()
 	if err != nil {
 		return MCPAuthorizationResult{}, ErrNotFound
@@ -294,7 +298,10 @@ func (s *Service) continueGrantedAuthorizationLocked(ctx context.Context, sess *
 		return MCPAuthorizationResult{}, fmt.Errorf("%w: persist authorization claim", ErrInternal)
 	}
 	s.stopAuthorizationExpiry(sess.ID)
-	prepared := engine.PrepareAuthorizationContinuation(memory.WithWorkspace(ctx, env.Workspace().Root()), sess, env, claimed, session.AuthorizationGranted)
+	prepared, err := engine.PrepareAuthorizationContinuation(memory.WithWorkspace(ctx, env.Workspace().Root()), sess, env, claimed, resolution)
+	if err != nil {
+		return MCPAuthorizationResult{}, fmt.Errorf("%w: prepare granted authorization continuation", ErrInternal)
+	}
 	if !s.registerPrepared(sess.ID, prepared.Run(), sess) {
 		if transition := prepared.Abort(); transition != agent.PreparedRunAborted {
 			return MCPAuthorizationResult{}, fmt.Errorf("%w: abort unregistered authorization continuation: %s", ErrInternal, transition)
@@ -316,6 +323,10 @@ func (s *Service) resolveAuthorizationLocked(ctx context.Context, sess *session.
 	if status == session.AuthorizationClosed {
 		reason = string(session.AuthorizationInterrupted)
 		status = session.AuthorizationInterrupted
+	}
+	resolution, err := session.NewAuthorizationResolution(status)
+	if err != nil {
+		return MCPAuthorizationResult{}, fmt.Errorf("%w: invalid terminal authorization status %q", ErrInternal, status)
 	}
 	results, err := sess.AbortAuthorization(reason)
 	if err != nil {
@@ -341,7 +352,10 @@ func (s *Service) resolveAuthorizationLocked(ctx context.Context, sess *session.
 		}
 		return mcpAuthorizationResult(pending, status, nil), nil
 	}
-	prepared := engine.PrepareAfterAuthorization(memory.WithWorkspace(ctx, env.Workspace().Root()), sess, env, pending.Authorization, pending.Call.ID, results, status)
+	prepared, err := engine.PrepareAfterAuthorization(memory.WithWorkspace(ctx, env.Workspace().Root()), sess, env, pending.Authorization, pending.Call.ID, results, resolution)
+	if err != nil {
+		return MCPAuthorizationResult{}, fmt.Errorf("%w: prepare terminal authorization continuation", ErrInternal)
+	}
 	if !s.registerPrepared(sess.ID, prepared.Run(), sess) {
 		if transition := prepared.Abort(); transition != agent.PreparedRunAborted {
 			return MCPAuthorizationResult{}, fmt.Errorf("%w: abort unregistered authorization resolution: %s", ErrInternal, transition)

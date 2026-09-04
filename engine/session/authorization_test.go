@@ -23,6 +23,33 @@ func TestValidAuthorizationID(t *testing.T) {
 	}
 }
 
+func TestNewAuthorizationResolutionAcceptsOnlyTerminalStatuses(t *testing.T) {
+	t.Parallel()
+	terminal := []AuthorizationStatus{
+		AuthorizationGranted,
+		AuthorizationDenied,
+		AuthorizationCancelled,
+		AuthorizationExpired,
+		AuthorizationInterrupted,
+		AuthorizationFailed,
+		AuthorizationClosed,
+	}
+	for _, status := range terminal {
+		resolution, err := NewAuthorizationResolution(status)
+		if err != nil || !resolution.Valid() || resolution.Status() != status {
+			t.Errorf("NewAuthorizationResolution(%q) = (%q, %v, %v)", status, resolution.Status(), resolution.Valid(), err)
+		}
+	}
+	for _, status := range []AuthorizationStatus{"", AuthorizationPending, "unknown"} {
+		if resolution, err := NewAuthorizationResolution(status); err == nil || resolution.Valid() {
+			t.Errorf("NewAuthorizationResolution(%q) = (%q, %v), want invalid error", status, resolution.Status(), err)
+		}
+	}
+	if (AuthorizationResolution{}).Valid() {
+		t.Error("zero AuthorizationResolution is valid")
+	}
+}
+
 func authorizationPending() PendingAuthorization {
 	call := NewToolCall("call-2", "external_create", json.RawMessage(`{"title":"review"}`))
 	call.ItemID = "provider-item-2"

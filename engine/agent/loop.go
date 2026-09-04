@@ -1264,7 +1264,11 @@ func (p *PreparedRun) Abort() PreparedRunTransition {
 // register Run before Start. It may present another authorization because its
 // sole production caller has already authenticated the owner at the Service
 // boundary.
-func (e *Engine) PrepareAuthorizationContinuation(ctx context.Context, sess *session.Session, env tool.Environment, pending session.PendingAuthorization, status session.AuthorizationStatus) *PreparedRun {
+func (e *Engine) PrepareAuthorizationContinuation(ctx context.Context, sess *session.Session, env tool.Environment, pending session.PendingAuthorization, resolution session.AuthorizationResolution) (*PreparedRun, error) {
+	if !resolution.Valid() {
+		return nil, errors.New("agent: authorization continuation requires a terminal resolution")
+	}
+	status := resolution.Status()
 	return e.prepareRun(ctx, sess, RunRequest{RunID: sess.RunID(), CanPresentAuthorization: true}, session.Usage{}, func(ctx context.Context, r *Run) {
 		e.emit(r, session.Event{Type: session.EvSessionInit})
 		toolToRun, ok := e.deps.Catalog.Lookup(pending.Call.Name)
@@ -1296,7 +1300,7 @@ func (e *Engine) PrepareAuthorizationContinuation(ctx context.Context, sess *ses
 		e.save(ctx, r, sess)
 		e.emitAuthorizationResolution(r, sess.Counters.Turns, pending.Authorization, pending.Call.ID, status, nil)
 		e.runLoop(ctx, r, sess, env, session.Usage{}, "", false)
-	})
+	}), nil
 }
 
 // PrepareAfterAuthorization prepares the ordinary model loop after a terminal
@@ -1304,12 +1308,16 @@ func (e *Engine) PrepareAuthorizationContinuation(ctx context.Context, sess *ses
 // exact ordered ToolResults already recorded on sess. The caller must register
 // Run before Start. It may present another authorization because its sole
 // production caller has already authenticated the owner at the Service boundary.
-func (e *Engine) PrepareAfterAuthorization(ctx context.Context, sess *session.Session, env tool.Environment, authorization session.ExternalAuthorization, callID session.ToolCallID, results []session.ToolResult, status session.AuthorizationStatus) *PreparedRun {
+func (e *Engine) PrepareAfterAuthorization(ctx context.Context, sess *session.Session, env tool.Environment, authorization session.ExternalAuthorization, callID session.ToolCallID, results []session.ToolResult, resolution session.AuthorizationResolution) (*PreparedRun, error) {
+	if !resolution.Valid() {
+		return nil, errors.New("agent: authorization continuation requires a terminal resolution")
+	}
+	status := resolution.Status()
 	return e.prepareRun(ctx, sess, RunRequest{RunID: sess.RunID(), CanPresentAuthorization: true}, session.Usage{}, func(ctx context.Context, r *Run) {
 		e.emit(r, session.Event{Type: session.EvSessionInit})
 		e.emitAuthorizationResolution(r, sess.Counters.Turns, authorization, callID, status, results)
 		e.runLoop(ctx, r, sess, env, session.Usage{}, "", false)
-	})
+	}), nil
 }
 
 func (e *Engine) emitAuthorizationResolution(r *Run, turn int, authorization session.ExternalAuthorization, callID session.ToolCallID, status session.AuthorizationStatus, results []session.ToolResult) {
