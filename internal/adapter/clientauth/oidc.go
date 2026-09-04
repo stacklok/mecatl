@@ -154,7 +154,7 @@ func Login(ctx context.Context, cfg LoginConfig) (Token, error) {
 	}
 	validator, err := authoidc.NewValidator(ctx, authoidc.Config{Issuer: id.Issuer, JWKSURI: doc.JWKSURI, Audience: id.Audience, HTTPClient: client})
 	if err != nil {
-		return Token{}, ErrDiscovery
+		return Token{}, fmt.Errorf("%w: %w", ErrDiscovery, err)
 	}
 	defer func() { _ = validator.Close() }()
 	if _, err := validator.Validate(ctx, tok.AccessToken); err != nil {
@@ -210,11 +210,11 @@ func NewRefreshSource(ctx context.Context, creds *Credentials, cfg LoginConfig) 
 	}()
 	doc, err := fetchDiscovery(ctx, client, id)
 	if err != nil {
-		return nil, ErrDiscovery
+		return nil, fmt.Errorf("%w: %w", ErrDiscovery, err)
 	}
 	validator, err := authoidc.NewValidator(ctx, authoidc.Config{Issuer: id.Issuer, JWKSURI: doc.JWKSURI, Audience: id.Audience, HTTPClient: client})
 	if err != nil {
-		return nil, ErrDiscovery
+		return nil, fmt.Errorf("%w: %w", ErrDiscovery, err)
 	}
 	result := newRefreshSource(id, creds, cfg.Registry, client, doc.TokenEndpoint, validator, refreshPoll)
 	result.ownsClient = ownsClient
