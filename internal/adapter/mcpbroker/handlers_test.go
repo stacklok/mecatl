@@ -135,3 +135,16 @@ func TestHandlerBundleMountRejectsEachMissingProtectedHandlerWithoutRoutes(t *te
 		})
 	}
 }
+
+func TestVMCPHandlerRejectedWithoutProtectedBundle(t *testing.T) {
+	handler := http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})
+	bundle := HandlerBundle{VMCP: handler}
+	mux := http.NewServeMux()
+	if err := bundle.Mount(mux, ""); err == nil {
+		t.Fatal("mounted an anonymous vMCP handler with no protected authorization bundle")
+	}
+	request := httptest.NewRequest(http.MethodPost, "http://broker.example"+toolHiveMCPPath, nil)
+	if _, pattern := mux.Handler(request); pattern != "" {
+		t.Errorf("vMCP route %q was registered despite the missing protected bundle", toolHiveMCPPath)
+	}
+}

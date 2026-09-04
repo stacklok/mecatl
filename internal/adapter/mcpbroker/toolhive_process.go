@@ -225,7 +225,13 @@ func newToolHiveProcess(ctx context.Context, config ToolHiveConfig, options tool
 	if err != nil {
 		return rollback(fmt.Errorf("mcpbroker: create vMCP handler: %w", err))
 	}
-	process.Handlers.VMCP = vmcpHandler
+	if incoming != nil {
+		// The vMCP endpoint is published only when the OIDC middleware exists to
+		// protect it. With zero protected upstreams there is no incoming-auth
+		// mechanism at all, so publishing it would be an anonymous
+		// tool-execution surface (CWE-306 / OWASP API2:2023).
+		process.Handlers.VMCP = vmcpHandler
+	}
 	if auth != nil {
 		embedded := http.StripPrefix(toolHiveBasePath, auth.Handler())
 		process.Handlers.Authorization = embedded

@@ -78,6 +78,68 @@ func TestNewToolHiveProcessFallsBackToMemoryStorageWhenUnconfigured(t *testing.T
 	t.Cleanup(func() { _ = process.Close() })
 }
 
+func TestAnonymousOnlyProcessPublishesNoVMCPRoute(t *testing.T) {
+	var requests atomic.Int32
+	anonymous := toolHiveDiscoveryServer(t, "get_status", &requests)
+	process, err := NewToolHiveProcess(t.Context(), ToolHiveConfig{
+		Profiles: []ToolHiveProfile{{Name: "status", URL: anonymous.URL, Auth: authNone}},
+	})
+	if err != nil {
+		t.Fatalf("NewToolHiveProcess: %v", err)
+	}
+	t.Cleanup(func() { _ = process.Close() })
+	if process.Handlers.VMCP != nil {
+		t.Fatal("an all-auth:none process published the vMCP handler with no protected bundle to guard it")
+	}
+	if !process.Handlers.Empty() {
+		t.Fatalf("an all-auth:none process published unexpected handlers: %+v", process.Handlers)
+	}
+}
+
+func TestProtectedBrokerVMCPEndpointRejectsAnonymousOverNetwork(t *testing.T) {
+	t.Setenv("MECATL_TEST_CLIENT_SECRET", "construction-only-secret")
+	var requests atomic.Int32
+	anonymous := toolHiveDiscoveryServer(t, "get_status", &requests)
+	protected := protectedToolHiveProfile("private")
+	protected.Static = []StaticTool{{Name: "echo", Description: "echo", Schema: json.RawMessage(`{"type":"object"}`)}}
+	process, err := NewToolHiveProcess(t.Context(), ToolHiveConfig{
+		CallbackURL: "https://broker.example/callback",
+		Profiles:    []ToolHiveProfile{protected, {Name: "status", URL: anonymous.URL, Auth: authNone}},
+	})
+	if err != nil {
+		t.Fatalf("NewToolHiveProcess: %v", err)
+	}
+	t.Cleanup(func() { _ = process.Close() })
+	if process.Handlers.VMCP == nil {
+		t.Fatal("a process with a protected upstream must publish the vMCP handler")
+	}
+
+	mux := http.NewServeMux()
+	if err := process.Handlers.Mount(mux, "/callback"); err != nil {
+		t.Fatalf("mount handlers: %v", err)
+	}
+	server := httptest.NewServer(mux)
+	t.Cleanup(server.Close)
+
+	for _, body := range []string{
+		`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"anon","version":"1.0"}}}`,
+		`{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}`,
+		`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"private.echo","arguments":{}}}`,
+	} {
+		response, err := http.Post(server.URL+toolHiveMCPPath, "application/json", strings.NewReader(body))
+		if err != nil {
+			t.Fatalf("anonymous POST %s: %v", body, err)
+		}
+		payload, _ := io.ReadAll(response.Body)
+		_ = response.Body.Close()
+		if response.StatusCode != http.StatusUnauthorized {
+			t.Fatalf("anonymous %s: status = %d, body = %s, want %d", body, response.StatusCode, payload, http.StatusUnauthorized)
+		}
+	}
+}
+
+
+
 func TestToolHiveConstructionPreservesProtectedMapping(t *testing.T) {
 	profiles := []ToolHiveProfile{
 		protectedToolHiveProfile("GitHub_Cloud"),

@@ -74,6 +74,13 @@ func (h HandlerBundle) routes(callbackPath string) ([]handlerRoute, error) {
 	if err := protectedHandlersComplete(fixed[:6]); err != nil {
 		return nil, err
 	}
+	if h.VMCP != nil {
+		for _, route := range fixed[:6] {
+			if route.handler == nil {
+				return nil, errors.New("mcpbroker: vMCP handler requires the protected authorization bundle")
+			}
+		}
+	}
 	routes := nonNilRoutes(fixed)
 	if callbackPath != "" || h.Callback != nil {
 		if err := validCallbackHandler(callbackPath, h.Callback); err != nil {
