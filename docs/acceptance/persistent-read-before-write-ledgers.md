@@ -3,7 +3,7 @@
 **Phase:** storage-independent file-mutation safety
 **Status:** landed, 2026-08-26. Panel-repair wave completed: Workspace is content-only and Environment independently owns the selected ReadLedger.
 **Issue:** [stacklok/mecatl#888](https://github.com/stacklok/mecatl/issues/888).
-**ADR:** [ADR-0296](../adr/0296-persistent-read-before-write-ledgers.md) — separates session-scoped ledger storage from file-content storage while preserving fail-closed mutation and final filesystem CAS.
+**ADR:** [ADR-0298](../adr/0298-persistent-read-before-write-ledgers.md) — separates session-scoped ledger storage from file-content storage while preserving fail-closed mutation and final filesystem CAS.
 **Accumulator branch:** `acc/persistent-read-ledgers` (off `main`).
 
 The smallest set of work that lets a deployment retain read-before-write evidence independently of file contents, across runs and replicas, without weakening Edit or Write. It includes a Redis-backed contract proof because Redis is the first durable consumer and is already an established root-module dependency; wiring a remote filesystem remains separate work.
@@ -12,7 +12,7 @@ The doc is organized scenario-first because acceptance is about what the running
 
 ## Why these scope cuts
 
-- [ADR-0208](../adr/0208-execution-environment.md) remains authoritative for opaque versions, I/O-free lexical keying, create-only writes, and conditional replacement; [ADR-0296](../adr/0296-persistent-read-before-write-ledgers.md) supersedes only ADR-0208's in-memory/live-Workspace ledger-lifetime decision.
+- [ADR-0208](../adr/0208-execution-environment.md) remains authoritative for opaque versions, I/O-free lexical keying, create-only writes, and conditional replacement; [ADR-0298](../adr/0298-persistent-read-before-write-ledgers.md) supersedes only ADR-0208's in-memory/live-Workspace ledger-lifetime decision.
 - [ADR-0036](../adr/0036-engine-module.md) keeps the ledger contract and in-memory reference adapter in the importable engine module while the existing Redis dependency remains in the root adapter layer.
 - [ADR-0048](../adr/0048-mecak8s.md) makes Redis the relevant durable proof, but mecak8s filesystem mode and operator-facing configuration belong to follow-up issue #889.
 
@@ -117,7 +117,7 @@ A post-mutation ledger-write failure is reported honestly: the already-successfu
 
 ## Cross-cutting deliverables
 
-- Add [ADR-0296](../adr/0296-persistent-read-before-write-ledgers.md), which declares ADR-0208 decision 6 superseded; do not edit the frozen ADR-0208 text.
+- Add [ADR-0298](../adr/0298-persistent-read-before-write-ledgers.md), which declares ADR-0208 decision 6 superseded; do not edit the frozen ADR-0208 text.
 - Update `docs/architecture.md`, `docs/architecture/ports.md`, `docs/design/IMPLEMENTATION-NOTES.md`, and the `AGENTS.md` invariant so Workspace is content-only and Environment independently carries the selected ledger.
 - Replace ADR-0027's “reset-by-design” read-ledger fidelity row with the split default-memory/durable-selected lifecycle and add any outlives-a-call Redis ledger resource to List 1.
 - Update `engine/CHANGELOG.md` and `engine/api/*.txt` under the engine compatibility policy.
