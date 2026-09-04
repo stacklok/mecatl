@@ -268,6 +268,7 @@ func installLearningFixture() {
 	runCmd(ctx, "kubectl", "wait", "-n", k8sNamespace, "--for=condition=Available", "deployment/learning-driver", "--timeout=120s")
 	kubectlApplyStdin(ctx, []byte(learningDriverEgressPolicy))
 
+	gomega.Expect(os.MkdirAll(filepath.Dir(valuesPath), 0o700)).To(gomega.Succeed())
 	gomega.Expect(os.WriteFile(valuesPath, []byte(learningValues), 0o600)).To(gomega.Succeed())
 	chart := filepath.Join(repoRoot(), "deploy", "helm", "mecak8s")
 	out, err := exec.CommandContext(ctx, "helm", "upgrade", "--install", "mecak8s", chart,
