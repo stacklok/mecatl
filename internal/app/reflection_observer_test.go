@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -23,6 +24,244 @@ import (
 )
 
 type captureReflectionInput struct{ input chan learning.Input }
+
+type admissionPolicyFunc func(learning.AdmissionRequest) learning.AdmissionDecision
+
+func (f admissionPolicyFunc) Decide(req learning.AdmissionRequest) learning.AdmissionDecision {
+	return f(req)
+}
+
+type automaticCaptureReflector struct {
+	mu       sync.Mutex
+	inputs   []learning.Input
+	estimate int
+	order    *[]string
+	called   chan learning.Input
+}
+
+func (r *automaticCaptureReflector) RequestTokenEstimate(_ learning.Input) (int, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.order != nil {
+		*r.order = append(*r.order, "estimate")
+	}
+	return r.estimate, nil
+}
+
+func (r *automaticCaptureReflector) Reflect(_ context.Context, in learning.Input) (learning.Outcome, error) {
+	r.mu.Lock()
+	r.inputs = append(r.inputs, in)
+	if r.order != nil {
+		*r.order = append(*r.order, "reflect")
+	}
+	r.mu.Unlock()
+	if r.called != nil {
+		r.called <- in
+	}
+	return learning.Outcome{Kind: learning.OutcomeAbstained}, nil
+}
+
+func automaticTrajectory(id session.SessionID, messages []session.Message, current learning.MessageSpan) learning.Trajectory {
+	trajectory := learning.NewTrajectory(id, "/workspace", session.StopEndTurn, session.Usage{}, messages)
+	trajectory.Kind = session.SessionKindMain
+	trajectory.Current = current
+	trajectory.Counters = session.Counters{Turns: 2}
+	return trajectory
+}
+
+func automaticTestObserver(t *testing.T, reflector *automaticCaptureReflector, policy learning.AdmissionPolicy) (*reflectionObserver, *reflectionCoordinator, *automaticAdmissionController) {
+	t.Helper()
+	coordinator := newReflectionCoordinator(context.Background(), reflectionCoordinatorConfig{Workers: 1, Capacity: 2, Timeout: time.Second})
+	t.Cleanup(coordinator.Close)
+	automatic := defaultLearningAutomaticConfig()
+	automatic.Cooldown = time.Hour
+	automatic.MaxReflections = 4
+	automatic.MaxReflectionsPerPrincipal = 4
+	automatic.MaxTokens = 1 << 20
+	automatic.MaxTokensPerPrincipal = 1 << 20
+	controller := newAutomaticAdmissionController(automatic, nil)
+	return &reflectionObserver{
+		coordinator: coordinator, reflector: reflector, repository: memproposal.New(), operatorMemory: memmemory.New(),
+		mode: learning.Review, policy: policy, controller: controller, sensitivity: learning.Balanced,
+	}, coordinator, controller
+}
+
+func TestScalableReflectionEvidence_Scenario1_AutomaticFullSourceAdmissionThenBoundedSelection(t *testing.T) {
+	large := session.NewUserMessageWithParts("old context", []session.Content{{Data: []byte(strings.Repeat("x", defaultReflectionJobBytes+1))}})
+	messages := []session.Message{large, session.NewUserMessage("Please remember that Go files use gofmt")}
+	seenFull := false
+	policy := admissionPolicyFunc(func(req learning.AdmissionRequest) learning.AdmissionDecision {
+		seenFull = len(req.Input.Trajectory.Messages) == 2 && len(req.Input.Trajectory.Messages[0].Parts[0].Data) > defaultReflectionJobBytes
+		return (learning.ThresholdPolicy{Sensitivity: learning.Balanced}).Decide(req)
+	})
+	reflector := &automaticCaptureReflector{estimate: 8, called: make(chan learning.Input, 1)}
+	observer, _, _ := automaticTestObserver(t, reflector, policy)
+
+	if err := observer.Observe(context.Background(), automaticTrajectory("large-source", messages, learning.MessageSpan{Start: 1, End: 2})); err != nil {
+		t.Fatal(err)
+	}
+	input := <-reflector.called
+	if !seenFull {
+		t.Fatal("automatic admission did not inspect the full retained source")
+	}
+	if len(input.Trajectory.Messages) == 0 || len(input.Trajectory.Messages) > learning.MaxInputMessages || reflectionRawInputBytes(input, defaultReflectionJobBytes) > defaultReflectionJobBytes {
+		t.Fatalf("reflector input is not bounded selected evidence: messages=%d bytes=%d", len(input.Trajectory.Messages), reflectionRawInputBytes(input, defaultReflectionJobBytes))
+	}
+	if !input.Trajectory.Current.Valid(len(input.Trajectory.Messages)) || !session.IsGenuineUserPrompt(input.Trajectory.Messages[input.Trajectory.Current.Start]) {
+		t.Fatalf("selected current span is not verified: %#v", input.Trajectory.Current)
+	}
+	if input.Manifest == nil || input.Manifest.Protocol != learning.ReflectionEvidenceV1 {
+		t.Fatalf("reflector input manifest = %#v", input.Manifest)
+	}
+}
+
+func TestADR_0298_AdmissionPrecedesBoundedInputConstruction(t *testing.T) {
+	messages := make([]session.Message, learning.MaxInputMessages+40)
+	for i := range messages {
+		messages[i] = session.NewUserMessage(strings.Repeat("context ", 512))
+	}
+	messages[len(messages)-1] = session.NewUserMessage("remember that selection stays bounded")
+	order := []string{}
+	policy := admissionPolicyFunc(func(req learning.AdmissionRequest) learning.AdmissionDecision {
+		order = append(order, "admission")
+		if len(req.Input.Trajectory.Messages) != len(messages) {
+			t.Fatalf("admission saw %d messages, want %d", len(req.Input.Trajectory.Messages), len(messages))
+		}
+		return learning.AdmissionDecision{Admitted: true, Class: learning.AdmissionHard, Signals: learning.DetectSignalsScoped(req.Input, learning.DetectionScope{Current: req.Input.Trajectory.Current})}
+	})
+	reflector := &automaticCaptureReflector{estimate: 8, order: &order, called: make(chan learning.Input, 1)}
+	observer, _, _ := automaticTestObserver(t, reflector, policy)
+	if err := observer.Observe(context.Background(), automaticTrajectory("ordered", messages, learning.MessageSpan{Start: len(messages) - 1, End: len(messages)})); err != nil {
+		t.Fatal(err)
+	}
+	input := <-reflector.called
+	if len(order) < 3 || order[0] != "admission" || order[1] != "estimate" || order[2] != "reflect" {
+		t.Fatalf("automatic order = %v", order)
+	}
+	if len(input.Trajectory.Messages) > learning.MaxInputMessages || reflectionRawInputBytes(input, defaultReflectionJobBytes) > defaultReflectionJobBytes {
+		t.Fatalf("post-admission input exceeds hard limits: messages=%d bytes=%d", len(input.Trajectory.Messages), reflectionRawInputBytes(input, defaultReflectionJobBytes))
+	}
+}
+
+func TestScalableReflectionEvidence_Scenario3_AutomaticCurrentSpanClosureIsMandatory(t *testing.T) {
+	call := session.NewToolCall("large", "Read", nil)
+	result := session.NewToolResult("large", "")
+	for range learning.MaxCandidateEvidence {
+		result.Parts = append(result.Parts, session.Content{BlockKind: session.BlockText, Text: strings.Repeat("x", defaultReflectionJobBytes)})
+	}
+	messages := []session.Message{
+		session.NewUserMessage("investigate this result"),
+		session.NewAssistantMessage("", "", []session.ToolCall{call}),
+		session.NewToolMessage(result),
+	}
+	reflector := &automaticCaptureReflector{estimate: 8, called: make(chan learning.Input, 1)}
+	observer, coordinator, controller := automaticTestObserver(t, reflector, learning.AlwaysPolicy{})
+	if err := observer.Observe(context.Background(), automaticTrajectory("mandatory", messages, learning.MessageSpan{Start: 0, End: 3})); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case input := <-reflector.called:
+		t.Fatalf("unfit current-span closure reached reflector: %#v", input)
+	default:
+	}
+	coordinator.mu.Lock()
+	started, receipts := coordinator.started, len(coordinator.receipts)
+	coordinator.mu.Unlock()
+	controller.mu.Lock()
+	reservations := len(controller.reservations)
+	controller.mu.Unlock()
+	if started || receipts != 0 || reservations != 0 {
+		t.Fatalf("mandatory closure skip left work: started=%v receipts=%d reservations=%d", started, receipts, reservations)
+	}
+}
+
+func TestScalableReflectionEvidence_Scenario5_AutomaticSkipLeavesNoAdmissionState(t *testing.T) {
+	reflector := &automaticCaptureReflector{estimate: 8, called: make(chan learning.Input, 1)}
+	observer, coordinator, controller := automaticTestObserver(t, reflector, learning.AlwaysPolicy{})
+	trajectory := automaticTrajectory("unsafe-only", []session.Message{session.NewAssistantMessage("", "provider reasoning", nil)}, learning.MessageSpan{Start: 0, End: 1})
+	if err := observer.Observe(context.Background(), trajectory); err != nil {
+		t.Fatal(err)
+	}
+	coordinator.mu.Lock()
+	started, queued, receipts, pending := coordinator.started, coordinator.queued, len(coordinator.receipts), len(coordinator.pending)
+	coordinator.mu.Unlock()
+	controller.mu.Lock()
+	reservations, completed := len(controller.reservations), len(controller.completed)
+	controller.mu.Unlock()
+	reflector.mu.Lock()
+	calls := len(reflector.inputs)
+	reflector.mu.Unlock()
+	if started || queued != 0 || receipts != 0 || pending != 0 || reservations != 0 || completed != 0 || calls != 0 {
+		t.Fatalf("skip left state: started=%v queued=%d receipts=%d pending=%d reservations=%d completed=%d calls=%d", started, queued, receipts, pending, reservations, completed, calls)
+	}
+}
+
+func TestADR_0298_NoAutomaticRawSizeRejectionCompatibility(t *testing.T) {
+	large := session.NewUserMessageWithParts("", []session.Content{{Data: []byte(strings.Repeat("z", defaultReflectionJobBytes*2))}})
+	messages := []session.Message{large, session.NewUserMessage("remember that raw excluded bytes do not reject reflection")}
+	reflector := &automaticCaptureReflector{estimate: 8, called: make(chan learning.Input, 1)}
+	observer, _, _ := automaticTestObserver(t, reflector, learning.AlwaysPolicy{})
+	if err := observer.Observe(context.Background(), automaticTrajectory("raw-large", messages, learning.MessageSpan{Start: 1, End: 2})); err != nil {
+		t.Fatalf("excluded raw bytes rejected automatic reflection: %v", err)
+	}
+	select {
+	case <-reflector.called:
+	case <-time.After(time.Second):
+		t.Fatal("bounded selected evidence was not reflected")
+	}
+}
+
+func TestADR_0298_AutomaticCancellationStopsPreAdmissionMaterialization(t *testing.T) {
+	reflector := &automaticCaptureReflector{estimate: 8, called: make(chan learning.Input, 1)}
+	observer, coordinator, controller := automaticTestObserver(t, reflector, learning.AlwaysPolicy{})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	err := observer.Observe(ctx, automaticTrajectory("cancelled", []session.Message{session.NewUserMessage("remember cancellation")}, learning.MessageSpan{Start: 0, End: 1}))
+	if err == nil {
+		t.Fatal("pre-admission cancellation was ignored")
+	}
+	coordinator.mu.Lock()
+	started, receipts := coordinator.started, len(coordinator.receipts)
+	coordinator.mu.Unlock()
+	controller.mu.Lock()
+	reservations := len(controller.reservations)
+	controller.mu.Unlock()
+	if started || receipts != 0 || reservations != 0 || len(reflector.inputs) != 0 {
+		t.Fatalf("cancelled scan published work: started=%v receipts=%d reservations=%d calls=%d", started, receipts, reservations, len(reflector.inputs))
+	}
+}
+
+func TestADR_0298_AutomaticAdmissionCooldownBudgetReservationUnchanged(t *testing.T) {
+	order := []string{}
+	policy := admissionPolicyFunc(func(req learning.AdmissionRequest) learning.AdmissionDecision {
+		order = append(order, "policy")
+		return learning.AdmissionDecision{Admitted: true, Class: learning.AdmissionWeighted, Signals: learning.DetectSignalsScoped(req.Input, learning.DetectionScope{Current: req.Input.Trajectory.Current})}
+	})
+	reflector := &automaticCaptureReflector{estimate: 7, order: &order, called: make(chan learning.Input, 2)}
+	observer, _, controller := automaticTestObserver(t, reflector, policy)
+	if err := observer.Observe(context.Background(), automaticTrajectory("first", []session.Message{session.NewUserMessage("remember first")}, learning.MessageSpan{Start: 0, End: 1})); err != nil {
+		t.Fatal(err)
+	}
+	<-reflector.called
+	if err := observer.Observe(context.Background(), automaticTrajectory("second", []session.Message{session.NewUserMessage("remember second")}, learning.MessageSpan{Start: 0, End: 1})); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-reflector.called:
+		t.Fatal("cooldown-admission rejection reached provider")
+	default:
+	}
+	controller.mu.Lock()
+	reservations := append([]learningReservation(nil), controller.reservations...)
+	controller.mu.Unlock()
+	if len(reservations) != 1 || reservations[0].tokens != 7 {
+		t.Fatalf("reservation accounting = %#v", reservations)
+	}
+	wantPrefix := []string{"policy", "estimate", "reflect", "policy", "estimate"}
+	if len(order) < len(wantPrefix) || !reflect.DeepEqual(order[:len(wantPrefix)], wantPrefix) {
+		t.Fatalf("policy/materialization/budget ordering = %v", order)
+	}
+}
 
 type passingSkillEvaluator struct{}
 

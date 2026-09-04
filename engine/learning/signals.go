@@ -56,7 +56,21 @@ func DetectSignalsScoped(in Input, scope DetectionScope) []Signal {
 	detected = append(nonExplicitSignals(detected), explicitCurrentPromptSignals(currentInput)...)
 	for i := range detected {
 		for j := range detected[i].Evidence {
-			detected[i].Evidence[j].Ordinal += scope.Current.Start
+			ref := &detected[i].Evidence[j]
+			ref.Ordinal += scope.Current.Start
+			if in.Manifest == nil {
+				continue
+			}
+			var resolved EvidenceRef
+			var err error
+			if ref.Locator == EvidenceEvent {
+				resolved, err = EventEvidenceRef(in, ref.Ordinal, ref.ToolCallID)
+			} else {
+				resolved, err = MessageEvidenceRef(in, ref.Ordinal, ref.ToolCallID)
+			}
+			if err == nil {
+				*ref = resolved
+			}
 		}
 	}
 	all := make([]Signal, 0, len(in.Signals)+len(detected))

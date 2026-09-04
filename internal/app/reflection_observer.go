@@ -292,13 +292,47 @@ func (o *reflectionObserver) createOrReserveAttempt(ctx context.Context, partiti
 	return record, found && existing.ID == record.ID, nil
 }
 
+func selectedCurrentSpan(manifest learning.MaterializationManifest, current learning.MessageSpan) learning.MessageSpan {
+	start, end := -1, -1
+	selected := 0
+	for _, entry := range manifest.Entries {
+		if entry.Locator != learning.EvidenceMessage || entry.OriginalMessage == nil {
+			continue
+		}
+		if current.Contains(*entry.OriginalMessage) {
+			if start < 0 {
+				start = selected
+			}
+			end = selected + 1
+		}
+		selected++
+	}
+	if start < 0 {
+		return learning.MessageSpan{}
+	}
+	return learning.MessageSpan{Start: start, End: end}
+}
+
+func boundedExisting(input learning.Input, existing []learning.ExistingFact) []learning.ExistingFact {
+	for _, fact := range existing {
+		candidate := append(input.Existing, fact)
+		input.Existing = candidate
+		if _, err := reflectionInputMaterial(input, defaultReflectionJobBytes); err != nil {
+			return candidate[:len(candidate)-1]
+		}
+	}
+	return input.Existing
+}
+
 //nolint:gocyclo // explicit/direct and automatic/queued paths share one bounded input and disposition funnel
 func (o *reflectionObserver) submit(ctx context.Context, trajectory learning.Trajectory, events []session.Event, _ bool, automatic bool) (reflectionReceipt, error) {
 	if o == nil || o.reflector == nil || o.repository == nil {
 		return reflectionReceipt{}, errors.New("reflection is not configured")
 	}
-	if size := reflectionTrajectoryBytes(trajectory) + reflectionEventsBytes(events, defaultReflectionJobBytes); size > defaultReflectionJobBytes {
-		return reflectionReceipt{}, fmt.Errorf("reflection input exceeds %d-byte job limit", defaultReflectionJobBytes)
+	if !automatic {
+		if size := reflectionTrajectoryBytes(trajectory) + reflectionEventsBytes(events, defaultReflectionJobBytes); size > defaultReflectionJobBytes {
+			return reflectionReceipt{}, fmt.Errorf("reflection input exceeds %d-byte job limit", defaultReflectionJobBytes)
+		}
 	}
 	owner := trajectory.Principal.Clone()
 	ctx = reflectionContext(ctx, owner)
@@ -311,21 +345,74 @@ func (o *reflectionObserver) submit(ctx context.Context, trajectory learning.Tra
 	if !automatic {
 		hostSignals = []learning.Signal{{Kind: learning.SignalHostRequested}}
 	}
-	input := learning.NewInput(trajectory, events, hostSignals, memoryExisting(ctx, stores...))
-	signals := append([]learning.Signal(nil), hostSignals...)
-	signals = append(signals, learning.DetectSignals(input)...)
-	decision := learning.AdmissionDecision{Admitted: true, Class: learning.AdmissionHostRequested, Reasons: []learning.AdmissionReason{learning.ReasonHostRequested}, Signals: signals}
+	var input learning.Input
+	var signals []learning.Signal
+	decision := learning.AdmissionDecision{Admitted: true, Class: learning.AdmissionHostRequested, Reasons: []learning.AdmissionReason{learning.ReasonHostRequested}}
 	if automatic {
+		if err := ctx.Err(); err != nil {
+			return reflectionReceipt{}, err
+		}
+		// Admission borrows the completed trajectory instead of NewInput's owned
+		// full-source copy. The policy scans the complete source/current span; only
+		// an admitted trajectory is copied into a bounded selected Input below.
+		admissionInput := learning.Input{Trajectory: trajectory}
 		policy := o.policy
 		if policy == nil {
 			policy = learning.ThresholdPolicy{Sensitivity: o.sensitivity}
 		}
-		decision = policy.Decide(learning.AdmissionRequest{Input: input})
+		decision = policy.Decide(learning.AdmissionRequest{Input: admissionInput})
 		o.emitAdmission(decision)
 		if !decision.Admitted {
 			return reflectionReceipt{}, nil
 		}
-		signals = decision.Signals
+		if err := ctx.Err(); err != nil {
+			return reflectionReceipt{}, err
+		}
+		var materialized learning.Materialization
+		materialLimit := defaultReflectionJobBytes
+		for {
+			var err error
+			materialized, err = learning.MaterializeEvidence(learning.MaterializationRequest{
+				Trajectory: trajectory,
+				Events:     events,
+				Signals:    decision.Signals,
+				Mandatory:  trajectory.Current,
+				Limits:     learning.MaterializationLimits{MaxBytes: materialLimit},
+			})
+			if err != nil {
+				return reflectionReceipt{}, err
+			}
+			if materialized.Disposition != learning.MaterializationSelected {
+				return reflectionReceipt{}, nil
+			}
+			input = materialized.Input
+			input.Trajectory.Workspace = trajectory.Workspace
+			input.Trajectory.Principal = owner
+			input.Trajectory.Kind = trajectory.Kind
+			input.Trajectory.Counters = trajectory.Counters
+			input.Trajectory.Current = selectedCurrentSpan(materialized.Manifest, trajectory.Current)
+			signals = learning.DetectSignals(input)
+			input.Signals = signals
+			if _, err := reflectionInputMaterial(input, defaultReflectionJobBytes); err == nil {
+				break
+			}
+			materialLimit /= 2
+			if materialLimit == 0 {
+				return reflectionReceipt{}, nil
+			}
+		}
+		input.Existing = boundedExisting(input, memoryExisting(ctx, stores...))
+		if err := learning.ValidateInput(input); err != nil {
+			return reflectionReceipt{}, fmt.Errorf("validate automatic materialization: %w", err)
+		}
+		if err := ctx.Err(); err != nil {
+			return reflectionReceipt{}, err
+		}
+	} else {
+		input = learning.NewInput(trajectory, events, hostSignals, memoryExisting(ctx, stores...))
+		signals = append([]learning.Signal(nil), hostSignals...)
+		signals = append(signals, learning.DetectSignals(input)...)
+		decision.Signals = signals
 	}
 	reservationTokens := 0
 	if automatic {
