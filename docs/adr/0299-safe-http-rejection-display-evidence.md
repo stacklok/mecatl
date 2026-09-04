@@ -1,4 +1,4 @@
-# ADR 0295 — Safe HTTP rejection display evidence
+# ADR 0299 — Safe HTTP rejection display evidence
 
 - Status: Accepted
 - Date: 2026-09-03

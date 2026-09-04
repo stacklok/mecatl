@@ -661,7 +661,7 @@ It strips userinfo, query, and fragment and omits malformed values. The SDK erro
 unwrap-only, retry/classification metadata is unchanged, and in-band SSE failures do not
 invent HTTP evidence. Raw bodies, headers, arbitrary URLs, prompts, credentials, and IDs
 remain absent from user-visible display and durable attempt evidence. See
-[ADR 0295](../adr/0295-safe-http-rejection-display-evidence.md).
+[ADR 0299](../adr/0299-safe-http-rejection-display-evidence.md).
 
 **Prompt-free failed-step retry.** `engine/session/session.go` (`PrepareFailedStepRetry`) accepts
 only a failed typed Retryable attempt at Precommit or Visible, repairs an interrupted

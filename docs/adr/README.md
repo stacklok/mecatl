@@ -37,7 +37,7 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0245 — Safe build diagnostics](./0245-safe-build-diagnostics.md)
 - [0254 — Dedicated session debugger and per-instance admin transport](./0254-session-debugger-admin-transport.md)
 - [0255 — Sanitized durable network-attempt evidence](./0255-sanitized-network-attempt-evidence.md)
-- [0295 — Safe HTTP rejection display evidence](./0295-safe-http-rejection-display-evidence.md)
+- [0299 — Safe HTTP rejection display evidence](./0299-safe-http-rejection-display-evidence.md)
 - [0256 — Target-bound related evidence and approval-gated reporting](./0256-session-debugger-evidence-and-reporting.md) *(partially superseded by 0257)*
 - [0257 — Session debugger incarnation and disclosure hardening](./0257-session-debugger-hardening.md) *(incarnation identity and edges superseded by 0258)*
 - [0258 — Cryptographic session and lineage incarnations](./0258-cryptographic-session-incarnations.md)
