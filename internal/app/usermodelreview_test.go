@@ -413,7 +413,7 @@ func TestExplicitReflectionUsesPersistedSessionProvider(t *testing.T) {
 
 func TestExplicitReflectionAlternateRootStagesButCannotPromoteProjectProposal(t *testing.T) {
 	ctx := context.Background()
-	alternateRoot := t.TempDir()
+	alternateRoot := osfsWSForTest(t, t.TempDir()).Root()
 	provider := mockllm.New(
 		mockllm.TextTurn("completed"),
 		mockllm.TextTurn(`{"kind":"proposed","candidates":[{"kind":"project_fact","key":"project/build","value":"task build","evidence":["m:0"]}]}`),

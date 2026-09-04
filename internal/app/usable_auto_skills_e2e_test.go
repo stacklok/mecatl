@@ -16,7 +16,7 @@ import (
 )
 
 func TestUsableAutoSkillsStockBuildPublishesReflectedProcedure(t *testing.T) {
-	workspace := t.TempDir()
+	workspace := osfsWSForTest(t, t.TempDir()).Root()
 	storeDir := t.TempDir()
 	var requestMu sync.Mutex
 	var requests []port.LLMRequest

@@ -37,7 +37,7 @@ import (
 
 func TestCloudNativeLearning_Scenario3_ExplicitProcedureAttemptSurvivesRestart(t *testing.T) {
 	ctx := context.Background()
-	workspace := t.TempDir()
+	workspace := osfsWSForTest(t, t.TempDir()).Root()
 	storeDir := t.TempDir()
 	userModelDir := t.TempDir()
 	owner := &session.Principal{Issuer: "test", Subject: "owner", GrantType: session.GrantTypeUser}

@@ -61,7 +61,7 @@ func TestUsableAutoSkillsStockBuildPolicyMatrix(t *testing.T) {
 			if tc.projectPolicy {
 				t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 			}
-			workspace := t.TempDir()
+			workspace := osfsWSForTest(t, t.TempDir()).Root()
 			storeDir := t.TempDir()
 			if tc.projectPolicy {
 				if err := os.MkdirAll(filepath.Join(workspace, ".mecatl"), 0o700); err != nil {

@@ -146,7 +146,7 @@ func TestCloudNativeLearning_Scenario1_DirectSkillDraftRemainsInactive(t *testin
 		{name: "rejected procedure request", prompt: "do not create a skill from this procedure", admitted: false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			workspace := t.TempDir()
+			workspace := osfsWSForTest(t, t.TempDir()).Root()
 			var activitiesMu sync.Mutex
 			var activities []learning.Activity
 			turns := []mockllm.Turn{
