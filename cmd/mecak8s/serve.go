@@ -26,6 +26,15 @@ import (
 	"github.com/stacklok/mecatl/internal/cliconfig"
 )
 
+// brokerControlVerifiedIdentity reports whether the API verifies the caller,
+// rather than merely encrypting the connection. Server TLS authenticates only
+// the server; mTLS is caller identity only when every client certificate is
+// required and verified against the configured client CA.
+func brokerControlVerifiedIdentity(cfg config, tlsCfg *tls.Config) bool {
+	return cfg.authToken != "" || cfg.oidc.Enabled() ||
+		tlsCfg != nil && tlsCfg.ClientAuth == tls.RequireAndVerifyClientCert
+}
+
 // validateBrokerControlOwnership refuses to serve the broker's OAuth control
 // surface (authorize/token/callback — necessarily unauthenticated by the OAuth
 // dance itself) unless the deployment either verifies caller identity on its
