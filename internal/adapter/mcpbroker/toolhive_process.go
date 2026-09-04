@@ -372,6 +372,7 @@ func newToolHiveProtectedTarget(issuer, callbackURL string, required bool) (*oau
 		clientID:              clientID,
 		scopes:                []string{"openid", "offline_access"},
 		requestRefresh:        true,
+		resource:              issuer,
 	}, nil
 }
 

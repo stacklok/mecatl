@@ -2,11 +2,7 @@ package mcpbroker
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/base64"
 	"errors"
-
-	"golang.org/x/oauth2"
 
 	"github.com/stacklok/mecatl/engine/session"
 	contract "github.com/stacklok/mecatl/internal/mcpbroker"
@@ -303,13 +299,5 @@ func workspaceEnrollmentRef(transaction *authorizationTransaction) contract.Work
 
 func presentWorkspaceTransaction(transaction *authorizationTransaction) string {
 	cfg := transaction.oauthConfig(transaction.clientSecret)
-	challenge := sha256.Sum256([]byte(transaction.verifier))
-	options := []oauth2.AuthCodeOption{
-		oauth2.SetAuthURLParam("code_challenge", base64.RawURLEncoding.EncodeToString(challenge[:])),
-		oauth2.SetAuthURLParam("code_challenge_method", "S256"),
-	}
-	if transaction.route.requestRefresh {
-		options = append(options, oauth2.AccessTypeOffline)
-	}
-	return cfg.AuthCodeURL(transaction.state, options...)
+	return cfg.AuthCodeURL(transaction.state, transaction.authCodeOptions()...)
 }

@@ -617,6 +617,10 @@ func TestADR_0298_ToolHiveEnrollmentUsesRealIdentityMiddleware(t *testing.T) {
 			if err != nil || !presentation.Valid() {
 				t.Fatalf("BeginWorkspaceEnrollment = (%+v, %v)", presentation, err)
 			}
+			presentedURL, err := url.Parse(presentation.URL)
+			if err != nil || presentedURL.Query().Get("resource") != process.protectedTarget.resource || process.protectedTarget.resource == "" {
+				t.Fatalf("presentation resource = %q, want %q (err=%v)", presentedURL.Query().Get("resource"), process.protectedTarget.resource, err)
+			}
 			if got := toolNames(attached.(*Attachment).Tools()); len(got) != 0 {
 				t.Fatalf("protected tools visible before enrollment: %v", got)
 			}

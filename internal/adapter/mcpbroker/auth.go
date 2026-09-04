@@ -36,6 +36,10 @@ type oauthRoute struct {
 	secretEnv             string
 	scopes                []string
 	requestRefresh        bool
+	// resource is the RFC 8707 resource indicator sent with every authorization
+	// and token request: the canonical URI of the MCP server this route's
+	// grant is scoped to. Required by the MCP Authorization Spec 2025-06-18.
+	resource string
 }
 
 func compileOAuthRoute(callbackURL string, declaration permconfig.MCPServerProfile) (*oauthRoute, error) {
@@ -70,6 +74,7 @@ func compileOAuthRoute(callbackURL string, declaration permconfig.MCPServerProfi
 		secretEnv:             profile.Client.Preregistered.SecretEnv,
 		scopes:                append([]string(nil), profile.Scopes...),
 		requestRefresh:        profile.RequestRefreshToken,
+		resource:              declaration.URL,
 	}, nil
 }
 
@@ -357,6 +362,25 @@ func (t *authorizationTransaction) oauthConfig(secret string) *oauth2.Config {
 		}}
 }
 
+// authCodeOptions is the single option builder shared by every authorization
+// and token request this transaction makes, so the PKCE challenge, refresh
+// request, and RFC 8707 resource indicator can never drift between the
+// per-tool-call and workspace-enrollment presentation paths.
+func (t *authorizationTransaction) authCodeOptions() []oauth2.AuthCodeOption {
+	challenge := sha256.Sum256([]byte(t.verifier))
+	options := []oauth2.AuthCodeOption{
+		oauth2.SetAuthURLParam("code_challenge", base64.RawURLEncoding.EncodeToString(challenge[:])),
+		oauth2.SetAuthURLParam("code_challenge_method", "S256"),
+	}
+	if t.route.requestRefresh {
+		options = append(options, oauth2.AccessTypeOffline)
+	}
+	if t.route.resource != "" {
+		options = append(options, oauth2.SetAuthURLParam("resource", t.route.resource))
+	}
+	return options
+}
+
 func lookupAuthorization(logical *logicalSession, authorization session.ExternalAuthorization) (*authorizationTransaction, error) {
 	transaction := logical.authorizations[authorizationIdentity{id: authorization.ID, binding: authorization.Binding}]
 	if transaction == nil {
@@ -394,15 +418,7 @@ func (a *Attachment) PresentAuthorization(ctx context.Context, authorization ses
 		return "", contract.ErrAuthorizationNotFound
 	}
 	cfg := transaction.oauthConfig(transaction.clientSecret)
-	challenge := sha256.Sum256([]byte(transaction.verifier))
-	options := []oauth2.AuthCodeOption{
-		oauth2.SetAuthURLParam("code_challenge", base64.RawURLEncoding.EncodeToString(challenge[:])),
-		oauth2.SetAuthURLParam("code_challenge_method", "S256"),
-	}
-	if transaction.route.requestRefresh {
-		options = append(options, oauth2.AccessTypeOffline)
-	}
-	return cfg.AuthCodeURL(transaction.state, options...), nil
+	return cfg.AuthCodeURL(transaction.state, transaction.authCodeOptions()...), nil
 }
 
 // AuthorizationStatus reports the exact transaction's current lifecycle status.
@@ -599,7 +615,11 @@ func (r *Runtime) handleCallback(ctx context.Context, code, state string) error 
 	logical.mu.Unlock()
 
 	exchangeCtx = context.WithValue(exchangeCtx, oauth2.HTTPClient, r.oauth.httpClient)
-	token, err := cfg.Exchange(exchangeCtx, code, oauth2.VerifierOption(verifier))
+	exchangeOptions := []oauth2.AuthCodeOption{oauth2.VerifierOption(verifier)}
+	if transaction.route.resource != "" {
+		exchangeOptions = append(exchangeOptions, oauth2.SetAuthURLParam("resource", transaction.route.resource))
+	}
+	token, err := cfg.Exchange(exchangeCtx, code, exchangeOptions...)
 	exchangeCancel()
 	logical.mu.Lock()
 	defer logical.mu.Unlock()

@@ -104,6 +104,9 @@ func requestProtected(t *testing.T, attachment *Attachment, call session.ToolCal
 	if err != nil || parsed.Query().Get("state") == "" || parsed.Query().Get("code_challenge") == "" {
 		t.Fatalf("presentation URL = %q, %v", presentation, err)
 	}
+	if got := parsed.Query().Get("resource"); got == "" {
+		t.Fatalf("presentation URL %q is missing the RFC 8707 resource indicator", presentation)
+	}
 	return authorization, parsed.Query().Get("state")
 }
 
@@ -345,6 +348,31 @@ func TestCallbackAfterTransactionExpiryIsRejectedAndMarkedExpired(t *testing.T) 
 	}
 	if status, err := attachment.AuthorizationStatus(t.Context(), authorization); err != nil || status != session.AuthorizationExpired {
 		t.Fatalf("expired status = (%q, %v)", status, err)
+	}
+}
+
+func TestTokenExchangeCarriesResourceIndicator(t *testing.T) {
+	const wantResource = "https://mcp.example/mcp"
+	var resourceValues []string
+	tokenServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		if err := request.ParseForm(); err != nil {
+			t.Fatal(err)
+		}
+		resourceValues = append(resourceValues, request.Form.Get("resource"))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"access_token":"access","token_type":"Bearer","expires_in":3600}`))
+	}))
+	defer tokenServer.Close()
+
+	harness := newProtectedHarness(t, tokenServer)
+	attachment, _ := attach(t, harness.runtime, "resource-session")
+	call := session.NewToolCall("resource-call", "mcp__github__create", json.RawMessage(`{}`))
+	_, state := requestProtected(t, attachment, call)
+	if got := callback(t, harness.runtime, "authorization-code", state).Code; got != http.StatusOK {
+		t.Fatalf("callback status = %d", got)
+	}
+	if len(resourceValues) != 1 || resourceValues[0] != wantResource {
+		t.Fatalf("token exchange resource values = %v, want [%q]", resourceValues, wantResource)
 	}
 }
 
