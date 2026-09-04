@@ -347,6 +347,10 @@ Server cert/key and file-backed Redis CA/ACL Secret rotations are transactional 
 the last valid generation if projection is partial or validation fails. Keep old and new
 CAs together for an overlap period, then remove the old one after leaves have rotated.
 The server client-CA trust pool remains static and changing it requires a rolling restart.
+When broker mode is also configured, its embedded OAuth authorization server opens its
+own separate Redis connection using the same credential files but does not watch or
+reload them — a rotation requires restarting the pod for that connection to pick up the
+new credentials, even though readiness (driven by the main session store) stays healthy.
 
 The Redis Secret is mounted read-only with `defaultMode: 0440` and projects exactly the configured CA and ACL keys; unrelated Secret keys are not exposed. A password key alone uses Redis's default ACL user, while a username key requires a password key. `caKey` is optional: leaving it empty selects system-trust TLS, so an install against a publicly-rooted managed Redis with no ACL renders `--redis-tls` and no Secret volume at all. `credentialsSecret` is required exactly when some key needs reading. TLS-without-ACL external deployments are valid. The rendered command receives paths only, never Secret values. `values-kind.yaml` is deliberately the only profile that permits `ko.local` and plaintext Redis, and it passes `--redis-allow-plaintext` explicitly. It is not a production configuration.
 

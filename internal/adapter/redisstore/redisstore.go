@@ -224,6 +224,18 @@ func newWithConfig(cfg Config, deps storeDependencies) (*Store, error) {
 // authorization server, which stores under a distinct key prefix — without
 // reaching into this Store's internal, rotation-managed client. The caller
 // owns the returned client's lifecycle (Close it when done).
+//
+// Credentials/CA material are read ONCE, here, at construction: unlike the
+// main session-store client (NewWithConfig with cfg.reloadEnabled()), this
+// client does NOT watch its credential/CA files and does NOT hot-reload after
+// an ACL or CA rotation — go-redis reconnects using the SAME static
+// Username/Password/TLS baked into tcredis.Config, which exposes no
+// credentials-provider or reload hook. After a rotation, this client's
+// reconnects fail with the stale material while /readyz (driven by the main
+// store's reload-aware client) stays green, masking the failure as broker-only
+// OAuth breakage. A rotation therefore requires restarting the process for
+// this specific client. Document this limitation at every call site's own
+// operator-facing docs rather than implying parity with NewWithConfig.
 func NewClient(cfg Config) (redis.UniversalClient, error) {
 	if err := validateAddr(cfg.Addr); err != nil {
 		return nil, err
