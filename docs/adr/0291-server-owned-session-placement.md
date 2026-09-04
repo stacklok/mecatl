@@ -5,7 +5,7 @@
 - Scope: public placement selection; session/snapshot/driver identity; binding and
   reattachment; discovery; successors; delegation; schedules; ACP; and path projections
 - Supersedes: [ADR 0237](./0237-listener-scoped-workspace-authority.md); [ADR 0032](./0032-worktree-binding.md) decisions 1, 2, 4, and 5 where they expose or accept filesystem paths; [ADR 0214](./0214-environment-persistence.md) only for duplicate workspace persistence, workspace-derived fallback, and lazy stamping. ADR 0214's exact reattachment and runtime affinity remain authoritative.
-- Superseded by: none
+- Superseded by: [ADR 0297](./0297-active-clear-cancellation-boundary.md) only for active-source `ClearSession` failure semantics
 
 ## Context
 

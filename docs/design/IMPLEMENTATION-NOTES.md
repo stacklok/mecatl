@@ -6177,7 +6177,12 @@ the source placement. Clear creates a fresh empty-history successor; Fork copies
 may apply authorized provider/model/reasoning overrides in the same atomic publication. Both lock
 and lease the owned source, derive a cancellation context from the held mutation lease, build any
 per-session engine, re-check the held lease immediately before persistence, and tear down provisional
-bindings/engines if ownership is lost. The current `SessionStore` seam has no lease-token
+bindings/engines if ownership is lost. For a running or awaiting Clear, selector preflight
+runs while the source is untouched, then cancellation is the irreversible abandon-and-replace
+boundary. Any later lease, placement, engine, or persistence failure publishes no successor
+and causes no client rebind, but the source may already be terminal-cancelled; retry remains
+valid and prior workspace mutations are never rolled back. No distributed transaction across
+those systems is claimed. The current `SessionStore` seam has no lease-token
 conditional create, so there is an accepted residual window after the final held-lease check and
 before or during publication: a concurrent renewal loss cancels the context but cannot make every
 supported store's already-started commit atomic. This is not claimed as cancellation atomicity;

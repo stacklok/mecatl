@@ -613,10 +613,13 @@ names are rejected during settings validation. Before StatusML parsing, command 
 ASCII whitespace, so a normal `print` newline is accepted without changing internal
 text. This preserves `ui` as a pure render layer
 while allowing autonomous source updates. Its `/clear` command calls `ClearSession`
-to create a non-destructive empty-history successor that inherits the current session's
-exact placement, effective model/reasoning effort, and permission mode. It rebinds locally
-only after the successor and its authoritative snapshot are available; any failure leaves
-the source session and UI unchanged. Usage and configuration are documented in
+to create an empty-history successor that inherits the current session's exact placement,
+effective model/reasoning effort, and permission mode. For a running or awaiting source,
+clear is abandon-and-replace: cancellation is irreversible, while successor publication and
+local rebinding happen only after later placement, engine, and persistence steps succeed.
+A post-cancellation failure therefore leaves the UI bound to the stored source, which may
+already be terminal-cancelled; retry remains valid and workspace mutations are never rolled
+back. Usage and configuration are documented in
 `docs/tui.md`.
 
 **Remote mecatui OIDC.** The remote-login path is separate from the ToolHive LLM
@@ -906,8 +909,12 @@ decoded, persisted, or stored in a registry/map, and restart requires clients to
 distinct history-carrying successor. With no selector both inherit and exactly reattach
 the source placement. A fresh source-scoped selector may move either successor to an
 eligible worktree; Fork may also atomically apply provider/model/effort overrides.
-Source ownership, run-entry serialization, and leases are checked before publication,
-and any failure leaves the source and client binding unchanged. Schedules similarly
+Source ownership, run-entry serialization, and leases are checked before publication.
+Failures detected before active-source cancellation leave the source and client binding
+unchanged. For a running or awaiting Clear, cancellation is the irreversible boundary: a
+later failure publishes no successor and performs no client rebind, but the source may remain
+terminal-cancelled. Fork and idle-source failures retain the non-mutating source behavior.
+Schedules similarly
 persist their resolved exact ref, durable owner, and placement scope—not a selector or
 "current default" intent—and reauthorize and exactly reattach at each fire.
 
@@ -922,8 +929,10 @@ them.
 **Conversation successors.** `Service.ClearSessionSuccessor` and
 `Service.ForkSessionSuccessor` implement the two operations above. Fork snapshots valid
 history with `session.ForkSnapshot` and `session.SeedHistory`; Clear starts with empty
-history. Both create fresh idle aggregates with fresh counters/usage and preserve the
-source session. Wire surfaces are `ClearSession`/`ForkSession` over gRPC and the matching
+history. Both create fresh idle aggregates with fresh counters/usage and retain the
+source session as a stored conversation. Active Clear first cancels the source; a later
+successor failure can therefore leave that source terminal-cancelled without publishing or
+rebinding a successor. Wire surfaces are `ClearSession`/`ForkSession` over gRPC and the matching
 HTTP successor routes.
 
 ## See also

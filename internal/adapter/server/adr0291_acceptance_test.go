@@ -241,8 +241,34 @@ func TestADR_0291_ScopedWorktreeSelectorsFailClosed(t *testing.T) {
 	inventory.mu.Lock()
 	inventory.worktrees[0].Head = "h2"
 	inventory.mu.Unlock()
+	awaiting, err := store.Load(context.Background(), "source-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := awaiting.RecordUserPrompt("keep this approval", nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := awaiting.BeginTurn(); err != nil {
+		t.Fatal(err)
+	}
+	if err := awaiting.PauseForApproval(session.PendingAsk{AskID: "keep-ask"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Save(context.Background(), awaiting); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := svc.ClearSessionSuccessor(aliceCtx, "source-a", SuccessorPlacement{Selector: token}); !errors.Is(err, ErrPlacementNotFound) {
 		t.Fatalf("stale selector = %v, want ErrPlacementNotFound", err)
+	}
+	unchanged, err := store.Load(context.Background(), "source-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if unchanged.State != session.StateAwaiting {
+		t.Fatalf("stale selector changed source state = %q, want awaiting", unchanged.State)
+	}
+	if ask, ok := unchanged.PendingAsk(); !ok || ask.AskID != "keep-ask" {
+		t.Fatalf("stale selector consumed source approval: ask=%+v ok=%t", ask, ok)
 	}
 	if workspaceCalls != beforeWorkspaces || store.createCount() != baselineCreates {
 		t.Fatalf("stale selector constructed target or persisted: workspace=%d creates=%d", workspaceCalls, store.createCount())

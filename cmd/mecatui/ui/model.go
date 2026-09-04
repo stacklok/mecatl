@@ -490,6 +490,11 @@ type Model struct {
 
 	compactPending      bool
 	compactRequestToken uint64
+	// clearPending is the single in-flight ClearSession handoff. The source stays
+	// bound until the correlated response succeeds; the token makes delayed
+	// responses from an earlier attempt inert.
+	clearPending      *clearHandoff
+	clearRequestToken uint64
 
 	width  int
 	height int
