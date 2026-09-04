@@ -2,10 +2,10 @@
 id: 04-selected-evidence-coordinator
 title: Selected-evidence coordinator identity and limits
 blocked_by: [02-automatic-materialization-admission, 03-explicit-materialization-lifecycle]
-status: pending
-attempt: 0
-branch: ""
-worktree: ""
+status: in-progress
+attempt: 1
+branch: plan-scalable-reflection-evidence/04-selected-evidence-coordinator-attempt-1
+worktree: .scratch/worker-scalable-reflection-evidence-04-selected-evidence-coordinator-attempt-1
 issue: ""
 retries: 0
 last_error: ""

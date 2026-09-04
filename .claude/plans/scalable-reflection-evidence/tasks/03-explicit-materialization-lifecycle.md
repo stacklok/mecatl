@@ -2,7 +2,7 @@
 id: 03-explicit-materialization-lifecycle
 title: Explicit materialization outcomes and Build lifecycle
 blocked_by: [01-learning-materializer]
-status: in-progress
+status: done
 attempt: 1
 branch: plan-scalable-reflection-evidence/03-explicit-materialization-lifecycle-attempt-1
 worktree: .scratch/worker-scalable-reflection-evidence-03-explicit-materialization-lifecycle-attempt-1
