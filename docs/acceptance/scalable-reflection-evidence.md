@@ -1,7 +1,7 @@
 # Scalable reflection evidence — acceptance plan
 
 **Phase:** capability — deterministic bounded evidence materialization for reflection
-**Status:** draft
+**Status:** in-progress
 **ADR:** [ADR 0298](../adr/0298-bounded-reflection-evidence-materialization.md) — replace raw-size rejection with one versioned bounded-evidence protocol shared by automatic and explicit reflection.
 **Accumulator branch:** `acc/scalable-reflection-evidence` (off `main`).
 
