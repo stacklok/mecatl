@@ -56,15 +56,13 @@ type reflectionReceipt struct {
 }
 
 type reflectionJob struct {
-	principal string
-	input     learning.Input
-	reflector learning.Reflector
-	process   func(context.Context, string, learning.Outcome) (reflectionReceipt, error)
-	// dedupeKey is the canonical trajectory digest shared by automatic and explicit
-	// submissions. reserve runs under coordinator admission after capacity checks.
-	dedupeKey string
-	reserve   func() bool
-	complete  func(reflectionReceipt)
+	principal     string
+	input         learning.Input
+	selectedBytes int
+	reflector     learning.Reflector
+	process       func(context.Context, string, learning.Outcome) (reflectionReceipt, error)
+	reserve       func() bool
+	complete      func(reflectionReceipt)
 }
 
 type queuedReflection struct {
@@ -260,6 +258,17 @@ func (c *reflectionCoordinator) nextAttemptIDLocked(key string) string {
 	return fmt.Sprintf("%s-%016x", reflectionJobID(key), c.attempt)
 }
 
+func selectedEvidenceIdentity(in learning.Input) (string, string, error) {
+	manifest := in.Manifest
+	if manifest == nil || manifest.Protocol != learning.ReflectionEvidenceV1 ||
+		manifest.Source.Domain != learning.ReflectionEvidenceSourceV1 ||
+		manifest.Source.Value != in.Trajectory.SessionID || !learning.ValidSHA256(manifest.Digest) {
+		return "", "", errors.New("reflection job has invalid selected-evidence identity")
+	}
+	key := fmt.Sprintf("%s\x00%s\x00%s\x00%s", manifest.Protocol, manifest.Source.Domain, manifest.Source.Value, manifest.Digest)
+	return key, manifest.Digest, nil
+}
+
 // Enqueue admits a job without waiting for model or storage work. An in-flight
 // duplicate joins the original attempt; a rerun after completion gets a fresh id.
 // Capacity rejection records the same content-free id/count receipt that
@@ -271,19 +280,14 @@ func (c *reflectionCoordinator) Enqueue(job reflectionJob) (reflectionReceipt, e
 	if job.principal == "" || job.reflector == nil {
 		return reflectionReceipt{}, errors.New("invalid reflection job")
 	}
-	material, err := reflectionInputMaterial(job.input, c.cfg.JobBytes)
+	if job.selectedBytes <= 0 || job.selectedBytes > c.cfg.JobBytes {
+		return reflectionReceipt{}, fmt.Errorf("reflection input exceeds %d-byte job limit", c.cfg.JobBytes)
+	}
+	identity, digest, err := selectedEvidenceIdentity(job.input)
 	if err != nil {
 		return reflectionReceipt{}, err
 	}
-	if len(material) > c.cfg.JobBytes {
-		return reflectionReceipt{}, fmt.Errorf("reflection input exceeds %d-byte job limit", c.cfg.JobBytes)
-	}
-	sum := sha256.Sum256(material)
-	digest := hex.EncodeToString(sum[:])
-	if job.dedupeKey != "" {
-		digest = job.dedupeKey
-	}
-	key := job.principal + "\x00" + digest
+	key := job.principal + "\x00" + identity
 	baseID := reflectionJobID(key)
 
 	c.mu.Lock()
@@ -298,7 +302,7 @@ func (c *reflectionCoordinator) Enqueue(job reflectionJob) (reflectionReceipt, e
 		return reflectionReceipt{ID: existing, Disposition: reflectionDuplicate, Queued: queued}, nil
 	}
 	principalQueued := len(c.queues[job.principal]) + c.running[job.principal]
-	if c.queued >= c.cfg.Capacity || principalQueued >= c.cfg.PrincipalCapacity || c.queuedBytes+len(material) > c.cfg.QueueBytes {
+	if c.queued >= c.cfg.Capacity || principalQueued >= c.cfg.PrincipalCapacity || c.queuedBytes+job.selectedBytes > c.cfg.QueueBytes {
 		queued := c.queued
 		receipt := reflectionReceipt{ID: baseID, Disposition: reflectionQueueFull, Queued: queued, Err: errReflectionQueueFull.Error()}
 		c.mu.Unlock()
@@ -328,10 +332,10 @@ func (c *reflectionCoordinator) Enqueue(job reflectionJob) (reflectionReceipt, e
 	if len(c.queues[job.principal]) == 0 && c.running[job.principal] == 0 {
 		c.active = append(c.active, job.principal)
 	}
-	c.queues[job.principal] = append(c.queues[job.principal], queuedReflection{id: id, key: key, digest: digest, bytes: len(material), job: job})
+	c.queues[job.principal] = append(c.queues[job.principal], queuedReflection{id: id, key: key, digest: digest, bytes: job.selectedBytes, job: job})
 	c.pending[key] = id
 	c.queued++
-	c.queuedBytes += len(material)
+	c.queuedBytes += job.selectedBytes
 	c.startWorkersLocked()
 	queued := c.queued
 	c.mu.Unlock()

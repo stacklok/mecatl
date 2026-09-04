@@ -60,12 +60,19 @@ func (*testReflector) RequestTokenEstimate(learning.Input) (int, error) {
 	return 1, nil
 }
 
-func testJob(p, id string, r learning.Reflector) reflectionJob {
-	tr := learning.NewTrajectory(session.SessionID(id), "/w", session.StopEndTurn, session.Usage{}, []session.Message{session.NewUserMessage("Remember that preference")})
-	in := learning.NewInput(tr, nil, []learning.Signal{{Kind: learning.SignalExplicitRemember}}, nil)
-	return reflectionJob{principal: p, input: in, reflector: r, process: func(context.Context, string, learning.Outcome) (reflectionReceipt, error) {
+func selectedTestJob(p, id, text string, r learning.Reflector) reflectionJob {
+	tr := learning.NewTrajectory(session.SessionID(id), "/w", session.StopEndTurn, session.Usage{}, []session.Message{session.NewUserMessage(text)})
+	materialized, err := learning.MaterializeEvidence(learning.MaterializationRequest{Trajectory: tr, Explicit: true})
+	if err != nil || materialized.Disposition != learning.MaterializationSelected {
+		panic("test reflection evidence did not materialize")
+	}
+	return reflectionJob{principal: p, input: materialized.Input, reflector: r, selectedBytes: len(materialized.Canonical), process: func(context.Context, string, learning.Outcome) (reflectionReceipt, error) {
 		return reflectionReceipt{}, nil
 	}}
+}
+
+func testJob(p, id string, r learning.Reflector) reflectionJob {
+	return selectedTestJob(p, id, "Remember that preference", r)
 }
 func TestReflectionCoordinatorBoundedFairSingleflightAndShutdown(t *testing.T) {
 	release := make(chan struct{})

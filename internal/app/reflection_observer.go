@@ -354,6 +354,7 @@ func (o *reflectionObserver) submit(ctx context.Context, trajectory learning.Tra
 	}
 	var input learning.Input
 	var signals []learning.Signal
+	var selectedBytes int
 	decision := learning.AdmissionDecision{Admitted: true, Class: learning.AdmissionHostRequested, Reasons: []learning.AdmissionReason{learning.ReasonHostRequested}}
 	if automatic {
 		if err := ctx.Err(); err != nil {
@@ -393,6 +394,7 @@ func (o *reflectionObserver) submit(ctx context.Context, trajectory learning.Tra
 				return reflectionReceipt{}, nil
 			}
 			input = materialized.Input
+			selectedBytes = len(materialized.Canonical)
 			input.Trajectory.Workspace = trajectory.Workspace
 			input.Trajectory.Principal = owner
 			input.Trajectory.Kind = trajectory.Kind
@@ -430,6 +432,7 @@ func (o *reflectionObserver) submit(ctx context.Context, trajectory learning.Tra
 			return reflectionReceipt{Disposition: reflectionCompleted, Abstained: true, Err: materialized.Reason.String()}, nil
 		}
 		input = materialized.Input
+		selectedBytes = len(materialized.Canonical)
 		input.Trajectory.Workspace = trajectory.Workspace
 		input.Trajectory.Principal = owner
 		input.Trajectory.Kind = trajectory.Kind
@@ -468,16 +471,16 @@ func (o *reflectionObserver) submit(ctx context.Context, trajectory learning.Tra
 		if err != nil {
 			return reflectionReceipt{Disposition: reflectionFailed}, err
 		}
-		digest, err := reflectionInputDigest(input)
+		identity, digest, err := selectedEvidenceIdentity(input)
 		if err != nil {
 			return reflectionReceipt{Disposition: reflectionFailed}, err
 		}
-		receipt := reflectionReceipt{ID: reflectionJobID(reflectionPrincipal(owner) + "\x00" + string(input.Trajectory.SessionID) + "\x00" + digest), Disposition: reflectionCompleted}
+		receipt := reflectionReceipt{ID: reflectionJobID(reflectionPrincipal(owner) + "\x00" + identity), Disposition: reflectionCompleted}
 		if outcome.Kind == learning.OutcomeAbstained {
 			receipt.Abstained = true
 			return receipt, nil
 		}
-		processed, err := o.job(input, signals, owner).process(jobCtx, digest, outcome)
+		processed, err := o.job(input, signals, owner, selectedBytes, nil, nil).process(jobCtx, digest, outcome)
 		processed.ID, processed.Disposition = receipt.ID, reflectionCompleted
 		return processed, err
 	}
@@ -591,12 +594,13 @@ func (o *reflectionObserver) emitAutomaticRefusal(err error) {
 	o.metrics(activity)
 }
 
-func (o *reflectionObserver) job(input learning.Input, signals []learning.Signal, owner *session.Principal) reflectionJob {
+func (o *reflectionObserver) job(input learning.Input, signals []learning.Signal, owner *session.Principal, selectedBytes int, reserve func() bool, complete func(reflectionReceipt)) reflectionJob {
 	principal := reflectionPrincipal(owner)
 	return reflectionJob{
-		principal: principal,
-		input:     input,
+		principal: principal, input: input, selectedBytes: selectedBytes,
 		reflector: o.reflector,
+		reserve:   reserve,
+		complete:  complete,
 		process: func(ctx context.Context, digest string, outcome learning.Outcome) (reflectionReceipt, error) {
 			return processReflectionOutcome(memoryadapter.WithWorkspace(reflectionContext(ctx, owner), input.Trajectory.Workspace), o.repository,
 				o.operatorMemory, o.projectMemory, principal, input,
