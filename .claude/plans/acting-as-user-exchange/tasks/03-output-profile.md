@@ -2,8 +2,8 @@
 id: 03-output-profile
 title: Deterministic issuance and independent output verification
 blocked_by: [02-authority-conjunction]
-status: in-progress
-branch: ""
+status: done
+branch: "plan-acting-as-user-exchange/03-output-profile"
 worktree: ""
 issue: "372"
 retries: 0
