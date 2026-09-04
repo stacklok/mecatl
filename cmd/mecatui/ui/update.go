@@ -460,6 +460,9 @@ func (m Model) finishStartupResume() (tea.Model, tea.Cmd) {
 // server-rejected-selection fallback, issue #41) can reuse it before layering its
 // warning on top.
 func (m Model) applySessionReady(msg client.SessionReadyMsg) (tea.Model, tea.Cmd, bool) {
+	// A ready message establishes (or re-establishes) the authoritative session
+	// binding. A recovery from any prior binding must never cross it.
+	m.promptRecovery = nil
 	m = m.bindSessionID(msg.SessionID)
 	m = m.syncDebugTarget()
 	m.failedStepRetryTried = false
@@ -828,15 +831,15 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 			}
 			return m, tea.Batch(m.refreshCmd(), m.armLiveFeed()), true
 		}
-		// A transport error has no semantic commit fact. Always pause and preserve
-		// staged follow-ups, regardless of legacy transient-looking status text.
-		m.conv.addError("stream error: " + friendlyWorkspaceEnrollmentRejection(msg.Err.Error()))
-		if isWorkspaceEnrollmentRejection(msg.Err.Error()) {
-			if p := strings.TrimSpace(m.lastSubmittedPromptText); p != "" {
-				m.pendingInitialPrompt = p
-			}
+		// A transport error has no semantic commit fact. Restore only an
+		// unmodified text-only draft; a server-confirmed enrollment rejection is
+		// the one case eligible for a later exact-once replay.
+		authoritative := isWorkspaceEnrollmentRejection(msg.Err.Error())
+		m.recoverPrompt(authoritative)
+		if authoritative && m.promptRecovery != nil {
+			m.promptRecovery.autoReplay = true
 		}
-		m.lastSubmittedPromptText = ""
+		m.conv.addError("stream error: " + friendlyWorkspaceEnrollmentRejection(msg.Err.Error()))
 		m = m.endRun(stopError)
 		liveCmd := m.armLiveFeed()
 		mm, drainCmd := m.drainQueue(stopError)
@@ -873,6 +876,7 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 		// Clean close. If a run was still active (no terminal result seen),
 		// finalise it; otherwise it's the expected post-result close (no-op).
 		if m.phase == phaseRunning || m.phase == phaseAwaitingApproval {
+			m.recoverPrompt(false)
 			m = m.endRun("closed")
 			modeCmd := m.retryPendingModeCmd()
 			liveCmd := m.armLiveFeed()
@@ -1448,6 +1452,9 @@ func (m Model) settleFailedClearSource() (Model, tea.Cmd, bool) {
 // totals, surfaces a terminal error, ends the run, and drains any queued prompts.
 // Extracted from updateStreamEvent's switch to keep that dispatcher flat.
 func (m Model) applyResult(msg client.ResultMsg) (tea.Model, tea.Cmd) {
+	// A terminal result is a server-side run fact, so this prompt cannot be replayed
+	// by a later unrelated control response.
+	m.promptRecovery = nil
 	// ResultMsg.Usage is the run's CUMULATIVE total; fold it into the session
 	// total exactly once here. The per-turn TurnEndMsg feeds only the
 	// context-occupancy meter (m.contextTokens), never m.usage — adding both
@@ -3173,6 +3180,24 @@ func (m Model) preparePromptContent(text string) (string, client.MediaResult, bo
 	return strings.TrimSpace(text), media, hadPastes, hadStaged, nil
 }
 
+// recoverPrompt restores a text-only prompt only while it still belongs to this
+// exact run. An existing draft is user-authored replacement state and wins.
+func (m *Model) recoverPrompt(authoritative bool) {
+	r := m.promptRecovery
+	if r == nil || r.sessionID != m.sessionID || r.streamGen != m.streamGen {
+		m.promptRecovery = nil
+		return
+	}
+	if m.prompt.Value() != "" {
+		m.promptRecovery = nil
+		return
+	}
+	m.prompt.Rewrite(r.text)
+	if !authoritative {
+		m.promptRecovery = nil
+	}
+}
+
 // submitPrompt opens a fresh Converse run for the textarea text, sends the
 // mandatory prompt frame, starts the reader goroutine, and arms WaitForMsg.
 func (m Model) submitPrompt() (tea.Model, tea.Cmd) {
@@ -3225,7 +3250,12 @@ func (m Model) submitPrompt() (tea.Model, tea.Cmd) {
 	// This is a genuine new user turn, so it starts a fresh one-retry budget.
 	// Automatic failed-step retry bypasses submitPrompt and therefore cannot re-arm itself.
 	m.failedStepRetryTried = false
-	m.lastSubmittedPromptText = text
+	m.promptRecovery = nil
+	// Only a plain text prompt is recoverable. Attachments, media, and staged file
+	// parts have one-shot lifecycle and must never be replayed implicitly.
+	if text != "" && len(media.Parts) == 0 && !hadPastes && !hadStaged {
+		m.promptRecovery = &promptRecovery{text: text, sessionID: m.sessionID, streamGen: m.streamGen + 1}
+	}
 	if len(media.Descriptors) > 0 {
 		m.conv.addUserWithMedia(text, media.Descriptors)
 	} else {
@@ -3321,6 +3351,7 @@ func (m Model) startFailedStepRetry() (Model, tea.Cmd) {
 // openRun owns the common one-Converse-run transport setup. firstFrame must send
 // exactly one Prompt or RetryStart before any control frame.
 func (m Model) openRun(retry bool, firstFrame func(*client.Stream) error) (Model, tea.Cmd) {
+	m.streamGen++ // reserve this generation before OpenConverse so open failures are correlated too
 	m.authorization.runningControlGen = 0
 	runCtx, cancel := context.WithCancel(m.deps.Ctx)
 	var stream *client.Stream
@@ -3337,12 +3368,12 @@ func (m Model) openRun(retry bool, firstFrame func(*client.Stream) error) (Model
 	m.stream = stream
 	m.streamCh = ch
 	m.cancelRun = cancel
-	m.streamGen++
 	go stream.ReadLoop(runCtx, ch)
 
+	gen := m.streamGen
 	send := func() tea.Msg {
 		if err := firstFrame(stream); err != nil {
-			return authStreamErr(m, err)
+			return streamMsg{gen: gen, msg: authStreamErr(m, err)}
 		}
 		return nil
 	}
@@ -4561,6 +4592,7 @@ func (m Model) handleOpenError(err error, cancel context.CancelFunc, retry bool)
 		mm, connectCmd := m.reduceLiveAuthRecovery(streamErr.AuthReason)
 		return mm.(Model), connectCmd
 	}
+	m.recoverPrompt(false)
 	m = m.endRun(stopError)
 	if retry {
 		m.failedStepRetryRun = false

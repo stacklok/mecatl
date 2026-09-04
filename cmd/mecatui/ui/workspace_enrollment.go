@@ -259,9 +259,9 @@ func (m Model) applyWorkspaceEnrollment(msg workspaceEnrollmentMsg) (tea.Model, 
 	return m, nil
 }
 
-// finalizeWorkspaceEnrollmentConnected is the shared completion path. Clearing
-// pendingInitialPrompt before submit gives exactly-once initial/rejected prompt
-// resubmission even if a later manual recheck repeats the connected response.
+// finalizeWorkspaceEnrollmentConnected is the shared completion path. It consumes
+// a matching recovery before resubmitting, so either a later connected response or
+// a replacement draft cannot replay the rejected prompt twice.
 func (m Model) finalizeWorkspaceEnrollmentConnected() (tea.Model, tea.Cmd) {
 	if m.enrollment.controlCancel != nil {
 		m.enrollment.controlCancel()
@@ -274,6 +274,15 @@ func (m Model) finalizeWorkspaceEnrollmentConnected() (tea.Model, tea.Cmd) {
 	focusCmd := m.prompt.Focus()
 	m.statusMsg = "workspace services connected"
 	cmd := tea.Batch(focusCmd, (&m).armLiveFeed())
+	if r := m.promptRecovery; r != nil {
+		// The recovered draft must still be the source-session draft. A changed
+		// textarea is a replacement composition and is deliberately never replayed.
+		m.promptRecovery = nil
+		if r.autoReplay && r.sessionID == m.sessionID && strings.TrimSpace(m.prompt.Value()) == r.text {
+			mm, submitCmd := m.submitPrompt()
+			return mm, tea.Batch(cmd, submitCmd)
+		}
+	}
 	if p := strings.TrimSpace(m.pendingInitialPrompt); p != "" {
 		m.pendingInitialPrompt = ""
 		m.prompt.Rewrite(p)

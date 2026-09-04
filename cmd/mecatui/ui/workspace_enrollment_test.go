@@ -102,14 +102,14 @@ func TestWorkspaceEnrollmentRejectionAutoResubmits(t *testing.T) {
 	m = typeText(t, m, "list PRs")
 	mm, _ := m.submitPrompt()
 	m = mm.(Model)
-	if m.lastSubmittedPromptText != "list PRs" {
-		t.Fatalf("lastSubmittedPromptText = %q", m.lastSubmittedPromptText)
+	if m.promptRecovery == nil || m.promptRecovery.text != "list PRs" || m.promptRecovery.autoReplay {
+		t.Fatalf("initial recovery = %#v", m.promptRecovery)
 	}
 
 	mm, _ = m.Update(client.StreamErrMsg{Err: errors.New("rpc error: code = FailedPrecondition desc = workspace services must be connected before prompting")})
 	m = mm.(Model)
-	if m.pendingInitialPrompt != "list PRs" || m.lastSubmittedPromptText != "" {
-		t.Fatalf("rejection recovery pending/staged = %q/%q", m.pendingInitialPrompt, m.lastSubmittedPromptText)
+	if m.promptRecovery == nil || !m.promptRecovery.autoReplay || m.prompt.Value() != "list PRs" {
+		t.Fatalf("rejection recovery = %#v, draft=%q", m.promptRecovery, m.prompt.Value())
 	}
 
 	m.enrollment.ID = "bundle-1"
@@ -124,6 +124,66 @@ func TestWorkspaceEnrollmentRejectionAutoResubmits(t *testing.T) {
 	runBatchLeaves(cmd)
 	if got := promptTexts(send); len(got) != 1 || got[0] != "list PRs" {
 		t.Fatalf("sent prompts = %v, want one resubmission", got)
+	}
+}
+
+func TestPromptTransportFailureRestoresDraftWithoutReplay(t *testing.T) {
+	m, send := builtinDispatchModel(t, client.Capabilities{}, false)
+	m = typeText(t, m, "review this change")
+	mm, _ := m.submitPrompt()
+	m = mm.(Model)
+
+	mm, _ = m.Update(client.StreamErrMsg{Err: errors.New("connection lost")})
+	m = mm.(Model)
+	if got := m.prompt.Value(); got != "review this change" {
+		t.Fatalf("restored draft = %q", got)
+	}
+	if m.promptRecovery != nil {
+		t.Fatalf("ambiguous failure retained replay state: %#v", m.promptRecovery)
+	}
+	if got := promptTexts(send); len(got) != 0 {
+		t.Fatalf("ambiguous failure replayed prompt: %v", got)
+	}
+}
+
+func TestWorkspaceEnrollmentRecoveryDoesNotCrossReplacementDraft(t *testing.T) {
+	m, send := builtinDispatchModel(t, client.Capabilities{WorkspaceEnrollment: true}, false)
+	m = typeText(t, m, "original")
+	mm, _ := m.submitPrompt()
+	m = mm.(Model)
+	mm, _ = m.Update(client.StreamErrMsg{Err: errors.New("workspace services must be connected before prompting")})
+	m = mm.(Model)
+	m.prompt.Rewrite("replacement")
+	m.enrollment.ID = "bundle-1"
+
+	mm, cmd := m.applyWorkspaceEnrollment(workspaceEnrollmentMsg{
+		action: "check", sessionID: m.sessionID, targetEnrollmentID: "bundle-1",
+		result: client.WorkspaceEnrollment{ID: "bundle-1", Status: client.WorkspaceEnrollmentConnected},
+	})
+	m = mm.(Model)
+	runBatchLeaves(cmd)
+	if got := m.prompt.Value(); got != "replacement" {
+		t.Fatalf("replacement draft = %q", got)
+	}
+	if got := promptTexts(send); len(got) != 0 {
+		t.Fatalf("replacement draft was replayed: %v", got)
+	}
+}
+
+func TestPromptRecoveryIsClearedOnSessionReset(t *testing.T) {
+	m, _ := builtinDispatchModel(t, client.Capabilities{WorkspaceEnrollment: true}, false)
+	m = typeText(t, m, "original")
+	mm, _ := m.submitPrompt()
+	m = mm.(Model)
+	mm, _ = m.Update(client.StreamErrMsg{Err: errors.New("workspace services must be connected before prompting")})
+	m = mm.(Model)
+	if m.promptRecovery == nil {
+		t.Fatal("expected enrollment recovery before reset")
+	}
+
+	m = m.resetSession()
+	if m.promptRecovery != nil {
+		t.Fatalf("reset retained recovery: %#v", m.promptRecovery)
 	}
 }
 

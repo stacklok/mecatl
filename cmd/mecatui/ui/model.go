@@ -449,6 +449,15 @@ func (m Model) spinnerVisible() bool {
 	return m.phase == phaseRunning || m.phase == phaseConnecting
 }
 
+// promptRecovery is a text-only prompt that can safely be restored after a run
+// transport outcome. It is tied to the source session and stream generation.
+type promptRecovery struct {
+	text       string
+	sessionID  string
+	streamGen  uint64
+	autoReplay bool
+}
+
 // Model is the root Elm model. It owns the conversation, the bubbles widgets, the
 // renderer (glamour cache), the active run stream, and the per-run cancel func.
 type Model struct {
@@ -776,10 +785,12 @@ type Model struct {
 	// re-fires. Empty = no seed (the default; today's behavior).
 	pendingInitialPrompt string
 
-	// lastSubmittedPromptText is staged only for the workspace-enrollment gate:
-	// its StreamErrMsg rejection hands the text to pendingInitialPrompt, which the
-	// successful enrollment reducer submits once.
-	lastSubmittedPromptText string
+	// promptRecovery retains a text-only prompt across a transport outcome. It is
+	// bound to the source session and stream generation so a stale failure cannot
+	// restore or replay text into a successor session. autoReplay is reserved for
+	// the authoritative workspace-enrollment pre-commit rejection; ordinary
+	// transport failures restore a draft and clear the record instead.
+	promptRecovery *promptRecovery
 
 	// Startup-adopted chats remain protected until their first prompt reaches the
 	// server stream. A pre-SessionInit failure restores the authoritative transcript
@@ -1132,7 +1143,7 @@ func (m Model) resetSessionDerived() Model {
 	}
 	m.enrollment = workspaceEnrollmentState{}
 	m.workspaceEnrollmentNotice = ""
-	m.lastSubmittedPromptText = ""
+	m.promptRecovery = nil
 	m.providerRoute = ""
 	m.statusContextRoot = ""
 	// Drop the session title: it is session-derived (seeded from the first prompt
