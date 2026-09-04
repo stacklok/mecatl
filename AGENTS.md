@@ -26,6 +26,10 @@ Driven over gRPC + HTTP; an optional Bubble Tea TUI (`mecatui`) is a client.
 Be token-efficient by avoiding needless context, tool calls, and delegation—not by prematurely constraining useful work. When invoking `Subagent`, omit `max_run_tokens`/`max_tokens`, `max_turns`, `max_tool_calls`, and `timeout_ms` unless the user or task explicitly requests a bound. Omit `authority` too unless a task requires a deliberate, documented reduction of the child’s derived authority; an unnecessary `remaining_delegation_depth` or tool/filesystem restriction can prevent the delegation from running. Unnecessary limits can terminate a child after spending tokens without producing its deliverable.
 For unfamiliar code, use `Grep` to locate symbols, then bounded `Read` calls (`offset` + `limit`); do not issue parallel full-file reads. Pass known ranges to a delegated worker and stop discovery once there is enough context for its next edit.
 
+### GitHub CLI (`gh`)
+
+`Bash` commands run through POSIX `/bin/sh`, not Bash. Keep `gh` invocations simple and POSIX-compatible: do not use Bash-only quoting or syntax (for example, `$'...'`, arrays, process substitution, or `[[ ... ]]`), and do not inline multiline Markdown in a shell argument. Write issue or PR Markdown to a separate file under `.scratch/`, then pass that file with the applicable `--body-file` flag, for example `gh issue comment <number> --body-file .scratch/comment.md` or `gh pr edit <number> --body-file .scratch/pr-body.md`. Quote ordinary scalar arguments with standard double quotes when needed; never use `eval` or command substitution to construct Markdown arguments.
+
 ## Commands
 
 **Always build through the Taskfile** — a bare `go build` in the repo root drops stray
