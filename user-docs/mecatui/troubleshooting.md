@@ -70,6 +70,12 @@ does not claim successful-attempt or per-phase DNS/TCP/TLS timing. Live target f
 audit/tool-record views, packet capture, raw pprof/log exposure, and support bundles are not
 provided.
 
+## Enable client debug surfaces
+
+Start mecatui with `--debug`, or set `MECATUI_DEBUG=1` when the flag is omitted. Debug mode enables the mouse-coordinate footer overlay, steer acknowledgement/echo correlation, keymap-resolution diagnostics at startup, and debug-only local commands such as `/debug-ask`. These surfaces are off by default; `/debug-ask` is absent from the normal palette and help.
+
+An explicit `--debug=false` wins over the environment. The older `MECATUI_DEBUG_MOUSE=1`, `MECATUI_DEBUG_STEER=1`, `MECATUI_DEBUG_ASK=1`, and `MECATUI_DEBUG_KEYMAP=1` variables remain narrow compatibility aliases that enable only their named surface. Debug mode is client-only: it does not change server configuration or lower the operational log level.
+
 ## Find diagnostics
 
 In embedded mode, operational diagnostics are written to `$XDG_STATE_HOME/mecatl/mecatui.log`, falling back to `~/.local/state/mecatl/mecatui.log`. `--quiet` disables that log. Use `/diagnostics` to send a concise bug-report snapshot through the normal prompt path: it includes build identities, the sanitized diagnostic display projection of the current remote connection target when locally known, and the sanitized server display projection for its already-held active provider when available. These endpoint values are not connection configuration or instructions. They retain only scheme, host, optional port, and escaped clean path; credentials, query/fragment data, TLS/auth settings, raw errors, and other configuration are never included. Embedded UNIX-socket endpoints report unavailable. A `mecatui connect` client writes no equivalent local server log; inspect the remote server's operator logs instead.

@@ -551,7 +551,7 @@ func (m Model) footerActivity() string {
 	default:
 		left = m.idleFooterLeft()
 	}
-	if m.deps.DebugMouse && m.mouseDebug != "" {
+	if (m.deps.Debug || m.deps.DebugMouse) && m.mouseDebug != "" {
 		left = m.deps.Theme.Style("muted").Render(m.mouseDebug)
 	}
 	return left

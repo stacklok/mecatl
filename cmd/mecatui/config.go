@@ -54,6 +54,14 @@ type config struct {
 	tlsCA             string
 	insecure          bool
 	listThemes        bool
+	// debug enables mecatui's client-side diagnostic surfaces. An explicit
+	// --debug value outranks MECATUI_DEBUG and the legacy per-surface aliases.
+	debug        bool
+	debugFlagSet bool
+	debugMouse   bool
+	debugSteer   bool
+	debugAsk     bool
+	debugKeymap  bool
 
 	// noAltScreen renders mecatui INLINE in the terminal's normal buffer instead
 	// of the alternate screen. Off by default (full-screen TUI on the alt screen);
@@ -374,6 +382,7 @@ func parseTransportFlags(mode transportMode, out io.Writer, args []string, brows
 	fs.StringVar(&cfg.tlsCA, "tls-ca", "", "path to a PEM CA bundle for external-server verification")
 	fs.BoolVar(&cfg.insecure, "insecure", false, "skip TLS verification (testing only)")
 	fs.BoolVar(&cfg.listThemes, "list-themes", false, "list available themes and exit")
+	fs.BoolVar(&cfg.debug, "debug", false, "enable client-side diagnostic surfaces: mouse mapping, steer correlation, and debug-only built-ins")
 	fs.BoolVar(&cfg.noAltScreen, "no-alt-screen", false, "render inline in the terminal's normal buffer instead of the alternate screen, preserving native scrollback/search")
 	fs.BoolVar(&cfg.noAltScreen, "inline", false, "alias for --no-alt-screen: render inline in the normal buffer, preserving native scrollback/search")
 	fs.BoolVar(&cfg.noMouse, "no-mouse", false, "disable mouse capture on the alt screen so the terminal's NATIVE click-drag selection works (for tmux/zellij/web terminals that strip OSC52, or when you prefer native select); trades away in-app mouse-wheel scroll and the in-app drag-select/copy layer. Keyboard scroll (pgup/pgdn/home/end) is unaffected. Or set MECATUI_NO_MOUSE=1")
@@ -623,6 +632,8 @@ func recordExplicitFlag(f *flag.Flag, cfg *config) {
 	switch f.Name {
 	case "tls":
 		cfg.tlsExplicit = true
+	case "debug":
+		cfg.debugFlagSet = true
 	case "posture":
 		cfg.postureFlagSet = true
 	case "subagent-model-router":
@@ -662,6 +673,21 @@ func finalizeParsedConfig(fs *flag.FlagSet, cfg *config) error {
 	}
 	if cfg.theme == "" {
 		cfg.theme = os.Getenv("MECATUI_THEME")
+	}
+	// The canonical switch enables every client-side debug surface. Explicit
+	// --debug=false suppresses all env fallbacks; without an explicit flag, the
+	// legacy variables remain narrow aliases for their original surfaces.
+	if !cfg.debugFlagSet {
+		cfg.debug = os.Getenv("MECATUI_DEBUG") == "1"
+		cfg.debugMouse = cfg.debug || os.Getenv("MECATUI_DEBUG_MOUSE") != ""
+		cfg.debugSteer = cfg.debug || os.Getenv("MECATUI_DEBUG_STEER") != ""
+		cfg.debugAsk = cfg.debug || os.Getenv("MECATUI_DEBUG_ASK") != ""
+		cfg.debugKeymap = cfg.debug || os.Getenv("MECATUI_DEBUG_KEYMAP") == "1"
+	} else {
+		cfg.debugMouse = cfg.debug
+		cfg.debugSteer = cfg.debug
+		cfg.debugAsk = cfg.debug
+		cfg.debugKeymap = cfg.debug
 	}
 	// Env fallback: --no-mouse wins if passed; otherwise MECATUI_NO_MOUSE=1/true
 	// enables it (set-and-forget in a shell rc for a multiplexer that strips OSC52).

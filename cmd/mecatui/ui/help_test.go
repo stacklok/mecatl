@@ -85,6 +85,13 @@ func TestHelpOverlayAllOnGolden(t *testing.T) {
 	compareGolden(t, "help_all_on.golden", got)
 }
 
+func TestHelpOmitsDebugOnlyBuiltins(t *testing.T) {
+	m := helpModel(t, allOnCaps(), func(deps *Deps) { deps.DebugAsk = true })
+	if got := stripANSIstr(m.View().Content); strings.Contains(got, "debug-ask") {
+		t.Fatalf("normal help leaked a debug-only builtin:\n%s", got)
+	}
+}
+
 // TestHelpAnnotationsTrackCaps asserts the annotations follow caps without
 // pinning exact layout: under embedded defaults the MCP/commands/skills features
 // are tagged not-enabled and memory/teams are not.

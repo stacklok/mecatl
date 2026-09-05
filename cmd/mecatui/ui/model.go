@@ -288,27 +288,20 @@ type Deps struct {
 	// the per-phase churn is unwanted).
 	NoWindowTitle bool
 
-	// DebugMouse turns on a footer diagnostic overlay (env MECATUI_DEBUG_MOUSE=1):
-	// on every mouse press/motion the footer-left is overridden with the raw mouse
-	// coordinates and their content mapping (top=convTopRow, yoff, viewport height,
-	// and the screenToContent result) — the durable instrument for diagnosing
-	// selection/coordinate issues (it is what surfaced the highlight-on-wrong-line
-	// bug). Default OFF (zero cost when unset); main.go reads the env var.
+	// Debug enables every client-side diagnostic surface. DebugMouse, DebugSteer,
+	// and DebugAsk remain narrow compatibility aliases for their original surfaces.
+	Debug bool
+
+	// DebugMouse turns on a footer diagnostic overlay when Debug is false: on every
+	// mouse press/motion the footer-left is overridden with raw coordinates and
+	// their content mapping.
 	DebugMouse bool
 
-	// DebugSteer turns on a steer correlation trace in the status line (env
-	// MECATUI_DEBUG_STEER=1): each steer ack/echo logs the incoming message_id,
-	// the live bundle's id, and the match/burn/drop decision, so a stuck or
-	// mis-correlated steer lifecycle is visible in the TUI rather than opaque.
-	// Default OFF (zero cost when unset); main.go reads the env var.
+	// DebugSteer traces steer correlation in the status line when Debug is false.
 	DebugSteer bool
 
-	// DebugAsk registers the /debug-ask built-in (env MECATUI_DEBUG_ASK=1): it
-	// injects a fake permission ask with long Bash args through the REAL ask
-	// reducer, so the modal's wrap/scroll/full-screen-args behaviour (issue #488)
-	// can be exercised by hand without driving a live run. Default OFF (the
-	// built-in is absent); main.go reads the env var — deliberately never a flag,
-	// so it stays out of --help.
+	// DebugAsk registers /debug-ask when Debug is false. The command injects a fake
+	// long-args permission ask through the real reducer.
 	DebugAsk bool
 
 	// KeyOverrides maps a keyMap field name (e.g. "Agents") to its replacement chord(s).

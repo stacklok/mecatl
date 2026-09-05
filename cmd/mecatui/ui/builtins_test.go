@@ -190,15 +190,48 @@ func TestBuiltinByName(t *testing.T) {
 	}
 }
 
-// TestDebugAskBuiltinGatedOnEnv pins the /debug-ask gate (issue #488): without
-// Deps.DebugAsk the builtin is absent; with it, it is registered.
-func TestDebugAskBuiltinGatedOnEnv(t *testing.T) {
+// TestDebugAskBuiltinGated pins the /debug-ask gate: without debug it is
+// absent; canonical Debug and the narrow DebugAsk alias each register it from
+// the same declaration used by known-name interception.
+func TestDebugAskBuiltinGated(t *testing.T) {
 	caps := client.Capabilities{}
 	if _, ok := builtinByName(caps, wiredCollaborators{}, "debug-ask"); ok {
-		t.Error("/debug-ask must be ABSENT without the DebugAsk gate")
+		t.Error("/debug-ask must be ABSENT without a debug gate")
 	}
-	if _, ok := builtinByName(caps, wiredCollaborators{DebugAsk: true}, "debug-ask"); !ok {
-		t.Error("/debug-ask must be registered with the DebugAsk gate on")
+	for _, wired := range []wiredCollaborators{{Debug: true}, {DebugAsk: true}} {
+		if _, ok := builtinByName(caps, wired, "debug-ask"); !ok {
+			t.Errorf("/debug-ask must be registered with debug wiring %+v", wired)
+		}
+	}
+	if len(debugBuiltins) != 1 || debugBuiltins[0].name != "debug-ask" || !isKnownBuiltinName(debugBuiltins[0].name) {
+		t.Fatalf("debug builtin declaration does not drive known-name interception: %#v", debugBuiltins)
+	}
+	for _, b := range builtinCommands(caps, wiredCollaborators{}) {
+		if b.name == "debug-ask" {
+			t.Fatal("debug-ask leaked into the normal palette rows")
+		}
+	}
+	for _, name := range builtinNameRegistry {
+		if name.name == "debug-ask" {
+			t.Fatal("debug-ask leaked into the normal builtin-name registry")
+		}
+	}
+}
+
+func TestDebugAskDispatchIsLocalOnlyWhenEnabled(t *testing.T) {
+	m, send := builtinDispatchModel(t, client.Capabilities{}, false)
+	m = typeText(t, m, "/debug-ask")
+	m, cmd := pressEnter(t, m)
+	if cmd != nil || len(send.frames()) != 0 || m.prompt.Value() == "" {
+		t.Fatal("disabled /debug-ask must stay local, blocked, and editable")
+	}
+
+	m, send = builtinDispatchModel(t, client.Capabilities{}, false)
+	m.deps.DebugAsk = true
+	m = typeText(t, m, "/debug-ask")
+	m, cmd = pressEnter(t, m)
+	if cmd != nil || len(send.frames()) != 0 || m.phase != phaseAwaitingApproval || m.prompt.Value() != "" {
+		t.Fatalf("enabled /debug-ask did not dispatch locally: phase=%v input=%q cmd=%v frames=%d", m.phase, m.prompt.Value(), cmd, len(send.frames()))
 	}
 }
 

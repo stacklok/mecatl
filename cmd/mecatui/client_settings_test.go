@@ -305,6 +305,21 @@ func TestKeymapDeprecationWarnFiresOnceOnLegacyKeymap(t *testing.T) {
 	}
 }
 
+func TestCanonicalDebugPrintsKeymapDiagnostics(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	var deps ui.Deps
+	out := captureStderr(t, func() {
+		if err := applyKeyOverridesToDeps(config{debugKeymap: true}, &deps); err != nil {
+			t.Fatalf("apply: %v", err)
+		}
+	})
+	for _, layer := range []string{"legacy YAML", "client YAML", "CLI", "merged"} {
+		if !strings.Contains(out, "mecatui keymap ("+layer+")") {
+			t.Errorf("canonical debug output missing %s layer: %q", layer, out)
+		}
+	}
+}
+
 func TestKeymapDeprecationWarnSilentWithoutLegacyKeymap(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	// A legacy file with server keys but NO keymap: contributes nothing.

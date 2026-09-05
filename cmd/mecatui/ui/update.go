@@ -1149,12 +1149,12 @@ func (m *Model) mintSteerID() string {
 // or one outstanding bundle's ack racing a recomposed replacement) is
 // idempotently dropped.
 // steerTrace emits a one-line correlation trace into the status bar when
-// Deps.DebugSteer is set (env MECATUI_DEBUG_STEER=1): the ack/echo kind, the
+// Deps.Debug or Deps.DebugSteer is set: the ack/echo kind, the
 // incoming message_id, the live bundle's id, and the decision. It makes a stuck
 // or mis-correlated steer lifecycle visible in the TUI rather than opaque. A nil
 // live bundle renders "-".
 func (m Model) steerTrace(kind, inID, decision string) string {
-	if !m.deps.DebugSteer {
+	if !m.deps.Debug && !m.deps.DebugSteer {
 		return ""
 	}
 	live := "-"
@@ -3688,7 +3688,7 @@ func (m Model) onModalMousePress(mo tea.Mouse) (tea.Model, tea.Cmd, bool) {
 // convenience over the copy-on-release default). A press outside the conversation
 // region (header/input/footer) or while an overlay owns the body starts nothing.
 func (m Model) onMousePress(mo tea.Mouse) (tea.Model, tea.Cmd) {
-	if m.deps.DebugMouse {
+	if m.deps.Debug || m.deps.DebugMouse {
 		m.mouseDebug = m.mouseDebugLine(mo)
 	}
 	switch mo.Button {
@@ -3834,7 +3834,7 @@ func (Model) autoScrollCmd() tea.Cmd {
 // the pointer is held still at the edge. A motion back INSIDE the region disarms
 // autoscroll and resets the acceleration ramp.
 func (m Model) onMouseMotion(mo tea.Mouse) (tea.Model, tea.Cmd) {
-	if m.deps.DebugMouse {
+	if m.deps.Debug || m.deps.DebugMouse {
 		m.mouseDebug = m.mouseDebugLine(mo)
 	}
 	if (&m).promptMouseMotion(mo) {
