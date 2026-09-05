@@ -124,6 +124,7 @@ chat's run budget. Generated-title updates normally appear live in an open mecat
 a reconnect or reopened session refetches the authoritative snapshot, so a missed
 live update is corrected.
 
+## Start fresh with `/clear`
 
 Use `/clear` when you want empty context without changing placement. You can issue it
 while idle, while a response is streaming, or while an approval is open; you do not need to
