@@ -81,7 +81,8 @@ func TestADR_0212_SessionLoadObservability_Scenario1_BoundedWarningAndMetric(t *
 			diag := &loadRecordingDiagnostics{}
 			var metrics []port.SessionLoadFailureClass
 			svc := newLoadObservabilityService(t, loadFailingStore{err: tc.err}, diag, func(class port.SessionLoadFailureClass) { metrics = append(metrics, class) })
-			_, _ = svc.GetSession(session.WithPrincipal(t.Context(), &session.Principal{Issuer: "i", Subject: "s"}), "private")
+			requestCtx := context.WithValue(session.WithPrincipal(t.Context(), &session.Principal{Issuer: "i", Subject: "s"}), loadDiagnosticContextKey{}, sensitive)
+			_, _ = svc.GetSession(requestCtx, "private")
 
 			if len(diag.records) != 1 {
 				t.Fatalf("warnings = %d, want 1", len(diag.records))
@@ -183,6 +184,8 @@ func newLoadObservabilityService(t *testing.T, store port.SessionStore, diag por
 	return svc
 }
 
+type loadDiagnosticContextKey struct{}
+
 type loadDiagnosticRecord struct {
 	level   port.Level
 	message string
@@ -197,10 +200,13 @@ type loadRecordingDiagnostics struct {
 	records []loadDiagnosticRecord
 }
 
-func (d *loadRecordingDiagnostics) Log(_ context.Context, level port.Level, message string, args ...any) {
+func (d *loadRecordingDiagnostics) Log(ctx context.Context, level port.Level, message string, args ...any) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	all := append(append([]any(nil), d.attrs...), args...)
+	if baggage := ctx.Value(loadDiagnosticContextKey{}); baggage != nil {
+		all = append(all, "request_baggage", baggage)
+	}
 	fields := make(map[string]any, len(all)/2)
 	for i := 0; i+1 < len(all); i += 2 {
 		fields[fmt.Sprint(all[i])] = all[i+1]

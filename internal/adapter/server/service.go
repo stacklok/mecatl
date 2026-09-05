@@ -3003,7 +3003,9 @@ func (s *Service) GetSession(ctx context.Context, id session.SessionID) (*sessio
 	if err != nil && !errors.Is(err, port.ErrSessionNotFound) {
 		if s.cfg.OwnershipEnforced {
 			class := port.ClassifySessionLoadFailure(err)
-			s.cfg.Diagnostics.Log(ctx, port.LevelWarn, "session load failed", "class", class.String(), "ownership", "enforced")
+			// This target-free operator fact must not inherit request trace/baggage:
+			// handlers may project context values into the final log record.
+			s.cfg.Diagnostics.Log(context.Background(), port.LevelWarn, "session load failed", "class", class.String(), "ownership", "enforced")
 			if s.cfg.SessionLoadFailureMetric != nil {
 				s.cfg.SessionLoadFailureMetric(class)
 			}

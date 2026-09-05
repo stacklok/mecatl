@@ -425,6 +425,10 @@ func (st *Store) Load(ctx context.Context, id session.SessionID) (*session.Sessi
 	if err != nil {
 		return nil, port.NewSessionLoadFailure(port.SessionLoadFailureSnapshot, err)
 	}
+	if sess.ID != id {
+		return nil, port.NewSessionLoadFailure(port.SessionLoadFailureSnapshot,
+			fmt.Errorf("redisstore: load %q: snapshot id mismatch: stored %q", id, sess.ID))
+	}
 	return sess, nil
 }
 

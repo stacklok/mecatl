@@ -5,6 +5,7 @@ import (
 
 	"github.com/alicebob/miniredis/v2"
 
+	"github.com/stacklok/mecatl/engine/adapter/sessnap"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/internal/adapter/redisstore"
 )
@@ -25,6 +26,17 @@ func TestLoadClassifiesRetrievalAndSnapshotFailures(t *testing.T) {
 	_, err = st.Load(t.Context(), sess.ID)
 	if got := port.ClassifySessionLoadFailure(err); got != port.SessionLoadFailureSnapshot {
 		t.Fatalf("decode class = %s, want snapshot: %v", got, err)
+	}
+
+	other := newTestSession(t, "different")
+	blob, err := sessnap.Marshal(other)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mr.HSet("mecatl:session:classified", "blob", string(blob))
+	_, err = st.Load(t.Context(), sess.ID)
+	if got := port.ClassifySessionLoadFailure(err); got != port.SessionLoadFailureSnapshot {
+		t.Fatalf("identity mismatch class = %s, want snapshot: %v", got, err)
 	}
 
 	mr.Close()

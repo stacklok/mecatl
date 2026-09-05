@@ -61,11 +61,18 @@
   scoper they stay nil, byte-identical to the metrics-off posture.
   Session lookup failures use a separate target-free callback: under ownership
   enforcement, one non-not-found `GetSession` failure emits one WARN and increments
-  `mecatl_session_load_failures_total{class="store|snapshot|unknown"}` once. The
-  diagnostic carries only that port-owned class and the constant `ownership=enforced`
-  marker; neither channel carries a session id, principal, storage locator, cause,
-  blob content, or blob size. Genuine absence and foreign ownership remain silent and
-  caller-visible as the same NotFound result.
+  `mecatl_session_load_failures_total{class="store|snapshot|unknown"}` once. Unlike
+  run-derived metrics, this service-boundary counter has no `role` label: `class` is
+  its only label. `store` means retrieval or transport failed; `snapshot` means
+  retrieved bytes failed format, decode, persisted-identity, or validation checks;
+  `unknown` is the fail-safe result for an untyped custom-store error. Operators
+  should respectively check backend reachability/configuration, storage integrity or
+  mis-keying and backup recovery, or the custom adapter's bounded health diagnostics
+  and typed wrapping. They must not infer a class from text or add target data while
+  investigating. The diagnostic carries only that port-owned class and the constant
+  `ownership=enforced` marker; neither channel carries a session id, principal,
+  storage locator, cause, blob content, or blob size. Genuine absence and foreign
+  ownership remain silent and caller-visible as the same NotFound result.
   The domain counters include the run-terminal `mecatl_runs_total{stop,role}`
   (one per run, by terminal stop reason) and — for **turn-semantics**
   observability (issue #81) — `mecatl_turns_total{role}` (one per COMPLETED

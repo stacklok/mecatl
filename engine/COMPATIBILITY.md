@@ -133,11 +133,11 @@ honour.
 
 Snapshot-backed implementations should wrap retrieval or transport failures with
 `port.NewSessionLoadFailure(port.SessionLoadFailureStore, err)` and snapshot decode,
-format, identity, or validation failures with `SessionLoadFailureSnapshot`. Genuine
+format, identity, or validation failures with `port.SessionLoadFailureSnapshot`. Genuine
 absence continues to wrap `port.ErrSessionNotFound` and must not be reclassified.
-Consumers inspect the typed `SessionLoadFailureError` through `errors.Is`/`errors.As`
+Consumers inspect the typed `port.SessionLoadFailureError` through `errors.Is`/`errors.As`
 or `port.ClassifySessionLoadFailure`; error text is not a classification contract.
-Unknown custom-store failures intentionally remain `SessionLoadFailureUnknown`.
+Unknown custom-store failures intentionally remain `port.SessionLoadFailureUnknown`.
 
 ### What a folded `Load` MUST populate vs. what is safe to lose
 

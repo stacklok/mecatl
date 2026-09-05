@@ -33,7 +33,7 @@ recorder and exporter.
 
 ### Series emitted
 
-All series carry a bounded `role` label (`main`, `subagent`, `member`, `parallel`, `usermodel`, `child`) so you can split per-engine-family without free-text cardinality leaking session ids or model names.
+Engine- and run-derived series carry a bounded `role` label (`main`, `subagent`, `member`, `parallel`, `usermodel`, `child`) so you can split per-engine-family without free-text cardinality leaking session ids or model names. The target-free `mecatl_session_load_failures_total` counter is the deliberate exception: it is emitted by the service load boundary rather than an engine run and carries only `class`.
 
 | Series | Type | Labels | What it measures |
 |---|---|---|---|
@@ -206,6 +206,17 @@ only `class=store|snapshot|unknown` and `ownership=enforced`; the companion coun
 `mecatl_session_load_failures_total`. Neither signal includes the requested session,
 principal, storage key or path, raw error, snapshot content, or snapshot size. Genuine
 missing sessions and foreign-owner concealment remain silent.
+
+Use the bounded class to choose a target-free response:
+
+| Class | Meaning | Safe operator action |
+|---|---|---|
+| `store` | The store could not retrieve the snapshot, including transport failures. | Check backend health, connectivity, credentials, TLS, and timeouts; use backend-wide health signals rather than asking for or logging the requested session ID. |
+| `snapshot` | Bytes were retrieved but the snapshot format, decoding, persisted identity, or validation failed. | Check storage-integrity and mis-keying alerts, then follow the backend's documented backup or repair procedure without copying snapshot contents into logs. |
+| `unknown` | A custom store returned an untyped failure that Mecatl cannot classify safely. | Check the custom adapter's bounded health diagnostics and update it to wrap failures with the public `engine/port` classification contract; do not infer a class from error text. |
+
+The counter identifies a failure family, not a target. It deliberately cannot answer
+which session was requested; do not weaken ownership concealment to obtain that detail.
 
 `provider.route` is an event-stream fact rather than a diagnostic. When the
 serving provider is OpenRouter, it reports the downstream inference provider
