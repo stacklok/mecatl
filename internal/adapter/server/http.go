@@ -367,9 +367,8 @@ type sessionTitleJSON struct {
 }
 
 type titleAttemptSummaryJSON struct {
-	ID            string `json:"id"`
-	Outcome       string `json:"outcome"`
-	CreatedAtUnix int64  `json:"created_at_unix"`
+	ID      string `json:"id"`
+	Outcome string `json:"outcome"`
 }
 
 type tokenUsageJSON struct {
@@ -388,7 +387,7 @@ type usageJSON struct {
 func sessionTitleToJSON(p session.TitlePayload) *sessionTitleJSON {
 	out := &sessionTitleJSON{Title: valid(p.Title), Provenance: valid(string(p.Provenance)), GenerationState: valid(string(p.GenerationState))}
 	if p.LatestAttempt != nil {
-		out.LatestAttempt = &titleAttemptSummaryJSON{ID: valid(p.LatestAttempt.ID), Outcome: valid(string(p.LatestAttempt.Outcome)), CreatedAtUnix: p.LatestAttempt.CreatedAt.Unix()}
+		out.LatestAttempt = &titleAttemptSummaryJSON{ID: valid(p.LatestAttempt.ID), Outcome: valid(string(p.LatestAttempt.Outcome))}
 	}
 	return out
 }

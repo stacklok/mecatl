@@ -329,7 +329,7 @@ type TeamMemberDisposition struct{Name string; Disposition string; Reason string
 type TeamMemberSpec struct{Name string; Role string; Mutating bool; Lead bool; RoutedCategory string; RoutedModel string; RoutingReason string; Model string}
 type TeamPayload struct{ParentCallID string; TeamID string; Roster []TeamMemberSpec; Member string; MemberSessionID string; MemberIncarnation IncarnationID; InnerKind EventType; Text string; ToolName string; Detail string; IsError bool; Rounds int; Stop StopReason; Usage Usage; ContextUsed int64; ContextWindow int64; Tasks []TeamTaskSnapshot; Findings []TeamFindingSnapshot; Dispositions []TeamMemberDisposition; Cause string}
 type TeamTaskSnapshot struct{ID string; Description string; State string; Assignee string; Deps []string}
-type TitleAttempt struct{ID string; Outcome TitleAttemptOutcome; CreatedAt time.Time}
+type TitleAttempt struct{ID string; Outcome TitleAttemptOutcome}
 type TitleAttemptOutcome string
 type TitleGenerationState string
 type TitlePayload struct{Title string; Provenance TitleProvenance; GenerationState TitleGenerationState; LatestAttempt *TitleAttempt}

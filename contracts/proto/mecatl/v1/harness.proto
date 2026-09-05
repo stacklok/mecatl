@@ -1452,8 +1452,7 @@ message TitleAttemptSummary {
   string id = 1;
   // outcome is "succeeded", "deferred", "failed", "interrupted", or empty while claimed.
   string outcome = 2;
-  // created_at_unix is the attempt creation time in Unix seconds.
-  int64 created_at_unix = 3;
+  reserved 3;
 }
 
 // TokenUsage is one canonical usage bucket. models maps opaque server-produced

@@ -163,7 +163,6 @@ export interface UserPromptEventPayload {
 
 /** One source-free summary of the latest session-title generation attempt. @public */
 export interface TitleAttemptEventPayload {
-  readonly createdAtUnix: bigint;
   readonly id: string;
   readonly outcome: string;
 }

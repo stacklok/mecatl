@@ -28,6 +28,10 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 ### Removed
 
+- **Title-attempt timestamps** — `session.TitleAttempt.CreatedAt` is removed.
+  Attempt identity and outcome remain sufficient for the lifecycle and UI failure
+  deduplication. Removed is breaking (pre-v1 minor) per COMPATIBILITY.md.
+
 - **`session.Session.ResetUsage`** — the externally callable accounting reset is
   removed. It could discard durable lifetime usage to grant a synthesis allowance;
   the internal run baseline now provides that allowance without a reset. Removed is
@@ -48,7 +52,7 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 - **Session title-generation domain metadata and lifecycle event** — adds generated title provenance,
   durable title-generation lifecycle/source/attempt records, canonical title-model
   token usage, and the source-free `EvSessionTitle` / `TitlePayload` event
-  projection. Title lifecycle attempts retain only identity, outcome, and time;
+  projection. Title lifecycle attempts retain only identity and outcome;
   title usage is intentionally separate from `Session.Usage`, normal run budgets,
   result usage, and conversation. Snapshot and event-source metadata round-trip
   the title-specific state. Added (minor).

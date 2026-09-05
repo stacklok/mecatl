@@ -903,8 +903,6 @@ export interface TextPromptPart {
 // @public
 export interface TitleAttemptEventPayload {
     // (undocumented)
-    readonly createdAtUnix: bigint;
-    // (undocumented)
     readonly id: string;
     // (undocumented)
     readonly outcome: string;

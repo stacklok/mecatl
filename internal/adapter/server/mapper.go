@@ -860,7 +860,6 @@ func toProtoSessionTitle(p session.TitlePayload) *mecatlv1.SessionTitle {
 	if p.LatestAttempt != nil {
 		out.LatestAttempt = &mecatlv1.TitleAttemptSummary{
 			Id: valid(p.LatestAttempt.ID), Outcome: valid(string(p.LatestAttempt.Outcome)),
-			CreatedAtUnix: p.LatestAttempt.CreatedAt.Unix(),
 		}
 	}
 	return out

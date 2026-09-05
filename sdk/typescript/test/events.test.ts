@@ -49,7 +49,7 @@ describe("event unions", () => {
               runId: "run-known",
               title: {
                 generationState: "generated",
-                latestAttempt: { createdAtUnix: 123n, id: "attempt-1", outcome: "succeeded" },
+                latestAttempt: { id: "attempt-1", outcome: "succeeded" },
                 provenance: "generated",
                 title: "Inspect event kinds",
               },
@@ -80,7 +80,7 @@ describe("event unions", () => {
     expectTypeOf(title.payload).toEqualTypeOf<SessionTitleEventPayload>();
     expect(title.payload).toMatchObject({
       generationState: "generated",
-      latestAttempt: { createdAtUnix: 123n, id: "attempt-1", outcome: "succeeded" },
+      latestAttempt: { id: "attempt-1", outcome: "succeeded" },
       provenance: "generated",
       title: "Inspect event kinds",
     });
