@@ -187,6 +187,11 @@ type ParallelTool struct {
 	// ids, the prefixes keeping them disjoint by convention. The store is consumed as
 	// the port.SessionStore interface, never a concrete adapter.
 	store port.SessionStore
+
+	// onBranchRegistered is a test-only sequencing seam. It runs after a branch is
+	// registered with the parent child-run registry and before its worker-slot wait.
+	// Nil in production.
+	onBranchRegistered func(int)
 }
 
 // ParallelOption configures a ParallelTool.
@@ -879,6 +884,9 @@ func (t *ParallelTool) launchBranch(ctx context.Context, sem chan struct{}, call
 	if err := caps.registerChildRun(branchCtx, childID, childFamilyParallelBranch, branchLabel(i), cancel, false); err != nil {
 		return branchResult{index: i, label: branchLabel(i), childID: string(childID), failed: true,
 			failReason: fmt.Sprintf("child session could not be protected: %v", err)}
+	}
+	if t.onBranchRegistered != nil {
+		t.onBranchRegistered(i)
 	}
 	select {
 	case sem <- struct{}{}:

@@ -22,7 +22,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/agent"
@@ -439,18 +438,24 @@ func TestCancelParallelBranchWhileQueued(t *testing.T) {
 		"PARK-B": {toolName: "Wait2"},
 	}}
 	childEngine := childEngineWith(prov, catalogWith(t, park1, park2))
+	registered := make(chan int, 2)
 	e := parallelEngineFor(t, childEngine, &memForker{}, "all",
-		[]string{"PARK-A one", "PARK-B two"}, agent.WithParallelConcurrency(1))
+		[]string{"PARK-A one", "PARK-B two"},
+		agent.WithParallelConcurrency(1),
+		agent.WithParallelBranchRegisteredForTest(func(i int) { registered <- i }),
+	)
 	r := e.Run(context.Background(), newSession(t, session.Limits{}), agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 
 	var cancelDone sync.WaitGroup
 	cancelDone.Add(1)
+	var queuedIdx int
 	var queuedOK, runningOK bool
 	go func() {
 		defer cancelDone.Done()
-		// Whichever branch parks first holds the single worker slot; the OTHER is
-		// queued. Branch ids are deterministic ("parallel-<callID>-<i>"), so the
-		// queued one is addressable before its branch_start ever fires.
+		// Registration precedes the worker-slot wait. Observe both registrations
+		// explicitly before finding the branch that acquired the sole slot.
+		<-registered
+		<-registered
 		var runningIdx int
 		select {
 		case <-park1.started:
@@ -458,32 +463,8 @@ func TestCancelParallelBranchWhileQueued(t *testing.T) {
 		case <-park2.started:
 			runningIdx = 1
 		}
-		queuedIdx := 1 - runningIdx
-		// The queued branch registers inside its OWN goroutine, which is not
-		// sequenced against the sibling's park — under scheduler load its
-		// registration can lag past park.started, and CancelChild on a not-yet-
-		// registered id is a documented false no-op (the branch would then run
-		// uncancelled and park forever → watchdog wedge). Retry (bounded) until
-		// the registration lands: the branch cannot leave the queue meanwhile,
-		// because the single worker slot is held by the parked running branch,
-		// which is only cancelled after this succeeds.
-		deadline := time.After(10 * time.Second)
-		for !queuedOK {
-			if queuedOK = r.CancelChild(fmt.Sprintf("parallel-s1-p1-%d", queuedIdx)); queuedOK {
-				break
-			}
-			select {
-			case <-deadline:
-				// Fail CRISPLY: without a run cancel the parked running branch
-				// (and so the whole run) would only unwind via drainObserving's
-				// watchdog, masking this as a generic wedge. Errorf is
-				// goroutine-safe; the main goroutine still reports !queuedOK.
-				t.Errorf("queued branch parallel-s1-p1-%d never became cancellable within the deadline", queuedIdx)
-				r.Cancel()
-				return
-			case <-time.After(time.Millisecond):
-			}
-		}
+		queuedIdx = 1 - runningIdx
+		queuedOK = r.CancelChild(fmt.Sprintf("parallel-s1-p1-%d", queuedIdx))
 		runningOK = r.CancelChild(fmt.Sprintf("parallel-s1-p1-%d", runningIdx))
 	}()
 
@@ -504,6 +485,31 @@ func TestCancelParallelBranchWhileQueued(t *testing.T) {
 		t.Fatalf("the queued branch must read cancelled-by-user-before-start:\n%s", res.Content)
 	}
 	assertBranchBracketing(t, evs, 2)
+	// The queued branch never reaches runBranch, but cancelledBeforeStart must still
+	// emit its complete, ordered lifecycle exactly once.
+	starts, ends := 0, 0
+	startAt, endAt := -1, -1
+	var queuedEnd *session.ParallelPayload
+	for i, ev := range evs {
+		if ev.Type != session.EvParallelBranch || ev.Parallel == nil || ev.Parallel.BranchIndex != queuedIdx {
+			continue
+		}
+		switch ev.Parallel.Kind {
+		case session.ParallelBranchStart:
+			starts++
+			startAt = i
+		case session.ParallelBranchEnd:
+			ends++
+			endAt = i
+			queuedEnd = ev.Parallel
+		}
+	}
+	if starts != 1 || ends != 1 || startAt >= endAt {
+		t.Fatalf("queued branch %d lifecycle = %d starts at %d, %d ends at %d; want exactly one ordered start then end", queuedIdx, starts, startAt, ends, endAt)
+	}
+	if !queuedEnd.Failed || queuedEnd.Stop != session.StopCancelled {
+		t.Fatalf("queued branch %d end = failed:%v stop:%q, want failed cancelled", queuedIdx, queuedEnd.Failed, queuedEnd.Stop)
+	}
 	if got := lastResult(t, evs); got.Stop == session.StopError || got.Stop == session.StopCancelled {
 		t.Fatalf("the PARENT run must complete cleanly, got stop %q", got.Stop)
 	}
