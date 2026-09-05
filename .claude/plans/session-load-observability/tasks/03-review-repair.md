@@ -2,10 +2,10 @@
 id: 03-review-repair
 title: Align the target-free diagnostics contract
 blocked_by: [02-review-repair]
-status: pending
-attempt: 0
-branch: ""
-worktree: ""
+status: in-progress
+attempt: 1
+branch: "plan-session-load-observability/03-review-repair-attempt-1"
+worktree: ".scratch/worker-session-load-observability-03-review-repair-attempt-1"
 issue: "1125"
 retries: 0
 last_error: ""
