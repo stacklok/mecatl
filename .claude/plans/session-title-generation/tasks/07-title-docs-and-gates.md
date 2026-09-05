@@ -2,8 +2,8 @@
 id: 07-title-docs-and-gates
 title: Document title generation and verify aggregate delivery
 blocked_by: [01-session-title-domain, 02-title-wire-projection, 03-title-slot-resolution, 04-title-generator, 05-title-coordinator, 06-mecatui-title-ux]
-status: in-progress
-branch: ""
+status: done
+branch: "plan-session-title-generation/07-title-docs-and-gates"
 worktree: ""
 issue: "621"
 retries: 0
