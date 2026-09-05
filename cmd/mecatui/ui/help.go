@@ -1,9 +1,11 @@
 package ui
 
 import (
+	"fmt"
 	"strings"
 
 	"charm.land/bubbles/v2/key"
+	"charm.land/lipgloss/v2"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
@@ -36,13 +38,49 @@ type helpRow struct {
 const helpKeyWidth = 22
 
 // renderHelpOverlay draws the "?" keys-&-features overlay centred over the
-// conversation region, reusing the askCard + lipgloss.Place treatment the MCP
-// and agents overlays use. Every availability decision reads the relayed caps
-// (not a ui-local guess), so the same overlay honestly reflects an embedded
-// default (mcp/commands/skills off) and an external mecated with everything on.
-// hk carries the LIVE key markings so a rebinding propagates here.
-func renderHelpOverlay(th theme.Theme, caps client.Capabilities, width, height int, hk helpKeys) string {
-	return centerCard(th, helpBody(th, caps, hk), width, height)
+// conversation region. When the body is taller than the offered height, it windows
+// complete ANSI lines and reserves a row for its scroll indicator.
+func renderHelpOverlay(th theme.Theme, caps client.Capabilities, width, height, scroll int, hk helpKeys) string {
+	body := helpBody(th, caps, hk)
+	if height <= 0 {
+		return centerCard(th, body, width, height)
+	}
+	lines := helpRenderedLines(body)
+	cardChrome := lipgloss.Height(th.Style("askCard").Render(""))
+	if height <= cardChrome {
+		// A card cannot fit in this exceptionally small viewport. Keep the overlay
+		// usable rather than overflowing the conversation region.
+		return lines[clampScroll(scroll, len(lines), 1)]
+	}
+	window := helpWindowHeight(th, height, len(lines))
+	scroll = clampScroll(scroll, len(lines), window)
+	body = strings.TrimSuffix(windowRenderedLinesWithIndicator(th, lines, scroll, window, func(start, end, total int) string {
+		return helpScrollIndicator(hk, start, end, total)
+	}), "\n")
+	return centerCard(th, body, width, height)
+}
+
+// helpScrollIndicator keeps the navigation affordances in every clipped frame,
+// including the initial top view where the help body's footer is not visible.
+func helpScrollIndicator(hk helpKeys, start, end, total int) string {
+	return fmt.Sprintf("lines %d–%d of %d · %s close · %s/%s scroll · %s page · %s jump", start+1, end, total, hk.close, hk.navUp, hk.navDown, hk.scroll, hk.jump)
+}
+
+// helpRenderedLines splits the help body into complete styled lines. helpBody
+// renders every line independently, so windowing cannot leave a terminal style open.
+func helpRenderedLines(body string) []string {
+	return strings.Split(body, "\n")
+}
+
+// helpWindowHeight accounts for the card chrome and its scroll indicator. The
+// indicator replaces one content row only when it is needed, keeping the card within
+// the actual conversation viewport.
+func helpWindowHeight(th theme.Theme, height, total int) int {
+	window := max(1, height-lipgloss.Height(th.Style("askCard").Render("")))
+	if total > window {
+		window = max(1, window-1)
+	}
+	return window
 }
 
 // helpBody builds the overlay's text: a title, grouped chord sections (each row
@@ -131,13 +169,13 @@ func helpBody(th theme.Theme, caps client.Capabilities, hk helpKeys) string {
 	// when skills are off (nothing to browse).
 	b.WriteString("\n")
 	if caps.Skills {
-		b.WriteString(muted.Render(
-			"Skills activate automatically when the model needs them; type /skills\n"+
-				"to browse the skills inventory.") + "\n")
+		writeHelpMutedLines(&b, th,
+			"Skills activate automatically when the model needs them; type /skills",
+			"to browse the skills inventory.")
 	} else {
-		b.WriteString(muted.Render(
-			"Skills run automatically when the model needs them — not a browsable\n"+
-				"list; watch the transcript for Skill tool calls.") + "\n")
+		writeHelpMutedLines(&b, th,
+			"Skills run automatically when the model needs them — not a browsable",
+			"list; watch the transcript for Skill tool calls.")
 	}
 	// Agent definitions, when served, are browsable via /agents (the inventory the
 	// Subagent tool routes delegations to). Distinct from caps.Teams / ctrl+a, which is
@@ -169,12 +207,18 @@ func helpBody(th theme.Theme, caps client.Capabilities, hk helpKeys) string {
 	b.WriteString("\n" + muted.Render("↑ input · ↓ output · ⊕ cache write") + "\n")
 	b.WriteString(muted.Render("cache N% — share of input tokens served from cache") + "\n")
 
-	// Close hint. Sourced LIVE from the Close/Help bindings (the two keys that
-	// actually dismiss this overlay — see the m.showHelp gate in update.go), NOT a
-	// hardcoded "esc or ?": an operator can remap either, and a stale hint would
-	// lie about how to close. With default keys it renders exactly "esc or ?".
-	b.WriteString("\n" + muted.Render(hk.close+" to close"))
+	// The navigation and close affordances use the LIVE bindings, so a keymap
+	// override never leaves an unusable scrollable overlay.
+	b.WriteString("\n" + muted.Render(hk.close+" close · "+hk.navUp+"/"+hk.navDown+" scroll · "+hk.scroll+" page · "+hk.jump+" jump"))
 	return b.String()
+}
+
+// writeHelpMutedLines renders each line independently so helpRenderedLines can
+// safely window the ANSI output without severing a style sequence.
+func writeHelpMutedLines(b *strings.Builder, th theme.Theme, lines ...string) {
+	for _, line := range lines {
+		b.WriteString(th.Style("muted").Render(line) + "\n")
+	}
 }
 
 // helpKeys is the set of pre-computed chord markings helpBody renders for the

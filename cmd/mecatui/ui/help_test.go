@@ -328,7 +328,7 @@ func TestHelpReflectsKeyOverride(t *testing.T) {
 		{name: "Help", match: "this help (on an empty prompt)", want: "ctrl+f12", absent: "?", occurs: 1},
 		{name: "Quit", match: "quit (press twice", want: "ctrl+f13", absent: "ctrl+c", occurs: 1},
 		{name: "Scroll", match: "scroll the conversation", want: "ctrl+f14/ctrl+f15", absent: "pgup", occurs: 1},
-		{name: "Close hint", match: "to close", want: "ctrl+f16 or ctrl+f12", absent: "esc or ?", occurs: 1},
+		{name: "Close hint", match: " close", want: "ctrl+f16 or ctrl+f12", absent: "esc or ?", occurs: 1},
 	}
 
 	for _, row := range rows {
@@ -386,6 +386,7 @@ func TestHelpKeyOverrideEndToEnd(t *testing.T) {
 		t.Fatal("help overlay did not open on '?' with empty input")
 	}
 
+	m = applyAll(m, tea.WindowSizeMsg{Width: 100, Height: 100})
 	view := stripANSIstr(m.View().Content)
 	var effortRow, mcpRow string
 	for _, line := range strings.Split(view, "\n") {

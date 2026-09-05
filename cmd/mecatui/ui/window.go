@@ -63,6 +63,15 @@ func clampScroll(want, total, window int) int {
 // time. Every emitted line carries a trailing newline so the callers' footer
 // concatenation stays uniform across the scrolled and unscrolled cases.
 func windowRenderedLines(th theme.Theme, lines []string, scroll, window int) string {
+	return windowRenderedLinesWithIndicator(th, lines, scroll, window, func(start, end, total int) string {
+		return fmt.Sprintf("lines %d–%d of %d", start+1, end, total)
+	})
+}
+
+// windowRenderedLinesWithIndicator is windowRenderedLines with a caller-owned
+// overflow indicator. It lets a clipped surface retain its live navigation
+// affordances without consuming another row.
+func windowRenderedLinesWithIndicator(th theme.Theme, lines []string, scroll, window int, indicator func(start, end, total int) string) string {
 	total := len(lines)
 	start := scroll
 	if start > total {
@@ -78,7 +87,7 @@ func windowRenderedLines(th theme.Theme, lines []string, scroll, window int) str
 		b.WriteString(ln + "\n")
 	}
 	if total > window {
-		b.WriteString(th.Style("muted").Render(fmt.Sprintf("lines %d–%d of %d", start+1, end, total)) + "\n")
+		b.WriteString(th.Style("muted").Render(indicator(start, end, total)) + "\n")
 	}
 	return b.String()
 }

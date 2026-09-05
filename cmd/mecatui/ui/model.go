@@ -612,6 +612,7 @@ type Model struct {
 	// workspace/global default). Zero until a restart-now pick. Display-only.
 	pickedThisSession client.ModelSelection
 	showHelp          bool           // the "?" keys-&-features overlay is open (caps-driven; see help.go)
+	helpScroll        int            // first visible complete help-body line while the overlay is open
 	stream            *client.Stream // current run's stream
 	cancelRun         context.CancelFunc
 

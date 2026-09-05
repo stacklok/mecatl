@@ -78,6 +78,15 @@ Use the dedicated guides for those workflows:
 - [Commands and memory](../mecatui/commands-and-memory.md) — learning,
   reflections, and memory-maintenance commands.
 
+## Keyboard help
+
+Press `?` on an empty prompt to open the keys-and-features overlay. When the
+overlay is taller than the conversation area, use **Up/Down** to move one line,
+**Page Up/Page Down** to move a page, and **Home/End** to jump to the beginning
+or end. The overlay shows its current line range; press `?` or **Esc** to close
+it. The displayed key labels and capability availability reflect the active
+client keymap and connected server.
+
 ## Configuration ownership
 
 Client settings such as themes, keymaps, terminal rendering, and mouse behavior

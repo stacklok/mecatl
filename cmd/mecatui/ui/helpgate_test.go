@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 )
@@ -83,6 +84,195 @@ func TestHelpSwallowsOtherKeysWhileOpen(t *testing.T) {
 	}
 	if !m.showHelp {
 		t.Fatal("help should still be open after a swallowed key")
+	}
+}
+
+func TestHelpPreservesGlobalLifecycleKeys(t *testing.T) {
+	t.Run("quit", func(t *testing.T) {
+		m := helpModel(t, allOnCaps())
+		m, _ = pressKey(m, ctrlC())
+		if !m.quitArmed || !m.showHelp {
+			t.Fatalf("ctrl+c should arm quit without closing help: armed=%t help=%t", m.quitArmed, m.showHelp)
+		}
+		_, cmd := pressKey(m, ctrlC())
+		if !isQuitCmd(cmd) {
+			t.Fatal("second ctrl+c should quit while help is open")
+		}
+	})
+	t.Run("quitD", func(t *testing.T) {
+		m := helpModel(t, allOnCaps())
+		m, _ = pressKey(m, ctrlD())
+		if !m.quitDArmed || !m.showHelp {
+			t.Fatalf("ctrl+d should arm quit without closing help: armed=%t help=%t", m.quitDArmed, m.showHelp)
+		}
+		_, cmd := pressKey(m, ctrlD())
+		if !isQuitCmd(cmd) {
+			t.Fatal("second ctrl+d should quit while help is open")
+		}
+	})
+	t.Run("suspend", func(t *testing.T) {
+		m := helpModel(t, allOnCaps())
+		_, cmd := pressKey(m, ctrlZ())
+		if !isSuspendCmd(cmd) {
+			t.Fatal("ctrl+z should suspend while help is open")
+		}
+	})
+}
+
+func TestHelpScrollNavigationAndReset(t *testing.T) {
+	m := helpModel(t, allOnCaps())
+	m = applyAll(m, tea.WindowSizeMsg{Width: 100, Height: 24})
+	total, window := m.helpScrollGeometry()
+	if maxScrollOffset(total, window) == 0 {
+		t.Fatalf("precondition: help should overflow at this height (total=%d window=%d)", total, window)
+	}
+
+	m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyDown})
+	if m.helpScroll != 1 {
+		t.Fatalf("down moved help scroll to %d, want 1", m.helpScroll)
+	}
+	m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyPgDown})
+	if m.helpScroll != clampScroll(1+window, total, window) {
+		t.Fatalf("pgdown moved help scroll to %d, want page movement", m.helpScroll)
+	}
+	m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyPgUp})
+	if m.helpScroll != 1 {
+		t.Fatalf("pgup moved help scroll to %d, want 1", m.helpScroll)
+	}
+	m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyEnd})
+	if want := maxScrollOffset(total, window); m.helpScroll != want {
+		t.Fatalf("end moved help scroll to %d, want %d", m.helpScroll, want)
+	}
+	m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyHome})
+	if m.helpScroll != 0 {
+		t.Fatalf("home moved help scroll to %d, want 0", m.helpScroll)
+	}
+
+	m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyEnd}, qmark())
+	if m.showHelp || m.helpScroll != 0 {
+		t.Fatalf("closing help should reset offset: open=%t offset=%d", m.showHelp, m.helpScroll)
+	}
+	m = applyAll(m, qmark())
+	if !m.showHelp || m.helpScroll != 0 {
+		t.Fatalf("opening help should reset offset: open=%t offset=%d", m.showHelp, m.helpScroll)
+	}
+}
+
+func TestHelpRenderingIsHeightBoundedAndShowsScrollGuidance(t *testing.T) {
+	m := helpModel(t, allOnCaps(), func(deps *Deps) {
+		deps.KeyOverrides = map[string][]string{
+			"Close":        {"ctrl+f1"},
+			"Up":           {"ctrl+f2"},
+			"Down":         {"ctrl+f3"},
+			"ScrollU":      {"ctrl+f4"},
+			"ScrollD":      {"ctrl+f5"},
+			"ScrollTop":    {"ctrl+f6"},
+			"ScrollBottom": {"ctrl+f7"},
+		}
+	})
+	m = applyAll(m, tea.WindowSizeMsg{Width: 100, Height: 24})
+	if got, limit := lipgloss.Height(m.renderBody()), m.vp.Height(); got > limit {
+		t.Fatalf("help body is %d lines, exceeds offered viewport height %d", got, limit)
+	}
+
+	initial := stripANSIstr(m.renderBody())
+	for _, want := range []string{"lines ", " of ", "ctrl+f1 or ? close", "ctrl+f2/ctrl+f3 scroll", "ctrl+f4/ctrl+f5 page", "ctrl+f6/ctrl+f7 jump"} {
+		if !strings.Contains(initial, want) {
+			t.Fatalf("initial clipped help should show %q:\n%s", want, initial)
+		}
+	}
+
+	m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyF7, Mod: tea.ModCtrl})
+	body := stripANSIstr(m.renderBody())
+	total, window := m.helpScrollGeometry()
+	if m.helpScroll != maxScrollOffset(total, window) {
+		t.Fatalf("end scroll offset = %d, want %d", m.helpScroll, maxScrollOffset(total, window))
+	}
+	if !strings.Contains(body, "lines ") || !strings.Contains(body, " of ") {
+		t.Fatalf("end-scrolled help should show a line-range indicator:\n%s", body)
+	}
+	if !strings.Contains(body, "ctrl+f1 or ? close") {
+		t.Fatalf("end-scrolled help should retain the live close hint:\n%s", body)
+	}
+}
+
+// TestHelpNavigationRespectsKeyOverrides exercises the live bindings through
+// Model.Update, rather than only checking their rendered markings.
+func TestHelpNavigationRespectsKeyOverrides(t *testing.T) {
+	m := helpModel(t, allOnCaps(), func(deps *Deps) {
+		deps.KeyOverrides = map[string][]string{
+			"ScrollU":      {"u"},
+			"ScrollD":      {"d"},
+			"ScrollTop":    {"t"},
+			"ScrollBottom": {"b"},
+			"Close":        {"c"},
+			"Up":           {"k"},
+			"Down":         {"j"},
+		}
+	})
+	m = applyAll(m, tea.WindowSizeMsg{Width: 100, Height: 24})
+	total, window := m.helpScrollGeometry()
+	maxScroll := maxScrollOffset(total, window)
+	if maxScroll == 0 {
+		t.Fatalf("precondition: help should overflow at this height (total=%d window=%d)", total, window)
+	}
+	press := func(ch rune) { m = applyAll(m, tea.KeyPressMsg{Code: ch, Text: string(ch)}) }
+
+	press('j')
+	if m.helpScroll != 1 {
+		t.Fatalf("overridden Down moved help scroll to %d, want 1", m.helpScroll)
+	}
+	press('d')
+	if want := clampScroll(1+window, total, window); m.helpScroll != want {
+		t.Fatalf("overridden ScrollD moved help scroll to %d, want %d", m.helpScroll, want)
+	}
+	press('u')
+	if m.helpScroll != 1 {
+		t.Fatalf("overridden ScrollU moved help scroll to %d, want 1", m.helpScroll)
+	}
+	press('t')
+	if m.helpScroll != 0 {
+		t.Fatalf("overridden ScrollTop moved help scroll to %d, want 0", m.helpScroll)
+	}
+	press('b')
+	if m.helpScroll != maxScroll {
+		t.Fatalf("overridden ScrollBottom moved help scroll to %d, want %d", m.helpScroll, maxScroll)
+	}
+	press('k')
+	if m.helpScroll != maxScroll-1 {
+		t.Fatalf("overridden Up moved help scroll to %d, want %d", m.helpScroll, maxScroll-1)
+	}
+	press('c')
+	if m.showHelp || m.helpScroll != 0 {
+		t.Fatalf("overridden Close should close and reset help: open=%t offset=%d", m.showHelp, m.helpScroll)
+	}
+}
+
+func TestHelpScrollClampsAfterResizeWithoutFollowingEnd(t *testing.T) {
+	m := helpModel(t, allOnCaps())
+	m = applyAll(m, tea.WindowSizeMsg{Width: 100, Height: 24}, tea.KeyPressMsg{Code: tea.KeyEnd})
+	before := m.helpScroll
+
+	m = applyAll(m, tea.WindowSizeMsg{Width: 100, Height: 32})
+	total, window := m.helpScrollGeometry()
+	want := clampScroll(before, total, window)
+	if m.helpScroll != want {
+		t.Fatalf("resize left stale offset %d, want clamped %d", m.helpScroll, want)
+	}
+
+	m.helpScroll = before // Exercise navigation's defensive clamp independently.
+	m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyUp})
+	if want > 0 && m.helpScroll != want-1 {
+		t.Fatalf("relative navigation began at %d, want clamped offset %d then up", m.helpScroll, want)
+	}
+
+	m = helpModel(t, allOnCaps())
+	m = applyAll(m, tea.WindowSizeMsg{Width: 100, Height: 32}, tea.KeyPressMsg{Code: tea.KeyEnd})
+	before = m.helpScroll
+	m = applyAll(m, tea.WindowSizeMsg{Width: 100, Height: 24})
+	total, window = m.helpScrollGeometry()
+	if m.helpScroll != before || m.helpScroll == maxScrollOffset(total, window) {
+		t.Fatalf("smaller viewport should retain the prior offset, not follow End: got=%d before=%d end=%d", m.helpScroll, before, maxScrollOffset(total, window))
 	}
 }
 

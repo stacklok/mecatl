@@ -3,6 +3,8 @@ package ui
 import (
 	"strings"
 	"testing"
+
+	tea "charm.land/bubbletea/v2"
 )
 
 // TestHelpOverlayReflectsPlatformMarking proves the model's injected platform
@@ -11,6 +13,7 @@ func TestHelpOverlayReflectsPlatformMarking(t *testing.T) {
 	m := helpModel(t, allOnCaps(), func(deps *Deps) {
 		deps.scrollKeysMarking = func() string { return "fn+↑/fn+↓ (pgup/pgdn)" }
 	})
+	m = applyAll(m, tea.WindowSizeMsg{Width: 100, Height: 100})
 	out := stripANSIstr(m.View().Content)
 
 	if !strings.Contains(out, "fn+↑/fn+↓") {

@@ -1595,6 +1595,7 @@ func (m Model) onResize(msg tea.WindowSizeMsg) (tea.Model, tea.Cmd) {
 	// the header arithmetic are GONE; the heights are measured via lipgloss.Height of
 	// the rendered regions in chrome().
 	m.relayout()
+	m.clampHelpScroll()
 	if widthChanged && m.vp.Height() == viewportHeight {
 		m.refreshView()
 		m.syncStuck()
@@ -1736,6 +1737,7 @@ func (m *Model) relayout() {
 // (SIGINT/SIGTERM via tea.WithContext in main) is unaffected; this is the in-TUI
 // key path only.
 func (m Model) onKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	// Global lifecycle controls retain precedence over every overlay.
 	if key.Matches(msg, m.keys.Quit) {
 		return m.onQuitKey()
 	}
@@ -1759,6 +1761,12 @@ func (m Model) onKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	// re-syncs on resume.
 	if key.Matches(msg, m.keys.Suspend) {
 		return m.onSuspend()
+	}
+
+	// Help owns the remaining keys while open: its documented navigation and close
+	// controls act on the overlay and every ordinary key is swallowed.
+	if m.showHelp {
+		return m.onHelpKey(msg)
 	}
 
 	// Disarm whichever quit guards are armed: any non-ctrl+c key disarms the Quit
@@ -1797,19 +1805,6 @@ func (m Model) onKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return mm, cmd
 	}
 
-	// An open help overlay owns the keyboard: "?" or esc closes it, everything
-	// else is swallowed. Routed AFTER the MCP/agents overlays (they never coexist;
-	// those handlers return handled=false when closed) and BEFORE the ctrl+t
-	// toggle and the phase switch — so a "?" pressed while help is up closes it
-	// rather than reopening or leaking to the textarea.
-	if m.showHelp {
-		if key.Matches(msg, m.keys.Help) || key.Matches(msg, m.keys.Close) {
-			m.showHelp = false
-			_ = m.prompt.Focus()
-		}
-		return m, nil
-	}
-
 	// ctrl+t is a global render toggle (full vs capped tool output); it works in
 	// any phase and never feeds the textarea.
 	if key.Matches(msg, m.keys.ExpandTools) {
@@ -1836,7 +1831,48 @@ func (m Model) onKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	return m.dispatchPhaseKey(msg)
 }
 
-// clearAnySelection gives esc priority over ordinary phase actions when either
+// onHelpKey handles the help overlay's complete keyboard contract. It runs before
+// phase routing, so navigation never reaches the conversation and every other key
+// remains swallowed.
+func (m Model) onHelpKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	m.clampHelpScroll()
+	total, window := m.helpScrollGeometry()
+	switch {
+	case key.Matches(msg, m.keys.Help), key.Matches(msg, m.keys.Close):
+		m.showHelp = false
+		m.helpScroll = 0
+		_ = m.prompt.Focus()
+	case key.Matches(msg, m.keys.ScrollD):
+		m.helpScroll = clampScroll(m.helpScroll+window, total, window)
+	case key.Matches(msg, m.keys.ScrollU):
+		m.helpScroll = clampScroll(m.helpScroll-window, total, window)
+	case key.Matches(msg, m.keys.Down):
+		m.helpScroll = clampScroll(m.helpScroll+1, total, window)
+	case key.Matches(msg, m.keys.Up):
+		m.helpScroll = clampScroll(m.helpScroll-1, total, window)
+	case key.Matches(msg, m.keys.ScrollBottom):
+		m.helpScroll = maxScrollOffset(total, window)
+	case key.Matches(msg, m.keys.ScrollTop):
+		m.helpScroll = 0
+	}
+	return m, nil
+}
+
+// helpScrollGeometry derives the same complete rendered lines and window used by
+// renderHelpOverlay, keeping key navigation and height-bounded rendering aligned.
+func (m Model) helpScrollGeometry() (total, window int) {
+	lines := helpRenderedLines(helpBody(m.deps.Theme, m.caps, m.helpKeyMarkings()))
+	return len(lines), helpWindowHeight(m.deps.Theme, m.vp.Height(), len(lines))
+}
+
+// clampHelpScroll keeps a retained offset valid after a relayout changes the
+// viewport geometry. It deliberately preserves a still-valid offset rather than
+// pinning an earlier End selection to the new bottom.
+func (m *Model) clampHelpScroll() {
+	total, window := m.helpScrollGeometry()
+	m.helpScroll = clampScroll(m.helpScroll, total, window)
+}
+
 // selection owner is active.
 func (m Model) clearAnySelection(msg tea.KeyPressMsg) (Model, bool) {
 	if !key.Matches(msg, m.keys.Cancel) || (!m.sel.active && !m.prompt.HasSelection()) ||
@@ -2734,6 +2770,7 @@ func (m Model) onIdleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		// inserts literally. The overlay claims the keyboard via the m.showHelp gate
 		// in onKey; blur the input while it is up.
 		m.showHelp = true
+		m.helpScroll = 0
 		m.prompt.Blur()
 		return m, nil
 	case key.Matches(msg, m.keys.MCPPanel):
