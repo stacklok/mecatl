@@ -588,7 +588,7 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 	case statusContextMsg:
 		if msg.sessionID == m.sessionID {
 			m.statusContextRoot = msg.root
-			statusline.SetCommandSessionCWD(m.deps.StatusSource, msg.sessionID, msg.root)
+			statusline.SetCommandCWD(m.deps.StatusSource, msg.root)
 			m.submitStatusLine()
 		}
 		return m, nil, true

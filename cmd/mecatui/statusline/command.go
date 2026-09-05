@@ -74,22 +74,15 @@ func (s *commandCWDState) set(cwd string) {
 	s.cwd = cwd
 }
 
-func (s *commandCWDState) selectSession(_ string) {
-	s.set("")
-}
-
-func (s *commandCWDState) setSession(_ string, cwd string) {
-	s.set(cwd)
-}
+func (s *commandCWDState) clear() { s.set("") }
 
 type commandSource struct {
 	Source
 	cwd *commandCWDState
 }
 
-func (s commandSource) setCommandCWD(cwd string)            { s.cwd.set(cwd) }
-func (s commandSource) selectCommandSession(id string)      { s.cwd.selectSession(id) }
-func (s commandSource) setCommandSessionCWD(id, cwd string) { s.cwd.setSession(id, cwd) }
+func (s commandSource) setCommandCWD(cwd string) { s.cwd.set(cwd) }
+func (s commandSource) clearCommandCWD()         { s.cwd.clear() }
 
 // SetCommandCWD updates the private process working directory for a direct
 // command source. The directory is never part of Input or status rendering.
@@ -99,19 +92,11 @@ func SetCommandCWD(source Source, cwd string) {
 	}
 }
 
-// SelectCommandSession clears the direct command's prior CWD until a local-context
-// lookup for the active session supplies one.
-func SelectCommandSession(source Source, id string) {
+// ClearCommandCWD clears the direct command's local-session CWD so it falls
+// back to the configured helper directory until a lookup supplies a new root.
+func ClearCommandCWD(source Source) {
 	if command, ok := source.(commandSource); ok {
-		command.selectCommandSession(id)
-	}
-}
-
-// SetCommandSessionCWD applies the active session's local root to the direct command.
-// The UI guards replies by session ID before calling this helper.
-func SetCommandSessionCWD(source Source, id, cwd string) {
-	if command, ok := source.(commandSource); ok {
-		command.setCommandSessionCWD(id, cwd)
+		command.clearCommandCWD()
 	}
 }
 
