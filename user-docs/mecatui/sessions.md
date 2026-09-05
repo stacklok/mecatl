@@ -125,6 +125,7 @@ chat's run budget. Generated-title updates normally appear live in an open mecat
 a reconnect or reopened session refetches the authoritative snapshot, so a missed
 live update is corrected.
 
+## Start fresh with `/clear`
 
 Use `/clear` when you want a fresh session and empty context while staying in the
 current workspace and model. The old conversation remains stored and discoverable
