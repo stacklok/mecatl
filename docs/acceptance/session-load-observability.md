@@ -1,7 +1,7 @@
 # Session-load observability — acceptance plan
 
 **Phase:** capability — actionable operator visibility without caller disclosure
-**Status:** in-progress
+**Status:** landed
 **Issue:** [stacklok/mecatl#1125](https://github.com/stacklok/mecatl/issues/1125)
 **Branch:** `acc/session-load-observability`
 
