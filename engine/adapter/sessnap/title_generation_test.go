@@ -59,7 +59,7 @@ func TestSessionTitleGeneration_Scenario5_TokenUsageRoundTripAndProjection(t *te
 	if restored.Usage != (session.Usage{}) {
 		t.Errorf("main Usage = %#v, want zero", restored.Usage)
 	}
-	legacy := Snapshot{ID: "legacy", State: session.StateIdle, Mode: session.ModeDefault, Usage: &session.Usage{InputTokens: 5}}
+	legacy := Snapshot{ID: "legacy", State: session.StateIdle, Mode: session.ModeDefault, EnvironmentRef: session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/workspace", Revision: "in-tree-v1"}, Usage: &session.Usage{InputTokens: 5}}
 	legacyRestored, err := legacy.Restore()
 	if err != nil {
 		t.Fatalf("restore legacy usage: %v", err)

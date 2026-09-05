@@ -179,7 +179,7 @@ func (c *titleCoordinator) claim(id session.SessionID) ([]string, string, Provid
 		return nil, "", ProviderSelector{}, false, "no_sources"
 	}
 	attemptID := fmt.Sprintf("title-%d", c.attemptID.Add(1))
-	sess.RecordTitleAttempt(session.TitleAttempt{ID: attemptID, CreatedAt: c.svc.cfg.Now()})
+	sess.RecordTitleAttempt(session.TitleAttempt{ID: attemptID})
 	if !c.persistTitle(c.ctx, sess) {
 		return nil, "", ProviderSelector{}, false, "claim_persist_failed"
 	}

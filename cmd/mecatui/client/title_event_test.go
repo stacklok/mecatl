@@ -11,7 +11,7 @@ func TestTitleEventProjectsAuthoritativeMetadata(t *testing.T) {
 
 	msg, ok := EventToMsg(&mecatlv1.Event{Type: "session.title", Title: &mecatlv1.SessionTitle{
 		Title: "Generated title", Provenance: "generated", GenerationState: "generated",
-		LatestAttempt: &mecatlv1.TitleAttemptSummary{Id: "attempt-1", Outcome: "succeeded", CreatedAtUnix: 42},
+		LatestAttempt: &mecatlv1.TitleAttemptSummary{Id: "attempt-1", Outcome: "succeeded"},
 	}}).(SessionTitleMsg)
 	if !ok {
 		t.Fatalf("message = %T, want SessionTitleMsg", msg)

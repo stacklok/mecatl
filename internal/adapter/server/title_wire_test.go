@@ -29,7 +29,7 @@ func TestSessionTitleGeneration_Scenario2_TitleMetadataRoundTrip(t *testing.T) {
 	s := session.New("session-1", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindMem, ID: "test", Revision: "test"}, session.Limits{}, at)
 	s.SetTitle("First prompt")
 	s.SetTitleGeneration(session.TitleGenerationPending)
-	s.RecordTitleAttempt(session.TitleAttempt{ID: "attempt-1", Outcome: session.TitleAttemptDeferred, CreatedAt: at})
+	s.RecordTitleAttempt(session.TitleAttempt{ID: "attempt-1", Outcome: session.TitleAttemptDeferred})
 	s.RecordTokenUsage(session.UsageKindSessionTitle, "provider", "model", session.Usage{InputTokens: 3, OutputTokens: 2})
 
 	got := toProtoSession(s, ResolvedModel{}, nil)
@@ -37,7 +37,7 @@ func TestSessionTitleGeneration_Scenario2_TitleMetadataRoundTrip(t *testing.T) {
 	if meta.GetTitle() != "First prompt" || meta.GetProvenance() != "first-prompt" || meta.GetGenerationState() != "pending" {
 		t.Fatalf("title metadata = %#v", meta)
 	}
-	if attempt := meta.GetLatestAttempt(); attempt.GetId() != "attempt-1" || attempt.GetOutcome() != "deferred" || attempt.GetCreatedAtUnix() != at.Unix() {
+	if attempt := meta.GetLatestAttempt(); attempt.GetId() != "attempt-1" || attempt.GetOutcome() != "deferred" {
 		t.Fatalf("latest attempt = %#v", attempt)
 	}
 	if got := got.GetTokenUsage()["session_title"]; got.GetTotal().GetInputTokens() != 3 || got.GetModels()["provider/model"].GetOutputTokens() != 2 {
@@ -48,10 +48,9 @@ func TestSessionTitleGeneration_Scenario2_TitleMetadataRoundTrip(t *testing.T) {
 func TestSessionTitleGeneration_Scenario4_TitleEventIsAuthoritativeAndSanitized(t *testing.T) {
 	t.Parallel()
 
-	at := time.Date(2026, time.August, 30, 12, 0, 0, 0, time.UTC)
 	ev := toProto(session.Event{Type: session.EvSessionTitle, Title: &session.TitlePayload{
 		Title: "valid\xff title", Provenance: session.TitleProvenanceGenerated, GenerationState: session.TitleGenerationGenerated,
-		LatestAttempt: &session.TitleAttempt{ID: "attempt-1", Outcome: session.TitleAttemptSucceeded, CreatedAt: at},
+		LatestAttempt: &session.TitleAttempt{ID: "attempt-1", Outcome: session.TitleAttemptSucceeded},
 	}})
 
 	if ev.GetType() != "session.title" || ev.GetTitle() == nil {
@@ -60,8 +59,9 @@ func TestSessionTitleGeneration_Scenario4_TitleEventIsAuthoritativeAndSanitized(
 	if got := ev.GetTitle(); got.GetTitle() != "valid� title" || got.GetProvenance() != "generated" || got.GetGenerationState() != "generated" {
 		t.Fatalf("title payload = %#v", got)
 	}
-	if ev.GetTitle().ProtoReflect().Descriptor().Fields().ByName("latest_usage") != nil {
-		t.Fatal("title lifecycle projection must not contain nested usage")
+	fields := ev.GetTitle().ProtoReflect().Descriptor().Fields()
+	if fields.ByName("latest_usage") != nil || fields.ByName("created_at_unix") != nil {
+		t.Fatal("title lifecycle projection must contain only source-free title metadata")
 	}
 	body, err := json.Marshal(sessionTitleToJSON(session.TitlePayload{Title: "valid\xff title"}))
 	if err != nil || strings.Contains(string(body), "source") || strings.Contains(string(body), "error") {

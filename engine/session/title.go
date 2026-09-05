@@ -3,7 +3,6 @@ package session
 import (
 	"fmt"
 	"strings"
-	"time"
 	"unicode/utf8"
 )
 
@@ -84,9 +83,8 @@ const (
 
 // TitleAttempt is durable lifecycle metadata for one title-generation attempt.
 type TitleAttempt struct {
-	ID        string
-	Outcome   TitleAttemptOutcome
-	CreatedAt time.Time
+	ID      string
+	Outcome TitleAttemptOutcome
 }
 
 // TitlePayload is the bounded source-free projection emitted after a durable

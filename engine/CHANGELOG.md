@@ -11,28 +11,6 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 ## [Unreleased]
 
-### Changed
-
-- **Durable main-usage budget baseline** — `Session.Usage` is now permanently the
-  deprecated lifetime mirror of `TokenUsage[UsageKindMain].Total`. `MaxRunTokens`
-  measures usage since an immutable internal run baseline; ordinary runs use zero and
-  team-lead synthesis captures its current main total without mutating session
-  accounting. Auxiliary usage remains outside this budget and `EvResult.Usage`.
-
-- **Simplified title-model token accounting** — removes the title-specific
-  `session.AuxiliaryUsage`/`AuxiliaryOperation` API and its per-attempt ledger.
-  `Session.RecordTokenUsage` records canonical usage by kind and opaque selected-model
-  attribution, and `RestoreTitleMetadata` now restores title lifecycle metadata only.
-  Removed APIs and the changed restore signature are breaking; pre-v1 this is a minor
-  compatibility classification.
-
-### Removed
-
-- **`session.Session.ResetUsage`** — the externally callable accounting reset is
-  removed. It could discard durable lifetime usage to grant a synthesis allowance;
-  the internal run baseline now provides that allowance without a reset. Removed is
-  breaking (pre-v1 minor) per COMPATIBILITY.md.
-
 ### Added
 
 - **Session-load failure classification** — adds `port.SessionLoadFailureClass`,
@@ -68,7 +46,7 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 - **Session title-generation domain metadata and lifecycle event** — adds generated title provenance,
   durable title-generation lifecycle/source/attempt records, canonical title-model
   token usage, and the source-free `EvSessionTitle` / `TitlePayload` event
-  projection. Title lifecycle attempts retain only identity, outcome, and time;
+  projection. Title lifecycle attempts retain only identity and outcome;
   title usage is intentionally separate from `Session.Usage`, normal run budgets,
   result usage, and conversation. Snapshot and event-source metadata round-trip
   the title-specific state. Added (minor).
@@ -144,6 +122,28 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 - **`agent.WithSubagentReadLedgerFactory`, `agent.WithTeamReadLedgerFactory`, `agent.WithTeamToolReadLedgerFactory`** (repair-wave task 05) — inject factories that mint a fresh ledger for every child environment without importing a concrete adapter into `engine/agent`. **Added = minor**.
 
 ### Changed
+
+- **Durable main-usage budget baseline** — `Session.Usage` is now permanently the
+  deprecated lifetime mirror of `TokenUsage[UsageKindMain].Total`. `MaxRunTokens`
+  measures usage since an immutable internal run baseline; ordinary runs use zero and
+  team-lead synthesis captures its current main total without mutating session
+  accounting. Auxiliary usage remains outside this budget and `EvResult.Usage`.
+
+- **Simplified title-model token accounting** — removes the title-specific
+  `session.AuxiliaryUsage`/`AuxiliaryOperation` API and its per-attempt ledger.
+  `Session.RecordTokenUsage` records canonical usage by kind and opaque selected-model
+  attribution, and `RestoreTitleMetadata` now restores title lifecycle metadata only.
+  Removed APIs and the changed restore signature are breaking; pre-v1 this is a minor
+  compatibility classification.
+
+- **Title-attempt timestamps** — `session.TitleAttempt.CreatedAt` is removed.
+  Attempt identity and outcome remain sufficient for the lifecycle and UI failure
+  deduplication. Removed is breaking (pre-v1 minor) per COMPATIBILITY.md.
+
+- **`session.Session.ResetUsage`** — the externally callable accounting reset is
+  removed. It could discard durable lifetime usage to grant a synthesis allowance;
+  the internal run baseline now provides that allowance without a reset. Removed is
+  breaking (pre-v1 minor) per COMPATIBILITY.md.
 
 - **`learning.AttemptRepository.DiscoverWork`, `learning.AttemptWork{List,Page,Cursor}`, and `learning.MaxAttemptWorkBatch`** ([ADR 0259](../docs/adr/0259-cloud-native-learning.md)) — adds bounded, cursor-paged, storage-neutral discovery of queued attempts and running attempts with expired claims across opaque owner partitions. The cursor is only a disposable scan position and grants no workflow authority. This makes the repository, including a remote driver, the sole worker authority for work admitted after startup and claim-expiry reassignment. Extending the interface is Changed/breaking (pre-v1 a minor bump).
 

@@ -27,9 +27,8 @@ type SessionTitleMsg struct {
 
 // TitleAttemptSummary is the latest durable title attempt projection.
 type TitleAttemptSummary struct {
-	ID            string
-	Outcome       string
-	CreatedAtUnix int64
+	ID      string
+	Outcome string
 }
 
 // SessionInitMsg marks the run stream as live (proto type "session.init").
@@ -1161,7 +1160,7 @@ func sessionTitleMsg(title *mecatlv1.SessionTitle) SessionTitleMsg {
 	attempt := title.GetLatestAttempt()
 	return SessionTitleMsg{
 		Title: title.GetTitle(), Provenance: title.GetProvenance(), GenerationState: title.GetGenerationState(),
-		LatestAttempt: TitleAttemptSummary{ID: attempt.GetId(), Outcome: attempt.GetOutcome(), CreatedAtUnix: attempt.GetCreatedAtUnix()},
+		LatestAttempt: TitleAttemptSummary{ID: attempt.GetId(), Outcome: attempt.GetOutcome()},
 	}
 }
 
