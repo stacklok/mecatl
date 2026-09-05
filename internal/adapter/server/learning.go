@@ -529,18 +529,20 @@ func (s *Service) learningEvidenceStatus(ctx context.Context, ref learning.Evide
 		}
 		events := make([]session.Event, 0, ref.Ordinal+1)
 		eventOrdinal := ref.Ordinal
+		eventSequence := int64(0)
 		for event, eventErr := range s.cfg.EventLog.Read(ctx, ref.SessionID) {
 			if eventErr != nil {
 				return false, "event evidence unavailable", ""
 			}
 			events = append(events, event)
-			if ref.ResolvedProtocol() == learning.ReflectionEvidenceV1 && ref.EventSeq != nil && event.Seq == *ref.EventSeq {
+			if ref.ResolvedProtocol() == learning.ReflectionEvidenceV1 && ref.EventSeq != nil && eventSequence == *ref.EventSeq {
 				eventOrdinal = len(events) - 1
 				break
 			}
 			if ref.ResolvedProtocol() != learning.ReflectionEvidenceV1 && len(events) > ref.Ordinal {
 				break
 			}
+			eventSequence++
 		}
 		if eventOrdinal < 0 || eventOrdinal >= len(events) {
 			return false, "event evidence unavailable", ""

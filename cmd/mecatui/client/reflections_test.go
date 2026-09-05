@@ -30,7 +30,7 @@ func (*pagingReflectionClient) ReflectSession(context.Context, string) (Reflecti
 	return ReflectionReceipt{}, nil
 }
 
-func TestADR_0298_MecatuiClientMapsClosedSafeAbstentionReason(t *testing.T) {
+func TestADR_0300_MecatuiClientMapsClosedSafeAbstentionReason(t *testing.T) {
 	got := mapReflectionReceipt(&mecatlv1.ReflectionReceipt{
 		ReflectionId: "id\xff\x1b[31m",
 		Disposition:  "abstained\x00selected",

@@ -31,6 +31,6 @@ Persist the complete immutable selected-evidence manifest with each staged propo
 - AC4.4: A compacted, deleted, unavailable, reordered, or changed source, unsupported protocol, identity mismatch, binding mismatch, or aggregate mismatch returns failed precondition and performs no memory or learned-skill promotion.
   - verify: `TestScalableReflectionEvidence_Scenario4_MismatchFailsPreconditionWithoutPromotion`
 - AC4.5: Existing evidence preview is not repurposed: detail keeps the current at-most-1024-byte, UTF-8-safe, canonical redacted/digest-verified projection and never exposes raw source or a manifest dump.
-  - verify: `TestADR_0298_EvidencePreviewCompatibilityRemainsRedactedAndBounded`
+  - verify: `TestADR_0300_EvidencePreviewCompatibilityRemainsRedactedAndBounded`
 - AC8.5: Review/auto staging, trust and ownership checks, proposal CAS, conflict handling, promotion eligibility, and undo semantics are unchanged after evidence verification.
-  - verify: `TestADR_0298_StagingPromotionAndUndoControlsUnchanged`
+  - verify: `TestADR_0300_StagingPromotionAndUndoControlsUnchanged`

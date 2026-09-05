@@ -25,8 +25,8 @@ Project explicit closed materialization abstentions and preserved typed failures
 - AC9.1: gRPC and HTTP project explicit no-safe-evidence as successful abstention using only the closed reason and stable harness text; cancellation, closed, failed precondition, queue-full, timeout, validation, persistence, and provider faults retain existing non-Internal typed classifications.
   - verify: `TestScalableReflectionEvidence_Scenario9_TransportDispositionAndTypedErrorMatrix`
 - AC9.2: The proto-free mecatui client preserves only the closed reason/stable text and repairs every producer-influenced string; malformed UTF-8/control content cannot reach output.
-  - verify: `TestADR_0298_MecatuiClientMapsClosedSafeAbstentionReason`
+  - verify: `TestADR_0300_MecatuiClientMapsClosedSafeAbstentionReason`
 - AC9.3: `/reflect` displays in-progress, then muted stable abstention text, a success count, or a sanitized typed failure; stale generations cannot overwrite newer status.
   - verify: `TestScalableReflectionEvidence_Scenario9_MecatuiReflectStatusMatrix`
 - AC9.4: Proposal detail marks manifest/source mismatch non-approvable, retains the bounded redacted evidence preview contract, and never displays manifest entries or raw source text.
-  - verify: `TestADR_0298_MecatuiMismatchAndPreviewRemainNonDisclosing`
+  - verify: `TestADR_0300_MecatuiMismatchAndPreviewRemainNonDisclosing`

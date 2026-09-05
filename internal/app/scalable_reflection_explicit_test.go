@@ -51,7 +51,7 @@ func TestScalableReflectionEvidence_Scenario1_ExplicitLargeTrajectoryMatchesAuto
 	}
 }
 
-func TestADR_0298_ExplicitEventSourceSelectionPrecedesCap(t *testing.T) {
+func TestADR_0300_ExplicitEventSourceSelectionPrecedesCap(t *testing.T) {
 	reflector := &automaticCaptureReflector{called: make(chan learning.Input, 1)}
 	observer, _ := newExplicitTestObserver(t, reflector)
 	scanned := 0
@@ -110,7 +110,7 @@ func TestScalableReflectionEvidence_Scenario5_ExplicitClosedAbstentionReasons(t 
 	}
 }
 
-func TestADR_0298_MaterializationDispositionReasonAndErrorMatrix(t *testing.T) {
+func TestADR_0300_MaterializationDispositionReasonAndErrorMatrix(t *testing.T) {
 	selected, err := learning.MaterializeEvidence(context.Background(), learning.MaterializationRequest{Trajectory: automaticTrajectory("selected", []session.Message{session.NewUserMessage("remember gofmt")}, learning.MessageSpan{}), Explicit: true})
 	if err != nil || selected.Disposition != learning.MaterializationSelected || selected.Reason != learning.MaterializationReasonSelected {
 		t.Fatalf("selected = %+v, err=%v", selected, err)
@@ -120,7 +120,7 @@ func TestADR_0298_MaterializationDispositionReasonAndErrorMatrix(t *testing.T) {
 	}
 }
 
-func TestADR_0298_NonMaterializationFaultsRetainTypedMappings(t *testing.T) {
+func TestADR_0300_NonMaterializationFaultsRetainTypedMappings(t *testing.T) {
 	for _, want := range []error{context.Canceled, context.DeadlineExceeded} {
 		got := explicitReflectionServiceError(want)
 		if !errors.Is(got, want) {
@@ -173,7 +173,7 @@ func TestScalableReflectionEvidence_Scenario7_BuiltCloseCancelsAndJoinsMateriali
 	}
 }
 
-func TestADR_0298_MaterializationCancelCloseRaceAndNoPerJobGoroutine(t *testing.T) {
+func TestADR_0300_MaterializationCancelCloseRaceAndNoPerJobGoroutine(t *testing.T) {
 	gate := newMaterializationLifecycle()
 	before := runtime.NumGoroutine()
 	const jobs = 64

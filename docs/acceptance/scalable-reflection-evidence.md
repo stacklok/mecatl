@@ -2,7 +2,7 @@
 
 **Phase:** capability — deterministic bounded evidence materialization for reflection
 **Status:** landed
-**ADR:** [ADR 0298](../adr/0298-bounded-reflection-evidence-materialization.md) — replace raw-size rejection with one versioned bounded-evidence protocol shared by automatic and explicit reflection.
+**ADR:** [ADR 0300](../adr/0300-bounded-reflection-evidence-materialization.md) — replace raw-size rejection with one versioned bounded-evidence protocol shared by automatic and explicit reflection.
 **Accumulator branch:** `acc/scalable-reflection-evidence` (off `main`).
 
 ## Outcome
@@ -77,11 +77,11 @@ independent eligibility gate.
   - verify: `TestScalableReflectionEvidence_Scenario1_ExplicitLargeTrajectoryMatchesAutomatic`
 - AC1.3: Materialization working memory is bounded by selection limits rather than source size;
   excluded large values are classified before copying and no full canonical projection exists.
-  - verify: `TestADR_0298_MaterializerWorkingStateIsBounded`
+  - verify: `TestADR_0300_MaterializerWorkingStateIsBounded`
 - AC1.4: Only after automatic admission succeeds is a bounded selected `learning.Input` created;
   existing `MaxInputMessages`, `MaxInputEvents`, candidate/evidence limits, encoded coordinator
   bytes, and provider request/token limits remain hard bounds on it.
-  - verify: `TestADR_0298_AdmissionPrecedesBoundedInputConstruction`
+  - verify: `TestADR_0300_AdmissionPrecedesBoundedInputConstruction`
 
 ---
 
@@ -103,7 +103,7 @@ coordination state.
   intent; correction/failure-recovery/repeated-tool-sequence context; most-recent eligible
   user/assistant context; then events. Within a tier original coordinates are the stable
   tie-breaker, and final output is source ordered.
-  - verify: `TestADR_0298_ClosedRankingTiersTieBreakAndSourceOrder`
+  - verify: `TestADR_0300_ClosedRankingTiersTieBreakAndSourceOrder`
 - AC2.3: Automatic and explicit attempts over identical selected source evidence share identity
   `(protocol, identity boundary, selected digest)` and singleflight, even when invocation mode,
   host signals, or existing-memory comparison context differ; changing selected evidence or its
@@ -115,7 +115,7 @@ coordination state.
   - verify: `TestScalableReflectionEvidence_Scenario2_SelectedDigestDrivesProposalID`
 - AC2.5: One materialized selected input performs at most one provider call; no chunking,
   multi-pass extraction, or candidate merge is introduced.
-  - verify: `TestADR_0298_OneSelectedInputOneProviderCall`
+  - verify: `TestADR_0300_OneSelectedInputOneProviderCall`
 
 ---
 
@@ -137,16 +137,16 @@ span and all closure it reaches are mandatory before lower-priority evidence.
   per-field projection rules; no extra text truncation is introduced to force it under bounds.
   If required current closure cannot fit, automatic skips and explicit returns closed successful
   abstention `mandatory_span_exceeds_bounds`.
-  - verify: `TestADR_0298_OversizedComponentOmittedAndMandatoryClosureAbstains`
+  - verify: `TestADR_0300_OversizedComponentOmittedAndMandatoryClosureAbstains`
 - AC3.4: Dropping a unit cannot renumber durable original coordinates. Model handles are compact
   selected-local `m:n`/`e:n`; persisted references keep distinct original message coordinates or
   event sequences plus digest.
-  - verify: `TestADR_0298_SelectedLocalHandlesDoNotReplaceOriginalCoordinates`
+  - verify: `TestADR_0300_SelectedLocalHandlesDoNotReplaceOriginalCoordinates`
 - AC3.5: Pre-version ADR-0109 records decode only as `reflection-evidence/legacy-v0`, where
   `EvidenceRef.Ordinal` retains its historical input-local meaning. New records write explicit
   `reflection-evidence/v1`; readers dispatch by resolved protocol and never infer/rewrite ordinal
   meaning from new field presence.
-  - verify: `TestADR_0298_LegacyEvidenceOrdinalCompatibilityIsVersioned`
+  - verify: `TestADR_0300_LegacyEvidenceOrdinalCompatibilityIsVersioned`
 
 ---
 
@@ -179,7 +179,7 @@ and aggregate digest to re-materialize exactly what the reflector saw once.
 - AC4.5: Existing evidence preview is not repurposed: detail keeps the current at-most-1024-byte,
   UTF-8-safe, canonical redacted/digest-verified projection and never exposes raw source or a
   manifest dump.
-  - verify: `TestADR_0298_EvidencePreviewCompatibilityRemainsRedactedAndBounded`
+  - verify: `TestADR_0300_EvidencePreviewCompatibilityRemainsRedactedAndBounded`
 
 ---
 
@@ -203,10 +203,10 @@ decided before coordinator, reservation, persistence, or proposal work.
 - AC5.3: Clients receive only stable harness-authored text mapped from the closed vocabulary.
   Cancellation and close retain typed cancellation/closed errors rather than successful
   abstention; no arbitrary source/provider/repository error becomes a reason.
-  - verify: `TestADR_0298_MaterializationDispositionReasonAndErrorMatrix`
+  - verify: `TestADR_0300_MaterializationDispositionReasonAndErrorMatrix`
 - AC5.4: Increasing only excluded/unselected retained bytes cannot turn a normally eligible
   automatic selection into an oversize failure.
-  - verify: `TestADR_0298_NoAutomaticRawSizeRejectionCompatibility`
+  - verify: `TestADR_0300_NoAutomaticRawSizeRejectionCompatibility`
 
 ---
 
@@ -228,14 +228,14 @@ content, and every outward failure/abstention surface stays content-free.
 - AC6.2: Omitted material uses only a fixed marker already defined by canonical projection or
   disappears; it is never hashed into a diagnostic label or content-derived reason. Retained
   hostile/control text is normalized and untrusted-fenced before digest/provider use.
-  - verify: `TestADR_0298_OmissionAndHostileTextProjectionAreCanonical`
+  - verify: `TestADR_0300_OmissionAndHostileTextProjectionAreCanonical`
 - AC6.3: An empty-after-projection unit is ineligible. An unsafe-only source follows Scenario 5
   before queue/provider work, and every outward surface excludes source bytes, paths, arguments,
   credentials, media, and child output.
   - verify: `TestScalableReflectionEvidence_Scenario6_UnsafeOnlyInputDoesNoQueueOrProviderWork`
 - AC6.4: Provider, persistence, validation, queue, timeout, and source-mismatch faults retain
   their existing non-Internal typed mapping; diagnostics and errors remain bounded/content-free.
-  - verify: `TestADR_0298_NonMaterializationFaultsRetainTypedMappings`
+  - verify: `TestADR_0300_NonMaterializationFaultsRetainTypedMappings`
 
 ---
 
@@ -254,14 +254,14 @@ job.
 - AC7.2: Automatic run cancellation before admission terminates the caller-run scan without a
   detached goroutine or published reflection job; detachment may occur only after successful
   bounded materialization and coordinator admission.
-  - verify: `TestADR_0298_AutomaticCancellationStopsPreAdmissionMaterialization`
+  - verify: `TestADR_0300_AutomaticCancellationStopsPreAdmissionMaterialization`
 - AC7.3: `Built.Close` closes the materialization gate, rejects new scans, cancels and joins all
   active scans, then performs existing coordinator queued/running shutdown; it cannot return while
   materialization-owned work remains.
   - verify: `TestScalableReflectionEvidence_Scenario7_BuiltCloseCancelsAndJoinsMaterialization`
 - AC7.4: Race/leak proofs show no per-job materialization goroutine, double receipt/proposal,
   post-close admission, leaked active operation, or provider call after cancellation/close.
-  - verify: `TestADR_0298_MaterializationCancelCloseRaceAndNoPerJobGoroutine`
+  - verify: `TestADR_0300_MaterializationCancelCloseRaceAndNoPerJobGoroutine`
 
 ---
 
@@ -285,14 +285,14 @@ automatic reflection still earns admission and reserves spend under existing con
   completed cache, process/principal budgets, and reservation ordering remain enforced; an
   admitted selected input consumes reservation on timeout/failure/reflector abstention as
   before, while pre-selection skip consumes none.
-  - verify: `TestADR_0298_AutomaticAdmissionCooldownBudgetReservationUnchanged`
+  - verify: `TestADR_0300_AutomaticAdmissionCooldownBudgetReservationUnchanged`
 - AC8.4: Coordinator global/per-principal count limits, selected-job and aggregate queued-byte
   limits, fair FIFO rotation, receipt capacity, timeout, cancellation, singleflight, and
   close behavior remain enforced around the selected-evidence job.
-  - verify: `TestADR_0298_CoordinatorResourceSafetyUnchanged`
+  - verify: `TestADR_0300_CoordinatorResourceSafetyUnchanged`
 - AC8.5: Review/auto staging, trust and ownership checks, proposal CAS, conflict handling,
   promotion eligibility, and undo semantics are unchanged after evidence verification.
-  - verify: `TestADR_0298_StagingPromotionAndUndoControlsUnchanged`
+  - verify: `TestADR_0300_StagingPromotionAndUndoControlsUnchanged`
 - AC8.6: The intentional exported `engine/learning` evidence/provenance changes are present in
   the API snapshots and classified in `engine/CHANGELOG.md`; both modules remain standalone
   and layering-clean.
@@ -315,17 +315,17 @@ a proposal was staged.
   - verify: `TestScalableReflectionEvidence_Scenario9_TransportDispositionAndTypedErrorMatrix`
 - AC9.2: The proto-free mecatui client preserves only the closed reason/stable text and repairs
   every producer-influenced string; malformed UTF-8/control content cannot reach output.
-  - verify: `TestADR_0298_MecatuiClientMapsClosedSafeAbstentionReason`
+  - verify: `TestADR_0300_MecatuiClientMapsClosedSafeAbstentionReason`
 - AC9.3: `/reflect` displays in-progress, then muted stable abstention text, a success count, or
   a sanitized typed failure; stale generations cannot overwrite newer status.
   - verify: `TestScalableReflectionEvidence_Scenario9_MecatuiReflectStatusMatrix`
 - AC9.4: Proposal detail marks manifest/source mismatch non-approvable, retains the bounded
   redacted evidence preview contract, and never displays manifest entries or raw source text.
-  - verify: `TestADR_0298_MecatuiMismatchAndPreviewRemainNonDisclosing`
+  - verify: `TestADR_0300_MecatuiMismatchAndPreviewRemainNonDisclosing`
 
 ## Settled protocol decisions
 
-ADR 0298 fixes the complete v1 ranking table, connected tool-turn component, whole-component
+ADR 0300 fixes the complete v1 ranking table, connected tool-turn component, whole-component
 oversize behavior, mandatory-span outcomes, safe-field projection, aggregate manifest and identity
 boundary, selected-local versus durable coordinates, legacy ordinal dispatch, lifecycle ownership,
 and closed outcome vocabulary. No material protocol choice remains open in this plan.

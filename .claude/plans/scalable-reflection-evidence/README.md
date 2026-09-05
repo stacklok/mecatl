@@ -4,7 +4,7 @@ Accumulator: `acc/scalable-reflection-evidence`
 Acceptance plan: `docs/acceptance/scalable-reflection-evidence.md`
 Epic: none mapped
 
-This DAG follows the actual boundaries of ADR 0298: an engine-only deterministic materializer first; automatic admission and the Build-owned pre-admission lifecycle next; explicit reflection and closed outcomes; coordinator identity; durable proposal verification; client transport/UI projection; then the single API/documentation reconciliation. Workers use offline fakes only. The orchestrator owns acceptance-plan status; protobuf and generated API surfaces have one designated writer each.
+This DAG follows the actual boundaries of ADR 0300: an engine-only deterministic materializer first; automatic admission and the Build-owned pre-admission lifecycle next; explicit reflection and closed outcomes; coordinator identity; durable proposal verification; client transport/UI projection; then the single API/documentation reconciliation. Workers use offline fakes only. The orchestrator owns acceptance-plan status; protobuf and generated API surfaces have one designated writer each.
 
 | Task | Title | Blocked by | Acceptance criteria |
 |---|---|---|---|

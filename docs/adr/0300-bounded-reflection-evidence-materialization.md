@@ -1,4 +1,4 @@
-# ADR 0298 — Bounded reflection evidence materialization
+# ADR 0300 — Bounded reflection evidence materialization
 
 - Status: Proposed
 - Date: 2026-09-04

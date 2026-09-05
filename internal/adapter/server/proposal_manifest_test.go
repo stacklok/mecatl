@@ -102,7 +102,7 @@ func (f *proposalManifestFixture) service() *Service {
 	}}
 }
 
-func TestADR_0298_ProposalVerificationBuildsSelectedEvidenceOnly(t *testing.T) {
+func TestADR_0300_ProposalVerificationBuildsSelectedEvidenceOnly(t *testing.T) {
 	original := 0
 	messages := []session.Message{
 		session.NewUserMessage("remember selected evidence"),
@@ -243,7 +243,7 @@ func TestScalableReflectionEvidence_Scenario4_MismatchFailsPreconditionWithoutPr
 	}
 }
 
-func TestADR_0298_EvidencePreviewCompatibilityRemainsRedactedAndBounded(t *testing.T) {
+func TestADR_0300_EvidencePreviewCompatibilityRemainsRedactedAndBounded(t *testing.T) {
 	f := newProposalManifestFixture(t)
 	detail, err := f.service().GetLearningProposal(context.Background(), string(f.record.ID), "")
 	if err != nil {
@@ -256,7 +256,44 @@ func TestADR_0298_EvidencePreviewCompatibilityRemainsRedactedAndBounded(t *testi
 	}
 }
 
-func TestADR_0298_StagingPromotionAndUndoControlsUnchanged(t *testing.T) {
+func TestADR_0300_V1EventEvidencePreviewUsesSessionStreamOrdinal(t *testing.T) {
+	const sourceID = session.SessionID("event-preview-source")
+	events := []session.Event{
+		{Type: session.EvToolResult, Seq: 1, RunID: "run-one", ToolResult: &session.ToolResult{CallID: "first", Content: "first run result"}},
+		{Type: session.EvToolResult, Seq: 1, RunID: "run-two", ToolResult: &session.ToolResult{CallID: "second", Content: "second run result"}},
+	}
+	materialized, err := learning.MaterializeEvidence(context.Background(), learning.MaterializationRequest{
+		Trajectory: learning.NewTrajectory(sourceID, "", session.StopEndTurn, session.Usage{}, nil),
+		Events:     events,
+		Explicit:   true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref, err := learning.EventEvidenceRef(materialized.Input, 1, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	store := memstore.New()
+	sess := session.New(sourceID, session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/workspace", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1, 0))
+	if err := store.Create(context.Background(), sess); err != nil {
+		t.Fatal(err)
+	}
+	eventLog := memstore.NewEventLog()
+	for _, event := range events {
+		if err := eventLog.Append(context.Background(), sourceID, event); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	available, availability, preview := (&Service{cfg: Config{Store: store, EventLog: eventLog}}).learningEvidenceStatus(context.Background(), ref)
+	if !available || availability != "available" || !strings.Contains(preview, "second run result") {
+		t.Fatalf("v1 evidence status = available=%v availability=%q preview=%q", available, availability, preview)
+	}
+}
+
+func TestADR_0300_StagingPromotionAndUndoControlsUnchanged(t *testing.T) {
 	f := newProposalManifestFixture(t)
 	svc := f.service()
 	promoted, err := svc.DecideLearningProposal(context.Background(), string(f.record.ID), string(f.record.Version), "approve", "", "")

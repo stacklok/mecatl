@@ -25,14 +25,14 @@ Route automatic reflection through a full-source streaming admission scan follow
 - AC1.1: Automatic admission evaluates the full eligible source and verified current span incrementally, retaining only bounded counters/coordinates/digests/ranking state and never constructing or copying an unbounded `learning.Input`; an otherwise eligible trajectory over 256 KiB then reaches exactly one reflector call over bounded selected evidence.
   - verify: `TestScalableReflectionEvidence_Scenario1_AutomaticFullSourceAdmissionThenBoundedSelection`
 - AC1.4: Only after automatic admission succeeds is a bounded selected `learning.Input` created; existing `MaxInputMessages`, `MaxInputEvents`, candidate/evidence limits, encoded coordinator bytes, and provider request/token limits remain hard bounds on it.
-  - verify: `TestADR_0298_AdmissionPrecedesBoundedInputConstruction`
+  - verify: `TestADR_0300_AdmissionPrecedesBoundedInputConstruction`
 - AC3.2: Automatic materialization includes the complete verified current span in canonical projected form plus every connected paired-tool closure before spending remaining capacity.
   - verify: `TestScalableReflectionEvidence_Scenario3_AutomaticCurrentSpanClosureIsMandatory`
 - AC5.1: Automatic no-evidence or unfit mandatory closure returns `skipped` with the applicable closed reason and creates no receipt, queue/singleflight entry, reservation, provider call, repository open/stage, proposal, or promotion.
   - verify: `TestScalableReflectionEvidence_Scenario5_AutomaticSkipLeavesNoAdmissionState`
 - AC5.4: Increasing only excluded/unselected retained bytes cannot turn a normally eligible automatic selection into an oversize failure.
-  - verify: `TestADR_0298_NoAutomaticRawSizeRejectionCompatibility`
+  - verify: `TestADR_0300_NoAutomaticRawSizeRejectionCompatibility`
 - AC7.2: Automatic run cancellation before admission terminates the caller-run scan without a detached goroutine or published reflection job; detachment may occur only after successful bounded materialization and coordinator admission.
-  - verify: `TestADR_0298_AutomaticCancellationStopsPreAdmissionMaterialization`
+  - verify: `TestADR_0300_AutomaticCancellationStopsPreAdmissionMaterialization`
 - AC8.3: Automatic policy admission, sensitivity, current-span verification, cooldown, completed cache, process/principal budgets, and reservation ordering remain enforced; an admitted selected input consumes reservation on timeout/failure/reflector abstention as before, while pre-selection skip consumes none.
-  - verify: `TestADR_0298_AutomaticAdmissionCooldownBudgetReservationUnchanged`
+  - verify: `TestADR_0300_AutomaticAdmissionCooldownBudgetReservationUnchanged`

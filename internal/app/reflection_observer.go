@@ -103,49 +103,6 @@ func (o *reflectionObserver) reflectWithEventSource(ctx context.Context, traject
 	return o.submitWithEventSource(ctx, trajectory, nil, events, false, false)
 }
 
-func reflectionTrajectoryBytes(trajectory learning.Trajectory) int {
-	total := len(trajectory.Workspace) + len(trajectory.SessionID)
-	for _, message := range trajectory.Messages {
-		total += len(message.Text) + len(message.Reasoning) + len(message.ProviderPhase) + len(message.ReasoningItemID)
-		for _, call := range message.ToolCalls {
-			total += len(call.ID) + len(call.Name) + len(call.Args) + len(call.ItemID)
-		}
-		for _, part := range message.Parts {
-			total += len(part.Data) + len(part.Text) + len(part.URL) + len(part.Name) + len(part.Title) + len(part.Description)
-		}
-		if message.ToolResult != nil {
-			total += len(message.ToolResult.Content) + len(message.ToolResult.CallID)
-			for _, part := range message.ToolResult.Parts {
-				total += len(part.Data) + len(part.Text) + len(part.URL) + len(part.Name) + len(part.Title) + len(part.Description)
-			}
-		}
-		if total > defaultReflectionJobBytes {
-			return total
-		}
-	}
-	return total
-}
-
-func reflectionEventsBytes(events []session.Event, limit int) int {
-	total := 0
-	for _, event := range events {
-		total += len(event.Type) + len(event.Text)
-		if event.ToolCall != nil {
-			total += len(event.ToolCall.ID) + len(event.ToolCall.Name)
-		}
-		if event.ToolResult != nil {
-			total += len(event.ToolResult.CallID) + len(event.ToolResult.Content)
-			for _, part := range event.ToolResult.Parts {
-				total += len(part.Data) + len(part.Text) + len(part.Name) + len(part.Title) + len(part.Description) + len(part.MIMEType)
-			}
-		}
-		if total > limit {
-			return total
-		}
-	}
-	return total
-}
-
 func currentPromptBinding(input learning.Input, class learning.AdmissionClass) (learning.CurrentPromptBinding, error) {
 	index := -1
 	if input.Trajectory.Current.Valid(len(input.Trajectory.Messages)) {

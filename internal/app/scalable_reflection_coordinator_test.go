@@ -117,7 +117,7 @@ func TestScalableReflectionEvidence_Scenario2_SelectedDigestDrivesProposalID(t *
 	}
 }
 
-func TestADR_0298_OneSelectedInputOneProviderCall(t *testing.T) {
+func TestADR_0300_OneSelectedInputOneProviderCall(t *testing.T) {
 	release := make(chan struct{})
 	started := make(chan session.SessionID, 2)
 	reflector := &testReflector{start: started, release: release}
@@ -147,7 +147,7 @@ func TestADR_0298_OneSelectedInputOneProviderCall(t *testing.T) {
 	}
 }
 
-func TestADR_0298_CoordinatorQueueChargeIncludesExistingFacts(t *testing.T) {
+func TestADR_0300_CoordinatorQueueChargeIncludesExistingFacts(t *testing.T) {
 	release := make(chan struct{})
 	reflector := &testReflector{release: release}
 	job := testJob("principal", "existing-bytes", reflector)
@@ -172,7 +172,7 @@ func TestADR_0298_CoordinatorQueueChargeIncludesExistingFacts(t *testing.T) {
 	}
 }
 
-func TestADR_0298_CoordinatorResourceSafetyUnchanged(t *testing.T) {
+func TestADR_0300_CoordinatorResourceSafetyUnchanged(t *testing.T) {
 	release := make(chan struct{})
 	starts := make(chan session.SessionID, 8)
 	reflector := &testReflector{start: starts, release: release}

@@ -14,7 +14,7 @@ accumulator: acc/scalable-reflection-evidence
 
 # Task brief
 
-Perform the final single-writer reconciliation for intentional exported `engine/learning` evidence/provenance changes and selected-evidence behavior documentation. Run `task api:update`, review and retain only intentional `engine/api/*.txt` changes, classify them in `engine/CHANGELOG.md`, update living architecture and implementation notes, and update public user documentation if the explicit reflection behavior is user-visible. Do not edit frozen ADR 0298 or orchestrator-owned acceptance-plan status.
+Perform the final single-writer reconciliation for intentional exported `engine/learning` evidence/provenance changes and selected-evidence behavior documentation. Run `task api:update`, review and retain only intentional `engine/api/*.txt` changes, classify them in `engine/CHANGELOG.md`, update living architecture and implementation notes, and update public user documentation if the explicit reflection behavior is user-visible. Do not edit frozen ADR 0300 or orchestrator-owned acceptance-plan status.
 
 **Likely scope:** `engine/api/*.txt`, `engine/CHANGELOG.md`, `docs/architecture.md`, `docs/design/IMPLEMENTATION-NOTES.md`, focused `user-docs/` material, and generated configuration reference only through `task docs`.
 

@@ -27,6 +27,6 @@ Switch coordinator deduplication, singleflight, deterministic proposal identity 
 - AC2.4: Deterministic proposal IDs incorporate selected-evidence identity plus partition and candidate identity; retry converges, while host signals, invocation mode, and comparison-only existing facts do not perturb selected-evidence identity.
   - verify: `TestScalableReflectionEvidence_Scenario2_SelectedDigestDrivesProposalID`
 - AC2.5: One materialized selected input performs at most one provider call; no chunking, multi-pass extraction, or candidate merge is introduced.
-  - verify: `TestADR_0298_OneSelectedInputOneProviderCall`
+  - verify: `TestADR_0300_OneSelectedInputOneProviderCall`
 - AC8.4: Coordinator global/per-principal count limits, selected-job and aggregate queued-byte limits, fair FIFO rotation, receipt capacity, timeout, cancellation, singleflight, and close behavior remain enforced around the selected-evidence job.
-  - verify: `TestADR_0298_CoordinatorResourceSafetyUnchanged`
+  - verify: `TestADR_0300_CoordinatorResourceSafetyUnchanged`

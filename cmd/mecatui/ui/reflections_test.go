@@ -192,7 +192,7 @@ func TestScalableReflectionEvidence_Scenario9_MecatuiReflectStatusMatrix(t *test
 	}
 }
 
-func TestADR_0298_MecatuiMismatchAndPreviewRemainNonDisclosing(t *testing.T) {
+func TestADR_0300_MecatuiMismatchAndPreviewRemainNonDisclosing(t *testing.T) {
 	th := theme.New("aztec", theme.AztecPalette())
 	preview := strings.Repeat("p", 1024) + "RAW SOURCE TRANSCRIPT"
 	proposal := client.LearningProposal{

@@ -4186,7 +4186,7 @@ instruction-like prose. Both reference stores retain 64 revisions per key and pe
 origin-known/truncated marker; Undo may remove a value only when retained history proves the target
 was its creation, and fails without mutation at a truncated predecessor boundary.
 
-**Optional learning and evidence reflection (#507 / #509 Chunk A; ADR 0298 refinement):**
+**Optional learning and evidence reflection (#507 / #509 Chunk A; ADR 0300 refinement):**
 `engine/learning` owns `Mode`, the owned completed `Trajectory`, and synchronous `Observer`, plus
 the storage-neutral reflection domain. `engine/learning/materializer.go` (`MaterializeEvidence`)
 is the single exported selection choke point: it accepts the caller context, returns a closed-disposition `Materialization`,
@@ -4309,7 +4309,7 @@ ADR-0213 enforcement exists. Unspecified ownership and missing or partial reposi
 remain fatal before any repository client is composed. Local in-process repositories retain their
 existing application ownership enforcement.
 
-**Bounded selected-evidence refinement (ADR 0298):** automatic admission streams the full
+**Bounded selected-evidence refinement (ADR 0300):** automatic admission streams the full
 eligible source and verified current span with bounded counters, coordinates, digests, and ranking
 state; it does not construct an unbounded `learning.Input`. Automatic and explicit reflection then
 use the same deterministic `reflection-evidence/v1` selector before provider or proposal work.
