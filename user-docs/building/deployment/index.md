@@ -16,6 +16,8 @@ pods, and mecatui provides an interactive terminal skin over an embedded server.
 
 - [**Embed the engine directly**](embed-engine.md) — import `github.com/stacklok/mecatl/engine`, wire the port interfaces yourself, and compose `app.Build` into your own binary without taking Mecatl's heavy require cone.
 
+- [**Configure Mecatl**](settings.md) — choose the operator settings and secret files, daemon topology configuration, command flags, and client-only mecatui settings for each deployment shape.
+
 - [**Run mecated standalone**](mecated.md) — configure and operate the `mecated` composition root: flags, TLS/auth, `--store-dir` persistence, session leasing for multi-replica deployments, Prometheus/OTel, and graceful shutdown.
 
 - [**Operate local session storage**](session-storage-operations.md) — tested systemd user-service and launchd examples, daemon-owned retention, management capability truth, and the quiesced backup/migration/restore runbook.
