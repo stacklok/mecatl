@@ -279,28 +279,35 @@ func (st *Store) pageSessionMetadataLocked(ctx context.Context, request port.Ses
 }
 
 func (st *Store) readyInventoryCatalog(ctx context.Context, cursor *port.SessionMetadataCursor) (inventoryCatalog, error) {
-	fingerprint, err := st.inventoryFingerprint()
-	if err != nil {
-		return inventoryCatalog{}, err
+	for attempt := 0; attempt < 3; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return inventoryCatalog{}, err
+		}
+		fingerprint, err := st.inventoryFingerprint()
+		if err != nil {
+			return inventoryCatalog{}, err
+		}
+		if catalog, ready := st.readInventoryManifest(fingerprint); ready {
+			return catalog, nil
+		}
+		if cursor != nil {
+			return inventoryCatalog{}, port.ErrSessionMetadataCursorRestart
+		}
+		if _, err := st.discoveryMetaListLocked(ctx); err != nil {
+			return inventoryCatalog{}, err
+		}
+		if st.inventoryCatalogReadyObserver != nil {
+			st.inventoryCatalogReadyObserver()
+		}
+		fingerprint, err = st.inventoryFingerprint()
+		if err != nil {
+			return inventoryCatalog{}, err
+		}
+		if catalog, ready := st.readInventoryManifest(fingerprint); ready {
+			return catalog, nil
+		}
 	}
-	if catalog, ready := st.readInventoryManifest(fingerprint); ready {
-		return catalog, nil
-	}
-	if cursor != nil {
-		return inventoryCatalog{}, port.ErrSessionMetadataCursorRestart
-	}
-	if _, err := st.discoveryMetaListLocked(ctx); err != nil {
-		return inventoryCatalog{}, err
-	}
-	fingerprint, err = st.inventoryFingerprint()
-	if err != nil {
-		return inventoryCatalog{}, err
-	}
-	catalog, ready := st.readInventoryManifest(fingerprint)
-	if !ready {
-		return inventoryCatalog{}, fmt.Errorf("jsonlstore: rebuilt inventory catalog is not ready")
-	}
-	return catalog, nil
+	return inventoryCatalog{}, fmt.Errorf("jsonlstore: inventory changed repeatedly while preparing catalog")
 }
 
 const inventoryContinuationPrefix = "jsonl-v1."

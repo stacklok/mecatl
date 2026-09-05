@@ -164,16 +164,17 @@ type Store struct {
 	resolver sessionResolver
 	// mu is confined to the sibling schedule store. Session-family mutations
 	// coordinate by their stable cross-process flock identity instead.
-	mu                        sync.Mutex
-	inventoryMu               sync.Mutex
-	lineageMu                 sync.Mutex
-	snapshot                  snapshotOps
-	durability                SnapshotDurabilityCapability
-	tempOwner                 string
-	tempGeneration            atomic.Uint64
-	toolCallLockTimeout       time.Duration
-	inventoryWorkObserver     func(inventoryWorkKind)
-	snapshotFamilyLockBlocked func()
+	mu                            sync.Mutex
+	inventoryMu                   sync.Mutex
+	lineageMu                     sync.Mutex
+	snapshot                      snapshotOps
+	durability                    SnapshotDurabilityCapability
+	tempOwner                     string
+	tempGeneration                atomic.Uint64
+	toolCallLockTimeout           time.Duration
+	inventoryWorkObserver         func(inventoryWorkKind)
+	inventoryCatalogReadyObserver func()
+	snapshotFamilyLockBlocked     func()
 }
 
 // compile-time assertions that Store satisfies both ports plus the optional
