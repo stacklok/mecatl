@@ -94,8 +94,8 @@ func TestADR_0212_SessionLoadObservability_Scenario1_BoundedWarningAndMetric(t *
 			if got := fmt.Sprint(record.fields["class"]); got != tc.want.String() {
 				t.Fatalf("class field = %q, want %q", got, tc.want)
 			}
-			if len(record.fields) > 2 || (len(record.fields) == 2 && record.fields["ownership"] != "enforced") {
-				t.Fatalf("unbounded diagnostic fields: %#v", record.fields)
+			if len(record.fields) != 2 || record.fields["ownership"] != "enforced" {
+				t.Fatalf("unbounded or incomplete diagnostic fields: %#v", record.fields)
 			}
 			if strings.Contains(record.render(), sensitive) || strings.Contains(record.render(), "private") || strings.Contains(record.render(), "alice") || strings.Contains(record.render(), "98765") {
 				t.Fatalf("diagnostic leaked sensitive data: %s", record.render())
