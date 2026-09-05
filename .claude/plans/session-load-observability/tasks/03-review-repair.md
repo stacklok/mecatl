@@ -2,7 +2,7 @@
 id: 03-review-repair
 title: Align the target-free diagnostics contract
 blocked_by: [02-review-repair]
-status: in-progress
+status: done
 attempt: 1
 branch: "plan-session-load-observability/03-review-repair-attempt-1"
 worktree: ".scratch/worker-session-load-observability-03-review-repair-attempt-1"
