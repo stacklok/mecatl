@@ -2,10 +2,10 @@
 id: 01-observability
 title: Classify and instrument session-load failures
 blocked_by: []
-status: pending
-attempt: 0
-branch: ""
-worktree: ""
+status: in-progress
+attempt: 1
+branch: "plan-session-load-observability/01-observability-attempt-1"
+worktree: ".scratch/worker-session-load-observability-01-observability-attempt-1"
 issue: "1125"
 retries: 0
 last_error: ""
