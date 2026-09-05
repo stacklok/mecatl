@@ -656,6 +656,24 @@ func recordExplicitFlag(f *flag.Flag, cfg *config) {
 	markRetentionCLIFlag(&cfg.retentionCLISet, f.Name)
 }
 
+// resolveDebugConfig applies the canonical debug switch and its legacy env aliases.
+func resolveDebugConfig(cfg *config) {
+	// Explicit --debug=false suppresses all env fallbacks; without an explicit flag,
+	// the legacy variables remain narrow aliases for their original surfaces.
+	if !cfg.debugFlagSet {
+		cfg.debug = os.Getenv("MECATUI_DEBUG") == "1"
+		cfg.debugMouse = cfg.debug || os.Getenv("MECATUI_DEBUG_MOUSE") != ""
+		cfg.debugSteer = cfg.debug || os.Getenv("MECATUI_DEBUG_STEER") != ""
+		cfg.debugAsk = cfg.debug || os.Getenv("MECATUI_DEBUG_ASK") != ""
+		cfg.debugKeymap = cfg.debug || os.Getenv("MECATUI_DEBUG_KEYMAP") == "1"
+		return
+	}
+	cfg.debugMouse = cfg.debug
+	cfg.debugSteer = cfg.debug
+	cfg.debugAsk = cfg.debug
+	cfg.debugKeymap = cfg.debug
+}
+
 func finalizeParsedConfig(fs *flag.FlagSet, cfg *config) error {
 	// Record explicit flags so composition lets CLI out-rank the operator-global
 	// settings.yaml keys (mirrors mecated). Extracted to recordExplicitFlag to keep
@@ -674,21 +692,7 @@ func finalizeParsedConfig(fs *flag.FlagSet, cfg *config) error {
 	if cfg.theme == "" {
 		cfg.theme = os.Getenv("MECATUI_THEME")
 	}
-	// The canonical switch enables every client-side debug surface. Explicit
-	// --debug=false suppresses all env fallbacks; without an explicit flag, the
-	// legacy variables remain narrow aliases for their original surfaces.
-	if !cfg.debugFlagSet {
-		cfg.debug = os.Getenv("MECATUI_DEBUG") == "1"
-		cfg.debugMouse = cfg.debug || os.Getenv("MECATUI_DEBUG_MOUSE") != ""
-		cfg.debugSteer = cfg.debug || os.Getenv("MECATUI_DEBUG_STEER") != ""
-		cfg.debugAsk = cfg.debug || os.Getenv("MECATUI_DEBUG_ASK") != ""
-		cfg.debugKeymap = cfg.debug || os.Getenv("MECATUI_DEBUG_KEYMAP") == "1"
-	} else {
-		cfg.debugMouse = cfg.debug
-		cfg.debugSteer = cfg.debug
-		cfg.debugAsk = cfg.debug
-		cfg.debugKeymap = cfg.debug
-	}
+	resolveDebugConfig(cfg)
 	// Env fallback: --no-mouse wins if passed; otherwise MECATUI_NO_MOUSE=1/true
 	// enables it (set-and-forget in a shell rc for a multiplexer that strips OSC52).
 	if !cfg.noMouse {
