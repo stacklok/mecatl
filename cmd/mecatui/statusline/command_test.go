@@ -223,7 +223,7 @@ func TestStatusLineCommandDoesNotTrimNonASCIIOutputBoundary(t *testing.T) {
 }
 
 func TestADR_0296_StatusInputProtocolV3WorkspacePathAndName(t *testing.T) {
-	input := Input{Version: ProtocolVersion, Workspace: Workspace{Location: "local", Name: "provider label", Path: "/eligible/root"}}
+	input := Input{Version: ProtocolVersion, Workspace: Workspace{Location: "local", Name: "provider label", Path: "/eligible/root"}, Terminal: Terminal{FooterAvailCols: 80}}
 	wire, err := json.Marshal(input)
 	if err != nil {
 		t.Fatalf("marshal status input: %v", err)
@@ -231,8 +231,19 @@ func TestADR_0296_StatusInputProtocolV3WorkspacePathAndName(t *testing.T) {
 	if ProtocolVersion != 3 || !strings.Contains(string(wire), `"Name":"provider label"`) || !strings.Contains(string(wire), `"Path":"/eligible/root"`) || strings.Contains(string(wire), "Basename") {
 		t.Fatalf("status input v3 workspace projection = %s", wire)
 	}
-	if _, exists := reflect.TypeFor[templateWorkspace]().FieldByName("Path"); exists {
-		t.Fatal("template projection exposes the privileged workspace path")
+	templates := NewTemplateSource(TemplateSet{Footer: SurfaceTemplates{Full: `<footer><text>[{{.Workspace.Path}}]</text></footer>`}}, 0)
+	t.Cleanup(func() { _ = templates.Close(context.Background()) })
+	templates.Submit(input)
+	waitStatusChange(t, templates)
+	if got, want := statusSurfaceText(templates.Latest().Footer), "[/eligible/root]"; got != want {
+		t.Fatalf("template workspace path = %q, want %q", got, want)
+	}
+	emptyPath := input
+	emptyPath.Workspace.Path = ""
+	templates.Submit(emptyPath)
+	waitStatusChange(t, templates)
+	if got, want := statusSurfaceText(templates.Latest().Footer), "[]"; got != want {
+		t.Fatalf("template workspace path without eligible context = %q, want %q", got, want)
 	}
 }
 

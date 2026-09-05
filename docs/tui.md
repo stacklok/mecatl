@@ -32,9 +32,10 @@ provider-supplied workspace display metadata as `Workspace.Name`; it replaces v1
 `Session.Digest` and v2's misleading `Workspace.Basename`, with no compatibility
 aliases. A direct command receives the raw input as JSON on stdin. The optional
 local session-context service is resolved asynchronously for each active session.
-When it returns an eligible root, that root is supplied only to the direct command as
-`Workspace.Path` and as its process CWD (including after a worktree switch); it is
-never included in templates, arguments, environment, or UI rendering. A stale reply
+When it returns an eligible root, that root is supplied to the direct command as
+`Workspace.Path` and as its process CWD (including after a worktree switch), and to
+templates through their StatusML-escaped projection. It is never included in
+arguments, environment, or universal Harness/HTTP/event/placement projections. A stale reply
 is discarded; unavailable context uses the configured helper executable's cleaned
 absolute parent directory, then the launch-directory fallback only when that parent
 cannot be determined. the optional

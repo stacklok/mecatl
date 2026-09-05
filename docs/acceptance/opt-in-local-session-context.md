@@ -113,21 +113,23 @@ the path-surface inventory of [ADR-0291](../adr/0291-server-owned-session-placem
 
 ### Scenario 4 — Status commands receive eligible local context
 
-Mecatui's status-line source retrieves the privileged context asynchronously, caches
-it by active session ID, and applies it only if that session remains active. A direct
-status command receives the matched root as both `Workspace.Path` in its raw JSON
-input and its process CWD. `Workspace.Name` is provider-supplied display metadata,
-not a filesystem basename; protocol v3 removes the `Basename` alias. Templates and
-ordinary UI state remain path-free. Without an eligible root, the command uses the
-configured helper executable's cleaned absolute parent directory, then the launch
-directory only if that parent cannot be determined.
+Mecatui's status-line source retrieves the privileged context asynchronously and
+applies it only if that session remains active. A direct status command receives the
+matched root as both `Workspace.Path` in its raw JSON input and its process CWD;
+templates receive the same `Workspace.Path` through their StatusML-escaped projection.
+`Workspace.Name` is provider-supplied display metadata, not a filesystem basename;
+protocol v3 removes the `Basename` alias. Without an eligible root, `Workspace.Path`
+is empty and the command uses the configured helper executable's cleaned absolute
+parent directory, then the launch directory only if that parent cannot be determined.
 
 **Acceptance:**
 - AC4.1: After local-context lookup for an active eligible local session succeeds, a
   direct status command receives the root as `Workspace.Path` in raw JSON and as
-  CWD, including for a selected worktree. The root appears in neither arguments,
-  environment, templates, nor rendered status state.
-  - verify: `TestADR_0296_StatusCommandReceivesRootInInputAndCWD`
+  CWD, including for a selected worktree; templates receive the same path through
+  their StatusML-escaped projection. The root appears in neither arguments nor
+  environment, and remains outside universal Harness/HTTP/event/placement
+  projections.
+  - verify: `TestADR_0296_StatusCommandReceivesRootInInputAndCWD`, `TestADR_0296_StatusTemplateReceivesEligibleLocalContext`
 - AC4.2: Lookup is invalidated and refreshed when Mecatui creates, adopts, clears,
   forks, or switches its active session; a late result for an older session cannot
   change the current status command CWD or `Workspace.Path`.
@@ -139,7 +141,8 @@ directory only if that parent cannot be determined.
   - verify: `TestADR_0296_StatusContextUnavailableUsesHelperParentAndNoPath`, `TestStatusCustomization_Scenario1_StatusInputExcludesRemoteWorkspacePath`
 - AC4.4: Status input protocol v3 names provider-supplied display metadata
   `Workspace.Name`, not `Workspace.Basename`, and has no compatibility alias.
-  Templates do not receive the privileged `Workspace.Path` field.
+  Templates receive `Workspace.Path` only for the same eligible local context that
+  supplies it to a configured direct command, and receive an empty path otherwise.
   - verify: `TestADR_0296_StatusInputProtocolV3WorkspacePathAndName`
 
 ## Out of scope
@@ -150,7 +153,7 @@ directory only if that parent cannot be determined.
 | HTTP gateway route or universal Harness operation | never in this capability | [ADR-0296](../adr/0296-opt-in-local-session-context.md) |
 | Creation-time placement request, workspace inventory, or public selector | separate placement-selection ADR | [ADR-0296](../adr/0296-opt-in-local-session-context.md) |
 | Roots for remote, memory, ACP, no-FS, or future environment kinds | separately reviewed provider-locality capability | [ADR-0296](../adr/0296-opt-in-local-session-context.md) |
-| Root in StatusML/templates or ordinary UI state | demonstrated future disclosure need | planning decision for this capability |
+| Root in ordinary UI state or universal projections | demonstrated future disclosure need | planning decision for this capability |
 
 ## Sequencing recommendation
 
@@ -176,6 +179,7 @@ transport, and the configured direct local status-command boundary.
 - `TestADR_0296_StandaloneMecatedDoesNotExposeLocalSessionContext`
 - `TestADR_0296_LocalContextClosesProvisionalBinding`
 - `TestADR_0296_StatusCommandReceivesRootInInputAndCWD`
+- `TestADR_0296_StatusTemplateReceivesEligibleLocalContext`
 - `TestADR_0296_StatusContextDiscardsStaleSessionResult`
 - `TestADR_0296_StatusContextUnavailableUsesHelperParentAndNoPath`
 - `TestADR_0296_StatusInputProtocolV3WorkspacePathAndName`
@@ -198,10 +202,11 @@ transport, and the configured direct local status-command boundary.
   single-local-client transport need a dedicated follow-up decision.
 - **Open environment kinds.** V1 recognizes only `session.EnvKindLocal`; a future
   provider must not receive path disclosure by merely returning a rooted workspace.
-- **Status input schema.** The root reaches only a configured local direct status
-  command as `Workspace.Path` in raw JSON and as CWD. Templates and ordinary UI
-  state remain path-free; any further disclosure requires a concrete use case and
-  separate review.
+- **Status input schema.** The root reaches a configured local direct command as
+  `Workspace.Path` in raw JSON and as CWD, and reaches templates in their
+  StatusML-escaped projection only for the same eligible local context. Any further
+  disclosure through ordinary UI state or universal projections requires a concrete
+  use case and separate review.
 
 ## Exit criteria
 

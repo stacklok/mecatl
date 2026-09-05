@@ -143,12 +143,13 @@ private placement at creation, while delegation derives placement from its paren
 models nor delegation/artifact handles can select a host path. For a configured
 local status command, the optional local session-context service may resolve an
 already-bound eligible local root asynchronously. Mecatui supplies that privileged
-value only to its local direct command: as `Workspace.Path` in raw command JSON and
-as the process CWD. It refreshes it whenever the active session is replaced or
-switched, discards stale responses, and otherwise uses the configured helper
-executable's cleaned absolute parent directory (then its launch working directory if
-that cannot be determined); the root is never exposed in templates, command
-arguments, environment, or ordinary UI state.
+value to its local direct command as `Workspace.Path` in raw command JSON and as the
+process CWD, and to status templates through their StatusML-escaped projection. It
+refreshes it whenever the active session is replaced or switched, discards stale
+responses, and otherwise uses the configured helper executable's cleaned absolute
+parent directory (then its launch working directory if that cannot be determined);
+the root is never exposed in command arguments, environment, ordinary UI state, or
+universal Harness/HTTP/event/placement projections.
 
 ## mecatui session identity
 

@@ -42,6 +42,28 @@ func TestADR_0296_StatusContextDiscardsStaleSessionResult(t *testing.T) {
 	}
 }
 
+func TestADR_0296_StatusTemplateReceivesEligibleLocalContext(t *testing.T) {
+	root := t.TempDir()
+	source := statusline.NewTemplateSource(statusline.TemplateSet{Footer: statusline.SurfaceTemplates{
+		Full: `<footer><text>{{.Workspace.Path}}</text></footer>`,
+	}}, 0)
+	t.Cleanup(func() { _ = source.Close(context.Background()) })
+	m := New(Deps{Ctx: context.Background(), Theme: theme.New("aztec", theme.AztecPalette()), StatusSource: source, LocalSessionContext: statusContextGetter{roots: map[string]string{"local": root}}})
+	m.activePlacement = client.Placement{Kind: "local", Label: "active-workspace"}
+	m.width = 200
+
+	updated, contextCmd := m.Update(client.SessionReadyMsg{SessionID: "local"})
+	m = updated.(Model)
+	waitStatusSourceChanged(t, source)
+	updated, _ = m.Update(statusContextMessage(t, contextCmd))
+	m = updated.(Model)
+
+	waitStatusSourceChanged(t, source)
+	if got, want := statusContextSurfaceText(source.Latest().Footer), root; got != want {
+		t.Fatalf("template workspace path = %q, want active local root %q", got, want)
+	}
+}
+
 func TestADR_0296_StatusContextUnavailableUsesHelperParentAndNoPath(t *testing.T) {
 	launch := t.TempDir()
 	source := statusline.NewCommandSource(statusline.Command{

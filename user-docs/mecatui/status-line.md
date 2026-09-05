@@ -95,7 +95,7 @@ are zero, and `Clock.Now` is the zero time until the source refreshes it.
 | `Context.Percent` | integer | `Used.Raw / Window.Raw` as an integer percentage, or `0` when unknown. |
 | `Workspace.Location` | string | `local`, `remote`, or `unknown`. |
 | `Workspace.Name` | string | Provider-supplied workspace display metadata. It is not a directory basename or a usable path. |
-| `Workspace.Path` | string | Exact local root returned by the privileged local-context RPC, supplied only to a configured direct local status command. Empty for remote, untrusted, no-FS, unavailable, and otherwise ineligible sessions; unavailable to templates. |
+| `Workspace.Path` | string | Exact local root returned by the privileged local-context RPC. It is available to status templates through their StatusML-escaped projection and to a configured direct local status command. It is empty for remote, untrusted, no-FS, unavailable, and otherwise ineligible sessions. |
 | `Terminal.Rows`, `Terminal.Cols` | integers | Measured terminal dimensions. |
 | `Terminal.HeaderAvailCols`, `Terminal.FooterAvailCols` | integers | Columns remaining after mecatui reserves mandatory header and footer lanes. |
 | `MainAgent.State` | string | `connecting`, `idle`, `thinking`, `running_tool`, `awaiting_approval`, `completed`, `failed`, or `cancelled`. |
@@ -108,10 +108,11 @@ are zero, and `Clock.Now` is the zero time until the source refreshes it.
 
 The input deliberately excludes prompts, transcript and tool content, credentials,
 authentication metadata, diagnostics, and command output. `Workspace.Path` is the
-single privileged exception: only a configured local direct executable receives it
-when the embedded local-context RPC successfully resolves the active eligible local
-session. Templates do not receive `Workspace.Path`. Without that root, the command
-uses the configured helper executable's cleaned absolute parent directory, falling
+single privileged exception: status templates receive it through their StatusML-escaped
+projection and a configured local direct executable receives it in raw input when the
+embedded local-context RPC successfully resolves the active eligible local session.
+Without that root, the command uses the configured helper executable's cleaned absolute
+parent directory, falling
 back to its launch directory only if the parent cannot be determined; it never
 implicitly selects `HOME`.
 
@@ -284,9 +285,9 @@ Mecatui runs the executable in the eligible local root of the active session whe
 its opt-in local session-context service can resolve one. It refreshes that private
 lookup after a session is created, adopted, cleared, forked, or switched, and
 ignores an older response after a newer session becomes active. The root is used
-only as `Workspace.Path` in raw command JSON and as the process CWD. Templates and
-rendered status state remain path-free. If context is unavailable or ineligible,
-mecatui uses the configured helper executable's cleaned absolute parent directory;
+only as `Workspace.Path` in raw command JSON and as the process CWD; templates
+receive it through their StatusML-escaped projection. If context is unavailable or
+ineligible, `Workspace.Path` is empty and mecatui uses the configured helper executable's cleaned absolute parent directory;
 the local launch directory is retained only when that parent cannot be determined.
 A remote path is never used as a local CWD. The process receives a fixed safe
 baseline: `HOME`, `PATH`, `TERM`, `LANG`, `LC_ALL`, `COLUMNS`, and `LINES` when

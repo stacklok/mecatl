@@ -25,7 +25,6 @@ func (m Model) refreshStatusContextCmd() tea.Cmd {
 	}
 	id := m.sessionID
 	statusline.SelectCommandSession(m.deps.StatusSource, id)
-	statusline.SetCommandSessionCWD(m.deps.StatusSource, id, "")
 	if m.deps.LocalSessionContext == nil {
 		return nil
 	}

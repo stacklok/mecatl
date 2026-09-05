@@ -124,8 +124,9 @@ when the code that satisfies the plan has landed.
 
 - [Opt-in local session context](opt-in-local-session-context.md) — a separate,
   embedded-Mecatui-only privileged gRPC service reveals an owned session's exact
-  reattached local root only to a configured local status command, through its raw
-  v3 input and CWD; public placement surfaces and templates remain path-free. Status: draft.
+  reattached local root to status templates through their escaped v3 input projection
+  and to a configured local status command through raw v3 input and CWD; public
+  placement surfaces remain path-free. Status: draft.
 - [Server-owned session placement](server-owned-session-placement.md) — removes public
   filesystem-path authority: composition binds default/no-FS/remote environments;
   alternate worktrees use fresh source-scoped opaque selectors only on clear/fork.

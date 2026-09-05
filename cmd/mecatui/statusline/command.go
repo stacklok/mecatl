@@ -52,10 +52,8 @@ type Command struct {
 }
 
 type commandCWDState struct {
-	mu        sync.RWMutex
-	cwd       string
-	activeID  string
-	bySession map[string]string
+	mu  sync.RWMutex
+	cwd string
 }
 
 func (s *commandCWDState) get(launchDir string) string {
@@ -76,20 +74,12 @@ func (s *commandCWDState) set(cwd string) {
 	s.cwd = cwd
 }
 
-func (s *commandCWDState) selectSession(id string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.activeID = id
-	s.cwd = s.bySession[id]
+func (s *commandCWDState) selectSession(_ string) {
+	s.set("")
 }
 
-func (s *commandCWDState) setSession(id, cwd string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.bySession[id] = cwd
-	if s.activeID == id {
-		s.cwd = cwd
-	}
+func (s *commandCWDState) setSession(_ string, cwd string) {
+	s.set(cwd)
 }
 
 type commandSource struct {
@@ -104,24 +94,24 @@ func (s commandSource) setCommandSessionCWD(id, cwd string) { s.cwd.setSession(i
 // SetCommandCWD updates the private process working directory for a direct
 // command source. The directory is never part of Input or status rendering.
 func SetCommandCWD(source Source, cwd string) {
-	if setter, ok := source.(interface{ setCommandCWD(string) }); ok {
-		setter.setCommandCWD(cwd)
+	if command, ok := source.(commandSource); ok {
+		command.setCommandCWD(cwd)
 	}
 }
 
-// SelectCommandSession restores the cached CWD for session ID, or the launch
-// directory fallback until a local-context lookup supplies one.
+// SelectCommandSession clears the direct command's prior CWD until a local-context
+// lookup for the active session supplies one.
 func SelectCommandSession(source Source, id string) {
-	if selector, ok := source.(interface{ selectCommandSession(string) }); ok {
-		selector.selectCommandSession(id)
+	if command, ok := source.(commandSource); ok {
+		command.selectCommandSession(id)
 	}
 }
 
-// SetCommandSessionCWD caches a local session root for the direct command. It
-// remains private process state and is never projected through Input.
+// SetCommandSessionCWD applies the active session's local root to the direct command.
+// The UI guards replies by session ID before calling this helper.
 func SetCommandSessionCWD(source Source, id, cwd string) {
-	if setter, ok := source.(interface{ setCommandSessionCWD(string, string) }); ok {
-		setter.setCommandSessionCWD(id, cwd)
+	if command, ok := source.(commandSource); ok {
+		command.setCommandSessionCWD(id, cwd)
 	}
 }
 
@@ -185,7 +175,7 @@ func validCommandPart(value string) bool {
 // raw Input JSON on stdin and never exposes command failures or captured output
 // to the generated status line.
 func NewCommandSource(command Command) Source {
-	command.cwd = &commandCWDState{bySession: make(map[string]string)}
+	command.cwd = &commandCWDState{}
 	header := compileVariants(SurfaceTemplates{}, defaultHeaderTemplates())
 	footer := compileVariants(SurfaceTemplates{}, defaultFooterTemplates())
 	var ticks <-chan time.Time

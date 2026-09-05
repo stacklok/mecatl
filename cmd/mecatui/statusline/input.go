@@ -109,9 +109,10 @@ type Context struct {
 
 // Workspace is the active session workspace's display-safe provenance. Location
 // is "local", "remote", or "unknown". Name is provider-supplied display metadata,
-// not a filesystem basename. Path is supplied only to a direct local status command
-// after the privileged local-context RPC has returned an eligible local root; it is
-// intentionally absent from template projection and ordinary UI state.
+// not a filesystem basename. Path is supplied to status templates through their
+// StatusML-escaped projection and to a direct local status command after the
+// privileged local-context RPC has returned an eligible local root. It is otherwise
+// empty and is not part of universal client projections.
 type Workspace struct {
 	Location string
 	Name     string

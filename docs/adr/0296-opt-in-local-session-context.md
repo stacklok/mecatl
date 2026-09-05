@@ -115,11 +115,11 @@ The two data classes remain distinct.
 
 ### 4.1 Status-command input protocol
 
-The local session path is included only in the raw JSON input of a configured direct
-local status command after the privileged RPC successfully returns an eligible local
-root. `Workspace.Name` is provider-supplied display metadata, not a filesystem
-basename. Templates retain a path-free projection. This is status input protocol v3;
-there is no `Basename` compatibility alias.
+The local session path is included in the raw JSON input of a configured direct
+local status command and in the StatusML-escaped template projection after the
+privileged RPC successfully returns an eligible local root. `Workspace.Name` is
+provider-supplied display metadata, not a filesystem basename. This is status input
+protocol v3; there is no `Basename` compatibility alias.
 
 ### 4.2 Direct status-command CWD
 
@@ -146,9 +146,11 @@ selection mechanism.
 - Local clients can reliably identify and operate relative to the exact local
   directory of an already-bound session, including selected worktree successors and
   non-VCS directories.
-- Mecatui status commands can receive a local session root in their raw JSON input
-  and as their CWD, without a special Go side-channel and without making all
-  `PlacementMetadata` path-bearing. Templates remain path-free.
+- Mecatui status commands and templates can receive a local session root after an
+  eligible lookup: a command receives it in raw JSON and as CWD; a template receives
+  it in its StatusML-escaped projection. This does not make `PlacementMetadata`
+  path-bearing or expose paths through universal Harness/HTTP/event/placement
+  projections.
 - Status input protocol v3 replaces the misleading `Workspace.Basename` field with
   provider-supplied display metadata at `Workspace.Name`; no alias is retained.
 - The default public Harness/HTTP/client contract remains path-free. Remote clients
