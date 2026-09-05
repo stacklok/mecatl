@@ -1,4 +1,4 @@
-    ifacemethod func (AdmissionPolicy).Decide(AdmissionRequest) AdmissionDecision
+    ifacemethod func (AdmissionPolicy).Decide(context.Context, AdmissionRequest) (AdmissionDecision, error)
     ifacemethod func (AttemptRepository).Abandon(context.Context, AttemptPartition, AttemptID, AttemptVersion) (AttemptRecord, error)
     ifacemethod func (AttemptRepository).AcquireClaim(context.Context, AttemptPartition, AttemptID, AttemptVersion, time.Duration) (AttemptRecord, AttemptClaim, error)
     ifacemethod func (AttemptRepository).Checkpoint(context.Context, AttemptPartition, AttemptID, AttemptVersion, AttemptClaim, AttemptCheckpoint) (AttemptRecord, error)
@@ -45,7 +45,7 @@
     method func (AdmissionClass).Valid() bool
     method func (AdmissionProvenance).Validate(expected AttemptSource, expectedPrompt CurrentPromptBinding) error
     method func (AdmissionReason).Valid() bool
-    method func (AlwaysPolicy).Decide(req AdmissionRequest) AdmissionDecision
+    method func (AlwaysPolicy).Decide(ctx context.Context, req AdmissionRequest) (AdmissionDecision, error)
     method func (AttemptCheckpoint).Validate() error
     method func (AttemptCheckpointStage).CanAdvanceTo(next AttemptCheckpointStage) bool
     method func (AttemptCheckpointStage).Valid() bool
@@ -74,7 +74,7 @@
     method func (MessageSpan).Valid(messageCount int) bool
     method func (Mode).Next() Mode
     method func (Mode).String() string
-    method func (NeverPolicy).Decide(AdmissionRequest) AdmissionDecision
+    method func (NeverPolicy).Decide(ctx context.Context, _ AdmissionRequest) (AdmissionDecision, error)
     method func (OutcomeKind).Valid() bool
     method func (PromptOrigin).Valid() bool
     method func (ProposalStatus).Valid() bool
@@ -86,7 +86,7 @@
     method func (SkillActivationPolicy).String() string
     method func (SkillActivationPolicy).Valid() bool
     method func (SkillState).Valid() bool
-    method func (ThresholdPolicy).Decide(req AdmissionRequest) AdmissionDecision
+    method func (ThresholdPolicy).Decide(ctx context.Context, req AdmissionRequest) (AdmissionDecision, error)
     method func (ValidationDisposition).Valid() bool
 const ActivityAbstained ActivityKind = "abstained"
 const ActivityAdmitted ActivityKind = "admitted"
@@ -315,10 +315,10 @@ type Activity struct{Kind ActivityKind; Reason AdmissionReason; Sensitivity Sens
 type ActivityKind string
 type AdmissionClass string
 type AdmissionDecision struct{Admitted bool; Class AdmissionClass; Score int; Threshold int; Reasons []AdmissionReason; Signals []Signal}
-type AdmissionPolicy interface{Decide(AdmissionRequest) AdmissionDecision}
+type AdmissionPolicy interface{Decide(context.Context, AdmissionRequest) (AdmissionDecision, error)}
 type AdmissionProvenance struct{Class AdmissionClass "json:\"class\""; Source AttemptSource "json:\"source\""; CurrentPrompt CurrentPromptBinding "json:\"current_prompt\""; Binding ProvenanceBinding "json:\"binding\""}
 type AdmissionReason string
-type AdmissionRequest struct{Input Input}
+type AdmissionRequest struct{Trajectory Trajectory; Signals []Signal}
 type AlwaysPolicy struct{}
 type AttemptCheckpoint struct{Stage AttemptCheckpointStage; ProposalID ProposalID; SkillID SkillID}
 type AttemptCheckpointStage string
@@ -376,7 +376,7 @@ type MaterializationDisposition string
 type MaterializationLimits struct{MaxMessages int "json:\"max_messages,omitempty\""; MaxEvents int "json:\"max_events,omitempty\""; MaxBytes int "json:\"max_bytes,omitempty\""}
 type MaterializationManifest struct{Protocol EvidenceProtocol "json:\"protocol\""; Source SourceIdentity "json:\"source\""; Entries []ManifestEntry "json:\"entries\""; Digest string "json:\"digest\""}
 type MaterializationReason string
-type MaterializationRequest struct{Trajectory Trajectory "json:\"trajectory\""; Events []session.Event "json:\"events,omitempty\""; Signals []Signal "json:\"signals,omitempty\""; Mandatory MessageSpan "json:\"mandatory,omitempty\""; Limits MaterializationLimits "json:\"limits,omitempty\""; Explicit bool "json:\"explicit,omitempty\""}
+type MaterializationRequest struct{Trajectory Trajectory "json:\"trajectory\""; Events []session.Event "json:\"events,omitempty\""; EventSource iter.Seq2[session.Event, error] "json:\"-\""; Signals []Signal "json:\"signals,omitempty\""; Mandatory MessageSpan "json:\"mandatory,omitempty\""; Limits MaterializationLimits "json:\"limits,omitempty\""; Explicit bool "json:\"explicit,omitempty\""}
 type MessageProjection struct{Evidence *EvidenceProjection "json:\"evidence,omitempty\""; Role session.Role "json:\"role\""; Text string "json:\"text,omitempty\""; ToolCalls []ToolProjection "json:\"tool_calls,omitempty\""; ToolResult *ResultProjection "json:\"tool_result,omitempty\""; Parts []PartProjection "json:\"parts,omitempty\""}
 type MessageSpan struct{Start int "json:\"start\""; End int "json:\"end\""}
 type Mode uint8

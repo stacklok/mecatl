@@ -66,7 +66,11 @@ func selectedTestJob(p, id, text string, r learning.Reflector) reflectionJob {
 	if err != nil || materialized.Disposition != learning.MaterializationSelected {
 		panic("test reflection evidence did not materialize")
 	}
-	return reflectionJob{principal: p, input: materialized.Input, reflector: r, selectedBytes: len(materialized.Canonical), process: func(context.Context, string, learning.Outcome) (reflectionReceipt, error) {
+	selectedBytes := len(materialized.Canonical)
+	if material, materialErr := reflectionInputMaterial(materialized.Input, defaultReflectionJobBytes); materialErr == nil {
+		selectedBytes = len(material)
+	}
+	return reflectionJob{principal: p, input: materialized.Input, reflector: r, selectedBytes: selectedBytes, process: func(context.Context, string, learning.Outcome) (reflectionReceipt, error) {
 		return reflectionReceipt{}, nil
 	}}
 }

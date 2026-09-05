@@ -45,36 +45,39 @@ func DetectSignalsScoped(in Input, scope DetectionScope) []Signal {
 	if err := ValidateInput(in); err != nil || !scope.Current.Valid(len(in.Trajectory.Messages)) {
 		return nil
 	}
-	current := in.Trajectory.Messages[scope.Current.Start:scope.Current.End]
-	trajectory := NewTrajectory(in.Trajectory.SessionID, in.Trajectory.Workspace, in.Trajectory.Stop, in.Trajectory.Usage, current)
-	trajectory.Principal = in.Trajectory.Principal.Clone()
-	trajectory.Kind = in.Trajectory.Kind
-	trajectory.Counters = in.Trajectory.Counters
-	trajectory.Current = MessageSpan{Start: 0, End: len(current)}
-	currentInput := NewInput(trajectory, nil, nil, in.Existing)
+	return detectSignalsScoped(in.Trajectory, in.Existing, in.Signals, in.Manifest, scope)
+}
+
+func detectSignalsScoped(trajectory Trajectory, existing []ExistingFact, hostSignals []Signal, manifest *MaterializationManifest, scope DetectionScope) []Signal {
+	current := trajectory.Messages[scope.Current.Start:scope.Current.End]
+	currentTrajectory := trajectory
+	currentTrajectory.Messages = current
+	currentTrajectory.Current = MessageSpan{Start: 0, End: len(current)}
+	currentInput := Input{Trajectory: currentTrajectory, Existing: existing}
 	detected := DetectSignals(currentInput)
 	detected = append(nonExplicitSignals(detected), explicitCurrentPromptSignals(currentInput)...)
 	for i := range detected {
 		for j := range detected[i].Evidence {
 			ref := &detected[i].Evidence[j]
 			ref.Ordinal += scope.Current.Start
-			if in.Manifest == nil {
+			if manifest == nil {
 				continue
 			}
+			sourceInput := Input{Trajectory: trajectory, Manifest: manifest}
 			var resolved EvidenceRef
 			var err error
 			if ref.Locator == EvidenceEvent {
-				resolved, err = EventEvidenceRef(in, ref.Ordinal, ref.ToolCallID)
+				resolved, err = EventEvidenceRef(sourceInput, ref.Ordinal, ref.ToolCallID)
 			} else {
-				resolved, err = MessageEvidenceRef(in, ref.Ordinal, ref.ToolCallID)
+				resolved, err = MessageEvidenceRef(sourceInput, ref.Ordinal, ref.ToolCallID)
 			}
 			if err == nil {
 				*ref = resolved
 			}
 		}
 	}
-	all := make([]Signal, 0, len(in.Signals)+len(detected))
-	for _, signal := range in.Signals {
+	all := make([]Signal, 0, len(hostSignals)+len(detected))
+	for _, signal := range hostSignals {
 		if (signal.Kind == SignalContradiction || signal.Kind == SignalHostRequested) && signalHasOnlyCurrentEvidence(signal, scope.Current) {
 			all = append(all, signal)
 		}

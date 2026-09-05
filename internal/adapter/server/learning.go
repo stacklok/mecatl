@@ -397,17 +397,19 @@ func (s *Service) rematerializeProposal(ctx context.Context, part learning.Propo
 		if s.cfg.EventLog == nil {
 			return learning.Input{}, true, fmt.Errorf("%w: proposal event source is unavailable", ErrFailedPrecondition)
 		}
+		sequence := int64(0)
 		for event, eventErr := range s.cfg.EventLog.Read(ctx, manifest.Source.Value) {
 			if eventErr != nil {
 				return learning.Input{}, true, fmt.Errorf("%w: proposal event source is unavailable", ErrFailedPrecondition)
 			}
-			if _, wanted := eventSequences[event.Seq]; wanted {
+			if _, wanted := eventSequences[sequence]; wanted {
 				selectedEvents = append(selectedEvents, event)
-				delete(eventSequences, event.Seq)
+				delete(eventSequences, sequence)
 				if len(eventSequences) == 0 {
 					break
 				}
 			}
+			sequence++
 		}
 		if len(eventSequences) != 0 {
 			return learning.Input{}, true, fmt.Errorf("%w: proposal event sequence is unavailable", ErrFailedPrecondition)

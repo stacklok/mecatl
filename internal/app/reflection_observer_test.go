@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"reflect"
 	"strings"
 	"sync"
@@ -25,10 +26,10 @@ import (
 
 type captureReflectionInput struct{ input chan learning.Input }
 
-type admissionPolicyFunc func(learning.AdmissionRequest) learning.AdmissionDecision
+type admissionPolicyFunc func(context.Context, learning.AdmissionRequest) (learning.AdmissionDecision, error)
 
-func (f admissionPolicyFunc) Decide(req learning.AdmissionRequest) learning.AdmissionDecision {
-	return f(req)
+func (f admissionPolicyFunc) Decide(ctx context.Context, req learning.AdmissionRequest) (learning.AdmissionDecision, error) {
+	return f(ctx, req)
 }
 
 type automaticCaptureReflector struct {
@@ -69,33 +70,26 @@ func automaticTrajectory(id session.SessionID, messages []session.Message, curre
 	return trajectory
 }
 
-func automaticTestObserver(t *testing.T, reflector *automaticCaptureReflector, policy learning.AdmissionPolicy) (*reflectionObserver, *reflectionCoordinator, *automaticAdmissionController) {
+func automaticTestObserver(t *testing.T, reflector *automaticCaptureReflector, policy learning.AdmissionPolicy) (*reflectionObserver, *reflectionCoordinator) {
 	t.Helper()
 	coordinator := newReflectionCoordinator(context.Background(), reflectionCoordinatorConfig{Workers: 1, Capacity: 2, Timeout: time.Second})
 	t.Cleanup(coordinator.Close)
-	automatic := defaultLearningAutomaticConfig()
-	automatic.Cooldown = time.Hour
-	automatic.MaxReflections = 4
-	automatic.MaxReflectionsPerPrincipal = 4
-	automatic.MaxTokens = 1 << 20
-	automatic.MaxTokensPerPrincipal = 1 << 20
-	controller := newAutomaticAdmissionController(automatic, nil)
 	return &reflectionObserver{
 		coordinator: coordinator, reflector: reflector, repository: memproposal.New(), operatorMemory: memmemory.New(),
-		mode: learning.Review, policy: policy, controller: controller, sensitivity: learning.Balanced,
-	}, coordinator, controller
+		mode: learning.Review, policy: policy, sensitivity: learning.Balanced,
+	}, coordinator
 }
 
 func TestScalableReflectionEvidence_Scenario1_AutomaticFullSourceAdmissionThenBoundedSelection(t *testing.T) {
 	large := session.NewUserMessageWithParts("old context", []session.Content{{Data: []byte(strings.Repeat("x", defaultReflectionJobBytes+1))}})
 	messages := []session.Message{large, session.NewUserMessage("Please remember that Go files use gofmt")}
 	seenFull := false
-	policy := admissionPolicyFunc(func(req learning.AdmissionRequest) learning.AdmissionDecision {
-		seenFull = len(req.Input.Trajectory.Messages) == 2 && len(req.Input.Trajectory.Messages[0].Parts[0].Data) > defaultReflectionJobBytes
-		return (learning.ThresholdPolicy{Sensitivity: learning.Balanced}).Decide(req)
+	policy := admissionPolicyFunc(func(ctx context.Context, req learning.AdmissionRequest) (learning.AdmissionDecision, error) {
+		seenFull = len(req.Trajectory.Messages) == 2 && len(req.Trajectory.Messages[0].Parts[0].Data) > defaultReflectionJobBytes
+		return (learning.ThresholdPolicy{Sensitivity: learning.Balanced}).Decide(ctx, req)
 	})
 	reflector := &automaticCaptureReflector{estimate: 8, called: make(chan learning.Input, 1)}
-	observer, _, _ := automaticTestObserver(t, reflector, policy)
+	observer, _ := automaticTestObserver(t, reflector, policy)
 
 	if err := observer.Observe(context.Background(), automaticTrajectory("large-source", messages, learning.MessageSpan{Start: 1, End: 2})); err != nil {
 		t.Fatal(err)
@@ -122,15 +116,15 @@ func TestADR_0298_AdmissionPrecedesBoundedInputConstruction(t *testing.T) {
 	}
 	messages[len(messages)-1] = session.NewUserMessage("remember that selection stays bounded")
 	order := []string{}
-	policy := admissionPolicyFunc(func(req learning.AdmissionRequest) learning.AdmissionDecision {
+	policy := admissionPolicyFunc(func(_ context.Context, req learning.AdmissionRequest) (learning.AdmissionDecision, error) {
 		order = append(order, "admission")
-		if len(req.Input.Trajectory.Messages) != len(messages) {
-			t.Fatalf("admission saw %d messages, want %d", len(req.Input.Trajectory.Messages), len(messages))
+		if len(req.Trajectory.Messages) != len(messages) {
+			t.Fatalf("admission saw %d messages, want %d", len(req.Trajectory.Messages), len(messages))
 		}
-		return learning.AdmissionDecision{Admitted: true, Class: learning.AdmissionHard, Signals: learning.DetectSignalsScoped(req.Input, learning.DetectionScope{Current: req.Input.Trajectory.Current})}
+		return learning.AdmissionDecision{Admitted: true, Class: learning.AdmissionHard}, nil
 	})
 	reflector := &automaticCaptureReflector{estimate: 8, order: &order, called: make(chan learning.Input, 1)}
-	observer, _, _ := automaticTestObserver(t, reflector, policy)
+	observer, _ := automaticTestObserver(t, reflector, policy)
 	if err := observer.Observe(context.Background(), automaticTrajectory("ordered", messages, learning.MessageSpan{Start: len(messages) - 1, End: len(messages)})); err != nil {
 		t.Fatal(err)
 	}
@@ -140,6 +134,72 @@ func TestADR_0298_AdmissionPrecedesBoundedInputConstruction(t *testing.T) {
 	}
 	if len(input.Trajectory.Messages) > learning.MaxInputMessages || reflectionRawInputBytes(input, defaultReflectionJobBytes) > defaultReflectionJobBytes {
 		t.Fatalf("post-admission input exceeds hard limits: messages=%d bytes=%d", len(input.Trajectory.Messages), reflectionRawInputBytes(input, defaultReflectionJobBytes))
+	}
+}
+
+func TestADR_0298_AutomaticAdmissionIsContextCancellable(t *testing.T) {
+	started := make(chan struct{})
+	policy := admissionPolicyFunc(func(ctx context.Context, _ learning.AdmissionRequest) (learning.AdmissionDecision, error) {
+		close(started)
+		<-ctx.Done()
+		return learning.AdmissionDecision{}, ctx.Err()
+	})
+	observer, coordinator := automaticTestObserver(t, &automaticCaptureReflector{estimate: 8}, policy)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- observer.Observe(ctx, automaticTrajectory("cancel-admission", []session.Message{session.NewUserMessage("remember cancellation")}, learning.MessageSpan{Start: 0, End: 1}))
+	}()
+	<-started
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("automatic admission error = %v, want context.Canceled", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("automatic admission ignored cancellation")
+	}
+	coordinator.mu.Lock()
+	queued := coordinator.queued
+	coordinator.mu.Unlock()
+	if queued != 0 {
+		t.Fatalf("cancelled admission published work: queued=%d", queued)
+	}
+}
+
+func TestADR_0298_BuiltCloseCancelsAutomaticAdmission(t *testing.T) {
+	started := make(chan struct{})
+	policy := admissionPolicyFunc(func(ctx context.Context, _ learning.AdmissionRequest) (learning.AdmissionDecision, error) {
+		close(started)
+		<-ctx.Done()
+		return learning.AdmissionDecision{}, ctx.Err()
+	})
+	observer, _ := automaticTestObserver(t, &automaticCaptureReflector{estimate: 8}, policy)
+	gate := newMaterializationLifecycle()
+	observer.lifecycle = gate
+	done := make(chan error, 1)
+	go func() {
+		done <- observer.Observe(context.Background(), automaticTrajectory("close-admission", []session.Message{session.NewUserMessage("remember closure")}, learning.MessageSpan{Start: 0, End: 1}))
+	}()
+	<-started
+	closed := make(chan struct{})
+	go func() {
+		gate.close()
+		close(closed)
+	}()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("closed automatic admission error = %v, want cancellation", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Built.Close did not cancel automatic admission")
+	}
+	select {
+	case <-closed:
+	case <-time.After(time.Second):
+		t.Fatal("Built.Close did not join automatic admission")
 	}
 }
 
@@ -155,7 +215,7 @@ func TestScalableReflectionEvidence_Scenario3_AutomaticCurrentSpanClosureIsManda
 		session.NewToolMessage(result),
 	}
 	reflector := &automaticCaptureReflector{estimate: 8, called: make(chan learning.Input, 1)}
-	observer, coordinator, controller := automaticTestObserver(t, reflector, learning.AlwaysPolicy{})
+	observer, coordinator := automaticTestObserver(t, reflector, learning.AlwaysPolicy{})
 	if err := observer.Observe(context.Background(), automaticTrajectory("mandatory", messages, learning.MessageSpan{Start: 0, End: 3})); err != nil {
 		t.Fatal(err)
 	}
@@ -167,17 +227,14 @@ func TestScalableReflectionEvidence_Scenario3_AutomaticCurrentSpanClosureIsManda
 	coordinator.mu.Lock()
 	started, receipts := coordinator.started, len(coordinator.receipts)
 	coordinator.mu.Unlock()
-	controller.mu.Lock()
-	reservations := len(controller.reservations)
-	controller.mu.Unlock()
-	if started || receipts != 0 || reservations != 0 {
-		t.Fatalf("mandatory closure skip left work: started=%v receipts=%d reservations=%d", started, receipts, reservations)
+	if started || receipts != 0 {
+		t.Fatalf("mandatory closure skip left work: started=%v receipts=%d", started, receipts)
 	}
 }
 
 func TestScalableReflectionEvidence_Scenario5_AutomaticSkipLeavesNoAdmissionState(t *testing.T) {
 	reflector := &automaticCaptureReflector{estimate: 8, called: make(chan learning.Input, 1)}
-	observer, coordinator, controller := automaticTestObserver(t, reflector, learning.AlwaysPolicy{})
+	observer, coordinator := automaticTestObserver(t, reflector, learning.AlwaysPolicy{})
 	trajectory := automaticTrajectory("unsafe-only", []session.Message{session.NewAssistantMessage("", "provider reasoning", nil)}, learning.MessageSpan{Start: 0, End: 1})
 	if err := observer.Observe(context.Background(), trajectory); err != nil {
 		t.Fatal(err)
@@ -185,14 +242,11 @@ func TestScalableReflectionEvidence_Scenario5_AutomaticSkipLeavesNoAdmissionStat
 	coordinator.mu.Lock()
 	started, queued, receipts, pending := coordinator.started, coordinator.queued, len(coordinator.receipts), len(coordinator.pending)
 	coordinator.mu.Unlock()
-	controller.mu.Lock()
-	reservations, completed := len(controller.reservations), len(controller.completed)
-	controller.mu.Unlock()
 	reflector.mu.Lock()
 	calls := len(reflector.inputs)
 	reflector.mu.Unlock()
-	if started || queued != 0 || receipts != 0 || pending != 0 || reservations != 0 || completed != 0 || calls != 0 {
-		t.Fatalf("skip left state: started=%v queued=%d receipts=%d pending=%d reservations=%d completed=%d calls=%d", started, queued, receipts, pending, reservations, completed, calls)
+	if started || queued != 0 || receipts != 0 || pending != 0 || calls != 0 {
+		t.Fatalf("skip left state: started=%v queued=%d receipts=%d pending=%d calls=%d", started, queued, receipts, pending, calls)
 	}
 }
 
@@ -200,7 +254,7 @@ func TestADR_0298_NoAutomaticRawSizeRejectionCompatibility(t *testing.T) {
 	large := session.NewUserMessageWithParts("", []session.Content{{Data: []byte(strings.Repeat("z", defaultReflectionJobBytes*2))}})
 	messages := []session.Message{large, session.NewUserMessage("remember that raw excluded bytes do not reject reflection")}
 	reflector := &automaticCaptureReflector{estimate: 8, called: make(chan learning.Input, 1)}
-	observer, _, _ := automaticTestObserver(t, reflector, learning.AlwaysPolicy{})
+	observer, _ := automaticTestObserver(t, reflector, learning.AlwaysPolicy{})
 	if err := observer.Observe(context.Background(), automaticTrajectory("raw-large", messages, learning.MessageSpan{Start: 1, End: 2})); err != nil {
 		t.Fatalf("excluded raw bytes rejected automatic reflection: %v", err)
 	}
@@ -213,7 +267,7 @@ func TestADR_0298_NoAutomaticRawSizeRejectionCompatibility(t *testing.T) {
 
 func TestADR_0298_AutomaticCancellationStopsPreAdmissionMaterialization(t *testing.T) {
 	reflector := &automaticCaptureReflector{estimate: 8, called: make(chan learning.Input, 1)}
-	observer, coordinator, controller := automaticTestObserver(t, reflector, learning.AlwaysPolicy{})
+	observer, coordinator := automaticTestObserver(t, reflector, learning.AlwaysPolicy{})
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	err := observer.Observe(ctx, automaticTrajectory("cancelled", []session.Message{session.NewUserMessage("remember cancellation")}, learning.MessageSpan{Start: 0, End: 1}))
@@ -223,22 +277,19 @@ func TestADR_0298_AutomaticCancellationStopsPreAdmissionMaterialization(t *testi
 	coordinator.mu.Lock()
 	started, receipts := coordinator.started, len(coordinator.receipts)
 	coordinator.mu.Unlock()
-	controller.mu.Lock()
-	reservations := len(controller.reservations)
-	controller.mu.Unlock()
-	if started || receipts != 0 || reservations != 0 || len(reflector.inputs) != 0 {
-		t.Fatalf("cancelled scan published work: started=%v receipts=%d reservations=%d calls=%d", started, receipts, reservations, len(reflector.inputs))
+	if started || receipts != 0 || len(reflector.inputs) != 0 {
+		t.Fatalf("cancelled scan published work: started=%v receipts=%d calls=%d", started, receipts, len(reflector.inputs))
 	}
 }
 
 func TestADR_0298_AutomaticAdmissionCooldownBudgetReservationUnchanged(t *testing.T) {
 	order := []string{}
-	policy := admissionPolicyFunc(func(req learning.AdmissionRequest) learning.AdmissionDecision {
+	policy := admissionPolicyFunc(func(_ context.Context, _ learning.AdmissionRequest) (learning.AdmissionDecision, error) {
 		order = append(order, "policy")
-		return learning.AdmissionDecision{Admitted: true, Class: learning.AdmissionWeighted, Signals: learning.DetectSignalsScoped(req.Input, learning.DetectionScope{Current: req.Input.Trajectory.Current})}
+		return learning.AdmissionDecision{Admitted: true, Class: learning.AdmissionWeighted}, nil
 	})
 	reflector := &automaticCaptureReflector{estimate: 7, order: &order, called: make(chan learning.Input, 2)}
-	observer, _, controller := automaticTestObserver(t, reflector, policy)
+	observer, _ := automaticTestObserver(t, reflector, policy)
 	if err := observer.Observe(context.Background(), automaticTrajectory("first", []session.Message{session.NewUserMessage("remember first")}, learning.MessageSpan{Start: 0, End: 1})); err != nil {
 		t.Fatal(err)
 	}
@@ -246,20 +297,10 @@ func TestADR_0298_AutomaticAdmissionCooldownBudgetReservationUnchanged(t *testin
 	if err := observer.Observe(context.Background(), automaticTrajectory("second", []session.Message{session.NewUserMessage("remember second")}, learning.MessageSpan{Start: 0, End: 1})); err != nil {
 		t.Fatal(err)
 	}
-	select {
-	case <-reflector.called:
-		t.Fatal("cooldown-admission rejection reached provider")
-	default:
-	}
-	controller.mu.Lock()
-	reservations := append([]learningReservation(nil), controller.reservations...)
-	controller.mu.Unlock()
-	if len(reservations) != 1 || reservations[0].tokens != 7 {
-		t.Fatalf("reservation accounting = %#v", reservations)
-	}
-	wantPrefix := []string{"policy", "estimate", "reflect", "policy", "estimate"}
-	if len(order) < len(wantPrefix) || !reflect.DeepEqual(order[:len(wantPrefix)], wantPrefix) {
-		t.Fatalf("policy/materialization/budget ordering = %v", order)
+	<-reflector.called
+	want := []string{"policy", "estimate", "reflect", "policy", "estimate", "reflect"}
+	if !reflect.DeepEqual(order, want) {
+		t.Fatalf("policy/materialization/budget ordering = %v, want %v", order, want)
 	}
 }
 

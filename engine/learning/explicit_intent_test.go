@@ -1,6 +1,7 @@
 package learning_test
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stacklok/mecatl/engine/learning"
@@ -139,7 +140,11 @@ func explicitIntentDecision(stop session.StopReason, messages []session.Message,
 	trajectory.Kind = kind
 	trajectory.Current = current
 	trajectory.Counters = session.Counters{Turns: 1}
-	return (learning.ThresholdPolicy{Sensitivity: learning.Balanced}).Decide(learning.AdmissionRequest{Input: learning.NewInput(trajectory, nil, nil, nil)})
+	decision, err := (learning.ThresholdPolicy{Sensitivity: learning.Balanced}).Decide(context.Background(), learning.AdmissionRequest{Trajectory: trajectory})
+	if err != nil {
+		panic(err)
+	}
+	return decision
 }
 
 func hasExplicitProcedureSignal(signals []learning.Signal) bool {

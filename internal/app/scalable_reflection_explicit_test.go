@@ -34,7 +34,7 @@ func TestScalableReflectionEvidence_Scenario1_ExplicitLargeTrajectoryMatchesAuto
 	}, learning.MessageSpan{Start: 1, End: 2})
 
 	autoReflector := &automaticCaptureReflector{estimate: 8, called: make(chan learning.Input, 1)}
-	automatic, _, _ := automaticTestObserver(t, autoReflector, learning.AlwaysPolicy{})
+	automatic, _ := automaticTestObserver(t, autoReflector, learning.AlwaysPolicy{})
 	if err := automatic.Observe(context.Background(), trajectory); err != nil {
 		t.Fatal(err)
 	}
@@ -48,6 +48,30 @@ func TestScalableReflectionEvidence_Scenario1_ExplicitLargeTrajectoryMatchesAuto
 	explicitInput := <-explicitReflector.called
 	if autoInput.Manifest == nil || explicitInput.Manifest == nil || autoInput.Manifest.Digest != explicitInput.Manifest.Digest {
 		t.Fatalf("selected evidence differs: automatic=%#v explicit=%#v", autoInput.Manifest, explicitInput.Manifest)
+	}
+}
+
+func TestADR_0298_ExplicitEventSourceSelectionPrecedesCap(t *testing.T) {
+	reflector := &automaticCaptureReflector{called: make(chan learning.Input, 1)}
+	observer, _ := newExplicitTestObserver(t, reflector)
+	scanned := 0
+	events := func(yield func(session.Event, error) bool) {
+		for range learning.MaxInputEvents {
+			scanned++
+			if !yield(session.Event{Type: session.EvReasoningDelta}, nil) {
+				return
+			}
+		}
+		scanned++
+		yield(session.Event{Type: session.EvResult, Result: &session.ResultPayload{Stop: session.StopEndTurn}}, nil)
+	}
+	trajectory := automaticTrajectory("complete-event-source", nil, learning.MessageSpan{})
+	if _, err := observer.reflectWithEventSource(context.Background(), trajectory, events); err != nil {
+		t.Fatal(err)
+	}
+	input := <-reflector.called
+	if scanned != learning.MaxInputEvents+1 || len(input.Events) != 1 {
+		t.Fatalf("explicit event selection scanned=%d selected=%d", scanned, len(input.Events))
 	}
 }
 

@@ -4193,9 +4193,11 @@ is the single exported selection choke point: it accepts the caller context, ret
 whose selected arm contains the bounded `Input`, canonical bytes, and immutable aggregate manifest;
 its no-work arms contain no source excerpt. Component discovery advances linearly through the canonical
 assistant-plus-contiguous-results turn shape and checks cancellation between source records and within each
-bounded component; it never rescans the retained tail once per tool call. Automatic admission streams the full eligible source and
-verified current span with bounded counters/coordinates/digests; it does not build an unbounded
-`learning.Input`. After admission, the shared `reflection-evidence/v1` selector used by explicit
+bounded component; it never rescans the retained tail once per tool call. Automatic admission passes the
+borrowed completed trajectory through a context-aware policy, streams the full eligible source and
+verified current span with bounded counters/coordinates/digests, and does not build an unbounded
+`learning.Input`. Caller cancellation and Build closure interrupt that admission scan. After admission,
+the shared `reflection-evidence/v1` selector used by explicit
 reflection ranks whole connected tool-turn components (assistant + every call/result), emits selected
 content in source order, and prioritizes mandatory current span/closure, explicit remember/learn
 intent, correction/failure-recovery/repeated-tool-sequence context, recent eligible user/assistant
@@ -4206,7 +4208,8 @@ rejection.
 
 Each selection carries an immutable aggregate manifest with protocol, exact source boundary
 `{domain: "mecatl/reflection-evidence/source/v1", session_id}`, all selected original message
-coordinates/event sequences in source order, entry digests/component bindings, and a domain-separated
+coordinates and zero-based session-wide event-log ordinals in source order, entry digests/component
+bindings, and a domain-separated
 aggregate digest. Model handles are selected-local `m:n`/`e:n`; durable original coordinates stay
 distinct. Candidate references carry aggregate digest plus selected manifest entry index and exactly
 match that entry's locator/coordinate/digest/binding rather than replacing the manifest. Pre-version

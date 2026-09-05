@@ -116,6 +116,52 @@ func TestADR_0298_MaterializerWorkingStateIsBounded(t *testing.T) {
 	}
 }
 
+func TestADR_0298_EventSourceIsFullyRankedBeforeSelectedCap(t *testing.T) {
+	scanned := 0
+	got := materialize(t, learning.MaterializationRequest{
+		Trajectory: sourceTrajectory(),
+		EventSource: func(yield func(session.Event, error) bool) {
+			for range learning.MaxInputEvents {
+				scanned++
+				if !yield(session.Event{Type: session.EvReasoningDelta}, nil) {
+					return
+				}
+			}
+			scanned++
+			yield(session.Event{Type: session.EvResult, Seq: 1, Result: &session.ResultPayload{Stop: session.StopEndTurn}}, nil)
+		},
+		Limits:   learning.MaterializationLimits{MaxEvents: 1},
+		Explicit: true,
+	})
+	if scanned != learning.MaxInputEvents+1 {
+		t.Fatalf("event source scanned %d records, want %d", scanned, learning.MaxInputEvents+1)
+	}
+	if len(got.Input.Events) != 1 || len(got.Manifest.Entries) != 1 {
+		t.Fatalf("late eligible event was not selected: %#v", got)
+	}
+}
+
+func TestADR_0298_EventCoordinatesAreSessionUnique(t *testing.T) {
+	got := materialize(t, learning.MaterializationRequest{
+		Trajectory: sourceTrajectory(),
+		Events: []session.Event{
+			{Type: session.EvResult, Seq: 1, RunID: "run-a", Result: &session.ResultPayload{Stop: session.StopEndTurn}},
+			{Type: session.EvResult, Seq: 1, RunID: "run-b", Result: &session.ResultPayload{Stop: session.StopEndTurn}},
+		},
+		Explicit: true,
+	})
+	if len(got.Manifest.Entries) != 2 {
+		t.Fatalf("manifest entries = %#v", got.Manifest.Entries)
+	}
+	first, second := got.Manifest.Entries[0].EventSequence, got.Manifest.Entries[1].EventSequence
+	if first == nil || second == nil || *first != 0 || *second != 1 {
+		t.Fatalf("event coordinates = %v, %v, want session ordinals 0, 1", first, second)
+	}
+	if err := learning.ValidateInput(got.Input); err != nil {
+		t.Fatalf("session-unique event coordinates rejected: %v", err)
+	}
+}
+
 func TestScalableReflectionEvidence_Scenario2_ManifestDeterministicAcrossReloadAndRetry(t *testing.T) {
 	req := learning.MaterializationRequest{
 		Trajectory: sourceTrajectory(session.NewUserMessage("remember that Go files use gofmt"), session.NewAssistantMessage("Done.", "private reasoning", nil)),

@@ -1206,9 +1206,11 @@ observer seam ([ADR 0109](adr/0109-staged-learning-proposals.md), refined by
 `Materialization`: either a bounded `Input` plus immutable `MaterializationManifest`, or a
 content-free no-work outcome. Standard composition owns the bounded staged-reflection
 coordinator. Automatic admission scans the full eligible source/current
-span with bounded counters, coordinates, digests, and ranking state; it never first constructs an
-unbounded `learning.Input`. Only after admission does it invoke the shared `reflection-evidence/v1`
-selector used by explicit reflection. The selector chooses whole connected tool-turn components
+span through a context-aware borrowed-trajectory policy with bounded counters, coordinates, digests,
+and ranking state; it never first constructs an unbounded `learning.Input`, and caller cancellation or
+Build closure interrupts the scan. Only after admission does it invoke the shared `reflection-evidence/v1`
+selector used by explicit reflection. Explicit reflection streams and ranks the complete event source
+before applying the selected-event cap. The selector chooses whole connected tool-turn components
 (an assistant message, all its calls, and every result), emits them in source order, and gives
 priority to mandatory verified current span/closure, explicit remember/learn intent,
 correction/failure-recovery/repeated-tool-sequence context, recent eligible user/assistant context,
@@ -1218,7 +1220,8 @@ work or explicitly abstains. Raw retained size is not an independent rejection c
 
 Each bounded selected input has an immutable aggregate manifest: protocol, exact source boundary
 `{domain: "mecatl/reflection-evidence/source/v1", session_id}`, every selected original message
-coordinate/event sequence in source order, canonical entry digests and complete component bindings, plus a domain-separated
+coordinate or zero-based session-wide event-log ordinal in source order, canonical entry digests and
+complete component bindings, plus a domain-separated
 selected-evidence SHA-256 digest. Model handles are selected-local `m:<n>`/`e:<n>`; durable
 coordinates remain distinct. Candidate references carry aggregate digest plus selected manifest
 entry index and must match that entry's durable locator/coordinate/digest/binding; they never replace

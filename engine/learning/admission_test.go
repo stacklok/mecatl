@@ -7,6 +7,15 @@ import (
 	"github.com/stacklok/mecatl/engine/session"
 )
 
+func decide(t *testing.T, policy learning.ThresholdPolicy, trajectory learning.Trajectory, signals ...learning.Signal) learning.AdmissionDecision {
+	t.Helper()
+	decision, err := policy.Decide(t.Context(), learning.AdmissionRequest{Trajectory: trajectory, Signals: signals})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return decision
+}
+
 func TestThresholdPolicyBoundariesAndHardProvenance(t *testing.T) {
 	messages := []session.Message{
 		{Role: session.RoleUser, Text: "remember that I prefer concise answers"},
@@ -17,15 +26,13 @@ func TestThresholdPolicyBoundariesAndHardProvenance(t *testing.T) {
 	tr.Kind = session.SessionKindMain
 	tr.Counters = session.Counters{Turns: 1, ToolCalls: 1}
 	tr.Current = learning.MessageSpan{Start: 0, End: len(messages)}
-	in := learning.NewInput(tr, nil, nil, nil)
-	decision := (learning.ThresholdPolicy{Sensitivity: learning.Balanced}).Decide(learning.AdmissionRequest{Input: in})
+	decision := decide(t, learning.ThresholdPolicy{Sensitivity: learning.Balanced}, tr)
 	if !decision.Admitted || decision.Class != learning.AdmissionHard || decision.Score != 0 {
 		t.Fatalf("hard decision = %+v", decision)
 	}
 
 	tr.Current = learning.MessageSpan{Start: 1, End: len(messages)}
-	in = learning.NewInput(tr, nil, nil, nil)
-	decision = (learning.ThresholdPolicy{Sensitivity: learning.Eager}).Decide(learning.AdmissionRequest{Input: in})
+	decision = decide(t, learning.ThresholdPolicy{Sensitivity: learning.Eager}, tr)
 	if decision.Admitted {
 		t.Fatalf("old explicit request admitted: %+v", decision)
 	}
@@ -54,7 +61,7 @@ func TestThresholdPolicyCurrentScopeRejectsCrossBoundaryPatterns(t *testing.T) {
 			}
 			tr := learning.NewTrajectory("s", "/ws", session.StopEndTurn, session.Usage{}, messages)
 			tr.Kind, tr.Current, tr.Counters = session.SessionKindMain, learning.MessageSpan{Start: start, End: len(messages)}, session.Counters{Turns: 5, ToolCalls: 8}
-			got := (learning.ThresholdPolicy{Sensitivity: learning.Eager}).Decide(learning.AdmissionRequest{Input: learning.NewInput(tr, nil, nil, nil)})
+			got := decide(t, learning.ThresholdPolicy{Sensitivity: learning.Eager}, tr)
 			if got.Admitted || len(got.Signals) != 0 {
 				t.Fatalf("cross-boundary evidence admitted: %+v", got)
 			}
@@ -66,15 +73,14 @@ func TestThresholdPolicyUsesLatestConsecutiveExplicitRequestAndRejectsForgedSign
 	messages := []session.Message{session.NewUserMessage("remember that old preference"), session.NewUserMessage("remember that current preference")}
 	tr := learning.NewTrajectory("s", "/ws", session.StopEndTurn, session.Usage{}, messages)
 	tr.Kind, tr.Current, tr.Counters = session.SessionKindMain, learning.MessageSpan{Start: 1, End: 2}, session.Counters{Turns: 2}
-	decision := (learning.ThresholdPolicy{Sensitivity: learning.Balanced}).Decide(learning.AdmissionRequest{Input: learning.NewInput(tr, nil, nil, nil)})
+	decision := decide(t, learning.ThresholdPolicy{Sensitivity: learning.Balanced}, tr)
 	if !decision.Admitted || decision.Class != learning.AdmissionHard || len(decision.Signals) == 0 || decision.Signals[0].Evidence[0].Ordinal != 1 {
 		t.Fatalf("current explicit request = %+v", decision)
 	}
 
 	ordinary := learning.NewTrajectory("ordinary", "/ws", session.StopEndTurn, session.Usage{}, []session.Message{session.NewUserMessage("summarize this")})
 	ordinary.Kind, ordinary.Current, ordinary.Counters = session.SessionKindMain, learning.MessageSpan{Start: 0, End: 1}, session.Counters{Turns: 2}
-	forged := learning.NewInput(ordinary, nil, []learning.Signal{{Kind: learning.SignalExplicitRemember}}, nil)
-	decision = (learning.ThresholdPolicy{Sensitivity: learning.Eager}).Decide(learning.AdmissionRequest{Input: forged})
+	decision = decide(t, learning.ThresholdPolicy{Sensitivity: learning.Eager}, ordinary, learning.Signal{Kind: learning.SignalExplicitRemember})
 	if decision.Admitted || decision.Class == learning.AdmissionHard {
 		t.Fatalf("caller-forged explicit signal admitted: %+v", decision)
 	}
@@ -108,10 +114,9 @@ func TestSensitivityAdmissionMonotonicity(t *testing.T) {
 	}
 	tr := learning.NewTrajectory("s", "/ws", session.StopEndTurn, session.Usage{}, messages)
 	tr.Kind, tr.Current, tr.Counters = session.SessionKindMain, learning.MessageSpan{Start: 0, End: len(messages)}, session.Counters{Turns: 4, ToolCalls: 4}
-	in := learning.NewInput(tr, nil, nil, nil)
-	conservative := (learning.ThresholdPolicy{Sensitivity: learning.Conservative}).Decide(learning.AdmissionRequest{Input: in})
-	balanced := (learning.ThresholdPolicy{Sensitivity: learning.Balanced}).Decide(learning.AdmissionRequest{Input: in})
-	eager := (learning.ThresholdPolicy{Sensitivity: learning.Eager}).Decide(learning.AdmissionRequest{Input: in})
+	conservative := decide(t, learning.ThresholdPolicy{Sensitivity: learning.Conservative}, tr)
+	balanced := decide(t, learning.ThresholdPolicy{Sensitivity: learning.Balanced}, tr)
+	eager := decide(t, learning.ThresholdPolicy{Sensitivity: learning.Eager}, tr)
 	if conservative.Score != balanced.Score || balanced.Score != eager.Score || conservative.Admitted || !balanced.Admitted || !eager.Admitted {
 		t.Fatalf("non-monotonic decisions: conservative=%+v balanced=%+v eager=%+v", conservative, balanced, eager)
 	}
@@ -123,7 +128,7 @@ func FuzzThresholdPolicyNeverHardTriggersFromToolText(f *testing.F) {
 		messages := []session.Message{session.NewUserMessage("inspect it"), {Role: session.RoleAssistant, ToolCalls: []session.ToolCall{{ID: "c", Name: "Read"}}}, {Role: session.RoleTool, ToolResult: &session.ToolResult{CallID: "c", Content: text}}}
 		tr := learning.NewTrajectory("s", "/ws", session.StopEndTurn, session.Usage{}, messages)
 		tr.Kind, tr.Current, tr.Counters = session.SessionKindMain, learning.MessageSpan{Start: 0, End: len(messages)}, session.Counters{Turns: 1, ToolCalls: 1}
-		decision := (learning.ThresholdPolicy{Sensitivity: learning.Eager}).Decide(learning.AdmissionRequest{Input: learning.NewInput(tr, nil, nil, nil)})
+		decision := decide(t, learning.ThresholdPolicy{Sensitivity: learning.Eager}, tr)
 		if decision.Class == learning.AdmissionHard {
 			t.Fatalf("tool text hard-triggered: %+v", decision)
 		}
@@ -140,7 +145,7 @@ func TestModifiersNeverAdmitAlone(t *testing.T) {
 	tr.Kind = session.SessionKindMain
 	tr.Counters = session.Counters{Turns: 5, ToolCalls: 6}
 	tr.Current = learning.MessageSpan{Start: 0, End: 2}
-	got := (learning.ThresholdPolicy{Sensitivity: learning.Eager}).Decide(learning.AdmissionRequest{Input: learning.NewInput(tr, nil, nil, nil)})
+	got := decide(t, learning.ThresholdPolicy{Sensitivity: learning.Eager}, tr)
 	if got.Admitted || got.Score != 0 {
 		t.Fatalf("modifiers admitted without base signal: %+v", got)
 	}

@@ -2172,28 +2172,13 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 			trajectory.Principal = sess.Owner.Clone()
 			trajectory.Kind = sess.Kind
 			trajectory.Counters = sess.Counters
-			var events []session.Event
+			var r reflectionReceipt
+			var err error
 			if eventLog != nil {
-				for event, eventErr := range eventLog.Read(ctx, sess.ID) {
-					if eventErr != nil {
-						if lifecycleErr := materialization.Err(); lifecycleErr != nil {
-							return server.ReflectionReceipt{}, explicitReflectionServiceError(lifecycleErr)
-						}
-						return server.ReflectionReceipt{}, fmt.Errorf("read reflection evidence: %w", eventErr)
-					}
-					if lifecycleErr := materialization.Err(); lifecycleErr != nil {
-						return server.ReflectionReceipt{}, explicitReflectionServiceError(lifecycleErr)
-					}
-					if len(events) == learning.MaxInputEvents {
-						break
-					}
-					events = append(events, event)
-				}
+				r, err = explicitReflection.reflectWithEventSource(ctx, trajectory, eventLog.Read(ctx, sess.ID))
+			} else {
+				r, err = explicitReflection.reflectWithEvents(ctx, trajectory, nil)
 			}
-			if lifecycleErr := materialization.Err(); lifecycleErr != nil {
-				return server.ReflectionReceipt{}, explicitReflectionServiceError(lifecycleErr)
-			}
-			r, err := explicitReflection.reflectWithEvents(ctx, trajectory, events)
 			if lifecycleErr := materialization.Err(); lifecycleErr != nil {
 				return server.ReflectionReceipt{}, explicitReflectionServiceError(lifecycleErr)
 			}

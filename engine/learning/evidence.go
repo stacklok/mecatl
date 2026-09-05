@@ -188,6 +188,8 @@ func EventEvidenceRef(in Input, ordinal int, callID session.ToolCallID) (Evidenc
 		ref.ManifestIndex = entryIndex
 		ref.AggregateDigest = in.Manifest.Digest
 		ref.Digest = entry.Digest
+		sequence := *entry.EventSequence
+		ref.EventSeq = &sequence
 	}
 	return ref, nil
 }

@@ -280,7 +280,15 @@ func (c *reflectionCoordinator) Enqueue(job reflectionJob) (reflectionReceipt, e
 	if job.principal == "" || job.reflector == nil {
 		return reflectionReceipt{}, errors.New("invalid reflection job")
 	}
-	if job.selectedBytes <= 0 || job.selectedBytes > c.cfg.JobBytes {
+	material, err := reflectionInputMaterial(job.input, max(c.cfg.JobBytes, defaultReflectionJobBytes))
+	if err != nil {
+		return reflectionReceipt{}, err
+	}
+	job.selectedBytes = len(material)
+	if job.selectedBytes == 0 {
+		return reflectionReceipt{}, errors.New("invalid empty reflection job")
+	}
+	if job.selectedBytes > c.cfg.JobBytes {
 		return reflectionReceipt{}, fmt.Errorf("reflection input exceeds %d-byte job limit", c.cfg.JobBytes)
 	}
 	identity, digest, err := selectedEvidenceIdentity(job.input)

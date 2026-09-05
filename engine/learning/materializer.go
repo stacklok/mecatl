@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"iter"
 	"slices"
 	"sort"
 	"strings"
@@ -60,12 +61,13 @@ type MaterializationLimits struct {
 
 // MaterializationRequest supplies a source boundary and deterministic selection context.
 type MaterializationRequest struct {
-	Trajectory Trajectory            `json:"trajectory"`
-	Events     []session.Event       `json:"events,omitempty"`
-	Signals    []Signal              `json:"signals,omitempty"`
-	Mandatory  MessageSpan           `json:"mandatory,omitempty"`
-	Limits     MaterializationLimits `json:"limits,omitempty"`
-	Explicit   bool                  `json:"explicit,omitempty"`
+	Trajectory  Trajectory                      `json:"trajectory"`
+	Events      []session.Event                 `json:"events,omitempty"`
+	EventSource iter.Seq2[session.Event, error] `json:"-"`
+	Signals     []Signal                        `json:"signals,omitempty"`
+	Mandatory   MessageSpan                     `json:"mandatory,omitempty"`
+	Limits      MaterializationLimits           `json:"limits,omitempty"`
+	Explicit    bool                            `json:"explicit,omitempty"`
 }
 
 // MaterializationDisposition is the closed selected/abstained/skipped result vocabulary.
@@ -100,14 +102,15 @@ type Materialization struct {
 }
 
 type materialUnit struct {
-	messages  []int
-	event     int
-	tier      int
-	order     int
-	bytes     int
-	mandatory bool
-	component string
-	calls     []session.ToolCallID
+	messages        []int
+	event           *EvidenceEventData
+	eventCoordinate int64
+	tier            int
+	order           int
+	bytes           int
+	mandatory       bool
+	component       string
+	calls           []session.ToolCallID
 }
 
 // MaterializeEvidence selects whole source components without constructing a full
@@ -162,7 +165,7 @@ func MaterializeEvidence(ctx context.Context, req MaterializationRequest) (Mater
 		}
 		messageCount := len(unit.messages)
 		eventCount := 0
-		if unit.event >= 0 && len(unit.messages) == 0 {
+		if unit.event != nil && len(unit.messages) == 0 {
 			eventCount = 1
 		}
 		fits := messages+messageCount <= limits.MaxMessages && events+eventCount <= limits.MaxEvents && used+unit.bytes <= limits.MaxBytes
@@ -248,19 +251,36 @@ func boundedUnits(ctx context.Context, req MaterializationRequest, limits Materi
 		}
 		units = retainRankedUnit(units, unit, capUnits)
 	}
-	for i := range req.Events {
+	eventCoordinate := int64(0)
+	appendEvent := func(event session.Event) {
+		coordinate := eventCoordinate
+		eventCoordinate++
+		if !eligibleEvent(event) {
+			return
+		}
+		projected := materializerEvent(event)
+		raw, _ := json.Marshal(projectEvent(projected))
+		if len(raw) > limits.MaxBytes {
+			return
+		}
+		units = retainRankedUnit(units, materialUnit{event: &projected, eventCoordinate: coordinate, tier: 4, order: len(messages) + int(coordinate), bytes: len(raw)}, capUnits)
+	}
+	for _, event := range req.Events {
 		if err := ctx.Err(); err != nil {
 			return nil, false, err
 		}
-		if !eligibleEvent(req.Events[i]) {
-			continue
+		appendEvent(event)
+	}
+	if req.EventSource != nil {
+		for event, sourceErr := range req.EventSource {
+			if sourceErr != nil {
+				return nil, false, sourceErr
+			}
+			if err := ctx.Err(); err != nil {
+				return nil, false, err
+			}
+			appendEvent(event)
 		}
-		projected := projectEvent(materializerEvent(req.Events[i]))
-		raw, _ := json.Marshal(projected)
-		if len(raw) > limits.MaxBytes {
-			continue
-		}
-		units = retainRankedUnit(units, materialUnit{event: i, tier: 4, order: len(messages) + i, bytes: len(raw)}, capUnits)
 	}
 	if req.Mandatory.Valid(len(messages)) && mandatoryCovered < req.Mandatory.End-req.Mandatory.Start {
 		mandatoryFailed = true
@@ -274,7 +294,7 @@ func sourceUnitAt(ctx context.Context, messages []session.Message, i int) (mater
 		return materialUnit{}, false, nil
 	}
 	if message.Role != session.RoleAssistant || len(message.ToolCalls) == 0 {
-		return materialUnit{messages: []int{i}, event: -1, tier: 3, order: i, component: fmt.Sprintf("message:%d", i)}, true, nil
+		return materialUnit{messages: []int{i}, tier: 3, order: i, component: fmt.Sprintf("message:%d", i)}, true, nil
 	}
 	if len(message.ToolCalls) > MaxCandidateEvidence {
 		return materialUnit{}, false, nil
@@ -306,7 +326,7 @@ func sourceUnitAt(ctx context.Context, messages []session.Message, i int) (mater
 	if len(pending) != 0 {
 		return materialUnit{}, false, nil
 	}
-	return materialUnit{messages: indices, event: -1, tier: 3, order: i, component: fmt.Sprintf("tool:%d", i), calls: calls}, true, nil
+	return materialUnit{messages: indices, tier: 3, order: i, component: fmt.Sprintf("tool:%d", i), calls: calls}, true, nil
 }
 
 func retainRankedUnit(units []materialUnit, unit materialUnit, limit int) []materialUnit {
@@ -430,10 +450,10 @@ func buildMaterialization(req MaterializationRequest, selected []materialUnit) M
 				messageLocal++
 			}
 		} else {
-			event := materializerEvent(req.Events[unit.event])
+			event := *unit.event
 			selectedEvents = append(selectedEvents, event)
-			seq := event.Seq
-			manifest.Entries = append(manifest.Entries, ManifestEntry{Handle: fmt.Sprintf("e:%d", eventLocal), Locator: EvidenceEvent, EventSequence: &seq, Digest: digestCanonical(projectEvent(event))})
+			coordinate := unit.eventCoordinate
+			manifest.Entries = append(manifest.Entries, ManifestEntry{Handle: fmt.Sprintf("e:%d", eventLocal), Locator: EvidenceEvent, EventSequence: &coordinate, Digest: digestCanonical(projectEvent(event))})
 			eventLocal++
 		}
 	}
@@ -493,7 +513,7 @@ func validateMaterializationManifest(in Input) error {
 	lastSequence := int64(-1)
 	for i, event := range in.Events {
 		entry := manifest.Entries[len(in.Trajectory.Messages)+i]
-		if entry.Handle != fmt.Sprintf("e:%d", i) || entry.Locator != EvidenceEvent || entry.OriginalMessage != nil || entry.EventSequence == nil || *entry.EventSequence != event.Seq || entry.EventSequence != nil && *entry.EventSequence <= lastSequence || entry.Component != "" || len(entry.ToolCallIDs) != 0 || entry.Digest != digestCanonical(projectEvent(event)) {
+		if entry.Handle != fmt.Sprintf("e:%d", i) || entry.Locator != EvidenceEvent || entry.OriginalMessage != nil || entry.EventSequence == nil || *entry.EventSequence < 0 || entry.EventSequence != nil && *entry.EventSequence <= lastSequence || entry.Component != "" || len(entry.ToolCallIDs) != 0 || entry.Digest != digestCanonical(projectEvent(event)) {
 			return fmt.Errorf("%w: materialization event entry %d mismatch", ErrInvalidInput, i)
 		}
 		lastSequence = *entry.EventSequence

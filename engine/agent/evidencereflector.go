@@ -249,6 +249,14 @@ func canonicalProjectionInput(projection learning.Projection) (learning.Input, e
 	if err != nil {
 		return learning.Input{}, err
 	}
+	// V1 event evidence uses the immutable source-stream ordinal rather than the
+	// selected event's semantic sequence. The projection is the source of that
+	// already-validated model-visible coordinate.
+	for i := range canonical.Events {
+		if canonical.Events[i].Evidence != nil && projection.Events[i].Evidence != nil {
+			canonical.Events[i].Evidence.EventSeq = projection.Events[i].Evidence.EventSeq
+		}
+	}
 	got, marshalErr := json.Marshal(canonical)
 	if marshalErr != nil {
 		return learning.Input{}, fmt.Errorf("%w: encode canonical projection", ErrReflectionLimits)

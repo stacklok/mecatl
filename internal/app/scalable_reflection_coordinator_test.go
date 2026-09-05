@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -143,6 +144,31 @@ func TestADR_0298_OneSelectedInputOneProviderCall(t *testing.T) {
 	reflector.mu.Unlock()
 	if calls != 1 {
 		t.Fatalf("one selected input made %d provider calls, want exactly one", calls)
+	}
+}
+
+func TestADR_0298_CoordinatorQueueChargeIncludesExistingFacts(t *testing.T) {
+	release := make(chan struct{})
+	reflector := &testReflector{release: release}
+	job := testJob("principal", "existing-bytes", reflector)
+	job.input.Existing = []learning.ExistingFact{{Kind: learning.CandidateOperatorFact, Key: "style", Value: strings.Repeat("x", 4096)}}
+	final, err := reflectionInputMaterial(job.input, defaultReflectionJobBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(final) <= job.selectedBytes {
+		t.Fatalf("fixture final bytes %d do not exceed selected bytes %d", len(final), job.selectedBytes)
+	}
+	coordinator := newReflectionCoordinator(context.Background(), reflectionCoordinatorConfig{
+		Workers: 1, Capacity: 1, JobBytes: len(final), QueueBytes: len(final) - 1,
+	})
+	t.Cleanup(func() {
+		close(release)
+		coordinator.Close()
+	})
+	receipt, err := coordinator.Enqueue(job)
+	if err != nil || receipt.Disposition != reflectionQueueFull {
+		t.Fatalf("enqueue with uncharged existing facts = %+v, %v", receipt, err)
 	}
 }
 
