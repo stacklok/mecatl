@@ -14,7 +14,7 @@ import (
 func TestDelegationOverlayChromeLongKeyLabelsStayOneRow(t *testing.T) {
 	const width = 48
 	const height = 20
-	bodyWidth := focusCardTextWidth(width)
+	_, _, bodyWidth := agentsCardLayout(aztec(), width)
 	long := strings.Repeat("rebound-key-label-", 8)
 	hk := defaultHelpKeys()
 	hk.navUp, hk.navDown = long+"up", long+"down"
@@ -51,11 +51,11 @@ func TestDelegationOverlayChromeLongKeyLabelsStayOneRow(t *testing.T) {
 
 	// Each window still gets precisely its calculated row budget: the long
 	// chrome is truncated in place rather than becoming an unaccounted row.
-	rosterOut := renderSubagentRoster(th, subagentState{cursor: 6}, fleet, hk, height, width)
-	parallelOut := renderParallelRoster(th, parallelState{cursor: 6}, groups, hk, height, width)
-	teamOut := renderTeamRoster(th, teamState{cursor: 6}, team, hk, height, width)
-	tasksOut := renderTeamTasks(th, team, hk, height, width)
-	findingsOut := renderTeamFindings(th, team, hk, height, width)
+	rosterOut := renderSubagentRoster(th, subagentState{cursor: 6}, fleet, hk, height, bodyWidth)
+	parallelOut := renderParallelRoster(th, parallelState{cursor: 6}, groups, hk, height, bodyWidth)
+	teamOut := renderTeamRoster(th, teamState{cursor: 6}, team, hk, height, bodyWidth)
+	tasksOut := renderTeamTasks(th, team, hk, height, bodyWidth)
+	findingsOut := renderTeamFindings(th, team, hk, height, bodyWidth)
 	for _, tc := range []struct {
 		name   string
 		out    string
@@ -77,16 +77,16 @@ func TestDelegationOverlayChromeLongKeyLabelsStayOneRow(t *testing.T) {
 		name string
 		out  string
 	}{
-		{"subagent focus", renderSubagentFocus(th, fleet[:1], fleet[0].childID, hk, width, height)},
-		{"parallel focus", renderParallelGroupFocus(th, parallelState{group: groups[0].parentCallID}, groups[:1], hk, width, height)},
-		{"subagent fallback", renderSubagentFocus(th, nil, long, hk, width, height)},
-		{"parallel fallback", renderParallelGroupFocus(th, parallelState{group: long}, nil, hk, width, height)},
-		{"member fallback", renderTeamFocus(th, team, long, hk, width, height)},
-		{"empty subagents", renderSubagentRoster(th, subagentState{}, nil, hk, height, width)},
-		{"empty parallel", renderParallelRoster(th, parallelState{}, nil, hk, height, width)},
-		{"empty teams", renderTeamsTab(th, teamState{}, nil, hk, width, height)},
-		{"empty tasks", renderTeamTasks(th, &block{}, hk, height, width)},
-		{"empty findings", renderTeamFindings(th, &block{}, hk, height, width)},
+		{"subagent focus", renderSubagentFocus(th, fleet[:1], fleet[0].childID, hk, bodyWidth, height)},
+		{"parallel focus", renderParallelGroupFocus(th, parallelState{group: groups[0].parentCallID}, groups[:1], hk, bodyWidth, height)},
+		{"subagent fallback", renderSubagentFocus(th, nil, long, hk, bodyWidth, height)},
+		{"parallel fallback", renderParallelGroupFocus(th, parallelState{group: long}, nil, hk, bodyWidth, height)},
+		{"member fallback", renderTeamFocus(th, team, long, hk, bodyWidth, height)},
+		{"empty subagents", renderSubagentRoster(th, subagentState{}, nil, hk, height, bodyWidth)},
+		{"empty parallel", renderParallelRoster(th, parallelState{}, nil, hk, height, bodyWidth)},
+		{"empty teams", renderTeamsTab(th, teamState{}, nil, hk, bodyWidth, height)},
+		{"empty tasks", renderTeamTasks(th, &block{}, hk, height, bodyWidth)},
+		{"empty findings", renderTeamFindings(th, &block{}, hk, height, bodyWidth)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assertRows(tc.name, tc.out)

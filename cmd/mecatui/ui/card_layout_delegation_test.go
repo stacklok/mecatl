@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -91,6 +92,46 @@ func TestMecatuiCardLayout_Scenario2_DelegationRowsFitBodyWidth(t *testing.T) {
 		m.parallel = parallelState{view: parallelGroupView, group: "p1"}
 		assertFits(t, "focus", viewAtWidth(t, m))
 	})
+}
+
+// TestDelegationOverlayCardUsesOuterAndBodyWidths verifies the final framed card
+// at narrow and normal geometry: rows are prepared to its usable body width, and
+// framing never wraps a styled row after the fact.
+func TestDelegationOverlayCardUsesOuterAndBodyWidths(t *testing.T) {
+	th := aztec()
+	for _, width := range []int{36, 100} {
+		t.Run(fmt.Sprintf("width-%d", width), func(t *testing.T) {
+			_, outerWidth, bodyWidth := agentsCardLayout(th, width)
+			long := strings.Repeat("unbreakable-delegation-value-", 8)
+			fleet := []subagentLane{{
+				childID: "child-1",
+				goal:    "inspect",
+				trace:   []teamTrace{{kind: teamTraceMessage, text: long}},
+			}}
+			out := stripANSIstr(renderAgentsOverlay(th, tabSubagents,
+				subagentState{view: subagentFocus, child: "child-1"}, parallelState{}, teamState{}, nil,
+				fleet, nil, defaultHelpKeys(), width, 40))
+			framed := false
+			for row, line := range strings.Split(out, "\n") {
+				line = strings.TrimSpace(line)
+				if line == "" {
+					continue
+				}
+				if got := lipgloss.Width(line); got > outerWidth {
+					t.Errorf("final card row %d width = %d, want ≤ outer width %d: %q", row, got, outerWidth, line)
+				}
+				if strings.ContainsRune(line, '┏') && lipgloss.Width(line) == outerWidth {
+					framed = true
+				}
+			}
+			if !framed {
+				t.Fatalf("final card did not retain its %d-column frame:\n%s", outerWidth, out)
+			}
+			if bodyWidth >= outerWidth {
+				t.Fatalf("body width %d must reserve the %d-column askCard frame", bodyWidth, outerWidth-bodyWidth)
+			}
+		})
+	}
 }
 
 // TestMecatuiCardLayout_Scenario2_ApprovalRowsWrapBeforeStyle verifies AC2.2:

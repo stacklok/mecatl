@@ -485,10 +485,10 @@ func focusCardTextWidth(width int) int {
 	return max(1, width-6) // askCard border (2) + horizontal padding (2*2)
 }
 
-// wrapFocusMetadata wraps a complete focus-card row to its positive body budget.
-// A zero viewport remains deliberately unbounded, matching the other overlays.
-func wrapFocusMetadata(s string, width int) string {
-	if budget := focusCardTextWidth(width); budget > 0 {
+// wrapFocusMetadataAtWidth wraps a complete focus-card row to its supplied body budget.
+// A zero budget remains deliberately unbounded, matching the other overlays.
+func wrapFocusMetadataAtWidth(s string, budget int) string {
+	if budget > 0 {
 		return ansi.Wrap(s, budget, "")
 	}
 	return s

@@ -372,44 +372,54 @@ func (m Model) onParallelRosterKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 // honest empty note rather than borrowing another tab's body.
 func renderAgentsOverlay(th theme.Theme, tab agentsTab, sub subagentState, par parallelState, team teamState, b *block, fleet []subagentLane, groups []parallelGroup, hk helpKeys, width, height int) string {
 	bar := agentsTabBar(th, tab)
+	_, outerWidth, bodyWidth := agentsCardLayout(th, width)
 	// The body gets the height MINUS the tab bar + its blank line (agentsTabBarLines),
 	// so the window math in the tab bodies still keeps the footer hint on-screen.
 	bodyHeight := agentsBodyHeight(height)
 	var body string
 	switch tab {
 	case tabSubagents:
-		body = renderSubagentTab(th, sub, fleet, hk, width, bodyHeight)
+		body = renderSubagentTab(th, sub, fleet, hk, bodyWidth, bodyHeight)
 	case tabParallel:
-		body = renderParallelTab(th, par, groups, hk, width, bodyHeight)
+		body = renderParallelTab(th, par, groups, hk, bodyWidth, bodyHeight)
 	default:
-		body = renderTeamsTab(th, team, b, hk, width, bodyHeight)
+		body = renderTeamsTab(th, team, b, hk, bodyWidth, bodyHeight)
 	}
-	return centerAgentsCard(th, bar+"\n\n"+body, width, height)
+	return centerAgentsCard(th, bar+"\n\n"+body, outerWidth, width, height)
 }
 
-// centerAgentsCard fixes the delegation overlay's body to the supplied layout
-// budget before framing. Unlike a natural-width Lipgloss card, a long roster row
-// cannot silently widen the final card beyond the offered viewport.
-func centerAgentsCard(th theme.Theme, body string, width, height int) string {
-	card := th.Style("askCard")
-	if bodyWidth := focusCardTextWidth(width); bodyWidth > 0 {
-		card = card.Width(bodyWidth)
+// agentsCardLayout derives the final card's outer and usable body widths from
+// askCard's actual frame. Rows receive bodyWidth; only the frame receives
+// outerWidth, so neither Lipgloss nor the frame has a second wrap to perform.
+func agentsCardLayout(th theme.Theme, width int) (card lipgloss.Style, outerWidth, bodyWidth int) {
+	card = th.Style("askCard")
+	if width <= 0 {
+		return card, 0, 0
+	}
+	const (
+		margin  = 4
+		maxBody = 100
+	)
+	frame := card.GetHorizontalFrameSize()
+	outerWidth = min(max(1, width-margin), maxBody+frame)
+	if outerWidth <= frame {
+		card = lipgloss.NewStyle().Width(outerWidth)
+		return card, outerWidth, outerWidth
+	}
+	return card, outerWidth, outerWidth - frame
+}
+
+// centerAgentsCard frames an already width-bounded delegation overlay.
+func centerAgentsCard(th theme.Theme, body string, outerWidth, width, height int) string {
+	card, _, _ := agentsCardLayout(th, 0)
+	if outerWidth > 0 {
+		card = card.Width(outerWidth)
 	}
 	out := card.Render(body)
 	if width <= 0 || height <= 0 {
 		return out
 	}
 	return lipgloss.Place(width, height, lipgloss.Center, lipgloss.Center, out)
-}
-
-// agentsCardContentWidth is the usable text width inside the final framed card.
-// Callers that render a single chrome/detail line must reserve the askCard frame;
-// otherwise Lipgloss wraps their already-bounded source a second time.
-func agentsCardContentWidth(th theme.Theme, bodyWidth int) int {
-	if bodyWidth <= 0 {
-		return bodyWidth
-	}
-	return max(1, bodyWidth-th.Style("askCard").GetHorizontalFrameSize())
 }
 
 // agentsTabBarLines is how many vertical lines the unified overlay's tab strip costs
@@ -465,37 +475,34 @@ func agentsTabBar(th theme.Theme, tab agentsTab) string {
 // renderTeamsTab renders the Teams tab body — the EXISTING team overlay roster /
 // focus / tasks / findings sub-views verbatim, via the team.go renderers. A nil team
 // block (no team has run) reads as an honest empty note so the tab is never blank.
-// width is the OUTER viewport width, forwarded to the focus pane so its failure line
-// can wrap to the card's text budget (see teamFailureLine, mirroring the subagent
-// tab's width forwarding); the roster's own lines are all rune-bounded already.
-func renderTeamsTab(th theme.Theme, st teamState, b *block, hk helpKeys, width, height int) string {
+// bodyWidth is the final card's usable row budget; callers derive it once from
+// askCard and never ask a row renderer to subtract card chrome again.
+func renderTeamsTab(th theme.Theme, st teamState, b *block, hk helpKeys, bodyWidth, height int) string {
 	if b == nil {
 		muted := th.Style("muted")
-		bodyWidth := focusCardTextWidth(width)
 		return renderDynamicCardChromeLine(muted, "", "no team has run this session", bodyWidth) + "\n\n" +
 			renderDynamicCardChromeLine(muted, "", agentsEmptyHint(hk), bodyWidth)
 	}
 	switch st.view {
 	case teamFocus:
-		return renderTeamFocus(th, b, st.member, hk, width, height)
+		return renderTeamFocus(th, b, st.member, hk, bodyWidth, height)
 	case teamTasks:
-		return renderTeamTasks(th, b, hk, height, width)
+		return renderTeamTasks(th, b, hk, height, bodyWidth)
 	case teamFindings:
-		return renderTeamFindings(th, b, hk, height, width)
+		return renderTeamFindings(th, b, hk, height, bodyWidth)
 	default:
-		return renderTeamRoster(th, st, b, hk, height, width)
+		return renderTeamRoster(th, st, b, hk, height, bodyWidth)
 	}
 }
 
 // renderSubagentTab renders the Subagents tab body: the flat fleet roster, or one
-// focused child's redacted chip trace. width is the OUTER viewport width, forwarded to the
-// focus pane so its failure line can wrap to the card's text budget (see
-// subagentFailureLine); the roster's own lines are all rune-bounded already.
-func renderSubagentTab(th theme.Theme, st subagentState, fleet []subagentLane, hk helpKeys, width, height int) string {
+// bodyWidth is the final card's usable row budget, shared by every focus and
+// roster renderer beneath the already-framed overlay.
+func renderSubagentTab(th theme.Theme, st subagentState, fleet []subagentLane, hk helpKeys, bodyWidth, height int) string {
 	if st.view == subagentFocus {
-		return renderSubagentFocus(th, fleet, st.child, hk, width, height)
+		return renderSubagentFocus(th, fleet, st.child, hk, bodyWidth, height)
 	}
-	return renderSubagentRoster(th, st, fleet, hk, height, width)
+	return renderSubagentRoster(th, st, fleet, hk, height, bodyWidth)
 }
 
 // renderSubagentRoster renders the flat fleet roster WINDOWED to the available height,
@@ -506,7 +513,7 @@ func renderSubagentRoster(th theme.Theme, st subagentState, fleet []subagentLane
 	muted := th.Style("muted")
 	bodyWidth := 0
 	if len(widths) > 0 {
-		bodyWidth = focusCardTextWidth(widths[0])
+		bodyWidth = widths[0]
 	}
 	var out strings.Builder
 
@@ -614,6 +621,10 @@ const maxSubagentCauseWidth = 160
 // those panels do — and centerCard does not Place at width 0, so there is nothing to
 // overflow.
 func subagentFailureLine(ln *subagentLane, width int) string {
+	return subagentFailureLineAtWidth(ln, focusCardTextWidth(width))
+}
+
+func subagentFailureLineAtWidth(ln *subagentLane, bodyWidth int) string {
 	if !ln.done || ln.cause == "" || !subagentStopErrored(ln.stop) {
 		return ""
 	}
@@ -629,7 +640,7 @@ func subagentFailureLine(ln *subagentLane, width int) string {
 	// i.e. it would no longer provide the bound this comment claims. strings.Fields splits
 	// on every unicode.IsSpace, which is what "one logical line" has to mean for an
 	// untrusted peer string.
-	return indentWrap("failed: "+truncate(sanitizeTerminal(strings.Join(strings.Fields(ln.cause), " ")), maxSubagentCauseWidth), focusCardTextWidth(width))
+	return indentWrap("failed: "+truncate(sanitizeTerminal(strings.Join(strings.Fields(ln.cause), " ")), maxSubagentCauseWidth), bodyWidth)
 }
 
 // subagentBackgroundMarker flags a detached-delivery (background: true) child on its
@@ -695,11 +706,10 @@ const childIDHashLen = 6
 // focus format (tool chips with bounded previews + capped message lines),
 // height-bounded to the rows that fit. A focused ChildID with no matching lane (the
 // child vanished — defensive) reads as a muted note. It mirrors renderTeamFocus.
-func renderSubagentFocus(th theme.Theme, fleet []subagentLane, child string, hk helpKeys, width, height int) string {
+func renderSubagentFocus(th theme.Theme, fleet []subagentLane, child string, hk helpKeys, bodyWidth, height int) string {
 	muted := th.Style("muted")
 	ln := findFleetLane(fleet, child)
 	if ln == nil {
-		bodyWidth := focusCardTextWidth(width)
 		return renderDynamicCardChromeLine(th.Style("askTitle"), "", "subagent", bodyWidth) + "\n\n" +
 			renderDynamicCardChromeLine(muted, "", "subagent #"+shortChildID(child)+" is no longer in the fleet", bodyWidth) + "\n\n" +
 			renderDynamicCardChromeLine(muted, "", focusBackHint(hk), bodyWidth)
@@ -710,13 +720,12 @@ func renderSubagentFocus(th theme.Theme, fleet []subagentLane, child string, hk 
 	if goal == "" {
 		goal = "subagent"
 	}
-	budget := focusCardTextWidth(width)
-	out.WriteString(th.Style("askTitle").Render(wrapFocusMetadata("subagent · "+goal, width)))
+	out.WriteString(th.Style("askTitle").Render(wrapFocusMetadataAtWidth("subagent · "+goal, bodyWidth)))
 	out.WriteString("\n")
-	out.WriteString(muted.Render(wrapFocusMetadata(subagentRosterLine(ln), width)))
+	out.WriteString(muted.Render(wrapFocusMetadataAtWidth(subagentRosterLine(ln), bodyWidth)))
 	out.WriteString("\n")
-	out.WriteString(muted.Render(hangingIndentWrap(boundedPreviewsSubNote, "  ", "    ", agentsCardContentWidth(th, budget))))
-	if fail := subagentFailureLine(ln, width); fail != "" {
+	out.WriteString(muted.Render(hangingIndentWrap(boundedPreviewsSubNote, "  ", "    ", bodyWidth)))
+	if fail := subagentFailureLineAtWidth(ln, bodyWidth); fail != "" {
 		// The ONE place the fleet answers "why did it fail". The inline Subagent card
 		// already carries the cause inside the tool result the agent received, but a
 		// roster/focus row otherwise shows only "stop:error", and a BACKGROUND child's
@@ -732,14 +741,14 @@ func renderSubagentFocus(th theme.Theme, fleet []subagentLane, child string, hk 
 		if ln.done {
 			note = "background: done — result ready for the agent (SubagentStatus)"
 		}
-		for _, row := range strings.Split(hangingIndentWrap(note, "  ", "    ", agentsCardContentWidth(th, budget)), "\n") {
+		for _, row := range strings.Split(hangingIndentWrap(note, "  ", "    ", bodyWidth), "\n") {
 			out.WriteString("\n")
 			out.WriteString(muted.Render(row))
 		}
 	}
 	out.WriteString("\n\n")
 
-	r := &renderer{th: th, marks: hk, traceWidth: focusCardTextWidth(width)}
+	r := &renderer{th: th, marks: hk, traceWidth: bodyWidth}
 	trace := r.renderTrace(ln.trace)
 	if trace == "" {
 		out.WriteString(muted.Render("(no activity yet)"))
@@ -753,7 +762,7 @@ func renderSubagentFocus(th theme.Theme, fleet []subagentLane, child string, hk 
 	if !ln.done {
 		hint = hk.cancelChild + " cancel · " + focusBackHint(hk)
 	}
-	out.WriteString("\n\n" + renderDynamicCardChromeLine(muted, "", hint, budget))
+	out.WriteString("\n\n" + renderDynamicCardChromeLine(muted, "", hint, bodyWidth))
 	return out.String()
 }
 
@@ -801,7 +810,7 @@ func renderParallelRoster(th theme.Theme, st parallelState, groups []parallelGro
 	muted := th.Style("muted")
 	bodyWidth := 0
 	if len(widths) > 0 {
-		bodyWidth = focusCardTextWidth(widths[0])
+		bodyWidth = widths[0]
 	}
 	var out strings.Builder
 
@@ -841,7 +850,7 @@ func renderParallelRoster(th theme.Theme, st parallelState, groups []parallelGro
 		hk.nextTab + " switch",
 		hk.scroll + " page",
 		hk.jumpTopFull + "·" + hk.jumpEndFull + " first/last",
-	}, agentsCardContentWidth(th, bodyWidth)))
+	}, bodyWidth))
 	return out.String()
 }
 
@@ -908,11 +917,10 @@ func branchHumanLabel(g *parallelGroup, index int) string {
 // cancel key addresses, the WINNER row a "★") with its interleaved trace in the Team
 // focus format below its roster line. A focused ParentCallID with no matching
 // group reads as a muted note.
-func renderParallelGroupFocus(th theme.Theme, st parallelState, groups []parallelGroup, hk helpKeys, width, height int) string {
+func renderParallelGroupFocus(th theme.Theme, st parallelState, groups []parallelGroup, hk helpKeys, bodyWidth, height int) string {
 	muted := th.Style("muted")
 	g := findParallelGroup(groups, st.group)
 	if g == nil {
-		bodyWidth := focusCardTextWidth(width)
 		return renderDynamicCardChromeLine(th.Style("askTitle"), "", "parallel", bodyWidth) + "\n\n" +
 			renderDynamicCardChromeLine(muted, "", "this parallel run is no longer tracked", bodyWidth) + "\n\n" +
 			renderDynamicCardChromeLine(muted, "", focusBackHint(hk), bodyWidth)
@@ -923,17 +931,16 @@ func renderParallelGroupFocus(th theme.Theme, st parallelState, groups []paralle
 	if join == "" {
 		join = "all"
 	}
-	budget := focusCardTextWidth(width)
-	out.WriteString(th.Style("askTitle").Render(wrapFocusMetadata("parallel · join="+join, width)))
+	out.WriteString(th.Style("askTitle").Render(wrapFocusMetadataAtWidth("parallel · join="+join, bodyWidth)))
 	out.WriteString("\n")
-	out.WriteString(muted.Render(wrapFocusMetadata(parallelRosterLine(g), width)))
+	out.WriteString(muted.Render(wrapFocusMetadataAtWidth(parallelRosterLine(g), bodyWidth)))
 	// Run-level stop, focus-only (NOT on the shared parallelRosterLine). Empty-guarded:
 	// a join=all run carries no winner-bearing stop by contract, so it renders no line.
 	if g.done && g.stop != "" {
-		out.WriteString("\n" + muted.Render(wrapFocusMetadata("run stop: "+subagentStopLabel(g.stop), width)))
+		out.WriteString("\n" + muted.Render(wrapFocusMetadataAtWidth("run stop: "+subagentStopLabel(g.stop), bodyWidth)))
 	}
 	out.WriteString("\n")
-	out.WriteString(muted.Render(indentWrap(boundedPreviewsParNote, budget)))
+	out.WriteString(muted.Render(indentWrap(boundedPreviewsParNote, bodyWidth)))
 	out.WriteString("\n\n")
 
 	// Branch events arrive concurrently and OUT OF ORDER on the wire (branch-2's events can
@@ -944,7 +951,7 @@ func renderParallelGroupFocus(th theme.Theme, st parallelState, groups []paralle
 	rows := teamFocusRows(height)
 	used := 0
 	cancellable := false
-	r := &renderer{th: th, marks: hk, traceWidth: focusCardTextWidth(width)}
+	r := &renderer{th: th, marks: hk, traceWidth: bodyWidth}
 	for i := range ordered {
 		br := &ordered[i]
 		if !br.done && br.childID != "" {
@@ -957,7 +964,7 @@ func renderParallelGroupFocus(th theme.Theme, st parallelState, groups []paralle
 			out.WriteString(muted.Render(fmt.Sprintf("  · +%d more branch(es)", len(ordered)-i)) + "\n")
 			break
 		}
-		out.WriteString(renderParallelBranchRow(th, br, g.winner, i == cursor, budget))
+		out.WriteString(renderParallelBranchRow(th, br, g.winner, i == cursor, bodyWidth))
 		used += 1 + renderParallelBranchTrace(&out, th, r, br, remaining)
 	}
 	// The cancel hint shows only while some branch is still cancellable (running with a
@@ -970,7 +977,7 @@ func renderParallelGroupFocus(th theme.Theme, st parallelState, groups []paralle
 	if len(ordered) == 0 {
 		hint = focusBackHint(hk)
 	}
-	out.WriteString("\n\n" + renderDynamicCardChromeLine(muted, "", hint, budget))
+	out.WriteString("\n\n" + renderDynamicCardChromeLine(muted, "", hint, bodyWidth))
 	return out.String()
 }
 
@@ -981,11 +988,11 @@ func renderParallelBranchRow(th theme.Theme, br *parallelBranch, winner int, sel
 	line := parallelBranchLine(br)
 	switch {
 	case selected:
-		return th.Style("askButtonActive").Render(wrapFocusMetadata("› "+line, width)) + "\n"
+		return th.Style("askButtonActive").Render(wrapFocusMetadataAtWidth("› "+line, width)) + "\n"
 	case br.index == winner:
-		return th.Style("askButtonActive").Render(wrapFocusMetadata("★ "+line, width)) + "\n"
+		return th.Style("askButtonActive").Render(wrapFocusMetadataAtWidth("★ "+line, width)) + "\n"
 	default:
-		return th.Style("muted").Render(wrapFocusMetadata("  "+line, width)) + "\n"
+		return th.Style("muted").Render(wrapFocusMetadataAtWidth("  "+line, width)) + "\n"
 	}
 }
 

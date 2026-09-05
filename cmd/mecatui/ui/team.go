@@ -339,7 +339,7 @@ func renderTeamRoster(th theme.Theme, st teamState, b *block, hk helpKeys, heigh
 	muted := th.Style("muted")
 	bodyWidth := 0
 	if len(widths) > 0 {
-		bodyWidth = focusCardTextWidth(widths[0])
+		bodyWidth = widths[0]
 	}
 	var out strings.Builder
 
@@ -442,19 +442,17 @@ func teamRosterSubhead(b *block) string {
 // header and trace are height-bounded, not width-wrapped. A focused name with no
 // matching lane (the member vanished — defensive) falls back to a muted note. All
 // text is sanitized.
-func renderTeamFocus(th theme.Theme, b *block, member string, hk helpKeys, width, height int) string {
+func renderTeamFocus(th theme.Theme, b *block, member string, hk helpKeys, bodyWidth, height int) string {
 	muted := th.Style("muted")
 	ln := teamFindLane(b, member)
 	if ln == nil {
-		bodyWidth := focusCardTextWidth(width)
 		return renderDynamicCardChromeLine(th.Style("askTitle"), "", "agents", bodyWidth) + "\n\n" +
 			renderDynamicCardChromeLine(muted, "", "member "+sanitizeTerminal(member)+" is no longer in the roster", bodyWidth) + "\n\n" +
 			renderDynamicCardChromeLine(muted, "", focusBackHint(hk), bodyWidth)
 	}
 
-	budget := focusCardTextWidth(width)
 	var out strings.Builder
-	out.WriteString(th.Style("askTitle").Render(wrapFocusMetadata("agent · "+truncate(sanitizeTerminal(ln.name), maxTeamNameWidth), width)))
+	out.WriteString(th.Style("askTitle").Render(wrapFocusMetadataAtWidth("agent · "+truncate(sanitizeTerminal(ln.name), maxTeamNameWidth), bodyWidth)))
 	out.WriteString("\n")
 	// The member's own lane line (reusing the inline vocabulary) as a sub-header so
 	// the focus pane is self-describing: glyph, mutating cue, name, [lead], state,
@@ -464,10 +462,10 @@ func renderTeamFocus(th theme.Theme, b *block, member string, hk helpKeys, width
 	if ln.ctxWindow > 0 {
 		subhead += " · " + renderContextMeter(th, ln.ctxUsed, ln.ctxWindow)
 	}
-	out.WriteString(muted.Render(wrapFocusMetadata(subhead, width)))
+	out.WriteString(muted.Render(wrapFocusMetadataAtWidth(subhead, bodyWidth)))
 	out.WriteString("\n\n")
 
-	r := &renderer{th: th, marks: hk, traceWidth: budget}
+	r := &renderer{th: th, marks: hk, traceWidth: bodyWidth}
 	trace := r.renderTrace(ln.trace)
 	if trace == "" {
 		out.WriteString(muted.Render("(no activity yet)"))
@@ -485,7 +483,7 @@ func renderTeamFocus(th theme.Theme, b *block, member string, hk helpKeys, width
 	// (possibly retried) member does not render it (it recovered).
 	if b.teamDone && ln.stopped && ln.stopReason == teamStopReasonError && ln.cause != "" {
 		out.WriteString("\n")
-		out.WriteString(teamFailureLine(ln, width))
+		out.WriteString(teamFailureLineAtWidth(ln, bodyWidth))
 	}
 
 	// The cancel hint shows only for a CANCELLABLE member: a live team, a lane not
@@ -495,7 +493,7 @@ func renderTeamFocus(th theme.Theme, b *block, member string, hk helpKeys, width
 	if !b.teamDone && !ln.stopped && ln.sessionID != "" {
 		hint = hk.cancelChild + " cancel · " + focusBackHint(hk)
 	}
-	out.WriteString("\n\n" + muted.Render(hint))
+	out.WriteString("\n\n" + renderDynamicCardChromeLine(muted, "", hint, bodyWidth))
 	return out.String()
 }
 
@@ -530,10 +528,14 @@ func capRenderedLines(th theme.Theme, s string, maxLines int) string {
 // subagentFailureLine, so a future caller without the renderTeamFocus gate cannot
 // render a stale cause on a recovered (done) member or a non-error stop.
 func teamFailureLine(ln *teamLane, width int) string {
+	return teamFailureLineAtWidth(ln, focusCardTextWidth(width))
+}
+
+func teamFailureLineAtWidth(ln *teamLane, bodyWidth int) string {
 	if !ln.stopped || ln.stopReason != teamStopReasonError || ln.cause == "" {
 		return ""
 	}
-	return indentWrap("failed: "+truncate(sanitizeTerminal(strings.Join(strings.Fields(ln.cause), " ")), maxSubagentCauseWidth), focusCardTextWidth(width))
+	return indentWrap("failed: "+truncate(sanitizeTerminal(strings.Join(strings.Fields(ln.cause), " ")), maxSubagentCauseWidth), bodyWidth)
 }
 
 // teamFindLane returns the lane named member off the team block, or nil. Names
@@ -633,7 +635,7 @@ func renderTeamTasks(th theme.Theme, b *block, hk helpKeys, height int, widths .
 	muted := th.Style("muted")
 	bodyWidth := 0
 	if len(widths) > 0 {
-		bodyWidth = focusCardTextWidth(widths[0])
+		bodyWidth = widths[0]
 	}
 	var out strings.Builder
 
@@ -757,7 +759,7 @@ func renderTeamFindings(th theme.Theme, b *block, hk helpKeys, height int, width
 	muted := th.Style("muted")
 	bodyWidth := 0
 	if len(widths) > 0 {
-		bodyWidth = focusCardTextWidth(widths[0])
+		bodyWidth = widths[0]
 	}
 	var out strings.Builder
 

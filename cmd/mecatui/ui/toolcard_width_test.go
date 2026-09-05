@@ -67,6 +67,47 @@ func TestMecatuiCardLayout_Scenario1_ResultRowsWrapBeforeStyle(t *testing.T) {
 	}
 }
 
+func TestDelegationToolArgsWrapBeforeStyle(t *testing.T) {
+	r := newTestRenderer()
+	r.setWidth(42)
+	_, cardWidth, bodyWidth := r.toolCardLayout()
+	long := "long-delegation-" + strings.Repeat("value-", 12)
+
+	for _, tc := range []struct {
+		name      string
+		wantShort string
+		block     *block
+	}{
+		{"subagent", "short-subagent", &block{kind: blockTool, toolName: "Subagent", subagent: true, subGoal: long + "\nshort-subagent"}},
+		{"team", "", &block{kind: blockTool, toolName: "Team", team: true, teamLanes: []teamLane{{name: "member", current: long + "\nshort-team"}}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			prepared := stripANSIstr(r.renderToolArgs(tc.block, false, bodyWidth))
+			for row, line := range strings.Split(prepared, "\n") {
+				if got := lipgloss.Width(line); got > bodyWidth {
+					t.Errorf("prepared row %d width = %d, want ≤ body width %d: %q", row, got, bodyWidth, line)
+				}
+			}
+
+			out := stripANSIstr(r.renderTool(tc.block, false))
+			rows := strings.Split(out, "\n")
+			for row, line := range rows {
+				if got := maxLineWidth(line); got > cardWidth {
+					t.Errorf("final card row %d width = %d, want ≤ %d: %q", row, got, cardWidth, line)
+				}
+			}
+			if tc.wantShort != "" && !strings.Contains(out, tc.wantShort) {
+				t.Fatalf("styled delegation args lost short source row %q:\n%s", tc.wantShort, out)
+			}
+			for _, line := range rows {
+				if strings.TrimSpace(strings.Trim(line, "│╭╮╰╯─ ")) == "" && !strings.Contains(line, "╭") && !strings.Contains(line, "╰") {
+					t.Errorf("styled delegation args produced a padding-derived blank row: %q\n%s", line, out)
+				}
+			}
+		})
+	}
+}
+
 func TestMecatuiCardLayout_Scenario1_CollapsedResultRows(t *testing.T) {
 	r := newTestRenderer()
 	r.setWidth(toolCardMaxWidth + 2 + defaultBlockIndent)

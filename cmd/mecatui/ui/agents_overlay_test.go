@@ -698,7 +698,8 @@ func TestSubagentRosterFooterSentinel(t *testing.T) {
 	th, hk := aztec(), defaultHelpKeys()
 	hk.navUp = "rebound-key-label-with-an-unusually-long-live-value\nand-another-line"
 
-	out := stripANSIstr(renderSubagentRoster(th, subagentState{}, []subagentLane{{childID: "child", goal: "inspect"}}, hk, 0, viewportWidth))
+	_, _, bodyWidth := agentsCardLayout(th, viewportWidth)
+	out := stripANSIstr(renderSubagentRoster(th, subagentState{}, []subagentLane{{childID: "child", goal: "inspect"}}, hk, 0, bodyWidth))
 	footer := out[strings.LastIndex(out, "\n")+1:]
 	if strings.ContainsRune(footer, '\n') {
 		t.Fatalf("footer rendered more than one row: %q", footer)

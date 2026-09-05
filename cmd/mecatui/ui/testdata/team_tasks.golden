@@ -2,21 +2,21 @@
 ────────────────────────────────────────────────────────────────────────────────────────────────────
 
 
-     ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-     ┃                                                                                        ┃
-     ┃    Subagents    Parallel  ▸ Teams                                                      ┃
-     ┃                                                                                        ┃
-     ┃  tasks                                                                                 ┃
-     ┃  1 done · 1 in-progress · 2 pending(1 blocked)                                         ┃
-     ┃                                                                                        ┃
-     ┃    ✓ task-1 · investigate · completed · scout · deps:—                                 ┃
-     ┃    ◆ task-2 · implement fix · in_progress · lead · deps:—                              ┃
-     ┃    ⊘ task-3 · review · pending · — · deps:task-2                                       ┃
-     ┃    ○ task-4 · lint · pending · — · deps:—                                              ┃
-     ┃                                                                                        ┃
-     ┃  t roster · esc close                                                                  ┃
-     ┃                                                                                        ┃
-     ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+  ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+  ┃                                                                                              ┃
+  ┃    Subagents    Parallel  ▸ Teams                                                            ┃
+  ┃                                                                                              ┃
+  ┃  tasks                                                                                       ┃
+  ┃  1 done · 1 in-progress · 2 pending(1 blocked)                                               ┃
+  ┃                                                                                              ┃
+  ┃    ✓ task-1 · investigate · completed · scout · deps:—                                       ┃
+  ┃    ◆ task-2 · implement fix · in_progress · lead · deps:—                                    ┃
+  ┃    ⊘ task-3 · review · pending · — · deps:task-2                                             ┃
+  ┃    ○ task-4 · lint · pending · — · deps:—                                                    ┃
+  ┃                                                                                              ┃
+  ┃  t roster · esc close                                                                        ┃
+  ┃                                                                                              ┃
+  ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
 
 
 

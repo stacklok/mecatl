@@ -2,21 +2,21 @@
 ────────────────────────────────────────────────────────────────────────────────────────────────────
 
 
-     ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-     ┃                                                                                        ┃
-     ┃  ▸ Subagents    Parallel    Teams                                                      ┃
-     ┃                                                                                        ┃
-     ┃  subagent · background deep audit                                                      ┃
-     ┃  ◐ background deep audit #r-f8a6 ⇢ bg · Bash… · 3 tools · ↑0 ↓0                        ┃
-     ┃    bounded previews — child content is clamped + scrubbed, never in the parent         ┃
-     ┃      conversation                                                                      ┃
-     ┃    background: runs detached; the agent collects its result via SubagentStatus         ┃
-     ┃                                                                                        ┃
-     ┃    ✓ Bash                                                                              ┃
-     ┃                                                                                        ┃
-     ┃  x cancel · esc back                                                                   ┃
-     ┃                                                                                        ┃
-     ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+  ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+  ┃                                                                                              ┃
+  ┃  ▸ Subagents    Parallel    Teams                                                            ┃
+  ┃                                                                                              ┃
+  ┃  subagent · background deep audit                                                            ┃
+  ┃  ◐ background deep audit #r-f8a6 ⇢ bg · Bash… · 3 tools · ↑0 ↓0                              ┃
+  ┃    bounded previews — child content is clamped + scrubbed, never in the parent               ┃
+  ┃      conversation                                                                            ┃
+  ┃    background: runs detached; the agent collects its result via SubagentStatus               ┃
+  ┃                                                                                              ┃
+  ┃    ✓ Bash                                                                                    ┃
+  ┃                                                                                              ┃
+  ┃  x cancel · esc back                                                                         ┃
+  ┃                                                                                              ┃
+  ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
 
 
 

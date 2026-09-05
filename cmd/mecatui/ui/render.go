@@ -1529,6 +1529,16 @@ func renderToolCardText(style lipgloss.Style, text string, bodyWidth int) string
 	return strings.Join(rows, "\n")
 }
 
+// renderDelegationToolCardText preserves delegation-source whitespace while
+// constraining every raw row before styles can add their own layout padding.
+func renderDelegationToolCardText(style lipgloss.Style, text string, bodyWidth int) string {
+	rows := strings.Split(wrapToolCardText(sanitizeTerminal(text), bodyWidth), "\n")
+	for i, row := range rows {
+		rows[i] = style.Render(row)
+	}
+	return strings.Join(rows, "\n")
+}
+
 // wrapToolCardText constrains raw card text before it is styled or framed.
 func wrapToolCardText(text string, bodyWidth int) string {
 	if text == "" || bodyWidth <= 0 {
@@ -1648,15 +1658,13 @@ func (r *renderer) renderToolArgs(b *block, expand bool, bodyWidth int) string {
 	var args string
 	switch {
 	case b.team:
-		// A Team card renders its BOUNDED per-member lanes in place of raw JSON args:
-		// a team header plus a live/expanded/resolved region. Member content is
-		// server-bounded and never enters the parent conversation.
-		args = r.renderTeam(b, expand)
+		// Delegation rows must be bounded while still raw. renderTeam applies styles
+		// only after preparing its body-width rows, so no ANSI padding can induce a
+		// second wrap below the card frame.
+		return r.renderTeam(b, expand, bodyWidth)
 	case b.subagent:
-		// A Subagent card renders its REDACTED child activity in place of raw JSON
-		// args. The child's interior (args/results/message text) is isolated by design
-		// and never shown — only metadata.
-		args = r.renderSubagent(b, expand)
+		// See the Team path above; Subagent has the same styled metadata/trace body.
+		return r.renderSubagent(b, expand, bodyWidth)
 	default:
 		if diff, ok := r.renderToolDiffAtWidth(b.toolName, b.toolArgs, expand, bodyWidth); ok {
 			// Edit/Write render their change as a diff in place of the raw JSON args.
@@ -1826,33 +1834,33 @@ func renderResultBlockLine(blk client.ContentBlock) (string, bool) {
 // The goal title always leads (a muted line) so a card is self-contained and
 // legible even with several concurrent subagents interleaved. All subagent-derived
 // strings (goal, tool names, previews) are terminal-sanitized.
-func (r *renderer) renderSubagent(b *block, expand bool) string {
+func (r *renderer) renderSubagent(b *block, expand bool, bodyWidth int) string {
 	muted := r.th.Style("muted")
 	var out strings.Builder
 	if b.subGoal != "" {
-		out.WriteString(muted.Render("↳ " + sanitizeTerminal(b.subGoal)))
+		out.WriteString(renderDelegationToolCardText(muted, "↳ "+sanitizeTerminal(b.subGoal), bodyWidth))
 		out.WriteString("\n")
 	}
 	if routed := subagentModelLabel(b.subRoutedCategory, b.subRoutedModel, b.subRoutingReason, b.subModel); routed != "" {
-		out.WriteString(muted.Render(routed))
+		out.WriteString(renderDelegationToolCardText(muted, routed, bodyWidth))
 		out.WriteString("\n")
 	}
 
 	if b.subDone {
-		out.WriteString(muted.Render(subagentResolvedLine(b)))
+		out.WriteString(renderDelegationToolCardText(muted, subagentResolvedLine(b), bodyWidth))
 		return strings.TrimRight(out.String(), "\n")
 	}
 
 	if expand {
-		out.WriteString(muted.Render("subagent · " + boundedPreviewsSubNote))
-		if trace := r.renderTrace(b.subTrace); trace != "" {
+		out.WriteString(renderDelegationToolCardText(muted, "subagent · "+boundedPreviewsSubNote, bodyWidth))
+		if trace := r.renderTraceAtWidth(b.subTrace, bodyWidth); trace != "" {
 			out.WriteString("\n")
 			out.WriteString(trace)
 		}
 		return strings.TrimRight(out.String(), "\n")
 	}
 
-	out.WriteString(muted.Render(r.subagentLiveLine(b)))
+	out.WriteString(renderDelegationToolCardText(muted, r.subagentLiveLine(b), bodyWidth))
 	return strings.TrimRight(out.String(), "\n")
 }
 
@@ -2059,16 +2067,16 @@ func teamLaneOrder(lanes []teamLane) []int {
 //
 // All member-derived text (names, message lines, tool names, previews) is
 // terminal-sanitized before it reaches lipgloss.
-func (r *renderer) renderTeam(b *block, expand bool) string {
+func (r *renderer) renderTeam(b *block, expand bool, bodyWidth int) string {
 	muted := r.th.Style("muted")
 	var out strings.Builder
 
 	if b.teamDone {
-		out.WriteString(muted.Render(teamResolvedLine(b)))
+		out.WriteString(renderDelegationToolCardText(muted, teamResolvedLine(b), bodyWidth))
 		return out.String()
 	}
 
-	out.WriteString(muted.Render(r.teamHeader(b, expand)))
+	out.WriteString(renderDelegationToolCardText(muted, r.teamHeader(b, expand), bodyWidth))
 
 	order := teamLaneOrder(b.teamLanes)
 	shown := order
@@ -2083,9 +2091,9 @@ func (r *renderer) renderTeam(b *block, expand bool) string {
 			out.WriteString("\n")
 		}
 		out.WriteString("\n")
-		out.WriteString(muted.Render(teamLaneLine(ln, nameW, false)))
+		out.WriteString(renderDelegationToolCardText(muted, teamLaneLine(ln, nameW, false), bodyWidth))
 		if expand {
-			if tr := r.renderTrace(ln.trace); tr != "" {
+			if tr := r.renderTraceAtWidth(ln.trace, bodyWidth); tr != "" {
 				out.WriteString("\n")
 				out.WriteString(tr)
 			}
@@ -2097,7 +2105,7 @@ func (r *renderer) renderTeam(b *block, expand bool) string {
 		// full, windowed roster. The chord reads the LIVE Agents marking so an override
 		// propagates (issue #457).
 		out.WriteString("\n")
-		out.WriteString(muted.Render(fmt.Sprintf("  · +%d more · %s", extra, r.marks.agents)))
+		out.WriteString(renderDelegationToolCardText(muted, fmt.Sprintf("  · +%d more · %s", extra, r.marks.agents), bodyWidth))
 	}
 	return out.String()
 }
@@ -2212,6 +2220,12 @@ func teamStopReasonLabel(reason string) string {
 	default:
 		return ""
 	}
+}
+
+// renderTraceAtWidth prepares styled trace rows against a tool card's body before
+// they join the card. It leaves the shared renderer untouched for other regions.
+func (r *renderer) renderTraceAtWidth(trace []teamTrace, bodyWidth int) string {
+	return (&renderer{th: r.th, traceWidth: bodyWidth}).renderTrace(trace)
 }
 
 // renderTrace renders a delegation lane's expanded trace — the SHARED format for
