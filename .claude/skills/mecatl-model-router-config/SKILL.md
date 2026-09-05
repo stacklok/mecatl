@@ -24,125 +24,54 @@ description: >-
 
 ### Step 1 — Elicit preferences (BEFORE any search)
 
-Ask questions **one at a time** in this exact order. Do NOT present the full
-list upfront. Wait for the operator's answer before moving to the next question.
+Ask one concise question at a time in this order; wait for the answer before the
+next question. Use ordinary conversational text as the default, with the
+recommended option stated plainly. Do not render banners, checkmark summaries,
+or a widget/protocol syntax.
 
-Format for each question:
+Interpret natural-language answers rather than requiring exact option labels. If
+an answer is ambiguous, ask a brief follow-up. The operator may revise an earlier
+answer conversationally at any point (for example, “Actually, use Anthropic”);
+confirm the changed answer and revisit any dependent choice if necessary.
 
-```
-───────────────────────────────
-✓ <label>: <answer>     ← repeat for each prior answer
-
-→ <current question>?
-
-  ▸ <recommended option> (recommended)
-    <other option>
-
-  yes = <recommended> · "back" to redo previous
-───────────────────────────────
-```
+If the current client explicitly provides a native question UI, it may present
+the same question and choices there. Never assume it exists or expose its
+internal protocol in chat.
 
 **Q1 — Provider**
 
-```
-───────────────────────────────
-→ Provider?
-
-  ▸ OpenRouter — aggregates all vendors behind one key (recommended)
-    Anthropic direct
-    OpenAI direct
-    Other (name it)
-
-  yes = OpenRouter · "back" to redo previous
-───────────────────────────────
-```
+Ask: “Which provider should this config use? I recommend OpenRouter because one
+key can reach multiple vendors. OpenRouter, Anthropic direct, OpenAI direct, or
+another provider?”
 
 **Q2 — Priority axis**
 
-```
-───────────────────────────────
-✓ Provider: <Q1>
-
-→ Priority axis?
-
-  ▸ balanced — frontier where it matters, cheap elsewhere (recommended)
-    cost-tiered — prefer cheap/open models, accept lower ceiling
-    capability-first — most capable regardless of cost
-
-  yes = balanced · "back" to redo previous
-───────────────────────────────
-```
+Ask: “What matters most: balanced cost and capability (recommended),
+cost-tiered (prefer cheaper models when they can do the job, saving money but
+possibly trading away capability), or capability-first (prefer the strongest fit,
+with potentially higher cost)?”
 
 **Q3 — Open vs proprietary**
 
-```
-───────────────────────────────
-✓ Provider: <Q1>
-✓ Priority: <Q2>
-
-→ Open-weights required?
-
-  ▸ proprietary — hosted APIs are fine (recommended)
-    open-weights — MIT/Apache only (self-hostable)
-
-  yes = proprietary · "back" to redo previous
-───────────────────────────────
-```
+Ask: “Are hosted proprietary models acceptable (recommended), or do you require
+MIT/Apache open-weight models?”
 
 **Q4 — Multimodal**
 
-```
-───────────────────────────────
-✓ Provider: <Q1>
-✓ Priority: <Q2>
-✓ Open-weights: <Q3>
-
-→ Image/vision input needed?
-
-  ▸ text-only — no vision needed (recommended)
-    rarely — explicit per-call via model: image
-    commonly — bake a vision tier into the router
-
-  yes = text-only · "back" to redo previous
-───────────────────────────────
-```
+Ask: “How often do you need image input: not at all (recommended), rarely, or
+commonly?”
 
 **Q5 — Target ceiling (optional)**
 
-```
-───────────────────────────────
-✓ Provider: <Q1>
-✓ Priority: <Q2>
-✓ Open-weights: <Q3>
-✓ Vision: <Q4>
-
-→ Target coding ceiling? (optional)
-
-  ▸ skip — no specific target (recommended)
-    name a model, e.g. "Sonnet 4.6", "Opus 4.8"
-
-  yes = skip · "back" to redo previous
-───────────────────────────────
-```
+Ask: “Is there a target coding ceiling or model you want to match? You can name
+one, or say there is no specific target.”
 
 **Q6 — Existing config (auto-discovered, not asked blank)**
 
 Do NOT ask. Silently run `cat ~/.config/mecatl/settings.yaml`.
 
-- **Found with `models:` block** — show it fenced, then ask:
-  ```
-  ───────────────────────────────
-  ✓ Provider: <Q1> · ✓ Priority: <Q2> · ✓ Open-weights: <Q3> · ✓ Vision: <Q4> · ✓ Ceiling: <Q5>
-
-  → Found an existing models: config — use as base or start fresh?
-
-    ▸ use as base — revise only what needs changing (recommended)
-      start fresh — ignore existing config
-
-    yes = use as base · "back" to redo previous
-  ───────────────────────────────
-  ```
-
+- **Found with `models:` block** — show it fenced, then ask: “I found an existing
+  `models:` config. Should I use it as a base (recommended) or start fresh?”
 - **Not found or no `models:` block** — skip silently, proceed to Step 2.
 
 Record all answers. These determine which models are even candidates.
@@ -256,21 +185,21 @@ After the config, include:
 
 ## Interaction example
 
-Step 1 uses `AskUserQuestion` — each question renders as a native UI widget
-(radio buttons, descriptions). The operator clicks or types; no "yes"/"back"
-shortcuts needed. The five calls happen one at a time:
+Ask normally, one question at a time. For example:
 
-1. `AskUserQuestion` → Provider → operator picks **OpenRouter**
-2. `AskUserQuestion` → Priority → operator picks **capability-first**
-3. `AskUserQuestion` → Licensing → operator picks **proprietary**
-4. `AskUserQuestion` → Vision → operator picks **rarely**
-5. `AskUserQuestion` → Ceiling → operator picks **Opus 4.8 territory**
+1. “Which provider should this config use? I recommend OpenRouter, but Anthropic
+   direct, OpenAI direct, or another provider also work.” → **OpenRouter**
+2. “What matters most: balanced cost and capability, cost-tiered, or
+   capability-first?” → **capability-first**
+3. “Are hosted proprietary models acceptable, or do you require open weights?”
+   → **proprietary**
+4. “How often do you need image input: not at all, rarely, or commonly?” →
+   **rarely**
+5. “Is there a target coding ceiling or model you want to match?” → **Opus 4.8
+   territory**
 
-Then the skill silently runs `cat ~/.config/mecatl/settings.yaml`. If a
-`models:` block is found it is shown fenced and a final `AskUserQuestion`
-asks **use as base** vs **start fresh**. If not found, Step 2 starts
-immediately.
-
-After all answers are recorded the skill moves to Step 2 — searching
-benchmarks and pricing for OpenRouter models that can reach Opus 4.8 territory,
-with a vision alias for the rare-vision requirement.
+The operator can correct an answer naturally, such as “Actually, use Anthropic
+instead,” before the search begins. Then silently inspect
+`~/.config/mecatl/settings.yaml`; if it has a `models:` block, ask whether to use
+it as a base or start fresh. Otherwise, begin Step 2 and search for models that
+fit the recorded preferences.
