@@ -2,10 +2,10 @@
 id: 02-review-repair
 title: Close observability review gaps
 blocked_by: [01-observability]
-status: pending
-attempt: 0
-branch: ""
-worktree: ""
+status: in-progress
+attempt: 1
+branch: "plan-session-load-observability/02-review-repair-attempt-1"
+worktree: ".scratch/worker-session-load-observability-02-review-repair-attempt-1"
 issue: "1125"
 retries: 0
 last_error: ""
