@@ -55,12 +55,28 @@ func learningFailoverSpecs() {
 				runCtx, cancelRun := shortCtx(60 * time.Second)
 				defer cancelRun()
 				requestBody, _ := json.Marshal(map[string]string{"text": "Turn this workflow into a skill: retain the restart-safe procedure for future sessions."})
-				req, _ := http.NewRequestWithContext(runCtx, http.MethodPost, fmt.Sprintf("http://%s/v1/sessions/%s/prompt", addr, sessionID), bytes.NewReader(requestBody))
-				req.Header.Set("Content-Type", "application/json")
-				req.Header.Set("Accept", "text/event-stream")
-				resp, err := http.DefaultClient.Do(req)
-				gomega.Expect(err).NotTo(gomega.HaveOccurred())
-				gomega.Expect(resp.StatusCode).To(gomega.Equal(http.StatusOK))
+				var resp *http.Response
+				var responseBody []byte
+				// A loaded kind API server can exhaust the bounded lease-acquire call before
+				// run launch. Retrying that pre-stream response is safe: a launched run has
+				// already committed HTTP 200 and is returned immediately.
+				gomega.Eventually(func() int {
+					req, _ := http.NewRequestWithContext(runCtx, http.MethodPost, fmt.Sprintf("http://%s/v1/sessions/%s/prompt", addr, sessionID), bytes.NewReader(requestBody))
+					req.Header.Set("Content-Type", "application/json")
+					req.Header.Set("Accept", "text/event-stream")
+					var err error
+					resp, err = http.DefaultClient.Do(req)
+					if err != nil {
+						return 0
+					}
+					if resp.StatusCode == http.StatusOK {
+						return resp.StatusCode
+					}
+					responseBody, _ = io.ReadAll(io.LimitReader(resp.Body, 8192))
+					_ = resp.Body.Close()
+					return resp.StatusCode
+				}, 30*time.Second, time.Second).Should(gomega.Equal(http.StatusOK),
+					"prompt response: %s", formatBody(responseBody))
 				defer func() { _ = resp.Body.Close() }()
 				go func() {
 					_, _ = io.Copy(io.Discard, resp.Body)
