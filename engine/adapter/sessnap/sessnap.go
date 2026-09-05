@@ -291,9 +291,6 @@ func (snap Snapshot) Restore() (*session.Session, error) {
 	s.Title = snap.Title
 	s.TitleProvenance = snap.TitleProvenance
 	s.RestoreTitleMetadata(snap.TitleGeneration, snap.TitleSourcePrompts, snap.TitleAttempts)
-	if snap.TokenUsage != nil {
-		s.RestoreTokenUsage(snap.TokenUsage)
-	}
 	// The identity labels go through the WRITE-ONCE aggregate method rather than a
 	// field poke (Session is an aggregate) and rather than a RestoreState
 	// parameter (that widening is Changed/breaking; this stays Added/minor).
@@ -318,7 +315,11 @@ func (snap Snapshot) Restore() (*session.Session, error) {
 	if err := RestoreState(s, snap.State, snap.StopReason, snap.Pending, snap.Counters, usage, snap.Permanent, snap.LastError); err != nil {
 		return nil, err
 	}
-	if snap.TokenUsage == nil && usage != (session.Usage{}) {
+	// Canonical token usage wins whenever it is present; legacy snapshots derive the
+	// main bucket from their deprecated compatibility projection.
+	if snap.TokenUsage != nil {
+		s.RestoreTokenUsage(snap.TokenUsage)
+	} else if usage != (session.Usage{}) {
 		s.RestoreTokenUsage(map[session.UsageKind]session.TokenUsage{
 			session.UsageKindMain: {Total: usage, Models: map[string]session.Usage{"unknown": usage}},
 		})

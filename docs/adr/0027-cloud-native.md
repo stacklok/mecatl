@@ -127,9 +127,10 @@ A documented side effect: because `resetToIdle` preserves Usage, a reused
 child/member session's per-engine `MaxRunTokens` brake is now CUMULATIVE across
 `Reopen` (team rounds, structured-output validation retries), which is the
 intended "cap the whole call" reading rather than a per-Reopen fresh allowance.
-The one deliberate exception is the team lead's synthesis turn, which calls the
-explicit `Session.ResetUsage` seam so a budget-stopped working run still produces
-the deliverable. The team-AGGREGATE budget is unchanged (it sums per-round
+The one deliberate exception is the team lead's synthesis turn, which captures
+its current cumulative main usage as an internal immutable run baseline so a
+budget-stopped working run still produces the deliverable without resetting
+lifetime accounting. The team-AGGREGATE budget is unchanged (it sums per-round
 `EvResult.Usage`, the zero-based per-run delta), so the two budgets stay
 independent.
 

@@ -13,12 +13,25 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 ### Changed
 
+- **Durable main-usage budget baseline** — `Session.Usage` is now permanently the
+  deprecated lifetime mirror of `TokenUsage[UsageKindMain].Total`. `MaxRunTokens`
+  measures usage since an immutable internal run baseline; ordinary runs use zero and
+  team-lead synthesis captures its current main total without mutating session
+  accounting. Auxiliary usage remains outside this budget and `EvResult.Usage`.
+
 - **Simplified title-model token accounting** — removes the title-specific
   `session.AuxiliaryUsage`/`AuxiliaryOperation` API and its per-attempt ledger.
   `Session.RecordTokenUsage` records canonical usage by kind and opaque selected-model
   attribution, and `RestoreTitleMetadata` now restores title lifecycle metadata only.
   Removed APIs and the changed restore signature are breaking; pre-v1 this is a minor
   compatibility classification.
+
+### Removed
+
+- **`session.Session.ResetUsage`** — the externally callable accounting reset is
+  removed. It could discard durable lifetime usage to grant a synthesis allowance;
+  the internal run baseline now provides that allowance without a reset. Removed is
+  breaking (pre-v1 minor) per COMPATIBILITY.md.
 
 ### Added
 
@@ -1090,9 +1103,8 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
     exhaustion, not a fault/cancel), routed through the completed path so the
     session ends `completed` and stays Reopen-recoverable. A string passthrough on
     the wire (no proto enum). Added to `agent.isEmptyTerminalStop`'s allow-set
-    (a clean bounded terminal) following `StopBudget`'s classification; NOT in
-    the salvage ResetUsage arm (it is a wall-clock deadline, not a token
-    ceiling, so it follows `StopNoProgress` there).
+    (a clean bounded terminal); it remains subject to the carried token budget
+    during a salvage drive.
   - `port.ScheduleStore.RecordFireStart(ctx, name, fire)` — persists the IN-FLIGHT
     fire (id/SessionID/StartedAt/Deadline, Stop empty) and stamps
     `ScheduleState.LastFireSessionID` to the real session id +

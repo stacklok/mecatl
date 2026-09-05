@@ -902,11 +902,12 @@ was observed announcing actions without emitting the tool calls). `EvNoProgress`
 **Token budget — the per-engine loop-level ceiling (`StopBudget`).** `agent.Deps.MaxRunTokens`
 (0 = disabled) is a cumulative token ceiling checked at each turn BOUNDARY in
 `Engine.drive` (Step 2, after the existing `sess.StopReason()` and `ctx.Err()` checks, before
-`BeginTurn`) against the session aggregate's accumulated `session.Usage` via
-`Usage.TotalTokens()` (`engine/session/session.go` (`RecordUsage`)). Usage is persisted and
-survives `Reopen`/`Interrupt`/`Recover`, so the ceiling remains cumulative across resumed runs
-and restart; a resumed child can therefore stop before new work when its inherited budget is
-already spent. Input+output count; cache tokens are excluded because `CacheReadTokens` is a
+`BeginTurn`) against lifetime main usage since the run's immutable baseline. The
+baseline is zero for ordinary runs, so persisted `session.Usage` — the deprecated
+compatibility mirror of canonical `token_usage[main].Total` — keeps the ceiling cumulative
+across `Reopen`/`Interrupt`/`Recover` and restart. Only the team lead's final synthesis run
+captures the current main total as its baseline, giving that one deliverable phase a fresh
+allowance without resetting durable accounting. Input+output count; cache tokens are excluded because `CacheReadTokens` is a
 subset of `InputTokens`, `CacheWriteTokens` is a side cost, and `ReasoningTokens` is likewise a
 subset of `OutputTokens` (providers bill reasoning as part of the inclusive output total, so
 adding it would double-count). The subset invariant holds CROSS-PROVIDER because the
@@ -932,12 +933,10 @@ independent ceiling against their own persisted session usage. Parent usage and
 cross-tree aggregate observability and enforcement are deferred and out of scope.
 `StopBudget` is the
 PER-ENGINE half of the AGENT-TEAMS-SPIKE's named "Deferred 4A" brake — landed once for every
-delegation path and cumulative over that session's persisted usage; the team-AGGREGATE half is the
-separate `WithTeamTokenBudget` below. `Reopen` does not reset usage. The deliberate delivery-only
-exceptions reset it explicitly: an empty budget-stopped Subagent's single salvage attempt in
-`engine/agent/subagent.go` (`salvageEmptyStop`) and the lead's required team synthesis in
-`engine/agent/teamsupervisor.go` (`synthesise`). Neither makes a best-effort summary guaranteed.
-`StopBudget` is a STRING passthrough on the wire (`session.StopBudget = "budget"`, no proto enum).
+delegation path and cumulative over that session's persisted usage. The team lead's
+synthesis baseline is internal run state; it is neither persisted nor externally selectable.
+A budget-stopped Subagent salvage remains subject to its carried budget. `StopBudget` is a
+STRING passthrough on the wire (`session.StopBudget = "budget"`, no proto enum).
 Guards: `agent.TestBudget*`, `session.TestStopBudgetIsCleanReopenableTerminal`,
 `server.TestServiceBudgetSurfacesAndReopens`, `app.TestMaxRunTokensPropagatesToParentAndChild`.
 
@@ -1660,9 +1659,9 @@ limit/budget stops only; it is now ANY empty terminal stop — `isEmptyTerminalS
 `StopMaxTurns`/`StopMaxToolCalls`/`StopBudget`/`StopNoProgress`/(defense-in-depth) `StopEndTurn`,
 gated by a blank-finalText guard so a normal text answer is untouched. Stage 1 is `salvageEmptyStop`
 (renamed from `salvageEmptyLimitStop`): ONE bounded wrap-up turn (`child.Reopen()` + `MaxTurns=1` pin
-+ the `salvageWrapUpPrompt`) to coax a partial summary — `ResetUsage` runs for `StopBudget` ONLY
-(mirroring `Supervisor.synthesise`; `StopNoProgress`/`StopEndTurn` keep their carried budget braking
-the salvage turn). Stage 2, if the salvage ALSO produced nothing, is `digestChildActivity`: the
++ the `salvageWrapUpPrompt`) to coax a partial summary. A budget-stopped child remains subject to
+its carried budget; only the team lead's synthesis uses an internal non-zero run baseline. Stage 2,
+if the salvage ALSO produced nothing, is `digestChildActivity`: the
 child's last non-empty `RoleAssistant` text walked backwards out of its own history (the
 `closeOutInterruptedTurn` idiom), clamped (`clampRunes`, not `clampPreview` — multi-line own-output,
 not a peer preview) and framed by `recoveredDigestPrefix`. Only when BOTH stages are empty does the
@@ -6395,21 +6394,20 @@ mid-conversation (`docs/adr/0027-cloud-native.md` ledger rows 1/2/3):
   default session writes the zero values, so its snapshot stays byte-identical to a
   pre-Phase-1 one.
 - **`Usage` is mutated through `RecordUsage`** (running-only guard, mirroring
-  `RecordToolResults`); the loop calls it alongside its own per-run total, and the
-  `MaxRunTokens` budget brake (`budgetExhausted`) is evaluated against the CUMULATIVE
-  `sess.Usage` of that engine's own session, not the per-run delta — so the budget survives reopen/restart while the
-  per-run `EvResult.Usage` figure (which the team supervisor sums per round) is unchanged.
+  `RecordToolResults`); it remains the deprecated lifetime compatibility mirror of
+  `TokenUsage[main].Total`. The loop calls it alongside its own per-run total, and the
+  `MaxRunTokens` budget brake (`budgetExhausted`) measures each engine's own canonical
+  main usage since an immutable per-run baseline. Ordinary runs use zero, preserving
+  cumulative budget enforcement across reopen/restart independently for every child;
+  only the team-lead synthesis and the single `StopBudget` free-text Subagent cleanup
+  re-drive capture their starting main total. `EvResult.Usage` remains the per-run delta.
 - **`resetToIdle` DELIBERATELY preserves `Usage`** (the divergence from `Counters`, which it
   still zeroes) so the budget survives the Reopen/Interrupt/Recover seams — pinned by
   `TestResetToIdlePreservesUsage` (mutation-verified: adding `s.Usage = Usage{}` fails it).
-  A documented consequence: a reused child/member session's per-engine `MaxRunTokens` brake
-  is now CUMULATIVE across `Reopen` (team rounds, structured-output validation retries), which
-  is the intended "cap the whole call" reading — `driveChild` SUMS usage across the in-call
-  Reopens and the cross-attempt brake is now real (pinned by `TestStructuredOutputBudgetTripsAcrossDrives`).
-  The team lead's SYNTHESIS turn is the one deliberate exception: `Supervisor.synthesise` calls
-  the explicit `Session.ResetUsage` seam (the aggregate-mutation counterpart to the non-reset,
-  legal from any non-running state) before the synthesis drive so a budget-stopped working run
-  still produces the deliverable (the synthesis spend is still folded into the team outcome).
+  A reused child/member session's per-engine `MaxRunTokens` brake is CUMULATIVE across
+  `Reopen` (team rounds, structured-output validation retries), which is the intended
+  "cap the whole call" reading. The team lead's synthesis run is the only exception: its
+  private run baseline preserves lifetime accounting while allowing the deliverable.
   The team-AGGREGATE budget is unchanged (it sums per-round `EvResult.Usage`, the per-run delta).
 - **The snapshot (`sessnap.Snapshot`) gained `profile,omitempty` + `provider_id,omitempty`
   + `model_id,omitempty` (strings) + `usage` (a `*session.Usage` POINTER for true

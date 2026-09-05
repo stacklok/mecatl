@@ -904,9 +904,8 @@ const defaultStructuredOutputRetries = 2
 // fetching/reading and never reached its conclusion. The salvage asks the child to
 // stop and summarize its partial findings; it explicitly forbids further tool use
 // because the salvage drive is hard-bound to a single turn (see
-// salvageEmptyStop). For a token-budget stop the salvage drive uses a
-// ResetUsage call (mirroring the Supervisor.synthesise precedent) so the one wrap-up
-// turn is not immediately re-blocked by the working run's cumulative spend.
+// salvageEmptyStop). A budget-stopped child does not receive a fresh allowance:
+// only the team lead's synthesis run uses an internal budget baseline.
 const salvageWrapUpPrompt = "You have reached your budget and must stop now. " +
 	"Do not call any more tools. Summarize concisely what you found so far and give " +
 	"your best partial answer as your final response."
@@ -3735,9 +3734,8 @@ func driveChild(ctx context.Context, engine *Engine, child *session.Session, run
 // wall-clock timeout) plus an EMPTY clean end (StopEndTurn). The caller pairs it
 // with a blank-finalText guard so a NORMAL StopEndTurn that produced text is never
 // disturbed. StopTimeout follows StopBudget's classification (a clean bounded
-// terminal, recoverable); it is NOT in the ResetUsage arm below (it is a wall-clock
-// deadline, not a token ceiling — it does not stop on the budget, so the carried
-// budget keeps braking the salvage turn, like StopNoProgress/StopEndTurn).
+// terminal, recoverable); it remains subject to the carried token budget like
+// StopNoProgress and StopEndTurn.
 func isEmptyTerminalStop(stop session.StopReason) bool {
 	switch stop {
 	case session.StopMaxTurns, session.StopMaxToolCalls, session.StopBudget,
@@ -3788,12 +3786,8 @@ func digestChildActivity(child *session.Session) string {
 //     through. (StopNoProgress/empty-StopEndTurn are the issue-#152 additions: a
 //     reasoning-only or silently-empty turn discarded the child's work the same way a
 //     limit stop did.)
-//   - For StopBudget ONLY, calls child.ResetUsage() AFTER child.Reopen() (mirroring the
-//     Supervisor.synthesise precedent in engine/agent/teamsupervisor.go) so the one
-//     wrap-up turn is not immediately re-blocked by the working run's cumulative spend.
-//     The salvage turn's own spend is still folded into the returned usage accumulator.
-//     StopNoProgress/StopEndTurn never ResetUsage (they did not stop on the token
-//     ceiling, so the carried budget must keep braking the salvage turn).
+//   - StopBudget does not receive a fresh allowance: only the team lead's
+//     synthesis run has a non-zero baseline.
 //   - Reuses the SAME child session via Reopen() (which resets Counters), mirroring the
 //     structured-output retry seam. A non-recoverable session (failed/cancelled) simply
 //     keeps the empty result.
@@ -3827,10 +3821,7 @@ func salvageEmptyStop(ctx context.Context, engine *Engine, child *session.Sessio
 	// loop-local accumulator, NOT session.Usage). A resumed child whose cumulative
 	// session.Usage already exceeds the ceiling trips StopBudget at the FIRST boundary
 	// before any model call, producing zero per-run spend — there is nothing to salvage,
-	// and running the wrap-up drive would incorrectly grant an extra turn (the ResetUsage
-	// below would clear the prior-run spend, undermining the cloud-native Phase 1 budget
-	// carry guarantee). By contrast a normal budget stop always has per-run spend > 0
-	// because the child made at least one model call before crossing the ceiling.
+	// and a wrap-up drive would immediately observe the same budget.
 	if stop == session.StopBudget && usage.TotalTokens() == 0 {
 		return finalText, usage
 	}
@@ -3838,15 +3829,6 @@ func salvageEmptyStop(ctx context.Context, engine *Engine, child *session.Sessio
 	// so the child is completed here. A failed/cancelled session is not recoverable — bail.
 	if err := child.Reopen(); err != nil {
 		return finalText, usage
-	}
-	// For a token-budget stop, the cumulative session.Usage survives Reopen (cloud-native
-	// Phase 1), so the working run's spend would immediately re-trip the budget ceiling on
-	// the salvage turn's first boundary check. Reset the accumulator so the ONE wrap-up
-	// turn is allowed to run — mirroring Supervisor.synthesise. A reset error is impossible
-	// on this idle path (Reopen just transitioned to idle) but is non-fatal: at worst the
-	// salvage turn re-trips the budget and we fall back to the empty placeholder.
-	if stop == session.StopBudget {
-		_ = child.ResetUsage()
 	}
 	// Pin the salvage to exactly ONE turn, restoring the real limits afterwards.
 	savedLimits := child.Limits

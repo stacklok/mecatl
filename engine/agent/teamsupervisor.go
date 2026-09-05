@@ -1392,7 +1392,7 @@ func (s *Supervisor) runTurn(ctx context.Context, ti turnInput, evCh chan<- Team
 	m := ti.m
 	_ = s.team.SetMemberState(m.spec.Name, team.MemberWorking)
 
-	text, stop, usage := s.driveOneTurn(ctx, m, ti.prompt, evCh)
+	text, stop, usage := s.driveOneTurn(ctx, m, ti.prompt, evCh, false)
 	if text != "" {
 		m.lastText = text
 	}
@@ -1574,7 +1574,7 @@ func (s *Supervisor) fireTeammateIdle(ctx context.Context, m *memberRT) {
 // auto-deny / event-forward / terminal-text-capture logic lives, shared by runTurn
 // (per round) and synthesise (the lead's one final turn). It does NOT Reopen, persist,
 // or do budget bookkeeping — that stays with the callers.
-func (s *Supervisor) driveOneTurn(ctx context.Context, m *memberRT, prompt string, evCh chan<- TeamEvent) (text string, stop session.StopReason, usage session.Usage) {
+func (s *Supervisor) driveOneTurn(ctx context.Context, m *memberRT, prompt string, evCh chan<- TeamEvent, synthesis bool) (text string, stop session.StopReason, usage session.Usage) {
 	// This member has genuinely been driven: cleanupAll's A5 vocabulary keeps its
 	// registry entry (real terminal) rather than removing it as never-ran.
 	m.ran = true
@@ -1594,7 +1594,12 @@ func (s *Supervisor) driveOneTurn(ctx context.Context, m *memberRT, prompt strin
 		stopWatch := context.AfterFunc(m.ctx, cancelDrive)
 		defer stopWatch()
 	}
-	run := m.engine.Run(driveCtx, m.sess, m.env, RunRequest{Text: prompt})
+	var run *Run
+	if synthesis {
+		run = m.engine.runWithCurrentMainUsageBaseline(driveCtx, m.sess, m.env, RunRequest{Text: prompt})
+	} else {
+		run = m.engine.Run(driveCtx, m.sess, m.env, RunRequest{Text: prompt})
+	}
 	posture := childPosture{isolated: m.isolated, caps: s.caps, role: m.spec.Name,
 		// childID is the member SESSION id (MemberSessionID — NOT the member name role
 		// carries), the uniform ask-ownership/cancel handle (A6): a CancelChild for
@@ -1714,24 +1719,12 @@ func (s *Supervisor) synthesise(ctx context.Context, evCh chan<- TeamEvent) (rep
 
 	prompt := s.buildSynthesisSources()
 
-	// The synthesis turn runs AFTER the round loop and the team/engine budget gate
-	// (it structurally cannot trip the gate). It is a deliberate fresh-allowance
-	// continuation: a lead whose WORKING run was stopped by its engine-level
-	// MaxRunTokens (StopBudget) must still produce the team's deliverable. Since the
-	// cumulative session.Usage now survives Reopen (cloud-native Phase 1, so the
-	// budget survives restart), reset the lead's accumulator through the explicit
-	// aggregate seam so the synthesis turn is not re-blocked by the working run's
-	// spend. The lead is idle here (Reopened — or Recovered, issue #318 — after its
-	// working run; a non-resumable lead was already gated out above), so ResetUsage is
-	// legal. The synthesis spend
-	// is still folded into the team OUTCOME below (lead.tokensUsed), so the accounting
-	// is complete; only the per-run brake input is reset. A reset error is impossible
-	// on this idle path but is non-fatal (it would only leave the prior spend, which
-	// at worst skips the synthesis turn — the labelled fallback then covers it).
-	_ = lead.sess.ResetUsage()
-
+	// The synthesis turn runs after the round loop and receives its own engine-budget
+	// allowance. Capture the lead's lifetime main usage as this run's immutable baseline:
+	// no durable accounting or compatibility projection is reset, and any synthesis
+	// re-drive/nudge remains on this same Run baseline.
 	_ = s.team.SetMemberState(s.leadName, team.MemberWorking)
-	text, stop, usage := s.driveOneTurn(ctx, lead, prompt, evCh)
+	text, stop, usage := s.driveOneTurn(ctx, lead, prompt, evCh, true)
 	if text != "" {
 		lead.lastText = text
 	}

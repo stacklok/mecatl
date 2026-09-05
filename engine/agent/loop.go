@@ -320,10 +320,9 @@ type Deps struct {
 	// ChildAskReviewer is set.
 	ChildAskReviewMaxDenies int
 
-	// MaxRunTokens is the loop-level cumulative TOKEN ceiling for a single run: when
-	// the run's accumulated session.Usage (input+output, via Usage.TotalTokens) crosses
-	// this value, the loop terminates CLEANLY at the next turn boundary with
-	// session.StopBudget. It is the shared runaway brake the AGENT-TEAMS-SPIKE named the
+	// MaxRunTokens is the loop-level token ceiling for one run: when lifetime main
+	// usage since the Run's immutable baseline crosses this value, the loop
+	// terminates CLEANLY at the next turn boundary with session.StopBudget. It is the shared runaway brake the AGENT-TEAMS-SPIKE named the
 	// missing token budget — checked in drive Step 2, so it serves EVERY engine: main +
 	// Subagent + Team member + lead synthesis + Fork branch. Semantics: 0 (the default;
 	// existing Deps built without it) DISABLES the budget (behaviour byte-identical to
@@ -608,6 +607,11 @@ type Run struct {
 	// runID is the host-minted identity stamped onto every event this run emits
 	// (ADR 0249). Read ONLY by emit/emitOrAbort; the loop never branches on it.
 	runID string
+	// budgetBaseline is the immutable cumulative main usage captured when this run
+	// starts. Ordinary runs use zero; the team lead's synthesis run captures the
+	// lead's lifetime main usage to receive its own allowance without changing the
+	// durable ledger or compatibility mirror.
+	budgetBaseline session.Usage
 	// ctx is the run's context, captured at Engine.Run. Engine.emit forwards it
 	// to the injected EventSink so telemetry adapters can read a trace span from
 	// it and correlate spans/metrics to the originating request. Each run (including
@@ -1010,7 +1014,20 @@ func (e *Engine) prepareRunEnvironment(ctx context.Context, r *Run, sess *sessio
 // Run starts processing req against sess with the exact supplied environment and
 // returns immediately with a handle to the background run.
 func (e *Engine) Run(ctx context.Context, sess *session.Session, env tool.Environment, req RunRequest) *Run {
-	return e.startRun(ctx, sess, req, "", func(ctx context.Context, r *Run) {
+	return e.startRun(ctx, sess, req, session.Usage{}, "", func(ctx context.Context, r *Run) {
+		if !e.prepareRunEnvironment(ctx, r, sess, env) {
+			return
+		}
+		e.drive(ctx, r, sess, env, req.Text, req.Parts)
+	})
+}
+
+// runWithCurrentMainUsageBaseline drives the team lead's final synthesis with a
+// fresh budget allowance without mutating durable session accounting. It is
+// package-private so no caller outside agent can select a budget baseline.
+func (e *Engine) runWithCurrentMainUsageBaseline(ctx context.Context, sess *session.Session, env tool.Environment, req RunRequest) *Run {
+	baseline := sess.TokenUsage[session.UsageKindMain].Total
+	return e.startRun(ctx, sess, req, baseline, "", func(ctx context.Context, r *Run) {
 		if !e.prepareRunEnvironment(ctx, r, sess, env) {
 			return
 		}
@@ -1023,7 +1040,7 @@ func (e *Engine) Run(ctx context.Context, sess *session.Session, env tool.Enviro
 // instructions and system prompt inputs are re-resolved by the normal request builder.
 // sess must carry durable failed-step retry intent prepared by the host.
 func (e *Engine) RetryFailedStep(ctx context.Context, sess *session.Session, env tool.Environment) *Run {
-	return e.startRun(ctx, sess, RunRequest{}, "", func(ctx context.Context, r *Run) {
+	return e.startRun(ctx, sess, RunRequest{}, session.Usage{}, "", func(ctx context.Context, r *Run) {
 		if !e.prepareRunEnvironment(ctx, r, sess, env) {
 			return
 		}
@@ -1080,7 +1097,7 @@ func (e *Engine) ResumeApproval(ctx context.Context, sess *session.Session, env 
 	// never read the id off the session: a reused session still carries the id of
 	// the run that just ended, and inheriting it would silently attribute a brand
 	// new run's events to the previous one.
-	return e.startRun(ctx, sess, RunRequest{RunID: sess.RunID()}, "", func(ctx context.Context, r *Run) {
+	return e.startRun(ctx, sess, RunRequest{RunID: sess.RunID()}, session.Usage{}, "", func(ctx context.Context, r *Run) {
 		if !e.prepareRunEnvironment(ctx, r, sess, env) {
 			return
 		}
@@ -1123,7 +1140,7 @@ func askDiscriminatorFor(req RunRequest, serial int64) (value string, colonRejec
 // LIFO seal/close discipline. It is the single Run-construction site shared by
 // Engine.Run (→ drive) and ResumeApproval (→ driveFromAwaiting) so the two
 // entry seams cannot drift in their concurrency setup.
-func (e *Engine) startRun(ctx context.Context, sess *session.Session, req RunRequest, workspace string, body func(context.Context, *Run)) *Run {
+func (e *Engine) startRun(ctx context.Context, sess *session.Session, req RunRequest, budgetBaseline session.Usage, workspace string, body func(context.Context, *Run)) *Run {
 	ctx, cancel := context.WithCancel(ctx)
 	serial := runSerial.Add(1)
 	ctx = port.WithRunAttemptContext(ctx, sess.ID, serial)
@@ -1140,14 +1157,15 @@ func (e *Engine) startRun(ctx context.Context, sess *session.Session, req RunReq
 	}
 	ctx = tool.WithMemoryAttribution(ctx, attribution)
 	r := &Run{
-		events:    make(chan session.Event, 64),
-		asks:      newAskRegistry(),
-		cancel:    cancel,
-		ctx:       ctx,
-		workspace: workspace,
-		req:       req,
-		hardAbort: make(chan struct{}),
-		serial:    serial,
+		events:         make(chan session.Event, 64),
+		asks:           newAskRegistry(),
+		cancel:         cancel,
+		ctx:            ctx,
+		workspace:      workspace,
+		req:            req,
+		budgetBaseline: budgetBaseline,
+		hardAbort:      make(chan struct{}),
+		serial:         serial,
 		// Bind the run-scoped diagnostics ONCE here, where the live session is in
 		// scope: correlate every emitted line to this session id, and (for a child
 		// engine, Role != "") to its agent role too. The main engine has Role=="" so
@@ -1277,9 +1295,8 @@ func (e *Engine) drive(ctx context.Context, r *Run, sess *session.Session, env t
 
 	// total is THIS run's per-run usage delta (the EvResult.Usage figure the team
 	// supervisor sums per round). It starts at zero each Run. The MaxRunTokens budget
-	// brake is evaluated against the AGGREGATE's cumulative Usage (sess.Usage) instead
-	// — which RecordUsage below keeps in lock-step and which the snapshot persists —
-	// so the budget survives reopen/restart while EvResult.Usage stays per-run.
+	// brake is evaluated against lifetime main usage since this Run's immutable baseline,
+	// while the aggregate's Session.Usage remains the durable compatibility mirror.
 	e.runLoop(ctx, r, sess, env, session.Usage{}, "", false)
 }
 
@@ -1293,9 +1310,9 @@ func (e *Engine) drive(ctx context.Context, r *Run, sess *session.Session, env t
 // total seeds the per-run usage delta (zero for a fresh prompt; the
 // already-spent-this-re-entry delta for driveFromAwaiting, so the EvResult figure
 // the team supervisor sums stays accurate). lastText seeds the last meaningful
-// assistant text. The budget brake reads sess.Usage directly (persisted spend is
-// honoured), independent of total. skipFirstBoundaryInjections is used only by
-// failed-step retry reuses conversation state; live instruction sources are re-resolved.
+// assistant text. The budget brake reads lifetime main usage through sess.Usage
+// (the durable compatibility mirror), measured from r.budgetBaseline and independent
+// of total. skipFirstBoundaryInjections is used only by failed-step retry reuses conversation state; live instruction sources are re-resolved.
 // while every later iteration resumes the ordinary boundary drains.
 func (e *Engine) runLoop(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, total session.Usage, lastText string, skipFirstBoundaryInjections bool) {
 	// no-progress nudge accounting (Workstream A). noProgressNudges counts the
@@ -1772,18 +1789,15 @@ func (e *Engine) effectiveMaxRunTokens(r *Run) int {
 	}
 }
 
-// budgetExhausted reports whether the session's CUMULATIVE usage has crossed the
-// effective loop-level token ceiling (Deps.MaxRunTokens folded with the run's
-// tighten-only RunRequest override). A non-positive effective ceiling (the default)
-// disables the budget and always returns false.
-//
-// It reads the AGGREGATE's cumulative Usage (the value RecordUsage accumulates and
-// the snapshot persists), NOT the per-run delta, so the budget brake bounds the
-// logical run across reopen/restart — a reloaded session resumes with its prior
-// spend already counted. The per-run delta stays the EvResult.Usage figure.
+// budgetExhausted reports whether lifetime main usage accrued since this Run's
+// immutable baseline has crossed the effective loop-level token ceiling
+// (Deps.MaxRunTokens folded with the run's tighten-only RunRequest override). A
+// non-positive effective ceiling (the default) disables the budget and always
+// returns false. Ordinary runs have a zero baseline; only the package-private
+// team-lead synthesis path captures the current main total.
 func (e *Engine) budgetExhausted(r *Run, cumulative session.Usage) bool {
 	ceiling := e.effectiveMaxRunTokens(r)
-	return ceiling > 0 && cumulative.TotalTokens() >= ceiling
+	return ceiling > 0 && cumulative.TotalTokens()-r.budgetBaseline.TotalTokens() >= ceiling
 }
 
 // lookupTool resolves a tool by name for THIS run: the run-scoped ExtraTools overlay
