@@ -77,6 +77,7 @@ func (s *Session) RestoreTokenUsage(usage map[UsageKind]TokenUsage) {
 		}
 		s.TokenUsage[kind] = TokenUsage{Total: total, Models: models}
 	}
+	s.Usage = s.TokenUsage[UsageKindMain].Total
 }
 
 // Usage is an immutable value object accounting for the token cost of a single

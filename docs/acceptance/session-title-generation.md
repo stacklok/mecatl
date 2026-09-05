@@ -182,9 +182,10 @@ no per-attempt usage ledger. `token_usage[main]` is canonical for main work; dep
 - AC5.4: Title-generation tokens do not alter the deprecated `Session.Usage` main mirror,
   `MaxRunTokens`, normal turn/result usage, or the agent conversation.
   - verify: `TestADR_0291_AuxiliaryUsageDoesNotSpendRunBudget`
-- AC5.5: The budget baseline is internal and non-mutating: ordinary runs start at zero, only team
-  synthesis starts at current cumulative main usage, and no externally callable usage-reset API
-  exists.
+- AC5.5: The internal immutable budget baseline leaves `Session.Usage` and
+  `token_usage[main]` lifetime totals untouched: ordinary runs start at zero, only team
+  synthesis captures current cumulative main usage, that baseline survives its re-drives and
+  nudges, and no externally callable usage-reset API exists.
   - verify: `TestADR_0291_RunBudgetBaselineDoesNotResetLifetimeUsage`
 - AC5.6: Other auxiliary callers are not migrated by this plan.
   - verify: `TestSessionTitleGeneration_Scenario5_OnlyTitleIsPlumbed`

@@ -197,10 +197,6 @@ func Fold(meta SessionMeta, events iter.Seq2[session.Event, error]) (*session.Se
 	s.Title = meta.Title
 	s.TitleProvenance = meta.TitleProvenance
 	s.RestoreTitleMetadata(meta.TitleGeneration, meta.TitleSourcePrompts, meta.TitleAttempts)
-	if meta.TokenUsage != nil {
-		s.RestoreTokenUsage(meta.TokenUsage)
-	}
-
 	if f.pending != nil {
 		// AWAITING: the live session at pause time holds the assistant message WITH its
 		// not-yet-answered tool call (RecordAssistant runs before dispatch; the ask
@@ -221,11 +217,7 @@ func Fold(meta SessionMeta, events iter.Seq2[session.Event, error]) (*session.Se
 	if err := sessnap.RestoreState(s, f.restoreState(), f.stop, nil, f.finalCounters(), f.usage, f.permanent, f.lastError); err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrReconstruct, err)
 	}
-	if meta.TokenUsage == nil && f.usage != (session.Usage{}) {
-		s.RestoreTokenUsage(map[session.UsageKind]session.TokenUsage{
-			session.UsageKindMain: {Total: f.usage, Models: map[string]session.Usage{"unknown": f.usage}},
-		})
-	}
+	restoreTokenUsage(s, meta.TokenUsage, f.usage)
 	if s.State == session.StateFailed {
 		if err := s.RecordFailureMetadata(f.disposition, f.progress); err != nil {
 			return nil, fmt.Errorf("%w: restore failure metadata: %w", ErrReconstruct, err)
@@ -242,6 +234,20 @@ func Fold(meta SessionMeta, events iter.Seq2[session.Event, error]) (*session.Se
 	// title survives compaction here (better than the snapshot lazy fallback).
 	s.SetTitle(f.firstGenuineText)
 	return s, nil
+}
+
+// restoreTokenUsage makes canonical persisted usage authoritative and derives it
+// from the legacy compatibility projection only when the ledger is absent.
+func restoreTokenUsage(s *session.Session, persisted map[session.UsageKind]session.TokenUsage, legacy session.Usage) {
+	if persisted != nil {
+		s.RestoreTokenUsage(persisted)
+		return
+	}
+	if legacy != (session.Usage{}) {
+		s.RestoreTokenUsage(map[session.UsageKind]session.TokenUsage{
+			session.UsageKindMain: {Total: legacy, Models: map[string]session.Usage{"unknown": legacy}},
+		})
+	}
 }
 
 func (f *folder) finalizeOpenTurn() {
@@ -287,7 +293,7 @@ func restoreAuthority(s *session.Session, authority *session.Authority) error {
 // f.messages is the paired prefix; we seed that, then drive the trailing turn through
 // the running aggregate and pause on the ask — mirroring how the loop reached the
 // awaiting state.
-func (f *folder) reconstructAwaiting(s *session.Session, _ SessionMeta) (*session.Session, error) {
+func (f *folder) reconstructAwaiting(s *session.Session, meta SessionMeta) (*session.Session, error) {
 	if err := s.SeedHistory(f.messages); err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrReconstruct, err)
 	}
@@ -300,7 +306,7 @@ func (f *folder) reconstructAwaiting(s *session.Session, _ SessionMeta) (*sessio
 	if err := s.RecordAssistant(session.NewAssistantMessage(f.curText, "", f.curCalls)); err != nil {
 		return nil, fmt.Errorf("%w: awaiting assistant: %w", ErrReconstruct, err)
 	}
-	s.Usage = f.usage
+	restoreTokenUsage(s, meta.TokenUsage, f.usage)
 	if err := s.PauseForApproval(*f.pending); err != nil {
 		return nil, fmt.Errorf("%w: awaiting pause: %w", ErrReconstruct, err)
 	}

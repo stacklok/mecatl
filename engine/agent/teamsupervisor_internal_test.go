@@ -257,3 +257,47 @@ func TestBaseSharingReadOnlyMemberIsShellless(t *testing.T) {
 		t.Error("the base Environment's runner was lost — the member must not mutate the base")
 	}
 }
+
+// TestSynthesisBudgetBaselineSurvivesNudge proves the lead's fresh allowance is
+// immutable for the whole synthesis Run, including its no-progress re-drive, while
+// the session's lifetime main accounting stays intact.
+func TestSynthesisBudgetBaselineSurvivesNudge(t *testing.T) {
+	tm := team.New("baseline")
+	allow := permpolicy.NewPolicy(permpolicy.AllowAllFloorRules(), nil)
+	provider := mockllm.New(
+		mockllm.ChunksTurn(
+			mockllm.TextChunk("working complete"),
+			mockllm.UsageChunk(session.Usage{InputTokens: 100}),
+			mockllm.DoneChunk(session.StopEndTurn),
+		),
+		mockllm.ChunksTurn(
+			mockllm.UsageChunk(session.Usage{InputTokens: 40}),
+			mockllm.DoneChunk(session.StopEndTurn),
+		),
+		mockllm.ChunksTurn(
+			mockllm.TextChunk("synthesis after nudge"),
+			mockllm.UsageChunk(session.Usage{InputTokens: 20}),
+			mockllm.DoneChunk(session.StopEndTurn),
+		),
+	)
+	factory := func(_ MemberSpec, _ string) MemberBuild {
+		return MemberBuild{Engine: NewEngine(Deps{
+			LLM: provider, Catalog: tool.NewCatalog(), Policy: allow, Hooks: noopHookRunner{},
+			Model: "mock", MaxRunTokens: 50,
+		})}
+	}
+	sup := NewSupervisor(tm, memEnv("/ws"), factory, WithMaxRounds(1))
+	if err := sup.AddMember(context.Background(), MemberSpec{Name: "lead", Lead: true, InitialPrompt: "work then report"}); err != nil {
+		t.Fatalf("AddMember: %v", err)
+	}
+
+	out := sup.Run(context.Background(), nil)
+	if out.Report != "synthesis after nudge" {
+		t.Fatalf("report = %q, want synthesis after no-progress nudge", out.Report)
+	}
+	lead := sup.members["lead"].sess
+	want := session.Usage{InputTokens: 160}
+	if lead.Usage != want || lead.TokenUsage[session.UsageKindMain].Total != want {
+		t.Fatalf("lifetime main usage = %+v / %+v, want %+v", lead.Usage, lead.TokenUsage[session.UsageKindMain].Total, want)
+	}
+}

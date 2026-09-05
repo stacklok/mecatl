@@ -98,11 +98,9 @@ func TestSubagentSalvageDoesNotClobberExistingSummary(t *testing.T) {
 	}
 }
 
-// TestSubagentBudgetStopSalvages proves StopBudget NOW triggers salvage: a child that
-// exhausts its token budget with no summary DOES get a wrap-up drive (one extra turn,
-// enabled by ResetUsage). The result carries the salvaged summary AND the honest
-// "[subagent stopped: reached its token budget]" note (never relabelled).
-//
+// TestSubagentBudgetStopDoesNotResetUsage proves a budget-stopped child receives
+// no fresh allowance for salvage: only team-lead synthesis can use a non-zero
+// internal baseline.
 // Note: the operator-level engine budget (MaxRunTokens) is used here rather than a
 // per-call max_tokens override, because per-call values below agent.MinSubagentRunTokens
 // (25 000) are floored up to 25 000 — a 50-token per-call ceiling would be silently
@@ -111,7 +109,8 @@ func TestSubagentSalvageDoesNotClobberExistingSummary(t *testing.T) {
 func TestSubagentBudgetStopSalvages(t *testing.T) {
 	// A child whose first turn calls a tool with usage that overshoots the OPERATOR budget
 	// (50 tokens); the boundary check trips StopBudget before turn 2, with an empty body.
-	// The second scripted turn is the salvage summary that MUST run after ResetUsage.
+	// The second scripted turn must remain unconsumed: a budget stop cannot reset
+	// lifetime main usage for salvage.
 	childLLM := mockllm.New(
 		mockllm.ChunksTurn(
 			mockllm.ToolCallChunk(toolCall("k", "Read", `{"path":"a"}`)),
@@ -121,8 +120,8 @@ func TestSubagentBudgetStopSalvages(t *testing.T) {
 		mockllm.TextTurn("SALVAGED BUDGET FINDINGS"),
 	)
 	// Tight operator budget of 50 tokens; the first turn spends 200 (100 in + 100 out),
-	// tripping StopBudget — the salvage must then run after ResetUsage clears the
-	// cumulative spend.
+	// tripping StopBudget. The salvage attempt must observe the carried spend and not
+	// consume the second scripted turn.
 	childEngine := agent.NewEngine(agent.Deps{
 		LLM:          childLLM,
 		Catalog:      catalogWith(t, salvageReadTool()),
@@ -143,33 +142,22 @@ func TestSubagentBudgetStopSalvages(t *testing.T) {
 		t.Fatalf("salvaged budget stop is a success-with-note, got error: %+v", results[0])
 	}
 	body := results[0].Content
-	if strings.Contains(body, "(subagent produced no summary)") {
-		t.Fatalf("salvage should have filled in a body, got the empty placeholder: %q", body)
-	}
-	if !strings.Contains(body, "SALVAGED BUDGET FINDINGS") {
-		t.Fatalf("result must carry the salvaged summary, got: %q", body)
+	if strings.Contains(body, "SALVAGED BUDGET FINDINGS") {
+		t.Fatalf("budget stop must not grant a salvage allowance, got: %q", body)
 	}
 	// The honest "[subagent stopped: reached its token budget]" note must survive — the
 	// salvage fills in the body but must never relabel the stop reason.
 	if !strings.Contains(body, "reached its token budget") {
 		t.Fatalf("result must keep the honest budget note, got: %q", body)
 	}
-	// Two model calls: one budget-tripping turn + one salvage wrap-up turn.
-	if got := childLLM.Calls(); got != 2 {
-		t.Fatalf("child made %d model calls, want 2 (budget turn + salvage turn)", got)
+	// One model call: the second scripted salvage turn must stay unconsumed.
+	if got := childLLM.Calls(); got != 1 {
+		t.Fatalf("child made %d model calls, want 1 (budget stop remains exhausted)", got)
 	}
-	// The reported usage must include BOTH the original spend and the salvage turn's spend.
-	// The salvage turn adds at least some usage (even if 0 from the mock); the key check is
-	// that the first turn's 200 tokens are present (usage accumulation was preserved).
-	// (The mock TextTurn adds 0 extra tokens, so the floor is the original 200.)
 }
 
-// TestSubagentBudgetStopSalvageNeedsUsageReset proves that the ResetUsage call is what
-// makes the salvage turn possible: without it the child's cumulative Usage (200 tokens,
-// exceeding the 50-token budget) would immediately re-trip the budget ceiling at the
-// next turn boundary, preventing the salvage. The test verifies the salvage still runs
-// to completion and returns non-empty text — which only works because ResetUsage cleared
-// the stale spend before the salvage drive.
+// TestSubagentBudgetStopSalvagePreservesLifetimeUsage guards against reintroducing
+// an internal reset through the salvage path.
 func TestSubagentBudgetStopSalvageNeedsUsageReset(t *testing.T) {
 	// Same setup as TestSubagentBudgetStopSalvages: a 50-token budget, a first turn that
 	// spends 200 tokens, and a salvage turn that must produce text.
@@ -197,15 +185,12 @@ func TestSubagentBudgetStopSalvageNeedsUsageReset(t *testing.T) {
 	if len(results) != 1 {
 		t.Fatalf("want 1 result, got %d", len(results))
 	}
-	// The salvage ran to completion, which proves ResetUsage cleared the budget
-	// accumulator: without the reset the second turn boundary check would re-trip
-	// StopBudget immediately (200 tokens > 50-token budget) and the salvage would
-	// return empty text.
-	if !strings.Contains(results[0].Content, "RESET ENABLED THIS SALVAGE") {
-		t.Fatalf("salvage must produce non-empty text (proving ResetUsage worked), got: %q", results[0].Content)
+	// The second turn remains unavailable because the child retains its lifetime
+	// main usage after the budget stop.
+	if strings.Contains(results[0].Content, "RESET ENABLED THIS SALVAGE") {
+		t.Fatalf("salvage must not reset usage, got: %q", results[0].Content)
 	}
-	// Two model calls: one budget-tripping turn + one salvage wrap-up turn.
-	if got := childLLM.Calls(); got != 2 {
-		t.Fatalf("child made %d model calls, want 2 (budget turn + salvage turn)", got)
+	if got := childLLM.Calls(); got != 1 {
+		t.Fatalf("child made %d model calls, want 1 (no reset-backed salvage)", got)
 	}
 }

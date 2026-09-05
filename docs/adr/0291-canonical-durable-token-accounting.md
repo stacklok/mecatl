@@ -22,9 +22,10 @@ Attribute normal agent-loop model usage to `token_usage[main]` with the selected
 
 Retain `Session.Usage` and the existing snapshot `usage` field as deprecated compatibility mirrors of the lifetime `token_usage[main]` total. Dual-write them while consumers migrate. They are not canonical and no longer define the accounting model. Auxiliary usage, including `session_title`, never changes the compatibility mirror, `MaxRunTokens`, normal `EvResult.Usage`, or the agent conversation.
 
-### Planned budget-baseline design
+### Budget-baseline design
 
-Replace the mutating `ResetUsage` budget workaround with an internal, non-mutating per-run budget baseline. There is no new externally callable reset API.
+`Session.ResetUsage` is removed. The loop uses an internal, non-mutating per-run
+budget baseline; there is no new externally callable reset API.
 
 At the start of an ordinary run, the baseline is zero. The run's budget consumption is the cumulative lifetime main usage accrued above that baseline; normal `Result.Usage` remains the usage accrued by that run. Auxiliary kinds never affect either calculation.
 
