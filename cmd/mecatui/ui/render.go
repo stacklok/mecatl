@@ -1537,6 +1537,40 @@ func wrapToolCardText(text string, bodyWidth int) string {
 	return ansi.Hardwrap(text, bodyWidth, true)
 }
 
+// renderCardChromeSegments packs complete semantic chrome segments into one bounded row.
+// It retains only a priority prefix and reserves room for an omission marker, so a live
+// rebound key/action label is never split by a generic character truncation.
+func renderCardChromeSegments(style lipgloss.Style, segments []string, width int) string {
+	clean := make([]string, 0, len(segments))
+	for _, segment := range segments {
+		segment = strings.Map(func(r rune) rune {
+			if unicode.IsSpace(r) {
+				return ' '
+			}
+			return r
+		}, sanitizeTerminal(segment))
+		if segment != "" {
+			clean = append(clean, segment)
+		}
+	}
+	if width <= 0 {
+		return style.Render(strings.Join(clean, " · "))
+	}
+	for n := len(clean); n >= 0; n-- {
+		line := strings.Join(clean[:n], " · ")
+		if n < len(clean) {
+			if line != "" {
+				line += " · "
+			}
+			line += "..."
+		}
+		if lipgloss.Width(line) <= width {
+			return style.Render(line)
+		}
+	}
+	return style.Render("")
+}
+
 // renderDynamicCardChromeLine renders one bounded chrome row from dynamic text. It
 // sanitizes and flattens both inputs before reserving the prefix cells, then truncates
 // the remaining text at display-cell boundaries before applying the style.

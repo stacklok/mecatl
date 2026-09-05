@@ -8,6 +8,7 @@ import (
 	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
@@ -491,6 +492,28 @@ func wrapFocusMetadata(s string, width int) string {
 		return ansi.Wrap(s, budget, "")
 	}
 	return s
+}
+
+// hangingIndentWrap wraps a detail row to the text budget while indenting continuation
+// rows deeper than its parent lane. It applies the continuation's narrower width to every
+// line, which guarantees both indentation forms fit the card without dropping content.
+func hangingIndentWrap(s, firstIndent, continuationIndent string, budget int) string {
+	if budget <= 0 {
+		return firstIndent + s
+	}
+	continuationWidth := lipgloss.Width(continuationIndent)
+	if continuationWidth >= budget {
+		return ansi.Wrap(s, budget, "")
+	}
+	lines := strings.Split(ansi.Wrap(s, budget-continuationWidth, ""), "\n")
+	for i, line := range lines {
+		if i == 0 {
+			lines[i] = firstIndent + line
+		} else {
+			lines[i] = continuationIndent + line
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 // indentWrap word-wraps s to the text budget and indents every resulting line by

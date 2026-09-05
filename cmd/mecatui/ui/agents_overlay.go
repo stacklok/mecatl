@@ -402,6 +402,16 @@ func centerAgentsCard(th theme.Theme, body string, width, height int) string {
 	return lipgloss.Place(width, height, lipgloss.Center, lipgloss.Center, out)
 }
 
+// agentsCardContentWidth is the usable text width inside the final framed card.
+// Callers that render a single chrome/detail line must reserve the askCard frame;
+// otherwise Lipgloss wraps their already-bounded source a second time.
+func agentsCardContentWidth(th theme.Theme, bodyWidth int) int {
+	if bodyWidth <= 0 {
+		return bodyWidth
+	}
+	return max(1, bodyWidth-th.Style("askCard").GetHorizontalFrameSize())
+}
+
 // agentsTabBarLines is how many vertical lines the unified overlay's tab strip costs
 // (the tab bar itself + the blank line under it). The tab bodies are given the OUTER
 // height minus this so their height-window math (teamRosterRows/teamFocusRows/…) keeps
@@ -718,11 +728,14 @@ func renderSubagentFocus(th theme.Theme, fleet []subagentLane, child string, hk 
 		// AGENT has collected the result (the registry's delivered state) is not on
 		// the wire, so the pane states the delivery channel without claiming a state
 		// it cannot know.
-		note := "  background: runs detached; the agent collects its result via SubagentStatus"
+		note := "background: runs detached; the agent collects its result via SubagentStatus"
 		if ln.done {
-			note = "  background: done — result ready for the agent (SubagentStatus)"
+			note = "background: done — result ready for the agent (SubagentStatus)"
 		}
-		out.WriteString("\n" + muted.Render(wrapFocusMetadata(note, width)))
+		for _, row := range strings.Split(hangingIndentWrap(note, "  ", "    ", agentsCardContentWidth(th, budget)), "\n") {
+			out.WriteString("\n")
+			out.WriteString(muted.Render(row))
+		}
 	}
 	out.WriteString("\n\n")
 
@@ -819,11 +832,16 @@ func renderParallelRoster(th theme.Theme, st parallelState, groups []parallelGro
 		out.WriteString(muted.Render(fmt.Sprintf("  · +%d below", below)) + "\n")
 	}
 
-	// Every chord reads the LIVE keyMap markings (hk) so an override propagates
-	// (issue #457); with defaults the hint is byte-identical to the historical literal.
-	// The jump pair uses the FULL joined keys ("home/g·end/G") to match the roster
-	// handler's JumpTop/JumpEnd bindings, which bind both home/g and end/G.
-	out.WriteString("\n" + renderDynamicCardChromeLine(muted, "", hk.navUp+"/"+hk.navDown+" select · "+hk.scroll+" page · "+hk.jumpTopFull+"·"+hk.jumpEndFull+" first/last · "+hk.choose+" focus · "+agentsEmptyHint(hk), bodyWidth))
+	// Pack complete live-key actions by user-facing priority. Lower-priority navigation
+	// is omitted before any rebound key/action label can be split.
+	out.WriteString("\n" + renderCardChromeSegments(muted, []string{
+		hk.closeOnly + " close",
+		hk.navUp + "/" + hk.navDown + " select",
+		hk.choose + " focus",
+		hk.nextTab + " switch",
+		hk.scroll + " page",
+		hk.jumpTopFull + "·" + hk.jumpEndFull + " first/last",
+	}, agentsCardContentWidth(th, bodyWidth)))
 	return out.String()
 }
 

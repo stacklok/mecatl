@@ -1131,6 +1131,60 @@ func TestSubagentFocusBackgroundGolden(t *testing.T) {
 	compareGolden(t, "subagent_focus_background.golden", got)
 }
 
+// TestSubagentFocusBackgroundNoteHangsInFinalCard verifies the delivery note wraps in
+// the final centred card with continuation rows deeper than its parent lane.
+func TestSubagentFocusBackgroundNoteHangsInFinalCard(t *testing.T) {
+	m := newMCPModel(t, aztec(), nil)
+	m = goldenBackgroundFleet(m)
+	m = applyAll(m, tea.WindowSizeMsg{Width: 52, Height: 30})
+	mm, _ := m.Update(ctrlKey('a'))
+	m = mm.(Model)
+	mm, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = mm.(Model)
+
+	out := stripANSIstr(m.View().Content)
+	assertFitsViewport(t, []byte(out), m.width)
+	lines := strings.Split(out, "\n")
+	parent := -1
+	for i, line := range lines {
+		if strings.Contains(line, "background: runs detached") {
+			parent = i
+			break
+		}
+	}
+	if parent < 0 || parent+1 >= len(lines) {
+		t.Fatalf("missing wrapped background note:\n%s", out)
+	}
+	var noteLines, noteRows []string
+	for _, line := range lines[parent:] {
+		content, ok := strings.CutPrefix(strings.TrimLeft(line, " "), "┃")
+		content = strings.TrimSpace(strings.Trim(content, "┃ "))
+		if !ok || content == "" {
+			break
+		}
+		noteRows = append(noteRows, line)
+		noteLines = append(noteLines, content)
+	}
+	note := strings.Join(noteLines, " ")
+	if !strings.Contains(note, "background: runs detached; the agent collects its result via SubagentStatus") {
+		t.Fatalf("background note lost content: %q\n%s", note, out)
+	}
+	laneIndent := func(line string) int {
+		t.Helper()
+		content, ok := strings.CutPrefix(strings.TrimLeft(line, " "), "┃")
+		if !ok {
+			t.Fatalf("expected card row, got %q", line)
+		}
+		return len(content) - len(strings.TrimLeft(content, " "))
+	}
+	parentIndent := laneIndent(noteRows[0])
+	for i, row := range noteRows[1:] {
+		if continuationIndent := laneIndent(row); continuationIndent <= parentIndent {
+			t.Errorf("background continuation %d indent = %d, want > parent indent %d:\n%s", i+1, continuationIndent, parentIndent, out)
+		}
+	}
+}
+
 // TestAgentsTeamsTabGolden locks the Teams tab of the unified overlay (the tab bar +
 // the former team roster), reached by `tab` from the Subagents-default view.
 func TestAgentsTeamsTabGolden(t *testing.T) {
@@ -1184,7 +1238,48 @@ func TestParallelRosterGolden(t *testing.T) {
 		t.Fatalf("expected Parallel tab, got %v", m.agentsTab)
 	}
 	got := stripANSI([]byte(m.View().Content))
+	assertFitsViewport(t, got, m.width)
 	compareGolden(t, "parallel_roster.golden", got)
+}
+
+// TestParallelRosterFooterPacksSemanticSegmentsInFinalCard verifies the actual
+// golden viewport keeps complete high-priority actions on one footer row.
+func TestParallelRosterFooterPacksSemanticSegmentsInFinalCard(t *testing.T) {
+	m := newMCPModel(t, aztec(), nil)
+	m = goldenParallel(m)
+	mm, _ := m.Update(ctrlKey('a'))
+	m = mm.(Model)
+	out := stripANSIstr(m.View().Content)
+	assertFitsViewport(t, []byte(out), m.width)
+	for _, want := range []string{"esc close", "↑/↓ select", "enter focus", "tab switch"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("parallel roster footer omitted high-priority segment %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "esc ...") {
+		t.Errorf("parallel roster footer split a semantic segment:\n%s", out)
+	}
+}
+
+// TestParallelRosterFooterLongReboundLabelsInFinalCard verifies the final card
+// omits whole lower-priority segments rather than splitting rebound labels.
+func TestParallelRosterFooterLongReboundLabelsInFinalCard(t *testing.T) {
+	const width = 48
+	long := strings.Repeat("rebound-key-label-", 8)
+	hk := defaultHelpKeys()
+	hk.closeOnly, hk.navUp, hk.navDown = long+"close", long+"up", long+"down"
+	hk.choose, hk.nextTab = long+"focus", long+"switch"
+	hk.scroll, hk.jumpTopFull, hk.jumpEndFull = long+"page", long+"first", long+"last"
+	out := stripANSIstr(renderAgentsOverlay(aztec(), tabParallel, subagentState{}, parallelState{}, teamState{view: teamRoster}, nil, nil, []parallelGroup{{parentCallID: "p1", branchCount: 1}}, hk, width, 20))
+	assertFitsViewport(t, []byte(out), width)
+	if !strings.Contains(out, "...") {
+		t.Fatalf("long rebound footer should signal omitted segments:\n%s", out)
+	}
+	for _, fragment := range []string{"rebound-key-label-...", "rebound-key-label-…"} {
+		if strings.Contains(out, fragment) {
+			t.Errorf("footer split rebound key/action label %q:\n%s", fragment, out)
+		}
+	}
 }
 
 // TestParallelGroupFocusGolden locks one Parallel group's focus pane (the branches inline,
