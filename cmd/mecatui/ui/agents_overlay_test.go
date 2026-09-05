@@ -1131,6 +1131,44 @@ func TestSubagentFocusBackgroundGolden(t *testing.T) {
 	compareGolden(t, "subagent_focus_background.golden", got)
 }
 
+// TestSubagentFocusBoundedPreviewsNoteHangsInFinalCard guards the nested explanatory
+// note at the golden fixture's real width: its continuation must not return to the
+// parent detail lane.
+func TestSubagentFocusBoundedPreviewsNoteHangsInFinalCard(t *testing.T) {
+	m := newMCPModel(t, aztec(), nil)
+	m = goldenBackgroundFleet(m)
+	mm, _ := m.Update(ctrlKey('a'))
+	m = mm.(Model)
+	mm, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = mm.(Model)
+
+	out := stripANSIstr(m.View().Content)
+	lines := strings.Split(out, "\n")
+	parent := -1
+	for i, line := range lines {
+		if strings.Contains(line, "bounded previews") {
+			parent = i
+			break
+		}
+	}
+	if parent < 0 || parent+1 >= len(lines) {
+		t.Fatalf("missing wrapped bounded-previews note:\n%s", out)
+	}
+	cardIndent := func(line string) int {
+		t.Helper()
+		content, ok := strings.CutPrefix(strings.TrimLeft(line, " "), "┃")
+		if !ok {
+			t.Fatalf("expected card row, got %q", line)
+		}
+		return len(content) - len(strings.TrimLeft(content, " "))
+	}
+	parentIndent := cardIndent(lines[parent])
+	continuationIndent := cardIndent(lines[parent+1])
+	if continuationIndent <= parentIndent {
+		t.Errorf("bounded-previews continuation indent = %d, want > parent indent %d:\n%s", continuationIndent, parentIndent, out)
+	}
+}
+
 // TestSubagentFocusBackgroundNoteHangsInFinalCard verifies the delivery note wraps in
 // the final centred card with continuation rows deeper than its parent lane.
 func TestSubagentFocusBackgroundNoteHangsInFinalCard(t *testing.T) {

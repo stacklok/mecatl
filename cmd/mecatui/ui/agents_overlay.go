@@ -715,7 +715,7 @@ func renderSubagentFocus(th theme.Theme, fleet []subagentLane, child string, hk 
 	out.WriteString("\n")
 	out.WriteString(muted.Render(wrapFocusMetadata(subagentRosterLine(ln), width)))
 	out.WriteString("\n")
-	out.WriteString(muted.Render(indentWrap(boundedPreviewsSubNote, budget)))
+	out.WriteString(muted.Render(hangingIndentWrap(boundedPreviewsSubNote, "  ", "    ", agentsCardContentWidth(th, budget))))
 	if fail := subagentFailureLine(ln, width); fail != "" {
 		// The ONE place the fleet answers "why did it fail". The inline Subagent card
 		// already carries the cause inside the tool result the agent received, but a
