@@ -61,7 +61,7 @@ func TestLogicalAgentIdentityProjection_Scenario5_RotationPreservesLogicalIdenti
 	}
 }
 
-func TestADR_0252_LogicalAgentRotationOverlap(t *testing.T) {
+func TestADR_0301_LogicalAgentRotationOverlap(t *testing.T) {
 	oldKey := testPKCS8(t)
 	newKey := testPKCS8(t)
 	keys := map[string][]byte{"old": oldKey, "new": newKey}
@@ -117,7 +117,7 @@ func TestADR_0252_LogicalAgentRotationOverlap(t *testing.T) {
 	}
 }
 
-func TestADR_0252_LogicalAgentCredentialCanariesNeverPersistOrLeak(t *testing.T) {
+func TestADR_0301_LogicalAgentCredentialCanariesNeverPersistOrLeak(t *testing.T) {
 	issuer := testLogicalAgentIssuer(t)
 	identity, err := NewLogicalAgentIdentity(issuer.TrustDomain(), DefinitionTierManaged, "Code Reviewer")
 	if err != nil {

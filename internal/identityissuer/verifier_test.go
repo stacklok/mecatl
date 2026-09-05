@@ -43,7 +43,7 @@ func TestIdentityIssuerSubstrate_Scenario3_IndependentBundleVerification(t *test
 	}
 }
 
-func TestADR_0251_VerifierFailsClosed(t *testing.T) {
+func TestADR_0300_VerifierFailsClosed(t *testing.T) {
 	issuer := testIssuer(t)
 	bundle, err := issuer.Bundle(time.Minute)
 	if err != nil {
@@ -146,7 +146,7 @@ func TestInvariant_identity_bundle_freshness_bound(t *testing.T) {
 	}
 }
 
-func TestADR_0251_CanonicalBundleHasNoPrivateMaterial(t *testing.T) {
+func TestADR_0300_CanonicalBundleHasNoPrivateMaterial(t *testing.T) {
 	issuer := testIssuer(t)
 	first, err := issuer.Bundle(time.Minute)
 	if err != nil {

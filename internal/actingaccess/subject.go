@@ -134,7 +134,7 @@ func (v *JWTSubjectAssertionVerifier) Verify(assertion SubjectAssertion, present
 	}
 	now := v.now().UTC()
 	issuedAt, notBefore, expiresAt := time.Unix(claims.issuedAt, 0).UTC(), time.Unix(claims.notBefore, 0).UTC(), time.Unix(claims.expiresAt, 0).UTC()
-	if !keyNotAfter.After(now) || expiresAt.After(keyNotAfter) || !expiresAt.After(issuedAt) || notBefore.After(expiresAt) || now.Before(issuedAt.Add(-v.clockSkew)) ||
+	if !keyNotAfter.After(now) || expiresAt.After(keyNotAfter) || !expiresAt.After(issuedAt) || expiresAt.After(issuedAt.Add(v.maxAge)) || notBefore.After(expiresAt) || now.Before(issuedAt.Add(-v.clockSkew)) ||
 		now.Before(notBefore.Add(-v.clockSkew)) || now.After(expiresAt.Add(v.clockSkew)) || now.Sub(issuedAt) > v.maxAge+v.clockSkew {
 		return VerifiedSubject{}, errors.New("subject assertion time is invalid")
 	}

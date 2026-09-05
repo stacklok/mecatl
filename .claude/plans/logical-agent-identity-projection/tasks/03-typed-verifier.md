@@ -22,8 +22,8 @@ Implement the I2-specific independent verifier as a mutually exclusive profile b
 - AC4.1: An independently configured verifier accepts a valid I2 token and returns exactly trust domain, recomputed subject, tier, exact name, optional instance, a fresh sorted unique tool slice, JWT ID, and expiry—without raw compact JWT, generic claims, or a policy verdict.
   - verify: `TestLogicalAgentIdentityProjection_Scenario4_IndependentTypedVerification`
 - AC4.2: Payload tampering, attacker-key signing with a copied `kid`, wrong algorithm/key/use/trust domain/audience/time, unknown key, unavailable/stale/incomplete/regressed bundle, missing/empty/malformed/padded/wrong-length/non-base64url `jti`, missing/malformed v1 claim, unknown tier/version/member, multiple logical-agent versions, non-canonical tools, or subject/profile disagreement fails with a zero typed result and no partial authority.
-  - verify: `TestADR_0252_TypedVerifierFailsClosed`
+  - verify: `TestADR_0301_TypedVerifierFailsClosed`
 - AC4.3: Duplicate protected-header, registered-claim, top-level profile, and every v1-object member fail even when a last-value-wins parser would see a valid final value; a canonical positive-control sibling verifies. The production verifier constructs its typed result from the signature-validated typed claims representation and does not decode the payload again through an unverified path.
-  - verify: `TestADR_0252_TypedVerifierUsesOneSecurityRepresentation`
+  - verify: `TestADR_0301_TypedVerifierUsesOneSecurityRepresentation`
 - AC4.4: A valid I1 canary token fails I2 verification, an I2 token remains rejected by I1's registered-claims-only canary verifier, and generic unrelated JWT claims never grant tools or select another validation profile.
-  - verify: `TestADR_0252_ProfileConfusionMatrix`
+  - verify: `TestADR_0301_ProfileConfusionMatrix`

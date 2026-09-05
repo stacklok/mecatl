@@ -58,9 +58,9 @@ func (f outputFixture) exchangeOutput(t *testing.T, request Request) (ExchangeRe
 	if err != nil {
 		t.Fatal(err)
 	}
-	verified, err := f.verifier.Verify(result.Response(), outputPlan(result))
-	if err != nil {
-		t.Fatalf("Verify: %v", err)
+	verified := result.VerifiedOutput()
+	if verified.IsZero() {
+		t.Fatal("Exchange returned no verified output")
 	}
 	return result, verified
 }
@@ -111,9 +111,14 @@ func TestActingAccess_Scenario4_VerifiesExactOutputProfile(t *testing.T) {
 		!verified.ExpiresAt().Equal(f.now.Add(5*time.Minute)) {
 		t.Fatalf("verified output does not match exact plan: %#v", verified)
 	}
+	scopes := verified.Scopes()
+	scopes[0] = "repo:write"
+	if got := result.VerifiedOutput().Scopes(); !reflect.DeepEqual(got, []string{"repo:read"}) {
+		t.Fatalf("verified output accessor aliases scopes: %#v", got)
+	}
 }
 
-func TestADR_0253_OutputLifetimeCeiling(t *testing.T) {
+func TestADR_0302_OutputLifetimeCeiling(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
 		shorten func(*outputFixture)
@@ -121,13 +126,13 @@ func TestADR_0253_OutputLifetimeCeiling(t *testing.T) {
 		{"subject", func(f *outputFixture) { f.subject.verified.notAfter = f.now.Add(time.Minute) }},
 		{"actor", func(f *outputFixture) { f.actor.verified.notAfter = f.now.Add(time.Minute) }},
 		{"consent", func(f *outputFixture) {
-			f.spies.decisions[FailureConsent] = mustDecision(DecisionPermit, f.now.Add(time.Minute))
+			f.spies.source(FailureConsent).decision = mustDecision(DecisionPermit, f.now.Add(time.Minute))
 		}},
 		{"association", func(f *outputFixture) {
-			f.spies.decisions[FailureAssociation] = mustDecision(DecisionPermit, f.now.Add(time.Minute))
+			f.spies.source(FailureAssociation).decision = mustDecision(DecisionPermit, f.now.Add(time.Minute))
 		}},
 		{"target policy", func(f *outputFixture) {
-			f.spies.decisions[FailureTargetPolicy] = mustDecision(DecisionPermit, f.now.Add(time.Minute))
+			f.spies.source(FailureTargetPolicy).decision = mustDecision(DecisionPermit, f.now.Add(time.Minute))
 		}},
 		{"configured", func(f *outputFixture) { f.gate.cfg.MaximumLifetime = time.Minute }},
 	} {
@@ -147,7 +152,7 @@ func TestADR_0253_OutputLifetimeCeiling(t *testing.T) {
 	}
 }
 
-func TestADR_0253_OutputProfileConfusionRefused(t *testing.T) {
+func TestADR_0302_OutputProfileConfusionRefused(t *testing.T) {
 	f := newOutputFixture(t)
 	result, _ := f.exchangeOutput(t, f.request)
 	for _, tc := range []struct {
@@ -248,13 +253,14 @@ func TestActingAccess_Scenario4_ReviewerReadDeployerWrite(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.actor.verified.tools = []string{"Deploy"}
-	f.spies.expected = decisionExpectation{consent: "consent-alice-read", presenter: "broker-prod", resource: "vmcp-deploy", operation: "write", detail: "deployment.write", scopes: []string{"deploy:write"}}
+	f.spies.setExpected(decisionExpectation{consent: "consent-alice-read", presenter: "broker-prod", resource: "vmcp-deploy", operation: "write", detail: "deployment.write", scopes: []string{"deploy:write"}})
+	f.spies.registry.requiredTools = []string{"Deploy"}
 	if _, verified := f.exchangeOutput(t, deploy); verified.ActorSubject() != f.actor.verified.Subject() {
 		t.Fatal("deployer output not verified")
 	}
 }
 
-func TestADR_0253_OutputBindsAuthenticatedPresenterAndFreshKey(t *testing.T) {
+func TestADR_0302_OutputBindsAuthenticatedPresenterAndFreshKey(t *testing.T) {
 	f := newOutputFixture(t)
 	result, _ := f.exchangeOutput(t, f.request)
 
@@ -276,7 +282,7 @@ func TestADR_0253_OutputBindsAuthenticatedPresenterAndFreshKey(t *testing.T) {
 	}
 }
 
-func TestADR_0253_OutputRejectsStaleIssuanceTimes(t *testing.T) {
+func TestADR_0302_OutputRejectsStaleIssuanceTimes(t *testing.T) {
 	f := newOutputFixture(t)
 	result, _ := f.exchangeOutput(t, f.request)
 	response := result.Response()
@@ -291,6 +297,67 @@ type classifiedOutputVerifier struct{ err error }
 
 func (v classifiedOutputVerifier) Verify(ExchangeResponse, MechanismInput) (VerifiedOutput, error) {
 	return VerifiedOutput{}, v.err
+}
+
+type fixedOutputVerifier struct {
+	verified VerifiedOutput
+	err      error
+}
+
+func (v fixedOutputVerifier) Verify(ExchangeResponse, MechanismInput) (VerifiedOutput, error) {
+	return v.verified, v.err
+}
+
+func TestGateRejectsEmptyOrMismatchedVerifiedOutput(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		output func(MechanismInput) VerifiedOutput
+	}{
+		{name: "zero", output: func(MechanismInput) VerifiedOutput { return VerifiedOutput{} }},
+		{name: "mismatched", output: func(plan MechanismInput) VerifiedOutput {
+			output, err := NewVerifiedOutput(qualifiedOutputSubject(plan.Owner()), plan.ActorSubject(), plan.Presenter().Value(),
+				"other-resource", plan.Detail().Value(), plan.Scopes(), plan.NotAfter())
+			if err != nil {
+				t.Fatal(err)
+			}
+			return output
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newScenario3Fixture(t)
+			plan := MechanismInput{facts: decisionFacts{owner: f.owner, presenter: f.presenter, actorSubject: f.actor.verified.Subject(),
+				resource: f.request.Resource(), operation: f.request.Operation(), detail: f.request.Detail(), scopes: f.request.Scopes()}, notAfter: f.now.Add(5 * time.Minute)}
+			f.gate.cfg.OutputVerifier = fixedOutputVerifier{verified: tc.output(plan)}
+			result, err := f.exchange(t, f.request, "bad-verifier-output")
+			if !IsFailure(err, FailureOutputVerification) || !result.VerifiedOutput().IsZero() {
+				t.Fatalf("result=%#v err=%v", result, err)
+			}
+		})
+	}
+}
+
+func TestGateCanonicalizesOutputDeadlineToWholeSeconds(t *testing.T) {
+	f := newOutputFixture(t)
+	f.now = f.now.Add(987654321 * time.Nanosecond)
+	f.gate.cfg.Now = func() time.Time { return f.now }
+	f.issuer.now = func() time.Time { return f.now }
+	f.verifier.now = func() time.Time { return f.now }
+	f.subject.verified.notAfter = f.now.Add(90*time.Second + 123*time.Nanosecond)
+	result, err := f.exchange(t, f.request, "nanosecond-clock")
+	if err != nil {
+		t.Fatalf("Exchange: %v", err)
+	}
+	if got := outputPlan(result).NotAfter(); got.Nanosecond() != 0 || !result.VerifiedOutput().ExpiresAt().Equal(got) {
+		t.Fatalf("deadline=%v verified expiry=%v", got, result.VerifiedOutput().ExpiresAt())
+	}
+
+	f = newOutputFixture(t)
+	f.now = f.now.Add(900 * time.Millisecond)
+	f.gate.cfg.Now = func() time.Time { return f.now }
+	f.subject.verified.notAfter = f.now.Add(50 * time.Millisecond)
+	if _, err := f.exchange(t, f.request, "truncated-expiry"); !IsFailure(err, FailureOutputVerification) || f.issuer.calls != 0 {
+		t.Fatalf("err=%v issuer calls=%d", err, f.issuer.calls)
+	}
 }
 
 func TestGatePreservesOutputVerifierFailureClassification(t *testing.T) {

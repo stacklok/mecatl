@@ -1,4 +1,4 @@
-# ADR 0253 — Acting-as-user exchange boundary
+# ADR 0302 — Acting-as-user exchange boundary
 
 - Status: Proposed
 - Date: 2026-09-03
@@ -8,7 +8,7 @@
 
 ## Context
 
-ADR 0204 binds a durable session to a verified `(issuer, subject)` owner pair without retaining an inbound credential. ADR 0234 makes child tool authority a monotone carried capability set. ADR 0251 provides a shell-less broker-host ES256 trust-domain substrate, and ADR 0252 projects one logical agent definition plus its exact current tools as a compact JWT-SVID. None of those facts authorizes an external provider call on behalf of a user.
+ADR 0204 binds a durable session to a verified `(issuer, subject)` owner pair without retaining an inbound credential. ADR 0234 makes child tool authority a monotone carried capability set. ADR 0300 provides a shell-less broker-host ES256 trust-domain substrate, and ADR 0301 projects one logical agent definition plus its exact current tools as a compact JWT-SVID. None of those facts authorizes an external provider call on behalf of a user.
 
 The external authorization decision has distinct principals and ceilings. A user subject proves whose authority is being spent; the I2 logical-agent token proves which definition acts and its exact tools; the combined broker workload proves which presenter submits the exchange; and a registered vMCP resource/operation identifies the target. Conflating a broker OAuth client identifier with the I2 logical-definition subject would remove the very association the authorization server must check. Conversely, verifying independently valid user and actor JWTs is insufficient: an attacker could recombine them with an unassociated presenter or broader target.
 
@@ -49,7 +49,7 @@ authorization_details = exact registered RFC 9396 operation detail, when the
 
 The registered request is a single canonical tuple `(resource, operation, authorization details, scopes)`. A registry maps it to required I2 tools and permitted scopes; a mechanism cannot replace it with defaults, a different operation, a broader detail, or a cross-resource scope. I3-C accepts only the closed profile above; cross-domain identity chaining is deferred and any issuer/tenant outside the configured bilateral profile is rejected.
 
-The authorization server verifies the I2 token under the same atomically replaced, complete, bounded-freshness Mecatl trust-domain bundle and rotation schedule as ADR 0251; it pins the fixed exchange audience, ES256/profile/time rules, canonical definition subject, and exact tool set. It rejects retired/unknown keys after the bounded freshness window. I2 `instance` and `jti` are audit correlation only; no absent I2 field grants user, resource, consent, presenter, or holder authority.
+The authorization server verifies the I2 token under the same atomically replaced, complete, bounded-freshness Mecatl trust-domain bundle and rotation schedule as ADR 0300; it pins the fixed exchange audience, ES256/profile/time rules, canonical definition subject, and exact tool set. It rejects retired/unknown keys after the bounded freshness window. I2 `instance` and `jti` are audit correlation only; no absent I2 field grants user, resource, consent, presenter, or holder authority.
 
 The AS-authenticated broker client/presenter and the I2 logical definition are separate identities. B1 proves only the workload-to-broker hop; the AS independently authenticates the broker client on the exchange connection (for example through a registered mTLS client) and derives presenter/client identity from that authentication, never from a request field. The authorization server must enforce an operator-owned, deployment-scoped, validity-bounded association selected only from that presenter identity and registered policy. It binds the presenter, logical definition, resource, operation/detail, and canonical requested/granted scope ceiling; absent, ambiguous, stale, or explicit-deny association records refuse. This association is the required authorization fact; equality of `actor_token.sub` and `client_id` is not an alternative.
 
@@ -91,7 +91,7 @@ The design deliberately cannot make a production ToolHive call yet. I3-T require
 
 - [ADR 0204 — caller identity threading](./0204-caller-identity-threading.md)
 - [ADR 0234 — authority evaluator port](./0234-authority-evaluator-port.md)
-- [ADR 0251 — identity issuer substrate](./0251-identity-issuer-substrate.md)
-- [ADR 0252 — logical-agent identity projection](./0252-logical-agent-identity-projection.md)
+- [ADR 0300 — identity issuer substrate](./0300-identity-issuer-substrate.md)
+- [ADR 0301 — logical-agent identity projection](./0301-logical-agent-identity-projection.md)
 - [Agent identity outbound](../agent-identity-outbound.md)
 - [RFC 8693](https://www.rfc-editor.org/rfc/rfc8693), [RFC 8707](https://www.rfc-editor.org/rfc/rfc8707), [RFC 8705](https://www.rfc-editor.org/rfc/rfc8705), [RFC 9396](https://www.rfc-editor.org/rfc/rfc9396), and [RFC 9700](https://www.rfc-editor.org/rfc/rfc9700)

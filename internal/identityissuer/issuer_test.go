@@ -13,7 +13,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 )
 
-func TestADR_0251_IdentityConfigFailsClosed(t *testing.T) {
+func TestADR_0300_IdentityConfigFailsClosed(t *testing.T) {
 	key := testPKCS8(t)
 	for _, tc := range []struct {
 		name   string
@@ -113,7 +113,7 @@ func TestIdentityIssuerSubstrate_Scenario2_LoadImmutableKeyring(t *testing.T) {
 	}
 }
 
-func TestADR_0251_KeyringRejectsInvalidGeneration(t *testing.T) {
+func TestADR_0300_KeyringRejectsInvalidGeneration(t *testing.T) {
 	valid := testPKCS8(t)
 	wrongCurve := testPKCS8Curve(t, elliptic.P384())
 	for _, tc := range []struct {

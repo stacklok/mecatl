@@ -19,7 +19,7 @@ import (
 	"github.com/stacklok/mecatl/internal/identityissuer"
 )
 
-func TestADR_0253_ClosedSubjectAssertionProfile(t *testing.T) {
+func TestADR_0302_ClosedSubjectAssertionProfile(t *testing.T) {
 	now := time.Unix(1_900_000_000, 0).UTC()
 	key := newP256Key(t)
 	presenter, err := NewPresenter("broker-prod")
@@ -70,6 +70,7 @@ func TestADR_0253_ClosedSubjectAssertionProfile(t *testing.T) {
 		{"wrong authorized party", ExchangeSubjectTokenType, withClaim(claims, "azp", "other"), jwt.SigningMethodES256, key},
 		{"missing time", ExchangeSubjectTokenType, withoutClaim(claims, "nbf"), jwt.SigningMethodES256, key},
 		{"excessive age", ExchangeSubjectTokenType, withClaim(claims, "iat", now.Add(-3*time.Minute).Unix()), jwt.SigningMethodES256, key},
+		{"expiry exceeds max age", ExchangeSubjectTokenType, withClaim(claims, "exp", now.Add(time.Minute+time.Second).Unix()), jwt.SigningMethodES256, key},
 	}
 	wrongAlgorithmKey := newP384Key(t)
 	cases = append(cases, struct {
@@ -115,7 +116,7 @@ func TestADR_0253_ClosedSubjectAssertionProfile(t *testing.T) {
 	}
 }
 
-func TestADR_0253_ActorProfileVerificationAndRotation(t *testing.T) {
+func TestADR_0302_ActorProfileVerificationAndRotation(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 	oldDER, oldKey := newPKCS8(t)
 	newDER, _ := newPKCS8(t)

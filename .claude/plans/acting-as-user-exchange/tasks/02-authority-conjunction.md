@@ -20,9 +20,9 @@ Build the concrete production entrypoint and exact authorization conjunction in 
 - AC3.1: Through the production exchange entrypoint, Alice, an associated AS-authenticated presenter, a reviewer with the exact registered read tool, an exact consent proof, and a permitted registered read target receive a permit trace containing every required gate.
   - verify: `TestActingAccess_Scenario3_AllCeilingsPermit`
 - AC3.2: Six independent decision-source spies each deny the baseline alone; each denial prevents mechanism invocation and identifies its stable failure kind. Restoring that source permits. Changing one bound consent/presenter/resource/operation/detail/scope value likewise refuses before issuance.
-  - verify: `TestADR_0253_IndependentCeilingRefusals`
+  - verify: `TestADR_0302_IndependentCeilingRefusals`
 - AC3.3: An explicit deny beats a matching permit in consent, association, or target policy, and neither consent nor a broader scope overrides it; unavailable/indeterminate fails closed without issuance.
-  - verify: `TestADR_0253_DenyDominanceAndIndeterminacy`
+  - verify: `TestADR_0302_DenyDominanceAndIndeterminacy`
 - AC3.4: A logical actor subject with a valid signature but a narrower exact tool set cannot use a cached or subject-name-derived broader capability.
   - verify: `TestInvariant_acting_access_exact_actor_tools`
 - AC3.5: An unknown resource/operation/detail, alias, omitted/default/extra scope, cross-resource scope reuse, or tool-name-only resource inference is refused.

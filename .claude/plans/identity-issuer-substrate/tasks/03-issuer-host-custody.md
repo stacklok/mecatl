@@ -26,4 +26,4 @@ Add the issuer-only composition mode of the future combined broker. It must be a
 - AC4.3: Agent-side workloads lack the issuer Secret mount and Secret API read access, while the issuer-host positive control can complete a sign-and-independent-verify canary.
   - verify: `TestIdentityIssuerSubstrate_Scenario4_SecretContainment`
 - AC4.4: Keys, compact JWTs, and bearer canaries never occur in bundle/status/diagnostic/error/event/snapshot/argv/environment projections.
-  - verify: `TestADR_0251_SecretCanariesNeverLeak`
+  - verify: `TestADR_0300_SecretCanariesNeverLeak`

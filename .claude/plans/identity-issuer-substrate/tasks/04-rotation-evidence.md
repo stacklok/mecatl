@@ -22,6 +22,6 @@ Complete I1’s manifest-driven prepublish/activate/retire validation and restar
 - AC5.2: Activate starts new-key signing while independently cached verifiers accept both documented overlap keys; restart reconstructs the declared generation, phase, active key, and bundle sequence.
   - verify: `TestIdentityIssuerSubstrate_Scenario5_ActivateAndRestart`
 - AC5.3: Retire refuses before last old issuance plus `T+S+R`; after that bound, old keys disappear and old-key JWT-SVIDs fail verification.
-  - verify: `TestADR_0251_RetirementOverlapBound`
+  - verify: `TestADR_0300_RetirementOverlapBound`
 - AC5.4: New long-lived snapshots, listeners, refresh workers, or caches are inventoried in ADR 0027 before landing.
   - verify: inspection — ADR 0027 resource and fidelity inventory is reviewed alongside the implementation.

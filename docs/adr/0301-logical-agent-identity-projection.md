@@ -1,4 +1,4 @@
-# ADR 0252 — Logical-agent JWT-SVID identity projection
+# ADR 0301 — Logical-agent JWT-SVID identity projection
 
 - Status: Proposed
 - Date: 2026-08-31
@@ -8,13 +8,13 @@
 
 ## Context
 
-ADR 0251 provides the future combined broker with an explicit SPIFFE trust domain, an ES256/P-256 issuer, a canonical public bundle, an independent verifier, shell-less key custody, and restart-safe rotation. Mecatl already carries a durable `governance.CapabilitySet` and narrows it through the shared delegation seams, but it has no signed representation a downstream broker can independently verify.
+ADR 0300 provides the future combined broker with an explicit SPIFFE trust domain, an ES256/P-256 issuer, a canonical public bundle, an independent verifier, shell-less key custody, and restart-safe rotation. Mecatl already carries a durable `governance.CapabilitySet` and narrows it through the shared delegation seams, but it has no signed representation a downstream broker can independently verify.
 
 The broader identity exploration previously mixed several axes: logical agent definition, runtime occurrence, owner or user, delegation history, run correlation, and workload holder. It also proposed richer resource and chain claims than mecatl can currently enforce without inventing a second policy language. I2 needs one small, honest assertion that I3 can later consume as actor evidence without making history an authorization source or moving user credentials into mecatl.
 
 ## Decision
 
-I2 adds one root-internal, typed logical-agent JWT-SVID profile over ADR 0251. It implements constrained issuance and independent typed verification only. It adds no production mint RPC, agent-loop dependency, session persistence, Redis state, user exchange, vMCP route admission, or credential lookup.
+I2 adds one root-internal, typed logical-agent JWT-SVID profile over ADR 0300. It implements constrained issuance and independent typed verification only. It adds no production mint RPC, agent-loop dependency, session persistence, Redis state, user exchange, vMCP route admission, or credential lookup.
 
 ### Logical principal
 
@@ -72,7 +72,7 @@ The signed tool set may equal or narrow the source tools. I2 makes no claim abou
 
 ### Constrained issue and verify operations
 
-I2 adds typed siblings within `internal/identityissuer` and a constrained host-level mint method. They share ADR 0251's key custody, bundle, time, audience, and rotation substrate but do not expose arbitrary claims, JOSE headers, key selection, issuer, audience, TTL, timestamps, signing bytes, or caller-provided JWT ID.
+I2 adds typed siblings within `internal/identityissuer` and a constrained host-level mint method. They share ADR 0300's key custody, bundle, time, audience, and rotation substrate but do not expose arbitrary claims, JOSE headers, key selection, issuer, audience, TTL, timestamps, signing bytes, or caller-provided JWT ID.
 
 Every mint receives a fresh 16-byte cryptographically random `jti`, encoded unpadded base64url. It is correlation metadata, not authority or replay prevention. I2 uses one fixed configured I3 audience and one fixed I1-bounded TTL. Compact tokens remain capped at 16 KiB.
 
@@ -93,7 +93,7 @@ The result carries no raw compact token, generic claims map, or authorization ve
 
 ### Lifecycle and compatibility
 
-Compact I2 JWTs are ephemeral and never enter session snapshots, event logs, diagnostics, prompts, model-visible results, or distributed broker state. Reminting the same logical definition preserves the subject and same-or-narrower tools while changing times, `jti`, signature, and possibly `kid`. During ADR 0251 rotation overlap, independent verifiers accept old and new unexpired tokens only while their keys remain in the bounded complete bundle.
+Compact I2 JWTs are ephemeral and never enter session snapshots, event logs, diagnostics, prompts, model-visible results, or distributed broker state. Reminting the same logical definition preserves the subject and same-or-narrower tools while changing times, `jti`, signature, and possibly `kid`. During ADR 0300 rotation overlap, independent verifiers accept old and new unexpired tokens only while their keys remain in the bounded complete bundle.
 
 When I2 is disabled, no I2 validation, issuer lookup, mint, verification, persistence, or diagnostic occurs, and existing stored bytes and agent behavior remain unchanged. When enabled, I2 returns a signed token or an error; it never fabricates an unsigned or anonymous identity.
 
@@ -115,7 +115,7 @@ For I2, this ADR supersedes the candidate shapes in `docs/agent-identity-model.m
 
 ## See also
 
-- [ADR 0251 — identity issuer substrate](./0251-identity-issuer-substrate.md)
+- [ADR 0300 — identity issuer substrate](./0300-identity-issuer-substrate.md)
 - [ADR 0234 — authority evaluator port](./0234-authority-evaluator-port.md)
 - [ADR 0027 — cloud-native architecture](./0027-cloud-native.md)
 - [Agent identity model](../agent-identity-model.md)

@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/stacklok/mecatl/internal/identityissuer"
 )
 
 func TestActingAccess_Scenario1_RejectsNonCanonicalRequest(t *testing.T) {
@@ -91,6 +93,7 @@ func TestInvariant_acting_access_closed_inputs(t *testing.T) {
 		reflect.TypeOf(Request{}), reflect.TypeOf(Owner{}), reflect.TypeOf(Presenter{}),
 		reflect.TypeOf(RegisteredResource{}), reflect.TypeOf(RegisteredOperation{}), reflect.TypeOf(RegisteredDetail{}),
 		reflect.TypeOf(Scope{}), reflect.TypeOf(VerifiedSubject{}), reflect.TypeOf(VerifiedActor{}), reflect.TypeOf(Decision{}),
+		reflect.TypeOf(RegistrationDecision{}),
 		reflect.TypeOf(SubjectAuthorityInput{}), reflect.TypeOf(ConsentInput{}), reflect.TypeOf(AssociationInput{}),
 		reflect.TypeOf(RegistryInput{}), reflect.TypeOf(TargetPolicyInput{}), reflect.TypeOf(MechanismInput{}),
 		reflect.TypeOf(PermitTrace{}), reflect.TypeOf(ExchangeResult{}),
@@ -222,10 +225,27 @@ func contains(value, fragment string) bool {
 	return false
 }
 
+type decisionSpy struct {
+	decision Decision
+	calls    int
+	expected decisionExpectation
+}
+
+type subjectAuthoritySpy struct{ decisionSpy }
+type consentAuthoritySpy struct{ decisionSpy }
+type associationAuthoritySpy struct{ decisionSpy }
+type registryAuthoritySpy struct {
+	decisionSpy
+	requiredTools []string
+}
+type targetAuthoritySpy struct{ decisionSpy }
+
 type authoritySpies struct {
-	decisions map[FailureKind]Decision
-	calls     map[FailureKind]int
-	expected  decisionExpectation
+	subject     *subjectAuthoritySpy
+	consent     *consentAuthoritySpy
+	association *associationAuthoritySpy
+	registry    *registryAuthoritySpy
+	target      *targetAuthoritySpy
 }
 
 type decisionExpectation struct {
@@ -245,42 +265,79 @@ func mustDecision(effect DecisionEffect, notAfter time.Time) Decision {
 }
 
 func newAuthoritySpies(exp decisionExpectation, until time.Time) *authoritySpies {
+	permit := mustDecision(DecisionPermit, until)
 	return &authoritySpies{
-		decisions: map[FailureKind]Decision{
-			FailureSubjectAuthority: mustDecision(DecisionPermit, until),
-			FailureConsent:          mustDecision(DecisionPermit, until),
-			FailureAssociation:      mustDecision(DecisionPermit, until),
-			FailureRegistry:         mustDecision(DecisionPermit, until),
-			FailureTargetPolicy:     mustDecision(DecisionPermit, until),
-		},
-		calls: make(map[FailureKind]int), expected: exp,
+		subject:     &subjectAuthoritySpy{decisionSpy{decision: permit, expected: exp}},
+		consent:     &consentAuthoritySpy{decisionSpy{decision: permit, expected: exp}},
+		association: &associationAuthoritySpy{decisionSpy{decision: permit, expected: exp}},
+		registry:    &registryAuthoritySpy{decisionSpy: decisionSpy{decision: permit, expected: exp}, requiredTools: []string{"Read"}},
+		target:      &targetAuthoritySpy{decisionSpy{decision: permit, expected: exp}},
 	}
 }
 
-func (s *authoritySpies) decide(kind FailureKind, in decisionInputView) Decision {
-	s.calls[kind]++
+func (s *decisionSpy) decide(in decisionInputView) Decision {
+	s.calls++
 	if in.ConsentProof() != s.expected.consent || in.Presenter().Value() != s.expected.presenter ||
 		in.Resource().Value() != s.expected.resource || in.Operation().Value() != s.expected.operation ||
 		in.Detail().Value() != s.expected.detail || !reflect.DeepEqual(in.Scopes(), s.expected.scopes) {
-		return mustDecision(DecisionDeny, s.decisions[kind].NotAfter())
+		return mustDecision(DecisionDeny, s.decision.NotAfter())
 	}
-	return s.decisions[kind]
+	return s.decision
 }
 
-func (s *authoritySpies) DecideSubject(_ context.Context, in SubjectAuthorityInput) Decision {
-	return s.decide(FailureSubjectAuthority, in)
+func (s *subjectAuthoritySpy) DecideSubject(_ context.Context, in SubjectAuthorityInput) Decision {
+	return s.decide(in)
 }
-func (s *authoritySpies) DecideConsent(_ context.Context, in ConsentInput) Decision {
-	return s.decide(FailureConsent, in)
+func (s *consentAuthoritySpy) DecideConsent(_ context.Context, in ConsentInput) Decision {
+	return s.decide(in)
 }
-func (s *authoritySpies) DecideAssociation(_ context.Context, in AssociationInput) Decision {
-	return s.decide(FailureAssociation, in)
+func (s *associationAuthoritySpy) DecideAssociation(_ context.Context, in AssociationInput) Decision {
+	return s.decide(in)
 }
-func (s *authoritySpies) DecideRegistration(_ context.Context, in RegistryInput) Decision {
-	return s.decide(FailureRegistry, in)
+func (s *registryAuthoritySpy) DecideRegistration(_ context.Context, in RegistryInput) RegistrationDecision {
+	decision := s.decide(in)
+	tools := s.requiredTools
+	if decision.Effect() != DecisionPermit {
+		tools = nil
+	}
+	result, _ := NewRegistrationDecision(decision, tools)
+	return result
 }
-func (s *authoritySpies) DecideTarget(_ context.Context, in TargetPolicyInput) Decision {
-	return s.decide(FailureTargetPolicy, in)
+func (s *targetAuthoritySpy) DecideTarget(_ context.Context, in TargetPolicyInput) Decision {
+	return s.decide(in)
+}
+
+func (s *authoritySpies) source(kind FailureKind) *decisionSpy {
+	switch kind {
+	case FailureSubjectAuthority:
+		return &s.subject.decisionSpy
+	case FailureConsent:
+		return &s.consent.decisionSpy
+	case FailureAssociation:
+		return &s.association.decisionSpy
+	case FailureRegistry:
+		return &s.registry.decisionSpy
+	case FailureTargetPolicy:
+		return &s.target.decisionSpy
+	default:
+		panic("unknown decision source")
+	}
+}
+
+func (s *authoritySpies) setExpected(exp decisionExpectation) {
+	for _, source := range []*decisionSpy{&s.subject.decisionSpy, &s.consent.decisionSpy, &s.association.decisionSpy, &s.registry.decisionSpy, &s.target.decisionSpy} {
+		source.expected = exp
+	}
+}
+
+func (s *authoritySpies) callCounts() map[FailureKind]int {
+	return map[FailureKind]int{
+		FailureSubjectAuthority: s.subject.calls,
+		FailureConsent:          s.consent.calls,
+		FailureAssociation:      s.association.calls,
+		FailureRegistry:         s.registry.calls,
+		FailureTargetPolicy:     s.target.calls,
+	}
 }
 
 type fixedSubjectVerifier struct {
@@ -289,14 +346,10 @@ type fixedSubjectVerifier struct {
 	calls      int
 	wantRaw    string
 	rawMatches int
-	block      func()
 }
 
 func (v *fixedSubjectVerifier) Verify(token SubjectAssertion, _ Presenter) (VerifiedSubject, error) {
 	v.calls++
-	if v.block != nil {
-		v.block()
-	}
 	if token.secret.value != nil && token.secret.value.raw == v.wantRaw {
 		v.rawMatches++
 	}
@@ -336,7 +389,8 @@ func (recordingOutputVerifier) Verify(response ExchangeResponse, plan MechanismI
 	if !validExchangeResponse(response, plan, time.Date(2035, 1, 2, 3, 4, 5, 0, time.UTC)) {
 		return VerifiedOutput{}, fmt.Errorf("invalid output")
 	}
-	return VerifiedOutput{}, nil
+	return NewVerifiedOutput(qualifiedOutputSubject(plan.Owner()), plan.ActorSubject(), plan.Presenter().Value(),
+		plan.Resource().Value(), plan.Detail().Value(), plan.Scopes(), plan.NotAfter())
 }
 
 func (m *recordingMechanism) Exchange(_ context.Context, in MechanismInput, subject SubjectAssertion, actor I2Token) (ExchangeResponse, error) {
@@ -405,12 +459,20 @@ func newScenario3Fixture(t *testing.T) scenario3Fixture {
 	}
 	until := now.Add(10 * time.Minute)
 	subject := &fixedSubjectVerifier{verified: VerifiedSubject{owner: owner, consentProof: "consent-alice-read", notAfter: until}}
-	actor := &fixedActorVerifier{verified: VerifiedActor{trustDomain: "agents.example", subject: "spiffe://agents.example/agent/project/reviewer", name: "reviewer", tools: []string{"Read"}, jwtID: "actor-1", notAfter: until}}
+	actorIdentity, err := identityissuer.NewLogicalAgentIdentity("agents.example", identityissuer.DefinitionTierProject, "reviewer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	verifiedActor, err := NewVerifiedActor("agents.example", actorIdentity.Subject, identityissuer.DefinitionTierProject, "reviewer", "", []string{"Read"}, "actor-1", until)
+	if err != nil {
+		t.Fatal(err)
+	}
+	actor := &fixedActorVerifier{verified: verifiedActor}
 	expected := decisionExpectation{consent: "consent-alice-read", presenter: "broker-prod", resource: "vmcp-repository", operation: "read", detail: "repository.read", scopes: []string{"repo:read"}}
 	spies := newAuthoritySpies(expected, until)
 	mechanism := &recordingMechanism{}
-	gate, err := NewGate(GateConfig{SubjectVerifier: subject, ActorVerifier: actor, SubjectAuthority: spies, Consent: spies,
-		Association: spies, Registry: spies, TargetPolicy: spies, Mechanism: mechanism, OutputVerifier: recordingOutputVerifier{}, MaximumLifetime: 5 * time.Minute, Now: func() time.Time { return now }})
+	gate, err := NewGate(GateConfig{SubjectVerifier: subject, ActorVerifier: actor, SubjectAuthority: spies.subject, Consent: spies.consent,
+		Association: spies.association, Registry: spies.registry, TargetPolicy: spies.target, Mechanism: mechanism, OutputVerifier: recordingOutputVerifier{}, MaximumLifetime: 5 * time.Minute, Now: func() time.Time { return now }})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -433,12 +495,12 @@ func (f scenario3Fixture) exchange(t *testing.T, request Request, correlation st
 
 func TestActingAccess_Scenario3_AllCeilingsPermit(t *testing.T) {
 	f := newScenario3Fixture(t)
-	f.spies.decisions[FailureAssociation] = mustDecision(DecisionPermit, f.now.Add(2*time.Minute))
+	f.spies.source(FailureAssociation).decision = mustDecision(DecisionPermit, f.now.Add(2*time.Minute))
 	result, err := f.exchange(t, f.request, "request-123")
 	if err != nil {
 		t.Fatalf("Exchange: %v", err)
 	}
-	wantGates := []GateKind{GateOwner, GateSubjectAuthority, GateConsent, GateAssociation, GateActorTools, GateRegistry, GateTargetPolicy}
+	wantGates := []GateKind{GateOwner, GateSubjectAuthority, GateConsent, GateAssociation, GateRegistry, GateActorTools, GateTargetPolicy}
 	if got := result.Trace().Gates(); !reflect.DeepEqual(got, wantGates) {
 		t.Fatalf("trace gates = %#v, want %#v", got, wantGates)
 	}
@@ -454,7 +516,7 @@ func TestActingAccess_Scenario3_AllCeilingsPermit(t *testing.T) {
 	}
 }
 
-func TestADR_0253_IndependentCeilingRefusals(t *testing.T) {
+func TestADR_0302_IndependentCeilingRefusals(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		kind FailureKind
@@ -467,7 +529,7 @@ func TestADR_0253_IndependentCeilingRefusals(t *testing.T) {
 			if tc.kind == FailureActorTools {
 				f.actor.verified.tools = []string{"Grep"}
 			} else {
-				f.spies.decisions[tc.kind] = mustDecision(DecisionDeny, f.now.Add(time.Minute))
+				f.spies.source(tc.kind).decision = mustDecision(DecisionDeny, f.now.Add(time.Minute))
 			}
 			_, err := f.exchange(t, f.request, "deny-one")
 			if !IsFailure(err, tc.kind) || f.mechanism.calls != 0 {
@@ -476,7 +538,7 @@ func TestADR_0253_IndependentCeilingRefusals(t *testing.T) {
 			if tc.kind == FailureActorTools {
 				f.actor.verified.tools = []string{"Read"}
 			} else {
-				f.spies.decisions[tc.kind] = mustDecision(DecisionPermit, f.now.Add(time.Minute))
+				f.spies.source(tc.kind).decision = mustDecision(DecisionPermit, f.now.Add(time.Minute))
 			}
 			if _, err := f.exchange(t, f.request, "restored"); err != nil {
 				t.Fatalf("restored Exchange: %v", err)
@@ -503,8 +565,16 @@ func TestADR_0253_IndependentCeilingRefusals(t *testing.T) {
 			r, _ := f.registry.NewRequest(f.owner, f.presenter, "vmcp-repository", "status", "repository.status", []string{"repo:status"})
 			return r
 		}},
-		{"detail", func(f *scenario3Fixture) { f.spies.expected.detail = "other-detail" }, nil},
-		{"scope", func(f *scenario3Fixture) { f.spies.expected.scopes = []string{"repo:status"} }, nil},
+		{"detail", func(f *scenario3Fixture) {
+			exp := f.spies.subject.expected
+			exp.detail = "other-detail"
+			f.spies.setExpected(exp)
+		}, nil},
+		{"scope", func(f *scenario3Fixture) {
+			exp := f.spies.subject.expected
+			exp.scopes = []string{"repo:status"}
+			f.spies.setExpected(exp)
+		}, nil},
 	} {
 		t.Run("bound "+tc.name, func(t *testing.T) {
 			f := newScenario3Fixture(t)
@@ -522,7 +592,7 @@ func TestADR_0253_IndependentCeilingRefusals(t *testing.T) {
 	}
 }
 
-func TestADR_0253_DenyDominanceAndIndeterminacy(t *testing.T) {
+func TestADR_0302_DenyDominanceAndIndeterminacy(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
 		decision  Decision
@@ -535,13 +605,56 @@ func TestADR_0253_DenyDominanceAndIndeterminacy(t *testing.T) {
 		for _, kind := range []FailureKind{FailureConsent, FailureAssociation, FailureTargetPolicy} {
 			t.Run(tc.name+"/"+string(kind), func(t *testing.T) {
 				f := newScenario3Fixture(t)
-				f.spies.decisions[kind] = tc.decision
+				f.spies.source(kind).decision = tc.decision
 				_, err := f.exchange(t, f.request, "deny-dominates")
 				if !IsFailure(err, kind) || FailureRetryable(err) != tc.retryable || f.mechanism.calls != 0 {
 					t.Fatalf("err = %v retryable=%v mechanism=%d", err, FailureRetryable(err), f.mechanism.calls)
 				}
 			})
 		}
+	}
+}
+
+func TestRegistryRequirementsAreResolvedAtExchangeTime(t *testing.T) {
+	f := newScenario3Fixture(t)
+	request := f.request
+	f.spies.registry.requiredTools = []string{"Deploy"}
+	if _, err := f.exchange(t, request, "changed-requirements"); !IsFailure(err, FailureActorTools) || f.mechanism.calls != 0 {
+		t.Fatalf("stale request requirements were used: err=%v mechanism=%d", err, f.mechanism.calls)
+	}
+	f.actor.verified.tools = []string{"Deploy"}
+	if _, err := f.exchange(t, request, "current-requirements"); err != nil {
+		t.Fatalf("current registry requirements did not permit: %v", err)
+	}
+}
+
+func TestNewVerifiedActorRejectsNonCanonicalIdentityAndClaims(t *testing.T) {
+	identity, err := identityissuer.NewLogicalAgentIdentity("agents.example", identityissuer.DefinitionTierProject, "reviewer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	until := time.Now().Add(time.Minute)
+	if _, err := NewVerifiedActor("agents.example", identity.Subject, identityissuer.DefinitionTierProject, "reviewer", "", []string{"Read"}, "actor-id", until); err != nil {
+		t.Fatalf("canonical actor rejected: %v", err)
+	}
+	for _, tc := range []struct {
+		name, trustDomain, subject, actorName, instance string
+		tier                                            identityissuer.DefinitionTier
+		tools                                           []string
+	}{
+		{name: "invalid trust domain", trustDomain: "https://agents.example", subject: identity.Subject, tier: identityissuer.DefinitionTierProject, actorName: "reviewer", tools: []string{"Read"}},
+		{name: "subject mismatch", trustDomain: "agents.example", subject: identity.Subject + "-other", tier: identityissuer.DefinitionTierProject, actorName: "reviewer", tools: []string{"Read"}},
+		{name: "tier mismatch", trustDomain: "agents.example", subject: identity.Subject, tier: identityissuer.DefinitionTierManaged, actorName: "reviewer", tools: []string{"Read"}},
+		{name: "name mismatch", trustDomain: "agents.example", subject: identity.Subject, tier: identityissuer.DefinitionTierProject, actorName: "other", tools: []string{"Read"}},
+		{name: "invalid instance", trustDomain: "agents.example", subject: identity.Subject, tier: identityissuer.DefinitionTierProject, actorName: "reviewer", instance: "bad\ninstance", tools: []string{"Read"}},
+		{name: "duplicate tools", trustDomain: "agents.example", subject: identity.Subject, tier: identityissuer.DefinitionTierProject, actorName: "reviewer", tools: []string{"Read", "Read"}},
+		{name: "unsorted tools", trustDomain: "agents.example", subject: identity.Subject, tier: identityissuer.DefinitionTierProject, actorName: "reviewer", tools: []string{"Write", "Read"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := NewVerifiedActor(tc.trustDomain, tc.subject, tc.tier, tc.actorName, tc.instance, tc.tools, "actor-id", until); err == nil {
+				t.Fatal("NewVerifiedActor succeeded")
+			}
+		})
 	}
 }
 

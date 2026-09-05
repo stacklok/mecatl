@@ -31,7 +31,11 @@ func (v externalActorVerifier) Verify(token actingaccess.I2Token) (actingaccess.
 	if err := token.Consume(actorBytesConsumer{}); err != nil {
 		return actingaccess.VerifiedActor{}, err
 	}
-	return actingaccess.NewVerifiedActor("agents.example", "spiffe://agents.example/mecatl/agent-definition/v1/project/reviewer",
+	identity, err := identityissuer.NewLogicalAgentIdentity("agents.example", identityissuer.DefinitionTierProject, "reviewer")
+	if err != nil {
+		return actingaccess.VerifiedActor{}, err
+	}
+	return actingaccess.NewVerifiedActor("agents.example", identity.Subject,
 		identityissuer.DefinitionTierProject, "reviewer", "", []string{"Read"}, "actor-id", v.until)
 }
 

@@ -18,7 +18,7 @@ import (
 	"github.com/stacklok/mecatl/engine/governance"
 )
 
-func TestADR_0252_ContainedToolProjectionSucceeds(t *testing.T) {
+func TestADR_0301_ContainedToolProjectionSucceeds(t *testing.T) {
 	issuer := testLogicalAgentIssuer(t)
 	identity, err := NewLogicalAgentIdentity(issuer.TrustDomain(), DefinitionTierManaged, "Code Reviewer")
 	if err != nil {
@@ -41,7 +41,7 @@ func TestADR_0252_ContainedToolProjectionSucceeds(t *testing.T) {
 	}
 }
 
-func TestADR_0252_LogicalAgentProjectionNeverWidens(t *testing.T) {
+func TestADR_0301_LogicalAgentProjectionNeverWidens(t *testing.T) {
 	issuer := testLogicalAgentIssuer(t)
 	identity, err := NewLogicalAgentIdentity(issuer.TrustDomain(), DefinitionTierManaged, "Code Reviewer")
 	if err != nil {
@@ -79,7 +79,7 @@ func TestLogicalAgentIdentityProjection_Scenario2_ToolNamesStayExact(t *testing.
 	}
 }
 
-func TestADR_0252_ContainmentOracleCorpus(t *testing.T) {
+func TestADR_0301_ContainmentOracleCorpus(t *testing.T) {
 	issuer := testLogicalAgentIssuer(t)
 	identity, err := NewLogicalAgentIdentity(issuer.TrustDomain(), DefinitionTierManaged, "Code Reviewer")
 	if err != nil {
@@ -95,7 +95,7 @@ func TestADR_0252_ContainmentOracleCorpus(t *testing.T) {
 	}
 }
 
-func TestADR_0252_IssuerUsesGovernanceContainment(t *testing.T) {
+func TestADR_0301_IssuerUsesGovernanceContainment(t *testing.T) {
 	parsed, err := parser.ParseFile(gotoken.NewFileSet(), "logical_agent_issue.go", nil, 0)
 	if err != nil {
 		t.Fatal(err)
@@ -173,7 +173,7 @@ func TestLogicalAgentIdentityProjection_Scenario3_TypedIssue(t *testing.T) {
 	}
 }
 
-func TestADR_0252_FreshRandomJWTID(t *testing.T) {
+func TestADR_0301_FreshRandomJWTID(t *testing.T) {
 	issuer := testLogicalAgentIssuer(t)
 	identity, err := NewLogicalAgentIdentity(issuer.TrustDomain(), DefinitionTierManaged, "Code Reviewer")
 	if err != nil {
@@ -217,7 +217,7 @@ func TestADR_0252_FreshRandomJWTID(t *testing.T) {
 	}
 }
 
-func TestADR_0252_IssueFailsBeforeReturningCredential(t *testing.T) {
+func TestADR_0301_IssueFailsBeforeReturningCredential(t *testing.T) {
 	issuer := testLogicalAgentIssuer(t)
 	identity, err := NewLogicalAgentIdentity(issuer.TrustDomain(), DefinitionTierManaged, "Code Reviewer")
 	if err != nil {
@@ -247,7 +247,7 @@ func TestADR_0252_IssueFailsBeforeReturningCredential(t *testing.T) {
 	}
 }
 
-func TestADR_0252_LogicalAgentIssuerIsNotArbitrarySigner(t *testing.T) {
+func TestADR_0301_LogicalAgentIssuerIsNotArbitrarySigner(t *testing.T) {
 	typ := reflect.TypeOf((*Host)(nil))
 	method, ok := typ.MethodByName("IssueLogicalAgent")
 	if !ok {

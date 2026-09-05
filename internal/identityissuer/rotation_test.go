@@ -95,7 +95,7 @@ func TestIdentityIssuerSubstrate_Scenario5_ActivateAndRestart(t *testing.T) {
 	}
 }
 
-func TestADR_0251_RetirementOverlapBound(t *testing.T) {
+func TestADR_0300_RetirementOverlapBound(t *testing.T) {
 	oldKey := testPKCS8(t)
 	newKey := testPKCS8(t)
 	keys := map[string][]byte{"old": oldKey, "new": newKey}

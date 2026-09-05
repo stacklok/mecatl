@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-func TestADR_0252_CanonicalLogicalAgentSubject(t *testing.T) {
+func TestADR_0301_CanonicalLogicalAgentSubject(t *testing.T) {
 	const trustDomain = "agents.customer.example"
 	wantDigests := map[DefinitionTier]string{
 		DefinitionTierSystem:  "lcpozajz4blonusg5fjaa5j5ydb6fzxn4kaduodutd76rziz5r7a",
@@ -57,7 +57,7 @@ func TestLogicalAgentIdentityProjection_Scenario1_DefinitionIdentityDoesNotColla
 	}
 }
 
-func TestADR_0252_SubjectAndDefinitionBoundsFailClosed(t *testing.T) {
+func TestADR_0301_SubjectAndDefinitionBoundsFailClosed(t *testing.T) {
 	const trustDomain = "agents.customer.example"
 	for _, tc := range []struct {
 		name, subject string

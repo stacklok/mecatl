@@ -126,13 +126,12 @@ func NewRegistry(registrations []Registration) (*Registry, error) {
 
 // Request is the immutable, non-secret input admitted by the registry.
 type Request struct {
-	owner         Owner
-	presenter     Presenter
-	resource      RegisteredResource
-	operation     RegisteredOperation
-	detail        RegisteredDetail
-	scopes        []Scope
-	requiredTools []string
+	owner     Owner
+	presenter Presenter
+	resource  RegisteredResource
+	operation RegisteredOperation
+	detail    RegisteredDetail
+	scopes    []Scope
 }
 
 // NewRequest resolves only an exact registered tuple and copies its values.
@@ -146,7 +145,7 @@ func (r *Registry) NewRequest(owner Owner, presenter Presenter, resource, operat
 			continue
 		}
 		return Request{owner: owner, presenter: presenter, resource: target.resource, operation: target.operation, detail: target.detail,
-			scopes: append([]Scope(nil), target.scopes...), requiredTools: append([]string(nil), target.requiredTools...)}, nil
+			scopes: append([]Scope(nil), target.scopes...)}, nil
 	}
 	return Request{}, errors.New("acting-access request is not registered")
 }

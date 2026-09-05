@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"slices"
 	"time"
 
 	"github.com/stacklok/mecatl/internal/identityissuer"
@@ -30,31 +31,13 @@ type VerifiedActor struct {
 
 // NewVerifiedActor constructs the closed result returned by a trusted I2 verifier.
 func NewVerifiedActor(trustDomain, subject string, tier identityissuer.DefinitionTier, name, instance string, tools []string, jwtID string, notAfter time.Time) (VerifiedActor, error) {
-	if !boundedSafe(trustDomain) || !boundedSafe(subject) || !validActorTier(tier) || !boundedSafe(name) ||
-		(instance != "" && !boundedSafe(instance)) || !validActorTools(tools) || !boundedSafe(jwtID) || notAfter.IsZero() {
+	identity, identityErr := identityissuer.NewLogicalAgentIdentity(trustDomain, tier, name)
+	claim, claimErr := identityissuer.NewLogicalAgentClaim(tier, name, instance, tools)
+	if identityErr != nil || claimErr != nil || subject != identity.Subject || !slices.Equal(claim.Tools, tools) || !boundedSafe(jwtID) || notAfter.IsZero() {
 		return VerifiedActor{}, errors.New("verified actor is invalid")
 	}
 	return VerifiedActor{trustDomain: trustDomain, subject: subject, tier: tier, name: name, instance: instance,
-		tools: append([]string(nil), tools...), jwtID: jwtID, notAfter: notAfter.UTC()}, nil
-}
-
-func validActorTier(tier identityissuer.DefinitionTier) bool {
-	switch tier {
-	case identityissuer.DefinitionTierSystem, identityissuer.DefinitionTierManaged, identityissuer.DefinitionTierDriver,
-		identityissuer.DefinitionTierUser, identityissuer.DefinitionTierProject:
-		return true
-	default:
-		return false
-	}
-}
-
-func validActorTools(tools []string) bool {
-	for index, value := range tools {
-		if !boundedSafe(value) || (index > 0 && tools[index-1] >= value) {
-			return false
-		}
-	}
-	return true
+		tools: append([]string(nil), claim.Tools...), jwtID: jwtID, notAfter: notAfter.UTC()}, nil
 }
 
 // TrustDomain returns the verified Mecatl trust domain.
@@ -104,7 +87,7 @@ func (v VerifiedActor) ContainsRequiredTools(required []string) bool {
 	return true
 }
 
-// LogicalActorVerifier adapts the existing ADR-0252 logical-agent verifier. It
+// LogicalActorVerifier adapts the existing ADR-0301 logical-agent verifier. It
 // never parses JWTs itself and copies every returned authority-bearing value.
 type LogicalActorVerifier struct {
 	verifier *identityissuer.LogicalAgentVerifier
@@ -136,16 +119,8 @@ func (v *LogicalActorVerifier) Verify(token I2Token) (VerifiedActor, error) {
 	if err != nil {
 		return VerifiedActor{}, err
 	}
-	return VerifiedActor{
-		trustDomain: verified.TrustDomain,
-		subject:     verified.Subject,
-		tier:        verified.Tier,
-		name:        verified.Name,
-		instance:    verified.Instance,
-		tools:       append([]string(nil), verified.Tools...),
-		jwtID:       verified.JWTID,
-		notAfter:    verified.Expiry,
-	}, nil
+	return NewVerifiedActor(verified.TrustDomain, verified.Subject, verified.Tier, verified.Name, verified.Instance,
+		verified.Tools, verified.JWTID, verified.Expiry)
 }
 
 // DecisionEffect is the closed result vocabulary shared by authority sources.
@@ -245,9 +220,40 @@ type PresenterAssociation interface {
 	DecideAssociation(context.Context, AssociationInput) Decision
 }
 
-// RequestRegistry revalidates the exact registered resource/operation/detail/scope tuple.
+// RegistrationDecision is the current registry decision and exact logical-agent tool requirements.
+type RegistrationDecision struct {
+	decision      Decision
+	requiredTools []string
+}
+
+// NewRegistrationDecision constructs one trusted exchange-time registration result.
+func NewRegistrationDecision(decision Decision, requiredTools []string) (RegistrationDecision, error) {
+	if decision.effect == DecisionPermit && validRequiredTools(requiredTools) {
+		return RegistrationDecision{decision: decision, requiredTools: append([]string(nil), requiredTools...)}, nil
+	}
+	if (decision.effect == DecisionDeny || decision.effect == DecisionUnavailable) && len(requiredTools) == 0 {
+		return RegistrationDecision{decision: decision}, nil
+	}
+	return RegistrationDecision{}, errors.New("acting-access registration decision is invalid")
+}
+
+// Decision returns the bounded current registry decision.
+func (d RegistrationDecision) Decision() Decision { return d.decision }
+
+// RequiredTools returns a copy of the current registered logical-agent requirements.
+func (d RegistrationDecision) RequiredTools() []string {
+	return append([]string(nil), d.requiredTools...)
+}
+
+func validRequiredTools(tools []string) bool {
+	claim, err := identityissuer.NewLogicalAgentClaim(identityissuer.DefinitionTierSystem, "registry-validation", "", tools)
+	return len(tools) > 0 && err == nil && slices.Equal(claim.Tools, tools)
+}
+
+// RequestRegistry revalidates the exact registered resource/operation/detail/scope tuple
+// and returns its current logical-agent tool requirements.
 type RequestRegistry interface {
-	DecideRegistration(context.Context, RegistryInput) Decision
+	DecideRegistration(context.Context, RegistryInput) RegistrationDecision
 }
 
 // TargetPolicy decides current target authority for the exact tuple.
@@ -380,9 +386,11 @@ func (t PermitTrace) Gates() []GateKind { return append([]GateKind(nil), t.gates
 // Correlation returns a bounded digest of caller correlation.
 func (t PermitTrace) Correlation() string { return t.correlation }
 
-// ExchangeResult is the successful mechanism response and its non-secret permit trace.
+// ExchangeResult is the successful mechanism response, independently verified
+// output authority, and non-secret permit trace.
 type ExchangeResult struct {
 	response ExchangeResponse
+	verified VerifiedOutput
 	trace    PermitTrace
 	plan     MechanismInput
 }
@@ -392,6 +400,11 @@ func (r ExchangeResult) Token() OutputToken { return r.response.Token() }
 
 // Response returns the closed RFC 8693 response metadata and opaque token.
 func (r ExchangeResult) Response() ExchangeResponse { return r.response }
+
+// VerifiedOutput returns the independently verified exact output authority.
+func (r ExchangeResult) VerifiedOutput() VerifiedOutput {
+	return copyVerifiedOutput(r.verified)
+}
 
 // Trace returns the immutable permit trace.
 func (r ExchangeResult) Trace() PermitTrace {
@@ -486,17 +499,20 @@ func (g *Gate) Exchange(ctx context.Context, request Request, subjectToken Subje
 	bounds = append(bounds, associationDecision.notAfter)
 	trace = append(trace, GateAssociation)
 
-	if !actor.ContainsRequiredTools(request.requiredTools) {
-		return ExchangeResult{}, refuse(FailureActorTools, false)
-	}
-	trace = append(trace, GateActorTools)
-
-	registryDecision := g.cfg.Registry.DecideRegistration(ctx, RegistryInput{facts})
+	registryResult := g.cfg.Registry.DecideRegistration(ctx, RegistryInput{facts})
+	registryDecision := registryResult.decision
 	if err := validateDecision(registryDecision, now, FailureRegistry); err != nil {
 		return ExchangeResult{}, err
 	}
+	if !validRequiredTools(registryResult.requiredTools) {
+		return ExchangeResult{}, refuse(FailureRegistry, false)
+	}
 	bounds = append(bounds, registryDecision.notAfter)
-	trace = append(trace, GateRegistry)
+
+	if !actor.ContainsRequiredTools(registryResult.requiredTools) {
+		return ExchangeResult{}, refuse(FailureActorTools, false)
+	}
+	trace = append(trace, GateRegistry, GateActorTools)
 
 	targetDecision := g.cfg.TargetPolicy.DecideTarget(ctx, TargetPolicyInput{facts})
 	if err := validateDecision(targetDecision, now, FailureTargetPolicy); err != nil {
@@ -510,6 +526,10 @@ func (g *Gate) Exchange(ctx context.Context, request Request, subjectToken Subje
 			notAfter = bound
 		}
 	}
+	notAfter = notAfter.Truncate(time.Second)
+	if !notAfter.After(now) {
+		return ExchangeResult{}, refuse(FailureOutputVerification, false)
+	}
 	input := MechanismInput{facts: copyDecisionFacts(facts), notAfter: notAfter}
 	response, err := g.cfg.Mechanism.Exchange(ctx, input, subjectToken, actorToken)
 	if err != nil {
@@ -518,11 +538,15 @@ func (g *Gate) Exchange(ctx context.Context, request Request, subjectToken Subje
 	if !validExchangeResponse(response, input, now) {
 		return ExchangeResult{}, refuse(FailureOutputVerification, false)
 	}
-	if _, err := g.cfg.OutputVerifier.Verify(response, input); err != nil {
+	verified, err := g.cfg.OutputVerifier.Verify(response, input)
+	if err != nil {
 		return ExchangeResult{}, classifyDependencyFailure(err, FailureOutputVerification)
 	}
+	if verified.IsZero() || !verified.matchesPlan(input) {
+		return ExchangeResult{}, refuse(FailureOutputVerification, false)
+	}
 	digest := sha256.Sum256([]byte(correlation))
-	return ExchangeResult{response: response, plan: input, trace: PermitTrace{gates: append([]GateKind(nil), trace...), correlation: "sha256:" + hex.EncodeToString(digest[:])}}, nil
+	return ExchangeResult{response: response, verified: copyVerifiedOutput(verified), plan: input, trace: PermitTrace{gates: append([]GateKind(nil), trace...), correlation: "sha256:" + hex.EncodeToString(digest[:])}}, nil
 }
 
 func classifyDependencyFailure(err error, fallback FailureKind) error {

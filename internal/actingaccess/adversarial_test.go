@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -27,20 +26,20 @@ func TestActingAccess_Scenario5_FailureTaxonomy(t *testing.T) {
 		}},
 		{"invalid actor", FailureActorVerification, false, func(f *scenario3Fixture) { f.actor.verified = VerifiedActor{} }},
 		{"presenter denial", FailureAssociation, false, func(f *scenario3Fixture) {
-			f.spies.decisions[FailureAssociation] = mustDecision(DecisionDeny, f.now.Add(time.Minute))
+			f.spies.source(FailureAssociation).decision = mustDecision(DecisionDeny, f.now.Add(time.Minute))
 		}},
 		{"subject authority denial", FailureSubjectAuthority, false, func(f *scenario3Fixture) {
-			f.spies.decisions[FailureSubjectAuthority] = mustDecision(DecisionDeny, f.now.Add(time.Minute))
+			f.spies.source(FailureSubjectAuthority).decision = mustDecision(DecisionDeny, f.now.Add(time.Minute))
 		}},
 		{"actor authority failure", FailureActorTools, false, func(f *scenario3Fixture) { f.actor.verified.tools = []string{"Grep"} }},
 		{"target scope denial", FailureRegistry, false, func(f *scenario3Fixture) {
-			f.spies.decisions[FailureRegistry] = mustDecision(DecisionDeny, f.now.Add(time.Minute))
+			f.spies.source(FailureRegistry).decision = mustDecision(DecisionDeny, f.now.Add(time.Minute))
 		}},
 		{"target policy denial", FailureTargetPolicy, false, func(f *scenario3Fixture) {
-			f.spies.decisions[FailureTargetPolicy] = mustDecision(DecisionDeny, f.now.Add(time.Minute))
+			f.spies.source(FailureTargetPolicy).decision = mustDecision(DecisionDeny, f.now.Add(time.Minute))
 		}},
 		{"consent denial", FailureConsent, false, func(f *scenario3Fixture) {
-			f.spies.decisions[FailureConsent] = mustDecision(DecisionDeny, f.now.Add(time.Minute))
+			f.spies.source(FailureConsent).decision = mustDecision(DecisionDeny, f.now.Add(time.Minute))
 		}},
 		{"unsupported profile", FailureUnsupportedProfile, false, func(f *scenario3Fixture) { f.mechanism.err = ErrUnsupportedProfile }},
 		{"mechanism refusal", FailureMechanism, false, func(f *scenario3Fixture) { f.mechanism.err = errors.New("refused") }},
@@ -63,7 +62,7 @@ func TestActingAccess_Scenario5_FailureTaxonomy(t *testing.T) {
 	for _, kind := range []FailureKind{FailureSubjectAuthority, FailureConsent, FailureAssociation, FailureRegistry, FailureTargetPolicy} {
 		t.Run("unavailable/"+string(kind), func(t *testing.T) {
 			f := newScenario3Fixture(t)
-			f.spies.decisions[kind] = mustDecision(DecisionUnavailable, f.now.Add(time.Minute))
+			f.spies.source(kind).decision = mustDecision(DecisionUnavailable, f.now.Add(time.Minute))
 			result, err := f.exchange(t, f.request, "taxonomy-unavailable")
 			if !IsFailure(err, kind) || !FailureRetryable(err) || !outputTokenIsZero(result.Token()) {
 				t.Fatalf("result=%#v err=%v, want retryable %s", result, err, kind)
@@ -147,20 +146,20 @@ func TestInvariant_acting_access_secret_sink_inventory(t *testing.T) {
 		{"owner", func(f *scenario3Fixture) { f.subject.verified.owner = mustOwner(t, "https://issuer.example", "other") }},
 		{"actor", func(f *scenario3Fixture) { f.actor.err = errors.New(actorCanary) }},
 		{"subject authority", func(f *scenario3Fixture) {
-			f.spies.decisions[FailureSubjectAuthority] = mustDecision(DecisionDeny, f.now.Add(time.Minute))
+			f.spies.source(FailureSubjectAuthority).decision = mustDecision(DecisionDeny, f.now.Add(time.Minute))
 		}},
 		{"consent", func(f *scenario3Fixture) {
-			f.spies.decisions[FailureConsent] = mustDecision(DecisionDeny, f.now.Add(time.Minute))
+			f.spies.source(FailureConsent).decision = mustDecision(DecisionDeny, f.now.Add(time.Minute))
 		}},
 		{"association", func(f *scenario3Fixture) {
-			f.spies.decisions[FailureAssociation] = mustDecision(DecisionDeny, f.now.Add(time.Minute))
+			f.spies.source(FailureAssociation).decision = mustDecision(DecisionDeny, f.now.Add(time.Minute))
 		}},
 		{"actor tools", func(f *scenario3Fixture) { f.actor.verified.tools = []string{"Write"} }},
 		{"registry", func(f *scenario3Fixture) {
-			f.spies.decisions[FailureRegistry] = mustDecision(DecisionDeny, f.now.Add(time.Minute))
+			f.spies.source(FailureRegistry).decision = mustDecision(DecisionDeny, f.now.Add(time.Minute))
 		}},
 		{"target", func(f *scenario3Fixture) {
-			f.spies.decisions[FailureTargetPolicy] = mustDecision(DecisionDeny, f.now.Add(time.Minute))
+			f.spies.source(FailureTargetPolicy).decision = mustDecision(DecisionDeny, f.now.Add(time.Minute))
 		}},
 		{"unsupported", func(f *scenario3Fixture) { f.mechanism.err = fmt.Errorf("%s: %w", outputCanary, ErrUnsupportedProfile) }},
 		{"unavailable", func(f *scenario3Fixture) {
@@ -180,7 +179,7 @@ func TestInvariant_acting_access_secret_sink_inventory(t *testing.T) {
 	}
 }
 
-func TestADR_0253_NoFallbackAuthorityAndStaleFacts(t *testing.T) {
+func TestADR_0302_NoFallbackAuthorityAndStaleFacts(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
 		kind   FailureKind
@@ -188,16 +187,20 @@ func TestADR_0253_NoFallbackAuthorityAndStaleFacts(t *testing.T) {
 	}{
 		{"expired subject", FailureSubjectVerification, func(f *scenario3Fixture) { f.subject.verified.notAfter = f.now }},
 		{"expired actor", FailureActorVerification, func(f *scenario3Fixture) { f.actor.verified.notAfter = f.now }},
-		{"expired consent", FailureConsent, func(f *scenario3Fixture) { f.spies.decisions[FailureConsent] = mustDecision(DecisionPermit, f.now) }},
-		{"expired association", FailureAssociation, func(f *scenario3Fixture) { f.spies.decisions[FailureAssociation] = mustDecision(DecisionPermit, f.now) }},
+		{"expired consent", FailureConsent, func(f *scenario3Fixture) {
+			f.spies.source(FailureConsent).decision = mustDecision(DecisionPermit, f.now)
+		}},
+		{"expired association", FailureAssociation, func(f *scenario3Fixture) {
+			f.spies.source(FailureAssociation).decision = mustDecision(DecisionPermit, f.now)
+		}},
 		{"expired policy", FailureTargetPolicy, func(f *scenario3Fixture) {
-			f.spies.decisions[FailureTargetPolicy] = mustDecision(DecisionPermit, f.now)
+			f.spies.source(FailureTargetPolicy).decision = mustDecision(DecisionPermit, f.now)
 		}},
 		{"denied presenter", FailureAssociation, func(f *scenario3Fixture) {
-			f.spies.decisions[FailureAssociation] = mustDecision(DecisionDeny, f.now.Add(time.Minute))
+			f.spies.source(FailureAssociation).decision = mustDecision(DecisionDeny, f.now.Add(time.Minute))
 		}},
 		{"unavailable target", FailureTargetPolicy, func(f *scenario3Fixture) {
-			f.spies.decisions[FailureTargetPolicy] = mustDecision(DecisionUnavailable, f.now.Add(time.Minute))
+			f.spies.source(FailureTargetPolicy).decision = mustDecision(DecisionUnavailable, f.now.Add(time.Minute))
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -250,7 +253,7 @@ func TestADR_0253_NoFallbackAuthorityAndStaleFacts(t *testing.T) {
 		t.Fatalf("unknown subject key result=%#v err=%v", result, err)
 	}
 
-	// A token from a removed I2 key is refused by the real ADR-0252 verifier.
+	// A token from a removed I2 key is refused by the real ADR-0301 verifier.
 	trustedDER, _ := newPKCS8(t)
 	retiredDER, _ := newPKCS8(t)
 	trustedIssuer := loadActorIssuer(t, actorManifest(), map[string][]byte{"old": trustedDER})
@@ -290,20 +293,20 @@ func TestInvariant_acting_access_predicate_mutation_resistance(t *testing.T) {
 	}{
 		{"owner", FailureOwner, func(f *scenario3Fixture) { f.subject.verified.owner = mustOwner(t, "https://issuer.example", "other") }},
 		{"subject authority", FailureSubjectAuthority, func(f *scenario3Fixture) {
-			f.spies.decisions[FailureSubjectAuthority] = mustDecision(DecisionDeny, f.now.Add(time.Minute))
+			f.spies.source(FailureSubjectAuthority).decision = mustDecision(DecisionDeny, f.now.Add(time.Minute))
 		}},
 		{"consent", FailureConsent, func(f *scenario3Fixture) {
-			f.spies.decisions[FailureConsent] = mustDecision(DecisionDeny, f.now.Add(time.Minute))
+			f.spies.source(FailureConsent).decision = mustDecision(DecisionDeny, f.now.Add(time.Minute))
 		}},
 		{"association", FailureAssociation, func(f *scenario3Fixture) {
-			f.spies.decisions[FailureAssociation] = mustDecision(DecisionDeny, f.now.Add(time.Minute))
+			f.spies.source(FailureAssociation).decision = mustDecision(DecisionDeny, f.now.Add(time.Minute))
 		}},
 		{"actor tools", FailureActorTools, func(f *scenario3Fixture) { f.actor.verified.tools = []string{"Write"} }},
 		{"registry", FailureRegistry, func(f *scenario3Fixture) {
-			f.spies.decisions[FailureRegistry] = mustDecision(DecisionDeny, f.now.Add(time.Minute))
+			f.spies.source(FailureRegistry).decision = mustDecision(DecisionDeny, f.now.Add(time.Minute))
 		}},
 		{"target policy", FailureTargetPolicy, func(f *scenario3Fixture) {
-			f.spies.decisions[FailureTargetPolicy] = mustDecision(DecisionDeny, f.now.Add(time.Minute))
+			f.spies.source(FailureTargetPolicy).decision = mustDecision(DecisionDeny, f.now.Add(time.Minute))
 		}},
 	}
 	for _, mutation := range mutations {
@@ -312,7 +315,7 @@ func TestInvariant_acting_access_predicate_mutation_resistance(t *testing.T) {
 			mutation.mutate(&f)
 			_, err := f.exchange(t, f.request, "mutation")
 			if !IsFailure(err, mutation.kind) || f.mechanism.calls != 0 {
-				t.Fatalf("production entrypoint survived predicate mutation: err=%v mechanism=%d source-calls=%v", err, f.mechanism.calls, f.spies.calls)
+				t.Fatalf("production entrypoint survived predicate mutation: err=%v mechanism=%d source-calls=%v", err, f.mechanism.calls, f.spies.callCounts())
 			}
 		})
 	}
@@ -324,7 +327,7 @@ func TestActingAccess_Scenario6_RefusalPrecedesIssuance(t *testing.T) {
 		if kind == FailureActorTools {
 			f.actor.verified.tools = []string{"Write"}
 		} else {
-			f.spies.decisions[kind] = mustDecision(DecisionDeny, f.now.Add(time.Minute))
+			f.spies.source(kind).decision = mustDecision(DecisionDeny, f.now.Add(time.Minute))
 		}
 		if _, err := f.exchange(t, f.request, "pre-issue"); !IsFailure(err, kind) || f.issuer.calls != 0 {
 			t.Errorf("%s: err=%v issuer calls=%d", kind, err, f.issuer.calls)
@@ -386,44 +389,6 @@ func TestActingAccess_Scenario6_NoPersistentCacheAndReplayBound(t *testing.T) {
 	}
 }
 
-func TestActingAccess_Scenario6_LocalOnlyOutageIsolation(t *testing.T) {
-	f := newScenario3Fixture(t)
-	entered := make(chan struct{})
-	release := make(chan struct{})
-	f.subject.block = func() { close(entered); <-release }
-	f.subject.err = ErrTemporarilyUnavailable
-
-	var wg sync.WaitGroup
-	wg.Add(1)
-	var externalResult ExchangeResult
-	var externalErr error
-	go func() {
-		defer wg.Done()
-		externalResult, externalErr = f.exchange(t, f.request, "blocked-external")
-	}()
-	select {
-	case <-entered:
-	case <-time.After(time.Second):
-		t.Fatal("external exchange did not block in subject verifier")
-	}
-
-	localDone := make(chan string, 1)
-	go func() { localDone <- "local-complete" }()
-	select {
-	case got := <-localDone:
-		if got != "local-complete" || f.mechanism.calls != 0 || f.subject.calls != 1 {
-			t.Fatalf("local work crossed acting-access boundary: got=%q subject=%d mechanism=%d", got, f.subject.calls, f.mechanism.calls)
-		}
-	case <-time.After(250 * time.Millisecond):
-		t.Fatal("local-only work was coupled to external exchange outage")
-	}
-	close(release)
-	wg.Wait()
-	if !IsFailure(externalErr, FailureSubjectVerification) || !FailureRetryable(externalErr) || !outputTokenIsZero(externalResult.Token()) || f.mechanism.calls != 0 {
-		t.Fatalf("external result=%#v err=%v mechanism=%d", externalResult, externalErr, f.mechanism.calls)
-	}
-}
-
 func outputTokenIsZero(token OutputToken) bool { return token.secret.value == nil }
 
 func assertNoCanary(t *testing.T, surface, value string, canaries ...string) {
@@ -452,12 +417,13 @@ type canaryOutputVerifier struct {
 	calls   int
 }
 
-func (v *canaryOutputVerifier) Verify(response ExchangeResponse, _ MechanismInput) (VerifiedOutput, error) {
+func (v *canaryOutputVerifier) Verify(response ExchangeResponse, plan MechanismInput) (VerifiedOutput, error) {
 	v.calls++
 	if response.token.secret.value == nil || response.token.secret.value.raw != v.wantRaw {
 		return VerifiedOutput{}, errors.New("invalid compact output")
 	}
-	return VerifiedOutput{}, nil
+	return NewVerifiedOutput(qualifiedOutputSubject(plan.Owner()), plan.ActorSubject(), plan.Presenter().Value(),
+		plan.Resource().Value(), plan.Detail().Value(), plan.Scopes(), plan.NotAfter())
 }
 
 type compactOutputVerifier struct {

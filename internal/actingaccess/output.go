@@ -233,6 +233,26 @@ func (v VerifiedOutput) Scopes() []string { return append([]string(nil), v.scope
 // ExpiresAt returns the verified output expiry.
 func (v VerifiedOutput) ExpiresAt() time.Time { return v.expiresAt }
 
+// IsZero reports whether no independently verified output facts are present.
+func (v VerifiedOutput) IsZero() bool {
+	return v.subject == "" && v.actorSubject == "" && v.clientID == "" && v.audience == "" && v.detail == "" && len(v.scopes) == 0 && v.expiresAt.IsZero()
+}
+
+func (v VerifiedOutput) matchesPlan(plan MechanismInput) bool {
+	return v.subject == qualifiedOutputSubject(plan.Owner()) &&
+		v.actorSubject == plan.ActorSubject() &&
+		v.clientID == plan.Presenter().Value() &&
+		v.audience == plan.Resource().Value() &&
+		v.detail == plan.Detail().Value() &&
+		slices.Equal(v.scopes, plan.Scopes()) &&
+		v.expiresAt.Equal(plan.NotAfter())
+}
+
+func copyVerifiedOutput(v VerifiedOutput) VerifiedOutput {
+	v.scopes = append([]string(nil), v.scopes...)
+	return v
+}
+
 // Verify accepts only a correctly signed, closed output profile matching the exact plan.
 func (v *JWTOutputVerifier) Verify(response ExchangeResponse, plan MechanismInput) (VerifiedOutput, error) {
 	if v == nil || !validExchangeResponse(response, plan, v.now().UTC()) || response.token.secret.value == nil {

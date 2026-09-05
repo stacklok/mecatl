@@ -1,4 +1,4 @@
-# ADR 0251 — Identity issuer substrate for the combined broker
+# ADR 0300 — Identity issuer substrate for the combined broker
 
 - Status: Proposed
 - Date: 2026-08-31

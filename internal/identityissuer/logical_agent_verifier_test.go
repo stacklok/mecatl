@@ -57,7 +57,7 @@ func TestLogicalAgentIdentityProjection_Scenario4_IndependentTypedVerification(t
 	}
 }
 
-func TestADR_0252_TypedVerifierFailsClosed(t *testing.T) {
+func TestADR_0301_TypedVerifierFailsClosed(t *testing.T) {
 	issuer := testLogicalAgentIssuer(t)
 	identity, err := NewLogicalAgentIdentity(issuer.TrustDomain(), DefinitionTierManaged, "Code Reviewer")
 	if err != nil {
@@ -156,7 +156,7 @@ func TestADR_0252_TypedVerifierFailsClosed(t *testing.T) {
 	}
 }
 
-func TestADR_0252_TypedVerifierUsesOneSecurityRepresentation(t *testing.T) {
+func TestADR_0301_TypedVerifierUsesOneSecurityRepresentation(t *testing.T) {
 	issuer := testLogicalAgentIssuer(t)
 	identity, err := NewLogicalAgentIdentity(issuer.TrustDomain(), DefinitionTierManaged, "Code Reviewer")
 	if err != nil {
@@ -199,7 +199,7 @@ func TestADR_0252_TypedVerifierUsesOneSecurityRepresentation(t *testing.T) {
 	}
 }
 
-func TestADR_0252_ProfileConfusionMatrix(t *testing.T) {
+func TestADR_0301_ProfileConfusionMatrix(t *testing.T) {
 	issuer := testLogicalAgentIssuer(t)
 	identity, err := NewLogicalAgentIdentity(issuer.TrustDomain(), DefinitionTierManaged, "Code Reviewer")
 	if err != nil {

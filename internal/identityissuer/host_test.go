@@ -124,7 +124,7 @@ func TestIdentityIssuerSubstrate_Scenario4_SecretContainment(t *testing.T) {
 	}
 }
 
-func TestADR_0251_SecretCanariesNeverLeak(t *testing.T) {
+func TestADR_0300_SecretCanariesNeverLeak(t *testing.T) {
 	t.Parallel()
 
 	privateCanary := "PRIVATE-KEY-CANARY-4f64d99b"
