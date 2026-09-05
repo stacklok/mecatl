@@ -1833,9 +1833,9 @@ func (m Model) onKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m.onClipboardPaste()
 	}
 
-	// alt+m cycles permission mode. It is handled here — before the phase switch —
-	// for idle + running so the key never feeds the textarea. Ctrl+M collides with
-	// Enter on real terminals, so the binding deliberately uses Alt+M.
+	// shift+tab cycles permission mode. It is handled here — before the phase switch —
+	// for idle + running so the key never feeds the textarea. It also avoids relying
+	// on macOS Option being configured as Meta.
 	if m.deps.DebugTarget == "" && key.Matches(msg, m.keys.ModeSwitch) && (m.phase == phaseIdle || m.phase == phaseRunning) {
 		return m.switchMode(client.NextMode(m.desiredMode()))
 	}

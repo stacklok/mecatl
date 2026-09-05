@@ -18,6 +18,7 @@ Press `?` on an empty prompt to open the live help overlay. It shows the active 
 | `ctrl+u` | Clear the unsent draft, including staged attachments and large-paste placeholders. |
 | `esc` | Clear an active selection first. While work is running, cancel directly and preserve the draft, queued follow-ups, and steer. While idle with a paused queue, clear that queue but preserve the draft. |
 | `ctrl+t` | Expand a focused tool card or approval details. For a collapsed tool card, the expanded view shows the complete tool arguments and result; press it again to return to the width-bounded preview. |
+| `shift+tab` | Cycle the current session permission mode: **default → plan → accept-edits → default**. In an MCP prompt argument form, it instead moves to the previous required field. |
 | `ctrl+g` | Select all prompt text. |
 | `ctrl+shift+c` | Copy the active prompt or conversation selection; no selection is a no-op. |
 | `pgup` / `pgdn` | Scroll the conversation. |
@@ -53,6 +54,7 @@ keymap:
   SelectAll: ctrl+g
   CopySelection: ctrl+shift+c
   ClearPrompt: ctrl+u
+  ModeSwitch: alt+m # optional override for the default shift+tab
   Allow: y
   Deny: n
 ```

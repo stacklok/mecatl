@@ -1186,7 +1186,7 @@ show the plain prompt-hint card.
 | `esc` (with an active selection) | **clear the selection** first — before any other `esc` meaning |
 | `?` | help overlay (on an empty prompt) |
 | `/` | slash-command palette (built-in `/clear`, `/help`, `/quit`, `/session`, `/retry`; capability-gated `/compact`, `/mcp`, `/agents`, `/team`, `/skills`, `/soul`, `/usermodel`, `/reflections`, `/reflect`, `/dream`, `/models`, `/effort`, `/worktrees`, `/schedule`; operator-setting `/learning`; plus workspace commands) |
-| `alt+m` | cycle the current session permission mode: **default → plan → accept-edits → default**. The server/session is authoritative; if the aggregate rejects the switch because a turn is running or awaiting approval, mecatui shows a notice and retries the selected mode at the next prompt boundary. |
+| `shift+tab` | cycle the current session permission mode outside an MCP prompt argument form: **default → plan → accept-edits → default**. In that form, it moves focus to the previous required argument instead. The server/session is authoritative; if the aggregate rejects the switch because a turn is running or awaiting approval, mecatui shows a notice and retries the selected mode at the next prompt boundary. |
 | `ctrl+a` | open the **unified agents overlay** — ONE surface with three tabs: **Subagents** (the flat Subagent-child fleet), **Parallel** (the fork-join GROUP roster — join mode, branches, winner, fork paths), and **Teams** (the full roster + per-member focus of the most-recent team). `tab` cycles tabs, `enter` focuses a row/group, `esc` steps back / closes. The default tab is **context-sensitive** (team live → parallel live → subagents → parallel → team). Works **while idle and mid-run**; inert under a permission modal. `/team` opens it pinned to the Teams tab. |
 | `ctrl+g` | select all prompt text (rebindable as `SelectAll`; inside the `/models` picker, the existing `SetGlobalDefault` binding is used instead) |
 | `x` (agents overlay, on a **running** lane) | **cancel that child agent** (sends `CancelChild` with the lane's child id; the run itself keeps streaming). Works on all three tabs: a **Subagents** lane (roster or focus pane), a **Parallel branch** (inside a focused group — `↑/↓` selects the branch), and a **team member** (Teams roster or focus pane; mid-drive OR idle between rounds — the member is de-scheduled and its claimed tasks released). Confirm-less, because it is recoverable: the child is persisted (a subagent stays **resumable** by its `agentId`; a cancelled branch reads `[FAILED] cancelled by user`; a cancelled member shows `stopped — cancelled`). Inert on a done lane. If the child was parked on a surfaced permission ask, the server retracts it (`permission.retract`) and the approval modal dismisses itself. |
@@ -1307,7 +1307,7 @@ safe there). Actions marked *(approval)* are the permission-modal keys.
 | `ScrollD` | `pgdown` | global | scroll the conversation down |
 | `ScrollTop` | `home` | global | jump the conversation to the top |
 | `ScrollBottom` | `end` | global | jump to the bottom (resumes auto-follow) |
-| `ModeSwitch` | `alt+m` | global | cycle permission mode (default / plan / accept-edits) |
+| `ModeSwitch` | `shift+tab` | idle/running² | cycle permission mode (default / plan / accept-edits); MCP prompt argument forms keep `shift+tab` for previous-field navigation |
 | `MCPPanel` | `ctrl+o` | global | MCP inventory panel |
 | `Resources` | `ctrl+r` | global | MCP resources picker |
 | `Prompts` | `ctrl+p` | global | MCP prompts picker |
@@ -1334,6 +1334,9 @@ safe there). Actions marked *(approval)* are the permission-modal keys.
 `overlayInternal`) — so its chord is not collision-checked against the other
 actions. Keep it `ctrl`-modified (the default `ctrl+g`): a bare `g` would be
 swallowed by the picker's filter input and by `ScrollTop`/`JumpTop`.
+
+² `ModeSwitch` is global only while idle or running. An open MCP prompt argument
+form owns `shift+tab` for previous-field navigation.
 
 `RawArgs` and `Refresh` share the default chord `r` in **disjoint surfaces** (the
 MCP overlay vs the full-screen ask-args view — an overlay never owns the keyboard
@@ -1398,8 +1401,9 @@ An invalid override fails startup with a `keymap:` error. The rules
 - **Unknown actions are rejected** — names must match the action table exactly.
 - **Empty chords are rejected**; duplicates within one action are deduped.
 - **Bare printable runes are rejected on global actions** — a global-scope
-  action must be a modified or special chord (`ctrl+x`, `alt+m`, `f5`, `home`,
-  `tab`, …), never a bare letter that would swallow prose input. (Overlay-scope
+  action must be a modified or special chord (`ctrl+x`, `alt+m` for a
+  `ModeSwitch` override, `f5`, `home`, `tab`, …), never a bare letter that
+  would swallow prose input. (Overlay-scope
   actions — and the approval keys — may be bare: they only fire while a modal or
   overlay owns the keyboard.)
 - **No collisions within a scope**: two global actions may not share a chord,

@@ -29,6 +29,18 @@ func TestDefaultRawArgsBinding(t *testing.T) {
 	}
 }
 
+// TestDefaultModeSwitchBinding pins the conventional Shift+Tab default and its
+// matching help label; Alt+M remains available only through a user override.
+func TestDefaultModeSwitchBinding(t *testing.T) {
+	b := defaultKeys().ModeSwitch
+	if keys := b.Keys(); len(keys) != 1 || keys[0] != "shift+tab" {
+		t.Errorf("ModeSwitch default keys = %v, want [shift+tab]", keys)
+	}
+	if h := b.Help(); h.Key != "shift+tab" || h.Desc != "switch mode" {
+		t.Errorf("ModeSwitch default help = %v, want {shift+tab switch mode}", h)
+	}
+}
+
 // TestRawArgsKeyMarking pins the helpKeyMarkings seam: the rawArgs marking reads
 // the LIVE binding's first chord, falling back to "r" for an empty binding.
 func TestRawArgsKeyMarking(t *testing.T) {

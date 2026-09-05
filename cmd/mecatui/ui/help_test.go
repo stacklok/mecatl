@@ -323,7 +323,7 @@ func TestHelpReflectsKeyOverride(t *testing.T) {
 		{name: "Prompts", match: "MCP prompts", want: "ctrl+f8", absent: "ctrl+p", occurs: 1},
 		{name: "Agents", match: "agents overlay", want: "ctrl+f9", absent: "ctrl+a", occurs: 1},
 		{name: "Effort", match: "reasoning-effort picker", want: "ctrl+f5", absent: "ctrl+e", occurs: 1},
-		{name: "ModeSwitch", match: "cycle permission mode", want: "ctrl+f10", absent: "alt+m", occurs: 1},
+		{name: "ModeSwitch", match: "cycle permission mode", want: "ctrl+f10", absent: "shift+tab", occurs: 1},
 		{name: "ExpandTools", match: "expand/collapse details", want: "ctrl+f11", absent: "ctrl+t", occurs: 1},
 		{name: "Help", match: "this help (on an empty prompt)", want: "ctrl+f12", absent: "?", occurs: 1},
 		{name: "Quit", match: "quit (press twice", want: "ctrl+f13", absent: "ctrl+c", occurs: 1},

@@ -143,7 +143,7 @@ func helpBody(th theme.Theme, caps client.Capabilities, hk helpKeys) string {
 		helpRow{key: "/session", action: "show active session details and copy its exact ID"},
 		helpRow{key: "/sessions", action: "continue, inspect, or manage stored sessions"},
 		helpRow{key: "/connect", action: "sign in and connect to a saved remote target"},
-		helpRow{key: hk.modeSwitch, action: "cycle permission mode (default / plan / accept-edits)"},
+		helpRow{key: hk.modeSwitch, action: "cycle permission mode (outside MCP prompt argument forms)"},
 		helpRow{key: hk.expandTools, action: "expand/collapse details"},
 	)
 	writeHelpRows(&b, th, inspectRows)
@@ -369,7 +369,7 @@ func keyMarkingsWithScroll(km keyMap, defaultScrollMarking string) helpKeys {
 		prompts:       firstKey(km.Prompts, "ctrl+p"),
 		agents:        firstKey(km.Agents, "ctrl+a"),
 		effort:        firstKey(km.Effort, "ctrl+e"),
-		modeSwitch:    firstKey(km.ModeSwitch, "alt+m"),
+		modeSwitch:    firstKey(km.ModeSwitch, "shift+tab"),
 		expandTools:   firstKey(km.ExpandTools, "ctrl+t"),
 		scroll:        scrollMarking(km, defaultScrollMarking),
 		scrollUp:      firstKey(km.ScrollU, "pgup"),
