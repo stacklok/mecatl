@@ -5604,12 +5604,16 @@ wrap retrieval/transport failures as `port.SessionLoadFailureStore` and snapshot
 format/decode/identity/validation failures as `SessionLoadFailureSnapshot`; custom or
 untyped failures fold to `SessionLoadFailureUnknown`. The Service classifies only via
 the port-owned typed error (`errors.Is`/`errors.As`), never by parsing adapter text.
-One public invocation emits at most one WARN with only `class` and the constant
-`ownership=enforced` marker, then invokes the optional composition metric callback
-once. Telemetry renders that as
-`mecatl_session_load_failures_total{class="store|snapshot|unknown"}`. Neither channel
-receives a session id, principal, storage locator, raw cause, blob content, or blob
-size; genuine `port.ErrSessionNotFound` remains silent.
+One public invocation emits at most one WARN from a detached clean context with only
+`class` and the constant `ownership=enforced` direct fields, then invokes the optional
+composition metric callback once. It adds no request target, principal, path, cause,
+blob content, or blob size data. Attributes deliberately pre-bound by the trusted
+operator-supplied `port.Diagnostics` sink are outside this producer's control.
+Telemetry renders that as
+`mecatl_session_load_failures_total{class="store|snapshot|unknown"}`. The Service
+supplies neither diagnostic fields nor metric labels with a session id, principal,
+storage locator, raw cause, blob content, or blob size; genuine
+`port.ErrSessionNotFound` remains silent.
 
 See [ADR 0212](../adr/0212-caller-ownership-enforcement.md) and
 [`docs/architecture.md`](../architecture.md)'s "Caller ownership enforcement"

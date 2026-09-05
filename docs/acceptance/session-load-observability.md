@@ -19,10 +19,12 @@ retrieval/transport failures as `store` and decode/validation failures as `snaps
 a genuine `ErrSessionNotFound` is not a failure. Under `OwnershipEnforced`,
 `Service.GetSession` emits one bounded WARN and increments
 `mecatl_session_load_failures_total{class=...}` once per non-not-found load failure.
-The only label is the closed class; the WARN contains only `failure_class` and, if
-useful, the constant `ownership_enforced=true`. It never contains a session ID,
-principal, Redis key/path, raw error, blob content, or blob size. Nil telemetry is a
-no-op.
+The only metric label is the closed `class`. For its bounded WARN, `Service.GetSession`
+uses a detached clean context and supplies only the direct fields `class` and constant
+`ownership=enforced`; it never supplies a session ID, principal, Redis key/path, raw
+error, blob content, or blob size. Attributes deliberately pre-bound by the trusted
+operator-supplied `port.Diagnostics` sink are outside this producer's control. Nil
+telemetry is a no-op.
 
 This follows [ADR 0212 caller ownership](../adr/0212-caller-ownership-enforcement.md)
 (the absence contract), [ADR 0020 diagnostics](../adr/0020-diagnostics.md) (injected,
@@ -46,7 +48,7 @@ introspection endpoint, repetition cache, or legacy-snapshot read path is introd
   - verify: `TestADR_0212_SessionLoadObservability_Scenario1_NotFoundConcealsMissingForeignAndLoadFailure`
 - AC1.2: Built-in snapshot-backed stores classify retrieval/transport failures as `store`, decode/validation failures as `snapshot`, preserve classification through wrapping with typed `errors.Is`/`errors.As` contracts rather than error text, and leave genuine `ErrSessionNotFound` silent; unrecognized failures and adversarial lookalike error strings classify as `unknown`.
   - verify: `TestSessionLoadFailureClassificationFromWrappedErrors`
-- AC1.3: Under `OwnershipEnforced`, one public `GetSession` invocation that encounters a non-not-found load failure emits at most one WARN and increments `mecatl_session_load_failures_total` at most once, regardless of store wrapping. The final rendered diagnostic record—message, direct fields, and inherited attributes—is limited to the bounded class and optional constant ownership marker and contains no session ID, principal, Redis key/path, raw or wrapped error, blob content, or blob size. The metric carries only `class=store|snapshot|unknown`; nil telemetry suppresses only the metric while the diagnostic remains.
+- AC1.3: Under `OwnershipEnforced`, one public `GetSession` invocation that encounters a non-not-found load failure emits at most one WARN and increments `mecatl_session_load_failures_total` at most once, regardless of store wrapping. `Service.GetSession` uses a detached clean diagnostics context and adds only the closed `class` plus constant `ownership=enforced` direct fields; it never adds request target, principal, path, cause, blob content, or blob size data. Attributes deliberately pre-bound by the trusted operator-supplied `port.Diagnostics` sink are outside this producer's control. The metric carries only `class=store|snapshot|unknown`; nil telemetry suppresses only the metric while the diagnostic remains.
   - verify: `TestADR_0212_SessionLoadObservability_Scenario1_BoundedWarningAndMetric`
 - AC1.4: The load-failure class is a closed `engine/port` contract with no server-side string matching, and adding it does not change events, protobufs, caller-facing APIs, or the ownership decision.
   - verify: `TestSessionLoadFailureClassificationIsClosedAndPortOwned`

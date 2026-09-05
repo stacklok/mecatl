@@ -69,10 +69,13 @@
   should respectively check backend reachability/configuration, storage integrity or
   mis-keying and backup recovery, or the custom adapter's bounded health diagnostics
   and typed wrapping. They must not infer a class from text or add target data while
-  investigating. The diagnostic carries only that port-owned class and the constant
-  `ownership=enforced` marker; neither channel carries a session id, principal,
-  storage locator, cause, blob content, or blob size. Genuine absence and foreign
-  ownership remain silent and caller-visible as the same NotFound result.
+  investigating. `Service.GetSession` invokes its injected diagnostics sink with a
+  detached clean context and supplies only the port-owned `class` field and constant
+  `ownership=enforced` marker. It adds no request target, principal, path, cause,
+  blob content, or blob size data. Attributes deliberately pre-bound by the trusted
+  operator-supplied `port.Diagnostics` sink are outside this producer's control.
+  Genuine absence and foreign ownership remain silent and caller-visible as the same
+  NotFound result.
   The domain counters include the run-terminal `mecatl_runs_total{stop,role}`
   (one per run, by terminal stop reason) and — for **turn-semantics**
   observability (issue #81) — `mecatl_turns_total{role}` (one per COMPLETED
