@@ -139,6 +139,7 @@ const (
 	attrOutcome     = "outcome"     // schedule fire outcome (fired/skipped/failed)
 	attrReason      = "reason"      // closed learning admission reason
 	attrSensitivity = "sensitivity" // conservative/balanced/eager
+	attrClass       = "class"       // closed session-load failure class
 )
 
 // Role family values for the attrRole label. This is a CLOSED, bounded set —
@@ -222,6 +223,9 @@ type Metrics struct {
 	// learningActivities counts closed, content-free admission/reflection/proposal
 	// activity and reserved tokens. No identity or digest label is accepted.
 	learningActivities metric.Int64Counter
+	// sessionLoadFailures counts ownership-concealed load failures by the closed
+	// store/snapshot/unknown class only.
+	sessionLoadFailures metric.Int64Counter
 }
 
 // Compile-time interface checks.
@@ -358,6 +362,12 @@ func NewMetrics(mp metric.MeterProvider) (*Metrics, error) {
 		metric.WithDescription("Content-free learning admissions, outcomes, transitions, and reserved tokens."),
 	); err != nil {
 		return nil, fmt.Errorf("telemetry: learning activity counter: %w", err)
+	}
+	if m.sessionLoadFailures, err = meter.Int64Counter(
+		"mecatl.session.load_failures",
+		metric.WithDescription("Ownership-concealed session load failures, by bounded class."),
+	); err != nil {
+		return nil, fmt.Errorf("telemetry: session load failures counter: %w", err)
 	}
 
 	return m, nil
@@ -566,6 +576,15 @@ func (m *Metrics) EmitSchedule(payload session.SchedulePayload, duration time.Du
 	if duration > 0 {
 		m.scheduleFireDuration.Record(context.Background(), duration.Seconds(), outcomeAttr)
 	}
+}
+
+// EmitSessionLoadFailure increments the ownership-safe load-failure counter.
+// Invalid values fail closed to the unknown label.
+func (m *Metrics) EmitSessionLoadFailure(class port.SessionLoadFailureClass) {
+	if m == nil {
+		return
+	}
+	m.sessionLoadFailures.Add(context.Background(), 1, withAttrs(nil, attribute.String(attrClass, class.String())))
 }
 
 // EmitLearning records only closed activity/reason/sensitivity labels.

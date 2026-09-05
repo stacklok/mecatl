@@ -206,6 +206,9 @@ func TestLoadUnknownFormatIsInfraError(t *testing.T) {
 	if errors.Is(err, port.ErrSessionNotFound) {
 		t.Errorf("Load(unknown format) error = %v: must NEVER be ErrSessionNotFound", err)
 	}
+	if got := port.ClassifySessionLoadFailure(err); got != port.SessionLoadFailureSnapshot {
+		t.Errorf("Load(unknown format) class = %s, want snapshot", got)
+	}
 	if want := "sessnap-json/99"; !strings.Contains(err.Error(), want) {
 		t.Errorf("Load(unknown format) error %q does not name the offending format %q", err, want)
 	}
@@ -215,6 +218,25 @@ func TestLoadUnknownFormatIsInfraError(t *testing.T) {
 // tag this client does not speak.
 type unknownFormatServer struct {
 	driverv1.UnimplementedSessionStoreServiceServer
+}
+
+func TestLoadTransportFailureIsClassifiedStore(t *testing.T) {
+	conn := dialBufconn(t, func(gs *grpc.Server) {
+		driverv1.RegisterSessionStoreServiceServer(gs, unavailableLoadServer{})
+	})
+	st := mustNewSessionStore(t, conn)
+	_, err := st.Load(context.Background(), "any-id")
+	if got := port.ClassifySessionLoadFailure(err); got != port.SessionLoadFailureStore {
+		t.Fatalf("Load transport class = %s, want store: %v", got, err)
+	}
+}
+
+type unavailableLoadServer struct {
+	driverv1.UnimplementedSessionStoreServiceServer
+}
+
+func (unavailableLoadServer) Load(context.Context, *driverv1.LoadRequest) (*driverv1.LoadResponse, error) {
+	return nil, status.Error(codes.Unavailable, "backend unavailable")
 }
 
 func (unknownFormatServer) Load(context.Context, *driverv1.LoadRequest) (*driverv1.LoadResponse, error) {

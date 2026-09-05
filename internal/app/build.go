@@ -1013,6 +1013,11 @@ type Config struct {
 	// the scheduler metrics-silent: byte-identical to the pre-feature shape.
 	ScheduleMetricsEmitter func(payload session.SchedulePayload, duration time.Duration)
 
+	// SessionLoadFailureMetricsEmitter records one ownership-concealed load
+	// failure by its closed port-owned class. The callback receives no target or
+	// cause. Nil keeps the metric silent while diagnostics remain active.
+	SessionLoadFailureMetricsEmitter func(port.SessionLoadFailureClass)
+
 	// Diagnostics is the general-purpose operational logging seam, injected by the
 	// caller (mecated wires a slogdiag sink to stderr; the embedded TUI passes its
 	// own). It is the sink the build-once composition facts (token counter /
@@ -1908,6 +1913,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		Engine:                              engine,
 		Store:                               store,
 		OwnershipEnforced:                   cfg.OwnershipEnforced,
+		SessionLoadFailureMetric:            cfg.SessionLoadFailureMetricsEmitter,
 		StorageManagementAuthorized:         storageManagementAuthorizer(cfg),
 		LocalStorageMaintenanceSingleWriter: localStorageMaintenanceSingleWriter(store),
 		SessionLiveness:                     cfg.sessionLiveness,

@@ -1206,13 +1206,14 @@ func appConfig(cfg config, sink port.EventSink, recorder port.ToolCallRecorder, 
 		Interactive: !cfg.headless,
 		// Headless is explicit deployment identity. The posture ladder raises
 		// workspace trust only when this is false.
-		Headless:               cfg.headless,
-		Sink:                   sink,
-		ToolCallRecorder:       recorder,
-		MetricsRoleScoper:      roleScoper,
-		ScheduleMetricsEmitter: metrics.EmitSchedule,
-		LearningMetricsEmitter: metrics.EmitLearning,
-		Diagnostics:            diag,
+		Headless:                         cfg.headless,
+		Sink:                             sink,
+		ToolCallRecorder:                 recorder,
+		MetricsRoleScoper:                roleScoper,
+		ScheduleMetricsEmitter:           metrics.EmitSchedule,
+		SessionLoadFailureMetricsEmitter: metrics.EmitSessionLoadFailure,
+		LearningMetricsEmitter:           metrics.EmitLearning,
+		Diagnostics:                      diag,
 		// Plan-mode auto-approve (issue #206 Wave 6a): the OPT-IN operator flag.
 		PlanModeAutoApprove: cfg.planModeAutoApprove,
 		// Steer (steer-while-running, issue #512): the opt-OUT of the default-ON

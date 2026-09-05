@@ -59,6 +59,13 @@
   `main|subagent|member|parallel|usermodel|child`, never the raw role (which can
   embed a def name or model id), so label cardinality stays bounded; without a
   scoper they stay nil, byte-identical to the metrics-off posture.
+  Session lookup failures use a separate target-free callback: under ownership
+  enforcement, one non-not-found `GetSession` failure emits one WARN and increments
+  `mecatl_session_load_failures_total{class="store|snapshot|unknown"}` once. The
+  diagnostic carries only that port-owned class and the constant `ownership=enforced`
+  marker; neither channel carries a session id, principal, storage locator, cause,
+  blob content, or blob size. Genuine absence and foreign ownership remain silent and
+  caller-visible as the same NotFound result.
   The domain counters include the run-terminal `mecatl_runs_total{stop,role}`
   (one per run, by terminal stop reason) and — for **turn-semantics**
   observability (issue #81) — `mecatl_turns_total{role}` (one per COMPLETED
