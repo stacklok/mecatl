@@ -2,7 +2,7 @@
 id: 01-observability
 title: Classify and instrument session-load failures
 blocked_by: []
-status: in-progress
+status: done
 attempt: 1
 branch: "plan-session-load-observability/01-observability-attempt-1"
 worktree: ".scratch/worker-session-load-observability-01-observability-attempt-1"
