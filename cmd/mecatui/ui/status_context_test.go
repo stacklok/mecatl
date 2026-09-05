@@ -58,9 +58,21 @@ func TestADR_0296_StatusTemplateReceivesEligibleLocalContext(t *testing.T) {
 	updated, _ = m.Update(statusContextMessage(t, contextCmd))
 	m = updated.(Model)
 
-	waitStatusSourceChanged(t, source)
-	if got, want := statusContextSurfaceText(source.Latest().Footer), root; got != want {
-		t.Fatalf("template workspace path = %q, want active local root %q", got, want)
+	input := m.statusLineSnapshot()
+	if got, want := input.Workspace.Path, root; got != want {
+		t.Fatalf("status input workspace path = %q, want active local root %q", got, want)
+	}
+	source.Submit(input)
+	waitStatusContextSurfaceText(t, source, root)
+}
+
+func waitStatusContextSurfaceText(t *testing.T, source statusline.Source, want string) {
+	t.Helper()
+	for {
+		waitStatusSourceChanged(t, source)
+		if got := statusContextSurfaceText(source.Latest().Footer); got == want {
+			return
+		}
 	}
 }
 
