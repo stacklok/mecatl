@@ -738,7 +738,7 @@ func (h *HTTPHandler) writeSession(w http.ResponseWriter, status int, sess *sess
 		Title:           valid(title),
 		TitleProvenance: valid(string(sess.TitleProvenance)),
 		TitleMetadata:   sessionTitleToJSON(titlePayload(sess)),
-		TokenUsage:      tokenUsageToJSON(sess.TokenUsage),
+		TokenUsage:      tokenUsageToJSON(sess.TokenUsageSnapshot()),
 		ResolvedModel:   resolvedModelToJSON(h.svc.ResolvedModel(sess.ID)),
 		Kind:            string(sess.Kind),
 		Relationship:    toProtoSessionRelationship(sess.Relationship),

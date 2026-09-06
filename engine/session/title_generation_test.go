@@ -44,10 +44,15 @@ func TestSessionTitleGeneration_Scenario5_RecordsTokenUsage(t *testing.T) {
 	s.RecordTokenUsage(UsageKindSessionTitle, " openrouter\n", " model \t", Usage{InputTokens: 11, OutputTokens: 7})
 	s.RecordTokenUsage(UsageKindSessionTitle, "anthropic", "haiku", Usage{InputTokens: 3, OutputTokens: 5})
 
-	got := s.TokenUsage[UsageKindSessionTitle]
+	got := s.TokenUsageSnapshot()[UsageKindSessionTitle]
 	want := Usage{InputTokens: 14, OutputTokens: 12}
 	if got.Total != want || got.Models["openrouter/model"] != (Usage{InputTokens: 11, OutputTokens: 7}) || got.Models["anthropic/haiku"] != (Usage{InputTokens: 3, OutputTokens: 5}) {
 		t.Fatalf("canonical title token usage = %#v, want model-attributed total %#v", got, want)
+	}
+	s.TokenUsage[UsageKindSessionTitle].Models["openrouter/model"] = Usage{}
+	delete(s.TokenUsage, UsageKindSessionTitle)
+	if got := s.TokenUsageSnapshot()[UsageKindSessionTitle]; got.Total != want || got.Models["openrouter/model"] != (Usage{InputTokens: 11, OutputTokens: 7}) {
+		t.Fatalf("external projection mutation changed canonical usage: %#v", got)
 	}
 	if s.Usage != mainUsage {
 		t.Fatalf("main Usage = %#v, want unchanged %#v", s.Usage, mainUsage)

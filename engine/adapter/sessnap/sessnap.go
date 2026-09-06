@@ -212,7 +212,7 @@ func Of(s *session.Session) (Snapshot, error) {
 		TitleGeneration:        s.TitleGeneration,
 		TitleSourcePrompts:     s.TitleSourcePrompts(),
 		TitleAttempts:          s.TitleAttempts(),
-		TokenUsage:             cloneTokenUsage(s.TokenUsage),
+		TokenUsage:             cloneTokenUsage(s.TokenUsageSnapshot()),
 		Kind:                   s.Kind,
 		Relationship:           relationship,
 		CreatedAt:              s.CreatedAt,

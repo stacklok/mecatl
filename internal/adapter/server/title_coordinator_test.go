@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/stacklok/mecatl/engine/adapter/memfs"
+	"github.com/stacklok/mecatl/engine/adapter/memledger"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
@@ -108,13 +109,20 @@ func TestSessionTitleGeneration_Scenario4_InterruptionAndRetryPolicy(t *testing.
 func TestSessionTitleGeneration_Scenario4_CoordinatorShutdownAndInventory(t *testing.T) {
 	store := memstore.New()
 	stopped := make(chan struct{})
+	started := make(chan struct{}, 1)
 	svc := titleCoordinatorService(t, store, titleGeneratorFunc(func(ctx context.Context, _ []string) TitleGenerationResult {
+		started <- struct{}{}
 		<-ctx.Done()
 		close(stopped)
 		return TitleGenerationResult{Outcome: session.TitleAttemptInterrupted, Err: ctx.Err()}
 	}))
 	sess := pendingTitleSession(t, store, "shutdown")
 	svc.submitTitleGeneration(sess.ID)
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("generator did not start")
+	}
 	svc.Close()
 	select {
 	case <-stopped:
@@ -123,9 +131,160 @@ func TestSessionTitleGeneration_Scenario4_CoordinatorShutdownAndInventory(t *tes
 	}
 }
 
-func titleCoordinatorService(t *testing.T, store *memstore.Store, generator SessionTitleGenerator) *Service {
+func TestSessionTitleGeneration_Scenario4_CloseJoinsPendingRetry(t *testing.T) {
+	store := memstore.New()
+	svc := titleCoordinatorService(t, store, titleGeneratorFunc(func(context.Context, []string) TitleGenerationResult {
+		return TitleGenerationResult{Outcome: session.TitleAttemptFailed, Retryable: true}
+	}))
+	sess := pendingTitleSession(t, store, "retry-close")
+	svc.submitTitleGeneration(sess.ID)
+	deadline := time.After(time.Second)
+	for {
+		loaded, err := store.Load(context.Background(), sess.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(loaded.TitleAttempts()) == 1 && loaded.TitleAttempts()[0].Outcome == session.TitleAttemptFailed {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatal("retry was not scheduled")
+		default:
+			time.Sleep(time.Millisecond)
+		}
+	}
+	joined := make(chan struct{})
+	go func() {
+		svc.titleCoordinator.retryWG.Wait()
+		close(joined)
+	}()
+	select {
+	case <-joined:
+		t.Fatal("retry was not tracked before shutdown")
+	case <-time.After(10 * time.Millisecond):
+	}
+	svc.Close()
+	select {
+	case <-joined:
+	case <-time.After(time.Second):
+		t.Fatal("Close did not join pending retry")
+	}
+}
+
+func TestSessionTitleGeneration_Scenario4_StartupReconcilesPendingSession(t *testing.T) {
+	backing := memstore.New()
+	id := session.SessionID("startup-reconcile")
+	pendingTitleSession(t, backing, id)
+	store := titlePagerStore{Store: backing, id: id}
+	started := make(chan struct{}, 1)
+	titleCoordinatorService(t, store, titleGeneratorFunc(func(context.Context, []string) TitleGenerationResult {
+		started <- struct{}{}
+		return TitleGenerationResult{Title: "reconciled", Outcome: session.TitleAttemptSucceeded}
+	}))
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("startup reconciliation did not submit pending title")
+	}
+}
+
+func TestSessionTitleGeneration_Scenario4_DeduplicatesThroughGeneration(t *testing.T) {
+	store := memstore.New()
+	started, finish := make(chan struct{}, 1), make(chan struct{})
+	var calls atomic.Int32
+	svc := titleCoordinatorService(t, store, titleGeneratorFunc(func(context.Context, []string) TitleGenerationResult {
+		calls.Add(1)
+		started <- struct{}{}
+		<-finish
+		return TitleGenerationResult{Title: "deduplicated", Outcome: session.TitleAttemptSucceeded}
+	}))
+	sess := pendingTitleSession(t, store, "active-dedup")
+	svc.submitTitleGeneration(sess.ID)
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("generator did not start")
+	}
+	svc.submitTitleGeneration(sess.ID)
+	if got, err := store.Load(context.Background(), sess.ID); err != nil || got.TitleGeneration != session.TitleGenerationPending || len(got.TitleAttempts()) != 1 || got.TitleAttempts()[0].Outcome != "" {
+		t.Fatalf("duplicate submission changed live attempt: %#v, %v", got, err)
+	}
+	close(finish)
+	deadline := time.After(time.Second)
+	for calls.Load() != 1 {
+		select {
+		case <-deadline:
+			t.Fatalf("generator calls = %d, want 1", calls.Load())
+		default:
+			time.Sleep(time.Millisecond)
+		}
+	}
+}
+
+func TestSessionTitleGeneration_Scenario4_AttemptIDsContinueAfterRestart(t *testing.T) {
+	store := memstore.New()
+	sess := pendingTitleSession(t, store, "attempt-id-restart")
+	sess.RecordTitleAttempt(session.TitleAttempt{ID: "title-1", Outcome: session.TitleAttemptFailed})
+	if err := store.Save(context.Background(), sess); err != nil {
+		t.Fatal(err)
+	}
+	started := make(chan struct{}, 1)
+	svc := titleCoordinatorService(t, store, titleGeneratorFunc(func(context.Context, []string) TitleGenerationResult {
+		started <- struct{}{}
+		return TitleGenerationResult{Outcome: session.TitleAttemptInterrupted, Err: context.Canceled}
+	}))
+	svc.submitTitleGeneration(sess.ID)
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("generator did not start")
+	}
+	deadline := time.After(time.Second)
+	for {
+		loaded, err := store.Load(context.Background(), sess.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		attempts := loaded.TitleAttempts()
+		if len(attempts) == 2 && attempts[1].Outcome != "" {
+			if attempts[1].ID != "title-2" {
+				t.Fatalf("new attempt ID = %q, want title-2", attempts[1].ID)
+			}
+			return
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("attempt was not committed: %#v", attempts)
+		default:
+			time.Sleep(time.Millisecond)
+		}
+	}
+}
+
+type titlePlacementProvider struct{}
+
+func (titlePlacementProvider) Bind(_ context.Context, _ PlacementBindRequest) (PlacementBinding, error) {
+	ref := session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}
+	return PlacementBinding{Ref: ref, Environment: tool.MustEnvironment(ref, memfs.NewWorkspace("/ws"), memledger.New(), nil)}, nil
+}
+
+func (titlePlacementProvider) Reattach(_ context.Context, req PlacementReattachRequest) (PlacementBinding, error) {
+	return PlacementBinding{Ref: req.Ref, Environment: tool.MustEnvironment(req.Ref, memfs.NewWorkspace(req.Ref.ID), memledger.New(), nil)}, nil
+}
+
+type titlePagerStore struct {
+	*memstore.Store
+	id session.SessionID
+}
+
+func (s titlePagerStore) PageSessionMetadata(_ context.Context, _ port.SessionMetadataPageRequest) (port.SessionMetadataPage, error) {
+	return port.SessionMetadataPage{Sessions: []port.SessionDiscoveryMeta{{ID: s.id, State: session.StateCompleted}}}, nil
+}
+
+func titleCoordinatorService(t *testing.T, store port.SessionStore, generator SessionTitleGenerator) *Service {
 	t.Helper()
-	svc, err := NewService(Config{Engine: agent.NewEngine(agent.Deps{LLM: mockllm.New(), Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil)}), Store: store, Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) }, TitleGenerator: generator, Now: func() time.Time { return time.Unix(1, 0) }})
+	svc, err := NewService(Config{Engine: agent.NewEngine(agent.Deps{LLM: mockllm.New(), Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil)}), Store: store, PlacementProvider: titlePlacementProvider{}, PlacementScope: "test", TitleGenerator: generator, Now: func() time.Time { return time.Unix(1, 0) }})
 	if err != nil {
 		t.Fatalf("NewService: %v", err)
 	}
@@ -145,7 +304,7 @@ func TestSessionTitleGenerationDiagnosticsAreLifecycleSafe(t *testing.T) {
 			FailureClass: titleFailureDeadline, FailureStage: titleStageEstablishment,
 		}
 	})
-	svc, err := NewService(Config{Engine: agent.NewEngine(agent.Deps{LLM: mockllm.New(), Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil)}), Store: store, Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) }, TitleGenerator: generator, Diagnostics: diagnostics, Now: func() time.Time { return time.Unix(1, 0) }})
+	svc, err := NewService(Config{Engine: agent.NewEngine(agent.Deps{LLM: mockllm.New(), Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil)}), Store: store, PlacementProvider: titlePlacementProvider{}, PlacementScope: "test", TitleGenerator: generator, Diagnostics: diagnostics, Now: func() time.Time { return time.Unix(1, 0) }})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -214,9 +373,9 @@ func (d *titleDiagnostics) joined() string {
 	return strings.Join(d.state.records, "\n")
 }
 
-func pendingTitleSession(t *testing.T, store *memstore.Store, id session.SessionID) *session.Session {
+func pendingTitleSession(t *testing.T, store port.SessionStore, id session.SessionID) *session.Session {
 	t.Helper()
-	sess := session.New(id, session.ModeDefault, "/ws", session.Limits{}, time.Unix(1, 0))
+	sess := session.New(id, session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1, 0))
 	sess.SetTitleGeneration(session.TitleGenerationPending)
 	sess.RecordTitleSourcePrompt("source")
 	if err := store.Save(context.Background(), sess); err != nil {
@@ -234,7 +393,7 @@ func TestSessionTitleGeneration_Scenario2_AutomaticWorkIsOutsideChatRun(t *testi
 	})
 	svc, err := NewService(Config{
 		Engine: agent.NewEngine(agent.Deps{LLM: mockllm.New(mockllm.TextTurn("main reply")), Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil)}),
-		Store:  store, Workspaces: func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+		Store:  store, PlacementProvider: titlePlacementProvider{}, PlacementScope: "test",
 		TitleGenerator: generator, Now: func() time.Time { return time.Unix(1, 0) },
 	})
 	if err != nil {
@@ -242,7 +401,7 @@ func TestSessionTitleGeneration_Scenario2_AutomaticWorkIsOutsideChatRun(t *testi
 	}
 	defer svc.Close()
 
-	sess := session.New("title-outside-run", session.ModeDefault, "/ws", session.Limits{}, time.Unix(1, 0))
+	sess := session.New("title-outside-run", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1, 0))
 	sess.SetTitleGeneration(session.TitleGenerationPending)
 	sess.RecordTitleSourcePrompt("fix the title coordinator")
 	if err := store.Save(context.Background(), sess); err != nil {

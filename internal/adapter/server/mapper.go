@@ -821,7 +821,7 @@ func toProtoSession(s *session.Session, rm ResolvedModel, caps *mecatlv1.ServerC
 		Title:           valid(s.Title),
 		TitleProvenance: valid(string(s.TitleProvenance)),
 		TitleMetadata:   toProtoSessionTitle(titlePayload(s)),
-		TokenUsage:      toProtoTokenUsage(s.TokenUsage),
+		TokenUsage:      toProtoTokenUsage(s.TokenUsageSnapshot()),
 		Capabilities:    caps,
 		Kind:            string(s.Kind),
 		Relationship:    toProtoSessionRelationship(s.Relationship),

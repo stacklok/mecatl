@@ -2193,7 +2193,6 @@ func (s *Service) createSession(ctx context.Context, mode session.PermissionMode
 			return nil, err
 		}
 		s.setTitleGenerationEligibility(sess, sel)
-		stampDefaultEnvironmentRef(sess)
 		if err := seedCarryover(sess, carrySnap); err != nil {
 			return nil, err
 		}
@@ -2291,7 +2290,6 @@ func (s *Service) createPerSessionEngine(ctx context.Context, mintID func() sess
 		sess.Placement = canonicalPlacementMetadata(*placement)
 	}
 	s.setTitleGenerationEligibility(sess, sel)
-	stampDefaultEnvironmentRef(sess)
 	if err := seedCarryover(sess, carrySnap); err != nil {
 		if closeFn != nil {
 			_ = closeFn()
@@ -4583,6 +4581,8 @@ func admitRunPurpose(sess *session.Session, purpose runPurpose) error {
 //     keeps the shared engine — BYTE-IDENTICAL to pre-Phase-3.
 func (s *Service) engineAndEnvironmentFor(ctx context.Context, sess *session.Session) (*agent.Engine, tool.Environment, error) { //nolint:gocyclo // the per-session engine/environment resolution is inherently branched
 	id := sess.ID
+	attribution := s.ResolvedModel(id)
+	sess.SetUsageAttribution(attribution.ProviderID, attribution.ModelID)
 	engine := s.cfg.Engine
 	s.mu.Lock()
 	se, hasEngine := s.sessionEngines[id]
@@ -7459,7 +7459,7 @@ func (s *Service) ListSessions(ctx context.Context) ([]SessionSummary, error) {
 			summary.Title = DeriveTitle(sess)
 			summary.TitleProvenance = sess.TitleProvenance
 			summary.TitleMetadata = titlePayload(sess)
-			summary.TokenUsage = sess.TokenUsage
+			summary.TokenUsage = sess.TokenUsageSnapshot()
 			summary.Placement = sess.Placement
 			// Clone: the row must not carry a live pointer into the loaded
 			// session, or a consumer of the row can rewrite the recorded owner.

@@ -1026,7 +1026,7 @@ func (e *Engine) Run(ctx context.Context, sess *session.Session, env tool.Enviro
 // fresh budget allowance without mutating durable session accounting. It is
 // package-private so no caller outside agent can select a budget baseline.
 func (e *Engine) runWithCurrentMainUsageBaseline(ctx context.Context, sess *session.Session, env tool.Environment, req RunRequest) *Run {
-	baseline := sess.TokenUsage[session.UsageKindMain].Total
+	baseline := sess.TokenUsageSnapshot()[session.UsageKindMain].Total
 	return e.startRun(ctx, sess, req, baseline, "", func(ctx context.Context, r *Run) {
 		if !e.prepareRunEnvironment(ctx, r, sess, env) {
 			return

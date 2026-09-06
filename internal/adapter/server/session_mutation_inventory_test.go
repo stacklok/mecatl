@@ -234,7 +234,7 @@ func scanUnsanctionedWrites(files map[string]*ast.File, allowed map[string]bool)
 					violations = append(violations, path+":"+fn.Name.Name+"."+sel.Sel.Name)
 				case "Delete":
 					// sync.Map deletion is process-local, not a durable family write.
-					if x, ok := sel.X.(*ast.SelectorExpr); !ok || x.Sel.Name != "recoverNotices" {
+					if x, ok := sel.X.(*ast.SelectorExpr); !ok || x.Sel.Name != "recoverNotices" && x.Sel.Name != "queued" {
 						violations = append(violations, path+":"+fn.Name.Name+".Delete")
 					}
 				}
@@ -252,7 +252,7 @@ func TestADR_0294_DurableSessionWritesUseSanctionedWrappers(t *testing.T) {
 		t.Fatal(err)
 	}
 	allowed := map[string]bool{
-		"persistNewSession": true, "saveSession": true, "deleteSessionFamily": true, "appendEvent": true,
+		"persistNewSession": true, "saveSession": true, "persistTitle": true, "deleteSessionFamily": true, "appendEvent": true,
 		// Schedule records are a distinct caller-owned family, not a session family;
 		// naming the sanctioned seams keeps schedule_manager.go inside this scan.
 		"CreateSchedule": true, "UpdateSchedule": true, "DeleteSchedule": true,

@@ -343,9 +343,16 @@ type Session struct {
 	Limits Limits
 	// Counters are the running totals for stop-condition evaluation.
 	Counters Counters
-	// TokenUsage is the canonical durable accounting ledger. Session.Usage remains
-	// the deprecated compatibility projection of "main".
+	// TokenUsage is the deprecated mutable compatibility projection of the canonical
+	// ledger. Mutating it does not alter aggregate accounting; use TokenUsageSnapshot
+	// for an owned current view.
 	TokenUsage map[UsageKind]TokenUsage
+	// tokenUsage is the aggregate-owned canonical durable accounting ledger.
+	tokenUsage map[UsageKind]TokenUsage
+	// usageProviderID and usageModelID are the run-scoped attribution selected by
+	// composition for a shared default engine; durable selectors remain above.
+	usageProviderID string
+	usageModelID    string
 	// Usage is the deprecated lifetime main-token compatibility projection. It always
 	// mirrors TokenUsage[UsageKindMain].Total and is never reset. Unlike Counters,
 	// it is deliberately NOT cleared by resetToIdle.
@@ -526,6 +533,7 @@ func New(id SessionID, mode PermissionMode, ref EnvironmentRef, limits Limits, c
 		Conversation:    &Conversation{},
 		Limits:          limits,
 		TokenUsage:      make(map[UsageKind]TokenUsage),
+		tokenUsage:      make(map[UsageKind]TokenUsage),
 		EnvironmentRef:  ref,
 		Kind:            SessionKindMain,
 		TitleGeneration: TitleGenerationDisabled,
@@ -578,6 +586,12 @@ func (s *Session) RecordToolResults(results []ToolResult) error {
 	return nil
 }
 
+// SetUsageAttribution selects the provider/model attribution for subsequent main usage.
+func (s *Session) SetUsageAttribution(providerID, modelID string) {
+	s.usageProviderID = providerID
+	s.usageModelID = modelID
+}
+
 // RecordUsage accumulates the token usage of a model call onto the aggregate's
 // canonical main ledger and its deprecated lifetime compatibility mirror. It is
 // the intention-revealing seam the loop uses instead of poking the public Usage
@@ -588,8 +602,12 @@ func (s *Session) RecordUsage(u Usage) error {
 	if s.State != StateRunning {
 		return fmt.Errorf("%w: RecordUsage from %q", ErrIllegalTransition, s.State)
 	}
-	s.RecordTokenUsage(UsageKindMain, s.ProviderID, s.ModelID, u)
-	s.Usage = s.TokenUsage[UsageKindMain].Total
+	providerID, modelID := s.usageProviderID, s.usageModelID
+	if providerID == "" || modelID == "" {
+		providerID, modelID = s.ProviderID, s.ModelID
+	}
+	s.RecordTokenUsage(UsageKindMain, providerID, modelID, u)
+	s.Usage = s.tokenUsage[UsageKindMain].Total
 	return nil
 }
 

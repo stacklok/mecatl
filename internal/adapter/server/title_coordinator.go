@@ -14,6 +14,7 @@ import (
 const (
 	titleCoordinatorWorkers = 2
 	titleCoordinatorQueue   = 64
+	titleReconcileLimit     = 64
 	titleRetryBackoff       = 5 * time.Second
 )
 
@@ -26,6 +27,7 @@ type titleCoordinator struct {
 	cancel    context.CancelFunc
 	queue     chan session.SessionID
 	wg        sync.WaitGroup
+	retryWG   sync.WaitGroup
 	queued    sync.Map
 	attemptID atomic.Uint64
 }
@@ -49,12 +51,17 @@ func newTitleCoordinator(svc *Service, generator SessionTitleGenerator) *titleCo
 				case <-ctx.Done():
 					return
 				case id := <-c.queue:
-					c.queued.Delete(id)
 					c.drive(id)
+					c.queued.Delete(id)
 				}
 			}
 		}()
 	}
+	c.wg.Add(1)
+	go func() {
+		defer c.wg.Done()
+		c.svc.reconcilePendingTitles(ctx)
+	}()
 	return c
 }
 
@@ -84,6 +91,7 @@ func (c *titleCoordinator) diagnostics(id session.SessionID) port.Diagnostics {
 func (c *titleCoordinator) Close() {
 	c.cancel()
 	c.wg.Wait()
+	c.retryWG.Wait()
 }
 
 func (s *Service) submitTitleGeneration(id session.SessionID) {
@@ -98,7 +106,7 @@ func (s *Service) submitTitleGeneration(id session.SessionID) {
 // before terminal relay persistence was wired. It deliberately skips any attempt
 // record: an empty outcome may have crossed the durable claim before a crash, so
 // retrying it could bill a second provider call.
-func (s *Service) reconcilePendingTitles() {
+func (s *Service) reconcilePendingTitles(parent context.Context) {
 	if s.titleCoordinator == nil {
 		return
 	}
@@ -106,7 +114,7 @@ func (s *Service) reconcilePendingTitles() {
 	if !ok {
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(parent, 5*time.Second)
 	defer cancel()
 	page, err := pager.PageSessionMetadata(ctx, port.SessionMetadataPageRequest{Limit: titleReconcileLimit})
 	if err != nil {
@@ -178,12 +186,32 @@ func (c *titleCoordinator) claim(id session.SessionID) ([]string, string, Provid
 	if len(sources) == 0 {
 		return nil, "", ProviderSelector{}, false, "no_sources"
 	}
-	attemptID := fmt.Sprintf("title-%d", c.attemptID.Add(1))
+	attemptID := c.nextAttemptID(attempts)
 	sess.RecordTitleAttempt(session.TitleAttempt{ID: attemptID})
 	if !c.persistTitle(c.ctx, sess) {
 		return nil, "", ProviderSelector{}, false, "claim_persist_failed"
 	}
 	return sources, attemptID, ProviderSelector{ProviderID: sess.ProviderID, ModelID: sess.ModelID}, true, "claimed"
+}
+
+func (c *titleCoordinator) nextAttemptID(attempts []session.TitleAttempt) string {
+	var persisted uint64
+	for _, attempt := range attempts {
+		var n uint64
+		if _, err := fmt.Sscanf(attempt.ID, "title-%d", &n); err == nil && fmt.Sprintf("title-%d", n) == attempt.ID && n > persisted {
+			persisted = n
+		}
+	}
+	for {
+		current := c.attemptID.Load()
+		next := persisted + 1
+		if next <= current {
+			next = current + 1
+		}
+		if c.attemptID.CompareAndSwap(current, next) {
+			return fmt.Sprintf("title-%d", next)
+		}
+	}
 }
 
 func (c *titleCoordinator) logCompletion(id session.SessionID, attemptID string, result TitleGenerationResult) {
@@ -250,8 +278,14 @@ func (c *titleCoordinator) commit(id session.SessionID, attemptID string, result
 	case session.TitleAttemptFailed:
 		if len(attempts) < 2 && result.Retryable {
 			sess.SetTitleGeneration(session.TitleGenerationPending)
+			c.retryWG.Add(1)
 			if c.persistTitle(c.ctx, sess) {
-				go c.retry(id)
+				go func() {
+					defer c.retryWG.Done()
+					c.retry(id)
+				}()
+			} else {
+				c.retryWG.Done()
 			}
 			return
 		}

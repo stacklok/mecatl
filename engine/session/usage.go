@@ -43,10 +43,10 @@ func (s *Session) RecordTokenUsage(kind UsageKind, providerID, modelID string, u
 }
 
 func (s *Session) recordTokenUsage(kind UsageKind, attribution string, usage Usage) {
-	if s.TokenUsage == nil {
-		s.TokenUsage = make(map[UsageKind]TokenUsage)
+	if s.tokenUsage == nil {
+		s.tokenUsage = make(map[UsageKind]TokenUsage)
 	}
-	bucket := s.TokenUsage[kind]
+	bucket := s.tokenUsage[kind]
 	if bucket.Models == nil {
 		bucket.Models = make(map[string]Usage)
 	}
@@ -55,13 +55,19 @@ func (s *Session) recordTokenUsage(kind UsageKind, attribution string, usage Usa
 	}
 	bucket.Models[attribution] = bucket.Models[attribution].Add(usage)
 	bucket.Total = bucket.Total.Add(usage)
-	s.TokenUsage[kind] = bucket
+	s.tokenUsage[kind] = bucket
+	s.TokenUsage = cloneTokenUsage(s.tokenUsage)
+}
+
+// TokenUsageSnapshot returns an owned copy of the canonical accounting ledger.
+func (s *Session) TokenUsageSnapshot() map[UsageKind]TokenUsage {
+	return cloneTokenUsage(s.tokenUsage)
 }
 
 // RestoreTokenUsage restores the canonical accounting ledger from trusted
 // persistence. A nil ledger is legacy data; compatibility projections are retained.
 func (s *Session) RestoreTokenUsage(usage map[UsageKind]TokenUsage) {
-	s.TokenUsage = make(map[UsageKind]TokenUsage, len(usage))
+	s.tokenUsage = make(map[UsageKind]TokenUsage, len(usage))
 	for kind, bucket := range usage {
 		if kind != UsageKindMain && kind != UsageKindSessionTitle {
 			continue
@@ -75,9 +81,22 @@ func (s *Session) RestoreTokenUsage(usage map[UsageKind]TokenUsage) {
 			models[model] = models[model].Add(value)
 			total = total.Add(value)
 		}
-		s.TokenUsage[kind] = TokenUsage{Total: total, Models: models}
+		s.tokenUsage[kind] = TokenUsage{Total: total, Models: models}
 	}
-	s.Usage = s.TokenUsage[UsageKindMain].Total
+	s.TokenUsage = cloneTokenUsage(s.tokenUsage)
+	s.Usage = s.tokenUsage[UsageKindMain].Total
+}
+
+func cloneTokenUsage(in map[UsageKind]TokenUsage) map[UsageKind]TokenUsage {
+	out := make(map[UsageKind]TokenUsage, len(in))
+	for kind, bucket := range in {
+		models := make(map[string]Usage, len(bucket.Models))
+		for model, usage := range bucket.Models {
+			models[model] = usage
+		}
+		out[kind] = TokenUsage{Total: bucket.Total, Models: models}
+	}
+	return out
 }
 
 // Usage is an immutable value object accounting for the token cost of a single

@@ -38,6 +38,10 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   canonical title lifecycle projection; its nested usage is removed. Added
   (minor); the retained wire title/provenance fields are deprecated (pre-v1
   breaking compatibility classification).
+- **Protected canonical token-usage ledger** — adds
+  `Session.TokenUsageSnapshot` and `Session.SetUsageAttribution`; the exposed
+  `Session.TokenUsage` map remains a compatibility projection, while aggregate
+  accounting is no longer mutable through it. Added (minor).
 
 - **`tool.TemporaryScope`, `tool.CommandTemporaryScopeRunner`, and `tool.CommandTemporaryScopeStreamer`** ([ADR 0281](../docs/adr/0281-managed-temporary-command-leases.md)) — optional bound-runner capabilities for the closed managed/system temporary-storage scope selection. The capability carries no path or environment value and preserves the existing `CommandRunner` fallback for runners that do not manage temporary storage. Added (minor).
 

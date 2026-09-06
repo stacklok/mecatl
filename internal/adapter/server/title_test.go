@@ -26,7 +26,11 @@ import (
 // listSessionsService but local to this file's title-focused tests.
 func titleService(t *testing.T, store port.SessionStore) *server.Service {
 	t.Helper()
-	llm := mockllm.New(mockllm.TextTurn("hi"))
+	llm := mockllm.New(mockllm.Turn{Chunks: []port.Chunk{
+		{Kind: port.ChunkText, Text: "hi"},
+		{Kind: port.ChunkUsage, Usage: &session.Usage{InputTokens: 2, OutputTokens: 1}},
+		{Kind: port.ChunkDone, Stop: session.StopEndTurn},
+	}})
 	eng := agent.NewEngine(agent.Deps{
 		LLM:     llm,
 		Catalog: tool.NewCatalog(),
@@ -78,6 +82,32 @@ func saveSessionWithPrompt(ctx context.Context, t *testing.T, st port.SessionSto
 		t.Fatalf("Save: %v", err)
 	}
 	return s
+}
+
+func TestDefaultSessionUsageUsesResolvedModelAttribution(t *testing.T) {
+	svc := titleService(t, memstore.New())
+	defer svc.Close()
+	sess, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := svc.StartRun(context.Background(), sess.ID, "hi")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range run.Events() {
+	}
+	loaded, err := svc.GetSession(context.Background(), sess.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	usage := loaded.TokenUsageSnapshot()[session.UsageKindMain]
+	if got := usage.Models["openai/test-model"]; got != usage.Total {
+		t.Fatalf("main usage attribution = %#v, want selected default model", usage.Models)
+	}
+	if _, ok := usage.Models["unknown"]; ok {
+		t.Fatalf("main usage used legacy unknown attribution: %#v", usage.Models)
+	}
 }
 
 func TestDeriveTitleFromFirstGenuine(t *testing.T) {

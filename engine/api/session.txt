@@ -52,10 +52,12 @@
     method func (*Session).SetMode(mode PermissionMode) error
     method func (*Session).SetTitle(text string)
     method func (*Session).SetTitleGeneration(state TitleGenerationState)
+    method func (*Session).SetUsageAttribution(providerID string, modelID string)
     method func (*Session).Stop(reason StopReason) error
     method func (*Session).StopReason() (StopReason, bool)
     method func (*Session).TitleAttempts() []TitleAttempt
     method func (*Session).TitleSourcePrompts() []string
+    method func (*Session).TokenUsageSnapshot() map[UsageKind]TokenUsage
     method func (Authority).Clone() Authority
     method func (Authority).Valid() bool
     method func (EnvironmentRef).Valid() bool
