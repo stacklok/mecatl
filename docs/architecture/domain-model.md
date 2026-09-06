@@ -169,6 +169,7 @@ API. The real constants:
 | EventType value | Const | Emitted when |
 |---|---|---|
 | `session.init` | `EvSessionInit` | run starts — emitted exactly once, before the SessionStart hook and the first `turn.start` |
+| `session.title` | `EvSessionTitle` | a durable session-title lifecycle change — carries the source-free `TitlePayload` (`Title`, `Provenance`, `GenerationState`, and `LatestAttempt`), never title-source prompts or provider error text |
 | `turn.start` | `EvTurnStart` | beginning of each turn |
 | `turn.end` | `EvTurnEnd` | closes a turn's model exchange, carrying the typed `TurnEndPayload` |
 | `message.delta` | `EvMessageDelta` | streamed assistant text delta |
@@ -189,8 +190,8 @@ API. The real constants:
 | `team.start/member/tasks/findings/end` | `EvTeam*` | an in-process `Team` run's BOUNDED projection (coordinating roster) |
 | `parallel.start/branch/end` | `EvParallel*` | a `Parallel` fork-join run's REDACTED, bounded-preview GROUP projection (join + winner + fork paths) |
 
-`Event` carries `Type, Seq, Turn, Text` plus optional pointers `ToolCall`,
-`ToolResult`, `Ask *PendingAsk`, `Result *ResultPayload`, `TurnEnd *TurnEndPayload`,
+`Event` carries `Type, Seq, Turn, Text` plus the optional `Title *TitlePayload` (set on
+`EvSessionTitle`) and other optional pointers `ToolCall`, `ToolResult`, `Ask *PendingAsk`, `Result *ResultPayload`, `TurnEnd *TurnEndPayload`,
 `Hook *HookPayload`, `Approval *ApprovalPayload`,
 `CompactionArchive *CompactionArchivePayload`, `UserPrompt *UserPromptPayload`,
 `Usage *Usage`, `Subagent`, `Team`, `Parallel` (each set only on its own event

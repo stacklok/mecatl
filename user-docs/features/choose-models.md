@@ -149,12 +149,15 @@ These mechanisms are independent:
   `guardrail`, `plan`, and `router` do not replace the session model. The `plan`
   slot can use a stronger model while a plan is being written; compaction and
   checker slots can use cheaper models.
-- **`title` is an explicit opt-in slot** for automatic session-title generation.
-  It has no default-tier or session-model fallback: without a compatible `title`
-  binding on the session's fixed provider, no title-model call is made. The server
-  generates a title asynchronously from up to three early genuine prompts; it
-  never delays or changes the chat. Its token usage is stored separately as
-  `session_title`, not charged to the chat's displayed usage or run budget.
+- **`title` is an explicit opt-in slot** for automatic session-title generation. It
+  has no fallback at all: if the binding is absent, or if it is present but cannot
+  be resolved for the session's fixed provider, generation is disabled and the
+  server makes no title-provider call. This differs from other invalid slot or
+  route targets, which may warn and fall back to the session model. With a
+  compatible `title` binding, the server generates a title asynchronously from up
+  to three early genuine prompts; it never delays or changes the chat. Its token
+  usage is stored separately as `session_title`, not charged to the chat's
+  displayed usage or run budget.
 - **Router categories** select a model for a plain delegated Subagent, an unpinned
   named specialist (including `mode: "read-write"`), a Parallel branch, or an undefined
   team member from the task description. A taxonomy enables the router; with no taxonomy,
@@ -169,14 +172,17 @@ small  → quick  → gemini-3.5-flash
 image  → image  → gpt-5.6-terra
 ```
 
-Resolution is fail-soft: an invalid alias, slot, or route target warns and falls
-back to the session model. Explicit per-call models, model-pinned named agents, fork or
-resume choices, and other higher-precedence selectors are not overridden by the router. A
-named definition with no `model:` is routable; `model: inherit` is an explicit pin. Writable
-named routing keeps the specialist's direct-write scope, while explicit
-`read-write`+`agent`+`model` remains invalid. Model slots and router taxonomies are operator decisions; project model
-settings are ignored unless the operator explicitly allows the relevant model
-set on a trusted project.
+Resolution is fail-soft for slots and routes other than `title`: an invalid alias,
+slot, or route target warns and falls back to the session model. The `title` slot is
+  the exception described above; an absent or unresolvable title binding disables
+  generation rather than falling back or making a provider call. Explicit per-call
+  models, model-pinned named agents, fork or resume choices, and other higher-
+  precedence selectors are not overridden by the router. A named definition with no
+  `model:` is routable; `model: inherit` is an explicit pin. Writable named routing
+ keeps the specialist's direct-write scope, while explicit `read-write`+`agent`+`model`
+ remains invalid. Model slots and router taxonomies are operator decisions; project
+ model settings are ignored unless the operator explicitly allows the relevant model
+ set on a trusted project.
 
 This configuration belongs in the operator-global settings file, not a checked-in
 project file. For the complete precedence rules and CLI equivalents, see the
