@@ -2,7 +2,7 @@
 id: 10-macos-panel-repairs
 title: Repair macOS managed-storage panel findings
 blocked_by: [09-macos-managed-temp]
-status: in-progress
+status: done
 attempt: 1
 branch: "plan-managed-temporary-command-leases/10-macos-panel-repairs-attempt-1"
 worktree: ".scratch/worker-managed-temporary-command-leases-10-macos-panel-repairs-attempt-1"
