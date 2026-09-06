@@ -65,12 +65,12 @@ reach the right run.
   secrets, (provider_id, id)-sorted. Gated by `ServerCapabilities.model_selection`
   (true iff ≥1 provider is available). See [multi-provider](providers.md).
 - `Converse(stream ConverseRequest) → stream ConverseResponse)` — bidirectional.
-  The first frame **must** be `prompt`; then zero or more `resume_approval` /
-  `cancel` / `cancel_child` control frames. `ConverseRequest` is a `oneof kind
-  { Prompt prompt=1; ResumeApproval resume_approval=10; Cancel cancel=11;
-  CancelChild cancel_child=12 }`. The server starts the
-  run, reads control frames on a side goroutine (`readControl`), and relays
-  `Event`s on the main goroutine until the channel closes.
+  The first frame **must** be `prompt` or `retry`; later frames may carry
+  `resume_approval`, `cancel`, `cancel_child`, `steer`, or `steer_cancel` controls.
+  A received second start frame is rejected with `InvalidArgument`. The server starts
+  the run, reads controls on a side goroutine (`readControl`), and relays `Event`s
+  until the terminal result closes the stream. A control still in transit at that
+  boundary may instead observe normal EOF.
 - The full service is wider than this core. Session lifecycle adds
   `CloseSession`; the read-only inventories are `ListAgents`, `ListCommands`,
   `ListSkills`, `GetSoul`, `GetUserModel`; MCP passthrough is

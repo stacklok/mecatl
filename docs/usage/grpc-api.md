@@ -263,8 +263,10 @@ The bidi stream drives exactly one run:
 | `cancel` (`Cancel{}`) | abort the in-flight run |
 | `cancel_child` (`CancelChild{child_id}`) | cancel ONE child run by its id (the `agentId:` / `child_id` handle), leaving the run and sibling children untouched; unknown/finished ids are ignored on the stream |
 
-A second `prompt` or `retry`, or any unknown control frame, is ignored. A single
-`Converse` stream drives a single run.
+A received second `prompt` or `retry` is `InvalidArgument`; unknown control frames
+are ignored. A single `Converse` stream drives a single run. Because the server
+closes the stream on the terminal result, a control frame still in transit at that
+boundary may instead observe normal EOF.
 
 For a failed model stream, inspect the terminal Result's optional
 `retry_disposition` and `stream_progress`. New servers set both fields even when the

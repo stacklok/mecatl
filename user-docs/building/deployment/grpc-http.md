@@ -78,6 +78,11 @@ import mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 For RPC-by-RPC behavior, request fields, response semantics, and stream control
 frames, see the [gRPC API reference](https://github.com/stacklok/mecatl/blob/main/docs/usage/grpc-api.md).
 
+One `Converse` stream drives one run: start it with exactly one `Prompt` or
+`RetryStart`, then send only controls while it remains live. A received second start
+frame is rejected, but a frame still in transit when the server has emitted its
+terminal result can observe normal stream completion instead.
+
 Mecatl does not enable gRPC server reflection. Use the checked-in proto files
 with `grpcurl`, or use generated bindings in your client.
 
