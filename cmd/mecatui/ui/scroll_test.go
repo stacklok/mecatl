@@ -181,7 +181,7 @@ func TestScrollIndicatorRendersOnlyWhenScrolledUp(t *testing.T) {
 // branch a present-files-only test would never reach.
 func TestScrollIndicatorTakesPrecedenceOverChangedFiles(t *testing.T) {
 	m := scrollModel(t)
-	m.recordFileChange("a.go") // a real "✎ 1 file" changed-files cue is now present
+	m.conv.recordFileChange("a.go") // a real "✎ 1 file" changed-files cue is now present
 
 	// At the bottom (stuck): the changed-files cue shows, no scroll cue.
 	atBottom := stripANSIstr(m.renderHeader())

@@ -1072,7 +1072,7 @@ func (m Model) updateStreamEvent(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// at call time (not on the result) so the header reflects intent the moment
 		// the mutation is announced; mutatedPath gates to Edit/Write + dedupes.
 		if p, ok := mutatedPath(msg.Name, msg.Args); ok {
-			m.recordFileChange(p)
+			m.conv.recordFileChange(p)
 		}
 		return m.afterEvent()
 	case client.ToolResultMsg:
@@ -4440,7 +4440,7 @@ func (m *Model) refreshView() {
 	// in beneath the scrollback so the muted "Δ N files" header indicator has a
 	// discoverable, scannable expansion — without a dedicated key or overlay.
 	if m.expandTools {
-		if list := m.rend.renderChangedFiles(m.filesChanged); list != "" {
+		if list := m.rend.renderChangedFiles(m.conv.filesChanged); list != "" {
 			content += "\n" + list
 		}
 	}

@@ -454,7 +454,7 @@ func (m Model) scrollIndicator() string {
 const changedFilesIndicatorLimit = 999
 
 func (m Model) changedFilesIndicator() string {
-	n := len(m.filesChanged)
+	n := len(m.conv.filesChanged)
 	if n == 0 {
 		return ""
 	}

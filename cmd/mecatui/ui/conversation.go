@@ -209,6 +209,7 @@ const (
 // on the block (not a pre-rendered string) lets a theme/width change re-render
 // the whole history correctly.
 type block struct {
+	id   uint64
 	kind blockKind
 
 	// rev is the block's render revision: bumped on EVERY post-append mutation of a
@@ -382,7 +383,14 @@ type subagentLane struct {
 // ctrl+a Subagents tab. It is part of the conversation so a /clear (which rebuilds
 // the conversation) drops it too.
 type conversation struct {
-	blocks []block
+	blocks      []block
+	nextBlockID uint64
+	// filesChanged preserves first-seen order; filesSeen tracks membership. The
+	// appendix receives its identity at the first distinct change, even though it
+	// is not yet a physical rendered block.
+	filesChanged           []string
+	filesSeen              map[string]struct{}
+	changedFilesAppendixID uint64
 	// subagentFleet preserves first-seen order; fleetIndex maps ChildID → its slot so
 	// repeated tool/end events for a child update the same lane in O(1).
 	subagentFleet []subagentLane
@@ -395,6 +403,33 @@ type conversation struct {
 	parallelIndex  map[string]int
 }
 
+// appendBlock assigns the next UI-local document identity before adding a block.
+func (c *conversation) appendBlock(b block) {
+	c.nextBlockID++
+	b.id = c.nextBlockID
+	c.blocks = append(c.blocks, b)
+}
+
+// recordFileChange records a first-seen mutated workspace path. The synthetic
+// appendix gets one stable identity at its first distinct member.
+func (c *conversation) recordFileChange(path string) {
+	if path == "" {
+		return
+	}
+	if c.filesSeen == nil {
+		c.filesSeen = make(map[string]struct{})
+	}
+	if _, ok := c.filesSeen[path]; ok {
+		return
+	}
+	c.filesSeen[path] = struct{}{}
+	c.filesChanged = append(c.filesChanged, path)
+	if c.changedFilesAppendixID == 0 {
+		c.nextBlockID++
+		c.changedFilesAppendixID = c.nextBlockID
+	}
+}
+
 // isEmpty reports whether the conversation has no blocks yet — the first-run
 // state, before any prompt is sent. The zero-state welcome card renders in the
 // empty viewport while this holds (and vanishes the instant the first block,
@@ -403,7 +438,7 @@ func (c *conversation) isEmpty() bool { return len(c.blocks) == 0 }
 
 // addUser appends a text-only user-prompt block.
 func (c *conversation) addUser(text string) {
-	c.blocks = append(c.blocks, block{kind: blockUser, raw: text})
+	c.appendBlock(block{kind: blockUser, raw: text})
 }
 
 // addUserWithMedia appends a user-prompt block carrying media-part placeholders.
@@ -412,13 +447,13 @@ func (c *conversation) addUser(text string) {
 // the text so a multimodal prompt is never silently rendered as text-only. With
 // no media it is equivalent to addUser.
 func (c *conversation) addUserWithMedia(text string, media []string) {
-	c.blocks = append(c.blocks, block{kind: blockUser, raw: text, media: media})
+	c.appendBlock(block{kind: blockUser, raw: text, media: media})
 }
 
 // startAssistant opens a fresh, empty assistant block to accumulate deltas into.
 // Called on turn.start so each turn is its own markdown block.
 func (c *conversation) startAssistant() {
-	c.blocks = append(c.blocks, block{kind: blockAssistant})
+	c.appendBlock(block{kind: blockAssistant})
 }
 
 // appendAssistant appends streamed text to the current assistant block, opening
@@ -432,7 +467,7 @@ func (c *conversation) appendAssistant(text string) {
 		b.reasoningStreaming = false
 		return
 	}
-	c.blocks = append(c.blocks, block{kind: blockAssistant, raw: text})
+	c.appendBlock(block{kind: blockAssistant, raw: text})
 }
 
 // reviseAssistant REPLACES the current assistant block's raw content with text
@@ -456,7 +491,7 @@ func (c *conversation) reviseAssistant(text string) {
 		b.reasoningStreaming = false
 		return
 	}
-	c.blocks = append(c.blocks, block{kind: blockAssistant, raw: text})
+	c.appendBlock(block{kind: blockAssistant, raw: text})
 }
 
 // appendReasoning accumulates streamed reasoning-summary text into the current
@@ -469,7 +504,7 @@ func (c *conversation) reviseAssistant(text string) {
 func (c *conversation) appendReasoning(text string) {
 	b := c.currentAssistant()
 	if b == nil {
-		c.blocks = append(c.blocks, block{kind: blockAssistant})
+		c.appendBlock(block{kind: blockAssistant})
 		b = &c.blocks[len(c.blocks)-1]
 	}
 	b.reasoning += text
@@ -506,12 +541,12 @@ func (c *conversation) currentAssistant() *block {
 
 // addTurnStat appends a muted per-turn usage/elapsed stat line.
 func (c *conversation) addTurnStat(text string) {
-	c.blocks = append(c.blocks, block{kind: blockTurnStat, raw: text})
+	c.appendBlock(block{kind: blockTurnStat, raw: text})
 }
 
 // addTool appends a running tool-call block.
 func (c *conversation) addTool(id, name, args string) {
-	c.blocks = append(c.blocks, block{
+	c.appendBlock(block{
 		kind:     blockTool,
 		toolID:   id,
 		toolName: name,
@@ -1189,7 +1224,7 @@ func (c *conversation) liveTeamBlock() *block {
 
 // addNotice appends a muted info block (compaction / permission verb).
 func (c *conversation) addNotice(text string) {
-	c.blocks = append(c.blocks, block{kind: blockNotice, raw: text})
+	c.appendBlock(block{kind: blockNotice, raw: text})
 }
 
 // addRecoverNotice appends a WARNING-styled recover-notice block (a session that
@@ -1199,7 +1234,7 @@ func (c *conversation) addNotice(text string) {
 // bullet — and durable rather than a transient statusMsg so the run's first
 // event does not overwrite it before the user reads it.
 func (c *conversation) addRecoverNotice(text string) {
-	c.blocks = append(c.blocks, block{kind: blockNotice, raw: text, recover: true})
+	c.appendBlock(block{kind: blockNotice, raw: text, recover: true})
 }
 
 // addDelivery appends a fire-result delivery note block: a scheduled-task
@@ -1209,7 +1244,7 @@ func (c *conversation) addRecoverNotice(text string) {
 // engine recorded) — the renderer strips the fence markers + redundant
 // provenance header for display (they are machine markers, not content).
 func (c *conversation) addDelivery(scheduleName, fireID, text string) {
-	c.blocks = append(c.blocks, block{
+	c.appendBlock(block{
 		kind:           blockDelivery,
 		toolName:       scheduleName, // reused for the schedule-name label
 		deliveryFireID: fireID,
@@ -1222,7 +1257,7 @@ func (c *conversation) addDelivery(scheduleName, fireID, text string) {
 // distinctly from a plain notice — a hook glyph + phase, with the outcome
 // coloured (blocked stands out from a benign info/modified notice).
 func (c *conversation) addHook(text, phase, tool, decision string) {
-	c.blocks = append(c.blocks, block{
+	c.appendBlock(block{
 		kind:         blockHook,
 		raw:          text,
 		hookPhase:    phase,
@@ -1233,12 +1268,12 @@ func (c *conversation) addHook(text, phase, tool, decision string) {
 
 // addError appends an error block.
 func (c *conversation) addError(text string) {
-	c.blocks = append(c.blocks, block{kind: blockError, raw: text})
+	c.appendBlock(block{kind: blockError, raw: text})
 }
 
 // addPermanentError appends a permanent-error block: the error is a server-classified
 // PERMANENT provider rejection and retrying cannot help. The renderer shows a one-line
 // human summary; the raw error payload is available on expand (ctrl+t).
 func (c *conversation) addPermanentError(text string) {
-	c.blocks = append(c.blocks, block{kind: blockError, raw: text, permanent: true})
+	c.appendBlock(block{kind: blockError, raw: text, permanent: true})
 }

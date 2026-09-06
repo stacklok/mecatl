@@ -226,8 +226,8 @@ func TestYoloBadgeWithTailFitsOneRow(t *testing.T) {
 		m = applyAll(m, tea.WindowSizeMsg{Width: w, Height: 30},
 			client.SessionReadyMsg{SessionID: "sess-test-0001", Capabilities: client.Capabilities{Posture: posture}})
 		// A changed-files cue gives a non-empty right-aligned tail beside the badge.
-		m.recordFileChange("a.go")
-		m.recordFileChange("b.go")
+		m.conv.recordFileChange("a.go")
+		m.conv.recordFileChange("b.go")
 		return m.renderHeader()
 	}
 	for _, tc := range cases {

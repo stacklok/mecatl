@@ -194,6 +194,8 @@ var oracleSteps = []struct {
 // method fails TestConversationMutatorsCoveredByOracle until it is either added
 // as an oracle step or consciously listed here.
 var oracleNonMutators = map[string]string{
+	"appendBlock":         "block-creation gateway, driven by every block appender",
+	"recordFileChange":    "changes only appendix metadata, which is not yet a rendered block",
 	"isEmpty":             "pure read",
 	"currentAssistant":    "rev-bump gateway, driven via appendAssistant/appendReasoning/endReasoningStream",
 	"subagentBlock":       "rev-bump gateway, driven via the setSubagent* steps",
