@@ -50,7 +50,7 @@ is not the human subject token, I2 actor token, or final vMCP access token.
 
 ### I1
 
-ADR 0300 and `internal/identityissuer` own:
+ADR 0303 and `internal/identityissuer` own:
 
 ```text
 explicit mecatl trust domain
@@ -65,7 +65,7 @@ Do not weaken I1 into arbitrary `Sign` or generic claim-map APIs.
 
 ### I2
 
-ADR 0301 is authoritative for the actor credential:
+ADR 0304 is authoritative for the actor credential:
 
 ```text
 sub = definition-scoped SPIFFE ID
@@ -120,9 +120,9 @@ implement TokenReview or sidecar transport.
 Read:
 
 ```text
-docs/adr/0300-identity-issuer-substrate.md
+docs/adr/0303-identity-issuer-substrate.md
 docs/acceptance/identity-issuer-substrate.md
-docs/adr/0301-logical-agent-identity-projection.md
+docs/adr/0304-logical-agent-identity-projection.md
 docs/acceptance/logical-agent-identity-projection.md
 docs/agent-identity-model.md
 docs/agent-identity-outbound.md
@@ -635,7 +635,7 @@ DECISIONS.md        accepted/rejected/deferred choices
 RESULT.md           I3-C acceptance-plan handoff
 ```
 
-Do not modify ADR 0300 or ADR 0301 during exploration. A new ADR records I3.
+Do not modify ADR 0303 or ADR 0304 during exploration. A new ADR records I3.
 Do not modify active Stage 3 or B0 handovers/contracts.
 
 ## Likely I3-C acceptance scenarios after design approval

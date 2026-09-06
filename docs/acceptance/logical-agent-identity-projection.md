@@ -3,7 +3,7 @@
 **Phase:** I2 logical-agent identity
 **Status:** in-progress, 2026-08-31. Synthesized from the approved and adversarially reviewed I2 design session.
 **Issues:** [stacklok/mecatl#367](https://github.com/stacklok/mecatl/issues/367), [#371](https://github.com/stacklok/mecatl/issues/371), [#375](https://github.com/stacklok/mecatl/issues/375), [#377](https://github.com/stacklok/mecatl/issues/377).
-**ADR:** [ADR-0301](../adr/0301-logical-agent-identity-projection.md) — pins the logical subject, closed typed claim, one containment proof, and issue/verify boundary.
+**ADR:** [ADR-0304](../adr/0304-logical-agent-identity-projection.md) — pins the logical subject, closed typed claim, one containment proof, and issue/verify boundary.
 **Accumulator branch:** `acc/logical-agent-identity-projection` (off `acc/identity-issuer-substrate`).
 
 The smallest set of work that lets the existing shell-less I1 host mint and independently verify a bounded logical-agent JWT-SVID whose exact tool authority cannot exceed a supplied mecatl `CapabilitySet`.
@@ -12,8 +12,8 @@ The plan deliberately stops before B4 spawn wiring and I3 user/actor exchange. A
 
 ## Why these scope cuts
 
-- [ADR-0301](../adr/0301-logical-agent-identity-projection.md) limits I2 to typed logical-definition identity, exact tool projection, constrained issuance, and independent verification.
-- [ADR-0300](../adr/0300-identity-issuer-substrate.md) retains ES256 key custody, bundle verification, fixed audience/time policy, host isolation, and rotation.
+- [ADR-0304](../adr/0304-logical-agent-identity-projection.md) limits I2 to typed logical-definition identity, exact tool projection, constrained issuance, and independent verification.
+- [ADR-0303](../adr/0303-identity-issuer-substrate.md) retains ES256 key custody, bundle verification, fixed audience/time policy, host isolation, and rotation.
 - [ADR-0234](../adr/0234-authority-evaluator-port.md) and [`AGENTS.md` — authority cannot widen](../../AGENTS.md) keep runtime authority derivation and concrete request authorization outside token encoding.
 - [`architecture.md` — dependency direction](../architecture.md) keeps `internal/identityissuer` dependent on the governance domain, never the reverse.
 
@@ -21,7 +21,7 @@ The plan deliberately stops before B4 spawn wiring and I3 user/actor exchange. A
 
 ### Scenario 1 — canonical logical-definition subject and closed claim
 
-A trusted caller supplies one closed definition tier, its exact resolved name, and an optional occurrence label. I2 derives one deterministic local SPIFFE workload identity without lossy name collisions and validates the bounded v1 value before any signing work. This is the principal and schema fixed by [ADR-0301](../adr/0301-logical-agent-identity-projection.md).
+A trusted caller supplies one closed definition tier, its exact resolved name, and an optional occurrence label. I2 derives one deterministic local SPIFFE workload identity without lossy name collisions and validates the bounded v1 value before any signing work. This is the principal and schema fixed by [ADR-0304](../adr/0304-logical-agent-identity-projection.md).
 
 **Acceptance:**
 
@@ -36,7 +36,7 @@ A trusted caller supplies one closed definition tier, its exact resolved name, a
 
 ### Scenario 2 — exact no-wider authority projection
 
-A caller requests an exact tool-name set from an already-derived source `governance.CapabilitySet`. I2 uses the existing predicate rather than introducing token-specific narrowing, as required by [ADR-0301](../adr/0301-logical-agent-identity-projection.md) and [ADR-0234](../adr/0234-authority-evaluator-port.md).
+A caller requests an exact tool-name set from an already-derived source `governance.CapabilitySet`. I2 uses the existing predicate rather than introducing token-specific narrowing, as required by [ADR-0304](../adr/0304-logical-agent-identity-projection.md) and [ADR-0234](../adr/0234-authority-evaluator-port.md).
 
 **Acceptance:**
 
@@ -53,7 +53,7 @@ A caller requests an exact tool-name set from an already-derived source `governa
 
 ### Scenario 3 — constrained issuance and unpredictable token identity
 
-The root-internal issuer host signs the canonical value while retaining ownership of JOSE, audience, time, key, and randomness. No caller can turn the operation into an arbitrary signing oracle. This extends [ADR-0300](../adr/0300-identity-issuer-substrate.md) without weakening its custody boundary.
+The root-internal issuer host signs the canonical value while retaining ownership of JOSE, audience, time, key, and randomness. No caller can turn the operation into an arbitrary signing oracle. This extends [ADR-0303](../adr/0303-identity-issuer-substrate.md) without weakening its custody boundary.
 
 **Acceptance:**
 
@@ -68,7 +68,7 @@ The root-internal issuer host signs the canonical value while retaining ownershi
 
 ### Scenario 4 — independent, single-pass typed verification
 
-A retained verifier with only the compact token, configured trust domain/audience/schema limits, clock, and a fresh complete I1 bundle validates one security representation and returns a typed logical identity. It never verifies the envelope and then projects authority from a second unverified parse. This follows [ADR-0301](../adr/0301-logical-agent-identity-projection.md), [ADR-0300](../adr/0300-identity-issuer-substrate.md), and the fail-closed trust-boundary rules in [`AGENTS.md`](../../AGENTS.md).
+A retained verifier with only the compact token, configured trust domain/audience/schema limits, clock, and a fresh complete I1 bundle validates one security representation and returns a typed logical identity. It never verifies the envelope and then projects authority from a second unverified parse. This follows [ADR-0304](../adr/0304-logical-agent-identity-projection.md), [ADR-0303](../adr/0303-identity-issuer-substrate.md), and the fail-closed trust-boundary rules in [`AGENTS.md`](../../AGENTS.md).
 
 **Acceptance:**
 
@@ -83,20 +83,20 @@ A retained verifier with only the compact token, configured trust domain/audienc
 
 ### Scenario 5 — ephemeral remint across rotation without identity drift
 
-I2 carries no durable token state. Using the same valid typed identity and same-or-narrower source authority after I1 activation produces a fresh credential under the current key while bounded overlap remains independently verifiable. This applies [ADR-0300](../adr/0300-identity-issuer-substrate.md) rotation and [ADR-0301](../adr/0301-logical-agent-identity-projection.md) remint semantics.
+I2 carries no durable token state. Using the same valid typed identity and same-or-narrower source authority after I1 activation produces a fresh credential under the current key while bounded overlap remains independently verifiable. This applies [ADR-0303](../adr/0303-identity-issuer-substrate.md) rotation and [ADR-0304](../adr/0304-logical-agent-identity-projection.md) remint semantics.
 
 **Acceptance:**
 
 - AC5.1: Before and after key activation, independently verified tokens have the same canonical subject/tier/name/instance and same-or-narrower tools, but fresh `jti`, signature, issuance time, and the active `kid`.
   - verify: `TestLogicalAgentIdentityProjection_Scenario5_RotationPreservesLogicalIdentity`
-- AC5.2: During the documented overlap both unexpired tokens verify; after the ADR-0300 retirement bound the old-key token fails and the new-key token remains valid.
+- AC5.2: During the documented overlap both unexpired tokens verify; after the ADR-0303 retirement bound the old-key token fails and the new-key token remains valid.
   - verify: `TestADR_0301_LogicalAgentRotationOverlap`
 - AC5.3: A deterministic compact-token/signature canary is proven present at the successful issuance boundary, then absent from the typed verifier result, bounded issue/verify errors and diagnostics, and every persistence-capable domain value. Separate rejected fixtures place recognizable tool, instance, and unknown-claim canaries in claim-derived error paths and prove errors/diagnostics do not echo them; successful signed claims and typed results retain the approved tool/instance fields. No session, event, status, or model-visible type is widened to carry a compact token or parent token.
   - verify: `TestADR_0301_LogicalAgentCredentialCanariesNeverPersistOrLeak`
 
 ### Scenario 6 — vertical authority and compatibility proof
 
-A reviewer definition receives a read-only projection, an independent verifier returns that exact per-token tool set, and the existing authority evaluator consumes that returned value. Read succeeds while deploy fails; a deploy-capable positive control follows the identical path and succeeds. This proves authentication remains separate from concrete authorization under [ADR-0234](../adr/0234-authority-evaluator-port.md) and [ADR-0301](../adr/0301-logical-agent-identity-projection.md).
+A reviewer definition receives a read-only projection, an independent verifier returns that exact per-token tool set, and the existing authority evaluator consumes that returned value. Read succeeds while deploy fails; a deploy-capable positive control follows the identical path and succeeds. This proves authentication remains separate from concrete authorization under [ADR-0234](../adr/0234-authority-evaluator-port.md) and [ADR-0304](../adr/0304-logical-agent-identity-projection.md).
 
 **Acceptance:**
 
@@ -113,13 +113,13 @@ A reviewer definition receives a read-only projection, an independent verifier r
 
 | Item | Defer-to | ADR / decision |
 |---|---|---|
-| Root/Subagent/Parallel/Team/schedule binding and eager mint invocation | B4 | [ADR-0301](../adr/0301-logical-agent-identity-projection.md) |
-| Durable five-tier definition binding and restart remint orchestration | B4/B0 | [ADR-0301](../adr/0301-logical-agent-identity-projection.md) |
-| User subject, groups, RFC 8693 exchange, `act`, client/presenter authorization | I3 | [ADR-0301](../adr/0301-logical-agent-identity-projection.md) |
-| Holder binding, replay consumption, vMCP token, route/resource/Cedar policy | I3/B4 | [ADR-0301](../adr/0301-logical-agent-identity-projection.md) |
+| Root/Subagent/Parallel/Team/schedule binding and eager mint invocation | B4 | [ADR-0304](../adr/0304-logical-agent-identity-projection.md) |
+| Durable five-tier definition binding and restart remint orchestration | B4/B0 | [ADR-0304](../adr/0304-logical-agent-identity-projection.md) |
+| User subject, groups, RFC 8693 exchange, `act`, client/presenter authorization | I3 | [ADR-0304](../adr/0304-logical-agent-identity-projection.md) |
+| Holder binding, replay consumption, vMCP token, route/resource/Cedar policy | I3/B4 | [ADR-0304](../adr/0304-logical-agent-identity-projection.md) |
 | Redis fencing, failover, idempotency and broker ownership | B0/B1 | [ADR-0027](../adr/0027-cloud-native.md) |
-| General resource-containment vocabulary, KMS/HSM and federation | later | [ADR-0301](../adr/0301-logical-agent-identity-projection.md) |
-| Stage 3 MCP authorization interruption changes | separate track | [ADR-0300](../adr/0300-identity-issuer-substrate.md) |
+| General resource-containment vocabulary, KMS/HSM and federation | later | [ADR-0304](../adr/0304-logical-agent-identity-projection.md) |
+| Stage 3 MCP authorization interruption changes | separate track | [ADR-0303](../adr/0303-identity-issuer-substrate.md) |
 
 ## Cross-cutting deliverables
 
@@ -150,7 +150,7 @@ Establish the pure definition/profile values and golden vectors first, then the 
 - **Temporal authority.** An issued tool set remains usable until expiry even if runtime authority narrows; the fixed short TTL is I2's revocation bound.
 - **Definition fidelity.** Current durable definition labels do not encode every resolved tier; B4 must carry a trusted typed winner rather than infer it.
 - **Resource precision.** Tool presence does not grant every repository, path, tenant, route, credential, or argument behind that tool; I3/B4 performs resolved-target authorization.
-- **Software key custody.** ADR-0300's broker-host, cluster-admin, node/kubelet, Secret-store, and bootstrap-root compromise limits remain; I4 may add KMS/HSM.
+- **Software key custody.** ADR-0303's broker-host, cluster-admin, node/kubelet, Secret-store, and bootstrap-root compromise limits remain; I4 may add KMS/HSM.
 
 ## Exit criteria
 

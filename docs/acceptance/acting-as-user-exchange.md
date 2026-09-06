@@ -3,7 +3,7 @@
 **Phase:** I3-C adapter-neutral acting-as-user exchange contract
 **Status:** in-progress, 2026-09-03. Derived from the approved I3-D design.
 **Issue:** [stacklok/mecatl#372](https://github.com/stacklok/mecatl/issues/372).
-**ADR:** [ADR-0302](../adr/0302-acting-as-user-exchange.md) — live exchange contract and I3-C boundary.
+**ADR:** [ADR-0305](../adr/0305-acting-as-user-exchange.md) — live exchange contract and I3-C boundary.
 **Accumulator branch:** `acc/acting-as-user-exchange` (off `acc/logical-agent-identity-projection`, the accepted I2 base).
 
 The smallest set of work that proves an acting-as-user exchange cannot recombine independently valid user, actor, presenter, or target facts into broader authority. It creates an adapter-neutral, root-internal gate with deterministic offline evidence; it does not make a ToolHive production call.
@@ -12,8 +12,8 @@ The plan is scenario-first: every scenario demonstrates a bounded decision or se
 
 ## Why these scope cuts
 
-- [ADR-0302](../adr/0302-acting-as-user-exchange.md) keeps production ToolHive/vMCP, B1 workload verification, target route admission, credential lookup, Stage 3, persistent caching, and schedule consent outside I3-C.
-- [ADR-0301](../adr/0301-logical-agent-identity-projection.md) fixes I2 as a definition-scoped JWT-SVID with exact tools; I3-C must not widen it with generic claims or infer resource scope from a tool name.
+- [ADR-0305](../adr/0305-acting-as-user-exchange.md) keeps production ToolHive/vMCP, B1 workload verification, target route admission, credential lookup, Stage 3, persistent caching, and schedule consent outside I3-C.
+- [ADR-0304](../adr/0304-logical-agent-identity-projection.md) fixes I2 as a definition-scoped JWT-SVID with exact tools; I3-C must not widen it with generic claims or infer resource scope from a tool name.
 - [ADR-0234](../adr/0234-authority-evaluator-port.md) already establishes that external policy can only tighten carried authority.
 
 ## In scope — 6 scenarios, in implementation order
@@ -34,12 +34,12 @@ A caller constructs a non-secret request from a durable issuer-qualified owner, 
 
 ### Scenario 2 — Verified user and I2 actor bind to the durable owner
 
-The gate verifies a fresh subject assertion against the exact intended use and verifies the compact I2 JWT through the existing profile verifier; it never treats an exported parsed value as proof. The durable owner is an exact issuer/subject pair, while I2 remains independently constrained by [ADR-0301](../adr/0301-logical-agent-identity-projection.md).
+The gate verifies a fresh subject assertion against the exact intended use and verifies the compact I2 JWT through the existing profile verifier; it never treats an exported parsed value as proof. The durable owner is an exact issuer/subject pair, while I2 remains independently constrained by [ADR-0304](../adr/0304-logical-agent-identity-projection.md).
 
 **Acceptance:**
 - AC2.1: A valid exchange-subject assertion whose issuer-qualified identity matches the durable owner reaches the policy gate; changing only issuer or subject refuses before issuance. Wrong/multiple audience, login-bearer or ID-token substitution, wrong `typ`/authorized party, missing/excessive-age temporal fields, duplicate registered claims, wrong algorithm, and oversized input also refuse.
   - verify: `TestADR_0302_ClosedSubjectAssertionProfile`
-- AC2.2: A valid compact I2 JWT produces a copied verified logical actor, while wrong audience, expired, malformed, oversized, duplicate-claim, stale-bundle, and algorithm-confused actor tokens refuse without partial facts. Rotation accepts old/new keys only during ADR-0300 overlap and refuses retired or refresh-stale bundles.
+- AC2.2: A valid compact I2 JWT produces a copied verified logical actor, while wrong audience, expired, malformed, oversized, duplicate-claim, stale-bundle, and algorithm-confused actor tokens refuse without partial facts. Rotation accepts old/new keys only during ADR-0303 overlap and refuses retired or refresh-stale bundles.
   - verify: `TestADR_0302_ActorProfileVerificationAndRotation`
 - AC2.3: A caller-constructed or post-verification-mutated logical-agent value cannot widen the tools used by the gate.
   - verify: `TestInvariant_acting_access_verified_actor_copy`
@@ -48,7 +48,7 @@ The gate verifies a fresh subject assertion against the exact intended use and v
 
 ### Scenario 3 — Every authority ceiling independently contains the request
 
-Given a registered request, the production gate permits only the conjunction of independently verified subject authority, consent, AS-authenticated presenter-to-actor association, exact I2 tool requirements, registered resource/operation/detail/scope ceilings, and target policy. Consent is not a policy override, and explicit deny in any source is terminal. It models target authority as a registered plan-level tuple, not an untrusted route string, as required by [ADR-0302](../adr/0302-acting-as-user-exchange.md) and [ADR-0234](../adr/0234-authority-evaluator-port.md).
+Given a registered request, the production gate permits only the conjunction of independently verified subject authority, consent, AS-authenticated presenter-to-actor association, exact I2 tool requirements, registered resource/operation/detail/scope ceilings, and target policy. Consent is not a policy override, and explicit deny in any source is terminal. It models target authority as a registered plan-level tuple, not an untrusted route string, as required by [ADR-0305](../adr/0305-acting-as-user-exchange.md) and [ADR-0234](../adr/0234-authority-evaluator-port.md).
 
 **Acceptance:**
 - AC3.1: Through the production exchange entrypoint, Alice, an associated AS-authenticated presenter, a reviewer with the exact registered read tool, an exact consent proof, and a permitted registered read target receive a permit trace containing every required gate.
@@ -68,7 +68,7 @@ Given a registered request, the production gate permits only the conjunction of 
 
 ### Scenario 4 — An issued token is independently verified against the allowed plan
 
-After all local checks permit, the issuance mechanism receives only an immutable validated plan and ephemeral credentials. A deterministic offline AS returns compact signed bytes, and a separate verifier accepts them only when the complete closed profile matches the plan. The verifier receives public test material and independently signed adversarial tokens, never an issuance fake’s parsed output or profile object. This preserves the independently verified single-representation discipline of [ADR-0301](../adr/0301-logical-agent-identity-projection.md).
+After all local checks permit, the issuance mechanism receives only an immutable validated plan and ephemeral credentials. A deterministic offline AS returns compact signed bytes, and a separate verifier accepts them only when the complete closed profile matches the plan. The verifier receives public test material and independently signed adversarial tokens, never an issuance fake’s parsed output or profile object. This preserves the independently verified single-representation discipline of [ADR-0304](../adr/0304-logical-agent-identity-projection.md).
 
 **Acceptance:**
 - AC4.1: Alice + reviewer/read yields a compact RFC 8693 response with required access-token fields and an independently verified output whose identity has collision-resistant issuer-qualified user `sub`, closed I2 logical `act`, AS-derived client attribution, exactly one registered audience, canonical scopes, and canonical operation detail.
@@ -84,7 +84,7 @@ After all local checks permit, the issuance mechanism receives only an immutable
 
 ### Scenario 5 — Failures and secret boundaries fail closed
 
-The gate distinguishes permanent authorization/profile failures from unavailable trusted infrastructure, returns only stable non-secret categories, and never creates a fallback identity. It protects the token-bearing values that RFC 8693 exchange would otherwise place at a high-risk boundary; [ADR-0302](../adr/0302-acting-as-user-exchange.md) forbids persistence and model-visible projection.
+The gate distinguishes permanent authorization/profile failures from unavailable trusted infrastructure, returns only stable non-secret categories, and never creates a fallback identity. It protects the token-bearing values that RFC 8693 exchange would otherwise place at a high-risk boundary; [ADR-0305](../adr/0305-acting-as-user-exchange.md) forbids persistence and model-visible projection.
 
 **Acceptance:**
 - AC5.1: Invalid subject, owner mismatch, invalid actor, presenter denial, actor authority failure, target/scope denial, consent denial, unsupported profile, temporary unavailability, and invalid output have closed failure kinds with correct retryability.
@@ -130,13 +130,13 @@ ToolHive source inspected at `288e466dcf6c496950be3ae9914cf45906f9fe77` (local `
 
 | Item | Defer-to | ADR / decision |
 |---|---|---|
-| ToolHive/vMCP production client and release integration | I3-T | [ADR-0302](../adr/0302-acting-as-user-exchange.md) |
-| TokenReview, projected ServiceAccount token, and sidecar transport | B1 | [ADR-0302](../adr/0302-acting-as-user-exchange.md) |
-| Provider credential lookup and resolved-route admission | I3-T | [ADR-0302](../adr/0302-acting-as-user-exchange.md) |
-| Persistent output-token cache and distributed invalidation | broker/I3-T | [ADR-0302](../adr/0302-acting-as-user-exchange.md) |
-| Stage 3 continuation | B4 | [ADR-0302](../adr/0302-acting-as-user-exchange.md) |
-| Scheduled/offline consent | I3-S / #373 | [ADR-0302](../adr/0302-acting-as-user-exchange.md) |
-| KMS, federation, and RFC 8705 deployment enforcement | I4 / I3-T | [ADR-0302](../adr/0302-acting-as-user-exchange.md) |
+| ToolHive/vMCP production client and release integration | I3-T | [ADR-0305](../adr/0305-acting-as-user-exchange.md) |
+| TokenReview, projected ServiceAccount token, and sidecar transport | B1 | [ADR-0305](../adr/0305-acting-as-user-exchange.md) |
+| Provider credential lookup and resolved-route admission | I3-T | [ADR-0305](../adr/0305-acting-as-user-exchange.md) |
+| Persistent output-token cache and distributed invalidation | broker/I3-T | [ADR-0305](../adr/0305-acting-as-user-exchange.md) |
+| Stage 3 continuation | B4 | [ADR-0305](../adr/0305-acting-as-user-exchange.md) |
+| Scheduled/offline consent | I3-S / #373 | [ADR-0305](../adr/0305-acting-as-user-exchange.md) |
+| KMS, federation, and RFC 8705 deployment enforcement | I4 / I3-T | [ADR-0305](../adr/0305-acting-as-user-exchange.md) |
 
 ## Sequencing recommendation
 

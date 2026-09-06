@@ -1,7 +1,7 @@
 # Logical-agent identity projection plan state
 
 **Acceptance plan:** `docs/acceptance/logical-agent-identity-projection.md`  
-**ADR:** `docs/adr/0301-logical-agent-identity-projection.md`
+**ADR:** `docs/adr/0304-logical-agent-identity-projection.md`
 **Accumulator:** `acc/logical-agent-identity-projection`  
 **Base:** `acc/identity-issuer-substrate`
 

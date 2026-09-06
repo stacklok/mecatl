@@ -165,7 +165,7 @@ audience, and bounded valid times. It retains only its last complete bundle thro
 own cache bound; failed, malformed, duplicate-key, and sequence-regressing refreshes
 never replace the snapshot, and stale or unready verification fails closed. There is no
 private-key projection or JWKS compatibility endpoint. See
-[ADR 0300](adr/0300-identity-issuer-substrate.md).
+[ADR 0303](adr/0303-identity-issuer-substrate.md).
 
 A separately constructed issuer-only `Host` is the future combined broker's shell-less
 custody composition. Disabled construction returns no generation and does not invoke its
@@ -177,7 +177,7 @@ and unsafe paths remain absent. Status carries only enabled/ready/algorithm stat
 construction/probe failures are deliberately generic so key, JWT, and bearer material cannot
 reach an error or endpoint projection. The existing mecak8s agent deployment has no issuer
 Secret mount or Secret RBAC grant; a later combined-broker deployment must preserve that
-separation. See [ADR 0300](adr/0300-identity-issuer-substrate.md).
+separation. See [ADR 0303](adr/0303-identity-issuer-substrate.md).
 
 Its constrained typed logical-agent operation accepts only a canonical resolved logical
 identity, optional instance metadata, exact requested tool names, and the source
@@ -186,7 +186,7 @@ capability containment predicate before signing. The issuer alone supplies the E
 protected header, active `kid`, local issuer, singleton configured audience, bounded TTL,
 timestamps, fresh random JWT ID, and the closed v1 claim; it returns no credential on any
 validation, containment, randomness, signing, or size-bound failure. This is a host-local
-method only, not an HTTP/RPC mint endpoint. See [ADR 0301](adr/0301-logical-agent-identity-projection.md).
+method only, not an HTTP/RPC mint endpoint. See [ADR 0304](adr/0304-logical-agent-identity-projection.md).
 
 ### I3-C acting-as-user exchange gate
 
@@ -194,7 +194,7 @@ method only, not an HTTP/RPC mint endpoint. See [ADR 0301](adr/0301-logical-agen
 future acting-as-user exchange. It is deliberately **not wired** into an application,
 server, ToolHive client, sidecar, or production OAuth flow. The package cannot make a
 production external call or affect local-only work today; those composition and outage-
-isolation proofs remain deferred to I3-T. See [ADR 0302](adr/0302-acting-as-user-exchange.md).
+isolation proofs remain deferred to I3-T. See [ADR 0305](adr/0305-acting-as-user-exchange.md).
 
 The gate accepts a composition-registered request tuple, a durable issuer-qualified
 owner, an authenticated presenter, one ephemeral exchange-subject assertion, and one

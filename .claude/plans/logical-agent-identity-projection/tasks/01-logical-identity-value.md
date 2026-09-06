@@ -13,7 +13,7 @@ accumulator: acc/logical-agent-identity-projection
 
 # Task brief
 
-Create the root-internal typed logical-agent identity/profile value and its validation boundary. Keep it independent of agent-loop, session, composition, RPC, and persistence wiring. Use the ADR-0301 canonical SPIFFE subject format: five closed tiers, exact UTF-8 name, display-only slug, exact length-delimited SHA-256 input, RFC 4648 lowercase unpadded Base32 digest, SPIFFE grammar, and 2048-byte cap. Define the closed v1 claim value and bounds, including optional audit-only instance and canonical exact tools. Reject unknown schema members, duplicates, noncanonical tools, control characters, invalid UTF-8, and invalid bounds. Do not introduce token signing or a second authority policy in this task.
+Create the root-internal typed logical-agent identity/profile value and its validation boundary. Keep it independent of agent-loop, session, composition, RPC, and persistence wiring. Use the ADR-0304 canonical SPIFFE subject format: five closed tiers, exact UTF-8 name, display-only slug, exact length-delimited SHA-256 input, RFC 4648 lowercase unpadded Base32 digest, SPIFFE grammar, and 2048-byte cap. Define the closed v1 claim value and bounds, including optional audit-only instance and canonical exact tools. Reject unknown schema members, duplicates, noncanonical tools, control characters, invalid UTF-8, and invalid bounds. Do not introduce token signing or a second authority policy in this task.
 
 ## Acceptance criteria
 

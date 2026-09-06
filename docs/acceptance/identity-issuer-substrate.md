@@ -3,14 +3,14 @@
 **Phase:** I1 identity substrate
 **Status:** draft, 2026-08-31. Synthesized from the approved I1 design session.
 **Issue:** [stacklok/mecatl#478](https://github.com/stacklok/mecatl/issues/478).
-**ADR:** [ADR-0300](../adr/0300-identity-issuer-substrate.md) — pins the I1 issuer substrate.
+**ADR:** [ADR-0303](../adr/0303-identity-issuer-substrate.md) — pins the I1 issuer substrate.
 **Accumulator branch:** `acc/identity-issuer-substrate` (off `main`).
 
 The smallest set of work that proves a shell-less combined-broker issuer can create and independently verify bounded ES256 JWT-SVIDs without becoming a parallel broker platform or changing Stage 3 MCP authorization.
 
 ## Why these scope cuts
 
-- [ADR-0300](../adr/0300-identity-issuer-substrate.md) keeps I1 a signing, bundle, verifier, and custody substrate; logical-agent claims, user delegation, and vMCP enforcement follow in I2/I3/B4.
+- [ADR-0303](../adr/0303-identity-issuer-substrate.md) keeps I1 a signing, bundle, verifier, and custody substrate; logical-agent claims, user delegation, and vMCP enforcement follow in I2/I3/B4.
 - [ADR 0027](../adr/0027-cloud-native.md) requires inventories for any new long-lived host resource; B0/B1 retain ownership of distributed broker state.
 - [ADR 0048](../adr/0048-mecak8s.md) keeps agent pods storage-free and managed-service state external.
 
@@ -18,7 +18,7 @@ The smallest set of work that proves a shell-less combined-broker issuer can cre
 
 ### Scenario 1 — explicit disabled and configured identity posture
 
-The broker-host configuration treats identity as disabled by default. When enabled it requires a valid explicit SPIFFE trust domain, bounded timing policy, registered audience, and bootstrap tuple; it never derives authority from requests or Kubernetes metadata. This follows [ADR-0300](../adr/0300-identity-issuer-substrate.md) and the [layering rule](../../AGENTS.md).
+The broker-host configuration treats identity as disabled by default. When enabled it requires a valid explicit SPIFFE trust domain, bounded timing policy, registered audience, and bootstrap tuple; it never derives authority from requests or Kubernetes metadata. This follows [ADR-0303](../adr/0303-identity-issuer-substrate.md) and the [layering rule](../../AGENTS.md).
 
 **Acceptance:**
 - AC1.1: An identity-disabled host opens no keyring, starts no bundle listener, creates no identity resource, and leaves persisted session state unchanged.
@@ -30,7 +30,7 @@ The broker-host configuration treats identity as disabled by default. When enabl
 
 ### Scenario 2 — bounded signing from an immutable keyring generation
 
-A complete immutable Secret generation produces one validated `crypto.Signer` snapshot. [ADR-0300](../adr/0300-identity-issuer-substrate.md) requires PKCS#8 P-256 material and issuer-owned envelope fields.
+A complete immutable Secret generation produces one validated `crypto.Signer` snapshot. [ADR-0303](../adr/0303-identity-issuer-substrate.md) requires PKCS#8 P-256 material and issuer-owned envelope fields.
 
 **Acceptance:**
 - AC2.1: A strict manifest plus matching PKCS#8 P-256 key items produces a deterministic public-JWK-thumbprint `kid` and one active ES256 signer.
@@ -42,7 +42,7 @@ A complete immutable Secret generation produces one validated `crypto.Signer` sn
 
 ### Scenario 3 — canonical bundle and independent verification
 
-The retained verifier fetches the canonical SPIFFE JWT bundle through the configured `https_web` bootstrap path and returns typed verified identity rather than authorization claims. [ADR-0300](../adr/0300-identity-issuer-substrate.md) and [ADR 0205](../adr/0205-bounded-jwks-staleness.md) pin bounded key freshness.
+The retained verifier fetches the canonical SPIFFE JWT bundle through the configured `https_web` bootstrap path and returns typed verified identity rather than authorization claims. [ADR-0303](../adr/0303-identity-issuer-substrate.md) and [ADR 0205](../adr/0205-bounded-jwks-staleness.md) pin bounded key freshness.
 
 **Acceptance:**
 - AC3.1: A separately configured verifier accepts an issuer JWT-SVID only for the configured trust domain, valid SPIFFE subject, one expected audience, active `kid`, ES256 signature, and valid bounded times.
@@ -56,7 +56,7 @@ The retained verifier fetches the canonical SPIFFE JWT bundle through the config
 
 ### Scenario 4 — combined-broker host custody without parallel infrastructure
 
-I1’s issuer-only mode is a composition mode of the future combined broker, not a new broker lifecycle. It preserves the root-internal layering and the Stage 3 boundary described by [ADR-0300](../adr/0300-identity-issuer-substrate.md) and [ADR 0048](../adr/0048-mecak8s.md).
+I1’s issuer-only mode is a composition mode of the future combined broker, not a new broker lifecycle. It preserves the root-internal layering and the Stage 3 boundary described by [ADR-0303](../adr/0303-identity-issuer-substrate.md) and [ADR 0048](../adr/0048-mecak8s.md).
 
 **Acceptance:**
 - AC4.1: The issuer host exposes only bundle, liveness, readiness, and safe generation status; it does not expose arbitrary signing, token minting, ToolHive, vMCP, Redis broker state, or an agent tool surface.
@@ -70,7 +70,7 @@ I1’s issuer-only mode is a composition mode of the future combined broker, not
 
 ### Scenario 5 — restart-safe rotation with measurable overlap
 
-The manifest generation is I1’s sole rotation record; B0/B1 Redis remains reserved for distributed broker correctness. [ADR-0300](../adr/0300-identity-issuer-substrate.md) and [ADR 0027](../adr/0027-cloud-native.md) require explicit lifecycle evidence.
+The manifest generation is I1’s sole rotation record; B0/B1 Redis remains reserved for distributed broker correctness. [ADR-0303](../adr/0303-identity-issuer-substrate.md) and [ADR 0027](../adr/0027-cloud-native.md) require explicit lifecycle evidence.
 
 **Acceptance:**
 - AC5.1: Prepublish starts old-key signing with old/new public verification keys and advances only when every ready replica reports the expected generation and identical bundle digest.
@@ -86,11 +86,11 @@ The manifest generation is I1’s sole rotation record; B0/B1 Redis remains rese
 
 | Item | Defer-to | ADR / decision |
 |---|---|---|
-| Logical-agent claims and attenuation serialization | I2 | ADR-0300 |
-| User-subject/agent-actor token exchange and holder binding | I3 | ADR-0300 |
-| Broker Redis fences, callback/refresh recovery, replica ownership | B0/B1 | ADR-0300 |
-| vMCP route admission and credential lookup | B4 | ADR-0300 |
-| KMS/HSM, federation, revocation, compatibility JWKS, production mint API | later | ADR-0300 |
+| Logical-agent claims and attenuation serialization | I2 | ADR-0303 |
+| User-subject/agent-actor token exchange and holder binding | I3 | ADR-0303 |
+| Broker Redis fences, callback/refresh recovery, replica ownership | B0/B1 | ADR-0303 |
+| vMCP route admission and credential lookup | B4 | ADR-0303 |
+| KMS/HSM, federation, revocation, compatibility JWKS, production mint API | later | ADR-0303 |
 
 ## Sequencing recommendation
 

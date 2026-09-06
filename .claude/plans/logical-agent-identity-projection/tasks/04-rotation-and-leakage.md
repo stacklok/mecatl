@@ -21,7 +21,7 @@ Extend I2 tests over the existing I1 rotation substrate. Prove remint derives fr
 
 - AC5.1: Before and after key activation, independently verified tokens have the same canonical subject/tier/name/instance and same-or-narrower tools, but fresh `jti`, signature, issuance time, and the active `kid`.
   - verify: `TestLogicalAgentIdentityProjection_Scenario5_RotationPreservesLogicalIdentity`
-- AC5.2: During the documented overlap both unexpired tokens verify; after the ADR-0300 retirement bound the old-key token fails and the new-key token remains valid.
+- AC5.2: During the documented overlap both unexpired tokens verify; after the ADR-0303 retirement bound the old-key token fails and the new-key token remains valid.
   - verify: `TestADR_0301_LogicalAgentRotationOverlap`
 - AC5.3: A deterministic compact-token/signature canary is proven present at the successful issuance boundary, then absent from the typed verifier result, bounded issue/verify errors and diagnostics, and every persistence-capable domain value. Separate rejected fixtures place recognizable tool, instance, and unknown-claim canaries in claim-derived error paths and prove errors/diagnostics do not echo them; successful signed claims and typed results retain the approved tool/instance fields. No session, event, status, or model-visible type is widened to carry a compact token or parent token.
   - verify: `TestADR_0301_LogicalAgentCredentialCanariesNeverPersistOrLeak`
