@@ -69,6 +69,7 @@ when the code that satisfies the plan has landed.
   engine yaml.v3 parsing with goccy/go-yaml while preserving safe diagnostics,
   strict/lenient contracts, frontmatter parsing, and standalone engine closure.
   Status: draft.
+- [OpenAI Responses multiple visible text parts](openai-multiple-text-parts.md) — accept every ordered visible text delta from distinct Responses item/content identities through the existing `ChunkText`/`Message.Text` path, without changing phase, reasoning, tool-call, or post-visibility no-replay behavior. Status: draft.
 - [Operator-defined LLM providers](operator-defined-llm-providers.md) — operator-local,
   truthfully named gateway providers over the existing Responses, Chat Completions, and
   Anthropic Messages adapters, plus persistent built-in endpoint overrides. Status: draft.
