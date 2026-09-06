@@ -255,6 +255,10 @@ PR after verification. There is no cleanup or status-only PR.
   resolution, TypeScript/Node/browser/macOS compatibility matrices, executable
   examples and public docs, path-qualified GitHub Packages publication, and the
   human-gated `v0.0.1` cut; npmjs `v0.1.0` remains a #821 follow-up. Status: draft.
+- [Initial production MCP broker](initial-production-mcp-broker.md) — an
+  authenticated, independently deployed single-replica broker exposing the existing
+  Stage 3 logical contract, with explicit restart interruption and no distributed/HA
+  claim. Status: draft.
 
 ## See also
 
