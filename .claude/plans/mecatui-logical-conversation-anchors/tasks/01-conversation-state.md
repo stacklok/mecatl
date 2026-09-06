@@ -2,7 +2,7 @@
 id: 01-conversation-state
 title: Conversation-owned logical block state
 blocked_by: []
-status: in-progress
+status: done
 attempt: 1
 branch: plan-mecatui-logical-conversation-anchors/01-conversation-state-attempt-1
 worktree: .scratch/worker-mecatui-logical-conversation-anchors-01-conversation-state-attempt-1
