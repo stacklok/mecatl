@@ -257,6 +257,13 @@ type renderer struct {
 	joinPrefixLines []string
 	joinPrefixN     int
 	joinPrefixKey   joinPrefixState
+	// joinPrefixProvenance is the lockstep metadata sibling of joinPrefixLines.
+	// It contains no rendered text and is reset with the cached prefix.
+	joinPrefixProvenance []renderedRow
+	// frameProvenanceScratch assembles one frame's lockstep rows without a fresh
+	// full-scrollback allocation on every streaming tick.
+	frameProvenanceScratch []renderedRow
+	blockFrameCache        map[int]frameBlockEntry
 }
 
 // joinPrefixState is the validity key of the cached incremental-join prefix: the
@@ -348,12 +355,13 @@ const assistantBodyHang = 2
 // goldens stay byte-identical.
 func newRenderer(th theme.Theme, hk helpKeys) *renderer {
 	return &renderer{
-		th:         th,
-		marks:      hk,
-		indent:     defaultBlockIndent,
-		cache:      map[int]*glamour.TermRenderer{},
-		blockMD:    map[int]mdEntry{},
-		blockCache: map[int]blockEntry{},
+		th:              th,
+		marks:           hk,
+		indent:          defaultBlockIndent,
+		cache:           map[int]*glamour.TermRenderer{},
+		blockMD:         map[int]mdEntry{},
+		blockCache:      map[int]blockEntry{},
+		blockFrameCache: map[int]frameBlockEntry{},
 	}
 }
 
@@ -412,6 +420,7 @@ func padLines(s string, n int) string {
 func (r *renderer) resetBlockCaches() {
 	r.blockCache = map[int]blockEntry{}
 	r.blockMD = map[int]mdEntry{}
+	r.blockFrameCache = map[int]frameBlockEntry{}
 	// Drop the whole-conversation join memo too: it is built over blockCache, so the
 	// index reuse that aliases a stale block entry would equally alias a stale join.
 	r.joinValid = false
@@ -420,6 +429,7 @@ func (r *renderer) resetBlockCaches() {
 	// the cached render of blocks [0, joinPrefixN), so a rebuilt conversation reusing
 	// those indices would otherwise serve a stale prefix.
 	r.joinPrefixLines = r.joinPrefixLines[:0]
+	r.joinPrefixProvenance = r.joinPrefixProvenance[:0]
 	r.joinPrefixN = 0
 	r.joinPrefixKey = joinPrefixState{}
 	// Drop the viewport-output memo too (defense-in-depth): every CURRENT resetSession
@@ -829,46 +839,7 @@ func (r *renderer) walkBlocks(c *conversation, expand bool) (firstChanged int) {
 // they are split single lines, but SetContentLines is free to re-split them and the
 // fresh array still absorbs the result.
 func (r *renderer) renderConversationLines(c *conversation, expand bool) []string {
-	firstChanged := r.walkBlocks(c, expand)
-	n := len(r.joinScratch)
-	prefixN := min(firstChanged, n)
-
-	// Decide whether the cached prefix still covers exactly [0, prefixN) at the
-	// current width/expand. If not, rebuild it from the settled segments.
-	wantKey := joinPrefixState{width: r.width, expand: expand}
-	if r.joinPrefixKey != wantKey || r.joinPrefixN != prefixN {
-		r.rebuildPrefix(c.blocks, prefixN)
-		r.joinPrefixN = prefixN
-		r.joinPrefixKey = wantKey
-	}
-
-	// Assemble the frame: a fresh slice = cached prefix lines + freshly-split suffix
-	// segments + the ONE terminal "" element. Pre-size generously to keep the suffix
-	// appends allocation-light.
-	lines := make([]string, 0, len(r.joinPrefixLines)+(n-prefixN)*2+1)
-	lines = append(lines, r.joinPrefixLines...)
-	for i := prefixN; i < n; i++ {
-		appendSegmentLines(&lines, c.blocks, i, r.joinScratch[i])
-	}
-	// The full join ends with the last segment's trailing "\n", whose split tail is a
-	// single trailing "" element — the same one strings.Split(join, "\n") produces.
-	// It belongs to no segment's prefix-cacheable lines (when a suffix exists, an
-	// inter-block "\n\n" boundary owns the blank line via the next segment's leading
-	// ""), so it is appended once here, per frame, at the absolute end — covering the
-	// empty conversation too (n==0 → just [""], which SetContentLines maps to nil).
-	lines = append(lines, "")
-	return lines
-}
-
-// rebuildPrefix rebuilds joinPrefixLines as the line-split of segments [0, prefixN),
-// reusing the existing backing array (truncate-and-append). prefixN==0 leaves it
-// empty. blocks is the conversation's block slice, threaded through so
-// appendSegmentLines can apply per-kind separator widths.
-func (r *renderer) rebuildPrefix(blocks []block, prefixN int) {
-	r.joinPrefixLines = r.joinPrefixLines[:0]
-	for i := 0; i < prefixN; i++ {
-		appendSegmentLines(&r.joinPrefixLines, blocks, i, r.joinScratch[i])
-	}
+	return r.renderConversationFrame(c, expand).lines
 }
 
 // The inter-block separator is written BEFORE every block after the first by the
@@ -925,29 +896,6 @@ func blockBlankLinesAfter(blocks []block, i int) int {
 	return interBlockBlankLinesCompact
 }
 
-// appendSegmentLines appends block i's content lines to dst, modelling the canonical
-// segment sep(i) + scratch + "\n" (sep(0)="", sep(i>0)=blockSepAfter(blocks,i-1))
-// MINUS its trailing "\n" — that terminal "\n"'s split tail is handled once, at the
-// absolute end of the frame, by renderConversationLines. The leading inter-block
-// separator of block i>0 becomes blockBlankLinesAfter(blocks,i) blank "" lines BEFORE
-// the block's content; the content itself is scratch split on "\n". Concatenated across
-// all blocks this yields strings.Split(fullJoin, "\n") exactly, modulo that single
-// terminal "".
-func appendSegmentLines(dst *[]string, blocks []block, i int, scratch string) {
-	if i > 0 {
-		// The inter-block separator produces blank lines before this block; the count
-		// depends on the previous block's kind (must match blockSepAfter byte-for-byte).
-		for n := 0; n < blockBlankLinesAfter(blocks, i); n++ {
-			*dst = append(*dst, "")
-		}
-	}
-	// scratch may be empty (an empty block render); SplitSeq still yields one ""
-	// element for it, matching strings.Split over the full join.
-	for line := range strings.SplitSeq(scratch, "\n") {
-		*dst = append(*dst, line)
-	}
-}
-
 // renderBlock is the CACHED per-block entry point: it returns the memoized
 // render when the block's revision, the wrap width, and the expand toggle all
 // match the cached entry, and otherwise renders fresh via renderBlockFresh,
@@ -999,6 +947,7 @@ func (r *renderer) renderBlock(idx int, b *block, expand bool) string {
 	// has re-rendered since the prefix was built.
 	if idx < r.joinPrefixN {
 		r.joinPrefixLines = r.joinPrefixLines[:0]
+		r.joinPrefixProvenance = r.joinPrefixProvenance[:0]
 		r.joinPrefixN = 0
 		r.joinPrefixKey = joinPrefixState{}
 	}
