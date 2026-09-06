@@ -2,6 +2,7 @@ package session
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"unicode/utf8"
 )
@@ -202,15 +203,7 @@ func (s *Session) ApplyTitleGeneration(generation TitleGenerationState, attempts
 }
 
 func equalTitleAttempts(a, b []TitleAttempt) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
+	return slices.Equal(a, b)
 }
 
 // RecordTitleAttempt appends durable lifecycle metadata for one attempt.
