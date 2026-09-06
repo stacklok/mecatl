@@ -1,9 +1,10 @@
 # Mecatui live-feed reconnect — acceptance plan
 
 **Issue:** [stacklok/mecatl#779](https://github.com/stacklok/mecatl/issues/779)  
-**Status:** landed
+**Status:** in-progress
 **Scope:** regression closure plus the narrow live-reader bearer-provenance correction
-exposed by the named end-to-end acceptance test on `acc/mecatui-live-reconnect`.
+exposed by the named end-to-end acceptance test on `acc/mecatui-live-reconnect`; final
+panel repair round 2 strengthens the offline acceptance proofs without widening scope.
 **ADR:** [ADR-0096](../adr/0096-live-feed-reconnect.md) — client-owned reconnect,
 bounded backoff, full-log delivery catch-up, FireID deduplication, and generation guards.  
 **References:** [`docs/tui.md`](../tui.md), [`AGENTS.md`](../../AGENTS.md) (single-loop,
@@ -49,6 +50,8 @@ generation decisions in [ADR-0096](../adr/0096-live-feed-reconnect.md).
 - AC1.3: That connected live-reader path preserves the failed target and session handoff,
   tears down the affected readers and reconnect loop, and performs no retry for rejection
   returned from initial `Recv`, reconnect probe `Open`, or freshly rearmed-reader `Recv`.
+  The named test drives reconnect-probe `Open` rejection through the connected UI reducer,
+  proving the `/connect` recovery handoff and teardown rather than only the client loop.
   - verify: `TestADR_0096_BearerLiveReaderAuthRejectedPreservesHandoffAndStopsRetry`
 - AC1.4: A non-bearer first-`Recv` authentication failure remains `AuthNotEnrolled`,
   and replay transport errors remain unclassified; neither case widens bearer-only
@@ -71,8 +74,10 @@ The single-loop and cancellation invariants remain those documented in
   immediate-close cycle advances continuity from attempt 1 to attempt 2 and
   deterministically waits for the attempt-2 backoff before its next probe. It must not
   preload continuity or merely inspect delay helper math: probe open alone does not reset
-  the attempt; attempts are bounded, increasing, and capped.
-  - verify: `TestADR_0096_ImmediateRearmedCloseUsesAttemptTwoBackoff`, `TestLiveReconnectDelay_BoundedAndIncreasing`
+  the attempt; attempts are bounded, increasing, and capped. A deterministic client-loop
+  proof sets jitter to zero and shows `ReconnectLiveCmdFromAttempt(prior=1)` does not open
+  before the attempt-2 delay and does open afterward, using wide timing bounds.
+  - verify: `TestADR_0096_ImmediateRearmedCloseUsesAttemptTwoBackoff`, `TestADR_0096_AttemptTwoWaitsDeterministicBackoff`, `TestLiveReconnectDelay_BoundedAndIncreasing`
 - AC2.2: The same session has at most one reconnect loop; reconnect success clears
   degraded state, tears down the completed loop, and re-arms one fresh live reader.
   - verify: `TestReconnectUI_NoDuplicateConcurrentReconnect`, `TestReconnectUI_TriggerOnStreamCloseAndError`
@@ -91,8 +96,9 @@ current-generation and real-event rule follows [ADR-0096](../adr/0096-live-feed-
 **Acceptance:**
 
 - AC3.1: A real event from the current live generation positively resets the cross-loop
-  continuity attempt, so the next immediate-close outage starts at attempt 1. A reconnect
-  marker, probe success, and catch-up event alone each leave continuity unchanged.
+  continuity attempt, so the next current-reader immediate-close outage emits reconnect
+  marker attempt 1. A reconnect marker, probe success, and catch-up event alone each leave
+  continuity unchanged.
   - verify: `TestADR_0096_OnlyCurrentLiveEventResetsContinuity`
 - AC3.2: After a real session switch, a stale reconnect generation cannot mutate or rearm
   the old session. Stale live generations and TUI cancellation retain their existing

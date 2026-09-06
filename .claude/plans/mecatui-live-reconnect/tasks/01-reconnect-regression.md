@@ -21,16 +21,16 @@ Add only missing offline regression tests for the already-landed live-feed recon
 - AC1.1: On the first live `Recv`, and on a reconnect probe `Open` or probe `Recv`, gRPC
   `Unauthenticated` plus bearer provenance produces `StreamErrMsg{AuthReason: AuthRejected}`;
   it is not treated as transient.
-  - verify: `TestEventStreamAuthClassificationRespectsBearerProvenance`, `TestADR_0096_ReconnectProbeAuthRejectedStopsRetry`
+  - verify: `TestEventStreamAuthClassificationRespectsBearerProvenance`, `TestADR_0096_ReconnectProbeOpenAuthRejectedStopsRetry`
 - AC1.2: The first-`Recv` UI path renders the rejected-bearer recovery overlay with
   actionable guidance: re-login is disabled, and the operator is told to check the
   issuer, audience, or CA. The reconnect/live state is disarmed and the stale `live feed
   reconnecting` footer is cleared.
-  - verify: `TestADR_0096_BearerFirstRecvAuthRejectedRoutesToConnectRecovery`
+  - verify: `TestADR_0096_BearerLiveReaderRecvAuthRejectedRoutesToConnectRecovery`
 - AC1.3: `AuthRejected` preserves the failed target and session handoff, tears down the
   affected readers and reconnect loop, and performs no retry for rejection returned from
   first `Recv`, reconnect probe `Open`, or reconnect probe `Recv`.
-  - verify: `TestADR_0096_BearerAuthRejectedPreservesTargetSessionAndTearsDownRetry`
+  - verify: `TestADR_0096_BearerLiveReaderAuthRejectedPreservesHandoffAndStopsRetry`
 - AC1.4: A non-bearer first-`Recv` authentication failure remains `AuthNotEnrolled`,
   and replay transport errors remain unclassified; neither case widens bearer-only
   recovery.
@@ -39,7 +39,7 @@ Add only missing offline regression tests for the already-landed live-feed recon
   immediate-close starts at attempt 2 and waits for the attempt-2 backoff before probing.
   The reconnect loop does not reset the attempt merely because its probe opened, and
   backoff attempts are bounded, increasing, and capped.
-  - verify: `TestADR_0096_CleanCloseAdvancesCrossLoopContinuity`, `TestLiveReconnectDelay_BoundedAndIncreasing`
+  - verify: `TestADR_0096_ImmediateRearmedCloseUsesAttemptTwoBackoff`, `TestLiveReconnectDelay_BoundedAndIncreasing`
 - AC2.2: The same session has at most one reconnect loop; reconnect success clears
   degraded state, tears down the completed loop, and re-arms one fresh live reader.
   - verify: `TestReconnectUI_NoDuplicateConcurrentReconnect`, `TestReconnectUI_TriggerOnStreamCloseAndError`
@@ -49,7 +49,7 @@ Add only missing offline regression tests for the already-landed live-feed recon
 - AC3.1: A real event from the current live generation resets the cross-loop continuity
   attempt; the next immediate-close outage starts at attempt 1. A probe/reconnected marker
   or catch-up event alone does not reset it.
-  - verify: `TestADR_0096_RealLiveEventResetsContinuity`
+  - verify: `TestADR_0096_OnlyCurrentLiveEventResetsContinuity`
 - AC3.2: A stale live or reconnect generation is dropped without rearming the old session;
   session switch and TUI cancellation preserve the existing teardown behavior.
   - verify: `TestReconnectUI_StopsOnSessionSwitch`, `TestStaleStreamGenerationDropped`
