@@ -2,7 +2,7 @@
 id: 09-macos-managed-temp
 title: macOS managed temporary storage support
 blocked_by: [08-reaper-worker-and-docs]
-status: in-progress
+status: done
 attempt: 1
 branch: "plan-managed-temporary-command-leases/09-macos-managed-temp-attempt-1"
 worktree: ".scratch/worker-managed-temporary-command-leases-09-macos-managed-temp-attempt-1"
