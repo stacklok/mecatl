@@ -2,10 +2,10 @@
 id: 03-panel-repair-2
 title: Final live reconnect panel repair round 2
 blocked_by: [02-panel-repair]
-status: pending
-attempt: 0
-branch: ""
-worktree: ""
+status: in-progress
+attempt: 1
+branch: plan-mecatui-live-reconnect/03-panel-repair-2-attempt-1
+worktree: .scratch/worker-mecatui-live-reconnect-03-panel-repair-2-attempt-1
 issue: "779"
 retries: 0
 last_error: ""
