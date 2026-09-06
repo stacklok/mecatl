@@ -3,12 +3,12 @@ id: 01-conversation-view
 title: Logical anchor frame and viewport controller
 blocked_by: []
 status: in-progress
-attempt: 1
-branch: plan-mecatui-logical-conversation-anchors/01-conversation-view-attempt-1
-worktree: .scratch/worker-mecatui-logical-conversation-anchors-01-conversation-view-attempt-1
+attempt: 2
+branch: plan-mecatui-logical-conversation-anchors/01-conversation-view-attempt-2
+worktree: .scratch/worker-mecatui-logical-conversation-anchors-01-conversation-view-attempt-2
 issue: ""
-retries: 0
-last_error: ""
+retries: 1
+last_error: "attempt 1: implementation did not route selection/expanded paths through the controller, did not preserve cached-prefix fast path, and did not implement appendix provenance"
 accumulator: acc/mecatui-logical-conversation-anchors
 ---
 
