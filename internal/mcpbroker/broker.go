@@ -310,6 +310,14 @@ type Service interface {
 	DeleteSession(context.Context, session.SessionID) (DeleteOutcome, error)
 }
 
+// BindingSessionDeleter is the optional atomic logical-delete capability. It
+// preserves the legacy unbound DeleteSession contract while allowing a remote
+// caller that holds an opaque binding to fail closed rather than deleting a
+// newer incarnation of the same session.
+type BindingSessionDeleter interface {
+	DeleteSessionIfBinding(context.Context, session.SessionID, session.ExternalBinding) (DeleteOutcome, error)
+}
+
 // Attachment is a process-local handle to one logical broker session.
 //
 // Authorization operations take session.ExternalAuthorization so callers reuse

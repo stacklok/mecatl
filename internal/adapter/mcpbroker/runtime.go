@@ -207,6 +207,7 @@ type Runtime struct {
 }
 
 var _ contract.Service = (*Runtime)(nil)
+var _ contract.BindingSessionDeleter = (*Runtime)(nil)
 
 // New constructs an in-process broker. OAuth options are required only when the
 // catalogue contains protected routes.
@@ -329,6 +330,19 @@ func (r *Runtime) AttachSession(ctx context.Context, id session.SessionID) (cont
 // DeleteSession logically deletes one broker session and invalidates all handles
 // to that incarnation. Reattachment later creates a fresh incarnation.
 func (r *Runtime) DeleteSession(ctx context.Context, id session.SessionID) (contract.DeleteOutcome, error) {
+	return r.deleteSession(ctx, id, "")
+}
+
+// DeleteSessionIfBinding atomically deletes only the exact opaque logical
+// incarnation selected by binding. It leaves a newer incarnation untouched.
+func (r *Runtime) DeleteSessionIfBinding(ctx context.Context, id session.SessionID, binding session.ExternalBinding) (contract.DeleteOutcome, error) {
+	if binding == "" {
+		return "", contract.ErrStateUnavailable
+	}
+	return r.deleteSession(ctx, id, binding)
+}
+
+func (r *Runtime) deleteSession(ctx context.Context, id session.SessionID, binding session.ExternalBinding) (contract.DeleteOutcome, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
@@ -339,6 +353,10 @@ func (r *Runtime) DeleteSession(ctx context.Context, id session.SessionID) (cont
 	}
 	logical, exists := r.sessions[id]
 	if !exists {
+		r.mu.Unlock()
+		return contract.DeleteNotFound, nil
+	}
+	if binding != "" && binding != session.ExternalBinding(r.bindingPrefix+"."+fmt.Sprint(logical.ref.generation)) {
 		r.mu.Unlock()
 		return contract.DeleteNotFound, nil
 	}

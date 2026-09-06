@@ -1,0 +1,67 @@
+syntax = "proto3";
+
+package mecatl.broker.v1;
+
+option go_package = "github.com/stacklok/mecatl/contracts/gen/go/mecatl/broker/v1;brokerv1";
+
+import "google/protobuf/timestamp.proto";
+
+// BrokerService connects a harness process to a broker-owned logical session.
+service BrokerService {
+  rpc Attach(AttachRequest) returns (AttachResponse);
+  rpc Commit(HandleRequest) returns (Empty);
+  rpc Abort(HandleRequest) returns (Empty);
+  rpc Close(HandleRequest) returns (CloseResponse);
+  rpc Delete(DeleteRequest) returns (DeleteResponse);
+  rpc Run(RunRequest) returns (RunResponse);
+  rpc RequestAuthorization(RequestAuthorizationRequest) returns (RequestAuthorizationResponse);
+  rpc AbortAuthorization(AbortAuthorizationRequest) returns (Empty);
+}
+message Empty {}
+message AttachRequest { string session_id = 1; }
+message AttachResponse {
+  string binding = 1;
+  string handle = 2;
+  string outcome = 3;
+  repeated ToolDescriptor tools = 4;
+}
+message HandleRequest { string handle = 1; }
+message CloseResponse { string outcome = 1; }
+message DeleteRequest { string session_id = 1; string binding = 2; }
+message DeleteResponse { string outcome = 1; }
+message ToolDescriptor {
+  string name = 1;
+  string description = 2;
+  bytes schema = 3;
+  bool read_only = 4;
+  bool dispatch_serial = 5;
+  bool authorization_capable = 6;
+}
+message RunRequest {
+  string handle = 1;
+  string name = 2;
+  string call_id = 3;
+  bytes args = 4;
+  string item_id = 5;
+}
+message RunResponse { ToolResult result = 1; }
+message ToolResult { string call_id = 1; string content = 2; bool is_error = 3; repeated ResultPart parts = 4; }
+message ResultPart {
+  string block_kind = 1;
+  string media_kind = 2;
+  string mime_type = 3;
+  bytes data = 4;
+  string url = 5;
+  string text = 6;
+  string name = 7;
+  string title = 8;
+  string description = 9;
+  int64 size = 10;
+  repeated string audience = 11;
+  double priority = 12;
+  string last_modified = 13;
+}
+message RequestAuthorizationRequest { string handle = 1; string name = 2; string call_id = 3; bytes args = 4; string item_id = 5; }
+message RequestAuthorizationResponse { Authorization authorization = 1; bool required = 2; }
+message AbortAuthorizationRequest { string handle = 1; Authorization authorization = 2; }
+message Authorization { string id = 1; string binding = 2; google.protobuf.Timestamp expires_at = 3; }
