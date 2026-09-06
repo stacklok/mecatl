@@ -2,7 +2,7 @@
 id: 11-macos-final-panel-repairs
 title: Repair final managed-storage validation findings
 blocked_by: [10-macos-panel-repairs]
-status: in-progress
+status: done
 attempt: 1
 branch: "plan-managed-temporary-command-leases/11-macos-final-panel-repairs-attempt-1"
 worktree: ".scratch/worker-managed-temporary-command-leases-11-macos-final-panel-repairs-attempt-1"
