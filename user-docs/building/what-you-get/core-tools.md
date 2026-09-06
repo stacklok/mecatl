@@ -67,6 +67,7 @@ and the separate `BashSystemTemp` capability. In managed mode, `managed_root`,
 five minutes), and `shutdown_reap_timeout` (default one minute) configure storage
 and cleanup.
 
+### Background commands
 
 A `Bash` call with `background: true` returns immediately with a `bashcmd-<id>` job id and keeps the command running while the model continues — the pattern for a dev server, a watch loop, or a slow build. The permission ask happens once, at start, exactly as for a foreground command. The read-only `BashStatus` tool is the only channel back: no arguments lists this run's jobs (id, running/done, stop reason), `job_id` shows the command and its retained output tail (or collects a finished job's result, delivered once), `wait_ms` waits for a finish, and `cancel` stops a job. A background command runs in the **real workspace with no isolation** — its effects can interleave with the model's own file changes — keeps only a bounded tail of recent output, and is **cancelled automatically if it is still running when the run ends** (a job lives for one run, never across sessions).
 
