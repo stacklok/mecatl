@@ -29,7 +29,7 @@ func runScopedBash(t *testing.T, rules []governance.Rule, call session.ToolCall,
 	catalog := tool.NewCatalog()
 	catalog.MustRegister(NewBashTool())
 	eng := NewEngine(Deps{LLM: provider, Catalog: catalog, Policy: permpolicy.NewPolicy(rules, nil)})
-	sess := session.New("scope", session.ModeDefault, "/ws", session.Limits{MaxTurns: 3}, time.Now())
+	sess := session.New("scope", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindMem, ID: "/ws", Revision: "v1"}, session.Limits{MaxTurns: 3}, time.Now())
 	run := eng.Run(context.Background(), sess, bashEnvRunner(runner), RunRequest{Text: "run"})
 	var events []session.Event
 	var result session.ToolResult

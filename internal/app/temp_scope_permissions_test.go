@@ -34,7 +34,7 @@ func TestADR_0281_EngineSystemPromptContainsTempScopeContract(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = built.Close() }()
-	sess := session.New("scope-prompt", session.ModeDefault, "/ws", session.Limits{MaxTurns: 1}, time.Now())
+	sess := session.New("scope-prompt", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{MaxTurns: 1}, time.Now())
 	for range built.Engine.Run(ctx, sess, memEnvironment("/ws"), agent.RunRequest{Text: "hi"}).Events() {
 	}
 	for _, clause := range []string{"managed storage is disposable", "temp_scope: system", "not a filesystem sandbox"} {

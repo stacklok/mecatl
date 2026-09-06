@@ -101,12 +101,12 @@ var bashWS = memfs.NewWorkspace("/ws")
 
 // bashEnv wraps bashWS into a shell-less Environment (the background-Bash tests
 // inject a streaming runner via the Environment's runner, not the workspace).
-var bashEnv = tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: "/ws"}, bashWS, testReadLedger(), nil)
+var bashEnv = tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: "/ws", Revision: "v1"}, bashWS, testReadLedger(), nil)
 
 // bashEnvRunner wraps bashWS into an Environment bound to runner (the
 // background-Bash tests pass a streaming runner this way, issue #462).
 func bashEnvRunner(runner tool.CommandRunner) tool.Environment {
-	return tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: "/ws"}, bashWS, testReadLedger(), runner)
+	return tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: "/ws", Revision: "v1"}, bashWS, testReadLedger(), runner)
 }
 
 func bashCall(id, command string, timeoutMS int, background bool) session.ToolCall {
