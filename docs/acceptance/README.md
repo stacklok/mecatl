@@ -126,7 +126,7 @@ PR after verification. There is no cleanup or status-only PR.
   500 ms generation-tagged expiry; it reuses `clearPrompt`, preserves surface ownership,
   and documents universal `ctrl+u`. Status: landed.
 - [CallMcpWithQuery broker support](callmcpwithquery-broker-support.md) — bounded jq projection for a direct MCP target or a current broker attachment, preserving the attachment's existing session isolation and authorization gates. Status: implemented locally under explicit workflow waiver; not approved or landed.
-
+- [Mecatui logical conversation anchors](mecatui-logical-conversation-anchors.md) — UI-local semantic reading anchors, line provenance, conservative live selection retention, and cache-preserving viewport replacement. Status: landed in this Combined candidate; authoritative on merge.
 - [Mecatui card layout](mecatui-card-layout.md) — width-bounded card rendering
   that wraps raw dynamic rows before styling, preventing Lipgloss alignment
   padding from becoming vertical whitespace while retaining intentional
