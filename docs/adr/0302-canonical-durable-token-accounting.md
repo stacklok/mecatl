@@ -1,4 +1,4 @@
-# ADR 0291 — Canonical durable token accounting and run-scoped budgets
+# ADR 0302 — Canonical durable token accounting and run-scoped budgets
 
 - Status: Accepted
 - Date: 2026-09-04
@@ -43,7 +43,7 @@ This ADR records tokens, not monetary cost. Pricing, currency conversion, histor
 
 ## See also
 
-- [ADR 0290 — Asynchronous session-title generation](./0290-session-title-generation-and-auxiliary-usage.md)
+- [ADR 0301 — Asynchronous session-title generation](./0301-session-title-generation-and-auxiliary-usage.md)
 - [ADR 0030 — Layered model-selection heuristics](./0030-model-selection-heuristics.md)
 - [ADR 0027 — Cloud-native arc](./0027-cloud-native.md)
 - [Session title generation and token usage acceptance plan](../acceptance/session-title-generation.md)

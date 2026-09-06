@@ -1,9 +1,9 @@
 # Session title generation and token usage — acceptance plan
 
 **Phase:** mecatui session-title UX and opt-in title-model accounting  
-**Status:** in-progress, 2026-08-30. Reconciled with ADRs 0290 and 0291.
+**Status:** in-progress, 2026-08-30. Reconciled with ADRs 0301 and 0302.
 **Issue:** [stacklok/mecatl#621](https://github.com/stacklok/mecatl/issues/621).  
-**ADR:** [ADR 0290](../adr/0290-session-title-generation-and-auxiliary-usage.md) — server-owned asynchronous title lifecycle and opt-in title slot; [ADR 0291](../adr/0291-canonical-durable-token-accounting.md) — canonical durable token usage and run-scoped budget baseline.
+**ADR:** [ADR 0301](../adr/0301-session-title-generation-and-auxiliary-usage.md) — server-owned asynchronous title lifecycle and opt-in title slot; [ADR 0302](../adr/0302-canonical-durable-token-accounting.md) — canonical durable token usage and run-scoped budget baseline.
 **Accumulator branch:** `acc/session-title-generation` (off `main`).
 
 The smallest set of work that lets a mecatui operator set an active session title directly and,
@@ -42,12 +42,12 @@ automatic job admission and every client benefits from it.
   EventLog when enabled and published through gRPC `StreamSessionLive`. That live push is
   best-effort. Per-run HTTP SSE has no out-of-band title push; HTTP clients discover title changes
   from the authoritative session snapshot and durable event stream.
-- The engine owns title provenance, sources/lifecycle, and the event value. ADR 0291 owns
+- The engine owns title provenance, sources/lifecycle, and the event value. ADR 0302 owns
   canonical token usage: title usage never changes the deprecated `Session.Usage` main mirror,
   run budgets, ordinary result usage, or conversation history.
 
-These cuts follow [ADR 0290](../adr/0290-session-title-generation-and-auxiliary-usage.md),
-[ADR 0291](../adr/0291-canonical-durable-token-accounting.md),
+These cuts follow [ADR 0301](../adr/0301-session-title-generation-and-auxiliary-usage.md),
+[ADR 0302](../adr/0302-canonical-durable-token-accounting.md),
 [ADR 0030](../adr/0030-model-selection-heuristics.md),
 [ADR 0016](../adr/0016-multi-provider.md),
 [ADR 0020](../adr/0020-diagnostics.md), and the aggregate, provider-neutrality, durable-event, and
@@ -116,12 +116,12 @@ prompts. The generator uses one bounded direct stream call and returns only stri
   - verify: `TestSessionTitleGeneration_Scenario3_TitleSlotRoutesOnlyGenerator`
 - AC3.3: The generator has no routing, credential, store, or mutation authority and receives no
   client-supplied title input, model, provider, or system prompt.
-  - verify: `TestADR_0290_TitleGenerationServerOwnsInputAndModel`
+  - verify: `TestADR_0301_TitleGenerationServerOwnsInputAndModel`
 - AC3.4: Input is fenced as untrusted data and bounded before the provider call. Valid generated
   output is strict, UTF-8, whitespace-canonicalized to one line, and capped at 80 runes total
   including truncation. First-prompt and operator titles retain their existing length limit but use
   the same one-line whitespace canonicalization.
-  - verify: `TestADR_0290_TitleGenerationInputOutputBoundary`
+  - verify: `TestADR_0301_TitleGenerationInputOutputBoundary`
 - AC3.5: `defer` permits an attempt after source prompt two or three; a valid title, malformed
   output, unavailable configuration, or third-prompt exhaustion ends the lifecycle with the
   fallback retained.
@@ -181,12 +181,12 @@ no per-attempt usage ledger. `token_usage[main]` is canonical for main work; dep
   - verify: `TestSessionTitleGeneration_Scenario5_TokenUsageRoundTripAndProjection`
 - AC5.4: Title-generation tokens do not alter the deprecated `Session.Usage` main mirror,
   `MaxRunTokens`, normal turn/result usage, or the agent conversation.
-  - verify: `TestADR_0291_AuxiliaryUsageDoesNotSpendRunBudget`
+  - verify: `TestADR_0302_AuxiliaryUsageDoesNotSpendRunBudget`
 - AC5.5: The internal immutable budget baseline leaves `Session.Usage` and
   `token_usage[main]` lifetime totals untouched: ordinary runs start at zero, only team
   synthesis captures current cumulative main usage, that baseline survives its re-drives and
   nudges, and no externally callable usage-reset API exists.
-  - verify: `TestADR_0291_RunBudgetBaselineDoesNotResetLifetimeUsage`
+  - verify: `TestADR_0302_RunBudgetBaselineDoesNotResetLifetimeUsage`
 - AC5.6: Other auxiliary callers are not migrated by this plan.
   - verify: `TestSessionTitleGeneration_Scenario5_OnlyTitleIsPlumbed`
 
@@ -194,7 +194,7 @@ no per-attempt usage ledger. `token_usage[main]` is canonical for main work; dep
 
 | Item | Decision |
 |---|---|
-| Currency/price estimates, rate history, and billing reconciliation | Deferred; ADR 0291 records tokens only. |
+| Currency/price estimates, rate history, and billing reconciliation | Deferred; ADR 0302 records tokens only. |
 | Migrating other model calls into canonical token usage | Deferred; this plan wires `session_title` only. |
 | Client-triggered generation or arbitrary client model invocation | Rejected; automatic work is Service-owned. |
 | Generic model-invocation RPC/dispatcher | Rejected; later operations require their own authorization, input, lifecycle, accounting, and notification design. |

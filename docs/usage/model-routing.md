@@ -107,11 +107,11 @@ models:
 #### Session title generation
 
 - **The `title` slot.** This explicit opt-in for automatic session-title generation
-  ([ADR 0290](../adr/0290-session-title-generation-and-auxiliary-usage.md)) has **no
+  ([ADR 0301](../adr/0301-session-title-generation-and-auxiliary-usage.md)) has **no
   tier or session-model fallback**: omit it and generation is disabled. On the fixed
   compatible provider, the server makes one bounded tool-less call after a successful
   exchange. Its usage is durable `session_title` accounting under
-  [ADR 0291](../adr/0291-canonical-durable-token-accounting.md), not `Session.Usage`,
+  [ADR 0302](../adr/0302-canonical-durable-token-accounting.md), not `Session.Usage`,
   the session/run budget, or normal result usage. The title model never changes the
   session model.
 

@@ -155,8 +155,8 @@ emits session-correlated, diagnostics-only lifecycle records for submission, adm
 claim, generator selection/completion, and conditional commit loss. Completion records
 only outcome, provider/model attribution, token counts, and on failure a stable class
 plus stage; it never records prompt sources, provider error text, credentials, or model
-output. See [ADR 0290](../adr/0290-session-title-generation-and-auxiliary-usage.md)
-and [ADR 0291](../adr/0291-canonical-durable-token-accounting.md).
+output. See [ADR 0301](../adr/0301-session-title-generation-and-auxiliary-usage.md)
+and [ADR 0302](../adr/0302-canonical-durable-token-accounting.md).
 
 ### Event taxonomy (`engine/session/event.go`)
 
