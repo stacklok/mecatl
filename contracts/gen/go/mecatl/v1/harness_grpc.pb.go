@@ -170,10 +170,11 @@ type HarnessServiceClient interface {
 	// ForkSession creates a history-carrying successor with optional placement and
 	// model-routing overrides.
 	ForkSession(ctx context.Context, in *ForkSessionRequest, opts ...grpc.CallOption) (*ForkSessionResponse, error)
-	// Converse drives one run. The first frame MUST be `prompt`; subsequent
-	// frames are zero or more `resume_approval` / `cancel` control frames. The
-	// server streams `Event` envelopes until the terminal `result` event, then
-	// closes the stream. A context cancel from the client aborts the run.
+	// Converse drives one run. The first frame MUST be `prompt` or `retry`; later
+	// frames may carry controls. A received second `prompt` or `retry` is rejected
+	// with INVALID_ARGUMENT. The server streams `Event` envelopes until the terminal
+	// `result` event, then closes the stream; controls still in transit may instead
+	// observe normal stream completion. A context cancel from the client aborts the run.
 	Converse(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ConverseRequest, ConverseResponse], error)
 	// ListMcpResources returns the static resource snapshots advertised by the
 	// connected MCP servers. An empty `server` returns the union across every
@@ -1269,10 +1270,11 @@ type HarnessServiceServer interface {
 	// ForkSession creates a history-carrying successor with optional placement and
 	// model-routing overrides.
 	ForkSession(context.Context, *ForkSessionRequest) (*ForkSessionResponse, error)
-	// Converse drives one run. The first frame MUST be `prompt`; subsequent
-	// frames are zero or more `resume_approval` / `cancel` control frames. The
-	// server streams `Event` envelopes until the terminal `result` event, then
-	// closes the stream. A context cancel from the client aborts the run.
+	// Converse drives one run. The first frame MUST be `prompt` or `retry`; later
+	// frames may carry controls. A received second `prompt` or `retry` is rejected
+	// with INVALID_ARGUMENT. The server streams `Event` envelopes until the terminal
+	// `result` event, then closes the stream; controls still in transit may instead
+	// observe normal stream completion. A context cancel from the client aborts the run.
 	Converse(grpc.BidiStreamingServer[ConverseRequest, ConverseResponse]) error
 	// ListMcpResources returns the static resource snapshots advertised by the
 	// connected MCP servers. An empty `server` returns the union across every

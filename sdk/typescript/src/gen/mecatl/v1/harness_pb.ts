@@ -2738,8 +2738,11 @@ export const SessionSchema: GenMessage<Session> = /*@__PURE__*/
 
 /**
  * ConverseRequest is a client-to-server frame on the Converse stream. The
- * first frame MUST be `prompt` or `retry`. Field numbers 1-9 are reserved for the
- * start family; 10+ for the gate/cancellation family.
+ * first frame MUST be `prompt` or `retry`; later frames are controls. A received
+ * second `prompt` or `retry` is rejected with INVALID_ARGUMENT, but controls in
+ * transit when the server completes the run may observe normal stream completion.
+ * Field numbers 1-9 are reserved for the start family; 10+ for the
+ * gate/cancellation family.
  *
  * @generated from message mecatl.v1.ConverseRequest
  */
@@ -9449,10 +9452,11 @@ export const HarnessService: GenService<{
     output: typeof ForkSessionResponseSchema;
   },
   /**
-   * Converse drives one run. The first frame MUST be `prompt`; subsequent
-   * frames are zero or more `resume_approval` / `cancel` control frames. The
-   * server streams `Event` envelopes until the terminal `result` event, then
-   * closes the stream. A context cancel from the client aborts the run.
+   * Converse drives one run. The first frame MUST be `prompt` or `retry`; later
+   * frames may carry controls. A received second `prompt` or `retry` is rejected
+   * with INVALID_ARGUMENT. The server streams `Event` envelopes until the terminal
+   * `result` event, then closes the stream; controls still in transit may instead
+   * observe normal stream completion. A context cancel from the client aborts the run.
    *
    * @generated from rpc mecatl.v1.HarnessService.Converse
    */

@@ -5500,8 +5500,11 @@ func (x *Session) GetPlacement() *PlacementMetadata {
 }
 
 // ConverseRequest is a client-to-server frame on the Converse stream. The
-// first frame MUST be `prompt` or `retry`. Field numbers 1-9 are reserved for the
-// start family; 10+ for the gate/cancellation family.
+// first frame MUST be `prompt` or `retry`; later frames are controls. A received
+// second `prompt` or `retry` is rejected with INVALID_ARGUMENT, but controls in
+// transit when the server completes the run may observe normal stream completion.
+// Field numbers 1-9 are reserved for the start family; 10+ for the
+// gate/cancellation family.
 type ConverseRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Types that are valid to be assigned to Kind:
