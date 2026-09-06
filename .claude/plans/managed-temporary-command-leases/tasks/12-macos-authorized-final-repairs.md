@@ -2,7 +2,7 @@
 id: 12-macos-authorized-final-repairs
 title: Apply authorized managed-storage validation repairs
 blocked_by: [11-macos-final-panel-repairs]
-status: in-progress
+status: done
 attempt: 1
 branch: "plan-managed-temporary-command-leases/12-macos-authorized-final-repairs-attempt-1"
 worktree: ".scratch/worker-managed-temporary-command-leases-12-macos-authorized-final-repairs-attempt-1"
