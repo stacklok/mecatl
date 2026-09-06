@@ -2,10 +2,10 @@
 id: 02-panel-repair
 title: Strengthen live reconnect acceptance proofs
 blocked_by: [01-reconnect-regression]
-status: pending
-attempt: 0
-branch: ""
-worktree: ""
+status: in-progress
+attempt: 1
+branch: plan-mecatui-live-reconnect/02-panel-repair-attempt-1
+worktree: .scratch/worker-mecatui-live-reconnect-02-panel-repair-attempt-1
 issue: "779"
 retries: 0
 last_error: ""
