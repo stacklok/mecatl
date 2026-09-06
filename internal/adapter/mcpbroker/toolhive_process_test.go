@@ -73,6 +73,11 @@ func TestNewToolHiveProcessUsesConfiguredAuthStorage(t *testing.T) {
 }
 
 func TestToolHiveProtectedClientIsConfidential(t *testing.T) {
+	assertToolHiveProtectedClientIsConfidential(t)
+}
+
+func assertToolHiveProtectedClientIsConfidential(t *testing.T) {
+	t.Helper()
 	t.Setenv("MECATL_TEST_CLIENT_SECRET", "construction-only-secret")
 	profile := protectedToolHiveProfile("private")
 	profile.Static = []StaticTool{{Name: "echo", Description: "echo", Schema: json.RawMessage(`{"type":"object"}`)}}
@@ -111,6 +116,11 @@ func TestToolHiveProtectedClientIsConfidential(t *testing.T) {
 	}
 	if err := registration.SHA256Hasher.Compare(t.Context(), client.GetHashedSecret(), []byte("wrong-secret")); err == nil {
 		t.Fatal("registered secret hash accepted a different secret")
+	}
+	transaction := &authorizationTransaction{route: process.protectedTarget}
+	oauthConfig := transaction.oauthConfig(secret)
+	if oauthConfig.Endpoint.AuthStyle != oauth2.AuthStyleInHeader || oauthConfig.ClientSecret != secret {
+		t.Fatalf("broker exchange config = %#v, want private secret with HTTP Basic", oauthConfig)
 	}
 }
 

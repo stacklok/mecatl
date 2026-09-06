@@ -63,6 +63,8 @@ tasks:
       # mecak8s: the storage-free, k8s-native agent binary (ADR 0048; a thin peer
       # of mecated composing app.Build with Redis store + k8s lease + drain gate).
       - go build -ldflags "{{.BUILD_LDFLAGS}}" -o bin/mecak8s ./cmd/mecak8s
+      # mecabroker: the separately deployable authenticated ToolHive owner.
+      - go build -ldflags "{{.BUILD_LDFLAGS}}" -o bin/mecabroker ./cmd/mecabroker
       - go build -ldflags "{{.BUILD_LDFLAGS}}" -o bin/mecatui ./cmd/mecatui
       # engine/ is its own Go module (consumed via the committed go.work). Building
       # it here keeps the importable-core module compiling alongside the binaries.

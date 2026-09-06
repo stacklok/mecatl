@@ -118,7 +118,9 @@ func callback(t *testing.T, runtime *Runtime, code, state string) *httptest.Resp
 	return recorder
 }
 
-func TestProtectedCallCallbackSingleUseAndRefreshCustody(t *testing.T) {
+func TestADR_0302_RemoteBrokerPreservesConfidentialClient(t *testing.T) {
+	assertToolHiveProtectedClientIsConfidential(t)
+
 	var exchanges, refreshes int
 	tokenServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
 		if err := request.ParseForm(); err != nil {
