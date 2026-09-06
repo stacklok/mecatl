@@ -2,10 +2,10 @@
 id: 01-double-escape
 title: Physical non-remappable double-Escape draft clearing
 blocked_by: []
-status: pending
-attempt: 0
-branch: ""
-worktree: ""
+status: in-progress
+attempt: 1
+branch: plan-mecatui-double-escape/01-double-escape-attempt-1
+worktree: .scratch/worker-mecatui-double-escape-01-double-escape-attempt-1
 issue: "605"
 retries: 0
 last_error: ""
