@@ -211,6 +211,7 @@ func (sessionsStartupNewIntent) isSurfaceIntent() {}
 type sessionsActiveTitleIntent struct {
 	id            string
 	title         string
+	provenance    string
 	successNotice string
 }
 
@@ -712,7 +713,7 @@ func (s *sessionsState) handleRenamed(msg client.SessionRenamedMsg) (tea.Cmd, bo
 		}
 	}
 	s.syncFilter()
-	s.intent = sessionsActiveTitleIntent{id: msg.SessionID, title: msg.Title, successNotice: "renamed session"}
+	s.intent = sessionsActiveTitleIntent{id: msg.SessionID, title: msg.Title, provenance: msg.TitleProvenance, successNotice: "renamed session"}
 	if s.pager != nil {
 		return s.beginPage(""), true, false
 	}

@@ -50,16 +50,31 @@ func TestSessionTitleGeneration_Scenario1_TitleCommandPersistsOperatorTitle(t *t
 	}
 }
 
-func TestSessionTitleGeneration_Scenario1_TitleCommandReadsWhitespaceSuffixAndClearsInput(t *testing.T) {
-	for _, input := range []string{"/title", "/title ", "/title   ", "/title\t\n"} {
+func TestSessionTitleGeneration_Scenario1_BareTitleCommandReadsAndClearsInput(t *testing.T) {
+	m := titleModel(t, &titleRenamer{})
+	m.prompt.Rewrite("/title")
+
+	mm, cmd := m.submitPrompt()
+	m = mm.(Model)
+	if cmd != nil || len(m.conv.blocks) != 1 || !strings.Contains(m.conv.blocks[0].raw, "Fallback") || !strings.Contains(m.conv.blocks[0].raw, "unknown") {
+		t.Fatalf("notice/cmd = %#v/%v, want local provenance notice", m.conv.blocks, cmd != nil)
+	}
+	if got := m.prompt.Value(); got != "" {
+		t.Fatalf("input = %q, want cleared input", got)
+	}
+}
+
+func TestSessionTitleGeneration_Scenario1_WhitespaceTitleCommandIsRejected(t *testing.T) {
+	for _, input := range []string{"/title ", "/title   ", "/title\t\n"} {
 		t.Run(strings.ReplaceAll(input, " ", "space"), func(t *testing.T) {
 			m := titleModel(t, &titleRenamer{})
+			m.sessionTitleProvenance = "generated"
 			m.prompt.Rewrite(input)
 
 			mm, cmd := m.submitPrompt()
 			m = mm.(Model)
-			if cmd != nil || len(m.conv.blocks) != 1 || !strings.Contains(m.conv.blocks[0].raw, "Fallback") || !strings.Contains(m.conv.blocks[0].raw, "generated") {
-				t.Fatalf("%q notice/cmd = %#v/%v, want local provenance notice", input, m.conv.blocks, cmd != nil)
+			if cmd != nil || m.sessionTitle != "Fallback" || !strings.Contains(stripANSIstr(m.statusMsg), "requires non-whitespace text") {
+				t.Fatalf("%q title/status/cmd = %q/%q/%v, want rejected blank rename", input, m.sessionTitle, stripANSIstr(m.statusMsg), cmd != nil)
 			}
 			if got := m.prompt.Value(); got != "" {
 				t.Fatalf("%q left input %q, want cleared input", input, got)
@@ -71,16 +86,63 @@ func TestSessionTitleGeneration_Scenario1_TitleCommandReadsWhitespaceSuffixAndCl
 func TestSessionTitleGeneration_Scenario1_TitleCommandReconcilesFailure(t *testing.T) {
 	r := &titleRenamer{err: errors.New("rejected")}
 	m := titleModel(t, r)
+	m.deps.Session = &fakeConv{getSessionTitle: "Fallback"}
 	m.prompt.Rewrite("/title optimistic")
 	mm, cmd := m.submitPrompt()
 	m = mm.(Model)
 	if m.sessionTitle != "optimistic" {
 		t.Fatalf("optimistic title = %q", m.sessionTitle)
 	}
-	m = applyAll(m, cmd())
-	if m.sessionTitle != "Fallback" {
-		t.Fatalf("failed rename title = %q, want fallback", m.sessionTitle)
+	mm, refresh := m.Update(cmd())
+	m = mm.(Model)
+	if refresh == nil || m.sessionTitle != "optimistic" {
+		t.Fatalf("failed rename must retain optimistic title until authoritative refresh: title=%q cmd=%v", m.sessionTitle, refresh != nil)
 	}
+	m = applyAll(m, refresh())
+	if m.sessionTitle != "Fallback" {
+		t.Fatalf("failed rename title = %q, want authoritative fallback", m.sessionTitle)
+	}
+}
+
+func TestSessionTitleGeneration_Scenario1_RenameCompletionsRespectRequestOrder(t *testing.T) {
+	t.Run("older success cannot overwrite latest", func(t *testing.T) {
+		m := titleModel(t, &titleRenamer{})
+		mm, _ := m.renameTitle("first")
+		m = mm.(Model)
+		mm, _ = m.renameTitle("second")
+		m = mm.(Model)
+
+		m, cmd := m.onTitleRenamed(client.SessionRenamedMsg{SessionID: "active", RequestToken: 1, Title: "first", TitleProvenance: "operator"})
+		if cmd != nil || m.sessionTitle != "second" {
+			t.Fatalf("older success changed latest title: %q", m.sessionTitle)
+		}
+		m, cmd = m.onTitleRenamed(client.SessionRenamedMsg{SessionID: "active", RequestToken: 2, Title: "second", TitleProvenance: "operator"})
+		if cmd != nil || m.sessionTitle != "second" || m.sessionTitleProvenance != "operator" {
+			t.Fatalf("latest success was not adopted: %q/%q", m.sessionTitle, m.sessionTitleProvenance)
+		}
+	})
+
+	t.Run("only latest failure reconciles", func(t *testing.T) {
+		m := titleModel(t, &titleRenamer{})
+		m.deps.Session = &fakeConv{getSessionTitle: "authoritative"}
+		mm, _ := m.renameTitle("first")
+		m = mm.(Model)
+		mm, _ = m.renameTitle("second")
+		m = mm.(Model)
+
+		m, cmd := m.onTitleRenamed(client.SessionRenamedMsg{SessionID: "active", RequestToken: 1, Err: errors.New("old failure")})
+		if cmd != nil || m.sessionTitle != "second" {
+			t.Fatalf("older failure changed latest title: %q", m.sessionTitle)
+		}
+		m, cmd = m.onTitleRenamed(client.SessionRenamedMsg{SessionID: "active", RequestToken: 2, Err: errors.New("latest failure")})
+		if cmd == nil || m.sessionTitle != "second" {
+			t.Fatalf("latest failure did not preserve optimistic title pending reconciliation: %q", m.sessionTitle)
+		}
+		m = applyAll(m, cmd())
+		if m.sessionTitle != "authoritative" {
+			t.Fatalf("authoritative reconciliation = %q", m.sessionTitle)
+		}
+	})
 }
 
 func TestSessionTitleGeneration_Scenario1_TitleCommandIsClientOnly(t *testing.T) {
@@ -124,7 +186,7 @@ func TestSessionTitleGeneration_Scenario4_ClientReconnectReconcilesTitle(t *test
 
 func TestSessionTitleGeneration_Scenario4_QuietFailureOffersManualTitle(t *testing.T) {
 	m := titleModel(t, &titleRenamer{})
-	failed := client.SessionTitleMsg{Title: "Fallback", Provenance: "fallback", GenerationState: "exhausted", LatestAttempt: client.TitleAttemptSummary{ID: "a1", Outcome: "deferred"}}
+	failed := client.SessionTitleMsg{Title: "Fallback", Provenance: "fallback", GenerationState: "exhausted", LatestAttempt: client.TitleAttemptSummary{ID: "a1"}}
 	m = applyAll(m, failed, failed)
 	if len(m.conv.blocks) != 1 || !strings.Contains(m.conv.blocks[0].raw, "/title <text>") || strings.Contains(m.conv.blocks[0].raw, "provider") {
 		t.Fatalf("failure notices = %#v", m.conv.blocks)

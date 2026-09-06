@@ -646,18 +646,19 @@ func canonicalBuiltinName(name string) string {
 }
 
 // titleCommand recognizes /title without treating arbitrary model-facing slash
-// commands as client commands. A suffix containing only whitespace is a no-argument
-// title read, matching the palette's completed "/title " input.
-func titleCommand(text string) (title string, bare, ok bool) {
+// commands as client commands. Only exactly /title is a title read; a whitespace
+// suffix is an invalid rename rather than a read.
+func titleCommand(text string) (title string, bare, blankArgs, ok bool) {
 	raw := strings.TrimLeftFunc(text, unicode.IsSpace)
 	if !strings.HasPrefix(strings.ToLower(raw), "/title") {
-		return "", false, false
+		return "", false, false, false
 	}
 	if len(raw) > len("/title") && !unicode.IsSpace(rune(raw[len("/title")])) {
-		return "", false, false
+		return "", false, false, false
 	}
-	title = strings.TrimSpace(raw[len("/title"):])
-	return title, title == "", true
+	suffix := raw[len("/title"):]
+	title = strings.TrimSpace(suffix)
+	return title, suffix == "", suffix != "" && title == "", true
 }
 
 // runTitle adds a local, nonpersistent title/provenance notice. It deliberately
@@ -678,11 +679,11 @@ func (m Model) renameTitle(title string) (tea.Model, tea.Cmd) {
 		m.statusMsg = m.deps.Theme.Style("warning").Render("title rename is unavailable")
 		return m, nil
 	}
-	m.titleRenamePrevious = m.sessionTitle
+	m.titleRenameRequestToken++
 	m.sessionTitle = title
 	m.sessionTitleProvenance = "operator"
 	m.prompt.Reset()
-	return m, client.RenameSessionCmd(m.deps.Ctx, m.deps.SessionManagement, m.sessionID, title)
+	return m, client.RenameSessionCmdWithToken(m.deps.Ctx, m.deps.SessionManagement, m.sessionID, title, m.titleRenameRequestToken)
 }
 
 // dispatchBareBuiltin checks whether raw text is a slash command after trimming
@@ -690,7 +691,12 @@ func (m Model) renameTitle(title string) (tea.Model, tea.Cmd) {
 // recognized built-in that does not accept arguments keeps the input and shows a
 // local warning. Unknown slash commands remain model-facing.
 func (m Model) dispatchBareBuiltin(text string) (tea.Model, tea.Cmd, bool) {
-	if title, bare, ok := titleCommand(text); ok {
+	if title, bare, blankArgs, ok := titleCommand(text); ok {
+		if blankArgs {
+			m.prompt.Reset()
+			m.statusMsg = m.deps.Theme.Style("warning").Render("/title requires non-whitespace text; use bare /title to view the current title")
+			return m, nil, true
+		}
 		if bare {
 			m.prompt.Reset()
 			return m.runTitle(), nil, true

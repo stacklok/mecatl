@@ -305,8 +305,8 @@ func TestPaletteCompleteTitleForArguments(t *testing.T) {
 		}
 		mm, cmd := m.submitPrompt()
 		m = mm.(Model)
-		if cmd != nil || len(m.conv.blocks) != 1 || !strings.Contains(m.conv.blocks[0].raw, "Session title:") {
-			t.Fatalf("enter after palette completion = blocks=%#v cmd=%v, want local title read", m.conv.blocks, cmd != nil)
+		if cmd != nil || len(m.conv.blocks) != 0 || !strings.Contains(stripANSIstr(m.statusMsg), "requires non-whitespace text") {
+			t.Fatalf("enter after palette completion = blocks=%#v status=%q cmd=%v, want rejected blank title", m.conv.blocks, stripANSIstr(m.statusMsg), cmd != nil)
 		}
 		if got := m.prompt.Value(); got != "" {
 			t.Fatalf("input after title read = %q, want cleared", got)

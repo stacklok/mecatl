@@ -23,7 +23,6 @@ type SessionSnapshot struct {
 	ResolvedModel   ResolvedModel
 	Title           string
 	TitleProvenance string
-	TitleMetadata   SessionTitleMsg
 	// Capabilities is the server's feature-advertisement snapshot from the Session
 	// proto (the SAME value CreateSessionResponse carries). A client that reloads
 	// or switches to a persisted session (continue, /effort fork, /clear successor)
@@ -44,7 +43,6 @@ func snapshotFrom(s *mecatlv1.Session) SessionSnapshot {
 		ResolvedModel:   resolvedModelFrom(s.GetResolvedModel()),
 		Title:           titleFromProto(s),
 		TitleProvenance: titleProvenanceFromProto(s),
-		TitleMetadata:   sessionTitleMsg(s.GetTitleMetadata()),
 		Capabilities:    capabilitiesFrom(s.GetCapabilities()),
 	}
 }
@@ -130,8 +128,8 @@ type ResolvedModelMsg struct {
 	// Title is the session's stored title from the snapshot (self-heal channel for
 	// the window title). See the struct doc.
 	Title string
-	// TitleMetadata carries title lifecycle state for authoritative title reconciliation.
-	TitleMetadata SessionTitleMsg
+	// TitleProvenance carries the title's source alongside Title.
+	TitleProvenance string
 	// Capabilities is the server's feature-advertisement snapshot. See the struct doc.
 	Capabilities Capabilities
 	Err          error
@@ -187,7 +185,7 @@ func RefreshResolvedModelCmd(ctx context.Context, g SessionGetter, id string) te
 		return ResolvedModelMsg{
 			SessionID: id, Resolved: snap.ResolvedModel, Mode: snap.Mode,
 			State: snap.State, Placement: snap.Placement, CreatedAt: snap.CreatedAt,
-			Title: snap.Title, TitleMetadata: snap.TitleMetadata, Capabilities: snap.Capabilities, Err: err,
+			Title: snap.Title, TitleProvenance: snap.TitleProvenance, Capabilities: snap.Capabilities, Err: err,
 		}
 	}
 }

@@ -11,12 +11,10 @@ import (
 const titleGenerationExhausted = "exhausted"
 
 func (m Model) onTitleRenamed(msg client.SessionRenamedMsg) (Model, tea.Cmd) {
-	if msg.SessionID != m.sessionID {
+	if msg.SessionID != m.sessionID || msg.RequestToken != m.titleRenameRequestToken {
 		return m, nil
 	}
 	if msg.Err != nil {
-		m.sessionTitle = m.titleRenamePrevious
-		m.titleRenamePrevious = ""
 		if m.deps.Session != nil {
 			return m, client.RefreshResolvedModelCmd(m.deps.Ctx, m.deps.Session, msg.SessionID)
 		}
@@ -33,7 +31,6 @@ func (m Model) onTitleRenamed(msg client.SessionRenamedMsg) (Model, tea.Cmd) {
 		}
 		sessions.syncFilter()
 	}
-	m.titleRenamePrevious = ""
 	return m, nil
 }
 
@@ -55,37 +52,35 @@ func (m Model) onSessionTitle(msg client.SessionTitleMsg) Model {
 		sessions.syncFilter()
 	}
 	if msg.GenerationState == titleGenerationExhausted && msg.LatestAttempt.ID != "" {
-		if m.titleFailedAttempts == nil {
-			m.titleFailedAttempts = make(map[string]struct{})
+		if msg.LatestAttempt.ID == m.titleFailedAttemptID {
+			return m
 		}
-		if id := msg.LatestAttempt.ID; id != "" {
-			if _, seen := m.titleFailedAttempts[id]; seen {
-				return m
-			}
-			m.titleFailedAttempts[id] = struct{}{}
-		}
+		m.titleFailedAttemptID = msg.LatestAttempt.ID
 		m.conv.addNotice("Automatic title generation did not complete. The current title was kept; use /title <text> to set one.")
 		m.refreshView()
 	}
 	return m
 }
 
-func (m Model) adoptTitle(title, provenance string, metadata client.SessionTitleMsg) Model {
+func (m Model) adoptTitle(title, provenance string) Model {
 	if title != "" {
 		m.sessionTitle = title
 	}
 	if provenance != "" {
 		m.sessionTitleProvenance = provenance
 	}
-	if metadata.Title != "" || metadata.Provenance != "" || metadata.GenerationState != "" {
-		m = m.onSessionTitle(metadata)
-	}
 	return m
 }
 
 func titleProvenanceLabel(provenance string) string {
-	if provenance == "" {
-		return "generated"
+	switch strings.ToLower(provenance) {
+	case "generated", "operator":
+		return strings.ToLower(provenance)
+	case "first-prompt":
+		return "first prompt"
+	default:
+		// Older servers exposed a title without provenance; it may have been seeded
+		// from a first prompt, but that cannot be known from the compatibility field.
+		return "unknown"
 	}
-	return strings.ToLower(provenance)
 }

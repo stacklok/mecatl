@@ -906,7 +906,7 @@ func (m Model) onResolvedModelMsg(msg client.ResolvedModelMsg) (Model, tea.Cmd, 
 	}
 	// The snapshot is authoritative after reconnect/session adoption, so unlike the
 	// old first-prompt seed it may replace a local title.
-	m = m.adoptTitle(msg.Title, "", msg.TitleMetadata)
+	m = m.adoptTitle(msg.Title, msg.TitleProvenance)
 	// Mode update: apply when the refetch carries a mode (the plan-approval
 	// refresh path). On the footer-heal path Mode is the same as m.activeMode
 	// (or empty from an older server), so this is a benign no-op.
@@ -2178,6 +2178,7 @@ func (m Model) applySessionsSurfaceIntent(intent surfaceIntent) (model tea.Model
 	case sessionsActiveTitleIntent:
 		if intent.id == m.sessionID {
 			m.sessionTitle = intent.title
+			m.sessionTitleProvenance = intent.provenance
 		}
 		m.statusMsg = m.deps.Theme.Style("success").Render(intent.successNotice)
 		return m, nil, true, false
@@ -3176,6 +3177,7 @@ func (m Model) submitPrompt() (tea.Model, tea.Cmd) {
 	// GetSession refetch on the carryover/fork/adopt paths (onResolvedModelMsg).
 	if m.sessionTitle == "" {
 		m.sessionTitle = text
+		m.sessionTitleProvenance = "first-prompt"
 	}
 	m.prompt.Reset()
 	// A fresh run clears any queue pause: whether this is the auto-drain (popAndSubmit
