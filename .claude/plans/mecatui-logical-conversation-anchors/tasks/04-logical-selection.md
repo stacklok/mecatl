@@ -2,10 +2,10 @@
 id: 04-logical-selection
 title: Logical selection projection
 blocked_by: [03-reading-anchor]
-status: pending
-attempt: 0
-branch: ""
-worktree: ""
+status: in-progress
+attempt: 1
+branch: "plan-mecatui-logical-conversation-anchors/04-logical-selection-attempt-1"
+worktree: ".scratch/worker-mecatui-logical-conversation-anchors-04-logical-selection-attempt-1"
 issue: ""
 retries: 0
 last_error: ""
