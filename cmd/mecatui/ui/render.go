@@ -2268,6 +2268,26 @@ func (r *renderer) renderTrace(trace []teamTrace) string {
 			b.WriteString(style.Render(row))
 		}
 	}
+	writeToolLine := func(glyph, name, detail string, glyphStyle lipgloss.Style) {
+		flush()
+		rows := wrapDelegationRow("  ", glyph+" "+name+" — "+detail, r.traceWidth)
+		regularPrefix := r.traceWidth <= 0 || r.traceWidth > 2
+		offset, glyphStart := 0, 0
+		if !regularPrefix {
+			glyphStart = 2
+		}
+		for _, row := range rows {
+			if b.Len() > 0 {
+				b.WriteString("\n")
+			}
+			if regularPrefix {
+				b.WriteString(row[:2])
+				row = row[2:]
+			}
+			b.WriteString(renderTraceToolRow(row, offset, glyphStart, name, glyphStyle, nameStyle, muted))
+			offset += len([]rune(row))
+		}
+	}
 	for i := range trace {
 		t := &trace[i]
 		switch t.kind {
@@ -2280,7 +2300,7 @@ func (r *renderer) renderTrace(trace []teamTrace) string {
 			}
 			name := truncate(sanitizeTerminal(t.name), maxTraceToolNameLen)
 			if detail := sanitizeTerminal(oneLine(t.detail)); detail != "" {
-				writeLine("  ", glyph+" "+name+" — "+truncate(detail, maxTraceDetailLen), style)
+				writeToolLine(glyph, name, truncate(detail, maxTraceDetailLen), style)
 			} else {
 				chips = append(chips, glyph+" "+name)
 			}
@@ -2289,6 +2309,56 @@ func (r *renderer) renderTrace(trace []teamTrace) string {
 		}
 	}
 	flush()
+	return b.String()
+}
+
+// renderTraceToolRow restores a trace tool row's semantic styles after its raw
+// text has been wrapped: status glyph, tool name, then muted preview. offset and
+// glyphStart are rune offsets in the unwrapped text, letting a style boundary fall
+// on either side of a wrapped row.
+func renderTraceToolRow(row string, offset, glyphStart int, name string, glyphStyle, nameStyle, muted lipgloss.Style) string {
+	nameStart := glyphStart + 2 // glyph plus its following space
+	detailStart := nameStart + len([]rune(name))
+
+	var b strings.Builder
+	var runes []rune
+	style := -1
+	write := func(next int) {
+		if len(runes) == 0 {
+			style = next
+			return
+		}
+		text := string(runes)
+		switch style {
+		case 0:
+			b.WriteString(glyphStyle.Render(text))
+		case 1:
+			b.WriteString(nameStyle.Render(text))
+		case 2:
+			b.WriteString(muted.Render(text))
+		default:
+			b.WriteString(text)
+		}
+		runes = runes[:0]
+		style = next
+	}
+	for i, r := range []rune(row) {
+		position := offset + i
+		next := -1
+		switch {
+		case position == glyphStart:
+			next = 0
+		case position >= nameStart && position < detailStart:
+			next = 1
+		case position >= detailStart:
+			next = 2
+		}
+		if next != style {
+			write(next)
+		}
+		runes = append(runes, r)
+	}
+	write(-1)
 	return b.String()
 }
 

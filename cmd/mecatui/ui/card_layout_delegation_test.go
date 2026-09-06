@@ -94,6 +94,31 @@ func TestMecatuiCardLayout_Scenario2_DelegationRowsFitBodyWidth(t *testing.T) {
 	})
 }
 
+// TestDelegationTraceStylesOnlyStatusGlyph ensures wrapping does not expand the
+// success/error colour beyond the marker: tool names retain toolName and previews
+// retain muted styling, even when their boundary lands on a continuation row.
+func TestDelegationTraceStylesOnlyStatusGlyph(t *testing.T) {
+	th := aztec()
+	r := &renderer{th: th, traceWidth: 7}
+
+	out := r.renderTrace([]teamTrace{{kind: teamTraceTool, name: "Read", detail: "preview"}})
+	lines := strings.Split(out, "\n")
+	if len(lines) < 2 {
+		t.Fatalf("trace should wrap at the configured width, got %q", out)
+	}
+	if want := "  " + th.Style("toolOk").Render("✓") + " " + th.Style("toolName").Render("Rea"); lines[0] != want {
+		t.Errorf("first row = %q, want %q", lines[0], want)
+	}
+	if want := "  " + th.Style("toolName").Render("d") + th.Style("muted").Render(" — p"); lines[1] != want {
+		t.Errorf("second row = %q, want %q", lines[1], want)
+	}
+
+	errorOut := (&renderer{th: th}).renderTrace([]teamTrace{{kind: teamTraceTool, isError: true, name: "Read", detail: "preview"}})
+	if want := "  " + th.Style("toolErr").Render("✗") + " " + th.Style("toolName").Render("Read") + th.Style("muted").Render(" — preview"); errorOut != want {
+		t.Errorf("error trace = %q, want %q", errorOut, want)
+	}
+}
+
 // TestDelegationOverlayCardUsesOuterAndBodyWidths verifies the final framed card
 // at narrow and normal geometry: rows are prepared to its usable body width, and
 // framing never wraps a styled row after the fact.
