@@ -123,8 +123,8 @@ func resolveTemporaryStorage(cfg Config, getenv func(string) string, platform st
 	if result.Mode != temporaryStorageManaged && result.Mode != temporaryStorageSystem {
 		return temporaryStorageConfig{}, fmt.Errorf("temporary storage mode must be managed or system")
 	}
-	if result.Mode == temporaryStorageManaged && platform != "linux" {
-		return temporaryStorageConfig{}, fmt.Errorf("temporary storage mode managed is supported only on linux")
+	if result.Mode == temporaryStorageManaged && platform != "linux" && platform != "darwin" {
+		return temporaryStorageConfig{}, fmt.Errorf("temporary storage mode managed is supported only on linux and macOS")
 	}
 	inherited := inheritedSystemTempDir(getenv)
 	var err error

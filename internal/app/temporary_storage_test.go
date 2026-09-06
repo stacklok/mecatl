@@ -53,7 +53,7 @@ func TestADR_0281_TemporaryStorageConfigValidation(t *testing.T) {
 	}
 }
 
-func TestADR_0281_ManagedModeLinuxAdmission(t *testing.T) {
+func TestADR_0281_ManagedModeUnixAdmission(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
 		mode     temporaryStorageMode
@@ -61,8 +61,11 @@ func TestADR_0281_ManagedModeLinuxAdmission(t *testing.T) {
 		wantErr  bool
 	}{
 		{name: "managed linux", mode: temporaryStorageManaged, platform: "linux"},
-		{name: "managed non-linux", mode: temporaryStorageManaged, platform: "darwin", wantErr: true},
-		{name: "system non-linux", mode: temporaryStorageSystem, platform: "darwin"},
+		{name: "managed macOS", mode: temporaryStorageManaged, platform: "darwin"},
+		{name: "managed windows", mode: temporaryStorageManaged, platform: "windows", wantErr: true},
+		{name: "managed other", mode: temporaryStorageManaged, platform: "plan9", wantErr: true},
+		{name: "system macOS", mode: temporaryStorageSystem, platform: "darwin"},
+		{name: "system windows", mode: temporaryStorageSystem, platform: "windows"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := resolveTemporaryStorage(Config{temporaryStorage: temporaryStorageConfig{Mode: tc.mode, CommandReapAfter: time.Hour, ReapInterval: time.Hour, ReapTimeout: 5 * time.Minute, ShutdownReapTimeout: time.Minute}}, func(string) string { return t.TempDir() }, tc.platform)

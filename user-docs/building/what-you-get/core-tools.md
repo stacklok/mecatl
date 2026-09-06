@@ -49,13 +49,14 @@ Fetched text is external input. Mecatl strips active HTML elements, converts the
 
 :::
 
-### Managed temporary storage (Linux)
+### Managed temporary storage (Linux and macOS)
 
 Bash uses a private managed temporary lease by default. On normal completion the
 harness removes that lease; a bounded maintenance worker later reclaims only
 validated, unlocked abandoned command/job leases after the operator-configured
 TTL. It never sweeps arbitrary system temporary files and never blocks command
-allocation. The lifecycle is Linux-only.
+allocation. The lifecycle is available on Linux and macOS; other platforms must
+use system mode.
 
 An operator can set `temporary_storage.mode: system` in user-global
 `~/.config/mecatl/settings.yaml` to restore system temporary storage. This rollback

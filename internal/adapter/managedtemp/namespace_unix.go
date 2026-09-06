@@ -1,6 +1,6 @@
-//go:build linux
+//go:build unix
 
-// Package managedtemp owns the private Linux filesystem namespace used by managed
+// Package managedtemp owns the private Unix filesystem namespace used by managed
 // command temporary storage. It intentionally exposes no deletion primitives.
 package managedtemp
 

@@ -303,6 +303,29 @@ jobs:
           (cd provider/openai && go build ./...)
           (cd provider/openaichat && go build ./...)
 
+  managed-temp-macos:
+    name: Managed temporary storage (macOS)
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
+    runs-on: macos-14
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: |
+            go.sum
+            engine/go.sum
+      - name: Run managed temporary storage tests
+        run: |
+          go test ./internal/adapter/managedtemp -run '^TestADR_0281_ReaperDeletesOnlyValidatedEligibleLease$' -count=1
+          go test ./internal/adapter/osfs -run '^TestADR_0281_ForegroundLeaseOverlayAndMetadataPrivacy$' -count=1
+          go test ./internal/app -run '^TestADR_0281_ManagedModeUnixAdmission$' -count=1
+
   test-race-root-a:
     name: Test (race root-a)
     needs: changes

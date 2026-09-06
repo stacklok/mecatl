@@ -1,10 +1,14 @@
-//go:build !linux
+//go:build !unix
 
 package managedtemp
 
-import "errors"
+import (
+	"context"
+	"errors"
+	"time"
+)
 
-var errUnsupported = errors.New("managedtemp: managed storage is supported only on linux")
+var errUnsupported = errors.New("managedtemp: managed storage is supported only on unix")
 
 type Namespace struct{}
 type Workspace struct{}
@@ -24,3 +28,18 @@ func (*Lease) Terminal() error                     { return errUnsupported }
 func (*Lease) Remove() error                       { return errUnsupported }
 func (*Lease) Close() error                        { return nil }
 func ValidTestHomeMarker(string) bool              { return false }
+
+type SweepOptions struct {
+	Now              time.Time
+	Interval         time.Duration
+	CommandReapAfter time.Duration
+}
+
+type SweepResult struct {
+	Scanned bool
+	Deleted int
+}
+
+func (*Namespace) Sweep(context.Context, SweepOptions) (SweepResult, error) {
+	return SweepResult{}, errUnsupported
+}

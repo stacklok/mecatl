@@ -30,6 +30,7 @@ an editor that spawned it.
 
 ---
 
+<<<<<<< HEAD
 ## OAuth protected-resource discovery
 
 `mecated` and `mecak8s` share the optional RFC 9728 profile flags
@@ -45,13 +46,14 @@ gRPC transport. ToolHive is implementation provenance for the remote client
 adapter, not a runtime engine dependency. Without the profile, explicit OIDC
 login and existing issuer/audience behavior are unchanged.
 
-## Managed temporary storage (Linux)
+## Managed temporary storage (Linux and macOS)
 
 By default Bash commands use a private managed temporary lease. The harness removes
 that lease after normal command completion and a bounded Build-owned maintenance
 worker recovers validated abandoned command/job leases after the configured TTL.
 The worker never scans arbitrary system temporary directories and does not delay a
-command allocation. This lifecycle is available only on Linux.
+command allocation. This lifecycle is available on Linux and macOS; other
+platforms must use `mode: system`.
 
 To use the inherited or configured system temporary directory instead, an operator
 sets the user-global (not project) `settings.yaml` value below. System mode is the
@@ -61,7 +63,7 @@ managed data untouched for manual inspection or removal.
 ```yaml
 # ~/.config/mecatl/settings.yaml
 temporary_storage:
-  mode: system # managed is the Linux default
+  mode: system # managed is the Linux and macOS default
 ```
 
 Managed mode accepts `managed_root`, `system_temp_dir`, `command_reap_after`,
