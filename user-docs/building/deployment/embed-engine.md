@@ -166,8 +166,22 @@ Optional fields with non-trivial defaults:
 | `TokenCounter` | `HeuristicTokenCounter` — character-based estimate. |
 | `ContextWindow` | nil → compaction disabled. Wire a closure that returns the model's window in tokens to enable it. |
 | `MaxNoProgressNudges` | `2` — the loop injects up to two continuation nudges when the model produces an empty/reasoning-only turn before terminating with `StopNoProgress`. |
-| `MaxRunTokens` | `0` — no per-run token budget. Set to a positive value to cap cumulative spend. |
+| `MaxRunTokens` | `0` — no per-engine token budget. Set a positive value to cap an engine session's cumulative spend. The same ceiling is inherited by subagents, Parallel branches, team members, and lead synthesis, but each engine enforces it against its own session usage; child spend is excluded from the parent, so a delegation tree can exceed it. |
 | `Instructions` | `prompt.RootAssembler` — looks for `AGENTS.md` / `CLAUDE.md` at the workspace root. |
+
+### Token budgets with delegation
+
+`Deps.MaxRunTokens` is an independently enforced ceiling for each engine, not a
+shared delegation-tree allowance. A main engine, Subagent, Parallel branch, team
+member, and lead synthesis inherit the configured value, while each checks only its
+own session usage. Child spend is excluded from parent usage, so a delegation tree
+can exceed that ceiling.
+
+For teams, `agent.WithTeamTokenBudget` configures the separate aggregate
+`MaxTeamTokens` equivalent on the `agent.Supervisor`. It is checked between rounds:
+when crossed, it prevents another round, while the current round and lead synthesis
+complete. It is distinct from and composes with `Deps.MaxRunTokens`; it does not
+provide a cross-tree aggregate outside that team.
 
 ---
 

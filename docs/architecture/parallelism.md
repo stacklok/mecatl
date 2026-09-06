@@ -107,15 +107,18 @@ and the Team-unique structures add task/finding snapshots (capped value types), 
 cue, the context meter, and `team.end` aggregate usage plus closed-enum
 member dispositions (`done` or `stopped` for `error`/`cancelled`/`budget`).
 
-A team-wide **token budget** complements the per-run one ([the agent loop](agent-loop.md)):
-`Supervisor.WithTeamTokenBudget` (`--max-team-tokens`, **default: unlimited**; gRPC
-`CreateTeamRequest.max_team_tokens`; a per-call Team `max_team_tokens` arg may
-only tighten it) is a supervisor-level ceiling checked at the ROUND boundary
-before scheduling — the in-flight round and the lead's synthesis still
-complete, and members are never individually stopped — accumulating each
-member's per-drive usage and surfacing via `TeamOutcome.BudgetExhausted` plus
-a `StopBudget` team stop. It is orthogonal to `--max-run-tokens`, which each
-member inherits per-run.
+A team-wide **token budget** is distinct from the independently enforced per-engine
+`MaxRunTokens` ceilings ([the agent loop](agent-loop.md)). The configured
+`MaxRunTokens` value is inherited by the main engine, every Subagent, every Parallel
+branch, every team member, and lead synthesis; each engine checks only its own session
+usage. Parent usage excludes child spend, so a delegation tree can exceed that
+per-engine ceiling. `Supervisor.WithTeamTokenBudget` (`--max-team-tokens`, **default:
+unlimited**; gRPC `CreateTeamRequest.max_team_tokens`; a per-call Team
+`max_team_tokens` arg may only tighten it) is instead a supervisor-level aggregate
+checked at the ROUND boundary before scheduling. Once crossed it prevents new rounds;
+the current round and the lead's synthesis still complete, and members are never
+individually stopped. It surfaces via `TeamOutcome.BudgetExhausted` plus a `StopBudget`
+team stop.
 
 ## Worktree placement — server-owned existing worktrees (ADR 0291)
 
