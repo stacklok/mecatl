@@ -2,10 +2,10 @@
 id: 04-mecak8s-continuation
 title: Mecak8s remote selection and Stage 3 protected-call continuation
 blocked_by: [02-remote-failure-semantics, 03-broker-auth-callback-service]
-status: pending
-attempt: 0
-branch: ""
-worktree: ""
+status: in-progress
+attempt: 1
+branch: plan-initial-production-mcp-broker/04-mecak8s-continuation-attempt-1
+worktree: .scratch/worker-initial-production-mcp-broker-04-mecak8s-continuation-attempt-1
 issue: ""
 retries: 0
 last_error: ""

@@ -2,7 +2,7 @@
 id: 03-broker-auth-callback-service
 title: Authenticated TLS broker service and ToolHive callback lifecycle
 blocked_by: [01-remote-contract]
-status: in-progress
+status: done
 attempt: 1
 branch: plan-initial-production-mcp-broker/03-broker-auth-callback-service-attempt-1
 worktree: .scratch/worker-initial-production-mcp-broker-03-broker-auth-callback-service-attempt-1
