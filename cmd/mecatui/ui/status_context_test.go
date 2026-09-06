@@ -37,8 +37,12 @@ func TestADR_0296_StatusContextDiscardsStaleSessionResult(t *testing.T) {
 		t.Fatalf("status input = %#v, want only current local context path %#v", got, want)
 	}
 	waitStatusSourceChanged(t, source)
-	if got := statusContextSurfaceText(source.Latest().Footer); got != second {
-		t.Fatalf("status command CWD = %q, want current session root %q", got, second)
+	want, err := filepath.EvalSymlinks(second)
+	if err != nil {
+		t.Fatalf("canonicalize current session root: %v", err)
+	}
+	if got := statusContextSurfaceText(source.Latest().Footer); got != want {
+		t.Fatalf("status command CWD = %q, want current session root %q", got, want)
 	}
 }
 

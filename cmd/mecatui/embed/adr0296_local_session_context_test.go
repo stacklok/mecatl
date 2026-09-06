@@ -64,8 +64,12 @@ func TestADR_0296_EmbeddedMecatuiServesLocalSessionContext(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetLocalSessionContext: %v", err)
 	}
-	if got.GetWorkspacePath() != workspace {
-		t.Fatalf("workspace path = %q, want %q", got.GetWorkspacePath(), workspace)
+	want, err := filepath.EvalSymlinks(workspace)
+	if err != nil {
+		t.Fatalf("canonicalize workspace path: %v", err)
+	}
+	if got.GetWorkspacePath() != want {
+		t.Fatalf("workspace path = %q, want %q", got.GetWorkspacePath(), want)
 	}
 }
 
