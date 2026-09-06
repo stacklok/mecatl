@@ -2,13 +2,13 @@
 id: 01-remote-contract
 title: Neutral versioned broker protocol and remote attachment adapter
 blocked_by: []
-status: in-progress
+status: blocked
 attempt: 2
 branch: plan-initial-production-mcp-broker/01-remote-contract-attempt-2
 worktree: .scratch/worker-initial-production-mcp-broker-01-remote-contract-attempt-2
 issue: ""
-retries: 1
-last_error: ""
+retries: 2
+last_error: "verification blocked: task lint timed out after 600s and task test hit host filesystem ENOSPC (11 GiB free); focused broker tests passed"
 accumulator: acc/initial-production-mcp-broker
 ---
 
