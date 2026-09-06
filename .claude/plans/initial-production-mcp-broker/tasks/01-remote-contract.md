@@ -2,13 +2,13 @@
 id: 01-remote-contract
 title: Neutral versioned broker protocol and remote attachment adapter
 blocked_by: []
-status: in-progress
+status: pending
 attempt: 1
-branch: plan-initial-production-mcp-broker/01-remote-contract-attempt-1
+branch: ""
 worktree: .scratch/worker-initial-production-mcp-broker-01-remote-contract-attempt-1
 issue: ""
-retries: 0
-last_error: ""
+retries: 1
+last_error: "isolation blocked: attempt-1 worktree had pre-existing uncommitted broker changes"
 accumulator: acc/initial-production-mcp-broker
 ---
 
