@@ -6442,6 +6442,15 @@ mid-conversation (`docs/adr/0027-cloud-native.md` ledger rows 1/2/3):
   sources and no attempt record; later-page eligible sessions wait for a subsequent
   normal eligible exchange and its submission. This avoids turning startup into an unbounded inventory
   sweep while preserving the no-rebill exclusion for incomplete durable claims.
+- **Title metadata is ordered independently of the label.** `TitleRevision` is an additive,
+  durable title-specific revision: every effective title metadata mutation advances it, and
+  snapshots, title RPC responses, and live `session.title` events all project it. The active
+  mecatui session accepts revision `0` only as a legacy value until it has observed a positive
+  revision; after that it rejects legacy, equal, and lower updates and adopts only a strictly
+  higher revision. Thus a reconnect snapshot can safely arrive before an older buffered live
+  event without regressing the visible title. This is client reconciliation, not a global event
+  ordering guarantee; the active-session guard still prevents events from another session from
+  entering the reducer.
 
 ### Awaiting-approval evict/rehydrate (cloud-native Phase 2)
 

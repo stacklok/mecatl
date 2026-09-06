@@ -149,7 +149,12 @@ submitting bounded asynchronous title work. On startup, the coordinator makes on
 capped initial metadata-page scan for completed eligible sessions that have no
 attempt; it deliberately does not follow the cursor, so restart reconciliation is
 bounded best-effort rather than an inventory sweep. Generated input is fenced untrusted data;
-output is strict, valid UTF-8, normalized to one line, and capped at 80 runes.
+output is strict, valid UTF-8, normalized to one line, and capped at 80 runes. Title
+metadata has a durable, title-specific revision that advances with every effective
+mutation. Both live `session.title` events and session snapshots carry it; clients
+accept legacy revision `0` only until a positive revision has been observed for the
+active session, then retain only a strictly higher revision. This makes a snapshot
+followed by a delayed older live event converge on the snapshot rather than regress.
 
 A physical call records its input/output tokens only in `TokenUsage[session_title]`,
 attributed to the composition-selected opaque provider/model. It never changes
@@ -169,7 +174,7 @@ API. The real constants:
 | EventType value | Const | Emitted when |
 |---|---|---|
 | `session.init` | `EvSessionInit` | run starts — emitted exactly once, before the SessionStart hook and the first `turn.start` |
-| `session.title` | `EvSessionTitle` | a durable session-title lifecycle change — carries the source-free `TitlePayload` (`Title`, `Provenance`, `GenerationState`, and `LatestAttempt`), never title-source prompts or provider error text |
+| `session.title` | `EvSessionTitle` | a durable session-title lifecycle change — carries the source-free `TitlePayload` (`Title`, `Provenance`, `GenerationState`, `LatestAttempt`, and durable title `Revision`), never title-source prompts or provider error text |
 | `turn.start` | `EvTurnStart` | beginning of each turn |
 | `turn.end` | `EvTurnEnd` | closes a turn's model exchange, carrying the typed `TurnEndPayload` |
 | `message.delta` | `EvMessageDelta` | streamed assistant text delta |

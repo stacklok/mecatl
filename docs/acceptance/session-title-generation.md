@@ -155,12 +155,18 @@ muted client-only notice directing the operator to `/title <text>`; it contains 
   - verify: `TestSessionTitleGeneration_Scenario4_CoordinatorShutdownAndInventory`,
     `TestSessionTitleGeneration_Scenario4_ReconciliationUsesOneCappedPageBestEffort`
 - AC4.5: Every persisted title/lifecycle change appends and publishes `session.title` containing
-  authoritative title, provenance, lifecycle, and only bounded latest-attempt metadata—never prompt,
-  provider-error text, or token-usage detail.
-  - verify: `TestSessionTitleGeneration_Scenario4_TitleEventIsAuthoritativeAndSanitized`
+  authoritative title, provenance, lifecycle, a durable title revision, and only bounded latest-attempt
+  metadata—never prompt, provider-error text, or token-usage detail.
+  - verify: `TestSessionTitleGeneration_Scenario4_TitleEventIsAuthoritativeAndSanitized`,
+    `TestSessionTitleRevisionWireCompatibility`
 - AC4.6: Active/open clients apply `session.title` immediately and reconcile via `GetSession` after
-  live-stream reconnect or session reopen; no periodic inventory polling is introduced.
-  - verify: `TestSessionTitleGeneration_Scenario4_ClientReconnectReconcilesTitle`
+  live-stream reconnect or session reopen; no periodic inventory polling is introduced. Both the
+  snapshot and live event carry the durable title revision, and the client adopts only a higher positive
+  revision. Legacy revision `0` remains acceptable only until a positive revision is observed for the
+  active session, so a snapshot followed by a delayed older live event cannot regress the title.
+  - verify: `TestSessionTitleGeneration_Scenario4_ClientReconnectReconcilesTitle`,
+    `TestTitleRevisionSnapshotRejectsDelayedLiveEvent`,
+    `TestTitleRevisionAcceptsLegacyOnlyBeforePositive`
 - AC4.7: A terminal automatic non-success produces one muted client-only notice without provider
   detail that retains the fallback and directs the operator to `/title <text>` for a manual title.
   - verify: `TestSessionTitleGeneration_Scenario4_QuietFailureOffersManualTitle`
