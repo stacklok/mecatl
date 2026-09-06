@@ -2,13 +2,13 @@
 id: 01-conversation-view
 title: Logical anchor frame and viewport controller
 blocked_by: []
-status: in-progress
+status: blocked
 attempt: 3
 branch: plan-mecatui-logical-conversation-anchors/01-conversation-view-attempt-3
 worktree: .scratch/worker-mecatui-logical-conversation-anchors-01-conversation-view-attempt-3
 issue: ""
-retries: 2
-last_error: "attempt 2: frame provenance remains whole-frame rebuilt and lacks semantic regions; logical selection/controller are not integrated into gestures or copy; acceptance tests do not drive real UI paths"
+retries: 3
+last_error: "attempt 3: worker correctly identified the complete cross-cutting ADR refactor as beyond its executable task capacity; no implementation produced"
 accumulator: acc/mecatui-logical-conversation-anchors
 ---
 
