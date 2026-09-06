@@ -1,9 +1,9 @@
 # Initial production MCP broker — acceptance/design plan
 
 **Phase:** production topology slice after session-scoped MCP authorization
-**Status:** draft — reviewed implementation contract; neither approved nor landed (2026-09-06)
-**Plan branch / HEAD:** `design/initial-production-mcp-broker` at `fa0dd9e19` (parent `2adf71a3b`)
-**Future accumulator:** proposed `acc/initial-production-mcp-broker`; it is not asserted to exist.
+**Status:** in-progress (2026-09-06)
+**Plan branch / HEAD:** `acc/initial-production-mcp-broker` at `b245a14d1`
+**Accumulator:** `acc/initial-production-mcp-broker` (current harness-owned-native integration worktree).
 
 This plan is the committed acceptance contract for the orchestration that follows. It does
 **not** claim restart continuity, HA, ownership, distributed fences, or exactly-once

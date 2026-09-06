@@ -2,10 +2,10 @@
 id: 01-remote-contract
 title: Neutral versioned broker protocol and remote attachment adapter
 blocked_by: []
-status: pending
-attempt: 0
-branch: ""
-worktree: ""
+status: in-progress
+attempt: 1
+branch: plan-initial-production-mcp-broker/01-remote-contract-attempt-1
+worktree: .scratch/worker-initial-production-mcp-broker-01-remote-contract-attempt-1
 issue: ""
 retries: 0
 last_error: ""
