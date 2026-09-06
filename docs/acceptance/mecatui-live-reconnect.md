@@ -1,9 +1,10 @@
 # Mecatui live-feed reconnect — acceptance plan
 
 **Issue:** [stacklok/mecatl#779](https://github.com/stacklok/mecatl/issues/779)  
-**Status:** landed
+**Status:** in-progress
 **Scope:** regression closure for the already-landed live-feed reconnect behavior on
-`acc/mecatui-live-reconnect`; no production changes are required.
+`acc/mecatui-live-reconnect`; repair coverage must not change production unless a named
+failing acceptance test exposes a defect.
 **ADR:** [ADR-0096](../adr/0096-live-feed-reconnect.md) — client-owned reconnect,
 bounded backoff, full-log delivery catch-up, FireID deduplication, and generation guards.  
 **References:** [`docs/tui.md`](../tui.md), [`AGENTS.md`](../../AGENTS.md) (single-loop,
@@ -25,29 +26,31 @@ a new ADR. ADR-0096 already makes the required decisions.
 
 ### Scenario 1 — bearer rejection is authentication recovery, not reconnect
 
-A bearer-backed live stream whose first `Recv`, reconnect probe `Open`, or reconnect
-probe `Recv` returns gRPC `Unauthenticated` is classified as `AuthRejected`. The UI
-consumes that closed reason through the existing `/connect` recovery path, preserves the
-failed target/session handoff, tears down the affected readers and reconnect loop, and
-does not retry. Credential-free `Unauthenticated` and replay errors keep their existing
-classifications. This preserves the authentication and generation decisions in
-[ADR-0096](../adr/0096-live-feed-reconnect.md).
+A bearer-backed live stream whose first `Recv`, reconnect probe `Open`, or first
+`Recv` on the freshly rearmed live reader returns gRPC `Unauthenticated` is classified as
+`AuthRejected`. The UI consumes that closed reason through the existing `/connect`
+recovery path, preserves the failed target/session handoff, tears down the affected
+readers and reconnect loop, and does not retry. Credential-free `Unauthenticated` and
+replay errors keep their existing classifications. This preserves the authentication and
+generation decisions in [ADR-0096](../adr/0096-live-feed-reconnect.md).
 
 **Acceptance:**
 
-- AC1.1: On the first live `Recv`, and on a reconnect probe `Open` or probe `Recv`, gRPC
-  `Unauthenticated` plus bearer provenance produces `StreamErrMsg{AuthReason: AuthRejected}`;
-  it is not treated as transient.
-  - verify: `TestEventStreamAuthClassificationRespectsBearerProvenance`, `TestADR_0096_ReconnectProbeAuthRejectedStopsRetry`
-- AC1.2: The first-`Recv` UI path renders the rejected-bearer recovery overlay with
-  actionable guidance: re-login is disabled, and the operator is told to check the
-  issuer, audience, or CA. The reconnect/live state is disarmed and the stale `live feed
-  reconnecting` footer is cleared.
-  - verify: `TestADR_0096_BearerFirstRecvAuthRejectedRoutesToConnectRecovery`
-- AC1.3: `AuthRejected` preserves the failed target and session handoff, tears down the
-  affected readers and reconnect loop, and performs no retry for rejection returned from
-  first `Recv`, reconnect probe `Open`, or reconnect probe `Recv`.
-  - verify: `TestADR_0096_BearerAuthRejectedPreservesTargetSessionAndTearsDownRetry`
+- AC1.1: On the first live `Recv`, reconnect probe `Open`, or first `Recv` on the
+  freshly rearmed live reader, gRPC `Unauthenticated` plus bearer provenance produces
+  `StreamErrMsg{AuthReason: AuthRejected}`; it is not treated as transient.
+  - verify: `TestEventStreamAuthClassificationRespectsBearerProvenance`, `TestADR_0096_ReconnectProbeOpenAuthRejectedStopsRetry`
+- AC1.2: A connected model routes bearer rejection returned by the actual initial or
+  freshly rearmed live-reader command/message handoff through the rejected-bearer
+  `/connect` recovery overlay. The overlay gives actionable issuer, audience, or CA
+  guidance, disables re-login, clears the stale `live feed reconnecting` footer, and
+  disarms reconnect/live state; it is not a test that injects a pre-classified
+  `StreamErrMsg` directly.
+  - verify: `TestADR_0096_BearerLiveReaderRecvAuthRejectedRoutesToConnectRecovery`
+- AC1.3: That connected live-reader path preserves the failed target and session handoff,
+  tears down the affected readers and reconnect loop, and performs no retry for rejection
+  returned from initial `Recv`, reconnect probe `Open`, or freshly rearmed-reader `Recv`.
+  - verify: `TestADR_0096_BearerLiveReaderAuthRejectedPreservesHandoffAndStopsRetry`
 - AC1.4: A non-bearer first-`Recv` authentication failure remains `AuthNotEnrolled`,
   and replay transport errors remain unclassified; neither case widens bearer-only
   recovery.
@@ -65,11 +68,12 @@ The single-loop and cancellation invariants remain those documented in
 
 **Acceptance:**
 
-- AC2.1: Open→immediate-close advances continuity into reconnect attempt 1; a second
-  immediate-close starts at attempt 2 and waits for the attempt-2 backoff before probing.
-  The reconnect loop does not reset the attempt merely because its probe opened, and
-  backoff attempts are bounded, increasing, and capped.
-  - verify: `TestADR_0096_CleanCloseAdvancesCrossLoopContinuity`, `TestLiveReconnectDelay_BoundedAndIncreasing`
+- AC2.1: The actual first-close → reconnect-probe-success → freshly rearmed reader
+  immediate-close cycle advances continuity from attempt 1 to attempt 2 and
+  deterministically waits for the attempt-2 backoff before its next probe. It must not
+  preload continuity or merely inspect delay helper math: probe open alone does not reset
+  the attempt; attempts are bounded, increasing, and capped.
+  - verify: `TestADR_0096_ImmediateRearmedCloseUsesAttemptTwoBackoff`, `TestLiveReconnectDelay_BoundedAndIncreasing`
 - AC2.2: The same session has at most one reconnect loop; reconnect success clears
   degraded state, tears down the completed loop, and re-arms one fresh live reader.
   - verify: `TestReconnectUI_NoDuplicateConcurrentReconnect`, `TestReconnectUI_TriggerOnStreamCloseAndError`
@@ -87,13 +91,14 @@ current-generation and real-event rule follows [ADR-0096](../adr/0096-live-feed-
 
 **Acceptance:**
 
-- AC3.1: A real event from the current live generation resets the cross-loop continuity
-  attempt; the next immediate-close outage starts at attempt 1. A probe/reconnected marker
-  or catch-up event alone does not reset it.
-  - verify: `TestADR_0096_RealLiveEventResetsContinuity`
-- AC3.2: A stale live or reconnect generation is dropped without rearming the old session;
-  session switch and TUI cancellation preserve the existing teardown behavior.
-  - verify: `TestReconnectUI_StopsOnSessionSwitch`, `TestStaleStreamGenerationDropped`
+- AC3.1: A real event from the current live generation positively resets the cross-loop
+  continuity attempt, so the next immediate-close outage starts at attempt 1. A reconnect
+  marker, probe success, and catch-up event alone each leave continuity unchanged.
+  - verify: `TestADR_0096_OnlyCurrentLiveEventResetsContinuity`
+- AC3.2: After a real session switch, a stale reconnect generation cannot mutate or rearm
+  the old session. Stale live generations and TUI cancellation retain their existing
+  teardown behavior.
+  - verify: `TestADR_0096_StaleReconnectAfterSessionSwitchCannotRearmOldSession`, `TestStaleStreamGenerationDropped`
 
 ## Out of scope
 
@@ -111,7 +116,7 @@ current-generation and real-event rule follows [ADR-0096](../adr/0096-live-feed-
 - `task lint`, `task test`, `task docs`, `task ac-trace-strict`, and `go run ./cmd/mecademo`
   pass; `go run ./cmd/mecademo` still demonstrates a complete offline turn/tool/
   permission/approval/result session.
-- `task ac-trace-strict` is run when this plan is promoted to `landed`; while draft,
-  `task ac-trace` reports missing future proofs without making the plan a gate.
+- `task ac-trace-strict` is a landed requirement: every named proof resolves before this
+  plan returns to `landed`.
 - No ADR, API baseline, generated contract, or unrelated documentation change is
   introduced.
