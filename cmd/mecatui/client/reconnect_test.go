@@ -143,8 +143,8 @@ func restoreBackoff(t *testing.T) func() {
 }
 
 // TestADR_0096_AttemptTwoWaitsDeterministicBackoff proves the client loop, not
-// just delay helper math, holds a continuity reconnect at prior attempt one
-// until the jitter-free attempt-two delay has elapsed.
+// just delay helper math, requests the exact attempt-two delay and cannot open
+// the probe until the controlled waiter releases it.
 func TestADR_0096_AttemptTwoWaitsDeterministicBackoff(t *testing.T) {
 	restore := restoreBackoff(t)
 	defer restore()
@@ -153,21 +153,50 @@ func TestADR_0096_AttemptTwoWaitsDeterministicBackoff(t *testing.T) {
 	liveReconnectJitterFrac = 0
 
 	live := &attemptTimingLiveStreamer{opened: make(chan struct{})}
-	ch, stop := ReconnectLiveCmdFromAttempt(context.Background(), live, nil, "sess-attempt-two", 1)
-	defer stop()
+	requested := make(chan time.Duration, 1)
+	release := make(chan struct{})
+	wait := func(ctx context.Context, d time.Duration) bool {
+		select {
+		case requested <- d:
+		case <-ctx.Done():
+			return false
+		}
+		select {
+		case <-release:
+			return true
+		case <-ctx.Done():
+			return false
+		}
+	}
+	out := make(chan tea.Msg, 2)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		reconnectLiveLoop(context.Background(), live, nil, "sess-attempt-two", out, 1, wait)
+	}()
 
 	select {
-	case <-live.opened:
-		t.Fatal("attempt-two probe opened before its deterministic backoff")
-	case <-time.After(100 * time.Millisecond):
+	case got := <-requested:
+		if got != 200*time.Millisecond {
+			t.Fatalf("attempt-two delay = %v, want 200ms", got)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("attempt-two delay was not requested")
 	}
 	select {
 	case <-live.opened:
-	case <-time.After(time.Second):
-		t.Fatal("attempt-two probe did not open after its deterministic backoff")
+		t.Fatal("attempt-two probe opened before its controlled backoff was released")
+	default:
 	}
+	close(release)
+	select {
+	case <-live.opened:
+	case <-time.After(2 * time.Second):
+		t.Fatal("attempt-two probe did not open after its controlled backoff was released")
+	}
+	<-done
 
-	msgs := drainRecon(t, ch)
+	msgs := drainRecon(t, out)
 	if len(msgs) != 2 {
 		t.Fatalf("messages = %#v, want reconnecting and reconnected", msgs)
 	}

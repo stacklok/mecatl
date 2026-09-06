@@ -586,17 +586,6 @@ func containsStr(s, substr string) bool {
 	return false
 }
 
-// failingLiveStreamer records reconnect probe opens and fails each one.
-type failingLiveStreamer struct {
-	opens atomic.Int32
-	err   error
-}
-
-func (s *failingLiveStreamer) StreamSessionLive(context.Context, string) (*client.EventStream, error) {
-	s.opens.Add(1)
-	return nil, s.err
-}
-
 // rearmedReaderAuthRejectedStreamer closes the initial reader, lets the first
 // reconnect probe succeed, then rejects the first Recv on the freshly rearmed
 // reader. It proves the auth terminal also covers the rearm boundary.
@@ -804,45 +793,108 @@ func TestADR_0096_ImmediateRearmedCloseUsesAttemptTwoBackoff(t *testing.T) {
 	joinReconnectForCleanup(&m)()
 }
 
+type continuityResetStreamer struct{ opens atomic.Int32 }
+
+func (s *continuityResetStreamer) StreamSessionLive(context.Context, string) (*client.EventStream, error) {
+	switch s.opens.Add(1) {
+	case 1: // initial reader closes
+		return client.NewEventStream(client.NewFakeEventStream()), nil
+	case 2: // reconnect probe succeeds
+		return client.NewEventStream(client.NewFakeEventStream()), nil
+	case 3: // rearmed reader emits a real event, then closes
+		return client.NewEventStream(client.NewFakeEventStream(deliveryEv("nightly", "fire-live"))), nil
+	case 4: // post-reset reconnect probe succeeds
+		return client.NewEventStream(client.NewFakeEventStream()), nil
+	default:
+		return nil, errors.New("unexpected extra live open")
+	}
+}
+
 func TestADR_0096_OnlyCurrentLiveEventResetsContinuity(t *testing.T) {
-	live := &failingLiveStreamer{err: errors.New("unavailable")}
-	m := New(Deps{LiveStream: live, Theme: theme.New("aztec", theme.AztecPalette()), Ctx: context.Background(), NoAltScreen: true})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	live := &continuityResetStreamer{}
+	replayer := &fakeSessionReplayer{stream: client.NewFakeEventStream(deliveryEv("nightly", "fire-catchup"))}
+	m := New(Deps{
+		LiveStream:  live,
+		Replayer:    replayer,
+		Theme:       theme.New("aztec", theme.AztecPalette()),
+		Ctx:         ctx,
+		NoAltScreen: true,
+	})
 	m.sessionID = "sess-continuity"
-	m.liveGen = 1
-	m.liveCh = make(chan tea.Msg)
-	m.liveArmed = m.sessionID
-	m.liveReconGen = 1
-	m.liveReconCh = make(chan tea.Msg)
-	m.liveContinuityAttempt = 4
 
-	// A reconnect marker, successful probe handoff, and catch-up delivery are not
-	// evidence from the current live reader and must preserve the failure sequence.
-	for _, msg := range []tea.Msg{
-		client.LiveReconnectingMsg{Attempt: 5},
-		client.DeliveryNoteMsg{ScheduleName: "nightly", FireID: "fire-catchup", Text: fencedDeliveryText("nightly", "fire-catchup")},
-	} {
-		mm, _ := m.updateReconnectMsg(reconnectMsg{gen: m.liveReconGen, msg: msg})
-		m = mm.(Model)
-		if m.liveContinuityAttempt != 4 {
-			t.Fatalf("reconnect-side %T reset continuity to %d, want 4", msg, m.liveContinuityAttempt)
-		}
-	}
-	mm, _ := m.updateReconnectMsg(reconnectMsg{gen: m.liveReconGen, msg: client.LiveReconnectedMsg{}})
+	// Drive the initial reader close through the arm/fan-in seam. It starts the
+	// first continuity sequence and the real reconnect loop.
+	initialReader := m.armLiveFeed()
+	initialClose := runCmdTimeout(t, initialReader)
+	mm, reconnect := m.Update(initialClose)
 	m = mm.(Model)
-	if m.liveContinuityAttempt != 4 {
-		t.Fatalf("successful reconnect probe reset continuity to %d, want 4", m.liveContinuityAttempt)
+	if m.liveContinuityAttempt != 1 {
+		t.Fatalf("initial close set continuity to %d, want 1", m.liveContinuityAttempt)
 	}
 
-	mm, _ = m.updateLiveMsg(liveMsg{gen: m.liveGen, msg: client.DeliveryNoteMsg{ScheduleName: "nightly", FireID: "fire-live", Text: fencedDeliveryText("nightly", "fire-live")}})
+	// The loop's marker, catch-up event, and successful probe all arrive through
+	// its fan-in and are not evidence from the current live reader.
+	markerMsg := runCmdTimeout(t, reconnect)
+	marker, ok := markerMsg.(reconnectMsg)
+	if !ok {
+		t.Fatalf("reconnect marker handoff = %T, want reconnectMsg", markerMsg)
+	}
+	if reconnecting, ok := marker.msg.(client.LiveReconnectingMsg); !ok || reconnecting.Attempt != 1 {
+		t.Fatalf("reconnect marker = %#v, want attempt 1", marker.msg)
+	}
+	mm, _ = m.Update(markerMsg)
+	m = mm.(Model)
+	if m.liveContinuityAttempt != 1 {
+		t.Fatalf("reconnect marker reset continuity to %d, want 1", m.liveContinuityAttempt)
+	}
+
+	catchUpMsg := runCmdTimeout(t, m.waitReconnectCmd())
+	catchUp, ok := catchUpMsg.(reconnectMsg)
+	if !ok {
+		t.Fatalf("catch-up handoff = %T, want reconnectMsg", catchUpMsg)
+	}
+	if _, ok := catchUp.msg.(client.DeliveryNoteMsg); !ok {
+		t.Fatalf("catch-up message = %#v, want DeliveryNoteMsg", catchUp.msg)
+	}
+	mm, _ = m.Update(catchUpMsg)
+	m = mm.(Model)
+	if m.liveContinuityAttempt != 1 {
+		t.Fatalf("catch-up event reset continuity to %d, want 1", m.liveContinuityAttempt)
+	}
+
+	probeMsg := runCmdTimeout(t, m.waitReconnectCmd())
+	probe, ok := probeMsg.(reconnectMsg)
+	if !ok {
+		t.Fatalf("probe handoff = %T, want reconnectMsg", probeMsg)
+	}
+	if _, ok := probe.msg.(client.LiveReconnectedMsg); !ok {
+		t.Fatalf("probe message = %#v, want LiveReconnectedMsg", probe.msg)
+	}
+	mm, rearmedReader := m.Update(probeMsg)
+	m = mm.(Model)
+	if m.liveContinuityAttempt != 1 {
+		t.Fatalf("successful probe reset continuity to %d, want 1", m.liveContinuityAttempt)
+	}
+
+	// The freshly rearmed reader's actual event is the sole reset signal.
+	currentEvent := runCmdTimeout(t, rearmedReader)
+	liveEvent, ok := currentEvent.(liveMsg)
+	if !ok {
+		t.Fatalf("current-reader handoff = %T, want liveMsg", currentEvent)
+	}
+	if _, ok := liveEvent.msg.(client.DeliveryNoteMsg); !ok {
+		t.Fatalf("current-reader message = %#v, want DeliveryNoteMsg", liveEvent.msg)
+	}
+	mm, _ = m.Update(currentEvent)
 	m = mm.(Model)
 	if m.liveContinuityAttempt != 0 {
-		t.Fatalf("real current-generation live event left continuity at %d, want reset", m.liveContinuityAttempt)
+		t.Fatalf("current-reader event left continuity at %d, want reset", m.liveContinuityAttempt)
 	}
 
-	// The next close must consume the reset continuity sequence. Drive the
-	// current reader's close through the reducer, then observe the real reconnect
-	// loop marker rather than inspecting the counter alone.
-	mm, reconnect := m.updateLiveMsg(liveMsg{gen: m.liveGen, msg: client.StreamClosedMsg{}})
+	currentClose := runCmdTimeout(t, m.waitLiveCmd())
+	mm, reconnect = m.Update(currentClose)
 	m = mm.(Model)
 	defer joinReconnectForCleanup(&m)()
 	next := runCmdTimeout(t, reconnect)

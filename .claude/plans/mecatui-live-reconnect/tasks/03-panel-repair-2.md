@@ -30,11 +30,11 @@ catch-up scope.
 
 > AC2.1: The actual first-close → reconnect-probe-success → freshly rearmed reader
 > immediate-close cycle advances continuity from attempt 1 to attempt 2 and
-> deterministically waits for the attempt-2 backoff before its next probe. It must not
+> deterministically requests the exact attempt-2 backoff before its next probe. It must not
 > preload continuity or merely inspect delay helper math: probe open alone does not reset
 > the attempt; attempts are bounded, increasing, and capped. A deterministic client-loop
-> proof sets jitter to zero and shows `ReconnectLiveCmdFromAttempt(prior=1)` does not open
-> before the attempt-2 delay and does open afterward, using wide timing bounds.
+> proof sets jitter to zero, injects a private controlled waiter into the real reconnect loop,
+> asserts the exact attempt-2 delay, and proves the probe opens only after release.
 >
 > - verify: `TestADR_0096_ImmediateRearmedCloseUsesAttemptTwoBackoff`, `TestADR_0096_AttemptTwoWaitsDeterministicBackoff`, `TestLiveReconnectDelay_BoundedAndIncreasing`
 

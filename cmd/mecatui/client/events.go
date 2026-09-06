@@ -191,6 +191,19 @@ func (c *Client) BearerBackedStream() bool { return c != nil && c.bearerBacked }
 // temporarily shrink it to exercise the timeout path.
 var liveReconnectAttemptTimeout = 10 * time.Second
 
+type reconnectDelayWait func(context.Context, time.Duration) bool
+
+func waitReconnectDelay(ctx context.Context, d time.Duration) bool {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
+	}
+}
+
 // reconnectLiveLoop is the body of ReconnectLiveCmd: the bounded-backoff
 // reconnect+catch-up loop. It emits LiveReconnectingMsg at the top of each
 // attempt, drains the durable catch-up (forwarding its event msgs onto out), then
@@ -198,7 +211,7 @@ var liveReconnectAttemptTimeout = 10 * time.Second
 // it emits LiveReconnectedMsg and returns (the ui re-arms a FRESH live channel);
 // on failure it records the error and backs off. The probe stream's ctx is the
 // loop's ctx, so the ui's stop (cancel) cleans it up once the ui has re-armed.
-func reconnectLiveLoop(ctx context.Context, live LiveStreamer, replayer SessionReplayer, id string, out chan<- tea.Msg, priorAttempt int) {
+func reconnectLiveLoop(ctx context.Context, live LiveStreamer, replayer SessionReplayer, id string, out chan<- tea.Msg, priorAttempt int, wait reconnectDelayWait) {
 	defer close(out)
 	attempt := priorAttempt
 	var lastErr error
@@ -215,12 +228,8 @@ func reconnectLiveLoop(ctx context.Context, live LiveStreamer, replayer SessionR
 			if d <= 0 {
 				return
 			}
-			timer := time.NewTimer(d)
-			select {
-			case <-ctx.Done():
-				timer.Stop()
+			if !wait(ctx, d) {
 				return
-			case <-timer.C:
 			}
 		}
 		if !emit(ctx, out, LiveReconnectingMsg{Attempt: attempt, Err: lastErr}) {
@@ -287,7 +296,7 @@ func reconnectLiveCmd(ctx context.Context, live LiveStreamer, replayer SessionRe
 	}
 	go func() {
 		defer close(done)
-		reconnectLiveLoop(ctx, live, replayer, id, ch, priorAttempt)
+		reconnectLiveLoop(ctx, live, replayer, id, ch, priorAttempt, waitReconnectDelay)
 	}()
 	return ch, stop
 }
