@@ -514,6 +514,13 @@ func (e *Engine) resolvePendingCall(ctx context.Context, r *Run, sess *session.S
 		e.emit(r, session.Event{Type: session.EvToolResult, Turn: turnIdx, ToolResult: ptr(res)})
 		return res, false
 	}
+	if decision, cancelled := e.authorizeMutatedSystemScope(ctx, r, sess, env, turnIdx, pendingCall, pre.effective, true); cancelled {
+		return session.ToolResult{}, true
+	} else if decision.Effect == governance.Deny {
+		res := denyResult(pre.effective, decision.Reason)
+		e.emit(r, session.Event{Type: session.EvToolResult, Turn: turnIdx, ToolResult: ptr(res)})
+		return res, false
+	}
 	var enqueue time.Time
 	if e.deps.Clock != nil {
 		enqueue = e.deps.Clock.Now()
@@ -577,6 +584,16 @@ func (e *Engine) runOne(ctx context.Context, r *Run, sess *session.Session, env 
 		// It runs the call on allow, denies it otherwise — all serial, like a policy
 		// ask (runOne is the mutate-serial path; surfacing here never overlaps a batch).
 		return e.askHookApproval(ctx, r, sess, env, turnIdx, c, t, pre.msg)
+	}
+
+	// A PreToolUse hook is trusted to rewrite ordinary arguments, but it cannot
+	// silently turn a managed Bash call into the separately-authorized system scope.
+	if decision, cancelled := e.authorizeMutatedSystemScope(ctx, r, sess, env, turnIdx, c, pre.effective, false); cancelled {
+		return session.ToolResult{}, true
+	} else if decision.Effect == governance.Deny {
+		res := denyResult(pre.effective, decision.Reason)
+		e.emit(r, session.Event{Type: session.EvToolResult, Turn: turnIdx, ToolResult: ptr(res)})
+		return res, false
 	}
 
 	// Execute the EFFECTIVE call (args possibly rewritten by the PreToolUse hook).
@@ -650,6 +667,34 @@ func (e *Engine) permissionDecision(ctx context.Context, sess *session.Session, 
 		return ordinary
 	}
 	return system
+}
+
+func (e *Engine) authorizeMutatedSystemScope(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, turnIdx int, original, effective session.ToolCall, resuming bool) (governance.PermissionDecision, bool) {
+	if bashSystemScope(original) || !bashSystemScope(effective) {
+		return governance.PermissionDecision{Effect: governance.Allow}, false
+	}
+	decision := e.deps.Policy.Evaluate(ctx, sess.ID, sess.Mode, session.ToolCall{Name: bashSystemTempToolName}, env.Workspace())
+	if decision.Effect == governance.Deny {
+		return decision, false
+	}
+	if decision.Effect != governance.Ask {
+		return decision, false
+	}
+	if resuming {
+		return governance.PermissionDecision{Effect: governance.Deny, Reason: "system temporary scope requires separate approval after PreToolUse mutation"}, false
+	}
+	ask := session.PendingAsk{AskID: newAskID(sess.ID, sess.Counters.ToolCalls, effective.ID, r.askDiscriminator), Tool: effective.Name, Args: systemScopeApprovalArgs(effective), Reason: decision.Reason, Call: effective.ID, ConfiguredAsk: decision.ConfiguredAsk, FlooredConfiguredAllow: decision.FlooredConfiguredAllow}
+	verdict, ok, paused := e.surfaceAsk(ctx, r, sess, turnIdx, ask)
+	if !paused {
+		return governance.PermissionDecision{Effect: governance.Deny, Reason: "internal: cannot pause"}, false
+	}
+	if !ok {
+		return governance.PermissionDecision{Effect: governance.Deny, Reason: "cancelled"}, true
+	}
+	if verdict.verdict == session.VerdictAllowOnce || verdict.verdict == session.VerdictAllowAlways {
+		return governance.PermissionDecision{Effect: governance.Allow}, false
+	}
+	return governance.PermissionDecision{Effect: governance.Deny, Reason: "denied by user: " + decision.Reason}, false
 }
 
 func bashSystemScope(c session.ToolCall) bool {

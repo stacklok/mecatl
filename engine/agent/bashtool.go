@@ -271,7 +271,7 @@ func (t BashTool) ExecuteWithParent(ctx context.Context, in session.ToolCall, en
 // cancels and joins it (doneCh closes in the deferred finishChildRunResult),
 // and it emits NOTHING — no events cross its goroutine boundary.
 func (BashTool) driveBackground(jobCtx, timeoutCtx context.Context, jobID session.SessionID, args bashArgs, streamer tool.CommandStreamer, tail *tailBuffer, cancelJob, cancelTimeout context.CancelFunc, caps parentCaps) {
-	exitCode, err := runStreamingBashWithScope(jobCtx, streamer, args.Command, bashScope(args), tail)
+	exitCode, err := runStreamingBashWithScope(jobCtx, streamer, args.Command, bashScope(args), args.TempScope != "", tail)
 	caps.setChildExitCode(jobID, exitCode)
 
 	// Terminal classification, mirroring the Subagent background terminal
@@ -311,7 +311,7 @@ func (BashTool) runForeground(ctx context.Context, callID session.ToolCallID, ar
 		defer cancel()
 	}
 
-	res, err := runBashWithScope(ctx, runner, args.Command, bashScope(args))
+	res, err := runBashWithScope(ctx, runner, args.Command, bashScope(args), args.TempScope != "")
 	if err != nil {
 		// Surface command-execution failures (no shell, timeout, cancellation)
 		// to the model so it can adapt, preserving the runner's partial output
@@ -355,16 +355,22 @@ func bashScope(args bashArgs) tool.TemporaryScope {
 	return tool.TemporaryScopeManaged
 }
 
-func runBashWithScope(ctx context.Context, runner tool.CommandRunner, command string, scope tool.TemporaryScope) (tool.CommandResult, error) {
+func runBashWithScope(ctx context.Context, runner tool.CommandRunner, command string, scope tool.TemporaryScope, requested bool) (tool.CommandResult, error) {
 	if scoped, ok := runner.(tool.CommandTemporaryScopeRunner); ok {
 		return scoped.RunWithTemporaryScope(ctx, command, scope)
+	}
+	if requested {
+		return tool.CommandResult{}, errors.New("command runner does not support temporary scope selection")
 	}
 	return runner.Run(ctx, command)
 }
 
-func runStreamingBashWithScope(ctx context.Context, runner tool.CommandStreamer, command string, scope tool.TemporaryScope, out io.Writer) (int, error) {
+func runStreamingBashWithScope(ctx context.Context, runner tool.CommandStreamer, command string, scope tool.TemporaryScope, requested bool, out io.Writer) (int, error) {
 	if scoped, ok := runner.(tool.CommandTemporaryScopeStreamer); ok {
 		return scoped.RunStreamingWithTemporaryScope(ctx, command, scope, out)
+	}
+	if requested {
+		return 0, errors.New("command runner does not support temporary scope selection")
 	}
 	return runner.RunStreaming(ctx, command, out)
 }

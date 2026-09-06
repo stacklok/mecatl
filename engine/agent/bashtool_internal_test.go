@@ -96,6 +96,10 @@ func (f *fakeStreamingRunner) RunStreamingWithEnvironment(ctx context.Context, c
 	return f.RunStreaming(ctx, command, out)
 }
 
+func (f *fakeStreamingRunner) RunStreamingWithTemporaryScope(ctx context.Context, command string, _ tool.TemporaryScope, out io.Writer) (int, error) {
+	return f.RunStreaming(ctx, command, out)
+}
+
 // bashWS is the workspace every fake runs against (only Root() is read).
 var bashWS = memfs.NewWorkspace("/ws")
 

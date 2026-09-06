@@ -164,7 +164,7 @@ func (BashTool) Execute(ctx context.Context, in session.ToolCall, env tool.Envir
 		defer cancel()
 	}
 
-	res, err := runWithTemporaryScope(ctx, runner, args.Command, fstoolsTemporaryScope(args.TempScope))
+	res, err := runWithTemporaryScope(ctx, runner, args.Command, fstoolsTemporaryScope(args.TempScope), args.TempScope != "")
 	if err != nil {
 		// Surface command-execution failures (no shell, timeout, cancellation)
 		// to the model so it can adapt, rather than aborting the harness. The
@@ -192,9 +192,12 @@ func fstoolsTemporaryScope(scope string) tool.TemporaryScope {
 	return tool.TemporaryScopeManaged
 }
 
-func runWithTemporaryScope(ctx context.Context, runner tool.CommandRunner, command string, scope tool.TemporaryScope) (tool.CommandResult, error) {
+func runWithTemporaryScope(ctx context.Context, runner tool.CommandRunner, command string, scope tool.TemporaryScope, requested bool) (tool.CommandResult, error) {
 	if scoped, ok := runner.(tool.CommandTemporaryScopeRunner); ok {
 		return scoped.RunWithTemporaryScope(ctx, command, scope)
+	}
+	if requested {
+		return tool.CommandResult{}, errors.New("command runner does not support temporary scope selection")
 	}
 	return runner.Run(ctx, command)
 }

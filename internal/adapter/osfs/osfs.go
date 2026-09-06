@@ -1359,10 +1359,12 @@ func (r *CommandRunner) RunStreamingWithEnvironment(ctx context.Context, command
 // on a successfully-exited shell is a SUCCESS carrying the partial output (see
 // the exec.ErrWaitDelay branch below), not a harness failure.
 func (r *CommandRunner) run(ctx context.Context, command string, overlay tool.CommandEnvironmentOverlay, managed bool, leaseKind string, stdout, stderr io.Writer) (exitCode int, err error) {
-	if _, ok := ctx.Deadline(); !ok {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, defaultCommandTimeout)
-		defer cancel()
+	if !managed {
+		if _, ok := ctx.Deadline(); !ok {
+			var cancel context.CancelFunc
+			ctx, cancel = context.WithTimeout(ctx, defaultCommandTimeout)
+			defer cancel()
+		}
 	}
 
 	lease, overlay, leaseErr := r.managedLease(managed, leaseKind, overlay)

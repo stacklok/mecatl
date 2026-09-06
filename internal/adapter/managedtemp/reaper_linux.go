@@ -119,7 +119,7 @@ func (n *Namespace) sweepWorkspaces(ctx context.Context, opts SweepOptions) (int
 		if err != nil {
 			continue
 		}
-		count, sweepErr := sweepWorkspace(ctx, workspace, opts)
+		count, sweepErr := sweepWorkspace(ctx, n.root, workspace, opts)
 		_ = workspace.Close()
 		if sweepErr != nil {
 			return deleted, sweepErr
@@ -129,7 +129,8 @@ func (n *Namespace) sweepWorkspaces(ctx context.Context, opts SweepOptions) (int
 	return deleted, nil
 }
 
-func sweepWorkspace(ctx context.Context, workspace *os.Root, opts SweepOptions) (int, error) {
+//nolint:gocyclo // each fail-closed validation check is intentionally explicit.
+func sweepWorkspace(ctx context.Context, namespace, workspace *os.Root, opts SweepOptions) (int, error) {
 	if err := validatePrivateDir(workspace, "."); err != nil {
 		return 0, nil
 	}
@@ -139,6 +140,14 @@ func sweepWorkspace(ctx context.Context, workspace *os.Root, opts SweepOptions) 
 	}
 	var manifest workspaceManifest
 	if json.Unmarshal(data, &manifest) != nil || manifest.Version != manifestVersion || manifest.Key != filepath.Base(workspace.Name()) || manifest.Backend == "" || manifest.Identity == "" {
+		return 0, nil
+	}
+	index, err := readWorkspaceIndex(namespace)
+	if err != nil {
+		return 0, nil
+	}
+	entry, ok := index.Workspaces[manifest.Key]
+	if !ok || entry.Backend != manifest.Backend || entry.Identity != manifest.Identity || entry.CurrentPath != manifest.CurrentPath {
 		return 0, nil
 	}
 	if err := validatePrivateDir(workspace, "commands"); err != nil {
@@ -182,7 +191,7 @@ func sweepWorkspace(ctx context.Context, workspace *os.Root, opts SweepOptions) 
 //nolint:gocyclo // each fail-closed validation check is intentionally explicit.
 func reapLease(ctx context.Context, commands *os.Root, name string, opts SweepOptions) bool {
 	kind, id, ok := strings.Cut(name, "-")
-	if !ok || (kind != "cmd" && kind != "job") || len(id) != 32 {
+	if !ok || (kind != "cmd" && kind != "job") || !validAllocationID(id) {
 		return false
 	}
 	leaseRoot, err := commands.OpenRoot(name)
@@ -224,6 +233,14 @@ func reapLease(ctx context.Context, commands *os.Root, name string, opts SweepOp
 		return false
 	}
 	if err := removeTreeNoLinks(leaseRoot); err != nil || ctx.Err() != nil {
+		return false
+	}
+	entry, err := commands.Lstat(name)
+	if err != nil {
+		return false
+	}
+	opened, err := leaseRoot.Stat(".")
+	if err != nil || !os.SameFile(entry, opened) {
 		return false
 	}
 	return commands.Remove(name) == nil

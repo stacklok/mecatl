@@ -162,7 +162,7 @@ func (n *Namespace) openWorkspaceLocked(backend, identity, currentPath, key stri
 		_ = root.Close()
 		return nil, err
 	}
-	if _, ok := index.Workspaces[key]; !ok {
+	if entry, ok := index.Workspaces[key]; !ok || entry.CurrentPath != currentPath {
 		index.Workspaces[key] = workspaceIndexEntry{Backend: backend, Identity: identity, CurrentPath: currentPath}
 		data, err := json.Marshal(index)
 		if err != nil {
@@ -170,6 +170,15 @@ func (n *Namespace) openWorkspaceLocked(backend, identity, currentPath, key stri
 			return nil, err
 		}
 		if err := replacePrivateFile(n.root, "workspace-index.manifest", data); err != nil {
+			_ = root.Close()
+			return nil, err
+		}
+		manifest, err := json.Marshal(workspaceManifest{Version: manifestVersion, Key: key, Backend: backend, Identity: identity, CurrentPath: currentPath})
+		if err != nil {
+			_ = root.Close()
+			return nil, err
+		}
+		if err := replacePrivateFile(root, "workspace.manifest", manifest); err != nil {
 			_ = root.Close()
 			return nil, err
 		}

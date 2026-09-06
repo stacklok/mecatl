@@ -120,6 +120,40 @@ func TestADR_0281_ManagedRootAndWorkspaceFailClosed(t *testing.T) {
 	}
 }
 
+// TestADR_0281_LeaseRemovalRetainsReplacedParentEntry pins the final unlink
+// against a same-UID replacement after the retained lease handle was validated.
+func TestADR_0281_LeaseRemovalRetainsReplacedParentEntry(t *testing.T) {
+	ns, err := Open(filepath.Join(t.TempDir(), "managed"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ns.Close() })
+	workspace, err := ns.OpenWorkspace("osfs", "replacement", t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = workspace.Close() })
+	lease, err := workspace.Allocate("cmd")
+	if err != nil {
+		t.Fatal(err)
+	}
+	original := lease.Path()
+	replacement := original + ".old"
+	if err := os.Rename(original, replacement); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(original, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := lease.Remove(); err == nil {
+		t.Fatal("Remove accepted a replaced parent entry")
+	}
+	if info, err := os.Lstat(original); err != nil || !info.IsDir() {
+		t.Fatalf("replacement was removed: %v, %v", info, err)
+	}
+	_ = lease.Close()
+}
+
 func TestADR_0281_UnknownManifestVersionRetained(t *testing.T) {
 	base := t.TempDir()
 	ns, err := Open(filepath.Join(base, "mecatl"))

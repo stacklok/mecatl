@@ -49,6 +49,7 @@ type allocationManifest struct {
 	TerminalAt   time.Time `json:"terminal_at,omitempty"`
 	UID          int       `json:"uid"`
 	OwnerPID     int       `json:"owner_pid,omitempty"`
+	ProcessStart string    `json:"process_start,omitempty"`
 	ProcessGroup int       `json:"process_group,omitempty"`
 	State        string    `json:"state"`
 }
@@ -102,7 +103,12 @@ func (l *Lease) transition(state string, pid int) error {
 	now := time.Now().UTC()
 	manifest.State = state
 	if pid != 0 {
+		start, err := processStartIdentity(pid)
+		if err != nil {
+			return err
+		}
 		manifest.OwnerPID = pid
+		manifest.ProcessStart = start
 		manifest.ProcessGroup = pid
 		manifest.StartedAt = now
 	} else {
@@ -118,6 +124,8 @@ func (l *Lease) transition(state string, pid int) error {
 // ValidTestHomeMarker reports whether marker names a private command lease
 // created by this protocol. It rejects ordinary paths and malformed metadata;
 // test-home uses it before placing process-wide HOME state under the lease.
+//
+//nolint:gocyclo // each marker validation check is intentionally explicit.
 func ValidTestHomeMarker(marker string) bool {
 	if marker == "" || !filepath.IsAbs(marker) || filepath.Base(marker) == "." {
 		return false
@@ -128,7 +136,10 @@ func ValidTestHomeMarker(marker string) bool {
 	}
 	name := filepath.Base(marker)
 	id, ok := strings.CutPrefix(name, "cmd-")
-	if !ok || len(id) != 32 {
+	if !ok || !validAllocationID(id) {
+		return false
+	}
+	if !validTestHomeNamespace(marker) {
 		return false
 	}
 	data, err := os.ReadFile(filepath.Join(marker, "manifest.json"))
@@ -145,7 +156,14 @@ func ValidTestHomeMarker(marker string) bool {
 			return false
 		}
 	}
-	return true
+	lock, err := os.OpenFile(filepath.Join(marker, "lease.lock"), os.O_RDWR, 0)
+	if err != nil {
+		return false
+	}
+	defer func() { _ = lock.Close() }()
+	// A marker is valid only while its runner owns the active lease. This rejects
+	// arbitrary same-UID directories that imitate the public lease layout.
+	return syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB) == syscall.EWOULDBLOCK
 }
 
 // Close releases the active lease lock without removing the allocation.
@@ -339,6 +357,9 @@ func validateLease(l *Lease) error {
 	if err := validatePrivateDirInfo(info); err != nil {
 		return err
 	}
+	if err := sameLeaseParentEntry(l.parent.root, l.name, l.root); err != nil {
+		return err
+	}
 	if err := validatePrivateDir(l.root, "."); err != nil {
 		return err
 	}
@@ -356,8 +377,23 @@ func validateLease(l *Lease) error {
 	if manifest.Version != manifestVersion {
 		return ErrUnsupportedVersion
 	}
-	if manifest.ID != l.id || manifest.Kind != l.kind {
+	if !validAllocationID(manifest.ID) || manifest.ID != l.id || manifest.Kind != l.kind {
 		return errors.New("managedtemp: allocation manifest identity mismatch")
+	}
+	return nil
+}
+
+func sameLeaseParentEntry(parent *os.Root, name string, lease *os.Root) error {
+	entry, err := parent.Lstat("commands/" + name)
+	if err != nil {
+		return err
+	}
+	opened, err := lease.Stat(".")
+	if err != nil {
+		return err
+	}
+	if !os.SameFile(entry, opened) {
+		return errors.New("managedtemp: lease parent entry was replaced")
 	}
 	return nil
 }
@@ -393,6 +429,65 @@ func allocationID() (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(random[:]), nil
+}
+
+func processStartIdentity(pid int) (string, error) {
+	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
+	if err != nil {
+		return "", fmt.Errorf("managedtemp: read process start identity: %w", err)
+	}
+	end := strings.LastIndexByte(string(data), ')')
+	if end < 0 {
+		return "", errors.New("managedtemp: malformed process stat")
+	}
+	fields := strings.Fields(string(data)[end+1:])
+	// Field 22 is starttime; the suffix begins at field 3.
+	if len(fields) <= 19 || fields[19] == "" {
+		return "", errors.New("managedtemp: malformed process start identity")
+	}
+	return fields[19], nil
+}
+
+func validTestHomeNamespace(marker string) bool {
+	commands := filepath.Dir(marker)
+	workspace := filepath.Dir(commands)
+	workspaces := filepath.Dir(workspace)
+	namespace := filepath.Dir(workspaces)
+	if filepath.Base(commands) != "commands" || filepath.Base(workspaces) != "workspaces" {
+		return false
+	}
+	for _, path := range []string{commands, workspace, workspaces, namespace} {
+		info, err := os.Lstat(path)
+		if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm() != privateDirMode || !ownedByCurrentUser(info) {
+			return false
+		}
+	}
+	workspaceData, err := os.ReadFile(filepath.Join(workspace, "workspace.manifest"))
+	if err != nil {
+		return false
+	}
+	var manifest workspaceManifest
+	if json.Unmarshal(workspaceData, &manifest) != nil || manifest.Version != manifestVersion || manifest.Key != filepath.Base(workspace) || manifest.Backend == "" || manifest.Identity == "" {
+		return false
+	}
+	indexData, err := os.ReadFile(filepath.Join(namespace, "workspace-index.manifest"))
+	if err != nil {
+		return false
+	}
+	var index workspaceIndex
+	if json.Unmarshal(indexData, &index) != nil || index.Version != manifestVersion {
+		return false
+	}
+	entry, ok := index.Workspaces[manifest.Key]
+	return ok && entry.Backend == manifest.Backend && entry.Identity == manifest.Identity && entry.CurrentPath == manifest.CurrentPath
+}
+
+func validAllocationID(id string) bool {
+	if len(id) != 32 {
+		return false
+	}
+	_, err := hex.DecodeString(id)
+	return err == nil
 }
 
 func lockExclusive(file *os.File, nonBlocking bool) error {
