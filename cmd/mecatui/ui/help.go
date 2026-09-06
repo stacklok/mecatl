@@ -103,6 +103,7 @@ func helpBody(th theme.Theme, caps client.Capabilities, hk helpKeys) string {
 		{key: hk.selectAll, action: "select all prompt text"},
 		{key: hk.copySelection, action: "copy the active prompt or conversation selection"},
 		{key: hk.clearPrompt, action: "clear the unsent prompt"},
+		{key: "esc esc (physical)", action: "clear idle draft within 500ms; not remappable; alternative: ClearPrompt / " + hk.clearPrompt},
 		{key: hk.cancel, action: "cancel the running turn"},
 	})
 

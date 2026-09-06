@@ -625,6 +625,12 @@ type Model struct {
 	quitArmed  bool
 	quitArmGen int
 
+	// doubleEscapeArmed is the silent, idle-draft physical Escape gesture. It is
+	// deliberately separate from the remappable Cancel and ClearPrompt actions.
+	// Each first press increments the generation used by its 500ms expiry message.
+	doubleEscapeArmed bool
+	doubleEscapeGen   int
+
 	// suspendedFrom records the phase the model was in when a ctrl+z suspend fired
 	// (issue #504) plus the session id captured at that instant (the session could
 	// roll over while suspended). Set in onSuspend, read by the ResumeMsg reducer to

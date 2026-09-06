@@ -15,7 +15,8 @@ Press `?` on an empty prompt to open the live help overlay. It shows the active 
 | `enter` | Send a prompt; while work is running, steer when the server supports it or queue a follow-up otherwise. |
 | `shift+enter` or `ctrl+j` | Insert a newline. |
 | `↑` | With empty input, bring queued follow-ups back for editing. |
-| `ctrl+u` | Clear the unsent draft, including staged attachments and large-paste placeholders. |
+| `ctrl+u` | Clear the unsent draft, including staged attachments and large-paste placeholders (`ClearPrompt`; remappable). |
+| physical `esc` twice within 500ms | While idle with a focused draft containing text, staged attachments, large-paste content, or pending media, clear it through `ClearPrompt`; attachment-only drafts qualify. The first press is silent and only arms; key repeat cannot complete it. Selection, palette, mention, approval, overlay, modal, running cancel, another key, or expiry disarms it. This physical compatibility gesture is not remappable; use `ClearPrompt` / `ctrl+u` as the accessible alternative. |
 | `esc` | Clear an active selection first. While work is running, cancel directly and preserve the draft, queued follow-ups, and steer. While idle with a paused queue, clear that queue but preserve the draft. |
 | `ctrl+t` | Expand a focused tool card or approval details. For a collapsed tool card, the expanded view shows the complete tool arguments and result; press it again to return to the width-bounded preview. |
 | `shift+tab` | Cycle the current session permission mode: **default → plan → accept-edits → default**. In an MCP prompt argument form, it instead moves to the previous required field. |

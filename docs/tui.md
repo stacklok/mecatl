@@ -1175,6 +1175,7 @@ show the plain prompt-hint card.
 | paste (bracketed) | replace the active prompt selection, or insert clipboard text at the caret; a single pasted **media-file path** is staged as an attachment instead, and a **large** paste (≥ 2000 chars — alone or combined with the current input — or ≥ 30 lines) is staged behind a `[Pasted text #N]` placeholder, replacing the active selection before insertion or otherwise appending at the end of the input, expanding on send (ignored while an overlay/modal is open) |
 | `ctrl+v` | read the OS clipboard — a clipboard **image** stages as an `[Image #N]` attachment (when supported), else replace the active prompt selection with clipboard **text** (see below) |
 | `ctrl+u` | clear the entire unsent draft, including staged attachments and large-paste placeholders (rebindable via `ClearPrompt`) |
+| physical `esc` twice within 500ms (idle, focused, draft-local non-empty) | silently clear the draft through `ClearPrompt`. Draft-local content means text, staged attachments, large-paste content, or pending media, so attachment-only drafts qualify. The first press only arms the gesture; key repeat cannot complete it. A selection, palette, mention, approval, overlay, modal, running cancel, intervening key, or expiry consumes/disarms it, so the next idle `esc` is fresh. This physical compatibility gesture is not remappable; `ClearPrompt` / `ctrl+u` remains the accessible alternative. |
 | `esc` (while a run streams) | cancel the in-flight run (sends `Cancel`; waits for the terminal result; leaves the draft and queued follow-ups intact) |
 | `enter` (idle, **paused queue**, empty input) | resume — send the merged staged follow-ups |
 | `esc` (idle, **paused queue**) | clear the queue (the current draft remains intact) |
@@ -1308,7 +1309,7 @@ safe there). Actions marked *(approval)* are the permission-modal keys.
 |---|---|---|---|
 | `Submit` | `enter` | global | send the prompt; while a run streams, steer when supported or queue a follow-up otherwise |
 | `Newline` | `shift+enter`, `ctrl+j` | global | newline in the input |
-| `Cancel` | `esc` | global | cancel the running turn; idle Escape leaves the current draft intact |
+| `Cancel` | `esc` | global | cancel the running turn; the separate physical double-`esc` compatibility gesture clears an eligible idle draft within 500ms and is not remappable |
 | `ClearPrompt` | `ctrl+u` | global | clear the entire unsent draft, including staged attachments and large-paste placeholders |
 | `EditBack` | `up` | global | pull the queued follow-ups back into the input (empty input only) |
 | `Paste` | `ctrl+v` | global | paste a clipboard image as an attachment, else clipboard text |
