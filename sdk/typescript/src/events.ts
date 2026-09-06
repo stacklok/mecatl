@@ -161,15 +161,16 @@ export interface UserPromptEventPayload {
   readonly text: string;
 }
 
+/** One title-generation attempt projected by a `session.title` event. @public */
+export interface TitleAttemptEventPayload {
+  readonly id: string;
+  readonly outcome: string;
+}
+
 /** The source-free payload of a `session.title` event. @public */
 export interface SessionTitleEventPayload {
   readonly generationState: string;
-  readonly latestAttempt?:
-    | {
-        readonly id: string;
-        readonly outcome: string;
-      }
-    | undefined;
+  readonly latestAttempt?: TitleAttemptEventPayload | undefined;
   readonly provenance: string;
   readonly revision: bigint;
   readonly title: string;

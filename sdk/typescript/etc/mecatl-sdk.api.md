@@ -314,8 +314,6 @@ export interface EventPayloads {
     readonly "schedule.skipped": ScheduleEventPayload;
     // (undocumented)
     readonly "session.init": undefined;
-    // Warning: (ae-forgotten-export) The symbol "SessionTitleEventPayload" needs to be exported by the entry point index.d.ts
-    //
     // (undocumented)
     readonly "session.title": SessionTitleEventPayload;
     // (undocumented)
@@ -799,6 +797,20 @@ export interface Sessions {
 }
 
 // @public
+export interface SessionTitleEventPayload {
+    // (undocumented)
+    readonly generationState: string;
+    // (undocumented)
+    readonly latestAttempt?: TitleAttemptEventPayload | undefined;
+    // (undocumented)
+    readonly provenance: string;
+    // (undocumented)
+    readonly revision: bigint;
+    // (undocumented)
+    readonly title: string;
+}
+
+// @public
 export interface SteerEventPayload {
     // (undocumented)
     readonly messageId: string;
@@ -976,6 +988,14 @@ export interface TextPromptPart {
     readonly kind: "text";
     // (undocumented)
     readonly text: string;
+}
+
+// @public
+export interface TitleAttemptEventPayload {
+    // (undocumented)
+    readonly id: string;
+    // (undocumented)
+    readonly outcome: string;
 }
 
 // @public
