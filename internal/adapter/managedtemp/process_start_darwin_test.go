@@ -4,10 +4,12 @@ package managedtemp
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"testing"
+
+	"golang.org/x/sys/unix"
 )
 
 func TestProcessStartIdentityPersistsKernelIdentity(t *testing.T) {
@@ -38,8 +40,16 @@ func TestProcessStartIdentityPersistsKernelIdentity(t *testing.T) {
 	if err := json.Unmarshal(data, &manifest); err != nil {
 		t.Fatal(err)
 	}
-	if manifest.ProcessStart == "" || manifest.ProcessStart == strconv.Itoa(os.Getpid()) {
-		t.Fatalf("persisted process identity = %q, want non-PID-only identity", manifest.ProcessStart)
+	proc, err := unix.SysctlKinfoProc("kern.proc.pid", os.Getpid())
+	if err != nil {
+		t.Fatalf("SysctlKinfoProc: %v", err)
+	}
+	if proc == nil || int(proc.Proc.P_pid) != os.Getpid() {
+		t.Fatalf("kernel process = %#v, want pid %d", proc, os.Getpid())
+	}
+	want := fmt.Sprintf("%d.%06d", proc.Proc.P_starttime.Sec, proc.Proc.P_starttime.Usec)
+	if manifest.ProcessStart != want {
+		t.Fatalf("persisted process identity = %q, want kernel start identity %q", manifest.ProcessStart, want)
 	}
 }
 

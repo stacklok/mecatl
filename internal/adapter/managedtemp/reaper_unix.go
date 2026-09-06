@@ -214,7 +214,7 @@ func reapLease(ctx context.Context, commands *os.Root, name string, opts SweepOp
 		return false
 	}
 	var manifest allocationManifest
-	if json.Unmarshal(data, &manifest) != nil || manifest.Version != manifestVersion || manifest.ID != id || manifest.Kind != kind || manifest.UID != os.Geteuid() {
+	if json.Unmarshal(data, &manifest) != nil || !validReapManifest(manifest, kind, id) {
 		return false
 	}
 	transition := manifest.CreatedAt
@@ -237,6 +237,28 @@ func reapLease(ctx context.Context, commands *os.Root, name string, opts SweepOp
 		return false
 	}
 	return commands.Remove(name) == nil
+}
+
+func validReapManifest(manifest allocationManifest, kind, id string) bool {
+	if manifest.Version != manifestVersion || manifest.ID != id || manifest.Kind != kind || manifest.UID != os.Geteuid() || manifest.CreatedAt.IsZero() {
+		return false
+	}
+	switch manifest.State {
+	case "active":
+		return !manifest.StartedAt.IsZero() && !manifest.StartedAt.Before(manifest.CreatedAt) && manifest.TerminalAt.IsZero() && manifest.OwnerPID > 0 && manifest.ProcessStart != "" && activeProcessIdentityValid(manifest)
+	case "terminal":
+		return !manifest.TerminalAt.IsZero() && !manifest.TerminalAt.Before(manifest.CreatedAt) && (manifest.StartedAt.IsZero() || !manifest.TerminalAt.Before(manifest.StartedAt))
+	default:
+		return false
+	}
+}
+
+func activeProcessIdentityValid(manifest allocationManifest) bool {
+	identity, err := processStartIdentity(manifest.OwnerPID)
+	if err == nil {
+		return identity == manifest.ProcessStart
+	}
+	return errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ESRCH)
 }
 
 func validateLeaseParentEntry(parent *os.Root, name string, lease *os.Root) error {

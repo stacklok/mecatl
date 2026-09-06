@@ -167,6 +167,9 @@ func TestManagedTemporaryCommandLeases_Scenario4_EndToEnd(t *testing.T) {
 		t.Fatal(err)
 	}
 	residuePath := residue.Path()
+	if err := residue.Started(os.Getpid()); err != nil {
+		t.Fatal(err)
+	}
 	if err := residue.Close(); err != nil {
 		t.Fatal(err)
 	}

@@ -78,6 +78,57 @@ func TestADR_0281_ReaperDeletesOnlyValidatedEligibleLease(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(badPath, "manifest.json"), []byte("not-json"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	currentIdentity, err := processStartIdentity(os.Getpid())
+	if err != nil {
+		t.Fatal(err)
+	}
+	malformed := make([]string, 0, 6)
+	for _, test := range []struct {
+		name   string
+		mutate func(*allocationManifest)
+	}{
+		{name: "missing-created-at", mutate: func(manifest *allocationManifest) { manifest.CreatedAt = time.Time{} }},
+		{name: "unknown-state", mutate: func(manifest *allocationManifest) { manifest.State = "unknown" }},
+		{name: "terminal-without-terminal-at", mutate: func(manifest *allocationManifest) { manifest.TerminalAt = time.Time{} }},
+		{name: "active-without-started-at", mutate: func(manifest *allocationManifest) {
+			manifest.State, manifest.TerminalAt, manifest.StartedAt = "active", time.Time{}, time.Time{}
+		}},
+		{name: "active-without-process-identity", mutate: func(manifest *allocationManifest) {
+			manifest.State, manifest.TerminalAt, manifest.StartedAt, manifest.OwnerPID, manifest.ProcessStart = "active", time.Time{}, manifest.CreatedAt, 0, ""
+		}},
+		{name: "active-with-reused-process-identity", mutate: func(manifest *allocationManifest) {
+			manifest.State, manifest.TerminalAt, manifest.StartedAt, manifest.OwnerPID, manifest.ProcessStart = "active", time.Time{}, manifest.CreatedAt, os.Getpid(), currentIdentity+"-reused"
+		}},
+	} {
+		lease, err := workspace.Allocate("cmd")
+		if err != nil {
+			t.Fatal(err)
+		}
+		path := lease.Path()
+		if err := lease.Terminal(); err != nil {
+			t.Fatal(err)
+		}
+		if err := lease.Close(); err != nil {
+			t.Fatal(err)
+		}
+		data, err := os.ReadFile(filepath.Join(path, "manifest.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var manifest allocationManifest
+		if err := json.Unmarshal(data, &manifest); err != nil {
+			t.Fatal(err)
+		}
+		test.mutate(&manifest)
+		data, err = json.Marshal(manifest)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(path, "manifest.json"), data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		malformed = append(malformed, path)
+	}
 	unrecognised := filepath.Join(workspace.Path(), "commands", "cmd-unrecognised")
 	if err := os.Symlink(filepath.Join(eligible.Path(), "tmp"), unrecognised); err != nil {
 		t.Fatal(err)
@@ -92,7 +143,7 @@ func TestADR_0281_ReaperDeletesOnlyValidatedEligibleLease(t *testing.T) {
 	if _, err := os.Stat(eligible.Path()); !errors.Is(err, fs.ErrNotExist) {
 		t.Fatalf("eligible lease remains: %v", err)
 	}
-	for _, path := range []string{locked.Path(), badPath, unrecognised} {
+	for _, path := range append([]string{locked.Path(), badPath, unrecognised}, malformed...) {
 		if _, err := os.Lstat(path); err != nil {
 			t.Fatalf("invalid or contended lease %q was deleted: %v", path, err)
 		}
@@ -194,6 +245,9 @@ func TestADR_0281_CrashRecoveryAndConcurrentReaping(t *testing.T) {
 		t.Fatal(err)
 	}
 	path := lease.Path()
+	if err := lease.Started(os.Getpid()); err != nil {
+		t.Fatal(err)
+	}
 	if err := lease.Close(); err != nil {
 		t.Fatal(err)
 	} // simulate a dead runner: OS released its lock.
