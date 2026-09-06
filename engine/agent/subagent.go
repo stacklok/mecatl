@@ -904,8 +904,8 @@ const defaultStructuredOutputRetries = 2
 // fetching/reading and never reached its conclusion. The salvage asks the child to
 // stop and summarize its partial findings; it explicitly forbids further tool use
 // because the salvage drive is hard-bound to a single turn (see
-// salvageEmptyStop). A budget-stopped child does not receive a fresh allowance:
-// only the team lead's synthesis run uses an internal budget baseline.
+// salvageEmptyStop). A budget-stopped child gets one internal cleanup allowance
+// measured from its current main usage; that baseline never resets accounting.
 const salvageWrapUpPrompt = "You have reached your budget and must stop now. " +
 	"Do not call any more tools. Summarize concisely what you found so far and give " +
 	"your best partial answer as your final response."
@@ -3786,8 +3786,9 @@ func digestChildActivity(child *session.Session) string {
 //     through. (StopNoProgress/empty-StopEndTurn are the issue-#152 additions: a
 //     reasoning-only or silently-empty turn discarded the child's work the same way a
 //     limit stop did.)
-//   - StopBudget does not receive a fresh allowance: only the team lead's
-//     synthesis run has a non-zero baseline.
+//   - StopBudget uses an internal baseline captured immediately before the
+//     cleanup re-drive. The baseline grants only this bounded cleanup turn and
+//     never resets the child's lifetime accounting.
 //   - Reuses the SAME child session via Reopen() (which resets Counters), mirroring the
 //     structured-output retry seam. A non-recoverable session (failed/cancelled) simply
 //     keeps the empty result.
@@ -3839,7 +3840,12 @@ func salvageEmptyStop(ctx context.Context, engine *Engine, child *session.Sessio
 	// tighten-only MaxRunTokensOverride and run-scoped ExtraTools survive the salvage drive.
 	salvageReq := runReq
 	salvageReq.Text = salvageWrapUpPrompt
-	run := engine.Run(ctx, child, runEnv, salvageReq)
+	var run *Run
+	if stop == session.StopBudget {
+		run = engine.runWithCurrentMainUsageBaseline(ctx, child, runEnv, salvageReq)
+	} else {
+		run = engine.Run(ctx, child, runEnv, salvageReq)
+	}
 	text, _, _, u, _ := drainChildObserved(run, emit, string(call.ID), string(childID), posture)
 	// Sum the salvage turn's usage (mirror the structured-output usage accumulation);
 	// the caller's usage already excludes this drive, so there is no double-count.

@@ -183,10 +183,13 @@ no per-attempt usage ledger. `token_usage[main]` is canonical for main work; dep
   `MaxRunTokens`, normal turn/result usage, or the agent conversation.
   - verify: `TestADR_0302_AuxiliaryUsageDoesNotSpendRunBudget`
 - AC5.5: The internal immutable budget baseline leaves `Session.Usage` and
-  `token_usage[main]` lifetime totals untouched: ordinary runs start at zero, only team
-  synthesis captures current cumulative main usage, that baseline survives its re-drives and
-  nudges, and no externally callable usage-reset API exists.
-  - verify: `TestADR_0302_RunBudgetBaselineDoesNotResetLifetimeUsage`
+  `token_usage[main]` lifetime totals untouched: ordinary runs start at zero; team
+  synthesis and a budget-stopped free-text Subagent's one-turn cleanup capture current
+  cumulative main usage immediately before their bounded re-drive; cleanup spend is
+  added to the same lifetime totals; and no externally callable usage-reset or
+  baseline-selection API exists.
+  - verify: `TestADR_0302_RunBudgetBaselineDoesNotResetLifetimeUsage`,
+    `TestSubagentBudgetStopSalvages`
 - AC5.6: Other auxiliary callers are not migrated by this plan.
   - verify: `TestSessionTitleGeneration_Scenario5_OnlyTitleIsPlumbed`
 

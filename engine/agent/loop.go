@@ -608,8 +608,9 @@ type Run struct {
 	// (ADR 0249). Read ONLY by emit/emitOrAbort; the loop never branches on it.
 	runID string
 	// budgetBaseline is the immutable cumulative main usage captured when this run
-	// starts. Ordinary runs use zero; the team lead's synthesis run captures the
-	// lead's lifetime main usage to receive its own allowance without changing the
+	// starts. Ordinary runs use zero; privileged package-private continuations
+	// (team synthesis and a budget-stopped child cleanup) capture the session's
+	// lifetime main usage to receive one bounded allowance without changing the
 	// durable ledger or compatibility mirror.
 	budgetBaseline session.Usage
 	// ctx is the run's context, captured at Engine.Run. Engine.emit forwards it
@@ -1022,9 +1023,10 @@ func (e *Engine) Run(ctx context.Context, sess *session.Session, env tool.Enviro
 	})
 }
 
-// runWithCurrentMainUsageBaseline drives the team lead's final synthesis with a
+// runWithCurrentMainUsageBaseline drives one internal, bounded continuation with a
 // fresh budget allowance without mutating durable session accounting. It is
-// package-private so no caller outside agent can select a budget baseline.
+// package-private so external callers cannot select a budget baseline; ordinary
+// Engine.Run calls always use the zero baseline.
 func (e *Engine) runWithCurrentMainUsageBaseline(ctx context.Context, sess *session.Session, env tool.Environment, req RunRequest) *Run {
 	baseline := sess.TokenUsageSnapshot()[session.UsageKindMain].Total
 	return e.startRun(ctx, sess, req, baseline, func(ctx context.Context, r *Run) {
