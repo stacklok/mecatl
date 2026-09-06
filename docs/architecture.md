@@ -157,9 +157,11 @@ raw secret only in private process memory for HTTP-Basic code exchange and refre
 service count, an opaque reference, and a presentation URL—not upstream names, endpoints,
 callback state, codes, or tokens.
 
-`mecated` and `mecak8s` mount ToolHive's fixed broker handler bundle on their existing
-primary HTTP mux before the API catch-all; no second listener or context-value catalogue
-channel exists. The same broker origin has two callback roles: every upstream provider returns
+`mecated` mounts ToolHive's fixed broker handler bundle on its existing primary HTTP
+mux before the API catch-all. `mecak8s` instead uses the remote broker adapter and mounts
+no ToolHive handlers: it dials with CA-verified TLS, an explicit expected DNS name, and a
+projected workload token reread for every RPC. The same broker origin has two callback roles:
+every upstream provider returns
 to ToolHive's fixed `/v1/mcp/broker/oauth/callback` prefix, while ToolHive's completed chain
 returns to the operator-configured final mecatl callback URL. Ingress must route the complete
 fixed broker prefix as well as that final callback path to the listener. The final callback URL

@@ -89,6 +89,7 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/tools"
 	"github.com/stacklok/mecatl/internal/adapter/xdgconfig"
 	"github.com/stacklok/mecatl/internal/buildinfo"
+	mcpbrokercontract "github.com/stacklok/mecatl/internal/mcpbroker"
 	"github.com/stacklok/mecatl/internal/syscaller"
 	"github.com/stacklok/mecatl/provider/openai"
 )
@@ -857,6 +858,15 @@ type Config struct {
 	MCPBrokerCaller           mcpbroker.Caller
 	MCPBrokerAuthorizedCaller mcpbroker.AuthorizedCaller
 	MCPBrokerOptions          []mcpbroker.Option
+	// MCPBrokerFactory selects an externally hosted broker instead of constructing
+	// ToolHive in this process. Build calls it only when broker authority is selected
+	// and owns the returned close function. The remote service must provide the same
+	// Attachment contract; no local fallback is attempted on factory failure.
+	MCPBrokerFactory func(context.Context) (mcpbrokercontract.Service, func() error, error)
+	// MCPBrokerFactoryRequired prevents a broker-capable command root from
+	// silently constructing an in-process ToolHive broker when remote custody is
+	// part of its deployment contract.
+	MCPBrokerFactoryRequired bool
 	// MCPProfileLoader resolves operator-tier profiles with the same permission
 	// resolver Build already owns. Command roots install it so settings are not
 	// parsed a second time and secret lookup remains a runtime-only operation.
@@ -1956,19 +1966,47 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	}
 
 	var brokerRuntime *mcpbroker.Runtime
+	var brokerService mcpbrokercontract.Service
 	var brokerProcess *mcpbroker.Process
+	var brokerRemoteClose func() error
 	var brokerHandlers mcpbroker.HandlerBundle
 	var brokerCallbackPath string
-	brokerConfigured := len(brokerDeclaration.Routes) != 0 || cfg.MCPBrokerCaller != nil ||
+	brokerConfigured := cfg.MCPBrokerFactory != nil || len(brokerDeclaration.Routes) != 0 || cfg.MCPBrokerCaller != nil ||
 		cfg.MCPBrokerAuthorizedCaller != nil || len(cfg.MCPBrokerDiscovered) != 0 || len(cfg.MCPBrokerOptions) != 0
 	if brokerSelected && brokerConfigured {
+		if cfg.MCPBrokerFactoryRequired && cfg.MCPBrokerFactory == nil {
+			childLiveness.Close()
+			mcpClose()
+			agentClose()
+			storeClose()
+			commandConnClose()
+			return nil, errors.New("remote MCP broker is required for this deployment")
+		}
 		occupied := make([]string, 0)
 		if assets.rootCatalog != nil {
 			for _, registered := range assets.rootCatalog.Tools() {
 				occupied = append(occupied, registered.Spec().Name)
 			}
 		}
-		if cfg.MCPBrokerCaller == nil && cfg.MCPBrokerAuthorizedCaller == nil && len(cfg.MCPBrokerDiscovered) == 0 && len(cfg.MCPBrokerOptions) == 0 {
+		if cfg.MCPBrokerFactory != nil {
+			brokerService, brokerRemoteClose, err = cfg.MCPBrokerFactory(ctx)
+			if err != nil {
+				childLiveness.Close()
+				mcpClose()
+				agentClose()
+				storeClose()
+				commandConnClose()
+				return nil, fmt.Errorf("connect remote MCP broker: %w", err)
+			}
+			if brokerService == nil || brokerRemoteClose == nil {
+				childLiveness.Close()
+				mcpClose()
+				agentClose()
+				storeClose()
+				commandConnClose()
+				return nil, errors.New("connect remote MCP broker: factory returned incomplete service")
+			}
+		} else if cfg.MCPBrokerCaller == nil && cfg.MCPBrokerAuthorizedCaller == nil && len(cfg.MCPBrokerDiscovered) == 0 && len(cfg.MCPBrokerOptions) == 0 {
 			authRedisClient, authStorageClose, err := buildToolHiveAuthRedisClient(cfg)
 			if err != nil {
 				childLiveness.Close()
@@ -2013,8 +2051,12 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 				commandConnClose()
 				return nil, fmt.Errorf("build MCP broker: %w", err)
 			}
+			brokerService = brokerRuntime
 		}
-		if brokerDeclaration.CallbackURL != "" {
+		if brokerService == nil {
+			brokerService = brokerRuntime
+		}
+		if brokerDeclaration.CallbackURL != "" && brokerRuntime != nil {
 			if brokerProcess == nil {
 				brokerHandlers, brokerCallbackPath, err = brokerRuntime.Handlers(brokerDeclaration.CallbackURL)
 			} else {
@@ -2036,7 +2078,9 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		}
 	}
 	closeBroker := func() {
-		if brokerProcess != nil {
+		if brokerRemoteClose != nil {
+			_ = brokerRemoteClose()
+		} else if brokerProcess != nil {
 			_ = brokerProcess.Close()
 		} else if brokerRuntime != nil {
 			_ = brokerRuntime.Close()
@@ -2534,13 +2578,13 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		PlanModeAutoApprove: cfg.PlanModeAutoApprove,
 		Interactive:         cfg.Interactive,
 	}
-	if brokerRuntime != nil {
-		svcCfg.MCPBroker = brokerRuntime
+	if brokerService != nil {
+		svcCfg.MCPBroker = brokerService
 	}
-	// Workspace enrollment (pre-prompt authenticate-then-discover) applies only
-	// to the bundled ToolHive Process path: a plain Compile-based Runtime has no
-	// live discovery primitive and never satisfies the enrollment boundary.
-	svcCfg.WorkspaceEnrollment = brokerProcess.WorkspaceEnrollmentRequired()
+	// A remote broker preserves the same pre-prompt enrollment capability while
+	// keeping browser presentation on the broker. Local Compile-only runtimes do
+	// not expose enrollment; bundled ToolHive and remote services do.
+	svcCfg.WorkspaceEnrollment = brokerProcess.WorkspaceEnrollmentRequired() || cfg.MCPBrokerFactory != nil
 	if assets.reflectionRepository == nil || provider == nil {
 		svcCfg.ReflectSession = nil
 	}

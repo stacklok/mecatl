@@ -384,7 +384,15 @@ mcp:
 ```
 
 The static token is projected as `MCP_GITHUB_TOKEN`; it never appears in Helm
-values, arguments, or a ConfigMap. `staticBearer` covers a personal access
+values, arguments, or a ConfigMap. For broker-mode OAuth, mecak8s connects to a separately
+hosted internal broker rather than embedding ToolHive. Supply `--mcp-broker-address`,
+`--mcp-broker-token-file`, `--mcp-broker-tls-ca`, and `--mcp-broker-server-name` together.
+The projected workload token is read for every broker RPC; TLS verification and bearer
+authentication cannot be disabled or partially configured. The broker owns ToolHive and its
+callback routes, while mecak8s retains only opaque enrollment/authorization references and
+fetches presentation URLs live.
+
+`staticBearer` covers a personal access
 token; for a GitHub OAuth App's real browser consent flow, use `auth.mode:
 oauth` with `upstream: {mode: oauth2, oauth2: {authorizationEndpoint,
 tokenEndpoint}}` instead of `issuer` — GitHub has no OIDC discovery endpoint —

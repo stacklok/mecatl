@@ -137,12 +137,19 @@ type config struct {
 	// mecated/mecatequi: a per-server bearer rides the MCP_<NAME>_TOKEN env (a
 	// scheduler like titlani injects a short-lived per-run identity there), token
 	// optional. Threaded onto app.Config.MCPServers in appConfig.
-	mcpServers   *cliconfig.MCPServerList
-	useMock      bool
-	mockScript   string
-	mockProvider port.LLMProvider
-	shell        string
-	noBash       bool
+	mcpServers *cliconfig.MCPServerList
+	// A production mecak8s broker is an authenticated, CA-verified remote service.
+	// The projected workload token is read for every RPC so rotation needs no pod
+	// restart; the expected DNS name is never inferred from an address.
+	mcpBrokerAddress    string
+	mcpBrokerTokenFile  string
+	mcpBrokerTLSCAFile  string
+	mcpBrokerServerName string
+	useMock             bool
+	mockScript          string
+	mockProvider        port.LLMProvider
+	shell               string
+	noBash              bool
 
 	// Storage-free state (ADR 0048): --redis-url points the session store +
 	// durable event log at a Redis managed service. Credentials are read from
@@ -350,6 +357,10 @@ func parseFlags(argv []string) (config, error) {
 	// Remote MCP servers (issue #341): the shared repeatable name=URL flag +
 	// MCP_<NAME>_TOKEN bearer convention, identical to mecated/mecatequi.
 	cfg.mcpServers = cliconfig.RegisterMCPServerFlag(fs, "")
+	fs.StringVar(&cfg.mcpBrokerAddress, "mcp-broker-address", "", "host:port of the remote internal MCP broker; requires projected-token authentication and verified TLS")
+	fs.StringVar(&cfg.mcpBrokerTokenFile, "mcp-broker-token-file", "", "projected workload identity token file reread for every remote broker RPC")
+	fs.StringVar(&cfg.mcpBrokerTLSCAFile, "mcp-broker-tls-ca", "", "PEM CA bundle used to verify the remote MCP broker")
+	fs.StringVar(&cfg.mcpBrokerServerName, "mcp-broker-server-name", "", "expected DNS name in the remote MCP broker certificate")
 	fs.BoolVar(&cfg.useMock, "mock", false, "use a canned offline mock provider (no network, no API key; for the e2e / smoke tests)")
 	fs.StringVar(&cfg.mockScript, "mock-script", "", "path to a JSON mockllm script (offline; implies --mock and supports text, tool-call, and delayed turns)")
 	fs.StringVar(&cfg.shell, "shell", "/bin/sh", "shell used to execute Bash-tool commands; empty disables Bash (shell-less mode)")
@@ -575,6 +586,15 @@ func parseFlags(argv []string) (config, error) {
 	if (cfg.redisFilesystem || cfg.redisReadLedger) && cfg.redisURL == "" {
 		return config{}, errors.New("--redis-filesystem and --redis-read-ledger require --redis-url")
 	}
+	brokerFields := 0
+	for _, value := range []string{cfg.mcpBrokerAddress, cfg.mcpBrokerTokenFile, cfg.mcpBrokerTLSCAFile, cfg.mcpBrokerServerName} {
+		if value != "" {
+			brokerFields++
+		}
+	}
+	if brokerFields != 0 && brokerFields != 4 {
+		return config{}, errors.New("--mcp-broker-address, --mcp-broker-token-file, --mcp-broker-tls-ca, and --mcp-broker-server-name must be configured together")
+	}
 
 	return cfg, nil
 }
@@ -686,6 +706,8 @@ func appConfig(cfg config, diag port.Diagnostics, obs observability) app.Config 
 		MCPAuthorityLoader:       cliconfig.NewMCPProfileResolver(cfg.mcpServers, os.LookupEnv),
 		MCPAuthorityDefault:      mcpAuthorityDefault,
 		MCPBrokerSupported:       true,
+		MCPBrokerFactory:         mcpBrokerFactory(cfg),
+		MCPBrokerFactoryRequired: true,
 		ProviderCredentialLoader: cliconfig.NewProviderCredentialResolver(cfg.providerFlags, cfg.providerCredentials),
 		ProviderOverrides:        cfg.providerFlags.EndpointOverrides(),
 		EnableParallel:           cfg.enableParallel,

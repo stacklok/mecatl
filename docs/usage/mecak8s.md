@@ -18,10 +18,11 @@ a `coordination.k8s.io` Lease per session
 `/readyz` (drain-gated + Redis-pinged), and a bounded `GracefulStop`. The agent pods are
 **storage-free**: no PVC, no `--store-dir`, no local state — every piece of state is a
 managed service the pod talks to over the network (Redis + the k8s API server). Global
-MCP profiles use the same operator settings loader as mecated/mecatequi. The intended
-OAuth posture is one browser/session enrollment through the process-local ToolHive broker;
-it can drive multiple configured protected upstreams sequentially, and a preregistered client
-secret is injected from a Kubernetes Secret when required.
+MCP profiles use the same operator settings loader as mecated/mecatequi. Broker-mode
+profiles use the separately deployed internal broker over authenticated gRPC; mecak8s does
+not construct ToolHive or mount broker callback handlers locally. The connection requires a
+projected workload-token file, a CA bundle, and an explicit expected DNS name. The token file
+is reread for every RPC so projected-token rotation does not require restarting mecak8s.
 `mecak8s` never launches a browser and cannot run `mecated mcp login`. A mutable local credential root is accepted
 only when explicitly mounted/configured, but contradicts the normal storage-free posture
 and is not recommended. It drops
@@ -76,6 +77,7 @@ $ go run ./cmd/mecak8s --redis-url redis:6379 --redis-allow-plaintext --session-
 | `--auth-token` / `--tls-cert` / `--tls-key` / `--client-ca` | `""` | bearer / TLS / mTLS — enable before binding a non-mesh address (a pod is otherwise fronted by the Service/mesh). |
 | `--max-run-tokens` / `--max-team-tokens` | `0` | `--max-run-tokens` is a per-engine cumulative ceiling (`0` = unlimited): the same value is inherited but independently enforced by the main engine, Subagents, Parallel branches, team members, and lead synthesis. Child spend is not charged to the parent, so a delegation tree can exceed it. `--max-team-tokens` is separate: its team-round aggregate stops new rounds only at a round boundary; the in-flight round and lead synthesis finish. Per-call `max_run_tokens` and `max_team_tokens` may only tighten their respective ceilings. Neither flag is a currency billing cap. |
 | `--mcp-server` | — | remote MCP server as `name=URL` (repeatable); a per-server bearer token is read from `MCP_<NAME>_TOKEN` (name upper-cased, token optional). Names must match `[A-Za-z0-9_]+` and be case-insensitively unique; a token-bearing URL must be `https` (or `http` to loopback). The same flag + env convention as `mecated`/`mecatequi` ([ADR 0082](../adr/0082-factory-mcp-wiring.md)). NOTE: the token is read **once at startup** and shared across all sessions for the pod's lifetime — per-run identity is a `mecatequi` property; a per-session credential source is future work (mecatl#342). |
+| `--mcp-broker-address` / `--mcp-broker-token-file` / `--mcp-broker-tls-ca` / `--mcp-broker-server-name` | `""` | Remote internal broker `host:port`, projected workload-token path, PEM CA path, and exact certificate DNS name. Configure all four or none. Broker-mode MCP refuses startup without this remote factory; there is no anonymous, plaintext, system-root, inferred-name, or local-ToolHive fallback. The token is reread on every RPC. |
 | `--mcp-server-insecure-http` | — | EXPLICIT per-server opt-in (repeatable): name of a `--mcp-server` entry whose bearer may ride plain `http` to a non-loopback host — e.g. an in-cluster NetworkPolicy-scoped Service. Acknowledges the token travels **cleartext on the network path**; the mitigations are network-layer controls plus the short-lived token. Relaxes ONLY the http scheme gate, ONLY for that name, order-independently of the `--mcp-server` position; an unregistered name or an https/loopback/non-http URL is a startup error ([ADR 0090](../adr/0090-mcp-insecure-http-optin.md)). |
 | `--llm-per-attempt-timeout` / `--llm-stream-idle-timeout` | `300s` / `180s` | LLM resilience knobs (mirror `mecated`). |
 | `--metrics-addr` | `""` (off) | OPT-IN Prometheus `/metrics` listen address for a SEPARATE loopback admin listener (the admin mux — `/metrics` + pprof/expvar, ADR 0018 decision 6). MUST be loopback — a non-loopback bind is REJECTED at parse time (fail-closed; the admin mux output is secret-shaped). e.g. `127.0.0.1:9090`. |

@@ -148,6 +148,17 @@ rotations retain the previous generation. The
 server client-CA pool remains static and requires restart; CA rotation should overlap old
 and new roots before removing the old root.
 
+Mecak8s broker mode is remote-only. `cmd/mecak8s/mcp_remote.go` builds the
+`internal/adapter/mcpbrokergrpc` client through an `app.Config` factory; `app.Build` invokes
+that factory only after broker authority is selected and never falls back to a local ToolHive
+process. All four connection inputs are mandatory: address, projected workload-token file,
+CA bundle, and expected certificate DNS name. The CA is loaded at connection time, while the
+bounded regular token file is reopened and reread by gRPC per-RPC credentials. Empty,
+malformed, unavailable, anonymous, plaintext, and inferred-name configurations fail closed.
+The remote adapter keeps the authorization reference opaque, obtains presentation live, and
+continues only the exact invocation parked before authorization; confirmed broker state loss
+may restart only pre-prompt enrollment, never a protected-call continuation.
+
 Helm chart 0.3.0 has three explicit real-provider postures: in-pod TLS + OIDC;
 edge-terminated TLS + OIDC (`security.tlsTerminatedUpstream`, pod TLS off for a
 ClusterIP h2c backend); and the visibly unsafe local/trusted-mesh bypass. The gate is
