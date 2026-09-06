@@ -2,7 +2,7 @@
 id: 02-rendered-frame
 title: Cached rendered frame provenance
 blocked_by: [01-conversation-state]
-status: in-progress
+status: done
 attempt: 1
 branch: plan-mecatui-logical-conversation-anchors/02-rendered-frame-attempt-1
 worktree: .scratch/worker-mecatui-logical-conversation-anchors-02-rendered-frame-attempt-1
