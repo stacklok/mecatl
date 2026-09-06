@@ -182,8 +182,8 @@ func Fold(meta SessionMeta, events iter.Seq2[session.Event, error]) (*session.Se
 		return nil, fmt.Errorf("%w: %w", ErrReconstruct, err)
 	}
 	// Inert creation labels — opaque to the domain, restored by direct assignment
-	// exactly as sessnap.Restore does (these are authoritative exported values, not
-	// state transitions).
+	// exactly as sessnap.Restore does. Title-specific metadata restores atomically
+	// through RestoreTitleMetadata below.
 	s.Placement = meta.Placement
 	s.Profile = meta.Profile
 	s.ProviderID = meta.ProviderID
@@ -192,10 +192,7 @@ func Fold(meta SessionMeta, events iter.Seq2[session.Event, error]) (*session.Se
 	s.DebugMCPServers = append([]string(nil), meta.DebugMCPServers...)
 	s.DebugMCPTools = append([]string(nil), meta.DebugMCPTools...)
 	s.DebugTargetFingerprint = meta.DebugTargetFingerprint
-	s.Title = meta.Title
-	s.TitleProvenance = meta.TitleProvenance
-	s.RestoreTitleMetadata(meta.TitleGeneration, meta.TitleSourcePrompts, meta.TitleAttempts)
-	s.TitleRevision = meta.TitleRevision
+	s.RestoreTitleMetadata(meta.Title, meta.TitleProvenance, meta.TitleRevision, meta.TitleGeneration, meta.TitleSourcePrompts, meta.TitleAttempts)
 	if f.pending != nil {
 		// AWAITING: the live session at pause time holds the assistant message WITH its
 		// not-yet-answered tool call (RecordAssistant runs before dispatch; the ask

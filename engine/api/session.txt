@@ -44,7 +44,7 @@
     method func (*Session).RestoreIncarnation(inc IncarnationID) error
     method func (*Session).RestoreLabels(owner *Principal, authority Authority) error
     method func (*Session).RestoreSessionMetadata(kind SessionKind, rel SessionRelationship) error
-    method func (*Session).RestoreTitleMetadata(generation TitleGenerationState, sources []string, attempts []TitleAttempt)
+    method func (*Session).RestoreTitleMetadata(title string, provenance TitleProvenance, revision uint64, generation TitleGenerationState, sources []string, attempts []TitleAttempt)
     method func (*Session).RestoreTokenUsage(usage map[UsageKind]TokenUsage)
     method func (*Session).ResumeWith() (PendingAsk, error)
     method func (*Session).RunID() string

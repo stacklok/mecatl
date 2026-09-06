@@ -101,13 +101,33 @@ func TestTitleGenerationMutationBumpsRevisionOnce(t *testing.T) {
 	}
 }
 
-func TestRestoreTitleMetadataDoesNotChangeRevision(t *testing.T) {
+func TestRestoreTitleMetadataRestoresAllMetadataAtomically(t *testing.T) {
 	s := newTestSession(Limits{})
-	s.SetTitle("title")
-	before := s.TitleRevision
-	s.RestoreTitleMetadata(TitleGenerationExhausted, []string{"source"}, []TitleAttempt{{ID: "attempt", Outcome: TitleAttemptInterrupted}})
-	if got := s.TitleRevision; got != before {
-		t.Fatalf("RestoreTitleMetadata revision = %d, want %d", got, before)
+	s.SetTitle("old title")
+	s.SetTitleGeneration(TitleGenerationPending)
+	s.RecordTitleSourcePrompt("old source")
+	s.RecordTitleAttempt(TitleAttempt{ID: "old", Outcome: TitleAttemptDeferred})
+
+	attempts := []TitleAttempt{{ID: "attempt", Outcome: TitleAttemptInterrupted}}
+	s.RestoreTitleMetadata("restored title", TitleProvenanceGenerated, 7, TitleGenerationExhausted, []string{"source"}, attempts)
+
+	if got, want := s.Title, "restored title"; got != want {
+		t.Errorf("Title = %q, want %q", got, want)
+	}
+	if got, want := s.TitleProvenance, TitleProvenanceGenerated; got != want {
+		t.Errorf("TitleProvenance = %q, want %q", got, want)
+	}
+	if got, want := s.TitleRevision, uint64(7); got != want {
+		t.Errorf("TitleRevision = %d, want %d", got, want)
+	}
+	if got, want := s.TitleGeneration, TitleGenerationExhausted; got != want {
+		t.Errorf("TitleGeneration = %q, want %q", got, want)
+	}
+	if got, want := s.TitleSourcePrompts(), []string{"source"}; len(got) != len(want) || got[0] != want[0] {
+		t.Errorf("TitleSourcePrompts = %#v, want %#v", got, want)
+	}
+	if got := s.TitleAttempts(); !equalTitleAttempts(got, attempts) {
+		t.Errorf("TitleAttempts = %#v, want %#v", got, attempts)
 	}
 }
 

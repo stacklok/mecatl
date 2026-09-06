@@ -255,13 +255,16 @@ func clampGeneratedTitle(text string) string {
 	return string(runes[:maxGeneratedTitleRunes-1]) + "…"
 }
 
-// RestoreTitleMetadata restores durable title-specific metadata from a trusted
-// snapshot or event-source metadata projection. It deliberately does not
+// RestoreTitleMetadata atomically restores durable title-specific metadata from a
+// trusted snapshot or event-source metadata projection. It deliberately does not
 // advance TitleRevision: restoration is not a mutation.
-func (s *Session) RestoreTitleMetadata(generation TitleGenerationState, sources []string, attempts []TitleAttempt) {
+func (s *Session) RestoreTitleMetadata(title string, provenance TitleProvenance, revision uint64, generation TitleGenerationState, sources []string, attempts []TitleAttempt) {
 	if generation == "" {
 		generation = TitleGenerationDisabled
 	}
+	s.Title = title
+	s.TitleProvenance = provenance
+	s.TitleRevision = revision
 	s.TitleGeneration = generation
 	s.titleSourcePrompts = nil
 	for _, source := range sources {

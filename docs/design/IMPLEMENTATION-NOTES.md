@@ -905,9 +905,11 @@ was observed announcing actions without emitting the tool calls). `EvNoProgress`
 `BeginTurn`) against lifetime main usage since the run's immutable baseline. The
 baseline is zero for ordinary runs, so persisted `session.Usage` — the deprecated
 compatibility mirror of canonical `token_usage[main].Total` — keeps the ceiling cumulative
-across `Reopen`/`Interrupt`/`Recover` and restart. Only the team lead's final synthesis run
-captures the current main total as its baseline, giving that one deliverable phase a fresh
-allowance without resetting durable accounting. Input+output count; cache tokens are excluded because `CacheReadTokens` is a
+across `Reopen`/`Interrupt`/`Recover` and restart. The team lead's final synthesis run
+and exactly one cleanup re-drive for a free-text Subagent that stopped at `StopBudget`
+capture the current main total as their baseline, giving each bounded deliverable phase a
+fresh allowance without resetting durable accounting. All ordinary calls, other retries,
+and auxiliary operations retain the zero baseline. Input+output count; cache tokens are excluded because `CacheReadTokens` is a
 subset of `InputTokens`, `CacheWriteTokens` is a side cost, and `ReasoningTokens` is likewise a
 subset of `OutputTokens` (providers bill reasoning as part of the inclusive output total, so
 adding it would double-count). The subset invariant holds CROSS-PROVIDER because the
@@ -935,7 +937,9 @@ cross-tree aggregate observability and enforcement are deferred and out of scope
 PER-ENGINE half of the AGENT-TEAMS-SPIKE's named "Deferred 4A" brake — landed once for every
 delegation path and cumulative over that session's persisted usage. The team lead's
 synthesis baseline is internal run state; it is neither persisted nor externally selectable.
-A budget-stopped Subagent salvage remains subject to its carried budget. `StopBudget` is a
+A budget-stopped free-text Subagent gets exactly one cleanup re-drive with the same
+non-mutating current-main-usage baseline; other salvage/retry paths retain the zero
+baseline. `StopBudget` is a
 STRING passthrough on the wire (`session.StopBudget = "budget"`, no proto enum).
 Guards: `agent.TestBudget*`, `session.TestStopBudgetIsCleanReopenableTerminal`,
 `server.TestServiceBudgetSurfacesAndReopens`, `app.TestMaxRunTokensPropagatesToParentAndChild`.
@@ -1659,8 +1663,9 @@ limit/budget stops only; it is now ANY empty terminal stop — `isEmptyTerminalS
 `StopMaxTurns`/`StopMaxToolCalls`/`StopBudget`/`StopNoProgress`/(defense-in-depth) `StopEndTurn`,
 gated by a blank-finalText guard so a normal text answer is untouched. Stage 1 is `salvageEmptyStop`
 (renamed from `salvageEmptyLimitStop`): ONE bounded wrap-up turn (`child.Reopen()` + `MaxTurns=1` pin
-+ the `salvageWrapUpPrompt`) to coax a partial summary. A budget-stopped child remains subject to
-its carried budget; only the team lead's synthesis uses an internal non-zero run baseline. Stage 2,
++ the `salvageWrapUpPrompt`) to coax a partial summary. For exactly one `StopBudget`
+cleanup re-drive, the current main total is its non-mutating baseline; all other salvage
+paths retain the zero baseline. Stage 2,
 if the salvage ALSO produced nothing, is `digestChildActivity`: the
 child's last non-empty `RoleAssistant` text walked backwards out of its own history (the
 `closeOutInterruptedTurn` idiom), clamped (`clampRunes`, not `clampPreview` — multi-line own-output,
@@ -6406,8 +6411,9 @@ mid-conversation (`docs/adr/0027-cloud-native.md` ledger rows 1/2/3):
   `TestResetToIdlePreservesUsage` (mutation-verified: adding `s.Usage = Usage{}` fails it).
   A reused child/member session's per-engine `MaxRunTokens` brake is CUMULATIVE across
   `Reopen` (team rounds, structured-output validation retries), which is the intended
-  "cap the whole call" reading. The team lead's synthesis run is the only exception: its
-  private run baseline preserves lifetime accounting while allowing the deliverable.
+  "cap the whole call" reading. The team lead's synthesis run and exactly one
+  budget-stopped free-text Subagent cleanup re-drive are the only exceptions: each private
+  run baseline preserves lifetime accounting while allowing its bounded deliverable.
   The team-AGGREGATE budget is unchanged (it sums per-round `EvResult.Usage`, the per-run delta).
 - **The snapshot (`sessnap.Snapshot`) gained `profile,omitempty` + `provider_id,omitempty`
   + `model_id,omitempty` (strings) + `usage` (a `*session.Usage` POINTER for true

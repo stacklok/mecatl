@@ -14,7 +14,10 @@ func TestSessionTitleGeneration_Scenario2_TitleMetadataRoundTrip(t *testing.T) {
 	s.SetTitleGeneration(session.TitleGenerationPending)
 	s.RecordTitleSourcePrompt("first principal prompt")
 	s.RecordTitleAttempt(session.TitleAttempt{ID: "attempt-1", Outcome: session.TitleAttemptDeferred})
-	if got, want := s.TitleRevision, uint64(3); got != want {
+	if err := s.RenameTitle("operator title"); err != nil {
+		t.Fatalf("RenameTitle: %v", err)
+	}
+	if got, want := s.TitleRevision, uint64(4); got != want {
 		t.Fatalf("TitleRevision before snapshot = %d, want %d", got, want)
 	}
 	s.RecordTokenUsage(session.UsageKindSessionTitle, "provider", "model", session.Usage{InputTokens: 3, OutputTokens: 5})
@@ -37,7 +40,13 @@ func TestSessionTitleGeneration_Scenario2_TitleMetadataRoundTrip(t *testing.T) {
 	if len(attempts) != 1 || attempts[0].ID != "attempt-1" || attempts[0].Outcome != session.TitleAttemptDeferred {
 		t.Errorf("TitleAttempts = %#v, want deferred attempt", attempts)
 	}
-	if got, want := restored.TitleRevision, uint64(3); got != want {
+	if got, want := restored.Title, "operator title"; got != want {
+		t.Errorf("Title = %q, want %q", got, want)
+	}
+	if got, want := restored.TitleProvenance, session.TitleProvenanceOperator; got != want {
+		t.Errorf("TitleProvenance = %q, want %q", got, want)
+	}
+	if got, want := restored.TitleRevision, uint64(4); got != want {
 		t.Errorf("TitleRevision = %d, want %d", got, want)
 	}
 	usage := restored.TokenUsage[session.UsageKindSessionTitle]

@@ -277,9 +277,8 @@ func (snap Snapshot) Restore() (*session.Session, error) {
 	for _, dto := range snap.Messages {
 		s.Conversation.Append(fromDTO(dto))
 	}
-	// Restore the inert creation labels by direct assignment — exported authoritative
-	// values, with no state transition. Profile / ProviderID / ModelID /
-	// ReasoningEffort / EnvironmentRef are opaque to the domain.
+	// Restore opaque creation labels by direct assignment. Title-specific metadata
+	// restores atomically through RestoreTitleMetadata below.
 	s.Profile = snap.Profile
 	s.ProviderID = snap.ProviderID
 	s.ModelID = snap.ModelID
@@ -292,10 +291,7 @@ func (snap Snapshot) Restore() (*session.Session, error) {
 	// inert stored label, not lifecycle state, so it does not belong in
 	// RestoreState's state-machine parameter list.
 	s.BeginRun(snap.RunID)
-	s.Title = snap.Title
-	s.TitleProvenance = snap.TitleProvenance
-	s.RestoreTitleMetadata(snap.TitleGeneration, snap.TitleSourcePrompts, snap.TitleAttempts)
-	s.TitleRevision = snap.TitleRevision
+	s.RestoreTitleMetadata(snap.Title, snap.TitleProvenance, snap.TitleRevision, snap.TitleGeneration, snap.TitleSourcePrompts, snap.TitleAttempts)
 	// The identity labels go through the WRITE-ONCE aggregate method rather than a
 	// field poke (Session is an aggregate) and rather than a RestoreState
 	// parameter (that widening is Changed/breaking; this stays Added/minor).

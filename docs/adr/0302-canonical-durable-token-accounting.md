@@ -29,7 +29,11 @@ budget baseline; there is no new externally callable reset API.
 
 At the start of an ordinary run, the baseline is zero. The run's budget consumption is the cumulative lifetime main usage accrued above that baseline; normal `Result.Usage` remains the usage accrued by that run. Auxiliary kinds never affect either calculation.
 
-Only the team lead's synthesis run sets its baseline to the current cumulative `token_usage[main]` total. This gives synthesis its own `MaxRunTokens` allowance after a budget-stopped working run without resetting or rewriting lifetime accounting. No other regular call, child, resume, or auxiliary operation receives a non-zero baseline.
+Only the team lead's synthesis run and exactly one cleanup re-drive for a free-text
+Subagent that stopped at `StopBudget` set their baseline to the current cumulative
+`token_usage[main]` total. This gives each bounded deliverable phase its own
+`MaxRunTokens` allowance without resetting or rewriting lifetime accounting. All other
+ordinary calls, children, resumes, retries, and auxiliary operations use zero baseline.
 
 The baseline is internal run state, not session state: it is not persisted, projected, exposed by a port, or made callable by clients. A restarted or subsequent run starts according to its own entry rule, preserving the durable lifetime ledger and the deprecated compatibility mirror.
 

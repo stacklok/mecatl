@@ -132,16 +132,17 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 - **Durable main-usage budget baseline** — `Session.Usage` is now permanently the
   deprecated lifetime mirror of `TokenUsage[UsageKindMain].Total`. `MaxRunTokens`
-  measures usage since an immutable internal run baseline; ordinary runs use zero and
-  team-lead synthesis captures its current main total without mutating session
-  accounting. Auxiliary usage remains outside this budget and `EvResult.Usage`.
+  measures usage since an immutable internal run baseline; ordinary runs use zero, while
+  team-lead synthesis and exactly one `StopBudget` free-text Subagent cleanup capture
+  their current main total without mutating session accounting. Auxiliary usage remains
+  outside this budget and `EvResult.Usage`.
 
 - **Simplified title-model token accounting** — removes the title-specific
   `session.AuxiliaryUsage`/`AuxiliaryOperation` API and its per-attempt ledger.
   `Session.RecordTokenUsage` records canonical usage by kind and opaque selected-model
-  attribution, and `RestoreTitleMetadata` now restores title lifecycle metadata only.
-  Removed APIs and the changed restore signature are breaking; pre-v1 this is a minor
-  compatibility classification.
+  attribution, and `RestoreTitleMetadata` now atomically restores the complete durable
+  title metadata, including its revision. Removed APIs and the changed restore signature
+  are breaking; pre-v1 this is a minor compatibility classification.
 
 - **Title-attempt timestamps** — `session.TitleAttempt.CreatedAt` is removed.
   Attempt identity and outcome remain sufficient for the lifecycle and UI failure
