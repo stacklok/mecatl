@@ -607,7 +607,7 @@ func (s *sessionsState) handleRenameKey(msg tea.KeyPressMsg) tea.Cmd {
 	}
 	if key.Matches(msg, s.deps.keys.Choose) {
 		s.renaming, s.actionLoading = false, true
-		return client.RenameSessionCmd(s.deps.ctx, s.manager, s.actionID, s.renameInput.Value())
+		return client.RenameSessionCmdWithToken(s.deps.ctx, s.manager, s.actionID, s.renameInput.Value(), 0)
 	}
 	var cmd tea.Cmd
 	s.renameInput, cmd = s.renameInput.Update(msg)

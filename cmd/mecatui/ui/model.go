@@ -481,7 +481,7 @@ type Model struct {
 	// path clamps + sanitizes it; this field holds the raw adopted title.
 	sessionTitle            string
 	sessionTitleProvenance  string
-	titleRevision           uint64
+	sessionTitleRevision    uint64
 	titleRenameRequestToken uint64
 	titleFailedAttemptID    string
 	statusMsg               string
@@ -1029,7 +1029,7 @@ func New(deps Deps) Model {
 		m.sessionID = resume.Row.ID
 		m.sessionTitle = resume.Row.Title
 		m.sessionTitleProvenance = resume.Row.TitleProvenance
-		m.titleRevision = resume.Snapshot.TitleRevision
+		m.sessionTitleRevision = resume.Snapshot.TitleRevision
 		m.sessionState = resume.Snapshot.State
 		m.sessionCreatedAt = resume.Snapshot.CreatedAt
 		m.sessionModifiedAt = resume.Row.ModifiedAt
@@ -1095,7 +1095,7 @@ func (m Model) resetSessionDerived() Model {
 	// must not leave a stale label on its new session.
 	m.sessionTitle = ""
 	m.sessionTitleProvenance = ""
-	m.titleRevision = 0
+	m.sessionTitleRevision = 0
 	m.titleRenameRequestToken = 0
 	m.titleFailedAttemptID = ""
 	// Drop any pending permission modal — and the FIFO queue behind it plus the

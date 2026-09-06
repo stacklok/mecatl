@@ -61,11 +61,6 @@ func (c *Client) DeleteSession(ctx context.Context, id string) error {
 	return nil
 }
 
-// RenameSessionCmd performs RenameSession off the reducer goroutine.
-func RenameSessionCmd(ctx context.Context, r SessionRenamer, id, title string) tea.Cmd {
-	return RenameSessionCmdWithToken(ctx, r, id, title, 0)
-}
-
 // RenameSessionCmdWithToken correlates an asynchronous rename with a UI request.
 func RenameSessionCmdWithToken(ctx context.Context, r SessionRenamer, id, title string, requestToken uint64) tea.Cmd {
 	return func() tea.Msg {

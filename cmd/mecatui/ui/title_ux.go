@@ -70,14 +70,14 @@ func (m Model) onSessionTitle(msg client.SessionTitleMsg) Model {
 
 func (m Model) adoptTitle(title, provenance string, revision uint64) (Model, bool) {
 	if revision == 0 {
-		if m.titleRevision != 0 {
+		if m.sessionTitleRevision != 0 {
 			return m, false
 		}
 	} else {
-		if revision <= m.titleRevision {
+		if revision <= m.sessionTitleRevision {
 			return m, false
 		}
-		m.titleRevision = revision
+		m.sessionTitleRevision = revision
 	}
 	if title != "" {
 		m.sessionTitle = title
