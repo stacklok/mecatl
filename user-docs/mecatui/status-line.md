@@ -134,10 +134,20 @@ these semantic tokens:
 `text`, `muted`, `primary`, `secondary`, `accent`, `success`, `warning`, `error`,
 and `info`.
 
-A link keeps its display text separate from its destination:
+A link keeps its display text separate from its destination. `<link>` is a
+StatusML element, **not** the HTML `<a>` element. It must be a direct child of
+`<header>` or `<footer>` and its contents must be plain text; semantic-token
+and nested-link children are not supported:
 
 ```text
 <footer><link href="https://docs.example.test/status">status docs</link></footer>
+```
+
+These forms are invalid:
+
+```text
+<footer><a href="https://docs.example.test/status">status docs</a></footer>
+<footer><link href="https://docs.example.test/status"><text>status docs</text></link></footer>
 ```
 
 ### Escaping dynamic command output
@@ -172,11 +182,31 @@ or validate it with a URL parser before producing the StatusML document.
 
 Only bounded `http` and `https` URLs without user information are retained. Until
 terminal hyperlink support is added, a link is rendered as theme-styled underlined
-text rather than an OSC 8 sequence. Malformed or unknown markup is literalized;
-unsafe link destinations lose their destination but retain their display text.
-Control characters, including ANSI, OSC, newline, tab, and Unicode line-separator
-controls, are removed from markup text, link metadata, and theme data before rendering.
-StatusML is always rendered as one terminal line.
+text rather than an OSC 8 sequence. Unsafe link destinations lose their destination
+but retain their display text. Control characters, including ANSI, OSC, newline, tab,
+and Unicode line-separator controls, are removed from markup text, link metadata,
+and theme data before rendering. StatusML is always rendered as one terminal line.
+
+### Command failures and troubleshooting
+
+A status command has a one-second invocation deadline and a combined 4 KiB
+`stdout`/`stderr` limit. Its complete combined output must be one valid StatusML
+document. In particular, do not write logs, warnings, tracebacks, or progress output
+to `stderr`: it is combined with `stdout`, so it makes the document invalid.
+
+If the executable cannot start, exits unsuccessfully, times out, exceeds the output
+limit, or emits malformed StatusML, mecatui keeps the most recently successful custom
+surface and marks it `[stale]`. If it has no successful custom surface yet, it instead
+uses the shipped default surface. The command does not receive a failure result or
+retry signal, and `/diagnostics` does not currently include status-command failures or
+captured output. `[stale]` is therefore the only in-client failure indication; it is
+not a machine-readable feedback channel for the command.
+
+Test a command independently with representative JSON input before configuring it.
+Have it write exactly one StatusML document to standard output, and send any
+command-specific diagnostics to a separate destination that is not its standard
+error stream. StatusML markup used directly in a template is safely literalized when
+malformed; malformed command output instead triggers the fallback behavior above.
 
 The v1 token-to-palette mapping is a best effort, not a cross-widget compatibility
 promise. [Issue #799](https://github.com/stacklok/mecatl/issues/799) owns the
