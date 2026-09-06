@@ -205,7 +205,7 @@ mailbox). See the delegation-capabilities note below.
 
 | Flag | Default | Meaning |
 | --- | --- | --- |
-| `--max-run-tokens` | `0` (**unlimited**) | **Default: unlimited** (`0` disables the brake). Maximum **cumulative input + output tokens per agent run**. A run that crosses it ends cleanly with `stop=budget` (terminal `StopBudget`). The budget is **inherited by every Subagent / Parallel branch / team member**, so a delegation fan-out cannot blow past it. Resuming a Subagent resets its turn and tool-call counters but preserves its cumulative token usage, so `resume` does not replenish this budget. Opt in by passing a positive value. |
+| `--max-run-tokens` | `0` (**unlimited**) | **Default: unlimited** (`0` disables the brake). Maximum **cumulative input + output tokens for each engine's own session**. A run that crosses it ends cleanly with `stop=budget` (terminal `StopBudget`). The configured value is **inherited independently by every Subagent / Parallel branch / team member**; parent usage and `EvResult` do not include child spend, so a delegation fan-out can exceed `--max-run-tokens`. Cross-tree aggregate observability and enforcement are deferred and out of scope. Resuming a Subagent resets its turn and tool-call counters but preserves its cumulative token usage, so `resume` does not replenish that child's budget. Opt in by passing a positive value. |
 | `--max-team-tokens` | `0` (**unlimited**) | **Default: unlimited** (`0` disables the brake). Maximum **cumulative input + output tokens per team run**, summed across **all members and rounds**. When crossed the team stops scheduling new rounds — the **in-flight round and the lead's synthesis still complete**, and the report states the budget stop. Applies to the `Team` tool and gRPC `CreateTeam`; a per-call Team `max_team_tokens` may only **tighten** it, and so may the wire `CreateTeamRequest.max_team_tokens` (HTTP: `"max_team_tokens"` in the create body). The outcome (incl. `budget_exhausted` and the `"budget"` stop) rides the **terminal `TeamEvent.outcome` frame** both `RunTeam` surfaces (gRPC stream + HTTP SSE) end with. **Orthogonal** to `--max-run-tokens` (per-run; both compose). |
 | `--enable-parallel` | `true` | register the **Parallel** fan-out tool (N parallel isolated child branches). On by default; `=false` disables it. *(Renamed from the former `--enable-fork`.)* |
 | `--websearch` | `""` (on) | **WebSearch** **master switch**: web search is **ON by default** (the Exa anonymous tier — no key, no config). Pass `--websearch=off` to **disable** it entirely (the kill switch — no outbound search calls; the tool reports it is disabled). Any value other than `off` (or unset) leaves web search enabled. Mirrors `--guardrails`. |
@@ -256,7 +256,8 @@ mailbox). See the delegation-capabilities note below.
 > over a dedicated `parallel.*` event family, and its result carries the preserved
 > fork-workspace paths. A **Team** additionally honours a **team-wide token budget**
 > (`--max-team-tokens`, **default: unlimited**, tightenable per call) checked at the round boundary — orthogonal
-> to the per-run `--max-run-tokens`, which still bounds each member drive. Team stream
+> to the per-engine `--max-run-tokens`, which still bounds each member session's own cumulative
+> usage. Team stream
 > events are intentionally watchable but bounded: member previews/tasks/findings are
 > capped, permission asks are never forwarded, and `team.end` includes closed-enum
 > member dispositions. (The `mecatui` `ctrl+a` overlay surfaces all three under

@@ -31,7 +31,7 @@ By default a subagent is **read-only**: it can Read/Grep/Glob and run build/test
 | `agent` | Route to a named specialist agent definition instead of the default explorer (see [Extension points: agent definitions](/building/extension-points/agent-definitions.md)). |
 | `model` | Pin this call to a specific model — a cheaper one for wide fan-out, a stronger one for deep analysis. Omit to inherit the parent's model. |
 | `max_turns` / `max_tool_calls` | Tighten-only caps on this call — you can make a subagent stricter than the operator's default, never looser. |
-| `max_run_tokens` | A cumulative input+output token budget for this call, tighten-only. Omit it in almost all cases — the default is inherited and usually unlimited. If you do set one, values below 25,000 are automatically raised to that floor, since the system prompt and project instructions get replayed every turn. |
+| `max_run_tokens` | A cumulative input+output token budget for this child engine's session, tighten-only. Omit it in almost all cases — the configured default is inherited independently and usually unlimited. This does not cap parent or delegation-tree spend. If you do set one, values below 25,000 are automatically raised to that floor, since the system prompt and project instructions get replayed every turn. |
 | `timeout_ms` | A wall-clock deadline; exceeding it cancels the child and returns a time-budget error. |
 | `output_schema` | A JSON schema for a structured result, when you need to mechanically consume the answer (e.g. comparing several subagents). The child is given a `SubmitResult` tool and must deliver by calling it; a bad submission gets up to two bounded correction retries before the call gives up. |
 | `fork` | Seed the child from a copy of your current conversation instead of an empty one, so it inherits everything you've already established. Runs on your model; not combinable with `model`, `agent`, or `resume`. |
@@ -100,7 +100,7 @@ When the team finishes, `Team`'s result is **one consolidated report** the lead 
 
 ### Team-wide token budget
 
-A team-level token ceiling (operator flag `--max-team-tokens`, default unlimited) sums usage across every member and round. If a call sets its own `max_team_tokens`, it can only tighten the operator's default, never loosen it. Crossing the budget stops the team from scheduling new rounds — the in-flight round and the lead's final synthesis still complete, so you always get a report, and it states that the budget stop happened. This is separate from the per-run token budget every individual member inherits.
+A team-level token ceiling (operator flag `--max-team-tokens`, default unlimited) sums usage across every member and round. If a call sets its own `max_team_tokens`, it can only tighten the operator's default, never loosen it. Crossing the budget stops the team from scheduling new rounds — the in-flight round and the lead's final synthesis still complete, so you always get a report, and it states that the budget stop happened. This is separate from the per-engine token budget that every individual member inherits and enforces against its own session usage.
 
 ## Automatic model routing
 

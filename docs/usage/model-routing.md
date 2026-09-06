@@ -217,12 +217,15 @@ models:
 - **Cost note (CWE-770):** an untrusted/peer-injected task prompt can **steer** the
   classifier toward your most-expensive category (the breaker only counts *misses*, not
   steered-but-valid classifications). It is **bounded** — the router can only pick from
-  *your* taxonomy, the provider is fixed, and **`--max-run-tokens`** (plus
-  `--max-team-tokens` and the per-call `max_run_tokens`) is the actual spend ceiling. The
+  *your* taxonomy, the provider is fixed, and each engine's **`--max-run-tokens`**
+  (plus the separate team-wide `--max-team-tokens` and a child per-call
+  `max_run_tokens` override) is its own spend ceiling. Parent usage does not include
+  child spend, although classifier calls still count against the parent engine's
+  ceiling; delegation-tree aggregate enforcement is deferred and out of scope. The
   budget caps a routed child regardless of the chosen model **and** (since #92) folds each
   classifier call's own token spend into the parent run's cumulative `--max-run-tokens`, so
   repeated classifications cannot run up unbounded classifier cost either. Keep the category
-  cost range modest and rely on the token budget as the hard ceiling.
+  cost range modest and rely on the per-engine token budget as that engine's hard ceiling.
 
 #### Authoring skills & agent definitions for model selection
 

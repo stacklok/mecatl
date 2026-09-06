@@ -486,7 +486,7 @@ erDiagram
 
 - **budget-enforced-at-turn-boundary** — The token budget is checked at a `Turn` boundary: an in-flight `Turn` always completes, and the budget then stops the next `Turn` cleanly.
 
-- **delegation-budget-inherited-tighten-only** — A shared token budget is inherited by every delegated `Subagent` and `TeamMember`; a per-call override may only tighten it, never raise it.
+- **delegation-budget-inherited-tighten-only** — Every delegated `Subagent` and `TeamMember` independently inherits the configured per-engine token ceiling; each checks only its own persisted session usage, so a delegation tree can exceed that ceiling. A per-call override may only tighten it, never raise it; cross-tree aggregate observability and enforcement are deferred and out of scope.
 
 - **rehydration-needs-snapshot-plus-log** — Rehydrating a `Session` after a restart restores the aggregate from its snapshot and re-derives volatile state — learned `PermissionRules` and the pre-compaction `Conversation` archive — by replaying the `EventLog`; the snapshot alone is insufficient.
 
@@ -617,7 +617,7 @@ erDiagram
 
 1. The model issues delegation `ToolCalls` that spawn several `Subagents` from an `AgentDef`, bounded by the concurrency gate.
 2. Each `Subagent` runs a read-only child loop and cannot spawn its own `Subagents`.
-3. A child `PermissionAsk` surfaces without raw arguments; the children's token spend draws down the inherited budget.
+3. A child `PermissionAsk` surfaces without raw arguments; the child enforces the inherited per-engine budget against its own session usage, not a parent-drawn aggregate.
 
 **Invariants touched**
 
@@ -626,7 +626,7 @@ erDiagram
 - **subagent-fanout-bounded** — Concurrent child agents are bounded by a child-concurrency gate.
 - **child-ask-redacts-raw-args** — A child `PermissionAsk` surfaced to a parent or reviewer never carries the child's raw `ToolCall` arguments.
 
-- **delegation-budget-inherited-tighten-only** — A shared token budget is inherited by every delegated `Subagent` and `TeamMember`; a per-call override may only tighten it, never raise it.
+- **delegation-budget-inherited-tighten-only** — Every delegated `Subagent` and `TeamMember` independently inherits the configured per-engine token ceiling; each checks only its own persisted session usage, so a delegation tree can exceed that ceiling. A per-call override may only tighten it, never raise it; cross-tree aggregate observability and enforcement are deferred and out of scope.
 
 
 ### A team works a shared task and the lead synthesizes
@@ -647,7 +647,7 @@ erDiagram
 
 - **team-returns-lead-synthesis** — A `Team` returns the `Lead`'s consolidated synthesis, not concatenated `TeamMember` output.
 
-- **delegation-budget-inherited-tighten-only** — A shared token budget is inherited by every delegated `Subagent` and `TeamMember`; a per-call override may only tighten it, never raise it.
+- **delegation-budget-inherited-tighten-only** — Every delegated `Subagent` and `TeamMember` independently inherits the configured per-engine token ceiling; each checks only its own persisted session usage, so a delegation tree can exceed that ceiling. A per-call override may only tighten it, never raise it; cross-tree aggregate observability and enforcement are deferred and out of scope.
 
 
 ### A run crosses the token budget

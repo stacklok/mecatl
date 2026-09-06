@@ -877,7 +877,7 @@ was observed announcing actions without emitting the tool calls). `EvNoProgress`
 `type`/`stop` are strings, not enums), so no proto regen was needed; mecatui renders
 `EvNoProgress` as a muted notice and `StopNoProgress` as a `stopped · no progress` footer label.
 
-**Token budget — the shared loop-level ceiling (`StopBudget`).** `agent.Deps.MaxRunTokens`
+**Token budget — the per-engine loop-level ceiling (`StopBudget`).** `agent.Deps.MaxRunTokens`
 (0 = disabled) is a cumulative token ceiling checked at each turn BOUNDARY in
 `Engine.drive` (Step 2, after the existing `sess.StopReason()` and `ctx.Err()` checks, before
 `BeginTurn`) against the session aggregate's accumulated `session.Usage` via
@@ -896,7 +896,7 @@ UNDERCOUNTED Anthropic runs (cache-served prompt tokens never hit the budget). T
 breakdown is surfaced the same way: OpenAI's `output_tokens_details.reasoning_tokens` and
 Anthropic's `output_tokens_details.thinking_tokens` map to `ReasoningTokens` at the same two
 adapter mapping sites, as an additive observability field (NOT a budget-semantics change).
-When `total.TotalTokens() >= MaxRunTokens` the loop ends via
+When `sess.Usage.TotalTokens() >= MaxRunTokens` the loop ends via
 `terminateComplete(…, session.StopBudget, …)` — a NON-error completed-state terminal
 (Reopen-recoverable), not a promise that a delegated deliverable is complete. The boundary check
 means an in-flight turn always COMPLETES (no mid-stream abort → no-replay-after-first-chunk holds);
@@ -904,7 +904,11 @@ a turn whose usage massively overshoots still finishes, then the budget trips be
 It is NOT a `port.LLMRequest` field (the request stays provider-neutral) — it is composition-tunable
 (`app.Config.MaxRunTokens` → `--max-run-tokens`) and INHERITED by every engine via
 `engineDepsForProvider`; `childEngineDepsForProvider` delegates there and does NOT clear it, so
-Subagent/team-member/lead/Parallel children inherit the same ceiling. `StopBudget` is the
+Subagent/team-member/lead/Parallel children inherit the configured value as an
+independent ceiling against their own persisted session usage. Parent usage and
+`EvResult` do not fold in child spend, so a delegation tree can exceed `MaxRunTokens`;
+cross-tree aggregate observability and enforcement are deferred and out of scope.
+`StopBudget` is the
 PER-ENGINE half of the AGENT-TEAMS-SPIKE's named "Deferred 4A" brake — landed once for every
 delegation path and cumulative over that session's persisted usage; the team-AGGREGATE half is the
 separate `WithTeamTokenBudget` below. `Reopen` does not reset usage. The deliberate delivery-only
@@ -937,7 +941,7 @@ status:" line both state the budget stop, so BOTH entry points surface it. It is
 (`app.Config.MaxTeamTokens` → `--max-team-tokens`; `server.Config.TeamTokenBudget` for the gRPC
 CreateTeam path; `agent.WithTeamToolTokenBudget` for the in-catalog Team tool) and a per-call Team
 `max_team_tokens` may only TIGHTEN it (`tightenLimit`). It is ORTHOGONAL to the per-engine
-`MaxRunTokens` (which bounds each member session's cumulative usage); both compose. The Supervisor
+`MaxRunTokens` (which bounds each member session's own cumulative usage); both compose. The Supervisor
 sum (`TeamOutcome.Usage`) is authoritative for the budget gate; the TeamTool sink's `turn.end` sum
 (`memberEventUsage`) stays authoritative for the `EvTeamEnd` payload — they are equal by
 construction, documented not reconciled. Guards: `agent.TestTeamTokenBudget*` /
@@ -2841,8 +2845,8 @@ reaching into the live `*team.Team`. The headline regression guard is
 `TestTeamToolRefusalSynthesisFallsBackToLedger`: a refusal synthesis over a populated ledger must never
 reach the parent.
 
-> **4A CLOSED, both halves.** The per-RUN half is the SHARED `agent.Deps.MaxRunTokens` loop
-> ceiling (see the Token-budget note above): a runaway team member crosses it and ends with
+> **4A CLOSED, both halves.** The per-RUN half is the per-engine `agent.Deps.MaxRunTokens` loop
+> ceiling (see the Token-budget note above): a runaway team member crosses its own ceiling and ends with
 > `session.StopBudget`, which the supervisor handles exactly like any other stopped member
 > (the resilient-deliverable safety-net fallback still applies; a budget-stopped lead stays
 > RESUMABLE so its one synthesis turn still runs — guarded by
@@ -6353,7 +6357,7 @@ mid-conversation (`docs/adr/0027-cloud-native.md` ledger rows 1/2/3):
 - **`Usage` is mutated through `RecordUsage`** (running-only guard, mirroring
   `RecordToolResults`); the loop calls it alongside its own per-run total, and the
   `MaxRunTokens` budget brake (`budgetExhausted`) is evaluated against the CUMULATIVE
-  `sess.Usage`, not the per-run delta — so the budget survives reopen/restart while the
+  `sess.Usage` of that engine's own session, not the per-run delta — so the budget survives reopen/restart while the
   per-run `EvResult.Usage` figure (which the team supervisor sums per round) is unchanged.
 - **`resetToIdle` DELIBERATELY preserves `Usage`** (the divergence from `Counters`, which it
   still zeroes) so the budget survives the Reopen/Interrupt/Recover seams — pinned by

@@ -172,9 +172,9 @@ In `mecatui`, the context meter's denominator can briefly show as unresolved (`c
 
 ### Token budget
 
-You can bound the total token spend for a run with `MaxRunTokens`. This is checked at the turn boundary — never mid-stream, so an in-flight turn always completes — against the session's accumulated input and output tokens (cache tokens are excluded).
+You can bound one engine session's cumulative token spend with `MaxRunTokens`. This is checked at the turn boundary — never mid-stream, so an in-flight turn always completes — against that session's accumulated input and output tokens (cache tokens are excluded).
 
-When the budget is crossed, the run ends cleanly with stop reason `budget`. That is a non-error terminal: the session is in `completed` state and can be reopened to continue. Every child run — subagent, parallel branch, team member — inherits the same budget. A per-call override can only tighten it, never raise it.
+When the budget is crossed, the run ends cleanly with stop reason `budget`. That is a non-error terminal: the session is in `completed` state and can be reopened to continue. Every child engine — subagent, parallel branch, team member — inherits the configured value but enforces it only against its own persisted session usage. Parent usage does not include child spend, so the total delegation tree can exceed `MaxRunTokens`; cross-tree aggregate observability and enforcement are deferred and out of scope. A per-call override can only tighten a child's ceiling, never raise it.
 
 :::note[Default]
 
