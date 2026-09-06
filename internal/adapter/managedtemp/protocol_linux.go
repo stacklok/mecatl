@@ -449,27 +449,45 @@ func processStartIdentity(pid int) (string, error) {
 }
 
 func validTestHomeNamespace(marker string) bool {
-	commands := filepath.Dir(marker)
-	workspace := filepath.Dir(commands)
-	workspaces := filepath.Dir(workspace)
-	namespace := filepath.Dir(workspaces)
-	if filepath.Base(commands) != "commands" || filepath.Base(workspaces) != "workspaces" {
+	commands, workspace, workspaces, namespace := testHomeNamespacePaths(marker)
+	if filepath.Base(commands) != "commands" || filepath.Base(workspaces) != "workspaces" || !validPrivateTestHomeDirs(commands, workspace, workspaces, namespace) {
 		return false
 	}
-	for _, path := range []string{commands, workspace, workspaces, namespace} {
+	manifest, ok := validTestHomeWorkspaceManifest(workspace)
+	return ok && validTestHomeWorkspaceIndex(namespace, manifest)
+}
+
+func testHomeNamespacePaths(marker string) (commands, workspace, workspaces, namespace string) {
+	commands = filepath.Dir(marker)
+	workspace = filepath.Dir(commands)
+	workspaces = filepath.Dir(workspace)
+	namespace = filepath.Dir(workspaces)
+	return commands, workspace, workspaces, namespace
+}
+
+func validPrivateTestHomeDirs(paths ...string) bool {
+	for _, path := range paths {
 		info, err := os.Lstat(path)
 		if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm() != privateDirMode || !ownedByCurrentUser(info) {
 			return false
 		}
 	}
+	return true
+}
+
+func validTestHomeWorkspaceManifest(workspace string) (workspaceManifest, bool) {
 	workspaceData, err := os.ReadFile(filepath.Join(workspace, "workspace.manifest"))
 	if err != nil {
-		return false
+		return workspaceManifest{}, false
 	}
 	var manifest workspaceManifest
 	if json.Unmarshal(workspaceData, &manifest) != nil || manifest.Version != manifestVersion || manifest.Key != filepath.Base(workspace) || manifest.Backend == "" || manifest.Identity == "" {
-		return false
+		return workspaceManifest{}, false
 	}
+	return manifest, true
+}
+
+func validTestHomeWorkspaceIndex(namespace string, manifest workspaceManifest) bool {
 	indexData, err := os.ReadFile(filepath.Join(namespace, "workspace-index.manifest"))
 	if err != nil {
 		return false
