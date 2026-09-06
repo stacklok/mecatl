@@ -207,7 +207,7 @@ func parseFlags(argv []string) (flags, error) {
 	fs.StringVar(&f.storeDir, "store-dir", "", "directory for the JSONL session store (empty -> in-memory store)")
 	fs.StringVar(&f.shell, "shell", "/bin/sh", "shell used to execute Bash-tool commands; empty disables Bash")
 	fs.BoolVar(&f.noBash, "no-bash", false, "disable the Bash tool entirely (shell-less mode); overrides --shell")
-	fs.IntVar(&f.maxRunTokens, "max-run-tokens", 0, "max cumulative input+output tokens per run; a run that crosses it ends cleanly with stop=budget. 0 = unlimited")
+	fs.IntVar(&f.maxRunTokens, "max-run-tokens", 0, "max cumulative input+output tokens per engine run; the same ceiling is inherited but independently enforced for children, whose spend is not charged to the parent, so a delegation tree can exceed it. A run that crosses it ends cleanly with stop=budget. 0 = unlimited")
 	fs.IntVar(&f.maxTeamTokens, "max-team-tokens", 0, "max cumulative input+output tokens per team run; 0 = unlimited")
 	fs.IntVar(&f.maxTurns, "max-turns", 0, "max model calls (turns) for the run; a run that crosses it ends cleanly with stop=max_turns. 0 (default) uses the deployment default; a positive value caps this single-shot run. Orthogonal to --max-run-tokens (turns vs tokens; both compose)")
 

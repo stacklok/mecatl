@@ -58,6 +58,8 @@ mecatequi \
   model treats it as data to act on, not instructions to obey.
 - **`--timeout`** is the wall-clock backstop (orthogonal to `--max-run-tokens` /
   `--max-turns`); a timed-out run exits 1 with `stop_reason=cancelled`.
+- **`--max-run-tokens`** is a per-engine cumulative token ceiling, not a currency billing cap: the same value is inherited but independently enforced by the main engine and every Subagent, Parallel branch, team member, and lead synthesis. Child spend is not charged to the parent, so a delegation tree can exceed it. A child call's `max_run_tokens` can only tighten its own ceiling.
+- **`--max-team-tokens`** is separate from `--max-run-tokens`: it aggregates team rounds and, once crossed, prevents new rounds at a round boundary while the in-flight round and lead synthesis finish. A Team call's `max_team_tokens` can only tighten it. Neither flag enforces or reports a cross-tree aggregate.
 - **`--mcp-server <name>=<url>` + `MCP_<NAME>_TOKEN`** wire the run's MCP endpoints
   (repeatable). The scheduler injects a **short-lived per-run identity** as
   `MCP_<NAME>_TOKEN` (name upper-cased); the run presents it as

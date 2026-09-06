@@ -716,9 +716,9 @@ scenarios:
     steps:
       - "The model issues delegation `ToolCalls` that spawn several `Subagents` from an `AgentDef`, bounded by the concurrency gate."
       - "Each `Subagent` runs a read-only child loop and cannot spawn its own `Subagents`."
-      - "A child `PermissionAsk` surfaces without raw arguments; the children's token spend draws down the inherited budget."
+      - "A child `PermissionAsk` surfaces without raw arguments; every child gets the configured `MaxRunTokens` value as its own independently enforced ceiling, so child spend does not draw down the parent."
     invariants_touched:
-      [subagent-no-nesting, subagent-read-only-sandbox, subagent-fanout-bounded, child-ask-redacts-raw-args, delegation-budget-inherited-tighten-only]
+      [subagent-no-nesting, subagent-read-only-sandbox, subagent-fanout-bounded, child-ask-redacts-raw-args, per-engine-budget-inherited-tighten-only]
 
   - name: A team works a shared task and the lead synthesizes
     actors: [Principal, Lead]
@@ -726,8 +726,10 @@ scenarios:
       - "A `Team` is spawned with a trusted goal; each `TeamMember` runs an isolated loop and records findings to the shared ledger."
       - "Peer messages between members are treated as untrusted input."
       - "`Lead` reads the ledger and returns one consolidated synthesis as the `Team`'s result."
+      - "Each `TeamMember` and the `Lead` synthesis use the configured `MaxRunTokens` value as independently enforced per-engine ceilings; their spend does not draw down the parent."
+      - "The separate `MaxTeamTokens` ceiling aggregates team rounds: when crossed it prevents new rounds, while the in-flight round and lead synthesis finish."
     invariants_touched:
-      [team-goal-trusted-peers-untrusted, member-isolated-loop, team-returns-lead-synthesis, delegation-budget-inherited-tighten-only]
+      [team-goal-trusted-peers-untrusted, member-isolated-loop, team-returns-lead-synthesis, per-engine-budget-inherited-tighten-only, team-budget-round-aggregate]
 
   - name: A run crosses the token budget
     actors: [Operator]
@@ -818,10 +820,19 @@ invariants:
     statement: >
       The token budget is checked at a `Turn` boundary: an in-flight `Turn`
       always completes, and the budget then stops the next `Turn` cleanly.
-  - id: delegation-budget-inherited-tighten-only
+  - id: per-engine-budget-inherited-tighten-only
     statement: >
-      A shared token budget is inherited by every delegated `Subagent` and
-      `TeamMember`; a per-call override may only tighten it, never raise it.
+      `MaxRunTokens` is the same configured ceiling for the main engine, each
+      `Subagent`, each `Parallel` branch, every `TeamMember`, and lead synthesis,
+      but each engine enforces it only against its own session usage. Child spend
+      never draws down parent usage; per-call overrides may only tighten a child's
+      ceiling. A delegation tree can therefore exceed this per-engine ceiling.
+  - id: team-budget-round-aggregate
+    statement: >
+      `MaxTeamTokens` is a distinct, tighten-only aggregate checked between team
+      rounds. Crossing it prevents new rounds; the in-flight round and lead
+      synthesis still complete. Cross-tree aggregate enforcement and observability
+      are deferred.
   - id: rehydration-needs-snapshot-plus-log
     statement: >
       Rehydrating a `Session` after a restart restores the aggregate from its

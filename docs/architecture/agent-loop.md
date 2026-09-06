@@ -84,7 +84,8 @@ A permanently-failed session that is recovered for re-entry emits a one-time
 warning before burning a provider call.
 
 A run-level **per-engine token budget** bounds that engine's loop: `Deps.MaxRunTokens`
-(`--max-run-tokens`; **default: unlimited**, `0` disables the brake) is checked at the turn boundary — never
+(`--max-run-tokens`; **default: unlimited**, `0` disables the brake) is a token
+ceiling, not a currency billing cap. It is checked at the turn boundary — never
 mid-stream, so an in-flight turn always completes — against that engine session's
 accumulated `session.Usage` (input + output; cache tokens excluded). Crossing
 it ends the run cleanly with `StopBudget` (a NON-error terminal → `completed`,

@@ -389,7 +389,7 @@ func parseFlags(argv []string) (config, error) {
 	fs.DurationVar(&cfg.llmStreamIdleTimeout, "llm-stream-idle-timeout", 180*time.Second, "max idle gap between LLM stream chunks after the first chunk; a longer stall terminates the turn (0 disables)")
 	fs.IntVar(&cfg.llmBreakerThreshold, "llm-breaker-threshold", 5, "consecutive LLM failures that open the circuit breaker (0 disables)")
 	fs.DurationVar(&cfg.llmBreakerCooldown, "llm-breaker-cooldown", 30*time.Second, "how long the LLM circuit breaker stays open before half-opening")
-	fs.IntVar(&cfg.maxRunTokens, "max-run-tokens", 0, "max cumulative input+output tokens per agent run; a run that crosses it ends cleanly with stop=budget. 0 = unlimited")
+	fs.IntVar(&cfg.maxRunTokens, "max-run-tokens", 0, "max cumulative input+output tokens per engine run; the same ceiling is inherited but independently enforced for children, whose spend is not charged to the parent, so a delegation tree can exceed it. A run that crosses it ends cleanly with stop=budget. 0 = unlimited")
 	fs.IntVar(&cfg.maxTeamTokens, "max-team-tokens", 0, "max cumulative input+output tokens per team run; 0 = unlimited")
 
 	fs.BoolVar(&cfg.noPromptCache, "no-prompt-cache", false, "disable provider-side prompt caching (ADR 0100): every adapter's cache dialect degrades to None, reproducing the pre-caching wire exactly. Caching is ON by default")
