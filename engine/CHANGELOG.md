@@ -33,18 +33,14 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   `TitlePayload.Revision`: a durable, title-specific monotonic revision that
   advances only for effective title metadata mutations. Added (minor).
 - **Canonical token-usage buckets and title lifecycle projection** — adds
-  `session.UsageKind`/`TokenUsage` and `Session.TokenUsage`, canonical token
-  usage kinds with opaque model attribution maps. Each total is normalized to
-  the sum of its model entries; legacy snapshots map unattributed usage to
-  `unknown`. `Session.Usage` and its snapshot projection
-  remain dual-written compatibility data. `SessionTitle` is the source-free
-  canonical title lifecycle projection; its nested usage is removed. Added
-  (minor); the retained wire title/provenance fields are deprecated (pre-v1
-  breaking compatibility classification).
-- **Protected canonical token-usage ledger** — adds
-  `Session.TokenUsageSnapshot` and `Session.SetUsageAttribution`; the exposed
-  `Session.TokenUsage` map remains a compatibility projection, while aggregate
-  accounting is no longer mutable through it. Added (minor).
+  `session.UsageKind`/`TokenUsage` and `Session.TokenUsageSnapshot`, canonical
+  token usage kinds with opaque model attribution maps. Each total is normalized
+  to the sum of its model entries; legacy snapshots map unattributed usage to
+  `unknown`. The snapshot is an owned read view of the aggregate's private
+  canonical ledger. `Session.Usage` remains dual-written compatibility data.
+  `SessionTitle` is the source-free canonical title lifecycle projection; its
+  nested usage is removed. Added (minor); the retained wire title/provenance
+  fields are deprecated (pre-v1 breaking compatibility classification).
 
 - **`tool.TemporaryScope`, `tool.CommandTemporaryScopeRunner`, and `tool.CommandTemporaryScopeStreamer`** ([ADR 0281](../docs/adr/0281-managed-temporary-command-leases.md)) — optional bound-runner capabilities for the closed managed/system temporary-storage scope selection. The capability carries no path or environment value and preserves the existing `CommandRunner` fallback for runners that do not manage temporary storage. Added (minor).
 

@@ -1470,8 +1470,8 @@ func TestRecordUsageKeepsLifetimeCompatibilityMirror(t *testing.T) {
 	if s.Usage != want {
 		t.Fatalf("Usage = %+v, want lifetime main total %+v", s.Usage, want)
 	}
-	if got := s.TokenUsage[UsageKindMain].Total; got != want {
-		t.Fatalf("TokenUsage[main].Total = %+v, want %+v", got, want)
+	if got := s.TokenUsageSnapshot()[UsageKindMain].Total; got != want {
+		t.Fatalf("TokenUsageSnapshot()[main].Total = %+v, want %+v", got, want)
 	}
 }
 

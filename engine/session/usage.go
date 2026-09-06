@@ -56,7 +56,6 @@ func (s *Session) recordTokenUsage(kind UsageKind, attribution string, usage Usa
 	bucket.Models[attribution] = bucket.Models[attribution].Add(usage)
 	bucket.Total = bucket.Total.Add(usage)
 	s.tokenUsage[kind] = bucket
-	s.TokenUsage = cloneTokenUsage(s.tokenUsage)
 }
 
 // TokenUsageSnapshot returns an owned copy of the canonical accounting ledger.
@@ -65,7 +64,7 @@ func (s *Session) TokenUsageSnapshot() map[UsageKind]TokenUsage {
 }
 
 // RestoreTokenUsage restores the canonical accounting ledger from trusted
-// persistence. A nil ledger is legacy data; compatibility projections are retained.
+// persistence. A nil ledger is legacy data.
 func (s *Session) RestoreTokenUsage(usage map[UsageKind]TokenUsage) {
 	s.tokenUsage = make(map[UsageKind]TokenUsage, len(usage))
 	for kind, bucket := range usage {
@@ -83,7 +82,6 @@ func (s *Session) RestoreTokenUsage(usage map[UsageKind]TokenUsage) {
 		}
 		s.tokenUsage[kind] = TokenUsage{Total: total, Models: models}
 	}
-	s.TokenUsage = cloneTokenUsage(s.tokenUsage)
 	s.Usage = s.tokenUsage[UsageKindMain].Total
 }
 

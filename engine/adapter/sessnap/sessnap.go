@@ -216,7 +216,7 @@ func Of(s *session.Session) (Snapshot, error) {
 		TitleGeneration:        s.TitleGeneration,
 		TitleSourcePrompts:     s.TitleSourcePrompts(),
 		TitleAttempts:          s.TitleAttempts(),
-		TokenUsage:             cloneTokenUsage(s.TokenUsageSnapshot()),
+		TokenUsage:             s.TokenUsageSnapshot(),
 		Kind:                   s.Kind,
 		Relationship:           relationship,
 		CreatedAt:              s.CreatedAt,
@@ -478,21 +478,6 @@ func beginTurnPreservingCounters(s *session.Session, want session.Counters) erro
 	}
 	s.Counters = want
 	return nil
-}
-
-func cloneTokenUsage(in map[session.UsageKind]session.TokenUsage) map[session.UsageKind]session.TokenUsage {
-	if len(in) == 0 {
-		return nil
-	}
-	out := make(map[session.UsageKind]session.TokenUsage, len(in))
-	for kind, bucket := range in {
-		models := make(map[string]session.Usage, len(bucket.Models))
-		for model, usage := range bucket.Models {
-			models[model] = usage
-		}
-		out[kind] = session.TokenUsage{Total: bucket.Total, Models: models}
-	}
-	return out
 }
 
 // Marshal encodes the snapshot of s as a single JSON line (no trailing newline).

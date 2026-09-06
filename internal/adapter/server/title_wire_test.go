@@ -113,7 +113,7 @@ func TestSessionTitleGeneration_Scenario5_TokenUsageRoundTripAndProjection(t *te
 	if got := usage.GetTotal(); got.GetInputTokens() != 136 || usage.GetModels()["provider/model"].GetInputTokens() != 136 {
 		t.Fatalf("canonical aggregated usage = %#v", usage)
 	}
-	summary := toProtoSessionSummary(SessionSummary{TitleMetadata: titlePayload(s), TokenUsage: s.TokenUsage})
+	summary := toProtoSessionSummary(SessionSummary{TitleMetadata: titlePayload(s), TokenUsage: s.TokenUsageSnapshot()})
 	if got := summary.GetTokenUsage()["session_title"]; got.GetTotal().GetInputTokens() != 136 {
 		t.Fatalf("summary canonical usage = %#v", got)
 	}

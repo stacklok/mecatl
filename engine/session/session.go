@@ -343,11 +343,8 @@ type Session struct {
 	Limits Limits
 	// Counters are the running totals for stop-condition evaluation.
 	Counters Counters
-	// TokenUsage is the deprecated mutable compatibility projection of the canonical
-	// ledger. Mutating it does not alter aggregate accounting; use TokenUsageSnapshot
-	// for an owned current view.
-	TokenUsage map[UsageKind]TokenUsage
 	// tokenUsage is the aggregate-owned canonical durable accounting ledger.
+	// TokenUsageSnapshot returns an owned external view.
 	tokenUsage map[UsageKind]TokenUsage
 	// usageProviderID and usageModelID are the run-scoped attribution selected by
 	// composition for a shared default engine; durable selectors remain above.
@@ -536,7 +533,6 @@ func New(id SessionID, mode PermissionMode, ref EnvironmentRef, limits Limits, c
 		Mode:            mode,
 		Conversation:    &Conversation{},
 		Limits:          limits,
-		TokenUsage:      make(map[UsageKind]TokenUsage),
 		tokenUsage:      make(map[UsageKind]TokenUsage),
 		EnvironmentRef:  ref,
 		Kind:            SessionKindMain,
