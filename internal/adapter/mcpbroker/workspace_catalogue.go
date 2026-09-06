@@ -202,8 +202,10 @@ func stageAuthenticatedRoutes(ctx context.Context, process *Process, brokerCrede
 		}
 		seen[name] = struct{}{}
 	}
-	for name := range base.routes {
-		seen[name] = struct{}{}
+	for _, route := range base.routes {
+		if route.oauth == nil {
+			seen[route.spec.Name] = struct{}{}
+		}
 	}
 	staged := make([]route, 0)
 	for _, backend := range backends {
@@ -279,7 +281,13 @@ func (p *Process) catalogueInputs(runtime *Runtime) ([]string, []route, bool) {
 	if closed || p.Runtime != runtime {
 		return nil, nil, false
 	}
-	return backends, append([]route(nil), runtime.catalogue.routes...), true
+	routes := make([]route, 0, len(runtime.catalogue.routes))
+	for _, route := range runtime.catalogue.routes {
+		if route.oauth == nil {
+			routes = append(routes, route)
+		}
+	}
+	return backends, routes, true
 }
 
 func (p *Process) catalogueStillAvailable(runtime *Runtime) bool {

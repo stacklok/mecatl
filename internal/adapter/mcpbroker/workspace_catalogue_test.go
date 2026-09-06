@@ -115,6 +115,28 @@ func TestADR_0298_FreezeAuthenticatedCatalogueStagesStaticAndLiveDefinitions(t *
 	}
 }
 
+func TestFreezeAuthenticatedCatalogueSupersedesVisibleStaticRoutes(t *testing.T) {
+	runtime := testAnonymousRuntime(t)
+	static := route{backend: "first", spec: tool.ToolSpec{Name: "mcp__first__declared", Description: "declared", Schema: json.RawMessage(`{"type":"object"}`)}, oauth: &oauthRoute{}, broker: true}
+	runtime.catalogue = &Catalogue{routes: append(runtime.catalogue.routes, static)}
+	attachment := testAttachment(t, runtime)
+	process := testCatalogueProcess(runtime, &orderedCapabilityQueries{responses: map[string]AuthenticatedCapabilities{
+		"first": {Backend: "first", Tools: []ToolDefinition{{Backend: "first", Name: "mcp__first__live", Description: "live", Schema: json.RawMessage(`{"type":"object"}`)}}},
+	}}, "first")
+	process.construction.staticByBackend = map[string][]StaticTool{"first": {{Name: "declared", Description: "declared", Schema: json.RawMessage(`{"type":"object"}`)}}}
+
+	if _, err := attachment.FreezeAuthenticatedCatalogue(t.Context(), testEnrollmentRef(), process, staticTokenSource("opaque-broker-token"), nil); err != nil {
+		t.Fatalf("FreezeAuthenticatedCatalogue: %v", err)
+	}
+	if got, want := toolNames(attachment.Tools()), []string{"mcp__anonymous__status", "mcp__first__declared", "mcp__first__live"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("frozen tools = %v, want %v", got, want)
+	}
+	declared, ok := attachment.lookupRoute("mcp__first__declared")
+	if !ok || !declared.broker || declared.oauth != nil {
+		t.Fatalf("declared frozen route = %#v, want broker route", declared)
+	}
+}
+
 func TestFreezeAuthenticatedCatalogueConcurrentFreezeHasOneCatalogue(t *testing.T) {
 	runtime := testAnonymousRuntime(t)
 	attachment := testAttachment(t, runtime)

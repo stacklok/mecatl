@@ -438,10 +438,10 @@ type MCPOAuthProfile struct {
 	// broker OAuth accepts only an explicit empty mapping until ToolHive can enforce it equivalently.
 	Network *MCPOAuthNetworkProfile `yaml:"network"`
 	// Tools optionally declares this protected backend's tool catalogue
-	// statically. Declarations avoid schema discovery but remain staged with all
-	// protected tools until workspace enrollment completes; they never trigger
-	// lazy per-tool authorization. Omitted, the backend uses authenticated
-	// discovery during that same enrollment.
+	// statically. Declarations are visible before connection; the first call
+	// starts ToolHive's aggregate authorization for every protected backend.
+	// The granted bundle unlocks the declared surface only. Omitted, the backend
+	// remains discoverable only through pre-prompt workspace enrollment.
 	Tools []MCPStaticToolProfile `yaml:"tools"`
 }
 

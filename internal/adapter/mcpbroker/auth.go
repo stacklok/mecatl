@@ -305,9 +305,12 @@ type protectedSessionTool struct {
 // resolved reports whether the caller should return immediately with
 // (result, found, err); resolved == false means a new transaction must be
 // created.
-func existingAuthorizationLocked(logical *logicalSession, backend string, hash [32]byte) (result session.ExternalAuthorization, found, resolved bool, err error) {
+func existingAuthorizationLocked(logical *logicalSession, backend string, hash [32]byte, bundle bool) (result session.ExternalAuthorization, found, resolved bool, err error) {
 	if logical.deleted {
 		return session.ExternalAuthorization{}, false, true, contract.ErrStateUnavailable
+	}
+	if bundle && logical.brokerCredential != nil {
+		return session.ExternalAuthorization{}, false, true, nil
 	}
 	if grant := logical.grants[backend]; grant != nil {
 		if grant.firstPending && grant.firstCall != hash {
@@ -316,7 +319,7 @@ func existingAuthorizationLocked(logical *logicalSession, backend string, hash [
 		return session.ExternalAuthorization{}, false, true, nil
 	}
 	for _, transaction := range logical.authorizations {
-		if transaction.backend == backend && transaction.status == session.AuthorizationPending {
+		if transaction.status == session.AuthorizationPending && (transaction.backend == backend || bundle && transaction.bundleBackends != nil) {
 			if transaction.callHash != hash {
 				return session.ExternalAuthorization{}, false, true, errors.New("broker route already has a different pending authorization")
 			}
@@ -340,9 +343,10 @@ func (t *protectedSessionTool) RequestAuthorization(ctx context.Context, call se
 	}
 	logical := t.attachment.logical
 	hash := callHash(call)
+	bundle := t.route.broker && t.attachment.runtime.process != nil && t.route.oauth == t.attachment.runtime.process.protectedTarget
 
 	logical.mu.Lock()
-	if result, found, resolved, err := existingAuthorizationLocked(logical, t.route.backend, hash); resolved {
+	if result, found, resolved, err := existingAuthorizationLocked(logical, t.route.backend, hash, bundle); resolved {
 		logical.mu.Unlock()
 		return result, found, err
 	}
@@ -378,7 +382,7 @@ func (t *protectedSessionTool) RequestAuthorization(ctx context.Context, call se
 	defer logical.mu.Unlock()
 	// Re-verify: a concurrent call (or deletion) may have already resolved this
 	// exact backend/call while the secret was resolving above.
-	if result, found, resolved, err := existingAuthorizationLocked(logical, t.route.backend, hash); resolved {
+	if result, found, resolved, err := existingAuthorizationLocked(logical, t.route.backend, hash, bundle); resolved {
 		return result, found, err
 	}
 	copyRoute := *t.route.oauth
@@ -386,6 +390,9 @@ func (t *protectedSessionTool) RequestAuthorization(ctx context.Context, call se
 		identity: authorizationIdentity{id: id, binding: session.AuthorizationBinding(binding)}, route: &copyRoute,
 		backend: t.route.backend, callHash: hash, callID: call.ID, state: state, verifier: verifier, clientSecret: secret,
 		expiresAt: t.attachment.runtime.oauth.now().Add(t.attachment.runtime.oauth.ttl), status: session.AuthorizationPending,
+	}
+	if bundle {
+		transaction.bundleBackends = append([]string(nil), t.attachment.runtime.process.construction.protectedBackends...)
 	}
 	logical.authorizations[transaction.identity] = transaction
 	if !t.attachment.runtime.registerCallbackState(state, logical, transaction) {

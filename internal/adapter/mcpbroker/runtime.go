@@ -49,10 +49,10 @@ type route struct {
 	spec     tool.ToolSpec
 	readOnly bool
 	oauth    *oauthRoute
-	// broker marks a ToolHive-routed capability admitted only after the
-	// session's aggregate workspace enrollment completed. It deliberately does
-	// not implement tool.AuthorizationRequester: the outer broker credential is
-	// reused without creating a backend-specific mecatl OAuth flow.
+	// broker marks a ToolHive-routed capability that executes with the outer
+	// broker credential. Before authorization a static declaration also has an
+	// oauth route and therefore requests the aggregate ToolHive authorization;
+	// the frozen route retains broker alone.
 	broker bool
 }
 
@@ -581,11 +581,11 @@ func (t *sessionTool) Execute(ctx context.Context, call session.ToolCall, _ tool
 		return session.ToolResult{}, err
 	}
 	call.Args = append(json.RawMessage(nil), call.Args...)
-	if t.route.oauth != nil {
-		return t.executeProtected(opCtx, call)
-	}
 	if t.route.broker {
 		return t.executeBroker(opCtx, call)
+	}
+	if t.route.oauth != nil {
+		return t.executeProtected(opCtx, call)
 	}
 	result, err := t.attachment.runtime.caller(opCtx, t.attachment.logical.ref, t.route.backend, call)
 	result.CallID = call.ID

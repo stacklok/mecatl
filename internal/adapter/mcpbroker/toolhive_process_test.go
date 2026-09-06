@@ -385,14 +385,16 @@ func TestStaticProtectedRoutesRejectInvalidDeclarationsAndCollisions(t *testing.
 	}
 }
 
-// admitStaticForGenericAuthorizationTest deliberately reconstructs the legacy
-// custom-runtime route shape. These tests pin generic per-tool OAuth behavior;
-// NewToolHiveProcess itself never publishes these routes before enrollment.
+// admitStaticForGenericAuthorizationTest reconstructs a generic per-tool OAuth
+// route for Runtime-only tests. NewToolHiveProcess itself publishes broker routes.
 func admitStaticForGenericAuthorizationTest(t *testing.T, process *Process) {
 	t.Helper()
 	routes, err := compileStaticProtectedRoutes(process.construction, process.protectedTarget, nil, process.occupied)
 	if err != nil {
 		t.Fatalf("compile generic static routes: %v", err)
+	}
+	for i := range routes {
+		routes[i].broker = false
 	}
 	process.Runtime.catalogue = &Catalogue{routes: routes}
 }
@@ -491,7 +493,68 @@ func TestGenericStaticProtectedOIDCAndCIMDUseToolHiveTarget(t *testing.T) {
 	}
 }
 
-func TestADR_0298_StaticProtectedToolsAreStagedUntilEnrollment(t *testing.T) {
+func TestToolHiveStaticToolAuthorizationStartsBundle(t *testing.T) {
+	t.Setenv("MECATL_TEST_CLIENT_SECRET", "construction-only-secret")
+	first := protectedToolHiveProfile("github")
+	first.Static = []StaticTool{{Name: "get_me", Schema: json.RawMessage(`{"type":"object"}`)}}
+	second := protectedToolHiveProfile("calendar")
+	second.Static = []StaticTool{{Name: "list_events", Schema: json.RawMessage(`{"type":"object"}`)}}
+	process, err := NewToolHiveProcess(t.Context(), ToolHiveConfig{CallbackURL: "https://broker.example/callback", Profiles: []ToolHiveProfile{first, second}})
+	if err != nil {
+		t.Fatalf("NewToolHiveProcess: %v", err)
+	}
+	t.Cleanup(func() { _ = process.Close() })
+	attached, _, err := process.Runtime.AttachSession(t.Context(), "bundle-session")
+	if err != nil {
+		t.Fatalf("AttachSession: %v", err)
+	}
+	t.Cleanup(func() { _, _ = attached.Close(context.Background()) })
+	attachment := attached.(*Attachment)
+	wrapped := toolByName(t, attachment, "mcp__github__get_me")
+	requester, ok := wrapped.(tool.AuthorizationRequester)
+	if !ok {
+		t.Fatal("visible static tool lacks authorization requester")
+	}
+	call := session.NewToolCall("call-1", wrapped.Spec().Name, json.RawMessage(`{}`))
+	authorization, required, err := requester.RequestAuthorization(t.Context(), call)
+	if err != nil || !required {
+		t.Fatalf("RequestAuthorization = (%+v, %v, %v)", authorization, required, err)
+	}
+	attachment.logical.mu.RLock()
+	transaction := attachment.logical.authorizations[authorizationIdentity{id: authorization.ID, binding: authorization.Binding}]
+	attachment.logical.mu.RUnlock()
+	if transaction == nil || !reflect.DeepEqual(transaction.bundleBackends, []string{"github", "calendar"}) {
+		t.Fatalf("transaction = %#v, want ToolHive bundle", transaction)
+	}
+	presentation, err := attachment.PresentAuthorization(t.Context(), authorization)
+	if err != nil || !strings.HasPrefix(presentation, process.protectedTarget.authorizationEndpoint+"?") {
+		t.Fatalf("PresentAuthorization = %q, %v", presentation, err)
+	}
+	var brokerCalls int
+	process.Runtime.authorizedCaller = func(_ context.Context, _ SessionRef, backend string, call session.ToolCall, source oauth2.TokenSource) (session.ToolResult, error) {
+		token, err := source.Token()
+		if err != nil || token.AccessToken != "bundle-token" || backend != "calendar" {
+			return session.ToolResult{}, errors.New("static route did not use the bundle credential")
+		}
+		brokerCalls++
+		return session.NewToolResult(call.ID, "connected"), nil
+	}
+	attachment.logical.mu.Lock()
+	delete(attachment.logical.authorizations, transaction.identity)
+	attachment.logical.brokerCredential = &oauthGrant{token: &oauth2.Token{AccessToken: "bundle-token", TokenType: "Bearer", Expiry: time.Now().Add(time.Hour)}, executed: make(map[session.ToolCallID][32]byte)}
+	attachment.logical.mu.Unlock()
+	secondTool := toolByName(t, attachment, "mcp__calendar__list_events")
+	secondCall := session.NewToolCall("call-2", secondTool.Spec().Name, json.RawMessage(`{}`))
+	if _, required, err := secondTool.(tool.AuthorizationRequester).RequestAuthorization(t.Context(), secondCall); err != nil || required {
+		t.Fatalf("second RequestAuthorization = (%v, %v), want satisfied bundle", required, err)
+	}
+	result, err := secondTool.Execute(t.Context(), secondCall, tool.Environment{})
+	if err != nil || result.Content != "connected" || brokerCalls != 1 {
+		t.Fatalf("bundle route execution = (%+v, %v), calls=%d", result, err, brokerCalls)
+	}
+}
+
+func TestADR_0298_StaticProtectedToolsAreVisibleBeforeEnrollment(t *testing.T) {
 	t.Setenv("MECATL_TEST_CLIENT_SECRET", "construction-only-secret")
 	var anonymousRequests, protectedRequests atomic.Int32
 	anonymous := toolHiveDiscoveryServer(t, "status", &anonymousRequests)
@@ -517,16 +580,20 @@ func TestADR_0298_StaticProtectedToolsAreStagedUntilEnrollment(t *testing.T) {
 	if got := protectedRequests.Load(); got != 0 {
 		t.Fatalf("protected startup requests = %d, want 0", got)
 	}
-	if got := process.Runtime.catalogue.Specs(); len(got) != 1 || got[0].Name != "mcp__public__status" {
-		t.Fatalf("startup catalogue = %#v, want anonymous tool only", got)
+	if got := process.Runtime.catalogue.Specs(); len(got) != 2 || got[0].Name != "mcp__GitHub_API__reviewed" || got[1].Name != "mcp__public__status" {
+		t.Fatalf("startup catalogue = %#v, want anonymous and declared protected tools", got)
 	}
 	attachment, _, err := process.Runtime.AttachSession(t.Context(), "static-session")
 	if err != nil {
 		t.Fatalf("AttachSession: %v", err)
 	}
 	t.Cleanup(func() { _, _ = attachment.Close(context.Background()) })
-	if got := toolNames(attachment.(*Attachment).Tools()); !reflect.DeepEqual(got, []string{"mcp__public__status"}) {
-		t.Fatalf("pre-enrollment attachment exposed staged protected tools: %v", got)
+	if got := toolNames(attachment.(*Attachment).Tools()); !reflect.DeepEqual(got, []string{"mcp__GitHub_API__reviewed", "mcp__public__status"}) {
+		t.Fatalf("pre-enrollment attachment tools = %v, want anonymous and declared protected tools", got)
+	}
+	route, ok := attachment.(*Attachment).lookupRoute("mcp__GitHub_API__reviewed")
+	if !ok || route.oauth != process.protectedTarget || !route.broker {
+		t.Fatalf("declared route = %#v, want ToolHive OAuth and broker execution", route)
 	}
 	enroller := attachment.(contract.WorkspaceEnrollmentAttachment)
 	presentation, err := enroller.BeginWorkspaceEnrollment(t.Context())
@@ -697,8 +764,8 @@ func TestADR_0298_ToolHiveEnrollmentUsesRealIdentityMiddleware(t *testing.T) {
 			if err != nil || presentedURL.Query().Get("resource") != process.protectedTarget.resource || process.protectedTarget.resource == "" {
 				t.Fatalf("presentation resource = %q, want %q (err=%v)", presentedURL.Query().Get("resource"), process.protectedTarget.resource, err)
 			}
-			if got := toolNames(attached.(*Attachment).Tools()); len(got) != 0 {
-				t.Fatalf("protected tools visible before enrollment: %v", got)
+			if got, want := toolNames(attached.(*Attachment).Tools()), []string{"mcp__private__create"}; !reflect.DeepEqual(got, want) {
+				t.Fatalf("pre-enrollment tools = %v, want %v", got, want)
 			}
 			flowCtx, cancelFlow := context.WithTimeout(t.Context(), 5*time.Second)
 			defer cancelFlow()
@@ -945,6 +1012,7 @@ func TestStaticProtectedRouteCallbackResumesExactCall(t *testing.T) {
 	if err != nil {
 		t.Fatalf("compileStaticProtectedRoutes: %v", err)
 	}
+	routes[0].broker = false
 	roots := x509.NewCertPool()
 	roots.AddCert(tokenServer.Certificate())
 	calls := 0

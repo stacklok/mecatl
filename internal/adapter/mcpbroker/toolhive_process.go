@@ -101,11 +101,14 @@ func newToolHiveProcess(ctx context.Context, config ToolHiveConfig, options tool
 	if err != nil {
 		return nil, err
 	}
-	if _, err := compileStaticProtectedRoutes(construction, protectedTarget, routes, config.Occupied); err != nil {
+	staticRoutes, err := compileStaticProtectedRoutes(construction, protectedTarget, routes, config.Occupied)
+	if err != nil {
 		return nil, err
 	}
-	// Protected declarations remain staged until aggregate ToolHive enrollment
-	// succeeds. The process-wide catalogue contains anonymous routes only.
+	// Static protected declarations are visible before enrollment so a first call
+	// can initiate the ToolHive-owned bundle authorization. catalogueInputs
+	// filters these oauth routes when it builds the enrolled replacement.
+	routes = append(routes, staticRoutes...)
 	sortRoutes(routes)
 	catalogue := &Catalogue{routes: routes}
 	caller := anonymousCaller(construction.anonymous)
@@ -343,6 +346,7 @@ func compileStaticProtectedRoutes(construction toolHiveConstruction, protectedTa
 				return nil, fmt.Errorf("%w: static tool declaration %q", err, name)
 			}
 			candidate.oauth = protectedTarget
+			candidate.broker = true
 			seen[name] = struct{}{}
 			routes = append(routes, candidate)
 		}
