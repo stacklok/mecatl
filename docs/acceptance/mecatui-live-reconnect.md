@@ -1,7 +1,7 @@
 # Mecatui live-feed reconnect — acceptance plan
 
 **Issue:** [stacklok/mecatl#779](https://github.com/stacklok/mecatl/issues/779)  
-**Status:** in-progress
+**Status:** landed
 **Scope:** regression closure plus the narrow live-reader bearer-provenance correction
 exposed by the named end-to-end acceptance test on `acc/mecatui-live-reconnect`; final
 panel repair round 2 strengthens the offline acceptance proofs without widening scope.
