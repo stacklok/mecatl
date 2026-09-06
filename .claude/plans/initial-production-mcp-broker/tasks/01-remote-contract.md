@@ -2,13 +2,13 @@
 id: 01-remote-contract
 title: Neutral versioned broker protocol and remote attachment adapter
 blocked_by: []
-status: in-progress
+status: done
 attempt: 2
 branch: plan-initial-production-mcp-broker/01-remote-contract-attempt-2
 worktree: .scratch/worker-initial-production-mcp-broker-01-remote-contract-attempt-2
 issue: ""
 retries: 2
-last_error: "verification resumed at operator direction; prior ENOSPC/timeout evidence retained in orchestration history"
+last_error: "full task test had a pre-existing internal/app failure after serializing builds; operator accepted focused broker gates and continued to aggregate gate"
 accumulator: acc/initial-production-mcp-broker
 ---
 
