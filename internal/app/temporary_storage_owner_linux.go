@@ -28,18 +28,10 @@ func validateControlledRoot(path string) error {
 	return nil
 }
 
-func managedWorkspaceIdentity(root string) (identity, currentPath string, err error) {
-	currentPath, err = filepath.EvalSymlinks(root)
+func managedWorkspaceIdentity(root string) (string, error) {
+	canonicalPath, err := filepath.EvalSymlinks(root)
 	if err != nil {
-		return "", "", err
+		return "", err
 	}
-	info, err := os.Stat(currentPath)
-	if err != nil {
-		return "", "", err
-	}
-	stat, ok := info.Sys().(*syscall.Stat_t)
-	if !ok {
-		return "", "", fmt.Errorf("managed temporary storage: workspace identity unavailable")
-	}
-	return fmt.Sprintf("dev:%d/inode:%d", stat.Dev, stat.Ino), currentPath, nil
+	return canonicalPath, nil
 }

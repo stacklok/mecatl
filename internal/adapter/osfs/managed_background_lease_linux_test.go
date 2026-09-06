@@ -54,7 +54,7 @@ func managedJobStreamer(t *testing.T) tool.CommandTemporaryScopeStreamer {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = ns.Close() })
-	workspace, err := ns.OpenWorkspace("osfs", "background-job-lease", t.TempDir())
+	workspace, err := ns.OpenWorkspace("osfs", "background-job-lease")
 	if err != nil {
 		t.Fatal(err)
 	}

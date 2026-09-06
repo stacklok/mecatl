@@ -7,6 +7,7 @@ package managedtemp
 import (
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -32,10 +33,8 @@ type Namespace struct {
 
 // Workspace is one private workspace namespace below a Namespace.
 type Workspace struct {
-	path     string
-	backend  string
-	identity string
-	root     *os.Root
+	path string
+	root *os.Root
 }
 
 // Open creates or adopts an absolute managed root. Existing objects are never
@@ -73,12 +72,7 @@ func (n *Namespace) initialize() error {
 	if err := ensurePrivateDir(n.root, "workspaces"); err != nil {
 		return err
 	}
-	for _, name := range []string{"gc.lock", "workspace-index.lock"} {
-		if err := ensurePrivateFile(n.root, name); err != nil {
-			return err
-		}
-	}
-	return n.createJSON("workspace-index.manifest", []byte(`{"version":1,"workspaces":{}}`))
+	return ensurePrivateFile(n.root, "gc.lock")
 }
 
 // Close releases the root handle. It does not delete managed data.
@@ -94,10 +88,10 @@ func (n *Namespace) Close() error {
 // Path returns the root path for adapter-internal composition only.
 func (n *Namespace) Path() string { return n.path }
 
-// OpenWorkspace creates or adopts the private namespace for one opaque workspace
-// identity. The identity is recorded only in owner-only manifest metadata; its
-// digest key, never the raw value, is used in the path.
-func (n *Namespace) OpenWorkspace(backend, identity, currentPath string) (*Workspace, error) {
+// OpenWorkspace creates or adopts the private namespace for one transient workspace
+// identity. The digest key, never the raw identity, is used in the path or durable
+// metadata.
+func (n *Namespace) OpenWorkspace(backend, identity string) (*Workspace, error) {
 	if n == nil || n.root == nil {
 		return nil, errors.New("managedtemp: namespace is closed")
 	}
@@ -107,26 +101,6 @@ func (n *Namespace) OpenWorkspace(backend, identity, currentPath string) (*Works
 	key := workspaceKey(backend, identity)
 	if err := validatePrivateDir(n.root, "workspaces"); err != nil {
 		return nil, fmt.Errorf("managedtemp: workspaces: %w", err)
-	}
-	indexLock, err := n.root.OpenFile("workspace-index.lock", os.O_RDWR, 0)
-	if err != nil {
-		return nil, fmt.Errorf("managedtemp: open workspace index lock: %w", err)
-	}
-	if err := lockExclusive(indexLock, false); err != nil {
-		_ = indexLock.Close()
-		return nil, fmt.Errorf("managedtemp: lock workspace index: %w", err)
-	}
-	defer func() { _ = unlockClose(indexLock) }()
-	return n.openWorkspaceLocked(backend, identity, currentPath, key)
-}
-
-func (n *Namespace) openWorkspaceLocked(backend, identity, currentPath, key string) (*Workspace, error) {
-	index, err := readWorkspaceIndex(n.root)
-	if err != nil {
-		return nil, err
-	}
-	if entry, ok := index.Workspaces[key]; ok && (entry.Backend != backend || entry.Identity != identity) {
-		return nil, errors.New("managedtemp: workspace index collision")
 	}
 	workspaces, err := n.root.OpenRoot("workspaces")
 	if err != nil {
@@ -144,12 +118,23 @@ func (n *Namespace) openWorkspaceLocked(backend, identity, currentPath, key stri
 		_ = root.Close()
 		return nil, fmt.Errorf("managedtemp: validate workspace: %w", err)
 	}
-	w := &Workspace{path: filepath.Join(n.path, "workspaces", key), backend: backend, identity: identity, root: root}
+	w := &Workspace{path: filepath.Join(n.path, "workspaces", key), root: root}
 	if err := ensurePrivateFile(root, "workspace.lock"); err != nil {
 		_ = root.Close()
 		return nil, err
 	}
-	manifest, err := json.Marshal(workspaceManifest{Version: manifestVersion, Key: key, Backend: backend, Identity: identity, CurrentPath: currentPath})
+	workspaceLock, err := root.OpenFile("workspace.lock", os.O_RDWR, 0)
+	if err != nil {
+		_ = root.Close()
+		return nil, err
+	}
+	if err := lockExclusive(workspaceLock, false); err != nil {
+		_ = workspaceLock.Close()
+		_ = root.Close()
+		return nil, err
+	}
+	defer func() { _ = unlockClose(workspaceLock) }()
+	manifest, err := json.Marshal(workspaceManifest{Version: manifestVersion, Key: key})
 	if err != nil {
 		_ = root.Close()
 		return nil, fmt.Errorf("managedtemp: marshal workspace manifest: %w", err)
@@ -158,30 +143,9 @@ func (n *Namespace) openWorkspaceLocked(backend, identity, currentPath, key stri
 		_ = root.Close()
 		return nil, err
 	}
-	if err := validateWorkspaceManifest(root, key, backend, identity); err != nil {
+	if err := validateWorkspaceManifest(root, key); err != nil {
 		_ = root.Close()
 		return nil, err
-	}
-	if entry, ok := index.Workspaces[key]; !ok || entry.CurrentPath != currentPath {
-		index.Workspaces[key] = workspaceIndexEntry{Backend: backend, Identity: identity, CurrentPath: currentPath}
-		data, err := json.Marshal(index)
-		if err != nil {
-			_ = root.Close()
-			return nil, err
-		}
-		if err := replacePrivateFile(n.root, "workspace-index.manifest", data); err != nil {
-			_ = root.Close()
-			return nil, err
-		}
-		manifest, err := json.Marshal(workspaceManifest{Version: manifestVersion, Key: key, Backend: backend, Identity: identity, CurrentPath: currentPath})
-		if err != nil {
-			_ = root.Close()
-			return nil, err
-		}
-		if err := replacePrivateFile(root, "workspace.manifest", manifest); err != nil {
-			_ = root.Close()
-			return nil, err
-		}
 	}
 	return w, nil
 }
@@ -229,15 +193,6 @@ func (n *Namespace) WritePrivateFile(name string, data []byte) error {
 	return writePrivateFile(n.root, name, data)
 }
 
-func (n *Namespace) createJSON(name string, data []byte) error {
-	if _, err := n.root.Lstat(name); err == nil {
-		return validatePrivateFile(n.root, name)
-	} else if !errors.Is(err, fs.ErrNotExist) {
-		return err
-	}
-	return writePrivateFile(n.root, name, data)
-}
-
 func (w *Workspace) createJSON(name string, data []byte) error {
 	if _, err := w.root.Lstat(name); err == nil {
 		return validatePrivateFile(w.root, name)
@@ -249,7 +204,12 @@ func (w *Workspace) createJSON(name string, data []byte) error {
 
 func workspaceKey(backend, identity string) string {
 	sum := sha256.Sum256([]byte("mecatl/managed-temp/workspace/v1\x00" + backend + "\x00" + identity))
-	return hex.EncodeToString(sum[:])
+	return base64.RawURLEncoding.EncodeToString(sum[:16])
+}
+
+func validWorkspaceKey(key string) bool {
+	decoded, err := base64.RawURLEncoding.DecodeString(key)
+	return err == nil && len(decoded) == 16
 }
 
 func openParent(path string) (*os.Root, string, error) {

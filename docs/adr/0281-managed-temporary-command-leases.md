@@ -83,18 +83,16 @@ A background Bash job owns one lease for its complete job lifetime. It is remove
 
 ### 3. Keep managed leases beneath a private, durable parent
 
-`temporary_storage.managed_root` names one private managed namespace beneath the inherited system temporary directory. It is organized first by a shared stable workspace-instance identity, giving an operator one place to find every resource associated with that workspace. The identity contract belongs to this ADR: an osfs workspace derives it from its canonical physical root device/inode; a remote, virtual, or on-demand-sandbox workspace provider supplies an opaque ID stable across rematerialization and reconnection, but different for a replacement workspace or isolated worktree/copy. A worktree needs no Git-specific identity: its distinct physical root naturally receives a distinct ID. The identity is distinct from a materialization path and `session.EnvironmentRef`.
+`temporary_storage.managed_root` names one private managed namespace beneath the inherited system temporary directory. It is organized first by an opaque workspace key, giving an operator one place to find every resource associated with that workspace. An osfs workspace derives its key transiently from its canonical physical path; a remote, virtual, or on-demand-sandbox workspace provider supplies its own opaque ID. A worktree needs no special treatment: its distinct physical root naturally derives a distinct key. The key is distinct from the materialization path and `session.EnvironmentRef`.
 
-No raw identity becomes a path component. The directory key is a fixed-width, domain-separated cryptographic digest of backend kind and opaque workspace ID; the owner-only root `workspace-index.manifest`, protected by `workspace-index.lock`, maps that key to the canonical identity and current path for local operator inspection. The per-workspace manifest repeats the identity and key; an absent, malformed, mismatched, or collision-conflicted entry fails closed. The index is system-managed diagnostic/control data, never model-visible. This is the common key for all workspace-scoped resources; if a future session-recovery or audit use case requires persistence, it needs a separate durable field and reattachment contract rather than overloading `EnvironmentRef`.
+No raw identity becomes a path component or durable metadata. The directory key is the first 128 bits of a domain-separated SHA-256 digest of backend kind and the transient identity, encoded with unpadded URL-safe Base64 (22 characters). This makes the key compact and filesystem-safe without introducing a custom encoding. The per-workspace manifest repeats only the key and its format version; an absent, malformed, or mismatched manifest fails closed. A 128-bit collision is practically negligible for this disposable local namespace, so no global workspace index is maintained. This is the common key for all workspace-scoped resources; if a future session-recovery or audit use case requires persistence, it needs a separate durable field and reattachment contract rather than overloading `EnvironmentRef`.
 
 ```text
 <system-temp-dir>/mecatl/
   gc.lock
   last-successful-sweep.json
-  workspace-index.manifest
-  workspace-index.lock
   workspaces/
-    <workspace-instance-id>/
+    <workspace-key>/
       workspace.manifest
       workspace.lock
       commands/                         # ADR 0281
@@ -192,13 +190,13 @@ This decision does not introduce a global `/tmp` sweeper, a raw agent-selected t
 Implementation should proceed as separately reviewable work:
 
 1. Add the operator-global `temporary_storage` settings schema, strict validation, shared managed-root adoption, and the `mode: system` rollback behavior; project-tier settings are warn-ignored.
-2. Add the canonical workspace-instance resolver, safe digest key, owner-only index, and handle-rooted no-link filesystem operations shared by every allocation family.
+2. Add canonical transient workspace identity derivation, compact URL-safe Base64 digest keys, per-workspace manifests, and handle-rooted no-link filesystem operations shared by every allocation family.
 3. Add the per-invocation command-environment overlay capability, then add `temp_scope`, the independent `BashSystemTemp` permission gate, and model-visible guidance.
 4. Add managed per-command/job leases to the local Linux command runner and direct test-home temporary roots into a validated lease.
 5. Preserve current process-group cancellation semantics; add immediate cleanup when the managed group is gone and record terminal state for deterministic TTL cleanup when it is not.
 6. Add manifest, per-lease locking, interval-gated root GC coordination, and deterministic command/job orphan reaping.
 7. Add the `app.Build`-owned startup/periodic maintenance worker and shutdown join; inventory the long-lived GC state and maintenance resource.
-8. Test default settings, root adoption, safe workspace-ID encoding and index lookup/collision rejection, lease-name and manifest-ID agreement, per-lease layout, invalid/project-tier/rollback settings, both `BashSystemTemp` approval examples, normal completion, timeout, cancellation, a long-running command with no timeout that a reaper skips while its lease lock is held, process-group-still-live deferral, escaped-child immediate deletion, concurrent runners/reapers, malformed/symlinked/replaced path components, crash recovery, worker shutdown, Linux-only managed-mode admission, and declared `system`-scope policy behavior.
+8. Test default settings, root adoption, compact workspace-key encoding, per-workspace manifest validation, lease-name and manifest-ID agreement, per-lease layout, invalid/project-tier/rollback settings, both `BashSystemTemp` approval examples, normal completion, timeout, cancellation, a long-running command with no timeout that a reaper skips while its lease lock is held, process-group-still-live deferral, escaped-child immediate deletion, concurrent runners/reapers, malformed/symlinked/replaced path components, crash recovery, worker shutdown, Linux-only managed-mode admission, and declared `system`-scope policy behavior.
 
 ## See also
 

@@ -21,23 +21,9 @@ const manifestVersion = 1
 // ErrUnsupportedVersion reports a record whose format cannot be safely read.
 var ErrUnsupportedVersion = errors.New("managedtemp: unsupported manifest version")
 
-type workspaceIndex struct {
-	Version    int                            `json:"version"`
-	Workspaces map[string]workspaceIndexEntry `json:"workspaces"`
-}
-
-type workspaceIndexEntry struct {
-	Backend     string `json:"backend"`
-	Identity    string `json:"identity"`
-	CurrentPath string `json:"current_path"`
-}
-
 type workspaceManifest struct {
-	Version     int    `json:"version"`
-	Key         string `json:"key"`
-	Backend     string `json:"backend"`
-	Identity    string `json:"identity"`
-	CurrentPath string `json:"current_path"`
+	Version int    `json:"version"`
+	Key     string `json:"key"`
 }
 
 type allocationManifest struct {
@@ -279,24 +265,6 @@ func (n *Namespace) ReadSweepCompletion() (time.Time, error) {
 	return record.CompletedAt, nil
 }
 
-func readWorkspaceIndex(root *os.Root) (workspaceIndex, error) {
-	data, err := readPrivateFile(root, "workspace-index.manifest")
-	if err != nil {
-		return workspaceIndex{}, err
-	}
-	var index workspaceIndex
-	if err := json.Unmarshal(data, &index); err != nil {
-		return workspaceIndex{}, fmt.Errorf("managedtemp: malformed workspace index: %w", err)
-	}
-	if index.Version != manifestVersion {
-		return workspaceIndex{}, ErrUnsupportedVersion
-	}
-	if index.Workspaces == nil {
-		return workspaceIndex{}, errors.New("managedtemp: malformed workspace index")
-	}
-	return index, nil
-}
-
 func replacePrivateFile(root *os.Root, name string, data []byte) error {
 	if err := validatePrivateFile(root, name); err != nil {
 		return err
@@ -339,7 +307,7 @@ func validateWorkspace(w *Workspace) error {
 	if err := validatePrivateDir(w.root, "."); err != nil {
 		return err
 	}
-	return validateWorkspaceManifest(w.root, filepath.Base(w.path), w.backend, w.identity)
+	return validateWorkspaceManifest(w.root, filepath.Base(w.path))
 }
 
 func validateLease(l *Lease) error {
@@ -398,7 +366,7 @@ func sameLeaseParentEntry(parent *os.Root, name string, lease *os.Root) error {
 	return nil
 }
 
-func validateWorkspaceManifest(root *os.Root, key, backend, identity string) error {
+func validateWorkspaceManifest(root *os.Root, key string) error {
 	data, err := readPrivateFile(root, "workspace.manifest")
 	if err != nil {
 		return err
@@ -410,7 +378,7 @@ func validateWorkspaceManifest(root *os.Root, key, backend, identity string) err
 	if manifest.Version != manifestVersion {
 		return ErrUnsupportedVersion
 	}
-	if manifest.Key != key || manifest.Backend != backend || manifest.Identity != identity {
+	if manifest.Key != key || !validWorkspaceKey(key) {
 		return errors.New("managedtemp: workspace manifest identity mismatch")
 	}
 	return nil
@@ -453,8 +421,12 @@ func validTestHomeNamespace(marker string) bool {
 	if filepath.Base(commands) != "commands" || filepath.Base(workspaces) != "workspaces" || !validPrivateTestHomeDirs(commands, workspace, workspaces, namespace) {
 		return false
 	}
-	manifest, ok := validTestHomeWorkspaceManifest(workspace)
-	return ok && validTestHomeWorkspaceIndex(namespace, manifest)
+	gc, err := os.Lstat(filepath.Join(namespace, "gc.lock"))
+	if err != nil || !gc.Mode().IsRegular() || gc.Mode()&os.ModeSymlink != 0 || gc.Mode().Perm() != privateFileMode || !ownedByCurrentUser(gc) {
+		return false
+	}
+	_, ok := validTestHomeWorkspaceManifest(workspace)
+	return ok
 }
 
 func testHomeNamespacePaths(marker string) (commands, workspace, workspaces, namespace string) {
@@ -481,23 +453,10 @@ func validTestHomeWorkspaceManifest(workspace string) (workspaceManifest, bool) 
 		return workspaceManifest{}, false
 	}
 	var manifest workspaceManifest
-	if json.Unmarshal(workspaceData, &manifest) != nil || manifest.Version != manifestVersion || manifest.Key != filepath.Base(workspace) || manifest.Backend == "" || manifest.Identity == "" {
+	if json.Unmarshal(workspaceData, &manifest) != nil || manifest.Version != manifestVersion || manifest.Key != filepath.Base(workspace) || !validWorkspaceKey(manifest.Key) {
 		return workspaceManifest{}, false
 	}
 	return manifest, true
-}
-
-func validTestHomeWorkspaceIndex(namespace string, manifest workspaceManifest) bool {
-	indexData, err := os.ReadFile(filepath.Join(namespace, "workspace-index.manifest"))
-	if err != nil {
-		return false
-	}
-	var index workspaceIndex
-	if json.Unmarshal(indexData, &index) != nil || index.Version != manifestVersion {
-		return false
-	}
-	entry, ok := index.Workspaces[manifest.Key]
-	return ok && entry.Backend == manifest.Backend && entry.Identity == manifest.Identity && entry.CurrentPath == manifest.CurrentPath
 }
 
 func validAllocationID(id string) bool {

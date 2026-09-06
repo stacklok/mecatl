@@ -52,7 +52,7 @@ func (s *managedTemporaryStorage) workspace(root string) (*managedtemp.Workspace
 	if s == nil {
 		return nil, nil
 	}
-	identity, currentPath, err := managedWorkspaceIdentity(root)
+	identity, err := managedWorkspaceIdentity(root)
 	if err != nil {
 		return nil, err
 	}
@@ -61,7 +61,7 @@ func (s *managedTemporaryStorage) workspace(root string) (*managedtemp.Workspace
 	if workspace := s.workspaces[identity]; workspace != nil {
 		return workspace, nil
 	}
-	workspace, err := s.namespace.OpenWorkspace("osfs", identity, currentPath)
+	workspace, err := s.namespace.OpenWorkspace("osfs", identity)
 	if err != nil {
 		return nil, err
 	}

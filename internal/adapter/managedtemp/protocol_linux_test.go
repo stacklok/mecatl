@@ -3,12 +3,27 @@
 package managedtemp
 
 import (
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestWorkspaceKeyUsesFirst128BitsOfRawURLBase64SHA256(t *testing.T) {
+	const backend = "osfs"
+	const identity = "/canonical/workspace"
+	sum := sha256.Sum256([]byte("mecatl/managed-temp/workspace/v1\x00" + backend + "\x00" + identity))
+	want := base64.RawURLEncoding.EncodeToString(sum[:16])
+	if got := workspaceKey(backend, identity); got != want || len(got) != 22 {
+		t.Fatalf("workspaceKey() = %q, want first 128 bits as raw URL base64 %q", got, want)
+	}
+	if !validWorkspaceKey(want) || validWorkspaceKey("######################") {
+		t.Fatal("workspace key format validation accepted an invalid key")
+	}
+}
 
 func TestADR_0281_ManagedRootAndWorkspaceFailClosed(t *testing.T) {
 	base := t.TempDir()
@@ -29,8 +44,8 @@ func TestADR_0281_ManagedRootAndWorkspaceFailClosed(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = ns.Close() })
 
-	identity := "device:1/inode:2"
-	workspace, err := ns.OpenWorkspace("osfs", identity, "/private/repository")
+	identity := "/private/repository"
+	workspace, err := ns.OpenWorkspace("osfs", identity)
 	if err != nil {
 		t.Fatalf("OpenWorkspace: %v", err)
 	}
@@ -38,46 +53,29 @@ func TestADR_0281_ManagedRootAndWorkspaceFailClosed(t *testing.T) {
 	if strings.Contains(workspace.Path(), identity) {
 		t.Fatalf("workspace path exposes raw identity: %q", workspace.Path())
 	}
-	index, err := os.ReadFile(filepath.Join(ns.Path(), "workspace-index.manifest"))
-	if err != nil {
-		t.Fatalf("ReadFile index: %v", err)
-	}
-	if !strings.Contains(string(index), identity) {
-		t.Fatalf("owner index does not retain canonical identity: %s", index)
-	}
 	manifestPath := filepath.Join(workspace.Path(), "workspace.manifest")
 	manifest, err := os.ReadFile(manifestPath)
 	if err != nil {
 		t.Fatalf("ReadFile workspace manifest: %v", err)
 	}
+	if strings.Contains(string(manifest), identity) {
+		t.Fatalf("workspace manifest exposes raw identity: %s", manifest)
+	}
+	var manifestFields map[string]any
+	if err := json.Unmarshal(manifest, &manifestFields); err != nil || len(manifestFields) != 2 {
+		t.Fatalf("workspace manifest = %s; want only version and key", manifest)
+	}
 	if err := os.WriteFile(manifestPath, []byte(`{"version":1,"key":"wrong"}`), 0o600); err != nil {
 		t.Fatalf("WriteFile malformed workspace manifest: %v", err)
 	}
-	if _, err := ns.OpenWorkspace("osfs", identity, "/private/repository"); err == nil {
+	if _, err := ns.OpenWorkspace("osfs", identity); err == nil {
 		t.Fatal("OpenWorkspace accepted a mismatched manifest key")
 	}
 	if err := os.WriteFile(manifestPath, manifest, 0o600); err != nil {
 		t.Fatalf("restore workspace manifest: %v", err)
 	}
-
-	collision := workspaceIndex{Version: manifestVersion, Workspaces: map[string]workspaceIndexEntry{
-		workspaceKey("osfs", "collision"): {Backend: "other", Identity: "identity", CurrentPath: "/other"},
-	}}
-	collisionData, err := json.Marshal(collision)
-	if err != nil {
-		t.Fatalf("Marshal collision index: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(ns.Path(), "workspace-index.manifest"), collisionData, 0o600); err != nil {
-		t.Fatalf("WriteFile collision index: %v", err)
-	}
-	if _, err := ns.OpenWorkspace("osfs", "collision", "/collision"); err == nil {
-		t.Fatal("OpenWorkspace accepted an index collision")
-	}
-	if _, err := os.Stat(filepath.Join(ns.Path(), "workspaces", workspaceKey("osfs", "collision"))); !os.IsNotExist(err) {
-		t.Fatalf("collision created or removed candidate unexpectedly: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(ns.Path(), "workspace-index.manifest"), index, 0o600); err != nil {
-		t.Fatalf("restore workspace index: %v", err)
+	if got := filepath.Base(workspace.Path()); len(got) != 22 || strings.ContainsAny(got, "+/=") {
+		t.Fatalf("workspace key = %q, want 22-char raw URL-safe base64", got)
 	}
 
 	lease, err := workspace.Allocate("cmd")
@@ -112,12 +110,6 @@ func TestADR_0281_ManagedRootAndWorkspaceFailClosed(t *testing.T) {
 		t.Fatalf("outside content was deleted: %v", err)
 	}
 
-	if err := os.Remove(filepath.Join(ns.Path(), "workspace-index.manifest")); err != nil {
-		t.Fatalf("Remove index: %v", err)
-	}
-	if _, err := ns.OpenWorkspace("osfs", "another-workspace", "/other"); err == nil {
-		t.Fatal("OpenWorkspace recreated a missing index")
-	}
 }
 
 // TestADR_0281_LeaseRemovalRetainsReplacedParentEntry pins the final unlink
@@ -128,7 +120,7 @@ func TestADR_0281_LeaseRemovalRetainsReplacedParentEntry(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = ns.Close() })
-	workspace, err := ns.OpenWorkspace("osfs", "replacement", t.TempDir())
+	workspace, err := ns.OpenWorkspace("osfs", "replacement")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -161,7 +153,7 @@ func TestADR_0281_UnknownManifestVersionRetained(t *testing.T) {
 		t.Fatalf("Open: %v", err)
 	}
 	t.Cleanup(func() { _ = ns.Close() })
-	workspace, err := ns.OpenWorkspace("osfs", "workspace", "/private/repository")
+	workspace, err := ns.OpenWorkspace("osfs", "workspace")
 	if err != nil {
 		t.Fatalf("OpenWorkspace: %v", err)
 	}

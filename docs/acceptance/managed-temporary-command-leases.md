@@ -8,9 +8,11 @@
 The smallest set of work that makes managed temporary storage the default for local
 Linux Bash commands and background jobs: each gets a private, attributable lease;
 the harness cleans it promptly where safe and reclaims only validated crash residue
-on a bounded schedule. It retains a human-approved system temporary-directory escape
-without treating it as a filesystem sandbox. It deliberately excludes the workspace
-scratchpad and delegation-fork lifecycle proposed by ADR 0282 and ADR 0283.
+on a bounded schedule. Workspace keys derive transiently from canonical physical
+paths and are never persisted as raw metadata. It retains a human-approved system
+temporary-directory escape without treating it as a filesystem sandbox. It
+deliberately excludes the workspace scratchpad and delegation-fork lifecycle proposed
+by ADR 0282 and ADR 0283.
 
 The doc is organized scenario-first because acceptance is about what the running
 harness can demonstrate, not which packages exist on disk.
@@ -83,12 +85,12 @@ path into deletion authority ([ADR-0281](../adr/0281-managed-temporary-command-l
   observation window, and an existing foreign or permissive object is rejected rather
   than repaired.
   - verify: `TestADR_0281_ManagedObjectsCreatedAtomicallyPrivate`
-- AC1.6: A managed root/workspace allocation rejects symlink, replacement, ownership,
-  mode, manifest-key, or index-collision failures without deleting anything, and maps
-  the raw workspace identity only in owner-only index metadata—not into an
-  agent-visible path. A same-UID component replacement after validation and before
-  cleanup/reaping cannot redirect deletion outside the retained handle-rooted lease;
-  the candidate is retained or fails closed.
+- AC1.6: A managed root/workspace allocation rejects symlink, replacement,
+  ownership, mode, or manifest-key failures without deleting anything. Its 128-bit
+  domain-separated key is encoded as unpadded URL-safe Base64, and it persists no
+  raw workspace path or identity. A same-UID component replacement after validation
+  and before cleanup/reaping cannot redirect deletion outside the retained
+  handle-rooted lease; the candidate is retained or fails closed.
   - verify: `TestADR_0281_ManagedRootAndWorkspaceFailClosed`
 - AC1.7: A missing, malformed, or newer-than-supported version in any allocation
   manifest or sweep-completion record is reported and retained without rewrite or

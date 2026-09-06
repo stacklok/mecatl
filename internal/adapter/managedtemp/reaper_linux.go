@@ -112,14 +112,14 @@ func (n *Namespace) sweepWorkspaces(ctx context.Context, opts SweepOptions) (int
 		if err := ctx.Err(); err != nil {
 			return deleted, err
 		}
-		if !entry.IsDir() || len(entry.Name()) != 64 {
+		if !entry.IsDir() || !validWorkspaceKey(entry.Name()) {
 			continue
 		}
 		workspace, err := workspaces.OpenRoot(entry.Name())
 		if err != nil {
 			continue
 		}
-		count, sweepErr := sweepWorkspace(ctx, n.root, workspace, opts)
+		count, sweepErr := sweepWorkspace(ctx, workspace, opts)
 		_ = workspace.Close()
 		if sweepErr != nil {
 			return deleted, sweepErr
@@ -130,7 +130,7 @@ func (n *Namespace) sweepWorkspaces(ctx context.Context, opts SweepOptions) (int
 }
 
 //nolint:gocyclo // each fail-closed validation check is intentionally explicit.
-func sweepWorkspace(ctx context.Context, namespace, workspace *os.Root, opts SweepOptions) (int, error) {
+func sweepWorkspace(ctx context.Context, workspace *os.Root, opts SweepOptions) (int, error) {
 	if err := validatePrivateDir(workspace, "."); err != nil {
 		return 0, nil
 	}
@@ -139,15 +139,7 @@ func sweepWorkspace(ctx context.Context, namespace, workspace *os.Root, opts Swe
 		return 0, nil
 	}
 	var manifest workspaceManifest
-	if json.Unmarshal(data, &manifest) != nil || manifest.Version != manifestVersion || manifest.Key != filepath.Base(workspace.Name()) || manifest.Backend == "" || manifest.Identity == "" {
-		return 0, nil
-	}
-	index, err := readWorkspaceIndex(namespace)
-	if err != nil {
-		return 0, nil
-	}
-	entry, ok := index.Workspaces[manifest.Key]
-	if !ok || entry.Backend != manifest.Backend || entry.Identity != manifest.Identity || entry.CurrentPath != manifest.CurrentPath {
+	if json.Unmarshal(data, &manifest) != nil || manifest.Version != manifestVersion || manifest.Key != filepath.Base(workspace.Name()) {
 		return 0, nil
 	}
 	if err := validatePrivateDir(workspace, "commands"); err != nil {

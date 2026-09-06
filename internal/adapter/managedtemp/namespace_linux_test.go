@@ -19,7 +19,7 @@ func TestADR_0281_ManagedObjectsCreatedAtomicallyPrivate(t *testing.T) {
 		t.Fatalf("Open: %v", err)
 	}
 	t.Cleanup(func() { _ = ns.Close() })
-	workspace, err := ns.OpenWorkspace("osfs", "workspace-identity", "/work/repo")
+	workspace, err := ns.OpenWorkspace("osfs", "workspace-identity")
 	if err != nil {
 		t.Fatalf("OpenWorkspace: %v", err)
 	}
@@ -40,8 +40,6 @@ func TestADR_0281_ManagedObjectsCreatedAtomicallyPrivate(t *testing.T) {
 	for _, path := range []string{
 		filepath.Join(base, "mecatl"),
 		filepath.Join(base, "mecatl", "gc.lock"),
-		filepath.Join(base, "mecatl", "workspace-index.lock"),
-		filepath.Join(base, "mecatl", "workspace-index.manifest"),
 		filepath.Join(base, "mecatl", "workspaces"),
 		filepath.Join(workspace.Path(), "workspace.lock"),
 		filepath.Join(workspace.Path(), "workspace.manifest"),
@@ -68,7 +66,7 @@ func TestADR_0281_ManagedObjectsCreatedAtomicallyPrivate(t *testing.T) {
 	if err := os.Chmod(filepath.Join(base, "mecatl", "workspaces"), 0o755); err != nil {
 		t.Fatalf("Chmod workspaces: %v", err)
 	}
-	if _, err := ns.OpenWorkspace("osfs", "replacement-identity", "/work/replacement"); err == nil {
+	if _, err := ns.OpenWorkspace("osfs", "replacement-identity"); err == nil {
 		t.Fatal("OpenWorkspace accepted an existing permissive namespace component")
 	}
 
