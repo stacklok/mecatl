@@ -2,10 +2,10 @@
 id: 01-reconnect-regression
 title: Offline live-feed reconnect regression coverage
 blocked_by: []
-status: pending
-attempt: 0
-branch: acc/mecatui-live-reconnect
-worktree: .scratch/issue-779-live-reconnect
+status: in-progress
+attempt: 1
+branch: plan-mecatui-live-reconnect/01-reconnect-regression-attempt-1
+worktree: .scratch/worker-mecatui-live-reconnect-01-reconnect-regression-attempt-1
 issue: "779"
 retries: 0
 last_error: ""
