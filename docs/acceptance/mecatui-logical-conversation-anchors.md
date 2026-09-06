@@ -1,7 +1,7 @@
 # Mecatui logical conversation anchors — acceptance plan
 
 **Phase:** mecatui conversation-view correctness refactor
-**Status:** draft, 2026-09-06. Derived from the still-proposed ADR after operator decisions.
+**Status:** in-progress, 2026-09-06. Derived from the still-proposed ADR after operator decisions.
 **ADR:** [ADR-0301](../adr/0301-logical-conversation-anchors.md) — UI-local logical anchors, provenance, selection, and performance constraints.
 **Accumulator branch:** `acc/mecatui-logical-conversation-anchors` (off `main`).
 
