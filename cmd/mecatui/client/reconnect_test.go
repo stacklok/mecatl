@@ -94,6 +94,18 @@ func (f *fakeLiveStreamerReconnect) StreamSessionLive(_ context.Context, id stri
 	return NewEventStream(es), nil
 }
 
+// attemptTimingLiveStreamer signals the probe's opening for deterministic
+// attempt-two backoff coverage.
+type attemptTimingLiveStreamer struct {
+	opened chan struct{}
+	once   sync.Once
+}
+
+func (s *attemptTimingLiveStreamer) StreamSessionLive(_ context.Context, _ string) (*EventStream, error) {
+	s.once.Do(func() { close(s.opened) })
+	return NewEventStream(NewFakeEventStream()), nil
+}
+
 // drainRecon collects every msg off ch until it closes, with a per-msg timeout
 // so a stuck loop fails the test instead of hanging.
 func drainRecon(t *testing.T, ch <-chan tea.Msg) []tea.Msg {
@@ -128,6 +140,44 @@ func deliveryEvent(schedule, fire string) *mecatlv1.Event {
 func restoreBackoff(t *testing.T) func() {
 	t.Helper()
 	return RestoreBackoffForTest()
+}
+
+// TestADR_0096_AttemptTwoWaitsDeterministicBackoff proves the client loop, not
+// just delay helper math, holds a continuity reconnect at prior attempt one
+// until the jitter-free attempt-two delay has elapsed.
+func TestADR_0096_AttemptTwoWaitsDeterministicBackoff(t *testing.T) {
+	restore := restoreBackoff(t)
+	defer restore()
+	liveReconnectBaseBackoff = 100 * time.Millisecond
+	liveReconnectMaxBackoff = time.Second
+	liveReconnectJitterFrac = 0
+
+	live := &attemptTimingLiveStreamer{opened: make(chan struct{})}
+	ch, stop := ReconnectLiveCmdFromAttempt(context.Background(), live, nil, "sess-attempt-two", 1)
+	defer stop()
+
+	select {
+	case <-live.opened:
+		t.Fatal("attempt-two probe opened before its deterministic backoff")
+	case <-time.After(100 * time.Millisecond):
+	}
+	select {
+	case <-live.opened:
+	case <-time.After(time.Second):
+		t.Fatal("attempt-two probe did not open after its deterministic backoff")
+	}
+
+	msgs := drainRecon(t, ch)
+	if len(msgs) != 2 {
+		t.Fatalf("messages = %#v, want reconnecting and reconnected", msgs)
+	}
+	marker, ok := msgs[0].(LiveReconnectingMsg)
+	if !ok || marker.Attempt != 2 {
+		t.Fatalf("first message = %#v, want LiveReconnectingMsg{Attempt: 2}", msgs[0])
+	}
+	if _, ok := msgs[1].(LiveReconnectedMsg); !ok {
+		t.Fatalf("second message = %#v, want LiveReconnectedMsg", msgs[1])
+	}
 }
 
 // TestReconnectLiveCmd_FiresOnCleanCloseAndError drives the reconnect loop with

@@ -617,6 +617,19 @@ func (s *rearmedReaderAuthRejectedStreamer) StreamSessionLive(context.Context, s
 
 func (*rearmedReaderAuthRejectedStreamer) BearerBackedStream() bool { return true }
 
+// reconnectProbeAuthRejectedStreamer closes its initial reader, then rejects the
+// reconnect loop's actual StreamSessionLive open with bearer provenance.
+type reconnectProbeAuthRejectedStreamer struct{ opens atomic.Int32 }
+
+func (s *reconnectProbeAuthRejectedStreamer) StreamSessionLive(context.Context, string) (*client.EventStream, error) {
+	if s.opens.Add(1) == 1 {
+		return client.NewEventStream(client.NewFakeEventStream()), nil
+	}
+	return nil, status.Error(codes.Unauthenticated, "rejected")
+}
+
+func (*reconnectProbeAuthRejectedStreamer) BearerBackedStream() bool { return true }
+
 func TestADR_0096_BearerLiveReaderAuthRejectedPreservesHandoffAndStopsRetry(t *testing.T) {
 	live := &rearmedReaderAuthRejectedStreamer{}
 	m := New(Deps{
@@ -628,6 +641,7 @@ func TestADR_0096_BearerLiveReaderAuthRejectedPreservesHandoffAndStopsRetry(t *t
 		NoAltScreen: true,
 	})
 	m.sessionID = "sess-rejected"
+	m.phase = phaseIdle
 
 	// Drive initial close, successful probe, and fresh rearm through the actual
 	// reader commands. The final message is the rearmed reader's first Recv.
@@ -652,6 +666,9 @@ func TestADR_0096_BearerLiveReaderAuthRejectedPreservesHandoffAndStopsRetry(t *t
 	mm, _ = m.Update(rejected)
 	m = mm.(Model)
 
+	if !m.connect.open || m.connect.reason != client.AuthRejected {
+		t.Fatalf("auth recovery = %#v, want open AuthRejected /connect recovery", m.connect)
+	}
 	if m.sessionID != "sess-rejected" || m.connect.failedTarget != "remote.example:443" || m.connect.resumeSessionID != "sess-rejected" {
 		t.Fatalf("auth recovery lost target/session: session=%q connect=%#v", m.sessionID, m.connect)
 	}
@@ -661,15 +678,64 @@ func TestADR_0096_BearerLiveReaderAuthRejectedPreservesHandoffAndStopsRetry(t *t
 	if live.opens.Load() != 3 {
 		t.Fatalf("live opens = %d, want exactly initial reader + probe + rearmed reader; rejected bearer must not retry", live.opens.Load())
 	}
+
+	// A rejection returned by the reconnect probe OPEN must travel through the
+	// same connected reducer recovery, rather than ending only inside the client
+	// reconnect loop. The initial reader's clean close starts that real loop.
+	probeLive := &reconnectProbeAuthRejectedStreamer{}
+	probe := New(Deps{
+		Connect:     fakeConnect{targets: []ConnectTarget{{Target: "remote.example:443"}}},
+		LiveStream:  probeLive,
+		Server:      "remote.example:443",
+		Theme:       theme.New("aztec", theme.AztecPalette()),
+		Ctx:         context.Background(),
+		NoAltScreen: true,
+	})
+	probe.sessionID = "sess-probe-rejected"
+	probe.phase = phaseIdle
+	probeCmd := probe.armLiveFeed()
+	probeClose := runCmdTimeout(t, probeCmd)
+	mm, waitProbe := probe.Update(probeClose)
+	probe = mm.(Model)
+	probeAttempt := runCmdTimeout(t, waitProbe)
+	marker, ok := probeAttempt.(reconnectMsg)
+	if !ok {
+		t.Fatalf("probe reconnect marker handoff = %T, want reconnectMsg", probeAttempt)
+	}
+	if reconnecting, ok := marker.msg.(client.LiveReconnectingMsg); !ok || reconnecting.Attempt != 1 {
+		t.Fatalf("probe reconnect marker = %#v, want attempt 1", marker.msg)
+	}
+	mm, waitProbe = probe.Update(probeAttempt)
+	probe = mm.(Model)
+	probeRejected := runCmdTimeout(t, waitProbe)
+	reconnect, ok := probeRejected.(reconnectMsg)
+	if !ok {
+		t.Fatalf("probe rejection handoff = %T, want reconnectMsg", probeRejected)
+	}
+	streamErr, ok := reconnect.msg.(client.StreamErrMsg)
+	if !ok || streamErr.AuthReason != client.AuthRejected {
+		t.Fatalf("probe open classification = %#v, want AuthRejected StreamErrMsg", reconnect.msg)
+	}
+	mm, _ = probe.Update(probeRejected)
+	probe = mm.(Model)
+	if !probe.connect.open || probe.connect.reason != client.AuthRejected {
+		t.Fatalf("probe auth recovery = %#v, want open AuthRejected /connect recovery", probe.connect)
+	}
+	if probe.sessionID != "sess-probe-rejected" || probe.connect.failedTarget != "remote.example:443" || probe.connect.resumeSessionID != "sess-probe-rejected" {
+		t.Fatalf("probe auth recovery lost target/session: session=%q connect=%#v", probe.sessionID, probe.connect)
+	}
+	if probe.liveCh != nil || probe.liveReconCh != nil || probe.liveStop != nil || probe.liveReconStop != nil || probe.liveArmed != "" {
+		t.Fatalf("probe auth recovery did not tear down both readers: live=%v recon=%v armed=%q", probe.liveCh, probe.liveReconCh, probe.liveArmed)
+	}
+	if probeLive.opens.Load() != 2 {
+		t.Fatalf("probe live opens = %d, want initial reader + rejected probe; rejected bearer must not retry", probeLive.opens.Load())
+	}
 }
 
 // reconnectSequenceStreamer models the exact close → probe → rearm → close
 // sequence. Probe streams are discarded by reconnectLiveLoop; reader streams are
 // consumed by LiveStreamCmd, so the closes below travel through the actual handoff.
-type reconnectSequenceStreamer struct {
-	opens    atomic.Int32
-	probe2At atomic.Int64
-}
+type reconnectSequenceStreamer struct{ opens atomic.Int32 }
 
 func (s *reconnectSequenceStreamer) StreamSessionLive(context.Context, string) (*client.EventStream, error) {
 	switch s.opens.Add(1) {
@@ -677,8 +743,7 @@ func (s *reconnectSequenceStreamer) StreamSessionLive(context.Context, string) (
 		return client.NewEventStream(client.NewFakeEventStream()), nil
 	case 2: // first reconnect probe succeeds
 		return client.NewEventStream(client.NewFakeEventStream()), nil
-	case 4: // attempt-2 probe is reached only after attempt-2 backoff
-		s.probe2At.Store(time.Now().UnixNano())
+	case 4: // attempt-2 probe follows the client-loop backoff
 		return client.NewEventStream(client.NewFakeEventStream()), nil
 	default:
 		return nil, errors.New("unexpected extra live open")
@@ -722,22 +787,16 @@ func TestADR_0096_ImmediateRearmedCloseUsesAttemptTwoBackoff(t *testing.T) {
 	if _, ok := secondClose.(liveMsg); !ok {
 		t.Fatalf("rearmed reader handoff = %T, want liveMsg", secondClose)
 	}
-	started := time.Now()
 	mm, reconnect2 := m.Update(secondClose)
 	m = mm.(Model)
 
 	secondAttempt := runCmdTimeout(t, reconnect2)
-	elapsed := time.Since(started)
 	rm, ok = secondAttempt.(reconnectMsg)
 	if !ok {
 		t.Fatalf("second reconnect handoff = %T, want reconnectMsg", secondAttempt)
 	}
 	if marker, ok := rm.msg.(client.LiveReconnectingMsg); !ok || marker.Attempt != 2 {
 		t.Fatalf("second reconnect marker = %#v, want attempt 2", rm.msg)
-	}
-	probe2At := live.probe2At.Load()
-	if probe2At == 0 || elapsed < 750*time.Millisecond {
-		t.Fatalf("attempt-2 probe ran without its bounded backoff: elapsed=%v probeAt=%v", elapsed, time.Unix(0, probe2At))
 	}
 	if opens := live.opens.Load(); opens != 4 {
 		t.Fatalf("live opens = %d, want initial reader + probe + rearmed reader + attempt-2 probe", opens)
@@ -778,6 +837,21 @@ func TestADR_0096_OnlyCurrentLiveEventResetsContinuity(t *testing.T) {
 	m = mm.(Model)
 	if m.liveContinuityAttempt != 0 {
 		t.Fatalf("real current-generation live event left continuity at %d, want reset", m.liveContinuityAttempt)
+	}
+
+	// The next close must consume the reset continuity sequence. Drive the
+	// current reader's close through the reducer, then observe the real reconnect
+	// loop marker rather than inspecting the counter alone.
+	mm, reconnect := m.updateLiveMsg(liveMsg{gen: m.liveGen, msg: client.StreamClosedMsg{}})
+	m = mm.(Model)
+	defer joinReconnectForCleanup(&m)()
+	next := runCmdTimeout(t, reconnect)
+	rm, ok := next.(reconnectMsg)
+	if !ok {
+		t.Fatalf("post-event reconnect handoff = %T, want reconnectMsg", next)
+	}
+	if marker, ok := rm.msg.(client.LiveReconnectingMsg); !ok || marker.Attempt != 1 {
+		t.Fatalf("post-event reconnect marker = %#v, want attempt 1", rm.msg)
 	}
 }
 
