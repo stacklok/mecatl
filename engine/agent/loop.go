@@ -1014,7 +1014,7 @@ func (e *Engine) prepareRunEnvironment(ctx context.Context, r *Run, sess *sessio
 // Run starts processing req against sess with the exact supplied environment and
 // returns immediately with a handle to the background run.
 func (e *Engine) Run(ctx context.Context, sess *session.Session, env tool.Environment, req RunRequest) *Run {
-	return e.startRun(ctx, sess, req, session.Usage{}, "", func(ctx context.Context, r *Run) {
+	return e.startRun(ctx, sess, req, session.Usage{}, func(ctx context.Context, r *Run) {
 		if !e.prepareRunEnvironment(ctx, r, sess, env) {
 			return
 		}
@@ -1027,7 +1027,7 @@ func (e *Engine) Run(ctx context.Context, sess *session.Session, env tool.Enviro
 // package-private so no caller outside agent can select a budget baseline.
 func (e *Engine) runWithCurrentMainUsageBaseline(ctx context.Context, sess *session.Session, env tool.Environment, req RunRequest) *Run {
 	baseline := sess.TokenUsageSnapshot()[session.UsageKindMain].Total
-	return e.startRun(ctx, sess, req, baseline, "", func(ctx context.Context, r *Run) {
+	return e.startRun(ctx, sess, req, baseline, func(ctx context.Context, r *Run) {
 		if !e.prepareRunEnvironment(ctx, r, sess, env) {
 			return
 		}
@@ -1040,7 +1040,7 @@ func (e *Engine) runWithCurrentMainUsageBaseline(ctx context.Context, sess *sess
 // instructions and system prompt inputs are re-resolved by the normal request builder.
 // sess must carry durable failed-step retry intent prepared by the host.
 func (e *Engine) RetryFailedStep(ctx context.Context, sess *session.Session, env tool.Environment) *Run {
-	return e.startRun(ctx, sess, RunRequest{}, session.Usage{}, "", func(ctx context.Context, r *Run) {
+	return e.startRun(ctx, sess, RunRequest{}, session.Usage{}, func(ctx context.Context, r *Run) {
 		if !e.prepareRunEnvironment(ctx, r, sess, env) {
 			return
 		}
@@ -1097,7 +1097,7 @@ func (e *Engine) ResumeApproval(ctx context.Context, sess *session.Session, env 
 	// never read the id off the session: a reused session still carries the id of
 	// the run that just ended, and inheriting it would silently attribute a brand
 	// new run's events to the previous one.
-	return e.startRun(ctx, sess, RunRequest{RunID: sess.RunID()}, session.Usage{}, "", func(ctx context.Context, r *Run) {
+	return e.startRun(ctx, sess, RunRequest{RunID: sess.RunID()}, session.Usage{}, func(ctx context.Context, r *Run) {
 		if !e.prepareRunEnvironment(ctx, r, sess, env) {
 			return
 		}
@@ -1140,7 +1140,7 @@ func askDiscriminatorFor(req RunRequest, serial int64) (value string, colonRejec
 // LIFO seal/close discipline. It is the single Run-construction site shared by
 // Engine.Run (→ drive) and ResumeApproval (→ driveFromAwaiting) so the two
 // entry seams cannot drift in their concurrency setup.
-func (e *Engine) startRun(ctx context.Context, sess *session.Session, req RunRequest, budgetBaseline session.Usage, workspace string, body func(context.Context, *Run)) *Run {
+func (e *Engine) startRun(ctx context.Context, sess *session.Session, req RunRequest, budgetBaseline session.Usage, body func(context.Context, *Run)) *Run {
 	ctx, cancel := context.WithCancel(ctx)
 	serial := runSerial.Add(1)
 	ctx = port.WithRunAttemptContext(ctx, sess.ID, serial)
@@ -1161,7 +1161,6 @@ func (e *Engine) startRun(ctx context.Context, sess *session.Session, req RunReq
 		asks:           newAskRegistry(),
 		cancel:         cancel,
 		ctx:            ctx,
-		workspace:      workspace,
 		req:            req,
 		budgetBaseline: budgetBaseline,
 		hardAbort:      make(chan struct{}),
