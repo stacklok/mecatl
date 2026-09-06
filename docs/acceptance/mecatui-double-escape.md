@@ -1,9 +1,9 @@
 # Mecatui double-Escape draft clearing — acceptance plan
 
-**Phase:** focused capability — local mecatui prompt UX  
+**Phase:** focused capability — local mecatui prompt UX
 **Status:** landed, 2026-09-06
-**Issue:** #605  
-**Accumulator branch:** `acc/mecatui-double-escape` (off `main`)  
+**Issue:** #605
+**Accumulator branch:** `acc/mecatui-double-escape` (off `main`)
 **Scope:** `cmd/mecatui/ui` input routing, live help/docs, and offline tests only
 
 An idle mecatui with a focused, non-empty prompt offers a destructive draft-clear gesture
