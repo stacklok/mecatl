@@ -2,7 +2,7 @@
 id: 01-reconnect-regression
 title: Offline live-feed reconnect regression coverage
 blocked_by: []
-status: in-progress
+status: done
 attempt: 1
 branch: plan-mecatui-live-reconnect/01-reconnect-regression-attempt-1
 worktree: .scratch/worker-mecatui-live-reconnect-01-reconnect-regression-attempt-1
