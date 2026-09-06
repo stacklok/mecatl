@@ -316,7 +316,7 @@ func (c *titleCoordinator) retry(id session.SessionID) {
 // durable event, then best-effort live publication. Payload construction is
 // source-free and all externally visible strings are UTF-8 repaired by mapper.
 func (c *titleCoordinator) persistTitle(ctx context.Context, sess *session.Session) bool {
-	if err := c.svc.cfg.Store.Save(ctx, sess); err != nil {
+	if err := c.svc.saveSession(ctx, sess); err != nil {
 		return false
 	}
 	c.svc.publishTitle(ctx, sess)

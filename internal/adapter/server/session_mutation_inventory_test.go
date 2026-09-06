@@ -234,7 +234,7 @@ func scanUnsanctionedWrites(files map[string]*ast.File, allowed map[string]bool)
 					violations = append(violations, path+":"+fn.Name.Name+"."+sel.Sel.Name)
 				case "Delete":
 					// sync.Map deletion is process-local, not a durable family write.
-					if x, ok := sel.X.(*ast.SelectorExpr); !ok || x.Sel.Name != "recoverNotices" && x.Sel.Name != "queued" {
+					if x, ok := sel.X.(*ast.SelectorExpr); !ok || (x.Sel.Name != "recoverNotices" && x.Sel.Name != "queued") {
 						violations = append(violations, path+":"+fn.Name.Name+".Delete")
 					}
 				}

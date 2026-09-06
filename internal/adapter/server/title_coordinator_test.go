@@ -61,6 +61,10 @@ func TestTitleCoordinatorLifecycleUpdatesAdvanceRevision(t *testing.T) {
 	}
 }
 
+func titleTestPlacementProvider() PlacementProvider {
+	return titlePlacementProvider{}
+}
+
 func TestSessionTitleGeneration_Scenario4_TwoPhaseAttemptAdmission(t *testing.T) {
 	store := memstore.New()
 	started := make(chan struct{}, 1)

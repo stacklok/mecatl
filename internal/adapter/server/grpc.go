@@ -403,11 +403,11 @@ func (h *HarnessServer) Converse(stream mecatlv1.HarnessService_ConverseServer) 
 		}
 		return err
 	}
-	id, run, retrying, err := h.startConverse(ctx, first)
+	id, run, _, err := h.startConverse(ctx, first)
 	if err != nil {
 		return err
 	}
-	defer h.svc.deregister(id, run)
+	defer h.svc.finishRelayRun(context.WithoutCancel(ctx), id, run)
 
 	// The single-writer gate for EVERY Send on this bidi stream: a gRPC stream
 	// is NOT goroutine-safe — Send called concurrently from the RecoverNotice
@@ -499,14 +499,12 @@ func (h *HarnessServer) Converse(stream mecatlv1.HarnessService_ConverseServer) 
 		defer close(done)
 		defer rl.recorder.Close()
 		pushErr(h.relayRun(rl, run))
-		if retrying {
-			h.svc.Persist(context.WithoutCancel(ctx), id)
-		}
+		// Terminal persistence is owned by RunEventRecorder.Observe(EvResult).
 		// The terminal original must leave the registry before a steer already
 		// being routed can reopen the session. Finish it before sealing the
 		// mailbox; a route that began before the seal is allowed to post its
 		// promoted run, while a later frame is correctly too late.
-		h.svc.FinishRun(id, run)
+		h.svc.finishRelayRun(rl.logCtx, id, run)
 		// Seal new routes and wait only for a Steer handler that has already
 		// received its frame. This closes the receive→post race without adding a
 		// grace delay to ordinary completed runs.
@@ -521,7 +519,7 @@ func (h *HarnessServer) Converse(stream mecatlv1.HarnessService_ConverseServer) 
 			// never the terminal original.
 			ct.swap(p.run)
 			pushErr(h.relayRun(rl, p.run))
-			h.svc.FinishRun(id, p.run)
+			h.svc.finishRelayRun(rl.logCtx, id, p.run)
 			// The promoted run's terminal ack is SENT INLINE (never the ack
 			// lane — relayRun already returned, so a lane-queued ack could lose
 			// the select race to the closed events channel and ride after the
