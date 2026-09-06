@@ -3,9 +3,9 @@
 - **Acceptance plan:** `docs/acceptance/openai-multiple-text-parts.md`
 - **Issue:** `738`
 - **Accumulator:** `acc/openai-multiple-text-parts`
-- **Status:** in-progress
+- **Status:** complete
 
-One pending task corrects the OpenAI Responses visible-text projection without widening a port or public API. The acceptance plan and ADR 0301 are the behavioral contract.
+One completed task corrects the OpenAI Responses visible-text projection without widening a port or public API. The acceptance plan and ADR 0301 are the behavioral contract.
 
 ## Tasks
 

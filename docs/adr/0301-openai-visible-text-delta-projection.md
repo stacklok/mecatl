@@ -1,6 +1,6 @@
 # ADR 0301 — OpenAI Responses visible text delta projection
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-09-06
 - Scope: `response.output_text.delta` projection in the OpenAI Responses SSE adapter
 - Supersedes: only the **Single visible text part** subsection of ADR 0017 §2
