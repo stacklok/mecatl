@@ -2,10 +2,10 @@
 id: 05-production-delivery
 title: Standalone broker command, one-replica deployment, and operator documentation
 blocked_by: [04-mecak8s-continuation]
-status: pending
-attempt: 0
-branch: ""
-worktree: ""
+status: in-progress
+attempt: 1
+branch: plan-initial-production-mcp-broker/05-production-delivery-attempt-1
+worktree: .scratch/worker-initial-production-mcp-broker-05-production-delivery-attempt-1
 issue: ""
 retries: 0
 last_error: ""
