@@ -1,7 +1,7 @@
 # OpenAI Responses multiple visible text parts — acceptance plan
 
 **Phase:** bug fix — ordered Responses stream translation
-**Status:** in-progress, 2026-09-06. Derived from [stacklok/mecatl#738](https://github.com/stacklok/mecatl/issues/738).
+**Status:** landed, 2026-09-06. Derived from [stacklok/mecatl#738](https://github.com/stacklok/mecatl/issues/738).
 **Issue:** [stacklok/mecatl#738](https://github.com/stacklok/mecatl/issues/738).
 **Accumulator branch:** `acc/openai-multiple-text-parts` (off `main`).
 
