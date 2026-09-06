@@ -198,9 +198,11 @@ If the executable cannot start, exits unsuccessfully, times out, exceeds the out
 limit, or emits malformed StatusML, mecatui keeps the most recently successful custom
 surface and marks it `[stale]`. If it has no successful custom surface yet, it instead
 uses the shipped default surface. The command does not receive a failure result or
-retry signal, and `/diagnostics` does not currently include status-command failures or
-captured output. `[stale]` is therefore the only in-client failure indication; it is
-not a machine-readable feedback channel for the command.
+retry signal. `/diagnostics` reports safe current command state: each header/footer
+is `default`, `custom`, or `stale`; `error` is `none`, `unsupported`, `timeout`,
+`output_limit`, `invalid_statusml`, `exit`, or `failed`. It never reports captured
+output, arguments, paths, or raw failure text. `[stale]` remains the only in-client
+failure indication; it is not a machine-readable feedback channel for the command.
 
 Test a command independently with representative JSON input before configuring it.
 Have it write exactly one StatusML document to standard output, and send any

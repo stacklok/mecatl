@@ -50,7 +50,9 @@ ASCII whitespace is trimmed, allowing ordinary `print` output while preserving
 internal text. A command failure (including timeout, excess combined output, or
 invalid StatusML) retains the last successful surface with `[stale]`, or uses the
 shipped default when none exists; the command receives no feedback and
-`/diagnostics` does not currently report the failure. The status-line guide describes
+`/diagnostics` reports only the safe coarse command status: each header/footer is
+`default`, `custom`, or `stale`, and the error is a closed category; it never reports
+command output, arguments, paths, or raw failure text. The status-line guide describes
 the command-output and troubleshooting contract.
 
 See [Status line customization](https://github.com/stacklok/mecatl/blob/main/user-docs/mecatui/status-line.md)

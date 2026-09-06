@@ -11,6 +11,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
+	statusline "github.com/stacklok/mecatl/cmd/mecatui/statusline"
 )
 
 type fakeServerInfo struct {
@@ -171,6 +172,49 @@ func TestDiagnosticsCommandSendsSafeRemoteReport(t *testing.T) {
 	if lines := strings.Split(got, "\n"); len(lines) != expectedLines {
 		t.Fatalf("report has %d lines, want the %d-line allowlist: %q", len(lines), expectedLines, got)
 	}
+}
+
+func TestDiagnosticsCommandIncludesSafeStatusCommandState(t *testing.T) {
+	m, send := builtinDispatchModel(t, client.Capabilities{}, false)
+	m.deps.StatusSource = diagnosticStatusSourceFake{diagnostics: statusline.CommandDiagnostics{
+		Header: statusline.CommandSurfaceStale,
+		Footer: statusline.CommandSurfaceDefault,
+		Error:  statusline.CommandErrorInvalidStatusML,
+	}}
+
+	_, cmd, handled := m.dispatchBareBuiltin("/diagnostics")
+	if !handled || cmd == nil {
+		t.Fatal("/diagnostics was not dispatched")
+	}
+	runBatchLeaves(cmd)
+	got := send.frames()[0].GetPrompt().GetText()
+	for _, want := range []string{
+		"status command header: stale",
+		"status command footer: default",
+		"status command error: invalid_statusml",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("report missing %q: %q", want, got)
+		}
+	}
+
+	m.deps.StatusSource = diagnosticStatusSourceFake{diagnostics: statusline.CommandDiagnostics{Header: "raw failure: secret", Footer: "../../private", Error: "command args --token=secret"}}
+	report := m.diagnosticsReport("", "", "", "", "embedded")
+	if strings.Contains(report, "secret") || strings.Contains(report, "private") || !strings.Contains(report, "status command header: default") || !strings.Contains(report, "status command error: failed") {
+		t.Fatalf("unsafe status command diagnostics = %q", report)
+	}
+}
+
+type diagnosticStatusSourceFake struct {
+	diagnostics statusline.CommandDiagnostics
+}
+
+func (diagnosticStatusSourceFake) Submit(statusline.Input)     {}
+func (diagnosticStatusSourceFake) Changed() <-chan struct{}    { return nil }
+func (diagnosticStatusSourceFake) Latest() statusline.Result   { return statusline.Result{} }
+func (diagnosticStatusSourceFake) Close(context.Context) error { return nil }
+func (f diagnosticStatusSourceFake) CommandDiagnostics() statusline.CommandDiagnostics {
+	return f.diagnostics
 }
 
 // TestDiagnosticsArgumentPolicy keeps arguments local and leaves unknown slash

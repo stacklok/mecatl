@@ -20,7 +20,11 @@ import (
 
 const maxCommandOutputBytes = 4 << 10
 
-var errCommandOutputLimit = errors.New("status command output limit exceeded")
+var (
+	errCommandOutputLimit = errors.New("status command output limit exceeded")
+	errCommandUnsupported = errors.New("status command process trees unsupported")
+	errInvalidStatusML    = errors.New("invalid status command output")
+)
 
 // PassthroughEnvError reports an invalid passthrough environment name. ReservedName
 // is empty when the value does not match the supported environment-name grammar.
@@ -78,11 +82,17 @@ func (s *commandCWDState) clear() { s.set("") }
 
 type commandSource struct {
 	Source
-	cwd *commandCWDState
+	status *statusLineSource
+	cwd    *commandCWDState
 }
 
 func (s commandSource) setCommandCWD(cwd string) { s.cwd.set(cwd) }
 func (s commandSource) clearCommandCWD()         { s.cwd.clear() }
+func (s commandSource) CommandDiagnostics() CommandDiagnostics {
+	s.status.mu.Lock()
+	defer s.status.mu.Unlock()
+	return s.status.commandDiagnostics
+}
 
 // SetCommandCWD updates the private process working directory for a direct
 // command source. The directory is never part of Input or status rendering.
@@ -172,17 +182,17 @@ func NewCommandSource(command Command) Source {
 	source := newSourceWithOptions(ticks, func(ctx context.Context, input Input) renderedStatusLine {
 		fallback := renderTemplates(ctx, header, footer, input)
 		if !procgroup.Supported() {
-			return renderedStatusLine{line: fallback, err: errors.New("status command process trees unsupported")}
+			return renderedStatusLine{line: fallback, err: errCommandUnsupported, command: true, errorClass: CommandErrorUnsupported}
 		}
 		output, err := runCommand(ctx, command, input)
 		if err != nil {
-			return renderedStatusLine{line: fallback, err: err}
+			return renderedStatusLine{line: fallback, err: err, command: true, errorClass: commandErrorClass(ctx, err)}
 		}
 		doc, ok := parse(strings.Trim(string(output), " \t\n\r\v\f"))
 		if !ok {
-			return renderedStatusLine{line: fallback, err: errors.New("invalid status command output")}
+			return renderedStatusLine{line: fallback, err: errInvalidStatusML, command: true, errorClass: CommandErrorInvalidStatusML}
 		}
-		result := renderedStatusLine{line: fallback, headerSupplied: doc.Header.Present, footerSupplied: doc.Footer.Present}
+		result := renderedStatusLine{line: fallback, headerSupplied: doc.Header.Present, footerSupplied: doc.Footer.Present, command: true, errorClass: CommandErrorNone}
 		if result.headerSupplied {
 			result.line.Header = doc.Header
 		}
@@ -191,10 +201,25 @@ func NewCommandSource(command Command) Source {
 		}
 		return result
 	}, false, commandDebounce, commandDeadline)
+	source.commandDiagnostics = CommandDiagnostics{Header: CommandSurfaceDefault, Footer: CommandSurfaceDefault, Error: CommandErrorNone}
 	if ticker != nil {
 		source.stopTicker = ticker.Stop
 	}
-	return commandSource{Source: source, cwd: command.cwd}
+	return commandSource{Source: source, status: source, cwd: command.cwd}
+}
+
+func commandErrorClass(ctx context.Context, err error) string {
+	switch {
+	case errors.Is(ctx.Err(), context.DeadlineExceeded), errors.Is(err, context.DeadlineExceeded):
+		return CommandErrorTimeout
+	case errors.Is(err, errCommandOutputLimit):
+		return CommandErrorOutputLimit
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		return CommandErrorExit
+	}
+	return CommandErrorFailed
 }
 
 func runCommand(ctx context.Context, command Command, input Input) ([]byte, error) {

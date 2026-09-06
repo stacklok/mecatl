@@ -224,4 +224,8 @@ func TestStatusLine_Scenario4_FailureDegradesWithoutLeakage(t *testing.T) {
 	if !strings.Contains(text, "good [stale]") || strings.Contains(text, secret) {
 		t.Fatalf("failure degradation = %q, want stale last-good surface without command output", text)
 	}
+	diagnostics := source.(CommandDiagnosticsSource).CommandDiagnostics()
+	if diagnostics != (CommandDiagnostics{Header: CommandSurfaceDefault, Footer: CommandSurfaceStale, Error: CommandErrorExit}) {
+		t.Fatalf("command diagnostics = %#v", diagnostics)
+	}
 }
