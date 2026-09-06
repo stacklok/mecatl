@@ -3,23 +3,21 @@
 package managedtemp
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
-	"syscall"
+
+	"golang.org/x/sys/unix"
 )
 
-// processStartIdentity derives an opaque identity from Darwin's kernel process
-// record. It deliberately does not fall back to the PID: a reused PID has a
-// different kinfo_proc record and therefore a different identity.
+// processStartIdentity records Darwin's kernel-reported process start time,
+// paired with its PID only after the kernel confirms the same process record.
+// It deliberately fails rather than using a PID-only fallback.
 func processStartIdentity(pid int) (string, error) {
-	record, err := syscall.Sysctl(fmt.Sprintf("kern.proc.pid.%d", pid))
-	if err != nil || record == "" {
-		if err == nil {
-			err = fmt.Errorf("empty process record")
-		}
+	proc, err := unix.SysctlKinfoProc("kern.proc.pid", pid)
+	if err != nil {
 		return "", fmt.Errorf("managedtemp: read process start identity: %w", err)
 	}
-	sum := sha256.Sum256([]byte(record))
-	return hex.EncodeToString(sum[:]), nil
+	if proc == nil || int(proc.Proc.P_pid) != pid || proc.Proc.P_starttime.Sec <= 0 {
+		return "", fmt.Errorf("managedtemp: malformed process start identity")
+	}
+	return fmt.Sprintf("%d.%06d", proc.Proc.P_starttime.Sec, proc.Proc.P_starttime.Usec), nil
 }
