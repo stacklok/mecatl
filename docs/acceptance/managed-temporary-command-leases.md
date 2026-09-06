@@ -89,9 +89,10 @@ path into deletion authority ([ADR-0281](../adr/0281-managed-temporary-command-l
   - verify: `TestADR_0281_ManagedObjectsCreatedAtomicallyPrivate`
 - AC1.6: A managed root/workspace allocation rejects symlink, replacement,
   ownership, mode, or manifest-key/current-path failures without deleting anything. Its
-  128-bit domain-separated key is encoded as unpadded URL-safe Base64; its owner-only
-  manifest contains the canonical current workspace path and refreshes that field when
-  the same key opens from a new path, but persists no raw backend identity or global
+  96-bit domain-separated key is encoded as canonical unpadded URL-safe Base64 in
+  exactly 16 characters; non-canonical or differently sized values fail closed. Its
+  owner-only manifest contains the canonical current workspace path and refreshes that
+  field when the same key opens from a new path, but persists no raw backend identity or global
   workspace index. A same-UID component replacement after validation
   and before cleanup/reaping cannot redirect deletion outside the retained
   handle-rooted lease; the candidate is retained or fails closed.
@@ -170,7 +171,7 @@ cleanup only after the managed group is gone ([ADR-0281](../adr/0281-managed-tem
 
 **Acceptance:**
 - AC3.1: A managed foreground Bash call receives a distinct owner-only
-  `cmd-<22-char-base64-random-id>/tmp` directory in both `TMPDIR` and `GOTMPDIR`; shell
+  `cmd-<16-char-base64-random-id>/tmp` directory in both `TMPDIR` and `GOTMPDIR`; shell
   text is byte-for-byte free of injected temporary paths, and manifest metadata
   contains no command, output, environment, credential, or transcript content.
   The fixed internal overlay is applied after the common secret scrub and cannot
@@ -182,7 +183,7 @@ cleanup only after the managed group is gone ([ADR-0281](../adr/0281-managed-tem
   variables differ by scope.
   - verify: `TestADR_0281_TempOverlayPreservesSecretScrub`
 - AC3.2: A managed `background: true` Bash call receives one distinct
-  `job-<22-char-base64-random-id>/tmp` lease that remains held for its complete job lifetime
+  `job-<16-char-base64-random-id>/tmp` lease that remains held for its complete job lifetime
   and is cleaned under the same terminal rules as a foreground command.
   - verify: `TestADR_0281_BackgroundJobLeaseLifecycle`
 - AC3.3: Successful completion, cancellation, and timeout retain their existing

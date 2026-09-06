@@ -98,8 +98,8 @@ func TestADR_0281_BackgroundJobLeaseLifecycle(t *testing.T) {
 
 	tempPath := out.path(t)
 	leasePath := filepath.Dir(tempPath)
-	if base := filepath.Base(leasePath); !strings.HasPrefix(base, "job-") || len(strings.TrimPrefix(base, "job-")) != 22 || strings.ContainsAny(strings.TrimPrefix(base, "job-"), "+/=") || filepath.Base(tempPath) != "tmp" {
-		t.Fatalf("background temporary path = %q, want job-<22-char-raw-url-base64-id>/tmp", tempPath)
+	if base := filepath.Base(leasePath); !strings.HasPrefix(base, "job-") || len(strings.TrimPrefix(base, "job-")) != 16 || strings.ContainsAny(strings.TrimPrefix(base, "job-"), "+/=") || filepath.Base(tempPath) != "tmp" {
+		t.Fatalf("background temporary path = %q, want job-<16-char-raw-url-base64-id>/tmp", tempPath)
 	}
 	if _, err := os.Stat(leasePath); err != nil {
 		t.Fatalf("live background job lease %q: %v", leasePath, err)

@@ -12,16 +12,26 @@ import (
 	"testing"
 )
 
-func TestWorkspaceKeyUsesFirst128BitsOfRawURLBase64SHA256(t *testing.T) {
+func TestWorkspaceKeyUsesFirst96BitsOfRawURLBase64SHA256(t *testing.T) {
 	const backend = "osfs"
 	const identity = "/canonical/workspace"
 	sum := sha256.Sum256([]byte("mecatl/managed-temp/workspace/v1\x00" + backend + "\x00" + identity))
-	want := base64.RawURLEncoding.EncodeToString(sum[:16])
-	if got := workspaceKey(backend, identity); got != want || len(got) != 22 {
-		t.Fatalf("workspaceKey() = %q, want first 128 bits as raw URL base64 %q", got, want)
+	want := base64.RawURLEncoding.EncodeToString(sum[:12])
+	if got := workspaceKey(backend, identity); got != want || len(got) != 16 {
+		t.Fatalf("workspaceKey() = %q, want first 96 bits as 16-character raw URL base64 %q", got, want)
 	}
-	if !validWorkspaceKey(want) || validWorkspaceKey("######################") {
-		t.Fatal("workspace key format validation accepted an invalid key")
+	for _, key := range []string{
+		want,
+		base64.RawURLEncoding.EncodeToString(sum[:16]),
+		base64.URLEncoding.EncodeToString(sum[:11]),
+		"################",
+	} {
+		if got := validWorkspaceKey(key); got != (key == want) {
+			t.Errorf("validWorkspaceKey(%q) = %t, want %t", key, got, key == want)
+		}
+		if got := validAllocationID(key); got != (key == want) {
+			t.Errorf("validAllocationID(%q) = %t, want %t", key, got, key == want)
+		}
 	}
 }
 
@@ -92,8 +102,8 @@ func TestADR_0281_ManagedRootAndWorkspaceFailClosed(t *testing.T) {
 	if err != nil || !strings.Contains(string(refreshedManifest), `"current_path":"`+movedPath+`"`) {
 		t.Fatalf("workspace manifest did not refresh the current path: %q, %v", refreshedManifest, err)
 	}
-	if got := filepath.Base(workspace.Path()); len(got) != 22 || strings.ContainsAny(got, "+/=") {
-		t.Fatalf("workspace key = %q, want 22-char raw URL-safe base64", got)
+	if got := filepath.Base(workspace.Path()); len(got) != 16 || strings.ContainsAny(got, "+/=") {
+		t.Fatalf("workspace key = %q, want 16-char raw URL-safe base64", got)
 	}
 
 	lease, err := workspace.Allocate("cmd")
@@ -101,8 +111,8 @@ func TestADR_0281_ManagedRootAndWorkspaceFailClosed(t *testing.T) {
 		t.Fatalf("Allocate: %v", err)
 	}
 	t.Cleanup(func() { _ = lease.Close() })
-	if !strings.HasPrefix(filepath.Base(lease.Path()), "cmd-") || len(lease.ID()) != 22 || !validAllocationID(lease.ID()) {
-		t.Fatalf("lease identity = %q / %q, want cmd- plus 22-char raw URL-safe base64 128-bit ID", lease.Path(), lease.ID())
+	if !strings.HasPrefix(filepath.Base(lease.Path()), "cmd-") || len(lease.ID()) != 16 || !validAllocationID(lease.ID()) {
+		t.Fatalf("lease identity = %q / %q, want cmd- plus 16-char raw URL-safe base64 96-bit ID", lease.Path(), lease.ID())
 	}
 
 	outside := filepath.Join(base, "outside")

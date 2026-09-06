@@ -17,7 +17,7 @@ Apply the foreground lease protocol to ADR 0201 background Bash jobs, retaining 
 
 ## Acceptance criteria
 
-- AC3.2: A managed `background: true` Bash call receives one distinct `job-<128-bit-random-id>/tmp` lease that remains held for its complete job lifetime and is cleaned under the same terminal rules as a foreground command.
+- AC3.2: A managed `background: true` Bash call receives one distinct `job-<96-bit-random-id>/tmp` lease that remains held for its complete job lifetime and is cleaned under the same terminal rules as a foreground command.
   - verify: `TestADR_0281_BackgroundJobLeaseLifecycle`
 - AC3.7: Concurrent managed runners receive distinct leases, and a reaper cannot remove either live allocation while its per-lease lock is held, including for a command with no timeout.
   - verify: `TestADR_0281_ActiveLeaseLockDefeatsReaper`

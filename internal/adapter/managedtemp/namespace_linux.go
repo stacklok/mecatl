@@ -21,8 +21,10 @@ import (
 )
 
 const (
-	privateDirMode  = 0o700
-	privateFileMode = 0o600
+	privateDirMode          = 0o700
+	privateFileMode         = 0o600
+	managedIdentifierBytes  = 12 // 96 bits.
+	managedIdentifierLength = 16 // base64.RawURLEncoding characters for 96 bits.
 )
 
 // Namespace is a private managed root. Every mutation is relative to root.
@@ -237,12 +239,12 @@ func validCanonicalWorkspacePath(path string) bool {
 
 func workspaceKey(backend, identity string) string {
 	sum := sha256.Sum256([]byte("mecatl/managed-temp/workspace/v1\x00" + backend + "\x00" + identity))
-	return base64.RawURLEncoding.EncodeToString(sum[:16])
+	return base64.RawURLEncoding.EncodeToString(sum[:managedIdentifierBytes])
 }
 
 func validWorkspaceKey(key string) bool {
 	decoded, err := base64.RawURLEncoding.DecodeString(key)
-	return err == nil && len(decoded) == 16 && base64.RawURLEncoding.EncodeToString(decoded) == key
+	return err == nil && len(key) == managedIdentifierLength && len(decoded) == managedIdentifierBytes && base64.RawURLEncoding.EncodeToString(decoded) == key
 }
 
 func openParent(path string) (*os.Root, string, error) {

@@ -57,7 +57,7 @@ type Lease struct {
 	parent *Workspace
 }
 
-// ID returns the opaque random allocation ID.
+// ID returns the opaque 96-bit random allocation ID.
 func (l *Lease) ID() string { return l.id }
 
 // Path returns the adapter-local allocation path.
@@ -393,7 +393,7 @@ func readPrivateFile(root *os.Root, name string) ([]byte, error) {
 }
 
 func allocationID() (string, error) {
-	var random [16]byte
+	var random [managedIdentifierBytes]byte
 	if _, err := io.ReadFull(rand.Reader, random[:]); err != nil {
 		return "", err
 	}
@@ -462,7 +462,7 @@ func validTestHomeWorkspaceManifest(workspace string) (workspaceManifest, bool) 
 
 func validAllocationID(id string) bool {
 	decoded, err := base64.RawURLEncoding.DecodeString(id)
-	return err == nil && len(decoded) == 16 && base64.RawURLEncoding.EncodeToString(decoded) == id
+	return err == nil && len(id) == managedIdentifierLength && len(decoded) == managedIdentifierBytes && base64.RawURLEncoding.EncodeToString(decoded) == id
 }
 
 func lockExclusive(file *os.File, nonBlocking bool) error {
