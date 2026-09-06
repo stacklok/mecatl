@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"reflect"
 	"sync"
 	"testing"
@@ -347,5 +348,35 @@ func TestAttachReattachCloseDeleteLifecycle(t *testing.T) {
 	}
 	if _, err := fresh.AuthorizationStatus(t.Context(), session.ExternalAuthorization{ID: "none", Binding: "none"}); !errors.Is(err, contract.ErrAuthorizationNotFound) {
 		t.Fatalf("anonymous authorization status error = %v", err)
+	}
+}
+
+func TestRuntimeCloseAndDrainUsesOneProcessDeadline(t *testing.T) {
+	runtime := testAnonymousRuntime(t)
+	finishes := make([]func(), 0, 3)
+	for i := range 3 {
+		attached, _, err := runtime.AttachSession(t.Context(), session.SessionID(fmt.Sprintf("drain-%d", i)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, finish, err := attached.(*Attachment).beginOperation(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		finishes = append(finishes, finish)
+	}
+	defer func() {
+		for _, finish := range finishes {
+			finish()
+		}
+	}()
+
+	const timeout = 60 * time.Millisecond
+	started := time.Now()
+	if err := runtime.closeAndDrain(timeout); err != nil {
+		t.Fatal(err)
+	}
+	if elapsed := time.Since(started); elapsed >= 2*timeout {
+		t.Fatalf("drain elapsed %v, want one %v process deadline", elapsed, timeout)
 	}
 }

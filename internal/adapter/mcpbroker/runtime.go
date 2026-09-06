@@ -197,6 +197,7 @@ type Runtime struct {
 	nextGeneration   uint64
 	bindingPrefix    string
 	closed           bool
+	drainSessions    []*logicalSession
 	// process is set only when this Runtime is owned by a bundled ToolHive
 	// Process (NewToolHiveProcess). It lets an Attachment reach the pre-prompt
 	// authenticated-discovery primitives without widening the neutral contract.
@@ -473,22 +474,6 @@ func (a *Attachment) Tools() []tool.Tool {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 	return a.catalogue.Tools()
-}
-
-func (a *Attachment) stateError() error {
-	a.mu.RLock()
-	closed := a.closed
-	a.mu.RUnlock()
-	if closed {
-		return contract.ErrAttachmentClosed
-	}
-	a.logical.mu.RLock()
-	deleted := a.logical.deleted
-	a.logical.mu.RUnlock()
-	if deleted {
-		return contract.ErrStateUnavailable
-	}
-	return nil
 }
 
 // Close rejects new work through this attachment and joins work that was already

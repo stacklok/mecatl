@@ -125,6 +125,13 @@ func TestProtectedCallCallbackSingleUseAndRefreshCustody(t *testing.T) {
 			t.Error(err)
 			return
 		}
+		user, password, ok := request.BasicAuth()
+		if !ok || user != "client-id" || password != "client-secret" {
+			t.Errorf("BasicAuth = (%q, %q, %v)", user, password, ok)
+		}
+		if secret := request.Form.Get("client_secret"); secret != "" {
+			t.Errorf("client_secret form value = %q", secret)
+		}
 		w.Header().Set("Content-Type", "application/json")
 		switch request.Form.Get("grant_type") {
 		case "authorization_code":
@@ -407,29 +414,39 @@ func TestConfidentialTokenExchangeUsesBasicAuthenticationOnce(t *testing.T) {
 	}
 }
 
-func TestOAuthErrorCallbackConsumesStateAndMarksFailed(t *testing.T) {
-	tokenServer := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
-		t.Fatal("error callback must not exchange a token")
-	}))
-	defer tokenServer.Close()
+func TestOAuthErrorCallbackConsumesStateAndMapsStatus(t *testing.T) {
+	for _, test := range []struct {
+		name, oauthError string
+		want             session.AuthorizationStatus
+	}{
+		{name: "access denied", oauthError: "access_denied", want: session.AuthorizationDenied},
+		{name: "other error", oauthError: "server_error", want: session.AuthorizationFailed},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			tokenServer := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+				t.Fatal("error callback must not exchange a token")
+			}))
+			defer tokenServer.Close()
 
-	harness := newProtectedHarness(t, tokenServer)
-	attachment, _ := attach(t, harness.runtime, "error-session")
-	call := session.NewToolCall("error-call", "mcp__github__create", json.RawMessage(`{}`))
-	authorization, state := requestProtected(t, attachment, call)
-	request := httptest.NewRequest(http.MethodGet, "/callback?"+url.Values{"error": {"access_denied"}, "state": {state}}.Encode(), nil)
-	first := httptest.NewRecorder()
-	harness.runtime.CallbackHandler().ServeHTTP(first, request)
-	if first.Code != http.StatusBadRequest {
-		t.Fatalf("error callback status = %d", first.Code)
-	}
-	if status, err := attachment.AuthorizationStatus(t.Context(), authorization); err != nil || status != session.AuthorizationFailed {
-		t.Fatalf("failed status = (%q, %v)", status, err)
-	}
-	second := httptest.NewRecorder()
-	harness.runtime.CallbackHandler().ServeHTTP(second, request)
-	if second.Code != http.StatusBadRequest {
-		t.Fatalf("replayed error callback status = %d", second.Code)
+			harness := newProtectedHarness(t, tokenServer)
+			attachment, _ := attach(t, harness.runtime, session.SessionID("error-session-"+test.oauthError))
+			call := session.NewToolCall("error-call", "mcp__github__create", json.RawMessage(`{}`))
+			authorization, state := requestProtected(t, attachment, call)
+			request := httptest.NewRequest(http.MethodGet, "/callback?"+url.Values{"error": {test.oauthError}, "state": {state}}.Encode(), nil)
+			first := httptest.NewRecorder()
+			harness.runtime.CallbackHandler().ServeHTTP(first, request)
+			if first.Code != http.StatusBadRequest {
+				t.Fatalf("error callback status = %d", first.Code)
+			}
+			if status, err := attachment.AuthorizationStatus(t.Context(), authorization); err != nil || status != test.want {
+				t.Fatalf("status = (%q, %v), want %q", status, err, test.want)
+			}
+			second := httptest.NewRecorder()
+			harness.runtime.CallbackHandler().ServeHTTP(second, request)
+			if second.Code != http.StatusBadRequest {
+				t.Fatalf("replayed error callback status = %d", second.Code)
+			}
+		})
 	}
 }
 
@@ -580,7 +597,7 @@ func TestRuntimeCloseAndDrainWaitsForActiveOperations(t *testing.T) {
 		WithAuthorizedCaller(func(context.Context, SessionRef, string, session.ToolCall, oauth2.TokenSource) (session.ToolResult, error) {
 			return session.ToolResult{}, nil
 		}),
-		WithOAuthSecretResolver(func(ctx context.Context, _ string) (string, error) {
+		WithOAuthSecretResolver(func(_ context.Context, _ string) (string, error) {
 			close(entered)
 			<-release
 			return "client-secret", nil
@@ -647,7 +664,7 @@ func TestRuntimeCloseAndDrainIsBoundedWhenOperationHangs(t *testing.T) {
 		WithAuthorizedCaller(func(context.Context, SessionRef, string, session.ToolCall, oauth2.TokenSource) (session.ToolResult, error) {
 			return session.ToolResult{}, nil
 		}),
-		WithOAuthSecretResolver(func(ctx context.Context, _ string) (string, error) {
+		WithOAuthSecretResolver(func(_ context.Context, _ string) (string, error) {
 			close(entered)
 			<-hang // ignores ctx cancellation on purpose: a genuinely wedged op
 			return "client-secret", nil
@@ -725,7 +742,7 @@ func TestTokenRefreshDoesNotHoldSessionLock(t *testing.T) {
 func TestTokenRefreshHonoursOperationCancellation(t *testing.T) {
 	entered := make(chan struct{})
 	block := make(chan struct{})
-	tokenServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+	tokenServer := httptest.NewTLSServer(http.HandlerFunc(func(_ http.ResponseWriter, request *http.Request) {
 		close(entered)
 		select {
 		case <-block:
@@ -759,5 +776,135 @@ func TestTokenRefreshHonoursOperationCancellation(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("Token did not honour operation cancellation (waited for runtime.oauth.timeout instead)")
+	}
+}
+
+func TestRefreshCarriesResourceIndicator(t *testing.T) {
+	const wantResource = "https://mcp.example/mcp"
+	for _, brokerWide := range []bool{false, true} {
+		name := "scoped"
+		if brokerWide {
+			name = "broker"
+		}
+		t.Run(name, func(t *testing.T) {
+			var gotResource string
+			tokenServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+				if err := request.ParseForm(); err != nil {
+					t.Error(err)
+				}
+				gotResource = request.Form.Get("resource")
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"access_token":"fresh","token_type":"Bearer","expires_in":3600}`))
+			}))
+			defer tokenServer.Close()
+
+			harness := newProtectedHarness(t, tokenServer)
+			attached, _ := attach(t, harness.runtime, session.SessionID("resource-refresh-"+name))
+			config := (&authorizationTransaction{route: harness.runtime.catalogue.routes[0].oauth}).oauthConfig("client-secret")
+			grant := &oauthGrant{
+				config: config, resource: wantResource,
+				token: &oauth2.Token{AccessToken: "stale", RefreshToken: "refresh", TokenType: "Bearer", Expiry: time.Now().Add(-time.Minute)},
+			}
+			attached.logical.mu.Lock()
+			if brokerWide {
+				attached.logical.brokerCredential = grant
+			} else {
+				attached.logical.grants["github"] = grant
+			}
+			attached.logical.mu.Unlock()
+
+			var source oauth2.TokenSource = &scopedTokenSource{runtime: harness.runtime, logical: attached.logical, backend: "github", ctx: t.Context()}
+			if brokerWide {
+				source = &brokerTokenSource{runtime: harness.runtime, logical: attached.logical, ctx: t.Context()}
+			}
+			if _, err := source.Token(); err != nil {
+				t.Fatalf("Token: %v", err)
+			}
+			if gotResource != wantResource {
+				t.Fatalf("refresh resource = %q, want %q", gotResource, wantResource)
+			}
+		})
+	}
+}
+
+func TestConcurrentRefreshSerializesEachGrant(t *testing.T) {
+	for _, brokerWide := range []bool{false, true} {
+		name := "route"
+		if brokerWide {
+			name = "broker"
+		}
+		t.Run(name, func(t *testing.T) {
+			var mu sync.Mutex
+			calls := 0
+			firstEntered := make(chan struct{})
+			secondEntered := make(chan struct{})
+			release := make(chan struct{})
+			tokenServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				mu.Lock()
+				calls++
+				call := calls
+				mu.Unlock()
+				switch call {
+				case 1:
+					close(firstEntered)
+				case 2:
+					close(secondEntered)
+				}
+				<-release
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"access_token":"fresh","token_type":"Bearer","expires_in":3600}`))
+			}))
+			defer tokenServer.Close()
+
+			harness := newProtectedHarness(t, tokenServer)
+			attached, _ := attach(t, harness.runtime, session.SessionID("concurrent-refresh-"+name))
+			config := (&authorizationTransaction{route: harness.runtime.catalogue.routes[0].oauth}).oauthConfig("client-secret")
+			grant := &oauthGrant{config: config, token: &oauth2.Token{AccessToken: "stale", RefreshToken: "refresh", TokenType: "Bearer", Expiry: time.Now().Add(-time.Minute)}}
+			attached.logical.mu.Lock()
+			if brokerWide {
+				attached.logical.brokerCredential = grant
+			} else {
+				attached.logical.grants["github"] = grant
+			}
+			attached.logical.mu.Unlock()
+
+			var source oauth2.TokenSource
+			if brokerWide {
+				source = &brokerTokenSource{runtime: harness.runtime, logical: attached.logical, ctx: context.Background()}
+			} else {
+				source = &scopedTokenSource{runtime: harness.runtime, logical: attached.logical, backend: "github", ctx: context.Background()}
+			}
+			results := make(chan error, 2)
+			start := make(chan struct{})
+			for range 2 {
+				go func() {
+					<-start
+					token, err := source.Token()
+					if err == nil && token.AccessToken != "fresh" {
+						err = fmt.Errorf("access token = %q", token.AccessToken)
+					}
+					results <- err
+				}()
+			}
+			close(start)
+			<-firstEntered
+			select {
+			case <-secondEntered:
+				close(release)
+				t.Fatal("same grant was refreshed concurrently")
+			case <-time.After(25 * time.Millisecond):
+			}
+			close(release)
+			for range 2 {
+				if err := <-results; err != nil {
+					t.Fatalf("Token: %v", err)
+				}
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			if calls != 1 {
+				t.Fatalf("refresh requests = %d, want 1", calls)
+			}
+		})
 	}
 }

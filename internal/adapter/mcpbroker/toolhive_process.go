@@ -11,11 +11,12 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/ory/fosite"
 	"github.com/stacklok/toolhive/pkg/auth/upstreamtoken"
 	"github.com/stacklok/toolhive/pkg/authserver"
 	"github.com/stacklok/toolhive/pkg/authserver/runner"
+	"github.com/stacklok/toolhive/pkg/authserver/server/registration"
 	"github.com/stacklok/toolhive/pkg/authserver/storage"
+	"github.com/stacklok/toolhive/pkg/oauthproto"
 	"github.com/stacklok/toolhive/pkg/vmcp"
 	"github.com/stacklok/toolhive/pkg/vmcp/aggregator"
 	vmcpauth "github.com/stacklok/toolhive/pkg/vmcp/auth"
@@ -171,11 +172,20 @@ func newToolHiveProcess(ctx context.Context, config ToolHiveConfig, options tool
 		if protectedTarget == nil {
 			return rollback(fmt.Errorf("%w: protected ToolHive target is required", ErrInvalidCatalogue))
 		}
-		if err := authStore.RegisterClient(processCtx, &fosite.DefaultClient{
-			ID: protectedTarget.clientID, RedirectURIs: []string{config.CallbackURL},
-			GrantTypes: []string{"authorization_code", "refresh_token"}, ResponseTypes: []string{"code"},
-			Scopes: []string{"openid", "offline_access"}, Audience: []string{issuer}, Public: true,
-		}); err != nil {
+		client, err := registration.New(registration.Config{
+			ID:                      protectedTarget.clientID,
+			Secret:                  protectedTarget.clientSecret,
+			RedirectURIs:            []string{config.CallbackURL},
+			TokenEndpointAuthMethod: oauthproto.TokenEndpointAuthMethodClientSecretBasic,
+			GrantTypes:              []string{oauthproto.GrantTypeAuthorizationCode, oauthproto.GrantTypeRefreshToken},
+			ResponseTypes:           []string{oauthproto.ResponseTypeCode},
+			Scopes:                  []string{"openid", "offline_access"},
+			Audience:                []string{issuer},
+		})
+		if err != nil {
+			return rollback(fmt.Errorf("mcpbroker: construct embedded authorization client: %w", err))
+		}
+		if err := authStore.RegisterClient(processCtx, client); err != nil {
 			return rollback(fmt.Errorf("mcpbroker: register embedded authorization client: %w", err))
 		}
 		auth, err = runner.NewEmbeddedAuthServerWithStorage(processCtx, &authserver.RunConfig{
@@ -365,11 +375,16 @@ func newToolHiveProtectedTarget(issuer, callbackURL string, required bool) (*oau
 	if err != nil {
 		return nil, fmt.Errorf("%w: create ToolHive authorization client: %v", ErrInvalidCatalogue, err)
 	}
+	clientSecret, err := registration.GenerateClientSecret()
+	if err != nil {
+		return nil, fmt.Errorf("%w: create ToolHive authorization client secret: %v", ErrInvalidCatalogue, err)
+	}
 	return &oauthRoute{
 		authorizationEndpoint: issuer + "/oauth/authorize",
 		tokenEndpoint:         issuer + "/oauth/token",
 		callbackURL:           callbackURL,
 		clientID:              clientID,
+		clientSecret:          clientSecret,
 		scopes:                []string{"openid", "offline_access"},
 		requestRefresh:        true,
 		resource:              issuer,

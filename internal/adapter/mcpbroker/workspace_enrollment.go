@@ -92,13 +92,14 @@ func (a *Attachment) BeginWorkspaceEnrollment(ctx context.Context) (contract.Wor
 	logical.mu.Unlock()
 
 	// Secret resolution is potentially slow and must NOT run while holding
-	// logical.mu: see the identical rationale on RequestAuthorization.
-	var secret string
-	if target.secretEnv != "" {
-		secret, err = a.runtime.oauth.resolveSecret(opCtx, target.secretEnv)
-		if err != nil {
-			return contract.WorkspaceEnrollmentPresentation{}, err
-		}
+	// logical.mu: see the identical rationale on RequestAuthorization. Delegates
+	// to the shared resolveClientSecret (rather than re-deriving it here) so the
+	// already-populated raw target.clientSecret (the confidential embedded
+	// broker's own client secret, set once at construction) is never bypassed
+	// in favor of a secretEnv lookup that a target like this one never has.
+	secret, err := target.resolveClientSecret(opCtx, a.runtime.oauth.resolveSecret)
+	if err != nil {
+		return contract.WorkspaceEnrollmentPresentation{}, err
 	}
 	id, err := opaque(a.runtime.oauth.random)
 	if err != nil {

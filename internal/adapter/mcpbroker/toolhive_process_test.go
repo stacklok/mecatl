@@ -22,7 +22,9 @@ import (
 	jwt "github.com/golang-jwt/jwt/v5"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/ory/fosite"
+	"github.com/stacklok/toolhive/pkg/authserver/server/registration"
 	"github.com/stacklok/toolhive/pkg/authserver/storage"
+	"github.com/stacklok/toolhive/pkg/oauthproto"
 	"golang.org/x/oauth2"
 
 	"github.com/stacklok/mecatl/engine/session"
@@ -37,6 +39,7 @@ import (
 type registerClientSpy struct {
 	*storage.MemoryStorage
 	registered atomic.Bool
+	client     fosite.Client
 }
 
 func newRegisterClientSpy() *registerClientSpy {
@@ -44,6 +47,7 @@ func newRegisterClientSpy() *registerClientSpy {
 }
 
 func (s *registerClientSpy) RegisterClient(ctx context.Context, client fosite.Client) error {
+	s.client = client
 	s.registered.Store(true)
 	return s.MemoryStorage.RegisterClient(ctx, client)
 }
@@ -62,6 +66,80 @@ func TestNewToolHiveProcessUsesConfiguredAuthStorage(t *testing.T) {
 	t.Cleanup(func() { _ = process.Close() })
 	if !spy.registered.Load() {
 		t.Fatal("NewToolHiveProcess did not register the client on the configured AuthStorage")
+	}
+}
+
+func TestToolHiveProtectedClientIsConfidential(t *testing.T) {
+	t.Setenv("MECATL_TEST_CLIENT_SECRET", "construction-only-secret")
+	profile := protectedToolHiveProfile("private")
+	profile.Static = []StaticTool{{Name: "echo", Description: "echo", Schema: json.RawMessage(`{"type":"object"}`)}}
+	spy := newRegisterClientSpy()
+	process, err := NewToolHiveProcess(t.Context(), ToolHiveConfig{
+		CallbackURL: "https://broker.example/callback", Profiles: []ToolHiveProfile{profile}, AuthStorage: spy,
+	})
+	if err != nil {
+		t.Fatalf("NewToolHiveProcess: %v", err)
+	}
+	t.Cleanup(func() { _ = process.Close() })
+
+	client := spy.client
+	if client == nil {
+		t.Fatal("registered client is nil")
+	}
+	if client.IsPublic() {
+		t.Fatal("protected ToolHive client is public")
+	}
+	openid, ok := client.(fosite.OpenIDConnectClient)
+	if !ok {
+		t.Fatalf("registered client type %T does not expose token-endpoint authentication", client)
+	}
+	if got := openid.GetTokenEndpointAuthMethod(); got != oauthproto.TokenEndpointAuthMethodClientSecretBasic {
+		t.Fatalf("token endpoint auth method = %q, want %q", got, oauthproto.TokenEndpointAuthMethodClientSecretBasic)
+	}
+	secret := process.protectedTarget.clientSecret
+	if secret == "" {
+		t.Fatal("protected target client secret is empty")
+	}
+	if string(client.GetHashedSecret()) == secret {
+		t.Fatal("registered client stores the raw secret")
+	}
+	if err := registration.SHA256Hasher.Compare(t.Context(), client.GetHashedSecret(), []byte(secret)); err != nil {
+		t.Fatalf("registered secret hash does not verify: %v", err)
+	}
+	if err := registration.SHA256Hasher.Compare(t.Context(), client.GetHashedSecret(), []byte("wrong-secret")); err == nil {
+		t.Fatal("registered secret hash accepted a different secret")
+	}
+}
+
+func TestADR_0299_BrokerClientSecretNeverCrossesPublicBoundary(t *testing.T) {
+	t.Setenv("MECATL_TEST_CLIENT_SECRET", "construction-only-secret")
+	profile := protectedToolHiveProfile("private")
+	profile.Static = []StaticTool{{Name: "echo", Description: "echo", Schema: json.RawMessage(`{"type":"object"}`)}}
+	process, err := NewToolHiveProcess(t.Context(), ToolHiveConfig{
+		CallbackURL: "https://broker.example/callback", Profiles: []ToolHiveProfile{profile},
+	})
+	if err != nil {
+		t.Fatalf("NewToolHiveProcess: %v", err)
+	}
+	t.Cleanup(func() { _ = process.Close() })
+	secret := process.protectedTarget.clientSecret
+
+	attachment, _, err := process.Runtime.AttachSession(t.Context(), "secret-boundary")
+	if err != nil {
+		t.Fatalf("AttachSession: %v", err)
+	}
+	t.Cleanup(func() { _, _ = attachment.Close(context.Background()) })
+	presentation, err := attachment.(contract.WorkspaceEnrollmentAttachment).BeginWorkspaceEnrollment(t.Context())
+	if err != nil {
+		t.Fatalf("BeginWorkspaceEnrollment: %v", err)
+	}
+	if strings.Contains(presentation.URL, secret) {
+		t.Fatal("workspace enrollment presentation exposes the broker client secret")
+	}
+	for _, spec := range attachment.(*Attachment).Tools() {
+		if strings.Contains(spec.Spec().Description, secret) || strings.Contains(string(spec.Spec().Schema), secret) {
+			t.Fatal("model-facing tool specification exposes the broker client secret")
+		}
 	}
 }
 
@@ -137,8 +215,6 @@ func TestProtectedBrokerVMCPEndpointRejectsAnonymousOverNetwork(t *testing.T) {
 		}
 	}
 }
-
-
 
 func TestToolHiveConstructionPreservesProtectedMapping(t *testing.T) {
 	profiles := []ToolHiveProfile{

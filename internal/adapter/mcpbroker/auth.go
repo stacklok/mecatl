@@ -8,10 +8,12 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/oauth2"
@@ -42,6 +44,7 @@ type oauthRoute struct {
 	callbackURL           string
 	clientID              string
 	secretEnv             string
+	clientSecret          string
 	scopes                []string
 	requestRefresh        bool
 	// resource is the RFC 8707 resource indicator sent with every authorization
@@ -84,6 +87,16 @@ func compileOAuthRoute(callbackURL string, declaration permconfig.MCPServerProfi
 		requestRefresh:        profile.RequestRefreshToken,
 		resource:              declaration.URL,
 	}, nil
+}
+
+func (route *oauthRoute) resolveClientSecret(ctx context.Context, resolve func(context.Context, string) (string, error)) (string, error) {
+	if route.clientSecret != "" {
+		return route.clientSecret, nil
+	}
+	if route.secretEnv == "" {
+		return "", nil
+	}
+	return resolve(ctx, route.secretEnv)
 }
 
 func (c *Catalogue) protected() bool {
@@ -220,8 +233,10 @@ type authorizationTransaction struct {
 }
 
 type oauthGrant struct {
+	refreshMu    sync.Mutex
 	config       *oauth2.Config
 	token        *oauth2.Token
+	resource     string
 	firstCall    [32]byte
 	firstPending bool
 	executed     map[session.ToolCallID][32]byte
@@ -338,12 +353,9 @@ func (t *protectedSessionTool) RequestAuthorization(ctx context.Context, call se
 	// deletion and Runtime.Close's ability to even reach the point of
 	// cancelling this operation's context, so holding it here would block
 	// unrelated shutdown/deletion for the duration of the round trip.
-	var secret string
-	if t.route.oauth.secretEnv != "" {
-		secret, err = t.attachment.runtime.oauth.resolveSecret(opCtx, t.route.oauth.secretEnv)
-		if err != nil {
-			return session.ExternalAuthorization{}, false, err
-		}
+	secret, err := t.route.oauth.resolveClientSecret(opCtx, t.attachment.runtime.oauth.resolveSecret)
+	if err != nil {
+		return session.ExternalAuthorization{}, false, err
 	}
 	id, err := opaque(t.attachment.runtime.oauth.random)
 	if err != nil {
@@ -393,9 +405,8 @@ func (t *authorizationTransaction) external() session.ExternalAuthorization {
 func (t *authorizationTransaction) oauthConfig(secret string) *oauth2.Config {
 	// The hardened OAuth token client (internal/adapter/mcp.NewHardenedOAuthTokenClient)
 	// unconditionally requires an HTTP Basic Authorization header on every token
-	// request, including the protectedTarget public client (no secretEnv): Basic
-	// with an empty password is a valid encoding of that public client's identity.
-	// AuthStyleAutoDetect never satisfies that requirement, so it is never used.
+	// request. AuthStyleAutoDetect never satisfies that requirement and may retry
+	// with a form-body secret, so it is never used.
 	return &oauth2.Config{ClientID: t.route.clientID, ClientSecret: secret, RedirectURL: t.route.callbackURL,
 		Scopes: append([]string(nil), t.route.scopes...), Endpoint: oauth2.Endpoint{
 			AuthURL: t.route.authorizationEndpoint, TokenURL: t.route.tokenEndpoint, AuthStyle: oauth2.AuthStyleInHeader,
@@ -549,7 +560,7 @@ func (r *Runtime) CallbackHandler() http.Handler {
 			return
 		}
 		if callbackErr := values.Get("error"); callbackErr != "" {
-			if err := r.handleCallbackError(values.Get("state")); err != nil {
+			if err := r.handleCallbackError(values.Get("state"), callbackErr); err != nil {
 				http.Error(w, "invalid OAuth callback", http.StatusBadRequest)
 				return
 			}
@@ -598,7 +609,7 @@ func exactCallbackValues(values url.Values) bool {
 	return true
 }
 
-func (r *Runtime) handleCallbackError(state string) error {
+func (r *Runtime) handleCallbackError(state, oauthError string) error {
 	indexed, ok := r.claimCallbackState(state)
 	if !ok {
 		return contract.ErrAuthorizationNotFound
@@ -613,7 +624,11 @@ func (r *Runtime) handleCallbackError(state string) error {
 		transaction.status = session.AuthorizationExpired
 	} else {
 		transaction.claimed = true
-		transaction.status = session.AuthorizationFailed
+		if oauthError == "access_denied" {
+			transaction.status = session.AuthorizationDenied
+		} else {
+			transaction.status = session.AuthorizationFailed
+		}
 	}
 	if transaction.cancel != nil {
 		transaction.cancel()
@@ -677,7 +692,7 @@ func (r *Runtime) handleCallback(ctx context.Context, code, state string) error 
 		transaction.status = session.AuthorizationFailed
 		return errors.New("OAuth token exchange failed")
 	}
-	grant := &oauthGrant{config: cfg, token: token, firstCall: transaction.callHash, firstPending: true, executed: make(map[session.ToolCallID][32]byte)}
+	grant := &oauthGrant{config: cfg, token: token, resource: transaction.route.resource, firstCall: transaction.callHash, firstPending: true, executed: make(map[session.ToolCallID][32]byte)}
 	if transaction.bundleBackends != nil {
 		// This is the one opaque credential for the ToolHive broker operation.
 		// Its claims and ToolHive-owned upstream credentials are never decoded or
@@ -693,6 +708,56 @@ func (r *Runtime) handleCallback(ctx context.Context, code, state string) error 
 
 func validBearerToken(token *oauth2.Token) bool {
 	return token != nil && token.AccessToken != "" && strings.EqualFold(token.TokenType, "bearer")
+}
+
+// refreshOAuthToken preserves RFC 8707 resource binding while delegating the
+// refresh protocol, client-auth negotiation, response parsing, and rotation
+// semantics to x/oauth2.
+func refreshOAuthToken(ctx context.Context, client *http.Client, config *oauth2.Config, current *oauth2.Token, resource string) (*oauth2.Token, error) {
+	refreshClient := client
+	if resource != "" {
+		clone := *client
+		transport := client.Transport
+		if transport == nil {
+			transport = http.DefaultTransport
+		}
+		clone.Transport = resourceRefreshTransport{base: transport, resource: resource}
+		refreshClient = &clone
+	}
+	ctx = context.WithValue(ctx, oauth2.HTTPClient, refreshClient)
+	return config.TokenSource(ctx, current).Token()
+}
+
+type resourceRefreshTransport struct {
+	base     http.RoundTripper
+	resource string
+}
+
+func (t resourceRefreshTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	if request.Body == nil {
+		return t.base.RoundTrip(request)
+	}
+	body, err := io.ReadAll(request.Body)
+	if err != nil {
+		return nil, err
+	}
+	if err := request.Body.Close(); err != nil {
+		return nil, err
+	}
+	values, err := url.ParseQuery(string(body))
+	if err != nil {
+		return nil, err
+	}
+	values.Set("resource", t.resource)
+	encoded := values.Encode()
+	clone := request.Clone(request.Context())
+	clone.Header = request.Header.Clone()
+	clone.Body = io.NopCloser(strings.NewReader(encoded))
+	clone.ContentLength = int64(len(encoded))
+	clone.GetBody = func() (io.ReadCloser, error) {
+		return io.NopCloser(strings.NewReader(encoded)), nil
+	}
+	return t.base.RoundTrip(clone)
 }
 
 type scopedTokenSource struct {
@@ -712,16 +777,25 @@ func (s *scopedTokenSource) Token() (*oauth2.Token, error) {
 		return nil, contract.ErrStateUnavailable
 	}
 	grant := s.logical.grants[s.backend]
+	s.logical.mu.Unlock()
 	if grant == nil {
-		s.logical.mu.Unlock()
 		return nil, contract.ErrAuthorizationNotFound
+	}
+
+	grant.refreshMu.Lock()
+	defer grant.refreshMu.Unlock()
+
+	s.logical.mu.Lock()
+	if s.logical.deleted || s.logical.grants[s.backend] != grant {
+		s.logical.mu.Unlock()
+		return nil, contract.ErrStateUnavailable
 	}
 	if grant.token.Valid() {
 		token := cloneToken(grant.token)
 		s.logical.mu.Unlock()
 		return token, nil
 	}
-	config, current := grant.config, grant.token
+	config, current := grant.config, cloneToken(grant.token)
 	s.logical.mu.Unlock()
 
 	// The network round trip must NOT run under logical.mu: that mutex also
@@ -730,8 +804,7 @@ func (s *scopedTokenSource) Token() (*oauth2.Token, error) {
 	// gave up (and outlive the session it belongs to).
 	ctx, cancel := context.WithTimeout(s.ctx, s.runtime.oauth.timeout)
 	defer cancel()
-	ctx = context.WithValue(ctx, oauth2.HTTPClient, s.runtime.oauth.httpClient)
-	fresh, err := config.TokenSource(ctx, current).Token()
+	fresh, err := refreshOAuthToken(ctx, s.runtime.oauth.httpClient, config, current, grant.resource)
 
 	s.logical.mu.Lock()
 	defer s.logical.mu.Unlock()
@@ -782,22 +855,30 @@ func (s *brokerTokenSource) Token() (*oauth2.Token, error) {
 		return nil, contract.ErrStateUnavailable
 	}
 	grant := s.logical.brokerCredential
+	s.logical.mu.Unlock()
 	if grant == nil {
-		s.logical.mu.Unlock()
 		return nil, contract.ErrAuthorizationNotFound
+	}
+
+	grant.refreshMu.Lock()
+	defer grant.refreshMu.Unlock()
+
+	s.logical.mu.Lock()
+	if s.logical.deleted || s.logical.brokerCredential != grant {
+		s.logical.mu.Unlock()
+		return nil, contract.ErrStateUnavailable
 	}
 	if grant.token.Valid() {
 		token := cloneToken(grant.token)
 		s.logical.mu.Unlock()
 		return token, nil
 	}
-	config, current := grant.config, grant.token
+	config, current := grant.config, cloneToken(grant.token)
 	s.logical.mu.Unlock()
 
 	ctx, cancel := context.WithTimeout(s.ctx, s.runtime.oauth.timeout)
 	defer cancel()
-	ctx = context.WithValue(ctx, oauth2.HTTPClient, s.runtime.oauth.httpClient)
-	fresh, err := config.TokenSource(ctx, current).Token()
+	fresh, err := refreshOAuthToken(ctx, s.runtime.oauth.httpClient, config, current, grant.resource)
 
 	s.logical.mu.Lock()
 	defer s.logical.mu.Unlock()
@@ -917,12 +998,12 @@ func (l *logicalSession) maybeCleanupLocked(runtime *Runtime) {
 }
 
 // waitOperations blocks until every in-flight operation registered through
-// beginOperation has returned, or timeout elapses. It must be called AFTER
+// beginOperation has returned, or ctx expires. It must be called AFTER
 // markDeletedLocked (which cancels their context, so they unwind promptly)
-// and with the caller holding no lock. Returns false on timeout: the caller
-// gives up waiting but the operations are still cancelled and will finish
-// asynchronously.
-func (l *logicalSession) waitOperations(timeout time.Duration) bool {
+// and with the caller holding no lock. Returns false when ctx expires: the
+// caller gives up waiting but the operations are still cancelled and will
+// finish asynchronously.
+func (l *logicalSession) waitOperations(ctx context.Context) bool {
 	l.mu.Lock()
 	done := l.operationsDone
 	l.mu.Unlock()
@@ -932,7 +1013,7 @@ func (l *logicalSession) waitOperations(timeout time.Duration) bool {
 	select {
 	case <-done:
 		return true
-	case <-time.After(timeout):
+	case <-ctx.Done():
 		return false
 	}
 }
@@ -972,24 +1053,7 @@ func (l *logicalSession) clearSecretsLocked(runtime *Runtime, status session.Aut
 // Process, which DOES tear down additional owned resources (vMCP/authserver)
 // right after closing its Runtime, must drain first: see closeAndDrain.
 func (r *Runtime) Close() error {
-	r.mu.Lock()
-	if r.closed {
-		r.mu.Unlock()
-		return nil
-	}
-	r.closed = true
-	sessions := r.sessions
-	r.sessions = make(map[session.SessionID]*logicalSession)
-	r.mu.Unlock()
-	for _, logical := range sessions {
-		logical.mu.Lock()
-		logical.markDeletedLocked(session.AuthorizationClosed)
-		logical.maybeCleanupLocked(r)
-		logical.mu.Unlock()
-	}
-	if r.oauth.httpClient != nil {
-		r.oauth.httpClient.CloseIdleConnections()
-	}
+	_ = r.closeAndSnapshot()
 	return nil
 }
 
@@ -998,24 +1062,45 @@ func (r *Runtime) Close() error {
 // down any dependency those operations might still be using. Used only by
 // Process.Close/rollback, which owns exactly such dependencies (vMCP server,
 // embedded authserver) — a bare Runtime has none, so it keeps using the
-// non-blocking Close.
+// non-blocking Close. One deadline bounds the whole drain, not each session.
 func (r *Runtime) closeAndDrain(timeout time.Duration) error {
-	sessions := r.snapshotSessions()
-	if err := r.Close(); err != nil {
-		return err
-	}
+	sessions := r.closeAndSnapshot()
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
 	for _, logical := range sessions {
-		logical.waitOperations(timeout)
+		if !logical.waitOperations(ctx) {
+			break
+		}
 	}
 	return nil
 }
 
-func (r *Runtime) snapshotSessions() []*logicalSession {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	sessions := make([]*logicalSession, 0, len(r.sessions))
-	for _, logical := range r.sessions {
-		sessions = append(sessions, logical)
+// closeAndSnapshot closes attachment admission and captures every admitted
+// session under the same lock. The snapshot is retained so a concurrent bare
+// Close cannot make a subsequent Process drain lose sessions that are still
+// unwinding.
+func (r *Runtime) closeAndSnapshot() []*logicalSession {
+	r.mu.Lock()
+	first := !r.closed
+	if first {
+		r.closed = true
+		r.drainSessions = make([]*logicalSession, 0, len(r.sessions))
+		for _, logical := range r.sessions {
+			r.drainSessions = append(r.drainSessions, logical)
+		}
+		r.sessions = make(map[session.SessionID]*logicalSession)
+		for _, logical := range r.drainSessions {
+			logical.mu.Lock()
+			logical.markDeletedLocked(session.AuthorizationClosed)
+			logical.maybeCleanupLocked(r)
+			logical.mu.Unlock()
+		}
+	}
+	sessions := append([]*logicalSession(nil), r.drainSessions...)
+	r.mu.Unlock()
+
+	if first && r.oauth.httpClient != nil {
+		r.oauth.httpClient.CloseIdleConnections()
 	}
 	return sessions
 }

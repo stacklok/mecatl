@@ -500,7 +500,7 @@ Structured HTTP/API rejections may additionally append a sanitized actual target
 (scheme, host, optional port, clean escaped path) and one bounded opaque provider request
 ID to the user-visible error. They omit userinfo, query, fragment, raw bodies, headers,
 and invalid IDs; in-band SSE failures do not fabricate HTTP evidence. This display-only
-exception does not change retry or durable attempt metadata. See [ADR 0299](adr/0299-safe-http-rejection-display-evidence.md).
+exception does not change retry or durable attempt metadata. See [ADR 0309](adr/0299-safe-http-rejection-display-evidence.md).
 
 `Converse.RetryStart` or bodyless `POST /v1/sessions/{id}/retry`. The aggregate first
 persists failed-step retry intent and blocks normal prompts until it resolves. Persisted
