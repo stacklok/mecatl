@@ -435,7 +435,7 @@ func triggerReconnect(t *testing.T, m Model) Model {
 // the session switches: a stale reconnect msg (gen mismatch) is dropped WITHOUT
 // triggering a reconnect for the old session, and disarmReconnect clears the
 // reconnect state.
-func TestReconnectUI_StopsOnSessionSwitch(t *testing.T) {
+func TestADR_0096_StaleReconnectAfterSessionSwitchCannotRearmOldSession(t *testing.T) {
 	defer restoreBackoffClient(t)()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -467,12 +467,18 @@ func TestReconnectUI_StopsOnSessionSwitch(t *testing.T) {
 	if m.liveReconnecting {
 		t.Errorf("liveReconnecting should clear on session switch (resetSession clears it)")
 	}
-	// A stale reconnect msg with the OLD gen is dropped (gen mismatch).
-	stale := reconnectMsg{gen: reconGen, msg: client.LiveReconnectingMsg{Attempt: 5}}
+	// A real session replacement arms a fresh reader. A stale reconnect success
+	// from the old generation must not re-arm or mutate that replacement.
+	m.sessionID = "sess-fresh-0002"
+	if cmd := m.armLiveFeed(); cmd == nil || m.liveArmed != "sess-fresh-0002" {
+		t.Fatalf("fresh session live reader was not armed: armed=%q cmd=%v", m.liveArmed, cmd)
+	}
+	opensBefore := fl.opens.Load()
+	stale := reconnectMsg{gen: reconGen, msg: client.LiveReconnectedMsg{}}
 	mm, c := m.updateReconnectMsg(stale)
 	m = mm.(Model)
-	if c != nil {
-		t.Errorf("stale reconnect msg should not re-arm, got cmd=%v", c)
+	if c != nil || m.sessionID != "sess-fresh-0002" || m.liveArmed != "sess-fresh-0002" || fl.opens.Load() != opensBefore {
+		t.Fatalf("stale reconnect mutated/rearmed fresh session: cmd=%v session=%q armed=%q opens=%d want=%d", c, m.sessionID, m.liveArmed, fl.opens.Load(), opensBefore)
 	}
 }
 
@@ -591,10 +597,207 @@ func (s *failingLiveStreamer) StreamSessionLive(context.Context, string) (*clien
 	return nil, s.err
 }
 
-func TestADR_0096_BearerFirstRecvAuthRejectedRoutesToConnectRecovery(t *testing.T) {
+// rearmedReaderAuthRejectedStreamer closes the initial reader, lets the first
+// reconnect probe succeed, then rejects the first Recv on the freshly rearmed
+// reader. It proves the auth terminal also covers the rearm boundary.
+type rearmedReaderAuthRejectedStreamer struct{ opens atomic.Int32 }
+
+func (s *rearmedReaderAuthRejectedStreamer) StreamSessionLive(context.Context, string) (*client.EventStream, error) {
+	switch s.opens.Add(1) {
+	case 1:
+		return client.NewEventStream(client.NewFakeEventStream()), nil
+	case 2:
+		return client.NewEventStream(client.NewFakeEventStream()), nil
+	case 3:
+		return client.NewEventStream(client.NewFakeEventStream().WithEndErr(status.Error(codes.Unauthenticated, "rejected"))), nil
+	default:
+		return nil, errors.New("rejected bearer retried")
+	}
+}
+
+func (*rearmedReaderAuthRejectedStreamer) BearerBackedStream() bool { return true }
+
+func TestADR_0096_BearerLiveReaderAuthRejectedPreservesHandoffAndStopsRetry(t *testing.T) {
+	live := &rearmedReaderAuthRejectedStreamer{}
 	m := New(Deps{
 		Connect:     fakeConnect{targets: []ConnectTarget{{Target: "remote.example:443"}}},
-		LiveStream:  &failingLiveStreamer{err: status.Error(codes.Unauthenticated, "rejected")},
+		LiveStream:  live,
+		Server:      "remote.example:443",
+		Theme:       theme.New("aztec", theme.AztecPalette()),
+		Ctx:         context.Background(),
+		NoAltScreen: true,
+	})
+	m.sessionID = "sess-rejected"
+
+	// Drive initial close, successful probe, and fresh rearm through the actual
+	// reader commands. The final message is the rearmed reader's first Recv.
+	cmd := m.armLiveFeed()
+	initialClose := runCmdTimeout(t, cmd)
+	mm, waitReconnect := m.Update(initialClose)
+	m = mm.(Model)
+	attempt := runCmdTimeout(t, waitReconnect)
+	mm, waitSuccess := m.Update(attempt)
+	m = mm.(Model)
+	success := runCmdTimeout(t, waitSuccess)
+	mm, rearmedReader := m.Update(success)
+	m = mm.(Model)
+	rejected := runCmdTimeout(t, rearmedReader)
+	liveMsg, ok := rejected.(liveMsg)
+	if !ok {
+		t.Fatalf("rearmed reader handoff = %T, want liveMsg", rejected)
+	}
+	if streamErr, ok := liveMsg.msg.(client.StreamErrMsg); !ok || streamErr.AuthReason != client.AuthRejected {
+		t.Fatalf("rearmed first Recv = %#v, want AuthRejected StreamErrMsg", liveMsg.msg)
+	}
+	mm, _ = m.Update(rejected)
+	m = mm.(Model)
+
+	if m.sessionID != "sess-rejected" || m.connect.failedTarget != "remote.example:443" || m.connect.resumeSessionID != "sess-rejected" {
+		t.Fatalf("auth recovery lost target/session: session=%q connect=%#v", m.sessionID, m.connect)
+	}
+	if m.liveCh != nil || m.liveReconCh != nil || m.liveStop != nil || m.liveReconStop != nil || m.liveArmed != "" {
+		t.Fatalf("auth recovery did not tear down both readers: live=%v recon=%v armed=%q", m.liveCh, m.liveReconCh, m.liveArmed)
+	}
+	if live.opens.Load() != 3 {
+		t.Fatalf("live opens = %d, want exactly initial reader + probe + rearmed reader; rejected bearer must not retry", live.opens.Load())
+	}
+}
+
+// reconnectSequenceStreamer models the exact close → probe → rearm → close
+// sequence. Probe streams are discarded by reconnectLiveLoop; reader streams are
+// consumed by LiveStreamCmd, so the closes below travel through the actual handoff.
+type reconnectSequenceStreamer struct {
+	opens    atomic.Int32
+	probe2At atomic.Int64
+}
+
+func (s *reconnectSequenceStreamer) StreamSessionLive(context.Context, string) (*client.EventStream, error) {
+	switch s.opens.Add(1) {
+	case 1, 3: // initial reader, then freshly rearmed reader
+		return client.NewEventStream(client.NewFakeEventStream()), nil
+	case 2: // first reconnect probe succeeds
+		return client.NewEventStream(client.NewFakeEventStream()), nil
+	case 4: // attempt-2 probe is reached only after attempt-2 backoff
+		s.probe2At.Store(time.Now().UnixNano())
+		return client.NewEventStream(client.NewFakeEventStream()), nil
+	default:
+		return nil, errors.New("unexpected extra live open")
+	}
+}
+
+func TestADR_0096_ImmediateRearmedCloseUsesAttemptTwoBackoff(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	live := &reconnectSequenceStreamer{}
+	m := New(Deps{LiveStream: live, Theme: theme.New("aztec", theme.AztecPalette()), Ctx: ctx, NoAltScreen: true})
+	m.sessionID = "sess-continuity"
+
+	// Initial reader close starts attempt 1; its successful probe re-arms a fresh
+	// live reader. Neither handoff is injected as a preclassified lifecycle msg.
+	cmd := m.armLiveFeed()
+	firstClose := runCmdTimeout(t, cmd)
+	mm, reconnect1 := m.Update(firstClose)
+	m = mm.(Model)
+	firstAttempt := runCmdTimeout(t, reconnect1)
+	rm, ok := firstAttempt.(reconnectMsg)
+	if !ok {
+		t.Fatalf("first reconnect handoff = %T, want reconnectMsg", firstAttempt)
+	}
+	if marker, ok := rm.msg.(client.LiveReconnectingMsg); !ok || marker.Attempt != 1 {
+		t.Fatalf("first reconnect marker = %#v, want attempt 1", rm.msg)
+	}
+	mm, nextReconnect := m.Update(firstAttempt)
+	m = mm.(Model)
+	reconnected := runCmdTimeout(t, nextReconnect)
+	rm, ok = reconnected.(reconnectMsg)
+	if !ok {
+		t.Fatalf("successful probe handoff = %T, want reconnectMsg", reconnected)
+	}
+	if _, ok := rm.msg.(client.LiveReconnectedMsg); !ok {
+		t.Fatalf("successful probe message = %#v, want LiveReconnectedMsg", rm.msg)
+	}
+	mm, rearmedReader := m.Update(reconnected)
+	m = mm.(Model)
+	secondClose := runCmdTimeout(t, rearmedReader)
+	if _, ok := secondClose.(liveMsg); !ok {
+		t.Fatalf("rearmed reader handoff = %T, want liveMsg", secondClose)
+	}
+	started := time.Now()
+	mm, reconnect2 := m.Update(secondClose)
+	m = mm.(Model)
+
+	secondAttempt := runCmdTimeout(t, reconnect2)
+	elapsed := time.Since(started)
+	rm, ok = secondAttempt.(reconnectMsg)
+	if !ok {
+		t.Fatalf("second reconnect handoff = %T, want reconnectMsg", secondAttempt)
+	}
+	if marker, ok := rm.msg.(client.LiveReconnectingMsg); !ok || marker.Attempt != 2 {
+		t.Fatalf("second reconnect marker = %#v, want attempt 2", rm.msg)
+	}
+	probe2At := live.probe2At.Load()
+	if probe2At == 0 || elapsed < 750*time.Millisecond {
+		t.Fatalf("attempt-2 probe ran without its bounded backoff: elapsed=%v probeAt=%v", elapsed, time.Unix(0, probe2At))
+	}
+	if opens := live.opens.Load(); opens != 4 {
+		t.Fatalf("live opens = %d, want initial reader + probe + rearmed reader + attempt-2 probe", opens)
+	}
+	joinReconnectForCleanup(&m)()
+}
+
+func TestADR_0096_OnlyCurrentLiveEventResetsContinuity(t *testing.T) {
+	live := &failingLiveStreamer{err: errors.New("unavailable")}
+	m := New(Deps{LiveStream: live, Theme: theme.New("aztec", theme.AztecPalette()), Ctx: context.Background(), NoAltScreen: true})
+	m.sessionID = "sess-continuity"
+	m.liveGen = 1
+	m.liveCh = make(chan tea.Msg)
+	m.liveArmed = m.sessionID
+	m.liveReconGen = 1
+	m.liveReconCh = make(chan tea.Msg)
+	m.liveContinuityAttempt = 4
+
+	// A reconnect marker, successful probe handoff, and catch-up delivery are not
+	// evidence from the current live reader and must preserve the failure sequence.
+	for _, msg := range []tea.Msg{
+		client.LiveReconnectingMsg{Attempt: 5},
+		client.DeliveryNoteMsg{ScheduleName: "nightly", FireID: "fire-catchup", Text: fencedDeliveryText("nightly", "fire-catchup")},
+	} {
+		mm, _ := m.updateReconnectMsg(reconnectMsg{gen: m.liveReconGen, msg: msg})
+		m = mm.(Model)
+		if m.liveContinuityAttempt != 4 {
+			t.Fatalf("reconnect-side %T reset continuity to %d, want 4", msg, m.liveContinuityAttempt)
+		}
+	}
+	mm, _ := m.updateReconnectMsg(reconnectMsg{gen: m.liveReconGen, msg: client.LiveReconnectedMsg{}})
+	m = mm.(Model)
+	if m.liveContinuityAttempt != 4 {
+		t.Fatalf("successful reconnect probe reset continuity to %d, want 4", m.liveContinuityAttempt)
+	}
+
+	mm, _ = m.updateLiveMsg(liveMsg{gen: m.liveGen, msg: client.DeliveryNoteMsg{ScheduleName: "nightly", FireID: "fire-live", Text: fencedDeliveryText("nightly", "fire-live")}})
+	m = mm.(Model)
+	if m.liveContinuityAttempt != 0 {
+		t.Fatalf("real current-generation live event left continuity at %d, want reset", m.liveContinuityAttempt)
+	}
+}
+
+// readerAuthRejectedLiveStreamer returns an actual EventStream whose first Recv
+// fails with Unauthenticated. Its bearer provenance exercises LiveStreamCmd's
+// reader classification rather than preclassifying a StreamErrMsg in the UI.
+type readerAuthRejectedLiveStreamer struct{ opens atomic.Int32 }
+
+func (s *readerAuthRejectedLiveStreamer) StreamSessionLive(context.Context, string) (*client.EventStream, error) {
+	s.opens.Add(1)
+	return client.NewEventStream(client.NewFakeEventStream().WithEndErr(status.Error(codes.Unauthenticated, "rejected"))), nil
+}
+
+func (*readerAuthRejectedLiveStreamer) BearerBackedStream() bool { return true }
+
+func TestADR_0096_BearerLiveReaderRecvAuthRejectedRoutesToConnectRecovery(t *testing.T) {
+	live := &readerAuthRejectedLiveStreamer{}
+	m := New(Deps{
+		Connect:     fakeConnect{targets: []ConnectTarget{{Target: "remote.example:443"}}},
+		LiveStream:  live,
 		Server:      "remote.example:443",
 		Theme:       theme.New("aztec", theme.AztecPalette()),
 		Ctx:         context.Background(),
@@ -602,123 +805,42 @@ func TestADR_0096_BearerFirstRecvAuthRejectedRoutesToConnectRecovery(t *testing.
 	})
 	m.sessionID = "sess-rejected"
 	m.phase = phaseIdle
-	m.liveGen = 1
-	m.liveCh = make(chan tea.Msg)
-	m.liveArmed = m.sessionID
-	m.liveReconnecting = true
-	m.liveReconnectAttempt = 3
-	m.liveReconnectErr = "stale reconnect error"
 
-	mm, _ := m.updateLiveMsg(liveMsg{gen: m.liveGen, msg: client.StreamErrMsg{
-		Err:        status.Error(codes.Unauthenticated, "rejected"),
-		AuthReason: client.AuthRejected,
-	}})
+	cmd := m.armLiveFeed()
+	if cmd == nil {
+		t.Fatal("initial live reader was not armed")
+	}
+	msg := runCmdTimeout(t, cmd)
+	liveMsg, ok := msg.(liveMsg)
+	if !ok {
+		t.Fatalf("live reader handoff = %T, want liveMsg", msg)
+	}
+	streamErr, ok := liveMsg.msg.(client.StreamErrMsg)
+	if !ok || streamErr.AuthReason != client.AuthRejected {
+		t.Fatalf("first Recv classification = %#v, want AuthRejected StreamErrMsg", liveMsg.msg)
+	}
+	mm, _ := m.Update(msg)
 	m = mm.(Model)
 
 	if !m.connect.open || m.connect.reason != client.AuthRejected {
-		t.Fatalf("connect recovery = %#v, want an open AuthRejected recovery", m.connect)
+		t.Fatalf("connect recovery = %#v, want open AuthRejected recovery", m.connect)
 	}
 	if m.connect.failedTarget != "remote.example:443" || m.connect.resumeSessionID != "sess-rejected" || m.sessionID != "sess-rejected" {
 		t.Fatalf("target/session not preserved: failed=%q resume=%q session=%q", m.connect.failedTarget, m.connect.resumeSessionID, m.sessionID)
 	}
-	if m.liveCh != nil || m.liveReconCh != nil || m.liveReconnecting || m.liveReconnectAttempt != 0 || m.liveReconnectErr != "" {
-		t.Fatalf("auth recovery left live/reconnect state armed: live=%v recon=%v reconnecting=%v attempt=%d err=%q", m.liveCh, m.liveReconCh, m.liveReconnecting, m.liveReconnectAttempt, m.liveReconnectErr)
+	if m.liveCh != nil || m.liveReconCh != nil || m.liveReconnecting || m.liveArmed != "" {
+		t.Fatalf("auth recovery left live/reconnect state armed: live=%v recon=%v reconnecting=%v armed=%q", m.liveCh, m.liveReconCh, m.liveReconnecting, m.liveArmed)
 	}
 	if footer := stripANSIstr(m.renderFooter()); containsStr(footer, "live feed reconnecting") {
 		t.Fatalf("stale reconnect footer remained after auth recovery: %q", footer)
 	}
-	if overlay := stripANSIstr(m.View().Content); !containsStr(overlay, "Re-login is disabled") || !containsStr(overlay, "issuer, audience, and CA") {
-		t.Fatalf("auth recovery overlay is not actionable: %q", overlay)
+	overlay := stripANSIstr(m.View().Content)
+	for _, guidance := range []string{"Re-login is disabled", "issuer, audience, and CA"} {
+		if !containsStr(overlay, guidance) {
+			t.Fatalf("auth recovery overlay missing %q: %q", guidance, overlay)
+		}
 	}
-}
-
-func TestADR_0096_BearerAuthRejectedPreservesTargetSessionAndTearsDownRetry(t *testing.T) {
-	m := New(Deps{Server: "remote.example:443", Theme: theme.New("aztec", theme.AztecPalette()), Ctx: context.Background(), NoAltScreen: true})
-	m.sessionID = "sess-rejected"
-	m.liveCh = make(chan tea.Msg)
-	m.liveArmed = m.sessionID
-	m.liveReconCh = make(chan tea.Msg)
-	var liveStops, reconStops int
-	m.liveStop = func() { liveStops++ }
-	m.liveReconStop = func() { reconStops++ }
-
-	mm, cmd := m.updateReconnectMsg(reconnectMsg{gen: m.liveReconGen, msg: client.StreamErrMsg{
-		Err:        status.Error(codes.Unauthenticated, "rejected"),
-		AuthReason: client.AuthRejected,
-	}})
-	m = mm.(Model)
-
-	if cmd == nil { // openConnect may list saved targets; it must enter recovery.
-		t.Fatal("auth recovery returned no connect command")
+	if live.opens.Load() != 1 {
+		t.Fatalf("live opens = %d, want 1; rejected bearer must not retry", live.opens.Load())
 	}
-	if m.sessionID != "sess-rejected" || m.connect.failedTarget != "remote.example:443" || m.connect.resumeSessionID != "sess-rejected" {
-		t.Fatalf("auth recovery lost target/session: session=%q connect=%#v", m.sessionID, m.connect)
-	}
-	if liveStops != 1 || reconStops != 1 || m.liveCh != nil || m.liveReconCh != nil || m.liveStop != nil || m.liveReconStop != nil {
-		t.Fatalf("auth recovery did not tear down both readers: liveStops=%d reconStops=%d live=%v recon=%v", liveStops, reconStops, m.liveCh, m.liveReconCh)
-	}
-}
-
-func TestADR_0096_CleanCloseAdvancesCrossLoopContinuity(t *testing.T) {
-	defer restoreBackoffClient(t)()
-	live := &failingLiveStreamer{err: errors.New("unavailable")}
-	m := New(Deps{LiveStream: live, Theme: theme.New("aztec", theme.AztecPalette()), Ctx: context.Background(), NoAltScreen: true})
-	m.sessionID = "sess-continuity"
-	m.liveGen = 1
-	m.liveCh = make(chan tea.Msg)
-	m.liveArmed = m.sessionID
-	m.liveContinuityAttempt = 1 // the preceding open→close cycle was attempt 1
-
-	mm, cmd := m.updateLiveMsg(liveMsg{gen: m.liveGen, msg: client.StreamClosedMsg{}})
-	m = mm.(Model)
-	if cmd == nil {
-		t.Fatal("second clean close did not start a reconnect loop")
-	}
-	msg := runCmdTimeout(t, cmd)
-	rm, ok := msg.(reconnectMsg)
-	if !ok {
-		t.Fatalf("reconnect msg = %T, want reconnectMsg", msg)
-	}
-	attempt, ok := rm.msg.(client.LiveReconnectingMsg)
-	if !ok || attempt.Attempt != 2 {
-		t.Fatalf("continuity attempt = %#v, want LiveReconnectingMsg{Attempt:2}", rm.msg)
-	}
-	// Receiving attempt 2 required waiting the second-attempt backoff and then
-	// opening its probe; the probe is not a real live event, so continuity stays 2.
-	if m.liveContinuityAttempt != 2 || live.opens.Load() != 1 {
-		t.Fatalf("after the attempt-2 delay, continuity/probe opens = %d/%d, want 2/1", m.liveContinuityAttempt, live.opens.Load())
-	}
-	joinReconnectForCleanup(&m)()
-}
-
-func TestADR_0096_RealLiveEventResetsContinuity(t *testing.T) {
-	defer restoreBackoffClient(t)()
-	live := &failingLiveStreamer{err: errors.New("unavailable")}
-	m := New(Deps{LiveStream: live, Theme: theme.New("aztec", theme.AztecPalette()), Ctx: context.Background(), NoAltScreen: true})
-	m.sessionID = "sess-continuity"
-	m.liveGen = 1
-	m.liveCh = make(chan tea.Msg)
-	m.liveArmed = m.sessionID
-	m.liveContinuityAttempt = 4
-
-	mm, _ := m.updateLiveMsg(liveMsg{gen: m.liveGen, msg: client.DeliveryNoteMsg{ScheduleName: "nightly", FireID: "fire-live", Text: fencedDeliveryText("nightly", "fire-live")}})
-	m = mm.(Model)
-	if m.liveContinuityAttempt != 0 {
-		t.Fatalf("real current-generation live event left continuity at %d, want reset", m.liveContinuityAttempt)
-	}
-	mm, cmd := m.updateLiveMsg(liveMsg{gen: m.liveGen, msg: client.StreamClosedMsg{}})
-	m = mm.(Model)
-	if cmd == nil {
-		t.Fatal("clean close after a real event did not start reconnect")
-	}
-	msg := runCmdTimeout(t, cmd)
-	rm, ok := msg.(reconnectMsg)
-	if !ok {
-		t.Fatalf("reconnect msg = %T, want reconnectMsg", msg)
-	}
-	attempt, ok := rm.msg.(client.LiveReconnectingMsg)
-	if !ok || attempt.Attempt != 1 {
-		t.Fatalf("continuity attempt = %#v, want LiveReconnectingMsg{Attempt:1}", rm.msg)
-	}
-	joinReconnectForCleanup(&m)()
 }

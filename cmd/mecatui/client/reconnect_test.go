@@ -574,9 +574,9 @@ func (s *rejectedReconnectLiveStreamer) StreamSessionLive(context.Context, strin
 	return nil, status.Error(codes.Unauthenticated, "rejected")
 }
 
-func (*rejectedReconnectLiveStreamer) bearerBackedStream() bool { return true }
+func (*rejectedReconnectLiveStreamer) BearerBackedStream() bool { return true }
 
-func TestADR_0096_ReconnectProbeAuthRejectedStopsRetry(t *testing.T) {
+func TestADR_0096_ReconnectProbeOpenAuthRejectedStopsRetry(t *testing.T) {
 	defer restoreBackoff(t)()
 	liveReconnectBaseBackoff = time.Millisecond
 	liveReconnectJitterFrac = 0

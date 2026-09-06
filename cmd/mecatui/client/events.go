@@ -95,6 +95,10 @@ func LiveStreamCmd(ctx context.Context, live LiveStreamer, id string) (ch chan t
 		}()
 		return ch, stop
 	}
+	if p, ok := live.(liveAuthProvenance); ok {
+		es.bearerBacked = p.BearerBackedStream()
+	}
+	es.classifyAuth = true
 	go es.ReadLoop(ctx, ch)
 	return ch, stop
 }
@@ -171,19 +175,16 @@ func catchUpReplay(ctx context.Context, replayer SessionReplayer, id string, out
 }
 
 type liveAuthProvenance interface {
-	bearerBackedStream() bool
+	BearerBackedStream() bool
 }
 
 func liveBearerBacked(live LiveStreamer) bool {
 	p, ok := live.(liveAuthProvenance)
-	return ok && p.bearerBackedStream()
+	return ok && p.BearerBackedStream()
 }
 
-func (s *EventStream) bearerBackedStream() bool {
-	return s != nil && s.bearerBacked
-}
-
-func (c *Client) bearerBackedStream() bool { return c != nil && c.bearerBacked }
+// BearerBackedStream reports whether this client sends bearer credentials.
+func (c *Client) BearerBackedStream() bool { return c != nil && c.bearerBacked }
 
 // liveReconnectAttemptTimeout bounds one StreamSessionLive reopening attempt. It
 // prevents a wedged gRPC transport from holding the reconnect loop forever. Tests

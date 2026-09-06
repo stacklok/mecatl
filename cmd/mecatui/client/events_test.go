@@ -492,6 +492,32 @@ func (f *fakeLiveStreamer) StreamSessionLive(_ context.Context, id string) (*Eve
 	return NewEventStream(f.stream), nil
 }
 
+// authenticatedLiveStreamerWithoutProvenance deliberately does not implement
+// liveAuthProvenance. LiveStreamCmd must preserve the authenticated provenance
+// already recorded on the returned stream.
+type authenticatedLiveStreamerWithoutProvenance struct{}
+
+func (authenticatedLiveStreamerWithoutProvenance) StreamSessionLive(context.Context, string) (*EventStream, error) {
+	return newAuthenticatedEventStream(funcEventRecver{err: status.Error(codes.Unauthenticated, "rejected")}, true), nil
+}
+
+func TestLiveStreamCmdPreservesReturnedAuthenticatedProvenance(t *testing.T) {
+	ch, stop := LiveStreamCmd(context.Background(), authenticatedLiveStreamerWithoutProvenance{}, "sess-live-auth")
+	defer stop()
+
+	msgs := drain(ch)
+	if len(msgs) != 1 {
+		t.Fatalf("got %d messages, want one StreamErrMsg: %#v", len(msgs), msgs)
+	}
+	got, ok := msgs[0].(StreamErrMsg)
+	if !ok {
+		t.Fatalf("message = %T, want StreamErrMsg", msgs[0])
+	}
+	if got.AuthReason != AuthRejected || got.Transient {
+		t.Errorf("auth error = %#v, want non-transient AuthRejected", got)
+	}
+}
+
 // TestLiveStreamCmd asserts the interface live wrapper routes to the
 // LiveStreamer, yields the scripted messages, closes its channel, and has an
 // idempotent stop.
