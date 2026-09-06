@@ -1,7 +1,7 @@
 # Mecatui live-feed reconnect — acceptance plan
 
 **Issue:** [stacklok/mecatl#779](https://github.com/stacklok/mecatl/issues/779)  
-**Status:** draft  
+**Status:** in-progress
 **Scope:** regression closure for the already-landed live-feed reconnect behavior on
 `acc/mecatui-live-reconnect`; no production implementation or test changes in this plan.  
 **ADR:** [ADR-0096](../adr/0096-live-feed-reconnect.md) — client-owned reconnect,
