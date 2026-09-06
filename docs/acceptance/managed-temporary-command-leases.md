@@ -1,7 +1,7 @@
 # Managed temporary command leases — acceptance plan
 
 **Phase:** capability — deterministic lifecycle for command and background-job temporary storage.
-**Status:** landed, 2026-09-06. macOS support is part of the v1 contract.
+**Status:** in-progress, 2026-09-06. The operator authorized a same-UID cooperation scope clarification.
 **ADR:** [ADR-0281](../adr/0281-managed-temporary-command-leases.md) — managed and system scopes, validated private leases, and deterministic reaping.
 **Accumulator branch:** `acc/managed-temporary-command-leases` (off `main`).
 
@@ -94,9 +94,10 @@ path into deletion authority ([ADR-0281](../adr/0281-managed-temporary-command-l
   exactly 16 characters; non-canonical or differently sized values fail closed. Its
   owner-only manifest contains the canonical current workspace path and refreshes that
   field when the same key opens from a new path, but persists no raw backend identity or global
-  workspace index. A same-UID component replacement after validation
-  and before cleanup/reaping cannot redirect deletion outside the retained
-  handle-rooted lease; the candidate is retained or fails closed.
+  workspace index. Handle-rooted cleanup protects against malformed, foreign-owned,
+  symlinked, and non-cooperating replacement paths; processes running as the same UID
+  as the harness remain cooperating local principals and are outside this cleanup
+  boundary.
   - verify: `TestADR_0281_ManagedRootAndWorkspaceFailClosed`
 - AC1.7: A missing, malformed, or newer-than-supported version in any allocation
   manifest or sweep-completion record is reported and retained without rewrite or
