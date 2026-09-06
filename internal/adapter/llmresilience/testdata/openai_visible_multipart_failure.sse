@@ -1,0 +1,11 @@
+event: response.created
+data: {"type":"response.created","sequence_number":0,"response":{"id":"resp_visible_failure","status":"in_progress"}}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","sequence_number":1,"item_id":"msg_a","output_index":0,"content_index":0,"delta":"first"}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","sequence_number":2,"item_id":"msg_b","output_index":1,"content_index":2,"delta":"-second"}
+
+event: response.failed
+data: {"type":"response.failed","sequence_number":3,"response":{"id":"resp_visible_failure","status":"failed","error":{"code":"rate_limit_exceeded","message":"retry later"}}}
