@@ -14,8 +14,10 @@ import (
 
 // buildToolHiveAuthRedisClient connects to the operator's configured Redis
 // instance for the embedded ToolHive auth server to share (under its own key
-// prefix — see mcpbroker.ToolHiveConfig.AuthRedisClient), so pending OAuth
-// authorizations survive a pod restart. internal/app cannot import the
+// prefix — see mcpbroker.ToolHiveConfig.AuthRedisClient), so ToolHive's inner
+// pending OAuth records can survive a pod restart. Mecatl's outer callback and
+// enrollment correlation remain process-local; this storage does not recover
+// an interrupted outer enrollment. internal/app cannot import the
 // vendored toolhive storage package directly (see
 // TestToolHiveImportsStayBehindApprovedAdapterLeaves — toolhive imports stay
 // behind approved adapter leaves, and composition is not one), so it hands

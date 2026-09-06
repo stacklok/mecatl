@@ -125,7 +125,10 @@ upstreams sequentially. ToolHive owns upstream callback state, code exchange, re
 provider-specific injection; a token for one backend is not used for another. Mecatl retains
 the session and pre-prompt enrollment boundary, then strictly discovers every protected backend
 and freezes the complete catalogue only after success. Static protected `tools` declarations are
-staged too. A failed enrollment exposes no partial protected catalogue.
+staged too. The generated client between mecatl and ToolHive is confidential: ToolHive stores
+only its hash, while mecatl uses the process-private raw secret solely for HTTP-Basic token
+exchange and refresh. It is never included in the browser flow, controls, logs, snapshots, or
+upstream calls. A failed enrollment exposes no partial protected catalogue.
 
 Mecatl controls reveal only the enrollment reference, aggregate state, configured-service count,
 and temporary presentation URL. They never reveal an upstream name, OAuth state/code, endpoint,
@@ -135,8 +138,12 @@ mecatl callback URL. Route the complete `/v1/mcp/broker/` prefix and the final c
 the same listener. See the [Kubernetes deployment guide](/building/deployment/mecak8s.md) for
 Helm configuration.
 
-Broker session attachments remain process-local. The mode is not safe behind the default
-multi-replica `mecak8s` Service until affinity or durable broker routing is available.
+Broker session attachments and outer callback correlation remain process-local. ToolHive's
+configured Redis storage can preserve its inner upstream authorization/token records, but a
+mecatl restart cannot correlate a persisted pending aggregate back to that inner operation: it
+discards the old pending correlation and starts a fresh enrollment rather than recovering it.
+The mode is not safe behind the default multi-replica `mecak8s` Service until affinity or durable
+outer broker routing is available.
 
 The legacy bearer path is simpler for a server that does not need OAuth:
 

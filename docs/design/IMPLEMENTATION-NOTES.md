@@ -5797,8 +5797,12 @@ OAuth state. Broker authority stays exclusive of global `MCPServers`.
 Multiple configured protected profiles become one ordered ToolHive upstream configuration in
 `internal/adapter/mcpbroker/toolhive_construction.go` (`compileToolHiveConstruction`): ToolHive
 owns the sequential upstream callback/state, authorization-code exchange, refresh, and
-provider-to-backend injection. Mecatl starts, observes, or cancels only one opaque workspace
-enrollment. Its public control projection contains no backend/provider selector, callback
+provider-to-backend injection. A protected process generates its own confidential ToolHive
+broker client; `internal/adapter/mcpbroker/toolhive_process.go` registers only ToolHive's hash,
+and `internal/adapter/mcpbroker/auth.go` retains the raw secret only for private HTTP-Basic code
+exchange and refresh ([ADR 0299](../adr/0299-confidential-toolhive-broker-client.md)). Mecatl
+starts, observes, or cancels only one opaque workspace enrollment. Its public control projection
+contains no backend/provider selector, callback
 state, endpoint, authorization code, access token, or refresh token. The fixed upstream callback
 is `/v1/mcp/broker/oauth/callback`; the separately configured callback URL is ToolHive's final
 redirect to mecatl, so ingress needs the complete fixed broker prefix plus the final callback
@@ -5816,11 +5820,15 @@ passes `Attachment.Tools()` explicitly through `SessionEngineRequest.BrokerTools
 persisted binding. `CloseSession` drops a local attachment without deleting logical
 authorization state; owner deletion calls `DeleteSession`.
 
-The mecatl attachment/session boundary remains process-local: a prior-process binding cannot
-reattach and fails closed. ToolHive backing storage can retain its own authorization state, but
-there is no durable broker ownership or multi-replica routing; broker OAuth remains unsafe behind
-the chart's default multi-replica Service without affinity or a durable-broker decision. Guards
-include `internal/adapter/server/mcp_broker_multi_upstream_e2e_test.go`,
+The mecatl attachment/session boundary remains process-local. After restart, the
+pre-prompt server seam may replace a stale binding with the new incarnation,
+discard the old pending correlation, and begin a fresh enrollment. It does not
+recover or continue the prior outer enrollment. ToolHive's configured Redis storage can
+retain its inner upstream authorization/token records, but mecatl's outer
+callback correlation and broker ownership are not durable and cannot rediscover
+those records. Likewise, replicas do not share or route that outer correlation;
+broker OAuth remains unsafe behind the chart's default multi-replica Service
+without affinity or a durable-broker decision. Guards include `internal/adapter/server/mcp_broker_multi_upstream_e2e_test.go`,
 `internal/adapter/mcpbroker/workspace_catalogue_test.go`, and
 `internal/adapter/mcpbroker/toolhive_process_test.go`.
 
