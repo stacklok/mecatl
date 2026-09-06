@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -10,10 +11,12 @@ import (
 	"testing"
 	"time"
 
+	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 	"github.com/stacklok/mecatl/engine/adapter/memlease"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/wallclock"
 	"github.com/stacklok/mecatl/engine/governance"
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/mcp"
@@ -114,11 +117,16 @@ func (enrollmentTool) Execute(context.Context, session.ToolCall, tool.Environmen
 
 func newWorkspaceEnrollmentHTTPService(t *testing.T, ownershipEnforced bool) (*Service, *enrollmentBroker, *session.Session) {
 	t.Helper()
+	return newWorkspaceEnrollmentServiceWithStore(t, ownershipEnforced, memstore.New())
+}
+
+func newWorkspaceEnrollmentServiceWithStore(t *testing.T, ownershipEnforced bool, store port.SessionStore) (*Service, *enrollmentBroker, *session.Session) {
+	t.Helper()
 	runtime := testBrokerRuntime(t)
 	t.Cleanup(func() { _ = runtime.Close() })
 	broker := &enrollmentBroker{Service: runtime}
 	svc, err := NewService(Config{
-		Engine: brokerEngineResult().Engine, Store: memstore.New(),
+		Engine: brokerEngineResult().Engine, Store: store,
 		PlacementProvider: brokerPlacementProvider{}, PlacementScope: "test",
 		NewID: func() session.SessionID { return "workspace-enrollment-http" }, MCPBroker: broker,
 		OwnershipEnforced: ownershipEnforced,
@@ -381,6 +389,73 @@ func TestADR_0298_ToolHiveEnrollmentControlsRedactUpstreamStateE2E(t *testing.T)
 			t.Fatalf("cancel response = %#v", cancelled)
 		}
 	})
+}
+
+func TestWorkspaceEnrollmentGRPCProjectsOnlyAggregateDenial(t *testing.T) {
+	svc, broker, created := newWorkspaceEnrollmentHTTPService(t, false)
+	harness := NewHarnessServer(svc)
+	started, err := harness.ConnectWorkspaceServices(t.Context(), &mecatlv1.WorkspaceEnrollmentConnectRequest{SessionId: string(created.ID)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	broker.attachment.result = brokercontract.WorkspaceEnrollmentResult{Ref: broker.attachment.ref, Status: brokercontract.WorkspaceEnrollmentDenied}
+	denied, err := harness.ConnectWorkspaceServices(t.Context(), &mecatlv1.WorkspaceEnrollmentConnectRequest{SessionId: string(created.ID)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if denied.GetEnrollmentId() != started.GetEnrollmentId() || denied.GetStatus() != string(brokercontract.WorkspaceEnrollmentDenied) || denied.GetRequiredServices() != 1 || denied.GetPresentationUrl() != "" {
+		t.Fatalf("gRPC denial projection = %+v", denied)
+	}
+	fields := denied.ProtoReflect().Descriptor().Fields()
+	for i := range fields.Len() {
+		switch name := string(fields.Get(i).Name()); name {
+		case "enrollment_id", "status", "required_services", "expires_at", "presentation_url":
+		default:
+			t.Fatalf("unsafe workspace-enrollment gRPC field %q", name)
+		}
+	}
+}
+
+func TestTerminalWorkspaceEnrollmentSaveFailureRecoversOnNextObservation(t *testing.T) {
+	for _, status := range []brokercontract.WorkspaceEnrollmentStatus{
+		brokercontract.WorkspaceEnrollmentDenied,
+		brokercontract.WorkspaceEnrollmentExpired,
+		brokercontract.WorkspaceEnrollmentFailed,
+	} {
+		t.Run(string(status), func(t *testing.T) {
+			inner := memstore.New()
+			store := &failNextAuthorizationSaveStore{SessionStore: inner}
+			svc, broker, created := newWorkspaceEnrollmentServiceWithStore(t, false, store)
+			started, err := svc.ConnectWorkspaceServices(t.Context(), created.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			broker.attachment.result = brokercontract.WorkspaceEnrollmentResult{Ref: started.Ref, Status: status}
+			store.failures.Store(1)
+			if _, err := svc.ConnectWorkspaceServices(t.Context(), created.ID); !errors.Is(err, ErrInternal) {
+				t.Fatalf("first terminal observation error = %v, want ErrInternal", err)
+			}
+			loaded, err := inner.Load(t.Context(), created.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if pending, ok := loaded.PendingWorkspaceEnrollment(); !ok || pending.ID != started.Ref.ID {
+				t.Fatalf("failed save changed durable pending enrollment = (%+v, %v)", pending, ok)
+			}
+
+			recovered, err := svc.ConnectWorkspaceServices(t.Context(), created.ID)
+			if err != nil || recovered.Status != status || !sameWorkspaceEnrollmentRef(recovered.Ref, started.Ref) {
+				t.Fatalf("next observation = (%+v, %v), want %q", recovered, err, status)
+			}
+			loaded, err = inner.Load(t.Context(), created.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, pending := loaded.PendingWorkspaceEnrollment(); pending {
+				t.Fatal("recovered terminal observation remained pending")
+			}
+		})
+	}
 }
 
 func TestWorkspaceEnrollmentCompensationIsBounded(t *testing.T) {

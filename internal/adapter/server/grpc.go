@@ -1443,13 +1443,8 @@ func (h *HarnessServer) CancelWorkspaceEnrollment(ctx context.Context, req *meca
 }
 
 func toProtoWorkspaceEnrollment(result WorkspaceEnrollmentProjection) *mecatlv1.WorkspaceEnrollment {
-	enrollmentStatus := string(result.Status)
-	switch enrollmentStatus {
-	case "denied", "expired":
-		enrollmentStatus = "failed"
-	}
 	return &mecatlv1.WorkspaceEnrollment{
-		EnrollmentId: string(result.Ref.ID), Status: enrollmentStatus,
+		EnrollmentId: string(result.Ref.ID), Status: string(result.Status),
 		RequiredServices: result.Ref.RequiredServices, PresentationUrl: valid(result.URL),
 	}
 }
