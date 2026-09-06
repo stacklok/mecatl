@@ -272,6 +272,8 @@ func (m Model) applyWorkspaceEnrollment(msg workspaceEnrollmentMsg) (tea.Model, 
 // than lumping them under one generic message, so a user who explicitly
 // cancelled sees different copy than one whose GitHub consent was denied or
 // whose enrollment simply timed out.
+//
+//nolint:unparam // notice is always "" today (statusMsg carries every current terminal message); kept as a symmetric slot for a future terminal status that needs both.
 func terminalWorkspaceEnrollmentNotice(status client.WorkspaceEnrollmentStatus) (terminal bool, notice, statusMsg string) {
 	switch status {
 	case client.WorkspaceEnrollmentCancelled:
