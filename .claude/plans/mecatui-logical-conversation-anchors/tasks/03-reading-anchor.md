@@ -2,10 +2,10 @@
 id: 03-reading-anchor
 title: Conversation-view reading anchor controller
 blocked_by: [02-rendered-frame]
-status: pending
-attempt: 0
-branch: ""
-worktree: ""
+status: in-progress
+attempt: 1
+branch: "plan-mecatui-logical-conversation-anchors/03-reading-anchor-attempt-1"
+worktree: ".scratch/worker-mecatui-logical-conversation-anchors-03-reading-anchor-attempt-1"
 issue: ""
 retries: 0
 last_error: ""
