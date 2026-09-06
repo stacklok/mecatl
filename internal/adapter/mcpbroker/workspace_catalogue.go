@@ -106,40 +106,49 @@ func (c *attachmentCatalogue) Tools() []tool.Tool {
 // brokerCredential is opaque and is passed only through ToolHive's incoming
 // identity middleware.
 func (a *Attachment) FreezeAuthenticatedCatalogue(ctx context.Context, ref contract.WorkspaceEnrollmentRef, process *Process, brokerCredential oauth2.TokenSource, occupied []string) (contract.WorkspaceCatalogue, error) {
+	frozen, _, err := a.freezeAuthenticatedCatalogue(ctx, ref, process, brokerCredential, occupied, true)
+	return frozen, err
+}
+
+// freezeAuthenticatedCatalogue builds a complete immutable catalogue. Enrollment
+// uses publish=false so the catalogue remains private until its logical commit.
+//
+//nolint:gocyclo // every early-return guards a distinct precondition (closed, stale ref, process authority, publish race); splitting would scatter the single freeze/publish invariant
+func (a *Attachment) freezeAuthenticatedCatalogue(ctx context.Context, ref contract.WorkspaceEnrollmentRef, process *Process, brokerCredential oauth2.TokenSource, occupied []string, publish bool) (contract.WorkspaceCatalogue, *attachmentCatalogue, error) {
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if a == nil || process == nil || brokerCredential == nil || !ref.Valid() {
-		return nil, ErrAuthenticatedDiscovery
+		return nil, nil, ErrAuthenticatedDiscovery
 	}
 
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if a.closed {
-		return nil, contract.ErrAttachmentClosed
+		return nil, nil, contract.ErrAttachmentClosed
 	}
 	if a.catalogue != nil && a.catalogue.frozen != nil {
 		if a.catalogue.frozen.Ref() == ref {
-			return a.catalogue.frozen, nil
+			return a.catalogue.frozen, a.catalogue, nil
 		}
-		return nil, ErrAuthenticatedDiscovery
+		return nil, nil, ErrAuthenticatedDiscovery
 	}
 	if err := a.stateErrorLocked(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	backends, anonymous, ok := process.catalogueInputs(a.runtime)
 	if !ok || len(backends) == 0 {
-		return nil, ErrAuthenticatedDiscovery
+		return nil, nil, ErrAuthenticatedDiscovery
 	}
 	base := a.catalogue
 	if base == nil {
-		return nil, ErrAuthenticatedDiscovery
+		return nil, nil, ErrAuthenticatedDiscovery
 	}
 
 	stagedRoutes, err := stageAuthenticatedRoutes(ctx, process, brokerCredential, backends, base, occupied)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	sortRoutes(stagedRoutes)
@@ -157,16 +166,19 @@ func (a *Attachment) FreezeAuthenticatedCatalogue(ctx context.Context, ref contr
 	}
 	frozen, err := contract.NewWorkspaceCatalogue(ref, allTools)
 	if err != nil {
-		return nil, fmt.Errorf("%w: freeze attachment catalogue", ErrInvalidCatalogue)
+		return nil, nil, fmt.Errorf("%w: freeze attachment catalogue", ErrInvalidCatalogue)
 	}
 
 	// A Process may close while a query returns. Do not publish a catalogue whose
 	// process no longer owns its discovery authority.
 	if !process.catalogueStillAvailable(a.runtime) || a.closed {
-		return nil, ErrAuthenticatedDiscovery
+		return nil, nil, ErrAuthenticatedDiscovery
 	}
-	a.catalogue = newAttachmentCatalogue(allRoutes, frozen.Tools(), frozen)
-	return frozen, nil
+	candidate := newAttachmentCatalogue(allRoutes, frozen.Tools(), frozen)
+	if publish {
+		a.catalogue = candidate
+	}
+	return frozen, candidate, nil
 }
 
 func (a *Attachment) stateErrorLocked() error {

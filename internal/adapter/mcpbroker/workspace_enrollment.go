@@ -57,6 +57,11 @@ func existingWorkspaceEnrollmentLocked(a *Attachment, logical *logicalSession) (
 			url := presentWorkspaceTransaction(transaction)
 			return contract.WorkspaceEnrollmentPresentation{Ref: workspaceEnrollmentRef(transaction), URL: url}, true, nil
 		}
+		// A terminal observation remains retryable until the host has persisted
+		// it. Reaching Begin again proves the aggregate no longer carries that
+		// pending reference, so this is the acknowledgement boundary where its
+		// broker tombstone can be removed.
+		a.terminateWorkspaceTransactionLocked(logical, transaction, contract.WorkspaceEnrollmentFailed)
 	}
 	if len(logical.authorizations) >= maxAuthorizationRecords {
 		return contract.WorkspaceEnrollmentPresentation{}, true, errors.New("mcpbroker: authorization record capacity reached")
@@ -147,6 +152,8 @@ func (a *Attachment) BeginWorkspaceEnrollment(ctx context.Context) (contract.Wor
 // ObserveWorkspaceEnrollment reports the current bundle status. A granted
 // transaction triggers authenticated discovery across the whole bundle and,
 // only if every backend succeeds, publishes the frozen catalogue.
+//
+//nolint:gocyclo // one switch over every terminal transaction status plus the granted-path discovery/reverify/publish sequence; splitting would separate a status branch from the reverify it must share
 func (a *Attachment) ObserveWorkspaceEnrollment(ctx context.Context, ref contract.WorkspaceEnrollmentRef) (contract.WorkspaceEnrollmentResult, error) {
 	if err := ctx.Err(); err != nil {
 		return contract.WorkspaceEnrollmentResult{}, err
@@ -192,25 +199,26 @@ func (a *Attachment) ObserveWorkspaceEnrollment(ctx context.Context, ref contrac
 		logical.mu.Unlock()
 		return contract.WorkspaceEnrollmentResult{Ref: ref, Status: contract.WorkspaceEnrollmentPending}, nil
 	case session.AuthorizationCancelled:
-		result := a.terminateWorkspaceTransactionLocked(logical, transaction, contract.WorkspaceEnrollmentCancelled)
+		result := a.observeTerminalWorkspaceTransactionLocked(logical, transaction, contract.WorkspaceEnrollmentCancelled)
 		logical.mu.Unlock()
 		return result, nil
 	case session.AuthorizationExpired:
-		result := a.terminateWorkspaceTransactionLocked(logical, transaction, contract.WorkspaceEnrollmentExpired)
+		result := a.observeTerminalWorkspaceTransactionLocked(logical, transaction, contract.WorkspaceEnrollmentExpired)
 		logical.mu.Unlock()
 		return result, nil
 	case session.AuthorizationDenied:
-		result := a.terminateWorkspaceTransactionLocked(logical, transaction, contract.WorkspaceEnrollmentDenied)
+		result := a.observeTerminalWorkspaceTransactionLocked(logical, transaction, contract.WorkspaceEnrollmentDenied)
 		logical.mu.Unlock()
 		return result, nil
 	case session.AuthorizationFailed, session.AuthorizationClosed:
-		result := a.terminateWorkspaceTransactionLocked(logical, transaction, contract.WorkspaceEnrollmentFailed)
+		result := a.observeTerminalWorkspaceTransactionLocked(logical, transaction, contract.WorkspaceEnrollmentFailed)
 		logical.mu.Unlock()
 		return result, nil
 	case session.AuthorizationGranted:
 		// fall through to discovery below, unlocked.
 	default:
-		result := a.terminateWorkspaceTransactionLocked(logical, transaction, contract.WorkspaceEnrollmentFailed)
+		transaction.status = session.AuthorizationFailed
+		result := a.observeTerminalWorkspaceTransactionLocked(logical, transaction, contract.WorkspaceEnrollmentFailed)
 		logical.mu.Unlock()
 		return result, nil
 	}
@@ -225,29 +233,44 @@ func (a *Attachment) ObserveWorkspaceEnrollment(ctx context.Context, ref contrac
 		return a.failWorkspaceTransaction(logical, transaction), nil
 	}
 	occupied := append([]string(nil), process.occupied...)
-	catalogue, err := a.FreezeAuthenticatedCatalogue(opCtx, ref, process, &brokerTokenSource{runtime: a.runtime, logical: logical, ctx: opCtx}, occupied)
+	catalogue, candidate, err := a.freezeAuthenticatedCatalogue(opCtx, ref, process, &brokerTokenSource{runtime: a.runtime, logical: logical, ctx: opCtx}, occupied, false)
 	if err != nil {
+		if callerErr := ctx.Err(); callerErr != nil {
+			// Discovery was interrupted by this observer, not rejected by the
+			// authenticated backend. Keep the granted transaction and credential
+			// intact so a later observer can retry it.
+			return contract.WorkspaceEnrollmentResult{}, callerErr
+		}
 		return a.failWorkspaceTransaction(logical, transaction), nil
 	}
+	if callerErr := ctx.Err(); callerErr != nil {
+		return contract.WorkspaceEnrollmentResult{}, callerErr
+	}
 
+	a.mu.Lock()
+	if a.closed {
+		a.mu.Unlock()
+		return contract.WorkspaceEnrollmentResult{}, contract.ErrAttachmentClosed
+	}
 	logical.mu.Lock()
 	if logical.deleted || logical.authorizations[transaction.identity] != transaction || transaction.status != session.AuthorizationGranted || logical.brokerCredential != grant {
 		logical.mu.Unlock()
+		a.mu.Unlock()
 		return contract.WorkspaceEnrollmentResult{}, contract.ErrStateUnavailable
 	}
-	a.mu.RLock()
-	routes := make([]route, 0, len(a.catalogue.routes))
-	for _, route := range a.catalogue.routes {
+	routes := make([]route, 0, len(candidate.routes))
+	for _, route := range candidate.routes {
 		routes = append(routes, route)
 	}
-	a.mu.RUnlock()
 	sortRoutes(routes)
 	routes = cloneRoutes(routes)
 	logical.completedEnrollment = &completedWorkspaceEnrollment{ref: ref, routes: routes}
+	a.catalogue = candidate
 	delete(logical.authorizations, transaction.identity)
 	state := transaction.state
 	transaction.clientSecret, transaction.verifier, transaction.state = "", "", ""
 	logical.mu.Unlock()
+	a.mu.Unlock()
 	a.runtime.removeCallbackState(state, transaction)
 
 	return contract.WorkspaceEnrollmentResult{Ref: ref, Status: contract.WorkspaceEnrollmentConnected, Catalogue: catalogue}, nil
@@ -284,11 +307,27 @@ func (a *Attachment) failWorkspaceTransaction(logical *logicalSession, transacti
 	logical.mu.Lock()
 	defer logical.mu.Unlock()
 	if lookupWorkspaceTransactionLocked(logical, session.WorkspaceEnrollmentID(transaction.identity.id)) == nil {
-		// Already cleared by a concurrent Cancel/expiry; report the same terminal.
+		// Already cleared by a concurrent Cancel; report the same terminal.
 		clearWorkspaceCredentialLocked(logical)
 		return contract.WorkspaceEnrollmentResult{Ref: workspaceEnrollmentRef(transaction), Status: contract.WorkspaceEnrollmentFailed}
 	}
-	return a.terminateWorkspaceTransactionLocked(logical, transaction, contract.WorkspaceEnrollmentFailed)
+	transaction.status = session.AuthorizationFailed
+	return a.observeTerminalWorkspaceTransactionLocked(logical, transaction, contract.WorkspaceEnrollmentFailed)
+}
+
+// observeTerminalWorkspaceTransactionLocked clears all authority while retaining
+// a metadata-only tombstone. Observe can therefore repeat the same terminal
+// result after a host save failure; the next Begin removes the tombstone once
+// the aggregate has acknowledged it by clearing its pending record.
+func (a *Attachment) observeTerminalWorkspaceTransactionLocked(logical *logicalSession, transaction *authorizationTransaction, status contract.WorkspaceEnrollmentStatus) contract.WorkspaceEnrollmentResult {
+	a.runtime.removeCallbackState(transaction.state, transaction)
+	if transaction.cancel != nil {
+		transaction.cancel()
+		transaction.cancel = nil
+	}
+	transaction.clientSecret, transaction.verifier, transaction.state = "", "", ""
+	clearWorkspaceCredentialLocked(logical)
+	return contract.WorkspaceEnrollmentResult{Ref: workspaceEnrollmentRef(transaction), Status: status}
 }
 
 // terminateWorkspaceTransactionLocked clears the aggregate broker credential and
