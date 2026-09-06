@@ -26,7 +26,8 @@ func TestManagedTemporaryCommandLeases_Scenario4_EndToEnd(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = ns.Close() })
-	workspace, err := ns.OpenWorkspace("osfs", "scenario-four")
+	workspaceRoot := t.TempDir()
+	workspace, err := ns.OpenWorkspace("osfs", "scenario-four", workspaceRoot)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -66,7 +66,9 @@ temporary_storage:
 
 Managed mode accepts `managed_root`, `system_temp_dir`, `command_reap_after`,
 `reap_interval`, `reap_timeout` (default five minutes), and
-`shutdown_reap_timeout` (default one minute). These are operator controls; project
+`shutdown_reap_timeout` (default one minute). Each workspace manifest also records
+its canonical current path for owner-only debugging; it is refreshed when that managed
+workspace key is opened from a new path. These are operator controls; project
 settings cannot redirect or weaken cleanup. A Bash call may request `temp_scope:
 system` only when ordinary Bash permission and the separate `BashSystemTemp`
 capability are both allowed. See [ADR 0281](adr/0281-managed-temporary-command-leases.md).

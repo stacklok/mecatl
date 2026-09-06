@@ -34,7 +34,7 @@ type temporaryStorageConfig struct {
 type managedTemporaryStorage struct {
 	namespace  *managedtemp.Namespace
 	mu         sync.Mutex
-	workspaces map[string]*managedtemp.Workspace
+	workspaces []*managedtemp.Workspace
 }
 
 func openManagedTemporaryStorage(cfg temporaryStorageConfig) (*managedTemporaryStorage, error) {
@@ -45,7 +45,7 @@ func openManagedTemporaryStorage(cfg temporaryStorageConfig) (*managedTemporaryS
 	if err != nil {
 		return nil, err
 	}
-	return &managedTemporaryStorage{namespace: namespace, workspaces: map[string]*managedtemp.Workspace{}}, nil
+	return &managedTemporaryStorage{namespace: namespace}, nil
 }
 
 func (s *managedTemporaryStorage) workspace(root string) (*managedtemp.Workspace, error) {
@@ -56,16 +56,13 @@ func (s *managedTemporaryStorage) workspace(root string) (*managedtemp.Workspace
 	if err != nil {
 		return nil, err
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if workspace := s.workspaces[identity]; workspace != nil {
-		return workspace, nil
-	}
-	workspace, err := s.namespace.OpenWorkspace("osfs", identity)
+	workspace, err := s.namespace.OpenWorkspace("osfs", identity, identity)
 	if err != nil {
 		return nil, err
 	}
-	s.workspaces[identity] = workspace
+	s.mu.Lock()
+	s.workspaces = append(s.workspaces, workspace)
+	s.mu.Unlock()
 	return workspace, nil
 }
 

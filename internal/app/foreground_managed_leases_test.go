@@ -147,7 +147,7 @@ func TestADR_0281_TestHomeUsesValidatedLeaseMarker(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = ns.Close() })
-	workspace, err := ns.OpenWorkspace("osfs", "test-home-workspace")
+	workspace, err := ns.OpenWorkspace("osfs", "test-home-workspace", t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}

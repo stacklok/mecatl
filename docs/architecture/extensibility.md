@@ -17,7 +17,9 @@ allocates one private command/job lease and supplies only its `tmp/` child as
 interval-gated worker later reclaims only validated, unlocked abandoned leases after
 the configured TTL. The worker's root coordination lock never delays command
 allocation or execution, and each startup/periodic sweep and shutdown join has its
-own configured deadline. Operators can select `temporary_storage.mode: system` to
+own configured deadline. The workspace manifest holds the canonical current workspace
+path for owner-only diagnostics and refreshes it when the same managed key opens from a
+new path. Operators can select `temporary_storage.mode: system` to
 restore inherited/configured system temporary storage; this disables managed
 allocation and reaping and leaves existing managed data for explicit inspection or
 removal. Managed mode is Linux-only. See [ADR 0281](../adr/0281-managed-temporary-command-leases.md).

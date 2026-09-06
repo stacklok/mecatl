@@ -4,7 +4,7 @@ package managedtemp
 
 import (
 	"crypto/rand"
-	"encoding/hex"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -22,8 +22,9 @@ const manifestVersion = 1
 var ErrUnsupportedVersion = errors.New("managedtemp: unsupported manifest version")
 
 type workspaceManifest struct {
-	Version int    `json:"version"`
-	Key     string `json:"key"`
+	Version     int    `json:"version"`
+	Key         string `json:"key"`
+	CurrentPath string `json:"current_path"`
 }
 
 type allocationManifest struct {
@@ -378,7 +379,7 @@ func validateWorkspaceManifest(root *os.Root, key string) error {
 	if manifest.Version != manifestVersion {
 		return ErrUnsupportedVersion
 	}
-	if manifest.Key != key || !validWorkspaceKey(key) {
+	if manifest.Key != key || !validWorkspaceKey(key) || !validCanonicalWorkspacePath(manifest.CurrentPath) {
 		return errors.New("managedtemp: workspace manifest identity mismatch")
 	}
 	return nil
@@ -396,7 +397,7 @@ func allocationID() (string, error) {
 	if _, err := io.ReadFull(rand.Reader, random[:]); err != nil {
 		return "", err
 	}
-	return hex.EncodeToString(random[:]), nil
+	return base64.RawURLEncoding.EncodeToString(random[:]), nil
 }
 
 func processStartIdentity(pid int) (string, error) {
@@ -453,18 +454,15 @@ func validTestHomeWorkspaceManifest(workspace string) (workspaceManifest, bool) 
 		return workspaceManifest{}, false
 	}
 	var manifest workspaceManifest
-	if json.Unmarshal(workspaceData, &manifest) != nil || manifest.Version != manifestVersion || manifest.Key != filepath.Base(workspace) || !validWorkspaceKey(manifest.Key) {
+	if json.Unmarshal(workspaceData, &manifest) != nil || manifest.Version != manifestVersion || manifest.Key != filepath.Base(workspace) || !validWorkspaceKey(manifest.Key) || !validCanonicalWorkspacePath(manifest.CurrentPath) {
 		return workspaceManifest{}, false
 	}
 	return manifest, true
 }
 
 func validAllocationID(id string) bool {
-	if len(id) != 32 {
-		return false
-	}
-	_, err := hex.DecodeString(id)
-	return err == nil
+	decoded, err := base64.RawURLEncoding.DecodeString(id)
+	return err == nil && len(decoded) == 16 && base64.RawURLEncoding.EncodeToString(decoded) == id
 }
 
 func lockExclusive(file *os.File, nonBlocking bool) error {

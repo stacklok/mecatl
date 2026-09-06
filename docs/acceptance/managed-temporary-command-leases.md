@@ -9,7 +9,9 @@ The smallest set of work that makes managed temporary storage the default for lo
 Linux Bash commands and background jobs: each gets a private, attributable lease;
 the harness cleans it promptly where safe and reclaims only validated crash residue
 on a bounded schedule. Workspace keys derive transiently from canonical physical
-paths and are never persisted as raw metadata. It retains a human-approved system
+paths and are never persisted as raw backend identity. The owner-only workspace manifest
+records the canonical current workspace path for debugging and refreshes it when the same
+key is opened from a new path. It retains a human-approved system
 temporary-directory escape without treating it as a filesystem sandbox. It
 deliberately excludes the workspace scratchpad and delegation-fork lifecycle proposed
 by ADR 0282 and ADR 0283.
@@ -86,9 +88,11 @@ path into deletion authority ([ADR-0281](../adr/0281-managed-temporary-command-l
   than repaired.
   - verify: `TestADR_0281_ManagedObjectsCreatedAtomicallyPrivate`
 - AC1.6: A managed root/workspace allocation rejects symlink, replacement,
-  ownership, mode, or manifest-key failures without deleting anything. Its 128-bit
-  domain-separated key is encoded as unpadded URL-safe Base64, and it persists no
-  raw workspace path or identity. A same-UID component replacement after validation
+  ownership, mode, or manifest-key/current-path failures without deleting anything. Its
+  128-bit domain-separated key is encoded as unpadded URL-safe Base64; its owner-only
+  manifest contains the canonical current workspace path and refreshes that field when
+  the same key opens from a new path, but persists no raw backend identity or global
+  workspace index. A same-UID component replacement after validation
   and before cleanup/reaping cannot redirect deletion outside the retained
   handle-rooted lease; the candidate is retained or fails closed.
   - verify: `TestADR_0281_ManagedRootAndWorkspaceFailClosed`
@@ -166,7 +170,7 @@ cleanup only after the managed group is gone ([ADR-0281](../adr/0281-managed-tem
 
 **Acceptance:**
 - AC3.1: A managed foreground Bash call receives a distinct owner-only
-  `cmd-<128-bit-random-id>/tmp` directory in both `TMPDIR` and `GOTMPDIR`; shell
+  `cmd-<22-char-base64-random-id>/tmp` directory in both `TMPDIR` and `GOTMPDIR`; shell
   text is byte-for-byte free of injected temporary paths, and manifest metadata
   contains no command, output, environment, credential, or transcript content.
   The fixed internal overlay is applied after the common secret scrub and cannot
@@ -178,7 +182,7 @@ cleanup only after the managed group is gone ([ADR-0281](../adr/0281-managed-tem
   variables differ by scope.
   - verify: `TestADR_0281_TempOverlayPreservesSecretScrub`
 - AC3.2: A managed `background: true` Bash call receives one distinct
-  `job-<128-bit-random-id>/tmp` lease that remains held for its complete job lifetime
+  `job-<22-char-base64-random-id>/tmp` lease that remains held for its complete job lifetime
   and is cleaned under the same terminal rules as a foreground command.
   - verify: `TestADR_0281_BackgroundJobLeaseLifecycle`
 - AC3.3: Successful completion, cancellation, and timeout retain their existing

@@ -139,7 +139,7 @@ func sweepWorkspace(ctx context.Context, workspace *os.Root, opts SweepOptions) 
 		return 0, nil
 	}
 	var manifest workspaceManifest
-	if json.Unmarshal(data, &manifest) != nil || manifest.Version != manifestVersion || manifest.Key != filepath.Base(workspace.Name()) {
+	if json.Unmarshal(data, &manifest) != nil || manifest.Version != manifestVersion || manifest.Key != filepath.Base(workspace.Name()) || !validWorkspaceKey(manifest.Key) || !validCanonicalWorkspacePath(manifest.CurrentPath) {
 		return 0, nil
 	}
 	if err := validatePrivateDir(workspace, "commands"); err != nil {

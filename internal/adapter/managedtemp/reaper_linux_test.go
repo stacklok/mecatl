@@ -43,7 +43,7 @@ func TestADR_0281_ReaperDeletesOnlyValidatedEligibleLease(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = ns.Close() })
-	workspace, err := ns.OpenWorkspace("osfs", "reaper-validation")
+	workspace, err := ns.OpenWorkspace("osfs", "reaper-validation", "/workspace/reaper-validation")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -104,7 +104,7 @@ func TestADR_0281_CrashRecoveryAndConcurrentReaping(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = ns.Close() })
-	workspace, err := ns.OpenWorkspace("osfs", "crash-recovery")
+	workspace, err := ns.OpenWorkspace("osfs", "crash-recovery", "/workspace/crash-recovery")
 	if err != nil {
 		t.Fatal(err)
 	}

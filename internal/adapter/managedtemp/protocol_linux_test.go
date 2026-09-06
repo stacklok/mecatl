@@ -45,7 +45,7 @@ func TestADR_0281_ManagedRootAndWorkspaceFailClosed(t *testing.T) {
 	t.Cleanup(func() { _ = ns.Close() })
 
 	identity := "/private/repository"
-	workspace, err := ns.OpenWorkspace("osfs", identity)
+	workspace, err := ns.OpenWorkspace("osfs", identity, identity)
 	if err != nil {
 		t.Fatalf("OpenWorkspace: %v", err)
 	}
@@ -58,21 +58,39 @@ func TestADR_0281_ManagedRootAndWorkspaceFailClosed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadFile workspace manifest: %v", err)
 	}
-	if strings.Contains(string(manifest), identity) {
-		t.Fatalf("workspace manifest exposes raw identity: %s", manifest)
+	var manifestFields workspaceManifest
+	if err := json.Unmarshal(manifest, &manifestFields); err != nil || manifestFields.Version != manifestVersion || manifestFields.Key != filepath.Base(workspace.Path()) || manifestFields.CurrentPath != identity {
+		t.Fatalf("workspace manifest = %s; want version, key, and canonical current path", manifest)
 	}
-	var manifestFields map[string]any
-	if err := json.Unmarshal(manifest, &manifestFields); err != nil || len(manifestFields) != 2 {
-		t.Fatalf("workspace manifest = %s; want only version and key", manifest)
-	}
-	if err := os.WriteFile(manifestPath, []byte(`{"version":1,"key":"wrong"}`), 0o600); err != nil {
+	if err := os.WriteFile(manifestPath, []byte(`{"version":1,"key":"wrong","current_path":"/private/repository"}`), 0o600); err != nil {
 		t.Fatalf("WriteFile malformed workspace manifest: %v", err)
 	}
-	if _, err := ns.OpenWorkspace("osfs", identity); err == nil {
+	if _, err := ns.OpenWorkspace("osfs", identity, identity); err == nil {
 		t.Fatal("OpenWorkspace accepted a mismatched manifest key")
 	}
 	if err := os.WriteFile(manifestPath, manifest, 0o600); err != nil {
 		t.Fatalf("restore workspace manifest: %v", err)
+	}
+	if err := os.WriteFile(manifestPath, []byte(`{"version":1,"key":"`+manifestFields.Key+`"}`), 0o600); err != nil {
+		t.Fatalf("WriteFile workspace manifest without current path: %v", err)
+	}
+	if _, err := ns.OpenWorkspace("osfs", identity, identity); err == nil {
+		t.Fatal("OpenWorkspace accepted a manifest without a canonical current path")
+	}
+	if err := os.WriteFile(manifestPath, manifest, 0o600); err != nil {
+		t.Fatalf("restore workspace manifest with current path: %v", err)
+	}
+	movedPath := "/private/repository-renamed"
+	refreshed, err := ns.OpenWorkspace("osfs", identity, movedPath)
+	if err != nil {
+		t.Fatalf("refresh workspace manifest: %v", err)
+	}
+	if err := refreshed.Close(); err != nil {
+		t.Fatalf("close refreshed workspace: %v", err)
+	}
+	refreshedManifest, err := os.ReadFile(manifestPath)
+	if err != nil || !strings.Contains(string(refreshedManifest), `"current_path":"`+movedPath+`"`) {
+		t.Fatalf("workspace manifest did not refresh the current path: %q, %v", refreshedManifest, err)
 	}
 	if got := filepath.Base(workspace.Path()); len(got) != 22 || strings.ContainsAny(got, "+/=") {
 		t.Fatalf("workspace key = %q, want 22-char raw URL-safe base64", got)
@@ -83,8 +101,8 @@ func TestADR_0281_ManagedRootAndWorkspaceFailClosed(t *testing.T) {
 		t.Fatalf("Allocate: %v", err)
 	}
 	t.Cleanup(func() { _ = lease.Close() })
-	if !strings.HasPrefix(filepath.Base(lease.Path()), "cmd-") || len(lease.ID()) != 32 {
-		t.Fatalf("lease identity = %q / %q, want cmd- plus 128-bit ID", lease.Path(), lease.ID())
+	if !strings.HasPrefix(filepath.Base(lease.Path()), "cmd-") || len(lease.ID()) != 22 || !validAllocationID(lease.ID()) {
+		t.Fatalf("lease identity = %q / %q, want cmd- plus 22-char raw URL-safe base64 128-bit ID", lease.Path(), lease.ID())
 	}
 
 	outside := filepath.Join(base, "outside")
@@ -120,7 +138,7 @@ func TestADR_0281_LeaseRemovalRetainsReplacedParentEntry(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = ns.Close() })
-	workspace, err := ns.OpenWorkspace("osfs", "replacement")
+	workspace, err := ns.OpenWorkspace("osfs", "replacement", "/workspace/replacement")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,7 +171,7 @@ func TestADR_0281_UnknownManifestVersionRetained(t *testing.T) {
 		t.Fatalf("Open: %v", err)
 	}
 	t.Cleanup(func() { _ = ns.Close() })
-	workspace, err := ns.OpenWorkspace("osfs", "workspace")
+	workspace, err := ns.OpenWorkspace("osfs", "workspace", "/workspace/current")
 	if err != nil {
 		t.Fatalf("OpenWorkspace: %v", err)
 	}

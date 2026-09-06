@@ -12,7 +12,7 @@ type Lease struct{}
 
 func Open(string) (*Namespace, error) { return nil, errUnsupported }
 func (*Namespace) Close() error       { return nil }
-func (*Namespace) OpenWorkspace(string, string) (*Workspace, error) {
+func (*Namespace) OpenWorkspace(string, string, string) (*Workspace, error) {
 	return nil, errUnsupported
 }
 func (*Workspace) Close() error                    { return nil }

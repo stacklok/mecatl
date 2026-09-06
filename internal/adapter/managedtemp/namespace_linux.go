@@ -89,14 +89,17 @@ func (n *Namespace) Close() error {
 func (n *Namespace) Path() string { return n.path }
 
 // OpenWorkspace creates or adopts the private namespace for one transient workspace
-// identity. The digest key, never the raw identity, is used in the path or durable
-// metadata.
-func (n *Namespace) OpenWorkspace(backend, identity string) (*Workspace, error) {
+// identity. The digest key, never the raw identity, is used in the path. canonicalPath
+// is retained only in the owner-readable manifest for operator diagnosis.
+func (n *Namespace) OpenWorkspace(backend, identity, canonicalPath string) (*Workspace, error) {
 	if n == nil || n.root == nil {
 		return nil, errors.New("managedtemp: namespace is closed")
 	}
 	if backend == "" || identity == "" {
 		return nil, errors.New("managedtemp: workspace backend and identity are required")
+	}
+	if canonicalPath == "" || !filepath.IsAbs(canonicalPath) || filepath.Clean(canonicalPath) != canonicalPath {
+		return nil, errors.New("managedtemp: canonical workspace path is required")
 	}
 	key := workspaceKey(backend, identity)
 	if err := validatePrivateDir(n.root, "workspaces"); err != nil {
@@ -134,12 +137,12 @@ func (n *Namespace) OpenWorkspace(backend, identity string) (*Workspace, error) 
 		return nil, err
 	}
 	defer func() { _ = unlockClose(workspaceLock) }()
-	manifest, err := json.Marshal(workspaceManifest{Version: manifestVersion, Key: key})
+	manifest, err := workspaceManifestJSON(key, canonicalPath)
 	if err != nil {
 		_ = root.Close()
-		return nil, fmt.Errorf("managedtemp: marshal workspace manifest: %w", err)
+		return nil, err
 	}
-	if err := w.createJSON("workspace.manifest", manifest); err != nil {
+	if err := w.writeWorkspaceManifest(manifest, canonicalPath); err != nil {
 		_ = root.Close()
 		return nil, err
 	}
@@ -193,13 +196,43 @@ func (n *Namespace) WritePrivateFile(name string, data []byte) error {
 	return writePrivateFile(n.root, name, data)
 }
 
-func (w *Workspace) createJSON(name string, data []byte) error {
-	if _, err := w.root.Lstat(name); err == nil {
-		return validatePrivateFile(w.root, name)
-	} else if !errors.Is(err, fs.ErrNotExist) {
+func workspaceManifestJSON(key, canonicalPath string) ([]byte, error) {
+	return json.Marshal(workspaceManifest{Version: manifestVersion, Key: key, CurrentPath: canonicalPath})
+}
+
+func (w *Workspace) writeWorkspaceManifest(manifest []byte, canonicalPath string) error {
+	info, err := w.root.Lstat("workspace.manifest")
+	if errors.Is(err, fs.ErrNotExist) {
+		return writePrivateFile(w.root, "workspace.manifest", manifest)
+	}
+	if err != nil {
 		return err
 	}
-	return writePrivateFile(w.root, name, data)
+	if err := validatePrivateFileInfo(info); err != nil {
+		return err
+	}
+	data, err := readPrivateFile(w.root, "workspace.manifest")
+	if err != nil {
+		return err
+	}
+	var existing workspaceManifest
+	if err := json.Unmarshal(data, &existing); err != nil {
+		return fmt.Errorf("managedtemp: malformed workspace manifest: %w", err)
+	}
+	if existing.Version != manifestVersion {
+		return ErrUnsupportedVersion
+	}
+	if existing.Key != filepath.Base(w.path) || !validWorkspaceKey(existing.Key) || !validCanonicalWorkspacePath(existing.CurrentPath) {
+		return errors.New("managedtemp: workspace manifest identity mismatch")
+	}
+	if existing.CurrentPath == canonicalPath {
+		return nil
+	}
+	return replacePrivateFile(w.root, "workspace.manifest", manifest)
+}
+
+func validCanonicalWorkspacePath(path string) bool {
+	return path != "" && filepath.IsAbs(path) && filepath.Clean(path) == path
 }
 
 func workspaceKey(backend, identity string) string {
@@ -209,7 +242,7 @@ func workspaceKey(backend, identity string) string {
 
 func validWorkspaceKey(key string) bool {
 	decoded, err := base64.RawURLEncoding.DecodeString(key)
-	return err == nil && len(decoded) == 16
+	return err == nil && len(decoded) == 16 && base64.RawURLEncoding.EncodeToString(decoded) == key
 }
 
 func openParent(path string) (*os.Root, string, error) {
