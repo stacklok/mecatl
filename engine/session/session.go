@@ -346,10 +346,10 @@ type Session struct {
 	// tokenUsage is the aggregate-owned canonical durable accounting ledger.
 	// TokenUsageSnapshot returns an owned external view.
 	tokenUsage map[UsageKind]TokenUsage
-	// usageProviderID and usageModelID are the run-scoped attribution selected by
-	// composition for a shared default engine; durable selectors remain above.
-	usageProviderID string
-	usageModelID    string
+	// usageAttribution is the normalized run-scoped provider/model attribution
+	// selected by composition. Empty means a restored or inert session has not
+	// yet lazily derived it from its durable labels.
+	usageAttribution string
 	// Usage is the deprecated lifetime main-token compatibility projection. It always
 	// mirrors TokenUsage[UsageKindMain].Total and is never reset. Unlike Counters,
 	// it is deliberately NOT cleared by resetToIdle.
@@ -586,10 +586,10 @@ func (s *Session) RecordToolResults(results []ToolResult) error {
 	return nil
 }
 
-// SetUsageAttribution selects the provider/model attribution for subsequent main usage.
+// SetUsageAttribution selects the normalized provider/model attribution for
+// subsequent main usage.
 func (s *Session) SetUsageAttribution(providerID, modelID string) {
-	s.usageProviderID = providerID
-	s.usageModelID = modelID
+	s.usageAttribution = modelAttribution(providerID, modelID)
 }
 
 // RecordUsage accumulates the token usage of a model call onto the aggregate's
@@ -602,11 +602,12 @@ func (s *Session) RecordUsage(u Usage) error {
 	if s.State != StateRunning {
 		return fmt.Errorf("%w: RecordUsage from %q", ErrIllegalTransition, s.State)
 	}
-	providerID, modelID := s.usageProviderID, s.usageModelID
-	if providerID == "" || modelID == "" {
-		providerID, modelID = s.ProviderID, s.ModelID
+	attribution := s.usageAttribution
+	if attribution == "" {
+		attribution = modelAttribution(s.ProviderID, s.ModelID)
+		s.usageAttribution = attribution
 	}
-	s.RecordTokenUsage(UsageKindMain, providerID, modelID, u)
+	s.recordTokenUsage(UsageKindMain, attribution, u)
 	s.Usage = s.tokenUsage[UsageKindMain].Total
 	return nil
 }

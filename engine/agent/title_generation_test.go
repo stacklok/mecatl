@@ -19,6 +19,7 @@ func TestSessionTitleGeneration_PromptIngressCapturesOnlyPrincipalPrompts(t *tes
 	)
 	e := newEngine(agent.Deps{LLM: llm, Catalog: catalogWith(t)})
 	sess := newSession(t, session.Limits{})
+	sess.SetTitleGeneration(session.TitleGenerationPending)
 	env := agent.EnvForWS(memfs.NewWorkspace("/ws"), nil)
 
 	for _, prompt := range []string{"first", "second", "third", "fourth"} {

@@ -7,8 +7,10 @@ import (
 
 func TestSessionTitleGeneration_Scenario2_GenuinePromptCandidatesRoundTrip(t *testing.T) {
 	s := newTestSession(Limits{})
+	s.SetTitleGeneration(TitleGenerationPending)
 
 	for _, prompt := range []string{
+		"\t \n",
 		"  First\nprincipal prompt  ",
 		"\tSecond principal prompt\t",
 		strings.Repeat("x", 2_100),
@@ -34,6 +36,27 @@ func TestSessionTitleGeneration_Scenario2_GenuinePromptCandidatesRoundTrip(t *te
 	got[0] = "mutated caller copy"
 	if s.TitleSourcePrompts()[0] != want[0] {
 		t.Fatal("TitleSourcePrompts returned mutable aggregate storage")
+	}
+}
+
+func TestRecordTitleSourcePromptSkipsNonPendingWithoutAllocation(t *testing.T) {
+	for _, state := range []TitleGenerationState{
+		TitleGenerationDisabled,
+		TitleGenerationGenerated,
+		TitleGenerationExhausted,
+	} {
+		t.Run(string(state), func(t *testing.T) {
+			s := newTestSession(Limits{})
+			s.SetTitleGeneration(state)
+			if got := testing.AllocsPerRun(1_000, func() {
+				s.RecordTitleSourcePrompt("principal prompt")
+			}); got != 0 {
+				t.Fatalf("RecordTitleSourcePrompt allocations = %v, want 0", got)
+			}
+			if got := s.TitleSourcePrompts(); len(got) != 0 {
+				t.Fatalf("TitleSourcePrompts = %#v, want none", got)
+			}
+		})
 	}
 }
 

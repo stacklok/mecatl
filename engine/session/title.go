@@ -153,10 +153,11 @@ const (
 )
 
 // RecordTitleSourcePrompt captures a bounded principal text prompt at the
-// original ingress seam. Empty prompts and prompts beyond the first three are
-// ignored; this method never examines conversation history.
+// original ingress seam while automatic title generation is pending. Empty
+// prompts and prompts beyond the first three are ignored; this method never
+// examines conversation history.
 func (s *Session) RecordTitleSourcePrompt(text string) {
-	if !s.recordTitleSourcePrompt(text) {
+	if s.TitleGeneration != TitleGenerationPending || !s.recordTitleSourcePrompt(text) {
 		return
 	}
 	s.bumpTitleRevision()
