@@ -194,6 +194,9 @@ func reapLease(ctx context.Context, commands *os.Root, name string, opts SweepOp
 	if err := validatePrivateDir(leaseRoot, "."); err != nil || ctx.Err() != nil {
 		return false
 	}
+	if err := validateLeaseParentEntry(commands, name, leaseRoot); err != nil {
+		return false
+	}
 	lock, err := leaseRoot.OpenFile("lease.lock", os.O_RDWR, 0)
 	if err != nil {
 		return false
@@ -224,18 +227,34 @@ func reapLease(ctx context.Context, commands *os.Root, name string, opts SweepOp
 	if transition.IsZero() || opts.Now.Sub(transition) < opts.CommandReapAfter || ctx.Err() != nil {
 		return false
 	}
+	if err := validateLeaseParentEntry(commands, name, leaseRoot); err != nil {
+		return false
+	}
 	if err := removeTreeNoLinks(leaseRoot); err != nil || ctx.Err() != nil {
 		return false
 	}
-	entry, err := commands.Lstat(name)
-	if err != nil {
-		return false
-	}
-	opened, err := leaseRoot.Stat(".")
-	if err != nil || !os.SameFile(entry, opened) {
+	if err := validateLeaseParentEntry(commands, name, leaseRoot); err != nil {
 		return false
 	}
 	return commands.Remove(name) == nil
+}
+
+func validateLeaseParentEntry(parent *os.Root, name string, lease *os.Root) error {
+	entry, err := parent.Lstat(name)
+	if err != nil {
+		return err
+	}
+	if err := validatePrivateDirInfo(entry); err != nil {
+		return err
+	}
+	opened, err := lease.Stat(".")
+	if err != nil {
+		return err
+	}
+	if !os.SameFile(entry, opened) {
+		return errors.New("managedtemp: lease parent entry was replaced")
+	}
+	return nil
 }
 
 // syscallEWOULDBLOCK avoids exposing syscall details in the sweep API.

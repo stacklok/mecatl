@@ -49,6 +49,21 @@ func TestADR_0281_ForegroundLeaseOverlayAndMetadataPrivacy(t *testing.T) {
 		done <- runErr
 	}()
 
+	leasePath, pid := waitForStartedLease(t, workspace.Path())
+	defer func() {
+		if err := syscall.Kill(-pid, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
+			t.Errorf("kill foreground process group: %v", err)
+		}
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Errorf("foreground managed command: %v", err)
+			}
+		case <-time.After(10 * time.Second):
+			t.Error("foreground managed command did not finish")
+		}
+	}()
+
 	pathsFile := filepath.Join(root, "temporary-paths")
 	var paths []string
 	deadline := time.Now().Add(5 * time.Second)
@@ -62,6 +77,9 @@ func TestADR_0281_ForegroundLeaseOverlayAndMetadataPrivacy(t *testing.T) {
 	}
 	if len(paths) != 2 || paths[0] == "" || paths[0] != paths[1] || filepath.Base(paths[0]) != "tmp" || !strings.HasPrefix(filepath.Base(filepath.Dir(paths[0])), "cmd-") {
 		t.Fatalf("TMPDIR/GOTMPDIR = %q, want one cmd-<allocation-id>/tmp directory", paths)
+	}
+	if filepath.Dir(paths[0]) != leasePath {
+		t.Fatalf("temporary paths lease = %q, want started lease %q", filepath.Dir(paths[0]), leasePath)
 	}
 	if strings.Contains(command, paths[0]) {
 		t.Fatalf("shell text contains injected lease temporary path %q", paths[0])
@@ -82,32 +100,33 @@ func TestADR_0281_ForegroundLeaseOverlayAndMetadataPrivacy(t *testing.T) {
 			t.Fatalf("manifest leaks %q: %s", forbidden, manifest)
 		}
 	}
-	if err := syscall.Kill(-mustPIDFromLease(t, filepath.Dir(paths[0])), syscall.SIGKILL); err != nil {
-		t.Fatalf("kill foreground process group: %v", err)
-	}
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Fatalf("foreground managed command: %v", err)
-		}
-	case <-time.After(10 * time.Second):
-		t.Fatal("foreground managed command did not finish")
-	}
 }
 
-func mustPIDFromLease(t *testing.T, leasePath string) int {
+func waitForStartedLease(t *testing.T, workspacePath string) (string, int) {
 	t.Helper()
-	manifest, err := os.ReadFile(filepath.Join(leasePath, "manifest.json"))
-	if err != nil {
-		t.Fatal(err)
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		manifests, err := filepath.Glob(filepath.Join(workspacePath, "commands", "cmd-*", "manifest.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, path := range manifests {
+			data, err := os.ReadFile(path)
+			if err != nil {
+				continue
+			}
+			var manifest struct {
+				State    string `json:"state"`
+				OwnerPID int    `json:"owner_pid"`
+			}
+			if json.Unmarshal(data, &manifest) == nil && manifest.State == "active" && manifest.OwnerPID > 0 {
+				return filepath.Dir(path), manifest.OwnerPID
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
-	var fields struct {
-		OwnerPID int `json:"owner_pid"`
-	}
-	if err := json.Unmarshal(manifest, &fields); err != nil || fields.OwnerPID <= 0 {
-		t.Fatalf("manifest owner PID = %d, %v", fields.OwnerPID, err)
-	}
-	return fields.OwnerPID
+	t.Fatal("managed command did not publish an active manifest")
+	return "", 0
 }
 
 func TestManagedTemporaryCommandLeases_Scenario4_EndToEnd(t *testing.T) {

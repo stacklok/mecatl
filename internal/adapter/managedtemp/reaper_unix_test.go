@@ -4,6 +4,7 @@ package managedtemp
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io/fs"
 	"os"
@@ -95,6 +96,85 @@ func TestADR_0281_ReaperDeletesOnlyValidatedEligibleLease(t *testing.T) {
 		if _, err := os.Lstat(path); err != nil {
 			t.Fatalf("invalid or contended lease %q was deleted: %v", path, err)
 		}
+	}
+}
+
+// A syntactically valid parent entry must still name the handle that was
+// validated. Otherwise a relative link can redirect recursive cleanup to a
+// sibling whose manifest has been forged to match the candidate.
+func TestADR_0281_ReaperDeletesOnlyValidatedEligibleLease_RetainsRelativeSymlinkedSibling(t *testing.T) {
+	ns, err := Open(filepath.Join(t.TempDir(), "managed"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ns.Close() })
+	workspace, err := ns.OpenWorkspace("osfs", "relative-link", "/workspace/relative-link")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = workspace.Close() })
+
+	candidate, err := workspace.Allocate("cmd")
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidateName := filepath.Base(candidate.Path())
+	if err := candidate.Terminal(); err != nil {
+		t.Fatal(err)
+	}
+	if err := candidate.Close(); err != nil {
+		t.Fatal(err)
+	}
+	sibling, err := workspace.Allocate("job")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sibling.Terminal(); err != nil {
+		t.Fatal(err)
+	}
+	if err := sibling.Close(); err != nil {
+		t.Fatal(err)
+	}
+	keep := filepath.Join(sibling.Path(), "tmp", "must-survive")
+	if err := os.WriteFile(keep, []byte("sibling content"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Make the target look like the candidate to every manifest-only check.
+	manifestPath := filepath.Join(sibling.Path(), "manifest.json")
+	data, err := os.ReadFile(manifestPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var manifest allocationManifest
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		t.Fatal(err)
+	}
+	manifest.ID, manifest.Kind = candidate.ID(), "cmd"
+	data, err = json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(manifestPath, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(candidate.Path()); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Base(sibling.Path()), candidate.Path()); err != nil {
+		t.Fatal(err)
+	}
+
+	commands, err := workspace.root.OpenRoot("commands")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = commands.Close() }()
+	if reapLease(context.Background(), commands, candidateName, SweepOptions{Now: time.Now().Add(2 * time.Hour), Interval: time.Hour, CommandReapAfter: time.Hour}) {
+		t.Fatal("reaper deleted a relative-symlinked candidate")
+	}
+	if data, err := os.ReadFile(keep); err != nil || string(data) != "sibling content" {
+		t.Fatalf("relative symlink redirected cleanup into sibling: %q, %v", data, err)
 	}
 }
 

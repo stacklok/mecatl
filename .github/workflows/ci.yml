@@ -322,7 +322,7 @@ jobs:
             engine/go.sum
       - name: Run managed temporary storage tests
         run: |
-          go test ./internal/adapter/managedtemp -run '^TestADR_0281_ReaperDeletesOnlyValidatedEligibleLease$' -count=1
+          go test ./internal/adapter/managedtemp -run '^(TestADR_0281_ReaperDeletesOnlyValidatedEligibleLease.*|TestProcessStartIdentityPersistsKernelIdentity|TestProcessStartIdentityRejectsNonexistentPID)$' -count=1
           go test ./internal/adapter/osfs -run '^TestADR_0281_ForegroundLeaseOverlayAndMetadataPrivacy$' -count=1
           go test ./internal/app -run '^TestADR_0281_ManagedModeUnixAdmission$' -count=1
 

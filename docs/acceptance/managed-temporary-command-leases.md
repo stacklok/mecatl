@@ -256,7 +256,7 @@ this process-lifetime worker and its durable sweep coordination state
   - verify: `TestADR_0281_BuildOwnsManagedTempWorkerLifecycle`
 - AC4.5: The ADR 0027 resource inventory records the managed-temp worker, root/lease
   locks, and completion record with owner, scope, cleanup, and restart disposition;
-  architecture and public operator documentation describe the Linux-only managed
+  architecture and public operator documentation describe the Linux and macOS managed
   lifecycle and system-mode rollback.
   - verify: inspection — documentation and inventory are reviewed with the lifecycle implementation; `task docs` enforces links and generated `llms.txt`.
 - AC4.6: In an offline end-to-end run, a managed Bash command allocates a private
