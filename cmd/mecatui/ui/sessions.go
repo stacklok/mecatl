@@ -274,6 +274,7 @@ func (m Model) adoptAuthoritativeTranscript(row client.SessionListItem, loaded c
 	m = m.bindSessionID(row.ID)
 	m.sessionTitle = row.Title
 	m.sessionTitleProvenance = row.TitleProvenance
+	m.titleRevision = row.TitleRevision
 	m.sessionState = row.State
 	m.sessionCreatedAt = row.CreatedAt
 	m.sessionModifiedAt = row.ModifiedAt

@@ -16,6 +16,7 @@ type SessionRenamedMsg struct {
 	RequestToken    uint64
 	Title           string
 	TitleProvenance string
+	TitleRevision   uint64
 	Err             error
 }
 
@@ -69,7 +70,7 @@ func RenameSessionCmd(ctx context.Context, r SessionRenamer, id, title string) t
 func RenameSessionCmdWithToken(ctx context.Context, r SessionRenamer, id, title string, requestToken uint64) tea.Cmd {
 	return func() tea.Msg {
 		snapshot, err := r.RenameSession(ctx, id, title)
-		return SessionRenamedMsg{SessionID: id, RequestToken: requestToken, Title: snapshot.Title, TitleProvenance: snapshot.TitleProvenance, Err: err}
+		return SessionRenamedMsg{SessionID: id, RequestToken: requestToken, Title: snapshot.Title, TitleProvenance: snapshot.TitleProvenance, TitleRevision: snapshot.TitleRevision, Err: err}
 	}
 }
 

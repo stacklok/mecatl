@@ -20,13 +20,17 @@ func (m Model) onTitleRenamed(msg client.SessionRenamedMsg) (Model, tea.Cmd) {
 		}
 		return m, nil
 	}
-	m.sessionTitle = msg.Title
-	m.sessionTitleProvenance = msg.TitleProvenance
+	var adopted bool
+	m, adopted = m.adoptTitle(msg.Title, msg.TitleProvenance, msg.TitleRevision)
+	if !adopted {
+		return m, nil
+	}
 	if sessions := sessionsSurface(&m); sessions != nil {
 		for i := range sessions.sessions {
 			if sessions.sessions[i].ID == msg.SessionID {
 				sessions.sessions[i].Title = msg.Title
 				sessions.sessions[i].TitleProvenance = msg.TitleProvenance
+				sessions.sessions[i].TitleRevision = msg.TitleRevision
 			}
 		}
 		sessions.syncFilter()
@@ -38,15 +42,17 @@ func (m Model) onTitleRenamed(msg client.SessionRenamedMsg) (Model, tea.Cmd) {
 // guards keep events from a former session out of this reducer; snapshot refetches
 // remain authoritative after reconnect and adoption.
 func (m Model) onSessionTitle(msg client.SessionTitleMsg) Model {
-	if msg.Title != "" {
-		m.sessionTitle = msg.Title
+	var adopted bool
+	m, adopted = m.adoptTitle(msg.Title, msg.Provenance, msg.Revision)
+	if !adopted {
+		return m
 	}
-	m.sessionTitleProvenance = msg.Provenance
 	if sessions := sessionsSurface(&m); sessions != nil {
 		for i := range sessions.sessions {
 			if sessions.sessions[i].ID == m.sessionID {
 				sessions.sessions[i].Title = m.sessionTitle
 				sessions.sessions[i].TitleProvenance = msg.Provenance
+				sessions.sessions[i].TitleRevision = msg.Revision
 			}
 		}
 		sessions.syncFilter()
@@ -62,14 +68,24 @@ func (m Model) onSessionTitle(msg client.SessionTitleMsg) Model {
 	return m
 }
 
-func (m Model) adoptTitle(title, provenance string) Model {
+func (m Model) adoptTitle(title, provenance string, revision uint64) (Model, bool) {
+	if revision == 0 {
+		if m.titleRevision != 0 {
+			return m, false
+		}
+	} else {
+		if revision <= m.titleRevision {
+			return m, false
+		}
+		m.titleRevision = revision
+	}
 	if title != "" {
 		m.sessionTitle = title
 	}
 	if provenance != "" {
 		m.sessionTitleProvenance = provenance
 	}
-	return m
+	return m, true
 }
 
 func titleProvenanceLabel(provenance string) string {

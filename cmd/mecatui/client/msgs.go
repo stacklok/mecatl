@@ -21,6 +21,7 @@ import (
 type SessionTitleMsg struct {
 	Title           string
 	Provenance      string
+	Revision        uint64
 	GenerationState string
 	LatestAttempt   TitleAttemptSummary
 }
@@ -1158,7 +1159,7 @@ func sessionTitleMsg(title *mecatlv1.SessionTitle) SessionTitleMsg {
 	}
 	attempt := title.GetLatestAttempt()
 	return SessionTitleMsg{
-		Title: title.GetTitle(), Provenance: title.GetProvenance(), GenerationState: title.GetGenerationState(),
+		Title: title.GetTitle(), Provenance: title.GetProvenance(), Revision: title.GetRevision(), GenerationState: title.GetGenerationState(),
 		LatestAttempt: TitleAttemptSummary{ID: attempt.GetId()},
 	}
 }

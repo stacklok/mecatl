@@ -906,7 +906,7 @@ func (m Model) onResolvedModelMsg(msg client.ResolvedModelMsg) (Model, tea.Cmd, 
 	}
 	// The snapshot is authoritative after reconnect/session adoption, so unlike the
 	// old first-prompt seed it may replace a local title.
-	m = m.adoptTitle(msg.Title, msg.TitleProvenance)
+	m, _ = m.adoptTitle(msg.Title, msg.TitleProvenance, msg.TitleRevision)
 	// Mode update: apply when the refetch carries a mode (the plan-approval
 	// refresh path). On the footer-heal path Mode is the same as m.activeMode
 	// (or empty from an older server), so this is a benign no-op.
@@ -2177,8 +2177,7 @@ func (m Model) applySessionsSurfaceIntent(intent surfaceIntent) (model tea.Model
 		return m, m.createSessionCmd(), true, true
 	case sessionsActiveTitleIntent:
 		if intent.id == m.sessionID {
-			m.sessionTitle = intent.title
-			m.sessionTitleProvenance = intent.provenance
+			m, _ = m.adoptTitle(intent.title, intent.provenance, intent.revision)
 		}
 		m.statusMsg = m.deps.Theme.Style("success").Render(intent.successNotice)
 		return m, nil, true, false
