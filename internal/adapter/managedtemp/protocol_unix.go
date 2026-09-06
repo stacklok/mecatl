@@ -229,8 +229,8 @@ func (w *Workspace) Allocate(kind string) (*Lease, error) {
 	return &Lease{path: filepath.Join(w.path, "commands", name), name: name, id: id, kind: kind, root: root, lock: lock, parent: w}, nil
 }
 
-// Remove removes this exact validated lease. It refuses a replacement at the parent
-// handle and never follows links while traversing the retained lease handle.
+// Remove validates that the parent still names the retained lease handle, then
+// traverses that handle without following links.
 func (l *Lease) Remove() error {
 	if l == nil || l.root == nil || l.parent == nil || l.parent.root == nil {
 		return errors.New("managedtemp: lease is closed")

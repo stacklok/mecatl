@@ -140,8 +140,8 @@ func TestADR_0281_ManagedRootAndWorkspaceFailClosed(t *testing.T) {
 
 }
 
-// TestADR_0281_LeaseRemovalRetainsReplacedParentEntry pins the final unlink
-// against a same-UID replacement after the retained lease handle was validated.
+// TestADR_0281_LeaseRemovalRetainsReplacedParentEntry pins retention when the
+// parent entry no longer names the lease handle at cleanup validation.
 func TestADR_0281_LeaseRemovalRetainsReplacedParentEntry(t *testing.T) {
 	ns, err := Open(filepath.Join(t.TempDir(), "managed"))
 	if err != nil {
