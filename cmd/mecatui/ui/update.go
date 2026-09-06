@@ -50,8 +50,18 @@ const doubleEscapeWindow = 500 * time.Millisecond
 
 type doubleEscapeExpiryMsg struct{ gen int }
 
-func (Model) doubleEscapeExpiryCmd(gen int) tea.Cmd {
-	return tea.Tick(doubleEscapeWindow, func(time.Time) tea.Msg { return doubleEscapeExpiryMsg{gen} })
+type doubleEscapeTimerFunc func(time.Duration, int) tea.Cmd
+
+func scheduleDoubleEscapeExpiry(after time.Duration, gen int) tea.Cmd {
+	return tea.Tick(after, func(time.Time) tea.Msg { return doubleEscapeExpiryMsg{gen} })
+}
+
+func (m Model) doubleEscapeExpiryCmd(gen int) tea.Cmd {
+	timer := m.doubleEscapeTimer
+	if timer == nil {
+		timer = scheduleDoubleEscapeExpiry
+	}
+	return timer(doubleEscapeWindow, gen)
 }
 
 // disarmQuitGuards clears any armed quit guards the current keypress did NOT itself
@@ -300,6 +310,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case autoScrollMsg:
 		return m.onAutoScroll()
+
+	case tea.KeyboardEnhancementsMsg, tea.KeyReleaseMsg:
+		return m.onKeyboardProtocolMsg(msg)
 
 	case tea.KeyPressMsg:
 		return m.onKey(msg)
@@ -1771,13 +1784,26 @@ func (m Model) hasDoubleEscapeDraft() bool {
 // every selection, menu, overlay, modal, paused queue, and running-cancel owner
 // gets Escape first. Only the focused, plain idle composer can use the gesture.
 func (m Model) doubleEscapeEligible() bool {
-	return m.phase == phaseIdle && m.prompt.Focused() && m.hasDoubleEscapeDraft() &&
+	return m.keyboardEventTypes && m.phase == phaseIdle && m.prompt.Focused() && m.hasDoubleEscapeDraft() &&
 		!m.sel.active && !m.prompt.HasSelection() && !m.palette.open && !m.mention.open &&
-		m.queuePaused == "" && !m.sessionDetailsOpen && !m.showHelp && m.modal == nil &&
-		m.team.view == teamNone && m.agentsInv.view == agentsInvNone &&
-		m.userModel.view == userModelNone && m.reflections.view == reflectionsNone &&
-		m.dream.view == dreamClosed && !m.connect.open && m.effort.view == effortNone &&
-		m.worktrees.view == worktreesNone && m.schedule.view == scheduleNone
+		m.queuePaused == "" && !bodyOwnerOpen(m)
+}
+
+func (m Model) onKeyboardProtocolMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.KeyboardEnhancementsMsg:
+		m.keyboardEventTypes = msg.SupportsEventTypes()
+		if !m.keyboardEventTypes {
+			m.doubleEscapeArmed = false
+			m.doubleEscapeReleased = false
+		}
+	case tea.KeyReleaseMsg:
+		releasedKey := msg.Key()
+		if m.doubleEscapeArmed && m.doubleEscapeEligible() && releasedKey.Code == tea.KeyEscape && releasedKey.Mod == 0 {
+			m.doubleEscapeReleased = true
+		}
+	}
+	return m, nil
 }
 
 // onKey routes key presses by phase. ctrl+c is handled first, with a graceful
@@ -1792,6 +1818,7 @@ func (m Model) onKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	// also disarms before that owner handles it; a repeat is never a gesture press.
 	if !physicalEscape(msg) || !m.doubleEscapeEligible() {
 		m.doubleEscapeArmed = false
+		m.doubleEscapeReleased = false
 	}
 
 	// Global lifecycle controls retain precedence over every overlay.
@@ -2403,6 +2430,7 @@ func (m Model) onDisarmMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case doubleEscapeExpiryMsg:
 		if m.doubleEscapeArmed && msg.gen == m.doubleEscapeGen {
 			m.doubleEscapeArmed = false
+			m.doubleEscapeReleased = false
 		}
 		return m, nil
 	default:
@@ -2878,10 +2906,15 @@ func (m Model) onIdleDoubleEscape(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if m.doubleEscapeArmed {
+		if !m.doubleEscapeReleased {
+			return m, nil
+		}
 		m.doubleEscapeArmed = false
+		m.doubleEscapeReleased = false
 		return m.clearPrompt()
 	}
 	m.doubleEscapeArmed = true
+	m.doubleEscapeReleased = false
 	m.doubleEscapeGen++
 	return m, m.doubleEscapeExpiryCmd(m.doubleEscapeGen)
 }

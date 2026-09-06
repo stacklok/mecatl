@@ -625,11 +625,15 @@ type Model struct {
 	quitArmed  bool
 	quitArmGen int
 
-	// doubleEscapeArmed is the silent, idle-draft physical Escape gesture. It is
-	// deliberately separate from the remappable Cancel and ClearPrompt actions.
-	// Each first press increments the generation used by its 500ms expiry message.
-	doubleEscapeArmed bool
-	doubleEscapeGen   int
+	// keyboardEventTypes is true only after Bubble Tea reports support for key
+	// repeat/release event types. The destructive physical gesture fails closed
+	// while false. doubleEscapeReleased records the release boundary for the
+	// current arm; doubleEscapeTimer is the deterministic scheduling test seam.
+	keyboardEventTypes   bool
+	doubleEscapeArmed    bool
+	doubleEscapeReleased bool
+	doubleEscapeGen      int
+	doubleEscapeTimer    doubleEscapeTimerFunc
 
 	// suspendedFrom records the phase the model was in when a ctrl+z suspend fired
 	// (issue #504) plus the session id captured at that instant (the session could
