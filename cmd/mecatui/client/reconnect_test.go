@@ -8,6 +8,8 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 )
@@ -560,5 +562,47 @@ func TestReconnectLiveCmd_RegressionUnfencedPromptNotMisclassified(t *testing.T)
 	}
 	if userPrompt != 0 {
 		t.Errorf("un-fenced prompt re-rendered from catch-up (want it dropped): userPrompt=%d", userPrompt)
+	}
+}
+
+// rejectedReconnectLiveStreamer models a bearer-backed live subscription whose
+// reconnect probe is rejected before a stream is opened.
+type rejectedReconnectLiveStreamer struct{ opens int }
+
+func (s *rejectedReconnectLiveStreamer) StreamSessionLive(context.Context, string) (*EventStream, error) {
+	s.opens++
+	return nil, status.Error(codes.Unauthenticated, "rejected")
+}
+
+func (*rejectedReconnectLiveStreamer) bearerBackedStream() bool { return true }
+
+func TestADR_0096_ReconnectProbeAuthRejectedStopsRetry(t *testing.T) {
+	defer restoreBackoff(t)()
+	liveReconnectBaseBackoff = time.Millisecond
+	liveReconnectJitterFrac = 0
+
+	live := &rejectedReconnectLiveStreamer{}
+	ch, stop := ReconnectLiveCmd(context.Background(), live, nil, "sess-rejected")
+	defer stop()
+	msgs := drainRecon(t, ch)
+
+	var reconnects int
+	var rejected []StreamErrMsg
+	for _, msg := range msgs {
+		switch msg := msg.(type) {
+		case LiveReconnectingMsg:
+			reconnects++
+		case StreamErrMsg:
+			rejected = append(rejected, msg)
+		}
+	}
+	if reconnects != 1 {
+		t.Fatalf("reconnect attempts = %d, want exactly one after bearer rejection: %#v", reconnects, msgs)
+	}
+	if live.opens != 1 {
+		t.Fatalf("probe opens = %d, want exactly one (authentication failures must not retry)", live.opens)
+	}
+	if len(rejected) != 1 || rejected[0].AuthReason != AuthRejected || rejected[0].Transient {
+		t.Fatalf("auth rejection = %#v, want one non-transient AuthRejected StreamErrMsg", rejected)
 	}
 }
