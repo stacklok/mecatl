@@ -76,6 +76,9 @@ type Snapshot struct {
 	// Profile), restored by direct assignment, NOT a state transition.
 	Title           string                  `json:"title,omitempty"`
 	TitleProvenance session.TitleProvenance `json:"title_provenance,omitempty"`
+	// TitleRevision is the title-specific durable metadata revision. omitempty
+	// preserves the zero value for legacy snapshots.
+	TitleRevision uint64 `json:"title_revision,omitempty"`
 	// TitleGeneration metadata is distinct from main Usage and conversation.
 	TitleGeneration    session.TitleGenerationState `json:"title_generation,omitempty"`
 	TitleSourcePrompts []string                     `json:"title_source_prompts,omitempty"`
@@ -209,6 +212,7 @@ func Of(s *session.Session) (Snapshot, error) {
 		DebugTargetFingerprint: s.DebugTargetFingerprint,
 		Title:                  s.Title,
 		TitleProvenance:        s.TitleProvenance,
+		TitleRevision:          s.TitleRevision,
 		TitleGeneration:        s.TitleGeneration,
 		TitleSourcePrompts:     s.TitleSourcePrompts(),
 		TitleAttempts:          s.TitleAttempts(),
@@ -291,6 +295,7 @@ func (snap Snapshot) Restore() (*session.Session, error) {
 	s.Title = snap.Title
 	s.TitleProvenance = snap.TitleProvenance
 	s.RestoreTitleMetadata(snap.TitleGeneration, snap.TitleSourcePrompts, snap.TitleAttempts)
+	s.TitleRevision = snap.TitleRevision
 	// The identity labels go through the WRITE-ONCE aggregate method rather than a
 	// field poke (Session is an aggregate) and rather than a RestoreState
 	// parameter (that widening is Changed/breaking; this stays Added/minor).

@@ -7,6 +7,16 @@ import (
 	"github.com/stacklok/mecatl/engine/session"
 )
 
+func TestFoldLegacyTitleMetadataHasZeroRevision(t *testing.T) {
+	s, err := eventsource.Fold(meta(), seq(nil))
+	if err != nil {
+		t.Fatalf("Fold: %v", err)
+	}
+	if got := s.TitleRevision; got != 0 {
+		t.Fatalf("legacy TitleRevision = %d, want 0", got)
+	}
+}
+
 func TestFoldRestoresTitleGenerationMetadata(t *testing.T) {
 	m := meta()
 	m.Title = "Generated title"
@@ -14,6 +24,7 @@ func TestFoldRestoresTitleGenerationMetadata(t *testing.T) {
 	m.TitleGeneration = session.TitleGenerationGenerated
 	m.TitleSourcePrompts = []string{"first prompt", "second prompt"}
 	m.TitleAttempts = []session.TitleAttempt{{ID: "attempt-1", Outcome: session.TitleAttemptSucceeded}}
+	m.TitleRevision = 7
 	m.TokenUsage = map[session.UsageKind]session.TokenUsage{
 		session.UsageKindSessionTitle: {
 			Total:  session.Usage{InputTokens: 5, OutputTokens: 3},
@@ -33,6 +44,9 @@ func TestFoldRestoresTitleGenerationMetadata(t *testing.T) {
 	}
 	if got := s.TitleAttempts(); len(got) != 1 || got[0].ID != "attempt-1" {
 		t.Errorf("TitleAttempts = %#v, want restored attempt", got)
+	}
+	if got, want := s.TitleRevision, uint64(7); got != want {
+		t.Errorf("TitleRevision = %d, want %d", got, want)
 	}
 	if got := s.TokenUsage[session.UsageKindSessionTitle]; got.Total.OutputTokens != 3 || got.Models["unknown"].InputTokens != 5 {
 		t.Errorf("TokenUsage = %#v, want restored ledger", got)

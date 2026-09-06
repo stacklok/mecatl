@@ -5,7 +5,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
@@ -21,12 +20,13 @@ import (
 func titleEligibilityService(t *testing.T, eligible func(server.ProviderSelector) bool, observe func(port.LLMRequest)) *server.Service {
 	t.Helper()
 	llm := mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(observe)}, mockllm.TextTurn("main reply"))
-	svc, err := server.NewService(server.Config{
+	svc, err := newTestServerService(server.Config{
 		Engine: agent.NewEngine(agent.Deps{
 			LLM: llm, Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil), Model: "main-model",
 		}),
 		Store:                   memstore.New(),
-		Workspaces:              func(root string) tool.Workspace { return memfs.NewWorkspace(root) },
+		PlacementProvider:       appTestPlacementProvider{root: "/ws"},
+		PlacementScope:          "test",
 		Now:                     func() time.Time { return time.Unix(1, 0) },
 		TitleGenerationEligible: eligible,
 	})
@@ -47,7 +47,7 @@ func TestSessionTitleGeneration_Scenario2_CreationPersistsEligibility(t *testing
 	}
 	eligibleSvc := titleEligibilityService(t, titleGenerationEligible(eligibleCfg, regForTest(provider, providerOpenAI, eligibleCfg.Model)), func(port.LLMRequest) { calls++ })
 
-	eligible, err := eligibleSvc.CreateSession(context.Background(), "/ws", session.ModeDefault, session.Limits{})
+	eligible, err := eligibleSvc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession eligible: %v", err)
 	}
@@ -57,7 +57,7 @@ func TestSessionTitleGeneration_Scenario2_CreationPersistsEligibility(t *testing
 
 	disabledCfg := Config{Model: "main-model", ModelSlots: map[string]string{slotCheap: "cheap-model"}}
 	disabledSvc := titleEligibilityService(t, titleGenerationEligible(disabledCfg, regForTest(provider, providerOpenAI, disabledCfg.Model)), func(port.LLMRequest) { calls++ })
-	disabled, err := disabledSvc.CreateSession(context.Background(), "/ws", session.ModeDefault, session.Limits{})
+	disabled, err := disabledSvc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatalf("CreateSession disabled: %v", err)
 	}

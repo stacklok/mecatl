@@ -29,6 +29,7 @@ export const MECATL_EVENT_KINDS = [
   "schedule.fired",
   "schedule.skipped",
   "session.init",
+  "session.title",
   "steer",
   "steer.outcome",
   "subagent.end",
@@ -158,6 +159,20 @@ export interface EventContent {
 export interface UserPromptEventPayload {
   readonly parts: readonly EventContent[];
   readonly text: string;
+}
+
+/** The source-free payload of a `session.title` event. @public */
+export interface SessionTitleEventPayload {
+  readonly generationState: string;
+  readonly latestAttempt?:
+    | {
+        readonly id: string;
+        readonly outcome: string;
+      }
+    | undefined;
+  readonly provenance: string;
+  readonly revision: bigint;
+  readonly title: string;
 }
 
 /** One conversation entry in a compaction archive. @public */
@@ -344,6 +359,7 @@ export interface EventPayloads {
   readonly "schedule.fired": ScheduleEventPayload;
   readonly "schedule.skipped": ScheduleEventPayload;
   readonly "session.init": undefined;
+  readonly "session.title": SessionTitleEventPayload;
   readonly steer: SteerEventPayload;
   readonly "steer.outcome": SteerOutcomeEventPayload;
   readonly "subagent.end": SubagentEventPayload;
@@ -463,6 +479,8 @@ function payload(
     case "schedule.fired":
     case "schedule.skipped":
       return required(event.schedule, kind, transport);
+    case "session.title":
+      return required(event.title, kind, transport);
     case "steer":
       return required(event.steer, kind, transport);
     case "steer.outcome":

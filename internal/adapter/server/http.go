@@ -417,6 +417,7 @@ type sessionTitleJSON struct {
 	Provenance      string                   `json:"provenance"`
 	GenerationState string                   `json:"generation_state"`
 	LatestAttempt   *titleAttemptSummaryJSON `json:"latest_attempt,omitempty"`
+	Revision        uint64                   `json:"revision"`
 }
 
 type titleAttemptSummaryJSON struct {
@@ -438,7 +439,7 @@ type usageJSON struct {
 }
 
 func sessionTitleToJSON(p session.TitlePayload) *sessionTitleJSON {
-	out := &sessionTitleJSON{Title: valid(p.Title), Provenance: valid(string(p.Provenance)), GenerationState: valid(string(p.GenerationState))}
+	out := &sessionTitleJSON{Title: valid(p.Title), Provenance: valid(string(p.Provenance)), GenerationState: valid(string(p.GenerationState)), Revision: p.Revision}
 	if p.LatestAttempt != nil {
 		out.LatestAttempt = &titleAttemptSummaryJSON{ID: valid(p.LatestAttempt.ID), Outcome: valid(string(p.LatestAttempt.Outcome))}
 	}

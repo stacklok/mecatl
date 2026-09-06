@@ -26,6 +26,41 @@ func (f titleGeneratorFunc) Generate(ctx context.Context, sources []string) Titl
 	return f(ctx, sources)
 }
 
+func TestTitleCoordinatorLifecycleUpdatesAdvanceRevision(t *testing.T) {
+	store := memstore.New()
+	svc := titleCoordinatorService(t, store, titleGeneratorFunc(func(context.Context, []string) TitleGenerationResult { return TitleGenerationResult{} }))
+	sess := pendingTitleSession(t, store, "revision")
+
+	_, attemptID, _, claimed, _ := svc.titleCoordinator.claim(sess.ID)
+	if !claimed || attemptID == "" {
+		t.Fatalf("claim = %q, %t", attemptID, claimed)
+	}
+	loaded, err := store.Load(context.Background(), sess.ID)
+	if err != nil || loaded.TitleRevision != 3 {
+		t.Fatalf("claimed revision = %d, err = %v; want 3", loaded.TitleRevision, err)
+	}
+
+	svc.titleCoordinator.commit(sess.ID, attemptID, TitleGenerationResult{Outcome: session.TitleAttemptDeferred})
+	loaded, err = store.Load(context.Background(), sess.ID)
+	if err != nil || loaded.TitleRevision != 4 {
+		t.Fatalf("completed revision = %d, err = %v; want 4", loaded.TitleRevision, err)
+	}
+
+	loaded.SetTitleGeneration(session.TitleGenerationPending)
+	loaded.ApplyTitleGeneration(session.TitleGenerationPending, append(loaded.TitleAttempts(), session.TitleAttempt{ID: "interrupted"}))
+	if err := store.Save(context.Background(), loaded); err != nil {
+		t.Fatal(err)
+	}
+	_, _, _, claimed, _ = svc.titleCoordinator.claim(sess.ID)
+	if claimed {
+		t.Fatal("incomplete attempt was claimed")
+	}
+	loaded, err = store.Load(context.Background(), sess.ID)
+	if err != nil || loaded.TitleGeneration != session.TitleGenerationExhausted || loaded.TitleRevision != 6 {
+		t.Fatalf("interrupted revision = %d, generation = %q, err = %v; want 6/exhausted", loaded.TitleRevision, loaded.TitleGeneration, err)
+	}
+}
+
 func TestSessionTitleGeneration_Scenario4_TwoPhaseAttemptAdmission(t *testing.T) {
 	store := memstore.New()
 	started := make(chan struct{}, 1)

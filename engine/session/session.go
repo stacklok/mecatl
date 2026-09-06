@@ -417,6 +417,10 @@ type Session struct {
 	// TitleGeneration is automatic title generation's durable lifecycle. New
 	// sessions default to disabled until composition explicitly enables it.
 	TitleGeneration TitleGenerationState
+	// TitleRevision advances once for each effective durable title metadata
+	// mutation. It is independent of event sequences, environment revisions, and
+	// event-log cursors; zero is the legacy value.
+	TitleRevision uint64
 	// titleSourcePrompts captures only the first three genuine non-empty principal
 	// text prompts at prompt ingress; it never derives candidates from history.
 	titleSourcePrompts []string
@@ -1210,6 +1214,7 @@ func (s *Session) SetTitle(text string) {
 	if s.Title == "" && strings.TrimSpace(text) != "" {
 		s.Title = ClampTitle(text)
 		s.TitleProvenance = TitleProvenanceFirstPrompt
+		s.bumpTitleRevision()
 	}
 }
 
@@ -1221,8 +1226,12 @@ func (s *Session) RenameTitle(text string) error {
 	if title == "" {
 		return fmt.Errorf("session: title must not be blank")
 	}
+	if s.Title == title && s.TitleProvenance == TitleProvenanceOperator {
+		return nil
+	}
 	s.Title = title
 	s.TitleProvenance = TitleProvenanceOperator
+	s.bumpTitleRevision()
 	return nil
 }
 

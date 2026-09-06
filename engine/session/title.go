@@ -95,6 +95,8 @@ type TitlePayload struct {
 	Provenance      TitleProvenance
 	GenerationState TitleGenerationState
 	LatestAttempt   *TitleAttempt
+	// Revision is the title-specific durable metadata revision. Zero is legacy.
+	Revision uint64
 }
 
 // IsSynthesisedSummary reports whether a message's text is a harness-synthesised
@@ -153,14 +155,22 @@ const (
 // original ingress seam. Empty prompts and prompts beyond the first three are
 // ignored; this method never examines conversation history.
 func (s *Session) RecordTitleSourcePrompt(text string) {
-	if strings.TrimSpace(text) == "" || len(s.titleSourcePrompts) == maxTitleSourcePrompts {
+	if !s.recordTitleSourcePrompt(text) {
 		return
+	}
+	s.bumpTitleRevision()
+}
+
+func (s *Session) recordTitleSourcePrompt(text string) bool {
+	if strings.TrimSpace(text) == "" || len(s.titleSourcePrompts) == maxTitleSourcePrompts {
+		return false
 	}
 	runes := []rune(text)
 	if len(runes) > maxTitleSourceRunes {
 		text = string(runes[:maxTitleSourceRunes])
 	}
 	s.titleSourcePrompts = append(s.titleSourcePrompts, text)
+	return true
 }
 
 // TitleSourcePrompts returns an owned copy of the captured source prompts.
@@ -170,12 +180,42 @@ func (s *Session) TitleSourcePrompts() []string {
 
 // SetTitleGeneration records durable automatic-title lifecycle intent.
 func (s *Session) SetTitleGeneration(state TitleGenerationState) {
+	if s.TitleGeneration == state {
+		return
+	}
 	s.TitleGeneration = state
+	s.bumpTitleRevision()
+}
+
+// ApplyTitleGeneration atomically replaces automatic-title lifecycle metadata.
+// It advances the title revision once when either value changes.
+func (s *Session) ApplyTitleGeneration(generation TitleGenerationState, attempts []TitleAttempt) {
+	if generation == "" {
+		generation = TitleGenerationDisabled
+	}
+	if s.TitleGeneration == generation && equalTitleAttempts(s.titleAttempts, attempts) {
+		return
+	}
+	s.TitleGeneration = generation
+	s.titleAttempts = append([]TitleAttempt(nil), attempts...)
+	s.bumpTitleRevision()
+}
+
+func equalTitleAttempts(a, b []TitleAttempt) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // RecordTitleAttempt appends durable lifecycle metadata for one attempt.
 func (s *Session) RecordTitleAttempt(attempt TitleAttempt) {
-	s.titleAttempts = append(s.titleAttempts, attempt)
+	s.ApplyTitleGeneration(s.TitleGeneration, append(s.TitleAttempts(), attempt))
 }
 
 // TitleAttempts returns an owned copy of title-generation attempts.
@@ -190,10 +230,20 @@ func (s *Session) SetGeneratedTitle(text string) error {
 	if title == "" {
 		return fmt.Errorf("session: generated title must not be blank")
 	}
+	if s.Title == title && s.TitleProvenance == TitleProvenanceGenerated && s.TitleGeneration == TitleGenerationGenerated {
+		return nil
+	}
 	s.Title = title
 	s.TitleProvenance = TitleProvenanceGenerated
 	s.TitleGeneration = TitleGenerationGenerated
+	s.bumpTitleRevision()
 	return nil
+}
+
+func (s *Session) bumpTitleRevision() {
+	if s.TitleRevision != ^uint64(0) {
+		s.TitleRevision++
+	}
 }
 
 func clampGeneratedTitle(text string) string {
@@ -206,7 +256,8 @@ func clampGeneratedTitle(text string) string {
 }
 
 // RestoreTitleMetadata restores durable title-specific metadata from a trusted
-// snapshot or event-source metadata projection.
+// snapshot or event-source metadata projection. It deliberately does not
+// advance TitleRevision: restoration is not a mutation.
 func (s *Session) RestoreTitleMetadata(generation TitleGenerationState, sources []string, attempts []TitleAttempt) {
 	if generation == "" {
 		generation = TitleGenerationDisabled
@@ -214,7 +265,7 @@ func (s *Session) RestoreTitleMetadata(generation TitleGenerationState, sources 
 	s.TitleGeneration = generation
 	s.titleSourcePrompts = nil
 	for _, source := range sources {
-		s.RecordTitleSourcePrompt(source)
+		s.recordTitleSourcePrompt(source)
 	}
 	s.titleAttempts = append([]TitleAttempt(nil), attempts...)
 }

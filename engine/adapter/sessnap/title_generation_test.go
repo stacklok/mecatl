@@ -1,6 +1,8 @@
 package sessnap
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -12,6 +14,9 @@ func TestSessionTitleGeneration_Scenario2_TitleMetadataRoundTrip(t *testing.T) {
 	s.SetTitleGeneration(session.TitleGenerationPending)
 	s.RecordTitleSourcePrompt("first principal prompt")
 	s.RecordTitleAttempt(session.TitleAttempt{ID: "attempt-1", Outcome: session.TitleAttemptDeferred})
+	if got, want := s.TitleRevision, uint64(3); got != want {
+		t.Fatalf("TitleRevision before snapshot = %d, want %d", got, want)
+	}
 	s.RecordTokenUsage(session.UsageKindSessionTitle, "provider", "model", session.Usage{InputTokens: 3, OutputTokens: 5})
 
 	snap, err := Of(s)
@@ -31,6 +36,9 @@ func TestSessionTitleGeneration_Scenario2_TitleMetadataRoundTrip(t *testing.T) {
 	attempts := restored.TitleAttempts()
 	if len(attempts) != 1 || attempts[0].ID != "attempt-1" || attempts[0].Outcome != session.TitleAttemptDeferred {
 		t.Errorf("TitleAttempts = %#v, want deferred attempt", attempts)
+	}
+	if got, want := restored.TitleRevision, uint64(3); got != want {
+		t.Errorf("TitleRevision = %d, want %d", got, want)
 	}
 	usage := restored.TokenUsage[session.UsageKindSessionTitle]
 	if usage.Total != (session.Usage{InputTokens: 3, OutputTokens: 5}) || usage.Models["provider/model"] != usage.Total {
@@ -64,8 +72,35 @@ func TestSessionTitleGeneration_Scenario5_TokenUsageRoundTripAndProjection(t *te
 	if err != nil {
 		t.Fatalf("restore legacy usage: %v", err)
 	}
+	if got := legacyRestored.TitleRevision; got != 0 {
+		t.Errorf("legacy TitleRevision = %d, want 0", got)
+	}
 	if got := legacyRestored.TokenUsage[session.UsageKindMain]; got.Total.InputTokens != 5 || got.Models["unknown"].InputTokens != 5 {
 		t.Fatalf("legacy token usage = %#v, want unknown attribution", got)
+	}
+}
+
+func TestSnapshotJSONTitleRevisionPresence(t *testing.T) {
+	env := session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/workspace", Revision: "in-tree-v1"}
+	withRevision := session.New("with-revision", session.ModeDefault, env, session.Limits{}, time.Time{})
+	withRevision.SetTitle("title")
+	snap, err := Of(withRevision)
+	if err != nil {
+		t.Fatalf("Of: %v", err)
+	}
+	body, err := json.Marshal(snap)
+	if err != nil || !strings.Contains(string(body), `"title_revision":1`) {
+		t.Fatalf("snapshot JSON = %s, err = %v", body, err)
+	}
+
+	withoutRevision := session.New("without-revision", session.ModeDefault, env, session.Limits{}, time.Time{})
+	snap, err = Of(withoutRevision)
+	if err != nil {
+		t.Fatalf("Of: %v", err)
+	}
+	body, err = json.Marshal(snap)
+	if err != nil || strings.Contains(string(body), `"title_revision"`) {
+		t.Fatalf("legacy snapshot JSON = %s, err = %v", body, err)
 	}
 }
 

@@ -60,7 +60,7 @@ func newTitleCoordinator(svc *Service, generator SessionTitleGenerator) *titleCo
 	c.wg.Add(1)
 	go func() {
 		defer c.wg.Done()
-		c.svc.reconcilePendingTitles(ctx)
+		c.svc.reconcilePendingTitles(ctx, c)
 	}()
 	return c
 }
@@ -106,8 +106,8 @@ func (s *Service) submitTitleGeneration(id session.SessionID) {
 // before terminal relay persistence was wired. It deliberately skips any attempt
 // record: an empty outcome may have crossed the durable claim before a crash, so
 // retrying it could bill a second provider call.
-func (s *Service) reconcilePendingTitles(parent context.Context) {
-	if s.titleCoordinator == nil {
+func (s *Service) reconcilePendingTitles(parent context.Context, coordinator *titleCoordinator) {
+	if coordinator == nil {
 		return
 	}
 	pager, ok := s.cfg.Store.(port.SessionMetadataPager)
@@ -129,7 +129,7 @@ func (s *Service) reconcilePendingTitles(parent context.Context) {
 		if err != nil || sess == nil || sess.TitleGeneration != session.TitleGenerationPending || sess.TitleProvenance == session.TitleProvenanceOperator || len(sess.TitleSourcePrompts()) == 0 || len(sess.TitleAttempts()) != 0 {
 			continue
 		}
-		s.submitTitleGeneration(sess.ID)
+		coordinator.Submit(sess.ID)
 	}
 }
 
@@ -178,7 +178,7 @@ func (c *titleCoordinator) claim(id session.SessionID) ([]string, string, Provid
 	attempts := sess.TitleAttempts()
 	if len(attempts) > 0 && attempts[len(attempts)-1].Outcome == "" {
 		attempts[len(attempts)-1].Outcome = session.TitleAttemptInterrupted
-		sess.RestoreTitleMetadata(session.TitleGenerationExhausted, sess.TitleSourcePrompts(), attempts)
+		sess.ApplyTitleGeneration(session.TitleGenerationExhausted, attempts)
 		c.persistTitle(c.ctx, sess)
 		return nil, "", ProviderSelector{}, false, "incomplete_attempt"
 	}
@@ -187,7 +187,7 @@ func (c *titleCoordinator) claim(id session.SessionID) ([]string, string, Provid
 		return nil, "", ProviderSelector{}, false, "no_sources"
 	}
 	attemptID := c.nextAttemptID(attempts)
-	sess.RecordTitleAttempt(session.TitleAttempt{ID: attemptID})
+	sess.ApplyTitleGeneration(sess.TitleGeneration, append(attempts, session.TitleAttempt{ID: attemptID}))
 	if !c.persistTitle(c.ctx, sess) {
 		return nil, "", ProviderSelector{}, false, "claim_persist_failed"
 	}
@@ -263,35 +263,41 @@ func (c *titleCoordinator) commit(id session.SessionID, attemptID string, result
 		return
 	}
 	attempts[len(attempts)-1].Outcome = result.Outcome
-	sess.RestoreTitleMetadata(sess.TitleGeneration, sess.TitleSourcePrompts(), attempts)
-	sess.RecordTokenUsage(session.UsageKindSessionTitle, result.ProviderID, result.ModelID, result.Usage)
-
+	generation := sess.TitleGeneration
+	retry := false
 	switch result.Outcome {
 	case session.TitleAttemptSucceeded:
 		if sess.SetGeneratedTitle(result.Title) != nil {
-			sess.SetTitleGeneration(session.TitleGenerationExhausted)
+			generation = session.TitleGenerationExhausted
+		} else {
+			generation = session.TitleGenerationGenerated
 		}
 	case session.TitleAttemptDeferred:
 		if len(sess.TitleSourcePrompts()) >= 3 {
-			sess.SetTitleGeneration(session.TitleGenerationExhausted)
+			generation = session.TitleGenerationExhausted
 		}
 	case session.TitleAttemptFailed:
 		if len(attempts) < 2 && result.Retryable {
-			sess.SetTitleGeneration(session.TitleGenerationPending)
-			c.retryWG.Add(1)
-			if c.persistTitle(c.ctx, sess) {
-				go func() {
-					defer c.retryWG.Done()
-					c.retry(id)
-				}()
-			} else {
-				c.retryWG.Done()
-			}
-			return
+			retry = true
+		} else {
+			generation = session.TitleGenerationExhausted
 		}
-		sess.SetTitleGeneration(session.TitleGenerationExhausted)
 	default:
-		sess.SetTitleGeneration(session.TitleGenerationExhausted)
+		generation = session.TitleGenerationExhausted
+	}
+	sess.ApplyTitleGeneration(generation, attempts)
+	sess.RecordTokenUsage(session.UsageKindSessionTitle, result.ProviderID, result.ModelID, result.Usage)
+	if retry {
+		c.retryWG.Add(1)
+		if c.persistTitle(c.ctx, sess) {
+			go func() {
+				defer c.retryWG.Done()
+				c.retry(id)
+			}()
+		} else {
+			c.retryWG.Done()
+		}
+		return
 	}
 	c.persistTitle(c.ctx, sess)
 }

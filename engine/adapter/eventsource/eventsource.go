@@ -109,6 +109,8 @@ type SessionMeta struct {
 	// supplied. A legacy empty title is derived from the first genuine user event.
 	Title           string
 	TitleProvenance session.TitleProvenance
+	// TitleRevision is the title-specific durable metadata revision. Zero is legacy.
+	TitleRevision uint64
 	// Title-generation metadata is authoritative metadata, not event-carried run data.
 	TitleGeneration    session.TitleGenerationState
 	TitleSourcePrompts []string
@@ -193,6 +195,7 @@ func Fold(meta SessionMeta, events iter.Seq2[session.Event, error]) (*session.Se
 	s.Title = meta.Title
 	s.TitleProvenance = meta.TitleProvenance
 	s.RestoreTitleMetadata(meta.TitleGeneration, meta.TitleSourcePrompts, meta.TitleAttempts)
+	s.TitleRevision = meta.TitleRevision
 	if f.pending != nil {
 		// AWAITING: the live session at pause time holds the assistant message WITH its
 		// not-yet-answered tool call (RecordAssistant runs before dispatch; the ask

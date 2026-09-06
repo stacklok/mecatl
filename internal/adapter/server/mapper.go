@@ -836,6 +836,7 @@ func titlePayload(s *session.Session) session.TitlePayload {
 		Title:           DeriveTitle(s),
 		Provenance:      s.TitleProvenance,
 		GenerationState: s.TitleGeneration,
+		Revision:        s.TitleRevision,
 	}
 	if s.Title == "" && payload.Title != "" {
 		payload.Provenance = session.TitleProvenanceFirstPrompt
@@ -853,6 +854,7 @@ func toProtoSessionTitle(p session.TitlePayload) *mecatlv1.SessionTitle {
 		Title:           valid(p.Title),
 		Provenance:      valid(string(p.Provenance)),
 		GenerationState: valid(string(p.GenerationState)),
+		Revision:        p.Revision,
 	}
 	if p.LatestAttempt != nil {
 		out.LatestAttempt = &mecatlv1.TitleAttemptSummary{

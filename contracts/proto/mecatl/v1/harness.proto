@@ -1384,6 +1384,8 @@ message SessionTitle {
   string generation_state = 3;
   // latest_attempt is the latest durable attempt without provider error detail.
   TitleAttemptSummary latest_attempt = 4;
+  // revision advances on each effective durable title metadata mutation; zero is legacy.
+  uint64 revision = 5;
 }
 
 // TitleAttemptSummary is the latest durable title attempt without provider error detail.
