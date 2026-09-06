@@ -448,6 +448,7 @@ func TestCancelParallelBranchWhileQueued(t *testing.T) {
 
 	var cancelDone sync.WaitGroup
 	cancelDone.Add(1)
+	queuedTerminal := make(chan int, 2)
 	var queuedIdx int
 	var queuedOK, runningOK bool
 	go func() {
@@ -465,10 +466,21 @@ func TestCancelParallelBranchWhileQueued(t *testing.T) {
 		}
 		queuedIdx = 1 - runningIdx
 		queuedOK = r.CancelChild(fmt.Sprintf("parallel-s1-p1-%d", queuedIdx))
+
+		// Keep the only slot occupied until the queued branch has taken its
+		// cancellation path. Releasing it first would make both cases in
+		// launchBranch's semaphore select ready and reintroduce a scheduler race.
+		for <-queuedTerminal != queuedIdx {
+		}
 		runningOK = r.CancelChild(fmt.Sprintf("parallel-s1-p1-%d", runningIdx))
 	}()
 
-	evs := drainObserving(t, r, nil)
+	evs := drainObserving(t, r, func(ev session.Event) {
+		if ev.Type == session.EvParallelBranch && ev.Parallel != nil &&
+			ev.Parallel.Kind == session.ParallelBranchEnd {
+			queuedTerminal <- ev.Parallel.BranchIndex
+		}
+	})
 	cancelDone.Wait()
 
 	if !queuedOK {
