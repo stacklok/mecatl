@@ -6,7 +6,9 @@ option go_package = "github.com/stacklok/mecatl/contracts/gen/go/mecatl/broker/v
 
 import "google/protobuf/timestamp.proto";
 
-// BrokerService connects a harness process to a broker-owned logical session.
+// BrokerService connects a harness process to one authoritative broker process.
+// Attachment handles and broker incarnations are process-local; this protocol
+// does not provide restart continuity or interchangeable replicas.
 service BrokerService {
   rpc Attach(AttachRequest) returns (AttachResponse);
   rpc Commit(HandleRequest) returns (Empty);
@@ -16,18 +18,26 @@ service BrokerService {
   rpc Run(RunRequest) returns (RunResponse);
   rpc RequestAuthorization(RequestAuthorizationRequest) returns (RequestAuthorizationResponse);
   rpc AbortAuthorization(AbortAuthorizationRequest) returns (Empty);
+  rpc PresentAuthorization(AuthorizationRequest) returns (PresentationResponse);
+  rpc AuthorizationStatus(AuthorizationRequest) returns (AuthorizationStatusResponse);
+  rpc CancelAuthorization(AuthorizationRequest) returns (CancelResponse);
+  rpc BeginWorkspaceEnrollment(HandleRequest) returns (WorkspacePresentationResponse);
+  rpc ObserveWorkspaceEnrollment(WorkspaceRequest) returns (WorkspaceResultResponse);
+  rpc CancelWorkspaceEnrollment(WorkspaceRequest) returns (WorkspaceResultResponse);
 }
 message Empty {}
-message AttachRequest { string session_id = 1; }
+message AttachRequest { string session_id = 1; string broker_incarnation = 2; }
 message AttachResponse {
   string binding = 1;
   string handle = 2;
   string outcome = 3;
   repeated ToolDescriptor tools = 4;
+  string broker_incarnation = 5;
+  bool workspace_enrollment = 6;
 }
-message HandleRequest { string handle = 1; }
+message HandleRequest { string handle = 1; string broker_incarnation = 2; }
 message CloseResponse { string outcome = 1; }
-message DeleteRequest { string session_id = 1; string binding = 2; }
+message DeleteRequest { string session_id = 1; string binding = 2; string broker_incarnation = 3; }
 message DeleteResponse { string outcome = 1; }
 message ToolDescriptor {
   string name = 1;
@@ -43,6 +53,7 @@ message RunRequest {
   string call_id = 3;
   bytes args = 4;
   string item_id = 5;
+  string broker_incarnation = 6;
 }
 message RunResponse { ToolResult result = 1; }
 message ToolResult { string call_id = 1; string content = 2; bool is_error = 3; repeated ResultPart parts = 4; }
@@ -61,7 +72,15 @@ message ResultPart {
   double priority = 12;
   string last_modified = 13;
 }
-message RequestAuthorizationRequest { string handle = 1; string name = 2; string call_id = 3; bytes args = 4; string item_id = 5; }
+message RequestAuthorizationRequest { string handle = 1; string name = 2; string call_id = 3; bytes args = 4; string item_id = 5; string broker_incarnation = 6; }
 message RequestAuthorizationResponse { Authorization authorization = 1; bool required = 2; }
-message AbortAuthorizationRequest { string handle = 1; Authorization authorization = 2; }
+message AbortAuthorizationRequest { string handle = 1; Authorization authorization = 2; string broker_incarnation = 3; }
 message Authorization { string id = 1; string binding = 2; google.protobuf.Timestamp expires_at = 3; }
+message AuthorizationRequest { string handle = 1; Authorization authorization = 2; string broker_incarnation = 3; }
+message PresentationResponse { string url = 1; }
+message AuthorizationStatusResponse { string status = 1; }
+message CancelResponse { string outcome = 1; }
+message WorkspaceRef { string id = 1; uint32 required_services = 2; google.protobuf.Timestamp expires_at = 3; }
+message WorkspaceRequest { string handle = 1; WorkspaceRef ref = 2; string broker_incarnation = 3; }
+message WorkspacePresentationResponse { WorkspaceRef ref = 1; string url = 2; }
+message WorkspaceResultResponse { WorkspaceRef ref = 1; string status = 2; repeated ToolDescriptor tools = 3; }

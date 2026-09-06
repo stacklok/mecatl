@@ -9,11 +9,14 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"sync"
+	"time"
 	"unicode/utf8"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
@@ -25,37 +28,119 @@ import (
 
 const defaultMaxHandles = 128
 
+const ambiguousOutcomeMessage = "remote tool outcome is unknown because the broker response was lost; the tool was not retried"
+
+// Config bounds transport calls and server-side attachment retention.
+type Config struct {
+	DialTimeout       time.Duration
+	RPCDeadline       time.Duration
+	ExecuteDeadline   time.Duration
+	HandleIdleTimeout time.Duration
+	SweepInterval     time.Duration
+	CleanupTimeout    time.Duration
+	MaxHandles        int
+}
+
+// DefaultConfig returns finite production defaults for the initial single-process broker.
+func DefaultConfig() Config {
+	return Config{
+		DialTimeout: 5 * time.Second, RPCDeadline: 10 * time.Second,
+		ExecuteDeadline: 2 * time.Minute, HandleIdleTimeout: 5 * time.Minute,
+		SweepInterval: 30 * time.Second, CleanupTimeout: 10 * time.Second,
+		MaxHandles: defaultMaxHandles,
+	}
+}
+
+func (c Config) valid() bool {
+	return c.DialTimeout > 0 && c.RPCDeadline > 0 && c.ExecuteDeadline > 0 &&
+		c.HandleIdleTimeout > 0 && c.SweepInterval > 0 && c.CleanupTimeout > 0 && c.MaxHandles > 0
+}
+
+// Dial establishes a connection within Config.DialTimeout and returns a bounded client.
+func Dial(ctx context.Context, target string, cfg Config, opts ...grpc.DialOption) (*Client, *grpc.ClientConn, error) {
+	if !cfg.valid() {
+		return nil, nil, errors.New("mcpbrokergrpc: all deadlines and capacities must be positive")
+	}
+	dialCtx, cancel := context.WithTimeout(ctx, cfg.DialTimeout)
+	defer cancel()
+	conn, err := grpc.NewClient(target, opts...)
+	if err != nil {
+		return nil, nil, status.Error(codes.Unavailable, "broker connection unavailable")
+	}
+	conn.Connect()
+	for conn.GetState() != connectivity.Ready {
+		state := conn.GetState()
+		if state == connectivity.Shutdown || !conn.WaitForStateChange(dialCtx, state) {
+			_ = conn.Close()
+			return nil, nil, status.Error(codes.Unavailable, "broker connection unavailable")
+		}
+	}
+	client, err := NewClientWithConfig(conn, cfg)
+	if err != nil {
+		_ = conn.Close()
+		return nil, nil, err
+	}
+	return client, conn, nil
+}
+
+// Server adapts one mcpbroker.Service incarnation to the broker RPC service.
 type Server struct {
 	brokerv1.UnimplementedBrokerServiceServer
-	service    mcpbroker.Service
-	mu         sync.Mutex
-	handles    map[string]*serverAttachment
-	maxHandles int
+	service     mcpbroker.Service
+	mu          sync.Mutex
+	handles     map[string]*serverAttachment
+	maxHandles  int
+	incarnation string
+	cfg         Config
+	closed      bool
+	done        chan struct{}
+	stop        chan struct{}
 }
 type serverAttachment struct {
 	attachment mcpbroker.Attachment
 	tools      map[string]tool.Tool
+	active     int
+	lastUsed   time.Time
 }
 
+// NewServer constructs a server with default deadlines and the requested handle bound.
 func NewServer(service mcpbroker.Service, maxHandles int) (*Server, error) {
+	cfg := DefaultConfig()
+	if maxHandles > 0 {
+		cfg.MaxHandles = maxHandles
+	}
+	return NewServerWithConfig(service, cfg)
+}
+
+// NewServerWithConfig constructs one authoritative broker-process incarnation.
+func NewServerWithConfig(service mcpbroker.Service, cfg Config) (*Server, error) {
 	if service == nil {
 		return nil, errors.New("mcpbrokergrpc: service is required")
 	}
-	if maxHandles <= 0 {
-		maxHandles = defaultMaxHandles
+	if !cfg.valid() {
+		return nil, errors.New("mcpbrokergrpc: all deadlines and capacities must be positive")
 	}
-	return &Server{service: service, handles: make(map[string]*serverAttachment), maxHandles: maxHandles}, nil
-}
-func Register(reg grpc.ServiceRegistrar, service mcpbroker.Service) {
-	server, err := NewServer(service, defaultMaxHandles)
+	incarnation, err := newHandle()
 	if err != nil {
-		panic(err)
+		return nil, fmt.Errorf("mcpbrokergrpc: mint broker incarnation: %w", err)
 	}
+	s := &Server{service: service, handles: make(map[string]*serverAttachment), maxHandles: cfg.MaxHandles, incarnation: incarnation, cfg: cfg, done: make(chan struct{}), stop: make(chan struct{})}
+	go s.sweep()
+	return s, nil
+}
+
+// RegisterServer registers an explicitly owned server so its cleanup can be joined.
+func RegisterServer(reg grpc.ServiceRegistrar, server *Server) {
 	brokerv1.RegisterBrokerServiceServer(reg, server)
 }
+
+// Attach opens a process-bound attachment handle.
 func (s *Server) Attach(ctx context.Context, req *brokerv1.AttachRequest) (*brokerv1.AttachResponse, error) {
 	if req.GetSessionId() == "" {
 		return nil, invalid("session_id is required")
+	}
+	if err := s.checkIncarnation(req.GetBrokerIncarnation(), true); err != nil {
+		return nil, err
 	}
 	a, outcome, err := s.service.AttachSession(ctx, session.SessionID(req.GetSessionId()))
 	if err != nil {
@@ -73,37 +158,154 @@ func (s *Server) Attach(ctx context.Context, req *brokerv1.AttachRequest) (*brok
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.closed {
+		_, _ = a.Close(context.Background())
+		return nil, status.Error(codes.Unavailable, mcpbroker.ErrStateUnavailable.Error())
+	}
 	if len(s.handles) >= s.maxHandles {
 		_, _ = a.Close(context.Background())
 		return nil, status.Error(codes.ResourceExhausted, "attachment handle capacity reached")
 	}
-	s.handles[h] = &serverAttachment{attachment: a, tools: tools}
-	return &brokerv1.AttachResponse{Binding: string(a.Binding()), Handle: h, Outcome: string(outcome), Tools: desc}, nil
+	_, enrollment := a.(mcpbroker.WorkspaceEnrollmentAttachment)
+	s.handles[h] = &serverAttachment{attachment: a, tools: tools, lastUsed: time.Now()}
+	return &brokerv1.AttachResponse{Binding: string(a.Binding()), Handle: h, Outcome: string(outcome), Tools: desc, BrokerIncarnation: s.incarnation, WorkspaceEnrollment: enrollment}, nil
 }
-func (s *Server) get(handle string) (*serverAttachment, error) {
+
+func (s *Server) checkIncarnation(got string, allowEmpty bool) error {
+	s.mu.Lock()
+	closed := s.closed
+	s.mu.Unlock()
+	if closed {
+		return status.Error(codes.Unavailable, mcpbroker.ErrStateUnavailable.Error())
+	}
+	if got == "" && allowEmpty {
+		return nil
+	}
+	if got == "" || got != s.incarnation {
+		return status.Error(codes.FailedPrecondition, "broker incarnation mismatch")
+	}
+	return nil
+}
+
+func (s *Server) get(incarnation, handle string) (*serverAttachment, func(), error) {
+	if err := s.checkIncarnation(incarnation, false); err != nil {
+		return nil, nil, err
+	}
+	if handle == "" {
+		return nil, nil, invalid("handle is required")
+	}
+	s.mu.Lock()
+	a := s.handles[handle]
+	if a == nil || s.closed {
+		s.mu.Unlock()
+		return nil, nil, status.Error(codes.FailedPrecondition, "attachment handle unavailable")
+	}
+	a.active++
+	a.lastUsed = time.Now()
+	s.mu.Unlock()
+	return a, func() {
+		s.mu.Lock()
+		a.active--
+		a.lastUsed = time.Now()
+		s.mu.Unlock()
+	}, nil
+}
+
+func (s *Server) take(incarnation, handle string) (*serverAttachment, error) {
+	if err := s.checkIncarnation(incarnation, false); err != nil {
+		return nil, err
+	}
 	if handle == "" {
 		return nil, invalid("handle is required")
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	a := s.handles[handle]
-	if a == nil {
-		return nil, status.Error(codes.NotFound, "attachment handle not found")
+	if a == nil || s.closed {
+		return nil, status.Error(codes.FailedPrecondition, "attachment handle unavailable")
 	}
+	delete(s.handles, handle)
 	return a, nil
 }
+
+func (s *Server) sweep() {
+	defer close(s.done)
+	ticker := time.NewTicker(s.cfg.SweepInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-s.stop:
+			return
+		case now := <-ticker.C:
+			s.mu.Lock()
+			var expired []*serverAttachment
+			for handle, attachment := range s.handles {
+				if attachment.active == 0 && now.Sub(attachment.lastUsed) >= s.cfg.HandleIdleTimeout {
+					delete(s.handles, handle)
+					expired = append(expired, attachment)
+				}
+			}
+			s.mu.Unlock()
+			for _, attachment := range expired {
+				s.closeAttachment(attachment)
+			}
+		}
+	}
+}
+
+func (s *Server) closeAttachment(attachment *serverAttachment) {
+	ctx, cancel := context.WithTimeout(context.Background(), s.cfg.CleanupTimeout)
+	defer cancel()
+	_, _ = attachment.attachment.Close(ctx)
+}
+
+// Shutdown rejects new operations and bounds closure of every orphaned handle.
+func (s *Server) Shutdown(ctx context.Context) error {
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return nil
+	}
+	s.closed = true
+	close(s.stop)
+	attachments := make([]*serverAttachment, 0, len(s.handles))
+	for handle, attachment := range s.handles {
+		delete(s.handles, handle)
+		attachments = append(attachments, attachment)
+	}
+	s.mu.Unlock()
+	for _, attachment := range attachments {
+		closeCtx, cancel := context.WithTimeout(ctx, s.cfg.CleanupTimeout)
+		_, err := attachment.attachment.Close(closeCtx)
+		cancel()
+		if err != nil && ctx.Err() != nil {
+			return ctx.Err()
+		}
+	}
+	select {
+	case <-s.done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// Commit commits the provisional state behind one exact handle.
 func (s *Server) Commit(ctx context.Context, req *brokerv1.HandleRequest) (*brokerv1.Empty, error) {
-	a, e := s.get(req.GetHandle())
+	a, release, e := s.get(req.GetBrokerIncarnation(), req.GetHandle())
 	if e != nil {
 		return nil, e
 	}
+	defer release()
 	if e = a.attachment.Commit(ctx); e != nil {
 		return nil, brokerStatus(e)
 	}
 	return &brokerv1.Empty{}, nil
 }
+
+// Abort aborts and releases one exact handle.
 func (s *Server) Abort(ctx context.Context, req *brokerv1.HandleRequest) (*brokerv1.Empty, error) {
-	a, e := s.get(req.GetHandle())
+	a, e := s.take(req.GetBrokerIncarnation(), req.GetHandle())
 	if e != nil {
 		return nil, e
 	}
@@ -112,8 +314,10 @@ func (s *Server) Abort(ctx context.Context, req *brokerv1.HandleRequest) (*broke
 	}
 	return &brokerv1.Empty{}, nil
 }
+
+// Close releases one exact handle without deleting logical state.
 func (s *Server) Close(ctx context.Context, req *brokerv1.HandleRequest) (*brokerv1.CloseResponse, error) {
-	a, e := s.get(req.GetHandle())
+	a, e := s.take(req.GetBrokerIncarnation(), req.GetHandle())
 	if e != nil {
 		return nil, e
 	}
@@ -123,9 +327,14 @@ func (s *Server) Close(ctx context.Context, req *brokerv1.HandleRequest) (*broke
 	}
 	return &brokerv1.CloseResponse{Outcome: string(out)}, nil
 }
+
+// Delete deletes only logical state in the addressed broker incarnation.
 func (s *Server) Delete(ctx context.Context, req *brokerv1.DeleteRequest) (*brokerv1.DeleteResponse, error) {
 	if req.GetSessionId() == "" {
 		return nil, invalid("session_id is required")
+	}
+	if err := s.checkIncarnation(req.GetBrokerIncarnation(), true); err != nil {
+		return nil, err
 	}
 	var out mcpbroker.DeleteOutcome
 	var err error
@@ -141,11 +350,14 @@ func (s *Server) Delete(ctx context.Context, req *brokerv1.DeleteRequest) (*brok
 	}
 	return &brokerv1.DeleteResponse{Outcome: string(out)}, nil
 }
+
+// Run dispatches one tool invocation without application-level retry.
 func (s *Server) Run(ctx context.Context, req *brokerv1.RunRequest) (*brokerv1.RunResponse, error) {
-	a, e := s.get(req.GetHandle())
+	a, release, e := s.get(req.GetBrokerIncarnation(), req.GetHandle())
 	if e != nil {
 		return nil, e
 	}
+	defer release()
 	call, e := callFrom(req.GetName(), req.GetCallId(), req.GetArgs(), req.GetItemId())
 	if e != nil {
 		return nil, e
@@ -164,11 +376,14 @@ func (s *Server) Run(ctx context.Context, req *brokerv1.RunRequest) (*brokerv1.R
 	}
 	return &brokerv1.RunResponse{Result: wire}, nil
 }
+
+// RequestAuthorization begins authorization for one exact invocation.
 func (s *Server) RequestAuthorization(ctx context.Context, req *brokerv1.RequestAuthorizationRequest) (*brokerv1.RequestAuthorizationResponse, error) {
-	a, e := s.get(req.GetHandle())
+	a, release, e := s.get(req.GetBrokerIncarnation(), req.GetHandle())
 	if e != nil {
 		return nil, e
 	}
+	defer release()
 	call, e := callFrom(req.GetName(), req.GetCallId(), req.GetArgs(), req.GetItemId())
 	if e != nil {
 		return nil, e
@@ -183,11 +398,14 @@ func (s *Server) RequestAuthorization(ctx context.Context, req *brokerv1.Request
 	}
 	return &brokerv1.RequestAuthorizationResponse{Authorization: authToWire(auth), Required: required}, nil
 }
+
+// AbortAuthorization aborts one exact tool authorization.
 func (s *Server) AbortAuthorization(ctx context.Context, req *brokerv1.AbortAuthorizationRequest) (*brokerv1.Empty, error) {
-	a, e := s.get(req.GetHandle())
+	a, release, e := s.get(req.GetBrokerIncarnation(), req.GetHandle())
 	if e != nil {
 		return nil, e
 	}
+	defer release()
 	auth, e := authFromWire(req.GetAuthorization())
 	if e != nil {
 		return nil, e
@@ -203,6 +421,136 @@ func (s *Server) AbortAuthorization(ctx context.Context, req *brokerv1.AbortAuth
 		return nil, invalid("tool is not authorization-capable")
 	}
 	return nil, brokerStatus(e)
+}
+
+// PresentAuthorization returns the ephemeral URL for one exact authorization.
+func (s *Server) PresentAuthorization(ctx context.Context, req *brokerv1.AuthorizationRequest) (*brokerv1.PresentationResponse, error) {
+	a, release, err := s.get(req.GetBrokerIncarnation(), req.GetHandle())
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	auth, err := authFromWire(req.GetAuthorization())
+	if err != nil {
+		return nil, err
+	}
+	url, err := a.attachment.PresentAuthorization(ctx, auth)
+	if err != nil {
+		return nil, brokerStatus(err)
+	}
+	if url == "" || !utf8.ValidString(url) {
+		return nil, invalid("invalid presentation")
+	}
+	return &brokerv1.PresentationResponse{Url: url}, nil
+}
+
+// AuthorizationStatus observes one exact authorization.
+func (s *Server) AuthorizationStatus(ctx context.Context, req *brokerv1.AuthorizationRequest) (*brokerv1.AuthorizationStatusResponse, error) {
+	a, release, err := s.get(req.GetBrokerIncarnation(), req.GetHandle())
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	auth, err := authFromWire(req.GetAuthorization())
+	if err != nil {
+		return nil, err
+	}
+	out, err := a.attachment.AuthorizationStatus(ctx, auth)
+	if err != nil {
+		return nil, brokerStatus(err)
+	}
+	if !validAuthorizationStatus(out) {
+		return nil, status.Error(codes.Internal, "invalid authorization status")
+	}
+	return &brokerv1.AuthorizationStatusResponse{Status: string(out)}, nil
+}
+
+// CancelAuthorization cancels one exact authorization.
+func (s *Server) CancelAuthorization(ctx context.Context, req *brokerv1.AuthorizationRequest) (*brokerv1.CancelResponse, error) {
+	a, release, err := s.get(req.GetBrokerIncarnation(), req.GetHandle())
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	auth, err := authFromWire(req.GetAuthorization())
+	if err != nil {
+		return nil, err
+	}
+	out, err := a.attachment.CancelAuthorization(ctx, auth)
+	if err != nil {
+		return nil, brokerStatus(err)
+	}
+	if !validCancelOutcome(out) {
+		return nil, status.Error(codes.Internal, "invalid cancel outcome")
+	}
+	return &brokerv1.CancelResponse{Outcome: string(out)}, nil
+}
+
+// BeginWorkspaceEnrollment begins a pre-prompt enrollment.
+func (s *Server) BeginWorkspaceEnrollment(ctx context.Context, req *brokerv1.HandleRequest) (*brokerv1.WorkspacePresentationResponse, error) {
+	a, release, err := s.get(req.GetBrokerIncarnation(), req.GetHandle())
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	enroller, ok := a.attachment.(mcpbroker.WorkspaceEnrollmentAttachment)
+	if !ok {
+		return nil, status.Error(codes.FailedPrecondition, "workspace enrollment unsupported")
+	}
+	presentation, err := enroller.BeginWorkspaceEnrollment(ctx)
+	if err != nil {
+		return nil, brokerStatus(err)
+	}
+	if !presentation.Valid() {
+		return nil, status.Error(codes.Internal, "invalid workspace presentation")
+	}
+	return &brokerv1.WorkspacePresentationResponse{Ref: workspaceRefToWire(presentation.Ref), Url: presentation.URL}, nil
+}
+
+// ObserveWorkspaceEnrollment observes one exact pre-prompt enrollment.
+func (s *Server) ObserveWorkspaceEnrollment(ctx context.Context, req *brokerv1.WorkspaceRequest) (*brokerv1.WorkspaceResultResponse, error) {
+	return s.workspaceResult(ctx, req, false)
+}
+
+// CancelWorkspaceEnrollment cancels one exact pre-prompt enrollment.
+func (s *Server) CancelWorkspaceEnrollment(ctx context.Context, req *brokerv1.WorkspaceRequest) (*brokerv1.WorkspaceResultResponse, error) {
+	return s.workspaceResult(ctx, req, true)
+}
+
+func (s *Server) workspaceResult(ctx context.Context, req *brokerv1.WorkspaceRequest, cancel bool) (*brokerv1.WorkspaceResultResponse, error) {
+	a, release, err := s.get(req.GetBrokerIncarnation(), req.GetHandle())
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	enroller, ok := a.attachment.(mcpbroker.WorkspaceEnrollmentAttachment)
+	if !ok {
+		return nil, status.Error(codes.FailedPrecondition, "workspace enrollment unsupported")
+	}
+	ref, err := workspaceRefFromWire(req.GetRef())
+	if err != nil {
+		return nil, err
+	}
+	var result mcpbroker.WorkspaceEnrollmentResult
+	if cancel {
+		result, err = enroller.CancelWorkspaceEnrollment(ctx, ref)
+	} else {
+		result, err = enroller.ObserveWorkspaceEnrollment(ctx, ref)
+	}
+	if err != nil {
+		return nil, brokerStatus(err)
+	}
+	if !result.Valid() {
+		return nil, status.Error(codes.Internal, "invalid workspace result")
+	}
+	var desc []*brokerv1.ToolDescriptor
+	if result.Catalogue != nil {
+		desc, _, err = descriptors(result.Catalogue.Tools())
+		if err != nil {
+			return nil, status.Error(codes.Internal, "invalid workspace catalogue")
+		}
+	}
+	return &brokerv1.WorkspaceResultResponse{Ref: workspaceRefToWire(result.Ref), Status: string(result.Status), Tools: desc}, nil
 }
 
 func descriptors(in []tool.Tool) ([]*brokerv1.ToolDescriptor, map[string]tool.Tool, error) {
@@ -239,7 +587,7 @@ func brokerStatus(err error) error {
 	case errors.Is(err, mcpbroker.ErrAttachmentClosed):
 		return status.Error(codes.FailedPrecondition, err.Error())
 	case errors.Is(err, mcpbroker.ErrStateUnavailable):
-		return status.Error(codes.FailedPrecondition, err.Error())
+		return status.Error(codes.Unavailable, err.Error())
 	case errors.Is(err, mcpbroker.ErrAuthorizationNotFound):
 		return status.Error(codes.NotFound, err.Error())
 	default:
@@ -248,31 +596,78 @@ func brokerStatus(err error) error {
 }
 
 // Client implements mcpbroker.Service over the generated RPC client.
-type Client struct{ rpc brokerv1.BrokerServiceClient }
-
-func NewClient(conn grpc.ClientConnInterface) *Client {
-	return &Client{rpc: brokerv1.NewBrokerServiceClient(conn)}
+type Client struct {
+	rpc         brokerv1.BrokerServiceClient
+	cfg         Config
+	mu          sync.Mutex
+	incarnation string
 }
+
+// NewClient constructs a client with finite default deadlines.
+func NewClient(conn grpc.ClientConnInterface) *Client {
+	client, _ := NewClientWithConfig(conn, DefaultConfig())
+	return client
+}
+
+// NewClientWithConfig constructs a client whose every RPC has a finite deadline.
+func NewClientWithConfig(conn grpc.ClientConnInterface, cfg Config) (*Client, error) {
+	if conn == nil {
+		return nil, errors.New("mcpbrokergrpc: connection is required")
+	}
+	if !cfg.valid() {
+		return nil, errors.New("mcpbrokergrpc: all deadlines and capacities must be positive")
+	}
+	return &Client{rpc: brokerv1.NewBrokerServiceClient(conn), cfg: cfg}, nil
+}
+
+func (c *Client) bounded(ctx context.Context, execute bool) (context.Context, context.CancelFunc) {
+	d := c.cfg.RPCDeadline
+	if execute {
+		d = c.cfg.ExecuteDeadline
+	}
+	return context.WithTimeout(ctx, d)
+}
+func (c *Client) brokerIncarnation() string { c.mu.Lock(); defer c.mu.Unlock(); return c.incarnation }
+
+// AttachSession opens a handle while pinning the first observed broker incarnation.
 func (c *Client) AttachSession(ctx context.Context, id session.SessionID) (mcpbroker.Attachment, mcpbroker.AttachOutcome, error) {
 	if id == "" {
 		return nil, "", errors.New("mcpbrokergrpc: session id is required")
 	}
-	r, e := c.rpc.Attach(ctx, &brokerv1.AttachRequest{SessionId: string(id)})
+	expected := c.brokerIncarnation()
+	rpcCtx, cancel := c.bounded(ctx, false)
+	defer cancel()
+	r, e := c.rpc.Attach(rpcCtx, &brokerv1.AttachRequest{SessionId: string(id), BrokerIncarnation: expected})
 	if e != nil {
 		return nil, "", clientError(e)
 	}
-	if r.GetHandle() == "" || r.GetBinding() == "" || !validAttachOutcome(r.GetOutcome()) {
+	if r.GetHandle() == "" || r.GetBinding() == "" || r.GetBrokerIncarnation() == "" || !validAttachOutcome(r.GetOutcome()) {
 		return nil, "", errors.New("mcpbrokergrpc: malformed attach response")
 	}
+	c.mu.Lock()
+	if c.incarnation != "" && c.incarnation != r.GetBrokerIncarnation() {
+		c.mu.Unlock()
+		return nil, "", mcpbroker.ErrStateUnavailable
+	}
+	c.incarnation = r.GetBrokerIncarnation()
+	c.mu.Unlock()
 	tools, e := remoteTools(c, r)
 	if e != nil {
 		return nil, "", e
 	}
-	return &clientAttachment{client: c, handle: r.GetHandle(), binding: session.ExternalBinding(r.GetBinding()), tools: tools}, mcpbroker.AttachOutcome(r.GetOutcome()), nil
+	base := &clientAttachment{client: c, handle: r.GetHandle(), binding: session.ExternalBinding(r.GetBinding()), incarnation: r.GetBrokerIncarnation(), tools: tools}
+	if r.GetWorkspaceEnrollment() {
+		return &clientEnrollmentAttachment{clientAttachment: base}, mcpbroker.AttachOutcome(r.GetOutcome()), nil
+	}
+	return base, mcpbroker.AttachOutcome(r.GetOutcome()), nil
 }
+
+// DeleteSession deletes logical state in the client's pinned broker incarnation.
 func (c *Client) DeleteSession(ctx context.Context, id session.SessionID) (mcpbroker.DeleteOutcome, error) {
 	return c.delete(ctx, id, "")
 }
+
+// DeleteSessionIfBinding atomically deletes only the exact opaque binding.
 func (c *Client) DeleteSessionIfBinding(ctx context.Context, id session.SessionID, binding session.ExternalBinding) (mcpbroker.DeleteOutcome, error) {
 	if binding == "" {
 		return "", errors.New("mcpbrokergrpc: binding is required")
@@ -280,7 +675,9 @@ func (c *Client) DeleteSessionIfBinding(ctx context.Context, id session.SessionI
 	return c.delete(ctx, id, binding)
 }
 func (c *Client) delete(ctx context.Context, id session.SessionID, binding session.ExternalBinding) (mcpbroker.DeleteOutcome, error) {
-	r, e := c.rpc.Delete(ctx, &brokerv1.DeleteRequest{SessionId: string(id), Binding: string(binding)})
+	rpcCtx, cancel := c.bounded(ctx, false)
+	defer cancel()
+	r, e := c.rpc.Delete(rpcCtx, &brokerv1.DeleteRequest{SessionId: string(id), Binding: string(binding), BrokerIncarnation: c.brokerIncarnation()})
 	if e != nil {
 		return "", clientError(e)
 	}
@@ -291,47 +688,143 @@ func (c *Client) delete(ctx context.Context, id session.SessionID, binding sessi
 }
 
 type clientAttachment struct {
-	client  *Client
-	handle  string
-	binding session.ExternalBinding
-	tools   []tool.Tool
+	client      *Client
+	handle      string
+	binding     session.ExternalBinding
+	incarnation string
+	tools       []tool.Tool
+	mu          sync.Mutex
+	closed      bool
 }
 
 func (a *clientAttachment) Binding() session.ExternalBinding { return a.binding }
 func (a *clientAttachment) Tools() []tool.Tool               { return append([]tool.Tool(nil), a.tools...) }
+func (a *clientAttachment) request() *brokerv1.HandleRequest {
+	return &brokerv1.HandleRequest{Handle: a.handle, BrokerIncarnation: a.incarnation}
+}
 func (a *clientAttachment) Commit(ctx context.Context) error {
-	_, e := a.client.rpc.Commit(ctx, &brokerv1.HandleRequest{Handle: a.handle})
+	rpcCtx, cancel := a.client.bounded(ctx, false)
+	defer cancel()
+	_, e := a.client.rpc.Commit(rpcCtx, a.request())
 	return clientError(e)
 }
 func (a *clientAttachment) Abort(ctx context.Context) error {
-	_, e := a.client.rpc.Abort(ctx, &brokerv1.HandleRequest{Handle: a.handle})
+	rpcCtx, cancel := a.client.bounded(ctx, false)
+	defer cancel()
+	_, e := a.client.rpc.Abort(rpcCtx, a.request())
 	return clientError(e)
 }
 func (a *clientAttachment) Close(ctx context.Context) (mcpbroker.CloseOutcome, error) {
-	r, e := a.client.rpc.Close(ctx, &brokerv1.HandleRequest{Handle: a.handle})
+	a.mu.Lock()
+	if a.closed {
+		a.mu.Unlock()
+		return mcpbroker.CloseAlreadyClosed, nil
+	}
+	a.mu.Unlock()
+	rpcCtx, cancel := a.client.bounded(ctx, false)
+	defer cancel()
+	r, e := a.client.rpc.Close(rpcCtx, a.request())
 	if e != nil {
 		return "", clientError(e)
 	}
 	if r.GetOutcome() != string(mcpbroker.CloseClosed) && r.GetOutcome() != string(mcpbroker.CloseAlreadyClosed) {
 		return "", errors.New("mcpbrokergrpc: invalid close outcome")
 	}
+	a.mu.Lock()
+	a.closed = true
+	a.mu.Unlock()
 	return mcpbroker.CloseOutcome(r.GetOutcome()), nil
 }
-func (*clientAttachment) PresentAuthorization(context.Context, session.ExternalAuthorization) (string, error) {
-	return "", errors.New("mcpbrokergrpc: presentation is unavailable over this protocol")
+func (a *clientAttachment) authRequest(auth session.ExternalAuthorization) *brokerv1.AuthorizationRequest {
+	return &brokerv1.AuthorizationRequest{Handle: a.handle, Authorization: authToWire(auth), BrokerIncarnation: a.incarnation}
 }
-func (*clientAttachment) AuthorizationStatus(context.Context, session.ExternalAuthorization) (session.AuthorizationStatus, error) {
-	return "", errors.New("mcpbrokergrpc: status is unavailable over this protocol")
+func (a *clientAttachment) PresentAuthorization(ctx context.Context, auth session.ExternalAuthorization) (string, error) {
+	rpcCtx, cancel := a.client.bounded(ctx, false)
+	defer cancel()
+	r, err := a.client.rpc.PresentAuthorization(rpcCtx, a.authRequest(auth))
+	if err != nil {
+		return "", clientError(err)
+	}
+	if r.GetUrl() == "" || !utf8.ValidString(r.GetUrl()) {
+		return "", errors.New("mcpbrokergrpc: malformed presentation response")
+	}
+	return r.GetUrl(), nil
 }
-func (*clientAttachment) CancelAuthorization(context.Context, session.ExternalAuthorization) (mcpbroker.CancelOutcome, error) {
-	return "", errors.New("mcpbrokergrpc: cancellation is unavailable over this protocol")
+func (a *clientAttachment) AuthorizationStatus(ctx context.Context, auth session.ExternalAuthorization) (session.AuthorizationStatus, error) {
+	rpcCtx, cancel := a.client.bounded(ctx, false)
+	defer cancel()
+	r, err := a.client.rpc.AuthorizationStatus(rpcCtx, a.authRequest(auth))
+	if err != nil {
+		return "", clientError(err)
+	}
+	out := session.AuthorizationStatus(r.GetStatus())
+	if !validAuthorizationStatus(out) {
+		return "", errors.New("mcpbrokergrpc: invalid authorization status")
+	}
+	return out, nil
+}
+func (a *clientAttachment) CancelAuthorization(ctx context.Context, auth session.ExternalAuthorization) (mcpbroker.CancelOutcome, error) {
+	rpcCtx, cancel := a.client.bounded(ctx, false)
+	defer cancel()
+	r, err := a.client.rpc.CancelAuthorization(rpcCtx, a.authRequest(auth))
+	if err != nil {
+		return "", clientError(err)
+	}
+	out := mcpbroker.CancelOutcome(r.GetOutcome())
+	if !validCancelOutcome(out) {
+		return "", errors.New("mcpbrokergrpc: invalid cancel outcome")
+	}
+	return out, nil
+}
+
+type clientEnrollmentAttachment struct{ *clientAttachment }
+
+func (a *clientEnrollmentAttachment) BeginWorkspaceEnrollment(ctx context.Context) (mcpbroker.WorkspaceEnrollmentPresentation, error) {
+	rpcCtx, cancel := a.client.bounded(ctx, false)
+	defer cancel()
+	r, err := a.client.rpc.BeginWorkspaceEnrollment(rpcCtx, a.request())
+	if err != nil {
+		return mcpbroker.WorkspaceEnrollmentPresentation{}, clientError(err)
+	}
+	ref, err := workspaceRefFromWire(r.GetRef())
+	if err != nil {
+		return mcpbroker.WorkspaceEnrollmentPresentation{}, err
+	}
+	out := mcpbroker.WorkspaceEnrollmentPresentation{Ref: ref, URL: r.GetUrl()}
+	if !out.Valid() {
+		return mcpbroker.WorkspaceEnrollmentPresentation{}, errors.New("mcpbrokergrpc: malformed workspace presentation")
+	}
+	return out, nil
+}
+func (a *clientEnrollmentAttachment) ObserveWorkspaceEnrollment(ctx context.Context, ref mcpbroker.WorkspaceEnrollmentRef) (mcpbroker.WorkspaceEnrollmentResult, error) {
+	return a.workspaceResult(ctx, ref, false)
+}
+func (a *clientEnrollmentAttachment) CancelWorkspaceEnrollment(ctx context.Context, ref mcpbroker.WorkspaceEnrollmentRef) (mcpbroker.WorkspaceEnrollmentResult, error) {
+	return a.workspaceResult(ctx, ref, true)
+}
+func (a *clientEnrollmentAttachment) workspaceResult(ctx context.Context, ref mcpbroker.WorkspaceEnrollmentRef, cancelOperation bool) (mcpbroker.WorkspaceEnrollmentResult, error) {
+	rpcCtx, cancel := a.client.bounded(ctx, false)
+	defer cancel()
+	req := &brokerv1.WorkspaceRequest{Handle: a.handle, Ref: workspaceRefToWire(ref), BrokerIncarnation: a.incarnation}
+	var r *brokerv1.WorkspaceResultResponse
+	var err error
+	if cancelOperation {
+		r, err = a.client.rpc.CancelWorkspaceEnrollment(rpcCtx, req)
+	} else {
+		r, err = a.client.rpc.ObserveWorkspaceEnrollment(rpcCtx, req)
+	}
+	if err != nil {
+		return mcpbroker.WorkspaceEnrollmentResult{}, clientError(err)
+	}
+	return workspaceResultFromWire(a.client, a.handle, a.incarnation, r)
 }
 
 type remoteTool struct {
-	client   *Client
-	handle   string
-	spec     tool.ToolSpec
-	readOnly bool
+	client      *Client
+	handle      string
+	incarnation string
+	spec        tool.ToolSpec
+	readOnly    bool
 }
 
 func (t *remoteTool) Spec() tool.ToolSpec {
@@ -347,8 +840,13 @@ func (t *remoteTool) Execute(ctx context.Context, call session.ToolCall, _ tool.
 	if _, e := callFrom(call.Name, string(call.ID), call.Args, call.ItemID); e != nil {
 		return session.ToolResult{}, e
 	}
-	r, e := t.client.rpc.Run(ctx, &brokerv1.RunRequest{Handle: t.handle, Name: call.Name, CallId: string(call.ID), Args: append([]byte(nil), call.Args...), ItemId: call.ItemID})
+	rpcCtx, cancel := t.client.bounded(ctx, true)
+	defer cancel()
+	r, e := t.client.rpc.Run(rpcCtx, &brokerv1.RunRequest{Handle: t.handle, Name: call.Name, CallId: string(call.ID), Args: append([]byte(nil), call.Args...), ItemId: call.ItemID, BrokerIncarnation: t.incarnation})
 	if e != nil {
+		if status.Code(e) == codes.Aborted {
+			return session.NewToolError(call.ID, ambiguousOutcomeMessage), nil
+		}
 		return session.ToolResult{}, clientError(e)
 	}
 	return resultFromWire(r.GetResult())
@@ -361,7 +859,9 @@ func (*remoteSerialTool) DispatchSerialTool() {}
 type remoteAuthorizationTool struct{ *remoteTool }
 
 func (t *remoteAuthorizationTool) RequestAuthorization(ctx context.Context, call session.ToolCall) (session.ExternalAuthorization, bool, error) {
-	r, e := t.client.rpc.RequestAuthorization(ctx, &brokerv1.RequestAuthorizationRequest{Handle: t.handle, Name: call.Name, CallId: string(call.ID), Args: append([]byte(nil), call.Args...), ItemId: call.ItemID})
+	rpcCtx, cancel := t.client.bounded(ctx, false)
+	defer cancel()
+	r, e := t.client.rpc.RequestAuthorization(rpcCtx, &brokerv1.RequestAuthorizationRequest{Handle: t.handle, Name: call.Name, CallId: string(call.ID), Args: append([]byte(nil), call.Args...), ItemId: call.ItemID, BrokerIncarnation: t.incarnation})
 	if e != nil {
 		return session.ExternalAuthorization{}, false, clientError(e)
 	}
@@ -369,7 +869,9 @@ func (t *remoteAuthorizationTool) RequestAuthorization(ctx context.Context, call
 	return a, r.GetRequired(), e
 }
 func (t *remoteAuthorizationTool) AbortAuthorization(ctx context.Context, a session.ExternalAuthorization) error {
-	_, e := t.client.rpc.AbortAuthorization(ctx, &brokerv1.AbortAuthorizationRequest{Handle: t.handle, Authorization: authToWire(a)})
+	rpcCtx, cancel := t.client.bounded(ctx, false)
+	defer cancel()
+	_, e := t.client.rpc.AbortAuthorization(rpcCtx, &brokerv1.AbortAuthorizationRequest{Handle: t.handle, Authorization: authToWire(a), BrokerIncarnation: t.incarnation})
 	return clientError(e)
 }
 
@@ -384,7 +886,7 @@ func remoteTools(c *Client, r *brokerv1.AttachResponse) ([]tool.Tool, error) {
 			return nil, errors.New("mcpbrokergrpc: malformed tool descriptor")
 		}
 		seen[d.GetName()] = true
-		base := &remoteTool{client: c, handle: r.GetHandle(), spec: tool.ToolSpec{Name: d.GetName(), Description: d.GetDescription(), Schema: append([]byte(nil), d.GetSchema()...)}, readOnly: d.GetReadOnly()}
+		base := &remoteTool{client: c, handle: r.GetHandle(), incarnation: r.GetBrokerIncarnation(), spec: tool.ToolSpec{Name: d.GetName(), Description: d.GetDescription(), Schema: append([]byte(nil), d.GetSchema()...)}, readOnly: d.GetReadOnly()}
 		if d.GetAuthorizationCapable() {
 			a := &remoteAuthorizationTool{remoteTool: base}
 			if d.GetDispatchSerial() {
@@ -408,6 +910,11 @@ func clientError(err error) error {
 		return nil
 	}
 	switch status.Code(err) {
+	case codes.Unavailable:
+		if status.Convert(err).Message() == mcpbroker.ErrStateUnavailable.Error() {
+			return mcpbroker.ErrStateUnavailable
+		}
+		return err
 	case codes.FailedPrecondition:
 		if status.Convert(err).Message() == mcpbroker.ErrAttachmentClosed.Error() {
 			return mcpbroker.ErrAttachmentClosed
@@ -475,6 +982,58 @@ func authFromWire(a *brokerv1.Authorization) (session.ExternalAuthorization, err
 		return session.ExternalAuthorization{}, errors.New("mcpbrokergrpc: malformed authorization")
 	}
 	return session.ExternalAuthorization{ID: a.GetId(), Binding: session.AuthorizationBinding(a.GetBinding()), ExpiresAt: a.GetExpiresAt().AsTime()}, nil
+}
+
+func workspaceRefToWire(ref mcpbroker.WorkspaceEnrollmentRef) *brokerv1.WorkspaceRef {
+	return &brokerv1.WorkspaceRef{Id: string(ref.ID), RequiredServices: ref.RequiredServices, ExpiresAt: timestamppb.New(ref.ExpiresAt)}
+}
+func workspaceRefFromWire(ref *brokerv1.WorkspaceRef) (mcpbroker.WorkspaceEnrollmentRef, error) {
+	if ref == nil || ref.GetExpiresAt() == nil || !ref.GetExpiresAt().IsValid() {
+		return mcpbroker.WorkspaceEnrollmentRef{}, invalid("malformed workspace reference")
+	}
+	out := mcpbroker.WorkspaceEnrollmentRef{ID: session.WorkspaceEnrollmentID(ref.GetId()), RequiredServices: ref.GetRequiredServices(), ExpiresAt: ref.GetExpiresAt().AsTime()}
+	if !out.Valid() {
+		return mcpbroker.WorkspaceEnrollmentRef{}, invalid("malformed workspace reference")
+	}
+	return out, nil
+}
+func workspaceResultFromWire(c *Client, handle, incarnation string, r *brokerv1.WorkspaceResultResponse) (mcpbroker.WorkspaceEnrollmentResult, error) {
+	if r == nil {
+		return mcpbroker.WorkspaceEnrollmentResult{}, errors.New("mcpbrokergrpc: malformed workspace result")
+	}
+	ref, err := workspaceRefFromWire(r.GetRef())
+	if err != nil {
+		return mcpbroker.WorkspaceEnrollmentResult{}, err
+	}
+	out := mcpbroker.WorkspaceEnrollmentResult{Ref: ref, Status: mcpbroker.WorkspaceEnrollmentStatus(r.GetStatus())}
+	if out.Status == mcpbroker.WorkspaceEnrollmentConnected {
+		attach := &brokerv1.AttachResponse{Handle: handle, BrokerIncarnation: incarnation, Tools: r.GetTools()}
+		tools, toolsErr := remoteTools(c, attach)
+		if toolsErr != nil {
+			return mcpbroker.WorkspaceEnrollmentResult{}, toolsErr
+		}
+		out.Catalogue, err = mcpbroker.NewWorkspaceCatalogue(ref, tools)
+		if err != nil {
+			return mcpbroker.WorkspaceEnrollmentResult{}, err
+		}
+	}
+	if !out.Valid() {
+		return mcpbroker.WorkspaceEnrollmentResult{}, errors.New("mcpbrokergrpc: malformed workspace result")
+	}
+	return out, nil
+}
+func validAuthorizationStatus(s session.AuthorizationStatus) bool {
+	switch s {
+	case session.AuthorizationPending, session.AuthorizationGranted, session.AuthorizationDenied,
+		session.AuthorizationCancelled, session.AuthorizationExpired, session.AuthorizationInterrupted,
+		session.AuthorizationFailed, session.AuthorizationClosed:
+		return true
+	default:
+		return false
+	}
+}
+func validCancelOutcome(out mcpbroker.CancelOutcome) bool {
+	return out == mcpbroker.CancelCancelled || out == mcpbroker.CancelAlreadyCancelled || out == mcpbroker.CancelAlreadyResolved
 }
 
 var _ mcpbroker.Service = (*Client)(nil)

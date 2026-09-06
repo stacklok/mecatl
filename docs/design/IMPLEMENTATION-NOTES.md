@@ -5832,6 +5832,17 @@ without affinity or a durable-broker decision. Guards include `internal/adapter/
 `internal/adapter/mcpbroker/workspace_catalogue_test.go`, and
 `internal/adapter/mcpbroker/toolhive_process_test.go`.
 
+The remote adapter in `internal/adapter/mcpbrokergrpc/broker.go` pins a client and every
+handle operation to one random server incarnation. `Config` supplies positive finite dial,
+ordinary-RPC, Execute, idle-retention, sweep, and cleanup bounds. Transport `Unavailable`
+is distinct from a confirmed stale incarnation. The server tracks active operations so
+caller cancellation releases only that operation; explicit Close/Abort and the idle sweep
+own attachment closure without logical deletion, and `Server.Shutdown` joins the sweep.
+Execute has no adapter retry: an `Aborted` response after possible dispatch becomes one
+fixed model-visible ambiguous-outcome tool error. A new client may start one fresh
+pre-prompt enrollment after restart, while a stale protected-call continuation fails closed.
+The process resource ledger and non-distributed boundary are [ADR 0304](../adr/0304-process-bound-remote-mcp-broker.md).
+
 **Server-global MCP on every session (bug #3 fix, `sessionEngineFactory`):** the
 per-session catalog mounts the SERVER-GLOBAL MCP tools (`cfg.MCPServers` + ToolHive — the
 same tools the build-time `buildCatalog`→`connectMCP`+`assembleCatalog` path mounts on the main engine), NOT just core + client

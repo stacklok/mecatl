@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/test/bufconn"
 	"google.golang.org/protobuf/reflect/protodesc"
 
@@ -206,10 +207,14 @@ func newRemote(t *testing.T, local mcpbroker.Service) mcpbroker.Service {
 	t.Helper()
 	listener := bufconn.Listen(1 << 20)
 	server := grpc.NewServer()
-	mcpbrokergrpc.Register(server, local)
+	brokerServer, err := mcpbrokergrpc.NewServer(local, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mcpbrokergrpc.RegisterServer(server, brokerServer)
 	go func() { _ = server.Serve(listener) }()
-	t.Cleanup(func() { server.Stop(); _ = listener.Close() })
-	conn, err := grpc.NewClient("passthrough:///broker", grpc.WithContextDialer(func(context.Context, string) (net.Conn, error) { return listener.Dial() }), grpc.WithInsecure())
+	t.Cleanup(func() { _ = brokerServer.Shutdown(context.Background()); server.Stop(); _ = listener.Close() })
+	conn, err := grpc.NewClient("passthrough:///broker", grpc.WithContextDialer(func(context.Context, string) (net.Conn, error) { return listener.Dial() }), grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		t.Fatal(err)
 	}
