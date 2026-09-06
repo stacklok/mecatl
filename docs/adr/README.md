@@ -140,8 +140,8 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0250 — Durable cursors and the session watch transport](./0250-durable-cursors-and-watch.md)
 
 ### Providers & APIs
-- [0301 — Asynchronous session-title generation](./0301-session-title-generation-and-auxiliary-usage.md) *(proposed)*
-- [0302 — Canonical durable token accounting and run-scoped budgets](./0302-canonical-durable-token-accounting.md)
+- [0302 — Asynchronous session-title generation](./0302-session-title-generation-and-auxiliary-usage.md) *(proposed)*
+- [0303 — Canonical durable token accounting and run-scoped budgets](./0303-canonical-durable-token-accounting.md)
 - [0016 — Multi-provider](./0016-multi-provider.md)
 - [0017 — OpenAI Responses API](./0017-openai-responses-api.md) *(research; its single-visible-text-part subsection is superseded by 0302)*
 - [0302 — Project every OpenAI Responses visible text delta in SSE arrival order](./0302-openai-visible-text-delta-projection.md) *(supersedes only ADR 0017 §2's single-visible-text-part subsection)*
