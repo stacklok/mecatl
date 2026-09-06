@@ -2,7 +2,7 @@
 id: 02-panel-repair
 title: Repair double-Escape safety contract after panel review
 blocked_by: [01-double-escape]
-status: in-progress
+status: done
 attempt: 1
 branch: plan-mecatui-double-escape/02-panel-repair-attempt-1
 worktree: .scratch/worker-mecatui-double-escape-02-panel-repair-attempt-1
