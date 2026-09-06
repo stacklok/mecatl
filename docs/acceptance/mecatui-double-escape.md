@@ -1,7 +1,7 @@
 # Mecatui double-Escape draft clearing — acceptance plan
 
 **Phase:** focused capability — local mecatui prompt UX  
-**Status:** in-progress — panel repair, 2026-09-06
+**Status:** landed, 2026-09-06
 **Issue:** #605  
 **Accumulator branch:** `acc/mecatui-double-escape` (off `main`)  
 **Scope:** `cmd/mecatui/ui` input routing, live help/docs, and offline tests only

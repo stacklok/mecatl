@@ -54,7 +54,7 @@ when the code that satisfies the plan has landed.
 - [Mecatui double-Escape draft clearing](mecatui-double-escape.md) — a fail-closed,
   enhanced-key-event-only, silent press-release-press idle prompt gesture with an exact
   500 ms generation-tagged expiry; it reuses `clearPrompt`, preserves surface ownership,
-  and documents universal `ctrl+u`. Status: in-progress.
+  and documents universal `ctrl+u`. Status: landed.
 - [Mecatui card layout](mecatui-card-layout.md) — width-bounded card rendering
   that wraps raw dynamic rows before styling, preventing Lipgloss alignment
   padding from becoming vertical whitespace while retaining intentional
