@@ -50,6 +50,7 @@ when the code that satisfies the plan has landed.
 
 ## Plans
 
+- [Mecatui live-feed reconnect](mecatui-live-reconnect.md) — regression closure for bearer-backed first-Recv authentication rejection, existing `/connect` recovery, cross-loop reconnect continuity/backoff, and real-event recovery without weakening generation, cancellation, or catch-up invariants. Status: draft.
 - [Mecatui card layout](mecatui-card-layout.md) — width-bounded card rendering
   that wraps raw dynamic rows before styling, preventing Lipgloss alignment
   padding from becoming vertical whitespace while retaining intentional
