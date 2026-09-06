@@ -1,161 +1,96 @@
 # Acceptance-plan template
 
-Fill this in to produce `docs/acceptance/<plan>.md` — mecatl's design +
-verification contract for one capability. Copy the skeleton below and
-replace every `<…>` placeholder. Sections tagged **[constant]** always
-appear; **[common]** unless the plan is tiny; **[optional]** only when the
-situation calls for it. Delete the tags and any section you don't use.
-
-**The load-bearing invariants the bundled check + ac-trace enforce:**
-
-1. **Numbered acceptance criteria** — `AC<scenario>.<n>:` labels. They give
-   the orchestrator's per-task briefs, `ac-trace`, and `panel-review` a
-   stable id (`AC2.3`) to cite. **Prefer labels.**
-2. **≥1 citation per scenario** — a markdown link into `../adr/**`,
-   `../architecture.md`, `../design/IMPLEMENTATION-NOTES.md`, or
-   `../../AGENTS.md`, or at minimum a bare `ADR-NNNN` reference. Citations
-   live inline, never in a footnote.
-3. **A `verify:` sub-line on every numbered AC** — Go test names, or one
-   non-test method (`none` / `inspection` / `demonstration`) with a reason.
-   This is the machine-checkable AC→proof link `ac-trace` reads. Set
-   `**Status:** draft` in the header. See the `verify:` contract in
-   `docs/acceptance/README.md`.
-
-**Citation paths** (relative to `docs/acceptance/`):
-
-| Target | Form |
-|---|---|
-| ADR | `[ADR-0036](../adr/0036-engine-module.md)` |
-| Architecture + section | `` [`architecture.md § The loop`](../architecture.md) `` |
-| Implementation notes | `` [`IMPLEMENTATION-NOTES.md`](../design/IMPLEMENTATION-NOTES.md) `` |
-| AGENTS.md invariant | `` [`AGENTS.md` — the layering rule](../../AGENTS.md) `` |
-| Source file | `` [`engine/agent/loop.go`](../../engine/agent/loop.go) `` (two levels up) |
-
-**The boundary.** Stop at *Definition of done* / *Deferred decisions*. Do
-**not** write a per-task worker-assignment table — decomposition is
-`/plan-orchestrate`'s job. A coarse *Sequencing recommendation* (prose) or an
-*Implementation order (waves)* table naming the seam where orchestrate takes
-over is fine.
-
----
+Copy the skeleton into `docs/acceptance/<slug>.md`. Keep focused plans compact. The
+bundled checker requires a scenario, numbered ACs with `verify:` lines, citations, an
+out-of-scope section, an allowed status, a Split/Combined declaration, and all seven exact
+interface-category labels with non-placeholder content. Combined is a compact one-task,
+exactly-one-`### Scenario` exception and must declare the parseable metadata
+`**Expected tasks:** 1` plus a non-placeholder `**Combined rationale:**` explaining why
+separate plan review adds no value. gRPC/protobuf, exported Go APIs/interfaces, tool
+schemas, CLI/config, events/persistence, and security/authority must each begin
+`None — <rationale>`; compatibility/migration may describe workflow migration. A
+workflow-only meta-change may instead review process documents and skills as its interface
+in the same PR.
 
 ```markdown
-# <Plan Name> — acceptance plan
+# <Name> — acceptance plan
 
 **Phase:** <capability / milestone>
-**Status:** draft, <YYYY-MM-DD>. <one-line provenance>
-<!-- [optional], one per line: -->
+**Status:** draft, <YYYY-MM-DD>. <provenance>
+**Delivery:** Split. <why the default two-PR path applies>
+**Expected tasks:** <positive count or deferred to orchestration>
+<!-- For Combined, the two fields must instead be exactly:
+**Expected tasks:** 1
+**Combined rationale:** <non-placeholder explanation why separate plan review adds no value>
+-->
+<!-- Or: **Delivery:** Combined. <why gRPC/protobuf, exported Go APIs/interfaces, tool schemas, CLI/config, events/persistence, and security/authority begin None — rationale; compatibility/migration may describe workflow migration; workflow-only meta-changes may declare their process interface> -->
 **Issue:** [stacklok/mecatl#NN](https://github.com/stacklok/mecatl/issues/NN).
-**ADR:** [ADR-NNNN](../adr/NNNN-slug.md) — <what it pins>.
-**Accumulator branch:** `acc/<plan-slug>` (off `main`).
+**Plan PR:** <added when opened>
+**Approved baseline:** <merged plan commit; absent until approved>
 
-<!-- Lead frame: 1–2 unheaded paragraphs. "The smallest set of work that
-proves/lets <goal>." What it derisks; what is deferred. -->
-The smallest set of work that <proves | lets> <goal>.
+<One or two paragraphs defining the smallest demonstrable behavior.>
 
-The doc is organized scenario-first because acceptance is about what the
-running harness can demonstrate, not which packages exist on disk.
+## Interface contract
 
-## Why these scope cuts                                        <!-- [common] -->
-- [ADR-NNNN](../adr/NNNN-slug.md) — <one-line decision>
+Public or material choices must be exact; do not defer them to implementation. Use
+`None — <rationale>` only when the category is genuinely unaffected.
 
-## In scope — <N> scenarios, in implementation order           <!-- [constant] -->
+- **gRPC / protobuf:** <exact messages, fields, methods, numbers, compatibility; or None + rationale>
+- **Exported Go APIs / interfaces:** <exact packages, symbols, signatures; or None + rationale>
+- **Tool schemas:** <exact tool names and input/output schema changes; or None + rationale>
+- **CLI / config:** <exact flags, keys, defaults, precedence; or None + rationale>
+- **Events / persistence:** <exact event/persisted fields and migration; or None + rationale>
+- **Security / authority:** <exact trust, permission, secret, ownership boundaries; or None + rationale>
+- **Compatibility / migration:** <compatibility classification and rollout/migration; or None + rationale>
 
-Scenarios are listed in implementation order. Each is independently demoable;
-later scenarios assume earlier ones but don't change their acceptance
-criteria. Within each scenario, ACs progress trivial happy path → richer
-happy path → edges → cross-cutting.
+## In scope — <N> scenarios, in implementation order
 
-### Scenario 1 — <title>
+### Scenario 1 — <observable outcome>
 
-<Narrative: what the running harness / a test client does, which layers and
-ports act, which invariants hold — inline-cited to an ADR / architecture
-section / AGENTS.md invariant. ≥1 citation in this block.>
-
-**Work:**                                                      <!-- [common] -->
-<!-- Present-tense, by layer. -->
-- engine domain (`session` / `governance` / `tool` / `prompt`): <aggregate /
-  value-object / invariant work>
-- engine app (`engine/agent`): <loop / dispatch / orchestration work>
-- ports (`engine/port`): <new or widened port interfaces>
-- adapters (`engine/adapter/*` / `internal/adapter/*`): <driven adapter work>
-- composition (`internal/app` / `cmd/*`): <wiring, flags, posture>
-
-**Acceptance:**                                                <!-- [constant] -->
-- AC1.1: <trivial happy path — a present-tense assertion of observable
-  behaviour, NOT "implement X". Cite an ADR / invariant.>
-  - verify: `TestInvariant_<id>`
-- AC1.2: <richer happy path.>
-  - verify: `TestADR_NNNN_<Name>`
-- AC1.3: <edge / negative case.>
-  - verify: inspection — <why review, not a unit test, proves it>
-- AC1.4: `Test<Plan>_Scenario1_<Name>` passes.  <!-- scenario/named-test AC -->
-  - verify: `Test<Plan>_Scenario1_<Name>`
-
----
-
-### Scenario 2 — <title>
-
-<Narrative, ≥1 citation.>
+<Narrative with a link to an ADR, architecture, implementation notes, or AGENTS.md.>
 
 **Acceptance:**
-- AC2.1: <…>
-  - verify: `Test<Identifier>_<Name>`
-- AC2.2: <…>
-  - verify: none — <reason it is deliberately unverified: reserved / unreachable>
+- AC1.1: <present-tense observable behavior>.
+  - verify: `Test<Plan>_Scenario1_<Name>`
+- AC1.2: <negative or edge behavior>.
+  - verify: inspection — <why inspection is the right proof>
 
-## Out of scope                                                <!-- [constant] -->
-| Item | Defer-to | ADR / decision |
+## Out of scope
+
+| Item | Defer-to | Decision |
 |---|---|---|
-| <deferred item> | <phase / later> | [ADR-NNNN](../adr/NNNN-slug.md) |
+| <item> | <phase/later> | <ADR or rationale> |
 
-## Cross-cutting deliverables                                  <!-- [optional] -->
-<!-- Composition wiring, conformance-suite extensions, docs/AGENTS.md
-updates — work not owned by a single scenario. -->
+## Definition of done
 
-## Sequencing recommendation                                   <!-- [common] -->
-<!-- Prose: critical orderings between scenarios. Coarse only. -->
+1. Applicable `task lint`, `task test`, `task docs`, and `task api:check` gates pass.
+2. `task ac-trace-strict` resolves every named proof when the plan becomes `landed`.
+3. `go run ./cmd/mecademo` remains green for runtime changes.
+4. The implementation PR links the Plan / Interface PR and approved commit and reports
+   interface conformance.
+5. `/panel-review` reports no ship blockers or unwaived reviewer failures.
 
-## Named tests landing in this plan                            <!-- [optional] -->
-<!-- Identifiers embed the rule: TestADR_NNNN_*, TestInvariant_<id>,
-Test<Plan>_Scenario<N>_*. Listed in landing order. -->
+## Deferred decisions and known risks
 
-## Definition of done                                          <!-- [constant] -->
-1. `task lint` and `task test` pass (both modules, `-race`).
-2. `task docs` — configuration reference regenerated and the matlatl strict link gate green.
-3. `task api:check` passes (or `task api:update` was run and the
-   `engine/CHANGELOG.md` note is present) if the plan touched the engine's
-   exported surface.
-4. `task ac-trace-strict` — every AC's `verify:` proof resolves (this plan is
-   `landed`).
-5. The named tests (`TestADR_NNNN_*`, `TestInvariant_<id>`) are green and
-   grep-locatable by their identifiers.
-6. `go run ./cmd/mecademo` still prints a full offline session.
-7. <plan-specific gates>.
-
-## Deferred decisions and known risks                          <!-- [common] -->
-- **<decision/risk>.** <one line; which phase resolves it>.
-
-## Exit criteria
-
-When every point under *Definition of done* holds on the accumulator, this
-plan is satisfied.
+- <Only non-material implementation detail may remain. Material contract decisions keep
+  the plan in draft.>
 ```
 
----
+Lifecycle: `draft → proposed → approved → in-progress → landed`. Split plans are marked
+`proposed` for the plan PR and `approved` before it merges. `approved` is not shipped. For
+Combined, `/to-acceptance-plan` prepares this plan on the eventual implementation branch
+without opening a plan PR; explicit `/plan-orchestrate` invocation adds the one-task
+implementation and opens the sole Combined PR. After every gate passes, the completing
+candidate puts `landed` in its PR diff; the target branch keeps its prior state until merge.
 
-## Reminders while drafting
+Citation paths are relative to `docs/acceptance/`: ADR
+`[ADR 0036](../adr/0036-engine-module.md)`, architecture
+`[architecture](../architecture.md)`, and `[AGENTS.md](../../AGENTS.md)`.
 
-- **Use the repo's vocabulary verbatim** (`AGENTS.md`,
-  `docs/architecture.md`). Don't invent synonyms for the layers, the ports,
-  or the invariants.
-- **ACs assert behaviour, not tasks.** "A resumed run re-derives its window
-  from the live catalog" — not "implement the window resolver".
-- **Every scenario earns ≥1 citation.** No ADR/invariant to point at is a
-  smell.
-- **Respect the layering rule.** Work items that would import an adapter
-  from the domain are a mis-design, not a task.
-- **Run the check** before declaring done:
-  `bash .claude/skills/to-acceptance-plan/scripts/check-acceptance-plan.sh docs/acceptance/<plan>.md`.
+Run:
+
+```sh
+bash .claude/skills/to-acceptance-plan/scripts/check-acceptance-plan.sh docs/acceptance/<slug>.md
+```
 
 [← back to the skill](../SKILL.md)

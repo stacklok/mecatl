@@ -8,9 +8,10 @@ scenario and one orchestration task; plans must not manufacture complexity. Each
 document names its scope and cites the ADRs / [architecture](../architecture.md) /
 [AGENTS.md](../../AGENTS.md) invariants that pin its decisions.
 
-Plans are authored by the `/to-acceptance-plan` skill and driven to completion
-by `/plan-orchestrate`. New plans must be linked from this README; the matlatl
-gate (`task docs`) fails on an unreachable doc.
+Plans are authored by `/to-acceptance-plan`, human-reviewed as behavioral and
+interface contracts, and implemented by `/plan-orchestrate` only after the applicable
+checkpoint. New plans must be linked from this README; the matlatl gate (`task docs`)
+fails on an unreachable doc.
 
 ## The verification contract
 
@@ -40,21 +41,64 @@ Named-test conventions ac-trace recognises:
 - Descriptive test names are accepted in a `verify:` line, but prefer the
   pinned forms when the AC defends a rule.
 
+## Interface contract
+
+Every new plan has a `## Interface contract` section with all seven exact canonical
+category labels: gRPC/protobuf, exported Go APIs/interfaces, tool schemas, CLI/config,
+events/persistence, security/authority, and compatibility/migration. Every category needs
+non-placeholder content. `None` is valid only as `None — <rationale>` (hyphen, en dash, or
+em dash); bare `None`, `TBD`, and `<...>` placeholders fail the bundled checker. The checker
+also requires `**Delivery:** Split|Combined` and an allowed `**Status:** draft|proposed|approved|in-progress|landed`
+prefix. Public or material decisions cannot be deferred to implementation; unresolved
+material decisions keep the plan in `draft`.
+
+Substantive interface-bearing plans use a Plan / Interface PR before implementation.
+Combined is limited to a compact one-task plan with exactly one `### Scenario`. It declares
+exact `**Expected tasks:** 1` metadata and a non-placeholder `**Combined rationale:**`
+explaining why separate plan review adds no value. **gRPC / protobuf**, **Exported Go APIs /
+interfaces**, **Tool schemas**, **CLI / config**, **Events / persistence**, and **Security /
+authority** each begin `None — <rationale>`.
+**Compatibility / migration** may describe workflow migration, and splitting must add no
+review value. A workflow-only meta-change may treat process documents and skills as the
+interface reviewed in the same PR. Combined preparation opens no separate plan PR.
+
+Material contract drift stops orchestration with `blocked-contract-drift`; the orchestrator
+cannot create, commit, push, or open an amendment. A separate, explicitly authorized
+`/to-acceptance-plan` amendment invocation uses the Split Plan / Interface PR flow and must
+pass checker/docs verification, human review and merge, and return to `approved`. The
+orchestrator records the amendment PR and full merged commit before resuming.
+
 ## Status lifecycle
 
-A plan's `**Status:**` line moves `draft → in-progress → landed`. Only a
-`landed` plan is gated by `ac-trace --strict`; drafts are reported but never
-fail the build. `/plan-orchestrate` flips the plan to `landed` on the
-accumulator once the aggregate gate passes, so the strict gate bites exactly
-when the code that satisfies the plan has landed.
+A plan moves `draft → proposed → approved → in-progress → landed`:
+
+- `draft`: material behavior or interface decisions may remain open.
+- `proposed`: validated and ready for human plan/interface review.
+- `approved`: the human-reviewed plan PR was merged; the contract is approved, not shipped.
+- `in-progress`: autonomous implementation is underway against the recorded baseline.
+- `landed`: after all verification passes, the implementation/Combined candidate carries
+  the proposed transition in its PR diff; it becomes authoritative only when that PR
+  merges. Until then the target branch remains `approved` or `in-progress`.
+
+Only an authoritatively `landed` plan is gated by `ac-trace --strict`; earlier target-branch
+states do not claim the behavior shipped. `/plan-orchestrate` records the approved plan PR
+and commit baseline for split work and places the `landed` edit directly in the completing
+PR after verification. There is no cleanup or status-only PR.
 
 ## Plans
 
+- [Human-reviewed development contracts](human-reviewed-development-contracts.md) —
+  plan/interface review before autonomous implementation, with exact interface
+  declarations, run-local orchestration state, and a final human code-review gate.
+  Status: landed in this Combined candidate; authoritative on merge.
 - [Mecatui live-feed reconnect](mecatui-live-reconnect.md) — regression closure for bearer-backed first-Recv authentication rejection, existing `/connect` recovery, cross-loop reconnect continuity/backoff, and real-event recovery without weakening generation, cancellation, or catch-up invariants. Status: landed.
 - [Mecatui card layout](mecatui-card-layout.md) — width-bounded card rendering
   that wraps raw dynamic rows before styling, preventing Lipgloss alignment
   padding from becoming vertical whitespace while retaining intentional
   Markdown and input-rail exceptions. Status: draft.
+- [Persistent read-before-write ledgers](persistent-read-before-write-ledgers.md) —
+  storage-independent, session-scoped read evidence with an in-memory default,
+  a durable Redis contract proof, and fail-closed file-tool behavior. Status: draft.
 - [Local mecak8s Kind fixture](mecak8s-kind-fixture.md) — cleanly separates an
   operator-run mock/real-provider mecak8s fixture, optional Keycloak caller
   identity, and the deferred ToolHive/vMCP delegation extension. Status: draft.

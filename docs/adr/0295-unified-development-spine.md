@@ -4,6 +4,7 @@
 - Date: 2026-09-03
 - Scope: agent-driven development workflow, worker isolation, and final review gates
 - Supersedes: ADR 0072
+- Superseded by: ADR 0302
 
 ## Context
 

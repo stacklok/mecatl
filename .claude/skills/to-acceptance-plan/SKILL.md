@@ -1,130 +1,108 @@
 ---
 name: to-acceptance-plan
+disable-model-invocation: true
 description: >-
-  Turn settled design for substantive implementation, a bug fix, picked-up issue,
-  or feature work into a scenario-first acceptance plan at
-  docs/acceptance/<plan>.md. Numbered ACs each carry a non-empty verify: proof and
-  cite an ADR, architecture section, or invariant. Runs advisory adversarial and
-  specialist checks, commits the plan and generated docs on a clean accumulator,
-  then hands it to /plan-orchestrate. Use for implement/fix/pick up issue/feature
-  work once design is settled. NOT for task decomposition or implementation.
+  Turn settled substantive work into a scenario-first acceptance plan with exact
+  interfaces, validate and review it, then hand off: Split opens a human Plan / Interface
+  PR; Combined prepares the plan on the eventual implementation branch without a separate
+  PR. Stops before implementation or orchestration. NOT for task decomposition.
 ---
 
 # to-acceptance-plan
 
-The **design** step: synthesise a settled design into `docs/acceptance/<plan>.md`
-— the substantive issue or capability's design document **and** its verification contract — then
-hand it to `/plan-orchestrate`.
+Create the durable behavioral and interface contract at
+`docs/acceptance/<slug>.md`, then stop at the delivery-specific handoff: a Split plan PR or
+a prepared Combined branch.
 
-**Do NOT interview the user** — the design discussion already happened.
-Synthesise what is known into the plan shape.
+## Contract
 
-**No separate PR.** The plan is committed directly to the accumulator, never to
-`main`, then handed to `/plan-orchestrate`. Orchestration carries it from `draft`
-to `landed` and opens **one** PR (plan + code) for the human to merge. This is the
-single human gate.
+Claude Code's `disable-model-invocation: true` prevents model-initiated invocation in that
+host. It does not protect mecatl or any other harness. Another harness must require an
+explicit user request before creating a worktree or branch, committing, pushing, or opening
+a PR. Without that request, draft and report only; do not perform those side effects.
 
-## Inputs
+- Use the eventual delivery branch in exactly one validated writable worktree. Split uses a
+  dedicated `plan/<slug>` branch; Combined uses the eventual combined implementation branch.
+  Never write in the primary checkout when operating from an isolated worktree.
+- Start at `draft`; unresolved material behavior or interface decisions remain draft.
+- Before handoff, set `proposed` and record whether the path is `Split` or `Combined`.
+- Default to `Split`. `Combined` is a narrow exception for a compact one-task, exactly
+  one-`### Scenario` change only when it declares exact `**Expected tasks:** 1` metadata,
+  a non-placeholder `**Combined rationale:**` explaining why separate plan review adds no
+  value, and gRPC/protobuf, exported Go APIs/interfaces, tool schemas, CLI/config,
+  events/persistence, and security/authority each begin `None — <rationale>`;
+  compatibility/migration may describe workflow migration. A workflow-only meta-change may
+  instead treat repository process documents and skills as the interface reviewed in that
+  same PR.
+- Split opens a dedicated Plan / Interface PR and stops. Combined opens no plan PR:
+  `/plan-orchestrate` must be explicitly invoked to add implementation on the same branch
+  and open the sole Combined PR.
+- Never implement code, merge, or use a closing issue keyword.
 
-- the **design discussion** — decisions, scope cuts, deferrals;
-- **`docs/architecture.md`** — the layers, the ports, the layering rule;
-- **`AGENTS.md`** — the canonical agent contract: the invariants under
-  "Things That Will Bite You" are the equivalent of a domain model's
-  invariant list. Respect them; cite them;
-- the **ADRs** under `docs/adr/` — frozen decision records. Cite them,
-  never contradict them silently;
-- **`docs/design/IMPLEMENTATION-NOTES.md`** — the dense per-subsystem
-  reference, when the plan touches an existing subsystem.
+## Authoring
 
-## Process
+1. Read `AGENTS.md`, `docs/architecture.md`, `docs/acceptance/README.md`, relevant ADRs,
+   and `docs/design/IMPLEMENTATION-NOTES.md` when applicable.
+2. Draft from
+   [`references/ACCEPTANCE-PLAN-TEMPLATE.md`](references/ACCEPTANCE-PLAN-TEMPLATE.md).
+   Keep focused work compact. Every scenario has numbered `AC<n>.<m>:` assertions,
+   non-empty `verify:` lines, and at least one repository citation.
+3. Complete `## Interface contract` using all seven exact canonical labels from the
+   template: gRPC/protobuf, exported Go APIs, tool schemas, CLI/config,
+   events/persistence, security/authority, and compatibility/migration. Every category
+   needs non-placeholder content; use `None — <rationale>` only when genuinely absent.
+   Public or material decisions may not be deferred to implementation.
+4. Add a new ADR for a costly-to-reverse decision; update living docs where behavior will
+   change. Add the plan to `docs/acceptance/README.md`.
+5. Run:
 
-1. **Re-read the anchors.** `docs/architecture.md`, `AGENTS.md`, the ADRs
-   the design touched, and `docs/acceptance/README.md` for the house shape
-   and the `verify:` contract.
-
-2. **Pick the capability + plan slug.** The slug names the file
-   (`docs/acceptance/<plan>.md`) and the accumulator branch
-   (`acc/<plan>`).
-
-3. **Draft from** [`ACCEPTANCE-PLAN-TEMPLATE.md`](references/ACCEPTANCE-PLAN-TEMPLATE.md).
-   Load-bearing rules:
-   - **Scenario-first** — organise by what the running harness demonstrates
-     (a `mecademo` flow, a gRPC call sequence, an engine behaviour), in
-     implementation order.
-   - **Numbered acceptance criteria** (`AC<scenario>.<n>:`) — present-tense
-     assertions of observable behaviour, not "implement X". These ARE the
-     contract: they flow into orchestrate's per-task briefs and are graded by
-     `/panel-review`.
-   - **A `verify:` sub-line on every AC** — Go test names
-     (`TestADR_NNNN_*`, `TestInvariant_<id>`, `Test<Plan>_Scenario<N>_*`,
-     or a descriptive unit/e2e test name), or one non-test method
-     (`none` / `inspection` / `demonstration`) with a reason. Set
-     `**Status:** draft`.
-   - **≥1 citation per scenario** — a link to `../adr/**`,
-     `../architecture.md`, `../design/IMPLEMENTATION-NOTES.md`, or
-     `../../AGENTS.md`.
-   - In/out of scope, deferred decisions, **Definition of done** anchored on
-     the Taskfile gates (incl. `task ac-trace-strict`).
-   - A focused issue is allowed to stay compact: one scenario, a small AC set,
-     and one eventual orchestration task. Do not add scenarios or split tasks
-     solely to make the artifact look capability-sized.
-   - **New decisions land as new ADRs.** If the plan makes a
-     costly-to-reverse decision not yet captured, add the ADR stub
-     (copy `docs/adr/template.md`) in the same change — ADRs are frozen,
-     never edited in place. A new documented invariant lands with its
-     pinning test named in the relevant AC's `verify:`.
-
-4. **Offer stub ADRs sparingly.** Capture only *remaining* costly-to-reverse
-   decisions the design left uncaptured. Don't duplicate decisions already
-   in an ADR or `AGENTS.md`.
-
-5. **Run the bundled check** and fix until it passes:
-   ```bash
-   bash .claude/skills/to-acceptance-plan/scripts/check-acceptance-plan.sh docs/acceptance/<plan>.md
+   ```sh
+   bash .claude/skills/to-acceptance-plan/scripts/check-acceptance-plan.sh docs/acceptance/<slug>.md
+   bash .claude/skills/to-acceptance-plan/scripts/check-acceptance-plan-test.sh
+   task docs
    ```
-   Add the plan to `docs/acceptance/README.md` (the matlatl gate fails on an
-   unreachable doc), then run `task docs` (configuration-reference regeneration
-   + link gate).
 
-6. **Devils-advocate pass (advisory, non-blocking).** Dispatch the
-   `devils-advocate` subagent against the draft plus the ADRs /
-   architecture / AGENTS.md invariants it cites. It returns an advisory gap
-   report (missing scenarios, task-shaped or untestable ACs, contradictions
-   with an ADR or invariant, uncited scenarios, missing `verify:` lines).
-   - **Fold in the clear ones automatically** — a missing `verify:` line, an
-     obvious edge scenario, a task-shaped AC reworded to behaviour, a missing
-     citation. Re-run the check if you changed ACs/citations.
-   - **Surface only material open decisions** — a genuine scope question or a
-     contradiction that needs a human call — as a short, batched list. Do not
-     run a one-gap-at-a-time human Q&A loop; auto-accept low-severity findings
-     and record them under *Deferred decisions*.
+   The regression fixture script is also wired through `task docs:check` and therefore
+   `task docs`; the explicit command makes its authoring-time coverage visible.
 
-7. **Light specialist spot-check (advisory, non-blocking).** For the one or
-   two domains the plan most touches (e.g. `secure-code-reviewer` for a
-   permission/trust boundary, `software-architect` for a new port/layer),
-   run a single scoped pass asking only "are these ACs correct and complete
-   for your domain?" — not a re-design. Fold clear corrections into the ACs;
-   batch any real open question with Step 6's. Skip for a trivial plan.
+6. Run one advisory `devils-advocate` pass and at most two relevant specialist spot-checks.
+   Fold clear corrections in; batch material open decisions for the human. Re-run checks.
 
-8. **Commit and hand off.** Re-run the bundled check and `task docs` after the
-   reviews. Create and check out `acc/<plan>` from the current `main` commit. If
-   the current checkout is the repository's primary/current checkout, classify it
-   as `primary-current`. If the harness supplied a writable isolated worktree,
-   validate its repository root and classify it as `harness-owned-native`. Only
-   when neither checkout is usable may this skill explicitly create a disposable
-   integration worktree under `.scratch/`; classify that as
-   `orchestrator-created-disposable`. Never create a redundant nested worktree. Stage only
-   the plan, its README/index or new ADRs, and generated documentation paths
-   explicitly; commit them on `acc/<plan>`, never on `main`. Require
-   `git status --short` to be empty. This checkout is the integration worktree
-   transferred to `/plan-orchestrate`. Record and report the checkout path **and
-   ownership classification** plus the plan path, then invoke (or tell the user to
-   invoke) `/plan-orchestrate <plan>`. **Do not decompose into tasks here**, and
-   **do not open a PR** — orchestrate owns both.
+## Amendment mode
 
-## What this skill does NOT do
+Use amendment mode only after a `blocked-contract-drift` handoff and a separate, explicit
+user authorization to invoke `/to-acceptance-plan` for that amendment. The orchestrator
+cannot authorize or perform it. Amend the durable plan and related decision/task docs using
+the **Split** Plan / Interface PR flow regardless of the original delivery mode: run the
+checker and docs gates, open the amendment PR, then stop for human review. A human must mark
+the plan `approved` and merge it. Report the amendment PR and full merged commit so
+`/plan-orchestrate` can record both in `run.md`, establish the required ancestry, regenerate
+decomposition and briefs, and only then resume dispatch. The normal side-effect authority
+rules above still apply; amendment mode does not imply permission to branch, commit, push,
+or open a PR.
 
-- **No task decomposition** — that is `/plan-orchestrate` Step 0.
-- **No PR** — the plan lands via orchestrate's single PR.
-- **No interview** — synthesise, don't ask; surface only material open
-  decisions, batched.
+## Worktree ownership record
+
+Before any permitted branch/worktree side effect, create
+`.scratch/orchestrate/<slug>/run.md` and record the integration/plan worktree path, owner
+classification (`harness-owned-native`, `orchestrator-created-disposable`, or
+`primary-current` where applicable), branch, creation baseline, and cleanup eligibility.
+On resume, verify the record against `git worktree list`. Only an explicitly
+`orchestrator-created-disposable` worktree that completed successfully may be eligible for
+removal; never infer ownership from its path.
+
+## Delivery handoff
+
+For **Split**, explicitly stage only the plan/interface docs and generated docs, commit on
+`plan/<slug>`, push that branch, and open a PR with stage **Plan / Interface**. Use
+`Relates to #N` or `Tracking: #N` as ordinary text. GitHub has no `Related-to` keyword: do
+not use closing keywords or sidebar-link this PR as the issue-closing PR. Report the PR
+URL, branch, worktree, checker result, and docs result, then **STOP**. Human review marks
+the plan `approved` before merge; `approved` means contract-reviewed, not shipped.
+
+For **Combined**, prepare the proposed plan on the eventual combined implementation branch
+and **STOP without pushing or opening a separate plan PR**. If the explicit user request
+authorizes a local commit, commit the plan there; otherwise leave it as the recorded handoff
+and let the explicitly invoked orchestrator make the first combined candidate commit before
+dispatch. The user must explicitly invoke `/plan-orchestrate` to add the one-task
+implementation, verify the combined candidate, and open the sole **Combined** PR.

@@ -1,94 +1,101 @@
 ## Summary
 
-See the [contribution guide](https://github.com/stacklok/mecatl/blob/main/CONTRIBUTING.md) for contribution and verification expectations.
+<!-- REQUIRED: why this is needed and what changed. -->
+
+-
+
+## Development stage
+
+<!-- REQUIRED. Check exactly one. -->
+
+- [ ] **Plan / Interface** — behavioral and exact-interface contract; no implementation
+- [ ] **Implementation** — based on an approved, merged Plan / Interface PR
+- [ ] **Combined** — compact one-task exception; no separate plan PR, and the in-PR plan
+      declares `**Expected tasks:** 1`, a non-placeholder `**Combined rationale:**`, and no
+      runtime/public/operator/persistence/trust-boundary interface change (`None — rationale`;
+      workflow-only meta-changes may review process docs/skills here)
+- [ ] **Trivial / mechanical** — acceptance-plan spine exempt
+
+### Contract linkage
 
 <!--
-REQUIRED. Explain:
-1. WHY this change is needed (the problem or motivation)
-2. WHAT changed (concise bullet points)
+Plan / Interface: link the acceptance plan and write the non-closing issue reference.
+Implementation: link the Plan / Interface PR and full approved commit.
+Combined: link the in-PR plan, confirm there was no separate plan PR, and quote its narrow
+one-task eligibility rationale.
+Trivial/mechanical: write N/A with rationale.
+-->
 
-The diff shows the code — your summary must give reviewers the context needed
-to understand the change without reading the diff first.
+- Acceptance plan:
+- Plan / Interface PR:
+- Approved commit baseline:
+- Combined/exemption rationale:
+
+### Interface conformance
+
+<!--
+Implementation: state "Matches approved contract" or list deviations and link the
+human-approved amendment PR + full merged commit. Material drift must not be approved in
+this PR; orchestration cannot author the amendment, which requires a separately authorized
+Split Plan / Interface PR.
+Plan / Interface and Combined: summarize the exact interface contract under review.
 -->
 
 -
 
+## Issue relationship
+
 <!--
-Link related issues. Use "Closes" or "Fixes" to auto-close on merge.
-Remove this line if there is no related issue.
+GitHub has no native "Related-to" keyword.
+Plan / Interface PRs: use ordinary non-closing text: "Relates to #N" or "Tracking: #N".
+Implementation/Combined PRs: use "Closes #N" or "Fixes #N" ONLY when this PR fully
+completes the issue; otherwise use a non-closing reference. Never put closing keywords
+in commit messages, and never make the Plan / Interface PR the sidebar closing PR.
 -->
 
-Fixes #
+Relates to #
 
 ## Type of change
 
-<!-- REQUIRED. Check exactly one. -->
+<!-- REQUIRED. Check all that apply. -->
 
+- [ ] Behavioral/interface plan
 - [ ] Bug fix
 - [ ] New feature
 - [ ] Refactoring (no behavior change)
 - [ ] Dependency update
-- [ ] Documentation
+- [ ] Documentation/process
 - [ ] Other (describe):
 
 ## Test plan
 
-<!--
-Baseline verification is REQUIRED for every repository change. Check all three
-baseline items after running them. The remaining checks are conditional; check
-each one that applies and that you ran. Describe any manual testing below.
--->
+### Baseline checks
 
-### Required baseline
+<!-- Check applicable commands; explain intentionally skipped runtime gates. -->
 
+- [ ] Acceptance-plan checker
 - [ ] Linting (`task lint`)
 - [ ] Offline test suite (`task test`)
 - [ ] Offline demo (`go run ./cmd/mecademo`)
-
-### Conditional checks
-
-- [ ] Markdown changed: documentation generation and checks (`task docs`)
-- [ ] User docs or user-facing behavior changed: user-docs site build (`task site:build`)
-- [ ] Guarded engine API surface affected: compatibility check (`task api:check`)
-- [ ] Intentional guarded engine API change: baselines regenerated (`task api:update`) and `engine/CHANGELOG.md` updated
-- [ ] Manual testing (describe below)
+- [ ] Markdown changed: docs generation/link checks (`task docs`)
+- [ ] User docs/user-facing behavior changed: site build (`task site:build`)
+- [ ] Guarded engine API affected: compatibility check (`task api:check`)
+- [ ] Intentional engine API change: `task api:update` + `engine/CHANGELOG.md`
+- [ ] Landed plan: strict acceptance trace (`task ac-trace-strict`)
+- [ ] Final implementation review: `/panel-review`
 
 ## Changes
 
-<!--
-Optional — include for PRs touching more than a few files to help reviewers
-navigate the diff. Remove this entire section for small PRs.
--->
+<!-- Optional navigation table for larger diffs. -->
 
 | File | Change |
-|------|--------|
-|      |        |
+|---|---|
+| | |
 
-## Does this introduce a user-facing change?
+## User-facing change
 
-<!--
-If yes, describe the change from the user's perspective. This helps with release notes.
-If no, write "No". Remove this section entirely if not applicable.
--->
-
-## Implementation plan
-
-<!--
-Optional — include when this PR was planned with an AI assistant or has an
-approved implementation plan. Paste it inside the details block. Remove this
-section entirely when it is not useful.
--->
-
-<details>
-<summary>Approved implementation plan</summary>
-
-<!-- Paste the plan here -->
-
-</details>
+<!-- Describe from the user's perspective, or write "None". -->
 
 ## Special notes for reviewers
 
-<!--
-Optional — call out non-obvious logic, known limitations, areas needing extra
-scrutiny, or follow-up work. Remove this section if not needed.
--->
+<!-- Call out risks, limitations, or areas needing scrutiny. -->

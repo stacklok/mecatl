@@ -841,8 +841,9 @@ tasks:
       - go run ./internal/configgen/cmd/configref --skeleton internal/configgen/settings.skeleton.yaml --reference docs/configuration-reference.md
 
   docs:check:
-    desc: Gate ADR-number uniqueness and stale moved paths, then doc link health with matlatl (strict — broken links/anchors, orphans, unreachable)
+    desc: Gate acceptance-plan checker fixtures, ADR-number uniqueness and stale moved paths, then doc link health with matlatl (strict — broken links/anchors, orphans, unreachable)
     cmds:
+      - bash .claude/skills/to-acceptance-plan/scripts/check-acceptance-plan-test.sh
       - go test ./docs/lint -run '^TestRealADRNumberUniqueness$'
       - go test ./docs/lint -run '^TestNoStaleMovedADRSlugs$'
       - go run github.com/stacklok/matlatl/cmd/matlatl@v0.0.8 check . --strict
