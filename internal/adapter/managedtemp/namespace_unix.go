@@ -1,4 +1,4 @@
-//go:build unix
+//go:build linux || darwin
 
 // Package managedtemp owns the private Unix filesystem namespace used by managed
 // command temporary storage. It intentionally exposes no deletion primitives.

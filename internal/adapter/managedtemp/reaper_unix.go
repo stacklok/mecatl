@@ -1,4 +1,4 @@
-//go:build unix
+//go:build linux || darwin
 
 package managedtemp
 
@@ -245,12 +245,19 @@ func validReapManifest(manifest allocationManifest, kind, id string) bool {
 	}
 	switch manifest.State {
 	case "active":
-		return !manifest.StartedAt.IsZero() && !manifest.StartedAt.Before(manifest.CreatedAt) && manifest.TerminalAt.IsZero() && manifest.OwnerPID > 0 && manifest.ProcessStart != "" && activeProcessIdentityValid(manifest)
+		if manifest.StartedAt.IsZero() && manifest.OwnerPID == 0 && manifest.ProcessStart == "" && manifest.ProcessGroup == 0 {
+			return manifest.TerminalAt.IsZero()
+		}
+		return manifest.TerminalAt.IsZero() && validStartedIdentity(manifest)
 	case "terminal":
-		return !manifest.TerminalAt.IsZero() && !manifest.TerminalAt.Before(manifest.CreatedAt) && (manifest.StartedAt.IsZero() || !manifest.TerminalAt.Before(manifest.StartedAt))
+		return !manifest.TerminalAt.IsZero() && validStartedIdentity(manifest)
 	default:
 		return false
 	}
+}
+
+func validStartedIdentity(manifest allocationManifest) bool {
+	return !manifest.StartedAt.IsZero() && manifest.OwnerPID > 0 && manifest.ProcessStart != "" && manifest.ProcessGroup > 0 && activeProcessIdentityValid(manifest)
 }
 
 func activeProcessIdentityValid(manifest allocationManifest) bool {

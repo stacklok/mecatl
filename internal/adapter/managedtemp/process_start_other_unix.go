@@ -1,4 +1,4 @@
-//go:build unix && !linux && !darwin
+//go:build !linux && !darwin
 
 package managedtemp
 

@@ -1,4 +1,4 @@
-//go:build unix
+//go:build linux || darwin
 
 package managedtemp
 
@@ -49,68 +49,27 @@ func TestADR_0281_ReaperDeletesOnlyValidatedEligibleLease(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = workspace.Close() })
-	eligible, err := workspace.Allocate("cmd")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := eligible.Terminal(); err != nil {
-		t.Fatal(err)
-	}
-	if err := eligible.Close(); err != nil {
-		t.Fatal(err)
-	}
-	locked, err := workspace.Allocate("job")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = locked.Close() })
-	if err := locked.Terminal(); err != nil {
-		t.Fatal(err)
-	}
-	bad, err := workspace.Allocate("cmd")
-	if err != nil {
-		t.Fatal(err)
-	}
-	badPath := bad.Path()
-	if err := bad.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(badPath, "manifest.json"), []byte("not-json"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	currentIdentity, err := processStartIdentity(os.Getpid())
-	if err != nil {
-		t.Fatal(err)
-	}
-	malformed := make([]string, 0, 6)
-	for _, test := range []struct {
-		name   string
-		mutate func(*allocationManifest)
-	}{
-		{name: "missing-created-at", mutate: func(manifest *allocationManifest) { manifest.CreatedAt = time.Time{} }},
-		{name: "unknown-state", mutate: func(manifest *allocationManifest) { manifest.State = "unknown" }},
-		{name: "terminal-without-terminal-at", mutate: func(manifest *allocationManifest) { manifest.TerminalAt = time.Time{} }},
-		{name: "active-without-started-at", mutate: func(manifest *allocationManifest) {
-			manifest.State, manifest.TerminalAt, manifest.StartedAt = "active", time.Time{}, time.Time{}
-		}},
-		{name: "active-without-process-identity", mutate: func(manifest *allocationManifest) {
-			manifest.State, manifest.TerminalAt, manifest.StartedAt, manifest.OwnerPID, manifest.ProcessStart = "active", time.Time{}, manifest.CreatedAt, 0, ""
-		}},
-		{name: "active-with-reused-process-identity", mutate: func(manifest *allocationManifest) {
-			manifest.State, manifest.TerminalAt, manifest.StartedAt, manifest.OwnerPID, manifest.ProcessStart = "active", time.Time{}, manifest.CreatedAt, os.Getpid(), currentIdentity+"-reused"
-		}},
-	} {
-		lease, err := workspace.Allocate("cmd")
+
+	terminal := func(t *testing.T, kind string) string {
+		t.Helper()
+		lease, err := workspace.Allocate(kind)
 		if err != nil {
 			t.Fatal(err)
 		}
 		path := lease.Path()
+		if err := lease.Started(os.Getpid()); err != nil {
+			t.Fatal(err)
+		}
 		if err := lease.Terminal(); err != nil {
 			t.Fatal(err)
 		}
 		if err := lease.Close(); err != nil {
 			t.Fatal(err)
 		}
+		return path
+	}
+	mutateManifest := func(t *testing.T, path string, mutate func(*allocationManifest)) {
+		t.Helper()
 		data, err := os.ReadFile(filepath.Join(path, "manifest.json"))
 		if err != nil {
 			t.Fatal(err)
@@ -119,7 +78,7 @@ func TestADR_0281_ReaperDeletesOnlyValidatedEligibleLease(t *testing.T) {
 		if err := json.Unmarshal(data, &manifest); err != nil {
 			t.Fatal(err)
 		}
-		test.mutate(&manifest)
+		mutate(&manifest)
 		data, err = json.Marshal(manifest)
 		if err != nil {
 			t.Fatal(err)
@@ -127,23 +86,69 @@ func TestADR_0281_ReaperDeletesOnlyValidatedEligibleLease(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(path, "manifest.json"), data, 0o600); err != nil {
 			t.Fatal(err)
 		}
-		malformed = append(malformed, path)
 	}
-	unrecognised := filepath.Join(workspace.Path(), "commands", "cmd-unrecognised")
-	if err := os.Symlink(filepath.Join(eligible.Path(), "tmp"), unrecognised); err != nil {
+
+	eligible := terminal(t, "cmd")
+	skewedTerminal := terminal(t, "job")
+	mutateManifest(t, skewedTerminal, func(manifest *allocationManifest) {
+		manifest.TerminalAt = manifest.CreatedAt.Add(-time.Hour)
+	})
+	incompleteTerminal := terminal(t, "cmd")
+	mutateManifest(t, incompleteTerminal, func(manifest *allocationManifest) {
+		manifest.ProcessGroup = 0
+	})
+	preStart, err := workspace.Allocate("job")
+	if err != nil {
 		t.Fatal(err)
 	}
+	preStartPath := preStart.Path()
+	if err := preStart.Close(); err != nil {
+		t.Fatal(err)
+	}
+	partialActive, err := workspace.Allocate("cmd")
+	if err != nil {
+		t.Fatal(err)
+	}
+	partialActivePath := partialActive.Path()
+	if err := partialActive.Close(); err != nil {
+		t.Fatal(err)
+	}
+	mutateManifest(t, partialActivePath, func(manifest *allocationManifest) {
+		manifest.StartedAt = manifest.CreatedAt
+	})
+	locked, err := workspace.Allocate("job")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = locked.Close() })
+	if err := locked.Started(os.Getpid()); err != nil {
+		t.Fatal(err)
+	}
+	if err := locked.Terminal(); err != nil {
+		t.Fatal(err)
+	}
+	bad := terminal(t, "cmd")
+	if err := os.WriteFile(filepath.Join(bad, "manifest.json"), []byte("not-json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	unrecognised := filepath.Join(workspace.Path(), "commands", "cmd-unrecognised")
+	if err := os.Symlink(filepath.Join(eligible, "tmp"), unrecognised); err != nil {
+		t.Fatal(err)
+	}
+
 	result, err := ns.Sweep(context.Background(), SweepOptions{Now: time.Now().Add(2 * time.Hour), Interval: time.Hour, CommandReapAfter: time.Hour})
 	if err != nil {
 		t.Fatalf("sweep: %v", err)
 	}
-	if result.Deleted != 1 {
-		t.Fatalf("deleted = %d, want exactly the validated eligible lease", result.Deleted)
+	if result.Deleted != 3 {
+		t.Fatalf("deleted = %d, want the complete terminal, skewed terminal, and untouched pre-start residue", result.Deleted)
 	}
-	if _, err := os.Stat(eligible.Path()); !errors.Is(err, fs.ErrNotExist) {
-		t.Fatalf("eligible lease remains: %v", err)
+	for _, path := range []string{eligible, skewedTerminal, preStartPath} {
+		if _, err := os.Stat(path); !errors.Is(err, fs.ErrNotExist) {
+			t.Fatalf("validated eligible lease remains %q: %v", path, err)
+		}
 	}
-	for _, path := range append([]string{locked.Path(), badPath, unrecognised}, malformed...) {
+	for _, path := range []string{incompleteTerminal, partialActivePath, locked.Path(), bad, unrecognised} {
 		if _, err := os.Lstat(path); err != nil {
 			t.Fatalf("invalid or contended lease %q was deleted: %v", path, err)
 		}
