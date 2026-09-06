@@ -146,8 +146,11 @@ Broker authority is exclusive of programmatic global `MCPServers`; `app.Build` r
 mixed configuration after resolving the effective authority, including a loader result,
 before constructing MCP, broker-process, or Redis resources. It accepts multiple configured
 OAuth upstreams. ToolHive owns their ordered browser flow, callback state, PKCE/code exchange,
-refresh, and provider-specific backend token injection; mecatl exposes only one opaque
-pre-prompt enrollment per session. Each protected ToolHive process generates one
+refresh, and provider-specific backend token injection. A protected backend with static `tools:`
+declarations is visible immediately; its first call starts that same opaque ToolHive bundle
+authorization. The grant unlocks only the declared tools during the active run. An undeclared
+backend, and undeclared tools on a declared backend, still require pre-prompt enrollment for
+authenticated discovery and the complete frozen catalogue. Each protected ToolHive process generates one
 confidential broker client; ToolHive persists only its hash, and mecatl retains the
 raw secret only in private process memory for HTTP-Basic code exchange and refresh
 ([ADR 0299](adr/0299-confidential-toolhive-broker-client.md)). Public enrollment controls carry aggregate status, a
@@ -165,10 +168,9 @@ chart-supported OIDC verified-caller configuration; its authorization is a brows
 flow and a preregistered client secret remains a Kubernetes Secret reference, never broker
 profile data.
 
-Protected static declarations and authenticated discovery results are staged until the opaque
-enrollment succeeds. Mecatl then performs strict authenticated discovery for every protected
-backend, collision-checks it, freezes the complete model-visible catalogue, and rebuilds the
-session engine; a failure admits no partial catalogue. Normal mecatl permissions govern the
+Authenticated discovery results remain staged until the opaque pre-prompt enrollment succeeds.
+Mecatl then collision-checks every protected backend, freezes the complete model-visible catalogue,
+and rebuilds the session engine; a failure admits no partial catalogue. Normal mecatl permissions govern the
 frozen tools. `server.Service` holds only local attachments, and each per-session catalogue is
 assembled from an explicit wrapper-tool slice after the canonical session ID is reserved. The
 session snapshot persists an opaque broker-incarnation binding and reload requires an exact

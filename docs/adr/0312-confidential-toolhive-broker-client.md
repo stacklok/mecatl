@@ -55,7 +55,7 @@ only credential used against ToolHive's vMCP endpoint.
 
 ## See also
 
-- [ADR 0298 — Per-upstream MCP broker OAuth grants](./0298-per-upstream-mcp-broker-oauth-grants.md)
+- [ADR 0311 — Per-upstream MCP broker OAuth grants](./0311-per-upstream-mcp-broker-oauth-grants.md)
 - [ADR 0220 — Adapter-local MCP OAuth controller](./0220-mcp-oauth-controller.md)
 - [Multi-upstream OAuth acceptance plan](../acceptance/mcp-broker-multi-upstream-oauth.md)
 

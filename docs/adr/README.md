@@ -176,7 +176,8 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0113 — Operator MCP authentication profiles and explicit login](./0113-operator-mcp-auth-profiles.md)
 - [0223 — Pin MCP transport-error semantics that do not replay rejected calls](./0223-mcp-sdk-transport-error-semantics.md) *(superseded by 0309)*
 - [0309 — MCP closed-idle POST failures are ambiguous and never replayed](./0309-mcp-ambiguous-closed-idle-post.md)
-- [0311 — Per-upstream MCP broker OAuth grants](./0311-per-upstream-mcp-broker-oauth-grants.md)
+- [0310 — Lazy ToolHive authorization for statically declared protected tools](./0310-lazy-toolhive-static-tools.md)
+- [0311 — Per-upstream MCP broker OAuth grants](./0311-per-upstream-mcp-broker-oauth-grants.md) *(static-tool admission superseded by 0310)*
 - [0312 — Confidential ToolHive broker client credentials](./0312-confidential-toolhive-broker-client.md)
 
 ### Performance & diagnostics

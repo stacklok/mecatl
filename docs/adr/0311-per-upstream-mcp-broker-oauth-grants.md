@@ -4,7 +4,7 @@
 - Date: 2026-09-03
 - Scope: session-scoped MCP broker OAuth authorization and workspace enrollment
 - Supersedes: None
-- Superseded by: None
+- Superseded by: ADR 0310 (pre-prompt-only static-tool admission decision only)
 
 ## Context
 

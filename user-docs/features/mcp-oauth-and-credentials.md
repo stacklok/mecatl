@@ -124,8 +124,10 @@ One session starts one opaque enrollment, and ToolHive drives the configured pro
 upstreams sequentially. ToolHive owns upstream callback state, code exchange, refresh, and
 provider-specific injection; a token for one backend is not used for another. Mecatl retains
 the session and pre-prompt enrollment boundary, then strictly discovers every protected backend
-and freezes the complete catalogue only after success. Static protected `tools` declarations are
-staged too. The generated client between mecatl and ToolHive is confidential: ToolHive stores
+and freezes the complete catalogue only after success. Static declarations are visible before connection: calling one starts the same opaque ToolHive
+bundle authorization and, after success, makes the declared tools usable in that session. This
+lazy path does not discover undeclared tools, including others on the same backend; use the
+pre-prompt enrollment flow to discover and freeze the complete protected catalogue. The generated client between mecatl and ToolHive is confidential: ToolHive stores
 only its hash, while mecatl uses the process-private raw secret solely for HTTP-Basic token
 exchange and refresh. It is never included in the browser flow, controls, logs, snapshots, or
 upstream calls. A failed enrollment exposes no partial protected catalogue.
