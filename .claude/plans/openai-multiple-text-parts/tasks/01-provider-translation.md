@@ -2,10 +2,10 @@
 id: 01-provider-translation
 title: OpenAI Responses multipart visible-text projection
 blocked_by: []
-status: pending
-attempt: 0
-branch: ""
-worktree: ""
+status: in-progress
+attempt: 1
+branch: "plan-openai-multiple-text-parts/01-provider-translation-attempt-1"
+worktree: ".scratch/worker-openai-multiple-text-parts-01-provider-translation-attempt-1"
 issue: "738"
 retries: 0
 last_error: ""
