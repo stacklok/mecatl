@@ -2,13 +2,13 @@
 id: 01-conversation-state
 title: Conversation-owned logical block state
 blocked_by: []
-status: pending
-attempt: 0
-branch: ""
-worktree: ""
+status: in-progress
+attempt: 1
+branch: plan-mecatui-logical-conversation-anchors/01-conversation-state-attempt-1
+worktree: .scratch/worker-mecatui-logical-conversation-anchors-01-conversation-state-attempt-1
 issue: ""
 retries: 0
-last_error: "re-decomposed from the blocked all-in-one task"
+last_error: ""
 accumulator: acc/mecatui-logical-conversation-anchors
 ---
 
