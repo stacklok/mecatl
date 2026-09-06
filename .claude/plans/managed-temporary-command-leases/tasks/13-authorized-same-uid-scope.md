@@ -2,7 +2,7 @@
 id: 13-authorized-same-uid-scope
 title: Clarify same-UID cleanup scope and platform tests
 blocked_by: [12-macos-authorized-final-repairs]
-status: in-progress
+status: done
 attempt: 1
 branch: "plan-managed-temporary-command-leases/13-authorized-same-uid-scope-attempt-1"
 worktree: ".scratch/worker-managed-temporary-command-leases-13-authorized-same-uid-scope-attempt-1"
