@@ -111,6 +111,8 @@ PR after verification. There is no cleanup or status-only PR.
   enhanced-key-event-only, silent press-release-press idle prompt gesture with an exact
   500 ms generation-tagged expiry; it reuses `clearPrompt`, preserves surface ownership,
   and documents universal `ctrl+u`. Status: landed.
+- [Initial production MCP broker](initial-production-mcp-broker.md) — deploy the existing Stage 3 broker behind an authenticated remote gRPC boundary as one explicitly non-HA replica; outer attachment correlation is process-local and restart interrupts live authorization. Status: draft.
+
 - [Mecatui card layout](mecatui-card-layout.md) — width-bounded card rendering
   that wraps raw dynamic rows before styling, preventing Lipgloss alignment
   padding from becoming vertical whitespace while retaining intentional
