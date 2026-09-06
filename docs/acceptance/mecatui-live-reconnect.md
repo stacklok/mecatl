@@ -75,8 +75,8 @@ The single-loop and cancellation invariants remain those documented in
   deterministically waits for the attempt-2 backoff before its next probe. It must not
   preload continuity or merely inspect delay helper math: probe open alone does not reset
   the attempt; attempts are bounded, increasing, and capped. A deterministic client-loop
-  proof sets jitter to zero and shows `ReconnectLiveCmdFromAttempt(prior=1)` does not open
-  before the attempt-2 delay and does open afterward, using wide timing bounds.
+  proof injects a controlled private waiter, asserts the exact attempt-2 delay before any
+  probe opens, then releases the waiter and observes the successful open.
   - verify: `TestADR_0096_ImmediateRearmedCloseUsesAttemptTwoBackoff`, `TestADR_0096_AttemptTwoWaitsDeterministicBackoff`, `TestLiveReconnectDelay_BoundedAndIncreasing`
 - AC2.2: The same session has at most one reconnect loop; reconnect success clears
   degraded state, tears down the completed loop, and re-arms one fresh live reader.
