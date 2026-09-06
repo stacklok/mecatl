@@ -1,12 +1,12 @@
 # Managed temporary command leases — acceptance plan
 
 **Phase:** capability — deterministic lifecycle for command and background-job temporary storage.
-**Status:** landed, 2026-09-01. Derived from the still-proposed ADR; this plan is the implementation contract, not acceptance of the decision.
+**Status:** in-progress, 2026-09-06. macOS support is now part of the v1 contract; the plan returns to in-progress for the platform repair.
 **ADR:** [ADR-0281](../adr/0281-managed-temporary-command-leases.md) — managed and system scopes, validated private leases, and deterministic reaping.
 **Accumulator branch:** `acc/managed-temporary-command-leases` (off `main`).
 
 The smallest set of work that makes managed temporary storage the default for local
-Linux Bash commands and background jobs: each gets a private, attributable lease;
+Linux and macOS Bash commands and background jobs: each gets a private, attributable lease;
 the harness cleans it promptly where safe and reclaims only validated crash residue
 on a bounded schedule. Workspace keys derive transiently from canonical physical
 paths and are never persisted as raw backend identity. The owner-only workspace manifest
@@ -21,7 +21,7 @@ harness can demonstrate, not which packages exist on disk.
 
 ## Why these scope cuts
 
-- [ADR-0281](../adr/0281-managed-temporary-command-leases.md) is Linux-only in v1,
+- [ADR-0281](../adr/0281-managed-temporary-command-leases.md) supports Linux and macOS in v1,
   uses the inherited system temporary directory by default rather than an XDG
   cache/state/runtime directory, and makes `mode: system` the explicit rollback.
 - [ADR-0201](../adr/0201-background-bash.md) keeps foreground and background work
@@ -42,7 +42,7 @@ scenarios assume earlier ones but do not change their acceptance criteria.
 
 ### Scenario 1 — an operator admits one safe managed namespace
 
-A Linux operator selects managed temporary storage from user-global configuration.
+A Linux or macOS operator selects managed temporary storage from user-global configuration.
 The harness resolves the default relative root below the inherited system temporary
 directory, creates or adopts only a private owner-controlled root, and derives a
 non-model-visible workspace key from stable workspace identity. The configuration
@@ -62,7 +62,7 @@ path into deletion authority ([ADR-0281](../adr/0281-managed-temporary-command-l
   `mode: system` is selected.
 
 **Acceptance:**
-- AC1.1: With no `temporary_storage` block, a Linux local runner selects managed
+- AC1.1: With no `temporary_storage` block, a Linux or macOS local runner selects managed
   mode and resolves the private `mecatl` root below the inherited system temporary
   directory; it does not select an XDG cache, state, or runtime directory.
   - verify: `TestADR_0281_DefaultManagedRootUsesSystemTemp`
@@ -78,9 +78,10 @@ path into deletion authority ([ADR-0281](../adr/0281-managed-temporary-command-l
   cleanup, or alter retention; it is ignored with an operator warning while the
   trusted operator-tier resolution remains effective.
   - verify: `TestADR_0281_ProjectTemporaryStorageIgnored`
-- AC1.4: On a non-Linux platform, `mode: managed` fails configuration validation
-  before serving; `mode: system` remains available and preserves existing behavior.
-  - verify: `TestADR_0281_ManagedModeLinuxAdmission`
+- AC1.4: Linux and macOS admit `mode: managed`; Windows and other unsupported
+  platforms fail configuration validation before serving, while `mode: system`
+  remains available and preserves existing behavior.
+  - verify: `TestADR_0281_ManagedModeUnixAdmission`
 - AC1.5: Every managed root, workspace, lease, lock, manifest, completion record,
   and temporary-write file is created handle-relatively with private permissions
   before it is published. A permissive umask never creates a group- or world-readable
