@@ -70,6 +70,32 @@ func TestADR_0296_StatusTemplateReceivesEligibleLocalContext(t *testing.T) {
 	waitStatusContextSurfaceText(t, source, root)
 }
 
+func TestADR_0296_StartupResumeReceivesEligibleLocalContext(t *testing.T) {
+	root := t.TempDir()
+	source := statusline.NewTemplateSource(statusline.TemplateSet{Footer: statusline.SurfaceTemplates{
+		Full: `<footer><text>{{.Workspace.Path}}</text></footer>`,
+	}}, 0)
+	t.Cleanup(func() { _ = source.Close(context.Background()) })
+	m := newTestModelFromDeps(Deps{
+		Ctx: context.Background(), Theme: theme.New("aztec", theme.AztecPalette()),
+		StatusSource: source, LocalSessionContext: statusContextGetter{roots: map[string]string{"existing": root}},
+		Resume: startupSelection("existing", "completed"),
+	})
+	m.width = 200
+
+	updated, contextCmd := m.Update(startupResumeReadyMsg{})
+	m = updated.(Model)
+	if contextCmd == nil {
+		t.Fatal("startup resume did not resolve local status context")
+	}
+	updated, _ = m.Update(statusContextMessage(t, contextCmd))
+	m = updated.(Model)
+
+	if got, want := m.statusLineSnapshot().Workspace.Path, root; got != want {
+		t.Fatalf("status input workspace path = %q, want resumed local root %q", got, want)
+	}
+}
+
 func waitStatusContextSurfaceText(t *testing.T, source statusline.Source, want string) {
 	t.Helper()
 	for {
