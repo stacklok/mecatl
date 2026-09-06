@@ -521,6 +521,7 @@ type Model struct {
 
 	conv conversation
 	vp   viewport.Model
+	view conversationView
 
 	// authorization is separate from permission approval: MCP browser authorization
 	// has no allow/always/deny verdict and never carries tool arguments or a URL.
@@ -538,12 +539,8 @@ type Model struct {
 
 	prompt prompttextarea.Editor
 	sp     spinner.Model
-	// stuck is true while the viewport auto-follows the bottom (tails streaming
-	// output). It is no longer hardcoded: syncStuck re-derives it from
-	// m.vp.AtBottom() after every scroll/wheel/nav so a scroll-up unsticks (and
-	// survives streaming — refreshView only re-pins to bottom when stuck) and
-	// scrolling/jumping back to the bottom re-sticks (auto-follow resumes). The
-	// initial value is true because an empty conversation is already at-bottom.
+	// stuck is a compatibility projection for existing chrome. conversationView
+	// owns the actual follow/anchor state; syncStuck keeps this field derived.
 	stuck bool
 
 	// viewDirty is set when a streamed delta mutated the conversation but
@@ -1007,6 +1004,7 @@ func New(deps Deps) Model {
 		prompt:  prompt,
 		sp:      sp,
 		vp:      vp,
+		view:    conversationView{mode: followTail},
 		stuck:   true,
 		// Armed exactly when Init will actually request the background colour
 		// (see ThemeAutoDetect); onBackgroundColor disarms it on the first
@@ -1092,7 +1090,8 @@ func (m Model) resetSession() Model {
 func (m Model) resetSessionDerived() Model {
 	// Drop renderer caches before installing the target's authoritative transcript.
 	m.rend.resetBlockCaches()
-	// Reset auto-follow for the next session's transcript.
+	// Reset auto-follow and document-local anchor state for the next session.
+	m.view = conversationView{mode: followTail}
 	m.stuck = true
 	m.usage = client.Usage{}
 	m.contextTokens = 0

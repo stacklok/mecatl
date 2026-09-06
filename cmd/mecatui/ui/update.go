@@ -4277,7 +4277,7 @@ func snapshotSelection(m *Model) {
 	// A dirty gesture refreshes content before the coalesced render tick. Preserve the
 	// pre-gesture tail-follow state across that growth; SetContent otherwise retains
 	// the former YOffset and briefly shows an earlier part of the transcript.
-	followTail := m.viewDirty && m.stuck
+	shouldFollowTail := m.viewDirty && m.view.mode == followTail
 	// snapshotSelection calls vp.SetContent (re-splicing the highlight), so the
 	// vpView cache must be invalidated so the next View() reflects the new content.
 	m.rend.invalidateVPView()
@@ -4303,10 +4303,12 @@ func snapshotSelection(m *Model) {
 		m.selBase = base
 	}
 	m.sel.snapshot = selectedText(base, m.sel)
-	m.vp.SetContent(styleSelection(base, m.sel, m.deps.Theme.Style("selection")))
-	if followTail {
+	m.view.replaceProjection(&m.vp, styleSelection(base, m.sel, m.deps.Theme.Style("selection")))
+	if shouldFollowTail {
+		m.view.mode = followTail
 		m.vp.GotoBottom()
 	}
+	m.stuck = m.view.mode == followTail
 }
 
 // clearSelection drops any active text selection (including a pending edge-
@@ -4362,13 +4364,11 @@ func (m Model) shellWriteCmd(payload string) tea.Cmd {
 	}
 }
 
-// syncStuck re-derives the auto-follow flag from the viewport's actual position:
-// stuck is true exactly when the viewport is at the bottom. Called after every
-// scroll/wheel/nav so a scroll-up unsticks (next streaming delta then re-renders
-// in place without yanking to bottom — see refreshView) and scrolling/jumping
-// back to the bottom re-sticks (auto-follow resumes).
+// syncStuck maintains the legacy chrome projection after conversationView has
+// observed a viewport movement. The controller, not this bool, owns follow state.
 func (m *Model) syncStuck() {
-	m.stuck = m.vp.AtBottom()
+	m.view.observe(m.vp)
+	m.stuck = m.view.mode == followTail
 }
 
 // onScrollKey is the shared conversation-scroll handler used by both onIdleKey and
@@ -4419,6 +4419,7 @@ func (m *Model) refreshView() {
 	// invalidated — the caller may be a spinner-only frame that skips refreshView
 	// entirely, in which case the vpView cache correctly serves the prior content.
 	m.rend.invalidateVPView()
+	frame := m.rend.renderConversationFrame(&m.conv, m.expandTools)
 	// FAST PATH: the line-slice handoff. When no selection is active AND the
 	// changed-files footer is not in play (it renders only under the global expand
 	// toggle), feed vp.SetContentLines directly with the incrementally-joined line
@@ -4429,19 +4430,18 @@ func (m *Model) refreshView() {
 	// selection and footer paths both post-process the JOINED STRING, so they fall
 	// back to the byte-identical string path below.
 	if !m.sel.active && !m.expandTools {
-		m.vp.SetContentLines(m.rend.renderConversationLines(&m.conv, m.expandTools))
-		if m.stuck {
-			m.vp.GotoBottom()
-		}
+		m.view.replace(&m.vp, frame)
+		m.stuck = m.view.mode == followTail
 		return
 	}
-	content := m.rend.renderConversation(&m.conv, m.expandTools)
+	content := strings.Join(frame.lines, "\n")
 	// When the global details toggle is on, fold the session's changed-files list
 	// in beneath the scrollback so the muted "Δ N files" header indicator has a
 	// discoverable, scannable expansion — without a dedicated key or overlay.
 	if m.expandTools {
 		if list := m.rend.renderChangedFiles(m.conv.filesChanged); list != "" {
 			content += "\n" + list
+			frame = frameWithAppendix(frame, content, m.conv.changedFilesAppendixID)
 		}
 	}
 	// An active text selection is now rendered by US (styleSelection splices the
@@ -4469,10 +4469,8 @@ func (m *Model) refreshView() {
 		m.selBase = content
 		content = styleSelection(content, m.sel, m.deps.Theme.Style("selection"))
 	}
-	m.vp.SetContent(content)
-	if m.stuck {
-		m.vp.GotoBottom()
-	}
+	m.view.replaceContent(&m.vp, content, frame)
+	m.stuck = m.view.mode == followTail
 }
 
 // drainQueue MERGES staged follow-ups into ONE prompt only after a healthy

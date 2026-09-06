@@ -31,7 +31,23 @@ type readingAnchor struct {
 	sourceOffset int
 	row          int
 	text         bool
+	bias         edgeBias
 }
+
+// followMode is the sole auto-follow truth owned by conversationView.
+type followMode uint8
+
+const (
+	followTail followMode = iota
+	anchored
+)
+
+type edgeBias uint8
+
+const (
+	towardStart edgeBias = iota
+	towardEnd
+)
 
 // renderedRow is provenance for one frame line. It intentionally has no text
 // field: renderedFrame.lines owns the existing viewport strings.
@@ -79,7 +95,10 @@ func (f renderedFrame) anchorForRow(row int) (readingAnchor, bool) {
 		return readingAnchor{}, false
 	}
 	p := f.provenance[row]
-	return readingAnchor(p), true
+	return readingAnchor{
+		blockID: p.blockID, region: p.region, sourceOffset: p.sourceOffset,
+		row: p.row, text: p.text,
+	}, true
 }
 
 func (f renderedFrame) rowForAnchor(anchor readingAnchor) (int, bool) {
@@ -278,4 +297,26 @@ func assignVisibleOffsets(rows []renderedRow, lines []string) {
 		_, stop := ansi.ByteToGraphemeRange(plain, 0, len(plain))
 		offsets[rows[i].region] += stop
 	}
+}
+
+// frameWithAppendix extends the render-owned frame only while the appendix is
+// visible. Its rows identify the appendix without retaining another text copy.
+func frameWithAppendix(frame renderedFrame, content string, appendixID uint64) renderedFrame {
+	oldN := len(frame.lines)
+	frame.lines = strings.Split(content, "\n")
+	provenance := make([]renderedRow, len(frame.lines))
+	copy(provenance, frame.provenance)
+	offset := 0
+	for i := oldN; i < len(provenance); i++ {
+		provenance[i] = renderedRow{
+			blockID: appendixID, region: conversationRegionAppendix,
+			sourceOffset: offset, row: i - oldN, text: true,
+		}
+		plain := ansi.Strip(frame.lines[i])
+		_, n := ansi.ByteToGraphemeRange(plain, 0, len(plain))
+		offset += n
+	}
+	frame.provenance = provenance
+	frame.appendixID = appendixID
+	return frame
 }
