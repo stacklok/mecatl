@@ -92,7 +92,7 @@ func TestADR_0281_BackgroundJobLeaseLifecycle(t *testing.T) {
 	out := newLeasePathWriter()
 	done := make(chan error, 1)
 	go func() {
-		_, err := streamer.RunStreamingWithTemporaryScope(ctx, "printf '%s\\n' \"$TMPDIR\"; sleep 30", tool.TemporaryScopeManaged, out)
+		_, err := streamer.RunStreamingWithTemporaryScope(ctx, "printf '%s\\n' \"$TMPDIR\"; exec sleep 30", tool.TemporaryScopeManaged, out)
 		done <- err
 	}()
 
