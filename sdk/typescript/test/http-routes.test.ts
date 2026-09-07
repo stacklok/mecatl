@@ -280,9 +280,11 @@ describe("complete HTTP route transport", () => {
         transport: browserEntry.createHttpTransport({ baseUrl: "http://mecatl.test", fetch }),
       });
       const abort = new AbortController();
-      const stream = raw.stream(entry.grpc.descriptor, singleValue(requestFor(entry)), {
-        signal: abort.signal,
-      });
+      const stream = raw.stream(
+        entry.grpc.descriptor as DescMethodStreaming,
+        singleValue(requestFor(entry)),
+        { signal: abort.signal },
+      );
       const iterator = stream[Symbol.asyncIterator]();
       const first = await Promise.race([
         iterator.next(),

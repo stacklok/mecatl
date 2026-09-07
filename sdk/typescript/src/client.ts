@@ -31,6 +31,14 @@ import {
 import { createHttpTransport, type HttpTransportOptions } from "./http.js";
 import { encodePrompt, type PromptCapabilities, type PromptInput } from "./media.js";
 import {
+  type Agents,
+  type Commands,
+  createCoreNamespaces,
+  type McpInventory,
+  type Models,
+  type Worktrees,
+} from "./namespaces-core.js";
+import {
   createRawClient,
   invalidateRawCompatibility,
   type RawClient,
@@ -135,8 +143,13 @@ export interface Sessions {
 
 /** The ergonomic mecatl client. @public */
 export interface Client {
+  readonly agents: Agents;
+  readonly commands: Commands;
+  readonly mcp: McpInventory;
+  readonly models: Models;
   readonly sessions: Sessions;
   readonly status: ConnectionStatusStore;
+  readonly worktrees: Worktrees;
   close(): Promise<void>;
   [Symbol.asyncDispose](): Promise<void>;
 }
@@ -415,8 +428,13 @@ class SessionImpl implements Session {
 }
 
 class ClientImpl implements Client {
+  readonly agents: Agents;
+  readonly commands: Commands;
+  readonly mcp: McpInventory;
+  readonly models: Models;
   readonly sessions: Sessions;
   readonly status: ConnectionStatusStore;
+  readonly worktrees: Worktrees;
 
   readonly #abort = new AbortController();
   readonly #attachments = new Map<symbol, () => Promise<void>>();
@@ -476,6 +494,14 @@ class ClientImpl implements Client {
           signal,
         ),
     };
+    const namespaces = createCoreNamespaces({
+      unary: (method, input, requestOptions) => this.#unary(method, input, requestOptions),
+    });
+    this.agents = namespaces.agents;
+    this.commands = namespaces.commands;
+    this.mcp = namespaces.mcp;
+    this.models = namespaces.models;
+    this.worktrees = namespaces.worktrees;
     this.sessions = {
       create: async (input) => {
         const lease = this.#toolHost?.beginSessionCreate?.();

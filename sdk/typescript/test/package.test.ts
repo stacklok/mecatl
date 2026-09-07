@@ -8,8 +8,9 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs";
+import { builtinModules } from "node:module";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 import { gunzipSync } from "node:zlib";
 import { afterAll, beforeAll, expect, test } from "vitest";
@@ -63,6 +64,25 @@ function readPackedFiles(archivePath: string): Map<string, Buffer> {
   }
 
   return files;
+}
+
+function browserEntrypointGraph(): ReadonlySet<string> {
+  const pending = ["package/dist/index.js"];
+  const visited = new Set<string>();
+  while (pending.length > 0) {
+    const current = pending.pop();
+    if (current === undefined || visited.has(current)) continue;
+    visited.add(current);
+    const source = packedFiles.get(current)?.toString("utf8");
+    expect(source, `packed browser module ${current}`).toBeDefined();
+    for (const match of source?.matchAll(/\b(?:from|import)\s*(?:\(\s*)?["']([^"']+)["']/gu) ??
+      []) {
+      const specifier = match[1];
+      if (specifier?.startsWith(".") !== true) continue;
+      pending.push(normalize(join(dirname(current), specifier)).replaceAll("\\", "/"));
+    }
+  }
+  return visited;
 }
 
 beforeAll(() => {
@@ -194,6 +214,10 @@ test("packed tarball carries dist and license only", () => {
     "package/dist/media.d.ts.map",
     "package/dist/media.js",
     "package/dist/media.js.map",
+    "package/dist/namespaces-core.d.ts",
+    "package/dist/namespaces-core.d.ts.map",
+    "package/dist/namespaces-core.js",
+    "package/dist/namespaces-core.js.map",
     "package/dist/node-client.d.ts",
     "package/dist/node-client.d.ts.map",
     "package/dist/node-client.js",
@@ -261,4 +285,105 @@ test("packed tarball carries dist and license only", () => {
   expect(packedFiles.get("package/LICENSE")?.toString("utf8")).toContain(
     "Apache License\n                           Version 2.0",
   );
+});
+
+test("the core namespace batch is exported from both supported entrypoints", () => {
+  const consumer = join(consumerRoot, "core-namespaces.mts");
+  writeFileSync(
+    consumer,
+    `
+import { create } from "@bufbuild/protobuf";
+import type {
+  Agents,
+  Client,
+  Commands,
+  McpInventory,
+  Models,
+  RequestOptions,
+  Worktrees,
+} from "@stacklok/mecatl-sdk";
+import type {
+  Agents as NodeAgents,
+  Commands as NodeCommands,
+  McpInventory as NodeMcpInventory,
+  Models as NodeModels,
+  NodeClient,
+  RequestOptions as NodeRequestOptions,
+  Worktrees as NodeWorktrees,
+} from "@stacklok/mecatl-sdk/node";
+import {
+  ListAgentsRequestSchema,
+  ListModelsRequestSchema,
+  type ListAgentsResponse,
+  type ListModelsResponse,
+} from "@stacklok/mecatl-sdk/gen";
+
+declare const browser: Client;
+declare const node: NodeClient;
+const browserNamespaces: readonly [McpInventory, Agents, Commands, Worktrees, Models] = [
+  browser.mcp,
+  browser.agents,
+  browser.commands,
+  browser.worktrees,
+  browser.models,
+];
+const nodeNamespaces: readonly [
+  NodeMcpInventory,
+  NodeAgents,
+  NodeCommands,
+  NodeWorktrees,
+  NodeModels,
+] = [node.mcp, node.agents, node.commands, node.worktrees, node.models];
+const browserOptions: RequestOptions = { timeoutMs: 100 };
+const nodeOptions: NodeRequestOptions = browserOptions;
+const browserResponse: Promise<ListAgentsResponse> = browser.agents.list(
+  create(ListAgentsRequestSchema),
+  browserOptions,
+);
+const nodeResponse: Promise<ListModelsResponse> = node.models.list(
+  create(ListModelsRequestSchema),
+  nodeOptions,
+);
+void [browserNamespaces, nodeNamespaces, browserResponse, nodeResponse];
+`,
+  );
+  const typecheck = spawnSync(
+    process.execPath,
+    [
+      join(packageRoot, "node_modules", "typescript", "bin", "tsc"),
+      "--noEmit",
+      "--strict",
+      "--target",
+      "ES2022",
+      "--lib",
+      "ESNext,DOM,DOM.Iterable",
+      "--module",
+      "NodeNext",
+      "--moduleResolution",
+      "NodeNext",
+      "--types",
+      "node",
+      "--typeRoots",
+      join(packageRoot, "node_modules", "@types"),
+      consumer,
+    ],
+    { cwd: consumerRoot, encoding: "utf8" },
+  );
+  expect(typecheck.stderr).toBe("");
+  expect(typecheck.stdout).toBe("");
+  expect(typecheck.status).toBe(0);
+
+  const graph = browserEntrypointGraph();
+  expect(graph).toContain("package/dist/namespaces-core.js");
+  const builtins = new Set(builtinModules.map((name) => name.replace(/^node:/u, "")));
+  const builtinImports = [...graph].flatMap((path) => {
+    const source = packedFiles.get(path)?.toString("utf8") ?? "";
+    return [...source.matchAll(/\b(?:from|import)\s*(?:\(\s*)?["']([^"']+)["']/gu)]
+      .map((match) => match[1] ?? "")
+      .filter(
+        (specifier) =>
+          specifier.startsWith("node:") || builtins.has(specifier.replace(/^node:/u, "")),
+      );
+  });
+  expect(builtinImports).toEqual([]);
 });

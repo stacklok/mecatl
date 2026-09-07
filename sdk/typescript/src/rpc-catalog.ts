@@ -81,9 +81,10 @@ export interface RPCCatalogEntry<
   S extends RPCServiceName = RPCServiceName,
   M extends string = string,
   Shape extends RPCStreamingShape = RPCStreamingShape,
+  D extends DescriptorForShape<Shape> = DescriptorForShape<Shape>,
 > {
   readonly backingService: string;
-  readonly grpc: GRPCTransportClassification<DescriptorForShape<Shape>>;
+  readonly grpc: GRPCTransportClassification<D>;
   readonly http: RPCTransportClassification;
   readonly key: `${S}.${M}`;
   readonly method: M;
@@ -158,15 +159,16 @@ function rpc<
   const S extends RPCServiceName,
   const M extends string,
   const Shape extends RPCStreamingShape,
+  const D extends DescriptorForShape<Shape>,
 >(row: {
   readonly backingService: string;
-  readonly grpc: GRPCTransportClassification<DescriptorForShape<Shape>>;
+  readonly grpc: GRPCTransportClassification<D>;
   readonly http: HTTPReview;
   readonly key: `${S}.${M}`;
   readonly method: M;
   readonly service: S;
   readonly shape: Shape;
-}): RPCCatalogEntry<S, M, Shape> {
+}): RPCCatalogEntry<S, M, Shape, D> {
   const secondary: RPCTransportClassification =
     row.http.kind === "http"
       ? { ...row.http, decoder: row.grpc.descriptor.output }

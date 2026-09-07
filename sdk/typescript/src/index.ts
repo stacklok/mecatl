@@ -117,6 +117,14 @@ export {
   MAX_PROMPT_MEDIA_PARTS,
   textPart,
 } from "./media.js";
+export type {
+  Agents,
+  Commands,
+  McpInventory,
+  Models,
+  RequestOptions,
+  Worktrees,
+} from "./namespaces-core.js";
 export type { RawClient, RawClientOptions } from "./raw.js";
 export {
   createRawClient,

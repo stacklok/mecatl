@@ -114,7 +114,11 @@ async function consume(query: AsyncIterable<{ kind: string }>): Promise<string[]
 
 function fakeClient(create: () => Promise<Session>, close: () => Promise<void>): Client {
   return {
+    agents: undefined as never,
     close,
+    commands: undefined as never,
+    mcp: undefined as never,
+    models: undefined as never,
     sessions: {
       create,
       fork: vi.fn(),
@@ -124,6 +128,7 @@ function fakeClient(create: () => Promise<Session>, close: () => Promise<void>):
       getSnapshot: () => "online",
       subscribe: () => () => undefined,
     },
+    worktrees: undefined as never,
     [Symbol.asyncDispose]: close,
   };
 }

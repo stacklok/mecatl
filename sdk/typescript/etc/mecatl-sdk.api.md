@@ -9,6 +9,7 @@ import type { DescMessage } from '@bufbuild/protobuf';
 import type { DescMethodStreaming } from '@bufbuild/protobuf';
 import type { DescMethodUnary } from '@bufbuild/protobuf';
 import type { JsonValue } from '@bufbuild/protobuf';
+import type { Message } from '@bufbuild/protobuf';
 import type { MessageInitShape } from '@bufbuild/protobuf';
 import type { MessageShape } from '@bufbuild/protobuf';
 import { Transport } from '@connectrpc/connect';
@@ -22,6 +23,15 @@ export class ActivityGapError extends MecatlError {
 export type AgentEvent = Exclude<KnownEvent, {
     readonly kind: `team.${string}`;
 }>;
+
+// @public
+export interface Agents {
+    // Warning: (ae-forgotten-export) The symbol "ListAgentsRequest" needs to be exported by the entry point index.d.ts
+    // Warning: (ae-forgotten-export) The symbol "ListAgentsResponse" needs to be exported by the entry point index.d.ts
+    //
+    // (undocumented)
+    list(request: ListAgentsRequest, options?: RequestOptions): Promise<ListAgentsResponse>;
+}
 
 // @public
 export interface ApprovalEventPayload {
@@ -107,16 +117,35 @@ export interface Client {
     // (undocumented)
     [Symbol.asyncDispose](): Promise<void>;
     // (undocumented)
+    readonly agents: Agents;
+    // (undocumented)
     close(): Promise<void>;
+    // (undocumented)
+    readonly commands: Commands;
+    // (undocumented)
+    readonly mcp: McpInventory;
+    // (undocumented)
+    readonly models: Models;
     // (undocumented)
     readonly sessions: Sessions;
     // (undocumented)
     readonly status: ConnectionStatusStore;
+    // (undocumented)
+    readonly worktrees: Worktrees;
 }
 
 // @public
 export interface ClientDiagnosticsOptions {
     diagnostics?: DiagnosticsSink;
+}
+
+// @public
+export interface Commands {
+    // Warning: (ae-forgotten-export) The symbol "ListCommandsRequest" needs to be exported by the entry point index.d.ts
+    // Warning: (ae-forgotten-export) The symbol "ListCommandsResponse" needs to be exported by the entry point index.d.ts
+    //
+    // (undocumented)
+    list(request: ListCommandsRequest, options?: RequestOptions): Promise<ListCommandsResponse>;
 }
 
 // @public
@@ -462,6 +491,40 @@ export const MAX_PROMPT_MEDIA_BYTES: number;
 export const MAX_PROMPT_MEDIA_PARTS = 16;
 
 // @public
+export interface McpInventory {
+    // Warning: (ae-forgotten-export) The symbol "GetMcpPromptRequest" needs to be exported by the entry point index.d.ts
+    // Warning: (ae-forgotten-export) The symbol "GetMcpPromptResponse" needs to be exported by the entry point index.d.ts
+    //
+    // (undocumented)
+    getPrompt(request: GetMcpPromptRequest, options?: RequestOptions): Promise<GetMcpPromptResponse>;
+    // Warning: (ae-forgotten-export) The symbol "ListMcpPromptsRequest" needs to be exported by the entry point index.d.ts
+    // Warning: (ae-forgotten-export) The symbol "ListMcpPromptsResponse" needs to be exported by the entry point index.d.ts
+    //
+    // (undocumented)
+    listPrompts(request: ListMcpPromptsRequest, options?: RequestOptions): Promise<ListMcpPromptsResponse>;
+    // Warning: (ae-forgotten-export) The symbol "ListMcpResourcesRequest" needs to be exported by the entry point index.d.ts
+    // Warning: (ae-forgotten-export) The symbol "ListMcpResourcesResponse" needs to be exported by the entry point index.d.ts
+    //
+    // (undocumented)
+    listResources(request: ListMcpResourcesRequest, options?: RequestOptions): Promise<ListMcpResourcesResponse>;
+    // Warning: (ae-forgotten-export) The symbol "ListMcpSourcesRequest" needs to be exported by the entry point index.d.ts
+    // Warning: (ae-forgotten-export) The symbol "ListMcpSourcesResponse" needs to be exported by the entry point index.d.ts
+    //
+    // (undocumented)
+    listSources(request: ListMcpSourcesRequest, options?: RequestOptions): Promise<ListMcpSourcesResponse>;
+    // Warning: (ae-forgotten-export) The symbol "ListToolHiveGroupsRequest" needs to be exported by the entry point index.d.ts
+    // Warning: (ae-forgotten-export) The symbol "ListToolHiveGroupsResponse" needs to be exported by the entry point index.d.ts
+    //
+    // (undocumented)
+    listToolHiveGroups(request: ListToolHiveGroupsRequest, options?: RequestOptions): Promise<ListToolHiveGroupsResponse>;
+    // Warning: (ae-forgotten-export) The symbol "ReadMcpResourceRequest" needs to be exported by the entry point index.d.ts
+    // Warning: (ae-forgotten-export) The symbol "ReadMcpResourceResponse" needs to be exported by the entry point index.d.ts
+    //
+    // (undocumented)
+    readResource(request: ReadMcpResourceRequest, options?: RequestOptions): Promise<ReadMcpResourceResponse>;
+}
+
+// @public
 export const MECATL_ATTACH_FILTERED_KINDS: readonly ["approval", "compaction.archive", "network.attempt", "request.manifest", "user_prompt"];
 
 // @public
@@ -525,6 +588,15 @@ export interface ModelRetryEventPayload {
     readonly retryDisposition: RetryDisposition;
     // (undocumented)
     readonly streamProgress: StreamProgress;
+}
+
+// @public
+export interface Models {
+    // Warning: (ae-forgotten-export) The symbol "ListModelsRequest" needs to be exported by the entry point index.d.ts
+    // Warning: (ae-forgotten-export) The symbol "ListModelsResponse" needs to be exported by the entry point index.d.ts
+    //
+    // (undocumented)
+    list(request: ListModelsRequest, options?: RequestOptions): Promise<ListModelsResponse>;
 }
 
 // @public
@@ -646,6 +718,9 @@ export interface RawClientOptions {
     transport: Transport;
     transportKind?: TransportKind;
 }
+
+// @public
+export type RequestOptions = CallOptions;
 
 // @public
 export interface ResultEventPayload {
@@ -1127,5 +1202,14 @@ export interface WatchGapEnvelope {
 
 // @public
 export function withSessionAffinity(sessionId: string, options?: CallOptions): CallOptions;
+
+// @public
+export interface Worktrees {
+    // Warning: (ae-forgotten-export) The symbol "ListWorktreesRequest" needs to be exported by the entry point index.d.ts
+    // Warning: (ae-forgotten-export) The symbol "ListWorktreesResponse" needs to be exported by the entry point index.d.ts
+    //
+    // (undocumented)
+    list(request: ListWorktreesRequest, options?: RequestOptions): Promise<ListWorktreesResponse>;
+}
 
 ```
