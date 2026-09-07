@@ -508,9 +508,111 @@ func TestMCPAuthorizationTerminalFallbackIsFullyReconstructable(t *testing.T) {
 	}
 }
 
+// TestMCPAuthorizationResolutionBackfillsMissingRequired reproduces the
+// save-before-emit crash window: PauseForAuthorization's snapshot save
+// succeeds, but the process fails before EvAuthorizationRequired reaches the
+// EventLog (the seed below omits it entirely, unlike
+// TestMCPAuthorizationTerminalFallbackIsFullyReconstructable's seed). A naive
+// resolution would append authorization.resolved with no matching required,
+// which eventsource.Fold rejects outright. Resolution must instead backfill
+// the missing required event from the durably-saved pending state before
+// appending the resolution, so the log recovers Fold-reconstructable ordering
+// despite the earlier gap.
+func TestMCPAuthorizationResolutionBackfillsMissingRequired(t *testing.T) {
+	f := newLifecycleFixture(t, session.AuthorizationDenied, nil, time.Now, nil)
+	log := memstore.NewEventLog()
+	f.svc.cfg.EventLog = log
+	seed := []session.Event{
+		{Type: session.EvTurnStart},
+		{Type: session.EvToolCall, ToolCall: &f.pending.Call},
+		{Type: session.EvToolCall, ToolCall: &f.pending.Deferred[0]},
+		// Deliberately no EvAuthorizationRequired: this is the crash window.
+	}
+	for _, ev := range seed {
+		if err := log.Append(t.Context(), "authorization-session", ev); err != nil {
+			t.Fatal(err)
+		}
+	}
+	loaded, err := f.store.Load(t.Context(), "authorization-session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	loaded.EnvironmentRef = session.EnvironmentRef{Kind: session.EnvironmentKind("lost-remote"), ID: "runtime", Revision: "gone"}
+	if err := f.store.Save(t.Context(), loaded); err != nil {
+		t.Fatal(err)
+	}
+
+	control := MCPAuthorizationControl{SessionID: loaded.ID, AuthorizationID: f.pending.Authorization.ID}
+	result, err := f.svc.RecheckMCPAuthorization(t.Context(), loaded.ID, control)
+	if err != nil || result.Status != session.AuthorizationDenied || result.Run != nil {
+		t.Fatalf("fallback result = %+v, %v; want denied and no run", result, err)
+	}
+
+	var events []session.Event
+	for ev, readErr := range log.Read(t.Context(), loaded.ID) {
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		events = append(events, ev)
+	}
+	// seed (3) + backfilled required (1) + 2 tool results + resolved (1) = 7.
+	if got, want := len(events), len(seed)+4; got != want {
+		t.Fatalf("event count = %d, want %d: %+v", got, want, events)
+	}
+	backfilled := events[len(seed)]
+	if backfilled.Type != session.EvAuthorizationRequired || backfilled.Authorization == nil ||
+		backfilled.Authorization.AuthorizationID != f.pending.Authorization.ID ||
+		backfilled.Authorization.Call != f.pending.Call.ID || backfilled.Authorization.Status != session.AuthorizationPending {
+		t.Fatalf("backfilled required event = %+v", backfilled)
+	}
+	resolved := events[len(events)-1]
+	if resolved.Type != session.EvAuthorizationResolved || resolved.Authorization == nil || resolved.Authorization.Status != session.AuthorizationDenied {
+		t.Fatalf("trailing resolution event = %+v", resolved)
+	}
+	if _, err := eventsource.Fold(eventsource.SessionMeta{
+		ID: loaded.ID, Mode: loaded.Mode, Limits: loaded.Limits, EnvironmentRef: loaded.EnvironmentRef, CreatedAt: loaded.CreatedAt,
+	}, log.Read(t.Context(), loaded.ID)); err != nil {
+		t.Fatalf("backfill did not restore Fold-reconstructable ordering: %v", err)
+	}
+
+	// A SECOND resolution attempt over a log that already has the required
+	// event must never duplicate it (Fold rejects a reused authorization call
+	// id) — reattaching the read-only existence check, not an optimistic flag,
+	// is what makes this safe.
+	if err := log.Append(t.Context(), loaded.ID, session.Event{Type: session.EvToolResult, ToolResult: ptrToolResult(session.NewToolResult(f.pending.Call.ID, "noop"))}); err != nil {
+		t.Fatal(err)
+	}
+	f.svc.ensureAuthorizationRequiredLogged(t.Context(), loaded.ID, f.pending)
+	var requiredCount int
+	for ev, readErr := range log.Read(t.Context(), loaded.ID) {
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		if ev.Type == session.EvAuthorizationRequired {
+			requiredCount++
+		}
+	}
+	if requiredCount != 1 {
+		t.Fatalf("required event count = %d, want 1 (no duplicate backfill)", requiredCount)
+	}
+}
+
+func ptrToolResult(r session.ToolResult) *session.ToolResult { return &r }
+
 func TestMCPAuthorizationTerminalFallbackAppendFailureIsExplicit(t *testing.T) {
 	f := newLifecycleFixture(t, session.AuthorizationDenied, nil, time.Now, nil)
-	log := &countingEventLog{postWriteFailCalls: map[int]bool{1: true}}
+	log := &countingEventLog{}
+	// Seed the required event so ensureAuthorizationRequiredLogged's existence
+	// check finds it and makes no backfill append of its own — this test's
+	// failure injection targets appendAuthorizationResolution's own first
+	// append, not the reconciliation check ahead of it.
+	if err := log.Append(t.Context(), "authorization-session", session.Event{Type: session.EvAuthorizationRequired, Authorization: &session.AuthorizationPayload{
+		AuthorizationID: f.pending.Authorization.ID, DisplayName: f.pending.Authorization.DisplayName, Call: f.pending.Call.ID,
+		ExpiresAt: f.pending.Authorization.ExpiresAt, Status: session.AuthorizationPending,
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	log.postWriteFailCalls = map[int]bool{2: true}
 	diag := &lifecycleDiagnostics{}
 	f.svc.cfg.EventLog = log
 	f.svc.cfg.Diagnostics = diag
@@ -530,11 +632,11 @@ func TestMCPAuthorizationTerminalFallbackAppendFailureIsExplicit(t *testing.T) {
 	if !diag.contains("persist terminal authorization lifecycle failed") {
 		t.Fatal("fallback append failure was not diagnosed")
 	}
-	if got := len(log.attempts); got != 1 {
-		t.Fatalf("append attempts = %d, want one at-most-once attempt", got)
+	if got := len(log.attempts); got != 2 {
+		t.Fatalf("append attempts = %d, want the seeded required plus one at-most-once attempt", got)
 	}
-	if got := len(log.recorded); got != 1 {
-		t.Fatalf("durably written events = %d, want the ambiguous first append preserved without retry", got)
+	if got := len(log.recorded); got != 2 {
+		t.Fatalf("durably written events = %d, want the seeded required plus the ambiguous append preserved without retry", got)
 	}
 	persisted, loadErr := f.store.Load(t.Context(), loaded.ID)
 	if loadErr != nil {
@@ -558,7 +660,10 @@ func TestMCPAuthorizationCloseSessionSettlesParkedCall(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if loaded.State != session.StateRunning {
+	// Idle, not the stranded StateRunning of before: settlement starts no run
+	// to own it, so Abandon settles it — see ensureAuthorizationRequiredLogged's
+	// sibling fix in settleAuthorizationLocked.
+	if loaded.State != session.StateIdle {
 		t.Fatalf("state = %q", loaded.State)
 	}
 	if err := session.ValidateToolPairing(loaded.Conversation.Messages); err != nil {
@@ -957,7 +1062,7 @@ func TestMCPAuthorizationServiceCloseSettlesParkedCall(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if settled.State != session.StateRunning {
+	if settled.State != session.StateIdle {
 		t.Fatalf("state = %q", settled.State)
 	}
 	if pairErr := session.ValidateToolPairing(settled.Conversation.Messages); pairErr != nil {
@@ -1218,7 +1323,7 @@ func TestMCPAuthorizationCloseSessionSaveFailureRetainsAuthorityForRetry(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	if persisted.State != session.StateRunning {
+	if persisted.State != session.StateIdle {
 		t.Fatalf("state after retry = %q", persisted.State)
 	}
 	f.svc.mu.Lock()

@@ -173,6 +173,43 @@ func TestSessionAffinityAndHandoff_Scenario2_GRPCUnaryAndServerStreamMatrix(t *t
 			_, err = stream.Recv()
 			return err
 		}},
+		{"ConnectWorkspaceServices", func() error {
+			_, err := client.ConnectWorkspaceServices(ctx, &mecatlv1.WorkspaceEnrollmentConnectRequest{SessionId: requestID})
+			return err
+		}},
+		{"RetryWorkspaceEnrollment", func() error {
+			_, err := client.RetryWorkspaceEnrollment(ctx, &mecatlv1.WorkspaceEnrollmentControlRequest{SessionId: requestID})
+			return err
+		}},
+		{"CancelWorkspaceEnrollment", func() error {
+			_, err := client.CancelWorkspaceEnrollment(ctx, &mecatlv1.WorkspaceEnrollmentControlRequest{SessionId: requestID})
+			return err
+		}},
+		{"GetMcpAuthorizationPresentation", func() error {
+			_, err := client.GetMcpAuthorizationPresentation(ctx, &mecatlv1.GetMcpAuthorizationPresentationRequest{SessionId: requestID})
+			return err
+		}},
+		{"RecheckMcpAuthorization", func() error {
+			// Bidi: the affinity header rides the stream's metadata and is
+			// checked (twice — see grpc.go's two-phase pattern) independent of
+			// Send/Recv timing, but the RPC status itself surfaces only on Recv.
+			stream, err := client.RecheckMcpAuthorization(ctx)
+			if err != nil {
+				return err
+			}
+			_ = stream.Send(&mecatlv1.RecheckMcpAuthorizationRequest{SessionId: requestID, AuthorizationId: "authorization:1"})
+			_, err = stream.Recv()
+			return err
+		}},
+		{"CancelMcpAuthorization", func() error {
+			stream, err := client.CancelMcpAuthorization(ctx)
+			if err != nil {
+				return err
+			}
+			_ = stream.Send(&mecatlv1.CancelMcpAuthorizationRequest{SessionId: requestID, AuthorizationId: "authorization:1"})
+			_, err = stream.Recv()
+			return err
+		}},
 	}
 	var commonFailure string
 	for _, tc := range tests {

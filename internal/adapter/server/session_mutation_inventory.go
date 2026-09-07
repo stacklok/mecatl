@@ -94,6 +94,7 @@ var sessionMutationInventory = map[string]SessionMutationEntry{
 	"resolveAuthorizationLocked":           {SessionMutationLeaseProven, "called only from RecheckMCPAuthorization/CancelMCPAuthorization callers that already hold runEntryMu and the acquired session lease"},
 	"settleAuthorizationLocked":            {SessionMutationLeaseProven, "called only from closeSessionAuthorized after runEntryMu.lock and the real acquireLease have both succeeded"},
 	"appendAuthorizationResolution":        {SessionMutationLeaseProven, "no-continuation EventLog fallback invoked only from the same lease-proven authorization-resolution callers"},
+	"ensureAuthorizationRequiredLogged":    {SessionMutationLeaseProven, "called only from resolveAuthorizationLocked/settleAuthorizationLocked callers that already hold runEntryMu and the acquired session lease"},
 	"ConnectWorkspaceServices":             {SessionMutationLeaseOwned, "runs under runEntryMu with the idle-only, no-active-run precondition and acquires the session mutation lease before persisting"},
 	"cancelWorkspaceEnrollment":            {SessionMutationLeaseOwned, "shared cancel body for RetryWorkspaceEnrollment/CancelWorkspaceEnrollment, gated the same as ConnectWorkspaceServices"},
 	"restoreAuthorizationClaim":            {SessionMutationLeaseProven, "compensating restore invoked only from the same lease-proven authorization-continuation callers after a failed claim-persist"},

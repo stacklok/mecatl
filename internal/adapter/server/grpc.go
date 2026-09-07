@@ -1408,6 +1408,9 @@ func (h *HarnessServer) StreamSessionEvents(req *mecatlv1.StreamSessionEventsReq
 }
 
 func (h *HarnessServer) ConnectWorkspaceServices(ctx context.Context, req *mecatlv1.WorkspaceEnrollmentConnectRequest) (*mecatlv1.WorkspaceEnrollment, error) {
+	if err := validateGRPCSessionAffinity(ctx, req.GetSessionId()); err != nil {
+		return nil, err
+	}
 	if req.GetSessionId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "session_id is required")
 	}
@@ -1419,6 +1422,9 @@ func (h *HarnessServer) ConnectWorkspaceServices(ctx context.Context, req *mecat
 }
 
 func (h *HarnessServer) RetryWorkspaceEnrollment(ctx context.Context, req *mecatlv1.WorkspaceEnrollmentControlRequest) (*mecatlv1.WorkspaceEnrollment, error) {
+	if err := validateGRPCSessionAffinity(ctx, req.GetSessionId()); err != nil {
+		return nil, err
+	}
 	id := session.WorkspaceEnrollmentID(req.GetEnrollmentId())
 	if req.GetSessionId() == "" || !id.Valid() {
 		return nil, status.Error(codes.InvalidArgument, "valid session_id and enrollment_id are required")
@@ -1431,6 +1437,9 @@ func (h *HarnessServer) RetryWorkspaceEnrollment(ctx context.Context, req *mecat
 }
 
 func (h *HarnessServer) CancelWorkspaceEnrollment(ctx context.Context, req *mecatlv1.WorkspaceEnrollmentControlRequest) (*mecatlv1.WorkspaceEnrollment, error) {
+	if err := validateGRPCSessionAffinity(ctx, req.GetSessionId()); err != nil {
+		return nil, err
+	}
 	id := session.WorkspaceEnrollmentID(req.GetEnrollmentId())
 	if req.GetSessionId() == "" || !id.Valid() {
 		return nil, status.Error(codes.InvalidArgument, "valid session_id and enrollment_id are required")
@@ -1452,6 +1461,9 @@ func toProtoWorkspaceEnrollment(result WorkspaceEnrollmentProjection) *mecatlv1.
 // GetMcpAuthorizationPresentation returns the live browser URL for one owned,
 // still-pending authorization. The request carries correlation only.
 func (h *HarnessServer) GetMcpAuthorizationPresentation(ctx context.Context, req *mecatlv1.GetMcpAuthorizationPresentationRequest) (*mecatlv1.GetMcpAuthorizationPresentationResponse, error) {
+	if err := validateGRPCSessionAffinity(ctx, req.GetSessionId()); err != nil {
+		return nil, err
+	}
 	if req.GetSessionId() == "" || !session.ValidAuthorizationID(req.GetAuthorizationId()) {
 		return nil, status.Error(codes.InvalidArgument, "invalid session_id or authorization_id")
 	}
@@ -1464,6 +1476,9 @@ func (h *HarnessServer) GetMcpAuthorizationPresentation(ctx context.Context, req
 }
 
 func (h *HarnessServer) RecheckMcpAuthorization(stream grpc.BidiStreamingServer[mecatlv1.RecheckMcpAuthorizationRequest, mecatlv1.RecheckMcpAuthorizationResponse]) error {
+	if err := validateGRPCSessionAffinity(stream.Context(), ""); err != nil {
+		return err
+	}
 	first, err := stream.Recv()
 	if err != nil {
 		return status.Error(codes.InvalidArgument, "authorization control requires an initial frame")
@@ -1472,6 +1487,9 @@ func (h *HarnessServer) RecheckMcpAuthorization(stream grpc.BidiStreamingServer[
 		return status.Error(codes.InvalidArgument, "first authorization control frame must contain only valid session_id and authorization_id")
 	}
 	id := session.SessionID(first.GetSessionId())
+	if err := validateGRPCSessionAffinity(stream.Context(), string(id)); err != nil {
+		return err
+	}
 	runCtx := context.WithoutCancel(stream.Context())
 	result, err := h.svc.RecheckMCPAuthorization(runCtx, id, MCPAuthorizationControl{SessionID: id, AuthorizationID: first.GetAuthorizationId()})
 	if err != nil {
@@ -1501,6 +1519,9 @@ func (h *HarnessServer) RecheckMcpAuthorization(stream grpc.BidiStreamingServer[
 }
 
 func (h *HarnessServer) CancelMcpAuthorization(stream grpc.BidiStreamingServer[mecatlv1.CancelMcpAuthorizationRequest, mecatlv1.CancelMcpAuthorizationResponse]) error {
+	if err := validateGRPCSessionAffinity(stream.Context(), ""); err != nil {
+		return err
+	}
 	first, err := stream.Recv()
 	if err != nil {
 		return status.Error(codes.InvalidArgument, "authorization control requires an initial frame")
@@ -1509,6 +1530,9 @@ func (h *HarnessServer) CancelMcpAuthorization(stream grpc.BidiStreamingServer[m
 		return status.Error(codes.InvalidArgument, "first authorization control frame must contain only valid session_id and authorization_id")
 	}
 	id := session.SessionID(first.GetSessionId())
+	if err := validateGRPCSessionAffinity(stream.Context(), string(id)); err != nil {
+		return err
+	}
 	runCtx := context.WithoutCancel(stream.Context())
 	result, err := h.svc.CancelMCPAuthorization(runCtx, id, MCPAuthorizationControl{SessionID: id, AuthorizationID: first.GetAuthorizationId()})
 	if err != nil {

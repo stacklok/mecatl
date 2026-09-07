@@ -405,6 +405,7 @@ func (s *Service) resolveAuthorizationLocked(ctx context.Context, sess *session.
 		return MCPAuthorizationResult{}, fmt.Errorf("%w: persist authorization resolution", ErrInternal)
 	}
 	s.stopAuthorizationExpiry(sess.ID)
+	s.ensureAuthorizationRequiredLogged(ctx, sess.ID, pending)
 	engine, env, err := s.engineAndEnvironmentFor(ctx, sess)
 	if err != nil {
 		// Engine/environment reconstruction is not required to make a terminal
@@ -415,6 +416,17 @@ func (s *Service) resolveAuthorizationLocked(ctx context.Context, sess *session.
 			s.cfg.Diagnostics.Log(context.WithoutCancel(ctx), port.LevelWarn, "persist terminal authorization lifecycle failed",
 				"session", string(sess.ID), "status", string(status), "continuation_err", err.Error(), "err", appendErr.Error())
 			return MCPAuthorizationResult{}, fmt.Errorf("%w: continuation unavailable (%v); persist terminal authorization lifecycle: %v", ErrInternal, err, appendErr)
+		}
+		// AbortAuthorization left sess StateRunning for the ordinary case: a real
+		// Engine.Run about to start. This fallback starts none, so without
+		// settling it here the durable snapshot is stranded StateRunning with no
+		// owning run and no EvResult ever emitted — the next prompt misreads it as
+		// a crash orphan. Best-effort and silent on failure, matching
+		// repairAuthorizationRegistration's established pattern: the results and
+		// resolution are already durably logged above, so a failure here is a
+		// display-state nit, not a lost-work risk.
+		if err := sess.Abandon(); err == nil {
+			_ = s.saveSession(context.WithoutCancel(ctx), sess)
 		}
 		return mcpAuthorizationResult(pending, status, nil), nil
 	}
@@ -490,6 +502,60 @@ func (s *Service) registerAndStartAuthorizationResolution(ctx context.Context, s
 		return appendTerminal(fmt.Errorf("%w: start authorization resolution: %s", ErrInternal, transition))
 	}
 	return nil
+}
+
+// ensureAuthorizationRequiredLogged closes the crash-window gap between
+// PauseForAuthorization's durable snapshot save and this session's
+// EvAuthorizationRequired reaching the EventLog: a process failure in that
+// narrow interval leaves a durably-awaiting session with no matching required
+// record, so the resolved event this call is about to append (via either the
+// continuation-run relay or appendAuthorizationResolution) would make
+// eventsource.Fold reject the whole session ("resolved has no matching open
+// lifecycle"). It reads this session's log ONCE for an existing required event
+// carrying pending's exact AuthorizationID and backfills one, built from the
+// same durable pending state, only when genuinely absent — never blindly, since
+// a duplicate required for an ID that already has one is its own Fold error
+// ("reused authorization call id"). A read failure is fail-safe: it leaves the
+// (unchanged, pre-existing) gap rather than risk a duplicate from an uncertain
+// read, and WARNs once.
+func (s *Service) ensureAuthorizationRequiredLogged(ctx context.Context, id session.SessionID, pending session.PendingAuthorization) {
+	if s.cfg.EventLog == nil {
+		return
+	}
+	logged, err := authorizationRequiredLogged(ctx, s.cfg.EventLog, id, pending.Authorization.ID)
+	if err != nil {
+		s.cfg.Diagnostics.Log(context.WithoutCancel(ctx), port.LevelWarn, "authorization reconciliation: event log read failed",
+			"session", string(id), "authorization", pending.Authorization.ID, "err", err.Error())
+		return
+	}
+	if logged {
+		return
+	}
+	ev := session.Event{Type: session.EvAuthorizationRequired, Authorization: &session.AuthorizationPayload{
+		AuthorizationID: pending.Authorization.ID,
+		DisplayName:     pending.Authorization.DisplayName,
+		Call:            pending.Call.ID,
+		ExpiresAt:       pending.Authorization.ExpiresAt,
+		Status:          session.AuthorizationPending,
+	}}
+	if err := s.appendEvent(context.WithoutCancel(ctx), id, ev); err != nil {
+		s.cfg.Diagnostics.Log(context.WithoutCancel(ctx), port.LevelWarn, "authorization reconciliation: backfill append failed",
+			"session", string(id), "authorization", pending.Authorization.ID, "err", err.Error())
+	}
+}
+
+// authorizationRequiredLogged reports whether id's durable EventLog already
+// carries an EvAuthorizationRequired for authorizationID.
+func authorizationRequiredLogged(ctx context.Context, log port.EventLog, id session.SessionID, authorizationID string) (bool, error) {
+	for ev, err := range log.Read(ctx, id) {
+		if err != nil {
+			return false, err
+		}
+		if ev.Type == session.EvAuthorizationRequired && ev.Authorization != nil && ev.Authorization.AuthorizationID == authorizationID {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // appendAuthorizationResolution is the no-continuation fallback for an already
@@ -854,10 +920,23 @@ func (s *Service) settleAuthorizationLocked(ctx context.Context, id session.Sess
 			"session", string(id), "err", err.Error())
 		return err
 	}
+	s.ensureAuthorizationRequiredLogged(ctx, id, pending)
 	if err := s.appendAuthorizationResolution(ctx, id, pending, results, session.AuthorizationInterrupted); err != nil {
 		s.cfg.Diagnostics.Log(context.WithoutCancel(ctx), port.LevelWarn, "persist external authorization settlement lifecycle failed",
 			"session", string(id), "err", err.Error())
 		return err
+	}
+	// resolveAuthorization (via InterruptAuthorization) leaves sess StateRunning
+	// — correct for the ordinary continuation path, which immediately starts a
+	// real Engine.Run. Shutdown settlement starts none, so without this the
+	// durable snapshot is stranded StateRunning forever: no process is left to
+	// drive it, and the next boot's crash-orphan sweep would only ever see it
+	// as "abandoned", never as the clean interruption it actually was. Abandon
+	// settles it to idle with accurate close-out wording; best-effort and
+	// silent on failure, matching repairAuthorizationRegistration's established
+	// pattern — shutdown is one-shot with no later retry to preserve state for.
+	if err := sess.Abandon(); err == nil {
+		_ = s.saveSession(context.WithoutCancel(ctx), sess)
 	}
 	return nil
 }
