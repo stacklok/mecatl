@@ -51,7 +51,7 @@ Every plan has one non-empty `## Human decisions` section with exactly one shape
 
 Place every material behavior/interface choice there, not under deferred decisions. The
 bundled checker rejects missing, empty, placeholder, or malformed sections and ties unchecked
-items mechanically to `draft` status. New plans and materially amended legacy plans after ADR 0304
+items mechanically to `draft` status. New plans and materially amended legacy plans after ADR 0306
 must declare exact `**Contract:** human-reviewed/v1` metadata; unmarked historical plans are
 grandfathered until materially amended and are not bulk-migrated.
 
@@ -118,6 +118,12 @@ PR after verification. There is no cleanup or status-only PR.
 - [Persistent read-before-write ledgers](persistent-read-before-write-ledgers.md) —
   storage-independent, session-scoped read evidence with an in-memory default,
   a durable Redis contract proof, and fail-closed file-tool behavior. Status: draft.
+- [Session-load observability](session-load-observability.md) — target-free operator
+  classification and metrics for snapshot load failures while preserving ownership
+  concealment. Status: landed.
+- [Managed temporary command leases](managed-temporary-command-leases.md) — private,
+  attributable Linux and macOS command/job temporary storage with a permission-visible
+  system escape and deterministic crash-residue reaping. Status: landed.
 - [Local mecak8s Kind fixture](mecak8s-kind-fixture.md) — cleanly separates an
   operator-run mock/real-provider mecak8s fixture, optional Keycloak caller
   identity, and the deferred ToolHive/vMCP delegation extension. Status: draft.
@@ -158,6 +164,7 @@ PR after verification. There is no cleanup or status-only PR.
 - [Delegation observability convergence](delegation-observability-convergence.md) —
   bounded previews for Subagent/Parallel, converging the delegation observability
   surface on two tiers (Team-unique structures stay Team-only). Status: landed.
+- [OAuth protected-resource discovery](oauth-protected-resource-discovery.md) — RFC 9728 metadata from mecated/mecak8s and mecatui shorthand enrollment with issuer/audience/client hints. Status: draft.
 - [Caller identity](caller-identity.md) — completed acceptance record for optional
   OIDC caller attribution: a verified principal, durable session/schedule ownership,
   and log-only event actors; no authorization. Status: landed.
@@ -237,6 +244,12 @@ PR after verification. There is no cleanup or status-only PR.
   ownership matrix, `query()`'s one-shot lifecycle, callback `tool()` with local
   schema validation and two-layer collision refusal, the hand-written loopback
   streaming-HTTP MCP host, and the offline Node/Bun e2e. Status: draft.
+- [TypeScript SDK public surface and v0.1.0 release (M4)](sdk-typescript-release.md) —
+  `@stacklok/mecatl-sdk` M4: the descriptor-to-transport parity gate for all 77
+  public RPCs, thin typed namespaces, ergonomic teams, streaming plan
+  resolution, TypeScript/Node/browser/macOS compatibility matrices, executable
+  examples and public docs, path-qualified npm trusted publishing, and the
+  human-gated `v0.1.0` cut. Status: draft.
 
 ## See also
 

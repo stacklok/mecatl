@@ -38,7 +38,7 @@ func savedConnection(target string) (clientauth.Connection, error) {
 	if err != nil {
 		return clientauth.Connection{}, fmt.Errorf("saved target unavailable: opening the connection registry failed: %w", err)
 	}
-	connection, err := registry.FindTarget(target)
+	connection, err := registry.Find(target)
 	if err != nil {
 		// Not enrolled is an ordinary state with an obvious remedy; an unreadable
 		// registry is a local fault. main.go's copy of this lookup already

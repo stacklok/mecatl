@@ -612,6 +612,12 @@ type Config struct {
 	// root supplies the same sink the rest of the build uses.
 	Diagnostics port.Diagnostics
 
+	// SessionLoadFailureMetric records one bounded class for each non-not-found
+	// GetSession load failure under ownership enforcement. It receives no target,
+	// principal, locator, cause, blob, or size. Optional and nil-safe; diagnostics
+	// remain enabled when this callback is nil.
+	SessionLoadFailureMetric func(port.SessionLoadFailureClass)
+
 	// ReplayApprovals repopulates the in-memory learned-rule store (permstore) for a
 	// loaded session from its durable EventLog allow-always verdicts (cloud-native
 	// Phase 3b). It is the consumer that kills the Phase 2 re-ask wart: the permstore
@@ -2995,18 +3001,23 @@ func (s *Service) deleteSessionFamily(ctx context.Context, id session.SessionID,
 func (s *Service) GetSession(ctx context.Context, id session.SessionID) (*session.Session, error) {
 	sess, err := s.cfg.Store.Load(ctx, id)
 	if err != nil && !errors.Is(err, port.ErrSessionNotFound) {
-		// Under enforcement the line carries NO target: neither the id nor the
-		// store's error, which routinely embeds the record path. An operator only
-		// needs the RATE of this line to see an outage, and withholding the target
-		// keeps a probing caller from correlating anything through the log.
 		if s.cfg.OwnershipEnforced {
-			s.cfg.Diagnostics.Log(ctx, port.LevelWarn, "session load failed; reported to callers as absent (target withheld under ownership enforcement)")
+			class := port.ClassifySessionLoadFailure(err)
+			// This target-free operator fact must not inherit request trace/baggage:
+			// handlers may project context values into the final log record.
+			s.cfg.Diagnostics.Log(context.Background(), port.LevelWarn, "session load failed", "class", class.String(), "ownership", "enforced")
+			if s.cfg.SessionLoadFailureMetric != nil {
+				s.cfg.SessionLoadFailureMetric(class)
+			}
 		} else {
 			s.cfg.Diagnostics.Log(ctx, port.LevelWarn, "session load failed; reported to the caller as absent",
 				"session", string(id), "err", err.Error())
 		}
 	}
 	if err != nil || s.authorizeSession(ctx, sess) != nil {
+		if s.cfg.OwnershipEnforced {
+			return nil, ErrNotFound
+		}
 		return nil, fmt.Errorf("%w: %q", ErrNotFound, id)
 	}
 	// The session ID is an opaque handle, so repairing malformed bytes here would

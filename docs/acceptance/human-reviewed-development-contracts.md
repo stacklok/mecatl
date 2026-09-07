@@ -6,7 +6,7 @@
 **Delivery:** Combined. This focused change has no runtime/public/operator/persistence/trust-boundary interface; the process skills and documents are themselves the complete interface being reviewed.
 **Expected tasks:** 1
 **Combined rationale:** The process contract and its repository documentation are the complete deliverable, so a separate plan-review PR followed by an implementation PR would review the same indivisible change twice and add no review value.
-**ADR:** [ADR 0304](../adr/0304-human-reviewed-development-contracts.md) — human contract review precedes autonomous implementation.
+**ADR:** [ADR 0306](../adr/0306-human-reviewed-development-contracts.md) — human contract review precedes autonomous implementation.
 
 The smallest change that makes behavioral and exact-interface review a durable checkpoint
 before autonomous implementation, while preserving isolated TDD and final code review.
@@ -33,7 +33,7 @@ None — the process contract contains no unresolved choice.
 
 A contributor can follow one consistent flow from proposed contract through approved
 baseline, isolated TDD implementation, panel review, and final human merge. The living
-workflow, skills, PR template, and checker agree with [ADR 0304](../adr/0304-human-reviewed-development-contracts.md)
+workflow, skills, PR template, and checker agree with [ADR 0306](../adr/0306-human-reviewed-development-contracts.md)
 and the repository's [agent contract](../../AGENTS.md).
 
 **Acceptance:**

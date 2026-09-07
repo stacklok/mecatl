@@ -165,6 +165,22 @@ Versioned automatic session cleanup policy. Operator-tier only; project values a
 | `retention.sweep_cadence` | `duration` | `1h` | SweepCadence is the repeat interval; 0 disables repeats while retaining the compatibility startup sweep. |
 | `retention.acknowledge_main_deletion` | `bool` | `false` | AcknowledgeMainDeletion explicitly consents to destructive main-session cleanup. |
 
+## `temporary_storage`
+
+Tier: **operator**
+
+Managed command temporary-storage policy. Read only from user-global settings.yaml; project and explicit CLI config values are ignored. Managed mode is Linux-only; system preserves inherited temporary-directory behavior.
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `temporary_storage.mode` | `string` | `managed` |  |
+| `temporary_storage.managed_root` | `string` | `mecatl` |  |
+| `temporary_storage.system_temp_dir` | `string` | `inherited` |  |
+| `temporary_storage.command_reap_after` | `duration` | `1h` |  |
+| `temporary_storage.reap_interval` | `duration` | `1h` |  |
+| `temporary_storage.reap_timeout` | `duration` | `5m` |  |
+| `temporary_storage.shutdown_reap_timeout` | `duration` | `1m` |  |
+
 ## `storage_management`
 
 Tier: **operator**

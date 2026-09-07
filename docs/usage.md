@@ -30,6 +30,53 @@ an editor that spawned it.
 
 ---
 
+<<<<<<< HEAD
+## OAuth protected-resource discovery
+
+`mecated` and `mecak8s` share the optional RFC 9728 profile flags
+`--oidc-resource`, `--oidc-client-id`, and `--oidc-scopes`. The resource must be
+an operator-supplied absolute HTTPS URL; Helm exposes the equivalent
+`oidc.resource`, `oidc.clientID`, and `oidc.scopes` values. Metadata advertises
+standard `resource`, `authorization_servers`, and `bearer_methods_supported: ["header"]`
+fields separately from mecatl's audience/client-id extensions. Every protected API
+route advertises the configured resource's metadata URL as its service-wide base;
+the server never derives it from a request Host or path. Anonymous metadata
+and OIDC discovery are bootstrap-only and remain separate from authenticated
+gRPC transport. ToolHive is implementation provenance for the remote client
+adapter, not a runtime engine dependency. Without the profile, explicit OIDC
+login and existing issuer/audience behavior are unchanged.
+
+## Managed temporary storage (Linux and macOS)
+
+By default Bash commands use a private managed temporary lease. The harness removes
+that lease after normal command completion and a bounded Build-owned maintenance
+worker recovers validated abandoned command/job leases after the configured TTL.
+The worker never scans arbitrary system temporary directories and does not delay a
+command allocation. This lifecycle is available on Linux and macOS; other
+platforms must use `mode: system`.
+
+To use the inherited or configured system temporary directory instead, an operator
+sets the user-global (not project) `settings.yaml` value below. System mode is the
+rollback switch: it stops new managed leases and reaping, and it leaves existing
+managed data untouched for manual inspection or removal.
+
+```yaml
+# ~/.config/mecatl/settings.yaml
+temporary_storage:
+  mode: system # managed is the Linux and macOS default
+```
+
+Managed mode accepts `managed_root`, `system_temp_dir`, `command_reap_after`,
+`reap_interval`, `reap_timeout` (default five minutes), and
+`shutdown_reap_timeout` (default one minute). Each workspace manifest also records
+its canonical current path for owner-only debugging; it is refreshed when that managed
+workspace key is opened from a new path. These are operator controls; project
+settings cannot redirect or weaken cleanup. A Bash call may request `temp_scope:
+system` only when ordinary Bash permission and the separate `BashSystemTemp`
+capability are both allowed. See [ADR 0281](adr/0281-managed-temporary-command-leases.md).
+
+---
+
 ## Build identity and safe diagnostics
 
 Every shipped executable accepts exact top-level `--version` and prints its build id without starting normal configuration or services. Ordinary `task build`, `task install`, and Taskfile-driven ko builds resolve their source identity at build time with `git describe --tags --match 'v[0-9]*' --always --dirty`: the most recent root release tag, commits since it, abbreviated SHA, and an optional dirty suffix (for example, `v0.0.22-28-g40a6b3fc6-dirty`). `BUILD_ID=<value>` preserves that explicit linker stamp verbatim, including `dev`. Direct Go or ko builds without a stamp do not invoke git at runtime; they fall back to embedded VCS metadata as `dev+<12-char-vcs-revision>[.dirty]`, or `dev` if metadata is unavailable or invalid. Authenticated clients can read the server build identity and sanitized diagnostic display endpoint projections through gRPC `GetServerInfo` or HTTP `GET /v1/info`; these are not connection configuration or instructions. The detailed transport contracts are in [the gRPC API](usage/grpc-api.md) and [the HTTP/SSE API](usage/http-sse-api.md). Mecatui's `/diagnostics` behavior is documented in [the TUI guide](tui.md).

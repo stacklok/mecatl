@@ -163,7 +163,17 @@ ordinary offline tests. See the [fixture's setup and CA instructions](https://gi
 
 ---
 
-## How mecak8s differs from mecated
+## OAuth protected-resource profile
+
+For remote `mecatui` discovery, set the same optional profile flags on either
+composition root: `--oidc-resource` is the externally reachable RFC 9728 URL,
+`--oidc-client-id` is the public mecatl extension, and `--oidc-scopes` is CSV
+scope metadata. The Helm chart exposes these as `oidc.resource`, `oidc.clientID`,
+and `oidc.scopes`; it rejects partial profiles and never infers a resource from
+pod bind addresses. Metadata bootstrap is anonymous HTTPS and intentionally
+separate from authenticated gRPC transport. ToolHive supplied implementation
+provenance for the client discovery path; it is not an engine dependency.
+
 
 `mecak8s` has a deliberately narrower surface than `mecated`. The differences are not runtime configuration — they are compile-time defaults and removed capabilities.
 

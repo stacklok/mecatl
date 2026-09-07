@@ -408,7 +408,10 @@ func NewCommandRunner() *CommandRunner {
 }
 
 // Compile-time assertion that CommandRunner satisfies the runner port.
-var _ tool.CommandRunner = (*CommandRunner)(nil)
+var (
+	_ tool.CommandRunner            = (*CommandRunner)(nil)
+	_ tool.CommandEnvironmentRunner = (*CommandRunner)(nil)
+)
 
 // SetResult programs the deterministic result (and/or error) that the next and
 // subsequent Run calls return. Passing a nil result with a nil error makes Run
@@ -426,6 +429,17 @@ func (r *CommandRunner) SetResult(res *tool.CommandResult, err error) {
 // command string is ignored beyond being a marker; this method exists for
 // deterministic Bash-tool stubbing, not real execution.
 func (r *CommandRunner) Run(ctx context.Context, _ string) (tool.CommandResult, error) {
+	return r.run(ctx)
+}
+
+// RunWithEnvironment accepts the trusted overlay for CommandRunner conformance.
+// The in-memory runner has no process environment, so it deliberately has no
+// observable effect on its deterministic canned result.
+func (r *CommandRunner) RunWithEnvironment(ctx context.Context, _ string, _ tool.CommandEnvironmentOverlay) (tool.CommandResult, error) {
+	return r.run(ctx)
+}
+
+func (r *CommandRunner) run(ctx context.Context) (tool.CommandResult, error) {
 	if err := ctx.Err(); err != nil {
 		return tool.CommandResult{}, err
 	}

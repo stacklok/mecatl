@@ -880,6 +880,10 @@ func (r *recordingRunner) Run(_ context.Context, command string) (tool.CommandRe
 	return r.result, r.returnError
 }
 
+func (r *recordingRunner) RunWithEnvironment(ctx context.Context, command string, _ tool.CommandEnvironmentOverlay) (tool.CommandResult, error) {
+	return r.Run(ctx, command)
+}
+
 // TestBashUsesBoundRunner proves BashTool.Execute reads the CommandRunner off
 // the tool.Environment (issue #462): the bound runner receives the command, and
 // a shell-less Environment (nil runner) surfaces ErrNoShell honestly.

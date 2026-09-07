@@ -166,6 +166,7 @@ func (c *Config) UnmarshalYAML(node ast.Node) error {
 		"mcp":                    newPermconfigNodePointer(&c.MCP),
 		"retention":              newPermconfigNodePointer(&c.Retention),
 		"storage_management":     newPermconfigNodePointer(&c.StorageManagement),
+		"temporary_storage":      newPermconfigNodePointer(&c.TemporaryStorage),
 	}
 	for _, entry := range mapping.Values {
 		key, ok := permconfigMappingKey(entry.Key)

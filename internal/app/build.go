@@ -187,6 +187,8 @@ type Config struct {
 	RedisAllowPlaintext bool
 	Shell               string
 	NoBash              bool
+	temporaryStorage    temporaryStorageConfig
+	managedTemp         *managedTemporaryStorage
 	// AuthorityEvaluator selects the authority evaluator adapter: "local" enforces
 	// minted sets, while "noop" deliberately disables enforcement. "cedar" loads
 	// CedarAuthorityPolicy at startup and fails closed when it cannot be loaded.
@@ -1013,6 +1015,11 @@ type Config struct {
 	// the scheduler metrics-silent: byte-identical to the pre-feature shape.
 	ScheduleMetricsEmitter func(payload session.SchedulePayload, duration time.Duration)
 
+	// SessionLoadFailureMetricsEmitter records one ownership-concealed load
+	// failure by its closed port-owned class. The callback receives no target or
+	// cause. Nil keeps the metric silent while diagnostics remain active.
+	SessionLoadFailureMetricsEmitter func(port.SessionLoadFailureClass)
+
 	// Diagnostics is the general-purpose operational logging seam, injected by the
 	// caller (mecated wires a slogdiag sink to stderr; the embedded TUI passes its
 	// own). It is the sink the build-once composition facts (token counter /
@@ -1445,6 +1452,21 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	// SAME instance — one discovery pass, one cache, no per-consumer drift.
 	cfg.permResolver = buildPermResolver(cfg)
 	cfg.childPermResolver = buildChildPermResolver(cfg)
+	var temporaryStorageErr error
+	cfg, temporaryStorageErr = foldOperatorTemporaryStorage(cfg)
+	if temporaryStorageErr != nil {
+		return nil, temporaryStorageErr
+	}
+	cfg.managedTemp, temporaryStorageErr = openManagedTemporaryStorage(cfg.temporaryStorage)
+	if temporaryStorageErr != nil {
+		return nil, fmt.Errorf("open managed temporary storage: %w", temporaryStorageErr)
+	}
+	managedTempTransferred := false
+	defer func() {
+		if !managedTempTransferred {
+			cfg.managedTemp.close()
+		}
+	}()
 	var retentionErr error
 	cfg, retentionErr = foldOperatorRetention(cfg)
 	if retentionErr != nil {
@@ -1908,6 +1930,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		Engine:                              engine,
 		Store:                               store,
 		OwnershipEnforced:                   cfg.OwnershipEnforced,
+		SessionLoadFailureMetric:            cfg.SessionLoadFailureMetricsEmitter,
 		StorageManagementAuthorized:         storageManagementAuthorizer(cfg),
 		LocalStorageMaintenanceSingleWriter: localStorageMaintenanceSingleWriter(store),
 		SessionLiveness:                     cfg.sessionLiveness,
@@ -2388,6 +2411,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	// Service's process-wide truth. No worker is started when exclusion is
 	// permanently unavailable; runtime loss stickily settles health unavailable.
 	cfg.maintenanceMutationAvailable = svc.MaintenanceMutationAvailable
+	managedTempWorkerClose := startManagedTempWorker(ctx, cfg)
 	childGCClose := startChildGC(ctx, cfg, store, svc.IsLive, svc.DeleteSessionForRetentionCandidate)
 
 	// Crash-orphaned running-session sweep (issue #475 Step 4): repairs a
@@ -2407,6 +2431,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		}
 		staleSessionReconcileClose()
 		childGCClose()
+		managedTempWorkerClose()
 		schedClose()
 		refreshClose()
 		svc.Close()
@@ -2419,8 +2444,10 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		agentClose()
 		storeClose()
 		commandConnClose()
+		cfg.managedTemp.close()
 	})
 	profilesTransferred = true
+	managedTempTransferred = true
 	return &Built{Service: svc, Close: closeAll}, nil
 }
 
@@ -2901,6 +2928,7 @@ func sessionEngineFactory(
 		// tool it cannot call).
 		deps.PromptConfig = applySchedulePosture(deps.PromptConfig, scheduleManagerPresent(assets))
 		deps.PromptConfig = applyAgentModelDiscoveryPosture(deps.PromptConfig, deps.Catalog)
+		deps.PromptConfig = applyTemporaryStoragePosture(deps.PromptConfig, bashAvailable(cfg))
 		deps.PromptConfig = applyDiagnosticsPosture(deps.PromptConfig)
 		deps.PromptConfig = applyLearningPosture(deps.PromptConfig, learningCfg.LearningMode, learningCfg.SkillActivationPolicy, learningCfg.automaticAdmissionLedger)
 		// MODEL-VISIBLE no-FS posture (ADR 0070, the #40 pattern): tell the model up
@@ -3792,6 +3820,7 @@ func buildEngine(ctx context.Context, cfg Config, reg *providerRegistry, provide
 	// note (the model is never told about a tool it cannot call).
 	deps.PromptConfig = applySchedulePosture(deps.PromptConfig, scheduleManagerPresent(assets))
 	deps.PromptConfig = applyAgentModelDiscoveryPosture(deps.PromptConfig, deps.Catalog)
+	deps.PromptConfig = applyTemporaryStoragePosture(deps.PromptConfig, bashAvailable(cfg))
 	deps.PromptConfig = applyDiagnosticsPosture(deps.PromptConfig)
 	deps.PromptConfig = applyLearningPosture(deps.PromptConfig, cfg.LearningMode, cfg.SkillActivationPolicy, assets.automaticAdmissionLedger)
 	// The shell-less default-FS posture is NOT baked into the shared engine's
@@ -5898,9 +5927,25 @@ func buildCommandRunnerForRoot(cfg Config, root string) tool.CommandRunner {
 	// (gitenv) — the operator's own hooks/pager are honoured here, only the secrets
 	// are removed.
 	env := envscrub.Scrub(os.Environ())
-	runner, err := osfs.NewCommandRunnerShell(root, cfg.Shell, osfs.WithCommandEnvList(env))
+	return newCommandRunnerForRoot(cfg, root, env, "could not build command runner; Bash tool disabled")
+}
+
+func newCommandRunnerForRoot(cfg Config, root string, env []string, failure string) tool.CommandRunner {
+	opts := []osfs.CommandRunnerOption{
+		osfs.WithCommandEnvList(env),
+		osfs.WithSystemTemporaryDirectory(cfg.temporaryStorage.SystemTempDir),
+	}
+	if cfg.managedTemp != nil {
+		workspace, err := cfg.managedTemp.workspace(root)
+		if err != nil {
+			cfg.diag().Log(context.Background(), port.LevelWarn, failure, "workspace", root, "err", err)
+			return nil
+		}
+		opts = append(opts, osfs.WithManagedTemporaryWorkspace(workspace))
+	}
+	runner, err := osfs.NewCommandRunnerShell(root, cfg.Shell, opts...)
 	if err != nil {
-		cfg.diag().Log(context.Background(), port.LevelWarn, "could not build command runner; Bash tool disabled", "workspace", root, "err", err)
+		cfg.diag().Log(context.Background(), port.LevelWarn, failure, "workspace", root, "err", err)
 		return nil
 	}
 	return runner
@@ -6047,12 +6092,7 @@ func newHardenedRunnerForRoot(cfg Config, root string) tool.CommandRunner {
 	// then layer the git-neutralising env on the secret-free base so a sandboxed
 	// child sees neither the operator's secrets nor an untrusted repo's git hooks.
 	env := gitenv.Scrub(envscrub.Scrub(os.Environ()))
-	runner, err := osfs.NewCommandRunnerShell(root, cfg.Shell, osfs.WithCommandEnvList(env))
-	if err != nil {
-		cfg.diag().Log(context.Background(), port.LevelWarn, "could not build sandboxed member command runner; team-member Bash disabled", "workspace", root, "err", err)
-		return nil
-	}
-	return runner
+	return newCommandRunnerForRoot(cfg, root, env, "could not build sandboxed member command runner; team-member Bash disabled")
 }
 
 // subagentShellUntrustedReason returns the model/operator-facing reason the
@@ -7803,6 +7843,25 @@ func applyAgentModelDiscoveryPosture(pc prompt.Config, catalog *tool.Catalog) pr
 		pc.Role = prompt.DefaultRole()
 	}
 	pc.Role += "\n\n" + agentModelDiscoveryPostureNote
+	return pc
+}
+
+// temporaryStoragePostureNote describes the temporary-storage lifecycle choice
+// Bash exposes. It is deliberately explicit that scope is not a sandbox.
+const temporaryStoragePostureNote = "Bash temporary storage defaults to managed storage; managed storage is disposable after the command. Use temp_scope: system only when a command needs host-shared or longer-lived temporary state. temp_scope is not a filesystem sandbox: ordinary Bash authority still governs every command and path."
+
+func bashAvailable(cfg Config) bool {
+	return !cfg.NoBash && cfg.Shell != ""
+}
+
+func applyTemporaryStoragePosture(pc prompt.Config, enabled bool) prompt.Config {
+	if !enabled {
+		return pc
+	}
+	if pc.Role == "" {
+		pc.Role = prompt.DefaultRole()
+	}
+	pc.Role += "\n\n" + temporaryStoragePostureNote
 	return pc
 }
 

@@ -66,6 +66,10 @@ type SessionStore interface {
 	Save(ctx context.Context, s *session.Session) error
 	// Load retrieves the session with the given id. The not-found case MUST wrap
 	// port.ErrSessionNotFound; any other error is an infrastructure failure.
+	// Snapshot-backed adapters SHOULD wrap retrieval/transport failures with
+	// NewSessionLoadFailure(SessionLoadFailureStore, err) and decode/validation
+	// failures with SessionLoadFailureSnapshot so ownership-concealing hosts can
+	// emit bounded observability without inspecting error text.
 	Load(ctx context.Context, id session.SessionID) (*session.Session, error)
 }
 

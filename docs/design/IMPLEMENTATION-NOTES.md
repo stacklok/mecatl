@@ -103,7 +103,29 @@ do not project to a principal, and owns an explicit `Close` for the background r
 `internal/cliconfig` adapts those errors to the unchanged server sentinels and retains
 the server-root system context and all existing flag behavior.
 
-### mecak8s projected credentials and Helm runtime contract
+### RFC 9728 protected-resource profile
+
+The optional profile is shared by `mecated` and `mecak8s`: `--oidc-resource`,
+`--oidc-client-id`, and CSV `--oidc-scopes` are parsed once in
+`internal/cliconfig` and projected by the HTTP metadata handler. RFC fields
+`resource`, `authorization_servers`, `bearer_methods_supported: ["header"]`, and
+optional `scopes_supported` are kept distinct from mecatl extensions for audience
+and client ID. Discovery is
+anonymous HTTPS bootstrap and transport-separated from authenticated gRPC; it
+never adopts private issuer trust settings. The discovery client uses its configured
+15-second `http.Client` timeout (rather than calling its transport directly), and
+root resources with or without a trailing slash derive the same metadata URL. A
+saved root-resource hostname and its full resource URL are aliases; legacy
+`host:port` targets remain supported and ambiguity fails closed. `scopes_supported`
+is a narrow operator-configured public-client request allowlist, not authorization
+policy: discovered login requests exactly the confirmed set or an explicit subset and
+never expands a saved enrollment from later metadata. API 401s on subordinate routes
+remain generic `Bearer`; only the direct configured well-known route serves metadata.
+Explicit `mecatui login --scopes` may select only a configured scope. Public-client
+token exchange and refresh use `client_id` parameters, never HTTP Basic. ToolHive/
+ToolHive-Core are recorded
+as implementation provenance for the client path, not imported by the engine.
+
 
 `internal/adapter/tlsreload` owns mecak8s server-certificate loading, complete-chain
 validation, atomic last-valid publication, projected-Secret watching, and a fixed periodic
@@ -5596,6 +5618,24 @@ name in `boundaries` must resolve to a valid table entry (else
 `boundaries` is reported as a "stale classification table entry" (AC5.1's
 "stale table entry" half) — a renamed/removed method leaves a dangling row
 the guard also catches, not just a new unclassified one.
+
+`Service.GetSession` preserves ADR 0212's absence concealment for three distinct
+outcomes: missing snapshots, foreign ownership, and non-not-found load failures all
+return target-free `ErrNotFound` under enforcement. Built-in snapshot-backed stores
+wrap retrieval/transport failures as `port.SessionLoadFailureStore` and snapshot
+format/decode/identity/validation failures as `SessionLoadFailureSnapshot`; custom or
+untyped failures fold to `SessionLoadFailureUnknown`. The Service classifies only via
+the port-owned typed error (`errors.Is`/`errors.As`), never by parsing adapter text.
+One public invocation emits at most one WARN from a detached clean context with only
+`class` and the constant `ownership=enforced` direct fields, then invokes the optional
+composition metric callback once. It adds no request target, principal, path, cause,
+blob content, or blob size data. Attributes deliberately pre-bound by the trusted
+operator-supplied `port.Diagnostics` sink are outside this producer's control.
+Telemetry renders that as
+`mecatl_session_load_failures_total{class="store|snapshot|unknown"}`. The Service
+supplies neither diagnostic fields nor metric labels with a session id, principal,
+storage locator, raw cause, blob content, or blob size; genuine
+`port.ErrSessionNotFound` remains silent.
 
 See [ADR 0212](../adr/0212-caller-ownership-enforcement.md) and
 [`docs/architecture.md`](../architecture.md)'s "Caller ownership enforcement"

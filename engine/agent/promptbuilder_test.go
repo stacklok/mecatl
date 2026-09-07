@@ -107,6 +107,10 @@ func (stubShellRunner) Run(context.Context, string) (tool.CommandResult, error) 
 	return tool.CommandResult{}, nil
 }
 
+func (stubShellRunner) RunWithEnvironment(context.Context, string, tool.CommandEnvironmentOverlay) (tool.CommandResult, error) {
+	return tool.CommandResult{}, nil
+}
+
 // TestBuildRequestHostPromptBuilderOwnsSystemPrompt is the headline acceptance
 // criterion (issue #127): a host-supplied PromptBuilder produces a fully
 // host-owned system prompt with NONE of the coding-agent defaults

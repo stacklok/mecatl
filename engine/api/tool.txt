@@ -1,7 +1,11 @@
     ifacemethod func (AgentDefSource).ListAgentDefs(ctx context.Context) ([]AgentDef, error)
     ifacemethod func (AuthorityResourceResolver).AuthorityResourcePath(path string) (target string, workspace string, err error)
+    ifacemethod func (CommandEnvironmentRunner).RunWithEnvironment(ctx context.Context, command string, overlay CommandEnvironmentOverlay) (CommandResult, error)
+    ifacemethod func (CommandEnvironmentStreamer).RunStreamingWithEnvironment(ctx context.Context, command string, overlay CommandEnvironmentOverlay, out io.Writer) (exitCode int, err error)
     ifacemethod func (CommandRunner).Run(ctx context.Context, command string) (CommandResult, error)
     ifacemethod func (CommandStreamer).RunStreaming(ctx context.Context, command string, out io.Writer) (exitCode int, err error)
+    ifacemethod func (CommandTemporaryScopeRunner).RunWithTemporaryScope(ctx context.Context, command string, scope TemporaryScope) (CommandResult, error)
+    ifacemethod func (CommandTemporaryScopeStreamer).RunStreamingWithTemporaryScope(ctx context.Context, command string, scope TemporaryScope, out io.Writer) (exitCode int, err error)
     ifacemethod func (Disclosable).Advertised() ToolSpec
     ifacemethod func (EnvironmentForker).Fork(ctx context.Context, base Environment, label string) (child Environment, cleanup func() error, advisory string, err error)
     ifacemethod func (EnvironmentMerger).Merge(ctx context.Context, child Environment, parent Environment) error
@@ -78,6 +82,8 @@ const SkillOriginDriver SkillOrigin = "driver"
 const SkillOriginExplicit SkillOrigin = "explicit"
 const SkillOriginProject SkillOrigin = "project"
 const SkillOriginUser SkillOrigin = "user"
+const TemporaryScopeManaged TemporaryScope = "managed"
+const TemporaryScopeSystem TemporaryScope = "system"
 const ToolSearchName untyped string = "ToolSearch"
 func CanonicalMemoryText(value string) string
 func DecodeFileVersion(encoded string) FileVersion
@@ -106,9 +112,14 @@ type AgentMCPServer struct{Name string; URL string; Headers map[string]string}
 type AgentOrigin string
 type AuthorityResourceResolver interface{AuthorityResourcePath(path string) (target string, workspace string, err error)}
 type Catalog struct{}
+type CommandEnvironmentOverlay struct{TempDir string; GoTempDir string; TestHomeMarker string}
+type CommandEnvironmentRunner interface{RunWithEnvironment(ctx context.Context, command string, overlay CommandEnvironmentOverlay) (CommandResult, error); CommandRunner}
+type CommandEnvironmentStreamer interface{RunStreamingWithEnvironment(ctx context.Context, command string, overlay CommandEnvironmentOverlay, out io.Writer) (exitCode int, err error); CommandStreamer}
 type CommandResult struct{Stdout string; Stderr string; ExitCode int}
 type CommandRunner interface{Run(ctx context.Context, command string) (CommandResult, error)}
 type CommandStreamer interface{RunStreaming(ctx context.Context, command string, out io.Writer) (exitCode int, err error)}
+type CommandTemporaryScopeRunner interface{RunWithTemporaryScope(ctx context.Context, command string, scope TemporaryScope) (CommandResult, error); CommandRunner}
+type CommandTemporaryScopeStreamer interface{RunStreamingWithTemporaryScope(ctx context.Context, command string, scope TemporaryScope, out io.Writer) (exitCode int, err error); CommandStreamer}
 type Disclosable interface{Advertised() ToolSpec; Tool}
 type Environment struct{}
 type EnvironmentForker interface{Fork(ctx context.Context, base Environment, label string) (child Environment, cleanup func() error, advisory string, err error)}
@@ -141,6 +152,7 @@ type SkillAsset struct{Name string; Size int64; Executable bool}
 type SkillMeta struct{Name string; Description string; Origin SkillOrigin; HasAssets bool; License string; Compatibility string; Metadata map[string]string; AllowedTools []string}
 type SkillOrigin string
 type SkillSource interface{ListSkillAssets(ctx context.Context, name string) ([]SkillAsset, error); ListSkills(ctx context.Context) ([]SkillMeta, error); ReadSkillAsset(ctx context.Context, skill string, asset string) ([]byte, error); SkillBody(ctx context.Context, name string) (string, error)}
+type TemporaryScope string
 type Tool interface{Execute(ctx context.Context, in session.ToolCall, env Environment) (session.ToolResult, error); ReadOnly() bool; Spec() ToolSpec}
 type ToolSpec struct{Name string; Description string; Schema json.RawMessage}
 type VersionMismatchError struct{Path string}

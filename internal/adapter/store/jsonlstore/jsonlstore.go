@@ -729,9 +729,16 @@ func (st *Store) Load(ctx context.Context, id session.SessionID) (*session.Sessi
 		return err
 	})
 	if err != nil {
-		return nil, err
+		if errors.Is(err, port.ErrSessionNotFound) || errors.Is(err, port.ErrSessionLoadFailure) {
+			return nil, err
+		}
+		return nil, port.NewSessionLoadFailure(port.SessionLoadFailureStore, err)
 	}
-	return sessnap.Unmarshal(line)
+	sess, err := sessnap.Unmarshal(line)
+	if err != nil {
+		return nil, port.NewSessionLoadFailure(port.SessionLoadFailureSnapshot, err)
+	}
+	return sess, nil
 }
 
 // maxEventRecordSize is the largest newline-committed event-log record that

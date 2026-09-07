@@ -146,6 +146,13 @@ oidc:
   # OIDC validator; they do not change process-wide TLS trust.
   caSecret: ""
   caKey: ""
+  # Optional RFC 9728 protected-resource profile for OAuth clients. Both
+  # resource and clientID are required together and imply oidc.enabled.
+  resource: ""
+  clientID: ""
+  # These entries are joined into the same comma-separated syntax accepted by
+  # --oidc-scopes and validated by cliconfig.ParseOIDCScopes.
+  scopes: []
 
 tls:
   # Server TLS is optional for mock and explicit unsafe-bypass profiles, but

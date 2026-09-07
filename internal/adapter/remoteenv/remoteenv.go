@@ -510,13 +510,27 @@ type runner struct {
 }
 
 // Compile-time assertion that runner satisfies the runner port.
-var _ tool.CommandRunner = (*runner)(nil)
+var (
+	_ tool.CommandRunner            = (*runner)(nil)
+	_ tool.CommandEnvironmentRunner = (*runner)(nil)
+)
 
 // BoundWorkspaceRoot reports the namespace identity shared with the workspace.
 func (r *runner) BoundWorkspaceRoot() string { return r.ns.id }
 
 // Run executes the tiny test protocol against the bound namespace.
 func (r *runner) Run(ctx context.Context, command string) (tool.CommandResult, error) {
+	return r.run(ctx, command)
+}
+
+// RunWithEnvironment accepts the trusted overlay for CommandRunner conformance.
+// The deterministic remote test protocol has no process environment, so it
+// deliberately leaves the command result unchanged.
+func (r *runner) RunWithEnvironment(ctx context.Context, command string, _ tool.CommandEnvironmentOverlay) (tool.CommandResult, error) {
+	return r.run(ctx, command)
+}
+
+func (r *runner) run(ctx context.Context, command string) (tool.CommandResult, error) {
 	if err := ctx.Err(); err != nil {
 		return tool.CommandResult{}, err
 	}

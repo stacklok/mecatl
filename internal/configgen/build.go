@@ -12,6 +12,8 @@ import (
 // reflected fields. Tests can pass an empty Docs (the structure is still exercised).
 type Docs map[string]string
 
+const configDurationType = "duration"
+
 // BuildModel constructs the settings.yaml Model by REFLECTING over the permconfig
 // *Section structs (yaml tags + types, in declaration order) and attaching the
 // harvested doc-comments, the hand-pinned tier map, and the enable notes / examples.
@@ -29,6 +31,7 @@ func BuildModel(docs Docs) *Model {
 		providerOverridesSubtree(docs),
 		learningSubtree(docs),
 		retentionSubtree(docs),
+		temporaryStorageSubtree(docs),
 		storageManagementSubtree(docs),
 		steerSubtree(docs),
 		modelsSubtree(docs),
@@ -194,11 +197,33 @@ func retentionSubtree(docs Docs) *Subtree {
 		case "version":
 			f.Default, f.ExampleValue = "1", "1"
 		case "sweep_cadence":
-			f.Type, f.Default, f.ExampleValue = "duration", "1h", "1h"
+			f.Type, f.Default, f.ExampleValue = configDurationType, "1h", "1h"
 		}
 	}
 	return &Subtree{Key: "retention", Tier: TierOperator, CommentedOut: true,
 		Doc: "Versioned automatic session cleanup policy. Operator-tier only; project values are ignored. Zero disables each limit. Explicit compatibility flags outrank these values.", Fields: fields}
+}
+
+func temporaryStorageSubtree(docs Docs) *Subtree {
+	fields := fieldsOf("TemporaryStorageSection", permconfig.TemporaryStorageSection{}, docs)
+	for _, field := range fields {
+		switch field.Key {
+		case "mode":
+			field.Default, field.ExampleValue = "managed", "managed"
+		case "managed_root":
+			field.Default, field.ExampleValue = "mecatl", "mecatl"
+		case "system_temp_dir":
+			field.Default, field.ExampleValue = "inherited", ""
+		case "command_reap_after", "reap_interval":
+			field.Type, field.Default, field.ExampleValue = configDurationType, "1h", "1h"
+		case "reap_timeout":
+			field.Type, field.Default, field.ExampleValue = configDurationType, "5m", "5m"
+		case "shutdown_reap_timeout":
+			field.Type, field.Default, field.ExampleValue = configDurationType, "1m", "1m"
+		}
+	}
+	return &Subtree{Key: "temporary_storage", Tier: TierOperator, CommentedOut: true,
+		Doc: "Managed command temporary-storage policy. Read only from user-global settings.yaml; project and explicit CLI config values are ignored. Managed mode is Linux-only; system preserves inherited temporary-directory behavior.", Fields: fields}
 }
 
 func storageManagementSubtree(docs Docs) *Subtree {
@@ -232,7 +257,7 @@ func learningSubtree(docs Docs) *Subtree {
 	skills[0].Default = "validated when mode is explicitly auto; evaluated otherwise"
 	fields[2].Nested = skills
 	automatic := fieldsOf("LearningAutomaticSection", permconfig.LearningAutomaticSection{}, docs)
-	automatic[0].Type, automatic[1].Type = "duration", "duration"
+	automatic[0].Type, automatic[1].Type = configDurationType, configDurationType
 	defaults := []string{"10m", "1h", "8", "100000", "4", "50000"}
 	for i := range automatic {
 		automatic[i].ExampleValue, automatic[i].Default = defaults[i], defaults[i]

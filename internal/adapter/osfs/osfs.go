@@ -54,6 +54,7 @@ import (
 
 	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/hashutil"
+	"github.com/stacklok/mecatl/internal/adapter/managedtemp"
 	"github.com/stacklok/mecatl/internal/adapter/procgroup"
 )
 
@@ -1162,6 +1163,13 @@ type CommandRunner struct {
 	// inherited git danger is REMOVED, not merely overridden. osfs stays free of
 	// git-specific knowledge — it just sets whatever complete env it is handed.
 	env []string
+	// managedWorkspace owns foreground command and background-job leases. It is
+	// nil for system temporary storage and for runners that cannot make the managed
+	// guarantee.
+	managedWorkspace *managedtemp.Workspace
+	// systemTempDir is the configured/inherited host temporary directory applied
+	// only when the trusted caller selects the system scope.
+	systemTempDir string
 	// waitDelay is the per-command cmd.WaitDelay (defaultCommandWaitDelay unless
 	// overridden via WithCommandWaitDelay — tests use a short one). See
 	// defaultCommandWaitDelay for the grandchild-pipe rationale (A7).
@@ -1189,6 +1197,20 @@ func WithCommandEnvList(env []string) CommandRunnerOption {
 	return func(r *CommandRunner) {
 		r.env = append([]string(nil), env...)
 	}
+}
+
+// WithManagedTemporaryWorkspace makes foreground Run calls allocate one private
+// managed command lease from workspace. The overlay is constructed internally
+// after the runner's already-scrubbed base environment; callers cannot supply
+// lease paths through shell text or tool arguments.
+func WithManagedTemporaryWorkspace(workspace *managedtemp.Workspace) CommandRunnerOption {
+	return func(r *CommandRunner) { r.managedWorkspace = workspace }
+}
+
+// WithSystemTemporaryDirectory sets the configured/inherited system temporary
+// directory used for explicit system-scope Bash calls.
+func WithSystemTemporaryDirectory(dir string) CommandRunnerOption {
+	return func(r *CommandRunner) { r.systemTempDir = dir }
 }
 
 // WithCommandWaitDelay overrides the runner's cmd.WaitDelay (default
@@ -1236,8 +1258,12 @@ func NewCommandRunnerShell(dir, shell string, opts ...CommandRunnerOption) (tool
 // OPTIONAL streaming capability (a background command's tail-ring capture runs
 // through it).
 var (
-	_ tool.CommandRunner   = (*CommandRunner)(nil)
-	_ tool.CommandStreamer = (*CommandRunner)(nil)
+	_ tool.CommandRunner                 = (*CommandRunner)(nil)
+	_ tool.CommandStreamer               = (*CommandRunner)(nil)
+	_ tool.CommandEnvironmentRunner      = (*CommandRunner)(nil)
+	_ tool.CommandEnvironmentStreamer    = (*CommandRunner)(nil)
+	_ tool.CommandTemporaryScopeRunner   = (*CommandRunner)(nil)
+	_ tool.CommandTemporaryScopeStreamer = (*CommandRunner)(nil)
 )
 
 // Run runs command via /bin/sh -c, capturing (and truncating) stdout/stderr and
@@ -1251,11 +1277,36 @@ var (
 // portable backstop. A non-zero exit is reported via the returned
 // CommandResult.ExitCode, not as an error.
 func (r *CommandRunner) Run(ctx context.Context, command string) (tool.CommandResult, error) {
+	return r.runResult(ctx, command, tool.CommandEnvironmentOverlay{}, true)
+}
+
+// RunWithTemporaryScope selects the closed temporary-storage scope for this
+// invocation. System scope never allocates a managed lease.
+func (r *CommandRunner) RunWithTemporaryScope(ctx context.Context, command string, scope tool.TemporaryScope) (tool.CommandResult, error) {
+	overlay := tool.CommandEnvironmentOverlay{}
+	managed := scope == tool.TemporaryScopeManaged
+	if scope == tool.TemporaryScopeSystem || r.managedWorkspace == nil {
+		managed = false
+		if r.systemTempDir != "" {
+			overlay.TempDir = r.systemTempDir
+			overlay.GoTempDir = r.systemTempDir
+		}
+	}
+	return r.runResult(ctx, command, overlay, managed)
+}
+
+// RunWithEnvironment runs command with overlay applied only to this invocation.
+// It preserves the runner's bound root and does not retain the overlay.
+func (r *CommandRunner) RunWithEnvironment(ctx context.Context, command string, overlay tool.CommandEnvironmentOverlay) (tool.CommandResult, error) {
+	return r.runResult(ctx, command, overlay, true)
+}
+
+func (r *CommandRunner) runResult(ctx context.Context, command string, overlay tool.CommandEnvironmentOverlay, managed bool) (tool.CommandResult, error) {
 	var stdout, stderr cappedBuffer
 	stdout.cap = maxCommandOutput
 	stderr.cap = maxCommandOutput
 
-	exitCode, err := r.run(ctx, command, &stdout, &stderr)
+	exitCode, err := r.run(ctx, command, overlay, managed, "cmd", &stdout, &stderr)
 	res := tool.CommandResult{
 		Stdout:   stdout.String(),
 		Stderr:   stderr.String(),
@@ -1273,7 +1324,29 @@ func (r *CommandRunner) Run(ctx context.Context, command string) (tool.CommandRe
 // retain the stream itself. The returned exitCode replaces CommandResult for
 // this path: a non-zero exit is reported there, not as an error.
 func (r *CommandRunner) RunStreaming(ctx context.Context, command string, out io.Writer) (int, error) {
-	return r.run(ctx, command, out, out)
+	return r.run(ctx, command, tool.CommandEnvironmentOverlay{}, false, "", out, out)
+}
+
+// RunStreamingWithTemporaryScope is RunStreaming with a trusted temporary
+// scope selection. System scope never allocates a managed lease.
+func (r *CommandRunner) RunStreamingWithTemporaryScope(ctx context.Context, command string, scope tool.TemporaryScope, out io.Writer) (int, error) {
+	overlay := tool.CommandEnvironmentOverlay{}
+	managed := scope == tool.TemporaryScopeManaged
+	if scope == tool.TemporaryScopeSystem || r.managedWorkspace == nil {
+		managed = false
+		if r.systemTempDir != "" {
+			overlay.TempDir = r.systemTempDir
+			overlay.GoTempDir = r.systemTempDir
+		}
+	}
+	return r.run(ctx, command, overlay, managed, "job", out, out)
+}
+
+// RunStreamingWithEnvironment streams command output with overlay applied only
+// to this invocation. It preserves the runner's bound root and does not retain
+// the overlay.
+func (r *CommandRunner) RunStreamingWithEnvironment(ctx context.Context, command string, overlay tool.CommandEnvironmentOverlay, out io.Writer) (int, error) {
+	return r.run(ctx, command, overlay, false, "", out, out)
 }
 
 // run is the ONE spawn/wait tail Run and RunStreaming share, so the two cannot
@@ -1285,11 +1358,18 @@ func (r *CommandRunner) RunStreaming(ctx context.Context, command string, out io
 // whatever output the writers captured so far standing; and a WaitDelay expiry
 // on a successfully-exited shell is a SUCCESS carrying the partial output (see
 // the exec.ErrWaitDelay branch below), not a harness failure.
-func (r *CommandRunner) run(ctx context.Context, command string, stdout, stderr io.Writer) (exitCode int, err error) {
-	if _, ok := ctx.Deadline(); !ok {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, defaultCommandTimeout)
-		defer cancel()
+func (r *CommandRunner) run(ctx context.Context, command string, overlay tool.CommandEnvironmentOverlay, managed bool, leaseKind string, stdout, stderr io.Writer) (exitCode int, err error) {
+	if !managed {
+		if _, ok := ctx.Deadline(); !ok {
+			var cancel context.CancelFunc
+			ctx, cancel = context.WithTimeout(ctx, defaultCommandTimeout)
+			defer cancel()
+		}
+	}
+
+	lease, overlay, leaseErr := r.managedLease(managed, leaseKind, overlay)
+	if leaseErr != nil {
+		return 0, leaseErr
 	}
 
 	cmd := exec.CommandContext(ctx, r.shell, "-c", command)
@@ -1306,16 +1386,38 @@ func (r *CommandRunner) run(ctx context.Context, command string, stdout, stderr 
 	// backgrounded grandchild would otherwise be orphaned (and keep holding the
 	// pipes past the WaitDelay until it exits on its own).
 	procgroup.Configure(cmd)
-	// A hardened (team-member) runner carries a COMPLETE, pre-scrubbed environment
-	// (computed in composition via gitenv.Scrub: inherited GIT_* danger removed,
-	// neutralising config appended); use it verbatim so removal of an inherited
-	// variable actually takes effect. An unhardened runner has r.env == nil, so
-	// cmd.Env stays nil and exec inherits os.Environ() unchanged, as before.
-	if r.env != nil {
+	// A hardened runner carries a COMPLETE, pre-scrubbed environment. A per-call
+	// overlay is merged over that same base only for this command, so it cannot
+	// change the runner's namespace or affect later invocations.
+	if overlay != (tool.CommandEnvironmentOverlay{}) {
+		env, envErr := overlayEnvironment(r.env, overlay)
+		if envErr != nil {
+			if lease != nil {
+				_ = lease.Remove()
+			}
+			return 0, envErr
+		}
+		cmd.Env = env
+	} else if r.env != nil {
 		cmd.Env = r.env
 	}
 
-	runErr := cmd.Run()
+	if startErr := cmd.Start(); startErr != nil {
+		if lease != nil {
+			_ = lease.Remove()
+		}
+		return 0, startErr
+	}
+	if lease != nil {
+		if leaseErr := lease.Started(cmd.Process.Pid); leaseErr != nil {
+			_ = procgroup.Kill(cmd.Process.Pid)
+			_ = cmd.Wait()
+			_ = lease.Close()
+			return 0, fmt.Errorf("osfs: record managed command lease: %w", leaseErr)
+		}
+	}
+	runErr := cmd.Wait()
+	finishManagedLease(lease, cmd.Process.Pid, ctx.Err() != nil)
 
 	if cerr := ctx.Err(); cerr != nil {
 		// Context cancellation/timeout is a harness-level failure.
@@ -1338,6 +1440,75 @@ func (r *CommandRunner) run(ctx context.Context, command string, stdout, stderr 
 		return 0, runErr
 	}
 	return 0, nil
+}
+
+func (r *CommandRunner) managedLease(managed bool, kind string, overlay tool.CommandEnvironmentOverlay) (*managedtemp.Lease, tool.CommandEnvironmentOverlay, error) {
+	if !managed || r.managedWorkspace == nil {
+		return nil, overlay, nil
+	}
+	lease, err := r.managedWorkspace.Allocate(kind)
+	if err != nil {
+		return nil, overlay, fmt.Errorf("osfs: allocate managed command lease: %w", err)
+	}
+	overlay.TempDir = lease.TempDir()
+	overlay.GoTempDir = lease.TempDir()
+	overlay.TestHomeMarker = lease.Path()
+	return lease, overlay, nil
+}
+
+func finishManagedLease(lease *managedtemp.Lease, pid int, cancelled bool) {
+	if lease == nil {
+		return
+	}
+	_ = lease.Terminal()
+	groupGone := !procgroup.GroupAlive(pid)
+	if !groupGone && cancelled {
+		groupGone = procgroup.WaitGone(pid, 100*time.Millisecond)
+	}
+	if groupGone {
+		_ = lease.Remove()
+		return
+	}
+	_ = lease.Close()
+}
+
+// overlayEnvironment merges a trusted one-call temporary-storage overlay over
+// base without retaining either slice. A nil base means the process environment,
+// matching exec.Cmd's ordinary inheritance semantics. Replacing an existing key
+// avoids duplicate entries whose resolution varies by platform.
+func overlayEnvironment(base []string, overlay tool.CommandEnvironmentOverlay) ([]string, error) {
+	overlaid := map[string]string{}
+	if overlay.TempDir != "" {
+		overlaid["TMPDIR"] = overlay.TempDir
+	}
+	if overlay.GoTempDir != "" {
+		overlaid["GOTMPDIR"] = overlay.GoTempDir
+	}
+	if overlay.TestHomeMarker != "" {
+		overlaid["MECATL_TEST_TEMP_LEASE"] = overlay.TestHomeMarker
+	}
+	keys := make([]string, 0, len(overlaid))
+	for key, value := range overlaid {
+		if strings.ContainsRune(value, '\x00') {
+			return nil, fmt.Errorf("osfs: invalid command environment value for %q", key)
+		}
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	if base == nil {
+		base = os.Environ()
+	}
+	merged := make([]string, 0, len(base)+len(keys))
+	for _, entry := range base {
+		key, _, _ := strings.Cut(entry, "=")
+		if _, replaced := overlaid[key]; !replaced {
+			merged = append(merged, entry)
+		}
+	}
+	for _, key := range keys {
+		merged = append(merged, key+"="+overlaid[key])
+	}
+	return merged, nil
 }
 
 // cappedBuffer is a bytes.Buffer-like writer that stops accepting bytes once cap

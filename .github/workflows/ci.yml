@@ -303,6 +303,31 @@ jobs:
           (cd provider/openai && go build ./...)
           (cd provider/openaichat && go build ./...)
 
+  managed-temp-macos:
+    name: Managed temporary storage (macOS)
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
+    runs-on: macos-14
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: |
+            go.sum
+            engine/go.sum
+      - name: Run managed temporary storage tests
+        run: |
+          go test ./internal/adapter/managedtemp -count=1
+          go test ./internal/adapter/osfs -run '^TestADR_0281_.*' -count=1
+          go test ./internal/app -run '^TestADR_0281_ManagedModeUnixAdmission$' -count=1
+          GOOS=freebsd GOARCH=amd64 go test -c -o "$RUNNER_TEMP/osfs-freebsd.test" ./internal/adapter/osfs
+          GOOS=freebsd GOARCH=amd64 go test -c -o "$RUNNER_TEMP/app-freebsd.test" ./internal/app
+
   test-race-root-a:
     name: Test (race root-a)
     needs: changes
@@ -878,7 +903,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.docs_only != 'true'
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 20
     # Supply-chain hygiene that travels with the engine library: govulncheck
     # reports only REACHABLE vulnerabilities (call-graph analysis, not a bare
     # require-list scan), so a reachable CVE in either module's dependency cone
@@ -921,29 +946,39 @@ jobs:
       - name: Test govulncheck gate
         run: bash .github/scripts/govulncheck-gate_test.sh
 
-      # govulncheck is PINNED via `go run` (the house idiom — like
-      # actionlint@v1.7.7 above), not added as a require. `./...` from the root
-      # does NOT cross the engine module boundary, so the engine module is a
-      # second, separate invocation against its OWN go.mod/go.sum.
+      # govulncheck is PINNED and installed ONCE here (`go install`, not `go run`
+      # per invocation) — four separate `go run pkg@version` calls below each
+      # re-resolved+downloaded the SAME govulncheck dep closure (x/vuln,
+      # x/telemetry, x/mod, x/tools, x/sync) from scratch, which repeatedly ate
+      # into this job's network-bound window and its timeout budget. Installing
+      # once cuts that 4x down to 1x; `go env GOPATH`/bin is added to PATH so
+      # every module-scoped step below can just call `govulncheck`.
+      - name: Install govulncheck (pinned, shared by every module below)
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@v1.1.4
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      # `./...` from the root does NOT cross the engine module boundary, so the
+      # engine module is a second, separate invocation against its OWN go.mod/go.sum.
       - name: govulncheck (root module — allowlisted gate)
         shell: bash
         run: |
           set -o pipefail
-          go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 -format json ./... \
+          govulncheck -format json ./... \
             | go run .github/scripts/govulncheck-gate.go # v1.1.4 — no allowlist (toolhive v0.31.0 cleared the docker/docker vulns)
 
       - name: govulncheck (engine module — strict, no allowlist)
         shell: bash
         run: |
           set -o pipefail
-          cd engine && go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 -format json ./... \
+          cd engine && govulncheck -format json ./... \
             | go run ../.github/scripts/govulncheck-gate.go # v1.1.4
 
       - name: govulncheck (OIDC authn module — strict, no allowlist)
         shell: bash
         run: |
           set -o pipefail
-          cd authn/oidc && go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 -format json ./... \
+          cd authn/oidc && govulncheck -format json ./... \
             | go run ../../.github/scripts/govulncheck-gate.go # v1.1.4
 
       # provider/ submodules (ADR 0093) — each its own module; scan against its
@@ -952,13 +987,13 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          (cd provider/ssefilter && go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 -format json ./... \
+          (cd provider/ssefilter && govulncheck -format json ./... \
             | go run ../../.github/scripts/govulncheck-gate.go) # v1.1.4
-          (cd provider/anthropic && go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 -format json ./... \
+          (cd provider/anthropic && govulncheck -format json ./... \
             | go run ../../.github/scripts/govulncheck-gate.go) # v1.1.4
-          (cd provider/openai && go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 -format json ./... \
+          (cd provider/openai && govulncheck -format json ./... \
             | go run ../../.github/scripts/govulncheck-gate.go) # v1.1.4
-          (cd provider/openaichat && go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 -format json ./... \
+          (cd provider/openaichat && govulncheck -format json ./... \
             | go run ../../.github/scripts/govulncheck-gate.go) # v1.1.4
 
   docs:

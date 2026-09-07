@@ -69,6 +69,24 @@ This page is the overview and router; the big picture and the layering rule are 
 - **[Extensibility — MCP, tools & progressive disclosure](architecture/extensibility.md)**
 - **[Deployment & server hardening](architecture/deployment-and-hardening.md)**
 
+### Protected-resource discovery
+
+Both `mecated` and `mecak8s` use the shared OIDC profile flags. When configured,
+`--oidc-resource` publishes the RFC 9728 canonical resource and
+`--oidc-client-id` publishes mecatl's public client hint; `--oidc-scopes` is the
+shared CSV syntax and a narrow operator-configured request allowlist (a comma is a
+separator, never part of one scope token). mecatui requests exactly the confirmed
+configured scopes, or an explicitly selected subset; the list is neither server
+authorization policy nor expanded from later metadata. These values are not inferred
+from listeners or request headers: the canonical configured resource is the explicit
+service-wide protected-resource identity. Its direct well-known endpoint serves
+metadata; protected subordinate API routes return a generic `Bearer` challenge because
+their path and untrusted Host cannot prove that exact identity. Discovery is an
+anonymous HTTPS bootstrap path distinct from authenticated gRPC. The
+client-side flow is a narrow Apache-2.0-attributed adaptation of ToolHive and
+ToolHive-Core behavior; neither is an engine dependency. Existing issuer/audience
+projection and explicit OIDC login remain compatible.
+
 ### Internal credential store
 
 `internal/adapter/credentialstore` is a host-internal, credential-format-agnostic
@@ -736,8 +754,11 @@ back. Usage and configuration are documented in
 
 **Remote mecatui OIDC.** The remote-login path is separate from the ToolHive LLM
 login: `mecatui llm login` remains the ToolHive gateway flow, while `mecatui login
-ADDRESS` performs public-client OIDC enrollment for one remote target. Login requires
-issuer, public client ID, and audience. It defaults to public, globally routable issuer
+ADDRESS` performs public-client OIDC enrollment for one remote target. A bare DNS
+hostname or HTTPS resource URL discovers the issuer, public client ID, audience, and
+operator-configured requested scopes from the resource metadata; mecatui requests exactly
+that confirmed set (or an explicit subset), never adds baseline scopes, and never expands a
+saved enrollment from later metadata. Legacy/private deployments without that profile require those values explicitly. Login defaults to public, globally routable issuer
 addresses verified against the system trust store; optional `--tls-ca` replaces those
 roots. `--private-issuer` requires `--tls-ca` and selects private-address admission. The
 saved policy and an explicit CA reference, never CA contents, are used for later refresh
@@ -760,10 +781,10 @@ is the only custom server-CA input. An enrolled target uses a root-scoped OS-key
 keyring-wrapped encrypted credential store; under the root lock, the legacy unsuffixed
 keyring key is copied only when that encrypted namespace contains an actual credential
 record—opening an empty namespace is not migration evidence. Credentials are bound to
-the canonical target and
-complete OIDC identity; legacy records whose target used a zero-padded port need a
-one-time login because canonical decimal-port spelling changes their key. A
-target-bound dynamic bearer source validates, refreshes, and CAS-saves credentials on
+the canonical target and a confirmed RFC 9728 resource URL when enrolled through discovery; resource
+aliases and legacy `host:port` targets resolve exactly and ambiguities fail closed.
+Legacy records remain target-only; records whose target used a zero-padded port need a
+one-time login because canonical decimal-port spelling changes their key. A target-bound dynamic bearer source validates, refreshes, and CAS-saves credentials on
 application token demand. Proactive refresh is activity-gated: an application-facing
 `Token` demand that obtains a bearer is activity, including one served from a valid
 access token; RPC success is not the signal, and background work cannot arm another

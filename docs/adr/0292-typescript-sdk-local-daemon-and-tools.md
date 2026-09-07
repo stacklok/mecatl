@@ -1,6 +1,6 @@
 # ADR 0292 — TypeScript SDK local daemon and callback tools
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-09-03
 - Scope: `sdk/typescript/` — the `./node` subpath's `spawn()`, `query()`, `tool()`, the loopback MCP tool host, and the client-level diagnostics sink. Client-side only: no `contracts/proto/` change and no production change under `internal/adapter/server/` or `cmd/mecated/`.
 - Supersedes: none. Extends [ADR 0279](./0279-typescript-sdk-architecture.md) (M1) and [ADR 0288](./0288-typescript-sdk-durable-attachment.md) (M2) into the M3 surface those two deferred.

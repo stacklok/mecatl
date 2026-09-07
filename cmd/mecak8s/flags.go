@@ -700,9 +700,10 @@ func appConfig(cfg config, diag port.Diagnostics, obs observability) app.Config 
 		Diagnostics: diag,
 		// Observability (issue #343, ADR 0098): OPT-IN. With no --otlp-* flags the
 		// handles are zero-valued (nil) — the byte-identical no-metrics posture.
-		Sink:              obs.Sink,
-		ToolCallRecorder:  obs.ToolCallRecorder,
-		MetricsRoleScoper: obs.MetricsRoleScoper,
+		Sink:                             obs.Sink,
+		ToolCallRecorder:                 obs.ToolCallRecorder,
+		MetricsRoleScoper:                obs.MetricsRoleScoper,
+		SessionLoadFailureMetricsEmitter: obs.SessionLoadFailureMetricsEmitter,
 	}
 	// Project only the supported API-key credentials and parsed base URLs from
 	// the once-resolved snapshot. An OPENAI_API_KEY implies the real provider.

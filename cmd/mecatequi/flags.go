@@ -446,9 +446,10 @@ func appConfig(f flags, diag port.Diagnostics, obs observability) app.Config {
 		// Observability (issue #343, ADR 0098): OPT-IN OTLP push. With no --otlp-*
 		// flags the handles are zero-valued (nil Sink/ToolCallRecorder/
 		// MetricsRoleScoper) — the byte-identical no-telemetry posture.
-		Sink:              obs.Sink,
-		ToolCallRecorder:  obs.ToolCallRecorder,
-		MetricsRoleScoper: obs.MetricsRoleScoper,
+		Sink:                             obs.Sink,
+		ToolCallRecorder:                 obs.ToolCallRecorder,
+		MetricsRoleScoper:                obs.MetricsRoleScoper,
+		SessionLoadFailureMetricsEmitter: obs.SessionLoadFailureMetricsEmitter,
 	}
 	keys := f.providerCredentials
 	f.providerFlags.ApplyResolved(&out, keys)

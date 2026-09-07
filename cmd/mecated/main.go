@@ -1206,13 +1206,14 @@ func appConfig(cfg config, sink port.EventSink, recorder port.ToolCallRecorder, 
 		Interactive: !cfg.headless,
 		// Headless is explicit deployment identity. The posture ladder raises
 		// workspace trust only when this is false.
-		Headless:               cfg.headless,
-		Sink:                   sink,
-		ToolCallRecorder:       recorder,
-		MetricsRoleScoper:      roleScoper,
-		ScheduleMetricsEmitter: metrics.EmitSchedule,
-		LearningMetricsEmitter: metrics.EmitLearning,
-		Diagnostics:            diag,
+		Headless:                         cfg.headless,
+		Sink:                             sink,
+		ToolCallRecorder:                 recorder,
+		MetricsRoleScoper:                roleScoper,
+		ScheduleMetricsEmitter:           metrics.EmitSchedule,
+		SessionLoadFailureMetricsEmitter: metrics.EmitSessionLoadFailure,
+		LearningMetricsEmitter:           metrics.EmitLearning,
+		Diagnostics:                      diag,
 		// Plan-mode auto-approve (issue #206 Wave 6a): the OPT-IN operator flag.
 		PlanModeAutoApprove: cfg.planModeAutoApprove,
 		// Steer (steer-while-running, issue #512): the opt-OUT of the default-ON
@@ -1436,21 +1437,34 @@ func clientMCPOnCreateForListeners(cfg config) bool {
 // the earlier CLI-only guard is still caught (review fix #1). The rate_limit=0
 // and rate_burst=0 meanings (disable / derive) are preserved: only negative and
 // non-finite (NaN/Inf) values are rejected (review fix #5).
-// buildAPIHandler assembles the authenticated HTTP API handler, wrapping it in
-// the CORS policy when one is configured.
+// buildAPIHandler assembles the authenticated HTTP API handler, mounts the
+// anonymous RFC 9728 protected-resource metadata endpoint in front of it, and
+// wraps both in the CORS policy when one is configured.
 //
-// The ORDER IS LOAD-BEARING: CORS wraps OUTSIDE auth. A browser preflight is an
-// unauthenticated OPTIONS request — the CORS specification forbids sending
-// credentials on it — so a policy installed inside the auth middleware would 401
-// every preflight and cross-origin access would never work at all. Wrapping
-// outside is safe because a preflight is answered from headers alone: it never
-// reaches a handler, never touches a session, and never returns data. The real
-// request that follows still passes through auth normally.
+// The ORDER IS LOAD-BEARING: CORS wraps OUTSIDE auth AND the metadata mount. A
+// browser preflight is an unauthenticated OPTIONS request — the CORS
+// specification forbids sending credentials on it — so a policy installed
+// inside the auth middleware would 401 every preflight and cross-origin access
+// would never work at all. Wrapping outside is safe because a preflight is
+// answered from headers alone: it never reaches a handler, never touches a
+// session, and never returns data. The real request that follows still passes
+// through auth normally. The metadata endpoint is itself unauthenticated by
+// design (RFC 9728), so it must be reachable cross-origin too — a browser-based
+// OIDC client fetching it after a 401 needs the CORS headers on that response
+// as much as on the API's.
 //
-// A nil policy (no --cors-origins, the default) returns the authenticated
-// handler unchanged, so the default path is byte-identical.
-func buildAPIHandler(corsPolicy *server.CORSPolicy, auth *server.Authenticator, svc *server.Service) http.Handler {
-	return corsPolicy.Middleware(auth.Middleware(server.NewHTTPHandler(svc)))
+// A nil policy (no --cors-origins, the default) returns the handler
+// unchanged, so the default path is byte-identical.
+func buildAPIHandler(corsPolicy *server.CORSPolicy, auth *server.Authenticator, svc *server.Service, profile server.ProtectedResourceProfile) http.Handler {
+	return corsPolicy.Middleware(server.WithProtectedResourceMetadata(profile, auth.Middleware(server.NewHTTPHandler(svc))))
+}
+
+func protectedResourceProfile(c cliconfig.OIDCConfig) server.ProtectedResourceProfile {
+	projection, err := c.ProfileProjection()
+	if err != nil || !c.ProtectedResourceEnabled() {
+		return server.ProtectedResourceProfile{}
+	}
+	return projection.ProtectedResourceProfile()
 }
 
 func validateEffectiveConfig(cfg config) error {
@@ -1972,7 +1986,7 @@ func serve(ctx context.Context, cfg config, svc *server.Service, reg *prometheus
 	if cfg.httpAddr != "" {
 		httpMux := http.NewServeMux()
 		server.NewHealthHandler(func() bool { return true }).RegisterHealth(httpMux)
-		httpMux.Handle("/", buildAPIHandler(corsPolicy, auth, svc))
+		httpMux.Handle("/", buildAPIHandler(corsPolicy, auth, svc, protectedResourceProfile(cfg.oidc)))
 		httpSrv = &http.Server{
 			Addr:              cfg.httpAddr,
 			Handler:           httpMux,

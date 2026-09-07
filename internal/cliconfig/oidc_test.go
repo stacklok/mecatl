@@ -5,6 +5,8 @@ import (
 	"errors"
 	"flag"
 	"io"
+	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -15,7 +17,6 @@ import (
 type fakeValidator struct{}
 
 func (fakeValidator) Validate(context.Context, string) (*session.Principal, error) { return nil, nil }
-
 func TestOIDCMaxJWKSStalenessFlag(t *testing.T) {
 	tests := []struct {
 		name string
@@ -39,6 +40,32 @@ func TestOIDCMaxJWKSStalenessFlag(t *testing.T) {
 				t.Fatalf("MaxJWKSStaleness = %v, want %v", cfg.MaxJWKSStaleness, tc.want)
 			}
 		})
+	}
+}
+
+func TestADR_0305_ServerCompositionParity(t *testing.T) {
+	for _, name := range []string{"oidc-issuer", "oidc-audience", "oidc-resource", "oidc-client-id", "oidc-scopes"} {
+		fs := flag.NewFlagSet(name, flag.ContinueOnError)
+		fs.SetOutput(io.Discard)
+		var cfg OIDCConfig
+		RegisterOIDCFlags(fs, &cfg)
+		if fs.Lookup(name) == nil {
+			t.Fatalf("shared OIDC flag %q is not registered", name)
+		}
+	}
+	var cfg OIDCConfig
+	fs := flag.NewFlagSet("parity", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	RegisterOIDCFlags(fs, &cfg)
+	if err := fs.Parse([]string{"--oidc-issuer=https://issuer.example", "--oidc-audience=api", "--oidc-resource=https://resource.example", "--oidc-client-id=mecatui", "--oidc-scopes=profile,openid,profile"}); err != nil {
+		t.Fatal(err)
+	}
+	projection, err := cfg.ProfileProjection()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if projection.Resource != "https://resource.example" || projection.ClientID != "mecatui" || len(projection.Scopes) != 2 {
+		t.Fatalf("shared composition contract = %#v", projection)
 	}
 }
 
@@ -77,6 +104,151 @@ func TestOIDCPrivateHTTPSIssuerFlagsAndValidation(t *testing.T) {
 				t.Fatalf("OIDCValidator(%#v) error = %v, want error=%t", tc.cfg, err, tc.want)
 			}
 		})
+	}
+}
+
+func TestADR_0305_ProfileProjection(t *testing.T) {
+	var got OIDCConfig
+	cfg := OIDCConfig{Issuer: "https://issuer.example", Audience: "api://mecatl", Resource: "https://api.example.com", ClientID: "mecatui"}
+	cfg.NewValidator = func(_ context.Context, c OIDCConfig) (server.PrincipalValidator, error) {
+		got = c
+		return fakeValidator{}, nil
+	}
+	if _, err := OIDCValidator(context.Background(), cfg); err != nil {
+		t.Fatalf("OIDCValidator: %v", err)
+	}
+	if got.Issuer != cfg.Issuer || got.Audience != cfg.Audience {
+		t.Fatalf("validator projection = issuer %q audience %q, want %q %q", got.Issuer, got.Audience, cfg.Issuer, cfg.Audience)
+	}
+	projection, err := cfg.ProfileProjection()
+	if err != nil {
+		t.Fatalf("ProfileProjection: %v", err)
+	}
+	if projection.Issuer != cfg.Issuer || projection.Audience != cfg.Audience {
+		t.Fatalf("metadata projection = issuer %q audience %q, want %q %q", projection.Issuer, projection.Audience, cfg.Issuer, cfg.Audience)
+	}
+}
+
+func TestADR_0305_ProfileConfigurationMatrix(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		cfg         OIDCConfig
+		wantEnabled bool
+		wantErr     bool
+	}{
+		{name: "absent", wantEnabled: false},
+		{name: "complete", cfg: OIDCConfig{Issuer: "https://issuer", Audience: "api", Resource: "https://resource", ClientID: "client"}, wantEnabled: true},
+		{name: "canonicalizes resource", cfg: OIDCConfig{Issuer: "https://issuer", Audience: "api", Resource: "https://RESOURCE:443/", ClientID: "client"}, wantEnabled: true},
+		{name: "force query", cfg: OIDCConfig{Issuer: "https://issuer", Audience: "api", Resource: "https://resource?", ClientID: "client"}, wantErr: true},
+		{name: "insecure issuer", cfg: OIDCConfig{Issuer: "http://issuer", Audience: "api", Resource: "https://resource", ClientID: "client", InsecureAllowPrivateIssuer: true}, wantErr: true},
+		{name: "resource only", cfg: OIDCConfig{Issuer: "https://issuer", Audience: "api", Resource: "https://resource"}, wantErr: true},
+		{name: "client only", cfg: OIDCConfig{Issuer: "https://issuer", Audience: "api", ClientID: "client"}, wantErr: true},
+		{name: "without OIDC", cfg: OIDCConfig{Resource: "https://resource", ClientID: "client"}, wantErr: true},
+		{name: "scopes only", cfg: OIDCConfig{Issuer: "https://issuer", Audience: "api", ScopesCSV: "read"}, wantErr: true},
+		{name: "client ID too long", cfg: OIDCConfig{Issuer: "https://issuer", Audience: "api", Resource: "https://resource", ClientID: strings.Repeat("a", 1025)}, wantErr: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.cfg.ValidateOIDCProfile()
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("ValidateOIDCProfile: %v, want error %t", err, tc.wantErr)
+			}
+			if !tc.wantErr && tc.cfg.ProtectedResourceEnabled() != tc.wantEnabled {
+				t.Fatalf("ProtectedResourceEnabled = %t, want %t", tc.cfg.ProtectedResourceEnabled(), tc.wantEnabled)
+			}
+		})
+	}
+}
+
+func TestADR_0305_ProfileCanonicalizesResourceForEveryProjection(t *testing.T) {
+	cfg := OIDCConfig{Issuer: "https://issuer", Audience: "api", Resource: "https://RESOURCE:443/", ClientID: "client"}
+	if err := cfg.ValidateOIDCProfile(); err != nil {
+		t.Fatal(err)
+	}
+	projection, err := cfg.ProfileProjection()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Resource != "https://resource" || projection.Resource != cfg.Resource || projection.ProtectedResourceProfile().Resource != cfg.Resource {
+		t.Fatalf("resource identities diverged: config=%q projection=%q profile=%q", cfg.Resource, projection.Resource, projection.ProtectedResourceProfile().Resource)
+	}
+}
+
+func TestADR_0305_ScopeCSV(t *testing.T) {
+	for _, tc := range []struct {
+		csv     string
+		want    []string
+		wantErr bool
+	}{
+		{csv: " z, a, z,b ", want: []string{"a", "b", "z"}},
+		{csv: "", want: nil},
+		{csv: "read,,write", wantErr: true},
+		{csv: "read,not safe", wantErr: true},
+		{csv: "read,\"write\"", wantErr: true},
+	} {
+		got, err := ParseOIDCScopes(tc.csv)
+		if (err != nil) != tc.wantErr {
+			t.Fatalf("ParseOIDCScopes(%q): %v, want error %t", tc.csv, err, tc.wantErr)
+		}
+		if !tc.wantErr && !reflect.DeepEqual(got, tc.want) {
+			t.Fatalf("ParseOIDCScopes(%q) = %#v, want %#v", tc.csv, got, tc.want)
+		}
+	}
+	cfg := OIDCConfig{Issuer: "https://issuer", Audience: "api", Resource: "https://resource", ClientID: "client"}
+	if err := cfg.ValidateOIDCProfile(); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Scopes != nil {
+		t.Fatalf("absent scopes = %#v, want nil", cfg.Scopes)
+	}
+	fs := flag.NewFlagSet("oidc-profile", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	flagCfg := OIDCConfig{}
+	RegisterOIDCFlags(fs, &flagCfg)
+	if err := fs.Parse([]string{"--oidc-scopes", " z, a, z,b "}); err != nil {
+		t.Fatalf("Parse flags: %v", err)
+	}
+	flagCfg.Issuer, flagCfg.Audience = "https://issuer", "api"
+	flagCfg.Resource, flagCfg.ClientID = "https://resource", "client"
+	if err := flagCfg.ValidateOIDCProfile(); err != nil {
+		t.Fatalf("ValidateOIDCProfile after flag parse: %v", err)
+	}
+	if !reflect.DeepEqual(flagCfg.Scopes, []string{"a", "b", "z"}) {
+		t.Fatalf("flag scopes = %#v, want [a b z]", flagCfg.Scopes)
+	}
+	emptyFlags := flag.NewFlagSet("oidc-empty-scope", flag.ContinueOnError)
+	emptyFlags.SetOutput(io.Discard)
+	emptyCfg := OIDCConfig{}
+	RegisterOIDCFlags(emptyFlags, &emptyCfg)
+	if err := emptyFlags.Parse([]string{"--oidc-scopes="}); err != nil {
+		t.Fatalf("Parse empty scopes: %v", err)
+	}
+	if err := emptyCfg.ValidateOIDCProfile(); err == nil {
+		t.Fatal("supplied empty --oidc-scopes unexpectedly accepted")
+	}
+	for _, name := range []string{"--oidc-resource=", "--oidc-client-id="} {
+		fs := flag.NewFlagSet("oidc-empty-profile", flag.ContinueOnError)
+		fs.SetOutput(io.Discard)
+		cfg := OIDCConfig{}
+		RegisterOIDCFlags(fs, &cfg)
+		if err := fs.Parse([]string{name}); err != nil {
+			t.Fatalf("Parse %s: %v", name, err)
+		}
+		if err := cfg.ValidateOIDCProfile(); err == nil {
+			t.Fatalf("supplied empty %s unexpectedly accepted", name)
+		}
+	}
+}
+
+func TestADR_0305_ProfileValidation(t *testing.T) {
+	cases := []OIDCConfig{
+		{Issuer: "https://issuer", Audience: "api", Resource: "http://resource", ClientID: "client"},
+		{Issuer: "https://issuer", Audience: "api", Resource: "https://resource", ClientID: "client", ScopesCSV: "read,,write"},
+		{Issuer: "https://issuer", Audience: "api", Resource: "https://resource"},
+	}
+	for _, cfg := range cases {
+		if err := cfg.ValidateOIDCProfile(); err == nil {
+			t.Fatalf("ValidateOIDCProfile(%#v) = nil, want startup error", cfg)
+		}
 	}
 }
 

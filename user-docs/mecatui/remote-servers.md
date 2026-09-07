@@ -85,7 +85,20 @@ workspace authority.
 
 Caller identity is attribution, not tenant isolation: authenticated callers can still list and act on other callers' sessions. Do not treat a token-authenticated shared server as a tenancy boundary.
 
-## Remote OIDC login
+## Remote protected-resource discovery
+
+When the server publishes the optional RFC 9728 profile, `mecatui login` can
+accept a bare host or canonical HTTPS resource URL and discover the issuer,
+audience, public client hint, and scopes before confirmation. Metadata and issuer
+lookup use anonymous verified HTTPS bootstrap; the resulting authenticated gRPC
+connection is a separate transport decision. The configured resource is the
+service-wide protected-resource base, so every protected API route advertises
+its same metadata URL; the server never derives that URL from a request Host or
+path. The RFC fields remain distinct from
+mecatl extension fields, and ToolHive/ToolHive-Core are implementation
+provenance rather than an engine dependency. Existing explicit issuer/client/
+audience login remains supported.
+
 
 Remote enrollment and connecting are separate actions:
 
@@ -98,13 +111,18 @@ bin/mecatui connect mecated.example.internal:443 \
   --tls --tls-ca /path/to/server-ca.pem
 ```
 
-`mecatui login ADDRESS` runs the public OIDC Authorization Code + PKCE flow; it is
-persistent enrollment, never an anonymous-login command. It
-requires `--issuer`, `--client-id`, and `--audience`. It defaults to a public issuer
+`mecatui login ADDRESS` accepts a bare HTTPS hostname or canonical HTTPS resource URL
+when the server publishes RFC 9728 metadata; it otherwise requires explicit `--issuer`,
+`--client-id`, and `--audience`, running the public OIDC Authorization Code + PKCE flow —
+it is persistent enrollment, never an anonymous-login command. Saved `mecatui connect
+ADDRESS` accepts the same confirmed resource alias (including its bare hostname for a
+root resource) or the legacy `host:port` target; it never rediscovers metadata. Discovery
+is anonymous, redirect-free, timeout-bounded HTTPS bootstrap and remains separate from
+the authenticated gRPC transport. Explicit-flow login defaults to a public issuer
 verified against the system roots; the example above is a PRIVATE issuer, so it passes
-`--private-issuer`, which requires `--tls-ca`. The login `--tls-ca` verifies the issuer's discovery,
-token, JWKS, refresh, and revocation endpoints; it does not configure server transport
-trust. An explicit issuer CA bundle path/reference, not its contents, is saved as public
+`--private-issuer`, which requires `--tls-ca`. The login `--tls-ca` verifies the issuer's
+discovery, token, JWKS, refresh, and revocation endpoints; it does not configure server
+transport trust. An explicit issuer CA bundle path/reference, not its contents, is saved as public
 target metadata. A later `connect` with saved credentials always uses verified TLS,
 including for loopback; only `connect --tls-ca` independently verifies a private-CA
 gRPC server. Login saves

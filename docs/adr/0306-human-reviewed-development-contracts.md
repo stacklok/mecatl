@@ -1,4 +1,4 @@
-# ADR 0304 — Human-reviewed development contracts before implementation
+# ADR 0306 — Human-reviewed development contracts before implementation
 
 - Status: Accepted
 - Date: 2026-09-06
@@ -35,13 +35,13 @@ sets `landed` in its PR diff. That is a proposed transition until merge: the tar
 remains `approved` or `in-progress`, and `landed` becomes authoritative only when that diff
 merges. No cleanup or status-only PR follows.
 
-ADR 0304 carries `Accepted` as the target state of this proposal PR: merging the PR is the
+ADR 0306 carries `Accepted` as the target state of this proposal PR: merging the PR is the
 acceptance event. Until merge, this ADR remains mutable during review; once merged, it is
 frozen under ADR 0002.
 
 Every new plan carries exact `**Contract:** human-reviewed/v1` metadata and the current template
 shape. Unmarked historical plans are grandfathered and need not be bulk-migrated, but any
-material amendment after ADR 0304 adopts the full current template and passes its checker.
+material amendment after ADR 0306 adopts the full current template and passes its checker.
 
 Every plan also has a non-empty `## Human decisions` section. It contains either
 `None — <rationale>` or checklist items: unresolved judgments use `- [ ] ...`; resolved

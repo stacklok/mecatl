@@ -88,6 +88,9 @@ type HeadlessTelemetryHandles struct {
 	// internal/app's roleFamily already resolved; nil when disabled (children
 	// unmetered, byte-identical).
 	MetricsRoleScoper func(familyRole string) (port.EventSink, port.ToolCallRecorder)
+	// SessionLoadFailureMetricsEmitter records ownership-concealed load failures
+	// with one closed class label. Nil when telemetry is disabled.
+	SessionLoadFailureMetricsEmitter func(port.SessionLoadFailureClass)
 }
 
 // HeadlessTelemetry builds the OTel metrics + (optional) tracing pipeline for a
@@ -153,11 +156,12 @@ func HeadlessTelemetry(ctx context.Context, cfg HeadlessTelemetryConfig) (Headle
 	}
 
 	return HeadlessTelemetryHandles{
-		Shutdown:          providers.Shutdown,
-		Registry:          providers.Registry,
-		Metrics:           metrics,
-		Sink:              sink,
-		ToolCallRecorder:  mainScoped,
-		MetricsRoleScoper: roleScoper,
+		Shutdown:                         providers.Shutdown,
+		Registry:                         providers.Registry,
+		Metrics:                          metrics,
+		Sink:                             sink,
+		ToolCallRecorder:                 mainScoped,
+		MetricsRoleScoper:                roleScoper,
+		SessionLoadFailureMetricsEmitter: metrics.EmitSessionLoadFailure,
 	}, nil
 }

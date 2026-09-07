@@ -208,10 +208,13 @@ server is authoritative.
   `--workspace` is rejected in every connect form; configure the server root on
   the server host.
 
-- **`mecatui login ADDRESS`** — performs the remote server's public OIDC
-  Authorization Code + PKCE login, then records target metadata and an encrypted,
-  target-bound credential. It requires `--issuer`, `--client-id`, and `--audience`.
-  It defaults to public issuer addresses trusted by the system roots; `--tls-ca` is
+- **`mecatui login ADDRESS`** — enrolls a remote server. With a bare DNS hostname
+  or HTTPS resource URL, it first performs anonymous RFC 9728 protected-resource
+  discovery and requires confirmation of the discovered values. For legacy or
+  private deployments without that profile, provide `--issuer`, `--client-id`, and
+  `--audience` explicitly. It then performs Authorization Code + PKCE login and
+  records target metadata and an encrypted, target-bound credential. It defaults to
+  public issuer addresses trusted by the system roots; `--tls-ca` is
   optional there and REPLACES those roots. `--private-issuer` requires `--tls-ca` and
   admits private issuer addresses only. This CA verifies the issuer endpoints and is not
   the optional server CA supplied to `connect`. It exits without starting a session. `--no-browser` prints the
@@ -259,8 +262,12 @@ server is authoritative.
 ### OIDC-connected server
 
 `mecatui login ADDRESS` is the enrollment path for a remote `mecated`/`mecak8s`
-caller-identity deployment. The issuer, public client, audience, redirect URI, and
-scopes are bound to the canonical `host:port` target. Login validates discovery,
+caller-identity deployment. A bare DNS hostname or HTTPS resource URL discovers the
+issuer, public client, audience, and scopes from RFC 9728 metadata before confirmation;
+legacy/private deployments without a profile require them explicitly. The gRPC target
+and confirmed canonical resource remain separate identities: credentials stay keyed by
+the canonical `host:port` target, while a discovery enrollment also saves the resource
+as an exact registry alias. Login validates discovery,
 PKCE, and the resulting token. A public issuer uses system trust roots; private HTTPS
 requires an explicit issuer CA bundle path. The registry saves an explicit path/reference
 only—not CA contents—for issuer discovery, token, JWKS, refresh, and revocation;

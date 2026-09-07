@@ -2,13 +2,16 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -26,11 +29,21 @@ import (
 const savedLoginCallbackTimeout = 5 * time.Minute
 
 var (
-	executeRemoteLogin        = runSavedRemoteLogin
-	newRemoteLoginRuntime     = oauthlogin.New
-	prepareSavedLogin         = prepareSavedRemoteLogin
-	prepareExistingSavedLogin = prepareExistingSavedRemoteLogin
+	executeRemoteLogin          = runSavedRemoteLogin
+	newRemoteLoginRuntime       = oauthlogin.New
+	prepareSavedLogin           = prepareSavedRemoteLogin
+	prepareExistingSavedLogin   = prepareExistingSavedRemoteLogin
+	discoverRemoteResource      = discoverWithPublicBootstrap
+	confirmDiscoveredEnrollment = confirmDiscoveredLogin
 )
+
+const defaultOIDCScopes = "openid,profile,offline_access"
+
+type discoveredEnrollment struct {
+	Resource    string
+	MetadataURL string
+	Connection  clientauth.Connection
+}
 
 type notifyContextFunc func(context.Context, ...os.Signal) (context.Context, context.CancelFunc)
 
@@ -52,7 +65,7 @@ func newSavedLoginContextWithNotifier(timeout time.Duration, notify notifyContex
 func runRemoteLogin(address string, args []string) error {
 	fs := flag.NewFlagSet("mecatui login", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
-	var issuer, clientID, audience, tlsCA string
+	var issuer, clientID, audience, tlsCA, grpcTarget string
 	var privateIssuer bool
 	var noBrowser bool
 	var scopes string
@@ -61,12 +74,13 @@ func runRemoteLogin(address string, args []string) error {
 	fs.StringVar(&clientID, "client-id", "", "public OIDC client ID")
 	fs.StringVar(&audience, "audience", "", "OIDC token audience")
 	fs.StringVar(&tlsCA, "tls-ca", "", "path to a PEM CA bundle for issuer verification (replaces system roots in public mode)")
+	fs.StringVar(&grpcTarget, "grpc-target", "", "gRPC transport target for protected-resource discovery")
 	fs.BoolVar(&privateIssuer, "private-issuer", false, "allow only private issuer addresses; requires --tls-ca")
-	fs.StringVar(&scopes, "scopes", "openid,profile,offline_access", "comma-separated OIDC scopes to request; offline_access is what earns a refresh token, but a provider that has not granted it to this client will refuse the whole request")
+	fs.StringVar(&scopes, "scopes", defaultOIDCScopes, "comma-separated OIDC scopes to request; overrides advertised profile scopes")
 	fs.BoolVar(&noBrowser, "no-browser", false, "print the OIDC authorization URL instead of opening a browser, then wait for the loopback callback (headless/SSH use)")
 	fs.DurationVar(&timeout, "callback-timeout", 5*time.Minute, "maximum time to wait for the loopback OAuth callback")
 	fs.Usage = func() {
-		fmt.Fprintln(os.Stderr, "Usage: mecatui login ADDRESS --issuer HTTPS_URL --client-id ID --audience AUDIENCE [--tls-ca PATH] [--private-issuer]")
+		fmt.Fprintln(os.Stderr, "Usage: mecatui login ADDRESS [--issuer HTTPS_URL --client-id ID --audience AUDIENCE] [--grpc-target HOST:PORT]")
 		cliconfig.PrintDefaults(fs.Output(), fs)
 	}
 	if err := fs.Parse(args); err != nil {
@@ -75,8 +89,25 @@ func runRemoteLogin(address string, args []string) error {
 	if fs.NArg() != 0 {
 		return fmt.Errorf("login: unexpected arguments after ADDRESS; usage: mecatui login ADDRESS")
 	}
-	if issuer == "" || clientID == "" || audience == "" || timeout <= 0 {
-		return errors.New("login: --issuer, --client-id, --audience, and a positive --callback-timeout are required")
+	if timeout <= 0 {
+		return errors.New("login: a positive --callback-timeout is required")
+	}
+
+	explicitIssuer := flagWasSet(fs, "issuer")
+	explicitClientID := flagWasSet(fs, "client-id")
+	explicitAudience := flagWasSet(fs, "audience")
+	explicitIdentity := explicitIssuer || explicitClientID || explicitAudience
+	if !explicitIdentity {
+		if tlsCA != "" || privateIssuer {
+			return errors.New("login: --tls-ca and --private-issuer require explicit --issuer, --client-id, and --audience")
+		}
+		return runDiscoveredRemoteLogin(address, grpcTarget, scopes, flagWasSet(fs, "scopes"), noBrowser, timeout)
+	}
+	if issuer == "" || clientID == "" || audience == "" {
+		return errors.New("login: --issuer, --client-id, and --audience are required together")
+	}
+	if grpcTarget != "" {
+		return errors.New("login: --grpc-target is only valid with protected-resource discovery")
 	}
 	if privateIssuer && tlsCA == "" {
 		return errors.New("login: --private-issuer requires --tls-ca")
@@ -108,6 +139,139 @@ func runRemoteLogin(address string, args []string) error {
 	}
 	fmt.Fprintln(os.Stderr, "login successful")
 	return nil
+}
+
+func runDiscoveredRemoteLogin(address, grpcTarget, scopes string, scopesExplicit, noBrowser bool, timeout time.Duration) error {
+	resource, err := parseProtectedResource(address)
+	if err != nil {
+		return errors.New("login: --issuer, --client-id, and --audience are required for a non-resource address")
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	discoverCtx, cancelDiscover := context.WithTimeout(ctx, timeout)
+	discovered, err := discoverRemoteResource(discoverCtx, resource)
+	cancelDiscover()
+	if err != nil {
+		return errors.New("login: protected-resource discovery failed")
+	}
+	selectedScopes, err := discoveredScopes(discovered, scopes, scopesExplicit)
+	if err != nil {
+		return errors.New("login: invalid --scopes")
+	}
+	enrollment, err := discoveredEnrollmentFrom(discovered, grpcTarget, strings.Join(selectedScopes, ","))
+	if err != nil {
+		return errors.New("login: protected-resource discovery returned an invalid enrollment profile")
+	}
+	confirmed, err := confirmDiscoveredEnrollment(os.Stdin, os.Stderr, enrollment)
+	if err != nil {
+		return fmt.Errorf("login: confirmation failed: %w", err)
+	}
+	if !confirmed {
+		return errors.New("login: discovered enrollment was not confirmed")
+	}
+	loginCtx, cancelLogin := context.WithTimeout(ctx, timeout)
+	defer cancelLogin()
+	if err := executeRemoteLogin(loginCtx, enrollment.Connection, noBrowser); err != nil {
+		if errors.Is(err, context.Canceled) {
+			fmt.Fprintln(os.Stderr, "login cancelled")
+			return nil
+		}
+		return fmt.Errorf("login: %w", err)
+	}
+	fmt.Fprintln(os.Stderr, "login successful")
+	return nil
+}
+
+func discoverWithPublicBootstrap(ctx context.Context, resource protectedResource) (discoveredResource, error) {
+	return discoverProtectedResource(ctx, resource, nil)
+}
+
+func flagWasSet(fs *flag.FlagSet, name string) bool {
+	set := false
+	fs.Visit(func(f *flag.Flag) { set = set || f.Name == name })
+	return set
+}
+
+func discoveredScopes(discovered discoveredResource, explicit string, explicitSet bool) ([]string, error) {
+	confirmed := make(map[string]bool, len(discovered.Scopes))
+	for _, scope := range discovered.Scopes {
+		if !validScope(scope) || confirmed[scope] {
+			return nil, errDiscoveryRejected
+		}
+		confirmed[scope] = true
+	}
+	requested := discovered.Scopes
+	if explicitSet {
+		requested = splitScopes(explicit)
+		if len(requested) == 0 {
+			return nil, errDiscoveryRejected
+		}
+	}
+	selected := make(map[string]bool, len(requested))
+	for _, scope := range requested {
+		if !confirmed[scope] {
+			return nil, errDiscoveryRejected
+		}
+		if !validScope(scope) {
+			return nil, errDiscoveryRejected
+		}
+		selected[scope] = true
+	}
+	result := make([]string, 0, len(selected))
+	for scope := range selected {
+		result = append(result, scope)
+	}
+	slices.Sort(result)
+	return result, nil
+}
+
+func discoveredEnrollmentFrom(discovered discoveredResource, grpcTarget, scopes string) (discoveredEnrollment, error) {
+	target := discovered.GRPCTarget
+	if grpcTarget != "" {
+		target = grpcTarget
+	}
+	if scopes == "" {
+		scopes = strings.Join(discovered.Scopes, ",")
+	}
+	identity := clientauth.Identity{Target: target, Issuer: discovered.Issuer, ClientID: discovered.ClientID, Audience: discovered.Audience, RedirectURI: oauthlogin.ExactRedirectURL, Scopes: splitScopes(scopes)}
+	identity, err := identity.Canonical()
+	if err != nil {
+		return discoveredEnrollment{}, err
+	}
+	return discoveredEnrollment{Resource: discovered.Resource, MetadataURL: discovered.MetadataURL, Connection: clientauth.Connection{Identity: identity, ResourceURL: discovered.Resource, IssuerAddressPolicy: clientauth.IssuerAddressPolicyPublic}}, nil
+}
+
+func confirmDiscoveredLogin(in io.Reader, out io.Writer, enrollment discoveredEnrollment) (bool, error) {
+	if !safeDiscoveredEnrollment(enrollment) {
+		return false, errDiscoveryRejected
+	}
+	if _, err := fmt.Fprintf(out, "Discovered protected resource:\n  resource: %s\n  metadata: %s\n  issuer: %s\n  audience: %s\n  client ID: %s\n  scopes: %s\n  gRPC target: %s\nContinue with browser login? [y/N]: ", enrollment.Resource, enrollment.MetadataURL, enrollment.Connection.Identity.Issuer, enrollment.Connection.Identity.Audience, enrollment.Connection.Identity.ClientID, strings.Join(enrollment.Connection.Identity.Scopes, ","), enrollment.Connection.Identity.Target); err != nil {
+		return false, err
+	}
+	answer, err := bufio.NewReader(in).ReadString('\n')
+	if err != nil && !errors.Is(err, io.EOF) {
+		return false, err
+	}
+	answer = strings.TrimSpace(answer)
+	return strings.EqualFold(answer, "y") || strings.EqualFold(answer, "yes"), nil
+}
+
+func safeDiscoveredEnrollment(enrollment discoveredEnrollment) bool {
+	values := []string{
+		enrollment.Resource,
+		enrollment.MetadataURL,
+		enrollment.Connection.Identity.Issuer,
+		enrollment.Connection.Identity.Audience,
+		enrollment.Connection.Identity.ClientID,
+		enrollment.Connection.Identity.Target,
+		strings.Join(enrollment.Connection.Identity.Scopes, ","),
+	}
+	for _, value := range values {
+		if !safeDisplayValue(value) {
+			return false
+		}
+	}
+	return true
 }
 
 // preparedSavedLogin owns the local handles proven usable before interactive OIDC.
@@ -150,12 +314,61 @@ func prepareSavedRemoteLogin(ctx context.Context, conn clientauth.Connection) (p
 		closeStore()
 		return preparedSavedLogin{}, &client.AuthError{Reason: client.AuthStorageUnavailable}
 	}
-	if _, err := creds.Load(ctx, conn.Identity); err != nil &&
-		!errors.Is(err, credentialstore.ErrNotFound) && !errors.Is(err, clientauth.ErrCorrupt) {
+	// Snapshot the target/credential state now, BEFORE the caller's interactive
+	// browser wait: this route serves both a fresh enrollment (nothing to
+	// snapshot yet -- Found:false / an empty target list is itself a valid CAS
+	// baseline) and a rediscovery of an already-enrolled resource, and only the
+	// snapshot closes the gap where a concurrent logout removes that enrollment
+	// while the browser exchange is in flight, which would otherwise let
+	// completion resurrect the removed row.
+	expectedTarget, expectedCredential, err := snapshotSavedLoginState(ctx, conn, registry, creds)
+	if err != nil {
 		closeStore()
-		return preparedSavedLogin{}, &client.AuthError{Reason: client.AuthStorageUnavailable}
+		return preparedSavedLogin{}, err
 	}
-	return preparedSavedLogin{registry: registry, creds: creds, close: closeStore}, nil
+	return preparedSavedLogin{registry: registry, creds: creds, close: closeStore, expectedTarget: expectedTarget, expectedCredential: expectedCredential}, nil
+}
+
+// snapshotSavedLoginState captures the CAS preconditions Enroll needs to reject
+// a commit that races a concurrent logout/re-enrollment of the same target: the
+// credential state for conn.Identity and every existing registry row for its
+// (canonicalized) target, both read at preflight time.
+func snapshotSavedLoginState(ctx context.Context, conn clientauth.Connection, registry *clientauth.Registry, creds *clientauth.Credentials) (*[]clientauth.Connection, *clientauth.ExpectedCredentialState, error) {
+	rec, loadErr := creds.Load(ctx, conn.Identity)
+	var expectedCredential *clientauth.ExpectedCredentialState
+	switch {
+	case loadErr == nil:
+		expectedCredential = &clientauth.ExpectedCredentialState{Found: true, Version: rec.Version}
+	case errors.Is(loadErr, credentialstore.ErrNotFound):
+		expectedCredential = &clientauth.ExpectedCredentialState{Found: false}
+	case errors.Is(loadErr, clientauth.ErrCorrupt):
+		// Enroll's corrupt-record repair path may still run, but only if the
+		// record is STILL corrupt at commit time -- if another process
+		// repaired or replaced it while this sign-in's browser flow was open,
+		// this stale sign-in must not overwrite that.
+		expectedCredential = &clientauth.ExpectedCredentialState{Corrupt: true}
+	default:
+		return nil, nil, &client.AuthError{Reason: client.AuthStorageUnavailable}
+	}
+	all, err := registry.List()
+	if err != nil {
+		return nil, nil, &client.AuthError{Reason: client.AuthStorageUnavailable}
+	}
+	var expected []clientauth.Connection
+	// Canonicalize defensively (matching Enroll's own discipline) rather than
+	// trust the caller's conn.Identity.Target is already canonical -- a
+	// mismatch here would silently see zero existing entries and misreport
+	// every login as a changed target.
+	target := conn.Identity.Target
+	if canon, canonErr := conn.Identity.Canonical(); canonErr == nil {
+		target = canon.Target
+	}
+	for _, existing := range all {
+		if existing.Identity.Target == target {
+			expected = append(expected, existing)
+		}
+	}
+	return &expected, expectedCredential, nil
 }
 
 // prepareExistingSavedRemoteLogin opens only existing saved-target state. It is
@@ -181,43 +394,12 @@ func prepareExistingSavedRemoteLogin(ctx context.Context, conn clientauth.Connec
 		closeStore()
 		return preparedSavedLogin{}, &client.AuthError{Reason: client.AuthStorageUnavailable}
 	}
-	rec, loadErr := creds.Load(ctx, conn.Identity)
-	var expectedCredential *clientauth.ExpectedCredentialState
-	switch {
-	case loadErr == nil:
-		expectedCredential = &clientauth.ExpectedCredentialState{Found: true, Version: rec.Version}
-	case errors.Is(loadErr, credentialstore.ErrNotFound):
-		expectedCredential = &clientauth.ExpectedCredentialState{Found: false}
-	case errors.Is(loadErr, clientauth.ErrCorrupt):
-		// Enroll's corrupt-record repair path may still run, but only if the
-		// record is STILL corrupt at commit time -- if another process
-		// repaired or replaced it while this sign-in's browser flow was
-		// open, this stale sign-in must not overwrite that.
-		expectedCredential = &clientauth.ExpectedCredentialState{Corrupt: true}
-	default:
-		closeStore()
-		return preparedSavedLogin{}, &client.AuthError{Reason: client.AuthStorageUnavailable}
-	}
-	all, err := registry.List()
+	expectedTarget, expectedCredential, err := snapshotSavedLoginState(ctx, conn, registry, creds)
 	if err != nil {
 		closeStore()
-		return preparedSavedLogin{}, &client.AuthError{Reason: client.AuthStorageUnavailable}
+		return preparedSavedLogin{}, err
 	}
-	var expected []clientauth.Connection
-	// Canonicalize defensively (matching Enroll's own discipline) rather than
-	// trust the caller's conn.Identity.Target is already canonical -- a
-	// mismatch here would silently see zero existing entries and misreport
-	// every reauth as a changed target.
-	target := conn.Identity.Target
-	if canon, canonErr := conn.Identity.Canonical(); canonErr == nil {
-		target = canon.Target
-	}
-	for _, existing := range all {
-		if existing.Identity.Target == target {
-			expected = append(expected, existing)
-		}
-	}
-	return preparedSavedLogin{registry: registry, creds: creds, close: closeStore, expectedTarget: &expected, expectedCredential: expectedCredential}, nil
+	return preparedSavedLogin{registry: registry, creds: creds, close: closeStore, expectedTarget: expectedTarget, expectedCredential: expectedCredential}, nil
 }
 
 // runSavedRemoteLogin performs the ordinary OIDC flow for an already-saved public

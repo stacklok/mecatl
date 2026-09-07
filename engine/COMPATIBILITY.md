@@ -129,6 +129,16 @@ its event stream into a `*session.Session`. The reference implementation is
 records the decision. This section is the field-by-field contract such a backend must
 honour.
 
+### Load-failure classification
+
+Snapshot-backed implementations should wrap retrieval or transport failures with
+`port.NewSessionLoadFailure(port.SessionLoadFailureStore, err)` and snapshot decode,
+format, identity, or validation failures with `port.SessionLoadFailureSnapshot`. Genuine
+absence continues to wrap `port.ErrSessionNotFound` and must not be reclassified.
+Consumers inspect the typed `port.SessionLoadFailureError` through `errors.Is`/`errors.As`
+or `port.ClassifySessionLoadFailure`; error text is not a classification contract.
+Unknown custom-store failures intentionally remain `port.SessionLoadFailureUnknown`.
+
 ### What a folded `Load` MUST populate vs. what is safe to lose
 
 | Field on the reconstructed `*session.Session` | Round-trip obligation | Source |

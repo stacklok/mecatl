@@ -158,7 +158,11 @@ func (st *Store) Load(_ context.Context, id session.SessionID) (*session.Session
 	if !ok {
 		return nil, fmt.Errorf("%w: %q", ErrNotFound, id)
 	}
-	return snap.Restore()
+	sess, err := snap.Restore()
+	if err != nil {
+		return nil, port.NewSessionLoadFailure(port.SessionLoadFailureSnapshot, err)
+	}
+	return sess, nil
 }
 
 // List returns every stored session's id and last Save time, in no guaranteed

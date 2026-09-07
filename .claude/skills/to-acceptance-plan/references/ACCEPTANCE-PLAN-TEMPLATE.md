@@ -1,7 +1,7 @@
 # Acceptance-plan template
 
 Copy the skeleton into `docs/acceptance/<slug>.md`. Keep focused plans compact. New plans and
-materially amended legacy plans after ADR 0304 must use this current template, including exact
+materially amended legacy plans after ADR 0306 must use this current template, including exact
 `**Contract:** human-reviewed/v1` metadata; unmarked historical plans are grandfathered until
 materially amended. The bundled checker requires exact `**Contract:** human-reviewed/v1` metadata, a scenario, numbered ACs with `verify:` lines, citations, an
 out-of-scope section, an allowed status, a non-empty `## Human decisions` section, a

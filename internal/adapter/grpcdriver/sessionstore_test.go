@@ -206,6 +206,9 @@ func TestLoadUnknownFormatIsInfraError(t *testing.T) {
 	if errors.Is(err, port.ErrSessionNotFound) {
 		t.Errorf("Load(unknown format) error = %v: must NEVER be ErrSessionNotFound", err)
 	}
+	if got := port.ClassifySessionLoadFailure(err); got != port.SessionLoadFailureSnapshot {
+		t.Errorf("Load(unknown format) class = %s, want snapshot", got)
+	}
 	if want := "sessnap-json/99"; !strings.Contains(err.Error(), want) {
 		t.Errorf("Load(unknown format) error %q does not name the offending format %q", err, want)
 	}
@@ -215,6 +218,61 @@ func TestLoadUnknownFormatIsInfraError(t *testing.T) {
 // tag this client does not speak.
 type unknownFormatServer struct {
 	driverv1.UnimplementedSessionStoreServiceServer
+}
+
+func TestLoadTransportFailureIsClassifiedStore(t *testing.T) {
+	conn := dialBufconn(t, func(gs *grpc.Server) {
+		driverv1.RegisterSessionStoreServiceServer(gs, unavailableLoadServer{})
+	})
+	st := mustNewSessionStore(t, conn)
+	_, err := st.Load(context.Background(), "any-id")
+	if got := port.ClassifySessionLoadFailure(err); got != port.SessionLoadFailureStore {
+		t.Fatalf("Load transport class = %s, want store: %v", got, err)
+	}
+}
+
+func TestLoadMalformedSnapshotIsClassifiedSnapshot(t *testing.T) {
+	conn := dialBufconn(t, func(gs *grpc.Server) {
+		driverv1.RegisterSessionStoreServiceServer(gs, snapshotLoadServer{payload: []byte("not-json")})
+	})
+	st := mustNewSessionStore(t, conn)
+	_, err := st.Load(context.Background(), "requested")
+	if got := port.ClassifySessionLoadFailure(err); got != port.SessionLoadFailureSnapshot {
+		t.Fatalf("Load malformed snapshot class = %s, want snapshot: %v", got, err)
+	}
+}
+
+func TestLoadMismatchedReturnedIDIsClassifiedSnapshot(t *testing.T) {
+	sess := session.New("different", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/workspace", Revision: "r1"}, session.Limits{}, time.Unix(1, 0))
+	payload, err := sessnap.Marshal(sess)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn := dialBufconn(t, func(gs *grpc.Server) {
+		driverv1.RegisterSessionStoreServiceServer(gs, snapshotLoadServer{payload: payload})
+	})
+	st := mustNewSessionStore(t, conn)
+	_, err = st.Load(context.Background(), "requested")
+	if got := port.ClassifySessionLoadFailure(err); got != port.SessionLoadFailureSnapshot {
+		t.Fatalf("Load mismatched ID class = %s, want snapshot: %v", got, err)
+	}
+}
+
+type snapshotLoadServer struct {
+	driverv1.UnimplementedSessionStoreServiceServer
+	payload []byte
+}
+
+func (s snapshotLoadServer) Load(context.Context, *driverv1.LoadRequest) (*driverv1.LoadResponse, error) {
+	return &driverv1.LoadResponse{Snapshot: &driverv1.SessionSnapshot{Format: SnapshotFormat, Payload: s.payload}}, nil
+}
+
+type unavailableLoadServer struct {
+	driverv1.UnimplementedSessionStoreServiceServer
+}
+
+func (unavailableLoadServer) Load(context.Context, *driverv1.LoadRequest) (*driverv1.LoadResponse, error) {
+	return nil, status.Error(codes.Unavailable, "backend unavailable")
 }
 
 func (unknownFormatServer) Load(context.Context, *driverv1.LoadRequest) (*driverv1.LoadResponse, error) {

@@ -410,7 +410,7 @@ func (st *Store) Create(ctx context.Context, s *session.Session) error {
 func (st *Store) Load(ctx context.Context, id session.SessionID) (*session.Session, error) {
 	client, release, err := st.clients.acquire()
 	if err != nil {
-		return nil, err
+		return nil, port.NewSessionLoadFailure(port.SessionLoadFailureStore, err)
 	}
 	defer release()
 	st.observeMetadataWork(metadataWorkLoad)
@@ -419,9 +419,17 @@ func (st *Store) Load(ctx context.Context, id session.SessionID) (*session.Sessi
 		if errors.Is(err, redis.Nil) {
 			return nil, fmt.Errorf("%w: %q", ErrNotFound, id)
 		}
-		return nil, fmt.Errorf("redisstore: load %q: %w", id, err)
+		return nil, port.NewSessionLoadFailure(port.SessionLoadFailureStore, fmt.Errorf("redisstore: load %q: %w", id, err))
 	}
-	return sessnap.Unmarshal(blob)
+	sess, err := sessnap.Unmarshal(blob)
+	if err != nil {
+		return nil, port.NewSessionLoadFailure(port.SessionLoadFailureSnapshot, err)
+	}
+	if sess.ID != id {
+		return nil, port.NewSessionLoadFailure(port.SessionLoadFailureSnapshot,
+			fmt.Errorf("redisstore: load %q: snapshot id mismatch: stored %q", id, sess.ID))
+	}
+	return sess, nil
 }
 
 // List returns every stored session's id and SAVE-time mtime. It SCANs the

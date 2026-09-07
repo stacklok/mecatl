@@ -18,6 +18,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/stacklok/mecatl/engine/adapter/sessnap"
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 )
 
@@ -331,14 +332,17 @@ func readCurrentSnapshot(root *os.Root, name string) (currentSnapshot, bool, err
 		return currentSnapshot{}, true, err
 	}
 	if info.Size() > maxScannerTokenSize+lastLineSeekWindow {
-		return currentSnapshot{}, true, fmt.Errorf("jsonlstore: current snapshot exceeds %d bytes", maxScannerTokenSize)
+		return currentSnapshot{}, true, port.NewSessionLoadFailure(port.SessionLoadFailureSnapshot, fmt.Errorf("jsonlstore: current snapshot exceeds %d bytes", maxScannerTokenSize))
 	}
 	data, err := io.ReadAll(f)
 	if err != nil {
 		return currentSnapshot{}, true, err
 	}
 	current, err := decodeCurrentSnapshot(data)
-	return current, true, err
+	if err != nil {
+		return currentSnapshot{}, true, port.NewSessionLoadFailure(port.SessionLoadFailureSnapshot, err)
+	}
+	return current, true, nil
 }
 
 func snapshotIDFromLine(line []byte) (session.SessionID, error) {
@@ -377,7 +381,7 @@ func readSnapshotLine(root *os.Root, name string) ([]byte, error) {
 		return nil, fmt.Errorf("jsonlstore: read session file tail: %w", err)
 	}
 	if last == nil {
-		return nil, fmt.Errorf("jsonlstore: empty session file: %s", name)
+		return nil, port.NewSessionLoadFailure(port.SessionLoadFailureSnapshot, fmt.Errorf("jsonlstore: empty session file: %s", name))
 	}
 	return last, nil
 }
@@ -400,13 +404,13 @@ func (r sessionResolver) currentSnapshotFor(id session.SessionID) (currentSnapsh
 	}
 	embedded, err := snapshotIDFromLine(current.Snapshot)
 	if err != nil {
-		return currentSnapshot{}, true, fmt.Errorf("jsonlstore: inspect current snapshot: %w", err)
+		return currentSnapshot{}, true, port.NewSessionLoadFailure(port.SessionLoadFailureSnapshot, fmt.Errorf("jsonlstore: inspect current snapshot: %w", err))
 	}
 	if embedded != id {
-		return currentSnapshot{}, true, fmt.Errorf("jsonlstore: current session id mismatch: stored %q, requested %q", embedded, id)
+		return currentSnapshot{}, true, port.NewSessionLoadFailure(port.SessionLoadFailureSnapshot, fmt.Errorf("jsonlstore: current session id mismatch: stored %q, requested %q", embedded, id))
 	}
 	if _, err := sessnap.Unmarshal(current.Snapshot); err != nil {
-		return currentSnapshot{}, true, fmt.Errorf("jsonlstore: verify current snapshot: %w", err)
+		return currentSnapshot{}, true, port.NewSessionLoadFailure(port.SessionLoadFailureSnapshot, fmt.Errorf("jsonlstore: verify current snapshot: %w", err))
 	}
 	return current, true, nil
 }
@@ -520,10 +524,10 @@ func (r sessionResolver) canonicalSnapshot(id session.SessionID) ([]byte, bool, 
 	}
 	embedded, err := snapshotIDFromLine(line)
 	if err != nil {
-		return nil, true, fmt.Errorf("jsonlstore: inspect canonical session file: %w", err)
+		return nil, true, port.NewSessionLoadFailure(port.SessionLoadFailureSnapshot, fmt.Errorf("jsonlstore: inspect canonical session file: %w", err))
 	}
 	if embedded != id {
-		return nil, true, fmt.Errorf("jsonlstore: canonical session id mismatch: stored %q, requested %q", embedded, id)
+		return nil, true, port.NewSessionLoadFailure(port.SessionLoadFailureSnapshot, fmt.Errorf("jsonlstore: canonical session id mismatch: stored %q, requested %q", embedded, id))
 	}
 	return line, true, nil
 }
@@ -674,7 +678,7 @@ func (r sessionResolver) readablePath(id session.SessionID, kind sessionKind) (s
 func legacyLineOwnedBy(line []byte, id session.SessionID) (bool, error) {
 	embedded, err := snapshotIDFromLine(line)
 	if err != nil {
-		return false, fmt.Errorf("jsonlstore: inspect legacy session file: %w", err)
+		return false, port.NewSessionLoadFailure(port.SessionLoadFailureSnapshot, fmt.Errorf("jsonlstore: inspect legacy session file: %w", err))
 	}
 	return embedded == id, nil
 }

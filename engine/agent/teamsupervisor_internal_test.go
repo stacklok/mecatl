@@ -217,6 +217,10 @@ func (fakeRunner) Run(context.Context, string) (tool.CommandResult, error) {
 	return tool.CommandResult{}, nil
 }
 
+func (fakeRunner) RunWithEnvironment(context.Context, string, tool.CommandEnvironmentOverlay) (tool.CommandResult, error) {
+	return tool.CommandResult{}, nil
+}
+
 // TestBaseSharingReadOnlyMemberIsShellless proves the issue-#462 review fix: a
 // base-sharing (default read-only) member's Environment carries a NIL runner as
 // defense-in-depth, even when the parent (base) Environment has a bound runner.

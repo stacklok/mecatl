@@ -209,6 +209,8 @@ type Resolver struct {
 	// block. Parse failures are retained so composition fails closed at startup.
 	operatorStorageManagement    *StorageManagementSection
 	operatorStorageManagementErr error
+	operatorTemporaryStorage     *TemporaryStorageSection
+	operatorTemporaryStorageErr  error
 
 	// operatorProviders and operatorProviderOverrides are immutable operator-tier
 	// provider configuration captured once at resolver construction.
@@ -237,6 +239,15 @@ func (r *Resolver) OperatorStorageManagement() (*StorageManagementSection, error
 		return nil, nil
 	}
 	return r.operatorStorageManagement, r.operatorStorageManagementErr
+}
+
+// OperatorTemporaryStorage returns the immutable operator-tier command temporary
+// storage policy and any strict parse failure that would otherwise disable it.
+func (r *Resolver) OperatorTemporaryStorage() (*TemporaryStorageSection, error) {
+	if r == nil {
+		return nil, nil
+	}
+	return r.operatorTemporaryStorage, r.operatorTemporaryStorageErr
 }
 
 // OperatorGuardrails returns the operator-tier guardrails config (user-global + CLI
@@ -673,6 +684,11 @@ func (r *Resolver) loadProjectRules(ws tool.WorkspaceReader) ([]governance.Rule,
 				"retention: IGNORING a project-tier retention block (operator-tier only; projects cannot weaken cleanup protection)",
 				"file", src.path, "root", ws.Root())
 		}
+		if cfg.TemporaryStorage != nil {
+			r.diag.Log(context.Background(), port.LevelWarn,
+				"temporary_storage: IGNORING a project-tier temporary_storage block (operator-tier only; projects cannot redirect command temporary storage or alter cleanup retention)",
+				"file", src.path, "root", ws.Root())
+		}
 		if cfg.StorageManagement != nil {
 			r.diag.Log(context.Background(), port.LevelWarn,
 				"storage_management: IGNORING a project-tier authority block (operator-tier only)",
@@ -842,6 +858,9 @@ func (r *Resolver) captureOperatorParseError(data []byte, err error) {
 	if hasTopLevelKey(data, "storage_management") && r.operatorStorageManagementErr == nil {
 		r.operatorStorageManagementErr = err
 	}
+	if hasTopLevelKey(data, "temporary_storage") && r.operatorTemporaryStorageErr == nil {
+		r.operatorTemporaryStorageErr = err
+	}
 }
 
 func (r *Resolver) loadUserRules(report *Report) []governance.Rule {
@@ -929,6 +948,7 @@ func (r *Resolver) loadUserRules(report *Report) []governance.Rule {
 				r.captureMCP(cfg.MCP)
 				r.captureRetention(cfg.Retention)
 				r.captureStorageManagement(cfg.StorageManagement)
+				r.captureTemporaryStorage(cfg.TemporaryStorage)
 				r.captureProviders(cfg.Providers, cfg.ProviderOverrides)
 			}
 		}
@@ -1080,6 +1100,13 @@ func (r *Resolver) captureRetention(s *RetentionSection) {
 		return
 	}
 	r.operatorRetention = s
+}
+
+func (r *Resolver) captureTemporaryStorage(s *TemporaryStorageSection) {
+	if s == nil || r.operatorTemporaryStorage != nil {
+		return
+	}
+	r.operatorTemporaryStorage = s
 }
 
 func (r *Resolver) captureStorageManagement(s *StorageManagementSection) {

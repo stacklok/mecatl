@@ -44,7 +44,12 @@ import (
 // Service serves traffic through (Service.StorageReady type-asserts the store
 // for a Pinger). A non-Redis store (the in-memory fallback) has no ping, so
 // readiness is drain-gated only.
-func normalHTTPMux(svc *server.Service, auth *server.Authenticator) http.Handler {
+//
+// The anonymous RFC 9728 protected-resource metadata endpoint (when profile is
+// non-empty) is mounted in front of the authenticated API, same as mecated —
+// it must stay reachable without credentials, and outside the drain listener
+// since it is discovery metadata, not a lifecycle operation.
+func normalHTTPMux(svc *server.Service, auth *server.Authenticator, profile server.ProtectedResourceProfile) http.Handler {
 	ready := server.ReadyFunc(func() bool {
 		if svc.IsDraining() {
 			return false
@@ -56,7 +61,7 @@ func normalHTTPMux(svc *server.Service, auth *server.Authenticator) http.Handler
 
 	mux := http.NewServeMux()
 	server.NewHealthHandler(ready).RegisterHealth(mux)
-	mux.Handle("/", auth.Middleware(server.NewHTTPHandler(svc)))
+	mux.Handle("/", server.WithProtectedResourceMetadata(profile, auth.Middleware(server.NewHTTPHandler(svc))))
 	return mux
 }
 
@@ -159,7 +164,7 @@ func serveWithDrainWait(ctx context.Context, cfg config, svc *server.Service, ob
 	// HTTP/SSE carries health endpoints outside auth and the API inside auth.
 	httpSrv := &http.Server{
 		Addr:              cfg.httpAddr,
-		Handler:           normalHTTPMux(svc, auth),
+		Handler:           normalHTTPMux(svc, auth, protectedResourceProfile(cfg.oidc)),
 		ReadHeaderTimeout: 10 * time.Second,
 		TLSConfig:         tlsCfg,
 	}
@@ -229,6 +234,17 @@ func serveWithDrainWait(ctx context.Context, cfg config, svc *server.Service, ob
 
 	boundedShutdown(cfg, grpcSrv, httpSrv, drainSrv, metricsSrv, svc)
 	return nil
+}
+
+// protectedResourceProfile projects the already-validated shared OIDC profile
+// into the anonymous public endpoint without exposing the rest of the daemon
+// configuration.
+func protectedResourceProfile(c cliconfig.OIDCConfig) server.ProtectedResourceProfile {
+	projection, err := c.ProfileProjection()
+	if err != nil || !c.ProtectedResourceEnabled() {
+		return server.ProtectedResourceProfile{}
+	}
+	return projection.ProtectedResourceProfile()
 }
 
 // newAuthenticator constructs the caller-identity boundary with the server-root

@@ -40,7 +40,7 @@ proposed surfaces for gRPC/protobuf, exported Go APIs, tool schemas, CLI/config,
 events/persistence,
 security/authority boundaries, and compatibility/migration. `None` requires a rationale.
 Material public decisions cannot be postponed until code exists. New plans and materially amended
-legacy plans after ADR 0304 must adopt the current template and exact
+legacy plans after ADR 0306 must adopt the current template and exact
 `**Contract:** human-reviewed/v1` metadata; unmarked historical plans are grandfathered until
 materially amended and need not be bulk-migrated.
 
@@ -115,4 +115,4 @@ failed, harness-owned, primary, and ambiguous worktrees are retained.
 | `/panel-review` | independent Spec / Standards / Test adequacy / Domain review |
 
 See [the acceptance-plan guide](acceptance/README.md) and
-[ADR 0304](adr/0304-human-reviewed-development-contracts.md).
+[ADR 0306](adr/0306-human-reviewed-development-contracts.md).

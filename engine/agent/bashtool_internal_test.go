@@ -22,6 +22,7 @@ type fakeBashRunner struct {
 
 	mu      sync.Mutex
 	command string
+	scope   tool.TemporaryScope
 }
 
 func (f *fakeBashRunner) Run(_ context.Context, command string) (tool.CommandResult, error) {
@@ -29,6 +30,17 @@ func (f *fakeBashRunner) Run(_ context.Context, command string) (tool.CommandRes
 	defer f.mu.Unlock()
 	f.command = command
 	return f.res, f.err
+}
+
+func (f *fakeBashRunner) RunWithEnvironment(ctx context.Context, command string, _ tool.CommandEnvironmentOverlay) (tool.CommandResult, error) {
+	return f.Run(ctx, command)
+}
+
+func (f *fakeBashRunner) RunWithTemporaryScope(ctx context.Context, command string, scope tool.TemporaryScope) (tool.CommandResult, error) {
+	f.mu.Lock()
+	f.scope = scope
+	f.mu.Unlock()
+	return f.Run(ctx, command)
 }
 
 // fakeStreamingRunner is a scriptable tool.CommandRunner + tool.CommandStreamer
@@ -80,17 +92,25 @@ func (f *fakeStreamingRunner) RunStreaming(ctx context.Context, _ string, out io
 	return f.exitCode, f.err
 }
 
+func (f *fakeStreamingRunner) RunStreamingWithEnvironment(ctx context.Context, command string, _ tool.CommandEnvironmentOverlay, out io.Writer) (int, error) {
+	return f.RunStreaming(ctx, command, out)
+}
+
+func (f *fakeStreamingRunner) RunStreamingWithTemporaryScope(ctx context.Context, command string, _ tool.TemporaryScope, out io.Writer) (int, error) {
+	return f.RunStreaming(ctx, command, out)
+}
+
 // bashWS is the workspace every fake runs against (only Root() is read).
 var bashWS = memfs.NewWorkspace("/ws")
 
 // bashEnv wraps bashWS into a shell-less Environment (the background-Bash tests
 // inject a streaming runner via the Environment's runner, not the workspace).
-var bashEnv = tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: "/ws"}, bashWS, testReadLedger(), nil)
+var bashEnv = tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: "/ws", Revision: "v1"}, bashWS, testReadLedger(), nil)
 
 // bashEnvRunner wraps bashWS into an Environment bound to runner (the
 // background-Bash tests pass a streaming runner this way, issue #462).
 func bashEnvRunner(runner tool.CommandRunner) tool.Environment {
-	return tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: "/ws"}, bashWS, testReadLedger(), runner)
+	return tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: "/ws", Revision: "v1"}, bashWS, testReadLedger(), runner)
 }
 
 func bashCall(id, command string, timeoutMS int, background bool) session.ToolCall {

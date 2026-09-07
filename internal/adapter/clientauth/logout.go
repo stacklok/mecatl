@@ -82,14 +82,18 @@ type pendingRevocation struct {
 // unreadable credentials retain the registry entry so another process's token
 // rotation never becomes an unreachable orphan. Provider revocation is bounded
 // best effort and never blocks local deletion.
-func Logout(ctx context.Context, target string, cfg LogoutConfig) (LogoutResult, error) {
+func Logout(ctx context.Context, target string, cfg LogoutConfig) (LogoutResult, error) { //nolint:gocyclo // local credential/registry CAS outcomes are intentionally explicit.
 	result := LogoutResult{Target: target}
 	if cfg.Registry == nil {
 		return result, errors.New("clientauth: registry is required")
 	}
-	canonical, err := canonicalTarget(target)
+	canonical, err := cfg.Registry.targetForAlias(target)
+	if errors.Is(err, credentialstore.ErrNotFound) {
+		// Keep absent logout idempotent for either alias form.
+		return result, nil
+	}
 	if err != nil {
-		return result, ErrInvalidIdentity
+		return result, err
 	}
 	result.Target = canonical
 	// An existing-only registry whose root was never created has no state to log
@@ -99,6 +103,17 @@ func Logout(ctx context.Context, target string, cfg LogoutConfig) (LogoutResult,
 	// legitimately races with logout the same way any check-then-act would.
 	if _, statErr := os.Stat(cfg.Registry.root); errors.Is(statErr, os.ErrNotExist) {
 		return result, nil
+	}
+	resource, isResource, err := resourceForAlias(target)
+	if err != nil {
+		return result, err
+	}
+	if isResource {
+		unlockResource, lockErr := cfg.Registry.lockTarget(ctx, "resource:"+resource)
+		if lockErr != nil {
+			return result, lockErr
+		}
+		defer unlockResource()
 	}
 	unlock, err := cfg.Registry.lockTarget(ctx, canonical)
 	if err != nil {
@@ -110,6 +125,16 @@ func Logout(ctx context.Context, target string, cfg LogoutConfig) (LogoutResult,
 			unlock()
 		}
 	}()
+	// Alias resolution happens before the per-target transaction so we can select
+	// its lock. Resolve it again while that lock is held: a re-enrolment may have
+	// repointed a resource alias between those steps.
+	resolved, err := cfg.Registry.targetForAlias(target)
+	if err != nil {
+		return result, err
+	}
+	if resolved != canonical {
+		return result, credentialstore.ErrConflict
+	}
 	all, err := cfg.Registry.List()
 	if err != nil {
 		return result, err

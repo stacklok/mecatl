@@ -565,6 +565,7 @@ func wirePerfSinks(cfg *app.Config, metrics *telemetry.Metrics, tracing port.Eve
 	// byte-identical metrics-silent path — the embed builds metrics only under
 	// perf-on, so this closure is a no-op there until metrics is non-nil.
 	cfg.ScheduleMetricsEmitter = metrics.EmitSchedule
+	cfg.SessionLoadFailureMetricsEmitter = metrics.EmitSessionLoadFailure
 	cfg.MetricsRoleScoper = func(familyRole string) (port.EventSink, port.ToolCallRecorder) {
 		scoped := metrics.WithRole(familyRole)
 		childSinks := []port.EventSink{scoped}

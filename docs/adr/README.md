@@ -19,8 +19,8 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0002 — Documentation lifecycle](./0002-documentation-lifecycle.md)
 - [0003 — Consolidate design records as ADRs](./0003-consolidate-design-records-as-adrs.md)
 - [0072 — The acceptance-plan spine](./0072-acceptance-plan-spine.md) *(superseded by 0295)*
-- [0295 — One scaled acceptance-plan spine for substantive work](./0295-unified-development-spine.md) *(single-PR decision superseded by 0304)*
-- [0304 — Human-reviewed development contracts before implementation](./0304-human-reviewed-development-contracts.md)
+- [0295 — One scaled acceptance-plan spine for substantive work](./0295-unified-development-spine.md) *(single-PR decision superseded by 0306)*
+- [0306 — Human-reviewed development contracts before implementation](./0306-human-reviewed-development-contracts.md)
 
 ### Architecture & implementation
 - [0001 — Agent Client Protocol (ACP) adapter](./0001-acp-adapter.md)
@@ -61,6 +61,7 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0279 — TypeScript SDK architecture: Connect-ES transport, protobuf-es codegen, in-repo pnpm project](./0279-typescript-sdk-architecture.md) *(supersedes ADR 0253 Decisions 1–2 in part)*
 - [0288 — TypeScript SDK durable attachment: the watch envelope, the serializable cursor, and the reconnect authority](./0288-typescript-sdk-durable-attachment.md)
 - [0292 — TypeScript SDK local daemon and callback tools](./0292-typescript-sdk-local-daemon-and-tools.md)
+- [0304 — TypeScript SDK public surface completeness and v0.1.0 release](./0304-typescript-sdk-public-surface-and-release.md)
 - [0036 — `engine/` is its own Go module (monorepo via `go.work`)](./0036-engine-module.md)
 - [0037 — Engine public-API stability contract](./0037-engine-stability-contract.md)
 - [0038 — Event-sourced SessionStore rehydration (the reference fold)](./0038-event-sourced-rehydration.md)

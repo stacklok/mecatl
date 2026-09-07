@@ -200,6 +200,7 @@ func kindKeycloakFixtureArgs() []string {
 // only the mecak8s-vmcp fixture's own setup creates, and the e2e pod would
 // hang mounting a missing volume until the install times out (the regression
 // this test exists to catch).
+
 func TestMecak8sHelmChart_KindProfileAloneHasNoSecretDependency(t *testing.T) {
 	values, err := os.ReadFile("values-kind.yaml")
 	if err != nil {
@@ -243,6 +244,70 @@ func TestMecak8sHelmChart_KindProfileAloneHasNoSecretDependency(t *testing.T) {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("bare Kind render missing %q", want)
 		}
+	}
+}
+
+func TestADR_0305_HelmProtectedResourceProfile(t *testing.T) {
+	rendered, err := helm(t, "template", "profile", ".", "--set", "mockProvider=true", "--set", "redis.local.enabled=true", "--set", "oidc.enabled=true", "--set", "oidc.issuer=https://idp.example.com", "--set", "oidc.audience=mecatl", "--set", "oidc.resource=https://api.example.com/mcp", "--set", "oidc.clientID=mecatui", "--set", "oidc.scopes[0]=openid", "--set", "oidc.scopes[1]=profile")
+	if err != nil {
+		t.Fatalf("render protected-resource profile: %v\n%s", err, rendered)
+	}
+	deployment := deploymentFromRender(t, rendered)
+	args := deployment.Spec.Template.Spec.Containers[0].Args
+	for _, want := range []string{"--oidc-resource=https://api.example.com/mcp", "--oidc-client-id=mecatui", "--oidc-scopes=openid,profile"} {
+		if !slices.Contains(args, want) {
+			t.Fatalf("rendered args missing %q: %v", want, args)
+		}
+	}
+	if rendered, err := helm(t, "template", "profile-ipv6", ".", "--set", "mockProvider=true", "--set", "redis.local.enabled=true", "--set", "oidc.enabled=true", "--set", "oidc.issuer=https://idp.example.com", "--set", "oidc.audience=mecatl", "--set-string", "oidc.resource=https://[::1]:8443/mcp", "--set", "oidc.clientID=mecatui"); err != nil {
+		t.Fatalf("render valid IPv6 resource with a valid port: %v\n%s", err, rendered)
+	} else if want := "--oidc-resource=https://[::1]:8443/mcp"; !strings.Contains(rendered, want) {
+		t.Fatalf("valid IPv6 resource render missing %q", want)
+	}
+	for name, values := range map[string]string{
+		"partial":  "oidc.enabled=true,oidc.issuer=https://idp.example.com,oidc.audience=mecatl,oidc.resource=https://api.example.com/mcp",
+		"disabled": "oidc.enabled=false,oidc.issuer=https://idp.example.com,oidc.audience=mecatl,oidc.resource=https://api.example.com/mcp,oidc.clientID=mecatui",
+		"scope":    "oidc.enabled=true,oidc.issuer=https://idp.example.com,oidc.audience=mecatl,oidc.resource=https://api.example.com/mcp,oidc.clientID=mecatui,oidc.scopes={open%20id}",
+	} {
+		t.Run(name, func(t *testing.T) {
+			if output, err := helm(t, "template", name, ".", "--set", "mockProvider=true", "--set", values); err == nil {
+				t.Fatalf("malformed profile rendered successfully:\n%s", output)
+			}
+		})
+	}
+	for name, values := range map[string][]string{
+		"userinfo":                  {"oidc.resource=https://user@api.example.com/mcp"},
+		"malformed-url":             {"oidc.resource=https://api.example.com/%zz"},
+		"comma-resource":            {"oidc.resource=https://api.example.com/mcp,other"},
+		"quoted-resource":           {`oidc.resource=https://api.example.com/mcp"`},
+		"backslash-resource":        {`oidc.resource=https://api.example.com/mcp\\\\`},
+		"dot-segment-resource":      {"oidc.resource=https://api.example.com/a/../b"},
+		"encoded-dot-segment":       {"oidc.resource=https://api.example.com/a/%2e%2e/b"},
+		"encoded-slash-dot-segment": {"oidc.resource=https://api.example.com/a/%2e%2e%2fb"},
+		"empty-host-resource":       {"oidc.resource=https://:443/mcp"},
+		"invalid-port-resource":     {"oidc.resource=https://api.example.com:99999/mcp"},
+		"non-numeric-port":          {"oidc.resource=https://api.example.com:abc/mcp"},
+		"ipv6-invalid-port":         {"oidc.resource=https://[::1]:99999/mcp"},
+		"ipv6-non-numeric-port":     {"oidc.resource=https://[::1]:abc/mcp"},
+		"format-resource":           {"oidc.resource=https://api.example.com/mcp\u200b"},
+		"control-char-resource":     {"oidc.resource=https://api.example.com/mcp\x01"},
+		"c1-control-resource":       {"oidc.resource=https://api.example.com/mcp\u0085"},
+		"resource-too-long":         {"oidc.resource=https://api.example.com/" + strings.Repeat("a", 1090)},
+		"insecure-issuer":           {"oidc.issuer=http://idp.example.com"},
+		"empty-host-issuer":         {"oidc.issuer=https:///issuer"},
+		"comma-scope":               {"oidc.scopes[0]=openid,profile"},
+		"quoted-scope":              {`oidc.scopes[0]=openid"`},
+		"backslash-scope":           {`oidc.scopes[0]=openid\\\\`},
+	} {
+		t.Run(name, func(t *testing.T) {
+			args := []string{"template", name, ".", "--set", "mockProvider=true", "--set", "redis.local.enabled=true", "--set", "oidc.enabled=true", "--set", "oidc.issuer=https://idp.example.com", "--set", "oidc.audience=mecatl", "--set", "oidc.clientID=mecatui"}
+			for _, value := range values {
+				args = append(args, "--set-string", value)
+			}
+			if output, err := helm(t, args...); err == nil {
+				t.Fatalf("unsafe profile rendered successfully:\n%s", output)
+			}
+		})
 	}
 }
 

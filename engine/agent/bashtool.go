@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -27,6 +28,11 @@ const bashToolTruncationMarker = "\n... [output truncated: exceeded 25000 bytes]
 // holds. It matches the Subagent background gate's scale (8): each live job is
 // an OS process the run-end drain must cancel+join plus a 64 KiB tail buffer.
 const maxBackgroundBashJobs = 8
+
+// BashSystemTempToolName is the synthetic, tool-wide permission capability for
+// the system temporary-directory overlay. It never appears in the catalog and
+// never authorizes Bash execution by itself.
+const bashSystemTempToolName = "BashSystemTemp"
 
 // bashToolDescription is the model-facing documentation for the Bash tool. The
 // foreground half is byte-identical to the fstools Bash description (the
@@ -141,6 +147,7 @@ type bashArgs struct {
 	Command    string `json:"command"`
 	TimeoutMS  int    `json:"timeout_ms"`
 	Background bool   `json:"background"`
+	TempScope  string `json:"temp_scope"`
 }
 
 // Spec returns the model-facing specification of the Bash tool.
@@ -153,7 +160,8 @@ func (BashTool) Spec() tool.ToolSpec {
   "properties": {
     "command": {"type": "string", "description": "Shell command line to run in the workspace root."},
     "timeout_ms": {"type": "integer", "description": "Optional timeout in milliseconds."},
-    "background": {"type": "boolean", "description": "Optional: run detached and return a job id instead of waiting for the command to finish."}
+    "background": {"type": "boolean", "description": "Optional: run detached and return a job id instead of waiting for the command to finish."},
+    "temp_scope": {"type": "string", "enum": ["managed", "system"], "description": "Optional temporary-storage scope; managed is disposable, system requests host-shared temporary storage."}
   },
   "required": ["command"]
 }`),
@@ -249,7 +257,7 @@ func (t BashTool) ExecuteWithParent(ctx context.Context, in session.ToolCall, en
 	caps.attachChildOutputTail(jobID, tail)
 	caps.startChildRun(jobID)
 
-	go t.driveBackground(jobCtx, timeoutCtx, jobID, args.Command, streamer, tail, cancelJob, cancelTimeout, caps)
+	go t.driveBackground(jobCtx, timeoutCtx, jobID, args, streamer, tail, cancelJob, cancelTimeout, caps)
 
 	return session.NewToolResult(in.ID, fmt.Sprintf("background bash job started.\n\njob id: %s\n\n"+
 		"It keeps running while you continue; a note will tell you when it finishes. "+
@@ -262,8 +270,8 @@ func (t BashTool) ExecuteWithParent(ctx context.Context, in session.ToolCall, en
 // is run-scoped: jobCtx derives from the parent run's, the run-end drain
 // cancels and joins it (doneCh closes in the deferred finishChildRunResult),
 // and it emits NOTHING — no events cross its goroutine boundary.
-func (BashTool) driveBackground(jobCtx, timeoutCtx context.Context, jobID session.SessionID, command string, streamer tool.CommandStreamer, tail *tailBuffer, cancelJob, cancelTimeout context.CancelFunc, caps parentCaps) {
-	exitCode, err := streamer.RunStreaming(jobCtx, command, tail)
+func (BashTool) driveBackground(jobCtx, timeoutCtx context.Context, jobID session.SessionID, args bashArgs, streamer tool.CommandStreamer, tail *tailBuffer, cancelJob, cancelTimeout context.CancelFunc, caps parentCaps) {
+	exitCode, err := runStreamingBashWithScope(jobCtx, streamer, args.Command, bashScope(args), args.TempScope != "", tail)
 	caps.setChildExitCode(jobID, exitCode)
 
 	// Terminal classification, mirroring the Subagent background terminal
@@ -303,7 +311,7 @@ func (BashTool) runForeground(ctx context.Context, callID session.ToolCallID, ar
 		defer cancel()
 	}
 
-	res, err := runner.Run(ctx, args.Command)
+	res, err := runBashWithScope(ctx, runner, args.Command, bashScope(args), args.TempScope != "")
 	if err != nil {
 		// Surface command-execution failures (no shell, timeout, cancellation)
 		// to the model so it can adapt, preserving the runner's partial output
@@ -334,7 +342,37 @@ func parseBashArgs(in session.ToolCall) (args bashArgs, msg string, ok bool) {
 	if args.TimeoutMS < 0 {
 		return bashArgs{}, "\"timeout_ms\" must be non-negative", false
 	}
+	if args.TempScope != "" && args.TempScope != string(tool.TemporaryScopeManaged) && args.TempScope != string(tool.TemporaryScopeSystem) {
+		return bashArgs{}, "\"temp_scope\" must be managed or system", false
+	}
 	return args, "", true
+}
+
+func bashScope(args bashArgs) tool.TemporaryScope {
+	if args.TempScope == string(tool.TemporaryScopeSystem) {
+		return tool.TemporaryScopeSystem
+	}
+	return tool.TemporaryScopeManaged
+}
+
+func runBashWithScope(ctx context.Context, runner tool.CommandRunner, command string, scope tool.TemporaryScope, requested bool) (tool.CommandResult, error) {
+	if scoped, ok := runner.(tool.CommandTemporaryScopeRunner); ok {
+		return scoped.RunWithTemporaryScope(ctx, command, scope)
+	}
+	if requested {
+		return tool.CommandResult{}, errors.New("command runner does not support temporary scope selection")
+	}
+	return runner.Run(ctx, command)
+}
+
+func runStreamingBashWithScope(ctx context.Context, runner tool.CommandStreamer, command string, scope tool.TemporaryScope, requested bool, out io.Writer) (int, error) {
+	if scoped, ok := runner.(tool.CommandTemporaryScopeStreamer); ok {
+		return scoped.RunStreamingWithTemporaryScope(ctx, command, scope, out)
+	}
+	if requested {
+		return 0, errors.New("command runner does not support temporary scope selection")
+	}
+	return runner.RunStreaming(ctx, command, out)
 }
 
 // bashCombinedOutput renders a CommandResult as the model-facing combined
