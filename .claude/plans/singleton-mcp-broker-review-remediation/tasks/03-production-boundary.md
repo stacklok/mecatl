@@ -2,10 +2,10 @@
 id: 03-production-boundary
 title: Real readiness and bounded public transport
 blocked_by: [01-transport-contract]
-status: pending
-attempt: 0
-branch: ""
-worktree: ""
+status: in-progress
+attempt: 1
+branch: "plan-singleton-mcp-broker-review-remediation/03-production-boundary-attempt-1"
+worktree: "/Users/jakub/devel/mecatl/.worktrees/distributed-broker-contract"
 issue: ""
 retries: 0
 last_error: ""
