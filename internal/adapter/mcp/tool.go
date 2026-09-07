@@ -3,7 +3,6 @@ package mcp
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"strings"
 
@@ -155,9 +154,8 @@ func (t *remoteTool) Execute(ctx context.Context, in session.ToolCall, _ tool.En
 		// terminal "server unavailable" — surface the clear message, not the
 		// raw transport string ("connection refused" / "context deadline
 		// exceeded"). Any other fault is surfaced verbatim.
-		if isConnectionDrop(callErr) || errors.Is(callErr, errReconnectFailed) {
-			return session.NewToolError(in.ID,
-				fmt.Sprintf("mcp call failed: MCP server %q unavailable after reconnect", t.server.Name())), nil
+		if message := unavailableMessage(callErr, "mcp call failed", t.server.Name()); message != "" {
+			return session.NewToolError(in.ID, message), nil
 		}
 		return session.NewToolError(in.ID, fmt.Sprintf("mcp call failed: %v", callErr)), nil
 	}

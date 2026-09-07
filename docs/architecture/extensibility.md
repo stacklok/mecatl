@@ -44,11 +44,15 @@ tools are registered into the catalog **namespaced** `mcp__<server>__<tool>` so 
 remote tool can never collide with or shadow a built-in. Concrete session loss
 (server restart, plain missing-session 404, closed transport, EOF, or refused
 connection) is re-established transparently with a single bounded reconnect
-attempt per call, serialized under a mutex. A structured JSON-RPC 400/404 or HTTP
-429/502/503/504 is instead a one-call failure: the live session is retained and
-the operation is never replayed automatically. See
-[ADR 0056](../adr/0056-mcp-client-reconnect.md) and
-[ADR 0223](../adr/0223-mcp-sdk-transport-error-semantics.md). The client also holds the
+attempt per call, serialized under a mutex. A closed idle HTTP connection while
+a POST is being sent is different: delivery may be ambiguous, so the operation
+is not replayed and the model receives a normalized unavailable result that
+states its outcome is unknown. A structured JSON-RPC 400/404 or HTTP
+429/502/503/504 is likewise a one-call failure: the live session is retained
+and the operation is never replayed automatically. See
+[ADR 0056](../adr/0056-mcp-client-reconnect.md),
+[ADR 0223](../adr/0223-mcp-sdk-transport-error-semantics.md), and
+[ADR 0306](../adr/0306-mcp-ambiguous-closed-idle-post.md). The client also holds the
 **standalone SSE GET stream** open per connected server, so server-initiated
 `notifications/{tools,prompts,resources}/list_changed` invalidate the cached
 snapshots (lazily re-listed on the next read); live catalog refresh is

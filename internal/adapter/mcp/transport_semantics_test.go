@@ -106,6 +106,7 @@ func TestTransportPerCallRejectionDoesNotReconnectOrReplay(t *testing.T) {
 		"client is closing",
 		"connection closed",
 		"connection refused",
+		"http: server closed idle connection",
 		"EOF",
 		"rejected by transport",
 	}
