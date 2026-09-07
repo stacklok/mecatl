@@ -293,9 +293,8 @@ func assignVisibleOffsets(rows []renderedRow, lines []string) {
 		}
 		rows[i].text = true
 		rows[i].sourceOffset = offsets[rows[i].region]
-		plain := ansi.Strip(lines[i])
-		_, stop := ansi.ByteToGraphemeRange(plain, 0, len(plain))
-		offsets[rows[i].region] += stop
+		plain := strings.TrimRight(ansi.Strip(lines[i]), " ")
+		offsets[rows[i].region] += graphemeCount(plain)
 	}
 }
 

@@ -3996,7 +3996,7 @@ func (m Model) onMousePress(mo tea.Mouse) (tea.Model, tea.Cmd) {
 // because copySelection's signature is shared with the right-click and
 // release-on-drag paths (which carry no disarm) and must stay unchanged.
 func (m Model) clickCopy(disarm tea.Cmd) (tea.Model, tea.Cmd) {
-	mm, cmd := m.copyPayload(selectedText(m.vp.GetContent(), m.sel))
+	mm, cmd := m.copySelection()
 	return mm, tea.Batch(cmd, disarm)
 }
 
@@ -4230,13 +4230,16 @@ func (m Model) onMouseRelease(mo tea.Mouse) (tea.Model, tea.Cmd) {
 	if !m.sel.active {
 		return m, nil
 	}
+	wasAutoScroll := m.sel.autoScroll != scrollNone
 	m.sel.autoScroll = scrollNone // the drag is over: kill any pending autoscroll tick
 	m.sel.autoScrollRamp = 0      // self-reset acceleration so release is a true reset seam
-	if line, col, ok := screenToContent(m, mo.X, mo.Y); ok {
-		m.sel.headL = line
-		m.sel.headC = col
+	if !wasAutoScroll {
+		if line, col, ok := screenToContent(m, mo.X, mo.Y); ok {
+			m.sel.headL = line
+			m.sel.headC = col
+		}
 	}
-	if m.sel.empty() {
+	if m.sel.empty() && m.sel.copied == "" && !wasAutoScroll {
 		m.sel = selection{}
 		m.refreshView() // repaint the now-UNSTYLED content (no native highlight to clear)
 		return m, nil
@@ -4253,7 +4256,24 @@ func (m Model) onMouseRelease(mo tea.Mouse) (tea.Model, tea.Cmd) {
 // (shellWriteCmd, batched). It sets a muted "copied N chars" status. An empty
 // payload is a no-op (defensive — release already clears empties).
 func (m Model) copySelection() (tea.Model, tea.Cmd) {
-	return m.copyPayload(selectedText(m.vp.GetContent(), m.sel))
+	if !m.sel.active {
+		return m.copyPayload("")
+	}
+	if m.viewDirty && m.sel.copied != "" {
+		frame := m.rend.renderConversationFrame(&m.conv, m.expandTools)
+		content := strings.Join(frame.lines, "\n")
+		if m.expandTools {
+			if list := m.rend.renderChangedFiles(m.conv.filesChanged); list != "" {
+				content += "\n" + list
+				frame = frameWithAppendix(frame, content, m.conv.changedFilesAppendixID)
+			}
+		}
+		if !m.sel.resolveLogical(frame) {
+			m = m.clearSelection()
+			return m.copyPayload("")
+		}
+	}
+	return m.copyPayload(m.sel.copied)
 }
 
 // snapshotSelection records the selection's identity anchor and RE-SPLICES the
@@ -4282,18 +4302,16 @@ func snapshotSelection(m *Model) {
 	// vpView cache must be invalidated so the next View() reflects the new content.
 	m.rend.invalidateVPView()
 	base := m.selBase
+	frame := m.view.frame
 	// selBase is refreshed by refreshView, but a streamed delta only marks the view
 	// dirty (deferred to the frame-cadence tick) — it does NOT re-render. A gesture
-	// that lands in that dirty window (delta arrived, tick not yet fired) would
-	// otherwise re-splice the STALE base and SetContent it, reverting the viewport to
-	// the pre-delta conversation (a "flash back" to an earlier state). Re-capture the
-	// base from the LIVE conversation whenever it is dirty so the splice always starts
-	// from current content. This re-renders the conversation, but only on a gesture
-	// that races a pending delta — never on the streaming hot path (which has no
-	// active selection gesture between deltas).
+	// that lands in that dirty window (delta arrived, tick not yet fired) must derive
+	// both its splice base and logical frame from the live conversation.
 	if m.viewDirty {
-		base = m.rend.renderConversation(&m.conv, m.expandTools)
+		frame = m.rend.renderConversationFrame(&m.conv, m.expandTools)
+		base = strings.Join(frame.lines, "\n")
 		m.selBase = base
+		m.viewDirty = false
 	}
 	if base == "" {
 		// Defensive: no base captured (e.g. a test that set raw viewport content then
@@ -4302,7 +4320,14 @@ func snapshotSelection(m *Model) {
 		base = m.vp.GetContent()
 		m.selBase = base
 	}
-	m.sel.snapshot = selectedText(base, m.sel)
+	if !m.sel.snapshotLogical(frame, base) {
+		// Some derived rows have no canonical text provenance. Keep their existing
+		// gesture behaviour; a later replacement will still clear them rather than
+		// claiming logical survival.
+		m.sel.anchorPoint, m.sel.headPoint = selectionPoint{}, selectionPoint{}
+		m.sel.snapshot = selectedText(base, m.sel)
+		m.sel.copied = m.sel.snapshot
+	}
 	m.view.replaceProjection(&m.vp, styleSelection(base, m.sel, m.deps.Theme.Style("selection")))
 	if shouldFollowTail {
 		m.view.mode = followTail
@@ -4452,14 +4477,11 @@ func (m *Model) refreshView() {
 	// so it covers every refreshView caller — the highlight survives a streaming
 	// re-render (Req 2).
 	//
-	// Identity check FIRST, against the UNSTYLED content: the anchor/head are absolute
-	// line indices, so a reflow that changed the line count above/within the selection
-	// (ctrl+t expand/collapse, compaction) now re-points them at different text. If the
-	// text under the selection no longer matches what was selected, DROP it rather than
-	// highlight/copy the wrong runes. selectedText must read the UNSTYLED content, so it
-	// runs before the splice. A pure append below leaves the selected lines untouched, so
-	// this does NOT fire for streaming (Req 2 preserved).
-	if m.sel.active && selectedText(content, m.sel) != m.sel.snapshot {
+	// A selection survives only when both logical endpoint contexts resolve and the
+	// resulting ANSI-free copied text remains byte-identical. Reading anchors may
+	// fall back; selections deliberately may not.
+	if m.sel.active && ((m.sel.anchorPoint.blockID == 0 && selectedText(content, m.sel) != m.sel.snapshot) ||
+		(m.sel.anchorPoint.blockID != 0 && !m.sel.resolveLogical(frame))) {
 		*m = m.clearSelection()
 	}
 	if m.sel.active {

@@ -1172,12 +1172,8 @@ func lineIndexContaining(content, sub string) int {
 	return -1
 }
 
-// TestSelectionClearedOnReflowAboveIt: selection-identity robustness. The anchor/
-// head are ABSOLUTE line indices, so a re-render that changes the line count above
-// (or within) the selection — here ctrl+t expanding a tool body — re-points them at
-// different text. The selection must be DROPPED, not left highlighting/copying the
-// wrong runes. (A pure append BELOW does not trigger this — see
-// TestSelectionSurvivesStreamingDelta.)
+// TestSelectionClearedOnReflowAboveIt: selection identity must not retain a span
+// whose copied visible text changes when a reflow introduces new rendered rows.
 func TestSelectionClearedOnReflowAboveIt(t *testing.T) {
 	cb := &fakeClipboard{}
 	m, _, _ := newTestModel(t, theme.New("aztec", theme.AztecPalette()))
@@ -1225,7 +1221,7 @@ func TestSelectionClearedOnReflowAboveIt(t *testing.T) {
 		t.Fatalf("test setup did not shift the layout (marker stayed at line %d); ctrl+t must change the tool body height", markerLine)
 	}
 	if m.sel.active {
-		t.Errorf("selection should be CLEARED after a reflow shifted the content under it (marker %d → %d)", markerLine, afterIdx)
+		t.Errorf("selection should be CLEARED after a reflow changed the selected text (marker %d → %d)", markerLine, afterIdx)
 	}
 	if strings.Contains(m.vp.View(), selectionBgSGR(t, m)) {
 		t.Error("no selection background highlight should remain after the reflow-clear")
