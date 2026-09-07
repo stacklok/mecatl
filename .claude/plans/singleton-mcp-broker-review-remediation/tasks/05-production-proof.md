@@ -2,7 +2,7 @@
 id: 05-production-proof
 title: Production-path authorization and deployment proofs
 blocked_by: [04-deployment-release]
-status: in-progress
+status: done
 attempt: 1
 branch: "plan-singleton-mcp-broker-review-remediation/05-production-proof-attempt-1"
 worktree: "/Users/jakub/devel/mecatl/.worktrees/distributed-broker-contract"
