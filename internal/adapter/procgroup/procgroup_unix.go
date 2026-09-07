@@ -44,13 +44,6 @@ func Kill(pid int) error {
 	return err
 }
 
-// GroupAlive reports whether the managed process group remains alive. It does
-// not inspect escaped descendants, which are outside the managed contract.
-func GroupAlive(pid int) bool {
-	err := syscall.Kill(-pid, 0)
-	return err == nil || err == syscall.EPERM
-}
-
 // WaitGone gives a cancellation kill a bounded chance to finish reaping the
 // complete managed group before its lease is considered for immediate deletion.
 func WaitGone(pid int, limit time.Duration) bool {
