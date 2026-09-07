@@ -2,7 +2,7 @@
 id: 09-panel-selection-identity
 title: Fail closed for ambiguous logical selection endpoints
 blocked_by: [08-panel-canonical-provenance]
-status: in-progress
+status: done
 attempt: 1
 branch: "plan-mecatui-logical-conversation-anchors/09-panel-selection-identity-attempt-1"
 worktree: ".scratch/worker-mecatui-logical-conversation-anchors-09-panel-selection-identity-attempt-1"
