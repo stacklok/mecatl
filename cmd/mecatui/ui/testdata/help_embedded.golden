@@ -1,24 +1,24 @@
  mecatui  ·  session sess-test-00  ·  mock-model  ·  mode default  ·  127.0.0.1:8080
 ────────────────────────────────────────────────────────────────────────────────────────────────────
-┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-┃                                                                                                           ┃
-┃  mecatui — keys & features                                                                                ┃
-┃                                                                                                           ┃
-┃  Prompting                                                                                                ┃
-┃    enter                 send the prompt                                                                  ┃
-┃    shift+enter           newline (also ctrl+j)                                                            ┃
-┃    /                     slash-command palette (built-ins always; workspace commands when enabled)        ┃
-┃    @                     attach a file: image/audio inlines as media (when supported), else inlines text  ┃
-┃    ctrl+v                paste a clipboard image as an attachment (when supported), else paste text       ┃
-┃    ctrl+g                select all prompt text                                                           ┃
-┃    ctrl+shift+c          copy the active prompt or conversation selection                                 ┃
-┃    ctrl+u                clear the unsent prompt                                                          ┃
-┃    esc                   cancel the running turn                                                          ┃
-┃                                                                                                           ┃
-┃  While a run is streaming                                                                                 ┃
-┃  lines 1–14 of 60 · esc or ? close · ↑/↓ scroll · pgup/pgdn page · home/end jump                          ┃
-┃                                                                                                           ┃
-┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃                                                                                                                                                   ┃
+┃  mecatui — keys & features                                                                                                                        ┃
+┃                                                                                                                                                   ┃
+┃  Prompting                                                                                                                                        ┃
+┃    enter                 send the prompt                                                                                                          ┃
+┃    shift+enter           newline (also ctrl+j)                                                                                                    ┃
+┃    /                     slash-command palette (built-ins always; workspace commands when enabled)                                                ┃
+┃    @                     attach a file: image/audio inlines as media (when supported), else inlines text                                          ┃
+┃    ctrl+v                paste a clipboard image as an attachment (when supported), else paste text                                               ┃
+┃    ctrl+g                select all prompt text                                                                                                   ┃
+┃    ctrl+shift+c          copy the active prompt or conversation selection                                                                         ┃
+┃    ctrl+u                clear the unsent prompt                                                                                                  ┃
+┃    esc esc (physical)    enhanced key-event support required; first press is silent; key release then press within 500ms; repeats cannot confirm  ┃
+┃                          clears staged attachments, large-paste content, and pending media; owners take precedence                                ┃
+┃                          not remappable; universal alternative: ClearPrompt / ctrl+u                                                              ┃
+┃  lines 1–14 of 63 · esc or ? close · ↑/↓ scroll · pgup/pgdn page · home/end jump                                                                  ┃
+┃                                                                                                                                                   ┃
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
 
 
 │
