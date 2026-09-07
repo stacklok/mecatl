@@ -130,7 +130,7 @@ func TestUsableAutoSkillsStockBuildPolicyMatrix(t *testing.T) {
 			for time.Now().Before(deadline) {
 				listed, err = built.Service.ListLearnedSkills(ctx, &mecatlv1.ListLearnedSkillsRequest{Project: workspace})
 				if err != nil {
-					t.Fatal(err)
+					t.Fatalf("ListLearnedSkills: %v diagnostics=%v", err, diag.capturedStrings())
 				}
 				if tc.wantState == "" {
 					time.Sleep(100 * time.Millisecond)

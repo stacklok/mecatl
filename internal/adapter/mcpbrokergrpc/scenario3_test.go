@@ -3,6 +3,7 @@ package mcpbrokergrpc_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -55,8 +56,9 @@ func TestInvariant_remote_broker_continues_exact_parked_call(t *testing.T) {
 	}
 	local.grant()
 	changed := session.NewToolCall("call-1", "protected", []byte(`{"request":"changed"}`))
-	if _, err := protected.Execute(t.Context(), changed, tool.Environment{}); err == nil {
-		t.Fatal("remote broker executed a call that did not match the parked invocation")
+	result, err := protected.Execute(t.Context(), changed, tool.Environment{})
+	if err != nil || !result.IsError || !strings.Contains(result.Content, "outcome is unknown") {
+		t.Fatalf("changed invocation = %#v, %v, want model-visible ambiguous outcome", result, err)
 	}
 	if got := local.executionCount(); got != 0 {
 		t.Fatalf("changed invocation reached effect: %d", got)

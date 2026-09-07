@@ -4460,7 +4460,7 @@ func engineDepsForProvider(
 		// it (childEngineDepsForProvider does not clear it).
 		Clock:                 wallclock.Clock{},
 		Diagnostics:           cfg.diag(),
-		PromptConfig:          promptConfig(modelCfg, cfg.gitStatus),
+		PromptConfig:          applyMCPBrokerPosture(promptConfig(modelCfg, cfg.gitStatus), brokerAuthorityEnabled(cfg)),
 		Model:                 model,
 		ContextWindow:         windowFn,
 		CompactionRatio:       defaultCompactionRatio,
@@ -8174,6 +8174,20 @@ func applySchedulePosture(pc prompt.Config, hasSchedule bool) prompt.Config {
 // diagnosticsPostureNote tells only main-session models that the TUI can submit
 // a safe current-state report through the ordinary prompt path.
 const diagnosticsPostureNote = "The mecatui /diagnostics command submits a concise current client/server diagnostic report as a normal user prompt. Treat that report as the authoritative current state when the user provides it; do not request secrets, configuration, environment variables, or raw connection details to recreate it."
+
+const mcpBrokerPostureNote = "MCP authority is broker-owned for this session. Use the ordinary MCP tools already present in the catalog; do not ask the user to provide upstream credentials, tokens, endpoints, or broker connection details. If a remote tool reports an unknown outcome, the operation may already have completed: do not automatically invoke it again. First reconcile through a known-safe status/read path when available; otherwise report the uncertainty and seek explicit operator direction. If a tool is temporarily unavailable, report that bounded failure without attempting to reconfigure or bypass the broker."
+
+func brokerAuthorityEnabled(cfg Config) bool {
+	return cfg.MCPAuthority != nil && cfg.MCPAuthority.Mode() == mcpauthority.Broker
+}
+
+func applyMCPBrokerPosture(pc prompt.Config, enabled bool) prompt.Config {
+	if !enabled {
+		return pc
+	}
+	pc.Role += "\n\n" + mcpBrokerPostureNote
+	return pc
+}
 
 func applyDiagnosticsPosture(pc prompt.Config) prompt.Config {
 	if pc.Role == "" {

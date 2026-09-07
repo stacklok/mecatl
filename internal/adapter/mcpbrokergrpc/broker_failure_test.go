@@ -162,8 +162,10 @@ func TestInvariant_initial_broker_rejects_stale_incarnation(t *testing.T) {
 		}
 	}
 	assertStateLoss("commit", attached.Commit(t.Context()))
-	_, err = attached.Tools()[0].Execute(t.Context(), session.NewToolCall("call", "read", []byte(`{}`)), tool.Environment{})
-	assertStateLoss("execute", err)
+	result, err := attached.Tools()[0].Execute(t.Context(), session.NewToolCall("call", "read", []byte(`{}`)), tool.Environment{})
+	if err != nil || !result.IsError || result.Content != "tool temporarily unavailable" {
+		t.Errorf("execute stale operation = %#v, %v, want model-visible temporary failure", result, err)
+	}
 	_, err = attached.PresentAuthorization(t.Context(), auth)
 	assertStateLoss("present", err)
 	_, err = attached.AuthorizationStatus(t.Context(), auth)
@@ -255,9 +257,9 @@ func TestInitialProductionMCPBroker_Scenario4_CancellationAndCleanup(t *testing.
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
 	defer cancel()
-	_, err = attached.Tools()[0].Execute(ctx, session.NewToolCall("blocked", "read", []byte(`{}`)), tool.Environment{})
-	if status.Code(err) != codes.DeadlineExceeded && !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("cancelled Execute = %v, want deadline", err)
+	result, err := attached.Tools()[0].Execute(ctx, session.NewToolCall("blocked", "read", []byte(`{}`)), tool.Environment{})
+	if err != nil || !result.IsError || !strings.Contains(result.Content, "outcome is unknown") {
+		t.Fatalf("cancelled Execute = %#v, %v, want model-visible ambiguous outcome", result, err)
 	}
 	if err := attached.Commit(t.Context()); err != nil {
 		t.Fatalf("sibling operation after cancellation: %v", err)
@@ -281,6 +283,154 @@ func TestInitialProductionMCPBroker_Scenario4_CancellationAndCleanup(t *testing.
 	case <-time.After(testWait):
 		t.Fatal("cancelled operation goroutine did not exit")
 	}
+}
+
+func TestInitialProductionMCPBroker_TerminalLifecycleReceiptsSurviveRetriesUntilLeaseExpiry(t *testing.T) {
+	local := newFailureBroker()
+	cfg := shortConfig()
+	cfg.HandleIdleTimeout = 30 * time.Millisecond
+	cfg.SweepInterval = 5 * time.Millisecond
+	server, err := mcpbrokergrpc.NewServerWithConfig(local, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = server.Shutdown(context.Background()) })
+
+	closed, err := server.Attach(t.Context(), &brokerv1.AttachRequest{SessionId: "close-receipt"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	closeReq := &brokerv1.HandleRequest{Handle: closed.GetHandle(), BrokerIncarnation: closed.GetBrokerIncarnation()}
+	for i := 0; i < 2; i++ {
+		response, closeErr := server.Close(t.Context(), closeReq)
+		if closeErr != nil || response.GetOutcome() != string(mcpbroker.CloseClosed) {
+			t.Fatalf("Close retry %d = %#v, %v, want original closed receipt", i, response, closeErr)
+		}
+	}
+	if got := local.closeCalls.Load(); got != 1 {
+		t.Fatalf("underlying Close calls = %d, want 1", got)
+	}
+	if _, err := server.Abort(t.Context(), closeReq); status.Code(err) != codes.FailedPrecondition {
+		t.Fatalf("Abort after Close = %v, want state unavailable", err)
+	}
+
+	aborted, err := server.Attach(t.Context(), &brokerv1.AttachRequest{SessionId: "abort-receipt"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	abortReq := &brokerv1.HandleRequest{Handle: aborted.GetHandle(), BrokerIncarnation: aborted.GetBrokerIncarnation()}
+	for i := 0; i < 2; i++ {
+		if _, abortErr := server.Abort(t.Context(), abortReq); abortErr != nil {
+			t.Fatalf("Abort retry %d: %v", i, abortErr)
+		}
+	}
+	if got := local.abortCalls.Load(); got != 1 {
+		t.Fatalf("underlying Abort calls = %d, want 1", got)
+	}
+
+	time.Sleep(4 * cfg.HandleIdleTimeout)
+	if _, err = server.Close(t.Context(), closeReq); status.Code(err) != codes.FailedPrecondition {
+		t.Fatalf("Close after receipt expiry = %v, want state unavailable", err)
+	}
+	if got := local.closeCalls.Load(); got != 2 { // one Close plus the Abort implementation's local Close.
+		t.Fatalf("terminal receipt was closed again during expiry: calls = %d, want 2", got)
+	}
+}
+
+func TestInitialProductionMCPBroker_ConcurrentCloseRetriesShareOneReceipt(t *testing.T) {
+	local := newFailureBroker()
+	server, err := mcpbrokergrpc.NewServerWithConfig(local, shortConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = server.Shutdown(context.Background()) })
+	attached, err := server.Attach(t.Context(), &brokerv1.AttachRequest{SessionId: "concurrent-close"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := &brokerv1.HandleRequest{Handle: attached.GetHandle(), BrokerIncarnation: attached.GetBrokerIncarnation()}
+
+	const callers = 16
+	errs := make(chan error, callers)
+	var wg sync.WaitGroup
+	for range callers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			response, closeErr := server.Close(t.Context(), req)
+			if closeErr == nil && response.GetOutcome() != string(mcpbroker.CloseClosed) {
+				closeErr = fmt.Errorf("outcome = %q, want closed", response.GetOutcome())
+			}
+			errs <- closeErr
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := local.closeCalls.Load(); got != 1 {
+		t.Fatalf("underlying Close calls = %d, want 1", got)
+	}
+}
+
+func TestInitialProductionMCPBroker_TerminalLifecycleReceiptErrorSemantics(t *testing.T) {
+	t.Run("close terminal outcome survives returned error", func(t *testing.T) {
+		local := newFailureBroker()
+		local.closeOutcome = mcpbroker.CloseClosed
+		local.closeErr = context.DeadlineExceeded
+		server, err := mcpbrokergrpc.NewServerWithConfig(local, shortConfig())
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = server.Shutdown(context.Background()) })
+		attached, err := server.Attach(t.Context(), &brokerv1.AttachRequest{SessionId: "close-error-receipt"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		req := &brokerv1.HandleRequest{Handle: attached.GetHandle(), BrokerIncarnation: attached.GetBrokerIncarnation()}
+		if _, err := server.Close(t.Context(), req); status.Code(err) != codes.DeadlineExceeded {
+			t.Fatalf("first Close = %v, want deadline", err)
+		}
+		local.closeErr = nil
+		response, err := server.Close(t.Context(), req)
+		if err != nil || response.GetOutcome() != string(mcpbroker.CloseClosed) {
+			t.Fatalf("Close retry = %#v, %v, want retained closed receipt", response, err)
+		}
+		if got := local.closeCalls.Load(); got != 1 {
+			t.Fatalf("underlying Close calls = %d, want 1", got)
+		}
+	})
+
+	t.Run("failed abort remains retryable", func(t *testing.T) {
+		local := newFailureBroker()
+		local.abortErr = errors.New("abort failed")
+		server, err := mcpbrokergrpc.NewServerWithConfig(local, shortConfig())
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = server.Shutdown(context.Background()) })
+		attached, err := server.Attach(t.Context(), &brokerv1.AttachRequest{SessionId: "abort-error-retry"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		req := &brokerv1.HandleRequest{Handle: attached.GetHandle(), BrokerIncarnation: attached.GetBrokerIncarnation()}
+		if _, err := server.Abort(t.Context(), req); err == nil {
+			t.Fatal("first Abort succeeded, want injected failure")
+		}
+		local.abortErr = nil
+		if _, err := server.Abort(t.Context(), req); err != nil {
+			t.Fatalf("Abort retry: %v", err)
+		}
+		if _, err := server.Abort(t.Context(), req); err != nil {
+			t.Fatalf("Abort receipt retry: %v", err)
+		}
+		if got := local.abortCalls.Load(); got != 2 {
+			t.Fatalf("underlying Abort calls = %d, want failed attempt plus one success", got)
+		}
+	})
 }
 
 func TestInvariant_initial_broker_makes_no_distributed_claims(t *testing.T) {
@@ -343,8 +493,11 @@ func TestInitialProductionMCPBroker_Scenario4_AmbiguousToolResultIsNotReplayed(t
 	}
 	call := session.NewToolCall("call-1", "read", []byte(`{}`))
 	result, err := attached.Tools()[0].Execute(t.Context(), call, tool.Environment{})
-	if err != nil || !result.IsError || result.CallID != call.ID || !strings.Contains(result.Content, "outcome is unknown") {
-		t.Fatalf("lost response = %#v, %v, want fixed model-visible ambiguity", result, err)
+	if err != nil || !result.IsError || result.CallID != call.ID ||
+		!strings.Contains(result.Content, "operation may already have completed") ||
+		!strings.Contains(result.Content, "Do not automatically repeat it") ||
+		!strings.Contains(result.Content, "Reconcile through a safe status/read path first") {
+		t.Fatalf("lost response = %#v, %v, want actionable model-visible ambiguity", result, err)
 	}
 	if got, handlers := local.executeCalls.Load(), runHandlers.Load(); got != 1 || handlers != 1 {
 		t.Fatalf("possibly dispatched Execute invoked proxy=%d handler=%d times, want 1 each", got, handlers)
@@ -353,6 +506,65 @@ func TestInitialProductionMCPBroker_Scenario4_AmbiguousToolResultIsNotReplayed(t
 	result, err = attached.Tools()[0].Execute(t.Context(), second, tool.Environment{})
 	if err != nil || result.IsError || local.executeCalls.Load() != 2 || runHandlers.Load() != 2 {
 		t.Fatalf("later ordinary action = %#v, %v, proxy=%d handlers=%d", result, err, local.executeCalls.Load(), runHandlers.Load())
+	}
+}
+
+func TestInitialProductionMCPBroker_DefinitiveSessionLossIsModelVisible(t *testing.T) {
+	local := newFailureBroker()
+	conn, stop := failureBufServer(t, local, nil)
+	defer stop()
+	client, err := mcpbrokergrpc.NewClientWithConfig(conn, shortConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	attached, _, err := client.AttachSession(t.Context(), "lost-session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	remote := attached.Tools()[0]
+	if _, err := attached.Close(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	call := session.NewToolCall("call-1", remote.Spec().Name, []byte(`{}`))
+	result, err := remote.Execute(t.Context(), call, tool.Environment{})
+	if err != nil || !result.IsError || result.CallID != call.ID || result.Content != "tool temporarily unavailable" {
+		t.Fatalf("Execute after session loss = %#v, %v, want fixed model-visible temporary failure", result, err)
+	}
+	if got := local.executeCalls.Load(); got != 0 {
+		t.Fatalf("underlying Execute calls = %d, want 0", got)
+	}
+}
+
+func TestInitialProductionMCPBroker_UnprovenExecuteFailuresAreAmbiguous(t *testing.T) {
+	for _, code := range []codes.Code{codes.Unavailable, codes.DeadlineExceeded, codes.Canceled, codes.Internal} {
+		t.Run(code.String(), func(t *testing.T) {
+			local := newFailureBroker()
+			interceptor := func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
+				response, err := handler(ctx, req)
+				if strings.HasSuffix(info.FullMethod, "/Run") && err == nil {
+					return nil, status.Error(code, "response lost after dispatch")
+				}
+				return response, err
+			}
+			conn, stop := failureBufServer(t, local, interceptor)
+			defer stop()
+			client, err := mcpbrokergrpc.NewClientWithConfig(conn, shortConfig())
+			if err != nil {
+				t.Fatal(err)
+			}
+			attached, _, err := client.AttachSession(t.Context(), session.SessionID("ambiguous-"+code.String()))
+			if err != nil {
+				t.Fatal(err)
+			}
+			call := session.NewToolCall("call-1", "read", []byte(`{}`))
+			result, err := attached.Tools()[0].Execute(t.Context(), call, tool.Environment{})
+			if err != nil || !result.IsError || result.CallID != call.ID || result.Content != "remote tool outcome is unknown because the broker response was lost; the operation may already have completed. Do not automatically repeat it. Reconcile through a safe status/read path first; if unavailable, report the uncertainty and seek operator direction." {
+				t.Fatalf("Execute = %#v, %v, want fixed ambiguous result", result, err)
+			}
+			if got := local.executeCalls.Load(); got != 1 {
+				t.Fatalf("underlying Execute calls = %d, want 1", got)
+			}
+		})
 	}
 }
 
@@ -472,6 +684,11 @@ type failureBroker struct {
 	authCalls     atomic.Int32
 	executeCalls  atomic.Int32
 	beginCalls    atomic.Int32
+	abortCalls    atomic.Int32
+	closeCalls    atomic.Int32
+	abortErr      error
+	closeOutcome  mcpbroker.CloseOutcome
+	closeErr      error
 	blockExecute  chan struct{}
 	executeExited chan struct{}
 }
@@ -549,10 +766,21 @@ func (a *failureAttachment) peer() *failureAttachment {
 }
 func (a *failureAttachment) Binding() session.ExternalBinding { return a.binding }
 func (*failureAttachment) Commit(context.Context) error       { return nil }
-func (a *failureAttachment) Abort(ctx context.Context) error  { _, err := a.Close(ctx); return err }
+func (a *failureAttachment) Abort(ctx context.Context) error {
+	a.broker.abortCalls.Add(1)
+	if a.broker.abortErr != nil {
+		return a.broker.abortErr
+	}
+	_, err := a.Close(ctx)
+	return err
+}
 func (a *failureAttachment) Close(context.Context) (mcpbroker.CloseOutcome, error) {
+	a.broker.closeCalls.Add(1)
 	closed := false
 	a.closeOnce.Do(func() { close(a.closed); closed = true })
+	if a.broker.closeOutcome != "" {
+		return a.broker.closeOutcome, a.broker.closeErr
+	}
 	if closed {
 		return mcpbroker.CloseClosed, nil
 	}

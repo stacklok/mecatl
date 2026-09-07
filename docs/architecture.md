@@ -195,7 +195,11 @@ attachment handle to one broker-process incarnation. Connection establishment, o
 RPCs, Execute, idle-handle retention, and cleanup are all finitely bounded. Transport
 unavailability does not prove state loss; a stale incarnation is rejected before broker
 state access. Execute is never retried after possible dispatch: a lost response becomes a
-fixed model-visible ambiguous outcome. Explicit close and idle reclamation close only the
+fixed model-visible ambiguous outcome. That result tells the model the operation may already
+have completed, forbids an automatic repeat, and directs it to reconcile through a known-safe
+status/read path before seeking explicit operator direction when the outcome cannot be established.
+The broker-enabled main-engine prompt carries the same instruction; this is recovery guidance,
+not a runtime reconciliation gate or duplicate-effect prevention. Explicit close and idle reclamation close only the
 attachment, not its logical broker session. A fresh client may start a new pre-prompt
 enrollment after restart, but a live protected-call authorization never rebinds. This is a
 single-process failure boundary, not replica interchangeability, restart durability,

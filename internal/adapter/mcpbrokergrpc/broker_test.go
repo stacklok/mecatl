@@ -9,7 +9,9 @@ import (
 	"testing"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
 	"google.golang.org/protobuf/reflect/protodesc"
 
@@ -106,6 +108,21 @@ func TestInitialProductionMCPBroker_Scenario1_ToolRoundTrip(t *testing.T) {
 	}
 }
 
+func TestInitialProductionMCPBroker_RejectsNonObjectToolSchema(t *testing.T) {
+	t.Run("server", func(t *testing.T) {
+		remote := newRemote(t, invalidDescriptorBroker{})
+		if _, _, err := remote.AttachSession(t.Context(), "invalid-schema"); err == nil || status.Code(err) != codes.InvalidArgument {
+			t.Fatalf("AttachSession with boolean schema = %v, want invalid descriptor rejection", err)
+		}
+	})
+	t.Run("client", func(t *testing.T) {
+		client := mcpbrokergrpc.NewClient(malformedAttachConn{})
+		if _, _, err := client.AttachSession(t.Context(), "invalid-schema"); err == nil || !strings.Contains(err.Error(), "malformed tool descriptor") {
+			t.Fatalf("AttachSession with peer boolean schema = %v, want client descriptor rejection", err)
+		}
+	})
+}
+
 func TestInvariant_initial_broker_protocol_is_neutral_and_secret_free(t *testing.T) {
 	wire := strings.ToLower(protodesc.ToFileDescriptorProto(brokerv1.File_mecatl_broker_v1_broker_proto).String())
 	for _, token := range []string{"toolcall", "oauth", "verifier", "access_token", "refresh_token", "client_secret", "toolhive", "redis", "generation", "fence", "owner"} {
@@ -140,6 +157,44 @@ func goListDeps(t *testing.T, pkg string) string {
 		t.Fatalf("go list %s: %v\n%s", pkg, err, output)
 	}
 	return string(output)
+}
+
+type malformedAttachConn struct{}
+
+func (malformedAttachConn) Invoke(_ context.Context, _ string, _, reply any, _ ...grpc.CallOption) error {
+	response := reply.(*brokerv1.AttachResponse)
+	*response = brokerv1.AttachResponse{
+		Handle:            "handle",
+		Binding:           "binding",
+		BrokerIncarnation: "incarnation",
+		Outcome:           string(mcpbroker.AttachCreated),
+		Tools: []*brokerv1.ToolDescriptor{{
+			Name: "invalid", Description: "invalid", Schema: []byte(`true`),
+		}},
+	}
+	return nil
+}
+func (malformedAttachConn) NewStream(context.Context, *grpc.StreamDesc, string, ...grpc.CallOption) (grpc.ClientStream, error) {
+	return nil, errors.New("unexpected stream")
+}
+
+type invalidDescriptorBroker struct{}
+
+func (invalidDescriptorBroker) AttachSession(context.Context, session.SessionID) (mcpbroker.Attachment, mcpbroker.AttachOutcome, error) {
+	return &invalidDescriptorAttachment{}, mcpbroker.AttachCreated, nil
+}
+func (invalidDescriptorBroker) DeleteSession(context.Context, session.SessionID) (mcpbroker.DeleteOutcome, error) {
+	return mcpbroker.DeleteNotFound, nil
+}
+
+type invalidDescriptorAttachment struct{ attachment }
+
+func (invalidDescriptorAttachment) Tools() []tool.Tool { return []tool.Tool{invalidSchemaTool{}} }
+
+type invalidSchemaTool struct{ serialTool }
+
+func (invalidSchemaTool) Spec() tool.ToolSpec {
+	return tool.ToolSpec{Name: "invalid", Description: "invalid", Schema: []byte(`true`)}
 }
 
 type broker struct{ exists bool }

@@ -17,6 +17,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/connectivity"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
@@ -26,9 +27,13 @@ import (
 	"github.com/stacklok/mecatl/internal/mcpbroker"
 )
 
-const defaultMaxHandles = 128
-
-const ambiguousOutcomeMessage = "remote tool outcome is unknown because the broker response was lost; the tool was not retried"
+const (
+	defaultMaxHandles         = 128
+	ambiguousOutcomeMessage   = "remote tool outcome is unknown because the broker response was lost; the operation may already have completed. Do not automatically repeat it. Reconcile through a safe status/read path first; if unavailable, report the uncertainty and seek operator direction."
+	sessionUnavailableMessage = "tool temporarily unavailable"
+	dispatchStateTrailer      = "mecatl-broker-dispatch"
+	dispatchNotStarted        = "not-started"
+)
 
 // Config bounds transport calls and server-side attachment retention.
 type Config struct {
@@ -96,11 +101,23 @@ type Server struct {
 	done        chan struct{}
 	stop        chan struct{}
 }
+type lifecycleOperation uint8
+
+const (
+	lifecycleNone lifecycleOperation = iota
+	lifecycleAbort
+	lifecycleClose
+)
+
 type serverAttachment struct {
-	attachment mcpbroker.Attachment
-	tools      map[string]tool.Tool
-	active     int
-	lastUsed   time.Time
+	attachment      mcpbroker.Attachment
+	tools           map[string]tool.Tool
+	active          int
+	lastUsed        time.Time
+	running         lifecycleOperation
+	runningDone     chan struct{}
+	terminal        lifecycleOperation
+	terminalOutcome mcpbroker.CloseOutcome
 }
 
 // NewServer constructs a server with default deadlines and the requested handle bound.
@@ -206,7 +223,7 @@ func (s *Server) get(incarnation, handle string) (*serverAttachment, func(), err
 	}
 	s.mu.Lock()
 	a := s.handles[handle]
-	if a == nil || s.closed {
+	if a == nil || s.closed || a.running != lifecycleNone || a.terminal != lifecycleNone {
 		s.mu.Unlock()
 		return nil, nil, status.Error(codes.FailedPrecondition, "attachment handle unavailable")
 	}
@@ -221,21 +238,62 @@ func (s *Server) get(incarnation, handle string) (*serverAttachment, func(), err
 	}, nil
 }
 
-func (s *Server) take(incarnation, handle string) (*serverAttachment, error) {
+func (s *Server) beginLifecycle(ctx context.Context, incarnation, handle string, operation lifecycleOperation) (*serverAttachment, mcpbroker.CloseOutcome, bool, error) {
 	if err := s.checkIncarnation(incarnation, false); err != nil {
-		return nil, err
+		return nil, "", false, err
 	}
 	if handle == "" {
-		return nil, invalid("handle is required")
+		return nil, "", false, invalid("handle is required")
 	}
+	for {
+		s.mu.Lock()
+		a := s.handles[handle]
+		if a == nil || s.closed {
+			s.mu.Unlock()
+			return nil, "", false, status.Error(codes.FailedPrecondition, "attachment handle unavailable")
+		}
+		if a.terminal != lifecycleNone {
+			if a.terminal != operation {
+				s.mu.Unlock()
+				return nil, "", false, status.Error(codes.FailedPrecondition, "attachment handle unavailable")
+			}
+			a.lastUsed = time.Now()
+			outcome := a.terminalOutcome
+			s.mu.Unlock()
+			return nil, outcome, true, nil
+		}
+		if a.running != lifecycleNone {
+			done := a.runningDone
+			s.mu.Unlock()
+			select {
+			case <-done:
+				continue
+			case <-ctx.Done():
+				return nil, "", false, status.FromContextError(ctx.Err()).Err()
+			}
+		}
+		a.running = operation
+		a.runningDone = make(chan struct{})
+		a.active++
+		a.lastUsed = time.Now()
+		s.mu.Unlock()
+		return a, "", false, nil
+	}
+}
+
+func (s *Server) finishLifecycle(a *serverAttachment, operation lifecycleOperation, outcome mcpbroker.CloseOutcome, terminal bool) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	a := s.handles[handle]
-	if a == nil || s.closed {
-		return nil, status.Error(codes.FailedPrecondition, "attachment handle unavailable")
+	a.active--
+	if terminal {
+		a.terminal = operation
+		a.terminalOutcome = outcome
 	}
-	delete(s.handles, handle)
-	return a, nil
+	a.running = lifecycleNone
+	done := a.runningDone
+	a.runningDone = nil
+	a.lastUsed = time.Now()
+	close(done)
+	s.mu.Unlock()
 }
 
 func (s *Server) sweep() {
@@ -252,7 +310,9 @@ func (s *Server) sweep() {
 			for handle, attachment := range s.handles {
 				if attachment.active == 0 && now.Sub(attachment.lastUsed) >= s.cfg.HandleIdleTimeout {
 					delete(s.handles, handle)
-					expired = append(expired, attachment)
+					if attachment.terminal == lifecycleNone {
+						expired = append(expired, attachment)
+					}
 				}
 			}
 			s.mu.Unlock()
@@ -281,7 +341,9 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	attachments := make([]*serverAttachment, 0, len(s.handles))
 	for handle, attachment := range s.handles {
 		delete(s.handles, handle)
-		attachments = append(attachments, attachment)
+		if attachment.terminal == lifecycleNone {
+			attachments = append(attachments, attachment)
+		}
 	}
 	s.mu.Unlock()
 	for _, attachment := range attachments {
@@ -319,11 +381,16 @@ func (s *Server) Commit(ctx context.Context, req *brokerv1.HandleRequest) (*brok
 func (s *Server) Abort(ctx context.Context, req *brokerv1.HandleRequest) (*brokerv1.Empty, error) {
 	ctx, cancel := s.bounded(ctx, false)
 	defer cancel()
-	a, e := s.take(req.GetBrokerIncarnation(), req.GetHandle())
+	a, _, receipt, e := s.beginLifecycle(ctx, req.GetBrokerIncarnation(), req.GetHandle(), lifecycleAbort)
 	if e != nil {
 		return nil, e
 	}
-	if e = a.attachment.Abort(ctx); e != nil {
+	if receipt {
+		return &brokerv1.Empty{}, nil
+	}
+	e = a.attachment.Abort(ctx)
+	s.finishLifecycle(a, lifecycleAbort, "", e == nil)
+	if e != nil {
 		return nil, brokerStatus(e)
 	}
 	return &brokerv1.Empty{}, nil
@@ -333,11 +400,16 @@ func (s *Server) Abort(ctx context.Context, req *brokerv1.HandleRequest) (*broke
 func (s *Server) Close(ctx context.Context, req *brokerv1.HandleRequest) (*brokerv1.CloseResponse, error) {
 	ctx, cancel := s.bounded(ctx, false)
 	defer cancel()
-	a, e := s.take(req.GetBrokerIncarnation(), req.GetHandle())
+	a, out, receipt, e := s.beginLifecycle(ctx, req.GetBrokerIncarnation(), req.GetHandle(), lifecycleClose)
 	if e != nil {
 		return nil, e
 	}
-	out, e := a.attachment.Close(ctx)
+	if receipt {
+		return &brokerv1.CloseResponse{Outcome: string(out)}, nil
+	}
+	out, e = a.attachment.Close(ctx)
+	terminal := out == mcpbroker.CloseClosed || out == mcpbroker.CloseAlreadyClosed
+	s.finishLifecycle(a, lifecycleClose, out, terminal)
 	if e != nil {
 		return nil, brokerStatus(e)
 	}
@@ -368,22 +440,27 @@ func (s *Server) Delete(ctx context.Context, req *brokerv1.DeleteRequest) (*brok
 	return &brokerv1.DeleteResponse{Outcome: string(out)}, nil
 }
 
+func preDispatchError(ctx context.Context, err error) error {
+	_ = grpc.SetTrailer(ctx, metadata.Pairs(dispatchStateTrailer, dispatchNotStarted))
+	return err
+}
+
 // Run dispatches one tool invocation without application-level retry.
 func (s *Server) Run(ctx context.Context, req *brokerv1.RunRequest) (*brokerv1.RunResponse, error) {
 	ctx, cancel := s.bounded(ctx, true)
 	defer cancel()
 	a, release, e := s.get(req.GetBrokerIncarnation(), req.GetHandle())
 	if e != nil {
-		return nil, e
+		return nil, preDispatchError(ctx, e)
 	}
 	defer release()
 	call, e := callFrom(req.GetName(), req.GetCallId(), req.GetArgs(), req.GetItemId())
 	if e != nil {
-		return nil, e
+		return nil, preDispatchError(ctx, e)
 	}
 	target := a.tools[call.Name]
 	if target == nil {
-		return nil, invalid("unknown tool")
+		return nil, preDispatchError(ctx, invalid("unknown tool"))
 	}
 	result, e := target.Execute(ctx, call, tool.Environment{})
 	if e != nil {
@@ -594,7 +671,7 @@ func descriptors(in []tool.Tool) ([]*brokerv1.ToolDescriptor, map[string]tool.To
 			return nil, nil, errors.New("nil tool")
 		}
 		spec := t.Spec()
-		if spec.Name == "" || !utf8.ValidString(spec.Name) || !utf8.ValidString(spec.Description) || !json.Valid(spec.Schema) {
+		if spec.Name == "" || !utf8.ValidString(spec.Name) || !utf8.ValidString(spec.Description) || !validJSONObject(spec.Schema) {
 			return nil, nil, errors.New("invalid tool descriptor")
 		}
 		if _, ok := tools[spec.Name]; ok {
@@ -606,6 +683,10 @@ func descriptors(in []tool.Tool) ([]*brokerv1.ToolDescriptor, map[string]tool.To
 		tools[spec.Name] = t
 	}
 	return out, tools, nil
+}
+func validJSONObject(raw []byte) bool {
+	var object map[string]json.RawMessage
+	return json.Unmarshal(raw, &object) == nil && object != nil
 }
 func newHandle() (string, error) {
 	b := make([]byte, 24)
@@ -880,12 +961,17 @@ func (t *remoteTool) Execute(ctx context.Context, call session.ToolCall, _ tool.
 	}
 	rpcCtx, cancel := t.client.bounded(ctx, true)
 	defer cancel()
-	r, e := t.client.rpc.Run(rpcCtx, &brokerv1.RunRequest{Handle: t.handle, Name: call.Name, CallId: string(call.ID), Args: append([]byte(nil), call.Args...), ItemId: call.ItemID, BrokerIncarnation: t.incarnation})
+	var trailer metadata.MD
+	r, e := t.client.rpc.Run(rpcCtx, &brokerv1.RunRequest{Handle: t.handle, Name: call.Name, CallId: string(call.ID), Args: append([]byte(nil), call.Args...), ItemId: call.ItemID, BrokerIncarnation: t.incarnation}, grpc.Trailer(&trailer))
 	if e != nil {
-		if status.Code(e) == codes.Aborted {
-			return session.NewToolError(call.ID, ambiguousOutcomeMessage), nil
+		if isDefinitiveSessionLoss(e) {
+			return session.NewToolError(call.ID, sessionUnavailableMessage), nil
 		}
-		return session.ToolResult{}, clientError(e)
+		marker := trailer.Get(dispatchStateTrailer)
+		if len(marker) == 1 && marker[0] == dispatchNotStarted {
+			return session.ToolResult{}, clientError(e)
+		}
+		return session.NewToolError(call.ID, ambiguousOutcomeMessage), nil
 	}
 	return resultFromWire(r.GetResult())
 }
@@ -920,7 +1006,7 @@ func remoteTools(c *Client, r *brokerv1.AttachResponse) ([]tool.Tool, error) {
 	out := make([]tool.Tool, 0, len(r.GetTools()))
 	seen := map[string]bool{}
 	for _, d := range r.GetTools() {
-		if d == nil || d.GetName() == "" || seen[d.GetName()] || !utf8.ValidString(d.GetName()) || !utf8.ValidString(d.GetDescription()) || !json.Valid(d.GetSchema()) {
+		if d == nil || d.GetName() == "" || seen[d.GetName()] || !utf8.ValidString(d.GetName()) || !utf8.ValidString(d.GetDescription()) || !validJSONObject(d.GetSchema()) {
 			return nil, errors.New("mcpbrokergrpc: malformed tool descriptor")
 		}
 		seen[d.GetName()] = true
@@ -943,6 +1029,12 @@ func remoteTools(c *Client, r *brokerv1.AttachResponse) ([]tool.Tool, error) {
 func validAttachOutcome(v string) bool {
 	return v == string(mcpbroker.AttachCreated) || v == string(mcpbroker.AttachReattached)
 }
+func isDefinitiveSessionLoss(err error) bool {
+	st := status.Convert(err)
+	return st.Code() == codes.FailedPrecondition ||
+		(st.Code() == codes.Unavailable && st.Message() == mcpbroker.ErrStateUnavailable.Error())
+}
+
 func clientError(err error) error {
 	if err == nil {
 		return nil

@@ -289,8 +289,8 @@ func TestWorkspaceEnrollmentTerminalObservationIsRetryable(t *testing.T) {
 			}
 			for attempt := range 2 {
 				result, observeErr := enroller.ObserveWorkspaceEnrollment(t.Context(), presentation.Ref)
-				if observeErr != nil || result.Status != test.want || result.Ref != presentation.Ref {
-					t.Fatalf("observe attempt %d = (%+v, %v), want %q", attempt+1, result, observeErr, test.want)
+				if observeErr != nil || result.Status != test.want || result.Ref != presentation.Ref || !result.Valid() || result.Catalogue != nil {
+					t.Fatalf("observe attempt %d = (%+v, %v), want valid %q result with no catalogue", attempt+1, result, observeErr, test.want)
 				}
 			}
 			fresh, err := enroller.BeginWorkspaceEnrollment(t.Context())

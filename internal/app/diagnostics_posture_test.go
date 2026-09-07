@@ -14,6 +14,7 @@ import (
 	"github.com/stacklok/mecatl/engine/prompt"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
+	"github.com/stacklok/mecatl/internal/adapter/mcpauthority"
 	"github.com/stacklok/mecatl/internal/adapter/server"
 )
 
@@ -54,6 +55,36 @@ func TestDiagnosticsPostureFactoryPaths(t *testing.T) {
 		if strings.Contains(systems[i+1].StablePrefix, diagnosticsPostureNote) {
 			t.Fatalf("%s StablePrefix advertises the main-only diagnostics affordance", name)
 		}
+	}
+}
+
+func TestMCPBrokerPostureFactoryPaths(t *testing.T) {
+	ctx := context.Background()
+	var systems []prompt.Layered
+	provider := mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(func(req port.LLMRequest) {
+		systems = append(systems, req.System)
+	})}, mockllm.TextTurn("ok"), mockllm.TextTurn("ok"))
+	cfg := Config{Model: "gpt-5", MCPAuthority: mcpauthority.NewBroker(mcpauthority.BrokerConfig{})}
+	reg := regForTest(provider, providerOpenAI, cfg.Model)
+	factory := sessionEngineFactory(cfg, reg, provider, memstore.New(), permpolicy.NewPolicy(defaultRules(), nil), nil, nil, prompt.RootAssembler{}, catalogAssets{}, nil)
+	main, err := factory(ctx, server.ProviderSelector{}, nil, server.ProfileDefault, "", session.ModeDefault)
+	if err != nil {
+		t.Fatalf("main factory: %v", err)
+	}
+	defer func() { _ = main.Close() }()
+	drivePrompt(t, main.Engine, "broker-main")
+
+	child := newChildEngineForProvider(cfg, "subagent", provider, cfg.Model, func() int { return defaultContextWindowTokens }, tool.NewCatalog(), promptConfig(cfg, ""), nil)
+	drivePrompt(t, child, "broker-child")
+
+	if len(systems) != 2 {
+		t.Fatalf("captured systems = %d, want 2", len(systems))
+	}
+	if !strings.Contains(systems[0].StablePrefix, mcpBrokerPostureNote) {
+		t.Fatal("broker main factory StablePrefix omits broker-owned authority guidance")
+	}
+	if strings.Contains(systems[1].StablePrefix, mcpBrokerPostureNote) {
+		t.Fatal("child StablePrefix advertises main-only broker-owned authority guidance")
 	}
 }
 

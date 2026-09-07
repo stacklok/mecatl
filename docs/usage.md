@@ -505,6 +505,13 @@ and TEST-NET value. The chart intentionally deploys exactly one `Recreate` repli
 no PDB, autoscaling, or outer-broker Redis. A restart interrupts active attachments and
 outer OAuth callback correlation; this is not an HA or exactly-once deployment.
 
+If a tool reports that its outcome is unknown after a broker response was lost, treat the
+operation as possibly completed. Do not automatically repeat a mutation. First inspect provider
+state through a known-safe status/read operation when one exists. If that cannot establish the
+outcome, report the uncertainty and obtain an explicit recovery decision. Mecatl supplies this
+procedure in the broker-enabled model prompt, but does not enforce it as a reconciliation or
+approval gate and cannot prevent duplicate external effects from a later new invocation.
+
 The Service publishes only TLS gRPC and browser callback ports. Health, readiness, and
 pre-stop drain use a loopback-only admin listener through fixed self-probe commands in the
 shell-less image. Readiness validates the finite TLS/OIDC/profile/ToolHive/discovery/static-

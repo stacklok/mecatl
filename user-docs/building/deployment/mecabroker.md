@@ -27,6 +27,16 @@ switch, or outer-broker Redis. Restart interrupts active attachments and outer O
 callback correlation. A replaced broker may support a fresh pre-prompt enrollment, but
 cannot rebind an active protected call or promise exactly-once external effects.
 
+If a tool reports an unknown outcome after losing the broker response:
+
+1. Treat the operation as possibly completed.
+2. Inspect provider state through a known-safe status or read operation, if one exists.
+3. Do not automatically repeat the mutation.
+4. If the outcome remains unknown, report it and obtain an explicit recovery decision.
+
+The broker-enabled model receives the same guidance. It is not a hard reconciliation or
+approval gate, and a later new invocation can still duplicate an external effect.
+
 ## Probes and drain
 
 Only TLS gRPC and browser callbacks are published by the Service. The admin listener is
