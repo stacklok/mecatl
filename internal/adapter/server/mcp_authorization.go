@@ -302,6 +302,15 @@ func (s *Service) continueGrantedAuthorizationLocked(ctx context.Context, sess *
 	if err != nil {
 		return MCPAuthorizationResult{}, fmt.Errorf("%w: construct granted authorization resolution", ErrInternal)
 	}
+	// Reconcile BEFORE ClaimAuthorization consumes pending — same ordering as
+	// every terminal path; see ensureAuthorizationRequiredLogged's doc.
+	pending, ok := sess.PendingAuthorization()
+	if !ok {
+		return MCPAuthorizationResult{}, errAuthorizationNoPending
+	}
+	if err := s.ensureAuthorizationRequiredLogged(ctx, sess.ID, pending); err != nil {
+		return MCPAuthorizationResult{}, err
+	}
 	claimed, err := sess.ClaimAuthorization()
 	if err != nil {
 		return MCPAuthorizationResult{}, errAuthorizationUnclaimable
@@ -411,6 +420,23 @@ func (s *Service) resolveAuthorizationLocked(ctx context.Context, sess *session.
 	if err := s.saveSession(ctx, sess); err != nil {
 		return MCPAuthorizationResult{}, fmt.Errorf("%w: persist authorization resolution", ErrInternal)
 	}
+	// From here, sess is durably StateRunning with no owning run yet — correct
+	// ONLY because a real Engine.Run is either about to start (the continuation
+	// branch below) or the fallback branch is about to settle it itself. EVERY
+	// return between here and one of those two outcomes — including an append
+	// failure, a prepare failure, or a registration failure — previously
+	// stranded sess StateRunning forever. owned flips true only at the genuine
+	// continuation handoff; the fallback branch never sets it, so this defer
+	// settles it there unconditionally too (success or failure), replacing the
+	// fallback's own narrower "only after a successful append" repair.
+	owned := false
+	defer func() {
+		if !owned {
+			if err := sess.Abandon(); err == nil {
+				_ = s.saveSession(context.WithoutCancel(ctx), sess)
+			}
+		}
+	}()
 	s.stopAuthorizationExpiry(sess.ID)
 	engine, env, err := s.engineAndEnvironmentFor(ctx, sess)
 	if err != nil {
@@ -423,17 +449,6 @@ func (s *Service) resolveAuthorizationLocked(ctx context.Context, sess *session.
 				"session", string(sess.ID), "status", string(status), "continuation_err", err.Error(), "err", appendErr.Error())
 			return MCPAuthorizationResult{}, fmt.Errorf("%w: continuation unavailable (%v); persist terminal authorization lifecycle: %v", ErrInternal, err, appendErr)
 		}
-		// AbortAuthorization left sess StateRunning for the ordinary case: a real
-		// Engine.Run about to start. This fallback starts none, so without
-		// settling it here the durable snapshot is stranded StateRunning with no
-		// owning run and no EvResult ever emitted — the next prompt misreads it as
-		// a crash orphan. Best-effort and silent on failure, matching
-		// repairAuthorizationRegistration's established pattern: the results and
-		// resolution are already durably logged above, so a failure here is a
-		// display-state nit, not a lost-work risk.
-		if err := sess.Abandon(); err == nil {
-			_ = s.saveSession(context.WithoutCancel(ctx), sess)
-		}
 		return mcpAuthorizationResult(pending, status, nil), nil
 	}
 	prepared, err := engine.PrepareAfterAuthorization(memory.WithWorkspace(ctx, env.Workspace().Root()), sess, env, pending.Authorization, pending.Call.ID, results, resolution)
@@ -443,6 +458,7 @@ func (s *Service) resolveAuthorizationLocked(ctx context.Context, sess *session.
 	if err := s.registerAndStartAuthorizationResolution(ctx, sess, prepared, pending, results, status); err != nil {
 		return MCPAuthorizationResult{}, err
 	}
+	owned = true
 	return mcpAuthorizationResult(pending, status, prepared.Run()), nil
 }
 
@@ -851,9 +867,22 @@ func (s *Service) interruptRestoredAuthorizationLocked(ctx context.Context, sess
 	if err := s.saveSession(ctx, sess); err != nil {
 		return nil, false, fmt.Errorf("%w: persist interrupted authorization", ErrInternal)
 	}
+	// From here sess is durably StateRunning, correct ONLY if this function
+	// returns (sess, true, nil) — the caller (StartRunContent) then owns
+	// settling it back down if the real Engine.Run it's about to start never
+	// materializes (its own deferred repair, registered on that signal).
+	// A FAILURE below must never surface as (nil, false, err): that used to
+	// return before the caller's guard could ever be registered, permanently
+	// stranding sess StateRunning with no owning run and no pending
+	// authorization left to retry. Settle it internally first — best-effort
+	// and silent on failure, matching repairAuthorizationRegistration's
+	// established pattern — then return the original error.
 	if err := s.appendAuthorizationResolution(ctx, sess.ID, pending, results, session.AuthorizationInterrupted); err != nil {
 		s.cfg.Diagnostics.Log(context.WithoutCancel(ctx), port.LevelWarn, "persist interrupted authorization lifecycle failed",
 			"session", string(sess.ID), "err", err.Error())
+		if abandonErr := sess.Abandon(); abandonErr == nil {
+			_ = s.saveSession(context.WithoutCancel(ctx), sess)
+		}
 		return nil, false, fmt.Errorf("%w: persist interrupted authorization lifecycle: %v", ErrInternal, err)
 	}
 	return sess, true, nil
@@ -956,22 +985,25 @@ func (s *Service) settleAuthorizationLocked(ctx context.Context, id session.Sess
 			"session", string(id), "err", err.Error())
 		return err
 	}
+	// InterruptAuthorization leaves sess StateRunning — correct for the
+	// ordinary continuation path, which immediately starts a real Engine.Run.
+	// Shutdown settlement starts none, so from here sess is stranded
+	// StateRunning forever unless settled — REGARDLESS of what the append
+	// below does: a failed append used to return early and skip settlement
+	// entirely, leaving the exact same stranding this comment already existed
+	// to prevent. Unconditional defer covers both outcomes. Best-effort and
+	// silent on failure, matching repairAuthorizationRegistration's
+	// established pattern — shutdown is one-shot with no later retry to
+	// preserve state for.
+	defer func() {
+		if err := sess.Abandon(); err == nil {
+			_ = s.saveSession(context.WithoutCancel(ctx), sess)
+		}
+	}()
 	if err := s.appendAuthorizationResolution(ctx, id, pending, results, session.AuthorizationInterrupted); err != nil {
 		s.cfg.Diagnostics.Log(context.WithoutCancel(ctx), port.LevelWarn, "persist external authorization settlement lifecycle failed",
 			"session", string(id), "err", err.Error())
 		return err
-	}
-	// resolveAuthorization (via InterruptAuthorization) leaves sess StateRunning
-	// — correct for the ordinary continuation path, which immediately starts a
-	// real Engine.Run. Shutdown settlement starts none, so without this the
-	// durable snapshot is stranded StateRunning forever: no process is left to
-	// drive it, and the next boot's crash-orphan sweep would only ever see it
-	// as "abandoned", never as the clean interruption it actually was. Abandon
-	// settles it to idle with accurate close-out wording; best-effort and
-	// silent on failure, matching repairAuthorizationRegistration's established
-	// pattern — shutdown is one-shot with no later retry to preserve state for.
-	if err := sess.Abandon(); err == nil {
-		_ = s.saveSession(context.WithoutCancel(ctx), sess)
 	}
 	return nil
 }

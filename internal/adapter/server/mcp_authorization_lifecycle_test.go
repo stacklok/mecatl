@@ -643,6 +643,124 @@ func TestMCPAuthorizationReconciliationFailureLeavesPendingIntact(t *testing.T) 
 	}
 }
 
+// TestMCPAuthorizationGrantedResolutionBackfillsMissingRequired proves the
+// fourth reconciliation site: continueGrantedAuthorizationLocked reconciles
+// the required-event lifecycle BEFORE ClaimAuthorization consumes pending,
+// exactly like the three terminal paths. The seed omits EvAuthorizationRequired
+// entirely (the crash window), and a granted resolution must still backfill it
+// and remain eventsource.Fold-reconstructable.
+func TestMCPAuthorizationGrantedResolutionBackfillsMissingRequired(t *testing.T) {
+	f := newLifecycleFixture(t, session.AuthorizationGranted, nil, time.Now, nil)
+	log := memstore.NewEventLog()
+	f.svc.cfg.EventLog = log
+	seed := []session.Event{
+		{Type: session.EvTurnStart},
+		{Type: session.EvToolCall, ToolCall: &f.pending.Call},
+		{Type: session.EvToolCall, ToolCall: &f.pending.Deferred[0]},
+		// Deliberately no EvAuthorizationRequired: this is the crash window.
+	}
+	for _, ev := range seed {
+		if err := log.Append(t.Context(), "authorization-session", ev); err != nil {
+			t.Fatal(err)
+		}
+	}
+	control := MCPAuthorizationControl{SessionID: "authorization-session", AuthorizationID: f.pending.Authorization.ID}
+	result, err := f.svc.RecheckMCPAuthorization(t.Context(), "authorization-session", control)
+	if err != nil || result.Run == nil || result.Status != session.AuthorizationGranted {
+		t.Fatalf("granted result = %+v, %v", result, err)
+	}
+	drainLifecycleRun(t, f.svc, result)
+	var found bool
+	for ev, readErr := range log.Read(t.Context(), "authorization-session") {
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		if ev.Type == session.EvAuthorizationRequired && ev.Authorization != nil && ev.Authorization.AuthorizationID == f.pending.Authorization.ID {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("granted resolution did not backfill the missing required event")
+	}
+	// The backfill mechanism's Fold-reconstructability is already proven for
+	// the shared ensureAuthorizationRequiredLogged path by
+	// TestMCPAuthorizationResolutionBackfillsMissingRequired; this test's own
+	// claim is narrower — that the granted/4th call site invokes it at all,
+	// which the found assertion above already establishes.
+}
+
+// TestMCPAuthorizationSettlementBackfillFailureAppendFailureStillIdles proves
+// the shutdown-settlement path settles to idle on an appendAuthorizationResolution
+// failure too, not only on success — the prior narrower fix only settled after
+// a successful append, stranding the session on a failed one.
+func TestMCPAuthorizationSettlementAppendFailureStillSettles(t *testing.T) {
+	f := newLifecycleFixture(t, session.AuthorizationPending, nil, time.Now, nil)
+	log := &countingEventLog{}
+	// Seed the required event so ensureAuthorizationRequiredLogged's existence
+	// check finds it and appends nothing of its own — the injected failure
+	// below must land on appendAuthorizationResolution's own append, not the
+	// reconciliation check ahead of it.
+	if err := log.Append(t.Context(), "authorization-session", session.Event{Type: session.EvAuthorizationRequired, Authorization: &session.AuthorizationPayload{
+		AuthorizationID: f.pending.Authorization.ID, DisplayName: f.pending.Authorization.DisplayName, Call: f.pending.Call.ID,
+		ExpiresAt: f.pending.Authorization.ExpiresAt, Status: session.AuthorizationPending,
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	log.postWriteFailCalls = map[int]bool{2: true}
+	f.svc.cfg.EventLog = log
+	// Service.Close's settlement sweep only visits sessions registered in its
+	// process-owned inventory (brokerAttachments/authorizationExpiry/heldLeases)
+	// — a committed attachment is what makes this session part of it.
+	loaded, err := f.store.Load(t.Context(), "authorization-session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	attachment, release, err := f.svc.authorizationAttachment(t.Context(), loaded)
+	if err != nil || attachment == nil {
+		t.Fatalf("attach = %v, %v", attachment, err)
+	}
+	release()
+	f.svc.Close()
+	settled, err := f.store.Load(t.Context(), "authorization-session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if settled.State != session.StateIdle {
+		t.Fatalf("state = %q, want idle despite the settlement append failure", settled.State)
+	}
+}
+
+// TestStartRunSettlesInterruptedRestoredAuthorizationOnAppendFailure proves
+// interruptRestoredAuthorizationLocked settles itself to idle when its OWN
+// appendAuthorizationResolution fails, rather than returning an error before
+// StartRunContent's caller-side stranding guard is ever registered.
+func TestStartRunSettlesInterruptedRestoredAuthorizationOnAppendFailure(t *testing.T) {
+	f := newLifecycleFixture(t, session.AuthorizationPending, brokercontract.ErrStateUnavailable, time.Now, nil)
+	log := &countingEventLog{}
+	// Seed the required event so the reconciliation check ahead of
+	// InterruptAuthorization finds it and appends nothing — the injected
+	// failure must land on this function's own appendAuthorizationResolution.
+	if err := log.Append(t.Context(), "authorization-session", session.Event{Type: session.EvAuthorizationRequired, Authorization: &session.AuthorizationPayload{
+		AuthorizationID: f.pending.Authorization.ID, DisplayName: f.pending.Authorization.DisplayName, Call: f.pending.Call.ID,
+		ExpiresAt: f.pending.Authorization.ExpiresAt, Status: session.AuthorizationPending,
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	log.postWriteFailCalls = map[int]bool{2: true}
+	f.svc.cfg.EventLog = log
+	_, err := f.svc.StartRunContent(t.Context(), "authorization-session", "continue", nil)
+	if err == nil {
+		t.Fatal("StartRunContent unexpectedly succeeded")
+	}
+	loaded, loadErr := f.store.Load(t.Context(), "authorization-session")
+	if loadErr != nil {
+		t.Fatal(loadErr)
+	}
+	if loaded.State != session.StateIdle {
+		t.Fatalf("state = %q, want idle after the restored-interruption append failure", loaded.State)
+	}
+}
+
 func TestMCPAuthorizationTerminalFallbackAppendFailureIsExplicit(t *testing.T) {
 	f := newLifecycleFixture(t, session.AuthorizationDenied, nil, time.Now, nil)
 	log := &countingEventLog{}
@@ -686,8 +804,12 @@ func TestMCPAuthorizationTerminalFallbackAppendFailureIsExplicit(t *testing.T) {
 	if loadErr != nil {
 		t.Fatal(loadErr)
 	}
-	if persisted.State != session.StateRunning {
-		t.Fatalf("settled snapshot state = %q, want running", persisted.State)
+	// Idle, not the stranded StateRunning of before: an ambiguous append
+	// failure here used to return early and skip settlement entirely — the
+	// unconditional defer in resolveAuthorizationLocked now settles it
+	// regardless of whether the append succeeded or failed.
+	if persisted.State != session.StateIdle {
+		t.Fatalf("settled snapshot state = %q, want idle", persisted.State)
 	}
 	if err := session.ValidateToolPairing(persisted.Conversation.Messages); err != nil {
 		t.Fatalf("settled snapshot pairing: %v", err)
