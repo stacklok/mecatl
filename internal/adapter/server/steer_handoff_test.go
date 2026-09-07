@@ -276,7 +276,18 @@ func TestSteer_PromotedRelaySequential(t *testing.T) {
 	client, stallRelease, cleanup := dialGRPCStall(t, svc, 2*time.Second)
 	defer cleanup()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	// This ctx is the SOLE timeout budget for the whole test: session setup,
+	// the pre-stall Recv loop, the promoted-run poll below, AND the final
+	// drain-to-EOF read all share it. Twice already de-flaked (#672, #816) by
+	// replacing a fixed sleep with a signal-driven poll — that poll is still
+	// correct (0/20 failures locally, -race, back-to-back), but a poll bounded
+	// by a tight shared deadline still fails outright under real scheduling
+	// contention (e.g. a full -race `task test` run with many packages
+	// building/testing concurrently) if enough of the 10s budget is spent
+	// before the poll even starts. Widen the budget instead of adding a
+	// sleep — matches the 15s the sibling TestSteer_ControlTargetsPromotedRun
+	// already uses for a comparably multi-step flow.
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 
 	cs, err := client.CreateSession(ctx, &mecatlv1.CreateSessionRequest{})
