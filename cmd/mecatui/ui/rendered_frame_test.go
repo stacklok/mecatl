@@ -52,23 +52,37 @@ func TestADR_0301_ReflowRestoresCanonicalVisibleTextOffset(t *testing.T) {
 	c := &conversation{}
 	c.addUser("short")
 	c.startAssistant()
-	c.appendAssistant("one two three four five six seven eight nine ten eleven twelve")
+	c.appendAssistant("one two three four five e\u0301 six seven eight nine ten eleven twelve")
 
 	r := newCacheRenderer()
-	r.setWidth(100)
-	wide := r.renderConversationFrame(c, false)
-	anchor, ok := wide.anchorForRow(wide.firstRegionRow(c.blocks[1].id, conversationRegionBody))
-	if !ok {
-		t.Fatal("body row did not produce a text anchor")
-	}
 	r.setWidth(24)
 	narrow := r.renderConversationFrame(c, false)
-	row, ok := narrow.rowForAnchor(anchor)
-	if !ok {
-		t.Fatal("body anchor did not resolve after reflow")
+	var anchor readingAnchor
+	found := false
+	for i, line := range narrow.lines {
+		if row := narrow.provenance[i]; row.blockID == c.blocks[1].id && row.region == conversationRegionBody && row.text && strings.Contains(stripANSIstr(line), "eight") {
+			anchor, found = narrow.anchorForRow(i)
+			break
+		}
 	}
-	if got := narrow.provenance[row].sourceOffset; got != anchor.sourceOffset {
-		t.Fatalf("reflow source offset = %d, want %d", got, anchor.sourceOffset)
+	if !found {
+		t.Fatalf("wrapped continuation containing eight not found in %q", narrow.lines)
+	}
+	if want := graphemeCount("one two three fourfive e\u0301 six seven"); anchor.sourceOffset != want {
+		t.Fatalf("continuation source offset = %d, want canonical offset %d", anchor.sourceOffset, want)
+	}
+
+	r.setWidth(100)
+	wide := r.renderConversationFrame(c, false)
+	row, ok := wide.rowForAnchor(anchor)
+	if !ok {
+		t.Fatal("continuation anchor did not resolve after reflow")
+	}
+	if got := wide.provenance[row].sourceOffset; got > anchor.sourceOffset {
+		t.Fatalf("reflow source offset = %d, must begin at or before canonical offset %d", got, anchor.sourceOffset)
+	}
+	if got := stripANSIstr(wide.lines[row]); !strings.Contains(got, "eight") {
+		t.Fatalf("reflow restored row %q, want canonical continuation containing eight", got)
 	}
 }
 

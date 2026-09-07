@@ -242,7 +242,7 @@ func (r *renderer) provenanceRows(b *block, rendered string, expand bool) []rend
 			}
 		}
 	}
-	assignVisibleOffsets(rows, lines)
+	r.assignVisibleOffsets(b, rows, lines)
 	return rows
 }
 
@@ -293,7 +293,10 @@ func (r *renderer) toolRegions(b *block, rows []renderedRow, lines []string, exp
 	}
 }
 
-func assignVisibleOffsets(rows []renderedRow, lines []string) {
+// assignVisibleOffsets maps rows to canonical semantic text, not the final panel
+// strings. Indentation, hanging assistant layout, and card framing are presentation
+// only; counting them would make the same text acquire a different offset on reflow.
+func (r *renderer) assignVisibleOffsets(b *block, rows []renderedRow, lines []string) {
 	offsets := map[regionID]int{}
 	for i := range rows {
 		if rows[i].blockID == 0 || rows[i].region == conversationRegionChrome || rows[i].region == conversationRegionAppendix {
@@ -301,9 +304,27 @@ func assignVisibleOffsets(rows []renderedRow, lines []string) {
 		}
 		rows[i].text = true
 		rows[i].sourceOffset = offsets[rows[i].region]
-		plain := strings.TrimRight(ansi.Strip(lines[i]), " ")
+		plain := ansi.Strip(lines[i])
+		plain = canonicalRowText(b.kind, plain, r.indent)
 		offsets[rows[i].region] += graphemeCount(plain)
 	}
+}
+
+func canonicalRowText(kind blockKind, line string, indent int) string {
+	if indent > 0 {
+		line = strings.TrimPrefix(line, strings.Repeat(" ", indent))
+	}
+	if kind == blockTool {
+		// toolCard.Render adds a border and horizontal padding after semantic-region
+		// wrapping. Neither belongs to the region's canonical source text.
+		line = strings.TrimPrefix(line, "│ ")
+		line = strings.TrimSuffix(line, " │")
+		return strings.TrimRight(line, " ")
+	}
+	if kind == blockAssistant {
+		line = strings.TrimPrefix(line, strings.Repeat(" ", assistantBodyHang))
+	}
+	return strings.TrimRight(line, " ")
 }
 
 // frameWithAppendix extends the render-owned frame only while the appendix is
