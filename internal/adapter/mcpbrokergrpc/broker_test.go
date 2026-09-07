@@ -68,11 +68,22 @@ func TestInitialProductionMCPBroker_Scenario1_LifecycleOutcomes(t *testing.T) {
 	if _, outcome, err := remote.AttachSession(ctx, "session-1"); err != nil || outcome != mcpbroker.AttachReattached {
 		t.Fatalf("reattach after Close = %q, %v", outcome, err)
 	}
-	if got, err := remote.DeleteSession(ctx, "session-1"); err != nil || got != mcpbroker.DeleteDeleted {
-		t.Fatalf("DeleteSession = %q, %v", got, err)
+	conditional, ok := any(remote).(mcpbroker.BindingSessionDeleter)
+	if !ok {
+		t.Fatal("remote client does not support binding deletion")
 	}
-	if got, err := remote.DeleteSession(ctx, "session-1"); err != nil || got != mcpbroker.DeleteNotFound {
-		t.Fatalf("second DeleteSession = %q, %v", got, err)
+	if got, err := conditional.DeleteSessionIfBinding(ctx, "session-1", attachment.Binding()); err != nil || got != mcpbroker.DeleteDeleted {
+		t.Fatalf("DeleteSessionIfBinding = %q, %v", got, err)
+	}
+	if got, err := conditional.DeleteSessionIfBinding(ctx, "session-1", attachment.Binding()); err != nil || got != mcpbroker.DeleteNotFound {
+		t.Fatalf("second DeleteSessionIfBinding = %q, %v", got, err)
+	}
+}
+
+func TestRemoteDeleteRejectsEmptyBinding(t *testing.T) {
+	remote := newRemote(t, newBroker())
+	if _, err := remote.DeleteSession(t.Context(), "session-1"); err == nil || !strings.Contains(err.Error(), "requires a binding") {
+		t.Fatalf("DeleteSession without binding = %v, want binding rejection", err)
 	}
 }
 
@@ -147,6 +158,13 @@ func (b *broker) DeleteSession(context.Context, session.SessionID) (mcpbroker.De
 	}
 	b.exists = false
 	return mcpbroker.DeleteDeleted, nil
+}
+
+func (b *broker) DeleteSessionIfBinding(ctx context.Context, _ session.SessionID, binding session.ExternalBinding) (mcpbroker.DeleteOutcome, error) {
+	if binding != "binding-1" {
+		return mcpbroker.DeleteNotFound, nil
+	}
+	return b.DeleteSession(ctx, "")
 }
 
 type attachment struct{ closed bool }

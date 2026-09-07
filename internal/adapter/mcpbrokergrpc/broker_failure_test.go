@@ -185,6 +185,57 @@ func TestInvariant_initial_broker_rejects_stale_incarnation(t *testing.T) {
 	}
 }
 
+func TestInitialProductionMCPBroker_ServerRunDeadlineBoundsBackgroundAndHonorsEarlierCallerDeadline(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		serverDeadline time.Duration
+		callerDeadline time.Duration
+		maximumElapsed time.Duration
+	}{
+		{name: "server", serverDeadline: 40 * time.Millisecond, maximumElapsed: 500 * time.Millisecond},
+		{name: "caller", serverDeadline: 200 * time.Millisecond, callerDeadline: 15 * time.Millisecond, maximumElapsed: 100 * time.Millisecond},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			local := newFailureBroker()
+			local.blockExecute = make(chan struct{})
+			cfg := shortConfig()
+			cfg.ExecuteDeadline = tc.serverDeadline
+			server, err := mcpbrokergrpc.NewServerWithConfig(local, cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = server.Shutdown(context.Background()) })
+
+			attached, err := server.Attach(context.Background(), &brokerv1.AttachRequest{SessionId: "bounded"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctx := context.Background()
+			if tc.callerDeadline > 0 {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(ctx, tc.callerDeadline)
+				defer cancel()
+			}
+			started := time.Now()
+			_, err = server.Run(ctx, &brokerv1.RunRequest{
+				BrokerIncarnation: attached.GetBrokerIncarnation(), Handle: attached.GetHandle(),
+				Name: "read", CallId: "blocked", Args: []byte(`{}`),
+			})
+			if status.Code(err) != codes.DeadlineExceeded {
+				t.Fatalf("Run() error = %v, want DeadlineExceeded", err)
+			}
+			if elapsed := time.Since(started); elapsed > tc.maximumElapsed {
+				t.Fatalf("Run() elapsed = %v, want no more than %v", elapsed, tc.maximumElapsed)
+			}
+			select {
+			case <-local.executeExited:
+			case <-time.After(testWait):
+				t.Fatal("bounded Run did not cancel the tool execution")
+			}
+		})
+	}
+}
+
 func TestInitialProductionMCPBroker_Scenario4_CancellationAndCleanup(t *testing.T) {
 	local := newFailureBroker()
 	local.blockExecute = make(chan struct{})

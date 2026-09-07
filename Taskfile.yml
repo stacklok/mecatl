@@ -428,11 +428,11 @@ tasks:
 
   deploy:check:
     desc: |
-      Validate the deploy/helm/mecak8s chart WITHOUT a cluster: `helm lint`
-      every deploy/helm/mecak8s/ci/*-values.yaml fixture, schema-check the
-      rendered manifests (default + oidc.enabled=true), and assert the
-      caller-identity boundaries (ADR 0204). Needs helm + kubeconform; needs NO
-      cluster, so it runs in CI and on a laptop.
+      Validate the deploy/helm/mecak8s and deploy/helm/mecabroker charts WITHOUT a
+      cluster: `helm lint` the production fixtures, schema-check the rendered
+      manifests (mecak8s default + oidc.enabled=true; mecabroker production), and
+      assert the mecak8s caller-identity boundaries (ADR 0204). Needs helm +
+      kubeconform; needs NO cluster, so it runs in CI and on a laptop.
     vars:
       PROD_SET: redis.endpoint=redis.example.internal:6379,redis.credentialsSecret=redis-credentials,security.allowUnsafeRealProvider=true
       SAFE_SET: redis.endpoint=redis.example.internal:6379,redis.credentialsSecret=redis-credentials,tls.enabled=true,tls.secretName=mecak8s-tls,oidc.enabled=true,oidc.issuer=https://idp.example.com,oidc.audience=mecatl
@@ -442,24 +442,25 @@ tasks:
       - sh: command -v kubeconform >/dev/null 2>&1
         msg: "kubeconform is not installed (go install github.com/yannh/kubeconform/cmd/kubeconform@latest)"
     cmds:
-      # `helm template | kubeconform` against every
-      # deploy/helm/mecak8s/ci/*-values.yaml fixture — a discoverable,
-      # `-f`-based example of a full production install, checked the same way
-      # as the --set-based PROD_SET/OIDC_SET renders below. Deliberately NOT
-      # `helm lint`: it does not fail on a template execution error (a
-      # `fail`/`required` violation prints as an INFO line and still exits 0),
-      # so it wouldn't catch the class of error this exists to catch. This is
-      # chart-testing's (`ct lint`) fixture-directory convention without the
-      # `ct` binary itself: `ct` shells out to Python yamale/yamllint even with
-      # its other validations disabled, a real toolchain dependency this
-      # repo's otherwise-all-Go tool chain (kind/ko/kubeconform/kustomize)
-      # doesn't carry — not worth it for value `helm template`+kubeconform
-      # already cover.
+      - cmd: |
+          set -eu
+          helm lint deploy/helm/mecak8s --set '{{.PROD_SET}}'
+          helm lint deploy/helm/mecabroker -f deploy/helm/mecabroker/ci/production-values.yaml
+        silent: true
+      # `helm template | kubeconform` validates every fixture because `helm lint`
+      # does not fail on all template execution errors (a `fail`/`required`
+      # violation can print as an INFO line and still exit 0). This is the
+      # chart-testing (`ct lint`) fixture-directory convention without the `ct`
+      # binary itself: `ct` shells out to Python yamale/yamllint even with its
+      # other validations disabled, a real toolchain dependency this repo's
+      # otherwise-all-Go tool chain (kind/ko/kubeconform/kustomize) doesn't carry
+      # — not worth it for value `helm template`+kubeconform already cover.
       - cmd: |
           set -eu -o pipefail
           for f in deploy/helm/mecak8s/ci/*-values.yaml; do
             helm template deploy/helm/mecak8s -f "$f" | kubeconform -strict -summary -
           done
+          helm template production deploy/helm/mecabroker -f deploy/helm/mecabroker/ci/production-values.yaml | kubeconform -strict -summary -
         silent: true
       # Schema validation is kubeconform, NOT `kubectl apply --dry-run=client`:
       # kubectl maps kinds against the API server even with --validate=false, so

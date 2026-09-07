@@ -77,7 +77,7 @@ func TestInitialProductionMCPBroker_Scenario5_DeploymentSecurity(t *testing.T) {
 		t.Fatal(err)
 	}
 	policy := string(network)
-	for _, want := range []string{"mecak8s", "browser-callback", "operatorEgress", "namespaceSelector", "podSelector", "ipBlock"} {
+	for _, want := range []string{"publicFrom", "operatorEgress", "namespaceSelector", "podSelector", "ipBlock"} {
 		if !strings.Contains(policy, want) {
 			t.Errorf("broker NetworkPolicy missing %q", want)
 		}

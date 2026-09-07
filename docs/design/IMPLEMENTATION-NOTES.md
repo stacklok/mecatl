@@ -5797,13 +5797,15 @@ bare `port.LLMProvider`. **DEFERRED:** the standalone gRPC `CreateTeam` RPC stay
 provider (no per-CreateTeam selector); `ListAgents`/`AgentInfo` provider surfacing (no proto
 change).
 
-**Session-scoped MCP broker composition (P10, ADR 0308):** `internal/app/build.go` owns one
-process-wide `internal/adapter/mcpbroker.Process`, returns its complete fixed ToolHive
-`HandlerBundle` for mounting by `mecated` and `mecak8s` on their primary HTTP muxes, and
-closes it only after `server.Service` has bounded local attachment shutdown. The root-internal
-`internal/mcpbroker` contract carries only neutral tool wrappers, an opaque binding, and
-attachment lifecycle operations; the generic engine knows nothing about broker or upstream
-OAuth state. Broker authority stays exclusive of global `MCPServers`.
+**Session-scoped MCP broker composition (P10, ADR 0311):** when local broker authority is
+selected, `internal/app/build.go` owns one process-wide
+`internal/adapter/mcpbroker.Process`, returns its complete fixed ToolHive `HandlerBundle` for
+mounting by `mecated`, and closes it only after `server.Service` has bounded local attachment
+shutdown. `mecak8s` selects its remote broker factory instead, so it creates neither a local
+ToolHive process nor broker HTTP handlers. The root-internal `internal/mcpbroker` contract carries
+only neutral tool wrappers, an opaque binding, and attachment lifecycle operations; the generic
+engine knows nothing about broker or upstream OAuth state. Broker authority stays exclusive of
+global `MCPServers`.
 
 Multiple configured protected profiles become one ordered ToolHive upstream configuration in
 `internal/adapter/mcpbroker/toolhive_construction.go` (`compileToolHiveConstruction`): ToolHive
@@ -5831,15 +5833,17 @@ passes `Attachment.Tools()` explicitly through `SessionEngineRequest.BrokerTools
 persisted binding. `CloseSession` drops a local attachment without deleting logical
 authorization state; owner deletion calls `DeleteSession`.
 
-The mecatl attachment/session boundary remains process-local. After restart, the
+The local mecatl attachment/session boundary remains process-local. After restart, the
 pre-prompt server seam may replace a stale binding with the new incarnation,
 discard the old pending correlation, and begin a fresh enrollment. It does not
 recover or continue the prior outer enrollment. ToolHive's configured Redis storage can
-retain its inner upstream authorization/token records, but mecatl's outer
+retain its inner upstream authorization/token records, but a local mecatl process's outer
 callback correlation and broker ownership are not durable and cannot rediscover
-those records. Likewise, replicas do not share or route that outer correlation;
-broker OAuth remains unsafe behind the chart's default multi-replica Service
-without affinity or a durable-broker decision. Guards include `internal/adapter/server/mcp_broker_multi_upstream_e2e_test.go`,
+those records. Likewise, local replicas do not share or route that outer correlation;
+that topology requires affinity or a durable-broker decision. `mecak8s` avoids this local
+broker topology by using the remote broker service; its client retains only remote attachment
+handles and follows the remote adapter's fail-closed incarnation semantics. Guards include
+`internal/adapter/server/mcp_broker_multi_upstream_e2e_test.go`,
 `internal/adapter/mcpbroker/workspace_catalogue_test.go`, and
 `internal/adapter/mcpbroker/toolhive_process_test.go`.
 

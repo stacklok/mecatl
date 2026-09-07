@@ -2584,7 +2584,8 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	// A remote broker preserves the same pre-prompt enrollment capability while
 	// keeping browser presentation on the broker. Local Compile-only runtimes do
 	// not expose enrollment; bundled ToolHive and remote services do.
-	svcCfg.WorkspaceEnrollment = brokerProcess.WorkspaceEnrollmentRequired() || cfg.MCPBrokerFactory != nil
+	svcCfg.WorkspaceEnrollment = cfg.MCPBrokerFactory != nil ||
+		(brokerProcess != nil && brokerProcess.WorkspaceEnrollmentRequired())
 	if assets.reflectionRepository == nil || provider == nil {
 		svcCfg.ReflectSession = nil
 	}

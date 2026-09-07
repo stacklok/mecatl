@@ -33,9 +33,9 @@ resources:
   requests: {cpu: 100m, memory: 128Mi}
   limits: {cpu: 1000m, memory: 512Mi}
 
+# The public listener multiplexes TLS gRPC and browser callback routes.
 service:
-  grpcPort: 9080
-  callbackPort: 9081
+  port: 9080
 
 terminationGracePeriodSeconds: 70
 drain:
@@ -44,10 +44,8 @@ drain:
 
 networkPolicy:
   enabled: true
-  # Each entry is a Kubernetes NetworkPolicyPeer. Keep these lists explicit:
-  # mecak8sFrom reaches only gRPC; browserCallbackFrom reaches only callbacks.
-  mecak8sFrom: []
-  browserCallbackFrom: []
+  # publicFrom reaches the multiplexed TLS gRPC and callback listener.
+  publicFrom: []
   # Operator-owned NetworkPolicyEgressRule entries for DNS plus concrete
   # OIDC/JWKS, upstream OAuth, and MCP destination CIDRs/selectors. Dynamic
   # destinations must be maintained by the operator or an external policy system.

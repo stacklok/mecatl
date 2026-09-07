@@ -141,13 +141,21 @@ func (s *Service) rollbackBrokerAttachment(ctx context.Context, local *localBrok
 // from broker deletion being idempotent (ToolHive's DeleteSession treats an
 // already-deleted/never-existed session as success), not from keeping this
 // handle around pending a durable delete that has already committed.
-func (s *Service) deleteBrokerSessionLocked(ctx context.Context, id session.SessionID) error {
+func (s *Service) deleteBrokerSessionLocked(ctx context.Context, id session.SessionID, binding session.ExternalBinding) error {
 	if s.cfg.MCPBroker == nil {
 		return nil
 	}
 	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), engineCloseTimeout)
 	defer cancel()
-	if _, err := s.cfg.MCPBroker.DeleteSession(cleanupCtx, id); err != nil {
+	if binding != "" {
+		deleter, ok := s.cfg.MCPBroker.(brokercontract.BindingSessionDeleter)
+		if !ok {
+			return fmt.Errorf("%w: broker does not support exact-binding deletion", ErrFailedPrecondition)
+		}
+		if _, err := deleter.DeleteSessionIfBinding(cleanupCtx, id, binding); err != nil {
+			return fmt.Errorf("%w: delete MCP broker logical session: %v", ErrInternal, err)
+		}
+	} else if _, err := s.cfg.MCPBroker.DeleteSession(cleanupCtx, id); err != nil {
 		return fmt.Errorf("%w: delete MCP broker logical session: %v", ErrInternal, err)
 	}
 	s.closeSessionLocal(id)

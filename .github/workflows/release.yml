@@ -1,5 +1,6 @@
-# Publishes and signs the mecated, mecatui, and mecak8s images plus the mecak8s
-# Helm chart from root `v*` tags or an explicitly selected tag.
+# Publishes and signs the mecated, mecatui, mecak8s, and mecabroker images plus
+# the mecak8s and mecabroker Helm charts from root `v*` tags or an explicitly
+# selected existing tag.
 name: Release
 
 on:
@@ -23,7 +24,7 @@ permissions:
 # Never run two releases for the same tag concurrently. Do NOT cancel in
 # progress — a half-signed release is worse than a slow one.
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-${{ inputs.tag || github.ref }}
   cancel-in-progress: false
 
 env:
@@ -31,8 +32,30 @@ env:
   GOFLAGS: -mod=readonly
 
 jobs:
+  validate-release-tag:
+    name: Validate release tag
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - name: Require an existing v* tag
+        id: tag
+        env:
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          case "$RELEASE_TAG" in
+            v*) ;;
+            *) echo "release tag must start with v: $RELEASE_TAG" >&2; exit 1 ;;
+          esac
+          git check-ref-format --allow-onelevel "refs/tags/$RELEASE_TAG"
+          git ls-remote --exit-code --refs "https://github.com/${GITHUB_REPOSITORY}.git" "refs/tags/$RELEASE_TAG" >/dev/null
+          echo "tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+
   publish:
     name: Build, publish, sign, attest
+    needs: validate-release-tag
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
@@ -46,7 +69,7 @@ jobs:
       KO_DOCKER_REPO: ghcr.io/${{ github.repository }}
       # On workflow_dispatch github.ref_name is the default branch, so prefer
       # the explicit input; on a tag push github.ref_name is the tag.
-      VERSION: ${{ inputs.tag || github.ref_name }}
+      VERSION: ${{ needs.validate-release-tag.outputs.tag }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -55,11 +78,15 @@ jobs:
           fetch-depth: 1
           ref: ${{ env.VERSION }}
 
+      - name: Resolve checked-out commit
+        id: source
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
       # Sibling action refs use literal version tags; fail before publishing if they
       # do not match this release tag.
       - name: Check reusable-workflow pins match the release tag
         env:
-          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+          RELEASE_TAG: ${{ env.VERSION }}
         run: EXPECTED_TAG="${RELEASE_TAG}" bash .github/actions/check-reusable-pins.sh
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -102,7 +129,7 @@ jobs:
             --image-refs=image-refs.txt \
             --image-label=org.opencontainers.image.source=https://github.com/${{ github.repository }} \
             --image-label=org.opencontainers.image.title=mecated \
-            --image-label=org.opencontainers.image.revision=${{ github.sha }} \
+            --image-label=org.opencontainers.image.revision=${{ steps.source.outputs.sha }} \
             --image-label=org.opencontainers.image.vendor=Stacklok \
             ./cmd/mecated
           # The digest ref is the same image regardless of tag; take the first.
@@ -160,6 +187,7 @@ jobs:
   # support and identifies it with the org.stacklok.broodbox.agent OCI label.
   publish-mecatui:
     name: Build, publish, sign, attest mecatui
+    needs: validate-release-tag
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
@@ -174,7 +202,7 @@ jobs:
       KO_DOCKER_REPO: ghcr.io/${{ github.repository }}/mecatui
       # On workflow_dispatch github.ref_name is the default branch, so prefer
       # the explicit input; on a tag push github.ref_name is the tag.
-      VERSION: ${{ inputs.tag || github.ref_name }}
+      VERSION: ${{ needs.validate-release-tag.outputs.tag }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -182,6 +210,10 @@ jobs:
           # ko reads the base image digest from .ko.yaml; no deep history needed.
           fetch-depth: 1
           ref: ${{ env.VERSION }}
+
+      - name: Resolve checked-out commit
+        id: source
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
@@ -225,7 +257,7 @@ jobs:
             --image-label=org.stacklok.broodbox.agent=/var/run/ko/agent.yaml \
             --image-label=org.opencontainers.image.source=https://github.com/${{ github.repository }} \
             --image-label=org.opencontainers.image.title=mecatui \
-            --image-label=org.opencontainers.image.revision=${{ github.sha }} \
+            --image-label=org.opencontainers.image.revision=${{ steps.source.outputs.sha }} \
             --image-label=org.opencontainers.image.vendor=Stacklok \
             ./cmd/mecatui
           # The digest ref is the same image regardless of tag; take the first.
@@ -281,6 +313,7 @@ jobs:
 
   publish-mecak8s:
     name: Build, publish, sign, attest mecak8s
+    needs: validate-release-tag
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
@@ -295,7 +328,7 @@ jobs:
       KO_DOCKER_REPO: ghcr.io/${{ github.repository }}/mecak8s
       # On workflow_dispatch github.ref_name is the default branch, so prefer
       # the explicit input; on a tag push github.ref_name is the tag.
-      VERSION: ${{ inputs.tag || github.ref_name }}
+      VERSION: ${{ needs.validate-release-tag.outputs.tag }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -303,6 +336,10 @@ jobs:
           # ko reads the base image digest from .ko.yaml; no deep history needed.
           fetch-depth: 1
           ref: ${{ env.VERSION }}
+
+      - name: Resolve checked-out commit
+        id: source
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
@@ -343,7 +380,7 @@ jobs:
             --image-refs=image-refs.txt \
             --image-label=org.opencontainers.image.source=https://github.com/${{ github.repository }} \
             --image-label=org.opencontainers.image.title=mecak8s \
-            --image-label=org.opencontainers.image.revision=${{ github.sha }} \
+            --image-label=org.opencontainers.image.revision=${{ steps.source.outputs.sha }} \
             --image-label=org.opencontainers.image.vendor=Stacklok \
             ./cmd/mecak8s
           # The digest ref is the same image regardless of tag; take the first.
@@ -399,6 +436,7 @@ jobs:
 
   publish-mecabroker:
     name: Build, publish, sign, attest mecabroker
+    needs: validate-release-tag
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
@@ -408,13 +446,17 @@ jobs:
       attestations: write
     env:
       KO_DOCKER_REPO: ghcr.io/${{ github.repository }}/mecabroker
-      VERSION: ${{ inputs.tag || github.ref_name }}
+      VERSION: ${{ needs.validate-release-tag.outputs.tag }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           fetch-depth: 1
           ref: ${{ env.VERSION }}
+
+      - name: Resolve checked-out commit
+        id: source
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
@@ -435,7 +477,7 @@ jobs:
             -t "${VERSION}" -t latest --image-refs=image-refs.txt \
             --image-label=org.opencontainers.image.source=https://github.com/${{ github.repository }} \
             --image-label=org.opencontainers.image.title=mecabroker \
-            --image-label=org.opencontainers.image.revision=${{ github.sha }} \
+            --image-label=org.opencontainers.image.revision=${{ steps.source.outputs.sha }} \
             --image-label=org.opencontainers.image.vendor=Stacklok \
             ./cmd/mecabroker
           digest="$(head -n1 image-refs.txt)"
@@ -448,6 +490,17 @@ jobs:
         env:
           IMAGE: ${{ steps.build.outputs.digest }}
         run: cosign sign --yes "${IMAGE}"
+      - name: Generate SBOM file
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          image: ${{ steps.build.outputs.digest }}
+          format: spdx-json
+          output-file: sbom.spdx.json
+          upload-artifact: false
+      - name: Attest SBOM (keyless)
+        env:
+          IMAGE: ${{ steps.build.outputs.digest }}
+        run: cosign attest --yes --predicate sbom.spdx.json --type spdxjson "${IMAGE}"
       - name: Attest build provenance
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
@@ -463,6 +516,7 @@ jobs:
   # image is released, from the same v* tag as mecated/mecatui/mecak8s.
   publish-slack-bot:
     name: Build, publish, sign, attest Slack bot example image
+    needs: validate-release-tag
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
@@ -474,13 +528,17 @@ jobs:
       IMAGE: ghcr.io/${{ github.repository }}/slack-bot
       # On workflow_dispatch github.ref_name is the default branch, so prefer
       # the explicit input; on a tag push github.ref_name is the tag.
-      VERSION: ${{ inputs.tag || github.ref_name }}
+      VERSION: ${{ needs.validate-release-tag.outputs.tag }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           fetch-depth: 1
           ref: ${{ env.VERSION }}
+
+      - name: Resolve checked-out commit
+        id: source
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
       - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
@@ -511,7 +569,7 @@ jobs:
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.title=slack-bot
-            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.revision=${{ steps.source.outputs.sha }}
             org.opencontainers.image.vendor=Stacklok
 
       # Sign/SBOM/attest the pushed manifest list BY DIGEST, matching the
@@ -546,7 +604,7 @@ jobs:
   # Publish the chart only after its default image tag exists.
   publish-helm-chart:
     name: Package, publish, sign Helm chart
-    needs: publish-mecak8s
+    needs: [validate-release-tag, publish-mecak8s]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -559,13 +617,17 @@ jobs:
       CHART_PATH: deploy/helm/mecak8s
       # On workflow_dispatch github.ref_name is the default branch, so prefer
       # the explicit input; on a tag push github.ref_name is the tag.
-      VERSION: ${{ inputs.tag || github.ref_name }}
+      VERSION: ${{ needs.validate-release-tag.outputs.tag }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           fetch-depth: 1
           ref: ${{ env.VERSION }}
+
+      - name: Resolve checked-out commit
+        id: source
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
         with:
@@ -666,3 +728,62 @@ jobs:
             echo "  --certificate-oidc-issuer=https://token.actions.githubusercontent.com"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
+
+  publish-mecabroker-helm-chart:
+    name: Package, publish, sign mecabroker Helm chart
+    needs: [validate-release-tag, publish-mecabroker]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    env:
+      OCI_REGISTRY: ghcr.io/${{ github.repository }}/charts
+      CHART_PATH: deploy/helm/mecabroker
+      VERSION: ${{ needs.validate-release-tag.outputs.tag }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+          ref: ${{ env.VERSION }}
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: v3.18.4
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      - name: Resolve chart version from tag
+        id: version
+        run: echo "chart_version=${VERSION#v}" >> "$GITHUB_OUTPUT"
+      - name: helm lint
+        run: helm lint "${CHART_PATH}" -f "${CHART_PATH}/ci/production-values.yaml"
+      - name: helm package
+        env:
+          CHART_VERSION: ${{ steps.version.outputs.chart_version }}
+        run: |
+          mkdir -p dist
+          helm package "${CHART_PATH}" --version "${CHART_VERSION}" --destination dist
+          test -f "dist/mecabroker-${CHART_VERSION}.tgz"
+      - name: helm registry login
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io -u "${{ github.actor }}" --password-stdin
+      - name: Log in to ghcr for cosign
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: helm push
+        id: push
+        env:
+          CHART_VERSION: ${{ steps.version.outputs.chart_version }}
+        run: |
+          set -euo pipefail
+          OUTPUT=$(helm push "dist/mecabroker-${CHART_VERSION}.tgz" "oci://${OCI_REGISTRY}" 2>&1)
+          echo "$OUTPUT"
+          DIGEST=$(echo "$OUTPUT" | awk '/^Digest:/ {print $2}')
+          test -n "$DIGEST"
+          echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
+      - name: cosign sign chart
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: cosign sign -y "${OCI_REGISTRY}/mecabroker@${DIGEST}"

@@ -24,12 +24,11 @@ extraEnv:
     valueFrom:
       secretKeyRef: {name: mecabroker-upstream, key: client-secret}
 networkPolicy:
-  mecak8sFrom:
+  publicFrom:
     - namespaceSelector:
         matchLabels: {kubernetes.io/metadata.name: mecatl}
       podSelector:
         matchLabels: {app.kubernetes.io/name: mecak8s}
-  browserCallbackFrom:
     - namespaceSelector:
         matchLabels: {mecatl.stacklok.com/browser-ingress: "true"}
       podSelector:

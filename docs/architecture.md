@@ -202,13 +202,12 @@ single-process failure boundary, not replica interchangeability, restart durabil
 callback failover, exactly-once effects, or HA ([ADR 0304](adr/0304-process-bound-remote-mcp-broker.md)).
 
 The production `cmd/mecabroker` image and dedicated Helm chart preserve that boundary:
-exactly one replica, `Recreate`, no PDB, no autoscaling, and no outer-broker Redis. The
-public Service exposes only TLS gRPC and browser callback routes. A loopback-only admin
+exactly one replica, `Recreate`, no PDB, no autoscaling, and no outer-broker Redis. The public Service exposes one TLS listener that multiplexes gRPC and browser callback routes by HTTP/2 gRPC content type. A loopback-only admin
 listener serves bounded health/readiness/drain through fixed self-probe subcommands; it is
 not a Service or NetworkPolicy port. One process-local coordinator gates both public
-transports: drain rejects new work atomically, waits the configured endpoint-propagation
-interval, lets active operations finish until a finite deadline, then cancels what remains
-before listeners and ToolHive resources close. Readiness covers validated TLS identity,
+route classes: `GET /drain` atomically rejects new work and makes readiness false, then
+waits only the configured endpoint-propagation interval. SIGTERM performs the final
+finite active-operation drain, listener shutdown, and ToolHive resource close. Readiness covers validated TLS identity,
 OIDC verifier initialization, profile/routes, ToolHive construction, anonymous discovery,
 and static protected-route validation, but is never an ownership fence. Restart interrupts
 attachments and outer callback correlation. Operators supply concrete namespace, pod, and

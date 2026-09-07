@@ -134,8 +134,18 @@ func RegisterServer(reg grpc.ServiceRegistrar, server *Server) {
 	brokerv1.RegisterBrokerServiceServer(reg, server)
 }
 
+func (s *Server) bounded(ctx context.Context, execute bool) (context.Context, context.CancelFunc) {
+	d := s.cfg.RPCDeadline
+	if execute {
+		d = s.cfg.ExecuteDeadline
+	}
+	return context.WithTimeout(ctx, d)
+}
+
 // Attach opens a process-bound attachment handle.
 func (s *Server) Attach(ctx context.Context, req *brokerv1.AttachRequest) (*brokerv1.AttachResponse, error) {
+	ctx, cancel := s.bounded(ctx, false)
+	defer cancel()
 	if req.GetSessionId() == "" {
 		return nil, invalid("session_id is required")
 	}
@@ -292,6 +302,8 @@ func (s *Server) Shutdown(ctx context.Context) error {
 
 // Commit commits the provisional state behind one exact handle.
 func (s *Server) Commit(ctx context.Context, req *brokerv1.HandleRequest) (*brokerv1.Empty, error) {
+	ctx, cancel := s.bounded(ctx, false)
+	defer cancel()
 	a, release, e := s.get(req.GetBrokerIncarnation(), req.GetHandle())
 	if e != nil {
 		return nil, e
@@ -305,6 +317,8 @@ func (s *Server) Commit(ctx context.Context, req *brokerv1.HandleRequest) (*brok
 
 // Abort aborts and releases one exact handle.
 func (s *Server) Abort(ctx context.Context, req *brokerv1.HandleRequest) (*brokerv1.Empty, error) {
+	ctx, cancel := s.bounded(ctx, false)
+	defer cancel()
 	a, e := s.take(req.GetBrokerIncarnation(), req.GetHandle())
 	if e != nil {
 		return nil, e
@@ -317,6 +331,8 @@ func (s *Server) Abort(ctx context.Context, req *brokerv1.HandleRequest) (*broke
 
 // Close releases one exact handle without deleting logical state.
 func (s *Server) Close(ctx context.Context, req *brokerv1.HandleRequest) (*brokerv1.CloseResponse, error) {
+	ctx, cancel := s.bounded(ctx, false)
+	defer cancel()
 	a, e := s.take(req.GetBrokerIncarnation(), req.GetHandle())
 	if e != nil {
 		return nil, e
@@ -328,23 +344,24 @@ func (s *Server) Close(ctx context.Context, req *brokerv1.HandleRequest) (*broke
 	return &brokerv1.CloseResponse{Outcome: string(out)}, nil
 }
 
-// Delete deletes only logical state in the addressed broker incarnation.
+// Delete deletes only the exact logical state in the addressed broker incarnation.
 func (s *Server) Delete(ctx context.Context, req *brokerv1.DeleteRequest) (*brokerv1.DeleteResponse, error) {
+	ctx, cancel := s.bounded(ctx, false)
+	defer cancel()
 	if req.GetSessionId() == "" {
 		return nil, invalid("session_id is required")
+	}
+	if req.GetBinding() == "" {
+		return nil, invalid("binding is required")
 	}
 	if err := s.checkIncarnation(req.GetBrokerIncarnation(), true); err != nil {
 		return nil, err
 	}
-	var out mcpbroker.DeleteOutcome
-	var err error
-	if req.GetBinding() == "" {
-		out, err = s.service.DeleteSession(ctx, session.SessionID(req.GetSessionId()))
-	} else if d, ok := s.service.(mcpbroker.BindingSessionDeleter); ok {
-		out, err = d.DeleteSessionIfBinding(ctx, session.SessionID(req.GetSessionId()), session.ExternalBinding(req.GetBinding()))
-	} else {
+	d, ok := s.service.(mcpbroker.BindingSessionDeleter)
+	if !ok {
 		return nil, status.Error(codes.FailedPrecondition, "binding delete is unsupported")
 	}
+	out, err := d.DeleteSessionIfBinding(ctx, session.SessionID(req.GetSessionId()), session.ExternalBinding(req.GetBinding()))
 	if err != nil {
 		return nil, brokerStatus(err)
 	}
@@ -353,6 +370,8 @@ func (s *Server) Delete(ctx context.Context, req *brokerv1.DeleteRequest) (*brok
 
 // Run dispatches one tool invocation without application-level retry.
 func (s *Server) Run(ctx context.Context, req *brokerv1.RunRequest) (*brokerv1.RunResponse, error) {
+	ctx, cancel := s.bounded(ctx, true)
+	defer cancel()
 	a, release, e := s.get(req.GetBrokerIncarnation(), req.GetHandle())
 	if e != nil {
 		return nil, e
@@ -379,6 +398,8 @@ func (s *Server) Run(ctx context.Context, req *brokerv1.RunRequest) (*brokerv1.R
 
 // RequestAuthorization begins authorization for one exact invocation.
 func (s *Server) RequestAuthorization(ctx context.Context, req *brokerv1.RequestAuthorizationRequest) (*brokerv1.RequestAuthorizationResponse, error) {
+	ctx, cancel := s.bounded(ctx, false)
+	defer cancel()
 	a, release, e := s.get(req.GetBrokerIncarnation(), req.GetHandle())
 	if e != nil {
 		return nil, e
@@ -401,6 +422,8 @@ func (s *Server) RequestAuthorization(ctx context.Context, req *brokerv1.Request
 
 // AbortAuthorization aborts one exact tool authorization.
 func (s *Server) AbortAuthorization(ctx context.Context, req *brokerv1.AbortAuthorizationRequest) (*brokerv1.Empty, error) {
+	ctx, cancel := s.bounded(ctx, false)
+	defer cancel()
 	a, release, e := s.get(req.GetBrokerIncarnation(), req.GetHandle())
 	if e != nil {
 		return nil, e
@@ -425,6 +448,8 @@ func (s *Server) AbortAuthorization(ctx context.Context, req *brokerv1.AbortAuth
 
 // PresentAuthorization returns the ephemeral URL for one exact authorization.
 func (s *Server) PresentAuthorization(ctx context.Context, req *brokerv1.AuthorizationRequest) (*brokerv1.PresentationResponse, error) {
+	ctx, cancel := s.bounded(ctx, false)
+	defer cancel()
 	a, release, err := s.get(req.GetBrokerIncarnation(), req.GetHandle())
 	if err != nil {
 		return nil, err
@@ -446,6 +471,8 @@ func (s *Server) PresentAuthorization(ctx context.Context, req *brokerv1.Authori
 
 // AuthorizationStatus observes one exact authorization.
 func (s *Server) AuthorizationStatus(ctx context.Context, req *brokerv1.AuthorizationRequest) (*brokerv1.AuthorizationStatusResponse, error) {
+	ctx, cancel := s.bounded(ctx, false)
+	defer cancel()
 	a, release, err := s.get(req.GetBrokerIncarnation(), req.GetHandle())
 	if err != nil {
 		return nil, err
@@ -467,6 +494,8 @@ func (s *Server) AuthorizationStatus(ctx context.Context, req *brokerv1.Authoriz
 
 // CancelAuthorization cancels one exact authorization.
 func (s *Server) CancelAuthorization(ctx context.Context, req *brokerv1.AuthorizationRequest) (*brokerv1.CancelResponse, error) {
+	ctx, cancel := s.bounded(ctx, false)
+	defer cancel()
 	a, release, err := s.get(req.GetBrokerIncarnation(), req.GetHandle())
 	if err != nil {
 		return nil, err
@@ -488,6 +517,8 @@ func (s *Server) CancelAuthorization(ctx context.Context, req *brokerv1.Authoriz
 
 // BeginWorkspaceEnrollment begins a pre-prompt enrollment.
 func (s *Server) BeginWorkspaceEnrollment(ctx context.Context, req *brokerv1.HandleRequest) (*brokerv1.WorkspacePresentationResponse, error) {
+	ctx, cancel := s.bounded(ctx, false)
+	defer cancel()
 	a, release, err := s.get(req.GetBrokerIncarnation(), req.GetHandle())
 	if err != nil {
 		return nil, err
@@ -518,6 +549,8 @@ func (s *Server) CancelWorkspaceEnrollment(ctx context.Context, req *brokerv1.Wo
 }
 
 func (s *Server) workspaceResult(ctx context.Context, req *brokerv1.WorkspaceRequest, cancel bool) (*brokerv1.WorkspaceResultResponse, error) {
+	ctx, stop := s.bounded(ctx, false)
+	defer stop()
 	a, release, err := s.get(req.GetBrokerIncarnation(), req.GetHandle())
 	if err != nil {
 		return nil, err
@@ -584,6 +617,10 @@ func newHandle() (string, error) {
 func invalid(msg string) error { return status.Error(codes.InvalidArgument, msg) }
 func brokerStatus(err error) error {
 	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		return status.Error(codes.DeadlineExceeded, err.Error())
+	case errors.Is(err, context.Canceled):
+		return status.Error(codes.Canceled, err.Error())
 	case errors.Is(err, mcpbroker.ErrAttachmentClosed):
 		return status.Error(codes.FailedPrecondition, err.Error())
 	case errors.Is(err, mcpbroker.ErrStateUnavailable):
@@ -662,9 +699,10 @@ func (c *Client) AttachSession(ctx context.Context, id session.SessionID) (mcpbr
 	return base, mcpbroker.AttachOutcome(r.GetOutcome()), nil
 }
 
-// DeleteSession deletes logical state in the client's pinned broker incarnation.
-func (c *Client) DeleteSession(ctx context.Context, id session.SessionID) (mcpbroker.DeleteOutcome, error) {
-	return c.delete(ctx, id, "")
+// DeleteSession is unavailable remotely because remote deletion requires an exact
+// persisted binding. Local callers retain the unbound Service compatibility path.
+func (*Client) DeleteSession(context.Context, session.SessionID) (mcpbroker.DeleteOutcome, error) {
+	return "", errors.New("mcpbrokergrpc: remote deletion requires a binding")
 }
 
 // DeleteSessionIfBinding atomically deletes only the exact opaque binding.

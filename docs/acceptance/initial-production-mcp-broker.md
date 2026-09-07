@@ -26,16 +26,17 @@ that demonstration unambiguous.
   it must not import, expose, or become part of the ToolHive runtime package.
 - The remote server issues an **ephemeral attachment handle** on Attach. The handle is
   not `ExternalBinding`, is never persisted, and identifies one server-registry entry.
-  That entry tracks provisional/committed/aborted/closed independently while retaining
-  the exact persisted binding for every operation. A handle cannot be used after close,
-  expiry, or against another binding.
-- Preserve `Service.DeleteSession(ctx, id)` compatibility for existing in-process
-  callers. Add `DeleteSessionIfBinding(ctx, id string, expected session.ExternalBinding)
-  (DeleteOutcome, error)` at the seam; under the Runtime binding lock it compares the exact
-  binding and deletes in the same critical section. The remote adapter and server deletion
-  path use this method, so a stale remote delete cannot win a check-then-delete race against
-  a fresh logical session recreated under the same ID. This is an intentional root-internal
-  contract change, not a new `engine/` API.
+  Normal attachment RPCs carry only that transient handle and the broker incarnation;
+  they do not carry durable binding fields. A handle cannot be used after close or expiry.
+- `session.ExternalBinding` is the durable opaque identity of the exact logical-session
+  incarnation. Normal remote attachment operations do not carry it; remote Delete requires
+  the persisted binding and fails closed when it is absent. Preserve
+  `Service.DeleteSession(ctx, id)` only as the explicitly local compatibility path.
+  `DeleteSessionIfBinding(ctx, id string, expected session.ExternalBinding)
+  (DeleteOutcome, error)` compares and deletes under the Runtime binding lock. The
+  server deletion caller passes the loaded session's persisted binding, so stale remote
+  cleanup cannot delete a fresh logical session recreated under the same ID. This is an
+  intentional root-internal contract change, not a new `engine/` API.
 - The remote descriptor is frozen at attachment/catalogue creation and contains exactly:
   `name`, `description`, raw schema bytes, `read_only`, `dispatch_serial`, and
   `authorization_capable`. The client reconstructs frozen `tool.Tool` wrappers and all
@@ -134,8 +135,9 @@ documents the current session-scoped broker boundary that this adapter preserves
 
 1. Add `contracts/proto/mecatl/broker/v1/broker.proto`; run `task generate`. Its package
    is `mecatl.broker.v1`, not the old donor protocol. Define Attach returning binding,
-   handle, attach outcome, frozen descriptors, and capability bits; all handle operations
-   carry handle plus expected binding. Delete carries session ID plus expected binding.
+   handle, attach outcome, frozen descriptors, and capability bits; normal attachment
+   operations carry only handle plus broker incarnation. Delete carries session ID plus
+   the mandatory durable expected binding.
 2. Add `internal/adapter/mcpbrokergrpc/server.go`, `client.go`, `codec.go`, and focused
    tests. The server owns a capped, mutex-protected handle registry. It registers an
    attachment only after Attach succeeds; Commit/Abort/Close mutate the entry idempotently;

@@ -21,8 +21,6 @@ import (
 	"syscall"
 	"time"
 
-	"google.golang.org/grpc"
-
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/internal/adapter/mcpbroker"
 	"github.com/stacklok/mecatl/internal/adapter/mcpbrokerserver"
@@ -37,8 +35,7 @@ const (
 )
 
 type config struct {
-	grpcAddress      string
-	httpAddress      string
+	publicAddress    string
 	adminAddress     string
 	tlsCertFile      string
 	tlsKeyFile       string
@@ -91,7 +88,7 @@ func main() {
 		case "ready":
 			err = requestLocalAdmin(http.MethodGet, "/readyz", shutdownTimeout)
 		case "drain":
-			err = requestLocalAdmin(http.MethodPost, "/drain", defaultPropagationWait+defaultDrainTimeout+shutdownTimeout)
+			err = requestLocalAdmin(http.MethodGet, "/drain", defaultPropagationWait+shutdownTimeout)
 		default:
 		}
 		if err != nil {
@@ -115,10 +112,9 @@ func main() {
 
 func parseFlags() config {
 	var cfg config
-	flag.StringVar(&cfg.grpcAddress, "grpc-addr", "127.0.0.1:9080", "authenticated broker gRPC listen address")
-	flag.StringVar(&cfg.httpAddress, "http-addr", "127.0.0.1:9081", "browser callback and ToolHive route listen address")
+	flag.StringVar(&cfg.publicAddress, "listen-addr", "127.0.0.1:9080", "TLS gRPC and browser callback listen address")
 	flag.StringVar(&cfg.adminAddress, "admin-addr", "127.0.0.1:9082", "loopback-only health, readiness, and drain listen address")
-	flag.StringVar(&cfg.tlsCertFile, "tls-cert", "", "PEM server certificate (required with --tls-key outside loopback)")
+	flag.StringVar(&cfg.tlsCertFile, "tls-cert", "", "PEM public listener server certificate (required)")
 	flag.StringVar(&cfg.tlsKeyFile, "tls-key", "", "PEM server private key")
 	flag.StringVar(&cfg.oidcIssuer, "oidc-issuer", "", "exact HTTPS workload-token issuer")
 	flag.StringVar(&cfg.oidcJWKSURI, "oidc-jwks-uri", "", "explicit HTTPS JWKS endpoint")
@@ -154,10 +150,10 @@ func run(ctx context.Context, cfg config, diagnostics port.Diagnostics) error {
 		}
 		tlsConfig = &tls.Config{Certificates: []tls.Certificate{certificate}, MinVersion: tls.VersionTLS12}
 	}
-	if err := mcpbrokerserver.ValidateTransport(cfg.grpcAddress, tlsConfig); err != nil {
-		return err
+	if tlsConfig == nil {
+		return errors.New("broker public TLS certificate and key are required")
 	}
-	if err := mcpbrokerserver.ValidateTransport(cfg.httpAddress, tlsConfig); err != nil {
+	if err := mcpbrokerserver.ValidateTransport(cfg.publicAddress, tlsConfig); err != nil {
 		return err
 	}
 	caPEM, err := os.ReadFile(cfg.oidcCAFile)
@@ -193,72 +189,81 @@ func run(ctx context.Context, cfg config, diagnostics port.Diagnostics) error {
 		_ = server.Close(closeCtx)
 	}()
 
-	grpcListener, err := net.Listen("tcp", cfg.grpcAddress)
+	publicListener, err := net.Listen("tcp", cfg.publicAddress)
 	if err != nil {
-		return errors.New("listen for broker RPC")
+		return errors.New("listen for broker public traffic")
 	}
-	defer func() { _ = grpcListener.Close() }()
-	httpListener, err := net.Listen("tcp", cfg.httpAddress)
-	if err != nil {
-		return errors.New("listen for broker callbacks")
-	}
-	defer func() { _ = httpListener.Close() }()
+	defer func() { _ = publicListener.Close() }()
 	adminListener, err := net.Listen("tcp", cfg.adminAddress)
 	if err != nil {
 		return errors.New("listen for broker administration")
 	}
 	defer func() { _ = adminListener.Close() }()
 
-	grpcServer, err := server.NewGRPCServer(tlsConfig)
+	// TLS terminates at net/http, which dispatches HTTP/2 gRPC requests to the
+	// gRPC server and fixed browser routes to ToolHive's HTTP handler.
+	grpcServer, err := server.NewGRPCServer(nil)
 	if err != nil {
 		return err
 	}
-	httpServer := &http.Server{Addr: cfg.httpAddress, Handler: server.HTTPHandler(), ReadHeaderTimeout: 5 * time.Second}
+	publicServer := &http.Server{
+		Addr:              cfg.publicAddress,
+		Handler:           publicHandler(grpcServer, server.HTTPHandler()),
+		ReadHeaderTimeout: 5 * time.Second,
+		TLSConfig:         tlsConfig.Clone(),
+	}
+	publicServer.TLSConfig.NextProtos = []string{"h2", "http/1.1"}
 	adminServer := &http.Server{Addr: cfg.adminAddress, ReadHeaderTimeout: 2 * time.Second}
 
-	var drainOnce sync.Once
-	drainDone := make(chan struct{})
-	drain := func() {
-		drainOnce.Do(func() {
+	var admissionOnce sync.Once
+	propagated := make(chan struct{})
+	beginDrain := func() {
+		admissionOnce.Do(func() {
+			server.BeginDrain()
 			go func() {
-				defer close(drainDone)
-				server.BeginDrain()
+				timer := time.NewTimer(cfg.propagationWait)
+				defer timer.Stop()
+				<-timer.C
+				close(propagated)
+			}()
+		})
+	}
+	adminServer.Handler = adminHandler(server.Ready, beginDrain, propagated)
+
+	var shutdownOnce sync.Once
+	shutdownDone := make(chan struct{})
+	shutdown := func() {
+		shutdownOnce.Do(func() {
+			go func() {
+				defer close(shutdownDone)
+				beginDrain()
+				<-propagated
 				drainCtx, cancel := context.WithTimeout(context.Background(), cfg.drainTimeout)
-				_ = server.Drain(drainCtx, cfg.propagationWait)
+				_ = server.Drain(drainCtx, 0)
 				cancel()
 				stopCtx, stopCancel := context.WithTimeout(context.Background(), shutdownTimeout)
-				_ = httpServer.Shutdown(stopCtx)
+				_ = publicServer.Shutdown(stopCtx)
 				_ = server.Close(stopCtx)
 				stopCancel()
 			}()
 		})
 	}
-	adminServer.Handler = adminHandler(server, drain, drainDone)
 
-	errCh := make(chan error, 3)
-	go func() { errCh <- grpcServer.Serve(grpcListener) }()
-	go func() {
-		if tlsConfig == nil {
-			errCh <- httpServer.Serve(httpListener)
-			return
-		}
-		httpServer.TLSConfig = tlsConfig.Clone()
-		tlsListener := tls.NewListener(httpListener, httpServer.TLSConfig)
-		errCh <- httpServer.Serve(tlsListener)
-	}()
+	errCh := make(chan error, 2)
+	go func() { errCh <- publicServer.ServeTLS(publicListener, "", "") }()
 	go func() { errCh <- adminServer.Serve(adminListener) }()
 
 	var result error
 	select {
 	case <-ctx.Done():
-		drain()
-		<-drainDone
+		shutdown()
+		<-shutdownDone
 	case serveErr := <-errCh:
-		if !errors.Is(serveErr, http.ErrServerClosed) && !errors.Is(serveErr, grpc.ErrServerStopped) {
+		if !errors.Is(serveErr, http.ErrServerClosed) {
 			result = errors.New("broker listener stopped")
 		}
-		drain()
-		<-drainDone
+		shutdown()
+		<-shutdownDone
 	}
 	adminCtx, adminCancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	_ = adminServer.Shutdown(adminCtx)
@@ -281,23 +286,33 @@ func validateAdminAddress(address string) error {
 	return nil
 }
 
-func adminHandler(server *mcpbrokerserver.Server, drain func(), drainDone <-chan struct{}) http.Handler {
+func publicHandler(grpcHandler, callbackHandler http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.ProtoMajor == 2 && strings.HasPrefix(r.Header.Get("Content-Type"), "application/grpc") {
+			grpcHandler.ServeHTTP(w, r)
+			return
+		}
+		callbackHandler.ServeHTTP(w, r)
+	})
+}
+
+func adminHandler(ready func(context.Context) bool, beginDrain func(), propagated <-chan struct{}) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
 	mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) {
-		if !server.Ready(r.Context()) {
+		if !ready(r.Context()) {
 			http.Error(w, "not ready", http.StatusServiceUnavailable)
 			return
 		}
 		w.WriteHeader(http.StatusOK)
 	})
-	mux.HandleFunc("POST /drain", func(w http.ResponseWriter, r *http.Request) {
-		drain()
+	mux.HandleFunc("GET /drain", func(w http.ResponseWriter, r *http.Request) {
+		beginDrain()
 		select {
-		case <-drainDone:
+		case <-propagated:
 			w.WriteHeader(http.StatusOK)
 		case <-r.Context().Done():
-			w.WriteHeader(http.StatusServiceUnavailable)
+			http.Error(w, "drain propagation incomplete", http.StatusServiceUnavailable)
 		}
 	})
 	return mux

@@ -33,8 +33,7 @@ spec:
           image: {{ if .Values.image.digest }}{{ .Values.image.repository }}@{{ .Values.image.digest }}{{ else }}{{ .Values.image.repository }}:{{ default (printf "v%s" .Chart.Version) .Values.image.tag }}{{ end }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           args:
-            - --grpc-addr=0.0.0.0:9080
-            - --http-addr=0.0.0.0:9081
+            - --listen-addr=0.0.0.0:9080
             - --admin-addr=127.0.0.1:9082
             - --tls-cert=/var/run/secrets/tls/{{ .Values.tls.certKey }}
             - --tls-key=/var/run/secrets/tls/{{ .Values.tls.keyKey }}
@@ -50,8 +49,7 @@ spec:
           env: {{- toYaml . | nindent 12 }}
           {{- end }}
           ports:
-            - {name: grpc, containerPort: 9080}
-            - {name: callback, containerPort: 9081}
+            - {name: public, containerPort: 9080}
             - {name: admin, containerPort: 9082}
           startupProbe:
             exec: {command: ["/ko-app/mecabroker", "ready"]}

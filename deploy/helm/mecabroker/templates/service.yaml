@@ -7,5 +7,4 @@ spec:
   type: ClusterIP
   selector: {{- include "mecabroker.labels" . | nindent 4 }}
   ports:
-    - {name: grpc, port: {{ .Values.service.grpcPort }}, targetPort: grpc}
-    - {name: browser-callback, port: {{ .Values.service.callbackPort }}, targetPort: callback}
+    - {name: public, port: {{ .Values.service.port }}, targetPort: public}
