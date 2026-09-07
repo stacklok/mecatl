@@ -5800,7 +5800,7 @@ owns the sequential upstream callback/state, authorization-code exchange, refres
 provider-to-backend injection. A protected process generates its own confidential ToolHive
 broker client; `internal/adapter/mcpbroker/toolhive_process.go` registers only ToolHive's hash,
 and `internal/adapter/mcpbroker/auth.go` retains the raw secret only for private HTTP-Basic code
-exchange and refresh ([ADR 0309](../adr/0309-confidential-toolhive-broker-client.md)). Mecatl
+exchange and refresh ([ADR 0312](../adr/0312-confidential-toolhive-broker-client.md)). Mecatl
 starts, observes, or cancels only one opaque workspace enrollment. Its public control projection
 contains no backend/provider selector, callback
 state, endpoint, authorization code, access token, or refresh token. The fixed upstream callback

@@ -1114,9 +1114,6 @@ func EventToMsg(ev *mecatlv1.Event) tea.Msg {
 		}
 	case "tool.progress":
 		return ToolProgressMsg{Text: ev.GetText()}
-	case "authorization.required", "authorization.resolved":
-		a := ev.GetAuthorization()
-		return MCPAuthorizationMsg{AuthorizationID: a.GetAuthorizationId(), DisplayName: a.GetDisplayName(), CallID: a.GetCallId(), Status: a.GetStatus()}
 	case "permission.ask":
 		a := ev.GetAsk()
 		return PermissionAskMsg{AskID: a.GetAskId(), Tool: a.GetTool(), Args: a.GetArgs(), Reason: a.GetReason()}
@@ -1151,14 +1148,14 @@ func EventToMsg(ev *mecatlv1.Event) tea.Msg {
 	case "compaction.archive":
 		return compactionArchiveMsg(ev.GetCompactionArchive())
 	default:
-		// The text-only advisory notices (compaction / no_progress / provider.route)
-		// are mapped by advisoryEventToMsg and the subagent.* / team.* delegation
-		// projections by delegationEventToMsg (two split-out switches) to keep this
-		// dispatcher under the cyclomatic-complexity bound. The switches are total
-		// over the documented type strings ONLY together: a new advisory case goes to
-		// advisoryEventToMsg, a new delegation case to delegationEventToMsg, not here.
-		// An unknown/empty type returns nil so future event kinds are ignored,
-		// not fatal.
+		// The text-only advisory notices (compaction / no_progress / provider.route),
+		// MCP authorization lifecycle events, and the subagent.* / team.* delegation
+		// projections are mapped by advisoryEventToMsg and delegationEventToMsg (two
+		// split-out switches) to keep this dispatcher under the cyclomatic-complexity
+		// bound. The switches are total over the documented type strings ONLY
+		// together: a new advisory or authorization case goes to advisoryEventToMsg,
+		// a new delegation case to delegationEventToMsg, not here. An unknown/empty
+		// type returns nil so future event kinds are ignored, not fatal.
 		if msg := advisoryEventToMsg(ev); msg != nil {
 			return msg
 		}
@@ -1178,10 +1175,11 @@ func sessionTitleMsg(title *mecatlv1.SessionTitle) SessionTitleMsg {
 }
 
 // advisoryEventToMsg maps the text-only advisory event types (compaction,
-// no_progress, provider.route) to their tea.Msg. It is split out of EventToMsg
-// only so neither dispatcher grows past the cyclomatic-complexity bound (the
-// delegationEventToMsg precedent). An unmatched type returns nil so the caller
-// falls through to the delegation switch.
+// no_progress, provider.route), the steer echo/outcome, and the MCP
+// authorization lifecycle events to their tea.Msg. It is split out of
+// EventToMsg only so neither dispatcher grows past the cyclomatic-complexity
+// bound (the delegationEventToMsg precedent). An unmatched type returns nil so
+// the caller falls through to the delegation switch.
 func advisoryEventToMsg(ev *mecatlv1.Event) tea.Msg {
 	switch ev.GetType() {
 	case "model.retry":
@@ -1199,6 +1197,9 @@ func advisoryEventToMsg(ev *mecatlv1.Event) tea.Msg {
 		return SteerEchoMsg{Text: ev.GetSteer().GetText(), Parts: contentPartsFromProto(ev.GetSteer().GetParts()), MessageID: ev.GetSteer().GetMessageId()}
 	case "steer.outcome":
 		return steerOutcomeMsg(ev.GetSteerOutcome())
+	case "authorization.required", "authorization.resolved":
+		a := ev.GetAuthorization()
+		return MCPAuthorizationMsg{AuthorizationID: a.GetAuthorizationId(), DisplayName: a.GetDisplayName(), CallID: a.GetCallId(), Status: a.GetStatus()}
 	default:
 		return nil
 	}

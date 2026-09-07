@@ -153,7 +153,7 @@ backend, and undeclared tools on a declared backend, still require pre-prompt en
 authenticated discovery and the complete frozen catalogue. Each protected ToolHive process generates one
 confidential broker client; ToolHive persists only its hash, and mecatl retains the
 raw secret only in private process memory for HTTP-Basic code exchange and refresh
-([ADR 0309](adr/0309-confidential-toolhive-broker-client.md)). Public enrollment controls carry aggregate status, a
+([ADR 0312](adr/0312-confidential-toolhive-broker-client.md)). Public enrollment controls carry aggregate status, a
 service count, an opaque reference, and a presentation URL—not upstream names, endpoints,
 callback state, codes, or tokens.
 
