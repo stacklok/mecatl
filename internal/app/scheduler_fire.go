@@ -202,6 +202,12 @@ func makeFireFunc(svc *server.Service, store port.ScheduleStore, defaultTimeout 
 		// and the durable log exists precisely to record that tail.
 		logCtx := context.WithoutCancel(ctx)
 		recorder := server.NewRunEventRecorder(logCtx, svc, sess.ID)
+		// Drain to channel CLOSE, never break on EvResult: close(r.events) only
+		// happens after the drive goroutine's terminate()->e.save() has returned
+		// (engine/agent loop.go), mirroring the gRPC/HTTP relays' drain-to-discard
+		// contract (grpc.go relayRun). Breaking early here let this fire body race
+		// the engine's own still-running save() against the store, which is the
+		// "TempDir RemoveAll: directory not empty" flake under test load.
 		for ev := range run.Events() {
 			// The fire loop is this run's only consumer, so it owns the durable
 			// projection the gRPC/HTTP relays record for a client-driven run. Actor
@@ -214,7 +220,6 @@ func makeFireFunc(svc *server.Service, store port.ScheduleStore, defaultTimeout 
 			if ev.Type == session.EvResult && ev.Result != nil {
 				stop = ev.Result.Stop
 				runErr = ev.Result.Error
-				break
 			}
 		}
 		recorder.Close()
