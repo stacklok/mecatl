@@ -65,7 +65,7 @@ describe("offline durable activity wire", () => {
         const watchingClient = connect({ baseUrl: endpoint(daemon.ready) });
         let actorClient: ReturnType<typeof connect> | undefined;
         try {
-          const session = await watchingClient.sessions.create({ workspace: daemon.workspace });
+          const session = await watchingClient.sessions.create({});
           const firstRun = await session.run("record activity before restart");
           await firstRun.result();
 
@@ -103,35 +103,32 @@ describe("offline durable activity wire", () => {
   });
 
   it("activity spans two runs on the real wire", async () => {
-    await withDaemon(
-      { script: fixture("activity-before-restart.json") },
-      async ({ ready, workspace }) => {
-        const client = connect({ baseUrl: endpoint(ready) });
-        try {
-          const session = await client.sessions.create({ workspace });
-          const firstRun = await session.run("first activity run");
-          await firstRun.result();
+    await withDaemon({ script: fixture("activity-before-restart.json") }, async ({ ready }) => {
+      const client = connect({ baseUrl: endpoint(ready) });
+      try {
+        const session = await client.sessions.create({});
+        const firstRun = await session.run("first activity run");
+        await firstRun.result();
 
-          const activity = await session.activity();
-          const { envelopes, iterator } = await collectThroughBoundary(activity);
-          const secondRun = await session.run("second activity run");
-          const secondResult = secondRun.result();
-          await collectUntilRunResult(iterator, envelopes, secondRun.id);
-          await secondResult;
-          await activity.close();
+        const activity = await session.activity();
+        const { envelopes, iterator } = await collectThroughBoundary(activity);
+        const secondRun = await session.run("second activity run");
+        const secondResult = secondRun.result();
+        await collectUntilRunResult(iterator, envelopes, secondRun.id);
+        await secondResult;
+        await activity.close();
 
-          const results = envelopes.flatMap((envelope) =>
-            envelope.kind === "event" && envelope.event.kind === "result"
-              ? [envelope.event.runId]
-              : [],
-          );
-          expect(results).toEqual([firstRun.id, secondRun.id]);
-          expect(secondRun.id).not.toBe(firstRun.id);
-          await session.delete();
-        } finally {
-          await client.close();
-        }
-      },
-    );
+        const results = envelopes.flatMap((envelope) =>
+          envelope.kind === "event" && envelope.event.kind === "result"
+            ? [envelope.event.runId]
+            : [],
+        );
+        expect(results).toEqual([firstRun.id, secondRun.id]);
+        expect(secondRun.id).not.toBe(firstRun.id);
+        await session.delete();
+      } finally {
+        await client.close();
+      }
+    });
   });
 });

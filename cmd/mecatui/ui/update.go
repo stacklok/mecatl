@@ -43,6 +43,27 @@ func (Model) renderTickCmd() tea.Cmd {
 // Claude Code's "press ctrl+c again to exit" grace window.
 const quitArmWindow = 3 * time.Second
 
+// doubleEscapeWindow bounds the physical Escape gesture used to abandon an idle
+// draft. The reducer never reads a clock: a generation-tagged Tick message owns
+// expiry, which keeps tests and stale-tick handling deterministic.
+const doubleEscapeWindow = 500 * time.Millisecond
+
+type doubleEscapeExpiryMsg struct{ gen int }
+
+type doubleEscapeTimerFunc func(time.Duration, int) tea.Cmd
+
+func scheduleDoubleEscapeExpiry(after time.Duration, gen int) tea.Cmd {
+	return tea.Tick(after, func(time.Time) tea.Msg { return doubleEscapeExpiryMsg{gen} })
+}
+
+func (m Model) doubleEscapeExpiryCmd(gen int) tea.Cmd {
+	timer := m.doubleEscapeTimer
+	if timer == nil {
+		timer = scheduleDoubleEscapeExpiry
+	}
+	return timer(doubleEscapeWindow, gen)
+}
+
 // disarmQuitGuards clears any armed quit guards the current keypress did NOT itself
 // invoke (pressedQuit / pressedQuitD): an armed guard disarms on any key other than
 // its own, so its "press again" window spans only its own consecutive presses. It
@@ -290,6 +311,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case autoScrollMsg:
 		return m.onAutoScroll()
 
+	case tea.KeyboardEnhancementsMsg, tea.KeyReleaseMsg:
+		return m.onKeyboardProtocolMsg(msg)
+
 	case tea.KeyPressMsg:
 		return m.onKey(msg)
 
@@ -316,7 +340,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.generatedStatusLine = msg.line
 		return m, m.statusLineWaitCmd()
 
-	case quitDisarmMsg, quitDDisarmMsg, clickDisarmMsg:
+	case quitDisarmMsg, quitDDisarmMsg, clickDisarmMsg, doubleEscapeExpiryMsg:
 		return m.onDisarmMsg(msg)
 
 	case diagnosticsMsg:
@@ -1744,6 +1768,44 @@ func (m *Model) relayout() {
 	m.syncStuck()
 }
 
+// physicalEscape reports the non-remappable hardware gesture. Bubble Tea's
+// repeat metadata is authoritative when available; repeats remain owner-visible
+// but can never arm or complete the draft-clear gesture.
+func physicalEscape(msg tea.KeyPressMsg) bool {
+	return msg.Code == tea.KeyEscape && msg.Mod == 0
+}
+
+func (m Model) hasDoubleEscapeDraft() bool {
+	return m.prompt.Value() != "" || len(m.stagedMedia) > 0 || len(m.stagedPastes) > 0 ||
+		len(m.pendingPromptMedia.Parts) > 0 || len(m.pendingPromptMedia.Descriptors) > 0
+}
+
+// doubleEscapeEligible is intentionally narrower than ordinary prompt input:
+// every selection, menu, overlay, modal, paused queue, and running-cancel owner
+// gets Escape first. Only the focused, plain idle composer can use the gesture.
+func (m Model) doubleEscapeEligible() bool {
+	return m.keyboardEventTypes && m.phase == phaseIdle && m.prompt.Focused() && m.hasDoubleEscapeDraft() &&
+		!m.sel.active && !m.prompt.HasSelection() && !m.palette.open && !m.mention.open &&
+		m.queuePaused == "" && !bodyOwnerOpen(m)
+}
+
+func (m Model) onKeyboardProtocolMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.KeyboardEnhancementsMsg:
+		m.keyboardEventTypes = msg.SupportsEventTypes()
+		if !m.keyboardEventTypes {
+			m.doubleEscapeArmed = false
+			m.doubleEscapeReleased = false
+		}
+	case tea.KeyReleaseMsg:
+		releasedKey := msg.Key()
+		if m.doubleEscapeArmed && m.doubleEscapeEligible() && releasedKey.Code == tea.KeyEscape && releasedKey.Mod == 0 {
+			m.doubleEscapeReleased = true
+		}
+	}
+	return m, nil
+}
+
 // onKey routes key presses by phase. ctrl+c is handled first, with a graceful
 // double-press guard (Claude Code's "press again to exit"): a first ctrl+c does
 // NOT quit — it clears a non-empty prompt, or on an empty prompt arms the guard
@@ -1752,6 +1814,13 @@ func (m *Model) relayout() {
 // (SIGINT/SIGTERM via tea.WithContext in main) is unaffected; this is the in-TUI
 // key path only.
 func (m Model) onKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	// Any intervening key breaks consecutiveness. Escape owned by another surface
+	// also disarms before that owner handles it; a repeat is never a gesture press.
+	if !physicalEscape(msg) || !m.doubleEscapeEligible() {
+		m.doubleEscapeArmed = false
+		m.doubleEscapeReleased = false
+	}
+
 	// Global lifecycle controls retain precedence over every overlay.
 	if key.Matches(msg, m.keys.Quit) {
 		return m.onQuitKey()
@@ -2347,10 +2416,9 @@ func (m Model) onClickDisarm(msg clickDisarmMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// onDisarmMsg fans the two timed-disarm messages (the double-Ctrl+C quit guard and
-// the multi-click count reset) out to their reducers: one switch case in update()
-// that re-discriminates the concrete type here — the onPasteMsg/onMouseMsg pattern,
-// keeping update()'s cyclomatic complexity bounded.
+// onDisarmMsg fans the timed-disarm messages out to their reducers: one switch
+// case in update() that re-discriminates the concrete type here — the
+// onPasteMsg/onMouseMsg pattern, keeping update()'s cyclomatic complexity bounded.
 func (m Model) onDisarmMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case quitDisarmMsg:
@@ -2359,6 +2427,12 @@ func (m Model) onDisarmMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.onQuitDDisarm(msg)
 	case clickDisarmMsg:
 		return m.onClickDisarm(msg)
+	case doubleEscapeExpiryMsg:
+		if m.doubleEscapeArmed && msg.gen == m.doubleEscapeGen {
+			m.doubleEscapeArmed = false
+			m.doubleEscapeReleased = false
+		}
+		return m, nil
 	default:
 		return m, nil
 	}
@@ -2811,6 +2885,8 @@ func (m Model) onIdleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.statusMsg = m.deps.Theme.Style("muted").Render("queue cleared")
 		m.refreshView()
 		return m, nil
+	case physicalEscape(msg):
+		return m.onIdleDoubleEscape(msg)
 	case key.Matches(msg, m.keys.Newline):
 		m.prompt.InsertNewline()
 		return m.afterInputEdit(nil)
@@ -2823,6 +2899,24 @@ func (m Model) onIdleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		cmd := (&m).updatePromptKey(msg)
 		return m.afterInputEdit(cmd)
 	}
+}
+
+func (m Model) onIdleDoubleEscape(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	if msg.IsRepeat || !m.doubleEscapeEligible() {
+		return m, nil
+	}
+	if m.doubleEscapeArmed {
+		if !m.doubleEscapeReleased {
+			return m, nil
+		}
+		m.doubleEscapeArmed = false
+		m.doubleEscapeReleased = false
+		return m.clearPrompt()
+	}
+	m.doubleEscapeArmed = true
+	m.doubleEscapeReleased = false
+	m.doubleEscapeGen++
+	return m, m.doubleEscapeExpiryCmd(m.doubleEscapeGen)
 }
 
 // onIdleSubmit handles enter at idle, in priority order (extracted from onIdleKey to

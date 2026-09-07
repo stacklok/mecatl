@@ -1,4 +1,4 @@
-# ADR 0302 — Human-reviewed development contracts before implementation
+# ADR 0304 — Human-reviewed development contracts before implementation
 
 - Status: Accepted
 - Date: 2026-09-06
@@ -35,7 +35,7 @@ sets `landed` in its PR diff. That is a proposed transition until merge: the tar
 remains `approved` or `in-progress`, and `landed` becomes authoritative only when that diff
 merges. No cleanup or status-only PR follows.
 
-ADR 0302 carries `Accepted` as the target state of this proposal PR: merging the PR is the
+ADR 0304 carries `Accepted` as the target state of this proposal PR: merging the PR is the
 acceptance event. Until merge, this ADR remains mutable during review; once merged, it is
 frozen under ADR 0002.
 

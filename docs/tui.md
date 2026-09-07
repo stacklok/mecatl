@@ -63,7 +63,14 @@ The render packages (`ui`, `theme`) and the `client` package stay a pure client 
 they never import any `engine/...` or `internal/...` package and render solely from the proto
 `Event` envelope. Hosting the embedded server is confined to the `cmd/mecatui`
 main and its `embed` subpackage (which build the same server `mecated` does, via
-`internal/app`).
+`internal/app`). Embedded operational diagnostics go only to the per-user state
+log (`$XDG_STATE_HOME/mecatl/mecatui.log`, with the standard local-state fallback).
+A stable cross-process lock is held for the writer lifetime, so a second instance
+fails closed instead of replacing an active log. On startup, a no-symlink open
+verifies the path is a regular file; an oversized log is atomically retained to a
+recent 10 MiB tail, with the replacement and containing directory synced before
+append. Unsafe paths and failures before replacement preserve the prior log and
+use `io.Discard`, so diagnostics cannot corrupt the terminal.
 
 ## Build
 
@@ -1175,6 +1182,7 @@ show the plain prompt-hint card.
 | paste (bracketed) | replace the active prompt selection, or insert clipboard text at the caret; a single pasted **media-file path** is staged as an attachment instead, and a **large** paste (≥ 2000 chars — alone or combined with the current input — or ≥ 30 lines) is staged behind a `[Pasted text #N]` placeholder, replacing the active selection before insertion or otherwise appending at the end of the input, expanding on send (ignored while an overlay/modal is open) |
 | `ctrl+v` | read the OS clipboard — a clipboard **image** stages as an `[Image #N]` attachment (when supported), else replace the active prompt selection with clipboard **text** (see below) |
 | `ctrl+u` | clear the entire unsent draft, including staged attachments and large-paste placeholders (rebindable via `ClearPrompt`) |
+| physical `esc` twice within 500ms | While idle with a focused draft containing text, staged attachments, large-paste content, or pending media, clear it through `ClearPrompt`; attachment-only drafts qualify. This gesture requires enhanced key-event support; without it, the gesture is unavailable. The first press is silent and only arms, an `esc` key release must follow, and only a later non-repeat press can clear; key repeat or another press before release cannot complete it. Existing selection, palette, mention, approval, overlay, modal, and running-turn owners take precedence and disarm it, as do another key or expiry. This physical compatibility gesture is not remappable; use the universal remappable `ClearPrompt` / `ctrl+u` alternative. |
 | `esc` (while a run streams) | cancel the in-flight run (sends `Cancel`; waits for the terminal result; leaves the draft and queued follow-ups intact) |
 | `enter` (idle, **paused queue**, empty input) | resume — send the merged staged follow-ups |
 | `esc` (idle, **paused queue**) | clear the queue (the current draft remains intact) |
@@ -1308,7 +1316,7 @@ safe there). Actions marked *(approval)* are the permission-modal keys.
 |---|---|---|---|
 | `Submit` | `enter` | global | send the prompt; while a run streams, steer when supported or queue a follow-up otherwise |
 | `Newline` | `shift+enter`, `ctrl+j` | global | newline in the input |
-| `Cancel` | `esc` | global | cancel the running turn; idle Escape leaves the current draft intact |
+| `Cancel` | `esc` | global | cancel the running turn; the separate physical double-`esc` compatibility gesture clears an eligible idle draft within 500ms and is not remappable |
 | `ClearPrompt` | `ctrl+u` | global | clear the entire unsent draft, including staged attachments and large-paste placeholders |
 | `EditBack` | `up` | global | pull the queued follow-ups back into the input (empty input only) |
 | `Paste` | `ctrl+v` | global | paste a clipboard image as an attachment, else clipboard text |

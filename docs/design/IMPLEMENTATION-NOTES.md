@@ -8214,7 +8214,7 @@ failures name only the class, never the value. The elapsed-time expiry leg is bo
 the only clock-dependent part because the official `oauth2.Token.Valid` has no injected
 clock.
 
-## TypeScript SDK — `sdk/typescript/` (M1 core + M2 attachment, ADRs 0279 and 0288)
+## TypeScript SDK — `sdk/typescript/` (M1 core + M2 attachment + M3 local daemon, ADRs 0279, 0288 and 0292)
 
 The ESM-only `@stacklok/mecatl-sdk` has three exports. `.` owns the transport-neutral
 `Client`/`Session`/`Run` API, typed events/errors, prompt-media helpers, and the hand-written
@@ -8259,6 +8259,201 @@ existing `engine/adapter/mockllm` provider via `app.Config.MockProvider`, includ
 tool-call turns and a bounded per-turn delay for deterministic mid-flight cancellation. The
 SDK CI job runs frozen install, Biome, typecheck, unit Vitest, build, pack, API reports, Go+TS
 codegen freshness, and this e2e; each command remains a hard failure.
+
+M3's local-daemon root is `sdk/typescript/src/spawn.ts`. `spawn()` is reachable only from
+`./node`; the transport-neutral entry point imports neither `node:child_process` nor the
+launcher module. Binary resolution is total and ordered: explicit `binaryPath`, then
+`MECATED_BIN`, then an SDK-owned `PATH` walk for `mecated`, with `stat` plus execute-access
+validation before launch and no shell. Caller arguments cannot name the SDK-owned listener,
+ready-file, or lifetime flags. The default argv is `serve --grpc-unix-socket <socket>
+--http-addr "" --ready-file <ready> --lifetime-pipe-fd 3`; it deliberately carries no posture,
+trust, or permission flag. `http: true` changes only the SDK-owned HTTP value to
+`127.0.0.1:0`; because the daemon then omits `mcp_servers_on_create`, later tool support
+is derived from the ready document's `features`, never from that option.
+`lifetimePipe: false` omits both the lifetime flag and the fourth stdio entry. Caller
+`env` values are merged over the inherited process environment before binary resolution
+and launch, and that environment is never used to build an outward-facing fact or message.
+
+Each spawn creates a `0700` directory with `mkdtemp`, never adopts a caller-predictable path,
+and holds `ready.json` plus `mecated.sock` there. Socket paths are checked against Darwin's
+104-byte `sun_path` ceiling before launch; an over-long OS temp base is discarded and replaced
+through a second short-base `mkdtemp`. Cleanup uses `lstat` so replacing the runtime path with
+a symlink removes the link rather than its target. The launch, filesystem, scheduler, clock,
+and transport factories live in one module-internal options bag used by unit tests and never
+enter the public API.
+
+Readiness is the atomically published document, not stdout or a speculative dial loop. A
+partial JSON read remains behind the polling barrier; only schema `mecated-ready/1` with a
+valid pid, Unix transport, non-empty `socket_path`, positive API major and string feature
+list succeeds, and the document path — not the requested path — builds the UDS transport.
+The SDK performs the first `GetCompatibilityInfo` dial before returning the client. A child
+whose handle closes first produces `spawn_failed` with its code and signal; a live child that
+misses the configured deadline produces `readiness_timeout`. Both paths, plus schema and
+first-dial failures after launch, dispose any created transport, close the lifetime endpoint,
+send `SIGTERM`, bound the grace period and escalate to `SIGKILL`, then remove the runtime
+directory. The process handle is the signalling authority; the ready document's pid is only
+display metadata.
+
+The real launcher retains at most the last 64 KiB of stderr and reports at most the last 4 KiB.
+If the reporting cut lands inside a line, that leading fragment is discarded before decoding.
+Redaction then runs over exactly the reported text and replaces a whole line for environment-
+assignment shapes or the `sk-`, `ghp_`, `xox[abps]-`, and `eyJ` credential prefixes. The safe
+tail is the only stderr material added to the typed error or diagnostics. `ClientDiagnosticsOptions`
+installs one synchronous structured sink on Node/Bun client construction; records contain
+`code`, `level`, `message`, and primitive typed `fields`, remain separate from `session.Event`,
+and sink exceptions cannot replace the failure being observed. With no sink the SDK has no
+`console` fallback.
+
+The `./node`-only `SpawnedClient` subtype adds a `daemon` getter whose frozen `DaemonInfo`
+is an explicit five-field projection: pid, transport, socket path, API major and features.
+It excludes the ready document's HTTP address, gRPC-address duplicate, deployment label and
+every unknown future field. Node's fourth `stdio` pipe is a connected Unix socketpair; the
+server-side validator accepts that exact connected-stream shape as well as a FIFO, and the
+child watches its endpoint only for reads, so closing the never-written parent endpoint
+provides the parent-death EOF contract without `mkfifo(1)`.
+
+Disposal ownership is split explicitly between `sdk/typescript/src/client.ts` and
+`sdk/typescript/src/spawn.ts`. `ClientImpl` registers accepted and not-yet-accepted owned runs
+separately from `SessionActivity` / `AttachedRun` watches. Its one cached close promise walks the
+fixed order: send cancellation or abort the run stream, close every durable watch, stop the status
+monitor, abort and stop the module-internal tool-host lifecycle, dispose an SDK-owned transport,
+then invoke the spawned-daemon stop and runtime-removal hooks. The internal options bag owns the
+launcher, scheduler, tool-host and teardown-observation seams; none enters either public barrel.
+Each step is isolated by the same disposal wrapper, which emits a
+`client_disposal_failed` diagnostic with only the step and error class, then continues and never
+throws out of `close()`. Watch close unregisters itself; run completion unregisters its cancel
+closure. `Symbol.asyncDispose` delegates to the same promise.
+
+The spawned-daemon hook signals only its captured child handle. `SIGTERM` precedes lifetime-end
+release; a bounded grace precedes `SIGKILL`, and a second bound prevents an unresponsive kill from
+wedging disposal. Both bounds — and the readiness poll — race a timer against the child's exit, so
+each one aborts its scheduler sleep once the race settles: `Promise.race` does not cancel its loser,
+and a non-unref'd timer that outlives it keeps the host's event loop alive after the SDK's own work
+is done. Both stop and directory removal are individually idempotent, so a stop fault
+cannot skip removal. The ready document's pid stays display-only. The child's exit promise is also
+the post-start death detector: an exit outside close records one frozen `daemon_exited` diagnostic,
+aborts active client-side work, and makes `ClientImpl` retain a local `InvalidStateError` that every
+later client, session, and run entry check returns before touching transport. A later close still
+releases client resources and removes the runtime directory, but `isRunning()` prevents signalling
+the already-observed child. Ordinary `connect()` construction supplies no daemon hooks and therefore
+has no process or runtime-directory authority.
+
+The one-shot layer is `sdk/typescript/src/query.ts`. Its public options keep the three ownership
+domains separate: `session` is passed to `Client.sessions.create`, `spawn` is consulted only when
+there is no supplied client, and `onPermissionAsk` configures the existing `Run` responder. The
+module-internal `queryInternal` options bag replaces only the spawn function for tests; no launcher
+or resource seam enters the `./node` barrel. Plan mode is checked from the requested session mode
+before that seam is invoked and raises the existing `UnsupportedFeatureError` for
+`session.resolvePlan()` rather than adding an M4 plan-resolution surface.
+
+`QueryImpl` claims the existing run's event iterator once and exposes the same decoded `Event`
+values plus the created session id. A terminal result cleans up before it is delivered. Iterator
+`return` and the optional abort signal share one cached cleanup promise: they send the run's
+ordinary cancel control, drain through its terminal so `SessionImpl` releases its active-run
+registration, then walk the resource ledger. The session is deleted unless `retainSession` was
+requested; the client is closed only when query created it. Setup has the same ledger in reverse:
+a create failure closes only a newly spawned client, while a run-start failure first deletes its
+already-created session and then closes that client without replacing the original typed error.
+Retention deliberately does not imply durability. With a supplied client the id can be loaded for
+that daemon's remaining lifetime; an SDK-created daemon still stops at query cleanup, and its
+default store is in-memory.
+
+Responder-less ask handling is an injected `PermissionAskResponder`, not a change to
+`sdk/typescript/src/run.ts`. It returns `deny`, emits one frozen
+`query_permission_ask_denied` diagnostic carrying only `askId` and `tool`, and leaves the raw ask
+in the event union. A caller-supplied responder takes the existing M1 path unchanged, including
+its abstention semantics, and a `Run` constructed outside query still leaves an unanswered ask
+pending for `resolveAsk()`.
+
+Callback-tool registration lives in `sdk/typescript/src/tool.ts` and is decorated onto the
+Node/Bun client type without widening the transport-neutral `Client`. The one registry owns a
+validated server name (`sdk` by default, maximum 64 ASCII characters from `[A-Za-z0-9._-]`, no
+`__`) and rejects empty or namespace-forging tool names plus local duplicates. Registration copies
+the plain JSON Schema value and compiles it with Ajv's 2020-12 dialect under explicit
+`coerceTypes: false`, `useDefaults: false`, and `removeAdditional: false`; Ajv is a direct MIT
+dependency recorded in `sdk/typescript/package.json` and reachable only from `./node`.
+
+`sdk/typescript/src/client.ts` treats a client tool host as an injected lifecycle plus registry
+view. Every session-create attempt leases the registry against concurrent registration. A
+tool-bearing create waits for the host binding, calls `ListMcpSources`, and rejects a resolved
+server whose name equals the registry namespace before issuing `CreateSession`. It then appends
+exactly one `McpServerSpec` for the whole set, preserving any explicit raw `mcpServers`; a
+successful create commits immutability, while a failed create releases the lease. The advertised
+tool annotation always contains `readOnlyHint`: false by default, true only for the caller's
+unverified `readOnly` assertion. The harness consequently serializes the safe default, while a
+mis-annotation can enter read-parallel dispatch and is not covered by plan mode's fixed built-in
+mutation names.
+
+The `withToolRegistration` decorator in `sdk/typescript/src/tool.ts` also owns the typed
+availability refusal. `sdk/typescript/src/node-client.ts` supplies no registry for `connect()`, so
+`tool()` raises local `unsupported_feature` synchronously and cannot issue an RPC or start a host.
+After the first compatibility dial, `sdk/typescript/src/spawn.ts` derives availability only from the
+ready document's `mcp_servers_on_create` feature: an absent feature omits the registry lifecycle from
+`ClientImpl`, leaves the loopback host unstarted, and makes the refusal name that feature. The SDK
+does not infer support from `http: true`. When a capable client's `CreateSession` instead returns
+`client_mcp_unsupported` or `client_mcp_unreachable`, `ClientImpl` releases the create lease as
+unsuccessful and the existing server-error normalizer preserves the code and server origin; no
+`Session` handle is constructed and later registration remains possible. The four M3-only members
+of `SDKErrorCode` are visibly tagged in `sdk/typescript/src/errors.ts`; the Scenario 8 test checks
+that exact set against the server manifest already parity-gated from the Go error registry.
+
+The registry validates model-authored arguments before invoking the handler and turns a schema
+miss into a text `isError` result. Validation never rewrites the input. A valid JSON object is
+recursively copied with data properties onto null-prototype records before user code runs, so
+`__proto__`, `constructor`, and `prototype` cannot activate inherited setters or leak inherited
+members into the handler. `sdk/typescript/test/media.test.ts` walks the `.` entrypoint's source
+graph and rejects both Node built-ins and any Ajv import, keeping the subpath boundary executable.
+
+The concrete binding is `sdk/typescript/src/tool-host.ts` (`LoopbackToolHost`), constructed by
+`sdk/typescript/src/spawn.ts` and never exported from either public barrel. It mints 32 random bytes
+per spawned client and retains the bearer in memory; `mcpServer()` is its only outbound projection,
+placing `Authorization: Bearer …` beside the literal `http://127.0.0.1:<ephemeral>/mcp` URL. The
+listener compares SHA-256 digests of presented and expected authorization values through
+`timingSafeEqual`, so missing, truncated and full-length-wrong inputs take the same fixed-length
+comparison path. POST requests with an `Origin` or a non-exact bound `Host` are rejected before
+authentication, unauthenticated requests are rejected before a body listener is installed, and
+every non-POST request (including `OPTIONS`) is `405` with `Allow: POST` and no CORS surface.
+
+The stateless JSON-RPC switch implements exactly `server/discover`, `initialize`,
+`notifications/initialized`, `tools/list`, `tools/call` and `ping`. Discovery returns method-not-found
+so the pinned Go SDK falls back to initialize; the initialize result selects from the same descending
+supported set and advertises that set, with `2025-11-25` as the latest legacy fallback. Calls enter
+one client-wide eight-slot scheduler. The queue is capped at 64, per-tool `concurrency` is
+tighten-only, request bodies are capped at 1 MiB, and a 30-second timer starts at admission so queued
+and running calls are both bounded. Caller disconnect, deadline and client disposal abort the
+handler signal and retire the logical slot without waiting for handler code that ignores abort.
+
+Result normalization is one choke point: strings become one text block; every other serializable
+JSON value becomes `structuredContent` plus its compact JSON text mirror; and an explicit
+`CallToolResult` passes unchanged. The serialized result is checked against the mirrored
+`internal/adapter/toolkit/toolkit.go` 25,000-byte limit before the HTTP response. A thrown handler or
+non-serializable value receives a random correlation id and a generic `isError` result. The
+`tool_handler_failed` diagnostic carries that id, the local tool name and the original `cause`; sink
+exceptions are ignored. Deliberate `isError` results bypass this failure translation and remain
+verbatim. `ClientImpl`'s pre-existing tool-host-before-transport disposal order calls `abort` and
+`stop`, which cancel the scheduler, destroy listener connections and join `Server.close` so the port
+is reusable before daemon teardown.
+
+Scenario 10's wire proof lives in `sdk/typescript/e2e/spawn.e2e.test.ts` and
+`sdk/typescript/e2e/tool.e2e.test.ts` and deliberately imports the product `spawn()` surface. Its
+strict mock scripts cover successful, throwing,
+read-only, mutating and schema-invalid callback turns. The event assertions read the real
+`tool.result`, rather than treating handler invocation as proof that the payload crossed back into
+the agent loop. The lifecycle half reads the published ready allowlist, makes real refused connects
+to the suppressed `127.0.0.1:8080` and `:8081` defaults, checks close-before-directory-removal, and
+kills Node and Bun helper parents. `sdk/typescript/e2e/fixtures/runtime-helper.mjs` imports the built
+package, so Bun exercises the published ESM shape rather than Vitest's TypeScript transform. The SDK
+CI job pins Bun 1.4.1 and the local `task sdk:e2e` gate requires a Bun executable (or an explicit
+`BUN_BIN`), keeping the runtime leg out of skip-only test metadata.
+
+The real-wire fixtures currently select the explicit `noop` authority evaluator. Client MCP tools
+are added to a per-session catalog after `internal/app/root_authority.go` (`mintRootAuthority`) has
+projected the process-wide root catalog, so the default local evaluator otherwise rejects the newly
+mounted exact tool name before the permission layer can ask. This keeps the M3 MCP/permission wire
+proof isolated, but the default-authority integration is a separate ship decision rather than a
+property these tests claim to cover. One fixture deliberately restores the default evaluator and
+asserts the denial verbatim, so the limitation is regression-covered and the eventual
+`RootAuthority` widening has a failing test to flip rather than a silent behaviour change.
 
 The M2 durable-watch base lives in `sdk/typescript/src/watch.ts`. Its client-authored `kind`
 turns the generated `{event, cursor, phase}` response into `event | boundary | gap | unknown`;

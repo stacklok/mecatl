@@ -1,0 +1,8 @@
+{
+  "turns": [
+    {
+      "text": "invalid turn",
+      "tool_calls": [{ "id": "invalid", "name": "Read", "args": {} }]
+    }
+  ]
+}

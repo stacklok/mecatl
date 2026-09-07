@@ -39,6 +39,7 @@ func mouseCaptureEnabled(m Model) bool {
 // (not a string); we set Content and request the alt screen.
 func (m Model) View() tea.View {
 	var v tea.View
+	v.KeyboardEnhancements.ReportEventTypes = true
 	v.AltScreen = !m.deps.NoAltScreen
 	v.WindowTitle = m.windowTitle()
 	// Capture the mouse — but ONLY on the alt screen, and ONLY when mouse capture

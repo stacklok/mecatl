@@ -115,6 +115,11 @@ export interface Client {
 }
 
 // @public
+export interface ClientDiagnosticsOptions {
+    diagnostics?: DiagnosticsSink;
+}
+
+// @public
 export interface CompactionArchiveEventPayload {
     // (undocumented)
     readonly replaced: readonly ArchivedConversationMessage[];
@@ -190,6 +195,24 @@ export class CursorMalformedError extends MecatlError {
 export class CursorScopeError extends MecatlError {
     constructor(message?: string);
 }
+
+// @public
+export type DiagnosticFieldValue = boolean | number | string | null;
+
+// @public
+export type DiagnosticLevel = "debug" | "error" | "info" | "warn";
+
+// @public
+export interface DiagnosticRecord {
+    readonly cause?: unknown;
+    readonly code: string;
+    readonly fields: Readonly<Record<string, DiagnosticFieldValue>>;
+    readonly level: DiagnosticLevel;
+    readonly message: string;
+}
+
+// @public
+export type DiagnosticsSink = (record: DiagnosticRecord) => void;
 
 // @public
 export type ErrorOrigin = TransportKind | "local";
@@ -698,7 +721,7 @@ export interface ScheduleEventPayload {
 export type SdkCursor = string;
 
 // @public (undocumented)
-export type SDKErrorCode = "authentication" | "cursor_scope" | "incompatible_server" | "invalid_prompt" | "invalid_state" | "no_runs" | "protocol" | "transport" | "unsupported_feature";
+export type SDKErrorCode = "authentication" | "cursor_scope" | "incompatible_server" | "invalid_prompt" | "invalid_state" | "no_runs" | "protocol" | "readiness_timeout" | "spawn_failed" | "tool_registration" | "transport" | "unsupported_platform" | "unsupported_feature";
 
 // @public (undocumented)
 export class ServerError extends MecatlError {

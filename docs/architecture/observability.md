@@ -48,7 +48,14 @@ coverage for allocations, RSS, tokens, cache-hit rate, and goroutine hygiene. Se
   command roots share an exact `--log-level` flag (`debug`, `info`, `warn`, or
   `error`; default `info`). Each root installs its configured stderr logger as
   the global `slog` default and wraps that same logger with `slogdiag`, so
-  ambient library records and injected diagnostics obey one threshold. Invalid
+  ambient library records and injected diagnostics obey one threshold. Embedded
+  `mecatui` instead redirects its diagnostics to its private state log. A stable
+  cross-process lock is held for the writer lifetime, so another instance fails
+  closed rather than replacing an actively written log. At startup it opens the
+  data path without following symlinks, atomically retains a recent 10 MiB tail
+  of an oversized regular log, syncs the replacement and containing directory,
+  then appends. Unsafe paths and failures before replacement preserve the prior
+  log and fall back to `io.Discard`. Invalid
   values, including an explicitly empty value, fail soft to `info` and produce
   one warning after logger installation.
 - **Telemetry** (`internal/adapter/telemetry`) — one adapter that implements

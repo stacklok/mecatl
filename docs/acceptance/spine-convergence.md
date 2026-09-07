@@ -25,7 +25,7 @@ contributor (human or agent) can do in the repo, not which files exist.
 - **CLI / config:** None — no binary or operator configuration changed.
 - **Events / persistence:** None — no runtime event or persistence shape changed.
 - **Security / authority:** None — the historical plan introduced repository workflow checks, not a runtime authority boundary.
-- **Compatibility / migration:** The repository workflow contract is superseded where necessary by [ADR 0302](../adr/0302-human-reviewed-development-contracts.md); no runtime migration applies.
+- **Compatibility / migration:** The repository workflow contract is superseded where necessary by [ADR 0304](../adr/0304-human-reviewed-development-contracts.md); no runtime migration applies.
 
 ## Why these scope cuts
 

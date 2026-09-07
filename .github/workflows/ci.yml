@@ -133,6 +133,10 @@ jobs:
           cache: pnpm
           cache-dependency-path: sdk/typescript/pnpm-lock.yaml
 
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: '1.4.1'
+
       # The SDK job becomes hybrid as later slices add codegen freshness and a
       # same-checkout mecated e2e. Provision those tools now without perturbing
       # the existing Go jobs.

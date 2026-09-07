@@ -107,6 +107,21 @@ export class AuthenticationError extends MecatlError {
 }
 
 // @public
+export type CallToolContent = Readonly<Record<string, ToolJsonValue>> & {
+    readonly type: string;
+};
+
+// @public
+export interface CallToolResult {
+    // (undocumented)
+    readonly content: readonly CallToolContent[];
+    // (undocumented)
+    readonly isError?: boolean;
+    // (undocumented)
+    readonly structuredContent?: ToolJsonValue;
+}
+
+// @public
 export interface Client {
     // (undocumented)
     [Symbol.asyncDispose](): Promise<void>;
@@ -119,13 +134,18 @@ export interface Client {
 }
 
 // @public
+export interface ClientDiagnosticsOptions {
+    diagnostics?: DiagnosticsSink;
+}
+
+// @public
 export interface CompactionArchiveEventPayload {
     // (undocumented)
     readonly replaced: readonly ArchivedConversationMessage[];
 }
 
 // @public
-export function connect(options: NodeConnectOptions): Client;
+export function connect(options: NodeConnectOptions): NodeClient;
 
 // @public
 export type ConnectionStatus = "connecting" | "online" | "reconnecting" | "offline" | "unauthorized" | "incompatible";
@@ -197,6 +217,33 @@ export class CursorMalformedError extends MecatlError {
 export class CursorScopeError extends MecatlError {
     constructor(message?: string);
 }
+
+// @public
+export interface DaemonInfo {
+    readonly apiMajor: number;
+    readonly features: readonly string[];
+    readonly pid: number;
+    readonly socketPath: string;
+    readonly transport: "unix";
+}
+
+// @public
+export type DiagnosticFieldValue = boolean | number | string | null;
+
+// @public
+export type DiagnosticLevel = "debug" | "error" | "info" | "warn";
+
+// @public
+export interface DiagnosticRecord {
+    readonly cause?: unknown;
+    readonly code: string;
+    readonly fields: Readonly<Record<string, DiagnosticFieldValue>>;
+    readonly level: DiagnosticLevel;
+    readonly message: string;
+}
+
+// @public
+export type DiagnosticsSink = (record: DiagnosticRecord) => void;
 
 // @public
 export type ErrorOrigin = TransportKind | "local";
@@ -513,7 +560,12 @@ export interface ModelRetryEventPayload {
 }
 
 // @public
-export type NodeConnectOptions = NodeTransportOptions | InjectedTransportOptions;
+export interface NodeClient extends Client {
+    tool(name: string, schema: ToolSchema, handler: ToolHandler, options?: ToolOptions): ToolDefinition;
+}
+
+// @public
+export type NodeConnectOptions = (NodeTransportOptions | InjectedTransportOptions) & ClientDiagnosticsOptions;
 
 // @public (undocumented)
 export interface NodeTransportCommonOptions extends CredentialOptions {
@@ -635,6 +687,24 @@ export class ProtocolError extends MecatlError {
 }
 
 // @public
+export interface Query extends AsyncIterable<Event_2> {
+    readonly sessionId: string;
+}
+
+// @public
+export function query(prompt: PromptInput, options?: QueryOptions): Promise<Query>;
+
+// @public
+export interface QueryOptions {
+    client?: Client;
+    onPermissionAsk?: PermissionAskResponder;
+    retainSession?: boolean;
+    session?: CreateSessionOptions;
+    signal?: AbortSignal;
+    spawn?: SpawnOptions;
+}
+
+// @public
 export interface RawClient {
     features(options?: CallOptions): Promise<ReadonlySet<string>>;
     // (undocumented)
@@ -725,7 +795,7 @@ export interface ScheduleEventPayload {
 export type SdkCursor = string;
 
 // @public (undocumented)
-export type SDKErrorCode = "authentication" | "cursor_scope" | "incompatible_server" | "invalid_prompt" | "invalid_state" | "no_runs" | "protocol" | "transport" | "unsupported_feature";
+export type SDKErrorCode = "authentication" | "cursor_scope" | "incompatible_server" | "invalid_prompt" | "invalid_state" | "no_runs" | "protocol" | "readiness_timeout" | "spawn_failed" | "tool_registration" | "transport" | "unsupported_platform" | "unsupported_feature";
 
 // @public (undocumented)
 export class ServerError extends MecatlError {
@@ -796,6 +866,25 @@ export interface Sessions {
     fork(sourceSessionId: string, options?: ForkSessionOptions): Promise<Session>;
     // (undocumented)
     get(sessionId: string): Promise<Session>;
+}
+
+// @public
+export function spawn(options?: SpawnOptions): Promise<SpawnedClient>;
+
+// @public
+export interface SpawnedClient extends NodeClient {
+    readonly daemon: DaemonInfo;
+}
+
+// @public
+export interface SpawnOptions extends ClientDiagnosticsOptions {
+    args?: readonly string[];
+    binaryPath?: string;
+    env?: Readonly<NodeJS.ProcessEnv>;
+    http?: boolean;
+    lifetimePipe?: boolean;
+    readinessTimeoutMs?: number;
+    toolServerName?: string;
 }
 
 // @public
@@ -989,6 +1078,43 @@ export interface ToolCallEventPayload {
 }
 
 // @public
+export interface ToolDefinition {
+    readonly concurrency: number | undefined;
+    readonly modelName: string;
+    readonly name: string;
+    readonly readOnly: boolean;
+    readonly schema: ToolSchema;
+}
+
+// @public
+export type ToolHandler = (arguments_: Readonly<Record<string, ToolJsonValue>>, context: ToolHandlerContext) => unknown | Promise<unknown>;
+
+// @public
+export interface ToolHandlerContext {
+    readonly signal: AbortSignal;
+}
+
+// @public
+export type ToolJsonValue = boolean | number | string | null | readonly ToolJsonValue[] | {
+    readonly [key: string]: ToolJsonValue;
+};
+
+// @public
+export interface ToolOptions {
+    concurrency?: number;
+    readOnly?: boolean;
+}
+
+// @public
+export class ToolRegistrationError extends MecatlError {
+    constructor(reason: ToolRegistrationReason, message: string, cause?: unknown);
+    readonly reason: ToolRegistrationReason;
+}
+
+// @public
+export type ToolRegistrationReason = "duplicate_name" | "invalid_options" | "invalid_schema" | "invalid_server_name" | "invalid_tool_name";
+
+// @public
 export interface ToolResultEventPayload {
     // (undocumented)
     readonly blocks: readonly EventContentBlock[];
@@ -1001,6 +1127,9 @@ export interface ToolResultEventPayload {
     // (undocumented)
     readonly structuredContent: string;
 }
+
+// @public
+export type ToolSchema = boolean | Readonly<Record<string, ToolJsonValue>>;
 
 export { Transport }
 

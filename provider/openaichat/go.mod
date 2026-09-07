@@ -3,7 +3,7 @@ module github.com/stacklok/mecatl/provider/openaichat
 go 1.26.6
 
 require (
-	github.com/openai/openai-go/v3 v3.52.0
+	github.com/openai/openai-go/v3 v3.54.0
 	github.com/stacklok/mecatl/engine v0.13.0
 	github.com/stacklok/mecatl/provider/ssefilter v0.1.0
 	go.uber.org/goleak v1.3.0

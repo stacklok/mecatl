@@ -8,7 +8,7 @@ import (
 	"github.com/stacklok/mecatl/engine/session"
 )
 
-func TestADR_0301_DistinctIdentitiesEmitOrderedChunkText(t *testing.T) {
+func TestADR_0302_DistinctIdentitiesEmitOrderedChunkText(t *testing.T) {
 	got := decodeFixture(t, "distinct_text_identities_turn.sse")
 	want := []port.Chunk{
 		{Kind: port.ChunkText, Text: "item"},
@@ -21,7 +21,7 @@ func TestADR_0301_DistinctIdentitiesEmitOrderedChunkText(t *testing.T) {
 	assertChunks(t, got, want)
 }
 
-func TestADR_0301_InterleavedPhaseReasoningAndToolCallPreserveChunkSemantics(t *testing.T) {
+func TestADR_0302_InterleavedPhaseReasoningAndToolCallPreserveChunkSemantics(t *testing.T) {
 	got := decodeFixture(t, "interleaved_multipart_turn.sse")
 	if len(got) != 8 {
 		t.Fatalf("got %d chunks, want 8: %+v", len(got), got)

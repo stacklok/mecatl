@@ -22,6 +22,11 @@ export type {
 export { connect } from "./client.js";
 export type { CredentialOptions, CredentialProvider } from "./credentials.js";
 export type {
+  ClientDiagnosticsOptions,
+  DiagnosticFieldValue,
+  DiagnosticLevel,
+  DiagnosticRecord,
+  DiagnosticsSink,
   ErrorOrigin,
   MecatlErrorCode,
   MecatlErrorOptions,
