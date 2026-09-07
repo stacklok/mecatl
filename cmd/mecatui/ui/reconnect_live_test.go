@@ -787,6 +787,25 @@ func TestADR_0096_ImmediateRearmedCloseUsesAttemptTwoBackoff(t *testing.T) {
 	if marker, ok := rm.msg.(client.LiveReconnectingMsg); !ok || marker.Attempt != 2 {
 		t.Fatalf("second reconnect marker = %#v, want attempt 2", rm.msg)
 	}
+	// The attempt-2 marker is emitted on the loop's buffered channel BEFORE the
+	// loop calls live.StreamSessionLive for the attempt-2 probe (case 4 below),
+	// so receiving it here gives no happens-before guarantee that opens is
+	// already 4 — a buffered send does not block on the receiver, and the loop
+	// goroutine may not yet have reached the StreamSessionLive call. Draining
+	// the loop's NEXT message (LiveReconnectedMsg, emitted only after that call
+	// returns) establishes the real synchronization: Go's channel semantics
+	// guarantee this receive happens after the corresponding send, which in
+	// turn happens after the StreamSessionLive call in the same goroutine.
+	mm, nextReconnect2 := m.Update(secondAttempt)
+	m = mm.(Model)
+	secondProbe := runCmdTimeout(t, nextReconnect2)
+	rm, ok = secondProbe.(reconnectMsg)
+	if !ok {
+		t.Fatalf("attempt-2 probe handoff = %T, want reconnectMsg", secondProbe)
+	}
+	if _, ok := rm.msg.(client.LiveReconnectedMsg); !ok {
+		t.Fatalf("attempt-2 probe message = %#v, want LiveReconnectedMsg", rm.msg)
+	}
 	if opens := live.opens.Load(); opens != 4 {
 		t.Fatalf("live opens = %d, want initial reader + probe + rearmed reader + attempt-2 probe", opens)
 	}
