@@ -7,11 +7,102 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stacklok/mecatl/engine/adapter/memproposal"
 	"github.com/stacklok/mecatl/engine/adapter/memskill"
 	"github.com/stacklok/mecatl/engine/adapter/skillfs"
 	"github.com/stacklok/mecatl/engine/learning"
 	"github.com/stacklok/mecatl/engine/tool"
 )
+
+// blockingWriteSkillRepository pauses the FIRST mutating call — CreateDraft,
+// which skillmaterialize.Materialize issues to create the draft version,
+// BEFORE skilllifecycle.Pipeline.Process ever runs — until release is
+// closed, signalling entered exactly once. It lets a test observe whatever
+// synchronization buildProcedureProcessor holds across its FULL write
+// sequence (Materialize's CreateDraft through Pipeline.Process), without
+// depending on the exact internal ordering beyond "CreateDraft goes first".
+type blockingWriteSkillRepository struct {
+	learning.SkillRepository
+	entered chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func (r *blockingWriteSkillRepository) CreateDraft(ctx context.Context, partition learning.SkillPartition, owner string, bundle learning.SkillBundle, prov learning.SkillProvenance) (learning.SkillVersion, error) {
+	r.once.Do(func() { close(r.entered) })
+	<-r.release
+	return r.SkillRepository.CreateDraft(ctx, partition, owner, bundle, prov)
+}
+
+// TestBuildProcedureProcessorHoldsPublicationLockForNonPublishablePartition
+// pins the fix for the flaky
+// TestUsableAutoSkillsStockBuildPolicyMatrix/untrusted_project_ignored: the
+// per-partition assets.skillPublication lock must be held for the WHOLE
+// buildProcedureProcessor write, even when the partition is NOT publishable
+// (untrusted workspace, demoted to Review) — not only on the publishable
+// branch. Before the fix, a non-publishable write acquired no lock at all, so
+// a concurrent reader (ListLearnedSkills's own publishPartition, guarded by
+// the SAME assets.skillPublication instance) could observe the partition's
+// generation change mid-read and fail with errLearnedSkillGenerationChanged.
+// This test proves the lock, deterministically: it forces the processor's
+// write to pause mid-flight and asserts a concurrent lock() attempt on the
+// SAME partition blocks until the write finishes, rather than relying on the
+// probabilistic e2e reproduction (which only surfaced ~15-20% of the time
+// under `-race -count=30`).
+func TestBuildProcedureProcessorHoldsPublicationLockForNonPublishablePartition(t *testing.T) {
+	proposals := memproposal.New()
+	blocking := &blockingWriteSkillRepository{SkillRepository: memskill.New(), entered: make(chan struct{}), release: make(chan struct{})}
+	catalog := skillfs.NewAtomicCatalog(nil, nil, nil)
+	pub := &learnedSkillPublication{}
+	input, outcome, digest := reflectionOutcomeFixture(t, learning.CandidateProcedure)
+	assets := catalogAssets{reflectionRepository: proposals, learnedSkills: blocking, liveSkills: catalog, skillOwner: "reflection", skillPublication: pub}
+	// TrustProject:false + Workspace==the candidate's project makes this
+	// partition NON-publishable (the exact "untrusted_project_ignored" shape):
+	// publishable := partition.Project=="" || (partition.Project==cfg.Workspace && projectIngestionAdmitted(cfg))
+	// both disjuncts are false here.
+	cfg := Config{LearningMode: learning.Auto, Workspace: input.Trajectory.Workspace, TrustProject: false}
+	processor := buildProcedureProcessor(cfg, assets)
+	if processor == nil {
+		t.Fatal("buildProcedureProcessor returned nil")
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := processReflectionOutcome(context.Background(), proposals, nil, nil, "principal", input, digest, outcome,
+			learning.DetectSignals(input), learning.Auto, false, input.Trajectory.Workspace, processor)
+		done <- err
+	}()
+
+	select {
+	case <-blocking.entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("buildProcedureProcessor never reached its first repository write")
+	}
+
+	partition := learning.SkillPartition{Principal: "principal", Project: input.Trajectory.Workspace}
+	acquired := make(chan func(), 1)
+	go func() { acquired <- pub.lock(partition) }()
+
+	select {
+	case unlock := <-acquired:
+		unlock()
+		t.Fatal("publication lock was acquired while a non-publishable buildProcedureProcessor write was still in flight — the lock must guard every partition-mutating write, not only the publishable branch")
+	case <-time.After(100 * time.Millisecond):
+		// Still blocked, as required: the lock is held across the non-publishable write.
+	}
+
+	close(blocking.release)
+	if err := <-done; err != nil {
+		t.Fatalf("processReflectionOutcome: %v", err)
+	}
+
+	select {
+	case unlock := <-acquired:
+		unlock()
+	case <-time.After(2 * time.Second):
+		t.Fatal("publication lock was never released after buildProcedureProcessor finished")
+	}
+}
 
 type failingListSkillRepository struct {
 	learning.SkillRepository

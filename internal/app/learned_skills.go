@@ -203,6 +203,32 @@ func buildProcedureProcessor(cfg Config, assets catalogAssets) func(context.Cont
 	}
 	return func(ctx context.Context, record learning.ProposalRecord, mode learning.Mode) error {
 		partition := learning.SkillPartition{Principal: record.Partition.Principal, Project: record.Partition.Project}
+		// The partition publication lock is acquired UNCONDITIONALLY, before ANY
+		// partition-mutating call below (not only around Pipeline.Process, and
+		// not only on the publishable branch): skillmaterialize.Materialize
+		// ALSO writes assets.learnedSkills (it creates the draft version) before
+		// Pipeline.Process ever runs, so a lock scoped to only the latter still
+		// left the former's write unguarded. A reader holding the SAME
+		// assets.skillPublication lock (Service.BeginSkillPublication, acquired
+		// around ListLearnedSkills/ListSkills/mutateLearnedSkill/
+		// RollbackLearnedSkill) must be excluded across the WHOLE sequence — an
+		// unlocked write let a concurrent listActiveLearnedSkillsAtGeneration
+		// observe the partition's generation change mid-read and fail with
+		// errLearnedSkillGenerationChanged (the flaky
+		// TestUsableAutoSkillsStockBuildPolicyMatrix/untrusted_project_ignored,
+		// reproduced under `-race -count=30`; pinned deterministically by
+		// TestBuildProcedureProcessorHoldsPublicationLockForNonPublishablePartition).
+		// ponytail: this now also holds the lock across Pipeline.Process's
+		// Evaluator.Evaluate call (a possible LLM round trip), and
+		// learnedSkillPublication.lock is not ctx-aware (a bare channel wait) —
+		// so a slow evaluator now stalls any ListLearnedSkills/ListSkills/
+		// mutate/rollback call for the SAME partition for its duration, where it
+		// previously ran outside the lock. Correctness (no torn reads) outweighs
+		// this; revisit with a ctx-aware wait if evaluator latency bites.
+		if assets.skillPublication != nil {
+			unlock := assets.skillPublication.lock(partition)
+			defer unlock()
+		}
 		inventory, err := learnedSkillInventory(ctx, assets.learnedSkills, partition, assets.skills)
 		if err != nil {
 			return err
@@ -215,11 +241,10 @@ func buildProcedureProcessor(cfg Config, assets catalogAssets) func(context.Cont
 		var publisher skilllifecycle.Publisher
 		publishable := partition.Project == "" || (partition.Project == cfg.Workspace && projectIngestionAdmitted(cfg))
 		if publishable && assets.liveSkills != nil {
+			// serial deliberately left unset on this publisher: this goroutine
+			// already holds the partition lock above, and learnedSkillPublication.lock
+			// is not reentrant — setting serial here would self-deadlock.
 			publisher = learnedSkillPublisher{repository: assets.learnedSkills, partitions: []learning.SkillPartition{partition}, owner: assets.skillOwner, catalog: assets.liveSkills}
-			if assets.skillPublication != nil {
-				unlock := assets.skillPublication.lock(partition)
-				defer unlock()
-			}
 		} else if mode == learning.Auto {
 			// A shared process catalog cannot safely expose another caller/project
 			// partition. Keep it staged until a partition-bound catalog is available.
