@@ -2,7 +2,7 @@
 id: 07-panel-semantic-tool-regions
 title: Derive tool-card provenance from semantic sections
 blocked_by: [06-panel-anchor-lifetime-and-appendix-order]
-status: in-progress
+status: done
 attempt: 1
 branch: "plan-mecatui-logical-conversation-anchors/07-panel-semantic-tool-regions-attempt-1"
 worktree: ".scratch/worker-mecatui-logical-conversation-anchors-07-panel-semantic-tool-regions-attempt-1"
