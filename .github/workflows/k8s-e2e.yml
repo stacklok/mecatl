@@ -80,9 +80,10 @@ jobs:
   k8s-e2e:
     name: k8s e2e (kind)
     runs-on: ubuntu-24.04
-    # The suite normally finishes in ~5-8 minutes; 20 covers a slow kind pull day.
-    # This is the cheap backstop UNDER the suite's own 30m `go test -timeout`.
-    timeout-minutes: 20
+    # `task e2e:k8s` has a 30m `go test -timeout`; setup and build consume this
+    # job budget too. Leave the suite enough outer-deadline margin to emit its
+    # diagnostics and upload the tee'd failure log.
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
