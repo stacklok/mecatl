@@ -61,6 +61,31 @@ func TestADR_0301_SelectionPreservesLiveStableText(t *testing.T) {
 	if got := copied.(Model).statusMsg; !strings.Contains(ansi.Strip(got), "copied") {
 		t.Fatalf("copy status = %q, want copied status", got)
 	}
+
+	t.Run("duplicate context requires canonical offset", func(t *testing.T) {
+		frame := renderedFrame{
+			lines: []string{"duplicated endpoint", "duplicated endpoint"},
+			provenance: []renderedRow{
+				{blockID: 1, region: conversationRegionBody, sourceOffset: 0, text: true},
+				{blockID: 1, region: conversationRegionBody, sourceOffset: 20, text: true},
+			},
+		}
+		point := selectionPoint{
+			blockID: 1, region: conversationRegionBody, sourceOffset: 30,
+			before: "duplicated", after: " endpoint",
+		}
+		line, col, ok := resolveSelectionPoint(frame, point)
+		if !ok || line != 1 || col != 10 {
+			t.Fatalf("duplicate context resolved to (%d, %d, %v), want (1, 10, true)", line, col, ok)
+		}
+
+		ambiguous := point
+		ambiguous.sourceOffset = 10
+		frame.provenance[1].sourceOffset = 0
+		if _, _, ok := resolveSelectionPoint(frame, ambiguous); ok {
+			t.Fatal("ambiguous duplicate canonical offsets must fail closed")
+		}
+	})
 }
 
 // TestLogicalConversationAnchors_Scenario1_ChangingFrame proves that the live

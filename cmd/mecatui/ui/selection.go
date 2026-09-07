@@ -374,25 +374,29 @@ func (s *selection) resolveLogical(frame renderedFrame) bool {
 }
 
 func resolveSelectionPoint(frame renderedFrame, point selectionPoint) (int, int, bool) {
-	// Prefer an exact local context match. Wrapped continuation indentation is display
-	// chrome, not canonical source text, so a source offset alone cannot distinguish
-	// it after reflow; the bounded context is the selection identity proof.
+	// Context proves that the visible text is unchanged, while the canonical source
+	// offset establishes which occurrence it identifies. Either proof alone can
+	// match duplicated text after a reflow, so reject an ambiguous exact match.
+	line, col, matches := 0, 0, 0
 	for i, row := range frame.provenance {
 		if row.blockID != point.blockID || row.region != point.region || !row.text {
 			continue
 		}
-		line := ansi.Strip(frame.lines[i])
-		text := strings.TrimSpace(line)
-		leading := graphemeCount(line) - graphemeCount(strings.TrimLeft(line, " "))
+		textLine := ansi.Strip(frame.lines[i])
+		text := strings.TrimSpace(textLine)
+		leading := graphemeCount(textLine) - graphemeCount(strings.TrimLeft(textLine, " "))
 		for offset := 0; offset <= graphemeCount(text); offset++ {
+			if row.sourceOffset+offset != point.sourceOffset {
+				continue
+			}
 			before := graphemeSlice(text, max(0, offset-selectionContextGraphemes), offset)
 			after := graphemeSlice(text, offset, min(graphemeCount(text), offset+selectionContextGraphemes))
 			if strings.HasSuffix(before, point.before) && strings.HasPrefix(after, point.after) {
-				return i, leading + offset, true
+				line, col, matches = i, leading+offset, matches+1
 			}
 		}
 	}
-	return 0, 0, false
+	return line, col, matches == 1
 }
 
 func (s *selection) snapshotLogical(frame renderedFrame, content string) bool {
