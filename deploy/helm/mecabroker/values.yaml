@@ -1,0 +1,54 @@
+nameOverride: ""
+fullnameOverride: ""
+
+image:
+  repository: ghcr.io/stacklok/mecatl/mecabroker
+  tag: ""
+  digest: ""
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+
+# The listener pair is TLS-only. The Secret must contain tls.crt and tls.key.
+tls:
+  secretName: mecabroker-tls
+  certKey: tls.crt
+  keyKey: tls.key
+
+# Workload identity verifies every mecak8s gRPC call. caSecret must contain ca.pem.
+workloadIdentity:
+  issuer: ""
+  jwksURI: ""
+  audience: mecabroker
+  caSecret: mecabroker-workload-identity
+  caKey: ca.pem
+  maxJWKSStaleness: 15m
+
+# Config is mounted read-only. OAuth client secrets named by client_secret_env
+# are supplied with extraEnv valueFrom.secretKeyRef, never inline here.
+brokerConfig: |
+  {"callback_url":"https://broker.invalid/callback","profiles":[]}
+extraEnv: []
+
+resources:
+  requests: {cpu: 100m, memory: 128Mi}
+  limits: {cpu: 1000m, memory: 512Mi}
+
+service:
+  grpcPort: 9080
+  callbackPort: 9081
+
+terminationGracePeriodSeconds: 70
+drain:
+  propagationDelay: 2s
+  timeout: 55s
+
+networkPolicy:
+  enabled: true
+  # Each entry is a Kubernetes NetworkPolicyPeer. Keep these lists explicit:
+  # mecak8sFrom reaches only gRPC; browserCallbackFrom reaches only callbacks.
+  mecak8sFrom: []
+  browserCallbackFrom: []
+  # Operator-owned NetworkPolicyEgressRule entries for DNS plus concrete
+  # OIDC/JWKS, upstream OAuth, and MCP destination CIDRs/selectors. Dynamic
+  # destinations must be maintained by the operator or an external policy system.
+  operatorEgress: []

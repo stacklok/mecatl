@@ -1,0 +1,102 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "mecabroker.fullname" . }}
+  labels: {{- include "mecabroker.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  strategy:
+    # Process-bound authorization and callback correlation are not transferable.
+    type: Recreate
+  selector:
+    matchLabels: {{- include "mecabroker.labels" . | nindent 6 }}
+  template:
+    metadata:
+      labels: {{- include "mecabroker.labels" . | nindent 8 }}
+      annotations:
+        checksum/broker-config: {{ .Values.brokerConfig | sha256sum }}
+    spec:
+      serviceAccountName: {{ include "mecabroker.fullname" . }}
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile: {type: RuntimeDefault}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: broker
+          image: {{ if .Values.image.digest }}{{ .Values.image.repository }}@{{ .Values.image.digest }}{{ else }}{{ .Values.image.repository }}:{{ default (printf "v%s" .Chart.Version) .Values.image.tag }}{{ end }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - --grpc-addr=0.0.0.0:9080
+            - --http-addr=0.0.0.0:9081
+            - --admin-addr=127.0.0.1:9082
+            - --tls-cert=/var/run/secrets/tls/{{ .Values.tls.certKey }}
+            - --tls-key=/var/run/secrets/tls/{{ .Values.tls.keyKey }}
+            - --oidc-issuer={{ required "workloadIdentity.issuer is required" .Values.workloadIdentity.issuer }}
+            - --oidc-jwks-uri={{ required "workloadIdentity.jwksURI is required" .Values.workloadIdentity.jwksURI }}
+            - --oidc-audience={{ required "workloadIdentity.audience is required" .Values.workloadIdentity.audience }}
+            - --oidc-ca=/var/run/secrets/workload-identity/{{ .Values.workloadIdentity.caKey }}
+            - --oidc-max-jwks-staleness={{ .Values.workloadIdentity.maxJWKSStaleness }}
+            - --config=/etc/mecabroker/broker.json
+            - --drain-propagation-delay={{ .Values.drain.propagationDelay }}
+            - --drain-timeout={{ .Values.drain.timeout }}
+          {{- with .Values.extraEnv }}
+          env: {{- toYaml . | nindent 12 }}
+          {{- end }}
+          ports:
+            - {name: grpc, containerPort: 9080}
+            - {name: callback, containerPort: 9081}
+            - {name: admin, containerPort: 9082}
+          startupProbe:
+            exec: {command: ["/ko-app/mecabroker", "ready"]}
+            periodSeconds: 2
+            failureThreshold: 30
+          readinessProbe:
+            exec: {command: ["/ko-app/mecabroker", "ready"]}
+            periodSeconds: 5
+            timeoutSeconds: 3
+          livenessProbe:
+            exec: {command: ["/ko-app/mecabroker", "health"]}
+            periodSeconds: 20
+            timeoutSeconds: 3
+          lifecycle:
+            preStop:
+              exec: {command: ["/ko-app/mecabroker", "drain"]}
+          resources: {{- toYaml .Values.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities: {drop: ["ALL"]}
+            seccompProfile: {type: RuntimeDefault}
+          volumeMounts:
+            - {name: tls, mountPath: /var/run/secrets/tls, readOnly: true}
+            - {name: workload-identity, mountPath: /var/run/secrets/workload-identity, readOnly: true}
+            - {name: broker-config, mountPath: /etc/mecabroker, readOnly: true}
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - name: tls
+          secret:
+            secretName: {{ required "tls.secretName is required" .Values.tls.secretName }}
+            defaultMode: 0440
+            items:
+              - {key: {{ .Values.tls.certKey }}, path: {{ .Values.tls.certKey }}}
+              - {key: {{ .Values.tls.keyKey }}, path: {{ .Values.tls.keyKey }}}
+        - name: workload-identity
+          secret:
+            secretName: {{ required "workloadIdentity.caSecret is required" .Values.workloadIdentity.caSecret }}
+            defaultMode: 0440
+            items:
+              - {key: {{ .Values.workloadIdentity.caKey }}, path: {{ .Values.workloadIdentity.caKey }}}
+        - name: broker-config
+          configMap:
+            name: {{ include "mecabroker.fullname" . }}-config
+            defaultMode: 0444
+        - name: tmp
+          emptyDir: {sizeLimit: 64Mi}

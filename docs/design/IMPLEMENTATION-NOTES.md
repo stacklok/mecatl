@@ -5854,6 +5854,18 @@ fixed model-visible ambiguous-outcome tool error. A new client may start one fre
 pre-prompt enrollment after restart, while a stale protected-call continuation fails closed.
 The process resource ledger and non-distributed boundary are [ADR 0304](../adr/0304-process-bound-remote-mcp-broker.md).
 
+`cmd/mecabroker` is the sole remote ToolHive composition root. Its dedicated chart is
+one-replica `Recreate` with no PDB, autoscaler, or outer-broker Redis. The public TLS
+listeners carry workload-authenticated gRPC and browser callbacks; a fixed loopback admin
+listener carries only health, readiness, and drain. `internal/adapter/mcpbrokerserver/coordinator.go`
+(`Coordinator`) is the process-local shared admission gate and active-operation cancellation
+registry for both public transports. Readiness checks run under one finite timeout and are
+traffic signals only. Drain closes admission first, waits endpoint propagation, bounds active
+work, cancels the remainder, and only then lets command composition stop listeners and close
+ToolHive resources. Restart interrupts attachments and outer OAuth correlation; none of these
+controls provides ownership transfer, callback failover, or HA. The complete topology and
+resource ledger are [ADR 0305](../adr/0305-single-replica-mcp-broker-topology.md).
+
 **Server-global MCP on every session (bug #3 fix, `sessionEngineFactory`):** the
 per-session catalog mounts the SERVER-GLOBAL MCP tools (`cfg.MCPServers` + ToolHive — the
 same tools the build-time `buildCatalog`→`connectMCP`+`assembleCatalog` path mounts on the main engine), NOT just core + client

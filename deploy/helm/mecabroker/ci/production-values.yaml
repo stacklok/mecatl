@@ -1,0 +1,43 @@
+image:
+  tag: v0.0.0
+workloadIdentity:
+  issuer: https://identity.example.invalid
+  jwksURI: https://identity.example.invalid/keys
+brokerConfig: |
+  {
+    "callback_url": "https://broker.example.invalid/oauth/complete",
+    "profiles": [{
+      "name": "issues",
+      "url": "https://mcp.example.invalid/mcp",
+      "auth": "oauth",
+      "oauth": {
+        "issuer": "https://identity.example.invalid",
+        "client_id": "replace-me",
+        "client_secret_env": "MECATL_MCP_ISSUES_CLIENT_SECRET",
+        "scopes": ["openid"]
+      },
+      "tools": [{"name":"list_issues","schema":{"type":"object"},"read_only":true}]
+    }]
+  }
+extraEnv:
+  - name: MECATL_MCP_ISSUES_CLIENT_SECRET
+    valueFrom:
+      secretKeyRef: {name: mecabroker-upstream, key: client-secret}
+networkPolicy:
+  mecak8sFrom:
+    - namespaceSelector:
+        matchLabels: {kubernetes.io/metadata.name: mecatl}
+      podSelector:
+        matchLabels: {app.kubernetes.io/name: mecak8s}
+  browserCallbackFrom:
+    - namespaceSelector:
+        matchLabels: {mecatl.stacklok.com/browser-ingress: "true"}
+      podSelector:
+        matchLabels: {mecatl.stacklok.com/browser-ingress: "true"}
+  # Documentation-only TEST-NET range: replace with concrete cluster DNS and
+  # destination CIDRs/selectors for this deployment before installation.
+  operatorEgress:
+    - to:
+        - ipBlock: {cidr: 192.0.2.0/24}
+      ports:
+        - {protocol: TCP, port: 443}

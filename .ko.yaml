@@ -48,6 +48,15 @@ builds:
     ldflags:
       - -s -w
       - '{{with index .Env "VERSION"}}-X github.com/stacklok/mecatl/internal/buildinfo.BuildID={{.}}{{end}}'
+  - id: mecabroker
+    main: ./cmd/mecabroker
+    flags:
+      - -trimpath
+    env:
+      - CGO_ENABLED=0
+    ldflags:
+      - -s -w
+      - '{{with index .Env "VERSION"}}-X github.com/stacklok/mecatl/internal/buildinfo.BuildID={{.}}{{end}}'
   # mecatui (issue #302): the optional Bubble Tea TUI binary. It overrides the
   # distroless base with the brood-box wolfi base (see baseImageOverrides above —
   # brood-box connects over SSH and needs a shell) and ships a kodata/agent.yaml

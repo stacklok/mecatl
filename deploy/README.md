@@ -1,5 +1,10 @@
 # Deploying mecated
 
+For the separately deployed, one-replica MCP authorization broker, use the
+[`deploy/helm/mecabroker`](helm/mecabroker) chart and the
+[standalone broker guide](../docs/usage.md#standalone-mcp-broker-on-kubernetes).
+It deliberately has no HA, PDB, scaling, or outer-broker Redis configuration.
+
 Kubernetes manifests for the mecatl server, `mecated`. The container image is
 built with [`ko`](https://ko.build) directly from `./cmd/mecated` — there is no
 Dockerfile. Manifests reference the image via the `ko://…` placeholder, which

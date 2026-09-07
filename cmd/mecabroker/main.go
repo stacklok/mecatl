@@ -16,8 +16,12 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"strings"
+	"sync"
 	"syscall"
 	"time"
+
+	"google.golang.org/grpc"
 
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/internal/adapter/mcpbroker"
@@ -26,11 +30,16 @@ import (
 	contract "github.com/stacklok/mecatl/internal/mcpbroker"
 )
 
-const shutdownTimeout = 10 * time.Second
+const (
+	shutdownTimeout        = 5 * time.Second
+	defaultPropagationWait = 2 * time.Second
+	defaultDrainTimeout    = 55 * time.Second
+)
 
 type config struct {
 	grpcAddress      string
 	httpAddress      string
+	adminAddress     string
 	tlsCertFile      string
 	tlsKeyFile       string
 	oidcIssuer       string
@@ -39,6 +48,8 @@ type config struct {
 	oidcCAFile       string
 	maxJWKSStaleness time.Duration
 	brokerConfigFile string
+	propagationWait  time.Duration
+	drainTimeout     time.Duration
 }
 
 type fileConfig struct {
@@ -72,6 +83,25 @@ type fileStatic struct {
 }
 
 func main() {
+	if len(os.Args) == 2 {
+		var err error
+		switch os.Args[1] {
+		case "health":
+			err = requestLocalAdmin(http.MethodGet, "/healthz", shutdownTimeout)
+		case "ready":
+			err = requestLocalAdmin(http.MethodGet, "/readyz", shutdownTimeout)
+		case "drain":
+			err = requestLocalAdmin(http.MethodPost, "/drain", defaultPropagationWait+defaultDrainTimeout+shutdownTimeout)
+		default:
+		}
+		if err != nil {
+			_, _ = fmt.Fprintln(os.Stderr, "mecabroker: local administration failed")
+			os.Exit(1)
+		}
+		if os.Args[1] == "health" || os.Args[1] == "ready" || os.Args[1] == "drain" {
+			return
+		}
+	}
 	cfg := parseFlags()
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -87,6 +117,7 @@ func parseFlags() config {
 	var cfg config
 	flag.StringVar(&cfg.grpcAddress, "grpc-addr", "127.0.0.1:9080", "authenticated broker gRPC listen address")
 	flag.StringVar(&cfg.httpAddress, "http-addr", "127.0.0.1:9081", "browser callback and ToolHive route listen address")
+	flag.StringVar(&cfg.adminAddress, "admin-addr", "127.0.0.1:9082", "loopback-only health, readiness, and drain listen address")
 	flag.StringVar(&cfg.tlsCertFile, "tls-cert", "", "PEM server certificate (required with --tls-key outside loopback)")
 	flag.StringVar(&cfg.tlsKeyFile, "tls-key", "", "PEM server private key")
 	flag.StringVar(&cfg.oidcIssuer, "oidc-issuer", "", "exact HTTPS workload-token issuer")
@@ -95,13 +126,22 @@ func parseFlags() config {
 	flag.StringVar(&cfg.oidcCAFile, "oidc-ca", "", "PEM trust bundle for issuer and JWKS TLS")
 	flag.DurationVar(&cfg.maxJWKSStaleness, "oidc-max-jwks-staleness", 15*time.Minute, "maximum cached-JWKS age during issuer outage")
 	flag.StringVar(&cfg.brokerConfigFile, "config", "", "strict JSON ToolHive broker configuration")
+	flag.DurationVar(&cfg.propagationWait, "drain-propagation-delay", defaultPropagationWait, "delay after closing admission before waiting for active work")
+	flag.DurationVar(&cfg.drainTimeout, "drain-timeout", defaultDrainTimeout, "finite deadline for active broker work during shutdown")
 	flag.Parse()
 	return cfg
 }
 
+//nolint:gocyclo // composition root keeps startup validation, listener ownership, and ordered drain in one lifecycle.
 func run(ctx context.Context, cfg config, diagnostics port.Diagnostics) error {
 	if cfg.brokerConfigFile == "" || cfg.oidcCAFile == "" {
 		return errors.New("required broker configuration is absent")
+	}
+	if cfg.propagationWait < 0 || cfg.drainTimeout <= 0 {
+		return errors.New("broker drain bounds are invalid")
+	}
+	if err := validateAdminAddress(cfg.adminAddress); err != nil {
+		return err
 	}
 	if (cfg.tlsCertFile == "") != (cfg.tlsKeyFile == "") {
 		return errors.New("TLS certificate and key must be configured together")
@@ -158,39 +198,126 @@ func run(ctx context.Context, cfg config, diagnostics port.Diagnostics) error {
 		return errors.New("listen for broker RPC")
 	}
 	defer func() { _ = grpcListener.Close() }()
+	httpListener, err := net.Listen("tcp", cfg.httpAddress)
+	if err != nil {
+		return errors.New("listen for broker callbacks")
+	}
+	defer func() { _ = httpListener.Close() }()
+	adminListener, err := net.Listen("tcp", cfg.adminAddress)
+	if err != nil {
+		return errors.New("listen for broker administration")
+	}
+	defer func() { _ = adminListener.Close() }()
+
 	grpcServer, err := server.NewGRPCServer(tlsConfig)
 	if err != nil {
 		return err
 	}
 	httpServer := &http.Server{Addr: cfg.httpAddress, Handler: server.HTTPHandler(), ReadHeaderTimeout: 5 * time.Second}
-	defer func() {
-		closeCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
-		defer cancel()
-		_ = httpServer.Shutdown(closeCtx)
-	}()
-	errCh := make(chan error, 2)
+	adminServer := &http.Server{Addr: cfg.adminAddress, ReadHeaderTimeout: 2 * time.Second}
+
+	var drainOnce sync.Once
+	drainDone := make(chan struct{})
+	drain := func() {
+		drainOnce.Do(func() {
+			go func() {
+				defer close(drainDone)
+				server.BeginDrain()
+				drainCtx, cancel := context.WithTimeout(context.Background(), cfg.drainTimeout)
+				_ = server.Drain(drainCtx, cfg.propagationWait)
+				cancel()
+				stopCtx, stopCancel := context.WithTimeout(context.Background(), shutdownTimeout)
+				_ = httpServer.Shutdown(stopCtx)
+				_ = server.Close(stopCtx)
+				stopCancel()
+			}()
+		})
+	}
+	adminServer.Handler = adminHandler(server, drain, drainDone)
+
+	errCh := make(chan error, 3)
 	go func() { errCh <- grpcServer.Serve(grpcListener) }()
 	go func() {
 		if tlsConfig == nil {
-			errCh <- httpServer.ListenAndServe()
+			errCh <- httpServer.Serve(httpListener)
 			return
 		}
 		httpServer.TLSConfig = tlsConfig.Clone()
-		errCh <- httpServer.ListenAndServeTLS("", "")
+		tlsListener := tls.NewListener(httpListener, httpServer.TLSConfig)
+		errCh <- httpServer.Serve(tlsListener)
 	}()
+	go func() { errCh <- adminServer.Serve(adminListener) }()
 
+	var result error
 	select {
 	case <-ctx.Done():
-		closeCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
-		defer cancel()
-		_ = httpServer.Shutdown(closeCtx)
-		return server.Close(closeCtx)
+		drain()
+		<-drainDone
 	case serveErr := <-errCh:
-		if errors.Is(serveErr, http.ErrServerClosed) {
-			return nil
+		if !errors.Is(serveErr, http.ErrServerClosed) && !errors.Is(serveErr, grpc.ErrServerStopped) {
+			result = errors.New("broker listener stopped")
 		}
-		return errors.New("broker listener stopped")
+		drain()
+		<-drainDone
 	}
+	adminCtx, adminCancel := context.WithTimeout(context.Background(), shutdownTimeout)
+	_ = adminServer.Shutdown(adminCtx)
+	adminCancel()
+	return result
+}
+
+func validateAdminAddress(address string) error {
+	host, _, err := net.SplitHostPort(address)
+	if err != nil {
+		return errors.New("broker admin listen address is invalid")
+	}
+	if strings.EqualFold(host, "localhost") {
+		return nil
+	}
+	ip := net.ParseIP(host)
+	if ip == nil || !ip.IsLoopback() {
+		return errors.New("broker admin listener must bind to loopback")
+	}
+	return nil
+}
+
+func adminHandler(server *mcpbrokerserver.Server, drain func(), drainDone <-chan struct{}) http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
+	mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) {
+		if !server.Ready(r.Context()) {
+			http.Error(w, "not ready", http.StatusServiceUnavailable)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	})
+	mux.HandleFunc("POST /drain", func(w http.ResponseWriter, r *http.Request) {
+		drain()
+		select {
+		case <-drainDone:
+			w.WriteHeader(http.StatusOK)
+		case <-r.Context().Done():
+			w.WriteHeader(http.StatusServiceUnavailable)
+		}
+	})
+	return mux
+}
+
+func requestLocalAdmin(method, path string, timeout time.Duration) error {
+	client := &http.Client{Timeout: timeout}
+	req, err := http.NewRequest(method, "http://127.0.0.1:9082"+path, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return errors.New("local drain rejected")
+	}
+	return nil
 }
 
 func readConfig(path string) (fileConfig, error) {

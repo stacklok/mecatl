@@ -1,0 +1,6 @@
+apiVersion: v2
+name: mecabroker
+description: Single-replica process-bound MCP authorization broker for mecak8s.
+type: application
+version: 0.1.0
+appVersion: "dev"

@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "mecabroker.fullname" . }}-config
+  labels: {{- include "mecabroker.labels" . | nindent 4 }}
+data:
+  broker.json: |
+{{ .Values.brokerConfig | indent 4 }}

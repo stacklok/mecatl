@@ -1,0 +1,23 @@
+{{- if .Values.networkPolicy.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "mecabroker.fullname" . }}
+  labels: {{- include "mecabroker.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels: {{- include "mecabroker.labels" . | nindent 6 }}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+{{ toYaml .Values.networkPolicy.mecak8sFrom | indent 8 }}
+      ports: [{protocol: TCP, port: grpc}]
+    - from:
+{{ toYaml .Values.networkPolicy.browserCallbackFrom | indent 8 }}
+      ports: [{protocol: TCP, port: browser-callback}]
+  # operatorEgress entries use only standard peers: namespaceSelector,
+  # podSelector, and ipBlock. Supply DNS plus concrete OIDC/JWKS, upstream OAuth,
+  # and MCP destination policy. Empty means default-deny egress.
+  egress:
+{{ toYaml .Values.networkPolicy.operatorEgress | indent 4 }}
+{{- end }}

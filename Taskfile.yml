@@ -189,6 +189,26 @@ tasks:
         silent: true
       - ko build --push --bare ./cmd/mecak8s
 
+  ko:build:broker:
+    desc: Build the mecabroker image locally with ko (no push; tagged under ko.local)
+    env:
+      KO_DOCKER_REPO: ko.local
+      VERSION: "{{.BUILD_ID}}"
+    cmds:
+      - ko build --local --bare ./cmd/mecabroker
+
+  ko:publish:broker:
+    desc: Build and push the mecabroker image with ko (honours KO_DOCKER_REPO)
+    env:
+      VERSION: "{{.BUILD_ID}}"
+    cmds:
+      - cmd: |
+          if [ -z "${KO_DOCKER_REPO:-}" ]; then
+            echo "KO_DOCKER_REPO is required (for example ghcr.io/stacklok/mecatl/mecabroker)"; exit 1
+          fi
+        silent: true
+      - ko build --push --bare ./cmd/mecabroker
+
   ko:build:mecatui:
     desc: Build the mecatui image locally with ko (issue #302; no push; tagged under ko.local)
     env:

@@ -24,6 +24,8 @@ pods, and mecatui provides an interactive terminal skin over an embedded server.
 
 - [**Cloud-native k8s with mecak8s**](mecak8s.md) — deploy the `cmd/mecak8s` composition root using the `deploy/helm/mecak8s/` Helm chart; covers the external Redis requirement, RBAC requirements for `leases`, pod drain, and lease release on SIGTERM.
 
+- [**Standalone MCP broker**](mecabroker.md) — deploy the dedicated one-replica `Recreate` broker chart with TLS/OIDC, isolated probes and drain, explicit network peers, and the documented restart-interruption boundary.
+
 - [**Single-shot CI with mecatequi**](mecatequi.md) — adopt the `mecatequi-reusable.yml` reusable workflow, understand the split-privilege job graph (agent job holds no write token; publish job applies the patch as data), and read `stop-reason` + `non-empty-diff` from action outputs correctly.
 
 - [**Drive via gRPC / HTTP**](grpc-http.md) — the wire protocol: the gRPC `Converse` stream, the HTTP/SSE surface, the `ResumeApproval` frame for permission verdicts, and the `POST /v1/sessions/{id}/approve` endpoint.

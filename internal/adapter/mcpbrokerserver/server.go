@@ -50,15 +50,17 @@ type Factory func(context.Context) (contract.Service, mcpbroker.HandlerBundle, s
 // workload identity policy into one lifecycle. Factory is the production path;
 // direct Service fields exist for adapter tests and are mutually exclusive with it.
 type Config struct {
-	Factory      Factory
-	Service      contract.Service
-	Handlers     mcpbroker.HandlerBundle
-	CallbackPath string
-	OIDC         OIDCConfig
-	Diagnostics  port.Diagnostics
-	Observe      func(operation, outcome string)
-	CloseProcess func() error
-	Transport    mcpbrokergrpc.Config
+	Factory          Factory
+	Service          contract.Service
+	Handlers         mcpbroker.HandlerBundle
+	CallbackPath     string
+	OIDC             OIDCConfig
+	Diagnostics      port.Diagnostics
+	Observe          func(operation, outcome string)
+	CloseProcess     func() error
+	Transport        mcpbrokergrpc.Config
+	ReadinessTimeout time.Duration
+	ReadinessChecks  []ReadinessCheck
 }
 
 type tokenValidator interface {
@@ -75,6 +77,7 @@ type Server struct {
 	diagnostics  port.Diagnostics
 	observe      func(string, string)
 	closeProcess func() error
+	coordinator  *Coordinator
 
 	mu         sync.Mutex
 	grpcServer *grpc.Server
@@ -83,6 +86,8 @@ type Server struct {
 }
 
 // New validates production identity policy before constructing any RPC state.
+//
+//nolint:gocyclo // one ordered transaction validates identity before construction and rolls resources back in reverse order.
 func New(ctx context.Context, cfg Config) (*Server, error) {
 	if cfg.Factory != nil && (cfg.Service != nil || !cfg.Handlers.Empty() || cfg.CallbackPath != "" || cfg.CloseProcess != nil) {
 		return nil, errors.New("mcpbrokerserver: factory and preconstructed broker resources are mutually exclusive")
@@ -124,7 +129,20 @@ func New(ctx context.Context, cfg Config) (*Server, error) {
 	if diagnostics == nil {
 		diagnostics = port.NopDiagnostics{}
 	}
-	s := &Server{validator: validator, rpc: rpc, mux: http.NewServeMux(), diagnostics: diagnostics, observe: cfg.Observe, closeProcess: cfg.CloseProcess}
+	readyTimeout := cfg.ReadinessTimeout
+	if readyTimeout == 0 {
+		readyTimeout = 2 * time.Second
+	}
+	coordinator, err := NewCoordinator(readyTimeout, cfg.ReadinessChecks...)
+	if err != nil {
+		_ = rpc.Shutdown(context.Background())
+		_ = validator.Close()
+		if cfg.CloseProcess != nil {
+			_ = cfg.CloseProcess()
+		}
+		return nil, err
+	}
+	s := &Server{validator: validator, rpc: rpc, mux: http.NewServeMux(), diagnostics: diagnostics, observe: cfg.Observe, closeProcess: cfg.CloseProcess, coordinator: coordinator}
 	if !cfg.Handlers.Empty() {
 		if err := cfg.Handlers.Mount(s.mux, cfg.CallbackPath); err != nil {
 			_ = rpc.Shutdown(context.Background())
@@ -135,6 +153,7 @@ func New(ctx context.Context, cfg Config) (*Server, error) {
 			return nil, fmt.Errorf("mcpbrokerserver: mount ToolHive routes: %w", err)
 		}
 	}
+	coordinator.Open()
 	return s, nil
 }
 
@@ -179,7 +198,7 @@ func (s *Server) NewGRPCServer(tlsConfig *tls.Config) (*grpc.Server, error) {
 	if s.grpcServer != nil {
 		return nil, errors.New("mcpbrokerserver: gRPC server already created")
 	}
-	options := []grpc.ServerOption{grpc.UnaryInterceptor(s.authenticate)}
+	options := []grpc.ServerOption{grpc.ChainUnaryInterceptor(s.coordinator.UnaryInterceptor, s.authenticate)}
 	if tlsConfig != nil {
 		if err := ValidateTransport("network", tlsConfig); err != nil {
 			return nil, err
@@ -196,10 +215,23 @@ func (s *Server) NewGRPCServer(tlsConfig *tls.Config) (*grpc.Server, error) {
 	return server, nil
 }
 
-// HTTPHandler returns the complete fixed ToolHive route bundle. These browser
-// endpoints are not workload-authenticated; their authority comes from opaque,
-// single-use state created by the broker process.
-func (s *Server) HTTPHandler() http.Handler { return s.mux }
+// HTTPHandler returns the complete fixed ToolHive route bundle behind the same
+// admission gate as gRPC. These browser endpoints are not workload-authenticated;
+// their authority comes from opaque, single-use state created by the broker process.
+func (s *Server) HTTPHandler() http.Handler { return s.coordinator.HTTP(s.mux) }
+
+// Ready reports bounded serving readiness. It is a deployment signal only, not
+// an ownership or stale-worker fence.
+func (s *Server) Ready(ctx context.Context) bool { return s.coordinator.Ready(ctx) }
+
+// BeginDrain atomically rejects new gRPC and browser callback work.
+func (s *Server) BeginDrain() { s.coordinator.BeginDrain() }
+
+// Drain waits for the configured endpoint-propagation interval and admitted
+// work, cancelling remaining operations when ctx reaches its finite deadline.
+func (s *Server) Drain(ctx context.Context, propagation time.Duration) error {
+	return s.coordinator.Drain(ctx, propagation)
+}
 
 // ValidateTransport rejects plaintext on any non-loopback TCP bind. A non-nil
 // TLS configuration must actually contain a server certificate source.
@@ -302,6 +334,7 @@ func (s *Server) record(ctx context.Context, operation, outcome string) {
 // finally releases the process-owned ToolHive resources.
 func (s *Server) Close(ctx context.Context) error {
 	s.closeOnce.Do(func() {
+		s.coordinator.BeginDrain()
 		s.mu.Lock()
 		grpcServer := s.grpcServer
 		s.mu.Unlock()

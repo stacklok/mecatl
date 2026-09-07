@@ -489,6 +489,35 @@ and the [failure table](usage/troubleshooting.md#openai-codex-manual-token-and-e
 `providers.openai-codex.oauth` entry; Kubernetes delivery for subscription OAuth
 requires a separate Secret or external-secret design.
 
+## Standalone MCP broker on Kubernetes
+
+The production remote broker is `cmd/mecabroker`, packaged separately from `mecak8s`:
+
+```sh
+task build                    # includes bin/mecabroker
+task ko:build:broker          # local image, no push
+helm template broker deploy/helm/mecabroker \
+  -f deploy/helm/mecabroker/ci/production-values.yaml
+```
+
+Treat the fixture values as shape documentation and replace every `.invalid`, Secret,
+and TEST-NET value. The chart intentionally deploys exactly one `Recreate` replica with
+no PDB, autoscaling, or outer-broker Redis. A restart interrupts active attachments and
+outer OAuth callback correlation; this is not an HA or exactly-once deployment.
+
+The Service publishes only TLS gRPC and browser callback ports. Health, readiness, and
+pre-stop drain use a loopback-only admin listener through fixed self-probe commands in the
+shell-less image. Readiness validates the finite TLS/OIDC/profile/ToolHive/discovery/static-
+route prerequisites without logging in a user or executing a tool. Drain rejects new gRPC
+and callbacks before the 2s propagation wait, gives active work a finite 55s deadline, and
+then cancels remaining work before teardown; the chart reserves 70s total.
+
+NetworkPolicy starts default-deny. Supply `networkPolicy.mecak8sFrom` and
+`browserCallbackFrom` selectors, then concrete `operatorEgress` DNS and destination rules
+for OIDC/JWKS, upstream OAuth, and MCP. Kubernetes NetworkPolicy cannot enforce external
+DNS names; dynamic endpoints require maintained CIDRs or an operator-provided policy
+controller. See [ADR 0305](adr/0305-single-replica-mcp-broker-topology.md).
+
 ## ToolHive LLM gateway
 
 If you already run [ToolHive](https://github.com/stacklok/toolhive)'s LLM gateway
