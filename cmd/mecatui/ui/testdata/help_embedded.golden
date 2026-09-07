@@ -1,25 +1,69 @@
  mecatui  ·  session sess-test-00  ·  mock-model  ·  mode default  ·  127.0.0.1:8080
 ────────────────────────────────────────────────────────────────────────────────────────────────────
-┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-┃                                                                                                           ┃
-┃  mecatui — keys & features                                                                                ┃
-┃                                                                                                           ┃
-┃  Prompting                                                                                                ┃
-┃    enter                 send the prompt                                                                  ┃
-┃    shift+enter           newline (also ctrl+j)                                                            ┃
-┃    /                     slash-command palette (built-ins always; workspace commands when enabled)        ┃
-┃    @                     attach a file: image/audio inlines as media (when supported), else inlines text  ┃
-┃    ctrl+v                paste a clipboard image as an attachment (when supported), else paste text       ┃
-┃    ctrl+g                select all prompt text                                                           ┃
-┃    ctrl+shift+c          copy the active prompt or conversation selection                                 ┃
-┃    ctrl+u                clear the unsent prompt                                                          ┃
-┃    esc                   cancel the running turn                                                          ┃
-┃                                                                                                           ┃
-┃  While a run is streaming                                                                                 ┃
-┃  lines 1–14 of 60 · esc or ? close · ↑/↓ scroll · pgup/pgdn page · home/end jump                          ┃
-┃                                                                                                           ┃
-┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
-
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃                                                                                                                                                                                 ┃
+┃  mecatui — keys & features                                                                                                                                                      ┃
+┃                                                                                                                                                                                 ┃
+┃  Prompting                                                                                                                                                                      ┃
+┃    enter                 send the prompt                                                                                                                                        ┃
+┃    shift+enter           newline (also ctrl+j)                                                                                                                                  ┃
+┃    /                     slash-command palette (built-ins always; workspace commands when enabled)                                                                              ┃
+┃    @                     attach a file: image/audio inlines as media (when supported), else inlines text                                                                        ┃
+┃    ctrl+v                paste a clipboard image as an attachment (when supported), else paste text                                                                             ┃
+┃    ctrl+g                select all prompt text                                                                                                                                 ┃
+┃    ctrl+y                copy the active prompt or conversation selection                                                                                                       ┃
+┃    ctrl+u                clear the unsent prompt                                                                                                                                ┃
+┃    esc                   cancel the running turn                                                                                                                                ┃
+┃                                                                                                                                                                                 ┃
+┃  While a run is streaming                                                                                                                                                       ┃
+┃    enter                 queue a follow-up (sends when the turn ends)                                                                                                           ┃
+┃    ctrl+u                clear the unsent prompt                                                                                                                                ┃
+┃    esc                   cancel run                                                                                                                                             ┃
+┃                                                                                                                                                                                 ┃
+┃  While the permission modal is open                                                                                                                                             ┃
+┃    a                     allow once                                                                                                                                             ┃
+┃    w                     always allow (this session; main-agent asks only)                                                                                                      ┃
+┃    d                     deny                                                                                                                                                   ┃
+┃    ←/→/tab           cycle the focused button · enter activates it                                                                                                              ┃
+┃    ctrl+t                full-screen args (non-diff asks) · in-modal diff expand (Edit/Write)                                                                                   ┃
+┃    r                     raw args in the full view                                                                                                                              ┃
+┃                                                                                                                                                                                 ┃
+┃  Inspect & control                                                                                                                                                              ┃
+┃    ctrl+o                MCP inventory  [not enabled]                                                                                                                           ┃
+┃    ctrl+r                MCP resources  [not enabled]                                                                                                                           ┃
+┃    ctrl+p                MCP prompts  [not enabled]                                                                                                                             ┃
+┃    ctrl+a                agents overlay (subagents / parallel / teams · tab to switch)                                                                                          ┃
+┃    ctrl+e                reasoning-effort picker  [not enabled]                                                                                                                 ┃
+┃    /schedule             browse & manage scheduled tasks  [not enabled]                                                                                                         ┃
+┃    /session              show active session details and copy its exact ID                                                                                                      ┃
+┃    /sessions             continue, inspect, or manage stored sessions                                                                                                           ┃
+┃    /connect              sign in and connect to a saved remote target                                                                                                           ┃
+┃    alt+m                 cycle permission mode (default / plan / accept-edits)                                                                                                  ┃
+┃    ctrl+t                expand/collapse details                                                                                                                                ┃
+┃                                                                                                                                                                                 ┃
+┃  General                                                                                                                                                                        ┃
+┃    pgup/pgdn             scroll the conversation (a ↑NN% header cue shows while scrolled up)                                                                                    ┃
+┃    home/end              jump to top / bottom (end resumes auto-follow)                                                                                                         ┃
+┃    wheel                 mouse-wheel scroll (alt screen only)                                                                                                                   ┃
+┃    drag                  select conversation text · drag to an edge auto-scrolls · copies on release · double-click word · triple-click line · right-click copies · esc clears  ┃
+┃    middle-click          paste the primary selection into the prompt (X11/Wayland; shift+middle-click pastes via the terminal instead)                                          ┃
+┃    ?                     this help (on an empty prompt)                                                                                                                         ┃
+┃    /quit                 quit immediately (alias: /exit; cancels an active run)                                                                                                 ┃
+┃    ctrl+z                suspend to the shell — the engine keeps running; fg resumes                                                                                            ┃
+┃    ctrl+c                quit (press twice; first press clears the prompt or arms, again within 3s exits)                                                                       ┃
+┃    ctrl+d                quit (EOF habit; press twice on an empty prompt)                                                                                                       ┃
+┃                                                                                                                                                                                 ┃
+┃  Skills run automatically when the model needs them — not a browsable                                                                                                           ┃
+┃  list; watch the transcript for Skill tool calls.                                                                                                                               ┃
+┃  Cross-session memory is on — context carries across runs.                                                                                                                      ┃
+┃  Type @ to attach a file — this model takes text only, so files inline as text.                                                                                                 ┃
+┃                                                                                                                                                                                 ┃
+┃  ↑ input · ↓ output · ⊕ cache write                                                                                                                                             ┃
+┃  cache N% — share of input tokens served from cache                                                                                                                             ┃
+┃                                                                                                                                                                                 ┃
+┃  esc or ? to close                                                                                                                                                              ┃
+┃                                                                                                                                                                                 ┃
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
 
 │
 │ Ask mecatl to do something…  (enter to send · shift+enter for newline · ? for help)

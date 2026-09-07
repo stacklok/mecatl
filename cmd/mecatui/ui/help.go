@@ -356,7 +356,7 @@ func keyMarkingsWithScroll(km keyMap, defaultScrollMarking string) helpKeys {
 		submit:        firstKey(km.Submit, "enter"),
 		paste:         firstKey(km.Paste, "ctrl+v"),
 		selectAll:     firstKey(km.SelectAll, "ctrl+g"),
-		copySelection: firstKey(km.CopySelection, "ctrl+shift+c"),
+		copySelection: firstKey(km.CopySelection, "ctrl+y"),
 		clearPrompt:   firstKey(km.ClearPrompt, "ctrl+u"),
 		cancel:        firstKey(km.Cancel, "esc"),
 		editBack:      navGlyph(firstKey(km.EditBack, "up")),

@@ -189,7 +189,7 @@ func TestSelectionShortcutsRespectDepsKeyOverridesEndToEnd(t *testing.T) {
 			t.Errorf("footer missing overridden marker %q:\n%s", marker, footer)
 		}
 	}
-	for _, marker := range []string{"ctrl+g select all", "ctrl+shift+c copy"} {
+	for _, marker := range []string{"ctrl+g select all", "ctrl+y copy"} {
 		if strings.Contains(footer, marker) {
 			t.Errorf("footer retained default marker %q:\n%s", marker, footer)
 		}
@@ -214,7 +214,7 @@ func TestSelectionShortcutsRespectDepsKeyOverridesEndToEnd(t *testing.T) {
 			t.Errorf("help missing overridden marker %q for %q:\n%s", marker, action, help)
 		}
 	}
-	for _, marker := range []string{"ctrl+g", "ctrl+shift+c"} {
+	for _, marker := range []string{"ctrl+g", "ctrl+y"} {
 		if strings.Contains(help, marker) {
 			t.Errorf("help retained default marker %q:\n%s", marker, help)
 		}
@@ -226,14 +226,14 @@ func TestSelectionShortcutsRespectDepsKeyOverridesEndToEnd(t *testing.T) {
 func TestSelectionShortcutsRenderDefaults(t *testing.T) {
 	const (
 		selectAll     = "ctrl+g select all"
-		copySelection = "ctrl+shift+c copy"
+		copySelection = "ctrl+y copy"
 	)
 
 	t.Run("help overlay", func(t *testing.T) {
 		got := stripANSIstr(m_helpBody(allOnCaps()))
 		rows := map[string]string{
 			"select all prompt text":                           "ctrl+g",
-			"copy the active prompt or conversation selection": "ctrl+shift+c",
+			"copy the active prompt or conversation selection": "ctrl+y",
 		}
 		for action, chord := range rows {
 			found := false
@@ -314,7 +314,7 @@ func TestHelpReflectsKeyOverride(t *testing.T) {
 		{name: "Newline", match: "newline", want: "ctrl+f2", absent: "shift+enter", occurs: 1},
 		{name: "Paste", match: "paste a clipboard image", want: "ctrl+f3", absent: "ctrl+v", occurs: 1},
 		{name: "SelectAll", match: "select all prompt text", want: "ctrl+f31", absent: "ctrl+g", occurs: 1},
-		{name: "CopySelection", match: "copy the active prompt or conversation selection", want: "ctrl+f32", absent: "ctrl+shift+c", occurs: 1},
+		{name: "CopySelection", match: "copy the active prompt or conversation selection", want: "ctrl+f32", absent: "ctrl+y", occurs: 1},
 		{name: "Cancel turn", match: "cancel the running turn", want: "ctrl+f4", absent: "esc", occurs: 1},
 		{name: "ClearPrompt", match: "clear the unsent prompt", want: "ctrl+f33", absent: "ctrl+u", occurs: 2},
 		{name: "Cancel running", match: "cancel run", want: "ctrl+f4", absent: "esc", occurs: 1},
