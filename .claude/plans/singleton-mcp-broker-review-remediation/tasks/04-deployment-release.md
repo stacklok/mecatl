@@ -2,10 +2,10 @@
 id: 04-deployment-release
 title: Honest Helm and release supply-chain surfaces
 blocked_by: [02-recovery-retention, 03-production-boundary]
-status: pending
-attempt: 0
-branch: ""
-worktree: ""
+status: in-progress
+attempt: 1
+branch: "plan-singleton-mcp-broker-review-remediation/04-deployment-release-attempt-1"
+worktree: "/Users/jakub/devel/mecatl/.worktrees/distributed-broker-contract"
 issue: ""
 retries: 0
 last_error: ""
