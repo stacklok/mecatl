@@ -822,17 +822,29 @@ func TestMCPAuthorizationTerminalFallbackAppendFailureIsExplicit(t *testing.T) {
 	if !diag.contains("persist terminal authorization lifecycle failed") {
 		t.Fatal("fallback append failure was not diagnosed")
 	}
-	// seed(1) + pending.Call result(2, the ambiguous one) + deferred result(3) +
-	// resolved: appendAuthorizationResolution now continues past the
-	// ambiguous failure instead of aborting the whole sequence, so every
-	// event still gets attempted and (here, since countingEventLog's
-	// postWriteFailCalls durably records before reporting the error) recorded.
-	want := len(seed) + 3
+	// seed(1) + pending.Call result(2, the ambiguous one) + deferred result(3):
+	// appendAuthorizationResolution continues past an ambiguous failure on a
+	// NON-primary event, but a caller of port.EventLog.Append cannot tell a
+	// durably-recorded-then-reported-failed ambiguity (what countingEventLog's
+	// postWriteFailCalls actually does here) apart from a genuinely-uncommitted
+	// one — so once the PRIMARY call's own result is the one that errors, the
+	// function must treat it the same as the uncommitted case and never attempt
+	// EvAuthorizationResolved (see TestMCPAuthorizationPrimaryResultAppendFailureStaysFoldable
+	// for the genuinely-uncommitted sibling of this test).
+	want := len(seed) + 2
 	if got := len(log.attempts); got != want {
-		t.Fatalf("append attempts = %d, want %d (seed plus the full 3-event resolution sequence)", got, want)
+		t.Fatalf("append attempts = %d, want %d (seed plus the primary and deferred results; no resolved attempt)", got, want)
 	}
+	// postWriteFailCalls still durably records before reporting its error, so
+	// both results land in recorded despite the ambiguous failure on the
+	// primary — only the (never-attempted) resolved event is missing.
 	if got := len(log.recorded); got != want {
-		t.Fatalf("durably written events = %d, want %d (every event preserved despite the one ambiguous failure)", got, want)
+		t.Fatalf("durably written events = %d, want %d (primary and deferred results recorded; resolved never attempted)", got, want)
+	}
+	for _, ev := range log.recorded {
+		if ev.Type == session.EvAuthorizationResolved {
+			t.Fatal("EvAuthorizationResolved was recorded despite the primary result's ambiguous append failure")
+		}
 	}
 	persisted, loadErr := f.store.Load(t.Context(), loaded.ID)
 	if loadErr != nil {
@@ -851,15 +863,96 @@ func TestMCPAuthorizationTerminalFallbackAppendFailureIsExplicit(t *testing.T) {
 	if f.attach.tool.calls.Load() != 0 {
 		t.Fatal("protected mutation executed after ambiguous append failure")
 	}
-	// The whole point of continuing past the ambiguous failure: despite it,
-	// the log now holds the complete required→results→resolved sequence, so
-	// eventsource.Fold can still reconstruct the session. Aborting on the
-	// first failure (the old behavior) would have left resolved missing here
-	// and made this permanently non-foldable.
-	if _, err := eventsource.Fold(eventsource.SessionMeta{
+	// Skipping the resolved append leaves the lifecycle looking open to Fold —
+	// the intended SOFT outcome (ErrPrivateStateRequired) for an ambiguous
+	// primary-result failure, never the hard ErrReconstruct a forced resolved
+	// append would have risked if this particular failure had genuinely not
+	// committed.
+	_, foldErr := eventsource.Fold(eventsource.SessionMeta{
 		ID: persisted.ID, Mode: persisted.Mode, Limits: persisted.Limits, EnvironmentRef: persisted.EnvironmentRef, CreatedAt: persisted.CreatedAt,
-	}, log.Read(t.Context(), persisted.ID)); err != nil {
-		t.Fatalf("continuing past the ambiguous failure did not preserve Fold-reconstructability: %v", err)
+	}, log.Read(t.Context(), persisted.ID))
+	if !errors.Is(foldErr, eventsource.ErrPrivateStateRequired) {
+		t.Fatalf("fold error = %v, want ErrPrivateStateRequired", foldErr)
+	}
+}
+
+// TestMCPAuthorizationPrimaryResultAppendFailureStaysFoldable proves the
+// distinct case postWriteFailCalls above cannot exercise: appendAuthorizationResolution
+// must not append EvAuthorizationResolved when the PRIMARY call's own
+// EvToolResult append is the one that failed and genuinely never committed
+// (failCalls, unlike postWriteFailCalls, fails BEFORE recording). Appending
+// resolved anyway would make eventsource.Fold's resolveAuthorization hard-reject
+// the log (ErrReconstruct, "resolved precedes matching tool.result") instead of
+// the intended soft, still-open outcome (ErrPrivateStateRequired) — a
+// permanently unrecoverable log rather than one merely missing private state.
+func TestMCPAuthorizationPrimaryResultAppendFailureStaysFoldable(t *testing.T) {
+	f := newLifecycleFixture(t, session.AuthorizationDenied, nil, time.Now, nil)
+	log := &countingEventLog{}
+	seed := []session.Event{
+		{Type: session.EvTurnStart},
+		{Type: session.EvToolCall, ToolCall: &f.pending.Call},
+		{Type: session.EvToolCall, ToolCall: &f.pending.Deferred[0]},
+		{Type: session.EvAuthorizationRequired, Authorization: &session.AuthorizationPayload{
+			AuthorizationID: f.pending.Authorization.ID, DisplayName: f.pending.Authorization.DisplayName, Call: f.pending.Call.ID,
+			ExpiresAt: f.pending.Authorization.ExpiresAt, Status: session.AuthorizationPending,
+		}},
+	}
+	for _, ev := range seed {
+		if err := log.Append(t.Context(), "authorization-session", ev); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// The primary call's own result is the FIRST result appendAuthorizationResolution
+	// attempts (results[0] is always pending.Call's, per session.resolveAuthorization).
+	// failCalls fails BEFORE recording — the genuinely-not-durable case, distinct
+	// from postWriteFailCalls' durably-recorded-then-reported-failed case.
+	log.failCalls = map[int]bool{len(seed) + 1: true}
+	diag := &lifecycleDiagnostics{}
+	f.svc.cfg.EventLog = log
+	f.svc.cfg.Diagnostics = diag
+	loaded, err := f.store.Load(t.Context(), "authorization-session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	loaded.EnvironmentRef = session.EnvironmentRef{Kind: session.EnvironmentKind("lost-remote"), ID: "runtime", Revision: "gone"}
+	if err := f.store.Save(t.Context(), loaded); err != nil {
+		t.Fatal(err)
+	}
+	control := MCPAuthorizationControl{SessionID: loaded.ID, AuthorizationID: f.pending.Authorization.ID}
+	result, err := f.svc.RecheckMCPAuthorization(t.Context(), loaded.ID, control)
+	if !errors.Is(err, ErrInternal) || result != (MCPAuthorizationResult{}) {
+		t.Fatalf("fallback append failure = %+v, %v; want ErrInternal and no success", result, err)
+	}
+	if !diag.contains("persist terminal authorization lifecycle failed") {
+		t.Fatal("fallback append failure was not diagnosed")
+	}
+	// seed(4) + the failed primary result(5) + the deferred sibling result(6):
+	// EvAuthorizationResolved must never be attempted once the primary result's
+	// own append is the one that failed.
+	wantAttempts := len(seed) + 2
+	if got := len(log.attempts); got != wantAttempts {
+		t.Fatalf("append attempts = %d, want %d (no resolved attempt once the primary result failed)", got, wantAttempts)
+	}
+	for _, ev := range log.recorded {
+		if ev.Type == session.EvAuthorizationResolved {
+			t.Fatal("EvAuthorizationResolved was recorded despite the primary result never committing")
+		}
+	}
+	persisted, loadErr := f.store.Load(t.Context(), loaded.ID)
+	if loadErr != nil {
+		t.Fatal(loadErr)
+	}
+	// The snapshot still settles to idle — this proves ONLY that the event log
+	// stays foldable, not that the snapshot avoided the stranding this PR's
+	// other fixes already cover.
+	if persisted.State != session.StateIdle {
+		t.Fatalf("settled snapshot state = %q, want idle", persisted.State)
+	}
+	_, foldErr := eventsource.Fold(eventsource.SessionMeta{
+		ID: persisted.ID, Mode: persisted.Mode, Limits: persisted.Limits, EnvironmentRef: persisted.EnvironmentRef, CreatedAt: persisted.CreatedAt,
+	}, log.Read(t.Context(), persisted.ID))
+	if !errors.Is(foldErr, eventsource.ErrPrivateStateRequired) {
+		t.Fatalf("fold error = %v, want ErrPrivateStateRequired (lifecycle left open, not a hard reconstruct failure)", foldErr)
 	}
 }
 
