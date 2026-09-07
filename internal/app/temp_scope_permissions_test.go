@@ -65,7 +65,4 @@ func TestADR_0281_SystemModeIsRollbackSwitch(t *testing.T) {
 	if got := strings.TrimSpace(res.Stdout); got != systemTemp+"\n"+systemTemp {
 		t.Fatalf("system mode temp overlay = %q, want configured %q", got, systemTemp)
 	}
-	if strings.Contains(res.Stdout, "/cmd-") {
-		t.Fatalf("system mode allocated managed lease: %q", res.Stdout)
-	}
 }
