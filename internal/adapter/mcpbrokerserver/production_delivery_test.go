@@ -14,7 +14,7 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-func TestInitialProductionMCPBroker_Scenario5_Readiness(t *testing.T) {
+func TestSingletonBrokerRemediation_Scenario3_ProductionReadinessUsesRealDependencies(t *testing.T) {
 	var failed atomic.Int32
 	calls := make([]atomic.Int32, 6)
 	checks := make([]ReadinessCheck, len(calls))
@@ -57,7 +57,7 @@ func TestInitialProductionMCPBroker_Scenario5_Readiness(t *testing.T) {
 	}
 }
 
-func TestInitialProductionMCPBroker_Scenario5_Drain(t *testing.T) {
+func TestSingletonBrokerRemediation_Scenario3_ProductionDrainAndCleanup(t *testing.T) {
 	coordinator, err := NewCoordinator(time.Second)
 	if err != nil {
 		t.Fatal(err)

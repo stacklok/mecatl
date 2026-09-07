@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -66,6 +65,10 @@ type Config struct {
 type tokenValidator interface {
 	Validate(context.Context, string) (*session.Principal, error)
 	Close() error
+}
+
+type readyTokenValidator interface {
+	Ready(context.Context) error
 }
 
 // Server owns the validator, RPC adapter, mounted browser routes, and optional
@@ -133,7 +136,11 @@ func New(ctx context.Context, cfg Config) (*Server, error) {
 	if readyTimeout == 0 {
 		readyTimeout = 2 * time.Second
 	}
-	coordinator, err := NewCoordinator(readyTimeout, cfg.ReadinessChecks...)
+	checks := append([]ReadinessCheck(nil), cfg.ReadinessChecks...)
+	if readyValidator, ok := validator.(readyTokenValidator); ok {
+		checks = append([]ReadinessCheck{readyValidator.Ready}, checks...)
+	}
+	coordinator, err := NewCoordinator(readyTimeout, checks...)
 	if err != nil {
 		_ = rpc.Shutdown(context.Background())
 		_ = validator.Close()
@@ -158,16 +165,14 @@ func New(ctx context.Context, cfg Config) (*Server, error) {
 }
 
 func newOIDCValidator(ctx context.Context, cfg OIDCConfig) (tokenValidator, error) {
-	issuer, err := url.Parse(cfg.Issuer)
-	if err != nil || issuer.Scheme != "https" || issuer.Host == "" || issuer.User != nil || issuer.RawQuery != "" || issuer.Fragment != "" {
-		return nil, errors.New("mcpbrokerserver: OIDC issuer must be an exact HTTPS URL")
+	if err := mcpbroker.ValidateProtectedURL(cfg.Issuer, "OIDC issuer"); err != nil {
+		return nil, fmt.Errorf("mcpbrokerserver: %w", err)
 	}
 	if cfg.JWKSURI == "" {
 		return nil, errors.New("mcpbrokerserver: an explicit HTTPS JWKS URI is required")
 	}
-	jwks, err := url.Parse(cfg.JWKSURI)
-	if err != nil || jwks.Scheme != "https" || jwks.Host == "" || jwks.User != nil || jwks.RawQuery != "" || jwks.Fragment != "" {
-		return nil, errors.New("mcpbrokerserver: JWKS URI must be HTTPS")
+	if err := mcpbroker.ValidateProtectedURL(cfg.JWKSURI, "JWKS URI"); err != nil {
+		return nil, fmt.Errorf("mcpbrokerserver: %w", err)
 	}
 	if cfg.Audience == "" {
 		return nil, errors.New("mcpbrokerserver: OIDC audience is required")

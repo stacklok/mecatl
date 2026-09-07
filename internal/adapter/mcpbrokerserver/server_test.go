@@ -184,7 +184,7 @@ func authContext(token string) context.Context {
 	return metadata.NewOutgoingContext(context.Background(), metadata.Pairs("authorization", "Bearer "+token))
 }
 
-func TestInitialProductionMCPBroker_Scenario2_AuthenticatedTLS(t *testing.T) {
+func TestSingletonBrokerRemediation_Scenario3_PublicRPCAuthenticationPrecedesBrokerState(t *testing.T) {
 	issuer := newIdentityFixture(t)
 	registerFixtureKey(issuer)
 	service := &countingService{}

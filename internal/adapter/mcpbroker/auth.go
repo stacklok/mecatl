@@ -67,11 +67,8 @@ func compileOAuthRoute(callbackURL string, declaration permconfig.MCPServerProfi
 		"callback URL":           callbackURL,
 	} {
 		parsed, err := url.Parse(raw)
-		if err != nil || parsed.Scheme == "" || parsed.Host == "" || parsed.User != nil || parsed.Fragment != "" {
+		if err != nil || parsed.Scheme == "" || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" || parsed.Opaque != "" || (parsed.RawPath != "" && parsed.RawPath != parsed.Path) {
 			return nil, fmt.Errorf("%w: route %q has invalid %s", ErrInvalidCatalogue, declaration.Name, label)
-		}
-		if parsed.Scheme != "https" {
-			return nil, fmt.Errorf("%w: route %q requires HTTPS for %s", ErrInvalidCatalogue, declaration.Name, label)
 		}
 	}
 	if profile.Client.Preregistered.ID == "" || profile.Client.Preregistered.SecretEnv == "" || len(profile.Scopes) == 0 {

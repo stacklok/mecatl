@@ -73,6 +73,7 @@ type Validator struct {
 	// internalClient is owned by this validator; caller-supplied clients remain
 	// caller-owned and are never closed here.
 	internalClient *http.Client
+	healthURL      string
 	closeOnce      sync.Once
 }
 
@@ -111,7 +112,7 @@ func NewValidator(ctx context.Context, cfg Config) (*Validator, error) {
 		}
 		return nil, fmt.Errorf("%w: %v", ErrInvalidConfig, err)
 	}
-	return &Validator{validator: validator, internalClient: internalClient}, nil
+	return &Validator{validator: validator, internalClient: internalClient, healthURL: cfg.JWKSURI}, nil
 }
 
 func authnConfig(cfg Config) authn.Config {
@@ -139,6 +140,27 @@ func (v *Validator) Validate(ctx context.Context, bearer string) (*session.Princ
 		return nil, fmt.Errorf("%w: verified claims have no issuer or subject", ErrInvalidToken)
 	}
 	return out, nil
+}
+
+// Ready performs a bounded, read-only verifier dependency check. It never
+// presents a credential or changes identity-provider state.
+func (v *Validator) Ready(ctx context.Context) error {
+	if v == nil || v.internalClient == nil || v.healthURL == "" {
+		return nil
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, v.healthURL, nil)
+	if err != nil {
+		return fmt.Errorf("OIDC health request: %w", err)
+	}
+	response, err := v.internalClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("OIDC health request: %w", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		return fmt.Errorf("OIDC health endpoint returned status %d", response.StatusCode)
+	}
+	return nil
 }
 
 // Close stops background JWKS refresh.

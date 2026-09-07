@@ -8,6 +8,7 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -17,11 +18,12 @@ import (
 )
 
 const (
-	clientTimeout       = 15 * time.Second
-	tlsHandshakeTimeout = 10 * time.Second
-	maxIdleConnections  = 8
-	maxIdlePerHost      = 2
-	idleConnTimeout     = 30 * time.Second
+	clientTimeout        = 15 * time.Second
+	tlsHandshakeTimeout  = 10 * time.Second
+	maxIdleConnections   = 8
+	maxIdlePerHost       = 2
+	maxOIDCResponseBytes = 4 << 20
+	idleConnTimeout      = 30 * time.Second
 )
 
 type approvedEndpoint struct {
@@ -287,5 +289,35 @@ func (t scopedTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	if _, ok := t.policy.endpoint(req.URL.Hostname(), port); !ok {
 		return nil, fmt.Errorf("HTTPS target %q is not an approved endpoint", req.URL.Host)
 	}
-	return t.next.RoundTrip(req)
+	response, err := t.next.RoundTrip(req)
+	if err != nil || response == nil || response.Body == nil {
+		return response, err
+	}
+	response.Body = &boundedBody{ReadCloser: response.Body, remaining: maxOIDCResponseBytes}
+	return response, nil
+}
+
+type boundedBody struct {
+	io.ReadCloser
+	remaining int64
+}
+
+func (b *boundedBody) Read(p []byte) (int, error) {
+	if b.remaining <= 0 {
+		return 0, errors.New("OIDC response exceeds the configured size limit")
+	}
+	limit := b.remaining
+	if int64(len(p)) > limit {
+		limit++
+	}
+	if int64(len(p)) > limit {
+		p = p[:int(limit)]
+	}
+	n, err := b.ReadCloser.Read(p)
+	if int64(n) > b.remaining {
+		b.remaining = 0
+		return int(b.remaining), errors.New("OIDC response exceeds the configured size limit")
+	}
+	b.remaining -= int64(n)
+	return n, err
 }

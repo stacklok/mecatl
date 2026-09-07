@@ -4,6 +4,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"encoding/json"
@@ -32,6 +33,11 @@ const (
 	shutdownTimeout        = 5 * time.Second
 	defaultPropagationWait = 2 * time.Second
 	defaultDrainTimeout    = 55 * time.Second
+	maxCallbackBodyBytes   = 64 << 10
+	maxPublicHeaderBytes   = 32 << 10
+	publicReadTimeout      = 2 * time.Minute
+	publicWriteTimeout     = 2 * time.Minute
+	publicIdleTimeout      = 60 * time.Second
 )
 
 type config struct {
@@ -210,10 +216,14 @@ func run(ctx context.Context, cfg config, diagnostics port.Diagnostics) error {
 		Addr:              cfg.publicAddress,
 		Handler:           publicHandler(grpcServer, server.HTTPHandler()),
 		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       publicReadTimeout,
+		WriteTimeout:      publicWriteTimeout,
+		IdleTimeout:       publicIdleTimeout,
+		MaxHeaderBytes:    maxPublicHeaderBytes,
 		TLSConfig:         tlsConfig.Clone(),
 	}
 	publicServer.TLSConfig.NextProtos = []string{"h2", "http/1.1"}
-	adminServer := &http.Server{Addr: cfg.adminAddress, ReadHeaderTimeout: 2 * time.Second}
+	adminServer := &http.Server{Addr: cfg.adminAddress, ReadHeaderTimeout: 2 * time.Second, ReadTimeout: 5 * time.Second, WriteTimeout: 5 * time.Second, IdleTimeout: 10 * time.Second, MaxHeaderBytes: maxPublicHeaderBytes}
 
 	var admissionOnce sync.Once
 	propagated := make(chan struct{})
@@ -292,8 +302,52 @@ func publicHandler(grpcHandler, callbackHandler http.Handler) http.Handler {
 			grpcHandler.ServeHTTP(w, r)
 			return
 		}
+		if err := validateCallbackRequest(r); err != nil {
+			requestErr, ok := err.(*callbackRequestError)
+			if !ok {
+				http.Error(w, "invalid callback request", http.StatusBadRequest)
+				return
+			}
+			http.Error(w, requestErr.Error(), requestErr.status)
+			return
+		}
 		callbackHandler.ServeHTTP(w, r)
 	})
+}
+
+type callbackRequestError struct {
+	status int
+	text   string
+}
+
+func (e callbackRequestError) Error() string { return e.text }
+
+func validateCallbackRequest(r *http.Request) error {
+	if r.Method != http.MethodGet && r.Method != http.MethodPost {
+		return &callbackRequestError{http.StatusMethodNotAllowed, "callback method is not supported"}
+	}
+	if r.Method == http.MethodPost {
+		contentType := strings.ToLower(strings.TrimSpace(strings.SplitN(r.Header.Get("Content-Type"), ";", 2)[0]))
+		if contentType != "application/x-www-form-urlencoded" && contentType != "multipart/form-data" {
+			return &callbackRequestError{http.StatusUnsupportedMediaType, "callback content type is not supported"}
+		}
+	}
+	if r.ContentLength > maxCallbackBodyBytes {
+		return &callbackRequestError{http.StatusRequestEntityTooLarge, "callback body is too large"}
+	}
+	if r.Body == nil {
+		return nil
+	}
+	body, err := io.ReadAll(io.LimitReader(r.Body, maxCallbackBodyBytes+1))
+	_ = r.Body.Close()
+	if err != nil {
+		return &callbackRequestError{http.StatusBadRequest, "callback body is unreadable"}
+	}
+	if len(body) > maxCallbackBodyBytes {
+		return &callbackRequestError{http.StatusRequestEntityTooLarge, "callback body is too large"}
+	}
+	r.Body = io.NopCloser(bytes.NewReader(body))
+	return nil
 }
 
 func adminHandler(ready func(context.Context) bool, beginDrain func(), propagated <-chan struct{}) http.Handler {
@@ -353,12 +407,35 @@ func readConfig(path string) (fileConfig, error) {
 	if cfg.CallbackURL == "" || len(cfg.Profiles) == 0 {
 		return fileConfig{}, errors.New("broker callback and profiles are required")
 	}
+	if err := mcpbroker.ValidateProtectedURL(cfg.CallbackURL, "broker callback"); err != nil {
+		return fileConfig{}, err
+	}
+	for _, profile := range cfg.Profiles {
+		if strings.EqualFold(profile.Auth, "oauth") {
+			if err := mcpbroker.ValidateProtectedURL(profile.URL, "protected upstream URL"); err != nil {
+				return fileConfig{}, err
+			}
+			if profile.OAuth == nil {
+				return fileConfig{}, errors.New("protected profile OAuth configuration is required")
+			}
+			for label, endpoint := range map[string]string{"issuer": profile.OAuth.Issuer, "authorization endpoint": profile.OAuth.AuthorizationEndpoint, "token endpoint": profile.OAuth.TokenEndpoint} {
+				if endpoint != "" {
+					if err := mcpbroker.ValidateProtectedURL(endpoint, label); err != nil {
+						return fileConfig{}, err
+					}
+				}
+			}
+		}
+	}
 	return cfg, nil
 }
 
 func exactCallbackPath(raw string) (string, error) {
+	if err := mcpbroker.ValidateProtectedURL(raw, "broker callback"); err != nil {
+		return "", err
+	}
 	parsed, err := url.Parse(raw)
-	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" || parsed.EscapedPath() != parsed.Path {
+	if err != nil {
 		return "", errors.New("broker callback must be an exact HTTPS URL")
 	}
 	if parsed.Path == "" {
