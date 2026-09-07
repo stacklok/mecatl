@@ -19,8 +19,8 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0002 — Documentation lifecycle](./0002-documentation-lifecycle.md)
 - [0003 — Consolidate design records as ADRs](./0003-consolidate-design-records-as-adrs.md)
 - [0072 — The acceptance-plan spine](./0072-acceptance-plan-spine.md) *(superseded by 0295)*
-- [0295 — One scaled acceptance-plan spine for substantive work](./0295-unified-development-spine.md) *(single-PR decision superseded by 0302)*
-- [0302 — Human-reviewed development contracts before implementation](./0302-human-reviewed-development-contracts.md)
+- [0295 — One scaled acceptance-plan spine for substantive work](./0295-unified-development-spine.md) *(single-PR decision superseded by 0304)*
+- [0304 — Human-reviewed development contracts before implementation](./0304-human-reviewed-development-contracts.md)
 
 ### Architecture & implementation
 - [0001 — Agent Client Protocol (ACP) adapter](./0001-acp-adapter.md)

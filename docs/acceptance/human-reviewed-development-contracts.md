@@ -5,7 +5,7 @@
 **Delivery:** Combined. This focused change has no runtime/public/operator/persistence/trust-boundary interface; the process skills and documents are themselves the complete interface being reviewed.
 **Expected tasks:** 1
 **Combined rationale:** The process contract and its repository documentation are the complete deliverable, so a separate plan-review PR followed by an implementation PR would review the same indivisible change twice and add no review value.
-**ADR:** [ADR 0302](../adr/0302-human-reviewed-development-contracts.md) — human contract review precedes autonomous implementation.
+**ADR:** [ADR 0304](../adr/0304-human-reviewed-development-contracts.md) — human contract review precedes autonomous implementation.
 
 The smallest change that makes behavioral and exact-interface review a durable checkpoint
 before autonomous implementation, while preserving isolated TDD and final code review.
@@ -28,7 +28,7 @@ follows.
 
 A contributor can follow one consistent flow from proposed contract through approved
 baseline, isolated TDD implementation, panel review, and final human merge. The living
-workflow, skills, PR template, and checker agree with [ADR 0302](../adr/0302-human-reviewed-development-contracts.md)
+workflow, skills, PR template, and checker agree with [ADR 0304](../adr/0304-human-reviewed-development-contracts.md)
 and the repository's [agent contract](../../AGENTS.md).
 
 **Acceptance:**
@@ -44,7 +44,7 @@ and the repository's [agent contract](../../AGENTS.md).
   separate plan PR, and requires explicit orchestration to add implementation and open the
   sole PR. This workflow-only meta-change reviews process documents and skills as its
   declared interface in that Combined PR.
-  - verify: inspection — compare ADR 0302, development process, onboarding, both spine skills, acceptance guide/template, and PR template.
+  - verify: inspection — compare ADR 0304, development process, onboarding, both spine skills, acceptance guide/template, and PR template.
 - AC1.3: Plan PR issue references are non-closing; only a fully completing final
   implementation PR uses a closing keyword, and commits never do.
   - verify: inspection — review the plan skill, orchestrator, development process, and PR template.

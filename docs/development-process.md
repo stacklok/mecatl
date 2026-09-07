@@ -104,4 +104,4 @@ failed, harness-owned, primary, and ambiguous worktrees are retained.
 | `/panel-review` | independent Spec / Standards / Test adequacy / Domain review |
 
 See [the acceptance-plan guide](acceptance/README.md) and
-[ADR 0302](adr/0302-human-reviewed-development-contracts.md).
+[ADR 0304](adr/0304-human-reviewed-development-contracts.md).
