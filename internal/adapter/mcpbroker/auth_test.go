@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -22,6 +23,67 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
 	contract "github.com/stacklok/mecatl/internal/mcpbroker"
 )
+
+func TestInvariant_singleton_broker_loopback_relaxation_is_test_only(t *testing.T) {
+	var requests atomic.Int32
+	tokenServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"access_token":"token","token_type":"Bearer","expires_in":3600}`))
+	}))
+	defer tokenServer.Close()
+
+	catalogue, err := Compile(protectedConfig(tokenServer.URL), []ToolDefinition{{Backend: "github", Name: "mcp__github__create", Schema: json.RawMessage(`{"type":"object"}`)}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	caller := AuthorizedCaller(func(_ context.Context, _ SessionRef, _ string, call session.ToolCall, _ oauth2.TokenSource) (session.ToolResult, error) {
+		return session.NewToolResult(call.ID, "ok"), nil
+	})
+	anonymous := Caller(func(_ context.Context, _ SessionRef, _ string, call session.ToolCall) (session.ToolResult, error) {
+		return session.NewToolResult(call.ID, "ok"), nil
+	})
+	production, err := New(catalogue, anonymous, WithAuthorizedCaller(caller))
+	if err != nil {
+		t.Fatalf("production runtime: %v", err)
+	}
+	defer production.Close()
+	request, err := http.NewRequest(http.MethodPost, tokenServer.URL, strings.NewReader("grant_type=authorization_code"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.SetBasicAuth("client", "secret")
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	if response, requestErr := production.oauth.httpClient.Do(request); requestErr == nil {
+		_ = response.Body.Close()
+		t.Fatal("production OAuth client reached a loopback token endpoint")
+	}
+	if requests.Load() != 0 {
+		t.Fatalf("production OAuth client dispatched %d loopback requests", requests.Load())
+	}
+
+	roots := x509.NewCertPool()
+	roots.AddCert(tokenServer.Certificate())
+	testRuntime, err := New(catalogue, anonymous, WithAuthorizedCaller(caller), WithOAuthLoopbackForTest(t, roots))
+	if err != nil {
+		t.Fatalf("test runtime: %v", err)
+	}
+	defer testRuntime.Close()
+	request, err = http.NewRequest(http.MethodPost, tokenServer.URL, strings.NewReader("grant_type=authorization_code"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.SetBasicAuth("client", "secret")
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	response, err := testRuntime.oauth.httpClient.Do(request)
+	if err != nil {
+		t.Fatalf("test-only loopback request: %v", err)
+	}
+	_ = response.Body.Close()
+	if requests.Load() != 1 {
+		t.Fatalf("test-only OAuth client dispatched %d requests, want 1", requests.Load())
+	}
+}
 
 func protectedConfig(tokenURL string) mcpauthority.BrokerConfig {
 	return mcpauthority.BrokerConfig{

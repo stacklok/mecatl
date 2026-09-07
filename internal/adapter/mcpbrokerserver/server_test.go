@@ -11,6 +11,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"math/big"
 	"net"
@@ -29,6 +30,7 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/reflect/protodesc"
 
+	oidcadapter "github.com/stacklok/mecatl/authn/oidc"
 	brokerv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/broker/v1"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
@@ -93,6 +95,33 @@ func (f *identityFixture) token(t *testing.T, issuer, audience string, expiry ti
 
 func productionOIDC(f *identityFixture, staleness time.Duration) OIDCConfig {
 	return OIDCConfig{Issuer: f.server.URL, JWKSURI: f.server.URL + "/keys", Audience: testAudience, TrustedCAPEM: f.caPEM(), MaxJWKSStaleness: staleness}
+}
+
+func TestSingletonBrokerRemediation_Scenario3_ReadinessDoesNotLaunderStaleKeys(t *testing.T) {
+	issuer := newIdentityFixture(t)
+	const staleness = 300 * time.Millisecond
+	srv, err := New(t.Context(), Config{Service: &countingService{}, OIDC: productionOIDC(issuer, staleness), ReadinessTimeout: time.Second})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer func() { _ = srv.Close(context.Background()) }()
+	token := issuer.token(t, issuer.server.URL, testAudience, time.Now().Add(time.Minute), nil)
+	if _, err := srv.validator.Validate(t.Context(), token); err != nil {
+		t.Fatalf("initial validation: %v", err)
+	}
+
+	time.Sleep(200 * time.Millisecond)
+	if !srv.Ready(t.Context()) {
+		t.Fatal("healthy JWKS dependency did not pass readiness")
+	}
+	issuer.available.Store(false)
+	time.Sleep(150 * time.Millisecond)
+	if _, err := srv.validator.Validate(t.Context(), token); !errors.Is(err, oidcadapter.ErrIdentityUnavailable) {
+		t.Fatalf("token remained valid after the original JWKS staleness bound: %v", err)
+	}
+	if srv.Ready(t.Context()) {
+		t.Fatal("readiness stayed open after JWKS became unavailable")
+	}
 }
 
 type countingService struct{ reads atomic.Int32 }
