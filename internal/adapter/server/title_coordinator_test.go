@@ -228,6 +228,40 @@ func TestSessionTitleGeneration_Scenario4_StartupReconcilesPendingSession(t *tes
 	}
 }
 
+func TestSessionTitleGeneration_Scenario4_ReconciliationUsesOneCappedPageBestEffort(t *testing.T) {
+	backing := memstore.New()
+	included := pendingTitleSession(t, backing, "reconcile-included")
+	excluded := pendingTitleSession(t, backing, "reconcile-excluded")
+	pager := &titleReconcilePagerStore{Store: backing, included: included.ID, excluded: excluded.ID}
+	started := make(chan struct{}, 1)
+	titleCoordinatorService(t, pager, titleGeneratorFunc(func(context.Context, []string) TitleGenerationResult {
+		started <- struct{}{}
+		return TitleGenerationResult{Title: "reconciled", Outcome: session.TitleAttemptSucceeded}
+	}))
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("startup reconciliation did not submit the first page candidate")
+	}
+	if got := pager.calls.Load(); got != 1 {
+		t.Fatalf("metadata page calls = %d, want 1", got)
+	}
+	if got := pager.request; got.Limit != titleReconcileLimit || got.Cursor != nil {
+		t.Fatalf("metadata request = %#v, want one initial capped page", got)
+	}
+	time.Sleep(20 * time.Millisecond)
+	if got := pager.calls.Load(); got != 1 {
+		t.Fatalf("metadata page calls after next cursor = %d, want 1", got)
+	}
+	loaded, err := backing.Load(context.Background(), excluded.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.TitleGeneration != session.TitleGenerationPending {
+		t.Fatalf("later-page session was reconciled: %#v", loaded)
+	}
+}
+
 func TestSessionTitleGeneration_Scenario4_DeduplicatesThroughGeneration(t *testing.T) {
 	store := memstore.New()
 	started, finish := make(chan struct{}, 1), make(chan struct{})
@@ -319,6 +353,23 @@ type titlePagerStore struct {
 
 func (s titlePagerStore) PageSessionMetadata(_ context.Context, _ port.SessionMetadataPageRequest) (port.SessionMetadataPage, error) {
 	return port.SessionMetadataPage{Sessions: []port.SessionDiscoveryMeta{{ID: s.id, State: session.StateCompleted}}}, nil
+}
+
+type titleReconcilePagerStore struct {
+	*memstore.Store
+	included session.SessionID
+	excluded session.SessionID
+	calls    atomic.Int32
+	request  port.SessionMetadataPageRequest
+}
+
+func (s *titleReconcilePagerStore) PageSessionMetadata(_ context.Context, request port.SessionMetadataPageRequest) (port.SessionMetadataPage, error) {
+	s.calls.Add(1)
+	s.request = request
+	return port.SessionMetadataPage{
+		Sessions:   []port.SessionDiscoveryMeta{{ID: s.included, State: session.StateCompleted}},
+		NextCursor: &port.SessionMetadataCursor{Continuation: "more"},
+	}, nil
 }
 
 func titleCoordinatorService(t *testing.T, store port.SessionStore, generator SessionTitleGenerator) *Service {

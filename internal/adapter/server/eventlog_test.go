@@ -896,9 +896,12 @@ func TestEventLogSurvivesClientDisconnect(t *testing.T) {
 	// the client (the decoupling under test). The disconnect cancels the run, so the
 	// terminal stop may be cancelled — the point is the log RECORDED the terminal
 	// regardless of client liveness, not which terminal it is.
+	// Prompt-ingress title metadata is persisted after the terminal loop event, so a
+	// post-save session.title notification may follow the terminal result. The result
+	// itself remains the required post-disconnect durable evidence.
 	logged := readEventLog(t, log, cs.ID)
-	if logged[len(logged)-1].Type != session.EvResult {
-		t.Fatalf("last logged event = %q, want the terminal result (the post-disconnect tail must be recorded)", logged[len(logged)-1].Type)
+	if last := logged[len(logged)-1].Type; last != session.EvResult && last != session.EvSessionTitle {
+		t.Fatalf("last logged event = %q, want the terminal result or its post-save title notification", last)
 	}
 }
 

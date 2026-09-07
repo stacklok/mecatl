@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -19,6 +20,137 @@ import (
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 )
+
+func TestSessionTitleGeneration_PromptIngressPublishesAfterSuccessfulPersistOnce(t *testing.T) {
+	store := memstore.New()
+	events := memstore.NewEventLog()
+	svc, err := NewService(Config{
+		Engine: agent.NewEngine(agent.Deps{LLM: mockllm.New(mockllm.TextTurn("done")), Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil)}),
+		Store:  store, EventLog: events, SharedEngineRoot: "/ws", PlacementProvider: titlePlacementProvider{}, PlacementScope: "test",
+		TitleGenerationEligible: func(ProviderSelector) bool { return true },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer svc.Close()
+
+	sess, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := titleEventCount(t, events, sess.ID)
+	live, unsubscribe, err := svc.Subscribe(context.Background(), sess.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unsubscribe()
+
+	run, err := svc.StartRun(context.Background(), sess.ID, "name this session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range run.Events() {
+	}
+	svc.Persist(context.Background(), sess.ID)
+	persisted, err := store.Load(context.Background(), sess.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sources := persisted.TitleSourcePrompts(); len(sources) != 1 || sources[0] != "name this session" {
+		t.Fatalf("persisted title sources = %#v, want prompt ingress metadata", sources)
+	}
+
+	select {
+	case event := <-live:
+		if event.Type != session.EvSessionTitle || event.Title == nil || event.Title.Revision != persisted.TitleRevision {
+			t.Fatalf("live title event = %#v", event)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("missing post-save title event")
+	}
+	if got, want := titleEventCount(t, events, sess.ID), before+1; got != want {
+		t.Fatalf("durable title events = %d, want %d", got, want)
+	}
+
+	svc.Persist(context.Background(), sess.ID)
+	select {
+	case event := <-live:
+		t.Fatalf("duplicate title event after unchanged persist: %#v", event)
+	case <-time.After(20 * time.Millisecond):
+	}
+	if got, want := titleEventCount(t, events, sess.ID), before+1; got != want {
+		t.Fatalf("durable title events after unchanged persist = %d, want %d", got, want)
+	}
+}
+
+func TestSessionTitleGeneration_PromptIngressSaveFailureDoesNotPublish(t *testing.T) {
+	store := &titleFailSaveStore{Store: memstore.New()}
+	events := memstore.NewEventLog()
+	svc, err := NewService(Config{
+		Engine: agent.NewEngine(agent.Deps{LLM: mockllm.New(mockllm.TextTurn("done")), Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil)}),
+		Store:  store, EventLog: events, SharedEngineRoot: "/ws", PlacementProvider: titlePlacementProvider{}, PlacementScope: "test",
+		TitleGenerationEligible: func(ProviderSelector) bool { return true },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer svc.Close()
+
+	sess, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := titleEventCount(t, events, sess.ID)
+	live, unsubscribe, err := svc.Subscribe(context.Background(), sess.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unsubscribe()
+
+	run, err := svc.StartRun(context.Background(), sess.ID, "name this session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range run.Events() {
+	}
+	store.fail = true
+	svc.Persist(context.Background(), sess.ID)
+
+	select {
+	case event := <-live:
+		t.Fatalf("title event after failed save: %#v", event)
+	case <-time.After(20 * time.Millisecond):
+	}
+	if got := titleEventCount(t, events, sess.ID); got != before {
+		t.Fatalf("durable title events after failed save = %d, want %d", got, before)
+	}
+}
+
+func titleEventCount(t *testing.T, events *memstore.EventLog, id session.SessionID) int {
+	t.Helper()
+	count := 0
+	for event, err := range events.Read(context.Background(), id) {
+		if err != nil {
+			t.Fatal(err)
+		}
+		if event.Type == session.EvSessionTitle {
+			count++
+		}
+	}
+	return count
+}
+
+type titleFailSaveStore struct {
+	*memstore.Store
+	fail bool
+}
+
+func (s *titleFailSaveStore) Save(ctx context.Context, sess *session.Session) error {
+	if s.fail {
+		return fmt.Errorf("save failed")
+	}
+	return s.Store.Save(ctx, sess)
+}
 
 func TestSessionTitleGeneration_NormalTransportRunsPersistAndSubmit(t *testing.T) {
 	for _, transport := range []string{"grpc", "http"} {

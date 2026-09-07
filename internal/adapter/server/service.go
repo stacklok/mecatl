@@ -1177,6 +1177,10 @@ type runState struct {
 	// run has settled. It must outlive the run-entry call itself.
 	runContextStop context.CancelFunc
 	awaiting       atomic.Bool
+	// titleRevision is the last title metadata revision successfully persisted and
+	// published for this run. It starts from the admitted durable snapshot so
+	// prompt-ingress changes publish only after their save succeeds.
+	titleRevision uint64
 	// persistMu makes admission of the durable awaiting save and drain's
 	// awaiting/non-awaiting decision one lifecycle transaction. Backend calls
 	// admitted before invalidation may still complete.
@@ -5642,6 +5646,10 @@ func (s *Service) persistRun(ctx context.Context, id session.SessionID, st *runS
 	if st.sess.State == session.StateAwaiting {
 		st.awaiting.Store(true)
 	}
+	if st.sess.TitleRevision != st.titleRevision {
+		s.publishTitle(context.WithoutCancel(ctx), st.sess)
+		st.titleRevision = st.sess.TitleRevision
+	}
 	// Title work is submitted only after the completed chat snapshot (including
 	// the ingress-captured source) is durable. Submission is non-blocking.
 	if st.sess.State == session.StateCompleted && st.sess.TitleGeneration == session.TitleGenerationPending && len(st.sess.TitleSourcePrompts()) > 0 {
@@ -5658,6 +5666,8 @@ func (s *Service) completeRelay(ctx context.Context, id session.SessionID, run *
 	st, ok := s.runs[id]
 	s.mu.Unlock()
 	if ok && st.run == run && (st.sess.State == session.StateCompleted || st.sess.State == session.StateCancelled || st.sess.State == session.StateFailed) {
+		st.persistMu.Lock()
+		defer st.persistMu.Unlock()
 		s.persistRun(ctx, id, st)
 	}
 }
@@ -6509,7 +6519,7 @@ func (s *Service) cleanupRunAdmission(id session.SessionID, st *runState, promot
 // The caller holds runEntryMu for id.
 func (s *Service) beginRunAdmission(parent context.Context, id session.SessionID, sess *session.Session, resumeAdmission bool) (*runState, context.Context, error) {
 	ctx, cancel := context.WithCancel(parent)
-	st := &runState{sess: sess, admissionCancel: cancel, settled: make(chan struct{}), resumeAdmission: resumeAdmission}
+	st := &runState{sess: sess, admissionCancel: cancel, settled: make(chan struct{}), resumeAdmission: resumeAdmission, titleRevision: sess.TitleRevision}
 	s.mu.Lock()
 	if s.draining.Load() {
 		s.mu.Unlock()

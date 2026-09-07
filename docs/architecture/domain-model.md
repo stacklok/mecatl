@@ -145,7 +145,10 @@ calls are opt-in.
 
 At prompt ingress the aggregate retains only the first three genuine, non-empty
 principal text prompts. Every terminal relay persists a completed exchange before
-submitting bounded asynchronous title work. Generated input is fenced untrusted data;
+submitting bounded asynchronous title work. On startup, the coordinator makes one
+capped initial metadata-page scan for completed eligible sessions that have no
+attempt; it deliberately does not follow the cursor, so restart reconciliation is
+bounded best-effort rather than an inventory sweep. Generated input is fenced untrusted data;
 output is strict, valid UTF-8, normalized to one line, and capped at 80 runes.
 
 A physical call records its input/output tokens only in `TokenUsage[session_title]`,

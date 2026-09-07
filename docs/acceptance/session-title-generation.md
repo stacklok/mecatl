@@ -149,8 +149,11 @@ muted client-only notice directing the operator to `/title <text>`; it contains 
   outcomes and never issue duplicate billable work after restart.
   - verify: `TestSessionTitleGeneration_Scenario4_InterruptionAndRetryPolicy`
 - AC4.4: The coordinator has bounded admission/workers, is cancelled and joined at shutdown, and
-  has explicit ADR-0027 resource-inventory and restart-fidelity decisions.
-  - verify: `TestSessionTitleGeneration_Scenario4_CoordinatorShutdownAndInventory`
+  has explicit ADR-0027 resource-inventory and restart-fidelity decisions. Restart reconciliation
+  is accepted bounded best-effort: it reads exactly one capped initial metadata page, never follows
+  its cursor, and may leave later-page eligible sessions for a normal eligible exchange and submission.
+  - verify: `TestSessionTitleGeneration_Scenario4_CoordinatorShutdownAndInventory`,
+    `TestSessionTitleGeneration_Scenario4_ReconciliationUsesOneCappedPageBestEffort`
 - AC4.5: Every persisted title/lifecycle change appends and publishes `session.title` containing
   authoritative title, provenance, lifecycle, and only bounded latest-attempt metadata—never prompt,
   provider-error text, or token-usage detail.

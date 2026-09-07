@@ -6435,6 +6435,13 @@ mid-conversation (`docs/adr/0027-cloud-native.md` ledger rows 1/2/3):
   `session.CompactionSummaryMarker` / `session.Tier4SummaryMarker`, promoted from the
   unexported `engine/agent` consts) — `engine/session` cannot import `engine/agent`/`engine/prompt`,
   so the genuine-vs-synthesised distinction the read path needs lives in the domain leaf.
+- **Title restart reconciliation is deliberately bounded best-effort.**
+  `internal/adapter/server/title_coordinator.go` (`reconcilePendingTitles`) asks an
+  optional metadata pager for exactly one initial page capped at `titleReconcileLimit`
+  and never follows `NextCursor`. It admits only completed pending sessions with title
+  sources and no attempt record; later-page eligible sessions wait for a subsequent
+  normal eligible exchange and its submission. This avoids turning startup into an unbounded inventory
+  sweep while preserving the no-rebill exclusion for incomplete durable claims.
 
 ### Awaiting-approval evict/rehydrate (cloud-native Phase 2)
 
