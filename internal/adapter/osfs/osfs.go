@@ -459,7 +459,22 @@ func (f *FileSystem) Stat(_ context.Context, path string) (tool.FileInfo, error)
 // recursively) in addition to the usual shell-style "*", "?", "[…]" and "{…}"
 // metacharacters. The pattern is interpreted relative to the root; matches that
 // resolve outside the root are discarded.
-func (f *FileSystem) Glob(_ context.Context, pattern string) ([]string, error) {
+func (f *FileSystem) Glob(ctx context.Context, pattern string) ([]string, error) {
+	var matches []string
+	if err := f.globWalk(ctx, pattern, func(path string, _ fs.DirEntry) error {
+		matches = append(matches, path)
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	// The public contract advertises sorted output independently of traversal
+	// order.
+	sort.Strings(matches)
+	return matches, nil
+}
+
+// globWalk visits root-relative matches without first materializing them.
+func (f *FileSystem) globWalk(ctx context.Context, pattern string, visit func(string, fs.DirEntry) error) error {
 	// doublestar patterns are root-relative, slash-separated paths. normalizeGlobPattern
 	// preserves the old filepath.Join leniency (silently absorbing a leading "/"
 	// or "./", which would otherwise be an invalid absolute pattern). An empty or
@@ -467,7 +482,7 @@ func (f *FileSystem) Glob(_ context.Context, pattern string) ([]string, error) {
 	// "" upstream, but stay robust here rather than globbing the entire root.
 	pat := normalizeGlobPattern(filepath.ToSlash(pattern))
 	if pat == "" {
-		return nil, nil
+		return nil
 	}
 
 	// Walk the os.Root-confined fs.FS. f.r.FS() (Go 1.24+) returns an fs.FS that
@@ -475,35 +490,26 @@ func (f *FileSystem) Glob(_ context.Context, pattern string) ([]string, error) {
 	// intermediate-directory components are rejected by construction — closing
 	// the filename-enumeration leak filepath.Glob had. WithNoFollow keeps the
 	// walk from descending into symlinked directories.
-	var matches []string
-	err := doublestar.GlobWalk(f.r.FS(), pat, func(p string, d fs.DirEntry) error {
+	return doublestar.GlobWalk(f.r.FS(), pat, func(path string, entry fs.DirEntry) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		// Drop leaf symlink matches to preserve the previous behavior exactly: a
 		// symlink inside the root can still target a file outside it, and Glob
 		// must not be a channel for following links out of the workspace. This
 		// mirrors the old Lstat + fs.ModeSymlink drop.
-		if d.Type()&fs.ModeSymlink != 0 {
+		if entry.Type()&fs.ModeSymlink != 0 {
 			return nil
 		}
 		// A bare "**" matches the root itself as "."; surfacing the workspace root
 		// to the model is meaningless, so drop it (filepath.Glob never produced it).
-		if p == "." {
+		if path == "." {
 			return nil
 		}
-		// p is already root-relative and slash-separated.
-		matches = append(matches, p)
-		return nil
+		// path is already root-relative and slash-separated. Returning the visitor
+		// error stops GlobWalk immediately.
+		return visit(path, entry)
 	}, doublestar.WithNoFollow())
-	if err != nil {
-		// doublestar returns ErrBadPattern (wrapping path.ErrBadPattern) for a
-		// malformed pattern; surface it like filepath.Glob's ErrBadPattern.
-		// IO errors are not requested (no WithFailOnIOErrors), matching the old
-		// lenient "skip unreadable" behavior.
-		return nil, err
-	}
-	// filepath.Glob returned sorted matches and the contract advertises sorted
-	// output; GlobWalk visits in directory order, so sort to preserve it.
-	sort.Strings(matches)
-	return matches, nil
 }
 
 // normalizeGlobPattern applies the leniency the old filepath.Join-based Glob
@@ -1023,9 +1029,8 @@ func (w *Workspace) Glob(ctx context.Context, pattern string) ([]string, error) 
 	return w.fs.Glob(ctx, pattern)
 }
 
-// maxGrepFiles and maxGrepBytes bound unscoped searches before they can turn a
-// broad workspace root into an unbounded traversal. Scoped searches are directed
-// by the caller's glob and are limited by the ordinary per-file Read bound.
+// maxGrepFiles and maxGrepBytes bound every search before a broad path glob can
+// turn a workspace root into an unbounded traversal.
 const (
 	maxGrepFiles   = 10_000
 	maxGrepBytes   = 64 << 20 // 64 MiB
@@ -1037,15 +1042,20 @@ var errGrepMatchLimit = errors.New("osfs: grep match limit reached")
 const grepSafetyBudgetMessage = "grep search exceeds the workspace safety budget; narrow the path (for example, internal/**/*.go)"
 
 // Grep returns the matches of a regular expression across files selected by an
-// optional path glob (relative to root). When pathGlob is empty, the whole tree
-// under root is searched within an aggregate safety budget. Binary-looking files
-// (those containing a NUL byte) are skipped. The search honors ctx cancellation.
+// optional path glob (relative to root), within an aggregate safety budget.
+// Binary-looking files (those containing a NUL byte) are skipped. The search
+// honors ctx cancellation.
 func (w *Workspace) Grep(ctx context.Context, pattern, pathGlob string) ([]tool.GrepMatch, error) {
 	re, err := regexp.Compile(pattern)
 	if err != nil {
 		return nil, fmt.Errorf("osfs: invalid grep pattern: %w", err)
 	}
-	search := grepSearch{ctx: ctx, re: re}
+	search := grepSearch{
+		ctx:      ctx,
+		re:       re,
+		maxFiles: maxGrepFiles,
+		maxBytes: maxGrepBytes,
+	}
 	if pathGlob == "" {
 		err = w.grepAll(&search)
 	} else {
@@ -1061,9 +1071,13 @@ func (w *Workspace) Grep(ctx context.Context, pattern, pathGlob string) ([]tool.
 }
 
 type grepSearch struct {
-	ctx     context.Context
-	re      *regexp.Regexp
-	matches []tool.GrepMatch
+	ctx       context.Context
+	re        *regexp.Regexp
+	matches   []tool.GrepMatch
+	files     int
+	readBytes int64
+	maxFiles  int
+	maxBytes  int64
 }
 
 func (s *grepSearch) scan(w *Workspace, rel string, info fs.FileInfo) error {
@@ -1073,6 +1087,11 @@ func (s *grepSearch) scan(w *Workspace, rel string, info fs.FileInfo) error {
 	if !info.Mode().IsRegular() {
 		return nil
 	}
+	s.files++
+	if s.files > s.maxFiles || info.Size() > s.maxBytes-s.readBytes {
+		return errors.New(grepSafetyBudgetMessage)
+	}
+	s.readBytes += info.Size()
 	data, err := w.fs.Read(s.ctx, rel)
 	if err != nil {
 		return nil // unreadable / vanished file: skip
@@ -1095,28 +1114,16 @@ func (s *grepSearch) scan(w *Workspace, rel string, info fs.FileInfo) error {
 }
 
 func (w *Workspace) grepGlob(pathGlob string, search *grepSearch) error {
-	files, err := w.fs.Glob(search.ctx, pathGlob)
-	if err != nil {
-		return err
-	}
-	for _, rel := range files {
-		if err := search.ctx.Err(); err != nil {
-			return err
+	return w.fs.globWalk(search.ctx, pathGlob, func(rel string, entry fs.DirEntry) error {
+		info, err := entry.Info()
+		if err != nil || !info.Mode().IsRegular() {
+			return nil
 		}
-		info, err := w.fs.r.Stat(rel)
-		if err != nil {
-			continue
-		}
-		if err := search.scan(w, rel, info); err != nil {
-			return err
-		}
-	}
-	return nil
+		return search.scan(w, rel, info)
+	})
 }
 
 func (w *Workspace) grepAll(search *grepSearch) error {
-	var files int
-	var readBytes int64
 	return filepath.WalkDir(w.fs.root, func(path string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -1131,11 +1138,6 @@ func (w *Workspace) grepAll(search *grepSearch) error {
 		if err != nil || !info.Mode().IsRegular() {
 			return nil
 		}
-		files++
-		if files > maxGrepFiles || info.Size() > maxGrepBytes-readBytes {
-			return errors.New(grepSafetyBudgetMessage)
-		}
-		readBytes += info.Size()
 		rel, err := w.fs.toRel(path)
 		if err != nil {
 			return nil

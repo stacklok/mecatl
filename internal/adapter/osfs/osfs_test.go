@@ -388,24 +388,35 @@ func TestGrepStopsAfterTruncationThreshold(t *testing.T) {
 	}
 }
 
-func TestGrepUnscopedSearchSafetyBudget(t *testing.T) {
-	ctx := context.Background()
-	root := t.TempDir()
-	ws, err := osfs.NewWorkspace(root)
-	if err != nil {
-		t.Fatalf("NewWorkspace: %v", err)
+func TestGrepSearchSafetyBudget(t *testing.T) {
+	tests := []struct {
+		name     string
+		pathGlob string
+	}{
+		{name: "unscoped", pathGlob: ""},
+		{name: "recursive glob", pathGlob: "**"},
 	}
-	large := filepath.Join(root, "large.txt")
-	if err := os.WriteFile(large, nil, 0o600); err != nil {
-		t.Fatalf("create large file: %v", err)
-	}
-	if err := os.Truncate(large, 64<<20+1); err != nil {
-		t.Fatalf("make large sparse file: %v", err)
-	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			ctx := context.Background()
+			root := t.TempDir()
+			ws, err := osfs.NewWorkspace(root)
+			if err != nil {
+				t.Fatalf("NewWorkspace: %v", err)
+			}
+			large := filepath.Join(root, "large.txt")
+			if err := os.WriteFile(large, nil, 0o600); err != nil {
+				t.Fatalf("create large file: %v", err)
+			}
+			if err := os.Truncate(large, 64<<20+1); err != nil {
+				t.Fatalf("make large sparse file: %v", err)
+			}
 
-	_, err = ws.Grep(ctx, "needle", "")
-	if err == nil || !strings.Contains(err.Error(), "grep search exceeds the workspace safety budget; narrow the path") {
-		t.Fatalf("Grep budget error = %v, want actionable safety-budget error", err)
+			_, err = ws.Grep(ctx, "needle", test.pathGlob)
+			if err == nil || !strings.Contains(err.Error(), "grep search exceeds the workspace safety budget; narrow the path") {
+				t.Fatalf("Grep budget error = %v, want actionable safety-budget error", err)
+			}
+		})
 	}
 }
 
