@@ -156,7 +156,7 @@ func (v *Validator) Ready(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("OIDC health request: %w", err)
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
 		return fmt.Errorf("OIDC health endpoint returned status %d", response.StatusCode)
 	}
