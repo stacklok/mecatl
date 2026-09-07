@@ -17,6 +17,10 @@ write_plan() {
 **Delivery:** Split. Default review path.
 **Expected tasks:** deferred to orchestration
 
+## Human decisions
+
+None — the fixture leaves no decision for a human.
+
 ## Interface contract
 
 - **gRPC / protobuf:** None — no wire change.
@@ -51,6 +55,17 @@ valid="$root/valid.md"
 write_plan "$valid"
 bash "$checker" "$valid" >/dev/null
 
+draft_unchecked="$root/draft-unchecked.md"
+cp "$valid" "$draft_unchecked"
+sed -i 's/None — the fixture leaves no decision for a human\./- [ ] Choose the fixture behavior./' "$draft_unchecked"
+bash "$checker" "$draft_unchecked" >/dev/null
+
+proposed_resolved="$root/proposed-resolved.md"
+cp "$valid" "$proposed_resolved"
+sed -i 's/\*\*Status:\*\* draft/\*\*Status:\*\* proposed/' "$proposed_resolved"
+sed -i 's/None — the fixture leaves no decision for a human\./- [X] Choose the fixture behavior. — Decision: Keep the fixture deterministic./' "$proposed_resolved"
+bash "$checker" "$proposed_resolved" >/dev/null
+
 combined_valid="$root/combined-valid.md"
 cp "$valid" "$combined_valid"
 sed -i 's/\*\*Delivery:\*\* Split/\*\*Delivery:\*\* Combined/' "$combined_valid"
@@ -58,7 +73,7 @@ sed -i 's/\*\*Expected tasks:\*\* deferred to orchestration/\*\*Expected tasks:\
 sed -i '/\*\*Expected tasks:\*\* 1/a **Combined rationale:** The fixture is one indivisible documentation check, so separate plan review adds no value.' "$combined_valid"
 bash "$checker" "$combined_valid" >/dev/null
 
-for case_name in missing-category bare-none placeholder bad-delivery bad-status; do
+for case_name in missing-category bare-none placeholder bad-delivery bad-status proposed-unchecked missing-human placeholder-human checked-without-decision; do
   cp "$valid" "$root/$case_name.md"
 done
 for case_name in combined-material-category combined-multiple-scenarios combined-missing-expected-tasks combined-wrong-expected-tasks combined-missing-rationale combined-placeholder-rationale; do
@@ -69,6 +84,11 @@ sed -i 's/None — no tool change\./None/' "$root/bare-none.md"
 sed -i 's/None — no operator change\./TBD/' "$root/placeholder.md"
 sed -i 's/\*\*Delivery:\*\* Split/\*\*Delivery:\*\* Later/' "$root/bad-delivery.md"
 sed -i 's/\*\*Status:\*\* draft/\*\*Status:\*\* done/' "$root/bad-status.md"
+sed -i 's/\*\*Status:\*\* draft/\*\*Status:\*\* proposed/' "$root/proposed-unchecked.md"
+sed -i 's/None — the fixture leaves no decision for a human\./- [ ] Choose the fixture behavior./' "$root/proposed-unchecked.md"
+sed -i '/^## Human decisions$/,/^## Interface contract$/ { /^## Human decisions$/d; /^None — the fixture leaves no decision for a human\.$/d; }' "$root/missing-human.md"
+sed -i 's/None — the fixture leaves no decision for a human\./None — <rationale>/' "$root/placeholder-human.md"
+sed -i 's/None — the fixture leaves no decision for a human\./- [x] Choose the fixture behavior./' "$root/checked-without-decision.md"
 sed -i 's/None — no operator change\./Adds --fixture operator configuration./' "$root/combined-material-category.md"
 cat >>"$root/combined-multiple-scenarios.md" <<'PLAN'
 
@@ -83,7 +103,7 @@ sed -i '/\*\*Expected tasks:\*\* 1/d' "$root/combined-missing-expected-tasks.md"
 sed -i 's/\*\*Expected tasks:\*\* 1/\*\*Expected tasks:\*\* 2/' "$root/combined-wrong-expected-tasks.md"
 sed -i '/\*\*Combined rationale:\*\*/d' "$root/combined-missing-rationale.md"
 sed -i 's/\*\*Combined rationale:\*\*.*/\*\*Combined rationale:\*\* TBD/' "$root/combined-placeholder-rationale.md"
-for case_name in missing-category bare-none placeholder bad-delivery bad-status combined-material-category combined-multiple-scenarios combined-missing-expected-tasks combined-wrong-expected-tasks combined-missing-rationale combined-placeholder-rationale; do
+for case_name in missing-category bare-none placeholder bad-delivery bad-status proposed-unchecked missing-human placeholder-human checked-without-decision combined-material-category combined-multiple-scenarios combined-missing-expected-tasks combined-wrong-expected-tasks combined-missing-rationale combined-placeholder-rationale; do
   expect_fail "$root/$case_name.md"
 done
 

@@ -16,7 +16,9 @@ Read `AGENTS.md`, `docs/architecture.md`, relevant `docs/adr/` records, and
 Substantive interface-bearing work uses two human checkpoints:
 
 1. **`/to-acceptance-plan`** writes `docs/acceptance/<slug>.md`, including exact
-   interfaces and verifiable behavior, opens a **Plan / Interface** PR, then stops.
+   interfaces, verifiable behavior, and a machine-readable `## Human decisions` section.
+   Unchecked decisions keep it `draft`; `proposed` means every human decision needed for
+   implementation is resolved and recorded. It opens a **Plan / Interface** PR, then stops.
 2. **Human contract review** marks the plan `approved` and merges it. Approved means
    reviewed, not shipped.
 3. **`/plan-orchestrate <slug>`** starts from the merged approved commit, uses run-local
@@ -38,9 +40,10 @@ Trivial/mechanical edits remain exempt. Every path preserves human merge authori
 
 Issue references on plan PRs are non-closing (`Relates to #N` or `Tracking: #N`). Only a
 final implementation PR that fully completes the issue uses `Closes #N` or `Fixes #N`.
-Contract drift blocks orchestration; only a separately, explicitly authorized
-`/to-acceptance-plan` amendment mode may open the required Split Plan / Interface PR for
-human approval and merge before work resumes.
+Contract drift, including a worker discovering an unrecorded human decision, blocks
+orchestration; the worker does not make that decision. Only a separately, explicitly
+authorized `/to-acceptance-plan` amendment mode may open the required Split Plan / Interface
+PR for human approval and merge before work resumes.
 
 ## Specialists
 

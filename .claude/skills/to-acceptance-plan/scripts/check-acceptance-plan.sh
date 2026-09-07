@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # check-acceptance-plan.sh — validate a docs/acceptance/<plan>.md against the
 # acceptance-plan contract: at least one scenario, numbered acceptance criteria,
-# a non-empty interface contract, >=1 ADR / architecture / AGENTS.md citation per
-# scenario, and an out-of-scope section.
+# a non-empty human-decisions section consistent with status, a non-empty interface
+# contract, >=1 ADR / architecture / AGENTS.md citation per scenario, and an
+# out-of-scope section.
 #
 # This is the authoring-time check for /to-acceptance-plan. The runtime gate on
 # a landed plan's verify: contract is `task ac-trace-strict` (the ac-trace tool;
@@ -86,10 +87,54 @@ elif [[ "$ac_count" -gt 0 ]]; then
 fi
 
 # --- (c) lifecycle and delivery declarations ----------------------------
-if grep -qE '^\*\*Status:\*\* (draft|proposed|approved|in-progress|landed)([,.[:space:]]|$)' "$plan"; then
+status_count=$(grep -cE '^\*\*Status:\*\*' "$plan" || true)
+status_line=$(grep -E '^\*\*Status:\*\*' "$plan" || true)
+status=''
+if [[ "$status_count" -eq 1 && "$status_line" =~ ^\*\*Status:\*\*[[:space:]]+(draft|proposed|approved|in-progress|landed)([,.[:space:]]|$) ]]; then
+  status=${BASH_REMATCH[1]}
   printf 'ok: allowed status declaration\n'
 else
-  note_fail 'missing or invalid "**Status:**" prefix (allowed: draft, proposed, approved, in-progress, landed).'
+  note_fail 'expected exactly one valid "**Status:**" prefix (allowed: draft, proposed, approved, in-progress, landed).'
+fi
+
+# Human decisions are deliberately bounded to one machine-readable section. Do not
+# infer unresolved decisions from arbitrary prose elsewhere in the plan.
+human_heading_count=$(grep -cE '^##[[:space:]]+Human decisions[[:space:]]*$' "$plan" || true)
+human_block=$(awk '
+  /^##[[:space:]]+Human decisions[[:space:]]*$/ { in_decisions = 1; next }
+  in_decisions && /^#{1,6}[[:space:]]+/ { exit }
+  in_decisions { print }
+' "$plan")
+human_lines=$(printf '%s\n' "$human_block" | grep -vE '^[[:space:]]*$' || true)
+human_line_count=$(printf '%s\n' "$human_lines" | grep -cE '.' || true)
+
+if [[ "$human_heading_count" -ne 1 ]]; then
+  note_fail 'expected exactly one "## Human decisions" section.'
+elif [[ "$human_line_count" -eq 0 ]]; then
+  note_fail '"## Human decisions" must be non-empty.'
+elif printf '%s\n' "$human_lines" | grep -qiE '(^|[^[:alnum:]_])(TBD|TODO|N/A|PLACEHOLDER|REPLACE ME)([^[:alnum:]_]|$)|<[^>]+>'; then
+  note_fail '"## Human decisions" contains placeholder content.'
+else
+  none_count=$(printf '%s\n' "$human_lines" | grep -cE '^None[[:space:]]+(-|–|—)[[:space:]]+[^[:space:]].*$' || true)
+  if [[ "$none_count" -eq 1 && "$human_line_count" -eq 1 ]]; then
+    printf 'ok: no open human decisions, with rationale\n'
+  else
+    invalid_decision_lines=$(printf '%s\n' "$human_lines" | grep -vE '^- \[ \] [^[:space:]].*$|^- \[[xX]\] [^[:space:]].*[[:space:]](-|–|—)[[:space:]]+Decision:[[:space:]]+[^[:space:]].*$' || true)
+    if [[ -n "$invalid_decision_lines" ]]; then
+      note_fail 'human decisions must be unchecked checklist items or checked items ending "— Decision: <decision>".'
+    else
+      unchecked_count=$(printf '%s\n' "$human_lines" | grep -cE '^- \[ \] ' || true)
+      if [[ "$unchecked_count" -gt 0 ]]; then
+        if [[ "$status" == draft ]]; then
+          printf 'ok: %s open human decision(s) keep plan in draft\n' "$unchecked_count"
+        else
+          note_fail 'unchecked human decisions require "**Status:** draft"; proposed, approved, in-progress, and landed require every decision resolved.'
+        fi
+      else
+        printf 'ok: all human decisions are resolved and recorded\n'
+      fi
+    fi
+  fi
 fi
 
 if grep -qE '^\*\*Delivery:\*\* (Split|Combined)([,.[:space:]]|$)' "$plan"; then

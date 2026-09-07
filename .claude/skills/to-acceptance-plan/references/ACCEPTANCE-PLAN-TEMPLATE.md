@@ -2,8 +2,11 @@
 
 Copy the skeleton into `docs/acceptance/<slug>.md`. Keep focused plans compact. The
 bundled checker requires a scenario, numbered ACs with `verify:` lines, citations, an
-out-of-scope section, an allowed status, a Split/Combined declaration, and all seven exact
-interface-category labels with non-placeholder content. Combined is a compact one-task,
+out-of-scope section, an allowed status, a non-empty `## Human decisions` section, a
+Split/Combined declaration, and all seven exact interface-category labels with
+non-placeholder content. Human decisions use either `None — <rationale>` or checklist items;
+unchecked items require `draft`, while every later status requires checked items ending
+`— Decision: <decision>`. Combined is a compact one-task,
 exactly-one-`### Scenario` exception and must declare the parseable metadata
 `**Expected tasks:** 1` plus a non-placeholder `**Combined rationale:**` explaining why
 separate plan review adds no value. gRPC/protobuf, exported Go APIs/interfaces, tool
@@ -29,6 +32,15 @@ in the same PR.
 **Approved baseline:** <merged plan commit; absent until approved>
 
 <One or two paragraphs defining the smallest demonstrable behavior.>
+
+## Human decisions
+
+<!-- Choose exactly one shape. Any unchecked item requires **Status:** draft. -->
+None — <rationale why no human judgment remains>
+<!-- Or:
+- [ ] <decision a human must make>
+- [x] <resolved decision> — Decision: <recorded outcome>
+-->
 
 ## Interface contract
 
@@ -72,11 +84,14 @@ Public or material choices must be exact; do not defer them to implementation. U
 
 ## Deferred decisions and known risks
 
-- <Only non-material implementation detail may remain. Material contract decisions keep
-  the plan in draft.>
+- <Only non-material implementation detail may remain. Material behavior or interface
+  choices belong in Human decisions and keep the plan in draft while unchecked.>
 ```
 
-Lifecycle: `draft → proposed → approved → in-progress → landed`. Split plans are marked
+Lifecycle: `draft → proposed → approved → in-progress → landed`. `draft` may carry unchecked
+human decisions. `proposed` means the section declares `None — <rationale>` or every decision
+needed to implement the contract is checked and records its outcome; it is then ready for
+review. Split plans are marked
 `proposed` for the plan PR and `approved` before it merges. `approved` is not shipped. For
 Combined, `/to-acceptance-plan` prepares this plan on the eventual implementation branch
 without opening a plan PR; explicit `/plan-orchestrate` invocation adds the one-task

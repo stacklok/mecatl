@@ -12,6 +12,10 @@ before autonomous implementation, while preserving isolated TDD and final code r
 This proposal PR enacts the process interface itself; no runtime code implementation
 follows.
 
+## Human decisions
+
+None — the process contract contains no unresolved choice.
+
 ## Interface contract
 
 - **gRPC / protobuf:** None — repository development workflow only; no wire contract changes.
@@ -55,6 +59,11 @@ and the repository's [agent contract](../../AGENTS.md).
   Taskfile gates, strict acceptance tracing, panel review, retained failed attempts, and
   human-only merge authority.
   - verify: inspection — review `plan-orchestrate` and `tdd-worker` contracts.
+- AC1.6: Every plan has a non-empty, non-placeholder `## Human decisions` section. An
+  unchecked checklist decision is accepted only while status is `draft`; `proposed` and all
+  later statuses require either `None — <rationale>` or fully checked decisions that record
+  `— Decision: <decision>`.
+  - verify: `.claude/skills/to-acceptance-plan/scripts/check-acceptance-plan-test.sh`
 
 ## Out of scope
 
@@ -66,9 +75,9 @@ and the repository's [agent contract](../../AGENTS.md).
 
 ## Definition of done
 
-1. The bundled checker and its committed fixture tests pass; fixtures prove rejection of
-   missing categories, invalid status/delivery, placeholders, bare `None`, and missing or
-   invalid Combined task-count/rationale metadata.
+1. The bundled checker and its committed fixture tests pass; fixtures prove the human-decision
+   status gate plus rejection of missing sections/categories, invalid status/delivery,
+   placeholders, bare `None`, and missing or invalid Combined task-count/rationale metadata.
 2. `task docs` passes.
 3. ADR/index, living process, acceptance guide/index, skills, worker contract, and PR template agree.
 4. No historical `.claude/plans/**` file is deleted.
@@ -76,5 +85,6 @@ and the repository's [agent contract](../../AGENTS.md).
 
 ## Deferred decisions and known risks
 
-- None — the material process interfaces are declared above; future tuning of run-local
-  file formats is implementation detail and must not weaken the durable contract.
+- None — the material process interfaces and human decisions are recorded above; only
+  non-material implementation detail may appear here, and any newly discovered material
+  choice returns the plan to draft and belongs in `## Human decisions`.

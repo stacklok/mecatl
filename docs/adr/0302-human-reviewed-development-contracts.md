@@ -27,8 +27,9 @@ and updates to living documentation where the decision requires them. Its status
 
 `draft → proposed → approved → in-progress → landed`
 
-`proposed` means ready for plan/interface review. `approved` means humans reviewed the
-contract and merged its plan PR; it does **not** mean the behavior shipped. Implementation
+`proposed` means every human decision needed to implement the behavioral/interface contract
+is resolved and recorded, so the plan is ready for review. `approved` means humans reviewed
+the contract and merged its plan PR; it does **not** mean the behavior shipped. Implementation
 sets `in-progress`. After all verification passes, the implementation or Combined candidate
 sets `landed` in its PR diff. That is a proposed transition until merge: the target branch
 remains `approved` or `in-progress`, and `landed` becomes authoritative only when that diff
@@ -37,6 +38,13 @@ merges. No cleanup or status-only PR follows.
 ADR 0302 carries `Accepted` as the target state of this proposal PR: merging the PR is the
 acceptance event. Until merge, this ADR remains mutable during review; once merged, it is
 frozen under ADR 0002.
+
+Every plan also has a non-empty `## Human decisions` section. It contains either
+`None — <rationale>` or checklist items: unresolved judgments use `- [ ] ...`; resolved
+judgments use `- [x] ... — Decision: ...`. Any unchecked item requires `draft`; `proposed`,
+`approved`, `in-progress`, and `landed` require all decisions resolved and recorded. Material
+behavior/interface choices belong here and cannot be hidden among deferred implementation
+notes.
 
 Every plan has a non-empty `## Interface contract` section. It enumerates the exact
 proposed surfaces, including explicit `None — <rationale>` declarations, for:
@@ -85,8 +93,10 @@ Partial implementation uses `Relates to #N` or `Tracking: #N` instead.
 ### Contract drift and amendments
 
 The implementation PR links the plan PR and approved commit baseline, and states whether
-its interfaces exactly conform. If implementation discovers material contract drift,
-orchestration stops all dispatch and returns `blocked-contract-drift`; it cannot draft,
+its interfaces exactly conform. If a worker discovers a material choice that the plan did
+not resolve, that is contract drift; the worker does not decide it. If implementation
+discovers any material contract drift, orchestration stops all dispatch and returns
+`blocked-contract-drift`; it cannot draft,
 commit, push, or open an amendment. A separate, explicitly authorized
 `/to-acceptance-plan` amendment mode updates the durable plan and related ADR/living/task
 docs through the Split Plan / Interface PR flow. Its checker and docs gates pass, a human

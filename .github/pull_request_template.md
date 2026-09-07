@@ -19,14 +19,16 @@
 ### Contract linkage
 
 <!--
-Plan / Interface: link the acceptance plan and write the non-closing issue reference.
+Plan / Interface: link the acceptance plan, confirm Human decisions are fully resolved before
+marking it proposed, and write the non-closing issue reference.
 Implementation: link the Plan / Interface PR and full approved commit.
-Combined: link the in-PR plan, confirm there was no separate plan PR, and quote its narrow
-one-task eligibility rationale.
+Combined: link the in-PR plan, confirm there was no separate plan PR, quote its narrow
+one-task eligibility rationale, and confirm Human decisions contain no unchecked item.
 Trivial/mechanical: write N/A with rationale.
 -->
 
 - Acceptance plan:
+- Human decisions resolved and recorded: Yes / N/A with rationale
 - Plan / Interface PR:
 - Approved commit baseline:
 - Combined/exemption rationale:

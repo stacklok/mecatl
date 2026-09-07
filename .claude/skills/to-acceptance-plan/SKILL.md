@@ -24,8 +24,11 @@ a PR. Without that request, draft and report only; do not perform those side eff
 - Use the eventual delivery branch in exactly one validated writable worktree. Split uses a
   dedicated `plan/<slug>` branch; Combined uses the eventual combined implementation branch.
   Never write in the primary checkout when operating from an isolated worktree.
-- Start at `draft`; unresolved material behavior or interface decisions remain draft.
-- Before handoff, set `proposed` and record whether the path is `Split` or `Combined`.
+- Start at `draft`; unresolved human judgments about material behavior or interfaces are
+  unchecked items in `## Human decisions` and keep the plan draft.
+- Set `proposed` only when `## Human decisions` declares `None — <rationale>` or every
+  decision is checked and records `— Decision: ...`; record whether the path is `Split` or
+  `Combined`.
 - Default to `Split`. `Combined` is a narrow exception for a compact one-task, exactly
   one-`### Scenario` change only when it declares exact `**Expected tasks:** 1` metadata,
   a non-placeholder `**Combined rationale:**` explaining why separate plan review adds no
@@ -47,14 +50,19 @@ a PR. Without that request, draft and report only; do not perform those side eff
    [`references/ACCEPTANCE-PLAN-TEMPLATE.md`](references/ACCEPTANCE-PLAN-TEMPLATE.md).
    Keep focused work compact. Every scenario has numbered `AC<n>.<m>:` assertions,
    non-empty `verify:` lines, and at least one repository citation.
-3. Complete `## Interface contract` using all seven exact canonical labels from the
+3. Complete mandatory `## Human decisions` with exactly one machine-readable shape:
+   `None — <rationale>`, or checklist items where open decisions are `- [ ] ...` and resolved
+   decisions are `- [x] ... — Decision: ...`. Place every material behavior/interface
+   judgment there; do not hide one as a deferred decision. Any unchecked item keeps the plan
+   `draft`.
+4. Complete `## Interface contract` using all seven exact canonical labels from the
    template: gRPC/protobuf, exported Go APIs, tool schemas, CLI/config,
    events/persistence, security/authority, and compatibility/migration. Every category
    needs non-placeholder content; use `None — <rationale>` only when genuinely absent.
    Public or material decisions may not be deferred to implementation.
-4. Add a new ADR for a costly-to-reverse decision; update living docs where behavior will
+5. Add a new ADR for a costly-to-reverse decision; update living docs where behavior will
    change. Add the plan to `docs/acceptance/README.md`.
-5. Run:
+6. Run:
 
    ```sh
    bash .claude/skills/to-acceptance-plan/scripts/check-acceptance-plan.sh docs/acceptance/<slug>.md
@@ -65,7 +73,7 @@ a PR. Without that request, draft and report only; do not perform those side eff
    The regression fixture script is also wired through `task docs:check` and therefore
    `task docs`; the explicit command makes its authoring-time coverage visible.
 
-6. Run one advisory `devils-advocate` pass and at most two relevant specialist spot-checks.
+7. Run one advisory `devils-advocate` pass and at most two relevant specialist spot-checks.
    Fold clear corrections in; batch material open decisions for the human. Re-run checks.
 
 ## Amendment mode

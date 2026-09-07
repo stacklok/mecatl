@@ -22,7 +22,9 @@ a PR. Without that request, stop before the first such side effect.
 ## Entry gate
 
 Read `docs/acceptance/<slug>.md` and the documents it cites. Run its bundled acceptance-plan
-checker before delivery-specific validation; any failure blocks entry.
+checker before delivery-specific validation; any failure blocks entry. Confirm the
+`## Human decisions` section has no unchecked item: implementation never begins while human
+judgment remains.
 
 ### Split (default)
 
@@ -118,8 +120,10 @@ Exact approved interface clauses this task implements: <verbatim text>
 The worker uses strict red-green-refactor TDD, applicable Taskfile gates, offline fakes,
 and no push. It reports branch, worktree, commits, AC proof, and interface conformance.
 
-If a worker discovers that the approved contract is materially wrong or incomplete, it
-must stop as `contract-drift`; do not repair around it. Stop all dispatch and return
+If a worker discovers that a human judgment needed to implement the approved contract was
+not resolved and recorded, or that the contract is otherwise materially wrong or incomplete,
+it must stop as `contract-drift`; it never makes the missing decision or repairs around it.
+Stop all dispatch and return
 `blocked-contract-drift`. Orchestration must not draft, open, commit, or push an amendment,
 and the blocked run cannot authorize one. Resumption requires a separately and explicitly
 authorized `/to-acceptance-plan` amendment-mode invocation using the **Split** Plan /

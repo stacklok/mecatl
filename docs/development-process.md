@@ -20,17 +20,22 @@ running applicable gates.
 
 A plan moves `draft → proposed → approved → in-progress → landed`:
 
-- `draft`: material decisions may still be open.
-- `proposed`: validated and ready for human plan/interface review.
+- `draft`: human judgments about material behavior or interfaces may still be open and are
+  listed as unchecked items under `## Human decisions`.
+- `proposed`: every human decision needed to implement the contract is resolved and recorded;
+  the plan is validated and ready for human plan/interface review.
 - `approved`: the plan PR was human-reviewed and merged; this is not shipped status.
 - `in-progress`: implementation is underway against the recorded approved commit.
 - `landed`: after every gate passes, the implementation/Combined candidate carries this
   proposed transition in its PR diff; it becomes authoritative only when that PR merges.
   Before merge, the target branch remains `approved` or `in-progress`.
 
-Every plan contains numbered behavioral acceptance criteria with non-empty `verify:` lines
-and a mandatory `## Interface contract`. The contract gives exact proposed surfaces for
-gRPC/protobuf, exported Go APIs, tool schemas, CLI/config, events/persistence,
+Every plan contains numbered behavioral acceptance criteria with non-empty `verify:` lines,
+a mandatory `## Human decisions` section, and a mandatory `## Interface contract`. Human
+decisions are either `None — <rationale>` or checklist items; unchecked items require
+`draft`, while checked items record `— Decision: ...`. The interface contract gives exact
+proposed surfaces for gRPC/protobuf, exported Go APIs, tool schemas, CLI/config,
+events/persistence,
 security/authority boundaries, and compatibility/migration. `None` requires a rationale.
 Material public decisions cannot be postponed until code exists.
 
@@ -44,7 +49,8 @@ Material public decisions cannot be postponed until code exists.
    `approved` before merging. The merged plan commit is the implementation baseline.
 3. **Implement — `/plan-orchestrate`.** Confirm the approved plan is merged, record its PR
    and commit under `.scratch/orchestrate/<slug>/`, decompose run-locally, and dispatch
-   isolated `tdd-worker` attempts. Material contract drift stops the run for a
+   isolated `tdd-worker` attempts. A worker that discovers a missing human decision reports
+   contract drift instead of making it; any material drift stops the run for a
    human-reviewed plan amendment.
 4. **Gate and review — automatic.** On the assembled implementation branch run `task lint`,
    `task test`, `task docs`, the offline demo, `task ac-trace-strict`, and `/panel-review`.
@@ -95,7 +101,7 @@ failed, harness-owned, primary, and ambiguous worktrees are retained.
 
 | Gate | What it pins |
 |---|---|
-| bundled acceptance-plan checker | plan shape, interface declaration, AC proofs, citations, scope |
+| bundled acceptance-plan checker | plan shape, human-decision/status consistency, interface declaration, AC proofs, citations, scope |
 | `task lint` | lint, vet, layering rules |
 | `task test` | full offline suite and engine standalone proof |
 | `task api:check` | guarded engine API compatibility |

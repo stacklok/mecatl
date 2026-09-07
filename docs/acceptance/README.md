@@ -41,6 +41,18 @@ Named-test conventions ac-trace recognises:
 - Descriptive test names are accepted in a `verify:` line, but prefer the
   pinned forms when the AC defends a rule.
 
+## Human decisions
+
+Every plan has one non-empty `## Human decisions` section with exactly one shape:
+
+- `None — <rationale>` when no human judgment remains; or
+- checklist items, with `- [ ] ...` for unresolved judgments and
+  `- [x] ... — Decision: ...` for resolved judgments.
+
+Place every material behavior/interface choice there, not under deferred decisions. The
+bundled checker rejects missing, empty, placeholder, or malformed sections and ties unchecked
+items mechanically to `draft` status.
+
 ## Interface contract
 
 Every new plan has a `## Interface contract` section with all seven exact canonical
@@ -72,8 +84,9 @@ orchestrator records the amendment PR and full merged commit before resuming.
 
 A plan moves `draft → proposed → approved → in-progress → landed`:
 
-- `draft`: material behavior or interface decisions may remain open.
-- `proposed`: validated and ready for human plan/interface review.
+- `draft`: material behavior or interface judgments may remain as unchecked Human decisions.
+- `proposed`: every human decision needed to implement the contract is resolved and recorded;
+  the plan is validated and ready for human plan/interface review.
 - `approved`: the human-reviewed plan PR was merged; the contract is approved, not shipped.
 - `in-progress`: autonomous implementation is underway against the recorded baseline.
 - `landed`: after all verification passes, the implementation/Combined candidate carries
