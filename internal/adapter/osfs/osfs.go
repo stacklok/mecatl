@@ -1023,84 +1023,125 @@ func (w *Workspace) Glob(ctx context.Context, pattern string) ([]string, error) 
 	return w.fs.Glob(ctx, pattern)
 }
 
+// maxGrepFiles and maxGrepBytes bound unscoped searches before they can turn a
+// broad workspace root into an unbounded traversal. Scoped searches are directed
+// by the caller's glob and are limited by the ordinary per-file Read bound.
+const (
+	maxGrepFiles   = 10_000
+	maxGrepBytes   = 64 << 20 // 64 MiB
+	grepMatchLimit = 201      // GrepTool renders 200 matches plus its truncation marker.
+)
+
+var errGrepMatchLimit = errors.New("osfs: grep match limit reached")
+
+const grepSafetyBudgetMessage = "grep search exceeds the workspace safety budget; narrow the path (for example, internal/**/*.go)"
+
 // Grep returns the matches of a regular expression across files selected by an
 // optional path glob (relative to root). When pathGlob is empty, the whole tree
-// under root is searched. Binary-looking files (those containing a NUL byte) are
-// skipped. The search honors ctx cancellation.
+// under root is searched within an aggregate safety budget. Binary-looking files
+// (those containing a NUL byte) are skipped. The search honors ctx cancellation.
 func (w *Workspace) Grep(ctx context.Context, pattern, pathGlob string) ([]tool.GrepMatch, error) {
 	re, err := regexp.Compile(pattern)
 	if err != nil {
 		return nil, fmt.Errorf("osfs: invalid grep pattern: %w", err)
 	}
-
-	var files []string
+	search := grepSearch{ctx: ctx, re: re}
 	if pathGlob == "" {
-		files, err = w.walkAll(ctx)
+		err = w.grepAll(&search)
 	} else {
-		files, err = w.fs.Glob(ctx, pathGlob)
+		err = w.grepGlob(pathGlob, &search)
+	}
+	if errors.Is(err, errGrepMatchLimit) {
+		return search.matches, nil
 	}
 	if err != nil {
 		return nil, err
 	}
+	return search.matches, nil
+}
 
-	var matches []tool.GrepMatch
-	for _, rel := range files {
-		if err := ctx.Err(); err != nil {
-			return nil, err
+type grepSearch struct {
+	ctx     context.Context
+	re      *regexp.Regexp
+	matches []tool.GrepMatch
+}
+
+func (s *grepSearch) scan(w *Workspace, rel string, info fs.FileInfo) error {
+	if err := s.ctx.Err(); err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() {
+		return nil
+	}
+	data, err := w.fs.Read(s.ctx, rel)
+	if err != nil {
+		return nil // unreadable / vanished file: skip
+	}
+	if bytes.IndexByte(data, 0) >= 0 {
+		return nil // binary file
+	}
+	for lineNo, line := range strings.Split(string(data), "\n") {
+		if err := s.ctx.Err(); err != nil {
+			return err
 		}
-		data, err := w.fs.Read(ctx, rel)
-		if err != nil {
-			continue // unreadable / vanished file: skip
-		}
-		if bytes.IndexByte(data, 0) >= 0 {
-			continue // binary file
-		}
-		lineNo := 0
-		for _, line := range strings.Split(string(data), "\n") {
-			lineNo++
-			if re.MatchString(line) {
-				matches = append(matches, tool.GrepMatch{
-					Path: rel,
-					Line: lineNo,
-					Text: line,
-				})
+		if s.re.MatchString(line) {
+			s.matches = append(s.matches, tool.GrepMatch{Path: rel, Line: lineNo + 1, Text: line})
+			if len(s.matches) == grepMatchLimit {
+				return errGrepMatchLimit
 			}
 		}
 	}
-	return matches, nil
+	return nil
 }
 
-// walkAll returns every regular file under root as a session-relative path.
-func (w *Workspace) walkAll(ctx context.Context) ([]string, error) {
-	var out []string
-	err := filepath.WalkDir(w.fs.root, func(p string, d fs.DirEntry, err error) error {
-		if err != nil {
+func (w *Workspace) grepGlob(pathGlob string, search *grepSearch) error {
+	files, err := w.fs.Glob(search.ctx, pathGlob)
+	if err != nil {
+		return err
+	}
+	for _, rel := range files {
+		if err := search.ctx.Err(); err != nil {
 			return err
 		}
-		if cerr := ctx.Err(); cerr != nil {
-			return cerr
+		info, err := w.fs.r.Stat(rel)
+		if err != nil {
+			continue
 		}
-		if d.IsDir() {
-			return nil
+		if err := search.scan(w, rel, info); err != nil {
+			return err
 		}
-		// Skip symlinks entirely: WalkDir does not descend into them, but a
-		// symlinked FILE could still point outside the root. Excluding them here
-		// keeps Grep from surfacing out-of-root content (and Read would refuse
-		// it anyway via os.Root).
-		if d.Type()&fs.ModeSymlink != 0 {
-			return nil
-		}
-		rel, rerr := w.fs.toRel(p)
-		if rerr != nil {
-			return nil
-		}
-		out = append(out, rel)
-		return nil
-	})
-	if err != nil {
-		return nil, err
 	}
-	return out, nil
+	return nil
+}
+
+func (w *Workspace) grepAll(search *grepSearch) error {
+	var files int
+	var readBytes int64
+	return filepath.WalkDir(w.fs.root, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if err := search.ctx.Err(); err != nil {
+			return err
+		}
+		if entry.IsDir() || entry.Type()&fs.ModeSymlink != 0 {
+			return nil
+		}
+		info, err := entry.Info()
+		if err != nil || !info.Mode().IsRegular() {
+			return nil
+		}
+		files++
+		if files > maxGrepFiles || info.Size() > maxGrepBytes-readBytes {
+			return errors.New(grepSafetyBudgetMessage)
+		}
+		readBytes += info.Size()
+		rel, err := w.fs.toRel(path)
+		if err != nil {
+			return nil
+		}
+		return search.scan(w, rel, info)
+	})
 }
 
 // CommandRunner runs shell commands via /bin/sh -c with a fixed working

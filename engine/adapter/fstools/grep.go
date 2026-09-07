@@ -30,7 +30,8 @@ Example:
 
 Limits:
 - Returns at most 200 matches per call; beyond that the result is truncated with
-  a marker — narrow the pattern or path. Binary files are skipped.`
+  a marker — narrow the pattern or path. Broad unscoped searches also have a
+  safety budget and may require a narrower path. Binary files are skipped.`
 
 // GrepTool searches file contents for a regular expression. It does not mutate
 // state, so ReadOnly is true.
