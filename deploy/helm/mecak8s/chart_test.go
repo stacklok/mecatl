@@ -291,6 +291,7 @@ func TestADR_0304_HelmProtectedResourceProfile(t *testing.T) {
 		"ipv6-non-numeric-port":     {"oidc.resource=https://[::1]:abc/mcp"},
 		"format-resource":           {"oidc.resource=https://api.example.com/mcp\u200b"},
 		"control-char-resource":     {"oidc.resource=https://api.example.com/mcp\x01"},
+		"c1-control-resource":      {"oidc.resource=https://api.example.com/mcp\u0085"},
 		"resource-too-long":         {"oidc.resource=https://api.example.com/" + strings.Repeat("a", 1090)},
 		"insecure-issuer":           {"oidc.issuer=http://idp.example.com"},
 		"empty-host-issuer":         {"oidc.issuer=https:///issuer"},
