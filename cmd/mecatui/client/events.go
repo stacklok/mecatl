@@ -95,6 +95,10 @@ func LiveStreamCmd(ctx context.Context, live LiveStreamer, id string) (ch chan t
 		}()
 		return ch, stop
 	}
+	if p, ok := live.(liveAuthProvenance); ok {
+		es.bearerBacked = p.BearerBackedStream()
+	}
+	es.classifyAuth = true
 	go es.ReadLoop(ctx, ch)
 	return ch, stop
 }
@@ -171,24 +175,34 @@ func catchUpReplay(ctx context.Context, replayer SessionReplayer, id string, out
 }
 
 type liveAuthProvenance interface {
-	bearerBackedStream() bool
+	BearerBackedStream() bool
 }
 
 func liveBearerBacked(live LiveStreamer) bool {
 	p, ok := live.(liveAuthProvenance)
-	return ok && p.bearerBackedStream()
+	return ok && p.BearerBackedStream()
 }
 
-func (s *EventStream) bearerBackedStream() bool {
-	return s != nil && s.bearerBacked
-}
-
-func (c *Client) bearerBackedStream() bool { return c != nil && c.bearerBacked }
+// BearerBackedStream reports whether this client sends bearer credentials.
+func (c *Client) BearerBackedStream() bool { return c != nil && c.bearerBacked }
 
 // liveReconnectAttemptTimeout bounds one StreamSessionLive reopening attempt. It
 // prevents a wedged gRPC transport from holding the reconnect loop forever. Tests
 // temporarily shrink it to exercise the timeout path.
 var liveReconnectAttemptTimeout = 10 * time.Second
+
+type reconnectDelayWait func(context.Context, time.Duration) bool
+
+func waitReconnectDelay(ctx context.Context, d time.Duration) bool {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
+	}
+}
 
 // reconnectLiveLoop is the body of ReconnectLiveCmd: the bounded-backoff
 // reconnect+catch-up loop. It emits LiveReconnectingMsg at the top of each
@@ -197,7 +211,7 @@ var liveReconnectAttemptTimeout = 10 * time.Second
 // it emits LiveReconnectedMsg and returns (the ui re-arms a FRESH live channel);
 // on failure it records the error and backs off. The probe stream's ctx is the
 // loop's ctx, so the ui's stop (cancel) cleans it up once the ui has re-armed.
-func reconnectLiveLoop(ctx context.Context, live LiveStreamer, replayer SessionReplayer, id string, out chan<- tea.Msg, priorAttempt int) {
+func reconnectLiveLoop(ctx context.Context, live LiveStreamer, replayer SessionReplayer, id string, out chan<- tea.Msg, priorAttempt int, wait reconnectDelayWait) {
 	defer close(out)
 	attempt := priorAttempt
 	var lastErr error
@@ -214,12 +228,8 @@ func reconnectLiveLoop(ctx context.Context, live LiveStreamer, replayer SessionR
 			if d <= 0 {
 				return
 			}
-			timer := time.NewTimer(d)
-			select {
-			case <-ctx.Done():
-				timer.Stop()
+			if !wait(ctx, d) {
 				return
-			case <-timer.C:
 			}
 		}
 		if !emit(ctx, out, LiveReconnectingMsg{Attempt: attempt, Err: lastErr}) {
@@ -286,7 +296,7 @@ func reconnectLiveCmd(ctx context.Context, live LiveStreamer, replayer SessionRe
 	}
 	go func() {
 		defer close(done)
-		reconnectLiveLoop(ctx, live, replayer, id, ch, priorAttempt)
+		reconnectLiveLoop(ctx, live, replayer, id, ch, priorAttempt, waitReconnectDelay)
 	}()
 	return ch, stop
 }

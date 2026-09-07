@@ -52,7 +52,12 @@
 
 **SSE → Chunk translation** (`stream.go`, `translate` — a pure function driven
 directly from recorded fixtures by `decodeSSE` in tests):
-- `response.output_text.delta` → `ChunkText`
+- `response.output_text.delta` → `ChunkText`. Every non-empty visible delta is
+  projected in serial SSE arrival order, even when item, output, or content
+  identities differ. Those provider identities are deliberately discarded at the
+  adapter boundary; the engine concatenates the chunks into the one
+  `Message.Text` string without synthetic separators or text-part metadata
+  ([ADR 0302](../adr/0302-openai-visible-text-delta-projection.md)).
 - `response.reasoning_summary_text.delta` / `response.reasoning_text.delta` →
   `ChunkReasoning` (the DISPLAY summary)
 - `response.output_item.done` (reasoning) → BUFFERED into `streamState.reasoning`

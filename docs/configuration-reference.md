@@ -21,10 +21,13 @@ copy is ignored with a WARN — honouring it would be a security downgrade);
 `operator + project` subtrees may also be set per-project (within the
 operator's cap / trust gate).
 
-The **Default** column is the value the harness uses when the key is ABSENT
-(`(empty)` for an unset string, `(absent)` for an unset
-map/list/sub-block). The example values in the `config init` skeleton are
-ILLUSTRATIVE, not defaults — an absent key falls back to the Default shown here.
+The **Default** column describes the `settings.yaml` schema/resolver fallback when
+an applicable key is ABSENT (`(empty)` for an unset string, `(absent)` for an unset
+map/list/sub-block). It is not a universal process-runtime default: command roots
+and modes can supply their own defaults, disable a feature, or reject a setting.
+The example values in the `config init` skeleton are ILLUSTRATIVE, not defaults.
+For the configuration planes and intentional per-mode differences, see
+https://mecatl.dev/building/deployment/settings.
 
 ## `permissions`
 

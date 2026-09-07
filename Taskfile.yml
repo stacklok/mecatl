@@ -498,7 +498,11 @@ tasks:
         git stash && BENCHCOUNT=10 task bench | tee old.txt && git stash pop
         benchstat old.txt new.txt
       allocs/op is the deterministic, gate-hard signal; treat ns/op as advisory
-      on shared CI. Override the sample count with BENCHCOUNT (default 10).
+      on shared CI. The BenchmarkRun*Turn benchmarks measure startup-inclusive
+      first-session/first-prompt work; BenchmarkSteadyState*Turn prewarms that
+      lifecycle then measures one recurring continuation turn. Both families are
+      hard-gated independently. Override the sample count with BENCHCOUNT (default
+      10).
     vars:
       BENCHCOUNT: '{{.BENCHCOUNT | default "10"}}'
     cmds:

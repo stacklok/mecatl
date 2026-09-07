@@ -17,6 +17,9 @@ importers:
       '@connectrpc/connect-node':
         specifier: 2.1.2
         version: 2.1.2(@bufbuild/protobuf@2.14.0)(@connectrpc/connect@2.1.2(@bufbuild/protobuf@2.14.0))
+      ajv:
+        specifier: 8.20.0
+        version: 8.20.0
     devDependencies:
       '@biomejs/biome':
         specifier: 2.5.11

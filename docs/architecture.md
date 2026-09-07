@@ -218,6 +218,99 @@ builds and spawns the same checkout's `mecated` with the offline mock provider t
 prove TCP, UDS, HTTP/SSE, asks, cancellation, and stale controls on real wire. See
 [ADR 0279](adr/0279-typescript-sdk-architecture.md).
 
+The `./node` entry point can also own a local daemon through `spawn()`. It resolves an
+already-installed `mecated` from `binaryPath`, `MECATED_BIN`, then `PATH` without a
+shell; creates a private per-client runtime directory; and launches the fixed UDS-only,
+HTTP-disabled topology by default. The child inherits fd 3 as a lifetime socketpair, so
+the daemon observes EOF if its Node parent disappears; `lifetimePipe: false` removes both
+the fd and its flag without changing explicit shutdown. `http: true` opens only an
+ephemeral loopback HTTP listener and honestly costs the deployment-scoped
+`mcp_servers_on_create` feature. The SDK reads that feature truth from the ready document,
+never from its own argv. The client is returned only after a complete `mecated-ready/1`
+file is read and the first compatibility dial succeeds; its transport dials the document's
+`socket_path`. Exit before that barrier is `spawn_failed`, while a live child that misses the
+deadline is `readiness_timeout` and is stopped. Startup errors carry the end of a bounded stderr
+tail after line-boundary truncation and whole-line credential-shape redaction. An optional
+structured diagnostics sink receives the same safe report; without one, the SDK writes nothing
+to `console`. Every post-launch failure stops the child before removing its private directory. A `SpawnedClient`'s
+`daemon` getter exposes only the frozen pid, Unix transport, socket path, API major and
+feature list; environment overrides are merged over the inherited parent environment but
+are never projected there. Client disposal first cancels its owned runs and releases durable
+watch activity, then stops status monitoring and any local tool host before closing its owned
+transport. A spawned client next sends `SIGTERM` to its child handle, escalates to `SIGKILL`
+after a bounded grace only while that handle is still running, and finally removes the runtime
+directory. Connected clients acquire no process or directory ownership. Every teardown fault is
+reported through diagnostics while later steps continue, and `close()` / `Symbol.asyncDispose`
+share one non-throwing idempotent operation. A daemon exit outside disposal puts the client in a
+terminal local `invalid_state`, emits one diagnostic, and prevents a dead socket from surfacing as
+the later-operation error. See
+[ADR 0292](adr/0292-typescript-sdk-local-daemon-and-tools.md).
+
+The same `./node` entry point exposes `query()` as the one-shot layer over that existing
+`Client`/`Session`/`Run` choreography. `await query(prompt, options)` resolves after session and
+run acceptance to a single-consumption `Query` whose iterator yields the ordinary `Event` union
+and whose `sessionId` identifies the session it created. Reaching the terminal result, returning
+from the iterator early, or aborting its signal drives one cleanup ledger: cancel and drain an
+unfinished run, delete the transient session unless `retainSession` is true, and close a client
+only when the query spawned it. A caller-supplied client therefore stays open while the query's
+default transient session is still deleted. Retention is bounded by the daemon's storage: it is
+useful across calls with a supplied live client, while an SDK-spawned daemon uses an in-memory
+store and is stopped when its owning query finishes. Plan mode is refused before spawning with
+`unsupported_feature` naming `session.resolvePlan()`. With no permission responder, query denies
+an ask, emits one client diagnostic naming the ask and tool, and continues the run; the raw
+`permission.ask` remains in the event stream, and `Run` outside query retains its existing manual
+pending-ask behavior.
+
+Spawned Node/Bun clients also expose `client.tool(name, schema, handler, options)` for a
+client-wide callback-tool registry. Schemas are plain JSON Schema 2020-12 values compiled by the
+`./node`-only validator; invalid schemas, duplicate names, namespace-forging names, and invalid
+server names fail locally with `tool_registration`. On the first session create, the client
+pre-flights `ListMcpSources`, refuses a resolved server-global namespace collision, and sends the
+entire registry as one loopback HTTP `McpServerSpec` named `sdk` by default. A successful create
+makes that registry immutable. Arguments are validated without coercion or default insertion and
+then copied onto null-prototype objects before the handler sees them. Tools are mutating unless
+`readOnly: true` is asserted; the SDK does not verify that assertion, and the harness uses the MCP
+`readOnlyHint` to choose concurrent read dispatch. The Ajv dependency and callback-tool types stay
+outside the transport-neutral `.` module graph. The concrete host is a stateless, hand-written
+streaming-HTTP MCP subset on a literal ephemeral `127.0.0.1` listener. It handles the Go client's
+`server/discover` fallback, legacy initialize negotiation, initialized notification, tool listing,
+tool calls and ping as JSON while every non-POST method receives `405`. A per-client 256-bit bearer
+travels only in the session's secret-shaped MCP headers over the daemon UDS; foreign `Origin` or
+`Host` requests are refused before authentication, authentication precedes bounded body reads, and
+the host emits no CORS headers.
+
+Callback registration is available only when `spawn()`'s ready document advertises
+`mcp_servers_on_create`; otherwise the loopback host is not started and `tool()` fails locally with
+typed `unsupported_feature` before any RPC. A connected client always takes that local refusal,
+while a feature-missing spawned client names `mcp_servers_on_create` in the error. Once a
+tool-bearing create reaches the daemon, `client_mcp_unsupported` and `client_mcp_unreachable` remain
+server-originated codes, and a refusal returns no `Session` and does not mark the registry as
+successfully created.
+
+Callback execution has eight client-wide slots, optional tighten-only per-tool limits, a bounded
+queue and a wall-clock deadline whose `AbortSignal` is also fired by caller cancellation and client
+disposal. Strings become text blocks, other JSON values become structured content plus a text
+mirror, and explicit `CallToolResult` values pass through. Results larger than the harness's
+25,000-byte tool-output cap are refused locally. A thrown handler value produces only a generic
+model-facing error and correlation id; the original cause is available to the client's diagnostics
+sink under that id, while an intentional `isError` result remains model-visible verbatim. Closing
+the client aborts running calls, drops queued calls and releases the loopback port before transport
+and daemon teardown.
+
+The offline close-out suite drives this public surface rather than the older hand-written daemon
+harness. Node Vitest starts the same checkout's `mecated --mock-script`, asserts callback results and
+generic handler failures on the real Go MCP wire, and verifies the default gRPC and HTTP TCP ports
+refuse connections while the UDS daemon is live. A built-package helper repeats spawn, callback and
+clean shutdown under Bun; separate Node and Bun parents are killed to prove fd-3 EOF stops the child.
+The SDK CI job pins both Node and Bun, so the hand-written host's discovery/initialize negotiation and
+the two runtime-lifecycle claims fail together when either side drifts. Those callback fixtures select
+the `noop` authority evaluator: a client MCP tool joins a per-session catalog after `mintRootAuthority`
+has already projected the process-wide root catalog, so under the default local evaluator the exact
+tool name is absent from the capability set and is denied after the permission ask has been allowed.
+One fixture pins that default-posture denial. Making callback tools usable under the default evaluator
+needs the root authority to carry a session's client MCP tool names, which is server work beyond
+ADR 0292.
+
 The durable-watch foundation uses the generated `WatchSessionEvents` descriptor on
 both transports and decodes each wire frame into a four-arm `WatchEnvelope`:
 `event`, the single replay-to-live `boundary`, cursor-free `gap`, or lossless

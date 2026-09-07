@@ -1,7 +1,7 @@
 # TypeScript SDK local daemon and callback tools (M3) — acceptance plan
 
 **Phase:** capability — `@stacklok/mecatl-sdk` M3: the spawned local daemon, `query()`, and callback tools
-**Status:** draft
+**Status:** landed, 2026-09-04. Delivery PRs: [#1078](https://github.com/stacklok/mecatl/pull/1078), [#1081](https://github.com/stacklok/mecatl/pull/1081), [#1084](https://github.com/stacklok/mecatl/pull/1084), [#1089](https://github.com/stacklok/mecatl/pull/1089), [#1091](https://github.com/stacklok/mecatl/pull/1091), [#1093](https://github.com/stacklok/mecatl/pull/1093), [#1095](https://github.com/stacklok/mecatl/pull/1095), [#1097](https://github.com/stacklok/mecatl/pull/1097), [#1099](https://github.com/stacklok/mecatl/pull/1099), [#1122](https://github.com/stacklok/mecatl/pull/1122).
 **Issue:** [stacklok/mecatl#821](https://github.com/stacklok/mecatl/issues/821) (parent: [#761](https://github.com/stacklok/mecatl/issues/761)).
 **ADR:** [ADR-0292](../adr/0292-typescript-sdk-local-daemon-and-tools.md) — binary resolution, the SDK-owned argv and its one tool-capable topology, the ready-file barrier, the lifetime pipe, disposal ownership, `query()`'s plan refusal, the immutable tool set and its two collision layers, the hand-written loopback MCP host, the bounded execution contract, the diagnostics sink, and the four new local error codes.
 **Delivery shape:** a **linear stack**, one PR per scenario — `sdk/31-spawn` is the stack root off `main`; subsequent layers are `sdk/32-hosting`, `sdk/33-startup-failure`, `sdk/34-disposal`, `sdk/35-query`, `sdk/36-tool`, `sdk/37-tool-host`, `sdk/38-tool-refusal`, `sdk/39-parity`, `sdk/40-e2e`. This is **not** an accumulator: each PR targets its predecessor and is reviewed and merged on its own, exactly as M2's `sdk/21`…`sdk/30` stack was.
@@ -212,13 +212,14 @@ features) to the caller.
   the daemon no longer advertises the feature.
   - verify: vitest:sdk/typescript/test/spawn-hosting.test.ts#ZW5hYmxpbmcgaHR0cCBjb3N0cyB0aGUgbWNwX3NlcnZlcnNfb25fY3JlYXRlIGZlYXR1cmU — `sdk/typescript/test/spawn-hosting.test.ts :: "enabling http costs the mcp_servers_on_create feature"`
 - AC2.4: When the lifetime pipe is enabled, the descriptor the child inherits at
-  fd 3 is a **FIFO** (`S_IFIFO`) — not a socket — because `checkLifetimePipeFD`
-  refuses anything else by name, and Node's `stdio: [..., "pipe"]` fourth entry
-  yields a socketpair. The parent holds the write end, never writes to it, and
+  fd 3 is the **connected local stream socket** that Node's `stdio: [..., "pipe"]`
+  fourth entry yields. The server-enabler pre-PR widened `checkLifetimePipeFD` to
+  admit that shape alongside a FIFO and to reject every other descriptor type, so
+  no `mkfifo(1)` dance is needed. The parent holds its end, never writes to it, and
   `--lifetime-pipe-fd 3` is present in the argv.
   - verify: vitest:sdk/typescript/test/spawn-hosting.test.ts#dGhlIGxpZmV0aW1lIHBpcGUgaXMgaW5oZXJpdGVkIGF0IGZkIDMgYW5kIG5ldmVyIHdyaXR0ZW4 — `sdk/typescript/test/spawn-hosting.test.ts :: "the lifetime pipe is inherited at fd 3 and never written"`
-- AC2.5: The child's inherited descriptor is **read-only**, so the child is not
-  itself a writer holding the FIFO open, and when the parent's write end is
+- AC2.5: The child watches its inherited endpoint only for reads, so it is not
+  itself a writer holding the channel open, and when the parent's end is
   released the child observes EOF — the signal the daemon turns into a graceful
   stop.
   - verify: vitest:sdk/typescript/test/spawn-hosting.test.ts#cmVsZWFzaW5nIHRoZSBwYXJlbnQgZW5kIGRlbGl2ZXJzIEVPRiB0byB0aGUgY2hpbGQ — `sdk/typescript/test/spawn-hosting.test.ts :: "releasing the parent end delivers EOF to the child"`
@@ -681,8 +682,11 @@ hand-rolled harness; a `--mock-script` fixture whose turn calls
 - AC10.8: A handler that throws on the real wire yields a generic model-facing
   error, and the run continues to its terminal rather than failing.
   - verify: vitest:sdk/typescript/e2e/tool.e2e.test.ts#YSB0aHJvd2luZyBoYW5kbGVyIGlzIGdlbmVyaWMgb24gdGhlIHdpcmUgYW5kIHRoZSBydW4gY29udGludWVz — `sdk/typescript/e2e/tool.e2e.test.ts :: "a throwing handler is generic on the wire and the run continues"`
-- AC10.9: A `readOnly: true` tool is dispatched in the concurrent read batch and
-  runs without raising an ask.
+- AC10.9: A `readOnly: true` tool is dispatched in the harness's concurrent read
+  batch — two calls in one turn overlap in flight, where a mutating tool is
+  dispatched alone. `readOnlyHint` steers dispatch, not permissions, so a
+  read-only callback still raises an ask; both halves run the same default
+  posture, so the only variable between them is the `readOnly` flag.
   - verify: vitest:sdk/typescript/e2e/tool.e2e.test.ts#cmVhZC1vbmx5IGFuZCBtdXRhdGluZyB0b29scyBib3RoIHJlYWNoIHRoZSBtb2RlbA — `sdk/typescript/e2e/tool.e2e.test.ts :: "read-only and mutating tools both reach the model"`
 - AC10.10: A default (mutating) tool raises a `permission.ask`; an
   `onPermissionAsk` responder allowing it lets the call reach the handler, and a
@@ -697,6 +701,12 @@ hand-rolled harness; a `--mock-script` fixture whose turn calls
   Node, and the Bun leg either runs or is explicitly recorded as deferred with
   its reason.
   - verify: inspection — a CI job's composition is a workflow fact, not a unit-testable one; review checks the `sdk` job in `.github/workflows/ci.yml`
+- AC10.13: A callback tool reached through the **default**
+  `--authority-evaluator local` is denied by the capability-set evaluator, with
+  the run still reaching its terminal. This pins the known limitation recorded
+  under "Deferred decisions and known risks" so the eventual `RootAuthority`
+  widening has a failing test to flip rather than a silent behaviour change.
+  - verify: vitest:sdk/typescript/e2e/tool.e2e.test.ts#YSBjYWxsYmFjayB0b29sIGlzIGRlbmllZCBieSB0aGUgZGVmYXVsdCBjYXBhYmlsaXR5LXNldCBldmFsdWF0b3I — `sdk/typescript/e2e/tool.e2e.test.ts :: "a callback tool is denied by the default capability-set evaluator"`
 
 ---
 
@@ -781,25 +791,14 @@ suites under `sdk/typescript/`, cited per AC.
 
 ## Deferred decisions and known risks
 
-- **BLOCKING — the lifetime pipe cannot be wired the way ADR Decision 5
-  originally assumed, on Node or Bun.** `checkLifetimePipeFD`
+- **RESOLVED — Node and Bun inherit the lifetime socketpair on fd 3.** The
+  server-enabler pre-PR widened `checkLifetimePipeFD`
   ([`cmd/mecated/lifetimefd_unix.go`](../../cmd/mecated/lifetimefd_unix.go))
-  requires `S_IFIFO` and names `socket` as an explicit failure, but libuv backs
-  a `child_process` `stdio` `"pipe"` entry with a **socketpair**: a direct
-  experiment on Node 24 has the child's fd 3 report `SOCKET`, so `mecated` would
-  refuse to start. A client-side workaround exists and was verified — create a
-  FIFO, open it, and pass that fd number in the `stdio` array, which the child
-  then sees as `FIFO` — but Node has no `mkfifo` binding, so it needs the
-  `mkfifo(1)` binary. The three options are: **(a)** the FIFO dance, adding a
-  `mkfifo(1)` dependency and a second process spawn; **(b)** widen
-  `checkLifetimePipeFD` to accept `S_IFSOCK` — a production `cmd/mecated/`
-  change, therefore **out of this plan's scope and a decision for the server
-  side**; **(c)** drop `--lifetime-pipe-fd` from the default argv and accept
-  that only `close()` stops the daemon, losing parent-*crash* shutdown. AC1.12
-  exists so whichever is chosen is proven in the stack's first PR rather than
-  its tenth. This supersedes the earlier framing of the risk as a Bun-only
-  fd-*inheritance* question: the constraint is the fd **type**, and it binds
-  every runtime.
+  to admit either a FIFO or a connected local stream socket and still reject
+  every other descriptor shape. The SDK therefore uses libuv's fourth
+  `child_process` stdio entry without `mkfifo(1)`. Scenario 2 pins the server
+  parity and Scenario 10 kills both a Node and a Bun parent, proving the daemon
+  observes EOF and exits.
 - **`retainSession` retains into an in-memory store on the SDK-owned argv.**
   `--store-dir` defaults to empty ("in-memory store") and `spawn()` does not
   pass it, so a retained session outlives the `query()` call but not the daemon.
@@ -844,17 +843,12 @@ suites under `sdk/typescript/`, cited per AC.
   itself scopes to M4. The alternative — ship `onPlanApproval` now and wire the
   minimal `ApprovePlan` path — pulls M4 work into M3 and adds an options field
   M4 must reinterpret. This is the plan's largest open decision.
-- **Bun's fourth-`stdio`-entry support is unverified.** Whether Bun's
-  `node:child_process` inherits fd 3 was not established at authoring time. The
-  design fails loudly if it does not — `openLifetimePipe` refuses a descriptor
-  that is not an open pipe — so the risk is a discovered limitation with a named
-  escape hatch (`lifetimePipe: false`), not a silent regression. AC2.4/AC2.5 and
-  AC10.5 are written so implementation discovers the answer; if Bun cannot, the
-  honest outcome is a documented per-runtime limitation, not a weakened AC.
-- **Whether Bun runs in CI at all is an M4 question this plan leans on.** #821
-  puts the Bun matrix in M4 but puts "exercise Node and Bun" in M3's own work
-  breakdown. AC10.10 accepts either a running Bun leg or an explicitly recorded
-  deferral, rather than pretending the matrix exists.
+- **RESOLVED — Bun's fourth-stdio inheritance works and runs in CI.** Bun 1.4.1
+  executes the same built-package spawn → tool → clean-close helper as Node,
+  and AC10.5 kills a Bun parent while its daemon is live. The pinned Bun setup
+  in the SDK CI job makes both proofs hard failures. The broader browser,
+  TypeScript-declaration, and platform matrix remains M4 work; only the M3
+  runtime claim moved forward here.
 - **Namespace-collision detection is strong but not total.** The pre-flight
   closes the case that matters (an operator's server-global server sharing the
   SDK's name), but a source resolved after the pre-flight, or a tool-name
@@ -862,6 +856,30 @@ suites under `sdk/typescript/`, cited per AC.
   `mcp.Register` is skip-and-continue with only a server-side WARN, and
   `CreateSessionResponse` carries no tool inventory. Closing it properly needs a
   server-side mounted-tool inventory, which is out of scope.
+- **BLOCKING FOR REAL USE — a callback tool is denied under the default
+  `--authority-evaluator local`.** `mintRootAuthority`
+  ([`internal/app/root_authority.go`](../../internal/app/root_authority.go)) mints
+  the root capability set from the process-wide `assets.rootCatalog`, and
+  `Service.RootAuthority`
+  ([`internal/adapter/server/service.go`](../../internal/adapter/server/service.go))
+  is a `func(session.SessionKind) session.Authority` that never sees a session's
+  `mcp_servers` additions. A client MCP tool therefore mounts into the
+  per-session catalog but is absent from the capability set, and
+  `localauthority.Evaluator`
+  ([`engine/adapter/localauthority/localauthority.go`](../../engine/adapter/localauthority/localauthority.go))
+  denies it after the permission ask has already been allowed. Observed on the
+  real wire: `tool.result` carries `tool "mcp__sdk__lookup" denied by authority:
+  tool is absent from the capability set`, `isError: true`. `spawn()` does not
+  pass `--authority-evaluator`, so **every default SDK deployment hits this** —
+  the M3 callback-tool feature is wire-complete but not usable end-to-end until
+  it is fixed. The fix must widen `RootAuthority` to carry the session's client
+  MCP tool names, which is production `internal/adapter/server/` work and
+  outside this plan's edit surface; it is tracked as a follow-up rather than
+  patched here. Scenario 10's fixtures pass `--authority-evaluator noop` so the
+  suite proves the SDK half — host handshake, dispatch, schema validation,
+  refusals, ask routing — rather than silently re-proving the denial, and
+  AC10.13 pins the default-posture denial so the limitation is test-covered and
+  the eventual fix has a failing test to flip.
 - **A hand-written MCP host is a standing compatibility liability.** Five
   methods and one response shape today, verified against the real Go client only
   by Scenario 10. A protocol revision that changes the handshake is SDK work,

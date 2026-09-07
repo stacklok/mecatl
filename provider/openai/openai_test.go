@@ -111,7 +111,6 @@ func TestUsageCacheReadSubsetOfInput(t *testing.T) {
 		"error_event.sse":                true,
 		"response_failed.sse":            true,
 		"response_failed_rate_limit.sse": true,
-		"multi_text_part_turn.sse":       true,
 	}
 	paths, err := filepath.Glob(filepath.Join("testdata", "*.sse"))
 	if err != nil {
@@ -156,7 +155,6 @@ func TestUsageCacheWriteSubsetOfInput(t *testing.T) {
 		"error_event.sse":                true,
 		"response_failed.sse":            true,
 		"response_failed_rate_limit.sse": true,
-		"multi_text_part_turn.sse":       true,
 	}
 	paths, err := filepath.Glob(filepath.Join("testdata", "*.sse"))
 	if err != nil {
@@ -269,7 +267,6 @@ func TestUsageReasoningSubsetOfOutput(t *testing.T) {
 		"error_event.sse":                true,
 		"response_failed.sse":            true,
 		"response_failed_rate_limit.sse": true,
-		"multi_text_part_turn.sse":       true,
 	}
 	paths, err := filepath.Glob(filepath.Join("testdata", "*.sse"))
 	if err != nil {
@@ -370,13 +367,12 @@ func TestReasoningReplayUsesRealBlobNotSummary(t *testing.T) {
 
 // TestPhaseCapturedAndReplayed pins the issue-#46 round-trip: the OpenAI Responses
 // phase marker on an assistant message item is CAPTURED off response.output_item.done
-// (without disturbing the single-visible-text-part assembly) and REPLAYED verbatim on
-// the assistant message item, and an empty phase is wire-omitted (byte-stability).
+// (without disturbing visible-text projection) and REPLAYED verbatim on the
+// assistant message item, and an empty phase is wire-omitted (byte-stability).
 func TestPhaseCapturedAndReplayed(t *testing.T) {
 	// (1) Capture: the fixture's message item carries phase:"final_answer". A
 	// ChunkPhase with that opaque value must appear, AND the "Done." text chunk must
-	// still be present — the phase capture must not perturb the visible-text-part
-	// single-part assembly.
+	// still be present — phase capture must not perturb visible-text projection.
 	got := decodeFixture(t, "phase_turn.sse")
 	var phase, text string
 	for _, c := range got {
@@ -1066,38 +1062,10 @@ func TestTranslateIncompleteUnknownReason(t *testing.T) {
 	}
 }
 
-// TestTranslateMultipleTextPartsErrors verifies that a turn emitting a SECOND
-// distinct visible text part (here, a different content_index on the same
-// message item) is a loud error rather than a silent fusion into one buffer.
-// The first part's text must still be emitted as a chunk before the error.
-func TestTranslateMultipleTextPartsErrors(t *testing.T) {
-	chunks, err := decodeFixtureErr(t, "multi_text_part_turn.sse")
-	if err == nil {
-		t.Fatal("expected an error from the second distinct text part, got nil")
-	}
-	if !strings.Contains(err.Error(), "multiple assistant text parts") {
-		t.Errorf("error %q does not mention the multi-part condition", err.Error())
-	}
-	var sawPartOne bool
-	for _, c := range chunks {
-		if c.Kind == port.ChunkText && c.Text == "Part one" {
-			sawPartOne = true
-		}
-	}
-	if !sawPartOne {
-		t.Errorf("expected the first part %q among chunks before the error, got %+v", "Part one", chunks)
-	}
-}
-
-// TestTranslateMultipleReasoningSummariesNoError pins the reasoning EXEMPTION
-// from the single-visible-text-part guard: multiple reasoning_summary_text.delta
-// events with DIFFERING summary_index must NOT trip the multi-text-part guard —
-// reasoning is display-only and keyed by summary_index (not content_index), so
-// distinct summary parts legitimately concatenate. Structurally this holds today
-// because reasoning deltas route to the separate response.reasoning_summary_text.delta
-// case and never reach translateTextDelta; this test documents the exemption so a
-// future refactor that unified the text/reasoning delta handling can't silently
-// start erroring on multi-part reasoning.
+// TestTranslateMultipleReasoningSummariesNoError pins that multiple
+// reasoning_summary_text.delta events with differing summary_index remain
+// display-only ChunkReasoning values. Their identities are independent from the
+// visible output-text projection and the deltas concatenate in arrival order.
 func TestTranslateMultipleReasoningSummariesNoError(t *testing.T) {
 	got := decodeFixture(t, "multi_reasoning_summary.sse")
 	want := []port.Chunk{

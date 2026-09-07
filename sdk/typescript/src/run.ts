@@ -63,6 +63,7 @@ export interface Run extends AsyncIterable<Event> {
 }
 
 export interface RunOperations {
+  assertOpen(): void;
   readonly transportKind: TransportKind;
   send(frame: MessageInitShape<typeof ConverseRequestSchema>): void;
 }
@@ -104,6 +105,7 @@ export class RunImpl implements Run {
   }
 
   async approve(askId: string, allow: boolean): Promise<void> {
+    this.#operations.assertOpen();
     if (this.#knownAsks.has(askId)) {
       await this.resolveAsk(askId, allow ? "allow_once" : "deny");
       return;
@@ -117,6 +119,7 @@ export class RunImpl implements Run {
   }
 
   async resolveAsk(askId: string, verdict: PermissionVerdict): Promise<void> {
+    this.#operations.assertOpen();
     const pending = this.#pendingAsks.get(askId);
     if (pending === undefined) {
       throw new PermissionAskAlreadyResolvedError(askId, {
@@ -190,6 +193,7 @@ export class RunImpl implements Run {
   }
 
   #claim(mode: ConsumptionMode): void {
+    this.#operations.assertOpen();
     if (this.#consumption !== undefined) {
       throw new InvalidStateError(
         `Run events are already being consumed through ${this.#consumption}`,
@@ -207,6 +211,7 @@ export class RunImpl implements Run {
   }
 
   async #next(): Promise<IteratorResult<Event>> {
+    this.#operations.assertOpen();
     if (this.#firstPending) {
       this.#firstPending = false;
       return { done: false, value: this.#first };
@@ -296,6 +301,7 @@ export class RunImpl implements Run {
   }
 
   #send(frame: MessageInitShape<typeof ConverseRequestSchema>): void {
+    this.#operations.assertOpen();
     this.#operations.send(frame);
   }
 }

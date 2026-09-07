@@ -1,0 +1,23 @@
+event: response.created
+data: {"type":"response.created","sequence_number":0,"response":{"id":"resp_interleaved","status":"in_progress"}}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","sequence_number":1,"item_id":"rs_1","output_index":0,"summary_index":0,"delta":"inspect"}
+
+event: response.output_item.done
+data: {"type":"response.output_item.done","sequence_number":2,"output_index":0,"item":{"id":"rs_1","type":"reasoning","summary":[{"type":"summary_text","text":"inspect"}],"encrypted_content":"OPAQUE_REASONING"}}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","sequence_number":3,"item_id":"msg_a","output_index":1,"content_index":0,"delta":"first"}
+
+event: response.output_item.done
+data: {"type":"response.output_item.done","sequence_number":4,"output_index":2,"item":{"id":"fc_1","type":"function_call","call_id":"call_1","name":"Read","arguments":"{\"path\":\"a.go\"}"}}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","sequence_number":5,"item_id":"msg_b","output_index":3,"content_index":2,"delta":"second"}
+
+event: response.output_item.done
+data: {"type":"response.output_item.done","sequence_number":6,"output_index":3,"item":{"id":"msg_b","type":"message","role":"assistant","status":"completed","phase":"future_phase","content":[{"type":"output_text","text":"second"}]}}
+
+event: response.completed
+data: {"type":"response.completed","sequence_number":7,"response":{"id":"resp_interleaved","status":"completed","usage":{"input_tokens":13,"input_tokens_details":{"cached_tokens":3},"output_tokens":8,"output_tokens_details":{"reasoning_tokens":2},"total_tokens":21}}}

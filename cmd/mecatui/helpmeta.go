@@ -80,6 +80,7 @@ var flagApplicabilityByFlag = map[string]flagApplicability{
 	"theme":           {group: groupUI, common: true, local: true, connect: true},
 	"theme-dir":       {group: groupUI, common: false, local: true, connect: true},
 	"list-themes":     {group: groupUI, common: false, local: true, connect: true},
+	"debug":           {group: groupUI, common: true, local: true, connect: true},
 	"no-alt-screen":   {group: groupUI, common: true, local: true, connect: true},
 	"inline":          {group: groupUI, common: false, local: true, connect: true},
 	"no-mouse":        {group: groupUI, common: false, local: true, connect: true},

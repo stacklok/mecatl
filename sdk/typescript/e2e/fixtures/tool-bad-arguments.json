@@ -1,0 +1,14 @@
+{
+  "turns": [
+    {
+      "tool_calls": [
+        {
+          "id": "bad-args-1",
+          "name": "mcp__sdk__lookup",
+          "args": { "query": 42 }
+        }
+      ]
+    },
+    { "text": "the model received the argument validation error" }
+  ]
+}

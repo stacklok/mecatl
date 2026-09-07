@@ -663,8 +663,8 @@ func TestSessionAffinityAndHandoff_Scenario6_DrainCancelsJoinsAndDiagnosesPersis
 	go func() {
 		for range run.Events() {
 		}
-		svc.FinishRun(sess.ID, run)
 		close(drained)
+		svc.FinishRun(sess.ID, run)
 	}()
 	lease.releaseHook = func(port.Lease) error {
 		if !store.attempted() {

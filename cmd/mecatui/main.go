@@ -355,23 +355,13 @@ func runWithOptions(argv []string, options runOptions) error {
 		// Dynamic terminal window/tab title: off collapses to bare "mecatui".
 		// Default false (dynamic: "<title> — <status word> mecatui").
 		NoWindowTitle: cfg.terminalTitleOff,
-		// Diagnostic: MECATUI_DEBUG_MOUSE=1 shows raw mouse coords + content mapping in
-		// the footer (for diagnosing selection/coordinate issues). Default off.
-		DebugMouse: os.Getenv("MECATUI_DEBUG_MOUSE") != "",
-		// Diagnostic: MECATUI_DEBUG_STEER=1 traces steer ack/echo correlation (incoming
-		// id vs live id, match/burn/drop) in the status line. Default off.
-		DebugSteer: os.Getenv("MECATUI_DEBUG_STEER") != "",
-		// Diagnostic: MECATUI_DEBUG_ASK=1 registers /debug-ask, which injects a fake
-		// long-args permission ask through the real reducer (for exercising the
-		// modal's wrap/scroll/full-screen-args behaviour by hand). Default off;
-		// deliberately env-only so it never appears in --help.
-		DebugAsk: os.Getenv("MECATUI_DEBUG_ASK") != "",
 		// Seed prompt from -p/--prompt + --prompt-file: joined at startup and
 		// auto-submitted once the first session is ready (interactive-seed, NOT a
 		// one-shot — the TUI stays open for follow-ups). Empty = no seed.
 		InitialPrompt: initialPromptForConfig(cfg),
 		DebugTarget:   cfg.debugTarget,
 	})
+	applyDebugConfig(cfg, &deps)
 	deps.ServerImpl = mecatuiServerImplementation
 	wireManualCompaction(&deps, cl)
 
@@ -397,6 +387,13 @@ func runWithOptions(argv []string, options runOptions) error {
 		writeFinalSessionHandoff(os.Stderr, finalModel)
 	}
 	return runErr
+}
+
+func applyDebugConfig(cfg config, deps *ui.Deps) {
+	deps.Debug = cfg.debug
+	deps.DebugMouse = cfg.debugMouse
+	deps.DebugSteer = cfg.debugSteer
+	deps.DebugAsk = cfg.debugAsk
 }
 
 // parseRunConfig resolves the transport-independent flags, then applies the

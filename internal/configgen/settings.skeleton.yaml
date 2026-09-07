@@ -6,9 +6,11 @@
 #| enable semantics of each opt-in feature.
 #|
 #| NOTE: the values shown below (e.g. default: sonnet, posture: trusted) are
-#| ILLUSTRATIVE EXAMPLES, not the built-in defaults. An ABSENT key keeps the
-#| harness's built-in default — see the Default column in
-#| docs/configuration-reference.md for what each key falls back to when unset.
+#| ILLUSTRATIVE EXAMPLES, not the built-in defaults. An ABSENT key uses the
+#| schema/resolver fallback documented in docs/configuration-reference.md; it
+#| is not a universal process-runtime default. Command roots and modes can
+#| supply their own defaults, disable a feature, or reject a setting. See the
+#| configuration-plane guide at https://mecatl.dev/building/deployment/settings.
 #|
 #| This skeleton is GENERATED from the permconfig YAML schema (the single source of
 #| truth). Do not hand-edit the committed copy — run 'task docs:configref'. See

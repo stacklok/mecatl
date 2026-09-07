@@ -136,6 +136,7 @@ interface AttachmentScheduler {
 }
 
 interface AttachmentInternalOptions {
+  onClose?: () => void;
   scheduler?: Partial<AttachmentScheduler>;
 }
 
@@ -458,6 +459,7 @@ class SessionActivityImpl implements SessionActivity {
   readonly #runId: string | undefined;
   readonly #serverFilter: string;
   readonly #observe: (envelope: WatchEnvelope) => void;
+  readonly #onClose: () => void;
   readonly #discardReplay: boolean;
   readonly #includeLogOnly: boolean;
   #boundaryAnnounced = false;
@@ -477,6 +479,7 @@ class SessionActivityImpl implements SessionActivity {
     buffer: WatchEnvelope[] = [],
     observe: (envelope: WatchEnvelope) => void = () => undefined,
     discardReplay = false,
+    onClose: () => void = () => undefined,
   ) {
     this.#connection = connection;
     this.#transport = transport;
@@ -486,6 +489,7 @@ class SessionActivityImpl implements SessionActivity {
     this.#token = initialToken;
     this.#buffer = buffer;
     this.#observe = observe;
+    this.#onClose = onClose;
     this.#discardReplay = discardReplay;
     this.#includeLogOnly = includeLogOnly;
   }
@@ -585,7 +589,11 @@ class SessionActivityImpl implements SessionActivity {
   async #close(): Promise<void> {
     if (this.#closed) return;
     this.#closed = true;
-    await this.#connection.close();
+    try {
+      await this.#connection.close();
+    } finally {
+      this.#onClose();
+    }
   }
 }
 
@@ -606,6 +614,7 @@ class AttachedRunImpl extends SessionActivityImpl implements AttachedRun {
     includeLogOnly: boolean,
     buffer: WatchEnvelope[] = [],
     discardReplay = false,
+    onClose: () => void = () => undefined,
   ) {
     const liveState = { value: true, pendingAsks: new Set<string>() };
     super(
@@ -629,6 +638,7 @@ class AttachedRunImpl extends SessionActivityImpl implements AttachedRun {
         }
       },
       discardReplay,
+      onClose,
     );
     this.runId = runId;
     this.#operations = operations;
@@ -692,6 +702,10 @@ export async function createSessionActivity(
     "",
     token,
     options.includeLogOnly ?? false,
+    [],
+    () => undefined,
+    false,
+    internal.onClose,
   );
 }
 
@@ -731,6 +745,9 @@ export async function createAttachedRun(
       serverFilter,
       resume.token,
       options.includeLogOnly ?? false,
+      [],
+      false,
+      internal.onClose,
     );
   }
 
@@ -755,6 +772,7 @@ export async function createAttachedRun(
       options.includeLogOnly ?? false,
       [],
       options.from === "now",
+      internal.onClose,
     );
   }
 
@@ -792,5 +810,7 @@ export async function createAttachedRun(
     token,
     options.includeLogOnly ?? false,
     replay,
+    false,
+    internal.onClose,
   );
 }
