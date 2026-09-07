@@ -4,7 +4,7 @@ go 1.26.6
 
 require (
 	github.com/stacklok/mecatl/engine v0.11.0
-	github.com/stacklok/toolhive-core v0.0.42
+	github.com/stacklok/toolhive-core v0.0.43
 )
 
 require (
@@ -20,7 +20,7 @@ require (
 	github.com/lestrrat-go/option/v2 v2.0.0 // indirect
 	github.com/power-devops/perfstat v0.0.0-20240221224432-82ca36839d55 // indirect
 	github.com/segmentio/asm v1.2.1 // indirect
-	github.com/shirou/gopsutil/v4 v4.26.7 // indirect
+	github.com/shirou/gopsutil/v4 v4.26.8 // indirect
 	github.com/valyala/fastjson v1.6.10 // indirect
 	github.com/yusufpapurcu/wmi v1.2.4 // indirect
 	golang.org/x/net v0.58.0 // indirect
