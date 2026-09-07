@@ -4,7 +4,7 @@
 - Date: 2026-09-06
 - Scope: initial remote MCP broker transport, attachment handles, and failure semantics
 - Supersedes: None
-- Superseded by: None
+- Superseded by: ADR 0306
 
 ## Context
 
