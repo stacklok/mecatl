@@ -1149,6 +1149,7 @@ func (m Model) resetSessionDerived() Model {
 	// anchored into the old content is stale. The caller's refreshView re-renders
 	// without re-applying it (sel is now inactive), clearing the highlight too.
 	m.sel = selection{}
+	m.selBase = ""
 	// Drop any pending multi-click sequence: it is anchored into the old content.
 	m.clickCount = 0
 	// Disarm the live feed: a /clear or session switch rebuilds the session, so

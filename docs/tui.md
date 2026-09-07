@@ -1890,9 +1890,12 @@ legible on every built-in theme — light (`solar`) and dark (`aztec`/`mono`) al
 The block is **glyph-bounded** — it stops at each line's last glyph rather than
 filling the terminal width, so multi-line selections have a ragged right edge; an
 empty line spanned in the **middle** of a multi-line selection now paints **one
-cell** so the run stays solid through it. The highlight is **logical** — it
-survives scrolling (wheel,
-`pgup`/`pgdn`, `home`/`end`) and a streaming re-render. The selection
+cell** so the run stays solid through it. The highlight is **logical**: its
+endpoints use UI-local block/region coordinates and canonical visible-text
+grapheme offsets. It survives scrolling (wheel, `pgup`/`pgdn`, `home`/`end`) and
+a streaming re-render only while both endpoint contexts and the copied visible
+text still prove the same selection; a transcript/session reconstruction clears
+it and resumes tail-follow. The selection
 background is the optional **`selection`** palette slot; a theme that omits it
 derives the block from its **`accent`** colour, still with a luminance-correct
 foreground. Dragging to the **top or
