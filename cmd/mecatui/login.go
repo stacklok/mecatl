@@ -314,12 +314,61 @@ func prepareSavedRemoteLogin(ctx context.Context, conn clientauth.Connection) (p
 		closeStore()
 		return preparedSavedLogin{}, &client.AuthError{Reason: client.AuthStorageUnavailable}
 	}
-	if _, err := creds.Load(ctx, conn.Identity); err != nil &&
-		!errors.Is(err, credentialstore.ErrNotFound) && !errors.Is(err, clientauth.ErrCorrupt) {
+	// Snapshot the target/credential state now, BEFORE the caller's interactive
+	// browser wait: this route serves both a fresh enrollment (nothing to
+	// snapshot yet -- Found:false / an empty target list is itself a valid CAS
+	// baseline) and a rediscovery of an already-enrolled resource, and only the
+	// snapshot closes the gap where a concurrent logout removes that enrollment
+	// while the browser exchange is in flight, which would otherwise let
+	// completion resurrect the removed row.
+	expectedTarget, expectedCredential, err := snapshotSavedLoginState(ctx, conn, registry, creds)
+	if err != nil {
 		closeStore()
-		return preparedSavedLogin{}, &client.AuthError{Reason: client.AuthStorageUnavailable}
+		return preparedSavedLogin{}, err
 	}
-	return preparedSavedLogin{registry: registry, creds: creds, close: closeStore}, nil
+	return preparedSavedLogin{registry: registry, creds: creds, close: closeStore, expectedTarget: expectedTarget, expectedCredential: expectedCredential}, nil
+}
+
+// snapshotSavedLoginState captures the CAS preconditions Enroll needs to reject
+// a commit that races a concurrent logout/re-enrollment of the same target: the
+// credential state for conn.Identity and every existing registry row for its
+// (canonicalized) target, both read at preflight time.
+func snapshotSavedLoginState(ctx context.Context, conn clientauth.Connection, registry *clientauth.Registry, creds *clientauth.Credentials) (*[]clientauth.Connection, *clientauth.ExpectedCredentialState, error) {
+	rec, loadErr := creds.Load(ctx, conn.Identity)
+	var expectedCredential *clientauth.ExpectedCredentialState
+	switch {
+	case loadErr == nil:
+		expectedCredential = &clientauth.ExpectedCredentialState{Found: true, Version: rec.Version}
+	case errors.Is(loadErr, credentialstore.ErrNotFound):
+		expectedCredential = &clientauth.ExpectedCredentialState{Found: false}
+	case errors.Is(loadErr, clientauth.ErrCorrupt):
+		// Enroll's corrupt-record repair path may still run, but only if the
+		// record is STILL corrupt at commit time -- if another process
+		// repaired or replaced it while this sign-in's browser flow was open,
+		// this stale sign-in must not overwrite that.
+		expectedCredential = &clientauth.ExpectedCredentialState{Corrupt: true}
+	default:
+		return nil, nil, &client.AuthError{Reason: client.AuthStorageUnavailable}
+	}
+	all, err := registry.List()
+	if err != nil {
+		return nil, nil, &client.AuthError{Reason: client.AuthStorageUnavailable}
+	}
+	var expected []clientauth.Connection
+	// Canonicalize defensively (matching Enroll's own discipline) rather than
+	// trust the caller's conn.Identity.Target is already canonical -- a
+	// mismatch here would silently see zero existing entries and misreport
+	// every login as a changed target.
+	target := conn.Identity.Target
+	if canon, canonErr := conn.Identity.Canonical(); canonErr == nil {
+		target = canon.Target
+	}
+	for _, existing := range all {
+		if existing.Identity.Target == target {
+			expected = append(expected, existing)
+		}
+	}
+	return &expected, expectedCredential, nil
 }
 
 // prepareExistingSavedRemoteLogin opens only existing saved-target state. It is
@@ -345,43 +394,12 @@ func prepareExistingSavedRemoteLogin(ctx context.Context, conn clientauth.Connec
 		closeStore()
 		return preparedSavedLogin{}, &client.AuthError{Reason: client.AuthStorageUnavailable}
 	}
-	rec, loadErr := creds.Load(ctx, conn.Identity)
-	var expectedCredential *clientauth.ExpectedCredentialState
-	switch {
-	case loadErr == nil:
-		expectedCredential = &clientauth.ExpectedCredentialState{Found: true, Version: rec.Version}
-	case errors.Is(loadErr, credentialstore.ErrNotFound):
-		expectedCredential = &clientauth.ExpectedCredentialState{Found: false}
-	case errors.Is(loadErr, clientauth.ErrCorrupt):
-		// Enroll's corrupt-record repair path may still run, but only if the
-		// record is STILL corrupt at commit time -- if another process
-		// repaired or replaced it while this sign-in's browser flow was
-		// open, this stale sign-in must not overwrite that.
-		expectedCredential = &clientauth.ExpectedCredentialState{Corrupt: true}
-	default:
-		closeStore()
-		return preparedSavedLogin{}, &client.AuthError{Reason: client.AuthStorageUnavailable}
-	}
-	all, err := registry.List()
+	expectedTarget, expectedCredential, err := snapshotSavedLoginState(ctx, conn, registry, creds)
 	if err != nil {
 		closeStore()
-		return preparedSavedLogin{}, &client.AuthError{Reason: client.AuthStorageUnavailable}
+		return preparedSavedLogin{}, err
 	}
-	var expected []clientauth.Connection
-	// Canonicalize defensively (matching Enroll's own discipline) rather than
-	// trust the caller's conn.Identity.Target is already canonical -- a
-	// mismatch here would silently see zero existing entries and misreport
-	// every reauth as a changed target.
-	target := conn.Identity.Target
-	if canon, canonErr := conn.Identity.Canonical(); canonErr == nil {
-		target = canon.Target
-	}
-	for _, existing := range all {
-		if existing.Identity.Target == target {
-			expected = append(expected, existing)
-		}
-	}
-	return preparedSavedLogin{registry: registry, creds: creds, close: closeStore, expectedTarget: &expected, expectedCredential: expectedCredential}, nil
+	return preparedSavedLogin{registry: registry, creds: creds, close: closeStore, expectedTarget: expectedTarget, expectedCredential: expectedCredential}, nil
 }
 
 // runSavedRemoteLogin performs the ordinary OIDC flow for an already-saved public

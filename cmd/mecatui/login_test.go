@@ -14,6 +14,7 @@ import (
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/internal/adapter/clientauth"
+	"github.com/stacklok/mecatl/internal/adapter/credentialstore"
 	"github.com/stacklok/mecatl/mcp/oauthlogin"
 )
 
@@ -299,5 +300,67 @@ func TestConfirmDiscoveredLoginAnswers(t *testing.T) {
 				t.Fatalf("confirmDiscoveredLogin(%q) = %v, want %v", tc.input, got, tc.want)
 			}
 		})
+	}
+}
+
+// TestPrepareSavedRemoteLoginSnapshotsPreventStaleResurrection pins the fix for
+// a review finding: the discovered-login route reused prepareSavedRemoteLogin,
+// which previously returned no ExpectedTarget/ExpectedCredential snapshot at
+// all. That let a concurrent logout for the same target -- racing the
+// interactive browser wait between preflight and Enroll's eventual commit --
+// be silently undone: Enroll would resurrect the removed row because it had
+// no CAS precondition to violate. prepareSavedRemoteLogin must now snapshot
+// the pre-existing state (mirroring prepareExistingSavedRemoteLogin), so
+// Enroll rejects a commit against state that changed underneath it.
+func TestPrepareSavedRemoteLoginSnapshotsPreventStaleResurrection(t *testing.T) {
+	reg, err := clientauth.OpenRegistry(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	backend := credentialstore.NewMemoryBackend()
+	store, err := backend.Open("stale-resurrect")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = store.Close() }()
+	creds, err := clientauth.NewCredentials(store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := clientauth.Identity{Target: "stale-resurrect.example:443", Issuer: "https://issuer.example", ClientID: "client", Audience: "api", RedirectURI: oauthlogin.ExactRedirectURL}
+	conn := clientauth.Connection{Identity: id}
+	if _, err := reg.Upsert(conn); err != nil {
+		t.Fatal(err)
+	}
+
+	// This is the fix: prepareSavedRemoteLogin's snapshot step, exercised
+	// directly against the fixture above (the real function additionally opens
+	// the OS keyring, which is unavailable in a sandboxed test run).
+	expectedTarget, expectedCredential, err := snapshotSavedLoginState(t.Context(), conn, reg, creds)
+	if err != nil {
+		t.Fatalf("snapshotSavedLoginState: %v", err)
+	}
+	if expectedTarget == nil || len(*expectedTarget) != 1 {
+		t.Fatalf("expectedTarget = %#v, want a snapshot of the one existing row", expectedTarget)
+	}
+	if expectedCredential == nil || expectedCredential.Found {
+		t.Fatalf("expectedCredential = %#v, want Found=false (no credential enrolled yet)", expectedCredential)
+	}
+
+	// Simulate the race: a concurrent logout removes the enrollment while this
+	// sign-in's browser wait would have been in flight.
+	if _, err := reg.DeleteTarget(id.Target, []clientauth.Connection{conn}); err != nil {
+		t.Fatal(err)
+	}
+
+	err = clientauth.Enroll(t.Context(), conn, clientauth.Token{AccessToken: "new", TokenType: "Bearer"}, clientauth.EnrollmentConfig{
+		Registry: reg, Credentials: creds,
+		ExpectedTarget: expectedTarget, ExpectedCredential: expectedCredential,
+	})
+	if !errors.Is(err, clientauth.ErrTargetChanged) {
+		t.Fatalf("Enroll after concurrent logout = %v, want ErrTargetChanged (stale resurrection must be rejected)", err)
+	}
+	if _, err := reg.FindTarget(id.Target); !errors.Is(err, credentialstore.ErrNotFound) {
+		t.Fatalf("FindTarget after rejected stale Enroll = %v, want ErrNotFound (logout must not be undone)", err)
 	}
 }
