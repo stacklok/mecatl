@@ -867,12 +867,13 @@ tasks:
   ac-trace:
     desc: "Report acceptance-criteria → test coverage for every docs/acceptance/ plan (report-only)"
     # sdk:install is a REAL dependency, not a convenience: .actrace.yml resolves
-    # `vitest:` proofs through scripts/resolve-vitest-proof.mjs, which parses the
-    # TypeScript AST using the compiler from sdk/typescript/node_modules. Without
-    # it every vitest proof is rejected ("TypeScript is unavailable"), which is
-    # merely noisy here but FATAL under --strict once a plan carrying vitest
-    # proofs is landed. The install task is fingerprinted on package.json +
-    # pnpm-lock.yaml, so this is a no-op on an already-installed tree.
+    # titled TypeScript proofs through the `vitest:` and `playwright:` resolvers,
+    # which parse the TypeScript AST using the compiler from
+    # sdk/typescript/node_modules. Without it every titled proof is rejected
+    # ("TypeScript is unavailable"), which is merely noisy here but FATAL under
+    # --strict once its plan lands. The install task is fingerprinted on
+    # package.json + pnpm-lock.yaml, so this is a no-op on an already-installed
+    # tree.
     deps: [sdk:install]
     cmds:
       # go run (pinned), NOT a go.mod `tool` directive — ac-trace is an INTERNAL

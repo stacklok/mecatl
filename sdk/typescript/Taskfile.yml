@@ -43,6 +43,19 @@ tasks:
       - task --dir ../.. build
       - pnpm run test:e2e
 
+  browser:install:
+    desc: Install the pinned Chromium revision and its host dependencies
+    deps: [install]
+    cmds:
+      - pnpm exec playwright install --with-deps chromium
+
+  browser:
+    desc: Pack the SDK and run the offline Chromium project against same-checkout mecated
+    deps: [pack]
+    cmds:
+      - task --dir ../.. build
+      - pnpm run test:browser
+
   build:
     desc: Build ESM modules, declarations, and source maps with tsc
     deps: [install]

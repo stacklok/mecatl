@@ -50,9 +50,10 @@ against the running harness can demonstrate, not which TypeScript files exist.
   Only the path-qualified tag reaches `npm publish`; the npm-side trust setup is
   a named human prerequisite, not a secret added to GitHub.
 - **Verify names follow M1–M3's convention.** Go proofs are
-  `TestSDKTypescriptRelease_ScenarioN_*`; TypeScript proofs use the strict
-  `vitest:<path>#<base64url-title>` resolver form so a renamed title cannot
-  degrade to file-level coverage.
+  `TestSDKTypescriptRelease_ScenarioN_*`; Node-side TypeScript proofs use the
+  strict `vitest:<path>#<base64url-title>` resolver form, while real-browser
+  proofs use the sibling `playwright:<path>#<base64url-title>` form, so a
+  renamed title cannot degrade to file-level coverage.
 
 ## Out of scope
 
@@ -366,19 +367,19 @@ tooling, exact-origin fixture server, mock script, and Chromium full project.
 **Acceptance:**
 - AC8.1: Chromium imports the package entrypoint, connects, creates a session,
   runs to a typed terminal, and closes without cross-runtime leakage.
-  - verify: vitest:sdk/typescript/e2e/browser/chromium.e2e.test.ts#Q2hyb21pdW0gY29tcGxldGVzIHRoZSBicm93c2VyIFNESyBjb250cm9sIGZsb3c — `sdk/typescript/e2e/browser/chromium.e2e.test.ts :: "Chromium completes the browser SDK control flow"`
+  - verify: playwright:sdk/typescript/e2e/browser/chromium.e2e.test.ts#Q2hyb21pdW0gY29tcGxldGVzIHRoZSBicm93c2VyIFNESyBjb250cm9sIGZsb3c — `sdk/typescript/e2e/browser/chromium.e2e.test.ts :: "Chromium completes the browser SDK control flow"`
 - AC8.2: The browser's credentialed preflight succeeds only for the one exact
   configured origin, carries the expected allow headers and `Vary: Origin`, and
   a sibling origin is refused.
-  - verify: vitest:sdk/typescript/e2e/browser/chromium.e2e.test.ts#dGhlIGJyb3dzZXIgdHJhbnNwb3J0IHBhc3NlcyBleGFjdC1vcmlnaW4gQ09SUyBwcmVmbGlnaHQ — `sdk/typescript/e2e/browser/chromium.e2e.test.ts :: "the browser transport passes exact-origin CORS preflight"`
+  - verify: playwright:sdk/typescript/e2e/browser/chromium.e2e.test.ts#dGhlIGJyb3dzZXIgdHJhbnNwb3J0IHBhc3NlcyBleGFjdC1vcmlnaW4gQ09SUyBwcmVmbGlnaHQ — `sdk/typescript/e2e/browser/chromium.e2e.test.ts :: "the browser transport passes exact-origin CORS preflight"`
 - AC8.3: Chromium sends an in-memory multimodal prompt, observes an ordinary
   permission ask, resolves it through the callback, and reaches the scripted
   terminal without external network access.
-  - verify: vitest:sdk/typescript/e2e/browser/chromium.e2e.test.ts#Q2hyb21pdW0gcnVucyBhIG11bHRpbW9kYWwgcHJvbXB0IGFuZCBwZXJtaXNzaW9uIGNhbGxiYWNr — `sdk/typescript/e2e/browser/chromium.e2e.test.ts :: "Chromium runs a multimodal prompt and permission callback"`
+  - verify: playwright:sdk/typescript/e2e/browser/chromium.e2e.test.ts#Q2hyb21pdW0gcnVucyBhIG11bHRpbW9kYWwgcHJvbXB0IGFuZCBwZXJtaXNzaW9uIGNhbGxiYWNr — `sdk/typescript/e2e/browser/chromium.e2e.test.ts :: "Chromium runs a multimodal prompt and permission callback"`
 - AC8.4: Chromium cancels an owned run with the expected run ID, exercises
   strict steer when the feature is advertised (and asserts typed unsupported
   otherwise), then attaches and drains a persisted run.
-  - verify: vitest:sdk/typescript/e2e/browser/chromium.e2e.test.ts#Q2hyb21pdW0gY2FuY2VscyBzdGVlcnMgd2hlbiBhZHZlcnRpc2VkIGFuZCByZWF0dGFjaGVz — `sdk/typescript/e2e/browser/chromium.e2e.test.ts :: "Chromium cancels steers when advertised and reattaches"`
+  - verify: playwright:sdk/typescript/e2e/browser/chromium.e2e.test.ts#Q2hyb21pdW0gY2FuY2VscyBzdGVlcnMgd2hlbiBhZHZlcnRpc2VkIGFuZCByZWF0dGFjaGVz — `sdk/typescript/e2e/browser/chromium.e2e.test.ts :: "Chromium cancels steers when advertised and reattaches"`
 
 ---
 
@@ -395,10 +396,10 @@ cache/timeouts/traces, and a separate `macos-14` Node 22 spawn job.
 **Acceptance:**
 - AC9.1: Firefox imports `.`, connects over HTTP/SSE, runs to a terminal, and
   attaches to drain that run.
-  - verify: vitest:sdk/typescript/e2e/browser/smoke.e2e.test.ts#RmlyZWZveCBpbXBvcnRzIGNvbm5lY3RzIHJ1bnMgYW5kIGF0dGFjaGVz — `sdk/typescript/e2e/browser/smoke.e2e.test.ts :: "Firefox imports connects runs and attaches"`
+  - verify: playwright:sdk/typescript/e2e/browser/smoke.e2e.test.ts#RmlyZWZveCBpbXBvcnRzIGNvbm5lY3RzIHJ1bnMgYW5kIGF0dGFjaGVz — `sdk/typescript/e2e/browser/smoke.e2e.test.ts :: "Firefox imports connects runs and attaches"`
 - AC9.2: WebKit imports `.`, connects over HTTP/SSE, runs to a terminal, and
   attaches to drain that run.
-  - verify: vitest:sdk/typescript/e2e/browser/smoke.e2e.test.ts#V2ViS2l0IGltcG9ydHMgY29ubmVjdHMgcnVucyBhbmQgYXR0YWNoZXM — `sdk/typescript/e2e/browser/smoke.e2e.test.ts :: "WebKit imports connects runs and attaches"`
+  - verify: playwright:sdk/typescript/e2e/browser/smoke.e2e.test.ts#V2ViS2l0IGltcG9ydHMgY29ubmVjdHMgcnVucyBhbmQgYXR0YWNoZXM — `sdk/typescript/e2e/browser/smoke.e2e.test.ts :: "WebKit imports connects runs and attaches"`
 - AC9.3: On `macos-14` with Node 22, `spawn()` starts the same-checkout binary
   over UDS, reaches readiness, performs one run, and exits cleanly with its
   runtime directory removed. Because the runner's real `$TMPDIR`
@@ -615,9 +616,8 @@ status reconciliation without closing #821 from an implementation PR.
   section's "dependency update PRs carry the ordinary compatibility refresh"
   currently assumes a mechanism that does not exist. Note that
   `package.test.ts`'s exact-pin assertions must be updated by the same PR.
-- A resolver for the browser suite's proofs in `.actrace.yml` if those tests run
-  under `@playwright/test`, whose titles the existing `vitest:` resolver cannot
-  resolve (see the batched runner decision below).
+- The browser suite's `playwright:` resolver in `.actrace.yml`, kept beside the
+  Node-side `vitest:` resolver so each runner's titled proofs resolve strictly.
 - No `engine/` API or proto change is expected. If one appears, stop and revise
   the scope rather than silently widening this client-side plan.
 
@@ -766,14 +766,10 @@ exact title.
   `LicenseRef-Stacklok-Proprietary` while the package declares `Apache-2.0`;
   AC11.8 fails closed until an authorized relicense lands. Both are human
   gates, and the first irreversible publish must not proceed past either.
-- **The browser suite's test runner is an open decision.** The bounding
-  mechanisms AC9.4 relies on (worker-scoped fixtures, per-project browsers,
-  failure-only traces, `retries: 0`) are `@playwright/test` concepts, but
-  Scenario 8/9 proofs currently use the `vitest:` token and `.actrace.yml`
-  defines only a `vitest:` resolver — so under `@playwright/test` those proofs
-  would not resolve and Definition of done item 5 would fail. Resolve before
-  Scenario 8 starts: run the browser tests under Vitest and restate AC9.4 in
-  Vitest vocabulary, or keep `@playwright/test` and add a sibling resolver.
+- **The browser suite runs under `@playwright/test`.** Its worker-scoped
+  fixtures, per-project browsers, failure-only traces, and `retries: 0` map
+  directly onto AC9.4. Scenario 8/9 proofs therefore use the strict sibling
+  `playwright:` resolver rather than being mislabeled as Vitest proofs.
 - **Proto breaking-change detection does not exist yet.** `buf.yaml` declares a
   `breaking` stanza but no workflow invokes `buf breaking --against`. AC7.4 now
   claims only generation freshness. Deciding whether `v0.1.0`'s "real

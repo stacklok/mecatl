@@ -174,8 +174,14 @@ class HttpTransport implements Transport {
         ? {}
         : { credentialProvider: options.credentialProvider }),
     };
-    this.#fetch = options.fetch ?? globalThis.fetch;
-    if (this.#fetch === undefined) throw new TypeError("A fetch implementation is required");
+    const fetchImplementation = options.fetch ?? globalThis.fetch;
+    if (fetchImplementation === undefined)
+      throw new TypeError("A fetch implementation is required");
+    // A function stored in a private field is invoked with the containing object
+    // as its receiver. Chromium's native window.fetch rejects that receiver as an
+    // illegal invocation, so bind both the native and injected implementation to
+    // the runtime global before retaining it.
+    this.#fetch = fetchImplementation.bind(globalThis);
   }
 
   async #request(
