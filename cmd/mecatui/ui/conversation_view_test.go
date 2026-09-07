@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"strings"
 	"testing"
 
 	"charm.land/bubbles/v2/viewport"
@@ -61,6 +62,49 @@ func TestADR_0301_AnchorFallbackIsDeterministic(t *testing.T) {
 	if got := view.restore(frame, readingAnchor{blockID: 2, region: conversationRegionResult, bias: towardEnd}); got != 3 {
 		t.Errorf("end-biased adjacent-block fallback row = %d, want 3", got)
 	}
+
+	// Tool-card provenance follows the rendered semantic sections, not a fraction
+	// of their total rows: a wrapped argument section can be much longer than its
+	// one-line result.
+	c := &conversation{}
+	c.addTool("call-1", "Read", `{"argument_one":"one","argument_two":"two","argument_three":"three","argument_four":"four"}`)
+	c.resolveTool("call-1", "RESULT_MARKER", false)
+	r := newCacheRenderer()
+	r.setWidth(32)
+	toolFrame := r.renderConversationFrame(c, true)
+	seenArguments, seenResult := false, false
+	argumentRow := -1
+	for i, line := range toolFrame.lines {
+		plain := stripANSIstr(line)
+		switch {
+		case strings.Contains(plain, "argument_"):
+			seenArguments = true
+			if argumentRow < 0 {
+				argumentRow = i
+			}
+			if got := toolFrame.provenance[i].region; got != conversationRegionArguments {
+				t.Errorf("argument row %d has region %v, want arguments", i, got)
+			}
+		case strings.Contains(plain, "RESULT_MARKER"):
+			seenResult = true
+			if got := toolFrame.provenance[i].region; got != conversationRegionResult {
+				t.Errorf("result row %d has region %v, want result", i, got)
+			}
+		}
+	}
+	if !seenArguments || !seenResult {
+		t.Fatalf("semantic test did not find arguments=%t result=%t in frame: %q", seenArguments, seenResult, toolFrame.lines)
+	}
+	anchor, ok := toolFrame.anchorForRow(argumentRow)
+	if !ok {
+		t.Fatal("wrapped argument row did not produce an anchor")
+	}
+	r.setWidth(80)
+	reflowed := r.renderConversationFrame(c, true)
+	row, ok := reflowed.rowForAnchor(anchor)
+	if !ok || reflowed.provenance[row].region != conversationRegionArguments {
+		t.Fatalf("argument anchor after reflow = row %d, ok=%t, region=%v; want arguments", row, ok, reflowed.provenance[row].region)
+	}
 }
 
 func TestADR_0301_CardAndChangedFilesAppendixFallback(t *testing.T) {
@@ -83,6 +127,32 @@ func TestADR_0301_CardAndChangedFilesAppendixFallback(t *testing.T) {
 	)
 	if got := view.restore(appendixCollapsed, readingAnchor{blockID: 2, region: conversationRegionAppendix, bias: towardStart}); got != 1 {
 		t.Errorf("collapsed appendix fallback row = %d, want physically preceding conversation row 1", got)
+	}
+
+	// A collapsed tool result remains in its result region even when the argument
+	// section has a different wrapped height.
+	c := &conversation{}
+	c.addTool("call-1", "Read", `{"argument_one":"one","argument_two":"two","argument_three":"three","argument_four":"four"}`)
+	c.resolveTool("call-1", "RESULT_MARKER", false)
+	r := newCacheRenderer()
+	r.setWidth(80)
+	frame := r.renderConversationFrame(c, false)
+	resultRow := -1
+	for i, line := range frame.lines {
+		if strings.Contains(stripANSIstr(line), "RESULT_MARKER") {
+			resultRow = i
+			break
+		}
+	}
+	if resultRow < 0 {
+		t.Fatal("collapsed card has no visible result row")
+	}
+	anchor, ok := frame.anchorForRow(resultRow)
+	if !ok || anchor.region != conversationRegionResult {
+		t.Fatalf("collapsed result anchor = %#v, ok=%t; want result region", anchor, ok)
+	}
+	if got := view.restore(frame, anchor); got != resultRow {
+		t.Errorf("collapsed result anchor restores row %d, want %d", got, resultRow)
 	}
 }
 

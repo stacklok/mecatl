@@ -189,7 +189,7 @@ func (r *renderer) blockFrameRows(index int, b *block, expand bool) []renderedRo
 	if entry, ok := r.blockFrameCache[index]; ok && entry.rev == b.rev && entry.width == r.width && entry.expand == expand {
 		return entry.rows
 	}
-	rows := provenanceRows(b, r.joinScratch[index], expand)
+	rows := r.provenanceRows(b, r.joinScratch[index], expand)
 	if r.blockFrameCache == nil {
 		r.blockFrameCache = map[int]frameBlockEntry{}
 	}
@@ -197,7 +197,7 @@ func (r *renderer) blockFrameRows(index int, b *block, expand bool) []renderedRo
 	return rows
 }
 
-func provenanceRows(b *block, rendered string, expand bool) []renderedRow {
+func (r *renderer) provenanceRows(b *block, rendered string, expand bool) []renderedRow {
 	lines := strings.Split(rendered, "\n")
 	rows := make([]renderedRow, len(lines))
 	region := conversationRegionChrome
@@ -217,8 +217,8 @@ func provenanceRows(b *block, rendered string, expand bool) []renderedRow {
 		region = conversationRegionBody
 	case blockTool:
 		region = conversationRegionChrome
-		// A tool card's header is chrome. Its remaining rows are split at the
-		// first result-text row; this keeps the existing card renderer authoritative.
+		// Tool-card sections are assigned below from the exact prepared card
+		// content, after the renderer has established their wrapped boundaries.
 		textStart = 1
 	default:
 		textStart, region = 0, conversationRegionBody
@@ -233,7 +233,7 @@ func provenanceRows(b *block, rendered string, expand bool) []renderedRow {
 		}
 	}
 	if b.kind == blockTool {
-		toolRegions(b, rows, lines)
+		r.toolRegions(b, rows, lines, expand)
 	}
 	if b.kind == blockUser {
 		for i, line := range lines {
@@ -254,24 +254,32 @@ func renderedReasoningForFrame(b *block, expand bool) string {
 	return "reasoning\n" + reasoningCaveat + "\n" + sanitizeTerminal(strings.TrimRight(b.reasoning, "\n"))
 }
 
-func toolRegions(b *block, rows []renderedRow, lines []string) {
+func (r *renderer) toolRegions(b *block, rows []renderedRow, lines []string, expand bool) {
 	if len(rows) == 0 {
 		return
 	}
-	firstResult := len(rows)
-	if b.resolved && b.resultBody != "" {
-		firstResult = max(1, len(rows)/2)
+	card, head, args, result := r.toolCardContent(b, expand)
+	contentStart := card.GetVerticalFrameSize() / 2
+	headerEnd := contentStart + len(strings.Split(head, "\n"))
+	argumentsEnd := headerEnd
+	if args != "" {
+		argumentsEnd += len(strings.Split(args, "\n"))
 	}
-	for i := 1; i < len(rows); i++ {
-		if i >= firstResult {
-			rows[i].region = conversationRegionResult
-		} else {
+	resultEnd := argumentsEnd
+	if result != "" {
+		resultEnd += len(strings.Split(result, "\n"))
+	}
+	for i := range rows {
+		rows[i] = renderedRow{blockID: b.id, region: conversationRegionChrome, row: i}
+		switch {
+		case i >= contentStart && i < headerEnd:
+			// Header rows are card chrome.
+		case i < argumentsEnd:
 			rows[i].region = conversationRegionArguments
+		case i < resultEnd:
+			rows[i].region = conversationRegionResult
 		}
-		rows[i].blockID = b.id
-		rows[i].row = i
 	}
-	rows[0] = renderedRow{blockID: b.id, region: conversationRegionChrome}
 	for _, block := range b.resultBlocks {
 		artifact, ok := renderResultBlockLine(block)
 		if !ok {

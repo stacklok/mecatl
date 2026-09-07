@@ -1380,6 +1380,19 @@ func deliveryBodyForDisplay(raw string) string {
 // the args don't parse as the expected shape). expand removes the line cap on
 // the result body and the diff.
 func (r *renderer) renderTool(b *block, expand bool) string {
+	card, head, args, result := r.toolCardContent(b, expand)
+	if args != "" {
+		head += "\n" + args
+	}
+	if result != "" {
+		head += "\n" + result
+	}
+	return card.Render(head)
+}
+
+// toolCardContent prepares each semantic section before the card frame is
+// applied. The same sections drive both rendering and row provenance.
+func (r *renderer) toolCardContent(b *block, expand bool) (lipgloss.Style, string, string, string) {
 	card, _, bodyWidth := r.toolCardLayout()
 
 	var glyph, glyphText string
@@ -1409,20 +1422,12 @@ func (r *renderer) renderTool(b *block, expand bool) string {
 		head += "\n" + renderToolCardText(r.th.Style("muted"), sanitizeTerminal(b.toolName), bodyWidth)
 	}
 
-	// Every independently styled card region is wrapped to the same body budget
-	// before it reaches the card frame. Keeping the regions separate prevents the
-	// frame from re-wrapping an already styled multi-region card.
-	if args := r.renderToolArgs(b, expand, bodyWidth); args != "" {
-		head += "\n" + args
-	}
-
+	args := r.renderToolArgs(b, expand, bodyWidth)
+	result := ""
 	if b.resolved {
-		if res := r.renderToolResult(b, expand, bodyWidth); res != "" {
-			head += "\n" + res
-		}
+		result = r.renderToolResult(b, expand, bodyWidth)
 	}
-
-	return card.Render(head)
+	return card, head, args, result
 }
 
 // toolCardLayout returns the styled card, its outer width, and its usable body
