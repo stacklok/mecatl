@@ -64,7 +64,7 @@ func TestSessionTitleGeneration_Scenario1_BareTitleCommandReadsAndClearsInput(t 
 	}
 }
 
-func TestSessionTitleGeneration_Scenario1_WhitespaceTitleCommandIsRejected(t *testing.T) {
+func TestSessionTitleGeneration_Scenario1_WhitespaceTitleCommandReadsAndClearsInput(t *testing.T) {
 	for _, input := range []string{"/title ", "/title   ", "/title\t\n"} {
 		t.Run(strings.ReplaceAll(input, " ", "space"), func(t *testing.T) {
 			m := titleModel(t, &titleRenamer{})
@@ -73,8 +73,8 @@ func TestSessionTitleGeneration_Scenario1_WhitespaceTitleCommandIsRejected(t *te
 
 			mm, cmd := m.submitPrompt()
 			m = mm.(Model)
-			if cmd != nil || m.sessionTitle != "Fallback" || !strings.Contains(stripANSIstr(m.statusMsg), "requires non-whitespace text") {
-				t.Fatalf("%q title/status/cmd = %q/%q/%v, want rejected blank rename", input, m.sessionTitle, stripANSIstr(m.statusMsg), cmd != nil)
+			if cmd != nil || m.sessionTitle != "Fallback" || len(m.conv.blocks) != 1 || !strings.Contains(m.conv.blocks[0].raw, "Fallback") || !strings.Contains(m.conv.blocks[0].raw, "generated") {
+				t.Fatalf("%q title/notice/cmd = %q/%#v/%v, want local title notice", input, m.sessionTitle, m.conv.blocks, cmd != nil)
 			}
 			if got := m.prompt.Value(); got != "" {
 				t.Fatalf("%q left input %q, want cleared input", input, got)
