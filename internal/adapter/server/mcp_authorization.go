@@ -322,7 +322,7 @@ func (s *Service) continueGrantedAuthorizationLocked(ctx context.Context, sess *
 	s.stopAuthorizationExpiry(sess.ID)
 	prepared, err := engine.PrepareAuthorizationContinuation(memory.WithWorkspace(ctx, env.Workspace().Root()), sess, env, claimed, resolution)
 	if err != nil {
-		if restoreErr := s.restoreAuthorizationClaim(ctx, sess, claimed); restoreErr != nil {
+		if restoreErr := s.restoreAuthorizationClaimOrSettle(ctx, sess.ID, sess, claimed); restoreErr != nil {
 			return MCPAuthorizationResult{}, fmt.Errorf("%w: prepare granted authorization continuation: %v; restore claim: %v", ErrInternal, err, restoreErr)
 		}
 		return MCPAuthorizationResult{}, fmt.Errorf("%w: prepare granted authorization continuation", ErrInternal)
@@ -355,14 +355,14 @@ func (s *Service) registerAndStartGrantedAuthorization(ctx context.Context, sess
 	handoff.Lock()
 	if err := ctx.Err(); err != nil {
 		waitForCancellation()
-		if restoreErr := s.restoreAuthorizationClaim(context.WithoutCancel(ctx), sess, claimed); restoreErr != nil {
+		if restoreErr := s.restoreAuthorizationClaimOrSettle(context.WithoutCancel(ctx), sess.ID, sess, claimed); restoreErr != nil {
 			return fmt.Errorf("%w: restore cancelled authorization claim: %v", ErrInternal, restoreErr)
 		}
 		return err
 	}
 	if !s.registerPrepared(sess.ID, prepared.Run(), sess) {
 		waitForCancellation()
-		if err := s.restoreAuthorizationClaim(context.WithoutCancel(ctx), sess, claimed); err != nil {
+		if err := s.restoreAuthorizationClaimOrSettle(context.WithoutCancel(ctx), sess.ID, sess, claimed); err != nil {
 			return fmt.Errorf("%w: restore unregistered authorization claim: %v", ErrInternal, err)
 		}
 		return ErrNoActiveRun
@@ -377,7 +377,7 @@ func (s *Service) registerAndStartGrantedAuthorization(ctx context.Context, sess
 		handoff.Lock()
 		handoff.Unlock() //nolint:staticcheck // deliberate empty critical section: wait for the AfterFunc callback's own lock/unlock to complete
 		s.deregister(sess.ID, prepared.Run())
-		if restoreErr := s.restoreAuthorizationClaim(context.WithoutCancel(ctx), sess, claimed); restoreErr != nil {
+		if restoreErr := s.restoreAuthorizationClaimOrSettle(context.WithoutCancel(ctx), sess.ID, sess, claimed); restoreErr != nil {
 			return fmt.Errorf("%w: restore cancelled authorization claim: %v", ErrInternal, restoreErr)
 		}
 		return ctx.Err()
@@ -607,10 +607,25 @@ func authorizationRequiredLogged(ctx context.Context, log port.EventLog, id sess
 // surface and diagnose any failure rather than report settled success.
 func (s *Service) appendAuthorizationResolution(ctx context.Context, id session.SessionID, pending session.PendingAuthorization, results []session.ToolResult, status session.AuthorizationStatus) error {
 	appendCtx := context.WithoutCancel(ctx)
+	// A post-write append failure is ambiguous (port.EventLog.Append: the event
+	// may already be durably committed) — the caller must not retry THAT event.
+	// But aborting the whole sequence on the first failure, as this used to do,
+	// left every LATER event unattempted too: required + a partial result
+	// prefix + no resolved is a permanently non-foldable log (eventsource.Fold
+	// requires the primary call answered before accepting resolved, and
+	// requires every open authorization closed). Attempting every remaining
+	// event regardless bounds the damage to the one ambiguous event instead of
+	// the whole tail, and costs nothing extra when nothing fails. The first
+	// error is still returned so the caller's existing failure handling
+	// (settling the session, diagnostics) is unchanged.
+	var firstErr error
 	for i := range results {
 		ev := session.Event{Type: session.EvToolResult, ToolResult: &results[i]}
 		if err := s.appendEvent(appendCtx, id, ev); err != nil {
-			return err
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
 		}
 		s.PublishSessionEvent(id, ev)
 	}
@@ -622,10 +637,13 @@ func (s *Service) appendAuthorizationResolution(ctx context.Context, id session.
 		Status:          status,
 	}}
 	if err := s.appendEvent(appendCtx, id, ev); err != nil {
-		return err
+		if firstErr == nil {
+			firstErr = err
+		}
+		return firstErr
 	}
 	s.PublishSessionEvent(id, ev)
-	return nil
+	return firstErr
 }
 
 func (s *Service) restoreAuthorizationClaim(ctx context.Context, sess *session.Session, pending session.PendingAuthorization) error {
@@ -633,6 +651,37 @@ func (s *Service) restoreAuthorizationClaim(ctx context.Context, sess *session.S
 		return err
 	}
 	return s.saveSession(ctx, sess)
+}
+
+// restoreAuthorizationClaimOrSettle wraps restoreAuthorizationClaim for the
+// granted-continuation compensation paths, where sess's earlier
+// ClaimAuthorization save has ALREADY durably landed StateRunning. If the
+// restoring save here also fails, sess's in-memory state (now StateAuthorizing,
+// via the in-memory-only RestoreAuthorizationClaim step) no longer matches
+// what is durably persisted, and there is nothing left for this attempt to
+// retry — the prior successful save is the only durable truth. Rather than
+// return leaving that snapshot stranded StateRunning with neither a runtime
+// owner nor a pending authorization to retry, reload it fresh from the store
+// and settle it via the same repairRunningSession the crash-orphan run-entry
+// path uses. Best-effort and diagnosed, never escalated: restoreErr is always
+// the returned error, matching every existing caller's contract.
+func (s *Service) restoreAuthorizationClaimOrSettle(ctx context.Context, id session.SessionID, sess *session.Session, claimed session.PendingAuthorization) error {
+	restoreErr := s.restoreAuthorizationClaim(ctx, sess, claimed)
+	if restoreErr == nil {
+		return nil
+	}
+	settleCtx := context.WithoutCancel(ctx)
+	fresh, loadErr := s.cfg.Store.Load(settleCtx, id)
+	if loadErr != nil {
+		s.cfg.Diagnostics.Log(settleCtx, port.LevelWarn, "reload stranded granted authorization after failed compensation failed",
+			"session", string(id), "restore_err", restoreErr.Error(), "load_err", loadErr.Error())
+		return restoreErr
+	}
+	if repairErr := s.repairRunningSession(settleCtx, fresh); repairErr != nil {
+		s.cfg.Diagnostics.Log(settleCtx, port.LevelWarn, "settle stranded granted authorization after failed compensation failed",
+			"session", string(id), "restore_err", restoreErr.Error(), "repair_err", repairErr.Error())
+	}
+	return restoreErr
 }
 
 func (s *Service) repairAuthorizationRegistration(ctx context.Context, sess *session.Session) {

@@ -179,6 +179,24 @@ func (s *failNextAuthorizationSaveStore) Save(ctx context.Context, sess *session
 
 var errAuthorizationSave = errors.New("authorization save failed")
 
+// failNthAuthorizationSaveStore fails exactly the n-th Save call (1-indexed),
+// every other call succeeds — for proving behavior across a SPECIFIC save in
+// a multi-save sequence (e.g. the claim save succeeds but a LATER
+// compensating save fails), which failNextAuthorizationSaveStore's
+// fail-then-always-succeed shape can't target.
+type failNthAuthorizationSaveStore struct {
+	port.SessionStore
+	calls  atomic.Int32
+	failAt int32
+}
+
+func (s *failNthAuthorizationSaveStore) Save(ctx context.Context, sess *session.Session) error {
+	if s.calls.Add(1) == s.failAt {
+		return errAuthorizationSave
+	}
+	return s.SessionStore.Save(ctx, sess)
+}
+
 type lifecycleDiagnostics struct {
 	mu       sync.Mutex
 	messages []string
@@ -764,17 +782,27 @@ func TestStartRunSettlesInterruptedRestoredAuthorizationOnAppendFailure(t *testi
 func TestMCPAuthorizationTerminalFallbackAppendFailureIsExplicit(t *testing.T) {
 	f := newLifecycleFixture(t, session.AuthorizationDenied, nil, time.Now, nil)
 	log := &countingEventLog{}
-	// Seed the required event so ensureAuthorizationRequiredLogged's existence
-	// check finds it and makes no backfill append of its own — this test's
-	// failure injection targets appendAuthorizationResolution's own first
-	// append, not the reconciliation check ahead of it.
-	if err := log.Append(t.Context(), "authorization-session", session.Event{Type: session.EvAuthorizationRequired, Authorization: &session.AuthorizationPayload{
-		AuthorizationID: f.pending.Authorization.ID, DisplayName: f.pending.Authorization.DisplayName, Call: f.pending.Call.ID,
-		ExpiresAt: f.pending.Authorization.ExpiresAt, Status: session.AuthorizationPending,
-	}}); err != nil {
-		t.Fatal(err)
+	// Seed the full turn history (so the eventual Fold check below has enough
+	// to reconstruct a conversation) plus the required event, so
+	// ensureAuthorizationRequiredLogged's existence check finds it and makes
+	// no backfill append of its own — this test's failure injection targets
+	// appendAuthorizationResolution's own first result append, not the
+	// reconciliation check ahead of it.
+	seed := []session.Event{
+		{Type: session.EvTurnStart},
+		{Type: session.EvToolCall, ToolCall: &f.pending.Call},
+		{Type: session.EvToolCall, ToolCall: &f.pending.Deferred[0]},
+		{Type: session.EvAuthorizationRequired, Authorization: &session.AuthorizationPayload{
+			AuthorizationID: f.pending.Authorization.ID, DisplayName: f.pending.Authorization.DisplayName, Call: f.pending.Call.ID,
+			ExpiresAt: f.pending.Authorization.ExpiresAt, Status: session.AuthorizationPending,
+		}},
 	}
-	log.postWriteFailCalls = map[int]bool{2: true}
+	for _, ev := range seed {
+		if err := log.Append(t.Context(), "authorization-session", ev); err != nil {
+			t.Fatal(err)
+		}
+	}
+	log.postWriteFailCalls = map[int]bool{len(seed) + 1: true}
 	diag := &lifecycleDiagnostics{}
 	f.svc.cfg.EventLog = log
 	f.svc.cfg.Diagnostics = diag
@@ -794,11 +822,17 @@ func TestMCPAuthorizationTerminalFallbackAppendFailureIsExplicit(t *testing.T) {
 	if !diag.contains("persist terminal authorization lifecycle failed") {
 		t.Fatal("fallback append failure was not diagnosed")
 	}
-	if got := len(log.attempts); got != 2 {
-		t.Fatalf("append attempts = %d, want the seeded required plus one at-most-once attempt", got)
+	// seed(1) + pending.Call result(2, the ambiguous one) + deferred result(3) +
+	// resolved: appendAuthorizationResolution now continues past the
+	// ambiguous failure instead of aborting the whole sequence, so every
+	// event still gets attempted and (here, since countingEventLog's
+	// postWriteFailCalls durably records before reporting the error) recorded.
+	want := len(seed) + 3
+	if got := len(log.attempts); got != want {
+		t.Fatalf("append attempts = %d, want %d (seed plus the full 3-event resolution sequence)", got, want)
 	}
-	if got := len(log.recorded); got != 2 {
-		t.Fatalf("durably written events = %d, want the seeded required plus the ambiguous append preserved without retry", got)
+	if got := len(log.recorded); got != want {
+		t.Fatalf("durably written events = %d, want %d (every event preserved despite the one ambiguous failure)", got, want)
 	}
 	persisted, loadErr := f.store.Load(t.Context(), loaded.ID)
 	if loadErr != nil {
@@ -816,6 +850,16 @@ func TestMCPAuthorizationTerminalFallbackAppendFailureIsExplicit(t *testing.T) {
 	}
 	if f.attach.tool.calls.Load() != 0 {
 		t.Fatal("protected mutation executed after ambiguous append failure")
+	}
+	// The whole point of continuing past the ambiguous failure: despite it,
+	// the log now holds the complete required→results→resolved sequence, so
+	// eventsource.Fold can still reconstruct the session. Aborting on the
+	// first failure (the old behavior) would have left resolved missing here
+	// and made this permanently non-foldable.
+	if _, err := eventsource.Fold(eventsource.SessionMeta{
+		ID: persisted.ID, Mode: persisted.Mode, Limits: persisted.Limits, EnvironmentRef: persisted.EnvironmentRef, CreatedAt: persisted.CreatedAt,
+	}, log.Read(t.Context(), persisted.ID)); err != nil {
+		t.Fatalf("continuing past the ambiguous failure did not preserve Fold-reconstructability: %v", err)
 	}
 }
 
@@ -1169,6 +1213,61 @@ func TestMCPAuthorizationPreparedRegistrationFailureNeverExecutes(t *testing.T) 
 	restored, ok := repaired.PendingAuthorization()
 	if !ok || restored.Authorization.ID != f.pending.Authorization.ID || restored.Call.ID != f.pending.Call.ID {
 		t.Fatalf("repaired authorization = %+v, %v", restored, ok)
+	}
+}
+
+// TestMCPAuthorizationGrantedCompensationSaveFailureSettlesInsteadOfStranding
+// proves restoreAuthorizationClaimOrSettle's fallback: registerPrepared fails
+// (same blocker-run technique as the sibling test above), which triggers
+// restoreAuthorizationClaim to compensate — but this time the COMPENSATING
+// save itself also fails (the claim save that already landed StateRunning
+// durably succeeded; only the second, restoring save fails). Before this fix
+// the durable snapshot would be left stranded StateRunning with neither a
+// runtime owner nor a pending authorization to retry; the fallback reloads it
+// fresh and settles it to idle via the same repairRunningSession the
+// crash-orphan run-entry path uses.
+func TestMCPAuthorizationGrantedCompensationSaveFailureSettlesInsteadOfStranding(t *testing.T) {
+	f := newLifecycleFixture(t, session.AuthorizationGranted, nil, time.Now, nil)
+	loaded, err := f.store.Load(t.Context(), "authorization-session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err = f.svc.engineAndEnvironmentFor(t.Context(), loaded); err != nil {
+		t.Fatal(err)
+	}
+	blockerSession := session.New("blocker", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindMem, ID: "/repo", Revision: "in-tree-v1"}, session.Limits{}, time.Now())
+	blockerEnv, err := tool.NewEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: "/repo", Revision: "in-tree-v1"}, memfs.NewWorkspace("/repo"), memledger.New(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blocker := f.svc.cfg.Engine.Run(t.Context(), blockerSession, blockerEnv, agent.RunRequest{Text: "block"})
+	f.svc.mu.Lock()
+	f.svc.runs[loaded.ID] = &runState{run: blocker, sess: blockerSession, settled: make(chan struct{})}
+	f.svc.mu.Unlock()
+	// 1st Save: ClaimAuthorization's own save (must succeed, landing
+	// StateRunning durably). 2nd Save: the compensating restoreAuthorizationClaim
+	// triggered by registerPrepared's failure below (must fail).
+	f.svc.cfg.Store = &failNthAuthorizationSaveStore{SessionStore: f.store, failAt: 2}
+	control := MCPAuthorizationControl{SessionID: loaded.ID, AuthorizationID: f.pending.Authorization.ID}
+	result, err := f.svc.RecheckMCPAuthorization(t.Context(), loaded.ID, control)
+	// The compensating restore itself failed this time (unlike the sibling
+	// test), so the caller reports that failure directly rather than the
+	// ordinary ErrNoActiveRun — restoring did not actually happen.
+	if !errors.Is(err, ErrInternal) || result.Run != nil {
+		t.Fatalf("result = %+v, err = %v", result, err)
+	}
+	for range blocker.Events() {
+	}
+	f.svc.deregister(loaded.ID, blocker)
+	if got := f.attach.tool.calls.Load(); got != 0 {
+		t.Fatalf("protected executions = %d", got)
+	}
+	settled, err := f.store.Load(t.Context(), loaded.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if settled.State != session.StateIdle {
+		t.Fatalf("settled state = %q, want idle (not stranded running)", settled.State)
 	}
 }
 
