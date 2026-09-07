@@ -11,6 +11,30 @@ func anchorFrame(rows ...renderedRow) renderedFrame {
 }
 
 func TestADR_0301_AnchorFallbackIsDeterministic(t *testing.T) {
+	// The old frame remains authoritative until refreshView captures its visible
+	// anchor, even though rendering the replacement reuses scratch backing.
+	m := newCoalesceModel(t)
+	m.conv.addUser("first")
+	m.conv.addUser("second")
+	m.conv.addUser("third")
+	m.refreshView()
+	priorID := m.conv.blocks[0].id
+	priorRow := m.view.frame.firstRegionRow(priorID, conversationRegionBody)
+	if priorRow < 0 {
+		t.Fatal("first block has no body row")
+	}
+	m.vp.SetHeight(1)
+	m.vp.SetYOffset(priorRow)
+	m.view.mode = anchored
+	// Simulate a reconstructed document rendered through the same scratch-backed
+	// renderer while the prior viewport is still visible.
+	m.conv.blocks[0].id = 99
+	m.conv.blocks[0].rev++
+	m.refreshView()
+	if got := m.view.anchor.blockID; got != priorID {
+		t.Fatalf("captured anchor block ID = %d, want prior viewport block ID %d", got, priorID)
+	}
+
 	frame := anchorFrame(
 		renderedRow{blockID: 1, region: conversationRegionBody, sourceOffset: 0, text: true},
 		renderedRow{blockID: 1, region: conversationRegionBody, sourceOffset: 5, text: true},
@@ -49,8 +73,16 @@ func TestADR_0301_CardAndChangedFilesAppendixFallback(t *testing.T) {
 	if got := view.restore(collapsed, readingAnchor{blockID: 7, region: conversationRegionArguments, sourceOffset: 8, text: true, bias: towardStart}); got != 1 {
 		t.Errorf("collapsed card fallback row = %d, want result summary row 1", got)
 	}
-	if got := view.restore(collapsed, readingAnchor{blockID: 9, region: conversationRegionAppendix, bias: towardStart}); got != 2 {
-		t.Errorf("collapsed appendix fallback row = %d, want preceding conversation row 2", got)
+
+	// The appendix gets an ID when the first change is observed, but it always
+	// renders physically last. Its ID can therefore precede a later conversation
+	// block; collapse must use physical frame order, not allocation order.
+	appendixCollapsed := anchorFrame(
+		renderedRow{blockID: 1, region: conversationRegionBody, sourceOffset: 0, text: true},
+		renderedRow{blockID: 3, region: conversationRegionBody, sourceOffset: 0, text: true},
+	)
+	if got := view.restore(appendixCollapsed, readingAnchor{blockID: 2, region: conversationRegionAppendix, bias: towardStart}); got != 1 {
+		t.Errorf("collapsed appendix fallback row = %d, want physically preceding conversation row 1", got)
 	}
 }
 

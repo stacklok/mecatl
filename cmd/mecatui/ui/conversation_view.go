@@ -52,7 +52,11 @@ func (v *conversationView) capture(vp viewport.Model) {
 }
 
 func (v *conversationView) restoreViewport(vp *viewport.Model, frame renderedFrame) {
+	// The renderer reuses provenance scratch memory on the next render, while this
+	// frame remains the viewport's identity source until its next replacement.
+	// Keep row metadata independent without copying rendered strings.
 	v.frame = frame
+	v.frame.provenance = append([]renderedRow(nil), frame.provenance...)
 	if v.mode == followTail {
 		vp.GotoBottom()
 		return
@@ -152,6 +156,18 @@ func sameBlockRow(frame renderedFrame, anchor readingAnchor) int {
 }
 
 func adjacentBlockRow(frame renderedFrame, anchor readingAnchor) int {
+	// The changed-files appendix is allocated when its first member is observed,
+	// but renders after every conversation block. When collapsed it has no row in
+	// this frame, so its only physical neighbour is the final conversation block.
+	if anchor.region == conversationRegionAppendix {
+		for i := len(frame.provenance) - 1; i >= 0; i-- {
+			if frame.provenance[i].blockID != 0 {
+				return lastBlockRow(frame, frame.provenance[i].blockID)
+			}
+		}
+		return -1
+	}
+
 	before, after := -1, -1
 	for i, row := range frame.provenance {
 		if row.blockID == 0 || row.blockID == anchor.blockID {
