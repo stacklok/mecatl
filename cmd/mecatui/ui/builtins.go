@@ -590,7 +590,7 @@ func postureSummary(p string) string {
 	}
 	label := p
 	if label == "" {
-		label = "unknown"
+		label = unknownLabel
 	}
 	return "posture " + label +
 		" — allow-all " + onoff(allowAll) +

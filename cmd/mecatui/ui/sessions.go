@@ -184,7 +184,7 @@ func (m Model) onSessionIDCopyResult(msg sessionIDCopyResultMsg) Model {
 
 func formatSessionTimestamp(unixSec int64) string {
 	if unixSec <= 0 {
-		return "unknown"
+		return unknownLabel
 	}
 	return time.Unix(unixSec, 0).UTC().Format(time.RFC3339)
 }
@@ -192,7 +192,7 @@ func formatSessionTimestamp(unixSec int64) string {
 func renderSessionDetails(th theme.Theme, details sessionDetailsView, hk helpKeys, width, height int) string {
 	unknown := func(value string) string {
 		if value == "" {
-			return "unknown"
+			return unknownLabel
 		}
 		return sanitizeTerminal(value)
 	}

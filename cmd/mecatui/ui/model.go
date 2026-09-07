@@ -23,6 +23,8 @@ import (
 	"github.com/stacklok/mecatl/cmd/mecatui/ui/welcome"
 )
 
+const unknownLabel = "unknown"
+
 // SessionCreator creates a server-side session and returns its id together with
 // the server's advertised capabilities. *client.Client satisfies it (via the
 // sessionAdapter); tests supply a fake. Keeping it an interface lets the ui be

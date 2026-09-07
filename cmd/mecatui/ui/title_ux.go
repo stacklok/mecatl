@@ -97,6 +97,6 @@ func titleProvenanceLabel(provenance string) string {
 	default:
 		// Older servers exposed a title without provenance; it may have been seeded
 		// from a first prompt, but that cannot be known from the compatibility field.
-		return "unknown"
+		return unknownLabel
 	}
 }

@@ -159,7 +159,7 @@ func (m Model) statusLineInput(now time.Time) statusline.Input {
 	if m.usage.InputTokens > 0 {
 		cachePercent = int(m.usage.CacheReadTokens * 100 / m.usage.InputTokens)
 	}
-	workspace := statusline.Workspace{Location: "unknown"}
+	workspace := statusline.Workspace{Location: unknownLabel}
 	if m.activePlacement.Kind != "" || m.activePlacement.Label != "" {
 		workspace.Location = "local"
 		if m.deps.ConnectionMode == "connect" {
