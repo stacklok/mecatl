@@ -1,4 +1,4 @@
-# ADR 0302 — Fail closed double-Escape clearing on enhanced key-event support
+# ADR 0303 — Fail closed double-Escape clearing on enhanced key-event support
 
 - Status: Accepted
 - Date: 2026-09-06

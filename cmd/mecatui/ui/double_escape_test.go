@@ -41,7 +41,7 @@ func pressReleasePress(m Model) Model {
 	return applyAll(m, escapePress(), escapeRelease(), escapePress())
 }
 
-func TestADR_0302_DoubleEscape_Scenario1_ViewRequestsEventTypesAndTracksSupport(t *testing.T) {
+func TestADR_0303_DoubleEscape_Scenario1_ViewRequestsEventTypesAndTracksSupport(t *testing.T) {
 	m := doubleEscapeDraft(t)
 	if !m.View().KeyboardEnhancements.ReportEventTypes {
 		t.Fatal("View did not request keyboard event-type reporting")
@@ -56,7 +56,7 @@ func TestADR_0302_DoubleEscape_Scenario1_ViewRequestsEventTypesAndTracksSupport(
 	}
 }
 
-func TestADR_0302_DoubleEscape_Scenario1_UnsupportedTerminalFailsClosed(t *testing.T) {
+func TestADR_0303_DoubleEscape_Scenario1_UnsupportedTerminalFailsClosed(t *testing.T) {
 	m := doubleEscapeDraft(t)
 	m = pressReleasePress(m)
 	if m.doubleEscapeArmed || m.prompt.Empty() {
@@ -64,7 +64,7 @@ func TestADR_0302_DoubleEscape_Scenario1_UnsupportedTerminalFailsClosed(t *testi
 	}
 }
 
-func TestADR_0302_DoubleEscape_Scenario1_FirstPressArmsExactExpiry(t *testing.T) {
+func TestADR_0303_DoubleEscape_Scenario1_FirstPressArmsExactExpiry(t *testing.T) {
 	m := enableEventTypes(doubleEscapeDraft(t))
 	m.stagedMedia = map[string]stagedAttachment{"[Image #1]": {mime: "image/png", data: []byte("image")}}
 	m.stagedPastes = map[string]string{"[Pasted text #1]": "large paste"}
@@ -93,7 +93,7 @@ func TestADR_0302_DoubleEscape_Scenario1_FirstPressArmsExactExpiry(t *testing.T)
 	}
 }
 
-func TestADR_0302_DoubleEscape_Scenario1_PressReleasePressClearsThroughClearPrompt(t *testing.T) {
+func TestADR_0303_DoubleEscape_Scenario1_PressReleasePressClearsThroughClearPrompt(t *testing.T) {
 	m := enableEventTypes(doubleEscapeDraft(t))
 	m.stagedMedia = map[string]stagedAttachment{"[Image #1]": {mime: "image/png", data: []byte("image")}}
 	m.stagedPastes = map[string]string{"[Pasted text #1]": "large paste"}
@@ -112,7 +112,7 @@ func TestADR_0302_DoubleEscape_Scenario1_PressReleasePressClearsThroughClearProm
 	}
 }
 
-func TestADR_0302_DoubleEscape_Scenario1_RepeatBeforeReleaseCannotClear(t *testing.T) {
+func TestADR_0303_DoubleEscape_Scenario1_RepeatBeforeReleaseCannotClear(t *testing.T) {
 	m := enableEventTypes(doubleEscapeDraft(t))
 	m = applyAll(m, escapePress(true))
 	if m.doubleEscapeArmed || m.prompt.Empty() {
@@ -132,7 +132,7 @@ func TestADR_0302_DoubleEscape_Scenario1_RepeatBeforeReleaseCannotClear(t *testi
 	}
 }
 
-func TestADR_0302_DoubleEscape_Scenario1_InterveningKeyDisarmsAndRoutesNormally(t *testing.T) {
+func TestADR_0303_DoubleEscape_Scenario1_InterveningKeyDisarmsAndRoutesNormally(t *testing.T) {
 	m := enableEventTypes(doubleEscapeDraft(t))
 	m = applyAll(m, escapePress(), escapeRelease(), tea.KeyPressMsg{Code: 'x', Text: "x"})
 	if m.doubleEscapeArmed || m.prompt.Value() != "keep this draftx" {
@@ -144,7 +144,7 @@ func TestADR_0302_DoubleEscape_Scenario1_InterveningKeyDisarmsAndRoutesNormally(
 	}
 }
 
-func TestADR_0302_DoubleEscape_Scenario1_ExactExpiryAndGenerationGuard(t *testing.T) {
+func TestADR_0303_DoubleEscape_Scenario1_ExactExpiryAndGenerationGuard(t *testing.T) {
 	m := enableEventTypes(doubleEscapeDraft(t))
 	var after time.Duration
 	m.doubleEscapeTimer = func(d time.Duration, gen int) tea.Cmd {
@@ -171,7 +171,7 @@ func TestADR_0302_DoubleEscape_Scenario1_ExactExpiryAndGenerationGuard(t *testin
 	}
 }
 
-func TestADR_0302_DoubleEscape_Scenario1_OwnersConsumeAndDisarm(t *testing.T) {
+func TestADR_0303_DoubleEscape_Scenario1_OwnersConsumeAndDisarm(t *testing.T) {
 	assertFreshNext := func(t *testing.T, m Model) {
 		t.Helper()
 		m.phase = phaseIdle
@@ -225,7 +225,7 @@ func TestADR_0302_DoubleEscape_Scenario1_OwnersConsumeAndDisarm(t *testing.T) {
 	})
 }
 
-func TestADR_0302_DoubleEscape_Scenario1_AllEscapeOwnersSuppressGesture(t *testing.T) {
+func TestADR_0303_DoubleEscape_Scenario1_AllEscapeOwnersSuppressGesture(t *testing.T) {
 	base := func() Model {
 		m := enableEventTypes(doubleEscapeDraft(t))
 		m.doubleEscapeArmed, m.doubleEscapeReleased = true, true
@@ -268,7 +268,7 @@ func TestADR_0302_DoubleEscape_Scenario1_AllEscapeOwnersSuppressGesture(t *testi
 	}
 }
 
-func TestADR_0302_DoubleEscape_Scenario1_ClearPromptAlternativeRemainsAccessible(t *testing.T) {
+func TestADR_0303_DoubleEscape_Scenario1_ClearPromptAlternativeRemainsAccessible(t *testing.T) {
 	m := enableEventTypes(doubleEscapeDraft(t))
 	m.keys = applyKeyOverrides(m.keys, map[string][]string{"Cancel": {"ctrl+f34"}, "ClearPrompt": {"ctrl+f33"}})
 	m.stagedMedia = map[string]stagedAttachment{"[Image #1]": {mime: "image/png"}}
@@ -284,7 +284,7 @@ func TestADR_0302_DoubleEscape_Scenario1_ClearPromptAlternativeRemainsAccessible
 	}
 }
 
-func TestADR_0302_DoubleEscape_Scenario1_FirstPressAndCompletionHaveNoNewStatus(t *testing.T) {
+func TestADR_0303_DoubleEscape_Scenario1_FirstPressAndCompletionHaveNoNewStatus(t *testing.T) {
 	m := enableEventTypes(doubleEscapeDraft(t))
 	m.statusMsg = "existing status"
 	m = applyAll(m, escapePress())
@@ -297,7 +297,7 @@ func TestADR_0302_DoubleEscape_Scenario1_FirstPressAndCompletionHaveNoNewStatus(
 	}
 }
 
-func TestADR_0302_DoubleEscape_Scenario2_LiveHelpExplainsRequirementAndAlternative(t *testing.T) {
+func TestADR_0303_DoubleEscape_Scenario2_LiveHelpExplainsRequirementAndAlternative(t *testing.T) {
 	body := stripANSIstr(m_helpBody(allOnCaps()))
 	for _, want := range []string{"esc esc", "500ms", "enhanced key-event support required", "first press is silent", "release", "repeat", "not remappable", "staged attachments", "large-paste", "pending media", "owners take precedence", "ctrl+u", "ClearPrompt"} {
 		if !strings.Contains(body, want) {
@@ -306,7 +306,7 @@ func TestADR_0302_DoubleEscape_Scenario2_LiveHelpExplainsRequirementAndAlternati
 	}
 }
 
-func TestADR_0302_DoubleEscape_Scenario2_DocumentationNamesSafetyContract(t *testing.T) {
+func TestADR_0303_DoubleEscape_Scenario2_DocumentationNamesSafetyContract(t *testing.T) {
 	for _, name := range []string{"../../../docs/tui.md", "../../../user-docs/mecatui/keybindings.md"} {
 		body, err := os.ReadFile(name)
 		if err != nil {
@@ -321,7 +321,7 @@ func TestADR_0302_DoubleEscape_Scenario2_DocumentationNamesSafetyContract(t *tes
 	}
 }
 
-func TestADR_0302_DoubleEscape_Scenario2_HelpGoldenChangesAreScoped(t *testing.T) {
+func TestADR_0303_DoubleEscape_Scenario2_HelpGoldenChangesAreScoped(t *testing.T) {
 	matches, err := filepath.Glob("testdata/help_*.golden")
 	if err != nil {
 		t.Fatal(err)
