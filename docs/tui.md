@@ -63,7 +63,14 @@ The render packages (`ui`, `theme`) and the `client` package stay a pure client 
 they never import any `engine/...` or `internal/...` package and render solely from the proto
 `Event` envelope. Hosting the embedded server is confined to the `cmd/mecatui`
 main and its `embed` subpackage (which build the same server `mecated` does, via
-`internal/app`).
+`internal/app`). Embedded operational diagnostics go only to the per-user state
+log (`$XDG_STATE_HOME/mecatl/mecatui.log`, with the standard local-state fallback).
+A stable cross-process lock is held for the writer lifetime, so a second instance
+fails closed instead of replacing an active log. On startup, a no-symlink open
+verifies the path is a regular file; an oversized log is atomically retained to a
+recent 10 MiB tail, with the replacement and containing directory synced before
+append. Unsafe paths and failures before replacement preserve the prior log and
+use `io.Discard`, so diagnostics cannot corrupt the terminal.
 
 ## Build
 
