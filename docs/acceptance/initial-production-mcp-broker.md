@@ -1,7 +1,7 @@
 # Initial production MCP broker — acceptance/design plan
 
 **Phase:** production topology slice after session-scoped MCP authorization
-**Status:** in-progress (2026-09-06)
+**Status:** landed (2026-09-06)
 **Plan branch / HEAD:** `acc/initial-production-mcp-broker` at `b245a14d1`
 **Accumulator:** `acc/initial-production-mcp-broker` (current harness-owned-native integration worktree).
 
