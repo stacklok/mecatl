@@ -218,6 +218,10 @@ test("packed tarball carries dist and license only", () => {
     "package/dist/namespaces-core.d.ts.map",
     "package/dist/namespaces-core.js",
     "package/dist/namespaces-core.js.map",
+    "package/dist/namespaces-ops.d.ts",
+    "package/dist/namespaces-ops.d.ts.map",
+    "package/dist/namespaces-ops.js",
+    "package/dist/namespaces-ops.js.map",
     "package/dist/node-client.d.ts",
     "package/dist/node-client.d.ts.map",
     "package/dist/node-client.js",
@@ -287,7 +291,7 @@ test("packed tarball carries dist and license only", () => {
   );
 });
 
-test("the core namespace batch is exported from both supported entrypoints", () => {
+test("the namespace batches are exported from both supported entrypoints", () => {
   const consumer = join(consumerRoot, "core-namespaces.mts");
   writeFileSync(
     consumer,
@@ -297,25 +301,49 @@ import type {
   Agents,
   Client,
   Commands,
+  DreamPlans,
+  LearnedSkills,
+  LearningAttempts,
+  LearningProposals,
   McpInventory,
   Models,
+  Reflection,
   RequestOptions,
+  Schedules,
+  Skills,
+  Soul,
+  Storage,
+  UserModel,
   Worktrees,
 } from "@stacklok/mecatl-sdk";
 import type {
   Agents as NodeAgents,
   Commands as NodeCommands,
+  DreamPlans as NodeDreamPlans,
+  LearnedSkills as NodeLearnedSkills,
+  LearningAttempts as NodeLearningAttempts,
+  LearningProposals as NodeLearningProposals,
   McpInventory as NodeMcpInventory,
   Models as NodeModels,
   NodeClient,
+  Reflection as NodeReflection,
   RequestOptions as NodeRequestOptions,
+  Schedules as NodeSchedules,
+  Skills as NodeSkills,
+  Soul as NodeSoul,
+  Storage as NodeStorage,
+  UserModel as NodeUserModel,
   Worktrees as NodeWorktrees,
 } from "@stacklok/mecatl-sdk/node";
 import {
+  FireNowRequestSchema,
   ListAgentsRequestSchema,
   ListModelsRequestSchema,
+  PlanSessionMigrationRequestSchema,
+  type FireNowResponse,
   type ListAgentsResponse,
   type ListModelsResponse,
+  type SessionMigrationPlan,
 } from "@stacklok/mecatl-sdk/gen";
 
 declare const browser: Client;
@@ -334,6 +362,52 @@ const nodeNamespaces: readonly [
   NodeWorktrees,
   NodeModels,
 ] = [node.mcp, node.agents, node.commands, node.worktrees, node.models];
+const browserOperational: readonly [
+  Skills,
+  LearnedSkills,
+  LearningAttempts,
+  LearningProposals,
+  Reflection,
+  Soul,
+  UserModel,
+  DreamPlans,
+  Schedules,
+  Storage,
+] = [
+  browser.skills,
+  browser.learnedSkills,
+  browser.learningAttempts,
+  browser.learningProposals,
+  browser.reflection,
+  browser.soul,
+  browser.userModel,
+  browser.dreamPlans,
+  browser.schedules,
+  browser.storage,
+];
+const nodeOperational: readonly [
+  NodeSkills,
+  NodeLearnedSkills,
+  NodeLearningAttempts,
+  NodeLearningProposals,
+  NodeReflection,
+  NodeSoul,
+  NodeUserModel,
+  NodeDreamPlans,
+  NodeSchedules,
+  NodeStorage,
+] = [
+  node.skills,
+  node.learnedSkills,
+  node.learningAttempts,
+  node.learningProposals,
+  node.reflection,
+  node.soul,
+  node.userModel,
+  node.dreamPlans,
+  node.schedules,
+  node.storage,
+];
 const browserOptions: RequestOptions = { timeoutMs: 100 };
 const nodeOptions: NodeRequestOptions = browserOptions;
 const browserResponse: Promise<ListAgentsResponse> = browser.agents.list(
@@ -344,7 +418,24 @@ const nodeResponse: Promise<ListModelsResponse> = node.models.list(
   create(ListModelsRequestSchema),
   nodeOptions,
 );
-void [browserNamespaces, nodeNamespaces, browserResponse, nodeResponse];
+const fireResponse: Promise<FireNowResponse> = browser.schedules.fireNow(
+  create(FireNowRequestSchema, { name: "nightly" }),
+  browserOptions,
+);
+const migrationResponse: Promise<SessionMigrationPlan> = node.storage.planMigration(
+  create(PlanSessionMigrationRequestSchema),
+  nodeOptions,
+);
+void [
+  browserNamespaces,
+  nodeNamespaces,
+  browserOperational,
+  nodeOperational,
+  browserResponse,
+  nodeResponse,
+  fireResponse,
+  migrationResponse,
+];
 `,
   );
   const typecheck = spawnSync(
@@ -375,6 +466,7 @@ void [browserNamespaces, nodeNamespaces, browserResponse, nodeResponse];
 
   const graph = browserEntrypointGraph();
   expect(graph).toContain("package/dist/namespaces-core.js");
+  expect(graph).toContain("package/dist/namespaces-ops.js");
   const builtins = new Set(builtinModules.map((name) => name.replace(/^node:/u, "")));
   const builtinImports = [...graph].flatMap((path) => {
     const source = packedFiles.get(path)?.toString("utf8") ?? "";

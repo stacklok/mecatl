@@ -125,6 +125,18 @@ export type {
   RequestOptions,
   Worktrees,
 } from "./namespaces-core.js";
+export type {
+  DreamPlans,
+  LearnedSkills,
+  LearningAttempts,
+  LearningProposals,
+  Reflection,
+  Schedules,
+  Skills,
+  Soul,
+  Storage,
+  UserModel,
+} from "./namespaces-ops.js";
 export type { RawClient, RawClientOptions } from "./raw.js";
 export {
   createRawClient,

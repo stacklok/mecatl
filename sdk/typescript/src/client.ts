@@ -26,6 +26,8 @@ import {
   type ConverseResponse,
   type Event,
   HarnessService,
+  type ListSessionsRequest,
+  type ListSessionsResponse,
   type WatchSessionEventsResponse,
 } from "./gen/mecatl/v1/harness_pb.js";
 import { createHttpTransport, type HttpTransportOptions } from "./http.js";
@@ -36,8 +38,22 @@ import {
   createCoreNamespaces,
   type McpInventory,
   type Models,
+  type RequestOptions,
   type Worktrees,
 } from "./namespaces-core.js";
+import {
+  createOperationalNamespaces,
+  type DreamPlans,
+  type LearnedSkills,
+  type LearningAttempts,
+  type LearningProposals,
+  type Reflection,
+  type Schedules,
+  type Skills,
+  type Soul,
+  type Storage,
+  type UserModel,
+} from "./namespaces-ops.js";
 import {
   createRawClient,
   invalidateRawCompatibility,
@@ -139,16 +155,27 @@ export interface Sessions {
   create(options: CreateSessionOptions): Promise<Session>;
   get(sessionId: string): Promise<Session>;
   fork(sourceSessionId: string, options?: ForkSessionOptions): Promise<Session>;
+  list(request: ListSessionsRequest, options?: RequestOptions): Promise<ListSessionsResponse>;
 }
 
 /** The ergonomic mecatl client. @public */
 export interface Client {
   readonly agents: Agents;
   readonly commands: Commands;
+  readonly dreamPlans: DreamPlans;
+  readonly learnedSkills: LearnedSkills;
+  readonly learningAttempts: LearningAttempts;
+  readonly learningProposals: LearningProposals;
   readonly mcp: McpInventory;
   readonly models: Models;
+  readonly reflection: Reflection;
+  readonly schedules: Schedules;
   readonly sessions: Sessions;
+  readonly skills: Skills;
+  readonly soul: Soul;
   readonly status: ConnectionStatusStore;
+  readonly storage: Storage;
+  readonly userModel: UserModel;
   readonly worktrees: Worktrees;
   close(): Promise<void>;
   [Symbol.asyncDispose](): Promise<void>;
@@ -430,10 +457,20 @@ class SessionImpl implements Session {
 class ClientImpl implements Client {
   readonly agents: Agents;
   readonly commands: Commands;
+  readonly dreamPlans: DreamPlans;
+  readonly learnedSkills: LearnedSkills;
+  readonly learningAttempts: LearningAttempts;
+  readonly learningProposals: LearningProposals;
   readonly mcp: McpInventory;
   readonly models: Models;
+  readonly reflection: Reflection;
+  readonly schedules: Schedules;
   readonly sessions: Sessions;
+  readonly skills: Skills;
+  readonly soul: Soul;
   readonly status: ConnectionStatusStore;
+  readonly storage: Storage;
+  readonly userModel: UserModel;
   readonly worktrees: Worktrees;
 
   readonly #abort = new AbortController();
@@ -494,14 +531,26 @@ class ClientImpl implements Client {
           signal,
         ),
     };
-    const namespaces = createCoreNamespaces({
+    const namespaceOperations = {
       unary: (method, input, requestOptions) => this.#unary(method, input, requestOptions),
-    });
+    } satisfies Pick<RawClient, "unary">;
+    const namespaces = createCoreNamespaces(namespaceOperations);
+    const operational = createOperationalNamespaces(namespaceOperations);
     this.agents = namespaces.agents;
     this.commands = namespaces.commands;
     this.mcp = namespaces.mcp;
     this.models = namespaces.models;
     this.worktrees = namespaces.worktrees;
+    this.dreamPlans = operational.dreamPlans;
+    this.learnedSkills = operational.learnedSkills;
+    this.learningAttempts = operational.learningAttempts;
+    this.learningProposals = operational.learningProposals;
+    this.reflection = operational.reflection;
+    this.schedules = operational.schedules;
+    this.skills = operational.skills;
+    this.soul = operational.soul;
+    this.storage = operational.storage;
+    this.userModel = operational.userModel;
     this.sessions = {
       create: async (input) => {
         const lease = this.#toolHost?.beginSessionCreate?.();
@@ -568,6 +617,7 @@ class ClientImpl implements Client {
         }
         return new SessionImpl(response.session.sessionId, this.#operations, undefined);
       },
+      list: operational.sessionInventory.list,
     };
     this.status = {
       getSnapshot: () => this.#snapshot,
