@@ -34,7 +34,7 @@ func writeConnectionsForTest(t *testing.T, registry *Registry, connections ...Co
 	}
 }
 
-func TestADR_0304_AdditiveResourceRegistryIdentity(t *testing.T) {
+func TestADR_0305_AdditiveResourceRegistryIdentity(t *testing.T) {
 	registry, err := OpenRegistry(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -70,7 +70,7 @@ func TestADR_0304_AdditiveResourceRegistryIdentity(t *testing.T) {
 	}
 }
 
-func TestADR_0304_RegistryLookupAmbiguity(t *testing.T) {
+func TestADR_0305_RegistryLookupAmbiguity(t *testing.T) {
 	registry, err := OpenRegistry(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -104,7 +104,7 @@ func TestADR_0277_LegacyRegistryCompatibility(t *testing.T) {
 	}
 }
 
-func TestADR_0304_SavedIdentityDrift(t *testing.T) {
+func TestADR_0305_SavedIdentityDrift(t *testing.T) {
 	registry, err := OpenRegistry(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -126,7 +126,7 @@ func TestADR_0304_SavedIdentityDrift(t *testing.T) {
 	}
 }
 
-func TestADR_0304_ResourceAliasLifecycle(t *testing.T) {
+func TestADR_0305_ResourceAliasLifecycle(t *testing.T) {
 	registry, err := OpenRegistry(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -165,7 +165,7 @@ func TestADR_0304_ResourceAliasLifecycle(t *testing.T) {
 	}
 }
 
-func TestADR_0304_LogoutRevalidatesMovedResourceAlias(t *testing.T) {
+func TestADR_0305_LogoutRevalidatesMovedResourceAlias(t *testing.T) {
 	registry, err := OpenRegistry(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -203,7 +203,7 @@ func TestADR_0304_LogoutRevalidatesMovedResourceAlias(t *testing.T) {
 	}
 }
 
-func TestADR_0304_LegacyResourceAliasPolicy(t *testing.T) {
+func TestADR_0305_LegacyResourceAliasPolicy(t *testing.T) {
 	registry, err := OpenRegistry(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -221,7 +221,7 @@ func TestADR_0304_LegacyResourceAliasPolicy(t *testing.T) {
 	}
 }
 
-func TestADR_0304_EnrollResourceAliasDisplacesAcrossTargets(t *testing.T) {
+func TestADR_0305_EnrollResourceAliasDisplacesAcrossTargets(t *testing.T) {
 	registry, err := OpenRegistry(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -244,7 +244,7 @@ func TestADR_0304_EnrollResourceAliasDisplacesAcrossTargets(t *testing.T) {
 	}
 }
 
-func TestADR_0304_EnrollResourceAliasPreservesUnrelatedConnections(t *testing.T) {
+func TestADR_0305_EnrollResourceAliasPreservesUnrelatedConnections(t *testing.T) {
 	registry, err := OpenRegistry(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -273,7 +273,7 @@ func TestADR_0304_EnrollResourceAliasPreservesUnrelatedConnections(t *testing.T)
 	}
 }
 
-func TestADR_0304_ConcurrentCrossTargetResourceEnrollmentSerializes(t *testing.T) {
+func TestADR_0305_ConcurrentCrossTargetResourceEnrollmentSerializes(t *testing.T) {
 	registry, err := OpenRegistry(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -307,7 +307,7 @@ func TestADR_0304_ConcurrentCrossTargetResourceEnrollmentSerializes(t *testing.T
 	}
 }
 
-func TestADR_0304_AliasConcurrency(t *testing.T) {
+func TestADR_0305_AliasConcurrency(t *testing.T) {
 	registry, err := OpenRegistry(t.TempDir())
 	if err != nil {
 		t.Fatal(err)

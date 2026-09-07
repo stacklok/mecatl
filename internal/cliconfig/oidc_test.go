@@ -43,7 +43,7 @@ func TestOIDCMaxJWKSStalenessFlag(t *testing.T) {
 	}
 }
 
-func TestADR_0304_ServerCompositionParity(t *testing.T) {
+func TestADR_0305_ServerCompositionParity(t *testing.T) {
 	for _, name := range []string{"oidc-issuer", "oidc-audience", "oidc-resource", "oidc-client-id", "oidc-scopes"} {
 		fs := flag.NewFlagSet(name, flag.ContinueOnError)
 		fs.SetOutput(io.Discard)
@@ -107,7 +107,7 @@ func TestOIDCPrivateHTTPSIssuerFlagsAndValidation(t *testing.T) {
 	}
 }
 
-func TestADR_0304_ProfileProjection(t *testing.T) {
+func TestADR_0305_ProfileProjection(t *testing.T) {
 	var got OIDCConfig
 	cfg := OIDCConfig{Issuer: "https://issuer.example", Audience: "api://mecatl", Resource: "https://api.example.com", ClientID: "mecatui"}
 	cfg.NewValidator = func(_ context.Context, c OIDCConfig) (server.PrincipalValidator, error) {
@@ -129,7 +129,7 @@ func TestADR_0304_ProfileProjection(t *testing.T) {
 	}
 }
 
-func TestADR_0304_ProfileConfigurationMatrix(t *testing.T) {
+func TestADR_0305_ProfileConfigurationMatrix(t *testing.T) {
 	for _, tc := range []struct {
 		name        string
 		cfg         OIDCConfig
@@ -159,7 +159,7 @@ func TestADR_0304_ProfileConfigurationMatrix(t *testing.T) {
 	}
 }
 
-func TestADR_0304_ProfileCanonicalizesResourceForEveryProjection(t *testing.T) {
+func TestADR_0305_ProfileCanonicalizesResourceForEveryProjection(t *testing.T) {
 	cfg := OIDCConfig{Issuer: "https://issuer", Audience: "api", Resource: "https://RESOURCE:443/", ClientID: "client"}
 	if err := cfg.ValidateOIDCProfile(); err != nil {
 		t.Fatal(err)
@@ -173,7 +173,7 @@ func TestADR_0304_ProfileCanonicalizesResourceForEveryProjection(t *testing.T) {
 	}
 }
 
-func TestADR_0304_ScopeCSV(t *testing.T) {
+func TestADR_0305_ScopeCSV(t *testing.T) {
 	for _, tc := range []struct {
 		csv     string
 		want    []string
@@ -239,7 +239,7 @@ func TestADR_0304_ScopeCSV(t *testing.T) {
 	}
 }
 
-func TestADR_0304_ProfileValidation(t *testing.T) {
+func TestADR_0305_ProfileValidation(t *testing.T) {
 	cases := []OIDCConfig{
 		{Issuer: "https://issuer", Audience: "api", Resource: "http://resource", ClientID: "client"},
 		{Issuer: "https://issuer", Audience: "api", Resource: "https://resource", ClientID: "client", ScopesCSV: "read,,write"},

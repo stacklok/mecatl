@@ -247,7 +247,7 @@ func TestMecak8sHelmChart_KindProfileAloneHasNoSecretDependency(t *testing.T) {
 	}
 }
 
-func TestADR_0304_HelmProtectedResourceProfile(t *testing.T) {
+func TestADR_0305_HelmProtectedResourceProfile(t *testing.T) {
 	rendered, err := helm(t, "template", "profile", ".", "--set", "mockProvider=true", "--set", "redis.local.enabled=true", "--set", "oidc.enabled=true", "--set", "oidc.issuer=https://idp.example.com", "--set", "oidc.audience=mecatl", "--set", "oidc.resource=https://api.example.com/mcp", "--set", "oidc.clientID=mecatui", "--set", "oidc.scopes[0]=openid", "--set", "oidc.scopes[1]=profile")
 	if err != nil {
 		t.Fatalf("render protected-resource profile: %v\n%s", err, rendered)

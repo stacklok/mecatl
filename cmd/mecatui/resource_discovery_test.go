@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-func TestADR_0304_ResourceInputGrammar(t *testing.T) {
+func TestADR_0305_ResourceInputGrammar(t *testing.T) {
 	t.Parallel()
 	bare, err := parseProtectedResource("api.example.com")
 	if err != nil {
@@ -42,7 +42,7 @@ func TestADR_0304_ResourceInputGrammar(t *testing.T) {
 	}
 }
 
-func TestADR_0304_ExactResourceBinding(t *testing.T) {
+func TestADR_0305_ExactResourceBinding(t *testing.T) {
 	t.Parallel()
 	resource, err := parseProtectedResource("https://api.example.com/service/v1")
 	if err != nil {
@@ -72,7 +72,7 @@ func TestADR_0304_ExactResourceBinding(t *testing.T) {
 	}
 }
 
-func TestADR_0304_MetadataFetchSecurity(t *testing.T) {
+func TestADR_0305_MetadataFetchSecurity(t *testing.T) {
 	t.Parallel()
 	client := newPublicBootstrapClient()
 	defer client.CloseIdleConnections()
@@ -97,7 +97,7 @@ func TestADR_0304_MetadataFetchSecurity(t *testing.T) {
 	}
 }
 
-func TestADR_0304_MetadataBodyBounds(t *testing.T) {
+func TestADR_0305_MetadataBodyBounds(t *testing.T) {
 	t.Parallel()
 	if err := validateJSONMediaType("application/json; charset=utf-8"); err != nil {
 		t.Fatal(err)
@@ -116,7 +116,7 @@ func TestADR_0304_MetadataBodyBounds(t *testing.T) {
 	}
 }
 
-func TestADR_0304_ProfileDocumentValidation(t *testing.T) {
+func TestADR_0305_ProfileDocumentValidation(t *testing.T) {
 	t.Parallel()
 	resource, err := parseProtectedResource("https://api.example.com")
 	if err != nil {
@@ -141,7 +141,7 @@ func TestADR_0304_ProfileDocumentValidation(t *testing.T) {
 	}
 }
 
-func TestADR_0304_IssuerBinding(t *testing.T) {
+func TestADR_0305_IssuerBinding(t *testing.T) {
 	t.Parallel()
 	issuer, err := parseIssuer("https://issuer.example.com/tenant")
 	if err != nil {
@@ -174,7 +174,7 @@ func TestADR_0304_IssuerBinding(t *testing.T) {
 	}
 }
 
-func TestADR_0304_OIDCDiscoveryPreservesIssuerPath(t *testing.T) {
+func TestADR_0305_OIDCDiscoveryPreservesIssuerPath(t *testing.T) {
 	resource, err := parseProtectedResource("https://api.example.com")
 	if err != nil {
 		t.Fatal(err)
@@ -203,7 +203,7 @@ func TestADR_0304_OIDCDiscoveryPreservesIssuerPath(t *testing.T) {
 	}
 }
 
-func TestADR_0304_DiscoveryFailureLeavesNoState(t *testing.T) {
+func TestADR_0305_DiscoveryFailureLeavesNoState(t *testing.T) {
 	t.Parallel()
 	resource, err := parseProtectedResource("https://api.example.com")
 	if err != nil {
@@ -222,7 +222,7 @@ func TestADR_0304_DiscoveryFailureLeavesNoState(t *testing.T) {
 	}
 }
 
-func TestADR_0304_MetadataDuplicateFields(t *testing.T) {
+func TestADR_0305_MetadataDuplicateFields(t *testing.T) {
 	t.Parallel()
 	resource, err := parseProtectedResource("https://api.example.com")
 	if err != nil {
@@ -238,7 +238,7 @@ func TestADR_0304_MetadataDuplicateFields(t *testing.T) {
 	}
 }
 
-func TestADR_0304_DiscoveryUsesClientTimeout(t *testing.T) {
+func TestADR_0305_DiscoveryUsesClientTimeout(t *testing.T) {
 	resource, err := parseProtectedResource("https://api.example.com")
 	if err != nil {
 		t.Fatal(err)

@@ -1,4 +1,4 @@
-# ADR 0304 — OAuth protected-resource discovery for remote mecatui
+# ADR 0305 — OAuth protected-resource discovery for remote mecatui
 
 - Status: Accepted
 - Date: 2026-09-02
