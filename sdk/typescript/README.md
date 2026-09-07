@@ -1,7 +1,7 @@
 # `@stacklok/mecatl-sdk`
 
 The TypeScript SDK for the [mecatl](https://github.com/stacklok/mecatl) agentic coding
-harness. The package is ESM-only and supports Node.js 24 or newer.
+harness. The package is ESM-only and supports Node.js 22 or newer.
 
 This first milestone establishes the package and its public entry points:
 
