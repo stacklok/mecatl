@@ -3,6 +3,7 @@
 package scopedhttps
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
@@ -123,6 +124,7 @@ func rootsFromPEM(pemBytes []byte) (*x509.CertPool, error) {
 func newPolicy(ctx context.Context, endpointCAs map[string][]byte, lookup func(context.Context, string) ([]net.IP, error)) (policy, error) {
 	endpoints := make(map[string]approvedEndpoint)
 	authorityRoots := make(map[string]*x509.CertPool)
+	authorityCAs := make(map[string][]byte)
 	for raw, ca := range endpointCAs {
 		if raw == "" {
 			continue
@@ -140,19 +142,19 @@ func newPolicy(ctx context.Context, endpointCAs map[string][]byte, lookup func(c
 		if err != nil {
 			return policy{}, fmt.Errorf("HTTPS endpoint %q: %w", raw, err)
 		}
-		// Two endpoints sharing one host:port authority (e.g. an issuer's
-		// discovery doc and its JWKS URI on the same host and port)
-		// legitimately share one pool; a distinct authority -- including the
-		// SAME hostname on a DIFFERENT port, a different issuer entirely --
-		// always gets its own. Roots are never merged across authorities.
 		key := net.JoinHostPort(host, port)
 		if existing, ok := authorityRoots[key]; ok {
-			roots = existing
-			if !roots.AppendCertsFromPEM(ca) {
-				return policy{}, fmt.Errorf("HTTPS endpoint %q: trusted CA bundle contains no certificates", raw)
+			// A host:port is one TLS authority. Never silently union trust
+			// material when two configured URLs name that authority: the
+			// configuration is ambiguous and accepting either CA would weaken
+			// the exact endpoint policy.
+			if !bytes.Equal(ca, authorityCAs[key]) {
+				return policy{}, fmt.Errorf("HTTPS authority %q has conflicting CA bundles", key)
 			}
+			roots = existing
 		}
 		authorityRoots[key] = roots
+		authorityCAs[key] = append([]byte(nil), ca...)
 		if _, ok := endpoints[key]; ok {
 			continue
 		}

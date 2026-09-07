@@ -177,7 +177,7 @@ func (s *Service) workspaceEnrollmentTarget(ctx context.Context, id session.Sess
 	if err != nil || sess == nil || sess.ID != id || s.authorizeSession(ctx, sess) != nil {
 		return nil, nil, nil, ErrNotFound
 	}
-	if s.cfg.MCPBroker == nil || sess.State != session.StateIdle || sess.Conversation == nil || len(sess.Conversation.Messages) != 0 {
+	if !s.brokerConfigured() || sess.State != session.StateIdle || sess.Conversation == nil || len(sess.Conversation.Messages) != 0 {
 		return nil, nil, nil, fmt.Errorf("%w: workspace enrollment must precede the first prompt", ErrFailedPrecondition)
 	}
 	if _, live := s.LookupRun(id); live {

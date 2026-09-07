@@ -855,7 +855,12 @@ var engineCloseTimeout = 10 * time.Second
 type Service struct {
 	cfg                 Config
 	brokerFactoryClose  func() error
+	brokerCurrent       brokercontract.Service
 	brokerReplacementMu sync.Mutex
+	// brokerGenerationMu protects the published broker client generation. Readers
+	// hold it while attaching or deleting so replacement cannot close a generation
+	// underneath an in-flight operation.
+	brokerGenerationMu sync.RWMutex
 
 	// placementBinder is the sole creation/successor placement binding seam.
 	// It is nil only for legacy hand-built configurations that have not migrated.
@@ -1373,6 +1378,7 @@ func NewServiceContext(ctx context.Context, cfg Config) (*Service, error) {
 	svc := &Service{
 		cfg:                 cfg,
 		brokerFactoryClose:  cfg.MCPBrokerClose,
+		brokerCurrent:       cfg.MCPBroker,
 		placementBinder:     placementBinder,
 		shutdownCancel:      shutdownCancel,
 		runs:                make(map[session.SessionID]*runState),
@@ -2225,7 +2231,7 @@ func (s *Service) createSession(ctx context.Context, mode session.PermissionMode
 	}
 	// A broker attachment is keyed by the canonical persisted identity. Mint and
 	// reserve generated IDs before any attachment or catalogue construction.
-	if s.cfg.MCPBroker != nil && !opts.idSet {
+	if s.brokerConfigured() && !opts.idSet {
 		id := mintID()
 		request := newCreateRequest(placement.Ref, mode, limits, sel, profile, opts.sourceSessionID, opts)
 		// Populate the outer retryRequest too (not just the local var used for
@@ -2279,7 +2285,7 @@ func (s *Service) createSession(ctx context.Context, mode session.PermissionMode
 		owner = srcOwner
 	}
 
-	needPerSession := s.cfg.MCPBroker != nil || s.sessionNeedsPerFactory(sel, specs, profile, workspace) || s.cfg.LearnedSkills != nil
+	needPerSession := s.brokerConfigured() || s.sessionNeedsPerFactory(sel, specs, profile, workspace) || s.cfg.LearnedSkills != nil
 	if !needPerSession {
 		// Shared-engine fast path (today's behaviour, byte-identical). The labels are
 		// the empty pair + default profile here (the empty-selector default profile is
@@ -2348,7 +2354,7 @@ func (s *Service) createPerSessionEngine(ctx context.Context, mintID func() sess
 		}
 		res, err = s.cfg.DebugSessionEngine(ctx, sel, profile, mode, opts.debugTargetID, session.DebugTargetFingerprint(debugTarget), debugTarget.Owner, opts.debugMCPServers, nil)
 	} else {
-		if s.cfg.MCPBroker != nil {
+		if s.brokerConfigured() {
 			id = mintID()
 			unlockBroker := s.brokerMu.lock(id)
 			defer unlockBroker()
@@ -3038,10 +3044,15 @@ func (s *Service) Drain() {
 			sch.Drain()
 		}
 	}
+	s.brokerReplacementMu.Lock()
+	s.brokerGenerationMu.Lock()
 	if s.brokerFactoryClose != nil {
 		_ = s.brokerFactoryClose()
 		s.brokerFactoryClose = nil
 	}
+	s.brokerCurrent = nil
+	s.brokerGenerationMu.Unlock()
+	s.brokerReplacementMu.Unlock()
 }
 
 func (s *Service) snapshotDrainState() (map[session.SessionID]*runState, []session.SessionID) {
@@ -5017,7 +5028,7 @@ func (s *Service) sessionNeedsPerFactory(sel ProviderSelector, specs []mcp.Serve
 // then separately compares the verified live root with SharedEngineRoot to decide whether
 // placement affinity needs a per-session engine.
 func (s *Service) needsRehydration(sess *session.Session) bool {
-	return s.cfg.MCPBroker != nil || s.cfg.LearnedSkills != nil ||
+	return s.brokerConfigured() || s.cfg.LearnedSkills != nil ||
 		sess.Kind == session.SessionKindDebug ||
 		sess.Profile == string(ProfileNoFS) ||
 		sess.ProviderID != "" || sess.ModelID != "" ||

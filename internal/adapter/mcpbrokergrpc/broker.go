@@ -60,7 +60,8 @@ func DefaultConfig() Config {
 
 func (c Config) valid() bool {
 	return c.DialTimeout > 0 && c.RPCDeadline > 0 && c.ExecuteDeadline > 0 &&
-		c.HandleIdleTimeout > 0 && c.SweepInterval > 0 && c.CleanupTimeout > 0 && c.MaxHandles > 0
+		c.HandleIdleTimeout > 0 && c.SweepInterval > 0 && c.CleanupTimeout > 0 && c.MaxHandles > 0 &&
+		c.MaxReceipts > 0 && c.MaxPendingControls > 0
 }
 
 // Dial establishes a connection within Config.DialTimeout and returns a bounded client.
@@ -159,8 +160,8 @@ func NewServerWithConfig(service mcpbroker.Service, cfg Config) (*Server, error)
 	if service == nil {
 		return nil, errors.New("mcpbrokergrpc: service is required")
 	}
-	if !cfg.valid() {
-		return nil, errors.New("mcpbrokergrpc: all deadlines and capacities must be positive")
+	if cfg.MaxReceipts < 0 || cfg.MaxPendingControls < 0 {
+		return nil, errors.New("mcpbrokergrpc: capacities must not be negative")
 	}
 	defaults := DefaultConfig()
 	if cfg.MaxReceipts == 0 {
@@ -168,6 +169,9 @@ func NewServerWithConfig(service mcpbroker.Service, cfg Config) (*Server, error)
 	}
 	if cfg.MaxPendingControls == 0 {
 		cfg.MaxPendingControls = defaults.MaxPendingControls
+	}
+	if !cfg.valid() {
+		return nil, errors.New("mcpbrokergrpc: all deadlines and capacities must be positive")
 	}
 	incarnation, err := newHandle()
 	if err != nil {

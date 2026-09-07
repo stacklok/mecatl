@@ -24,6 +24,14 @@ type localBrokerAttachment struct {
 	owned      bool
 }
 
+func (s *Service) brokerService() brokercontract.Service {
+	s.brokerGenerationMu.RLock()
+	defer s.brokerGenerationMu.RUnlock()
+	return s.brokerCurrent
+}
+
+func (s *Service) brokerConfigured() bool { return s.brokerService() != nil }
+
 func brokerTools(local *localBrokerAttachment) []tool.Tool {
 	if local == nil {
 		return nil
@@ -32,7 +40,7 @@ func brokerTools(local *localBrokerAttachment) []tool.Tool {
 }
 
 func (s *Service) callSessionEngine(ctx context.Context, sel ProviderSelector, specs []mcp.ServerConfig, profile SessionProfile, workspace string, mode session.PermissionMode, sessionTools []tool.Tool) (SessionEngineResult, error) {
-	if s.cfg.MCPBroker != nil {
+	if s.brokerConfigured() {
 		if s.cfg.SessionEngineWithTools == nil {
 			return SessionEngineResult{}, fmt.Errorf("%w: broker tools require an explicit session catalogue factory", ErrConfig)
 		}
@@ -45,7 +53,10 @@ func (s *Service) callSessionEngine(ctx context.Context, sel ProviderSelector, s
 }
 
 func (s *Service) openBrokerAttachment(ctx context.Context, id session.SessionID, expectedBinding session.ExternalBinding, bindingRequired bool) (*localBrokerAttachment, error) {
-	if s.cfg.MCPBroker == nil {
+	s.brokerGenerationMu.RLock()
+	defer s.brokerGenerationMu.RUnlock()
+	broker := s.brokerCurrent
+	if broker == nil {
 		return nil, nil
 	}
 	if bindingRequired && expectedBinding == "" {
@@ -60,7 +71,7 @@ func (s *Service) openBrokerAttachment(ctx context.Context, id session.SessionID
 		}
 		return &localBrokerAttachment{attachment: existing}, nil
 	}
-	attachment, _, err := s.cfg.MCPBroker.AttachSession(ctx, id)
+	attachment, _, err := broker.AttachSession(ctx, id)
 	if err != nil {
 		return nil, fmt.Errorf("attach MCP broker session %q: %w", id, err)
 	}
@@ -86,10 +97,6 @@ func (s *Service) rebindBrokerAttachment(ctx context.Context, sess *session.Sess
 	if s.cfg.MCPBrokerFactory != nil {
 		s.brokerReplacementMu.Lock()
 		defer s.brokerReplacementMu.Unlock()
-		if s.brokerFactoryClose != nil {
-			_ = s.brokerFactoryClose()
-			s.brokerFactoryClose = nil
-		}
 		fresh, closeFresh, err := s.cfg.MCPBrokerFactory(ctx)
 		if err != nil {
 			return nil, fmt.Errorf("%w: replace MCP broker client: %v", ErrInternal, err)
@@ -100,8 +107,16 @@ func (s *Service) rebindBrokerAttachment(ctx context.Context, sess *session.Sess
 			}
 			return nil, fmt.Errorf("%w: replacement MCP broker factory returned incomplete service", ErrInternal)
 		}
-		s.cfg.MCPBroker = fresh
+		s.brokerGenerationMu.Lock()
+		oldClose := s.brokerFactoryClose
+		if oldClose != nil {
+			_ = oldClose()
+		}
+		// brokerCurrent is published only after the old owner has closed, making
+		// the handoff atomic to all attachment readers.
+		s.brokerCurrent = fresh
 		s.brokerFactoryClose = closeFresh
+		s.brokerGenerationMu.Unlock()
 	}
 	local, err := s.openBrokerAttachment(ctx, sess.ID, "", false)
 	if err != nil {
@@ -162,20 +177,23 @@ func (s *Service) rollbackBrokerAttachment(ctx context.Context, local *localBrok
 // already-deleted/never-existed session as success), not from keeping this
 // handle around pending a durable delete that has already committed.
 func (s *Service) deleteBrokerSessionLocked(ctx context.Context, id session.SessionID, binding session.ExternalBinding) error {
-	if s.cfg.MCPBroker == nil {
+	s.brokerGenerationMu.RLock()
+	defer s.brokerGenerationMu.RUnlock()
+	broker := s.brokerCurrent
+	if broker == nil {
 		return nil
 	}
 	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), engineCloseTimeout)
 	defer cancel()
 	if binding != "" {
-		deleter, ok := s.cfg.MCPBroker.(brokercontract.BindingSessionDeleter)
+		deleter, ok := broker.(brokercontract.BindingSessionDeleter)
 		if !ok {
 			return fmt.Errorf("%w: broker does not support exact-binding deletion", ErrFailedPrecondition)
 		}
 		if _, err := deleter.DeleteSessionIfBinding(cleanupCtx, id, binding); err != nil {
 			return fmt.Errorf("%w: delete MCP broker logical session: %v", ErrInternal, err)
 		}
-	} else if _, err := s.cfg.MCPBroker.DeleteSession(cleanupCtx, id); err != nil {
+	} else if _, err := broker.DeleteSession(cleanupCtx, id); err != nil {
 		return fmt.Errorf("%w: delete MCP broker logical session: %v", ErrInternal, err)
 	}
 	s.closeSessionLocal(id)

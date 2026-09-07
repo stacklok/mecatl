@@ -402,6 +402,11 @@ func (r *Runtime) AttachSession(ctx context.Context, id session.SessionID) (cont
 	logical.mu.RUnlock()
 	if completed != nil {
 		if _, err := attachment.installCompletedEnrollment(completed); err != nil {
+			// Attach has already incremented the logical attachment count. The
+			// completed catalogue is installed before the handle is returned, so
+			// every failure must release that handle through the same lifecycle
+			// path rather than leaking logical capacity.
+			_ = attachment.Abort(context.Background())
 			return nil, "", err
 		}
 	}
