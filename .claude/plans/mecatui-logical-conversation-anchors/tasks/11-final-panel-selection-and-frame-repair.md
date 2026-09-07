@@ -2,7 +2,7 @@
 id: 11-final-panel-selection-and-frame-repair
 title: Repair dirty-frame and canonical selection integration
 blocked_by: [10-panel-simplify-artifacts-follow-state-and-docs]
-status: in-progress
+status: done
 attempt: 1
 branch: "plan-mecatui-logical-conversation-anchors/11-final-panel-selection-and-frame-repair-attempt-1"
 worktree: ".scratch/worker-mecatui-logical-conversation-anchors-11-final-panel-selection-and-frame-repair-attempt-1"
