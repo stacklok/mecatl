@@ -71,12 +71,19 @@ func driveStream(p port.LLMProvider) (chunks int, err error) {
 // loopback, no attacker-controlled content was parsed as a completion, and the
 // non-response is no longer silently accepted as a clean turn.
 //
-// Anti-vacuous control (mutation-test-the-drift-guards discipline, in the
-// SAME test): driving the identical redirect through a BARE
-// openai.New(WithBaseURL(proxy)) — no WithHTTPClient option — DOES follow
-// the redirect, hits the attacker, and yields the attacker's real completion
-// chunks — proving this harness would actually catch a regression that
-// dropped the option from newGatewayEntry.
+// Bare-adapter control (mutation-test-the-drift-guards discipline, in the
+// SAME test): openai-go v3.54.0 added its OWN origin-matching guard
+// (internal/requestconfig/origin.go) that rejects a redirect whose resulting
+// URL origin differs from the configured base URL, UNCONDITIONALLY — even a
+// BARE openai.New(WithBaseURL(proxy)) with no WithHTTPClient option now
+// refuses the redirect at the SDK layer and never reaches the attacker. This
+// is a defense-in-depth WIN (two independent layers now enforce the same
+// property), but it retires this control's original anti-vacuous purpose —
+// prior to v3.54.0 a bare adapter DID follow the redirect and hit the
+// attacker, which is what proved newGatewayEntry's WithHTTPClient option was
+// load-bearing. It no longer is for THIS attack vector; the control below
+// instead pins the new SDK-level guard so a downgrade or a future SDK
+// regression that drops it is still caught.
 func TestGatewayInferenceRefusesRedirects(t *testing.T) {
 	var attackerHits atomic.Int32
 	attacker := httptest.NewServer(terminalSSEHandler(&attackerHits))
@@ -114,18 +121,17 @@ func TestGatewayInferenceRefusesRedirects(t *testing.T) {
 		t.Fatalf("attacker hit count = %d, want 0 (the gateway inference client must refuse to follow the redirect)", got)
 	}
 
-	// --- Anti-vacuous control: the SAME redirect through a bare adapter with
-	// no WithHTTPClient option DOES follow it, proving the guard is real. ---
+	// --- Bare-adapter control: the SAME redirect through an adapter with no
+	// WithHTTPClient option is STILL refused, now by openai-go's own
+	// origin-matching guard (v3.54.0+). Pins that upstream protection so a
+	// downgrade or SDK regression dropping it is caught here too. ---
 	attackerHits.Store(0)
 	bare := openai.New(openai.WithBaseURL(proxy.URL))
-	chunks, streamErr = driveStream(bare)
-	if streamErr != nil {
-		t.Fatalf("control: bare adapter (no redirect-refusing client) unexpectedly errored: %v", streamErr)
+	_, streamErr = driveStream(bare)
+	if streamErr == nil {
+		t.Fatal("control: bare adapter followed the cross-origin redirect — openai-go's origin guard did not fire")
 	}
-	if chunks == 0 {
-		t.Error("control: bare adapter yielded 0 chunks — expected the attacker's completion to come through")
-	}
-	if got := attackerHits.Load(); got < 1 {
-		t.Fatalf("control: bare adapter did NOT follow the redirect (attacker hits = %d) — this test would not catch a regression", got)
+	if got := attackerHits.Load(); got != 0 {
+		t.Fatalf("control: bare adapter hit the attacker (hits = %d) — openai-go's origin guard did not fire", got)
 	}
 }
