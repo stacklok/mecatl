@@ -2,10 +2,10 @@
 id: 01-transport-contract
 title: Bounded broker receipts and structured transport contract
 blocked_by: []
-status: pending
-attempt: 0
-branch: ""
-worktree: ""
+status: in-progress
+attempt: 1
+branch: "plan-singleton-mcp-broker-review-remediation/01-transport-contract-attempt-1"
+worktree: ".scratch/worker-singleton-mcp-broker-review-remediation-01-transport-contract-attempt-1"
 issue: ""
 retries: 0
 last_error: ""
