@@ -332,6 +332,23 @@ func selectedText(content string, sel selection) string {
 
 const selectionContextGraphemes = 16
 
+func selectionRowText(row renderedRow, line string) (text string, leading int) {
+	plain := ansi.Strip(line)
+	withoutIndent := plain
+	if row.indent > 0 {
+		withoutIndent = strings.TrimPrefix(withoutIndent, strings.Repeat(" ", row.indent))
+	}
+	withoutPresentation := withoutIndent
+	switch row.kind {
+	case blockTool:
+		withoutPresentation = strings.TrimPrefix(withoutPresentation, "│ ")
+	case blockAssistant:
+		withoutPresentation = strings.TrimPrefix(withoutPresentation, strings.Repeat(" ", assistantBodyHang))
+	}
+	leading = graphemeCount(plain) - graphemeCount(withoutPresentation)
+	return canonicalRowText(row.kind, plain, row.indent), leading
+}
+
 func selectionPointFor(frame renderedFrame, line, col int) (selectionPoint, bool) {
 	if line < 0 || line >= len(frame.provenance) {
 		return selectionPoint{}, false
@@ -340,9 +357,8 @@ func selectionPointFor(frame renderedFrame, line, col int) (selectionPoint, bool
 	if !row.text || row.blockID == 0 {
 		return selectionPoint{}, false
 	}
-	lineText := strings.TrimSpace(ansi.Strip(frame.lines[line]))
-	leading := graphemeCount(ansi.Strip(frame.lines[line])) - graphemeCount(strings.TrimLeft(ansi.Strip(frame.lines[line]), " "))
-	offset := max(0, col-leading)
+	lineText, leading := selectionRowText(row, frame.lines[line])
+	offset := col - leading
 	if offset < 0 || offset > graphemeCount(lineText) {
 		return selectionPoint{}, false
 	}
@@ -382,9 +398,7 @@ func resolveSelectionPoint(frame renderedFrame, point selectionPoint) (int, int,
 		if row.blockID != point.blockID || row.region != point.region || !row.text {
 			continue
 		}
-		textLine := ansi.Strip(frame.lines[i])
-		text := strings.TrimSpace(textLine)
-		leading := graphemeCount(textLine) - graphemeCount(strings.TrimLeft(textLine, " "))
+		text, leading := selectionRowText(row, frame.lines[i])
 		for offset := 0; offset <= graphemeCount(text); offset++ {
 			if row.sourceOffset+offset != point.sourceOffset {
 				continue

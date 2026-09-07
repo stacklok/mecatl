@@ -62,6 +62,46 @@ func TestADR_0301_SelectionPreservesLiveStableText(t *testing.T) {
 		t.Fatalf("copy status = %q, want copied status", got)
 	}
 
+	// A pending delta must rebuild and install the complete expanded frame before a
+	// selection gesture projects it. In particular, the changed-files appendix is
+	// outside renderConversationFrame's normal block rows.
+	t.Run("dirty appendix uses the live complete frame", func(t *testing.T) {
+		const path = "DIRTYAPPENDIXMARKER.go"
+		m, _ := selModel(t)
+		m.conv.addTool("edit", "Edit", `{"path":"`+path+`","old_string":"a","new_string":"b"}`)
+		m.conv.resolveTool("edit", "done", false)
+		m.conv.recordFileChange(path)
+		m.expandTools = true
+		m.refreshView()
+		line := -1
+		for i, text := range strings.Split(m.vp.GetContent(), "\n") {
+			if strings.Contains(ansi.Strip(text), path) {
+				line = i
+			}
+		}
+		if line < 0 {
+			t.Fatal("precondition: changed-files appendix missing")
+		}
+
+		m.phase = phaseRunning
+		m = applyAll(m, client.AssistantDeltaMsg{Turn: 1, Text: "pending update"})
+		if !m.viewDirty {
+			t.Fatal("precondition: delta must be pending")
+		}
+		col := strings.Index(ansi.Strip(strings.Split(m.vp.GetContent(), "\n")[line]), "DIRTYAPPENDIXMARKER")
+		m = m.wordSelect(line, col)
+		if got := m.sel.anchorPoint.blockID; got != m.conv.changedFilesAppendixID {
+			t.Fatalf("appendix selection block = %d, want appendix ID %d", got, m.conv.changedFilesAppendixID)
+		}
+		if !m.view.frame.hasRegion(m.conv.changedFilesAppendixID, conversationRegionAppendix) {
+			t.Fatal("live complete frame was not installed before selection projection")
+		}
+		m.refreshView()
+		if !m.sel.active || selectedText(m.vp.GetContent(), m.sel) != "DIRTYAPPENDIXMARKER" {
+			t.Fatalf("appendix selection after later refresh = %q (active=%t)", selectedText(m.vp.GetContent(), m.sel), m.sel.active)
+		}
+	})
+
 	t.Run("duplicate context requires canonical offset", func(t *testing.T) {
 		frame := renderedFrame{
 			lines: []string{"duplicated endpoint", "duplicated endpoint"},
@@ -132,4 +172,27 @@ func TestLogicalConversationAnchors_Scenario1_ChangingFrame(t *testing.T) {
 	if got := copied.(Model).statusMsg; !strings.Contains(ansi.Strip(got), "copied") {
 		t.Fatalf("copy status = %q, want copied status", got)
 	}
+
+	t.Run("wrapped tool endpoints use canonical coordinates", func(t *testing.T) {
+		const marker = "WRAPPEDTOOLMARKER"
+		m, _ := selModel(t)
+		m = applyAll(m, tea.WindowSizeMsg{Width: 34, Height: 30})
+		m.conv.addTool("read", "Read", `{"path":"a/very/long/path/for/wrapping.txt"}`)
+		m.conv.resolveTool("read", marker+" survives a narrow tool card reflow", false)
+		m.expandTools = true
+		m.refreshView()
+		line := lineIndexContaining(m.vp.GetContent(), marker)
+		if line < 0 {
+			t.Fatal("precondition: wrapped tool marker missing")
+		}
+		col := strings.Index(ansi.Strip(strings.Split(m.vp.GetContent(), "\n")[line]), marker)
+		m = m.wordSelect(line, col)
+		if got, want := m.sel.anchorPoint.sourceOffset, m.view.frame.provenance[line].sourceOffset; got != want {
+			t.Fatalf("tool selection source offset = %d, want canonical frame offset %d", got, want)
+		}
+		m = applyAll(m, tea.WindowSizeMsg{Width: 100, Height: 30})
+		if !m.sel.active || selectedText(m.vp.GetContent(), m.sel) != marker {
+			t.Fatalf("tool selection after reflow = %q (active=%t), want %q", selectedText(m.vp.GetContent(), m.sel), m.sel.active, marker)
+		}
+	})
 }

@@ -4260,18 +4260,15 @@ func (m Model) copySelection() (tea.Model, tea.Cmd) {
 		return m.copyPayload("")
 	}
 	if m.viewDirty && m.sel.copied != "" {
-		frame := m.rend.renderConversationFrame(&m.conv, m.expandTools)
-		content := strings.Join(frame.lines, "\n")
-		if m.expandTools {
-			if list := m.rend.renderChangedFiles(m.conv.filesChanged); list != "" {
-				content += "\n" + list
-				frame = frameWithAppendix(frame, content, m.conv.changedFilesAppendixID)
-			}
-		}
+		frame, content := m.conversationFrame()
 		if !m.sel.resolveLogical(frame) {
 			m = m.clearSelection()
 			return m.copyPayload("")
 		}
+		m.viewDirty = false
+		m.selBase = content
+		m.rend.invalidateVPView()
+		m.view.replaceContent(&m.vp, styleSelection(content, m.sel, m.deps.Theme.Style("selection")), frame)
 	}
 	return m.copyPayload(m.sel.copied)
 }
@@ -4308,10 +4305,22 @@ func snapshotSelection(m *Model) {
 	// that lands in that dirty window (delta arrived, tick not yet fired) must derive
 	// both its splice base and logical frame from the live conversation.
 	if m.viewDirty {
-		frame = m.rend.renderConversationFrame(&m.conv, m.expandTools)
-		base = strings.Join(frame.lines, "\n")
-		m.selBase = base
+		if base == "" {
+			base = m.vp.GetContent()
+		}
+		// The gesture coordinates still identify the displayed frame. Snapshot that
+		// identity before replacing it, then resolve it in the complete live frame.
+		// This keeps an expanded appendix selectable while a coalesced delta is pending.
+		wasLogical := m.sel.snapshotLogical(frame, base)
+		frame, base = m.conversationFrame()
 		m.viewDirty = false
+		if wasLogical && !m.sel.resolveLogical(frame) {
+			*m = m.clearSelection()
+			return
+		}
+		m.selBase = base
+		m.view.replaceContent(&m.vp, styleSelection(base, m.sel, m.deps.Theme.Style("selection")), frame)
+		return
 	}
 	if base == "" {
 		// Defensive: no base captured (e.g. a test that set raw viewport content then
@@ -4408,6 +4417,20 @@ func (m Model) onScrollKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
+// conversationFrame produces the complete current projection, including the expanded
+// changed-files appendix which is outside the conversation renderer's block rows.
+func (m *Model) conversationFrame() (renderedFrame, string) {
+	frame := m.rend.renderConversationFrame(&m.conv, m.expandTools)
+	content := strings.Join(frame.lines, "\n")
+	if m.expandTools {
+		if list := m.rend.renderChangedFiles(m.conv.filesChanged); list != "" {
+			content += "\n" + list
+			frame = frameWithAppendix(frame, content, m.conv.changedFilesAppendixID)
+		}
+	}
+	return frame, content
+}
+
 // refreshView re-renders the conversation into the viewport, keeping the view
 // pinned to the bottom unless the user has scrolled up. It clears m.viewDirty, so
 // every render path (afterEvent, endRun, onResize, the frame-cadence renderTickMsg)
@@ -4433,7 +4456,7 @@ func (m *Model) refreshView() {
 	// invalidated — the caller may be a spinner-only frame that skips refreshView
 	// entirely, in which case the vpView cache correctly serves the prior content.
 	m.rend.invalidateVPView()
-	frame := m.rend.renderConversationFrame(&m.conv, m.expandTools)
+	frame, content := m.conversationFrame()
 	// FAST PATH: the line-slice handoff. When no selection is active AND the
 	// changed-files footer is not in play (it renders only under the global expand
 	// toggle), feed vp.SetContentLines directly with the incrementally-joined line
@@ -4446,16 +4469,6 @@ func (m *Model) refreshView() {
 	if !m.sel.active && !m.expandTools {
 		m.view.replace(&m.vp, frame)
 		return
-	}
-	content := strings.Join(frame.lines, "\n")
-	// When the global details toggle is on, fold the session's changed-files list
-	// in beneath the scrollback so the muted "Δ N files" header indicator has a
-	// discoverable, scannable expansion — without a dedicated key or overlay.
-	if m.expandTools {
-		if list := m.rend.renderChangedFiles(m.conv.filesChanged); list != "" {
-			content += "\n" + list
-			frame = frameWithAppendix(frame, content, m.conv.changedFilesAppendixID)
-		}
 	}
 	// An active text selection is now rendered by US (styleSelection splices the
 	// selection style into the content lines) rather than the viewport's native

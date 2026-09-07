@@ -56,6 +56,8 @@ type renderedRow struct {
 	sourceOffset int
 	row          int
 	text         bool
+	kind         blockKind
+	indent       int
 }
 
 // renderedFrame keeps the renderer's existing lines and their lockstep row
@@ -235,6 +237,10 @@ func (r *renderer) provenanceRows(b *block, rendered string, expand bool) []rend
 		r.toolRegions(b, rows, expand)
 	}
 	r.assignVisibleOffsets(b, rows, lines)
+	for i := range rows {
+		rows[i].kind = b.kind
+		rows[i].indent = r.indent
+	}
 	return rows
 }
 
