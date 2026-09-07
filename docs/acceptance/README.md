@@ -92,6 +92,10 @@ PR after verification. There is no cleanup or status-only PR.
   declarations, run-local orchestration state, and a final human code-review gate.
   Status: landed in this Combined candidate; authoritative on merge.
 - [Mecatui live-feed reconnect](mecatui-live-reconnect.md) — regression closure for bearer-backed first-Recv authentication rejection, existing `/connect` recovery, cross-loop reconnect continuity/backoff, and real-event recovery without weakening generation, cancellation, or catch-up invariants. Status: landed.
+- [Mecatui double-Escape draft clearing](mecatui-double-escape.md) — a fail-closed,
+  enhanced-key-event-only, silent press-release-press idle prompt gesture with an exact
+  500 ms generation-tagged expiry; it reuses `clearPrompt`, preserves surface ownership,
+  and documents universal `ctrl+u`. Status: landed.
 - [Mecatui card layout](mecatui-card-layout.md) — width-bounded card rendering
   that wraps raw dynamic rows before styling, preventing Lipgloss alignment
   padding from becoming vertical whitespace while retaining intentional

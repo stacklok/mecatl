@@ -1,0 +1,14 @@
+{
+  "turns": [
+    {
+      "tool_calls": [
+        {
+          "id": "mutate-1",
+          "name": "mcp__sdk__store",
+          "args": { "value": "changed" }
+        }
+      ]
+    },
+    { "text": "the mutating result reached the model" }
+  ]
+}

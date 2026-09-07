@@ -141,8 +141,8 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 
 ### Providers & APIs
 - [0016 — Multi-provider](./0016-multi-provider.md)
-- [0017 — OpenAI Responses API](./0017-openai-responses-api.md) *(research; its single-visible-text-part subsection is superseded by 0301)*
-- [0301 — Project every OpenAI Responses visible text delta in SSE arrival order](./0301-openai-visible-text-delta-projection.md) *(supersedes only ADR 0017 §2's single-visible-text-part subsection)*
+- [0017 — OpenAI Responses API](./0017-openai-responses-api.md) *(research; its single-visible-text-part subsection is superseded by 0302)*
+- [0302 — Project every OpenAI Responses visible text delta in SSE arrival order](./0302-openai-visible-text-delta-projection.md) *(supersedes only ADR 0017 §2's single-visible-text-part subsection)*
 - [0030 — Layered model-selection heuristics](./0030-model-selection-heuristics.md)
 - [0031 — Semantic subagent model router](./0031-subagent-model-router.md) *(enable model superseded by 0042)*
 - [0034 — Extend the model router to team members and Parallel branches](./0034-team-parallel-model-routing.md)
@@ -231,6 +231,7 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0294 — End-to-end session correlation and affinity](./0294-session-correlation-and-affinity.md) *(proposed)*
 - [0295 — One scaled acceptance-plan spine for substantive work](./0295-unified-development-spine.md) *(single-PR decision superseded by 0301)*
 - [0296 — Opt-in local session context service](./0296-opt-in-local-session-context.md) *(proposed)*
+- [0302 — Fail closed double-Escape clearing on enhanced key-event support](./0302-fail-closed-double-escape.md)
 
 ### Retired
 - [0029 — Repo-map tree-sitter](./0029-repomap-tree-sitter.md) *(retired)*

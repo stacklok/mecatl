@@ -10,8 +10,10 @@ import type { CallOptions, Transport } from "@connectrpc/connect";
 
 import {
   AuthenticationError,
+  type DiagnosticsSink,
   IncompatibleServerError,
   InvalidStateError,
+  MecatlError,
   ProtocolError,
   ServerError,
   SessionBusyError,
@@ -139,11 +141,47 @@ export interface Client {
   [Symbol.asyncDispose](): Promise<void>;
 }
 
+const diagnosticSinks = new WeakMap<Client, DiagnosticsSink>();
+
+/** Returns the diagnostic sink installed on one client, when present. */
+export function clientDiagnostics(client: Client): DiagnosticsSink | undefined {
+  return diagnosticSinks.get(client);
+}
+
 interface ClientCoreOptions {
+  diagnostics?: DiagnosticsSink;
+  internal?: ClientInternalOptions;
   owned: boolean;
   transport: Transport;
   transportKind: TransportKind;
   visibility: boolean;
+}
+
+interface ClientDaemonExit {
+  readonly code: number | null;
+  readonly signal: string | null;
+}
+
+interface ClientDaemonLifecycle {
+  readonly exit: Promise<ClientDaemonExit>;
+  removeRuntime(): Promise<void>;
+  stop(): Promise<void>;
+}
+
+interface ClientToolHostLifecycle {
+  abort(reason: unknown): void;
+  beginSessionCreate?(): { finish(created: boolean): void };
+  hasTools?(): boolean;
+  mcpServer?(): SessionMcpServer;
+  readonly serverName?: string;
+  start(): Promise<void> | void;
+  stop(): Promise<void>;
+}
+
+interface ClientInternalOptions {
+  daemon?: ClientDaemonLifecycle;
+  onTeardownStep?: (step: string) => void;
+  toolHost?: ClientToolHostLifecycle;
 }
 
 type AttachmentConnectionStatus = "online" | "reconnecting" | "unauthorized" | "incompatible";
@@ -160,6 +198,8 @@ interface SessionOperations {
   readonly clientSignal: AbortSignal;
   features(): Promise<ReadonlySet<string>>;
   invalidateCompatibility(): void;
+  registerAttachment(close: () => Promise<void>): () => void;
+  registerRun(cancel: () => Promise<void>): () => void;
   readonly transportKind: TransportKind;
   stream<I extends DescMessage, O extends DescMessage>(
     method: DescMethodStreaming<I, O>,
@@ -205,6 +245,20 @@ type DisposableTransport = Transport & {
   [Symbol.dispose]?: () => void;
 };
 
+/** Internal transport-disposal seam shared with local daemon startup. */
+export async function disposeTransport(transport: Transport): Promise<void> {
+  const disposable = transport as DisposableTransport;
+  const asyncDispose = disposable[Symbol.asyncDispose];
+  const dispose = disposable[Symbol.dispose];
+  if (asyncDispose !== undefined) {
+    await asyncDispose.call(disposable);
+  } else if (dispose !== undefined) {
+    dispose.call(disposable);
+  } else {
+    await disposable.close?.();
+  }
+}
+
 const HEARTBEAT_INTERVAL_MS = 30_000;
 const CONNECTION_STATUS_PRECEDENCE: readonly ConnectionStatus[] = [
   "incompatible",
@@ -233,12 +287,22 @@ class SessionImpl implements Session {
 
   async attach(runId?: string, options: AttachOptions = {}): Promise<AttachedRun> {
     this.#operations.assertOpen();
-    return createAttachedRun(this.id, runId, this.#operations, options);
+    let unregister: () => void = () => undefined;
+    const attached = await createAttachedRun(this.id, runId, this.#operations, options, {
+      onClose: () => unregister(),
+    });
+    unregister = this.#operations.registerAttachment(() => attached.close());
+    return attached;
   }
 
   async activity(options: AttachOptions = {}): Promise<SessionActivity> {
     this.#operations.assertOpen();
-    return createSessionActivity(this.id, this.#operations, options);
+    let unregister: () => void = () => undefined;
+    const activity = await createSessionActivity(this.id, this.#operations, options, {
+      onClose: () => unregister(),
+    });
+    unregister = this.#operations.registerAttachment(() => activity.close());
+    return activity;
   }
 
   async run(prompt: PromptInput, options: RunOptions = {}): Promise<Run> {
@@ -270,9 +334,33 @@ class SessionImpl implements Session {
       },
       this.#operations.transportKind,
     );
+    const runAbort = new AbortController();
     const responses = this.#operations
-      .stream(HarnessService.method.converse, input)
+      .stream(HarnessService.method.converse, input, { signal: runAbort.signal })
       [Symbol.asyncIterator]();
+    let acceptedRunId = "";
+    let released = false;
+    let unregister: () => void = () => undefined;
+    const release = () => {
+      if (released) return;
+      released = true;
+      this.#busy = false;
+      input.close();
+      unregister();
+    };
+    unregister = this.#operations.registerRun(async () => {
+      try {
+        if (acceptedRunId !== "") {
+          input.send({
+            kind: { case: "cancel", value: { expectedRunId: acceptedRunId } },
+          });
+        }
+      } finally {
+        release();
+        runAbort.abort();
+        await responses.return?.();
+      }
+    });
     try {
       let first: Event;
       for (;;) {
@@ -289,16 +377,13 @@ class SessionImpl implements Session {
         }
         if (next.value.event.runId !== "") {
           first = next.value.event;
+          acceptedRunId = first.runId;
           break;
         }
       }
-      const events = unwrapEvents(responses, first.runId, this.#operations.transportKind, () => {
-        this.#busy = false;
-        input.close();
-      });
+      const events = unwrapEvents(responses, first.runId, this.#operations.transportKind, release);
       if (first.type === "result") {
-        this.#busy = false;
-        input.close();
+        release();
       }
       return new RunImpl(
         this.id,
@@ -306,14 +391,14 @@ class SessionImpl implements Session {
         first,
         events,
         {
+          assertOpen: () => this.#operations.assertOpen(),
           send: (frame) => input.send(frame),
           transportKind: this.#operations.transportKind,
         },
         options,
       );
     } catch (error) {
-      this.#busy = false;
-      input.close();
+      release();
       throw error;
     }
   }
@@ -334,11 +419,18 @@ class ClientImpl implements Client {
   readonly status: ConnectionStatusStore;
 
   readonly #abort = new AbortController();
+  readonly #attachments = new Map<symbol, () => Promise<void>>();
   readonly #attachmentStatuses = new Map<symbol, AttachmentConnectionStatus>();
+  readonly #daemon: ClientDaemonLifecycle | undefined;
+  readonly #diagnostics: DiagnosticsSink | undefined;
   readonly #listeners = new Set<ConnectionStatusListener>();
   readonly #operations: SessionOperations;
   readonly #owned: boolean;
+  readonly #onTeardownStep: ((step: string) => void) | undefined;
   readonly #raw: RawClient;
+  readonly #runs = new Map<symbol, () => Promise<void>>();
+  readonly #toolHost: ClientToolHostLifecycle | undefined;
+  readonly #toolHostStarted: Promise<void> | undefined;
   readonly #transport: Transport;
   readonly #transportKind: TransportKind;
   readonly #watchVisibility: boolean;
@@ -348,10 +440,16 @@ class ClientImpl implements Client {
   #heartbeatAbort: AbortController | undefined;
   #requestStatus: ConnectionStatus = "connecting";
   #snapshot: ConnectionStatus = "connecting";
+  #terminalError: InvalidStateError | undefined;
   #visibilityTarget: Document | undefined;
 
   constructor(options: ClientCoreOptions) {
+    if (options.diagnostics !== undefined) diagnosticSinks.set(this, options.diagnostics);
+    this.#daemon = options.internal?.daemon;
+    this.#diagnostics = options.diagnostics;
     this.#owned = options.owned;
+    this.#onTeardownStep = options.internal?.onTeardownStep;
+    this.#toolHost = options.internal?.toolHost;
     this.#transport = options.transport;
     this.#transportKind = options.transportKind;
     this.#watchVisibility = options.visibility;
@@ -366,6 +464,8 @@ class ClientImpl implements Client {
       clientSignal: this.#abort.signal,
       features: () => this.#features(),
       invalidateCompatibility: () => invalidateRawCompatibility(this.#raw),
+      registerAttachment: (close) => this.#register(this.#attachments, close),
+      registerRun: (cancel) => this.#register(this.#runs, cancel),
       stream: (method, input, options) => this.#stream(method, input, options),
       transportKind: this.#transportKind,
       unary: (method, input, options) => this.#unary(method, input, options),
@@ -378,12 +478,45 @@ class ClientImpl implements Client {
     };
     this.sessions = {
       create: async (input) => {
-        const response = await this.#unary(
-          HarnessService.method.createSession,
-          input,
-          createSessionAffinity(input),
-        );
-        return this.#session(response.sessionId, "CreateSession", response.sessionCapabilities);
+        const lease = this.#toolHost?.beginSessionCreate?.();
+        try {
+          let request = input;
+          if (this.#toolHost?.hasTools?.() === true) {
+            await this.#toolHostStarted;
+            const serverName = this.#toolHost.serverName;
+            const mcpServer = this.#toolHost.mcpServer?.();
+            if (serverName === undefined || mcpServer === undefined) {
+              throw new InvalidStateError("The callback tool host is not ready", {
+                transport: "local",
+              });
+            }
+            const inventory = await this.#unary(HarnessService.method.listMcpSources, {});
+            if (
+              inventory.sources.some((source) =>
+                source.servers.some((server) => server.name === serverName),
+              )
+            ) {
+              throw new MecatlError(
+                `Callback tool server name ${JSON.stringify(serverName)} collides with a resolved server-global MCP server`,
+                { code: "tool_registration", transport: "local" },
+              );
+            }
+            request = {
+              ...input,
+              mcpServers: [...(input.mcpServers ?? []), mcpServer],
+            };
+          }
+          const response = await this.#unary(
+            HarnessService.method.createSession,
+            request,
+            createSessionAffinity(input),
+          );
+          lease?.finish(true);
+          return this.#session(response.sessionId, "CreateSession", response.sessionCapabilities);
+        } catch (error) {
+          lease?.finish(false);
+          throw error;
+        }
       },
       fork: async (sourceSessionId, input = {}) => {
         const response = await this.#unary(
@@ -415,6 +548,21 @@ class ClientImpl implements Client {
       subscribe: (listener) => this.#subscribe(listener),
     };
 
+    if (this.#toolHost !== undefined) {
+      try {
+        this.#toolHostStarted = Promise.resolve(this.#toolHost.start());
+      } catch (error) {
+        this.#toolHostStarted = Promise.reject(error);
+      }
+      void this.#toolHostStarted.catch(() => undefined);
+    }
+    if (this.#daemon !== undefined) {
+      void this.#daemon.exit.then(
+        (status) => this.#daemonExited(status),
+        () => this.#daemonExited({ code: null, signal: null }),
+      );
+    }
+
     void this.#probe(this.#raw).catch(() => undefined);
   }
 
@@ -428,6 +576,7 @@ class ClientImpl implements Client {
   }
 
   #assertOpen(): void {
+    if (this.#terminalError !== undefined) throw this.#terminalError;
     if (this.#closed) {
       throw new InvalidStateError("The client is closed", { transport: this.#transportKind });
     }
@@ -436,26 +585,95 @@ class ClientImpl implements Client {
   async #close(): Promise<void> {
     if (this.#closed) return;
     this.#closed = true;
-    this.#abort.abort(
-      new InvalidStateError("The client is closed", {
-        transport: this.#transportKind,
-      }),
-    );
+    const closed = new InvalidStateError("The client is closed", {
+      transport: this.#transportKind,
+    });
+
+    await this.#closeRegistered("cancel_owned_run", this.#runs);
+    await this.#closeRegistered("release_attachment", this.#attachments);
+    this.#abort.abort(closed);
     this.#attachmentStatuses.clear();
+    await this.#teardown("status_monitor", () => {
+      this.#stopHeartbeat();
+      this.#detachVisibility();
+      this.#listeners.clear();
+    });
+
+    if (this.#toolHost !== undefined) {
+      await this.#teardown("tool_host_abort", () => this.#toolHost?.abort(closed));
+      await this.#teardown("tool_host_stop", async () => this.#toolHost?.stop());
+    }
+
+    if (this.#owned) {
+      await this.#teardown("transport", () => disposeTransport(this.#transport));
+    }
+    if (this.#daemon !== undefined) {
+      await this.#teardown("daemon_stop", () => this.#daemon?.stop());
+      await this.#teardown("runtime_directory", () => this.#daemon?.removeRuntime());
+    }
+  }
+
+  async #closeRegistered(step: string, resources: Map<symbol, () => Promise<void>>): Promise<void> {
+    const closers = [...resources.values()];
+    resources.clear();
+    for (const close of closers) {
+      await this.#teardown(step, close);
+    }
+  }
+
+  #daemonExited(status: ClientDaemonExit): void {
+    if (this.#closed || this.#terminalError !== undefined) return;
+    this.#terminalError = new InvalidStateError(
+      `The spawned mecated daemon exited (code=${String(status.code)}, signal=${String(status.signal)})`,
+      { transport: "local" },
+    );
+    this.#requestStatus = "offline";
+    this.#attachmentStatuses.clear();
+    this.#publishResolvedStatus();
+    this.#abort.abort(this.#terminalError);
     this.#stopHeartbeat();
     this.#detachVisibility();
-    this.#listeners.clear();
-    if (!this.#owned) return;
+    this.#emitDiagnostic({
+      code: "daemon_exited",
+      fields: Object.freeze({ exitCode: status.code, signal: status.signal }),
+      level: "error",
+      message: "The spawned mecated daemon exited unexpectedly",
+    });
+  }
 
-    const transport = this.#transport as DisposableTransport;
-    const asyncDispose = transport[Symbol.asyncDispose];
-    const dispose = transport[Symbol.dispose];
-    if (asyncDispose !== undefined) {
-      await asyncDispose.call(transport);
-    } else if (dispose !== undefined) {
-      dispose.call(transport);
-    } else {
-      await transport.close?.();
+  #emitDiagnostic(record: Parameters<DiagnosticsSink>[0]): void {
+    try {
+      this.#diagnostics?.(Object.freeze(record));
+    } catch {
+      // Diagnostics observers never alter client lifecycle behavior.
+    }
+  }
+
+  #register(resources: Map<symbol, () => Promise<void>>, close: () => Promise<void>): () => void {
+    this.#assertOpen();
+    const id = Symbol("client-resource");
+    resources.set(id, close);
+    return () => resources.delete(id);
+  }
+
+  async #teardown(step: string, action: () => Promise<unknown> | unknown): Promise<void> {
+    try {
+      this.#onTeardownStep?.(step);
+    } catch {
+      // The internal lifecycle observer cannot alter teardown.
+    }
+    try {
+      await action();
+    } catch (error) {
+      this.#emitDiagnostic({
+        code: "client_disposal_failed",
+        fields: Object.freeze({
+          errorName: error instanceof Error ? error.name : typeof error,
+          step,
+        }),
+        level: "error",
+        message: `Client disposal could not complete the ${step} step`,
+      });
     }
   }
 
@@ -615,7 +833,7 @@ class ClientImpl implements Client {
         this.#publishResolvedStatus();
       },
       set: (status) => {
-        if (!open || this.#closed) return;
+        if (!open || this.#closed || this.#terminalError !== undefined) return;
         this.#attachmentStatuses.set(id, status);
         // A terminal floor failure remains useful after its attachment closes;
         // the next successful ordinary exchange clears the deployment fact.
@@ -626,7 +844,7 @@ class ClientImpl implements Client {
   }
 
   #setRequestStatus(status: ConnectionStatus): void {
-    if (this.#closed) return;
+    if (this.#closed || this.#terminalError !== undefined) return;
     this.#requestStatus = status;
     this.#publishResolvedStatus();
   }

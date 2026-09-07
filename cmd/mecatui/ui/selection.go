@@ -98,6 +98,16 @@ func convTopRow(m Model) int {
 	return sumHeight(above)
 }
 
+// bodyOwnerOpen is the single inventory of overlays and modals that replace the
+// conversation body and own Escape before root prompt handling.
+func bodyOwnerOpen(m Model) bool {
+	return m.sessionDetailsOpen || m.showHelp || m.team.view != teamNone ||
+		m.agentsInv.view != agentsInvNone || m.modal != nil ||
+		m.userModel.view != userModelNone || m.reflections.view != reflectionsNone ||
+		m.dream.view != dreamClosed || m.connect.open || m.effort.view != effortNone ||
+		m.worktrees.view != worktreesNone || m.schedule.view != scheduleNone
+}
+
 // selectable reports whether a left-click may START a selection right now. It is
 // the SAME overlay/mode gate the body switch in view.go uses to decide what owns
 // the conversation region: a selection may only begin when the plain viewport is
@@ -113,18 +123,7 @@ func selectable(m Model) bool {
 		m.phase != phaseFatal &&
 		m.phase != phaseAwaitingApproval &&
 		m.phase != phaseReplay &&
-		!m.sessionDetailsOpen &&
-		!m.showHelp &&
-		m.team.view == teamNone &&
-		m.agentsInv.view == agentsInvNone &&
-		m.modal == nil && // no surface-migrated overlay owns the body
-		m.userModel.view == userModelNone &&
-		m.reflections.view == reflectionsNone &&
-		m.dream.view == dreamClosed &&
-		!m.connect.open &&
-		m.effort.view == effortNone &&
-		m.worktrees.view == worktreesNone &&
-		m.schedule.view == scheduleNone
+		!bodyOwnerOpen(m)
 }
 
 // screenToContent maps a screen cell (x, y) to a LOGICAL content position (line
