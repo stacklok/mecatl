@@ -519,11 +519,8 @@ route prerequisites without logging in a user or executing a tool. Drain rejects
 and callbacks before the 2s propagation wait, gives active work a finite 55s deadline, and
 then cancels remaining work before teardown; the chart reserves 70s total.
 
-NetworkPolicy starts default-deny. Supply `networkPolicy.mecak8sFrom` and
-`browserCallbackFrom` selectors, then concrete `operatorEgress` DNS and destination rules
-for OIDC/JWKS, upstream OAuth, and MCP. Kubernetes NetworkPolicy cannot enforce external
-DNS names; dynamic endpoints require maintained CIDRs or an operator-provided policy
-controller. See [ADR 0305](adr/0305-single-replica-mcp-broker-topology.md).
+Set `networkPolicy.publicFrom` to the single union of exact namespace, pod, and CIDR peers that may reach the multiplexed public listener. The same NetworkPolicy port carries gRPC and browser callbacks; vanilla NetworkPolicy cannot provide route-level separation, so `mecak8sFrom` and `browserCallbackFrom` are not valid settings.
+
 
 ## ToolHive LLM gateway
 

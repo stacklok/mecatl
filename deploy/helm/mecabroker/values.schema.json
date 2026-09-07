@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["image", "tls", "workloadIdentity", "brokerConfig", "extraEnv", "resources", "service", "terminationGracePeriodSeconds", "drain", "networkPolicy"],
+  "properties": {
+    "nameOverride": {"type":"string"}, "fullnameOverride": {"type":"string"},
+    "image": {"type":"object", "additionalProperties":false, "required":["repository","tag","digest","pullPolicy"], "properties": {
+      "repository":{"type":"string","minLength":1}, "tag":{"type":"string","maxLength":0},
+      "digest":{"type":"string","pattern":"^sha256:[0-9a-f]{64}$"}, "pullPolicy":{"type":"string","enum":["Always","IfNotPresent","Never"]}
+    }},
+    "imagePullSecrets":{"type":"array","items":{"type":"object","required":["name"],"properties":{"name":{"type":"string","minLength":1}},"additionalProperties":false}},
+    "tls":{"type":"object","additionalProperties":false,"required":["secretName","certKey","keyKey"],"properties":{"secretName":{"type":"string","minLength":1},"certKey":{"type":"string","minLength":1},"keyKey":{"type":"string","minLength":1}}},
+    "workloadIdentity":{"type":"object","additionalProperties":false,"required":["issuer","jwksURI","audience","caSecret","caKey","maxJWKSStaleness"],"properties":{"issuer":{"type":"string","minLength":1},"jwksURI":{"type":"string","minLength":1},"audience":{"type":"string","minLength":1},"caSecret":{"type":"string","minLength":1},"caKey":{"type":"string","minLength":1},"maxJWKSStaleness":{"type":"string","minLength":1}}},
+    "brokerConfig":{"type":"string","minLength":1}, "extraEnv":{"type":"array","items":{"type":"object"}},
+    "resources":{"type":"object"}, "service":{"type":"object","additionalProperties":false,"required":["port"],"properties":{"port":{"type":"integer","minimum":1,"maximum":65535}}},
+    "terminationGracePeriodSeconds":{"type":"integer","minimum":1},
+    "drain":{"type":"object","additionalProperties":false,"required":["propagationDelay","timeout"],"properties":{"propagationDelay":{"type":"string","minLength":1},"timeout":{"type":"string","minLength":1}}},
+    "networkPolicy":{"type":"object","additionalProperties":false,"required":["enabled","publicFrom","operatorEgress"],"properties":{"enabled":{"type":"boolean"},"publicFrom":{"type":"array","items":{"type":"object","additionalProperties":false,"properties":{"namespaceSelector":{"type":"object"},"podSelector":{"type":"object"},"ipBlock":{"type":"object"}}}},"operatorEgress":{"type":"array","items":{"type":"object"}}}}
+  }
+}

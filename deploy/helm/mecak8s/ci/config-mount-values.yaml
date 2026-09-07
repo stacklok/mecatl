@@ -2,7 +2,8 @@
 # an operator-created ConfigMap. The ConfigMap itself is intentionally not
 # rendered or looked up by the chart.
 image:
-  tag: v0.0.0
+  digest: sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+  tag: ""
 mockProvider: true
 redis:
   endpoint: redis.example.internal:6379

@@ -34,7 +34,7 @@ func chartDir(t *testing.T) string {
 func helm(t *testing.T, args ...string) (string, error) {
 	t.Helper()
 	if _, err := exec.LookPath("helm"); err != nil {
-		t.Skip("helm is required for chart render tests")
+		t.Fatalf("helm is required for chart render tests: %v", err)
 	}
 	cmd := exec.Command("helm", args...)
 	cmd.Dir = chartDir(t)
@@ -117,6 +117,53 @@ func pdbFromRender(t *testing.T, rendered string) *policyv1.PodDisruptionBudget 
 		return &pdb
 	}
 	return nil
+}
+
+func TestSingletonBrokerRemediation_Scenario4_Mecak8sRemoteBrokerProjection(t *testing.T) {
+	rendered, err := helm(t, "template", "production", ".", "-f", "ci/production-values.yaml", "--set", "remoteBroker.address=mecabroker.mecatl.svc:9080,remoteBroker.caSecret=mecabroker-ca,remoteBroker.caKey=ca.pem,remoteBroker.serverName=mecabroker.mecatl.svc,remoteBroker.tokenAudience=mecabroker,remoteBroker.tokenLifetimeSeconds=600")
+	if err != nil {
+		t.Fatal(err, rendered)
+	}
+	d := deploymentFromRender(t, rendered)
+	if d.Spec.Template.Spec.AutomountServiceAccountToken == nil || *d.Spec.Template.Spec.AutomountServiceAccountToken {
+		t.Fatal("remote broker did not disable automatic service-account token mounting")
+	}
+	args := d.Spec.Template.Spec.Containers[0].Args
+	for _, want := range []string{"--mcp-broker-address=mecabroker.mecatl.svc:9080", "--mcp-broker-token-file=/var/run/secrets/mecatl-broker/token", "--mcp-broker-tls-ca=/var/run/secrets/mecatl-broker/ca.pem", "--mcp-broker-server-name=mecabroker.mecatl.svc"} {
+		if !slices.Contains(args, want) {
+			t.Fatalf("remote broker args missing %q: %q", want, args)
+		}
+	}
+	var projected bool
+	for _, v := range d.Spec.Template.Spec.Volumes {
+		if v.Name == "mecatl-broker" && v.Projected != nil {
+			for _, source := range v.Projected.Sources {
+				if source.ServiceAccountToken != nil {
+					token := source.ServiceAccountToken
+					projected = token.Path == "token" && token.Audience == "mecabroker" && token.ExpirationSeconds != nil && *token.ExpirationSeconds == 600
+				}
+			}
+		}
+	}
+	if !projected {
+		t.Fatal("remote broker workload token was not projected with the configured audience and lifetime")
+	}
+}
+
+func TestSingletonBrokerRemediation_Scenario4_DigestRequired(t *testing.T) {
+	rendered, err := helm(t, "template", "production", ".", "-f", "ci/production-values.yaml")
+	if err != nil {
+		t.Fatal(err, rendered)
+	}
+	image := deploymentFromRender(t, rendered).Spec.Template.Spec.Containers[0].Image
+	if !regexp.MustCompile(`@sha256:[0-9a-f]{64}$`).MatchString(image) {
+		t.Fatalf("production image = %q", image)
+	}
+	for _, set := range []string{"image.digest=", "image.digest=sha256:ABC", "image.digest=sha256:deadbeef", "image.tag=v1"} {
+		if _, err := helm(t, "template", "production", ".", "-f", "ci/production-values.yaml", "--set", set); err == nil {
+			t.Fatalf("accepted invalid production image override %q", set)
+		}
+	}
 }
 
 func TestADR_0294_TerminationGracePeriodIsConfigurableAndFitsDefaults(t *testing.T) {

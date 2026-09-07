@@ -1,7 +1,8 @@
 # task deploy:check fixture: a second secure real-provider profile using system
 # trust for Redis and the minimum in-pod TLS + OIDC controls.
 image:
-  tag: v0.0.0
+  digest: sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+  tag: ""
 defaultProvider: openrouter
 model: anthropic/claude-sonnet-4-6
 extraEnv:

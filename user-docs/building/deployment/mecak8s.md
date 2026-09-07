@@ -392,7 +392,13 @@ authentication cannot be disabled or partially configured. The broker owns ToolH
 callback routes, while mecak8s retains only opaque enrollment/authorization references and
 fetches presentation URLs live.
 
-`staticBearer` covers a personal access
+For the remote broker chart profile, set `remoteBroker.address`, `caSecret`, `caKey`,
+`serverName`, `tokenAudience`, and (optionally) the bounded `tokenLifetimeSeconds` together;
+the chart rejects partial configuration. It disables automatic service-account-token mounting,
+projects a read-only token at `/var/run/secrets/mecatl-broker/token`, and passes only file
+paths and the expected DNS name to the process. The token file is reread for every RPC, so
+atomic projected-token rotation does not require a pod restart.
+
 token; for a GitHub OAuth App's real browser consent flow, use `auth.mode:
 oauth` with `upstream: {mode: oauth2, oauth2: {authorizationEndpoint,
 tokenEndpoint}}` instead of `issuer` — GitHub has no OIDC discovery endpoint —

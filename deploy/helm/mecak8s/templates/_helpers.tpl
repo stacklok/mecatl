@@ -16,9 +16,12 @@ app.kubernetes.io/component: agent
 {{- end }}
 {{- define "mecak8s.validateImage" -}}
 {{- $_ := required "image.repository is required" .Values.image.repository -}}
-{{- if and .Values.image.digest .Values.image.tag -}}
-{{- fail "set at most one of image.digest or image.tag" -}}
+{{- if and .Values.image.digest .Values.image.tag -}}{{ fail "set at most one of image.digest or image.tag" }}{{- end -}}
+{{- if and (not .Values.mockProvider) (not .Values.security.allowUnsafeRealProvider) -}}
+{{- if and (not .Values.image.digest) (not .Values.image.tag) -}}{{ fail "secure production images require image.digest" }}{{- end -}}
 {{- end -}}
+{{- if and .Values.image.digest (not (regexMatch "^sha256:[0-9a-f]{64}$" .Values.image.digest)) -}}{{ fail "image.digest must be a lowercase sha256 digest" }}{{- end -}}
+
 {{- end -}}
 {{- define "mecak8s.redisPort" -}}
 {{- $match := regexFind ":[0-9]+$" .Values.redis.endpoint -}}
@@ -131,6 +134,16 @@ mounted
 {{- if and (hasKey $env "name") (eq $env.name "MECATL_DRIVER_AUTH_TOKEN") -}}{{ fail "extraEnv name \"MECATL_DRIVER_AUTH_TOKEN\" collides with the learning store token environment variable owned by the chart" }}{{- end -}}
 {{- end -}}
 {{- end -}}
+{{- define "mecak8s.validateRemoteBroker" -}}
+{{- $r := .Values.remoteBroker -}}
+{{- $any := or $r.address $r.caSecret $r.caKey $r.serverName $r.tokenAudience -}}
+{{- if $any -}}
+{{- if or (not $r.address) (not $r.caSecret) (not $r.caKey) (not $r.serverName) (not $r.tokenAudience) -}}
+{{- fail "remoteBroker.address, caSecret, caKey, serverName, and tokenAudience must be configured together" -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
 {{- define "mecak8s.validateProviderSecurity" -}}
 {{- if and .Values.mockProvider .Values.security.tlsTerminatedUpstream -}}
 {{- fail "security.tlsTerminatedUpstream applies only to a real provider; it is ignored when mockProvider=true, so setting both is a mistake" -}}

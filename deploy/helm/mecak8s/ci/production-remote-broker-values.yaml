@@ -1,14 +1,10 @@
-# task deploy:check production fixture: real provider, caller identity, encrypted
-# server transport, finite spend ceilings, verified external Redis, and hostname
-# spreading. Placeholder references are schema/render inputs only.
+# task deploy:check fixture: remote singleton broker client with projected token.
 image:
   digest: sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
   tag: ""
 mockProvider: false
 defaultProvider: openrouter
 model: anthropic/claude-sonnet-4-6
-maxRunTokens: 200000
-maxTeamTokens: 800000
 redis:
   endpoint: redis.example.internal:6379
   credentialsSecret: redis-credentials
@@ -19,12 +15,14 @@ oidc:
 tls:
   enabled: true
   secretName: mecak8s-tls
-topologySpreadConstraints:
-  - maxSkew: 1
-    topologyKey: kubernetes.io/hostname
-    whenUnsatisfiable: DoNotSchedule
+remoteBroker:
+  address: mecabroker.mecatl.svc:9080
+  caSecret: mecabroker-ca
+  caKey: ca.pem
+  serverName: mecabroker.mecatl.svc
+  tokenAudience: mecabroker
+  tokenLifetimeSeconds: 600
 extraEnv:
-  # The chart references this operator-provisioned Secret; it never creates it.
   - name: OPENROUTER_API_KEY
     valueFrom:
       secretKeyRef:

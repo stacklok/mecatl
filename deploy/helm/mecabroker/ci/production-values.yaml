@@ -1,5 +1,6 @@
 image:
-  tag: v0.0.0
+  digest: sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+  tag: ""
 workloadIdentity:
   issuer: https://identity.example.invalid
   jwksURI: https://identity.example.invalid/keys

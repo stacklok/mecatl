@@ -93,7 +93,7 @@ func TestInitialProductionMCPBroker_Scenario5_Mecak8sComposition(t *testing.T) {
 	}
 }
 
-func TestInitialProductionMCPBroker_Scenario5_WorkloadTokenRotation(t *testing.T) {
+func TestSingletonBrokerRemediation_Scenario4_ProjectedTokenRotation(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "token")
 	write := func(value string) {
 		t.Helper()

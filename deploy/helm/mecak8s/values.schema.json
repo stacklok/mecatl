@@ -10,7 +10,7 @@
       "required": ["repository", "digest", "tag", "pullPolicy"],
       "properties": {
         "repository": {"type": "string", "minLength": 1},
-        "digest": {"type": "string"},
+        "digest": {"type": "string", "pattern": "^(|sha256:[0-9a-f]{64})$"},
         "tag": {"type": "string"},
         "pullPolicy": {"type": "string", "enum": ["Always", "IfNotPresent", "Never"]}
       }
@@ -205,6 +205,15 @@
             }
           }
         }
+      }
+    },
+    "remoteBroker": {
+      "type": "object", "additionalProperties": false,
+      "required": ["address", "caSecret", "caKey", "serverName", "tokenAudience", "tokenLifetimeSeconds"],
+      "properties": {
+        "address": {"type": "string"}, "caSecret": {"type": "string"}, "caKey": {"type": "string"},
+        "serverName": {"type": "string"}, "tokenAudience": {"type": "string"},
+        "tokenLifetimeSeconds": {"type": "integer", "minimum": 1, "maximum": 3600}
       }
     },
     "learning": {

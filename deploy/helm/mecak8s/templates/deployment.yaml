@@ -4,6 +4,7 @@
 {{- include "mecak8s.validateTLS" . -}}
 {{- include "mecak8s.validateLearningStore" . -}}
 {{- include "mecak8s.validateProviderSecurity" . -}}
+{{- include "mecak8s.validateRemoteBroker" . -}}
 {{- $learningStoreEnabled := ne .Values.learning.store.endpoint "" -}}
 {{- $learningStoreTokenConfigured := and .Values.learning.store.tokenSecret .Values.learning.store.tokenKey -}}
 {{- include "mecak8s.validateMCP" . -}}
@@ -59,7 +60,7 @@ spec:
       {{- end }}
     spec:
       serviceAccountName: {{ include "mecak8s.fullname" . }}
-      automountServiceAccountToken: true
+      automountServiceAccountToken: {{ if .Values.remoteBroker.address }}false{{ else }}true{{ end }}
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets: {{- toYaml . | nindent 8 }}
       {{- end }}
@@ -118,6 +119,12 @@ spec:
             {{- end }}
             {{- if ne .Values.maxTeamTokens nil }}
             - {{ printf "--max-team-tokens=%v" .Values.maxTeamTokens | quote }}
+            {{- end }}
+            {{- if .Values.remoteBroker.address }}
+            - {{ printf "--mcp-broker-address=%s" .Values.remoteBroker.address | quote }}
+            - --mcp-broker-token-file=/var/run/secrets/mecatl-broker/token
+            - {{ printf "--mcp-broker-tls-ca=/var/run/secrets/mecatl-broker/%s" .Values.remoteBroker.caKey | quote }}
+            - {{ printf "--mcp-broker-server-name=%s" .Values.remoteBroker.serverName | quote }}
             {{- end }}
             {{- if .Values.workspace }}
             - {{ printf "--workspace=%s" .Values.workspace | quote }}
@@ -260,6 +267,9 @@ spec:
                 port: drain
           resources: {{- toYaml .Values.resources | nindent 12 }}
           volumeMounts:
+            {{- if .Values.remoteBroker.address }}
+            - {name: mecatl-broker, mountPath: /var/run/secrets/mecatl-broker, readOnly: true}
+            {{- end }}
             - {name: tmp, mountPath: /tmp}
             {{- if include "mecak8s.redisSecretMounted" . }}
             - {name: redis-credentials, mountPath: /var/run/secrets/redis, readOnly: true}
@@ -283,6 +293,20 @@ spec:
             {{- toYaml . | nindent 12 }}
             {{- end }}
       volumes:
+        {{- if .Values.remoteBroker.address }}
+        - name: mecatl-broker
+          projected:
+            defaultMode: 0440
+            sources:
+              - serviceAccountToken:
+                  path: token
+                  audience: {{ .Values.remoteBroker.tokenAudience | quote }}
+                  expirationSeconds: {{ .Values.remoteBroker.tokenLifetimeSeconds }}
+              - secret:
+                  name: {{ .Values.remoteBroker.caSecret | quote }}
+                  items:
+                    - {key: {{ .Values.remoteBroker.caKey | quote }}, path: {{ .Values.remoteBroker.caKey | quote }}}
+        {{- end }}
         - name: tmp
           emptyDir: {sizeLimit: 256Mi}
         {{- if include "mecak8s.redisSecretMounted" . }}
