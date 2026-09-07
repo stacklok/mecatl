@@ -10,14 +10,14 @@ require (
 	charm.land/lipgloss/v2 v2.0.5
 	github.com/adrg/xdg v0.5.3
 	github.com/alicebob/miniredis/v2 v2.38.0
-	github.com/anthropics/anthropic-sdk-go v1.66.0
+	github.com/anthropics/anthropic-sdk-go v1.69.0
 	github.com/bmatcuk/doublestar/v4 v4.10.0
 	github.com/cedar-policy/cedar-go v1.8.0
 	github.com/charmbracelet/colorprofile v0.4.3
 	github.com/charmbracelet/x/ansi v0.11.7
 	github.com/charmbracelet/x/exp/teatest/v2 v2.0.0-20260527151214-009e6338d40d
 	github.com/fsnotify/fsnotify v1.9.0
-	github.com/goccy/go-yaml v1.18.0
+	github.com/goccy/go-yaml v1.19.2
 	github.com/gofrs/flock v0.13.0
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/jsonschema-go v0.4.3
