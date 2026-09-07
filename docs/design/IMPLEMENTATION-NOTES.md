@@ -8400,30 +8400,45 @@ has no process or runtime-directory authority.
 
 The one-shot layer is `sdk/typescript/src/query.ts`. Its public options keep the three ownership
 domains separate: `session` is passed to `Client.sessions.create`, `spawn` is consulted only when
-there is no supplied client, and `onPermissionAsk` configures the existing `Run` responder. The
-module-internal `queryInternal` options bag replaces only the spawn function for tests; no launcher
-or resource seam enters the `./node` barrel. Plan mode is checked from the requested session mode
-before that seam is invoked and raises the existing `UnsupportedFeatureError` for
-`session.resolvePlan()` rather than adding an M4 plan-resolution surface.
+there is no supplied client, `onPermissionAsk` configures the ordinary `Run` responder, and
+`onPlanApproval` configures only `PresentPlan`. The module-internal `queryInternal` options bag
+replaces only the spawn function for tests; no launcher or resource seam enters the `./node`
+barrel. Plan mode requires `onPlanApproval` before that seam is invoked. The live plan ask is
+resolved through its existing Converse approval frame; after the same-ID run yields
+`plan_approved`, `QueryImpl` opens a fresh Converse stream with the constant in
+`sdk/typescript/src/plan.ts` (`PLAN_APPROVED_PROCEED_TEXT`) and flattens both runs. It never calls
+`ApprovePlan` while the first run is live and never sends a second start frame on that stream.
 
 `QueryImpl` claims the existing run's event iterator once and exposes the same decoded `Event`
-values plus the created session id. A terminal result cleans up before it is delivered. Iterator
-`return` and the optional abort signal share one cached cleanup promise: they send the run's
-ordinary cancel control, drain through its terminal so `SessionImpl` releases its active-run
-registration, then walk the resource ledger. The session is deleted unless `retainSession` was
-requested; the client is closed only when query created it. Setup has the same ledger in reverse:
-a create failure closes only a newly spawned client, while a run-start failure first deletes its
-already-created session and then closes that client without replacing the original typed error.
-Retention deliberately does not imply durability. With a supplied client the id can be loaded for
-that daemon's remaining lifetime; an SDK-created daemon still stops at query cleanup, and its
-default store is in-memory.
+values plus the created session id. The final terminal result cleans up before it is delivered; a
+plan run's `plan_approved` terminal instead stages the fresh continuation for the consumer's next
+read. Iterator `return` and the optional abort signal share one cached cleanup promise: they send
+the current run's ordinary cancel control when it is still live, drain through its terminal so
+`SessionImpl` releases its active-run registration, then walk the resource ledger. The session is
+deleted unless `retainSession` was requested; the client is closed only when query created it.
+Setup has the same ledger in reverse: a create failure closes only a newly spawned client, while a
+run-start failure first deletes its already-created session and then closes that client without
+replacing the original typed error. Retention deliberately does not imply durability. With a
+supplied client the id can be loaded for that daemon's remaining lifetime; an SDK-created daemon
+still stops at query cleanup, and its default store is in-memory.
 
-Responder-less ask handling is an injected `PermissionAskResponder`, not a change to
-`sdk/typescript/src/run.ts`. It returns `deny`, emits one frozen
+Responder-less ordinary-ask handling is an injected `PermissionAskResponder`. It returns `deny`, emits one frozen
 `query_permission_ask_denied` diagnostic carrying only `askId` and `tool`, and leaves the raw ask
-in the event union. A caller-supplied responder takes the existing M1 path unchanged, including
-its abstention semantics, and a `Run` constructed outside query still leaves an unanswered ask
-pending for `resolveAsk()`.
+in the event union. A caller-supplied ordinary responder takes the existing M1 path unchanged,
+including its abstention semantics. `sdk/typescript/src/run.ts` classifies `PresentPlan` by its
+canonical tool name before selecting a callback, so a plan ask can invoke only `onPlanApproval`
+and cannot be passed to public `resolveAsk()`.
+
+The parked-session sibling lives in `sdk/typescript/src/plan.ts`. `Session.resolvePlan()` is
+available only while the local session handle owns no live run and opens the existing
+server-streaming `ApprovePlan` RPC. `PlanResolutionImpl` owns that one merged iterator and applies
+the same single-consumption rule as `Run`: iteration or `result()`, never both. It fixes the first
+non-empty run ID as the resumed run, requires its terminal before accepting one different
+continuation ID, and requires EOF after that continuation's terminal. A resumed terminal other
+than `plan_approved` admits no continuation. The server's special empty-ID `StopError` after an
+approved terminal becomes `PlanContinuationStartError`, preserving the server error text instead
+of inventing a run result. `result()` exposes the two typed `RunResult` values only after their
+terminals, so no independently consumable live child streams exist.
 
 Callback-tool registration lives in `sdk/typescript/src/tool.ts` and is decorated onto the
 Node/Bun client type without widening the transport-neutral `Client`. The one registry owns a

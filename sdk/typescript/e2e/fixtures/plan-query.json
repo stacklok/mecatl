@@ -1,0 +1,14 @@
+{
+  "turns": [
+    {
+      "tool_calls": [
+        {
+          "id": "query-present-plan",
+          "name": "PresentPlan",
+          "args": { "plan": "1. Plan the query work. 2. Execute after approval." }
+        }
+      ]
+    },
+    { "text": "query executed the approved plan" }
+  ]
+}

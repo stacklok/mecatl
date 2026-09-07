@@ -54,6 +54,7 @@ import {
   type Storage,
   type UserModel,
 } from "./namespaces-ops.js";
+import { createPlanResolution, type PlanApprovalVerdict, type PlanResolution } from "./plan.js";
 import {
   createRawClient,
   invalidateRawCompatibility,
@@ -145,6 +146,8 @@ export interface Session {
   activity(options?: AttachOptions): Promise<SessionActivity>;
   /** Starts a run and resolves once its first run-ID-bearing event arrives. */
   run(prompt: PromptInput, options?: RunOptions): Promise<Run>;
+  /** Atomically resolves a durably parked plan and streams its resumed and continuation runs. */
+  resolvePlan(verdict?: PlanApprovalVerdict): PlanResolution;
   /** Releases runtime resources without removing the durable session. */
   close(): Promise<void>;
   /** Permanently removes the durable session and its sidecars. */
@@ -441,6 +444,24 @@ class SessionImpl implements Session {
       );
     } catch (error) {
       release();
+      throw error;
+    }
+  }
+
+  resolvePlan(verdict: PlanApprovalVerdict = "approve"): PlanResolution {
+    this.#operations.assertOpen();
+    if (this.#busy) {
+      throw new SessionBusyError("A run is already active on this Session", {
+        transport: this.#operations.transportKind,
+      });
+    }
+    this.#busy = true;
+    try {
+      return createPlanResolution(this.id, verdict, this.#operations, () => {
+        this.#busy = false;
+      });
+    } catch (error) {
+      this.#busy = false;
       throw error;
     }
   }

@@ -78,9 +78,32 @@ The default deletes the transient session and stops a daemon it spawned. Pass an
 `client` when the daemon must remain available; `retainSession: true` then leaves the session
 loadable by `oneShot.sessionId` for that daemon's lifetime. SDK-spawned daemons use an in-memory
 store unless you configure durable storage, so retention is not a persistence promise. Breaking
-iteration or aborting `signal` still cleans up. Plan mode is refused until the separate plan
-resolution API lands. Without `onPermissionAsk`, an ask is denied and reported through the
-client's structured diagnostics sink while the run continues.
+iteration or aborting `signal` still cleans up. Without `onPermissionAsk`, an ordinary ask is
+denied and reported through the client's structured diagnostics sink while the run continues.
+
+Plan-mode queries must provide the separate approval callback before the SDK creates a session:
+
+```ts
+const planned = await query("Plan and implement the change", {
+  onPlanApproval: () => "approve",
+  session: { mode: 2 },
+});
+```
+
+The callback may return `"approve"`, `"accept_edits"`, or `"iterate"`. Approval finishes the
+current plan run, then opens a fresh run with the harness proceed prompt; the query yields both run
+streams in order. It never starts twice on one live stream.
+
+To resolve a plan that is already durably parked and has no locally live run, use
+`session.resolvePlan()` instead:
+
+```ts
+const { resumed, continuation } = await session.resolvePlan("approve").result();
+```
+
+The resumed run is always present. The optional continuation has a new run ID and exists only
+after `plan_approved`. A run attachment stops at its selected run's terminal; use
+`session.activity()` when one view must observe both IDs.
 
 A spawned client can register local callback tools before it creates a session:
 

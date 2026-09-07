@@ -8,7 +8,7 @@ import {
   type DiagnosticRecord,
   MECATL_EVENT_KINDS,
   MecatlError,
-  UnsupportedFeatureError,
+  PlanApprovalRequiredError,
 } from "../src/index.js";
 import { queryInternal } from "../src/query.js";
 
@@ -233,16 +233,88 @@ describe("query one-shot lifecycle", () => {
     expect(kinds).toEqual(["permission.ask", "message.delta", "result"]);
   });
 
-  it("plan mode is refused before spawning", async () => {
+  it("plan mode requires onPlanApproval before spawning", async () => {
     const spawn = vi.fn();
     const failure = queryInternal("plan it", { session: { mode: 2 } }, { spawn });
 
     await expect(failure).rejects.toMatchObject({
-      code: "unsupported_feature",
-      feature: "session.resolvePlan()",
+      code: "invalid_state",
+      message: "query() plan mode requires onPlanApproval before starting",
     });
-    await expect(failure).rejects.toBeInstanceOf(UnsupportedFeatureError);
+    await expect(failure).rejects.toBeInstanceOf(PlanApprovalRequiredError);
     expect(spawn).not.toHaveBeenCalled();
+  });
+
+  it("plan asks use only onPlanApproval and continue on a fresh run", async () => {
+    const prompts: string[] = [];
+    const planAsks: string[] = [];
+    const permissionAsks: string[] = [];
+    let approvePlanCalls = 0;
+    let runNumber = 0;
+    const transport = createRouterTransport((router) => {
+      router.service(HarnessService, {
+        approvePlan: async function* () {
+          approvePlanCalls += 1;
+          yield* [];
+        },
+        createSession: () => ({ sessionId: "query-plan-session" }),
+        deleteSession: () => ({}),
+        getCompatibilityInfo: () => ({ apiMajor: 1 }),
+        converse: async function* (requests) {
+          runNumber += 1;
+          const input = requests[Symbol.asyncIterator]();
+          const prompt = await input.next();
+          if (prompt.value?.kind.case === "prompt") prompts.push(prompt.value.kind.value.text);
+          const runId = `query-plan-${runNumber}`;
+          if (runNumber === 1) {
+            yield {
+              event: {
+                ask: { askId: "plan-ask", tool: "PresentPlan" },
+                runId,
+                type: "permission.ask",
+              },
+            };
+            await input.next();
+            yield terminal(runId, "plan_approved");
+            return;
+          }
+          yield ask(runId, "ordinary-ask");
+          await input.next();
+          yield terminal(runId);
+        },
+      });
+    });
+    const client = connectTransport({
+      owned: false,
+      transport,
+      transportKind: "grpc",
+      visibility: false,
+    });
+    const query = await queryInternal("draft a plan", {
+      client,
+      onPermissionAsk: (value) => {
+        permissionAsks.push(value.askId);
+        return "deny";
+      },
+      onPlanApproval: (value) => {
+        planAsks.push(value.askId);
+        return "approve";
+      },
+      session: { mode: 2 },
+    });
+
+    const events: Array<{ kind: string; runId: string }> = [];
+    for await (const value of query) events.push({ kind: value.kind, runId: value.runId });
+
+    expect(planAsks).toEqual(["plan-ask"]);
+    expect(permissionAsks).toEqual(["ordinary-ask"]);
+    expect(prompts).toEqual(["draft a plan", "Plan approved by operator. Proceed with execution."]);
+    expect(events.filter((value) => value.kind === "result")).toEqual([
+      { kind: "result", runId: "query-plan-1" },
+      { kind: "result", runId: "query-plan-2" },
+    ]);
+    expect(approvePlanCalls).toBe(0);
+    await client.close();
   });
 
   it("an aborted or abandoned query still cleans up", async () => {

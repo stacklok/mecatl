@@ -88,9 +88,27 @@ keeps that client and its daemon caller-owned while still deleting the query's s
 supplied client, `retainSession: true` skips deletion and `oneShot.sessionId` can load the session
 for the daemon's remaining lifetime. A daemon created by `query()` is still stopped at cleanup and
 uses an in-memory store by default, so retention does not promise persistence. Signal abort and
-early iterator return follow the same cleanup path. Plan mode is refused with a typed error naming
-`session.resolvePlan()`. Without `onPermissionAsk`, query denies each ask, reports it through the
-client diagnostics sink, and lets the run continue; standalone `Run` behavior is unchanged.
+early iterator return follow the same cleanup path. Plan mode requires `onPlanApproval` before any
+resource is created. The plan-specific responder returns `"approve"`, `"accept_edits"`, or
+`"iterate"`; an approval drains the current plan run and then opens a fresh run carrying the
+harness proceed prompt. Both runs' events are yielded in order. Without `onPermissionAsk`, query
+denies each ordinary ask, reports it through the client diagnostics sink, and lets the run continue.
+
+## Parked plan resolution
+
+For a plan durably parked on `PresentPlan` with no locally live `Run`,
+`session.resolvePlan()` consumes the server's atomic stream. Iterate its events or call `result()`,
+never both:
+
+```ts
+const resolution = session.resolvePlan("approve");
+const { resumed, continuation } = await resolution.result();
+```
+
+The resumed result always comes first. `continuation` exists only when the resumed run ends with
+`plan_approved`, and has a different run ID. Attachments stay bound to one run; use
+`session.activity()` to observe both IDs. A continuation that fails before receiving an ID throws
+`PlanContinuationStartError` with the server's original message.
 
 ## Development
 

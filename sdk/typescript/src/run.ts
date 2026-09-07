@@ -18,6 +18,12 @@ import {
   type ConverseRequestSchema,
   type Event as ProtoEvent,
 } from "./gen/mecatl/v1/harness_pb.js";
+import {
+  PLAN_APPROVAL_TOOL,
+  type PlanApprovalResponder,
+  type PlanApprovalVerdict,
+  planPermissionVerdict,
+} from "./plan.js";
 
 /** A server permission verdict accepted by run.resolveAsk(). @public */
 export type PermissionVerdict = "allow_once" | "allow_always" | "deny";
@@ -31,6 +37,8 @@ export type PermissionAskResponder = (
 /** Options applied to one run. @public */
 export interface RunOptions {
   onPermissionAsk?: PermissionAskResponder;
+  /** Automatically answers only plan-originated PresentPlan asks. */
+  onPlanApproval?: PlanApprovalResponder;
 }
 
 /** The terminal outcome of a consumed run. Server-declared stops are values, not errors. @public */
@@ -69,7 +77,7 @@ export interface RunOperations {
 }
 
 type ConsumptionMode = "events" | "result";
-type PendingAsk = { readonly controller: AbortController };
+type PendingAsk = { readonly controller: AbortController; readonly plan: boolean };
 
 export class RunImpl implements Run {
   readonly id: string;
@@ -79,6 +87,7 @@ export class RunImpl implements Run {
   readonly #first: Event;
   readonly #knownAsks = new Set<string>();
   readonly #onPermissionAsk: PermissionAskResponder | undefined;
+  readonly #onPlanApproval: PlanApprovalResponder | undefined;
   readonly #operations: RunOperations;
   readonly #pendingAsks = new Map<string, PendingAsk>();
   #consumption: ConsumptionMode | undefined;
@@ -101,6 +110,7 @@ export class RunImpl implements Run {
     this.#events = events;
     this.#operations = operations;
     this.#onPermissionAsk = options.onPermissionAsk;
+    this.#onPlanApproval = options.onPlanApproval;
     this.#observe(this.#first);
   }
 
@@ -126,7 +136,37 @@ export class RunImpl implements Run {
         transport: this.#operations.transportKind,
       });
     }
+    if (pending.plan) {
+      throw new InvalidStateError(
+        `Plan approval ask ${askId} must be resolved through onPlanApproval`,
+        { transport: this.#operations.transportKind },
+      );
+    }
 
+    await this.#resolvePendingAsk(askId, verdict, pending);
+  }
+
+  async #resolvePlanAsk(askId: string, verdict: PlanApprovalVerdict): Promise<void> {
+    this.#operations.assertOpen();
+    const pending = this.#pendingAsks.get(askId);
+    if (pending === undefined) {
+      throw new PermissionAskAlreadyResolvedError(askId, {
+        transport: this.#operations.transportKind,
+      });
+    }
+    if (!pending.plan) {
+      throw new InvalidStateError(`Permission ask ${askId} is not a plan approval`, {
+        transport: this.#operations.transportKind,
+      });
+    }
+    await this.#resolvePendingAsk(askId, planPermissionVerdict(verdict), pending);
+  }
+
+  async #resolvePendingAsk(
+    askId: string,
+    verdict: PermissionVerdict,
+    pending: PendingAsk,
+  ): Promise<void> {
     const wireVerdict = approvalVerdict(verdict, this.#operations.transportKind);
     this.#pendingAsks.delete(askId);
     pending.controller.abort();
@@ -263,8 +303,17 @@ export class RunImpl implements Run {
     const askId = event.payload.askId;
     if (this.#ended || this.#knownAsks.has(askId)) return;
     this.#knownAsks.add(askId);
-    const pending = { controller: new AbortController() };
+    const plan = event.payload.tool === PLAN_APPROVAL_TOOL;
+    const pending = { controller: new AbortController(), plan };
     this.#pendingAsks.set(askId, pending);
+    if (plan) {
+      this.#startPlanResponder(event, pending);
+      return;
+    }
+    this.#startPermissionResponder(event, pending);
+  }
+
+  #startPermissionResponder(event: EventOf<"permission.ask">, pending: PendingAsk): void {
     const responder = this.#onPermissionAsk;
     if (responder === undefined) return;
 
@@ -277,12 +326,34 @@ export class RunImpl implements Run {
       }
       if (verdict === undefined || pending.controller.signal.aborted) return;
       try {
-        await this.resolveAsk(askId, verdict);
+        await this.resolveAsk(event.payload.askId, verdict);
       } catch (error) {
         if (!(error instanceof PermissionAskAlreadyResolvedError)) throw error;
       }
     })().catch(() => {
       // Automatic responder failures never alter raw event consumption.
+    });
+  }
+
+  #startPlanResponder(event: EventOf<"permission.ask">, pending: PendingAsk): void {
+    const responder = this.#onPlanApproval;
+    if (responder === undefined) return;
+
+    void (async () => {
+      let verdict: PlanApprovalVerdict | undefined;
+      try {
+        verdict = await responder(event.payload, pending.controller.signal);
+      } catch {
+        return;
+      }
+      if (verdict === undefined || pending.controller.signal.aborted) return;
+      try {
+        await this.#resolvePlanAsk(event.payload.askId, verdict);
+      } catch (error) {
+        if (!(error instanceof PermissionAskAlreadyResolvedError)) throw error;
+      }
+    })().catch(() => {
+      // Automatic plan-responder failures never alter raw event consumption.
     });
   }
 

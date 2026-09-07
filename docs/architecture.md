@@ -274,11 +274,21 @@ unfinished run, delete the transient session unless `retainSession` is true, and
 only when the query spawned it. A caller-supplied client therefore stays open while the query's
 default transient session is still deleted. Retention is bounded by the daemon's storage: it is
 useful across calls with a supplied live client, while an SDK-spawned daemon uses an in-memory
-store and is stopped when its owning query finishes. Plan mode is refused before spawning with
-`unsupported_feature` naming `session.resolvePlan()`. With no permission responder, query denies
-an ask, emits one client diagnostic naming the ask and tool, and continues the run; the raw
-`permission.ask` remains in the event stream, and `Run` outside query retains its existing manual
-pending-ask behavior.
+store and is stopped when its owning query finishes. Plan mode requires `onPlanApproval` before
+resource creation. A `PresentPlan` ask invokes only that plan-specific responder; approval drains
+the same-ID plan run through `plan_approved`, then starts a fresh Converse stream carrying the
+parity-pinned proceed prompt. The query iterator flattens both run streams. With no permission
+responder, query denies an ordinary ask, emits one client diagnostic naming the ask and tool, and
+continues the run; the raw `permission.ask` remains in the event stream.
+
+Separately, `Session.resolvePlan()` addresses a durably parked plan with no local live run through
+the server-streaming `ApprovePlan` RPC. Its single-consumption `PlanResolution` partitions the
+merged wire iterator into the resumed run and an optional different-ID continuation, requiring a
+terminal result for each. A non-`plan_approved` resumed terminal has no continuation; malformed
+ordering is a protocol error, while the server's empty-ID continuation-admission terminal becomes
+a distinct typed continuation-start failure. Run-bound attachments end at their selected terminal;
+`Session.activity()` remains the cross-run view. See
+[ADR 0304](adr/0304-typescript-sdk-public-surface-and-release.md) Decision 4.
 
 Spawned Node/Bun clients also expose `client.tool(name, schema, handler, options)` for a
 client-wide callback-tool registry. Schemas are plain JSON Schema 2020-12 values compiled by the

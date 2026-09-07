@@ -91,6 +91,7 @@ export type SDKErrorCode =
   | "invalid_prompt"
   | "invalid_state"
   | "no_runs"
+  | "plan_continuation_start"
   | "protocol"
   | "readiness_timeout" // M3_LOCAL_ERROR_CODE
   | "spawn_failed" // M3_LOCAL_ERROR_CODE
@@ -274,6 +275,22 @@ export class PromptValidationError extends MecatlError {
 
 /** A local run is already active on this Session handle. @public */
 export class SessionBusyError extends InvalidStateError {}
+
+/** query() plan mode was requested without its required plan-specific responder. @public */
+export class PlanApprovalRequiredError extends InvalidStateError {
+  constructor() {
+    super("query() plan mode requires onPlanApproval before starting", {
+      transport: "local",
+    });
+  }
+}
+
+/** The approved plan's continuation could not be admitted before it received a run ID. @public */
+export class PlanContinuationStartError extends MecatlError {
+  constructor(message: string, options: Omit<MecatlErrorOptions, "code">) {
+    super(message, { ...options, code: "plan_continuation_start" });
+  }
+}
 
 /** A permission ask is no longer pending on its originating run. @public */
 export class PermissionAskAlreadyResolvedError extends InvalidStateError {

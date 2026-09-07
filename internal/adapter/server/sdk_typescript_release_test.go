@@ -14,6 +14,7 @@ import (
 	"google.golang.org/protobuf/reflect/protoregistry"
 
 	_ "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
+	"github.com/stacklok/mecatl/engine/agent"
 )
 
 type sdkRPCCatalogRow struct {
@@ -126,6 +127,33 @@ func TestADR_0304_ExactGRPCOnlySet(t *testing.T) {
 			"RouteFamilyTransportClassification",
 		),
 	)
+}
+
+func TestADR_0304_PlanApprovalContractParity(t *testing.T) {
+	t.Parallel()
+
+	_, filename, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("locate TypeScript plan contract")
+	}
+	path := filepath.Join(filepath.Dir(filename), "..", "..", "..", "sdk", "typescript", "src", "plan.ts")
+	typescript := readParitySource(t, path)
+	match := regexp.MustCompile(`(?s)// BEGIN MECATL_PLAN_APPROVED_PROCEED_TEXT\s+` +
+		`export const PLAN_APPROVED_PROCEED_TEXT =\s*"([^"]+)";\s*` +
+		`// END MECATL_PLAN_APPROVED_PROCEED_TEXT`).FindStringSubmatch(typescript)
+	if len(match) != 2 {
+		t.Fatal("TypeScript plan contract has no parseable proceed-message pin")
+	}
+	if match[1] != agent.PlanApprovedProceedText {
+		t.Fatalf("Go/TypeScript plan proceed message drift: TypeScript=%q Go=%q", match[1], agent.PlanApprovedProceedText)
+	}
+	toolMatch := regexp.MustCompile(`(?m)^export const PLAN_APPROVAL_TOOL = "([^"]+)";$`).FindStringSubmatch(typescript)
+	if len(toolMatch) != 2 {
+		t.Fatal("TypeScript plan contract has no parseable plan-ask discriminator")
+	}
+	if want := agent.NewPresentPlanTool().Spec().Name; toolMatch[1] != want {
+		t.Fatalf("Go/TypeScript plan-ask discriminator drift: TypeScript=%q Go=%q", toolMatch[1], want)
+	}
 }
 
 func TestSDKTypescriptRelease_Scenario1_PublicServiceProjectionParity(t *testing.T) {

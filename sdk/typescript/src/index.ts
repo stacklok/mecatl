@@ -47,6 +47,8 @@ export {
   MecatlError,
   NoRunsError,
   PermissionAskAlreadyResolvedError,
+  PlanApprovalRequiredError,
+  PlanContinuationStartError,
   PromptValidationError,
   ProtocolError,
   ServerError,
@@ -137,6 +139,12 @@ export type {
   Storage,
   UserModel,
 } from "./namespaces-ops.js";
+export type {
+  PlanApprovalResponder,
+  PlanApprovalVerdict,
+  PlanResolution,
+  PlanResolutionResult,
+} from "./plan.js";
 export type { RawClient, RawClientOptions } from "./raw.js";
 export {
   createRawClient,

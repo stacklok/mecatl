@@ -873,6 +873,35 @@ export type PermissionAskResponder = (ask: PermissionAskEventPayload, signal: Ab
 export type PermissionVerdict = "allow_once" | "allow_always" | "deny";
 
 // @public
+export class PlanApprovalRequiredError extends InvalidStateError {
+    constructor();
+}
+
+// @public
+export type PlanApprovalResponder = (ask: PermissionAskEventPayload, signal: AbortSignal) => PlanApprovalVerdict | undefined | Promise<PlanApprovalVerdict | undefined>;
+
+// @public
+export type PlanApprovalVerdict = "approve" | "accept_edits" | "iterate";
+
+// @public
+export class PlanContinuationStartError extends MecatlError {
+    constructor(message: string, options: Omit<MecatlErrorOptions, "code">);
+}
+
+// @public
+export interface PlanResolution extends AsyncIterable<Event_2> {
+    result(): Promise<PlanResolutionResult>;
+}
+
+// @public
+export interface PlanResolutionResult {
+    // (undocumented)
+    readonly continuation?: RunResult;
+    // (undocumented)
+    readonly resumed: RunResult;
+}
+
+// @public
 export type PromptInput = string | readonly PromptPart[];
 
 // @public
@@ -905,6 +934,7 @@ export function query(prompt: PromptInput, options?: QueryOptions): Promise<Quer
 export interface QueryOptions {
     client?: Client;
     onPermissionAsk?: PermissionAskResponder;
+    onPlanApproval?: PlanApprovalResponder;
     retainSession?: boolean;
     session?: CreateSessionOptions;
     signal?: AbortSignal;
@@ -976,6 +1006,7 @@ export interface Run extends AsyncIterable<Event_2> {
 export interface RunOptions {
     // (undocumented)
     onPermissionAsk?: PermissionAskResponder;
+    onPlanApproval?: PlanApprovalResponder;
 }
 
 // @public
@@ -1068,7 +1099,7 @@ export interface Schedules {
 export type SdkCursor = string;
 
 // @public (undocumented)
-export type SDKErrorCode = "authentication" | "cursor_scope" | "incompatible_server" | "invalid_prompt" | "invalid_state" | "no_runs" | "protocol" | "readiness_timeout" | "spawn_failed" | "tool_registration" | "transport" | "unsupported_platform" | "unsupported_feature";
+export type SDKErrorCode = "authentication" | "cursor_scope" | "incompatible_server" | "invalid_prompt" | "invalid_state" | "no_runs" | "plan_continuation_start" | "protocol" | "readiness_timeout" | "spawn_failed" | "tool_registration" | "transport" | "unsupported_platform" | "unsupported_feature";
 
 // @public (undocumented)
 export class ServerError extends MecatlError {
@@ -1090,6 +1121,7 @@ export interface Session {
     delete(): Promise<void>;
     // (undocumented)
     readonly id: string;
+    resolvePlan(verdict?: PlanApprovalVerdict): PlanResolution;
     run(prompt: PromptInput, options?: RunOptions): Promise<Run>;
 }
 
