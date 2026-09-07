@@ -2,7 +2,7 @@
 id: 10-panel-simplify-artifacts-follow-state-and-docs
 title: Simplify artifact provenance, remove follow-state mirror, and reconcile docs
 blocked_by: [09-panel-selection-identity]
-status: in-progress
+status: done
 attempt: 1
 branch: "plan-mecatui-logical-conversation-anchors/10-panel-simplify-artifacts-follow-state-and-docs-attempt-1"
 worktree: ".scratch/worker-mecatui-logical-conversation-anchors-10-panel-simplify-artifacts-follow-state-and-docs-attempt-1"
