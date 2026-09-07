@@ -195,13 +195,17 @@ func rejectedRawPrompt(ctx context.Context, t *testing.T, raw mecatlv1.HarnessSe
 	if err != nil {
 		return err
 	}
-	if err := stream.Send(&mecatlv1.ConverseRequest{Kind: &mecatlv1.ConverseRequest_Prompt{
+	sendErr := stream.Send(&mecatlv1.ConverseRequest{Kind: &mecatlv1.ConverseRequest_Prompt{
 		Prompt: &mecatlv1.Prompt{SessionId: sessionID, Text: "must not run"},
-	}}); err != nil {
-		return err
+	}})
+	// Converse can reject affinity metadata before it reads the prompt. In that
+	// case Send may observe only the closed stream; Recv carries the terminal
+	// server status.
+	_, recvErr := stream.Recv()
+	if recvErr != nil {
+		return recvErr
 	}
-	_, err = stream.Recv()
-	return err
+	return sendErr
 }
 
 // TestSessionAffinityAndHandoff_Scenario7_ClientTransportProviderBytes is a
