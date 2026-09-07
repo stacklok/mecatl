@@ -174,6 +174,12 @@ when the code that satisfies the plan has landed.
   ownership matrix, `query()`'s one-shot lifecycle, callback `tool()` with local
   schema validation and two-layer collision refusal, the hand-written loopback
   streaming-HTTP MCP host, and the offline Node/Bun e2e. Status: draft.
+- [TypeScript SDK public surface and v0.1.0 release (M4)](sdk-typescript-release.md) —
+  `@stacklok/mecatl-sdk` M4: the descriptor-to-transport parity gate for all 77
+  public RPCs, thin typed namespaces, ergonomic teams, streaming plan
+  resolution, TypeScript/Node/browser/macOS compatibility matrices, executable
+  examples and public docs, path-qualified npm trusted publishing, and the
+  human-gated `v0.1.0` cut. Status: draft.
 
 ## See also
 
