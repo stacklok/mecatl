@@ -19,6 +19,11 @@ import {
 } from "./errors.js";
 import type { ConverseRequest } from "./gen/mecatl/v1/harness_pb.js";
 import { registerRawJson, registerTransport } from "./raw.js";
+import {
+  type HTTPMethod,
+  type HTTPOnlyControlName,
+  resolveHTTPOnlyControl,
+} from "./rpc-catalog.js";
 
 /** @public */
 export interface HttpTransportOptions extends CredentialOptions {
@@ -30,7 +35,7 @@ export interface HttpTransportOptions extends CredentialOptions {
 }
 
 type JsonRecord = Record<string, JsonValue>;
-type Route = { body: boolean; method: "DELETE" | "GET" | "POST"; path: string };
+type Route = { body: boolean; method: HTTPMethod; path: string };
 type SSEFrame = { data: string; event: string };
 
 function record(value: JsonValue): JsonRecord {
@@ -179,6 +184,15 @@ function timeoutSignal(
   return signal === undefined ? timeout : AbortSignal.any([signal, timeout]);
 }
 
+function sessionControlRoute(name: HTTPOnlyControlName, sessionId: string): Route {
+  const control = resolveHTTPOnlyControl(name, { session_id: sessionId });
+  return {
+    body: control.requestBody === "json",
+    method: control.method,
+    path: control.path,
+  };
+}
+
 class HttpTransport implements Transport {
   readonly #baseUrl: string;
   readonly #credentials: RequestCredentials | undefined;
@@ -306,13 +320,12 @@ class HttpTransport implements Transport {
     signal: AbortSignal | undefined,
     requestHeaders?: HeadersInit,
   ): Promise<void> {
-    const path = `/v1/sessions/${encodeURIComponent(sessionId)}`;
     const kind = frame.kind;
     let route: Route;
     let body: JsonRecord;
     switch (kind.case) {
       case "resumeApproval":
-        route = { body: true, method: "POST", path: `${path}/approve` };
+        route = sessionControlRoute("approve", sessionId);
         body = {
           allow: kind.value.allow,
           ask_id: kind.value.askId,
@@ -324,14 +337,14 @@ class HttpTransport implements Transport {
         await this.cancelRun(sessionId, kind.value.expectedRunId, signal, requestHeaders);
         return;
       case "cancelChild":
-        route = { body: true, method: "POST", path: `${path}/cancel-child` };
+        route = sessionControlRoute("cancelChild", sessionId);
         body = { child_id: kind.value.childId };
         break;
       case "steer":
         if (!this.#features.has("http_steer")) {
           throw new UnsupportedFeatureError("http_steer", { transport: "http" });
         }
-        route = { body: true, method: "POST", path: `${path}/steer` };
+        route = sessionControlRoute("steer", sessionId);
         body = {
           expected_run_id: kind.value.expectedRunId,
           message_id: kind.value.messageId,
@@ -348,7 +361,7 @@ class HttpTransport implements Transport {
         if (!this.#features.has("http_steer")) {
           throw new UnsupportedFeatureError("http_steer", { transport: "http" });
         }
-        route = { body: true, method: "POST", path: `${path}/cancel-steer` };
+        route = sessionControlRoute("steerCancel", sessionId);
         body = {
           expected_run_id: kind.value.expectedRunId,
           message_id: kind.value.messageId,
@@ -370,11 +383,7 @@ class HttpTransport implements Transport {
     requestHeaders?: HeadersInit,
   ): Promise<void> {
     const response = await this.#request(
-      {
-        body: true,
-        method: "POST",
-        path: `/v1/sessions/${encodeURIComponent(sessionId)}/cancel`,
-      },
+      sessionControlRoute("cancel", sessionId),
       { expected_run_id: runId },
       signal,
       requestHeaders,
@@ -430,11 +439,7 @@ class HttpTransport implements Transport {
       const sessionId = start.value.sessionId;
       wrapEvent = true;
       if (start.case === "prompt") {
-        route = {
-          body: true,
-          method: "POST",
-          path: `/v1/sessions/${encodeURIComponent(sessionId)}/prompt`,
-        };
+        route = sessionControlRoute("prompt", sessionId);
         body = {
           parts: start.value.parts.map((part) => ({
             data: part.data.length === 0 ? undefined : bytesToBase64(part.data),
@@ -445,11 +450,7 @@ class HttpTransport implements Transport {
           text: start.value.text,
         };
       } else {
-        route = {
-          body: false,
-          method: "POST",
-          path: `/v1/sessions/${encodeURIComponent(sessionId)}/retry`,
-        };
+        route = sessionControlRoute("retry", sessionId);
       }
       startControls = async () => {
         for (;;) {
