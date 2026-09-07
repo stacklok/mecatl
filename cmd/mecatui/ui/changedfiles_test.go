@@ -113,7 +113,7 @@ func TestRenderChangedFiles(t *testing.T) {
 }
 
 func TestStatusLineHeaderReservationOnlyAddsGapForSystemLane(t *testing.T) {
-	m := Model{width: 80, stuck: true}
+	m := Model{width: 80, view: conversationView{mode: followTail}}
 	if got, want := m.statusLineGeometry().headerAvailable, 78; got != want {
 		t.Fatalf("header availability without a right lane = %d, want %d", got, want)
 	}

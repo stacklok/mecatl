@@ -1,6 +1,6 @@
 # ADR 0301 — Logical conversation anchors in mecatui
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-09-06
 - Scope: `cmd/mecatui/ui` conversation rendering, scrolling, selection, and scrollback-performance invariants
 - Supersedes: none
@@ -61,8 +61,8 @@ wrapping, markdown layout, streaming growth, card expansion, and terminal resize
 can create, remove, or move them. The block ID is assigned only in the TUI when a
 document block is created; it is neither a protocol field nor persisted state.
 `region` identifies a stable display area where one exists. The initial closed
-set is card chrome, primary body, reasoning, tool arguments, tool result,
-artifact, and the changed-files appendix. Changed-file membership, the
+set is card chrome, primary body, reasoning, tool arguments, tool result, and the
+changed-files appendix. Changed-file membership, the
 appendix's first-observation identity allocation, and its document-block
 lifecycle belong to `conversation`; the root Model delegates its event routing
 to that owner. The appendix receives one UI-local ID when the session first

@@ -1698,7 +1698,7 @@ func (m Model) onResize(msg tea.WindowSizeMsg) (tea.Model, tea.Cmd) {
 	m.clampHelpScroll()
 	if widthChanged && m.vp.Height() == viewportHeight {
 		m.refreshView()
-		m.syncStuck()
+		m.view.observe(m.vp)
 	}
 	// Open modal surfaces derive geometry at Render time; no resize fan-out is needed.
 	return m, m.maybeKittyTransmit()
@@ -1809,8 +1809,8 @@ func (m *Model) maybeKittyTransmit() tea.Cmd {
 // common case (no layout change) is a cheap chrome render + compare with no re-render.
 // When the height DID change it mirrors onResize's old
 // tail: SetHeight, refreshView (re-render the conversation into the resized viewport),
-// then syncStuck (SetHeight can clamp YOffset so AtBottom flips — re-derive
-// auto-follow, otherwise the "↑ NN%" cue would lie). Width is NOT touched here (it is
+// then observes the viewport (SetHeight can clamp YOffset so AtBottom flips —
+// re-derive auto-follow, otherwise the "↑ NN%" cue would lie). Width is NOT touched here (it is
 // an onResize concern). A pointer receiver: it mutates the viewport in place.
 func (m *Model) relayout() {
 	if m.width <= 0 || m.height <= 0 {
@@ -1826,7 +1826,7 @@ func (m *Model) relayout() {
 	}
 	m.vp.SetHeight(bodyHeight)
 	m.refreshView()
-	m.syncStuck()
+	m.view.observe(m.vp)
 }
 
 // physicalEscape reports the non-remappable hardware gesture. Bubble Tea's
@@ -3832,7 +3832,7 @@ func (m Model) onMouseWheel(msg tea.MouseWheelMsg) (tea.Model, tea.Cmd) {
 	// A wheel event changes the scroll offset: invalidate the vpView cache so the
 	// next View() renders the new position rather than the stale pre-wheel output.
 	m.rend.invalidateVPView()
-	m.syncStuck()
+	m.view.observe(m.vp)
 	return m, cmd
 }
 
@@ -4128,7 +4128,7 @@ func (m Model) armAutoScroll(dir autoScrollDir, x int) (tea.Model, tea.Cmd) {
 	}
 	alreadyRunning := m.sel.autoScroll != scrollNone
 	m.sel.autoScroll = dir
-	m.syncStuck()
+	m.view.observe(m.vp)
 	m.extendHeadToEdge(dir, x)
 	snapshotSelection(&m)
 	if alreadyRunning {
@@ -4159,7 +4159,7 @@ func (m Model) onAutoScroll() (tea.Model, tea.Cmd) {
 		snapshotSelection(&m)
 		return m, nil
 	}
-	m.syncStuck()
+	m.view.observe(m.vp)
 	m.extendHeadToEdge(dir, m.sel.dragX)
 	snapshotSelection(&m)
 	return m, m.autoScrollCmd()
@@ -4333,7 +4333,6 @@ func snapshotSelection(m *Model) {
 		m.view.mode = followTail
 		m.vp.GotoBottom()
 	}
-	m.stuck = m.view.mode == followTail
 }
 
 // clearSelection drops any active text selection (including a pending edge-
@@ -4389,18 +4388,9 @@ func (m Model) shellWriteCmd(payload string) tea.Cmd {
 	}
 }
 
-// syncStuck maintains the legacy chrome projection after conversationView has
-// observed a viewport movement. The controller, not this bool, owns follow state.
-func (m *Model) syncStuck() {
-	m.view.observe(m.vp)
-	m.stuck = m.view.mode == followTail
-}
-
 // onScrollKey is the shared conversation-scroll handler used by both onIdleKey and
 // onRunningKey: pgup/pgdn delegate to the viewport (which does its own scroll
-// math), home/end jump to top/bottom, then syncStuck re-derives auto-follow. End
-// naturally re-sticks; home (and a partial pgup) unsticks so streaming no longer
-// yanks the view to the bottom. The caller has already matched one of these keys.
+// math), home/end jump to top/bottom, then conversationView observes the result.
 func (m Model) onScrollKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	switch {
@@ -4414,7 +4404,7 @@ func (m Model) onScrollKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	// Any scroll-key changes the scroll offset: invalidate the vpView cache so the
 	// next View() renders the new position rather than the stale pre-scroll output.
 	m.rend.invalidateVPView()
-	m.syncStuck()
+	m.view.observe(m.vp)
 	return m, cmd
 }
 
@@ -4424,10 +4414,9 @@ func (m Model) onScrollKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 // settles the flag — making "rendered ⟺ not dirty" an invariant and force-flushing
 // the tail at every turn/tool/result/error boundary regardless of tick timing.
 //
-// It re-pins ONLY when m.stuck (auto-follow). A scroll-up sets stuck=false (via
-// syncStuck), so a streaming delta re-renders the growing content in place without
-// yanking the view back to the bottom — the user's scroll-up survives streaming.
-// Scrolling/jumping back to the bottom re-sets stuck, and auto-follow resumes.
+// It re-pins only in tail-follow mode. A scroll-up switches to anchored mode, so
+// a streaming delta re-renders the growing content in place without yanking the
+// view back to the bottom. Scrolling/jumping back to the bottom resumes tail follow.
 //
 // Cost shape: renderConversation re-renders only blocks whose rev/width/expand
 // changed since the last frame (the renderer's blockCache; in practice the live
@@ -4456,7 +4445,6 @@ func (m *Model) refreshView() {
 	// back to the byte-identical string path below.
 	if !m.sel.active && !m.expandTools {
 		m.view.replace(&m.vp, frame)
-		m.stuck = m.view.mode == followTail
 		return
 	}
 	content := strings.Join(frame.lines, "\n")
@@ -4492,7 +4480,6 @@ func (m *Model) refreshView() {
 		content = styleSelection(content, m.sel, m.deps.Theme.Style("selection"))
 	}
 	m.view.replaceContent(&m.vp, content, frame)
-	m.stuck = m.view.mode == followTail
 }
 
 // drainQueue MERGES staged follow-ups into ONE prompt only after a healthy

@@ -33,7 +33,7 @@ type sessionStateProjection struct {
 func sessionState(m Model) sessionStateProjection {
 	return sessionStateProjection{
 		convEmpty:     m.conv.isEmpty(),
-		stuck:         m.stuck,
+		stuck:         m.view.mode == followTail,
 		filesChanged:  m.conv.filesChanged,
 		filesSeenLen:  len(m.conv.filesSeen),
 		filesSeenNil:  m.conv.filesSeen == nil,
@@ -423,7 +423,7 @@ func TestClearBuiltinCreatesThenBindsThenCloses(t *testing.T) {
 	m.toolProgress = "writing"
 	// Scrolled up (auto-follow off): /clear must re-arm it, since an empty
 	// conversation is at-bottom and the next run must tail its streaming deltas.
-	m.stuck = false
+	m.view.mode = anchored
 	m.resolvedSessionModel = client.ResolvedModel{ProviderID: "effective-provider", ModelID: "effective-model", ReasoningEffort: "high"}
 	m.createModelSelection = client.ModelSelection{ProviderID: "stale-provider", ModelID: "stale-model", ReasoningEffort: "low"}
 	m.activePlacement = client.Placement{Kind: "local", Label: "current-worktree"}

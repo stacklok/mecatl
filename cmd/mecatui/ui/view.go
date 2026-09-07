@@ -433,13 +433,10 @@ func (m Model) headerNextBadge() string {
 	return "next: " + truncate(sanitizeTerminal(label), maxModelLen)
 }
 
-// scrollIndicator returns the muted "↑ NN%" header cue shown ONLY when the user
-// has scrolled up off the bottom (!m.stuck) — the discoverable signal that the
-// view is no longer tailing live output and how far up it sits. It is "" while
-// stuck (auto-following the bottom), so the at-bottom steady-state header — and
-// thus the View goldens captured there — is unchanged.
+// scrollIndicator returns the muted "↑ NN%" header cue shown only when the view
+// is anchored rather than following the tail.
 func (m Model) scrollIndicator() string {
-	if m.stuck {
+	if m.view.mode == followTail {
 		return ""
 	}
 	return fmt.Sprintf("↑ %d%%", int(m.vp.ScrollPercent()*100))

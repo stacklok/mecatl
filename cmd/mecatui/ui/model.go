@@ -539,9 +539,6 @@ type Model struct {
 
 	prompt prompttextarea.Editor
 	sp     spinner.Model
-	// stuck is a compatibility projection for existing chrome. conversationView
-	// owns the actual follow/anchor state; syncStuck keeps this field derived.
-	stuck bool
 
 	// viewDirty is set when a streamed delta mutated the conversation but
 	// refreshView has not yet re-rendered it into the viewport. A one-shot
@@ -1005,7 +1002,6 @@ func New(deps Deps) Model {
 		sp:      sp,
 		vp:      vp,
 		view:    conversationView{mode: followTail},
-		stuck:   true,
 		// Armed exactly when Init will actually request the background colour
 		// (see ThemeAutoDetect); onBackgroundColor disarms it on the first
 		// response so a late/duplicate one is a no-op.
@@ -1092,7 +1088,6 @@ func (m Model) resetSessionDerived() Model {
 	m.rend.resetBlockCaches()
 	// Reset auto-follow and document-local anchor state for the next session.
 	m.view = conversationView{mode: followTail}
-	m.stuck = true
 	m.usage = client.Usage{}
 	m.contextTokens = 0
 	m.activeTool = ""

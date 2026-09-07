@@ -31,7 +31,7 @@ func selModel(t *testing.T) (Model, *fakeClipboard) {
 	m.conv.addUser("a request")
 	m.conv.appendAssistant(strings.Repeat("line of streamed output\n", 120))
 	m.phase = phaseIdle
-	m.stuck = true
+	m.view.mode = followTail
 	m.refreshView()
 	return m, cb
 }
@@ -466,7 +466,7 @@ func TestSelectionHighlightOnStyledLaterLine(t *testing.T) {
 	m.conv.endReasoningStream() // freeze the collapsed "reasoning summary · N lines" line
 	m.conv.appendAssistant(marker + " is the selected answer line")
 	m.phase = phaseIdle
-	m.stuck = true
+	m.view.mode = followTail
 	m.refreshView()
 
 	// PRECONDITION: at least one content line ABOVE the answer is ANSI-styled (the
@@ -538,7 +538,7 @@ func styledTranscriptModel(t *testing.T, answer string) (Model, int) {
 	m.conv.endReasoningStream()
 	m.conv.appendAssistant(answer)
 	m.phase = phaseIdle
-	m.stuck = true
+	m.view.mode = followTail
 	m.refreshView()
 
 	idx := lineIndexContaining(m.vp.GetContent(), strings.Fields(answer)[0])
@@ -666,8 +666,8 @@ func TestInitialSelectionInDirtyWindowKeepsTailFollowed(t *testing.T) {
 
 	m, _ := selModel(t)
 	m.phase = phaseRunning
-	if !m.stuck || !m.vp.AtBottom() {
-		t.Fatalf("precondition: selection model should follow the tail: stuck=%v atBottom=%v", m.stuck, m.vp.AtBottom())
+	if m.view.mode != followTail || !m.vp.AtBottom() {
+		t.Fatalf("precondition: selection model should follow the tail: stuck=%v atBottom=%v", m.view.mode == followTail, m.vp.AtBottom())
 	}
 
 	// The real delta reducer marks the grown transcript dirty without flushing it.
@@ -685,7 +685,7 @@ func TestInitialSelectionInDirtyWindowKeepsTailFollowed(t *testing.T) {
 	if !m.vp.AtBottom() {
 		t.Fatal("dirty selection snapshot should remain at the fresh tail")
 	}
-	if !m.stuck {
+	if m.view.mode != followTail {
 		t.Fatal("dirty selection snapshot should keep tail-following enabled")
 	}
 	if !strings.Contains(ansi.Strip(m.vp.View()), tail) {
@@ -696,7 +696,7 @@ func TestInitialSelectionInDirtyWindowKeepsTailFollowed(t *testing.T) {
 	if !m.vp.AtBottom() {
 		t.Fatal("render tick should keep the dirty selection snapshot at the tail")
 	}
-	if !m.stuck {
+	if m.view.mode != followTail {
 		t.Fatal("render tick should keep tail-following enabled")
 	}
 	if !strings.Contains(ansi.Strip(m.vp.View()), tail) {
@@ -710,8 +710,8 @@ func TestInitialSelectionInDirtyWindowKeepsTailFollowed(t *testing.T) {
 func TestInitialSelectionInDirtyWindowDoesNotRepinManualScroll(t *testing.T) {
 	m, _ := selModel(t)
 	m, _ = pressKey(m, tea.KeyPressMsg{Code: tea.KeyPgUp})
-	if m.stuck || m.vp.AtBottom() {
-		t.Fatalf("precondition: pgup should leave the selection model manually scrolled: stuck=%v atBottom=%v", m.stuck, m.vp.AtBottom())
+	if m.view.mode == followTail || m.vp.AtBottom() {
+		t.Fatalf("precondition: pgup should leave the selection model manually scrolled: stuck=%v atBottom=%v", m.view.mode == followTail, m.vp.AtBottom())
 	}
 	before := m.vp.YOffset()
 	m.phase = phaseRunning
@@ -733,16 +733,16 @@ func TestInitialSelectionInDirtyWindowDoesNotRepinManualScroll(t *testing.T) {
 	if !m.sel.active {
 		t.Fatal("initial press should activate a selection")
 	}
-	if m.stuck || m.vp.AtBottom() {
-		t.Fatalf("dirty selection snapshot repinned manual scroll: stuck=%v atBottom=%v", m.stuck, m.vp.AtBottom())
+	if m.view.mode == followTail || m.vp.AtBottom() {
+		t.Fatalf("dirty selection snapshot repinned manual scroll: stuck=%v atBottom=%v", m.view.mode == followTail, m.vp.AtBottom())
 	}
 	if got := m.vp.YOffset(); got != before {
 		t.Fatalf("dirty selection snapshot changed manual YOffset: got %d, want %d", got, before)
 	}
 
 	m = applyAll(m, renderTickMsg{})
-	if m.stuck || m.vp.AtBottom() {
-		t.Fatalf("render tick repinned manual scroll: stuck=%v atBottom=%v", m.stuck, m.vp.AtBottom())
+	if m.view.mode == followTail || m.vp.AtBottom() {
+		t.Fatalf("render tick repinned manual scroll: stuck=%v atBottom=%v", m.view.mode == followTail, m.vp.AtBottom())
 	}
 	if got := m.vp.YOffset(); got != before {
 		t.Fatalf("render tick changed manual YOffset: got %d, want %d", got, before)
@@ -775,7 +775,7 @@ func TestGestureInDirtyWindowDoesNotFlashBack(t *testing.T) {
 		m.conv.appendAssistant(strings.Repeat("answer line\n", 12))
 	}
 	m.phase = phaseRunning
-	m.stuck = true
+	m.view.mode = followTail
 	m.refreshView()
 
 	top := convTopRow(m)
@@ -1191,7 +1191,7 @@ func TestSelectionClearedOnReflowAboveIt(t *testing.T) {
 	const marker = "UNIQUEMARKERZZZ"
 	m.conv.appendAssistant(marker + " trailing words here")
 	m.phase = phaseIdle
-	m.stuck = true
+	m.view.mode = followTail
 	m.refreshView()
 
 	// Select within the marker line (in the capped render).
@@ -1259,14 +1259,14 @@ func TestWheelKeepsSelection(t *testing.T) {
 	if !m.sel.active {
 		t.Fatal("precondition: a selection should be active")
 	}
-	beforeStuck := m.stuck
+	beforeMode := m.view.mode
 
 	m, _ = pressKey(m, tea.MouseWheelMsg{Button: tea.MouseWheelUp})
 
 	if !m.sel.active {
 		t.Error("a wheel scroll must NOT clear an active selection")
 	}
-	if m.stuck == beforeStuck && beforeStuck {
+	if m.view.mode == beforeMode && beforeMode == followTail {
 		t.Error("a wheel-up should have unstuck the view (auto-follow re-derived)")
 	}
 }
@@ -1314,7 +1314,7 @@ func TestSelectionSurvivesStreamingDelta(t *testing.T) {
 	m, _ = motionMouse(m, 10, top)
 	anchorL, anchorC := m.sel.anchorL, m.sel.anchorC
 	headL, headC := m.sel.headL, m.sel.headC
-	beforeStuck := m.stuck
+	beforeMode := m.view.mode
 
 	m.phase = phaseRunning
 	m = applyAll(m,
@@ -1329,8 +1329,8 @@ func TestSelectionSurvivesStreamingDelta(t *testing.T) {
 	if !m.sel.active {
 		t.Error("selection should still be active after a streaming delta")
 	}
-	if m.stuck != beforeStuck {
-		t.Errorf("streaming delta changed stuck: %v → %v", beforeStuck, m.stuck)
+	if m.view.mode != beforeMode {
+		t.Errorf("streaming delta changed stuck: %v → %v", beforeMode, m.view.mode)
 	}
 	// The selection is still derivable after the delta: its visible text is non-empty
 	// and still equals the identity snapshot (the snapshot reflow-clear in refreshView
@@ -1458,7 +1458,7 @@ func TestDragNearTopEdgeScrollsUp(t *testing.T) {
 		t.Error("an armed edge-autoscroll should return a re-arming tick command")
 	}
 	// An upward scroll is an explicit user scroll → unstick auto-follow.
-	if m.stuck {
+	if m.view.mode == followTail {
 		t.Error("edge-autoscroll up should unstick auto-follow")
 	}
 }
@@ -2220,7 +2220,7 @@ func convModel(t *testing.T, line string) (Model, int, int) {
 	m.conv.addUser("req")
 	m.conv.appendAssistant(line)
 	m.phase = phaseIdle
-	m.stuck = true
+	m.view.mode = followTail
 	m.refreshView()
 	m.deps.Clipboard = cb // ensure threaded after refresh
 	idx := lineIndexContaining(m.vp.GetContent(), strings.Fields(line)[0])

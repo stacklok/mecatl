@@ -290,7 +290,6 @@ func (m Model) adoptAuthoritativeTranscript(row client.SessionListItem, loaded c
 	m.closeModal()
 	m.browsingStartupSessions = false
 	m.phase = phaseIdle
-	m.stuck = true
 	m.statusMsg = "continuing chat " + sanitizeTerminal(row.Title) + " — type to add a turn"
 	cmd := m.prompt.Focus()
 	if contextCmd := m.refreshStatusContextCmd(); contextCmd != nil {

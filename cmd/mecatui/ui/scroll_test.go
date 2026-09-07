@@ -25,7 +25,7 @@ func scrollModel(t *testing.T) Model {
 	// A block far taller than the viewport (~22 rows) so AtBottom/AtTop differ.
 	m.conv.appendAssistant(strings.Repeat("line of streamed output\n", 120))
 	m.phase = phaseIdle
-	m.stuck = true
+	m.view.mode = followTail
 	m.refreshView()
 	return m
 }
@@ -34,7 +34,7 @@ func scrollModel(t *testing.T) Model {
 // pgup scrolls up off the bottom, which must clear the auto-follow flag.
 func TestScrollUpUnsticks(t *testing.T) {
 	m := scrollModel(t)
-	if !m.stuck {
+	if m.view.mode != followTail {
 		t.Fatal("fresh long conversation should start stuck (at bottom)")
 	}
 	if !m.vp.AtBottom() {
@@ -43,7 +43,7 @@ func TestScrollUpUnsticks(t *testing.T) {
 
 	m, _ = pressKey(m, tea.KeyPressMsg{Code: tea.KeyPgUp})
 
-	if m.stuck {
+	if m.view.mode == followTail {
 		t.Error("after pgup the view should be unstuck (auto-follow off)")
 	}
 	if m.vp.AtBottom() {
@@ -57,7 +57,7 @@ func TestScrollUpUnsticks(t *testing.T) {
 func TestStreamingDeltaDoesNotRepinWhileUnstuck(t *testing.T) {
 	m := scrollModel(t)
 	m, _ = pressKey(m, tea.KeyPressMsg{Code: tea.KeyPgUp})
-	if m.stuck {
+	if m.view.mode == followTail {
 		t.Fatal("precondition: pgup should have unstuck the view")
 	}
 	before := m.vp.YOffset()
@@ -70,7 +70,7 @@ func TestStreamingDeltaDoesNotRepinWhileUnstuck(t *testing.T) {
 		renderTickMsg{},
 	)
 
-	if m.stuck {
+	if m.view.mode == followTail {
 		t.Error("a streamed delta must not re-stick a scrolled-up view")
 	}
 	if got := m.vp.YOffset(); got != before {
@@ -86,13 +86,13 @@ func TestStreamingDeltaDoesNotRepinWhileUnstuck(t *testing.T) {
 func TestScrollBackToBottomResticks(t *testing.T) {
 	m := scrollModel(t)
 	m, _ = pressKey(m, tea.KeyPressMsg{Code: tea.KeyPgUp})
-	if m.stuck {
+	if m.view.mode == followTail {
 		t.Fatal("precondition: pgup should have unstuck the view")
 	}
 
 	m, _ = pressKey(m, tea.KeyPressMsg{Code: tea.KeyEnd})
 
-	if !m.stuck {
+	if m.view.mode != followTail {
 		t.Error("End should re-stick the view (auto-follow resumes)")
 	}
 	if !m.vp.AtBottom() {
@@ -105,8 +105,8 @@ func TestScrollBackToBottomResticks(t *testing.T) {
 		client.AssistantDeltaMsg{Turn: 1, Text: strings.Repeat("tail text\n", 10)},
 		renderTickMsg{},
 	)
-	if !m.stuck || !m.vp.AtBottom() {
-		t.Errorf("after re-sticking a delta should stay pinned: stuck=%v atBottom=%v", m.stuck, m.vp.AtBottom())
+	if m.view.mode != followTail || !m.vp.AtBottom() {
+		t.Errorf("after re-sticking a delta should stay pinned: stuck=%v atBottom=%v", m.view.mode == followTail, m.vp.AtBottom())
 	}
 }
 
@@ -119,7 +119,7 @@ func TestHomeEndJump(t *testing.T) {
 	if !m.vp.AtTop() {
 		t.Error("Home should land at the top")
 	}
-	if m.stuck {
+	if m.view.mode == followTail {
 		t.Error("Home should unstick (not at bottom)")
 	}
 
@@ -127,7 +127,7 @@ func TestHomeEndJump(t *testing.T) {
 	if !m.vp.AtBottom() {
 		t.Error("End should land at the bottom")
 	}
-	if !m.stuck {
+	if m.view.mode != followTail {
 		t.Error("End should re-stick")
 	}
 }
@@ -136,14 +136,14 @@ func TestHomeEndJump(t *testing.T) {
 // viewport up and clears auto-follow (same as pgup).
 func TestMouseWheelUnsticks(t *testing.T) {
 	m := scrollModel(t)
-	if !m.stuck {
+	if m.view.mode != followTail {
 		t.Fatal("precondition: long conversation should start stuck")
 	}
 
 	mm, _ := m.Update(tea.MouseWheelMsg{Button: tea.MouseWheelUp})
 	m = mm.(Model)
 
-	if m.stuck {
+	if m.view.mode == followTail {
 		t.Error("a wheel-up should unstick the view")
 	}
 	if m.vp.AtBottom() {
@@ -209,13 +209,13 @@ func TestScrollIndicatorTakesPrecedenceOverChangedFiles(t *testing.T) {
 func TestScrollKeyDispatchWhileRunning(t *testing.T) {
 	m := scrollModel(t)
 	m.phase = phaseRunning
-	if !m.stuck {
+	if m.view.mode != followTail {
 		t.Fatal("precondition: long conversation should start stuck")
 	}
 
 	m, _ = pressKey(m, tea.KeyPressMsg{Code: tea.KeyPgUp})
 
-	if m.stuck {
+	if m.view.mode == followTail {
 		t.Error("pgup while a run streams should unstick (onRunningKey must route scroll keys)")
 	}
 	if m.vp.AtBottom() {
@@ -249,13 +249,13 @@ func TestMouseModeGatedOnAltScreen(t *testing.T) {
 func TestClearReArmsAutoFollow(t *testing.T) {
 	m := scrollModel(t)
 	m, _ = pressKey(m, tea.KeyPressMsg{Code: tea.KeyPgUp})
-	if m.stuck {
+	if m.view.mode == followTail {
 		t.Fatal("precondition: pgup should have unstuck the view")
 	}
 
 	m = m.resetSession()
 
-	if !m.stuck {
+	if m.view.mode != followTail {
 		t.Error("/clear (resetSession) should re-arm auto-follow on the now-empty conversation")
 	}
 }
@@ -274,25 +274,25 @@ func TestResizeReDerivesStuck(t *testing.T) {
 	// Content that overflows the small viewport but fits a tall one.
 	m.conv.appendAssistant(strings.Repeat("short line\n", 8))
 	m.phase = phaseIdle
-	m.stuck = true
+	m.view.mode = followTail
 	m.refreshView()
 
 	// Scroll up so stuck=false and the view is off the bottom.
 	m, _ = pressKey(m, tea.KeyPressMsg{Code: tea.KeyPgUp})
-	if m.stuck || m.vp.AtBottom() {
-		t.Fatalf("precondition: pgup should unstick and leave off-bottom (stuck=%v atBottom=%v)", m.stuck, m.vp.AtBottom())
+	if m.view.mode == followTail || m.vp.AtBottom() {
+		t.Fatalf("precondition: pgup should unstick and leave off-bottom (stuck=%v atBottom=%v)", m.view.mode == followTail, m.vp.AtBottom())
 	}
 
 	// Grow the window so the content now fits → AtBottom() flips true.
 	m = applyAll(m, tea.WindowSizeMsg{Width: 100, Height: 60})
 
-	if m.stuck != m.vp.AtBottom() {
-		t.Errorf("after resize stuck=%v must reflect AtBottom()=%v", m.stuck, m.vp.AtBottom())
+	if m.view.mode == followTail != m.vp.AtBottom() {
+		t.Errorf("after resize stuck=%v must reflect AtBottom()=%v", m.view.mode == followTail, m.vp.AtBottom())
 	}
 	if !m.vp.AtBottom() {
 		t.Error("growing the viewport until short content fits should leave it at the bottom")
 	}
-	if !m.stuck {
+	if m.view.mode != followTail {
 		t.Error("resize that makes content fit should re-arm auto-follow (stuck)")
 	}
 }

@@ -537,7 +537,7 @@ func TestSkillsWheelScrollsPanel(t *testing.T) {
 	m.conv.addUser("show me a long answer")
 	m.conv.appendAssistant(strings.Repeat("line of streamed output\n", 120))
 	m.phase = phaseIdle
-	m.stuck = true
+	m.view.mode = followTail
 	m.refreshView()
 	if !m.vp.AtBottom() {
 		t.Fatal("precondition: viewport should start at the bottom")
@@ -557,7 +557,7 @@ func TestSkillsWheelScrollsPanel(t *testing.T) {
 	if st.scroll != 1 {
 		t.Errorf("skills scroll after wheel-down = %d, want 1 (the panel owns the wheel)", st.scroll)
 	}
-	if !m.stuck {
+	if m.view.mode != followTail {
 		t.Error("a consumed wheel must NOT unstick the view (the panel eats it)")
 	}
 	if !m.vp.AtBottom() {

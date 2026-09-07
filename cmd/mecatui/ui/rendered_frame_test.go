@@ -17,7 +17,11 @@ func TestADR_0301_RenderedFrameProvenanceMatchesLines(t *testing.T) {
 	c.appendReasoning("considering options")
 	c.appendAssistant("a visible answer")
 	c.addTool("call-1", "Read", `{"path":"main.go"}`)
-	c.resolveTool("call-1", "package main", false)
+	c.resolveTool("call-1", "package main", false, client.ContentBlock{
+		Kind: client.ContentBlockResourceLink,
+		Name: "rendered artifact",
+		URL:  "file:///workspace/main.go",
+	})
 	c.recordFileChange("main.go")
 
 	r := newCacheRenderer()
@@ -39,6 +43,11 @@ func TestADR_0301_RenderedFrameProvenanceMatchesLines(t *testing.T) {
 	}
 	if !frame.hasRegion(c.blocks[2].id, conversationRegionArguments) || !frame.hasRegion(c.blocks[2].id, conversationRegionResult) {
 		t.Fatal("tool arguments and result must retain distinct semantic regions")
+	}
+	for i, line := range frame.lines {
+		if strings.Contains(stripANSIstr(line), "rendered artifact") && frame.provenance[i].region != conversationRegionResult {
+			t.Fatalf("artifact row %d has region %v, want enclosing tool result", i, frame.provenance[i].region)
+		}
 	}
 	if frame.appendixID != c.changedFilesAppendixID {
 		t.Fatalf("expanded appendix ID = %d, want %d", frame.appendixID, c.changedFilesAppendixID)

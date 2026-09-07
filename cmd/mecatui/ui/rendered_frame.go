@@ -18,7 +18,6 @@ const (
 	conversationRegionReasoning
 	conversationRegionArguments
 	conversationRegionResult
-	conversationRegionArtifact
 	conversationRegionAppendix
 )
 
@@ -233,14 +232,7 @@ func (r *renderer) provenanceRows(b *block, rendered string, expand bool) []rend
 		}
 	}
 	if b.kind == blockTool {
-		r.toolRegions(b, rows, lines, expand)
-	}
-	if b.kind == blockUser {
-		for i, line := range lines {
-			if strings.Contains(ansi.Strip(line), "📎 ") {
-				rows[i].region = conversationRegionArtifact
-			}
-		}
+		r.toolRegions(b, rows, expand)
 	}
 	r.assignVisibleOffsets(b, rows, lines)
 	return rows
@@ -254,7 +246,7 @@ func renderedReasoningForFrame(b *block, expand bool) string {
 	return "reasoning\n" + reasoningCaveat + "\n" + sanitizeTerminal(strings.TrimRight(b.reasoning, "\n"))
 }
 
-func (r *renderer) toolRegions(b *block, rows []renderedRow, lines []string, expand bool) {
+func (r *renderer) toolRegions(b *block, rows []renderedRow, expand bool) {
 	if len(rows) == 0 {
 		return
 	}
@@ -278,17 +270,6 @@ func (r *renderer) toolRegions(b *block, rows []renderedRow, lines []string, exp
 			rows[i].region = conversationRegionArguments
 		case i < resultEnd:
 			rows[i].region = conversationRegionResult
-		}
-	}
-	for _, block := range b.resultBlocks {
-		artifact, ok := renderResultBlockLine(block)
-		if !ok {
-			continue
-		}
-		for i, line := range lines {
-			if strings.Contains(ansi.Strip(line), artifact) {
-				rows[i].region = conversationRegionArtifact
-			}
 		}
 	}
 }
