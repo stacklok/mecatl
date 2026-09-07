@@ -125,6 +125,10 @@ when the code that satisfies the plan has landed.
   responsive header/footer templates or one local command over a shared status
   input and theme-integrated StatusML; present chrome is the default templates.
   Status: draft.
+- [Mecatui diagnostic-log retention](mecatui-diaglog-retention.md) — startup
+  retention of a bounded recent tail for the default and override diagnostic
+  sinks, with atomic failure preservation and fail-closed path handling. Status:
+  draft.
 - [Predictable mecatui session handles](predictable-session-handles.md) — one fixed,
   terminal-safe, client-resolved escaped raw-ID-prefix handle for ordinary chrome, `/sessions`,
   status-line v2, and `mecatui debug`; debug resolves positional handles against all caller-visible
