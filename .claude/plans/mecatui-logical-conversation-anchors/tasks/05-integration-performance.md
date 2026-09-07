@@ -2,7 +2,7 @@
 id: 05-integration-performance
 title: Logical anchors integration and performance
 blocked_by: [04-logical-selection]
-status: in-progress
+status: done
 attempt: 1
 branch: "plan-mecatui-logical-conversation-anchors/05-integration-performance-attempt-1"
 worktree: ".scratch/worker-mecatui-logical-conversation-anchors-05-integration-performance-attempt-1"
