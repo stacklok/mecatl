@@ -14,16 +14,34 @@ export default defineConfig({
   projects: [
     {
       name: "chromium-full",
+      testMatch: "chromium.e2e.test.ts",
       use: {
         ...devices["Desktop Chrome"],
         browserName: "chromium",
+      },
+    },
+    {
+      grep: /Firefox imports connects runs and attaches/u,
+      name: "firefox-smoke",
+      testMatch: "smoke.e2e.test.ts",
+      use: {
+        ...devices["Desktop Firefox"],
+        browserName: "firefox",
+      },
+    },
+    {
+      grep: /WebKit imports connects runs and attaches/u,
+      name: "webkit-smoke",
+      testMatch: "smoke.e2e.test.ts",
+      use: {
+        ...devices["Desktop Safari"],
+        browserName: "webkit",
       },
     },
   ],
   reporter: "list",
   retries: 0,
   testDir: ".",
-  testMatch: "chromium.e2e.test.ts",
   timeout: 30_000,
   use: {
     actionTimeout: 10_000,

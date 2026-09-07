@@ -53,7 +53,7 @@ interface WorkerFixtures {
 export const test = base.extend<TestFixtures, WorkerFixtures>({
   browserHarness: [
     async ({ playwright: _playwright }, use, workerInfo) => {
-      const harness = await startHarness(workerInfo.workerIndex);
+      const harness = await startHarness(workerInfo.workerIndex, workerInfo.project.name);
       try {
         await use(harness);
       } finally {
@@ -63,13 +63,29 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
     { scope: "worker", timeout: 60_000 },
   ],
   loopbackOnly: [
-    async ({ browserHarness, context, page }, use) => {
+    async ({ browserHarness, browserName, context, page }, use) => {
       const allowedOrigins = new Set([
         browserHarness.baseUrl,
         browserHarness.origin,
         browserHarness.siblingOrigin,
       ]);
       const blocked: string[] = [];
+      if (browserName !== "chromium") {
+        await context.route("**/*", async (route) => {
+          const url = new URL(route.request().url());
+          if (allowedOrigins.has(url.origin)) {
+            await route.continue();
+            return;
+          }
+          blocked.push(url.href);
+          await route.abort("blockedbyclient");
+        });
+        await use(undefined);
+        await context.unrouteAll({ behavior: "wait" });
+        expect(blocked, "browser tests attempted non-fixture network access").toEqual([]);
+        return;
+      }
+
       const pending = new Set<Promise<unknown>>();
       const session: CDPSession = await context.newCDPSession(page);
       // Do not use context.route() for this guard: Playwright fulfills browser
@@ -106,7 +122,7 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
 
 export { expect };
 
-async function startHarness(workerIndex: number): Promise<RunningHarness> {
+async function startHarness(workerIndex: number, projectName: string): Promise<RunningHarness> {
   const scratchRoot = join(repositoryRoot, ".scratch");
   await mkdir(scratchRoot, { recursive: true });
   const runtimeDirectory = await mkdtemp(join(scratchRoot, `sdk-browser-${workerIndex}-`));
@@ -129,6 +145,7 @@ async function startHarness(workerIndex: number): Promise<RunningHarness> {
     const readyFile = join(runtimeDirectory, "ready.json");
     const running = await startDaemon({
       allowedOrigin: allowedServer.origin,
+      projectName,
       readyFile,
       storeDirectory,
       workspace,
@@ -271,11 +288,13 @@ function closeServer(server: Server): Promise<void> {
 
 async function startDaemon(options: {
   allowedOrigin: string;
+  projectName: string;
   readyFile: string;
   storeDirectory: string;
   workspace: string;
 }): Promise<{ child: ChildProcess; ready: ReadyDocument }> {
-  const script = join(browserDirectory, "fixtures", "chromium.json");
+  const fixtureName = options.projectName === "chromium-full" ? "chromium.json" : "smoke.json";
+  const script = join(browserDirectory, "fixtures", fixtureName);
   const args = [
     "serve",
     "--mock-script",

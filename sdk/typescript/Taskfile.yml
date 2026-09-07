@@ -44,17 +44,34 @@ tasks:
       - pnpm run test:e2e
 
   browser:install:
-    desc: Install the pinned Chromium revision and its host dependencies
+    desc: Install the pinned Chromium, Firefox, and WebKit revisions and host dependencies
     deps: [install]
     cmds:
-      - pnpm exec playwright install --with-deps chromium
+      - pnpm exec playwright install --with-deps chromium firefox webkit
 
   browser:
-    desc: Pack the SDK and run the offline Chromium project against same-checkout mecated
+    desc: Pack the SDK and run all offline browser projects against same-checkout mecated
     deps: [pack]
     cmds:
       - task --dir ../.. build
       - pnpm run test:browser
+
+  browser:project:
+    desc: Pack the SDK and run one named offline browser project against same-checkout mecated
+    deps: [pack]
+    requires:
+      vars: [PROJECT]
+    cmds:
+      - task --dir ../.. build
+      - pnpm exec playwright test --config e2e/browser/playwright.config.ts --project "{{.PROJECT}}"
+
+  macos-spawn:
+    desc: Build the SDK and same-checkout mecated, then run only the macOS Node spawn smoke
+    deps: [build]
+    platforms: [darwin]
+    cmds:
+      - task --dir ../.. build
+      - pnpm run test:macos-spawn
 
   build:
     desc: Build ESM modules, declarations, and source maps with tsc
