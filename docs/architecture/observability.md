@@ -10,6 +10,22 @@
 
 ## Observability & persistence
 
+### Offline performance regression tracking
+
+`task bench` measures deterministic `allocs/op` for two complementary agent-loop
+contracts. `BenchmarkRun*Turn` constructs a fresh session for every iteration, so
+it captures bounded session lifecycle and first-prompt initialization. The matching
+`BenchmarkSteadyState*Turn` prewarms that first run and measures one normal
+continuation turn after `Session.Reopen`, including recurring reopen and run work
+without attributing startup initialization to every turn. Both families are
+hard-gated independently by `perf/cmd/allocsgate`; the PR workflow compares them
+against the main baseline but never publishes a new baseline from a PR.
+
+`task perf:scenarios` remains the separate whole-loop signal. In particular,
+`BenchmarkSingleSessionLong` preserves the approximately 500-turn single-session
+coverage for allocations, RSS, tokens, cache-hit rate, and goroutine hygiene. See
+`docs/adr/0019-perf-tracking.md` for the performance-tracking decision.
+
 - **EventSink** (`port.EventSink`) — an optional secondary relay.
   `Emit(ctx, ev)` carries the run's `context.Context` so telemetry can parent a
   run span to an inbound request span (the ctx is a **trace/baggage carrier
