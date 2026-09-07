@@ -3,6 +3,8 @@ package ui
 import (
 	"strings"
 	"testing"
+
+	"github.com/stacklok/mecatl/cmd/mecatui/client"
 )
 
 // TestADR_0301_RenderedFrameProvenanceMatchesLines pins ADR 0301's requirement
@@ -74,24 +76,49 @@ func TestADR_0301_ReflowRestoresCanonicalVisibleTextOffset(t *testing.T) {
 // collapsed streaming path: frame metadata tracks rows while cached rendered
 // strings remain the renderer's sole transcript representation.
 func TestADR_0301_ScrollbackFrameRetainsLinearMetadataOnly(t *testing.T) {
-	c := &conversation{}
-	for i := 0; i < 64; i++ {
-		c.addUser("settled scrollback")
+	for _, depth := range []int{64, 256} {
+		t.Run("depth", func(t *testing.T) {
+			c := &conversation{}
+			for i := 0; i < depth; i++ {
+				c.addUser("settled scrollback")
+			}
+			c.startAssistant()
+			c.appendAssistant("stream")
+			r := newCacheRenderer()
+			first := r.renderConversationFrame(c, false)
+			before := r.blockRenders
+
+			c.appendAssistant(" delta")
+			second := r.renderConversationFrame(c, false)
+			if got := r.blockRenders - before; got != 1 {
+				t.Fatalf("streaming frame re-rendered %d blocks at depth %d, want 1", got, depth)
+			}
+			if len(second.provenance) != len(second.lines) || len(first.provenance) == 0 {
+				t.Fatal("frame provenance must be row-linear and present")
+			}
+			if r.joinPrefixN != len(c.blocks)-1 {
+				t.Fatalf("cached prefix covers %d blocks, want settled prefix of %d", r.joinPrefixN, len(c.blocks)-1)
+			}
+		})
 	}
-	c.startAssistant()
-	c.appendAssistant("stream")
-	r := newCacheRenderer()
-	first := r.renderConversationFrame(c, false)
-	before := r.blockRenders
-	c.appendAssistant(" delta")
-	second := r.renderConversationFrame(c, false)
-	if got := r.blockRenders - before; got != 1 {
-		t.Fatalf("streaming frame re-rendered %d blocks, want 1", got)
+
+	// A burst of real stream events still produces one frame-coalesced live-block
+	// render after its explicit cadence tick, independent of scrollback depth.
+	m := newCoalesceModel(t)
+	for i := 0; i < 256; i++ {
+		m.conv.addUser("settled scrollback")
 	}
-	if len(second.provenance) != len(second.lines) || len(first.provenance) == 0 {
-		t.Fatal("frame provenance must be row-linear and present")
+	m.refreshView()
+	before := m.rend.blockRenders
+	m = applyAll(m,
+		client.AssistantDeltaMsg{Turn: 1, Text: "first"},
+		client.AssistantDeltaMsg{Turn: 1, Text: " second"},
+		renderTickMsg{},
+	)
+	if got := m.rend.blockRenders - before; got != 1 {
+		t.Fatalf("coalesced frame re-rendered %d blocks, want 1", got)
 	}
-	if r.joinPrefixN != len(c.blocks)-1 {
-		t.Fatalf("cached prefix covers %d blocks, want settled prefix of %d", r.joinPrefixN, len(c.blocks)-1)
+	if got, want := len(m.view.frame.provenance), len(m.view.frame.lines); got != want {
+		t.Fatalf("normal-path provenance rows = %d, lines = %d", got, want)
 	}
 }

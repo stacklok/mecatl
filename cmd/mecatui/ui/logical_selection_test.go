@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
@@ -62,37 +63,46 @@ func TestADR_0301_SelectionPreservesLiveStableText(t *testing.T) {
 	}
 }
 
-// TestLogicalConversationAnchors_Scenario1_ChangingFrame proves that a live
-// subagent card's stable goal remains selected and copyable while another card
-// update changes the rendered frame.
+// TestLogicalConversationAnchors_Scenario1_ChangingFrame proves that the live
+// Model event and mouse-input paths preserve a selected subagent-card goal when
+// an unrelated streamed update changes the rendered frame.
 func TestLogicalConversationAnchors_Scenario1_ChangingFrame(t *testing.T) {
 	const marker = "SUBAGENTGOALMARKER"
 	m, _ := selModel(t)
-	m.conv.addTool("parent", "Subagent", `{"prompt":"investigate"}`)
-	m.conv.setSubagentStart("parent", marker+" inspect auth", "", "", "", "")
-	m.phase = phaseIdle
-	m.refreshView()
+	m = applyAll(m,
+		client.TurnStartMsg{Turn: 1},
+		client.ToolCallMsg{ID: "parent", Name: "Subagent", Args: `{"prompt":"investigate"}`},
+		client.SubagentMsg{Kind: client.SubagentStart, ParentCallID: "parent", Goal: marker + " inspect auth"},
+	)
 	line := lineIndexContaining(m.vp.GetContent(), marker)
 	if line < 0 {
-		t.Fatal("precondition: subagent goal missing")
+		t.Fatal("precondition: subagent goal missing from Model event render")
 	}
-	m = m.wordSelect(line, strings.Index(ansi.Strip(strings.Split(m.vp.GetContent(), "\n")[line]), marker))
-	if got := m.sel.snapshot; got != marker {
-		t.Fatalf("precondition: selected goal = %q, want %q", got, marker)
+	y := convTopRow(m) + line - m.vp.YOffset()
+	x := strings.Index(ansi.Strip(strings.Split(m.vp.GetContent(), "\n")[line]), marker)
+	if x < 0 || y < convTopRow(m) || y >= convTopRow(m)+m.vp.Height() {
+		t.Fatalf("precondition: goal is not selectable at (%d,%d)", x, y)
+	}
+	m, _ = pressMouse(m, tea.MouseLeft, x, y)
+	m, _ = pressMouse(m, tea.MouseLeft, x, y)
+	if got := selectedText(m.vp.GetContent(), m.sel); got != marker {
+		t.Fatalf("selected live subagent goal = %q, want %q", got, marker)
 	}
 
-	// An unrelated tail update must not disturb the card-local logical selection.
-	m.conv.appendAssistant("unrelated tail update")
-	m.refreshView()
+	// This is the coalesced live-delta path, not a direct conversation mutation.
+	m = applyAll(m,
+		client.AssistantDeltaMsg{Turn: 1, Text: "unrelated tail update"},
+		renderTickMsg{},
+	)
 	if !m.sel.active {
-		t.Fatal("stable subagent-card selection was cleared")
+		t.Fatal("stable subagent-card selection was cleared by a live delta")
 	}
 	if got := selectedText(m.vp.GetContent(), m.sel); got != marker {
-		t.Fatalf("subagent-card selection = %q, want %q", got, marker)
+		t.Fatalf("selection after changing frame = %q, want %q", got, marker)
 	}
 	copied, cmd := m.copySelection()
 	if got, ok := osc52Payload(collectLeaves(cmd)); !ok || got != marker {
-		t.Fatalf("subagent-card copied payload = %q (ok=%v), want %q", got, ok, marker)
+		t.Fatalf("copied live-card payload = %q (ok=%v), want %q", got, ok, marker)
 	}
 	if got := copied.(Model).statusMsg; !strings.Contains(ansi.Strip(got), "copied") {
 		t.Fatalf("copy status = %q, want copied status", got)
