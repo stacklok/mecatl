@@ -161,6 +161,18 @@ Use the detailed references below for exact fields, response codes, event
 payloads, and feature-specific APIs such as schedules, teams, learning, and MCP
 inventories.
 
+### TypeScript direct-team handles
+
+The in-repository TypeScript SDK exposes the direct team lifecycle through
+`client.teams.create()`. The returned handle binds the server-created team ID across
+member spawn, message, cancel, run, list, and cleanup calls. A team run is single-use:
+iterate its typed member/outcome events or call `result()`, not both. Finishing that stream
+does not clean up the team; call `cleanup()` explicitly.
+
+The optional `maxTeamTokens` creation field maps directly to `max_team_tokens`. The server
+owns its unadvertised cap and treats the request as tighten-only; omission leaves that cap
+unchanged, and the client neither clamps nor invents a default.
+
 ## gRPC client contract
 
 The checked-in protobuf files are the gRPC source contract:

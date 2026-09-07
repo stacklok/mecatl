@@ -62,6 +62,7 @@ import {
   sessionAffinityIfRepresentable,
 } from "./raw.js";
 import { type ConverseFrame, type Run, RunImpl, type RunOptions } from "./run.js";
+import { createTeams, type Teams } from "./team.js";
 import {
   type AttachedRun,
   type AttachOptions,
@@ -175,6 +176,7 @@ export interface Client {
   readonly soul: Soul;
   readonly status: ConnectionStatusStore;
   readonly storage: Storage;
+  readonly teams: Teams;
   readonly userModel: UserModel;
   readonly worktrees: Worktrees;
   close(): Promise<void>;
@@ -470,6 +472,7 @@ class ClientImpl implements Client {
   readonly soul: Soul;
   readonly status: ConnectionStatusStore;
   readonly storage: Storage;
+  readonly teams: Teams;
   readonly userModel: UserModel;
   readonly worktrees: Worktrees;
 
@@ -550,6 +553,12 @@ class ClientImpl implements Client {
     this.skills = operational.skills;
     this.soul = operational.soul;
     this.storage = operational.storage;
+    this.teams = createTeams({
+      assertOpen: () => this.#assertOpen(),
+      stream: (method, input, requestOptions) => this.#stream(method, input, requestOptions),
+      transportKind: this.#transportKind,
+      unary: (method, input, requestOptions) => this.#unary(method, input, requestOptions),
+    });
     this.userModel = operational.userModel;
     this.sessions = {
       create: async (input) => {

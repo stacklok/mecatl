@@ -108,6 +108,20 @@ task sdk:pack
 
 The package is licensed under Apache-2.0.
 
+## Direct teams
+
+`client.teams.create()` returns a `Team` handle bound to the daemon-created team ID. The
+handle exposes the seven direct-team RPCs as `spawn`, `message`, `cancel`, `run`, `list`,
+and `cleanup`; consuming `run()` never cleans the team up implicitly. A team run can be
+iterated or drained with `result()`, but not both. Its member frames are the ordinary
+discriminated SDK events tagged with the producing member, and its terminal frame carries
+the typed team outcome. A missing or duplicate terminal outcome is a protocol error.
+
+`maxTeamTokens` is optional and is sent verbatim as `max_team_tokens`. The daemon owns and
+does not advertise its cap: it treats a positive request value as tighten-only. Omitting the
+option supplies no client default, and the SDK never treats it as a way to increase the
+daemon budget.
+
 ## Explicit session affinity
 
 `withSessionAffinity(sessionId, options)` binds one legal, byte-exact

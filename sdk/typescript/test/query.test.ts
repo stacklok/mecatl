@@ -138,6 +138,7 @@ function fakeClient(create: () => Promise<Session>, close: () => Promise<void>):
       subscribe: () => () => undefined,
     },
     storage: undefined as never,
+    teams: undefined as never,
     userModel: undefined as never,
     worktrees: undefined as never,
     [Symbol.asyncDispose]: close,

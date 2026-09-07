@@ -153,6 +153,17 @@ export type {
   RunResult,
 } from "./run.js";
 export type {
+  CreateTeamOptions,
+  Team,
+  TeamMemberOptions,
+  TeamMemberRunEvent,
+  TeamMessageOptions,
+  TeamOutcomeRunEvent,
+  TeamRun,
+  TeamRunEvent,
+  Teams,
+} from "./team.js";
+export type {
   AttachedRun,
   AttachOptions,
   SdkCursor,

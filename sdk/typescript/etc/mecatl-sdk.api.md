@@ -151,6 +151,8 @@ export interface Client {
     // (undocumented)
     readonly storage: Storage_2;
     // (undocumented)
+    readonly teams: Teams;
+    // (undocumented)
     readonly userModel: UserModel;
     // (undocumented)
     readonly worktrees: Worktrees;
@@ -221,6 +223,19 @@ export interface CreateSessionOptions {
     providerId?: string;
     // (undocumented)
     reasoningEffort?: string;
+}
+
+// @public
+export interface CreateTeamOptions {
+    // (undocumented)
+    goal?: string;
+    maxTeamTokens?: number;
+    // (undocumented)
+    members?: readonly TeamMemberOptions[];
+    // (undocumented)
+    name?: string;
+    // (undocumented)
+    sessionId: string;
 }
 
 // @public (undocumented)
@@ -1208,6 +1223,36 @@ export interface SubagentEventPayload {
 export const SUPPORTED_API_MAJOR = 1;
 
 // @public
+export interface Team {
+    // Warning: (ae-forgotten-export) The symbol "CancelTeammateResponse" needs to be exported by the entry point index.d.ts
+    //
+    // (undocumented)
+    cancel(member: string, options?: RequestOptions): Promise<CancelTeammateResponse>;
+    // Warning: (ae-forgotten-export) The symbol "CleanupTeamResponse" needs to be exported by the entry point index.d.ts
+    //
+    // (undocumented)
+    cleanup(options?: RequestOptions): Promise<CleanupTeamResponse>;
+    // (undocumented)
+    readonly id: string;
+    // Warning: (ae-forgotten-export) The symbol "TeamMember" needs to be exported by the entry point index.d.ts
+    readonly initialMembers: readonly TeamMember[];
+    // Warning: (ae-forgotten-export) The symbol "ListTeamResponse" needs to be exported by the entry point index.d.ts
+    //
+    // (undocumented)
+    list(options?: RequestOptions): Promise<ListTeamResponse>;
+    // Warning: (ae-forgotten-export) The symbol "SendTeammateMessageResponse" needs to be exported by the entry point index.d.ts
+    //
+    // (undocumented)
+    message(message: TeamMessageOptions, options?: RequestOptions): Promise<SendTeammateMessageResponse>;
+    // (undocumented)
+    run(options?: RequestOptions): TeamRun;
+    // Warning: (ae-forgotten-export) The symbol "SpawnTeammateResponse" needs to be exported by the entry point index.d.ts
+    //
+    // (undocumented)
+    spawn(member: TeamMemberOptions, options?: RequestOptions): Promise<SpawnTeammateResponse>;
+}
+
+// @public
 export type TeamEvent = Extract<KnownEvent, {
     readonly kind: `team.${string}`;
 }>;
@@ -1275,6 +1320,25 @@ export interface TeamMemberDispositionEventPayload {
 }
 
 // @public
+export interface TeamMemberOptions {
+    // (undocumented)
+    agentType?: string;
+    // (undocumented)
+    initialPrompt?: string;
+    // (undocumented)
+    lead?: boolean;
+    // (undocumented)
+    mutating?: boolean;
+    // (undocumented)
+    name: string;
+}
+
+// @public
+export type TeamMemberRunEvent = Event_2 & {
+    readonly member: string;
+};
+
+// @public
 export interface TeamMemberSpecEventPayload {
     // (undocumented)
     readonly lead: boolean;
@@ -1292,6 +1356,42 @@ export interface TeamMemberSpecEventPayload {
     readonly routedModel: string;
     // (undocumented)
     readonly routingReason: string;
+}
+
+// @public
+export interface TeamMessageOptions {
+    // (undocumented)
+    body: string;
+    // (undocumented)
+    from?: string;
+    // (undocumented)
+    to: string;
+}
+
+// @public
+export interface TeamOutcomeRunEvent {
+    // (undocumented)
+    readonly kind: "outcome";
+    // Warning: (ae-forgotten-export) The symbol "TeamOutcome" needs to be exported by the entry point index.d.ts
+    //
+    // (undocumented)
+    readonly outcome: TeamOutcome;
+}
+
+// @public
+export interface TeamRun extends AsyncIterable<TeamRunEvent> {
+    result(): Promise<TeamOutcome>;
+    // (undocumented)
+    readonly teamId: string;
+}
+
+// @public
+export type TeamRunEvent = TeamMemberRunEvent | TeamOutcomeRunEvent;
+
+// @public
+export interface Teams {
+    // (undocumented)
+    create(request: CreateTeamOptions, options?: RequestOptions): Promise<Team>;
 }
 
 // @public
