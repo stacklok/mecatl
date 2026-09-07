@@ -5849,14 +5849,30 @@ handles and follows the remote adapter's fail-closed incarnation semantics. Guar
 
 The remote adapter in `internal/adapter/mcpbrokergrpc/broker.go` pins a client and every
 handle operation to one random server incarnation. `Config` supplies positive finite dial,
-ordinary-RPC, Execute, idle-retention, sweep, and cleanup bounds. Transport `Unavailable`
-is distinct from a confirmed stale incarnation. The server tracks active operations so
-caller cancellation releases only that operation; explicit Close/Abort and the idle sweep
-own attachment closure without logical deletion, and `Server.Shutdown` joins the sweep.
-Execute has no adapter retry: an `Aborted` response after possible dispatch becomes one
-fixed model-visible ambiguous-outcome tool error. A new client may start one fresh
-pre-prompt enrollment after restart, while a stale protected-call continuation fails closed.
-The process resource ledger and non-distributed boundary are [ADR 0304](../adr/0304-process-bound-remote-mcp-broker.md).
+ordinary-RPC, Execute, idle-retention, sweep, cleanup, and receipt bounds. The protobuf
+surface uses a distinct request and response type per RPC plus `BrokerErrorDetail`'s closed
+reason vocabulary. The client rejects unknown reasons, malformed shapes, invalid UTF-8,
+malformed schemas, unknown outcomes, and response call-ID mismatches before session mutation;
+allowed argument, schema, text, binary, and MIME bytes otherwise survive exactly. Every
+method carries and checks the incarnation before broker state access.
+
+The server's lifecycle and Execute registries are bounded by capacity and absolute leases;
+observing a receipt never renews it. Abort/Close duplicates and Execute duplicates keyed by
+incarnation, handle, call ID, tool, item ID, and the argument digest atomically join or replay
+one immutable result, so the underlying operation runs once. Reclaimed identities return
+structured `state_unavailable` and cannot dispatch again. Only a recognized
+`dispatch_not_started` detail bound to the exact method proves the operation did not begin.
+Cancellation, deadlines, transport loss, absent or malformed details, and unknown failures
+after possible dispatch become the fixed correlated ambiguous-outcome result; the client
+never retries, hedges, rebinds, or replays Execute. Caller cancellation releases only that
+operation; explicit Close/Abort and the idle sweep own attachment closure without logical
+deletion, and `Server.Shutdown` joins active work and the sweep. The broker-enabled shared
+main and per-session engine factories both add the unknown-outcome recovery instruction to
+the model's stable system prompt, while broker-disabled engines do not. A new client may
+start one fresh pre-prompt enrollment after restart, while a stale protected-call
+continuation fails closed. The process resource ledger and non-distributed boundary are
+[ADR 0304](../adr/0304-process-bound-remote-mcp-broker.md); the bounded receipt and
+classification contract is [ADR 0306](../adr/0306-bounded-singleton-mcp-broker-correctness.md).
 
 `cmd/mecabroker` is the sole remote ToolHive composition root. Its dedicated chart is
 one-replica `Recreate` with no PDB, autoscaler, or outer-broker Redis. The public TLS

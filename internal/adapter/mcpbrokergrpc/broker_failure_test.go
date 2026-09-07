@@ -48,7 +48,7 @@ func TestADR_0304_RemoteAttachmentLifecycle(t *testing.T) {
 	case <-time.After(testWait):
 		t.Fatal("process-owned idle attachment was not reclaimed")
 	}
-	_, err = server.Commit(t.Context(), &brokerv1.HandleRequest{Handle: attached.GetHandle(), BrokerIncarnation: attached.GetBrokerIncarnation()})
+	_, err = server.Commit(t.Context(), &brokerv1.CommitRequest{Handle: attached.GetHandle(), BrokerIncarnation: attached.GetBrokerIncarnation()})
 	if status.Code(err) != codes.FailedPrecondition {
 		t.Fatalf("reclaimed process handle remained usable: %v", err)
 	}
@@ -135,7 +135,7 @@ func TestInitialProductionMCPBroker_Scenario4_RestartInterruptsPendingCall(t *te
 	}
 }
 
-func TestInvariant_initial_broker_rejects_stale_incarnation(t *testing.T) {
+func TestSingletonBrokerRemediation_Scenario1_StaleIncarnationRejectedAcrossSurface(t *testing.T) {
 	oldConn, oldStop := failureBufServer(t, newFailureBroker(), nil)
 	defer oldStop()
 	fresh := newFailureBroker()
@@ -161,7 +161,16 @@ func TestInvariant_initial_broker_rejects_stale_incarnation(t *testing.T) {
 			t.Errorf("%s stale operation = %v, want state unavailable", name, err)
 		}
 	}
+	_, _, err = client.AttachSession(t.Context(), "stale-attach")
+	assertStateLoss("attach", err)
 	assertStateLoss("commit", attached.Commit(t.Context()))
+	assertStateLoss("abort", attached.Abort(t.Context()))
+	_, err = attached.Close(t.Context())
+	assertStateLoss("close", err)
+	protected := attached.Tools()[1].(tool.AuthorizationRequester)
+	_, _, err = protected.RequestAuthorization(t.Context(), session.NewToolCall("auth-call", "protected", []byte(`{}`)))
+	assertStateLoss("request authorization", err)
+	assertStateLoss("abort authorization", protected.AbortAuthorization(t.Context(), auth))
 	result, err := attached.Tools()[0].Execute(t.Context(), session.NewToolCall("call", "read", []byte(`{}`)), tool.Environment{})
 	if err != nil || !result.IsError || result.Content != "tool temporarily unavailable" {
 		t.Errorf("execute stale operation = %#v, %v, want model-visible temporary failure", result, err)
@@ -176,6 +185,8 @@ func TestInvariant_initial_broker_rejects_stale_incarnation(t *testing.T) {
 	if !ok {
 		t.Fatal("remote attachment does not preserve enrollment capability")
 	}
+	_, err = enroller.BeginWorkspaceEnrollment(t.Context())
+	assertStateLoss("begin enrollment", err)
 	_, err = enroller.ObserveWorkspaceEnrollment(t.Context(), ref)
 	assertStateLoss("observe enrollment", err)
 	_, err = enroller.CancelWorkspaceEnrollment(t.Context(), ref)
@@ -219,7 +230,7 @@ func TestInitialProductionMCPBroker_ServerRunDeadlineBoundsBackgroundAndHonorsEa
 				defer cancel()
 			}
 			started := time.Now()
-			_, err = server.Run(ctx, &brokerv1.RunRequest{
+			_, err = server.Execute(ctx, &brokerv1.ExecuteRequest{
 				BrokerIncarnation: attached.GetBrokerIncarnation(), Handle: attached.GetHandle(),
 				Name: "read", CallId: "blocked", Args: []byte(`{}`),
 			})
@@ -238,11 +249,11 @@ func TestInitialProductionMCPBroker_ServerRunDeadlineBoundsBackgroundAndHonorsEa
 	}
 }
 
-func TestInitialProductionMCPBroker_Scenario4_CancellationAndCleanup(t *testing.T) {
+func TestSingletonBrokerRemediation_Scenario1_ConcurrentCancellationAndLifecycleIsolation(t *testing.T) {
 	local := newFailureBroker()
 	local.blockExecute = make(chan struct{})
 	cfg := shortConfig()
-	cfg.HandleIdleTimeout = 30 * time.Millisecond
+	cfg.HandleIdleTimeout = 200 * time.Millisecond
 	cfg.SweepInterval = 5 * time.Millisecond
 	cfg.CleanupTimeout = 100 * time.Millisecond
 	conn, stop := failureBufServer(t, local, nil, cfg)
@@ -261,11 +272,32 @@ func TestInitialProductionMCPBroker_Scenario4_CancellationAndCleanup(t *testing.
 	if err != nil || !result.IsError || !strings.Contains(result.Content, "outcome is unknown") {
 		t.Fatalf("cancelled Execute = %#v, %v, want model-visible ambiguous outcome", result, err)
 	}
-	if err := attached.Commit(t.Context()); err != nil {
-		t.Fatalf("sibling operation after cancellation: %v", err)
+	retryDone := make(chan error, 1)
+	go func() {
+		retry, retryErr := attached.Tools()[0].Execute(t.Context(), session.NewToolCall("blocked", "read", []byte(`{}`)), tool.Environment{})
+		if retryErr == nil && (retry.IsError || retry.Content != "ok") {
+			retryErr = fmt.Errorf("retry receipt = %#v", retry)
+		}
+		retryDone <- retryErr
+	}()
+	closeDone := make(chan error, 1)
+	go func() {
+		outcome, closeErr := attached.Close(t.Context())
+		if closeErr == nil && outcome != mcpbroker.CloseClosed {
+			closeErr = fmt.Errorf("close outcome = %q", outcome)
+		}
+		closeDone <- closeErr
+	}()
+	time.Sleep(10 * time.Millisecond)
+	if got := local.closeCalls.Load(); got != 0 {
+		t.Fatalf("lifecycle raced active Execute: close calls = %d", got)
 	}
-	if got, err := attached.Close(t.Context()); err != nil || got != mcpbroker.CloseClosed {
-		t.Fatalf("explicit Close = %q, %v", got, err)
+	close(local.blockExecute)
+	if err := <-retryDone; err != nil {
+		t.Fatalf("duplicate receipt after caller cancellation: %v", err)
+	}
+	if err := <-closeDone; err != nil {
+		t.Fatalf("lifecycle after Execute: %v", err)
 	}
 
 	orphan, _, err := client.AttachSession(t.Context(), "orphan")
@@ -278,14 +310,50 @@ func TestInitialProductionMCPBroker_Scenario4_CancellationAndCleanup(t *testing.
 	case <-time.After(testWait):
 		t.Fatal("orphan handle was not reclaimed within configured deadline")
 	}
+	if got := local.executeCalls.Load(); got != 1 {
+		t.Fatalf("cancelled Execute dispatched %d times, want one isolated owner", got)
+	}
+
+	shutdownBroker := newFailureBroker()
+	shutdownBroker.blockExecute = make(chan struct{})
+	shutdownServer, err := mcpbrokergrpc.NewServerWithConfig(shutdownBroker, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	shutdownAttached, err := shutdownServer.Attach(t.Context(), &brokerv1.AttachRequest{SessionId: "shutdown-race"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	executeDone := make(chan error, 1)
+	go func() {
+		_, executeErr := shutdownServer.Execute(context.Background(), &brokerv1.ExecuteRequest{Handle: shutdownAttached.GetHandle(), BrokerIncarnation: shutdownAttached.GetBrokerIncarnation(), Name: "read", CallId: "shutdown-call", Args: []byte(`{}`)})
+		executeDone <- executeErr
+	}()
 	select {
-	case <-local.executeExited:
 	case <-time.After(testWait):
-		t.Fatal("cancelled operation goroutine did not exit")
+		t.Fatal("shutdown-race Execute did not start")
+	case <-func() <-chan struct{} {
+		started := make(chan struct{})
+		go func() {
+			for shutdownBroker.executeCalls.Load() == 0 {
+				time.Sleep(time.Millisecond)
+			}
+			close(started)
+		}()
+		return started
+	}():
+	}
+	shutdownCtx, shutdownCancel := context.WithTimeout(t.Context(), testWait)
+	defer shutdownCancel()
+	if err := shutdownServer.Shutdown(shutdownCtx); err != nil {
+		t.Fatalf("Shutdown during Execute: %v", err)
+	}
+	if err := <-executeDone; status.Code(err) != codes.Canceled {
+		t.Fatalf("shutdown-owned Execute = %v, want cancelled terminal", err)
 	}
 }
 
-func TestInitialProductionMCPBroker_TerminalLifecycleReceiptsSurviveRetriesUntilLeaseExpiry(t *testing.T) {
+func TestSingletonBrokerRemediation_Scenario1_LifecycleReceiptsAreAbsoluteAndReplayable(t *testing.T) {
 	local := newFailureBroker()
 	cfg := shortConfig()
 	cfg.HandleIdleTimeout = 30 * time.Millisecond
@@ -300,7 +368,7 @@ func TestInitialProductionMCPBroker_TerminalLifecycleReceiptsSurviveRetriesUntil
 	if err != nil {
 		t.Fatal(err)
 	}
-	closeReq := &brokerv1.HandleRequest{Handle: closed.GetHandle(), BrokerIncarnation: closed.GetBrokerIncarnation()}
+	closeReq := &brokerv1.CloseRequest{Handle: closed.GetHandle(), BrokerIncarnation: closed.GetBrokerIncarnation()}
 	for i := 0; i < 2; i++ {
 		response, closeErr := server.Close(t.Context(), closeReq)
 		if closeErr != nil || response.GetOutcome() != string(mcpbroker.CloseClosed) {
@@ -310,7 +378,7 @@ func TestInitialProductionMCPBroker_TerminalLifecycleReceiptsSurviveRetriesUntil
 	if got := local.closeCalls.Load(); got != 1 {
 		t.Fatalf("underlying Close calls = %d, want 1", got)
 	}
-	if _, err := server.Abort(t.Context(), closeReq); status.Code(err) != codes.FailedPrecondition {
+	if _, err := server.Abort(t.Context(), &brokerv1.AbortRequest{Handle: closeReq.GetHandle(), BrokerIncarnation: closeReq.GetBrokerIncarnation()}); status.Code(err) != codes.FailedPrecondition {
 		t.Fatalf("Abort after Close = %v, want state unavailable", err)
 	}
 
@@ -318,7 +386,7 @@ func TestInitialProductionMCPBroker_TerminalLifecycleReceiptsSurviveRetriesUntil
 	if err != nil {
 		t.Fatal(err)
 	}
-	abortReq := &brokerv1.HandleRequest{Handle: aborted.GetHandle(), BrokerIncarnation: aborted.GetBrokerIncarnation()}
+	abortReq := &brokerv1.AbortRequest{Handle: aborted.GetHandle(), BrokerIncarnation: aborted.GetBrokerIncarnation()}
 	for i := 0; i < 2; i++ {
 		if _, abortErr := server.Abort(t.Context(), abortReq); abortErr != nil {
 			t.Fatalf("Abort retry %d: %v", i, abortErr)
@@ -329,8 +397,8 @@ func TestInitialProductionMCPBroker_TerminalLifecycleReceiptsSurviveRetriesUntil
 	}
 
 	time.Sleep(4 * cfg.HandleIdleTimeout)
-	if _, err = server.Close(t.Context(), closeReq); status.Code(err) != codes.FailedPrecondition {
-		t.Fatalf("Close after receipt expiry = %v, want state unavailable", err)
+	if _, err = server.Close(t.Context(), closeReq); status.Code(err) != codes.FailedPrecondition || !hasBrokerReason(err, brokerv1.BrokerErrorReason_BROKER_ERROR_REASON_STATE_UNAVAILABLE) {
+		t.Fatalf("Close after receipt expiry = %v, want structured state unavailable", err)
 	}
 	if got := local.closeCalls.Load(); got != 2 { // one Close plus the Abort implementation's local Close.
 		t.Fatalf("terminal receipt was closed again during expiry: calls = %d, want 2", got)
@@ -348,7 +416,7 @@ func TestInitialProductionMCPBroker_ConcurrentCloseRetriesShareOneReceipt(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	req := &brokerv1.HandleRequest{Handle: attached.GetHandle(), BrokerIncarnation: attached.GetBrokerIncarnation()}
+	req := &brokerv1.CloseRequest{Handle: attached.GetHandle(), BrokerIncarnation: attached.GetBrokerIncarnation()}
 
 	const callers = 16
 	errs := make(chan error, callers)
@@ -390,7 +458,7 @@ func TestInitialProductionMCPBroker_TerminalLifecycleReceiptErrorSemantics(t *te
 		if err != nil {
 			t.Fatal(err)
 		}
-		req := &brokerv1.HandleRequest{Handle: attached.GetHandle(), BrokerIncarnation: attached.GetBrokerIncarnation()}
+		req := &brokerv1.CloseRequest{Handle: attached.GetHandle(), BrokerIncarnation: attached.GetBrokerIncarnation()}
 		if _, err := server.Close(t.Context(), req); status.Code(err) != codes.DeadlineExceeded {
 			t.Fatalf("first Close = %v, want deadline", err)
 		}
@@ -416,7 +484,7 @@ func TestInitialProductionMCPBroker_TerminalLifecycleReceiptErrorSemantics(t *te
 		if err != nil {
 			t.Fatal(err)
 		}
-		req := &brokerv1.HandleRequest{Handle: attached.GetHandle(), BrokerIncarnation: attached.GetBrokerIncarnation()}
+		req := &brokerv1.AbortRequest{Handle: attached.GetHandle(), BrokerIncarnation: attached.GetBrokerIncarnation()}
 		if _, err := server.Abort(t.Context(), req); err == nil {
 			t.Fatal("first Abort succeeded, want injected failure")
 		}
@@ -472,11 +540,11 @@ func TestInitialProductionMCPBroker_Scenario4_AmbiguousToolResultIsNotReplayed(t
 	var runHandlers atomic.Int32
 	lose.Store(true)
 	interceptor := func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
-		if strings.HasSuffix(info.FullMethod, "/Run") {
+		if strings.HasSuffix(info.FullMethod, "/Execute") {
 			runHandlers.Add(1)
 		}
 		response, err := handler(ctx, req)
-		if strings.HasSuffix(info.FullMethod, "/Run") && err == nil && lose.CompareAndSwap(true, false) {
+		if strings.HasSuffix(info.FullMethod, "/Execute") && err == nil && lose.CompareAndSwap(true, false) {
 			return nil, status.Error(codes.Aborted, "response lost after dispatch")
 		}
 		return response, err
@@ -535,13 +603,13 @@ func TestInitialProductionMCPBroker_DefinitiveSessionLossIsModelVisible(t *testi
 	}
 }
 
-func TestInitialProductionMCPBroker_UnprovenExecuteFailuresAreAmbiguous(t *testing.T) {
+func TestSingletonBrokerRemediation_Scenario1_DispatchClassificationIsConservative(t *testing.T) {
 	for _, code := range []codes.Code{codes.Unavailable, codes.DeadlineExceeded, codes.Canceled, codes.Internal} {
 		t.Run(code.String(), func(t *testing.T) {
 			local := newFailureBroker()
 			interceptor := func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
 				response, err := handler(ctx, req)
-				if strings.HasSuffix(info.FullMethod, "/Run") && err == nil {
+				if strings.HasSuffix(info.FullMethod, "/Execute") && err == nil {
 					return nil, status.Error(code, "response lost after dispatch")
 				}
 				return response, err
@@ -566,6 +634,56 @@ func TestInitialProductionMCPBroker_UnprovenExecuteFailuresAreAmbiguous(t *testi
 			}
 		})
 	}
+	for _, test := range []struct {
+		name     string
+		method   string
+		ordinary bool
+	}{
+		{name: "recognized exact method", method: brokerv1.BrokerService_Execute_FullMethodName, ordinary: true},
+		{name: "wrong method is ambiguous", method: "/mecatl.broker.v1.BrokerService/Commit"},
+		{name: "absent proof is ambiguous"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			client := mcpbrokergrpc.NewClient(dispatchProofConn{method: test.method})
+			attached, _, err := client.AttachSession(t.Context(), "proof")
+			if err != nil {
+				t.Fatal(err)
+			}
+			call := session.NewToolCall("proof-call", "read", []byte(`{}`))
+			result, err := attached.Tools()[0].Execute(t.Context(), call, tool.Environment{})
+			if test.ordinary {
+				if err == nil || result.CallID != "" {
+					t.Fatalf("recognized proof = %#v, %v, want ordinary RPC error", result, err)
+				}
+			} else if err != nil || !result.IsError || result.Content != ambiguousOutcomeText {
+				t.Fatalf("unrecognized proof = %#v, %v, want correlated ambiguity", result, err)
+			}
+		})
+	}
+}
+
+const ambiguousOutcomeText = "remote tool outcome is unknown because the broker response was lost; the operation may already have completed. Do not automatically repeat it. Reconcile through a safe status/read path first; if unavailable, report the uncertainty and seek operator direction."
+
+type dispatchProofConn struct{ method string }
+
+func (c dispatchProofConn) Invoke(_ context.Context, method string, _, reply any, _ ...grpc.CallOption) error {
+	if strings.HasSuffix(method, "/Attach") {
+		*reply.(*brokerv1.AttachResponse) = brokerv1.AttachResponse{Binding: "binding", Handle: "handle", Outcome: string(mcpbroker.AttachCreated), BrokerIncarnation: "incarnation", Tools: []*brokerv1.ToolDescriptor{{Name: "read", Description: "read", Schema: []byte(`{"type":"object"}`)}}}
+		return nil
+	}
+	st := status.New(codes.InvalidArgument, "rejected")
+	if c.method == "" {
+		return st.Err()
+	}
+	withDetail, err := st.WithDetails(&brokerv1.BrokerErrorDetail{Reason: brokerv1.BrokerErrorReason_BROKER_ERROR_REASON_DISPATCH_NOT_STARTED, DispatchMethod: c.method})
+	if err != nil {
+		return err
+	}
+	return withDetail.Err()
+}
+
+func (dispatchProofConn) NewStream(context.Context, *grpc.StreamDesc, string, ...grpc.CallOption) (grpc.ClientStream, error) {
+	return nil, errors.New("unexpected stream")
 }
 
 func TestInitialProductionMCPBroker_Scenario4_PrePromptReenrollmentOnly(t *testing.T) {

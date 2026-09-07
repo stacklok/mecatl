@@ -7,25 +7,41 @@ option go_package = "github.com/stacklok/mecatl/contracts/gen/go/mecatl/broker/v
 import "google/protobuf/timestamp.proto";
 
 // BrokerService connects a harness process to one authoritative broker process.
-// Attachment handles and broker incarnations are process-local; this protocol
-// does not provide restart continuity or interchangeable replicas.
+// Attachment handles, receipts, and broker incarnations are process-local; this
+// protocol does not provide restart continuity or interchangeable replicas.
 service BrokerService {
   rpc Attach(AttachRequest) returns (AttachResponse);
-  rpc Commit(HandleRequest) returns (Empty);
-  rpc Abort(HandleRequest) returns (Empty);
-  rpc Close(HandleRequest) returns (CloseResponse);
+  rpc Commit(CommitRequest) returns (CommitResponse);
+  rpc Abort(AbortRequest) returns (AbortResponse);
+  rpc Close(CloseRequest) returns (CloseResponse);
   rpc Delete(DeleteRequest) returns (DeleteResponse);
-  rpc Run(RunRequest) returns (RunResponse);
+  rpc Execute(ExecuteRequest) returns (ExecuteResponse);
   rpc RequestAuthorization(RequestAuthorizationRequest) returns (RequestAuthorizationResponse);
-  rpc AbortAuthorization(AbortAuthorizationRequest) returns (Empty);
-  rpc PresentAuthorization(AuthorizationRequest) returns (PresentationResponse);
-  rpc AuthorizationStatus(AuthorizationRequest) returns (AuthorizationStatusResponse);
-  rpc CancelAuthorization(AuthorizationRequest) returns (CancelResponse);
-  rpc BeginWorkspaceEnrollment(HandleRequest) returns (WorkspacePresentationResponse);
-  rpc ObserveWorkspaceEnrollment(WorkspaceRequest) returns (WorkspaceResultResponse);
-  rpc CancelWorkspaceEnrollment(WorkspaceRequest) returns (WorkspaceResultResponse);
+  rpc AbortAuthorization(AbortAuthorizationRequest) returns (AbortAuthorizationResponse);
+  rpc PresentAuthorization(PresentAuthorizationRequest) returns (PresentAuthorizationResponse);
+  rpc AuthorizationStatus(AuthorizationStatusRequest) returns (AuthorizationStatusResponse);
+  rpc CancelAuthorization(CancelAuthorizationRequest) returns (CancelAuthorizationResponse);
+  rpc BeginWorkspaceEnrollment(BeginWorkspaceEnrollmentRequest) returns (BeginWorkspaceEnrollmentResponse);
+  rpc ObserveWorkspaceEnrollment(ObserveWorkspaceEnrollmentRequest) returns (ObserveWorkspaceEnrollmentResponse);
+  rpc CancelWorkspaceEnrollment(CancelWorkspaceEnrollmentRequest) returns (CancelWorkspaceEnrollmentResponse);
 }
-message Empty {}
+
+// BrokerErrorReason is a closed protocol vocabulary carried in BrokerErrorDetail.
+enum BrokerErrorReason {
+  BROKER_ERROR_REASON_UNSPECIFIED = 0;
+  BROKER_ERROR_REASON_STATE_UNAVAILABLE = 1;
+  BROKER_ERROR_REASON_ATTACHMENT_CLOSED = 2;
+  BROKER_ERROR_REASON_AUTHORIZATION_NOT_FOUND = 3;
+  BROKER_ERROR_REASON_DISPATCH_NOT_STARTED = 4;
+}
+
+// BrokerErrorDetail gives clients stable error identity without status-text inference.
+// dispatch_method is set only for DISPATCH_NOT_STARTED and must equal the exact RPC method.
+message BrokerErrorDetail {
+  BrokerErrorReason reason = 1;
+  string dispatch_method = 2;
+}
+
 message AttachRequest { string session_id = 1; string broker_incarnation = 2; }
 message AttachResponse {
   string binding = 1;
@@ -35,7 +51,11 @@ message AttachResponse {
   string broker_incarnation = 5;
   bool workspace_enrollment = 6;
 }
-message HandleRequest { string handle = 1; string broker_incarnation = 2; }
+message CommitRequest { string handle = 1; string broker_incarnation = 2; }
+message CommitResponse {}
+message AbortRequest { string handle = 1; string broker_incarnation = 2; }
+message AbortResponse {}
+message CloseRequest { string handle = 1; string broker_incarnation = 2; }
 message CloseResponse { string outcome = 1; }
 message DeleteRequest { string session_id = 1; string binding = 2; string broker_incarnation = 3; }
 message DeleteResponse { string outcome = 1; }
@@ -47,7 +67,7 @@ message ToolDescriptor {
   bool dispatch_serial = 5;
   bool authorization_capable = 6;
 }
-message RunRequest {
+message ExecuteRequest {
   string handle = 1;
   string name = 2;
   string call_id = 3;
@@ -55,7 +75,7 @@ message RunRequest {
   string item_id = 5;
   string broker_incarnation = 6;
 }
-message RunResponse { ToolResult result = 1; }
+message ExecuteResponse { ToolResult result = 1; }
 message ToolResult { string call_id = 1; string content = 2; bool is_error = 3; repeated ResultPart parts = 4; }
 message ResultPart {
   string block_kind = 1;
@@ -75,12 +95,18 @@ message ResultPart {
 message RequestAuthorizationRequest { string handle = 1; string name = 2; string call_id = 3; bytes args = 4; string item_id = 5; string broker_incarnation = 6; }
 message RequestAuthorizationResponse { Authorization authorization = 1; bool required = 2; }
 message AbortAuthorizationRequest { string handle = 1; Authorization authorization = 2; string broker_incarnation = 3; }
+message AbortAuthorizationResponse {}
 message Authorization { string id = 1; string binding = 2; google.protobuf.Timestamp expires_at = 3; }
-message AuthorizationRequest { string handle = 1; Authorization authorization = 2; string broker_incarnation = 3; }
-message PresentationResponse { string url = 1; }
+message PresentAuthorizationRequest { string handle = 1; Authorization authorization = 2; string broker_incarnation = 3; }
+message PresentAuthorizationResponse { string url = 1; }
+message AuthorizationStatusRequest { string handle = 1; Authorization authorization = 2; string broker_incarnation = 3; }
 message AuthorizationStatusResponse { string status = 1; }
-message CancelResponse { string outcome = 1; }
+message CancelAuthorizationRequest { string handle = 1; Authorization authorization = 2; string broker_incarnation = 3; }
+message CancelAuthorizationResponse { string outcome = 1; }
 message WorkspaceRef { string id = 1; uint32 required_services = 2; google.protobuf.Timestamp expires_at = 3; }
-message WorkspaceRequest { string handle = 1; WorkspaceRef ref = 2; string broker_incarnation = 3; }
-message WorkspacePresentationResponse { WorkspaceRef ref = 1; string url = 2; }
-message WorkspaceResultResponse { WorkspaceRef ref = 1; string status = 2; repeated ToolDescriptor tools = 3; }
+message BeginWorkspaceEnrollmentRequest { string handle = 1; string broker_incarnation = 2; }
+message BeginWorkspaceEnrollmentResponse { WorkspaceRef ref = 1; string url = 2; }
+message ObserveWorkspaceEnrollmentRequest { string handle = 1; WorkspaceRef ref = 2; string broker_incarnation = 3; }
+message ObserveWorkspaceEnrollmentResponse { WorkspaceRef ref = 1; string status = 2; repeated ToolDescriptor tools = 3; }
+message CancelWorkspaceEnrollmentRequest { string handle = 1; WorkspaceRef ref = 2; string broker_incarnation = 3; }
+message CancelWorkspaceEnrollmentResponse { WorkspaceRef ref = 1; string status = 2; repeated ToolDescriptor tools = 3; }

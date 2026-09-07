@@ -192,18 +192,27 @@ behavior.
 
 The versioned remote adapter under `internal/adapter/mcpbrokergrpc` pins each client and
 attachment handle to one broker-process incarnation. Connection establishment, ordinary
-RPCs, Execute, idle-handle retention, and cleanup are all finitely bounded. Transport
-unavailability does not prove state loss; a stale incarnation is rejected before broker
-state access. Execute is never retried after possible dispatch: a lost response becomes a
-fixed model-visible ambiguous outcome. That result tells the model the operation may already
-have completed, forbids an automatic repeat, and directs it to reconcile through a known-safe
+RPCs, Execute, idle-handle retention, and cleanup are all finitely bounded. Every RPC has
+method-specific protobuf messages and failures carry a closed structured reason; unknown
+reasons and malformed peer payloads are protocol failures, never status-text inference.
+Stale incarnations are rejected before state access across the complete RPC surface.
+Abort and Close, plus Execute keyed by the full call identity and argument digest, retain
+immutable receipts until an absolute lease deadline that reads cannot extend. Duplicates
+join or replay the same receipt without redispatch; after expiry they fail with
+`state_unavailable`. Execute validates the response call ID before exposing it to session
+state. Only a recognized, method-bound `dispatch_not_started` detail proves pre-dispatch
+failure; cancellation, deadline, transport loss, and malformed or absent proof after
+possible dispatch become a fixed model-visible ambiguous outcome with no automatic retry,
+hedge, rebind, or replay. That result tells the model the operation may already have
+completed, forbids an automatic repeat, and directs it to reconcile through a known-safe
 status/read path before seeking explicit operator direction when the outcome cannot be established.
-The broker-enabled main-engine prompt carries the same instruction; this is recovery guidance,
-not a runtime reconciliation gate or duplicate-effect prevention. Explicit close and idle reclamation close only the
-attachment, not its logical broker session. A fresh client may start a new pre-prompt
-enrollment after restart, but a live protected-call authorization never rebinds. This is a
-single-process failure boundary, not replica interchangeability, restart durability,
-callback failover, exactly-once effects, or HA ([ADR 0304](adr/0304-process-bound-remote-mcp-broker.md)).
+Both broker-enabled main and per-session engine factories carry this instruction; disabled
+engines do not. Explicit close and idle reclamation close only the attachment, not its
+logical broker session. A fresh client may start a new pre-prompt enrollment after restart,
+but a live protected-call authorization never rebinds. This is a single-process failure
+boundary, not replica interchangeability, restart durability, callback failover,
+exactly-once effects, or HA ([ADR 0304](adr/0304-process-bound-remote-mcp-broker.md),
+[ADR 0306](adr/0306-bounded-singleton-mcp-broker-correctness.md)).
 
 The production `cmd/mecabroker` image and dedicated Helm chart preserve that boundary:
 exactly one replica, `Recreate`, no PDB, no autoscaling, and no outer-broker Redis. The public Service exposes one TLS listener that multiplexes gRPC and browser callback routes by HTTP/2 gRPC content type. A loopback-only admin

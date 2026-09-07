@@ -8,8 +8,14 @@ import (
 	"testing"
 	"time"
 
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
+	brokerv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/broker/v1"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
+	"github.com/stacklok/mecatl/internal/adapter/mcpbrokergrpc"
 	"github.com/stacklok/mecatl/internal/mcpbroker"
 )
 
@@ -42,7 +48,7 @@ func TestInitialProductionMCPBroker_Scenario3_ProtectedCallContinuation(t *testi
 	}
 }
 
-func TestInvariant_remote_broker_continues_exact_parked_call(t *testing.T) {
+func TestSingletonBrokerRemediation_Scenario1_CallIdentityAndResponseCorrelation(t *testing.T) {
 	local := newContinuationBroker()
 	remote := newRemote(t, local)
 	attachment, _, err := remote.AttachSession(t.Context(), "session-exact")
@@ -57,8 +63,8 @@ func TestInvariant_remote_broker_continues_exact_parked_call(t *testing.T) {
 	local.grant()
 	changed := session.NewToolCall("call-1", "protected", []byte(`{"request":"changed"}`))
 	result, err := protected.Execute(t.Context(), changed, tool.Environment{})
-	if err != nil || !result.IsError || !strings.Contains(result.Content, "outcome is unknown") {
-		t.Fatalf("changed invocation = %#v, %v, want model-visible ambiguous outcome", result, err)
+	if err == nil || status.Code(err) != codes.InvalidArgument || result.CallID != "" {
+		t.Fatalf("changed invocation = %#v, %v, want pre-dispatch identity rejection", result, err)
 	}
 	if got := local.executionCount(); got != 0 {
 		t.Fatalf("changed invocation reached effect: %d", got)
@@ -66,6 +72,34 @@ func TestInvariant_remote_broker_continues_exact_parked_call(t *testing.T) {
 	if _, err := protected.Execute(t.Context(), original, tool.Environment{}); err != nil {
 		t.Fatalf("exact parked invocation did not continue: %v", err)
 	}
+
+	client := mcpbrokergrpc.NewClient(mismatchedResultConn{})
+	peerAttachment, _, err := client.AttachSession(t.Context(), "response-correlation")
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err = peerAttachment.Tools()[0].Execute(t.Context(), session.NewToolCall("expected-call", "read", []byte(`{}`)), tool.Environment{})
+	if err == nil || !strings.Contains(err.Error(), "call_id mismatch") || result.CallID != "" {
+		t.Fatalf("mismatched response correlation = %#v, %v, want pre-session rejection", result, err)
+	}
+}
+
+type mismatchedResultConn struct{}
+
+func (mismatchedResultConn) Invoke(_ context.Context, method string, _, reply any, _ ...grpc.CallOption) error {
+	switch {
+	case strings.HasSuffix(method, "/Attach"):
+		*reply.(*brokerv1.AttachResponse) = brokerv1.AttachResponse{Binding: "binding", Handle: "handle", Outcome: string(mcpbroker.AttachCreated), BrokerIncarnation: "incarnation", Tools: []*brokerv1.ToolDescriptor{{Name: "read", Description: "read", Schema: []byte(`{"type":"object"}`)}}}
+	case strings.HasSuffix(method, "/Execute"):
+		*reply.(*brokerv1.ExecuteResponse) = brokerv1.ExecuteResponse{Result: &brokerv1.ToolResult{CallId: "different-call", Content: "must not enter the session"}}
+	default:
+		return errors.New("unexpected method")
+	}
+	return nil
+}
+
+func (mismatchedResultConn) NewStream(context.Context, *grpc.StreamDesc, string, ...grpc.CallOption) (grpc.ClientStream, error) {
+	return nil, errors.New("unexpected stream")
 }
 
 func TestInitialProductionMCPBroker_Scenario3_TerminalOutcomeParity(t *testing.T) {

@@ -300,8 +300,8 @@ func operationName(method string) string {
 		return "close"
 	case "Delete":
 		return "delete"
-	case "Run":
-		return "run"
+	case "Execute":
+		return "execute"
 	case "RequestAuthorization":
 		return "request_authorization"
 	case "AbortAuthorization":

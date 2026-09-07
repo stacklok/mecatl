@@ -196,14 +196,14 @@ func TestInitialProductionMCPBroker_Scenario2_AuthenticatedTLS(t *testing.T) {
 			_, err := client.Attach(ctx, &brokerv1.AttachRequest{SessionId: "session"})
 			return err
 		},
-		func(ctx context.Context) error { _, err := client.Commit(ctx, &brokerv1.HandleRequest{}); return err },
-		func(ctx context.Context) error { _, err := client.Abort(ctx, &brokerv1.HandleRequest{}); return err },
-		func(ctx context.Context) error { _, err := client.Close(ctx, &brokerv1.HandleRequest{}); return err },
+		func(ctx context.Context) error { _, err := client.Commit(ctx, &brokerv1.CommitRequest{}); return err },
+		func(ctx context.Context) error { _, err := client.Abort(ctx, &brokerv1.AbortRequest{}); return err },
+		func(ctx context.Context) error { _, err := client.Close(ctx, &brokerv1.CloseRequest{}); return err },
 		func(ctx context.Context) error {
 			_, err := client.Delete(ctx, &brokerv1.DeleteRequest{SessionId: "missing"})
 			return err
 		},
-		func(ctx context.Context) error { _, err := client.Run(ctx, &brokerv1.RunRequest{}); return err },
+		func(ctx context.Context) error { _, err := client.Execute(ctx, &brokerv1.ExecuteRequest{}); return err },
 		func(ctx context.Context) error {
 			_, err := client.RequestAuthorization(ctx, &brokerv1.RequestAuthorizationRequest{})
 			return err
@@ -213,27 +213,27 @@ func TestInitialProductionMCPBroker_Scenario2_AuthenticatedTLS(t *testing.T) {
 			return err
 		},
 		func(ctx context.Context) error {
-			_, err := client.PresentAuthorization(ctx, &brokerv1.AuthorizationRequest{})
+			_, err := client.PresentAuthorization(ctx, &brokerv1.PresentAuthorizationRequest{})
 			return err
 		},
 		func(ctx context.Context) error {
-			_, err := client.AuthorizationStatus(ctx, &brokerv1.AuthorizationRequest{})
+			_, err := client.AuthorizationStatus(ctx, &brokerv1.AuthorizationStatusRequest{})
 			return err
 		},
 		func(ctx context.Context) error {
-			_, err := client.CancelAuthorization(ctx, &brokerv1.AuthorizationRequest{})
+			_, err := client.CancelAuthorization(ctx, &brokerv1.CancelAuthorizationRequest{})
 			return err
 		},
 		func(ctx context.Context) error {
-			_, err := client.BeginWorkspaceEnrollment(ctx, &brokerv1.HandleRequest{})
+			_, err := client.BeginWorkspaceEnrollment(ctx, &brokerv1.BeginWorkspaceEnrollmentRequest{})
 			return err
 		},
 		func(ctx context.Context) error {
-			_, err := client.ObserveWorkspaceEnrollment(ctx, &brokerv1.WorkspaceRequest{})
+			_, err := client.ObserveWorkspaceEnrollment(ctx, &brokerv1.ObserveWorkspaceEnrollmentRequest{})
 			return err
 		},
 		func(ctx context.Context) error {
-			_, err := client.CancelWorkspaceEnrollment(ctx, &brokerv1.WorkspaceRequest{})
+			_, err := client.CancelWorkspaceEnrollment(ctx, &brokerv1.CancelWorkspaceEnrollmentRequest{})
 			return err
 		},
 	}
@@ -346,16 +346,16 @@ func TestInvariant_initial_broker_observability_is_bounded_and_secret_free(t *te
 	presentationURL := "https://present.example/secret"
 	toolArguments := credential + callbackState + presentationURL
 	validToken := issuer.token(t, issuer.server.URL, testAudience, time.Now().Add(time.Minute), nil)
-	_, _ = client.Run(authContext(validToken), &brokerv1.RunRequest{Name: "secret-tool", Args: []byte(toolArguments)})
+	_, _ = client.Execute(authContext(validToken), &brokerv1.ExecuteRequest{Name: "secret-tool", Args: []byte(toolArguments)})
 	ctx := metadata.NewOutgoingContext(context.Background(), metadata.Pairs("authorization", "Bearer "+credential))
-	_, _ = client.Run(ctx, &brokerv1.RunRequest{Name: "secret-tool", Args: []byte(toolArguments)})
+	_, _ = client.Execute(ctx, &brokerv1.ExecuteRequest{Name: "secret-tool", Args: []byte(toolArguments)})
 	encoded := fmt.Sprint(diag.records)
 	for _, secret := range []string{credential, callbackState, presentationURL, toolArguments, "workload-secret-identity", issuer.server.URL} {
 		if strings.Contains(encoded, secret) || strings.Contains(strings.Join(labels, "|"), secret) {
 			t.Fatalf("secret %q reached observability: diagnostics=%s labels=%v", secret, encoded, labels)
 		}
 	}
-	allowedOps := map[string]bool{"run": true}
+	allowedOps := map[string]bool{"execute": true}
 	allowedOutcomes := map[string]bool{"unauthenticated": true, "unavailable": true, "allowed": true}
 	for _, label := range labels {
 		parts := strings.Split(label, ":")

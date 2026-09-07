@@ -58,33 +58,49 @@ func TestDiagnosticsPostureFactoryPaths(t *testing.T) {
 	}
 }
 
-func TestMCPBrokerPostureFactoryPaths(t *testing.T) {
+func TestSingletonBrokerRemediation_Scenario1_BrokerRecoveryInstructionUsesRealFactories(t *testing.T) {
 	ctx := context.Background()
 	var systems []prompt.Layered
 	provider := mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(func(req port.LLMRequest) {
 		systems = append(systems, req.System)
-	})}, mockllm.TextTurn("ok"), mockllm.TextTurn("ok"))
+	})}, mockllm.TextTurn("ok"), mockllm.TextTurn("ok"), mockllm.TextTurn("ok"))
 	cfg := Config{Model: "gpt-5", MCPAuthority: mcpauthority.NewBroker(mcpauthority.BrokerConfig{})}
 	reg := regForTest(provider, providerOpenAI, cfg.Model)
-	factory := sessionEngineFactory(cfg, reg, provider, memstore.New(), permpolicy.NewPolicy(defaultRules(), nil), nil, nil, prompt.RootAssembler{}, catalogAssets{}, nil)
-	main, err := factory(ctx, server.ProviderSelector{}, nil, server.ProfileDefault, "", session.ModeDefault)
+	policy := permpolicy.NewPolicy(defaultRules(), nil)
+	store := memstore.New()
+
+	mainDeps := baseEngineDeps(cfg, reg, provider, store, policy, nil, nil, prompt.RootAssembler{})
+	mainDeps.Catalog = tool.NewCatalog()
+	drivePrompt(t, agent.NewEngine(mainDeps), "broker-shared")
+
+	factory := sessionEngineFactory(cfg, reg, provider, store, policy, nil, nil, prompt.RootAssembler{}, catalogAssets{}, nil)
+	perSession, err := factory(ctx, server.ProviderSelector{}, nil, server.ProfileDefault, "", session.ModeDefault)
 	if err != nil {
-		t.Fatalf("main factory: %v", err)
+		t.Fatalf("per-session factory: %v", err)
 	}
-	defer func() { _ = main.Close() }()
-	drivePrompt(t, main.Engine, "broker-main")
+	defer func() { _ = perSession.Close() }()
+	drivePrompt(t, perSession.Engine, "broker-per-session")
 
-	child := newChildEngineForProvider(cfg, "subagent", provider, cfg.Model, func() int { return defaultContextWindowTokens }, tool.NewCatalog(), promptConfig(cfg, ""), nil)
-	drivePrompt(t, child, "broker-child")
+	disabled := cfg
+	disabled.MCPAuthority = nil
+	disabledFactory := sessionEngineFactory(disabled, reg, provider, store, policy, nil, nil, prompt.RootAssembler{}, catalogAssets{}, nil)
+	disabledSession, err := disabledFactory(ctx, server.ProviderSelector{}, nil, server.ProfileDefault, "", session.ModeDefault)
+	if err != nil {
+		t.Fatalf("disabled factory: %v", err)
+	}
+	defer func() { _ = disabledSession.Close() }()
+	drivePrompt(t, disabledSession.Engine, "broker-disabled")
 
-	if len(systems) != 2 {
-		t.Fatalf("captured systems = %d, want 2", len(systems))
+	if len(systems) != 3 {
+		t.Fatalf("captured systems = %d, want 3", len(systems))
 	}
-	if !strings.Contains(systems[0].StablePrefix, mcpBrokerPostureNote) {
-		t.Fatal("broker main factory StablePrefix omits broker-owned authority guidance")
+	for i, name := range []string{"shared main", "per-session"} {
+		if !strings.Contains(systems[i].StablePrefix, mcpBrokerPostureNote) || !strings.Contains(systems[i].StablePrefix, "do not automatically invoke it again") {
+			t.Fatalf("%s StablePrefix omits broker unknown-outcome recovery contract", name)
+		}
 	}
-	if strings.Contains(systems[1].StablePrefix, mcpBrokerPostureNote) {
-		t.Fatal("child StablePrefix advertises main-only broker-owned authority guidance")
+	if strings.Contains(systems[2].StablePrefix, mcpBrokerPostureNote) {
+		t.Fatal("broker-disabled StablePrefix advertises broker recovery guidance")
 	}
 }
 
