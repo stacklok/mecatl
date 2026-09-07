@@ -13,6 +13,8 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
+	"unicode/utf8"
 
 	"golang.org/x/oauth2"
 
@@ -31,6 +33,9 @@ var (
 	// ErrProtectedRouteUnsupported reports the P08 boundary: OAuth routes are
 	// declared by P07 but are not executable until protected-route custody lands.
 	ErrProtectedRouteUnsupported = errors.New("mcpbroker: protected route unsupported")
+	// ErrInvalidSessionID means the caller supplied an identifier outside the
+	// broker's bounded logical-session grammar.
+	ErrInvalidSessionID = errors.New("mcpbroker: invalid session ID")
 )
 
 // ToolDefinition is the neutral result of discovering one tool on a configured
@@ -148,6 +153,59 @@ func (c *Catalogue) Specs() []tool.ToolSpec {
 	return out
 }
 
+// Limits bounds broker-owned logical state. Zero values select safe defaults.
+type Limits struct {
+	MaxLogicalSessions int
+	LogicalRetention   time.Duration
+	SweepInterval      time.Duration
+	MaxPendingStates   int
+}
+
+const (
+	defaultMaxLogicalSessions = 1024
+	defaultLogicalRetention   = 24 * time.Hour
+	defaultBrokerSweep        = time.Minute
+	defaultMaxPendingStates   = 1024
+	maxLogicalSessionIDBytes  = 256
+)
+
+func (l Limits) withDefaults() Limits {
+	if l.MaxLogicalSessions <= 0 {
+		l.MaxLogicalSessions = defaultMaxLogicalSessions
+	}
+	if l.LogicalRetention <= 0 {
+		l.LogicalRetention = defaultLogicalRetention
+	}
+	if l.SweepInterval <= 0 {
+		l.SweepInterval = defaultBrokerSweep
+	}
+	if l.MaxPendingStates <= 0 {
+		l.MaxPendingStates = defaultMaxPendingStates
+	}
+	return l
+}
+
+// WithLimits configures bounded logical-session and pending callback state.
+func WithLimits(limits Limits) Option {
+	return func(runtime *Runtime) {
+		runtime.limits = limits.withDefaults()
+		runtime.sweeperEnabled = true
+	}
+}
+
+func validLogicalSessionID(id session.SessionID) bool {
+	value := string(id)
+	if value == "" || len(value) > maxLogicalSessionIDBytes || !utf8.ValidString(value) {
+		return false
+	}
+	for _, r := range value {
+		if r < 0x20 || r == 0x7f {
+			return false
+		}
+	}
+	return true
+}
+
 // SessionRef is an opaque reference to one in-process logical-session incarnation.
 // SessionID is exposed for backend attribution; the incarnation remains private.
 type SessionRef struct {
@@ -173,6 +231,9 @@ type logicalSession struct {
 	grants              map[string]*oauthGrant
 	brokerCredential    *oauthGrant
 	completedEnrollment *completedWorkspaceEnrollment
+	createdAt           time.Time
+	expiresAt           time.Time
+	attachments         int
 }
 
 // Caller is the private execution seam used by the in-process transport. The
@@ -203,7 +264,11 @@ type Runtime struct {
 	// authenticated-discovery primitives without widening the neutral contract.
 	// nil for a plain Compile-based Runtime, which never supports workspace
 	// enrollment.
-	process *Process
+	process        *Process
+	limits         Limits
+	sweepStop      chan struct{}
+	sweepDone      chan struct{}
+	sweeperEnabled bool
 }
 
 var _ contract.Service = (*Runtime)(nil)
@@ -229,6 +294,7 @@ func New(catalogue *Catalogue, caller Caller, options ...Option) (*Runtime, erro
 		sessions:      make(map[session.SessionID]*logicalSession),
 		states:        make(map[string]callbackState),
 		bindingPrefix: base64.RawURLEncoding.EncodeToString(bindingSeed),
+		limits:        (Limits{}).withDefaults(),
 	}
 	for _, option := range options {
 		if option == nil {
@@ -263,6 +329,11 @@ func New(catalogue *Catalogue, caller Caller, options ...Option) (*Runtime, erro
 		}
 		runtime.oauth.httpClient = client
 	}
+	if runtime.sweeperEnabled {
+		runtime.sweepStop = make(chan struct{})
+		runtime.sweepDone = make(chan struct{})
+		go runtime.sweep()
+	}
 	return runtime, nil
 }
 
@@ -272,8 +343,8 @@ func (r *Runtime) AttachSession(ctx context.Context, id session.SessionID) (cont
 	if err := ctx.Err(); err != nil {
 		return nil, "", err
 	}
-	if id == "" {
-		return nil, "", fmt.Errorf("%w: session ID is required", ErrInvalidCatalogue)
+	if !validLogicalSessionID(id) {
+		return nil, "", ErrInvalidSessionID
 	}
 	r.mu.Lock()
 	if r.closed {
@@ -283,13 +354,20 @@ func (r *Runtime) AttachSession(ctx context.Context, id session.SessionID) (cont
 	logical, exists := r.sessions[id]
 	outcome := contract.AttachReattached
 	if !exists {
+		if len(r.sessions) >= r.limits.MaxLogicalSessions {
+			r.mu.Unlock()
+			return nil, "", contract.ErrCapacity
+		}
 		r.nextGeneration++
+		now := time.Now()
 		operationCtx, cancelOps := context.WithCancel(context.Background())
 		logical = &logicalSession{
 			ref:            SessionRef{id: id, generation: r.nextGeneration},
 			operationCtx:   operationCtx,
 			cancelOps:      cancelOps,
 			provisional:    true,
+			createdAt:      now,
+			expiresAt:      now.Add(r.limits.LogicalRetention),
 			authorizations: make(map[authorizationIdentity]*authorizationTransaction),
 			grants:         make(map[string]*oauthGrant),
 		}
@@ -303,6 +381,9 @@ func (r *Runtime) AttachSession(ctx context.Context, id session.SessionID) (cont
 		logical.provisional = false
 		logical.mu.Unlock()
 	}
+	logical.mu.Lock()
+	logical.attachments++
+	logical.mu.Unlock()
 	r.mu.Unlock()
 
 	attachment := &Attachment{runtime: r, logical: logical, creator: outcome == contract.AttachCreated}
@@ -387,11 +468,27 @@ type Attachment struct {
 	runtime        *Runtime
 	logical        *logicalSession
 	closed         bool
+	detached       bool
 	creator        bool
 	settled        bool
 	activeOps      int
 	operationsDone chan struct{}
 	catalogue      *attachmentCatalogue
+}
+
+func (a *Attachment) detachLogical() {
+	a.mu.Lock()
+	if a.detached {
+		a.mu.Unlock()
+		return
+	}
+	a.detached = true
+	a.mu.Unlock()
+	a.logical.mu.Lock()
+	if a.logical.attachments > 0 {
+		a.logical.attachments--
+	}
+	a.logical.mu.Unlock()
 }
 
 var _ contract.Attachment = (*Attachment)(nil)
@@ -474,9 +571,11 @@ func (a *Attachment) Abort(ctx context.Context) error {
 		select {
 		case <-done:
 		case <-ctx.Done():
+			a.detachLogical()
 			return ctx.Err()
 		}
 	}
+	a.detachLogical()
 	return nil
 }
 
@@ -512,9 +611,11 @@ func (a *Attachment) Close(ctx context.Context) (contract.CloseOutcome, error) {
 		select {
 		case <-done:
 		case <-ctx.Done():
+			a.detachLogical()
 			return contract.CloseClosed, ctx.Err()
 		}
 	}
+	a.detachLogical()
 	return contract.CloseClosed, nil
 }
 

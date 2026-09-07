@@ -19,6 +19,8 @@ var (
 	// state cannot be recovered. Callers should resolve a parked authorization
 	// deterministically rather than silently creating a replacement transaction.
 	ErrStateUnavailable = errors.New("mcp broker state unavailable")
+	// ErrCapacity means admission was refused without evicting existing authority.
+	ErrCapacity = errors.New("mcp broker capacity reached")
 	// ErrAttachmentClosed means an operation used a locally closed attachment.
 	ErrAttachmentClosed = errors.New("mcp broker attachment closed")
 	// ErrAuthorizationNotFound means the exact authorization reference is unknown

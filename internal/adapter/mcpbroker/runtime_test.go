@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -379,4 +380,47 @@ func TestRuntimeCloseAndDrainUsesOneProcessDeadline(t *testing.T) {
 	if elapsed := time.Since(started); elapsed >= 2*timeout {
 		t.Fatalf("drain elapsed %v, want one %v process deadline", elapsed, timeout)
 	}
+}
+
+func TestRuntimeBoundedAdmissionAndRetention(t *testing.T) {
+	catalogue, err := Compile(anonymousConfig(), discoveredTools(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime, err := New(catalogue, func(context.Context, SessionRef, string, session.ToolCall) (session.ToolResult, error) {
+		return session.ToolResult{}, nil
+	}, WithLimits(Limits{MaxLogicalSessions: 1, LogicalRetention: 20 * time.Millisecond, SweepInterval: 5 * time.Millisecond, MaxPendingStates: 1}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer runtime.Close()
+	for _, id := range []session.SessionID{"", "bad\x00id", session.SessionID(strings.Repeat("x", maxLogicalSessionIDBytes+1))} {
+		if _, _, err := runtime.AttachSession(context.Background(), id); !errors.Is(err, ErrInvalidSessionID) {
+			t.Fatalf("AttachSession(%q) error = %v, want invalid ID", id, err)
+		}
+	}
+	first, _, err := runtime.AttachSession(context.Background(), "one")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := runtime.AttachSession(context.Background(), "two"); !errors.Is(err, contract.ErrCapacity) {
+		t.Fatalf("capacity error = %v", err)
+	}
+	if _, err := first.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if _, _, err := runtime.AttachSession(context.Background(), "two"); err == nil {
+			break
+		} else if !errors.Is(err, contract.ErrCapacity) {
+			t.Fatal(err)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	second, _, err := runtime.AttachSession(context.Background(), "two")
+	if err != nil {
+		t.Fatalf("retained logical session was not reclaimed: %v", err)
+	}
+	_, _ = second.Close(context.Background())
 }

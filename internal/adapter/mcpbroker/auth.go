@@ -245,6 +245,9 @@ type oauthGrant struct {
 func (r *Runtime) registerCallbackState(state string, logical *logicalSession, transaction *authorizationTransaction) bool {
 	r.stateMu.Lock()
 	defer r.stateMu.Unlock()
+	if len(r.states) >= r.limits.MaxPendingStates {
+		return false
+	}
 	if _, exists := r.states[state]; exists {
 		return false
 	}
@@ -1064,7 +1067,34 @@ func (r *Runtime) Close() error {
 	return nil
 }
 
-// closeAndDrain is Close, plus a bounded wait (closeDrainTimeout) for every
+func (r *Runtime) sweep() {
+	defer close(r.sweepDone)
+	ticker := time.NewTicker(r.limits.SweepInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-r.sweepStop:
+			return
+		case now := <-ticker.C:
+			var expired []*logicalSession
+			r.mu.Lock()
+			for id, logical := range r.sessions {
+				logical.mu.Lock()
+				if logical.attachments == 0 && logical.activeOps == 0 && !logical.expiresAt.IsZero() && !now.Before(logical.expiresAt) {
+					delete(r.sessions, id)
+					logical.markDeletedLocked(session.AuthorizationExpired)
+					expired = append(expired, logical)
+				}
+				logical.mu.Unlock()
+			}
+			r.mu.Unlock()
+			for _, logical := range expired {
+				logical.maybeCleanupLocked(r)
+			}
+		}
+	}
+}
+
 // operation cancelled by Close to actually return, before the caller tears
 // down any dependency those operations might still be using. Used only by
 // Process.Close/rollback, which owns exactly such dependencies (vMCP server,
@@ -1091,6 +1121,9 @@ func (r *Runtime) closeAndSnapshot() []*logicalSession {
 	first := !r.closed
 	if first {
 		r.closed = true
+		if r.sweeperEnabled {
+			close(r.sweepStop)
+		}
 		r.drainSessions = make([]*logicalSession, 0, len(r.sessions))
 		for _, logical := range r.sessions {
 			r.drainSessions = append(r.drainSessions, logical)
@@ -1105,6 +1138,9 @@ func (r *Runtime) closeAndSnapshot() []*logicalSession {
 	}
 	sessions := append([]*logicalSession(nil), r.drainSessions...)
 	r.mu.Unlock()
+	if first && r.sweeperEnabled {
+		<-r.sweepDone
+	}
 
 	if first && r.oauth.httpClient != nil {
 		r.oauth.httpClient.CloseIdleConnections()

@@ -37,13 +37,15 @@ const (
 
 // Config bounds transport calls and server-side attachment retention.
 type Config struct {
-	DialTimeout       time.Duration
-	RPCDeadline       time.Duration
-	ExecuteDeadline   time.Duration
-	HandleIdleTimeout time.Duration
-	SweepInterval     time.Duration
-	CleanupTimeout    time.Duration
-	MaxHandles        int
+	DialTimeout        time.Duration
+	RPCDeadline        time.Duration
+	ExecuteDeadline    time.Duration
+	HandleIdleTimeout  time.Duration
+	SweepInterval      time.Duration
+	CleanupTimeout     time.Duration
+	MaxHandles         int
+	MaxReceipts        int
+	MaxPendingControls int
 }
 
 // DefaultConfig returns finite production defaults for the initial single-process broker.
@@ -52,7 +54,7 @@ func DefaultConfig() Config {
 		DialTimeout: 5 * time.Second, RPCDeadline: 10 * time.Second,
 		ExecuteDeadline: 2 * time.Minute, HandleIdleTimeout: 5 * time.Minute,
 		SweepInterval: 30 * time.Second, CleanupTimeout: 10 * time.Second,
-		MaxHandles: defaultMaxHandles,
+		MaxHandles: defaultMaxHandles, MaxReceipts: 4096, MaxPendingControls: 1024,
 	}
 }
 
@@ -91,18 +93,19 @@ func Dial(ctx context.Context, target string, cfg Config, opts ...grpc.DialOptio
 // Server adapts one mcpbroker.Service incarnation to the broker RPC service.
 type Server struct {
 	brokerv1.UnimplementedBrokerServiceServer
-	service     mcpbroker.Service
-	mu          sync.Mutex
-	handles     map[string]*serverAttachment
-	maxHandles  int
-	incarnation string
-	cfg         Config
-	closed      bool
-	done        chan struct{}
-	stop        chan struct{}
-	executeCtx  context.Context
-	executeStop context.CancelFunc
-	executeWG   sync.WaitGroup
+	service         mcpbroker.Service
+	mu              sync.Mutex
+	handles         map[string]*serverAttachment
+	maxHandles      int
+	incarnation     string
+	cfg             Config
+	closed          bool
+	done            chan struct{}
+	stop            chan struct{}
+	executeCtx      context.Context
+	executeStop     context.CancelFunc
+	executeWG       sync.WaitGroup
+	pendingControls int
 }
 type lifecycleOperation uint8
 
@@ -149,6 +152,13 @@ func NewServerWithConfig(service mcpbroker.Service, cfg Config) (*Server, error)
 	}
 	if !cfg.valid() {
 		return nil, errors.New("mcpbrokergrpc: all deadlines and capacities must be positive")
+	}
+	defaults := DefaultConfig()
+	if cfg.MaxReceipts == 0 {
+		cfg.MaxReceipts = defaults.MaxReceipts
+	}
+	if cfg.MaxPendingControls == 0 {
+		cfg.MaxPendingControls = defaults.MaxPendingControls
 	}
 	incarnation, err := newHandle()
 	if err != nil {
@@ -291,7 +301,12 @@ func (s *Server) beginLifecycle(ctx context.Context, incarnation, handle string,
 				return nil, "", false, status.FromContextError(ctx.Err()).Err()
 			}
 		}
+		if s.pendingControls >= s.cfg.MaxPendingControls {
+			s.mu.Unlock()
+			return nil, "", false, reasonStatus(codes.ResourceExhausted, "broker control capacity reached", brokerv1.BrokerErrorReason_BROKER_ERROR_REASON_CAPACITY_REACHED, "")
+		}
 		a.running = operation
+		s.pendingControls++
 		a.runningDone = make(chan struct{})
 		a.active++
 		signalAttachment(a)
@@ -306,6 +321,9 @@ func (s *Server) finishLifecycle(a *serverAttachment, operation lifecycleOperati
 	if terminal {
 		a.terminal = operation
 		a.terminalOutcome = outcome
+	}
+	if a.running != lifecycleNone {
+		s.pendingControls--
 	}
 	a.running = lifecycleNone
 	done := a.runningDone
@@ -516,6 +534,10 @@ func (s *Server) Execute(ctx context.Context, req *brokerv1.ExecuteRequest) (*br
 		}
 		receipt.started = true
 	} else {
+		if len(a.receipts) >= s.cfg.MaxReceipts {
+			s.mu.Unlock()
+			return nil, reasonStatus(codes.ResourceExhausted, "broker receipt capacity reached", brokerv1.BrokerErrorReason_BROKER_ERROR_REASON_CAPACITY_REACHED, "")
+		}
 		receipt = &executeReceipt{digest: digest, started: true, done: make(chan struct{})}
 		a.receipts[call.ID] = receipt
 	}
@@ -606,6 +628,10 @@ func (s *Server) RequestAuthorization(ctx context.Context, req *brokerv1.Request
 		return nil, invalid("call_id was reused with different invocation content")
 	}
 	if receipt == nil {
+		if len(a.receipts) >= s.cfg.MaxReceipts {
+			s.mu.Unlock()
+			return nil, reasonStatus(codes.ResourceExhausted, "broker receipt capacity reached", brokerv1.BrokerErrorReason_BROKER_ERROR_REASON_CAPACITY_REACHED, "")
+		}
 		a.receipts[call.ID] = &executeReceipt{digest: digest, done: make(chan struct{})}
 	}
 	s.mu.Unlock()
@@ -849,6 +875,8 @@ func brokerStatus(err error) error {
 		return reasonStatus(codes.FailedPrecondition, "attachment closed", brokerv1.BrokerErrorReason_BROKER_ERROR_REASON_ATTACHMENT_CLOSED, "")
 	case errors.Is(err, mcpbroker.ErrStateUnavailable):
 		return reasonStatus(codes.Unavailable, "broker state unavailable", brokerv1.BrokerErrorReason_BROKER_ERROR_REASON_STATE_UNAVAILABLE, "")
+	case errors.Is(err, mcpbroker.ErrCapacity):
+		return reasonStatus(codes.ResourceExhausted, "broker capacity reached", brokerv1.BrokerErrorReason_BROKER_ERROR_REASON_CAPACITY_REACHED, "")
 	case errors.Is(err, mcpbroker.ErrAuthorizationNotFound):
 		return reasonStatus(codes.NotFound, "authorization not found", brokerv1.BrokerErrorReason_BROKER_ERROR_REASON_AUTHORIZATION_NOT_FOUND, "")
 	default:

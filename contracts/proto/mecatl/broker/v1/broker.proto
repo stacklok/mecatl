@@ -33,6 +33,7 @@ enum BrokerErrorReason {
   BROKER_ERROR_REASON_ATTACHMENT_CLOSED = 2;
   BROKER_ERROR_REASON_AUTHORIZATION_NOT_FOUND = 3;
   BROKER_ERROR_REASON_DISPATCH_NOT_STARTED = 4;
+  BROKER_ERROR_REASON_CAPACITY_REACHED = 5;
 }
 
 // BrokerErrorDetail gives clients stable error identity without status-text inference.

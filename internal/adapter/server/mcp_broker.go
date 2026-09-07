@@ -83,6 +83,26 @@ func (s *Service) openBrokerAttachment(ctx context.Context, id session.SessionID
 // that issued it. Live authorization control paths deliberately do NOT rebind:
 // they must hard-fail on a mismatch rather than resolve against fresh state.
 func (s *Service) rebindBrokerAttachment(ctx context.Context, sess *session.Session) (*localBrokerAttachment, error) {
+	if s.cfg.MCPBrokerFactory != nil {
+		s.brokerReplacementMu.Lock()
+		defer s.brokerReplacementMu.Unlock()
+		if s.brokerFactoryClose != nil {
+			_ = s.brokerFactoryClose()
+			s.brokerFactoryClose = nil
+		}
+		fresh, closeFresh, err := s.cfg.MCPBrokerFactory(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("%w: replace MCP broker client: %v", ErrInternal, err)
+		}
+		if fresh == nil || closeFresh == nil {
+			if closeFresh != nil {
+				_ = closeFresh()
+			}
+			return nil, fmt.Errorf("%w: replacement MCP broker factory returned incomplete service", ErrInternal)
+		}
+		s.cfg.MCPBroker = fresh
+		s.brokerFactoryClose = closeFresh
+	}
 	local, err := s.openBrokerAttachment(ctx, sess.ID, "", false)
 	if err != nil {
 		return nil, err
