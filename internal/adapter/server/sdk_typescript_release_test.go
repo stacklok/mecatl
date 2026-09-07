@@ -134,11 +134,22 @@ func TestSDKTypescriptRelease_Scenario1_PublicServiceProjectionParity(t *testing
 	rows := parseSDKRPCCatalog(t, sdkRPCCatalogSource(t))
 	serviceType := reflect.TypeOf((*Service)(nil))
 	mapped := make(map[string]struct{}, len(rows))
+	mappedAccess := make(map[string]struct{}, len(rows))
 	for _, row := range rows {
 		if _, duplicate := mapped[row.backingService]; duplicate {
 			t.Fatalf("Service.%s is projected by more than one descriptor row", row.backingService)
 		}
 		mapped[row.backingService] = struct{}{}
+		if row.backingService == "serverInfoResponse" {
+			serverInfoSource, err := os.ReadFile(filepath.Join(filepath.Dir(sdkServerHTTPSourcePath(t)), "serverinfo.go"))
+			if err != nil {
+				t.Fatalf("read server-info projection source: %v", err)
+			}
+			if !regexp.MustCompile(`func \(s \*Service\) serverInfoResponse\(`).Match(serverInfoSource) {
+				t.Errorf("catalog row %q names missing private *Service method %q", row.key, row.backingService)
+			}
+			continue
+		}
 		if _, ok := serviceType.MethodByName(row.backingService); !ok {
 			t.Errorf("catalog row %q names missing exported *Service method %q", row.key, row.backingService)
 		}
@@ -147,6 +158,7 @@ func TestSDKTypescriptRelease_Scenario1_PublicServiceProjectionParity(t *testing
 			t.Errorf("catalog row %q names unclassified *Service method %q", row.key, row.backingService)
 			continue
 		}
+		mappedAccess[row.backingService] = struct{}{}
 		if err := entry.validate(); err != nil {
 			t.Errorf("catalog row %q names invalid classification for *Service.%s: %v", row.key, row.backingService, err)
 		}
@@ -192,6 +204,7 @@ func TestSDKTypescriptRelease_Scenario1_PublicServiceProjectionParity(t *testing
 		"MaybeAutoApprovePlan",
 		"OwnershipEnforced",
 		"Persist",
+		"ProviderCapabilities",
 		"ProviderStatuses",
 		"PublishSessionEvent",
 		"ReattachPlacement",
@@ -224,12 +237,12 @@ func TestSDKTypescriptRelease_Scenario1_PublicServiceProjectionParity(t *testing
 		t,
 		"classified non-RPC Service complement",
 		nonRPCServiceMethods,
-		sdkStringSetSubtract(classified, mapped),
+		sdkStringSetSubtract(classified, mappedAccess),
 	)
 	assertSDKStringSetsEqual(
 		t,
 		"classified RPC-reachable Service projection",
-		mapped,
+		mappedAccess,
 		sdkStringSetSubtract(classified, nonRPCServiceMethods),
 	)
 }

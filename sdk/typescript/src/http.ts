@@ -22,7 +22,9 @@ import { registerRawJson, registerTransport } from "./raw.js";
 import {
   type HTTPMethod,
   type HTTPOnlyControlName,
+  type HTTPTransportClassification,
   resolveHTTPOnlyControl,
+  resolveHTTPRoute,
 } from "./rpc-catalog.js";
 
 /** @public */
@@ -41,11 +43,6 @@ type SSEFrame = { data: string; event: string };
 function record(value: JsonValue): JsonRecord {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return {};
   return value as JsonRecord;
-}
-
-function stringField(value: JsonRecord, name: string): string {
-  const field = value[name];
-  return typeof field === "string" ? field : "";
 }
 
 function permissionMode(value: JsonValue | undefined): string {
@@ -95,54 +92,10 @@ function encodeInput(
   if (method.name === "CreateSession" || method.name === "SetMode") {
     json.mode = permissionMode(json.mode);
   }
-  return json;
-}
-
-function unaryRoute(name: string, input: JsonRecord): Route | undefined {
-  const sessionId = encodeURIComponent(stringField(input, "session_id"));
-  const sourceSessionId = encodeURIComponent(stringField(input, "source_session_id"));
-  switch (name) {
-    case "GetCompatibilityInfo":
-      return { body: false, method: "GET", path: "/v1/compatibility" };
-    case "GetServerInfo": {
-      const provider = stringField(input, "provider_id");
-      return {
-        body: false,
-        method: "GET",
-        path: provider === "" ? "/v1/info" : `/v1/info?provider_id=${encodeURIComponent(provider)}`,
-      };
-    }
-    case "CreateSession":
-      return { body: true, method: "POST", path: "/v1/sessions" };
-    case "GetSession":
-      return { body: false, method: "GET", path: `/v1/sessions/${sessionId}` };
-    case "SetMode":
-      return { body: true, method: "POST", path: `/v1/sessions/${sessionId}/mode` };
-    case "CloseSession":
-      return { body: false, method: "DELETE", path: `/v1/sessions/${sessionId}` };
-    case "RenameSession":
-      return { body: true, method: "POST", path: `/v1/sessions/${sessionId}/rename` };
-    case "DeleteSession":
-      return { body: false, method: "POST", path: `/v1/sessions/${sessionId}/delete` };
-    case "CompactSession":
-      return { body: false, method: "POST", path: `/v1/sessions/${sessionId}/compact` };
-    case "ForkSession":
-      return { body: true, method: "POST", path: `/v1/sessions/${sourceSessionId}/fork` };
-    case "ListSessions":
-      return { body: false, method: "GET", path: "/v1/sessions" };
-    case "ListModels":
-      return { body: false, method: "GET", path: "/v1/models" };
-    default:
-      return undefined;
+  if (method.name === "ApprovePlan" && json.target_mode !== undefined) {
+    json.target_mode = permissionMode(json.target_mode);
   }
-}
-
-function requestBody(name: string, input: JsonRecord): JsonRecord {
-  const body = { ...input };
-  delete body.session_id;
-  delete body.source_session_id;
-  if (name === "SetMode") body.mode = permissionMode(input.mode);
-  return body;
+  return json;
 }
 
 function normalizeSession(value: JsonValue): JsonValue {
@@ -164,15 +117,15 @@ function permissionModeTextToNumber(value: JsonValue | undefined): number {
   }
 }
 
-function normalizeUnaryResponse(name: string, raw: JsonValue): JsonValue {
-  switch (name) {
-    case "GetSession":
-    case "SetMode":
-    case "RenameSession":
-      return { session: normalizeSession(raw) };
-    default:
-      return raw;
+function normalizeUnaryResponse(
+  classification: HTTPTransportClassification,
+  raw: JsonValue,
+): JsonValue {
+  if (classification.responseField === "session") return { session: normalizeSession(raw) };
+  if (classification.responseField !== undefined) {
+    return { [classification.responseField]: raw };
   }
+  return raw;
 }
 
 function timeoutSignal(
@@ -187,9 +140,21 @@ function timeoutSignal(
 function sessionControlRoute(name: HTTPOnlyControlName, sessionId: string): Route {
   const control = resolveHTTPOnlyControl(name, { session_id: sessionId });
   return {
-    body: control.requestBody === "json",
+    body: control.requestBody !== "none",
     method: control.method,
     path: control.path,
+  };
+}
+
+// HTTP steer remains a feature-gated latent client capability until the server
+// routes from ADR 0252 join this branch. It is deliberately outside the current
+// route inventory, whose partition must equal the handlers registered today.
+function latentHTTPSteerRoute(kind: "steer" | "steerCancel", sessionId: string): Route {
+  const suffix = kind === "steer" ? "steer" : "cancel-steer";
+  return {
+    body: true,
+    method: "POST",
+    path: `/v1/sessions/${encodeURIComponent(sessionId)}/${suffix}`,
   };
 }
 
@@ -261,13 +226,17 @@ class HttpTransport implements Transport {
     _contextValues?: ContextValues,
   ): Promise<UnaryResponse<I, O>> {
     const jsonInput = encodeInput(method, input);
-    const route = unaryRoute(method.name, jsonInput);
-    if (route === undefined) {
+    const resolved = resolveHTTPRoute(method, jsonInput);
+    if (resolved === undefined || resolved.classification.response !== "json") {
       throw new UnsupportedFeatureError(`http_${method.name}`, { transport: "http" });
     }
     const response = await this.#request(
-      route,
-      requestBody(method.name, jsonInput),
+      {
+        body: resolved.body !== undefined,
+        method: resolved.method,
+        path: resolved.path,
+      },
+      record(resolved.body ?? {}),
       timeoutSignal(signal, timeoutMs),
       header,
     );
@@ -284,7 +253,7 @@ class HttpTransport implements Transport {
         });
       }
     }
-    const normalized = normalizeUnaryResponse(method.name, raw);
+    const normalized = normalizeUnaryResponse(resolved.classification, raw);
     let message: MessageShape<O>;
     try {
       message = fromJson(method.output, normalized, { ignoreUnknownFields: true });
@@ -344,7 +313,7 @@ class HttpTransport implements Transport {
         if (!this.#features.has("http_steer")) {
           throw new UnsupportedFeatureError("http_steer", { transport: "http" });
         }
-        route = sessionControlRoute("steer", sessionId);
+        route = latentHTTPSteerRoute("steer", sessionId);
         body = {
           expected_run_id: kind.value.expectedRunId,
           message_id: kind.value.messageId,
@@ -361,7 +330,7 @@ class HttpTransport implements Transport {
         if (!this.#features.has("http_steer")) {
           throw new UnsupportedFeatureError("http_steer", { transport: "http" });
         }
-        route = sessionControlRoute("steerCancel", sessionId);
+        route = latentHTTPSteerRoute("steerCancel", sessionId);
         body = {
           expected_run_id: kind.value.expectedRunId,
           message_id: kind.value.messageId,
@@ -410,25 +379,7 @@ class HttpTransport implements Transport {
     let startControls: (() => Promise<never>) | undefined;
     let controlFailure: Promise<never> = new Promise(() => undefined);
 
-    if (method.name === "StreamSessionEvents") {
-      route = {
-        body: false,
-        method: "GET",
-        path: `/v1/sessions/${encodeURIComponent(stringField(jsonInput, "session_id"))}/events`,
-      };
-    } else if (method.name === "WatchSessionEvents") {
-      const query = new URLSearchParams();
-      const cursor = stringField(jsonInput, "cursor");
-      const runId = stringField(jsonInput, "run_id");
-      if (cursor !== "") query.set("cursor", cursor);
-      if (runId !== "") query.set("run_id", runId);
-      const suffix = query.toString();
-      route = {
-        body: false,
-        method: "GET",
-        path: `/v1/sessions/${encodeURIComponent(stringField(jsonInput, "session_id"))}/watch${suffix === "" ? "" : `?${suffix}`}`,
-      };
-    } else if (method.name === "Converse") {
+    if (method.name === "Converse") {
       const frame = firstInput as unknown as ConverseRequest;
       const start = frame.kind;
       if (start.case !== "prompt" && start.case !== "retry") {
@@ -465,7 +416,16 @@ class HttpTransport implements Transport {
         }
       };
     } else {
-      throw new UnsupportedFeatureError(`http_${method.name}`, { transport: "http" });
+      const resolved = resolveHTTPRoute(method, jsonInput);
+      if (resolved === undefined || resolved.classification.response !== "sse") {
+        throw new UnsupportedFeatureError(`http_${method.name}`, { transport: "http" });
+      }
+      route = {
+        body: resolved.body !== undefined,
+        method: resolved.method,
+        path: resolved.path,
+      };
+      body = record(resolved.body ?? {});
     }
 
     const response = await this.#request(route, body, effectiveSignal, header);

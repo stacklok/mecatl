@@ -2,7 +2,9 @@ import type {
   DescMessage,
   DescMethodBiDiStreaming,
   DescMethodServerStreaming,
+  DescMethodStreaming,
   DescMethodUnary,
+  JsonValue,
 } from "@bufbuild/protobuf";
 
 import { HarnessService } from "./gen/mecatl/v1/harness_pb.js";
@@ -28,7 +30,7 @@ export type RPCServiceName = (typeof RPC_CATALOG_SERVICES)[number];
 export type RPCStreamingShape = "unary" | "server_streaming" | "bidi_streaming";
 export type RPCRouteFamily = (typeof RPC_ROUTE_FAMILIES)[number];
 export type HTTPMethod = "DELETE" | "GET" | "POST" | "PUT";
-export type HTTPRequestBody = "json" | "none";
+export type HTTPRequestBody = "json" | "none" | "optional-json";
 export type HTTPResponseKind = "json" | "sse";
 
 type RPCDescriptor = DescMethodUnary | DescMethodServerStreaming | DescMethodBiDiStreaming;
@@ -46,6 +48,8 @@ export interface GRPCTransportClassification<D extends RPCDescriptor = RPCDescri
 }
 
 export interface HTTPTransportClassification {
+  /** Dot-separated request field whose value is the complete HTTP body. */
+  readonly bodyField?: string;
   readonly decoder: DescMessage;
   readonly kind: "http";
   readonly method: HTTPMethod;
@@ -55,6 +59,8 @@ export interface HTTPTransportClassification {
   readonly pathParameters: readonly string[];
   readonly queryParameters: readonly string[];
   readonly requestBody: HTTPRequestBody;
+  /** Response field that receives the complete HTTP JSON document. */
+  readonly responseField?: string;
   readonly response: HTTPResponseKind;
 }
 
@@ -86,12 +92,14 @@ export interface RPCCatalogEntry<
 }
 
 interface HTTPRouteReview {
+  readonly bodyField?: string;
   readonly kind: "http";
   readonly method: HTTPMethod;
   readonly pathTemplate: string;
   readonly pathParameters: readonly string[];
   readonly queryParameters: readonly string[];
   readonly requestBody: HTTPRequestBody;
+  readonly responseField?: string;
   readonly response: HTTPResponseKind;
 }
 
@@ -119,14 +127,18 @@ function http(
   queryParameters: readonly string[],
   requestBody: HTTPRequestBody,
   response: HTTPResponseKind,
+  bodyField = "",
+  responseField = "",
 ): HTTPRouteReview {
   return {
+    ...(bodyField === "" ? {} : { bodyField }),
     kind: "http",
     method,
     pathParameters,
     pathTemplate,
     queryParameters,
     requestBody,
+    ...(responseField === "" ? {} : { responseField }),
     response,
   };
 }
@@ -166,7 +178,7 @@ function rpc<
 
 export const HTTP_ONLY_CONTROLS = {
   approve: http("POST", "/v1/sessions/{id}/approve", ["id=session_id"], [], "json", "json"),
-  cancel: http("POST", "/v1/sessions/{id}/cancel", ["id=session_id"], [], "json", "json"),
+  cancel: http("POST", "/v1/sessions/{id}/cancel", ["id=session_id"], [], "optional-json", "json"),
   cancelChild: http(
     "POST",
     "/v1/sessions/{id}/cancel-child",
@@ -177,15 +189,6 @@ export const HTTP_ONLY_CONTROLS = {
   ),
   prompt: http("POST", "/v1/sessions/{id}/prompt", ["id=session_id"], [], "json", "sse"),
   retry: http("POST", "/v1/sessions/{id}/retry", ["id=session_id"], [], "none", "sse"),
-  steer: http("POST", "/v1/sessions/{id}/steer", ["id=session_id"], [], "json", "json"),
-  steerCancel: http(
-    "POST",
-    "/v1/sessions/{id}/cancel-steer",
-    ["id=session_id"],
-    [],
-    "json",
-    "json",
-  ),
 } as const;
 
 export type HTTPOnlyControlName = keyof typeof HTTP_ONLY_CONTROLS;
@@ -195,6 +198,125 @@ export interface ResolvedHTTPOnlyControl {
   readonly path: string;
   readonly requestBody: HTTPRequestBody;
   readonly response: HTTPResponseKind;
+}
+
+export interface ResolvedHTTPRoute {
+  readonly body: JsonValue | undefined;
+  readonly classification: HTTPTransportClassification;
+  readonly method: HTTPMethod;
+  readonly path: string;
+}
+
+type JsonRecord = Record<string, JsonValue>;
+
+function jsonRecord(value: JsonValue | undefined): JsonRecord {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return {};
+  return value as JsonRecord;
+}
+
+function mappingParts(mapping: string): readonly [target: string, source: string] {
+  const separator = mapping.indexOf("=");
+  return separator < 0
+    ? [mapping, mapping]
+    : [mapping.slice(0, separator), mapping.slice(separator + 1)];
+}
+
+function fieldValue(input: JsonRecord, path: string): JsonValue | undefined {
+  let current: JsonValue | undefined = input;
+  for (const segment of path.split(".")) {
+    current = jsonRecord(current)[segment];
+    if (current === undefined) return undefined;
+  }
+  return current;
+}
+
+function cloneJson(value: JsonValue): JsonValue {
+  if (Array.isArray(value)) return value.map(cloneJson);
+  if (typeof value !== "object" || value === null) return value;
+  const cloned: JsonRecord = {};
+  for (const [name, child] of Object.entries(value)) cloned[name] = cloneJson(child);
+  return cloned;
+}
+
+function deleteField(input: JsonRecord, path: string): void {
+  const segments = path.split(".");
+  let current = input;
+  for (const segment of segments.slice(0, -1)) {
+    const child = current[segment];
+    if (typeof child !== "object" || child === null || Array.isArray(child)) return;
+    current = child as JsonRecord;
+  }
+  delete current[segments.at(-1) ?? ""];
+}
+
+function scalarText(value: JsonValue, label: string): string {
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  throw new TypeError(`${label} must map to a scalar request field`);
+}
+
+function routeBody(
+  classification: HTTPTransportClassification,
+  input: JsonRecord,
+): JsonValue | undefined {
+  if (classification.requestBody === "none") return undefined;
+  const body = jsonRecord(
+    classification.bodyField === undefined
+      ? jsonRecord(cloneJson(input))
+      : cloneJson(fieldValue(input, classification.bodyField) ?? {}),
+  );
+  if (classification.bodyField === undefined) {
+    for (const mapping of [...classification.pathParameters, ...classification.queryParameters]) {
+      const [, source] = mappingParts(mapping);
+      if (!source.startsWith("@")) deleteField(body, source);
+    }
+  }
+  if (
+    classification.requestBody === "optional-json" &&
+    Object.keys(jsonRecord(body)).length === 0
+  ) {
+    return undefined;
+  }
+  return body;
+}
+
+/** Resolves one catalogued HTTP request without introducing a second route table. */
+export function resolveHTTPRoute(
+  method: DescMethodUnary | DescMethodStreaming,
+  input: JsonRecord,
+): ResolvedHTTPRoute | undefined {
+  const entry = rpcCatalogByDescriptor.get(method);
+  if (entry?.http.kind !== "http") return undefined;
+  const classification = entry.http;
+  let path = classification.pathTemplate;
+  for (const mapping of classification.pathParameters) {
+    const [placeholder, source] = mappingParts(mapping);
+    const value = source.startsWith("@") ? source.slice(1) : fieldValue(input, source);
+    if (value === undefined) throw new TypeError(`Missing HTTP route field ${source}`);
+    path = path.replace(
+      `{${placeholder}}`,
+      encodeURIComponent(scalarText(value, `HTTP route field ${source}`)),
+    );
+  }
+  const query = new URLSearchParams();
+  for (const mapping of classification.queryParameters) {
+    const [name, source] = mappingParts(mapping);
+    const value = fieldValue(input, source);
+    if (value === undefined) continue;
+    if (Array.isArray(value)) {
+      for (const item of value) query.append(name, scalarText(item, `HTTP query field ${source}`));
+    } else {
+      query.set(name, scalarText(value, `HTTP query field ${source}`));
+    }
+  }
+  const suffix = query.toString();
+  return {
+    body: routeBody(classification, input),
+    classification,
+    method: classification.method,
+    path: `${path}${suffix === "" ? "" : `?${suffix}`}`,
+  };
 }
 
 /** Resolve one descriptorless HTTP control without admitting it to RPC coverage. */
@@ -246,7 +368,7 @@ const rpcCatalogRows = [
     service: "HarnessService",
     method: "GetServerInfo",
     shape: "unary",
-    backingService: "ProviderCapabilities",
+    backingService: "serverInfoResponse",
     grpc: grpc(HarnessService.method.getServerInfo),
     http: http("GET", "/v1/info", [], ["provider_id"], "none", "json"),
   }),
@@ -257,7 +379,7 @@ const rpcCatalogRows = [
     shape: "unary",
     backingService: "GetSession",
     grpc: grpc(HarnessService.method.getSession),
-    http: http("GET", "/v1/sessions/{id}", ["id=session_id"], [], "none", "json"),
+    http: http("GET", "/v1/sessions/{id}", ["id=session_id"], [], "none", "json", "", "session"),
   }),
   rpc({
     key: "HarnessService.GetSessionTranscript",
@@ -275,7 +397,16 @@ const rpcCatalogRows = [
     shape: "unary",
     backingService: "SetMode",
     grpc: grpc(HarnessService.method.setMode),
-    http: http("POST", "/v1/sessions/{id}/mode", ["id=session_id"], [], "json", "json"),
+    http: http(
+      "POST",
+      "/v1/sessions/{id}/mode",
+      ["id=session_id"],
+      [],
+      "json",
+      "json",
+      "",
+      "session",
+    ),
   }),
   rpc({
     key: "HarnessService.CloseSession",
@@ -293,7 +424,16 @@ const rpcCatalogRows = [
     shape: "unary",
     backingService: "RenameSession",
     grpc: grpc(HarnessService.method.renameSession),
-    http: http("POST", "/v1/sessions/{id}/rename", ["id=session_id"], [], "json", "json"),
+    http: http(
+      "POST",
+      "/v1/sessions/{id}/rename",
+      ["id=session_id"],
+      [],
+      "json",
+      "json",
+      "",
+      "session",
+    ),
   }),
   rpc({
     key: "HarnessService.DeleteSession",
@@ -320,7 +460,14 @@ const rpcCatalogRows = [
     shape: "unary",
     backingService: "ClearSessionSuccessor",
     grpc: grpc(HarnessService.method.clearSession),
-    http: http("POST", "/v1/sessions/{id}/clear", ["id=source_session_id"], [], "json", "json"),
+    http: http(
+      "POST",
+      "/v1/sessions/{id}/clear",
+      ["id=source_session_id"],
+      [],
+      "optional-json",
+      "json",
+    ),
   }),
   rpc({
     key: "HarnessService.ForkSession",
@@ -329,7 +476,14 @@ const rpcCatalogRows = [
     shape: "unary",
     backingService: "ForkSessionSuccessor",
     grpc: grpc(HarnessService.method.forkSession),
-    http: http("POST", "/v1/sessions/{id}/fork", ["id=source_session_id"], [], "json", "json"),
+    http: http(
+      "POST",
+      "/v1/sessions/{id}/fork",
+      ["id=source_session_id"],
+      [],
+      "optional-json",
+      "json",
+    ),
   }),
   rpc({
     key: "HarnessService.Converse",
@@ -338,15 +492,7 @@ const rpcCatalogRows = [
     shape: "bidi_streaming",
     backingService: "StartRunContent",
     grpc: grpc(HarnessService.method.converse),
-    http: routeFamily("Converse", [
-      "prompt",
-      "retry",
-      "approve",
-      "cancel",
-      "cancelChild",
-      "steer",
-      "steerCancel",
-    ]),
+    http: routeFamily("Converse", ["prompt", "retry", "approve", "cancel", "cancelChild"]),
   }),
   rpc({
     key: "HarnessService.ListMcpResources",
@@ -506,7 +652,14 @@ const rpcCatalogRows = [
     shape: "unary",
     backingService: "ResumeSessionMigration",
     grpc: grpc(HarnessService.method.resumeSessionMigration),
-    http: http("POST", "/v1/storage/migrations/{id}/resume", ["id=job_id"], [], "json", "json"),
+    http: http(
+      "POST",
+      "/v1/storage/migrations/{id}/resume",
+      ["id=job_id"],
+      [],
+      "optional-json",
+      "json",
+    ),
   }),
   rpc({
     key: "HarnessService.CancelSessionMigration",
@@ -515,7 +668,7 @@ const rpcCatalogRows = [
     shape: "unary",
     backingService: "CancelSessionMigration",
     grpc: grpc(HarnessService.method.cancelSessionMigration),
-    http: http("POST", "/v1/storage/migrations/{id}/cancel", ["id=job_id"], [], "json", "json"),
+    http: http("POST", "/v1/storage/migrations/{id}/cancel", ["id=job_id"], [], "none", "json"),
   }),
   rpc({
     key: "HarnessService.GetSessionMigrationJob",
@@ -551,7 +704,7 @@ const rpcCatalogRows = [
     shape: "unary",
     backingService: "CancelSessionCleanup",
     grpc: grpc(HarnessService.method.cancelSessionCleanup),
-    http: http("POST", "/v1/storage/cleanup/jobs/{id}/cancel", ["id=job_id"], [], "json", "json"),
+    http: http("POST", "/v1/storage/cleanup/jobs/{id}/cancel", ["id=job_id"], [], "none", "json"),
   }),
   rpc({
     key: "HarnessService.GetSessionCleanupJob",
@@ -745,7 +898,7 @@ const rpcCatalogRows = [
       "GET",
       "/v1/skills/learned/{id}/diff",
       ["id=id"],
-      ["project", "owner_agent", "from_version", "to_version"],
+      ["project", "owner_agent", "from=from_version", "to=to_version"],
       "none",
       "json",
     ),
@@ -881,7 +1034,14 @@ const rpcCatalogRows = [
     shape: "server_streaming",
     backingService: "ApprovePlan",
     grpc: grpc(HarnessService.method.approvePlan),
-    http: http("POST", "/v1/sessions/{id}/plan:approve", ["id=session_id"], [], "json", "sse"),
+    http: http(
+      "POST",
+      "/v1/sessions/{id}/plan:approve",
+      ["id=session_id"],
+      [],
+      "optional-json",
+      "sse",
+    ),
   }),
   rpc({
     key: "ScheduleService.CreateSchedule",
@@ -890,7 +1050,7 @@ const rpcCatalogRows = [
     shape: "unary",
     backingService: "CreateSchedule",
     grpc: grpc(ScheduleService.method.createSchedule),
-    http: http("POST", "/v1/schedules", [], [], "json", "json"),
+    http: http("POST", "/v1/schedules", [], [], "json", "json", "spec"),
   }),
   rpc({
     key: "ScheduleService.GetSchedule",
@@ -917,7 +1077,7 @@ const rpcCatalogRows = [
     shape: "unary",
     backingService: "UpdateSchedule",
     grpc: grpc(ScheduleService.method.updateSchedule),
-    http: http("PUT", "/v1/schedules/{name}", ["name=name"], [], "json", "json"),
+    http: http("PUT", "/v1/schedules/{name}", ["name=spec.name"], [], "json", "json", "spec"),
   }),
   rpc({
     key: "ScheduleService.DeleteSchedule",
@@ -999,6 +1159,9 @@ function indexCatalog<const Rows extends readonly RPCCatalogEntry[]>(rows: Rows)
 
 /** The reviewed HarnessService + ScheduleService raw-transport completeness authority. */
 export const RPC_CATALOG = indexCatalog(rpcCatalogRows);
+
+const rpcCatalogByDescriptor = new Map<DescMethodUnary | DescMethodStreaming, RPCCatalogEntry>();
+for (const entry of rpcCatalogRows) rpcCatalogByDescriptor.set(entry.grpc.descriptor, entry);
 
 export type RPCCatalog = typeof RPC_CATALOG;
 export type RPCCatalogKey = keyof RPCCatalog;

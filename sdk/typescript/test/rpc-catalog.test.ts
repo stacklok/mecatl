@@ -24,7 +24,7 @@ describe("RPC transport catalog", () => {
     expect(resolveHTTPOnlyControl("cancel", { session_id: "a session" })).toMatchObject({
       method: "POST",
       path: "/v1/sessions/a%20session/cancel",
-      requestBody: "json",
+      requestBody: "optional-json",
       response: "json",
     });
     expect(() => resolveHTTPOnlyControl("cancel", {})).toThrowError(
