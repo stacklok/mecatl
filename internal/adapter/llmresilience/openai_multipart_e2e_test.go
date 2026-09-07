@@ -23,7 +23,7 @@ import (
 	openaiadapter "github.com/stacklok/mecatl/provider/openai"
 )
 
-func TestADR_0301_VisibleMultipartFailureIsTerminalWithoutReplayOrPersistence(t *testing.T) {
+func TestADR_0302_VisibleMultipartFailureIsTerminalWithoutReplayOrPersistence(t *testing.T) {
 	t.Run("visible multipart failure", func(t *testing.T) {
 		body, err := os.ReadFile(filepath.Join("testdata", "openai_visible_multipart_failure.sse"))
 		if err != nil {

@@ -1,4 +1,4 @@
-# ADR 0301 — OpenAI Responses visible text delta projection
+# ADR 0302 — OpenAI Responses visible text delta projection
 
 - Status: Accepted
 - Date: 2026-09-06
