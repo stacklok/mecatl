@@ -98,17 +98,26 @@ separate inventory for HTTP-only controls.
 **Acceptance:**
 - AC1.1: The SDK catalog key set is exactly the generated HarnessService and
   ScheduleService descriptor key set — 67 plus 10 today — with no missing,
-  duplicate, or stale row, and every row classifies both raw transports.
+  duplicate, or stale row, and every row classifies both raw transports. Other
+  generated `mecatl.v1` services are excluded only through a pinned exact
+  literal set (initially `{LocalSessionContextService}`, which is
+  operator-enabled and local-trust-scoped), so adding a third public service is
+  a visible diff rather than a silent gate shrink.
   - verify: TestSDKTypescriptRelease_Scenario1_RPCTransportCatalogParity
-- AC1.2: The reviewed gRPC-only set is exactly `{StreamSessionLive}`; changing
-  that set or adding a generic `unsupported` classification fails the guard.
+- AC1.2: The reviewed gRPC-only set is exactly `{StreamSessionLive}`, and the
+  classification type structurally admits no value outside the enumerated
+  gRPC / HTTP / route-family forms — there is no `unsupported` variant to
+  select. The route-family form is itself pinned to an exact literal set
+  (initially `{Converse}`).
   - verify: TestADR_0304_ExactGRPCOnlySet
 - AC1.3: HTTP-only controls are callable from their separate inventory but do
   not satisfy, shadow, or replace any RPC catalog entry.
   - verify: vitest:sdk/typescript/test/rpc-catalog.test.ts#SFRUUC1vbmx5IGNvbnRyb2xzIGRvIG5vdCBzYXRpc2Z5IFJQQyBjb3ZlcmFnZQ — `sdk/typescript/test/rpc-catalog.test.ts :: "HTTP-only controls do not satisfy RPC coverage"`
 - AC1.4: Every descriptor row names a real `*server.Service` method with a valid
   `serviceAccessTable` entry, and every classified RPC-reachable Service method
-  is represented by exactly one descriptor row.
+  is represented by exactly one descriptor row. The complement — classified
+  Service methods deemed not RPC-reachable — is pinned as an exact literal set,
+  so moving a method out of the gate is a visible diff.
   - verify: TestSDKTypescriptRelease_Scenario1_PublicServiceProjectionParity
 - AC1.5: The catalog's unary, server-streaming, and bidirectional classifications
   match the generated descriptor shapes, including `RunTeam`, `ApprovePlan`,
@@ -143,9 +152,23 @@ against the handler inventory.
   and storage plan/apply/job routes.
   - verify: TestSDKTypescriptRelease_Scenario2_HTTPCodecParity
 - AC2.4: An injected fake transport can invoke every catalogued RPC through the
-  public raw seam on gRPC and, except the exact gRPC-only set, HTTP, preserving
-  common request options and normalized errors.
+  public raw seam on gRPC and, except the exact gRPC-only set and the pinned
+  route-family set, HTTP, preserving common request options and normalized
+  errors.
   - verify: vitest:sdk/typescript/test/http-routes.test.ts#cmF3IG9wZXJhdGlvbnMgcmVhY2ggZXZlcnkgY2xhc3NpZmllZCBSUEMgb24gYm90aCB0cmFuc3BvcnRz — `sdk/typescript/test/http-routes.test.ts :: "raw operations reach every classified RPC on both transports"`
+
+- AC2.5: Each row's HTTP (method, path template) equals the registration in
+  `internal/adapter/server/http.go` whose handler invokes that row's
+  AC1.4-declared backing `*server.Service` method, and no two rows share a
+  (method, path) pair outside the pinned route-family set. A syntactically valid
+  route aimed at the wrong handler therefore fails, closing the
+  "says something rather than something true" hole a fake transport cannot see.
+  - verify: TestSDKTypescriptRelease_Scenario2_RouteToServiceInjectivity
+- AC2.6: The RPC catalog's HTTP classifications and the HTTP-only control
+  inventory together account for every route registered in
+  `internal/adapter/server/http.go`, with no route in both and none in neither,
+  so a new server control route cannot be invisible to both inventories.
+  - verify: TestSDKTypescriptRelease_Scenario2_HTTPRoutePartition
 
 ---
 
@@ -243,6 +266,10 @@ validation, tighten-only token option, and child-ID refusal coverage.
 The SDK models the actual `ApprovePlan` stream: the parked run resumes under its
 existing ID and an allow starts one continuation with a new ID
 ([ADR-0304](../adr/0304-typescript-sdk-public-surface-and-release.md) Decision 4;
+[ADR-0069](../adr/0069-plan-approval-gate.md), which owns `target_mode` ->
+verdict, `StopPlanApproved`/`StopPlanIterate`, and the proceed message;
+[ADR-0292](../adr/0292-typescript-sdk-local-daemon-and-tools.md) Decision 8,
+whose plan-mode refusal AC6.5 lifts;
 [#821](https://github.com/stacklok/mecatl/issues/821) “Events, runs, and controls”).
 
 **Work:** `PlanResolution`, plan-specific callback/verdict types, transport
@@ -254,9 +281,11 @@ mapping, single-consumption and run partitioning, attachment composition,
   run's events through its terminal before yielding a continuation with a
   different run ID, and `result()` returns both typed `RunResult`s in order.
   - verify: vitest:sdk/typescript/test/plan-resolution.test.ts#cmVzb2x2ZVBsYW4gc3RyZWFtcyB0aGUgcmVzdW1lZCBydW4gdGhlbiBpdHMgY29udGludWF0aW9u — `sdk/typescript/test/plan-resolution.test.ts :: "resolvePlan streams the resumed run then its continuation"`
-- AC6.2: A deny/iterate resolution returns the resumed run's terminal and no
-  continuation result; a third run ID, reversed ordering, or missing terminal
-  is a protocol error rather than silently flattened.
+- AC6.2: Any resolution whose resumed run does not reach `plan_approved` —
+  deny, iterate, or an approving resolution whose resumed run ends on
+  cancel/error — returns a resumed `RunResult` with no continuation; a third
+  run ID, reversed ordering, or missing terminal is a protocol error rather
+  than silently flattened.
   - verify: vitest:sdk/typescript/test/plan-resolution.test.ts#YSBkZW5pZWQgcGxhbiByZXNvbHV0aW9uIGhhcyBubyBjb250aW51YXRpb24gcnVu — `sdk/typescript/test/plan-resolution.test.ts :: "a denied plan resolution has no continuation run"`
 - AC6.3: A `PlanResolution` may be iterated or drained with `result()` exactly
   once; concurrent or second consumption fails typed before issuing another
@@ -267,13 +296,24 @@ mapping, single-consumption and run partitioning, attachment composition,
   - verify: vitest:sdk/typescript/e2e/plan-resolution.e2e.test.ts#YXR0YWNobWVudHMgcmVtYWluIGJvdW5kIHRvIG9uZSBydW4gZHVyaW5nIHBsYW4gcmVzb2x1dGlvbg — `sdk/typescript/e2e/plan-resolution.e2e.test.ts :: "attachments remain bound to one run during plan resolution"`
 - AC6.5: `query({mode: "plan"})` refuses before resource creation without
   `onPlanApproval`; with it, the owned live run resolves the plan-specific ask,
-  drains its terminal, starts a new-ID continuation only on allow, and returns
-  the continuation's one-shot result.
+  drains its terminal, and only on allow opens a **fresh** Converse stream (or
+  the HTTP prompt route) for the new-ID continuation — never a second start
+  frame on the live stream, which the server refuses with `InvalidArgument` and
+  which cancels the active run. The one-shot result flattens both runs.
   - verify: vitest:sdk/typescript/e2e/plan-resolution.e2e.test.ts#cXVlcnkgcGxhbiBtb2RlIHJlcXVpcmVzIG9uUGxhbkFwcHJvdmFsIGFuZCBmbGF0dGVucyBib3RoIHJ1bnM — `sdk/typescript/e2e/plan-resolution.e2e.test.ts :: "query plan mode requires onPlanApproval and flattens both runs"`
 - AC6.6: A plan-originated ask invokes only `onPlanApproval`, an ordinary tool
   ask invokes only `onPermissionAsk`, and the SDK's continuation prompt is
-  byte-equal to `agent.PlanApprovedProceedText`.
+  byte-equal to `agent.PlanApprovedProceedText`. An operator note is out of
+  scope for v0.1; if one is later accepted, the pin must cover the server's
+  `PlanApprovedProceedText + "\n\nOperator note: " + note` composition, not
+  the bare constant.
   - verify: TestADR_0304_PlanApprovalContractParity
+- AC6.7: A terminal `EvResult` carrying `StopError` and an **empty** run ID
+  after the resumed run's terminal — the server's honest
+  `continuation run failed to start: …` shape — surfaces as a distinct typed
+  continuation-start failure preserving that error text, never as a generic
+  protocol error and never as a fabricated `RunResult` with an invented ID.
+  - verify: vitest:sdk/typescript/test/plan-resolution.test.ts#Y29udGludWF0aW9uLXN0YXJ0IGZhaWx1cmUgcHJlc2VydmVzIHRoZSBzZXJ2ZXIgZXJyb3I — `sdk/typescript/test/plan-resolution.test.ts :: "continuation-start failure preserves the server error"`
 
 ---
 
@@ -295,13 +335,20 @@ Extractor from generated-protobuf gates.
 - AC7.2: The same consumer compiles under the repository's pinned TS 6 and the
   ordinary SDK source typecheck remains TS 6.
   - verify: vitest:sdk/typescript/test/declarations.test.ts#cHVibGljIGRlY2xhcmF0aW9ucyBjb21waWxlIHdpdGggVHlwZVNjcmlwdCA2 — `sdk/typescript/test/declarations.test.ts :: "public declarations compile with TypeScript 6"`
-- AC7.3: CI runs the SDK unit/build/API suite on Node 22 and the current Node
-  line (24 when this plan lands), retains Bun 1.4.1, and `engines.node` is
-  `>=22`.
-  - verify: inspection — review `.github/workflows/ci.yml`, `sdk/typescript/package.json`, and both matrix job logs
+- AC7.3: A `strategy.matrix` with `fail-fast: false` runs `task sdk:typecheck`,
+  `task sdk:test`, `task sdk:build`, and `task sdk:api:check` on literal pinned
+  Node versions `['22.x','24.x']` plus Bun 1.4.1; each leg declares its own
+  `timeout-minutes`. The Go/buf codegen-freshness gate and the Go-binary e2e
+  run **once**, not per Node leg, since neither is Node-dependent.
+  `engines.node` is `>=22`, and matrix values are literal strings — never
+  `latest` or `current`.
+  - verify: TestSDKTypescriptRelease_Scenario7_NodeMatrixShape
 - AC7.4: API Extractor reports for `.` and `./node` remain reviewed artifacts,
-  while `./gen` stays governed by reproducible generation and protobuf breaking
-  checks rather than being copied into those reports.
+  while `./gen` stays governed by reproducible generation rather than being
+  copied into those reports. `buf.yaml` declares a `breaking` stanza but **no
+  workflow invokes `buf breaking --against`** today; the AC asserts only the
+  gate that exists, and proto breaking-change detection is a named deferred
+  decision rather than a claimed gate.
   - verify: TestSDKTypescriptRelease_Scenario7_CompatibilityGateSeparation
 
 ---
@@ -354,12 +401,24 @@ cache/timeouts/traces, and a separate `macos-14` Node 22 spawn job.
   - verify: vitest:sdk/typescript/e2e/browser/smoke.e2e.test.ts#V2ViS2l0IGltcG9ydHMgY29ubmVjdHMgcnVucyBhbmQgYXR0YWNoZXM — `sdk/typescript/e2e/browser/smoke.e2e.test.ts :: "WebKit imports connects runs and attaches"`
 - AC9.3: On `macos-14` with Node 22, `spawn()` starts the same-checkout binary
   over UDS, reaches readiness, performs one run, and exits cleanly with its
-  runtime directory removed.
+  runtime directory removed. Because the runner's real `$TMPDIR`
+  (`/var/folders/…/T/`) is the long-path input Linux never supplies, the job
+  also asserts the resolved socket path stays within
+  `spawn.ts`'s `DARWIN_SUN_PATH_BYTES` (104) bound and that the shorter-base
+  fallback still binds when it triggers — the one thing Linux CI cannot prove.
   - verify: vitest:sdk/typescript/e2e/macos-spawn.e2e.test.ts#bWFjT1Mgc3Bhd25zIG92ZXIgVURTIGFuZCBleGl0cyBjbGVhbmxl — `sdk/typescript/e2e/macos-spawn.e2e.test.ts :: "macOS spawns over UDS and exits cleanly"`
-- AC9.4: Browser projects reuse one worker-scoped daemon, have explicit test and
-  job timeouts, collect traces only on failure, use no blanket retry, and never
-  reach an external network.
-  - verify: inspection — review Playwright config, fixture lifetime, workflow timeout, retry, trace, and network-denial settings
+- AC9.4: Browser projects reuse one worker-scoped daemon, declare explicit
+  per-test and per-job timeouts, collect traces only on failure, and use no
+  blanket retry. Both the fixture-origin server and the daemon bind **ephemeral
+  ports allocated per worker**, with `--cors-origins` derived from the fixture
+  server's bound address, so concurrent workers cannot collide on a fixed port.
+  The three browser projects and the `macos-14` job are **required** status
+  checks with no `continue-on-error`. The browser cache key includes the runner
+  label and the resolved Playwright version (not merely the lockfile hash), and
+  a miss re-installs via a pinned `playwright install --with-deps`. Once setup
+  completes, no test reaches any host other than the loopback daemon — browser
+  binaries may be fetched during setup, which is not a test egress.
+  - verify: inspection — review the runner config, fixture lifetime and port allocation, workflow timeouts, retry/trace policy, cache keys, and branch-protection required-check list
 
 ---
 
@@ -406,30 +465,75 @@ frozen install, generation cleanliness, all SDK gates, exact pack inspection,
 OIDC publication, `publishConfig`, and two-workflow trigger parity.
 
 **Acceptance:**
-- AC11.1: `workflow_dispatch` runs checkout through exact tarball inspection but
-  has no condition/path that can invoke `npm publish`.
+- AC11.1: The workflow is two jobs. `verify` holds `permissions: {contents:
+  read}` with no `id-token`, runs checkout through exact tarball inspection, and
+  uploads that tarball as the sole build artifact. `publish` declares `needs:
+  verify`, `environment: npm-publish`, `permissions: {contents: read, id-token:
+  write}`, and `if: github.event_name == 'push' && startsWith(github.ref,
+  'refs/tags/sdk/typescript/v')`; it installs nothing and runs no third-party
+  lifecycle script. A `workflow_dispatch` run therefore never instantiates the
+  only job able to mint an OIDC token.
   - verify: TestADR_0304_ManualDispatchIsDryRunOnly
-- AC11.2: A tag other than `sdk/typescript/v<package-version>` fails before
-  install or publication; the release checkout is the exact tag commit.
+- AC11.2: The tag must match
+  `^sdk/typescript/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$` — no
+  prerelease or build metadata, so the implicit `latest` dist-tag is always
+  correct — and must equal `sdk/typescript/v<package-version>`; the release
+  checkout is the exact tag commit, and the workflow fails before install unless
+  `$GITHUB_SHA` is an ancestor of `origin/main`, so a tag on an unmerged commit
+  cannot publish.
   - verify: TestSDKTypescriptRelease_Scenario11_TagVersionParity
-- AC11.3: The workflow performs a frozen pnpm install, runs `task generate`, and
-  rejects a dirty generated tree, SDK lockfile, or package metadata before
-  build/pack.
+- AC11.3: The `verify` job performs a frozen pnpm install under an
+  `onlyBuiltDependencies` allowlist, runs `task generate`, and rejects a dirty
+  generated tree or SDK lockfile before build/pack. It also rejects the release
+  unless the **packed** `package.json` declares `repository: {type: "git", url:
+  "git+https://github.com/stacklok/mecatl.git", directory: "sdk/typescript"}`,
+  `license: "Apache-2.0"`, `publishConfig.access: "public"`, and a `version`
+  equal to the tag's version — asserted on the packed manifest so `prepack`
+  cannot alter it unobserved.
   - verify: TestSDKTypescriptRelease_Scenario11_GenerationCleanlinessGate
 - AC11.4: Release runs SDK lint, both declaration compilers, unit/e2e/build/API
-  gates, packs once, and applies the existing exact-inventory oracle — `dist`
-  and `LICENSE` only — to the same tarball it would publish.
+  gates, packs once, and applies the existing exact-inventory oracle — an exact
+  allowlist of `dist/`, `package.json`, `README.md`, and `LICENSE`, no source,
+  config, or test fixtures — to the same tarball it would publish. The `verify`
+  job records that tarball's npm-format `sha512` integrity in
+  `$GITHUB_STEP_SUMMARY`.
   - verify: vitest:sdk/typescript/test/package.test.ts#cGFja2VkIHRhcmJhbGwgY2FycmllcyBkaXN0IGFuZCBsaWNlbnNlIG9ubHk — `sdk/typescript/test/package.test.ts :: "packed tarball carries dist and license only"`
-- AC11.5: A tag push publishes the inspected tarball with public access and npm
-  provenance under `id-token: write`; neither workflow nor repository release
-  configuration refers to `NPM_TOKEN` or another long-lived npm credential.
+- AC11.5: A tag push publishes the **downloaded artifact by path** (`npm publish
+  ./<name>-<version>.tgz --access public`), never the package directory, so no
+  `prepack`/`prepublishOnly`/`prepare` script runs at publish time; it
+  re-verifies the tarball `sha512` against AC11.4's recorded value first. The
+  workflow declares `permissions: {contents: read}` at top level, `id-token:
+  write` in exactly one job, and never `contents: write`, `packages:`,
+  `attestations:`, `pull-requests:`, or `issues:`. It references no `secrets.*`
+  context and contains no `NPM_TOKEN`, `NODE_AUTH_TOKEN`, `_authToken`,
+  `npm_config_*` auth variable, `actions/setup-node` `registry-url:` input, or
+  committed `.npmrc`. The publish job runs Node >= 22.14.0 with a pinned npm >=
+  11.5.1 and asserts that floor before publishing.
   - verify: TestADR_0304_TrustedPublishingOnly
-- AC11.6: `sdk/typescript/v0.1.0` selects the SDK release workflow and provably
-  does not match the root image workflow's `v*` **push-tag** trigger; the guard
-  also asserts that the root workflow's `workflow_dispatch` tag input is
-  unvalidated, so push isolation is mechanical while a manual root dispatch of
-  an SDK tag is recorded as an operational hazard rather than a glob outcome.
+- AC11.6: The SDK workflow's `push.tags` is exactly `['sdk/typescript/v*']` and
+  the root workflow's is exactly `['v*']`; neither uses `**`. A documented
+  matcher implementing GitHub's rule that `*` does not match `/` yields this
+  exact selection matrix: `sdk/typescript/v0.1.0` -> SDK only; `v0.1.0` -> root
+  only; `sdk/typescript/v9.9.9` -> SDK only; `v1.2.3` -> root only. Any change
+  to either pattern list fails the test rather than being silently
+  re-evaluated. Push isolation is therefore mechanical; **dispatch** isolation
+  is not a glob property, so the AC additionally records that the root
+  workflow's `workflow_dispatch` accepts an unvalidated free-text tag input.
   - verify: TestADR_0304_TagTriggerIsolation
+
+- AC11.8: No file in the packed tarball derives from a source carrying a
+  non-Apache-2.0 SPDX identifier. `contracts/proto/mecatl/v1/*.proto` and the
+  generated `sdk/typescript/src/gen/**` headers currently declare
+  `LicenseRef-Stacklok-Proprietary` while `package.json` declares
+  `Apache-2.0`, and `dist/gen/**` is packed — so the guard **fails closed** and
+  blocks publication until an authorized relicense corrects those headers.
+  - verify: TestSDKTypescriptRelease_Scenario11_PackedLicenseProvenance
+- AC11.7: The workflow declares `concurrency: {group:
+  release-sdk-typescript-${{ github.ref }}, cancel-in-progress: false}` — a
+  half-published release is worse than a slow one — every job declares
+  `timeout-minutes`, and every job pins `runs-on: ubuntu-24.04`, never
+  `ubuntu-latest`.
+  - verify: TestSDKTypescriptRelease_Scenario11_WorkflowBounding
 
 ---
 
@@ -449,21 +553,37 @@ status reconciliation without closing #821 from an implementation PR.
   `publishConfig.access` to `public`, updates the lockfile/API reports where
   required, and contains no release tag.
   - verify: inspection — review the release PR diff and its green required checks before merge
-- AC12.2: Before tagging, npm `@stacklok` organization ownership/package rights
-  are confirmed, the trusted publisher names `stacklok/mecatl` plus the exact
-  SDK workflow file, and a named maintainer accepts responsibility for the tag.
-  - verify: inspection — release checklist records all three named human prerequisites and the responsible maintainer
+- AC12.2: Before tagging, the release checklist records **five** prerequisites:
+  npm `@stacklok` organization ownership/package rights; a trusted-publisher
+  record naming `stacklok/mecatl`, the exact SDK workflow filename, and the
+  `npm-publish` environment; a named maintainer accepting responsibility for
+  the tag; confirmation that `stacklok/mecatl` is a **public** repository at tag
+  time (npm generates no provenance for private repositories even when the
+  package is public, and it fails *silently* — the repository is
+  `INTERNAL` today, so this is a live blocker, not a formality); and
+  confirmation that no `NPM_TOKEN`-shaped secret exists at repository,
+  environment, **or organization** scope. Authorized relicensing of the
+  proprietary-headed generated sources (AC11.8) is a sixth gate.
+  - verify: inspection — release checklist records all named prerequisites, the responsible maintainer, and the repository-visibility and licence clearances
 - AC12.3: The annotated or lightweight `sdk/typescript/v0.1.0` tag points
   exactly at the reviewed release commit on `main`, and no root `v0.1.0` tag is
   created as part of the SDK release.
   - verify: inspection — compare `git rev-parse sdk/typescript/v0.1.0`, the merged release commit, and the Actions trigger run
-- AC12.4: npm reports `@stacklok/mecatl-sdk@0.1.0` as public with GitHub OIDC
-  provenance tied to `stacklok/mecatl` and the dedicated SDK workflow.
-  - verify: inspection — inspect npm package visibility, version metadata, provenance statement, repository, commit, and workflow identity
-- AC12.5: The downloaded published tarball's file inventory and integrity match
-  the artifact inspected by the release workflow, and root image release jobs
-  did not run for the SDK tag.
-  - verify: inspection — compare npm integrity/inventory with the workflow pack log and inspect Actions runs for the tag
+- AC12.4: `npm view @stacklok/mecatl-sdk@0.1.0 --json dist.attestations` returns
+  a non-empty provenance predicate whose
+  `buildDefinition.externalParameters.workflow` names `stacklok/mecatl`,
+  `.github/workflows/release-sdk-typescript.yml`, ref
+  `refs/tags/sdk/typescript/v0.1.0`, and the reviewed commit SHA;
+  `npm audit signatures` passes in a clean install of the published version.
+  After the publish, the package's npm Publishing access is set to require 2FA
+  and disallow tokens, and any pre-existing `@stacklok` automation token is
+  revoked.
+  - verify: inspection — run the named npm commands and record their output in the release checklist
+- AC12.5: `npm view @stacklok/mecatl-sdk@0.1.0 --json dist.integrity` equals the
+  `sha512` recorded in the release run's job summary (AC11.4), the extracted
+  published tarball's file list equals the AC11.4 inventory, and no root image
+  release job ran for the SDK tag.
+  - verify: inspection — compare the recorded `sha512` and inventory against the published artifact, and inspect the Actions runs for the tag
 
 ---
 
@@ -487,6 +607,17 @@ status reconciliation without closing #821 from an implementation PR.
   for complete v0.1 behavior; `task docs` and `task site:build` green.
 - `sdk/typescript/package.json` declares Node `>=22`, version `0.1.0` in the
   release PR, and `publishConfig.access: public`; `website/` remains npm-based.
+- A `package-ecosystem: npm` Dependabot entry for `/sdk/typescript` (grouped
+  minor+patch, matching the seven existing `gomod` entries) and a vulnerability
+  gate over the SDK's production closure (`pnpm audit --prod` or
+  `osv-scanner`) in the `sdk` CI job. `.github/dependabot.yml` has **no** npm
+  ecosystem today and `task vuln` is govulncheck (Go-only), so the risk
+  section's "dependency update PRs carry the ordinary compatibility refresh"
+  currently assumes a mechanism that does not exist. Note that
+  `package.test.ts`'s exact-pin assertions must be updated by the same PR.
+- A resolver for the browser suite's proofs in `.actrace.yml` if those tests run
+  under `@playwright/test`, whose titles the existing `vitest:` resolver cannot
+  resolve (see the batched runner decision below).
 - No `engine/` API or proto change is expected. If one appears, stop and revise
   the scope rather than silently widening this client-side plan.
 
@@ -513,13 +644,18 @@ the only external state in the stack.
 - `TestSDKTypescriptRelease_Scenario1_StreamingShapeParity`
 - `TestSDKTypescriptRelease_Scenario2_HTTPRouteParity`
 - `TestSDKTypescriptRelease_Scenario2_HTTPCodecParity`
+- `TestSDKTypescriptRelease_Scenario2_RouteToServiceInjectivity`
+- `TestSDKTypescriptRelease_Scenario2_HTTPRoutePartition`
 - `TestADR_0304_PlanApprovalContractParity`
 - `TestSDKTypescriptRelease_Scenario7_CompatibilityGateSeparation`
+- `TestSDKTypescriptRelease_Scenario7_NodeMatrixShape`
 - `TestADR_0304_ManualDispatchIsDryRunOnly`
 - `TestSDKTypescriptRelease_Scenario11_TagVersionParity`
 - `TestSDKTypescriptRelease_Scenario11_GenerationCleanlinessGate`
 - `TestADR_0304_TrustedPublishingOnly`
 - `TestADR_0304_TagTriggerIsolation`
+- `TestSDKTypescriptRelease_Scenario11_WorkflowBounding`
+- `TestSDKTypescriptRelease_Scenario11_PackedLicenseProvenance`
 
 Two naming families are deliberate: `TestADR_0304_*` pins a costly-to-reverse
 ADR 0304 decision as a durable invariant (the exact gRPC-only set, the
@@ -619,12 +755,59 @@ exact title.
   Playwright revision makes CI reproducible but inevitably lags some release
   windows. Dependency update PRs carry the ordinary compatibility refresh; the
   v0.1 release records the exact tested revisions.
-- **No open public-API decision remains.** The three audited plan-approval
+- **The plan-approval public-API decision is closed.** The three audited
   options are resolved in ADR 0304: stream the existing shape; do not add a
-  server pre-PR; do not defer the ergonomic method. Remaining questions are
-  operational release choices batched for the handoff: the npm organization
-  owner, exact trusted-publisher administrator, named tag cutter, and whether
-  release engineering wants a manual Safari spot-check in addition to WebKit.
+  server pre-PR; do not defer the ergonomic method.
+- **Two release blockers are external and cannot be closed by this plan.**
+  (1) `stacklok/mecatl` is `INTERNAL` today and npm emits **no** provenance for
+  a private repository even when the package is public — and it degrades
+  silently, so AC11.5/AC12.4 are unsatisfiable until the repository is public.
+  (2) The protos and their generated TypeScript carry
+  `LicenseRef-Stacklok-Proprietary` while the package declares `Apache-2.0`;
+  AC11.8 fails closed until an authorized relicense lands. Both are human
+  gates, and the first irreversible publish must not proceed past either.
+- **The browser suite's test runner is an open decision.** The bounding
+  mechanisms AC9.4 relies on (worker-scoped fixtures, per-project browsers,
+  failure-only traces, `retries: 0`) are `@playwright/test` concepts, but
+  Scenario 8/9 proofs currently use the `vitest:` token and `.actrace.yml`
+  defines only a `vitest:` resolver — so under `@playwright/test` those proofs
+  would not resolve and Definition of done item 5 would fail. Resolve before
+  Scenario 8 starts: run the browser tests under Vitest and restate AC9.4 in
+  Vitest vocabulary, or keep `@playwright/test` and add a sibling resolver.
+- **Proto breaking-change detection does not exist yet.** `buf.yaml` declares a
+  `breaking` stanza but no workflow invokes `buf breaking --against`. AC7.4 now
+  claims only generation freshness. Deciding whether `v0.1.0`'s "real
+  compatibility line" requires the gate — and adding it — is deferred.
+- **`LocalSessionContextService` is published in `./gen` today.** It is
+  generated, re-exported from `src/gen/index.ts`, and packed. AC1.1 pins it as
+  an excluded literal so the gate cannot silently shrink, but whether an
+  operator-enabled, local-trust-scoped service belongs in a public `./gen` at
+  all should be decided before `v0.1.0` freezes that surface.
+- **The trusted-publisher workflow filename is load-bearing.** npm binds the
+  record to the exact filename, so renaming `release-sdk-typescript.yml` breaks
+  publishing silently at the *next* release, long after the rename merged.
+  Nothing in the repository would catch it.
+- **Prerelease dist-tag policy is deferred.** AC11.2's strict `vX.Y.Z` grammar
+  keeps the implicit `latest` correct; the first `-rc` tag needs a decision
+  rather than an accident.
+- **Exact runtime dependency pins are deliberate.** `@bufbuild/protobuf 2.14.0`
+  and siblings are pinned exactly in a *library*'s `dependencies`, which forces
+  consumer-tree duplication and blocks upstream patch uptake without an SDK
+  release. `package.test.ts` asserts them exactly. Recorded as a decision, not
+  changed here.
+- **Shipped sourcemaps reference unpublished sources.** `tsconfig.build.json`
+  sets `sourceMap`/`declarationMap` but `files` is `["dist","LICENSE"]`, so
+  every map resolves to an absent `../src/*.ts`. Either set `inlineSources` or
+  drop maps from the package before publishing.
+- **Root-workflow dispatch isolation is a pre-existing gap.** Root
+  `release.yml` takes a free-text `tag` input and checks out `ref: ${{ env.VERSION }}`,
+  so a maintainer could dispatch the **root** image release with an SDK tag.
+  Scenario 11 does not introduce it but makes it reachable; a `^v` guard step in
+  the root workflow is the smallest fix and is outside this client-side scope.
+- **Operational handoff questions:** the npm organization owner, the exact
+  trusted-publisher administrator, the named tag cutter, whether a
+  `sdk/typescript/**` tag ruleset should restrict tag creators, and whether
+  release engineering wants a manual Safari spot-check alongside WebKit.
 
 ## Exit criteria
 

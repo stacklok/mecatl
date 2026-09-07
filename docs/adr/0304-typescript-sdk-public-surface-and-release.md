@@ -74,10 +74,24 @@ The HTTP classification supplies method, path template, path/query/body
 mapping, response decoder, and whether the response is JSON or SSE. An RPC may
 instead carry a reviewed `grpc-only` classification with a rationale. The exact
 allowed set is pinned and initially contains only `StreamSessionLive`. It is
-not legal to label an operation generically `unsupported`: adding a gRPC-only
-exception changes this decision and its exact-set test. `Converse` is recorded
-as bidirectional gRPC plus the explicit HTTP prompt/control route family; it is
-not falsely described as one HTTP bidi stream.
+not legal to label an operation generically `unsupported`: the classification
+type structurally admits no such value, and adding a gRPC-only exception
+changes this decision and its exact-set test. `Converse` is recorded as
+bidirectional gRPC plus the explicit HTTP prompt/control route family; it is
+not falsely described as one HTTP bidi stream. That route-family form is a
+third classification value, so it is bounded the same way: its membership is a
+pinned exact literal set (initially `{Converse}`), each member's routes must
+already appear in another row or the HTTP-only control inventory, and the
+`Converse` row is explicitly carved out of the one-method/one-path and HTTP
+raw-reachability requirements rather than silently special-cased.
+
+Catalog scope is Harness plus Schedule. Other generated `mecatl.v1` services
+are excluded only through a pinned literal set (initially
+`{LocalSessionContextService}`), so a future third public service is a visible
+diff. Syntactic classification is not enough: each row's HTTP method and path
+must equal the registration whose handler invokes that row's declared backing
+Service method, and the route mapping must be injective — a fake transport
+answers any path, so it cannot detect a route aimed at the wrong handler.
 
 HTTP-only control operations are kept in a separate catalog. They remain
 callable where already supported but cannot satisfy descriptor parity. This
@@ -129,9 +143,16 @@ locally live `Run`. Its result follows the same one-consumption rule as `Run`:
 iterate events or call `result()`, never both. Events are partitioned by their
 server run ID into the resumed run and, only after an approving resolution, a
 continuation run with a new ID. `result()` returns the resumed `RunResult` and
-an optional continuation `RunResult`; a denial has no continuation. A missing
-run ID, a third run ID, a continuation before the resumed terminal, or EOF
-without the required terminal is a protocol error.
+an optional continuation `RunResult`; a denial has no continuation. A third run ID, a
+continuation before the resumed terminal, or EOF without the required terminal
+is a protocol error. One shape is deliberately excluded: the server emits a
+synthetic terminal `EvResult` with `StopError`, an empty run ID, and a
+`continuation run failed to start: …` message when continuation admission
+fails before a run exists. That surfaces as a distinct typed
+continuation-start failure preserving the server's text — never a generic
+protocol error and never a fabricated `RunResult`. An approving resolution
+whose resumed run ends on a non-`plan_approved` terminal likewise yields no
+continuation.
 
 Attachments remain run-bound. An attachment to the resumed run terminates with
 that run and never silently crosses to the continuation; `session.activity()`
@@ -162,9 +183,12 @@ the two run streams callers need.
 
 **5. Three separate compatibility gates own hand-written, generated, and
 declaration surface.** API Extractor reports for `.` and `./node` continue to
-gate intentional ergonomic API changes. Protobuf generation freshness and
-breaking checks govern `./gen`; generated declarations are not copied into the
-API Extractor reports.
+gate intentional ergonomic API changes. Protobuf generation freshness governs
+`./gen`; generated declarations are not copied into the API Extractor reports.
+`buf.yaml` declares a `breaking` stanza, but no workflow invokes `buf breaking
+--against` today, so this ADR claims only the gate that exists and records
+proto breaking-change detection as a deferred decision rather than asserting a
+third gate the repository lacks.
 
 TypeScript 6 remains the development compiler. A devDependency alias pins the
 latest accepted TypeScript 5.7 patch, and CI invokes that binary in a second
@@ -227,12 +251,36 @@ access and npm provenance. The job has `id-token: write` and no `NPM_TOKEN`,
 registry password, or long-lived publish credential. `publishConfig.access` is
 `public`.
 
+The workflow is two jobs so the control is structural rather than conditional:
+`verify` holds no `id-token` and produces the tarball artifact, while
+`publish` is the only job declaring `id-token: write`, is gated on a push to a
+`refs/tags/sdk/typescript/v` ref, declares the `npm-publish` environment, and
+installs nothing. A dry run therefore cannot mint an OIDC token at all,
+independent of any `if:` expression — which matters because
+`workflow_dispatch` runs the workflow file from the dispatched ref, so a
+source-inspection test alone could never establish publish-impossibility.
+Publication's operand is the exact downloaded tarball path, never the package
+directory: `package.json` declares `"prepack": "pnpm run build"`, so publishing
+from the directory would rebuild and ship an artifact different from the one
+inspected. Provenance is asserted on the output (`dist.attestations`), not on a
+flag. npm provenance is itself a SLSA attestation via the same Sigstore
+machinery, so SLSA parity with the root workflow is achieved; SBOM and cosign
+are deliberately not mirrored. The trusted-publisher record binds to the exact
+workflow filename, so renaming the file breaks publishing silently at the next
+release.
+
 `workflow_dispatch` executes the same checkout-through-pack verification as a
-dry run and is structurally unable to reach the publish step. This exercises
+dry run. This exercises
 the workflow before the first real tag without weakening tag authority. A
 root-module test inspects both release workflows and proves that
 `sdk/typescript/v0.1.0` selects the SDK workflow but cannot select the root
-image workflow's `v*` trigger.
+image workflow's `v*` **push** trigger — true for two independent reasons, that
+`v*` is anchored and the tag does not begin with `v`, and that GitHub's `*`
+does not match `/`. The test asserts exact pattern-set equality plus a
+selection matrix rather than re-implementing GitHub's glob engine, since a
+wrong matcher reporting "isolated" is worse than no test. Dispatch isolation is
+not a glob property: root `release.yml` accepts a free-text `tag` input it never
+validates, which is a pre-existing root-workflow gap recorded as a risk.
 
 The release PR changes `package.json` from `0.0.0` to `0.1.0`; the tag never
 mutates source. A human cuts `sdk/typescript/v0.1.0` only after the release PR
@@ -247,8 +295,21 @@ cannot create or infer them:
    exact `.github/workflows/release-sdk-typescript.yml` workflow filename.
 3. Name the release maintainer who will create and push
    `sdk/typescript/v0.1.0` after the release commit is on `main`.
+4. Confirm `stacklok/mecatl` is a **public** repository at tag time. npm
+   generates no provenance attestation for a private repository even when the
+   package is public, and it fails silently. The repository is `INTERNAL`
+   today, so this is a live blocker: do not publish `0.1.0` without provenance.
+5. Obtain an authorized relicense of the proprietary-headed sources. The
+   protos and their generated TypeScript declare
+   `LicenseRef-Stacklok-Proprietary` while the package declares `Apache-2.0`,
+   and `dist/gen/**` is packed. The publish gate fails closed until the headers
+   are corrected.
+6. Confirm no `NPM_TOKEN`-shaped secret exists at repository, environment, or
+   organization scope — an org-scoped leftover is invisible to file inspection.
 
-The tag scenario is human-gated until all three are checked.
+The tag scenario is human-gated until all six are checked. Runtime dependencies
+are exact-pinned in a library's `dependencies`; we accept consumer-tree
+duplication in exchange for a reproducible published closure.
 
 **10. M4 closes documentation state without rewriting frozen decisions.** ADR
 0292 moves from Proposed to Accepted because its M3 implementation is on
