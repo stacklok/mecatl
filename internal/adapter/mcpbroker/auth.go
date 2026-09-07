@@ -66,8 +66,7 @@ func compileOAuthRoute(callbackURL string, declaration permconfig.MCPServerProfi
 		"token endpoint":         profile.Upstream.OAuth2.TokenEndpoint,
 		"callback URL":           callbackURL,
 	} {
-		parsed, err := url.Parse(raw)
-		if err != nil || parsed.Scheme == "" || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" || parsed.Opaque != "" || (parsed.RawPath != "" && parsed.RawPath != parsed.Path) {
+		if err := ValidateProtectedURL(raw, label); err != nil {
 			return nil, fmt.Errorf("%w: route %q has invalid %s", ErrInvalidCatalogue, declaration.Name, label)
 		}
 	}
@@ -986,6 +985,23 @@ func claimGrantCallLocked(grant *oauthGrant, call session.ToolCall, hash [32]byt
 	return nil
 }
 
+func (l *logicalSession) expireAuthorizationsLocked(runtime *Runtime, now time.Time) {
+	for identity, transaction := range l.authorizations {
+		if transaction.status != session.AuthorizationPending || now.Before(transaction.expiresAt) {
+			continue
+		}
+		runtime.removeCallbackState(transaction.state, transaction)
+		if transaction.cancel != nil {
+			transaction.cancel()
+		}
+		transaction.status = session.AuthorizationExpired
+		transaction.clientSecret = ""
+		transaction.verifier = ""
+		transaction.state = ""
+		delete(l.authorizations, identity)
+	}
+}
+
 func (l *logicalSession) markDeletedLocked(status session.AuthorizationStatus) {
 	l.deleted = true
 	l.provisional = false
@@ -1077,6 +1093,7 @@ func (r *Runtime) sweep() {
 			r.mu.Lock()
 			for id, logical := range r.sessions {
 				logical.mu.Lock()
+				logical.expireAuthorizationsLocked(r, now)
 				if logical.attachments == 0 && logical.activeOps == 0 && !logical.expiresAt.IsZero() && !now.Before(logical.expiresAt) {
 					delete(r.sessions, id)
 					logical.markDeletedLocked(session.AuthorizationExpired)

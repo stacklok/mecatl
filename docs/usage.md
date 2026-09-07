@@ -501,7 +501,9 @@ helm template broker deploy/helm/mecabroker \
 ```
 
 Treat the fixture values as shape documentation and replace every `.invalid`, Secret,
-and TEST-NET value. The chart intentionally deploys exactly one `Recreate` replica with
+and TEST-NET value. `workloadIdentity.subject` is required and is the exact workload JWT
+subject allowed to create or use broker sessions and handles; a shared audience alone is
+not authority. The chart intentionally deploys exactly one `Recreate` replica with
 no PDB, autoscaling, or outer-broker Redis. A restart interrupts active attachments and
 outer OAuth callback correlation; this is not an HA or exactly-once deployment.
 

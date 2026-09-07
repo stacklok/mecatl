@@ -37,6 +37,7 @@ type OIDCConfig struct {
 	Issuer           string
 	JWKSURI          string
 	Audience         string
+	AllowedSubjects  []string
 	TrustedCAPEM     []byte
 	MaxJWKSStaleness time.Duration
 }
@@ -74,13 +75,14 @@ type readyTokenValidator interface {
 // Server owns the validator, RPC adapter, mounted browser routes, and optional
 // ToolHive process closer supplied by cmd/mecabroker.
 type Server struct {
-	validator    tokenValidator
-	rpc          *mcpbrokergrpc.Server
-	mux          *http.ServeMux
-	diagnostics  port.Diagnostics
-	observe      func(string, string)
-	closeProcess func() error
-	coordinator  *Coordinator
+	validator       tokenValidator
+	rpc             *mcpbrokergrpc.Server
+	mux             *http.ServeMux
+	diagnostics     port.Diagnostics
+	observe         func(string, string)
+	closeProcess    func() error
+	coordinator     *Coordinator
+	allowedSubjects map[string]struct{}
 
 	mu         sync.Mutex
 	grpcServer *grpc.Server
@@ -149,7 +151,11 @@ func New(ctx context.Context, cfg Config) (*Server, error) {
 		}
 		return nil, err
 	}
-	s := &Server{validator: validator, rpc: rpc, mux: http.NewServeMux(), diagnostics: diagnostics, observe: cfg.Observe, closeProcess: cfg.CloseProcess, coordinator: coordinator}
+	allowedSubjects := make(map[string]struct{}, len(cfg.OIDC.AllowedSubjects))
+	for _, subject := range cfg.OIDC.AllowedSubjects {
+		allowedSubjects[subject] = struct{}{}
+	}
+	s := &Server{validator: validator, rpc: rpc, mux: http.NewServeMux(), diagnostics: diagnostics, observe: cfg.Observe, closeProcess: cfg.CloseProcess, coordinator: coordinator, allowedSubjects: allowedSubjects}
 	if !cfg.Handlers.Empty() {
 		if err := cfg.Handlers.Mount(s.mux, cfg.CallbackPath); err != nil {
 			_ = rpc.Shutdown(context.Background())
@@ -176,6 +182,14 @@ func newOIDCValidator(ctx context.Context, cfg OIDCConfig) (tokenValidator, erro
 	}
 	if cfg.Audience == "" {
 		return nil, errors.New("mcpbrokerserver: OIDC audience is required")
+	}
+	if len(cfg.AllowedSubjects) == 0 {
+		return nil, errors.New("mcpbrokerserver: at least one OIDC workload subject is required")
+	}
+	for _, subject := range cfg.AllowedSubjects {
+		if subject == "" || strings.ContainsRune(subject, '\x00') {
+			return nil, errors.New("mcpbrokerserver: OIDC workload subjects must be non-empty")
+		}
 	}
 	if len(cfg.TrustedCAPEM) == 0 {
 		return nil, errors.New("mcpbrokerserver: an explicit OIDC trust bundle is required")
@@ -281,6 +295,10 @@ func (s *Server) authenticate(ctx context.Context, req any, info *grpc.UnaryServ
 		}
 		s.record(ctx, operation, "unauthenticated")
 		return nil, status.Error(codes.Unauthenticated, "invalid workload credential")
+	}
+	if _, allowed := s.allowedSubjects[principal.Subject]; !allowed {
+		s.record(ctx, operation, "unauthorized")
+		return nil, status.Error(codes.PermissionDenied, "workload is not authorized")
 	}
 	s.record(ctx, operation, "allowed")
 	return handler(session.WithPrincipal(ctx, principal), req)

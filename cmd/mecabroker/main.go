@@ -48,6 +48,7 @@ type config struct {
 	oidcIssuer       string
 	oidcJWKSURI      string
 	oidcAudience     string
+	oidcSubject      string
 	oidcCAFile       string
 	maxJWKSStaleness time.Duration
 	brokerConfigFile string
@@ -125,6 +126,7 @@ func parseFlags() config {
 	flag.StringVar(&cfg.oidcIssuer, "oidc-issuer", "", "exact HTTPS workload-token issuer")
 	flag.StringVar(&cfg.oidcJWKSURI, "oidc-jwks-uri", "", "explicit HTTPS JWKS endpoint")
 	flag.StringVar(&cfg.oidcAudience, "oidc-audience", "", "exact workload-token audience")
+	flag.StringVar(&cfg.oidcSubject, "oidc-subject", "", "exact authorized workload-token subject")
 	flag.StringVar(&cfg.oidcCAFile, "oidc-ca", "", "PEM trust bundle for issuer and JWKS TLS")
 	flag.DurationVar(&cfg.maxJWKSStaleness, "oidc-max-jwks-staleness", 15*time.Minute, "maximum cached-JWKS age during issuer outage")
 	flag.StringVar(&cfg.brokerConfigFile, "config", "", "strict JSON ToolHive broker configuration")
@@ -176,7 +178,7 @@ func run(ctx context.Context, cfg config, diagnostics port.Diagnostics) error {
 	}
 
 	server, err := mcpbrokerserver.New(ctx, mcpbrokerserver.Config{
-		OIDC:        mcpbrokerserver.OIDCConfig{Issuer: cfg.oidcIssuer, JWKSURI: cfg.oidcJWKSURI, Audience: cfg.oidcAudience, TrustedCAPEM: caPEM, MaxJWKSStaleness: cfg.maxJWKSStaleness},
+		OIDC:        mcpbrokerserver.OIDCConfig{Issuer: cfg.oidcIssuer, JWKSURI: cfg.oidcJWKSURI, Audience: cfg.oidcAudience, AllowedSubjects: []string{cfg.oidcSubject}, TrustedCAPEM: caPEM, MaxJWKSStaleness: cfg.maxJWKSStaleness},
 		Diagnostics: diagnostics,
 		Factory: func(factoryCtx context.Context) (contract.Service, mcpbroker.HandlerBundle, string, func() error, error) {
 			process, processErr := mcpbroker.NewToolHiveProcess(factoryCtx, declaration.toolHive())

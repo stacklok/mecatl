@@ -41,6 +41,7 @@ spec:
             - --oidc-issuer={{ required "workloadIdentity.issuer is required" .Values.workloadIdentity.issuer }}
             - --oidc-jwks-uri={{ required "workloadIdentity.jwksURI is required" .Values.workloadIdentity.jwksURI }}
             - --oidc-audience={{ required "workloadIdentity.audience is required" .Values.workloadIdentity.audience }}
+            - --oidc-subject={{ required "workloadIdentity.subject is required" .Values.workloadIdentity.subject }}
             - --oidc-ca=/var/run/secrets/workload-identity/{{ .Values.workloadIdentity.caKey }}
             - --oidc-max-jwks-staleness={{ .Values.workloadIdentity.maxJWKSStaleness }}
             - --config=/etc/mecabroker/broker.json

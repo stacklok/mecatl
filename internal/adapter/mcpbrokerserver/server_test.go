@@ -78,12 +78,16 @@ func (f *identityFixture) caPEM() []byte {
 }
 
 func (f *identityFixture) token(t *testing.T, issuer, audience string, expiry time.Time, key *rsa.PrivateKey) string {
+	return f.tokenWithSubject(t, issuer, audience, "workload-secret-identity", expiry, key)
+}
+
+func (f *identityFixture) tokenWithSubject(t *testing.T, issuer, audience, subject string, expiry time.Time, key *rsa.PrivateKey) string {
 	t.Helper()
 	if key == nil {
 		key = f.key
 	}
 	header, _ := json.Marshal(map[string]string{"alg": "RS256", "kid": "broker-key", "typ": "JWT"})
-	claims, _ := json.Marshal(map[string]any{"iss": issuer, "sub": "workload-secret-identity", "aud": audience, "iat": time.Now().Add(-time.Minute).Unix(), "exp": expiry.Unix()})
+	claims, _ := json.Marshal(map[string]any{"iss": issuer, "sub": subject, "aud": audience, "iat": time.Now().Add(-time.Minute).Unix(), "exp": expiry.Unix()})
 	input := base64.RawURLEncoding.EncodeToString(header) + "." + base64.RawURLEncoding.EncodeToString(claims)
 	digest := sha256.Sum256([]byte(input))
 	sig, err := rsa.SignPKCS1v15(rand.Reader, key, crypto.SHA256, digest[:])
@@ -94,7 +98,7 @@ func (f *identityFixture) token(t *testing.T, issuer, audience string, expiry ti
 }
 
 func productionOIDC(f *identityFixture, staleness time.Duration) OIDCConfig {
-	return OIDCConfig{Issuer: f.server.URL, JWKSURI: f.server.URL + "/keys", Audience: testAudience, TrustedCAPEM: f.caPEM(), MaxJWKSStaleness: staleness}
+	return OIDCConfig{Issuer: f.server.URL, JWKSURI: f.server.URL + "/keys", Audience: testAudience, AllowedSubjects: []string{"workload-secret-identity"}, TrustedCAPEM: f.caPEM(), MaxJWKSStaleness: staleness}
 }
 
 func TestSingletonBrokerRemediation_Scenario3_ReadinessDoesNotLaunderStaleKeys(t *testing.T) {
@@ -279,6 +283,31 @@ func TestSingletonBrokerRemediation_Scenario3_PublicRPCAuthenticationPrecedesBro
 	}
 	if got := service.reads.Load(); got != before {
 		t.Fatalf("anonymous calls touched broker state: reads %d -> %d", before, got)
+	}
+}
+
+func TestWorkloadIdentityAuthorizesAndBindsBrokerSessions(t *testing.T) {
+	issuer := newIdentityFixture(t)
+	registerFixtureKey(issuer)
+	service := &countingService{}
+	policy := productionOIDC(issuer, time.Minute)
+	policy.AllowedSubjects = []string{"workload-secret-identity", "other-workload"}
+	client, _, _ := startAuthenticatedBroker(t, service, policy, port.NopDiagnostics{}, nil)
+	first := issuer.token(t, issuer.server.URL, testAudience, time.Now().Add(time.Minute), nil)
+	second := issuer.tokenWithSubject(t, issuer.server.URL, testAudience, "other-workload", time.Now().Add(time.Minute), nil)
+	attached, err := client.Attach(authContext(first), &brokerv1.AttachRequest{SessionId: "bound-session"})
+	if err != nil {
+		t.Fatalf("first Attach: %v", err)
+	}
+	if _, err := client.Attach(authContext(second), &brokerv1.AttachRequest{SessionId: "bound-session", BrokerIncarnation: attached.BrokerIncarnation}); status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("cross-identity Attach code = %s, want PermissionDenied: %v", status.Code(err), err)
+	}
+	if got := service.reads.Load(); got != 1 {
+		t.Fatalf("cross-identity Attach touched broker state: %d reads", got)
+	}
+	denied := issuer.tokenWithSubject(t, issuer.server.URL, testAudience, "unconfigured-workload", time.Now().Add(time.Minute), nil)
+	if _, err := client.Attach(authContext(denied), &brokerv1.AttachRequest{SessionId: "other-session"}); status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("unconfigured workload code = %s, want PermissionDenied: %v", status.Code(err), err)
 	}
 }
 

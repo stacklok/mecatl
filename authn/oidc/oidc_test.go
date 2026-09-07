@@ -173,6 +173,23 @@ func newJWKSFixture(t *testing.T) *jwksFixture {
 	return fixture
 }
 
+func TestReadyRejectsMalformedOrEmptyJWKS(t *testing.T) {
+	for _, body := range []string{"not-json", `{"keys":[]}`, `{"keys":[{"kid":"missing-material","kty":"RSA"}]}`} {
+		t.Run(body, func(t *testing.T) {
+			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(body)) }))
+			defer server.Close()
+			validator, err := NewValidator(t.Context(), Config{Issuer: server.URL, JWKSURI: server.URL, Audience: testAudience, HTTPClient: server.Client()})
+			if err != nil {
+				return // Constructor validation is an equally fail-closed JWKS readiness path.
+			}
+			defer validator.Close()
+			if err := validator.Ready(t.Context()); err == nil {
+				t.Fatal("Ready accepted unusable JWKS")
+			}
+		})
+	}
+}
+
 func TestPrivateHTTPSIssuerUsesHardenedDefaultClient(t *testing.T) {
 	fixture := newJWKSFixture(t)
 	caPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: fixture.srv.Certificate().Raw})

@@ -24,6 +24,88 @@ import (
 	contract "github.com/stacklok/mecatl/internal/mcpbroker"
 )
 
+func TestExpiredCallbackStatesReleaseCapacityBeforeLogicalRetention(t *testing.T) {
+	catalogue, err := Compile(protectedConfig("https://tokens.example/token"), []ToolDefinition{{Backend: "github", Name: "mcp__github__create"}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime, err := New(catalogue,
+		func(_ context.Context, _ SessionRef, _ string, call session.ToolCall) (session.ToolResult, error) {
+			return session.NewToolResult(call.ID, "ok"), nil
+		},
+		WithAuthorizedCaller(func(_ context.Context, _ SessionRef, _ string, call session.ToolCall, _ oauth2.TokenSource) (session.ToolResult, error) {
+			return session.NewToolResult(call.ID, "ok"), nil
+		}),
+		WithOAuthSecretResolver(func(context.Context, string) (string, error) { return "secret", nil }),
+		WithOAuthLimits(15*time.Millisecond, time.Second),
+		WithLimits(Limits{MaxPendingStates: 1, SweepInterval: time.Millisecond, LogicalRetention: time.Hour}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer runtime.Close()
+	attachment, _, err := runtime.AttachSession(t.Context(), "session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	localAttachment, ok := attachment.(*Attachment)
+	if !ok {
+		t.Fatal("runtime returned unexpected attachment type")
+	}
+	requester := toolByName(t, localAttachment, "mcp__github__create").(tool.AuthorizationRequester)
+	first, required, err := requester.RequestAuthorization(t.Context(), session.ToolCall{ID: "first", Name: "mcp__github__create", Args: []byte(`{}`)})
+	if err != nil || !required {
+		t.Fatalf("first authorization = (%+v, %v, %v)", first, required, err)
+	}
+	runtime.stateMu.Lock()
+	state := runtime.states
+	var transaction *authorizationTransaction
+	for _, indexed := range state {
+		transaction = indexed.transaction
+	}
+	runtime.stateMu.Unlock()
+	if transaction == nil {
+		t.Fatal("missing pending callback transaction")
+	}
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		runtime.stateMu.Lock()
+		remaining := len(runtime.states)
+		runtime.stateMu.Unlock()
+		if remaining == 0 {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if transaction.clientSecret != "" || transaction.verifier != "" || transaction.state != "" {
+		t.Fatal("expired transaction retained secret callback material")
+	}
+	second, required, err := requester.RequestAuthorization(t.Context(), session.ToolCall{ID: "second", Name: "mcp__github__create", Args: []byte(`{}`)})
+	if err != nil || !required || second.ID == "" {
+		t.Fatalf("expired callback capacity was not recovered: (%+v, %v, %v)", second, required, err)
+	}
+}
+
+func TestCompileRejectsPlaintextProtectedEndpoints(t *testing.T) {
+	for _, endpoint := range []string{"authorization", "token", "callback"} {
+		t.Run(endpoint, func(t *testing.T) {
+			config := protectedConfig("https://tokens.example/token")
+			route := &config.Routes[0]
+			switch endpoint {
+			case "authorization":
+				route.Auth.OAuth.Upstream.OAuth2.AuthorizationEndpoint = "http://accounts.example/authorize"
+			case "token":
+				route.Auth.OAuth.Upstream.OAuth2.TokenEndpoint = "http://tokens.example/token"
+			case "callback":
+				config.CallbackURL = "http://client.example/oauth/callback"
+			}
+			if _, err := Compile(config, []ToolDefinition{{Backend: "github", Name: "mcp__github__create"}}, nil); err == nil {
+				t.Fatal("Compile accepted a plaintext protected endpoint")
+			}
+		})
+	}
+}
+
 func TestInvariant_singleton_broker_loopback_relaxation_is_test_only(t *testing.T) {
 	var requests atomic.Int32
 	tokenServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

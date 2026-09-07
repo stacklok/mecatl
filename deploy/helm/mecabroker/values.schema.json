@@ -11,7 +11,7 @@
     }},
     "imagePullSecrets":{"type":"array","items":{"type":"object","required":["name"],"properties":{"name":{"type":"string","minLength":1}},"additionalProperties":false}},
     "tls":{"type":"object","additionalProperties":false,"required":["secretName","certKey","keyKey"],"properties":{"secretName":{"type":"string","minLength":1},"certKey":{"type":"string","minLength":1},"keyKey":{"type":"string","minLength":1}}},
-    "workloadIdentity":{"type":"object","additionalProperties":false,"required":["issuer","jwksURI","audience","caSecret","caKey","maxJWKSStaleness"],"properties":{"issuer":{"type":"string","minLength":1},"jwksURI":{"type":"string","minLength":1},"audience":{"type":"string","minLength":1},"caSecret":{"type":"string","minLength":1},"caKey":{"type":"string","minLength":1},"maxJWKSStaleness":{"type":"string","minLength":1}}},
+    "workloadIdentity":{"type":"object","additionalProperties":false,"required":["issuer","jwksURI","audience","subject","caSecret","caKey","maxJWKSStaleness"],"properties":{"issuer":{"type":"string","minLength":1},"jwksURI":{"type":"string","minLength":1},"audience":{"type":"string","minLength":1},"subject":{"type":"string","minLength":1},"caSecret":{"type":"string","minLength":1},"caKey":{"type":"string","minLength":1},"maxJWKSStaleness":{"type":"string","minLength":1}}},
     "brokerConfig":{"type":"string","minLength":1}, "extraEnv":{"type":"array","items":{"type":"object"}},
     "resources":{"type":"object"}, "service":{"type":"object","additionalProperties":false,"required":["port"],"properties":{"port":{"type":"integer","minimum":1,"maximum":65535}}},
     "terminationGracePeriodSeconds":{"type":"integer","minimum":1},

@@ -96,6 +96,7 @@ type Server struct {
 	service         mcpbroker.Service
 	mu              sync.Mutex
 	handles         map[string]*serverAttachment
+	owners          map[session.SessionID]*sessionOwner
 	maxHandles      int
 	incarnation     string
 	cfg             Config
@@ -123,8 +124,16 @@ type executeReceipt struct {
 	err      error
 }
 
+type sessionOwner struct {
+	principal session.Principal
+	pending   int
+	handles   int
+}
+
 type serverAttachment struct {
 	attachment      mcpbroker.Attachment
+	principal       *session.Principal
+	logicalID       session.SessionID
 	tools           map[string]tool.Tool
 	active          int
 	expiresAt       time.Time
@@ -165,7 +174,7 @@ func NewServerWithConfig(service mcpbroker.Service, cfg Config) (*Server, error)
 		return nil, fmt.Errorf("mcpbrokergrpc: mint broker incarnation: %w", err)
 	}
 	executeCtx, executeStop := context.WithCancel(context.Background())
-	s := &Server{service: service, handles: make(map[string]*serverAttachment), maxHandles: cfg.MaxHandles, incarnation: incarnation, cfg: cfg, done: make(chan struct{}), stop: make(chan struct{}), executeCtx: executeCtx, executeStop: executeStop}
+	s := &Server{service: service, handles: make(map[string]*serverAttachment), owners: make(map[session.SessionID]*sessionOwner), maxHandles: cfg.MaxHandles, incarnation: incarnation, cfg: cfg, done: make(chan struct{}), stop: make(chan struct{}), executeCtx: executeCtx, executeStop: executeStop}
 	go s.sweep()
 	return s, nil
 }
@@ -183,7 +192,66 @@ func (s *Server) bounded(ctx context.Context, execute bool) (context.Context, co
 	return context.WithTimeout(ctx, d)
 }
 
-// Attach opens a process-bound attachment handle.
+func (s *Server) bindSession(ctx context.Context, id session.SessionID) (*session.Principal, error) {
+	principal := session.PrincipalFromContext(ctx)
+	if principal == nil {
+		return nil, nil // Direct adapter calls are test-only; the network boundary always installs a principal.
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	owner := s.owners[id]
+	if owner != nil && !principal.SameIdentity(&owner.principal) {
+		return nil, status.Error(codes.PermissionDenied, "broker session is not available")
+	}
+	if owner == nil {
+		owner = &sessionOwner{principal: *principal}
+		s.owners[id] = owner
+	}
+	owner.pending++
+	return principal.Clone(), nil
+}
+
+func (s *Server) authorizeSession(ctx context.Context, id session.SessionID) error {
+	principal := session.PrincipalFromContext(ctx)
+	if principal == nil {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	owner := s.owners[id]
+	if owner == nil || !principal.SameIdentity(&owner.principal) {
+		return status.Error(codes.PermissionDenied, "broker session is not available")
+	}
+	return nil
+}
+
+func (s *Server) finishSessionBind(id session.SessionID, attached bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	owner := s.owners[id]
+	if owner == nil {
+		return
+	}
+	owner.pending--
+	if attached {
+		owner.handles++
+	}
+	if owner.pending == 0 && owner.handles == 0 {
+		delete(s.owners, id)
+	}
+}
+
+func (s *Server) authorizeHandle(ctx context.Context, attachment *serverAttachment) error {
+	if attachment == nil || attachment.principal == nil {
+		return nil
+	}
+	principal := session.PrincipalFromContext(ctx)
+	if principal == nil || !principal.SameIdentity(attachment.principal) {
+		return status.Error(codes.PermissionDenied, "broker attachment is not available")
+	}
+	return nil
+}
+
 func (s *Server) Attach(ctx context.Context, req *brokerv1.AttachRequest) (*brokerv1.AttachResponse, error) {
 	ctx, cancel := s.bounded(ctx, false)
 	defer cancel()
@@ -193,7 +261,14 @@ func (s *Server) Attach(ctx context.Context, req *brokerv1.AttachRequest) (*brok
 	if err := s.checkIncarnation(req.GetBrokerIncarnation(), true); err != nil {
 		return nil, err
 	}
-	a, outcome, err := s.service.AttachSession(ctx, session.SessionID(req.GetSessionId()))
+	logicalID := session.SessionID(req.GetSessionId())
+	principal, err := s.bindSession(ctx, logicalID)
+	if err != nil {
+		return nil, err
+	}
+	attached := false
+	defer func() { s.finishSessionBind(logicalID, attached) }()
+	a, outcome, err := s.service.AttachSession(ctx, logicalID)
 	if err != nil {
 		return nil, brokerStatus(err)
 	}
@@ -219,7 +294,8 @@ func (s *Server) Attach(ctx context.Context, req *brokerv1.AttachRequest) (*brok
 	}
 	_, enrollment := a.(mcpbroker.WorkspaceEnrollmentAttachment)
 	now := time.Now()
-	s.handles[h] = &serverAttachment{attachment: a, tools: tools, expiresAt: now.Add(s.cfg.HandleIdleTimeout), changed: make(chan struct{}), receipts: make(map[session.ToolCallID]*executeReceipt)}
+	s.handles[h] = &serverAttachment{attachment: a, principal: principal, logicalID: logicalID, tools: tools, expiresAt: now.Add(s.cfg.HandleIdleTimeout), changed: make(chan struct{}), receipts: make(map[session.ToolCallID]*executeReceipt)}
+	attached = true
 	return &brokerv1.AttachResponse{Binding: string(a.Binding()), Handle: h, Outcome: string(outcome), Tools: desc, BrokerIncarnation: s.incarnation, WorkspaceEnrollment: enrollment}, nil
 }
 
@@ -244,7 +320,7 @@ func signalAttachment(a *serverAttachment) {
 	a.changed = make(chan struct{})
 }
 
-func (s *Server) get(incarnation, handle string) (*serverAttachment, func(), error) {
+func (s *Server) get(ctx context.Context, incarnation, handle string) (*serverAttachment, func(), error) {
 	if err := s.checkIncarnation(incarnation, false); err != nil {
 		return nil, nil, err
 	}
@@ -253,6 +329,10 @@ func (s *Server) get(incarnation, handle string) (*serverAttachment, func(), err
 	}
 	s.mu.Lock()
 	a := s.handles[handle]
+	if err := s.authorizeHandle(ctx, a); err != nil {
+		s.mu.Unlock()
+		return nil, nil, err
+	}
 	if a == nil || s.closed || !time.Now().Before(a.expiresAt) || a.running != lifecycleNone || a.terminal != lifecycleNone {
 		s.mu.Unlock()
 		return nil, nil, reasonStatus(codes.FailedPrecondition, "attachment handle unavailable", brokerv1.BrokerErrorReason_BROKER_ERROR_REASON_STATE_UNAVAILABLE, "")
@@ -278,6 +358,10 @@ func (s *Server) beginLifecycle(ctx context.Context, incarnation, handle string,
 	for {
 		s.mu.Lock()
 		a := s.handles[handle]
+		if err := s.authorizeHandle(ctx, a); err != nil {
+			s.mu.Unlock()
+			return nil, "", false, err
+		}
 		if a == nil || s.closed || !time.Now().Before(a.expiresAt) {
 			s.mu.Unlock()
 			return nil, "", false, reasonStatus(codes.FailedPrecondition, "attachment handle unavailable", brokerv1.BrokerErrorReason_BROKER_ERROR_REASON_STATE_UNAVAILABLE, "")
@@ -414,7 +498,7 @@ func (s *Server) Shutdown(ctx context.Context) error {
 func (s *Server) Commit(ctx context.Context, req *brokerv1.CommitRequest) (*brokerv1.CommitResponse, error) {
 	ctx, cancel := s.bounded(ctx, false)
 	defer cancel()
-	a, release, e := s.get(req.GetBrokerIncarnation(), req.GetHandle())
+	a, release, e := s.get(ctx, req.GetBrokerIncarnation(), req.GetHandle())
 	if e != nil {
 		return nil, e
 	}
@@ -477,6 +561,9 @@ func (s *Server) Delete(ctx context.Context, req *brokerv1.DeleteRequest) (*brok
 	if err := s.checkIncarnation(req.GetBrokerIncarnation(), true); err != nil {
 		return nil, err
 	}
+	if err := s.authorizeSession(ctx, session.SessionID(req.GetSessionId())); err != nil {
+		return nil, err
+	}
 	d, ok := s.service.(mcpbroker.BindingSessionDeleter)
 	if !ok {
 		return nil, status.Error(codes.FailedPrecondition, "binding delete is unsupported")
@@ -513,6 +600,10 @@ func (s *Server) Execute(ctx context.Context, req *brokerv1.ExecuteRequest) (*br
 
 	s.mu.Lock()
 	a := s.handles[req.GetHandle()]
+	if err := s.authorizeHandle(ctx, a); err != nil {
+		s.mu.Unlock()
+		return nil, err
+	}
 	if a == nil || s.closed || !time.Now().Before(a.expiresAt) || a.running != lifecycleNone || a.terminal != lifecycleNone {
 		s.mu.Unlock()
 		return nil, reasonStatus(codes.FailedPrecondition, "attachment handle unavailable", brokerv1.BrokerErrorReason_BROKER_ERROR_REASON_STATE_UNAVAILABLE, "")
@@ -607,7 +698,7 @@ func waitExecuteReceipt(ctx context.Context, receipt *executeReceipt) (*brokerv1
 func (s *Server) RequestAuthorization(ctx context.Context, req *brokerv1.RequestAuthorizationRequest) (*brokerv1.RequestAuthorizationResponse, error) {
 	ctx, cancel := s.bounded(ctx, false)
 	defer cancel()
-	a, release, e := s.get(req.GetBrokerIncarnation(), req.GetHandle())
+	a, release, e := s.get(ctx, req.GetBrokerIncarnation(), req.GetHandle())
 	if e != nil {
 		return nil, e
 	}
@@ -646,7 +737,7 @@ func (s *Server) RequestAuthorization(ctx context.Context, req *brokerv1.Request
 func (s *Server) AbortAuthorization(ctx context.Context, req *brokerv1.AbortAuthorizationRequest) (*brokerv1.AbortAuthorizationResponse, error) {
 	ctx, cancel := s.bounded(ctx, false)
 	defer cancel()
-	a, release, e := s.get(req.GetBrokerIncarnation(), req.GetHandle())
+	a, release, e := s.get(ctx, req.GetBrokerIncarnation(), req.GetHandle())
 	if e != nil {
 		return nil, e
 	}
@@ -672,7 +763,7 @@ func (s *Server) AbortAuthorization(ctx context.Context, req *brokerv1.AbortAuth
 func (s *Server) PresentAuthorization(ctx context.Context, req *brokerv1.PresentAuthorizationRequest) (*brokerv1.PresentAuthorizationResponse, error) {
 	ctx, cancel := s.bounded(ctx, false)
 	defer cancel()
-	a, release, err := s.get(req.GetBrokerIncarnation(), req.GetHandle())
+	a, release, err := s.get(ctx, req.GetBrokerIncarnation(), req.GetHandle())
 	if err != nil {
 		return nil, err
 	}
@@ -695,7 +786,7 @@ func (s *Server) PresentAuthorization(ctx context.Context, req *brokerv1.Present
 func (s *Server) AuthorizationStatus(ctx context.Context, req *brokerv1.AuthorizationStatusRequest) (*brokerv1.AuthorizationStatusResponse, error) {
 	ctx, cancel := s.bounded(ctx, false)
 	defer cancel()
-	a, release, err := s.get(req.GetBrokerIncarnation(), req.GetHandle())
+	a, release, err := s.get(ctx, req.GetBrokerIncarnation(), req.GetHandle())
 	if err != nil {
 		return nil, err
 	}
@@ -718,7 +809,7 @@ func (s *Server) AuthorizationStatus(ctx context.Context, req *brokerv1.Authoriz
 func (s *Server) CancelAuthorization(ctx context.Context, req *brokerv1.CancelAuthorizationRequest) (*brokerv1.CancelAuthorizationResponse, error) {
 	ctx, cancel := s.bounded(ctx, false)
 	defer cancel()
-	a, release, err := s.get(req.GetBrokerIncarnation(), req.GetHandle())
+	a, release, err := s.get(ctx, req.GetBrokerIncarnation(), req.GetHandle())
 	if err != nil {
 		return nil, err
 	}
@@ -741,7 +832,7 @@ func (s *Server) CancelAuthorization(ctx context.Context, req *brokerv1.CancelAu
 func (s *Server) BeginWorkspaceEnrollment(ctx context.Context, req *brokerv1.BeginWorkspaceEnrollmentRequest) (*brokerv1.BeginWorkspaceEnrollmentResponse, error) {
 	ctx, cancel := s.bounded(ctx, false)
 	defer cancel()
-	a, release, err := s.get(req.GetBrokerIncarnation(), req.GetHandle())
+	a, release, err := s.get(ctx, req.GetBrokerIncarnation(), req.GetHandle())
 	if err != nil {
 		return nil, err
 	}
@@ -787,7 +878,7 @@ type workspaceResultWire struct {
 func (s *Server) workspaceResult(ctx context.Context, incarnation, handle string, wireRef *brokerv1.WorkspaceRef, cancel bool) (workspaceResultWire, error) {
 	ctx, stop := s.bounded(ctx, false)
 	defer stop()
-	a, release, err := s.get(incarnation, handle)
+	a, release, err := s.get(ctx, incarnation, handle)
 	if err != nil {
 		return workspaceResultWire{}, err
 	}

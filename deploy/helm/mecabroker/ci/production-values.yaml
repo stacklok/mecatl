@@ -4,6 +4,7 @@ image:
 workloadIdentity:
   issuer: https://identity.example.invalid
   jwksURI: https://identity.example.invalid/keys
+  subject: mecak8s
 brokerConfig: |
   {
     "callback_url": "https://broker.example.invalid/oauth/complete",

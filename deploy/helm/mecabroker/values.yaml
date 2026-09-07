@@ -19,6 +19,8 @@ workloadIdentity:
   issuer: ""
   jwksURI: ""
   audience: mecabroker
+  # Exact subject of the sole workload allowed to own broker sessions/handles.
+  subject: ""
   caSecret: mecabroker-workload-identity
   caKey: ca.pem
   maxJWKSStaleness: 15m
