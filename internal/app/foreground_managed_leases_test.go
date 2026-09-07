@@ -86,11 +86,11 @@ func TestADR_0281_LeaseCleanupPreservesCommandOutcome(t *testing.T) {
 		wantErr  error
 		wantExit int
 	}{
-		{name: "non-zero", ctx: func() (context.Context, context.CancelFunc) { return context.WithCancel(context.Background()) }, command: "printf %s \"$TMPDIR\"; exit 7", wantExit: 7},
-		{name: "cancel", ctx: func() (context.Context, context.CancelFunc) { return context.WithCancel(context.Background()) }, command: "printf %s \"$TMPDIR\"; sleep 30", wantErr: context.Canceled},
+		{name: "non-zero", ctx: func() (context.Context, context.CancelFunc) { return context.WithCancel(context.Background()) }, command: "exit 7", wantExit: 7},
+		{name: "cancel", ctx: func() (context.Context, context.CancelFunc) { return context.WithCancel(context.Background()) }, command: "sleep 30", wantErr: context.Canceled},
 		{name: "timeout", ctx: func() (context.Context, context.CancelFunc) {
 			return context.WithTimeout(context.Background(), 20*time.Millisecond)
-		}, command: "printf %s \"$TMPDIR\"; sleep 30", wantErr: context.DeadlineExceeded},
+		}, command: "sleep 30", wantErr: context.DeadlineExceeded},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx, cancel := tc.ctx()
@@ -102,9 +102,12 @@ func TestADR_0281_LeaseCleanupPreservesCommandOutcome(t *testing.T) {
 			if !errors.Is(err, tc.wantErr) || (tc.wantErr == nil && err != nil) || res.ExitCode != tc.wantExit {
 				t.Fatalf("Run = %+v, %v; want exit %d, err %v", res, err, tc.wantExit, tc.wantErr)
 			}
-			lease := filepath.Dir(strings.TrimSpace(res.Stdout))
-			if _, err := os.Stat(lease); !os.IsNotExist(err) {
-				t.Fatalf("terminal lease remains at %q: %v", lease, err)
+			leases, globErr := filepath.Glob(filepath.Join(managedRoot, "workspaces", "*", "commands", "cmd-*"))
+			if globErr != nil {
+				t.Fatalf("find managed command leases: %v", globErr)
+			}
+			if len(leases) != 0 {
+				t.Fatalf("terminal command leases remain: %q", leases)
 			}
 		})
 	}
