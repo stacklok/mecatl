@@ -106,7 +106,7 @@ func TestInitialProductionMCPBroker_Scenario4_TransientReconnect(t *testing.T) {
 	}
 }
 
-func TestInitialProductionMCPBroker_Scenario4_RestartInterruptsPendingCall(t *testing.T) {
+func TestSingletonBrokerRemediation_Scenario5_RestartBoundary(t *testing.T) {
 	oldBroker := newFailureBroker()
 	oldConn, oldStop := failureBufServer(t, oldBroker, nil)
 	defer oldStop()
@@ -132,6 +132,17 @@ func TestInitialProductionMCPBroker_Scenario4_RestartInterruptsPendingCall(t *te
 	}
 	if attached.Binding() != binding || newBroker.authCalls.Load() != 0 || newBroker.executeCalls.Load() != 0 {
 		t.Fatalf("restart rebound or dispatched: binding=%q auth=%d execute=%d", attached.Binding(), newBroker.authCalls.Load(), newBroker.executeCalls.Load())
+	}
+	// A replacement client may enroll only before a call is parked; it is a
+	// different attachment on the replacement incarnation, never a rebind of
+	// the interrupted continuation above.
+	freshClient, err := mcpbrokergrpc.NewClientWithConfig(newConn, shortConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	freshAttachment, _, err := freshClient.AttachSession(t.Context(), "pre-prompt")
+	if err != nil || freshAttachment.Binding() == binding {
+		t.Fatalf("fresh pre-prompt enrollment = (%v, %v), want replacement attachment", freshAttachment, err)
 	}
 }
 

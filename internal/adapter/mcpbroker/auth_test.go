@@ -180,7 +180,72 @@ func callback(t *testing.T, runtime *Runtime, code, state string) *httptest.Resp
 	return recorder
 }
 
-func TestADR_0302_RemoteBrokerPreservesConfidentialClient(t *testing.T) {
+func TestSingletonBrokerRemediation_Scenario5_CallbackCorrelationReplayAndNonDisclosure(t *testing.T) {
+	var exchanges atomic.Int32
+	tokenServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		exchanges.Add(1)
+		if err := request.ParseForm(); err != nil {
+			t.Fatal(err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"access_token":"access","token_type":"Bearer"}`))
+	}))
+	defer tokenServer.Close()
+
+	harness := newProtectedHarness(t, tokenServer)
+	defer harness.runtime.Close()
+	first, _ := attach(t, harness.runtime, "first-enrollment")
+	second, _ := attach(t, harness.runtime, "second-enrollment")
+	firstAuth, firstState := requestProtected(t, first, session.NewToolCall("first", "mcp__github__create", json.RawMessage(`{"title":"one"}`)))
+	_, secondState := requestProtected(t, second, session.NewToolCall("second", "mcp__github__create", json.RawMessage(`{"title":"two"}`)))
+	if len(firstState) < 43 || firstState == secondState {
+		t.Fatalf("callback state is not a unique 256-bit opaque value: %q / %q", firstState, secondState)
+	}
+
+	genericReject := func(raw string) {
+		t.Helper()
+		response := httptest.NewRecorder()
+		harness.runtime.CallbackHandler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, raw, nil))
+		body := response.Body.String()
+		if response.Code != http.StatusBadRequest || body != "invalid OAuth callback\n" {
+			t.Fatalf("callback %q = (%d, %q), want one generic rejection", raw, response.Code, body)
+		}
+		for _, secret := range []string{firstState, secondState, "first-enrollment", "second-enrollment", "authorization-code"} {
+			if strings.Contains(body, secret) {
+				t.Fatalf("callback rejection disclosed %q in %q", secret, body)
+			}
+		}
+	}
+	genericReject("/callback")
+	genericReject("/callback?code=x&state=not-a-state")
+	genericReject("/callback?code=x&state=" + url.QueryEscape(firstState) + "&session=second-enrollment")
+	if exchanges.Load() != 0 {
+		t.Fatalf("hostile callbacks reached token exchange %d times", exchanges.Load())
+	}
+	if status, err := first.AuthorizationStatus(t.Context(), firstAuth); err != nil || status != session.AuthorizationPending {
+		t.Fatalf("hostile callback changed first enrollment: %q, %v", status, err)
+	}
+
+	if got := callback(t, harness.runtime, "authorization-code", firstState); got.Code != http.StatusOK {
+		t.Fatalf("valid final callback status = %d", got.Code)
+	}
+	if exchanges.Load() != 1 {
+		t.Fatalf("valid callback exchanges = %d, want 1", exchanges.Load())
+	}
+	genericReject("/callback?code=authorization-code&state=" + url.QueryEscape(firstState))
+	if exchanges.Load() != 1 {
+		t.Fatalf("replayed callback exchanged code %d times", exchanges.Load())
+	}
+
+	clock := time.Now().Add(2 * time.Hour)
+	harness.runtime.oauth.now = func() time.Time { return clock }
+	genericReject("/callback?code=authorization-code&state=" + url.QueryEscape(secondState))
+	if exchanges.Load() != 1 {
+		t.Fatalf("expired callback exchanged code %d times", exchanges.Load())
+	}
+}
+
+func TestADR_0302_SingletonBrokerConfidentialClientCustody(t *testing.T) {
 	assertToolHiveProtectedClientIsConfidential(t)
 
 	var exchanges, refreshes int

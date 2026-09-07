@@ -72,6 +72,35 @@ func TestNewToolHiveProcessUsesConfiguredAuthStorage(t *testing.T) {
 	}
 }
 
+func TestInvariant_singleton_broker_named_proofs_use_production_paths(t *testing.T) {
+	t.Setenv("MECATL_TEST_CLIENT_SECRET", "construction-only-secret")
+	profile := protectedToolHiveProfile("proof")
+	profile.Static = []StaticTool{{Name: "echo", Schema: json.RawMessage(`{"type":"object"}`)}}
+	process, err := NewToolHiveProcess(t.Context(), ToolHiveConfig{
+		CallbackURL: "https://broker.example/callback", Profiles: []ToolHiveProfile{profile},
+	})
+	if err != nil {
+		t.Fatalf("NewToolHiveProcess: %v", err)
+	}
+	t.Cleanup(func() { _ = process.Close() })
+	mux := http.NewServeMux()
+	if err := process.Handlers.Mount(mux, "/callback"); err != nil {
+		t.Fatalf("mount production ToolHive callback bundle: %v", err)
+	}
+	// The fixture reaches the mounted fixed bundle, not an attachment or a
+	// hand-written callback. The protected resource endpoint is supplied by the
+	// embedded ToolHive process and must remain live with its authorization routes.
+	response := httptest.NewRecorder()
+	mux.ServeHTTP(response, httptest.NewRequest(http.MethodGet, toolHiveBasePath+"/.well-known/oauth-protected-resource", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("embedded protected-resource handler = %d, want 200", response.Code)
+	}
+	attachment, _, err := process.Runtime.AttachSession(t.Context(), "production-proof")
+	if err != nil || attachment.Binding() == "" || len(attachment.Tools()) != 1 {
+		t.Fatalf("production runtime attachment = %#v, %v", attachment, err)
+	}
+}
+
 func TestToolHiveProtectedClientIsConfidential(t *testing.T) {
 	assertToolHiveProtectedClientIsConfidential(t)
 }

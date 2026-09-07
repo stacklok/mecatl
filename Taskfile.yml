@@ -52,6 +52,11 @@ tasks:
       - task --list
     silent: true
 
+  build:broker:
+    desc: Compile the standalone mecabroker binary into bin/
+    cmds:
+      - go build -ldflags "{{.BUILD_LDFLAGS}}" -o bin/mecabroker ./cmd/mecabroker
+
   build:
     desc: Compile binaries into bin/
     cmds:

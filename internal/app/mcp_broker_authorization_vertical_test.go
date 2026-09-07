@@ -31,12 +31,12 @@ import (
 	"github.com/stacklok/mecatl/internal/app"
 )
 
-// TestSessionMCPAuthorization_GrantRegressionParksAndResumes is the full
-// reconstructed vertical for a statically declared protected route. It uses
+// TestSingletonBrokerRemediation_Scenario5_Stage3RemoteVertical is the full
+// production-equivalent vertical for a statically declared protected route. It uses
 // app.Build, the real dispatcher and Service controls, and real TLS OAuth and
 // streaming-HTTP MCP fixtures. A terminal RFC 6749 refresh failure must revoke
 // the route grant before the model's next exact call reaches dispatch.
-func TestSessionMCPAuthorization_GrantRegressionParksAndResumes(t *testing.T) {
+func TestSingletonBrokerRemediation_Scenario5_Stage3RemoteVertical(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
 	defer cancel()
 
