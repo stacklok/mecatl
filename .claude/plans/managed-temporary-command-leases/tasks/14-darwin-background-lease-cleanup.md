@@ -2,7 +2,7 @@
 id: 14-darwin-background-lease-cleanup
 title: Repair Darwin background lease cleanup
 blocked_by: [13-authorized-same-uid-scope]
-status: in-progress
+status: done
 attempt: 1
 branch: "plan-managed-temporary-command-leases/14-darwin-background-lease-cleanup-attempt-1"
 worktree: ".scratch/worker-managed-temporary-command-leases-14-darwin-background-lease-cleanup-attempt-1"
