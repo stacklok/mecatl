@@ -13,8 +13,16 @@ func TestWatcherCoalescesBurst(t *testing.T) {
 	path := filepath.Join(dir, "value")
 	mustWrite(t, path, "initial")
 
+	// debounce/maxDebounce/the tail-wait below are deliberately generous (well
+	// beyond sibling tests in this file): the loop below round-trips through a
+	// real write + real fsnotify delivery + goroutine scheduling 8 times, and
+	// under -race on a loaded CI runner that round-trip can occasionally take
+	// tens of ms. A tight debounce here does not test coalescing more
+	// strictly -- it just makes an inter-write scheduling delay look like
+	// real quiescence, correctly (by design) splitting the burst into two
+	// callbacks and failing the test on a false positive.
 	changes := make(chan struct{}, 4)
-	w, armed := newTestWatcher(t, []string{path}, 50*time.Millisecond, 200*time.Millisecond, func() { changes <- struct{}{} })
+	w, armed := newTestWatcher(t, []string{path}, 150*time.Millisecond, 3*time.Second, func() { changes <- struct{}{} })
 	defer w.Close()
 
 	for i := 0; i < 8; i++ {
@@ -25,7 +33,7 @@ func TestWatcherCoalescesBurst(t *testing.T) {
 	select {
 	case <-changes:
 		t.Fatal("burst produced more than one callback")
-	case <-time.After(90 * time.Millisecond):
+	case <-time.After(300 * time.Millisecond):
 	}
 }
 
