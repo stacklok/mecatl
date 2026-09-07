@@ -2,7 +2,7 @@
 id: 06-panel-anchor-lifetime-and-appendix-order
 title: Preserve previous-frame provenance and document-order appendix fallback
 blocked_by: [05-integration-performance]
-status: in-progress
+status: done
 attempt: 2
 branch: "plan-mecatui-logical-conversation-anchors/06-panel-anchor-lifetime-and-appendix-order-attempt-2"
 worktree: ".scratch/worker-mecatui-logical-conversation-anchors-06-panel-anchor-lifetime-and-appendix-order-attempt-2"
