@@ -15,7 +15,6 @@ review-*.md
 report*.md
 handoff-*.md
 handover-*.md
-REVIEW-LEDGER.md
 
 # Claude Code sub-agent definitions (reviewer/specialist agents). These are
 # isolated by nature — no inbound or outbound doc links — so there is nothing to
