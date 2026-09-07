@@ -394,6 +394,13 @@ func (s *Service) resolveAuthorizationLocked(ctx context.Context, sess *session.
 	if err != nil {
 		return MCPAuthorizationResult{}, fmt.Errorf("%w: invalid terminal authorization status %q", ErrInternal, status)
 	}
+	// Reconcile BEFORE consuming pending: AbortAuthorization clears the
+	// session's only durable PendingAuthorization, and the very next save
+	// durably persists that cleared state. A failure here, before any of that,
+	// leaves pending fully intact for a retry — see ensureAuthorizationRequiredLogged.
+	if err := s.ensureAuthorizationRequiredLogged(ctx, sess.ID, pending); err != nil {
+		return MCPAuthorizationResult{}, err
+	}
 	results, err := sess.AbortAuthorization(reason)
 	if err != nil {
 		return MCPAuthorizationResult{}, ErrNotFound
@@ -405,7 +412,6 @@ func (s *Service) resolveAuthorizationLocked(ctx context.Context, sess *session.
 		return MCPAuthorizationResult{}, fmt.Errorf("%w: persist authorization resolution", ErrInternal)
 	}
 	s.stopAuthorizationExpiry(sess.ID)
-	s.ensureAuthorizationRequiredLogged(ctx, sess.ID, pending)
 	engine, env, err := s.engineAndEnvironmentFor(ctx, sess)
 	if err != nil {
 		// Engine/environment reconstruction is not required to make a terminal
@@ -518,18 +524,36 @@ func (s *Service) registerAndStartAuthorizationResolution(ctx context.Context, s
 // ("reused authorization call id"). A read failure is fail-safe: it leaves the
 // (unchanged, pre-existing) gap rather than risk a duplicate from an uncertain
 // read, and WARNs once.
-func (s *Service) ensureAuthorizationRequiredLogged(ctx context.Context, id session.SessionID, pending session.PendingAuthorization) {
+// ensureAuthorizationRequiredLogged closes the crash-window gap between
+// PauseForAuthorization's durable snapshot save and this session's
+// EvAuthorizationRequired reaching the EventLog: a process failure in that
+// narrow interval leaves a durably-awaiting session with no matching required
+// record, so a resolved event appended later would make eventsource.Fold
+// reject the whole session ("resolved has no matching open lifecycle"). It
+// reads this session's log ONCE for an existing required event carrying
+// pending's exact AuthorizationID and backfills one, built from the same
+// durable pending state, only when genuinely absent — never blindly, since a
+// duplicate required for an ID that already has one is its own Fold error
+// ("reused authorization call id").
+//
+// MUST be called BEFORE the caller consumes pending (AbortAuthorization /
+// InterruptAuthorization clear the session's only durable PendingAuthorization
+// and the caller then saves that cleared snapshot): once that save lands, the
+// source data needed to backfill required is gone, so a crash or a failed
+// backfill AFTER it would strand the same unfoldable gap permanently instead
+// of just narrowly. Calling this first, before any mutation, means a failure
+// here aborts the whole resolution with pending still fully intact — the
+// caller can simply retry.
+func (s *Service) ensureAuthorizationRequiredLogged(ctx context.Context, id session.SessionID, pending session.PendingAuthorization) error {
 	if s.cfg.EventLog == nil {
-		return
+		return nil
 	}
 	logged, err := authorizationRequiredLogged(ctx, s.cfg.EventLog, id, pending.Authorization.ID)
 	if err != nil {
-		s.cfg.Diagnostics.Log(context.WithoutCancel(ctx), port.LevelWarn, "authorization reconciliation: event log read failed",
-			"session", string(id), "authorization", pending.Authorization.ID, "err", err.Error())
-		return
+		return fmt.Errorf("%w: check authorization required lifecycle: %v", ErrInternal, err)
 	}
 	if logged {
-		return
+		return nil
 	}
 	ev := session.Event{Type: session.EvAuthorizationRequired, Authorization: &session.AuthorizationPayload{
 		AuthorizationID: pending.Authorization.ID,
@@ -539,9 +563,9 @@ func (s *Service) ensureAuthorizationRequiredLogged(ctx context.Context, id sess
 		Status:          session.AuthorizationPending,
 	}}
 	if err := s.appendEvent(context.WithoutCancel(ctx), id, ev); err != nil {
-		s.cfg.Diagnostics.Log(context.WithoutCancel(ctx), port.LevelWarn, "authorization reconciliation: backfill append failed",
-			"session", string(id), "authorization", pending.Authorization.ID, "err", err.Error())
+		return fmt.Errorf("%w: backfill authorization required lifecycle: %v", ErrInternal, err)
 	}
+	return nil
 }
 
 // authorizationRequiredLogged reports whether id's durable EventLog already
@@ -800,6 +824,11 @@ func (s *Service) interruptRestoredAuthorizationLocked(ctx context.Context, sess
 	if !ok {
 		return nil, false, fmt.Errorf("%w: invalid authorizing session", ErrFailedPrecondition)
 	}
+	// Reconcile BEFORE consuming pending — see resolveAuthorizationLocked's
+	// identical ordering comment and ensureAuthorizationRequiredLogged's doc.
+	if err := s.ensureAuthorizationRequiredLogged(ctx, sess.ID, pending); err != nil {
+		return nil, false, err
+	}
 	attachment, release, err := s.authorizationAttachment(ctx, sess)
 	if err != nil {
 		if !errors.Is(err, brokercontract.ErrStateUnavailable) {
@@ -894,6 +923,13 @@ func (s *Service) settleAuthorizationLocked(ctx context.Context, id session.Sess
 	if !ok {
 		return fmt.Errorf("%w: invalid authorizing session", ErrFailedPrecondition)
 	}
+	// Reconcile BEFORE consuming pending — see resolveAuthorizationLocked's
+	// identical ordering comment and ensureAuthorizationRequiredLogged's doc.
+	if err := s.ensureAuthorizationRequiredLogged(ctx, id, pending); err != nil {
+		s.cfg.Diagnostics.Log(context.WithoutCancel(ctx), port.LevelWarn, "authorization settlement reconciliation failed",
+			"session", string(id), "err", err.Error())
+		return err
+	}
 	attachment, release, attachErr := s.authorizationAttachment(ctx, sess)
 	if attachErr == nil {
 		_, err = attachment.CancelAuthorization(ctx, pending.Authorization)
@@ -920,7 +956,6 @@ func (s *Service) settleAuthorizationLocked(ctx context.Context, id session.Sess
 			"session", string(id), "err", err.Error())
 		return err
 	}
-	s.ensureAuthorizationRequiredLogged(ctx, id, pending)
 	if err := s.appendAuthorizationResolution(ctx, id, pending, results, session.AuthorizationInterrupted); err != nil {
 		s.cfg.Diagnostics.Log(context.WithoutCancel(ctx), port.LevelWarn, "persist external authorization settlement lifecycle failed",
 			"session", string(id), "err", err.Error())

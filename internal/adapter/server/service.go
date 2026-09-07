@@ -4469,10 +4469,28 @@ func (s *Service) startRunContent(ctx context.Context, id session.SessionID, tex
 	// by beginRunAdmission above from the PRE-repair load, so it must be kept
 	// in sync or Persist/GracefulDrain would observe the stale object.
 	st.sess = sess
+	// interruptedContinuationOwned is non-nil only on the interruptedAuthorization
+	// branch below; the flag it points to starts false and must flip true at the
+	// exact moment a real Engine.Run takes ownership (BeginRun below), or the
+	// deferred repair stays armed for every return in between.
+	var interruptedContinuationOwned *bool
 	if !interruptedAuthorization {
 		if err := s.repairRunningSession(ctx, sess); err != nil {
 			return nil, err
 		}
+	} else {
+		// interruptRestoredAuthorizationLocked already durably saved sess
+		// StateRunning, correct ONLY because this function is about to hand it
+		// to a real Engine.Run below. Every return between here and that
+		// handoff leaves the same durable StateRunning with no owning run —
+		// the exact stranded-snapshot shape repairRunningSession exists for.
+		owned := false
+		interruptedContinuationOwned = &owned
+		defer func() {
+			if !*interruptedContinuationOwned {
+				_ = s.repairRunningSession(context.WithoutCancel(ctx), sess)
+			}
+		}()
 	}
 	engine, env, err := s.engineAndEnvironmentFor(ctx, sess)
 	if err != nil {
@@ -4495,6 +4513,11 @@ func (s *Service) startRunContent(ctx context.Context, id session.SessionID, tex
 	})
 	if err != nil {
 		return nil, err
+	}
+	// engine.Run is now actively driving sess in its own goroutine and owns its
+	// persistence from here — the deferred repair above must stand down.
+	if interruptedContinuationOwned != nil {
+		*interruptedContinuationOwned = true
 	}
 	promoted = true
 	return run, nil

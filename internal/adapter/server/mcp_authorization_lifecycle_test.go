@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"iter"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -598,6 +599,49 @@ func TestMCPAuthorizationResolutionBackfillsMissingRequired(t *testing.T) {
 }
 
 func ptrToolResult(r session.ToolResult) *session.ToolResult { return &r }
+
+// failingReadEventLog fails every Read, to prove reconciliation is a genuine
+// precondition: a failure must abort resolution before anything is consumed.
+type failingReadEventLog struct{ inner port.EventLog }
+
+func (l failingReadEventLog) Append(ctx context.Context, id session.SessionID, ev session.Event) error {
+	return l.inner.Append(ctx, id, ev)
+}
+func (failingReadEventLog) Read(context.Context, session.SessionID) iter.Seq2[session.Event, error] {
+	return func(yield func(session.Event, error) bool) { yield(session.Event{}, errors.New("read failed")) }
+}
+
+// TestMCPAuthorizationReconciliationFailureLeavesPendingIntact pins the
+// reordering fix: ensureAuthorizationRequiredLogged runs BEFORE
+// AbortAuthorization consumes the session's only durable PendingAuthorization.
+// A reconciliation failure must therefore abort the whole resolution with the
+// session completely untouched — StateAuthorizing, pending still present, no
+// results recorded, nothing appended — so the caller can simply retry rather
+// than lose the source data a later crash would need to backfill from.
+func TestMCPAuthorizationReconciliationFailureLeavesPendingIntact(t *testing.T) {
+	f := newLifecycleFixture(t, session.AuthorizationDenied, nil, time.Now, nil)
+	f.svc.cfg.EventLog = failingReadEventLog{inner: memstore.NewEventLog()}
+
+	control := MCPAuthorizationControl{SessionID: "authorization-session", AuthorizationID: f.pending.Authorization.ID}
+	result, err := f.svc.RecheckMCPAuthorization(t.Context(), "authorization-session", control)
+	if !errors.Is(err, ErrInternal) || result != (MCPAuthorizationResult{}) {
+		t.Fatalf("reconciliation failure = %+v, %v; want ErrInternal and no success", result, err)
+	}
+	persisted, loadErr := f.store.Load(t.Context(), "authorization-session")
+	if loadErr != nil {
+		t.Fatal(loadErr)
+	}
+	if persisted.State != session.StateAuthorizing {
+		t.Fatalf("state = %q, want unchanged authorizing", persisted.State)
+	}
+	pending, ok := persisted.PendingAuthorization()
+	if !ok || pending.Authorization.ID != f.pending.Authorization.ID || pending.Call.ID != f.pending.Call.ID {
+		t.Fatalf("pending authorization = %+v, %t; want the original still intact", pending, ok)
+	}
+	if f.attach.tool.calls.Load() != 0 {
+		t.Fatal("protected mutation executed after reconciliation failure")
+	}
+}
 
 func TestMCPAuthorizationTerminalFallbackAppendFailureIsExplicit(t *testing.T) {
 	f := newLifecycleFixture(t, session.AuthorizationDenied, nil, time.Now, nil)
@@ -1399,8 +1443,13 @@ func TestStartRunRepairsUnavailableRestoredAuthorizationBeforeFailingReattach(t 
 	if loadErr != nil {
 		t.Fatal(loadErr)
 	}
-	if loaded.State != session.StateRunning {
-		t.Fatalf("state = %q, want running after interrupted repair", loaded.State)
+	// Idle, not a stranded StateRunning: the interrupt repair succeeded and
+	// saved StateRunning on the promise that a real Engine.Run would take
+	// ownership next, but the reattach that was supposed to drive it failed
+	// first — the deferred repair in StartRunContent settles it back down
+	// rather than leaving it misclassifiable as a crash orphan.
+	if loaded.State != session.StateIdle {
+		t.Fatalf("state = %q, want idle after the interrupted repair's continuation failed to start", loaded.State)
 	}
 	if pairErr := session.ValidateToolPairing(loaded.Conversation.Messages); pairErr != nil {
 		t.Fatalf("pairing: %v", pairErr)
