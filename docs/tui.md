@@ -144,7 +144,10 @@ the current session.
 Run `mecatui --help`, `mecatui -h`, or `mecatui help` for the concise top-level command index. `mecatui help sessions`, `mecatui help connect`, `mecatui help debug`, and `mecatui help login` alias their corresponding command-specific help; direct `sessions --help`, `connect --help`, `debug --help`, and `login --help` also work. Use bare `mecatui --help-flags` for common embedded-mode flags and bare `mecatui --help-all` (or the corresponding `sessions` or `connect` form) for the exhaustive flag reference.
 
 The transport is exactly what the invocation says — there is no implicit probe
-or fallback:
+or fallback. For the local-versus-remote configuration ownership and intentional
+default differences, see the [settings guide](https://mecatl.dev/building/deployment/settings):
+bare mode owns an embedded server, while connect mode is client-only and the remote
+server is authoritative.
 
 - **Bare `mecatui [flags]`** — always host an embedded `mecated` in-process over
   a private UNIX socket; **never probe** loopback, **never dial**. The socket
