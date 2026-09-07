@@ -2,13 +2,13 @@
 id: 06-panel-anchor-lifetime-and-appendix-order
 title: Preserve previous-frame provenance and document-order appendix fallback
 blocked_by: [05-integration-performance]
-status: pending
-attempt: 1
-branch: "plan-mecatui-logical-conversation-anchors/06-panel-anchor-lifetime-and-appendix-order-attempt-1"
-worktree: ".scratch/worker-mecatui-logical-conversation-anchors-06-panel-anchor-lifetime-and-appendix-order-attempt-1"
+status: in-progress
+attempt: 2
+branch: "plan-mecatui-logical-conversation-anchors/06-panel-anchor-lifetime-and-appendix-order-attempt-2"
+worktree: ".scratch/worker-mecatui-logical-conversation-anchors-06-panel-anchor-lifetime-and-appendix-order-attempt-2"
 issue: ""
 retries: 1
-last_error: "task test failed: TestUsableAutoSkillsStockBuildPolicyMatrix/untrusted_project_ignored (unrelated learned skill operation failure)"
+last_error: ""
 accumulator: acc/mecatui-logical-conversation-anchors
 ---
 
