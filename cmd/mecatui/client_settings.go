@@ -358,7 +358,7 @@ func applyKeyOverridesToDeps(cfg config, deps *ui.Deps) error {
 		// alt-screen. XDG-relative paths, not a possibly-wrong absolute path.
 		fmt.Fprintln(os.Stderr, "mecatui: WARNING: the keymap: key in ~/.config/mecatl/settings.yaml is deprecated; move it to ~/.config/mecatui/settings.yaml (the client settings file). The legacy key still works but will be removed in a future release.")
 	}
-	if os.Getenv("MECATUI_DEBUG_KEYMAP") == "1" {
+	if cfg.debugKeymap {
 		fmt.Fprintf(os.Stderr, "mecatui keymap (legacy YAML): %v\n", legacyMap)
 		fmt.Fprintf(os.Stderr, "mecatui keymap (client YAML): %v\n", clientMap)
 		fmt.Fprintf(os.Stderr, "mecatui keymap (CLI): %v\n", cliMap)

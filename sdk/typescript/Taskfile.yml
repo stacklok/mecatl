@@ -36,9 +36,10 @@ tasks:
       - pnpm run test
 
   e2e:
-    desc: Build same-checkout mecated and run the offline TypeScript SDK wire suite
-    deps: [install]
+    desc: Build the SDK and same-checkout mecated, then run the Node/Bun offline wire suite
+    deps: [build]
     cmds:
+      - test -x "${BUN_BIN:-}" || command -v bun >/dev/null 2>&1 || { echo "bun is required for the SDK e2e runtime matrix"; exit 1; }
       - task --dir ../.. build
       - pnpm run test:e2e
 

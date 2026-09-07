@@ -74,8 +74,8 @@ function assertReplayFollow(envelopes: WatchEnvelope[], runId: string): void {
   ).toBe(true);
 }
 
-async function exerciseAttach(client: Client, workspace: string): Promise<void> {
-  const session = await client.sessions.create({ workspace });
+async function exerciseAttach(client: Client): Promise<void> {
+  const session = await client.sessions.create({});
   const run = await session.run("prove replay then live follow");
   const ownedResult = run.result();
   const attached = await session.attach(run.id);
@@ -103,10 +103,10 @@ async function drain<T>(values: AsyncIterable<T>): Promise<void> {
 
 describe("offline durable attachment wire", () => {
   it("attach replays and follows a live run over gRPC", async () => {
-    await withDaemon({ script: fixture("attach.json") }, async ({ ready, workspace }) => {
+    await withDaemon({ script: fixture("attach.json") }, async ({ ready }) => {
       const client = grpcClient(ready);
       try {
-        await exerciseAttach(client, workspace);
+        await exerciseAttach(client);
       } finally {
         await client.close();
       }
@@ -114,33 +114,27 @@ describe("offline durable attachment wire", () => {
   });
 
   it("attach reaches the daemon over a unix domain socket", async () => {
-    await withDaemon(
-      { script: fixture("attach.json"), uds: true },
-      async ({ ready, workspace }) => {
-        expect(ready.socket_path).toBeTypeOf("string");
-        const client = grpcClient(ready);
-        try {
-          await exerciseAttach(client, workspace);
-        } finally {
-          await client.close();
-        }
-      },
-    );
+    await withDaemon({ script: fixture("attach.json"), uds: true }, async ({ ready }) => {
+      expect(ready.socket_path).toBeTypeOf("string");
+      const client = grpcClient(ready);
+      try {
+        await exerciseAttach(client);
+      } finally {
+        await client.close();
+      }
+    });
   });
 
   it("attach replays and follows a live run over HTTP/SSE", async () => {
-    await withDaemon(
-      { http: true, script: fixture("attach.json") },
-      async ({ ready, workspace }) => {
-        if (ready.http_address === undefined) throw new Error("mecated omitted HTTP readiness");
-        const client = connectHttp({ baseUrl: `http://${ready.http_address}` });
-        try {
-          await exerciseAttach(client, workspace);
-        } finally {
-          await client.close();
-        }
-      },
-    );
+    await withDaemon({ http: true, script: fixture("attach.json") }, async ({ ready }) => {
+      if (ready.http_address === undefined) throw new Error("mecated omitted HTTP readiness");
+      const client = connectHttp({ baseUrl: `http://${ready.http_address}` });
+      try {
+        await exerciseAttach(client);
+      } finally {
+        await client.close();
+      }
+    });
   });
 
   it("an awaiting approval resolved outside the SDK survives a restart on the same run id", async () => {
@@ -149,7 +143,7 @@ describe("offline durable attachment wire", () => {
       async (daemon) => {
         const client = grpcClient(daemon.ready);
         try {
-          const session = await client.sessions.create({ workspace: daemon.workspace });
+          const session = await client.sessions.create({});
           const run = await session.run("park on the scripted write approval");
           const ownedEnd = run.result().catch((error: unknown) => error);
           const attached = await session.attach(run.id);
@@ -219,51 +213,48 @@ describe("offline durable attachment wire", () => {
   });
 
   it("an attached cancel stops a real run and a stale one fails typed", async () => {
-    await withDaemon(
-      { http: true, script: fixture("attach-cancel.json") },
-      async ({ ready, workspace }) => {
-        if (ready.http_address === undefined) throw new Error("mecated omitted HTTP readiness");
-        const client = connectHttp({ baseUrl: `http://${ready.http_address}` });
-        try {
-          const session = await client.sessions.create({ workspace });
-          const run = await session.run("cancel this attached run");
-          const ownedResult = run.result();
-          const attached = await session.attach(run.id);
-          const { envelopes, iterator } = await collectThroughBoundary(attached);
-          const attachedEnd = drainIterator(iterator, envelopes);
-          await attached.cancel();
-          await attachedEnd;
+    await withDaemon({ http: true, script: fixture("attach-cancel.json") }, async ({ ready }) => {
+      if (ready.http_address === undefined) throw new Error("mecated omitted HTTP readiness");
+      const client = connectHttp({ baseUrl: `http://${ready.http_address}` });
+      try {
+        const session = await client.sessions.create({});
+        const run = await session.run("cancel this attached run");
+        const ownedResult = run.result();
+        const attached = await session.attach(run.id);
+        const { envelopes, iterator } = await collectThroughBoundary(attached);
+        const attachedEnd = drainIterator(iterator, envelopes);
+        await attached.cancel();
+        await attachedEnd;
 
-          await expect(ownedResult).resolves.toMatchObject({ stopReason: "cancelled" });
-          expect(envelopes.at(-1)).toMatchObject({
-            event: { payload: { stop: "cancelled" }, runId: run.id },
-            kind: "event",
-          });
+        await expect(ownedResult).resolves.toMatchObject({ stopReason: "cancelled" });
+        expect(envelopes.at(-1)).toMatchObject({
+          event: { payload: { stop: "cancelled" }, runId: run.id },
+          kind: "event",
+        });
 
-          const newer = await session.run("the stale cancel must not touch this run");
-          const newerResult = newer.result();
-          const stale = await attached.cancel().catch((error: unknown) => error);
-          expect(stale).toBeInstanceOf(ServerError);
-          expect(stale).toMatchObject({ code: "stale_run_control", transport: "http" });
-          await expect(newerResult).resolves.toMatchObject({
-            stopReason: "end_turn",
-            text: "the newer run survived the stale cancel",
-          });
-          await session.delete();
-        } finally {
-          await client.close();
-        }
-      },
-    );
+        const newer = await session.run("the stale cancel must not touch this run");
+        const newerResult = newer.result();
+        const stale = await attached.cancel().catch((error: unknown) => error);
+        expect(stale).toBeInstanceOf(ServerError);
+        expect(stale).toMatchObject({ code: "stale_run_control", transport: "http" });
+        await expect(newerResult).resolves.toMatchObject({
+          stopReason: "end_turn",
+          text: "the newer run survived the stale cancel",
+        });
+        await session.delete();
+      } finally {
+        await client.close();
+      }
+    });
   });
 
   it("a malformed cursor mid-watch arrives as a terminal SSE error frame", async () => {
-    await withDaemon({ http: true }, async ({ ready, workspace }) => {
+    await withDaemon({ http: true }, async ({ ready }) => {
       if (ready.http_address === undefined) throw new Error("mecated omitted HTTP readiness");
       const baseUrl = `http://${ready.http_address}`;
       const client = connectHttp({ baseUrl });
       try {
-        const session = await client.sessions.create({ workspace });
+        const session = await client.sessions.create({});
         const raw = createRawClient({ transport: createHttpTransport({ baseUrl }) });
         const failure = await drain(
           raw.stream(
@@ -286,10 +277,10 @@ describe("offline durable attachment wire", () => {
   });
 
   it("a log-only record is filtered by default and restored by opt-in", async () => {
-    await withDaemon({ script: fixture("log-only.json") }, async ({ ready, workspace }) => {
+    await withDaemon({ script: fixture("log-only.json") }, async ({ ready }) => {
       const client = grpcClient(ready);
       try {
-        const session = await client.sessions.create({ workspace });
+        const session = await client.sessions.create({});
         const run = await session.run("this prompt is a durable log-only record");
         await run.result();
 

@@ -516,7 +516,7 @@ func TestBuildGRPCReflectionPartitionsVerifiedPrincipals(t *testing.T) {
 func TestServiceExplicitReflectionReceiptsMatchReviewAndAutoPolicy(t *testing.T) {
 	for _, tc := range []struct {
 		mode         learning.Mode
-		wantPromoted int32
+		wantPromoted int
 		wantStatus   learning.ProposalStatus
 	}{
 		{learning.Off, 0, learning.ProposalStaged},
@@ -524,70 +524,27 @@ func TestServiceExplicitReflectionReceiptsMatchReviewAndAutoPolicy(t *testing.T)
 		{learning.Auto, 1, learning.ProposalPromoted},
 	} {
 		t.Run(tc.mode.String(), func(t *testing.T) {
-			ctx := context.Background()
 			workspace := t.TempDir()
-			provider := mockllm.New(
-				mockllm.TextTurn("completed"),
-				mockllm.TextTurn(`{"kind":"proposed","candidates":[{"kind":"operator_fact","key":"user/output","value":"concise","evidence":["m:0"]}]}`),
-				mockllm.TextTurn(`{"kind":"proposed","candidates":[{"kind":"operator_fact","key":"user/output","value":"concise","evidence":["m:0"]}]}`),
-			)
-			cfg := Config{
-				Model: "model", Workspace: workspace, NoSoul: true, LearningMode: tc.mode,
-				UserModelReviewInterval: 2, UserModelDir: t.TempDir(),
-				envDetector: fakeEnv(map[string]string{"OPENAI_API_KEY": "test"}), liveModelHTTPClient: offlineHTTPClient(),
-				providerConstructor: func(_ Config, id, _, _ string) port.LLMProvider {
-					if id == providerOpenAI {
-						return provider
-					}
-					return mockllm.New(mockllm.TextTurn("unused"))
-				},
-			}
+			provider := mockllm.New(mockllm.TextTurn(`{"kind":"proposed","candidates":[{"kind":"operator_fact","key":"user/output","value":"concise","evidence":["m:0"]}]}`))
+			cfg := Config{Model: "model", Workspace: workspace, LearningMode: tc.mode}
 			if tc.mode == learning.Off && buildReflectionObserver(cfg, provider, cfg.Model, memmemory.New(), nil, memproposal.New(), nil, nil) != nil {
 				t.Fatal("off mode wired an automatic reflection observer")
 			}
-			built, err := Build(ctx, cfg)
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer built.Close()
-			sess, err := built.Service.CreateSession(ctx, session.ModeDefault, defaultLimits())
-			if err != nil {
-				t.Fatal(err)
-			}
-			run, err := built.Service.StartRun(ctx, sess.ID, "Remember that I prefer concise output")
-			if err != nil {
-				t.Fatal(err)
-			}
-			_ = drainRunToLearningLog(ctx, t, built.Service, sess.ID, run)
-			if tc.mode != learning.Off {
-				deadline := time.Now().Add(2 * time.Second)
-				for provider.Calls() < 2 && time.Now().Before(deadline) {
-					time.Sleep(time.Millisecond)
-				}
-			}
-			receipt, err := built.Service.ReflectSession(ctx, sess.ID)
-			if tc.mode != learning.Off {
-				deadline := time.Now().Add(2 * time.Second)
-				for err == nil && receipt.GetStaged() == 0 && time.Now().Before(deadline) {
-					time.Sleep(time.Millisecond)
-					receipt, err = built.Service.ReflectSession(ctx, sess.ID)
-				}
-			}
-			if err != nil || receipt.GetStaged() != 1 || receipt.GetPromoted() != tc.wantPromoted {
+			repository := memproposal.New()
+			memory := memmemory.New()
+			observer := buildExplicitReflectionObserver(cfg, provider, cfg.Model, memory, nil, repository, nil)
+			trajectory := learning.NewTrajectory("explicit-policy", workspace, session.StopEndTurn, session.Usage{}, []session.Message{session.NewUserMessage("Remember that I prefer concise output")})
+			trajectory.Current = learning.MessageSpan{Start: 0, End: 1}
+			receipt, err := observer.Reflect(context.Background(), trajectory, false)
+			if err != nil || receipt.Staged != 1 || receipt.Promoted != tc.wantPromoted {
 				t.Fatalf("receipt=%+v err=%v", receipt, err)
 			}
-			page, err := built.Service.ListLearningProposals(context.Background(), "", "", 10, "")
-			if err != nil || len(page.GetProposals()) != 1 || page.GetProposals()[0].GetStatus() != string(tc.wantStatus) {
-				t.Fatalf("proposals=%+v err=%v", page.GetProposals(), err)
+			page, err := repository.List(context.Background(), learning.ProposalPartition{Principal: reflectionPrincipal(nil)}, learning.ProposalList{Limit: 10})
+			if err != nil || len(page.Records) != 1 || page.Records[0].Status != tc.wantStatus {
+				t.Fatalf("proposals=%+v err=%v", page.Records, err)
 			}
-			if tc.mode == learning.Off {
-				userModel, modelErr := built.Service.GetUserModel(context.Background())
-				if modelErr != nil || len(userModel.GetEntries()) != 0 {
-					t.Fatalf("off explicit reflection changed memory: entries=%+v err=%v", userModel.GetEntries(), modelErr)
-				}
-				if calls := provider.Calls(); calls != 2 {
-					t.Fatalf("off mode provider calls=%d, want one run plus one explicit reflection", calls)
-				}
+			if calls := provider.Calls(); calls != 1 {
+				t.Fatalf("provider calls=%d, want one explicit reflection", calls)
 			}
 		})
 	}

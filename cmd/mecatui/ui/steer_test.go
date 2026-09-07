@@ -39,6 +39,21 @@ func newSteerModel(t *testing.T, steerCap bool) (Model, *fakeConv) {
 	return m, conv
 }
 
+func TestDebugSteerTraceIsVisible(t *testing.T) {
+	m, _ := newSteerModel(t, true)
+	m.steer = &steerState{Sends: []steerQueuedSend{{ID: "steer-live"}}}
+	if got := stripANSIstr(m.steerTrace("ack", "steer-in", "accepted")); got != "" {
+		t.Fatalf("debug-off steer trace = %q, want empty", got)
+	}
+	m.deps.Debug = true
+	got := stripANSIstr(m.steerTrace("ack", "steer-in", "accepted"))
+	for _, want := range []string{"[steer]", "ack", "id=steer-in", "live=steer-live", "accepted"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("canonical debug steer trace %q missing %q", got, want)
+		}
+	}
+}
+
 // enqueueSteer types text and presses enter while running, then RUNS the returned
 // command so the steer frame's Send executes (sendSteer's send is a synchronous
 // tea.Cmd). Returns the updated model.

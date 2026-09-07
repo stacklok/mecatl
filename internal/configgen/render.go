@@ -16,9 +16,11 @@ const (
 #| enable semantics of each opt-in feature.
 #|
 #| NOTE: the values shown below (e.g. default: sonnet, posture: trusted) are
-#| ILLUSTRATIVE EXAMPLES, not the built-in defaults. An ABSENT key keeps the
-#| harness's built-in default — see the Default column in
-#| docs/configuration-reference.md for what each key falls back to when unset.
+#| ILLUSTRATIVE EXAMPLES, not the built-in defaults. An ABSENT key uses the
+#| schema/resolver fallback documented in docs/configuration-reference.md; it
+#| is not a universal process-runtime default. Command roots and modes can
+#| supply their own defaults, disable a feature, or reject a setting. See the
+#| configuration-plane guide at https://mecatl.dev/building/deployment/settings.
 #|
 #| This skeleton is GENERATED from the permconfig YAML schema (the single source of
 #| truth). Do not hand-edit the committed copy — run 'task docs:configref'. See
@@ -47,10 +49,13 @@ copy is ignored with a WARN — honouring it would be a security downgrade);
 ` + "`operator + project`" + ` subtrees may also be set per-project (within the
 operator's cap / trust gate).
 
-The **Default** column is the value the harness uses when the key is ABSENT
-(` + "`(empty)`" + ` for an unset string, ` + "`(absent)`" + ` for an unset
-map/list/sub-block). The example values in the ` + "`config init`" + ` skeleton are
-ILLUSTRATIVE, not defaults — an absent key falls back to the Default shown here.
+The **Default** column describes the ` + "`settings.yaml`" + ` schema/resolver fallback when
+an applicable key is ABSENT (` + "`(empty)`" + ` for an unset string, ` + "`(absent)`" + ` for an unset
+map/list/sub-block). It is not a universal process-runtime default: command roots
+and modes can supply their own defaults, disable a feature, or reject a setting.
+The example values in the ` + "`config init`" + ` skeleton are ILLUSTRATIVE, not defaults.
+For the configuration planes and intentional per-mode differences, see
+https://mecatl.dev/building/deployment/settings.
 `
 )
 

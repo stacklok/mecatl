@@ -31,6 +31,67 @@ fact, then raises the same error if iteration continues. Both leave the cursor a
 last envelope before the gap. `CursorExpiredError` also ends the attachment and requires
 the caller to choose an explicit restart from the beginning or a transcript reload.
 
+## Local daemon
+
+Node/Bun callers can import `spawn` from `@stacklok/mecatl-sdk/node`. It resolves an existing
+`mecated` executable from `binaryPath`, `MECATED_BIN`, then `PATH`, starts a private UDS-only
+daemon, and resolves after the daemon publishes its supported ready document:
+
+```ts
+import { spawn } from "@stacklok/mecatl-sdk/node";
+
+await using client = await spawn({
+  binaryPath: "/opt/mecatl/bin/mecated",
+  diagnostics: (record) => console.error(record),
+});
+console.log(client.daemon.features);
+const session = await client.sessions.create({});
+```
+
+The SDK does not download a binary or invoke a shell. Its listener, ready-file, and lifetime
+arguments are reserved; `args` can add other `mecated serve` flags but cannot replace those
+owned values. The default daemon exposes only its private Unix socket. `http: true` adds an
+ephemeral loopback HTTP listener, which makes callback-tool session creation unavailable;
+the client reports that capability from `client.daemon.features`. The lifetime endpoint is
+enabled by default so a vanished parent produces EOF in the daemon; `lifetimePipe: false`
+opts out of crash cleanup, while `close()` still stops the child. `env` values override the
+otherwise inherited process environment and are never exposed through `client.daemon`.
+Closing the client cancels its owned runs, detaches durable watches, closes its owned transport,
+then stops only the daemon that client spawned and removes its private runtime directory. Shutdown
+uses `SIGTERM` with a bounded grace before `SIGKILL`; cleanup faults go to `diagnostics`, do not
+skip later steps, and do not make `close()` reject. Connected clients never signal a process.
+`close()` and `Symbol.asyncDispose` are the same idempotent operation. A daemon that exits later
+without disposal makes subsequent client and session calls fail with typed `invalid_state` instead
+of a dead-socket transport error. A child exit before readiness is a typed `spawn_failed`; a live child that misses
+`readinessTimeoutMs` is a typed `readiness_timeout` and is stopped. Both include only the
+bounded, whole-line-redacted end of stderr. The optional `diagnostics` callback receives one
+structured safe record; without it the SDK never writes to `console`.
+
+## One-shot queries
+
+The Node/Bun entry point also exports `query()`, which composes spawn, session creation, one run,
+and cleanup while yielding the ordinary SDK event union:
+
+```ts
+import { query } from "@stacklok/mecatl-sdk/node";
+
+const oneShot = await query("Summarize this repository", {
+  spawn: { binaryPath: "/opt/mecatl/bin/mecated" },
+});
+for await (const event of oneShot) {
+  console.log(event.kind);
+}
+```
+
+The default deletes the transient session and closes only a client it created. Supplying `client`
+keeps that client and its daemon caller-owned while still deleting the query's session. With a
+supplied client, `retainSession: true` skips deletion and `oneShot.sessionId` can load the session
+for the daemon's remaining lifetime. A daemon created by `query()` is still stopped at cleanup and
+uses an in-memory store by default, so retention does not promise persistence. Signal abort and
+early iterator return follow the same cleanup path. Plan mode is refused with a typed error naming
+`session.resolvePlan()`. Without `onPermissionAsk`, query denies each ask, reports it through the
+client diagnostics sink, and lets the run continue; standalone `Run` behavior is unchanged.
+
 ## Development
 
 Run the SDK gates from the repository root:

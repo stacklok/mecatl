@@ -43,9 +43,17 @@ cannot be determined. the optional
 ambient environment values; reserved baseline and source-owned terminal-dimension names
 are rejected during settings validation. It uses local-only CWD selection, a one-second deadline, and a combined
 4 KiB stdout/stderr limit. StatusML accepts semantic theme tokens and validated
-HTTP(S) link metadata, never raw ANSI or OSC. Before parsing, only leading and
-trailing ASCII whitespace is trimmed, allowing ordinary `print` output while
-preserving internal text.
+HTTP(S) link metadata, never raw ANSI or OSC. A `<link>` is a direct `header` or
+`footer` child with plain-text contents; it is not an HTML `<a>` element and cannot
+contain a semantic token or another link. Before parsing, only leading and trailing
+ASCII whitespace is trimmed, allowing ordinary `print` output while preserving
+internal text. A command failure (including timeout, excess combined output, or
+invalid StatusML) retains the last successful surface with `[stale]`, or uses the
+shipped default when none exists; the command receives no feedback and
+`/diagnostics` reports only the safe coarse command status: each header/footer is
+`default`, `custom`, or `stale`, and the error is a closed category; it never reports
+command output, arguments, paths, or raw failure text. The status-line guide describes
+the command-output and troubleshooting contract.
 
 See [Status line customization](https://github.com/stacklok/mecatl/blob/main/user-docs/mecatui/status-line.md)
 for the complete settings schema, input reference, StatusML grammar, safety limits,
@@ -136,7 +144,10 @@ the current session.
 Run `mecatui --help`, `mecatui -h`, or `mecatui help` for the concise top-level command index. `mecatui help sessions`, `mecatui help connect`, `mecatui help debug`, and `mecatui help login` alias their corresponding command-specific help; direct `sessions --help`, `connect --help`, `debug --help`, and `login --help` also work. Use bare `mecatui --help-flags` for common embedded-mode flags and bare `mecatui --help-all` (or the corresponding `sessions` or `connect` form) for the exhaustive flag reference.
 
 The transport is exactly what the invocation says — there is no implicit probe
-or fallback:
+or fallback. For the local-versus-remote configuration ownership and intentional
+default differences, see the [settings guide](https://mecatl.dev/building/deployment/settings):
+bare mode owns an embedded server, while connect mode is client-only and the remote
+server is authoritative.
 
 - **Bare `mecatui [flags]`** — always host an embedded `mecated` in-process over
   a private UNIX socket; **never probe** loopback, **never dial**. The socket
@@ -498,6 +509,7 @@ a short directive with a longer brief. The seed fires ONCE: a `/models` restart 
 | `--trust-project` | off | **embedded** server: honour a discovered project's permission **ALLOW** rules **and** its project soul (`.mecatl/soul.md`). Default OFF, unified with `mecated` — deny/ask are always honoured regardless. Only pass it for a repo you trust |
 | `--yolo` | off | **embedded** server: OPERATOR POSTURE (dangerous) — suppress permission prompts for the built-in mutate-ask floor, for ephemeral/sandboxed use only. A configured deny/ask in any scope still applies. Refused as root unless `MECATL_SANDBOX=1` (or `IS_SANDBOX=1`) |
 | `--quiet` | off | discard the embedded server's operational diagnostics instead of writing them to `$XDG_STATE_HOME/mecatl/mecatui.log` (see the diagnostics note below) |
+| `--debug` | off | enable mecatui's client-side debug surfaces: mouse-coordinate mapping, steer correlation, keymap-resolution diagnostics at startup, and debug-only built-ins such as `/debug-ask`. `MECATUI_DEBUG=1` is the env fallback; an explicit `--debug=false` wins over all debug env vars. This does not change server logging or configuration |
 | `--perf` | off | **embedded** server: expose the sensitive admin surface (`/metrics`, `/debug/pprof`, `/debug/vars`, `/debug/flightrecorder`) and wire domain metrics. Empty `--perf-addr` uses the instance's owner-private UNIX `admin.sock`. UNAUTHENTICATED |
 | `--perf-addr` | – | **embedded** server: explicit TCP address for `--perf`; only loopback is accepted. Empty uses the private per-instance UNIX socket, except `--perf-mcp` uses ephemeral `127.0.0.1` TCP because streaming HTTP needs a URL. `127.0.0.1:0` explicitly requests ephemeral TCP |
 | `--perf-goroutine-warn-threshold` | 0 (off) | **embedded** server: arm the live goroutine-leak watchdog — Warn whenever the goroutine count exceeds this; the `/metrics` goroutine series is exported regardless. Only consulted with `--perf` |
@@ -569,7 +581,11 @@ left owned after the bounded shutdown completes.
 | `MECATUI_THEME` | theme name (same as `--theme`) |
 | `MECATUI_NO_MOUSE` | disable mouse capture and in-app mouse gestures (same as `--no-mouse`) while preserving native terminal selection; keyboard prompt selection still works |
 | `MECATUI_NO_TERMINAL_TITLE` | suppress the dynamic terminal window/tab title (same as `--terminal-title=off`) — collapse to the bare `mecatui` |
-| `MECATUI_DEBUG_MOUSE` | overlay raw mouse coords / click-mapping in the footer during a press/drag (troubleshooting) |
+| `MECATUI_DEBUG` | set to `1` to enable every client-side debug surface (same as `--debug` when that flag is omitted) |
+| `MECATUI_DEBUG_MOUSE` | legacy narrow alias: enable only the raw mouse-coordinate / click-mapping footer overlay |
+| `MECATUI_DEBUG_STEER` | legacy narrow alias: enable only steer acknowledgement/echo correlation in the status line |
+| `MECATUI_DEBUG_ASK` | legacy narrow alias: register only the `/debug-ask` fake permission-ask built-in |
+| `MECATUI_DEBUG_KEYMAP` | legacy narrow alias: print only the resolved keymap layers at startup |
 | `MECATUI_FORCE_EMOJI` / `MECATUI_NO_EMOJI` | force / suppress the emoji glyph for the YOLO posture badge (force-on, no-wins-over-force); default is conservative env-based detection (see the posture badge) |
 | `MECATUI_FORCE_KITTY` / `MECATUI_NO_KITTY` | force / suppress the Kitty-graphics mascot on the welcome splash (force-on, no-wins-over-force); default is conservative env-based detection, falling back to the always-correct half-block mascot |
 
@@ -1238,9 +1254,10 @@ Edit/Write asks keep the in-modal diff expand — see
 [ADR 0222](./adr/0222-mecatui-ask-args-view.md).
 
 For hand-testing the modal's long-args surfaces without driving a live run,
-`MECATUI_DEBUG_ASK=1` registers a `/debug-ask` built-in that injects a fake
-long-args permission ask through the real reducer (deliberately env-var-only —
-it never appears in `--help`).
+start mecatui with `--debug` (or `MECATUI_DEBUG=1`) and invoke `/debug-ask`.
+The built-in injects a fake long-args permission ask through the real reducer. It
+is absent from the normal palette and help when debug mode is off. The legacy
+`MECATUI_DEBUG_ASK=1` alias enables only this built-in.
 
 The `?` overlay enumerates the rest of the chords — `ctrl+v` (paste a clipboard
 image), `ctrl+o`/`ctrl+r`/`ctrl+p` (MCP inventory / resources / prompts), `ctrl+a`
@@ -1892,12 +1909,16 @@ of in-app mouse-wheel scroll and the in-app drag-select/copy layer. Keyboard scr
 (`pgup`/`pgdn`, `home`/`end`) is unaffected. (`--inline` / `--no-alt-screen`
 likewise leaves the mouse uncaptured.)
 
-**Troubleshooting — `MECATUI_DEBUG_MOUSE`.** If selection or click mapping looks
-off (a highlight on the wrong line, a click that lands a row away), set
-**`MECATUI_DEBUG_MOUSE=1`**: the footer-left is overridden during a press/drag with a
+**Troubleshooting — debug mode.** If selection, click mapping, or steer
+correlation looks wrong, start mecatui with **`--debug`** (or set
+**`MECATUI_DEBUG=1`**). Mouse presses/drags then override the footer-left with a
 live diagnostic — the raw mouse cell, the layout offsets (`top` = conversation top
 row, `yoff`, viewport height), the `screenToContent` mapping (`ok`, logical `L`/`C`),
-and the prompt-text hit bounds. It is off by default (zero cost when unset).
+and the prompt-text hit bounds; steer acknowledgements and echoes expose their
+correlation decisions in the status line, and the resolved keymap layers print at
+startup. The legacy `MECATUI_DEBUG_MOUSE=1`, `MECATUI_DEBUG_STEER=1`, and
+`MECATUI_DEBUG_KEYMAP=1` aliases enable only their respective surfaces. Debug mode
+is off by default.
 
 ### Type-while-running and queued follow-ups
 

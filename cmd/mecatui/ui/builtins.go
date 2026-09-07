@@ -41,7 +41,8 @@ type wiredCollaborators struct {
 	Scheduling   bool
 	Sessions     bool // /sessions picker — gated on inventory + authoritative transcript
 	Learning     bool // /learning operator-settings enum
-	DebugAsk     bool // /debug-ask — env-gated (MECATUI_DEBUG_ASK=1) fake-ask injector
+	Debug        bool // all debug-only builtins
+	DebugAsk     bool // /debug-ask narrow compatibility alias
 	Connect      bool // /connect — saved remote target picker
 	DebugSession bool // dedicated target-bound debugger: hide binding-breaking actions
 }
@@ -62,6 +63,7 @@ func (m Model) wiredCollaborators() wiredCollaborators {
 		Worktrees:   m.deps.Worktrees != nil, Scheduling: m.deps.Sched != nil,
 		Sessions:     m.deps.Sessions != nil && m.deps.Transcript != nil,
 		Learning:     m.deps.Learning != nil,
+		Debug:        m.deps.Debug,
 		DebugAsk:     m.deps.DebugAsk,
 		Connect:      m.deps.Connect != nil,
 		DebugSession: m.deps.DebugTarget != "",
@@ -223,7 +225,7 @@ func builtinCommands(caps client.Capabilities, w wiredCollaborators) []builtin {
 		out = append(out, builtin{name: "connect", desc: "sign in and connect to a saved remote target", run: Model.runConnect})
 	}
 	out = appendLearningBuiltin(out, w)
-	out = appendDebugAskBuiltin(out, w)
+	out = appendDebugBuiltins(out, w)
 	// /posture prints the server-wide operator posture tier + a line per defense.
 	// Gated on a non-empty caps.Posture (an older server omits the field), so it never
 	// appears against a server that cannot report it. Chrome only — it changes nothing.
@@ -259,18 +261,30 @@ func appendLearningBuiltin(out []builtin, w wiredCollaborators) []builtin {
 	)
 }
 
-// appendDebugAskBuiltin registers /debug-ask ONLY under the env-gated Deps.DebugAsk
-// (MECATUI_DEBUG_ASK=1) — a hand-testing affordance for the permission modal's
-// long-args surfaces (issue #488), never a documented feature.
-func appendDebugAskBuiltin(out []builtin, w wiredCollaborators) []builtin {
-	if !w.DebugAsk {
-		return out
-	}
-	return append(out, builtin{
+type debugBuiltin struct {
+	builtin
+	legacyEnabled func(wiredCollaborators) bool
+}
+
+// debugBuiltins is the single declaration of debug-only local commands. Both
+// enabled registration and known-but-gated interception derive from this slice.
+// Each optional legacy gate remains narrow to that one command.
+var debugBuiltins = []debugBuiltin{{
+	builtin: builtin{
 		name: "debug-ask",
 		desc: "(debug) inject a fake permission ask (long bash)",
 		run:  Model.runDebugAsk,
-	})
+	},
+	legacyEnabled: func(w wiredCollaborators) bool { return w.DebugAsk },
+}}
+
+func appendDebugBuiltins(out []builtin, w wiredCollaborators) []builtin {
+	for _, debug := range debugBuiltins {
+		if w.Debug || (debug.legacyEnabled != nil && debug.legacyEnabled(w)) {
+			out = append(out, debug.builtin)
+		}
+	}
+	return out
 }
 
 // builtinByName looks up a built-in by name within the caps-filtered set, for
@@ -525,7 +539,7 @@ var debugAskPayloads = []string{
 // runDebugAsk injects a FAKE permission ask with long Bash args through the SAME
 // reducer the wire drives (applyPermissionAsk over a client.PermissionAskMsg), so
 // queueing, dedupe, focus, the (1 of N) badge, and the click geometry all
-// exercise for real. Registered only under MECATUI_DEBUG_ASK=1. Each invocation
+// exercise for real. Registered only in client debug mode. Each invocation
 // rotates to the next canned payload (debugAskCycle). At phaseIdle the modal
 // opens directly (applyPermissionAsk does not gate on phase) — that is the
 // intended debug affordance, and a phaseAwaitingApproval invocation queues FIFO
@@ -547,7 +561,7 @@ func (m Model) runDebugAsk() (tea.Model, tea.Cmd) {
 		AskID:  fmt.Sprintf("sess-debug-ask-%d", n),
 		Tool:   "Bash",
 		Args:   string(args),
-		Reason: "debug ask (MECATUI_DEBUG_ASK) — not from the model",
+		Reason: "debug ask (client debug mode) — not from the model",
 	})
 }
 
@@ -592,13 +606,16 @@ var builtinNameRegistry = []builtinName{
 	{name: "skills", acceptsArgs: false}, {name: "soul", acceptsArgs: false}, {name: "usermodel", acceptsArgs: false},
 	{name: "models", acceptsArgs: false}, {name: "effort", acceptsArgs: false}, {name: "worktrees", acceptsArgs: false},
 	{name: "schedule", acceptsArgs: false}, {name: "sessions", acceptsArgs: false}, {name: "learning", acceptsArgs: false},
-	{name: "learning-sensitivity", acceptsArgs: false}, {name: "posture", acceptsArgs: false}, {name: "debug-ask", acceptsArgs: false},
+	{name: "learning-sensitivity", acceptsArgs: false}, {name: "posture", acceptsArgs: false},
 }
 
 func allBuiltins() map[string]bool {
-	set := make(map[string]bool, len(builtinNameRegistry))
+	set := make(map[string]bool, len(builtinNameRegistry)+len(debugBuiltins))
 	for _, builtin := range builtinNameRegistry {
 		set[builtin.name] = builtin.acceptsArgs
+	}
+	for _, debug := range debugBuiltins {
+		set[debug.name] = debug.acceptsArgs
 	}
 	return set
 }

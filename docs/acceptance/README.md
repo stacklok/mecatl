@@ -50,6 +50,7 @@ when the code that satisfies the plan has landed.
 
 ## Plans
 
+- [Mecatui live-feed reconnect](mecatui-live-reconnect.md) — regression closure for bearer-backed first-Recv authentication rejection, existing `/connect` recovery, cross-loop reconnect continuity/backoff, and real-event recovery without weakening generation, cancellation, or catch-up invariants. Status: landed.
 - [Mecatui card layout](mecatui-card-layout.md) — width-bounded card rendering
   that wraps raw dynamic rows before styling, preventing Lipgloss alignment
   padding from becoming vertical whitespace while retaining intentional
@@ -72,6 +73,7 @@ when the code that satisfies the plan has landed.
   engine yaml.v3 parsing with goccy/go-yaml while preserving safe diagnostics,
   strict/lenient contracts, frontmatter parsing, and standalone engine closure.
   Status: draft.
+- [OpenAI Responses multiple visible text parts](openai-multiple-text-parts.md) — accept every ordered visible text delta from distinct Responses item/content identities through the existing `ChunkText`/`Message.Text` path, without changing phase, reasoning, tool-call, or post-visibility no-replay behavior. Status: landed.
 - [Operator-defined LLM providers](operator-defined-llm-providers.md) — operator-local,
   truthfully named gateway providers over the existing Responses, Chat Completions, and
   Anthropic Messages adapters, plus persistent built-in endpoint overrides. Status: draft.

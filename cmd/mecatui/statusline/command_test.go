@@ -11,6 +11,15 @@ import (
 	"time"
 )
 
+func TestOnlyCommandSourcesExposeCommandDiagnostics(t *testing.T) {
+	for _, source := range []Source{NewDefaultSource(0), NewTemplateSource(TemplateSet{}, 0)} {
+		if _, ok := source.(CommandDiagnosticsSource); ok {
+			t.Fatalf("non-command source unexpectedly exposes command diagnostics: %T", source)
+		}
+		_ = source.Close(context.Background())
+	}
+}
+
 func TestCommandRequiresDirectAbsoluteExecutable(t *testing.T) {
 	t.Parallel()
 
@@ -155,6 +164,24 @@ func TestStatusLineCommandInvalidConfigurationDoesNotLeakArguments(t *testing.T)
 	line := source.Latest()
 	if strings.Contains(statusSurfaceText(line.Header)+statusSurfaceText(line.Footer), secret) {
 		t.Fatal("command arguments leaked into generated status")
+	}
+}
+
+func TestStatusLineCommandInvalidStatusMLReportsSafeDiagnostics(t *testing.T) {
+	source := NewCommandSource(Command{Path: "/bin/sh", Args: []string{"-c", `read input; printf 'unsafe failure detail'`}, LaunchDir: t.TempDir()})
+	t.Cleanup(func() { _ = source.Close(context.Background()) })
+	source.Submit(Input{Terminal: Terminal{HeaderAvailCols: 80, FooterAvailCols: 80}})
+	waitStatusChange(t, source)
+
+	diagnostics, ok := source.(CommandDiagnosticsSource)
+	if !ok {
+		t.Fatal("command source does not expose command diagnostics")
+	}
+	if got, want := diagnostics.CommandDiagnostics(), (CommandDiagnostics{Header: CommandSurfaceDefault, Footer: CommandSurfaceDefault, Error: CommandErrorInvalidStatusML}); got != want {
+		t.Fatalf("command diagnostics = %#v, want %#v", got, want)
+	}
+	if line := source.Latest(); strings.Contains(statusSurfaceText(line.Header)+statusSurfaceText(line.Footer), "unsafe failure detail") {
+		t.Fatal("invalid StatusML reached status surfaces")
 	}
 }
 

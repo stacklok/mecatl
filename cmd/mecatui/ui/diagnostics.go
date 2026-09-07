@@ -12,6 +12,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
+	statusline "github.com/stacklok/mecatl/cmd/mecatui/statusline"
 )
 
 // ServerInfoGetter reads safe identity and sanitized diagnostic display data for the
@@ -76,7 +77,36 @@ func (m Model) diagnosticsReport(serverBuild, serverImplementation, displayServe
 	return report + "\n" +
 		"active provider: " + provider + "\n" +
 		"active model: " + model + "\n" +
-		"permission mode: " + mode
+		"permission mode: " + mode + m.statusCommandDiagnosticsReport()
+}
+
+func (m Model) statusCommandDiagnosticsReport() string {
+	source, ok := m.deps.StatusSource.(statusline.CommandDiagnosticsSource)
+	if !ok {
+		return ""
+	}
+	diagnostics := source.CommandDiagnostics()
+	return "\nstatus command header: " + safeCommandSurfaceState(diagnostics.Header) +
+		"\nstatus command footer: " + safeCommandSurfaceState(diagnostics.Footer) +
+		"\nstatus command error: " + safeCommandErrorState(diagnostics.Error)
+}
+
+func safeCommandSurfaceState(state string) string {
+	switch state {
+	case statusline.CommandSurfaceDefault, statusline.CommandSurfaceCustom, statusline.CommandSurfaceStale:
+		return state
+	default:
+		return statusline.CommandSurfaceDefault
+	}
+}
+
+func safeCommandErrorState(state string) string {
+	switch state {
+	case statusline.CommandErrorNone, statusline.CommandErrorUnsupported, statusline.CommandErrorTimeout, statusline.CommandErrorOutputLimit, statusline.CommandErrorInvalidStatusML, statusline.CommandErrorExit, statusline.CommandErrorFailed:
+		return state
+	default:
+		return statusline.CommandErrorFailed
+	}
 }
 
 // diagnosticToken admits only short, single-line identity tokens. This keeps a

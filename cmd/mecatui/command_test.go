@@ -908,9 +908,12 @@ func TestBareHelpFlagsRealRendererShowsCommonFlags(t *testing.T) {
 		t.Errorf("bare help missing the no-probe note:\n%s", out)
 	}
 	assertCatalogCommandsRendered(t, out)
-	// Embedded flags appear in the bare common help (--mock is common+local).
-	if !hasFlagHeader(out, "mock") {
-		t.Errorf("bare help missing the embedded --mock common flag header:\n%s", out)
+	// Embedded flags appear in the bare common help (--mock is common+local), and
+	// the client-side debug switch is shared by local and connect modes.
+	for _, name := range []string{"mock", "debug"} {
+		if !hasFlagHeader(out, name) {
+			t.Errorf("bare help missing --%s common flag header:\n%s", name, out)
+		}
 	}
 	// Remote-only flags do NOT appear in the bare common help.
 	if hasFlagHeader(out, "auth-token") {
@@ -951,7 +954,8 @@ func TestConnectHelpRealRendererShowsCommonFlags(t *testing.T) {
 	}
 	// Remote flags appear in connect common help (--server is NOT applicable in
 	// connect — connect takes ADDRESS — so it must NOT appear; --auth-token IS).
-	for _, name := range []string{"auth-token", "anonymous"} {
+	// The shared client-side --debug flag appears here too.
+	for _, name := range []string{"auth-token", "anonymous", "debug"} {
 		if !hasFlagHeader(out, name) {
 			t.Errorf("connect help missing remote --%s flag header:\n%s", name, out)
 		}

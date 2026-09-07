@@ -113,6 +113,24 @@ func referenceHasKey(reference, full string) bool {
 	return strings.Contains(normalized, "`"+full+"`")
 }
 
+func TestGeneratedArtifactsDescribeSchemaDefaults(t *testing.T) {
+	model := configgen.BuildModel(nil)
+	skeleton := configgen.RenderSkeleton(model)
+	reference := configgen.RenderReference(model)
+
+	for name, artifact := range map[string]string{
+		"skeleton":  skeleton,
+		"reference": reference,
+	} {
+		if !strings.Contains(artifact, "not a universal process-runtime default") {
+			t.Errorf("%s does not distinguish schema fallbacks from process-runtime defaults", name)
+		}
+		if !strings.Contains(artifact, "https://mecatl.dev/building/deployment/settings") {
+			t.Errorf("%s does not direct operators to the configuration-plane guide", name)
+		}
+	}
+}
+
 func TestLearningModeReferenceHasFieldDescription(t *testing.T) {
 	reference := configgen.RenderReference(configgen.BuildModel(configgen.Docs{
 		"LearningSection.Mode": "Mode documents off, review, auto, the default, and project tightening.",
