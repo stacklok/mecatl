@@ -901,6 +901,7 @@ export interface SpawnOptions extends ClientDiagnosticsOptions {
     lifetimePipe?: boolean;
     readinessTimeoutMs?: number;
     toolServerName?: string;
+}
 
 // @public
 export interface SteerEventPayload {
