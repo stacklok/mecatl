@@ -47,7 +47,7 @@ This ADR records tokens, not monetary cost. Pricing, currency conversion, histor
 
 ## See also
 
-- [ADR 0306 — Asynchronous session-title generation](./0306-session-title-generation-and-auxiliary-usage.md)
+- [ADR 0308 — Asynchronous session-title generation](./0308-session-title-generation-and-auxiliary-usage.md)
 - [ADR 0030 — Layered model-selection heuristics](./0030-model-selection-heuristics.md)
 - [ADR 0027 — Cloud-native arc](./0027-cloud-native.md)
 - [Session title generation and token usage acceptance plan](../acceptance/session-title-generation.md)

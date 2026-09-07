@@ -624,7 +624,7 @@ operator title can later replace it. Automatic title generation is opt-in throug
 explicit compatible `models.slots.title` binding, is server-owned and asynchronous,
 and never changes the conversation or main-run budget. Its durable `session_title`
 accounting is governed by [ADR 0307](adr/0307-canonical-durable-token-accounting.md).
-See [ADR 0306](adr/0306-session-title-generation-and-auxiliary-usage.md).
+See [ADR 0308](adr/0308-session-title-generation-and-auxiliary-usage.md).
 
 The title leads because tab bars **truncate from the right**; the status is a
 **static word, never an animated spinner** (per-frame title churn trips OS

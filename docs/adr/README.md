@@ -53,8 +53,8 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0221 — Read-only environment credential source and OAuth refresh posture](./0221-read-only-credential-source.md)
 - [0112 — Host-owned loopback MCP OAuth login](./0112-mcp-oauth-loopback-runtime.md)
 - [0113 — Operator MCP authentication profiles and explicit login](./0113-operator-mcp-auth-profiles.md)
-- [0223 — Pin MCP transport-error semantics that do not replay rejected calls](./0223-mcp-sdk-transport-error-semantics.md) *(superseded by 0306)*
-- [0306 — MCP closed-idle POST failures are ambiguous and never replayed](./0306-mcp-ambiguous-closed-idle-post.md)
+- [0223 — Pin MCP transport-error semantics that do not replay rejected calls](./0223-mcp-sdk-transport-error-semantics.md) *(superseded by 0309)*
+- [0309 — MCP closed-idle POST failures are ambiguous and never replayed](./0309-mcp-ambiguous-closed-idle-post.md)
 - [0232 — Steer-while-running: inject a user message into an in-flight run](./0232-steer-while-running.md)
 - [0251 — Multimodal steer preserves prompt content](./0251-multimodal-steer.md)
 - [0252 — HTTP steer endpoint: `POST /v1/sessions/{id}/steer`](./0252-http-steer-endpoint.md)
@@ -142,7 +142,7 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0250 — Durable cursors and the session watch transport](./0250-durable-cursors-and-watch.md)
 
 ### Providers & APIs
-- [0306 — Asynchronous session-title generation](./0306-session-title-generation-and-auxiliary-usage.md) *(proposed)*
+- [0308 — Asynchronous session-title generation](./0308-session-title-generation-and-auxiliary-usage.md) *(proposed)*
 - [0307 — Canonical durable token accounting and run-scoped budgets](./0307-canonical-durable-token-accounting.md)
 - [0016 — Multi-provider](./0016-multi-provider.md)
 - [0017 — OpenAI Responses API](./0017-openai-responses-api.md) *(research; its single-visible-text-part subsection is superseded by 0302)*
@@ -174,8 +174,8 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0221 — Read-only environment credential source and OAuth refresh posture](./0221-read-only-credential-source.md)
 - [0112 — Host-owned loopback MCP OAuth login](./0112-mcp-oauth-loopback-runtime.md)
 - [0113 — Operator MCP authentication profiles and explicit login](./0113-operator-mcp-auth-profiles.md)
-- [0223 — Pin MCP transport-error semantics that do not replay rejected calls](./0223-mcp-sdk-transport-error-semantics.md) *(superseded by 0306)*
-- [0306 — MCP closed-idle POST failures are ambiguous and never replayed](./0306-mcp-ambiguous-closed-idle-post.md)
+- [0223 — Pin MCP transport-error semantics that do not replay rejected calls](./0223-mcp-sdk-transport-error-semantics.md) *(superseded by 0309)*
+- [0309 — MCP closed-idle POST failures are ambiguous and never replayed](./0309-mcp-ambiguous-closed-idle-post.md)
 
 ### Performance & diagnostics
 - [0018 — Perf observability](./0018-perf-observability.md)

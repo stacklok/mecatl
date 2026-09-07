@@ -1,4 +1,4 @@
-# ADR 0306 — MCP closed-idle POST failures are ambiguous and never replayed
+# ADR 0309 — MCP closed-idle POST failures are ambiguous and never replayed
 
 - Status: Accepted
 - Date: 2026-09-06

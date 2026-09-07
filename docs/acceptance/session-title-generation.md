@@ -1,9 +1,9 @@
 # Session title generation and token usage — acceptance plan
 
 **Phase:** mecatui session-title UX and opt-in title-model accounting  
-**Status:** in-progress, 2026-08-30. Reconciled with ADRs 0306 and 0307.
+**Status:** in-progress, 2026-08-30. Reconciled with ADRs 0308 and 0307.
 **Issue:** [stacklok/mecatl#621](https://github.com/stacklok/mecatl/issues/621).  
-**ADR:** [ADR 0306](../adr/0306-session-title-generation-and-auxiliary-usage.md) — server-owned asynchronous title lifecycle and opt-in title slot; [ADR 0307](../adr/0307-canonical-durable-token-accounting.md) — canonical durable token usage and run-scoped budget baseline.
+**ADR:** [ADR 0308](../adr/0308-session-title-generation-and-auxiliary-usage.md) — server-owned asynchronous title lifecycle and opt-in title slot; [ADR 0307](../adr/0307-canonical-durable-token-accounting.md) — canonical durable token usage and run-scoped budget baseline.
 **Accumulator branch:** `acc/session-title-generation` (off `main`).
 
 The smallest set of work that lets a mecatui operator set an active session title directly and,
@@ -46,7 +46,7 @@ automatic job admission and every client benefits from it.
   canonical token usage: title usage never changes the deprecated `Session.Usage` main mirror,
   run budgets, ordinary result usage, or conversation history.
 
-These cuts follow [ADR 0306](../adr/0306-session-title-generation-and-auxiliary-usage.md),
+These cuts follow [ADR 0308](../adr/0308-session-title-generation-and-auxiliary-usage.md),
 [ADR 0307](../adr/0307-canonical-durable-token-accounting.md),
 [ADR 0030](../adr/0030-model-selection-heuristics.md),
 [ADR 0016](../adr/0016-multi-provider.md),

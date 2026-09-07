@@ -107,7 +107,7 @@ models:
 #### Session title generation
 
 - **The `title` slot.** This explicit opt-in for automatic session-title generation
-  ([ADR 0306](../adr/0306-session-title-generation-and-auxiliary-usage.md)) has **no
+  ([ADR 0308](../adr/0308-session-title-generation-and-auxiliary-usage.md)) has **no
   tier or session-model fallback**: omit it and generation is disabled. On the fixed
   compatible provider, the server makes one bounded tool-less call after a successful
   exchange. Its usage is durable `session_title` accounting under

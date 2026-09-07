@@ -52,7 +52,7 @@ states its outcome is unknown. A structured JSON-RPC 400/404 or HTTP
 and the operation is never replayed automatically. See
 [ADR 0056](../adr/0056-mcp-client-reconnect.md),
 [ADR 0223](../adr/0223-mcp-sdk-transport-error-semantics.md), and
-[ADR 0306](../adr/0306-mcp-ambiguous-closed-idle-post.md). The client also holds the
+[ADR 0309](../adr/0309-mcp-ambiguous-closed-idle-post.md). The client also holds the
 **standalone SSE GET stream** open per connected server, so server-initiated
 `notifications/{tools,prompts,resources}/list_changed` invalidate the cached
 snapshots (lazily re-listed on the next read); live catalog refresh is

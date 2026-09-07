@@ -1,4 +1,4 @@
-# ADR 0306 — Asynchronous session-title generation and durable token usage
+# ADR 0308 — Asynchronous session-title generation and durable token usage
 
 - Status: Proposed
 - Date: 2026-08-30
