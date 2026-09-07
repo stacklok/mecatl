@@ -134,14 +134,14 @@ func deliveryEvent(schedule, fire string) *mecatlv1.Event {
 	}
 }
 
-func authorizationEvent(typ, id, status string) *mecatlv1.Event {
+func authorizationEvent(typ, id, authStatus string) *mecatlv1.Event {
 	return &mecatlv1.Event{
 		Type: typ,
 		Authorization: &mecatlv1.Authorization{
 			AuthorizationId: id,
 			DisplayName:     "GitHub",
 			CallId:          "call-1",
-			Status:          status,
+			Status:          authStatus,
 		},
 	}
 }
