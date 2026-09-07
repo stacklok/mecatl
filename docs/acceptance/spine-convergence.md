@@ -1,5 +1,6 @@
 # Spine convergence — acceptance plan
 
+**Contract:** human-reviewed/v1
 **Phase:** agentic development spine (process infrastructure)
 **Status:** draft, 2026-07-24. Converges the the internal sibling repos spine into mecatl.
 **Delivery:** Split. Historical plan that predates the Combined exception.

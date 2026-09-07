@@ -30,14 +30,19 @@ A plan moves `draft → proposed → approved → in-progress → landed`:
   proposed transition in its PR diff; it becomes authoritative only when that PR merges.
   Before merge, the target branch remains `approved` or `in-progress`.
 
-Every plan contains numbered behavioral acceptance criteria with non-empty `verify:` lines,
-a mandatory `## Human decisions` section, and a mandatory `## Interface contract`. Human
+Every new plan and every materially amended legacy plan contains exact
+`**Contract:** human-reviewed/v1` metadata, numbered behavioral acceptance criteria with
+non-empty `verify:` lines, a mandatory `## Human decisions` section, and a mandatory
+`## Interface contract`. Human
 decisions are either `None — <rationale>` or checklist items; unchecked items require
 `draft`, while checked items record `— Decision: ...`. The interface contract gives exact
 proposed surfaces for gRPC/protobuf, exported Go APIs, tool schemas, CLI/config,
 events/persistence,
 security/authority boundaries, and compatibility/migration. `None` requires a rationale.
-Material public decisions cannot be postponed until code exists.
+Material public decisions cannot be postponed until code exists. New plans and materially amended
+legacy plans after ADR 0304 must adopt the current template and exact
+`**Contract:** human-reviewed/v1` metadata; unmarked historical plans are grandfathered until
+materially amended and need not be bulk-migrated.
 
 ## Split path: the default
 

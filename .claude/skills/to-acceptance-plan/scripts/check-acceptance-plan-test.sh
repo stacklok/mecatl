@@ -13,6 +13,7 @@ write_plan() {
   cat >"$1" <<'PLAN'
 # Fixture — acceptance plan
 
+**Contract:** human-reviewed/v1
 **Status:** draft, fixture.
 **Delivery:** Split. Default review path.
 **Expected tasks:** deferred to orchestration
@@ -73,12 +74,14 @@ sed -i 's/\*\*Expected tasks:\*\* deferred to orchestration/\*\*Expected tasks:\
 sed -i '/\*\*Expected tasks:\*\* 1/a **Combined rationale:** The fixture is one indivisible documentation check, so separate plan review adds no value.' "$combined_valid"
 bash "$checker" "$combined_valid" >/dev/null
 
-for case_name in missing-category bare-none placeholder bad-delivery bad-status proposed-unchecked missing-human placeholder-human checked-without-decision; do
+for case_name in missing-contract invalid-contract missing-category bare-none placeholder bad-delivery bad-status proposed-unchecked missing-human placeholder-human checked-without-decision; do
   cp "$valid" "$root/$case_name.md"
 done
 for case_name in combined-material-category combined-multiple-scenarios combined-missing-expected-tasks combined-wrong-expected-tasks combined-missing-rationale combined-placeholder-rationale; do
   cp "$combined_valid" "$root/$case_name.md"
 done
+sed -i '/^\*\*Contract:\*\*/d' "$root/missing-contract.md"
+sed -i 's/\*\*Contract:\*\* human-reviewed\/v1/\*\*Contract:\*\* human-reviewed\/v2/' "$root/invalid-contract.md"
 sed -i '/Tool schemas/d' "$root/missing-category.md"
 sed -i 's/None — no tool change\./None/' "$root/bare-none.md"
 sed -i 's/None — no operator change\./TBD/' "$root/placeholder.md"
@@ -103,8 +106,22 @@ sed -i '/\*\*Expected tasks:\*\* 1/d' "$root/combined-missing-expected-tasks.md"
 sed -i 's/\*\*Expected tasks:\*\* 1/\*\*Expected tasks:\*\* 2/' "$root/combined-wrong-expected-tasks.md"
 sed -i '/\*\*Combined rationale:\*\*/d' "$root/combined-missing-rationale.md"
 sed -i 's/\*\*Combined rationale:\*\*.*/\*\*Combined rationale:\*\* TBD/' "$root/combined-placeholder-rationale.md"
-for case_name in missing-category bare-none placeholder bad-delivery bad-status proposed-unchecked missing-human placeholder-human checked-without-decision combined-material-category combined-multiple-scenarios combined-missing-expected-tasks combined-wrong-expected-tasks combined-missing-rationale combined-placeholder-rationale; do
+for case_name in missing-contract invalid-contract missing-category bare-none placeholder bad-delivery bad-status proposed-unchecked missing-human placeholder-human checked-without-decision combined-material-category combined-multiple-scenarios combined-missing-expected-tasks combined-wrong-expected-tasks combined-missing-rationale combined-placeholder-rationale; do
   expect_fail "$root/$case_name.md"
+done
+
+adopted_plans=()
+for plan in docs/acceptance/*.md; do
+  if grep -qFx '**Contract:** human-reviewed/v1' "$plan"; then
+    adopted_plans+=("$plan")
+  fi
+done
+if [[ ${#adopted_plans[@]} -eq 0 ]]; then
+  printf 'expected at least one adopted human-reviewed/v1 plan\n' >&2
+  exit 1
+fi
+for plan in "${adopted_plans[@]}"; do
+  bash "$checker" "$plan" >/dev/null
 done
 
 printf 'check-acceptance-plan fixtures: passed (%s)\n' "$root"

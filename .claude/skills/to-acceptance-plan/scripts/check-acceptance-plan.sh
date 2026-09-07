@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # check-acceptance-plan.sh — validate a docs/acceptance/<plan>.md against the
-# acceptance-plan contract: at least one scenario, numbered acceptance criteria,
-# a non-empty human-decisions section consistent with status, a non-empty interface
+# acceptance-plan contract: exact `**Contract:** human-reviewed/v1` metadata, at
+# least one scenario, numbered acceptance criteria, a non-empty human-decisions section consistent with status, a non-empty interface
 # contract, >=1 ADR / architecture / AGENTS.md citation per scenario, and an
 # out-of-scope section.
 #
@@ -37,6 +37,16 @@ fail=0
 warn=0
 note_fail() { printf 'FAIL: %s\n' "$1" >&2; fail=1; }
 note_warn() { printf 'WARN: %s\n' "$1" >&2; warn=1; }
+
+# The marker opts a plan into the current human-reviewed contract without
+# retroactively bulk-migrating the historical catalogue.
+contract_count=$(grep -cE '^\*\*Contract:\*\*' "$plan" || true)
+contract_exact=$(grep -cFx '**Contract:** human-reviewed/v1' "$plan" || true)
+if [[ "$contract_count" -eq 1 && "$contract_exact" -eq 1 ]]; then
+  printf 'ok: human-reviewed/v1 contract metadata\n'
+else
+  note_fail 'expected exactly one exact "**Contract:** human-reviewed/v1" declaration.'
+fi
 
 # A citation is a markdown link into ../adr/**, ../architecture*,
 # ../design/**, or ../../AGENTS.md (relative to docs/acceptance/), or a bare

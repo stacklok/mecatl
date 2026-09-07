@@ -1,5 +1,6 @@
 # Human-reviewed development contracts — acceptance plan
 
+**Contract:** human-reviewed/v1
 **Phase:** development-process contract
 **Status:** landed, 2026-09-06. Candidate transition after checker fixtures, plan checks, documentation gates, and diff validation passed; authoritative only when this Combined PR merges.
 **Delivery:** Combined. This focused change has no runtime/public/operator/persistence/trust-boundary interface; the process skills and documents are themselves the complete interface being reviewed.

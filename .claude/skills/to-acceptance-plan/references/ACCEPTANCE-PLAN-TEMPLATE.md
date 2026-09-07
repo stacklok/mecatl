@@ -1,7 +1,9 @@
 # Acceptance-plan template
 
-Copy the skeleton into `docs/acceptance/<slug>.md`. Keep focused plans compact. The
-bundled checker requires a scenario, numbered ACs with `verify:` lines, citations, an
+Copy the skeleton into `docs/acceptance/<slug>.md`. Keep focused plans compact. New plans and
+materially amended legacy plans after ADR 0304 must use this current template, including exact
+`**Contract:** human-reviewed/v1` metadata; unmarked historical plans are grandfathered until
+materially amended. The bundled checker requires exact `**Contract:** human-reviewed/v1` metadata, a scenario, numbered ACs with `verify:` lines, citations, an
 out-of-scope section, an allowed status, a non-empty `## Human decisions` section, a
 Split/Combined declaration, and all seven exact interface-category labels with
 non-placeholder content. Human decisions use either `None — <rationale>` or checklist items;
@@ -18,6 +20,7 @@ in the same PR.
 ```markdown
 # <Name> — acceptance plan
 
+**Contract:** human-reviewed/v1
 **Phase:** <capability / milestone>
 **Status:** draft, <YYYY-MM-DD>. <provenance>
 **Delivery:** Split. <why the default two-PR path applies>

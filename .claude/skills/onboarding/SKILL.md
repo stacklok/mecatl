@@ -16,7 +16,8 @@ Read `AGENTS.md`, `docs/architecture.md`, relevant `docs/adr/` records, and
 Substantive interface-bearing work uses two human checkpoints:
 
 1. **`/to-acceptance-plan`** writes `docs/acceptance/<slug>.md`, including exact
-   interfaces, verifiable behavior, and a machine-readable `## Human decisions` section.
+   `**Contract:** human-reviewed/v1` metadata, interfaces, verifiable behavior, and a
+   machine-readable `## Human decisions` section.
    Unchecked decisions keep it `draft`; `proposed` means every human decision needed for
    implementation is resolved and recorded. It opens a **Plan / Interface** PR, then stops.
 2. **Human contract review** marks the plan `approved` and merges it. Approved means

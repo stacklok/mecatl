@@ -39,6 +39,10 @@ ADR 0304 carries `Accepted` as the target state of this proposal PR: merging the
 acceptance event. Until merge, this ADR remains mutable during review; once merged, it is
 frozen under ADR 0002.
 
+Every new plan carries exact `**Contract:** human-reviewed/v1` metadata and the current template
+shape. Unmarked historical plans are grandfathered and need not be bulk-migrated, but any
+material amendment after ADR 0304 adopts the full current template and passes its checker.
+
 Every plan also has a non-empty `## Human decisions` section. It contains either
 `None — <rationale>` or checklist items: unresolved judgments use `- [ ] ...`; resolved
 judgments use `- [x] ... — Decision: ...`. Any unchecked item requires `draft`; `proposed`,

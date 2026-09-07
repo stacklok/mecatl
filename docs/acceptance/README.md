@@ -51,11 +51,13 @@ Every plan has one non-empty `## Human decisions` section with exactly one shape
 
 Place every material behavior/interface choice there, not under deferred decisions. The
 bundled checker rejects missing, empty, placeholder, or malformed sections and ties unchecked
-items mechanically to `draft` status.
+items mechanically to `draft` status. New plans and materially amended legacy plans after ADR 0304
+must declare exact `**Contract:** human-reviewed/v1` metadata; unmarked historical plans are
+grandfathered until materially amended and are not bulk-migrated.
 
 ## Interface contract
 
-Every new plan has a `## Interface contract` section with all seven exact canonical
+Every new plan has exact `**Contract:** human-reviewed/v1` metadata and a `## Interface contract` section with all seven exact canonical
 category labels: gRPC/protobuf, exported Go APIs/interfaces, tool schemas, CLI/config,
 events/persistence, security/authority, and compatibility/migration. Every category needs
 non-placeholder content. `None` is valid only as `None — <rationale>` (hyphen, en dash, or

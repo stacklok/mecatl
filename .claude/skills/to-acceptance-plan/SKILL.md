@@ -24,8 +24,11 @@ a PR. Without that request, draft and report only; do not perform those side eff
 - Use the eventual delivery branch in exactly one validated writable worktree. Split uses a
   dedicated `plan/<slug>` branch; Combined uses the eventual combined implementation branch.
   Never write in the primary checkout when operating from an isolated worktree.
-- Start at `draft`; unresolved human judgments about material behavior or interfaces are
-  unchecked items in `## Human decisions` and keep the plan draft.
+- Start at `draft`; include exact `**Contract:** human-reviewed/v1` metadata. New plans and
+  materially amended legacy plans after ADR 0304 must use the current template and marker;
+  unmarked historical plans are grandfathered until materially amended. Unresolved human
+  judgments about material behavior or interfaces are unchecked items in `## Human decisions`
+  and keep the plan draft.
 - Set `proposed` only when `## Human decisions` declares `None — <rationale>` or every
   decision is checked and records `— Decision: ...`; record whether the path is `Split` or
   `Combined`.

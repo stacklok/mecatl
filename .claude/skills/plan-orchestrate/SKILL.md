@@ -22,8 +22,8 @@ a PR. Without that request, stop before the first such side effect.
 ## Entry gate
 
 Read `docs/acceptance/<slug>.md` and the documents it cites. Run its bundled acceptance-plan
-checker before delivery-specific validation; any failure blocks entry. Confirm the
-`## Human decisions` section has no unchecked item: implementation never begins while human
+checker before delivery-specific validation; any failure blocks entry. Require exact
+`**Contract:** human-reviewed/v1` metadata and confirm the `## Human decisions` section has no unchecked item: implementation never begins while human
 judgment remains.
 
 ### Split (default)
