@@ -2,7 +2,7 @@
 id: 08-panel-canonical-provenance
 title: Map rendered rows to canonical visible grapheme offsets
 blocked_by: [07-panel-semantic-tool-regions]
-status: in-progress
+status: done
 attempt: 1
 branch: "plan-mecatui-logical-conversation-anchors/08-panel-canonical-provenance-attempt-1"
 worktree: ".scratch/worker-mecatui-logical-conversation-anchors-08-panel-canonical-provenance-attempt-1"
