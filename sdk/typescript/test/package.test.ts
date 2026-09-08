@@ -25,7 +25,7 @@ type PackageJson = {
   license: string;
   name: string;
   packageManager: string;
-  publishConfig: { access: string };
+  publishConfig: { registry: string };
   repository: { directory: string; type: string; url: string };
   type: string;
   version: string;
@@ -308,7 +308,7 @@ test("packed tarball carries dist and license only", () => {
   expect(packedPackageJson.repository).toEqual({
     directory: "sdk/typescript",
     type: "git",
-    url: "git+https://github.com/stacklok/mecatl.git",
+    url: "https://github.com/stacklok/mecatl.git",
   });
   expect(packedPackageJson.homepage).toBe(
     "https://github.com/stacklok/mecatl/tree/main/sdk/typescript#readme",
@@ -316,7 +316,9 @@ test("packed tarball carries dist and license only", () => {
   expect(packedPackageJson.bugs).toEqual({
     url: "https://github.com/stacklok/mecatl/issues",
   });
-  expect(packedPackageJson.publishConfig).toEqual({ access: "public" });
+  expect(packedPackageJson.publishConfig).toEqual({
+    registry: "https://npm.pkg.github.com",
+  });
   expect(packedPackageJson.engines).toEqual({ node: ">=22" });
   expect(packedPackageJson.dependencies).toEqual({
     "@bufbuild/protobuf": "2.14.0",

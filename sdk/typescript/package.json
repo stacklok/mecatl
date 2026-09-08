@@ -5,7 +5,7 @@
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/stacklok/mecatl.git",
+    "url": "https://github.com/stacklok/mecatl.git",
     "directory": "sdk/typescript"
   },
   "homepage": "https://github.com/stacklok/mecatl/tree/main/sdk/typescript#readme",
@@ -13,7 +13,7 @@
     "url": "https://github.com/stacklok/mecatl/issues"
   },
   "publishConfig": {
-    "access": "public"
+    "registry": "https://npm.pkg.github.com"
   },
   "type": "module",
   "sideEffects": false,

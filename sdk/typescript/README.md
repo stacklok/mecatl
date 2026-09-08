@@ -3,7 +3,36 @@
 The TypeScript SDK for the [mecatl](https://github.com/stacklok/mecatl) agentic coding
 harness. The package is ESM-only and supports Node.js 22 or newer.
 
-The v0.1 package has three public entry points:
+## Install the interim preview
+
+While the repository is internal, GitHub Packages requires authentication even
+to read the package. Create a GitHub personal access token with `read:packages`,
+expose it as `GITHUB_PACKAGES_TOKEN`, and configure your user or project
+`.npmrc` without putting the token itself in the file:
+
+```ini
+@stacklok:registry=https://npm.pkg.github.com
+//npm.pkg.github.com/:_authToken=${GITHUB_PACKAGES_TOKEN}
+```
+
+Then install the first preview explicitly:
+
+```sh
+pnpm add @stacklok/mecatl-sdk@0.0.1
+```
+
+The GitHub Packages line uses `0.0.x`. npm semver treats `^0.0.1` as pinned to
+that patch, so consumers opt into every preview update deliberately. Access is
+limited to organization members while the source repository remains internal.
+
+The package moves to npmjs at `0.1.0` after the repository is public and npm
+trusted publishing is configured. That cutover starts from a fresh version and
+flips the canonical registry; no GitHub Packages `0.0.x` artifact or version is
+republished to npmjs.
+
+## Public entry points
+
+The preview package has three public entry points:
 
 - `@stacklok/mecatl-sdk` — transport-neutral core and the browser HTTP/SSE transport;
 - `@stacklok/mecatl-sdk/node` — Node/Bun gRPC transport and local-process features;

@@ -33,6 +33,7 @@ type sdkScenario11Concurrency struct {
 }
 
 type sdkScenario11Job struct {
+	Env            map[string]string   `yaml:"env"`
 	Environment    string              `yaml:"environment"`
 	If             string              `yaml:"if"`
 	Needs          string              `yaml:"needs"`
@@ -45,6 +46,7 @@ type sdkScenario11Job struct {
 
 type sdkScenario11Step struct {
 	Env  map[string]string `yaml:"env"`
+	ID   string            `yaml:"id"`
 	Name string            `yaml:"name"`
 	Run  string            `yaml:"run"`
 	Uses string            `yaml:"uses"`
@@ -69,15 +71,21 @@ func TestADR_0304_ManualDispatchIsDryRunOnly(t *testing.T) {
 	if publish.Needs != "verify" {
 		t.Errorf("publish needs = %q, want verify", publish.Needs)
 	}
-	if publish.Environment != "npm-publish" {
-		t.Errorf("publish environment = %q, want npm-publish", publish.Environment)
+	if publish.Environment != "github-packages-publish" {
+		t.Errorf("publish environment = %q, want github-packages-publish", publish.Environment)
 	}
 	const publishCondition = "github.event_name == 'push' && startsWith(github.ref, 'refs/tags/sdk/typescript/v')"
 	if publish.If != publishCondition {
 		t.Errorf("publish if = %q, want %q", publish.If, publishCondition)
 	}
-	if !reflect.DeepEqual(publish.Permissions, map[string]string{"contents": "read", "id-token": "write"}) {
-		t.Errorf("publish permissions = %v, want contents: read + id-token: write", publish.Permissions)
+	wantPublishPermissions := map[string]string{
+		"attestations": "write",
+		"contents":     "read",
+		"id-token":     "write",
+		"packages":     "write",
+	}
+	if !reflect.DeepEqual(publish.Permissions, wantPublishPermissions) {
+		t.Errorf("publish permissions = %v, want %v", publish.Permissions, wantPublishPermissions)
 	}
 
 	uploads := 0
@@ -172,7 +180,8 @@ func TestSDKTypescriptRelease_Scenario11_GenerationCleanlinessGate(t *testing.T)
 	var manifest struct {
 		License       string `json:"license"`
 		PublishConfig struct {
-			Access string `json:"access"`
+			Access   *string `json:"access"`
+			Registry string  `json:"registry"`
 		} `json:"publishConfig"`
 		Repository struct {
 			Directory string `json:"directory"`
@@ -181,19 +190,19 @@ func TestSDKTypescriptRelease_Scenario11_GenerationCleanlinessGate(t *testing.T)
 		} `json:"repository"`
 	}
 	readSDKScenario11JSON(t, filepath.Join(root, "sdk", "typescript", "package.json"), &manifest)
-	if manifest.License != "Apache-2.0" || manifest.PublishConfig.Access != "public" {
-		t.Errorf("release metadata license/access = %q/%q", manifest.License, manifest.PublishConfig.Access)
+	if manifest.License != "Apache-2.0" || manifest.PublishConfig.Registry != "https://npm.pkg.github.com" || manifest.PublishConfig.Access != nil {
+		t.Errorf("release metadata license/registry/access = %q/%q/%v", manifest.License, manifest.PublishConfig.Registry, manifest.PublishConfig.Access)
 	}
 	wantRepository := struct {
 		Directory string `json:"directory"`
 		Type      string `json:"type"`
 		URL       string `json:"url"`
-	}{"sdk/typescript", "git", "git+https://github.com/stacklok/mecatl.git"}
+	}{"sdk/typescript", "git", "https://github.com/stacklok/mecatl.git"}
 	if manifest.Repository != wantRepository {
 		t.Errorf("repository = %+v, want %+v", manifest.Repository, wantRepository)
 	}
 	packedGate := verify.Steps[sdkScenario11StepNamed(verify, "Verify packed manifest release metadata")].Run
-	for _, proof := range []string{"package/package.json", "EXPECTED_VERSION", "Apache-2.0", "publishConfig.access", "sdk/typescript"} {
+	for _, proof := range []string{"package/package.json", "EXPECTED_VERSION", "Apache-2.0", "publishConfig.registry", "publishConfig.access", "https://npm.pkg.github.com", "sdk/typescript"} {
 		if !strings.Contains(packedGate, proof) {
 			t.Errorf("packed manifest gate is missing %q", proof)
 		}
@@ -205,12 +214,22 @@ func TestSDKTypescriptRelease_Scenario11_GenerationCleanlinessGate(t *testing.T)
 	}
 }
 
-func TestADR_0304_TrustedPublishingOnly(t *testing.T) {
+func TestADR_0313_EphemeralJobTokenOnly(t *testing.T) {
 	t.Parallel()
 
 	workflow, source := readSDKScenario11Workflow(t, sdkScenario11ReleaseWorkflow(t))
 	if !reflect.DeepEqual(workflow.Permissions, map[string]string{"contents": "read"}) {
 		t.Errorf("workflow permissions = %v, want contents: read only", workflow.Permissions)
+	}
+	publish := workflow.Jobs["publish"]
+	wantPublishPermissions := map[string]string{
+		"attestations": "write",
+		"contents":     "read",
+		"id-token":     "write",
+		"packages":     "write",
+	}
+	if !reflect.DeepEqual(publish.Permissions, wantPublishPermissions) {
+		t.Errorf("publish permissions = %v, want %v", publish.Permissions, wantPublishPermissions)
 	}
 	idTokenJobs := 0
 	for jobName, job := range workflow.Jobs {
@@ -220,21 +239,24 @@ func TestADR_0304_TrustedPublishingOnly(t *testing.T) {
 				t.Errorf("unexpected id-token permission on %s: %q", jobName, job.Permissions["id-token"])
 			}
 		}
-		for permission := range job.Permissions {
-			switch permission {
-			case "contents", "id-token":
-			default:
-				t.Errorf("job %s has forbidden permission %q", jobName, permission)
-			}
+		if jobName != "publish" && !reflect.DeepEqual(job.Permissions, map[string]string{"contents": "read"}) {
+			t.Errorf("non-publish job %s permissions = %v, want contents: read only", jobName, job.Permissions)
 		}
 	}
 	if idTokenJobs != 1 {
 		t.Errorf("id-token job count = %d, want exactly one", idTokenJobs)
 	}
+	if publish.Env["NODE_AUTH_TOKEN"] != "${{ secrets.GITHUB_TOKEN }}" {
+		t.Errorf("NODE_AUTH_TOKEN = %q, want ephemeral secrets.GITHUB_TOKEN", publish.Env["NODE_AUTH_TOKEN"])
+	}
+	secretReferences := regexp.MustCompile(`secrets\.[A-Za-z_][A-Za-z0-9_]*`).FindAllString(source, -1)
+	if !reflect.DeepEqual(secretReferences, []string{"secrets.GITHUB_TOKEN"}) {
+		t.Errorf("secret references = %v, want only secrets.GITHUB_TOKEN", secretReferences)
+	}
 	for _, forbidden := range []string{
-		"secrets.", "NPM_TOKEN", "NODE_AUTH_TOKEN", "_authToken", "npm_config_",
-		"registry-url:", "contents: write", "packages:", "attestations:",
-		"pull-requests:", "issues:", "--provenance", ".npmrc",
+		"NPM_TOKEN", "_authToken", "npm_config_", "contents: write",
+		"pull-requests:", "issues:", "--provenance", ".npmrc", "--access",
+		"dist.attestations",
 	} {
 		if strings.Contains(source, forbidden) {
 			t.Errorf("release workflow contains forbidden credential/authority text %q", forbidden)
@@ -248,27 +270,43 @@ func TestADR_0304_TrustedPublishingOnly(t *testing.T) {
 			}
 		}
 	}
-	publish := workflow.Jobs["publish"]
 	downloadIndex := sdkScenario11ActionIndex(publish, "actions/download-artifact@")
 	integrityIndex := sdkScenario11StepNamed(publish, "Re-verify downloaded tarball integrity")
-	publishIndex := sdkScenario11StepNamed(publish, "Publish tarball and assert generated provenance")
-	if downloadIndex < 0 || integrityIndex <= downloadIndex || publishIndex <= integrityIndex {
-		t.Fatalf("download/integrity/publish ordering = %d/%d/%d", downloadIndex, integrityIndex, publishIndex)
+	attestationIndex := sdkScenario11ActionIndex(publish, "actions/attest-build-provenance@")
+	verifyAttestationIndex := sdkScenario11StepNamed(publish, "Verify GitHub artifact attestation")
+	publishIndex := sdkScenario11StepNamed(publish, "Publish downloaded tarball")
+	summaryIndex := sdkScenario11StepNamed(publish, "Record published artifact evidence")
+	if downloadIndex < 0 || integrityIndex <= downloadIndex || attestationIndex <= integrityIndex ||
+		verifyAttestationIndex <= attestationIndex || publishIndex <= verifyAttestationIndex || summaryIndex <= publishIndex {
+		t.Fatalf("download/integrity/attest/verify/publish/summary ordering = %d/%d/%d/%d/%d/%d",
+			downloadIndex, integrityIndex, attestationIndex, verifyAttestationIndex, publishIndex, summaryIndex)
+	}
+	attestation := publish.Steps[attestationIndex]
+	if attestation.ID != "attestation" || attestation.With["subject-path"] != "${{ needs.verify.outputs.tarball }}" {
+		t.Errorf("attestation step = %+v, want exact downloaded tarball subject", attestation)
+	}
+	verifyAttestationRun := publish.Steps[verifyAttestationIndex].Run
+	if !strings.Contains(verifyAttestationRun, `gh attestation verify "./${TARBALL}" --repo stacklok/mecatl`) {
+		t.Error("publish does not verify the GitHub artifact attestation")
 	}
 	publishRun := publish.Steps[publishIndex].Run
-	if !strings.Contains(publishRun, `npm publish "./${TARBALL}" --access public`) {
-		t.Error("publish must use the downloaded tarball path with public access")
+	if !strings.Contains(publishRun, `npm publish "./${TARBALL}"`) {
+		t.Error("publish must use the downloaded tarball path")
 	}
-	if !strings.Contains(publishRun, "dist.attestations") {
-		t.Error("publish does not assert generated dist.attestations")
+	summary := publish.Steps[summaryIndex]
+	if summary.Env["ATTESTATION_URL"] != "${{ steps.attestation.outputs.attestation-url }}" ||
+		summary.Env["INTEGRITY"] != "${{ needs.verify.outputs.integrity }}" ||
+		!strings.Contains(summary.Run, "$GITHUB_STEP_SUMMARY") {
+		t.Error("publish summary does not record integrity and attestation URL")
 	}
 	setupNode := sdkScenario11Action(publish, "actions/setup-node@")
-	if setupNode == nil || setupNode.With["node-version"] != "24.7.0" {
-		t.Errorf("publish Node pin = %v, want exact 24.7.0 distribution", setupNode)
+	if setupNode == nil || setupNode.With["node-version"] != "24.7.0" ||
+		setupNode.With["registry-url"] != "https://npm.pkg.github.com" || setupNode.With["scope"] != "@stacklok" {
+		t.Errorf("publish Node/registry setup = %v, want exact Node 24.7.0 and GitHub Packages", setupNode)
 	}
-	floorRun := publish.Steps[sdkScenario11StepNamed(publish, "Assert trusted-publishing toolchain floors")].Run
+	floorRun := publish.Steps[sdkScenario11StepNamed(publish, "Assert GitHub Packages toolchain floors")].Run
 	if !strings.Contains(floorRun, "22.14.0") || !strings.Contains(floorRun, `test "$(npm --version)" = "11.5.1"`) {
-		t.Error("publish does not assert the Node and npm trusted-publishing floors")
+		t.Error("publish does not assert the Node and npm publishing floors")
 	}
 }
 
@@ -294,8 +332,8 @@ func TestADR_0304_TagTriggerIsolation(t *testing.T) {
 		tag       string
 		sdk, root bool
 	}{
-		{"sdk/typescript/v0.1.0", true, false},
-		{"v0.1.0", false, true},
+		{"sdk/typescript/v0.0.1", true, false},
+		{"v0.0.1", false, true},
 		{"sdk/typescript/v9.9.9", true, false},
 		{"v1.2.3", false, true},
 	}

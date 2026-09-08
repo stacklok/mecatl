@@ -7,8 +7,35 @@ description: Connect Node, Bun, or browser applications to Mecatl with the publi
 # Use the TypeScript SDK
 
 `@stacklok/mecatl-sdk` is an ESM-only client for Node.js 22+, Bun, and modern
-browsers. Install it with your JavaScript package manager, then choose one of
-three public entry points:
+browsers.
+
+## Install the interim preview
+
+The `0.0.x` preview line is hosted on GitHub Packages. While the source
+repository is internal, readers must be Stacklok organization members and use
+a GitHub personal access token with `read:packages`. Expose the token as
+`GITHUB_PACKAGES_TOKEN` and add this to a user or project `.npmrc`; do not put
+the token value in the file:
+
+```ini
+@stacklok:registry=https://npm.pkg.github.com
+//npm.pkg.github.com/:_authToken=${GITHUB_PACKAGES_TOKEN}
+```
+
+Install the first preview explicitly:
+
+```sh
+pnpm add @stacklok/mecatl-sdk@0.0.1
+```
+
+The range `^0.0.1` is patch-pinned by npm semver, so opt into each preview
+update deliberately. At `0.1.0`, the package moves to npmjs after the repository
+is public and trusted publishing is configured. The canonical registry flips;
+no GitHub Packages `0.0.x` artifact or version is republished to npmjs.
+
+## Choose an entry point
+
+The package has three public entry points:
 
 | Import | Use it for |
 | --- | --- |
