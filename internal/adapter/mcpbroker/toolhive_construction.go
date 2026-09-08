@@ -10,6 +10,8 @@ import (
 	"github.com/stacklok/toolhive/pkg/authserver/storage"
 	"github.com/stacklok/toolhive/pkg/vmcp"
 	authtypes "github.com/stacklok/toolhive/pkg/vmcp/auth/types"
+
+	"github.com/stacklok/mecatl/engine/port"
 )
 
 const (
@@ -48,6 +50,11 @@ type ToolHiveConfig struct {
 	// lifecycle — EmbeddedAuthServer.Close calls storage.Close, which closes
 	// the client it was given, so no separate cleanup is needed beyond that.
 	AuthRedisClient redis.UniversalClient
+	// Diagnostics receives per-backend authenticated-discovery outcomes during
+	// workspace-enrollment catalogue freeze (success + tool count, or failure +
+	// backend name) — see stageAuthenticatedRoutes. A nil value defaults to
+	// port.NopDiagnostics{}, matching every other nil-safe Diagnostics consumer.
+	Diagnostics port.Diagnostics
 }
 
 // ToolHiveProfile is one configured Streamable HTTP upstream.

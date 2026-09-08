@@ -1978,7 +1978,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 				commandConnClose()
 				return nil, fmt.Errorf("build bundled MCP broker: %w", err)
 			}
-			brokerProcess, err = mcpbroker.NewToolHiveProcess(ctx, toolHiveBrokerConfig(brokerDeclaration.Routes, brokerDeclaration.CallbackURL, occupied, authRedisClient))
+			brokerProcess, err = mcpbroker.NewToolHiveProcess(ctx, toolHiveBrokerConfig(brokerDeclaration.Routes, brokerDeclaration.CallbackURL, occupied, authRedisClient, cfg.diag()))
 			if err != nil {
 				authStorageClose()
 				childLiveness.Close()

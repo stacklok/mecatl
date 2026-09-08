@@ -9,6 +9,7 @@ import (
 
 	"golang.org/x/oauth2"
 
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/tool"
 	contract "github.com/stacklok/mecatl/internal/mcpbroker"
 )
@@ -211,8 +212,16 @@ func stageAuthenticatedRoutes(ctx context.Context, process *Process, brokerCrede
 	for _, backend := range backends {
 		capabilities, err := process.QueryAuthenticatedCapabilities(ctx, brokerCredential, backend)
 		if err != nil || capabilities.Backend != backend {
+			// The underlying cause is deliberately not distinguishable beyond this
+			// point (authenticated_discovery.go collapses every failure mode —
+			// unauthenticated, transport, upstream-error, backend-mismatch — into
+			// ErrAuthenticatedDiscovery, a single admission boundary, on purpose).
+			// This is still the one place an operator can learn WHICH configured
+			// backend broke a catalogue freeze that otherwise fails all-or-nothing.
+			process.diagnostics().Log(ctx, port.LevelWarn, "authenticated discovery failed; catalogue freeze aborted", "backend", backend)
 			return nil, ErrAuthenticatedDiscovery
 		}
+		process.diagnostics().Log(ctx, port.LevelInfo, "authenticated discovery succeeded", "backend", backend, "tools", len(capabilities.Tools))
 		declaredTools := process.construction.staticByBackend[backend]
 		declaredNames := make(map[string]struct{}, len(declaredTools))
 		for _, declared := range declaredTools {
