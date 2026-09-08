@@ -619,29 +619,29 @@ func (s *Service) appendAuthorizationResolution(ctx context.Context, id session.
 	// error is still returned so the caller's existing failure handling
 	// (settling the session, diagnostics) is unchanged.
 	var firstErr error
-	primaryAppended := false
+	allAppended := true
 	for i := range results {
 		ev := session.Event{Type: session.EvToolResult, ToolResult: &results[i]}
 		if err := s.appendEvent(appendCtx, id, ev); err != nil {
 			if firstErr == nil {
 				firstErr = err
 			}
+			allAppended = false
 			continue
-		}
-		if results[i].CallID == pending.Call.ID {
-			primaryAppended = true
 		}
 		s.PublishSessionEvent(id, ev)
 	}
 	// eventsource.Fold's resolveAuthorization hard-rejects (ErrReconstruct) an
 	// EvAuthorizationResolved whose primary call was never answered by a folded
-	// EvToolResult. If the primary call's OWN append is the one that ambiguously
-	// failed, its EvToolResult may genuinely not be durable — appending resolved
-	// anyway risks turning a safe, soft "lifecycle still open" outcome
+	// EvToolResult, and SeedHistory separately hard-rejects any OTHER dangling
+	// tool call — so a deferred sibling's result is just as load-bearing for
+	// foldability as the primary's. If ANY result append ambiguously failed, its
+	// EvToolResult may genuinely not be durable — appending resolved anyway
+	// risks turning a safe, soft "lifecycle still open" outcome
 	// (ErrPrivateStateRequired) into that hard, unrecoverable fold failure. Stop
 	// here instead: the lifecycle stays open, which Fold already treats as a
 	// legitimate (if unresolvable-from-safe-events) terminal state.
-	if !primaryAppended {
+	if !allAppended {
 		return firstErr
 	}
 	ev := session.Event{Type: session.EvAuthorizationResolved, Authorization: &session.AuthorizationPayload{

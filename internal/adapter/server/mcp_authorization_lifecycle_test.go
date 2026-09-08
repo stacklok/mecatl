@@ -956,6 +956,153 @@ func TestMCPAuthorizationPrimaryResultAppendFailureStaysFoldable(t *testing.T) {
 	}
 }
 
+// TestMCPAuthorizationDeferredResultAppendFailureStaysFoldable is the deferred-
+// sibling sibling of TestMCPAuthorizationPrimaryResultAppendFailureStaysFoldable:
+// a failed DEFERRED result append (results[1], not the primary) must ALSO stop
+// appendAuthorizationResolution from appending EvAuthorizationResolved. If the
+// deferred result's EvToolResult genuinely never committed, the authorization
+// itself still folds (resolveAuthorization only checks the primary call), but
+// SeedHistory then hard-rejects the dangling deferred tool_call — the same
+// permanent non-foldability the primary-result gate already guards against, on
+// the other half of the ordered result sequence. failCalls fails BEFORE
+// recording (the genuinely-not-durable case).
+func TestMCPAuthorizationDeferredResultAppendFailureStaysFoldable(t *testing.T) {
+	f := newLifecycleFixture(t, session.AuthorizationDenied, nil, time.Now, nil)
+	log := &countingEventLog{}
+	seed := []session.Event{
+		{Type: session.EvTurnStart},
+		{Type: session.EvToolCall, ToolCall: &f.pending.Call},
+		{Type: session.EvToolCall, ToolCall: &f.pending.Deferred[0]},
+		{Type: session.EvAuthorizationRequired, Authorization: &session.AuthorizationPayload{
+			AuthorizationID: f.pending.Authorization.ID, DisplayName: f.pending.Authorization.DisplayName, Call: f.pending.Call.ID,
+			ExpiresAt: f.pending.Authorization.ExpiresAt, Status: session.AuthorizationPending,
+		}},
+	}
+	for _, ev := range seed {
+		if err := log.Append(t.Context(), "authorization-session", ev); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// results[0] is the primary (succeeds); results[1] is the deferred sibling,
+	// the SECOND result append — its failure must be just as gating as the
+	// primary's.
+	log.failCalls = map[int]bool{len(seed) + 2: true}
+	diag := &lifecycleDiagnostics{}
+	f.svc.cfg.EventLog = log
+	f.svc.cfg.Diagnostics = diag
+	loaded, err := f.store.Load(t.Context(), "authorization-session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	loaded.EnvironmentRef = session.EnvironmentRef{Kind: session.EnvironmentKind("lost-remote"), ID: "runtime", Revision: "gone"}
+	if err := f.store.Save(t.Context(), loaded); err != nil {
+		t.Fatal(err)
+	}
+	control := MCPAuthorizationControl{SessionID: loaded.ID, AuthorizationID: f.pending.Authorization.ID}
+	result, err := f.svc.RecheckMCPAuthorization(t.Context(), loaded.ID, control)
+	if !errors.Is(err, ErrInternal) || result != (MCPAuthorizationResult{}) {
+		t.Fatalf("fallback append failure = %+v, %v; want ErrInternal and no success", result, err)
+	}
+	if !diag.contains("persist terminal authorization lifecycle failed") {
+		t.Fatal("fallback append failure was not diagnosed")
+	}
+	// seed(4) + the primary result(5, succeeds) + the failed deferred result(6):
+	// EvAuthorizationResolved must never be attempted once ANY result's own
+	// append has failed.
+	wantAttempts := len(seed) + 2
+	if got := len(log.attempts); got != wantAttempts {
+		t.Fatalf("append attempts = %d, want %d (no resolved attempt once the deferred result failed)", got, wantAttempts)
+	}
+	for _, ev := range log.recorded {
+		if ev.Type == session.EvAuthorizationResolved {
+			t.Fatal("EvAuthorizationResolved was recorded despite the deferred result never committing")
+		}
+	}
+	persisted, loadErr := f.store.Load(t.Context(), loaded.ID)
+	if loadErr != nil {
+		t.Fatal(loadErr)
+	}
+	if persisted.State != session.StateIdle {
+		t.Fatalf("settled snapshot state = %q, want idle", persisted.State)
+	}
+	_, foldErr := eventsource.Fold(eventsource.SessionMeta{
+		ID: persisted.ID, Mode: persisted.Mode, Limits: persisted.Limits, EnvironmentRef: persisted.EnvironmentRef, CreatedAt: persisted.CreatedAt,
+	}, log.Read(t.Context(), persisted.ID))
+	if !errors.Is(foldErr, eventsource.ErrPrivateStateRequired) {
+		t.Fatalf("fold error = %v, want ErrPrivateStateRequired (lifecycle left open, not a hard reconstruct failure)", foldErr)
+	}
+}
+
+// TestMCPAuthorizationDeferredResultAmbiguousPostWriteFailureStaysFoldable
+// covers the reviewer-requested POST-write half: postWriteFailCalls durably
+// records the deferred result before reporting failure (the ambiguous, possibly
+// -already-committed case), which must be treated identically to a genuine
+// non-commit — appendAuthorizationResolution cannot tell the two apart, so it
+// must conservatively skip EvAuthorizationResolved either way.
+func TestMCPAuthorizationDeferredResultAmbiguousPostWriteFailureStaysFoldable(t *testing.T) {
+	f := newLifecycleFixture(t, session.AuthorizationDenied, nil, time.Now, nil)
+	log := &countingEventLog{}
+	seed := []session.Event{
+		{Type: session.EvTurnStart},
+		{Type: session.EvToolCall, ToolCall: &f.pending.Call},
+		{Type: session.EvToolCall, ToolCall: &f.pending.Deferred[0]},
+		{Type: session.EvAuthorizationRequired, Authorization: &session.AuthorizationPayload{
+			AuthorizationID: f.pending.Authorization.ID, DisplayName: f.pending.Authorization.DisplayName, Call: f.pending.Call.ID,
+			ExpiresAt: f.pending.Authorization.ExpiresAt, Status: session.AuthorizationPending,
+		}},
+	}
+	for _, ev := range seed {
+		if err := log.Append(t.Context(), "authorization-session", ev); err != nil {
+			t.Fatal(err)
+		}
+	}
+	log.postWriteFailCalls = map[int]bool{len(seed) + 2: true}
+	diag := &lifecycleDiagnostics{}
+	f.svc.cfg.EventLog = log
+	f.svc.cfg.Diagnostics = diag
+	loaded, err := f.store.Load(t.Context(), "authorization-session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	loaded.EnvironmentRef = session.EnvironmentRef{Kind: session.EnvironmentKind("lost-remote"), ID: "runtime", Revision: "gone"}
+	if err := f.store.Save(t.Context(), loaded); err != nil {
+		t.Fatal(err)
+	}
+	control := MCPAuthorizationControl{SessionID: loaded.ID, AuthorizationID: f.pending.Authorization.ID}
+	result, err := f.svc.RecheckMCPAuthorization(t.Context(), loaded.ID, control)
+	if !errors.Is(err, ErrInternal) || result != (MCPAuthorizationResult{}) {
+		t.Fatalf("fallback append failure = %+v, %v; want ErrInternal and no success", result, err)
+	}
+	// postWriteFailCalls still durably records before reporting its error, so
+	// both results land in recorded despite the ambiguous failure — only the
+	// (never-attempted) resolved event is missing.
+	wantAttempts := len(seed) + 2
+	if got := len(log.attempts); got != wantAttempts {
+		t.Fatalf("append attempts = %d, want %d (no resolved attempt once the deferred result's append errored)", got, wantAttempts)
+	}
+	if got := len(log.recorded); got != wantAttempts {
+		t.Fatalf("durably written events = %d, want %d (primary and deferred results recorded; resolved never attempted)", got, wantAttempts)
+	}
+	for _, ev := range log.recorded {
+		if ev.Type == session.EvAuthorizationResolved {
+			t.Fatal("EvAuthorizationResolved was recorded despite the deferred result's ambiguous append failure")
+		}
+	}
+	persisted, loadErr := f.store.Load(t.Context(), loaded.ID)
+	if loadErr != nil {
+		t.Fatal(loadErr)
+	}
+	if persisted.State != session.StateIdle {
+		t.Fatalf("settled snapshot state = %q, want idle", persisted.State)
+	}
+	_, foldErr := eventsource.Fold(eventsource.SessionMeta{
+		ID: persisted.ID, Mode: persisted.Mode, Limits: persisted.Limits, EnvironmentRef: persisted.EnvironmentRef, CreatedAt: persisted.CreatedAt,
+	}, log.Read(t.Context(), persisted.ID))
+	if !errors.Is(foldErr, eventsource.ErrPrivateStateRequired) {
+		t.Fatalf("fold error = %v, want ErrPrivateStateRequired", foldErr)
+	}
+}
+
 func TestMCPAuthorizationCloseSessionSettlesParkedCall(t *testing.T) {
 	f := newLifecycleFixture(t, session.AuthorizationPending, nil, time.Now, nil)
 	f.svc.CloseSession("authorization-session")
