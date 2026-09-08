@@ -362,6 +362,8 @@ func (o *authAcceptedObservations) once(category authObservationCategory, transp
 	case category == authCategoryValidatedIdentity && transport == authTransportHTTP:
 		return &o.identityHTTP
 	default:
+		// Unknown pairs are deliberately unobserved: accepted authentication is
+		// bounded only for the closed category/transport matrix above.
 		return nil
 	}
 }
