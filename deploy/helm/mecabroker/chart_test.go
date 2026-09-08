@@ -63,7 +63,7 @@ func TestNetworkPolicyIngressDefaultsToDenyAndUsesPublicContainerPort(t *testing
 		}
 	})
 	t.Run("configured peers target the multiplexed public port", func(t *testing.T) {
-		rendered := renderChart(t, "template", "production", ".", "-f", "ci/production-values.yaml", "--set", "networkPolicy.publicFrom[0].ipBlock.cidr=192.0.2.0/24")
+		rendered := renderChart(t, "template", "production", ".", "-f", "ci/production-values.yaml", "--set-json", `networkPolicy.publicFrom=[{"ipBlock":{"cidr":"192.0.2.0/24"}}]`)
 		policy := networkPolicyFromRender(t, rendered)
 		if len(policy.Spec.Ingress) != 1 || policy.Spec.Ingress[0].Ports[0].Port.String() != "public" {
 			t.Fatalf("unexpected ingress: %#v", policy.Spec.Ingress)

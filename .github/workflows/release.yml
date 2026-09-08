@@ -322,6 +322,8 @@ jobs:
   publish-mecak8s:
     name: Build, publish, sign, attest mecak8s
     needs: validate-release-tag
+    outputs:
+      image_digest: ${{ steps.build.outputs.image_digest }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
@@ -666,9 +668,10 @@ jobs:
 
       # Bare `helm lint` renders with an empty values.yaml, which trips the
       # Redis and secure real-provider guards. Lint with the minimal production
-      # overrides that target already uses. The chart version supplies the image tag.
+      # overrides plus the immutable digest produced by the image job; release
+      # chart validation must never exercise the chart's tag fallback.
       - name: helm lint
-        run: helm lint "${CHART_PATH}" --set redis.endpoint=redis.example.internal:6379,redis.credentialsSecret=redis-credentials,tls.enabled=true,tls.secretName=mecak8s-tls,oidc.enabled=true,oidc.issuer=https://idp.example.com,oidc.audience=mecatl
+        run: helm lint "${CHART_PATH}" --set image.digest=${{ needs.publish-mecak8s.outputs.image_digest }},redis.endpoint=redis.example.internal:6379,redis.credentialsSecret=redis-credentials,tls.enabled=true,tls.secretName=mecak8s-tls,oidc.enabled=true,oidc.issuer=https://idp.example.com,oidc.audience=mecatl
 
       - name: helm package
         env:

@@ -18,7 +18,8 @@ app.kubernetes.io/component: agent
 {{- $_ := required "image.repository is required" .Values.image.repository -}}
 {{- if and .Values.image.digest .Values.image.tag -}}{{ fail "set at most one of image.digest or image.tag" }}{{- end -}}
 {{- if and (not .Values.mockProvider) (not .Values.security.allowUnsafeRealProvider) -}}
-{{- if and (not .Values.image.digest) (not .Values.image.tag) -}}{{ fail "secure production images require image.digest" }}{{- end -}}
+{{- if not .Values.image.digest -}}{{ fail "secure production images require image.digest" }}{{- end -}}
+{{- if .Values.image.tag -}}{{ fail "secure production images do not permit image.tag; use image.digest" }}{{- end -}}
 {{- end -}}
 {{- if and .Values.image.digest (not (regexMatch "^sha256:[0-9a-f]{64}$" .Values.image.digest)) -}}{{ fail "image.digest must be a lowercase sha256 digest" }}{{- end -}}
 
@@ -136,10 +137,10 @@ mounted
 {{- end -}}
 {{- define "mecak8s.validateRemoteBroker" -}}
 {{- $r := .Values.remoteBroker -}}
-{{- $any := or $r.address $r.caSecret $r.caKey $r.serverName $r.tokenAudience -}}
+{{- $any := or $r.address $r.caSecret $r.caKey $r.serverName $r.tokenAudience (and $r.tokenLifetimeSeconds (ne (int $r.tokenLifetimeSeconds) 600)) -}}
 {{- if $any -}}
-{{- if or (not $r.address) (not $r.caSecret) (not $r.caKey) (not $r.serverName) (not $r.tokenAudience) -}}
-{{- fail "remoteBroker.address, caSecret, caKey, serverName, and tokenAudience must be configured together" -}}
+{{- if or (not $r.address) (not $r.caSecret) (not $r.caKey) (not $r.serverName) (not $r.tokenAudience) (not $r.tokenLifetimeSeconds) -}}
+{{- fail "remoteBroker.address, caSecret, caKey, serverName, tokenAudience, and tokenLifetimeSeconds must be configured together" -}}
 {{- end -}}
 {{- end -}}
 {{- end -}}

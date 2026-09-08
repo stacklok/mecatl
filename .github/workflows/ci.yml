@@ -496,6 +496,13 @@ jobs:
             provider/anthropic/go.sum
             provider/openai/go.sum
             provider/openaichat/go.sum
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: v3.17.3
+      - name: Install kubeconform
+        run: GOBIN="$RUNNER_TEMP/bin" go install github.com/yannh/kubeconform/cmd/kubeconform@v0.7.0
+      - name: Add deployment tools to PATH
+        run: echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
       - name: Validate race workflow contracts
         run: |
           bash .github/scripts/root-race-packages_test.sh
@@ -551,6 +558,13 @@ jobs:
             provider/anthropic/go.sum
             provider/openai/go.sum
             provider/openaichat/go.sum
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: v3.17.3
+      - name: Install kubeconform
+        run: GOBIN="$RUNNER_TEMP/bin" go install github.com/yannh/kubeconform/cmd/kubeconform@v0.7.0
+      - name: Add deployment tools to PATH
+        run: echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
       - name: go test -race (root-b)
         env:
           RACE_TIMING: ${{ github.event_name == 'workflow_dispatch' && inputs.race_timing }}
@@ -603,6 +617,38 @@ jobs:
           path: .scratch/race-timing/*.jsonl
           if-no-files-found: warn
           retention-days: 3
+
+  deployment:
+    name: Deployment charts
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: go.sum
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: v3.17.3
+      - name: Install kubeconform
+        run: GOBIN="$RUNNER_TEMP/bin" go install github.com/yannh/kubeconform/cmd/kubeconform@v0.7.0
+      - name: Add deployment tools to PATH
+        run: echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
+      - name: Require deployment tools
+        run: command -v helm && command -v kubeconform && command -v task
+      - name: Validate deployment charts
+        run: task deploy:check
+      - name: Run mecak8s semantic chart tests
+        run: go test ./deploy/helm/mecak8s -count=1
+      - name: Run mecabroker semantic chart tests
+        run: go test ./deploy/helm/mecabroker -count=1
 
   test-non-race-draft:
     name: Test (non-race draft coverage)

@@ -197,7 +197,7 @@ func productionArgs() []string {
 }
 
 func secureProductionArgs() []string {
-	return []string{"template", "production", ".", "--set", "image.tag=v0.0.0", "--set", "redis.endpoint=redis.example.internal:6380", "--set", "redis.credentialsSecret=redis-credentials", "--set", "tls.enabled=true,tls.secretName=mecak8s-tls", "--set", "oidc.enabled=true,oidc.issuer=https://idp.example.com,oidc.audience=mecatl"}
+	return []string{"template", "production", ".", "--set", "image.digest=sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", "--set", "redis.endpoint=redis.example.internal:6380", "--set", "redis.credentialsSecret=redis-credentials", "--set", "tls.enabled=true,tls.secretName=mecak8s-tls", "--set", "oidc.enabled=true,oidc.issuer=https://idp.example.com,oidc.audience=mecatl"}
 }
 
 func TestMecak8sHelmChart_RedisFilesystemFlagsAndWorkspaceExclusion(t *testing.T) {
@@ -516,7 +516,7 @@ func TestADR_0294_HelmHasNoAffinityPolicySurface(t *testing.T) {
 }
 
 func TestMecak8sHelmChart_ChartOwnedAnnotationsCannotBeOverridden(t *testing.T) {
-	base := []string{"template", "production", ".", "--set", "image.tag=v0.0.0", "--set", "redis.endpoint=redis.example.internal:6380", "--set", "redis.credentialsSecret=redis-credentials"}
+	base := []string{"template", "production", ".", "--set", "image.digest=sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", "--set", "redis.endpoint=redis.example.internal:6380", "--set", "redis.credentialsSecret=redis-credentials"}
 	for _, tc := range []struct {
 		name string
 		set  string
@@ -901,7 +901,7 @@ func TestMecak8sHelmHelperMatchesProviderSecuritySchema(t *testing.T) {
 	if err := os.Remove(filepath.Join(chart, "values.schema.json")); err != nil {
 		t.Fatalf("remove chart schema: %v", err)
 	}
-	base := []string{"template", "production", chart, "--set", "image.tag=v0.0.0", "--set", "redis.endpoint=redis.example.internal:6380", "--set", "redis.credentialsSecret=redis-credentials"}
+	base := []string{"template", "production", chart, "--set", "image.digest=sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", "--set", "redis.endpoint=redis.example.internal:6380", "--set", "redis.credentialsSecret=redis-credentials"}
 	for _, tc := range providerSecurityCases() {
 		t.Run(tc.name(), func(t *testing.T) {
 			args := append([]string{}, base...)
@@ -1046,7 +1046,7 @@ func TestMecak8sHelmChart_SecureRedisModes(t *testing.T) {
 	}
 
 	// System-trust TLS without ACL credentials needs no Secret at all.
-	publicTLS := []string{"template", "production", ".", "--set", "image.tag=v0.0.0", "--set", "redis.endpoint=redis.example.internal:6380", "--set", "redis.caKey=", "--set", "security.allowUnsafeRealProvider=true"}
+	publicTLS := []string{"template", "production", ".", "--set", "image.digest=sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", "--set", "redis.endpoint=redis.example.internal:6380", "--set", "redis.caKey=", "--set", "security.allowUnsafeRealProvider=true"}
 	rendered, err := helm(t, publicTLS...)
 	if err != nil {
 		t.Fatalf("render system-trust TLS without Secret: %v", err)
