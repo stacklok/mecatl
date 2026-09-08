@@ -1055,7 +1055,7 @@ Two deliberate cycle-breaks worth noting, documented in code:
   See [ADR 0208](adr/0208-execution-environment.md),
   [ADR 0211](adr/0211-execution-environment-runtime-seam.md),
   [ADR 0214](adr/0214-environment-persistence.md),
-  [ADR 0314](adr/0314-posix-workspace-namespace-operations.md), and the
+  [ADR 0315](adr/0315-posix-workspace-namespace-operations.md), and the
   [ports chapter](architecture/ports.md).
 - `governance` does **not** import `session` (so `session` can import
   `governance` without a cycle); the `Evaluator` works on primitive args, and

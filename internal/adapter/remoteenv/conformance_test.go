@@ -9,7 +9,7 @@ import (
 )
 
 // TestConformance runs the shared Workspace conformance table against the
-// remote-fake Workspace (ADR 0314: the capability is implemented for local OS,
+// remote-fake Workspace (ADR 0315: the capability is implemented for local OS,
 // memory, Redis, and remote test workspaces).
 func TestConformance(t *testing.T) {
 	fsconformance.Run(t, func(t *testing.T) tool.Workspace {

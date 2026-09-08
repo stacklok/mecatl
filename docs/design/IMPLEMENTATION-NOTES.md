@@ -6237,7 +6237,7 @@ prefix-backed memfs/Redis workspaces derive directories and cannot retain empty 
 resolution evaluates Copy/Move source and destination independently and folds the worst effect, so a scoped
 rule covering one operand never authorizes the other. Authority-bound Copy and Move calls authorize source
 and destination as separate physical resources before execution.
-See ADR 0314.
+See ADR 0315.
 
 The final ReplaceFile is load-bearing: `engine/adapter/fstools/fstools_test.go`
 (`TestEditConditionalReplaceRejectsConcurrentChange`,

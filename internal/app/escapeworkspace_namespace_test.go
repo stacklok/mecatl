@@ -11,7 +11,7 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/osfs"
 )
 
-// escapeworkspace_namespace_test.go pins the ADR-0314 namespace-operation
+// escapeworkspace_namespace_test.go pins the ADR-0315 namespace-operation
 // wrapping in escapeWorkspace (internal/app/escapepolicy.go): ReadDir, Remove,
 // Rename, and CopyFile must delegate for genuine in-root paths, and must
 // reject an ordinary out-of-root path and a pseudo-filesystem path (/proc) on
@@ -49,7 +49,7 @@ func newNamespaceTestWorkspace(t *testing.T) (ws *escapeWorkspace, root string) 
 	return newEscapeWorkspace(base, clf).(*escapeWorkspace), root
 }
 
-func TestADR_0314_EscapeWorkspace_ReadDir_InRootDelegates(t *testing.T) {
+func TestADR_0315_EscapeWorkspace_ReadDir_InRootDelegates(t *testing.T) {
 	ws, root := newNamespaceTestWorkspace(t)
 	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("x"), 0o644); err != nil {
 		t.Fatalf("seed file: %v", err)
@@ -63,7 +63,7 @@ func TestADR_0314_EscapeWorkspace_ReadDir_InRootDelegates(t *testing.T) {
 	}
 }
 
-func TestADR_0314_EscapeWorkspace_ReadDir_RejectsOutOfRoot(t *testing.T) {
+func TestADR_0315_EscapeWorkspace_ReadDir_RejectsOutOfRoot(t *testing.T) {
 	ws, root := newNamespaceTestWorkspace(t)
 	outside := filepath.Join(filepath.Dir(root), "outside")
 	if err := os.MkdirAll(outside, 0o755); err != nil {
@@ -81,7 +81,7 @@ func TestADR_0314_EscapeWorkspace_ReadDir_RejectsOutOfRoot(t *testing.T) {
 	}
 }
 
-func TestADR_0314_EscapeWorkspace_ReadDir_RejectsPseudoFS(t *testing.T) {
+func TestADR_0315_EscapeWorkspace_ReadDir_RejectsPseudoFS(t *testing.T) {
 	ws, _ := newNamespaceTestWorkspace(t)
 	_, err := ws.ReadDir(context.Background(), "/proc")
 	if err == nil {
@@ -92,7 +92,7 @@ func TestADR_0314_EscapeWorkspace_ReadDir_RejectsPseudoFS(t *testing.T) {
 	}
 }
 
-func TestADR_0314_EscapeWorkspace_Remove_InRootDelegates(t *testing.T) {
+func TestADR_0315_EscapeWorkspace_Remove_InRootDelegates(t *testing.T) {
 	ws, root := newNamespaceTestWorkspace(t)
 	target := filepath.Join(root, "gone.txt")
 	if err := os.WriteFile(target, []byte("x"), 0o644); err != nil {
@@ -106,7 +106,7 @@ func TestADR_0314_EscapeWorkspace_Remove_InRootDelegates(t *testing.T) {
 	}
 }
 
-func TestADR_0314_EscapeWorkspace_Remove_RejectsOutOfRoot(t *testing.T) {
+func TestADR_0315_EscapeWorkspace_Remove_RejectsOutOfRoot(t *testing.T) {
 	ws, root := newNamespaceTestWorkspace(t)
 	outside := filepath.Join(filepath.Dir(root), "outside-remove.txt")
 	if err := os.WriteFile(outside, []byte("keep-me"), 0o644); err != nil {
@@ -124,7 +124,7 @@ func TestADR_0314_EscapeWorkspace_Remove_RejectsOutOfRoot(t *testing.T) {
 	}
 }
 
-func TestADR_0314_EscapeWorkspace_Remove_RejectsPseudoFS(t *testing.T) {
+func TestADR_0315_EscapeWorkspace_Remove_RejectsPseudoFS(t *testing.T) {
 	ws, _ := newNamespaceTestWorkspace(t)
 	err := ws.Remove(context.Background(), "/proc/version")
 	if err == nil {
@@ -135,7 +135,7 @@ func TestADR_0314_EscapeWorkspace_Remove_RejectsPseudoFS(t *testing.T) {
 	}
 }
 
-func TestADR_0314_EscapeWorkspace_Rename_InRootDelegates(t *testing.T) {
+func TestADR_0315_EscapeWorkspace_Rename_InRootDelegates(t *testing.T) {
 	ws, root := newNamespaceTestWorkspace(t)
 	if err := os.WriteFile(filepath.Join(root, "old.txt"), []byte("x"), 0o644); err != nil {
 		t.Fatalf("seed file: %v", err)
@@ -148,7 +148,7 @@ func TestADR_0314_EscapeWorkspace_Rename_InRootDelegates(t *testing.T) {
 	}
 }
 
-func TestADR_0314_EscapeWorkspace_Rename_RejectsOutOfRootOldPath(t *testing.T) {
+func TestADR_0315_EscapeWorkspace_Rename_RejectsOutOfRootOldPath(t *testing.T) {
 	ws, root := newNamespaceTestWorkspace(t)
 	outside := filepath.Join(filepath.Dir(root), "outside-old.txt")
 	if err := os.WriteFile(outside, []byte("keep-me"), 0o644); err != nil {
@@ -166,9 +166,9 @@ func TestADR_0314_EscapeWorkspace_Rename_RejectsOutOfRootOldPath(t *testing.T) {
 	}
 }
 
-// TestADR_0314_EscapeWorkspace_Rename_RejectsOutOfRootNewPath additionally pins
+// TestADR_0315_EscapeWorkspace_Rename_RejectsOutOfRootNewPath additionally pins
 // that the NEW-path operand is checked independently of the old path.
-func TestADR_0314_EscapeWorkspace_Rename_RejectsOutOfRootNewPath(t *testing.T) {
+func TestADR_0315_EscapeWorkspace_Rename_RejectsOutOfRootNewPath(t *testing.T) {
 	ws, root := newNamespaceTestWorkspace(t)
 	if err := os.WriteFile(filepath.Join(root, "old2.txt"), []byte("x"), 0o644); err != nil {
 		t.Fatalf("seed file: %v", err)
@@ -189,7 +189,7 @@ func TestADR_0314_EscapeWorkspace_Rename_RejectsOutOfRootNewPath(t *testing.T) {
 	}
 }
 
-func TestADR_0314_EscapeWorkspace_Rename_RejectsPseudoFS(t *testing.T) {
+func TestADR_0315_EscapeWorkspace_Rename_RejectsPseudoFS(t *testing.T) {
 	ws, root := newNamespaceTestWorkspace(t)
 	if err := os.WriteFile(filepath.Join(root, "src.txt"), []byte("x"), 0o644); err != nil {
 		t.Fatalf("seed file: %v", err)
@@ -202,7 +202,7 @@ func TestADR_0314_EscapeWorkspace_Rename_RejectsPseudoFS(t *testing.T) {
 	}
 }
 
-func TestADR_0314_EscapeWorkspace_CopyFile_InRootDelegates(t *testing.T) {
+func TestADR_0315_EscapeWorkspace_CopyFile_InRootDelegates(t *testing.T) {
 	ws, root := newNamespaceTestWorkspace(t)
 	if err := os.WriteFile(filepath.Join(root, "src.txt"), []byte("payload"), 0o644); err != nil {
 		t.Fatalf("seed file: %v", err)
@@ -216,11 +216,11 @@ func TestADR_0314_EscapeWorkspace_CopyFile_InRootDelegates(t *testing.T) {
 	}
 }
 
-// TestADR_0314_EscapeWorkspace_CopyFile_RejectsOutOfRootSource pins the
+// TestADR_0315_EscapeWorkspace_CopyFile_RejectsOutOfRootSource pins the
 // load-bearing case: CopyFile is implemented via ReadVersion+CreateFile, both
 // relaxed-serving, so ONLY the wrapper's confinement check stands between an
 // out-of-root source and exfiltration into the workspace.
-func TestADR_0314_EscapeWorkspace_CopyFile_RejectsOutOfRootSource(t *testing.T) {
+func TestADR_0315_EscapeWorkspace_CopyFile_RejectsOutOfRootSource(t *testing.T) {
 	ws, root := newNamespaceTestWorkspace(t)
 	outsideSrc := filepath.Join(filepath.Dir(root), "outside-src.txt")
 	if err := os.WriteFile(outsideSrc, []byte("secret"), 0o644); err != nil {
@@ -238,9 +238,9 @@ func TestADR_0314_EscapeWorkspace_CopyFile_RejectsOutOfRootSource(t *testing.T) 
 	}
 }
 
-// TestADR_0314_EscapeWorkspace_CopyFile_RejectsOutOfRootDestination is the
+// TestADR_0315_EscapeWorkspace_CopyFile_RejectsOutOfRootDestination is the
 // symmetric case: the destination write must be independently confined too.
-func TestADR_0314_EscapeWorkspace_CopyFile_RejectsOutOfRootDestination(t *testing.T) {
+func TestADR_0315_EscapeWorkspace_CopyFile_RejectsOutOfRootDestination(t *testing.T) {
 	ws, root := newNamespaceTestWorkspace(t)
 	if err := os.WriteFile(filepath.Join(root, "in.txt"), []byte("payload"), 0o644); err != nil {
 		t.Fatalf("seed file: %v", err)
@@ -258,7 +258,7 @@ func TestADR_0314_EscapeWorkspace_CopyFile_RejectsOutOfRootDestination(t *testin
 	}
 }
 
-func TestADR_0314_EscapeWorkspace_CopyFile_RejectsPseudoFS(t *testing.T) {
+func TestADR_0315_EscapeWorkspace_CopyFile_RejectsPseudoFS(t *testing.T) {
 	ws, root := newNamespaceTestWorkspace(t)
 	if err := os.WriteFile(filepath.Join(root, "src2.txt"), []byte("x"), 0o644); err != nil {
 		t.Fatalf("seed file: %v", err)

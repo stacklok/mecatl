@@ -2,8 +2,8 @@ package governance
 
 import "testing"
 
-// TestADR_0314_CopyMoveEvaluatesBothOperandsIndependently pins the conservative
-// multi-resource permission semantics for Copy/Move that ADR 0314 requires: a
+// TestADR_0315_CopyMoveEvaluatesBothOperandsIndependently pins the conservative
+// multi-resource permission semantics for Copy/Move that ADR 0315 requires: a
 // path-scoped rule matching only ONE of the two operands (source or
 // destination) must never be treated as authoritative for the whole call.
 // Source and destination are evaluated independently against the rule set and
@@ -16,7 +16,7 @@ import "testing"
 // resolvePatterns branch in resolve) and every sub-test below except
 // AllowOnBothOperandsApprovesWhole goes red, since the derived pattern falls
 // back to "" (tool-wide) and cannot distinguish source from destination.
-func TestADR_0314_CopyMoveEvaluatesBothOperandsIndependently(t *testing.T) {
+func TestADR_0315_CopyMoveEvaluatesBothOperandsIndependently(t *testing.T) {
 	for _, tool := range []string{"Copy", "Move"} {
 		t.Run(tool+"/DenyOnSourceDeniesWhole", func(t *testing.T) {
 			// A deny scoped to the SOURCE path must deny the call even though the

@@ -1,4 +1,4 @@
-# ADR 0314 — Add POSIX-like workspace namespace operations
+# ADR 0315 — Add POSIX-like workspace namespace operations
 
 - Status: Accepted
 - Date: 2026-09-03
