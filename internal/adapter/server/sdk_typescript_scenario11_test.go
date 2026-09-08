@@ -37,7 +37,7 @@ type sdkScenario11Job struct {
 	Env            map[string]string   `yaml:"env"`
 	Environment    string              `yaml:"environment"`
 	If             string              `yaml:"if"`
-	Needs          string              `yaml:"needs"`
+	Needs          any                 `yaml:"needs"`
 	Outputs        map[string]string   `yaml:"outputs"`
 	Permissions    map[string]string   `yaml:"permissions"`
 	RunsOn         string              `yaml:"runs-on"`

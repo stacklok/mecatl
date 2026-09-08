@@ -1,10 +1,10 @@
-# ADR 0313 — Process-bound remote MCP broker attachments
+# ADR 0316 — Process-bound remote MCP broker attachments
 
 - Status: Proposed
 - Date: 2026-09-06
 - Scope: initial remote MCP broker transport, attachment handles, and failure semantics
 - Supersedes: None
-- Superseded by: ADR 0315
+- Superseded by: ADR 0318
 
 ## Context
 

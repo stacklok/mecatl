@@ -5880,8 +5880,8 @@ main and per-session engine factories both add the unknown-outcome recovery inst
 the model's stable system prompt, while broker-disabled engines do not. A new client may
 start one fresh pre-prompt enrollment after restart, while a stale protected-call
 continuation fails closed. The process resource ledger and non-distributed boundary are
-[ADR 0313](../adr/0313-process-bound-remote-mcp-broker.md); the bounded receipt and
-classification contract is [ADR 0315](../adr/0315-bounded-singleton-mcp-broker-correctness.md).
+[ADR 0316](../adr/0316-process-bound-remote-mcp-broker.md); the bounded receipt and
+classification contract is [ADR 0318](../adr/0318-bounded-singleton-mcp-broker-correctness.md).
 
 `cmd/mecabroker` is the sole remote ToolHive composition root. Its dedicated chart is
 one-replica `Recreate` with no PDB, autoscaler, or outer-broker Redis. The public TLS
@@ -5896,7 +5896,7 @@ traffic signals only. Drain closes admission first, waits endpoint propagation, 
 work, cancels the remainder, and only then lets command composition stop listeners and close
 ToolHive resources. Restart interrupts attachments and outer OAuth correlation; none of these
 controls provides ownership transfer, callback failover, or HA. The complete topology and
-resource ledger are [ADR 0314](../adr/0314-single-replica-mcp-broker-topology.md).
+resource ledger are [ADR 0317](../adr/0317-single-replica-mcp-broker-topology.md).
 
 **Server-global MCP on every session (bug #3 fix, `sessionEngineFactory`):** the
 per-session catalog mounts the SERVER-GLOBAL MCP tools (`cfg.MCPServers` + ToolHive — the

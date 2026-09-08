@@ -1,20 +1,20 @@
-# ADR 0315 — Bounded singleton MCP broker correctness
+# ADR 0318 — Bounded singleton MCP broker correctness
 
 - Status: Accepted
 - Date: 2026-09-07
 - Scope: completion of the single-replica broker's transport, admission, readiness, and deployment contracts
-- Supersedes: ADR 0313
+- Supersedes: ADR 0316
 - Superseded by: None
 
 ## Context
 
-ADR 0313 selected process-bound remote attachments and prohibited application retries after
+ADR 0316 selected process-bound remote attachments and prohibited application retries after
 an uncertain Execute. Implementation review found that this was not sufficient to make the
 single-replica service honest under lost responses: lifecycle outcomes were not retained for
 the whole lease, Execute requests had no bounded receipt keyed by their call identity, and
 some error identities depended on gRPC status text. The same review found unbounded logical
 session admission, no production JWKS readiness probe, incomplete HTTP limits, and deployment
-values that did not represent the client and network boundaries described by ADR 0314.
+values that did not represent the client and network boundaries described by ADR 0317.
 
 The broker remains deliberately non-HA. These corrections must not introduce a durable outer
 broker, replica interchangeability, or an exactly-once claim for upstream side effects.
@@ -75,7 +75,7 @@ complete:
 | Replacement remote clients (`cmd/mecak8s.mcpBrokerFactory`) | one composition-owned client per broker generation | confirmed pre-prompt state loss closes the old gRPC connection before publishing a replacement; `Built.Close`/command shutdown closes the current connection | **recreate only before a prompt**; parked protected calls never rebind |
 | ToolHive process and confidential broker-client material | one broker process | closed after admission and public listeners; secret remains only in process memory | **reset by design**; restart interrupts outer callback correlation |
 
-ADR 0314 remains the topology decision; this amendment completes its resource inventory and the
+ADR 0317 remains the topology decision; this amendment completes its resource inventory and the
 ADR 0027 lifecycle accounting without rewriting that frozen historical ADR.
 
 ## Consequences
@@ -93,7 +93,7 @@ None of these changes make replicas interchangeable or make upstream mutations e
 
 ## See also
 
-- [ADR 0313 — Process-bound remote MCP broker attachments](./0313-process-bound-remote-mcp-broker.md)
-- [ADR 0314 — Single-replica production topology](./0314-single-replica-mcp-broker-topology.md)
+- [ADR 0316 — Process-bound remote MCP broker attachments](./0316-process-bound-remote-mcp-broker.md)
+- [ADR 0317 — Single-replica production topology](./0317-single-replica-mcp-broker-topology.md)
 - [Initial production MCP broker acceptance record](../acceptance/initial-production-mcp-broker.md)
 - [Implementation notes](../design/IMPLEMENTATION-NOTES.md)
