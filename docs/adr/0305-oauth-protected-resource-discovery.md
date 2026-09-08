@@ -4,7 +4,7 @@
 - Date: 2026-09-02
 - Scope: RFC 9728 metadata served by mecated/mecak8s and remote mecatui enrollment
 - Supersedes: The explicit-configuration portion of ADR 0277 only
-- Superseded by: None
+- Superseded by: ADR 0315 (scope-selection clauses only)
 
 ## Context
 
