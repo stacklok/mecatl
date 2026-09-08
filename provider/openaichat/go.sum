@@ -2,8 +2,8 @@ github.com/bmatcuk/doublestar/v4 v4.10.0 h1:zU9WiOla1YA122oLM6i4EXvGW62DvKZVxIe6
 github.com/bmatcuk/doublestar/v4 v4.10.0/go.mod h1:xBQ8jztBU6kakFMg+8WGxn0c6z1fTSPVIjEY1Wr7jzc=
 github.com/openai/openai-go/v3 v3.56.0 h1:Xb+gsS7Gsb5dx+Uat9BHTWhifAOvQjU+pQNWT/HXeWQ=
 github.com/openai/openai-go/v3 v3.56.0/go.mod h1:ufI1+K+t0ijRB3gk8eztiw1crcDpsBuxRQL4sbLIrts=
-github.com/stacklok/mecatl/engine v0.13.0 h1:jyqqRxzgbbyBu8UikPYhe3GbM9tI1VeHk/I2DNDW0XY=
-github.com/stacklok/mecatl/engine v0.13.0/go.mod h1:eEW9h6sXmyArEz1mO29NUFpKOqB51BJwfcsc77F8Guc=
+github.com/stacklok/mecatl/engine v0.14.0 h1:cGUygB7auxWNmvQ2gRKgY/IBRHMNe+kB1KO7YDYxoYM=
+github.com/stacklok/mecatl/engine v0.14.0/go.mod h1:eEW9h6sXmyArEz1mO29NUFpKOqB51BJwfcsc77F8Guc=
 github.com/stacklok/mecatl/provider/ssefilter v0.1.0 h1:At26rvktMkZNGL2kyZYJkBh/n6PAXAg7DwlneCt8r94=
 github.com/stacklok/mecatl/provider/ssefilter v0.1.0/go.mod h1:sWfLZ3cpUKkeNHTh2cv18y+w8aCVa4qdwhrvrr2oeaI=
 github.com/stretchr/testify v1.12.1 h1:EuwCh5fleGS7H32xRwO3wRGT7DxrDhLAT6FF8MpWDWE=
