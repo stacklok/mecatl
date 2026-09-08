@@ -602,7 +602,7 @@ func TestResolveTransportUsesPersistedServerCAWithExplicitOverride(t *testing.T)
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			target, dial, cleanup, err := resolveTransport(t.Context(), config{
-				transportMode: modeConnect, connectAddress: id.Target, useTLS: true, tlsCA: tc.ca,
+				transportMode: modeConnect, connectAddress: id.Target, tlsCA: tc.ca,
 				authToken: tc.authToken, anonymous: tc.anonymous,
 			})
 			defer cleanup()
