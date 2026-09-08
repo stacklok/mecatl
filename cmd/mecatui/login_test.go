@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/adrg/xdg"
 
@@ -18,14 +19,18 @@ import (
 	"github.com/stacklok/mecatl/mcp/oauthlogin"
 )
 
-func TestRemoteLoginStoresAbsoluteIssuerCAReferenceAcrossCWDChanges(t *testing.T) {
+func TestRemoteLoginStoresAbsoluteCAReferencesAcrossCWDChanges(t *testing.T) {
 	oldConfigHome := xdg.ConfigHome
 	xdg.ConfigHome = t.TempDir()
 	t.Cleanup(func() { xdg.ConfigHome = oldConfigHome })
 	first := t.TempDir()
 	second := t.TempDir()
 	ca := filepath.Join(first, "issuer-ca.pem")
+	serverCA := filepath.Join(first, "server-ca.pem")
 	if err := os.WriteFile(ca, []byte("fixture"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(serverCA, []byte("fixture"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	oldWD, err := os.Getwd()
@@ -47,7 +52,7 @@ func TestRemoteLoginStoresAbsoluteIssuerCAReferenceAcrossCWDChanges(t *testing.T
 		return upsertErr
 	}
 	if err := runRemoteLogin("remote.example:443", []string{
-		"--issuer", "https://issuer.example", "--client-id", "client", "--audience", "audience", "--tls-ca", "issuer-ca.pem",
+		"--issuer", "https://issuer.example", "--client-id", "client", "--audience", "audience", "--tls-ca", "issuer-ca.pem", "--server-tls-ca", "server-ca.pem",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -62,8 +67,12 @@ func TestRemoteLoginStoresAbsoluteIssuerCAReferenceAcrossCWDChanges(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if conn.IssuerCAFile != physicalCA || !filepath.IsAbs(conn.IssuerCAFile) {
-		t.Fatalf("saved issuer CA = %q, want %q", conn.IssuerCAFile, physicalCA)
+	physicalServerCA, err := filepath.EvalSymlinks(serverCA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if conn.IssuerCAFile != physicalCA || conn.ServerCAFile != physicalServerCA || !filepath.IsAbs(conn.IssuerCAFile) || !filepath.IsAbs(conn.ServerCAFile) {
+		t.Fatalf("saved issuer CA = %q, server CA = %q; want %q, %q", conn.IssuerCAFile, conn.ServerCAFile, physicalCA, physicalServerCA)
 	}
 }
 
@@ -294,6 +303,43 @@ func TestRemoteLoginIssuerPolicyFlags(t *testing.T) {
 	}
 	if err := runRemoteLogin("remote.example:443", append(args, "--private-issuer")); err == nil || !strings.Contains(err.Error(), "requires --tls-ca") {
 		t.Fatalf("private issuer without CA error = %v", err)
+	}
+}
+
+func TestDiscoveredLoginPropagatesServerCA(t *testing.T) {
+	originalDiscover := discoverRemoteResource
+	originalConfirm := confirmDiscoveredEnrollment
+	originalExecute := executeRemoteLogin
+	t.Cleanup(func() {
+		discoverRemoteResource = originalDiscover
+		confirmDiscoveredEnrollment = originalConfirm
+		executeRemoteLogin = originalExecute
+	})
+
+	discoverRemoteResource = func(context.Context, protectedResource) (discoveredResource, error) {
+		return discoveredResource{
+			protectedResource: protectedResource{
+				Resource: "https://resource.example", MetadataURL: "https://resource.example/.well-known/oauth-protected-resource",
+				GRPCTarget: "grpc.example:443",
+			},
+			Issuer: "https://issuer.example", ClientID: "client", Audience: "audience", Scopes: []string{"openid"},
+		}, nil
+	}
+	confirmDiscoveredEnrollment = func(_ io.Reader, _ io.Writer, enrollment discoveredEnrollment) (bool, error) {
+		if enrollment.Connection.ServerCAFile != "/server-ca.pem" {
+			t.Fatalf("confirmation server CA = %q, want propagated CA", enrollment.Connection.ServerCAFile)
+		}
+		return true, nil
+	}
+	executeRemoteLogin = func(_ context.Context, conn clientauth.Connection, _ bool) error {
+		if conn.ServerCAFile != "/server-ca.pem" {
+			t.Fatalf("saved server CA = %q, want propagated CA", conn.ServerCAFile)
+		}
+		return nil
+	}
+
+	if err := runDiscoveredRemoteLogin("resource.example", "", "/server-ca.pem", false, true, time.Second); err != nil {
+		t.Fatal(err)
 	}
 }
 

@@ -178,6 +178,7 @@ func runDiscoveredRemoteLogin(address, grpcTarget string, scopesExplicit, noBrow
 	if err != nil {
 		return errors.New("login: protected-resource discovery returned an invalid enrollment profile")
 	}
+	enrollment.Connection.ServerCAFile = serverCAFile
 	if !savedDiscoveredEnrollmentMatches(enrollment) {
 		confirmed, err := confirmDiscoveredEnrollment(os.Stdin, os.Stderr, enrollment)
 		if err != nil {

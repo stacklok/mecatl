@@ -2,8 +2,16 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"encoding/base64"
+	"encoding/json"
+	"encoding/pem"
 	"errors"
+	"math/big"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -15,6 +23,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/adrg/xdg"
+	"github.com/zalando/go-keyring"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -490,6 +499,98 @@ func TestSavedLocalEnrollmentIsNotIgnored(t *testing.T) {
 	reason, ok := client.AuthFailure(resolveErr, false)
 	if dial.Server != "" || !ok || reason != client.AuthStorageUnavailable {
 		t.Fatalf("dial=%#v err=%v reason=%q ok=%v, want saved-enrollment credential path", dial, resolveErr, reason, ok)
+	}
+}
+
+func TestResolveTransportUsesPersistedServerCAWithExplicitOverride(t *testing.T) {
+	keyring.MockInit()
+	oldConfigHome := xdg.ConfigHome
+	xdg.ConfigHome = t.TempDir()
+	t.Cleanup(func() { xdg.ConfigHome = oldConfigHome })
+
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var issuer *httptest.Server
+	issuer = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/.well-known/openid-configuration":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"issuer": issuer.URL, "authorization_endpoint": issuer.URL + "/authorize",
+				"token_endpoint": issuer.URL + "/token", "jwks_uri": issuer.URL + "/keys",
+				"code_challenge_methods_supported": []string{"S256"},
+			})
+		case "/keys":
+			_ = json.NewEncoder(w).Encode(map[string]any{"keys": []map[string]string{{
+				"kty": "RSA", "use": "sig", "alg": "RS256", "kid": "transport-test",
+				"n": base64.RawURLEncoding.EncodeToString(key.N.Bytes()),
+				"e": base64.RawURLEncoding.EncodeToString(big.NewInt(int64(key.E)).Bytes()),
+			}}})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(issuer.Close)
+
+	root := filepath.Join(xdg.ConfigHome, "mecatl")
+	issuerCA := filepath.Join(root, "issuer-ca.pem")
+	serverCA := filepath.Join(root, "server-ca.pem")
+	explicitCA := filepath.Join(root, "explicit-ca.pem")
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	issuerPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: issuer.Certificate().Raw})
+	if err := os.WriteFile(issuerCA, issuerPEM, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	id := clientauth.Identity{
+		Target: "saved.example:443", Issuer: issuer.URL, ClientID: "client", Audience: "audience",
+		RedirectURI: "http://127.0.0.1:18473/oauth/callback", Scopes: []string{"openid"},
+	}
+	registry, err := clientauth.OpenRegistry(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := registry.Upsert(clientauth.Connection{Identity: id, IssuerCAFile: issuerCA, ServerCAFile: serverCA, IssuerAddressPolicy: clientauth.IssuerAddressPolicyPrivate}); err != nil {
+		t.Fatal(err)
+	}
+	keys, err := clientauth.NewKeyringProvider(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := clientauth.OpenStore(t.Context(), root, keys)
+	if err != nil {
+		t.Fatal(err)
+	}
+	creds, err := clientauth.NewCredentials(store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := creds.Save(t.Context(), id, clientauth.Token{AccessToken: "saved-token", TokenType: "Bearer", Expiry: time.Now().Add(time.Hour).Format(time.RFC3339)}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tc := range []struct {
+		name string
+		ca   string
+		want string
+	}{
+		{name: "saved CA is the default", want: serverCA},
+		{name: "explicit connect CA overrides saved CA", ca: explicitCA, want: explicitCA},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			target, dial, cleanup, err := resolveTransport(t.Context(), config{
+				transportMode: modeConnect, connectAddress: id.Target, useTLS: true, tlsCA: tc.ca,
+			})
+			defer cleanup()
+			if err != nil || target != id.Target || dial.Server != id.Target || !dial.UseTLS || dial.Insecure || dial.TLSCAFile != tc.want || dial.TokenSource == nil {
+				t.Fatalf("target=%q dial=%#v err=%v, want saved verified transport with CA %q", target, dial, err, tc.want)
+			}
+		})
 	}
 }
 
