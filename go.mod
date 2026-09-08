@@ -10,7 +10,7 @@ require (
 	charm.land/lipgloss/v2 v2.0.5
 	github.com/adrg/xdg v0.5.3
 	github.com/alicebob/miniredis/v2 v2.39.0
-	github.com/anthropics/anthropic-sdk-go v1.70.1
+	github.com/anthropics/anthropic-sdk-go v1.71.0
 	github.com/bmatcuk/doublestar/v4 v4.10.0
 	github.com/cedar-policy/cedar-go v1.8.0
 	github.com/charmbracelet/colorprofile v0.4.3
@@ -55,7 +55,7 @@ require (
 	go.uber.org/goleak v1.3.0
 	golang.org/x/net v0.58.0
 	golang.org/x/oauth2 v0.36.0
-	golang.org/x/sync v0.22.0
+	golang.org/x/sync v0.23.0
 	golang.org/x/term v0.45.0
 	golang.org/x/time v0.15.0
 	golang.org/x/tools v0.49.0
