@@ -70,13 +70,14 @@ export function registerAgentSessions(app: App, bridge: MecatlBridge, config: Bo
 
   app.event("app_mention", async ({ event, say }) => {
     if (event.bot_id !== undefined) return;
-    if (!isAllowed(config, event.user)) return void say(NOT_AUTHORIZED_MESSAGE);
-    if (!rateLimiter.allow(event.user ?? event.channel)) return void say(RATE_LIMITED_MESSAGE);
     const threadTs = event.thread_ts ?? event.ts;
+    const notify = privateNotifier(app, say, event.channel, event.user, threadTs);
+    if (!isAllowed(config, event.user)) return void notify(NOT_AUTHORIZED_MESSAGE);
+    if (!rateLimiter.allow(event.user ?? event.channel)) return void notify(RATE_LIMITED_MESSAGE);
     const threadKey = `${event.channel}:${threadTs}`;
     activeChannelThreads.add(threadKey);
     const text = event.text.replace(MENTION_PREFIX, "");
-    await runPrompt(app, bridge, event.channel, threadTs, threadTs, threadKey, text, say);
+    await runPrompt(app, bridge, event.channel, threadTs, threadTs, threadKey, text, say, notify);
   });
 
   app.message(async ({ message, context, say }) => {
@@ -89,11 +90,14 @@ export function registerAgentSessions(app: App, bridge: MecatlBridge, config: Bo
     const threadTs = message.thread_ts;
 
     if (message.channel_type === "im") {
-      if (!isAllowed(config, userId)) return void say(NOT_AUTHORIZED_MESSAGE);
-      if (!rateLimiter.allow(userId ?? channelId)) return void say(RATE_LIMITED_MESSAGE);
+      // A DM channel is already just the bot and this one person, so plain `say` has no
+      // visibility problem here — unlike the channel/group branch below.
+      const notify = sayNotifier(say, undefined);
+      if (!isAllowed(config, userId)) return void notify(NOT_AUTHORIZED_MESSAGE);
+      if (!rateLimiter.allow(userId ?? channelId)) return void notify(RATE_LIMITED_MESSAGE);
       const anchor = dmStatusAnchor.get(channelId) ?? message.ts;
       if (!dmStatusAnchor.has(channelId)) dmStatusAnchor.set(channelId, anchor);
-      await runPrompt(app, bridge, channelId, anchor, undefined, channelId, text, say);
+      await runPrompt(app, bridge, channelId, anchor, undefined, channelId, text, say, notify);
       return;
     }
 
@@ -102,15 +106,48 @@ export function registerAgentSessions(app: App, bridge: MecatlBridge, config: Bo
     const threadKey = `${channelId}:${threadTs}`;
     if (!activeChannelThreads.has(threadKey)) return;
     if (context.botUserId !== undefined && text.includes(`<@${context.botUserId}>`)) return;
-    if (!isAllowed(config, userId)) return void say(NOT_AUTHORIZED_MESSAGE);
-    if (!rateLimiter.allow(userId ?? channelId)) return void say(RATE_LIMITED_MESSAGE);
-    await runPrompt(app, bridge, channelId, threadTs, threadTs, threadKey, text, say);
+    const notify = privateNotifier(app, say, channelId, userId, threadTs);
+    if (!isAllowed(config, userId)) return void notify(NOT_AUTHORIZED_MESSAGE);
+    if (!rateLimiter.allow(userId ?? channelId)) return void notify(RATE_LIMITED_MESSAGE);
+    await runPrompt(app, bridge, channelId, threadTs, threadTs, threadKey, text, say, notify);
   });
 }
 
 function isAllowed(config: BotConfig, userId: string | undefined): boolean {
   if (config.allowedUserIds === undefined) return true;
   return userId !== undefined && config.allowedUserIds.has(userId);
+}
+
+/** A reply channel scoped to the requesting user only — never visible to the rest of a thread. */
+type Notifier = (text: string) => Promise<unknown>;
+
+function sayNotifier(say: SayFn, threadTs: string | undefined): Notifier {
+  return (text) => say(threadTs === undefined ? text : { text, thread_ts: threadTs });
+}
+
+/**
+ * Auth-rejection, rate-limit, and operational-failure replies must stay scoped to the person
+ * who triggered them — broadcasting e.g. "you're not authorized" to the whole channel outs
+ * that person to everyone else in it (#1242). `chat.postEphemeral` is Slack's mechanism for
+ * that: visible only to `user`, never persisted as a regular thread message. Falls back to a
+ * plain (still-visible) `say` if the triggering user id is unknown — better than losing the
+ * reply outright, and Slack always supplies a user id on a real mention/message in practice.
+ */
+function privateNotifier(
+  app: App,
+  say: SayFn,
+  channel: string,
+  user: string | undefined,
+  threadTs: string | undefined,
+): Notifier {
+  if (user === undefined) return sayNotifier(say, threadTs);
+  return (text) =>
+    app.client.chat.postEphemeral({
+      channel,
+      text,
+      user,
+      ...(threadTs === undefined ? {} : { thread_ts: threadTs }),
+    });
 }
 
 async function runPrompt(
@@ -122,6 +159,7 @@ async function runPrompt(
   threadKey: string,
   text: string,
   say: SayFn,
+  notifyError: Notifier,
 ): Promise<void> {
   await setSessionStatus(app, channelId, statusThreadTs, "processing");
   try {
@@ -130,11 +168,7 @@ async function runPrompt(
     await say(replyThreadTs === undefined ? reply : { text: reply, thread_ts: replyThreadTs });
   } catch (error) {
     app.logger.error("mecatl prompt failed", error);
-    await say(
-      replyThreadTs === undefined
-        ? FAILURE_MESSAGE
-        : { text: FAILURE_MESSAGE, thread_ts: replyThreadTs },
-    );
+    await notifyError(FAILURE_MESSAGE);
   } finally {
     await setSessionStatus(app, channelId, statusThreadTs, "active");
   }
