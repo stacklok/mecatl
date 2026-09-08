@@ -53,8 +53,12 @@ func TestReadOnlyFlags(t *testing.T) {
 	// always-available tools. Bash's ReadOnly is asserted separately.
 	want := map[string]bool{
 		"Read":             true,
+		"ListDir":          true,
 		"Edit":             false,
 		"Write":            false,
+		"Copy":             false,
+		"Move":             false,
+		"Remove":           false,
 		"Grep":             true,
 		"Glob":             true,
 		"WebFetch":         true,
@@ -108,7 +112,7 @@ func TestNoFSExcludesFileTools(t *testing.T) {
 			t.Errorf("NoFS() missing %q", want)
 		}
 	}
-	banned := map[string]bool{"Read": true, "Edit": true, "Write": true, "Grep": true, "Glob": true, BashToolName: true}
+	banned := map[string]bool{"Read": true, "ListDir": true, "Edit": true, "Write": true, "Copy": true, "Move": true, "Remove": true, "Grep": true, "Glob": true, BashToolName: true}
 	for _, tl := range got {
 		if banned[tl.Spec().Name] {
 			t.Errorf("NoFS() includes file/shell tool %q — the no-FS profile must never carry it", tl.Spec().Name)
@@ -117,14 +121,14 @@ func TestNoFSExcludesFileTools(t *testing.T) {
 }
 
 func TestAllAndRegister(t *testing.T) {
-	if len(All()) != 7 {
-		t.Fatalf("All() = %d tools, want 7", len(All()))
+	if len(All()) != 11 {
+		t.Fatalf("All() = %d tools, want 11", len(All()))
 	}
 	cat := tool.NewCatalog()
 	if err := Register(cat); err != nil {
 		t.Fatalf("Register: %v", err)
 	}
-	for _, name := range []string{"Read", "Edit", "Write", "Grep", "Glob", "WebFetch", "FetchMcpResource"} {
+	for _, name := range []string{"Read", "ListDir", "Edit", "Write", "Copy", "Move", "Remove", "Grep", "Glob", "WebFetch", "FetchMcpResource"} {
 		if _, ok := cat.Lookup(name); !ok {
 			t.Errorf("catalog missing %q after Register", name)
 		}

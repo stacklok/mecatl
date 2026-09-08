@@ -47,6 +47,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 	"unicode/utf8"
 
@@ -739,6 +740,7 @@ func NewWorkspace(root string, opts ...Option) (*Workspace, error) {
 
 // Compile-time assertions that Workspace satisfies the filesystem and authority seams.
 var _ tool.Workspace = (*Workspace)(nil)
+var _ tool.WorkspaceNamespace = (*Workspace)(nil)
 var _ tool.AuthorityResourceResolver = (*Workspace)(nil)
 
 // Root returns the absolute session root all paths are scoped to.
@@ -782,6 +784,138 @@ func (w *Workspace) authorityResourcePath(path string) (target, workspace string
 // Read returns the contents of the file at the session-relative path.
 func (w *Workspace) Read(ctx context.Context, path string) ([]byte, error) {
 	return w.fs.Read(ctx, path)
+}
+
+// ReadDir returns the immediate children of a confined physical directory.
+func (w *Workspace) ReadDir(ctx context.Context, path string) ([]tool.FileInfo, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	rel, err := w.fs.resolvePath(path)
+	if err != nil {
+		return nil, err
+	}
+	entries, err := fs.ReadDir(w.fs.r.FS(), filepath.ToSlash(rel))
+	if err != nil {
+		return nil, mapEscape(path, err)
+	}
+	out := make([]tool.FileInfo, 0, len(entries))
+	for _, entry := range entries {
+		info, err := entry.Info()
+		if err != nil {
+			return nil, mapEscape(path, err)
+		}
+		out = append(out, toFileInfo(info))
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out, nil
+}
+
+// Remove deletes one file or empty directory. It never recursively removes a
+// directory and does not participate in the read ledger.
+func (w *Workspace) Remove(ctx context.Context, path string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	rel, err := w.fs.resolvePath(path)
+	if err != nil {
+		return err
+	}
+	canon, err := canonicalMutationPath(w.fs.root, path)
+	if err != nil {
+		return err
+	}
+	if !pathAtOrBelow(w.fs.root, canon) {
+		return fmt.Errorf("%w: %q", ErrPathEscape, path)
+	}
+	mu := pathLock(canon)
+	mu.Lock()
+	defer mu.Unlock()
+	if err := w.fs.r.Remove(rel); err != nil {
+		if errors.Is(err, syscall.ENOTEMPTY) || errors.Is(err, syscall.EEXIST) {
+			return &fs.PathError{Op: "remove", Path: path, Err: tool.ErrDirectoryNotEmpty}
+		}
+		return mapEscape(path, err)
+	}
+	return nil
+}
+
+// Rename moves a confined file or directory without intentionally replacing an
+// existing destination. Cooperating workspace mutations are serialized; as with
+// the existing local CAS contract, arbitrary external POSIX writers do not
+// participate in these process-local locks.
+func (w *Workspace) Rename(ctx context.Context, oldPath, newPath string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	oldRel, err := w.fs.resolvePath(oldPath)
+	if err != nil {
+		return err
+	}
+	newRel, err := w.fs.resolvePath(newPath)
+	if err != nil {
+		return err
+	}
+	oldCanon, err := canonicalMutationPath(w.fs.root, oldPath)
+	if err != nil {
+		return err
+	}
+	newCanon, err := canonicalMutationPath(w.fs.root, newPath)
+	if err != nil {
+		return err
+	}
+	release := lockMutationPair(oldCanon, newCanon)
+	defer release()
+	if _, err := w.fs.r.Lstat(newRel); err == nil {
+		return &fs.PathError{Op: "rename", Path: newPath, Err: fs.ErrExist}
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return mapEscape(newPath, err)
+	}
+	if dir := filepath.Dir(newRel); dir != "." {
+		if err := w.fs.r.MkdirAll(dir, 0o755); err != nil && !errors.Is(err, fs.ErrExist) {
+			return mapEscape(newPath, err)
+		}
+	}
+	return mapEscape(oldPath, w.fs.r.Rename(oldRel, newRel))
+}
+
+// CopyFile copies one regular file to a new destination. The destination create
+// is exclusive and the operation is independent of the read ledger.
+func (w *Workspace) CopyFile(ctx context.Context, source, destination string) (tool.FileVersion, error) {
+	if err := ctx.Err(); err != nil {
+		return tool.FileVersion{}, err
+	}
+	data, _, err := w.ReadVersion(ctx, source)
+	if err != nil {
+		return tool.FileVersion{}, err
+	}
+	stat, err := w.Stat(ctx, source)
+	if err != nil {
+		return tool.FileVersion{}, err
+	}
+	if !stat.Mode.IsRegular() {
+		return tool.FileVersion{}, &fs.PathError{Op: "copy", Path: source, Err: fs.ErrInvalid}
+	}
+	return w.CreateFile(ctx, destination, data)
+}
+
+func lockMutationPair(first, second string) func() {
+	firstLock, secondLock := pathLock(first), pathLock(second)
+	if firstLock == secondLock {
+		firstLock.Lock()
+		return firstLock.Unlock
+	}
+	// Canonical lexical order gives every caller the same lock order and avoids
+	// deadlocks when two concurrent renames swap operands.
+	if first > second {
+		firstLock, secondLock = secondLock, firstLock
+	}
+	firstLock.Lock()
+	secondLock.Lock()
+	return func() {
+		secondLock.Unlock()
+		firstLock.Unlock()
+	}
 }
 
 // Write replaces the contents of the file at the session-relative path, creating

@@ -42,6 +42,10 @@
     ifacemethod func (Workspace).Grep(ctx context.Context, pattern string, pathGlob string) ([]GrepMatch, error)
     ifacemethod func (Workspace).ReadVersion(ctx context.Context, path string) ([]byte, FileVersion, error)
     ifacemethod func (Workspace).ReplaceFile(ctx context.Context, path string, old FileVersion, data []byte) (FileVersion, error)
+    ifacemethod func (WorkspaceNamespace).CopyFile(ctx context.Context, source string, destination string) (FileVersion, error)
+    ifacemethod func (WorkspaceNamespace).ReadDir(ctx context.Context, path string) ([]FileInfo, error)
+    ifacemethod func (WorkspaceNamespace).Remove(ctx context.Context, path string) error
+    ifacemethod func (WorkspaceNamespace).Rename(ctx context.Context, oldPath string, newPath string) error
     ifacemethod func (WorkspaceReader).Read(ctx context.Context, path string) ([]byte, error)
     ifacemethod func (WorkspaceReader).Root() string
     ifacemethod func (WorkspaceReader).Stat(ctx context.Context, path string) (FileInfo, error)
@@ -162,10 +166,13 @@ type Tool interface{Execute(ctx context.Context, in session.ToolCall, env Enviro
 type ToolSpec struct{Name string; Description string; Schema json.RawMessage}
 type VersionMismatchError struct{Path string}
 type Workspace interface{CreateFile(ctx context.Context, path string, data []byte) (FileVersion, error); Glob(ctx context.Context, pattern string) ([]string, error); Grep(ctx context.Context, pattern string, pathGlob string) ([]GrepMatch, error); ReadVersion(ctx context.Context, path string) ([]byte, FileVersion, error); ReplaceFile(ctx context.Context, path string, old FileVersion, data []byte) (FileVersion, error); WorkspaceReader}
+type WorkspaceNamespace interface{CopyFile(ctx context.Context, source string, destination string) (FileVersion, error); ReadDir(ctx context.Context, path string) ([]FileInfo, error); Remove(ctx context.Context, path string) error; Rename(ctx context.Context, oldPath string, newPath string) error}
 type WorkspaceReader interface{Read(ctx context.Context, path string) ([]byte, error); Root() string; Stat(ctx context.Context, path string) (FileInfo, error)}
+var ErrDirectoryNotEmpty error
 var ErrDuplicateTool error
 var ErrEnvironmentNoReadLedger error
 var ErrEnvironmentNoWorkspace error
+var ErrFileOperationUnsupported error
 var ErrInstructionMemory error
 var ErrInvalidFileVersion error
 var ErrInvalidMemoryKey error

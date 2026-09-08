@@ -40,8 +40,8 @@ import (
 
 // All returns the always-available core tools as a fresh slice, ready for
 // registration in the composition root. The order is the canonical catalog
-// order: the filesystem tools from engine/adapter/fstools (Read, Edit, Write,
-// Grep, Glob) followed by the host-repo web/MCP reads. Bash is NOT included: it
+// order: the filesystem tools from engine/adapter/fstools (Read, ListDir, Edit,
+// Write, Copy, Move, Remove, Grep, Glob) followed by the host-repo web/MCP reads. Bash is NOT included: it
 // requires a tool.CommandRunner and is optional — add it separately via
 // NewBashTool when a runner is configured.
 //
@@ -56,7 +56,8 @@ func All() []tool.Tool {
 
 // NoFS returns the core tools available in a NO-filesystem session (the "no-fs"
 // session profile): WebFetch + FetchMcpResource. Every file-touching core tool
-// — Read, Edit, Write, Grep, Glob (and the separately-constructed Bash) — is
+// — Read, ListDir, Edit, Write, Copy, Move, Remove, Grep, Glob (and the
+// separately-constructed Bash) — is
 // deliberately absent: a no-FS session has no workspace, so offering them
 // would only generate honest-but-useless not-exist errors and burn turns. The
 // composition root (internal/app registerCoreTools) selects NoFS() vs All() per

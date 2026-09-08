@@ -19,6 +19,8 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   retrieval (`store`) from decode/validation (`snapshot`) failures through
   `errors.Is`/`errors.As` without exposing backend error text. Added (minor).
 
+- **`tool.WorkspaceNamespace`** — an additive POSIX-like namespace-operation extension (`ReadDir`/`Remove`/`Rename`/`CopyFile`) implemented by workspaces that support listing and mutating path names beyond content replacement (memfs, osfs, redisstore, remoteenv; ACP implements it with `Remove`/`Rename` returning `tool.ErrFileOperationUnsupported`). Adds `tool.ErrDirectoryNotEmpty` and `tool.ErrFileOperationUnsupported` sentinels. `Workspace` itself is unchanged; a consumer type-asserts for the new capability. Added (minor).
+
 - **`port.AppendHTTPErrorDisplay`** ([ADR 0309](../docs/adr/0299-safe-http-rejection-display-evidence.md)) — a stdlib-only helper for independently versioned provider modules to append only a validated HTTP(S) request target and bounded opaque correlation ID to a structured HTTP rejection. Added (minor).
 - **Versioned bounded reflection evidence materialization (ADR 0300)** — adds the storage-neutral `learning.MaterializeEvidence` protocol, immutable aggregate manifests, distinct selected-local and durable source coordinates, and closed no-work outcomes. Added (minor).
 

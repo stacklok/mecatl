@@ -81,6 +81,7 @@ type fsWorkspace struct {
 
 // Compile-time assertion that fsWorkspace satisfies the tool.Workspace port.
 var _ tool.Workspace = (*fsWorkspace)(nil)
+var _ tool.WorkspaceNamespace = (*fsWorkspace)(nil)
 
 // newFSWorkspace builds an fsWorkspace over conn for sessionID, composing an
 // osfs.Workspace rooted at root for the local (Stat/Glob/Grep) view. It returns
@@ -225,6 +226,34 @@ func (w *fsWorkspace) ReadVersion(ctx context.Context, path string) ([]byte, too
 		return nil, tool.FileVersion{}, err
 	}
 	return data, acpVersion(data), nil
+}
+
+// ReadDir uses the confined local filesystem view. ACP exposes no directory
+// listing RPC, so unsaved buffer-only files cannot be enumerated here.
+func (w *fsWorkspace) ReadDir(ctx context.Context, path string) ([]tool.FileInfo, error) {
+	return w.local.ReadDir(ctx, path)
+}
+
+// Remove is unsupported because ACP has no delete RPC; mutating the local disk
+// would bypass the editor buffer that defines this workspace's authoritative view.
+func (*fsWorkspace) Remove(context.Context, string) error {
+	return fmt.Errorf("acp: remove: %w", tool.ErrFileOperationUnsupported)
+}
+
+// Rename is unsupported because ACP has no rename RPC and local-disk mutation
+// would bypass the editor's authoritative buffers.
+func (*fsWorkspace) Rename(context.Context, string, string) error {
+	return fmt.Errorf("acp: rename: %w", tool.ErrFileOperationUnsupported)
+}
+
+// CopyFile copies the current editor-buffer snapshot to a new buffer path. The
+// destination create remains guarded by CreateFile's no-clobber check.
+func (w *fsWorkspace) CopyFile(ctx context.Context, source, destination string) (tool.FileVersion, error) {
+	data, err := w.Read(ctx, source)
+	if err != nil {
+		return tool.FileVersion{}, err
+	}
+	return w.CreateFile(ctx, destination, data)
 }
 
 // acpVersion mints a FileVersion from content bytes (sha256 via

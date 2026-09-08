@@ -1,5 +1,6 @@
 // Package fstools implements the correctness- and security-critical filesystem
-// tool bodies of the mecatl kit — Read, Edit, Write, Grep, Glob, and an OPTIONAL
+// tool bodies of the mecatl kit — Read, ListDir, Edit, Write, Copy, Move,
+// Remove, Grep, Glob, and an OPTIONAL
 // Bash — as tool.Tool values executing against an injected tool.Workspace (and,
 // for Bash, an injected tool.CommandRunner). It travels WITH the importable
 // engine module so an external consumer of engine/agent gets these tools — and
@@ -13,15 +14,17 @@
 //     that always survives the output cap.
 //
 // These bodies depend only on engine/session + engine/tool (+ stdlib). They never
-// touch the real OS: Read/Edit/Write/Grep/Glob go through the tool.Workspace seam,
-// and Bash goes through the injected tool.CommandRunner — so a consumer picks the
+// touch the real OS: the filesystem tools go through the tool.Workspace and
+// optional tool.WorkspaceNamespace seams, and Bash goes through the injected
+// tool.CommandRunner — so a consumer picks the
 // FileSystem/Workspace and shell backend. The reference in-memory Workspace is
 // engine/adapter/memfs; the honest no-op is engine/adapter/nofs.
 //
 // # Opt-in / opt-out
 //
 // The catalog is composed, not fixed. A consumer may:
-//   - take everything: register All() (Read/Edit/Write/Grep/Glob) via Register,
+//   - take everything: register All() (Read/ListDir/Edit/Write/Copy/Move/Remove/
+//     Grep/Glob) via Register,
 //     then add NewBashTool() only when a shell is configured;
 //   - take a subset: register only the tool values it wants;
 //   - swap a tool by name: register its own Tool under the same Spec().Name in
@@ -94,8 +97,12 @@ const TruncationMarker = "\n... [output truncated: exceeded 25000 bytes]"
 func All() []tool.Tool {
 	return []tool.Tool{
 		ReadTool{},
+		ListDirTool{},
 		EditTool{},
 		WriteTool{},
+		CopyTool{},
+		MoveTool{},
+		RemoveTool{},
 		GrepTool{},
 		GlobTool{},
 	}

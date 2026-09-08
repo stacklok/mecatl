@@ -31,7 +31,7 @@ import (
 // exactly these — nothing more (a family silently dropped from no-FS) and
 // nothing less (a file tool leaking back in).
 var noFSExcludedTools = []string{
-	"Read", "Edit", "Write", "Grep", "Glob", "Bash",
+	"Read", "ListDir", "Edit", "Write", "Copy", "Move", "Remove", "Grep", "Glob", "Bash",
 	"Parallel",
 	"BashStatus",         // the background-Bash companion: no Bash ⇒ no jobs to status/collect
 	skills.DraftToolName, // "SkillDraft"
@@ -127,7 +127,7 @@ func TestNoFSParallelAbsent(t *testing.T) {
 	}
 	// PresentPlan (issue #206 Wave 3) is registered in the no-FS catalog too — it
 	// is a signalling affordance, NOT a filesystem act, so it is NOT in the
-	// noFSExcludedTools set {Read,Edit,Write,Grep,Glob,Bash,Parallel,SkillDraft}.
+	// noFSExcludedTools set {Read,ListDir,Edit,Write,Copy,Move,Remove,Grep,Glob,Bash,Parallel,SkillDraft}.
 	// (It implements tool.PlanOnly, so the mode projection hides it outside plan
 	// mode — but it must be REGISTERED so the no-FS and shared name-sets agree.)
 	if _, ok := toolNameSet(noFSCat.Tools())["PresentPlan"]; !ok {
@@ -286,7 +286,7 @@ func TestNoFSSubagentChildInheritsNoFS(t *testing.T) {
 			t.Errorf("child request tool specs are missing %q (got %v)", want, offeredTools)
 		}
 	}
-	for _, banned := range []string{"Read", "Edit", "Write", "Grep", "Glob", "Bash"} {
+	for _, banned := range []string{"Read", "ListDir", "Edit", "Write", "Copy", "Move", "Remove", "Grep", "Glob", "Bash"} {
 		if offered[banned] {
 			t.Errorf("child request tool specs OFFER %q — a file/shell tool leaked into the no-FS child surface", banned)
 		}

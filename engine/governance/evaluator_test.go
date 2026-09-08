@@ -20,6 +20,11 @@ func queryArgs(q string) json.RawMessage {
 	return b
 }
 
+func copyMoveArgs(source, destination string) json.RawMessage {
+	b, _ := json.Marshal(map[string]string{"source": source, "destination": destination})
+	return b
+}
+
 // TestWebSearchQueryPatternMatches asserts the "query" probe key (issue #26) lets
 // an arg-pattern rule target a WebSearch call by its query string. A glob rule on
 // the query must match (Allow), and a non-matching query falls through to the
@@ -197,8 +202,12 @@ func TestPlanModeFilter(t *testing.T) {
 	}{
 		{"Edit denied", "Edit", fileArgs("/x"), Deny},
 		{"Write denied", "Write", fileArgs("/x"), Deny},
+		{"Copy denied", "Copy", copyMoveArgs("/x", "/y"), Deny},
+		{"Move denied", "Move", copyMoveArgs("/x", "/y"), Deny},
+		{"Remove denied", "Remove", fileArgs("/x"), Deny},
 		{"non-RO Bash denied", "Bash", bashArgs("rm -rf /"), Deny},
 		{"Read allowed", "Read", fileArgs("/x"), Allow},
+		{"ListDir allowed", "ListDir", fileArgs("/x"), Allow},
 		{"Grep allowed", "Grep", fileArgs("/x"), Allow},
 		{"Glob allowed", "Glob", fileArgs("/x"), Allow},
 		{"read-only Bash allowed", "Bash", bashArgs("git status"), Allow},
@@ -221,6 +230,27 @@ func TestPlanModeBeatsAllowRule(t *testing.T) {
 	e := NewEvaluator(rules)
 	if got := e.Evaluate("Write", fileArgs("/x"), true); got.Effect != Deny {
 		t.Fatalf("expected plan-mode Deny to override allow rule, got %v", got.Effect)
+	}
+}
+
+// Plan-mode deny must beat an explicit allow rule for each namespace-mutating
+// tool too — Copy/Move/Remove join Edit/Write in the unconditional plan-mode
+// deny set, not only the default-Ask fold.
+func TestPlanModeBeatsAllowRuleForNamespaceTools(t *testing.T) {
+	for _, tool := range []string{"Copy", "Move", "Remove"} {
+		t.Run(tool, func(t *testing.T) {
+			rules := []Rule{
+				{Scope: ScopeManaged, Tool: tool, Effect: Allow},
+			}
+			e := NewEvaluator(rules)
+			args := fileArgs("/x")
+			if tool == "Copy" || tool == "Move" {
+				args = copyMoveArgs("/x", "/y")
+			}
+			if got := e.Evaluate(tool, args, true); got.Effect != Deny {
+				t.Fatalf("expected plan-mode Deny to override allow rule for %s, got %v", tool, got.Effect)
+			}
+		})
 	}
 }
 

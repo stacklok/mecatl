@@ -9,17 +9,21 @@ import (
 // always permitted under plan mode. Bash is classified per-command via
 // ReadOnlyBash rather than appearing here.
 var readOnlyTools = map[string]bool{
-	"Read": true,
-	"Grep": true,
-	"Glob": true,
+	"Read":    true,
+	"ListDir": true,
+	"Grep":    true,
+	"Glob":    true,
 }
 
 // mutatingTools are tools that always mutate and are unconditionally denied by
 // plan mode. Bash is not listed: a Bash call is mutating only when its command
 // is not read-only (see ReadOnlyBash).
 var mutatingTools = map[string]bool{
-	"Edit":  true,
-	"Write": true,
+	"Edit":   true,
+	"Write":  true,
+	"Copy":   true,
+	"Move":   true,
+	"Remove": true,
 }
 
 // Evaluator resolves a tool call against a merged set of permission Rules using
@@ -223,8 +227,32 @@ func (e *Evaluator) resolve(rules []Rule, tool string, args json.RawMessage) Per
 	if tool == "Bash" {
 		return e.resolveBash(rules, args)
 	}
+	if tool == "Copy" || tool == "Move" {
+		if patterns, ok := copyMovePatterns(args); ok {
+			return e.resolvePatterns(rules, tool, patterns)
+		}
+	}
 	pattern := nonBashPattern(tool, args)
 	return e.resolveSimple(rules, tool, pattern)
+}
+
+// resolvePatterns evaluates every resource named by one tool call independently.
+// The worst effect wins so a rule covering one Copy/Move operand cannot silently
+// authorize the other, and a deny on either operand remains absolute.
+func (e *Evaluator) resolvePatterns(rules []Rule, tool string, patterns []string) PermissionDecision {
+	worst := PermissionDecision{Effect: Allow}
+	anyConfiguredAsk := false
+	for _, pattern := range patterns {
+		d := e.resolveSimple(rules, tool, pattern)
+		anyConfiguredAsk = anyConfiguredAsk || d.ConfiguredAsk
+		if effectRank(d.Effect) > effectRank(worst.Effect) {
+			worst = d
+		}
+	}
+	if worst.Effect == Ask {
+		worst.ConfiguredAsk = anyConfiguredAsk
+	}
+	return worst
 }
 
 // resolveBash evaluates each canonicalized sub-command of a (possibly compound)
@@ -509,7 +537,24 @@ func describeTarget(tool, rulePattern, pattern string) string {
 	return tool
 }
 
-// nonBashPattern derives the pattern string to match a non-Bash tool call
+// copyMovePatterns extracts both resource operands from a Copy or Move call.
+// Both must be strings; malformed shapes return false and fall back to the safe
+// ordinary no-pattern evaluation.
+func copyMovePatterns(args json.RawMessage) ([]string, bool) {
+	if len(args) == 0 {
+		return nil, false
+	}
+	var values struct {
+		Source      string `json:"source"`
+		Destination string `json:"destination"`
+	}
+	if err := json.Unmarshal(args, &values); err != nil {
+		return nil, false
+	}
+	return []string{values.Source, values.Destination}, true
+}
+
+// nonBashPattern derives the pattern string to match a single-resource non-Bash tool call
 // against. It uses the most common path/target field of the built-in tools so
 // rules can target specific files; unknown shapes fall back to the empty string
 // (which only matches tool-wide rules).

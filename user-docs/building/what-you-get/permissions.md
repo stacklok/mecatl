@@ -209,8 +209,8 @@ mutate:
 
 | Tool | Default effect |
 |---|---|
-| `Read`, `Grep`, `Glob`, `WebFetch`, `WebSearch`, `Subagent` | `allow` |
-| `Bash`, `Edit`, `Write`, `Team`, `SkillDraft` | `ask` |
+| `Read`, `ListDir`, `Grep`, `Glob`, `WebFetch`, `WebSearch`, `Subagent` | `allow` |
+| `Bash`, `Edit`, `Write`, `Copy`, `Move`, `Remove`, `Team`, `SkillDraft` | `ask` |
 
 (The memory tools, the synthetic `soul:apply` action, and the read-only child
 observability tools are also floor-scoped allows — pre-approved but overridable by

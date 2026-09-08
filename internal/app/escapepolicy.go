@@ -429,6 +429,56 @@ func (w *escapeWorkspace) Stat(ctx context.Context, path string) (tool.FileInfo,
 	return w.Workspace.Stat(ctx, path)
 }
 
+func (w *escapeWorkspace) ReadDir(ctx context.Context, path string) ([]tool.FileInfo, error) {
+	if err := w.refuseNamespacePath(path); err != nil {
+		return nil, err
+	}
+	ns, ok := w.Workspace.(tool.WorkspaceNamespace)
+	if !ok {
+		return nil, tool.ErrFileOperationUnsupported
+	}
+	return ns.ReadDir(ctx, path)
+}
+
+func (w *escapeWorkspace) Remove(ctx context.Context, path string) error {
+	if err := w.refuseNamespacePath(path); err != nil {
+		return err
+	}
+	ns, ok := w.Workspace.(tool.WorkspaceNamespace)
+	if !ok {
+		return tool.ErrFileOperationUnsupported
+	}
+	return ns.Remove(ctx, path)
+}
+
+func (w *escapeWorkspace) Rename(ctx context.Context, oldPath, newPath string) error {
+	if err := w.refuseNamespacePath(oldPath); err != nil {
+		return err
+	}
+	if err := w.refuseNamespacePath(newPath); err != nil {
+		return err
+	}
+	ns, ok := w.Workspace.(tool.WorkspaceNamespace)
+	if !ok {
+		return tool.ErrFileOperationUnsupported
+	}
+	return ns.Rename(ctx, oldPath, newPath)
+}
+
+func (w *escapeWorkspace) CopyFile(ctx context.Context, source, destination string) (tool.FileVersion, error) {
+	if err := w.refuseNamespacePath(source); err != nil {
+		return tool.FileVersion{}, err
+	}
+	if err := w.refuseNamespacePath(destination); err != nil {
+		return tool.FileVersion{}, err
+	}
+	ns, ok := w.Workspace.(tool.WorkspaceNamespace)
+	if !ok {
+		return tool.FileVersion{}, tool.ErrFileOperationUnsupported
+	}
+	return ns.CopyFile(ctx, source, destination)
+}
+
 // CreateFile consults the escape classifier (pseudo-fs hard-deny) then delegates
 // to the relaxed osfs create-only mutation.
 func (w *escapeWorkspace) CreateFile(ctx context.Context, path string, data []byte) (tool.FileVersion, error) {
@@ -476,6 +526,14 @@ func (w *escapeWorkspace) AuthorityResourcePath(path string) (target, workspace 
 		return "", "", err
 	}
 	return relaxed.RelaxedAuthorityResourcePath(path)
+}
+
+func (w *escapeWorkspace) refuseNamespacePath(path string) error {
+	args, _ := json.Marshal(map[string]string{"path": path})
+	if w.classifier.classify("Read", args) != escapeInRoot {
+		return fmt.Errorf("%w: namespace operations stay confined to the workspace", osfs.ErrPathEscape)
+	}
+	return nil
 }
 
 // refusePath returns the hard-deny error for pseudo-filesystems in every view.

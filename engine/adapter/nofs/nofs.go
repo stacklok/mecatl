@@ -35,6 +35,7 @@ func New() Workspace { return Workspace{} }
 
 // Compile-time assertion that Workspace satisfies the frozen seam.
 var _ tool.Workspace = Workspace{}
+var _ tool.WorkspaceNamespace = Workspace{}
 
 // Root returns "" — a no-FS session has no session root.
 func (Workspace) Root() string { return "" }
@@ -66,6 +67,20 @@ func (Workspace) CreateFile(context.Context, string, []byte) (tool.FileVersion, 
 // ReplaceFile fails loudly with ErrNoFilesystem: nothing can be replaced in a
 // no-FS session.
 func (Workspace) ReplaceFile(context.Context, string, tool.FileVersion, []byte) (tool.FileVersion, error) {
+	return tool.FileVersion{}, ErrNoFilesystem
+}
+
+// ReadDir returns no entries: there is no directory tree.
+func (Workspace) ReadDir(context.Context, string) ([]tool.FileInfo, error) { return nil, nil }
+
+// Remove fails loudly because there is no filesystem namespace to mutate.
+func (Workspace) Remove(context.Context, string) error { return ErrNoFilesystem }
+
+// Rename fails loudly because there is no filesystem namespace to mutate.
+func (Workspace) Rename(context.Context, string, string) error { return ErrNoFilesystem }
+
+// CopyFile fails loudly because there is no filesystem namespace to mutate.
+func (Workspace) CopyFile(context.Context, string, string) (tool.FileVersion, error) {
 	return tool.FileVersion{}, ErrNoFilesystem
 }
 

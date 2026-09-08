@@ -34,6 +34,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	pathpkg "path"
 	"sort"
 	"strings"
 	"sync"
@@ -52,6 +53,7 @@ import (
 const (
 	Kind     session.EnvironmentKind = "remote-fake"
 	revision string                  = "remote-fake-v1"
+	opRename                         = "rename"
 )
 
 // ErrUnknownNamespace is returned by Resolve/NewEnvironment when the requested
@@ -269,6 +271,7 @@ type workspace struct {
 
 // Compile-time assertion that workspace satisfies the frozen seam.
 var _ tool.Workspace = (*workspace)(nil)
+var _ tool.WorkspaceNamespace = (*workspace)(nil)
 
 // Root returns a logical root string. The fake has no on-disk root; this is the
 // namespace id so a caller can correlate it with the ref.
@@ -365,6 +368,166 @@ func (w *workspace) ReplaceFile(_ context.Context, p string, old tool.FileVersio
 	}
 	w.ns.files[key] = &file{data: stored, modTime: w.ns.now()}
 	return versionOf(stored), nil
+}
+
+// ReadDir returns the immediate children of a prefix-derived directory.
+func (w *workspace) ReadDir(_ context.Context, p string) ([]tool.FileInfo, error) {
+	dir, err := cleanDirPath(p)
+	if err != nil {
+		return nil, err
+	}
+	w.ns.mu.RLock()
+	defer w.ns.mu.RUnlock()
+	if dir != "" {
+		if _, ok := w.ns.files[dir]; ok {
+			return nil, &fs.PathError{Op: "readdir", Path: p, Err: fs.ErrInvalid}
+		}
+	}
+	prefix := ""
+	if dir != "" {
+		prefix = dir + "/"
+	}
+	entries := make(map[string]tool.FileInfo)
+	for name, f := range w.ns.files {
+		if !strings.HasPrefix(name, prefix) {
+			continue
+		}
+		rest := strings.TrimPrefix(name, prefix)
+		child, _, nested := strings.Cut(rest, "/")
+		if nested {
+			entries[child] = tool.FileInfo{Name: child, Mode: fs.ModeDir | 0o755, IsDir: true}
+		} else if child != "" {
+			entries[child] = tool.FileInfo{Name: child, Size: int64(len(f.data)), Mode: 0o644, ModTime: f.modTime}
+		}
+	}
+	if len(entries) == 0 && dir != "" {
+		return nil, &fs.PathError{Op: "readdir", Path: p, Err: fs.ErrNotExist}
+	}
+	out := make([]tool.FileInfo, 0, len(entries))
+	for _, entry := range entries {
+		out = append(out, entry)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out, nil
+}
+
+// Remove deletes a file and refuses non-recursive removal of a derived directory.
+func (w *workspace) Remove(_ context.Context, p string) error {
+	key, err := cleanPath(p)
+	if err != nil {
+		return err
+	}
+	w.ns.mu.Lock()
+	defer w.ns.mu.Unlock()
+	if _, ok := w.ns.files[key]; ok {
+		delete(w.ns.files, key)
+		return nil
+	}
+	for name := range w.ns.files {
+		if strings.HasPrefix(name, key+"/") {
+			return &fs.PathError{Op: "remove", Path: p, Err: tool.ErrDirectoryNotEmpty}
+		}
+	}
+	return &fs.PathError{Op: "remove", Path: p, Err: fs.ErrNotExist}
+}
+
+// Rename moves a file or derived directory without replacing a destination.
+func (w *workspace) Rename(_ context.Context, oldPath, newPath string) error {
+	oldKey, err := cleanPath(oldPath)
+	if err != nil {
+		return err
+	}
+	newKey, err := cleanPath(newPath)
+	if err != nil {
+		return err
+	}
+	if strings.HasPrefix(newKey, oldKey+"/") {
+		return &fs.PathError{Op: opRename, Path: newPath, Err: fs.ErrInvalid}
+	}
+	w.ns.mu.Lock()
+	defer w.ns.mu.Unlock()
+	if _, ok := w.ns.files[newKey]; ok || remoteFileAncestorExists(w.ns.files, newKey) {
+		return &fs.PathError{Op: opRename, Path: newPath, Err: fs.ErrExist}
+	}
+	for name := range w.ns.files {
+		if strings.HasPrefix(name, newKey+"/") {
+			return &fs.PathError{Op: opRename, Path: newPath, Err: fs.ErrExist}
+		}
+	}
+	if f, ok := w.ns.files[oldKey]; ok {
+		w.ns.files[newKey] = f
+		delete(w.ns.files, oldKey)
+		return nil
+	}
+	oldPrefix := oldKey + "/"
+	moved := make(map[string]*file)
+	for name, f := range w.ns.files {
+		if strings.HasPrefix(name, oldPrefix) {
+			moved[newKey+strings.TrimPrefix(name, oldKey)] = f
+		}
+	}
+	if len(moved) == 0 {
+		return &fs.PathError{Op: opRename, Path: oldPath, Err: fs.ErrNotExist}
+	}
+	for name := range moved {
+		if _, ok := w.ns.files[name]; ok {
+			return &fs.PathError{Op: opRename, Path: newPath, Err: fs.ErrExist}
+		}
+	}
+	for name := range w.ns.files {
+		if strings.HasPrefix(name, oldPrefix) {
+			delete(w.ns.files, name)
+		}
+	}
+	for name, f := range moved {
+		w.ns.files[name] = f
+	}
+	return nil
+}
+
+// CopyFile copies one regular file to a new destination without overwriting.
+func (w *workspace) CopyFile(_ context.Context, source, destination string) (tool.FileVersion, error) {
+	src, err := cleanPath(source)
+	if err != nil {
+		return tool.FileVersion{}, err
+	}
+	dst, err := cleanPath(destination)
+	if err != nil {
+		return tool.FileVersion{}, err
+	}
+	w.ns.mu.Lock()
+	defer w.ns.mu.Unlock()
+	f, ok := w.ns.files[src]
+	if !ok {
+		return tool.FileVersion{}, &fs.PathError{Op: "copy", Path: source, Err: fs.ErrNotExist}
+	}
+	if _, ok := w.ns.files[dst]; ok || remoteFileAncestorExists(w.ns.files, dst) {
+		return tool.FileVersion{}, &fs.PathError{Op: "copy", Path: destination, Err: fs.ErrExist}
+	}
+	for name := range w.ns.files {
+		if strings.HasPrefix(name, dst+"/") {
+			return tool.FileVersion{}, &fs.PathError{Op: "copy", Path: destination, Err: fs.ErrExist}
+		}
+	}
+	data := append([]byte(nil), f.data...)
+	w.ns.files[dst] = &file{data: data, modTime: w.ns.now()}
+	return versionOf(data), nil
+}
+
+func remoteFileAncestorExists(files map[string]*file, name string) bool {
+	for parent := pathpkg.Dir(name); parent != "."; parent = pathpkg.Dir(parent) {
+		if _, exists := files[parent]; exists {
+			return true
+		}
+	}
+	return false
+}
+
+func cleanDirPath(p string) (string, error) {
+	if p == "" || p == "." {
+		return "", nil
+	}
+	return cleanPath(p)
 }
 
 // Glob returns session-relative paths matching the pattern. The fake supports

@@ -35,8 +35,8 @@ and exits before loading normal configuration or starting listeners.
 composition root. Its normal storage-free pod configures the deployment default as no-FS.
 Operators may instead select `--redis-filesystem`, which binds a persistent virtual
 workspace shared by sessions with the same exact OIDC issuer/subject identity; ownerless
-sessions share a reserved anonymous namespace. The mode exposes Read/Edit/Write/Grep/Glob
-but no shell, executable-file semantics, worktrees, or filesystem fork/merge workflow.
+sessions share a reserved anonymous namespace. The mode exposes Read/ListDir/Edit/Write/
+Copy/Move/Remove/Grep/Glob but no shell, executable-file semantics, worktrees, or filesystem fork/merge workflow.
 `--workspace` remains the mutually-exclusive mounted-filesystem alternative. Clients
 cannot send a workspace path, cwd, placement ID, or exact ref. Exact private refs remain
 in snapshots and every run revalidates them against the caller before reattachment.

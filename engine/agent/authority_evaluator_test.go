@@ -359,6 +359,96 @@ func TestADR_0233_AuthorityEvaluator_Scenario7_ResourceAttributeIsDerivedWithout
 			}
 		})
 	}
+
+	// Copy/Move carry TWO paths (source AND destination): the evaluator must be
+	// consulted once per resource, both normalized against the workspace, and
+	// BOTH must be authorized for the call to execute.
+	t.Run("Copy authorizes both source and destination as distinct resources", func(t *testing.T) {
+		cp := &authorityTool{name: "Copy"}
+		evaluator := &recordingAuthorityEvaluator{decision: port.AuthorityDecision{Allowed: true}}
+		eng := newEngine(agent.Deps{
+			LLM:                mockllm.New(mockllm.ToolCallTurn(toolCall("copy", "Copy", `{"source":"a.txt","destination":"b.txt"}`))),
+			Catalog:            catalogWith(t, cp),
+			AuthorityEvaluator: evaluator,
+		})
+
+		env := agent.MemEnv("/workspace")
+		sess := authoritySession(t, "Copy")
+		if err := sess.Rehome(env.Ref()); err != nil {
+			t.Fatal(err)
+		}
+		drain(eng.Run(context.Background(), sess, env, agent.RunRequest{Text: "copy"}))
+		if got := cp.ran.Load(); got != 1 {
+			t.Fatalf("copy executions = %d, want 1", got)
+		}
+		if got := evaluator.calls(); got != 2 {
+			t.Fatalf("evaluator calls = %d, want 2 (one per resource)", got)
+		}
+		evaluator.mu.Lock()
+		defer evaluator.mu.Unlock()
+		if evaluator.requests[0].Resource == nil || evaluator.requests[0].Resource.Path != "/workspace/a.txt" {
+			t.Fatalf("first request resource = %+v, want normalized source /workspace/a.txt", evaluator.requests[0].Resource)
+		}
+		if evaluator.requests[1].Resource == nil || evaluator.requests[1].Resource.Path != "/workspace/b.txt" {
+			t.Fatalf("second request resource = %+v, want normalized destination /workspace/b.txt", evaluator.requests[1].Resource)
+		}
+	})
+
+	// A destination-only denial must still block the call: authorizing the
+	// source is not sufficient when the destination is denied.
+	t.Run("Copy is denied when only the destination resource is refused", func(t *testing.T) {
+		cp := &authorityTool{name: "Copy"}
+		evaluator := &sequencedAuthorityEvaluator{
+			decisions: []port.AuthorityDecision{
+				{Allowed: true},                         // source: allowed
+				{Allowed: false, Reason: "dest denied"}, // destination: denied
+			},
+		}
+		eng := newEngine(agent.Deps{
+			LLM:                mockllm.New(mockllm.ToolCallTurn(toolCall("copy", "Copy", `{"source":"a.txt","destination":"b.txt"}`))),
+			Catalog:            catalogWith(t, cp),
+			AuthorityEvaluator: evaluator,
+		})
+
+		env := agent.MemEnv("/workspace")
+		sess := authoritySession(t, "Copy")
+		if err := sess.Rehome(env.Ref()); err != nil {
+			t.Fatal(err)
+		}
+		events := drain(eng.Run(context.Background(), sess, env, agent.RunRequest{Text: "copy"}))
+		if got := cp.ran.Load(); got != 0 {
+			t.Fatalf("copy executions = %d, want 0 (destination denial must block execution)", got)
+		}
+		for _, event := range events {
+			if event.ToolResult != nil && event.ToolResult.CallID == "copy" {
+				if !event.ToolResult.IsError || !strings.Contains(event.ToolResult.Content, "dest denied") {
+					t.Fatalf("copy result = %+v, want a denial naming the destination reason", event.ToolResult)
+				}
+				return
+			}
+		}
+		t.Fatal("missing authority denial result for Copy")
+	})
+}
+
+// sequencedAuthorityEvaluator returns one decision per call in order, so a test
+// can distinguish the source-resource request from the destination-resource
+// request in a dual-resource call (Copy/Move).
+type sequencedAuthorityEvaluator struct {
+	mu        sync.Mutex
+	decisions []port.AuthorityDecision
+	i         int
+}
+
+func (e *sequencedAuthorityEvaluator) AuthorizeTool(_ context.Context, _ port.AuthorityRequest) (port.AuthorityDecision, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.i >= len(e.decisions) {
+		return port.AuthorityDecision{Allowed: false, Reason: "sequencedAuthorityEvaluator exhausted"}, nil
+	}
+	d := e.decisions[e.i]
+	e.i++
+	return d, nil
 }
 
 func TestADR_0233_AuthorityEvaluator_Scenario3_DisclosureIsNotLoadBearing(t *testing.T) {

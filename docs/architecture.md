@@ -579,7 +579,7 @@ flowchart LR
   subgraph DOMAIN["domain (no infra imports)"]
     sess["engine/session\nSession · Conversation · Event\nToolCall · ToolResult · Usage\n(inert labels: Profile · ProviderID · ModelID · ReasoningEffort · Title)"]
     gov["engine/governance\nEffect · Decision · Rule · Scope\nHookEvent · Evaluator · bash.go"]
-    tl["engine/tool\nTool · ToolSpec · Catalog · Disclosable\nFileSystem · Workspace · Environment · CommandRunner\nMemoryStore · EnvironmentForker · EnvironmentMerger · ToolSearch"]
+    tl["engine/tool\nTool · ToolSpec · Catalog · Disclosable\nFileSystem · Workspace · WorkspaceNamespace · Environment · CommandRunner\nMemoryStore · EnvironmentForker · EnvironmentMerger · ToolSearch"]
     pr["engine/prompt\nLayered · Build · Env · toolDisciplineHints\nInstructionAssembler · SoulSource · RulesSource · CommandExpander\n(model-neutral; per-model agencyDelta lives in internal/app)"]
   end
 
@@ -592,7 +592,7 @@ flowchart LR
     oai["openai · mockllm"]
     fs["osfs (+CommandRunner) · memfs"]
     st["memstore · jsonlstore · redisstore · sessnap"]
-    tools["tools (Read/Edit/Write/Grep/Glob/WebFetch/WebSearch + optional Bash)"]
+    tools["tools (Read/ListDir/Edit/Write/Copy/Move/Remove/Grep/Glob/WebFetch/WebSearch + optional Bash)"]
     pp["permpolicy · hookexec · modelhook"]
     tel["telemetry (OTel metrics+spans · Prometheus exporter · OTLP)"]
     ext["mcp (streaming-HTTP)\nmemory · dream · soul · forker · tokenizer"]
@@ -969,7 +969,7 @@ shared assembly with **k8s-native defaults** — a **Redis** session store + dur
 **storage-free**: no PVC, no `--store-dir`, no local state — every piece of state is a
 managed service the pod talks to over the network (Redis + the k8s API server). An
 optional principal-scoped Redis virtual workspace provides shell-less
-Read/Edit/Write/Grep/Glob persistence without a volume: exact issuer/subject pairs select
+Read/ListDir/Edit/Write/Copy/Move/Remove/Grep/Glob persistence without a volume: exact issuer/subject pairs select
 opaque namespaces, ownerless sessions share an anonymous namespace, and private placement
 refs are revalidated on reattach. It is mutually exclusive with the mounted-workspace mode.
 A separately selectable Redis read ledger keeps each session's read-before-write evidence
@@ -1042,10 +1042,14 @@ Two deliberate cycle-breaks worth noting, documented in code:
   a `port↔tool` cycle. See the package note in `engine/tool/tool.go`.
   `Environment` bundles a `Workspace`, an optional bound `CommandRunner`, and an
   exact backend identity `EnvironmentRef{Kind, ID, Revision}`. FS tools obtain
-  `env.Workspace()`; Bash obtains `env.CommandRunner()`. Workspace mutation remains
+  `env.Workspace()`; Bash obtains `env.CommandRunner()`. Workspace content mutation remains
   version-aware: Read records an opaque `FileVersion`, new-file Write is create-only,
-  and Edit/existing-file Write conditionally replace. The read ledger belongs to the
-  live Environment and resets when that Environment is rebuilt.
+  and Edit/existing-file Write conditionally replace. The optional additive
+  `WorkspaceNamespace` capability supplies `ReadDir`, non-recursive `Remove`,
+  no-clobber `Rename`, and no-clobber regular-file `CopyFile`; these namespace
+  operations do not consult the content read ledger. The built-in ListDir, Remove,
+  Move, and Copy tools fail honestly when a workspace omits the extension. The read
+  ledger belongs to the live Environment and resets when that Environment is rebuilt.
 
   [ADR 0291](adr/0291-server-owned-session-placement.md) makes `EnvironmentRef` the
   sole durable runtime identity. Every session is bound to a valid exact ref before
@@ -1056,7 +1060,8 @@ Two deliberate cycle-breaks worth noting, documented in code:
   authorization/revision drift, nil Workspace, or identity mismatch fail closed.
   See [ADR 0208](adr/0208-execution-environment.md),
   [ADR 0211](adr/0211-execution-environment-runtime-seam.md),
-  [ADR 0214](adr/0214-environment-persistence.md), and the
+  [ADR 0214](adr/0214-environment-persistence.md),
+  [ADR 0315](adr/0315-posix-workspace-namespace-operations.md), and the
   [ports chapter](architecture/ports.md).
 - `governance` does **not** import `session` (so `session` can import
   `governance` without a cycle); the `Evaluator` works on primitive args, and
