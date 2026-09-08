@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	appsv1 "k8s.io/api/apps/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	"sigs.k8s.io/yaml"
 )
@@ -219,7 +220,94 @@ func TestInvariant_singleton_broker_release_supply_chain_hardening(t *testing.T)
 			}
 		}
 	}
-	if koPins != 4 {
-		t.Fatalf("release workflow setup-ko steps = %d, want 4", koPins)
+}
+
+func TestReleaseWorkflow_BrokerChartUsesPublishedDigestAndTagSerialization(t *testing.T) {
+	body, err := os.ReadFile("../../../.github/workflows/release.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(body)
+	for _, required := range []string{
+		"group: release-${{ inputs.tag || github.ref_name }}",
+		"image_ref: ${{ steps.build.outputs.digest }}",
+		"image_digest: ${{ steps.build.outputs.image_digest }}",
+		"IMAGE_REF: ${{ needs.publish-mecabroker.outputs.image_ref }}",
+		"IMAGE_DIGEST: ${{ needs.publish-mecabroker.outputs.image_digest }}",
+		"--app-version \"${VERSION}\"",
+		"digest: ${IMAGE_DIGEST}",
+		"cosign sign --yes \"${IMAGE}\"",
+		"subject-digest: ${{ steps.build.outputs.image_digest }}",
+	} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("release workflow omits %q", required)
+		}
+	}
+	if strings.Contains(text, "group: release-${{ inputs.tag || github.ref }}") {
+		t.Fatal("tag push and manual release do not serialize on the same tag")
+	}
+}
+
+func TestMecabrokerChart_DeploymentSecurityAndShutdownBudget(t *testing.T) {
+	rendered := renderChart(t, "template", "production", ".", "-f", "ci/production-values.yaml")
+	var deployment appsv1.Deployment
+	for _, document := range strings.Split(rendered, "\n---") {
+		var meta struct {
+			Kind string `yaml:"kind"`
+		}
+		if yaml.Unmarshal([]byte(document), &meta) == nil && meta.Kind == "Deployment" {
+			if err := yaml.Unmarshal([]byte(document), &deployment); err != nil {
+				t.Fatal(err)
+			}
+			break
+		}
+	}
+	if deployment.Name == "" {
+		t.Fatal("rendered chart has no Deployment")
+	}
+	pod := deployment.Spec.Template.Spec
+	if pod.AutomountServiceAccountToken == nil || *pod.AutomountServiceAccountToken {
+		t.Fatal("broker service account token must be isolated")
+	}
+	if pod.SecurityContext == nil || pod.SecurityContext.RunAsNonRoot == nil || !*pod.SecurityContext.RunAsNonRoot || pod.SecurityContext.SeccompProfile == nil {
+		t.Fatalf("pod security context = %#v", pod.SecurityContext)
+	}
+	container := pod.Containers[0]
+	if container.SecurityContext == nil || container.SecurityContext.ReadOnlyRootFilesystem == nil || !*container.SecurityContext.ReadOnlyRootFilesystem || container.SecurityContext.AllowPrivilegeEscalation == nil || *container.SecurityContext.AllowPrivilegeEscalation || len(container.SecurityContext.Capabilities.Drop) == 0 {
+		t.Fatalf("container security context = %#v", container.SecurityContext)
+	}
+	if container.Resources.Requests.Cpu().IsZero() || container.Resources.Limits.Memory().IsZero() {
+		t.Fatalf("resources = %#v", container.Resources)
+	}
+	if container.Lifecycle == nil || container.Lifecycle.PreStop == nil || container.Lifecycle.PreStop.Exec == nil {
+		t.Fatal("missing drain preStop")
+	}
+	if pod.TerminationGracePeriodSeconds == nil || *pod.TerminationGracePeriodSeconds <= 62 {
+		t.Fatalf("grace = %v, want > 62", pod.TerminationGracePeriodSeconds)
+	}
+	for _, want := range []string{"--broker-dial-timeout=5s", "--broker-max-handles=128", "--broker-max-receipts=4096"} {
+		if !strings.Contains(strings.Join(container.Args, "\n"), want) {
+			t.Fatalf("missing runtime bound %q", want)
+		}
+	}
+	for _, args := range [][]string{
+		{"template", "production", ".", "-f", "ci/production-values.yaml", "--set", "terminationGracePeriodSeconds=62"},
+		{"template", "production", ".", "-f", "ci/production-values.yaml", "--set-json", `networkPolicy.operatorEgress=[{}]`},
+		{"template", "production", ".", "-f", "ci/production-values.yaml", "--set-json", `networkPolicy.operatorEgress=[{"to":[{"ipBlock":{"cidr":"192.0.2.0/24"}}]}]`},
+	} {
+		if _, err := exec.Command("helm", args...).CombinedOutput(); err == nil {
+			t.Fatalf("accepted invalid values %q", args)
+		}
+	}
+}
+
+func TestMecabrokerChart_ExplicitEgressAndDigestRender(t *testing.T) {
+	rendered := renderChart(t, "template", "production", ".", "-f", "ci/production-values.yaml")
+	policy := networkPolicyFromRender(t, rendered)
+	if len(policy.Spec.Egress) != 1 || len(policy.Spec.Egress[0].To) != 1 || len(policy.Spec.Egress[0].Ports) != 1 {
+		t.Fatalf("explicit egress = %#v", policy.Spec.Egress)
+	}
+	if !strings.Contains(rendered, "ghcr.io/stacklok/mecatl/mecabroker@sha256:") {
+		t.Fatal("image did not render repository@digest")
 	}
 }

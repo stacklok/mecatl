@@ -1,7 +1,7 @@
 # Singleton MCP broker review remediation — acceptance plan
 
 **Phase:** production broker correctness closure
-**Status:** in-progress, 2026-09-07. Converts the completed implementation self-review into executable acceptance proof.
+**Status:** landed, 2026-09-08. Converts the completed implementation self-review into executable acceptance proof.
 **ADR:** [ADR 0306](../adr/0306-bounded-singleton-mcp-broker-correctness.md) — bounded receipts, admission, readiness, and deployment truth.
 **Accumulator branch:** `acc/singleton-mcp-broker-review-remediation` (off `acc/initial-production-mcp-broker`).
 

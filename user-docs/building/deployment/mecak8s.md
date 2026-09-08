@@ -391,8 +391,9 @@ fetches presentation URLs live.
 
 For the remote broker chart profile, set `remoteBroker.address`, `caSecret`, `caKey`,
 `serverName`, `tokenAudience`, and (optionally) the bounded `tokenLifetimeSeconds` together;
-the chart rejects partial configuration. It disables automatic service-account-token mounting,
-projects a read-only token at `/var/run/secrets/mecatl-broker/token`, and passes only file
+the chart rejects partial configuration. It retains the standard Kubernetes service-account
+credential for the `SessionLease` API client and separately projects the read-only,
+audience-bound broker token at `/var/run/secrets/mecatl-broker/token`. It passes only file
 paths and the expected DNS name to the process. The token file is reread for every RPC, so
 atomic projected-token rotation does not require a pod restart.
 
@@ -405,30 +406,15 @@ ToolHive drives their sequential browser flow, owns callback state and refresh, 
 each upstream token only into its configured backend. Mecatl exposes one opaque enrollment,
 not per-backend controls or OAuth material.
 
-Set `mcp.broker.callbackURL` to ToolHive's final public HTTPS redirect to mecatl. Your ingress
-or gateway must also route the complete fixed `/v1/mcp/broker/` prefix, including ToolHive's
-upstream callback, to the mecak8s HTTP listener. Helm rejects an OAuth server without the final
-callback URL and the runtime rejects an invalid URL. Protected static declarations and live
-discovery stay hidden until enrollment succeeds; mecatl then strictly discovers every protected
-backend, collision-checks, and freezes the complete catalogue. A failed enrollment admits no
-partial protected tools. OAuth broker mode also requires the chart's OIDC caller identity
-(`oidc.enabled: true`, issuer, and audience), so broker authorization controls have verified
-callers. The broker profile and server metadata are non-secret ConfigMap data. A preregistered
-client secret remains a `SecretKeyRef` projection only—never a values field or ConfigMap entry;
-the browser authorizes the broker for that session rather than Helm accepting a credential-record
-value. With `mcp.servers: []`, Helm explicitly
-writes `mcp.mode: global`; a no-auth or static-bearer-only list keeps the existing
-global route behavior.
+Configure the final callback URL, fixed `/v1/mcp/broker/` callback prefix, OAuth profiles,
+and singleton lifecycle on the standalone `mecabroker` chart. Its ingress or gateway routes
+those browser paths to the broker Service, never to the mecak8s HTTP listener. mecak8s only
+holds opaque enrollment references and authenticates to the broker with its separate projected
+workload token. The standalone broker is one `Recreate` replica with no HA or zero-downtime
+rollout; this limitation does not require changing the scalable mecak8s Deployment.
 
-:::caution Process-local broker limitation
-Broker sessions and OAuth state are process-local. The chart schema now enforces
-`replicaCount: 1` whenever `mcp.broker.callbackURL` is set, and renders a
-`Recreate` rollout strategy instead of the default rolling update — there is no
-high availability or zero-downtime rollout for OAuth broker mode until an
-affinity or durable-broker decision lands.
-:::
-See the [operator guide](https://github.com/stacklok/mecatl/blob/main/docs/usage/mecak8s.md#configuring-mcp-servers-with-helm)
-for the complete OAuth values shape.
+See the [operator guide](https://github.com/stacklok/mecatl/blob/main/docs/usage.md#standalone-mcp-broker-on-kubernetes)
+for the broker chart and callback deployment.
 
 Keep MCP and OAuth endpoints on HTTPS and configure the chart's default-deny `networkPolicy.operatorEgress` (or a mesh) for them. The explicit
 `insecureHTTP: true` acknowledgement is accepted by the runtime only for

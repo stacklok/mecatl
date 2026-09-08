@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft-07/schema#",
   "type": "object",
   "additionalProperties": false,
-  "required": ["image", "tls", "workloadIdentity", "brokerConfig", "extraEnv", "resources", "service", "terminationGracePeriodSeconds", "drain", "networkPolicy"],
+  "required": ["image", "tls", "workloadIdentity", "brokerConfig", "extraEnv", "resources", "service", "terminationGracePeriodSeconds", "drain", "transport", "networkPolicy"],
   "properties": {
     "nameOverride": {"type":"string"}, "fullnameOverride": {"type":"string"},
     "image": {"type":"object", "additionalProperties":false, "required":["repository","tag","digest","pullPolicy"], "properties": {
@@ -15,7 +15,17 @@
     "brokerConfig":{"type":"string","minLength":1}, "extraEnv":{"type":"array","items":{"type":"object"}},
     "resources":{"type":"object"}, "service":{"type":"object","additionalProperties":false,"required":["port"],"properties":{"port":{"type":"integer","minimum":1,"maximum":65535}}},
     "terminationGracePeriodSeconds":{"type":"integer","minimum":1},
-    "drain":{"type":"object","additionalProperties":false,"required":["propagationDelay","timeout"],"properties":{"propagationDelay":{"type":"string","minLength":1},"timeout":{"type":"string","minLength":1}}},
-    "networkPolicy":{"type":"object","additionalProperties":false,"required":["enabled","publicFrom","operatorEgress"],"properties":{"enabled":{"type":"boolean"},"publicFrom":{"type":"array","items":{"oneOf":[{"type":"object","additionalProperties":false,"required":["ipBlock"],"properties":{"ipBlock":{"type":"object","additionalProperties":false,"required":["cidr"],"properties":{"cidr":{"type":"string","minLength":1},"except":{"type":"array","items":{"type":"string","minLength":1}}}}}},{"type":"object","additionalProperties":false,"required":["namespaceSelector"],"properties":{"namespaceSelector":{"type":"object","minProperties":1},"podSelector":{"type":"object","minProperties":1}}}]}} ,"operatorEgress":{"type":"array","items":{"type":"object"}}}}
+    "drain":{"type":"object","additionalProperties":false,"required":["propagationDelaySeconds","timeoutSeconds"],"properties":{"propagationDelaySeconds":{"type":"integer","minimum":0},"timeoutSeconds":{"type":"integer","minimum":1}}},
+    "transport":{"type":"object","additionalProperties":false,"required":["dialTimeoutSeconds","rpcDeadlineSeconds","executeDeadlineSeconds","handleIdleTimeoutSeconds","sweepIntervalSeconds","cleanupTimeoutSeconds","maxHandles","maxLogicalSessions","maxReceipts","maxReceiptBytes","maxPendingControls"],"properties":{"dialTimeoutSeconds":{"type":"integer","minimum":1},"rpcDeadlineSeconds":{"type":"integer","minimum":1},"executeDeadlineSeconds":{"type":"integer","minimum":1},"handleIdleTimeoutSeconds":{"type":"integer","minimum":1},"sweepIntervalSeconds":{"type":"integer","minimum":1},"cleanupTimeoutSeconds":{"type":"integer","minimum":1},"maxHandles":{"type":"integer","minimum":1},"maxLogicalSessions":{"type":"integer","minimum":1},"maxReceipts":{"type":"integer","minimum":1},"maxReceiptBytes":{"type":"integer","minimum":1},"maxPendingControls":{"type":"integer","minimum":1}}},
+    "networkPolicy":{"type":"object","additionalProperties":false,"required":["enabled","publicFrom","operatorEgress"],"properties":{"enabled":{"type":"boolean"},"publicFrom":{"type":"array","items":{"$ref":"#/definitions/networkPeer"}},"operatorEgress":{"type":"array","items":{"$ref":"#/definitions/networkEgressRule"}}}}
+  },
+  "definitions": {
+    "networkPeer": {"oneOf":[
+      {"type":"object","additionalProperties":false,"required":["ipBlock"],"properties":{"ipBlock":{"type":"object","additionalProperties":false,"required":["cidr"],"properties":{"cidr":{"type":"string","minLength":1},"except":{"type":"array","items":{"type":"string","minLength":1}}}}}},
+      {"type":"object","additionalProperties":false,"required":["namespaceSelector"],"properties":{"namespaceSelector":{"type":"object","minProperties":1},"podSelector":{"type":"object","minProperties":1}}},
+      {"type":"object","additionalProperties":false,"required":["podSelector"],"properties":{"podSelector":{"type":"object","minProperties":1}}}
+    ]},
+    "networkPort": {"type":"object","additionalProperties":false,"required":["protocol","port"],"properties":{"protocol":{"type":"string","enum":["TCP","UDP","SCTP"]},"port":{"type":"integer","minimum":1,"maximum":65535}}},
+    "networkEgressRule": {"type":"object","additionalProperties":false,"required":["to","ports"],"properties":{"to":{"type":"array","minItems":1,"items":{"$ref":"#/definitions/networkPeer"}},"ports":{"type":"array","minItems":1,"items":{"$ref":"#/definitions/networkPort"}}}}
   }
 }

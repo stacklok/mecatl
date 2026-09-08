@@ -125,8 +125,8 @@ func TestSingletonBrokerRemediation_Scenario4_Mecak8sRemoteBrokerProjection(t *t
 		t.Fatal(err, rendered)
 	}
 	d := deploymentFromRender(t, rendered)
-	if d.Spec.Template.Spec.AutomountServiceAccountToken == nil || *d.Spec.Template.Spec.AutomountServiceAccountToken {
-		t.Fatal("remote broker did not disable automatic service-account token mounting")
+	if d.Spec.Template.Spec.AutomountServiceAccountToken == nil || !*d.Spec.Template.Spec.AutomountServiceAccountToken {
+		t.Fatal("remote broker must retain the dedicated Kubernetes API service-account credential for SessionLease")
 	}
 	args := d.Spec.Template.Spec.Containers[0].Args
 	for _, want := range []string{"--mcp-broker-address=mecabroker.mecatl.svc:9080", "--mcp-broker-token-file=/var/run/secrets/mecatl-broker/token", "--mcp-broker-tls-ca=/var/run/secrets/mecatl-broker/ca.pem", "--mcp-broker-server-name=mecabroker.mecatl.svc"} {
@@ -189,6 +189,27 @@ func TestADR_0294_TerminationGracePeriodIsConfigurableAndFitsDefaults(t *testing
 	// preStop 3s + drain 15s + gRPC 10s + HTTP 5s + close 5s + telemetry 5s.
 	if budget := int64(3 + 15 + 10 + 5 + 5 + 5); budget >= 60 {
 		t.Fatalf("documented default shutdown budget = %ds, want < 60s", budget)
+	}
+}
+
+func TestMecak8sHelmChart_OperatorEgressRequiresExplicitPeersAndPorts(t *testing.T) {
+	for _, values := range []string{
+		`networkPolicy.operatorEgress=[{}]`,
+		`networkPolicy.operatorEgress=[{"to":[{"ipBlock":{"cidr":"192.0.2.0/24"}}]}]`,
+		`networkPolicy.operatorEgress=[{"to":[{}],"ports":[{"protocol":"TCP","port":443}]}]`,
+		`networkPolicy.operatorEgress=[{"to":[{"ipBlock":{"cidr":"192.0.2.0/24"}}],"ports":[{"protocol":"TCP","port":70000}]}]`,
+	} {
+		args := append(productionArgs(), "--set-json", values)
+		if rendered, err := helm(t, args...); err == nil {
+			t.Fatalf("accepted broad or invalid egress %s:\n%s", values, rendered)
+		}
+	}
+	rendered, err := helm(t, append(productionArgs(), "--set-json", `networkPolicy.operatorEgress=[{"to":[{"ipBlock":{"cidr":"192.0.2.0/24"}}],"ports":[{"protocol":"TCP","port":443}]}]`)...)
+	if err != nil {
+		t.Fatal(err, rendered)
+	}
+	if !strings.Contains(rendered, "cidr: 192.0.2.0/24") || !strings.Contains(rendered, "port: 443") {
+		t.Fatalf("explicit egress did not render: %s", rendered)
 	}
 }
 

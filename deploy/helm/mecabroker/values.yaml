@@ -40,9 +40,26 @@ service:
   port: 9080
 
 terminationGracePeriodSeconds: 70
+# Numeric seconds let the chart prove that Kubernetes has enough time for the
+# preStop drain: propagationDelaySeconds + timeoutSeconds + 5s resource close.
 drain:
-  propagationDelay: 2s
-  timeout: 55s
+  propagationDelaySeconds: 2
+  timeoutSeconds: 55
+
+# Every broker transport, retention, and capacity bound is explicit so an
+# operator can tune a singleton without relying on unreviewable extraArgs.
+transport:
+  dialTimeoutSeconds: 5
+  rpcDeadlineSeconds: 10
+  executeDeadlineSeconds: 120
+  handleIdleTimeoutSeconds: 300
+  sweepIntervalSeconds: 30
+  cleanupTimeoutSeconds: 10
+  maxHandles: 128
+  maxLogicalSessions: 128
+  maxReceipts: 4096
+  maxReceiptBytes: 8388608
+  maxPendingControls: 1024
 
 networkPolicy:
   enabled: true

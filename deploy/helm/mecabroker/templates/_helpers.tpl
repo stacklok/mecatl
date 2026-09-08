@@ -3,6 +3,11 @@
 {{- if .Values.image.tag -}}{{ fail "image.tag is not permitted; use image.digest" }}{{- end -}}
 {{- end -}}
 
+{{- define "mecabroker.validateShutdownBudget" -}}
+{{- $required := add (add (int .Values.drain.propagationDelaySeconds) (int .Values.drain.timeoutSeconds)) 5 -}}
+{{- if le (int .Values.terminationGracePeriodSeconds) $required -}}{{ fail (printf "terminationGracePeriodSeconds must exceed drain propagation + timeout + 5s close (%ds)" $required) }}{{- end -}}
+{{- end -}}
+
 {{- define "mecabroker.name" -}}
 {{- default .Chart.Name .Values.nameOverride | trunc 63 | trimSuffix "-" -}}
 {{- end -}}

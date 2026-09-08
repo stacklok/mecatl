@@ -60,7 +60,7 @@ spec:
       {{- end }}
     spec:
       serviceAccountName: {{ include "mecak8s.fullname" . }}
-      automountServiceAccountToken: {{ if .Values.remoteBroker.address }}false{{ else }}true{{ end }}
+      automountServiceAccountToken: true
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets: {{- toYaml . | nindent 8 }}
       {{- end }}

@@ -341,8 +341,8 @@
       "required": ["enabled", "publicFrom", "operatorEgress"],
       "properties": {
         "enabled": {"type": "boolean"},
-        "publicFrom": {"type": "array", "items": {"type": "object"}},
-        "operatorEgress": {"type": "array", "items": {"type": "object"}}
+        "publicFrom": {"type": "array", "items": {"$ref": "#/definitions/networkPeer"}},
+        "operatorEgress": {"type": "array", "items": {"$ref": "#/definitions/networkEgressRule"}}
       }
     }
   },
@@ -481,6 +481,15 @@
     }
   ],
   "definitions": {
+    "networkPeer": {
+      "oneOf": [
+        {"type":"object","additionalProperties":false,"required":["ipBlock"],"properties":{"ipBlock":{"type":"object","additionalProperties":false,"required":["cidr"],"properties":{"cidr":{"type":"string","minLength":1},"except":{"type":"array","items":{"type":"string","minLength":1}}}}}},
+        {"type":"object","additionalProperties":false,"required":["namespaceSelector"],"properties":{"namespaceSelector":{"type":"object","minProperties":1},"podSelector":{"type":"object","minProperties":1}}},
+        {"type":"object","additionalProperties":false,"required":["podSelector"],"properties":{"podSelector":{"type":"object","minProperties":1}}}
+      ]
+    },
+    "networkPort": {"type":"object","additionalProperties":false,"required":["protocol","port"],"properties":{"protocol":{"type":"string","enum":["TCP","UDP","SCTP"]},"port":{"type":"integer","minimum":1,"maximum":65535}}},
+    "networkEgressRule": {"type":"object","additionalProperties":false,"required":["to","ports"],"properties":{"to":{"type":"array","minItems":1,"items":{"$ref":"#/definitions/networkPeer"}},"ports":{"type":"array","minItems":1,"items":{"$ref":"#/definitions/networkPort"}}}},
     "secretKeyRef": {
       "type": "object",
       "additionalProperties": false,

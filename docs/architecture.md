@@ -186,9 +186,7 @@ recovered. Live protected-call authorization controls never rebind and fail clos
 silently creating replacement authority. ToolHive's configured Redis storage may preserve its
 inner authorization/token state, but mecatl cannot correlate a restarted outer enrollment to it.
 Durable/remote outer broker ownership and multi-replica routing remain later-stage concerns.
-OAuth broker mode is therefore not safe behind mecak8s's default multi-replica Service until an
-affinity or durable-broker decision is made; the chart does not silently change its replica
-behavior.
+Remote OAuth broker mode is served only by the dedicated singleton `mecabroker` deployment. `mecak8s` remains horizontally scalable for agent traffic because it never owns ToolHive callback state; its remote broker client holds only a CA-verified connection and an audience-bound workload token.
 
 The versioned remote adapter under `internal/adapter/mcpbrokergrpc` pins each client and
 attachment handle to one broker-process incarnation. Connection establishment, ordinary

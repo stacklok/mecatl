@@ -172,22 +172,11 @@ endpoint is runtime-valid. The authentication `mode` is a closed union:
 - `none` renders only `--mcp-server=<name>=<url>`;
 - `staticBearer` renders the same flag and projects its `secretKeyRef` into the
   runtime's `MCP_<UPPERCASE_NAME>_TOKEN` convention; and
-- `oauth` selects the session-scoped ToolHive broker authority, renders all configured
-  protected upstream profiles into a read-only chart-managed ConfigMap, projects only
-  preregistered client-secret `secretKeyRef` values when needed, and passes
-  `--permission-config=/etc/mecatl-mcp/settings.yaml`. It requires
-  `mcp.broker.callbackURL`, ToolHive's final public HTTPS redirect to mecatl. Global OAuth
-  profiles support the strict exact-origin `network` policy. Helm values for broker
-  OAuth must use the explicit empty policy (`additionalOrigins: []`,
-  `privateOrigins: []`, `maxRedirects: 0`); the rendered operator profile is the
-  equivalent empty network policy. Non-default controls remain rejected until
-  ToolHive can enforce the policy equivalently. Broker session, grant, and
-  authorization-transaction state is process-local and unreplicated: the chart
-  schema requires `replicaCount: 1` whenever `mcp.broker.callbackURL` is set (no
-  high availability until that state is shared), and the Deployment renders
-  `strategy.type: Recreate` instead of the default rolling update, so a config or
-  image change fully retires the old pod before starting the new one — plan a
-  broker rollout as a brief maintenance window, not a zero-downtime deploy.
+- `oauth` is served by the separately deployed standalone `mecabroker`; `mecak8s`
+  sends authenticated gRPC requests to it using `remoteBroker`. The broker, not the
+  agent Deployment, owns the ToolHive profile, browser callback routes, OAuth client
+  Secret references, and singleton `Recreate` lifecycle. Configure those on the
+  `mecabroker` chart; do not expose callback paths through the mecak8s Service.
 
 For example, an unauthenticated public server and a static bearer server are:
 
@@ -215,132 +204,23 @@ enforce egress with NetworkPolicy or a mesh—the chart intentionally ships no
 general NetworkPolicy. OAuth always requires HTTPS and cannot use this escape
 hatch.
 
-OAuth supports a preregistered confidential client, a CIMD client, or a
-DCR-registered client. This
-Helm surface does **not** accept the global-mode `profile`, `principal`, or
-`credentials.environment` fields and does not project an OAuth credential record.
-The browser starts one opaque broker enrollment for the session. ToolHive drives every
-configured protected upstream in order, owns upstream callback state and refresh, and injects
-each provider token only into its configured backend; a preregistered client alone references
-its client-secret key:
+OAuth profile and callback configuration belongs to the standalone `mecabroker` chart.
+`mecak8s` does not mount ToolHive handlers, project OAuth client secrets, or expose browser
+callback paths. Configure `remoteBroker.address`, CA Secret/key, expected server name, and token
+audience together; the chart projects a dedicated audience-bound broker token while retaining the
+standard service-account credential required by Kubernetes `SessionLease`. The token is reread for
+every RPC. The standalone broker's one-replica `Recreate` rollout owns the process-local callback
+limitation; mecak8s may retain its normal replica strategy.
 
-```yaml
-mcp:
-  broker:
-    # Publicly reachable HTTPS callback routed by your ingress/gateway to mecak8s.
-    callbackURL: https://agent.example/mcp/authorization/callback
-  servers:
-    - name: corporate
-      url: https://mcp.example/mcp
-      auth:
-        mode: oauth
-        oauth:
-          issuer: https://issuer.example
-          client:
-            mode: preregistered
-            preregistered:
-              id: mecak8s
-              secretKeyRef: {name: mecak8s-mcp-oauth, key: client-secret}
-          scopes: [mcp.read]
-          requestRefreshToken: true
-          network:
-            additionalOrigins: []
-            privateOrigins: []
-            maxRedirects: 0
-# Required whenever mcp.broker.callbackURL is set — see the OAuth mode note above.
-replicaCount: 1
-```
+For static and unauthenticated MCP servers, use `mcp.servers` as shown above. Protected static
+catalogues and OAuth profiles are configured on mecabroker and become available to mecak8s only
+through authenticated remote enrollment.
 
-For CIMD, set `client.mode: cimd` and replace `preregistered` with
-`cimd: {documentURL: https://client.example/mecatl.json}`. For Dynamic Client
-Registration (DCR), use an OAuth2 upstream and an HTTPS RFC 8414 discovery
-document; DCR mints and caches a public client identity in ToolHive's broker
-storage, so it has no Kubernetes Secret reference:
-
-```yaml
-client:
-  mode: dcr
-  dcr:
-    discoveryURL: https://auth.example/.well-known/oauth-authorization-server
-upstream:
-  mode: oauth2
-  oauth2:
-    authorizationEndpoint: https://auth.example/authorize
-    tokenEndpoint: https://auth.example/token
-```
-
-DCR cannot use `issuer` or `upstream.mode: oidc`, and the discovery URL must be
-HTTPS. The callback URL must
-be an absolute public HTTPS URL with no query or fragment. It is ToolHive's final redirect
-to mecatl; separately, upstream providers return through ToolHive's fixed
-`/v1/mcp/broker/oauth/callback` route. Your ingress or gateway must route the complete
-`/v1/mcp/broker/` prefix and the configured final callback path to the mecak8s HTTP listener.
-OAuth broker mode also requires `oidc.enabled: true` with its issuer and audience: OIDC is the
-chart-supported verified caller identity for broker authorization controls. The
-chart exposes no literal-secret field, arbitrary headers, stdio/SSE transport,
-local writable credential store, or browser credential. A client secret, when
-required, stays in the referenced Kubernetes Secret and is projected only as a
-`SecretKeyRef`. Never put it in values or the generated ConfigMap. With no
-`mcp.servers`, the chart deliberately renders `mcp.mode: global`; no broker is
-constructed. A no-auth or static-bearer-only list likewise keeps the established
-global routing.
-
-`issuer` assumes the upstream authorization server supports OIDC discovery.
-Some real-world OAuth Apps — GitHub's is the common case — have no discovery
-endpoint and only plain `authorization_endpoint`/`token_endpoint` URLs. Set
-`upstream: {mode: oauth2, oauth2: {authorizationEndpoint, tokenEndpoint}}` for
-those; `issuer` is then omitted (the two are mutually exclusive — the schema
-rejects either one being set alongside the wrong `upstream.mode`). An oauth
-server may also declare its protected tool catalogue statically via `tools`
-(each entry: `name`, `description`, `inputSchema`, optional `readOnly`). Those declarations,
-like live protected discovery, stay staged until the one enrollment completes. Mecatl then
-strictly discovers every configured protected backend, collision-checks the complete result,
-and freezes it as one catalogue; failure admits no partial protected tools. The model never
-receives backend OAuth material or a per-backend authorization control. For GitHub:
-
-```yaml
-mcp:
-  broker:
-    callbackURL: https://agent.example/mcp/authorization/callback
-  servers:
-    - name: github
-      url: https://api.githubcopilot.com/mcp/
-      auth:
-        mode: oauth
-        oauth:
-          upstream:
-            mode: oauth2
-            oauth2:
-              authorizationEndpoint: https://github.com/login/oauth/authorize
-              tokenEndpoint: https://github.com/login/oauth/access_token
-          client:
-            mode: preregistered
-            preregistered:
-              id: <your-github-oauth-app-client-id>
-              secretKeyRef: {name: mecak8s-github-mcp-oauth, key: client-secret}
-          scopes: [repo, read:org, read:user]
-          requestRefreshToken: true
-          network:
-            additionalOrigins: []
-            privateOrigins: []
-            maxRedirects: 0
-          tools:
-            - name: get_me
-              description: Get details of the authenticated GitHub user
-              inputSchema: {type: object, properties: {}}
-              readOnly: true
-# Required whenever mcp.broker.callbackURL is set — see the OAuth mode note above.
-replicaCount: 1
-```
-
-> **Broker replica limitation:** broker sessions, grants, and authorization state
-> are process-local. The chart schema enforces `replicaCount: 1` whenever
-> `mcp.broker.callbackURL` is set, and the Deployment renders `strategy.type:
-> Recreate` so a rollout fully retires the old pod before starting the new one —
-> there is no high availability or zero-downtime rollout for OAuth broker mode
-> until an affinity or durable-broker design is selected.
-
-
+For OAuth Apps without discovery, such as GitHub, put their explicit authorization and token
+endpoints in the standalone mecabroker profile. The broker validates the HTTPS endpoints, owns
+its callback path, and keeps client Secret references out of mecak8s values. See
+[Standalone MCP broker on Kubernetes](../usage.md#standalone-mcp-broker-on-kubernetes) for its
+production chart and callback routing contract.
 Changing OAuth profile metadata changes the pod-template
 `checksum/mcp-profile` annotation, causing a Deployment rollout. Kubernetes
 environment variables do not update in a running process when a Secret changes,

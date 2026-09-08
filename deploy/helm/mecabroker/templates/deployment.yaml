@@ -1,4 +1,5 @@
 {{- include "mecabroker.validateImage" . -}}
+{{- include "mecabroker.validateShutdownBudget" . -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -45,8 +46,19 @@ spec:
             - --oidc-ca=/var/run/secrets/workload-identity/{{ .Values.workloadIdentity.caKey }}
             - --oidc-max-jwks-staleness={{ .Values.workloadIdentity.maxJWKSStaleness }}
             - --config=/etc/mecabroker/broker.json
-            - --drain-propagation-delay={{ .Values.drain.propagationDelay }}
-            - --drain-timeout={{ .Values.drain.timeout }}
+            - --drain-propagation-delay={{ .Values.drain.propagationDelaySeconds }}s
+            - --drain-timeout={{ .Values.drain.timeoutSeconds }}s
+            - --broker-dial-timeout={{ .Values.transport.dialTimeoutSeconds }}s
+            - --broker-rpc-deadline={{ .Values.transport.rpcDeadlineSeconds }}s
+            - --broker-execute-deadline={{ .Values.transport.executeDeadlineSeconds }}s
+            - --broker-handle-idle-timeout={{ .Values.transport.handleIdleTimeoutSeconds }}s
+            - --broker-sweep-interval={{ .Values.transport.sweepIntervalSeconds }}s
+            - --broker-cleanup-timeout={{ .Values.transport.cleanupTimeoutSeconds }}s
+            - --broker-max-handles={{ .Values.transport.maxHandles }}
+            - --broker-max-logical-sessions={{ .Values.transport.maxLogicalSessions }}
+            - --broker-max-receipts={{ .Values.transport.maxReceipts }}
+            - --broker-max-receipt-bytes={{ .Values.transport.maxReceiptBytes }}
+            - --broker-max-pending-controls={{ .Values.transport.maxPendingControls }}
           {{- with .Values.extraEnv }}
           env: {{- toYaml . | nindent 12 }}
           {{- end }}

@@ -24,7 +24,7 @@ permissions:
 # Never run two releases for the same tag concurrently. Do NOT cancel in
 # progress — a half-signed release is worse than a slow one.
 concurrency:
-  group: release-${{ inputs.tag || github.ref }}
+  group: release-${{ inputs.tag || github.ref_name }}
   cancel-in-progress: false
 
 env:
@@ -463,6 +463,9 @@ jobs:
   publish-mecabroker:
     name: Build, publish, sign, attest mecabroker
     needs: validate-release-tag
+    outputs:
+      image_ref: ${{ steps.build.outputs.digest }}
+      image_digest: ${{ steps.build.outputs.image_digest }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
@@ -788,6 +791,8 @@ jobs:
       OCI_REGISTRY: ghcr.io/${{ github.repository }}/charts
       CHART_PATH: deploy/helm/mecabroker
       VERSION: ${{ needs.validate-release-tag.outputs.tag }}
+      IMAGE_REF: ${{ needs.publish-mecabroker.outputs.image_ref }}
+      IMAGE_DIGEST: ${{ needs.publish-mecabroker.outputs.image_digest }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -807,8 +812,16 @@ jobs:
         env:
           CHART_VERSION: ${{ steps.version.outputs.chart_version }}
         run: |
+          set -euo pipefail
+          printf '%s\n' "${IMAGE_REF}" | grep -Eq '^ghcr\.io/.+@sha256:[0-9a-f]{64}$'
+          printf '%s\n' "${IMAGE_DIGEST}" | grep -Eq '^sha256:[0-9a-f]{64}$'
           mkdir -p dist
-          helm package "${CHART_PATH}" --version "${CHART_VERSION}" --destination dist
+          rm -rf dist/mecabroker
+          cp -R "${CHART_PATH}" dist/mecabroker
+          sed -i "s|^  digest: .*|  digest: ${IMAGE_DIGEST}|" dist/mecabroker/values.yaml
+          grep -Fx "  digest: ${IMAGE_DIGEST}" dist/mecabroker/values.yaml
+          mkdir -p dist
+          helm package dist/mecabroker --version "${CHART_VERSION}" --app-version "${VERSION}" --destination dist
           test -f "dist/mecabroker-${CHART_VERSION}.tgz"
       - name: helm registry login
         env:
