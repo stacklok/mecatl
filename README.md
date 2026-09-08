@@ -8,10 +8,12 @@
 the loop, tools, permissions, hooks, delegation, and service boundaries for
 running AI agents as production workloads on infrastructure you operate.
 
-Mecatl starts locally and scales to fleets of agents on infrastructure you
-control. It combines composable tools and skills with durable state,
-permissions, attribution, and audit records while keeping model providers and
-deployment infrastructure replaceable.
+Mecatl keeps the agent loop independent of the client and execution
+environment, so the same runtime can start locally, run remotely with durable
+external state and a recorded event history, then scale across Kubernetes
+replicas without replacing the loop. It combines composable tools and skills
+with permissions, attribution, and audit records while keeping model providers
+and deployment infrastructure replaceable.
 
 Run one of the supplied services or connect Mecatl to an existing application
 with the model provider, state store, filesystem, and UI that fit your
@@ -28,7 +30,7 @@ Read the [Mecatl documentation](https://mecatl.dev/docs/intro) to get started.
   provider modules.
 - Durable sessions and append-only event logs through pluggable stores, so a
   deployment can recover persisted work after process replacement.
-- gRPC and HTTP/SSE interfaces for client applications, plus `mecatui`, a
+- Client integration via gRPC and HTTP/SSE, the TypeScript SDK, and mecatui, a
   terminal client that can host a local server or connect to a remote one.
 - A Kubernetes-native reference runtime that combines Redis-backed state,
   Kubernetes session leases, drain handling, and disposable replicas.
