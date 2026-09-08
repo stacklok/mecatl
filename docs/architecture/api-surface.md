@@ -28,7 +28,7 @@ reach the right run.
   current-default fallback.
 
   The no-FS session always routes through the per-session engine factory. Its catalog is
-  default minus {Read, Edit, Write, Grep, Glob, Bash, BashStatus, Parallel, SkillDraft};
+  default minus {Read, ListDir, Edit, Write, Copy, Move, Remove, Grep, Glob, Bash, BashStatus, Parallel, SkillDraft};
   WebFetch/WebSearch, memory, MCP, and file-less delegation remain. Its Workspace is the
   honest `engine/adapter/nofs` implementation and its valid no-FS ref survives restart.
 - `GetSession(GetSessionRequest) → GetSessionResponse` — path-free snapshot with

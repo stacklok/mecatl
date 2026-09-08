@@ -175,8 +175,8 @@ func buildGuardrailsHooks(cfg Config, provReg *providerRegistry, provider port.L
 // the modelhook adapter's read-only pre-filter lets a confidently-read-only Pre Bash
 // command bypass the checker entirely, so ONLY mutating/outward commands are
 // inspected. The pre-filter is fail-safe — an ambiguous/substitution command is still
-// inspected. The OTHER local tools (Read/Edit/Write/Grep/Glob) remain deliberately
-// unmatched. See ADR 0060.
+// inspected. The OTHER local tools (Read/ListDir/Edit/Write/Copy/Move/Remove/Grep/Glob)
+// remain deliberately unmatched. See ADR 0060.
 var defaultGuardrailSpecs = []modelhook.RuleSpec{
 	// Outbound search/fetch args (a query/URL carrying a secret) AND inbound results
 	// (a fetched page / search snippet carrying an injection).

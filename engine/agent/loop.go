@@ -87,7 +87,7 @@ const noProgressExtractiveNudgeText = "Stop investigating now and do not run any
 // "NO shell" substring is a stable test key — do not change it.
 const shellLessPostureNote = "This session has NO shell: the Bash tool is not available. " +
 	"Do not attempt to run commands, build, test, or invoke git — work through the file " +
-	"tools (Read/Write/Edit/Grep/Glob), your other tools (MCP, memory, web fetch), and " +
+	"tools (Read/ListDir/Write/Edit/Copy/Move/Remove/Grep/Glob), your other tools (MCP, memory, web fetch), and " +
 	"your own reasoning."
 
 // backgroundNoticeText renders the turn-boundary background-completion NOTICE

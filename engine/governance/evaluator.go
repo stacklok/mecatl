@@ -9,17 +9,21 @@ import (
 // always permitted under plan mode. Bash is classified per-command via
 // ReadOnlyBash rather than appearing here.
 var readOnlyTools = map[string]bool{
-	"Read": true,
-	"Grep": true,
-	"Glob": true,
+	"Read":    true,
+	"ListDir": true,
+	"Grep":    true,
+	"Glob":    true,
 }
 
 // mutatingTools are tools that always mutate and are unconditionally denied by
 // plan mode. Bash is not listed: a Bash call is mutating only when its command
 // is not read-only (see ReadOnlyBash).
 var mutatingTools = map[string]bool{
-	"Edit":  true,
-	"Write": true,
+	"Edit":   true,
+	"Write":  true,
+	"Copy":   true,
+	"Move":   true,
+	"Remove": true,
 }
 
 // Evaluator resolves a tool call against a merged set of permission Rules using

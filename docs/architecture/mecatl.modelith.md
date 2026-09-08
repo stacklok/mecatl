@@ -350,7 +350,7 @@ One worker within a `Team`, running an isolated child loop and contributing find
 
 ### `Tool`
 
-A capability the model can invoke by name — Read, Edit, Write, Grep, Glob, Bash, and opt-in tools like memory, skills, and delegation. A `Tool` is either read-only (may run concurrently) or mutating (never concurrent). It defines a name and an argument schema; a `ToolCall` is one invocation of it.
+A capability the model can invoke by name — Read, ListDir, Edit, Write, Copy, Move, Remove, Grep, Glob, Bash, and opt-in tools like memory, skills, and delegation. A `Tool` is either read-only (may run concurrently) or mutating (never concurrent). It defines a name and an argument schema; a `ToolCall` is one invocation of it.
 
 **Invariants**
 

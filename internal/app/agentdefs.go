@@ -540,7 +540,7 @@ func scopedToolNamesMode(def agents.AgentDef, available map[string]tool.Tool, al
 // re-added by buildMemberEngine on top of this base — see buildForceCopyRunner.)
 func baseSubagentTools(cfg Config) map[string]tool.Tool {
 	out := map[string]tool.Tool{}
-	for _, t := range tools.All() { // Read, Edit, Write, Grep, Glob, WebFetch
+	for _, t := range tools.All() { // Read, ListDir, Edit, Write, Copy, Move, Remove, Grep, Glob, WebFetch
 		out[t.Spec().Name] = t
 	}
 	if runner := buildSandboxedCommandRunner(cfg); runner != nil {

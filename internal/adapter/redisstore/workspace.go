@@ -44,6 +44,86 @@ if not data or not version then return -3 end
 if version ~= ARGV[4] then return 0 end
 redis.call('HSET', KEYS[1], ARGV[2], ARGV[5], ARGV[3], ARGV[6])
 return 1`)
+	removeWorkspacePath = redis.NewScript(`
+if redis.call('HGET', KEYS[1], 'm') ~= ARGV[1] then return -3 end
+local data = redis.call('HGET', KEYS[1], ARGV[2])
+local version = redis.call('HGET', KEYS[1], ARGV[3])
+if data or version then
+  if not data or not version then return -3 end
+  redis.call('HDEL', KEYS[1], ARGV[2], ARGV[3])
+  return 1
+end
+for _, field in ipairs(redis.call('HKEYS', KEYS[1])) do
+  if string.sub(field, 1, string.len(ARGV[4])) == ARGV[4] then return -2 end
+end
+return -1`)
+	copyWorkspaceFile = redis.NewScript(`
+if redis.call('HGET', KEYS[1], 'm') ~= ARGV[1] then return -3 end
+local data = redis.call('HGET', KEYS[1], ARGV[2])
+local version = redis.call('HGET', KEYS[1], ARGV[3])
+if not data and not version then return -1 end
+if not data or not version then return -3 end
+if version ~= ARGV[7] then return -2 end
+if redis.call('HEXISTS', KEYS[1], ARGV[4]) == 1 or redis.call('HEXISTS', KEYS[1], ARGV[5]) == 1 then return 0 end
+local parent = string.match(string.sub(ARGV[4], 3), '^(.*)/[^/]+$')
+while parent do
+  if redis.call('HEXISTS', KEYS[1], 'd:' .. parent) == 1 or redis.call('HEXISTS', KEYS[1], 'v:' .. parent) == 1 then return 0 end
+  parent = string.match(parent, '^(.*)/[^/]+$')
+end
+for _, field in ipairs(redis.call('HKEYS', KEYS[1])) do
+  if string.sub(field, 1, string.len(ARGV[6])) == ARGV[6] then return 0 end
+end
+redis.call('HSET', KEYS[1], ARGV[4], data, ARGV[5], version)
+return 1`)
+	renameWorkspacePath = redis.NewScript(`
+if redis.call('HGET', KEYS[1], 'm') ~= ARGV[1] then return -3 end
+local fields = redis.call('HGETALL', KEYS[1])
+local values = {}
+for i = 1, #fields, 2 do values[fields[i]] = fields[i + 1] end
+local oldData = 'd:' .. ARGV[2]
+local oldVersion = 'v:' .. ARGV[2]
+local newData = 'd:' .. ARGV[3]
+local newVersion = 'v:' .. ARGV[3]
+if values[newData] or values[newVersion] then return 0 end
+local parent = string.match(ARGV[3], '^(.*)/[^/]+$')
+while parent do
+  if values['d:' .. parent] or values['v:' .. parent] then return 0 end
+  parent = string.match(parent, '^(.*)/[^/]+$')
+end
+local newPrefix = ARGV[3] .. '/'
+for field, _ in pairs(values) do
+  if (string.sub(field, 1, 2) == 'd:' or string.sub(field, 1, 2) == 'v:') and string.sub(field, 3, 2 + string.len(newPrefix)) == newPrefix then return 0 end
+end
+local data = values[oldData]
+local version = values[oldVersion]
+if data or version then
+  if not data or not version then return -3 end
+  redis.call('HSET', KEYS[1], newData, data, newVersion, version)
+  redis.call('HDEL', KEYS[1], oldData, oldVersion)
+  return 1
+end
+local oldPrefix = ARGV[2] .. '/'
+local moved = 0
+for field, _ in pairs(values) do
+  local kind = string.sub(field, 1, 2)
+  local name = string.sub(field, 3)
+  if (kind == 'd:' or kind == 'v:') and string.sub(name, 1, string.len(oldPrefix)) == oldPrefix then
+    local target = kind .. ARGV[3] .. string.sub(name, string.len(ARGV[2]) + 1)
+    if values[target] then return 0 end
+    moved = moved + 1
+  end
+end
+if moved == 0 then return -1 end
+for field, value in pairs(values) do
+  local kind = string.sub(field, 1, 2)
+  local name = string.sub(field, 3)
+  if (kind == 'd:' or kind == 'v:') and string.sub(name, 1, string.len(oldPrefix)) == oldPrefix then
+    local target = kind .. ARGV[3] .. string.sub(name, string.len(ARGV[2]) + 1)
+    redis.call('HSET', KEYS[1], target, value)
+    redis.call('HDEL', KEYS[1], field)
+  end
+end
+return 1`)
 )
 
 // Workspace is a principal-scoped, shell-less virtual filesystem backed by Redis.
@@ -53,6 +133,7 @@ type Workspace struct {
 }
 
 var _ tool.Workspace = (*Workspace)(nil)
+var _ tool.WorkspaceNamespace = (*Workspace)(nil)
 var _ tool.AuthorityResourceResolver = (*Workspace)(nil)
 
 // CreateWorkspace creates or opens a principal namespace. Reopening an existing
@@ -204,6 +285,147 @@ func (w *Workspace) Stat(ctx context.Context, p string) (tool.FileInfo, error) {
 	return tool.FileInfo{Name: path.Base(p), Size: int64(len(data)), Mode: 0o644, ModTime: time.Time{}}, nil
 }
 
+// ReadDir returns immediate children of a prefix-derived virtual directory.
+func (w *Workspace) ReadDir(ctx context.Context, p string) ([]tool.FileInfo, error) {
+	dir, err := cleanWorkspaceDir(p)
+	if err != nil {
+		return nil, err
+	}
+	files, err := w.snapshot(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if dir != "" {
+		if _, ok := files[dir]; ok {
+			return nil, &fs.PathError{Op: "readdir", Path: p, Err: fs.ErrInvalid}
+		}
+	}
+	prefix := ""
+	if dir != "" {
+		prefix = dir + "/"
+	}
+	entries := make(map[string]tool.FileInfo)
+	for name, data := range files {
+		if !strings.HasPrefix(name, prefix) {
+			continue
+		}
+		rest := strings.TrimPrefix(name, prefix)
+		child, _, nested := strings.Cut(rest, "/")
+		if nested {
+			entries[child] = tool.FileInfo{Name: child, Mode: fs.ModeDir | 0o755, IsDir: true}
+		} else if child != "" {
+			entries[child] = tool.FileInfo{Name: child, Size: int64(len(data)), Mode: 0o644}
+		}
+	}
+	if len(entries) == 0 && dir != "" {
+		return nil, &fs.PathError{Op: "readdir", Path: p, Err: fs.ErrNotExist}
+	}
+	out := make([]tool.FileInfo, 0, len(entries))
+	for _, entry := range entries {
+		out = append(out, entry)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out, nil
+}
+
+// Remove atomically removes one regular file and refuses non-recursive removal
+// of a prefix-derived directory.
+func (w *Workspace) Remove(ctx context.Context, p string) error {
+	key, err := cleanWorkspacePath(p)
+	if err != nil {
+		return err
+	}
+	if _, err := w.snapshot(ctx); err != nil {
+		return err
+	}
+	result, err := w.runScript(ctx, removeWorkspacePath, workspaceFormat, workspaceData+key, workspaceVersion+key, workspaceData+key+"/")
+	if err != nil {
+		return fmt.Errorf("redisstore: remove workspace path: %w", err)
+	}
+	switch result {
+	case 1:
+		return nil
+	case -1:
+		return &fs.PathError{Op: "remove", Path: p, Err: fs.ErrNotExist}
+	case -2:
+		return &fs.PathError{Op: "remove", Path: p, Err: tool.ErrDirectoryNotEmpty}
+	default:
+		return errors.New("redisstore: workspace namespace is unavailable or corrupt")
+	}
+}
+
+// Rename atomically moves one file or a complete virtual-directory prefix and
+// refuses an existing destination.
+func (w *Workspace) Rename(ctx context.Context, oldPath, newPath string) error {
+	oldKey, err := cleanWorkspacePath(oldPath)
+	if err != nil {
+		return err
+	}
+	newKey, err := cleanWorkspacePath(newPath)
+	if err != nil {
+		return err
+	}
+	if strings.HasPrefix(newKey, oldKey+"/") {
+		return &fs.PathError{Op: "rename", Path: newPath, Err: fs.ErrInvalid}
+	}
+	if _, err := w.snapshot(ctx); err != nil {
+		return err
+	}
+	result, err := w.runScript(ctx, renameWorkspacePath, workspaceFormat, oldKey, newKey)
+	if err != nil {
+		return fmt.Errorf("redisstore: rename workspace path: %w", err)
+	}
+	switch result {
+	case 1:
+		return nil
+	case 0:
+		return &fs.PathError{Op: "rename", Path: newPath, Err: fs.ErrExist}
+	case -1:
+		return &fs.PathError{Op: "rename", Path: oldPath, Err: fs.ErrNotExist}
+	default:
+		return errors.New("redisstore: workspace namespace is unavailable or corrupt")
+	}
+}
+
+// CopyFile atomically copies one regular file to an absent destination.
+func (w *Workspace) CopyFile(ctx context.Context, source, destination string) (tool.FileVersion, error) {
+	src, err := cleanWorkspacePath(source)
+	if err != nil {
+		return tool.FileVersion{}, err
+	}
+	dst, err := cleanWorkspacePath(destination)
+	if err != nil {
+		return tool.FileVersion{}, err
+	}
+	files, err := w.snapshot(ctx)
+	if err != nil {
+		return tool.FileVersion{}, err
+	}
+	expected := ""
+	if data, ok := files[src]; ok {
+		expected = versionToken(data)
+	}
+	result, err := w.runScript(ctx, copyWorkspaceFile, workspaceFormat, workspaceData+src, workspaceVersion+src, workspaceData+dst, workspaceVersion+dst, workspaceData+dst+"/", expected)
+	if err != nil {
+		return tool.FileVersion{}, fmt.Errorf("redisstore: copy workspace file: %w", err)
+	}
+	switch result {
+	case 1:
+		return tool.NewFileVersion(expected), nil
+	case 0:
+		return tool.FileVersion{}, &fs.PathError{Op: "copy", Path: destination, Err: fs.ErrExist}
+	case -1:
+		if _, dirErr := w.ReadDir(ctx, source); dirErr == nil {
+			return tool.FileVersion{}, &fs.PathError{Op: "copy", Path: source, Err: fs.ErrInvalid}
+		}
+		return tool.FileVersion{}, &fs.PathError{Op: "copy", Path: source, Err: fs.ErrNotExist}
+	case -2:
+		return tool.FileVersion{}, &tool.VersionMismatchError{Path: source}
+	default:
+		return tool.FileVersion{}, errors.New("redisstore: workspace namespace is unavailable or corrupt")
+	}
+}
+
 // Glob returns sorted paths matching a doublestar pattern.
 func (w *Workspace) Glob(ctx context.Context, pattern string) ([]string, error) {
 	files, err := w.snapshot(ctx)
@@ -336,6 +558,13 @@ func cleanWorkspacePath(p string) (string, error) {
 		return "", fmt.Errorf("redisstore: path escapes workspace: %q", p)
 	}
 	return cleaned, nil
+}
+
+func cleanWorkspaceDir(p string) (string, error) {
+	if p == "" || p == "." {
+		return "", nil
+	}
+	return cleanWorkspacePath(p)
 }
 
 func normalizeWorkspaceGlob(pattern string) string {

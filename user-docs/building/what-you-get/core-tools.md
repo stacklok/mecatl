@@ -24,8 +24,12 @@ These tools are always present in a default session (no extra configuration requ
 | Catalog name | Purpose | Read-only? |
 |---|---|---|
 | `Read` | Read a file from the workspace by path. The primary way the model loads source code, config, and data files. | Yes |
+| `ListDir` | List one directory's immediate children. Results are sorted and directories carry a trailing `/`; virtual workspaces may derive directories from file paths and omit empty directories. | Yes |
 | `Write` | Create a missing file or conditionally replace an existing file in the workspace. A replacement requires a prior Read and an unchanged version; concurrent changes and creations surface as model-visible conflicts rather than being silently clobbered. | No |
 | `Edit` | Apply an exact-string replacement to a file. Enforces read-before-edit, exact match, and uniqueness (or `replace_all`). The file must be unchanged since it was read; a concurrent change or deletion since the read surfaces as a model-visible refusal to re-read and retry. Safer than Write for targeted changes. | No |
+| `Copy` | Copy one regular file to a new path. The destination must not exist; directories and overwrites are refused. | No |
+| `Move` | Move a file or directory to a new path. The destination must not exist, so an existing path is never silently replaced. | No |
+| `Remove` | Remove one file or empty physical directory. Removal is never recursive; non-empty and virtual derived directories are refused. | No |
 | `Bash` | Execute a shell command. The model's general-purpose escape hatch for tasks no other tool covers. Subject to permission rules. Supports `background: true` for long-running commands (see below). | No |
 | `BashStatus` | Check on the background commands `Bash` started in this run: poll a job's output tail, collect a finished job's result, or cancel a job. Registered wherever `Bash` is. | Yes |
 | `Grep` | Search file contents for a pattern (regex or literal) across the workspace. Returns matching lines with context. Supports `**` recursive globs when scoping the search to a subtree; broad unscoped searches have a safety budget, so supply `path` for large workspaces. | Yes |
@@ -45,7 +49,7 @@ Fetched text is external input. Mecatl strips active HTML elements, converts the
 
 :::note[Bash is mutating]
 
-`Bash` is always classified as mutating regardless of what the command does. If you need the model to run read-only shell commands concurrently, use `Grep` and `Glob` instead — they are purpose-built read-only tools that run in parallel.
+`Bash` is always classified as mutating regardless of what the command does. If you need the model to run read-only shell commands concurrently, use `ListDir`, `Grep`, and `Glob` instead — they are purpose-built read-only tools that run in parallel.
 
 :::
 
@@ -74,7 +78,7 @@ A `Bash` call with `background: true` returns immediately with a `bashcmd-<id>` 
 
 ### The no-filesystem session profile
 
-A session can be created with `profile: "no-fs"` — for a workspace that has no real filesystem to speak of, or a deployment that never wants one in reach. It removes `Read`/`Write`/`Edit`/`Grep`/`Glob`/`Bash`/`BashStatus`/`Parallel`/`SkillDraft` from the catalog entirely; `WebFetch`, `WebSearch`, the memory tools, and any MCP tools stay. A `Subagent`/`Team` child spawned from a no-fs session gets the equivalent file-less catalog, not the default one. This is a session-creation choice the client makes, not something the model can flip mid-session — see [Engine & session model](engine-and-session.md) for how a session is created.
+A session can be created with `profile: "no-fs"` — for a workspace that has no real filesystem to speak of, or a deployment that never wants one in reach. It removes `Read`/`ListDir`/`Write`/`Edit`/`Copy`/`Move`/`Remove`/`Grep`/`Glob`/`Bash`/`BashStatus`/`Parallel`/`SkillDraft` from the catalog entirely; `WebFetch`, `WebSearch`, the memory tools, and any MCP tools stay. A `Subagent`/`Team` child spawned from a no-fs session gets the equivalent file-less catalog, not the default one. This is a session-creation choice the client makes, not something the model can flip mid-session — see [Engine & session model](engine-and-session.md) for how a session is created.
 
 ---
 

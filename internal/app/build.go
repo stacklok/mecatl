@@ -6629,6 +6629,7 @@ func readOnlyExplorerCatalog(runner tool.CommandRunner) *tool.Catalog {
 	workspace := classification(server.KindExempt,
 		"bound to the authorized child workspace and constrained by its isolation and tool permissions")
 	classified.mustRegister(tools.ReadTool{}, workspace)
+	classified.mustRegister(tools.ListDirTool{}, workspace)
 	classified.mustRegister(tools.GrepTool{}, workspace)
 	classified.mustRegister(tools.GlobTool{}, workspace)
 	if runner != nil {
@@ -6648,7 +6649,7 @@ func writableExplorerCatalog(runner tool.CommandRunner, surface string) *tool.Ca
 	classified := newClassifiedCatalog()
 	workspace := classification(server.KindExempt,
 		"bound to the authorized child workspace and constrained by its isolation and tool permissions")
-	for _, t := range []tool.Tool{tools.ReadTool{}, tools.GrepTool{}, tools.GlobTool{}} {
+	for _, t := range []tool.Tool{tools.ReadTool{}, tools.ListDirTool{}, tools.GrepTool{}, tools.GlobTool{}} {
 		classified.mustRegister(t, workspace)
 	}
 	if runner != nil {
@@ -6656,6 +6657,9 @@ func writableExplorerCatalog(runner tool.CommandRunner, surface string) *tool.Ca
 	}
 	classified.mustRegister(tools.EditTool{}, workspace)
 	classified.mustRegister(tools.WriteTool{}, workspace)
+	classified.mustRegister(tools.CopyTool{}, workspace)
+	classified.mustRegister(tools.MoveTool{}, workspace)
+	classified.mustRegister(tools.RemoveTool{}, workspace)
 	mustValidateClassifiedCatalog(classified, surface)
 	return classified.catalog
 }
@@ -7907,11 +7911,15 @@ func registerDefaultMemberTools(classified *classifiedCatalog, spec agent.Member
 	workspace := classification(server.KindExempt,
 		"bound to the authorized member workspace and constrained by member isolation and tool permissions")
 	classified.mustRegister(tools.ReadTool{}, workspace)
+	classified.mustRegister(tools.ListDirTool{}, workspace)
 	classified.mustRegister(tools.GrepTool{}, workspace)
 	classified.mustRegister(tools.GlobTool{}, workspace)
 	if spec.Mutating {
 		classified.mustRegister(tools.EditTool{}, workspace)
 		classified.mustRegister(tools.WriteTool{}, workspace)
+		classified.mustRegister(tools.CopyTool{}, workspace)
+		classified.mustRegister(tools.MoveTool{}, workspace)
+		classified.mustRegister(tools.RemoveTool{}, workspace)
 	}
 	if memberBash := memberBashRunner(spec.Mutating, runner, mutatingRunner); memberBash != nil && (spec.Mutating || roIsolationAvailable) {
 		classified.mustRegister(agent.NewBashTool(), workspace)
@@ -7960,7 +7968,7 @@ const untrustedMemberShellNote = "This workspace has no subagent shell enabled: 
 // there is no filesystem from the prompt, not from a trail of unknown-tool
 // errors. The "NO filesystem" substring is a stable test key.
 const noFSPostureNote = "This session has NO filesystem: there is no workspace, and no file tools " +
-	"(Read/Write/Edit/Grep/Glob) or shell exist. Do not attempt to read, write, search, or run " +
+	"(Read/ListDir/Write/Edit/Copy/Move/Remove/Grep/Glob) or shell exist. Do not attempt to read, write, search, or run " +
 	"commands against files — nothing is there to lose or find. Work through your other tools " +
 	"(MCP tools, memory, web fetch) and your own reasoning; delegate only file-free investigations. " +
 	"Skills provide their instruction text only — a skill's bundled asset files are not readable here."
@@ -7987,7 +7995,7 @@ func applyNoFSPosture(pc prompt.Config, note string) prompt.Config {
 	return pc
 }
 
-const redisWorkspacePostureNote = "This session uses a persistent principal-scoped Redis workspace. Use Read/Edit/Write/Grep/Glob for files. It has no shell, executable-file semantics, git worktrees, or filesystem fork/merge workflow."
+const redisWorkspacePostureNote = "This session uses a persistent principal-scoped Redis workspace. Use Read/ListDir/Edit/Write/Copy/Move/Remove/Grep/Glob for files. It has no shell, executable-file semantics, git worktrees, or filesystem fork/merge workflow."
 
 func redisWorkspacePostureEnabled(cfg Config, noFS bool) bool {
 	return cfg.RedisFilesystem && !noFS

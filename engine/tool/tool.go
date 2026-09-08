@@ -25,6 +25,15 @@ import (
 // the harness.
 var ErrNoShell = errors.New("tool: no shell available")
 
+// ErrDirectoryNotEmpty is returned when a non-recursive Remove targets a
+// directory that still has children.
+var ErrDirectoryNotEmpty = errors.New("tool: directory not empty")
+
+// ErrFileOperationUnsupported is returned by a Workspace whose backing protocol
+// cannot represent a namespace operation (for example ACP has no delete/rename
+// RPC). Callers should surface it as a model-addressable capability limitation.
+var ErrFileOperationUnsupported = errors.New("tool: filesystem operation unsupported")
+
 // ToolSpec is what the model sees for a tool: its name, a documentation-quality
 // description (when to use / when not / example / limits), and the JSON schema
 // for its arguments. ToolSpecs are stable across turns so the LLM adapter can
@@ -419,6 +428,31 @@ type Workspace interface {
 	// Grep returns the matches of a regular expression across files selected by
 	// an optional path glob. Results are capped/shaped by the adapter.
 	Grep(ctx context.Context, pattern, pathGlob string) ([]GrepMatch, error)
+}
+
+// WorkspaceNamespace is the additive namespace-operation extension implemented
+// by workspaces that can list and mutate path names beyond content replacement.
+// Keeping it separate from Workspace preserves compatibility for consumers whose
+// backing protocol exposes only read/write, while allowing the built-in namespace
+// tools to fail honestly when the capability is absent. An adapter may implement
+// only the operations its protocol can express and return ErrFileOperationUnsupported
+// for the rest.
+//
+// Adapters without explicit directory records may derive directories from file
+// path prefixes. In those adapters empty directories do not exist: ReadDir lists
+// only derived children, and Remove on a derived directory necessarily reports
+// ErrDirectoryNotEmpty. Namespace operations deliberately do not consult or
+// update the Environment's read ledger; that ledger protects content-derived
+// Edit and overwrite-Write operations only.
+type WorkspaceNamespace interface {
+	// ReadDir returns immediate children sorted by name.
+	ReadDir(ctx context.Context, path string) ([]FileInfo, error)
+	// Remove removes one file or empty physical directory, never recursively.
+	Remove(ctx context.Context, path string) error
+	// Rename moves a file or directory and refuses an existing destination.
+	Rename(ctx context.Context, oldPath, newPath string) error
+	// CopyFile copies one regular file to an absent destination and returns its version.
+	CopyFile(ctx context.Context, source, destination string) (FileVersion, error)
 }
 
 // VersionMismatchError is the error ReplaceFile returns when the file's current

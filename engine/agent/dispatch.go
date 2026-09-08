@@ -1315,7 +1315,7 @@ func (e *Engine) authorizeExecution(ctx context.Context, r *Run, sess *session.S
 	if err != nil {
 		return session.NewToolError(call.ID, fmt.Sprintf("tool %q denied by authority: %v", call.Name, err)), true
 	}
-	resource, err := authorityResource(call, env)
+	resources, err := authorityResources(call, env)
 	if err != nil {
 		return session.NewToolError(call.ID, fmt.Sprintf("tool %q denied by authority: %v", target, err)), true
 	}
@@ -1328,30 +1328,35 @@ func (e *Engine) authorizeExecution(ctx context.Context, r *Run, sess *session.S
 	if requirement, required := e.deps.AuthorityEvaluator.(port.AuthorityOwnerRequirement); required && requirement.RequiresOwnerIdentity() && (ownerIssuer == "" || ownerSubject == "") {
 		return session.NewToolError(call.ID, fmt.Sprintf("tool %q denied by authority: owner identity is unavailable", target)), true
 	}
-	request := port.AuthorityRequest{
-		CapabilitySet:   authority.CapabilitySet,
-		ToolName:        target,
-		Action:          call.Name,
-		DelegationDepth: authority.CapabilitySet.RemainingDelegationDepth,
-		Principal: port.AuthorityPrincipal{
-			Definition:   authorityDefinition(authority),
-			Instance:     string(sess.ID),
-			OwnerIssuer:  ownerIssuer,
-			OwnerSubject: ownerSubject,
-		},
-		Resource: resource,
+	if len(resources) == 0 {
+		resources = []*port.AuthorityResource{nil}
 	}
-	decision, err := e.deps.AuthorityEvaluator.AuthorizeTool(ctx, request)
-	if err != nil {
-		r.diag.Log(ctx, port.LevelWarn, "authority evaluator unavailable", "tool", target, "turn", turnIdx, "err", err)
-		return session.NewToolError(call.ID, fmt.Sprintf("tool %q was not executed: authority evaluator unavailable", target)), true
-	}
-	if !decision.Allowed {
-		reason := decision.Reason
-		if reason == "" {
-			reason = "authorization denied"
+	for _, resource := range resources {
+		request := port.AuthorityRequest{
+			CapabilitySet:   authority.CapabilitySet,
+			ToolName:        target,
+			Action:          call.Name,
+			DelegationDepth: authority.CapabilitySet.RemainingDelegationDepth,
+			Principal: port.AuthorityPrincipal{
+				Definition:   authorityDefinition(authority),
+				Instance:     string(sess.ID),
+				OwnerIssuer:  ownerIssuer,
+				OwnerSubject: ownerSubject,
+			},
+			Resource: resource,
 		}
-		return session.NewToolError(call.ID, fmt.Sprintf("tool %q denied by authority: %s", target, reason)), true
+		decision, err := e.deps.AuthorityEvaluator.AuthorizeTool(ctx, request)
+		if err != nil {
+			r.diag.Log(ctx, port.LevelWarn, "authority evaluator unavailable", "tool", target, "turn", turnIdx, "err", err)
+			return session.NewToolError(call.ID, fmt.Sprintf("tool %q was not executed: authority evaluator unavailable", target)), true
+		}
+		if !decision.Allowed {
+			reason := decision.Reason
+			if reason == "" {
+				reason = "authorization denied"
+			}
+			return session.NewToolError(call.ID, fmt.Sprintf("tool %q denied by authority: %s", target, reason)), true
+		}
 	}
 	return session.ToolResult{}, false
 }
@@ -1390,23 +1395,43 @@ func authorityTarget(call session.ToolCall, _ governance.CapabilitySet) (string,
 	}
 }
 
-func authorityResource(call session.ToolCall, env tool.Environment) (*port.AuthorityResource, error) {
+func authorityResources(call session.ToolCall, env tool.Environment) ([]*port.AuthorityResource, error) {
+	var paths []string
 	switch call.Name {
-	case "Read", "Edit", "Write":
-		path, err := authorityPath(call.Args)
+	case "Read", "ListDir", "Edit", "Write", "Remove":
+		path, err := authorityPathNamed(call.Args, "path")
 		if err != nil {
 			return nil, err
 		}
-		return authorityWorkspaceResource(path, env)
+		paths = []string{path}
+	case "Copy", "Move":
+		source, err := authorityPathNamed(call.Args, "source")
+		if err != nil {
+			return nil, err
+		}
+		destination, err := authorityPathNamed(call.Args, "destination")
+		if err != nil {
+			return nil, err
+		}
+		paths = []string{source, destination}
 	default:
 		return nil, nil
 	}
+	resources := make([]*port.AuthorityResource, 0, len(paths))
+	for _, path := range paths {
+		resource, err := authorityWorkspaceResource(path, env)
+		if err != nil {
+			return nil, err
+		}
+		resources = append(resources, resource)
+	}
+	return resources, nil
 }
 
-// authorityPath reads only the path field from the known local-file tool shapes.
+// authorityPathNamed reads one named path field from a known local-file tool shape.
 // It refuses duplicate, missing, non-string, or trailing values so an evaluator
 // never receives a target selected from ambiguous JSON.
-func authorityPath(args json.RawMessage) (string, error) {
+func authorityPathNamed(args json.RawMessage, field string) (string, error) {
 	decoder := json.NewDecoder(strings.NewReader(string(args)))
 	token, err := decoder.Token()
 	if err != nil || token != json.Delim('{') {
@@ -1424,7 +1449,7 @@ func authorityPath(args json.RawMessage) (string, error) {
 		if err := decoder.Decode(&value); err != nil {
 			return "", errors.New("local resource arguments are invalid")
 		}
-		if key != "path" {
+		if key != field {
 			continue
 		}
 		pathCount++

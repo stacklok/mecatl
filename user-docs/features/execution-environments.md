@@ -26,11 +26,13 @@ filesystem.
 
 ## Default workspace
 
-Create a default session with a workspace root. `Read`, `Write`, `Edit`, `Grep`,
-`Glob`, and `Bash` all use that root. The workspace enforces the file-operation
-safety protocol: existing files must be read before overwrite, edits use exact
-and unique matches, and writes use version-aware conditional replacement so a
-concurrent change is never silently clobbered.
+Create a default session with a workspace root. `Read`, `ListDir`, `Write`,
+`Edit`, `Copy`, `Move`, `Remove`, `Grep`, `Glob`, and `Bash` all use that root.
+The workspace enforces the file-operation safety protocol: existing files must
+be read before overwrite, edits use exact and unique matches, and writes use
+version-aware conditional replacement so a concurrent change is never silently
+clobbered. Namespace operations are narrower: removal is non-recursive, copy
+accepts only regular files, and copy and move refuse an existing destination.
 
 The version ledger belongs to the live workspace/environment instance. A new
 run or process may require a fresh `Read` before an `Edit` or existing-file
@@ -46,8 +48,9 @@ curl -s -X POST http://127.0.0.1:8081/v1/sessions \
 ```
 
 The profile requires an empty `workspace`. Any other profile value is rejected;
-there is no silent fallback. A no-FS catalog removes `Read`, `Write`, `Edit`,
-`Grep`, `Glob`, `Bash`, `BashStatus`, `Parallel`, and `SkillDraft`. It retains
+there is no silent fallback. A no-FS catalog removes `Read`, `ListDir`,
+`Write`, `Edit`, `Copy`, `Move`, `Remove`, `Grep`, `Glob`, `Bash`, `BashStatus`,
+`Parallel`, and `SkillDraft`. It retains
 web tools, memory, MCP tools, skills, `Subagent`, and `Team`; children use the
 same file-less surface and cannot create a shell or fork a workspace.
 

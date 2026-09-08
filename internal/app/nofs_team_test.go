@@ -76,7 +76,7 @@ func TestNoFSTeamMemberSurface(t *testing.T) {
 	if build.Engine == nil {
 		t.Fatal("no-fs member factory returned a nil engine")
 	}
-	for _, name := range []string{"Read", "Edit", "Write", "Grep", "Glob", "Bash", "Parallel", "SkillDraft"} {
+	for _, name := range []string{"Read", "ListDir", "Edit", "Write", "Copy", "Move", "Remove", "Grep", "Glob", "Bash", "Parallel", "SkillDraft"} {
 		if build.Engine.HasTool(name) {
 			t.Errorf("no-fs member catalog carries %q — a file/shell tool leaked into the file-less member surface", name)
 		}

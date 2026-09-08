@@ -86,11 +86,15 @@ func seed(t *testing.T, ws *memfs.Workspace, path, content string) {
 // read-parallel / mutate-serial dispatch (gauntlet #4) for the filesystem tools.
 func TestReadOnlyFlags(t *testing.T) {
 	want := map[string]bool{
-		"Read":  true,
-		"Edit":  false,
-		"Write": false,
-		"Grep":  true,
-		"Glob":  true,
+		"Read":    true,
+		"ListDir": true,
+		"Edit":    false,
+		"Write":   false,
+		"Copy":    false,
+		"Move":    false,
+		"Remove":  false,
+		"Grep":    true,
+		"Glob":    true,
 	}
 	got := map[string]bool{}
 	for _, tl := range All() {
@@ -110,12 +114,12 @@ func TestReadOnlyFlags(t *testing.T) {
 	}
 }
 
-// TestAllAndRegister pins the fstools bundle: All() is exactly the five
+// TestAllAndRegister pins the fstools bundle: All() is exactly the nine
 // filesystem tools (NO Bash — it is opt-in via NewBashTool), Register adds them,
 // and NewBashTool registers Bash separately.
 func TestAllAndRegister(t *testing.T) {
-	if len(All()) != 5 {
-		t.Fatalf("All() = %d tools, want 5 (Read, Edit, Write, Grep, Glob)", len(All()))
+	if len(All()) != 9 {
+		t.Fatalf("All() = %d tools, want 9 (Read, ListDir, Edit, Write, Copy, Move, Remove, Grep, Glob)", len(All()))
 	}
 	for _, tl := range All() {
 		if tl.Spec().Name == BashToolName {
@@ -126,7 +130,7 @@ func TestAllAndRegister(t *testing.T) {
 	if err := Register(cat); err != nil {
 		t.Fatalf("Register: %v", err)
 	}
-	for _, name := range []string{"Read", "Edit", "Write", "Grep", "Glob"} {
+	for _, name := range []string{"Read", "ListDir", "Edit", "Write", "Copy", "Move", "Remove", "Grep", "Glob"} {
 		if _, ok := cat.Lookup(name); !ok {
 			t.Errorf("catalog missing %q after Register", name)
 		}

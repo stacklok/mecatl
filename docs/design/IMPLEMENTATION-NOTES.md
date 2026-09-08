@@ -3828,8 +3828,9 @@ no explicit rule list guardrails take the built-in **default block rule set**
 command it can prove read-only (reusing `governance.ReadOnlyBash`/`SplitCommands`/
 `SubstitutionReadOnly` — fail-safe: substitution/ambiguity is inspected), so a
 guardrail-protected shell costs an LLM call ONLY on a mutating/outward command (e.g.
-`gh pr merge`), not on every `ls`. The OTHER local tools (Read/Edit/Write/Grep/Glob)
-remain deliberately unmatched. An explicit `guardrails.rules` list replaces the
+`gh pr merge`), not on every `ls`. The OTHER local tools
+(Read/ListDir/Edit/Write/Copy/Move/Remove/Grep/Glob) remain deliberately unmatched. An
+explicit `guardrails.rules` list replaces the
 defaults (an operator's explicit `Bash` rule does NOT inherit the pre-filter — it
 inspects every command). There is no per-session call-count cap — the checker runs per
 matched call, and cost control lives in the operator's provider/billing layer (checker
@@ -6140,7 +6141,8 @@ because the shared engine has FS tools baked in.
   filesystem fork; the deliverable is a fork PATH); `registerSkillDraft` is SKIPPED (drafting
   writes a SKILL.md — a filesystem-authoring act). Everything else (global/client MCP +
   resource meta-tools, Subagent trio, Team/InspectMember, the memory six, Skill) registers
-  identically. The EXACT delta — default set MINUS {Read, Edit, Write, Grep, Glob, Bash,
+  identically. The EXACT delta — default set MINUS {Read, ListDir, Edit, Write, Copy, Move,
+  Remove, Grep, Glob, Bash,
   Parallel, SkillDraft} — is pinned by `TestNoFSCatalogProfile` (the issue-#42 idiom over the
   REAL `buildCatalog` assets, mutation-verified).
 - **Skill stays ON, body-only:** a skill body is TEXT INJECTION, not a filesystem act; an
@@ -6223,6 +6225,18 @@ capability handed to tools. The built-in bodies use only the safe path:
 4. A successful create/replace records the returned new version so another mutation through the same
    live Workspace remains valid.
 
+The additive namespace extension is `engine/tool/tool.go` (`WorkspaceNamespace`), not a widening of
+`Workspace`: external content-only workspaces remain source-compatible and the built-in tools return an
+honest unsupported result when the extension is absent. `ListDir` is read-only; `Copy`, `Move`, and
+`Remove` are mutate-serial and do not consult or update the content read ledger. Their contract is
+intentionally safer than general POSIX commands: Remove is non-recursive, Copy accepts one regular file,
+and Copy/Rename refuse an existing destination. `engine/adapter/fsconformance/fsconformance.go`
+(`RunNamespace`) pins sorting, derived-directory behavior, no-clobber, subtree rename, and copied-version
+consistency across memfs, osfs, and Redis. Redis performs each namespace mutation atomically in Lua;
+prefix-backed memfs/Redis workspaces derive directories and cannot retain empty ones. Authority-bound
+Copy and Move calls authorize source and destination as separate physical resources before execution.
+See ADR 0314.
+
 The final ReplaceFile is load-bearing: `engine/adapter/fstools/fstools_test.go`
 (`TestEditConditionalReplaceRejectsConcurrentChange`,
 `TestWriteConditionalReplaceRejectsConcurrentChange`) injects a mutation after the tool's current read
@@ -6271,9 +6285,9 @@ tool body, never re-opens it after).
   built from `internal/adapter/osfs/osfs.go` (`Canonicalize`) and its sibling exported
   helpers `LocalizeInRoot` and `ResolveRoot` — the SAME canonicalize-then-reject primitives
   the tool body runs over the same canonicalized root, so a symlinked absolute path
-  classifies identically to the tool body by construction. Only the three path-carrying
-  FS tools classify: Bash is gated by its own classifiers, Glob/Grep route patterns and
-  stay workspace-confined at every posture (ADR-0047 point 5), and a malformed path arg
+  classifies identically to the tool body by construction. The escape relax applies only
+  to Read/Write/Edit: ListDir/Copy/Move/Remove stay workspace-confined, Bash is gated by
+  its own classifiers, and Glob/Grep route patterns and stay workspace-confined at every posture (ADR-0047 point 5), and a malformed path arg
   classifies in-root (the
   tool body's own validation rejects it — the escape decision never invents a path).
 - `internal/app/escapepolicy.go` (`escapePolicy`) — a root-aware wrapping

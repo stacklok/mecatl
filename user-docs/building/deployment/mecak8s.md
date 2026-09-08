@@ -220,7 +220,7 @@ note below.
 ### Redis virtual workspace
 
 Set `redis.filesystem.enabled=true` (or pass `--redis-filesystem`) to provide
-persistent Read/Edit/Write/Grep/Glob files without mounting a volume. Files are
+persistent Read/ListDir/Edit/Write/Copy/Move/Remove/Grep/Glob files without mounting a volume. Files are
 partitioned by the session owner's exact OIDC issuer/subject pair; same-owner
 sessions share a namespace, while ownerless sessions share a reserved anonymous
 namespace. The persisted placement is revalidated on every run. Redis failures,

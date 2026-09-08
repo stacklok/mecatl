@@ -3,6 +3,8 @@ package osfs
 import (
 	"context"
 	"errors"
+	"io/fs"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -244,5 +246,105 @@ func TestRelaxedWriteCreateFileReplaceFileRejectAbsoluteSymlinkLeaf(t *testing.T
 	data, err = os.ReadFile(thirdTarget)
 	if err != nil || string(data) != "third-original" {
 		t.Fatalf("third content after ReplaceFile = %q, %v — must remain untouched", data, err)
+	}
+}
+
+// TestReadDirIncludesSymlinkEntryWithSymlinkMode pins that a symlink INSIDE the
+// workspace root (created via Bash `ln -s`, not an escape) is reported by
+// ReadDir with FileInfo.Mode carrying fs.ModeSymlink — it must not be silently
+// coerced to look like a regular file entry, so a caller inspecting Mode can
+// tell a symlink apart from real content before acting on it.
+func TestReadDirIncludesSymlinkEntryWithSymlinkMode(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	ws, err := NewWorkspace(root)
+	if err != nil {
+		t.Fatalf("NewWorkspace: %v", err)
+	}
+	if _, err := ws.CreateFile(ctx, "target.txt", []byte("hello")); err != nil {
+		t.Fatalf("CreateFile(target.txt): %v", err)
+	}
+	if err := os.Symlink("target.txt", filepath.Join(root, "link.txt")); err != nil {
+		t.Fatalf("symlink in-root leaf: %v", err)
+	}
+
+	entries, err := ws.ReadDir(ctx, ".")
+	if err != nil {
+		t.Fatalf("ReadDir(root): %v", err)
+	}
+	var link *tool.FileInfo
+	for i := range entries {
+		if entries[i].Name == "link.txt" {
+			link = &entries[i]
+		}
+	}
+	if link == nil {
+		t.Fatalf("ReadDir(root) = %+v, missing link.txt entry", entries)
+	}
+	if link.Mode&fs.ModeSymlink == 0 {
+		t.Errorf("ReadDir(root) link.txt Mode = %v, want fs.ModeSymlink set", link.Mode)
+	}
+}
+
+// TestRemoveDeletesSymlinkItselfNotTarget pins that Remove on a symlink path
+// deletes the SYMLINK ENTRY, not the file it points to: after Remove, the link
+// is gone (an Lstat on it fails) but the target file it pointed to — reachable
+// directly, not through the removed link — is untouched. A Remove that
+// followed the link and deleted the target instead would silently destroy
+// content the model never named.
+func TestRemoveDeletesSymlinkItselfNotTarget(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	ws, err := NewWorkspace(root)
+	if err != nil {
+		t.Fatalf("NewWorkspace: %v", err)
+	}
+	if _, err := ws.CreateFile(ctx, "target.txt", []byte("hello")); err != nil {
+		t.Fatalf("CreateFile(target.txt): %v", err)
+	}
+	linkPath := filepath.Join(root, "link.txt")
+	if err := os.Symlink("target.txt", linkPath); err != nil {
+		t.Fatalf("symlink in-root leaf: %v", err)
+	}
+
+	if err := ws.Remove(ctx, "link.txt"); err != nil {
+		t.Fatalf("Remove(link.txt): %v", err)
+	}
+	if _, err := os.Lstat(linkPath); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("Lstat(link.txt) after Remove = %v, want fs.ErrNotExist (the link entry itself must be gone)", err)
+	}
+	data, err := ws.Read(ctx, "target.txt")
+	if err != nil || string(data) != "hello" {
+		t.Fatalf("Read(target.txt) after Remove(link.txt) = %q, %v, want hello/nil (the link's target must survive)", data, err)
+	}
+}
+
+// TestCopyFileRejectsNonRegularSource pins that CopyFile refuses a source that
+// is not a regular file. A symlink whose target IS a regular file is
+// deliberately NOT this case — it follows normal copy semantics (see
+// TestRelaxedWriteCreateFileReplaceFileRejectAbsoluteSymlinkLeaf's sibling
+// coverage of the escaping-leaf case, and the in-root symlink-to-regular-file
+// path elsewhere in this package). A Unix domain socket is a non-regular file
+// that can be created and torn down deterministically without hanging the
+// test, unlike a FIFO (which blocks on open without a reader).
+func TestCopyFileRejectsNonRegularSource(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	ws, err := NewWorkspace(root)
+	if err != nil {
+		t.Fatalf("NewWorkspace: %v", err)
+	}
+	sockPath := filepath.Join(root, "sock")
+	l, err := net.Listen("unix", sockPath)
+	if err != nil {
+		t.Skipf("unix sockets unsupported on this platform: %v", err)
+	}
+	defer l.Close()
+
+	if _, err := ws.CopyFile(ctx, "sock", "dup.txt"); err == nil {
+		t.Fatal("CopyFile(unix socket source) = nil err, want a refusal (non-regular source)")
+	}
+	if _, err := ws.Read(ctx, "dup.txt"); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("dup.txt after refused CopyFile = %v, want fs.ErrNotExist (nothing must be planted)", err)
 	}
 }

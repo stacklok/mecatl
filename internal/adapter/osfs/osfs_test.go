@@ -28,6 +28,49 @@ func TestConformance(t *testing.T) {
 	})
 }
 
+// TestNamespaceConformance runs the shared WorkspaceNamespace conformance
+// table (ReadDir/Remove/Rename/CopyFile) against osfs.
+func TestNamespaceConformance(t *testing.T) {
+	fsconformance.RunNamespace(t, func(t *testing.T) tool.Workspace {
+		ws, err := osfs.NewWorkspace(t.TempDir())
+		if err != nil {
+			t.Fatalf("NewWorkspace: %v", err)
+		}
+		return ws
+	})
+}
+
+// TestEmptyPhysicalDirectorySurvivesLastFileRemoval pins osfs's real-directory
+// contract, the point where it diverges from memfs/redisstore's derived
+// directories (see the tool.WorkspaceNamespace doc-comment): osfs directories
+// are real physical inodes, so once a directory's last file is removed the
+// now-empty directory itself still exists — ReadDir reports it empty, and a
+// second Remove of it succeeds (it is a genuinely empty directory, not an
+// absent one).
+func TestEmptyPhysicalDirectorySurvivesLastFileRemoval(t *testing.T) {
+	ctx := context.Background()
+	ws, err := osfs.NewWorkspace(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewWorkspace: %v", err)
+	}
+	if _, err := ws.CreateFile(ctx, "sub/only.txt", []byte("x")); err != nil {
+		t.Fatalf("CreateFile: %v", err)
+	}
+	if err := ws.Remove(ctx, "sub/only.txt"); err != nil {
+		t.Fatalf("Remove(sub/only.txt): %v", err)
+	}
+	entries, err := ws.ReadDir(ctx, "sub")
+	if err != nil {
+		t.Fatalf("ReadDir(now-empty physical dir) = %v, want the directory to still exist", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("ReadDir(now-empty physical dir) = %v, want empty", entries)
+	}
+	if err := ws.Remove(ctx, "sub"); err != nil {
+		t.Fatalf("Remove(now-empty physical dir) = %v, want success", err)
+	}
+}
+
 // --- osfs CommandRunner tests (real shell, under t.TempDir) ---
 
 func newRunner(t *testing.T, dir string) tool.CommandRunner {

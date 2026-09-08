@@ -49,7 +49,7 @@ ignores internal churn:
   `memstore`, `sessnap`, `permpolicy`, `permstore`, `wallclock`, `nofs`,
   `search`, `webfetch`, `memlease`, `fstools`, `agentfs`, `skillfs`, and the `*conformance`
   suites). These ship as offline test doubles and sane defaults, not as a
-  stable API. `fstools` (the Read/Edit/Write/Grep/Glob/Bash tool bodies),
+  stable API. `fstools` (the Read/ListDir/Edit/Write/Copy/Move/Remove/Grep/Glob/Bash tool bodies),
   `agentfs` (the filesystem `.claude/agents` agent-def discovery adapter), and
   `skillfs` (the read-only `.claude/skills` discovery core + Skill tool body), and
   `search` (the WebSearch tool body + Exa/HTTP/SearXNG providers + offline fake),
