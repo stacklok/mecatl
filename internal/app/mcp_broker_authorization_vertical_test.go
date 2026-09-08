@@ -32,7 +32,6 @@ import (
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/session"
-	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/mcpauthority"
 	"github.com/stacklok/mecatl/internal/adapter/mcpbroker"
 	"github.com/stacklok/mecatl/internal/adapter/mcpbrokergrpc"
@@ -40,7 +39,6 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
 	"github.com/stacklok/mecatl/internal/adapter/server"
 	"github.com/stacklok/mecatl/internal/app"
-	brokercontract "github.com/stacklok/mecatl/internal/mcpbroker"
 )
 
 // TestSingletonBrokerRemediation_Scenario5_Stage3RemoteVertical is the full
@@ -52,9 +50,9 @@ func TestSingletonBrokerRemediation_Scenario5_Stage3RemoteVertical(t *testing.T)
 	runSingletonBrokerStage3RemoteVertical(t)
 }
 
-// TestSingletonBrokerRemediation_Scenario5_RestartBoundary replaces the real
-// production lifecycle at a stable endpoint. A parked attachment must fail closed,
-// while a fresh pre-prompt factory may attach to the replacement incarnation.
+// TestSingletonBrokerRemediation_Scenario5_RestartBoundary persists a real Stage-3
+// parked continuation, then replaces the production lifecycle at its exact endpoint.
+// The old binding must fail closed without dispatching upstream; a session created after replacement must attach and retry normally.
 func TestSingletonBrokerRemediation_Scenario5_RestartBoundary(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
 	defer cancel()
@@ -64,6 +62,12 @@ func TestSingletonBrokerRemediation_Scenario5_RestartBoundary(t *testing.T) {
 	t.Cleanup(certificateSource.Close)
 	address := reserveStage3Address(t)
 	callbackURL := "https://" + address + "/oauth/callback"
+	fixture := newBrokerAuthorizationFixture(t, callbackURL)
+	roots := x509.NewCertPool()
+	roots.AddCert(certificateSource.Certificate())
+	fixture.mcpClient = fixture.clientWithRoots(roots)
+	t.Setenv("MECATL_RESTART_CLIENT_SECRET", "restart-secret")
+
 	credentialDir := t.TempDir()
 	caFile := filepath.Join(credentialDir, "broker-ca.pem")
 	tokenFile := filepath.Join(credentialDir, "broker-token")
@@ -75,51 +79,47 @@ func TestSingletonBrokerRemediation_Scenario5_RestartBoundary(t *testing.T) {
 	}
 	productionConfig := func() mcpbrokerserver.ProductionConfig {
 		return mcpbrokerserver.ProductionConfig{
-			PublicAddress: address,
-			AdminAddress:  "127.0.0.1:0",
-			TLSConfig:     &tls.Config{Certificates: certificateSource.TLS.Certificates, MinVersion: tls.VersionTLS12},
-			OIDC: mcpbrokerserver.OIDCConfig{
-				Issuer: identity.server.URL, JWKSURI: identity.server.URL + "/keys", Audience: "mecak8s",
-				AllowedSubjects: []string{"mecak8s"}, TrustedCAPEM: identity.caPEM(), MaxJWKSStaleness: time.Minute,
-			},
-			ToolHive: mcpbroker.ToolHiveConfig{CallbackURL: callbackURL, Profiles: []mcpbroker.ToolHiveProfile{{
-				Name: "github", URL: "https://unused.example/mcp", Auth: "oauth",
-				OAuth:  &mcpbroker.ToolHiveOAuth{AuthorizationEndpoint: "https://identity.example/authorize", TokenEndpoint: "https://identity.example/token", ClientID: "restart-client", ClientSecretEnv: "MECATL_RESTART_CLIENT_SECRET"},
-				Static: []mcpbroker.StaticTool{{Name: "protected", Schema: json.RawMessage(`{"type":"object"}`), ReadOnly: true}},
-			}}},
-			PropagationWait: time.Millisecond,
-			DrainTimeout:    time.Second,
+			PublicAddress: address, AdminAddress: "127.0.0.1:0",
+			TLSConfig:       &tls.Config{Certificates: certificateSource.TLS.Certificates, MinVersion: tls.VersionTLS12},
+			OIDC:            mcpbrokerserver.OIDCConfig{Issuer: identity.server.URL, JWKSURI: identity.server.URL + "/keys", Audience: "mecak8s", AllowedSubjects: []string{"mecak8s"}, TrustedCAPEM: identity.caPEM(), MaxJWKSStaleness: time.Minute},
+			ToolHive:        mcpbroker.ToolHiveConfig{CallbackURL: callbackURL, Profiles: []mcpbroker.ToolHiveProfile{{Name: "github", URL: fixture.mcp.URL, Auth: "oauth", OAuth: &mcpbroker.ToolHiveOAuth{AuthorizationEndpoint: fixture.oauth.URL + "/authorize", TokenEndpoint: fixture.oauth.URL + "/token", ClientID: "restart-client", ClientSecretEnv: "MECATL_RESTART_CLIENT_SECRET", Scopes: []string{"read"}, RequestRefreshToken: true}, Static: []mcpbroker.StaticTool{{Name: "protected", Schema: json.RawMessage(`{"type":"object"}`), ReadOnly: true}}}}},
+			ToolHiveOptions: []mcpbroker.Option{mcpbroker.WithOAuthLoopbackForTest(t, roots), mcpbroker.WithBrokerHTTPClientForTest(t, fixture.clientWithRoots(roots)), mcpbroker.WithOAuthSecretResolver(func(context.Context, string) (string, error) { return "restart-secret", nil })},
+			PropagationWait: time.Millisecond, DrainTimeout: time.Second,
 		}
 	}
-	t.Setenv("MECATL_RESTART_CLIENT_SECRET", "restart-secret")
-	remoteConfig := mcpbrokergrpc.RemoteFactoryConfig{
-		Target: address, CAFile: caFile, ServerName: "example.com", TokenFile: tokenFile,
-		Transport: mcpbrokergrpc.DefaultConfig(),
+	declaration := mcpauthority.NewBroker(mcpauthority.BrokerConfig{CallbackURL: callbackURL, Routes: []permconfig.MCPServerProfile{{Name: "github", URL: fixture.mcp.URL, Auth: permconfig.MCPAuthProfile{Mode: "oauth", OAuth: &permconfig.MCPOAuthProfile{Upstream: &permconfig.MCPOAuthUpstreamProfile{Mode: "oauth2", OAuth2: &permconfig.MCPOAuth2UpstreamProfile{AuthorizationEndpoint: fixture.oauth.URL + "/authorize", TokenEndpoint: fixture.oauth.URL + "/token"}}, Client: permconfig.MCPOAuthClientProfile{Mode: "preregistered", Preregistered: &permconfig.MCPPreregisteredClientProfile{ID: "restart-client", SecretEnv: "MECATL_RESTART_CLIENT_SECRET"}}, Scopes: []string{"read"}, RequestRefreshToken: true}}}}})
+	remoteConfig := mcpbrokergrpc.RemoteFactoryConfig{Target: address, CAFile: caFile, ServerName: "example.com", TokenFile: tokenFile, Transport: mcpbrokergrpc.DefaultConfig()}
+	remoteFactory := mcpbrokergrpc.NewRemoteFactory(remoteConfig)
+	storeDir := t.TempDir()
+	restartStoreDir := t.TempDir()
+	workspace := t.TempDir()
+	build := func(provider *mockllm.Provider, store string) *app.Built {
+		built, err := app.Build(ctx, app.Config{Workspace: workspace, StoreDir: store, MockProvider: provider, NoSoul: true, AllowAllTools: true, OwnershipEnforced: true, MCPAuthority: declaration, MCPBrokerFactory: remoteFactory, MCPBrokerFactoryRequired: true})
+		if err != nil {
+			t.Fatalf("build Stage-3 remote client: %v", err)
+		}
+		return built
 	}
+	ownerCtx := session.WithPrincipal(ctx, &session.Principal{Issuer: "https://identity.example", Subject: "alice", GrantType: session.GrantTypeUser})
 
 	oldLifecycle, err := mcpbrokerserver.NewProduction(ctx, productionConfig())
 	if err != nil {
 		t.Fatalf("construct old production lifecycle: %v", err)
 	}
 	oldLifecycle.Start()
-	oldService, closeOldClient, err := mcpbrokergrpc.NewRemoteFactory(remoteConfig)(ctx)
+	oldBuilt := build(mockllm.New(mockllm.ToolCallTurn(session.NewToolCall("parked-call", "mcp__github__protected", json.RawMessage(`{}`)))), storeDir)
+	parkedSession, err := oldBuilt.Service.CreateSession(ownerCtx, session.ModeDefault, session.Limits{})
 	if err != nil {
-		t.Fatalf("construct old production client: %v", err)
+		t.Fatalf("create parked session: %v", err)
 	}
-	defer func() { _ = closeOldClient() }()
-	oldAttachment, _, err := oldService.AttachSession(ctx, "scenario5-restart")
-	if err != nil {
-		t.Fatalf("attach old production client: %v", err)
+	parkedEvents, parkedRun := runAndDrain(ownerCtx, t, oldBuilt.Service, parkedSession.ID, "park protected call")
+	if parkedRun.Outcome() != agent.RunOutcomeAuthorizationPending {
+		t.Fatalf("parked run outcome = %v, want authorization pending", parkedRun.Outcome())
 	}
-	if err := oldAttachment.Commit(ctx); err != nil {
-		t.Fatalf("commit old attachment: %v", err)
-	}
-	oldTool := oldAttachment.Tools()[0].(tool.AuthorizationRequester)
-	parkedCall := session.NewToolCall("parked-call", "mcp__github__protected", json.RawMessage(`{}`))
-	parked, _, err := oldTool.RequestAuthorization(ctx, parkedCall)
-	if err != nil || parked.ID == "" {
-		t.Fatalf("park authorization before restart = (%+v, %v)", parked, err)
-	}
+	parked := requiredAuthorization(t, parkedEvents, "parked-call")
+	assertDurablePending(ownerCtx, t, oldBuilt.Service, parkedSession.ID, "parked-call", parked.AuthorizationID)
+	copyStage3Store(t, storeDir, restartStoreDir)
+	oldBuilt.Close()
 	if err := oldLifecycle.Close(ctx); err != nil {
 		t.Fatalf("close old production lifecycle: %v", err)
 	}
@@ -128,78 +128,101 @@ func TestSingletonBrokerRemediation_Scenario5_RestartBoundary(t *testing.T) {
 	if err != nil {
 		t.Fatalf("construct replacement production lifecycle: %v", err)
 	}
-	defer func() { _ = newLifecycle.Close(context.Background()) }()
+	t.Cleanup(func() { _ = newLifecycle.Close(context.Background()) })
 	newLifecycle.Start()
-	if _, _, err := oldTool.RequestAuthorization(ctx, parkedCall); !errors.Is(err, brokercontract.ErrStateUnavailable) {
-		t.Fatalf("parked continuation after replacement = %v, want state unavailable without redispatch", err)
-	}
+	newBuilt := build(mockllm.New(mockllm.ToolCallTurn(session.NewToolCall("fresh-call", "mcp__github__protected", json.RawMessage(`{}`))), mockllm.TextTurn("fresh continuation complete")), restartStoreDir)
+	t.Cleanup(newBuilt.Close)
 
-	freshService, closeFreshClient, err := mcpbrokergrpc.NewRemoteFactory(remoteConfig)(ctx)
+	stale, err := newBuilt.Service.RecheckMCPAuthorization(ownerCtx, parkedSession.ID, server.MCPAuthorizationControl{SessionID: parkedSession.ID, AuthorizationID: parked.AuthorizationID})
+	if !errors.Is(err, server.ErrBrokerBindingMismatch) || stale.Run != nil {
+		t.Fatalf("stale parked recheck = (%+v, %v), want binding mismatch without continuation", stale, err)
+	}
+	if got := fixture.backendCalls.Load(); got != 0 {
+		t.Fatalf("stale parked continuation dispatched upstream %d times, want 0", got)
+	}
+	assertDurablePending(ownerCtx, t, newBuilt.Service, parkedSession.ID, "parked-call", parked.AuthorizationID)
+
+	freshSession, err := newBuilt.Service.CreateSession(ownerCtx, session.ModeDefault, session.Limits{})
 	if err != nil {
-		t.Fatalf("construct replacement production client: %v", err)
+		t.Fatalf("create fresh post-restart session: %v", err)
 	}
-	defer func() { _ = closeFreshClient() }()
-	freshAttachment, _, err := freshService.AttachSession(ctx, "scenario5-restart")
-	if err != nil {
-		t.Fatalf("fresh pre-prompt attach: %v", err)
+	freshEvents, freshRun := runAndDrain(ownerCtx, t, newBuilt.Service, freshSession.ID, "retry protected call")
+	if freshRun.Outcome() != agent.RunOutcomeAuthorizationPending {
+		t.Fatalf("fresh run outcome = %v, want authorization pending", freshRun.Outcome())
 	}
-	if freshAttachment.Binding() == oldAttachment.Binding() {
-		t.Fatal("replacement lifecycle reused the parked attachment binding")
+	fresh := requiredAuthorization(t, freshEvents, "fresh-call")
+	if fresh.AuthorizationID == parked.AuthorizationID {
+		t.Fatal("fresh pre-prompt session reused the parked authorization")
 	}
-	if err := freshAttachment.Commit(ctx); err != nil {
-		t.Fatalf("commit fresh attachment: %v", err)
-	}
-	freshCall := session.NewToolCall("fresh-call", "mcp__github__protected", json.RawMessage(`{}`))
-	freshAuthorization, _, err := freshAttachment.Tools()[0].(tool.AuthorizationRequester).RequestAuthorization(ctx, freshCall)
-	if err != nil || freshAuthorization.ID == "" || freshAuthorization.ID == parked.ID {
-		t.Fatalf("fresh pre-prompt recovery authorization = (%+v, %v), parked=%+v", freshAuthorization, err, parked)
+	if got := fixture.backendCalls.Load(); got != 0 {
+		t.Fatalf("fresh pre-prompt retry dispatched upstream %d times before authorization, want 0", got)
 	}
 }
 
-// This structural invariant independently pins both expensive Scenario 5 proofs
-// to the production constructor and remote factory and rejects hand-built gRPC.
+// This narrow structural invariant supplements the behavioral proofs. Constructors
+// must occur in each named proof's direct body, not in a dead nested helper.
 func TestInvariant_singleton_broker_named_proofs_use_production_paths(t *testing.T) {
 	file, err := parser.ParseFile(token.NewFileSet(), "mcp_broker_authorization_vertical_test.go", nil, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	proofs := map[string]map[string]int{
-		"runSingletonBrokerStage3RemoteVertical":                   {},
-		"TestSingletonBrokerRemediation_Scenario5_RestartBoundary": {},
-	}
-	var current map[string]int
-	ast.Inspect(file, func(node ast.Node) bool {
-		if fn, ok := node.(*ast.FuncDecl); ok {
-			current = proofs[fn.Name.Name]
-			return current != nil
+	for _, name := range []string{"runSingletonBrokerStage3RemoteVertical", "TestSingletonBrokerRemediation_Scenario5_RestartBoundary"} {
+		fn := namedFunction(file, name)
+		if fn == nil {
+			t.Fatalf("missing named proof %s", name)
 		}
-		if node == nil || current == nil {
-			return true
-		}
-		selector, ok := node.(*ast.SelectorExpr)
-		if !ok {
-			return true
-		}
-		if pkg, ok := selector.X.(*ast.Ident); ok {
-			current[pkg.Name+"."+selector.Sel.Name]++
-		}
-		return true
-	})
-	for proof, seen := range proofs {
+		seen := directSelectors(fn.Body)
 		for _, required := range []string{"mcpbrokerserver.NewProduction", "mcpbrokergrpc.NewRemoteFactory"} {
-			if seen[required] == 0 {
-				t.Errorf("%s bypassed %s", proof, required)
+			if !seen[required] {
+				t.Errorf("%s does not reach %s from its own body", name, required)
 			}
 		}
 		for _, forbidden := range []string{"grpc.NewServer", "mcpbrokergrpc.NewServer", "mcpbrokergrpc.NewServerWithConfig", "mcpbrokergrpc.RegisterServer"} {
-			if seen[forbidden] != 0 {
-				t.Errorf("%s hand-builds broker transport through %s", proof, forbidden)
+			if seen[forbidden] {
+				t.Errorf("%s hand-builds broker transport through %s", name, forbidden)
 			}
 		}
 	}
-	if proofs["runSingletonBrokerStage3RemoteVertical"]["app.Build"] == 0 {
+	if !directSelectors(namedFunction(file, "runSingletonBrokerStage3RemoteVertical").Body)["app.Build"] {
 		t.Error("Stage 3 production vertical bypassed app.Build")
 	}
+}
+
+func namedFunction(file *ast.File, name string) *ast.FuncDecl {
+	for _, declaration := range file.Decls {
+		if fn, ok := declaration.(*ast.FuncDecl); ok && fn.Name.Name == name {
+			return fn
+		}
+	}
+	return nil
+}
+
+func directSelectors(body *ast.BlockStmt) map[string]bool {
+	seen := map[string]bool{}
+	ast.Inspect(body, func(node ast.Node) bool {
+		if ifStmt, ok := node.(*ast.IfStmt); ok {
+			if literal, ok := ifStmt.Cond.(*ast.Ident); ok && literal.Name == "false" {
+				return false
+			}
+		}
+		if _, nested := node.(*ast.FuncLit); nested {
+			return false
+		}
+		call, ok := node.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		selector, ok := call.Fun.(*ast.SelectorExpr)
+		if !ok {
+			return true
+		}
+		pkg, ok := selector.X.(*ast.Ident)
+		if ok {
+			seen[pkg.Name+"."+selector.Sel.Name] = true
+		}
+		return true
+	})
+	return seen
 }
 
 func runSingletonBrokerStage3RemoteVertical(t *testing.T) {
@@ -414,6 +437,34 @@ func requiredAuthorization(t *testing.T, events []session.Event, call session.To
 	}
 	t.Fatalf("no authorization.required event for %q", call)
 	return session.AuthorizationPayload{}
+}
+
+func copyStage3Store(t *testing.T, source, destination string) {
+	t.Helper()
+	err := filepath.WalkDir(source, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		relative, err := filepath.Rel(source, path)
+		if err != nil || relative == "." {
+			return err
+		}
+		if entry.IsDir() && entry.Name() == ".session-leases" {
+			return filepath.SkipDir
+		}
+		target := filepath.Join(destination, relative)
+		if entry.IsDir() {
+			return os.MkdirAll(target, 0o700)
+		}
+		contents, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(target, contents, 0o600)
+	})
+	if err != nil {
+		t.Fatalf("copy durable Stage-3 store: %v", err)
+	}
 }
 
 func assertDurablePending(ctx context.Context, t *testing.T, svc *server.Service, id session.SessionID, call session.ToolCallID, authorizationID string) {
