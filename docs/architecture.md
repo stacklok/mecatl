@@ -283,12 +283,20 @@ continues the run; the raw `permission.ask` remains in the event stream.
 
 Separately, `Session.resolvePlan()` addresses a durably parked plan with no local live run through
 the server-streaming `ApprovePlan` RPC. Its single-consumption `PlanResolution` partitions the
-merged wire iterator into the resumed run and an optional different-ID continuation, requiring a
-terminal result for each. A non-`plan_approved` resumed terminal has no continuation; malformed
+merged wire iterator into two runs: the original-ID resumed plan run and, only after its
+`plan_approved` terminal, an optional different-ID continuation run, requiring a terminal result
+for each. A non-`plan_approved` resumed terminal has no continuation; malformed
 ordering is a protocol error, while the server's empty-ID continuation-admission terminal becomes
 a distinct typed continuation-start failure. Run-bound attachments end at their selected terminal;
 `Session.activity()` remains the cross-run view. See
 [ADR 0304](adr/0304-typescript-sdk-public-surface-and-release.md) Decision 4.
+
+The committed concise examples under `sdk/typescript/examples/` self-import only the package's
+three exported entry points. A dedicated no-emit project runs after the package build, so no source
+path alias can hide an export/example drift. It covers remote and local Node/Bun use, callback
+tools, browser+BFF guidance, permissions, durable attachment, teams, schedules, and plan
+resolution. The browser BFF is explicitly a deployment shape, not SDK server code. The larger
+Slack bot remains a separate pnpm project and has its own package-export typecheck CI leg.
 
 Spawned Node/Bun clients also expose `client.tool(name, schema, handler, options)` for a
 client-wide callback-tool registry. Schemas are plain JSON Schema 2020-12 values compiled by the

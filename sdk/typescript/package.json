@@ -37,6 +37,7 @@
     "test:macos-spawn": "vitest run --config vitest.e2e.config.ts e2e/macos-spawn.e2e.test.ts",
     "test:e2e": "vitest run --config vitest.e2e.config.ts",
     "build": "node --input-type=module --eval \"import { rmSync } from 'node:fs'; rmSync('dist', { recursive: true, force: true });\" && tsc -p tsconfig.build.json",
+    "examples:typecheck": "tsc -p examples/tsconfig.json",
     "api:check": "api-extractor run --config api-extractor.json && api-extractor run --config api-extractor.node.json",
     "api:update": "api-extractor run --local --config api-extractor.json && api-extractor run --local --config api-extractor.node.json",
     "prepack": "pnpm run build"

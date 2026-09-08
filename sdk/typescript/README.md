@@ -3,11 +3,20 @@
 The TypeScript SDK for the [mecatl](https://github.com/stacklok/mecatl) agentic coding
 harness. The package is ESM-only and supports Node.js 22 or newer.
 
-This first milestone establishes the package and its public entry points:
+The v0.1 package has three public entry points:
 
 - `@stacklok/mecatl-sdk` — transport-neutral core and the browser HTTP/SSE transport;
 - `@stacklok/mecatl-sdk/node` — Node/Bun gRPC transport and local-process features;
 - `@stacklok/mecatl-sdk/gen` — protobuf-es types and service descriptors.
+
+## Examples
+
+The focused programs in [the repository examples](https://github.com/stacklok/mecatl/tree/main/sdk/typescript/examples)
+cover remote `connect()`, local
+`spawn()` and `query()`, callback tools, browser+BFF deployment guidance, permissions,
+durable attachment, teams, schedules, and the two-run `PlanResolution`. CI builds the
+package first and type-checks those programs through only `.`, `./node`, and `./gen`.
+The larger Slack bot is a separate pnpm project with its own package-export typecheck leg.
 
 ## Durable attachment
 

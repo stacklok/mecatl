@@ -60,6 +60,10 @@ structured `diagnostics` callback, while the default writes nothing to `console`
 Use `connect()` instead when another operator or service owns the daemon. A connected client
 never signals a process or removes a server directory.
 
+For a concise package-level introduction, browser BFF guidance, and focused examples for
+permissions, durable attachment, teams, and schedules, see
+[Use the TypeScript SDK](/building/getting-started/typescript-sdk.md).
+
 For a one-shot prompt, `query()` composes the same spawn, session, and run APIs and yields their
 ordinary events:
 

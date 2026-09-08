@@ -8274,7 +8274,7 @@ failures name only the class, never the value. The elapsed-time expiry leg is bo
 the only clock-dependent part because the official `oauth2.Token.Valid` has no injected
 clock.
 
-## TypeScript SDK — `sdk/typescript/` (M1 core + M2 attachment + M3 local daemon, ADRs 0279, 0288 and 0292)
+## TypeScript SDK — `sdk/typescript/` (M1–M4 public v0.1 surface, ADRs 0279, 0288, 0292 and 0304)
 
 The ESM-only `@stacklok/mecatl-sdk` has three exports. `.` owns the transport-neutral
 `Client`/`Session`/`Run` API, typed events/errors, prompt-media helpers, and the hand-written
@@ -8283,7 +8283,7 @@ HTTP/2: TCP uses an ordinary base URL; UDS keeps an ordinary HTTP authority and 
 socket-opening `createConnection` through the HTTP/2 node options (`sdk/typescript/src/node-transport.ts`),
 never a `unix://` URL. `./gen` is the committed protobuf-es output generated only for
 `contracts/proto/mecatl/v1/`; it has a codegen freshness gate rather than an API Extractor
-report. The package requires Node 24 in M1, builds unbundled ESM plus declarations/source maps,
+report. The package requires Node 22 or newer, builds unbundled ESM plus declarations/source maps,
 and owns its pinned pnpm lock independently of the npm-based website.
 
 `sdk/typescript/src/raw.ts` enforces API-major compatibility before all non-compatibility RPCs;
@@ -8317,8 +8317,12 @@ provider credentials removed. Bare `--mock` remains its original single canned t
 `cmd/mecated/mockscript.go` exposes `--mock-script`: strict bounded JSON is compiled into the
 existing `engine/adapter/mockllm` provider via `app.Config.MockProvider`, including ask-worthy
 tool-call turns and a bounded per-turn delay for deterministic mid-flight cancellation. The
-SDK CI job runs frozen install, Biome, typecheck, unit Vitest, build, pack, API reports, Go+TS
-codegen freshness, and this e2e; each command remains a hard failure.
+SDK CI job runs frozen install, Biome, typecheck, unit Vitest, build, the package-export-only
+examples compiler, pack, API reports, Go+TS codegen freshness, and this e2e; each command remains a
+hard failure. `sdk/typescript/examples/slack-bot/` remains a separate pnpm project and CI job: its
+own `slack-bot:typecheck` task builds the same SDK `dist/` and supplies the second proof needed to
+cover every committed example without importing the Slack application's dependencies into the SDK
+package.
 
 M3's local-daemon root is `sdk/typescript/src/spawn.ts`. `spawn()` is reachable only from
 `./node`; the transport-neutral entry point imports neither `node:child_process` nor the
@@ -8429,7 +8433,8 @@ including its abstention semantics. `sdk/typescript/src/run.ts` classifies `Pres
 canonical tool name before selecting a callback, so a plan ask can invoke only `onPlanApproval`
 and cannot be passed to public `resolveAsk()`.
 
-The parked-session sibling lives in `sdk/typescript/src/plan.ts`. `Session.resolvePlan()` is
+The parked-session sibling lives in `sdk/typescript/src/plan.ts`. It is explicitly a two-run
+`PlanResolution`: `Session.resolvePlan()` is
 available only while the local session handle owns no live run and opens the existing
 server-streaming `ApprovePlan` RPC. `PlanResolutionImpl` owns that one merged iterator and applies
 the same single-consumption rule as `Run`: iteration or `result()`, never both. It fixes the first
@@ -8439,6 +8444,15 @@ than `plan_approved` admits no continuation. The server's special empty-ID `Stop
 approved terminal becomes `PlanContinuationStartError`, preserving the server error text instead
 of inventing a run result. `result()` exposes the two typed `RunResult` values only after their
 terminals, so no independently consumable live child streams exist.
+
+The executable documentation surface lives in `sdk/typescript/examples/`. Its top-level
+`tsconfig.json` includes only the concise programs, defines no `baseUrl`, `paths`, or `rootDirs`, and
+resolves the package's self-name through `package.json#exports` after `dist/` is built. The named
+Vitest oracle in `sdk/typescript/test/examples.test.ts` inventories those programs, rejects an SDK
+source-tree import from every TypeScript file below `examples/`, and checks that SDK imports use
+only `.`, `./node`, or `./gen`. The same oracle makes the separate Slack bot proof visible by
+pinning its CI job and `task slack-bot:typecheck` invocation. The second named oracle keeps the
+Node/Bun `connect()`/`spawn()`/`query()`/callback-tool coverage from being reduced to prose.
 
 Callback-tool registration lives in `sdk/typescript/src/tool.ts` and is decorated onto the
 Node/Bun client type without widening the transport-neutral `Client`. The one registry owns a

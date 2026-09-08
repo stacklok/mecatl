@@ -79,6 +79,12 @@ tasks:
     cmds:
       - pnpm run build
 
+  examples:typecheck:
+    desc: Type-check concise examples against only the built package exports
+    deps: [build]
+    cmds:
+      - pnpm run examples:typecheck
+
   api:check:
     desc: Verify the public API reports for the root and node entry points
     deps: [build]
