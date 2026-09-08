@@ -75,8 +75,8 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0237 — Listener-scoped workspace authority](./0237-listener-scoped-workspace-authority.md)
 - [0286 — Public and private OIDC issuers are two transports, not one policy](./0286-issuer-transport-split.md) *(supersedes ADR 0284's implicit CA-presence mode selection, and ADR 0277's private-only transport clauses)*
 - [0277 — Remote mecatui OIDC client authentication](./0277-remote-mecatui-oidc.md) *(supersedes 0270–0273)*
-- [0305 — OAuth protected-resource discovery for remote mecatui](./0305-oauth-protected-resource-discovery.md) *(scope-selection clarification proposed in 0315)*
-- [0315 — Server-owned scopes for discovered mecatui login](./0315-server-owned-discovered-oidc-scopes.md) *(proposed; supersedes ADR 0305's scope-selection clauses only)*
+- [0305 — OAuth protected-resource discovery for remote mecatui](./0305-oauth-protected-resource-discovery.md) *(scope-selection clarification proposed in 0316)*
+- [0316 — Server-owned scopes for discovered mecatui login](./0316-server-owned-discovered-oidc-scopes.md) *(proposed; supersedes ADR 0305's scope-selection clauses only)*
 - [0284 — Optional system trust for remote mecatui OIDC issuers](./0284-optional-system-trust-remote-oidc.md) *(supersedes ADR 0277's mandatory issuer-CA requirement only; mode selection superseded by 0286)*
 - [0278 — mecak8s edge-terminated TLS](./0278-mecak8s-edge-terminated-tls.md) *(supersedes ADR 0240's provider-security gate scope only)*
 - [0275 — Bounded scoped HTTPS keep-alive reuse for OIDC](./0275-bounded-scoped-https-keepalive-oidc.md) *(supersedes ADR 0235's keep-alive policy and ADR 0277's credential-recovery classification only)*
