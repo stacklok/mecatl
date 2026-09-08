@@ -1003,3 +1003,88 @@ func TestFSWorkspaceLedgerNotBlockedByParkedRPC(t *testing.T) {
 		t.Fatal("ledger RecordRead/RecordedVersion blocked behind a parked RPC holding callMu — the mutexes must be independent")
 	}
 }
+
+// --- ADR 0314: fsWorkspace namespace operations ------------------------------
+
+// TestADR_0314_FSWorkspace_ReadDir_DelegatesToLocal pins that ReadDir uses the
+// confined LOCAL disk view (fsWorkspace.local, an osfs.Workspace), per the
+// documented limitation that ACP exposes no directory-listing RPC and cannot
+// enumerate unsaved buffer-only files.
+func TestADR_0314_FSWorkspace_ReadDir_DelegatesToLocal(t *testing.T) {
+	ctx := context.Background()
+	ws, _, root := newTestFSWorkspace(t, nil)
+	// Write directly to disk (bypassing the peer buffer entirely) so ReadDir can
+	// only see this file if it consults the LOCAL disk view, not the buffers.
+	if err := os.WriteFile(filepath.Join(root, "ondisk.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatalf("seed on-disk file: %v", err)
+	}
+	entries, err := ws.ReadDir(ctx, ".")
+	if err != nil {
+		t.Fatalf("ReadDir: %v", err)
+	}
+	if len(entries) != 1 || entries[0].Name != "ondisk.txt" {
+		t.Fatalf("ReadDir = %+v, want [ondisk.txt] (the local disk view)", entries)
+	}
+}
+
+// TestADR_0314_FSWorkspace_Remove_Unsupported pins that Remove is UNSUPPORTED
+// (ACP has no delete RPC and mutating local disk would bypass the editor's
+// authoritative buffer), returning tool.ErrFileOperationUnsupported.
+func TestADR_0314_FSWorkspace_Remove_Unsupported(t *testing.T) {
+	ws, _, _ := newTestFSWorkspace(t, map[string]string{"a.txt": "hello"})
+	err := ws.Remove(context.Background(), "a.txt")
+	if !errors.Is(err, tool.ErrFileOperationUnsupported) {
+		t.Fatalf("Remove error = %v, want errors.Is(_, tool.ErrFileOperationUnsupported)", err)
+	}
+}
+
+// TestADR_0314_FSWorkspace_Rename_Unsupported pins that Rename is UNSUPPORTED
+// for the same reason as Remove (no rename RPC; local-disk mutation would
+// bypass the editor's authoritative buffers).
+func TestADR_0314_FSWorkspace_Rename_Unsupported(t *testing.T) {
+	ws, _, _ := newTestFSWorkspace(t, map[string]string{"a.txt": "hello"})
+	err := ws.Rename(context.Background(), "a.txt", "b.txt")
+	if !errors.Is(err, tool.ErrFileOperationUnsupported) {
+		t.Fatalf("Rename error = %v, want errors.Is(_, tool.ErrFileOperationUnsupported)", err)
+	}
+}
+
+// TestADR_0314_FSWorkspace_CopyFile_IsBufferAware pins that CopyFile reads the
+// EDITOR BUFFER (via Read, i.e. fs/read_text_file), not disk — so a source
+// whose in-memory buffer has diverged from its on-disk content is copied with
+// the buffer's content, honoring the editor's authoritative view the same way
+// Read/Write already do.
+func TestADR_0314_FSWorkspace_CopyFile_IsBufferAware(t *testing.T) {
+	ctx := context.Background()
+	ws, peer, root := newTestFSWorkspace(t, map[string]string{"src.txt": "buffer-content"})
+	// The on-disk content (if any existed) would differ; there is deliberately
+	// no on-disk file here — CopyFile must succeed purely from the buffer.
+	if _, err := os.Stat(filepath.Join(root, "src.txt")); !os.IsNotExist(err) {
+		t.Fatalf("precondition: src.txt must not exist on disk, stat err = %v", err)
+	}
+	ver, err := ws.CopyFile(ctx, "src.txt", "dst.txt")
+	if err != nil {
+		t.Fatalf("CopyFile: %v", err)
+	}
+	if ver.Equal(tool.FileVersion{}) {
+		t.Fatal("CopyFile returned a zero-value FileVersion")
+	}
+	got, ok := peer.get(filepath.Join(root, "dst.txt"))
+	if !ok || got != "buffer-content" {
+		t.Fatalf("peer buffer for dst.txt = (%q, %v), want (\"buffer-content\", true)", got, ok)
+	}
+}
+
+// TestADR_0314_FSWorkspace_CopyFile_NoClobber pins that CopyFile refuses to
+// overwrite an existing destination buffer, mirroring the shared Copy tool's
+// no-clobber contract (it delegates to CreateFile, the create-only mutation).
+func TestADR_0314_FSWorkspace_CopyFile_NoClobber(t *testing.T) {
+	ctx := context.Background()
+	ws, _, _ := newTestFSWorkspace(t, map[string]string{
+		"src.txt": "source",
+		"dst.txt": "already-there",
+	})
+	if _, err := ws.CopyFile(ctx, "src.txt", "dst.txt"); err == nil {
+		t.Fatal("CopyFile(src.txt, dst.txt) = nil error, want a no-clobber refusal (dst.txt already exists)")
+	}
+}

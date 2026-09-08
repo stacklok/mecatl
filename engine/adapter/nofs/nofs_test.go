@@ -57,6 +57,25 @@ func TestNoFSWorkspaceContract(t *testing.T) {
 	if _, err := ws.ReplaceFile(ctx, "a.txt", tool.FileVersion{}, []byte("data")); !errors.Is(err, nofs.ErrNoFilesystem) {
 		t.Errorf("ReplaceFile error = %v, want ErrNoFilesystem", err)
 	}
+
+	// ADR 0314: namespace operations are honest too — ReadDir reports an empty
+	// listing (there is no directory tree to enumerate, consistent with Glob/
+	// Grep's empty-with-no-error contract above), while every namespace
+	// MUTATION (Remove/Rename/CopyFile) fails loudly with the SAME
+	// ErrNoFilesystem refusal CreateFile/ReplaceFile already use — nothing can
+	// be created OR renamed/removed/copied in a session with no filesystem.
+	if entries, err := ws.ReadDir(ctx, "."); err != nil || len(entries) != 0 {
+		t.Errorf("ReadDir = (%v, %v), want empty with no error", entries, err)
+	}
+	if err := ws.Remove(ctx, "a.txt"); !errors.Is(err, nofs.ErrNoFilesystem) {
+		t.Errorf("Remove error = %v, want ErrNoFilesystem", err)
+	}
+	if err := ws.Rename(ctx, "a.txt", "b.txt"); !errors.Is(err, nofs.ErrNoFilesystem) {
+		t.Errorf("Rename error = %v, want ErrNoFilesystem", err)
+	}
+	if _, err := ws.CopyFile(ctx, "a.txt", "b.txt"); !errors.Is(err, nofs.ErrNoFilesystem) {
+		t.Errorf("CopyFile error = %v, want ErrNoFilesystem", err)
+	}
 }
 
 // TestNoFSPathErrorCarriesPath pins that the not-exist errors carry the asked

@@ -6233,8 +6233,10 @@ intentionally safer than general POSIX commands: Remove is non-recursive, Copy a
 and Copy/Rename refuse an existing destination. `engine/adapter/fsconformance/fsconformance.go`
 (`RunNamespace`) pins sorting, derived-directory behavior, no-clobber, subtree rename, and copied-version
 consistency across memfs, osfs, and Redis. Redis performs each namespace mutation atomically in Lua;
-prefix-backed memfs/Redis workspaces derive directories and cannot retain empty ones. Authority-bound
-Copy and Move calls authorize source and destination as separate physical resources before execution.
+prefix-backed memfs/Redis workspaces derive directories and cannot retain empty ones. Permission-pattern
+resolution evaluates Copy/Move source and destination independently and folds the worst effect, so a scoped
+rule covering one operand never authorizes the other. Authority-bound Copy and Move calls authorize source
+and destination as separate physical resources before execution.
 See ADR 0314.
 
 The final ReplaceFile is load-bearing: `engine/adapter/fstools/fstools_test.go`
