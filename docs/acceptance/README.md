@@ -202,6 +202,9 @@ PR after verification. There is no cleanup or status-only PR.
 - [Caller identity](caller-identity.md) — completed acceptance record for optional
   OIDC caller attribution: a verified principal, durable session/schedule ownership,
   and log-only event actors; no authorization. Status: landed.
+- [Caller-validation observability](caller-validation-observability.md) — closed,
+  privacy-safe auth-edge diagnostics for accepted credentials, rejections, and IdP
+  unavailability across HTTP and gRPC. Status: landed.
 - [Caller separation](caller-separation.md) — enforce OIDC caller isolation over
   application sessions, schedules, teams, memory, event streams, live runs, and
   model-facing object access; remote-driver enforcement is deferred to #452. Status:

@@ -1710,6 +1710,14 @@ deliberately independent of the static
 `authEnabled()`, because a shared-token deployment has one credential and zero
 subjects.
 
+The auth edge emits structured diagnostics when enabled authentication rejects
+credentials or malformed authorization input, or cannot reach the validator/IdP. It
+emits the first accepted outcome once for each closed category/transport pair (static
+bearer or validated identity, over HTTP or gRPC), rather than once per request.
+Records contain only closed `outcome`, `category`, `transport`, and `status` values.
+They never include the Authorization header, bearer/JWT, validator error text, issuer,
+subject, claims, or KID; identity-off requests emit no auth record.
+
 **It rides a context key, and is never fabricated.** `session.WithPrincipal` /
 `session.PrincipalFromContext` (`engine/session/principal_context.go`) carry the
 verified caller inward. For direct embedding, verification stays outside the engine;

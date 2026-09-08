@@ -212,6 +212,12 @@ a peer exhausts the bucket, requests return HTTP **429** / gRPC
 that bucket; they continue to the existing verified-principal limiter and are
 charged there once. A normally admitted bad token remains **401** / gRPC
 `UNAUTHENTICATED`, while an IdP outage remains **503** / gRPC `UNAVAILABLE`.
+Enabled authentication also writes structured operator diagnostics. Rejected and
+unavailable outcomes are logged per request; accepted authentication logs one INFO
+record per closed category/transport pair (static bearer or validated identity, over
+HTTP or gRPC), not per request. Fields are closed outcome/category and
+transport/status values only; credentials, JWTs, validator errors, issuer, subject,
+claims, and KID are never logged.
 
 This is a bound on **signing-key** revocation during an outage, not per-token
 revocation. An otherwise valid token remains acceptable until its normal expiry.
