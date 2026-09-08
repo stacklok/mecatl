@@ -42,8 +42,11 @@ route advertises the configured resource's metadata URL as its service-wide base
 the server never derives it from a request Host or path. Anonymous metadata
 and OIDC discovery are bootstrap-only and remain separate from authenticated
 gRPC transport. ToolHive is implementation provenance for the remote client
-adapter, not a runtime engine dependency. Without the profile, explicit OIDC
-login and existing issuer/audience behavior are unchanged.
+adapter, not a runtime engine dependency. For discovered login, mecatui requests
+`scopes_supported` exactly when the server advertises it; when the member is omitted,
+it requests the fixed `openid,profile,offline_access` baseline. Discovery rejects
+`--scopes`; administrators configure `oidc.scopes` for any other discovered-login
+scopes. Explicit identity login without a profile retains its `--scopes` override.
 
 ## Managed temporary storage (Linux and macOS)
 

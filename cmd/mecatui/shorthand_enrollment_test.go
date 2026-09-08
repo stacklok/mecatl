@@ -25,7 +25,7 @@ func TestOAuthProtectedResource_Scenario4_ShorthandEnrollment(t *testing.T) {
 		executeRemoteLogin = originalLogin
 	})
 	discoverRemoteResource = func(context.Context, protectedResource) (discoveredResource, error) {
-		return discoveredResource{protectedResource: protectedResource{Resource: "https://api.example.com", MetadataURL: "https://api.example.com/.well-known/oauth-protected-resource", GRPCTarget: "api.example.com:443"}, Issuer: "https://ISSUER.example.com", Audience: "api", ClientID: "client", Scopes: []string{"api.read"}}, nil
+		return discoveredResource{protectedResource: protectedResource{Resource: "https://api.example.com", MetadataURL: "https://api.example.com/.well-known/oauth-protected-resource", GRPCTarget: "api.example.com:443"}, Issuer: "https://ISSUER.example.com", Audience: "api", ClientID: "client", Scopes: []string{"api.read"}, ScopesPresent: true}, nil
 	}
 	confirmed := false
 	confirmDiscoveredEnrollment = func(io.Reader, io.Writer, discoveredEnrollment) (bool, error) {
@@ -50,7 +50,7 @@ func TestOAuthProtectedResource_Scenario4_ShorthandEnrollment(t *testing.T) {
 }
 
 func TestADR_0305_ResourceTargetSeparation(t *testing.T) {
-	enrollment, err := discoveredEnrollmentFrom(discoveredResource{protectedResource: protectedResource{Resource: "https://api.example.com/service/v1", MetadataURL: "https://api.example.com/.well-known/oauth-protected-resource/service/v1", GRPCTarget: "api.example.com:443"}, Issuer: "https://issuer.example.com", Audience: "api", ClientID: "client", Scopes: []string{"api.read"}}, "grpc.example.com:7443", "")
+	enrollment, err := discoveredEnrollmentFrom(discoveredResource{protectedResource: protectedResource{Resource: "https://api.example.com/service/v1", MetadataURL: "https://api.example.com/.well-known/oauth-protected-resource/service/v1", GRPCTarget: "api.example.com:443"}, Issuer: "https://issuer.example.com", Audience: "api", ClientID: "client", Scopes: []string{"api.read"}, ScopesPresent: true}, "grpc.example.com:7443", []string{"api.read"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,7 +60,7 @@ func TestADR_0305_ResourceTargetSeparation(t *testing.T) {
 }
 
 func TestInvariant_oauth_three_transport_trust_split(t *testing.T) {
-	enrollment, err := discoveredEnrollmentFrom(discoveredResource{protectedResource: protectedResource{Resource: "https://api.example.com", MetadataURL: "https://api.example.com/.well-known/oauth-protected-resource", GRPCTarget: "api.example.com:443"}, Issuer: "https://issuer.example.com", Audience: "api", ClientID: "client", Scopes: []string{"api.read"}}, "", "")
+	enrollment, err := discoveredEnrollmentFrom(discoveredResource{protectedResource: protectedResource{Resource: "https://api.example.com", MetadataURL: "https://api.example.com/.well-known/oauth-protected-resource", GRPCTarget: "api.example.com:443"}, Issuer: "https://issuer.example.com", Audience: "api", ClientID: "client", Scopes: []string{"api.read"}, ScopesPresent: true}, "", []string{"api.read"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,7 +85,7 @@ func TestADR_0305_DiscoveredIdentityConfirmation(t *testing.T) {
 		confirmDiscoveredEnrollment = originalConfirm
 		executeRemoteLogin = originalLogin
 	})
-	discovered := discoveredResource{protectedResource: protectedResource{Resource: "https://api.example.com", MetadataURL: "https://api.example.com/.well-known/oauth-protected-resource", GRPCTarget: "api.example.com:443"}, Issuer: "https://issuer.example.com", Audience: "api", ClientID: "client", Scopes: []string{"api.read"}}
+	discovered := discoveredResource{protectedResource: protectedResource{Resource: "https://api.example.com", MetadataURL: "https://api.example.com/.well-known/oauth-protected-resource", GRPCTarget: "api.example.com:443"}, Issuer: "https://issuer.example.com", Audience: "api", ClientID: "client", Scopes: []string{"api.read"}, ScopesPresent: true}
 	discoveryCalls := 0
 	discoverRemoteResource = func(context.Context, protectedResource) (discoveredResource, error) {
 		discoveryCalls++
@@ -103,7 +103,7 @@ func TestADR_0305_DiscoveredIdentityConfirmation(t *testing.T) {
 		t.Fatalf("rejected confirmation = err %v, login called %v", err, called)
 	}
 
-	enrollment, err := discoveredEnrollmentFrom(discovered, "", "api.read")
+	enrollment, err := discoveredEnrollmentFrom(discovered, "", []string{"api.read"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -136,57 +136,70 @@ func TestADR_0305_DiscoveredIdentityConfirmation(t *testing.T) {
 }
 
 func TestADR_0305_DiscoveredScopeSelection(t *testing.T) {
-	profile := discoveredResource{Scopes: []string{"api.read", "profile"}}
-	if _, err := discoveredScopes(profile, "api.write", true); err == nil {
-		t.Fatal("unadvertised explicit scope accepted")
-	}
-	scopes, err := discoveredScopes(profile, "profile", true)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got, want := strings.Join(scopes, ","), "profile"; got != want {
-		t.Fatalf("explicit configured scope = %q, want %q", got, want)
-	}
-	scopes, err = discoveredScopes(profile, "", false)
+	profile := discoveredResource{ScopesPresent: true, Scopes: []string{"profile", "api.read"}}
+	scopes, err := discoveredScopes(profile, false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got, want := strings.Join(scopes, ","), "api.read,profile"; got != want {
-		t.Fatalf("profile scopes = %q, want %q", got, want)
+		t.Fatalf("advertised scopes = %q, want %q", got, want)
 	}
-	scopes, err = discoveredScopes(discoveredResource{}, "", false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(scopes) != 0 {
-		t.Fatalf("empty confirmed scopes = %q, want empty", scopes)
-	}
-	if _, err := discoveredScopes(discoveredResource{}, "api.read", true); err == nil {
-		t.Fatal("explicit scope accepted without a confirmed scope set")
+	if _, err := discoveredScopes(profile, true); !errors.Is(err, errDiscoveryRejected) {
+		t.Fatalf("discovery explicit scope error = %v, want rejection", err)
 	}
 }
 
-func TestADR_0305_DiscoveredEmptyScopeSelectionRemainsEnrollable(t *testing.T) {
-	originalDiscover := discoverRemoteResource
-	originalConfirm := confirmDiscoveredEnrollment
-	originalLogin := executeRemoteLogin
+func TestMecatuiServerOwnedDiscoveryScopes_Scenario1_OmittedMetadataUsesBaseline(t *testing.T) {
+	originalDiscover, originalConfirm, originalLogin := discoverRemoteResource, confirmDiscoveredEnrollment, executeRemoteLogin
 	t.Cleanup(func() {
-		discoverRemoteResource = originalDiscover
-		confirmDiscoveredEnrollment = originalConfirm
-		executeRemoteLogin = originalLogin
+		discoverRemoteResource, confirmDiscoveredEnrollment, executeRemoteLogin = originalDiscover, originalConfirm, originalLogin
 	})
 	discoverRemoteResource = func(context.Context, protectedResource) (discoveredResource, error) {
 		return discoveredResource{protectedResource: protectedResource{Resource: "https://api.example.com", MetadataURL: "https://api.example.com/.well-known/oauth-protected-resource", GRPCTarget: "api.example.com:443"}, Issuer: "https://issuer.example.com", Audience: "api", ClientID: "client"}, nil
 	}
-	confirmDiscoveredEnrollment = func(io.Reader, io.Writer, discoveredEnrollment) (bool, error) { return true, nil }
-	var got clientauth.Connection
-	executeRemoteLogin = func(_ context.Context, conn clientauth.Connection, _ bool) error { got = conn; return nil }
+	var confirmed, loggedIn clientauth.Connection
+	confirmDiscoveredEnrollment = func(_ io.Reader, _ io.Writer, enrollment discoveredEnrollment) (bool, error) {
+		confirmed = enrollment.Connection
+		return true, nil
+	}
+	executeRemoteLogin = func(_ context.Context, conn clientauth.Connection, _ bool) error {
+		loggedIn = conn
+		return nil
+	}
 
 	if err := runRemoteLogin("api.example.com", nil); err != nil {
 		t.Fatal(err)
 	}
-	if len(got.Identity.Scopes) != 0 {
-		t.Fatalf("empty discovered scopes = %#v, want empty", got.Identity.Scopes)
+	want := []string{"offline_access", "openid", "profile"}
+	if !reflect.DeepEqual(confirmed.Identity.Scopes, want) {
+		t.Fatalf("confirmation scopes = %#v, want %#v", confirmed.Identity.Scopes, want)
+	}
+	if !reflect.DeepEqual(loggedIn.Identity.Scopes, want) {
+		t.Fatalf("login scopes = %#v, want %#v", loggedIn.Identity.Scopes, want)
+	}
+}
+
+func TestMecatuiServerOwnedDiscoveryScopes_Scenario1_RejectsDiscoveryScopesFlag(t *testing.T) {
+	originalDiscover, originalConfirm, originalLogin := discoverRemoteResource, confirmDiscoveredEnrollment, executeRemoteLogin
+	t.Cleanup(func() {
+		discoverRemoteResource, confirmDiscoveredEnrollment, executeRemoteLogin = originalDiscover, originalConfirm, originalLogin
+	})
+	discovered := false
+	discoverRemoteResource = func(context.Context, protectedResource) (discoveredResource, error) {
+		discovered = true
+		return discoveredResource{}, nil
+	}
+	confirmed := false
+	confirmDiscoveredEnrollment = func(io.Reader, io.Writer, discoveredEnrollment) (bool, error) { confirmed = true; return true, nil }
+	loggedIn := false
+	executeRemoteLogin = func(context.Context, clientauth.Connection, bool) error { loggedIn = true; return nil }
+
+	err := runRemoteLogin("api.example.com", []string{"--scopes", "api.read"})
+	if err == nil || !strings.Contains(err.Error(), "--scopes is only valid with explicit") {
+		t.Fatalf("discovery --scopes error = %v", err)
+	}
+	if discovered || confirmed || loggedIn {
+		t.Fatalf("discovery flag started discovery:%v confirmation:%v login:%v", discovered, confirmed, loggedIn)
 	}
 }
 
@@ -195,8 +208,8 @@ func TestADR_0305_DiscoveredEmptyScopeSelectionRemainsEnrollable(t *testing.T) {
 // silently split into two bogus scopes when later CSV-joined and re-split by
 // discoveredEnrollmentFrom.
 func TestADR_0305_DiscoveredScopeRejectsCommaSmuggling(t *testing.T) {
-	profile := discoveredResource{Scopes: []string{"api.read", "smuggled,scope"}}
-	if _, err := discoveredScopes(profile, "", false); err == nil {
+	profile := discoveredResource{ScopesPresent: true, Scopes: []string{"api.read", "smuggled,scope"}}
+	if _, err := discoveredScopes(profile, false); err == nil {
 		t.Fatal("discovered scope containing a comma was accepted")
 	}
 }

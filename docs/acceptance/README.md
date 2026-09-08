@@ -256,6 +256,10 @@ PR after verification. There is no cleanup or status-only PR.
   examples and public docs, path-qualified GitHub Packages publication, and the
   human-gated `v0.0.1` cut; npmjs `v0.1.0` remains a #821 follow-up. Status: draft.
 
+- [Canonical Shell command tool](canonical-shell-command-tool.md) — canonical `Shell`
+  and `ShellStatus` model-facing names, safe legacy `Bash` input normalization, and
+  parser-backed portable-POSIX feedback for model-facing shell commands. Status: proposed.
+
 ## See also
 
 - [Development process](../development-process.md) — the spine end to end.

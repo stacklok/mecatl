@@ -1,4 +1,4 @@
-# ADR 0315 — Server-owned scopes for discovered mecatui login
+# ADR 0316 — Server-owned scopes for discovered mecatui login
 
 - Status: Proposed
 - Date: 2026-09-08

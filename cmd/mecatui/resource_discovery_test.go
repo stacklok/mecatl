@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -138,6 +139,41 @@ func TestADR_0305_ProfileDocumentValidation(t *testing.T) {
 		if _, err := parseProfileDocument(resource, []byte(body)); err == nil {
 			t.Errorf("unsafe profile accepted: %s", body)
 		}
+	}
+}
+
+func TestMecatuiServerOwnedDiscoveryScopes_Scenario1_ScopesMemberPresenceMatrix(t *testing.T) {
+	resource, err := parseProtectedResource("https://api.example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	prefix := `{"resource":"https://api.example.com","authorization_servers":["https://issuer.example.com"],"com.stacklok.mecatl.audience":"api","com.stacklok.mecatl.client_id":"client"`
+	profile, err := parseProfileDocument(resource, []byte(prefix+`}`))
+	if err != nil {
+		t.Fatalf("omitted scopes_supported error = %v", err)
+	}
+	if profile.ScopesPresent || len(profile.Scopes) != 0 {
+		t.Fatalf("omitted scopes_supported profile = %#v", profile)
+	}
+	for _, suffix := range []string{
+		`,"scopes_supported":[]}`,
+		`,"scopes_supported":null}`,
+		`,"scopes_supported":{}}`,
+		`,"scopes_supported":"openid"}`,
+		`,"scopes_supported":["openid",""]}`,
+		`,"scopes_supported":["openid","openid"]}`,
+		`,"scopes_supported":["openid,profile"]}`,
+	} {
+		if _, err := parseProfileDocument(resource, []byte(prefix+suffix)); !errors.Is(err, errDiscoveryRejected) {
+			t.Errorf("profile %s error = %v, want rejection", suffix, err)
+		}
+	}
+	profile, err = parseProfileDocument(resource, []byte(prefix+`,"scopes_supported":["profile","openid"]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !profile.ScopesPresent || !reflect.DeepEqual(profile.Scopes, []string{"profile", "openid"}) {
+		t.Fatalf("advertised scopes_supported profile = %#v", profile)
 	}
 }
 

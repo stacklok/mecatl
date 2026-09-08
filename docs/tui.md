@@ -269,8 +269,12 @@ server is authoritative.
 
 `mecatui login ADDRESS` is the enrollment path for a remote `mecated`/`mecak8s`
 caller-identity deployment. A bare DNS hostname or HTTPS resource URL discovers the
-issuer, public client, audience, and scopes from RFC 9728 metadata before confirmation;
-legacy/private deployments without a profile require them explicitly. The gRPC target
+issuer, public client, audience, and scopes from RFC 9728 metadata before confirmation.
+It requests an advertised `scopes_supported` list exactly, or the fixed
+`openid,profile,offline_access` baseline when the member is omitted. Discovery rejects
+`--scopes`; administrators configure `oidc.scopes` for other scopes. Legacy/private
+deployments without a profile require those values explicitly and retain the explicit
+login `--scopes` override. The gRPC target
 and confirmed canonical resource remain separate identities: credentials stay keyed by
 the canonical `host:port` target, while a discovery enrollment also saves the resource
 as an exact registry alias. Login validates discovery,
