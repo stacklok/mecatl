@@ -17,7 +17,6 @@ import (
 	"os"
 	"os/signal"
 	"strings"
-	"sync"
 	"syscall"
 	"time"
 
@@ -25,7 +24,6 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/mcpbroker"
 	"github.com/stacklok/mecatl/internal/adapter/mcpbrokerserver"
 	"github.com/stacklok/mecatl/internal/adapter/slogdiag"
-	contract "github.com/stacklok/mecatl/internal/mcpbroker"
 )
 
 const (
@@ -135,7 +133,7 @@ func parseFlags() config {
 	return cfg
 }
 
-//nolint:gocyclo // composition root keeps startup validation, listener ownership, and ordered drain in one lifecycle.
+//nolint:gocyclo // composition root keeps file/flag validation separate from the shared lifecycle.
 func run(ctx context.Context, cfg config, diagnostics port.Diagnostics) error {
 	if cfg.brokerConfigFile == "" || cfg.oidcCAFile == "" {
 		return errors.New("required broker configuration is absent")
@@ -143,25 +141,15 @@ func run(ctx context.Context, cfg config, diagnostics port.Diagnostics) error {
 	if cfg.propagationWait < 0 || cfg.drainTimeout <= 0 {
 		return errors.New("broker drain bounds are invalid")
 	}
-	if err := validateAdminAddress(cfg.adminAddress); err != nil {
-		return err
-	}
 	if (cfg.tlsCertFile == "") != (cfg.tlsKeyFile == "") {
 		return errors.New("TLS certificate and key must be configured together")
 	}
-	var tlsConfig *tls.Config
-	if cfg.tlsCertFile != "" {
-		certificate, err := tls.LoadX509KeyPair(cfg.tlsCertFile, cfg.tlsKeyFile)
-		if err != nil {
-			return errors.New("load server identity")
-		}
-		tlsConfig = &tls.Config{Certificates: []tls.Certificate{certificate}, MinVersion: tls.VersionTLS12}
-	}
-	if tlsConfig == nil {
+	if cfg.tlsCertFile == "" {
 		return errors.New("broker public TLS certificate and key are required")
 	}
-	if err := mcpbrokerserver.ValidateTransport(cfg.publicAddress, tlsConfig); err != nil {
-		return err
+	certificate, err := tls.LoadX509KeyPair(cfg.tlsCertFile, cfg.tlsKeyFile)
+	if err != nil {
+		return errors.New("load server identity")
 	}
 	caPEM, err := os.ReadFile(cfg.oidcCAFile)
 	if err != nil {
@@ -171,21 +159,18 @@ func run(ctx context.Context, cfg config, diagnostics port.Diagnostics) error {
 	if err != nil {
 		return err
 	}
-	callbackPath, err := exactCallbackPath(declaration.CallbackURL)
-	if err != nil {
-		return err
-	}
-
-	server, err := mcpbrokerserver.New(ctx, mcpbrokerserver.Config{
-		OIDC:        mcpbrokerserver.OIDCConfig{Issuer: cfg.oidcIssuer, JWKSURI: cfg.oidcJWKSURI, Audience: cfg.oidcAudience, AllowedSubjects: []string{cfg.oidcSubject}, TrustedCAPEM: caPEM, MaxJWKSStaleness: cfg.maxJWKSStaleness},
-		Diagnostics: diagnostics,
-		Factory: func(factoryCtx context.Context) (contract.Service, mcpbroker.HandlerBundle, string, func() error, error) {
-			process, processErr := mcpbroker.NewToolHiveProcess(factoryCtx, declaration.toolHive())
-			if processErr != nil {
-				return nil, mcpbroker.HandlerBundle{}, "", nil, processErr
-			}
-			return process.Runtime, process.Handlers, callbackPath, process.Close, nil
-		},
+	bounds := mcpbrokerserver.DefaultPublicListenerConfig()
+	bounds.MaxCallbackBytes = maxCallbackBodyBytes
+	bounds.MaxHeaderBytes = maxPublicHeaderBytes
+	bounds.ReadTimeout = publicReadTimeout
+	bounds.WriteTimeout = publicWriteTimeout
+	bounds.IdleTimeout = publicIdleTimeout
+	lifecycle, err := mcpbrokerserver.NewProduction(ctx, mcpbrokerserver.ProductionConfig{
+		PublicAddress: cfg.publicAddress, AdminAddress: cfg.adminAddress,
+		TLSConfig: &tls.Config{Certificates: []tls.Certificate{certificate}, MinVersion: tls.VersionTLS12},
+		OIDC:      mcpbrokerserver.OIDCConfig{Issuer: cfg.oidcIssuer, JWKSURI: cfg.oidcJWKSURI, Audience: cfg.oidcAudience, AllowedSubjects: []string{cfg.oidcSubject}, TrustedCAPEM: caPEM, MaxJWKSStaleness: cfg.maxJWKSStaleness},
+		ToolHive:  declaration.toolHive(), Diagnostics: diagnostics, PropagationWait: cfg.propagationWait,
+		DrainTimeout: cfg.drainTimeout, ShutdownTimeout: shutdownTimeout, PublicBounds: bounds,
 	})
 	if err != nil {
 		return err
@@ -193,86 +178,19 @@ func run(ctx context.Context, cfg config, diagnostics port.Diagnostics) error {
 	defer func() {
 		closeCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 		defer cancel()
-		_ = server.Close(closeCtx)
+		_ = lifecycle.Close(closeCtx)
 	}()
-
-	publicListener, err := net.Listen("tcp", cfg.publicAddress)
-	if err != nil {
-		return errors.New("listen for broker public traffic")
-	}
-	defer func() { _ = publicListener.Close() }()
-	adminListener, err := net.Listen("tcp", cfg.adminAddress)
-	if err != nil {
-		return errors.New("listen for broker administration")
-	}
-	defer func() { _ = adminListener.Close() }()
-
-	publicBounds := mcpbrokerserver.DefaultPublicListenerConfig()
-	publicBounds.MaxCallbackBytes = maxCallbackBodyBytes
-	publicBounds.MaxHeaderBytes = maxPublicHeaderBytes
-	publicBounds.ReadTimeout = publicReadTimeout
-	publicBounds.WriteTimeout = publicWriteTimeout
-	publicBounds.IdleTimeout = publicIdleTimeout
-	publicServer, err := mcpbrokerserver.NewPublicListener(publicListener, server, tlsConfig, publicBounds)
-	if err != nil {
-		return err
-	}
-	adminServer := &http.Server{Addr: cfg.adminAddress, ReadHeaderTimeout: 2 * time.Second, ReadTimeout: 5 * time.Second, WriteTimeout: 5 * time.Second, IdleTimeout: 10 * time.Second, MaxHeaderBytes: maxPublicHeaderBytes}
-
-	var admissionOnce sync.Once
-	propagated := make(chan struct{})
-	beginDrain := func() {
-		admissionOnce.Do(func() {
-			server.BeginDrain()
-			go func() {
-				timer := time.NewTimer(cfg.propagationWait)
-				defer timer.Stop()
-				<-timer.C
-				close(propagated)
-			}()
-		})
-	}
-	adminServer.Handler = adminHandler(server.Ready, beginDrain, propagated)
-
-	var shutdownOnce sync.Once
-	shutdownDone := make(chan struct{})
-	shutdown := func() {
-		shutdownOnce.Do(func() {
-			go func() {
-				defer close(shutdownDone)
-				beginDrain()
-				<-propagated
-				drainCtx, cancel := context.WithTimeout(context.Background(), cfg.drainTimeout)
-				_ = server.Drain(drainCtx, 0)
-				cancel()
-				stopCtx, stopCancel := context.WithTimeout(context.Background(), shutdownTimeout)
-				_ = publicServer.Shutdown(stopCtx)
-				_ = server.Close(stopCtx)
-				stopCancel()
-			}()
-		})
-	}
-
-	errCh := make(chan error, 2)
-	go func() { errCh <- <-publicServer.Serve() }()
-	go func() { errCh <- adminServer.Serve(adminListener) }()
-
-	var result error
+	errs := lifecycle.Start()
 	select {
 	case <-ctx.Done():
-		shutdown()
-		<-shutdownDone
-	case serveErr := <-errCh:
-		if !errors.Is(serveErr, http.ErrServerClosed) {
-			result = errors.New("broker listener stopped")
+		return lifecycle.Close(context.Background())
+	case serveErr := <-errs:
+		if errors.Is(serveErr, http.ErrServerClosed) {
+			return nil
 		}
-		shutdown()
-		<-shutdownDone
+		_ = lifecycle.Close(context.Background())
+		return errors.New("broker listener stopped")
 	}
-	adminCtx, adminCancel := context.WithTimeout(context.Background(), shutdownTimeout)
-	_ = adminServer.Shutdown(adminCtx)
-	adminCancel()
-	return result
 }
 
 func validateAdminAddress(address string) error {
