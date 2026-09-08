@@ -523,16 +523,8 @@ func TestSDKTypescriptRelease_Scenario11_PackedLicenseProvenance(t *testing.T) {
 		}
 	}
 	sort.Strings(blockers)
-	want := []string{
-		"contracts/proto/mecatl/v1/harness.proto",
-		"contracts/proto/mecatl/v1/local_session_context.proto",
-		"contracts/proto/mecatl/v1/schedule.proto",
-		"sdk/typescript/src/gen/mecatl/v1/harness_pb.ts",
-		"sdk/typescript/src/gen/mecatl/v1/local_session_context_pb.ts",
-		"sdk/typescript/src/gen/mecatl/v1/schedule_pb.ts",
-	}
-	if !reflect.DeepEqual(blockers, want) {
-		t.Errorf("current non-Apache packed provenance blockers = %v, want %v", blockers, want)
+	if len(blockers) != 0 {
+		t.Errorf("non-Apache packed provenance blockers = %v, want none", blockers)
 	}
 }
 

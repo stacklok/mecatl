@@ -303,7 +303,7 @@ test("packed tarball carries dist and license only", () => {
     packedFiles.get("package/package.json")?.toString("utf8") ?? "{}",
   ) as PackageJson;
   expect(packedPackageJson.name).toBe("@stacklok/mecatl-sdk");
-  expect(packedPackageJson.version).toBe("0.0.0");
+  expect(packedPackageJson.version).toBe("0.0.1");
   expect(packedPackageJson.license).toBe("Apache-2.0");
   expect(packedPackageJson.repository).toEqual({
     directory: "sdk/typescript",
