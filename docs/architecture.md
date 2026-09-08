@@ -77,8 +77,11 @@ Both `mecated` and `mecak8s` use the shared OIDC profile flags. When configured,
 `--oidc-client-id` publishes mecatl's public client hint; `--oidc-scopes` is the
 shared CSV syntax and a narrow operator-configured request allowlist (a comma is a
 separator, never part of one scope token). mecatui requests exactly the confirmed
-configured scopes, or an explicitly selected subset; the list is neither server
-authorization policy nor expanded from later metadata. These values are not inferred
+advertised scopes. When metadata omits `scopes_supported`, it requests the fixed
+`openid,profile,offline_access` baseline. Discovery rejects `--scopes`; administrators
+configure `oidc.scopes` for other scopes. The list is neither server authorization
+policy nor expanded from later metadata. Explicit identity login retains its `--scopes`
+override. These values are not inferred
 from listeners or request headers: the canonical configured resource is the explicit
 service-wide protected-resource identity. Its direct well-known endpoint serves
 metadata; protected subordinate API routes return a generic `Bearer` challenge because
@@ -822,9 +825,12 @@ back. Usage and configuration are documented in
 login: `mecatui llm login` remains the ToolHive gateway flow, while `mecatui login
 ADDRESS` performs public-client OIDC enrollment for one remote target. A bare DNS
 hostname or HTTPS resource URL discovers the issuer, public client ID, audience, and
-operator-configured requested scopes from the resource metadata; mecatui requests exactly
-that confirmed set (or an explicit subset), never adds baseline scopes, and never expands a
-saved enrollment from later metadata. Legacy/private deployments without that profile require those values explicitly. Login defaults to public, globally routable issuer
+operator-configured requested scopes from the resource metadata. When metadata advertises
+`scopes_supported`, mecatui requests that confirmed set exactly; when it omits the
+member, it requests the fixed `openid,profile,offline_access` baseline. Discovery
+rejects `--scopes`, so administrators configure `oidc.scopes` for other scopes.
+Legacy/private deployments without that profile require those values explicitly and
+retain the explicit-login `--scopes` override. Login defaults to public, globally routable issuer
 addresses verified against the system trust store; optional `--tls-ca` replaces those
 roots. `--private-issuer` requires `--tls-ca` and selects private-address admission. The
 saved policy and an explicit CA reference, never CA contents, are used for later refresh
